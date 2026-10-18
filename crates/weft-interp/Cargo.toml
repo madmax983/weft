@@ -1,11 +1,20 @@
 [package]
 name = "weft-interp"
+description = "The Weft reference interpreter: handlers, one-shot continuations, on abort, scopes and deterministic simulation."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+thiserror.workspace = true
+weft-syntax.workspace = true
+weft-sema.workspace = true
+weft-check.workspace = true
+weft-verified.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
 
 [lints]
 workspace = true
