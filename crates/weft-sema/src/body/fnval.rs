@@ -811,6 +811,19 @@ impl Lower<'_> {
         let escaped = self.escaped.clone();
         let applied = self.applied.clone();
         let (calls_before, args_before) = (self.cap_calls.len(), self.op_args.len());
+        // A call of a closure that the body stores uses what the closure captures,
+        // also when the value comes back from the store with its type only.
+        for st in &escaped {
+            let (Some(v), Some(s)) = (st.var, st.info.summary) else {
+                continue;
+            };
+            let members = self.closures[s].members.clone();
+            for a in &applied {
+                if !self.closures[a.summary].members.is_disjoint(&members) {
+                    self.facts.uses.push((v, a.node));
+                }
+            }
+        }
         let mut work: Vec<Reach> = self.reaches.clone();
         let mut seen: BTreeSet<(NodeId, Vec<GivenKey>)> = BTreeSet::new();
         while let Some(r) = work.pop() {

@@ -47,6 +47,16 @@ fn stored_use(world: &World) / mut(world.entities) {
     run_ref(&cb)   //~ W0301
 }
 
+// The same when the stored closure comes back from a container with its type.
+fn from_vec(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    let v: Vec<fn()> = Vec.new()
+    v.push(|| print(r.hp))
+    world.entities.clear()
+    let h = v[0]
+    h()   //~ W0301
+}
+
 // A closure inside a by-value argument points into its captures, and the callee can run it.
 fn clear_then_cb(cb: Cb, w: &World) / mut(w.entities) {
     w.entities.clear()

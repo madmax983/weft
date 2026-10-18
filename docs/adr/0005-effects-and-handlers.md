@@ -81,7 +81,8 @@ Status: accepted. Date: 2026-10-18.
   can run a stored value. This applies after the whole body, so it also covers a node
   that comes before the store in a loop. A node in a closure passes the value on to
   each node where the closure runs. There the value uses what it captures (W0301 if a
-  captured place changed after the store), and it points into its captures as a closure
+  captured place changed after the store), also at a call of a value that comes back
+  from the store with the summary of its type, and it points into its captures as a closure
   argument does (W0312). An operation of a handler that the stored value performs runs
   its clause at the node, as at a perform.
 - A signature has a `stores` part: the function parameters that the body stores. It has
