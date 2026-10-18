@@ -8,7 +8,7 @@
 //! component of the control-flow graph. All components share the place and
 //! variable tables.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 
 pub use weft_syntax::ast::Span;
@@ -289,6 +289,10 @@ pub struct FnFacts {
 
     /// `library()`.
     pub library: bool,
+
+    /// The interning index of places: parent and step to child. `add_root` and
+    /// `child` keep it current.
+    pub place_index: HashMap<(PlaceId, Step), PlaceId>,
 }
 
 impl FnFacts {
@@ -333,23 +337,21 @@ impl FnFacts {
 
     /// Returns the child place of `parent` with one more step. Interns it.
     pub fn child(&mut self, parent: PlaceId, step: Step, text: &str) -> PlaceId {
-        let base = self.place(parent).clone();
+        if let Some(&p) = self.place_index.get(&(parent, step)) {
+            return p;
+        }
+        let base = self.place(parent);
         let mut steps = base.steps.clone();
         steps.push(step);
-        if let Some(i) = self
-            .places
-            .iter()
-            .position(|p| p.root == base.root && p.steps == steps)
-        {
-            return PlaceId(u32::try_from(i).unwrap_or(u32::MAX));
-        }
-        let display = format!("{}{}", base.display, text);
-        self.push_place(PlaceInfo {
+        let info = PlaceInfo {
             root: base.root,
             parent: Some(parent),
             steps,
-            display,
-        })
+            display: format!("{}{}", base.display, text),
+        };
+        let id = self.push_place(info);
+        self.place_index.insert((parent, step), id);
+        id
     }
 
     fn push_place(&mut self, info: PlaceInfo) -> PlaceId {

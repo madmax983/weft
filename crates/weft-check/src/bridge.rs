@@ -53,20 +53,30 @@ pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
         }
     }
     // Last-step relations between places of the same root and depth.
+    let mut groups: std::collections::BTreeMap<(u32, usize), Vec<usize>> =
+        std::collections::BTreeMap::new();
     for (i, p) in f.places.iter().enumerate() {
-        let Some(a) = p.steps.last() else { continue };
-        for (j, q) in f.places.iter().enumerate() {
-            if p.root != q.root || p.steps.len() != q.steps.len() {
+        if !p.steps.is_empty() {
+            groups.entry((p.root.0, p.steps.len())).or_default().push(i);
+        }
+    }
+    for group in groups.values() {
+        for &i in group {
+            let Some(a) = f.places[i].steps.last() else {
                 continue;
-            }
-            let Some(b) = q.steps.last() else { continue };
-            let pv = s(&PlaceId(u32::try_from(i).unwrap_or(0)));
-            let qv = s(&PlaceId(u32::try_from(j).unwrap_or(0)));
-            if places::step_alias(a, b) {
-                emit("step_alias", &[pv.clone(), qv.clone()]);
-            }
-            if places::step_within(a, b) {
-                emit("step_within", &[pv, qv]);
+            };
+            for &j in group {
+                let Some(b) = f.places[j].steps.last() else {
+                    continue;
+                };
+                let pv = s(&PlaceId(u32::try_from(i).unwrap_or(0)));
+                let qv = s(&PlaceId(u32::try_from(j).unwrap_or(0)));
+                if places::step_alias(a, b) {
+                    emit("step_alias", &[pv.clone(), qv.clone()]);
+                }
+                if places::step_within(a, b) {
+                    emit("step_within", &[pv, qv]);
+                }
             }
         }
     }

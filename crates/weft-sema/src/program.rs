@@ -405,16 +405,6 @@ pub struct Collector {
 }
 
 impl Collector {
-    /// Makes a collector that only resolves types against a finished program.
-    pub const fn for_types(prog: Program) -> Self {
-        Self {
-            prog,
-            diags: Vec::new(),
-            pending_fns: Vec::new(),
-            marked: 0,
-        }
-    }
-
     /// Collects the prelude first, then the other units.
     pub fn collect(units: &[Unit]) -> (Program, Vec<Diagnostic>) {
         let mut c = Self {
@@ -926,116 +916,11 @@ impl Collector {
         gens: &[String],
         self_ty: Option<&Ty>,
     ) -> Ty {
-        match &t.kind {
-            TypeExprKind::SelfType => self_ty.cloned().unwrap_or_else(|| {
-                self.diags
-                    .push(Diagnostic::error("W0101", "`Self` is not in scope", t.span));
-                Ty::Error
-            }),
-            TypeExprKind::Ref { inner, .. } => {
-                Ty::Ref(Box::new(self.resolve_ty(inner, m, gens, self_ty)))
-            }
-            TypeExprKind::Tuple(ts) if ts.is_empty() => Ty::Unit,
-            TypeExprKind::Tuple(ts) => Ty::Tuple(
-                ts.iter()
-                    .map(|t| self.resolve_ty(t, m, gens, self_ty))
-                    .collect(),
-            ),
-            TypeExprKind::Array { elem, len } => {
-                Ty::Array(Box::new(self.resolve_ty(elem, m, gens, self_ty)), *len)
-            }
-            TypeExprKind::Slice(e) => Ty::Slice(Box::new(self.resolve_ty(e, m, gens, self_ty))),
-            TypeExprKind::Fn {
-                params,
-                ret,
-                effects,
-            } => {
-                let params = params
-                    .iter()
-                    .map(|t| self.resolve_ty(t, m, gens, self_ty))
-                    .collect();
-                let ret = ret
-                    .as_ref()
-                    .map_or(Ty::Unit, |t| self.resolve_ty(t, m, gens, self_ty));
-                let effects = effects.as_ref().map(|row| {
-                    let mut names = BTreeSet::new();
-                    for item in &row.items {
-                        if let EffectItem::Named(n) = item {
-                            match effects::canonical(&self.prog, m, &n.name) {
-                                Some(ns) => names.extend(ns),
-                                None => self.diags.push(Diagnostic::error(
-                                    "W0101",
-                                    format!("unknown effect `{}`", n.name),
-                                    n.span,
-                                )),
-                            }
-                        }
-                    }
-                    names.into_iter().collect()
-                });
-                Ty::Fn(std::rc::Rc::new(FnTy {
-                    params,
-                    ret,
-                    effects,
-                    summary: None,
-                    item: None,
-                }))
-            }
-            TypeExprKind::Path { segments, args } => {
-                let args: Vec<Ty> = args
-                    .iter()
-                    .map(|t| self.resolve_ty(t, m, gens, self_ty))
-                    .collect();
-                if segments.len() == 1 {
-                    let n = segments[0].name.as_str();
-                    if let Some(i) = gens.iter().position(|g| g == n) {
-                        return Ty::Param(u32::try_from(i).unwrap_or(0));
-                    }
-                    if let Some(it) = IntTy::from_name(n) {
-                        return Ty::Int(it);
-                    }
-                    if n == "bool" {
-                        return Ty::Bool;
-                    }
-                }
-                let mut module = m;
-                for (i, seg) in segments.iter().enumerate() {
-                    let found = if i == 0 {
-                        self.prog.lookup(module, &seg.name)
-                    } else {
-                        self.prog.lookup_in(module, &seg.name)
-                    };
-                    match found {
-                        Some(ItemRef::Mod(sub)) if i + 1 < segments.len() => module = sub,
-                        Some(ItemRef::Adt(a)) if i + 1 == segments.len() => {
-                            let want = self.prog.adts[a].generics.len();
-                            if want != args.len() && !args.is_empty() {
-                                self.diags.push(Diagnostic::error(
-                                    "W0103",
-                                    format!("`{}` takes {want} type arguments", seg.name),
-                                    t.span,
-                                ));
-                                return Ty::Error;
-                            }
-                            let args = if args.is_empty() {
-                                vec![Ty::Error; want]
-                            } else {
-                                args
-                            };
-                            return Ty::Adt(a, args);
-                        }
-                        _ => break,
-                    }
-                }
-                let text: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
-                self.diags.push(Diagnostic::error(
-                    "W0101",
-                    format!("unknown type `{}`", text.join(".")),
-                    t.span,
-                ));
-                Ty::Error
-            }
+        TyResolver {
+            prog: &self.prog,
+            diags: &mut self.diags,
         }
+        .resolve(t, m, gens, self_ty)
     }
 
     /// Resolves a written place against parameter types.
@@ -1141,6 +1026,130 @@ impl Collector {
             }
         }
         Some(SigPlace { root, steps, text })
+    }
+}
+
+/// Resolves type expressions against a finished program. It does not copy the program.
+pub struct TyResolver<'a> {
+    /// The program.
+    pub prog: &'a Program,
+    /// Where the diagnostics go.
+    pub diags: &'a mut Vec<Diagnostic>,
+}
+
+impl TyResolver<'_> {
+    /// Resolves a type expression. `gens` names the type parameters in scope.
+    pub fn resolve(&mut self, t: &TypeExpr, m: ModId, gens: &[String], self_ty: Option<&Ty>) -> Ty {
+        match &t.kind {
+            TypeExprKind::SelfType => self_ty.cloned().unwrap_or_else(|| {
+                self.diags
+                    .push(Diagnostic::error("W0101", "`Self` is not in scope", t.span));
+                Ty::Error
+            }),
+            TypeExprKind::Ref { inner, .. } => {
+                Ty::Ref(Box::new(self.resolve(inner, m, gens, self_ty)))
+            }
+            TypeExprKind::Tuple(ts) if ts.is_empty() => Ty::Unit,
+            TypeExprKind::Tuple(ts) => Ty::Tuple(
+                ts.iter()
+                    .map(|t| self.resolve(t, m, gens, self_ty))
+                    .collect(),
+            ),
+            TypeExprKind::Array { elem, len } => {
+                Ty::Array(Box::new(self.resolve(elem, m, gens, self_ty)), *len)
+            }
+            TypeExprKind::Slice(e) => Ty::Slice(Box::new(self.resolve(e, m, gens, self_ty))),
+            TypeExprKind::Fn {
+                params,
+                ret,
+                effects,
+            } => {
+                let params = params
+                    .iter()
+                    .map(|t| self.resolve(t, m, gens, self_ty))
+                    .collect();
+                let ret = ret
+                    .as_ref()
+                    .map_or(Ty::Unit, |t| self.resolve(t, m, gens, self_ty));
+                let effects = effects.as_ref().map(|row| {
+                    let mut names = BTreeSet::new();
+                    for item in &row.items {
+                        if let EffectItem::Named(n) = item {
+                            match effects::canonical(self.prog, m, &n.name) {
+                                Some(ns) => names.extend(ns),
+                                None => self.diags.push(Diagnostic::error(
+                                    "W0101",
+                                    format!("unknown effect `{}`", n.name),
+                                    n.span,
+                                )),
+                            }
+                        }
+                    }
+                    names.into_iter().collect()
+                });
+                Ty::Fn(std::rc::Rc::new(FnTy {
+                    params,
+                    ret,
+                    effects,
+                    summary: None,
+                    item: None,
+                }))
+            }
+            TypeExprKind::Path { segments, args } => {
+                let args: Vec<Ty> = args
+                    .iter()
+                    .map(|t| self.resolve(t, m, gens, self_ty))
+                    .collect();
+                if segments.len() == 1 {
+                    let n = segments[0].name.as_str();
+                    if let Some(i) = gens.iter().position(|g| g == n) {
+                        return Ty::Param(u32::try_from(i).unwrap_or(0));
+                    }
+                    if let Some(it) = IntTy::from_name(n) {
+                        return Ty::Int(it);
+                    }
+                    if n == "bool" {
+                        return Ty::Bool;
+                    }
+                }
+                let mut module = m;
+                for (i, seg) in segments.iter().enumerate() {
+                    let found = if i == 0 {
+                        self.prog.lookup(module, &seg.name)
+                    } else {
+                        self.prog.lookup_in(module, &seg.name)
+                    };
+                    match found {
+                        Some(ItemRef::Mod(sub)) if i + 1 < segments.len() => module = sub,
+                        Some(ItemRef::Adt(a)) if i + 1 == segments.len() => {
+                            let want = self.prog.adts[a].generics.len();
+                            if want != args.len() && !args.is_empty() {
+                                self.diags.push(Diagnostic::error(
+                                    "W0103",
+                                    format!("`{}` takes {want} type arguments", seg.name),
+                                    t.span,
+                                ));
+                                return Ty::Error;
+                            }
+                            let args = if args.is_empty() {
+                                vec![Ty::Error; want]
+                            } else {
+                                args
+                            };
+                            return Ty::Adt(a, args);
+                        }
+                        _ => break,
+                    }
+                }
+                let text: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
+                self.diags.push(Diagnostic::error(
+                    "W0101",
+                    format!("unknown type `{}`", text.join(".")),
+                    t.span,
+                ));
+                Ty::Error
+            }
+        }
     }
 }
 

@@ -1088,13 +1088,16 @@ impl Lower<'_> {
     }
 
     pub(super) fn local_ty_pub(&mut self, t: &ast::TypeExpr) -> Ty {
-        let mut c = crate::program::Collector::for_types(self.prog.clone());
         let gens: Vec<String> = self
             .self_fn
             .map(|f| self.sigs[f].generics.clone())
             .unwrap_or_default();
-        let ty = c.resolve_ty(t, self.module, &gens, None);
-        self.diags.extend(c.diags);
+        let module = self.module;
+        let ty = crate::program::TyResolver {
+            prog: self.prog,
+            diags: &mut self.diags,
+        }
+        .resolve(t, module, &gens, None);
         ty
     }
 
