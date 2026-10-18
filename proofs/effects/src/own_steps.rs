@@ -1342,7 +1342,7 @@ pub proof fn lemma_b_perform_at(prog: Prog, s: State, cap: nat, op: nat, j: int)
     assert(!s.konts.contains_key(kn));
     assert(s2.konts[kn] == Kont { frames: kf, multi, used: false });
     assert(s2.stack[j] == Frame::Code(cl));
-    assert(forall|i: int| 0 <= i < j ==> s2.stack[i] == st[i]);
+    assert(forall|i: int| 0 <= i < j ==> #[trigger] s2.stack[i] == st[i]);
     // the clause frame
     let hi = s.hinfo[c];
     assert(hinfo_ok(prog, s, hi));
@@ -1544,7 +1544,7 @@ pub proof fn lemma_b_resume(prog: Prog, s: State, s2: State)
     assert(pos_ok(prog, s, ptop));
     assert(kont_ok(prog, s, kt));
     assert(s2.stack.len() == st.len() + kf.len());
-    assert(forall|i: int| 0 <= i < t ==> s2.stack[i] == st[i]);
+    assert(forall|i: int| 0 <= i < t ==> #[trigger] s2.stack[i] == st[i]);
     assert(s2.stack[t as int] == Frame::Code(f2));
     assert(forall|m: int| 0 <= m < kf.len() ==> s2.stack[t + 1 + m] == kf[m]);
     if once {
