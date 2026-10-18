@@ -37,6 +37,8 @@ Status: accepted. Date: 2026-10-18.
   around it (W0503).
 - A spawned task or fork branch cannot perform a user effect (W0314): the handler is on
   another task's stack.
+- Effect inference runs over the call graph until no signature changes. A signature
+  that still changes after 32 rounds and two more for each function is W0704.
 - Extern functions in user code default to `blocking`.
 - `print` is a debug built-in with no effect.
 

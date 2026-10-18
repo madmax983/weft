@@ -408,3 +408,29 @@ fn a_signature_states_what_a_body_gives_a_stored_value() {
     // A body that calls no unknown function value cannot run a stored one.
     assert!(!sig(src, "count").effects.reaches);
 }
+
+#[test]
+fn effect_inference_runs_until_the_signatures_are_stable() {
+    // A chain of 40 functions, each defined before the one that it calls.
+    let mut src = String::from(
+        "struct E { hp: i32 } struct W { es: Vec<E> }
+         fn top(w: &W) { ap40(|x| x.es.clear(), w) }\n",
+    );
+    for i in (1..=40).rev() {
+        src.push_str(&format!(
+            "fn ap{i}(f: fn(&W), w: &W) {{ ap{}(f, w) }}\n",
+            i - 1
+        ));
+    }
+    src.push_str("fn ap0(f: fn(&W), w: &W) { f(w) }\n");
+    let a = analyze_source(&src, Options::default()).expect("the source parses");
+    assert!(a.rounds > 32);
+    assert!(a.diags.iter().all(|d| d.code != "W0704"));
+    let f = facts(&src, "top");
+    // The closure mutates what the chain gives it, at the call of `ap40`.
+    let es = place(&f, "w.es");
+    assert!(f
+        .mutates_at
+        .iter()
+        .any(|&(at, m)| m == es && f.node(at).label == "ap40"));
+}

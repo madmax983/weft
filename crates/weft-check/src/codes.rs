@@ -46,6 +46,7 @@ pub const CODES: &[Code] = &[
     Code { code: "W0701", title: "public effects not stated", rule: "signatures", text: "Bodies infer effects. A public signature must state them." },
     Code { code: "W0702", title: "effect not in signature", rule: "unauthorized_effect(P, E)", text: "The body performs an effect that the signature does not state and no local handler handles. The effects of each closure that the body makes count, also when nothing calls the closure." },
     Code { code: "W0703", title: "mutation not in signature", rule: "unauthorized_mut(P, M)", text: "The body mutates a place reached from a parameter that no `mut(...)` in the signature covers." },
+    Code { code: "W0704", title: "effect inference does not stop", rule: "signatures", text: "Effect inference runs over the call graph until no signature changes. The signature of this function still changes after the bound: 32 rounds and two more for each function." },
     Code { code: "W0705", title: "function argument effects", rule: "signatures", text: "A function argument performs an effect that the parameter type does not allow." },
     Code { code: "W0801", title: "root handler in a library", rule: "root_handler_in_lib(H)", text: "Only binaries and tests install root handlers for standard effects. Libraries may intercept them." },
     Code { code: "W0802", title: "simulation in a library", rule: "root handlers", text: "`sim.run` replaces every root handler. Only binaries and tests can use it." },

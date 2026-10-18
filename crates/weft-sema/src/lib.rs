@@ -86,10 +86,13 @@ pub fn analyze(units: &[Unit], opts: Options) -> Analysis {
     // its returned function value does, which function parameters it stores,
     // whether it can run a stored function value, and whether an unknown function
     // value that it calls can resume more than once.
+    // A chain of calls needs one round for each function. A program that is still
+    // not stable after the bound gets W0704.
+    let limit = 32 + 2 * user_fns.len();
     let mut rounds = 0;
     loop {
         rounds += 1;
-        let mut changed = false;
+        let mut changed = Vec::new();
         for &f in &user_fns {
             let lib = library_of(&prog, f);
             let l = body::Lower::new(&prog, &sigs, prog.fns[f].module, &prog.fns[f].path, lib)
@@ -109,10 +112,26 @@ pub fn analyze(units: &[Unit], opts: Options) -> Analysis {
             };
             if next != sigs[f].effects {
                 sigs[f].effects = next;
-                changed = true;
+                changed.push(f);
             }
         }
-        if !changed || rounds >= 32 {
+        if changed.is_empty() {
+            break;
+        }
+        if rounds >= limit {
+            for f in changed {
+                let def = &prog.fns[f];
+                let mut d = Diagnostic::error(
+                    "W0704",
+                    format!(
+                        "the effects of `{}` do not become stable after {rounds} rounds of inference",
+                        def.name
+                    ),
+                    def.decl.name.span,
+                );
+                d.unit = unit_of(&prog, def.module);
+                diags.push(d);
+            }
             break;
         }
     }
