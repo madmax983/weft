@@ -284,6 +284,7 @@ pub open spec fn step_pop(s: State, s2: State) -> bool {
     running(s) && s.stack.last() is Handler && s2 == State { stack: s.stack.drop_last(), ..s }
 }
 
+/// The state after `acquire`: a fresh live resource in the slot.
 pub open spec fn do_acquire(s: State, slot: Slot, on_abort: bool) -> State {
     let f = tf(s);
     State {
@@ -294,6 +295,7 @@ pub open spec fn do_acquire(s: State, slot: Slot, on_abort: bool) -> State {
     }
 }
 
+/// Step: `acquire` into an empty slot.
 pub open spec fn step_acquire(prog: Prog, s: State, s2: State) -> bool {
     at_instr(prog, s) && match instr_at(prog, tf(s)) {
         Instr::Acquire { slot, on_abort } => !tf(s).slots.contains_key(slot) && s2 == do_acquire(
@@ -305,6 +307,7 @@ pub open spec fn step_acquire(prog: Prog, s: State, s2: State) -> bool {
     }
 }
 
+/// The state after `consume`: the resource is consumed and the slot is empty.
 pub open spec fn do_consume(s: State, slot: Slot) -> State {
     let f = tf(s);
     let r = f.slots[slot];
@@ -321,6 +324,7 @@ pub open spec fn slot_live(s: State, f: CFrame, slot: Slot) -> bool {
         == RState::Live
 }
 
+/// Step: `consume` a live resource.
 pub open spec fn step_consume(prog: Prog, s: State, s2: State) -> bool {
     at_instr(prog, s) && match instr_at(prog, tf(s)) {
         Instr::Consume { slot } => slot_live(s, tf(s), slot) && s2 == do_consume(s, slot),
@@ -364,6 +368,7 @@ pub open spec fn do_call(prog: Prog, s: State, block: BlockId, caps: Seq<nat>) -
     State { stack: upd_top(s, f2).push(Frame::Code(callee)), ..s }
 }
 
+/// Step: a call with existing capabilities.
 pub open spec fn step_call(prog: Prog, s: State, s2: State) -> bool {
     at_instr(prog, s) && match instr_at(prog, tf(s)) {
         Instr::Call { block, caps } => call_ok_dyn(prog, tf(s), block, caps) && s2 == do_call(
@@ -411,6 +416,7 @@ pub open spec fn do_handle(
     }
 }
 
+/// Step: `handle`.
 pub open spec fn step_handle(prog: Prog, s: State, s2: State) -> bool {
     at_instr(prog, s) && match instr_at(prog, tf(s)) {
         Instr::Handle { eff, clauses, body } => handle_ok_dyn(prog, tf(s), body) && s2 == do_handle(
@@ -482,6 +488,7 @@ pub open spec fn do_perform(prog: Prog, s: State, c: HId, op: nat, j: int) -> St
     }
 }
 
+/// Step: `perform` through a live handler.
 pub open spec fn step_perform(prog: Prog, s: State, s2: State) -> bool {
     at_instr(prog, s) && match instr_at(prog, tf(s)) {
         Instr::Perform { cap, op } => exists|j: int|
@@ -502,6 +509,7 @@ pub open spec fn do_cancel(s: State, j: int) -> State {
     State { stack: s.stack.subrange(0, j), pending: s.pending + captured(s, j), ..s }
 }
 
+/// Step: cancellation at a perform.
 pub open spec fn step_cancel(prog: Prog, s: State, s2: State) -> bool {
     at_instr(prog, s) && match instr_at(prog, tf(s)) {
         Instr::Perform { cap, op } => exists|j: int|
@@ -531,6 +539,7 @@ pub open spec fn do_resume(s: State) -> State {
     }
 }
 
+/// Step: `resume` a usable continuation.
 pub open spec fn step_resume(prog: Prog, s: State, s2: State) -> bool {
     at_instr(prog, s) && instr_at(prog, tf(s)) is Resume && resume_ok_dyn(s, tf(s)) && s2
         == do_resume(s)
@@ -553,6 +562,7 @@ pub open spec fn do_return(s: State) -> State {
     }
 }
 
+/// Step: `return` with no live linear value.
 pub open spec fn step_return(prog: Prog, s: State, s2: State) -> bool {
     at_instr(prog, s) && instr_at(prog, tf(s)) is Return && !nonempty(tf(s).slots) && s2
         == do_return(s)
@@ -565,6 +575,7 @@ pub open spec fn step_unwind_pop(s: State, s2: State) -> bool {
     &&& s2 == State { pending: s.pending.drop_last(), ..s }
 }
 
+/// The state after the unwinder drops the continuation of the top pending frame.
 pub open spec fn do_drop(s: State) -> State {
     let f = pf(s);
     let kid = f.k->0;
@@ -582,6 +593,7 @@ pub open spec fn step_unwind_drop(s: State, s2: State) -> bool {
     unwinding(s) && s.pending.last() is Code && holds_fresh(s, pf(s)) && s2 == do_drop(s)
 }
 
+/// The state after the unwinder runs `on abort` for the value in slot `sl`.
 pub open spec fn do_abort(s: State, sl: Slot) -> State {
     let f = pf(s);
     let r = f.slots[sl];

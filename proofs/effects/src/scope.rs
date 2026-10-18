@@ -233,6 +233,7 @@ pub open spec fn agree(s: State, s2: State) -> bool {
 // Stability under `agree`
 // ---------------------------------------------------------------------------
 
+/// What a frame can use does not change under `agree`.
 pub proof fn lemma_reaches_agree(s: State, s2: State, fr: Frame, h: HId)
     requires
         agree(s, s2),
@@ -242,6 +243,7 @@ pub proof fn lemma_reaches_agree(s: State, s2: State, fr: Frame, h: HId)
 {
 }
 
+/// Environment typing survives `agree`.
 pub proof fn lemma_env_typed_agree(s: State, s2: State, env: Seq<HId>, effs: Seq<EffId>)
     requires
         agree(s, s2),
@@ -255,6 +257,7 @@ pub proof fn lemma_env_typed_agree(s: State, s2: State, env: Seq<HId>, effs: Seq
     }
 }
 
+/// A good code frame stays good under `agree`.
 pub proof fn lemma_cf_ok_agree(prog: Prog, s: State, s2: State, f: CFrame)
     requires
         agree(s, s2),
@@ -272,6 +275,7 @@ pub proof fn lemma_cf_ok_agree(prog: Prog, s: State, s2: State, f: CFrame)
     }
 }
 
+/// Good frames stay good under `agree`.
 pub proof fn lemma_frames_agree(prog: Prog, s: State, s2: State, fr: Seq<Frame>)
     requires
         agree(s, s2),
@@ -297,6 +301,7 @@ pub proof fn lemma_frames_agree(prog: Prog, s: State, s2: State, fr: Seq<Frame>)
     }
 }
 
+/// `scoped` survives `agree`.
 pub proof fn lemma_scoped_agree(prog: Prog, s: State, s2: State, fr: Seq<Frame>)
     requires
         agree(s, s2),
@@ -321,6 +326,7 @@ pub proof fn lemma_scoped_agree(prog: Prog, s: State, s2: State, fr: Seq<Frame>)
     }
 }
 
+/// `based` survives `agree`.
 pub proof fn lemma_based_agree(prog: Prog, s: State, s2: State, fr: Seq<Frame>)
     requires
         agree(s, s2),
@@ -340,6 +346,7 @@ pub proof fn lemma_based_agree(prog: Prog, s: State, s2: State, fr: Seq<Frame>)
     }
 }
 
+/// `based_k` survives `agree`.
 pub proof fn lemma_based_k_agree(prog: Prog, s: State, s2: State, fr: Seq<Frame>)
     requires
         agree(s, s2),
@@ -361,6 +368,7 @@ pub proof fn lemma_based_k_agree(prog: Prog, s: State, s2: State, fr: Seq<Frame>
     }
 }
 
+/// `below_h` survives `agree`.
 pub proof fn lemma_below_h_agree(prog: Prog, s: State, s2: State, fr: Seq<Frame>)
     requires
         agree(s, s2),
@@ -378,6 +386,7 @@ pub proof fn lemma_below_h_agree(prog: Prog, s: State, s2: State, fr: Seq<Frame>
     }
 }
 
+/// A good stack stays good under `agree`.
 pub proof fn lemma_stack_seq_agree(prog: Prog, s: State, s2: State, st: Seq<Frame>)
     requires
         agree(s, s2),
@@ -391,6 +400,7 @@ pub proof fn lemma_stack_seq_agree(prog: Prog, s: State, s2: State, st: Seq<Fram
     lemma_below_h_agree(prog, s, s2, st);
 }
 
+/// A good continuation stays good under `agree`.
 pub proof fn lemma_kont_agree(prog: Prog, s: State, s2: State, kt: Kont)
     requires
         agree(s, s2),
@@ -404,6 +414,7 @@ pub proof fn lemma_kont_agree(prog: Prog, s: State, s2: State, kt: Kont)
     lemma_below_h_agree(prog, s, s2, kt.frames);
 }
 
+/// A good handler instance stays good under `agree`.
 pub proof fn lemma_hinfo_agree(prog: Prog, s: State, s2: State, hi: HInfo)
     requires
         agree(s, s2),

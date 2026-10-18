@@ -136,32 +136,39 @@ pub open spec fn all_clean(prog: Prog, s: State, fr: Seq<Frame>) -> bool {
     forall|i: int| 0 <= i < fr.len() && #[trigger] fr[i] is Code ==> clean(prog, s, fr[i]->Code_0)
 }
 
+/// Each owning code frame is good.
 pub open spec fn b_pos(prog: Prog, s: State) -> bool {
     forall|p: Pos| #[trigger] ocode(s, p) ==> pos_ok(prog, s, p)
 }
 
+/// No resource has two owners.
 pub open spec fn b_unique_res(s: State) -> bool {
     forall|p1: Pos, p2: Pos, r: ResId| #[trigger] holds(s, p1, r) && #[trigger] holds(s, p2, r) ==> p1 == p2
 }
 
+/// Each live resource has an owner.
 pub open spec fn b_owned(s: State) -> bool {
     forall|r: ResId| #[trigger] live(s, r) ==> exists|p: Pos| #[trigger] holds(s, p, r)
 }
 
+/// No fresh `once` continuation has two holders.
 pub open spec fn b_unique_k(s: State) -> bool {
     forall|p1: Pos, p2: Pos, kid: KId|
         fresh_once(s, kid) && #[trigger] holdsk(s, p1, kid) && #[trigger] holdsk(s, p2, kid) ==> p1 == p2
 }
 
+/// Each fresh `once` continuation has a holder.
 pub open spec fn b_held_k(s: State) -> bool {
     forall|kid: KId| #[trigger] fresh_once(s, kid) ==> exists|p: Pos| #[trigger] holdsk(s, p, kid)
 }
 
+/// A continuation inside a continuation is older.
 pub open spec fn b_order(s: State) -> bool {
     forall|k2: KId, i: nat, kid: KId|
         #[trigger] holdsk(s, Pos::Knt(k2, i), kid) && fresh_once(s, kid) ==> kid < k2
 }
 
+/// Every `multi` continuation holds only clean frames.
 pub open spec fn b_multi(prog: Prog, s: State) -> bool {
     forall|k: KId| #[trigger] s.konts.contains_key(k) && s.konts[k].multi ==> all_clean(prog, s, s.konts[k].frames)
 }

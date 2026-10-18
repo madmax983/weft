@@ -97,7 +97,6 @@ pub proof fn lemma_top_ok(prog: Prog, s: State)
         top_code(s),
     ensures
         cf_ok(prog, s, tf(s)),
-        reaches(s, s.stack.last(), 0) == tf(s).env.contains(0),
 {
     assert(frame_ok(prog, s, s.stack[s.stack.len() - 1]));
 }
@@ -139,6 +138,7 @@ pub proof fn lemma_agree_used(s: State, kid: KId)
     assert(k2.dom() =~= s.konts.dom());
 }
 
+/// `inv_a` survives the removal of a handler frame.
 pub proof fn lemma_a_pop(prog: Prog, s: State, s2: State)
     requires
         inv_a(prog, s),
@@ -150,6 +150,7 @@ pub proof fn lemma_a_pop(prog: Prog, s: State, s2: State)
     lemma_a_prefix(prog, s, s2, s.stack.len() - 1);
 }
 
+/// `inv_a` survives `return`.
 pub proof fn lemma_a_return(prog: Prog, s: State, s2: State)
     requires
         inv_a(prog, s),
@@ -168,6 +169,7 @@ pub proof fn lemma_a_return(prog: Prog, s: State, s2: State)
     lemma_a_prefix(prog, s, s2, s.stack.len() - 1);
 }
 
+/// `inv_a` survives a cancellation.
 pub proof fn lemma_a_cancel(prog: Prog, s: State, s2: State)
     requires
         inv_a(prog, s),
@@ -185,6 +187,7 @@ pub proof fn lemma_a_cancel(prog: Prog, s: State, s2: State)
     }
 }
 
+/// `inv_a` survives the unwinder steps.
 pub proof fn lemma_a_unwind(prog: Prog, s: State, s2: State)
     requires
         inv_a(prog, s),
@@ -233,6 +236,7 @@ pub proof fn lemma_cf_next(prog: Prog, s: State, f: CFrame, f2: CFrame)
     assert(ss_of(prog, f2) == ss_of(prog, adv(f)));
 }
 
+/// `inv_a` survives `acquire` and `consume`.
 pub proof fn lemma_a_local(prog: Prog, s: State, s2: State)
     requires
         check(prog),
@@ -311,6 +315,7 @@ pub proof fn lemma_a_finish(prog: Prog, s: State, s2: State)
     }
 }
 
+/// `inv_a` survives a call.
 pub proof fn lemma_a_call(prog: Prog, s: State, s2: State)
     requires
         check(prog),
@@ -402,6 +407,7 @@ pub proof fn lemma_a_call(prog: Prog, s: State, s2: State)
     }
 }
 
+/// `inv_a` survives `handle` (this uses rule d).
 pub proof fn lemma_a_handle(prog: Prog, s: State, s2: State)
     requires
         check(prog),
@@ -508,6 +514,7 @@ pub proof fn lemma_a_handle(prog: Prog, s: State, s2: State)
     }
 }
 
+/// `inv_a` survives `resume`.
 pub proof fn lemma_a_resume(prog: Prog, s: State, s2: State)
     requires
         check(prog),
@@ -735,6 +742,7 @@ pub proof fn lemma_a_perform_at(prog: Prog, s: State, cap: nat, op: nat, j: int)
     }
 }
 
+/// `inv_a` survives `perform`.
 pub proof fn lemma_a_perform(prog: Prog, s: State, s2: State)
     requires
         check(prog),

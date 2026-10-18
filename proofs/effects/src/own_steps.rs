@@ -305,6 +305,7 @@ pub proof fn lemma_b_subset(prog: Prog, s: State, s2: State)
     }
 }
 
+/// `inv_b` survives the removal of a handler frame.
 pub proof fn lemma_b_pop(prog: Prog, s: State, s2: State)
     requires
         inv_b(prog, s),
@@ -320,6 +321,7 @@ pub proof fn lemma_b_pop(prog: Prog, s: State, s2: State)
     lemma_b_subset(prog, s, s2);
 }
 
+/// `inv_b` survives an unwinder pop.
 pub proof fn lemma_b_unwind_pop(prog: Prog, s: State, s2: State)
     requires
         inv_b(prog, s),
@@ -479,6 +481,7 @@ pub proof fn lemma_top_positions(s: State, s2: State, n: nat)
 {
 }
 
+/// `inv_b` survives `acquire`.
 pub proof fn lemma_b_acquire(prog: Prog, s: State, s2: State)
     requires
         check(prog),
@@ -551,6 +554,7 @@ pub proof fn lemma_b_acquire(prog: Prog, s: State, s2: State)
     }
 }
 
+/// `inv_b` survives `consume`.
 pub proof fn lemma_b_consume(prog: Prog, s: State, s2: State)
     requires
         check(prog),
@@ -663,6 +667,7 @@ pub proof fn lemma_b_push(prog: Prog, s: State, s2: State, f2: CFrame, n: nat)
     lemma_b_local(prog, s, s2, p0);
 }
 
+/// `inv_b` survives a call.
 pub proof fn lemma_b_call(prog: Prog, s: State, s2: State)
     requires
         check(prog),
@@ -689,6 +694,7 @@ pub proof fn lemma_b_call(prog: Prog, s: State, s2: State)
     }
 }
 
+/// `inv_b` survives `handle`.
 pub proof fn lemma_b_handle(prog: Prog, s: State, s2: State)
     requires
         check(prog),
@@ -718,6 +724,7 @@ pub proof fn lemma_b_handle(prog: Prog, s: State, s2: State)
     }
 }
 
+/// `inv_b` survives an unwinder abort.
 pub proof fn lemma_b_unwind_abort(prog: Prog, s: State, s2: State)
     requires
         inv_b(prog, s),
@@ -934,6 +941,7 @@ pub proof fn lemma_keeps_used(s: State, s2: State, kid: KId, f: CFrame)
 {
 }
 
+/// `inv_b` survives a return that drops a fresh `once` continuation.
 pub proof fn lemma_b_return_drop(prog: Prog, s: State, s2: State)
     requires
         inv_a(prog, s),
@@ -1010,6 +1018,7 @@ pub proof fn lemma_b_return_drop(prog: Prog, s: State, s2: State)
     lemma_multi_mono(prog, s, s2);
 }
 
+/// `inv_b` survives `return`.
 pub proof fn lemma_b_return(prog: Prog, s: State, s2: State)
     requires
         inv_a(prog, s),
@@ -1043,6 +1052,7 @@ pub proof fn lemma_good_clear_k(prog: Prog, s: State, s2: State, f: CFrame, full
     assert(ss_of(prog, f2) == ss_of(prog, f));
 }
 
+/// `inv_b` survives an unwinder drop.
 pub proof fn lemma_b_unwind_drop(prog: Prog, s: State, s2: State)
     requires
         inv_b(prog, s),
@@ -1147,6 +1157,7 @@ pub proof fn lemma_b_unwind_drop(prog: Prog, s: State, s2: State)
     lemma_order_mono(s, s2);
 }
 
+/// `inv_b` survives a cancellation.
 pub proof fn lemma_b_cancel(prog: Prog, s: State, s2: State)
     requires
         check(prog),
@@ -1307,6 +1318,7 @@ pub proof fn lemma_many_clean(prog: Prog, s: State, s2: State, g: CFrame)
     }
 }
 
+/// `inv_b` survives a perform that captures from handler frame `j`.
 pub proof fn lemma_b_perform_at(prog: Prog, s: State, cap: nat, op: nat, j: int)
     requires
         check(prog),
@@ -1494,6 +1506,7 @@ pub proof fn lemma_b_perform_at(prog: Prog, s: State, cap: nat, op: nat, j: int)
     lemma_multi_mono(prog, s, s2);
 }
 
+/// `inv_b` survives `perform`.
 pub proof fn lemma_b_perform(prog: Prog, s: State, s2: State)
     requires
         check(prog),
@@ -1519,6 +1532,7 @@ pub proof fn lemma_b_perform(prog: Prog, s: State, s2: State)
     }
 }
 
+/// `inv_b` survives `resume` (once and multi).
 pub proof fn lemma_b_resume(prog: Prog, s: State, s2: State)
     requires
         check(prog),
