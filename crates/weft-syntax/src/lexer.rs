@@ -311,11 +311,23 @@ pub fn lex(src: &str) -> Result<Vec<Token>, ParseError> {
 ///
 /// The parser uses this for string interpolations, so that spans stay absolute.
 pub fn lex_at(src: &str, base: u32) -> Result<Vec<Token>, ParseError> {
-    let fits = u32::try_from(src.len()).ok().and_then(|n| base.checked_add(n)).is_some();
+    let fits = u32::try_from(src.len())
+        .ok()
+        .and_then(|n| base.checked_add(n))
+        .is_some();
     if !fits {
-        return Err(ParseError::new("the source text is too large", Span::new(base, base)));
+        return Err(ParseError::new(
+            "the source text is too large",
+            Span::new(base, base),
+        ));
     }
-    let mut lx = Lexer { src, bytes: src.as_bytes(), pos: 0, base, toks: Vec::new() };
+    let mut lx = Lexer {
+        src,
+        bytes: src.as_bytes(),
+        pos: 0,
+        base,
+        toks: Vec::new(),
+    };
     lx.run()?;
     Ok(insert_newlines(src, base, lx.toks))
 }
@@ -338,7 +350,10 @@ struct Lexer<'a> {
 
 impl Lexer<'_> {
     fn span(&self, lo: usize, hi: usize) -> Span {
-        let at = |i: usize| self.base.saturating_add(u32::try_from(i).unwrap_or(u32::MAX));
+        let at = |i: usize| {
+            self.base
+                .saturating_add(u32::try_from(i).unwrap_or(u32::MAX))
+        };
         Span::new(at(lo), at(hi))
     }
 
@@ -356,7 +371,11 @@ impl Lexer<'_> {
             let lo = self.pos;
             let Some(b) = self.byte(lo) else {
                 let span = self.span(lo, lo);
-                self.toks.push(Token { kind: TokenKind::Eof, span, starts_line });
+                self.toks.push(Token {
+                    kind: TokenKind::Eof,
+                    span,
+                    starts_line,
+                });
                 return Ok(());
             };
             let kind = match b {
@@ -366,7 +385,11 @@ impl Lexer<'_> {
                 _ => self.punct()?,
             };
             let span = self.span(lo, self.pos);
-            self.toks.push(Token { kind, span, starts_line });
+            self.toks.push(Token {
+                kind,
+                span,
+                starts_line,
+            });
         }
     }
 
@@ -392,7 +415,10 @@ impl Lexer<'_> {
 
     fn word(&mut self) -> TokenKind {
         let lo = self.pos;
-        while self.byte(self.pos).is_some_and(|b| b.is_ascii_alphanumeric() || b == b'_') {
+        while self
+            .byte(self.pos)
+            .is_some_and(|b| b.is_ascii_alphanumeric() || b == b'_')
+        {
             self.pos += 1;
         }
         let text = self.src.get(lo..self.pos).unwrap_or_default();
@@ -525,7 +551,10 @@ impl Lexer<'_> {
                     let start = self.pos + 1;
                     let end = self.interp_end(start)?;
                     let src = self.src.get(start..end).unwrap_or_default().to_owned();
-                    pieces.push(StrPiece::Interp { src, offset: self.span(start, start).lo });
+                    pieces.push(StrPiece::Interp {
+                        src,
+                        offset: self.span(start, start).lo,
+                    });
                     self.pos = end + 1;
                 }
                 Some(_) => {
@@ -632,7 +661,11 @@ fn insert_newlines(src: &str, base: u32, raw: Vec<Token>) -> Vec<Token> {
             if let Some(prev) = out.last() {
                 if prev.kind.can_end_statement() && !in_parens && !chain {
                     let span = newline_span(src, base, prev.span.hi);
-                    out.push(Token { kind: TokenKind::Newline, span, starts_line: false });
+                    out.push(Token {
+                        kind: TokenKind::Newline,
+                        span,
+                        starts_line: false,
+                    });
                 }
             }
         }
@@ -653,9 +686,15 @@ fn insert_newlines(src: &str, base: u32, raw: Vec<Token>) -> Vec<Token> {
 /// Returns the span of the first line break at or after absolute offset `from`.
 fn newline_span(src: &str, base: u32, from: u32) -> Span {
     let start = from.saturating_sub(base) as usize;
-    let found = src.as_bytes().get(start..).and_then(|rest| rest.iter().position(|&b| b == b'\n'));
-    found.map_or(Span::new(from, from), |i| {
-        let lo = from.saturating_add(u32::try_from(i).unwrap_or(u32::MAX));
-        Span::new(lo, lo.saturating_add(1))
-    })
+    let found = src
+        .as_bytes()
+        .get(start..)
+        .and_then(|rest| rest.iter().position(|&b| b == b'\n'));
+    found.map_or_else(
+        || Span::new(from, from),
+        |i| {
+            let lo = from.saturating_add(u32::try_from(i).unwrap_or(u32::MAX));
+            Span::new(lo, lo.saturating_add(1))
+        },
+    )
 }

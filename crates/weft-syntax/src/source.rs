@@ -22,7 +22,11 @@ impl SourceFile {
                 line_starts.push(u32::try_from(i + 1).unwrap_or(u32::MAX));
             }
         }
-        Self { name: name.into(), text, line_starts }
+        Self {
+            name: name.into(),
+            text,
+            line_starts,
+        }
     }
 
     /// Returns the 1-based line and column of a byte offset.

@@ -1,6 +1,8 @@
 //! Parser tests: statement ends, precedence, contextual keywords, items, types and errors.
 
 #![allow(clippy::unwrap_used)]
+// Weft string literals in these tests use `{x}` interpolation on purpose.
+#![allow(clippy::literal_string_with_formatting_args)]
 
 mod common;
 
@@ -17,7 +19,10 @@ use weft_syntax::parser::parse_expr;
 
 #[test]
 fn asi_method_chain_across_lines() {
-    assert_eq!(sx_expr("world\n    .entities\n    .clear()"), "(mcall (. world entities) clear)");
+    assert_eq!(
+        sx_expr("world\n    .entities\n    .clear()"),
+        "(mcall (. world entities) clear)"
+    );
     assert_eq!(sx_body("a\n  // c\n  .b()\nd"), "(mcall a b); d");
 }
 
@@ -67,10 +72,14 @@ fn asi_line_break_after_type_arguments_ends_a_statement() {
     assert_eq!(sx_body("let x: Vec<T>\nx"), "(let x: Vec<T>); x");
     assert_eq!(sx_body("let x: &T in w..\nx"), "(let x: (& T in w..)); x");
     let f = parse("struct S {\n a: Vec<T>\n b: u32\n}");
-    let ItemKind::Struct(s) = &f.items[0].kind else { panic!() };
+    let ItemKind::Struct(s) = &f.items[0].kind else {
+        panic!()
+    };
     assert_eq!(s.fields.len(), 2);
     let f = parse("effect E {\n fn a() -> Vec<T>\n fn b()\n}");
-    let ItemKind::Effect(e) = &f.items[0].kind else { panic!() };
+    let ItemKind::Effect(e) = &f.items[0].kind else {
+        panic!()
+    };
     assert_eq!(e.ops.len(), 2);
 }
 
@@ -89,7 +98,9 @@ fn asi_handle_in_on_next_line() {
 #[test]
 fn asi_on_abort_on_next_line() {
     let f = parse("linear struct T { a: u32 }\n\n  on abort = undo\nfn f() {}");
-    let ItemKind::Struct(s) = &f.items[0].kind else { panic!() };
+    let ItemKind::Struct(s) = &f.items[0].kind else {
+        panic!()
+    };
     assert_eq!(s.on_abort.as_ref().unwrap().name, "undo");
     assert_eq!(f.items.len(), 2);
     let f = parse("struct T {}\nfn on() {}");
@@ -100,12 +111,18 @@ fn asi_on_abort_on_next_line() {
 fn trailing_block_must_start_on_the_same_line() {
     assert_eq!(sx_body("g()\n{ x }"), "(call g); {x}");
     assert_eq!(sx_body("g() { x }"), "(call g trailing (fn [] {x}))");
-    assert_eq!(err_msg("fn f() { h(g()\n{ x }) }"), "expected `)` after arguments, found `{`");
+    assert_eq!(
+        err_msg("fn f() { h(g()\n{ x }) }"),
+        "expected `)` after arguments, found `{`"
+    );
 }
 
 #[test]
 fn trailing_block_on_method_and_chain_after_it() {
-    assert_eq!(sx_body("a.b(1) { c }.d"), "(. (mcall a b 1 trailing (fn [] {c})) d)");
+    assert_eq!(
+        sx_body("a.b(1) { c }.d"),
+        "(. (mcall a b 1 trailing (fn [] {c})) d)"
+    );
     assert_eq!(sx_body("f() {}"), "(call f trailing (fn [] {}))");
 }
 
@@ -134,7 +151,10 @@ fn precedence_logic_and_comparison() {
 fn precedence_prefix_and_postfix() {
     assert_eq!(sx_expr("-a.b"), "(- (. a b))");
     assert_eq!(sx_expr("!a && b"), "(&& (! a) b)");
-    assert_eq!(sx_expr("&world.entities[0]"), "(& (idx (. world entities) 0))");
+    assert_eq!(
+        sx_expr("&world.entities[0]"),
+        "(& (idx (. world entities) 0))"
+    );
     assert_eq!(sx_expr("--x"), "(- (- x))");
     assert_eq!(sx_expr("&&x"), "(& (& x))");
     assert_eq!(sx_expr("-a * b"), "(* (- a) b)");
@@ -152,7 +172,10 @@ fn non_associative_operators() {
     let chained = "comparison operators cannot be chained; use `&&`";
     assert_eq!(err_msg("fn f() { a < b < c }"), chained);
     assert_eq!(err_msg("fn f() { a == b != c }"), chained);
-    assert_eq!(err_msg("fn f() { a..b..c }"), "range operators cannot be chained; add parentheses");
+    assert_eq!(
+        err_msg("fn f() { a..b..c }"),
+        "range operators cannot be chained; add parentheses"
+    );
 }
 
 // ---------------------------------------------------------------- contextual keywords
@@ -161,8 +184,14 @@ fn non_associative_operators() {
 fn contextual_handle() {
     let f = parse("fn handle(req: Request) {}");
     assert_eq!(find_fn(&f, "handle").params[0].name.name, "req");
-    assert_eq!(sx_expr("http.serve(x, handle)"), "(mcall http serve x handle)");
-    assert_eq!(sx_body("let handle = 1\nhandle + 1"), "(let handle = 1); (+ handle 1)");
+    assert_eq!(
+        sx_expr("http.serve(x, handle)"),
+        "(mcall http serve x handle)"
+    );
+    assert_eq!(
+        sx_body("let handle = 1\nhandle + 1"),
+        "(let handle = 1); (+ handle 1)"
+    );
     assert_eq!(sx_expr("handle"), "handle");
     assert_eq!(sx_expr("handle.x"), "(. handle x)");
     assert_eq!(sx_expr("handle(x)"), "(call handle x)");
@@ -179,9 +208,15 @@ fn contextual_handle_without_effect_name_is_a_name() {
 
 #[test]
 fn contextual_scope() {
-    assert_eq!(sx_expr("scope { s => s.spawn(f) }"), "(scope s {(mcall s spawn f)})");
+    assert_eq!(
+        sx_expr("scope { s => s.spawn(f) }"),
+        "(scope s {(mcall s spawn f)})"
+    );
     assert_eq!(sx_expr("scope {\n s =>\n a\n b\n}"), "(scope s {a; b})");
-    assert_eq!(sx_body("let scope = 1\nscope.x"), "(let scope = 1); (. scope x)");
+    assert_eq!(
+        sx_body("let scope = 1\nscope.x"),
+        "(let scope = 1); (. scope x)"
+    );
     assert_eq!(sx_expr("f(scope)"), "(call f scope)");
 }
 
@@ -206,14 +241,19 @@ fn contextual_item_words_are_names_elsewhere() {
         sx_body("let type = linear + fip * multi"),
         "(let type = (+ linear (* fip multi)))"
     );
-    assert_eq!(sx_body("let uniq = shared\nmut(x)"), "(let uniq = shared); (call mut x)");
+    assert_eq!(
+        sx_body("let uniq = shared\nmut(x)"),
+        "(let uniq = shared); (call mut x)"
+    );
     assert_eq!(sx_body("test(1)"), "(call test 1)");
 }
 
 #[test]
 fn test_items() {
     let f = parse("test \"a b\" { assert true }\npub test \"c\" {}");
-    let ItemKind::Test(t) = &f.items[0].kind else { panic!() };
+    let ItemKind::Test(t) = &f.items[0].kind else {
+        panic!()
+    };
     assert_eq!(t.name, "a b");
     assert_eq!(t.body.stmts.len(), 1);
     assert!(f.items[1].is_pub);
@@ -226,13 +266,21 @@ fn interpolation_spans_are_absolute() {
     let src = "fn f() { \"a {x.y} b\" }";
     let f = parse(src);
     let body = &find_fn(&f, "f").body.as_ref().unwrap().stmts;
-    let StmtKind::Expr(e) = &body[0].kind else { panic!() };
+    let StmtKind::Expr(e) = &body[0].kind else {
+        panic!()
+    };
     assert_eq!(e.span, Span::new(9, 20));
-    let ExprKind::Lit(Lit::Str(parts)) = &e.kind else { panic!() };
-    let StrPart::Interp(inner) = &parts[1] else { panic!() };
+    let ExprKind::Lit(Lit::Str(parts)) = &e.kind else {
+        panic!()
+    };
+    let StrPart::Interp(inner) = &parts[1] else {
+        panic!()
+    };
     let lo = u32::try_from(src.find("x.y").unwrap()).unwrap();
     assert_eq!(inner.span, Span::new(lo, lo + 3));
-    let ExprKind::Field { base, name } = &inner.kind else { panic!() };
+    let ExprKind::Field { base, name } = &inner.kind else {
+        panic!()
+    };
     assert_eq!(base.span, Span::new(lo, lo + 1));
     assert_eq!(name.span, Span::new(lo + 2, lo + 3));
 }
@@ -241,11 +289,21 @@ fn interpolation_spans_are_absolute() {
 fn nested_interpolation_spans() {
     let src = "\"{f(\"{y}\")}\"";
     let e = parse_expr(src).unwrap();
-    let ExprKind::Lit(Lit::Str(parts)) = &e.kind else { panic!() };
-    let StrPart::Interp(call) = &parts[0] else { panic!() };
-    let ExprKind::Call { args, .. } = &call.kind else { panic!() };
-    let ExprKind::Lit(Lit::Str(inner)) = &args[0].value.kind else { panic!() };
-    let StrPart::Interp(y) = &inner[0] else { panic!() };
+    let ExprKind::Lit(Lit::Str(parts)) = &e.kind else {
+        panic!()
+    };
+    let StrPart::Interp(call) = &parts[0] else {
+        panic!()
+    };
+    let ExprKind::Call { args, .. } = &call.kind else {
+        panic!()
+    };
+    let ExprKind::Lit(Lit::Str(inner)) = &args[0].value.kind else {
+        panic!()
+    };
+    let StrPart::Interp(y) = &inner[0] else {
+        panic!()
+    };
     let lo = u32::try_from(src.find('y').unwrap()).unwrap();
     assert_eq!(y.span, Span::new(lo, lo + 1));
     assert_eq!(sx(&e), "\"{(call f \"{y}\")}\"");
@@ -257,7 +315,10 @@ fn interpolation_errors() {
     assert!(e.message.contains("empty interpolation"), "{}", e.message);
     assert_eq!(e.span, Span::new(12, 14));
     let e = parse_err("fn f() { \"{a b}\" }");
-    assert_eq!(e.message, "expected `}` to end the interpolation, found `b`");
+    assert_eq!(
+        e.message,
+        "expected `}` to end the interpolation, found `b`"
+    );
     assert_eq!(e.span, Span::new(13, 14));
     let e = parse_err("fn f() { \"{)}\" }");
     assert_eq!(e.message, "expected an expression, found `)`");
@@ -309,13 +370,19 @@ fn postfix_forms() {
     assert_eq!(sx_expr("2.s"), "(. 2 s)");
     assert_eq!(sx_expr("x[i][]"), "(idx (idx x i))");
     assert_eq!(sx_expr("f(a)(b)"), "(call (call f a) b)");
-    assert_eq!(sx_expr("a.b.c(d).e[f]"), "(idx (. (mcall (. a b) c d) e) f)");
+    assert_eq!(
+        sx_expr("a.b.c(d).e[f]"),
+        "(idx (. (mcall (. a b) c d) e) f)"
+    );
     assert_eq!(sx_expr("x.0(y)"), "(mcall x 0 y)");
 }
 
 #[test]
 fn named_arguments() {
-    assert_eq!(sx_expr("f(seed: 42, x, n: a + 1)"), "(call f seed: 42 x n: (+ a 1))");
+    assert_eq!(
+        sx_expr("f(seed: 42, x, n: a + 1)"),
+        "(call f seed: 42 x n: (+ a 1))"
+    );
     assert_eq!(sx_expr("s.run(seed: 1)"), "(mcall s run seed: 1)");
 }
 
@@ -337,10 +404,19 @@ fn closures() {
 fn struct_literals() {
     assert_eq!(sx_expr("Point { x: 1, y: 2 }"), "(struct Point x: 1 y: 2)");
     assert_eq!(sx_expr("Point {}"), "(struct Point)");
-    assert_eq!(sx_expr("Point {\n x: 1\n y: 2\n}"), "(struct Point x: 1 y: 2)");
+    assert_eq!(
+        sx_expr("Point {\n x: 1\n y: 2\n}"),
+        "(struct Point x: 1 y: 2)"
+    );
     assert_eq!(sx_expr("Point { x: 1, }"), "(struct Point x: 1)");
-    assert_eq!(sx_expr("Shape.Circle { r: 1 }"), "(struct Shape.Circle r: 1)");
-    assert_eq!(sx_body("let p = P { a: Q {} }"), "(let p = (struct P a: (struct Q)))");
+    assert_eq!(
+        sx_expr("Shape.Circle { r: 1 }"),
+        "(struct Shape.Circle r: 1)"
+    );
+    assert_eq!(
+        sx_body("let p = P { a: Q {} }"),
+        "(let p = (struct P a: (struct Q)))"
+    );
     // Lowercase names are never struct literals.
     assert_eq!(
         err_msg("fn f() { p { x: 1 } }"),
@@ -358,15 +434,33 @@ fn struct_literals() {
 #[test]
 fn no_struct_literal_or_trailing_block_in_heads() {
     assert_eq!(sx_body("if x == Foo {}"), "(if (== x Foo) {})");
-    assert_eq!(sx_body("if x == (Foo {}) {}"), "(if (== x (struct Foo)) {})");
-    assert_eq!(sx_body("if x.ready() { go() }"), "(if (mcall x ready) {(call go)})");
+    assert_eq!(
+        sx_body("if x == (Foo {}) {}"),
+        "(if (== x (struct Foo)) {})"
+    );
+    assert_eq!(
+        sx_body("if x.ready() { go() }"),
+        "(if (mcall x ready) {(call go)})"
+    );
     assert_eq!(sx_body("while f() { g() }"), "(while (call f) {(call g)})");
-    assert_eq!(sx_body("for e in xs.iter() { e }"), "(for e (mcall xs iter) {e})");
+    assert_eq!(
+        sx_body("for e in xs.iter() { e }"),
+        "(for e (mcall xs iter) {e})"
+    );
     assert_eq!(sx_body("match f() { A => 1 }"), "(match (call f) (A => 1))");
     assert_eq!(sx_body("while Foo {}"), "(while Foo {})");
-    assert_eq!(sx_body("if f(|| P {}) {}"), "(if (call f (fn [] (struct P))) {})");
-    assert_eq!(sx_body("if [P {}] == a {}"), "(if (== (array (struct P)) a) {})");
-    assert_eq!(sx_body("if a { P {} } else { P {} }"), "(if a {(struct P)} {(struct P)})");
+    assert_eq!(
+        sx_body("if f(|| P {}) {}"),
+        "(if (call f (fn [] (struct P))) {})"
+    );
+    assert_eq!(
+        sx_body("if [P {}] == a {}"),
+        "(if (== (array (struct P)) a) {})"
+    );
+    assert_eq!(
+        sx_body("if a { P {} } else { P {} }"),
+        "(if a {(struct P)} {(struct P)})"
+    );
 }
 
 #[test]
@@ -377,8 +471,14 @@ fn if_else_chains() {
         sx_expr("if a { 1 } else if b { 2 } else if c { 3 } else { 4 }"),
         "(if a {1} (if b {2} (if c {3} {4})))"
     );
-    assert_eq!(sx_expr("if a { 1 } else if b { 2 }"), "(if a {1} (if b {2}))");
-    assert_eq!(sx_body("let x = if a { 1 } else { 2 }"), "(let x = (if a {1} {2}))");
+    assert_eq!(
+        sx_expr("if a { 1 } else if b { 2 }"),
+        "(if a {1} (if b {2}))"
+    );
+    assert_eq!(
+        sx_body("let x = if a { 1 } else { 2 }"),
+        "(let x = (if a {1} {2}))"
+    );
 }
 
 #[test]
@@ -387,7 +487,12 @@ fn if_spans() {
     let e = parse_expr(src).unwrap();
     let end = u32::try_from(src.len()).unwrap();
     assert_eq!(e.span, Span::new(0, end));
-    let ExprKind::If { else_: Some(inner), .. } = &e.kind else { panic!() };
+    let ExprKind::If {
+        else_: Some(inner), ..
+    } = &e.kind
+    else {
+        panic!()
+    };
     assert_eq!(inner.span, Span::new(16, end));
 }
 
@@ -422,12 +527,20 @@ fn patterns() {
     assert_eq!(sx_body("let x: u32"), "(let x: u32)");
     assert_eq!(sx_body("let x"), "(let x)");
     let s = stmts("let (a, _) = t");
-    let StmtKind::Let { pat: Pattern::Tuple(ps, span), .. } = &s[0].kind else { panic!() };
+    let StmtKind::Let {
+        pat: Pattern::Tuple(ps, span),
+        ..
+    } = &s[0].kind
+    else {
+        panic!()
+    };
     assert_eq!(ps.len(), 2);
     assert_eq!(*span, Span::new(13, 19));
     assert!(matches!(ps[1], Pattern::Wild(_)));
     let s = stmts("let Some(x) = o");
-    let StmtKind::Let { pat, .. } = &s[0].kind else { panic!() };
+    let StmtKind::Let { pat, .. } = &s[0].kind else {
+        panic!()
+    };
     assert_eq!(pat.span(), Span::new(13, 20));
 }
 
@@ -438,10 +551,22 @@ fn statements() {
         "(= x 1); (+= x 2); (-= x 3); (*= x 4)"
     );
     assert_eq!(sx_body("a.b[0] = c"), "(= (idx (. a b) 0) c)");
-    assert_eq!(sx_body("loop { break\ncontinue }"), "(loop {break; continue})");
-    assert_eq!(sx_body("while i < n { i += 1 }"), "(while (< i n) {(+= i 1)})");
-    assert_eq!(sx_body("for (i, x) in 0..n { f(i) }"), "(for (i, x) (.. 0 n) {(call f i)})");
-    assert_eq!(sx_body("for e in world.entities[] {}"), "(for e (idx (. world entities)) {})");
+    assert_eq!(
+        sx_body("loop { break\ncontinue }"),
+        "(loop {break; continue})"
+    );
+    assert_eq!(
+        sx_body("while i < n { i += 1 }"),
+        "(while (< i n) {(+= i 1)})"
+    );
+    assert_eq!(
+        sx_body("for (i, x) in 0..n { f(i) }"),
+        "(for (i, x) (.. 0 n) {(call f i)})"
+    );
+    assert_eq!(
+        sx_body("for e in world.entities[] {}"),
+        "(for e (idx (. world entities)) {})"
+    );
     assert_eq!(sx_body("{ a }\n{ b }"), "{a}; {b}");
 }
 
@@ -479,7 +604,13 @@ fn fn_items() {
     let f = parse("pub fn f<T, U>(a: T, b: U,) -> (T, U) / io { (a, b) }");
     let d = find_fn(&f, "f");
     assert!(f.items[0].is_pub);
-    assert_eq!(d.generics.iter().map(|g| g.name.as_str()).collect::<Vec<_>>(), ["T", "U"]);
+    assert_eq!(
+        d.generics
+            .iter()
+            .map(|g| g.name.as_str())
+            .collect::<Vec<_>>(),
+        ["T", "U"]
+    );
     assert_eq!(d.params.len(), 2);
     assert_eq!(sx_ty(d.ret.as_ref().unwrap()), "(T, U)");
     assert_eq!(sx_row(d.effects.as_ref().unwrap()), "io");
@@ -499,7 +630,10 @@ fn fip_and_extern_fns() {
     assert!(find_fn(&f, "a").is_fip);
     let b = find_fn(&f, "b");
     assert!(b.is_extern && b.body.is_none());
-    assert_eq!(sx_row(find_fn(&f, "c").effects.as_ref().unwrap()), "io, net");
+    assert_eq!(
+        sx_row(find_fn(&f, "c").effects.as_ref().unwrap()),
+        "io, net"
+    );
     assert!(f.items[3].is_pub);
 }
 
@@ -518,7 +652,9 @@ fn extern_types() {
         })
         .collect();
     assert_eq!(props, [0, 2, 2, 0]);
-    let ItemKind::ExternType(b) = &f.items[1].kind else { panic!() };
+    let ItemKind::ExternType(b) = &f.items[1].kind else {
+        panic!()
+    };
     assert_eq!(b.props[1].key.name, "linear");
     assert!(b.props[1].value.is_none());
 }
@@ -527,21 +663,29 @@ fn extern_types() {
 fn struct_items() {
     let f =
         parse("struct P<T> { x: T, y: T }\nstruct Q: !Move {}\nstruct R {\n a: u32,\n b: u32\n}");
-    let ItemKind::Struct(p) = &f.items[0].kind else { panic!() };
+    let ItemKind::Struct(p) = &f.items[0].kind else {
+        panic!()
+    };
     assert_eq!(p.generics.len(), 1);
     assert_eq!(p.fields.len(), 2);
     assert_eq!(p.fields[0].span, Span::new(14, 18));
     assert!(p.on_abort.is_none() && !p.is_linear);
-    let ItemKind::Struct(q) = &f.items[1].kind else { panic!() };
+    let ItemKind::Struct(q) = &f.items[1].kind else {
+        panic!()
+    };
     assert!(q.is_immovable);
-    let ItemKind::Struct(r) = &f.items[2].kind else { panic!() };
+    let ItemKind::Struct(r) = &f.items[2].kind else {
+        panic!()
+    };
     assert_eq!(r.fields.len(), 2);
 }
 
 #[test]
 fn enum_items() {
     let f = parse("enum E<T> {\n A(T)\n B(u32, T),\n C\n}\nenum F {}");
-    let ItemKind::Enum(e) = &f.items[0].kind else { panic!() };
+    let ItemKind::Enum(e) = &f.items[0].kind else {
+        panic!()
+    };
     assert_eq!(e.variants.len(), 3);
     assert_eq!(e.variants[1].fields.len(), 2);
     assert_eq!(e.generics[0].name, "T");
@@ -550,7 +694,9 @@ fn enum_items() {
 #[test]
 fn effect_items() {
     let f = parse("effect E {\n fn a(x: u32) -> u32\n multi fn b()\n fn multi()\n}");
-    let ItemKind::Effect(e) = &f.items[0].kind else { panic!() };
+    let ItemKind::Effect(e) = &f.items[0].kind else {
+        panic!()
+    };
     assert_eq!(e.ops.len(), 3);
     assert!(!e.ops[0].is_multi && e.ops[1].is_multi && !e.ops[2].is_multi);
     assert_eq!(e.ops[2].name.name, "multi");
@@ -563,12 +709,16 @@ fn impl_and_mod_items() {
         "impl Point {\n pub fn new() -> Self { Point {} }\n\n fn x(self) -> u32 { self.x }\n}\n\
          mod m {\n mod n { fn f() {} }\n}\nimpl<T> List<T> {}",
     );
-    let ItemKind::Impl(i) = &f.items[0].kind else { panic!() };
+    let ItemKind::Impl(i) = &f.items[0].kind else {
+        panic!()
+    };
     assert!(i.generics.is_empty());
     assert_eq!(i.items.len(), 2);
     assert!(i.items[0].is_pub);
     assert_eq!(sx_ty(find_fn(&f, "new").ret.as_ref().unwrap()), "Self");
-    let ItemKind::Mod(m) = &f.items[1].kind else { panic!() };
+    let ItemKind::Mod(m) = &f.items[1].kind else {
+        panic!()
+    };
     assert_eq!(m.items.len(), 1);
     assert!(find_fn(&f, "f").body.is_some());
 }
@@ -609,15 +759,17 @@ fn types() {
     assert_eq!(param_ty("fn()"), "(fn ())");
     assert_eq!(param_ty("fn(A, B) -> C"), "(fn (A, B) -> C)");
     assert_eq!(param_ty("fn(A) / net"), "(fn (A) / net)");
-    assert_eq!(param_ty("fn(A) -> B / (net, log)"), "(fn (A) -> B / net, log)");
+    assert_eq!(
+        param_ty("fn(A) -> B / (net, log)"),
+        "(fn (A) -> B / net, log)"
+    );
     assert_eq!(param_ty("fn() / mut(x.y)"), "(fn () / mut(x.y))");
     assert_eq!(param_ty("fn() / (mut(a), io,)"), "(fn () / mut(a), io)");
 }
 
 #[test]
 fn type_modes_are_parsed() {
-    let f =
-        parse("fn f(x: T @ uniq aliased portable nonportable uncontended shared once many) {}");
+    let f = parse("fn f(x: T @ uniq aliased portable nonportable uncontended shared once many) {}");
     let ty = find_fn(&f, "f").params[0].ty.as_ref().unwrap();
     assert_eq!(
         ty.modes,
@@ -646,7 +798,9 @@ fn places() {
     let place = |src: &str| -> String {
         let f = parse(&format!("fn f() / mut({src}) {{}}"));
         let row = find_fn(&f, "f").effects.clone().unwrap();
-        let EffectItem::Mut(ps) = &row.items[0] else { panic!() };
+        let EffectItem::Mut(ps) = &row.items[0] else {
+            panic!()
+        };
         ps.iter().map(sx_place).collect::<Vec<_>>().join(", ")
     };
     assert_eq!(place("world.entities[]"), "world.entities[]");
@@ -658,7 +812,9 @@ fn places() {
     assert_eq!(place("a, b.c,"), "a, b.c");
     let f = parse("fn f() / mut(t.0[]) {}");
     let row = find_fn(&f, "f").effects.clone().unwrap();
-    let EffectItem::Mut(ps) = &row.items[0] else { panic!() };
+    let EffectItem::Mut(ps) = &row.items[0] else {
+        panic!()
+    };
     assert!(matches!(&ps[0].steps[0], PlaceStep::Field(n) if n.name == "0"));
     assert_eq!(ps[0].span, Span::new(13, 18));
     assert_eq!(row.span, Span::new(9, 19));
@@ -667,7 +823,10 @@ fn places() {
 #[test]
 fn effect_rows() {
     let f = parse("fn f() / mut(e), Log, par {}");
-    assert_eq!(sx_row(find_fn(&f, "f").effects.as_ref().unwrap()), "mut(e), Log, par");
+    assert_eq!(
+        sx_row(find_fn(&f, "f").effects.as_ref().unwrap()),
+        "mut(e), Log, par"
+    );
     let f = parse("fn f() / mut {}");
     assert_eq!(sx_row(find_fn(&f, "f").effects.as_ref().unwrap()), "mut");
 }
@@ -676,7 +835,9 @@ fn effect_rows() {
 fn ref_type_kinds() {
     let f = parse("fn f(x: &T in a.b) {}");
     let ty = find_fn(&f, "f").params[0].ty.as_ref().unwrap();
-    let TypeExprKind::Ref { place: Some(p), .. } = &ty.kind else { panic!() };
+    let TypeExprKind::Ref { place: Some(p), .. } = &ty.kind else {
+        panic!()
+    };
     assert_eq!(p.root.name, "a");
     assert_eq!(ty.span, Span::new(8, 17));
 }
@@ -688,43 +849,106 @@ const ITEM: &str = "an item (`fn`, `struct`, `enum`, `effect`, `impl`, `mod`, `e
 #[test]
 fn error_messages_for_items() {
     let cases: &[(&str, String)] = &[
-        ("fn f() {", "expected `}` at the end of the block, found end of file".into()),
-        ("fn f()", "expected `{` to start the function body, found end of file".into()),
-        ("fn f()\n{}", "expected `{` to start the function body, found end of line".into()),
+        (
+            "fn f() {",
+            "expected `}` at the end of the block, found end of file".into(),
+        ),
+        (
+            "fn f()",
+            "expected `{` to start the function body, found end of file".into(),
+        ),
+        (
+            "fn f()\n{}",
+            "expected `{` to start the function body, found end of line".into(),
+        ),
         ("let x = 1", format!("expected {ITEM}, found `let`")),
         ("pub", format!("expected {ITEM}, found end of file")),
-        ("extern foo", "expected `fn` or `type` after `extern`, found `foo`".into()),
-        ("extern fn f() {}", "an `extern fn` cannot have a body".into()),
-        ("struct S: Move {}", "expected `!` after `:` in a struct header, found `Move`".into()),
-        ("struct S: !Copy {}", "expected `Move` after `!`, found `Copy`".into()),
-        ("struct S {} on x = f", "expected `abort` after `on`, found `x`".into()),
-        ("struct S {} on abort f", "expected `=` after `on abort`, found `f`".into()),
-        ("struct S { a }", "expected `:` after the field name, found `}`".into()),
+        (
+            "extern foo",
+            "expected `fn` or `type` after `extern`, found `foo`".into(),
+        ),
+        (
+            "extern fn f() {}",
+            "an `extern fn` cannot have a body".into(),
+        ),
+        (
+            "struct S: Move {}",
+            "expected `!` after `:` in a struct header, found `Move`".into(),
+        ),
+        (
+            "struct S: !Copy {}",
+            "expected `Move` after `!`, found `Copy`".into(),
+        ),
+        (
+            "struct S {} on x = f",
+            "expected `abort` after `on`, found `x`".into(),
+        ),
+        (
+            "struct S {} on abort f",
+            "expected `=` after `on abort`, found `f`".into(),
+        ),
+        (
+            "struct S { a }",
+            "expected `:` after the field name, found `}`".into(),
+        ),
         (
             "struct S { a: T b: T }",
             "expected `,`, a line break or `}` after the field, found `b`".into(),
         ),
         ("struct S { a: T", "expected `}`, found end of file".into()),
         ("struct S {", "expected `}`, found end of file".into()),
-        ("enum E { A(T B) }", "expected `,` or `)` after a type, found `B`".into()),
-        ("enum E { 1 }", "expected the variant name, found `1`".into()),
-        ("effect E { let }", "expected `fn` to start an effect operation, found `let`".into()),
+        (
+            "enum E { A(T B) }",
+            "expected `,` or `)` after a type, found `B`".into(),
+        ),
+        (
+            "enum E { 1 }",
+            "expected the variant name, found `1`".into(),
+        ),
+        (
+            "effect E { let }",
+            "expected `fn` to start an effect operation, found `let`".into(),
+        ),
         (
             "effect E { multi x }",
             "expected `fn` to start an effect operation, found `multi`".into(),
         ),
         ("impl T { let }", format!("expected {ITEM}, found `let`")),
-        ("impl T {", "expected `}` at the end of the item list, found end of file".into()),
-        ("impl T x", "expected `{` to start the impl body, found `x`".into()),
-        ("mod m x", "expected `{` to start the module body, found `x`".into()),
+        (
+            "impl T {",
+            "expected `}` at the end of the item list, found end of file".into(),
+        ),
+        (
+            "impl T x",
+            "expected `{` to start the impl body, found `x`".into(),
+        ),
+        (
+            "mod m x",
+            "expected `{` to start the module body, found `x`".into(),
+        ),
         ("mod 1 {}", "expected the module name, found `1`".into()),
-        ("test \"a {b}\" {}", "a test name cannot contain interpolation".into()),
-        ("fn f<T U>() {}", "expected `,` or `>` after a type parameter, found `U`".into()),
-        ("fn f<1>() {}", "expected a type parameter name, found `1`".into()),
+        (
+            "test \"a {b}\" {}",
+            "a test name cannot contain interpolation".into(),
+        ),
+        (
+            "fn f<T U>() {}",
+            "expected `,` or `>` after a type parameter, found `U`".into(),
+        ),
+        (
+            "fn f<1>() {}",
+            "expected a type parameter name, found `1`".into(),
+        ),
         ("fn f(1) {}", "expected a parameter name, found `1`".into()),
-        ("fn f(a b) {}", "expected `,` or `)` after a parameter, found `b`".into()),
+        (
+            "fn f(a b) {}",
+            "expected `,` or `)` after a parameter, found `b`".into(),
+        ),
         ("fn () {}", "expected the function name, found `(`".into()),
-        ("fn f {}", "expected `(` after the function name, found `{`".into()),
+        (
+            "fn f {}",
+            "expected `(` after the function name, found `{`".into(),
+        ),
     ];
     for (src, want) in cases {
         assert_eq!(&parse_err(src).message, want, "for {src:?}");
@@ -740,26 +964,77 @@ fn error_messages_for_types_places_and_rows() {
              uncontended, shared, once, many",
         ),
         ("fn f(x: T @) {}", "expected a mode after `@`, found `)`"),
-        ("fn f(x: Vec<T U>) {}", "expected `,` or `>` after a type argument, found `U`"),
+        (
+            "fn f(x: Vec<T U>) {}",
+            "expected `,` or `>` after a type argument, found `U`",
+        ),
         ("fn f(x: 1) {}", "expected a type, found `1`"),
-        ("fn f(x: [u8; n]) {}", "expected an integer array length after `;`, found `n`"),
-        ("fn f(x: [u8; 4 }) {}", "expected `]` after the array length, found `}`"),
-        ("fn f(x: [u8 16]) {}", "expected `]` after the element type, found `16`"),
-        ("fn f(x: fn) {}", "expected `(` after `fn` in a function type, found `)`"),
-        ("fn f(x: (A B)) {}", "expected `,` or `)` after a type, found `B`"),
-        ("fn f() / mut(w..x) {}", "expected `,` or `)` after a place, found `x`"),
-        ("fn f() / mut(w...x) {}", "the wildcard step `..` must be the last step"),
-        ("fn f() / mut(w..[]) {}", "the wildcard step `..` must be the last step"),
+        (
+            "fn f(x: [u8; n]) {}",
+            "expected an integer array length after `;`, found `n`",
+        ),
+        (
+            "fn f(x: [u8; 4 }) {}",
+            "expected `]` after the array length, found `}`",
+        ),
+        (
+            "fn f(x: [u8 16]) {}",
+            "expected `]` after the element type, found `16`",
+        ),
+        (
+            "fn f(x: fn) {}",
+            "expected `(` after `fn` in a function type, found `)`",
+        ),
+        (
+            "fn f(x: (A B)) {}",
+            "expected `,` or `)` after a type, found `B`",
+        ),
+        (
+            "fn f() / mut(w..x) {}",
+            "expected `,` or `)` after a place, found `x`",
+        ),
+        (
+            "fn f() / mut(w...x) {}",
+            "the wildcard step `..` must be the last step",
+        ),
+        (
+            "fn f() / mut(w..[]) {}",
+            "the wildcard step `..` must be the last step",
+        ),
         ("fn f() / mut() {}", "`mut(...)` needs at least one place"),
         ("fn f() / mut(1) {}", "expected a place, found `1`"),
-        ("fn f() / mut(a.) {}", "expected a field name after `.` in a place, found `)`"),
-        ("fn f() / mut(a[b]) {}", "expected `]`, `..name]` or `name..]` in a place, found `b`"),
-        ("fn f() / mut(a[..b) {}", "expected `]` after the segment, found `)`"),
-        ("fn f() / mut(a[..1]) {}", "expected a split index name after `[..`, found `1`"),
-        ("fn f() / mut(a[b..) {}", "expected `]` after the segment, found `)`"),
-        ("fn f() / 1 {}", "expected an effect name or `mut(...)`, found `1`"),
-        ("fn f(g: fn() / ()) {}", "an effect row needs at least one effect"),
-        ("fn f(g: fn() / (a b)) {}", "expected `,` or `)` after an effect, found `b`"),
+        (
+            "fn f() / mut(a.) {}",
+            "expected a field name after `.` in a place, found `)`",
+        ),
+        (
+            "fn f() / mut(a[b]) {}",
+            "expected `]`, `..name]` or `name..]` in a place, found `b`",
+        ),
+        (
+            "fn f() / mut(a[..b) {}",
+            "expected `]` after the segment, found `)`",
+        ),
+        (
+            "fn f() / mut(a[..1]) {}",
+            "expected a split index name after `[..`, found `1`",
+        ),
+        (
+            "fn f() / mut(a[b..) {}",
+            "expected `]` after the segment, found `)`",
+        ),
+        (
+            "fn f() / 1 {}",
+            "expected an effect name or `mut(...)`, found `1`",
+        ),
+        (
+            "fn f(g: fn() / ()) {}",
+            "an effect row needs at least one effect",
+        ),
+        (
+            "fn f(g: fn() / (a b)) {}",
+            "expected `,` or `)` after an effect, found `b`",
+        ),
     ];
     for (src, want) in cases {
         assert_eq!(&parse_err(src).message, want, "for {src:?}");
@@ -769,44 +1044,104 @@ fn error_messages_for_types_places_and_rows() {
 #[test]
 fn error_messages_for_statements_and_expressions() {
     let cases: &[(&str, &str)] = &[
-        ("fn f() { g(a {) }", "expected `)` after arguments, found `{`"),
+        (
+            "fn f() { g(a {) }",
+            "expected `)` after arguments, found `{`",
+        ),
         ("fn f() { let x = ) }", "expected an expression, found `)`"),
         ("fn f() { let = 1 }", "expected a pattern, found `=`"),
-        ("fn f() { let (a b) = 1 }", "expected `,` or `)` after a pattern, found `b`"),
-        ("fn f() { x.) }", "expected a field or method name after `.`, found `)`"),
-        ("fn f() { a b }", "expected a line break or `;` after the statement, found `b`"),
+        (
+            "fn f() { let (a b) = 1 }",
+            "expected `,` or `)` after a pattern, found `b`",
+        ),
+        (
+            "fn f() { x.) }",
+            "expected a field or method name after `.`, found `)`",
+        ),
+        (
+            "fn f() { a b }",
+            "expected a line break or `;` after the statement, found `b`",
+        ),
         ("fn f() { x[1 }", "expected `]` after the index, found `}`"),
         ("fn f() { (a b) }", "expected `,` or `)`, found `b`"),
         ("fn f() { [a b] }", "expected `,` or `]`, found `b`"),
-        ("fn f() { handle E { fn op() {} } x }", "expected `in` after the handler, found `x`"),
+        (
+            "fn f() { handle E { fn op() {} } x }",
+            "expected `in` after the handler, found `x`",
+        ),
         (
             "fn f() { handle E { op() {} } in x }",
             "expected `fn` to start a handler clause, found `op`",
         ),
-        ("fn f() { handle E { fn op() {}", "expected `}`, found end of file"),
-        ("fn f() { handle E { fn 1() {} } in x }", "expected the operation name, found `1`"),
-        ("fn f() { handle E { fn op {} } in x }", "expected `(` after the operation name, found `{`"),
-        ("fn f() { scope { s } }", "expected `=>` after the scope name, found `}`"),
-        ("fn f() { scope { 1 => x } }", "expected the scope name after `scope {`, found `1`"),
-        ("fn f() { |a b| a }", "expected `,` or `|` after a closure parameter, found `b`"),
-        ("fn f() { match x { A 1 } }", "expected `=>` after the pattern, found `1`"),
+        (
+            "fn f() { handle E { fn op() {}",
+            "expected `}`, found end of file",
+        ),
+        (
+            "fn f() { handle E { fn 1() {} } in x }",
+            "expected the operation name, found `1`",
+        ),
+        (
+            "fn f() { handle E { fn op {} } in x }",
+            "expected `(` after the operation name, found `{`",
+        ),
+        (
+            "fn f() { scope { s } }",
+            "expected `=>` after the scope name, found `}`",
+        ),
+        (
+            "fn f() { scope { 1 => x } }",
+            "expected the scope name after `scope {`, found `1`",
+        ),
+        (
+            "fn f() { |a b| a }",
+            "expected `,` or `|` after a closure parameter, found `b`",
+        ),
+        (
+            "fn f() { match x { A 1 } }",
+            "expected `=>` after the pattern, found `1`",
+        ),
         (
             "fn f() { match x { A => 1 B => 2 } }",
             "expected `,`, a line break or `}` after the match arm, found `B`",
         ),
-        ("fn f() { match x y }", "expected `{` after the `match` value, found `y`"),
+        (
+            "fn f() { match x y }",
+            "expected `{` after the `match` value, found `y`",
+        ),
         (
             "fn f() { P { a: 1 b: 2 } }",
             "expected `,`, a line break or `}` after the field, found `b`",
         ),
-        ("fn f() { P { a 1 } }", "expected a line break or `;` after the statement, found `{`"),
+        (
+            "fn f() { P { a 1 } }",
+            "expected a line break or `;` after the statement, found `{`",
+        ),
         ("fn f() { P { a: } }", "expected an expression, found `}`"),
-        ("fn f() { P { a: 1, 2: 3 } }", "expected a field name, found `2`"),
-        ("fn f() { if a {} else x }", "expected `{` or `if` after `else`, found `x`"),
-        ("fn f() { if a b }", "expected `{` after the `if` condition, found `b`"),
-        ("fn f() { while a b }", "expected `{` after the `while` condition, found `b`"),
-        ("fn f() { for x of y {} }", "expected `in` after the `for` pattern, found `of`"),
-        ("fn f() { for x in y z }", "expected `{` after the `for` value, found `z`"),
+        (
+            "fn f() { P { a: 1, 2: 3 } }",
+            "expected a field name, found `2`",
+        ),
+        (
+            "fn f() { if a {} else x }",
+            "expected `{` or `if` after `else`, found `x`",
+        ),
+        (
+            "fn f() { if a b }",
+            "expected `{` after the `if` condition, found `b`",
+        ),
+        (
+            "fn f() { while a b }",
+            "expected `{` after the `while` condition, found `b`",
+        ),
+        (
+            "fn f() { for x of y {} }",
+            "expected `in` after the `for` pattern, found `of`",
+        ),
+        (
+            "fn f() { for x in y z }",
+            "expected `{` after the `for` value, found `z`",
+        ),
         ("fn f() { loop x }", "expected `{` after `loop`, found `x`"),
         ("fn f() { f(a: ) }", "expected an expression, found `)`"),
         ("fn f() { # }", "unexpected character `#`"),
@@ -833,7 +1168,8 @@ fn deep_nesting_is_an_error_not_a_crash() {
     let deep = |open: &str, mid: &str, close: &str, n: usize| {
         format!("fn f() {{ {}{mid}{} }}", open.repeat(n), close.repeat(n))
     };
-    let want = "the code is nested too deeply";
+    let nested = "the code is nested too deeply";
+    let long = "the expression is too long or nested too deeply; split it";
     for src in [
         deep("(", "x", ")", 5000),
         deep("[", "x", "]", 5000),
@@ -856,29 +1192,47 @@ fn deep_nesting_is_an_error_not_a_crash() {
         format!("fn f(x: {}T) {{}}", "&&".repeat(5000)),
         format!("fn f(x: {}T{}) {{}}", "(".repeat(5000), ")".repeat(5000)),
         format!("fn f(x: {}T{}) {{}}", "Vec<".repeat(5000), ">".repeat(5000)),
-        format!("fn f() {{ let {}x{} = 1 }}", "(".repeat(5000), ")".repeat(5000)),
-        format!("fn f() {{ let {}x{} = 1 }}", "A(".repeat(5000), ")".repeat(5000)),
+        format!(
+            "fn f() {{ let {}x{} = 1 }}",
+            "(".repeat(5000),
+            ")".repeat(5000)
+        ),
+        format!(
+            "fn f() {{ let {}x{} = 1 }}",
+            "A(".repeat(5000),
+            ")".repeat(5000)
+        ),
         format!("{}{}", "mod m { ".repeat(5000), "}".repeat(5000)),
     ] {
         let e = parse_err(&src);
-        assert_eq!(e.message, want, "for {:?}", &src[..40.min(src.len())]);
+        assert!(
+            e.message == nested || e.message == long,
+            "for {:?}: {}",
+            &src[..40.min(src.len())],
+            e.message
+        );
     }
 }
 
 #[test]
 fn moderate_nesting_is_fine() {
-    let n = 60;
+    let n = 40;
     let src = format!("fn f() {{ {}x{} }}", "(".repeat(n), ")".repeat(n));
     assert_eq!(sx_expr_in(&src), "x");
-    parse(&format!("fn f() {{ {}x }}", "-".repeat(500)));
-    parse(&format!("fn f() {{ x{} }}", " + x".repeat(500)));
+    parse(&format!("fn f() {{ {}x }}", "-".repeat(300)));
+    parse(&format!("fn f() {{ x{} }}", " + x".repeat(300)));
+    parse(&format!("fn f() {{ x{} }}", ".y()".repeat(300)));
+    let src = format!("fn f() {{ if a {{}}{} }}", " else if b {}".repeat(300));
+    parse(&src);
     parse(&format!("fn f() {{ {}x{} }}", "{".repeat(n), "}".repeat(n)));
 }
 
 fn sx_expr_in(src: &str) -> String {
     let f = parse(src);
     let body = &find_fn(&f, "f").body.as_ref().unwrap().stmts;
-    let StmtKind::Expr(e) = &body[0].kind else { panic!() };
+    let StmtKind::Expr(e) = &body[0].kind else {
+        panic!()
+    };
     sx(e)
 }
 
@@ -890,7 +1244,10 @@ fn parse_expr_entry_point() {
         parse_expr("a b").unwrap_err().message,
         "expected end of input after the expression, found `b`"
     );
-    assert_eq!(parse_expr("").unwrap_err().message, "expected an expression, found end of file");
+    assert_eq!(
+        parse_expr("").unwrap_err().message,
+        "expected an expression, found end of file"
+    );
     assert!(parse_expr("\"").is_err());
 }
 
@@ -898,4 +1255,28 @@ fn parse_expr_entry_point() {
 fn parse_error_display() {
     let e = parse_err("fn f(");
     assert_eq!(e.to_string(), e.message);
+}
+
+/// The worst inputs, and the deepest trees, fit in a 1.5 MB stack in a debug
+/// build. Callers on 2 MB test threads are then safe.
+#[test]
+fn worst_inputs_fit_in_a_small_stack() {
+    let cases = vec![
+        format!("fn f() {{ {}x }}", "|| ".repeat(5000)),
+        format!("fn f() {{ {}x{} }}", "\"{".repeat(2000), "}\"".repeat(2000)),
+        format!("fn f() {{ {}x{} }}", "(".repeat(5000), ")".repeat(5000)),
+        format!("fn f() {{ {}x{} }}", "{".repeat(5000), "}".repeat(5000)),
+        format!("fn f() {{ x{} }}", " + x".repeat(370)),
+        format!("fn f() {{ x{} }}", ".y".repeat(370)),
+        format!("fn f() {{ {}x }}", "|| ".repeat(90)),
+    ];
+    for src in cases {
+        let worker = std::thread::Builder::new()
+            .stack_size(1536 * 1024)
+            .spawn(move || {
+                let r = weft_syntax::parse_file(&src);
+                format!("{r:?}").len()
+            });
+        assert!(worker.unwrap().join().is_ok());
+    }
 }

@@ -55,20 +55,29 @@ impl Diagnostic {
 
     /// Makes a warning.
     pub fn warning(code: &str, message: impl Into<String>, span: Span) -> Self {
-        Self { severity: Severity::Warning, ..Self::error(code, message, span) }
+        Self {
+            severity: Severity::Warning,
+            ..Self::error(code, message, span)
+        }
     }
 
     /// Adds a note with a location.
     #[must_use]
     pub fn note_at(mut self, text: impl Into<String>, span: Span) -> Self {
-        self.notes.push(Note { text: text.into(), span: Some(span) });
+        self.notes.push(Note {
+            text: text.into(),
+            span: Some(span),
+        });
         self
     }
 
     /// Adds a note without a location.
     #[must_use]
     pub fn note(mut self, text: impl Into<String>) -> Self {
-        self.notes.push(Note { text: text.into(), span: None });
+        self.notes.push(Note {
+            text: text.into(),
+            span: None,
+        });
         self
     }
 
@@ -97,7 +106,13 @@ impl Diagnostic {
             match n.span {
                 Some(s) => {
                     let pad = width - n.text.chars().count();
-                    let _ = writeln!(out, "  {}{}  (line {})", n.text, " ".repeat(pad), file.line(s));
+                    let _ = writeln!(
+                        out,
+                        "  {}{}  (line {})",
+                        n.text,
+                        " ".repeat(pad),
+                        file.line(s)
+                    );
                 }
                 None => {
                     let _ = writeln!(out, "  {}", n.text);
@@ -115,10 +130,14 @@ mod tests {
     #[test]
     fn render_aligns_located_notes() {
         let f = SourceFile::new("a.wf", "let x = 1\nlet y = 2\n");
-        let d = Diagnostic::error("W0301", "`x` used after it was invalidated", Span::new(10, 11))
-            .note_at("x : &u32 in a", Span::new(0, 1))
-            .note_at("push : mut(a)", Span::new(10, 11))
-            .note("used at line 2");
+        let d = Diagnostic::error(
+            "W0301",
+            "`x` used after it was invalidated",
+            Span::new(10, 11),
+        )
+        .note_at("x : &u32 in a", Span::new(0, 1))
+        .note_at("push : mut(a)", Span::new(10, 11))
+        .note("used at line 2");
         let r = d.render(&f);
         assert!(r.starts_with("error[W0301]: `x` used after it was invalidated\n  --> a.wf:2:1\n"));
         assert!(r.contains("  x : &u32 in a  (line 1)\n"));

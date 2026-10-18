@@ -132,3 +132,27 @@ trailing    = block           // same line as ")"; becomes a closure with no par
   This removes the ambiguity in `if x.ready() { ... }`.
 - A struct literal needs `{` followed by `NAME :` or by `}`.
 - `x[]` names every element of `x`. It is valid in `for e in x[]` and after `&`.
+
+## Further rules
+
+These rules complete the grammar above.
+
+1. A line break after a `>` that closes type arguments, or after a wildcard `..`, also
+   ends a statement or a list item.
+2. `|| x += 1` is a closure whose body is a block with one assignment.
+3. `(e)`, `(p)` and `(T)` are the item itself. `(e,)` is a one-item tuple. `()` is unit.
+4. Trailing commas are allowed in every comma list. In braces (struct and enum bodies,
+   effect operations, struct literals, match arms) a comma or a line break separates
+   items. Handler clauses and items need no separator.
+5. A raw line break in a string is an error. An unknown escape is an error. An empty
+   interpolation `{}` is an error. A lone `}` is text.
+6. `assert` starts an assert statement only when an expression follows. `mut` in an
+   effect row means `mut(...)` only when `(` follows. `self` is a parameter name.
+7. The parser skips `;` and line breaks before `else`, `in` and `on`.
+8. In a method chain, the name after `.` must be on the same line as the `.`.
+9. Comparison chains and range chains are errors. `&&x` is `&(&x)`. `>=` after type
+   arguments splits into `>` and `=`.
+10. Deep nesting (about 96 levels) is an error, not a stack overflow.
+
+The pretty-printer (`weft_syntax::pretty`) prints a file that parses back to the same
+tree.

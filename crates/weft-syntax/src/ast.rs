@@ -22,8 +22,16 @@ impl Span {
     /// Returns the smallest span that contains both spans.
     #[must_use]
     pub const fn to(self, other: Self) -> Self {
-        let lo = if self.lo < other.lo { self.lo } else { other.lo };
-        let hi = if self.hi > other.hi { self.hi } else { other.hi };
+        let lo = if self.lo < other.lo {
+            self.lo
+        } else {
+            other.lo
+        };
+        let hi = if self.hi > other.hi {
+            self.hi
+        } else {
+            other.hi
+        };
         Self { lo, hi }
     }
 }
@@ -46,7 +54,10 @@ pub struct Ident {
 impl Ident {
     /// Makes a name.
     pub fn new(name: impl Into<String>, span: Span) -> Self {
-        Self { name: name.into(), span }
+        Self {
+            name: name.into(),
+            span,
+        }
     }
 }
 
@@ -212,7 +223,7 @@ pub enum TypeExprKind {
 }
 
 /// A place written in a type or effect: `world.entities[]`, `opt.Some`, `world..`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlaceExpr {
     /// The root: a parameter, `self`, or an `rc` type name.
     pub root: Ident,
@@ -223,7 +234,7 @@ pub struct PlaceExpr {
 }
 
 /// One step in a written place.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PlaceStep {
     /// `.name`: a field, a variant (capitalized) or a tuple index (`.0`).
     Field(Ident),
@@ -238,7 +249,7 @@ pub enum PlaceStep {
 }
 
 /// An effect row after `/`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EffectRow {
     /// The items, in source order.
     pub items: Vec<EffectItem>,
@@ -247,7 +258,7 @@ pub struct EffectRow {
 }
 
 /// One item of an effect row.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EffectItem {
     /// `mut(p, q, ...)`.
     Mut(Vec<PlaceExpr>),
@@ -359,7 +370,7 @@ pub struct TestDecl {
 }
 
 /// An extern type with declared properties: `extern type Vec<T> { elem: unstable }`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExternTypeDecl {
     /// The type name.
     pub name: Ident,
@@ -370,7 +381,7 @@ pub struct ExternTypeDecl {
 }
 
 /// One extern type property: `key` or `key: value`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TypeProp {
     /// The key.
     pub key: Ident,
@@ -468,13 +479,13 @@ pub enum Pattern {
     /// `_`.
     Wild(Span),
     /// `(a, b)`.
-    Tuple(Vec<Pattern>, Span),
+    Tuple(Vec<Self>, Span),
     /// `Some(x)`, `Died(id)`, `None`, `Event.Died(id)`.
     Variant {
         /// The variant path: one or two segments.
         path: Vec<Ident>,
         /// The payload patterns.
-        fields: Vec<Pattern>,
+        fields: Vec<Self>,
         /// The location.
         span: Span,
     },
@@ -484,7 +495,7 @@ pub enum Pattern {
 
 impl Pattern {
     /// Returns the location of the pattern.
-    pub fn span(&self) -> Span {
+    pub const fn span(&self) -> Span {
         match self {
             Self::Bind(id) => id.span,
             Self::Wild(s) | Self::Tuple(_, s) | Self::Lit(_, s) => *s,

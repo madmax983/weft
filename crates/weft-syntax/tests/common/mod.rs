@@ -18,7 +18,12 @@ pub fn parse(src: &str) -> File {
         Err(e) => {
             let lo = (e.span.lo as usize).min(src.len());
             let hi = (e.span.hi as usize).clamp(lo, src.len());
-            panic!("parse failed: {} at {:?} ({:?})\n{src}", e.message, e.span, src.get(lo..hi));
+            panic!(
+                "parse failed: {} at {:?} ({:?})\n{src}",
+                e.message,
+                e.span,
+                src.get(lo..hi)
+            );
         }
     }
 }
@@ -49,7 +54,11 @@ pub fn stmts(body: &str) -> Vec<Stmt> {
 
 /// Returns the S-expression of the statements of a function body.
 pub fn sx_body(body: &str) -> String {
-    stmts(body).iter().map(sx_stmt).collect::<Vec<_>>().join("; ")
+    stmts(body)
+        .iter()
+        .map(sx_stmt)
+        .collect::<Vec<_>>()
+        .join("; ")
 }
 
 /// Returns the S-expression of one expression statement.
@@ -78,7 +87,10 @@ fn find_fn_in<'a>(items: &'a [Item], name: &str) -> Option<&'a FnDecl> {
 
 /// Returns the body statements of a function.
 pub fn fn_body<'a>(file: &'a File, name: &str) -> &'a [Stmt] {
-    find_fn(file, name).body.as_ref().map_or(&[], |b| b.stmts.as_slice())
+    find_fn(file, name)
+        .body
+        .as_ref()
+        .map_or(&[], |b| b.stmts.as_slice())
 }
 
 /// S-expression of an expression.
@@ -87,12 +99,29 @@ pub fn sx(e: &Expr) -> String {
         ExprKind::Lit(l) => sx_lit(l),
         ExprKind::Name(id) => id.name.clone(),
         ExprKind::Field { base, name } => format!("(. {} {})", sx(base), name.name),
-        ExprKind::Index { base, index: Some(i) } => format!("(idx {} {})", sx(base), sx(i)),
+        ExprKind::Index {
+            base,
+            index: Some(i),
+        } => format!("(idx {} {})", sx(base), sx(i)),
         ExprKind::Index { base, index: None } => format!("(idx {})", sx(base)),
-        ExprKind::Call { callee, args, trailing } => {
-            format!("(call {}{}{})", sx(callee), sx_args(args), sx_trailing(trailing.as_deref()))
+        ExprKind::Call {
+            callee,
+            args,
+            trailing,
+        } => {
+            format!(
+                "(call {}{}{})",
+                sx(callee),
+                sx_args(args),
+                sx_trailing(trailing.as_deref())
+            )
         }
-        ExprKind::MethodCall { receiver, method, args, trailing } => format!(
+        ExprKind::MethodCall {
+            receiver,
+            method,
+            args,
+            trailing,
+        } => format!(
             "(mcall {} {}{}{})",
             sx(receiver),
             method.name,
@@ -121,10 +150,12 @@ pub fn sx(e: &Expr) -> String {
         }
         ExprKind::Closure { params, body } => format!("(fn [{}] {})", params_s(params), sx(body)),
         ExprKind::Block(b) => sx_block(b),
-        ExprKind::If { cond, then, else_ } => match else_ {
-            Some(e) => format!("(if {} {} {})", sx(cond), sx_block(then), sx(e)),
-            None => format!("(if {} {})", sx(cond), sx_block(then)),
-        },
+        ExprKind::If { cond, then, else_ } => {
+            let tail = else_
+                .as_ref()
+                .map_or_else(String::new, |e| format!(" {}", sx(e)));
+            format!("(if {} {}{tail})", sx(cond), sx_block(then))
+        }
         ExprKind::Match { scrutinee, arms } => {
             let mut s = format!("(match {}", sx(scrutinee));
             for a in arms {
@@ -133,11 +164,20 @@ pub fn sx(e: &Expr) -> String {
             s.push(')');
             s
         }
-        ExprKind::Handle { effect, clauses, body } => {
+        ExprKind::Handle {
+            effect,
+            clauses,
+            body,
+        } => {
             let mut s = format!("(handle {}", effect.name);
             for c in clauses {
-                let _ =
-                    write!(s, " ({} [{}] {})", c.op.name, params_s(&c.params), sx_block(&c.body));
+                let _ = write!(
+                    s,
+                    " ({} [{}] {})",
+                    c.op.name,
+                    params_s(&c.params),
+                    sx_block(&c.body)
+                );
             }
             let _ = write!(s, " in {})", sx(body));
             s
@@ -151,16 +191,21 @@ fn path_s<'a>(segs: impl Iterator<Item = &'a str>) -> String {
 }
 
 fn sx_list(es: &[Expr]) -> String {
-    es.iter().map(|e| format!(" {}", sx(e))).collect()
+    es.iter().fold(String::new(), |mut out, e| {
+        let _ = write!(out, " {}", sx(e));
+        out
+    })
 }
 
 fn sx_args(args: &[Arg]) -> String {
-    args.iter()
-        .map(|a| match &a.name {
-            Some(n) => format!(" {}: {}", n.name, sx(&a.value)),
-            None => format!(" {}", sx(&a.value)),
-        })
-        .collect()
+    args.iter().fold(String::new(), |mut out, a| {
+        let name = a
+            .name
+            .as_ref()
+            .map_or_else(String::new, |n| format!("{}: ", n.name));
+        let _ = write!(out, " {name}{}", sx(&a.value));
+        out
+    })
 }
 
 fn sx_trailing(t: Option<&Expr>) -> String {
@@ -209,7 +254,10 @@ pub fn sx_lit(l: &Lit) -> String {
 
 /// S-expression of a block.
 pub fn sx_block(b: &Block) -> String {
-    format!("{{{}}}", b.stmts.iter().map(sx_stmt).collect::<Vec<_>>().join("; "))
+    format!(
+        "{{{}}}",
+        b.stmts.iter().map(sx_stmt).collect::<Vec<_>>().join("; ")
+    )
 }
 
 /// S-expression of a statement.
@@ -262,7 +310,10 @@ pub fn sx_pat(p: &Pattern) -> String {
             if fields.is_empty() {
                 p
             } else {
-                format!("{p}({})", fields.iter().map(sx_pat).collect::<Vec<_>>().join(", "))
+                format!(
+                    "{p}({})",
+                    fields.iter().map(sx_pat).collect::<Vec<_>>().join(", ")
+                )
             }
         }
         Pattern::Lit(l, _) => sx_lit(l),
@@ -271,9 +322,11 @@ pub fn sx_pat(p: &Pattern) -> String {
 
 fn params_s(ps: &[Param]) -> String {
     ps.iter()
-        .map(|p| match &p.ty {
-            Some(t) => format!("{}: {}", p.name.name, sx_ty(t)),
-            None => p.name.name.clone(),
+        .map(|p| {
+            let ty =
+                p.ty.as_ref()
+                    .map_or_else(String::new, |t| format!(": {}", sx_ty(t)));
+            format!("{}{ty}", p.name.name)
         })
         .collect::<Vec<_>>()
         .join(", ")
@@ -285,11 +338,18 @@ pub fn sx_ty(t: &TypeExpr) -> String {
         TypeExprKind::Path { segments, args } => {
             let mut s = path_s(segments.iter().map(|i| i.name.as_str()));
             if !args.is_empty() {
-                let _ = write!(s, "<{}>", args.iter().map(sx_ty).collect::<Vec<_>>().join(", "));
+                let _ = write!(
+                    s,
+                    "<{}>",
+                    args.iter().map(sx_ty).collect::<Vec<_>>().join(", ")
+                );
             }
             s
         }
-        TypeExprKind::Ref { inner, place: Some(p) } => {
+        TypeExprKind::Ref {
+            inner,
+            place: Some(p),
+        } => {
             format!("(& {} in {})", sx_ty(inner), sx_place(p))
         }
         TypeExprKind::Ref { inner, place: None } => format!("(& {})", sx_ty(inner)),
@@ -298,9 +358,15 @@ pub fn sx_ty(t: &TypeExpr) -> String {
         }
         TypeExprKind::Array { elem, len } => format!("[{}; {len}]", sx_ty(elem)),
         TypeExprKind::Slice(e) => format!("[{}]", sx_ty(e)),
-        TypeExprKind::Fn { params, ret, effects } => {
-            let mut s =
-                format!("(fn ({})", params.iter().map(sx_ty).collect::<Vec<_>>().join(", "));
+        TypeExprKind::Fn {
+            params,
+            ret,
+            effects,
+        } => {
+            let mut s = format!(
+                "(fn ({})",
+                params.iter().map(sx_ty).collect::<Vec<_>>().join(", ")
+            );
             if let Some(r) = ret {
                 let _ = write!(s, " -> {}", sx_ty(r));
             }
@@ -358,7 +424,10 @@ pub fn sx_row(r: &EffectRow) -> String {
         .iter()
         .map(|i| match i {
             EffectItem::Mut(ps) => {
-                format!("mut({})", ps.iter().map(sx_place).collect::<Vec<_>>().join(", "))
+                format!(
+                    "mut({})",
+                    ps.iter().map(sx_place).collect::<Vec<_>>().join(", ")
+                )
             }
             EffectItem::Named(n) => n.name.clone(),
         })

@@ -11,7 +11,11 @@ fn toks(src: &str) -> Vec<Token> {
 
 /// Shows the token stream as text, one word per token.
 fn show(src: &str) -> String {
-    toks(src).iter().map(|t| t.kind.to_string()).collect::<Vec<_>>().join(" ")
+    toks(src)
+        .iter()
+        .map(|t| t.kind.to_string())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn lex_err(src: &str) -> (String, Span) {
@@ -44,9 +48,28 @@ fn keywords_have_their_own_kinds() {
 #[test]
 fn contextual_keywords_are_names() {
     let words = [
-        "handle", "scope", "linear", "fip", "multi", "test", "type", "on", "abort", "mut",
-        "assert", "uniq", "aliased", "portable", "nonportable", "uncontended", "shared", "once",
-        "many", "_", "_x", "sqlite3_step",
+        "handle",
+        "scope",
+        "linear",
+        "fip",
+        "multi",
+        "test",
+        "type",
+        "on",
+        "abort",
+        "mut",
+        "assert",
+        "uniq",
+        "aliased",
+        "portable",
+        "nonportable",
+        "uncontended",
+        "shared",
+        "once",
+        "many",
+        "_",
+        "_x",
+        "sqlite3_step",
     ];
     for w in words {
         let t = toks(w);
@@ -144,7 +167,10 @@ fn rule1_other_tokens_do_not_end_a_statement() {
     for op in others {
         let src = format!("{op}\ny");
         let t = toks(&src);
-        assert!(t.iter().all(|t| t.kind != TokenKind::Newline), "NL after {op:?}: {t:?}");
+        assert!(
+            t.iter().all(|t| t.kind != TokenKind::Newline),
+            "NL after {op:?}: {t:?}"
+        );
     }
 }
 
@@ -171,7 +197,10 @@ fn rule2_unbalanced_closers_do_not_break_the_lexer() {
 
 #[test]
 fn rule3_method_chain_continues() {
-    assert_eq!(show("world\n    .entities\n    .clear()"), "world . entities . clear ( ) EOF");
+    assert_eq!(
+        show("world\n    .entities\n    .clear()"),
+        "world . entities . clear ( ) EOF"
+    );
     assert_eq!(show("a\n// note\n.b"), "a . b EOF");
 }
 
@@ -197,23 +226,35 @@ fn semicolons() {
 #[test]
 fn plain_strings() {
     let t = toks(r#""hi there""#);
-    assert_eq!(t[0].kind, TokenKind::Str(vec![StrPiece::Text("hi there".into())]));
+    assert_eq!(
+        t[0].kind,
+        TokenKind::Str(vec![StrPiece::Text("hi there".into())])
+    );
     assert_eq!(t[0].span, Span::new(0, 10));
     assert_eq!(toks(r#""""#)[0].kind, TokenKind::Str(vec![]));
-    assert_eq!(toks("\"é ü\"")[0].kind, TokenKind::Str(vec![StrPiece::Text("é ü".into())]));
+    assert_eq!(
+        toks("\"é ü\"")[0].kind,
+        TokenKind::Str(vec![StrPiece::Text("é ü".into())])
+    );
 }
 
 #[test]
 fn string_escapes() {
     let t = toks(r#""a\n\t\\\"\{\}b""#);
-    assert_eq!(t[0].kind, TokenKind::Str(vec![StrPiece::Text("a\n\t\\\"{}b".into())]));
+    assert_eq!(
+        t[0].kind,
+        TokenKind::Str(vec![StrPiece::Text("a\n\t\\\"{}b".into())])
+    );
     assert_eq!(escape_text("a\n\t\\\"{}b"), r#"a\n\t\\\"\{\}b"#);
 }
 
 #[test]
 fn string_lone_close_brace_is_text() {
     let t = toks(r#""a } b""#);
-    assert_eq!(t[0].kind, TokenKind::Str(vec![StrPiece::Text("a } b".into())]));
+    assert_eq!(
+        t[0].kind,
+        TokenKind::Str(vec![StrPiece::Text("a } b".into())])
+    );
 }
 
 #[test]
@@ -224,7 +265,10 @@ fn string_interpolation_pieces() {
         t[0].kind,
         TokenKind::Str(vec![
             StrPiece::Text("x ".into()),
-            StrPiece::Interp { src: "a.b".into(), offset: 4 },
+            StrPiece::Interp {
+                src: "a.b".into(),
+                offset: 4
+            },
             StrPiece::Text(" y".into()),
         ])
     );
@@ -237,7 +281,10 @@ fn string_interpolation_with_base_and_unicode() {
         t[0].kind,
         TokenKind::Str(vec![
             StrPiece::Text("é".into()),
-            StrPiece::Interp { src: "x".into(), offset: 14 },
+            StrPiece::Interp {
+                src: "x".into(),
+                offset: 14
+            },
         ])
     );
 }
@@ -247,20 +294,29 @@ fn string_interpolation_nesting() {
     let t = toks(r#""{f({a})}""#);
     assert_eq!(
         t[0].kind,
-        TokenKind::Str(vec![StrPiece::Interp { src: "f({a})".into(), offset: 2 }])
+        TokenKind::Str(vec![StrPiece::Interp {
+            src: "f({a})".into(),
+            offset: 2
+        }])
     );
     let t = toks(r#""{g("}", "{h}")} end""#);
     assert_eq!(
         t[0].kind,
         TokenKind::Str(vec![
-            StrPiece::Interp { src: r#"g("}", "{h}")"#.into(), offset: 2 },
+            StrPiece::Interp {
+                src: r#"g("}", "{h}")"#.into(),
+                offset: 2
+            },
             StrPiece::Text(" end".into()),
         ])
     );
     let t = toks(r#""{f("\"{x}")}""#);
     assert_eq!(
         t[0].kind,
-        TokenKind::Str(vec![StrPiece::Interp { src: r#"f("\"{x}")"#.into(), offset: 2 }])
+        TokenKind::Str(vec![StrPiece::Interp {
+            src: r#"f("\"{x}")"#.into(),
+            offset: 2
+        }])
     );
     assert_eq!(t.len(), 2);
 }
