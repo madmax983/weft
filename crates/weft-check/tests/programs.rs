@@ -66,6 +66,14 @@ fn run(path: &Path) -> Result<(), String> {
     let name = path
         .file_name()
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    let unknown: Vec<&str> = weft_sema::marker_words(&src)
+        .into_iter()
+        .map(|(_, w)| w)
+        .filter(|w| !weft_sema::MARKERS.contains(w))
+        .collect();
+    if !unknown.is_empty() {
+        return Err(format!("unknown file markers {unknown:?}"));
+    }
     let opts = Options::from_markers(&src);
     let checked = check_source(&name, &src, opts);
     let file = SourceFile::new(&name, src.as_str());

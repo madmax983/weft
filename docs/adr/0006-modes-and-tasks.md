@@ -17,6 +17,6 @@ Status: accepted. Date: 2026-10-18.
   after the join.
 - A spawned task that captures a nonportable value or a shared-mutable reference is
   pinned. The relation `stealable(T)` tells the scheduler which tasks can move.
-  `tests/programs/26_stealable.wf` marks each task closure `//~ stealable` or
+  `tests/programs/33_stealable.wf` marks each task closure `//~ stealable` or
   `//~ pinned`, and the corpus test checks the marks.
 - A spawn in statement position gives its handle to the scope. A bound handle is linear.

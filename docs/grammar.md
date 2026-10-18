@@ -9,7 +9,8 @@ This grammar defines the syntax that the parser accepts. The AST is in
 - A line comment `// weft: WORD ...` is a file marker. The words are `library` (check
   the file as a library) and `no-runtime` (the embedded profile). `weft check`, `weft run`,
   `weft test` and the corpus tests read the markers of a single file. A package uses
-  `weft.toml` instead. The flags `--lib` and `--no-runtime` add to the markers.
+  `weft.toml` instead. The flags `--lib` and `--bin`, `--no-runtime` and `--runtime` win
+  over the markers. An unknown word gets the warning W0804.
 - Identifiers: `[A-Za-z_][A-Za-z0-9_]*`. Integers: `[0-9][0-9_]*`.
 - `2.s` is the integer `2`, a dot, and the name `s`. A float needs a digit after the dot.
   Phase 1 has no floats.
@@ -80,9 +81,12 @@ MODE        = uniq | aliased | portable | nonportable | uncontended | shared | o
 Notes:
 
 - `*T` is a raw pointer for foreign functions, for example
-  `extern fn sqlite3_step(stmt: *Stmt) -> i32 / blocking`. It is valid only in an
-  `extern fn` signature and in a local (W0116). It is an opaque copy value with no place:
-  it has no fields, no elements and no deref.
+  `extern fn sqlite3_step(stmt: *Stmt) -> i32 / blocking`. A written `*T` is valid only
+  in an `extern fn` signature, in a local and in a closure parameter (W0116). The check
+  looks only at written types: a type argument can hold a raw pointer, for example
+  `Some(stmt)` or `id(stmt)` with `fn id<T>(x: T) -> T`. A raw pointer is an opaque copy
+  value with no place: it has no fields, no elements and no deref. It is nonportable,
+  and so is each value that holds one.
 - The wildcard step `..` must be the last step: `mut(world..)`.
 - In a function type, a row with more than one item needs parentheses:
   `fn(Request) -> Response / (net, log)`.
@@ -163,14 +167,24 @@ These rules complete the grammar above.
    arguments splits into `>` and `=`.
 10. Nesting deeper than 96 levels is an error, not a stack overflow. A function body
     is one level, a statement in it is one level, and each nested block, parenthesis,
-    closure, `if`, `match`, type, pattern or item is one more level. A chain of more than about 150 prefix operators,
-    postfix steps (`.name`, `.method()`, `(args)`, `[i]`) or `else if` branches is also an
-    error. These limits keep every stage on a 2 MiB thread stack
-    (`crates/weft-cli/tests/limits.rs`).
+    closure, `if`, `match`, type, pattern or item is one more level. A chain of more
+    than about 150 prefix operators, postfix steps (`.name`, `.method()`, `(args)`,
+    `[i]`) or `else if` branches is also an error. A call, an index or a field step
+    around a nested expression costs a chain step too, so some forms stop before 96
+    levels: nested calls `g(g(..))` at about 57 levels, and struct literals with a call
+    in a field at about 35. These limits keep the parser, the printer, sema, the
+    checker, the spec and the interpreter on a 2 MiB thread stack
+    (`crates/weft-cli/tests/limits.rs`). The derivation printer of
+    `weft check --explain` is not in this list: it recurses once for each step of a
+    derivation, and a long path in a body gives a deep derivation. The `weft` binary
+    runs each command on a 256 MiB stack for this reason.
 11. A chain of binary operators has no limit. In a chain of more than 32 operators, the
     parser keeps each part of 32 operators in a hidden local of a block, and the rest of
     the chain starts from that local. The value, the order of evaluation and the
-    short-circuit of `&&` and `||` do not change. No program can name a hidden local.
+    short-circuit of `&&` and `||` do not change. No program can name a hidden local,
+    because a `'` cannot be in a name.
 
 The pretty-printer (`weft_syntax::pretty`) prints a file that parses back to the same
-tree. It prints the block of a long chain as the chain.
+tree, spans aside. It prints the block of a long chain as the chain, in parentheses
+when the chain is the left operand of an operator. A hidden local has the index of its
+part as its name (`chain'0`, `chain'1`, ...), so the names come back the same.

@@ -5,6 +5,10 @@
 //! the stack of a test thread: parse, print, analyze, check, the spec, the
 //! interpreter and drop. A larger program gets a parser error, never a stack
 //! overflow. A flat chain of binary operators has no limit.
+//!
+//! The derivation printer of `check --explain` is not a stage here. It recurses
+//! once for each step of a derivation, so its depth follows the length of a
+//! path in a body, not the nesting. The `weft` binary gives it a large stack.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 

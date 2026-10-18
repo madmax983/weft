@@ -32,10 +32,13 @@ flowchart TD
 
 ## Effect inference
 
-Sema infers the effects of each function that does not state them. It lowers every
-such body again until no signature changes. The bound is `10 * (n + 2)` rounds for `n`
-user functions (`weft_sema::round_limit`). If the signatures are not a fixpoint at the
-bound, each function whose effects can still change gets W0706, an error.
+Sema infers the effects of each function that does not state them
+(`crates/weft-sema/src/infer.rs`). A worklist lowers callees before callers. When a
+signature grows, sema lowers again only the bodies that name that function. A new row
+is joined with the old row, so a row only grows, and the lattice of rows is finite.
+So the inference reaches a fixpoint. The bound for one row is the height of its
+lattice (`infer::growth_limit`). A row that grows past it shows a checker bug: each
+function whose row can still grow gets W0706, an error.
 
 ## Commands
 
@@ -47,15 +50,22 @@ bound, each function whose effects can still change gets W0706, an error.
 | `weft deps` | load → sema → dependency authority (W0901, W0902) |
 
 A single file takes its options from marker lines: `// weft: library` and
-`// weft: no-runtime`. A package takes them from `weft.toml`. The flags add to them.
+`// weft: no-runtime`. A package takes them from `weft.toml`. The flags `--lib` and
+`--bin`, `--no-runtime` and `--runtime` win over both. An unknown word in a marker
+gets W0804, a warning.
 
 ## Size limits
 
 The parser rejects nesting deeper than 96 levels and chains of more than about 150
 prefix operators, postfix steps or `else if` branches. It keeps each part of 32 binary
 operators of a long chain in a hidden local, so a flat chain has no limit. Sema and the
-interpreter walk the tree recursively. `crates/weft-cli/tests/limits.rs` runs each
-stage on a 2 MiB thread for the largest program that parses.
+interpreter walk the tree recursively. `crates/weft-cli/tests/limits.rs` runs the
+parser, the printer, sema, the checker, the spec and the interpreter on a 2 MiB thread
+for the largest program that parses. The derivation printer of `check --explain`
+(`weft_check::bridge::render`) recurses once for each step of a derivation, so a long
+path in one body (thousands of statements, or a long flat chain) needs a deep stack,
+and its indented output grows with the square of the depth. The `weft` binary runs
+each command on a 256 MiB stack. An iterative printer is still to do.
 
 ## Verified pieces
 

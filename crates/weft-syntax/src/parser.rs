@@ -1909,10 +1909,12 @@ const fn bin_op(k: &T) -> Option<(BinOp, u8)> {
 }
 
 /// Moves a finished part of a long chain into a hidden local. Returns the name
-/// of the local, which is the left operand of the rest of the chain.
+/// of the local, which is the left operand of the rest of the chain. The name
+/// holds only the index of the part: the block of the chain keeps the locals
+/// of other chains apart, and the name stays the same after a round trip.
 fn chain_part(parts: &mut Vec<Stmt>, lhs: Expr) -> Expr {
     let span = lhs.span;
-    let name = format!("{CHAIN_PART_PREFIX}{}.{}", span.lo, parts.len());
+    let name = format!("{CHAIN_PART_PREFIX}{}", parts.len());
     parts.push(Stmt {
         kind: StmtKind::Let {
             pat: Pattern::Bind(Ident::new(name.clone(), span)),

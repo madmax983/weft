@@ -34,6 +34,13 @@ pub fn pretty_expr(e: &Expr) -> String {
     p.out
 }
 
+/// Prints one block as Weft source.
+pub fn pretty_block(b: &Block) -> String {
+    let mut p = Printer::default();
+    p.block(b);
+    p.out
+}
+
 /// Returns the parts of the block that the parser makes for a long chain: the
 /// values of the hidden locals, and the rest of the chain.
 fn chain_parts(e: &Expr) -> Option<(Vec<&Expr>, &Expr)> {
@@ -719,7 +726,15 @@ impl Printer {
             }
             ExprKind::Binary { op, lhs, rhs } => {
                 let p = bin_prec(*op);
-                let lhs_min = if p == 4 { p + 1 } else { p };
+                // A long chain on the left keeps its parentheses, or the
+                // parser makes it one chain with this operator.
+                let lhs_min = if chain_parts(lhs).is_some() {
+                    u8::MAX
+                } else if p == 4 {
+                    p + 1
+                } else {
+                    p
+                };
                 self.expr(lhs, lhs_min, head);
                 self.push(" ");
                 self.push(bin_text(*op));

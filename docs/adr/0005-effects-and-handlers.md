@@ -27,12 +27,18 @@ Status: accepted. Date: 2026-10-18.
   ```
 
   The caller then passes `attack(world, x, y)`, and the check accepts it.
-  `tests/programs/27_alias_in_one_task.wf` has both forms.
-- Effect inference iterates over the call graph to a fixpoint. The bound is
-  `10 * (n + 2)` rounds for `n` user functions (`weft_sema::round_limit`). If the
-  signatures are not a fixpoint at the bound, each function whose effects can still
-  change gets W0706, an error. The checker never uses effects that can be incomplete
-  without an error.
+  `tests/programs/34_alias_in_one_task.wf` has both forms.
+- Effect inference iterates over the call graph to a fixpoint (`weft_sema::infer`).
+  A worklist lowers callees before callers. When the row of a function grows, only the
+  functions whose bodies name it are lowered again. Each new row is joined with the old
+  row, so a row only grows. A row is in a finite lattice: the effects of the program,
+  the parameters, and the `mut` places of at most 8 steps under the parameters and the
+  `rc` groups. So the inference always reaches a fixpoint. The bound for one row is the
+  height of its lattice (`weft_sema::infer::growth_limit`). It depends on the number of
+  effects, parameters and types, and on the number of different steps in the places of
+  the program. A row that grows past the bound shows a checker bug: each function whose
+  row can still grow gets W0706, an error. The checker never uses effects that can be
+  incomplete without an error.
 - Every named effect can abort (the handler can drop the continuation). A linear value
   live across such a node needs `on abort` (W0602).
 - `resume` consumes a `once` continuation (W0501). A `multi` operation needs `many` values

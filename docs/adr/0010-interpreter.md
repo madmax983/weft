@@ -17,8 +17,10 @@ Status: accepted. Date: 2026-10-18.
 
 - `weft run FILE` runs `fn main` and `weft test FILE` runs the test blocks, through
   `weft_interp::{run_main, run_tests}`. Both check the program first and do not run it
-  if it has errors, unless `--unchecked` is given. `--seed` and `--workers` set the
-  scheduler. A failure gives exit code 1.
+  if it has errors, unless `--unchecked` is given. `--seed` and `--workers` (1 to
+  1024) set the scheduler. Errors and a failure give exit code 1; with `--unchecked`,
+  the exit code shows only the run. The binary writes the output and the log of each
+  test before its result line. A file with no test blocks gets a note.
 
 ## Consequences
 

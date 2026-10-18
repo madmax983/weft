@@ -1,7 +1,10 @@
 //! Packages: `weft.toml`, dependencies and their authority.
 //!
-//! A project grants each dependency a set of effects. Each public function of the
-//! dependency must stay inside that set. A JSON parser that asks for `Net` is
+//! A project grants each dependency a set of effects. The code of the
+//! dependency must stay inside that set: the row of each function, a private
+//! one too (name resolution does not enforce `pub` yet, so the root can call
+//! it), and each effect that a closure in a body performs (the closure can
+//! leave the dependency as a value). A JSON parser that asks for `Net` is
 //! rejected when the project loads it ("install time").
 
 use std::collections::BTreeSet;
@@ -109,11 +112,21 @@ pub struct Package {
     pub deps: Vec<Dependency>,
 }
 
+/// The profile that the flags choose. `None` keeps the value of the manifest
+/// or of the file markers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Profile {
+    /// `--lib` (true) or `--bin` (false).
+    pub library: Option<bool>,
+    /// `--no-runtime` (true) or `--runtime` (false).
+    pub no_runtime: Option<bool>,
+}
+
 impl Package {
     /// Returns the analysis options of the root. A package takes them from its
     /// manifest, a single file from its file markers (`// weft: library`). The
-    /// flags add to them.
-    pub fn options(&self, flags: weft_sema::Options) -> weft_sema::Options {
+    /// flags win over both.
+    pub fn options(&self, flags: Profile) -> weft_sema::Options {
         let own = match &self.manifest {
             Some(m) => weft_sema::Options {
                 library: m.package.kind == Kind::Lib,
@@ -126,19 +139,58 @@ impl Package {
                     weft_sema::Options::from_markers(&f.text)
                 }),
         };
-        own.or(flags)
+        weft_sema::Options {
+            library: flags.library.unwrap_or(own.library),
+            no_runtime: flags.no_runtime.unwrap_or(own.no_runtime),
+        }
     }
+
+    /// W0804: a word in a file marker that is not a marker. A package takes
+    /// its options from the manifest, so only a single file is checked.
+    pub fn marker_diags(&self) -> Vec<Diagnostic> {
+        let Some(f) = self.files.get(1).filter(|_| self.manifest.is_none()) else {
+            return Vec::new();
+        };
+        weft_sema::marker_words(&f.text)
+            .into_iter()
+            .filter(|(_, w)| !weft_sema::MARKERS.contains(w))
+            .map(|(at, w)| {
+                let lo = u32::try_from(at).unwrap_or(u32::MAX);
+                let hi = u32::try_from(at + w.len()).unwrap_or(u32::MAX);
+                let mut d = Diagnostic::warning(
+                    "W0804",
+                    format!("unknown file marker `{w}`; it has no effect"),
+                    weft_syntax::ast::Span::new(lo, hi),
+                )
+                .note(format!(
+                    "the markers are `{}`",
+                    weft_sema::MARKERS.join("`, `")
+                ));
+                d.unit = 1;
+                d
+            })
+            .collect()
+    }
+}
+
+/// A source file that does not parse.
+#[derive(Debug, thiserror::Error)]
+#[error("{}", .diag.message)]
+pub struct SyntaxError {
+    /// The source file.
+    pub file: SourceFile,
+    /// W0001 at the location of the error.
+    pub diag: Diagnostic,
 }
 
 fn parse_unit(name: &str, path: &Path) -> Result<(SourceFile, Unit)> {
     let text =
         fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
-    let file = parse_file(&text).map_err(|e| {
-        let sf = SourceFile::new(path.display().to_string(), text.as_str());
-        let (l, c) = sf.line_col(e.span.lo);
-        anyhow::anyhow!("{}:{l}:{c}: error[W0001]: {}", path.display(), e.message)
-    })?;
     let sf = SourceFile::new(path.display().to_string(), text);
+    let file = parse_file(&sf.text).map_err(|e| SyntaxError {
+        file: sf.clone(),
+        diag: Diagnostic::error("W0001", e.message, e.span),
+    })?;
     Ok((
         sf,
         Unit {
@@ -262,10 +314,16 @@ pub fn package_diags(pkg: &Package, a: &Analysis) -> Vec<Diagnostic> {
             out.push(d);
         }
         for (i, f) in a.program.fns.iter().enumerate() {
-            if !f.is_pub || a.program.mods[f.module].unit != dep.unit {
+            if a.program.mods[f.module].unit != dep.unit {
                 continue;
             }
-            let needs: BTreeSet<String> = effects::close(&a.sigs[i].effects.named);
+            // The effects that leave the body, also from a closure that the
+            // body does not call.
+            let mut performs = a.sigs[i].effects.named.clone();
+            for b in a.bodies.iter().filter(|b| b.func == Some(i)) {
+                performs.extend(b.facts.escapes_at.iter().map(|(_, e)| e.clone()));
+            }
+            let needs: BTreeSet<String> = effects::close(&performs);
             let extra: Vec<&String> = needs
                 .iter()
                 .filter(|e| !dep.authority.contains(*e))

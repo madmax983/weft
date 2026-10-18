@@ -44,14 +44,18 @@ $W help
 ```
 
 `run` and `test` check the program first. They do not run a program that has errors,
-unless you give `--unchecked`. `--seed N` and `--workers N` set the deterministic
-scheduler of the reference interpreter. The exit code is 0 on success, 1 when the
-program has errors or fails, and 2 on a usage error.
+unless you give `--unchecked`. `--seed N` and `--workers N` (1 to 1024) set the
+deterministic scheduler of the reference interpreter. The exit code is 0 on success,
+1 when the program has errors (a syntax error too) or fails, and 2 on a usage error or
+a file that cannot be read. With `--unchecked`, the exit code shows only the run. A
+command rejects an option that it does not use.
 
 A single file sets its options with marker lines. `// weft: library` checks it as a
 library (no root handlers). `// weft: no-runtime` selects the embedded profile (`main`
-handles every standard effect). A package sets the same options in `weft.toml`
-(`kind = "lib"`, `runtime = "none"`). The flags `--lib` and `--no-runtime` add to them.
+handles every standard effect). An unknown word in a marker line gets the warning
+W0804. A package sets the same options in `weft.toml` (`kind = "lib"`,
+`runtime = "none"`). The flags `--lib` and `--bin`, `--no-runtime` and `--runtime`
+win over the markers and the manifest.
 
 ## Layout
 

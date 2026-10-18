@@ -445,12 +445,7 @@ impl Collector {
                 c.prog.root = m;
             }
             if i > 1 {
-                // The root names a dependency as a module. The prelude declares
-                // nested modules first, so the root is not module 1.
-                let root = c.prog.root;
-                c.prog.mods[root]
-                    .items
-                    .insert(u.name.clone(), ItemRef::Mod(m));
+                c.name_dependency(&u.name, m, i);
             }
             unit_mods.push(m);
             let before = c.diags.len();
@@ -460,18 +455,41 @@ impl Collector {
             }
         }
         c.declare_ptr();
-        // Pass 2: bodies of type definitions and signatures.
-        let mut seen = 0;
-        for (i, u) in units.iter().enumerate() {
-            c.declare_unit_mark(&mut seen, i);
-            let _ = u;
-        }
+        // Pass 2: bodies of type definitions and signatures. The diagnostics
+        // of pass 1 have their units already.
+        let mut seen = c.diags.len();
+        c.marked = seen;
         for (i, (u, &m)) in units.iter().zip(&unit_mods).enumerate() {
             c.define_items(&u.file.items, m);
             c.declare_unit_mark(&mut seen, i);
         }
         c.resolve_signatures();
         (c.prog, c.diags)
+    }
+
+    /// Gives the root the name of dependency module `m` of unit `unit`. The
+    /// prelude declares nested modules first, so the root is not module 1.
+    ///
+    /// W0107: the name must not hide a name that the root sees already: an item
+    /// of the root, a prelude item or a standard effect alias such as `log`.
+    fn name_dependency(&mut self, name: &str, m: ModId, unit: usize) {
+        let root = self.prog.root;
+        if self.prog.lookup(root, name).is_none()
+            && effects::canonical(&self.prog, root, name).is_none()
+        {
+            self.prog.mods[root]
+                .items
+                .insert(name.to_string(), ItemRef::Mod(m));
+            return;
+        }
+        let mut d = Diagnostic::error(
+            "W0107",
+            format!("dependency `{name}` has the name of an item that the root sees already"),
+            Span::default(),
+        )
+        .note("give the dependency another name in weft.toml");
+        d.unit = unit;
+        self.diags.push(d);
     }
 
     /// Declares the definition of `*T` after all named types, so that the
