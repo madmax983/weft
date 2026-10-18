@@ -595,10 +595,11 @@ impl<'p> Lower<'p> {
 
     /// Returns the handle places of the `Rc` handles in a value of type `ty` at
     /// place `p`. A group place that a callee reaches through the value depends
-    /// on them. Past the depth limit, the result depends on `p` itself.
+    /// on them. Past the depth limit, it depends on any handle inside `p`.
     fn inner_handle_deps(&mut self, p: PlaceId, ty: &Ty, depth: usize) -> Vec<PlaceId> {
         if depth > 4 {
-            return self.handle_deps(&[p]);
+            let any = self.facts.wildcard(p);
+            return self.handle_deps(&[any]);
         }
         let t = self.inf.deep(ty);
         let mut out = Vec::new();

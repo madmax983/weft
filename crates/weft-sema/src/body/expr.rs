@@ -1179,7 +1179,11 @@ impl Lower<'_> {
                         self.facts.place(rt).root == root
                             && self.facts.var(var).kind == VarKind::Param
                     });
-                    let whose = if param { "its parameter" } else { "its local" };
+                    let whose = match (param, name.as_str()) {
+                        (true, _) => format!("its parameter `{name}`"),
+                        (false, "temporary") => "its temporary value".to_string(),
+                        (false, _) => format!("its local `{name}`"),
+                    };
                     let shown = &self.facts.place(r).display;
                     let head = if v.summary.is_some() {
                         format!("the closure returns a closure that captures `{shown}`")
@@ -1188,7 +1192,7 @@ impl Lower<'_> {
                     };
                     self.err(
                         "W0204",
-                        format!("{head}: {whose} `{name}` goes out of scope at the return"),
+                        format!("{head}: {whose} goes out of scope at the return"),
                         span,
                     );
                 }

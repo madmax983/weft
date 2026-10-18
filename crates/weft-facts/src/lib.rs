@@ -363,11 +363,17 @@ impl FnFacts {
         let base = self.place(parent);
         let mut steps = base.steps.clone();
         steps.push(step);
+        // A place below a wildcard place is still somewhere inside its base.
+        let display = if base.steps.contains(&WILD) {
+            base.display.clone()
+        } else {
+            format!("{}{}", base.display, text)
+        };
         let info = PlaceInfo {
             root: base.root,
             parent: Some(parent),
             steps,
-            display: format!("{}{}", base.display, text),
+            display,
         };
         let id = self.push_place(info);
         self.place_index.insert((parent, step), id);
