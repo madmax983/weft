@@ -406,7 +406,7 @@ impl Lower<'_> {
         v
     }
 
-    fn block_inner(&mut self, b: &Block) -> Val {
+    pub(super) fn block_inner(&mut self, b: &Block) -> Val {
         let mut last = Val::default();
         let n = b.stmts.len();
         for (i, s) in b.stmts.iter().enumerate() {
@@ -638,6 +638,12 @@ impl Lower<'_> {
             self.assign_local(l, &v, init);
             Some(l)
         };
+        // Each iteration reads the elements.
+        if let Some(l) = it {
+            for p in self.split_deps(&self.locals[l].refs.clone()).0 {
+                self.read(p);
+            }
+        }
         let header = self.emit(span, "for", String::new());
         if let Some(l) = it {
             let var = self.locals[l].var;
@@ -932,5 +938,16 @@ impl Lower<'_> {
         };
         let n = self.emit(span, "move", String::new());
         self.move_var(var, n);
+        // A move of a part of the owner frees that part only.
+        if v.var.is_none() {
+            if let Some(lv) = &v.place {
+                let root = lv.owner.and_then(|l| self.locals[l].root);
+                for &p in &lv.places {
+                    if Some(p) != root {
+                        self.facts.moved_part.push((p, n));
+                    }
+                }
+            }
+        }
     }
 }

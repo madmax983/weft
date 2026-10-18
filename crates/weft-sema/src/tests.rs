@@ -156,3 +156,36 @@ fn a_handler_clause_runs_at_each_operation_it_handles() {
     assert!(f.moved_at.contains(&(var(&f, "v"), log)));
     assert!(f.scope_end.contains(&(var(&f, "u"), log)));
 }
+
+#[test]
+fn a_move_of_a_field_moves_a_part() {
+    let f = facts(
+        "struct P { a: Vec<u64>, b: Vec<u64> }
+         fn take(v: Vec<u64>) {}
+         fn f() { let p = P { a: Vec.new(), b: Vec.new() }; take(p.a); take(p) }",
+        "f",
+    );
+    let a = place(&f, "p.a");
+    let p = var(&f, "p");
+    let (_, n) = *f
+        .moved_part
+        .iter()
+        .find(|&&(m, _)| m == a)
+        .expect("p.a moves");
+    assert!(f.moved_at.contains(&(p, n)));
+    // The move of the whole local is not a part move.
+    assert_eq!(f.moved_part.len(), 1);
+}
+
+#[test]
+fn a_loop_reads_the_elements_at_each_iteration() {
+    let f = facts("fn f(v: &Vec<u64>) { for x in v[] { print(1) } }", "f");
+    let elems = place(&f, "v[]");
+    let header = f
+        .nodes
+        .iter()
+        .position(|n| n.label == "for")
+        .map(|i| weft_facts::NodeId(u32::try_from(i).unwrap()))
+        .expect("the loop has a header");
+    assert!(f.reads_at.contains(&(header, elems)));
+}

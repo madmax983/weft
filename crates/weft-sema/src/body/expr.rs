@@ -779,10 +779,14 @@ impl Lower<'_> {
         let saved_deps = std::mem::replace(&mut self.match_deps, deps);
         let (sty, by_ref, places, sval) = if let Some(lv) = lv {
             let by_ref = lv.through_ref;
+            // A by-value binding moves the local, or a part of it.
+            let whole = lv
+                .owner
+                .filter(|&l| self.locals[l].root.is_some_and(|r| lv.places == [r]));
             let v = Val {
                 ty: lv.ty.clone(),
                 place: Some(lv.clone()),
-                var: lv.owner.map(|l| self.locals[l].var),
+                var: whole.map(|l| self.locals[l].var),
                 ..Val::default()
             };
             (lv.ty.clone(), by_ref, lv.places, v)
@@ -1401,6 +1405,11 @@ impl Lower<'_> {
                 .moved_captures
                 .extend(cs.moved_captures.iter().copied());
             clause_sum.dropped.extend(cs.dropped.iter().copied());
+            for &r in &cs.reads {
+                if !cs.own_roots.contains(&self.facts.place(r).root) {
+                    clause_sum.reads.insert(r);
+                }
+            }
         }
         footprint.sort();
         footprint.dedup();
@@ -1436,6 +1445,9 @@ impl Lower<'_> {
         for &n in &calls {
             for &v in &clause_sum.captures {
                 self.facts.uses.push((v, n));
+            }
+            for &r in &clause_sum.reads {
+                self.facts.reads_at.push((n, r));
             }
             for &v in &clause_sum.moved_captures {
                 if !self.is_copy_var(v) {
@@ -1509,13 +1521,24 @@ impl Lower<'_> {
         self.perform_effect(n, "Async");
         self.abortive(n);
         self.scopes.push(Vec::new());
-        let v = self.block(body);
+        // The tasks join before the locals of the body go out of scope.
+        self.frames.push(Frame {
+            names: Vec::new(),
+            barrier: None,
+        });
+        let v = self.block_inner(body);
+        let v = self.hand_out(v, body.span);
+        let tail = block_tail(body);
+        self.flush(tail);
         let tasks = self.scopes.pop().unwrap_or_default();
-        let v = self.hand_out(v, span);
         let end = self.emit(span, "scope end", String::new());
         for t in tasks {
             self.facts.joined_at.push((t, end));
         }
+        let held = self.hold_out(&v, tail);
+        self.end_frame(body.span);
+        self.frames.pop();
+        self.use_held(held, tail);
         self.end_frame(span);
         self.frames.pop();
         v

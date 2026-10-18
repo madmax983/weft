@@ -34,7 +34,7 @@ pub const CODES: &[Code] = &[
     Code { code: "W0401", title: "nonportable capture in fork", rule: "nonportable_capture(T, V)", text: "A fork branch runs on another thread. It cannot capture a nonportable value, for example an `rc` value." },
     Code { code: "W0402", title: "mutation through @shared", rule: "shared_mutation(P, M)", text: "A `@ shared` reference is read-only from every thread." },
     Code { code: "W0403", title: "shared-mutable reference in fork", rule: "shared_mut_capture(T, V)", text: "A shared-mutable reference is nonportable. Split the data into `@ uniq` parts with disjoint places first." },
-    Code { code: "W0405", title: "task footprints overlap", rule: "task_conflict(T, P)", text: "Tasks that can run at the same time, even on one thread, must have separate footprints." },
+    Code { code: "W0405", title: "task footprints overlap", rule: "task_conflict(T, P)", text: "Tasks that can run at the same time, even on one thread, must have separate footprints. A node that runs while a task is active must not access what the task writes, must not write what the task reads, and must not free (move or end the owner of) what the task reads or writes." },
     Code { code: "W0406", title: "uniq reference expected", rule: "modes", text: "The parameter is `@ uniq`, but the argument can be aliased." },
     Code { code: "W0501", title: "once continuation resumed twice", rule: "use_after_move(V, P)", text: "An operation that is not `multi` resumes at most once." },
     Code { code: "W0502", title: "once closure called twice", rule: "use_after_move(V, P)", text: "The closure moves a captured value, so it can run only once." },

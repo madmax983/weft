@@ -188,7 +188,8 @@ fn drop_facts(scope_end: bool) -> (B, VarId, VarId, NodeId, NodeId) {
 
 #[test]
 fn w0301_a_move_of_the_owner_invalidates_stable_parts() {
-    // invalidated_at(R, P) :- points_into(R, Path), root_of(Path, Rt), owner(Rt, V), moved_at(V, P).
+    // frees_at(P, Rt) :- owner(Rt, V), moved_at(V, P), !part_moved_at(V, P).
+    // invalidated_at(R, P) :- points_into(R, Path), frees_at(P, M), prefix(M, Path).
     let (b, v, r, n1, n2) = drop_facts(false);
     let rep = check(&b.f);
     assert!(rep.violations.error.contains(&(r, n2)));
@@ -198,7 +199,7 @@ fn w0301_a_move_of_the_owner_invalidates_stable_parts() {
 
 #[test]
 fn w0301_the_scope_end_of_the_owner_invalidates() {
-    // invalidated_at(R, P) :- points_into(R, Path), root_of(Path, Rt), owner(Rt, V), scope_end(V, P).
+    // frees_at(P, Rt) :- owner(Rt, V), scope_end(V, P).
     let (mut b, v, r, n1, n2) = drop_facts(true);
     let rep = check(&b.f);
     assert!(rep.violations.error.contains(&(r, n2)));
@@ -526,49 +527,79 @@ fn w0405_join_ends_the_task() {
 }
 
 #[test]
-fn w0405_a_use_of_a_reference_accesses_its_places() {
-    // accesses(P, A) :- uses(R, P), points_into(R, A).
+fn w0301_a_partial_move_frees_the_part_only() {
+    // frees_at(P, M) :- moved_part(M, P).
     let mut b = B::new();
-    let stats = b.param("stats");
-    let count = b.field(stats, 0, "count");
+    let p_root = b.local("p");
+    let a = b.field(p_root, 0, "a");
+    let other = b.field(p_root, 1, "b");
+    let p = b.var("p");
+    b.f.owner.push((p_root, p));
     let r = b.var("r");
-    b.f.points_into.push((r, count));
+    let q = b.var("q");
+    let n0 = b.node("let r, q");
+    b.bind(r, n0);
+    b.bind(q, n0);
+    b.f.points_into.push((r, a));
+    b.f.points_into.push((q, other));
+    let n1 = b.node("take(p.a)");
+    b.mv(p, n1);
+    b.f.moved_part.push((a, n1));
+    let n2 = b.node("print(r, q)");
+    b.use_(r, n2);
+    b.use_(q, n2);
+    let rep = check(&b.f);
+    assert!(rep.violations.error.contains(&(r, n2)));
+    assert!(!rep.violations.error.contains(&(q, n2)));
+    assert_eq!(rep.invalidations[0].cause, Cause::MovePart(a));
+}
+
+#[test]
+fn w0405_a_free_conflicts_with_a_task() {
+    // task_conflict(T, P) :- active(T, P), task_accesses(T, A), frees_at(P, M), overlaps(M, A).
+    let mut b = B::new();
+    let v_root = b.local("v");
+    let elem = b.elem(v_root);
+    let v = b.var("v");
+    b.f.owner.push((v_root, v));
     let t = b.f.add_task(TaskKind::Spawn, Span::default());
     let n0 = b.node("spawn");
     b.f.spawned_at.push((t, n0));
-    b.f.task_writes.push((t, count));
-    let n1 = b.node("print(r)");
-    b.use_(r, n1);
+    b.f.task_reads.push((t, elem));
+    let n1 = b.node("take(v)");
+    b.mv(v, n1);
     let rep = check(&b.f);
     assert!(rep.violations.task_conflict.contains(&(t, n1)));
-    assert_eq!(rep.conflicts[0].node_place, count);
-    // After the join, the use is not a conflict.
-    b.f.uses.clear();
+    assert_eq!(rep.conflicts[0].free, Some(Cause::Move(v)));
+    // A free after the join is not a conflict.
+    b.f.moved_at.clear();
     let n2 = b.node("join");
     b.f.joined_at.push((t, n2));
-    let n3 = b.node("print(r)");
-    b.use_(r, n3);
+    let n3 = b.node("end of v");
+    b.f.scope_end.push((v, n3));
     assert!(check(&b.f).violations.task_conflict.is_empty());
 }
 
 #[test]
-fn w0405_a_captured_reference_is_a_task_read() {
-    // task_reads(T, A) :- captures(T, R), points_into(R, A).
+fn w0405_a_reference_is_not_an_access_by_itself() {
+    // A use of a holder is an access only through the reads that sema records.
     let mut b = B::new();
-    let v = b.param("v");
-    let elem = b.elem(v);
+    let stats = b.param("stats");
+    let count = b.field(stats, 0, "count");
+    let name = b.field(stats, 1, "name");
     let r = b.var("r");
-    b.f.points_into.push((r, elem));
+    b.f.points_into.push((r, stats));
     let t = b.f.add_task(TaskKind::Spawn, Span::default());
     b.f.captures.push((t, r));
     let n0 = b.node("spawn");
     b.f.spawned_at.push((t, n0));
-    let n1 = b.node("v.clear()");
-    b.f.mutates_at.push((n1, v));
-    let rep = check(&b.f);
-    assert!(rep.violations.task_conflict.contains(&(t, n1)));
-    assert!(!rep.conflicts[0].task_writes);
-    assert_eq!(rep.conflicts[0].task_place, elem);
+    b.f.task_writes.push((t, count));
+    let n1 = b.node("print(stats.name)");
+    b.use_(r, n1);
+    b.f.reads_at.push((n1, name));
+    assert!(check(&b.f).violations.task_conflict.is_empty());
+    b.f.reads_at.push((n1, count));
+    assert!(check(&b.f).violations.task_conflict.contains(&(t, n1)));
 }
 
 #[test]

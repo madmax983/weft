@@ -63,6 +63,10 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
                     inside(owner, "goes out of scope"),
                 )
             }
+            Cause::MovePart(m) => {
+                let moved = &f.place(m).display;
+                (format!("{moved} : moved"), inside(moved, "is moved"))
+            }
         };
         let holder = if var.kind == VarKind::Closure || var.ty.starts_with("fn(") {
             format!("{} : {}, captures {path}", var.name, var.ty)
@@ -279,10 +283,11 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
     for c in conflicts {
         let at = f.node(c.at);
         let task = &f.tasks[c.task.index()];
-        let (verb, other) = if c.task_writes {
-            ("mutates", "accesses")
-        } else {
-            ("reads", "mutates")
+        let (verb, other) = match (c.task_writes, c.free) {
+            (true, None) => ("mutates", "accesses"),
+            (false, None) => ("reads", "mutates"),
+            (true, Some(_)) => ("mutates", "frees"),
+            (false, Some(_)) => ("reads", "frees"),
         };
         out.push(
             Diagnostic::error(

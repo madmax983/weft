@@ -19,6 +19,8 @@ pub enum Cause {
     Move(VarId),
     /// This owner of the place goes out of scope at the node.
     ScopeEnd(VarId),
+    /// The node moves the value at this place out of its owner.
+    MovePart(PlaceId),
 }
 
 /// Why a reference was invalidated: the evidence for one W0301 error.
@@ -49,6 +51,8 @@ pub struct Conflict {
     pub node_place: PlaceId,
     /// True if the task writes `task_place`.
     pub task_writes: bool,
+    /// The node frees `node_place`: a move or the end of its owner.
+    pub free: Option<Cause>,
 }
 
 /// The checker result: violations plus the evidence for diagnostics.
@@ -70,6 +74,8 @@ struct Ctx<'a> {
     /// `mutates_at`, with the footprint rule applied.
     muts: Vec<Vec<PlaceId>>,
     reads: Vec<Vec<PlaceId>>,
+    /// `frees_at`, with the cause of each free.
+    frees: Vec<Vec<(PlaceId, Cause)>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -102,13 +108,47 @@ impl<'a> Ctx<'a> {
         for &(p, a) in &f.reads_at {
             reads[p.index()].push(a);
         }
-        Self {
+        let mut cx = Self {
             f,
             succ,
             pred,
             muts,
             reads,
+            frees: vec![Vec::new(); n],
+        };
+        cx.frees = cx.frees_at();
+        cx
+    }
+
+    /// `frees_at(P, M)`: a move of a part frees the part; a move of the whole
+    /// value or the end of the owner frees each root that it owns.
+    fn frees_at(&self) -> Vec<Vec<(PlaceId, Cause)>> {
+        let f = self.f;
+        let mut out = vec![Vec::new(); self.n()];
+        let mut owned: BTreeMap<VarId, Vec<PlaceId>> = BTreeMap::new();
+        for &(rt, v) in &f.owner {
+            owned.entry(v).or_default().push(rt);
         }
+        let none: Vec<PlaceId> = Vec::new();
+        for &(m, p) in &f.moved_part {
+            out[p.index()].push((m, Cause::MovePart(m)));
+        }
+        for &(v, p) in &f.moved_at {
+            let roots = owned.get(&v).unwrap_or(&none);
+            // part_moved_at(V, P)
+            let part = f
+                .moved_part
+                .iter()
+                .any(|&(m, q)| q == p && roots.iter().any(|&rt| self.prefix(rt, m)));
+            if !part {
+                out[p.index()].extend(roots.iter().map(|&rt| (rt, Cause::Move(v))));
+            }
+        }
+        for &(v, p) in &f.scope_end {
+            let roots = owned.get(&v).unwrap_or(&none);
+            out[p.index()].extend(roots.iter().map(|&rt| (rt, Cause::ScopeEnd(v))));
+        }
+        out
     }
 
     fn n(&self) -> usize {
@@ -117,6 +157,10 @@ impl<'a> Ctx<'a> {
 
     fn same_root(&self, a: PlaceId, b: PlaceId) -> bool {
         self.f.place(a).root == self.f.place(b).root
+    }
+
+    fn prefix(&self, m: PlaceId, p: PlaceId) -> bool {
+        self.same_root(m, p) && places::may_prefix(&self.f.place(m).steps, &self.f.place(p).steps)
     }
 
     fn invalidates(&self, m: PlaceId, p: PlaceId) -> bool {
@@ -167,7 +211,7 @@ pub fn check(f: &FnFacts) -> Report {
     let uses = by_var(&f.uses);
     let moved = by_var(&f.moved_at);
 
-    invalidation(&cx, &rebound, &uses, &moved, &mut r);
+    invalidation(&cx, &rebound, &uses, &mut r);
     moves(&cx, &rebound, &uses, &moved, &mut r.violations);
     linear(&cx, &rebound, &moved, &mut r.violations);
     multi(&cx, &rebound, &uses, &mut r.violations);
@@ -181,7 +225,6 @@ fn invalidation(
     cx: &Ctx<'_>,
     rebound: &BTreeMap<VarId, Vec<NodeId>>,
     uses: &BTreeMap<VarId, Vec<NodeId>>,
-    moved: &BTreeMap<VarId, Vec<NodeId>>,
     r: &mut Report,
 ) {
     let f = cx.f;
@@ -189,11 +232,6 @@ fn invalidation(
     for &(v, p) in &f.points_into {
         paths.entry(v).or_default().push(p);
     }
-    let mut owners: BTreeMap<PlaceId, Vec<VarId>> = BTreeMap::new();
-    for &(rt, v) in &f.owner {
-        owners.entry(rt).or_default().push(v);
-    }
-    let ends = by_var(&f.scope_end);
     for (&v, ps) in &paths {
         let Some(used) = uses.get(&v) else { continue };
         // invalidated_at(R, P) with the first witness per node
@@ -210,19 +248,15 @@ fn invalidation(
                 ));
             }
         }
-        // A move or the scope end of an owner of `root_of(Path, Rt)`.
-        for &p in ps {
-            let mut at = Some(p);
-            while let Some(a) = at {
-                for &o in owners.get(&a).map_or(&[][..], Vec::as_slice) {
-                    for &n in moved.get(&o).map_or(&[][..], Vec::as_slice) {
-                        gens.push((n, p, Cause::Move(o)));
-                    }
-                    for &n in ends.get(&o).map_or(&[][..], Vec::as_slice) {
-                        gens.push((n, p, Cause::ScopeEnd(o)));
+        // A free of `M` with `prefix(M, Path)`.
+        for (i, fs) in cx.frees.iter().enumerate() {
+            let node = NodeId(u32::try_from(i).unwrap_or(u32::MAX));
+            for &(m, cause) in fs {
+                for &p in ps {
+                    if cx.prefix(m, p) {
+                        gens.push((node, p, cause));
                     }
                 }
-                at = f.place(a).parent;
             }
         }
         if gens.is_empty() {
@@ -407,24 +441,6 @@ fn tasks(cx: &Ctx<'_>, r: &mut Report) {
     for &(t, a) in &f.task_reads {
         reads.entry(t).or_default().push(a);
     }
-    // `points_into(R, A)` by holder.
-    let mut targets: BTreeMap<VarId, Vec<PlaceId>> = BTreeMap::new();
-    for &(v, p) in &f.points_into {
-        targets.entry(v).or_default().push(p);
-    }
-    // task_reads(T, A) :- captures(T, R), points_into(R, A).
-    for &(t, v) in &f.captures {
-        if let Some(ps) = targets.get(&v) {
-            reads.entry(t).or_default().extend(ps.iter().copied());
-        }
-    }
-    // accesses(P, A) :- uses(R, P), points_into(R, A).
-    let mut used_refs: Vec<Vec<PlaceId>> = vec![Vec::new(); cx.n()];
-    for &(v, n) in &f.uses {
-        if let Some(ps) = targets.get(&v) {
-            used_refs[n.index()].extend(ps.iter().copied());
-        }
-    }
     let mut spawned: BTreeMap<TaskId, Vec<NodeId>> = BTreeMap::new();
     let mut joined: BTreeMap<TaskId, Vec<NodeId>> = BTreeMap::new();
     for &(t, p) in &f.spawned_at {
@@ -445,26 +461,37 @@ fn tasks(cx: &Ctx<'_>, r: &mut Report) {
                 continue;
             }
             let node = NodeId(u32::try_from(i).unwrap_or(u32::MAX));
-            let accesses = cx.reads[i]
-                .iter()
-                .chain(cx.muts[i].iter())
-                .chain(used_refs[i].iter());
+            let accesses = cx.reads[i].iter().chain(cx.muts[i].iter());
             let mut found = None;
             for &a in accesses {
                 if let Some(&m) = tw.iter().find(|&&m| cx.overlaps(m, a)) {
-                    found = Some((m, a, true));
+                    found = Some((m, a, true, None));
                     break;
                 }
             }
             if found.is_none() {
                 for &m in &cx.muts[i] {
                     if let Some(&a) = tr.iter().find(|&&a| cx.overlaps(m, a)) {
-                        found = Some((a, m, false));
+                        found = Some((a, m, false, None));
                         break;
                     }
                 }
             }
-            if let Some((task_place, node_place, task_writes)) = found {
+            // A free of what the task reads or writes.
+            if found.is_none() {
+                for &(m, cause) in &cx.frees[i] {
+                    let hit = tr
+                        .iter()
+                        .map(|&a| (a, false))
+                        .chain(tw.iter().map(|&a| (a, true)))
+                        .find(|&(a, _)| cx.overlaps(m, a));
+                    if let Some((a, writes)) = hit {
+                        found = Some((a, m, writes, Some(cause)));
+                        break;
+                    }
+                }
+            }
+            if let Some((task_place, node_place, task_writes, free)) = found {
                 r.violations.task_conflict.insert((t, node));
                 r.conflicts.push(Conflict {
                     task: t,
@@ -472,6 +499,7 @@ fn tasks(cx: &Ctx<'_>, r: &mut Report) {
                     task_place,
                     node_place,
                     task_writes,
+                    free,
                 });
             }
         }

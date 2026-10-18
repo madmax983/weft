@@ -17,9 +17,12 @@ Status: accepted. Date: 2026-10-18.
 - `mut(p..)` is equal to `mut(p)`. A Verus lemma (`lemma_deeper_mutation_weaker`) proves
   that a deeper mutation invalidates no more.
 - Each owned local and each by-value parameter owns its root place (`owner(Rt, V)`). A
-  move of `V` or the end of its scope frees the memory, so it invalidates every
-  reference into the root, also through stable steps. A block value that points into a
-  local of the block is held across the end of the block, so this rule sees it.
+  move of `V` or the end of its scope frees the memory (`frees_at`), so it invalidates
+  every reference into the root, also through stable steps. A block value that points
+  into a local of the block is held across the end of the block, so this rule sees it.
+- A move of a part (`take(p.a)`) frees that part only (`moved_part`). References into
+  the other parts stay valid. For W0302 the move is still a move of the whole local:
+  a later use of `p`, also of `p.b`, is a use after move. This is conservative.
 - A temporary value that is not plain data has an owner too. It goes out of scope at
   the end of its statement, as in the interpreter. The value of a block is part of the
   enclosing statement, and the condition of `while` is a statement of its own.

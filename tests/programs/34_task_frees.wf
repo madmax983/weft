@@ -1,0 +1,123 @@
+// A move or the end of an owner frees its memory. A task that can run at that
+// time must not read or write the freed memory.
+struct Stats { count: u64, name: u64 }
+struct Pair { a: Vec<u64>, b: Vec<u64> }
+
+fn take(v: Vec<u64>) {}
+
+// The parent moves the owner while a task reads through a captured reference.
+fn parent_moves() / async {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    scope { s =>
+        s.spawn(|| { suspend(); print(r) })
+        take(v)   //~ W0405
+    }
+}
+
+// A sibling task moves the owner.
+fn sibling_moves() / async {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    scope { s =>
+        s.spawn(|| { suspend(); print(r) })
+        s.spawn(|| take(v))   //~ W0405
+    }
+}
+
+// A fork branch moves the owner.
+fn fork_moves() / par {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    fork(|| print(r), || take(v))   //~ W0405
+}
+
+// An inner block ends while a task reads its local.
+fn block_ends() / async {
+    scope { s =>
+        {
+            let v: Vec<u64> = Vec.new()
+            v.push(1)
+            let r = &v[0]
+            s.spawn(|| { suspend(); print(r) })
+        }   //~ W0405
+    }
+}
+
+// The parent moves a part of a pair while a task reads that part.
+fn part_moves() / async {
+    let p = Pair { a: Vec.new(), b: Vec.new() }
+    let r = &p.a
+    scope { s =>
+        s.spawn(|| print(r.len()))
+        take(p.a)   //~ W0405
+    }
+}
+
+// A loop over a collection reads it, also when the body does not use the element.
+fn loop_reads(v: &Vec<u64>) / mut(v), async {
+    scope { s =>
+        s.spawn(|| v.push(1))
+        for x in v[] { print(1) }   //~ W0405
+    }
+}
+
+// Controls: the tasks join before the locals of the scope body go out of
+// scope, and the parent moves a part that the task does not read.
+fn scope_local_joins() / async {
+    scope { s =>
+        let v: Vec<u64> = Vec.new()
+        v.push(1)
+        let r = &v[0]
+        s.spawn(|| { suspend(); print(r) })
+    }
+}
+
+fn other_part_moves() / async {
+    let p = Pair { a: Vec.new(), b: Vec.new() }
+    let r = &p.a
+    scope { s =>
+        s.spawn(|| print(r.len()))
+        take(p.b)
+    }
+}
+
+// Controls: tasks and the parent touch separate fields through one reference.
+fn fields_parent(stats: &Stats) / mut(stats.count), async {
+    scope { s =>
+        s.spawn(|| stats.count += 1)
+        print(stats.name)
+    }
+}
+
+fn fields_tasks(stats: &Stats) / mut(stats.count), async {
+    scope { s =>
+        s.spawn(|| print(stats.name))
+        s.spawn(|| stats.count += 1)
+    }
+}
+
+fn fields_fork(stats: &Stats) / mut(stats.count), par {
+    fork(|| stats.count += 1, || print(stats.name))   //~ W0403
+}
+
+// A move of one part keeps references into the other part valid.
+fn take_other_part() {
+    let p = Pair { a: Vec.new(), b: Vec.new() }
+    p.a.push(1)
+    let r = &p.a[0]
+    take(p.b)
+    print(r)
+}
+
+// A move of a part invalidates references into that part.
+fn take_part() {
+    let p = Pair { a: Vec.new(), b: Vec.new() }
+    p.a.push(1)
+    let r = &p.a
+    take(p.a)
+    print(r.len())   //~ W0301
+}
