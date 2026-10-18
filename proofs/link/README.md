@@ -36,17 +36,10 @@ verification results:: 230 verified, 0 errors
 
 The proofs do not use `assume`, `admit`, `external_body`, or new axioms.
 
-### Not in CI yet
+### CI
 
-`../verify-all.sh` does not run this crate, and the CI job runs only
-`../verify-all.sh`. Thus CI does not see a change to an included file that
-breaks a link theorem. To fix this, change the loop in `../verify-all.sh` to:
-
-```bash
-for crate in borrowing effects link; do
-```
-
-`verify.sh` runs `check-copies.sh` first, so this one change runs both.
+`../verify-all.sh` runs this crate, and the CI job runs `../verify-all.sh`.
+`verify.sh` runs `check-copies.sh` first.
 
 ## How the crate uses the sources
 

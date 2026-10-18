@@ -96,7 +96,7 @@ pub fn check_source(name: &str, src: &str, opts: Options) -> Checked {
                 sigs: Vec::new(),
                 bodies: Vec::new(),
                 diags: Vec::new(),
-                rounds: 0,
+                lowerings: 0,
             },
             reports: Vec::new(),
             diags: vec![d],

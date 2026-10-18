@@ -1,8 +1,9 @@
 //! Verified state machines for one-shot continuations and linear values.
 //!
 //! The interpreter uses these types at run time. The proofs show that a `once`
-//! continuation resumes at most once, and that a linear value ends consumed or
-//! aborted exactly once.
+//! continuation resumes at most once, and that a linear value is consumed or
+//! aborted at most once. They do not show that each linear value is finished:
+//! the static checker (W0601) and the unwinder of the interpreter must do that.
 //!
 //! `proofs/link` includes this file (`proofs/link/src/lifecycle_link.rs`). It
 //! proves that each operation is a step of the continuation and resource
@@ -10,8 +11,8 @@
 //! model step is an error. Two differences are about `multi` continuations:
 //! `drop_now` aborts a fresh `multi` continuation, and a resume after that
 //! abort fails. The model does not abort it, and it allows the resume.
-//! `proofs/verify-all.sh` does not run the link yet. Run
-//! `proofs/link/verify.sh` after a change to a spec in this file.
+//! `proofs/verify-all.sh` runs the link. Run `proofs/link/verify.sh` after a
+//! change to a spec in this file.
 
 use vstd::prelude::*;
 

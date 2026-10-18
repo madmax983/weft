@@ -754,6 +754,14 @@ fn types() {
     assert_eq!(param_ty("(A, B)"), "(A, B)");
     assert_eq!(param_ty("Self"), "Self");
     assert_eq!(param_ty("&&T"), "(& (& T))");
+    assert_eq!(param_ty("*Stmt"), "(* Stmt)");
+    assert_eq!(param_ty("**T"), "(* (* T))");
+    assert_eq!(param_ty("*&T in a"), "(* (& T in a))");
+    assert_eq!(param_ty("&*T in a"), "(& (* T) in a)");
+    assert_eq!(param_ty("*T @ uniq"), "(* T) @uniq");
+    assert_eq!(param_ty("*(T @ uniq)"), "(* T @uniq)");
+    assert_eq!(param_ty("Vec<*T>"), "Vec<(* T)>");
+    assert_eq!(param_ty("*fn() -> T"), "(* (fn () -> T))");
     assert_eq!(param_ty("&&T in a in b"), "(& (& T in a) in b)");
     assert_eq!(param_ty("&(T @ uniq) @ many"), "(& T @uniq) @many");
     assert_eq!(param_ty("fn()"), "(fn ())");
@@ -1183,13 +1191,12 @@ fn deep_nesting_is_an_error_not_a_crash() {
         deep("", "x", ".y", 100_000),
         deep("", "x", "[0]", 100_000),
         deep("", "x", "()", 100_000),
-        deep("", "x", " + x", 100_000),
-        deep("", "x", " || x", 100_000),
-        deep("x * ", "x", "", 100_000),
         deep("\"{", "x", "}\"", 2000),
         deep("", "if a {} ", "else if b {} ", 100_000),
         format!("fn f(x: {}T) {{}}", "&".repeat(5000)),
         format!("fn f(x: {}T) {{}}", "&&".repeat(5000)),
+        format!("fn f(x: {}T) {{}}", "*".repeat(5000)),
+        format!("fn f(x: {}T) {{}}", "*&".repeat(5000)),
         format!("fn f(x: {}T{}) {{}}", "(".repeat(5000), ")".repeat(5000)),
         format!("fn f(x: {}T{}) {{}}", "Vec<".repeat(5000), ">".repeat(5000)),
         format!(
@@ -1214,17 +1221,103 @@ fn deep_nesting_is_an_error_not_a_crash() {
     }
 }
 
+/// A flat chain of binary operators has no limit. The parser keeps each part of
+/// 32 operators in a hidden local, and the printer prints the chain again.
+#[test]
+fn long_binary_chains_parse() {
+    for (src, head) in [
+        (
+            format!("fn f() {{ x{} }}", " + x".repeat(100_000)),
+            "x + x + x",
+        ),
+        (
+            format!("fn f() {{ x{} }}", " || x".repeat(100_000)),
+            "x || x",
+        ),
+        (format!("fn f() {{ {}x }}", "x * ".repeat(100_000)), "x * x"),
+        (
+            format!("fn f() {{ x{} }}", " - y * z".repeat(50_000)),
+            "x - y * z - y * z",
+        ),
+    ] {
+        let f = parse(&src);
+        let text = weft_syntax::pretty::pretty(&f);
+        assert!(text.contains(head), "{}", &text[..60]);
+        assert_eq!(
+            text.split_whitespace().collect::<String>(),
+            src.split_whitespace().collect::<String>()
+        );
+        assert_eq!(weft_syntax::pretty::pretty(&parse(&text)), text);
+    }
+    // The hidden locals keep the value of each part, and the chain goes on.
+    let src = format!("fn f() {{ a{} }}", " + b".repeat(40));
+    let f = parse(&src);
+    let body = &find_fn(&f, "f").body.as_ref().unwrap().stmts;
+    let StmtKind::Expr(e) = &body[0].kind else {
+        panic!()
+    };
+    let ExprKind::Block(b) = &e.kind else {
+        panic!("{}", sx(e))
+    };
+    assert_eq!(b.stmts.len(), 2);
+    let StmtKind::Let {
+        pat: Pattern::Bind(id),
+        init: Some(part),
+        ..
+    } = &b.stmts[0].kind
+    else {
+        panic!()
+    };
+    assert!(weft_syntax::ast::is_chain_part(&id.name));
+    assert!(sx(part).starts_with("(+ (+ (+"));
+    let StmtKind::Expr(rest) = &b.stmts[1].kind else {
+        panic!()
+    };
+    assert_eq!(
+        sx(rest),
+        format!(
+            "(+ (+ (+ (+ (+ (+ (+ (+ {} b) b) b) b) b) b) b) b)",
+            id.name
+        )
+    );
+    // A short chain stays one tree.
+    assert_eq!(
+        sx_expr_in(&format!("fn f() {{ a{} }}", " + b".repeat(2))),
+        "(+ (+ a b) b)"
+    );
+    // In parentheses, a long chain binds like its last operator.
+    let src = format!("fn f() {{ (a{}) * c }}", " + b".repeat(40));
+    let text = weft_syntax::pretty::pretty(&parse(&src));
+    assert!(text.contains(" + b) * c"), "{text}");
+}
+
 #[test]
 fn moderate_nesting_is_fine() {
     let n = 40;
     let src = format!("fn f() {{ {}x{} }}", "(".repeat(n), ")".repeat(n));
     assert_eq!(sx_expr_in(&src), "x");
-    parse(&format!("fn f() {{ {}x }}", "-".repeat(300)));
+    parse(&format!("fn f() {{ {}x }}", "-".repeat(140)));
     parse(&format!("fn f() {{ x{} }}", " + x".repeat(300)));
-    parse(&format!("fn f() {{ x{} }}", ".y()".repeat(300)));
-    let src = format!("fn f() {{ if a {{}}{} }}", " else if b {}".repeat(300));
+    parse(&format!("fn f() {{ x{} }}", ".y()".repeat(140)));
+    let src = format!("fn f() {{ if a {{}}{} }}", " else if b {}".repeat(140));
     parse(&src);
     parse(&format!("fn f() {{ {}x{} }}", "{".repeat(n), "}".repeat(n)));
+    // A block costs one nesting level, like parentheses: about 96 levels.
+    parse(&format!(
+        "fn f() {{ {}x{} }}",
+        "{".repeat(94),
+        "}".repeat(94)
+    ));
+    parse(&format!(
+        "fn f() {{ {}x{} }}",
+        "(".repeat(94),
+        ")".repeat(94)
+    ));
+    parse(&format!(
+        "fn f() {{ {}x{} }}",
+        "if a { ".repeat(94),
+        " }".repeat(94)
+    ));
 }
 
 fn sx_expr_in(src: &str) -> String {
@@ -1258,7 +1351,7 @@ fn parse_error_display() {
 }
 
 /// The worst inputs, and the deepest trees, fit in a 1.5 MB stack in a debug
-/// build. Callers on 2 MB test threads are then safe.
+/// build. `crates/weft-cli/tests/limits.rs` tests the stages after the parser.
 #[test]
 fn worst_inputs_fit_in_a_small_stack() {
     let cases = vec![
@@ -1266,7 +1359,7 @@ fn worst_inputs_fit_in_a_small_stack() {
         format!("fn f() {{ {}x{} }}", "\"{".repeat(2000), "}\"".repeat(2000)),
         format!("fn f() {{ {}x{} }}", "(".repeat(5000), ")".repeat(5000)),
         format!("fn f() {{ {}x{} }}", "{".repeat(5000), "}".repeat(5000)),
-        format!("fn f() {{ x{} }}", " + x".repeat(370)),
+        format!("fn f() {{ x{} }}", " + x".repeat(100_000)),
         format!("fn f() {{ x{} }}", ".y".repeat(370)),
         format!("fn f() {{ {}x }}", "|| ".repeat(90)),
     ];

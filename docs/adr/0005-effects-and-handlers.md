@@ -14,6 +14,31 @@ Status: accepted. Date: 2026-10-18.
 - Call-site aliasing (W0312): a callee sees its reference parameters as separate places.
   So the caller must not pass overlapping places when the callee (or a handler that the
   callee reaches) mutates one of them.
+- W0312 is stronger than the design. The design lets one task mutate through aliases
+  (group borrowing). But with `fn attack(a: &Entity, b: &Entity) / mut(a, b)`, the call
+  `attack(x, y)` with `x` and `y` both in `world.entities[]` gets W0312. The workaround
+  states the shared place with `in`, so the callee knows that the two can alias:
+
+  ```weft
+  fn attack(w: &World, a: &Entity in w.entities[], b: &Entity in w.entities[]) / mut(a, b) {
+      a.hp -= 1
+      b.hp -= 1
+  }
+  ```
+
+  The caller then passes `attack(world, x, y)`, and the check accepts it.
+  `tests/programs/34_alias_in_one_task.wf` has both forms.
+- Effect inference iterates over the call graph to a fixpoint (`weft_sema::infer`).
+  A worklist lowers callees before callers. When the row of a function grows, only the
+  functions whose bodies name it are lowered again. Each new row is joined with the old
+  row, so a row only grows. A row is in a finite lattice: the effects of the program,
+  the parameters, and the `mut` places of at most 8 steps under the parameters and the
+  `rc` groups. So the inference always reaches a fixpoint. The bound for one row is the
+  height of its lattice (`weft_sema::infer::growth_limit`). It depends on the number of
+  effects, parameters and types, and on the number of different steps in the places of
+  the program. A row that grows past the bound shows a checker bug: each function whose
+  row can still grow gets W0706, an error. The checker never uses effects that can be
+  incomplete without an error.
 - Every named effect can abort (the handler can drop the continuation). A linear value
   live across such a node needs `on abort` (W0602).
 - `resume` consumes a `once` continuation (W0501). A `multi` operation needs `many` values

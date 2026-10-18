@@ -840,10 +840,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "serde",
+ "thiserror",
  "toml",
  "weft-check",
  "weft-datalog",
  "weft-facts",
+ "weft-interp",
  "weft-sema",
  "weft-syntax",
 ]

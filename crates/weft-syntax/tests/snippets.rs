@@ -325,7 +325,7 @@ fn s09_extern_fn() {
     assert!(d.is_extern);
     assert!(d.body.is_none());
     assert_eq!(d.name.name, "sqlite3_step");
-    assert_eq!(sx_ty(d.params[0].ty.as_ref().unwrap()), "(& Stmt)");
+    assert_eq!(sx_ty(d.params[0].ty.as_ref().unwrap()), "(* Stmt)");
     assert_eq!(sx_ty(d.ret.as_ref().unwrap()), "i32");
     assert_eq!(sx_row(d.effects.as_ref().unwrap()), "blocking");
 }

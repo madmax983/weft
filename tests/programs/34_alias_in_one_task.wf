@@ -1,0 +1,28 @@
+// W0312 is stronger than the design (ADR 0005). Two references into the same
+// elements cannot go to a callee that sees them as separate places. A callee
+// that states the shared place with `in` can take them.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+
+fn attack(a: &Entity, b: &Entity) / mut(a, b) {
+    a.hp -= 1
+    b.hp -= 1
+}
+
+fn fight(world: &World, i: usize, j: usize) / mut(world.entities[]) {
+    let x = &world.entities[i]
+    let y = &world.entities[j]
+    attack(x, y)   //~ W0312
+}
+
+// The workaround: both parameters are in `w.entities[]`, so they can alias.
+fn attack_in(w: &World, a: &Entity in w.entities[], b: &Entity in w.entities[]) / mut(a, b) {
+    a.hp -= 1
+    b.hp -= 1
+}
+
+fn fight_in(world: &World, i: usize, j: usize) / mut(world.entities[]) {
+    let x = &world.entities[i]
+    let y = &world.entities[j]
+    attack_in(world, x, y)
+}

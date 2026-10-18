@@ -1,0 +1,56 @@
+// Raw pointers for foreign functions (design doc "Blocking"). `*T` is an opaque
+// copy value with no place: no fields, no elements, no deref.
+extern type Stmt
+extern fn sqlite3_prepare(sql: String) -> *Stmt / blocking
+extern fn sqlite3_step(stmt: *Stmt) -> i32 / blocking
+extern fn sqlite3_finalize(stmt: *Stmt) / blocking
+
+// A local holds the result of a foreign call. A copy value can be used again.
+fn rows(sql: String) -> i32 / blocking {
+    let stmt: *Stmt = sqlite3_prepare(sql)
+    let a = sqlite3_step(stmt)
+    let b = sqlite3_step(stmt)
+    sqlite3_finalize(stmt)
+    a + b
+}
+
+// The type is inferred. A copy does not move the pointer.
+fn inferred() -> i32 / blocking {
+    let stmt = sqlite3_prepare("select 1")
+    let other = stmt
+    sqlite3_step(stmt) + sqlite3_step(other)
+}
+
+// A raw pointer has no fields and no elements.
+fn no_field() / blocking {
+    let stmt = sqlite3_prepare("x")
+    print(stmt.state)   //~ W0104
+}
+
+fn no_element() / blocking {
+    let stmt = sqlite3_prepare("x")
+    print(stmt[0])   //~ W0104
+}
+
+fn not_an_int() -> i32 / blocking {
+    sqlite3_prepare("x")   //~ W0102
+}
+
+// The checker cannot know if the foreign object allows other threads.
+fn crosses() / blocking, par {
+    let stmt = sqlite3_prepare("x")
+    fork(|| sqlite3_step(stmt), || 2)   //~ W0401
+}
+
+// Only foreign signatures and locals can name a raw pointer.
+fn wrapper(stmt: *Stmt) -> i32 / blocking {   //~ W0116
+    sqlite3_step(stmt)
+}
+
+fn leaks() -> *Stmt / blocking {   //~ W0116
+    sqlite3_prepare("x")
+}
+
+struct Holder { stmt: *Stmt }   //~ W0116
+
+enum Handle { Open(*Stmt), Closed }   //~ W0116

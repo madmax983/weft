@@ -284,7 +284,11 @@ impl fmt::Display for Display<'_> {
                 f.write_str(")")
             }
             Ty::Adt(id, ts) => {
-                f.write_str(self.names.get(*id).map_or("?", String::as_str))?;
+                let name = self.names.get(*id).map_or("?", String::as_str);
+                if let ([t], crate::program::PTR_NAME) = (ts.as_slice(), name) {
+                    return write!(f, "*{}", d(t));
+                }
+                f.write_str(name)?;
                 if !ts.is_empty() {
                     f.write_str("<")?;
                     for (i, t) in ts.iter().enumerate() {

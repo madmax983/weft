@@ -51,6 +51,16 @@ pub struct Ident {
     pub span: Span,
 }
 
+/// The prefix of the hidden locals that hold the parts of a long chain of
+/// binary operators. A `'` cannot start or continue a name in source, so no
+/// program can name them.
+pub const CHAIN_PART_PREFIX: &str = "chain'";
+
+/// Returns true if `name` is a hidden local of a long chain.
+pub fn is_chain_part(name: &str) -> bool {
+    name.starts_with(CHAIN_PART_PREFIX)
+}
+
 impl Ident {
     /// Makes a name.
     pub fn new(name: impl Into<String>, span: Span) -> Self {
@@ -198,6 +208,8 @@ pub enum TypeExprKind {
         /// The place after `in`.
         place: Option<PlaceExpr>,
     },
+    /// `*T`: a raw pointer for foreign functions. It is an opaque value.
+    Ptr(Box<TypeExpr>),
     /// `(A, B)`. The empty tuple `()` is unit.
     Tuple(Vec<TypeExpr>),
     /// `[T; N]`.

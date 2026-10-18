@@ -2,8 +2,9 @@
 
 This crate is the verified core of the Weft checker. Verus proves the code.
 A normal `cargo build` compiles the same code. The `verus!` macro removes the
-specs and the proofs. The production checker and the interpreter call these
-functions.
+specs and the proofs. The production checker and the interpreter call most of
+these functions. `places::concat` and the `modes` functions are verified but not
+yet used.
 
 ## Verify
 
@@ -54,7 +55,7 @@ the value of its spec function.
 | `invalidates` | `r == spec_invalidates(m@, p@)` (rule 3) |
 | `within` | `r == spec_within(p@, d@)` |
 | `overlaps` | `r == spec_overlaps(p@, q@)` |
-| `concat` | `r@ == a@ + b@` (effect substitution) |
+| `concat` | `r@ == a@ + b@` (not yet used; sema substitutes signature places with its own code) |
 
 | Lemma | Statement |
 | --- | --- |
@@ -105,6 +106,9 @@ Note: in this Verus version, `Set<int>` contains only finite sets. The least
 fixpoint is a subset of the nodes, so it is finite. The theorem is the same.
 
 ## `modes`: the mode lattice
+
+Not yet used: the checker decides the mode rules with flags in the facts
+(`nonportable`, `uniq`, `shared`). A later stage can use these functions.
 
 | Exec function | Ensures |
 | --- | --- |

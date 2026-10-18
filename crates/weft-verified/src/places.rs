@@ -12,8 +12,8 @@
 //! split steps. The model has no split steps (`Seg`). The link reads a split
 //! side as the elements step, and proves that rule 3 then spares only the
 //! other side of the same split. It also proves that the B3 checker with
-//! rule 3 as its kill rule has no UB. `proofs/verify-all.sh` does not run the
-//! link yet. Run `proofs/link/verify.sh` after a change to a spec in this file.
+//! rule 3 as its kill rule has no UB. `proofs/verify-all.sh` runs the link.
+//! Run `proofs/link/verify.sh` after a change to a spec in this file.
 
 use vstd::prelude::*;
 

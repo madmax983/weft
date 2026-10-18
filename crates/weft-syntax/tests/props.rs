@@ -75,6 +75,33 @@ fn check_round_trip(file: &File) -> Result<(), TestCaseError> {
 }
 
 #[test]
+fn long_chains_round_trip() {
+    // A chain of more than 32 operators has hidden locals. The names of the
+    // locals and the parentheses of a chain operand come back the same.
+    let long = |op: &str, n: usize| format!("x{}", format!(" {op} x").repeat(n));
+    let plus = long("+", 40);
+    let times = long("*", 40);
+    for body in [
+        format!("     {plus}"),
+        format!("({plus}) + 1"),
+        format!("({times}) + 1"),
+        format!("1 - ({plus})"),
+        format!("({plus}) * ({plus})"),
+        format!("-({plus})"),
+        format!("({plus}).f"),
+        format!("({plus})..({plus})"),
+        format!("{} && ({})", long("||", 40), long("&&", 70)),
+        format!("f({plus}, [{plus}])"),
+        format!("{{ {plus} }} + 1"),
+    ] {
+        let file = parse_file(&format!("fn f() {{ {body} }}")).unwrap();
+        if let Err(e) = check_round_trip(&file) {
+            panic!("{body}: {e}");
+        }
+    }
+}
+
+#[test]
 fn erase_replaces_spans_only() {
     assert_eq!(erase(&Span::new(3, 14)), "_");
     assert_eq!(erase(&"a1..2"), "\"a1..2\"");
@@ -109,6 +136,23 @@ fn pretty_output_examples() {
         "if (P {}).x {\n    f(|| 1) {\n        2\n    }\n} else if y {\n    \"a{{ 1 }}\\n\"\n}"
     );
     assert_eq!(pretty(&File::default()), "");
+    let f = parse_file(
+        "extern fn g(a: *T, b: &*T in p, c: *(T @ uniq), d: *(fn() / io)) -> *(fn()) / io",
+    )
+    .unwrap();
+    assert_eq!(
+        pretty(&f),
+        "extern fn g(a: *T, b: &*T in p, c: *(T @ uniq), d: *(fn() / io)) -> *(fn()) / io\n"
+    );
+    check_round_trip(&f).unwrap();
+    // Parentheses only where an inner reference would take the `in`.
+    let f =
+        parse_file("fn g(a: &&&T, b: &(&T) in p, c: &&T in a in b, d: &(*&T) in p) {}").unwrap();
+    assert_eq!(
+        pretty(&f),
+        "fn g(a: &&&T, b: &(&T) in p, c: &&T in a in b, d: &(*&T) in p) {}\n"
+    );
+    check_round_trip(&f).unwrap();
 }
 
 #[test]
@@ -375,6 +419,7 @@ fn ty() -> impl Strategy<Value = TypeExpr> + Clone {
                 inner: Box::new(t),
                 place
             }),
+            inner.clone().prop_map(|t| TypeExprKind::Ptr(Box::new(t))),
             prop::collection::vec(inner.clone(), 0..3).prop_map(TypeExprKind::Tuple),
             (inner.clone(), any::<u64>()).prop_map(|(t, len)| TypeExprKind::Array {
                 elem: Box::new(t),

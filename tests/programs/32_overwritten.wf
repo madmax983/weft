@@ -1,0 +1,52 @@
+// A linear value must be consumed before its variable gets a new value
+// (spec rule `overwritten(V, P)`, W0601).
+struct Conn { id: u64 }
+
+linear struct Tx { conn: Conn }
+    on abort = rollback
+
+fn rollback(tx: Tx) { let Tx(c) = tx }
+fn begin(id: u64) -> Tx { Tx { conn: Conn { id: id } } }
+
+fn overwrites() {
+    let tx = begin(1)
+    tx = begin(2)   //~ W0601
+    rollback(tx)
+}
+
+fn overwrites_in_a_branch(c: bool) {
+    let tx = begin(1)
+    if c {
+        tx = begin(2)   //~ W0601
+    }
+    rollback(tx)
+}
+
+fn overwrites_in_a_loop(n: u64) {
+    let tx = begin(0)
+    let i = 0
+    while i < n {
+        tx = begin(i)   //~ W0601
+        i += 1
+    }
+    rollback(tx)
+}
+
+// Consumed first: the new value is the only live one.
+fn consumes_then_rebinds() {
+    let tx = begin(1)
+    rollback(tx)
+    tx = begin(2)
+    rollback(tx)
+}
+
+fn rebinds_each_round(n: u64) {
+    let tx = begin(0)
+    let i = 0
+    while i < n {
+        rollback(tx)
+        tx = begin(i)
+        i += 1
+    }
+    rollback(tx)
+}

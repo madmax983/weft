@@ -19,8 +19,8 @@
 //! annotation marks at least the fixpoint of `gen` minus `kill` invalid. If
 //! no node both invalidates and rebinds the reference, the fixpoint is the
 //! invalid set of the model, outside the nodes where the reference can be
-//! unbound. `proofs/verify-all.sh` does not run the link yet. Run
-//! `proofs/link/verify.sh` after a change to a spec in this file.
+//! unbound. `proofs/verify-all.sh` runs the link. Run `proofs/link/verify.sh`
+//! after a change to a spec in this file.
 
 use vstd::prelude::*;
 

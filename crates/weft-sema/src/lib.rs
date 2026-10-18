@@ -7,6 +7,7 @@
 pub mod body;
 pub mod effects;
 pub mod fip;
+pub mod infer;
 pub mod program;
 pub mod types;
 
@@ -20,12 +21,54 @@ pub use program::{FnSig, Program, Unit};
 pub const PRELUDE_SRC: &str = include_str!("../../../std/prelude.wf");
 
 /// Analysis options.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Options {
     /// The root unit is a library: it may not install root handlers.
     pub library: bool,
     /// The embedded profile: no `std.rt`, so `main` must handle every standard effect.
     pub no_runtime: bool,
+}
+
+/// The words of file markers.
+pub const MARKERS: [&str; 2] = ["library", "no-runtime"];
+
+/// Returns each word of the file markers of a source text, with its byte
+/// offset. A marker is a line comment `// weft: WORD ...`. Spaces and commas
+/// separate the words.
+pub fn marker_words(src: &str) -> Vec<(usize, &str)> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for line in src.split_inclusive('\n') {
+        let indent = line.len() - line.trim_start().len();
+        if let Some(words) = line.trim_start().strip_prefix("// weft:") {
+            let mut at = start + indent + "// weft:".len();
+            for w in words.split_inclusive([' ', ',', '\t', '\r', '\n']) {
+                let word = w.trim_end_matches([' ', ',', '\t', '\r', '\n']);
+                if !word.is_empty() {
+                    out.push((at, word));
+                }
+                at += w.len();
+            }
+        }
+        start += line.len();
+    }
+    out
+}
+
+impl Options {
+    /// Reads the file markers of a source text (see [`marker_words`]). The
+    /// words are [`MARKERS`]. Other words have no effect.
+    pub fn from_markers(src: &str) -> Self {
+        let mut o = Self::default();
+        for (_, w) in marker_words(src) {
+            match w {
+                "library" => o.library = true,
+                "no-runtime" => o.no_runtime = true,
+                _ => {}
+            }
+        }
+        o
+    }
 }
 
 /// The facts of one body.
@@ -50,8 +93,8 @@ pub struct Analysis {
     pub bodies: Vec<BodyFacts>,
     /// Diagnostics from analysis (not from the checker).
     pub diags: Vec<Diagnostic>,
-    /// The number of effect inference rounds.
-    pub rounds: usize,
+    /// The number of body lowerings that effect inference used.
+    pub lowerings: usize,
 }
 
 /// Parses the prelude.
@@ -70,7 +113,21 @@ fn unit_of(prog: &Program, m: program::ModId) -> usize {
 }
 
 /// Analyzes the units. Unit 0 must be the prelude and unit 1 the root.
+///
+/// Effect inference ([`infer`]) gives a row to each function that does not
+/// state its effects. If it does not reach a fixpoint, each function whose row
+/// can still grow gets W0706.
 pub fn analyze(units: &[Unit], opts: Options) -> Analysis {
+    analyze_bounded(units, opts, None)
+}
+
+/// Analyzes the units. The row of a function may grow at most `limit` times.
+#[cfg(test)]
+pub(crate) fn analyze_with_limit(units: &[Unit], opts: Options, limit: usize) -> Analysis {
+    analyze_bounded(units, opts, Some(limit))
+}
+
+fn analyze_bounded(units: &[Unit], opts: Options, limit: Option<usize>) -> Analysis {
     let (prog, mut diags) = program::Collector::collect(units);
     let mut sigs: Vec<FnSig> = prog.fns.iter().map(|f| f.sig.clone()).collect();
     let user_fns: Vec<usize> = (0..prog.fns.len())
@@ -78,32 +135,14 @@ pub fn analyze(units: &[Unit], opts: Options) -> Analysis {
         .collect();
     let library_of =
         |prog: &Program, f: usize| opts.library || unit_of(prog, prog.fns[f].module) > 1;
-    // Effect inference: iterate to a fixpoint over the call graph.
-    let mut rounds = 0;
-    loop {
-        rounds += 1;
-        let mut changed = false;
-        for &f in &user_fns {
-            if sigs[f].declared {
-                continue;
-            }
-            let lib = library_of(&prog, f);
-            let l = body::Lower::new(&prog, &sigs, prog.fns[f].module, &prog.fns[f].path, lib)
-                .lower_fn(f);
-            if l.effects != sigs[f].effects {
-                sigs[f].effects = l.effects;
-                changed = true;
-            }
-        }
-        if !changed || rounds >= 32 {
-            break;
-        }
-    }
-    let mut bodies = Vec::new();
-    for &f in &user_fns {
+    let lower = |sigs: &[FnSig], f: usize| {
         let lib = library_of(&prog, f);
-        let l =
-            body::Lower::new(&prog, &sigs, prog.fns[f].module, &prog.fns[f].path, lib).lower_fn(f);
+        body::Lower::new(&prog, sigs, prog.fns[f].module, &prog.fns[f].path, lib).lower_fn(f)
+    };
+    let inferred = infer::infer(&prog, &mut sigs, &user_fns, limit, &lower);
+    diags.extend(inferred.diags);
+    let mut bodies = Vec::new();
+    for (&f, l) in user_fns.iter().zip(inferred.lowered) {
         diags.extend(l.diags);
         bodies.push(BodyFacts {
             func: Some(f),
@@ -136,7 +175,7 @@ pub fn analyze(units: &[Unit], opts: Options) -> Analysis {
         sigs,
         bodies,
         diags,
-        rounds,
+        lowerings: inferred.lowerings,
     }
 }
 

@@ -353,6 +353,7 @@ pub fn sx_ty(t: &TypeExpr) -> String {
             format!("(& {} in {})", sx_ty(inner), sx_place(p))
         }
         TypeExprKind::Ref { inner, place: None } => format!("(& {})", sx_ty(inner)),
+        TypeExprKind::Ptr(inner) => format!("(* {})", sx_ty(inner)),
         TypeExprKind::Tuple(ts) => {
             format!("({})", ts.iter().map(sx_ty).collect::<Vec<_>>().join(", "))
         }

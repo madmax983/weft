@@ -16,12 +16,14 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 serde.workspace = true
+thiserror.workspace = true
 toml.workspace = true
 weft-syntax.workspace = true
 weft-facts.workspace = true
 weft-sema.workspace = true
 weft-check.workspace = true
 weft-datalog.workspace = true
+weft-interp.workspace = true
 
 [lints]
 workspace = true
