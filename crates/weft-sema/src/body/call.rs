@@ -592,6 +592,11 @@ impl Lower<'_> {
         if abort {
             self.abortive(n);
         }
+        // The callee calls a function value that this body does not see, and it can resume more than once.
+        if sig.effects.multi {
+            self.multi_node(n);
+            self.unknown_multi = true;
+        }
         // The result.
         let ret = match inst {
             Some(t) => t.ret.clone(),

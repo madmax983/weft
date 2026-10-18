@@ -90,7 +90,9 @@ Status: accepted. Date: 2026-10-18.
 - A call of a function parameter, or of a function value that the body does not know,
   can resume a `multi` continuation more than once if a `multi` operation can reach the
   value: the type states a row with a `multi` effect, or it states no row and the
-  program has a `multi` operation (W0503).
+  program has a `multi` operation (W0503). A function that makes such a call of a value
+  that it does not know has a `multi` part in its signature: a call of the function can
+  resume more than once too. The body always infers this part.
 
 ### Mutation through the parameters of a function value
 

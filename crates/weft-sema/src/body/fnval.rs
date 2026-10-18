@@ -401,6 +401,8 @@ impl Lower<'_> {
             self.abortive(n);
             if self.may_be_multi(row) {
                 self.multi_node(n);
+                // A caller does not see this value: the call of the body is `multi`.
+                self.unknown_multi |= info.param.is_none();
             }
         }
     }
@@ -530,6 +532,7 @@ impl Lower<'_> {
         }
         if sum.multi {
             self.multi_node(n);
+            self.unknown_multi |= sum.unknown;
         }
         let pt = sum.passthrough.clone();
         self.sum().passthrough.extend(pt);

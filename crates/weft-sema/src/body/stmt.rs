@@ -180,6 +180,7 @@ impl Lower<'_> {
             stores: sum.stores.clone(),
             reaches: !self.reaches.is_empty(),
             reach_given: self.reach_sig(bases),
+            multi: self.unknown_multi,
             ..EffectSig::default()
         };
         let mut changed: Vec<PlaceId> = sum.muts.iter().copied().collect();

@@ -268,6 +268,9 @@ pub struct EffectSig {
     /// The places that the body gives to such a function value. The body always
     /// infers this part.
     pub reach_given: Vec<GivenPlace>,
+    /// The body calls a function value that it does not know, and that call can
+    /// resume a `multi` continuation more than once. The body always infers this part.
+    pub multi: bool,
 }
 
 impl EffectSig {

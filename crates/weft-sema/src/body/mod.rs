@@ -331,6 +331,9 @@ pub struct Lower<'p> {
     applied: Vec<Applied>,
     /// The handlers whose clauses are lowered.
     handled: Vec<Handled>,
+    /// A call of a function value that the body does not know can resume a
+    /// `multi` continuation more than once.
+    unknown_multi: bool,
 }
 
 impl<'p> Lower<'p> {
@@ -385,6 +388,7 @@ impl<'p> Lower<'p> {
             reaches: Vec::new(),
             applied: Vec::new(),
             handled: Vec::new(),
+            unknown_multi: false,
         }
     }
 
