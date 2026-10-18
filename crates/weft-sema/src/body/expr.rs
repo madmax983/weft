@@ -1093,12 +1093,12 @@ impl Lower<'_> {
             .map(|f| self.sigs[f].generics.clone())
             .unwrap_or_default();
         let module = self.module;
-        let ty = crate::program::TyResolver {
+
+        crate::program::TyResolver {
             prog: self.prog,
             diags: &mut self.diags,
         }
-        .resolve(t, module, &gens, None);
-        ty
+        .resolve(t, module, &gens, None)
     }
 
     /// Applies a closure summary at a node: the closure runs there.
