@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use weft_sema::program::FnId;
 use weft_sema::types::Ty;
-use weft_syntax::ast::{BinOp, Span};
+use weft_syntax::ast::Span;
 use weft_verified::lifecycle::LinState;
 
 use super::{CodeFrame, Flow, Frame, HandleMark, LinRec, ScopeRec, TaskResult, Wait, R};
@@ -13,13 +13,11 @@ use crate::error::{ErrorKind, RuntimeError};
 use crate::heap::SlotKind;
 use crate::runtime::Native;
 use crate::trace::{SuspendReason, TraceEvent};
-use crate::value::{
-    Cap, CellId, ClosureVal, EnumVal, HEnv, IterState, Obj, Place, ScopeId, Value,
-};
+use crate::value::{Cap, CellId, ClosureVal, EnumVal, HEnv, IterState, Obj, Place, ScopeId, Value};
 use weft_verified::lifecycle::Linear;
 
 /// Returns true for values that `for` and `match` bind by value.
-pub(crate) const fn is_scalar(v: &Value) -> bool {
+const fn is_scalar(v: &Value) -> bool {
     matches!(
         v,
         Value::Int(_) | Value::Bool(_) | Value::Unit | Value::Str(_) | Value::Dur(_)
@@ -291,6 +289,7 @@ impl super::Machine<'_, '_> {
             Op::Store => {
                 let (p, _) = self.pop_loc()?;
                 let v = self.pop()?;
+                self.check_unsigned(&p, &v)?;
                 let old = std::mem::replace(self.hget_mut(&p)?, v);
                 self.heap.drop_value(old);
             }
@@ -300,6 +299,7 @@ impl super::Machine<'_, '_> {
                 let p = self.follow_refs(p)?;
                 let cur = self.hget(&p)?.clone();
                 let new = self.binop(*op, cur, v)?;
+                self.check_unsigned(&p, &new)?;
                 *self.hget_mut(&p)? = new;
             }
             Op::Pop => {
@@ -412,10 +412,7 @@ impl super::Machine<'_, '_> {
                     }
                 }
                 let lin = if self.rt.adts.get(*adt).is_some_and(|a| a.linear) {
-                    self.lins.push(LinRec {
-                        l: Linear::new(),
-                        adt: *adt,
-                    });
+                    self.lins.push(LinRec { l: Linear::new() });
                     Some(self.lins.len() - 1)
                 } else {
                     None
@@ -477,7 +474,7 @@ impl super::Machine<'_, '_> {
             Op::Perform { effect, op, n } => {
                 let args = self.pop_n(*n as usize)?;
                 let henv = self.fr()?.henv.clone();
-                return self.perform(*effect, *op, args, henv);
+                return self.perform(*effect, *op, args, &henv);
             }
             Op::MakeClosure { code, caps } => {
                 let mut cells = Vec::new();
@@ -542,18 +539,21 @@ impl super::Machine<'_, '_> {
                 let v = self.pop()?;
                 if !self.bool_of(v)? {
                     let span = self.span_now();
-                    return self.abort_task(TaskResult::Failed {
-                        msg: "assertion failed".into(),
+                    return Ok(self.abort_task(TaskResult::Failed {
+                        msg: "the condition is false".into(),
                         kind: ErrorKind::Assertion,
                         span,
-                    });
+                    }));
                 }
             }
             Op::RangeIter => {
                 let hi = self.pop()?;
                 let lo = self.pop()?;
                 let (lo, hi) = (self.int_of(lo)?, self.int_of(hi)?);
-                self.push(Value::Iter(Box::new(IterState::Range { next: lo, end: hi })))?;
+                self.push(Value::Iter(Box::new(IterState::Range {
+                    next: lo,
+                    end: hi,
+                })))?;
             }
             Op::ElemIter => {
                 let (p, tr) = self.pop_loc()?;
@@ -626,6 +626,31 @@ impl super::Machine<'_, '_> {
             Frame::Code(cf) => cf.code.spans.get(cf.pc.saturating_sub(1)).copied(),
             _ => None,
         })
+    }
+
+    /// An unsigned struct field cannot hold a negative integer.
+    fn check_unsigned(&self, p: &Place, v: &Value) -> R<()> {
+        let Value::Int(i) = v else {
+            return Ok(());
+        };
+        let Some((&last, parent)) = p.path.split_last() else {
+            return Ok(());
+        };
+        if *i >= 0 {
+            return Ok(());
+        }
+        let parent = Place {
+            cell: p.cell,
+            path: parent.to_vec(),
+        };
+        if let Ok(Value::Struct(o)) = self.heap.get(&parent) {
+            let info = &self.rt.adts[o.adt];
+            if info.unsigned.get(last as usize).copied().unwrap_or(false) {
+                let name = info.fields.get(last as usize).map_or("", |n| &**n);
+                return Err(self.fault(format!("unsigned underflow: field `{name}` would be {i}")));
+            }
+        }
+        Ok(())
     }
 
     fn bind_slot(&mut self, s: u32, v: Value) -> R<()> {
@@ -859,6 +884,14 @@ impl super::Machine<'_, '_> {
             return Ok(());
         };
         for (p, a) in sig.params.iter().zip(args.iter_mut()) {
+            if let (true, Value::Int(i)) = (crate::runtime::is_unsigned(&p.ty), &*a) {
+                if *i < 0 {
+                    return Err(self.fault(format!(
+                        "unsigned underflow: parameter `{}` would be {i}",
+                        p.name
+                    )));
+                }
+            }
             if p.ty.is_ref() || matches!(p.ty, Ty::Param(_) | Ty::Fn(_) | Ty::Error) {
                 continue;
             }
@@ -876,12 +909,8 @@ impl super::Machine<'_, '_> {
     pub(crate) fn call_value(&mut self, callee: Value, args: Vec<Value>) -> R<Flow> {
         match callee {
             Value::Closure(c) => {
-                let f = self.code_frame(
-                    c.code,
-                    args,
-                    Rc::from(c.cells.as_slice()),
-                    c.henv.clone(),
-                )?;
+                let f =
+                    self.code_frame(c.code, args, Rc::from(c.cells.as_slice()), c.henv.clone())?;
                 self.task().frames.push(Frame::Code(f));
                 Ok(Flow::Continue)
             }
@@ -1075,7 +1104,7 @@ impl super::Machine<'_, '_> {
         };
         s.propagated = true;
         let henv = self.top_henv();
-        self.fail(msg, henv)
+        self.fail(msg, &henv)
     }
 
     fn fork(&mut self, n: usize, spans: &[Span]) -> R<Flow> {
@@ -1128,7 +1157,7 @@ impl super::Machine<'_, '_> {
                     self.heap.drop_value(v);
                 }
             }
-            return self.fail(msg, henv);
+            return self.fail(msg, &henv);
         }
         let mut vals = Vec::new();
         for t in tasks {

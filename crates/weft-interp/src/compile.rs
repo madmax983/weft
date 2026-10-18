@@ -93,7 +93,12 @@ impl<'a> Compiler<'a> {
         let mut tests = Vec::new();
         for t in &prog.tests {
             let id = c.reserve();
-            c.push_ctx(t.module, CodeKind::Test, format!("test \"{}\"", t.name), false);
+            c.push_ctx(
+                t.module,
+                CodeKind::Test,
+                format!("test \"{}\"", t.name),
+                false,
+            );
             c.set_span(t.body.span);
             c.block(&t.body);
             c.emit(Op::Return);
@@ -279,7 +284,10 @@ impl<'a> Compiler<'a> {
     /// Returns true if a name is a variable, without recording a capture.
     fn is_var(&self, name: &str) -> bool {
         for ctx in self.ctxs.iter().rev() {
-            if ctx.scopes.iter().any(|sc| sc.iter().any(|(n, _)| n == name))
+            if ctx
+                .scopes
+                .iter()
+                .any(|sc| sc.iter().any(|(n, _)| n == name))
                 || ctx.caps.iter().any(|(n, _)| n == name)
             {
                 return true;
@@ -374,7 +382,11 @@ impl<'a> Compiler<'a> {
     }
 
     fn variant(&self, name: &str) -> Option<(AdtId, usize)> {
-        self.prog.variants.get(name).and_then(|v| v.first()).copied()
+        self.prog
+            .variants
+            .get(name)
+            .and_then(|v| v.first())
+            .copied()
     }
 
     fn variant_arity(&self, adt: AdtId, vi: usize) -> usize {
@@ -456,7 +468,9 @@ impl<'a> Compiler<'a> {
                 self.set_span(s.span);
                 self.emit(Op::Return);
             }
-            StmtKind::Break | StmtKind::Continue => self.jump_out(matches!(s.kind, StmtKind::Break)),
+            StmtKind::Break | StmtKind::Continue => {
+                self.jump_out(matches!(s.kind, StmtKind::Break));
+            }
             StmtKind::While { cond, body } => {
                 self.emit(Op::LoopEnter);
                 let head = self.here();
@@ -597,9 +611,9 @@ impl<'a> Compiler<'a> {
                 }
             }
             Pattern::Variant { path, fields, .. } => {
-                let is_struct = self.adt_by_path(path).is_some_and(|a| {
-                    matches!(self.prog.adts[a].kind, AdtKind::Struct(_))
-                });
+                let is_struct = self
+                    .adt_by_path(path)
+                    .is_some_and(|a| matches!(self.prog.adts[a].kind, AdtKind::Struct(_)));
                 if is_struct {
                     self.emit(Op::Unstruct(u32_of(fields.len())));
                     for p in fields {
@@ -736,11 +750,11 @@ impl<'a> Compiler<'a> {
             ExprKind::Unary { op, expr } => match op {
                 UnOp::Ref => self.borrow(expr),
                 UnOp::Neg => {
-                    self.expr(expr);
+                    self.operand(expr);
                     self.emit(Op::Neg);
                 }
                 UnOp::Not => {
-                    self.expr(expr);
+                    self.operand(expr);
                     self.emit(Op::Not);
                 }
             },
@@ -768,8 +782,8 @@ impl<'a> Compiler<'a> {
                     self.patch(end, h);
                 }
                 _ => {
-                    self.expr(lhs);
-                    self.expr(rhs);
+                    self.operand(lhs);
+                    self.operand(rhs);
                     self.set_span(e.span);
                     self.emit(Op::Bin(*op));
                 }
@@ -923,7 +937,7 @@ impl<'a> Compiler<'a> {
                                 self.emit(Op::Str(Rc::from(t.as_str())));
                             }
                             StrPart::Interp(e) => {
-                                self.expr(e);
+                                self.operand(e);
                                 self.emit(Op::ToStr);
                             }
                         }
@@ -989,6 +1003,14 @@ impl<'a> Compiler<'a> {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// Compiles an operand that is only read: a place stays a place, so a
+    /// non-copy value does not move.
+    fn operand(&mut self, e: &Expr) {
+        if !self.place(e) {
+            self.expr(e);
         }
     }
 
@@ -1112,7 +1134,10 @@ impl<'a> Compiler<'a> {
         }
         match id.name.as_str() {
             "print" => {
-                let n = self.args(args, trailing);
+                for a in args {
+                    self.operand(&a.value);
+                }
+                let n = u32_of(args.len());
                 self.set_span(span);
                 self.emit(Op::Print(n));
                 return;
@@ -1158,16 +1183,16 @@ impl<'a> Compiler<'a> {
 
     /// Calls a function item. Named arguments go to their parameter, and a trailing
     /// block goes to the last free parameter, as in semantic analysis.
-    fn call_fn(
-        &mut self,
-        f: FnId,
-        recv: bool,
-        args: &[Arg],
-        trailing: Option<&Expr>,
-        span: Span,
-    ) {
+    fn call_fn(&mut self, f: FnId, recv: bool, args: &[Arg], trailing: Option<&Expr>, span: Span) {
         let params: Vec<String> = self.sigs.get(f).map_or_else(
-            || self.prog.fns[f].decl.params.iter().map(|p| p.name.name.clone()).collect(),
+            || {
+                self.prog.fns[f]
+                    .decl
+                    .params
+                    .iter()
+                    .map(|p| p.name.name.clone())
+                    .collect()
+            },
             |s| s.params.iter().map(|p| p.name.clone()).collect(),
         );
         let n = params.len();
@@ -1175,21 +1200,24 @@ impl<'a> Compiler<'a> {
         let mut slots: Vec<Option<&Expr>> = vec![None; n];
         let mut pos = first;
         for a in args {
-            let idx = match &a.name {
-                Some(nm) => params.iter().position(|p| *p == nm.name),
-                None => {
-                    while pos < n && slots[pos].is_some() {
-                        pos += 1;
-                    }
-                    Some(pos)
+            let idx = if let Some(nm) = &a.name {
+                params.iter().position(|p| *p == nm.name)
+            } else {
+                while pos < n && slots[pos].is_some() {
+                    pos += 1;
                 }
+                Some(pos)
             };
             if let Some(i) = idx.filter(|&i| i < n && i >= first) {
                 slots[i] = Some(&a.value);
             }
         }
         if let Some(t) = trailing {
-            if let Some(i) = slots.iter().rposition(Option::is_none).filter(|&i| i >= first) {
+            if let Some(i) = slots
+                .iter()
+                .rposition(Option::is_none)
+                .filter(|&i| i >= first)
+            {
                 slots[i] = Some(t);
             }
         }
@@ -1205,13 +1233,7 @@ impl<'a> Compiler<'a> {
         self.emit(Op::Call { f, n: u32_of(n) });
     }
 
-    fn method_call(
-        &mut self,
-        recv: &Expr,
-        method: &Ident,
-        args: &[Arg],
-        trailing: Option<&Expr>,
-    ) {
+    fn method_call(&mut self, recv: &Expr, method: &Ident, args: &[Arg], trailing: Option<&Expr>) {
         let span = self.top().span;
         match self.path_ref(recv) {
             Some(PathRef::Mod(m)) => {
@@ -1219,7 +1241,10 @@ impl<'a> Compiler<'a> {
                     Some(ItemRef::Fn(f)) => self.call_fn(f, false, args, trailing, span),
                     Some(ItemRef::Adt(a)) => self.positional_struct(a, args),
                     _ => {
-                        self.emit(fault(format!("no function `{}` in this module", method.name)));
+                        self.emit(fault(format!(
+                            "no function `{}` in this module",
+                            method.name
+                        )));
                     }
                 }
                 return;

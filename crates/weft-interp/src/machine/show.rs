@@ -6,7 +6,7 @@ use weft_syntax::ast::BinOp;
 
 use super::R;
 use crate::heap::SlotKind;
-use crate::value::{Cap, Place, Value};
+use crate::value::{Cap, Value};
 
 const MAX_DEPTH: usize = 24;
 
@@ -133,7 +133,11 @@ impl super::Machine<'_, '_> {
             },
             Value::Closure(_) => out.push_str("<closure>"),
             Value::FnItem(f) => {
-                let _ = write!(out, "<fn {}>", self.rt.prog.fns[*f].path);
+                let _ = write!(
+                    out,
+                    "<fn {}>",
+                    crate::runtime::qualified_name(self.rt.prog, *f)
+                );
             }
             Value::Task(t) => {
                 let _ = write!(out, "<task {t}>");
@@ -220,11 +224,7 @@ impl super::Machine<'_, '_> {
     }
 
     fn all_equal(&self, x: &[Value], y: &[Value], depth: usize) -> bool {
-        x.len() == y.len()
-            && x
-                .iter()
-                .zip(y)
-                .all(|(a, b)| self.equal(a, b, depth + 1))
+        x.len() == y.len() && x.iter().zip(y).all(|(a, b)| self.equal(a, b, depth + 1))
     }
 
     /// Applies a binary operator. Operands are read through references.
@@ -260,7 +260,8 @@ impl super::Machine<'_, '_> {
                 x.checked_sub(*y)
                     .ok_or_else(|| self.fault("duration underflow"))?,
             ),
-            (BinOp::Mul, Value::Dur(x), Value::Int(y)) | (BinOp::Mul, Value::Int(y), Value::Dur(x)) => {
+            (BinOp::Mul, Value::Dur(x), Value::Int(y))
+            | (BinOp::Mul, Value::Int(y), Value::Dur(x)) => {
                 Value::Dur(x.saturating_mul(u64::try_from(*y).unwrap_or(0)))
             }
             (BinOp::Lt, Value::Dur(x), Value::Dur(y)) => Value::Bool(x < y),
@@ -381,14 +382,6 @@ impl super::Machine<'_, '_> {
                     .collect()
             })
             .unwrap_or_default()
-    }
-
-    /// Returns the place of a reference or a location value.
-    pub(crate) const fn place_of(v: &Value) -> Option<&Place> {
-        match v {
-            Value::Ref(p) | Value::Loc(p, _) => Some(p),
-            _ => None,
-        }
     }
 }
 

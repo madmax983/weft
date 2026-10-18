@@ -1,0 +1,14 @@
+// A handler aborts a computation that has a running scope: the scope's child is
+// cancelled and its task handle gets the runtime `on abort`.
+fn inner() / fail, clock {
+    scope { s =>
+        let t = s.spawn(|| { sleep(5.s); print("never") })
+        fail("abort scope")
+        t.join()
+    }
+}
+
+fn main() / io {
+    handle Fail { fn fail(m) { print("caught {m}") } } in inner()
+    print("end")
+}

@@ -1,0 +1,21 @@
+// expect-error: failed: boom
+// The root handlers: `Log` writes to standard error, `Fail` with no handler fails `main`
+// after unwinding runs `on abort`.
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(tx: Tx) {
+    let Tx(id) = tx
+    print("rollback {id}")
+}
+
+fn risky() / fail { fail("boom") }
+
+fn main() / io, fail {
+    log.info("starting")
+    Log.warn("careful")
+    let tx = Tx { id: 3 }
+    risky()
+    let Tx(id) = tx
+    print("not reached {id}")
+}

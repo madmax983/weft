@@ -49,7 +49,7 @@ pub struct Heap {
 
 impl Heap {
     /// Makes an empty heap. `move_only[a]` tells whether type `a` never copies.
-    pub fn new(move_only: Rc<[bool]>) -> Self {
+    pub const fn new(move_only: Rc<[bool]>) -> Self {
         Self {
             slots: Vec::new(),
             move_only,
@@ -63,27 +63,23 @@ impl Heap {
     }
 
     /// Returns the number of cells ever allocated.
-    pub const fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.slots.len()
     }
 
     /// Returns true if no cell was allocated.
-    pub const fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.slots.is_empty()
     }
 
     /// Returns a cell.
     pub fn slot(&self, c: CellId) -> Result<&Slot, String> {
-        self.slots
-            .get(c)
-            .ok_or_else(|| format!("bad cell {c}"))
+        self.slots.get(c).ok_or_else(|| format!("bad cell {c}"))
     }
 
     /// Returns a cell for writing.
     pub fn slot_mut(&mut self, c: CellId) -> Result<&mut Slot, String> {
-        self.slots
-            .get_mut(c)
-            .ok_or_else(|| format!("bad cell {c}"))
+        self.slots.get_mut(c).ok_or_else(|| format!("bad cell {c}"))
     }
 
     /// Returns the value at a place.
@@ -359,7 +355,7 @@ impl Heap {
 }
 
 /// Replaces a value with [`Value::Moved`] and returns the old value.
-pub fn take_moved(v: &mut Value) -> Value {
+pub const fn take_moved(v: &mut Value) -> Value {
     std::mem::replace(v, Value::Moved)
 }
 
@@ -383,7 +379,10 @@ mod tests {
         h.weak_inc(c).ok();
         h.drop_value(Value::Rc(c));
         assert_eq!(h.leaked_rc(), 0);
-        assert!(matches!(h.slot(c).map(|s| s.kind), Ok(SlotKind::Rc { strong: 0, weak: 1 })));
+        assert!(matches!(
+            h.slot(c).map(|s| s.kind),
+            Ok(SlotKind::Rc { strong: 0, weak: 1 })
+        ));
         h.drop_value(Value::Weak(c));
         assert!(matches!(h.slot(c).map(|s| s.kind), Ok(SlotKind::Free)));
         assert!(h.rc_inc(c).is_err());
@@ -395,8 +394,14 @@ mod tests {
     fn places_and_copies() {
         let mut h = heap();
         assert!(h.is_empty());
-        let buf = h.alloc(SlotKind::Buf, Value::List(vec![Value::Int(1), Value::Int(2)]));
-        let local = h.alloc(SlotKind::Local, Value::Tuple(vec![Value::Vec(buf), Value::Int(3)]));
+        let buf = h.alloc(
+            SlotKind::Buf,
+            Value::List(vec![Value::Int(1), Value::Int(2)]),
+        );
+        let local = h.alloc(
+            SlotKind::Local,
+            Value::Tuple(vec![Value::Vec(buf), Value::Int(3)]),
+        );
         assert_eq!(h.len(), 2);
         let p = Place::root(local).child(1);
         assert!(matches!(h.get(&p), Ok(Value::Int(3))));
@@ -408,7 +413,10 @@ mod tests {
         assert_eq!(h.list(buf).map(Vec::len), Ok(2));
         h.list_mut(buf).map(|l| l.push(Value::Int(5))).ok();
         let mut owned = Vec::new();
-        h.owned_cells(h.get(&Place::root(local)).unwrap_or(&Value::Unit), &mut owned);
+        h.owned_cells(
+            h.get(&Place::root(local)).unwrap_or(&Value::Unit),
+            &mut owned,
+        );
         assert_eq!(owned, vec![buf]);
         let lin = Value::Struct(Box::new(Obj {
             adt: 0,

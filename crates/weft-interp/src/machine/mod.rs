@@ -7,6 +7,7 @@
 
 mod effects;
 mod exec;
+mod http;
 mod natives;
 mod show;
 
@@ -51,13 +52,16 @@ pub struct CodeFrame {
     pub henv: HEnv,
 }
 
+/// One clause of a handler mark: operation, code and captured cells.
+pub type Clause = (usize, CodeId, Rc<[CellId]>);
+
 /// A `handle` mark: the delimiter of a continuation.
 #[derive(Clone, Debug)]
 pub struct HandleMark {
     /// The handler instance.
     pub id: u64,
     /// The clauses: operation, code and captured cells.
-    pub clauses: Rc<[(usize, CodeId, Rc<[CellId]>)]>,
+    pub clauses: Rc<[Clause]>,
     /// The handlers outside this one. Clauses run with them.
     pub outer: HEnv,
 }
@@ -146,8 +150,6 @@ pub struct SimSaved {
 /// The simulation state.
 #[derive(Clone, Debug)]
 pub struct SimState {
-    /// The seed.
-    pub seed: u64,
     /// The virtual time when the simulation started.
     pub start: u64,
     /// The current partition.
@@ -165,6 +167,8 @@ pub enum TaskResult {
         msg: String,
         /// The kind of failure.
         kind: ErrorKind,
+        /// Where it failed.
+        span: Option<Span>,
     },
     /// It was cancelled.
     Cancelled,
@@ -269,8 +273,6 @@ pub struct ContRec {
 pub struct LinRec {
     /// The verified state machine.
     pub l: Linear,
-    /// The type.
-    pub adt: usize,
 }
 
 /// A timer.
@@ -333,11 +335,11 @@ pub struct Machine<'r, 'a> {
     pub(crate) blocking_calls: usize,
     pub(crate) cur: TaskId,
     quantum_used: u64,
-    pub(crate) requests: usize,
     pub(crate) listeners: Vec<String>,
+    http: Option<http::HttpState>,
 }
 
-const RAND_SALT: u64 = 0x5EED_0F_7A4D;
+const RAND_SALT: u64 = 0x5EED_F00D_7A4D_C0DE;
 
 impl<'r, 'a> Machine<'r, 'a> {
     /// Makes a machine for one run.
@@ -366,8 +368,8 @@ impl<'r, 'a> Machine<'r, 'a> {
             blocking_calls: 0,
             cur: 0,
             quantum_used: 0,
-            requests: 0,
             listeners: Vec::new(),
+            http: None,
         }
     }
 
@@ -403,11 +405,7 @@ impl<'r, 'a> Machine<'r, 'a> {
     fn span(&self) -> Option<Span> {
         let t = self.tasks.get(self.cur)?;
         t.frames.iter().rev().find_map(|f| match f {
-            Frame::Code(cf) => cf
-                .code
-                .spans
-                .get(cf.pc.saturating_sub(1))
-                .copied(),
+            Frame::Code(cf) => cf.code.spans.get(cf.pc.saturating_sub(1)).copied(),
             _ => None,
         })
     }
@@ -846,14 +844,14 @@ impl<'r, 'a> Machine<'r, 'a> {
             return Ok(None);
         }
         if t.cancel {
-            return self.abort_task(TaskResult::Cancelled).map(Some);
+            return Ok(Some(self.abort_task(TaskResult::Cancelled)));
         }
         match t.interrupt.take() {
             None => Ok(None),
-            Some(Interrupt::Timeout(id)) => self.timeout_unwind(id),
+            Some(Interrupt::Timeout(id)) => Ok(self.timeout_unwind(id)),
             Some(Interrupt::Fail(msg)) => {
                 let henv = self.top_henv();
-                self.fail(msg, henv).map(Some)
+                self.fail(msg, &henv).map(Some)
             }
         }
     }

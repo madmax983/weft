@@ -44,13 +44,13 @@ pub enum CPat {
     /// A literal.
     Lit(LitPat),
     /// A tuple.
-    Tuple(Vec<CPat>),
+    Tuple(Vec<Self>),
     /// A variant or a positional struct pattern.
     Variant {
         /// The variant or struct name.
         name: Rc<str>,
         /// The payload patterns.
-        fields: Vec<CPat>,
+        fields: Vec<Self>,
     },
 }
 

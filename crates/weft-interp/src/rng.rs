@@ -1,9 +1,9 @@
-//! A small seeded random number generator (SplitMix64).
+//! A small seeded random number generator (`SplitMix64`).
 //!
 //! The scheduler and the `Rand` root handler use it. The same seed always gives
 //! the same sequence, on every platform.
 
-/// A SplitMix64 generator.
+/// A `SplitMix64` generator.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rng {
     state: u64,

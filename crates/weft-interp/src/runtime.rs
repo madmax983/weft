@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use weft_sema::program::{AdtKind, EffectId, FnId, ItemRef, Program, PRELUDE};
-use weft_sema::types::AdtId;
+use weft_sema::types::{AdtId, IntTy, Ty};
 use weft_sema::FnSig;
 use weft_syntax::ast::Span;
 
@@ -98,6 +98,16 @@ pub struct AdtInfo {
     pub linear: bool,
     /// The `on abort` function.
     pub on_abort: Option<FnId>,
+    /// For each struct field: the field has an unsigned integer type.
+    pub unsigned: Vec<bool>,
+}
+
+/// Returns true for an unsigned integer type.
+pub const fn is_unsigned(t: &Ty) -> bool {
+    matches!(
+        t,
+        Ty::Int(IntTy::U8 | IntTy::U16 | IntTy::U32 | IntTy::U64 | IntTy::Usize)
+    )
 }
 
 /// Built-in types and effects.
@@ -236,6 +246,10 @@ impl<'a> Runtime<'a> {
             .adts
             .iter()
             .map(|a| {
+                let unsigned = match &a.kind {
+                    AdtKind::Struct(fs) => fs.iter().map(|f| is_unsigned(&f.ty)).collect(),
+                    _ => Vec::new(),
+                };
                 let (fields, variants, is_struct) = match &a.kind {
                     AdtKind::Struct(fs) => (
                         fs.iter().map(|f| Rc::from(f.name.as_str())).collect(),
@@ -251,10 +265,13 @@ impl<'a> Runtime<'a> {
                     ),
                     AdtKind::Extern { .. } => (Vec::new(), Vec::new(), false),
                 };
-                let on_abort = a.on_abort.as_ref().and_then(|n| match prog.lookup(a.module, n) {
-                    Some(ItemRef::Fn(f)) => Some(f),
-                    _ => None,
-                });
+                let on_abort = a
+                    .on_abort
+                    .as_ref()
+                    .and_then(|n| match prog.lookup(a.module, n) {
+                        Some(ItemRef::Fn(f)) => Some(f),
+                        _ => None,
+                    });
                 AdtInfo {
                     name: Rc::from(a.name.as_str()),
                     fields,
@@ -262,14 +279,11 @@ impl<'a> Runtime<'a> {
                     is_struct,
                     linear: a.linear,
                     on_abort,
+                    unsigned,
                 }
             })
             .collect();
-        let move_only: Rc<[bool]> = prog
-            .adts
-            .iter()
-            .map(|a| a.linear || a.immovable)
-            .collect();
+        let move_only: Rc<[bool]> = prog.adts.iter().map(|a| a.linear || a.immovable).collect();
         let find = |n: &str| match prog.mods.get(PRELUDE).and_then(|m| m.items.get(n)) {
             Some(ItemRef::Adt(a)) => Some(*a),
             _ => None,

@@ -1,0 +1,8 @@
+// unchecked
+// expect-error: a `once` continuation was resumed twice
+// The checker rejects this (W0501). The run-time guard catches it too.
+effect Note { fn note(msg: String) }
+fn main() {
+    handle Note { fn note(msg) { resume(()); resume(()) } } in note("a")
+    print("unreachable")
+}

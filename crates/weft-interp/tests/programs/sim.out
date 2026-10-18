@@ -1,0 +1,8 @@
+test election survives a partition: ok
+0s 35s
+test virtual clock: ok
+early
+late
+test tasks in a simulation: ok
+test a failing assertion: FAILED: assertion failed: the condition is false
+test a failure inside a simulation: FAILED: failed: sim fail

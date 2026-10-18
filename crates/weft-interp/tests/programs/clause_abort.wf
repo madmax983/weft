@@ -1,0 +1,24 @@
+// expect-error: failed: in clause
+// A clause fails while its continuation is not resumed: the task aborts, and
+// the frames of the continuation unwind too, so `on abort` runs for `t`.
+effect Ask { fn ask() -> u64 }
+
+linear struct Tx { id: u64 }
+    on abort = undo
+
+fn undo(t: Tx) {
+    let Tx(id) = t
+    print("undo {id}")
+}
+
+fn body() -> u64 / Ask {
+    let t = Tx { id: 9 }
+    let n = ask()
+    let Tx(i) = t
+    n + i
+}
+
+fn main() / fail {
+    let r = handle Ask { fn ask() { fail("in clause"); 0 } } in body()
+    print(r)
+}

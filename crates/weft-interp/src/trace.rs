@@ -151,7 +151,11 @@ impl fmt::Display for TraceEvent {
             } => write!(
                 f,
                 "spawn t{task} from t{parent} on w{worker}{}",
-                if *stealable { " (stealable)" } else { " (pinned)" }
+                if *stealable {
+                    " (stealable)"
+                } else {
+                    " (pinned)"
+                }
             ),
             Self::Run { task, worker } => write!(f, "run t{task} on w{worker}"),
             Self::Steal { task, from, to } => write!(f, "steal t{task} w{from} -> w{to}"),

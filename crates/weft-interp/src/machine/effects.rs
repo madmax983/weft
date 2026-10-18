@@ -12,11 +12,7 @@ use std::rc::Rc;
 use weft_sema::program::EffectId;
 use weft_verified::lifecycle::{ContError, Continuation, LinState};
 
-use super::{
-    After, CodeFrame, ContRec, Flow, Frame, SimSaved, TState, TaskResult, Timer, Unwind, Wait,
-    R,
-};
-use crate::code::CodeKind;
+use super::{After, CodeFrame, ContRec, Flow, Frame, SimSaved, TaskResult, Timer, Unwind, Wait, R};
 use crate::error::ErrorKind;
 use crate::heap::SlotKind;
 use crate::trace::{SuspendReason, TraceEvent};
@@ -29,9 +25,9 @@ impl super::Machine<'_, '_> {
         effect: EffectId,
         op: usize,
         args: Vec<Value>,
-        henv: HEnv,
+        henv: &HEnv,
     ) -> R<Flow> {
-        let Some((idx, code, cells, outer)) = self.find_handler(effect, op, &henv) else {
+        let Some((idx, code, cells, outer)) = self.find_handler(effect, op, henv) else {
             return self.root_op(effect, op, args);
         };
         let multi = self
@@ -80,14 +76,14 @@ impl super::Machine<'_, '_> {
     }
 
     /// Performs `fail(msg)`.
-    pub(crate) fn fail(&mut self, msg: String, henv: HEnv) -> R<Flow> {
+    pub(crate) fn fail(&mut self, msg: String, henv: &HEnv) -> R<Flow> {
         let Some(e) = self.rt.b.fail else {
             let span = self.span_now();
-            return self.abort_task(TaskResult::Failed {
+            return Ok(self.abort_task(TaskResult::Failed {
                 msg,
                 kind: ErrorKind::Failed,
                 span,
-            });
+            }));
         };
         let op = self.rt.prog.effects[e]
             .ops
@@ -116,7 +112,7 @@ impl super::Machine<'_, '_> {
             let tmpl = std::mem::take(&mut rec.frames);
             let copy = self.copy_frames(&tmpl);
             self.conts[k].frames = tmpl;
-            copy?
+            copy
         } else {
             std::mem::take(&mut rec.frames)
         };
@@ -188,14 +184,13 @@ impl super::Machine<'_, '_> {
     }
 
     /// Starts a simulation: it replaces the root handlers.
-    pub(crate) fn enter_sim(&mut self, seed: u64) -> Box<SimSaved> {
-        let saved = Box::new(SimSaved {
+    pub(crate) fn enter_sim(&mut self, seed: u64) -> SimSaved {
+        let saved = SimSaved {
             sim: self.sim.take(),
             sched: self.sched_rng.clone(),
             rand: self.rand_rng.clone(),
-        });
+        };
         self.sim = Some(super::SimState {
-            seed,
             start: self.now,
             partition: None,
         });
@@ -206,7 +201,7 @@ impl super::Machine<'_, '_> {
     }
 
     /// Aborts the whole current task: unwinds every frame, then ends the task.
-    pub(crate) fn abort_task(&mut self, result: TaskResult) -> R<Flow> {
+    pub(crate) fn abort_task(&mut self, result: TaskResult) -> Flow {
         let cur = self.cur;
         let frames = std::mem::take(&mut self.tasks[cur].frames);
         self.tasks[cur].aborting = true;
@@ -217,19 +212,16 @@ impl super::Machine<'_, '_> {
             prepass: false,
             children: Vec::new(),
         })));
-        Ok(Flow::Continue)
+        Flow::Continue
     }
 
     /// Aborts the block of a `with_timeout` whose deadline passed.
-    pub(crate) fn timeout_unwind(&mut self, id: u64) -> R<Option<Flow>> {
+    pub(crate) fn timeout_unwind(&mut self, id: u64) -> Option<Flow> {
         let cur = self.cur;
-        let Some(idx) = self.tasks[cur]
+        let idx = self.tasks[cur]
             .frames
             .iter()
-            .rposition(|f| matches!(f, Frame::Timeout { id: x, .. } if *x == id))
-        else {
-            return Ok(None);
-        };
+            .rposition(|f| matches!(f, Frame::Timeout { id: x, .. } if *x == id))?;
         let henv = match &self.tasks[cur].frames[idx] {
             Frame::Timeout { henv, .. } => henv.clone(),
             _ => HEnv::default(),
@@ -246,7 +238,7 @@ impl super::Machine<'_, '_> {
             prepass: false,
             children: Vec::new(),
         })));
-        Ok(Some(Flow::Continue))
+        Some(Flow::Continue)
     }
 
     /// Returns the tasks of every scope in a set of frames.
@@ -319,7 +311,7 @@ impl super::Machine<'_, '_> {
                 self.finish_task(cur, r);
                 Ok(Flow::Done)
             }
-            After::Fail { msg, henv } => self.fail(msg, henv),
+            After::Fail { msg, henv } => self.fail(msg, &henv),
         }
     }
 
@@ -365,7 +357,7 @@ impl super::Machine<'_, '_> {
                     }
                     let u = self.unwind_top()?;
                     u.frames.push(f);
-                    u.children = kids.clone();
+                    u.children.clone_from(&kids);
                     return Ok(self.block(Wait::Children(kids), SuspendReason::Children));
                 }
             }
@@ -420,8 +412,11 @@ impl super::Machine<'_, '_> {
     fn extract_linear(&mut self, v: Value, out: &mut Vec<Value>) -> Value {
         match v {
             Value::Struct(o)
-                if o.lin
-                    .is_some_and(|id| self.lins.get(id).is_some_and(|l| l.l.state == LinState::Live)) =>
+                if o.lin.is_some_and(|id| {
+                    self.lins
+                        .get(id)
+                        .is_some_and(|l| l.l.state == LinState::Live)
+                }) =>
             {
                 out.push(Value::Struct(o));
                 Value::Moved
@@ -506,7 +501,12 @@ impl super::Machine<'_, '_> {
                     return Ok(Flow::Continue);
                 };
                 self.trace.push(TraceEvent::OnAbort { task: cur, ty });
-                let f = self.code_frame(code, vec![Value::Struct(o)], Rc::from(Vec::new()), HEnv::default())?;
+                let f = self.code_frame(
+                    code,
+                    vec![Value::Struct(o)],
+                    Rc::from(Vec::new()),
+                    HEnv::default(),
+                )?;
                 self.task().frames.push(Frame::Code(f));
             }
             Value::Task(t) => {
@@ -523,7 +523,7 @@ impl super::Machine<'_, '_> {
 
     /// Copies the frames of a `multi` continuation. Cells that the frames own get
     /// fresh copies, so each resume starts from the captured state.
-    fn copy_frames(&mut self, frames: &[Frame]) -> R<Vec<Frame>> {
+    fn copy_frames(&mut self, frames: &[Frame]) -> Vec<Frame> {
         let mut owned: Vec<CellId> = Vec::new();
         for f in frames {
             if let Frame::Code(cf) = f {
@@ -550,10 +550,7 @@ impl super::Machine<'_, '_> {
             if map.contains_key(&c) {
                 continue;
             }
-            let kind = self
-                .heap
-                .slot(c)
-                .map_or(SlotKind::Local, |s| s.kind);
+            let kind = self.heap.slot(c).map_or(SlotKind::Local, |s| s.kind);
             let n = self.heap.alloc(kind, Value::Moved);
             map.insert(c, n);
         }
@@ -590,7 +587,7 @@ impl super::Machine<'_, '_> {
                 other => other.clone(),
             });
         }
-        Ok(out)
+        out
     }
 
     // -----------------------------------------------------------------------
@@ -606,14 +603,10 @@ impl super::Machine<'_, '_> {
         let opname = e.ops.get(op).map_or("", |o| o.name.as_str()).to_string();
         let ename = e.name.clone();
         if !e.is_std {
-            return Err(self.fault(format!(
-                "no handler for `{ename}.{opname}` on this task"
-            )));
+            return Err(self.fault(format!("no handler for `{ename}.{opname}` on this task")));
         }
         if self.opts.no_runtime && self.sim.is_none() {
-            return Err(self.fault(format!(
-                "no runtime: nothing handles `{ename}.{opname}`"
-            )));
+            return Err(self.fault(format!("no runtime: nothing handles `{ename}.{opname}`")));
         }
         let arg = args.into_iter().next();
         match (ename.as_str(), opname.as_str()) {
@@ -625,11 +618,11 @@ impl super::Machine<'_, '_> {
             ("Fail", _) => {
                 let msg = arg.map(|v| self.show(&v)).unwrap_or_default();
                 let span = self.span_now();
-                self.abort_task(TaskResult::Failed {
+                Ok(self.abort_task(TaskResult::Failed {
                     msg,
                     kind: ErrorKind::Failed,
                     span,
-                })
+                }))
             }
             ("Clock", "now") => {
                 let start = self.sim.as_ref().map_or(0, |s| s.start);
@@ -685,20 +678,5 @@ impl super::Machine<'_, '_> {
             reason: SuspendReason::Yield,
         });
         Ok(Flow::Yield)
-    }
-
-    /// Returns true if the task is a closure body of kind `kind`.
-    #[allow(dead_code)]
-    pub(crate) fn top_kind(&self) -> Option<CodeKind> {
-        self.tasks.get(self.cur)?.frames.iter().rev().find_map(|f| match f {
-            Frame::Code(cf) => Some(cf.code.kind),
-            _ => None,
-        })
-    }
-
-    /// Returns true if the task is blocked.
-    #[allow(dead_code)]
-    pub(crate) fn is_blocked(&self, t: TaskId) -> bool {
-        self.tasks.get(t).is_some_and(|t| t.state == TState::Blocked)
     }
 }

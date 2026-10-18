@@ -1,0 +1,14 @@
+// seed: 3
+// A spinning task is preempted at a loop back-edge, so the second task runs first.
+fn main() / io {
+    scope { s =>
+        let a = s.spawn(|| {
+            let i = 0
+            while i < 5000 { i += 1 }
+            print("spinner done")
+        })
+        let b = s.spawn(|| print("second ran"))
+        a.join()
+        b.join()
+    }
+}

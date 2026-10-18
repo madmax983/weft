@@ -1,0 +1,34 @@
+// A clause that returns without `resume` aborts: `on abort` runs once, only on that path.
+struct Conn { id: u64 }
+linear struct Tx { conn: Conn, open: bool }
+    on abort = rollback
+
+fn rollback(tx: Tx) {
+    let Tx(conn, open) = tx
+    print("rollback {conn.id}")
+}
+
+fn begin(id: u64) -> Tx / io { Tx { conn: Conn { id: id }, open: true } }
+
+impl Tx {
+    fn debit(self, amt: u64) / io, fail { if amt > 100 { fail("too much") } }
+    fn commit(self: Tx) / io {
+        let Tx(conn, open) = self
+        print("commit {conn.id}")
+    }
+}
+
+fn transfer(id: u64, amt: u64) / io, fail {
+    let tx = begin(id)
+    tx.debit(amt)
+    tx.commit()
+}
+
+fn main() / io {
+    handle Fail { fn fail(msg) { print("failed: {msg}") } } in {
+        transfer(1, 50)
+        transfer(2, 500)
+        print("not reached")
+    }
+    print("done")
+}

@@ -9,9 +9,7 @@ use super::{Flow, Frame, TaskResult, Timer, Wait, R};
 use crate::heap::SlotKind;
 use crate::runtime::Native;
 use crate::trace::{SuspendReason, TraceEvent};
-use crate::value::{
-    Cap, CellId, EnumVal, HEnv, HttpResponse, Place, Value,
-};
+use crate::value::{Cap, CellId, EnumVal, HEnv, HttpResponse, Place, Value};
 
 /// The number of threads of the blocking pool.
 const POOL_THREADS: usize = 2;
@@ -57,6 +55,12 @@ impl super::Machine<'_, '_> {
         }
     }
 
+    fn list_mut(&mut self, buf: CellId) -> R<&mut Vec<Value>> {
+        self.heap
+            .list_mut(buf)
+            .map_err(|e| crate::error::RuntimeError::new(crate::error::ErrorKind::Fault, e, None))
+    }
+
     /// Returns the value behind a reference receiver, without following `Rc`.
     fn recv_value(&self, recv: &Value) -> R<Value> {
         match recv {
@@ -99,13 +103,7 @@ impl super::Machine<'_, '_> {
 
     /// Runs a native function.
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn native(
-        &mut self,
-        n: Native,
-        f: FnId,
-        args: Vec<Value>,
-        henv: HEnv,
-    ) -> R<Flow> {
+    pub(crate) fn native(&mut self, n: Native, f: FnId, args: Vec<Value>, henv: HEnv) -> R<Flow> {
         let mut it = args.into_iter();
         let mut next = || it.next().unwrap_or_default();
         let v = match n {
@@ -120,19 +118,19 @@ impl super::Machine<'_, '_> {
                 if !whole {
                     return Err(self.fault("cannot push to a slice"));
                 }
-                self.heap.list_mut(buf).map_err(|e| self.fault(e))?.push(x);
+                self.list_mut(buf)?.push(x);
                 Value::Unit
             }
             Native::VecPop => {
                 let recv = next();
                 let (buf, _, _, _) = self.vec_of(&recv)?;
-                let x = self.heap.list_mut(buf).map_err(|e| self.fault(e))?.pop();
+                let x = self.list_mut(buf)?.pop();
                 self.option(x)?
             }
             Native::VecClear => {
                 let recv = next();
                 let (buf, _, _, _) = self.vec_of(&recv)?;
-                let xs = std::mem::take(self.heap.list_mut(buf).map_err(|e| self.fault(e))?);
+                let xs = std::mem::take(self.list_mut(buf)?);
                 for x in xs {
                     self.heap.drop_value(x);
                 }
@@ -225,7 +223,7 @@ impl super::Machine<'_, '_> {
                 let path = self.str_arg(&next());
                 match std::fs::read_to_string(&path) {
                     Ok(s) => Value::str(&s),
-                    Err(e) => return self.fail(format!("cannot read {path}: {e}"), henv),
+                    Err(e) => return self.fail(format!("cannot read {path}: {e}"), &henv),
                 }
             }
             Native::NetListen => {
@@ -288,7 +286,7 @@ impl super::Machine<'_, '_> {
             Native::HttpServe => {
                 let l = self.deref_value(next())?;
                 let h = next();
-                return self.http_serve(l, h, henv);
+                return self.http_serve(&l, h, &henv);
             }
             Native::WithTimeout => {
                 let d = self.dur_arg(next())?;
@@ -311,13 +309,15 @@ impl super::Machine<'_, '_> {
                     .iter()
                     .position(|o| o.name == "sleep")
                     .unwrap_or(0);
-                return self.perform(clock, op, vec![d], henv);
+                return self.perform(clock, op, vec![d], &henv);
             }
             Native::SimRun => {
                 let seed = self.int_of(next())?;
                 let body = next();
                 let saved = self.enter_sim(u64::try_from(seed).unwrap_or(0));
-                self.task().frames.push(Frame::Sim { saved });
+                self.task().frames.push(Frame::Sim {
+                    saved: Box::new(saved),
+                });
                 return self.call_closure(body, Vec::new());
             }
             Native::SimPartition => {
@@ -411,21 +411,19 @@ impl super::Machine<'_, '_> {
                 if let Some(s) = scope.and_then(|s| self.scopes.get_mut(s)) {
                     s.propagated = true;
                 }
-                self.fail(msg, henv.clone())
+                self.fail(msg, henv)
             }
             Some(TaskResult::Cancelled) => {
-                let msg = scope
-                    .and_then(|s| self.scopes.get_mut(s))
-                    .map_or_else(
-                        || "task was cancelled".to_string(),
-                        |s| {
-                            s.propagated = true;
-                            s.failure
-                                .clone()
-                                .unwrap_or_else(|| "task was cancelled".to_string())
-                        },
-                    );
-                self.fail(msg, henv.clone())
+                let msg = scope.and_then(|s| self.scopes.get_mut(s)).map_or_else(
+                    || "task was cancelled".to_string(),
+                    |s| {
+                        s.propagated = true;
+                        s.failure
+                            .clone()
+                            .unwrap_or_else(|| "task was cancelled".to_string())
+                    },
+                );
+                self.fail(msg, henv)
             }
             None => Err(self.fault("the task result was already taken")),
         }
