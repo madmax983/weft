@@ -24,6 +24,8 @@ pub const PRELUDE_SRC: &str = include_str!("../../../std/prelude.wf");
 pub struct Options {
     /// The root unit is a library: it may not install root handlers.
     pub library: bool,
+    /// The embedded profile: no `std.rt`, so `main` must handle every standard effect.
+    pub no_runtime: bool,
 }
 
 /// The facts of one body.
@@ -122,7 +124,11 @@ pub fn analyze(units: &[Unit], opts: Options) -> Analysis {
     }
     for &f in &user_fns {
         if prog.fns[f].decl.is_fip {
-            diags.extend(fip::check(&prog, &sigs, f));
+            let unit = unit_of(&prog, prog.fns[f].module);
+            diags.extend(fip::check(&prog, &sigs, f).into_iter().map(|mut d| {
+                d.unit = unit;
+                d
+            }));
         }
     }
     Analysis {

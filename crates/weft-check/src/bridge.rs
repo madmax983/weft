@@ -25,27 +25,30 @@ pub fn spec() -> &'static Program {
     })
 }
 
-/// Builds the input database of one function.
-pub fn database(f: &FnFacts) -> Database {
-    let mut db = Database::new();
-    macro_rules! s {
-        ($x:expr) => {
-            db.sym(&$x.to_string())
-        };
-    }
+/// One argument of an input fact.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Arg {
+    /// A symbol, such as `n3` or `Log`.
+    Sym(String),
+    /// An integer.
+    Int(i64),
+}
+
+/// Calls `emit` once for each input fact of one function.
+#[allow(clippy::too_many_lines)]
+pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
+    let s = |x: &dyn std::fmt::Display| Arg::Sym(x.to_string());
     for (i, p) in f.places.iter().enumerate() {
         let id = PlaceId(u32::try_from(i).unwrap_or(0));
-        let v = s!(id);
-        db.insert("place", [v]);
+        emit("place", &[s(&id)]);
         if let Some(q) = p.parent {
-            let qv = s!(q);
-            db.insert("parent", [v, qv]);
+            emit("parent", &[s(&id), s(&q)]);
         }
-        if p.steps.last().is_some_and(|s| s.unstable) {
-            db.insert("unstable", [v]);
+        if p.steps.last().is_some_and(|st| st.unstable) {
+            emit("unstable", &[s(&id)]);
         }
         if f.param_rooted(id) {
-            db.insert("param_rooted", [v]);
+            emit("param_rooted", &[s(&id)]);
         }
     }
     // Last-step relations between places of the same root and depth.
@@ -56,25 +59,23 @@ pub fn database(f: &FnFacts) -> Database {
                 continue;
             }
             let Some(b) = q.steps.last() else { continue };
-            let pv = s!(PlaceId(u32::try_from(i).unwrap_or(0)));
-            let qv = s!(PlaceId(u32::try_from(j).unwrap_or(0)));
+            let pv = s(&PlaceId(u32::try_from(i).unwrap_or(0)));
+            let qv = s(&PlaceId(u32::try_from(j).unwrap_or(0)));
             if places::step_alias(a, b) {
-                db.insert("step_alias", [pv, qv]);
+                emit("step_alias", &[pv.clone(), qv.clone()]);
             }
             if places::step_within(a, b) {
-                db.insert("step_within", [pv, qv]);
+                emit("step_within", &[pv, qv]);
             }
         }
     }
     for (a, b) in &f.cfg_edge {
-        let x = [s!(a), s!(b)];
-        db.insert("cfg_edge", x);
+        emit("cfg_edge", &[s(a), s(b)]);
     }
     macro_rules! rel2 {
         ($name:literal, $v:expr) => {
             for (a, b) in &$v {
-                let x = [s!(a), s!(b)];
-                db.insert($name, x);
+                emit($name, &[s(a), s(b)]);
             }
         };
     }
@@ -94,31 +95,25 @@ pub fn database(f: &FnFacts) -> Database {
     rel2!("captures", f.captures);
     rel2!("mut_through", f.mut_through);
     for (p, e) in &f.escapes_at {
-        let x = [s!(p), s!(e)];
-        db.insert("escapes_at", x);
+        emit("escapes_at", &[s(p), s(e)]);
     }
     for n in &f.may_abort {
-        let x = [s!(n)];
-        db.insert("may_abort", x);
+        emit("may_abort", &[s(n)]);
     }
     for n in &f.multi_at {
-        let x = [s!(n)];
-        db.insert("multi_at", x);
+        emit("multi_at", &[s(n)]);
     }
     for d in &f.declared_mut {
-        let x = [s!(d)];
-        db.insert("declared_mut", x);
+        emit("declared_mut", &[s(d)]);
     }
     for e in &f.declared_effect {
-        let x = [s!(e)];
-        db.insert("declared_effect", x);
+        emit("declared_effect", &[s(e)]);
     }
     for sr in &f.shared_root {
-        let x = [s!(sr)];
-        db.insert("shared_root", x);
+        emit("shared_root", &[s(sr)]);
     }
     for (i, v) in f.vars.iter().enumerate() {
-        let id = s!(VarId(u32::try_from(i).unwrap_or(0)));
+        let id = s(&VarId(u32::try_from(i).unwrap_or(0)));
         for (flag, name) in [
             (v.linear, "linear"),
             (v.has_on_abort, "has_on_abort"),
@@ -128,43 +123,78 @@ pub fn database(f: &FnFacts) -> Database {
             (v.uniq, "uniq"),
         ] {
             if flag {
-                db.insert(name, [id]);
+                emit(name, &[id.clone()]);
             }
         }
     }
     for (i, t) in f.tasks.iter().enumerate() {
-        let id = s!(TaskId(u32::try_from(i).unwrap_or(0)));
-        db.insert("task", [id]);
+        let id = s(&TaskId(u32::try_from(i).unwrap_or(0)));
+        emit("task", &[id.clone()]);
         if t.kind == TaskKind::Fork {
-            db.insert("fork_task", [id]);
+            emit("fork_task", &[id]);
         }
     }
     for (p, m, i) in &f.call_mut {
-        let x = [s!(p), s!(m), Value::Int(i64::from(*i))];
-        db.insert("call_mut", x);
+        emit("call_mut", &[s(p), s(m), Arg::Int(i64::from(*i))]);
     }
     for (p, a, i) in &f.call_arg {
-        let x = [s!(p), s!(a), Value::Int(i64::from(*i))];
-        db.insert("call_arg", x);
+        emit("call_arg", &[s(p), s(a), Arg::Int(i64::from(*i))]);
     }
     if f.has_signature {
-        db.insert("has_signature", [] as [Value; 0]);
+        emit("has_signature", &[]);
     }
     if f.library {
-        db.insert("library", [] as [Value; 0]);
+        emit("library", &[]);
     }
     for (i, h) in f.handlers.iter().enumerate() {
-        let id = s!(HandlerId(u32::try_from(i).unwrap_or(0)));
-        let e = s!(h.effect);
-        db.insert("handler", [id, e]);
+        let id = s(&HandlerId(u32::try_from(i).unwrap_or(0)));
+        let e = s(&h.effect);
+        emit("handler", &[id.clone(), e.clone()]);
         if h.is_std {
-            db.insert("std_effect", [e]);
+            emit("std_effect", &[e]);
         }
         if h.forwards {
-            db.insert("forwards", [id]);
+            emit("forwards", &[id]);
         }
     }
+}
+
+/// Builds the input database of one function.
+pub fn database(f: &FnFacts) -> Database {
+    let mut db = Database::new();
+    each_fact(f, &mut |rel, args| {
+        let vals: Vec<Value> = args
+            .iter()
+            .map(|a| match a {
+                Arg::Sym(t) => db.sym(t),
+                Arg::Int(i) => Value::Int(*i),
+            })
+            .collect();
+        db.insert(rel, vals);
+    });
     db
+}
+
+/// Writes the input facts of one function in Datalog syntax.
+pub fn facts_text(f: &FnFacts) -> String {
+    let mut out = format!("// facts of `{}`\n", f.name);
+    each_fact(f, &mut |rel, args| {
+        let a: Vec<String> = args
+            .iter()
+            .map(|a| match a {
+                Arg::Sym(t)
+                    if t.chars().next().is_some_and(|c| c.is_ascii_lowercase())
+                        && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') =>
+                {
+                    t.clone()
+                }
+                Arg::Sym(t) => format!("{t:?}"),
+                Arg::Int(i) => i.to_string(),
+            })
+            .collect();
+        out.push_str(&format!("{rel}({}).\n", a.join(", ")));
+    });
+    out
 }
 
 /// Evaluates the spec on one function.
@@ -344,4 +374,58 @@ fn render(
             }
         }
     }
+}
+
+/// The violation relations of the spec, in report order.
+pub const VIOLATION_RELATIONS: [&str; 15] = [
+    "error",
+    "use_after_move",
+    "moved_immovable",
+    "unconsumed",
+    "overwritten",
+    "abort_unhandled",
+    "live_across_multi",
+    "unauthorized_mut",
+    "unauthorized_effect",
+    "shared_mutation",
+    "alias_conflict",
+    "task_conflict",
+    "nonportable_capture",
+    "shared_mut_capture",
+    "root_handler_in_lib",
+];
+
+/// One explained violation: the fact and its derivation tree.
+#[derive(Clone, Debug)]
+pub struct Explained {
+    /// The violation relation.
+    pub relation: String,
+    /// The derived fact, with source names.
+    pub fact: String,
+    /// The derivation tree, with source names.
+    pub tree: String,
+    /// The derivation as JSON, with raw ids.
+    pub json: String,
+}
+
+/// Runs the spec with provenance and explains every violation of one function.
+pub fn explain(
+    f: &FnFacts,
+    line_of: &dyn Fn(u32) -> usize,
+) -> Result<Vec<Explained>, weft_datalog::Error> {
+    let out = evaluate_spec(f, true)?;
+    let mut v = Vec::new();
+    for rel in VIOLATION_RELATIONS {
+        for t in out.tuples(rel) {
+            if let Some(d) = out.explain(rel, &t) {
+                v.push(Explained {
+                    relation: rel.to_string(),
+                    fact: rename(&out.display_tuple(rel, &t), f, line_of),
+                    tree: render_derivation(&d, f, line_of),
+                    json: d.to_json(out.interner()),
+                });
+            }
+        }
+    }
+    Ok(v)
 }

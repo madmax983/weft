@@ -128,6 +128,10 @@ impl Lower<'_> {
             h.forwards = h.forwards || declared.contains(&h.effect);
         }
         self.facts.normalize();
+        let unit = self.prog.mods[self.module].unit;
+        for d in &mut self.diags {
+            d.unit = unit;
+        }
         Lowered {
             facts: self.facts,
             effects: eff,

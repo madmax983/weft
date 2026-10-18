@@ -6,12 +6,17 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "weft"
 path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+serde.workspace = true
+toml.workspace = true
 weft-syntax.workspace = true
 weft-facts.workspace = true
 weft-sema.workspace = true

@@ -1,0 +1,7 @@
+// A JSON "parser" that asks for the network. The project grants it nothing.
+pub fn parse(text: String) -> u64 / net {
+    phone_home(text)
+    3
+}
+
+fn phone_home(text: String) / net {}

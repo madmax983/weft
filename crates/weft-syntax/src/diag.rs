@@ -36,6 +36,8 @@ pub struct Diagnostic {
     pub span: Span,
     /// The explanation, one fact per line.
     pub notes: Vec<Note>,
+    /// The source unit: 0 is the prelude, 1 is the root file, higher are dependencies.
+    pub unit: usize,
 }
 
 impl Diagnostic {
@@ -47,6 +49,7 @@ impl Diagnostic {
             message: message.into(),
             span,
             notes: Vec::new(),
+            unit: 1,
         }
     }
 

@@ -1,0 +1,7 @@
+// A user lint rule: warn when a reference is used after a node that can abort.
+// Rules are Datalog queries over the same facts as spec/weft.dl.
+after_abort(Q) :- may_abort(P), cfg_edge(P, Q).
+after_abort(Q) :- after_abort(P), cfg_edge(P, Q).
+
+lint("reference used after a call that can abort", Q) :-
+    points_into(R, _), uses(R, Q), after_abort(Q).

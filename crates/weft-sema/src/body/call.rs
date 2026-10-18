@@ -326,7 +326,7 @@ impl Lower<'_> {
                 arg_places.push(Vec::new());
                 continue;
             }
-            self.unify(&pt, &av.val.ty, av.span);
+            self.unify_arg(&pt, &mut av.val, av.span);
             if is_ref_param || arg_is_ref {
                 arg_places.push(av.val.refs.clone());
                 held.push(i);
@@ -538,6 +538,27 @@ impl Lower<'_> {
         out
     }
 
+    /// Unifies an argument with a parameter type. A reference to a copy value
+    /// passes as the value: the call reads through the reference.
+    fn unify_arg(&mut self, pt: &Ty, v: &mut Val, span: Span) {
+        let p = self.inf.shallow(pt);
+        if let (false, Ty::Ref(inner)) = (
+            matches!(p, Ty::Ref(_) | Ty::Var(_)),
+            self.inf.shallow(&v.ty),
+        ) {
+            if self.is_copy(&inner) {
+                for &r in &v.refs.clone() {
+                    self.read(r);
+                }
+                self.unify(pt, &inner, span);
+                v.ty = (*inner).clone();
+                v.refs = Vec::new();
+                return;
+            }
+        }
+        self.unify(pt, &v.ty, span);
+    }
+
     /// A closure passed to a parameter with a declared effect row must stay inside it.
     fn check_fn_arg_effects(&mut self, pt: &Ty, s: usize, span: Span) {
         if let Ty::Fn(f) = self.inf.shallow(pt) {
@@ -586,8 +607,9 @@ impl Lower<'_> {
             );
         }
         for ((v, s), pt) in vals.iter().zip(&fty.params) {
-            self.unify(pt, &v.ty, *s);
-            self.consume(v, *s);
+            let mut v = v.clone();
+            self.unify_arg(pt, &mut v, *s);
+            self.consume(&v, *s);
         }
         self.use_local(l);
         let n = self.emit(span, &loc.name, String::new());

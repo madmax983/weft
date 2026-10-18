@@ -400,6 +400,7 @@ pub struct Collector {
     /// Diagnostics.
     pub diags: Vec<Diagnostic>,
     pending_fns: Vec<(FnId, Option<AdtId>, Vec<String>)>,
+    marked: usize,
 }
 
 impl Collector {
@@ -409,6 +410,7 @@ impl Collector {
             prog,
             diags: Vec::new(),
             pending_fns: Vec::new(),
+            marked: 0,
         }
     }
 
@@ -418,6 +420,7 @@ impl Collector {
             prog: Program::default(),
             diags: Vec::new(),
             pending_fns: Vec::new(),
+            marked: 0,
         };
         // Pass 1: names.
         let mut unit_mods = Vec::new();
@@ -435,14 +438,34 @@ impl Collector {
                 c.prog.mods[1].items.insert(u.name.clone(), ItemRef::Mod(m));
             }
             unit_mods.push(m);
+            let before = c.diags.len();
             c.declare_items(&u.file.items, m, u.is_std);
+            for d in &mut c.diags[before..] {
+                d.unit = i;
+            }
         }
         // Pass 2: bodies of type definitions and signatures.
-        for (u, &m) in units.iter().zip(&unit_mods) {
+        let mut seen = 0;
+        for (i, u) in units.iter().enumerate() {
+            c.declare_unit_mark(&mut seen, i);
+            let _ = u;
+        }
+        for (i, (u, &m)) in units.iter().zip(&unit_mods).enumerate() {
             c.define_items(&u.file.items, m);
+            c.declare_unit_mark(&mut seen, i);
         }
         c.resolve_signatures();
         (c.prog, c.diags)
+    }
+
+    /// Gives the unit index to diagnostics made since the last mark.
+    fn declare_unit_mark(&mut self, seen: &mut usize, unit: usize) {
+        let start = (*seen).max(self.marked);
+        for d in &mut self.diags[start..] {
+            d.unit = unit;
+        }
+        *seen = self.diags.len();
+        self.marked = self.diags.len();
     }
 
     fn new_mod(&mut self, name: &str, parent: Option<ModId>, is_std: bool, unit: usize) -> ModId {
@@ -742,9 +765,21 @@ impl Collector {
     fn resolve_signatures(&mut self) {
         let pending = std::mem::take(&mut self.pending_fns);
         for (id, owner, impl_gens) in pending {
+            let before = self.diags.len();
+            self.resolve_one(id, owner, &impl_gens);
+            let unit = self.prog.mods[self.prog.fns[id].module].unit;
+            for d in &mut self.diags[before..] {
+                d.unit = unit;
+            }
+        }
+        self.marked = self.diags.len();
+    }
+
+    fn resolve_one(&mut self, id: FnId, owner: Option<AdtId>, impl_gens: &[String]) {
+        {
             let f = self.prog.fns[id].decl.clone();
             let m = self.prog.fns[id].module;
-            let mut gens = impl_gens.clone();
+            let mut gens = impl_gens.to_vec();
             gens.extend(f.generics.iter().map(|g| g.name.clone()));
             let self_ty = owner.map(|o| {
                 Ty::Adt(

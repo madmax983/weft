@@ -32,6 +32,7 @@ fn run(path: &Path) -> Result<(), String> {
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
     let opts = Options {
         library: src.contains("// weft: library"),
+        no_runtime: src.contains("// weft: no-runtime"),
     };
     let checked = check_source(&name, &src, opts);
     let file = SourceFile::new(&name, src.as_str());

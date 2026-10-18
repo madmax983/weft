@@ -1,0 +1,4 @@
+// A logger that stays inside its authority.
+pub fn note(msg: String) / log {
+    log.info(msg)
+}

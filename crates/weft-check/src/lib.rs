@@ -5,6 +5,7 @@
 //! engine. The two results must be equal: [`driver::agreement`] compares them.
 
 pub mod bridge;
+pub mod codes;
 pub mod diagnose;
 pub mod driver;
 pub mod rules;

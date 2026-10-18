@@ -1,0 +1,20 @@
+// weft: no-runtime
+// The embedded profile: `main` installs its own executor instead of `std.rt`.
+effect Tick { fn tick() }
+
+fn work() / Tick, log {
+    tick()
+    log.info("done")
+}
+
+fn main() {
+    handle Tick { fn tick() { resume(()) } } in {
+        handle Log { fn info(m) { resume(()) } fn warn(m) { resume(()) } } in work()
+    }
+}
+
+fn helper() / clock { sleep(1.s) }
+
+fn main2() / clock {
+    helper()
+}
