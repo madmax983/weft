@@ -1,0 +1,36 @@
+// Linear values must be consumed; aborts need `on abort`.
+struct Conn { id: u64 }
+
+linear struct Tx { conn: Conn }
+    on abort = rollback
+
+linear struct Lock { id: u64 }
+
+fn rollback(tx: Tx) { let Tx(c) = tx }
+fn release(l: Lock) { let Lock(i) = l }
+
+fn begin() -> Tx { Tx { conn: Conn { id: 1 } } }
+fn take() -> Lock { Lock { id: 1 } }
+fn risky() / fail { fail("no") }
+
+fn forgets() {
+    let tx = begin()
+}   //~ W0601
+
+fn aborts() / fail {
+    let l = take()
+    risky()   //~ W0602
+    release(l)
+}
+
+fn fine() / fail {
+    let tx = begin()
+    risky()
+    rollback(tx)
+}
+
+fn twice() {
+    let tx = begin()
+    rollback(tx)
+    rollback(tx)   //~ W0302
+}

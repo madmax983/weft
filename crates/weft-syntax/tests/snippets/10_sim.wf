@@ -1,0 +1,8 @@
+test "election survives a partition" {
+    sim.run(seed: 42) {
+        let cluster = Cluster.start(5)
+        sim.net.partition([0, 1], [2, 3, 4])
+        sim.clock.advance(30.s)
+        assert cluster.leaders().len() == 1
+    }
+}

@@ -1,0 +1,25 @@
+// Design doc: "Deterministic simulation".
+struct Cluster { nodes: Vec<u64>, leader: u64 }
+
+impl Cluster {
+    fn start(n: u64) -> Cluster / net {
+        let nodes = Vec.new()
+        let i = 0
+        while i < n { nodes.push(i); i += 1 }
+        Cluster { nodes: nodes, leader: 2 }
+    }
+    fn leaders(self) -> Vec<u64> {
+        let out = Vec.new()
+        out.push(self.leader)
+        out
+    }
+}
+
+test "election survives a partition" {
+    sim.run(seed: 42) {
+        let cluster = Cluster.start(5)
+        sim.net.partition([0, 1], [2, 3, 4])
+        sim.clock.advance(30.s)
+        assert cluster.leaders().len() == 1
+    }
+}

@@ -1,0 +1,42 @@
+// Extra syntax that the doc names but does not show in full.
+extern type Vec<T> { elem: unstable }
+extern type Gc<T> { deref: stable }
+
+impl<T> Vec<T> {
+    extern fn new() -> Vec<T>
+    extern fn push(self, x: T) / mut(self)
+    extern fn split_mut(self, mid: usize) -> (&[T] in self[..mid] @ uniq, &[T] in self[mid..] @ uniq)
+}
+
+struct Frame: !Move { buf: [u8; 16], cur: &u8 in self.buf[] }
+
+enum Event { Died(u32), Spawned(u32, u32), Quit }
+
+effect Choice { multi fn choose() -> bool }
+
+mod api {
+    pub fn user(id: Id) -> User / net { fetch(id) }
+}
+
+fip fn rev(xs: List, acc: List) -> List {
+    match xs {
+        Cons(x, rest) => rev(rest, Cons(x, acc)),
+        Nil => acc,
+    }
+}
+
+fn wide(world: &World) / mut(world..) {
+    world.score = world.score * 2 + 1
+    let msg = "a \{literal\} brace and {world.score + 1}"
+    while world.score > 0 && !world.done {
+        world.score -= 1
+    }
+    loop { break }
+    let f = |x: u32, y| x + y
+    let g = fn_taking(fn_value)
+    world
+        .entities
+        .clear()
+}
+
+fn hof(f: fn(Request) -> Response / (net, log), g: fn() / mut(x)) {}

@@ -1,0 +1,16 @@
+effect Log { fn log(msg: String) }
+
+fn simulate(world: &World) / mut(world.entities[]), Log {
+    for e in world.entities[] {
+        step(world, e)
+        log("stepped {e.id}")    // checked as a call with the handler's footprint
+    }
+}
+
+fn main(env: Env) / io {
+    let world = World.load(env.fs)
+    let lines = Vec.new()
+    handle Log { fn log(msg) { lines.push(msg); resume(()) } }   // footprint: mut(lines)
+    in simulate(&world)
+    env.stdout.write_all(lines)
+}

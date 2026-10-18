@@ -1,0 +1,7 @@
+fn ingest(batch: &Batch, stats: &Stats) / mut(stats), async {
+    scope { s =>
+        s.spawn(|| stats.count += batch.len())   // mut(stats)
+        s.spawn(|| upload(batch))                // reads batch only: fine
+        s.spawn(|| print(stats.count))           // error: reads stats while task 1 mutates it
+    }
+}

@@ -1,0 +1,15 @@
+// Design doc: "Separation between tasks".
+struct Batch { items: Vec<u64> }
+struct Stats { count: u64 }
+
+impl Batch { fn len(self) -> u64 { 3 } }
+
+fn upload(b: &Batch) / net {}
+
+fn ingest(batch: &Batch, stats: &Stats) / mut(stats), async, net {
+    scope { s =>
+        s.spawn(|| stats.count += batch.len())   // mut(stats)
+        s.spawn(|| upload(batch))                // reads batch only: fine
+        s.spawn(|| print(stats.count))           //~ W0405
+    }
+}

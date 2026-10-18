@@ -1,0 +1,30 @@
+// Design doc: "Linear and immovable types".
+struct Conn { id: u64 }
+struct Id { n: u64 }
+
+linear struct Tx { conn: Conn, open: bool }
+    on abort = rollback        // runs only if an effect aborts the scope
+
+// A linear struct is consumed by destructuring it.
+fn rollback(tx: Tx) {
+    let Tx(conn, open) = tx
+}
+
+struct Db { url: String }
+
+impl Db {
+    fn begin(self) -> Tx / io { Tx { conn: Conn { id: 1 }, open: true } }
+}
+
+impl Tx {
+    fn debit(self, who: Id, amt: u64) / io, fail { if amt > 100 { fail("too much") } }
+    fn credit(self, who: Id, amt: u64) / io, fail {}
+    fn commit(self: Tx) / io { let Tx(conn, open) = self }
+}
+
+fn transfer(db: &Db, from: Id, to: Id, amt: u64) / io, fail {
+    let tx = db.begin()
+    tx.debit(from, amt)        // `fail` may abort here: allowed because Tx declares `on abort`
+    tx.credit(to, amt)
+    tx.commit()
+}

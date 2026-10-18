@@ -1,0 +1,11 @@
+// Design doc: "Blocking". Foreign calls carry `blocking`.
+extern type Stmt
+extern fn sqlite3_step(stmt: &Stmt) -> i32 / blocking
+
+fn next_row(stmt: &Stmt) -> i32 / blocking {
+    sqlite3_step(stmt)
+}
+
+fn wrong(stmt: &Stmt) -> i32 / net {
+    sqlite3_step(stmt)   //~ W0702
+}

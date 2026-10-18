@@ -1,0 +1,32 @@
+// Design doc: "Places and mutation", the accepted example.
+struct Weapon { dmg: i32 }
+struct Entity { id: u32, hp: i32, weapon: Option<Weapon> }
+struct Hit { damage: i32 }
+enum Event { Died(u32) }
+struct World { entities: Vec<Entity>, events: Vec<Event>, score: u32 }
+
+impl Entity {
+    fn advance(self) / mut(self) { self.hp -= 1 }
+    fn resolve(self, hit: Hit) / mut(self) { self.hp -= hit.damage }
+}
+
+impl World {
+    fn collision_for(self, e: &Entity) -> Hit { Hit { damage: e.hp / 10 } }
+}
+
+// `e` points somewhere inside world.entities[]; step may mutate only e
+fn step(world: &World, e: &Entity in world.entities[]) / mut(e) {
+    e.advance()
+    let hit = world.collision_for(e)   // reading all of world: fine
+    e.resolve(hit)
+}
+
+fn tick(world: &World) / mut(world.entities[], world.events, world.score) {
+    for e in world.entities[] {
+        step(world, e)
+        if e.hp <= 0 {
+            world.events.push(Died(e.id))  // disjoint from entities: e stays valid
+            world.score += 10              // stable place: invalidates nothing
+        }
+    }
+}

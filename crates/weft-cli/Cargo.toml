@@ -1,0 +1,22 @@
+[package]
+name = "weft-cli"
+description = "The `weft` command: check, explain, lint, run and test Weft programs."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "weft"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+weft-syntax.workspace = true
+weft-facts.workspace = true
+weft-sema.workspace = true
+weft-check.workspace = true
+weft-datalog.workspace = true
+
+[lints]
+workspace = true

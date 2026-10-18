@@ -1,0 +1,16 @@
+// Design doc: "Concurrency and the async runtime", root handlers.
+struct User { id: u64, name: String }
+
+mod db {
+    pub fn user(id: String) -> User / net { User { id: 1, name: id } }
+}
+
+fn main(env: Env) / io {
+    http.serve(env.net.listen(":8080"), handle)
+}
+
+fn handle(req: Request) -> Response / net, log {
+    let user = db.user(req.param("id"))   // suspends here: no await, no future type
+    log.info("served {user.id}")
+    Response.json(user)
+}

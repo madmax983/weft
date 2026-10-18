@@ -1,0 +1,175 @@
+// Weft static semantics: places, effects and modes.
+//
+// This program is the specification. The compiler extracts the input facts per
+// function. The production checker (crates/weft-check) must derive the same
+// violation relations on every program.
+//
+// Names: P, Q are CFG nodes; R, V are variables (a reference holder is a
+// variable); M, A, D, S and Path are places; T is a task; H is a handler; Cap is a
+// capability; E is an effect name.
+//
+// Input facts
+//   place(P)                 P is a place.
+//   parent(P, Q)             place P is place Q plus one step.
+//   unstable(P)              the step into P is unstable.
+//   step_alias(P, Q)         the last steps of P and Q can name the same memory.
+//   step_within(P, Q)        the last step of P names a subset of the last step of Q.
+//   param_rooted(P)          the root of P is a parameter or an rc group.
+//   cfg_edge(P, Q)           control can flow from node P to node Q.
+//   points_into(R, Path)     reference holder R can point into Path.
+//   mutates_at(P, M)         node P mutates place M.
+//   reads_at(P, A)           node P reads place A.
+//   performs_at(P, Cap)      node P performs through capability Cap.
+//   footprint(Cap, M)        the handler behind Cap mutates M.
+//   rebound_at(V, P)         node P gives V a new value.
+//   uses(V, P)               node P uses V.
+//   moved_at(V, P)           node P moves V (a move is also a use).
+//   scope_end(V, P)          V goes out of scope at node P on a normal path.
+//   linear(V)                V holds a linear value.
+//   has_on_abort(V)          the type of V declares `on abort`.
+//   once_var(V)              V is not `many`: linear, uniq, a once closure or a continuation.
+//   immovable(V)             the type of V is `!Move`.
+//   may_abort(P)             an effect can abort the scope at node P.
+//   multi_at(P)              node P can resume a `multi` continuation more than once.
+//   has_signature()          the function states its effects.
+//   declared_mut(D)          the signature states `mut(D)`.
+//   declared_effect(E)       the signature states effect E (closed under implication).
+//   escapes_at(P, E)         node P performs E and no local handler handles it.
+//   shared_root(S)           S is reached through a `@ shared` reference.
+//   task(T)                  T is a spawned task or a fork branch.
+//   fork_task(T)             T is a fork branch: it runs on another thread.
+//   spawned_at(T, P)         node P starts T.
+//   joined_at(T, P)          T is finished after node P.
+//   task_reads(T, A)         T reads A.
+//   task_writes(T, M)        T mutates M.
+//   captures(T, V)           the closure of T captures V.
+//   mut_through(T, V)        T mutates through the reference V.
+//   nonportable(V)           V cannot cross threads.
+//   uniq(V)                  V is `@ uniq`.
+//   call_mut(P, M, I)        the call at P mutates M through callee root I.
+//   call_arg(P, A, I)        the call at P passes place A as callee root I.
+//   library()                the module is a library.
+//   handler(H, E)            H handles effect E.
+//   std_effect(E)            E is a standard effect.
+//   forwards(H)              the function around H can still perform the effect of H.
+
+// ---------------------------------------------------------------------------
+// Places
+// ---------------------------------------------------------------------------
+
+// Two places at the same depth can name the same memory.
+alias(P, P)            :- place(P).
+alias(P, Q)            :- parent(P, P1), parent(Q, Q1), alias(P1, Q1), step_alias(P, Q).
+
+// M can be a prefix of P.
+prefix(M, P)           :- alias(M, P).
+prefix(M, P)           :- parent(P, Q), prefix(M, Q).
+
+strict_prefix(M, P)    :- parent(P, Q), prefix(M, Q).
+
+// P has an unstable step after the length of M.
+crosses_unstable(M, P) :- parent(P, Q), prefix(M, Q), unstable(P).
+crosses_unstable(M, P) :- parent(P, Q), crosses_unstable(M, Q).
+
+overlaps(P, Q)         :- prefix(P, Q).
+overlaps(P, Q)         :- prefix(Q, P).
+
+// P and D have the same depth, and each step of P names a subset of the step of D.
+pointwise(P, P)        :- place(P).
+pointwise(P, D)        :- parent(P, Q), parent(D, E), pointwise(Q, E), step_within(P, D).
+
+// P is inside or equal to D.
+within(P, D)           :- pointwise(P, D).
+within(P, D)           :- parent(P, Q), within(Q, D).
+
+// ---------------------------------------------------------------------------
+// W0301: use of an invalidated reference (rules 3, 4 and 5)
+// ---------------------------------------------------------------------------
+
+mutates_at(P, M)     :- performs_at(P, Cap), footprint(Cap, M).   // effects feed the same relation
+
+invalidated_at(R, P) :- points_into(R, Path), mutates_at(P, M),
+                        strict_prefix(M, Path), crosses_unstable(M, Path).
+invalid(R, Q)        :- invalidated_at(R, P), cfg_edge(P, Q).
+invalid(R, Q)        :- invalid(R, P), cfg_edge(P, Q), !rebound_at(R, P).
+error(R, P)          :- uses(R, P), invalid(R, P).
+
+// ---------------------------------------------------------------------------
+// W0302, W0501, W0502: use after move (affine values, once continuations)
+// ---------------------------------------------------------------------------
+
+moved(V, Q)          :- moved_at(V, P), cfg_edge(P, Q).
+moved(V, Q)          :- moved(V, P), cfg_edge(P, Q), !rebound_at(V, P).
+use_after_move(V, P) :- uses(V, P), moved(V, P).
+
+// W0604: a `!Move` value keeps its address.
+moved_immovable(V, P) :- moved_at(V, P), immovable(V).
+
+// ---------------------------------------------------------------------------
+// W0601, W0602: linear values
+// ---------------------------------------------------------------------------
+
+live_linear(V, Q)     :- linear(V), rebound_at(V, P), cfg_edge(P, Q).
+live_linear(V, Q)     :- live_linear(V, P), cfg_edge(P, Q), !moved_at(V, P).
+
+unconsumed(V, P)      :- live_linear(V, P), scope_end(V, P).
+overwritten(V, P)     :- live_linear(V, P), rebound_at(V, P).
+abort_unhandled(V, P) :- live_linear(V, P), may_abort(P), !moved_at(V, P), !has_on_abort(V).
+
+// ---------------------------------------------------------------------------
+// W0503: values live across a `multi` operation must be `many`
+// ---------------------------------------------------------------------------
+
+live_in(V, P)        :- uses(V, P).
+live_in(V, P)        :- live_out(V, P), !rebound_at(V, P).
+live_out(V, P)       :- cfg_edge(P, Q), live_in(V, Q).
+
+live_across_multi(V, P) :- multi_at(P), live_out(V, P), once_var(V).
+
+// ---------------------------------------------------------------------------
+// W0702, W0703, W0402: effects in signatures
+// ---------------------------------------------------------------------------
+
+needs_decl(P, M)        :- mutates_at(P, M), param_rooted(M).
+covered(M)              :- needs_decl(_, M), declared_mut(D), within(M, D).
+unauthorized_mut(P, M)  :- has_signature(), needs_decl(P, M), !covered(M).
+
+unauthorized_effect(P, E) :- has_signature(), escapes_at(P, E), !declared_effect(E).
+
+shared_mutation(P, M)   :- mutates_at(P, M), shared_root(S), within(M, S).
+
+// ---------------------------------------------------------------------------
+// W0312: a call passes overlapping places to a callee that mutates one of them
+// ---------------------------------------------------------------------------
+
+alias_conflict(P, M, A) :- call_mut(P, M, I), call_arg(P, A, J), I != J, overlaps(M, A).
+
+// ---------------------------------------------------------------------------
+// W0405: tasks that can run at the same time have separate footprints
+// ---------------------------------------------------------------------------
+
+active(T, Q)         :- spawned_at(T, P), cfg_edge(P, Q).
+active(T, Q)         :- active(T, P), cfg_edge(P, Q), !joined_at(T, P).
+
+accesses(P, A)       :- reads_at(P, A).
+accesses(P, A)       :- mutates_at(P, A).
+
+task_conflict(T, P)  :- active(T, P), task_writes(T, M), accesses(P, A), overlaps(M, A).
+task_conflict(T, P)  :- active(T, P), task_reads(T, A), mutates_at(P, M), overlaps(M, A).
+
+// ---------------------------------------------------------------------------
+// W0401, W0403: fork branches are portable; work stealing follows from modes
+// ---------------------------------------------------------------------------
+
+nonportable_capture(T, V) :- fork_task(T), captures(T, V), nonportable(V).
+shared_mut_capture(T, V)  :- fork_task(T), captures(T, V), mut_through(T, V), !uniq(V).
+
+pinned(T)            :- captures(T, V), nonportable(V).
+pinned(T)            :- captures(T, V), mut_through(T, V), !uniq(V).
+stealable(T)         :- task(T), !pinned(T).
+
+// ---------------------------------------------------------------------------
+// W0801: only binaries and tests install root handlers for standard effects
+// ---------------------------------------------------------------------------
+
+root_handler_in_lib(H) :- library(), handler(H, E), std_effect(E), !forwards(H).
