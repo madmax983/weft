@@ -3,7 +3,7 @@
 use weft_facts::{FnFacts, NodeId, VarKind};
 use weft_syntax::diag::Diagnostic;
 
-use crate::rules::{Conflict, Report};
+use crate::rules::{Cause, Conflict, Report};
 
 fn node_span(f: &FnFacts, n: NodeId) -> weft_facts::Span {
     f.node(n).span
@@ -23,26 +23,81 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
     for inv in &r.invalidations {
         let var = f.var(inv.var);
         let path = &f.place(inv.path).display;
-        let mutated = &f.place(inv.mutated).display;
         let at = f.node(inv.at);
-        let mut_text = if at.detail.is_empty() {
-            format!("mut({mutated})")
-        } else {
-            at.detail.clone()
-        };
+        let line = at.span.lo;
         let name = match var.kind {
             VarKind::Iterator => "the loop iterator".to_string(),
             VarKind::Temp => format!("the {}", var.name),
             _ => format!("`{}`", var.name),
         };
-        let d = Diagnostic::error("W0301", format!("{name} used after it was invalidated"), node_span(f, inv.used_at))
-            .note_at(format!("{} : &{} in {path}", var.name, var.ty.trim_start_matches('&')), var.span)
-            .note_at(format!("{} : {mut_text}", at.label), at.span)
-            .note(format!(
-                "{mutated} is a strict prefix of {path}, through an unstable step  →  invalidated at line {{line:{}}}",
-                at.span.lo
-            ))
-            .note(format!("used at line {{line:{}}}", node_span(f, inv.used_at).lo));
+        // What the node does, and why that invalidates the reference.
+        let inside = |owner: &str, verb: &str| {
+            let head = if path == owner {
+                format!("{owner} {verb}")
+            } else {
+                format!("{path} is inside {owner}, which {verb}")
+            };
+            format!("{head} at line {{line:{line}}}  →  invalidated at line {{line:{line}}}")
+        };
+        let (what, why) = match inv.cause {
+            Cause::Mutation(m) => {
+                let mutated = &f.place(m).display;
+                let what = if at.detail.is_empty() {
+                    format!("{} : mut({mutated})", at.label)
+                } else {
+                    format!("{} : {}", at.label, at.detail)
+                };
+                let why = format!(
+                    "{mutated} is a strict prefix of {path}, through an unstable step  →  invalidated at line {{line:{line}}}"
+                );
+                (what, why)
+            }
+            Cause::Move(o) => {
+                let owner = &f.var(o).name;
+                (format!("{owner} : moved"), inside(owner, "is moved"))
+            }
+            Cause::ScopeEnd(o) => {
+                let owner = &f.var(o).name;
+                (
+                    format!("{owner} : goes out of scope"),
+                    inside(owner, "goes out of scope"),
+                )
+            }
+        };
+        let holder = if var.kind == VarKind::Closure || var.ty.starts_with("fn(") {
+            format!("{} : {}, captures {path}", var.name, var.ty)
+        } else {
+            format!(
+                "{} : &{} in {path}",
+                var.name,
+                var.ty.trim_start_matches('&')
+            )
+        };
+        let used = node_span(f, inv.used_at);
+        // A block value is held only across the end of its block.
+        let block_value = var.kind == VarKind::Temp && var.name == "block value";
+        let d = if let (true, Cause::ScopeEnd(o)) = (block_value, inv.cause) {
+            Diagnostic::error(
+                "W0301",
+                format!(
+                    "the value of this block points into `{path}`, but `{}` goes out of scope at the end of the block",
+                    f.var(o).name
+                ),
+                used,
+            )
+            .note_at(holder, var.span)
+            .note_at(what, at.span)
+        } else {
+            Diagnostic::error(
+                "W0301",
+                format!("{name} used after it was invalidated"),
+                used,
+            )
+            .note_at(holder, var.span)
+            .note_at(what, at.span)
+            .note(why)
+            .note(format!("used at line {{line:{}}}", used.lo))
+        };
         out.push(d);
     }
 

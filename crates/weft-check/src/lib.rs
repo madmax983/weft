@@ -11,7 +11,7 @@ pub mod driver;
 pub mod rules;
 
 pub use driver::{agreement, check_analysis, check_source, Checked};
-pub use rules::{check, Conflict, Invalidation, Report};
+pub use rules::{check, Cause, Conflict, Invalidation, Report};
 
 #[cfg(test)]
 mod tests;

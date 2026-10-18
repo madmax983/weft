@@ -28,7 +28,11 @@ flowchart TD
     perform["perform op"] --> cap["performs_at(P, Cap)"] --> fp["footprint(Cap, M)"] --> mut
     spawn["s.spawn(closure)"] --> tw["task_writes(T, M)"] --> mut
     mut --> inv["invalidated_at(R, P)"] --> invalid["invalid(R, Q)"] --> err["error(R, P) = W0301"]
+    drop["moved_at(V, P), scope_end(V, P)"] --> own["owner(Rt, V), root_of(Path, Rt)"] --> inv
 ```
+
+A mutation invalidates a reference only through an unstable step. A move or the end of
+the owner frees the memory, so it invalidates every reference into the owned value.
 
 ## Verified pieces
 

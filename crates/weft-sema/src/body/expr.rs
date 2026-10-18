@@ -277,6 +277,7 @@ impl Lower<'_> {
                     owner: Some(l),
                     through_ref: false,
                     uniq: loc.uniq,
+                    deps: Vec::new(),
                 })
             };
             return Val {
@@ -390,19 +391,23 @@ impl Lower<'_> {
                 self.use_local(l);
                 let loc = self.locals[l].clone();
                 match self.inf.shallow(&loc.ty) {
-                    Ty::Ref(inner) => Some(LVal {
-                        places: loc.refs,
-                        ty: *inner,
-                        owner: None,
-                        through_ref: true,
-                        uniq: loc.uniq,
-                    }),
+                    Ty::Ref(inner) => {
+                        let (places, deps) = self.split_deps(&loc.refs);
+                        Some(LVal {
+                            places,
+                            ty: *inner,
+                            owner: None,
+                            through_ref: true,
+                            uniq: loc.uniq,
+                            deps,
+                        })
+                    }
                     t => {
                         let r = if let Some(r) = loc.root {
                             r
                         } else {
                             let r = self.root(&loc.name, RootKind::Local);
-                            self.locals[l].root = Some(r);
+                            self.set_root(l, r);
                             r
                         };
                         Some(LVal {
@@ -411,6 +416,7 @@ impl Lower<'_> {
                             owner: Some(l),
                             through_ref: false,
                             uniq: loc.uniq,
+                            deps: Vec::new(),
                         })
                     }
                 }
@@ -481,12 +487,15 @@ impl Lower<'_> {
                         Ty::Adt(ia, _) => self.group_root(ia),
                         _ => self.group_root(a),
                     };
+                    let mut deps = lv.deps.clone();
+                    deps.extend(self.handle_deps(&lv.places));
                     lv = LVal {
                         places: vec![g],
                         ty: inner,
                         owner: None,
                         through_ref: true,
                         uniq: false,
+                        deps,
                     };
                 }
                 _ => break,
@@ -592,16 +601,16 @@ impl Lower<'_> {
                     LVal {
                         places: vec![r],
                         ty: v.ty,
-                        owner: None,
-                        through_ref: false,
-                        uniq: false,
+                        ..LVal::default()
                     }
                 }
             }
         };
+        let mut refs = lv.places;
+        refs.extend(lv.deps);
         Val {
-            ty: Ty::Ref(Box::new(lv.ty.clone())),
-            refs: lv.places,
+            ty: Ty::Ref(Box::new(lv.ty)),
+            refs,
             uniq: false,
             ..Val::default()
         }
@@ -765,6 +774,9 @@ impl Lower<'_> {
 
     fn match_expr(&mut self, scrut: &Expr, arms: &[ast::Arm], span: Span) -> Val {
         let lv = self.place_expr(scrut);
+        // A binding by reference depends on the `Rc` handles on the way.
+        let deps = lv.as_ref().map(|l| l.deps.clone()).unwrap_or_default();
+        let saved_deps = std::mem::replace(&mut self.match_deps, deps);
         let (sty, by_ref, places, sval) = if let Some(lv) = lv {
             let by_ref = lv.through_ref;
             let v = Val {
@@ -807,15 +819,18 @@ impl Lower<'_> {
             }
             refs.extend(v.refs.iter().copied());
             let v = self.hand_out(v, arm.span);
-            let _ = v;
+            let tail = expr_tail(&arm.body);
+            let held = self.hold_out(&v, tail);
             self.end_frame(arm.span);
             self.frames.pop();
+            self.use_held(held, tail);
             if let Some(c) = self.cur {
                 self.facts.cfg_edge.push((c, join));
                 reached = true;
             }
         }
         self.cur = if reached { Some(join) } else { None };
+        self.match_deps = saved_deps;
         Val {
             ty: result,
             refs,
@@ -848,9 +863,11 @@ impl Lower<'_> {
                     }
                 }
                 let v = if by_ref {
+                    let mut refs = places.to_vec();
+                    refs.extend(self.match_deps.iter().copied());
                     Val {
                         ty: Ty::Ref(Box::new(t)),
-                        refs: places.to_vec(),
+                        refs,
                         ..Val::default()
                     }
                 } else {
@@ -1007,6 +1024,7 @@ impl Lower<'_> {
         });
         let entry = self.start(span, "closure entry");
         let mut ptys = Vec::new();
+        let mut param_roots = Vec::new();
         for (i, p) in params.iter().enumerate() {
             let ty = match (&p.ty, expected.and_then(|f| f.params.get(i))) {
                 (Some(t), _) => self.local_ty_pub(t),
@@ -1020,6 +1038,7 @@ impl Lower<'_> {
             } else {
                 Vec::new()
             };
+            param_roots.push(refs.first().copied());
             self.assign_local(
                 l,
                 &Val {
@@ -1030,13 +1049,20 @@ impl Lower<'_> {
                 entry,
             );
         }
-        let v = self.expr(body);
+        // The body returns its value: W0204 reports a value into its own locals.
+        let v = match &body.kind {
+            ExprKind::Block(b) => self.block_with(b, false),
+            _ => self.expr(body),
+        };
         if let Some(f) = expected {
             if !matches!(self.inf.shallow(&f.ret), Ty::Unit) {
                 self.unify(&f.ret, &v.ty, body.span);
             }
         }
         let v = self.hand_out(v, body.span);
+        let ret_refs = self.closure_ret_refs(&v, expr_tail(body));
+        self.sum().ret_refs = ret_refs;
+        self.sum().param_roots = param_roots;
         let ret_ty = v.ty.clone();
         self.drop_value(&v, body.span);
         self.flush(expr_tail(body));
@@ -1111,6 +1137,93 @@ impl Lower<'_> {
             summary: Some(id),
             ..Val::default()
         }
+    }
+
+    /// Returns the places of a closure result. A place inside a local of the
+    /// closure is W0204: the local goes out of scope when the closure returns.
+    fn closure_ret_refs(&mut self, v: &Val, span: Span) -> Vec<PlaceId> {
+        let own = self.sum().own_roots.clone();
+        let mut out = Vec::new();
+        let mut reported = Vec::new();
+        for &r in &v.refs {
+            let root = self.facts.place(r).root;
+            let local = self.facts.roots[root.index()].kind == RootKind::Local;
+            if own.contains(&root) && local {
+                if !reported.contains(&root) {
+                    reported.push(root);
+                    let name = self.facts.roots[root.index()].name.clone();
+                    self.err(
+                        "W0204",
+                        format!(
+                            "the closure returns a reference into `{}`: its local `{name}` goes out of scope at the return",
+                            self.facts.place(r).display
+                        ),
+                        span,
+                    );
+                }
+            } else {
+                out.push(r);
+            }
+        }
+        out
+    }
+
+    /// The places of a closure call result: a place under a reference parameter of
+    /// the closure stands for the places of that argument.
+    pub(super) fn closure_call_refs(&mut self, s: usize, args: &[Vec<PlaceId>]) -> Vec<PlaceId> {
+        let sum = self.closures[s].clone();
+        let mut out = Vec::new();
+        for &r in &sum.ret_refs {
+            let root = self.root_place(r);
+            match sum.param_roots.iter().position(|&p| p == Some(root)) {
+                Some(i) => {
+                    for &a in args.get(i).map_or(&[][..], Vec::as_slice) {
+                        out.push(self.rebase(r, root, a));
+                    }
+                }
+                None => out.push(r),
+            }
+        }
+        out
+    }
+
+    /// Returns the root place of `p`.
+    pub(super) fn root_place(&self, p: PlaceId) -> PlaceId {
+        let mut p = p;
+        while let Some(q) = self.facts.place(p).parent {
+            p = q;
+        }
+        p
+    }
+
+    /// Moves place `p` from under `from` to under `onto`, with the same steps.
+    fn rebase(&mut self, p: PlaceId, from: PlaceId, onto: PlaceId) -> PlaceId {
+        let mut chain = Vec::new();
+        let mut at = p;
+        while at != from {
+            let Some(parent) = self.facts.place(at).parent else {
+                return p;
+            };
+            chain.push((at, parent));
+            at = parent;
+        }
+        let mut out = onto;
+        for &(child, parent) in chain.iter().rev() {
+            let info = self.facts.place(child);
+            let Some(&step) = info.steps.last() else {
+                return p;
+            };
+            let text = info
+                .display
+                .get(self.facts.place(parent).display.len()..)
+                .unwrap_or("")
+                .to_string();
+            out = self.child(out, step, &text);
+            if self.dep_places.contains(&child) {
+                self.dep_places.insert(out);
+            }
+        }
+        out
     }
 
     pub(super) fn local_ty_pub(&mut self, t: &ast::TypeExpr) -> Ty {

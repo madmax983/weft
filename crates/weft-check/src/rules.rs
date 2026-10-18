@@ -10,6 +10,17 @@ use weft_facts::{FnFacts, HandlerId, NodeId, PlaceId, TaskId, TaskKind, VarId, V
 use weft_verified::dataflow::propagate;
 use weft_verified::places;
 
+/// What a node does that invalidates a reference.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Cause {
+    /// The node mutates this place.
+    Mutation(PlaceId),
+    /// The node moves this owner of the place.
+    Move(VarId),
+    /// This owner of the place goes out of scope at the node.
+    ScopeEnd(VarId),
+}
+
 /// Why a reference was invalidated: the evidence for one W0301 error.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Invalidation {
@@ -17,10 +28,10 @@ pub struct Invalidation {
     pub var: VarId,
     /// The place the reference points into.
     pub path: PlaceId,
-    /// The node that mutates.
+    /// The node that invalidates.
     pub at: NodeId,
-    /// The mutated place.
-    pub mutated: PlaceId,
+    /// What the node does.
+    pub cause: Cause,
     /// The use of the invalid reference.
     pub used_at: NodeId,
 }
@@ -156,7 +167,7 @@ pub fn check(f: &FnFacts) -> Report {
     let uses = by_var(&f.uses);
     let moved = by_var(&f.moved_at);
 
-    invalidation(&cx, &rebound, &uses, &mut r);
+    invalidation(&cx, &rebound, &uses, &moved, &mut r);
     moves(&cx, &rebound, &uses, &moved, &mut r.violations);
     linear(&cx, &rebound, &moved, &mut r.violations);
     multi(&cx, &rebound, &uses, &mut r.violations);
@@ -170,6 +181,7 @@ fn invalidation(
     cx: &Ctx<'_>,
     rebound: &BTreeMap<VarId, Vec<NodeId>>,
     uses: &BTreeMap<VarId, Vec<NodeId>>,
+    moved: &BTreeMap<VarId, Vec<NodeId>>,
     r: &mut Report,
 ) {
     let f = cx.f;
@@ -177,21 +189,47 @@ fn invalidation(
     for &(v, p) in &f.points_into {
         paths.entry(v).or_default().push(p);
     }
+    let mut owners: BTreeMap<PlaceId, Vec<VarId>> = BTreeMap::new();
+    for &(rt, v) in &f.owner {
+        owners.entry(rt).or_default().push(v);
+    }
+    let ends = by_var(&f.scope_end);
     for (&v, ps) in &paths {
         let Some(used) = uses.get(&v) else { continue };
         // invalidated_at(R, P) with the first witness per node
-        let mut gens: Vec<(NodeId, PlaceId, PlaceId)> = Vec::new();
+        let mut gens: Vec<(NodeId, PlaceId, Cause)> = Vec::new();
         for (i, ms) in cx.muts.iter().enumerate() {
             let hit = ms
                 .iter()
                 .find_map(|&m| ps.iter().find(|&&p| cx.invalidates(m, p)).map(|&p| (m, p)));
             if let Some((m, p)) = hit {
-                gens.push((NodeId(u32::try_from(i).unwrap_or(u32::MAX)), p, m));
+                gens.push((
+                    NodeId(u32::try_from(i).unwrap_or(u32::MAX)),
+                    p,
+                    Cause::Mutation(m),
+                ));
+            }
+        }
+        // A move or the scope end of an owner of `root_of(Path, Rt)`.
+        for &p in ps {
+            let mut at = Some(p);
+            while let Some(a) = at {
+                for &o in owners.get(&a).map_or(&[][..], Vec::as_slice) {
+                    for &n in moved.get(&o).map_or(&[][..], Vec::as_slice) {
+                        gens.push((n, p, Cause::Move(o)));
+                    }
+                    for &n in ends.get(&o).map_or(&[][..], Vec::as_slice) {
+                        gens.push((n, p, Cause::ScopeEnd(o)));
+                    }
+                }
+                at = f.place(a).parent;
             }
         }
         if gens.is_empty() {
             continue;
         }
+        gens.sort_by_key(|g| (g.0, g.2));
+        gens.dedup_by_key(|g| g.0);
         let kill = cx.mask(rebound.get(&v).cloned().unwrap_or_default());
         let gen = cx.mask(gens.iter().map(|g| g.0));
         let invalid = cx.forward(&gen, &kill);
@@ -200,15 +238,15 @@ fn invalidation(
                 continue;
             }
             r.violations.error.insert((v, u));
-            // Evidence: the first mutation that reaches this use on its own.
-            for &(at, path, mutated) in &gens {
+            // Evidence: the first invalidation that reaches this use on its own.
+            for &(at, path, cause) in &gens {
                 let one = cx.mask([at]);
                 if cx.forward(&one, &kill)[u.index()] {
                     r.invalidations.push(Invalidation {
                         var: v,
                         path,
                         at,
-                        mutated,
+                        cause,
                         used_at: u,
                     });
                     break;

@@ -5,8 +5,8 @@
 // violation relations on every program.
 //
 // Names: P, Q are CFG nodes; R, V are variables (a reference holder is a
-// variable); M, A, D, S and Path are places; T is a task; H is a handler; Cap is a
-// capability; E is an effect name.
+// variable); M, A, D, S and Path are places; Rt is a root place; T is a task; H
+// is a handler; Cap is a capability; E is an effect name.
 //
 // Input facts
 //   place(P)                 P is a place.
@@ -25,6 +25,7 @@
 //   uses(V, P)               node P uses V.
 //   moved_at(V, P)           node P moves V (a move is also a use).
 //   scope_end(V, P)          V goes out of scope at node P on a normal path.
+//   owner(Rt, V)             root place Rt holds the value of V. A move or the end of V frees it.
 //   linear(V)                V holds a linear value.
 //   has_on_abort(V)          the type of V declares `on abort`.
 //   once_var(V)              V is not `many`: linear, uniq, a once closure or a continuation.
@@ -67,6 +68,10 @@ prefix(M, P)           :- parent(P, Q), prefix(M, Q).
 
 strict_prefix(M, P)    :- parent(P, Q), prefix(M, Q).
 
+// Rt is the root of P, and a variable owns Rt.
+root_of(Rt, Rt)        :- owner(Rt, _).
+root_of(P, Rt)         :- parent(P, Q), root_of(Q, Rt).
+
 // P has an unstable step after the length of M.
 crosses_unstable(M, P) :- parent(P, Q), prefix(M, Q), unstable(P).
 crosses_unstable(M, P) :- parent(P, Q), crosses_unstable(M, Q).
@@ -90,6 +95,10 @@ mutates_at(P, M)     :- performs_at(P, Cap), footprint(Cap, M).   // effects fee
 
 invalidated_at(R, P) :- points_into(R, Path), mutates_at(P, M),
                         strict_prefix(M, Path), crosses_unstable(M, Path).
+
+// A move or the end of the owner frees the memory, so no unstable step is needed.
+invalidated_at(R, P) :- points_into(R, Path), root_of(Path, Rt), owner(Rt, V), moved_at(V, P).
+invalidated_at(R, P) :- points_into(R, Path), root_of(Path, Rt), owner(Rt, V), scope_end(V, P).
 invalid(R, Q)        :- invalidated_at(R, P), cfg_edge(P, Q).
 invalid(R, Q)        :- invalid(R, P), cfg_edge(P, Q), !rebound_at(R, P).
 error(R, P)          :- uses(R, P), invalid(R, P).

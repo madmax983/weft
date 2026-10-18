@@ -3,7 +3,7 @@
 use super::{
     ast, block_tail, effects, AssignOp, Block, EffectSig, ExprKind, FnId, Frame, LVal, LoopFrame,
     Lower, Lowered, NodeId, Pattern, PlaceId, RootKind, SigPlace, SigRoot, SigStep, Span, StepKind,
-    Stmt, StmtKind, Ty, Val, VarKind,
+    Stmt, StmtKind, Ty, Val, VarId, VarKind,
 };
 use std::collections::BTreeSet;
 
@@ -31,7 +31,7 @@ impl Lower<'_> {
                 }
             } else {
                 let r = self.facts.add_root(&p.name, RootKind::Local);
-                self.locals[l].root = Some(r);
+                self.set_root(l, r);
                 vec![r]
             };
             if matches!(p.ty, Ty::Fn(_)) {
@@ -235,11 +235,43 @@ impl Lower<'_> {
         }
     }
 
-    /// A returned reference must be inside the place that the signature states.
+    /// A returned reference must be inside the place that the signature states. It
+    /// cannot point into a local, a by-value parameter or a temporary of the
+    /// function: they go out of scope at the return.
     fn check_returned_refs(&mut self, v: &Val, span: Span) {
         let Some(id) = self.self_fn else { return };
         let sig = self.sigs[id].clone();
-        if sig.ret_places.is_empty() || v.refs.is_empty() {
+        let fname = self.prog.fns[id].name.clone();
+        let mut reported = Vec::new();
+        let mut rest = Vec::new();
+        for &r in &v.refs {
+            let root = self.facts.place(r).root;
+            if self.facts.roots[root.index()].kind != RootKind::Local {
+                rest.push(r);
+                continue;
+            }
+            if reported.contains(&root) {
+                continue;
+            }
+            reported.push(root);
+            let by_value = (0..sig.params.len())
+                .any(|i| self.locals[i].root.map(|p| self.facts.place(p).root) == Some(root));
+            let name = self.facts.roots[root.index()].name.clone();
+            let what = if by_value {
+                format!("the by-value parameter `{name}`")
+            } else if name == "temporary" {
+                "a temporary value".to_string()
+            } else {
+                format!("the local `{name}`")
+            };
+            let shown = self.facts.place(r).display.clone();
+            self.err(
+                "W0204",
+                format!("returned reference points into `{shown}`: {what} of `{fname}` goes out of scope at the return"),
+                span,
+            );
+        }
+        if sig.ret_places.is_empty() || rest.is_empty() {
             return;
         }
         let bases: Vec<Vec<PlaceId>> = (0..sig.params.len())
@@ -266,7 +298,9 @@ impl Lower<'_> {
         for rp in &sig.ret_places {
             allowed.extend(self.subst_place(&rp.place, &bases, 0));
         }
-        for &r in &v.refs {
+        // The handle places of `Rc` handles are not where the reference points.
+        rest.retain(|&r| !self.is_dep(r));
+        for &r in &rest {
             let ok = allowed.iter().any(|&a| {
                 self.facts.place(a).root == self.facts.place(r).root
                     && weft_verified::places::within(
@@ -293,15 +327,58 @@ impl Lower<'_> {
     // -----------------------------------------------------------------------
 
     pub(super) fn block(&mut self, b: &Block) -> Val {
+        self.block_with(b, true)
+    }
+
+    /// Lowers a block. With `hold`, a value that points into a local of the block
+    /// is held across the end of the block, so that the end invalidates it.
+    pub(super) fn block_with(&mut self, b: &Block, hold: bool) -> Val {
         self.frames.push(Frame {
             names: Vec::new(),
             barrier: None,
         });
         let v = self.block_inner(b);
         let v = self.hand_out(v, b.span);
+        let tail = block_tail(b);
+        let held = if hold { self.hold_out(&v, tail) } else { None };
         self.end_frame(b.span);
         self.frames.pop();
+        self.use_held(held, tail);
         v
+    }
+
+    /// Holds a value that points into a local of the innermost frame. Call it
+    /// before `end_frame`, and give the result to `use_held` after it.
+    pub(super) fn hold_out(&mut self, v: &Val, span: Span) -> Option<VarId> {
+        let top = self.frames.len() - 1;
+        let owned: Vec<PlaceId> = self.frames[top]
+            .names
+            .iter()
+            .filter_map(|&(_, l)| self.locals[l].root)
+            .collect();
+        let inside = v.refs.iter().any(|&p| {
+            let mut at = Some(p);
+            while let Some(a) = at {
+                if owned.contains(&a) {
+                    return true;
+                }
+                at = self.facts.place(a).parent;
+            }
+            false
+        });
+        if inside {
+            self.hold(v, "block value", span)
+        } else {
+            None
+        }
+    }
+
+    /// Uses a value that `hold_out` held, after the end of its frame.
+    pub(super) fn use_held(&mut self, held: Option<VarId>, span: Span) {
+        if let Some(var) = held {
+            let n = self.emit(span, "block value", String::new());
+            self.facts.uses.push((var, n));
+        }
     }
 
     /// Moves a block's value out of the block before its locals go out of scope.
@@ -575,10 +652,12 @@ impl Lower<'_> {
         let lv = self.place_or_temp(base);
         let t = self.deref_ty(&lv.ty);
         if let Some((step, elem)) = super::elem_step(self.prog, &self.inf.deep(&t)) {
-            let places: Vec<PlaceId> = match step {
+            let mut places: Vec<PlaceId> = match step {
                 Some(s) => lv.places.iter().map(|&p| self.child(p, s, "[]")).collect(),
                 None => lv.places.clone(),
             };
+            // The elements depend on the `Rc` handles on the way.
+            places.extend(lv.deps.iter().copied());
             // Copy elements bind by value; other elements bind by reference.
             let v = if self.is_scalar(&elem) {
                 Val {
@@ -788,21 +867,21 @@ impl Lower<'_> {
         }
         let v = self.expr(e);
         if let Ty::Ref(inner) = self.inf.shallow(&v.ty) {
+            let (places, deps) = self.split_deps(&v.refs);
             return LVal {
-                places: v.refs,
+                places,
                 ty: *inner,
                 owner: None,
                 through_ref: true,
                 uniq: v.uniq,
+                deps,
             };
         }
         let r = self.root("temporary", RootKind::Local);
         LVal {
             places: vec![r],
             ty: v.ty,
-            owner: None,
-            through_ref: false,
-            uniq: false,
+            ..LVal::default()
         }
     }
 

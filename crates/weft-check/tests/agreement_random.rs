@@ -106,7 +106,7 @@ fn build(s: &Shape) -> FnFacts {
     }
     let has_tasks = !s.tasks.is_empty();
     for &(rel, a, b, c) in &s.rels {
-        match rel % 22 {
+        match rel % 23 {
             0 => f.points_into.push((v(a), p(b))),
             1 => f.mutates_at.push((n(a), p(b))),
             2 => f.reads_at.push((n(a), p(b))),
@@ -141,6 +141,7 @@ fn build(s: &Shape) -> FnFacts {
             }
             20 => f.call_mut.push((n(a), p(b), u32::try_from(c % 3).unwrap())),
             21 => f.call_arg.push((n(a), p(b), u32::try_from(c % 3).unwrap())),
+            22 => f.owner.push((p(a), v(b))),
             _ => {}
         }
     }

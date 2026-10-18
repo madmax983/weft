@@ -50,6 +50,10 @@ pub struct Summary {
     pub captures: BTreeSet<VarId>,
     /// Captured variables that the body moves.
     pub moved_captures: BTreeSet<VarId>,
+    /// The places that the result of a closure points into.
+    pub ret_refs: Vec<PlaceId>,
+    /// The root place of each reference parameter of a closure.
+    pub param_roots: Vec<Option<PlaceId>>,
 }
 
 /// The result of lowering one function.
@@ -101,13 +105,17 @@ struct Val {
     item: Option<FnId>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct LVal {
     places: Vec<PlaceId>,
     ty: Ty,
     owner: Option<usize>,
     through_ref: bool,
     uniq: bool,
+    /// The `Rc` handles on the way to the place. The place stays valid only
+    /// while each handle keeps its value. A reference to the place also points
+    /// into these handle places.
+    deps: Vec<PlaceId>,
 }
 
 struct Frame {
@@ -183,6 +191,9 @@ pub struct Lower<'p> {
     cap_calls: Vec<(NodeId, CapId)>,
     resumes: Vec<(NodeId, CapId)>,
     match_moves: bool,
+    match_deps: Vec<PlaceId>,
+    /// The handle places of `LVal::deps`.
+    dep_places: BTreeSet<PlaceId>,
 }
 
 impl<'p> Lower<'p> {
@@ -228,6 +239,8 @@ impl<'p> Lower<'p> {
             cap_calls: Vec::new(),
             resumes: Vec::new(),
             match_moves: false,
+            match_deps: Vec::new(),
+            dep_places: BTreeSet::new(),
         }
     }
 
@@ -490,6 +503,40 @@ impl<'p> Lower<'p> {
         out
     }
 
+    /// Returns the handle places of `Rc` handles at `ps`. A reference through a
+    /// handle depends on the handle: a move, a scope end or a new value of the
+    /// handle can free the object.
+    fn handle_deps(&mut self, ps: &[PlaceId]) -> Vec<PlaceId> {
+        let step = Step {
+            kind: StepKind::Deref,
+            unstable: true,
+        };
+        let mut out = Vec::new();
+        for &p in ps {
+            let d = self.child(p, step, ".*");
+            self.dep_places.insert(d);
+            out.push(d);
+        }
+        out
+    }
+
+    /// Returns true if `p` is a handle place of `handle_deps` or inside one.
+    fn is_dep(&self, p: PlaceId) -> bool {
+        let mut at = Some(p);
+        while let Some(a) = at {
+            if self.dep_places.contains(&a) {
+                return true;
+            }
+            at = self.facts.place(a).parent;
+        }
+        false
+    }
+
+    /// Splits the places of a reference into the places it names and its handle places.
+    fn split_deps(&self, refs: &[PlaceId]) -> (Vec<PlaceId>, Vec<PlaceId>) {
+        refs.iter().partition(|&&p| !self.is_dep(p))
+    }
+
     fn place_text(&self, ps: &[PlaceId]) -> String {
         let v: Vec<&str> = ps
             .iter()
@@ -544,6 +591,12 @@ impl<'p> Lower<'p> {
         l
     }
 
+    /// Gives local `l` the root place `r`: the local owns the memory under `r`.
+    fn set_root(&mut self, l: usize, r: PlaceId) {
+        self.locals[l].root = Some(r);
+        self.facts.owner.push((r, self.locals[l].var));
+    }
+
     /// Gives a local the value `v` at node `n`.
     fn assign_local(&mut self, l: usize, v: &Val, n: NodeId) {
         let var = self.locals[l].var;
@@ -576,7 +629,7 @@ impl<'p> Lower<'p> {
         {
             let name = self.locals[l].name.clone();
             let r = self.root(&name, RootKind::Local);
-            self.locals[l].root = Some(r);
+            self.set_root(l, r);
         }
     }
 

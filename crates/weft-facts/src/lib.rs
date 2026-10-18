@@ -253,6 +253,8 @@ pub struct FnFacts {
     pub moved_at: Vec<(VarId, NodeId)>,
     /// `scope_end(V, P)`.
     pub scope_end: Vec<(VarId, NodeId)>,
+    /// `owner(Rt, V)`: the root place `Rt` holds the value of `V`.
+    pub owner: Vec<(PlaceId, VarId)>,
     /// `may_abort(P)`.
     pub may_abort: Vec<NodeId>,
     /// `multi_at(P)`.
@@ -413,6 +415,7 @@ impl FnFacts {
         nd(&mut self.uses);
         nd(&mut self.moved_at);
         nd(&mut self.scope_end);
+        nd(&mut self.owner);
         nd(&mut self.may_abort);
         nd(&mut self.multi_at);
         nd(&mut self.declared_mut);

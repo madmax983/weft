@@ -16,6 +16,17 @@ Status: accepted. Date: 2026-10-18.
 - The two sides of one split never alias. This proves `split_mut` parts disjoint.
 - `mut(p..)` is equal to `mut(p)`. A Verus lemma (`lemma_deeper_mutation_weaker`) proves
   that a deeper mutation invalidates no more.
+- Each owned local and each by-value parameter owns its root place (`owner(Rt, V)`). A
+  move of `V` or the end of its scope frees the memory, so it invalidates every
+  reference into the root, also through stable steps. A block value that points into a
+  local of the block is held across the end of the block, so this rule sees it.
+- An `Rc` handle keeps its object alive. A place through a handle is in the group root,
+  and the reference also depends on the handle place (`handle.*`, an unstable deref).
+  A new value, a move or the end of the handle invalidates the reference. Dropping
+  another clone does not.
+- A function or a closure cannot return a reference into its own locals, by-value
+  parameters or temporaries (W0204). A closure call keeps the places of its result; a
+  place under a reference parameter of the closure becomes the place of the argument.
 - Assignment follows the interpreter. `x = v` on a local gives the local a new value; on
   a reference local, `v` must be a reference. `c += v` (and `-=`, `*=`) on a reference
   writes through it: it mutates every place that `c` points into.

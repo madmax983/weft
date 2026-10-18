@@ -7,7 +7,7 @@ use weft_facts::{
     VarId, VarInfo, VarKind,
 };
 
-use crate::{bridge, Report};
+use crate::{bridge, Cause, Report};
 
 /// Runs the production checker and asserts that the Datalog spec agrees.
 fn check(f: &FnFacts) -> Report {
@@ -162,6 +162,57 @@ fn w0301_element_mutation_keeps_element_refs() {
     let n3 = b.node("e.hp");
     b.use_(e, n3);
     assert!(check(&b.f).violations.is_clean());
+}
+
+/// `let v = ..; let r = &v.items; DROP(v); use r`, where DROP is a move or a scope end.
+fn drop_facts(scope_end: bool) -> (B, VarId, VarId, NodeId, NodeId) {
+    let mut b = B::new();
+    let v_root = b.local("v");
+    let items = b.field(v_root, 0, "items");
+    let v = b.var("v");
+    b.f.owner.push((v_root, v));
+    let r = b.var("r");
+    let n0 = b.node("let r");
+    b.bind(r, n0);
+    b.f.points_into.push((r, items));
+    let n1 = b.node("drop v");
+    if scope_end {
+        b.f.scope_end.push((v, n1));
+    } else {
+        b.mv(v, n1);
+    }
+    let n2 = b.node("print(r)");
+    b.use_(r, n2);
+    (b, v, r, n1, n2)
+}
+
+#[test]
+fn w0301_a_move_of_the_owner_invalidates_stable_parts() {
+    // invalidated_at(R, P) :- points_into(R, Path), root_of(Path, Rt), owner(Rt, V), moved_at(V, P).
+    let (b, v, r, n1, n2) = drop_facts(false);
+    let rep = check(&b.f);
+    assert!(rep.violations.error.contains(&(r, n2)));
+    assert_eq!(rep.invalidations[0].at, n1);
+    assert_eq!(rep.invalidations[0].cause, Cause::Move(v));
+}
+
+#[test]
+fn w0301_the_scope_end_of_the_owner_invalidates() {
+    // invalidated_at(R, P) :- points_into(R, Path), root_of(Path, Rt), owner(Rt, V), scope_end(V, P).
+    let (mut b, v, r, n1, n2) = drop_facts(true);
+    let rep = check(&b.f);
+    assert!(rep.violations.error.contains(&(r, n2)));
+    assert_eq!(rep.invalidations[0].cause, Cause::ScopeEnd(v));
+    // A reference into another root survives, and a rebind revives the reference.
+    b.f.owner.clear();
+    assert!(check(&b.f).violations.error.is_empty());
+    let (mut b, _, r, _, n2) = drop_facts(true);
+    let n3 = b.f.add_node(Span::default(), "r = &..", "");
+    b.f.cfg_edge.retain(|&(p, q)| !(p == n1 && q == n2));
+    b.edge(n1, n3);
+    b.edge(n3, n2);
+    b.bind(r, n3);
+    assert!(check(&b.f).violations.error.is_empty());
 }
 
 #[test]

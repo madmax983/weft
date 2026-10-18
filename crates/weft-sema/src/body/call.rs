@@ -282,6 +282,7 @@ impl Lower<'_> {
         // before the next one runs, so that a later argument cannot hide a
         // mutation from an earlier reference.
         let mut recv = recv;
+        let mut recv_deps = Vec::new();
         let mut vals: Vec<ArgVal> = Vec::new();
         let mut arg_places: Vec<Vec<PlaceId>> = Vec::new();
         let mut held_vars = Vec::new();
@@ -322,6 +323,11 @@ impl Lower<'_> {
                     || vec![self.root("temporary", RootKind::Local)],
                     |lv| lv.places.clone(),
                 );
+                recv_deps = av
+                    .val
+                    .place
+                    .as_ref()
+                    .map_or_else(Vec::new, |lv| lv.deps.clone());
                 if let Ty::Ref(inner) = self.inf.shallow(&pt) {
                     self.unify(&inner, &av.val.ty, av.span);
                 }
@@ -424,11 +430,25 @@ impl Lower<'_> {
                 self.facts.call_arg.push((n, p, root_of(i)));
             }
         }
-        // Arguments must point where the parameters say.
+        // Arguments must point where the parameters say. A by-value argument is
+        // the base of the places inside it.
+        let bases: Vec<Vec<PlaceId>> = arg_places
+            .iter()
+            .zip(&vals)
+            .map(|(ps, av)| match (&av.val.place, ps.is_empty()) {
+                (Some(lv), true) => lv.places.clone(),
+                _ => ps.clone(),
+            })
+            .collect();
         for (i, p) in sig.params.iter().enumerate() {
             if let Some(pl) = &p.place {
-                let allowed = self.subst_place(pl, &arg_places, split);
-                for &r in &arg_places[i] {
+                let allowed = self.subst_place(pl, &bases, split);
+                let named: Vec<PlaceId> = arg_places[i]
+                    .iter()
+                    .copied()
+                    .filter(|&r| !self.is_dep(r))
+                    .collect();
+                for &r in &named {
                     let ok = allowed.iter().any(|&a| {
                         self.facts.place(a).root == self.facts.place(r).root
                             && weft_verified::places::within(
@@ -534,6 +554,7 @@ impl Lower<'_> {
                 }
                 out.refs.extend(places);
             }
+            out.refs.extend(recv_deps);
             out.parts = parts;
         }
         out
@@ -606,27 +627,30 @@ impl Lower<'_> {
         }
         // Each argument is typed, held and moved before the next one runs.
         let mut held = Vec::new();
-        let mut arg_refs = Vec::new();
+        let mut arg_places: Vec<Vec<PlaceId>> = Vec::new();
         for (i, a) in exprs.iter().enumerate() {
             let mut v = self.expr(a);
             if let Some(pt) = fty.params.get(i) {
                 self.unify_arg(pt, &mut v, a.span);
             }
             if matches!(self.inf.shallow(&v.ty), Ty::Ref(_)) {
-                arg_refs.extend(v.refs.iter().copied());
+                arg_places.push(v.refs.clone());
                 match v.var {
                     Some(var) => held.push(var),
                     None => held.extend(self.hold(&v, "argument", a.span)),
                 }
+            } else {
+                arg_places.push(Vec::new());
             }
             self.consume(&v, a.span);
         }
+        let arg_refs: Vec<PlaceId> = arg_places.iter().flatten().copied().collect();
         self.use_local(l);
         let n = self.emit(span, &loc.name, String::new());
         for v in held {
             self.facts.uses.push((v, n));
         }
-        for p in arg_refs {
+        for &p in &arg_refs {
             self.facts.reads_at.push((n, p));
             self.sum().reads.insert(p);
         }
@@ -648,8 +672,26 @@ impl Lower<'_> {
                 self.perform_effect(n, &e);
             }
         }
+        // The places of the result.
+        let refs = if let Some(s) = loc.summary {
+            self.closure_call_refs(s, &arg_places)
+        } else if let Some(item) = fty.item {
+            let sig = self.sigs[item].clone();
+            let split = self.fresh_split();
+            let mut refs = Vec::new();
+            for rp in &sig.ret_places {
+                refs.extend(self.subst_place(&rp.place, &arg_places, split));
+            }
+            refs
+        } else if matches!(self.inf.shallow(&fty.ret), Ty::Ref(_)) {
+            // An unknown function can return a reference into any reference argument.
+            arg_refs
+        } else {
+            Vec::new()
+        };
         Val {
             ty: fty.ret.clone(),
+            refs,
             ..Val::default()
         }
     }

@@ -1,0 +1,211 @@
+// A move or the end of the owner frees the memory: references into it are invalid.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Cell2 { items: Vec<u64> }
+
+fn take(v: Vec<u64>) {}
+fn take_world(w: World) {}
+fn take_rc(c: Rc<Cell2>) {}
+
+fn moved_into_call() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    take(v)
+    print(r)   //~ W0301
+}
+
+fn moved_to_local() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let w = v
+    w.push(2)
+    print(r)   //~ W0301
+}
+
+fn moved_struct() {
+    let v = World { entities: Vec.new() }
+    v.entities.push(Entity { hp: 1 })
+    let r = &v.entities[0]
+    take_world(v)
+    print(r.hp)   //~ W0301
+}
+
+// A stable part of a moved value is invalid too: the address goes away.
+fn moved_stable_part() {
+    let v = World { entities: Vec.new() }
+    let r = &v.entities
+    let w = v
+    print(r.len())   //~ W0301
+}
+
+// The value of a block cannot point into a local of the block.
+fn block_value() {
+    let r = {
+        let v = Vec.new()
+        v.push(1)
+        &v[0]   //~ W0301
+    }
+    print(r)
+}
+
+fn block_value_field() {
+    let r = { let e = Entity { hp: 1 }; &e.hp }   //~ W0301
+    print(r)
+}
+
+// A reference that is given a place in an inner block outlives it.
+fn rebound_inside() {
+    let keep = Entity { hp: 1 }
+    let r = &keep.hp
+    if true {
+        let inner = Entity { hp: 2 }
+        r = &inner.hp
+    }
+    print(r)   //~ W0301
+}
+
+// A closure that captures a local of a block outlives it.
+fn closure_outlives() {
+    let f = {   //~ W0301
+        let n = Vec.new()
+        n.push(1)
+        || print(n.len())
+    }
+    f()
+}
+
+// A reference into a loop body local does not reach the next iteration.
+fn loop_local(n: u64) {
+    let keep = Entity { hp: 1 }
+    let r = &keep.hp
+    let i = 0
+    while i < n {
+        let e = Entity { hp: 2 }
+        r = &e.hp
+        i += 1
+    }
+    print(r)   //~ W0301
+}
+
+// Dropping the only `Rc` handle can free the object.
+fn rc_overwrite() {
+    let a = Rc.new(Cell2 { items: Vec.new() })
+    a.items.push(1)
+    let r = &a.items[0]
+    a = Rc.new(Cell2 { items: Vec.new() })
+    print(r)   //~ W0301
+}
+
+fn rc_moved() {
+    let a = Rc.new(Cell2 { items: Vec.new() })
+    a.items.push(1)
+    let r = &a.items
+    take_rc(a)
+    print(r.len())   //~ W0301
+}
+
+fn rc_block() {
+    let a = Rc.new(Cell2 { items: Vec.new() })
+    let r = {
+        let b = a.clone()
+        &b.items   //~ W0301
+    }
+    print(r.len())
+}
+
+fn box_overwrite() {
+    let b = Box.new(Cell2 { items: Vec.new() })
+    let r = &b.items
+    b = Box.new(Cell2 { items: Vec.new() })
+    print(r.len())   //~ W0301
+}
+
+// A function cannot return a reference into its own locals or by-value parameters.
+fn ret_local(v: &Vec<u64>) -> &u64 in v[] {
+    let w = Vec.new()
+    w.push(1)
+    &w[0]   //~ W0204
+}
+
+fn ret_by_value(v: Vec<u64>) -> &u64 in v[] { &v[0] }   //~ W0204
+
+fn ret_in_by_value(v: Vec<u64>, r: &u64 in v[]) -> &u64 in v[] { r }   //~ W0204
+
+fn passes_owner_and_ref() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let n = ret_in_by_value(v, r)   //~ W0301
+}
+
+// A closure cannot return a reference into its own locals.
+fn closure_ret_local() {
+    let f = || { let e = Entity { hp: 1 }; &e.hp }   //~ W0204
+    print(f())
+}
+
+fn closure_ret_by_value() {
+    let f = |e: Entity| &e.hp   //~ W0204
+    print(f(Entity { hp: 1 }))
+}
+
+// The result of a closure call keeps its places.
+fn closure_result(world: &World) / mut(world.entities) {
+    let f = || &world.entities[0]
+    let r = f()
+    world.entities.push(Entity { hp: 1 })
+    print(r.hp)   //~ W0301
+}
+
+fn closure_result_param(world: &World) / mut(world.entities) {
+    let f = |e: &Entity| e
+    let r = f(&world.entities[0])
+    world.entities.push(Entity { hp: 1 })
+    print(r.hp)   //~ W0301
+}
+
+// Controls: no move, a copy, a use before the move, a clone that is dropped.
+fn use_before_move() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    print(r)
+    take(v)
+}
+
+fn copy_is_not_a_move() {
+    let x = 1
+    let r = &x
+    let y = x
+    print(r)
+    print(y)
+}
+
+fn rebound_after_move() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    take(v)
+    v = Vec.new()
+    v.push(2)
+    r = &v[0]
+    print(r)
+}
+
+fn clone_dropped(a: Rc<Cell2>) {
+    let r = &a.items
+    {
+        let b = a.clone()
+        print(b.items.len())
+    }
+    print(r.len())
+}
+
+fn ret_param(v: &Vec<u64>) -> &u64 in v[] { &v[0] }
+
+fn closure_ret_capture(world: &World) {
+    let f = || &world.entities[0]
+    print(f().hp)
+}
