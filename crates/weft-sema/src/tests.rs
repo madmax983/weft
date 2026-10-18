@@ -2,7 +2,12 @@
 
 use weft_syntax::parse_file;
 
-use crate::{analyze, prelude_unit, Analysis, Options, Unit};
+use crate::{analyze, prelude_unit, Analysis, Options, Unit, PRELUDE_UNIT, ROOT_UNIT};
+
+/// The parsed prelude.
+fn prelude() -> Unit {
+    prelude_unit().expect("the prelude parses")
+}
 
 fn unit(name: &str, src: &str) -> Unit {
     Unit {
@@ -14,7 +19,7 @@ fn unit(name: &str, src: &str) -> Unit {
 
 /// Analyzes a root unit and dependency units `(name, source)`.
 fn analyze_units(root: &str, deps: &[(&str, &str)]) -> Analysis {
-    let mut units = vec![prelude_unit(), unit("", root)];
+    let mut units = vec![prelude(), unit("", root)];
     units.extend(deps.iter().map(|(n, s)| unit(n, s)));
     analyze(&units, Options::default())
 }
@@ -171,7 +176,7 @@ fn sig_of<'a>(a: &'a Analysis, name: &str) -> &'a crate::FnSig {
 
 #[test]
 fn effect_inference_reaches_a_fixpoint() {
-    let units = vec![prelude_unit(), unit("", &call_chain(3))];
+    let units = vec![prelude(), unit("", &call_chain(3))];
     let a = crate::analyze(&units, Options::default());
     assert_eq!(codes(&a), Vec::new());
     // Callees come first, so each function is lowered once.
@@ -184,7 +189,7 @@ fn effect_inference_reaches_a_fixpoint() {
 #[test]
 fn effect_inference_time_is_linear_in_a_call_chain() {
     let n = 300;
-    let units = vec![prelude_unit(), unit("", &call_chain(n))];
+    let units = vec![prelude(), unit("", &call_chain(n))];
     let a = crate::analyze(&units, Options::default());
     assert_eq!(codes(&a), Vec::new());
     assert_eq!(a.lowerings, n);
@@ -195,7 +200,7 @@ fn effect_inference_time_is_linear_in_a_call_chain() {
 fn effect_inference_converges_when_places_go_around_a_cycle() {
     // The old bound of 10 rounds for each function stopped these too early.
     for (k, p) in [(1, 8), (4, 4), (8, 3)] {
-        let units = vec![prelude_unit(), unit("", &rotation(k, p))];
+        let units = vec![prelude(), unit("", &rotation(k, p))];
         let a = crate::analyze(&units, Options::default());
         assert_eq!(codes(&a), Vec::new(), "k={k} p={p}");
         // Each parameter gets the deepest place: 3 levels and `v`, or 4 levels.
@@ -212,7 +217,7 @@ fn effect_inference_converges_when_places_go_around_a_cycle() {
 
 #[test]
 fn effect_inference_that_does_not_converge_is_an_error() {
-    let units = vec![prelude_unit(), unit("", &rotation(1, 3))];
+    let units = vec![prelude(), unit("", &rotation(1, 3))];
     // The row of `g1` grows more than twice.
     let a = crate::analyze_with_limit(&units, Options::default(), 2);
     assert_eq!(codes(&a), vec![(1, "W0706".to_string())]);
@@ -229,10 +234,7 @@ fn effect_inference_that_does_not_converge_is_an_error() {
 fn effect_inference_checks_the_fixpoint_at_the_end() {
     // The body of `a` reads the row of `c` but does not name `c`. The name graph
     // does not show the edge, so the last lowering finds the growth.
-    let units = vec![
-        prelude_unit(),
-        unit("", "fn a() {}\nfn c() { log.info(\"x\") }"),
-    ];
+    let units = vec![prelude(), unit("", "fn a() {}\nfn c() { log.info(\"x\") }")];
     let (prog, _) = crate::program::Collector::collect(&units);
     let mut sigs: Vec<crate::FnSig> = prog.fns.iter().map(|f| f.sig.clone()).collect();
     let id = |name: &str| prog.fns.iter().position(|f| f.name == name).unwrap_or(0);
@@ -256,7 +258,7 @@ fn effect_inference_checks_the_fixpoint_at_the_end() {
 
 #[test]
 fn the_growth_limit_is_the_height_of_the_row_lattice() {
-    let units = vec![prelude_unit(), unit("", &rotation(1, 8))];
+    let units = vec![prelude(), unit("", &rotation(1, 8))];
     let a = crate::analyze(&units, Options::default());
     let sig = sig_of(&a, "g1");
     let small = crate::infer::growth_limit(&a.program, sig, 2);
@@ -308,7 +310,7 @@ fn a_row_only_grows() {
 }
 
 fn root_diags(src: &str) -> Vec<(String, String)> {
-    let units = vec![prelude_unit(), unit("", src)];
+    let units = vec![prelude(), unit("", src)];
     let a = analyze(&units, Options::default());
     a.diags
         .iter()
@@ -332,7 +334,7 @@ fn raw_pointer_is_a_copy_value_of_its_own_type() {
             "type mismatch: expected `i32`, found `*Stmt`".to_string()
         )]
     );
-    let units = vec![prelude_unit(), unit("", FFI)];
+    let units = vec![prelude(), unit("", FFI)];
     let a = analyze(&units, Options::default());
     let ptr = a.program.ptr.unwrap_or(usize::MAX);
     let def = &a.program.adts[ptr];
@@ -365,4 +367,15 @@ fn raw_pointer_only_in_foreign_signatures_and_locals() {
     let local =
         format!("{FFI}fn f() / blocking {{ let v: Vec<*Stmt> = Vec.new()\n v.push(open()) }}");
     assert_eq!(root_diags(&local), Vec::new());
+}
+
+#[test]
+fn the_prelude_parses_and_has_no_diagnostics() {
+    let p = prelude();
+    assert!(p.is_std);
+    assert!(!p.file.items.is_empty());
+    let a = analyze_units("", &[]);
+    assert_eq!(codes(&a), Vec::new());
+    assert_eq!(a.program.mods[a.program.root].unit, ROOT_UNIT);
+    assert_eq!(a.program.mods[crate::program::PRELUDE].unit, PRELUDE_UNIT);
 }

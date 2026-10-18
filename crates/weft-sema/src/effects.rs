@@ -25,6 +25,12 @@ pub fn canonical(prog: &Program, m: ModId, name: &str) -> Option<Vec<String>> {
     if let Some(ItemRef::Effect(e)) = prog.lookup(m, name) {
         return Some(vec![prog.effects[e].name.clone()]);
     }
+    std_alias(name)
+}
+
+/// Maps the alias of a standard effect to canonical names: `net` becomes
+/// `Net`, and `io` becomes the members of the bundle.
+pub fn std_alias(name: &str) -> Option<Vec<String>> {
     let std = match name {
         "async" => "Async",
         "net" => "Net",

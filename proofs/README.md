@@ -6,13 +6,13 @@ Verus proofs for Weft Phase 1. The pinned Verus revision is in `VERUS_VERSION`.
 | --- | --- | --- |
 | `borrowing/` | Soundness of group borrowing: places, calls, branches and loops, captured references, inline layout, task separation, progress. | B1-B5 proved (169 verified). See `borrowing/README.md`. |
 | `effects/` | Soundness of algebraic effects: effect safety, one-shot, abort, lexical handlers, multi-shot restriction, progress. | E1-E5 proved (122 verified). See `effects/README.md`. |
-| `link/` | B6: the exec core agrees with the models (places, dataflow, lifecycle). | Proved (230 verified). See `link/README.md` for the gaps. |
+| `link/` | B6: the exec core agrees with the models (places, dataflow, lifecycle). | Proved (232 verified). See `link/README.md` for the gaps. |
 
 The link (`link/`) covers the exec core. The facts that sema emits and the glue in
 `rules.rs` are hypotheses of the link: tests check them (agreement with the Datalog spec).
 
 The exec core that the checker runs is in `crates/weft-verified`. It is verified too
-(64 verified). See `crates/weft-verified/README.md` for the parts that the checker and
+(66 verified). See `crates/weft-verified/README.md` for the parts that the checker and
 the interpreter use.
 
 Run all proofs:

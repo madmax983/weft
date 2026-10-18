@@ -13,9 +13,10 @@ pub mod types;
 
 use weft_facts::FnFacts;
 use weft_syntax::diag::Diagnostic;
-use weft_syntax::parse_file;
+use weft_syntax::{parse_file, ParseError};
 
 pub use program::{FnSig, Program, Unit};
+pub use weft_syntax::diag::{PRELUDE_UNIT, ROOT_UNIT};
 
 /// The source of the standard prelude.
 pub const PRELUDE_SRC: &str = include_str!("../../../std/prelude.wf");
@@ -98,21 +99,27 @@ pub struct Analysis {
 }
 
 /// Parses the prelude.
-pub fn prelude_unit() -> Unit {
-    let file = parse_file(PRELUDE_SRC).unwrap_or_default();
-    Unit {
+///
+/// # Errors
+///
+/// Returns the parse error if `std/prelude.wf` does not parse. The tests
+/// make sure that it parses.
+pub fn prelude_unit() -> Result<Unit, ParseError> {
+    Ok(Unit {
         name: "prelude".into(),
-        file,
+        file: parse_file(PRELUDE_SRC)?,
         is_std: true,
-    }
+    })
 }
 
-/// Returns the unit index of a module: 0 for the prelude, 1 for the root, then dependencies.
+/// Returns the unit index of a module: [`PRELUDE_UNIT`], [`ROOT_UNIT`], then
+/// the dependencies.
 fn unit_of(prog: &Program, m: program::ModId) -> usize {
     prog.mods[m].unit
 }
 
-/// Analyzes the units. Unit 0 must be the prelude and unit 1 the root.
+/// Analyzes the units. Unit [`PRELUDE_UNIT`] must be the prelude and unit
+/// [`ROOT_UNIT`] the root.
 ///
 /// Effect inference ([`infer`]) gives a row to each function that does not
 /// state its effects. If it does not reach a fixpoint, each function whose row
@@ -134,7 +141,7 @@ fn analyze_bounded(units: &[Unit], opts: Options, limit: Option<usize>) -> Analy
         .filter(|&i| !prog.fns[i].is_std && prog.fns[i].decl.body.is_some())
         .collect();
     let library_of =
-        |prog: &Program, f: usize| opts.library || unit_of(prog, prog.fns[f].module) > 1;
+        |prog: &Program, f: usize| opts.library || unit_of(prog, prog.fns[f].module) > ROOT_UNIT;
     let lower = |sigs: &[FnSig], f: usize| {
         let lib = library_of(&prog, f);
         body::Lower::new(&prog, sigs, prog.fns[f].module, &prog.fns[f].path, lib).lower_fn(f)
@@ -152,7 +159,7 @@ fn analyze_bounded(units: &[Unit], opts: Options, limit: Option<usize>) -> Analy
     }
     for t in &prog.tests {
         let name = format!("test \"{}\"", t.name);
-        let lib = opts.library || unit_of(&prog, t.module) > 1;
+        let lib = opts.library || unit_of(&prog, t.module) > ROOT_UNIT;
         let l = body::Lower::new(&prog, &sigs, t.module, &name, lib).lower_test(&t.body, t.span);
         diags.extend(l.diags);
         bodies.push(BodyFacts {
@@ -180,10 +187,27 @@ fn analyze_bounded(units: &[Unit], opts: Options, limit: Option<usize>) -> Analy
 }
 
 /// Parses and analyzes one source text as the root unit.
+///
+/// # Errors
+///
+/// Returns W0001 if the source or the prelude does not parse.
 pub fn analyze_source(src: &str, opts: Options) -> Result<Analysis, Diagnostic> {
-    let file = parse_file(src).map_err(|e| Diagnostic::error("W0001", e.message, e.span))?;
+    let prelude = prelude_unit().map_err(|e| {
+        let mut d = Diagnostic::error(
+            "W0001",
+            format!("std/prelude.wf does not parse: {}", e.message),
+            e.span,
+        );
+        d.unit = PRELUDE_UNIT;
+        d
+    })?;
+    let file = parse_file(src).map_err(|e| {
+        let mut d = Diagnostic::error("W0001", e.message, e.span);
+        d.unit = ROOT_UNIT;
+        d
+    })?;
     let units = vec![
-        prelude_unit(),
+        prelude,
         Unit {
             name: String::new(),
             file,

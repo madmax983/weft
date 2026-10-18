@@ -104,7 +104,7 @@ pub struct TestOutcome {
 pub fn stealable_spans(checked: &Checked) -> BTreeSet<(u32, u32)> {
     let mut out = BTreeSet::new();
     for (b, r) in checked.analysis.bodies.iter().zip(&checked.reports) {
-        if b.unit != 1 {
+        if b.unit != weft_sema::ROOT_UNIT {
             continue;
         }
         for t in &r.violations.stealable {

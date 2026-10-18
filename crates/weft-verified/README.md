@@ -19,7 +19,7 @@ verus crates/weft-verified/src/lib.rs --crate-type=lib
 The result must be:
 
 ```text
-verification results:: 64 verified, 0 errors
+verification results:: 66 verified, 0 errors
 ```
 
 | Module | Verified |
@@ -50,6 +50,7 @@ the value of its spec function.
 | --- | --- |
 | `step_alias` | `r == spec_step_alias(*a, *b)` |
 | `step_within` | `r == spec_step_within(*a, *b)` |
+| `step_class` | `r == spec_step_class(*s)` |
 | `may_prefix` | `r == spec_may_prefix(m@, p@)` |
 | `crosses_unstable` | `r == spec_crosses_unstable(from as int, p@)` |
 | `invalidates` | `r == spec_invalidates(m@, p@)` (rule 3) |
@@ -60,6 +61,7 @@ the value of its spec function.
 | Lemma | Statement |
 | --- | --- |
 | `lemma_step_alias_symmetric` | Step aliasing is symmetric. |
+| `lemma_step_class` | Steps of different classes do not alias, and neither is within the other. The bridge compares only the steps of one class. |
 | `lemma_no_self_invalidation` | Rule 4: a mutation of `p` does not invalidate a reference to `p`. |
 | `lemma_stable_suffix_survives` | Rule 4: if all steps of `p` after `m` are stable, a mutation of `m` does not invalidate `p`. |
 | `lemma_disjoint_no_invalidation` | A mutation does not invalidate a place that it does not overlap. |

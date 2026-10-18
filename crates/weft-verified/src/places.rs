@@ -75,6 +75,30 @@ pub open spec fn spec_step_within(a: Step, b: Step) -> bool {
     }
 }
 
+/// The class of a step. Two steps of different classes do not alias, and
+/// neither is within the other (`lemma_step_class`). Thus a caller that
+/// looks for the pairs of [`step_alias`] and [`step_within`] can compare only
+/// the steps of one class.
+pub open spec fn spec_step_class(s: Step) -> (u8, u32) {
+    match s.kind {
+        StepKind::Field { id } => (0, id),
+        StepKind::Variant { id } => (1, id),
+        StepKind::Elem => (2, 0),
+        StepKind::Seg { .. } => (2, 0),
+        StepKind::Deref => (3, 0),
+    }
+}
+
+/// Steps of different classes do not alias, and neither is within the other.
+pub proof fn lemma_step_class(a: Step, b: Step)
+    ensures
+        spec_step_class(a) != spec_step_class(b) ==> !spec_step_alias(a, b) && !spec_step_within(
+            a,
+            b,
+        ),
+{
+}
+
 /// `m` can be a prefix of `p`: each step of `m` can alias the step of `p` at the same position.
 pub open spec fn spec_may_prefix(m: Seq<Step>, p: Seq<Step>) -> bool {
     m.len() <= p.len() && forall|i: int|
@@ -121,6 +145,20 @@ pub fn step_alias(a: &Step, b: &Step) -> (r: bool)
             == h2,
         (StepKind::Deref, StepKind::Deref) => true,
         _ => false,
+    }
+}
+
+/// Returns the class of a step (see `spec_step_class`).
+pub fn step_class(s: &Step) -> (r: (u8, u32))
+    ensures
+        r == spec_step_class(*s),
+{
+    match s.kind {
+        StepKind::Field { id } => (0, id),
+        StepKind::Variant { id } => (1, id),
+        StepKind::Elem => (2, 0),
+        StepKind::Seg { .. } => (2, 0),
+        StepKind::Deref => (3, 0),
     }
 }
 

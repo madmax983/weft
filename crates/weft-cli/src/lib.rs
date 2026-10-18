@@ -44,6 +44,16 @@ and `test` shows only the run.
 /// The most virtual workers of `run` and `test`.
 pub const MAX_WORKERS: usize = 1024;
 
+/// The stack of the thread that runs a command.
+///
+/// Sema and the interpreter walk the syntax tree with recursion. The parser
+/// limits the depth of the tree, and `tests/limits.rs` shows that a 2 MiB
+/// stack is sufficient for the deepest tree that it accepts. The large stack
+/// is a margin: each caller of [`run`] and [`run_live`] gets it, also a test
+/// thread. The system only reserves this memory. It uses a page when the
+/// recursion gets to it.
+pub const STACK: usize = 256 * 1024 * 1024;
+
 /// The output of a command.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Output {
@@ -86,6 +96,39 @@ fn options_of(cmd: &str) -> Option<Vec<&'static str>> {
     Some(PROFILE.iter().chain(own).copied().collect())
 }
 
+/// Returns the positional arguments of a command: the names of the arguments
+/// that it needs, then the names of the arguments that it can take.
+fn positional_of(cmd: &str) -> (&'static [&'static str], &'static [&'static str]) {
+    match cmd {
+        "check" | "run" | "test" | "agree" | "lint" | "deps" => (&["PATH"], &[]),
+        "facts" => (&["PATH"], &["FUNCTION"]),
+        "explain" => (&["CODE"], &[]),
+        _ => (&[], &[]),
+    }
+}
+
+/// Checks the number of positional arguments of a command.
+fn check_positional(cmd: &str, given: &[String]) -> Result<()> {
+    let (needs, can) = positional_of(cmd);
+    if let Some(name) = needs.get(given.len()) {
+        bail!("`{cmd}` needs a {name}; see `weft help`");
+    }
+    let max = needs.len() + can.len();
+    if let Some(extra) = given.get(max) {
+        let takes = match (max, can.is_empty()) {
+            (0, _) => "takes no arguments".to_string(),
+            (1, true) => "takes 1 argument".to_string(),
+            (n, true) => format!("takes {n} arguments"),
+            (n, false) => format!("takes at most {n} arguments"),
+        };
+        bail!(
+            "`{cmd}` {takes}, found {}: `{extra}` is extra; see `weft help`",
+            given.len()
+        );
+    }
+    Ok(())
+}
+
 /// Reads the number after an option.
 fn number<T: std::str::FromStr>(it: &mut std::slice::Iter<'_, String>, opt: &str) -> Result<T> {
     let v = it.next().with_context(|| format!("{opt} needs a number"))?;
@@ -126,9 +169,10 @@ fn flags(args: &[String]) -> Result<Flags> {
     Ok(f)
 }
 
-/// Runs one command. The output of a Weft program stays in [`Output`].
+/// Runs one command on a thread with a [`STACK`] stack. The output of a Weft
+/// program stays in [`Output`].
 pub fn run(args: &[String]) -> Result<Output> {
-    run_with(args, false)
+    on_large_stack(args, false)
 }
 
 /// Runs one command, and writes the output of a Weft program at once.
@@ -137,7 +181,25 @@ pub fn run(args: &[String]) -> Result<Output> {
 /// standard error while the program runs, so the log of a test comes before
 /// its result line.
 pub fn run_live(args: &[String]) -> Result<Output> {
-    run_with(args, true)
+    on_large_stack(args, true)
+}
+
+/// Runs one command on a thread with a [`STACK`] stack. If the system cannot
+/// give the stack, the command runs on the current thread. A panic of the
+/// command continues in the caller.
+fn on_large_stack(args: &[String], live: bool) -> Result<Output> {
+    std::thread::scope(|scope| {
+        let worker = std::thread::Builder::new()
+            .name("weft".into())
+            .stack_size(STACK)
+            .spawn_scoped(scope, || run_with(args, live));
+        match worker {
+            Ok(handle) => handle
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+            Err(_) => run_with(args, live),
+        }
+    })
 }
 
 fn run_with(args: &[String], live: bool) -> Result<Output> {
@@ -156,6 +218,7 @@ fn run_with(args: &[String], live: bool) -> Result<Output> {
     if let Some(o) = f.given.iter().find(|o| !takes.contains(&o.as_str())) {
         bail!("`{cmd}` does not take {o}; see `weft help`");
     }
+    check_positional(cmd, &f.positional)?;
     let out = match cmd {
         "check" => check(&f),
         "run" => run_main(&f, live),
@@ -202,11 +265,13 @@ fn syntax_output(cmd: &str, f: &Flags, s: &SyntaxError) -> Output {
     out
 }
 
+/// Returns the first positional argument. [`check_positional`] makes sure
+/// that a command that needs it has it.
 fn path_arg(f: &Flags) -> Result<&str> {
     f.positional
         .first()
         .map(String::as_str)
-        .context("missing PATH")
+        .context("missing PATH; see `weft help`")
 }
 
 /// Loads, analyzes and checks a file or a package. The flags win over the
@@ -220,7 +285,7 @@ pub fn check_path(path: &Path, profile: Profile) -> Result<(Package, Checked)> {
     checked.diags.extend(pkg.marker_diags());
     checked
         .diags
-        .sort_by_key(|d| (d.unit, d.span.lo, d.code.clone()));
+        .sort_by(|a, b| (a.unit, a.span.lo, &a.code).cmp(&(b.unit, b.span.lo, &b.code)));
     Ok((pkg, checked))
 }
 
@@ -341,6 +406,23 @@ fn facts(f: &Flags) -> Result<Output> {
         }
         text.push_str(&bridge::facts_text(&b.facts));
     }
+    if let (Some(name), true) = (only, text.is_empty()) {
+        let names: Vec<&str> = c
+            .analysis
+            .bodies
+            .iter()
+            .map(|b| b.facts.name.as_str())
+            .collect();
+        return Ok(Output {
+            stderr: format!(
+                "error: no function or test `{name}` in {}; the bodies are `{}`\n",
+                path.display(),
+                names.join("`, `")
+            ),
+            code: 1,
+            ..Output::default()
+        });
+    }
     Ok(Output {
         text,
         ..Output::default()
@@ -358,11 +440,14 @@ fn agree(f: &Flags) -> Result<Output> {
         Err(bad) => {
             let mut text = String::new();
             for b in bad {
-                let _ = writeln!(
-                    text,
-                    "disagree in `{}`\n  checker: {:?}\n  spec:    {:?}",
-                    b.function, b.checker, b.spec
-                );
+                let _ = match &b.spec {
+                    Ok(spec) => writeln!(
+                        text,
+                        "disagree in `{}`\n  checker: {:?}\n  spec:    {spec:?}",
+                        b.function, b.checker
+                    ),
+                    Err(e) => writeln!(text, "disagree in `{}`: {e}", b.function),
+                };
             }
             Ok(Output {
                 text,
@@ -382,6 +467,20 @@ fn lint(f: &Flags) -> Result<Output> {
     if !user.relations_defined().contains("lint") {
         bail!("{rules_path} must define `lint(Name, Node)`");
     }
+    let heads = user
+        .rules()
+        .iter()
+        .map(|r| (r.head.relation.as_str(), r.head.terms.len(), &r.loc));
+    let facts = user
+        .facts()
+        .iter()
+        .map(|f| (f.relation.as_str(), f.values.len(), &f.loc));
+    if let Some((_, n, loc)) = heads
+        .chain(facts)
+        .find(|&(rel, n, _)| rel == "lint" && n != 2)
+    {
+        bail!("{loc}: `lint` must have 2 arguments (Name, Node), found {n}");
+    }
     let mut program = bridge::spec().clone();
     program.extend(user);
     let path = Path::new(path_arg(f)?);
@@ -396,8 +495,11 @@ fn lint(f: &Flags) -> Result<Output> {
         )
         .map_err(|e| anyhow::anyhow!("{e}"))?;
         for t in out.tuples("lint") {
-            let name = out.display_value(t[0]).trim_matches('"').to_string();
-            let node = t.get(1).map(|v| out.display_value(*v)).unwrap_or_default();
+            let [name, node] = t.as_slice() else {
+                continue;
+            };
+            let name = out.display_value(*name).trim_matches('"').to_string();
+            let node = out.display_value(*node);
             let span = node
                 .strip_prefix('n')
                 .and_then(|n| n.parse::<usize>().ok())

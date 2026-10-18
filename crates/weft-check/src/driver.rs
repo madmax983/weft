@@ -4,7 +4,9 @@ use weft_sema::{Analysis, Options};
 use weft_syntax::diag::{Diagnostic, Severity};
 use weft_syntax::SourceFile;
 
-use crate::bridge;
+use weft_facts::{FnFacts, Violations};
+
+use crate::bridge::{self, SpecError};
 use crate::diagnose::{diagnose, resolve_lines};
 use crate::rules::{check, Report};
 
@@ -52,7 +54,7 @@ pub fn check_analysis(analysis: Analysis, files: &[SourceFile], opts: Options) -
     if opts.no_runtime {
         diags.extend(no_runtime_diags(&analysis));
     }
-    diags.sort_by_key(|d| (d.unit, d.span.lo, d.code.clone()));
+    diags.sort_by(|a, b| (a.unit, a.span.lo, &a.code).cmp(&(b.unit, b.span.lo, &b.code)));
     diags.dedup();
     Checked {
         analysis,
@@ -66,7 +68,7 @@ fn no_runtime_diags(a: &Analysis) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     for b in &a.bodies {
         let Some(f) = b.func else { continue };
-        if a.program.fns[f].name != "main" || b.unit != 1 {
+        if a.program.fns[f].name != "main" || b.unit != weft_sema::ROOT_UNIT {
             continue;
         }
         for (n, e) in &b.facts.escapes_at {
@@ -110,22 +112,28 @@ pub struct Disagreement {
     /// The function name.
     pub function: String,
     /// The checker result.
-    pub checker: weft_facts::Violations,
-    /// The spec result.
-    pub spec: weft_facts::Violations,
+    pub checker: Violations,
+    /// The spec result, or the reason that the spec has no result.
+    pub spec: Result<Violations, SpecError>,
 }
 
 /// Runs the Datalog spec on every body and compares it with the checker.
 ///
-/// Returns the number of bodies that agree, or the disagreements.
+/// Returns the number of bodies that agree, or the disagreements. A body
+/// where the spec fails is a disagreement.
 pub fn agreement(c: &Checked) -> Result<usize, Vec<Disagreement>> {
+    agreement_with(c, bridge::check_spec)
+}
+
+/// Compares the checker with the violations that `spec` gives for each body.
+fn agreement_with(
+    c: &Checked,
+    spec: impl Fn(&FnFacts) -> Result<Violations, SpecError>,
+) -> Result<usize, Vec<Disagreement>> {
     let mut bad = Vec::new();
     for (b, r) in c.analysis.bodies.iter().zip(&c.reports) {
-        let spec = match bridge::check_spec(&b.facts) {
-            Ok(v) => v,
-            Err(e) => panic!("spec evaluation failed for {}: {e}", b.facts.name),
-        };
-        if spec != r.violations {
+        let spec = spec(&b.facts);
+        if spec.as_ref() != Ok(&r.violations) {
             bad.push(Disagreement {
                 function: b.facts.name.clone(),
                 checker: r.violations.clone(),
@@ -137,5 +145,45 @@ pub fn agreement(c: &Checked) -> Result<usize, Vec<Disagreement>> {
         Ok(c.analysis.bodies.len())
     } else {
         Err(bad)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agreement_counts_the_bodies() {
+        let c = check_source("a.wf", "fn f() {}\nfn g() {}\n", Options::default());
+        assert_eq!(agreement(&c).map_err(|d| d.len()), Ok(2));
+    }
+
+    #[test]
+    fn a_spec_that_fails_is_a_disagreement() {
+        let c = check_source("a.wf", "fn f() {}\n", Options::default());
+        let Err(e) = weft_datalog::parse_program_named("bad.dl", "x(") else {
+            panic!("`x(` parses");
+        };
+        let fail = |_: &FnFacts| Err(SpecError::Eval(e.clone()));
+        let Err(bad) = agreement_with(&c, fail) else {
+            panic!("a failed spec agrees");
+        };
+        assert_eq!(bad.len(), 1);
+        assert_eq!(bad[0].function, "f");
+        assert_eq!(bad[0].checker, Violations::default());
+        let text = bad[0].spec.as_ref().map_err(ToString::to_string);
+        assert_eq!(
+            text,
+            Err(format!("the spec does not evaluate: {e}")),
+            "{:?}",
+            bad[0].spec
+        );
+        // A different result is a disagreement too.
+        let mut other = Violations::default();
+        other.stealable.insert(weft_facts::TaskId(0));
+        let Err(bad) = agreement_with(&c, |_| Ok(other.clone())) else {
+            panic!("different violations agree");
+        };
+        assert_eq!(bad[0].spec, Ok(other));
     }
 }

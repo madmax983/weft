@@ -5,6 +5,13 @@ use std::fmt::Write as _;
 use crate::ast::Span;
 use crate::source::SourceFile;
 
+/// The unit index of the standard prelude.
+pub const PRELUDE_UNIT: usize = 0;
+
+/// The unit index of the root: the file or the package that is checked.
+/// Dependencies have the indices after it.
+pub const ROOT_UNIT: usize = 1;
+
 /// How serious a diagnostic is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Severity {
@@ -36,7 +43,7 @@ pub struct Diagnostic {
     pub span: Span,
     /// The explanation, one fact per line.
     pub notes: Vec<Note>,
-    /// The source unit: 0 is the prelude, 1 is the root file, higher are dependencies.
+    /// The source unit: [`PRELUDE_UNIT`], [`ROOT_UNIT`], or a dependency.
     pub unit: usize,
 }
 
@@ -49,7 +56,7 @@ impl Diagnostic {
             message: message.into(),
             span,
             notes: Vec::new(),
-            unit: 1,
+            unit: ROOT_UNIT,
         }
     }
 

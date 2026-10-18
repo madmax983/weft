@@ -7,7 +7,7 @@ use weft_syntax::ast::{
     self, EffectItem, ExternTypeDecl, File, FnDecl, Item, ItemKind, Mode, PlaceExpr, PlaceStep,
     Span, TypeExpr, TypeExprKind,
 };
-use weft_syntax::diag::Diagnostic;
+use weft_syntax::diag::{Diagnostic, ROOT_UNIT};
 
 use crate::effects;
 use crate::types::{AdtId, FnTy, IntTy, Ty};
@@ -441,10 +441,10 @@ impl Collector {
         for (i, u) in units.iter().enumerate() {
             // A dependency sees its own items and the prelude, not the root.
             let m = c.new_mod(&u.name, None, u.is_std, i);
-            if i == 1 {
+            if i == ROOT_UNIT {
                 c.prog.root = m;
             }
-            if i > 1 {
+            if i > ROOT_UNIT {
                 c.name_dependency(&u.name, m, i);
             }
             unit_mods.push(m);

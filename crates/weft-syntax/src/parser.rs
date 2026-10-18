@@ -5,7 +5,7 @@
 //! nesting budget limits the recursion depth and the depth of the tree.
 //!
 //! A long chain of binary operators does not use the budget. The parser keeps
-//! each part of [`CHAIN_PART`] operators in a hidden local of a block (see
+//! each part of 32 operators in a hidden local of a block (see
 //! [`crate::ast::CHAIN_PART_PREFIX`]). The value and the order of evaluation do
 //! not change, and the tree stays shallow.
 //!

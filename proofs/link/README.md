@@ -20,7 +20,7 @@ The results must be:
 
 ```text
 check-copies: 10 included source files, no shadow copies, 0 verbatim copies identical
-verification results:: 230 verified, 0 errors
+verification results:: 232 verified, 0 errors
 ```
 
 | Module | Verified | What it is |
