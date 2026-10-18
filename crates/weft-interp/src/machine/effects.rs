@@ -1,0 +1,704 @@
+//! Effects: perform, resume, abort and unwinding.
+//!
+//! A perform finds the innermost lexical handler of its effect whose mark is on
+//! the current task's stack. It moves the frames from that mark to the top into a
+//! continuation, and runs the clause below them. `resume(v)` puts the frames back.
+//! A clause that returns without a resume aborts the continuation: its frames
+//! unwind and every live linear value in them gets `on abort`, innermost first.
+
+use std::collections::{BTreeMap, VecDeque};
+use std::rc::Rc;
+
+use weft_sema::program::EffectId;
+use weft_verified::lifecycle::{ContError, Continuation, LinState};
+
+use super::{
+    After, CodeFrame, ContRec, Flow, Frame, SimSaved, TState, TaskResult, Timer, Unwind, Wait,
+    R,
+};
+use crate::code::CodeKind;
+use crate::error::ErrorKind;
+use crate::heap::SlotKind;
+use crate::trace::{SuspendReason, TraceEvent};
+use crate::value::{CellId, CodeId, ContId, HEnv, Place, TaskId, Value};
+
+impl super::Machine<'_, '_> {
+    /// Performs an effect operation with the lexical handlers `henv`.
+    pub(crate) fn perform(
+        &mut self,
+        effect: EffectId,
+        op: usize,
+        args: Vec<Value>,
+        henv: HEnv,
+    ) -> R<Flow> {
+        let Some((idx, code, cells, outer)) = self.find_handler(effect, op, &henv) else {
+            return self.root_op(effect, op, args);
+        };
+        let multi = self
+            .rt
+            .prog
+            .effects
+            .get(effect)
+            .and_then(|e| e.ops.get(op))
+            .is_some_and(|o| o.multi);
+        let frames = self.task().frames.split_off(idx);
+        let k = self.conts.len();
+        self.conts.push(ContRec {
+            k: Continuation::new(multi),
+            frames,
+        });
+        self.task().frames.push(Frame::Clause { cont: k });
+        let mut args = args;
+        args.push(Value::Cont(k));
+        let f = self.code_frame(code, args, cells, outer)?;
+        self.task().frames.push(Frame::Code(f));
+        Ok(Flow::Continue)
+    }
+
+    /// Finds the handler mark and the clause for an operation.
+    fn find_handler(
+        &self,
+        effect: EffectId,
+        op: usize,
+        henv: &HEnv,
+    ) -> Option<(usize, CodeId, Rc<[CellId]>, HEnv)> {
+        let frames = &self.tasks.get(self.cur)?.frames;
+        for h in henv.handlers_for(effect) {
+            let Some(idx) = frames
+                .iter()
+                .rposition(|f| matches!(f, Frame::Handle(m) if m.id == h))
+            else {
+                continue;
+            };
+            if let Some(Frame::Handle(m)) = frames.get(idx) {
+                if let Some((_, code, cells)) = m.clauses.iter().find(|(o, _, _)| *o == op) {
+                    return Some((idx, *code, Rc::clone(cells), m.outer.clone()));
+                }
+            }
+        }
+        None
+    }
+
+    /// Performs `fail(msg)`.
+    pub(crate) fn fail(&mut self, msg: String, henv: HEnv) -> R<Flow> {
+        let Some(e) = self.rt.b.fail else {
+            let span = self.span_now();
+            return self.abort_task(TaskResult::Failed {
+                msg,
+                kind: ErrorKind::Failed,
+                span,
+            });
+        };
+        let op = self.rt.prog.effects[e]
+            .ops
+            .iter()
+            .position(|o| o.name == "fail")
+            .unwrap_or(0);
+        self.perform(e, op, vec![Value::str(&msg)], henv)
+    }
+
+    /// Resumes a continuation with a value.
+    pub(crate) fn resume(&mut self, k: ContId, args: Vec<Value>) -> R<Flow> {
+        let v = args.into_iter().next().unwrap_or_default();
+        let Some(rec) = self.conts.get_mut(k) else {
+            return Err(self.fault("internal: bad continuation"));
+        };
+        match rec.k.resume() {
+            Ok(()) => {}
+            Err(ContError::AlreadyResumed) => {
+                return Err(self.fault("a `once` continuation was resumed twice"));
+            }
+            Err(ContError::AlreadyDropped) => {
+                return Err(self.fault("a continuation was resumed after it was dropped"));
+            }
+        }
+        let frames = if rec.k.multi {
+            let tmpl = std::mem::take(&mut rec.frames);
+            let copy = self.copy_frames(&tmpl);
+            self.conts[k].frames = tmpl;
+            copy?
+        } else {
+            std::mem::take(&mut rec.frames)
+        };
+        self.task().frames.extend(frames);
+        self.deliver(v)
+    }
+
+    /// Gives a value to the frame on top. Marks pass it down.
+    pub(crate) fn deliver(&mut self, v: Value) -> R<Flow> {
+        let cur = self.cur;
+        loop {
+            let Some(top) = self.tasks[cur].frames.last_mut() else {
+                self.finish_task(cur, TaskResult::Ok(v));
+                return Ok(Flow::Done);
+            };
+            match top {
+                Frame::Code(cf) => {
+                    cf.stack.push(v);
+                    return Ok(Flow::Continue);
+                }
+                Frame::Unwind(_) => {
+                    // The result of an `on abort` function.
+                    self.heap.drop_value(v);
+                    return Ok(Flow::Continue);
+                }
+                Frame::Handle(_) | Frame::Scope { .. } => {
+                    self.tasks[cur].frames.pop();
+                }
+                Frame::Timeout { id, .. } => {
+                    let id = *id;
+                    self.tasks[cur].frames.pop();
+                    self.remove_timeout(id);
+                }
+                Frame::Sim { .. } => {
+                    if let Some(Frame::Sim { saved }) = self.tasks[cur].frames.pop() {
+                        self.restore_sim(*saved);
+                    }
+                }
+                Frame::Clause { cont } => {
+                    let k = *cont;
+                    self.tasks[cur].frames.pop();
+                    let frames = std::mem::take(&mut self.conts[k].frames);
+                    if self.conts[k].k.drop_now() {
+                        // The clause returned without a resume: abort the computation.
+                        self.tasks[cur].frames.push(Frame::Unwind(Box::new(Unwind {
+                            frames,
+                            aborts: VecDeque::new(),
+                            then: After::Deliver(v),
+                            prepass: false,
+                            children: Vec::new(),
+                        })));
+                        return Ok(Flow::Continue);
+                    }
+                    self.drop_frames(frames);
+                }
+                Frame::Fork { .. } => {
+                    return Err(self.fault("internal: a value reached a fork mark"));
+                }
+            }
+        }
+    }
+
+    /// Restores the state outside a simulation.
+    pub(crate) fn restore_sim(&mut self, saved: SimSaved) {
+        self.sim = saved.sim;
+        self.sched_rng = saved.sched;
+        self.rand_rng = saved.rand;
+        self.trace.push(TraceEvent::SimEnd);
+    }
+
+    /// Starts a simulation: it replaces the root handlers.
+    pub(crate) fn enter_sim(&mut self, seed: u64) -> Box<SimSaved> {
+        let saved = Box::new(SimSaved {
+            sim: self.sim.take(),
+            sched: self.sched_rng.clone(),
+            rand: self.rand_rng.clone(),
+        });
+        self.sim = Some(super::SimState {
+            seed,
+            start: self.now,
+            partition: None,
+        });
+        self.sched_rng = crate::rng::Rng::new(seed);
+        self.rand_rng = crate::rng::Rng::new(seed ^ super::RAND_SALT);
+        self.trace.push(TraceEvent::SimStart { seed });
+        saved
+    }
+
+    /// Aborts the whole current task: unwinds every frame, then ends the task.
+    pub(crate) fn abort_task(&mut self, result: TaskResult) -> R<Flow> {
+        let cur = self.cur;
+        let frames = std::mem::take(&mut self.tasks[cur].frames);
+        self.tasks[cur].aborting = true;
+        self.tasks[cur].frames.push(Frame::Unwind(Box::new(Unwind {
+            frames,
+            aborts: VecDeque::new(),
+            then: After::Finish(result),
+            prepass: false,
+            children: Vec::new(),
+        })));
+        Ok(Flow::Continue)
+    }
+
+    /// Aborts the block of a `with_timeout` whose deadline passed.
+    pub(crate) fn timeout_unwind(&mut self, id: u64) -> R<Option<Flow>> {
+        let cur = self.cur;
+        let Some(idx) = self.tasks[cur]
+            .frames
+            .iter()
+            .rposition(|f| matches!(f, Frame::Timeout { id: x, .. } if *x == id))
+        else {
+            return Ok(None);
+        };
+        let henv = match &self.tasks[cur].frames[idx] {
+            Frame::Timeout { henv, .. } => henv.clone(),
+            _ => HEnv::default(),
+        };
+        let frames = self.tasks[cur].frames.split_off(idx);
+        self.trace.push(TraceEvent::Timeout { task: cur });
+        self.tasks[cur].frames.push(Frame::Unwind(Box::new(Unwind {
+            frames,
+            aborts: VecDeque::new(),
+            then: After::Fail {
+                msg: "timeout".into(),
+                henv,
+            },
+            prepass: false,
+            children: Vec::new(),
+        })));
+        Ok(Some(Flow::Continue))
+    }
+
+    /// Returns the tasks of every scope in a set of frames.
+    fn children_in(&self, frames: &[Frame], out: &mut Vec<TaskId>) {
+        for f in frames {
+            match f {
+                Frame::Scope { scope } | Frame::Fork { scope, .. } => {
+                    if let Some(s) = self.scopes.get(*scope) {
+                        out.extend(s.children.iter().copied());
+                    }
+                }
+                Frame::Clause { cont } => {
+                    if let Some(c) = self.conts.get(*cont) {
+                        self.children_in(&c.frames, out);
+                    }
+                }
+                Frame::Unwind(u) => self.children_in(&u.frames, out),
+                _ => {}
+            }
+        }
+    }
+
+    fn unwind_top(&mut self) -> R<&mut Unwind> {
+        let cur = self.cur;
+        match self.tasks[cur].frames.last_mut() {
+            Some(Frame::Unwind(u)) => Ok(u),
+            _ => Err(crate::error::RuntimeError::new(
+                ErrorKind::Fault,
+                "internal: no unwinding",
+                None,
+            )),
+        }
+    }
+
+    /// One step of an unwinding.
+    pub(crate) fn unwind_step(&mut self) -> R<Flow> {
+        let u = self.unwind_top()?;
+        if !u.prepass {
+            u.prepass = true;
+            let frames = std::mem::take(&mut u.frames);
+            let mut kids = Vec::new();
+            self.children_in(&frames, &mut kids);
+            kids.retain(|&t| !self.is_done(t));
+            for &t in &kids {
+                self.cancel(t);
+            }
+            let u = self.unwind_top()?;
+            u.frames = frames;
+            u.children = kids;
+        }
+        let kids = self.unwind_top()?.children.clone();
+        let pending: Vec<TaskId> = kids.into_iter().filter(|&t| !self.is_done(t)).collect();
+        if !pending.is_empty() {
+            return Ok(self.block(Wait::Children(pending), SuspendReason::Children));
+        }
+        let u = self.unwind_top()?;
+        if let Some(v) = u.aborts.pop_front() {
+            return self.run_on_abort(v);
+        }
+        if let Some(f) = u.frames.pop() {
+            return self.unwind_frame(f);
+        }
+        let cur = self.cur;
+        let Some(Frame::Unwind(u)) = self.tasks[cur].frames.pop() else {
+            return Err(self.fault("internal: no unwinding"));
+        };
+        match u.then {
+            After::Deliver(v) => self.deliver(v),
+            After::Finish(r) => {
+                self.finish_task(cur, r);
+                Ok(Flow::Done)
+            }
+            After::Fail { msg, henv } => self.fail(msg, henv),
+        }
+    }
+
+    /// Unwinds one frame: finds live linear values and drops the rest.
+    fn unwind_frame(&mut self, f: Frame) -> R<Flow> {
+        match f {
+            Frame::Code(cf) => {
+                let mut found = Vec::new();
+                for v in self.frame_values(cf) {
+                    let rest = self.extract_linear(v, &mut found);
+                    self.heap.drop_value(rest);
+                }
+                let mut live = Vec::new();
+                for v in found {
+                    if self.unwind_lin(&v) {
+                        live.push(v);
+                    } else {
+                        self.heap.drop_value(v);
+                    }
+                }
+                self.unwind_top()?.aborts.extend(live);
+            }
+            Frame::Clause { cont } => {
+                let frames = std::mem::take(&mut self.conts[cont].frames);
+                if self.conts[cont].k.drop_now() {
+                    self.unwind_top()?.frames.extend(frames);
+                } else {
+                    self.drop_frames(frames);
+                }
+            }
+            Frame::Scope { scope } | Frame::Fork { scope, .. } => {
+                let kids: Vec<TaskId> = self
+                    .scopes
+                    .get(scope)
+                    .map(|s| s.children.clone())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|&t| !self.is_done(t))
+                    .collect();
+                if !kids.is_empty() {
+                    for &t in &kids {
+                        self.cancel(t);
+                    }
+                    let u = self.unwind_top()?;
+                    u.frames.push(f);
+                    u.children = kids.clone();
+                    return Ok(self.block(Wait::Children(kids), SuspendReason::Children));
+                }
+            }
+            Frame::Timeout { id, .. } => self.remove_timeout(id),
+            Frame::Sim { saved } => self.restore_sim(*saved),
+            Frame::Handle(_) => {}
+            Frame::Unwind(inner) => {
+                let inner = *inner;
+                if let After::Deliver(v) = inner.then {
+                    self.heap.drop_value(v);
+                }
+                let u = self.unwind_top()?;
+                u.frames.extend(inner.frames);
+                u.aborts.extend(inner.aborts);
+            }
+        }
+        Ok(Flow::Continue)
+    }
+
+    /// Returns the values of a code frame, innermost first: the operand stack from
+    /// the top, then temporaries, then slots in reverse order.
+    fn frame_values(&mut self, cf: CodeFrame) -> Vec<Value> {
+        let mut vals: Vec<Value> = cf.stack.into_iter().rev().collect();
+        let mut cells: Vec<CellId> = cf.temps.into_iter().rev().collect();
+        cells.extend(cf.slots.into_iter().rev().flatten());
+        for c in cells {
+            if let Ok(v) = self.heap.take(&Place::root(c)) {
+                vals.push(v);
+            }
+        }
+        vals
+    }
+
+    /// Drops the frames of a continuation that will not run.
+    pub(crate) fn drop_frames(&mut self, frames: Vec<Frame>) {
+        for f in frames.into_iter().rev() {
+            match f {
+                Frame::Code(cf) => self.cleanup_frame(cf),
+                Frame::Clause { cont } => {
+                    let fs = std::mem::take(&mut self.conts[cont].frames);
+                    let _ = self.conts[cont].k.drop_now();
+                    self.drop_frames(fs);
+                }
+                Frame::Timeout { id, .. } => self.remove_timeout(id),
+                Frame::Unwind(u) => self.drop_frames(u.frames),
+                _ => {}
+            }
+        }
+    }
+
+    /// Takes the live linear values out of a value.
+    fn extract_linear(&mut self, v: Value, out: &mut Vec<Value>) -> Value {
+        match v {
+            Value::Struct(o)
+                if o.lin
+                    .is_some_and(|id| self.lins.get(id).is_some_and(|l| l.l.state == LinState::Live)) =>
+            {
+                out.push(Value::Struct(o));
+                Value::Moved
+            }
+            Value::Task(t)
+                if self
+                    .tasks
+                    .get(t)
+                    .is_some_and(|x| x.handle.state == LinState::Live) =>
+            {
+                out.push(Value::Task(t));
+                Value::Moved
+            }
+            Value::Struct(mut o) => {
+                let fields = std::mem::take(&mut o.fields);
+                o.fields = fields
+                    .into_iter()
+                    .map(|f| self.extract_linear(f, out))
+                    .collect();
+                Value::Struct(o)
+            }
+            Value::Enum(mut e) => {
+                let fields = std::mem::take(&mut e.fields);
+                e.fields = fields
+                    .into_iter()
+                    .map(|f| self.extract_linear(f, out))
+                    .collect();
+                Value::Enum(e)
+            }
+            Value::Tuple(vs) => Value::Tuple(
+                vs.into_iter()
+                    .map(|f| self.extract_linear(f, out))
+                    .collect(),
+            ),
+            Value::List(vs) => Value::List(
+                vs.into_iter()
+                    .map(|f| self.extract_linear(f, out))
+                    .collect(),
+            ),
+            Value::Vec(c) | Value::Boxed(c) => {
+                let owned = self
+                    .heap
+                    .slot(c)
+                    .is_ok_and(|s| matches!(s.kind, SlotKind::Buf | SlotKind::Boxed));
+                if owned {
+                    if let Ok(inner) = self.heap.take(&Place::root(c)) {
+                        let rest = self.extract_linear(inner, out);
+                        if let Ok(s) = self.heap.slot_mut(c) {
+                            s.val = rest;
+                        }
+                    }
+                }
+                v
+            }
+            other => other,
+        }
+    }
+
+    /// Marks a linear value as aborted. Returns true if `on abort` must run.
+    fn unwind_lin(&mut self, v: &Value) -> bool {
+        match v {
+            Value::Struct(o) => o
+                .lin
+                .and_then(|id| self.lins.get_mut(id))
+                .is_some_and(|l| l.l.unwind()),
+            Value::Task(t) => self.tasks.get_mut(*t).is_some_and(|x| x.handle.unwind()),
+            _ => false,
+        }
+    }
+
+    /// Runs `on abort` for one linear value.
+    fn run_on_abort(&mut self, v: Value) -> R<Flow> {
+        let cur = self.cur;
+        match v {
+            Value::Struct(o) => {
+                let info = &self.rt.adts[o.adt];
+                let ty = info.name.to_string();
+                let f = info.on_abort;
+                let code = f.and_then(|f| self.rt.compiled.fn_code.get(f).copied().flatten());
+                let Some(code) = code else {
+                    self.heap.drop_value(Value::Struct(o));
+                    return Ok(Flow::Continue);
+                };
+                self.trace.push(TraceEvent::OnAbort { task: cur, ty });
+                let f = self.code_frame(code, vec![Value::Struct(o)], Rc::from(Vec::new()), HEnv::default())?;
+                self.task().frames.push(Frame::Code(f));
+            }
+            Value::Task(t) => {
+                self.trace.push(TraceEvent::OnAbort {
+                    task: cur,
+                    ty: "Task".into(),
+                });
+                self.cancel(t);
+            }
+            other => self.heap.drop_value(other),
+        }
+        Ok(Flow::Continue)
+    }
+
+    /// Copies the frames of a `multi` continuation. Cells that the frames own get
+    /// fresh copies, so each resume starts from the captured state.
+    fn copy_frames(&mut self, frames: &[Frame]) -> R<Vec<Frame>> {
+        let mut owned: Vec<CellId> = Vec::new();
+        for f in frames {
+            if let Frame::Code(cf) = f {
+                owned.extend(cf.slots.iter().flatten().copied());
+                owned.extend(cf.temps.iter().copied());
+            }
+        }
+        let mut extra = Vec::new();
+        for &c in &owned {
+            if let Ok(s) = self.heap.slot(c) {
+                self.heap.owned_cells(&s.val, &mut extra);
+            }
+        }
+        for f in frames {
+            if let Frame::Code(cf) = f {
+                for v in &cf.stack {
+                    self.heap.owned_cells(v, &mut extra);
+                }
+            }
+        }
+        owned.extend(extra);
+        let mut map: BTreeMap<CellId, CellId> = BTreeMap::new();
+        for c in owned {
+            if map.contains_key(&c) {
+                continue;
+            }
+            let kind = self
+                .heap
+                .slot(c)
+                .map_or(SlotKind::Local, |s| s.kind);
+            let n = self.heap.alloc(kind, Value::Moved);
+            map.insert(c, n);
+        }
+        let pairs: Vec<(CellId, CellId)> = map.iter().map(|(a, b)| (*a, *b)).collect();
+        for (old, new) in pairs {
+            let v = self
+                .heap
+                .slot(old)
+                .map(|s| s.val.clone())
+                .unwrap_or_default();
+            let nv = self.heap.remap(&v, &map);
+            if let Ok(s) = self.heap.slot_mut(new) {
+                s.val = nv;
+            }
+        }
+        let m = |c: &CellId| map.get(c).copied().unwrap_or(*c);
+        let mut out = Vec::new();
+        for f in frames {
+            out.push(match f {
+                Frame::Code(cf) => {
+                    let stack = cf.stack.iter().map(|v| self.heap.remap(v, &map)).collect();
+                    Frame::Code(CodeFrame {
+                        code: Rc::clone(&cf.code),
+                        pc: cf.pc,
+                        slots: cf.slots.iter().map(|s| s.as_ref().map(m)).collect(),
+                        caps: cf.caps.iter().map(m).collect(),
+                        stack,
+                        temps: cf.temps.iter().map(m).collect(),
+                        marks: cf.marks.clone(),
+                        loops: cf.loops.clone(),
+                        henv: cf.henv.clone(),
+                    })
+                }
+                other => other.clone(),
+            });
+        }
+        Ok(out)
+    }
+
+    // -----------------------------------------------------------------------
+    // Root handlers
+    // -----------------------------------------------------------------------
+
+    /// Handles an operation that no user handler takes: the `std.rt` root
+    /// handlers, or the simulation when `sim.run` is active.
+    fn root_op(&mut self, effect: EffectId, op: usize, args: Vec<Value>) -> R<Flow> {
+        let Some(e) = self.rt.prog.effects.get(effect) else {
+            return Err(self.fault("internal: bad effect"));
+        };
+        let opname = e.ops.get(op).map_or("", |o| o.name.as_str()).to_string();
+        let ename = e.name.clone();
+        if !e.is_std {
+            return Err(self.fault(format!(
+                "no handler for `{ename}.{opname}` on this task"
+            )));
+        }
+        if self.opts.no_runtime && self.sim.is_none() {
+            return Err(self.fault(format!(
+                "no runtime: nothing handles `{ename}.{opname}`"
+            )));
+        }
+        let arg = args.into_iter().next();
+        match (ename.as_str(), opname.as_str()) {
+            ("Log", level) => {
+                let msg = arg.map(|v| self.show(&v)).unwrap_or_default();
+                self.err_line(&format!("{level}: {msg}"));
+                self.deliver(Value::Unit)
+            }
+            ("Fail", _) => {
+                let msg = arg.map(|v| self.show(&v)).unwrap_or_default();
+                let span = self.span_now();
+                self.abort_task(TaskResult::Failed {
+                    msg,
+                    kind: ErrorKind::Failed,
+                    span,
+                })
+            }
+            ("Clock", "now") => {
+                let start = self.sim.as_ref().map_or(0, |s| s.start);
+                let now = self.now.saturating_sub(start);
+                self.deliver(Value::Dur(now))
+            }
+            ("Clock", "sleep") => {
+                let d = match arg.map(|v| self.deref_value(v)).transpose()? {
+                    Some(Value::Dur(d)) => d,
+                    Some(Value::Int(i)) => u64::try_from(i).unwrap_or(0),
+                    _ => 0,
+                };
+                self.sleep_for(d)
+            }
+            ("Rand", _) => {
+                let r = self.rand_rng.next_u64() >> 1;
+                self.deliver(Value::Int(i64::try_from(r).unwrap_or(0)))
+            }
+            _ => self.yield_now(),
+        }
+    }
+
+    /// Suspends the current task for `d` milliseconds of virtual time.
+    pub(crate) fn sleep_for(&mut self, d: u64) -> R<Flow> {
+        if let Some(f) = self.check_interrupt()? {
+            return Ok(f);
+        }
+        let task = self.cur;
+        let seq = self.wait_seq();
+        let at = self.now.saturating_add(d);
+        self.add_timer(
+            at,
+            Timer::Wake {
+                task,
+                seq,
+                value: Value::Unit,
+            },
+        );
+        Ok(self.block(Wait::Sleep, SuspendReason::Sleep))
+    }
+
+    /// Yields at a suspension point. The task stays ready.
+    pub(crate) fn yield_now(&mut self) -> R<Flow> {
+        if let Some(f) = self.check_interrupt()? {
+            return Ok(f);
+        }
+        let cur = self.cur;
+        let t = self.task();
+        t.suspended = true;
+        t.wake = Some(Value::Unit);
+        self.trace.push(TraceEvent::Suspend {
+            task: cur,
+            reason: SuspendReason::Yield,
+        });
+        Ok(Flow::Yield)
+    }
+
+    /// Returns true if the task is a closure body of kind `kind`.
+    #[allow(dead_code)]
+    pub(crate) fn top_kind(&self) -> Option<CodeKind> {
+        self.tasks.get(self.cur)?.frames.iter().rev().find_map(|f| match f {
+            Frame::Code(cf) => Some(cf.code.kind),
+            _ => None,
+        })
+    }
+
+    /// Returns true if the task is blocked.
+    #[allow(dead_code)]
+    pub(crate) fn is_blocked(&self, t: TaskId) -> bool {
+        self.tasks.get(t).is_some_and(|t| t.state == TState::Blocked)
+    }
+}
