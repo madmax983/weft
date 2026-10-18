@@ -1,0 +1,97 @@
+// Rule 3 of the borrowing proof (B3): a variant payload step is unstable. An
+// assignment to an enum place mutates that place, so it invalidates references
+// into the payload. A write to a primitive field invalidates nothing.
+enum State { Idle, Running(Vec<u64>), Done(u64) }
+struct Machine { state: State, score: u64, name: Vec<u64> }
+
+fn set_state(m: &Machine) / mut(m.state) { m.state = Idle }
+fn update(m: &Machine) / mut(m) {}
+
+// A callee mutates the enum place.
+fn payload_callee(m: &Machine) / mut(m.state) {
+    match m.state {
+        Running(v) => {
+            set_state(m)
+            print(v.len())   //~ W0301
+        }
+        _ => {}
+    }
+}
+
+fn payload_whole(m: &Machine) / mut(m) {
+    match m.state {
+        Running(v) => {
+            update(m)
+            print(v.len())   //~ W0301
+        }
+        _ => {}
+    }
+}
+
+// The body assigns to the enum place.
+fn payload_assign(m: &Machine) / mut(m.state) {
+    match m.state {
+        Running(v) => {
+            m.state = Done(1)
+            print(v.len())   //~ W0301
+        }
+        _ => {}
+    }
+}
+
+// The body assigns to an owned enum local.
+fn payload_local() {
+    let s = Running(Vec.new())
+    let rs = &s
+    match rs {
+        Running(v) => {
+            s = Idle
+            print(v.len())   //~ W0301
+        }
+        _ => {}
+    }
+}
+
+// Controls: a write to a primitive field, and the enum place itself.
+fn primitive_write(m: &Machine) / mut(m.score) {
+    let s = &m.score
+    let n = &m.name
+    let st = &m.state
+    m.score += 1
+    print(s)
+    print(n.len())
+    match st {
+        Running(v) => print(v.len()),
+        _ => {}
+    }
+}
+
+fn enum_ref_survives(m: &Machine) / mut(m.state) {
+    let st = &m.state
+    m.state = Idle
+    match st {
+        Done(x) => print(x),
+        _ => {}
+    }
+}
+
+fn stable_parts_survive(m: &Machine) / mut(m) {
+    let s = &m.score
+    let st = &m.state
+    update(m)
+    print(s)
+    match st {
+        Done(x) => print(x),
+        _ => {}
+    }
+}
+
+fn payload_other_field(m: &Machine) / mut(m.score) {
+    match m.state {
+        Running(v) => {
+            m.score += 1
+            print(v.len())
+        }
+        _ => {}
+    }
+}
