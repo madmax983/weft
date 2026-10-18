@@ -2,6 +2,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::fmt::Write as _;
+
 use weft_facts::{FnFacts, PlaceId, RootKind, VarId};
 
 use crate::{analyze_source, Options};
@@ -417,10 +419,7 @@ fn effect_inference_runs_until_the_signatures_are_stable() {
          fn top(w: &W) { ap40(|x| x.es.clear(), w) }\n",
     );
     for i in (1..=40).rev() {
-        src.push_str(&format!(
-            "fn ap{i}(f: fn(&W), w: &W) {{ ap{}(f, w) }}\n",
-            i - 1
-        ));
+        let _ = writeln!(src, "fn ap{i}(f: fn(&W), w: &W) {{ ap{}(f, w) }}", i - 1);
     }
     src.push_str("fn ap0(f: fn(&W), w: &W) { f(w) }\n");
     let a = analyze_source(&src, Options::default()).expect("the source parses");
