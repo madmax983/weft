@@ -418,7 +418,7 @@ impl Lower<'_> {
                     self.unify(&Ty::Int(IntTy::Usize), &t, ix.span);
                 }
                 let t = self.deref_ty(&lv.ty);
-                let rt = self.inf.resolve(&t);
+                let rt = self.inf.deep(&t);
                 if let Some((step, elem)) = elem_step(self.prog, &rt) {
                     let places = match step {
                         Some(s) => lv.places.iter().map(|&p| self.child(p, s, "[]")).collect(),
@@ -477,7 +477,7 @@ impl Lower<'_> {
                 _ => break,
             }
         }
-        let t = self.inf.resolve(&lv.ty);
+        let t = self.inf.deep(&lv.ty);
         if let Some((steps, next, _)) = field_step(self.prog, &t, &name.name) {
             let mut places = lv.places.clone();
             for (s, text) in &steps {
@@ -551,7 +551,7 @@ impl Lower<'_> {
             ExprKind::Index { base, index: None } => {
                 let lv = self.place_or_temp(base);
                 let t = self.deref_ty(&lv.ty);
-                let rt = self.inf.resolve(&t);
+                let rt = self.inf.deep(&t);
                 match elem_step(self.prog, &rt) {
                     Some((step, elem)) => {
                         let places = match step {
@@ -843,7 +843,7 @@ impl Lower<'_> {
                 self.assign_local(l, &v, n);
             }
             Pattern::Tuple(ps, s) => {
-                let rt = self.inf.resolve(&t);
+                let rt = self.inf.deep(&t);
                 let Ty::Tuple(ts) = rt else {
                     self.err("W0102", "this value is not a tuple", *s);
                     return;
@@ -874,7 +874,7 @@ impl Lower<'_> {
             }
             Pattern::Variant { path, fields, span } => {
                 let name = &path[path.len() - 1].name;
-                let rt = self.inf.resolve(&t);
+                let rt = self.inf.deep(&t);
                 let (adt, args) = match rt {
                     Ty::Adt(a, args) => (a, args),
                     Ty::Var(_) | Ty::Error => {

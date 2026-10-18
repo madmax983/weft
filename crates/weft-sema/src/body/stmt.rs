@@ -569,7 +569,7 @@ impl Lower<'_> {
     fn elem_iter(&mut self, base: &ast::Expr, span: Span) -> (Val, Vec<PlaceId>) {
         let lv = self.place_or_temp(base);
         let t = self.deref_ty(&lv.ty);
-        if let Some((step, elem)) = super::elem_step(self.prog, &self.inf.resolve(&t)) {
+        if let Some((step, elem)) = super::elem_step(self.prog, &self.inf.deep(&t)) {
             let places: Vec<PlaceId> = match step {
                 Some(s) => lv.places.iter().map(|&p| self.child(p, s, "[]")).collect(),
                 None => lv.places.clone(),

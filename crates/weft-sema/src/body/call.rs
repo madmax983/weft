@@ -217,6 +217,24 @@ impl Lower<'_> {
     ) -> Val {
         let sig = self.sigs[f].clone();
         let name = self.prog.fns[f].name.clone();
+        // Only a function with `self` as its first parameter takes a receiver.
+        if recv.is_some() && sig.params.first().is_none_or(|p| p.name != "self") {
+            let owner = self.prog.fns[f]
+                .owner
+                .map_or_else(String::new, |a| format!("{}.", self.prog.adts[a].name));
+            self.err(
+                "W0104",
+                format!("`{name}` has no `self` parameter: call it as `{owner}{name}(...)`"),
+                span,
+            );
+            for a in args.iter().map(|a| &a.value).chain(trailing) {
+                let _ = self.expr(a);
+            }
+            return Val {
+                ty: Ty::Error,
+                ..Val::default()
+            };
+        }
         let targs: Vec<Ty> = sig.generics.iter().map(|_| self.inf.fresh()).collect();
         let ptys: Vec<Ty> = sig
             .params
@@ -502,7 +520,7 @@ impl Lower<'_> {
             ..Val::default()
         };
         if !sig.ret_places.is_empty() {
-            let mut parts: Option<Vec<Val>> = match self.inf.resolve(&ret) {
+            let mut parts: Option<Vec<Val>> = match self.inf.deep(&ret) {
                 Ty::Tuple(ts) => Some(
                     ts.into_iter()
                         .map(|t| Val {
