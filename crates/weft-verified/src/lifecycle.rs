@@ -49,7 +49,7 @@ pub struct Continuation {
 
 impl Continuation {
     /// Makes a fresh continuation.
-    pub fn new(multi: bool) -> (r: Self)
+    pub const fn new(multi: bool) -> (r: Self)
         ensures
             r.state == ContState::Fresh,
             r.multi == multi,
@@ -58,7 +58,7 @@ impl Continuation {
     }
 
     /// Records a resume. A `once` continuation accepts only one resume.
-    pub fn resume(&mut self) -> (r: Result<(), ContError>)
+    pub const fn resume(&mut self) -> (r: Result<(), ContError>)
         ensures
             final(self).multi == old(self).multi,
             old(self).state == ContState::Dropped ==> r == Err::<(), ContError>(
@@ -83,7 +83,7 @@ impl Continuation {
 
     /// Records a drop. Returns true if the drop aborts the computation: the
     /// continuation was never resumed.
-    pub fn drop_now(&mut self) -> (aborts: bool)
+    pub const fn drop_now(&mut self) -> (aborts: bool)
         ensures
             aborts == (old(self).state == ContState::Fresh),
             aborts ==> final(self).state == ContState::Dropped,
@@ -126,7 +126,7 @@ pub enum LinError {
 
 impl Linear {
     /// Makes a live linear value.
-    pub fn new() -> (r: Self)
+    pub const fn new() -> (r: Self)
         ensures
             r.state == LinState::Live,
     {
@@ -134,7 +134,7 @@ impl Linear {
     }
 
     /// Consumes the value on the normal path.
-    pub fn consume(&mut self) -> (r: Result<(), LinError>)
+    pub const fn consume(&mut self) -> (r: Result<(), LinError>)
         ensures
             r is Ok <==> old(self).state == LinState::Live,
             r is Ok ==> final(self).state == LinState::Consumed,
@@ -152,7 +152,7 @@ impl Linear {
     /// Unwinds the value. Returns true if `on abort` must run now.
     ///
     /// `on abort` runs at most once, and only for a value that is still live.
-    pub fn unwind(&mut self) -> (run_on_abort: bool)
+    pub const fn unwind(&mut self) -> (run_on_abort: bool)
         ensures
             run_on_abort == (old(self).state == LinState::Live),
             run_on_abort ==> final(self).state == LinState::Aborted,
@@ -168,7 +168,7 @@ impl Linear {
     }
 
     /// Returns true if the value is finished (consumed or aborted).
-    pub fn is_finished(&self) -> (r: bool)
+    pub const fn is_finished(&self) -> (r: bool)
         ensures
             r == (self.state != LinState::Live),
     {

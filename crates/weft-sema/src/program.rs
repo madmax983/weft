@@ -425,6 +425,8 @@ pub struct Collector {
     pub diags: Vec<Diagnostic>,
     pending_fns: Vec<(FnId, Option<AdtId>, Vec<String>)>,
     marked: usize,
+    /// Each struct with `on abort`, and the written function name.
+    on_aborts: Vec<(AdtId, ast::Ident)>,
 }
 
 impl Collector {
@@ -435,6 +437,7 @@ impl Collector {
             diags: Vec::new(),
             pending_fns: Vec::new(),
             marked: 0,
+            on_aborts: Vec::new(),
         };
         // Pass 1: names.
         let mut unit_mods = Vec::new();
@@ -463,8 +466,65 @@ impl Collector {
             c.define_items(&u.file.items, m);
             c.declare_unit_mark(&mut seen, i);
         }
+        c.check_sizes();
         c.resolve_signatures();
+        c.check_on_aborts();
         (c.prog, c.diags)
+    }
+
+    /// Adds a diagnostic in the unit of module `m`.
+    fn push_in(&mut self, m: ModId, mut d: Diagnostic) {
+        d.unit = self.prog.mods[m].unit;
+        self.diags.push(d);
+    }
+
+    /// W0117: a struct that holds itself with no indirection has no finite
+    /// size.
+    fn check_sizes(&mut self) {
+        for a in infinite_structs(&self.prog) {
+            let def = &self.prog.adts[a];
+            let d = Diagnostic::error(
+                "W0117",
+                format!(
+                    "struct `{}` holds itself with no indirection, so it has no finite size",
+                    def.name
+                ),
+                def.span,
+            )
+            .note("put the field behind an indirection: an enum, `Box` or `Vec`");
+            self.push_in(def.module, d);
+        }
+    }
+
+    /// W0101 and W0118: the function after `on abort` must exist and take
+    /// one value of the type.
+    fn check_on_aborts(&mut self) {
+        for (a, name) in std::mem::take(&mut self.on_aborts) {
+            let (module, ty) = (self.prog.adts[a].module, self.prog.adts[a].name.clone());
+            let d = match self.prog.lookup(module, &name.name) {
+                Some(ItemRef::Fn(f)) => {
+                    let params = &self.prog.fns[f].sig.params;
+                    if matches!(params.as_slice(), [p] if matches!(p.ty, Ty::Adt(b, _) if b == a)) {
+                        continue;
+                    }
+                    Diagnostic::error(
+                        "W0118",
+                        format!(
+                            "`on abort = {}` needs a function that takes one `{ty}` value",
+                            name.name
+                        ),
+                        name.span,
+                    )
+                    .note(format!("declare it as `fn {}(x: {ty})`", name.name))
+                }
+                _ => Diagnostic::error(
+                    "W0101",
+                    format!("unknown function `{}` after `on abort`", name.name),
+                    name.span,
+                ),
+            };
+            self.push_in(module, d);
+        }
     }
 
     /// Gives the root the name of dependency module `m` of unit `unit`. The
@@ -576,6 +636,9 @@ impl Collector {
                     self.prog.adts[id].immovable = s.is_immovable;
                     self.prog.adts[id].on_abort = s.on_abort.as_ref().map(|i| i.name.clone());
                     self.prog.adts[id].has_on_abort = s.on_abort.is_some();
+                    if let Some(f) = &s.on_abort {
+                        self.on_aborts.push((id, f.clone()));
+                    }
                     self.insert(m, &s.name, ItemRef::Adt(id));
                 }
                 ItemKind::Enum(e) => {
@@ -668,7 +731,15 @@ impl Collector {
                             .collect(),
                     );
                     let mut fields = Vec::new();
+                    let mut names = BTreeSet::new();
                     for f in &s.fields {
+                        if !names.insert(f.name.name.as_str()) {
+                            self.diags.push(Diagnostic::error(
+                                "W0107",
+                                format!("field `{}` is defined twice", f.name.name),
+                                f.name.span,
+                            ));
+                        }
                         self.no_ptr(&f.ty);
                         let ty = self.resolve_ty(&f.ty, m, &gens, Some(&self_ty));
                         fields.push(FieldDef {
@@ -715,7 +786,15 @@ impl Collector {
                     };
                     let gens: Vec<String> = e.generics.iter().map(|g| g.name.clone()).collect();
                     let mut vs = Vec::new();
+                    let mut names = BTreeSet::new();
                     for (vi, v) in e.variants.iter().enumerate() {
+                        if !names.insert(v.name.name.as_str()) {
+                            self.diags.push(Diagnostic::error(
+                                "W0107",
+                                format!("variant `{}` is defined twice", v.name.name),
+                                v.name.span,
+                            ));
+                        }
                         for t in &v.fields {
                             self.no_ptr(t);
                         }
@@ -922,6 +1001,7 @@ impl Collector {
                     params[i].place = self.resolve_sig_place(pl, &params, &fn_params, m);
                 }
             }
+            self.check_in_cycles(&params);
             let ret = f
                 .ret
                 .as_ref()
@@ -972,6 +1052,44 @@ impl Collector {
                 effects,
                 declared,
             };
+        }
+    }
+
+    /// W0201: the `in` place of a parameter cannot start at the parameter
+    /// itself, and the `in` places cannot form a cycle.
+    fn check_in_cycles(&mut self, params: &[ParamSig]) {
+        let root_of = |i: usize| match params.get(i).and_then(|p| p.place.as_ref()) {
+            Some(SigPlace {
+                root: SigRoot::Param(j),
+                ..
+            }) => Some(*j),
+            _ => None,
+        };
+        for start in 0..params.len() {
+            // Each parameter has at most one `in` place, so the walk has one way.
+            let mut cycle = vec![start];
+            let mut at = root_of(start);
+            while let Some(j) = at {
+                if j == start || cycle.contains(&j) || cycle.len() > params.len() {
+                    break;
+                }
+                cycle.push(j);
+                at = root_of(j);
+            }
+            // Report each cycle once, at its first parameter.
+            if at != Some(start) || cycle.iter().any(|&j| j < start) {
+                continue;
+            }
+            let names: Vec<&str> = cycle.iter().map(|&j| params[j].name.as_str()).collect();
+            let message = if let [one] = names.as_slice() {
+                format!("the place of `{one}` starts at `{one}` itself")
+            } else {
+                format!("the places of `{}` form a cycle", names.join("`, `"))
+            };
+            self.diags.push(
+                Diagnostic::error("W0201", message, params[start].span)
+                    .note("an `in` place must start at another parameter, `self` or an `rc` type"),
+            );
         }
     }
 
@@ -1135,7 +1253,114 @@ impl Collector {
     }
 }
 
-/// Resolves type expressions against a finished program. It does not copy the program.
+/// Returns why two modes of a list contradict, or `None`.
+///
+/// Two values of one axis contradict, for example `once` and `many`. Also
+/// `uniq` and `shared` contradict: other threads can read a `shared` value,
+/// so other references to it exist.
+fn mode_conflict(modes: &[Mode]) -> Option<String> {
+    let axis = |m: Mode| match m {
+        Mode::Uniq | Mode::Aliased => 0,
+        Mode::Portable | Mode::Nonportable => 1,
+        Mode::Uncontended | Mode::Shared => 2,
+        Mode::Once | Mode::Many => 3,
+    };
+    for (i, &a) in modes.iter().enumerate() {
+        for &b in &modes[i + 1..] {
+            if a != b && axis(a) == axis(b) {
+                return Some(format!(
+                    "modes `{}` and `{}` contradict: a type has one mode on each axis",
+                    a.name(),
+                    b.name()
+                ));
+            }
+            if matches!(
+                (a, b),
+                (Mode::Uniq, Mode::Shared) | (Mode::Shared, Mode::Uniq)
+            ) {
+                return Some(format!(
+                    "modes `{}` and `{}` contradict: other threads can read a `shared` value, so it is not `uniq`",
+                    a.name(),
+                    b.name()
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// Returns the structs that hold themselves with no indirection.
+///
+/// A struct holds its fields inline, also through tuples and arrays with at
+/// least one element. An enum value is a cell of its own, and an extern type
+/// is opaque, so each is an indirection. A generic struct holds the
+/// arguments of the parameters that it holds inline. The function computes,
+/// for each struct, the structs and the parameters that it holds, as a least
+/// fixpoint.
+pub fn infinite_structs(prog: &Program) -> Vec<AdtId> {
+    /// What a struct holds inline.
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    enum Held {
+        Adt(AdtId),
+        Param(u32),
+    }
+    /// Adds to `out` what a value of type `t` holds inline.
+    fn held(t: &Ty, holds: &[BTreeSet<Held>], prog: &Program, out: &mut BTreeSet<Held>) {
+        match t {
+            Ty::Param(i) => {
+                out.insert(Held::Param(*i));
+            }
+            Ty::Tuple(ts) => {
+                for t in ts {
+                    held(t, holds, prog, out);
+                }
+            }
+            Ty::Array(t, n) if *n > 0 => held(t, holds, prog, out),
+            Ty::Adt(b, args) if matches!(prog.adts[*b].kind, AdtKind::Struct(_)) => {
+                out.insert(Held::Adt(*b));
+                for h in &holds[*b] {
+                    match h {
+                        Held::Adt(c) => {
+                            out.insert(Held::Adt(*c));
+                        }
+                        Held::Param(j) => {
+                            if let Some(arg) = args.get(*j as usize) {
+                                held(arg, holds, prog, out);
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut holds: Vec<BTreeSet<Held>> = vec![BTreeSet::new(); prog.adts.len()];
+    loop {
+        let mut changed = false;
+        for (a, def) in prog.adts.iter().enumerate() {
+            let AdtKind::Struct(fields) = &def.kind else {
+                continue;
+            };
+            let mut out = BTreeSet::new();
+            for f in fields {
+                held(&f.ty, &holds, prog, &mut out);
+            }
+            if out.len() > holds[a].len() {
+                holds[a] = out;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    (0..prog.adts.len())
+        .filter(|&a| holds[a].contains(&Held::Adt(a)))
+        .collect()
+}
+
+/// Resolves type expressions against a finished program. It borrows the
+/// program and writes its diagnostics to `diags`.
 pub struct TyResolver<'a> {
     /// The program.
     pub prog: &'a Program,
@@ -1146,6 +1371,9 @@ pub struct TyResolver<'a> {
 impl TyResolver<'_> {
     /// Resolves a type expression. `gens` names the type parameters in scope.
     pub fn resolve(&mut self, t: &TypeExpr, m: ModId, gens: &[String], self_ty: Option<&Ty>) -> Ty {
+        if let Some(message) = mode_conflict(&t.modes) {
+            self.diags.push(Diagnostic::error("W0119", message, t.span));
+        }
         match &t.kind {
             TypeExprKind::SelfType => self_ty.cloned().unwrap_or_else(|| {
                 self.diags

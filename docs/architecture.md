@@ -71,8 +71,8 @@ kilobytes of text.
 
 `weft_cli::run` runs each command on a thread with a 256 MiB stack, as a margin. The
 library entry points of sema and the checker (`weft_sema::analyze`,
-`weft_check::check_source`) run on the stack of the caller: their result holds
-`Rc` values, so it cannot come back from another thread.
+`weft_check::check_source`) run on the stack of the caller. Their result holds `Rc`
+values, so it cannot come back from another thread.
 
 ## Verified pieces
 

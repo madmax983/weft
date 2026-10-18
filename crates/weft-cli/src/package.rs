@@ -1,11 +1,12 @@
 //! Packages: `weft.toml`, dependencies and their authority.
 //!
 //! A project grants each dependency a set of standard effects. The code of
-//! the dependency must stay inside that set: the row of each function, a
-//! private one too (name resolution does not enforce `pub` yet, so the root
-//! can call it), and each effect that a closure in a body performs (the
-//! closure can leave the dependency as a value). When the project loads a JSON
-//! parser that asks for `Net`, W0901 rejects it ("install time").
+//! the dependency must stay inside that set. This applies to the row of each
+//! function, also a private one: name resolution does not enforce `pub` yet,
+//! so the root can call it. It also applies to each effect that a closure in
+//! a body performs, because the closure can leave the dependency as a value.
+//! When the project loads a JSON parser that asks for `Net`, W0901 rejects it
+//! ("install time").
 
 use std::collections::BTreeSet;
 use std::fs;

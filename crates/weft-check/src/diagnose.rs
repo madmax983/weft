@@ -1,9 +1,15 @@
 //! Diagnostics from checker results. Each diagnostic shows its derivation.
 
-use weft_facts::{FnFacts, NodeId, VarKind};
+use std::collections::BTreeMap;
+
+use weft_facts::{FnFacts, NodeId, VarId, VarKind};
+use weft_sema::effects;
 use weft_syntax::diag::Diagnostic;
 
 use crate::rules::Report;
+
+/// The most other sites that a W0602 note lists by line.
+const LISTED_SITES: usize = 5;
 
 fn node_span(f: &FnFacts, n: NodeId) -> weft_facts::Span {
     f.node(n).span
@@ -55,8 +61,7 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
                 node_span(f, n),
             )
             .note("an operation that is not `multi` resumes at most once"),
-            VarKind::Closure => once_closure(f, n),
-            _ if info.ty.starts_with("fn(") => once_closure(f, n),
+            _ if info.callable => once_closure(f, n),
             _ => Diagnostic::error(
                 "W0302",
                 format!("`{}` used after it was moved", info.name),
@@ -110,24 +115,49 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             node_span(f, n),
         ));
     }
+    // W0602: one error for each value, at the first site that can abort.
+    let mut aborts: BTreeMap<VarId, Vec<NodeId>> = BTreeMap::new();
     for &(var, n) in &v.abort_unhandled {
+        aborts.entry(var).or_default().push(n);
+    }
+    for (var, mut sites) in aborts {
+        sites.sort_by_key(|&n| node_span(f, n).lo);
+        let Some((&first, rest)) = sites.split_first() else {
+            continue;
+        };
         let info = f.var(var);
-        let at = f.node(n);
-        out.push(
-            Diagnostic::error(
-                "W0602",
-                format!(
-                    "linear value `{}` is live across `{}`, which can abort",
-                    info.name, at.label
-                ),
-                at.span,
-            )
-            .note_at(
-                format!("{} : {} (linear, no `on abort`)", info.name, info.ty),
-                info.span,
-            )
-            .note("declare `on abort = f` on the type, or consume the value before this call"),
-        );
+        let at = f.node(first);
+        let mut d = Diagnostic::error(
+            "W0602",
+            format!(
+                "linear value `{}` is live across `{}`, which can abort",
+                info.name, at.label
+            ),
+            at.span,
+        )
+        .note_at(
+            format!("{} : {} (linear, no `on abort`)", info.name, info.ty),
+            info.span,
+        )
+        .note("declare `on abort = f` on the type, or consume the value before this call");
+        if !rest.is_empty() {
+            let lines: Vec<String> = rest
+                .iter()
+                .take(LISTED_SITES)
+                .map(|&n| format!("{{line:{}}}", node_span(f, n).lo))
+                .collect();
+            let more = if rest.len() > LISTED_SITES {
+                ", ..."
+            } else {
+                ""
+            };
+            d = d.note(format!(
+                "and {} more sites that can abort, at lines {}{more}",
+                rest.len(),
+                lines.join(", ")
+            ));
+        }
+        out.push(d);
     }
     for &(var, n) in &v.live_across_multi {
         let info = f.var(var);
@@ -172,7 +202,7 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             )
             .note(format!(
                 "add `{}` to the effects after `/`, or handle it here",
-                e.to_lowercase()
+                written_effect(e)
             )),
         );
     }
@@ -265,8 +295,18 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             info.span,
         ));
     }
-    out.sort_by_key(|d| (d.span.lo, d.code.clone()));
+    out.sort_by(|a, b| (a.span.lo, &a.code).cmp(&(b.span.lo, &b.code)));
     out
+}
+
+/// Returns an effect as a signature writes it: a standard effect by its
+/// lowercase alias (`log`), a user effect by its name (`Log2`).
+fn written_effect(e: &str) -> String {
+    if effects::is_std(e) {
+        e.to_lowercase()
+    } else {
+        e.to_string()
+    }
 }
 
 /// Replaces `{line:N}` markers (byte offsets) with line numbers.

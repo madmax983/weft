@@ -379,3 +379,75 @@ fn the_prelude_parses_and_has_no_diagnostics() {
     assert_eq!(a.program.mods[a.program.root].unit, ROOT_UNIT);
     assert_eq!(a.program.mods[crate::program::PRELUDE].unit, PRELUDE_UNIT);
 }
+
+/// The W1002 messages of a program.
+fn w1002(src: &str) -> Vec<String> {
+    root_diags(src)
+        .into_iter()
+        .filter(|(code, _)| code == "W1002")
+        .map(|(_, message)| message)
+        .collect()
+}
+
+#[test]
+fn fip_use_counts_stop_at_two() {
+    // A use in a loop body counts as two or more. Deep loops do not overflow.
+    for depth in [1, 3, 64] {
+        let src = format!(
+            "fip fn g(x: Vec<u32>) -> Vec<u32> {{ {}let y = x{}\n x }}\n",
+            "while true { ".repeat(depth),
+            " }".repeat(depth)
+        );
+        assert_eq!(
+            w1002(&src),
+            ["`fip` needs `x` used exactly once on every path (found 1 to 2 or more)"],
+            "{depth} loops"
+        );
+    }
+    let src = "fip fn g(x: Vec<u32>) -> Vec<u32> { if true { x } else { Vec.new() } }\n";
+    assert_eq!(
+        w1002(src),
+        ["`fip` needs `x` used exactly once on every path (found 0 to 1)"]
+    );
+    let src = "enum L { C(L), N }\nfip fn g(x: L) -> L { N }\n";
+    assert_eq!(
+        w1002(src),
+        ["`fip` needs `x` used exactly once on every path (found 0)"]
+    );
+}
+
+#[test]
+fn fip_return_ends_a_path() {
+    let src =
+        "enum L { C(L), N }\nfip fn g(x: L, f: bool) -> L {\n    if f { return x }\n    x\n}\n";
+    assert_eq!(w1002(src), Vec::<String>::new());
+    // A use before the return counts on that path.
+    let src = "enum L { C(L), N }\nfip fn g(x: L, f: bool) -> L {\n    if f { let y = x\n return x }\n    x\n}\n";
+    assert_eq!(
+        w1002(src),
+        ["`fip` needs `x` used exactly once on every path (found 1 to 2 or more)"]
+    );
+    // A return in a match arm.
+    let src = "enum L { C(L), N }\nfip fn g(x: L, y: L) -> L {\n    match y {\n        C(t) => { return C(t) }\n        N => {}\n    }\n    x\n}\n";
+    assert_eq!(
+        w1002(src),
+        ["`fip` needs `x` used exactly once on every path (found 0 to 1)"]
+    );
+    // A loop body that returns runs at most once.
+    let src =
+        "enum L { C(L), N }\nfip fn g(x: L, f: bool) -> L {\n    while f { return x }\n    x\n}\n";
+    assert_eq!(w1002(src), Vec::<String>::new());
+}
+
+#[test]
+fn item_checks_report_in_the_unit_of_the_item() {
+    let dep = "struct A { a: A }\nstruct D { x: u64, x: u64 }\nlinear struct L { id: u64 }\n    on abort = gone\nfn modes(x: &u64 @ once many) {}\n";
+    let a = analyze_units("fn main() {}", &[("dep", dep)]);
+    let mut got = codes(&a);
+    got.sort();
+    let want: Vec<(usize, String)> = ["W0101", "W0107", "W0117", "W0119"]
+        .iter()
+        .map(|c| (2, (*c).to_string()))
+        .collect();
+    assert_eq!(got, want);
+}

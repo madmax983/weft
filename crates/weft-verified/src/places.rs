@@ -3,8 +3,9 @@
 //! A place is a root plus a sequence of steps. The checker compares two places
 //! only when they have the same root, so this module works on step sequences.
 //!
-//! Rule 3 of the design: a `mut(m)` invalidates a reference to `p` when `m` is a
-//! strict prefix of `p` and `p` crosses at least one unstable step after `m`.
+//! Rule 3 of the design: a `mut(m)` invalidates a reference to `p` if two
+//! conditions are true. `m` is a strict prefix of `p`. After `m`, `p` crosses
+//! at least one unstable step.
 //!
 //! `proofs/link` includes this file (`proofs/link/src/places_link.rs`). It
 //! proves that rule 3 kills each reference that the kill predicate of the B3
@@ -23,13 +24,24 @@ verus! {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum StepKind {
     /// A struct field or a tuple index.
-    Field { id: u32 },
+    Field {
+        /// The index of the field in its struct or tuple.
+        id: u32,
+    },
     /// An enum variant payload.
-    Variant { id: u32 },
+    Variant {
+        /// The index of the variant in its enum.
+        id: u32,
+    },
     /// Any element of a collection or an array.
     Elem,
     /// One side of a split: `[..k]` (`hi == false`) or `[k..]` (`hi == true`).
-    Seg { split: u32, hi: bool },
+    Seg {
+        /// The split point: one number for each split in a function.
+        split: u32,
+        /// True for the high side `[k..]`.
+        hi: bool,
+    },
     /// The target of a pointer type, such as `Box` or a declared pointer.
     Deref,
 }
@@ -49,14 +61,13 @@ pub struct Step {
 /// Two steps at the same position can name the same memory.
 pub open spec fn spec_step_alias(a: Step, b: Step) -> bool {
     match (a.kind, b.kind) {
-        (StepKind::Field { id: x }, StepKind::Field { id: y }) => x == y,
-        (StepKind::Variant { id: x }, StepKind::Variant { id: y }) => x == y,
-        (StepKind::Elem, StepKind::Elem) => true,
-        (StepKind::Elem, StepKind::Seg { .. }) => true,
-        (StepKind::Seg { .. }, StepKind::Elem) => true,
+        (StepKind::Field { id: x }, StepKind::Field { id: y })
+        | (StepKind::Variant { id: x }, StepKind::Variant { id: y }) => x == y,
+        (StepKind::Elem, StepKind::Elem | StepKind::Seg { .. })
+        | (StepKind::Seg { .. }, StepKind::Elem)
+        | (StepKind::Deref, StepKind::Deref) => true,
         (StepKind::Seg { split: s1, hi: h1 }, StepKind::Seg { split: s2, hi: h2 }) => s1 != s2 || h1
             == h2,
-        (StepKind::Deref, StepKind::Deref) => true,
         _ => false,
     }
 }
@@ -64,13 +75,12 @@ pub open spec fn spec_step_alias(a: Step, b: Step) -> bool {
 /// Step `a` names a subset of the memory that step `b` names.
 pub open spec fn spec_step_within(a: Step, b: Step) -> bool {
     match (a.kind, b.kind) {
-        (StepKind::Field { id: x }, StepKind::Field { id: y }) => x == y,
-        (StepKind::Variant { id: x }, StepKind::Variant { id: y }) => x == y,
-        (StepKind::Elem, StepKind::Elem) => true,
-        (StepKind::Seg { .. }, StepKind::Elem) => true,
+        (StepKind::Field { id: x }, StepKind::Field { id: y })
+        | (StepKind::Variant { id: x }, StepKind::Variant { id: y }) => x == y,
+        (StepKind::Elem | StepKind::Seg { .. }, StepKind::Elem)
+        | (StepKind::Deref, StepKind::Deref) => true,
         (StepKind::Seg { split: s1, hi: h1 }, StepKind::Seg { split: s2, hi: h2 }) => s1 == s2 && h1
             == h2,
-        (StepKind::Deref, StepKind::Deref) => true,
         _ => false,
     }
 }
@@ -83,8 +93,7 @@ pub open spec fn spec_step_class(s: Step) -> (u8, u32) {
     match s.kind {
         StepKind::Field { id } => (0, id),
         StepKind::Variant { id } => (1, id),
-        StepKind::Elem => (2, 0),
-        StepKind::Seg { .. } => (2, 0),
+        StepKind::Elem | StepKind::Seg { .. } => (2, 0),
         StepKind::Deref => (3, 0),
     }
 }
@@ -131,50 +140,47 @@ pub open spec fn spec_overlaps(p: Seq<Step>, q: Seq<Step>) -> bool {
 }
 
 /// Returns true if two steps at the same position can name the same memory.
-pub fn step_alias(a: &Step, b: &Step) -> (r: bool)
+pub const fn step_alias(a: &Step, b: &Step) -> (r: bool)
     ensures
         r == spec_step_alias(*a, *b),
 {
     match (a.kind, b.kind) {
-        (StepKind::Field { id: x }, StepKind::Field { id: y }) => x == y,
-        (StepKind::Variant { id: x }, StepKind::Variant { id: y }) => x == y,
-        (StepKind::Elem, StepKind::Elem) => true,
-        (StepKind::Elem, StepKind::Seg { .. }) => true,
-        (StepKind::Seg { .. }, StepKind::Elem) => true,
+        (StepKind::Field { id: x }, StepKind::Field { id: y })
+        | (StepKind::Variant { id: x }, StepKind::Variant { id: y }) => x == y,
+        (StepKind::Elem, StepKind::Elem | StepKind::Seg { .. })
+        | (StepKind::Seg { .. }, StepKind::Elem)
+        | (StepKind::Deref, StepKind::Deref) => true,
         (StepKind::Seg { split: s1, hi: h1 }, StepKind::Seg { split: s2, hi: h2 }) => s1 != s2 || h1
             == h2,
-        (StepKind::Deref, StepKind::Deref) => true,
         _ => false,
     }
 }
 
 /// Returns the class of a step (see `spec_step_class`).
-pub fn step_class(s: &Step) -> (r: (u8, u32))
+pub const fn step_class(s: &Step) -> (r: (u8, u32))
     ensures
         r == spec_step_class(*s),
 {
     match s.kind {
         StepKind::Field { id } => (0, id),
         StepKind::Variant { id } => (1, id),
-        StepKind::Elem => (2, 0),
-        StepKind::Seg { .. } => (2, 0),
+        StepKind::Elem | StepKind::Seg { .. } => (2, 0),
         StepKind::Deref => (3, 0),
     }
 }
 
 /// Returns true if step `a` names a subset of the memory that step `b` names.
-pub fn step_within(a: &Step, b: &Step) -> (r: bool)
+pub const fn step_within(a: &Step, b: &Step) -> (r: bool)
     ensures
         r == spec_step_within(*a, *b),
 {
     match (a.kind, b.kind) {
-        (StepKind::Field { id: x }, StepKind::Field { id: y }) => x == y,
-        (StepKind::Variant { id: x }, StepKind::Variant { id: y }) => x == y,
-        (StepKind::Elem, StepKind::Elem) => true,
-        (StepKind::Seg { .. }, StepKind::Elem) => true,
+        (StepKind::Field { id: x }, StepKind::Field { id: y })
+        | (StepKind::Variant { id: x }, StepKind::Variant { id: y }) => x == y,
+        (StepKind::Elem | StepKind::Seg { .. }, StepKind::Elem)
+        | (StepKind::Deref, StepKind::Deref) => true,
         (StepKind::Seg { split: s1, hi: h1 }, StepKind::Seg { split: s2, hi: h2 }) => s1 == s2 && h1
             == h2,
-        (StepKind::Deref, StepKind::Deref) => true,
         _ => false,
     }
 }

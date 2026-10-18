@@ -450,9 +450,9 @@ fn indent(out: &mut String, depth: usize) {
 
 /// Writes the tree with a stack, not with recursion, so a deep derivation does
 /// not overflow the stack. Each line is one node. A child is two spaces deeper
-/// than its parent, up to [`MAX_INDENT`] levels. A chain of one relation with
-/// more than [`CHAIN_FOLD`] steps shows its first and its last [`CHAIN_KEEP`]
-/// steps, and one line for the steps between them.
+/// than its parent, up to [`MAX_INDENT`] levels. The renderer folds a chain of
+/// one relation that has more than [`CHAIN_FOLD`] steps. It shows the first
+/// and the last [`CHAIN_KEEP`] steps, and one line for the steps between them.
 fn render(d: &Derivation, f: &FnFacts, line_of: &dyn Fn(u32) -> usize, out: &mut String) {
     let mut stack = vec![Item::Node(d, 0, Chain::Start)];
     while let Some(item) = stack.pop() {

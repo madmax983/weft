@@ -658,3 +658,31 @@ proptest::proptest! {
         }
     }
 }
+
+/// W0502 or W0302: the `callable` flag of the variable decides, not its type text.
+#[test]
+fn w0502_needs_a_callable_variable() {
+    for (callable, code) in [(true, "W0502"), (false, "W0302")] {
+        let mut b = B::new();
+        let f = b.var_with("f", |v| {
+            v.ty = "fn()".into();
+            v.callable = callable;
+        });
+        let n0 = b.node("let f");
+        b.bind(f, n0);
+        let n1 = b.node("f");
+        b.mv(f, n1);
+        let n2 = b.node("f");
+        b.mv(f, n2);
+        let r = check(&b.f);
+        let d = crate::diagnose::diagnose(&b.f, &r);
+        let codes: Vec<&str> = d.iter().map(|d| d.code.as_str()).collect();
+        assert_eq!(codes, [code], "callable: {callable}");
+    }
+    let closure = VarInfo::plain("c", VarKind::Closure, Span::default(), "T");
+    assert!(closure.callable);
+    let param = VarInfo::plain("p", VarKind::Param, Span::default(), "fn() -> u64");
+    assert!(param.callable);
+    let plain = VarInfo::plain("x", VarKind::Local, Span::default(), "u64");
+    assert!(!plain.callable);
+}

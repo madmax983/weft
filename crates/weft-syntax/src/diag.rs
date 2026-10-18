@@ -15,9 +15,10 @@ pub const ROOT_UNIT: usize = 1;
 /// How serious a diagnostic is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Severity {
-    /// The program is rejected.
+    /// The checker rejects the program.
     Error,
-    /// The program is accepted, but a rule (for example a user lint) fired.
+    /// The checker accepts the program, but a rule (for example a user lint)
+    /// fired.
     Warning,
 }
 
@@ -88,11 +89,16 @@ impl Diagnostic {
         self
     }
 
-    /// Renders the diagnostic in the format of the design doc.
+    /// Renders the diagnostic in the format of the design doc: the message,
+    /// the location, then one line for each note. A note with a location
+    /// shows its line.
     ///
     /// ```text
     /// error[W0301]: `first` used after it was invalidated
-    ///   first  : &Entity in world.entities[]          (line 2)
+    ///   --> world.wf:9:5
+    ///   first : &Entity in world.entities[]  (line 7)
+    ///   push : mut(world.entities)           (line 8)
+    ///   used at line 9
     /// ```
     pub fn render(&self, file: &SourceFile) -> String {
         let kind = match self.severity {

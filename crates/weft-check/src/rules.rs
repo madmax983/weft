@@ -120,12 +120,12 @@ impl<'a> Ctx<'a> {
     }
 
     /// Forward propagation from `gen` nodes, stopped after `kill` nodes.
-    fn forward(&self, gen: &Vec<bool>, kill: &Vec<bool>) -> Vec<bool> {
+    fn forward(&self, gen: &[bool], kill: &[bool]) -> Vec<bool> {
         propagate(&self.succ, gen, kill)
     }
 
     /// Backward propagation on the reversed graph.
-    fn backward(&self, gen: &Vec<bool>, kill: &Vec<bool>) -> Vec<bool> {
+    fn backward(&self, gen: &[bool], kill: &[bool]) -> Vec<bool> {
         propagate(&self.pred, gen, kill)
     }
 
@@ -138,18 +138,18 @@ impl<'a> Ctx<'a> {
     }
 }
 
-/// For each node in `targets`, returns the index in `gens` of the first gen
-/// node whose propagation alone reaches the node, as in [`propagate`] with
-/// that one gen. The result has one entry per node; only the entries of the
+/// Finds, for each node in `targets`, the first gen node that reaches it
+/// alone. "Reaches" has the meaning of [`propagate`] with only that gen. The
+/// result has the index in `gens` for each node. Only the entries of the
 /// targets are exact.
 ///
 /// First a backward search finds the nodes that can reach a target. A path
 /// from a gen to a target goes only through these nodes. Then one search runs
 /// from each gen, in order, in these nodes. A search marks each node that it
 /// reaches and that no earlier search marked, and it stops at marked nodes.
-/// The successors of a marked node that is not a kill node are marked, so an
-/// earlier search reached all that a later search can reach through that
-/// node. The cost is linear in the size of the graph.
+/// When a search marks a node that is not a kill node, it marks the
+/// successors too. Thus an earlier search reached all that a later search can
+/// reach through a marked node. The cost is linear in the size of the graph.
 pub(crate) fn first_reaching(
     succ: &[Vec<usize>],
     pred: &[Vec<usize>],

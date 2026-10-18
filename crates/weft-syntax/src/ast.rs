@@ -164,6 +164,20 @@ pub enum Mode {
 }
 
 impl Mode {
+    /// Returns the mode keyword.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Uniq => "uniq",
+            Self::Aliased => "aliased",
+            Self::Portable => "portable",
+            Self::Nonportable => "nonportable",
+            Self::Uncontended => "uncontended",
+            Self::Shared => "shared",
+            Self::Once => "once",
+            Self::Many => "many",
+        }
+    }
+
     /// Parses a mode keyword.
     pub fn from_name(name: &str) -> Option<Self> {
         Some(match name {

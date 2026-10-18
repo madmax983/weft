@@ -49,7 +49,7 @@ pub open spec fn spec_join(a: Modes, b: Modes) -> Modes {
 }
 
 /// Returns the best mode on every axis.
-pub fn bottom() -> (r: Modes)
+pub const fn bottom() -> (r: Modes)
     ensures
         r == spec_bottom(),
 {
@@ -57,7 +57,7 @@ pub fn bottom() -> (r: Modes)
 }
 
 /// Returns true if `a` can be used where `b` is expected.
-pub fn submode(a: &Modes, b: &Modes) -> (r: bool)
+pub const fn submode(a: &Modes, b: &Modes) -> (r: bool)
     ensures
         r == spec_submode(*a, *b),
 {
@@ -66,7 +66,7 @@ pub fn submode(a: &Modes, b: &Modes) -> (r: bool)
 }
 
 /// Returns the least mode above `a` and `b`.
-pub fn join(a: &Modes, b: &Modes) -> (r: Modes)
+pub const fn join(a: &Modes, b: &Modes) -> (r: Modes)
     ensures
         r == spec_join(*a, *b),
 {
@@ -127,6 +127,8 @@ pub proof fn lemma_bottom_crosses(b: Modes)
 mod tests {
     use super::*;
 
+    // One flag for each mode axis, in the order of the fields of `Modes`.
+    #[allow(clippy::fn_params_excessive_bools)]
     const fn m(aliased: bool, nonportable: bool, shared: bool, once: bool) -> Modes {
         Modes {
             aliased,

@@ -297,7 +297,8 @@ impl Parser {
         std::mem::replace(&mut self.no_struct, ns)
     }
 
-    /// Parses `item ( "," item )* ","? close`. The open token is consumed.
+    /// Parses `item ( "," item )* ","? close`. The caller has taken the open
+    /// token.
     /// Returns the items and true if a trailing comma is present.
     fn comma_list<R>(
         &mut self,
@@ -318,7 +319,7 @@ impl Parser {
     }
 
     /// Parses `( item sep )* "}"` where `sep` is `,` or a line break.
-    /// The `{` is consumed.
+    /// The caller has taken the `{`.
     fn brace_list<R>(
         &mut self,
         what: &str,
@@ -1813,7 +1814,8 @@ impl Parser {
         })
     }
 
-    /// Parses a string token. Each interpolation is parsed as an expression.
+    /// Parses a string token. The parser reads each interpolation as an
+    /// expression.
     fn str_lit(&mut self) -> PResult<Lit> {
         let pieces = match self.kind() {
             T::Str(p) => p.clone(),

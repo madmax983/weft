@@ -1,0 +1,33 @@
+// Item checks: sizes, duplicates, `on abort` functions, modes and `in` places.
+struct Inf { a: Inf }   //~ W0117
+struct Wrap<T> { t: T }
+struct InfWrapped { w: Wrap<InfWrapped> }   //~ W0117
+struct Loop1 { b: Loop2 }   //~ W0117
+struct Loop2 { a: Loop1 }   //~ W0117
+struct InTuple { t: (u64, [InTuple; 2]) }   //~ W0117
+struct Fine { next: Option<Fine>, kids: Vec<Fine>, boxed: Box<Fine>, none: [Fine; 0] }
+enum Tree { Node(Tree, Tree), Leaf }
+struct Holder { w: Wrap<u64>, t: Tree }
+
+struct Dup { a: u64, a: u64 }   //~ W0107
+enum DupE { A, B, A }   //~ W0107
+
+linear struct Lost { id: u64 }
+    on abort = nope   //~ W0101
+linear struct Bad { id: u64 }
+    on abort = wrong   //~ W0118
+fn wrong(b: &Bad) {}
+linear struct Good { id: u64 }
+    on abort = finish
+fn finish(g: Good) { let Good(i) = g }
+
+fn uniq_shared(a: &u64 @ uniq shared) {}   //~ W0119
+fn once_many(f: fn() @ once many) {}   //~ W0119
+fn uniq_aliased(c: &u64 @ uniq aliased) {}   //~ W0119
+fn portable(c: &u64 @ portable nonportable) {}   //~ W0119
+fn contended(c: &u64 @ uncontended shared) {}   //~ W0119
+fn fine_modes(a: &u64 @ uniq portable, b: &u64 @ shared aliased) {}
+
+fn self_place(x: &u64 in x) {}   //~ W0201
+fn cycle(v: &Vec<u64>, x: &u64 in y, y: &u64 in x) {}   //~ W0201
+fn chain(v: &Vec<u64>, x: &u64 in v[], y: &u64 in v[]) {}
