@@ -495,6 +495,11 @@ impl Lower<'_> {
                 self.lend(n, q);
             }
         }
+        for &(l, p) in &sum.binds {
+            for (q, _) in self.places_of(&sum, p, root, given) {
+                self.point_local(l, q);
+            }
+        }
         for e in &sum.escapes {
             self.facts.escapes_at.push((n, e.clone()));
             self.sum().escapes.insert(e.clone());

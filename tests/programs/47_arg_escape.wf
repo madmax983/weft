@@ -1,0 +1,54 @@
+// A closure or a clause can give a local outside it a place below its own
+// parameter. After each call, the local points into what the call gave.
+effect Peek { fn peek(x: &u64) }
+
+fn closure_keeps() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let w: Vec<u64> = Vec.new()
+    w.push(5)
+    let keep = &w[0]
+    let f = |x: &u64| { keep = x }
+    f(&v[0])
+    v.clear()
+    print(keep)   //~ W0301
+}
+
+fn give(f: fn(&u64), v: &Vec<u64>) { f(&v[0]) }
+fn hof_keeps(v: &Vec<u64>, w: &Vec<u64>) / mut(v) {
+    let keep = &w[0]
+    give(|x| { keep = x }, v)
+    v.clear()
+    print(keep)   //~ W0301
+}
+
+fn clause_keeps() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let w: Vec<u64> = Vec.new()
+    w.push(5)
+    let keep = &w[0]
+    handle Peek {
+        fn peek(x) {
+            keep = x
+            resume(())
+        }
+    } in {
+        peek(&v[0])
+    }
+    v.clear()
+    print(keep)   //~ W0301
+}
+
+// Control: the call gives a place that does not change.
+fn keeps_other() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let w: Vec<u64> = Vec.new()
+    w.push(5)
+    let keep = &w[0]
+    let f = |x: &u64| { keep = x }
+    f(&w[0])
+    v.clear()
+    print(keep)
+}

@@ -1661,6 +1661,11 @@ impl Lower<'_> {
                     }
                 }
             }
+            for &(l, p) in &cs.binds {
+                for q in through(self, p, a) {
+                    self.point_local(l, q);
+                }
+            }
             for &l in &cs.lends {
                 for q in through(self, l, a) {
                     changed.push(q);

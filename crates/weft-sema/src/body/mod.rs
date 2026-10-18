@@ -86,6 +86,9 @@ pub struct Summary {
     pub lends: BTreeSet<PlaceId>,
     /// The summaries of the function values that a call of the value returns.
     pub rets: BTreeSet<usize>,
+    /// Locals outside the body that the body gives a place below one of its
+    /// parameters: the local and the place.
+    pub binds: Vec<(usize, PlaceId)>,
 }
 
 impl Summary {
@@ -116,6 +119,11 @@ impl Summary {
         self.stores.extend(o.stores.iter().copied());
         self.lends.extend(o.lends.iter().copied());
         self.rets.extend(o.rets.iter().copied());
+        for b in &o.binds {
+            if !self.binds.contains(b) {
+                self.binds.push(*b);
+            }
+        }
     }
 
     /// Adds what a call of the function value that `o` stands for can do. A call of
@@ -929,10 +937,7 @@ impl<'p> Lower<'p> {
         let var = self.locals[l].var;
         self.bind(var, n);
         for &p in &v.refs {
-            self.facts.points_into.push((var, p));
-            if !self.locals[l].refs.contains(&p) {
-                self.locals[l].refs.push(p);
-            }
+            self.point_local(l, p);
         }
         if v.task.is_some() {
             self.locals[l].task = v.task;
@@ -968,6 +973,27 @@ impl<'p> Lower<'p> {
             let name = self.locals[l].name.clone();
             let r = self.root(&name, RootKind::Local);
             self.set_root(l, r);
+        }
+    }
+
+    /// Local `l` can point into place `p`. A place below a parameter of the body
+    /// around the node, given to a local outside the body, is a place of each call.
+    fn point_local(&mut self, l: usize, p: PlaceId) {
+        let var = self.locals[l].var;
+        self.facts.points_into.push((var, p));
+        if !self.locals[l].refs.contains(&p) {
+            self.locals[l].refs.push(p);
+        }
+        let arg = self.facts.roots[self.facts.place(p).root.index()].kind == RootKind::Arg;
+        let barrier = self.frames.iter().rposition(|f| f.barrier.is_some());
+        if let (true, Some(bi)) = (arg, barrier) {
+            if self.local_frame(l) < bi {
+                if let Some(si) = self.frames[bi].barrier {
+                    if !self.sums[si].binds.contains(&(l, p)) {
+                        self.sums[si].binds.push((l, p));
+                    }
+                }
+            }
         }
     }
 

@@ -111,6 +111,9 @@ Status: accepted. Date: 2026-10-18.
   mutation of `M` does. The signature does not state it: the caller sees the mutation
   where it gives the closure. An operation of a handler outside the function lends its
   reference arguments in the same way.
+- A closure or a handler clause can give a local outside it a place below its own
+  parameter (`keep = x`). At each node where it runs, the local then points into the
+  place that the node gives.
 - A closure or a handler clause that lends a place lends it again at each node where it
   runs: a call of the closure, and a perform, a call or a `resume` that runs the clause.
   A place below a parameter of the closure or the clause becomes the place that the node

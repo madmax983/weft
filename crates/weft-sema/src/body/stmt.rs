@@ -745,6 +745,11 @@ impl Lower<'_> {
         }
         out.extend(sum.ret_refs.iter().map(|&p| format!("ret {}", pk(p))));
         out.extend(
+            sum.binds
+                .iter()
+                .map(|&(l, p)| format!("bind {l} {}", pk(p))),
+        );
+        out.extend(
             sum.escapes
                 .iter()
                 .chain(&sum.row)
