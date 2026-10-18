@@ -141,7 +141,12 @@ Status: accepted. Date: 2026-10-18.
   - A place that the callee lends below a parameter of its own closure has no name in
     the signature. It counts as any place inside the reference arguments.
   - `lends_mut` holds at each call of a function parameter, also when no caller passes a
-    closure that mutates.
+    closure that mutates. So overlapping arguments of such a call are W0312, also when
+    the callback only reads them.
+  - A closure argument points into each place of each reference that it captures, not
+    only into the parts that it reads. A closure that captures `world` and reads
+    `world.score` overlaps a mutation of `world.entities` (W0312), as `world` given twice
+    does.
   - The `multi` test for a function parameter with no effect row looks at the whole
     program, not at the callers.
   - The effects of a closure count in its maker also when nothing calls the closure. The
@@ -150,7 +155,9 @@ Status: accepted. Date: 2026-10-18.
     does, also when nothing calls the result.
   - A join applies the effects of every value that it can be.
   - A stored function value runs at each node that can reach it, also at a node before
-    the store and at a call that does not run it.
+    the store and at a call that does not run it. It uses its captures there.
+  - The `multi` part of a signature counts each call of an unknown function value with
+    no effect row in a program that has a `multi` operation.
   - A function argument of an operation runs at the perform, with any place inside the
     reference arguments of the operation, also when the clause does not call it.
 - What stays open (not checked):
@@ -162,3 +169,5 @@ Status: accepted. Date: 2026-10-18.
     the clause does not get it.
   - W0402 inside a higher-order function: a callback that gets a place of a `@ shared`
     parameter can mutate it. The caller sees the mutation on its own place only.
+  - A reference inside a payload that a `match` binds by value, and a reference
+    parameter inside an `Option` of a function item, have no places (the RT3 family).

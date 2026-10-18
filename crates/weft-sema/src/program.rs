@@ -236,7 +236,7 @@ pub struct RetFn {
     /// Function parameters of the function that the call can call.
     pub passthrough: BTreeSet<usize>,
     /// Function items that the call can call.
-    pub items: BTreeSet<usize>,
+    pub items: BTreeSet<FnId>,
     /// The call can abort.
     pub abort: bool,
     /// The call can resume a `multi` continuation more than once.

@@ -39,6 +39,14 @@ pub(super) struct Given {
     pub root: u32,
 }
 
+impl Given {
+    /// The places and callee root indexes of `given`, for the operations that
+    /// they reach.
+    pub(super) fn args(given: &[Self]) -> Vec<(PlaceId, u32)> {
+        given.iter().map(|g| (g.place, g.root)).collect()
+    }
+}
+
 /// The parameter and the place of a `Given`, to compare two of them.
 type GivenKey = (Option<usize>, PlaceId);
 
@@ -79,17 +87,24 @@ pub(super) enum Scope {
 /// that it gives.
 #[derive(Clone, Debug)]
 pub(super) struct Reach {
+    /// The node.
     pub node: NodeId,
+    /// The places that the node gives to the value.
     pub given: Vec<Given>,
+    /// The body around the node.
     pub scope: Scope,
 }
 
 /// A node where a summary runs, with the places that it gives.
 #[derive(Clone, Debug)]
 pub(super) struct Applied {
+    /// The summary index.
     pub summary: usize,
+    /// The node.
     pub node: NodeId,
+    /// The places that the node gives to the value.
     pub given: Vec<Given>,
+    /// The body around the node.
     pub scope: Scope,
 }
 
@@ -394,7 +409,7 @@ impl Lower<'_> {
                 Some(dp) => self.call_param(n, dp, given),
                 None => self.call_unknown(n, given),
             }
-            let args: Vec<(PlaceId, u32)> = given.iter().map(|g| (g.place, g.root)).collect();
+            let args = Given::args(given);
             for e in row.into_iter().flatten() {
                 self.perform_at(n, e, &args);
             }
@@ -545,7 +560,7 @@ impl Lower<'_> {
         if sum.unknown {
             self.call_unknown(n, given);
         }
-        let args: Vec<(PlaceId, u32)> = given.iter().map(|g| (g.place, g.root)).collect();
+        let args = Given::args(given);
         for e in &sum.row {
             self.perform_at(n, e, &args);
         }
@@ -593,7 +608,7 @@ impl Lower<'_> {
                 self.facts.call_mut.push((n, q, i));
             }
         }
-        let args: Vec<(PlaceId, u32)> = given.iter().map(|g| (g.place, g.root)).collect();
+        let args = Given::args(given);
         for e in &sig.effects.named {
             self.perform_at(n, e, &args);
             if self.effect_has_multi(e) {
