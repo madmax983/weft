@@ -417,8 +417,8 @@ pub proof fn lemma_hinfo_agree(prog: Prog, s: State, s2: State, hi: HInfo)
     }
 }
 
-/// The parts of `inv_a` other than the stack carry over to `s2` when `s2`
-/// agrees with `s`, keeps every continuation and only adds new ones.
+/// The continuation and handler parts of `inv_a` carry over to `s2` when
+/// `s2` agrees with `s` and has the same continuation ids and handlers.
 pub proof fn lemma_rest_agree(prog: Prog, s: State, s2: State)
     requires
         inv_a(prog, s),
@@ -427,12 +427,9 @@ pub proof fn lemma_rest_agree(prog: Prog, s: State, s2: State)
         s2.hinfo == s.hinfo,
         s2.next_k == s.next_k,
         s2.next_h == s.next_h,
-        s2.res.dom() == s.res.dom(),
-        s2.next_res == s.next_res,
     ensures
         forall|k: KId| #[trigger] s2.konts.contains_key(k) ==> k < s2.next_k && kont_ok(prog, s2, s2.konts[k]),
         forall|h: HId| #[trigger] s2.hinfo.contains_key(h) ==> h < s2.next_h && hinfo_ok(prog, s2, s2.hinfo[h]),
-        forall|r: ResId| #[trigger] s2.res.contains_key(r) ==> r < s2.next_res,
 {
     assert forall|k: KId| #[trigger] s2.konts.contains_key(k) implies k < s2.next_k && kont_ok(
         prog,
@@ -449,9 +446,6 @@ pub proof fn lemma_rest_agree(prog: Prog, s: State, s2: State)
         s2.hinfo[h],
     ) by {
         lemma_hinfo_agree(prog, s, s2, s.hinfo[h]);
-    }
-    assert forall|r: ResId| #[trigger] s2.res.contains_key(r) implies r < s2.next_res by {
-        assert(s.res.contains_key(r));
     }
 }
 
