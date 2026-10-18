@@ -760,7 +760,7 @@ impl Lower<'_> {
         self.apply_value(n, &callee, fty.effects.as_deref(), 800, &direct);
         // The value can call a function argument with the places that it lends to it.
         let value = Callee::Value(callee.clone());
-        for (i, info, row, refs) in fns {
+        for (i, info, row, refs) in fns.clone() {
             let root = 810 + u32::try_from(i).unwrap_or(0);
             for p in refs {
                 self.facts.call_arg.push((n, p, root));
@@ -778,9 +778,27 @@ impl Lower<'_> {
         }
         // The places of the result.
         let refs = self.value_call_refs(&callee, &fty, &arg_places, &arg_refs);
+        // A function value in the result does what the callee states about it.
+        let by_pos: Vec<Option<super::fnval::RowFn>> = (0..arg_places.len())
+            .map(|i| {
+                fns.iter()
+                    .find(|(j, ..)| *j == i)
+                    .map(|(_, info, row, _)| (info.clone(), row.clone()))
+            })
+            .collect();
+        let mut ty = fty.ret.clone();
+        let summary = self.result_summary(&callee, &fty, &arg_places, &by_pos);
+        if let (Some(s), Ty::Fn(rty)) = (summary, self.inf.shallow(&fty.ret)) {
+            ty = Ty::Fn(Rc::new(FnTy {
+                summary: Some(s),
+                item: None,
+                ..(*rty).clone()
+            }));
+        }
         Val {
-            ty: fty.ret.clone(),
+            ty,
             refs,
+            summary,
             ..Val::default()
         }
     }

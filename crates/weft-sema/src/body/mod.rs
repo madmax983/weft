@@ -84,6 +84,8 @@ pub struct Summary {
     /// Places that the body gives to code that can mutate through them: a function
     /// parameter, an unknown function value or an operation of an outer handler.
     pub lends: BTreeSet<PlaceId>,
+    /// The summaries of the function values that a call of the value returns.
+    pub rets: BTreeSet<usize>,
 }
 
 impl Summary {
@@ -113,6 +115,18 @@ impl Summary {
         self.members.extend(o.members.iter().copied());
         self.stores.extend(o.stores.iter().copied());
         self.lends.extend(o.lends.iter().copied());
+        self.rets.extend(o.rets.iter().copied());
+    }
+
+    /// Adds what a call of the function value that `o` stands for can do. A call of
+    /// the result runs it later, and a callee that calls the result sees it here.
+    fn union_ret(&mut self, o: &Self) {
+        let mut o = o.clone();
+        o.ret_refs.clear();
+        o.dropped.clear();
+        o.rets.clear();
+        o.literal = false;
+        self.union(&o);
     }
 }
 

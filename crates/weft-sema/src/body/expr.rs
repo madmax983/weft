@@ -1120,6 +1120,14 @@ impl Lower<'_> {
         let end = self.cur;
         self.frames.pop();
         let mut sum = self.sums.pop().unwrap_or_default();
+        // A returned function value: a call of the closure can do what it does.
+        if let Ty::Fn(f) = self.inf.shallow(&ret_ty) {
+            let info = self.fn_info(&v);
+            let r = self.value_summary(&info, f.effects.as_deref());
+            let ret = self.closures[r].clone();
+            sum.union_ret(&ret);
+            sum.rets.insert(r);
+        }
         // A captured linear value that the closure moves must be consumed inside it.
         for &var in &sum.moved_captures {
             if self.facts.var(var).linear {

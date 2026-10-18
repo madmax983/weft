@@ -216,6 +216,11 @@ pub struct RetFn {
     /// Places that the call mutates through the parameters of the value.
     /// `SigRoot::Param(i)` is parameter `i` of the value, not of the function.
     pub arg_muts: Vec<SigPlace>,
+    /// Places that the call gives to code that can mutate through them: a function
+    /// parameter of the function, or a value that the function does not know.
+    pub lends: Vec<SigPlace>,
+    /// The same, through the parameters of the value, as in `arg_muts`.
+    pub arg_lends: Vec<SigPlace>,
     /// Named effects. The call site of the function resolves them.
     pub named: BTreeSet<String>,
     /// Function parameters of the function that the call can call.

@@ -56,7 +56,16 @@ Status: accepted. Date: 2026-10-18.
   (W0702, W0703), and an inferred row has them.
 - A function that returns a function value has a `ret` part in its signature: what a
   call of the result does, in the places of the parameters. A call of the result does
-  that. The body always infers this part, also when the signature states the row.
+  that. The body always infers this part, also when the signature states the row. It
+  includes the places that the result lends: to a function parameter of the function,
+  or to a value that the function does not know.
+- A call of a function value returns a value that does what the callee states about
+  it: a closure its returned values, a function item its `ret` part. A value that the
+  body does not know returns a value that lends each reference argument of the call
+  and can run each function argument of the call.
+- A closure that returns a function value can also do what the returned value does. So
+  a callee that calls the result of its function parameter is seen at the call that
+  gives the closure.
 - A function value that the body stores where it does not follow it (a struct field,
   an enum payload, a container, a by-value argument that is not a function, or a
   callee that stores its function parameter) can run later. It runs at each node that
@@ -115,7 +124,8 @@ Status: accepted. Date: 2026-10-18.
     program, not at the callers.
   - The effects of a closure count in its maker also when nothing calls the closure. The
     effects of a returned closure count at the call of the maker and again at a call of
-    the result.
+    the result. A call of a closure that returns a function value does what the result
+    does, also when nothing calls the result.
   - A join applies the effects of every value that it can be.
   - A stored function value runs at each node that can reach it, also at a node before
     the store and at a call that does not run it.

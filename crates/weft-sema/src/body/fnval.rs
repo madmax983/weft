@@ -185,6 +185,77 @@ impl Lower<'_> {
         }
     }
 
+    /// Returns the summary of function value `x`. A value that is not a closure gets a
+    /// new summary with what a call of it does.
+    pub(super) fn value_summary(&mut self, x: &FnInfo, row: Option<&[String]>) -> usize {
+        if let Some(s) = x.summary {
+            return s;
+        }
+        let mut m = Summary::default();
+        self.add_fn(&mut m, x, row);
+        self.closures.push(m);
+        self.closures.len() - 1
+    }
+
+    /// Returns the summary of the function value that a call of `callee` returns.
+    /// `fty` is the type of the callee, `args` the places of the reference
+    /// arguments of the call, and `fns` its function arguments by position. A
+    /// closure states what it returns. A function item states it in its signature.
+    /// A value that the body does not know returns a value that can mutate through
+    /// the places that the call gives, and can run the function arguments.
+    pub(super) fn result_summary(
+        &mut self,
+        callee: &FnInfo,
+        fty: &FnTy,
+        args: &[Vec<PlaceId>],
+        fns: &[Option<RowFn>],
+    ) -> Option<usize> {
+        let Ty::Fn(rty) = self.inf.shallow(&fty.ret) else {
+            return None;
+        };
+        let mut out = Summary::default();
+        let mut items: Vec<FnId> = callee.item.into_iter().collect();
+        let mut unknown = callee.summary.is_none() && callee.item.is_none();
+        if let Some(s) = callee.summary {
+            let sum = self.closures[s].clone();
+            for &r in &sum.rets {
+                let ret = self.closures[r].clone();
+                out.union(&ret);
+            }
+            items.extend(sum.items.iter().copied());
+            unknown |= sum.unknown || !sum.params.is_empty();
+        }
+        for f in items {
+            if let Some(rf) = self.sigs[f].effects.ret.clone() {
+                let r = self.ret_summary(&rf, &rty, args, fns);
+                let ret = self.closures[r].clone();
+                out.union(&ret);
+            } else {
+                out.unknown = true;
+                out.may_abort = true;
+            }
+        }
+        if unknown {
+            out.unknown = true;
+            out.may_abort = true;
+            out.multi |= self.may_be_multi(rty.effects.as_deref());
+            out.row.extend(rty.effects.iter().flatten().cloned());
+            out.lends.extend(args.iter().flatten().copied());
+            // The result can hold a function argument and run it later.
+            for (info, row) in fns.iter().flatten() {
+                self.add_fn(&mut out, info, row.as_deref());
+            }
+        }
+        self.closures.push(out);
+        let r = self.closures.len() - 1;
+        // A call of the result can return what the result returns.
+        let rets = self.closures[r].rets.clone();
+        if rets.is_empty() {
+            self.closures[r].rets.insert(r);
+        }
+        Some(r)
+    }
+
     /// Joins the values of two branches. Function values inside tuples and type
     /// arguments join too.
     pub(super) fn join_val(&mut self, a: &Val, b: &Val) -> Val {
@@ -856,28 +927,34 @@ impl Lower<'_> {
             unknown: u.unknown,
             ..RetFn::default()
         };
-        for &m in &u.muts {
-            match self.rooted(&u, m) {
-                Rooted::Param(_, k) => {
-                    let sp = SigPlace {
-                        root: SigRoot::Param(k),
-                        steps: self.sig_steps(m),
-                        text: self.facts.place(m).display.clone(),
-                    };
-                    if !out.arg_muts.contains(&sp) {
-                        out.arg_muts.push(sp);
+        let mut muts = (Vec::new(), Vec::new());
+        let mut lends = (Vec::new(), Vec::new());
+        for (ps, (outer, arg)) in [(&u.muts, &mut muts), (&u.lends, &mut lends)] {
+            for &m in ps {
+                match self.rooted(&u, m) {
+                    Rooted::Param(_, k) => {
+                        let sp = SigPlace {
+                            root: SigRoot::Param(k),
+                            steps: self.sig_steps(m),
+                            text: self.facts.place(m).display.clone(),
+                        };
+                        if !arg.contains(&sp) {
+                            arg.push(sp);
+                        }
                     }
-                }
-                Rooted::Own => {}
-                Rooted::Outer => {
-                    if let Some(sp) = self.sig_place(m, bases) {
-                        if !out.muts.contains(&sp) {
-                            out.muts.push(sp);
+                    Rooted::Own => {}
+                    Rooted::Outer => {
+                        if let Some(sp) = self.sig_place(m, bases) {
+                            if !outer.contains(&sp) {
+                                outer.push(sp);
+                            }
                         }
                     }
                 }
             }
         }
+        (out.muts, out.arg_muts) = muts;
+        (out.lends, out.arg_lends) = lends;
         for &r in &u.reads {
             if matches!(self.rooted(&u, r), Rooted::Outer) {
                 if let Some(sp) = self.sig_place(r, bases) {
@@ -972,6 +1049,12 @@ impl Lower<'_> {
         for sp in &rf.arg_muts {
             sum.muts.extend(self.subst_place(sp, &roots, split));
         }
+        for sp in &rf.lends {
+            sum.lends.extend(self.subst_place(sp, args, split));
+        }
+        for sp in &rf.arg_lends {
+            sum.lends.extend(self.subst_place(sp, &roots, split));
+        }
         // The named effects resolve at this call site, as for the call itself.
         for e in &rf.named {
             if let Some(h) = self.handlers.iter().rev().find(|h| &h.effect == e) {
@@ -994,7 +1077,11 @@ impl Lower<'_> {
         }
         sum.items.extend(rf.items.iter().copied());
         sum.unknown |= rf.unknown;
+        // A call of the result can do what the result does: the effects of the
+        // values that it returns are part of it.
+        let r = self.closures.len();
+        sum.rets.insert(r);
         self.closures.push(sum);
-        self.closures.len() - 1
+        r
     }
 }

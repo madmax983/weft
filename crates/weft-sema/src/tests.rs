@@ -352,3 +352,41 @@ fn a_signature_states_what_a_returned_closure_does() {
     assert_eq!(ret.muts[0].text, "w.n");
     assert!(ret.abort);
 }
+
+#[test]
+fn a_signature_states_what_a_returned_closure_lends() {
+    // The returned closure gives `w` to the function parameter `g`.
+    let s = sig(
+        "struct W { n: u64 } fn mk(g: fn(&W), w: &W) -> fn() { || g(w) }",
+        "mk",
+    );
+    let ret = s.effects.ret.expect("the returned closure has a summary");
+    assert_eq!(ret.lends.len(), 1);
+    assert_eq!(ret.lends[0].text, "w");
+    assert!(ret.passthrough.contains(&0));
+    // The result of a call of a function parameter lends what the call gives.
+    let s = sig(
+        "struct W { n: u64 } fn call(m: fn(&W) -> fn(), w: &W) -> fn() { m(w) }",
+        "call",
+    );
+    let ret = s.effects.ret.expect("the returned value has a summary");
+    assert!(ret.unknown);
+    assert_eq!(ret.lends.len(), 1);
+    assert_eq!(ret.lends[0].text, "w");
+}
+
+#[test]
+fn a_closure_has_the_effects_of_the_closure_that_it_returns() {
+    let f = facts(
+        "struct W { n: Vec<u64> }
+         fn ap(f: fn() -> fn()) { let g = f(); g() }
+         fn caller(w: &W) { ap(|| || w.n.clear()) }",
+        "caller",
+    );
+    // The call of `ap` runs the inner closure.
+    let n = place(&f, "w.n");
+    assert!(f
+        .mutates_at
+        .iter()
+        .any(|&(at, m)| m == n && f.node(at).label == "ap"));
+}
