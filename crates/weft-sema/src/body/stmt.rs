@@ -6,6 +6,7 @@ use super::{
     Stmt, StmtKind, Ty, Val, VarId, VarKind,
 };
 use std::collections::BTreeSet;
+use std::fmt::Write as _;
 
 impl Lower<'_> {
     /// Lowers a function body.
@@ -584,43 +585,25 @@ impl Lower<'_> {
             }
             StmtKind::While { cond, body } => {
                 let header = self.emit(s.span, "while", String::new());
-                // The condition is a statement of its own.
-                self.open_stmt();
-                let c = self.expr(cond);
-                self.unify(&Ty::Bool, &c.ty, cond.span);
-                self.close_stmt(cond.span);
-                let br = self.emit(cond.span, "branch", String::new());
-                let exit = self.facts.add_node(s.span, "end while", String::new());
-                self.facts.cfg_edge.push((br, exit));
-                self.loops.push(LoopFrame {
-                    header,
-                    exit,
-                    frames: self.frames.len(),
+                let mut exit = None;
+                self.lower_loop(&mut |me: &mut Self| {
+                    // The condition is a statement of its own.
+                    me.open_stmt();
+                    let c = me.expr(cond);
+                    me.unify(&Ty::Bool, &c.ty, cond.span);
+                    me.close_stmt(cond.span);
+                    let br = me.emit(cond.span, "branch", String::new());
+                    let x = me.facts.add_node(s.span, "end while", String::new());
+                    me.facts.cfg_edge.push((br, x));
+                    me.loop_body(body, header, x);
+                    exit = Some(x);
                 });
-                let v = self.block(body);
-                self.drop_value(&v, body.span);
-                self.flush(block_tail(body));
-                self.loops.pop();
-                if let Some(c) = self.cur {
-                    self.facts.cfg_edge.push((c, header));
-                }
-                self.cur = Some(exit);
+                self.cur = exit;
             }
             StmtKind::Loop(body) => {
                 let header = self.emit(s.span, "loop", String::new());
                 let exit = self.facts.add_node(s.span, "end loop", String::new());
-                self.loops.push(LoopFrame {
-                    header,
-                    exit,
-                    frames: self.frames.len(),
-                });
-                let v = self.block(body);
-                self.drop_value(&v, body.span);
-                self.flush(block_tail(body));
-                self.loops.pop();
-                if let Some(c) = self.cur {
-                    self.facts.cfg_edge.push((c, header));
-                }
+                self.lower_loop(&mut |me: &mut Self| me.loop_body(body, header, exit));
                 self.cur = Some(exit);
             }
             StmtKind::For { pat, iter, body } => self.for_loop(pat, iter, body, s.span),
@@ -631,6 +614,201 @@ impl Lower<'_> {
                 self.emit(e.span, "assert", String::new());
             }
         }
+    }
+
+    /// Lowers a loop body: control goes back to `header`, and `break` goes to `exit`.
+    fn loop_body(&mut self, body: &Block, header: NodeId, exit: NodeId) {
+        self.loops.push(LoopFrame {
+            header,
+            exit,
+            frames: self.frames.len(),
+        });
+        let v = self.block(body);
+        self.drop_value(&v, body.span);
+        self.flush(block_tail(body));
+        self.loops.pop();
+        if let Some(c) = self.cur {
+            self.facts.cfg_edge.push((c, header));
+        }
+    }
+
+    /// Lowers one iteration of a loop with `pass` until the values of the locals
+    /// from outside the loop are stable. An iteration starts with the values that
+    /// the iterations before it gave: references, function values and tasks. So
+    /// when the body gives a local a new value, the body is lowered again from
+    /// the loop head, with the old and the new values joined. A chain of locals
+    /// needs one more pass for each local. After `MAX_LOOP_PASSES` passes the values
+    /// of the last pass stay. A reference that goes deeper in each iteration
+    /// (`cur = &cur.next[0]`) then has the places of eight iterations. A deeper
+    /// place is below one of them, so a change through an unstable step covers it.
+    fn lower_loop(&mut self, pass: &mut dyn FnMut(&mut Self)) {
+        const MAX_LOOP_PASSES: usize = 8;
+        let outer = self.locals.len();
+        let made = (self.facts.roots.len(), self.facts.vars.len());
+        let mut passes = 0;
+        loop {
+            let start = self.carried(outer, made);
+            let head = self.clone();
+            pass(self);
+            passes += 1;
+            if passes >= MAX_LOOP_PASSES || self.carried(outer, made) == start {
+                return;
+            }
+            let values: Vec<_> = self.locals[..outer].to_vec();
+            self.rewind(head);
+            for (l, v) in values.into_iter().enumerate() {
+                let var = self.locals[l].var;
+                for &p in &v.refs {
+                    if !self.locals[l].refs.contains(&p) {
+                        self.facts.points_into.push((var, p));
+                    }
+                }
+                let loc = &mut self.locals[l];
+                loc.refs = v.refs;
+                loc.summary = v.summary;
+                loc.fn_param = v.fn_param;
+                loc.task = v.task;
+                loc.bound = v.bound;
+                loc.uniq = v.uniq;
+            }
+        }
+    }
+
+    /// The values of the first `outer` locals that an iteration passes to the next,
+    /// as keys that are the same in each pass. `made` is the number of roots and
+    /// variables before the loop.
+    fn carried(&self, outer: usize, made: (usize, usize)) -> Vec<BTreeSet<String>> {
+        self.locals[..outer]
+            .iter()
+            .map(|loc| {
+                let mut key: BTreeSet<String> = loc
+                    .refs
+                    .iter()
+                    .map(|&p| format!("ref {}", self.place_key(p, made.0)))
+                    .collect();
+                key.extend(loc.task.map(|t| format!("task {t}")));
+                let info = super::FnInfo {
+                    summary: loc.summary,
+                    item: None,
+                    param: loc.fn_param,
+                };
+                key.extend(self.fn_key(&info, made));
+                key
+            })
+            .collect()
+    }
+
+    /// A key of place `p` that is the same in each pass of a loop. A root that the
+    /// loop makes (index `roots` or more) has its kind and name, and a split has its side.
+    fn place_key(&self, p: PlaceId, roots: usize) -> String {
+        let info = self.facts.place(p);
+        let r = info.root.index();
+        let mut key = if r < roots {
+            format!("r{r}")
+        } else {
+            let root = &self.facts.roots[r];
+            format!("{:?} {}", root.kind, root.name)
+        };
+        for s in &info.steps {
+            let _ = match s.kind {
+                StepKind::Seg { hi, .. } => write!(key, "/seg {hi} {}", s.unstable),
+                k => write!(key, "/{k:?} {}", s.unstable),
+            };
+        }
+        key
+    }
+
+    /// The keys of what a call of function value `info` does, the same in each pass of a loop.
+    fn fn_key(&self, info: &super::FnInfo, made: (usize, usize)) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        out.extend(info.param.map(|p| format!("param {p:?}")));
+        let Some(s) = info.summary else {
+            return out;
+        };
+        let sum = &self.closures[s];
+        let pk = |p: PlaceId| self.place_key(p, made.0);
+        let vk = |v: VarId| {
+            if v.index() < made.1 {
+                format!("{v}")
+            } else {
+                self.facts.var(v).name.clone()
+            }
+        };
+        for (tag, ps) in [
+            ("mut", &sum.muts),
+            ("read", &sum.reads),
+            ("lend", &sum.lends),
+        ] {
+            out.extend(ps.iter().map(|&p| format!("{tag} {}", pk(p))));
+        }
+        out.extend(sum.ret_refs.iter().map(|&p| format!("ret {}", pk(p))));
+        out.extend(
+            sum.escapes
+                .iter()
+                .chain(&sum.row)
+                .map(|e| format!("effect {e}")),
+        );
+        out.extend(sum.performs.iter().map(|c| format!("cap {c}")));
+        out.extend(sum.passthrough.iter().map(|p| format!("passthrough {p}")));
+        out.extend(sum.items.iter().map(|f| format!("item {f}")));
+        out.extend(sum.params.iter().map(|p| format!("param {p}")));
+        out.extend(sum.stores.iter().map(|p| format!("stores {p}")));
+        out.extend(sum.captures.iter().map(|&v| format!("capture {}", vk(v))));
+        out.extend(
+            sum.moved_captures
+                .iter()
+                .map(|&v| format!("moved {}", vk(v))),
+        );
+        out.extend(
+            sum.param_roots
+                .iter()
+                .map(|(&r, k)| format!("root {k} {}", pk(r))),
+        );
+        out.extend(
+            sum.op_args
+                .iter()
+                .map(|(c, op, pos, p)| format!("op {c} {op:?} {pos:?} {}", pk(*p))),
+        );
+        out.extend(
+            sum.lent
+                .iter()
+                .map(|(f, pos, p)| format!("lent {f} {pos:?} {}", pk(*p))),
+        );
+        for (flag, on) in [
+            ("abort", sum.may_abort),
+            ("multi", sum.multi),
+            ("unknown", sum.unknown),
+            ("literal", sum.literal),
+        ] {
+            if on {
+                out.insert(flag.to_string());
+            }
+        }
+        out
+    }
+
+    /// Goes back to the state `head` at a loop head. The interned tables stay, so
+    /// that the values of the pass before stay valid.
+    fn rewind(&mut self, head: Self) {
+        let roots = std::mem::take(&mut self.facts.roots);
+        let places = std::mem::take(&mut self.facts.places);
+        let index = std::mem::take(&mut self.facts.place_index);
+        let vars = std::mem::take(&mut self.facts.vars);
+        let closures = std::mem::take(&mut self.closures);
+        let inf = std::mem::take(&mut self.inf);
+        let groups = std::mem::take(&mut self.groups);
+        let deps = std::mem::take(&mut self.dep_places);
+        let split = self.split;
+        *self = head;
+        self.facts.roots = roots;
+        self.facts.places = places;
+        self.facts.place_index = index;
+        self.facts.vars = vars;
+        self.closures = closures;
+        self.inf = inf;
+        self.groups = groups;
+        self.dep_places = deps;
+        self.split = split;
     }
 
     fn exit_node(&self) -> Option<NodeId> {
@@ -690,20 +868,11 @@ impl Lower<'_> {
         }
         let exit = self.facts.add_node(span, "end for", String::new());
         self.facts.cfg_edge.push((header, exit));
-        let bindn = self.emit(pat.span(), "for binding", String::new());
-        self.bind_pattern(pat, &elem_val, bindn);
-        self.loops.push(LoopFrame {
-            header,
-            exit,
-            frames: self.frames.len(),
+        self.lower_loop(&mut |me: &mut Self| {
+            let bindn = me.emit(pat.span(), "for binding", String::new());
+            me.bind_pattern(pat, &elem_val, bindn);
+            me.loop_body(body, header, exit);
         });
-        let v = self.block(body);
-        self.drop_value(&v, body.span);
-        self.flush(block_tail(body));
-        self.loops.pop();
-        if let Some(c) = self.cur {
-            self.facts.cfg_edge.push((c, header));
-        }
         self.cur = Some(exit);
         self.end_frame(span);
         self.frames.pop();

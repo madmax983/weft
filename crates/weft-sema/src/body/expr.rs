@@ -1507,12 +1507,14 @@ impl Lower<'_> {
         for (oi, cs, _) in &clauses_done {
             changes.extend(self.clause_through_params(cap, *oi, cs));
         }
-        // A resume runs the handled computation, also these changes. A clause that
-        // holds a reference into what its parameter gets across `resume` sees each
-        // change of the argument place as a change of the parameter.
+        // A resume runs the handled computation, also these changes. The node that
+        // gives the places reports a mutation that needs a declaration, so the
+        // resume only lends them. A clause that holds a reference into what its
+        // parameter gets across `resume` sees each change of the argument place as
+        // a change of the parameter.
         for &n in &resumes {
             for &q in &changes {
-                self.facts.mutates_at.push((n, q));
+                self.facts.lends_mut.push((n, q));
             }
         }
         changes.extend(body_sum.muts.iter().chain(&body_sum.lends).copied());

@@ -181,17 +181,20 @@ struct LVal {
     deps: Vec<PlaceId>,
 }
 
+#[derive(Clone)]
 struct Frame {
     names: Vec<(String, usize)>,
     barrier: Option<usize>,
 }
 
+#[derive(Clone)]
 struct HandlerFrame {
     effect: String,
     cap: CapId,
     multi: bool,
 }
 
+#[derive(Clone)]
 struct LoopFrame {
     header: NodeId,
     exit: NodeId,
@@ -234,6 +237,13 @@ enum PathRef {
 }
 
 /// The lowering state of one function.
+///
+/// A loop body can be lowered more than once (`lower_loop`). A pass after the
+/// first starts from a copy of the state at the loop head. Only the interned
+/// tables stay from the pass before: places, roots, variables, closure
+/// summaries and the inference table. Put a new field that can refer to these
+/// tables in `lower_loop` too.
+#[derive(Clone)]
 pub struct Lower<'p> {
     prog: &'p Program,
     sigs: &'p [FnSig],

@@ -47,8 +47,9 @@ Status: accepted. Date: 2026-10-18.
   - a function parameter: the effects of the caller pass through; the call can abort;
   - an unknown value: the call can abort, and it performs the effect row of its type.
 - `if`, `match` and a new value of a local join two function values: the result can be
-  either. Function values also flow through tuples, generic results and the result of
-  a closure call.
+  either. In a loop, a call before the new value also gets it: the body is lowered
+  again with the joined value (ADR 0003). Function values also flow through tuples,
+  generic results and the result of a closure call.
 - A closure belongs to the function that makes it. So the effect row of a function has
   the effects and the mutations of each closure that the body makes, also one that it
   returns or stores and does not call. A signature with a stated row must allow them

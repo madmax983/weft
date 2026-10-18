@@ -1,0 +1,125 @@
+// A later iteration of a loop sees the values that the body gives to the
+// locals outside the loop: a function value, a closure and a reference.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn grow(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 1 }) }
+fn noop(w: &World) {}
+
+// The second iteration calls `grow`.
+fn item_later(world: &World, n: u64) / mut(world.entities) {
+    let g = noop
+    let i = 0
+    while i < n {
+        let first = &world.entities[0]
+        g(world)
+        print(first.hp)   //~ W0301
+        g = grow
+        i += 1
+    }
+}
+pub fn item_later_pub(world: &World, n: u64) {   //~ W0701
+    let g = noop
+    let i = 0
+    while i < n {
+        g(world)
+        g = grow
+        i += 1
+    }
+}
+
+// The same with a closure, in `loop` and in `for`, and through a copy of the local.
+fn closure_later(world: &World, n: u64) / mut(world.entities) {
+    let h = || print(1)
+    let i = 0
+    loop {
+        if i == n { break }
+        let first = &world.entities[0]
+        h()
+        print(first.hp)   //~ W0301
+        h = || world.entities.clear()
+        i += 1
+    }
+}
+fn for_later(world: &World, v: &Vec<u64>) / mut(world.entities) {
+    let first = &world.entities[0]
+    let h = noop
+    for x in v[] {
+        h(world)
+        print(first.hp)   //~ W0301
+        h = grow
+    }
+}
+fn copy_later(world: &World, n: u64) / mut(world.entities) {
+    let first = &world.entities[0]
+    let h = || print(1)
+    let i = 0
+    while i < n {
+        let k = h
+        k()
+        print(first.hp)   //~ W0301
+        h = || world.entities.clear()
+        i += 1
+    }
+}
+
+// A chain: `a` gets the value of `b` one iteration after `b` gets it.
+fn chain(world: &World, n: u64) / mut(world.entities) {
+    let first = &world.entities[0]
+    let a = noop
+    let b = noop
+    let i = 0
+    while i < n {
+        a(world)
+        print(first.hp)   //~ W0301
+        a = b
+        b = grow
+        i += 1
+    }
+}
+
+// A reference local that the body moves to another place.
+fn clear_both(a: &World, b: &World, n: u64) {
+    let cur = a
+    let i = 0
+    while i < n {
+        cur.entities.clear()
+        cur = b
+        i += 1
+    }
+}
+pub fn clear_one(a: &World, b: &World, n: u64) / mut(a.entities) {
+    let cur = a
+    let i = 0
+    while i < n {
+        cur.entities.clear()   //~ W0703
+        cur = b
+        i += 1
+    }
+}
+fn ref_later(w1: &World, w2: &World) / mut(w1.entities, w2.entities) {
+    let first = &w2.entities[0]
+    clear_both(w1, w2, 2)
+    print(first.hp)   //~ W0301
+}
+
+// Controls: the body gives the same value again, and a value that does nothing.
+fn same_value(world: &World, n: u64) / mut(world.entities) {
+    let g = noop
+    let i = 0
+    while i < n {
+        let first = &world.entities[0]
+        g(world)
+        print(first.hp)
+        g = noop
+        i += 1
+    }
+}
+fn same_place(a: &World, n: u64) / mut(a.entities) {
+    let cur = a
+    let i = 0
+    while i < n {
+        cur.entities.clear()
+        cur = a
+        i += 1
+    }
+}

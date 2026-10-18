@@ -55,6 +55,11 @@ Status: accepted. Date: 2026-10-18.
   writes through it: it mutates every place that `c` points into. The same holds for
   any place that holds a reference: a reference field of a `!Move` struct writes its
   declared place, and a part of a local writes what the local points into.
+- A loop iteration starts with the values that the iterations before it gave. When the
+  body gives a local from outside the loop a new value (a reference, a function value or
+  a task), the lowering joins it into the value at the loop head and lowers the body
+  again, until the values are stable. So a mutation through `cur` before `cur = b` in
+  the body also mutates `b`. After eight passes the values of the last pass stay.
 - A closure refers to the variables that it captures, as the interpreter captures their
   cells. A captured value of plain data stays readable after its scope ends, so such a
   closure can leave the scope. A closure that captures another value cannot outlive the
@@ -71,6 +76,10 @@ Status: accepted. Date: 2026-10-18.
 
 - Element places are not index-sensitive. A mutation of one element can invalidate a
   reference into the unstable part of another element. This is safe and conservative.
+- A reference that goes deeper in each loop iteration (`cur = &cur.next[0]`) has the
+  places of eight iterations only. A reference that a deeper change invalidates is below
+  one of these places through an unstable step, so a change there invalidates it too. A
+  signature check does not see the deeper places.
 - `points_into` is not flow-sensitive. A reference that got a place inside a block, and
   then a place outside it before the block ends, is still invalid after the end. This
   is the same imprecision as for mutations.
