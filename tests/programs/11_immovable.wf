@@ -1,0 +1,19 @@
+// `!Move` types keep their address. Only they may point into `self`.
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct Plain { r: &u8 }   //~ W0605
+
+fn keep(f: Frame) {}
+
+fn make() -> Frame { Frame { buf: [0, 0, 0, 0] } }   // constructed in place
+
+fn moves() {
+    let f = make()
+    keep(f)   //~ W0604
+}
+
+fn in_place() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[2]
+    f.buf[0] = 9   // a fixed array element is stable: `cur` survives
+    print(f.cur)
+}

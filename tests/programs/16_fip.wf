@@ -1,0 +1,23 @@
+// Fully in-place functions reuse the cells they free.
+enum List { Cons(u64, List), Nil }
+
+fip fn rev(xs: List, acc: List) -> List {
+    match xs {
+        Cons(x, rest) => rev(rest, Cons(x, acc)),
+        Nil => acc,
+    }
+}
+
+fip fn dup(xs: List) -> List {
+    match xs {
+        Cons(x, rest) => Cons(x, Cons(x, rest)),   //~ W1001
+        Nil => Nil,
+    }
+}
+
+fip fn drop_it(xs: List) -> List { Nil }   //~ W1002
+
+fip fn noisy(xs: List) -> List / log {   //~ W1004
+    log.info("x")   //~ W1003
+    xs
+}

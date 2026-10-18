@@ -117,6 +117,34 @@ impl Lower<'_> {
         }
     }
 
+    /// Lowers an expression with an expected type. Array literals and closures use it.
+    pub(super) fn expr_with(&mut self, e: &Expr, expected: Option<&Ty>) -> Val {
+        match (&e.kind, expected.map(|t| self.inf.shallow(t))) {
+            (ExprKind::Array(es), Some(Ty::Array(elem, n))) => {
+                for x in es {
+                    let v = self.expr(x);
+                    self.unify(&elem, &v.ty, x.span);
+                    self.consume(&v, x.span);
+                }
+                if u64::try_from(es.len()).ok() != Some(n) {
+                    self.err(
+                        "W0102",
+                        format!("expected an array of {n} elements, found {}", es.len()),
+                        e.span,
+                    );
+                }
+                Val {
+                    ty: Ty::Array(elem, n),
+                    ..Val::default()
+                }
+            }
+            (ExprKind::Closure { params, body }, Some(Ty::Fn(f))) => {
+                self.closure(params, body, Some(&f), e.span)
+            }
+            _ => self.expr(e),
+        }
+    }
+
     fn lit(&mut self, l: &Lit) -> Val {
         let ty = match l {
             Lit::Int(_) => self.inf.fresh_int(),
@@ -560,7 +588,11 @@ impl Lower<'_> {
             .map(|_| self.inf.fresh())
             .collect();
         for (name, value) in fields {
-            let v = self.expr(value);
+            let expected = defs
+                .iter()
+                .find(|d| d.name == name.name)
+                .map(|d| super::subst(&d.ty, &args));
+            let v = self.expr_with(value, expected.as_ref());
             match defs.iter().find(|d| d.name == name.name) {
                 Some(d) => {
                     let ft = super::subst(&d.ty, &args);

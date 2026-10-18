@@ -27,6 +27,7 @@ pub fn check(prog: &Program, sigs: &[FnSig], f: FnId) -> Vec<Diagnostic> {
         module: def.module,
         diags: Vec::new(),
         owned: Vec::new(),
+        pattern_owned: Vec::new(),
     };
     if !sigs[f].effects.is_empty() {
         c.diags.push(Diagnostic::error(
@@ -70,12 +71,24 @@ struct Fip<'a> {
     module: usize,
     diags: Vec<Diagnostic>,
     owned: Vec<String>,
+    pattern_owned: Vec<String>,
 }
 
 /// Free cells by size, along the current path.
 type Credits = BTreeMap<usize, usize>;
 
 impl Fip<'_> {
+    /// Returns the payload types of a variant, found by name.
+    fn payload_types(&self, name: &str) -> Vec<Ty> {
+        let Some(&(adt, vi)) = self.prog.variants.get(name).and_then(|v| v.first()) else {
+            return Vec::new();
+        };
+        match &self.prog.adts[adt].kind {
+            crate::program::AdtKind::Enum(vs) => vs[vi].fields.clone(),
+            _ => Vec::new(),
+        }
+    }
+
     fn block(&mut self, b: &Block, credits: &mut Credits) {
         for s in &b.stmts {
             match &s.kind {
@@ -195,16 +208,21 @@ impl Fip<'_> {
             }
             ExprKind::Match { scrutinee, arms } => {
                 self.expr(scrutinee, credits);
-                let owned_scrut =
-                    matches!(&scrutinee.kind, ExprKind::Name(n) if self.owned.contains(&n.name));
+                let owned_scrut = matches!(&scrutinee.kind, ExprKind::Name(n)
+                    if self.owned.contains(&n.name) || self.pattern_owned.contains(&n.name));
                 for arm in arms {
                     let mut c = credits.clone();
                     if owned_scrut {
-                        if let Pattern::Variant { fields, .. } = &arm.pat {
+                        if let Pattern::Variant { fields, path, .. } = &arm.pat {
                             *c.entry(fields.len()).or_insert(0) += 1;
-                            for f in fields {
+                            let name = path.last().map_or("", |p| p.name.as_str());
+                            let ftys = self.payload_types(name);
+                            for (fi, f) in fields.iter().enumerate() {
                                 if let Pattern::Bind(b) = f {
-                                    self.owned.push(b.name.clone());
+                                    if !ftys.get(fi).is_some_and(is_owned) {
+                                        continue;
+                                    }
+                                    self.pattern_owned.push(b.name.clone());
                                     let (lo, hi) = uses_expr(&arm.body, &b.name);
                                     if lo != 1 || hi != 1 {
                                         self.diags.push(Diagnostic::error(

@@ -9,6 +9,11 @@ fn node_span(f: &FnFacts, n: NodeId) -> weft_facts::Span {
     f.node(n).span
 }
 
+fn once_closure(f: &FnFacts, n: NodeId) -> Diagnostic {
+    Diagnostic::error("W0502", "a `once` closure is called twice", node_span(f, n))
+        .note("the closure moves a captured value, so it can run only once")
+}
+
 /// Turns a checker report into diagnostics, in source order.
 pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
     let mut out = Vec::new();
@@ -50,10 +55,8 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
                 node_span(f, n),
             )
             .note("an operation that is not `multi` resumes at most once"),
-            VarKind::Closure => {
-                Diagnostic::error("W0502", "a `once` closure is called twice", node_span(f, n))
-                    .note("the closure moves a captured value, so it can run only once")
-            }
+            VarKind::Closure => once_closure(f, n),
+            _ if info.ty.starts_with("fn(") => once_closure(f, n),
             _ => Diagnostic::error(
                 "W0302",
                 format!("`{}` used after it was moved", info.name),

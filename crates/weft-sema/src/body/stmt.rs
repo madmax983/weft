@@ -125,7 +125,7 @@ impl Lower<'_> {
             effects::close(&eff.named)
         };
         for h in &mut self.facts.handlers {
-            h.forwards = declared.contains(&h.effect);
+            h.forwards = h.forwards || declared.contains(&h.effect);
         }
         self.facts.normalize();
         Lowered {

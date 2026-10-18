@@ -577,6 +577,7 @@ impl Collector {
                             span: f.span,
                         });
                     }
+                    self.prog.adts[id].kind = AdtKind::Struct(fields.clone());
                     // Reference fields: only `!Move` structs may point into `self`.
                     for (i, f) in s.fields.iter().enumerate() {
                         if let TypeExprKind::Ref { place, .. } = &f.ty.kind {

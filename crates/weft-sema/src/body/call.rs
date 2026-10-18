@@ -906,7 +906,7 @@ impl Lower<'_> {
         let task = rv
             .task
             .or_else(|| rv.local.and_then(|l| self.locals[l].task));
-        let ret = match self.inf.resolve(&self.deref_ty(&rv.ty)) {
+        let ret = match self.deref_ty(&rv.ty) {
             Ty::Adt(_, args) => args.first().cloned().unwrap_or(Ty::Error),
             _ => Ty::Error,
         };
