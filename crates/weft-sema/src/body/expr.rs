@@ -1,9 +1,9 @@
 //! Expressions, places, closures, handlers and scopes.
 
 use super::{
-    ast, block_tail, effects, elem_step, expr_tail, field_step, AdtKind, BinOp, CapId, ContInfo,
-    Deref, Expr, ExprKind, FnId, FnTy, Frame, HandlerFrame, HandlerInfo, IntTy, ItemRef, LVal, Lit,
-    Lower, NodeId, PathRef, Pattern, PlaceId, Rc, RootKind, Span, StrPart, Summary, Ty, UnOp, Val,
+    ast, block_tail, effects, elem_step, expr_tail, field_step, AdtKind, BinOp, ContInfo, Deref,
+    Expr, ExprKind, FnId, FnTy, Frame, HandlerFrame, HandlerInfo, IntTy, ItemRef, LVal, Lit, Lower,
+    NodeId, PathRef, Pattern, PlaceId, Rc, RootKind, Span, StrPart, Summary, Ty, UnOp, Val,
     VarKind, PRELUDE,
 };
 use weft_facts::{Step, StepKind};
@@ -1078,8 +1078,8 @@ impl Lower<'_> {
             };
             ptys.push(ty.clone());
             let l = self.new_local(&p.name.name, VarKind::Param, p.span, ty.clone(), false);
-            // A reference parameter points into what the call gives.
-            let refs = if ty.is_ref() {
+            // A parameter that holds references points into what the call gives.
+            let refs = if self.holds_refs(&ty) {
                 let r = self.root(&p.name.name, RootKind::Arg);
                 param_roots.insert(r, i);
                 vec![r]
@@ -1399,11 +1399,11 @@ impl Lower<'_> {
             let entry = self.start(c.span, "handler clause");
             let saved_stmts = std::mem::take(&mut self.stmt_temps);
             self.open_stmt();
-            // A reference parameter points into what the operation gets.
+            // A parameter that holds references points into what the operation gets.
             let mut param_roots = std::collections::BTreeMap::new();
             for (i, (p, pt)) in c.params.iter().zip(&op.params).enumerate() {
                 let l = self.new_local(&p.name.name, VarKind::Param, p.span, pt.clone(), false);
-                let refs = if pt.is_ref() {
+                let refs = if self.holds_refs(pt) {
                     let r = self.root(&p.name.name, RootKind::Arg);
                     param_roots.insert(r, i);
                     vec![r]
@@ -1478,6 +1478,8 @@ impl Lower<'_> {
         for &m in &footprint {
             self.facts.footprint.push((cap, m));
         }
+        lent.sort();
+        lent.dedup();
         // Resumes run the handled computation and the clauses again.
         let resumes: Vec<NodeId> = self
             .resumes
@@ -1485,8 +1487,6 @@ impl Lower<'_> {
             .filter(|(_, c)| *c == cap)
             .map(|(n, _)| *n)
             .collect();
-        lent.sort();
-        lent.dedup();
         for &n in &resumes {
             for &m in &footprint {
                 self.facts.mutates_at.push((n, m));
@@ -1495,59 +1495,36 @@ impl Lower<'_> {
                 self.facts.lends_mut.push((n, l));
             }
         }
-        // A call that reaches this handler must not pass places that the handler mutates.
+        let mut changes: Vec<PlaceId> = body_sum
+            .muts
+            .iter()
+            .chain(&body_sum.lends)
+            .copied()
+            .collect();
+        changes.extend(footprint.iter().chain(&lent).copied());
+        let mut h = super::Handled {
+            cap,
+            clauses: clauses_done,
+            footprint,
+            lent,
+            clause_sum,
+            resumes,
+            changes,
+        };
         let calls: Vec<NodeId> = self
             .cap_calls
             .iter()
             .filter(|(_, c)| *c == cap)
             .map(|(n, _)| *n)
             .collect();
-        for &n in &calls {
-            for &m in &footprint {
-                self.facts.call_mut.push((n, m, 1000 + cap.0));
-            }
-            for &l in &lent {
-                self.facts.lends_mut.push((n, l));
-            }
-        }
-        // A clause mutates and reads through its parameters what the operation gets.
-        let mut changes: Vec<PlaceId> = Vec::new();
-        for (oi, cs, _) in &clauses_done {
-            changes.extend(self.clause_through_params(cap, *oi, cs));
-        }
-        // A resume runs the handled computation, also these changes. The node that
-        // gives the places reports a mutation that needs a declaration, so the
-        // resume only lends them. A clause that holds a reference into what its
-        // parameter gets across `resume` sees each change of the argument place as
-        // a change of the parameter.
-        for &n in &resumes {
-            for &q in &changes {
-                self.facts.lends_mut.push((n, q));
-            }
-        }
-        changes.extend(body_sum.muts.iter().chain(&body_sum.lends).copied());
-        changes.extend(footprint.iter().chain(&lent).copied());
-        for (oi, cs, own_resumes) in &clauses_done {
-            self.resume_through_params(cap, *oi, cs, own_resumes, &changes);
-        }
-        // A clause runs at each operation that it handles. There it uses its
-        // captures, moves the moved ones, and its locals go out of scope.
-        for &n in &calls {
-            for &v in &clause_sum.captures {
-                self.facts.uses.push((v, n));
-            }
-            for &r in &clause_sum.reads {
-                self.facts.reads_at.push((n, r));
-            }
-            for &v in &clause_sum.moved_captures {
-                if !self.is_copy_var(v) {
-                    self.move_var(v, n);
-                }
-            }
-            for &v in &clause_sum.dropped {
-                self.facts.scope_end.push((v, n));
-            }
-        }
+        let args: Vec<super::OpArg> = self
+            .op_args
+            .iter()
+            .filter(|a| a.cap == cap)
+            .copied()
+            .collect();
+        self.run_handler(&mut h, &calls, &args);
+        self.handled.push(h);
         self.cur = saved;
         if let Ty::Fn(f) = self.inf.resolve(&ty) {
             if let Some(s) = f.summary {
@@ -1570,21 +1547,82 @@ impl Lower<'_> {
         }
     }
 
+    /// The clauses of handler `h` run at the nodes `calls`, and they get the places
+    /// `args`. `apply_stored` calls it again for the nodes that it adds.
+    pub(super) fn run_handler(
+        &mut self,
+        h: &mut super::Handled,
+        calls: &[NodeId],
+        args: &[super::OpArg],
+    ) {
+        // A call that reaches this handler must not pass places that the handler mutates.
+        for &n in calls {
+            for &m in &h.footprint {
+                self.facts.call_mut.push((n, m, 1000 + h.cap.0));
+            }
+            for &l in &h.lent {
+                self.facts.lends_mut.push((n, l));
+            }
+        }
+        // A clause mutates and reads through its parameters what the operation gets.
+        let mut changes: Vec<PlaceId> = Vec::new();
+        for (oi, cs, _) in &h.clauses {
+            changes.extend(self.clause_through_params(args, *oi, cs));
+        }
+        // A resume runs the handled computation, also these changes. The node that
+        // gives the places reports a mutation that needs a declaration, so the
+        // resume only lends them.
+        for &n in &h.resumes {
+            for &q in &changes {
+                self.facts.lends_mut.push((n, q));
+            }
+        }
+        h.changes.extend(changes);
+        // A clause that holds a reference into what its parameter gets across
+        // `resume` sees each change of the argument place as a change of the parameter.
+        let all: Vec<super::OpArg> = self
+            .op_args
+            .iter()
+            .filter(|a| a.cap == h.cap)
+            .copied()
+            .collect();
+        for (oi, cs, own_resumes) in &h.clauses {
+            self.resume_through_params(&all, *oi, cs, own_resumes, &h.changes);
+        }
+        // A clause runs at each operation that it handles. There it uses its
+        // captures, moves the moved ones, and its locals go out of scope.
+        for &n in calls {
+            for &v in &h.clause_sum.captures {
+                self.facts.uses.push((v, n));
+            }
+            for &r in &h.clause_sum.reads {
+                self.facts.reads_at.push((n, r));
+            }
+            for &v in &h.clause_sum.moved_captures {
+                if !self.is_copy_var(v) {
+                    self.move_var(v, n);
+                }
+            }
+            for &v in &h.clause_sum.dropped {
+                self.facts.scope_end.push((v, n));
+            }
+        }
+    }
+
     /// Applies what clause `cs` of operation `op` does through its reference
-    /// parameters at each node that gives places to the operation. Returns the
-    /// places that change: the clause mutates them or lends them.
+    /// parameters at each node of `args` that gives places to the operation.
+    /// Returns the places that change: the clause mutates them or lends them.
     fn clause_through_params(
         &mut self,
-        cap: CapId,
+        args: &[super::OpArg],
         op: Option<usize>,
         cs: &Summary,
     ) -> Vec<PlaceId> {
         let mut changed = Vec::new();
         let here = self.frames.iter().rev().find_map(|f| f.barrier);
-        let args: Vec<_> = self
-            .op_args
+        let args: Vec<_> = args
             .iter()
-            .filter(|a| a.cap == cap && (a.op.is_none() || a.op == op))
+            .filter(|a| a.op.is_none() || a.op == op)
             .copied()
             .collect();
         let through = |me: &mut Self, p: PlaceId, a: &super::OpArg| -> Vec<PlaceId> {
@@ -1641,7 +1679,7 @@ impl Lower<'_> {
     /// the operation gets is a change of the parameter of the clause.
     fn resume_through_params(
         &mut self,
-        cap: CapId,
+        args: &[super::OpArg],
         op: Option<usize>,
         cs: &Summary,
         resumes: &[NodeId],
@@ -1650,10 +1688,9 @@ impl Lower<'_> {
         if resumes.is_empty() {
             return;
         }
-        let args: Vec<_> = self
-            .op_args
+        let args: Vec<_> = args
             .iter()
-            .filter(|a| a.cap == cap && (a.op.is_none() || a.op == op))
+            .filter(|a| a.op.is_none() || a.op == op)
             .copied()
             .collect();
         let mut out = Vec::new();

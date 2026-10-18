@@ -390,3 +390,21 @@ fn a_closure_has_the_effects_of_the_closure_that_it_returns() {
         .iter()
         .any(|&(at, m)| m == n && f.node(at).label == "ap"));
 }
+
+#[test]
+fn a_signature_states_what_a_body_gives_a_stored_value() {
+    let src = "struct W { n: u64 } struct H { f: fn(&W) }
+         fn dispatch(h: &H, w: &W) { let f = h.f; f(w) }
+         fn count(h: &H, w: &W) -> u64 { w.n }";
+    let s = sig(src, "dispatch");
+    assert!(s.effects.reaches);
+    assert_eq!(s.effects.reach_given.len(), 1);
+    assert_eq!(s.effects.reach_given[0].arg, Some(0));
+    let place = s.effects.reach_given[0]
+        .place
+        .as_ref()
+        .expect("a named place");
+    assert_eq!(place.text, "w");
+    // A body that calls no unknown function value cannot run a stored one.
+    assert!(!sig(src, "count").effects.reaches);
+}

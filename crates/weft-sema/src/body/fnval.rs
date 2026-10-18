@@ -11,8 +11,11 @@
 
 use std::collections::BTreeSet;
 
-use super::{CapId, FnId, FnTy, Lower, NodeId, PlaceId, Rc, RootKind, SigRoot, Summary, Ty, Val};
-use crate::program::{EffectDef, LentPlace, RetFn, SigPlace};
+use super::{
+    CapId, FnId, FnTy, Lower, NodeId, PlaceId, Rc, RootKind, SigRoot, Summary, Ty, Val, VarId,
+    VarKind,
+};
+use crate::program::{EffectDef, GivenPlace, LentPlace, RetFn, SigPlace};
 
 /// What a function value can be. The default value is a value that the body does not know.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -92,6 +95,20 @@ pub(super) struct Applied {
 
 /// A function value with its effect row.
 pub(super) type RowFn = (FnInfo, Option<Vec<String>>);
+
+/// A function value that the body stores where it does not follow it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Stored {
+    /// The value.
+    pub info: FnInfo,
+    /// The effect row of its type.
+    pub row: Option<Vec<String>>,
+    /// The places that the value points into: what it captures.
+    pub refs: Vec<PlaceId>,
+    /// A variable that points into `refs` from the store on. Each node that can run
+    /// the value uses it.
+    pub var: Option<VarId>,
+}
 
 /// The callee of a higher-order call.
 pub(super) enum Callee {
@@ -725,9 +742,41 @@ impl Lower<'_> {
         if info == FnInfo::default() {
             return;
         }
-        let entry = (info, f.effects.clone());
-        if !self.escaped.contains(&entry) {
-            self.escaped.push(entry);
+        let row = f.effects.clone();
+        if self
+            .escaped
+            .iter()
+            .any(|e| e.info == info && e.row == row && e.refs == v.refs)
+        {
+            return;
+        }
+        // The stored value points into its captures from here on.
+        let var = match self.cur {
+            Some(n) if !v.refs.is_empty() => {
+                let span = self.facts.node(n).span;
+                let vi = self.var_info("{stored closure}", VarKind::Closure, span, &v.ty, false);
+                let var = self.facts.add_var(vi);
+                self.bind(var, n);
+                for &p in &v.refs {
+                    self.facts.points_into.push((var, p));
+                }
+                Some(var)
+            }
+            _ => None,
+        };
+        self.escaped.push(Stored {
+            info,
+            row,
+            refs: v.refs.clone(),
+            var,
+        });
+    }
+
+    /// The body stores `v` and each function value in its parts.
+    pub(super) fn escape_all(&mut self, v: &Val) {
+        self.escape(v);
+        for p in v.parts.iter().flatten() {
+            self.escape_all(p);
         }
     }
 
@@ -750,6 +799,7 @@ impl Lower<'_> {
         }
         let escaped = self.escaped.clone();
         let applied = self.applied.clone();
+        let (calls_before, args_before) = (self.cap_calls.len(), self.op_args.len());
         let mut work: Vec<Reach> = self.reaches.clone();
         let mut seen: BTreeSet<(NodeId, Vec<GivenKey>)> = BTreeSet::new();
         while let Some(r) = work.pop() {
@@ -757,8 +807,15 @@ impl Lower<'_> {
             if !seen.insert(key) {
                 continue;
             }
-            for (info, row) in &escaped {
-                self.apply_value(r.node, info, row.as_deref(), 800, &r.given);
+            for st in &escaped {
+                self.apply_value(r.node, &st.info, st.row.as_deref(), 800, &r.given);
+                // The value uses what it captures, and it points into it as an argument does.
+                if let Some(v) = st.var {
+                    self.facts.uses.push((v, r.node));
+                }
+                for &p in &st.refs {
+                    self.facts.call_arg.push((r.node, p, 800));
+                }
             }
             let Scope::Closure(id) = r.scope else {
                 continue;
@@ -791,6 +848,25 @@ impl Lower<'_> {
                 });
             }
         }
+        // A stored value can perform an operation of a handler that is lowered: its
+        // clauses run at the new nodes too.
+        let mut handled = std::mem::take(&mut self.handled);
+        for h in &mut handled {
+            let calls: Vec<NodeId> = self.cap_calls[calls_before..]
+                .iter()
+                .filter(|(_, c)| *c == h.cap)
+                .map(|(n, _)| *n)
+                .collect();
+            let args: Vec<OpArg> = self.op_args[args_before..]
+                .iter()
+                .filter(|a| a.cap == h.cap)
+                .copied()
+                .collect();
+            if !calls.is_empty() || !args.is_empty() {
+                self.run_handler(h, &calls, &args);
+            }
+        }
+        self.handled = handled;
     }
 
     // -----------------------------------------------------------------------
@@ -990,6 +1066,71 @@ impl Lower<'_> {
             }
         }
         out
+    }
+
+    /// Returns the places that the body gives to function values that it does not
+    /// know, in the places of the parameters.
+    pub(super) fn reach_sig(&self, bases: &[Vec<PlaceId>]) -> Vec<GivenPlace> {
+        let mut out = Vec::new();
+        for g in self.reaches.iter().flat_map(|r| &r.given) {
+            let root = self.facts.place(g.place).root;
+            let place = match self.facts.roots[root.index()].kind {
+                RootKind::Param | RootKind::Group => match self.sig_place(g.place, bases) {
+                    Some(sp) => Some(sp),
+                    None => continue,
+                },
+                RootKind::Local => continue,
+                RootKind::Arg => None,
+            };
+            let gp = GivenPlace { arg: g.pos, place };
+            if !out.contains(&gp) {
+                out.push(gp);
+            }
+        }
+        out
+    }
+
+    /// Returns the places that callee `f` gives to a stored function value that it
+    /// runs, or `None` if it cannot run one. `args` are the reference arguments of the
+    /// call by position, and `roots` their callee root indexes.
+    pub(super) fn reach_of(
+        &mut self,
+        f: FnId,
+        args: &[Vec<PlaceId>],
+        roots: &[u32],
+    ) -> Option<Vec<Given>> {
+        let def = &self.prog.fns[f];
+        if def.is_std {
+            return None;
+        }
+        // A function with no body can run anything that its arguments hold.
+        if def.decl.body.is_none() {
+            return Some(Self::any_arg(args, roots));
+        }
+        let sig = self.sigs[f].clone();
+        if !sig.effects.reaches {
+            return None;
+        }
+        let split = self.fresh_split();
+        let mut out = Vec::new();
+        for gp in &sig.effects.reach_given {
+            let Some(sp) = &gp.place else {
+                out.extend(Self::any_arg(args, roots));
+                continue;
+            };
+            let root = match sp.root {
+                SigRoot::Param(j) => roots.get(j).copied().unwrap_or(0),
+                SigRoot::Group(a) => 900 + u32::try_from(a).unwrap_or(0),
+            };
+            for q in self.subst_place(sp, args, split) {
+                out.push(Given {
+                    pos: gp.arg,
+                    place: q,
+                    root,
+                });
+            }
+        }
+        Some(out)
     }
 
     /// Returns place `p` as a signature place: its root is a parameter or an `rc` group.

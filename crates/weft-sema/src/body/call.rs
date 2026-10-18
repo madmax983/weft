@@ -317,6 +317,10 @@ impl Lower<'_> {
         // Evaluate the arguments in order. Type, hold and move each argument
         // before the next one runs, so that a later argument cannot hide a
         // mutation from an earlier reference.
+        // A parameter of a function type gets a callback: the callee can call it. A
+        // parameter of a type parameter gets a value that the callee can only keep.
+        let callback = |i: usize| sig.params.get(i).is_some_and(|p| matches!(p.ty, Ty::Fn(_)));
+        let mut value_refs: Vec<(usize, Vec<PlaceId>)> = Vec::new();
         let mut recv = recv;
         let mut recv_deps = Vec::new();
         let mut vals: Vec<ArgVal> = Vec::new();
@@ -398,14 +402,16 @@ impl Lower<'_> {
                 held_vars.extend(self.hold_operand(&av.val, later, av.span));
             } else {
                 arg_places.push(Vec::new());
-                // A closure argument refers to its captures until the call.
-                if av.val.summary.is_some() {
+                // A by-value argument that holds references, for example a closure,
+                // points into them until the call.
+                if !av.val.refs.is_empty() {
                     held_vars.extend(self.hold_operand(&av.val, later, av.span));
+                    value_refs.push((i, av.val.refs.clone()));
                 }
-                if !matches!(self.inf.shallow(&pt), Ty::Fn(_)) {
+                if !callback(i) {
                     // The callee keeps the value, for example in a container.
                     let v = av.val.clone();
-                    self.escape(&v);
+                    self.escape_all(&v);
                 }
                 if !matches!(self.inf.shallow(&pt), Ty::Fn(_)) || av.val.summary.is_none() {
                     let v = av.val.clone();
@@ -460,6 +466,19 @@ impl Lower<'_> {
                 self.facts.reads_at.push((n, p));
                 self.sum().reads.insert(p);
                 self.facts.call_arg.push((n, p, root_of(i)));
+            }
+        }
+        for (i, ps) in &value_refs {
+            // A function value inside the argument runs as a stored value (root 800).
+            let root = if callback(*i) {
+                800 + u32::try_from(*i).unwrap_or(0)
+            } else if self.has_fn(&vals[*i].val.ty, 0) {
+                800
+            } else {
+                root_of(*i)
+            };
+            for &p in ps {
+                self.facts.call_arg.push((n, p, root));
             }
         }
         // Arguments must point where the parameters say. A by-value argument is
@@ -535,11 +554,10 @@ impl Lower<'_> {
             let info = self.fn_info(&av.val);
             let row = fty.effects.clone();
             fns.push(Some((info.clone(), row.clone())));
-            let root = 800 + u32::try_from(i).unwrap_or(0);
-            // A closure argument points into its captures until the call.
-            for &p in &av.val.refs {
-                self.facts.call_arg.push((n, p, root));
+            if !callback(i) {
+                continue;
             }
+            let root = 800 + u32::try_from(i).unwrap_or(0);
             if let Some(s) = info.summary {
                 self.check_fn_arg_effects(&ptys[i], s, av.span);
             }
@@ -555,15 +573,19 @@ impl Lower<'_> {
         // that an argument holds. A foreign function can do both.
         let def = &self.prog.fns[f];
         let foreign = def.decl.body.is_none() && !def.is_std;
-        let is_std = def.is_std;
+        let mut holds_fn = false;
         for (i, av) in vals.iter().enumerate() {
             let ty = self.inf.shallow(&av.val.ty);
             if matches!(ty, Ty::Fn(_)) {
                 if foreign || sig.effects.stores.contains(&i) {
                     self.escape(&av.val);
                 }
-            } else if !is_std && self.has_fn(&ty, 0) {
-                let given = Self::any_arg(&arg_places, &roots);
+            } else if self.has_fn(&ty, 0) {
+                holds_fn = true;
+            }
+        }
+        if holds_fn {
+            if let Some(given) = self.reach_of(f, &arg_places, &roots) {
                 self.reach(n, &given);
             }
         }
@@ -702,6 +724,7 @@ impl Lower<'_> {
         let mut arg_places: Vec<Vec<PlaceId>> = Vec::new();
         let mut arg_tys = Vec::new();
         let mut fns = Vec::new();
+        let mut value_refs: Vec<(usize, Vec<PlaceId>)> = Vec::new();
         for (i, a) in exprs.iter().enumerate() {
             let later = i + 1 < exprs.len();
             let mut v = match (&a.kind, fty.params.get(i).map(|t| self.inf.shallow(t))) {
@@ -719,11 +742,18 @@ impl Lower<'_> {
                 held.extend(self.hold_operand(&v, later, a.span));
             } else {
                 arg_places.push(Vec::new());
-                if v.summary.is_some() {
+                if !v.refs.is_empty() {
                     held.extend(self.hold_operand(&v, later, a.span));
                 }
                 if let Ty::Fn(f) = self.inf.shallow(&v.ty) {
                     fns.push((i, self.fn_info(&v), f.effects.clone(), v.refs.clone()));
+                } else if !v.refs.is_empty() {
+                    // A by-value argument that holds references points into them.
+                    value_refs.push((i, v.refs.clone()));
+                }
+                if self.has_fn(&v.ty, 0) && !matches!(self.inf.shallow(&v.ty), Ty::Fn(_)) {
+                    // The callee keeps the value: it can run a function value in it.
+                    self.escape_all(&v);
                 }
             }
             // A closure argument is lent to the call, as in `call_fn`.
@@ -750,6 +780,22 @@ impl Lower<'_> {
                     pos: Some(i),
                     place: p,
                     root: roots[i],
+                });
+            }
+        }
+        for (i, ps) in &value_refs {
+            // A function value inside the argument runs as a stored value (root 800).
+            let root = if self.has_fn(&arg_tys[*i], 0) {
+                800
+            } else {
+                roots[*i]
+            };
+            for &p in ps {
+                self.facts.call_arg.push((n, p, root));
+                direct.push(Given {
+                    pos: Some(*i),
+                    place: p,
+                    root,
                 });
             }
         }
@@ -999,18 +1045,37 @@ impl Lower<'_> {
         // A perform is a call: each reference argument stays valid until it.
         let mut held = Vec::new();
         let mut arg_places = Vec::new();
+        let mut value_refs: Vec<(usize, Vec<PlaceId>)> = Vec::new();
+        let mut fns = Vec::new();
         for (i, (pt, a)) in o.params.iter().zip(args).enumerate() {
             let later = i + 1 < args.len();
-            let v = self.expr(&a.value);
+            let v = match (&a.value.kind, self.inf.shallow(pt)) {
+                (ExprKind::Closure { params, body }, Ty::Fn(f)) => {
+                    self.closure(params, body, Some(&f), a.value.span)
+                }
+                _ => self.expr(&a.value),
+            };
             self.unify(pt, &v.ty, a.value.span);
-            self.consume(&v, a.value.span);
+            if v.summary.is_none() {
+                self.consume(&v, a.value.span);
+            }
             if matches!(self.inf.shallow(&v.ty), Ty::Ref(_)) {
                 arg_places.push(v.refs.clone());
                 held.extend(self.hold_operand(&v, later, a.value.span));
             } else {
                 arg_places.push(Vec::new());
-                if later {
-                    held.extend(self.hold_later(&v, "argument", a.value.span));
+                if later || !v.refs.is_empty() {
+                    held.extend(self.hold_operand(&v, later, a.value.span));
+                }
+                // A by-value argument that holds references, for example a closure,
+                // points into them until the perform.
+                if !v.refs.is_empty() {
+                    value_refs.push((i, v.refs.clone()));
+                }
+                if let Ty::Fn(f) = self.inf.shallow(&v.ty) {
+                    fns.push((i, self.fn_info(&v), f.effects.clone()));
+                } else if self.has_fn(&v.ty, 0) {
+                    self.escape_all(&v);
                 }
             }
         }
@@ -1039,6 +1104,26 @@ impl Lower<'_> {
                     None => self.lend(n, p),
                 }
             }
+        }
+        for (i, ps) in &value_refs {
+            let root = 800 + u32::try_from(*i).unwrap_or(0);
+            for &p in ps {
+                self.facts.call_arg.push((n, p, root));
+                // The parameter of the clause points into what the argument holds.
+                if let (Some(c), false) = (cap, self.has_fn(&o.params[*i], 0)) {
+                    self.give_op(n, c, Some(op), Some(*i), p, root);
+                }
+            }
+        }
+        // The clause can call a function argument with any place inside the
+        // reference arguments.
+        let roots: Vec<u32> = (0..arg_places.len())
+            .map(|i| u32::try_from(i).unwrap_or(0))
+            .collect();
+        let given = Self::any_arg(&arg_places, &roots);
+        for (i, info, row) in fns {
+            let root = 800 + u32::try_from(i).unwrap_or(0);
+            self.apply_value(n, &info, row.as_deref(), root, &given);
         }
         if o.multi {
             self.multi_node(n);

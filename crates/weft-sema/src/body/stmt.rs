@@ -178,6 +178,8 @@ impl Lower<'_> {
             lent: self.lent_sig(bases),
             ret: self.ret_sig(bases),
             stores: sum.stores.clone(),
+            reaches: !self.reaches.is_empty(),
+            reach_given: self.reach_sig(bases),
             ..EffectSig::default()
         };
         let mut changed: Vec<PlaceId> = sum.muts.iter().copied().collect();

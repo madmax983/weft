@@ -250,6 +250,25 @@ enum PathRef {
     Effect(usize),
 }
 
+/// A handler whose clauses are lowered: what they do at each node that runs them.
+#[derive(Clone)]
+struct Handled {
+    /// The capability of the handler.
+    cap: CapId,
+    /// Each clause: its operation, its summary and its resumes.
+    clauses: Vec<(Option<usize>, Summary, Vec<NodeId>)>,
+    /// The places outside the clauses that they mutate.
+    footprint: Vec<PlaceId>,
+    /// The places outside the clauses that they lend.
+    lent: Vec<PlaceId>,
+    /// The captures, reads and locals of the clauses.
+    clause_sum: Summary,
+    /// The resumes of the clauses.
+    resumes: Vec<NodeId>,
+    /// The places that the handled computation changes.
+    changes: Vec<PlaceId>,
+}
+
 /// The lowering state of one function.
 ///
 /// A loop body can be lowered more than once (`lower_loop`). A pass after the
@@ -297,11 +316,13 @@ pub struct Lower<'p> {
     /// The places that nodes give to operations of local handlers.
     op_args: Vec<OpArg>,
     /// Function values that the body stores where it does not follow them.
-    escaped: Vec<fnval::RowFn>,
+    escaped: Vec<fnval::Stored>,
     /// The nodes where a stored function value can run.
     reaches: Vec<Reach>,
     /// The nodes where a summary runs.
     applied: Vec<Applied>,
+    /// The handlers whose clauses are lowered.
+    handled: Vec<Handled>,
 }
 
 impl<'p> Lower<'p> {
@@ -355,6 +376,7 @@ impl<'p> Lower<'p> {
             escaped: Vec::new(),
             reaches: Vec::new(),
             applied: Vec::new(),
+            handled: Vec::new(),
         }
     }
 

@@ -1,0 +1,123 @@
+// A function value that the body stores runs at each node that can reach it.
+// There it uses what it captured, and it gets what the reaching call gives.
+struct Entity { hp: i32 }
+impl Entity { fn new() -> Entity { Entity { hp: 1 } } }
+struct World { entities: Vec<Entity>, score: u64 }
+struct Cb { f: fn() }
+struct Handler { f: fn(&World) }
+effect Bump { fn bump(v: &Vec<u64>) }
+struct VecCb { f: fn(&Vec<u64>) }
+fn grow(w: &World) / mut(w.entities) { w.entities.push(Entity.new()) }
+
+// A generic callee keeps the value: a container or a type parameter.
+fn named_in_vec(world: &World) / mut(world.entities) {
+    let c = || world.entities.clear()
+    let v: Vec<fn()> = Vec.new()
+    v.push(c)
+    let first = &world.entities[0]
+    let g = v[0]
+    g()
+    print(first.hp)   //~ W0301
+}
+fn keep_g<T>(v: &Vec<T>, x: T) / mut(v) { v.push(x) }
+fn generic_store(world: &World) / mut(world.entities) {
+    let v: Vec<fn()> = Vec.new()
+    keep_g(&v, || world.entities.clear())
+    let first = &world.entities[0]
+    let g = v[0]
+    g()
+    print(first.hp)   //~ W0301
+}
+pub fn item_in_vec(world: &World) {   //~ W0701
+    let v: Vec<fn(&World)> = Vec.new()
+    v.push(grow)
+    let g = v[0]
+    g(world)
+}
+
+// A stored closure uses its captures where it runs.
+fn run_ref(cb: &Cb) {
+    let g = cb.f
+    g()
+}
+fn stored_use(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    let cb = Cb { f: || print(r.hp) }
+    world.entities.clear()
+    run_ref(&cb)   //~ W0301
+}
+
+// A closure inside a by-value argument points into its captures, and the callee can run it.
+fn clear_then_cb(cb: Cb, w: &World) / mut(w.entities) {
+    w.entities.clear()
+    let g = cb.f
+    g()
+}
+fn clear_then_pair(t: (fn(), u64), w: &World) / mut(w.entities) {
+    w.entities.clear()
+    let (g, n) = t
+    g()
+}
+fn in_struct(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    clear_then_cb(Cb { f: || print(r.hp) }, world)   //~ W0312
+}
+fn in_tuple(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    clear_then_pair((|| print(r.hp), 1), world)   //~ W0312
+}
+fn run_pair(t: (fn(), u64)) {
+    let (g, n) = t
+    g()
+}
+fn tuple_runs(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    run_pair((|| world.entities.clear(), 1))
+    print(first.hp)   //~ W0301
+}
+
+// A stored closure performs an operation whose clause mutates through its parameter.
+fn run_vec(cb: &VecCb, v: &Vec<u64>) {
+    let g = cb.f
+    g(v)
+}
+fn stored_perform() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump {
+        fn bump(x) {
+            x.push(2)
+            resume(())
+        }
+    } in {
+        let cb = VecCb { f: |y| bump(y) }
+        let r = &v[0]
+        run_vec(&cb, &v)
+        print(r)   //~ W0301
+    }
+}
+
+// Controls. A stored callback gets the place that the callee gives it, so the
+// row of the caller is precise, and a reference into another place survives.
+fn dispatch(h: &Handler, w: &World) {
+    let f = h.f
+    f(w)
+}
+fn registers(world: &World) / mut(world.entities) {
+    let h = Handler { f: |x| x.entities.push(Entity.new()) }
+    dispatch(&h, world)
+}
+fn scores(world: &World) / mut(world.score) {
+    let h = Handler { f: |x| x.score += 1 }
+    let first = &world.entities[0]
+    dispatch(&h, world)
+    print(first.hp)
+}
+// A callee that does not run a stored value is not a reaching node.
+fn count(h: &Handler, w: &World) -> u64 { w.score }
+fn not_run(world: &World) / mut(world.entities) {
+    let h = Handler { f: |x| x.entities.clear() }
+    let first = &world.entities[0]
+    let n = count(&h, world)
+    print(first.hp)
+}

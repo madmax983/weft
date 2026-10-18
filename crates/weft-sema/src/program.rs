@@ -206,6 +206,16 @@ pub struct LentPlace {
     pub place: Option<SigPlace>,
 }
 
+/// A place that the body gives to a function value that it does not know.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GivenPlace {
+    /// The argument position in the call of the value, or `None` for any position.
+    pub arg: Option<usize>,
+    /// The place, or `None` for a place that the caller cannot name: then it can be
+    /// any place that the reference arguments reach.
+    pub place: Option<SigPlace>,
+}
+
 /// What a call of a function value in the result does, in the places of the parameters.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RetFn {
@@ -252,6 +262,12 @@ pub struct EffectSig {
     /// Function parameters that the body stores, for example in a struct field. A
     /// later call can run them. The body always infers this part.
     pub stores: BTreeSet<usize>,
+    /// The body can run a function value that the caller stores: it calls a function
+    /// value that it does not know, or a function that can. The body always infers this part.
+    pub reaches: bool,
+    /// The places that the body gives to such a function value. The body always
+    /// infers this part.
+    pub reach_given: Vec<GivenPlace>,
 }
 
 impl EffectSig {

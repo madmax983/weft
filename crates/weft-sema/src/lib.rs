@@ -83,7 +83,8 @@ pub fn analyze(units: &[Unit], opts: Options) -> Analysis {
         |prog: &Program, f: usize| opts.library || unit_of(prog, prog.fns[f].module) > 1;
     // Effect inference: iterate to a fixpoint over the call graph. A function that
     // states its effects still infers what it lends to its function parameters, what
-    // its returned function value does, and which function parameters it stores.
+    // its returned function value does, which function parameters it stores, and
+    // whether it can run a stored function value.
     let mut rounds = 0;
     loop {
         rounds += 1;
@@ -97,6 +98,8 @@ pub fn analyze(units: &[Unit], opts: Options) -> Analysis {
                     lent: l.effects.lent,
                     ret: l.effects.ret,
                     stores: l.effects.stores,
+                    reaches: l.effects.reaches,
+                    reach_given: l.effects.reach_given,
                     ..sigs[f].effects.clone()
                 }
             } else {

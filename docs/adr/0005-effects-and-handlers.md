@@ -25,8 +25,12 @@ Status: accepted. Date: 2026-10-18.
   clause holds across `resume` is invalid after it.
 - Call-site aliasing (W0312): a callee sees its reference parameters as separate places.
   So the caller must not pass overlapping places when the callee (or a handler that the
-  callee reaches) mutates one of them. A closure argument points into what it captures
-  until the call, as a reference argument does.
+  callee reaches) mutates one of them. A by-value argument that holds references points
+  into them until the call, as a reference argument does: a closure points into what it
+  captures, and a tuple or an `Option` into its references. A perform is a call in the
+  same way, and the clause can run a function argument of the operation there.
+- A parameter of a closure or a clause that holds references (a reference, a tuple or an
+  `Option` with one) points into what the call gives.
 - Every named effect can abort (the handler can drop the continuation). A linear value
   live across such a node needs `on abort` (W0602).
 - `resume` consumes a `once` continuation (W0501). A `multi` operation needs `many` values
@@ -68,13 +72,21 @@ Status: accepted. Date: 2026-10-18.
   gives the closure.
 - A function value that the body stores where it does not follow it (a struct field,
   an enum payload, a container, a by-value argument that is not a function, or a
-  callee that stores its function parameter) can run later. It runs at each node that
-  can reach it: a call of an unknown function value, and a call that gets a value that
-  can hold a function. This applies after the whole body, so it also covers a node
+  callee that stores its function parameter) can run later. A parameter of a type
+  parameter (for example `Vec.push(x: T)`) keeps a function value: the callee cannot
+  call it. A stored value runs at each node that can reach it: a call of an unknown
+  function value, and a call that gets a value that can hold a function if the callee
+  can run a stored value. This applies after the whole body, so it also covers a node
   that comes before the store in a loop. A node in a closure passes the value on to
-  each node where the closure runs. A signature has a `stores` part: the function
-  parameters that the body stores. A function with no body can store each function
-  argument.
+  each node where the closure runs. There the value uses what it captures (W0301 if a
+  captured place changed after the store), and it points into its captures as a closure
+  argument does (W0312). An operation of a handler that the stored value performs runs
+  its clause at the node, as at a perform.
+- A signature has a `stores` part: the function parameters that the body stores. It has
+  a `reach` part: whether the body can run a stored value, and the places that it gives
+  to it, by argument position. A caller gives a stored value these places. A function
+  with no body can store each function argument, and can run a stored value with any
+  place inside its reference arguments.
 - A call of a function parameter, or of a function value that the body does not know,
   can resume a `multi` continuation more than once if a `multi` operation can reach the
   value: the type states a row with a `multi` effect, or it states no row and the
@@ -129,6 +141,8 @@ Status: accepted. Date: 2026-10-18.
   - A join applies the effects of every value that it can be.
   - A stored function value runs at each node that can reach it, also at a node before
     the store and at a call that does not run it.
+  - A function argument of an operation runs at the perform, with any place inside the
+    reference arguments of the operation, also when the clause does not call it.
 - What stays open (not checked):
   - A function value inside a returned tuple or struct, or a closure that a callee
     makes and stores in a place of the caller: the caller does not see what a later
