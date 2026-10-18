@@ -27,7 +27,7 @@ commands:
   explain CODE                                                   explain a diagnostic code
   deps    PATH                                                   check dependency authority
   spec                                                           print spec/weft.dl
-  help                                                           print this text
+  help    [COMMAND]                                              print this text
 
 PROFILE is --lib or --bin, and --no-runtime or --runtime. A single file sets
 its profile with marker lines: `// weft: library` and `// weft: no-runtime`.
@@ -103,6 +103,7 @@ fn positional_of(cmd: &str) -> (&'static [&'static str], &'static [&'static str]
         "check" | "run" | "test" | "agree" | "lint" | "deps" => (&["PATH"], &[]),
         "facts" => (&["PATH"], &["FUNCTION"]),
         "explain" => (&["CODE"], &[]),
+        "help" | "--help" | "-h" => (&[], &["COMMAND"]),
         _ => (&[], &[]),
     }
 }
@@ -119,6 +120,7 @@ fn check_positional(cmd: &str, given: &[String]) -> Result<()> {
             (0, _) => "takes no arguments".to_string(),
             (1, true) => "takes 1 argument".to_string(),
             (n, true) => format!("takes {n} arguments"),
+            (1, false) => "takes at most 1 argument".to_string(),
             (n, false) => format!("takes at most {n} arguments"),
         };
         bail!(
@@ -219,6 +221,11 @@ fn run_with(args: &[String], live: bool) -> Result<Output> {
         bail!("`{cmd}` does not take {o}; see `weft help`");
     }
     check_positional(cmd, &f.positional)?;
+    if let ("help" | "--help" | "-h", Some(c)) = (cmd, f.positional.first()) {
+        if options_of(c).is_none() {
+            bail!("unknown command `{c}`\n{USAGE}");
+        }
+    }
     let out = match cmd {
         "check" => check(&f),
         "run" => run_main(&f, live),
@@ -413,11 +420,15 @@ fn facts(f: &Flags) -> Result<Output> {
             .iter()
             .map(|b| b.facts.name.as_str())
             .collect();
+        let bodies = if names.is_empty() {
+            "it has no functions or tests".to_string()
+        } else {
+            format!("the bodies are `{}`", names.join("`, `"))
+        };
         return Ok(Output {
             stderr: format!(
-                "error: no function or test `{name}` in {}; the bodies are `{}`\n",
-                path.display(),
-                names.join("`, `")
+                "error: no function or test `{name}` in {}; {bodies}\n",
+                path.display()
             ),
             code: 1,
             ..Output::default()

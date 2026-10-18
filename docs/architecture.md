@@ -64,10 +64,12 @@ parser, the printer, sema, the checker, the spec and the interpreter on a 2 MiB 
 for the largest program that parses, also for chains inside nested blocks.
 
 The derivation printer of `check --explain` (`weft_check::bridge::render_derivation`)
-uses a stack, not recursion. It shows at most 32 levels of indent. It folds a chain of
-more than 8 steps of one relation: it shows the first 3 and the last 3 steps, and one
-line ``... N more `invalid` steps ...``. So a path of 10 000 statements gives a few
-kilobytes of text.
+uses a stack, not recursion. It shows at most 32 levels of indent. A chain is a path of
+premises whose relations depend on each other in the spec: `invalid` after `invalid`, or
+`live_out` and `live_in` in turn. The printer folds a chain of more than 8 steps. It
+shows the first 3 and the last 3 steps, and one line ``... N more `invalid` steps ...``.
+So a path of 10 000 statements gives a few kilobytes of text. `limits.rs` tests this on
+a 2 MiB thread for the derivations of W0301 and W0503.
 
 `weft_cli::run` runs each command on a thread with a 256 MiB stack, as a margin. The
 library entry points of sema and the checker (`weft_sema::analyze`,

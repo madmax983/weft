@@ -7,7 +7,8 @@
 //! overflow. A flat chain of binary operators has no limit.
 //!
 //! The derivation printer of `check --explain` does not recurse. It folds a
-//! long chain of one relation, so a long path in a body gives a short text.
+//! long chain of relations that depend on each other, so a long path in a
+//! body gives a short text.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -342,40 +343,129 @@ fn long_path(n: usize) -> String {
     s
 }
 
+/// A body with a linear value that is live across a `multi` operation, then
+/// `n` statements and one use. The derivation of W0503 has a chain of about
+/// `2 n` steps that alternate between `live_out` and `live_in`.
+fn long_multi(n: usize) -> String {
+    let mut s = String::from(
+        "effect Choice { multi fn choose() -> bool }\n\
+         linear struct Token { id: u64 }\n    on abort = spend\n\
+         fn spend(t: Token) { let Token(i) = t }\n\
+         fn mint() -> Token { Token { id: 1 } }\n\
+         fn big() -> bool / Choice {\n    let t = mint()\n    let b = choose()\n",
+    );
+    s.push_str(&"    print(1)\n".repeat(n));
+    s.push_str("    spend(t)\n    b\n}\n");
+    s
+}
+
+/// Checks `src` and renders the derivation of each violation on a 2 MiB
+/// thread. The library calls run on this thread, so the renderer must not
+/// recurse.
+fn explain_on_small_stack(src: String) -> String {
+    std::thread::Builder::new()
+        .stack_size(STACK)
+        .spawn(move || {
+            let checked = weft_check::check_source("long.wf", &src, Options::default());
+            let file = weft_syntax::SourceFile::new("long.wf", src.as_str());
+            let line_of = |o: u32| file.line_col(o).0;
+            let mut text = String::new();
+            for b in &checked.analysis.bodies {
+                for e in weft_check::bridge::explain(&b.facts, &line_of).expect("the spec runs") {
+                    text.push_str(&e.tree);
+                }
+            }
+            text
+        })
+        .expect("the thread starts")
+        .join()
+        .expect("explain does not overflow the stack")
+}
+
+/// Asserts that a rendered derivation is short and has a small indent.
+fn assert_short(text: &str) {
+    assert!(text.len() < 64 * 1024, "{} bytes", text.len());
+    let widest = text.lines().map(|l| l.len() - l.trim_start().len()).max();
+    assert!(widest.is_some_and(|w| w <= 64), "indent {widest:?}");
+}
+
 #[test]
 fn explain_folds_a_long_derivation() {
+    for (src, relation, fold) in [
+        (long_path(10_000), "error(", "more `invalid` steps ..."),
+        (
+            long_multi(10_000),
+            "live_across_multi(",
+            "more `live_in`, `live_out` steps ...",
+        ),
+    ] {
+        let start = std::time::Instant::now();
+        let text = explain_on_small_stack(src);
+        let time = start.elapsed();
+        assert!(text.starts_with(relation), "{text}");
+        assert!(text.contains(fold), "{text}");
+        assert_short(&text);
+        assert!(time.as_secs() < 60, "{time:?}");
+    }
+}
+
+/// The printer does not recurse, also on a deep derivation that it cannot
+/// fold. `ping` and `pong` are not relations of the spec, so the printer
+/// does not fold their chain.
+#[test]
+fn the_printer_does_not_recurse() {
+    use weft_datalog::{evaluate, parse_program, Database, EvalOptions, Value};
+    let n: i64 = 20_000;
+    let text = std::thread::Builder::new()
+        .stack_size(STACK / 4)
+        .spawn(move || {
+            let program = parse_program(
+                "ping(X) :- start(X).\n\
+                 pong(Y) :- ping(X), edge(X, Y).\n\
+                 ping(Y) :- pong(X), edge(X, Y).",
+            )
+            .expect("parses");
+            let mut db = Database::new();
+            db.insert("start", [Value::Int(0)]);
+            for i in 0..n {
+                db.insert("edge", [Value::Int(i), Value::Int(i + 1)]);
+            }
+            let out = evaluate(&program, db, EvalOptions::default()).expect("evaluates");
+            let d = out.explain("ping", &[Value::Int(n)]).expect("derived");
+            let facts = weft_facts::FnFacts::default();
+            weft_check::bridge::render_derivation(&d, &facts, &|_| 0)
+        })
+        .expect("the thread starts")
+        .join()
+        .expect("the printer does not overflow the stack");
+    // One line for each rule node and each `edge` leaf, and one `start` leaf.
+    let lines = usize::try_from(2 * n + 2).unwrap();
+    assert_eq!(text.lines().count(), lines);
+    assert!(!text.contains("more"), "the chain is not folded");
+    let widest = text.lines().map(|l| l.len() - l.trim_start().len()).max();
+    assert_eq!(widest, Some(2 * weft_check::bridge::MAX_INDENT));
+}
+
+#[test]
+fn check_explain_prints_a_folded_derivation() {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("limits");
     std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("long_path.wf");
-    std::fs::write(&path, long_path(10_000)).unwrap();
+    let path = dir.join("long_multi.wf");
+    std::fs::write(&path, long_multi(10_000)).unwrap();
     let args = vec![
         "check".to_string(),
         "--explain".to_string(),
         path.display().to_string(),
     ];
-    let start = std::time::Instant::now();
-    let out = std::thread::Builder::new()
-        .stack_size(STACK)
-        .spawn(move || weft_cli::run(&args).expect("the command runs"))
-        .expect("the thread starts")
-        .join()
-        .expect("explain does not overflow the stack");
-    let time = start.elapsed();
+    let out = weft_cli::run(&args).expect("the command runs");
     assert_eq!(out.code, 1, "{}", out.text);
-    assert!(out.text.contains("error[W0301]"), "{}", out.text);
+    assert!(out.text.contains("error[W0503]"), "{}", out.text);
     assert!(
-        out.text.contains("more `invalid` steps ..."),
+        out.text.contains("derivation of live_across_multi("),
         "{}",
         out.text
     );
-    assert!(out.text.len() < 64 * 1024, "{} bytes", out.text.len());
-    let widest = out
-        .text
-        .lines()
-        .map(|l| l.len() - l.trim_start().len())
-        .max();
-    assert!(widest.is_some_and(|w| w <= 64), "indent {widest:?}");
-    assert!(time.as_secs() < 60, "{time:?}");
+    assert_short(&out.text);
 }
 
 /// `weft_cli::run` runs the command on its own large stack, so a caller on a

@@ -12,7 +12,7 @@
 
 use std::collections::BTreeMap;
 
-use weft_syntax::ast::{Block, Expr, ExprKind, Pattern, StmtKind, StrPart};
+use weft_syntax::ast::{BinOp, Block, Expr, ExprKind, Pattern, StmtKind, StrPart};
 use weft_syntax::diag::Diagnostic;
 
 use crate::program::{FnId, FnSig, ItemRef, Program};
@@ -314,37 +314,71 @@ fn join(a: Option<Count>, b: Option<Count>) -> Option<Count> {
     }
 }
 
-/// The uses of a name in a part of the code, on two sets of paths.
+/// The uses of a name in a part of the code, on four sets of paths.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Uses {
-    /// The paths that go on after the part. `None` if each path returns.
+    /// The paths that go on after the part. `None` if no path goes on.
     next: Option<Count>,
     /// The paths that return inside the part. `None` if no path returns.
     ret: Option<Count>,
+    /// The paths that leave the innermost loop with `break`.
+    brk: Option<Count>,
+    /// The paths that go to the next run of the innermost loop with
+    /// `continue`.
+    cont: Option<Count>,
+}
+
+/// Adds the counts of `a` to each path of `b`, if a path of `a` goes on.
+fn after(a: Option<Count>, b: Option<Count>) -> Option<Count> {
+    a.zip(b).map(|(x, y)| add(x, y))
 }
 
 impl Uses {
-    /// No use, and no return.
+    /// No use, and each path goes on.
     const ZERO: Self = Self::of((0, 0));
+
+    /// A `break`: each path leaves the loop.
+    const BREAK: Self = Self {
+        next: None,
+        ret: None,
+        brk: Some((0, 0)),
+        cont: None,
+    };
+
+    /// A `continue`: each path goes to the next run of the loop.
+    const CONTINUE: Self = Self {
+        next: None,
+        ret: None,
+        brk: None,
+        cont: Some((0, 0)),
+    };
 
     /// The counts of paths that go on.
     const fn of(c: Count) -> Self {
         Self {
             next: Some(c),
             ret: None,
+            brk: None,
+            cont: None,
         }
     }
 
     /// The counts over all paths.
     fn all(self) -> Count {
-        join(self.next, self.ret).unwrap_or((0, 0))
+        [self.ret, self.brk, self.cont]
+            .into_iter()
+            .fold(self.next, join)
+            .unwrap_or((0, 0))
     }
 
     /// This part, then part `b`.
     fn then(self, b: Self) -> Self {
-        let next = self.next.zip(b.next).map(|(x, y)| add(x, y));
-        let ret = join(self.ret, self.next.zip(b.ret).map(|(x, y)| add(x, y)));
-        Self { next, ret }
+        Self {
+            next: after(self.next, b.next),
+            ret: join(self.ret, after(self.next, b.ret)),
+            brk: join(self.brk, after(self.next, b.brk)),
+            cont: join(self.cont, after(self.next, b.cont)),
+        }
     }
 
     /// This part or part `b`: two branches.
@@ -352,25 +386,34 @@ impl Uses {
         Self {
             next: join(self.next, b.next),
             ret: join(self.ret, b.ret),
+            brk: join(self.brk, b.brk),
+            cont: join(self.cont, b.cont),
         }
     }
 
-    /// A `return` after this part: each path ends.
+    /// A `return` after this part: each path that goes on ends.
     fn returns(self) -> Self {
         Self {
             next: None,
             ret: join(self.ret, self.next),
+            ..self
         }
     }
 
-    /// This part zero or more times, for a loop body. A repeated use counts
-    /// as [`MANY`]. A path that returns ends the loop.
-    fn repeated(self) -> Self {
-        let grows = self.next.is_some_and(|n| n.1 > 0);
-        let most = |h: usize| if grows { MANY } else { h };
+    /// A loop with this part as one run: the body, and for `while` the
+    /// condition after it. The loop runs it zero or more times. A repeated
+    /// use counts as [`MANY`]. A path leaves the loop at `break`, at
+    /// `return`, or at the end if `ends` is true (`while` and `for`).
+    fn repeated(self, ends: bool) -> Self {
+        let again = join(self.next, self.cont);
+        let grows = again.is_some_and(|n| n.1 > 0);
+        let most = |(lo, hi): Count| (lo, if grows { MANY } else { hi });
+        let end = ends.then_some((0, 0)).map(most);
         Self {
-            next: Some((0, most(0))),
-            ret: self.ret.map(|(lo, hi)| (lo, most(hi))),
+            next: join(end, self.brk.map(most)),
+            ret: self.ret.map(most),
+            brk: None,
+            cont: None,
         }
     }
 }
@@ -392,14 +435,23 @@ fn uses_block(b: &Block, name: &str) -> Uses {
             }
             StmtKind::While { cond, body } => {
                 // The condition runs once, then once after each run of the body.
+                // A `continue` goes to the condition. A `break` skips it.
                 let c = uses_expr(cond, name);
-                c.then(uses_block(body, name).then(c).repeated())
+                let body = uses_block(body, name);
+                let run = Uses {
+                    next: join(body.next, body.cont),
+                    cont: None,
+                    ..body
+                };
+                c.then(run.then(c).repeated(true))
             }
             StmtKind::For { iter, body, .. } => {
-                uses_expr(iter, name).then(uses_block(body, name).repeated())
+                uses_expr(iter, name).then(uses_block(body, name).repeated(true))
             }
-            StmtKind::Loop(body) => uses_block(body, name).repeated(),
-            _ => Uses::ZERO,
+            StmtKind::Loop(body) => uses_block(body, name).repeated(false),
+            StmtKind::Break => Uses::BREAK,
+            StmtKind::Continue => Uses::CONTINUE,
+            StmtKind::Let { init: None, .. } => Uses::ZERO,
         };
         acc = acc.then(part);
     }
@@ -448,6 +500,12 @@ fn uses_expr(e: &Expr, name: &str) -> Uses {
                 .chain(trailing.as_deref()),
             name,
         ),
+        // `&&` and `||` run the right operand on some paths only.
+        ExprKind::Binary {
+            op: BinOp::And | BinOp::Or,
+            lhs,
+            rhs,
+        } => uses_expr(lhs, name).then(uses_expr(rhs, name).or(Uses::ZERO)),
         ExprKind::Binary { lhs, rhs, .. } | ExprKind::Range { lo: lhs, hi: rhs } => {
             uses_expr(lhs, name).then(uses_expr(rhs, name))
         }

@@ -451,3 +451,127 @@ fn item_checks_report_in_the_unit_of_the_item() {
         .collect();
     assert_eq!(got, want);
 }
+
+/// `n` structs in a chain: `A0` holds `A1` inline, and so on. The last one
+/// holds a number. `reverse` declares the last struct first.
+fn struct_chain(n: usize, reverse: bool) -> String {
+    let mut items: Vec<String> = (0..n)
+        .map(|i| format!("struct A{i} {{ a: A{} }}\n", i + 1))
+        .collect();
+    items.push(format!("struct A{n} {{ x: u64 }}\n"));
+    if reverse {
+        items.reverse();
+    }
+    items.concat()
+}
+
+/// `n` generic structs in a chain that hold their parameter inline at the
+/// end, and a struct `Top` that holds itself through the chain.
+fn generic_chain(n: usize) -> String {
+    let mut items = vec!["struct Top { g: G0<Top> }\n".to_string()];
+    items.extend((0..n).map(|i| format!("struct G{i}<T> {{ g: G{}<T> }}\n", i + 1)));
+    items.push(format!("struct G{n}<T> {{ t: T }}\n"));
+    items.concat()
+}
+
+#[test]
+fn the_size_check_is_fast_on_a_long_chain() {
+    use std::time::{Duration, Instant};
+    let n = 3000;
+    for (src, want) in [
+        (struct_chain(n, false), Vec::new()),
+        (struct_chain(n, true), Vec::new()),
+        (generic_chain(n), vec![(ROOT_UNIT, "W0117".to_string())]),
+    ] {
+        let start = Instant::now();
+        let a = analyze_units(&src, &[]);
+        let time = start.elapsed();
+        assert_eq!(codes(&a), want);
+        // About 0.06 s in a debug build. The first check took 150 s for
+        // 800 structs.
+        assert!(time < Duration::from_secs(2), "{time:?}");
+    }
+    let a = analyze_units(&generic_chain(3), &[]);
+    let top = a.program.lookup(a.program.root, "Top");
+    assert!(
+        matches!(top, Some(crate::program::ItemRef::Adt(t)) if crate::program::infinite_structs(&a.program) == [t])
+    );
+}
+
+#[test]
+fn the_in_place_check_is_fast_on_a_long_chain() {
+    use std::time::{Duration, Instant};
+    let n = 3000;
+    let params: Vec<String> = (0..n)
+        .map(|i| format!("x{i}: &u32 in x{}", i + 1))
+        .collect();
+    let src = format!("fn f({}, x{n}: &u32) {{}}\n", params.join(", "));
+    let start = Instant::now();
+    let a = analyze_units(&src, &[]);
+    let time = start.elapsed();
+    assert_eq!(codes(&a), Vec::new());
+    assert!(time < Duration::from_secs(2), "{time:?}");
+    // The chain closes into a cycle: one error, at its first parameter.
+    let src = format!("fn f({}, x{n}: &u32 in x0) {{}}\n", params.join(", "));
+    assert_eq!(
+        codes(&analyze_units(&src, &[])),
+        vec![(ROOT_UNIT, "W0201".to_string())]
+    );
+}
+
+#[test]
+fn the_mode_check_is_fast_on_a_long_list() {
+    use std::time::{Duration, Instant};
+    let src = format!("fn f(x: &u32 @{}) {{}}\n", " uniq".repeat(100_000));
+    let start = Instant::now();
+    let a = analyze_units(&src, &[]);
+    let time = start.elapsed();
+    assert_eq!(codes(&a), Vec::new());
+    assert!(time < Duration::from_secs(2), "{time:?}");
+    let src = format!("fn f(x: &u32 @{} shared) {{}}\n", " uniq".repeat(100_000));
+    assert_eq!(
+        root_diags(&src),
+        vec![(
+            "W0119".to_string(),
+            "modes `uniq` and `shared` contradict: other threads can read a `shared` value, so it is not `uniq`".to_string()
+        )]
+    );
+}
+
+#[test]
+fn fip_counts_the_right_operand_of_and_and_or_on_one_path_only() {
+    let h = "fip fn h(xs: Vec<u32>) -> bool { let n = xs\n true }\n";
+    for op in ["&&", "||"] {
+        let src = format!("{h}fip fn g(xs: Vec<u32>, c: bool) -> bool {{ c {op} h(xs) }}\n");
+        assert_eq!(
+            w1002(&src),
+            ["`fip` needs `xs` used exactly once on every path (found 0 to 1)"],
+            "{op}"
+        );
+    }
+    let src = format!("{h}fip fn g(xs: Vec<u32>, c: bool) -> bool {{ h(xs) && c }}\n");
+    assert_eq!(w1002(&src), Vec::<String>::new());
+}
+
+#[test]
+fn fip_loop_paths_leave_only_by_break_or_return() {
+    let ok = [
+        // A `loop` with no `break` does not go on after it.
+        "fip fn g(xs: Vec<u32>) -> Vec<u32> { loop { return xs } }\n",
+        "fip fn g(xs: Vec<u32>, c: bool) -> Vec<u32> { loop { if c { return xs } } }\n",
+        "fip fn g(xs: Vec<u32>, c: bool) -> Vec<u32> { loop { if c { break }\n return xs }\n xs }\n",
+        // A `continue` skips the rest of the body.
+        "fip fn g(xs: Vec<u32>, c: bool) -> Vec<u32> { while c { if c { continue }\n return xs }\n xs }\n",
+    ];
+    for src in ok {
+        assert_eq!(w1002(src), Vec::<String>::new(), "{src}");
+    }
+    let src = "fip fn g(xs: Vec<u32>, c: bool) -> Vec<u32> { loop { let y = xs\n break }\n xs }\n";
+    assert_eq!(
+        w1002(src),
+        ["`fip` needs `xs` used exactly once on every path (found 2 or more)"]
+    );
+    // A `break` in an inner loop leaves only the inner loop.
+    let src = "fip fn g(xs: Vec<u32>) -> Vec<u32> { loop { loop { break }\n return xs } }\n";
+    assert_eq!(w1002(src), Vec::<String>::new());
+}

@@ -8,8 +8,8 @@ use crate::source::SourceFile;
 /// The unit index of the standard prelude.
 pub const PRELUDE_UNIT: usize = 0;
 
-/// The unit index of the root: the file or the package that is checked.
-/// Dependencies have the indices after it.
+/// The unit index of the root: the file or the package that the command
+/// checks. Dependencies have the indices after it.
 pub const ROOT_UNIT: usize = 1;
 
 /// How serious a diagnostic is.

@@ -6,9 +6,9 @@ use weft_facts::{FnFacts, NodeId, VarId, VarKind};
 use weft_sema::effects;
 use weft_syntax::diag::Diagnostic;
 
-use crate::rules::Report;
+use crate::rules::{Invalidation, Report};
 
-/// The most other sites that a W0602 note lists by line.
+/// The most lines that a note about other sites lists.
 const LISTED_SITES: usize = 5;
 
 fn node_span(f: &FnFacts, n: NodeId) -> weft_facts::Span {
@@ -20,13 +20,65 @@ fn once_closure(f: &FnFacts, n: NodeId) -> Diagnostic {
         .note("the closure moves a captured value, so it can run only once")
 }
 
+/// Groups `(variable, node)` pairs by variable. The nodes of each variable
+/// are in source order.
+fn by_var<'a>(
+    f: &FnFacts,
+    pairs: impl IntoIterator<Item = &'a (VarId, NodeId)>,
+) -> BTreeMap<VarId, Vec<NodeId>> {
+    let mut map: BTreeMap<VarId, Vec<NodeId>> = BTreeMap::new();
+    for &(var, n) in pairs {
+        map.entry(var).or_default().push(n);
+    }
+    for sites in map.values_mut() {
+        sites.sort_by_key(|&n| node_span(f, n).lo);
+    }
+    map
+}
+
+/// Adds a note for the other sites of an error that a variable has at more
+/// than one node, for example `and 2 more sites that can abort, at lines 8,
+/// 9`. `noun` is the singular and the plural of the word after the count.
+/// [`resolve_lines`] changes the `{lines:...}` marker into line numbers.
+fn note_more(d: Diagnostic, f: &FnFacts, rest: &[NodeId], noun: (&str, &str)) -> Diagnostic {
+    if rest.is_empty() {
+        return d;
+    }
+    let offsets: Vec<String> = rest
+        .iter()
+        .map(|&n| node_span(f, n).lo.to_string())
+        .collect();
+    let noun = if rest.len() == 1 { noun.0 } else { noun.1 };
+    d.note(format!(
+        "and {} more {noun}, at {{lines:{}}}",
+        rest.len(),
+        offsets.join(" ")
+    ))
+}
+
 /// Turns a checker report into diagnostics, in source order.
+///
+/// A rule that fails at many nodes for one variable gives one error, at the
+/// first node. A note lists the other nodes.
 pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     let v = &r.violations;
 
-    // W0301: the derivation of the design doc.
+    // W0301: the derivation of the design doc. One error for each reference
+    // and mutation, at the first use.
+    let mut invalidations: BTreeMap<(VarId, NodeId), Vec<&Invalidation>> = BTreeMap::new();
     for inv in &r.invalidations {
+        invalidations
+            .entry((inv.var, inv.at))
+            .or_default()
+            .push(inv);
+    }
+    for mut uses in invalidations.into_values() {
+        uses.sort_by_key(|inv| node_span(f, inv.used_at).lo);
+        let Some((&inv, rest)) = uses.split_first() else {
+            continue;
+        };
+        let rest: Vec<NodeId> = rest.iter().map(|i| i.used_at).collect();
         let var = f.var(inv.var);
         let path = &f.place(inv.path).display;
         let mutated = &f.place(inv.mutated).display;
@@ -49,27 +101,36 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
                 at.span.lo
             ))
             .note(format!("used at line {{line:{}}}", node_span(f, inv.used_at).lo));
-        out.push(d);
+        out.push(note_more(d, f, &rest, ("use", "uses")));
     }
 
-    for &(var, n) in &v.use_after_move {
-        let info = f.var(var);
-        let d = match info.kind {
-            VarKind::Continuation => Diagnostic::error(
-                "W0501",
-                "a `once` continuation is resumed twice",
-                node_span(f, n),
-            )
-            .note("an operation that is not `multi` resumes at most once"),
-            _ if info.callable => once_closure(f, n),
-            _ => Diagnostic::error(
-                "W0302",
-                format!("`{}` used after it was moved", info.name),
-                node_span(f, n),
-            )
-            .note_at(format!("{} : {}", info.name, info.ty), info.span),
+    for (var, sites) in by_var(f, &v.use_after_move) {
+        let Some((&n, rest)) = sites.split_first() else {
+            continue;
         };
-        out.push(d);
+        let info = f.var(var);
+        let (d, noun) = match info.kind {
+            VarKind::Continuation => (
+                Diagnostic::error(
+                    "W0501",
+                    "a `once` continuation is resumed twice",
+                    node_span(f, n),
+                )
+                .note("an operation that is not `multi` resumes at most once"),
+                ("resume", "resumes"),
+            ),
+            _ if info.callable => (once_closure(f, n), ("call", "calls")),
+            _ => (
+                Diagnostic::error(
+                    "W0302",
+                    format!("`{}` used after it was moved", info.name),
+                    node_span(f, n),
+                )
+                .note_at(format!("{} : {}", info.name, info.ty), info.span),
+                ("use after a move", "uses after a move"),
+            ),
+        };
+        out.push(note_more(d, f, rest, noun));
     }
     for &(var, n) in &v.moved_immovable {
         let info = f.var(var);
@@ -116,18 +177,13 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         ));
     }
     // W0602: one error for each value, at the first site that can abort.
-    let mut aborts: BTreeMap<VarId, Vec<NodeId>> = BTreeMap::new();
-    for &(var, n) in &v.abort_unhandled {
-        aborts.entry(var).or_default().push(n);
-    }
-    for (var, mut sites) in aborts {
-        sites.sort_by_key(|&n| node_span(f, n).lo);
+    for (var, sites) in by_var(f, &v.abort_unhandled) {
         let Some((&first, rest)) = sites.split_first() else {
             continue;
         };
         let info = f.var(var);
         let at = f.node(first);
-        let mut d = Diagnostic::error(
+        let d = Diagnostic::error(
             "W0602",
             format!(
                 "linear value `{}` is live across `{}`, which can abort",
@@ -140,36 +196,38 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             info.span,
         )
         .note("declare `on abort = f` on the type, or consume the value before this call");
-        if !rest.is_empty() {
-            let lines: Vec<String> = rest
-                .iter()
-                .take(LISTED_SITES)
-                .map(|&n| format!("{{line:{}}}", node_span(f, n).lo))
-                .collect();
-            let more = if rest.len() > LISTED_SITES {
-                ", ..."
-            } else {
-                ""
-            };
-            d = d.note(format!(
-                "and {} more sites that can abort, at lines {}{more}",
-                rest.len(),
-                lines.join(", ")
-            ));
-        }
-        out.push(d);
+        out.push(note_more(
+            d,
+            f,
+            rest,
+            ("site that can abort", "sites that can abort"),
+        ));
     }
-    for &(var, n) in &v.live_across_multi {
+    // W0503: one error for each value, at the first `multi` operation.
+    for (var, sites) in by_var(f, &v.live_across_multi) {
+        let Some((&first, rest)) = sites.split_first() else {
+            continue;
+        };
         let info = f.var(var);
-        let at = f.node(n);
-        out.push(
-            Diagnostic::error(
-                "W0503",
-                format!("`{}` is not `many`, but it is live across `{}`, which can resume more than once", info.name, at.label),
-                at.span,
-            )
-            .note_at(format!("{} : {}", info.name, info.ty), info.span),
-        );
+        let at = f.node(first);
+        let d = Diagnostic::error(
+            "W0503",
+            format!(
+                "`{}` is not `many`, but it is live across `{}`, which can resume more than once",
+                info.name, at.label
+            ),
+            at.span,
+        )
+        .note_at(format!("{} : {}", info.name, info.ty), info.span);
+        out.push(note_more(
+            d,
+            f,
+            rest,
+            (
+                "operation that can resume more than once",
+                "operations that can resume more than once",
+            ),
+        ));
     }
     for &(n, p) in &v.unauthorized_mut {
         let at = f.node(n);
@@ -299,9 +357,36 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
     out
 }
 
-/// Replaces `{line:N}` markers (byte offsets) with line numbers.
+/// Replaces `{line:N}` markers (byte offsets) with line numbers. A
+/// `{lines:N M ...}` marker becomes `line L` or `lines L1, L2`: each line one
+/// time, at most `LISTED_SITES` lines.
 pub fn resolve_lines(d: &mut Diagnostic, file: &weft_syntax::SourceFile) {
     for n in &mut d.notes {
+        while let Some(start) = n.text.find("{lines:") {
+            let Some(end) = n.text[start..].find('}') else {
+                break;
+            };
+            let mut lines: Vec<usize> = n.text[start + 7..start + end]
+                .split(' ')
+                .filter_map(|o| o.parse().ok())
+                .map(|o| file.line_col(o).0)
+                .collect();
+            lines.sort_unstable();
+            lines.dedup();
+            let word = if lines.len() == 1 { "line" } else { "lines" };
+            let shown: Vec<String> = lines
+                .iter()
+                .take(LISTED_SITES)
+                .map(ToString::to_string)
+                .collect();
+            let more = if lines.len() > LISTED_SITES {
+                ", ..."
+            } else {
+                ""
+            };
+            let text = format!("{word} {}{more}", shown.join(", "));
+            n.text.replace_range(start..=(start + end), &text);
+        }
         while let Some(start) = n.text.find("{line:") {
             let Some(end) = n.text[start..].find('}') else {
                 break;

@@ -53,8 +53,8 @@ pub enum Arg {
     Int(i64),
 }
 
-/// The places whose last steps can be related: the root, the depth and the
-/// class of the last step.
+/// A group of places that can have related last steps. The key is the root,
+/// the depth and the class of the last step.
 type StepGroup = (u32, usize, (u8, u32));
 
 /// Calls `emit` once for each input fact of one function.
@@ -73,8 +73,8 @@ pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
             emit("param_rooted", &[s(&id)]);
         }
     }
-    // Last-step relations between places of the same root and depth. Only
-    // last steps of the same class can be related (`places::step_class`), so
+    // Last-step relations between places of the same root and depth. Two last
+    // steps of different classes have no relation (`places::step_class`), so
     // the loop compares the places of one class.
     let mut groups: BTreeMap<StepGroup, Vec<(usize, &Step)>> = BTreeMap::new();
     for (i, p) in f.places.iter().enumerate() {
@@ -386,13 +386,13 @@ fn rename_word(w: &str, f: &FnFacts, line_of: &dyn Fn(u32) -> usize) -> String {
 /// keeps this indent.
 pub const MAX_INDENT: usize = 32;
 
-/// The renderer folds a chain of one relation that has more steps than this.
+/// The renderer folds a chain that has more steps than this.
 pub const CHAIN_FOLD: usize = 8;
 
 /// The steps that the renderer shows at each end of a folded chain.
 pub const CHAIN_KEEP: usize = 3;
 
-/// What the renderer does at the next step of a chain of one relation.
+/// What the renderer does at the next step of a chain.
 #[derive(Clone, Copy)]
 enum Chain<'a> {
     /// The node starts a chain: measure it first.
@@ -415,13 +415,53 @@ enum Item<'a> {
     Line(usize, String),
 }
 
+/// Returns the component of each relation of the spec, as an index into
+/// [`Program::components`]. Two relations have the same component when each
+/// depends on the other, for example `live_in` and `live_out`.
+fn spec_components() -> &'static BTreeMap<String, usize> {
+    static COMPONENTS: OnceLock<BTreeMap<String, usize>> = OnceLock::new();
+    COMPONENTS.get_or_init(|| {
+        let comps = spec().components().unwrap_or_default();
+        let mut map = BTreeMap::new();
+        for (i, comp) in comps.into_iter().enumerate() {
+            for relation in comp {
+                map.insert(relation, i);
+            }
+        }
+        map
+    })
+}
+
+/// Returns true if a chain can go from a fact of relation `a` to a premise
+/// of relation `b`: the relations are equal, or they depend on each other in
+/// the spec.
+fn same_chain(a: &str, b: &str) -> bool {
+    let comps = spec_components();
+    a == b || comps.get(a).is_some_and(|ca| comps.get(b) == Some(ca))
+}
+
 /// Returns the next step of the chain of `d`: its first derived premise of
-/// the same relation.
+/// the same relation, or of a relation that depends on the relation of `d`.
 fn chain_child(d: &Derivation) -> Option<&Derivation> {
     d.premises().iter().find_map(|p| match p {
-        Premise::Derived(c) if c.fact.relation == d.fact.relation => Some(c),
+        Premise::Derived(c) if same_chain(&d.fact.relation, &c.fact.relation) => Some(c),
         _ => None,
     })
+}
+
+/// Names the relations of the chain steps from `from` up to `to`, each one
+/// time, in the order of the chain. For example: `` `invalid` ``.
+fn chain_relations(from: &Derivation, to: &Derivation) -> String {
+    let mut names: Vec<&str> = Vec::new();
+    let mut cur = Some(from);
+    while let Some(d) = cur.filter(|d| !std::ptr::eq(*d, to)) {
+        if !names.contains(&d.fact.relation.as_str()) {
+            names.push(&d.fact.relation);
+        }
+        cur = chain_child(d);
+    }
+    let quoted: Vec<String> = names.iter().map(|n| format!("`{n}`")).collect();
+    quoted.join(", ")
 }
 
 /// Measures the chain that starts at `d`, and decides if the renderer folds it.
@@ -450,9 +490,13 @@ fn indent(out: &mut String, depth: usize) {
 
 /// Writes the tree with a stack, not with recursion, so a deep derivation does
 /// not overflow the stack. Each line is one node. A child is two spaces deeper
-/// than its parent, up to [`MAX_INDENT`] levels. The renderer folds a chain of
-/// one relation that has more than [`CHAIN_FOLD`] steps. It shows the first
-/// and the last [`CHAIN_KEEP`] steps, and one line for the steps between them.
+/// than its parent, up to [`MAX_INDENT`] levels.
+///
+/// A chain is a path of derived premises whose relations depend on each
+/// other, for example `invalid` after `invalid`, or `live_out` and `live_in`
+/// in turn. The renderer folds a chain that has more than [`CHAIN_FOLD`]
+/// steps. It shows the first and the last [`CHAIN_KEEP`] steps, and one line
+/// for the steps between them.
 fn render(d: &Derivation, f: &FnFacts, line_of: &dyn Fn(u32) -> usize, out: &mut String) {
     let mut stack = vec![Item::Node(d, 0, Chain::Start)];
     while let Some(item) = stack.pop() {
@@ -495,7 +539,7 @@ fn render(d: &Derivation, f: &FnFacts, line_of: &dyn Fn(u32) -> usize, out: &mut
                         stack.push(Item::Node(tail, depth + 2, Chain::Show));
                         Item::Line(
                             depth + 1,
-                            format!("... {skipped} more `{}` steps ...", d.fact.relation),
+                            format!("... {skipped} more {} steps ...", chain_relations(c, tail)),
                         )
                     }
                     Chain::Fold {

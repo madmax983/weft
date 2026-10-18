@@ -120,6 +120,7 @@ Weft enforces shared-XOR-mutable only where threads or tasks meet, using OxCaml-
 - Closures passed to `fork` or spawned as stealable tasks must be `portable`.
 - Data visible to several threads must be `shared`, or split into `uniq` parts whose places are proven disjoint.
 - Immutable plain data crosses modes automatically (mode crossing), so most code writes no modes at all.
+- A type has at most one mode on each axis. Also `uniq` and `shared` contradict: other threads can read a `shared` value, so other references to it exist. Both are errors (W0119).
 
 Modes are inferred in bodies and appear only in public signatures that need them.
 

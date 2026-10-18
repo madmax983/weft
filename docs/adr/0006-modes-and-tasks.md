@@ -8,6 +8,10 @@ Status: accepted. Date: 2026-10-18.
   (`weft_verified::modes`), but the checker does not use it yet: the mode rules use the
   flags `nonportable`, `uniq` and `shared` in the facts (ADR 0004).
 - `@ shared` forbids mutation through the reference (W0402).
+- A type states at most one mode on each axis, and not both `uniq` and `shared`
+  (W0119). A `shared` value is visible to other threads, so it is not unique. The
+  verified lattice keeps its axes independent, so it has an element with `uniq` and
+  `shared`. Sema rejects only the written pair.
 - A fork branch must be portable: no nonportable captures (W0401) and no mutation
   through an aliased reference (W0403). `split_mut` gives `@ uniq` parts.
 - Separation (W0405): a task is active from its spawn to its join or the scope end. Each

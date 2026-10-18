@@ -331,6 +331,20 @@ fn explain_and_help() {
 }
 
 #[test]
+fn help_takes_a_command() {
+    for args in [["help", "check"], ["--help", "run"], ["-h", "facts"]] {
+        let out = cmd(&args);
+        assert_eq!(out.code, 0, "{}", args.join(" "));
+        assert!(out.text.starts_with("usage: weft"), "{}", out.text);
+    }
+    assert!(usage_error(&["help", "nope"]).starts_with("unknown command `nope`\nusage: weft"));
+    assert_eq!(
+        usage_error(&["help", "check", "x"]),
+        "`help` takes at most 1 argument, found 2: `x` is extra; see `weft help`"
+    );
+}
+
+#[test]
 fn explain_needs_a_code() {
     let e = usage_error(&["explain"]);
     assert_eq!(e, "`explain` needs a CODE; see `weft help`");
@@ -403,6 +417,15 @@ fn facts_of_an_unknown_function_is_an_error() {
         out.stderr
     );
     assert_eq!(cmd(&["facts", path, "bad"]).code, 0);
+    let dir = scratch("nobodies", &[("types.wf", "struct S { a: u64 }\n")]);
+    let out = cmd(&["facts", &format!("{dir}/types.wf"), "f"]);
+    assert_eq!(out.code, 1);
+    assert!(
+        out.stderr
+            .ends_with("types.wf; it has no functions or tests\n"),
+        "{}",
+        out.stderr
+    );
 }
 
 #[test]

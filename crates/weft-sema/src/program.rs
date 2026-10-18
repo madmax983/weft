@@ -287,7 +287,8 @@ pub struct ModDef {
     pub items: HashMap<String, ItemRef>,
     /// The module is a standard module.
     pub is_std: bool,
-    /// The source unit: 0 is the prelude, 1 is the root, higher are dependencies.
+    /// The source unit: [`PRELUDE_UNIT`](weft_syntax::diag::PRELUDE_UNIT),
+    /// [`ROOT_UNIT`], or a dependency after them.
     pub unit: usize,
 }
 
@@ -671,6 +672,7 @@ impl Collector {
     }
 
     fn new_adt(&mut self, name: &str, generics: &[ast::Ident], m: ModId, span: Span) -> AdtId {
+        report_duplicates(&mut self.diags, "type parameter", generics);
         self.prog.adts.push(AdtDef {
             name: name.into(),
             generics: generics.iter().map(|g| g.name.clone()).collect(),
@@ -731,15 +733,8 @@ impl Collector {
                             .collect(),
                     );
                     let mut fields = Vec::new();
-                    let mut names = BTreeSet::new();
+                    report_duplicates(&mut self.diags, "field", s.fields.iter().map(|f| &f.name));
                     for f in &s.fields {
-                        if !names.insert(f.name.name.as_str()) {
-                            self.diags.push(Diagnostic::error(
-                                "W0107",
-                                format!("field `{}` is defined twice", f.name.name),
-                                f.name.span,
-                            ));
-                        }
                         self.no_ptr(&f.ty);
                         let ty = self.resolve_ty(&f.ty, m, &gens, Some(&self_ty));
                         fields.push(FieldDef {
@@ -786,15 +781,12 @@ impl Collector {
                     };
                     let gens: Vec<String> = e.generics.iter().map(|g| g.name.clone()).collect();
                     let mut vs = Vec::new();
-                    let mut names = BTreeSet::new();
+                    report_duplicates(
+                        &mut self.diags,
+                        "variant",
+                        e.variants.iter().map(|v| &v.name),
+                    );
                     for (vi, v) in e.variants.iter().enumerate() {
-                        if !names.insert(v.name.name.as_str()) {
-                            self.diags.push(Diagnostic::error(
-                                "W0107",
-                                format!("variant `{}` is defined twice", v.name.name),
-                                v.name.span,
-                            ));
-                        }
                         for t in &v.fields {
                             self.no_ptr(t);
                         }
@@ -821,6 +813,11 @@ impl Collector {
                     };
                     let mut ops = Vec::new();
                     for o in &e.ops {
+                        report_duplicates(
+                            &mut self.diags,
+                            "parameter",
+                            o.params.iter().map(|p| &p.name),
+                        );
                         for t in o.params.iter().filter_map(|p| p.ty.as_ref()).chain(&o.ret) {
                             self.no_ptr(t);
                         }
@@ -854,6 +851,7 @@ impl Collector {
                 }
                 ItemKind::Impl(imp) => {
                     let gens: Vec<String> = imp.generics.iter().map(|g| g.name.clone()).collect();
+                    report_duplicates(&mut self.diags, "type parameter", &imp.generics);
                     self.no_ptr(&imp.self_ty);
                     let self_ty = self.resolve_ty(&imp.self_ty, m, &gens, None);
                     let Ty::Adt(owner, _) = self_ty else {
@@ -945,6 +943,24 @@ impl Collector {
             let m = self.prog.fns[id].module;
             let mut gens = impl_gens.to_vec();
             gens.extend(f.generics.iter().map(|g| g.name.clone()));
+            report_duplicates(&mut self.diags, "type parameter", &f.generics);
+            let outer: BTreeSet<&str> = impl_gens.iter().map(String::as_str).collect();
+            for g in f
+                .generics
+                .iter()
+                .filter(|g| outer.contains(g.name.as_str()))
+            {
+                self.diags.push(Diagnostic::error(
+                    "W0107",
+                    format!("type parameter `{}` is defined twice", g.name),
+                    g.span,
+                ));
+            }
+            report_duplicates(
+                &mut self.diags,
+                "parameter",
+                f.params.iter().map(|p| &p.name),
+            );
             let self_ty = owner.map(|o| {
                 Ty::Adt(
                     o,
@@ -1065,20 +1081,38 @@ impl Collector {
             }) => Some(*j),
             _ => None,
         };
+        // Each parameter has at most one `in` place, so a walk has one way.
+        // A walk stops at a parameter that an earlier walk saw, so the time
+        // is linear. The states: 0 is new, 1 is on this walk, 2 is done.
+        let mut state = vec![0_u8; params.len()];
         for start in 0..params.len() {
-            // Each parameter has at most one `in` place, so the walk has one way.
-            let mut cycle = vec![start];
-            let mut at = root_of(start);
+            let mut path = Vec::new();
+            let mut at = Some(start);
             while let Some(j) = at {
-                if j == start || cycle.contains(&j) || cycle.len() > params.len() {
+                if state.get(j) != Some(&0) {
                     break;
                 }
-                cycle.push(j);
+                state[j] = 1;
+                path.push(j);
                 at = root_of(j);
             }
-            // Report each cycle once, at its first parameter.
-            if at != Some(start) || cycle.iter().any(|&j| j < start) {
+            // A walk that meets itself closes a cycle.
+            let cycle = match at {
+                Some(j) if state.get(j) == Some(&1) => path
+                    .iter()
+                    .position(|&k| k == j)
+                    .map(|p| path[p..].to_vec()),
+                _ => None,
+            };
+            for &k in &path {
+                state[k] = 2;
+            }
+            let Some(mut cycle) = cycle else {
                 continue;
+            };
+            // Report the cycle at its first parameter.
+            if let Some(first) = (0..cycle.len()).min_by_key(|&i| cycle[i]) {
+                cycle.rotate_left(first);
             }
             let names: Vec<&str> = cycle.iter().map(|&j| params[j].name.as_str()).collect();
             let message = if let [one] = names.as_slice() {
@@ -1087,7 +1121,7 @@ impl Collector {
                 format!("the places of `{}` form a cycle", names.join("`, `"))
             };
             self.diags.push(
-                Diagnostic::error("W0201", message, params[start].span)
+                Diagnostic::error("W0201", message, params[cycle[0]].span)
                     .note("an `in` place must start at another parameter, `self` or an `rc` type"),
             );
         }
@@ -1253,6 +1287,25 @@ impl Collector {
     }
 }
 
+/// W0107: reports each name that repeats an earlier name of the list.
+/// `what` names the kind of name, for example `field`.
+fn report_duplicates<'a>(
+    diags: &mut Vec<Diagnostic>,
+    what: &str,
+    names: impl IntoIterator<Item = &'a ast::Ident>,
+) {
+    let mut seen = BTreeSet::new();
+    for n in names {
+        if !seen.insert(n.name.as_str()) {
+            diags.push(Diagnostic::error(
+                "W0107",
+                format!("{what} `{}` is defined twice", n.name),
+                n.span,
+            ));
+        }
+    }
+}
+
 /// Returns why two modes of a list contradict, or `None`.
 ///
 /// Two values of one axis contradict, for example `once` and `many`. Also
@@ -1265,25 +1318,31 @@ fn mode_conflict(modes: &[Mode]) -> Option<String> {
         Mode::Uncontended | Mode::Shared => 2,
         Mode::Once | Mode::Many => 3,
     };
-    for (i, &a) in modes.iter().enumerate() {
-        for &b in &modes[i + 1..] {
-            if a != b && axis(a) == axis(b) {
+    // The first mode on each axis.
+    let mut seen: [Option<Mode>; 4] = [None; 4];
+    for &b in modes {
+        match seen[axis(b)] {
+            Some(a) if a != b => {
                 return Some(format!(
                     "modes `{}` and `{}` contradict: a type has one mode on each axis",
                     a.name(),
                     b.name()
                 ));
             }
-            if matches!(
-                (a, b),
-                (Mode::Uniq, Mode::Shared) | (Mode::Shared, Mode::Uniq)
-            ) {
-                return Some(format!(
-                    "modes `{}` and `{}` contradict: other threads can read a `shared` value, so it is not `uniq`",
-                    a.name(),
-                    b.name()
-                ));
-            }
+            Some(_) => {}
+            None => seen[axis(b)] = Some(b),
+        }
+        let other = match b {
+            Mode::Uniq => Mode::Shared,
+            Mode::Shared => Mode::Uniq,
+            _ => continue,
+        };
+        if seen[axis(other)] == Some(other) {
+            return Some(format!(
+                "modes `{}` and `{}` contradict: other threads can read a `shared` value, so it is not `uniq`",
+                other.name(),
+                b.name()
+            ));
         }
     }
     None
@@ -1294,69 +1353,177 @@ fn mode_conflict(modes: &[Mode]) -> Option<String> {
 /// A struct holds its fields inline, also through tuples and arrays with at
 /// least one element. An enum value is a cell of its own, and an extern type
 /// is opaque, so each is an indirection. A generic struct holds the
-/// arguments of the parameters that it holds inline. The function computes,
-/// for each struct, the structs and the parameters that it holds, as a least
-/// fixpoint.
+/// arguments of the parameters that it holds inline.
+///
+/// The work has two steps, so the time is about linear in the size of the
+/// definitions. First, a worklist finds the parameters that each struct
+/// holds inline. Each set has at most one entry for each parameter. Then a
+/// graph gets an edge from `a` to `b` when `a` holds `b` directly. A struct
+/// holds itself when it is on a cycle of this graph.
 pub fn infinite_structs(prog: &Program) -> Vec<AdtId> {
-    /// What a struct holds inline.
-    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    /// What a value holds inline: a struct or a type parameter.
     enum Held {
         Adt(AdtId),
         Param(u32),
     }
-    /// Adds to `out` what a value of type `t` holds inline.
-    fn held(t: &Ty, holds: &[BTreeSet<Held>], prog: &Program, out: &mut BTreeSet<Held>) {
+    /// Calls `on` for each struct and parameter that a value of type `t`
+    /// holds directly. `params[b]` holds the parameters that struct `b`
+    /// holds inline.
+    fn walk(t: &Ty, prog: &Program, params: &[BTreeSet<u32>], on: &mut dyn FnMut(Held)) {
         match t {
-            Ty::Param(i) => {
-                out.insert(Held::Param(*i));
-            }
+            Ty::Param(i) => on(Held::Param(*i)),
             Ty::Tuple(ts) => {
                 for t in ts {
-                    held(t, holds, prog, out);
+                    walk(t, prog, params, on);
                 }
             }
-            Ty::Array(t, n) if *n > 0 => held(t, holds, prog, out),
+            Ty::Array(t, n) if *n > 0 => walk(t, prog, params, on),
             Ty::Adt(b, args) if matches!(prog.adts[*b].kind, AdtKind::Struct(_)) => {
-                out.insert(Held::Adt(*b));
-                for h in &holds[*b] {
-                    match h {
-                        Held::Adt(c) => {
-                            out.insert(Held::Adt(*c));
-                        }
-                        Held::Param(j) => {
-                            if let Some(arg) = args.get(*j as usize) {
-                                held(arg, holds, prog, out);
-                            }
-                        }
+                on(Held::Adt(*b));
+                for &j in &params[*b] {
+                    if let Some(arg) = args.get(j as usize) {
+                        walk(arg, prog, params, on);
                     }
                 }
             }
             _ => {}
         }
     }
-    let mut holds: Vec<BTreeSet<Held>> = vec![BTreeSet::new(); prog.adts.len()];
-    loop {
-        let mut changed = false;
-        for (a, def) in prog.adts.iter().enumerate() {
-            let AdtKind::Struct(fields) = &def.kind else {
-                continue;
-            };
-            let mut out = BTreeSet::new();
-            for f in fields {
-                held(&f.ty, &holds, prog, &mut out);
+    /// Adds to `out` each struct that a value of type `t` can hold inline,
+    /// for any parameter sets.
+    fn mentions(t: &Ty, prog: &Program, out: &mut Vec<AdtId>) {
+        match t {
+            Ty::Tuple(ts) => {
+                for t in ts {
+                    mentions(t, prog, out);
+                }
             }
-            if out.len() > holds[a].len() {
-                holds[a] = out;
-                changed = true;
+            Ty::Array(t, n) if *n > 0 => mentions(t, prog, out),
+            Ty::Adt(b, args) if matches!(prog.adts[*b].kind, AdtKind::Struct(_)) => {
+                out.push(*b);
+                for t in args {
+                    mentions(t, prog, out);
+                }
             }
-        }
-        if !changed {
-            break;
+            _ => {}
         }
     }
-    (0..prog.adts.len())
-        .filter(|&a| holds[a].contains(&Held::Adt(a)))
-        .collect()
+    let fields = |a: AdtId| match &prog.adts[a].kind {
+        AdtKind::Struct(fields) => fields.as_slice(),
+        _ => &[],
+    };
+    let n = prog.adts.len();
+    // Step 1: the parameters. When the set of `b` grows, each struct that
+    // mentions `b` goes back on the worklist.
+    let mut users: Vec<Vec<AdtId>> = vec![Vec::new(); n];
+    for a in 0..n {
+        let mut out = Vec::new();
+        for f in fields(a) {
+            mentions(&f.ty, prog, &mut out);
+        }
+        out.sort_unstable();
+        out.dedup();
+        for b in out {
+            users[b].push(a);
+        }
+    }
+    let mut params: Vec<BTreeSet<u32>> = vec![BTreeSet::new(); n];
+    let mut queued = vec![true; n];
+    let mut work: Vec<AdtId> = (0..n).rev().collect();
+    while let Some(a) = work.pop() {
+        queued[a] = false;
+        let mut found = BTreeSet::new();
+        for f in fields(a) {
+            walk(&f.ty, prog, &params, &mut |h| {
+                if let Held::Param(i) = h {
+                    found.insert(i);
+                }
+            });
+        }
+        if found.len() > params[a].len() {
+            params[a] = found;
+            for &u in &users[a] {
+                if !queued[u] {
+                    queued[u] = true;
+                    work.push(u);
+                }
+            }
+        }
+    }
+    // Step 2: the graph of direct holds, and its cycles.
+    let edges: Vec<Vec<AdtId>> = (0..n)
+        .map(|a| {
+            let mut out = Vec::new();
+            for f in fields(a) {
+                walk(&f.ty, prog, &params, &mut |h| {
+                    if let Held::Adt(b) = h {
+                        out.push(b);
+                    }
+                });
+            }
+            out
+        })
+        .collect();
+    let cyclic = on_cycles(&edges);
+    (0..n).filter(|&a| cyclic[a]).collect()
+}
+
+/// Returns, for each node of a graph, whether a cycle goes through it. The
+/// function uses Tarjan's algorithm for strongly connected components. It
+/// keeps its own stack, so a long chain cannot overflow the thread stack.
+fn on_cycles(edges: &[Vec<usize>]) -> Vec<bool> {
+    const NEW: usize = usize::MAX;
+    let n = edges.len();
+    let (mut index, mut low) = (vec![NEW; n], vec![0; n]);
+    let mut on_stack = vec![false; n];
+    let mut cyclic = vec![false; n];
+    let (mut stack, mut calls) = (Vec::new(), Vec::new());
+    let mut next = 0;
+    for root in 0..n {
+        if index[root] != NEW {
+            continue;
+        }
+        calls.push((root, 0));
+        while let Some(&(v, i)) = calls.last() {
+            if i == 0 {
+                index[v] = next;
+                low[v] = next;
+                next += 1;
+                stack.push(v);
+                on_stack[v] = true;
+            }
+            if let Some(&w) = edges[v].get(i) {
+                if let Some(top) = calls.last_mut() {
+                    top.1 += 1;
+                }
+                if index[w] == NEW {
+                    calls.push((w, 0));
+                } else if on_stack[w] {
+                    low[v] = low[v].min(index[w]);
+                }
+                continue;
+            }
+            calls.pop();
+            if let Some(&(u, _)) = calls.last() {
+                low[u] = low[u].min(low[v]);
+            }
+            if low[v] == index[v] {
+                let mut members = Vec::new();
+                while let Some(w) = stack.pop() {
+                    on_stack[w] = false;
+                    members.push(w);
+                    if w == v {
+                        break;
+                    }
+                }
+                let cycle = members.len() > 1 || edges[v].contains(&v);
+                for w in members {
+                    cyclic[w] = cycle;
+                }
+            }
+        }
+    }
+    cyclic
 }
 
 /// Resolves type expressions against a finished program. It borrows the

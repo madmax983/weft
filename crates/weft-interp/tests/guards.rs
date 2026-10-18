@@ -48,6 +48,9 @@ fn guards_on_values() {
     fault("fn main() { print(!5) }", "a boolean is needed");
     fault("fn main() { let v = [1]\n print(v[-1]) }", "out of bounds");
     fault("fn main() { print(1.s - 2.s) }", "duration underflow");
+    // A field of a literal, other than the duration units `s` and `ms`.
+    fault("fn main() / clock { sleep(1.sleep) }", "no field `sleep`");
+    fault("fn main() { print(2.s, 500.x) }", "no field `x`");
     fault(
         "fn main() { print(18446744073709551615) }",
         "integer literal is too large",

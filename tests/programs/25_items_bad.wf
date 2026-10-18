@@ -11,6 +11,20 @@ struct Holder { w: Wrap<u64>, t: Tree }
 
 struct Dup { a: u64, a: u64 }   //~ W0107
 enum DupE { A, B, A }   //~ W0107
+fn dup_param(x: u64, x: String) {}   //~ W0107
+struct DupG<T, T> { t: T }   //~ W0107
+enum DupGE<T, T> { A(T) }   //~ W0107
+extern type DupX<T, T>   //~ W0107
+fn dup_gen<T, T>(t: T) {}   //~ W0107
+struct H<T> { t: T }
+impl<T, T> H<T> {   //~ W0107
+    fn one(self) {}
+    fn two(self) {}
+}
+impl<T> H<T> {
+    fn shadow<T>(self, t: T) {}   //~ W0107
+}
+effect DupOp { fn op(a: u64, a: u64) }   //~ W0107
 
 linear struct Lost { id: u64 }
     on abort = nope   //~ W0101
