@@ -1,6 +1,6 @@
 //! Packages: `weft.toml`, dependencies and their authority.
 //!
-//! A project grants each dependency a set of effects. Each public function of the
+//! A project grants each dependency a set of effects. Each function of the
 //! dependency must stay inside that set. A JSON parser that asks for `Net` is
 //! rejected when the project loads it ("install time").
 
@@ -252,10 +252,17 @@ pub fn package_diags(pkg: &Package, a: &Analysis) -> Vec<Diagnostic> {
             out.push(d);
         }
         for (i, f) in a.program.fns.iter().enumerate() {
-            if !f.is_pub || a.program.mods[f.module].unit != dep.unit {
+            // The project can call every function of the dependency. A function
+            // needs what it states and what its body does, with the closures that
+            // the body makes and returns.
+            if a.program.mods[f.module].unit != dep.unit {
                 continue;
             }
-            let needs: BTreeSet<String> = effects::close(&a.sigs[i].effects.named);
+            let mut named = a.sigs[i].effects.named.clone();
+            for b in a.bodies.iter().filter(|b| b.func == Some(i)) {
+                named.extend(b.effects.named.iter().cloned());
+            }
+            let needs: BTreeSet<String> = effects::close(&named);
             let extra: Vec<&String> = needs
                 .iter()
                 .filter(|e| !dep.authority.contains(*e))

@@ -1,0 +1,101 @@
+// Callbacks. A closure can mutate through its own reference parameters: the call
+// that runs it mutates what it gives to them. A closure argument points into its
+// captures, as a reference argument does.
+struct Entity { hp: i32 }
+impl Entity { fn new() -> Entity { Entity { hp: 10 } } }
+struct World { entities: Vec<Entity>, score: u64 }
+
+fn apply(f: fn(&World), w: &World) { f(w) }
+
+// `apply` gives `w` to the closure, so the call mutates `world.entities`.
+fn hof(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    apply(|x| x.entities.push(Entity.new()), world)
+    print(first.hp)   //~ W0301
+}
+fn hof_inferred(world: &World) {
+    let first = &world.entities[0]
+    apply(|x| x.entities.push(Entity.new()), world)
+    print(first.hp)   //~ W0301
+}
+
+// A direct call gives the arguments.
+fn direct(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let f = |x: &World| x.entities.push(Entity.new())
+    f(world)
+    print(first.hp)   //~ W0301
+}
+
+// A function parameter that the callee passes on.
+fn outer(f: fn(&World), w: &World) { apply(f, w) }
+fn via_outer(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    outer(|x| x.entities.push(Entity.new()), world)
+    print(first.hp)   //~ W0301
+}
+
+// A callee with no body can give the closure any place that its arguments reach.
+extern fn foreign_apply(f: fn(&World), w: &World)
+fn via_foreign(world: &World) {
+    let first = &world.entities[0]
+    foreign_apply(|x| x.entities.push(Entity.new()), world)
+    print(first.hp)   //~ W0301
+}
+
+// Inside a higher-order function, a function parameter can mutate through what it gets.
+fn holds(f: fn(&World), w: &World) {
+    let first = &w.entities[0]
+    f(w)
+    print(first.hp)   //~ W0301
+}
+
+// A closure argument that captured a reference: the callee frees the place first.
+fn clear_then(f: fn(), w: &World) / mut(w.entities) {
+    w.entities.clear()
+    f()
+}
+fn captured(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    clear_then(|| print(r.hp), world)   //~ W0312
+}
+fn captured_named(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    let c = || print(r.hp)
+    clear_then(c, world)   //~ W0312
+}
+
+// A direct call of a closure that mutates what an argument points into.
+fn mutating_closure(world: &World) / mut(world.entities) {
+    let f = |e: &Entity| {
+        world.entities.clear()
+        print(e.hp)
+    }
+    f(&world.entities[0])   //~ W0312
+}
+
+// Controls.
+// The closure mutates `x.score`: the reference into the elements survives,
+// and the signature states the precise place.
+fn precise(world: &World) / mut(world.score) {
+    let first = &world.entities[0]
+    apply(|x| x.score += 1, world)
+    print(first.hp)
+}
+// A closure that only reads its parameter.
+fn reads_only(world: &World) {
+    let first = &world.entities[0]
+    apply(|x| print(x.score), world)
+    print(first.hp)
+}
+// A reference into the lent place itself survives.
+fn holds_elem(f: fn(&Entity), w: &World) {
+    let first = &w.entities[0]
+    f(first)
+    print(first.hp)
+}
+// A captured reference into another place.
+fn captured_other(world: &World, other: &World) / mut(world.entities) {
+    let r = &other.entities[0]
+    clear_then(|| print(r.hp), world)
+}

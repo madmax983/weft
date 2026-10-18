@@ -1,0 +1,206 @@
+// Function values: items, joins, tuples, fields and returned closures. A call
+// of a function value does what each value that it can be does.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+mod api {
+    pub fn fetch(x: u64) -> u64 / net { x + 1 }
+}
+linear struct Lock { id: u64 }
+fn take() -> Lock { Lock { id: 1 } }
+fn release(l: Lock) { let Lock(i) = l }
+fn risky() / fail { fail("no") }
+fn grow(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 1 }) }
+fn noop(w: &World) {}
+fn pure_one(x: u64) -> u64 { x }
+
+// A call through a function item value has the effects of the item.
+fn via_item(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g = grow
+    g(world)
+    print(first.hp)   //~ W0301
+}
+pub fn undeclared(world: &World) {   //~ W0701
+    let g = grow
+    g(world)
+}
+fn shared_via_item(world: &World @ shared) {
+    let g = grow
+    g(world)   //~ W0402
+}
+fn abort_via_item() / fail {
+    let l = take()
+    let r = risky
+    r()   //~ W0602
+    release(l)
+}
+
+// An item argument: the callee can call it.
+fn apply(f: fn(&World), w: &World) { f(w) }
+fn item_arg(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    apply(grow, world)
+    print(first.hp)   //~ W0301
+}
+
+// `if` and `match` join two function values: a call can call either.
+fn if_items(c: bool) -> u64 / clock {
+    let g = if c { pure_one } else { api.fetch }
+    g(1)   //~ W0702
+}
+fn if_item_mut(world: &World, c: bool) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g = if c { noop } else { grow }
+    g(world)
+    print(first.hp)   //~ W0301
+}
+fn match_items(world: &World, n: u64) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g = match n {
+        0 => noop,
+        _ => grow,
+    }
+    g(world)
+    print(first.hp)   //~ W0301
+}
+
+// A new value of a local joins the old one.
+fn reassigned(world: &World, c: bool) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g = noop
+    if c { g = grow }
+    g(world)
+    print(first.hp)   //~ W0301
+}
+
+// Closures through tuples and branches.
+fn closure_in_tuple(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let t = (|| world.entities.push(Entity { hp: 1 }), 1)
+    let (h, n) = t
+    h()
+    print(first.hp)   //~ W0301
+}
+fn closure_in_if(world: &World, c: bool) / mut(world.entities) {
+    let first = &world.entities[0]
+    let h = if c { || print(1) } else { || world.entities.push(Entity { hp: 2 }) }
+    h()
+    print(first.hp)   //~ W0301
+}
+
+// A closure belongs to the function that makes it: its effects are in the row of
+// that function, also when the function stores it in a field.
+struct Cb { f: fn() }
+fn run_cb(cb: Cb) {
+    let g = cb.f
+    g()
+}
+fn stores() { run_cb(Cb { f: || log.info("x") }) }
+fn caller_stores() / clock {
+    stores()   //~ W0702
+}
+
+// A stored closure runs at each later call that gets a value that holds it.
+fn run_ref(cb: &Cb) {
+    let g = cb.f
+    g()
+}
+fn stored(world: &World) / mut(world.entities) {
+    let cb = Cb { f: || world.entities.clear() }
+    let first = &world.entities[0]
+    run_ref(&cb)
+    print(first.hp)   //~ W0301
+}
+fn stored_local() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let cb = Cb { f: || v.clear() }
+    let r = &v[0]
+    run_ref(&cb)
+    print(r)   //~ W0301
+}
+// In a loop the store comes after the call in the text.
+fn stored_in_loop(world: &World, cb: &Cb) / mut(world.entities, cb.f) {
+    let i = 0
+    while i < 2 {
+        let first = &world.entities[0]
+        run_ref(cb)
+        print(first.hp)   //~ W0301
+        cb.f = || world.entities.clear()
+        i += 1
+    }
+}
+// A callee that stores its function parameter.
+fn keep(f: fn(), cb: &Cb) / mut(cb.f) { cb.f = f }
+fn kept(world: &World, cb: &Cb) / mut(world.entities, cb.f) {
+    keep(|| world.entities.clear(), cb)
+    let first = &world.entities[0]
+    run_ref(cb)
+    print(first.hp)   //~ W0301
+}
+
+// A returned closure: its maker has its effects, and a later call of it has them too.
+fn mk() -> fn() { || log.info("hidden") }
+fn caller_mk() / clock {
+    let f = mk()   //~ W0702
+    f()   //~ W0702
+}
+fn mk_grow(w: &World) -> fn() / mut(w.entities) { || w.entities.push(Entity { hp: 1 }) }
+fn later(world: &World) / mut(world.entities) {
+    let f = mk_grow(world)
+    let first = &world.entities[0]
+    f()
+    print(first.hp)   //~ W0301
+}
+fn mk_abort() -> fn() { || risky() }
+fn abort_later() / fail {
+    let f = mk_abort()
+    let l = take()
+    f()   //~ W0602
+    release(l)
+}
+
+// A returned copy of a function parameter calls the closure that the caller gives.
+fn wrap(f: fn()) -> fn() {
+    let g = f
+    g
+}
+fn wrapped(world: &World) / mut(world.entities) {
+    let h = wrap(|| world.entities.clear())
+    let first = &world.entities[0]
+    h()
+    print(first.hp)   //~ W0301
+}
+
+// Controls: function values that do not mutate, and values that agree.
+fn pure_values(world: &World, c: bool) {
+    let first = &world.entities[0]
+    let g = noop
+    g(world)
+    let h = if c { noop } else { noop }
+    h(world)
+    print(first.hp)
+}
+fn same_items(c: bool) -> u64 {
+    let g = if c { pure_one } else { pure_one }
+    g(1)
+}
+fn mk_pure() -> fn(u64) -> u64 { |x| x + 1 }
+fn use_pure(world: &World) -> u64 {
+    let f = mk_pure()
+    let first = &world.entities[0]
+    let y = f(1)
+    print(first.hp)
+    y
+}
+fn stored_harmless(world: &World) {
+    let cb = Cb { f: || print(1) }
+    let first = &world.entities[0]
+    run_ref(&cb)
+    print(first.hp)
+}
+fn copies(c: bool) -> u64 {
+    let g = pure_one
+    let h = g
+    g(1) + h(2)
+}

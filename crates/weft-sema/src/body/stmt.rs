@@ -34,9 +34,6 @@ impl Lower<'_> {
                 self.set_root(l, r);
                 vec![r]
             };
-            if matches!(p.ty, Ty::Fn(_)) {
-                self.locals[l].fn_param = Some(param_locals.len() - 1);
-            }
             bases.push(base);
         }
         for (i, p) in sig.params.iter().enumerate() {
@@ -55,6 +52,7 @@ impl Lower<'_> {
                 ty: p.ty.clone(),
                 refs,
                 uniq: p.uniq,
+                fn_param: matches!(p.ty, Ty::Fn(_)).then_some((0, i)),
                 ..Val::default()
             };
             self.assign_local(l, &v, entry);
@@ -96,6 +94,7 @@ impl Lower<'_> {
             self.facts.scope_end.push((var, exit));
         }
         let _ = &self.loops;
+        self.apply_stored();
         let eff = self.summary_to_sig(&bases);
         let fdef = &self.prog.fns[id];
         if fdef.is_pub && !sig.declared && !eff.is_empty() && !fdef.decl.is_extern {
@@ -121,6 +120,7 @@ impl Lower<'_> {
         self.stmt_temps.pop();
         self.drop_value(&v, span);
         self.flush(block_tail(body));
+        self.apply_stored();
         let eff = self.summary_to_sig(&[]);
         self.finish(eff)
     }
@@ -165,45 +165,34 @@ impl Lower<'_> {
     }
 
     /// Converts the body summary into a signature row in terms of parameters.
+    ///
+    /// A closure keeps the capabilities of the place where it is made, so the row
+    /// also has the effects and the mutations of each closure that the body
+    /// makes, also one that it returns or stores and does not call.
     fn summary_to_sig(&self, bases: &[Vec<PlaceId>]) -> EffectSig {
-        let sum = self.sums[0].clone();
+        let sum = &self.sums[0];
         let mut out = EffectSig {
             named: sum.escapes.clone(),
             passthrough: sum.passthrough.clone(),
+            lent: self.lent_sig(bases),
+            ret: self.ret_sig(bases),
+            stores: sum.stores.clone(),
             ..EffectSig::default()
         };
+        let mut changed: Vec<PlaceId> = sum.muts.iter().copied().collect();
+        for c in &self.closures {
+            out.named.extend(c.escapes.iter().cloned());
+            changed.extend(c.muts.iter().copied().filter(|&m| {
+                let r = self.root_place(m);
+                !c.param_roots.contains_key(&r) && !c.own_roots.contains(&self.facts.place(m).root)
+            }));
+        }
         let mut muts: Vec<SigPlace> = Vec::new();
-        for &m in &sum.muts {
-            let root = self.facts.place(m).root;
-            let root_place = self
-                .facts
-                .places
-                .iter()
-                .position(|p| p.root == root && p.parent.is_none());
-            let Some(rp) = root_place else { continue };
-            let rp = PlaceId(u32::try_from(rp).unwrap_or(0));
-            let sig_root = if let Some(i) = bases.iter().position(|b| b.first() == Some(&rp)) {
-                SigRoot::Param(i)
-            } else if let Some((&a, _)) = self.groups.iter().find(|(_, &g)| g == rp) {
-                SigRoot::Group(a)
-            } else {
-                // A place under a parameter with an `in` clause, or a local.
-                match bases
-                    .iter()
-                    .position(|b| b.iter().any(|&bp| self.facts.place(bp).root == root))
-                {
-                    Some(i) => SigRoot::Param(i),
-                    None => continue,
-                }
-            };
+        for m in changed {
             // `mut(p..)` is equal to `mut(p)`: a mutation anywhere below `p` is one of `p`.
             let base = self.facts.wild_base(m).unwrap_or(m);
-            let mut steps = self.sig_steps(base);
-            steps.truncate(8);
-            let sp = SigPlace {
-                root: sig_root,
-                steps,
-                text: self.facts.place(base).display.clone(),
+            let Some(sp) = self.sig_place(base, bases) else {
+                continue;
             };
             if !muts.contains(&sp) {
                 muts.push(sp);
@@ -255,6 +244,11 @@ impl Lower<'_> {
 
     fn finish_return(&mut self, v: &Val, span: Span) {
         let ret = self.ret_ty.clone();
+        // A returned function value: its caller can call it later.
+        if let Ty::Fn(f) = self.inf.shallow(&ret) {
+            let info = self.fn_info(v);
+            self.rets.push((info, f.effects.clone()));
+        }
         if matches!(ret, Ty::Unit) {
             self.drop_value(v, span);
         } else {
@@ -809,6 +803,8 @@ impl Lower<'_> {
             }
             self.arith(&lv.ty, &v.ty, value.span);
         }
+        // A function value in a field or an element: the body does not follow it.
+        self.escape(&v);
         self.consume(&v, value.span);
         let detail = format!("mut({})", self.place_text(&places));
         let n = self.emit(span, "assign", detail);

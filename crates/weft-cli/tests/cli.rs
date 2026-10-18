@@ -113,3 +113,25 @@ fn explain_and_help() {
     assert!(run(&["explain".to_string(), "W9999".to_string()]).is_err());
     assert!(run(&["check".to_string(), "--bad".to_string()]).is_err());
 }
+
+#[test]
+fn deps_sees_effects_that_signatures_hide() {
+    let out = cmd(&["deps", "tests/packages/hidden"]);
+    assert_eq!(out.code, 1, "{}", out.text);
+    // A returned closure has the effects of its maker.
+    assert!(
+        out.text
+            .contains("error[W0901]: dependency `json` function `parse` needs `async, net`"),
+        "{}",
+        out.text
+    );
+    // The body counts, not only the stated effects.
+    assert!(
+        out.text
+            .contains("function `quiet` needs `async, log, net`"),
+        "{}",
+        out.text
+    );
+    // A private function counts: the project can call it.
+    assert!(out.text.contains("function `helper` needs"), "{}", out.text);
+}

@@ -1,8 +1,9 @@
 //! Calls: functions, methods, constructors, effect operations and built-ins.
 
+use super::fnval::{Callee, Given};
 use super::{
-    ast, effects, AdtKind, Arg, ContInfo, Expr, ExprKind, FnId, FnTy, ItemRef, Lower, NodeId,
-    PathRef, PlaceId, SigRoot, Span, TaskKind, Ty, Val, PRELUDE,
+    ast, effects, AdtKind, Arg, ContInfo, Expr, ExprKind, FnId, FnSig, FnTy, ItemRef, Lower,
+    NodeId, PathRef, PlaceId, Rc, SigRoot, Span, TaskKind, Ty, Val, PRELUDE,
 };
 
 /// One evaluated argument.
@@ -215,6 +216,38 @@ impl Lower<'_> {
         trailing: Option<&Expr>,
         span: Span,
     ) -> Val {
+        self.call_fn_as(f, recv, None, args, trailing, span)
+    }
+
+    /// Returns the callee root index of parameter `i`: a parameter with `in`
+    /// shares the root of its place.
+    fn sig_root(sig: &FnSig, i: usize) -> u32 {
+        let mut i = i;
+        for _ in 0..sig.params.len() {
+            match sig
+                .params
+                .get(i)
+                .and_then(|p| p.place.as_ref())
+                .map(|pl| &pl.root)
+            {
+                Some(SigRoot::Param(j)) if *j != i => i = *j,
+                _ => break,
+            }
+        }
+        u32::try_from(i).unwrap_or(0)
+    }
+
+    /// Calls a function item. `inst` is the type of the item as a value, for a call
+    /// through a local: the call uses its parameter and result types.
+    pub(super) fn call_fn_as(
+        &mut self,
+        f: FnId,
+        recv: Option<Val>,
+        inst: Option<&FnTy>,
+        args: &[Arg],
+        trailing: Option<&Expr>,
+        span: Span,
+    ) -> Val {
         let sig = self.sigs[f].clone();
         let name = self.prog.fns[f].name.clone();
         // Only a function with `self` as its first parameter takes a receiver.
@@ -236,11 +269,14 @@ impl Lower<'_> {
             };
         }
         let targs: Vec<Ty> = sig.generics.iter().map(|_| self.inf.fresh()).collect();
-        let ptys: Vec<Ty> = sig
-            .params
-            .iter()
-            .map(|p| super::subst(&p.ty, &targs))
-            .collect();
+        let ptys: Vec<Ty> = match inst {
+            Some(t) if t.params.len() == sig.params.len() => t.params.clone(),
+            _ => sig
+                .params
+                .iter()
+                .map(|p| super::subst(&p.ty, &targs))
+                .collect(),
+        };
         // Order the explicit arguments: named arguments go to their parameter.
         let first = usize::from(recv.is_some());
         let mut slots: Vec<Option<&Expr>> = vec![None; sig.params.len()];
@@ -366,6 +402,11 @@ impl Lower<'_> {
                 if av.val.summary.is_some() {
                     held_vars.extend(self.hold_operand(&av.val, later, av.span));
                 }
+                if !matches!(self.inf.shallow(&pt), Ty::Fn(_)) {
+                    // The callee keeps the value, for example in a container.
+                    let v = av.val.clone();
+                    self.escape(&v);
+                }
                 if !matches!(self.inf.shallow(&pt), Ty::Fn(_)) || av.val.summary.is_none() {
                     let v = av.val.clone();
                     self.consume(&v, av.span);
@@ -373,21 +414,8 @@ impl Lower<'_> {
             }
             vals.push(av);
         }
-        // The callee root of each parameter: a parameter with `in` shares the root of its place.
-        let root_of = |mut i: usize| -> u32 {
-            for _ in 0..sig.params.len() {
-                match sig
-                    .params
-                    .get(i)
-                    .and_then(|p| p.place.as_ref())
-                    .map(|pl| &pl.root)
-                {
-                    Some(SigRoot::Param(j)) if *j != i => i = *j,
-                    _ => break,
-                }
-            }
-            u32::try_from(i).unwrap_or(0)
-        };
+        let root_of = |i: usize| Self::sig_root(&sig, i);
+        let roots: Vec<u32> = (0..arg_places.len()).map(root_of).collect();
         // The call node.
         let split = self.fresh_split();
         let mut muts: Vec<(PlaceId, u32)> = Vec::new();
@@ -483,54 +511,84 @@ impl Lower<'_> {
                 );
             }
         }
-        // Effects.
+        // Effects. An operation of a local handler gets the reference arguments.
         let mut abort = false;
+        let ref_args: Vec<(PlaceId, u32)> = arg_places
+            .iter()
+            .zip(&roots)
+            .flat_map(|(ps, &r)| ps.iter().map(move |&p| (p, r)))
+            .collect();
         for e in &sig.effects.named {
-            self.perform_effect(n, e);
+            self.perform_at(n, e, &ref_args);
             if self.effect_has_multi(e) {
                 self.multi_node(n);
             }
-            if self.handlers.iter().any(|h| &h.effect == e) {
-                let cap = self
-                    .handlers
-                    .iter()
-                    .rev()
-                    .find(|h| &h.effect == e)
-                    .map(|h| h.cap);
-                if let Some(c) = cap {
-                    self.cap_calls.push((n, c));
-                }
-            }
             abort = true;
         }
+        // The callee can call a function argument with the places that it lends to it.
+        let mut fns = Vec::new();
         for (i, av) in vals.iter().enumerate() {
-            if let Some(s) = av.val.summary {
-                self.apply_summary(n, s, 800 + u32::try_from(i).unwrap_or(0));
-                self.check_fn_arg_effects(&ptys[i], s, av.span);
-            } else if let Some(fp) = av.val.fn_param {
-                self.sum().passthrough.insert(fp);
-                abort = true;
-            } else if let Some(item) = av.val.item {
-                for e in self.sigs[item].effects.named.clone() {
-                    self.perform_effect(n, &e);
-                    abort = true;
-                }
+            let Ty::Fn(fty) = self.inf.shallow(&av.val.ty) else {
+                fns.push(None);
+                continue;
+            };
+            let info = self.fn_info(&av.val);
+            let row = fty.effects.clone();
+            fns.push(Some((info.clone(), row.clone())));
+            let root = 800 + u32::try_from(i).unwrap_or(0);
+            // A closure argument points into its captures until the call.
+            for &p in &av.val.refs {
+                self.facts.call_arg.push((n, p, root));
             }
+            if let Some(s) = info.summary {
+                self.check_fn_arg_effects(&ptys[i], s, av.span);
+            }
+            let given = self.lent_to(&Callee::Item(f), i, &arg_places, &roots);
+            self.apply_value(n, &info, row.as_deref(), root, &given);
         }
         for &j in &sig.effects.passthrough {
-            if let Some(fp) = vals.get(j).and_then(|v| v.val.fn_param) {
+            if let Some((0, fp)) = vals.get(j).and_then(|v| v.val.fn_param) {
                 self.sum().passthrough.insert(fp);
+            }
+        }
+        // The callee can store a function argument, and it can run a stored one
+        // that an argument holds. A foreign function can do both.
+        let def = &self.prog.fns[f];
+        let foreign = def.decl.body.is_none() && !def.is_std;
+        let is_std = def.is_std;
+        for (i, av) in vals.iter().enumerate() {
+            let ty = self.inf.shallow(&av.val.ty);
+            if matches!(ty, Ty::Fn(_)) {
+                if foreign || sig.effects.stores.contains(&i) {
+                    self.escape(&av.val);
+                }
+            } else if !is_std && self.has_fn(&ty, 0) {
+                let given = Self::any_arg(&arg_places, &roots);
+                self.reach(n, &given);
             }
         }
         if abort {
             self.abortive(n);
         }
         // The result.
-        let ret = super::subst(&sig.ret, &targs);
+        let ret = match inst {
+            Some(t) => t.ret.clone(),
+            None => super::subst(&sig.ret, &targs),
+        };
         let mut out = Val {
             ty: ret.clone(),
             ..Val::default()
         };
+        // A returned function value does what the callee states about it.
+        if let (Some(rf), Ty::Fn(fty)) = (&sig.effects.ret, self.inf.shallow(&ret)) {
+            let s = self.ret_summary(rf, &fty, &arg_places, &fns);
+            out.summary = Some(s);
+            out.ty = Ty::Fn(Rc::new(FnTy {
+                summary: Some(s),
+                item: None,
+                ..(*fty).clone()
+            }));
+        }
         if !sig.ret_places.is_empty() {
             let mut parts: Option<Vec<Val>> = match self.inf.deep(&ret) {
                 Ty::Tuple(ts) => Some(
@@ -609,7 +667,8 @@ impl Lower<'_> {
         }
     }
 
-    /// Calls a closure value or a function parameter.
+    /// Calls a function value in a local: a closure, a function item, a function
+    /// parameter, a join of these, or a value that the body does not know.
     fn call_value(&mut self, l: usize, args: &[Arg], trailing: Option<&Expr>, span: Span) -> Val {
         let loc = self.locals[l].clone();
         let Ty::Fn(fty) = self.inf.shallow(&loc.ty) else {
@@ -624,6 +683,12 @@ impl Lower<'_> {
                 ..Val::default()
             };
         };
+        let callee = self.local_fn_info(l);
+        // A function item: the call is a call of the item, with its effects.
+        if let (None, Some(f), None) = (callee.summary, callee.item, callee.param) {
+            self.use_local(l);
+            return self.call_fn_as(f, None, Some(&fty), args, trailing, span);
+        }
         let exprs: Vec<&Expr> = args.iter().map(|a| &a.value).chain(trailing).collect();
         if exprs.len() != fty.params.len() {
             self.err(
@@ -635,7 +700,8 @@ impl Lower<'_> {
         // Type, hold and move each argument before the next one runs.
         let mut held = Vec::new();
         let mut arg_places: Vec<Vec<PlaceId>> = Vec::new();
-        let mut closures = Vec::new();
+        let mut arg_tys = Vec::new();
+        let mut fns = Vec::new();
         for (i, a) in exprs.iter().enumerate() {
             let later = i + 1 < exprs.len();
             let mut v = match (&a.kind, fty.params.get(i).map(|t| self.inf.shallow(t))) {
@@ -647,14 +713,17 @@ impl Lower<'_> {
             if let Some(pt) = fty.params.get(i) {
                 self.unify_arg(pt, &mut v, a.span);
             }
+            arg_tys.push(v.ty.clone());
             if matches!(self.inf.shallow(&v.ty), Ty::Ref(_)) {
                 arg_places.push(v.refs.clone());
                 held.extend(self.hold_operand(&v, later, a.span));
             } else {
                 arg_places.push(Vec::new());
-                if let Some(s) = v.summary {
+                if v.summary.is_some() {
                     held.extend(self.hold_operand(&v, later, a.span));
-                    closures.push(s);
+                }
+                if let Ty::Fn(f) = self.inf.shallow(&v.ty) {
+                    fns.push((i, self.fn_info(&v), f.effects.clone(), v.refs.clone()));
                 }
             }
             // A closure argument is lent to the call, as in `call_fn`.
@@ -668,67 +737,98 @@ impl Lower<'_> {
         for v in held {
             self.facts.uses.push((v, n));
         }
-        for &p in &arg_refs {
-            self.facts.reads_at.push((n, p));
-            self.sum().reads.insert(p);
+        let roots: Vec<u32> = (0..arg_places.len())
+            .map(|i| u32::try_from(i).unwrap_or(0))
+            .collect();
+        let mut direct = Vec::new();
+        for (i, ps) in arg_places.iter().enumerate() {
+            for &p in ps {
+                self.facts.reads_at.push((n, p));
+                self.sum().reads.insert(p);
+                self.facts.call_arg.push((n, p, roots[i]));
+                direct.push(Given {
+                    pos: Some(i),
+                    place: p,
+                    root: roots[i],
+                });
+            }
         }
         if self.facts.var(loc.var).once {
             self.facts.moved_at.push((loc.var, n));
         }
-        // The callee can call a closure argument.
-        for (i, &s) in closures.iter().enumerate() {
-            self.apply_summary(n, s, 810 + u32::try_from(i).unwrap_or(0));
+        // The value runs with the arguments.
+        self.apply_value(n, &callee, fty.effects.as_deref(), 800, &direct);
+        // The value can call a function argument with the places that it lends to it.
+        let value = Callee::Value(callee.clone());
+        for (i, info, row, refs) in fns {
+            let root = 810 + u32::try_from(i).unwrap_or(0);
+            for p in refs {
+                self.facts.call_arg.push((n, p, root));
+            }
+            let given = self.lent_to(&value, i, &arg_places, &roots);
+            self.apply_value(n, &info, row.as_deref(), root, &given);
         }
-        if let Some(s) = loc.summary {
-            self.apply_summary(n, s, 800);
-        } else if let Some(fp) = loc.fn_param {
-            self.sum().passthrough.insert(fp);
-            if let Some(es) = &fty.effects {
-                for e in es.clone() {
-                    self.perform_effect(n, &e);
-                }
-            }
-            self.abortive(n);
-        } else if let Some(item) = fty.item {
-            for e in self.sigs[item].effects.named.clone() {
-                self.perform_effect(n, &e);
-            }
+        // The value can run a stored function value that an argument holds.
+        if arg_tys
+            .iter()
+            .any(|t| !matches!(self.inf.shallow(t), Ty::Fn(_)) && self.has_fn(t, 0))
+        {
+            let given = Self::any_arg(&arg_places, &roots);
+            self.reach(n, &given);
         }
         // The places of the result.
-        let refs = if let Some(s) = loc.summary {
-            self.closure_call_refs(s, &arg_places)
-        } else if let Some(item) = fty.item {
-            let sig = self.sigs[item].clone();
-            let split = self.fresh_split();
-            let mut refs = Vec::new();
-            for rp in &sig.ret_places {
-                refs.extend(self.subst_place(&rp.place, &arg_places, split));
-                if matches!(rp.place.root, SigRoot::Group(_)) {
-                    refs.extend(self.group_arg_deps(&arg_places, &fty.params));
-                }
-            }
-            refs
-        } else if self.holds_refs(&fty.ret) {
-            // An unknown function can return a reference to any place inside a
-            // reference argument.
-            arg_refs
-                .iter()
-                .map(|&p| {
-                    if self.is_dep(p) {
-                        p
-                    } else {
-                        self.facts.wildcard(p)
-                    }
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let refs = self.value_call_refs(&callee, &fty, &arg_places, &arg_refs);
         Val {
             ty: fty.ret.clone(),
             refs,
             ..Val::default()
         }
+    }
+
+    /// Returns the places that the result of a call of a function value points into.
+    fn value_call_refs(
+        &mut self,
+        callee: &super::FnInfo,
+        fty: &FnTy,
+        arg_places: &[Vec<PlaceId>],
+        arg_refs: &[PlaceId],
+    ) -> Vec<PlaceId> {
+        let (mut refs, items, unknown) = match callee.summary {
+            Some(s) => {
+                let sum = &self.closures[s];
+                let items: Vec<FnId> = sum.items.iter().copied().collect();
+                let unknown = sum.unknown || !sum.params.is_empty();
+                (self.closure_call_refs(s, arg_places), items, unknown)
+            }
+            None => (
+                Vec::new(),
+                callee.item.into_iter().collect(),
+                callee.item.is_none(),
+            ),
+        };
+        for f in items {
+            let sig = self.sigs[f].clone();
+            let split = self.fresh_split();
+            for rp in &sig.ret_places {
+                refs.extend(self.subst_place(&rp.place, arg_places, split));
+                if matches!(rp.place.root, SigRoot::Group(_)) {
+                    refs.extend(self.group_arg_deps(arg_places, &fty.params));
+                }
+            }
+        }
+        // An unknown function can return a reference to any place inside a
+        // reference argument.
+        if unknown && self.holds_refs(&fty.ret) {
+            for &p in arg_refs {
+                let q = if self.is_dep(p) {
+                    p
+                } else {
+                    self.facts.wildcard(p)
+                };
+                refs.push(q);
+            }
+        }
+        refs
     }
 
     fn resume(&mut self, l: usize, args: &[Arg], span: Span) -> Val {
@@ -813,6 +913,7 @@ impl Lower<'_> {
             let v = self.expr(&arg.value);
             let ft = super::subst(&d.ty, &targs);
             self.unify(&ft, &v.ty, arg.value.span);
+            self.escape(&v);
             self.consume(&v, arg.value.span);
             if i + 1 < args.len() {
                 held.extend(self.hold_later(&v, "argument", arg.value.span));
@@ -851,6 +952,7 @@ impl Lower<'_> {
             let v = self.expr(&a.value);
             let ft = super::subst(ft, &targs);
             self.unify(&ft, &v.ty, a.value.span);
+            self.escape(&v);
             self.consume(&v, a.value.span);
             if i + 1 < args.len() {
                 held.extend(self.hold_later(&v, "argument", a.value.span));
@@ -876,26 +978,49 @@ impl Lower<'_> {
                 span,
             );
         }
+        // A perform is a call: each reference argument stays valid until it.
         let mut held = Vec::new();
+        let mut arg_places = Vec::new();
         for (i, (pt, a)) in o.params.iter().zip(args).enumerate() {
+            let later = i + 1 < args.len();
             let v = self.expr(&a.value);
             self.unify(pt, &v.ty, a.value.span);
             self.consume(&v, a.value.span);
-            if i + 1 < args.len() {
-                held.extend(self.hold_later(&v, "argument", a.value.span));
+            if matches!(self.inf.shallow(&v.ty), Ty::Ref(_)) {
+                arg_places.push(v.refs.clone());
+                held.extend(self.hold_operand(&v, later, a.value.span));
+            } else {
+                arg_places.push(Vec::new());
+                if later {
+                    held.extend(self.hold_later(&v, "argument", a.value.span));
+                }
             }
         }
         self.pend_uses.extend(held);
         let n = self.emit(span, &o.name, eff.name.to_lowercase());
         self.perform_effect(n, &eff.name);
-        if let Some(c) = self
+        let cap = self
             .handlers
             .iter()
             .rev()
             .find(|h| h.effect == eff.name)
-            .map(|h| h.cap)
-        {
+            .map(|h| h.cap);
+        if let Some(c) = cap {
             self.cap_calls.push((n, c));
+        }
+        // The clause gets the reference arguments. It pairs with the footprint of
+        // the handler in `call_mut` (W0312), and it can mutate through them.
+        for (i, ps) in arg_places.iter().enumerate() {
+            let root = u32::try_from(i).unwrap_or(0);
+            for &p in ps {
+                self.facts.reads_at.push((n, p));
+                self.sum().reads.insert(p);
+                self.facts.call_arg.push((n, p, root));
+                match cap {
+                    Some(c) => self.give_op(n, c, Some(op), Some(i), p, root),
+                    None => self.facts.lends_mut.push((n, p)),
+                }
+            }
         }
         if o.multi {
             self.multi_node(n);
@@ -1000,7 +1125,7 @@ impl Lower<'_> {
                 span,
             );
         }
-        self.apply_summary(n, s, 700);
+        self.apply_summary(n, s, 700, &[]);
         (t, n)
     }
 
@@ -1133,7 +1258,7 @@ impl Lower<'_> {
         let v = self.closure_arg(body, Some(Ty::Unit));
         let n = self.emit(span, "sim.run", String::new());
         if let Some(s) = v.summary {
-            self.apply_summary(n, s, 800);
+            self.apply_summary(n, s, 800, &[]);
         }
         self.handlers.truncate(base);
         let _ = PRELUDE;

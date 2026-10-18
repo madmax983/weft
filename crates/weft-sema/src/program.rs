@@ -194,6 +194,42 @@ pub struct RetPlace {
     pub uniq: bool,
 }
 
+/// A place that a function gives to one of its function parameters.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LentPlace {
+    /// The function parameter.
+    pub param: usize,
+    /// The argument position in the call of the parameter, or `None` for any position.
+    pub arg: Option<usize>,
+    /// The place, or `None` for a place that the caller cannot name: then it can be
+    /// any place that the reference arguments reach.
+    pub place: Option<SigPlace>,
+}
+
+/// What a call of a function value in the result does, in the places of the parameters.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RetFn {
+    /// Places that the call mutates.
+    pub muts: Vec<SigPlace>,
+    /// Places that the call reads.
+    pub reads: Vec<SigPlace>,
+    /// Places that the call mutates through the parameters of the value.
+    /// `SigRoot::Param(i)` is parameter `i` of the value, not of the function.
+    pub arg_muts: Vec<SigPlace>,
+    /// Named effects. The call site of the function resolves them.
+    pub named: BTreeSet<String>,
+    /// Function parameters of the function that the call can call.
+    pub passthrough: BTreeSet<usize>,
+    /// Function items that the call can call.
+    pub items: BTreeSet<usize>,
+    /// The call can abort.
+    pub abort: bool,
+    /// The call can resume a `multi` continuation more than once.
+    pub multi: bool,
+    /// The call can call a function value that the function does not know.
+    pub unknown: bool,
+}
+
 /// The effect part of a signature.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EffectSig {
@@ -203,6 +239,14 @@ pub struct EffectSig {
     pub named: BTreeSet<String>,
     /// Function parameters whose effects pass through to the caller.
     pub passthrough: BTreeSet<usize>,
+    /// The places that the body gives to its function parameters. A closure
+    /// argument can mutate through them. The body always infers this part.
+    pub lent: Vec<LentPlace>,
+    /// What a call of a returned function value does. The body always infers this part.
+    pub ret: Option<Box<RetFn>>,
+    /// Function parameters that the body stores, for example in a struct field. A
+    /// later call can run them. The body always infers this part.
+    pub stores: BTreeSet<usize>,
 }
 
 impl EffectSig {

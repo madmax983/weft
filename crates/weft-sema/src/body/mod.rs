@@ -25,7 +25,10 @@ use crate::types::{subst, Display, FnTy, Infer, IntTy, Ty};
 
 mod call;
 mod expr;
+mod fnval;
 mod stmt;
+
+use fnval::{Applied, FnInfo, OpArg, Reach};
 
 /// What a body does, in the places of the enclosing function.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -54,8 +57,59 @@ pub struct Summary {
     pub dropped: BTreeSet<VarId>,
     /// The places that the result of a closure points into.
     pub ret_refs: Vec<PlaceId>,
-    /// The root place of each reference parameter of a closure.
-    pub param_roots: Vec<Option<PlaceId>>,
+    /// The root place of each reference parameter of a function value, with the
+    /// parameter index. A place below it stands for a place that the call gives.
+    pub param_roots: BTreeMap<PlaceId, usize>,
+    /// The value is a closure of the body, or can be one: it moves, it is not copied.
+    pub literal: bool,
+    /// Function items that a call of the value can call. Their effects resolve where it is called.
+    pub items: BTreeSet<FnId>,
+    /// Function parameters that the value can be.
+    pub params: BTreeSet<usize>,
+    /// The value can be a function value that the body does not know.
+    pub unknown: bool,
+    /// Effects that a call of the value performs where it is called: the effect
+    /// rows of the parameters and unknown values that it can be.
+    pub row: BTreeSet<String>,
+    /// Places that the body gives to its function parameters: the parameter, the
+    /// argument position (`None`: any position), and the place.
+    pub lent: Vec<(usize, Option<usize>, PlaceId)>,
+    /// Places that the body gives to operations of local handlers: the capability,
+    /// the operation and the argument position (`None`: any), and the place.
+    pub op_args: Vec<(CapId, Option<usize>, Option<usize>, PlaceId)>,
+    /// The closures of the body that the value can be.
+    pub members: BTreeSet<usize>,
+    /// Function parameters that the body stores.
+    pub stores: BTreeSet<usize>,
+}
+
+impl Summary {
+    /// Adds what `o` does: a call of the result can do either.
+    fn union(&mut self, o: &Self) {
+        self.muts.extend(o.muts.iter().copied());
+        self.reads.extend(o.reads.iter().copied());
+        self.escapes.extend(o.escapes.iter().cloned());
+        self.performs.extend(o.performs.iter().copied());
+        self.may_abort |= o.may_abort;
+        self.multi |= o.multi;
+        self.passthrough.extend(o.passthrough.iter().copied());
+        self.own_roots.extend(o.own_roots.iter().copied());
+        self.captures.extend(o.captures.iter().copied());
+        self.moved_captures.extend(o.moved_captures.iter().copied());
+        self.dropped.extend(o.dropped.iter().copied());
+        self.ret_refs.extend(o.ret_refs.iter().copied());
+        self.param_roots
+            .extend(o.param_roots.iter().map(|(&r, &i)| (r, i)));
+        self.literal |= o.literal;
+        self.items.extend(o.items.iter().copied());
+        self.params.extend(o.params.iter().copied());
+        self.unknown |= o.unknown;
+        self.row.extend(o.row.iter().cloned());
+        self.lent.extend(o.lent.iter().copied());
+        self.op_args.extend(o.op_args.iter().copied());
+        self.members.extend(o.members.iter().copied());
+        self.stores.extend(o.stores.iter().copied());
+    }
 }
 
 /// The result of lowering one function.
@@ -88,8 +142,11 @@ struct Local {
     uniq: bool,
     task: Option<TaskId>,
     summary: Option<usize>,
-    fn_param: Option<usize>,
+    /// A function parameter: the summary index of its body and the parameter index.
+    fn_param: Option<(usize, usize)>,
     cont: Option<ContInfo>,
+    /// The local has a value: a new value joins the function values.
+    bound: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -103,7 +160,7 @@ struct Val {
     task: Option<TaskId>,
     parts: Option<Vec<Self>>,
     place: Option<LVal>,
-    fn_param: Option<usize>,
+    fn_param: Option<(usize, usize)>,
     item: Option<FnId>,
 }
 
@@ -135,6 +192,14 @@ struct LoopFrame {
     header: NodeId,
     exit: NodeId,
     frames: usize,
+}
+
+/// Returns the effect row of a function type.
+fn fn_row(t: &Ty) -> Option<Vec<String>> {
+    match t {
+        Ty::Fn(f) => f.effects.clone(),
+        _ => None,
+    }
 }
 
 /// The span of the value of a block: its last statement.
@@ -199,6 +264,16 @@ pub struct Lower<'p> {
     /// The open statements: the frame depth at the start, and the owners of
     /// the temporaries that go out of scope at the end.
     stmt_temps: Vec<(usize, Vec<VarId>)>,
+    /// The function values that the function returns.
+    rets: Vec<fnval::RowFn>,
+    /// The places that nodes give to operations of local handlers.
+    op_args: Vec<OpArg>,
+    /// Function values that the body stores where it does not follow them.
+    escaped: Vec<fnval::RowFn>,
+    /// The nodes where a stored function value can run.
+    reaches: Vec<Reach>,
+    /// The nodes where a summary runs.
+    applied: Vec<Applied>,
 }
 
 impl<'p> Lower<'p> {
@@ -247,6 +322,11 @@ impl<'p> Lower<'p> {
             match_deps: Vec::new(),
             dep_places: BTreeSet::new(),
             stmt_temps: Vec::new(),
+            rets: Vec::new(),
+            op_args: Vec::new(),
+            escaped: Vec::new(),
+            reaches: Vec::new(),
+            applied: Vec::new(),
         }
     }
 
@@ -775,6 +855,7 @@ impl<'p> Lower<'p> {
             summary: None,
             fn_param: None,
             cont: None,
+            bound: false,
         });
         let l = self.locals.len() - 1;
         let top = self.frames.len() - 1;
@@ -806,9 +887,20 @@ impl<'p> Lower<'p> {
         if v.task.is_some() {
             self.locals[l].task = v.task;
         }
-        if v.summary.is_some() {
-            self.locals[l].summary = v.summary;
+        // A function value. A new value of the local joins the old one: a later
+        // call can call either.
+        if let Ty::Fn(fty) = self.inf.shallow(&self.locals[l].ty) {
+            let new = (self.fn_info(v), fn_row(&self.inf.shallow(&v.ty)));
+            let info = if self.locals[l].bound {
+                let old = (self.local_fn_info(l), fty.effects.clone());
+                self.join_fn(&old, &new)
+            } else {
+                new.0
+            };
+            self.locals[l].summary = info.summary;
+            self.locals[l].fn_param = info.param;
         }
+        self.locals[l].bound = true;
         if v.uniq {
             self.locals[l].uniq = true;
             self.facts.vars[var.index()].uniq = true;
@@ -845,7 +937,7 @@ impl<'p> Lower<'p> {
     // Type properties
     // -----------------------------------------------------------------------
 
-    fn adt_fields(&self, t: &Ty) -> Vec<Ty> {
+    pub(super) fn adt_fields(&self, t: &Ty) -> Vec<Ty> {
         match t {
             Ty::Adt(a, args) => match &self.prog.adts[*a].kind {
                 AdtKind::Struct(fs) => fs.iter().map(|f| subst(&f.ty, args)).collect(),
@@ -929,7 +1021,7 @@ impl<'p> Lower<'p> {
             | Ty::Error
             | Ty::Var(_)
             | Ty::Scope => true,
-            Ty::Fn(f) => f.summary.is_none(),
+            Ty::Fn(f) => f.summary.is_none_or(|s| !self.closures[s].literal),
             Ty::Tuple(ts) => ts.iter().all(|t| self.is_copy_d(t, d + 1)),
             Ty::Adt(a, args) => {
                 let def = &self.prog.adts[a];

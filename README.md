@@ -54,6 +54,7 @@ cargo build --release
 | `proofs/` | Verus soundness proofs: group borrowing and algebraic effects. |
 | `std/prelude.wf` | The standard prelude. |
 | `tests/programs` | The design doc examples and one negative program per rule. |
+| `tests/packages` | Packages for the tests of `weft deps`. |
 | `docs/` | Plan, ADRs, grammar, architecture, traceability. |
 
 ## Status

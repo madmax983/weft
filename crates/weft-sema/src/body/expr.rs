@@ -1,9 +1,9 @@
 //! Expressions, places, closures, handlers and scopes.
 
 use super::{
-    ast, block_tail, effects, elem_step, expr_tail, field_step, AdtKind, BinOp, ContInfo, Deref,
-    Expr, ExprKind, FnId, FnTy, Frame, HandlerFrame, HandlerInfo, IntTy, ItemRef, LVal, Lit, Lower,
-    NodeId, PathRef, Pattern, PlaceId, Rc, RootKind, Span, StrPart, Summary, Ty, UnOp, Val,
+    ast, block_tail, effects, elem_step, expr_tail, field_step, AdtKind, BinOp, CapId, ContInfo,
+    Deref, Expr, ExprKind, FnId, FnTy, Frame, HandlerFrame, HandlerInfo, IntTy, ItemRef, LVal, Lit,
+    Lower, NodeId, PathRef, Pattern, PlaceId, Rc, RootKind, Span, StrPart, Summary, Ty, UnOp, Val,
     VarKind, PRELUDE,
 };
 use weft_facts::{Step, StepKind};
@@ -105,6 +105,7 @@ impl Lower<'_> {
                 for x in es {
                     let v = self.expr(x);
                     self.unify(&t, &v.ty, x.span);
+                    self.escape(&v);
                     self.consume(&v, x.span);
                 }
                 let ty = self.b.vec.map_or(Ty::Error, |v| Ty::Adt(v, vec![t]));
@@ -136,6 +137,7 @@ impl Lower<'_> {
                 for x in es {
                     let v = self.expr(x);
                     self.unify(&elem, &v.ty, x.span);
+                    self.escape(&v);
                     self.consume(&v, x.span);
                 }
                 if u64::try_from(es.len()).ok() != Some(n) {
@@ -707,6 +709,7 @@ impl Lower<'_> {
                 }
                 None => self.err("W0104", format!("no field `{}`", name.name), name.span),
             }
+            self.escape(&v);
             self.consume(&v, value.span);
         }
         for d in &defs {
@@ -758,22 +761,37 @@ impl Lower<'_> {
             any = true;
         }
         self.cur = if any { Some(join) } else { None };
-        let ty = if else_.is_none() {
-            Ty::Unit
-        } else if matches!(self.inf.shallow(&a.ty), Ty::Never) {
-            b.ty.clone()
-        } else {
-            self.unify(&a.ty, &b.ty, span);
-            a.ty.clone()
-        };
         let mut refs = a.refs.clone();
         refs.extend(b.refs.iter().copied());
         let uniq = a.uniq && b.uniq;
+        // The value of either branch: function values in it join.
+        let v = if else_.is_none() {
+            Val {
+                ty: Ty::Unit,
+                ..Val::default()
+            }
+        } else if matches!(self.inf.shallow(&a.ty), Ty::Never) {
+            Val {
+                refs: Vec::new(),
+                ..b
+            }
+        } else if matches!(self.inf.shallow(&b.ty), Ty::Never) {
+            Val {
+                refs: Vec::new(),
+                ..a
+            }
+        } else {
+            self.unify(&a.ty, &b.ty, span);
+            self.join_val(&a, &b)
+        };
         Val {
-            ty,
             refs,
             uniq,
-            ..Val::default()
+            var: None,
+            local: None,
+            place: None,
+            task: None,
+            ..v
         }
     }
 
@@ -808,6 +826,7 @@ impl Lower<'_> {
         let result = self.inf.fresh();
         let mut refs = Vec::new();
         let mut reached = false;
+        let mut joined: Option<Val> = None;
         for arm in arms {
             self.cur = Some(br);
             self.frames.push(Frame {
@@ -825,6 +844,18 @@ impl Lower<'_> {
             self.flush(expr_tail(&arm.body));
             if !matches!(self.inf.shallow(&v.ty), Ty::Never) {
                 self.unify(&result, &v.ty, arm.body.span);
+                // The function values of the arms join.
+                joined = Some(match joined.take() {
+                    Some(j) => self.join_val(&j, &v),
+                    None => Val {
+                        ty: v.ty.clone(),
+                        summary: v.summary,
+                        item: v.item,
+                        fn_param: v.fn_param,
+                        parts: v.parts.clone(),
+                        ..Val::default()
+                    },
+                });
             }
             refs.extend(v.refs.iter().copied());
             let v = self.hand_out(v, arm.span);
@@ -840,10 +871,13 @@ impl Lower<'_> {
         }
         self.cur = if reached { Some(join) } else { None };
         self.match_deps = saved_deps;
-        Val {
-            ty: result,
-            refs,
-            ..Val::default()
+        match joined {
+            Some(j) if self.has_fn(&j.ty, 0) => Val { refs, ..j },
+            _ => Val {
+                ty: result,
+                refs,
+                ..Val::default()
+            },
         }
     }
 
@@ -1035,7 +1069,7 @@ impl Lower<'_> {
         let entry = self.start(span, "closure entry");
         self.open_stmt();
         let mut ptys = Vec::new();
-        let mut param_roots = Vec::new();
+        let mut param_roots = std::collections::BTreeMap::new();
         for (i, p) in params.iter().enumerate() {
             let ty = match (&p.ty, expected.and_then(|f| f.params.get(i))) {
                 (Some(t), _) => self.local_ty_pub(t),
@@ -1044,17 +1078,21 @@ impl Lower<'_> {
             };
             ptys.push(ty.clone());
             let l = self.new_local(&p.name.name, VarKind::Param, p.span, ty.clone(), false);
+            // A reference parameter points into what the call gives.
             let refs = if ty.is_ref() {
-                vec![self.root(&p.name.name, RootKind::Param)]
+                let r = self.root(&p.name.name, RootKind::Arg);
+                param_roots.insert(r, i);
+                vec![r]
             } else {
                 Vec::new()
             };
-            param_roots.push(refs.first().copied());
+            let fn_param = matches!(self.inf.shallow(&ty), Ty::Fn(_)).then_some((si, i));
             self.assign_local(
                 l,
                 &Val {
                     ty,
                     refs,
+                    fn_param,
                     ..Val::default()
                 },
                 entry,
@@ -1074,13 +1112,14 @@ impl Lower<'_> {
         let ret_refs = self.closure_ret_refs(&v, expr_tail(body));
         self.sum().ret_refs = ret_refs;
         self.sum().param_roots = param_roots;
+        self.sum().literal = true;
         let ret_ty = v.ty.clone();
         self.drop_value(&v, body.span);
         self.flush(expr_tail(body));
         self.end_frame(span);
         let end = self.cur;
         self.frames.pop();
-        let sum = self.sums.pop().unwrap_or_default();
+        let mut sum = self.sums.pop().unwrap_or_default();
         // A captured linear value that the closure moves must be consumed inside it.
         for &var in &sum.moved_captures {
             if self.facts.var(var).linear {
@@ -1095,6 +1134,8 @@ impl Lower<'_> {
             let _ = outer;
         }
         let id = self.closures.len();
+        sum.members.insert(id);
+        self.close_scope(si, super::fnval::Scope::Closure(id));
         self.closures.push(sum.clone());
         self.cur = saved;
         self.restore_pending(saved_pending);
@@ -1207,7 +1248,7 @@ impl Lower<'_> {
         let mut out = Vec::new();
         for &r in &sum.ret_refs {
             let root = self.root_place(r);
-            match sum.param_roots.iter().position(|&p| p == Some(root)) {
+            match sum.param_roots.get(&root).copied() {
                 Some(i) => {
                     for &a in args.get(i).map_or(&[][..], Vec::as_slice) {
                         out.push(self.rebase(r, root, a));
@@ -1229,7 +1270,7 @@ impl Lower<'_> {
     }
 
     /// Moves place `p` from under `from` to under `onto`, with the same steps.
-    fn rebase(&mut self, p: PlaceId, from: PlaceId, onto: PlaceId) -> PlaceId {
+    pub(super) fn rebase(&mut self, p: PlaceId, from: PlaceId, onto: PlaceId) -> PlaceId {
         let mut chain = Vec::new();
         let mut at = p;
         while at != from {
@@ -1270,46 +1311,6 @@ impl Lower<'_> {
             diags: &mut self.diags,
         }
         .resolve(t, module, &gens, None)
-    }
-
-    /// Applies a closure summary at a node: the closure runs there.
-    pub(super) fn apply_summary(&mut self, n: NodeId, s: usize, root_index: u32) {
-        let sum = self.closures[s].clone();
-        let own = |me: &Self, p: PlaceId| sum.own_roots.contains(&me.facts.place(p).root);
-        for &m in &sum.muts {
-            if !own(self, m) {
-                self.mutate(n, m);
-                self.facts.call_mut.push((n, m, root_index));
-            }
-        }
-        for &r in &sum.reads {
-            if !own(self, r) {
-                self.facts.reads_at.push((n, r));
-                self.sum().reads.insert(r);
-            }
-        }
-        for e in &sum.escapes {
-            self.facts.escapes_at.push((n, e.clone()));
-            self.sum().escapes.insert(e.clone());
-        }
-        for &c in &sum.performs {
-            self.facts.performs_at.push((n, c));
-            self.sum().performs.insert(c);
-            self.cap_calls.push((n, c));
-        }
-        if sum.may_abort {
-            self.abortive(n);
-        }
-        if sum.multi {
-            self.multi_node(n);
-        }
-        let pt = sum.passthrough.clone();
-        self.sum().passthrough.extend(pt);
-        // The locals of the body go out of scope when it returns.
-        for &v in &sum.dropped {
-            self.facts.scope_end.push((v, n));
-        }
-        self.sum().dropped.extend(sum.dropped.iter().copied());
     }
 
     // -----------------------------------------------------------------------
@@ -1358,6 +1359,7 @@ impl Lower<'_> {
         let saved = self.cur;
         let mut footprint = Vec::new();
         let mut clause_sum = Summary::default();
+        let mut clauses_done = Vec::new();
         for c in clauses {
             let Some(op) = def.ops.iter().find(|o| o.name == c.op.name).cloned() else {
                 self.err(
@@ -1387,12 +1389,22 @@ impl Lower<'_> {
             let entry = self.start(c.span, "handler clause");
             let saved_stmts = std::mem::take(&mut self.stmt_temps);
             self.open_stmt();
-            for (p, pt) in c.params.iter().zip(&op.params) {
+            // A reference parameter points into what the operation gets.
+            let mut param_roots = std::collections::BTreeMap::new();
+            for (i, (p, pt)) in c.params.iter().zip(&op.params).enumerate() {
                 let l = self.new_local(&p.name.name, VarKind::Param, p.span, pt.clone(), false);
+                let refs = if pt.is_ref() {
+                    let r = self.root(&p.name.name, RootKind::Arg);
+                    param_roots.insert(r, i);
+                    vec![r]
+                } else {
+                    Vec::new()
+                };
                 self.assign_local(
                     l,
                     &Val {
                         ty: pt.clone(),
+                        refs,
                         ..Val::default()
                     },
                     entry,
@@ -1418,12 +1430,16 @@ impl Lower<'_> {
             self.end_frame(c.span);
             self.frames.pop();
             self.stmt_temps = saved_stmts;
-            let cs = self.sums.pop().unwrap_or_default();
+            self.close_scope(si, super::fnval::Scope::Clause);
+            let mut cs = self.sums.pop().unwrap_or_default();
+            cs.param_roots = param_roots;
             for &m in &cs.muts {
                 if !cs.own_roots.contains(&self.facts.place(m).root) {
                     footprint.push(m);
                 }
             }
+            let oi = def.ops.iter().position(|o| o.name == op.name);
+            clauses_done.push((oi, cs.clone()));
             self.merge_summary(&cs);
             clause_sum.captures.extend(cs.captures.iter().copied());
             clause_sum
@@ -1465,6 +1481,10 @@ impl Lower<'_> {
                 self.facts.call_mut.push((n, m, 1000 + cap.0));
             }
         }
+        // A clause mutates and reads through its parameters what the operation gets.
+        for (oi, cs) in &clauses_done {
+            self.clause_through_params(cap, *oi, cs);
+        }
         // A clause runs at each operation that it handles. There it uses its
         // captures, moves the moved ones, and its locals go out of scope.
         for &n in &calls {
@@ -1505,6 +1525,49 @@ impl Lower<'_> {
         }
     }
 
+    /// Applies what clause `cs` of operation `op` does through its reference
+    /// parameters at each node that gives places to the operation.
+    fn clause_through_params(&mut self, cap: CapId, op: Option<usize>, cs: &Summary) {
+        let here = self.frames.iter().rev().find_map(|f| f.barrier);
+        let args: Vec<_> = self
+            .op_args
+            .iter()
+            .filter(|a| a.cap == cap && (a.op.is_none() || a.op == op))
+            .copied()
+            .collect();
+        let through = |me: &mut Self, p: PlaceId, a: &super::OpArg| -> Option<PlaceId> {
+            let r = me.root_place(p);
+            let &k = cs.param_roots.get(&r)?;
+            match a.pos {
+                Some(i) if i == k => Some(me.rebase(p, r, a.place)),
+                Some(_) => None,
+                // The parameter can point anywhere inside the place.
+                None => Some(a.place),
+            }
+        };
+        for a in &args {
+            for &m in &cs.muts {
+                if let Some(q) = through(self, m, a) {
+                    // The summary of the body gets the change only for its own nodes.
+                    if a.body == here {
+                        self.mutate(a.node, q);
+                    } else {
+                        self.facts.mutates_at.push((a.node, q));
+                    }
+                    self.facts.call_mut.push((a.node, q, a.root));
+                }
+            }
+            for &r in &cs.reads {
+                if let Some(q) = through(self, r, a) {
+                    self.facts.reads_at.push((a.node, q));
+                    if a.body == here {
+                        self.sum().reads.insert(q);
+                    }
+                }
+            }
+        }
+    }
+
     fn merge_summary(&mut self, s: &Summary) {
         let own = s.own_roots.clone();
         let t = self.sum();
@@ -1521,6 +1584,11 @@ impl Lower<'_> {
         t.captures.extend(s.captures.iter().copied());
         t.moved_captures.extend(s.moved_captures.iter().copied());
         t.dropped.extend(s.dropped.iter().copied());
+        for &a in &s.op_args {
+            if !t.op_args.contains(&a) {
+                t.op_args.push(a);
+            }
+        }
     }
 
     // -----------------------------------------------------------------------

@@ -2,7 +2,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use weft_facts::{FnFacts, PlaceId, VarId};
+use weft_facts::{FnFacts, PlaceId, RootKind, VarId};
 
 use crate::{analyze_source, Options};
 
@@ -234,4 +234,121 @@ fn a_compound_assignment_to_a_reference_field_writes_its_place() {
     assert!(f.mutates_at.iter().any(|&(_, p)| p == buf));
     let cur = place(&f, "fr.cur");
     assert!(!f.mutates_at.iter().any(|&(_, p)| p == cur));
+}
+
+/// Returns the node with label `label`.
+fn node(f: &FnFacts, label: &str) -> weft_facts::NodeId {
+    f.nodes
+        .iter()
+        .position(|n| n.label == label)
+        .map(|i| weft_facts::NodeId(u32::try_from(i).unwrap()))
+        .expect("the node exists")
+}
+
+/// Returns the signature of function `name`.
+fn sig(src: &str, name: &str) -> crate::FnSig {
+    let a = analyze_source(src, Options::default()).expect("the source parses");
+    let i = a
+        .program
+        .fns
+        .iter()
+        .position(|f| f.name == name)
+        .expect("the function exists");
+    a.sigs[i].clone()
+}
+
+#[test]
+fn a_perform_passes_its_reference_arguments_to_the_clause() {
+    let f = facts(
+        "effect Bump { fn bump(v: &Vec<u64>) }
+         fn f() {
+             let v: Vec<u64> = Vec.new()
+             handle Bump { fn bump(x) { let e = &x[0]; x.push(1); print(e); resume(()) } } in bump(&v)
+         }",
+        "f",
+    );
+    let n = node(&f, "bump");
+    let v = place(&f, "v");
+    assert!(f.call_arg.contains(&(n, v, 0)));
+    // The clause parameter has its own root. A mutation through it is a mutation
+    // of the argument at the operation, and it needs no declaration.
+    let x = place(&f, "x");
+    assert_eq!(f.roots[f.place(x).root.index()].kind, RootKind::Arg);
+    assert!(!f.param_rooted(x));
+    assert!(f.points_into.contains(&(var(&f, "e"), place(&f, "x[]"))));
+    assert!(f.mutates_at.contains(&(n, v)));
+    assert!(f.call_mut.contains(&(n, v, 0)));
+}
+
+#[test]
+fn an_operation_of_an_outer_handler_lends_its_arguments() {
+    let f = facts(
+        "effect Bump { fn bump(v: &Vec<u64>) }
+         fn f(v: &Vec<u64>) / Bump { bump(v) }",
+        "f",
+    );
+    assert!(f.lends_mut.contains(&(node(&f, "bump"), place(&f, "v"))));
+    assert!(f.mutates_at.is_empty());
+}
+
+#[test]
+fn a_closure_argument_passes_its_captures() {
+    let f = facts(
+        "struct E { hp: i32 } struct W { es: Vec<E> }
+         fn run(g: fn(), w: &W) {}
+         fn f(w: &W) { let r = &w.es[0]; run(|| print(r.hp), w) }",
+        "f",
+    );
+    let n = node(&f, "run");
+    assert!(f.call_arg.contains(&(n, place(&f, "w.es[]"), 800)));
+    assert!(f.call_arg.contains(&(n, place(&f, "w"), 1)));
+}
+
+#[test]
+fn a_call_of_a_function_parameter_lends_its_reference_arguments() {
+    let f = facts("struct W { n: u64 } fn f(g: fn(&W), w: &W) { g(w) }", "f");
+    assert!(f.lends_mut.contains(&(node(&f, "g"), place(&f, "w"))));
+    assert!(f.may_abort.contains(&node(&f, "g")));
+}
+
+#[test]
+fn a_closure_parameter_root_needs_no_declaration() {
+    let f = facts(
+        "struct W { n: u64 } fn f(w: &W) / mut(w.n) { let h = |x: &W| x.n += 1; h(w) }",
+        "f",
+    );
+    let xn = place(&f, "x.n");
+    assert!(!f.param_rooted(xn));
+    // The call mutates the argument instead.
+    assert!(f.mutates_at.contains(&(node(&f, "h"), place(&f, "w.n"))));
+}
+
+#[test]
+fn a_signature_states_what_the_body_lends_to_its_function_parameters() {
+    let s = sig(
+        "struct W { n: u64 } fn apply(f: fn(&W), w: &W) { f(w) }",
+        "apply",
+    );
+    let lp = &s.effects.lent;
+    assert_eq!(lp.len(), 1, "{lp:?}");
+    assert_eq!((lp[0].param, lp[0].arg), (0, Some(0)));
+    let place = lp[0].place.as_ref().expect("the caller can name the place");
+    assert_eq!(place.root, crate::program::SigRoot::Param(1));
+    assert!(place.steps.is_empty());
+}
+
+#[test]
+fn a_signature_states_what_a_returned_closure_does() {
+    let s = sig(
+        "struct W { n: u64 } fn mk(w: &W) -> fn() { || { w.n += 1; log.info(\"x\") } }",
+        "mk",
+    );
+    // The maker has the effects of the closure.
+    assert!(s.effects.named.contains("Log"));
+    assert_eq!(s.effects.muts.len(), 1);
+    let ret = s.effects.ret.expect("the returned closure has a summary");
+    assert!(ret.named.contains("Log"));
+    assert_eq!(ret.muts.len(), 1);
+    assert_eq!(ret.muts[0].text, "w.n");
+    assert!(ret.abort);
 }

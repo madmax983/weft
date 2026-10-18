@@ -37,6 +37,9 @@ pub struct BodyFacts {
     pub unit: usize,
     /// The facts.
     pub facts: FnFacts,
+    /// The effects that the body infers, also for a function that states its
+    /// effects. They include the closures that the body makes.
+    pub effects: program::EffectSig,
 }
 
 /// The result of analysis.
@@ -78,20 +81,29 @@ pub fn analyze(units: &[Unit], opts: Options) -> Analysis {
         .collect();
     let library_of =
         |prog: &Program, f: usize| opts.library || unit_of(prog, prog.fns[f].module) > 1;
-    // Effect inference: iterate to a fixpoint over the call graph.
+    // Effect inference: iterate to a fixpoint over the call graph. A function that
+    // states its effects still infers what it lends to its function parameters, what
+    // its returned function value does, and which function parameters it stores.
     let mut rounds = 0;
     loop {
         rounds += 1;
         let mut changed = false;
         for &f in &user_fns {
-            if sigs[f].declared {
-                continue;
-            }
             let lib = library_of(&prog, f);
             let l = body::Lower::new(&prog, &sigs, prog.fns[f].module, &prog.fns[f].path, lib)
                 .lower_fn(f);
-            if l.effects != sigs[f].effects {
-                sigs[f].effects = l.effects;
+            let next = if sigs[f].declared {
+                program::EffectSig {
+                    lent: l.effects.lent,
+                    ret: l.effects.ret,
+                    stores: l.effects.stores,
+                    ..sigs[f].effects.clone()
+                }
+            } else {
+                l.effects
+            };
+            if next != sigs[f].effects {
+                sigs[f].effects = next;
                 changed = true;
             }
         }
@@ -109,6 +121,7 @@ pub fn analyze(units: &[Unit], opts: Options) -> Analysis {
             func: Some(f),
             unit: unit_of(&prog, prog.fns[f].module),
             facts: l.facts,
+            effects: l.effects,
         });
     }
     for t in &prog.tests {
@@ -120,6 +133,7 @@ pub fn analyze(units: &[Unit], opts: Options) -> Analysis {
             func: None,
             unit: unit_of(&prog, t.module),
             facts: l.facts,
+            effects: l.effects,
         });
     }
     for &f in &user_fns {

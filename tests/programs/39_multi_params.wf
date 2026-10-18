@@ -1,0 +1,56 @@
+// A call of a function parameter can resume more than once when a caller can
+// pass a closure that performs a `multi` operation.
+effect Choice { multi fn choose() -> bool }
+linear struct Token { id: u64 }
+    on abort = spend
+fn spend(t: Token) { let Token(i) = t }
+fn mint() -> Token { Token { id: 1 } }
+
+fn run(f: fn() -> bool) -> bool {
+    let t = mint()
+    let b = f()   //~ W0503
+    spend(t)
+    b
+}
+fn caller() -> bool / Choice { run(|| choose()) }
+
+// A copy of the parameter, and a closure parameter.
+fn run_copy(f: fn() -> bool) -> bool {
+    let t = mint()
+    let g = f
+    let b = g()   //~ W0503
+    spend(t)
+    b
+}
+fn run_closure() -> bool / Choice {
+    let go = |f: fn() -> bool| {
+        let t = mint()
+        let b = f()   //~ W0503
+        spend(t)
+        b
+    }
+    go(|| choose())
+}
+
+// A call that passes the parameter on: the callee can call it.
+fn twice(f: fn() -> bool) -> bool { f() }
+fn pass_on(f: fn() -> bool) -> bool {
+    let t = mint()
+    let b = twice(f)   //~ W0503
+    spend(t)
+    b
+}
+
+// Controls: the parameter type states effects with no `multi` operation, and
+// the token is consumed before the call.
+fn run_log(f: fn() -> bool / log) -> bool / log {
+    let t = mint()
+    let b = f()
+    spend(t)
+    b
+}
+fn consumed_first(f: fn() -> bool) -> bool {
+    let t = mint()
+    spend(t)
+    f()
+}
