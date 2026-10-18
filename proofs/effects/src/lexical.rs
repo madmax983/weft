@@ -93,13 +93,14 @@ pub proof fn e1_effect_safety(prog: Prog, tr: Seq<State>)
         is_trace(prog, tr),
         tr[0] == init(prog),
     ensures
-        forall|i: int|
-            0 <= i < tr.len() ==> !#[trigger] err_unhandled(prog, tr[i]) && !err_malformed(prog, tr[i]),
+        forall|i: int| 0 <= i < tr.len() ==> !#[trigger] err_unhandled(prog, tr[i]),
+        forall|i: int| 0 <= i < tr.len() ==> !#[trigger] err_malformed(prog, tr[i]),
 {
-    assert forall|i: int| 0 <= i < tr.len() implies !#[trigger] err_unhandled(prog, tr[i]) && !err_malformed(
-        prog,
-        tr[i],
-    ) by {
+    assert forall|i: int| 0 <= i < tr.len() implies !#[trigger] err_unhandled(prog, tr[i]) by {
+        lemma_inv_a_trace(prog, tr, i);
+        lemma_no_struct_error(prog, tr[i]);
+    }
+    assert forall|i: int| 0 <= i < tr.len() implies !#[trigger] err_malformed(prog, tr[i]) by {
         lemma_inv_a_trace(prog, tr, i);
         lemma_no_struct_error(prog, tr[i]);
     }
@@ -276,7 +277,7 @@ pub open spec fn resolves_to(prog: Prog, tr: Seq<State>, i: int, m: int) -> bool
                 CFrame { block: hi.clauses[op as int], pc: 0, env: hi.env, slots: Map::empty(), k: Some(s.next_k) },
             )
             &&& exists|j: int|
-                topmost(s.stack, c, j) && #[trigger] tr[i + 1].konts[s.next_k].frames[0] == s.stack[j]
+                #[trigger] topmost(s.stack, c, j) && tr[i + 1].konts[s.next_k].frames[0] == s.stack[j]
                     && s.stack[j] == Frame::Handler(c)
         },
         _ => false,
