@@ -232,7 +232,7 @@ pub fn package_diags(pkg: &Package, a: &Analysis) -> Vec<Diagnostic> {
             let mut d = Diagnostic::error(
                 "W0902",
                 "a library cannot enable the GC tier; only a binary may",
-                Default::default(),
+                weft_syntax::ast::Span::default(),
             );
             d.unit = 1;
             out.push(d);
@@ -246,7 +246,7 @@ pub fn package_diags(pkg: &Package, a: &Analysis) -> Vec<Diagnostic> {
                     "dependency `{}` enables the GC tier; libraries may never require it",
                     dep.name
                 ),
-                Default::default(),
+                weft_syntax::ast::Span::default(),
             );
             d.unit = dep.unit;
             out.push(d);

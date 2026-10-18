@@ -1,9 +1,9 @@
 //! Expressions, places, closures, handlers and scopes.
 
 use super::{
-    ast, effects, elem_step, field_step, sp, AdtKind, Arg, BinOp, ContInfo, Deref, Expr, ExprKind,
-    FnTy, Frame, HandlerFrame, HandlerInfo, IntTy, ItemRef, LVal, Lit, Lower, NodeId, PathRef,
-    Pattern, PlaceId, Rc, RootKind, Span, StrPart, Summary, Ty, UnOp, Val, VarKind, PRELUDE,
+    ast, effects, elem_step, field_step, AdtKind, BinOp, ContInfo, Deref, Expr, ExprKind, FnTy,
+    Frame, HandlerFrame, HandlerInfo, IntTy, ItemRef, LVal, Lit, Lower, NodeId, PathRef, Pattern,
+    PlaceId, Rc, RootKind, Span, StrPart, Summary, Ty, UnOp, Val, VarKind, PRELUDE,
 };
 use weft_facts::{Step, StepKind};
 
@@ -178,8 +178,8 @@ impl Lower<'_> {
                     ..Val::default()
                 })
             }
-            PathRef::Mod(m) => match self.prog.lookup_in(m, &name.name) {
-                Some(ItemRef::Fn(f)) => {
+            PathRef::Mod(m) => {
+                if let Some(ItemRef::Fn(f)) = self.prog.lookup_in(m, &name.name) {
                     let id = ast::Ident {
                         name: self.prog.fns[f].name.clone(),
                         span: name.span,
@@ -203,8 +203,7 @@ impl Lower<'_> {
                         item: Some(f),
                         ..Val::default()
                     })
-                }
-                _ => {
+                } else {
                     self.err(
                         "W0104",
                         format!("no item `{}` in this module", name.name),
@@ -215,7 +214,7 @@ impl Lower<'_> {
                         ..Val::default()
                     })
                 }
-            },
+            }
             PathRef::Effect(_) => {
                 self.err(
                     "W0105",
@@ -714,10 +713,7 @@ impl Lower<'_> {
         let a = self.block(then);
         let a_end = self.cur;
         self.cur = Some(br);
-        let b = match else_ {
-            Some(e) => self.expr(e),
-            None => Val::default(),
-        };
+        let b = else_.map_or_else(Val::default, |e| self.expr(e));
         let b_end = self.cur;
         let join = self.facts.add_node(span, "join", String::new());
         let mut any = false;
@@ -1172,7 +1168,6 @@ impl Lower<'_> {
             effect: def.name.clone(),
             cap,
             multi: def.has_multi(),
-            depth: self.frames.len(),
         });
         self.sums.push(Summary::default());
         let v = self.expr(body);
@@ -1347,16 +1342,5 @@ impl Lower<'_> {
         self.end_frame(span);
         self.frames.pop();
         v
-    }
-
-    #[allow(dead_code)]
-    fn unused_expr(&self) -> (Span, Option<&Arg>) {
-        (
-            sp(&Expr {
-                kind: ExprKind::Lit(Lit::Unit),
-                span: Span::default(),
-            }),
-            None,
-        )
     }
 }

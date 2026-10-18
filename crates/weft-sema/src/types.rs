@@ -191,15 +191,20 @@ impl Infer {
     pub fn unify(&mut self, a: &Ty, b: &Ty) -> bool {
         let a = self.shallow(a);
         let b = self.shallow(b);
+        if let (Ty::Var(x), Ty::Var(y)) | (Ty::IntVar(x), Ty::IntVar(y)) = (&a, &b) {
+            if x == y {
+                return true;
+            }
+        }
         match (&a, &b) {
-            (Ty::Error | Ty::Never, _) | (_, Ty::Error | Ty::Never) => true,
-            (Ty::Var(x), Ty::Var(y)) | (Ty::IntVar(x), Ty::IntVar(y)) if x == y => true,
-            (Ty::Var(x), _) => self.bind(*x, &b),
-            (_, Ty::Var(y)) => self.bind(*y, &a),
-            (Ty::IntVar(x), Ty::Int(_) | Ty::IntVar(_)) => self.bind(*x, &b),
-            (Ty::Int(_), Ty::IntVar(y)) => self.bind(*y, &a),
+            (Ty::Error | Ty::Never, _)
+            | (_, Ty::Error | Ty::Never)
+            | (Ty::Bool, Ty::Bool)
+            | (Ty::Unit, Ty::Unit)
+            | (Ty::Scope, Ty::Scope) => true,
+            (Ty::Var(x), _) | (Ty::IntVar(x), Ty::Int(_) | Ty::IntVar(_)) => self.bind(*x, &b),
+            (_, Ty::Var(y)) | (Ty::Int(_), Ty::IntVar(y)) => self.bind(*y, &a),
             (Ty::Int(x), Ty::Int(y)) => x == y,
-            (Ty::Bool, Ty::Bool) | (Ty::Unit, Ty::Unit) | (Ty::Scope, Ty::Scope) => true,
             (Ty::Tuple(xs), Ty::Tuple(ys)) if xs.len() == ys.len() => {
                 xs.iter().zip(ys).all(|(x, y)| self.unify(x, y))
             }

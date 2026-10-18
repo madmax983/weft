@@ -389,7 +389,7 @@ impl FnFacts {
     }
 
     /// Adds a capability.
-    pub fn add_cap(&mut self) -> CapId {
+    pub const fn add_cap(&mut self) -> CapId {
         let id = CapId(self.caps);
         self.caps += 1;
         id
@@ -518,12 +518,14 @@ mod tests {
 
     #[test]
     fn normalize_sorts_and_dedups() {
-        let mut f = FnFacts::default();
-        f.cfg_edge = vec![
-            (NodeId(2), NodeId(3)),
-            (NodeId(0), NodeId(1)),
-            (NodeId(2), NodeId(3)),
-        ];
+        let mut f = FnFacts {
+            cfg_edge: vec![
+                (NodeId(2), NodeId(3)),
+                (NodeId(0), NodeId(1)),
+                (NodeId(2), NodeId(3)),
+            ],
+            ..FnFacts::default()
+        };
         f.normalize();
         assert_eq!(
             f.cfg_edge,

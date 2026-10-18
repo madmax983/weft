@@ -1,9 +1,9 @@
 //! Functions, blocks, statements and patterns.
 
 use super::{
-    ast, effects, sp, AssignOp, Block, Diagnostic, EffectSig, ExprKind, FnId, Frame, LVal, Local,
-    LoopFrame, Lower, Lowered, NodeId, Pattern, PlaceId, RootKind, SigPlace, SigRoot, SigStep,
-    Span, StepKind, Stmt, StmtKind, Ty, Val, VarKind,
+    ast, effects, AssignOp, Block, EffectSig, ExprKind, FnId, Frame, LVal, LoopFrame, Lower,
+    Lowered, NodeId, Pattern, PlaceId, RootKind, SigPlace, SigRoot, SigStep, Span, StepKind, Stmt,
+    StmtKind, Ty, Val, VarKind,
 };
 use std::collections::BTreeSet;
 
@@ -78,7 +78,7 @@ impl Lower<'_> {
         let v = self.block_inner(&body);
         let tail_span = body.stmts.last().map_or(body.span, |s| s.span);
         if self.cur.is_some() {
-            self.finish_return(v, tail_span);
+            self.finish_return(&v, tail_span);
         }
         self.end_frame(body.span);
         if let Some(c) = self.cur {
@@ -95,7 +95,7 @@ impl Lower<'_> {
         let eff = self.summary_to_sig(&bases);
         let fdef = &self.prog.fns[id];
         if fdef.is_pub && !sig.declared && !eff.is_empty() && !fdef.decl.is_extern {
-            let text = self.effect_text(&eff);
+            let text = Self::effect_text(&eff);
             self.err(
                 "W0701",
                 format!(
@@ -140,7 +140,7 @@ impl Lower<'_> {
     }
 
     /// Text form of an effect row.
-    pub(super) fn effect_text(&self, e: &EffectSig) -> String {
+    pub(super) fn effect_text(e: &EffectSig) -> String {
         let mut parts: Vec<String> = Vec::new();
         if !e.muts.is_empty() {
             let ps: Vec<&str> = e.muts.iter().map(|m| m.text.as_str()).collect();
@@ -151,7 +151,7 @@ impl Lower<'_> {
     }
 
     /// Converts the body summary into a signature row in terms of parameters.
-    fn summary_to_sig(&mut self, bases: &[Vec<PlaceId>]) -> EffectSig {
+    fn summary_to_sig(&self, bases: &[Vec<PlaceId>]) -> EffectSig {
         let sum = self.sums[0].clone();
         let mut out = EffectSig {
             named: sum.escapes.clone(),
@@ -222,14 +222,14 @@ impl Lower<'_> {
         out
     }
 
-    fn finish_return(&mut self, v: Val, span: Span) {
+    fn finish_return(&mut self, v: &Val, span: Span) {
         let ret = self.ret_ty.clone();
         if matches!(ret, Ty::Unit) {
-            self.drop_value(&v, span);
+            self.drop_value(v, span);
         } else {
             self.unify(&ret, &v.ty, span);
-            self.consume(&v, span);
-            self.check_returned_refs(&v, span);
+            self.consume(v, span);
+            self.check_returned_refs(v, span);
         }
     }
 
@@ -421,12 +421,9 @@ impl Lower<'_> {
             }
             StmtKind::Assign { target, op, value } => self.assign(target, *op, value, s.span),
             StmtKind::Return(e) => {
-                let v = match e {
-                    Some(e) => self.expr(e),
-                    None => Val::default(),
-                };
+                let v = e.as_ref().map_or_else(Val::default, |e| self.expr(e));
                 if self.cur.is_some() {
-                    self.finish_return(v, s.span);
+                    self.finish_return(&v, s.span);
                     let n = self.emit(s.span, "return", String::new());
                     self.end_frames_above(1, n);
                     // The exit node is node 1 of the function component when it exists.
@@ -826,12 +823,5 @@ impl Lower<'_> {
         };
         let n = self.emit(span, "move", String::new());
         self.move_var(var, n);
-    }
-
-    #[allow(dead_code)]
-    fn unused(&self) -> Option<&Local> {
-        let _ = Diagnostic::error("", "", Span::default());
-        let _ = sp;
-        self.locals.first()
     }
 }

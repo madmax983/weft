@@ -7,6 +7,7 @@
 //! For every body, the production checker must agree with the Datalog spec.
 
 use std::collections::BTreeSet;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
@@ -47,17 +48,18 @@ fn run(path: &Path) -> Result<(), String> {
     let want = expected(&src);
     let mut msg = String::new();
     if actual != want {
-        msg.push_str(&format!("{name}: expected {want:?}\n  found {actual:?}\n"));
+        let _ = writeln!(msg, "{name}: expected {want:?}\n  found {actual:?}");
         for d in &checked.diags {
             msg.push_str(&d.render(&file));
         }
     }
     if let Err(bad) = agreement(&checked) {
         for b in bad {
-            msg.push_str(&format!(
-                "{name}: checker and spec disagree in `{}`\n  checker: {:?}\n  spec:    {:?}\n",
+            let _ = writeln!(
+                msg,
+                "{name}: checker and spec disagree in `{}`\n  checker: {:?}\n  spec:    {:?}",
                 b.function, b.checker, b.spec
-            ));
+            );
         }
     }
     if msg.is_empty() {

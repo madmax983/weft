@@ -2,7 +2,7 @@
 
 use super::{
     ast, effects, AdtKind, Arg, ContInfo, Expr, ExprKind, FnId, FnTy, ItemRef, Lower, NodeId,
-    PathRef, PlaceId, Rc, RootKind, SigRoot, Span, TaskKind, Ty, Val, VarKind, PRELUDE,
+    PathRef, PlaceId, RootKind, SigRoot, Span, TaskKind, Ty, Val, VarKind, PRELUDE,
 };
 
 /// One evaluated argument.
@@ -153,13 +153,7 @@ impl Lower<'_> {
         // A method on a value.
         let rv = match self.place_expr(recv) {
             Some(lv) => {
-                for &p in &lv.places {
-                    let _ = p;
-                }
-                let refs = match self.inf.shallow(&lv.ty) {
-                    Ty::Ref(_) => Vec::new(),
-                    _ => Vec::new(),
-                };
+                let refs = Vec::new();
                 let local = lv.owner;
                 let var = local.map(|l| self.locals[l].var);
                 let (task, summary) = local.map_or((None, None), |l| {
@@ -306,10 +300,10 @@ impl Lower<'_> {
             let arg_is_ref = matches!(self.inf.shallow(&av.val.ty), Ty::Ref(_));
             if is_ref_param && !arg_is_ref && i == 0 && first == 1 {
                 // `x.m()` borrows `x` when `m` takes `self` by reference.
-                let places = match &av.val.place {
-                    Some(lv) => lv.places.clone(),
-                    None => vec![self.root("temporary", RootKind::Local)],
-                };
+                let places = av.val.place.as_ref().map_or_else(
+                    || vec![self.root("temporary", RootKind::Local)],
+                    |lv| lv.places.clone(),
+                );
                 if let Ty::Ref(inner) = self.inf.shallow(&pt) {
                     self.unify(&inner, &av.val.ty, av.span);
                 }
@@ -386,7 +380,9 @@ impl Lower<'_> {
                 SigRoot::Group(a) => 900 + u32::try_from(*a).unwrap_or(0),
             };
             if let SigRoot::Param(i) = m.root {
-                if !matches!(self.inf.shallow(&ptys[i]), Ty::Ref(_)) && !(i == 0 && first == 1) {
+                let by_ref = matches!(self.inf.shallow(&ptys[i]), Ty::Ref(_));
+                let receiver = i == 0 && first == 1;
+                if !by_ref && !receiver {
                     continue;
                 }
             }
@@ -864,7 +860,7 @@ impl Lower<'_> {
             }
         }
         // Effect handlers live on one task's stack: a task cannot reach them.
-        let user: Vec<String> = sum
+        let user = sum
             .escapes
             .iter()
             .filter(|e| {
@@ -872,9 +868,8 @@ impl Lower<'_> {
                     .effect_named(self.module, e)
                     .is_some_and(|id| !self.prog.effects[id].is_std)
             })
-            .cloned()
-            .collect();
-        if !sum.performs.is_empty() || !user.is_empty() {
+            .count();
+        if !sum.performs.is_empty() || user > 0 {
             self.err(
                 "W0314",
                 "a task cannot perform a user effect: its handler runs on another task",
@@ -1009,7 +1004,6 @@ impl Lower<'_> {
                 effect: e.clone(),
                 cap,
                 multi: false,
-                depth: self.frames.len(),
             });
         }
         let v = self.closure_arg(body, Some(Ty::Unit));
@@ -1020,10 +1014,5 @@ impl Lower<'_> {
         self.handlers.truncate(base);
         let _ = PRELUDE;
         Val::default()
-    }
-
-    #[allow(dead_code)]
-    const fn unused_call(&self) -> Option<Rc<FnTy>> {
-        None
     }
 }

@@ -1,6 +1,7 @@
 //! Item collection, name resolution and signatures.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fmt::Write as _;
 
 use weft_syntax::ast::{
     self, EffectItem, ExternTypeDecl, File, FnDecl, Item, ItemKind, Mode, PlaceExpr, PlaceStep,
@@ -425,11 +426,7 @@ impl Collector {
         // Pass 1: names.
         let mut unit_mods = Vec::new();
         for (i, u) in units.iter().enumerate() {
-            let parent = if i == 0 {
-                None
-            } else {
-                Some(1).filter(|_| i > 1)
-            };
+            let parent = (i > 1).then_some(1);
             let m = c.new_mod(&u.name, parent, u.is_std, i);
             if i == 1 {
                 c.prog.root = m;
@@ -1134,11 +1131,11 @@ impl Collector {
                         hi,
                         unstable,
                     });
-                    text.push_str(&if hi {
-                        format!("[{}..]", k.name)
+                    if hi {
+                        let _ = write!(text, "[{}..]", k.name);
                     } else {
-                        format!("[..{}]", k.name)
-                    });
+                        let _ = write!(text, "[..{}]", k.name);
+                    }
                     ty = Ty::Slice(Box::new(next));
                 }
             }
@@ -1147,15 +1144,14 @@ impl Collector {
     }
 }
 
+/// The steps of `.name` (each with its text), the field type, and the text.
+pub type FieldStep = (Vec<(weft_facts::Step, String)>, Ty, String);
+
 /// Returns the steps for `.name` on a value of type `ty`, the next type, and the text.
 ///
 /// Struct fields and tuple indices are stable. Variants are unstable. A `Box` adds a
 /// deref step first.
-pub fn field_step(
-    prog: &Program,
-    ty: &Ty,
-    name: &str,
-) -> Option<(Vec<(weft_facts::Step, String)>, Ty, String)> {
+pub fn field_step(prog: &Program, ty: &Ty, name: &str) -> Option<FieldStep> {
     use weft_facts::{Step, StepKind};
     match ty {
         Ty::Tuple(ts) => {

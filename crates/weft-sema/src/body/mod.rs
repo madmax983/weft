@@ -80,7 +80,6 @@ struct Local {
     root: Option<PlaceId>,
     refs: Vec<PlaceId>,
     uniq: bool,
-    handle_depth: usize,
     task: Option<TaskId>,
     summary: Option<usize>,
     fn_param: Option<usize>,
@@ -120,7 +119,6 @@ struct HandlerFrame {
     effect: String,
     cap: CapId,
     multi: bool,
-    depth: usize,
 }
 
 struct LoopFrame {
@@ -165,11 +163,6 @@ pub struct Lower<'p> {
     cap_calls: Vec<(NodeId, CapId)>,
     resumes: Vec<(NodeId, CapId)>,
     match_moves: bool,
-}
-
-/// The span of an expression, for short calls.
-const fn sp(e: &Expr) -> Span {
-    e.span
 }
 
 impl<'p> Lower<'p> {
@@ -471,7 +464,6 @@ impl<'p> Lower<'p> {
             root: None,
             refs: Vec::new(),
             uniq,
-            handle_depth: self.handlers.len(),
             task: None,
             summary: None,
             fn_param: None,
@@ -612,7 +604,8 @@ impl<'p> Lower<'p> {
             | Ty::Never
             | Ty::Ref(_)
             | Ty::Error
-            | Ty::Var(_) => true,
+            | Ty::Var(_)
+            | Ty::Scope => true,
             Ty::Fn(f) => f.summary.is_none(),
             Ty::Tuple(ts) => ts.iter().all(|t| self.is_copy_d(t, d + 1)),
             Ty::Adt(a, args) => {
@@ -639,7 +632,6 @@ impl<'p> Lower<'p> {
                     }),
                 }
             }
-            Ty::Scope => true,
             _ => false,
         }
     }
