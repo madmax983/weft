@@ -1,5 +1,7 @@
 [workspace]
 resolver = "2"
+# CI checks out Verus at `verus/`; it is not part of this workspace.
+exclude = ["verus"]
 members = [
     "crates/weft-syntax",
     "crates/weft-facts",

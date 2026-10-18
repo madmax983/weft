@@ -304,7 +304,7 @@ fn vars_of(terms: &[CTerm]) -> impl Iterator<Item = usize> + '_ {
     })
 }
 
-fn operand_bound(op: Operand, bound: &[bool]) -> bool {
+const fn operand_bound(op: Operand, bound: &[bool]) -> bool {
     match op {
         Operand::Var(v) => bound[v],
         Operand::Const(_) => true,
