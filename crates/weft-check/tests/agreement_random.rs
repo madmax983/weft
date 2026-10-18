@@ -23,6 +23,9 @@ struct Shape {
 }
 
 fn step(kind: u8, id: u8, unstable: bool) -> Step {
+    if kind % 7 == 6 {
+        return weft_facts::WILD;
+    }
     let id = u32::from(id % 3);
     let kind = match kind % 6 {
         0 => StepKind::Field { id },

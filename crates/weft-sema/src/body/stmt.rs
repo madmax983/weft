@@ -189,7 +189,11 @@ impl Lower<'_> {
                     None => continue,
                 }
             };
-            let info = self.facts.place(m).clone();
+            // `mut(p..)` is equal to `mut(p)`: a mutation anywhere below `p` is one of `p`.
+            let info = self
+                .facts
+                .place(self.facts.wild_base(m).unwrap_or(m))
+                .clone();
             let steps: Vec<SigStep> = info
                 .steps
                 .iter()
@@ -260,7 +264,17 @@ impl Lower<'_> {
             }
             reported.push(root);
             let by_value = (0..sig.params.len())
-                .any(|i| self.locals[i].root.map(|p| self.facts.place(p).root) == Some(root));
+                .find(|&i| self.locals[i].root.map(|p| self.facts.place(p).root) == Some(root));
+            // The signature check already reports a returned place in a by-value parameter.
+            let in_sig = by_value.is_some_and(|i| {
+                sig.ret_places
+                    .iter()
+                    .any(|rp| rp.place.root == SigRoot::Param(i))
+            });
+            if in_sig {
+                continue;
+            }
+            let by_value = by_value.is_some();
             let name = self.facts.roots[root.index()].name.clone();
             let what = if by_value {
                 format!("the by-value parameter `{name}`")
@@ -306,24 +320,19 @@ impl Lower<'_> {
         // The handle places of `Rc` handles are not where the reference points.
         rest.retain(|&r| !self.is_dep(r));
         for &r in &rest {
-            let ok = allowed.iter().any(|&a| {
-                self.facts.place(a).root == self.facts.place(r).root
-                    && weft_verified::places::within(
-                        &self.facts.place(r).steps,
-                        &self.facts.place(a).steps,
-                    )
-            });
-            if !ok {
-                let (rt, at) = (
-                    self.facts.place(r).display.clone(),
-                    self.place_text(&allowed),
-                );
-                self.err(
-                    "W0204",
-                    format!("returned reference points into `{rt}`, but the signature says `{at}`"),
-                    span,
-                );
+            if allowed.iter().any(|&a| self.sig_allows(a, r)) {
+                continue;
             }
+            let (rt, at) = (
+                self.facts.place(r).display.clone(),
+                self.place_text(&allowed),
+            );
+            let msg = if allowed.iter().any(|&a| self.below_unstable(a, r)) {
+                format!("returned reference points into `{rt}`, which is below `{at}` through an unstable step: state the place, or `{at}..`")
+            } else {
+                format!("returned reference points into `{rt}`, but the signature says `{at}`")
+            };
+            self.err("W0204", msg, span);
         }
     }
 

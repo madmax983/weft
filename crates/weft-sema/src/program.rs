@@ -142,6 +142,8 @@ pub enum SigRoot {
 pub enum SigStep {
     /// A fixed step.
     Step(weft_facts::Step, String),
+    /// The wildcard step `..`: any place at or below.
+    Wild,
     /// A split side at the parameter with this index.
     Seg {
         /// The parameter that names the split point.
@@ -841,7 +843,13 @@ impl Collector {
                     match item {
                         EffectItem::Mut(ps) => {
                             for pl in ps {
-                                if let Some(sp) = self.resolve_sig_place(pl, &params, &fn_params) {
+                                if let Some(mut sp) =
+                                    self.resolve_sig_place(pl, &params, &fn_params)
+                                {
+                                    // `mut(p..)` is equal to `mut(p)`.
+                                    if sp.steps.last() == Some(&SigStep::Wild) {
+                                        sp.steps.pop();
+                                    }
                                     effects.muts.push(sp);
                                 }
                             }
@@ -884,6 +892,18 @@ impl Collector {
             TypeExprKind::Ref { place, .. } => match place {
                 Some(pl) => {
                     if let Some(sp) = self.resolve_sig_place(pl, params, names) {
+                        if let SigRoot::Param(i) = sp.root {
+                            if !params[i].ty.is_ref() {
+                                self.diags.push(Diagnostic::error(
+                                    "W0204",
+                                    format!(
+                                        "a returned reference cannot point into the by-value parameter `{}`: it goes out of scope at the return",
+                                        params[i].name
+                                    ),
+                                    pl.span,
+                                ));
+                            }
+                        }
                         out.push(RetPlace {
                             path: path.clone(),
                             place: sp,
@@ -960,6 +980,7 @@ impl Collector {
             match st {
                 PlaceStep::Wildcard => {
                     text.push_str("..");
+                    steps.push(SigStep::Wild);
                 }
                 PlaceStep::Field(id) => {
                     let Some((step, next, t)) = field_step(&self.prog, &ty, &id.name) else {

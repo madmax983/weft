@@ -74,7 +74,9 @@ MODE        = uniq | aliased | portable | nonportable | uncontended | shared | o
 
 Notes:
 
-- The wildcard step `..` must be the last step: `mut(world..)`.
+- The wildcard step `..` must be the last step: `mut(world..)`. In a reference type,
+  `&T in world..` is a reference to any place inside `world`. Without `..`, the
+  reference is at the place or below it through stable steps only.
 - In a function type, a row with more than one item needs parentheses:
   `fn(Request) -> Response / (net, log)`.
 

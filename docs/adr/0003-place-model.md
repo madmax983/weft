@@ -16,6 +16,17 @@ Status: accepted. Date: 2026-10-18.
 - The two sides of one split never alias. This proves `split_mut` parts disjoint.
 - `mut(p..)` is equal to `mut(p)`. A Verus lemma (`lemma_deeper_mutation_weaker`) proves
   that a deeper mutation invalidates no more.
+- `&T in p` names the place of the reference up to stable steps below `p`. The body
+  must return (or the caller must pass) a reference at `p` or below it through stable
+  steps only (W0204, W0203). So a caller can treat the reference as a reference at `p`.
+  `&T in p..` names any place inside `p`.
+- A wildcard place (`p..`, the step `WILD`) stands for any place at or below `p`. It
+  overlaps what `p` overlaps. A reference to it is invalid after any mutation or free
+  that overlaps `p`, and a mutation of it invalidates every reference below `p`. The
+  result of an unknown function value (a parameter of function type) points to the
+  wildcard place of each reference argument.
+- A returned place cannot be in a by-value parameter (W0204), also in an `extern`
+  signature.
 - Each owned local and each by-value parameter owns its root place (`owner(Rt, V)`). A
   move of `V` or the end of its scope frees the memory (`frees_at`), so it invalidates
   every reference into the root, also through stable steps. A block value that points

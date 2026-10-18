@@ -12,6 +12,7 @@
 //   place(P)                 P is a place.
 //   parent(P, Q)             place P is place Q plus one step.
 //   unstable(P)              the step into P is unstable.
+//   wildcard(P)              P stands for any place at or below its parent.
 //   step_alias(P, Q)         the last steps of P and Q can name the same memory.
 //   step_within(P, Q)        the last step of P names a subset of the last step of Q.
 //   param_rooted(P)          the root of P is a parameter or an rc group.
@@ -76,6 +77,12 @@ crosses_unstable(M, P) :- parent(P, Q), crosses_unstable(M, Q).
 overlaps(P, Q)         :- prefix(P, Q).
 overlaps(P, Q)         :- prefix(Q, P).
 
+// A wildcard place, and each place below it, can be any place at or below B.
+wild_at(P, B)          :- wildcard(P), parent(P, B).
+wild_at(P, B)          :- parent(P, Q), wild_at(Q, B).
+overlaps(P, Q)         :- wild_at(P, B), overlaps(B, Q).
+overlaps(P, Q)         :- wild_at(Q, B), overlaps(P, B).
+
 // P and D have the same depth, and each step of P names a subset of the step of D.
 pointwise(P, P)        :- place(P).
 pointwise(P, D)        :- parent(P, Q), parent(D, E), pointwise(Q, E), step_within(P, D).
@@ -101,6 +108,12 @@ frees_at(P, Rt)      :- owner(Rt, V), moved_at(V, P), !part_moved_at(V, P).
 frees_at(P, Rt)      :- owner(Rt, V), scope_end(V, P).
 
 invalidated_at(R, P) :- points_into(R, Path), frees_at(P, M), prefix(M, Path).
+
+// A reference that can point anywhere below B is invalid after any change that
+// overlaps B. A mutation anywhere below B invalidates every reference below B.
+invalidated_at(R, P) :- points_into(R, Path), wild_at(Path, B), mutates_at(P, M), overlaps(M, B).
+invalidated_at(R, P) :- points_into(R, Path), wild_at(Path, B), frees_at(P, M), overlaps(M, B).
+invalidated_at(R, P) :- points_into(R, Path), mutates_at(P, M), wild_at(M, B), prefix(B, Path).
 invalid(R, Q)        :- invalidated_at(R, P), cfg_edge(P, Q).
 invalid(R, Q)        :- invalid(R, P), cfg_edge(P, Q), !rebound_at(R, P).
 error(R, P)          :- uses(R, P), invalid(R, P).

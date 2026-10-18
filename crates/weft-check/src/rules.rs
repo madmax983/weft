@@ -76,6 +76,8 @@ struct Ctx<'a> {
     reads: Vec<Vec<PlaceId>>,
     /// `frees_at`, with the cause of each free.
     frees: Vec<Vec<(PlaceId, Cause)>>,
+    /// `wild_at(P, B)` by place.
+    bases: Vec<Vec<PlaceId>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -108,6 +110,15 @@ impl<'a> Ctx<'a> {
         for &(p, a) in &f.reads_at {
             reads[p.index()].push(a);
         }
+        // A parent comes before its children.
+        let mut bases: Vec<Vec<PlaceId>> = Vec::with_capacity(f.places.len());
+        for p in &f.places {
+            let mut b = p.parent.map_or_else(Vec::new, |q| bases[q.index()].clone());
+            if let (true, Some(q)) = (p.is_wildcard(), p.parent) {
+                b.push(q);
+            }
+            bases.push(b);
+        }
         let mut cx = Self {
             f,
             succ,
@@ -115,6 +126,7 @@ impl<'a> Ctx<'a> {
             muts,
             reads,
             frees: vec![Vec::new(); n],
+            bases,
         };
         cx.frees = cx.frees_at();
         cx
@@ -167,8 +179,23 @@ impl<'a> Ctx<'a> {
         self.same_root(m, p) && places::invalidates(&self.f.place(m).steps, &self.f.place(p).steps)
     }
 
+    /// `overlaps(P, Q)`. A wildcard place overlaps what its base overlaps.
     fn overlaps(&self, a: PlaceId, b: PlaceId) -> bool {
-        self.same_root(a, b) && places::overlaps(&self.f.place(a).steps, &self.f.place(b).steps)
+        (self.same_root(a, b) && places::overlaps(&self.f.place(a).steps, &self.f.place(b).steps))
+            || self.bases[a.index()].iter().any(|&x| self.overlaps(x, b))
+            || self.bases[b.index()].iter().any(|&y| self.overlaps(a, y))
+    }
+
+    /// `invalidated_at` by a mutation of `m`, for a reference into `p`.
+    fn mutation_kills(&self, m: PlaceId, p: PlaceId) -> bool {
+        self.invalidates(m, p)
+            || self.bases[p.index()].iter().any(|&b| self.overlaps(m, b))
+            || self.bases[m.index()].iter().any(|&b| self.prefix(b, p))
+    }
+
+    /// `invalidated_at` by a free of `m`, for a reference into `p`.
+    fn free_kills(&self, m: PlaceId, p: PlaceId) -> bool {
+        self.prefix(m, p) || self.bases[p.index()].iter().any(|&b| self.overlaps(m, b))
     }
 
     fn within(&self, p: PlaceId, d: PlaceId) -> bool {
@@ -237,9 +264,11 @@ fn invalidation(
         // invalidated_at(R, P) with the first witness per node
         let mut gens: Vec<(NodeId, PlaceId, Cause)> = Vec::new();
         for (i, ms) in cx.muts.iter().enumerate() {
-            let hit = ms
-                .iter()
-                .find_map(|&m| ps.iter().find(|&&p| cx.invalidates(m, p)).map(|&p| (m, p)));
+            let hit = ms.iter().find_map(|&m| {
+                ps.iter()
+                    .find(|&&p| cx.mutation_kills(m, p))
+                    .map(|&p| (m, p))
+            });
             if let Some((m, p)) = hit {
                 gens.push((
                     NodeId(u32::try_from(i).unwrap_or(u32::MAX)),
@@ -253,7 +282,7 @@ fn invalidation(
             let node = NodeId(u32::try_from(i).unwrap_or(u32::MAX));
             for &(m, cause) in fs {
                 for &p in ps {
-                    if cx.prefix(m, p) {
+                    if cx.free_kills(m, p) {
                         gens.push((node, p, cause));
                     }
                 }

@@ -529,6 +529,7 @@ impl<'p> Lower<'p> {
             for st in &sp.steps {
                 p = match st {
                     SigStep::Step(s, text) => self.child(p, *s, text),
+                    SigStep::Wild => self.facts.wildcard(p),
                     SigStep::Seg {
                         label,
                         hi,
@@ -673,6 +674,34 @@ impl<'p> Lower<'p> {
     /// Splits the places of a reference into the places it names and its handle places.
     fn split_deps(&self, refs: &[PlaceId]) -> (Vec<PlaceId>, Vec<PlaceId>) {
         refs.iter().partition(|&&p| !self.is_dep(p))
+    }
+
+    /// Returns true if the signature place `a` allows a reference into `r`.
+    /// Below a plain place only stable steps can follow, because a caller sees
+    /// the reference at `a`. Below a wildcard place any step can follow.
+    fn sig_allows(&self, a: PlaceId, r: PlaceId) -> bool {
+        let (pa, pr) = (self.facts.place(a), self.facts.place(r));
+        if pa.root != pr.root {
+            return false;
+        }
+        match (pa.is_wildcard(), pa.parent) {
+            (true, Some(base)) => {
+                weft_verified::places::within(&pr.steps, &self.facts.place(base).steps)
+            }
+            _ => {
+                weft_verified::places::within(&pr.steps, &pa.steps)
+                    && pr.steps[pa.steps.len()..].iter().all(|s| !s.unstable)
+            }
+        }
+    }
+
+    /// Returns true if `r` is inside `a` only through an unstable step below it.
+    fn below_unstable(&self, a: PlaceId, r: PlaceId) -> bool {
+        let (pa, pr) = (self.facts.place(a), self.facts.place(r));
+        pa.root == pr.root
+            && !pa.is_wildcard()
+            && weft_verified::places::within(&pr.steps, &pa.steps)
+            && !self.sig_allows(a, r)
     }
 
     fn place_text(&self, ps: &[PlaceId]) -> String {

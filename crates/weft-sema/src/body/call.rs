@@ -452,27 +452,26 @@ impl Lower<'_> {
                     .filter(|&r| !self.is_dep(r))
                     .collect();
                 for &r in &named {
-                    let ok = allowed.iter().any(|&a| {
-                        self.facts.place(a).root == self.facts.place(r).root
-                            && weft_verified::places::within(
-                                &self.facts.place(r).steps,
-                                &self.facts.place(a).steps,
-                            )
-                    });
-                    if !ok {
-                        let (rt, at) = (
-                            self.facts.place(r).display.clone(),
-                            self.place_text(&allowed),
-                        );
-                        self.err(
-                            "W0203",
-                            format!(
-                                "argument `{}` points into `{rt}`, but `{name}` needs `{at}`",
-                                p.name
-                            ),
-                            vals[i].span,
-                        );
+                    if allowed.iter().any(|&a| self.sig_allows(a, r)) {
+                        continue;
                     }
+                    let (rt, at) = (
+                        self.facts.place(r).display.clone(),
+                        self.place_text(&allowed),
+                    );
+                    let below = if allowed.iter().any(|&a| self.below_unstable(a, r)) {
+                        format!(", and `{rt}` is below it through an unstable step")
+                    } else {
+                        String::new()
+                    };
+                    self.err(
+                        "W0203",
+                        format!(
+                            "argument `{}` points into `{rt}`, but `{name}` needs `{at}`{below}",
+                            p.name
+                        ),
+                        vals[i].span,
+                    );
                 }
             }
             if p.uniq && !vals[i].val.uniq && p.ty.is_ref() {
@@ -694,8 +693,18 @@ impl Lower<'_> {
             }
             refs
         } else if matches!(self.inf.shallow(&fty.ret), Ty::Ref(_)) {
-            // An unknown function can return a reference into any reference argument.
+            // An unknown function can return a reference to any place inside a
+            // reference argument.
             arg_refs
+                .iter()
+                .map(|&p| {
+                    if self.is_dep(p) {
+                        p
+                    } else {
+                        self.facts.wildcard(p)
+                    }
+                })
+                .collect()
         } else {
             Vec::new()
         };

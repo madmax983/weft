@@ -47,9 +47,19 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
                 } else {
                     format!("{} : {}", at.label, at.detail)
                 };
-                let why = format!(
-                    "{mutated} is a strict prefix of {path}, through an unstable step  →  invalidated at line {{line:{line}}}"
-                );
+                let why = match (f.wild_base(inv.path), f.wild_base(m)) {
+                    (Some(b), _) => format!(
+                        "{path} can be any place inside {}, and {mutated} overlaps it  →  invalidated at line {{line:{line}}}",
+                        f.place(b).display
+                    ),
+                    (None, Some(b)) => format!(
+                        "{mutated} can be any place inside {}, which holds {path}  →  invalidated at line {{line:{line}}}",
+                        f.place(b).display
+                    ),
+                    (None, None) => format!(
+                        "{mutated} is a strict prefix of {path}, through an unstable step  →  invalidated at line {{line:{line}}}"
+                    ),
+                };
                 (what, why)
             }
             Cause::Move(o) => {

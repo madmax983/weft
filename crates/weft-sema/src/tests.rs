@@ -189,3 +189,15 @@ fn a_loop_reads_the_elements_at_each_iteration() {
         .expect("the loop has a header");
     assert!(f.reads_at.contains(&(header, elems)));
 }
+
+#[test]
+fn an_unknown_function_result_points_anywhere_inside_its_argument() {
+    let f = facts(
+        "struct E { hp: i32 } struct W { es: Vec<E> }
+         fn f(g: fn(&W) -> &E, w: &W) { let r = g(w); print(r.hp) }",
+        "f",
+    );
+    let any = place(&f, "w..");
+    assert!(f.place(any).is_wildcard());
+    assert!(f.points_into.contains(&(var(&f, "r"), any)));
+}

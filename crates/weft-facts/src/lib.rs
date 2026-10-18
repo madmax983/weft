@@ -71,6 +71,13 @@ id_type!(
     "h"
 );
 
+/// The last step of a wildcard place. A wildcard place stands for any place at or
+/// below its parent. No type has a field with this id.
+pub const WILD: Step = Step {
+    kind: StepKind::Field { id: u32::MAX },
+    unstable: true,
+};
+
 /// What a place root is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RootKind {
@@ -102,6 +109,13 @@ pub struct PlaceInfo {
     pub steps: Vec<Step>,
     /// The text form, for example `world.entities[]`.
     pub display: String,
+}
+
+impl PlaceInfo {
+    /// Returns true if the last step is the wildcard step.
+    pub fn is_wildcard(&self) -> bool {
+        self.steps.last() == Some(&WILD)
+    }
 }
 
 /// What a variable is.
@@ -356,6 +370,25 @@ impl FnFacts {
         let id = self.push_place(info);
         self.place_index.insert((parent, step), id);
         id
+    }
+
+    /// Returns the wildcard place under `p`: any place at or below `p`.
+    pub fn wildcard(&mut self, p: PlaceId) -> PlaceId {
+        self.child(p, WILD, "..")
+    }
+
+    /// Returns the parent of the outermost wildcard step on the path of `p`.
+    /// `p` can be any place at or below it.
+    pub fn wild_base(&self, p: PlaceId) -> Option<PlaceId> {
+        let mut base = None;
+        let mut at = p;
+        while let Some(q) = self.place(at).parent {
+            if self.place(at).is_wildcard() {
+                base = Some(q);
+            }
+            at = q;
+        }
+        base
     }
 
     fn push_place(&mut self, info: PlaceInfo) -> PlaceId {

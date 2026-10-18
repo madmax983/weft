@@ -685,3 +685,55 @@ fn w0801_root_handler_in_library() {
     b.f.library = false;
     assert!(check(&b.f).violations.root_handler_in_lib.is_empty());
 }
+
+#[test]
+fn w0301_a_wildcard_reference_is_invalid_after_an_overlapping_change() {
+    // invalidated_at(R, P) :- points_into(R, Path), wild_at(Path, B), mutates_at(P, M), overlaps(M, B).
+    let mut b = B::new();
+    let world = b.param("world");
+    let ents = b.field(world, 0, "entities");
+    let score = b.field(world, 1, "score");
+    let other = b.param("other");
+    let any = b.f.wildcard(world);
+    let r = b.var("r");
+    let n0 = b.node("let r = f(world)");
+    b.bind(r, n0);
+    b.f.points_into.push((r, any));
+    let n1 = b.node("other.clear()");
+    b.f.mutates_at.push((n1, other));
+    let n2 = b.node("world.entities.clear()");
+    b.f.mutates_at.push((n2, ents));
+    let n3 = b.node("print(r)");
+    b.use_(r, n3);
+    let rep = check(&b.f);
+    assert!(rep.violations.error.contains(&(r, n3)));
+    assert_eq!(rep.invalidations[0].at, n2);
+    // overlaps(P, Q) :- wild_at(P, B), overlaps(B, Q): a wildcard place overlaps
+    // every place inside its base, and nothing else.
+    let n4 = b.node("call");
+    b.f.call_mut.push((n4, score, 0));
+    b.f.call_mut.push((n4, other, 0));
+    b.f.call_arg.push((n4, any, 1));
+    let rep = check(&b.f);
+    assert!(rep.violations.alias_conflict.contains(&(n4, score, any)));
+    assert!(!rep.violations.alias_conflict.contains(&(n4, other, any)));
+}
+
+#[test]
+fn w0301_a_wildcard_mutation_invalidates_every_reference_below_its_base() {
+    // invalidated_at(R, P) :- points_into(R, Path), mutates_at(P, M), wild_at(M, B), prefix(B, Path).
+    let mut b = B::new();
+    let world = b.param("world");
+    let score = b.field(world, 1, "score");
+    let any = b.f.wildcard(world);
+    let r = b.var("r");
+    let n0 = b.node("let r = &world.score");
+    b.bind(r, n0);
+    b.f.points_into.push((r, score));
+    let n1 = b.node("e.hp += 1");
+    let hp = b.field(any, 0, "hp");
+    b.f.mutates_at.push((n1, hp));
+    let n2 = b.node("print(r)");
+    b.use_(r, n2);
+    assert!(check(&b.f).violations.error.contains(&(r, n2)));
+}
