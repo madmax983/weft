@@ -78,26 +78,27 @@ pub struct FnTy {
 }
 
 /// A type.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub enum Ty {
     /// An integer.
     Int(IntTy),
     /// `bool`.
     Bool,
     /// `()`.
+    #[default]
     Unit,
     /// The type of an expression that does not return.
     Never,
     /// A tuple.
-    Tuple(Vec<Ty>),
+    Tuple(Vec<Self>),
     /// A struct, enum or extern type with type arguments.
-    Adt(AdtId, Vec<Ty>),
+    Adt(AdtId, Vec<Self>),
     /// A reference. The place is tracked by the facts, not by the type.
-    Ref(Box<Ty>),
+    Ref(Box<Self>),
     /// A slice `[T]`, only behind a reference.
-    Slice(Box<Ty>),
+    Slice(Box<Self>),
     /// A fixed array.
-    Array(Box<Ty>, u64),
+    Array(Box<Self>, u64),
     /// A function value.
     Fn(Rc<FnTy>),
     /// An inference variable.
@@ -109,15 +110,9 @@ pub enum Ty {
     /// The capability of a `scope`.
     Scope,
     /// A continuation: `resume` takes the first type and returns the second.
-    Cont(Box<Ty>, Box<Ty>),
+    Cont(Box<Self>, Box<Self>),
     /// The type after an error. It unifies with everything.
     Error,
-}
-
-impl Default for Ty {
-    fn default() -> Self {
-        Self::Unit
-    }
 }
 
 impl Ty {
@@ -197,7 +192,7 @@ impl Infer {
         let a = self.shallow(a);
         let b = self.shallow(b);
         match (&a, &b) {
-            (Ty::Error, _) | (_, Ty::Error) | (Ty::Never, _) | (_, Ty::Never) => true,
+            (Ty::Error | Ty::Never, _) | (_, Ty::Error | Ty::Never) => true,
             (Ty::Var(x), Ty::Var(y)) | (Ty::IntVar(x), Ty::IntVar(y)) if x == y => true,
             (Ty::Var(x), _) => self.bind(*x, &b),
             (_, Ty::Var(y)) => self.bind(*y, &a),

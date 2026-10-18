@@ -279,7 +279,7 @@ pub fn resolve_lines(d: &mut Diagnostic, file: &weft_syntax::SourceFile) {
             let num: u32 = n.text[start + 6..start + end].parse().unwrap_or(0);
             let line = file.line_col(num).0;
             n.text
-                .replace_range(start..start + end + 1, &line.to_string());
+                .replace_range(start..=(start + end), &line.to_string());
         }
     }
 }

@@ -224,12 +224,12 @@ impl Lower<'_> {
 
     fn finish_return(&mut self, v: Val, span: Span) {
         let ret = self.ret_ty.clone();
-        if !matches!(ret, Ty::Unit) {
+        if matches!(ret, Ty::Unit) {
+            self.drop_value(&v, span);
+        } else {
             self.unify(&ret, &v.ty, span);
             self.consume(&v, span);
             self.check_returned_refs(&v, span);
-        } else {
-            self.drop_value(&v, span);
         }
     }
 
@@ -537,7 +537,7 @@ impl Lower<'_> {
             let init = self.emit(iter.span, "iterator", String::new());
             let v = Val {
                 ty: elem_val.ty.clone(),
-                refs: it_refs.clone(),
+                refs: it_refs,
                 ..Val::default()
             };
             self.assign_local(l, &v, init);
@@ -572,31 +572,36 @@ impl Lower<'_> {
     fn elem_iter(&mut self, base: &ast::Expr, span: Span) -> (Val, Vec<PlaceId>) {
         let lv = self.place_or_temp(base);
         let t = self.deref_ty(&lv.ty);
-        match super::elem_step(self.prog, &self.inf.resolve(&t)) {
-            Some((step, elem)) => {
-                let places: Vec<PlaceId> = match step {
-                    Some(s) => lv.places.iter().map(|&p| self.child(p, s, "[]")).collect(),
-                    None => lv.places.clone(),
-                };
-                let v = Val {
+        if let Some((step, elem)) = super::elem_step(self.prog, &self.inf.resolve(&t)) {
+            let places: Vec<PlaceId> = match step {
+                Some(s) => lv.places.iter().map(|&p| self.child(p, s, "[]")).collect(),
+                None => lv.places.clone(),
+            };
+            // Copy elements bind by value; other elements bind by reference.
+            let v = if self.is_scalar(&elem) {
+                Val {
+                    ty: elem,
+                    ..Val::default()
+                }
+            } else {
+                Val {
                     ty: Ty::Ref(Box::new(elem)),
                     refs: places.clone(),
                     uniq: lv.uniq,
                     ..Val::default()
-                };
-                (v, places)
-            }
-            None => {
-                let shown = self.show(&t);
-                self.err("W0102", format!("cannot iterate over `{shown}`"), span);
-                (
-                    Val {
-                        ty: Ty::Error,
-                        ..Val::default()
-                    },
-                    Vec::new(),
-                )
-            }
+                }
+            };
+            (v, places)
+        } else {
+            let shown = self.show(&t);
+            self.err("W0102", format!("cannot iterate over `{shown}`"), span);
+            (
+                Val {
+                    ty: Ty::Error,
+                    ..Val::default()
+                },
+                Vec::new(),
+            )
         }
     }
 

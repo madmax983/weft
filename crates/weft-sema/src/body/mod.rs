@@ -96,7 +96,7 @@ struct Val {
     uniq: bool,
     summary: Option<usize>,
     task: Option<TaskId>,
-    parts: Option<Vec<Val>>,
+    parts: Option<Vec<Self>>,
     place: Option<LVal>,
     fn_param: Option<usize>,
     item: Option<FnId>,
@@ -164,6 +164,7 @@ pub struct Lower<'p> {
     split: u32,
     cap_calls: Vec<(NodeId, CapId)>,
     resumes: Vec<(NodeId, CapId)>,
+    match_moves: bool,
 }
 
 /// The span of an expression, for short calls.
@@ -213,6 +214,7 @@ impl<'p> Lower<'p> {
             split: 0,
             cap_calls: Vec::new(),
             resumes: Vec::new(),
+            match_moves: false,
         }
     }
 
@@ -381,7 +383,7 @@ impl<'p> Lower<'p> {
         self.facts.child(p, s, text)
     }
 
-    fn fresh_split(&mut self) -> u32 {
+    const fn fresh_split(&mut self) -> u32 {
         self.split += 1;
         self.split
     }
@@ -638,6 +640,16 @@ impl<'p> Lower<'p> {
                 }
             }
             Ty::Scope => true,
+            _ => false,
+        }
+    }
+
+    /// Scalars: integers, `bool`, unit, `String` and `Duration`. A loop or a match
+    /// binds a scalar by value and other values by reference.
+    fn is_scalar(&self, t: &Ty) -> bool {
+        match self.inf.shallow(t) {
+            Ty::Int(_) | Ty::IntVar(_) | Ty::Bool | Ty::Unit => true,
+            Ty::Adt(a, _) => Some(a) == self.b.string || Some(a) == self.b.duration,
             _ => false,
         }
     }

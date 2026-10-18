@@ -405,7 +405,7 @@ pub struct Collector {
 
 impl Collector {
     /// Makes a collector that only resolves types against a finished program.
-    pub fn for_types(prog: Program) -> Self {
+    pub const fn for_types(prog: Program) -> Self {
         Self {
             prog,
             diags: Vec::new(),
@@ -477,6 +477,13 @@ impl Collector {
             unit,
         });
         self.prog.mods.len() - 1
+    }
+
+    fn adt_at(&self, m: ModId, span: Span) -> Option<AdtId> {
+        self.prog
+            .adts
+            .iter()
+            .position(|a| a.module == m && a.span == span)
     }
 
     fn insert(&mut self, m: ModId, name: &ast::Ident, r: ItemRef) {
@@ -580,7 +587,8 @@ impl Collector {
         for it in items {
             match &it.kind {
                 ItemKind::Struct(s) => {
-                    let Some(ItemRef::Adt(id)) = self.prog.lookup_in(m, &s.name.name) else {
+                    // Find the definition by its span: a duplicate name keeps its own record.
+                    let Some(id) = self.adt_at(m, it.span) else {
                         continue;
                     };
                     let gens: Vec<String> = s.generics.iter().map(|g| g.name.clone()).collect();
@@ -632,7 +640,7 @@ impl Collector {
                     self.prog.adts[id].kind = AdtKind::Struct(fields);
                 }
                 ItemKind::Enum(e) => {
-                    let Some(ItemRef::Adt(id)) = self.prog.lookup_in(m, &e.name.name) else {
+                    let Some(id) = self.adt_at(m, it.span) else {
                         continue;
                     };
                     let gens: Vec<String> = e.generics.iter().map(|g| g.name.clone()).collect();
@@ -1053,9 +1061,7 @@ impl Collector {
                 t => t.clone(),
             };
             (SigRoot::Param(0), t)
-        } else if let Some(ItemRef::Adt(a)) =
-            self.prog.lookup(PRELUDE.max(self.prog.root), rootname)
-        {
+        } else if let Some(ItemRef::Adt(a)) = self.prog.lookup(self.prog.root, rootname) {
             let n = self.prog.adts[a].generics.len();
             (SigRoot::Group(a), Ty::Adt(a, vec![Ty::Error; n]))
         } else {
@@ -1088,15 +1094,14 @@ impl Collector {
                     text.push_str(&t);
                     ty = next;
                 }
-                PlaceStep::Elem => match elem_step(&self.prog, &ty) {
-                    Some((step, next)) => {
+                PlaceStep::Elem => {
+                    if let Some((step, next)) = elem_step(&self.prog, &ty) {
                         if let Some(s) = step {
                             steps.push(SigStep::Step(s, "[]".into()));
                         }
                         text.push_str("[]");
                         ty = next;
-                    }
-                    None => {
+                    } else {
                         self.diags.push(Diagnostic::error(
                             "W0104",
                             "this place has no elements",
@@ -1104,7 +1109,7 @@ impl Collector {
                         ));
                         return None;
                     }
-                },
+                }
                 PlaceStep::SegLo(k) | PlaceStep::SegHi(k) => {
                     let hi = matches!(st, PlaceStep::SegHi(_));
                     let Some(&label) = names.get(&k.name) else {

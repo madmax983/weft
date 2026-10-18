@@ -26,6 +26,9 @@ impl Lower<'_> {
                         };
                     }
                 }
+                if let Some(v) = self.path_member(base, name) {
+                    return v;
+                }
                 self.place_value(e)
             }
             ExprKind::Index { .. } => self.place_value(e),
@@ -145,6 +148,88 @@ impl Lower<'_> {
         }
     }
 
+    /// `Enum.Variant` and `module.function` used as values.
+    fn path_member(&mut self, base: &Expr, name: &ast::Ident) -> Option<Val> {
+        match self.path_ref(base)? {
+            PathRef::Adt(a) => {
+                if let AdtKind::Enum(vs) = &self.prog.adts[a].kind {
+                    if let Some(vi) = vs.iter().position(|v| v.name == name.name) {
+                        if vs[vi].fields.is_empty() {
+                            let args: Vec<Ty> = self.prog.adts[a]
+                                .generics
+                                .iter()
+                                .map(|_| self.inf.fresh())
+                                .collect();
+                            return Some(Val {
+                                ty: Ty::Adt(a, args),
+                                ..Val::default()
+                            });
+                        }
+                    }
+                }
+                let n = self.prog.adts[a].name.clone();
+                self.err(
+                    "W0104",
+                    format!("`{n}` has no unit variant `{}`", name.name),
+                    name.span,
+                );
+                Some(Val {
+                    ty: Ty::Error,
+                    ..Val::default()
+                })
+            }
+            PathRef::Mod(m) => match self.prog.lookup_in(m, &name.name) {
+                Some(ItemRef::Fn(f)) => {
+                    let id = ast::Ident {
+                        name: self.prog.fns[f].name.clone(),
+                        span: name.span,
+                    };
+                    let _ = id;
+                    let sig = &self.sigs[f];
+                    let targs: Vec<Ty> = sig.generics.iter().map(|_| self.inf.fresh()).collect();
+                    let ty = Ty::Fn(Rc::new(FnTy {
+                        params: sig
+                            .params
+                            .iter()
+                            .map(|p| super::subst(&p.ty, &targs))
+                            .collect(),
+                        ret: super::subst(&sig.ret, &targs),
+                        effects: Some(effects::close(&sig.effects.named).into_iter().collect()),
+                        summary: None,
+                        item: Some(f),
+                    }));
+                    Some(Val {
+                        ty,
+                        item: Some(f),
+                        ..Val::default()
+                    })
+                }
+                _ => {
+                    self.err(
+                        "W0104",
+                        format!("no item `{}` in this module", name.name),
+                        name.span,
+                    );
+                    Some(Val {
+                        ty: Ty::Error,
+                        ..Val::default()
+                    })
+                }
+            },
+            PathRef::Effect(_) => {
+                self.err(
+                    "W0105",
+                    "an effect is not a value; call one of its operations",
+                    name.span,
+                );
+                Some(Val {
+                    ty: Ty::Error,
+                    ..Val::default()
+                })
+            }
+        }
+    }
+
     fn lit(&mut self, l: &Lit) -> Val {
         let ty = match l {
             Lit::Int(_) => self.inf.fresh_int(),
@@ -194,36 +279,33 @@ impl Lower<'_> {
                 item: None,
             };
         }
-        match self.prog.lookup(self.module, &id.name) {
-            Some(ItemRef::Fn(f)) => {
-                let sig = &self.sigs[f];
-                let targs: Vec<Ty> = sig.generics.iter().map(|_| self.inf.fresh()).collect();
-                let ty = Ty::Fn(Rc::new(FnTy {
-                    params: sig
-                        .params
-                        .iter()
-                        .map(|p| super::subst(&p.ty, &targs))
-                        .collect(),
-                    ret: super::subst(&sig.ret, &targs),
-                    effects: Some(effects::close(&sig.effects.named).into_iter().collect()),
-                    summary: None,
-                    item: Some(f),
-                }));
-                Val {
-                    ty,
-                    item: Some(f),
-                    ..Val::default()
-                }
+        if let Some(ItemRef::Fn(f)) = self.prog.lookup(self.module, &id.name) {
+            let sig = &self.sigs[f];
+            let targs: Vec<Ty> = sig.generics.iter().map(|_| self.inf.fresh()).collect();
+            let ty = Ty::Fn(Rc::new(FnTy {
+                params: sig
+                    .params
+                    .iter()
+                    .map(|p| super::subst(&p.ty, &targs))
+                    .collect(),
+                ret: super::subst(&sig.ret, &targs),
+                effects: Some(effects::close(&sig.effects.named).into_iter().collect()),
+                summary: None,
+                item: Some(f),
+            }));
+            Val {
+                ty,
+                item: Some(f),
+                ..Val::default()
             }
-            _ => {
-                if let Some(v) = self.unit_variant(&id.name) {
-                    return v;
-                }
-                self.err("W0101", format!("unknown name `{}`", id.name), span);
-                Val {
-                    ty: Ty::Error,
-                    ..Val::default()
-                }
+        } else {
+            if let Some(v) = self.unit_variant(&id.name) {
+                return v;
+            }
+            self.err("W0101", format!("unknown name `{}`", id.name), span);
+            Val {
+                ty: Ty::Error,
+                ..Val::default()
             }
         }
     }
@@ -302,13 +384,12 @@ impl Lower<'_> {
                         uniq: loc.uniq,
                     }),
                     t => {
-                        let r = match loc.root {
-                            Some(r) => r,
-                            None => {
-                                let r = self.root(&loc.name, RootKind::Local);
-                                self.locals[l].root = Some(r);
-                                r
-                            }
+                        let r = if let Some(r) = loc.root {
+                            r
+                        } else {
+                            let r = self.root(&loc.name, RootKind::Local);
+                            self.locals[l].root = Some(r);
+                            r
                         };
                         Some(LVal {
                             places: vec![r],
@@ -339,26 +420,23 @@ impl Lower<'_> {
                 }
                 let t = self.deref_ty(&lv.ty);
                 let rt = self.inf.resolve(&t);
-                match elem_step(self.prog, &rt) {
-                    Some((step, elem)) => {
-                        let places = match step {
-                            Some(s) => lv.places.iter().map(|&p| self.child(p, s, "[]")).collect(),
-                            None => lv.places.clone(),
-                        };
-                        Some(LVal {
-                            places,
-                            ty: elem,
-                            ..lv
-                        })
-                    }
-                    None => {
-                        let shown = self.show(&rt);
-                        self.err("W0104", format!("`{shown}` has no elements"), e.span);
-                        Some(LVal {
-                            ty: Ty::Error,
-                            ..lv
-                        })
-                    }
+                if let Some((step, elem)) = elem_step(self.prog, &rt) {
+                    let places = match step {
+                        Some(s) => lv.places.iter().map(|&p| self.child(p, s, "[]")).collect(),
+                        None => lv.places.clone(),
+                    };
+                    Some(LVal {
+                        places,
+                        ty: elem,
+                        ..lv
+                    })
+                } else {
+                    let shown = self.show(&rt);
+                    self.err("W0104", format!("`{shown}` has no elements"), e.span);
+                    Some(LVal {
+                        ty: Ty::Error,
+                        ..lv
+                    })
                 }
             }
             _ => None,
@@ -401,36 +479,33 @@ impl Lower<'_> {
             }
         }
         let t = self.inf.resolve(&lv.ty);
-        match field_step(self.prog, &t, &name.name) {
-            Some((steps, next, _)) => {
-                let mut places = lv.places.clone();
-                for (s, text) in &steps {
-                    let label = if text == "*" {
-                        String::new()
-                    } else {
-                        text.clone()
-                    };
-                    places = places.iter().map(|&p| self.child(p, *s, &label)).collect();
-                }
-                LVal {
-                    places,
-                    ty: next,
-                    ..lv
-                }
+        if let Some((steps, next, _)) = field_step(self.prog, &t, &name.name) {
+            let mut places = lv.places.clone();
+            for (s, text) in &steps {
+                let label = if text == "*" {
+                    String::new()
+                } else {
+                    text.clone()
+                };
+                places = places.iter().map(|&p| self.child(p, *s, &label)).collect();
             }
-            None => {
-                if !matches!(t, Ty::Error) {
-                    let shown = self.show(&t);
-                    self.err(
-                        "W0104",
-                        format!("`{shown}` has no field `{}`", name.name),
-                        span,
-                    );
-                }
-                LVal {
-                    ty: Ty::Error,
-                    ..lv
-                }
+            LVal {
+                places,
+                ty: next,
+                ..lv
+            }
+        } else {
+            if !matches!(t, Ty::Error) {
+                let shown = self.show(&t);
+                self.err(
+                    "W0104",
+                    format!("`{shown}` has no field `{}`", name.name),
+                    span,
+                );
+            }
+            LVal {
+                ty: Ty::Error,
+                ..lv
             }
         }
     }
@@ -457,7 +532,7 @@ impl Lower<'_> {
                             .find(|f| f.name == name.name)
                             .and_then(|f| f.place.clone())
                         {
-                            refs = self.subst_place(&sp, &[blv.places.clone()], 0);
+                            refs = self.subst_place(&sp, std::slice::from_ref(&blv.places), 0);
                         }
                     }
                 }
@@ -493,9 +568,10 @@ impl Lower<'_> {
                     None => lv,
                 }
             }
-            _ => match self.place_expr(inner) {
-                Some(lv) => lv,
-                None => {
+            _ => {
+                if let Some(lv) = self.place_expr(inner) {
+                    lv
+                } else {
                     let v = self.expr(inner);
                     self.consume(&v, inner.span);
                     let r = self.root("temporary", RootKind::Local);
@@ -507,7 +583,7 @@ impl Lower<'_> {
                         uniq: false,
                     }
                 }
-            },
+            }
         };
         Val {
             ty: Ty::Ref(Box::new(lv.ty.clone())),
@@ -671,22 +747,19 @@ impl Lower<'_> {
 
     fn match_expr(&mut self, scrut: &Expr, arms: &[ast::Arm], span: Span) -> Val {
         let lv = self.place_expr(scrut);
-        let (sty, by_ref, places, sval) = match lv {
-            Some(lv) => {
-                let by_ref = lv.through_ref;
-                let v = Val {
-                    ty: lv.ty.clone(),
-                    place: Some(lv.clone()),
-                    var: lv.owner.map(|l| self.locals[l].var),
-                    ..Val::default()
-                };
-                (lv.ty.clone(), by_ref, lv.places, v)
-            }
-            None => {
-                let v = self.expr(scrut);
-                let r = self.root("temporary", RootKind::Local);
-                (v.ty.clone(), false, vec![r], v)
-            }
+        let (sty, by_ref, places, sval) = if let Some(lv) = lv {
+            let by_ref = lv.through_ref;
+            let v = Val {
+                ty: lv.ty.clone(),
+                place: Some(lv.clone()),
+                var: lv.owner.map(|l| self.locals[l].var),
+                ..Val::default()
+            };
+            (lv.ty.clone(), by_ref, lv.places, v)
+        } else {
+            let v = self.expr(scrut);
+            let r = self.root("temporary", RootKind::Local);
+            (v.ty.clone(), false, vec![r], v)
         };
         for &p in &places {
             self.read(p);
@@ -703,7 +776,12 @@ impl Lower<'_> {
                 barrier: None,
             });
             let bn = self.emit(arm.pat.span(), "arm", String::new());
+            self.match_moves = false;
             self.match_pattern(&arm.pat, &sty, &places, by_ref, &sval, bn);
+            // A by-value binding moves the scrutinee once.
+            if self.match_moves {
+                self.consume(&sval, arm.pat.span());
+            }
             let v = self.expr(&arm.body);
             if !matches!(self.inf.shallow(&v.ty), Ty::Never) {
                 self.unify(&result, &v.ty, arm.body.span);
@@ -743,6 +821,13 @@ impl Lower<'_> {
                 self.unify(&t, &v.ty, *s);
             }
             Pattern::Bind(id) => {
+                // A copy payload binds by value: the arm reads the place.
+                let by_ref = by_ref && !self.is_scalar(&t);
+                if !by_ref {
+                    for &p in places {
+                        self.read(p);
+                    }
+                }
                 let v = if by_ref {
                     Val {
                         ty: Ty::Ref(Box::new(t)),
@@ -750,10 +835,13 @@ impl Lower<'_> {
                         ..Val::default()
                     }
                 } else {
-                    sval.clone()
+                    Val {
+                        ty: t.clone(),
+                        ..sval.clone()
+                    }
                 };
-                if !by_ref {
-                    self.consume(sval, id.span);
+                if !by_ref && !self.is_copy(&v.ty) {
+                    self.match_moves = true;
                 }
                 let l = self.new_local(&id.name, VarKind::Local, id.span, v.ty.clone(), false);
                 self.assign_local(l, &v, n);

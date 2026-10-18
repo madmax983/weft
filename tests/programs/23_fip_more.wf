@@ -1,0 +1,44 @@
+// More fully in-place checks.
+enum Tree { Node(Tree, u64, Tree), Leaf }
+enum List { Cons(u64, List), Nil }
+
+fip fn mirror(t: Tree) -> Tree {
+    match t {
+        Node(l, v, r) => Node(mirror(r), v, mirror(l)),
+        Leaf => Leaf,
+    }
+}
+
+fip fn twice(xs: List) -> List {
+    if true { xs } else { xs }
+}
+
+fip fn make() -> List {
+    Cons(1, Nil)   //~ W1001
+}
+
+fip fn closure_use(xs: List) -> List {
+    let f = || 1   //~ W1003
+    xs
+}
+
+fip fn helper(xs: List) -> List { xs }
+fn not_fip(xs: List) -> List { xs }
+
+fip fn calls(xs: List) -> List {
+    let ys = helper(xs)
+    not_fip(ys)   //~ W1003
+}
+
+fip fn loops(xs: List) -> List {
+    while false { print(1) }   //~ W1003
+    xs
+}
+
+fip fn twice_used(xs: List) -> List {   //~ W1002
+    match xs {
+        Cons(x, rest) => Cons(x, rest),
+        Nil => Nil,
+    }
+    xs   //~ W0302
+}

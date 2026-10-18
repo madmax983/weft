@@ -61,7 +61,7 @@ pub fn check(prog: &Program, sigs: &[FnSig], f: FnId) -> Vec<Diagnostic> {
     c.diags
 }
 
-fn is_owned(t: &Ty) -> bool {
+const fn is_owned(t: &Ty) -> bool {
     !matches!(t, Ty::Int(_) | Ty::Bool | Ty::Unit | Ty::Ref(_) | Ty::Fn(_))
 }
 
@@ -99,7 +99,7 @@ impl Fip<'_> {
                     let _ = pat;
                 }
                 StmtKind::Expr(e) | StmtKind::Assert(e) | StmtKind::Return(Some(e)) => {
-                    self.expr(e, credits)
+                    self.expr(e, credits);
                 }
                 StmtKind::Assign { target, value, .. } => {
                     self.expr(target, credits);
@@ -250,7 +250,7 @@ impl Fip<'_> {
             }
             ExprKind::Block(b) => self.block(b, credits),
             ExprKind::Field { base, .. } | ExprKind::Unary { expr: base, .. } => {
-                self.expr(base, credits)
+                self.expr(base, credits);
             }
             ExprKind::Index { base, index } => {
                 self.expr(base, credits);

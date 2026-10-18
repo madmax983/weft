@@ -208,7 +208,10 @@ fn raw(out: &Output, v: Value) -> String {
     let t = out.display_value(v);
     t.strip_prefix('"')
         .and_then(|x| x.strip_suffix('"'))
-        .map_or_else(|| t.clone(), |inner| inner.replace("\\\"", "\"").replace("\\\\", "\\"))
+        .map_or_else(
+            || t.clone(),
+            |inner| inner.replace("\\\"", "\"").replace("\\\\", "\\"),
+        )
 }
 
 fn parse_id(out: &Output, v: Value, prefix: char) -> Option<u32> {

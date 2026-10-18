@@ -129,23 +129,22 @@ impl Lower<'_> {
                 };
             }
             Some(PathRef::Effect(e)) => {
-                return match self.prog.effects[e]
+                return if let Some(op) = self.prog.effects[e]
                     .ops
                     .iter()
                     .position(|o| o.name == method.name)
                 {
-                    Some(op) => self.perform_op(e, op, args, span),
-                    None => {
-                        let n = self.prog.effects[e].name.clone();
-                        self.err(
-                            "W0104",
-                            format!("effect `{n}` has no operation `{}`", method.name),
-                            method.span,
-                        );
-                        Val {
-                            ty: Ty::Error,
-                            ..Val::default()
-                        }
+                    self.perform_op(e, op, args, span)
+                } else {
+                    let n = self.prog.effects[e].name.clone();
+                    self.err(
+                        "W0104",
+                        format!("effect `{n}` has no operation `{}`", method.name),
+                        method.span,
+                    );
+                    Val {
+                        ty: Ty::Error,
+                        ..Val::default()
                     }
                 };
             }
@@ -236,14 +235,13 @@ impl Lower<'_> {
         let mut pos = first;
         let mut extra = 0usize;
         for a in args {
-            let idx = match &a.name {
-                Some(n) => sig.params.iter().position(|p| p.name == n.name),
-                None => {
-                    while pos < slots.len() && slots[pos].is_some() {
-                        pos += 1;
-                    }
-                    Some(pos)
+            let idx = if let Some(n) = &a.name {
+                sig.params.iter().position(|p| p.name == n.name)
+            } else {
+                while pos < slots.len() && slots[pos].is_some() {
+                    pos += 1;
                 }
+                Some(pos)
             };
             match idx {
                 Some(i) if i < slots.len() => slots[i] = Some(&a.value),
@@ -951,12 +949,11 @@ impl Lower<'_> {
         let mut rets = Vec::new();
         for e in args.iter().map(|a| &a.value).chain(trailing) {
             let v = self.closure_arg(e, None);
-            let ret = match self.inf.shallow(&v.ty) {
-                Ty::Fn(f) => f.ret.clone(),
-                _ => {
-                    self.err("W0102", "`fork` takes closures", e.span);
-                    Ty::Error
-                }
+            let ret = if let Ty::Fn(f) = self.inf.shallow(&v.ty) {
+                f.ret.clone()
+            } else {
+                self.err("W0102", "`fork` takes closures", e.span);
+                Ty::Error
             };
             rets.push(ret);
             let (t, _) = self.start_task(TaskKind::Fork, &v, e.span);
@@ -1026,7 +1023,7 @@ impl Lower<'_> {
     }
 
     #[allow(dead_code)]
-    fn unused_call(&self) -> Option<Rc<FnTy>> {
+    const fn unused_call(&self) -> Option<Rc<FnTy>> {
         None
     }
 }
