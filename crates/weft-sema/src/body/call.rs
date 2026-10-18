@@ -1018,7 +1018,7 @@ impl Lower<'_> {
                 self.facts.call_arg.push((n, p, root));
                 match cap {
                     Some(c) => self.give_op(n, c, Some(op), Some(i), p, root),
-                    None => self.facts.lends_mut.push((n, p)),
+                    None => self.lend(n, p),
                 }
             }
         }
@@ -1075,7 +1075,9 @@ impl Lower<'_> {
         };
         let sum = self.closures[s].clone();
         let own = |me: &Self, p: PlaceId| sum.own_roots.contains(&me.facts.place(p).root);
-        for &m in &sum.muts {
+        // A place that the task lends can change as a mutation does.
+        let writes: Vec<PlaceId> = sum.muts.iter().chain(&sum.lends).copied().collect();
+        for &m in &writes {
             if !own(self, m) {
                 self.facts.task_writes.push((t, m));
             }
@@ -1095,7 +1097,7 @@ impl Lower<'_> {
                 r
             });
             let refs = refs.unwrap_or_default();
-            let through = sum.muts.iter().any(|&m| {
+            let through = writes.iter().any(|&m| {
                 refs.iter().any(|&r| {
                     self.facts.place(r).root == self.facts.place(m).root
                         && weft_verified::places::within(

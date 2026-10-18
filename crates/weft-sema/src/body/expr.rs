@@ -1358,6 +1358,8 @@ impl Lower<'_> {
         let ty = v.ty.clone();
         let saved = self.cur;
         let mut footprint = Vec::new();
+        // The places that the clauses lend outside them: each node that runs a clause lends them.
+        let mut lent = Vec::new();
         let mut clause_sum = Summary::default();
         let mut clauses_done = Vec::new();
         for c in clauses {
@@ -1422,6 +1424,7 @@ impl Lower<'_> {
             });
             let kv = self.locals[k].var;
             self.bind(kv, entry);
+            let resumes_before = self.resumes.len();
             let cv = self.block(&c.body);
             self.flush(block_tail(&c.body));
             if !matches!(self.inf.shallow(&cv.ty), Ty::Never) {
@@ -1438,8 +1441,18 @@ impl Lower<'_> {
                     footprint.push(m);
                 }
             }
+            for &l in &cs.lends {
+                if !cs.own_roots.contains(&self.facts.place(l).root) {
+                    lent.push(l);
+                }
+            }
             let oi = def.ops.iter().position(|o| o.name == op.name);
-            clauses_done.push((oi, cs.clone()));
+            let own_resumes: Vec<NodeId> = self.resumes[resumes_before..]
+                .iter()
+                .filter(|(_, c)| *c == cap)
+                .map(|(n, _)| *n)
+                .collect();
+            clauses_done.push((oi, cs.clone(), own_resumes));
             self.merge_summary(&cs);
             clause_sum.captures.extend(cs.captures.iter().copied());
             clause_sum
@@ -1464,9 +1477,14 @@ impl Lower<'_> {
             .filter(|(_, c)| *c == cap)
             .map(|(n, _)| *n)
             .collect();
-        for n in resumes {
+        lent.sort();
+        lent.dedup();
+        for &n in &resumes {
             for &m in &footprint {
                 self.facts.mutates_at.push((n, m));
+            }
+            for &l in &lent {
+                self.facts.lends_mut.push((n, l));
             }
         }
         // A call that reaches this handler must not pass places that the handler mutates.
@@ -1480,10 +1498,27 @@ impl Lower<'_> {
             for &m in &footprint {
                 self.facts.call_mut.push((n, m, 1000 + cap.0));
             }
+            for &l in &lent {
+                self.facts.lends_mut.push((n, l));
+            }
         }
         // A clause mutates and reads through its parameters what the operation gets.
-        for (oi, cs) in &clauses_done {
-            self.clause_through_params(cap, *oi, cs);
+        let mut changes: Vec<PlaceId> = Vec::new();
+        for (oi, cs, _) in &clauses_done {
+            changes.extend(self.clause_through_params(cap, *oi, cs));
+        }
+        // A resume runs the handled computation, also these changes. A clause that
+        // holds a reference into what its parameter gets across `resume` sees each
+        // change of the argument place as a change of the parameter.
+        for &n in &resumes {
+            for &q in &changes {
+                self.facts.mutates_at.push((n, q));
+            }
+        }
+        changes.extend(body_sum.muts.iter().chain(&body_sum.lends).copied());
+        changes.extend(footprint.iter().chain(&lent).copied());
+        for (oi, cs, own_resumes) in &clauses_done {
+            self.resume_through_params(cap, *oi, cs, own_resumes, &changes);
         }
         // A clause runs at each operation that it handles. There it uses its
         // captures, moves the moved ones, and its locals go out of scope.
@@ -1526,8 +1561,15 @@ impl Lower<'_> {
     }
 
     /// Applies what clause `cs` of operation `op` does through its reference
-    /// parameters at each node that gives places to the operation.
-    fn clause_through_params(&mut self, cap: CapId, op: Option<usize>, cs: &Summary) {
+    /// parameters at each node that gives places to the operation. Returns the
+    /// places that change: the clause mutates them or lends them.
+    fn clause_through_params(
+        &mut self,
+        cap: CapId,
+        op: Option<usize>,
+        cs: &Summary,
+    ) -> Vec<PlaceId> {
+        let mut changed = Vec::new();
         let here = self.frames.iter().rev().find_map(|f| f.barrier);
         let args: Vec<_> = self
             .op_args
@@ -1535,19 +1577,25 @@ impl Lower<'_> {
             .filter(|a| a.cap == cap && (a.op.is_none() || a.op == op))
             .copied()
             .collect();
-        let through = |me: &mut Self, p: PlaceId, a: &super::OpArg| -> Option<PlaceId> {
+        let through = |me: &mut Self, p: PlaceId, a: &super::OpArg| -> Vec<PlaceId> {
             let r = me.root_place(p);
-            let &k = cs.param_roots.get(&r)?;
-            match a.pos {
-                Some(i) if i == k => Some(me.rebase(p, r, a.place)),
-                Some(_) => None,
-                // The parameter can point anywhere inside the place.
-                None => Some(a.place),
-            }
+            let Some(&k) = cs.param_roots.get(&r) else {
+                return Vec::new();
+            };
+            let given = super::fnval::Given {
+                pos: a.pos,
+                place: a.place,
+                root: a.root,
+            };
+            me.through(p, r, k, &[given])
+                .into_iter()
+                .map(|g| g.place)
+                .collect()
         };
         for a in &args {
             for &m in &cs.muts {
-                if let Some(q) = through(self, m, a) {
+                for q in through(self, m, a) {
+                    changed.push(q);
                     // The summary of the body gets the change only for its own nodes.
                     if a.body == here {
                         self.mutate(a.node, q);
@@ -1558,14 +1606,94 @@ impl Lower<'_> {
                 }
             }
             for &r in &cs.reads {
-                if let Some(q) = through(self, r, a) {
+                for q in through(self, r, a) {
                     self.facts.reads_at.push((a.node, q));
                     if a.body == here {
                         self.sum().reads.insert(q);
                     }
                 }
             }
+            for &l in &cs.lends {
+                for q in through(self, l, a) {
+                    changed.push(q);
+                    if a.body == here {
+                        self.lend(a.node, q);
+                    } else {
+                        self.facts.lends_mut.push((a.node, q));
+                    }
+                }
+            }
         }
+        changed
+    }
+
+    /// At each resume of clause `cs` of operation `op`, a change of a place that
+    /// the operation gets is a change of the parameter of the clause.
+    fn resume_through_params(
+        &mut self,
+        cap: CapId,
+        op: Option<usize>,
+        cs: &Summary,
+        resumes: &[NodeId],
+        changes: &[PlaceId],
+    ) {
+        if resumes.is_empty() {
+            return;
+        }
+        let args: Vec<_> = self
+            .op_args
+            .iter()
+            .filter(|a| a.cap == cap && (a.op.is_none() || a.op == op))
+            .copied()
+            .collect();
+        let mut out = Vec::new();
+        for (&x, &k) in &cs.param_roots {
+            for a in args.iter().filter(|a| a.pos.is_none_or(|i| i == k)) {
+                for &m in changes {
+                    out.extend(self.onto_param(m, a.place, x, a.pos.is_some()));
+                }
+            }
+        }
+        out.sort();
+        out.dedup();
+        for &n in resumes {
+            for &q in &out {
+                self.facts.mutates_at.push((n, q));
+            }
+        }
+    }
+
+    /// Returns the place below parameter root `x` that a change of `m` changes, where
+    /// `x` stands for argument place `p`. With `exact` false, `x` can be anywhere inside `p`.
+    fn onto_param(&mut self, m: PlaceId, p: PlaceId, x: PlaceId, exact: bool) -> Option<PlaceId> {
+        let (pm, pp) = (self.facts.place(m), self.facts.place(p));
+        if pm.root != pp.root {
+            return None;
+        }
+        let base = |me: &Self, q: PlaceId| me.facts.wild_base(q).unwrap_or(q);
+        let (bm, bp) = (base(self, m), base(self, p));
+        let overlap = weft_verified::places::overlaps(
+            &self.facts.place(bm).steps,
+            &self.facts.place(bp).steps,
+        );
+        if !overlap {
+            return None;
+        }
+        // A change at or below the argument place keeps its steps below `x`.
+        let mut at = Some(m);
+        while let Some(q) = at {
+            if q == p {
+                return Some(if exact {
+                    self.rebase(m, p, x)
+                } else {
+                    self.facts.wildcard(x)
+                });
+            }
+            at = self.facts.place(q).parent;
+        }
+        // A change above the argument place, or one that can alias it, can change
+        // any place below `x`.
+        Some(self.facts.wildcard(x))
     }
 
     fn merge_summary(&mut self, s: &Summary) {
@@ -1584,6 +1712,7 @@ impl Lower<'_> {
         t.captures.extend(s.captures.iter().copied());
         t.moved_captures.extend(s.moved_captures.iter().copied());
         t.dropped.extend(s.dropped.iter().copied());
+        t.lends.extend(s.lends.iter().copied());
         for &a in &s.op_args {
             if !t.op_args.contains(&a) {
                 t.op_args.push(a);

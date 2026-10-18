@@ -326,18 +326,20 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         let at = f.node(c.at);
         let task = &f.tasks[c.task.index()];
         let verb = if c.task_writes { "mutates" } else { "reads" };
-        let other = match (c.task_writes, c.free, c.lends) {
-            (_, _, true) => "gives a function value that can mutate",
-            (true, None, false) => "accesses",
-            (false, None, false) => "mutates",
-            (_, Some(_), false) => "frees",
+        let node_place = &f.place(c.node_place).display;
+        let what = match (c.task_writes, c.free, c.lends) {
+            (_, _, true) => {
+                format!("gives `{node_place}` to a function value that can mutate it")
+            }
+            (true, None, false) => format!("accesses `{node_place}`"),
+            (false, None, false) => format!("mutates `{node_place}`"),
+            (_, Some(_), false) => format!("frees `{node_place}`"),
         };
         out.push(
             Diagnostic::error(
                 "W0405",
                 format!(
-                    "this code {other} `{}` while a task {verb} `{}`",
-                    f.place(c.node_place).display,
+                    "this code {what} while a task {verb} `{}`",
                     f.place(c.task_place).display
                 ),
                 at.span,

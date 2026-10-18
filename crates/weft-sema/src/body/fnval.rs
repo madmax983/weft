@@ -328,25 +328,56 @@ impl Lower<'_> {
         }
     }
 
-    /// The places that a place below parameter root `r` (parameter `k`) stands for.
-    fn through(
+    /// The places that place `p` below parameter root `r` (parameter `k`) stands
+    /// for, from the places `given`. A result with `pos: Some(k)` is `p` moved onto a
+    /// given place. A result with `pos: None` is a given place that the parameter can
+    /// point anywhere inside: a change of the place covers a change below it.
+    pub(super) fn through(
         &mut self,
         p: PlaceId,
         r: PlaceId,
         k: usize,
         given: &[Given],
-    ) -> Vec<(PlaceId, u32)> {
+    ) -> Vec<Given> {
         let mut out = Vec::new();
         for g in given {
             match g.pos {
-                Some(i) if i == k => out.push((self.rebase(p, r, g.place), g.root)),
+                Some(i) if i == k => out.push(Given {
+                    pos: Some(k),
+                    place: self.rebase(p, r, g.place),
+                    root: g.root,
+                }),
                 Some(_) => {}
-                // The parameter can point anywhere inside the place: a change of the
-                // place covers a change below it.
-                None => out.push((g.place, g.root)),
+                None => out.push(Given { pos: None, ..*g }),
             }
         }
         out
+    }
+
+    /// The places that place `p` of summary `sum` stands for where the summary runs
+    /// with the places `given`. `root` is the callee root index of the captures.
+    fn places_of(
+        &mut self,
+        sum: &Summary,
+        p: PlaceId,
+        root: u32,
+        given: &[Given],
+    ) -> Vec<(PlaceId, u32)> {
+        match self.rooted(sum, p) {
+            Rooted::Param(r, k) => self
+                .through(p, r, k, given)
+                .into_iter()
+                .map(|g| (g.place, g.root))
+                .collect(),
+            Rooted::Own => Vec::new(),
+            Rooted::Outer => vec![(p, root)],
+        }
+    }
+
+    /// Node `n` gives place `p` to code that can mutate through it.
+    pub(super) fn lend(&mut self, n: NodeId, p: PlaceId) {
+        self.facts.lends_mut.push((n, p));
+        self.sum().lends.insert(p);
     }
 
     /// Applies a summary at a node: the function value runs there.
@@ -360,25 +391,20 @@ impl Lower<'_> {
             scope,
         });
         for &m in &sum.muts {
-            let places = match self.rooted(&sum, m) {
-                Rooted::Param(r, k) => self.through(m, r, k, given),
-                Rooted::Own => Vec::new(),
-                Rooted::Outer => vec![(m, root)],
-            };
-            for (q, i) in places {
+            for (q, i) in self.places_of(&sum, m, root, given) {
                 self.mutate(n, q);
                 self.facts.call_mut.push((n, q, i));
             }
         }
         for &r in &sum.reads {
-            let places = match self.rooted(&sum, r) {
-                Rooted::Param(pr, k) => self.through(r, pr, k, given),
-                Rooted::Own => Vec::new(),
-                Rooted::Outer => vec![(r, root)],
-            };
-            for (q, _) in places {
+            for (q, _) in self.places_of(&sum, r, root, given) {
                 self.facts.reads_at.push((n, q));
                 self.sum().reads.insert(q);
+            }
+        }
+        for &l in &sum.lends {
+            for (q, _) in self.places_of(&sum, l, root, given) {
+                self.lend(n, q);
             }
         }
         for e in &sum.escapes {
@@ -394,15 +420,9 @@ impl Lower<'_> {
         for &(cap, op, pos, p) in &sum.op_args {
             match self.rooted(&sum, p) {
                 Rooted::Param(r, k) => {
-                    for g in given {
-                        match g.pos {
-                            Some(i) if i == k => {
-                                let q = self.rebase(p, r, g.place);
-                                self.give_op(n, cap, op, pos, q, g.root);
-                            }
-                            Some(_) => {}
-                            None => self.give_op(n, cap, op, None, g.place, g.root),
-                        }
+                    for g in self.through(p, r, k, given) {
+                        let pos = g.pos.and(pos);
+                        self.give_op(n, cap, op, pos, g.place, g.root);
                     }
                 }
                 Rooted::Own => {}
@@ -493,12 +513,17 @@ impl Lower<'_> {
             self.sum().passthrough.insert(p);
         }
         for g in given {
-            if let Some(s) = self.sums.get_mut(d) {
-                if !s.lent.contains(&(p, g.pos, g.place)) {
-                    s.lent.push((p, g.pos, g.place));
-                }
+            self.note_lent((d, p), g);
+            self.lend(n, g.place);
+        }
+    }
+
+    /// Records that the body at summary index `d` gives `g` to its function parameter `p`.
+    fn note_lent(&mut self, (d, p): (usize, usize), g: &Given) {
+        if let Some(s) = self.sums.get_mut(d) {
+            if !s.lent.contains(&(p, g.pos, g.place)) {
+                s.lent.push((p, g.pos, g.place));
             }
-            self.facts.lends_mut.push((n, g.place));
         }
     }
 
@@ -513,17 +538,13 @@ impl Lower<'_> {
         }
         params.sort_unstable();
         params.dedup();
-        for (d, p) in params {
+        for dp in params {
             for g in given {
-                if let Some(s) = self.sums.get_mut(d) {
-                    if !s.lent.contains(&(p, g.pos, g.place)) {
-                        s.lent.push((p, g.pos, g.place));
-                    }
-                }
+                self.note_lent(dp, g);
             }
         }
         for g in given {
-            self.facts.lends_mut.push((n, g.place));
+            self.lend(n, g.place);
         }
         // A function value that the body stores can be this value.
         self.reach(n, given);
@@ -547,7 +568,7 @@ impl Lower<'_> {
         } else if self.effect_lends(e) {
             // A clause outside the function can mutate through what the operation gets.
             for &(p, _) in args {
-                self.facts.lends_mut.push((n, p));
+                self.lend(n, p);
             }
         }
     }
@@ -681,16 +702,11 @@ impl Lower<'_> {
                 for g in &r.given {
                     match self.rooted(&sum, g.place) {
                         Rooted::Param(pr, k) => {
-                            for ag in &a.given {
-                                match ag.pos {
-                                    Some(i) if i == k => given.push(Given {
-                                        pos: g.pos,
-                                        place: self.rebase(g.place, pr, ag.place),
-                                        root: ag.root,
-                                    }),
-                                    Some(_) => {}
-                                    None => given.push(Given { pos: None, ..*ag }),
-                                }
+                            for ag in self.through(g.place, pr, k, &a.given) {
+                                given.push(Given {
+                                    pos: ag.pos.and(g.pos),
+                                    ..ag
+                                });
                             }
                         }
                         Rooted::Own => {}

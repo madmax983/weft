@@ -20,6 +20,9 @@ Status: accepted. Date: 2026-10-18.
   a call of a closure that performs, and a call that reaches the handler. For the last
   one the clause can get any place inside a reference argument of the call, so the
   whole argument counts as mutated.
+- A `resume` runs the handled computation. A change there of a place that the operation
+  got is a change of the clause parameter, so a reference into the parameter that the
+  clause holds across `resume` is invalid after it.
 - Call-site aliasing (W0312): a callee sees its reference parameters as separate places.
   So the caller must not pass overlapping places when the callee (or a handler that the
   callee reaches) mutates one of them. A closure argument points into what it captures
@@ -86,6 +89,10 @@ Status: accepted. Date: 2026-10-18.
   mutation of `M` does. The signature does not state it: the caller sees the mutation
   where it gives the closure. An operation of a handler outside the function lends its
   reference arguments in the same way.
+- A closure or a handler clause that lends a place lends it again at each node where it
+  runs: a call of the closure, and a perform, a call or a `resume` that runs the clause.
+  A place below a parameter of the closure or the clause becomes the place that the node
+  gives. A task that lends a place can write it (W0405).
 
 ### Dependency authority
 

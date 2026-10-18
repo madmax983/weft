@@ -81,6 +81,9 @@ pub struct Summary {
     pub members: BTreeSet<usize>,
     /// Function parameters that the body stores.
     pub stores: BTreeSet<usize>,
+    /// Places that the body gives to code that can mutate through them: a function
+    /// parameter, an unknown function value or an operation of an outer handler.
+    pub lends: BTreeSet<PlaceId>,
 }
 
 impl Summary {
@@ -109,6 +112,7 @@ impl Summary {
         self.op_args.extend(o.op_args.iter().copied());
         self.members.extend(o.members.iter().copied());
         self.stores.extend(o.stores.iter().copied());
+        self.lends.extend(o.lends.iter().copied());
     }
 }
 
