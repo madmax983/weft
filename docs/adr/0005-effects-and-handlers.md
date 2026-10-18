@@ -110,7 +110,9 @@ Status: accepted. Date: 2026-10-18.
   (`lends_mut(P, M)`). The call invalidates references and conflicts with tasks as a
   mutation of `M` does. The signature does not state it: the caller sees the mutation
   where it gives the closure. An operation of a handler outside the function lends its
-  reference arguments in the same way.
+  reference arguments in the same way. The code that gets the places sees them as
+  separate places, so a lent place pairs with the other arguments of the call as a
+  mutation of the callee does (`call_mut`, W0312).
 - A closure or a handler clause can give a local outside it a place below its own
   parameter (`keep = x`). At each node where it runs, the local then points into the
   place that the node gives.

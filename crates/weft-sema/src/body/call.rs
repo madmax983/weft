@@ -1101,7 +1101,7 @@ impl Lower<'_> {
                 self.facts.call_arg.push((n, p, root));
                 match cap {
                     Some(c) => self.give_op(n, c, Some(op), Some(i), p, root),
-                    None => self.lend(n, p),
+                    None => self.lend(n, p, root),
                 }
             }
         }

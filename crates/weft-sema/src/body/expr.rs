@@ -1557,7 +1557,7 @@ impl Lower<'_> {
     ) {
         // A call that reaches this handler must not pass places that the handler mutates.
         for &n in calls {
-            for &m in &h.footprint {
+            for &m in h.footprint.iter().chain(&h.lent) {
                 self.facts.call_mut.push((n, m, 1000 + h.cap.0));
             }
             for &l in &h.lent {
@@ -1670,9 +1670,10 @@ impl Lower<'_> {
                 for q in through(self, l, a) {
                     changed.push(q);
                     if a.body == here {
-                        self.lend(a.node, q);
+                        self.lend(a.node, q, a.root);
                     } else {
                         self.facts.lends_mut.push((a.node, q));
+                        self.facts.call_mut.push((a.node, q, a.root));
                     }
                 }
             }

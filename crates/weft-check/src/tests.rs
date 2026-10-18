@@ -845,3 +845,32 @@ fn w0301_w0405_a_lent_place_can_change() {
     assert!(r.violations.task_conflict.contains(&(t, n1)));
     assert!(r.conflicts[0].lends);
 }
+
+#[test]
+fn w0312_a_lent_place_pairs_with_the_other_arguments() {
+    // `f(w, &w.entities[0])` with `f` a function parameter: both places are lent.
+    let mut b = B::new();
+    let w = b.param("w");
+    let ents = b.field(w, 0, "entities");
+    let elem = b.elem(ents);
+    let n = b.node("f");
+    b.f.lends_mut.push((n, w));
+    b.f.lends_mut.push((n, elem));
+    b.f.call_mut.push((n, w, 0));
+    b.f.call_mut.push((n, elem, 1));
+    b.f.call_arg.push((n, w, 0));
+    b.f.call_arg.push((n, elem, 1));
+    let r = check(&b.f);
+    // Each place pairs with the other one.
+    assert!(r.violations.alias_conflict.contains(&(n, w, elem)));
+    assert!(r.violations.alias_conflict.contains(&(n, elem, w)));
+    // The diagnostics show one error for the call, with the outer place mutated.
+    let ds = crate::diagnose::diagnose(&b.f, &r);
+    let w0312: Vec<_> = ds.iter().filter(|d| d.code == "W0312").collect();
+    assert_eq!(w0312.len(), 1);
+    assert!(
+        w0312[0].message.contains("mutates `w` while"),
+        "{}",
+        w0312[0].message
+    );
+}

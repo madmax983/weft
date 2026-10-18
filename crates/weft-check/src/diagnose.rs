@@ -1,6 +1,6 @@
 //! Diagnostics from checker results. Each diagnostic shows its derivation.
 
-use weft_facts::{FnFacts, NodeId, VarKind};
+use weft_facts::{FnFacts, NodeId, PlaceId, VarKind};
 use weft_syntax::diag::Diagnostic;
 
 use crate::rules::{Cause, Conflict, Report};
@@ -289,7 +289,20 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             at.span,
         ));
     }
-    for &(n, m, a) in &v.alias_conflict {
+    // One W0312 for each call: the pair with the outermost mutated place. Two
+    // overlapping places that both change give the pair in both directions.
+    let mut pairs: Vec<(NodeId, PlaceId, PlaceId)> = v.alias_conflict.iter().copied().collect();
+    pairs.sort_by_key(|&(n, m, a)| {
+        (
+            n,
+            f.place(m).steps.len(),
+            std::cmp::Reverse(f.place(a).steps.len()),
+            m,
+            a,
+        )
+    });
+    pairs.dedup_by_key(|p| p.0);
+    for (n, m, a) in pairs {
         let at = f.node(n);
         out.push(
             Diagnostic::error(

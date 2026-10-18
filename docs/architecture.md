@@ -44,7 +44,8 @@ A function value can mutate through its reference parameters. A call that knows 
 value (a closure or an item, also one that a higher-order callee lends places to)
 mutates the places that it gives. A call of a function parameter or of an unknown
 value gives its places away: `lends_mut` invalidates references as a mutation does,
-and the caller sees the real mutation. See ADR 0005.
+and the caller sees the real mutation. A lent place is also a `call_mut` of the call,
+so it must not overlap another argument (W0312). See ADR 0005.
 
 ## Verified pieces
 

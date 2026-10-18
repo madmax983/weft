@@ -462,9 +462,12 @@ impl Lower<'_> {
         }
     }
 
-    /// Node `n` gives place `p` to code that can mutate through it.
-    pub(super) fn lend(&mut self, n: NodeId, p: PlaceId) {
+    /// Node `n` gives place `p` to code that can mutate through it, as callee root
+    /// `root`. That code sees its parameters as separate places, so the place pairs
+    /// with the other arguments of the node as a mutation does (W0312).
+    pub(super) fn lend(&mut self, n: NodeId, p: PlaceId, root: u32) {
         self.facts.lends_mut.push((n, p));
+        self.facts.call_mut.push((n, p, root));
         self.sum().lends.insert(p);
     }
 
@@ -491,8 +494,8 @@ impl Lower<'_> {
             }
         }
         for &l in &sum.lends {
-            for (q, _) in self.places_of(&sum, l, root, given) {
-                self.lend(n, q);
+            for (q, i) in self.places_of(&sum, l, root, given) {
+                self.lend(n, q, i);
             }
         }
         for &(l, p) in &sum.binds {
@@ -607,7 +610,7 @@ impl Lower<'_> {
         }
         for g in given {
             self.note_lent((d, p), g);
-            self.lend(n, g.place);
+            self.lend(n, g.place, g.root);
         }
     }
 
@@ -637,7 +640,7 @@ impl Lower<'_> {
             }
         }
         for g in given {
-            self.lend(n, g.place);
+            self.lend(n, g.place, g.root);
         }
         // A function value that the body stores can be this value.
         self.reach(n, given);
@@ -660,8 +663,8 @@ impl Lower<'_> {
             }
         } else if self.effect_lends(e) {
             // A clause outside the function can mutate through what the operation gets.
-            for &(p, _) in args {
-                self.lend(n, p);
+            for &(p, i) in args {
+                self.lend(n, p, i);
             }
         }
     }
