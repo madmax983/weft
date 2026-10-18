@@ -4,6 +4,7 @@
 //! [`Violations`].
 
 use std::collections::BTreeSet;
+use std::fmt::Write as _;
 use std::sync::OnceLock;
 
 use weft_datalog::{
@@ -123,13 +124,13 @@ pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
             (v.uniq, "uniq"),
         ] {
             if flag {
-                emit(name, &[id.clone()]);
+                emit(name, std::slice::from_ref(&id));
             }
         }
     }
     for (i, t) in f.tasks.iter().enumerate() {
         let id = s(&TaskId(u32::try_from(i).unwrap_or(0)));
-        emit("task", &[id.clone()]);
+        emit("task", std::slice::from_ref(&id));
         if t.kind == TaskKind::Fork {
             emit("fork_task", &[id]);
         }
@@ -192,7 +193,7 @@ pub fn facts_text(f: &FnFacts) -> String {
                 Arg::Int(i) => i.to_string(),
             })
             .collect();
-        out.push_str(&format!("{rel}({}).\n", a.join(", ")));
+        let _ = writeln!(out, "{rel}({}).", a.join(", "));
     });
     out
 }
@@ -205,10 +206,9 @@ pub fn evaluate_spec(f: &FnFacts, provenance: bool) -> Result<Output, weft_datal
 /// Returns the text of a symbol, without Datalog quotes.
 fn raw(out: &Output, v: Value) -> String {
     let t = out.display_value(v);
-    match t.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
-        Some(inner) => inner.replace("\\\"", "\"").replace("\\\\", "\\"),
-        None => t,
-    }
+    t.strip_prefix('"')
+        .and_then(|x| x.strip_suffix('"'))
+        .map_or_else(|| t.clone(), |inner| inner.replace("\\\"", "\"").replace("\\\\", "\\"))
 }
 
 fn parse_id(out: &Output, v: Value, prefix: char) -> Option<u32> {
@@ -354,21 +354,22 @@ fn render(
     let pad = "  ".repeat(depth);
     let fact = rename(&d.fact.text, f, line_of);
     match &d.reason {
-        Reason::Input => out.push_str(&format!("{pad}{fact}  [fact]\n")),
-        Reason::Fact { .. } => out.push_str(&format!("{pad}{fact}  [spec fact]\n")),
+        Reason::Input => {
+            let _ = writeln!(out, "{pad}{fact}  [fact]");
+        }
+        Reason::Fact { .. } => {
+            let _ = writeln!(out, "{pad}{fact}  [spec fact]");
+        }
         Reason::Rule { text, premises, .. } => {
-            out.push_str(&format!("{pad}{fact}  by  {text}\n"));
+            let _ = writeln!(out, "{pad}{fact}  by  {text}");
             for p in premises {
                 match p {
                     Premise::Derived(c) => render(c, f, line_of, depth + 1, out),
                     Premise::Absent { text, .. } => {
-                        out.push_str(&format!(
-                            "{pad}  not {}  [absent]\n",
-                            rename(text, f, line_of)
-                        ));
+                        let _ = writeln!(out, "{pad}  not {}  [absent]", rename(text, f, line_of));
                     }
                     Premise::Holds { text, .. } => {
-                        out.push_str(&format!("{pad}  {}  [holds]\n", rename(text, f, line_of)));
+                        let _ = writeln!(out, "{pad}  {}  [holds]", rename(text, f, line_of));
                     }
                 }
             }

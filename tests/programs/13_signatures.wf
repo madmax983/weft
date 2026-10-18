@@ -55,3 +55,19 @@ fn with_log(f: fn() / log) { f() }
 fn wrong_closure() / clock, log {
     with_log(|| sleep(1.s))   //~ W0705
 }
+
+// Enum payloads stay unstable, even behind a stable pointer.
+struct Inner { opt: Option<Vec<u64>> }
+struct Shelf { g: Gc<Inner> }
+
+fn reset_shelf(s: &Shelf) / mut(s) {}
+
+fn payload_behind_gc(s: &Shelf) / mut(s) {
+    match s.g.opt {
+        Some(v) => {
+            reset_shelf(s)
+            print(v)   //~ W0301
+        }
+        None => {}
+    }
+}

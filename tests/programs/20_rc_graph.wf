@@ -1,0 +1,29 @@
+// rc groups: graphs and doubly-linked lists without run-time borrow flags.
+struct Node { value: u64, next: Option<Rc<Node>>, prev: Option<Weak<Node>>, tags: Vec<u64> }
+
+fn link(a: Rc<Node>, b: Rc<Node>) / mut(Node) {
+    b.prev = Some(a.downgrade())   // a weak back-link breaks the cycle
+    a.next = Some(b)
+}
+
+fn bump_all(head: Rc<Node>) / mut(Node) {
+    head.value += 1
+    head.tags.push(head.value)
+}
+
+fn tag_then_read(a: Rc<Node>) / mut(Node) {
+    let first = &a.tags[0]
+    a.value = 3          // a stable field: `first` stays valid
+    print(first)
+    let b = a.clone()
+    b.tags.clear()       // through any clone: mut(Node) reaches the tags buffer
+    print(first)   //~ W0301
+}
+
+fn hidden(a: Rc<Node>) {
+    a.value = 1   // no signature: the effect `mut(Node)` is inferred
+}
+
+pub fn shown(a: Rc<Node>) / mut(a) {
+    a.value = 1   //~ W0703
+}

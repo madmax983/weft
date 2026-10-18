@@ -1,4 +1,6 @@
 //! The program corpus: every design doc example and one negative program per rule.
+
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //!
 //! A line that ends with `//~ CODE ...` expects those error codes on that line.
 //! A file that contains `// weft: library` is checked as a library.

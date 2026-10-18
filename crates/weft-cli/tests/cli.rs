@@ -1,5 +1,7 @@
 //! Tests of the `weft` commands.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use weft_cli::run;
 
 fn root() -> std::path::PathBuf {

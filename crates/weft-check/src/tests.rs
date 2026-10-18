@@ -1,5 +1,7 @@
 //! Rule tests on hand-written facts. Each test names the spec rule it covers.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use weft_facts::{
     CapId, FnFacts, HandlerInfo, NodeId, PlaceId, RootKind, Span, Step, StepKind, TaskId, TaskKind,
     VarId, VarInfo, VarKind,

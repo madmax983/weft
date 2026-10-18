@@ -1,5 +1,7 @@
 //! Gate 1b, part 1: the production checker and the Datalog spec agree on random facts.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 use proptest::prelude::*;
 use weft_check::{bridge, check};
 use weft_facts::{
