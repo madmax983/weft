@@ -2,7 +2,7 @@
 
 use super::{
     ast, effects, AdtKind, Arg, ContInfo, Expr, ExprKind, FnId, FnTy, ItemRef, Lower, NodeId,
-    PathRef, PlaceId, RootKind, SigRoot, Span, TaskKind, Ty, Val, VarKind, PRELUDE,
+    PathRef, PlaceId, RootKind, SigRoot, Span, TaskKind, Ty, Val, PRELUDE,
 };
 
 /// One evaluated argument.
@@ -278,41 +278,41 @@ impl Lower<'_> {
                 span,
             );
         }
+        // Evaluate the arguments in order. Each argument is typed, held and moved
+        // before the next one runs, so that a later argument cannot hide a
+        // mutation from an earlier reference.
+        let mut recv = recv;
         let mut vals: Vec<ArgVal> = Vec::new();
-        if let Some(r) = recv {
-            vals.push(ArgVal { val: r, span });
-        }
-        for (i, slot) in slots.iter().enumerate().skip(first) {
-            let Some(e) = slot else {
-                vals.push(ArgVal {
+        let mut arg_places: Vec<Vec<PlaceId>> = Vec::new();
+        let mut held_vars = Vec::new();
+        for i in 0..slots.len() {
+            let later = slots[i + 1..].iter().any(Option::is_some);
+            let mut av = if let (0, Some(r)) = (i, recv.take()) {
+                ArgVal { val: r, span }
+            } else if let Some(e) = slots[i] {
+                let expected = match self.inf.shallow(&ptys[i]) {
+                    Ty::Fn(f) => Some((*f).clone()),
+                    _ => None,
+                };
+                let v = match (&e.kind, expected) {
+                    (ExprKind::Closure { params, body }, Some(fty)) => {
+                        self.closure(params, body, Some(&fty), e.span)
+                    }
+                    _ => self.expr(e),
+                };
+                ArgVal {
+                    val: v,
+                    span: e.span,
+                }
+            } else {
+                ArgVal {
                     val: Val {
                         ty: Ty::Error,
                         ..Val::default()
                     },
                     span,
-                });
-                continue;
-            };
-            let expected = match self.inf.shallow(&ptys[i]) {
-                Ty::Fn(f) => Some((*f).clone()),
-                _ => None,
-            };
-            let v = match (&e.kind, expected) {
-                (ExprKind::Closure { params, body }, Some(fty)) => {
-                    self.closure(params, body, Some(&fty), e.span)
                 }
-                _ => self.expr(e),
             };
-            vals.push(ArgVal {
-                val: v,
-                span: e.span,
-            });
-        }
-        // Types, auto-borrow of receivers, and argument places.
-        let mut arg_places: Vec<Vec<PlaceId>> = Vec::new();
-        let mut held = Vec::new();
-        let mut moves = Vec::new();
-        for (i, av) in vals.iter_mut().enumerate() {
             let pt = ptys[i].clone();
             let is_ref_param = matches!(self.inf.shallow(&pt), Ty::Ref(_));
             let arg_is_ref = matches!(self.inf.shallow(&av.val.ty), Ty::Ref(_));
@@ -325,8 +325,17 @@ impl Lower<'_> {
                 if let Ty::Ref(inner) = self.inf.shallow(&pt) {
                     self.unify(&inner, &av.val.ty, av.span);
                 }
+                if later {
+                    let borrow = Val {
+                        ty: pt.clone(),
+                        refs: places.clone(),
+                        ..Val::default()
+                    };
+                    held_vars.extend(self.hold(&borrow, "receiver", av.span));
+                }
                 arg_places.push(places.clone());
                 av.val.refs = places;
+                vals.push(av);
                 continue;
             }
             if i == 0 && first == 1 && arg_is_ref && !is_ref_param {
@@ -334,45 +343,25 @@ impl Lower<'_> {
                 let inner = self.deref_ty(&av.val.ty);
                 self.unify(&pt, &inner, av.span);
                 arg_places.push(Vec::new());
+                vals.push(av);
                 continue;
             }
             self.unify_arg(&pt, &mut av.val, av.span);
             if is_ref_param || arg_is_ref {
+                // A reference argument stays valid until the call: hold it in a variable.
                 arg_places.push(av.val.refs.clone());
-                held.push(i);
+                match av.val.var {
+                    Some(v) => held_vars.push(v),
+                    None => held_vars.extend(self.hold(&av.val, "argument", av.span)),
+                }
             } else {
                 arg_places.push(Vec::new());
                 if !matches!(self.inf.shallow(&pt), Ty::Fn(_)) || av.val.summary.is_none() {
-                    moves.push(i);
+                    let v = av.val.clone();
+                    self.consume(&v, av.span);
                 }
             }
-        }
-        // Reference arguments stay valid until the call: hold each in a variable.
-        let mut held_vars = Vec::new();
-        for &i in &held {
-            if let Some(v) = vals[i].val.var {
-                held_vars.push(v);
-            } else if !vals[i].val.refs.is_empty() {
-                let t = vals[i].val.ty.clone();
-                let info = self.var_info(
-                    "argument",
-                    VarKind::Temp,
-                    vals[i].span,
-                    &t,
-                    vals[i].val.uniq,
-                );
-                let var = self.facts.add_var(info);
-                let n = self.emit(vals[i].span, "argument", String::new());
-                self.bind(var, n);
-                for &p in &vals[i].val.refs {
-                    self.facts.points_into.push((var, p));
-                }
-                held_vars.push(var);
-            }
-        }
-        for &i in &moves {
-            let v = vals[i].val.clone();
-            self.consume(&v, vals[i].span);
+            vals.push(av);
         }
         // The callee root of each parameter: a parameter with `in` shares the root of its place.
         let root_of = |mut i: usize| -> u32 {
@@ -607,24 +596,40 @@ impl Lower<'_> {
                 ..Val::default()
             };
         };
-        let mut vals = Vec::new();
-        for a in args.iter().map(|a| &a.value).chain(trailing) {
-            vals.push((self.expr(a), a.span));
-        }
-        if vals.len() != fty.params.len() {
+        let exprs: Vec<&Expr> = args.iter().map(|a| &a.value).chain(trailing).collect();
+        if exprs.len() != fty.params.len() {
             self.err(
                 "W0103",
                 format!("`{}` takes {} arguments", loc.name, fty.params.len()),
                 span,
             );
         }
-        for ((v, s), pt) in vals.iter().zip(&fty.params) {
-            let mut v = v.clone();
-            self.unify_arg(pt, &mut v, *s);
-            self.consume(&v, *s);
+        // Each argument is typed, held and moved before the next one runs.
+        let mut held = Vec::new();
+        let mut arg_refs = Vec::new();
+        for (i, a) in exprs.iter().enumerate() {
+            let mut v = self.expr(a);
+            if let Some(pt) = fty.params.get(i) {
+                self.unify_arg(pt, &mut v, a.span);
+            }
+            if matches!(self.inf.shallow(&v.ty), Ty::Ref(_)) {
+                arg_refs.extend(v.refs.iter().copied());
+                match v.var {
+                    Some(var) => held.push(var),
+                    None => held.extend(self.hold(&v, "argument", a.span)),
+                }
+            }
+            self.consume(&v, a.span);
         }
         self.use_local(l);
         let n = self.emit(span, &loc.name, String::new());
+        for v in held {
+            self.facts.uses.push((v, n));
+        }
+        for p in arg_refs {
+            self.facts.reads_at.push((n, p));
+            self.sum().reads.insert(p);
+        }
         if self.facts.var(loc.var).once {
             self.facts.moved_at.push((loc.var, n));
         }
@@ -690,9 +695,18 @@ impl Lower<'_> {
     }
 
     fn print(&mut self, args: &[Arg], span: Span) -> Val {
-        for a in args {
-            let _ = self.expr(&a.value);
+        // `print` reads what its reference arguments point to.
+        let mut held = Vec::new();
+        for (i, a) in args.iter().enumerate() {
+            let v = self.expr(&a.value);
+            for &p in &v.refs {
+                self.read(p);
+            }
+            if i + 1 < args.len() {
+                held.extend(self.hold(&v, "argument", a.value.span));
+            }
         }
+        self.pend_uses.extend(held);
         let _ = self.emit(span, "print", String::new());
         Val::default()
     }
@@ -717,12 +731,17 @@ impl Lower<'_> {
                 span,
             );
         }
-        for (d, arg) in defs.iter().zip(args) {
+        let mut held = Vec::new();
+        for (i, (d, arg)) in defs.iter().zip(args).enumerate() {
             let v = self.expr(&arg.value);
             let ft = super::subst(&d.ty, &targs);
             self.unify(&ft, &v.ty, arg.value.span);
             self.consume(&v, arg.value.span);
+            if i + 1 < args.len() {
+                held.extend(self.hold(&v, "argument", arg.value.span));
+            }
         }
+        self.pend_uses.extend(held);
         Val {
             ty: Ty::Adt(a, targs),
             ..Val::default()
@@ -750,13 +769,18 @@ impl Lower<'_> {
             );
         }
         let mut refs = Vec::new();
-        for (ft, a) in fields.iter().zip(args) {
+        let mut held = Vec::new();
+        for (i, (ft, a)) in fields.iter().zip(args).enumerate() {
             let v = self.expr(&a.value);
             let ft = super::subst(ft, &targs);
             self.unify(&ft, &v.ty, a.value.span);
             self.consume(&v, a.value.span);
+            if i + 1 < args.len() {
+                held.extend(self.hold(&v, "argument", a.value.span));
+            }
             refs.extend(v.refs);
         }
+        self.pend_uses.extend(held);
         Val {
             ty: Ty::Adt(adt, targs),
             refs,
@@ -775,11 +799,16 @@ impl Lower<'_> {
                 span,
             );
         }
-        for (pt, a) in o.params.iter().zip(args) {
+        let mut held = Vec::new();
+        for (i, (pt, a)) in o.params.iter().zip(args).enumerate() {
             let v = self.expr(&a.value);
             self.unify(pt, &v.ty, a.value.span);
             self.consume(&v, a.value.span);
+            if i + 1 < args.len() {
+                held.extend(self.hold(&v, "argument", a.value.span));
+            }
         }
+        self.pend_uses.extend(held);
         let n = self.emit(span, &o.name, eff.name.to_lowercase());
         self.perform_effect(n, &eff.name);
         if let Some(c) = self

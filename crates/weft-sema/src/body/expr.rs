@@ -1,9 +1,10 @@
 //! Expressions, places, closures, handlers and scopes.
 
 use super::{
-    ast, effects, elem_step, field_step, AdtKind, BinOp, ContInfo, Deref, Expr, ExprKind, FnTy,
-    Frame, HandlerFrame, HandlerInfo, IntTy, ItemRef, LVal, Lit, Lower, NodeId, PathRef, Pattern,
-    PlaceId, Rc, RootKind, Span, StrPart, Summary, Ty, UnOp, Val, VarKind, PRELUDE,
+    ast, block_tail, effects, elem_step, expr_tail, field_step, AdtKind, BinOp, ContInfo, Deref,
+    Expr, ExprKind, FnTy, Frame, HandlerFrame, HandlerInfo, IntTy, ItemRef, LVal, Lit, Lower,
+    NodeId, PathRef, Pattern, PlaceId, Rc, RootKind, Span, StrPart, Summary, Ty, UnOp, Val,
+    VarKind, PRELUDE,
 };
 use weft_facts::{Step, StepKind};
 
@@ -68,10 +69,18 @@ impl Lower<'_> {
                 }
             }
             ExprKind::Tuple(es) => {
-                let parts: Vec<Val> = es.iter().map(|x| self.expr(x)).collect();
-                for (p, x) in parts.iter().zip(es) {
-                    self.consume(p, x.span);
+                // Each part is moved and held before the next one runs.
+                let mut parts: Vec<Val> = Vec::new();
+                let mut held = Vec::new();
+                for (i, x) in es.iter().enumerate() {
+                    let p = self.expr(x);
+                    self.consume(&p, x.span);
+                    if i + 1 < es.len() {
+                        held.extend(self.hold(&p, "tuple part", x.span));
+                    }
+                    parts.push(p);
                 }
+                self.pend_uses.extend(held);
                 let ty = Ty::Tuple(parts.iter().map(|p| p.ty.clone()).collect());
                 let refs = parts.iter().flat_map(|p| p.refs.clone()).collect();
                 Val {
@@ -601,6 +610,7 @@ impl Lower<'_> {
             let b = self.expr(rhs);
             let bt = self.deref_ty(&b.ty);
             self.unify(&Ty::Bool, &bt, rhs.span);
+            self.flush(expr_tail(rhs));
             let join = self.emit(span, "join", String::new());
             self.facts.cfg_edge.push((br, join));
             return Val {
@@ -609,7 +619,9 @@ impl Lower<'_> {
             };
         }
         let a = self.expr(lhs);
+        let held = self.hold(&a, "operand", lhs.span);
         let b = self.expr(rhs);
+        self.pend_uses.extend(held);
         match op {
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                 let at = self.deref_ty(&a.ty);
@@ -711,9 +723,13 @@ impl Lower<'_> {
         self.unify(&Ty::Bool, &ct, cond.span);
         let br = self.emit(cond.span, "branch", String::new());
         let a = self.block(then);
+        self.flush(block_tail(then));
         let a_end = self.cur;
         self.cur = Some(br);
         let b = else_.map_or_else(Val::default, |e| self.expr(e));
+        if let Some(e) = else_ {
+            self.flush(expr_tail(e));
+        }
         let b_end = self.cur;
         let join = self.facts.add_node(span, "join", String::new());
         let mut any = false;
@@ -779,6 +795,7 @@ impl Lower<'_> {
                 self.consume(&sval, arm.pat.span());
             }
             let v = self.expr(&arm.body);
+            self.flush(expr_tail(&arm.body));
             if !matches!(self.inf.shallow(&v.ty), Ty::Never) {
                 self.unify(&result, &v.ty, arm.body.span);
             }
@@ -975,6 +992,7 @@ impl Lower<'_> {
         span: Span,
     ) -> Val {
         let saved = self.cur;
+        let saved_pending = self.take_pending();
         self.sums.push(Summary::default());
         let si = self.sums.len() - 1;
         self.frames.push(Frame {
@@ -1015,6 +1033,7 @@ impl Lower<'_> {
         let v = self.hand_out(v, body.span);
         let ret_ty = v.ty.clone();
         self.drop_value(&v, body.span);
+        self.flush(expr_tail(body));
         self.end_frame(span);
         let end = self.cur;
         self.frames.pop();
@@ -1035,6 +1054,7 @@ impl Lower<'_> {
         let id = self.closures.len();
         self.closures.push(sum.clone());
         self.cur = saved;
+        self.restore_pending(saved_pending);
         // The creation node uses the captures and moves the moved ones.
         let mut refs = Vec::new();
         let caps: Vec<_> = sum.captures.iter().copied().collect();
@@ -1174,6 +1194,7 @@ impl Lower<'_> {
         });
         self.sums.push(Summary::default());
         let v = self.expr(body);
+        self.flush(expr_tail(body));
         let body_sum = self.sums.pop().unwrap_or_default();
         self.merge_summary(&body_sum);
         self.handlers.pop();
@@ -1231,6 +1252,7 @@ impl Lower<'_> {
             let kv = self.locals[k].var;
             self.bind(kv, entry);
             let cv = self.block(&c.body);
+            self.flush(block_tail(&c.body));
             if !matches!(self.inf.shallow(&cv.ty), Ty::Never) {
                 self.unify(&ty, &cv.ty, c.body.span);
             }

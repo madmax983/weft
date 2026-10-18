@@ -127,6 +127,26 @@ struct LoopFrame {
     frames: usize,
 }
 
+/// The span of the value of a block: its last statement.
+fn block_tail(b: &Block) -> Span {
+    match b.stmts.last() {
+        Some(Stmt {
+            kind: StmtKind::Expr(e),
+            ..
+        }) => expr_tail(e),
+        Some(s) => s.span,
+        None => b.span,
+    }
+}
+
+/// The span of the value of an expression: the last statement of a block.
+fn expr_tail(e: &Expr) -> Span {
+    match &e.kind {
+        ExprKind::Block(b) => block_tail(b),
+        _ => e.span,
+    }
+}
+
 /// A path that names something other than a value.
 enum PathRef {
     Mod(ModId),
@@ -258,6 +278,55 @@ impl<'p> Lower<'p> {
     fn start(&mut self, span: Span, label: &str) -> NodeId {
         self.cur = None;
         self.emit(span, label, String::new())
+    }
+
+    /// Writes the queued uses and reads into a new node on the current path.
+    /// Call it before control leaves a branch, a loop body or a component, so
+    /// that the queue does not go into a node of another path.
+    fn flush(&mut self, span: Span) {
+        if self.pend_uses.is_empty() && self.pend_reads.is_empty() {
+            return;
+        }
+        if self.cur.is_none() {
+            // The queue belongs to code that cannot run.
+            self.pend_uses.clear();
+            self.pend_reads.clear();
+            return;
+        }
+        let _ = self.emit(span, "use", String::new());
+    }
+
+    /// Takes the queue away before a new component starts.
+    fn take_pending(&mut self) -> (Vec<VarId>, Vec<PlaceId>) {
+        (
+            std::mem::take(&mut self.pend_uses),
+            std::mem::take(&mut self.pend_reads),
+        )
+    }
+
+    /// Puts back a queue that `take_pending` took.
+    fn restore_pending(&mut self, saved: (Vec<VarId>, Vec<PlaceId>)) {
+        let (mut uses, mut reads) = saved;
+        uses.append(&mut self.pend_uses);
+        reads.append(&mut self.pend_reads);
+        self.pend_uses = uses;
+        self.pend_reads = reads;
+    }
+
+    /// Holds a reference value in a temporary from this point, so that later
+    /// code that invalidates it is seen. The consumer must use the temporary.
+    fn hold(&mut self, v: &Val, name: &str, span: Span) -> Option<VarId> {
+        if v.var.is_some() || v.refs.is_empty() || self.cur.is_none() {
+            return None;
+        }
+        let info = self.var_info(name, VarKind::Temp, span, &v.ty, v.uniq);
+        let var = self.facts.add_var(info);
+        let n = self.emit(span, name, String::new());
+        self.bind(var, n);
+        for &p in &v.refs {
+            self.facts.points_into.push((var, p));
+        }
+        Some(var)
     }
 
     fn sum(&mut self) -> &mut Summary {

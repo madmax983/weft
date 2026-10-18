@@ -1,9 +1,9 @@
 //! Functions, blocks, statements and patterns.
 
 use super::{
-    ast, effects, AssignOp, Block, EffectSig, ExprKind, FnId, Frame, LVal, LoopFrame, Lower,
-    Lowered, NodeId, Pattern, PlaceId, RootKind, SigPlace, SigRoot, SigStep, Span, StepKind, Stmt,
-    StmtKind, Ty, Val, VarKind,
+    ast, block_tail, effects, AssignOp, Block, EffectSig, ExprKind, FnId, Frame, LVal, LoopFrame,
+    Lower, Lowered, NodeId, Pattern, PlaceId, RootKind, SigPlace, SigRoot, SigStep, Span, StepKind,
+    Stmt, StmtKind, Ty, Val, VarKind,
 };
 use std::collections::BTreeSet;
 
@@ -80,6 +80,7 @@ impl Lower<'_> {
         if self.cur.is_some() {
             self.finish_return(&v, tail_span);
         }
+        self.flush(block_tail(&body));
         self.end_frame(body.span);
         if let Some(c) = self.cur {
             self.facts.cfg_edge.push((c, exit));
@@ -114,6 +115,7 @@ impl Lower<'_> {
         let _ = self.start(span, "test");
         let v = self.block(body);
         self.drop_value(&v, span);
+        self.flush(block_tail(body));
         let eff = self.summary_to_sig(&[]);
         self.finish(eff)
     }
@@ -464,6 +466,7 @@ impl Lower<'_> {
                 });
                 let v = self.block(body);
                 self.drop_value(&v, body.span);
+                self.flush(block_tail(body));
                 self.loops.pop();
                 if let Some(c) = self.cur {
                     self.facts.cfg_edge.push((c, header));
@@ -480,6 +483,7 @@ impl Lower<'_> {
                 });
                 let v = self.block(body);
                 self.drop_value(&v, body.span);
+                self.flush(block_tail(body));
                 self.loops.pop();
                 if let Some(c) = self.cur {
                     self.facts.cfg_edge.push((c, header));
@@ -556,6 +560,7 @@ impl Lower<'_> {
         });
         let v = self.block(body);
         self.drop_value(&v, body.span);
+        self.flush(block_tail(body));
         self.loops.pop();
         if let Some(c) = self.cur {
             self.facts.cfg_edge.push((c, header));

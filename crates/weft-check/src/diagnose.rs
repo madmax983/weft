@@ -30,10 +30,10 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         } else {
             at.detail.clone()
         };
-        let name = if var.kind == VarKind::Iterator {
-            "the loop iterator".to_string()
-        } else {
-            format!("`{}`", var.name)
+        let name = match var.kind {
+            VarKind::Iterator => "the loop iterator".to_string(),
+            VarKind::Temp => format!("the {}", var.name),
+            _ => format!("`{}`", var.name),
         };
         let d = Diagnostic::error("W0301", format!("{name} used after it was invalidated"), node_span(f, inv.used_at))
             .note_at(format!("{} : &{} in {path}", var.name, var.ty.trim_start_matches('&')), var.span)
