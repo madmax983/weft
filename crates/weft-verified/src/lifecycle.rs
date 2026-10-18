@@ -3,6 +3,11 @@
 //! The interpreter uses these types at run time. The proofs show that a `once`
 //! continuation resumes at most once, and that a linear value ends consumed or
 //! aborted exactly once.
+//!
+//! `proofs/link` includes this file. It proves that these state machines refine
+//! the continuation and resource records of the effects model
+//! (`proofs/link/src/lifecycle_link.rs`). Run `proofs/link/verify.sh` after a
+//! change to a spec in this file.
 
 use vstd::prelude::*;
 

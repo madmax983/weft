@@ -5,6 +5,10 @@
 //!
 //! Rule 3 of the design: a `mut(m)` invalidates a reference to `p` when `m` is a
 //! strict prefix of `p` and `p` crosses at least one unstable step after `m`.
+//!
+//! `proofs/link` includes this file. It proves that rule 3 agrees with the kill
+//! predicate of the B3 layout model (`proofs/link/src/places_link.rs`). Run
+//! `proofs/link/verify.sh` after a change to a spec in this file.
 
 use vstd::prelude::*;
 

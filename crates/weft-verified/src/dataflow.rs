@@ -12,6 +12,10 @@
 //! node in `S` that is not a `kill` node are in `S`.
 //! [`propagate`] computes exactly that least fixpoint. Backward analyses use it
 //! on the reversed graph.
+//!
+//! `proofs/link` includes this file. It proves that the W0301 fixpoint is the
+//! invalid set of the B1 CFG model (`proofs/link/src/dataflow_link.rs`). Run
+//! `proofs/link/verify.sh` after a change to a spec in this file.
 
 use vstd::prelude::*;
 
