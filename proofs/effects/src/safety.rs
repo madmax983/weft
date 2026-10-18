@@ -94,6 +94,76 @@ pub proof fn lemma_no_own_error(prog: Prog, s: State)
     }
 }
 
+/// A runnable frame position outside a `multi` continuation is an owning position.
+pub proof fn lemma_runnable_owning(s: State, p: Pos)
+    requires
+        runnable(s, p),
+        !(p is Knt && s.konts[p->Knt_0].multi),
+    ensures
+        owning(s, p),
+{
+}
+
+/// A code frame of a `multi` continuation is clean.
+pub proof fn lemma_multi_frame_clean(prog: Prog, s: State, p: Pos)
+    requires
+        inv_b(prog, s),
+        runnable(s, p),
+        p is Knt,
+        s.konts[p->Knt_0].multi,
+        frame_at(s, p) is Code,
+    ensures
+        clean(prog, s, frame_at(s, p)->Code_0),
+{
+    let k = p->Knt_0;
+    assert(s.konts.contains_key(k));
+    assert(all_clean(prog, s, s.konts[k].frames));
+    assert(s.konts[k].frames[p->Knt_1 as int] is Code);
+}
+
+/// With `inv_b`, there is no duplicate.
+pub proof fn lemma_no_dup(prog: Prog, s: State)
+    requires
+        inv_b(prog, s),
+    ensures
+        !err_dup(s),
+{
+    assert forall|p1: Pos, sl1: Slot, p2: Pos, sl2: Slot, r: ResId|
+        (p1 != p2 || sl1 != sl2) && #[trigger] slot_at(s, p1, sl1, r) && #[trigger] slot_at(s, p2, sl2, r)
+            && s.res.contains_key(r) implies s.res[r].st != RState::Live by {
+        if s.res[r].st == RState::Live {
+            assert forall|p: Pos, sl: Slot| #[trigger] slot_at(s, p, sl, r) implies holds(s, p, r) by {
+                if p is Knt && s.konts[p->Knt_0].multi {
+                    lemma_multi_frame_clean(prog, s, p);
+                    assert(!frame_at(s, p)->Code_0.slots.contains_key(sl));
+                }
+                lemma_runnable_owning(s, p);
+                assert(cf_at(s, p).slots.contains_key(sl));
+            }
+            assert(holds(s, p1, r));
+            assert(holds(s, p2, r));
+            assert(p1 == p2);
+            assert(ocode(s, p1));
+            assert(pos_ok(prog, s, p1));
+            assert(injective(cf_at(s, p1).slots));
+            assert(cf_at(s, p1).slots.contains_key(sl1) && cf_at(s, p1).slots.contains_key(sl2));
+        }
+    }
+    assert forall|p1: Pos, p2: Pos, kid: KId|
+        p1 != p2 && #[trigger] k_at(s, p1, kid) && #[trigger] k_at(s, p2, kid) implies !fresh_once(s, kid) by {
+        if fresh_once(s, kid) {
+            assert forall|p: Pos| #[trigger] k_at(s, p, kid) implies holdsk(s, p, kid) by {
+                if p is Knt && s.konts[p->Knt_0].multi {
+                    lemma_multi_frame_clean(prog, s, p);
+                }
+                lemma_runnable_owning(s, p);
+            }
+            assert(holdsk(s, p1, kid));
+            assert(holdsk(s, p2, kid));
+        }
+    }
+}
+
 /// **Soundness.** No execution of a checked program reaches an error state.
 pub proof fn soundness(prog: Prog, tr: Seq<State>)
     requires
@@ -107,6 +177,7 @@ pub proof fn soundness(prog: Prog, tr: Seq<State>)
         lemma_inv_trace(prog, tr, i);
         lemma_no_struct_error(prog, tr[i]);
         lemma_no_own_error(prog, tr[i]);
+        lemma_no_dup(prog, tr[i]);
     }
 }
 
@@ -440,7 +511,8 @@ pub proof fn e3_abort_safety(prog: Prog, tr: Seq<State>)
 /// clean frames: no linear value, and no fresh `once` continuation. So (2) a
 /// resume of a `multi` continuation, however often it happens, pushes frames
 /// that hold no resource and no fresh `once` continuation. (3) At every state,
-/// no resource and no fresh `once` continuation has two owners (no duplicate).
+/// no resource and no fresh `once` continuation has two owners, and no
+/// duplicate exists anywhere a frame can still run (`err_dup`).
 pub proof fn e5_multi_shot_restriction(prog: Prog, tr: Seq<State>)
     requires
         check(prog),
@@ -461,6 +533,7 @@ pub proof fn e5_multi_shot_restriction(prog: Prog, tr: Seq<State>)
                 !nonempty(g.slots) && !holds_fresh(tr[i], g)
             },
         forall|i: int| 0 <= i < tr.len() ==> #[trigger] b_unique_res(tr[i]) && b_unique_k(tr[i]),
+        forall|i: int| 0 <= i < tr.len() ==> !#[trigger] err_dup(tr[i]),
 {
     assert forall|i: int, k: KId|
         0 <= i < tr.len() && #[trigger] tr[i].konts.contains_key(k) && tr[i].konts[k].multi implies all_clean(
@@ -490,6 +563,10 @@ pub proof fn e5_multi_shot_restriction(prog: Prog, tr: Seq<State>)
     }
     assert forall|i: int| 0 <= i < tr.len() implies #[trigger] b_unique_res(tr[i]) && b_unique_k(tr[i]) by {
         lemma_inv_trace(prog, tr, i);
+    }
+    assert forall|i: int| 0 <= i < tr.len() implies !#[trigger] err_dup(tr[i]) by {
+        lemma_inv_trace(prog, tr, i);
+        lemma_no_dup(prog, tr[i]);
     }
 }
 

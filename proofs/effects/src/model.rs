@@ -19,7 +19,8 @@
 //! * `Cancel` models task cancellation at a suspension point: the perform
 //!   aborts at once, with the same unwinding.
 //!
-//! Every stuck state that is an error has a named error predicate (`error`).
+//! Every stuck state that is an error has a named error predicate. A duplicate
+//! (`err_dup`) is an error too. `error` is their disjunction.
 
 use vstd::prelude::*;
 
@@ -739,6 +740,59 @@ pub open spec fn err_no_on_abort(s: State) -> bool {
             && !s.res[pf(s).slots[sl]].on_abort
 }
 
+// ---------------------------------------------------------------------------
+// Duplicates
+// ---------------------------------------------------------------------------
+
+/// A frame position: on the stack, in the pending list, or in a continuation.
+pub enum Pos {
+    Stk(nat),
+    Pnd(nat),
+    Knt(KId, nat),
+}
+
+/// The frame at position `p`.
+pub open spec fn frame_at(s: State, p: Pos) -> Frame {
+    match p {
+        Pos::Stk(i) => s.stack[i as int],
+        Pos::Pnd(i) => s.pending[i as int],
+        Pos::Knt(k, i) => s.konts[k].frames[i as int],
+    }
+}
+
+/// The frame at `p` can still run or be finalized: it is on the stack, in the
+/// pending list, or in a continuation that can still resume (a fresh `once`
+/// one, or a `multi` one).
+pub open spec fn runnable(s: State, p: Pos) -> bool {
+    match p {
+        Pos::Stk(i) => i < s.stack.len(),
+        Pos::Pnd(i) => i < s.pending.len(),
+        Pos::Knt(k, i) => s.konts.contains_key(k) && (s.konts[k].multi || !s.konts[k].used) && i
+            < s.konts[k].frames.len(),
+    }
+}
+
+/// Slot `sl` of the runnable code frame at `p` holds resource `r`.
+pub open spec fn slot_at(s: State, p: Pos, sl: Slot, r: ResId) -> bool {
+    runnable(s, p) && frame_at(s, p) is Code && frame_at(s, p)->Code_0.slots.contains_key(sl)
+        && frame_at(s, p)->Code_0.slots[sl] == r
+}
+
+/// The runnable code frame at `p` holds continuation `kid`.
+pub open spec fn k_at(s: State, p: Pos, kid: KId) -> bool {
+    runnable(s, p) && frame_at(s, p) is Code && frame_at(s, p)->Code_0.k == Some(kid)
+}
+
+/// E5. A duplicate: a live linear resource is in two slots, or a fresh `once`
+/// continuation is in two frames.
+pub open spec fn err_dup(s: State) -> bool {
+    ||| exists|p1: Pos, sl1: Slot, p2: Pos, sl2: Slot, r: ResId|
+        (p1 != p2 || sl1 != sl2) && #[trigger] slot_at(s, p1, sl1, r) && #[trigger] slot_at(s, p2, sl2, r)
+            && s.res.contains_key(r) && s.res[r].st == RState::Live
+    ||| exists|p1: Pos, p2: Pos, kid: KId|
+        p1 != p2 && #[trigger] k_at(s, p1, kid) && #[trigger] k_at(s, p2, kid) && fresh_once(s, kid)
+}
+
 /// The state is an error.
 pub open spec fn error(prog: Prog, s: State) -> bool {
     ||| err_malformed(prog, s)
@@ -752,6 +806,7 @@ pub open spec fn error(prog: Prog, s: State) -> bool {
     ||| err_leak(prog, s)
     ||| err_unwind_dead(s)
     ||| err_no_on_abort(s)
+    ||| err_dup(s)
 }
 
 } // verus!

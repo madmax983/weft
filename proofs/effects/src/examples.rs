@@ -751,11 +751,14 @@ pub open spec fn u8() -> State {
     State { stack: u_stack(2, 2, x_slots()), ..u7() }
 }
 
-/// Without the multi rule, the second copy of the body consumes `x` again.
+/// Without the multi rule, `x` is duplicated at the first resume (the stack
+/// copy and the continuation both hold it), and the second copy of the body
+/// consumes `x` again.
 pub proof fn example_multi_is_error()
     ensures
         is_trace(p_multi_bad(), seq![s0(), s1(), s2(true), s3(true, true), u4(), u5(), u6(), u7(), u8()]),
         init(p_multi_bad()) == s0(),
+        err_dup(u4()),
         err_consumed_twice(p_multi_bad(), u8()),
 {
     let prog = p_multi_bad();
@@ -780,6 +783,9 @@ pub proof fn example_multi_is_error()
         else if i == 5 {} else if i == 6 {} else {}
     }
     assert(x_slots().contains_key(0));
+    // after the first resume, the stack copy and the continuation both hold `x`
+    assert(slot_at(u4(), Pos::Stk(3), 0, 0));
+    assert(slot_at(u4(), Pos::Knt(0, 1), 0, 0));
 }
 
 // ---------------------------------------------------------------------------

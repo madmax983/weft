@@ -20,28 +20,12 @@ use crate::scope::*;
 
 verus! {
 
-/// An owning position.
-pub enum Pos {
-    Stk(nat),
-    Pnd(nat),
-    Knt(KId, nat),
-}
-
 /// `p` is an owning position of `s`.
 pub open spec fn owning(s: State, p: Pos) -> bool {
     match p {
         Pos::Stk(i) => i < s.stack.len(),
         Pos::Pnd(i) => i < s.pending.len(),
         Pos::Knt(k, i) => fresh_once(s, k) && i < s.konts[k].frames.len(),
-    }
-}
-
-/// The frame at position `p`.
-pub open spec fn frame_at(s: State, p: Pos) -> Frame {
-    match p {
-        Pos::Stk(i) => s.stack[i as int],
-        Pos::Pnd(i) => s.pending[i as int],
-        Pos::Knt(k, i) => s.konts[k].frames[i as int],
     }
 }
 

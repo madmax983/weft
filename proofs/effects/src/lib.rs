@@ -1,3 +1,6 @@
+//! Soundness of Weft's algebraic effects, machine-checked in Verus.
+//! See `README.md` for the model, the theorems and the limitations.
+
 pub mod model;
 pub mod checker;
 pub mod scope;

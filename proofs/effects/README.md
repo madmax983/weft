@@ -5,7 +5,7 @@ A formal model of Weft's algebraic effects (lexical handlers, capability passing
 [Verus](https://github.com/verus-lang/verus) proof that the effect checker is sound.
 
 ```
-verification results:: 119 verified, 0 errors     (~16 s)
+verification results:: 122 verified, 0 errors     (~14 s)
 ```
 
 No `assume`, `admit`, `external_body` or extra axioms. Every theorem quantifies over
@@ -45,8 +45,9 @@ A small first-order abstract machine.
 * **Capabilities are handler ids.** `Handle` mints a fresh id `c`, records the handler
   instance (effect, clauses, handle-site environment) in `hinfo`, and pushes a handler
   frame and the body. The body gets `env ++ [c]`. A call passes capabilities
-  explicitly (`Call{caps}`). A perform names a capability by index into `env`, so it
-  reaches the handler that minted it, not the closest handler of the effect.
+  explicitly (`Call{caps}`). This is the elaborated form of Weft's implicit capability
+  passing. A perform names a capability by index into `env`, so it reaches the handler
+  that minted it, not the closest handler of the effect.
 * **Perform.** The machine finds the topmost handler frame of `c`. It captures the
   frames from that handler frame up to the top as a continuation, and runs the clause
   of `c` (from `hinfo`, in the handle-site environment) in place of the handler frame.
@@ -82,6 +83,7 @@ disjunction.
 | `err_leak` | normal return with a live linear value (E3) |
 | `err_unwind_dead` | the unwinder finds a resource that is not live (E3, E5) |
 | `err_no_on_abort` | the unwinder must abort a value whose type has no `on abort` (E3) |
+| `err_dup` | a live linear resource is in two slots, or a fresh `once` continuation is in two frames, of frames that can still run (stack, pending, fresh `once` and all `multi` continuations) (E5) |
 | `err_malformed` | missing block, callee, body or clause; capability index out of range |
 
 `progress` proves that a state that is not final and not an error always has a next
@@ -182,6 +184,7 @@ pub proof fn e5_multi_shot_restriction(prog: Prog, tr: Seq<State>)
             ==> !nonempty(g.slots) && !holds_fresh(tr[i], g),
         // no resource and no fresh `once` continuation has two owners
         forall|i: int| 0 <= i < tr.len() ==> b_unique_res(tr[i]) && b_unique_k(tr[i]),
+        forall|i: int| 0 <= i < tr.len() ==> !err_dup(tr[i]),
 
 // All errors, and progress (src/safety.rs, src/progress.rs)
 pub proof fn soundness(prog: Prog, tr: Seq<State>)
@@ -241,7 +244,7 @@ Each guard is a verified lemma.
 | E2 | `example_ok_checks` | `example_twice_rejected`, `example_twice_is_error`: a clause resumes twice; 8 states to `err_resume_used` | `example_hypotheses_satisfiable` |
 | E3 | `example_ok_checks`, `example_lex_checks` (abort path) | `example_no_abort_rejected`, `example_no_abort_is_error`: a value with no `on abort` is live across a perform whose clause drops the continuation; 5 states to `err_no_on_abort`. `example_leak_rejected`, `example_leak_is_error`: `err_leak` | `example_hypotheses_satisfiable`, `example_lexical` |
 | E4 | `example_lex_checks` | `example_escape_rejected`, `example_escape_is_error`: the body returns its own capability; 4 states to `err_dead_cap` | `example_lexical` |
-| E5 | `example_multi_ok_checks` | `example_multi_rejected`, `example_multi_is_error`: a linear value is live across a `multi` perform; the second resume consumes it again; 9 states to `err_consumed_twice` | `example_multi_ok` |
+| E5 | `example_multi_ok_checks` | `example_multi_rejected`, `example_multi_is_error`: a linear value is live across a `multi` perform; after the first resume it is duplicated (`err_dup`), and the second resume consumes it again; 9 states to `err_consumed_twice` | `example_multi_ok` |
 
 * `example_hypotheses_satisfiable`: a full 10-state execution of the accepted program
   (`handle`, `acquire`, `perform`, `resume`, `consume`, and the returns). It meets
@@ -261,16 +264,16 @@ fails, as expected, because the weak checker accepts the bad program.
 
 | Mutation | Result | Soundness lemma that fails |
 | --- | --- | --- |
-| (a) drop `cap < env.len()` at `Perform` | 114 verified, 2 errors | `lemma_no_struct_error` (E1) |
-| (b) `Resume` keeps a `once` `k` usable | 113 verified, 3 errors | `lemma_b_resume` (E2: `k_sync`) |
-| (c) drop the abort rule at a `once` perform | 114 verified, 2 errors | `lemma_capture_rules` (E3) |
-| (c) `Return` without the empty-`lin` check | 114 verified, 2 errors | `lemma_no_own_error` (E3: `err_leak`) |
-| (d) allow `rets[j] <= env.len()` at `Handle` | 113 verified, 3 errors | `lemma_a_handle` (`based`: E1, E4), `lemma_up_rule` |
-| drop the multi rule at a `multi` perform | 114 verified, 2 errors | `lemma_capture_rules` (E5) |
-| drop the suspension rule at `Call` | 115 verified, 1 error | `lemma_up_rule` (E3, E5) |
-| drop the suspension rule at `Resume` | 115 verified, 1 error | `lemma_up_rule` (E3, E5) |
+| (a) drop `cap < env.len()` at `Perform` | 120 verified, 2 errors | `lemma_no_struct_error` (E1) |
+| (b) `Resume` keeps a `once` `k` usable | 119 verified, 3 errors | `lemma_b_resume` (E2: `k_sync`) |
+| (c) drop the abort rule at a `once` perform | 120 verified, 2 errors | `lemma_capture_rules` (E3) |
+| (c) `Return` without the empty-`lin` check | 120 verified, 2 errors | `lemma_no_own_error` (E3: `err_leak`) |
+| (d) allow `rets[j] <= env.len()` at `Handle` | 119 verified, 3 errors | `lemma_a_handle` (`based`: E1, E4), `lemma_up_rule` |
+| drop the multi rule at a `multi` perform | 120 verified, 2 errors | `lemma_capture_rules` (E5) |
+| drop the suspension rule at `Call` | 121 verified, 1 error | `lemma_up_rule` (E3, E5) |
+| drop the suspension rule at `Resume` | 121 verified, 1 error | `lemma_up_rule` (E3, E5) |
 
-The source in this directory has no mutation. It verifies with 119 verified, 0 errors.
+The source in this directory has no mutation. It verifies with 122 verified, 0 errors.
 
 ## Rules that the Weft checker must mirror
 
