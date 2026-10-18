@@ -75,11 +75,14 @@ impl Lower<'_> {
             names: Vec::new(),
             barrier: None,
         });
+        // The temporaries of the value of the body live until the return.
+        self.open_stmt();
         let v = self.block_inner(&body);
         let tail_span = body.stmts.last().map_or(body.span, |s| s.span);
         if self.cur.is_some() {
             self.finish_return(&v, tail_span);
         }
+        self.stmt_temps.pop();
         self.flush(block_tail(&body));
         self.end_frame(body.span);
         if let Some(c) = self.cur {
@@ -113,7 +116,9 @@ impl Lower<'_> {
     pub fn lower_test(mut self, body: &Block, span: Span) -> Lowered {
         self.in_test = true;
         let _ = self.start(span, "test");
+        self.open_stmt();
         let v = self.block(body);
+        self.stmt_temps.pop();
         self.drop_value(&v, span);
         self.flush(block_tail(body));
         let eff = self.summary_to_sig(&[]);
@@ -407,9 +412,12 @@ impl Lower<'_> {
         for (i, s) in b.stmts.iter().enumerate() {
             let is_last = i + 1 == n;
             match &s.kind {
+                // The value of the block belongs to the enclosing statement.
                 StmtKind::Expr(e) if is_last => last = self.expr(e),
                 _ => {
+                    self.open_stmt();
                     self.stmt(s);
+                    self.close_stmt(s.span);
                     if is_last {
                         last = Val::default();
                         if self.cur.is_none() {
@@ -438,12 +446,18 @@ impl Lower<'_> {
         }
     }
 
-    /// Ends every frame above `keep`: for `return`, `break` and `continue`.
+    /// Ends every frame above `keep`: for `return`, `break` and `continue`. The
+    /// temporaries of the statements in these frames go out of scope too.
     fn end_frames_above(&mut self, keep: usize, n: NodeId) {
         let mut vars = Vec::new();
         for f in &self.frames[keep..] {
             for (_, l) in &f.names {
                 vars.push(self.locals[*l].var);
+            }
+        }
+        for (depth, temps) in &self.stmt_temps {
+            if *depth > keep {
+                vars.extend(temps.iter().copied());
             }
         }
         for v in vars {
@@ -531,8 +545,11 @@ impl Lower<'_> {
             }
             StmtKind::While { cond, body } => {
                 let header = self.emit(s.span, "while", String::new());
+                // The condition is a statement of its own.
+                self.open_stmt();
                 let c = self.expr(cond);
                 self.unify(&Ty::Bool, &c.ty, cond.span);
+                self.close_stmt(cond.span);
                 let br = self.emit(cond.span, "branch", String::new());
                 let exit = self.facts.add_node(s.span, "end while", String::new());
                 self.facts.cfg_edge.push((br, exit));
@@ -877,7 +894,7 @@ impl Lower<'_> {
                 deps,
             };
         }
-        let r = self.root("temporary", RootKind::Local);
+        let r = self.temp_root(e.span, &v.ty);
         LVal {
             places: vec![r],
             ty: v.ty,

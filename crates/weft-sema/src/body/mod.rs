@@ -50,6 +50,8 @@ pub struct Summary {
     pub captures: BTreeSet<VarId>,
     /// Captured variables that the body moves.
     pub moved_captures: BTreeSet<VarId>,
+    /// Owners that the body declares. They go out of scope when the body returns.
+    pub dropped: BTreeSet<VarId>,
     /// The places that the result of a closure points into.
     pub ret_refs: Vec<PlaceId>,
     /// The root place of each reference parameter of a closure.
@@ -194,6 +196,9 @@ pub struct Lower<'p> {
     match_deps: Vec<PlaceId>,
     /// The handle places of `LVal::deps`.
     dep_places: BTreeSet<PlaceId>,
+    /// The open statements: the frame depth at the start, and the owners of
+    /// the temporaries that go out of scope at the end.
+    stmt_temps: Vec<(usize, Vec<VarId>)>,
 }
 
 impl<'p> Lower<'p> {
@@ -241,6 +246,7 @@ impl<'p> Lower<'p> {
             match_moves: false,
             match_deps: Vec::new(),
             dep_places: BTreeSet::new(),
+            stmt_temps: Vec::new(),
         }
     }
 
@@ -444,6 +450,49 @@ impl<'p> Lower<'p> {
         p
     }
 
+    /// Makes the root place of a temporary value. A temporary that is not plain
+    /// data goes out of scope at the end of its statement, as in the interpreter.
+    fn temp_root(&mut self, span: Span, ty: &Ty) -> PlaceId {
+        let r = self.root("temporary", RootKind::Local);
+        let t = self.inf.shallow(ty);
+        if self.is_copy(&t) && !matches!(t, Ty::Var(_)) {
+            return r;
+        }
+        let shown = self.show(&t);
+        let var = self
+            .facts
+            .add_var(VarInfo::plain("temporary", VarKind::Temp, span, shown));
+        self.facts.owner.push((r, var));
+        if let Some(si) = self.frames.iter().rev().find_map(|f| f.barrier) {
+            self.sums[si].dropped.insert(var);
+        }
+        if let Some((_, temps)) = self.stmt_temps.last_mut() {
+            temps.push(var);
+        }
+        r
+    }
+
+    /// Opens a statement. The temporaries from here go out of scope at its end.
+    fn open_stmt(&mut self) {
+        let depth = self.frames.len();
+        self.stmt_temps.push((depth, Vec::new()));
+    }
+
+    /// Closes a statement: its temporaries go out of scope at its end.
+    fn close_stmt(&mut self, span: Span) {
+        let Some((_, temps)) = self.stmt_temps.pop() else {
+            return;
+        };
+        if temps.is_empty() || self.cur.is_none() {
+            return;
+        }
+        let end = Span::new(span.hi.saturating_sub(1), span.hi);
+        let n = self.emit(end, "end of statement", String::new());
+        for v in temps {
+            self.facts.scope_end.push((v, n));
+        }
+    }
+
     fn group_root(&mut self, adt: usize) -> PlaceId {
         if let Some(&p) = self.groups.get(&adt) {
             return p;
@@ -517,6 +566,95 @@ impl<'p> Lower<'p> {
             self.dep_places.insert(d);
             out.push(d);
         }
+        out
+    }
+
+    /// Returns the handle places of the `Rc` handles in a value of type `ty` at
+    /// place `p`. A group place that a callee reaches through the value depends
+    /// on them. Past the depth limit, the result depends on `p` itself.
+    fn inner_handle_deps(&mut self, p: PlaceId, ty: &Ty, depth: usize) -> Vec<PlaceId> {
+        if depth > 4 {
+            return self.handle_deps(&[p]);
+        }
+        let t = self.inf.deep(ty);
+        let mut out = Vec::new();
+        match &t {
+            Ty::Ref(_) => out = self.handle_deps(&[p]),
+            Ty::Tuple(ts) => {
+                for (i, ft) in ts.iter().enumerate() {
+                    let step = Step {
+                        kind: StepKind::Field {
+                            id: u32::try_from(i).unwrap_or(0),
+                        },
+                        unstable: false,
+                    };
+                    let c = self.child(p, step, &format!(".{i}"));
+                    out.extend(self.inner_handle_deps(c, ft, depth + 1));
+                }
+            }
+            Ty::Adt(a, args) => match &self.prog.adts[*a].kind {
+                AdtKind::Extern {
+                    deref: Some(Deref::Group),
+                    ..
+                } => out = self.handle_deps(&[p]),
+                AdtKind::Struct(_) | AdtKind::Enum(_) => {
+                    let names: Vec<String> = match &self.prog.adts[*a].kind {
+                        AdtKind::Struct(fs) => fs.iter().map(|f| f.name.clone()).collect(),
+                        AdtKind::Enum(vs) => vs.iter().map(|v| v.name.clone()).collect(),
+                        AdtKind::Extern { .. } => Vec::new(),
+                    };
+                    for name in &names {
+                        if let Some((steps, next, _)) = field_step(self.prog, &t, name) {
+                            let mut c = p;
+                            for (st, text) in &steps {
+                                c = self.child(c, *st, text);
+                            }
+                            out.extend(self.inner_handle_deps(c, &next, depth + 1));
+                        }
+                    }
+                }
+                AdtKind::Extern { .. } => {
+                    if let Some((Some(step), elem)) = elem_step(self.prog, &t) {
+                        let c = self.child(p, step, "[]");
+                        out.extend(self.inner_handle_deps(c, &elem, depth + 1));
+                    } else if let (AdtKind::Extern { deref: Some(d), .. }, Some(inner)) =
+                        (&self.prog.adts[*a].kind, args.first())
+                    {
+                        let step = Step {
+                            kind: StepKind::Deref,
+                            unstable: *d == Deref::Unstable,
+                        };
+                        let inner = inner.clone();
+                        let c = self.child(p, step, "");
+                        out.extend(self.inner_handle_deps(c, &inner, depth + 1));
+                    }
+                }
+            },
+            _ => {}
+        }
+        out
+    }
+
+    /// Returns the handle places that a group place in a call result depends
+    /// on: the handle places of the arguments, and the `Rc` handles inside the
+    /// values that the reference arguments point to.
+    fn group_arg_deps(&mut self, args: &[Vec<PlaceId>], ptys: &[Ty]) -> Vec<PlaceId> {
+        let mut out = Vec::new();
+        for (i, ps) in args.iter().enumerate() {
+            let pointee = match ptys.get(i).map(|t| self.inf.shallow(t)) {
+                Some(Ty::Ref(inner)) => Some(*inner),
+                _ => None,
+            };
+            for &p in ps {
+                if self.is_dep(p) {
+                    out.push(p);
+                } else if let Some(t) = &pointee {
+                    out.extend(self.inner_handle_deps(p, t, 0));
+                }
+            }
+        }
+        out.sort();
+        out.dedup();
         out
     }
 
@@ -594,7 +732,12 @@ impl<'p> Lower<'p> {
     /// Gives local `l` the root place `r`: the local owns the memory under `r`.
     fn set_root(&mut self, l: usize, r: PlaceId) {
         self.locals[l].root = Some(r);
-        self.facts.owner.push((r, self.locals[l].var));
+        let var = self.locals[l].var;
+        self.facts.owner.push((r, var));
+        let depth = self.local_frame(l);
+        if let Some(si) = self.frames[..=depth].iter().rev().find_map(|f| f.barrier) {
+            self.sums[si].dropped.insert(var);
+        }
     }
 
     /// Gives a local the value `v` at node `n`.

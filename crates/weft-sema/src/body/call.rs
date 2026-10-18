@@ -2,7 +2,7 @@
 
 use super::{
     ast, effects, AdtKind, Arg, ContInfo, Expr, ExprKind, FnId, FnTy, ItemRef, Lower, NodeId,
-    PathRef, PlaceId, RootKind, SigRoot, Span, TaskKind, Ty, Val, PRELUDE,
+    PathRef, PlaceId, SigRoot, Span, TaskKind, Ty, Val, PRELUDE,
 };
 
 /// One evaluated argument.
@@ -319,10 +319,10 @@ impl Lower<'_> {
             let arg_is_ref = matches!(self.inf.shallow(&av.val.ty), Ty::Ref(_));
             if is_ref_param && !arg_is_ref && i == 0 && first == 1 {
                 // `x.m()` borrows `x` when `m` takes `self` by reference.
-                let places = av.val.place.as_ref().map_or_else(
-                    || vec![self.root("temporary", RootKind::Local)],
-                    |lv| lv.places.clone(),
-                );
+                let places = match av.val.place.as_ref() {
+                    Some(lv) => lv.places.clone(),
+                    None => vec![self.temp_root(av.span, &av.val.ty)],
+                };
                 recv_deps = av
                     .val
                     .place
@@ -332,9 +332,12 @@ impl Lower<'_> {
                     self.unify(&inner, &av.val.ty, av.span);
                 }
                 if later {
+                    // The borrow depends on the `Rc` handles on the way too.
+                    let mut refs = places.clone();
+                    refs.extend(recv_deps.iter().copied());
                     let borrow = Val {
                         ty: pt.clone(),
-                        refs: places.clone(),
+                        refs,
                         ..Val::default()
                     };
                     held_vars.extend(self.hold(&borrow, "receiver", av.span));
@@ -541,7 +544,11 @@ impl Lower<'_> {
                 _ => None,
             };
             for rp in &sig.ret_places {
-                let places = self.subst_place(&rp.place, &arg_places, split);
+                let mut places = self.subst_place(&rp.place, &arg_places, split);
+                if matches!(rp.place.root, SigRoot::Group(_)) {
+                    // A group place stays valid only while the handles on the way do.
+                    places.extend(self.group_arg_deps(&arg_places, &ptys));
+                }
                 match (rp.path.first(), parts.as_mut()) {
                     (Some(&i), Some(ps)) if i < ps.len() => {
                         ps[i].refs.extend(places.iter().copied());
@@ -681,6 +688,9 @@ impl Lower<'_> {
             let mut refs = Vec::new();
             for rp in &sig.ret_places {
                 refs.extend(self.subst_place(&rp.place, &arg_places, split));
+                if matches!(rp.place.root, SigRoot::Group(_)) {
+                    refs.extend(self.group_arg_deps(&arg_places, &fty.params));
+                }
             }
             refs
         } else if matches!(self.inf.shallow(&fty.ret), Ty::Ref(_)) {

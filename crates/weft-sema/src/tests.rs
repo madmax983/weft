@@ -105,3 +105,54 @@ fn a_compound_assignment_through_a_reference_mutates_its_places() {
     let c = var(&f, "c");
     assert_eq!(f.rebound_at.iter().filter(|&&(v, _)| v == c).count(), 1);
 }
+
+#[test]
+fn a_temporary_goes_out_of_scope_at_the_end_of_its_statement() {
+    let f = facts(
+        "fn mk() -> Vec<u64> { Vec.new() } fn f() { let r = &mk()[0]; print(r) }",
+        "f",
+    );
+    let t = place(&f, "temporary");
+    let (_, owner) = *f
+        .owner
+        .iter()
+        .find(|&&(p, _)| p == t)
+        .expect("the temporary has an owner");
+    let end = f
+        .scope_end
+        .iter()
+        .find(|&&(v, _)| v == owner)
+        .map(|&(_, n)| n)
+        .expect("the temporary goes out of scope");
+    assert_eq!(f.node(end).label, "end of statement");
+    let r = var(&f, "r");
+    let used = f
+        .uses
+        .iter()
+        .filter(|&&(v, _)| v == r)
+        .map(|&(_, n)| n)
+        .max()
+        .expect("r is used");
+    assert!(end < used);
+}
+
+#[test]
+fn a_handler_clause_runs_at_each_operation_it_handles() {
+    let f = facts(
+        "effect Log { fn log(m: String) }
+         fn take(v: Vec<u64>) {}
+         fn f() {
+             let v: Vec<u64> = Vec.new()
+             handle Log { fn log(m) { let u = Vec.new(); take(v); resume(()) } } in log(\"x\")
+         }",
+        "f",
+    );
+    let log = f
+        .nodes
+        .iter()
+        .position(|n| n.label == "log")
+        .map(|i| weft_facts::NodeId(u32::try_from(i).unwrap()))
+        .expect("the operation has a node");
+    assert!(f.moved_at.contains(&(var(&f, "v"), log)));
+    assert!(f.scope_end.contains(&(var(&f, "u"), log)));
+}

@@ -597,7 +597,7 @@ impl Lower<'_> {
                 } else {
                     let v = self.expr(inner);
                     self.consume(&v, inner.span);
-                    let r = self.root("temporary", RootKind::Local);
+                    let r = self.temp_root(inner.span, &v.ty);
                     LVal {
                         places: vec![r],
                         ty: v.ty,
@@ -788,7 +788,7 @@ impl Lower<'_> {
             (lv.ty.clone(), by_ref, lv.places, v)
         } else {
             let v = self.expr(scrut);
-            let r = self.root("temporary", RootKind::Local);
+            let r = self.temp_root(scrut.span, &v.ty);
             (v.ty.clone(), false, vec![r], v)
         };
         for &p in &places {
@@ -1016,6 +1016,7 @@ impl Lower<'_> {
     ) -> Val {
         let saved = self.cur;
         let saved_pending = self.take_pending();
+        let saved_stmts = std::mem::take(&mut self.stmt_temps);
         self.sums.push(Summary::default());
         let si = self.sums.len() - 1;
         self.frames.push(Frame {
@@ -1023,6 +1024,7 @@ impl Lower<'_> {
             barrier: Some(si),
         });
         let entry = self.start(span, "closure entry");
+        self.open_stmt();
         let mut ptys = Vec::new();
         let mut param_roots = Vec::new();
         for (i, p) in params.iter().enumerate() {
@@ -1087,6 +1089,7 @@ impl Lower<'_> {
         self.closures.push(sum.clone());
         self.cur = saved;
         self.restore_pending(saved_pending);
+        self.stmt_temps = saved_stmts;
         // The creation node uses the captures and moves the moved ones.
         let mut refs = Vec::new();
         let caps: Vec<_> = sum.captures.iter().copied().collect();
@@ -1273,6 +1276,11 @@ impl Lower<'_> {
         }
         let pt = sum.passthrough.clone();
         self.sum().passthrough.extend(pt);
+        // The locals of the body go out of scope when it returns.
+        for &v in &sum.dropped {
+            self.facts.scope_end.push((v, n));
+        }
+        self.sum().dropped.extend(sum.dropped.iter().copied());
     }
 
     // -----------------------------------------------------------------------
@@ -1320,6 +1328,7 @@ impl Lower<'_> {
         let ty = v.ty.clone();
         let saved = self.cur;
         let mut footprint = Vec::new();
+        let mut clause_sum = Summary::default();
         for c in clauses {
             let Some(op) = def.ops.iter().find(|o| o.name == c.op.name).cloned() else {
                 self.err(
@@ -1347,6 +1356,8 @@ impl Lower<'_> {
                 barrier: Some(si),
             });
             let entry = self.start(c.span, "handler clause");
+            let saved_stmts = std::mem::take(&mut self.stmt_temps);
+            self.open_stmt();
             for (p, pt) in c.params.iter().zip(&op.params) {
                 let l = self.new_local(&p.name.name, VarKind::Param, p.span, pt.clone(), false);
                 self.assign_local(
@@ -1377,6 +1388,7 @@ impl Lower<'_> {
             }
             self.end_frame(c.span);
             self.frames.pop();
+            self.stmt_temps = saved_stmts;
             let cs = self.sums.pop().unwrap_or_default();
             for &m in &cs.muts {
                 if !cs.own_roots.contains(&self.facts.place(m).root) {
@@ -1384,6 +1396,11 @@ impl Lower<'_> {
                 }
             }
             self.merge_summary(&cs);
+            clause_sum.captures.extend(cs.captures.iter().copied());
+            clause_sum
+                .moved_captures
+                .extend(cs.moved_captures.iter().copied());
+            clause_sum.dropped.extend(cs.dropped.iter().copied());
         }
         footprint.sort();
         footprint.dedup();
@@ -1409,9 +1426,24 @@ impl Lower<'_> {
             .filter(|(_, c)| *c == cap)
             .map(|(n, _)| *n)
             .collect();
-        for n in calls {
+        for &n in &calls {
             for &m in &footprint {
                 self.facts.call_mut.push((n, m, 1000 + cap.0));
+            }
+        }
+        // A clause runs at each operation that it handles. There it uses its
+        // captures, moves the moved ones, and its locals go out of scope.
+        for &n in &calls {
+            for &v in &clause_sum.captures {
+                self.facts.uses.push((v, n));
+            }
+            for &v in &clause_sum.moved_captures {
+                if !self.is_copy_var(v) {
+                    self.move_var(v, n);
+                }
+            }
+            for &v in &clause_sum.dropped {
+                self.facts.scope_end.push((v, n));
             }
         }
         self.cur = saved;
@@ -1451,6 +1483,7 @@ impl Lower<'_> {
         t.own_roots.extend(own);
         t.captures.extend(s.captures.iter().copied());
         t.moved_captures.extend(s.moved_captures.iter().copied());
+        t.dropped.extend(s.dropped.iter().copied());
     }
 
     // -----------------------------------------------------------------------
