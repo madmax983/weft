@@ -1,0 +1,105 @@
+// A use of a reference as a value reads the places that it points into.
+struct Entity { hp: u64 }
+struct World { entities: Vec<Entity> }
+struct Stats { count: u64, name: u64 }
+struct Batch { items: Vec<u64> }
+
+impl Batch {
+    fn len(self) -> u64 { 3 }
+}
+
+fn show(x: &u64) { print(x) }
+fn bump(c: &u64) / mut(c) { c += 1 }
+
+// The parent reads through a reference while a task writes.
+fn parent_print(stats: &Stats) / mut(stats), async {
+    let c = &stats.count
+    scope { s =>
+        s.spawn(|| stats.count += 1)
+        print(c)   //~ W0405
+    }
+}
+
+fn parent_arith(stats: &Stats) / mut(stats), async {
+    let r = &stats.count
+    scope { s =>
+        s.spawn(|| stats.count += 1)
+        let y = r + 1   //~ W0405
+        print(y)
+    }
+}
+
+fn parent_call(stats: &Stats) / mut(stats), async {
+    let r = &stats.count
+    scope { s =>
+        s.spawn(|| stats.count += 1)
+        show(r)   //~ W0405
+    }
+}
+
+// A task reads through a captured reference while another task writes.
+fn task_reads_ref(batch: &Batch, stats: &Stats) / mut(stats), async {
+    let c = &stats.count
+    scope { s =>
+        s.spawn(|| stats.count += batch.len())
+        s.spawn(|| print(c))   //~ W0405
+    }
+}
+
+// A task holds a reference while the parent writes or frees its target.
+fn task_holds(stats: &Stats) / mut(stats), async {
+    let r = &stats.count
+    scope { s =>
+        s.spawn(|| print(r))
+        stats.count += 1   //~ W0405
+    }
+}
+
+fn task_dangle(v: &Vec<u64>) / mut(v), async {
+    let r = &v[0]
+    scope { s =>
+        s.spawn(|| print(r))
+        v.clear()   //~ W0405
+    }
+}
+
+fn task_uaf(world: &World) / mut(world.entities), async {
+    let r = &world.entities[0]
+    scope { s =>
+        s.spawn(|| print(r))
+        world.entities.clear()   //~ W0405
+    }
+}
+
+fn fork_dangle(v: &Vec<u64>) / mut(v), par {
+    let r = &v[0]
+    fork(|| print(r), || v.clear())   //~ W0403 W0405
+}
+
+// Control: the task and the parent use separate places.
+fn separate(world: &World, stats: &Stats) / mut(world.entities), async {
+    let r = &stats.count
+    scope { s =>
+        s.spawn(|| print(r))
+        world.entities.clear()
+    }
+}
+
+// Control: the parent reads while a task reads.
+fn both_read(stats: &Stats) / async {
+    let c = &stats.count
+    scope { s =>
+        s.spawn(|| print(stats.count))
+        print(c)
+    }
+}
+
+// Control: references to separate fields keep the footprints separate.
+fn field_refs(stats: &Stats) / mut(stats.count), async {
+    let c = &stats.count
+    let n = &stats.name
+    scope { s =>
+        s.spawn(|| bump(c))
+        s.spawn(|| print(n))
+    }
+}

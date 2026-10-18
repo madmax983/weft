@@ -153,6 +153,9 @@ active(T, Q)         :- active(T, P), cfg_edge(P, Q), !joined_at(T, P).
 
 accesses(P, A)       :- reads_at(P, A).
 accesses(P, A)       :- mutates_at(P, A).
+accesses(P, A)       :- uses(R, P), points_into(R, A).        // a use of a reference reads through it
+
+task_reads(T, A)     :- captures(T, R), points_into(R, A).    // a task reads through its captures
 
 task_conflict(T, P)  :- active(T, P), task_writes(T, M), accesses(P, A), overlaps(M, A).
 task_conflict(T, P)  :- active(T, P), task_reads(T, A), mutates_at(P, M), overlaps(M, A).

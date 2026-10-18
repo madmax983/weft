@@ -475,6 +475,52 @@ fn w0405_join_ends_the_task() {
 }
 
 #[test]
+fn w0405_a_use_of_a_reference_accesses_its_places() {
+    // accesses(P, A) :- uses(R, P), points_into(R, A).
+    let mut b = B::new();
+    let stats = b.param("stats");
+    let count = b.field(stats, 0, "count");
+    let r = b.var("r");
+    b.f.points_into.push((r, count));
+    let t = b.f.add_task(TaskKind::Spawn, Span::default());
+    let n0 = b.node("spawn");
+    b.f.spawned_at.push((t, n0));
+    b.f.task_writes.push((t, count));
+    let n1 = b.node("print(r)");
+    b.use_(r, n1);
+    let rep = check(&b.f);
+    assert!(rep.violations.task_conflict.contains(&(t, n1)));
+    assert_eq!(rep.conflicts[0].node_place, count);
+    // After the join, the use is not a conflict.
+    b.f.uses.clear();
+    let n2 = b.node("join");
+    b.f.joined_at.push((t, n2));
+    let n3 = b.node("print(r)");
+    b.use_(r, n3);
+    assert!(check(&b.f).violations.task_conflict.is_empty());
+}
+
+#[test]
+fn w0405_a_captured_reference_is_a_task_read() {
+    // task_reads(T, A) :- captures(T, R), points_into(R, A).
+    let mut b = B::new();
+    let v = b.param("v");
+    let elem = b.elem(v);
+    let r = b.var("r");
+    b.f.points_into.push((r, elem));
+    let t = b.f.add_task(TaskKind::Spawn, Span::default());
+    b.f.captures.push((t, r));
+    let n0 = b.node("spawn");
+    b.f.spawned_at.push((t, n0));
+    let n1 = b.node("v.clear()");
+    b.f.mutates_at.push((n1, v));
+    let rep = check(&b.f);
+    assert!(rep.violations.task_conflict.contains(&(t, n1)));
+    assert!(!rep.conflicts[0].task_writes);
+    assert_eq!(rep.conflicts[0].task_place, elem);
+}
+
+#[test]
 fn w0405_split_halves_are_disjoint() {
     let mut b = B::new();
     let world = b.param("world");

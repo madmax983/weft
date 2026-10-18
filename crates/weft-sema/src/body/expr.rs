@@ -262,6 +262,12 @@ impl Lower<'_> {
         if let Some(l) = self.lookup_local(&id.name) {
             self.use_local(l);
             let loc = self.locals[l].clone();
+            // A reference used as a value reads the places that it points into.
+            if matches!(self.inf.shallow(&loc.ty), Ty::Ref(_)) {
+                for &p in &loc.refs {
+                    self.read(p);
+                }
+            }
             let place = if loc.ty.is_ref() {
                 None
             } else {

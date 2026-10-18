@@ -369,6 +369,24 @@ fn tasks(cx: &Ctx<'_>, r: &mut Report) {
     for &(t, a) in &f.task_reads {
         reads.entry(t).or_default().push(a);
     }
+    // `points_into(R, A)` by holder.
+    let mut targets: BTreeMap<VarId, Vec<PlaceId>> = BTreeMap::new();
+    for &(v, p) in &f.points_into {
+        targets.entry(v).or_default().push(p);
+    }
+    // task_reads(T, A) :- captures(T, R), points_into(R, A).
+    for &(t, v) in &f.captures {
+        if let Some(ps) = targets.get(&v) {
+            reads.entry(t).or_default().extend(ps.iter().copied());
+        }
+    }
+    // accesses(P, A) :- uses(R, P), points_into(R, A).
+    let mut used_refs: Vec<Vec<PlaceId>> = vec![Vec::new(); cx.n()];
+    for &(v, n) in &f.uses {
+        if let Some(ps) = targets.get(&v) {
+            used_refs[n.index()].extend(ps.iter().copied());
+        }
+    }
     let mut spawned: BTreeMap<TaskId, Vec<NodeId>> = BTreeMap::new();
     let mut joined: BTreeMap<TaskId, Vec<NodeId>> = BTreeMap::new();
     for &(t, p) in &f.spawned_at {
@@ -389,7 +407,10 @@ fn tasks(cx: &Ctx<'_>, r: &mut Report) {
                 continue;
             }
             let node = NodeId(u32::try_from(i).unwrap_or(u32::MAX));
-            let accesses = cx.reads[i].iter().chain(cx.muts[i].iter());
+            let accesses = cx.reads[i]
+                .iter()
+                .chain(cx.muts[i].iter())
+                .chain(used_refs[i].iter());
             let mut found = None;
             for &a in accesses {
                 if let Some(&m) = tw.iter().find(|&&m| cx.overlaps(m, a)) {

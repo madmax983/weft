@@ -3,7 +3,7 @@
 use weft_facts::{FnFacts, NodeId, VarKind};
 use weft_syntax::diag::Diagnostic;
 
-use crate::rules::Report;
+use crate::rules::{Conflict, Report};
 
 fn node_span(f: &FnFacts, n: NodeId) -> weft_facts::Span {
     f.node(n).span
@@ -204,7 +204,24 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             .note("the callee sees them as separate places, so it cannot protect the references"),
         );
     }
-    for c in &r.conflicts {
+    // Several nodes of one expression can conflict with the same task: show the
+    // conflict with the most specific places once.
+    let mut conflicts: Vec<&Conflict> = r.conflicts.iter().collect();
+    let depth = |c: &Conflict| {
+        (
+            f.place(c.node_place).steps.len(),
+            f.place(c.task_place).steps.len(),
+        )
+    };
+    conflicts.sort_by_key(|c| {
+        let s = f.node(c.at).span;
+        (c.task, s.lo, s.hi, std::cmp::Reverse(depth(c)))
+    });
+    conflicts.dedup_by_key(|c| {
+        let s = f.node(c.at).span;
+        (c.task, s.lo, s.hi)
+    });
+    for c in conflicts {
         let at = f.node(c.at);
         let task = &f.tasks[c.task.index()];
         let (verb, other) = if c.task_writes {
