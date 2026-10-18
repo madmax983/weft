@@ -27,7 +27,7 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         let line = at.span.lo;
         let name = match var.kind {
             VarKind::Iterator => "the loop iterator".to_string(),
-            VarKind::Temp => format!("the {}", var.name),
+            VarKind::Temp | VarKind::BlockValue => format!("the {}", var.name),
             _ => format!("`{}`", var.name),
         };
         // What the node does, and why that invalidates the reference.
@@ -89,12 +89,17 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         };
         let used = node_span(f, inv.used_at);
         // A block value is held only across the end of its block.
-        let block_value = var.kind == VarKind::Temp && var.name == "block value";
+        let block_value = var.kind == VarKind::BlockValue;
         let d = if let (true, Cause::ScopeEnd(o)) = (block_value, inv.cause) {
+            let head = if var.ty.starts_with("fn(") {
+                format!("the closure that this block returns captures `{path}`")
+            } else {
+                format!("the value of this block points into `{path}`")
+            };
             Diagnostic::error(
                 "W0301",
                 format!(
-                    "the value of this block points into `{path}`, but `{}` goes out of scope at the end of the block",
+                    "{head}, but `{}` goes out of scope at the end of the block",
                     f.var(o).name
                 ),
                 used,

@@ -335,10 +335,34 @@ impl<'p> Lower<'p> {
     /// Holds a reference value in a temporary from this point, so that later
     /// code that invalidates it is seen. The consumer must use the temporary.
     fn hold(&mut self, v: &Val, name: &str, span: Span) -> Option<VarId> {
-        if v.var.is_some() || v.refs.is_empty() || self.cur.is_none() {
+        if v.var.is_some() {
             return None;
         }
-        let info = self.var_info(name, VarKind::Temp, span, &v.ty, v.uniq);
+        self.hold_as(v, name, VarKind::Temp, span)
+    }
+
+    /// Holds an operand while the later operands run. The value of a variable
+    /// is held too, because a later operand can give the variable a new value.
+    fn hold_later(&mut self, v: &Val, name: &str, span: Span) -> Option<VarId> {
+        self.hold_as(v, name, VarKind::Temp, span)
+    }
+
+    /// Returns the variable that a call uses for an argument: a held copy if
+    /// later arguments follow, else the variable of the value or a temporary.
+    fn hold_operand(&mut self, v: &Val, later: bool, span: Span) -> Option<VarId> {
+        if later {
+            self.hold_later(v, "argument", span).or(v.var)
+        } else {
+            v.var.or_else(|| self.hold(v, "argument", span))
+        }
+    }
+
+    /// Holds a reference value in a new variable of kind `kind`.
+    fn hold_as(&mut self, v: &Val, name: &str, kind: VarKind, span: Span) -> Option<VarId> {
+        if v.refs.is_empty() || self.cur.is_none() {
+            return None;
+        }
+        let info = self.var_info(name, kind, span, &v.ty, v.uniq);
         let var = self.facts.add_var(info);
         let n = self.emit(span, name, String::new());
         self.bind(var, n);
@@ -454,11 +478,10 @@ impl<'p> Lower<'p> {
     /// data goes out of scope at the end of its statement, as in the interpreter.
     fn temp_root(&mut self, span: Span, ty: &Ty) -> PlaceId {
         let r = self.root("temporary", RootKind::Local);
-        let t = self.inf.shallow(ty);
-        if self.is_copy(&t) && !matches!(t, Ty::Var(_)) {
+        if !self.may_free(ty) {
             return r;
         }
-        let shown = self.show(&t);
+        let shown = self.show(ty);
         let var = self
             .facts
             .add_var(VarInfo::plain("temporary", VarKind::Temp, span, shown));
@@ -928,6 +951,13 @@ impl<'p> Lower<'p> {
             }
             _ => false,
         }
+    }
+
+    /// Returns true if the end of a variable of type `t` can free memory: the
+    /// value is not plain data, or its type is not known yet.
+    fn may_free(&self, t: &Ty) -> bool {
+        let t = self.inf.shallow(t);
+        matches!(t, Ty::Var(_)) || !self.is_copy(&t)
     }
 
     /// Scalars: integers, `bool`, unit, `String` and `Duration`. A loop or a match

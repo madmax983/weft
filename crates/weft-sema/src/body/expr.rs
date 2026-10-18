@@ -76,7 +76,7 @@ impl Lower<'_> {
                     let p = self.expr(x);
                     self.consume(&p, x.span);
                     if i + 1 < es.len() {
-                        held.extend(self.hold(&p, "tuple part", x.span));
+                        held.extend(self.hold_later(&p, "tuple part", x.span));
                     }
                     parts.push(p);
                 }
@@ -544,29 +544,37 @@ impl Lower<'_> {
         for &p in &lv.places {
             self.read(p);
         }
-        // A reference field of a `!Move` struct points into the same struct.
-        let mut refs = Vec::new();
-        if let (ExprKind::Field { base, name }, Ty::Ref(_)) = (&e.kind, self.inf.shallow(&lv.ty)) {
-            if let Some(blv) = self.place_expr(base) {
-                if let Ty::Adt(a, _) = self.deref_ty(&blv.ty) {
-                    if let AdtKind::Struct(fs) = &self.prog.adts[a].kind {
-                        if let Some(sp) = fs
-                            .iter()
-                            .find(|f| f.name == name.name)
-                            .and_then(|f| f.place.clone())
-                        {
-                            refs = self.subst_place(&sp, std::slice::from_ref(&blv.places), 0);
-                        }
-                    }
-                }
-            }
-        }
+        let refs = if matches!(self.inf.shallow(&lv.ty), Ty::Ref(_)) {
+            self.field_referents(e).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         Val {
             ty: lv.ty.clone(),
             refs,
             place: Some(lv),
             ..Val::default()
         }
+    }
+
+    /// Returns the places that a reference field of a `!Move` struct points
+    /// into: the place of the field type, in the same struct.
+    pub(super) fn field_referents(&mut self, e: &Expr) -> Option<Vec<PlaceId>> {
+        let ExprKind::Field { base, name } = &e.kind else {
+            return None;
+        };
+        let blv = self.place_expr(base)?;
+        let Ty::Adt(a, _) = self.deref_ty(&blv.ty) else {
+            return None;
+        };
+        let AdtKind::Struct(fs) = &self.prog.adts[a].kind else {
+            return None;
+        };
+        let sp = fs
+            .iter()
+            .find(|f| f.name == name.name)
+            .and_then(|f| f.place.clone())?;
+        Some(self.subst_place(&sp, std::slice::from_ref(&blv.places), 0))
     }
 
     fn borrow(&mut self, inner: &Expr) -> Val {
@@ -634,7 +642,7 @@ impl Lower<'_> {
             };
         }
         let a = self.expr(lhs);
-        let held = self.hold(&a, "operand", lhs.span);
+        let held = self.hold_later(&a, "operand", lhs.span);
         let b = self.expr(rhs);
         self.pend_uses.extend(held);
         match op {
@@ -827,7 +835,7 @@ impl Lower<'_> {
             let held = self.hold_out(&v, tail);
             self.end_frame(arm.span);
             self.frames.pop();
-            self.use_held(held, tail);
+            let _ = self.use_held(held, tail);
             if let Some(c) = self.cur {
                 self.facts.cfg_edge.push((c, join));
                 reached = true;
@@ -1094,19 +1102,18 @@ impl Lower<'_> {
         self.cur = saved;
         self.restore_pending(saved_pending);
         self.stmt_temps = saved_stmts;
-        // The creation node uses the captures and moves the moved ones.
+        // The closure refers to the variables that it captures, as in the
+        // interpreter. A captured copy value stays readable after its scope
+        // ends; another value goes away with its variable, also a value that the
+        // closure moves when it runs.
         let mut refs = Vec::new();
         let caps: Vec<_> = sum.captures.iter().copied().collect();
         for v in &caps {
             if let Some(l) = self.locals.iter().position(|l| l.var == *v) {
                 let loc = self.locals[l].clone();
                 refs.extend(loc.refs.iter().copied());
-                if !loc.ty.is_ref() {
-                    if let Some(r) = loc.root {
-                        if !sum.moved_captures.contains(v) {
-                            refs.push(r);
-                        }
-                    }
+                if !loc.ty.is_ref() && self.may_free(&loc.ty) {
+                    refs.extend(loc.root);
                 }
                 self.pend_uses.push(*v);
                 self.note_capture(l);
@@ -1114,12 +1121,21 @@ impl Lower<'_> {
         }
         refs.sort();
         refs.dedup();
-        let n = self.emit(span, "closure", String::new());
-        for v in &sum.moved_captures {
-            if !self.is_copy_var(*v) {
-                self.move_var(*v, n);
+        // The moved captures are moved before the closure exists, so that the
+        // move does not invalidate the new closure.
+        let moved: Vec<_> = sum
+            .moved_captures
+            .iter()
+            .copied()
+            .filter(|&v| !self.is_copy_var(v))
+            .collect();
+        if !moved.is_empty() {
+            let m = self.emit(span, "move", String::new());
+            for v in moved {
+                self.move_var(v, m);
             }
         }
+        let n = self.emit(span, "closure", String::new());
         let fty = FnTy {
             params: ptys,
             ret: ret_ty,
@@ -1159,12 +1175,20 @@ impl Lower<'_> {
                 if !reported.contains(&root) {
                     reported.push(root);
                     let name = self.facts.roots[root.index()].name.clone();
+                    let param = self.facts.owner.iter().any(|&(rt, var)| {
+                        self.facts.place(rt).root == root
+                            && self.facts.var(var).kind == VarKind::Param
+                    });
+                    let whose = if param { "its parameter" } else { "its local" };
+                    let shown = &self.facts.place(r).display;
+                    let head = if v.summary.is_some() {
+                        format!("the closure returns a closure that captures `{shown}`")
+                    } else {
+                        format!("the closure returns a reference into `{shown}`")
+                    };
                     self.err(
                         "W0204",
-                        format!(
-                            "the closure returns a reference into `{}`: its local `{name}` goes out of scope at the return",
-                            self.facts.place(r).display
-                        ),
+                        format!("{head}: {whose} `{name}` goes out of scope at the return"),
                         span,
                     );
                 }
@@ -1538,7 +1562,11 @@ impl Lower<'_> {
         let held = self.hold_out(&v, tail);
         self.end_frame(body.span);
         self.frames.pop();
-        self.use_held(held, tail);
+        let v = if self.use_held(held, tail) {
+            Val { var: None, ..v }
+        } else {
+            v
+        };
         self.end_frame(span);
         self.frames.pop();
         v

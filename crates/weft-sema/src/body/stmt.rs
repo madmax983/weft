@@ -126,6 +126,13 @@ impl Lower<'_> {
     }
 
     fn finish(mut self, eff: EffectSig) -> Lowered {
+        // Show the types of the locals as the whole body inferred them.
+        for i in 0..self.locals.len() {
+            let ty = self.locals[i].ty.clone();
+            let shown = self.show(&ty);
+            let var = self.locals[i].var;
+            self.facts.vars[var.index()].ty = shown;
+        }
         let declared: BTreeSet<String> = if self.facts.has_signature {
             self.facts.declared_effect.iter().cloned().collect()
         } else {
@@ -284,9 +291,14 @@ impl Lower<'_> {
                 format!("the local `{name}`")
             };
             let shown = self.facts.place(r).display.clone();
+            let head = if v.summary.is_some() {
+                format!("the returned closure captures `{shown}`")
+            } else {
+                format!("returned reference points into `{shown}`")
+            };
             self.err(
                 "W0204",
-                format!("returned reference points into `{shown}`: {what} of `{fname}` goes out of scope at the return"),
+                format!("{head}: {what} of `{fname}` goes out of scope at the return"),
                 span,
             );
         }
@@ -357,8 +369,11 @@ impl Lower<'_> {
         let held = if hold { self.hold_out(&v, tail) } else { None };
         self.end_frame(b.span);
         self.frames.pop();
-        self.use_held(held, tail);
-        v
+        if self.use_held(held, tail) {
+            Val { var: None, ..v }
+        } else {
+            v
+        }
     }
 
     /// Holds a value that points into a local of the innermost frame. Call it
@@ -381,18 +396,21 @@ impl Lower<'_> {
             false
         });
         if inside {
-            self.hold(v, "block value", span)
+            self.hold_as(v, "block value", VarKind::BlockValue, span)
         } else {
             None
         }
     }
 
-    /// Uses a value that `hold_out` held, after the end of its frame.
-    pub(super) fn use_held(&mut self, held: Option<VarId>, span: Span) {
-        if let Some(var) = held {
-            let n = self.emit(span, "block value", String::new());
-            self.facts.uses.push((var, n));
-        }
+    /// Uses a value that `hold_out` held, after the end of its frame. Returns
+    /// true if there is one: the value then no longer stands for its variable.
+    pub(super) fn use_held(&mut self, held: Option<VarId>, span: Span) -> bool {
+        let Some(var) = held else {
+            return false;
+        };
+        let n = self.emit(span, "block value", String::new());
+        self.facts.uses.push((var, n));
+        true
     }
 
     /// Moves a block's value out of the block before its locals go out of scope.
@@ -754,18 +772,29 @@ impl Lower<'_> {
             );
             return;
         };
+        // `p op= v` on a place that holds a reference writes through it, as the
+        // interpreter does: it mutates what the reference points into.
+        let mut places = lv.places.clone();
+        if op != AssignOp::Assign && matches!(self.inf.shallow(&lv.ty), Ty::Ref(_)) {
+            let through = self
+                .field_referents(target)
+                .or_else(|| lv.owner.map(|l| self.locals[l].refs.clone()));
+            if let Some(ps) = through {
+                places = self.split_deps(&ps).0;
+            }
+        }
         if op == AssignOp::Assign {
             self.unify(&lv.ty, &v.ty, value.span);
         } else {
-            for &p in &lv.places {
+            for &p in &places {
                 self.read(p);
             }
             self.arith(&lv.ty, &v.ty, value.span);
         }
         self.consume(&v, value.span);
-        let detail = format!("mut({})", self.place_text(&lv.places));
+        let detail = format!("mut({})", self.place_text(&places));
         let n = self.emit(span, "assign", detail);
-        for &p in &lv.places {
+        for &p in &places {
             self.mutate(n, p);
         }
     }

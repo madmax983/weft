@@ -56,3 +56,27 @@ fn owned() -> u64 {
     n += 1
     n
 }
+
+// A compound assignment to a reference field or a reference part writes through it.
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+
+fn field_bump(f: &Frame) / mut(f.cur) {
+    f.cur += 1   //~ W0703
+}
+
+fn field_bump_declared(f: &Frame) / mut(f.buf) {
+    f.cur += 1
+}
+
+fn field_race(f: &Frame) / mut(f.buf), async {
+    let b = &f.buf
+    scope { s =>
+        s.spawn(|| print(b))
+        f.cur += 1   //~ W0405
+    }
+}
+
+fn tuple_part(s: &Stats @ shared) {
+    let t = (&s.count, 1)
+    t.0 += 1   //~ W0402
+}

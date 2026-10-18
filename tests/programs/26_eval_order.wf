@@ -168,3 +168,36 @@ fn temp_after(world: &World) / mut(world.entities) {
     let n = grow(world)
     show(&world.entities[0], n)
 }
+
+// A closure argument refers to its captures until the call.
+fn closure_arg(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    apply3(grow(world), || print(first.hp))   //~ W0301
+}
+
+fn closure_arg_first(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    apply4(|| print(first.hp), grow(world))   //~ W0301
+}
+
+// A later argument that gives a named argument a new value does not hide
+// the old value.
+fn rebound_later(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    show(first, { world.entities.push(Entity { hp: 1 }); first = &world.entities[0]; 0 })   //~ W0301
+}
+
+fn print_named(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    print(first, grow(world))   //~ W0301
+}
+
+// A closure value that a closure call takes runs in the call.
+fn closure_to_closure(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let run = |f: fn()| f()
+    run(|| world.entities.clear())
+    print(first.hp)   //~ W0301
+}
+
+fn apply4(f: fn(), n: u64) { f() }

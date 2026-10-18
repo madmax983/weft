@@ -359,12 +359,13 @@ impl Lower<'_> {
             if is_ref_param || arg_is_ref {
                 // A reference argument stays valid until the call: hold it in a variable.
                 arg_places.push(av.val.refs.clone());
-                match av.val.var {
-                    Some(v) => held_vars.push(v),
-                    None => held_vars.extend(self.hold(&av.val, "argument", av.span)),
-                }
+                held_vars.extend(self.hold_operand(&av.val, later, av.span));
             } else {
                 arg_places.push(Vec::new());
+                // A closure argument refers to its captures until the call.
+                if av.val.summary.is_some() {
+                    held_vars.extend(self.hold_operand(&av.val, later, av.span));
+                }
                 if !matches!(self.inf.shallow(&pt), Ty::Fn(_)) || av.val.summary.is_none() {
                     let v = av.val.clone();
                     self.consume(&v, av.span);
@@ -634,21 +635,32 @@ impl Lower<'_> {
         // Each argument is typed, held and moved before the next one runs.
         let mut held = Vec::new();
         let mut arg_places: Vec<Vec<PlaceId>> = Vec::new();
+        let mut closures = Vec::new();
         for (i, a) in exprs.iter().enumerate() {
-            let mut v = self.expr(a);
+            let later = i + 1 < exprs.len();
+            let mut v = match (&a.kind, fty.params.get(i).map(|t| self.inf.shallow(t))) {
+                (ExprKind::Closure { params, body }, Some(Ty::Fn(f))) => {
+                    self.closure(params, body, Some(&f), a.span)
+                }
+                _ => self.expr(a),
+            };
             if let Some(pt) = fty.params.get(i) {
                 self.unify_arg(pt, &mut v, a.span);
             }
             if matches!(self.inf.shallow(&v.ty), Ty::Ref(_)) {
                 arg_places.push(v.refs.clone());
-                match v.var {
-                    Some(var) => held.push(var),
-                    None => held.extend(self.hold(&v, "argument", a.span)),
-                }
+                held.extend(self.hold_operand(&v, later, a.span));
             } else {
                 arg_places.push(Vec::new());
+                if let Some(s) = v.summary {
+                    held.extend(self.hold_operand(&v, later, a.span));
+                    closures.push(s);
+                }
             }
-            self.consume(&v, a.span);
+            // A closure argument is lent to the call, as in `call_fn`.
+            if v.summary.is_none() {
+                self.consume(&v, a.span);
+            }
         }
         let arg_refs: Vec<PlaceId> = arg_places.iter().flatten().copied().collect();
         self.use_local(l);
@@ -662,6 +674,10 @@ impl Lower<'_> {
         }
         if self.facts.var(loc.var).once {
             self.facts.moved_at.push((loc.var, n));
+        }
+        // The callee can call a closure argument.
+        for (i, &s) in closures.iter().enumerate() {
+            self.apply_summary(n, s, 810 + u32::try_from(i).unwrap_or(0));
         }
         if let Some(s) = loc.summary {
             self.apply_summary(n, s, 800);
@@ -764,7 +780,7 @@ impl Lower<'_> {
                 self.read(p);
             }
             if i + 1 < args.len() {
-                held.extend(self.hold(&v, "argument", a.value.span));
+                held.extend(self.hold_later(&v, "argument", a.value.span));
             }
         }
         self.pend_uses.extend(held);
@@ -799,7 +815,7 @@ impl Lower<'_> {
             self.unify(&ft, &v.ty, arg.value.span);
             self.consume(&v, arg.value.span);
             if i + 1 < args.len() {
-                held.extend(self.hold(&v, "argument", arg.value.span));
+                held.extend(self.hold_later(&v, "argument", arg.value.span));
             }
         }
         self.pend_uses.extend(held);
@@ -837,7 +853,7 @@ impl Lower<'_> {
             self.unify(&ft, &v.ty, a.value.span);
             self.consume(&v, a.value.span);
             if i + 1 < args.len() {
-                held.extend(self.hold(&v, "argument", a.value.span));
+                held.extend(self.hold_later(&v, "argument", a.value.span));
             }
             refs.extend(v.refs);
         }
@@ -866,7 +882,7 @@ impl Lower<'_> {
             self.unify(pt, &v.ty, a.value.span);
             self.consume(&v, a.value.span);
             if i + 1 < args.len() {
-                held.extend(self.hold(&v, "argument", a.value.span));
+                held.extend(self.hold_later(&v, "argument", a.value.span));
             }
         }
         self.pend_uses.extend(held);

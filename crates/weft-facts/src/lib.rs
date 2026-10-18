@@ -127,6 +127,8 @@ pub enum VarKind {
     Param,
     /// A temporary value inside an expression.
     Temp,
+    /// The value of a block, held across the end of the block.
+    BlockValue,
     /// The hidden iterator of a `for` loop.
     Iterator,
     /// A closure value.

@@ -201,3 +201,37 @@ fn an_unknown_function_result_points_anywhere_inside_its_argument() {
     assert!(f.place(any).is_wildcard());
     assert!(f.points_into.contains(&(var(&f, "r"), any)));
 }
+
+#[test]
+fn a_closure_refers_to_captured_values_that_are_not_plain_data() {
+    let f = facts(
+        "fn take(v: Vec<u64>) {}
+         fn f() { let n: u64 = 1; let v: Vec<u64> = Vec.new(); let g = || { print(n); take(v) }; g() }",
+        "f",
+    );
+    let g = var(&f, "{closure}");
+    assert!(f.points_into.contains(&(g, place(&f, "v"))));
+    assert!(!f.points_into.contains(&(g, place(&f, "n"))));
+    // The move of `v` comes before the closure gets its value.
+    let v = var(&f, "v");
+    let (_, moved) = *f.moved_at.iter().find(|&&(x, _)| x == v).expect("v moves");
+    let (_, bound) = *f
+        .rebound_at
+        .iter()
+        .find(|&&(x, _)| x == g)
+        .expect("g is bound");
+    assert!(moved < bound);
+}
+
+#[test]
+fn a_compound_assignment_to_a_reference_field_writes_its_place() {
+    let f = facts(
+        "struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+         fn f(fr: &Frame) / mut(fr.buf) { fr.cur += 1 }",
+        "f",
+    );
+    let buf = place(&f, "fr.buf[]");
+    assert!(f.mutates_at.iter().any(|&(_, p)| p == buf));
+    let cur = place(&f, "fr.cur");
+    assert!(!f.mutates_at.iter().any(|&(_, p)| p == cur));
+}

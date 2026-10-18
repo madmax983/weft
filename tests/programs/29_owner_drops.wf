@@ -68,10 +68,10 @@ fn rebound_inside() {
 
 // A closure that captures a local of a block outlives it.
 fn closure_outlives() {
-    let f = {   //~ W0301
+    let f = {
         let n = Vec.new()
         n.push(1)
-        || print(n.len())
+        || print(n.len())   //~ W0301
     }
     f()
 }

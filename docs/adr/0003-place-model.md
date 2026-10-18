@@ -52,9 +52,25 @@ Status: accepted. Date: 2026-10-18.
   place under a reference parameter of the closure becomes the place of the argument.
 - Assignment follows the interpreter. `x = v` on a local gives the local a new value; on
   a reference local, `v` must be a reference. `c += v` (and `-=`, `*=`) on a reference
-  writes through it: it mutates every place that `c` points into.
+  writes through it: it mutates every place that `c` points into. The same holds for
+  any place that holds a reference: a reference field of a `!Move` struct writes its
+  declared place, and a part of a local writes what the local points into.
+- A closure refers to the variables that it captures, as the interpreter captures their
+  cells. A captured value of plain data stays readable after its scope ends, so such a
+  closure can leave the scope. A closure that captures another value cannot outlive the
+  variable (W0204, W0301), also when it moves the value: it takes the value only when it
+  runs. A temporary of plain data stays readable too, as a constant does. A reference
+  into a local of plain data is still invalid after the scope.
+- Evaluation order follows the interpreter: arguments and operands run from left to
+  right. A by-value argument moves when it is evaluated, so `f(v, v.len())` is a use
+  after move. A reference argument, a closure argument and the value of a named
+  variable are held from the point where they are taken, so a later argument that
+  invalidates or rebinds them is seen.
 
 ## Consequences
 
 - Element places are not index-sensitive. A mutation of one element can invalidate a
   reference into the unstable part of another element. This is safe and conservative.
+- `points_into` is not flow-sensitive. A reference that got a place inside a block, and
+  then a place outside it before the block ends, is still invalid after the end. This
+  is the same imprecision as for mutations.

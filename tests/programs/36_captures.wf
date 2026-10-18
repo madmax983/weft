@@ -1,0 +1,43 @@
+// A closure captures the variable, not a copy of its value. A captured copy
+// value stays readable after its scope ends; another value goes away with its
+// variable, also when the closure moves it.
+struct Bag { items: Vec<u64> }
+
+fn take_bag(b: Bag) -> usize { b.items.len() }
+
+// A closure that captures a copy value can leave the scope of the value.
+fn adder(n: u64) -> fn(u64) -> u64 { |x| x + n }
+fn greeter(s: String) -> fn() -> String { || s }
+fn block_copy() {
+    let f = { let n: u64 = 5; || n + 1 }
+    print(f())
+}
+
+// A closure that captures another value cannot.
+fn ret_vec_closure(v: Vec<u64>) -> fn() -> usize { || v.len() }   //~ W0204
+fn block_vec() {
+    let f = {
+        let v: Vec<u64> = Vec.new()
+        || v.len()   //~ W0301
+    }
+    print(f())
+}
+
+// A closure that moves a capture takes it when it runs. Until then the
+// variable holds it, so the closure cannot leave the scope of the variable.
+fn ret_moving_closure(b: Bag) -> fn() -> usize { || take_bag(b) }   //~ W0204
+fn block_moving() {
+    let f = {
+        let b = Bag { items: Vec.new() }
+        b.items.push(1)
+        || take_bag(b)   //~ W0301
+    }
+    print(f())
+}
+
+// Controls: the moving closure runs in the scope of its capture.
+fn moving_in_scope() {
+    let b = Bag { items: Vec.new() }
+    let f = || take_bag(b)
+    print(f())
+}
