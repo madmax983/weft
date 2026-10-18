@@ -1,0 +1,73 @@
+// Inference in bodies; public signatures state effects; wildcards; rc groups; GC-ready stability.
+struct Counter { n: u64, hist: Vec<u64> }
+
+pub fn bump(c: &Counter) { c.n += 1 }   //~ W0701
+
+pub fn bump_ok(c: &Counter) / mut(c..) {
+    c.n += 1
+    c.hist.push(c.n)
+}
+
+fn private(c: &Counter) { c.hist.clear() }   // inferred: mut(c.hist)
+
+pub fn uses_private(c: &Counter) / mut(c.n) {
+    private(c)   //~ W0703
+}
+
+// rc groups: mutation through any clone is `mut(group)`.
+struct Cell2 { items: Vec<u64> }
+
+fn alias_rc() / mut(Cell2) {
+    let a = Rc.new(Cell2 { items: Vec.new() })
+    let b = a.clone()
+    let first = &a.items[0]
+    b.items.push(1)
+    print(first)   //~ W0301
+}
+
+fn rc_undeclared(c: Rc<Cell2>) / mut(c) {
+    c.items.push(1)   //~ W0703
+}
+
+// A pointer type declares its stability. A GC pointer would be stable.
+extern type Gc<T> { deref: stable }
+struct Big { items: Vec<u64> }
+struct Holder { g: Gc<Big>, b: Box<Big> }
+
+fn reset(h: &Holder) / mut(h) {}
+
+fn gc_vs_box(h: &Holder) / mut(h) {
+    let r = &h.g.items[0]
+    let s = &h.b.items[0]
+    reset(h)
+    print(r)   //~ W0301
+    print(s)   //~ W0301
+}
+
+fn gc_survives(h: &Holder) / mut(h) {
+    let r = &h.g.items
+    reset(h)
+    print(r)
+}
+
+fn with_log(f: fn() / log) { f() }
+
+fn wrong_closure() / clock, log {
+    with_log(|| sleep(1.s))   //~ W0705
+}
+
+// Enum payloads stay unstable, even behind a stable pointer.
+struct Inner { opt: Option<Vec<u64>> }
+struct Shelf { g: Gc<Inner> }
+
+fn reset_shelf(s: &Shelf) / mut(s) {}
+
+fn payload_behind_gc(s: &Shelf) / mut(s) {
+    match s.g.opt {
+        Some(v) => {
+            reset_shelf(s)
+            print(v)   //~ W0301
+        }
+        None => {}
+    }
+}

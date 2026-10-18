@@ -1,0 +1,15 @@
+[package]
+name = "weft-sema"
+description = "Semantic analysis for Weft: names, types, places, modes, effects and fact generation."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+weft-syntax.workspace = true
+weft-facts.workspace = true
+weft-verified.workspace = true
+
+[lints]
+workspace = true

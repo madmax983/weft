@@ -1,0 +1,136 @@
+// The Weft standard prelude (Phase 1).
+//
+// Every module sees these items. `extern` items have no Weft body: the
+// interpreter implements them. Each pointer or collection type declares the
+// stability of its steps; the calculus has no fixed list.
+
+// ---------------------------------------------------------------------------
+// Standard effects. Lowercase names are aliases: `net` is `Net`.
+// `io` stands for Async, Net, Fs, Clock, Rand, Log and Blocking.
+// Net, Fs, Clock and Blocking imply Async: their operations suspend.
+// ---------------------------------------------------------------------------
+
+effect Async { fn suspend() }
+effect Net { fn net_poll() }
+effect Fs { fn fs_poll() }
+effect Clock {
+    fn now() -> Duration
+    fn sleep(d: Duration)
+}
+effect Rand { fn random() -> u64 }
+effect Log {
+    fn info(msg: String)
+    fn warn(msg: String)
+}
+effect Blocking { fn block() }
+effect Fail { fn fail(msg: String) }
+effect Par { fn par_poll() }
+
+// ---------------------------------------------------------------------------
+// Collections and pointers
+// ---------------------------------------------------------------------------
+
+extern type Vec<T> { elem: unstable }
+extern type Box<T> { deref: unstable }
+extern type Rc<T> { deref: group, nonportable }
+extern type Weak<T> { nonportable }
+extern type String { copy }
+extern type Duration { copy }
+extern type Task<T> { linear, on_abort }
+extern type Scope { nonportable }
+
+enum Option<T> { Some(T), None }
+enum Result<T, E> { Ok(T), Err(E) }
+
+impl<T> Vec<T> {
+    extern fn new() -> Vec<T>
+    extern fn push(self, x: T) / mut(self)
+    extern fn pop(self) -> Option<T> / mut(self)
+    extern fn clear(self) / mut(self)
+    extern fn len(self) -> usize
+    extern fn get(self, i: usize) -> &T in self[]
+    extern fn split_at(self, mid: usize) -> (&[T] in self[..mid], &[T] in self[mid..])
+    extern fn split_mut(self, mid: usize) -> (&[T] in self[..mid] @ uniq, &[T] in self[mid..] @ uniq)
+}
+
+impl<T> Box<T> {
+    extern fn new(x: T) -> Box<T>
+}
+
+impl<T> Rc<T> {
+    extern fn new(x: T) -> Rc<T>
+    extern fn clone(self) -> Rc<T>
+    extern fn downgrade(self) -> Weak<T>
+}
+
+impl<T> Weak<T> {
+    extern fn upgrade(self) -> Option<Rc<T>>
+}
+
+impl String {
+    extern fn len(self) -> usize
+}
+
+impl<T> Task<T> {
+    extern fn join(self: Task<T>) -> T / async
+    extern fn detach(self: Task<T>)
+}
+
+// ---------------------------------------------------------------------------
+// Capabilities: `main` gets the root capabilities in `env`.
+// ---------------------------------------------------------------------------
+
+extern type FsCap
+extern type NetCap
+extern type Listener
+extern type Stdout
+extern type Request
+extern type Response
+
+struct Env { fs: FsCap, net: NetCap, stdout: Stdout }
+
+impl FsCap {
+    extern fn read(self, path: String) -> String / fs
+}
+
+impl NetCap {
+    extern fn listen(self, addr: String) -> Listener / net
+}
+
+impl Stdout {
+    extern fn write(self, s: String) / io
+    extern fn write_all(self, lines: Vec<String>) / io
+}
+
+impl Request {
+    extern fn param(self, key: String) -> String
+}
+
+impl Response {
+    extern fn json<T>(x: T) -> Response
+    extern fn text(s: String) -> Response
+}
+
+mod http {
+    extern fn serve(l: Listener, h: fn(Request) -> Response / (net, log)) / net
+}
+
+// ---------------------------------------------------------------------------
+// Concurrency
+// ---------------------------------------------------------------------------
+
+// `with_timeout(d) { block }` aborts the block when `d` passes.
+extern fn with_timeout<T>(d: Duration, f: fn() -> T) -> T / async, fail
+extern fn sleep(d: Duration) / clock
+
+// The test harness: `sim.run` replaces every root handler with a simulation.
+mod sim {
+    extern fn run(seed: u64, body: fn())
+    mod net {
+        extern fn partition(a: Vec<u64>, b: Vec<u64>) / net
+        extern fn heal() / net
+    }
+    mod clock {
+        extern fn advance(d: Duration) / clock
+    }
+}

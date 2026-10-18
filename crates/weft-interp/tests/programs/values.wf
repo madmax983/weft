@@ -1,0 +1,46 @@
+// Values: tuples, structs, enums, Box, closures, function values, durations, strings.
+struct P { x: u64, y: u64 }
+struct Pin: !Move { a: u64, b: u64 }
+enum Shape { Dot, Rect(u64, u64) }
+
+fn add(a: u64, b: u64) -> u64 { a + b }
+fn apply(f: fn(u64, u64) -> u64, a: u64, b: u64) -> u64 { f(a, b) }
+
+fn area(s: &Shape) -> u64 {
+    match s {
+        Dot => 0,
+        Rect(w, h) => w * h,
+    }
+}
+
+fn main() {
+    let (a, b) = (1, "two")
+    print(a, b)
+    print((a, b))
+    let q = P(3, 4)
+    let P(x, y) = q
+    print(x * y)
+    let bx = Box.new(P { x: 1, y: 2 })
+    print(bx.x + bx.y)
+    print(2.s, 500.ms, 1.s + 500.ms)
+    let count = 0
+    let inc = || count += 1
+    inc()
+    inc()
+    print(count)
+    let f = add
+    print(f(2, 3), apply(add, 4, 5), apply(|u, v| u * v, 4, 5))
+    let shapes = [Shape.Dot, Rect(2, 3)]
+    for s in shapes[] { print(s, area(s)) }
+    let p = Pin { a: 1, b: 2 }
+    let r = &p.a
+    p.b = 5
+    print(r, p.b)
+    let n = 21
+    let s = "n = {n}, twice = {n * 2}"
+    print(s, s.len())
+    let v = [10, 20, 30]
+    let first = v.get(0)
+    print(first, v[1], v.len())
+    print(-n + 1, !true, 7 % 3, 7 / 2, n == 21 && n != 3)
+}

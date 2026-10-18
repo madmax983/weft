@@ -1,0 +1,16 @@
+[package]
+name = "weft-datalog"
+description = "A small Datalog engine with stratified negation and provenance."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

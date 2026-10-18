@@ -1,0 +1,12 @@
+fn profile_page(id: Id) -> Page / net {
+    scope { s =>
+        let user  = s.spawn(|| api.user(id))
+        let posts = s.spawn(|| api.posts(id))
+        Page(user.join(), posts.join())
+    }   // children can't outlive the scope; one failure cancels the siblings
+}
+
+fn timed(id: Id) -> Page / net, fail {
+    let page = with_timeout(2.s) { profile_page(id) }   // a handler that aborts the block
+    page
+}

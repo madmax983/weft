@@ -1,0 +1,81 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: fmt, clippy, test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: fmt
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: test
+        run: cargo test --workspace
+      - name: corpus agreement (release, more random cases)
+        run: PROPTEST_CASES=2048 cargo test --release -p weft-check --test agreement_random
+
+  coverage:
+    name: coverage
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.0
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      - name: coverage
+        run: cargo llvm-cov --workspace --fail-under-lines 85 --summary-only
+
+  verus:
+    name: verus proofs
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: read pinned Verus revision
+        id: pin
+        run: echo "rev=$(cat proofs/VERUS_VERSION)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: verus-lang/verus
+          ref: ${{ steps.pin.outputs.rev }}
+          path: verus
+      - name: cache Verus build
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            verus/source/target-verus
+            verus/source/z3
+            ~/.rustup/toolchains
+          key: verus-${{ runner.os }}-${{ steps.pin.outputs.rev }}
+      - name: build Verus
+        if: steps.cache.outputs.cache-hit != 'true'
+        working-directory: verus/source
+        run: |
+          rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"/\1/p' ../rust-toolchain.toml)" \
+            --profile minimal -c rustc-dev,llvm-tools,rust-src
+          ./tools/get-z3.sh
+          bash -c 'source ../tools/activate && vargo build --release'
+      - name: verify
+        run: |
+          export PATH="$GITHUB_WORKSPACE/verus/source/target-verus/release:$PATH"
+          export VERUS_Z3_PATH="$GITHUB_WORKSPACE/verus/source/z3"
+          proofs/verify-all.sh

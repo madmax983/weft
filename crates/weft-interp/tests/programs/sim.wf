@@ -1,0 +1,56 @@
+// Deterministic simulation: virtual time, seeded randomness and the network.
+struct Cluster { nodes: Vec<u64>, leader: u64 }
+
+impl Cluster {
+    fn start(n: u64) -> Cluster / net {
+        let nodes = Vec.new()
+        let i = 0
+        while i < n { nodes.push(i); i += 1 }
+        Cluster { nodes: nodes, leader: 2 }
+    }
+    fn leaders(self) -> Vec<u64> {
+        let out = Vec.new()
+        out.push(self.leader)
+        out
+    }
+}
+
+test "election survives a partition" {
+    sim.run(seed: 42) {
+        let cluster = Cluster.start(5)
+        sim.net.partition([0, 1], [2, 3, 4])
+        sim.clock.advance(30.s)
+        assert cluster.leaders().len() == 1
+        sim.net.heal()
+    }
+}
+
+test "virtual clock" {
+    sim.run(seed: 7) {
+        let t0 = Clock.now()
+        sleep(5.s)
+        sim.clock.advance(30.s)
+        print(t0, Clock.now())
+    }
+}
+
+fn race() / clock {
+    scope { s =>
+        let a = s.spawn(|| { sleep(20.ms); print("late") })
+        let b = s.spawn(|| { sleep(10.ms); print("early") })
+        a.join()
+        b.join()
+    }
+}
+
+test "tasks in a simulation" {
+    sim.run(seed: 1) { race() }
+}
+
+test "a failing assertion" {
+    assert 1 == 2
+}
+
+test "a failure inside a simulation" {
+    sim.run(seed: 2) { fail("sim fail") }
+}

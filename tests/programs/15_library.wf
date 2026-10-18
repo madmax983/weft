@@ -1,0 +1,17 @@
+// weft: library
+// Libraries may intercept standard effects, but not install root handlers.
+fn intercept() / net, log {
+    handle Log { fn info(m) { resume(()) } } in log.info("x")
+}
+
+fn root() {
+    handle Log { fn info(m) { resume(()) } } in log.info("x")   //~ W0801
+}
+
+fn sim_in_lib() {
+    sim.run(seed: 1) { print(1) }   //~ W0802
+}
+
+test "tests may install root handlers" {
+    sim.run(seed: 1) { print(1) }
+}

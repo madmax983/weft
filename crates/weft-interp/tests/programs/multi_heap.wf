@@ -1,0 +1,38 @@
+// A `multi` continuation that owns a Vec, a loop iterator, element references and
+// a closure. Each resume runs on its own copy, so all 8 paths see fresh state.
+struct P { x: u64 }
+
+effect Choice { multi fn choose() -> bool }
+
+fn explore() -> u64 / Choice {
+    let ps = [P { x: 1 }, P { x: 2 }, P { x: 3 }]
+    let total = 0
+    let picked = Vec.new()
+    for p in ps[] {
+        if choose() {
+            total += p.x
+            picked.push(p.x)
+        }
+    }
+    let n = 0
+    for q in picked[] { n += 1 }
+    let f = || total * 10
+    f() + n
+}
+
+fn main() {
+    let all = Vec.new()
+    let sum = handle Choice {
+        fn choose() {
+            let a = resume(true)
+            let b = resume(false)
+            a + b
+        }
+    } in {
+        let r = explore()
+        all.push(r)
+        r
+    }
+    print(sum)
+    print(all)
+}

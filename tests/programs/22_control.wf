@@ -1,0 +1,55 @@
+// A positive program that uses loops, matches, closures and tuples.
+enum Op { Add(u64), Sub(u64), Stop }
+struct Acc { total: u64, seen: Vec<u64>, last: Option<u64> }
+
+fn apply(acc: &Acc, ops: &Vec<Op>) / mut(acc..) {
+    for op in ops[] {
+        match op {
+            Add(n) => { acc.total += n }
+            Sub(n) => {
+                if acc.total >= n { acc.total -= n } else { continue }
+            }
+            Stop => { break }
+        }
+        acc.seen.push(acc.total)
+    }
+    let i = 0
+    while i < 3 && acc.total > 0 || false {
+        acc.total -= 1
+        i += 1
+    }
+    loop {
+        if acc.total == 0 { break }
+        acc.total -= 1
+    }
+    acc.last = Some(acc.total)
+}
+
+fn pairs() -> (u64, bool) {
+    let (a, b) = (1, true)
+    let f = |x: u64, y: u64| x + y
+    let g = |x| x * 2
+    let c = f(a, 2) + g(3)
+    let t = (c, !b)
+    t
+}
+
+fn last_or(acc: &Acc, d: u64) -> u64 {
+    match acc.last {
+        Some(v) => v,
+        None => d,
+    }
+}
+
+fn early(v: &Vec<u64>) -> u64 {
+    for x in v[] {
+        if x > 10 { return x }
+    }
+    for i in 0..3 { print(i) }
+    0
+}
+
+fn strings(n: u64) -> String {
+    let s = "n = {n}, twice = {n * 2}"
+    s
+}

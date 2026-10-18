@@ -1,0 +1,18 @@
+[package]
+name = "weft-verified"
+description = "The verified core of the Weft checker. Verus proves it; cargo compiles it."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+vstd.workspace = true
+verus_builtin.workspace = true
+verus_builtin_macros.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

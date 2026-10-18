@@ -1,0 +1,29 @@
+// Name and type errors.
+struct P { x: u64, y: u64 }
+struct P { z: u64 }   //~ W0107
+enum Shape { Dot, Rect(u64, u64) }
+
+fn add(a: u64, b: u64) -> u64 { a + b }
+
+fn errors(p: &P) {
+    let q = nope   //~ W0101
+    let r: bool = 3   //~ W0102
+    add(1)   //~ W0103
+    print(p.w)   //~ W0104
+    let n = 5
+    n(1)   //~ W0105
+    break   //~ W0111
+    add(1, 2) = 3   //~ W0112
+    let k = 1..2   //~ W0114
+    let s = P { x: 1 }   //~ W0115
+    let t = Rect(1)   //~ W0103
+    let u = if true { 1 } else { false }   //~ W0102
+    missing_fn(1)   //~ W0101
+    p.nothing()   //~ W0104
+    Shape.Cube   //~ W0104
+    let d = Shape.Dot
+}
+
+fn bad_types(x: Vec<u64, u64>) {}   //~ W0103
+fn bad_place(v: &Vec<u64>) / mut(q) {}   //~ W0201
+fn bad_effect() / teleport {}   //~ W0101

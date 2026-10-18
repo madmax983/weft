@@ -1,0 +1,4 @@
+commit 1
+failed: too much
+rollback 2
+done

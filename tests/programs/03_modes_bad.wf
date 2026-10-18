@@ -1,0 +1,33 @@
+// Mode errors at a thread boundary.
+struct Entity { hp: u64 }
+struct World { entities: Vec<Entity>, score: u64 }
+struct Node { v: u64 }
+
+fn heal(es: &[Entity]) / mut(es[]) {
+    for e in es[] { e.hp += 1 }
+}
+
+fn bump(w: &World) / mut(w.score) { w.score += 1 }
+
+// A shared-mutable reference is nonportable.
+fn aliased(world: &World) / mut(world.score), par {
+    fork(|| bump(world), || print(1))   //~ W0403
+}
+
+// Rc values cannot cross threads.
+fn rc_cross() / par {
+    let n = Rc.new(Node { v: 1 })
+    fork(|| print(n.v), || print(2))   //~ W0401
+}
+
+// `@ shared` means read-only from every thread.
+fn write_shared(world: &World @ shared) / mut(world.score) {
+    world.score += 1   //~ W0402
+}
+
+// Two branches mutate the same elements.
+fn both_halves(world: &World) / mut(world.entities[]), par {
+    let mid = world.entities.len() / 2
+    let (l, r) = world.entities.split_mut(mid)
+    fork(|| heal(l), || heal(l))   //~ W0405
+}

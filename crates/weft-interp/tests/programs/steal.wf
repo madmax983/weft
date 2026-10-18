@@ -1,0 +1,19 @@
+// A task that captures an `Rc` is pinned; the others are stealable.
+struct Node { v: u64 }
+
+fn work(n: u64) -> u64 {
+    let i = 0
+    let t = 0
+    while i < n { t += i; i += 1 }
+    t
+}
+
+fn main() / io {
+    let shared = Rc.new(Node { v: 5 })
+    scope { s =>
+        let a = s.spawn(|| work(100))
+        let b = s.spawn(|| shared.v + 1)
+        let c = s.spawn(|| work(200))
+        print(a.join() + b.join() + c.join())
+    }
+}

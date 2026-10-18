@@ -1,0 +1,4 @@
+[package]
+name = "gc-lib"
+kind = "lib"
+gc = true   # only a binary may switch the GC tier on

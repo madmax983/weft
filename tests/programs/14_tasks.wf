@@ -1,0 +1,31 @@
+// Tasks cannot reach handlers on another task; once closures run once.
+effect Note { fn note(x: u64) }
+
+linear struct Token { id: u64 }
+    on abort = spend
+fn spend(t: Token) { let Token(i) = t }
+fn mint() -> Token { Token { id: 1 } }
+
+fn noted() / Note, async {
+    scope { s => s.spawn(|| note(1)) }   //~ W0314
+}
+
+fn once_closure() {
+    let t = mint()
+    let f = || spend(t)
+    f()
+    f()   //~ W0502
+}
+
+fn joined() -> u64 / async {
+    scope { s =>
+        let t = s.spawn(|| 40)
+        t.join() + 2
+    }
+}
+
+fn not_joined() / async {
+    scope { s =>
+        let t = s.spawn(|| 1)
+    }   //~ W0601
+}

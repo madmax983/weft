@@ -1,0 +1,11 @@
+// seed: 0
+// A scope joins its children. The seed fixes the order of their output.
+fn main() / io {
+    let total = scope { s =>
+        let a = s.spawn(|| { print("a"); 1 })
+        let b = s.spawn(|| { print("b"); 2 })
+        let c = s.spawn(|| { print("c"); 3 })
+        a.join() + b.join() + c.join()
+    }
+    print(total)
+}

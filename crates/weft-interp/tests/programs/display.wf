@@ -1,0 +1,47 @@
+// Display, equality and JSON of every kind of value; the Vec, Box, Rc and String natives.
+struct P { x: u64, s: String }
+struct Empty {}
+enum Tree { Leaf, Node(u64, String) }
+
+fn main(env: Env) / io {
+    let v = [1, 2, 3]
+    let (l, r) = v.split_at(1)
+    print(l, r)
+    print(Box.new(5), &v, (1,), ["a", "b"], Empty {})
+    let rc = Rc.new(P { x: 1, s: "a" })
+    let w = rc.downgrade()
+    print(rc, w)
+    match w.upgrade() {
+        Some(x) => print("upgraded {x.x}"),
+        None => print("dead"),
+    }
+    print(|| 1, Tree.Leaf, Node(3, "x"))
+    print(1.s == 1000.ms, 2.s > 1.s, 1.s < 2.s, 1.s <= 1.s, 1.s >= 2.s, 3.s - 1.s)
+    print("a" < "b", "b" >= "a", "a" <= "a", "b" > "a", "ab" + "cd", "x" == "x", "x" != "y")
+    print(P { x: 1, s: "a" } == P { x: 1, s: "a" }, Node(1, "a") == Node(1, "b"))
+    print((1, 2) == (1, 2), [1, 2] == [1, 2], Tree.Leaf != Node(1, "a"), true == true, () == ())
+    print(1 < 2, 2 <= 2, 3 > 4, 4 >= 4, 10 - 3 * 2)
+    print(Response.json(P { x: 1, s: "q\"\n\t\\" }))
+    print(Response.json([Some(1), None]))
+    print(Response.json((true, 2.s)))
+    print(Response.json(Node(1, "a")))
+    print(Response.json(Tree.Leaf))
+    print(Response.json(Box.new(Empty {})))
+    print(Response.text("plain"))
+    let u = Vec.new()
+    u.push(4)
+    u.push(5)
+    print(u.pop(), u.pop(), u.pop())
+    u.push(6)
+    u.clear()
+    print(u, u.len())
+    let m = [1, 2, 3, 4]
+    let (a, b) = m.split_mut(2)
+    print(a, b, m.get(3))
+    let s = "hello"
+    print(s.len())
+    print(env.fs.read("tests/programs/data.txt"))
+    handle Fail { fn fail(msg) { print("read failed") } } in {
+        print(env.fs.read("tests/programs/no-such-file.txt"))
+    }
+}

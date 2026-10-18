@@ -1,0 +1,6 @@
+// expect-error: failed: left
+// A failing `fork` branch fails the forking task.
+fn main() / par, fail {
+    let (a, b) = fork(|| { fail("left"); 1 }, || 2)
+    print(a + b)
+}

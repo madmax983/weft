@@ -1,0 +1,61 @@
+[workspace]
+resolver = "2"
+# CI checks out Verus at `verus/`; it is not part of this workspace.
+exclude = ["verus"]
+members = [
+    "crates/weft-syntax",
+    "crates/weft-facts",
+    "crates/weft-datalog",
+    "crates/weft-verified",
+    "crates/weft-check",
+    "crates/weft-sema",
+    "crates/weft-interp",
+    "crates/weft-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/madmax983/weft"
+rust-version = "1.85"
+
+[workspace.dependencies]
+thiserror = "2"
+anyhow = "1"
+proptest = "1"
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+vstd = "=0.0.0-2026-10-18-0147"
+verus_builtin = "=0.0.0-2026-10-11-0230"
+verus_builtin_macros = "=0.0.0-2026-10-18-0147"
+weft-syntax = { path = "crates/weft-syntax" }
+weft-facts = { path = "crates/weft-facts" }
+weft-datalog = { path = "crates/weft-datalog" }
+weft-verified = { path = "crates/weft-verified" }
+weft-check = { path = "crates/weft-check" }
+weft-sema = { path = "crates/weft-sema" }
+weft-interp = { path = "crates/weft-interp" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+# Style lints that fight readable compiler code (short names for nodes, places and
+# variables; long lowering functions that follow the grammar; property records).
+module_name_repetitions = "allow"
+many_single_char_names = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
+struct_excessive_bools = "allow"
+# Its suggestions often borrow `self` twice in lowering code.
+option_if_let_else = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

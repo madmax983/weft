@@ -1,0 +1,31 @@
+// Silent effect polymorphism: `map` passes its argument's effects through.
+fn map(xs: &Vec<u64>, f: fn(u64) -> u64) -> Vec<u64> {
+    let out = Vec.new()
+    for x in xs[] { out.push(f(x)) }
+    out
+}
+
+mod api {
+    pub fn fetch(x: u64) -> u64 / net { x + 1 }
+}
+
+fn pure_use(xs: &Vec<u64>) -> Vec<u64> {
+    map(xs, |x| x * 2)
+}
+
+fn async_use(xs: &Vec<u64>) -> Vec<u64> / net {
+    map(xs, |x| api.fetch(x))
+}
+
+fn missing(xs: &Vec<u64>) -> Vec<u64> / log {
+    map(xs, |x| api.fetch(x))   //~ W0702
+}
+
+// References survive suspension: no other task can touch a task's places.
+struct Cache { items: Vec<u64> }
+
+fn across_suspend(c: &Cache) -> u64 / net {
+    let first = &c.items[0]
+    let y = api.fetch(1)
+    first + y
+}

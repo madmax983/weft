@@ -1,0 +1,14 @@
+[package]
+name = "weft-facts"
+description = "Fact tables that the Weft compiler extracts and the rules query."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+weft-syntax.workspace = true
+weft-verified.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,44 @@
+// Call-site aliasing, borrowed moves and the places in signatures.
+struct Entity { hp: u64 }
+struct World { a: Vec<Entity>, b: Vec<Entity> }
+struct Pair { a: Vec<u64>, b: Vec<u64> }
+struct Holder { name: Vec<u64> }
+
+fn push_from(dst: &Vec<u64>, src: &Vec<u64>) / mut(dst) { dst.push(1) }
+
+fn alias(p: &Pair) / mut(p..) {
+    push_from(&p.a, &p.b)
+    push_from(&p.a, &p.a)   //~ W0312
+}
+
+effect Note { fn note(x: u64) }
+
+fn walk(v: &Vec<u64>) / Note {
+    for x in v[] { note(1) }
+}
+
+fn handler_alias() {
+    let v = Vec.new()
+    v.push(1)
+    handle Note { fn note(x) { v.push(x); resume(()) } } in walk(&v)   //~ W0312
+}
+
+fn take(v: Vec<u64>) {}
+fn steal(h: &Holder) { take(h.name) }   //~ W0303
+
+fn step(world: &World, e: &Entity in world.a[]) / mut(e) { e.hp += 1 }
+
+fn wrong_place(world: &World) / mut(world..) {
+    for e in world.b[] { step(world, e) }   //~ W0203
+}
+
+fn first(v: &Vec<u64>) -> &u64 in v[] { &v[0] }
+fn other(v: &Vec<u64>, w: &Vec<u64>) -> &u64 in v[] { &w[0] }   //~ W0204
+fn noplace(v: &Vec<u64>) -> &u64 { &v[0] }   //~ W0204
+
+fn needs_uniq(es: &[u64] @ uniq) / mut(es) {}
+
+fn not_uniq(v: &Vec<u64>) / mut(v[]) {
+    let (l, r) = v.split_at(1)
+    needs_uniq(l)   //~ W0406
+}

@@ -1,0 +1,42 @@
+// Effect errors: footprints, signatures, continuations.
+effect Log { fn log(msg: String) }
+effect Choice { multi fn choose() -> bool }
+
+linear struct Token { id: u64 }
+    on abort = spend
+fn spend(t: Token) { let Token(i) = t }
+fn mint() -> Token { Token { id: 1 } }
+
+// A perform invalidates references exactly as a call with the handler's footprint.
+fn held() {
+    let lines = Vec.new()
+    lines.push("start")
+    handle Log { fn log(msg) { lines.push(msg); resume(()) } } in {
+        let first = &lines[0]
+        log("x")
+        print(first)   //~ W0301
+    }
+}
+
+// A function must state the effects it performs.
+fn quiet() / par {
+    log("hidden")   //~ W0702
+}
+
+// A `once` continuation resumes at most once.
+fn twice() {
+    handle Log { fn log(msg) { resume(()); resume(()) } } in log("a")   //~ W0501
+}
+
+// A linear value cannot be live across a `multi` operation.
+fn branchy() -> bool / Choice {
+    let t = mint()
+    let b = choose()   //~ W0503
+    spend(t)
+    b
+}
+
+// A closure that performs through a local handler cannot leave it.
+fn escape() {
+    let f = handle Log { fn log(msg) { resume(()) } } in || log("late")   //~ W0313
+}

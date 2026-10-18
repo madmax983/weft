@@ -1,0 +1,5 @@
+// weft: no-runtime
+// With no runtime, nothing handles the standard effects of `main`.
+fn main() / clock {
+    sleep(1.s)   //~ W0803
+}

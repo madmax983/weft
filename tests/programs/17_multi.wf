@@ -1,0 +1,12 @@
+// A `multi` operation may resume more than once; only `many` values may be live there.
+effect Choice { multi fn choose() -> bool }
+
+fn pick() -> u64 / Choice {
+    if choose() { 1 } else { 2 }
+}
+
+fn all_results() -> Vec<u64> {
+    let out = Vec.new()
+    handle Choice { fn choose() { resume(true); resume(false) } } in out.push(pick())
+    out
+}

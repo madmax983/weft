@@ -1,0 +1,22 @@
+// leaked: 2
+// An `Rc` cycle leaks; a dropped `Rc` frees its cell and `upgrade` gives `None`.
+struct Node { next: Option<Rc<Node>>, v: u64 }
+
+fn main() / mut(Node) {
+    let a = Rc.new(Node { next: None, v: 1 })
+    let b = Rc.new(Node { next: Some(a.clone()), v: 2 })
+    a.next = Some(b.clone())
+    let w = {
+        let c = Rc.new(Node { next: None, v: 3 })
+        c.downgrade()
+    }
+    match w.upgrade() {
+        Some(r) => print("alive {r.v}"),
+        None => print("gone"),
+    }
+    let w2 = a.downgrade()
+    match w2.upgrade() {
+        Some(r) => print("alive {r.v}"),
+        None => print("gone"),
+    }
+}

@@ -1,0 +1,9 @@
+linear struct Tx { conn: Conn, open: bool }
+    on abort = rollback        // runs only if an effect aborts the scope
+
+fn transfer(db: &Db, from: Id, to: Id, amt: u64) / io, fail {
+    let tx = db.begin()
+    tx.debit(from, amt)        // `fail` may abort here: allowed because Tx declares `on abort`
+    tx.credit(to, amt)
+    tx.commit()
+}   // dropping tx without commit or rollback on the normal path → compile error

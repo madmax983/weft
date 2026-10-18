@@ -1,0 +1,25 @@
+[package]
+name = "weft-check"
+description = "The Weft production checker and the bridge to the Datalog spec."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+weft-facts.workspace = true
+weft-verified.workspace = true
+weft-datalog.workspace = true
+weft-syntax.workspace = true
+weft-sema.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "checker"
+harness = false
+
+[lints]
+workspace = true

@@ -1,0 +1,10 @@
+fn total_hp(world: &World @ shared) -> u64 / par {
+    let (l, r) = world.entities.split_at(world.entities.len() / 2)
+    let (a, b) = fork(|| sum_hp(l), || sum_hp(r))   // closures must be @ portable
+    a + b
+}
+
+fn heal_all(world: &World) / mut(world.entities[]), par {
+    let (l, r) = world.entities.split_mut(mid)     // l, r : @ uniq, disjoint places
+    fork(|| heal(l), || heal(r))
+}

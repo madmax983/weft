@@ -1,0 +1,23 @@
+// Design doc: "Scopes and cancellation".
+struct Id { n: u64 }
+struct User { name: String }
+struct Post { title: String }
+struct Page { user: User, posts: Vec<Post> }
+
+mod api {
+    pub fn user(id: Id) -> User / net { User { name: "ann" } }
+    pub fn posts(id: Id) -> Vec<Post> / net { Vec.new() }
+}
+
+fn profile_page(id: Id) -> Page / net {
+    scope { s =>
+        let user  = s.spawn(|| api.user(id))
+        let posts = s.spawn(|| api.posts(id))
+        Page(user.join(), posts.join())
+    }   // children can't outlive the scope; one failure cancels the siblings
+}
+
+fn timed(id: Id) -> Page / net, fail {
+    let page = with_timeout(2.s) { profile_page(id) }   // a handler that aborts the block
+    page
+}
