@@ -801,3 +801,47 @@ fn inferred_places_keep_their_names() {
         "{out}"
     );
 }
+
+#[test]
+fn w0301_w0405_a_lent_place_can_change() {
+    // `let first = &w.entities[0]; f(w); print(first)` with `f` a function parameter.
+    let mut b = B::new();
+    let w = b.param("w");
+    let ents = b.field(w, 0, "entities");
+    let elem = b.elem(ents);
+    let first = b.var("first");
+    let n0 = b.node("let first");
+    b.bind(first, n0);
+    b.f.points_into.push((first, elem));
+    let n1 = b.node("f");
+    b.f.lends_mut.push((n1, w));
+    let n2 = b.node("print");
+    b.use_(first, n2);
+    // The signature does not state the mutation: the caller of `f` sees it.
+    b.f.has_signature = true;
+    let r = check(&b.f);
+    assert!(r.violations.error.contains(&(first, n2)));
+    assert_eq!(r.invalidations[0].cause, Cause::Lend(w));
+    assert!(r.violations.unauthorized_mut.is_empty());
+    assert!(r.violations.shared_mutation.is_empty());
+    // A reference into the lent place itself survives.
+    b.f.points_into.clear();
+    b.f.points_into.push((first, w));
+    assert!(check(&b.f).violations.error.is_empty());
+
+    // A task that reads `w.entities` while the parent lends `w`.
+    let mut b = B::new();
+    let w = b.param("w");
+    let ents = b.field(w, 0, "entities");
+    let t = b.f.add_task(TaskKind::Spawn, Span::default());
+    let s = b.node("spawn");
+    b.f.spawned_at.push((t, s));
+    b.f.task_reads.push((t, ents));
+    let n1 = b.node("f");
+    b.f.lends_mut.push((n1, w));
+    let end = b.node("scope end");
+    b.f.joined_at.push((t, end));
+    let r = check(&b.f);
+    assert!(r.violations.task_conflict.contains(&(t, n1)));
+    assert!(r.conflicts[0].lends);
+}

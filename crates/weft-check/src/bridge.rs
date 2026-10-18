@@ -110,6 +110,7 @@ pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
     rel2!("task_writes", f.task_writes);
     rel2!("captures", f.captures);
     rel2!("mut_through", f.mut_through);
+    rel2!("lends_mut", f.lends_mut);
     for (p, e) in &f.escapes_at {
         emit("escapes_at", &[s(p), s(e)]);
     }

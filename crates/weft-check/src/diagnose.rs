@@ -44,9 +44,13 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             format!("{head} at line {{line:{line}}}  →  invalidated at line {{line:{line}}}")
         };
         let (what, why) = match inv.cause {
-            Cause::Mutation(m) => {
+            Cause::Mutation(m) | Cause::Lend(m) => {
                 let mutated = &f.place(m).display;
                 let what = match (at.detail.is_empty(), at.label.strip_suffix(" =")) {
+                    _ if matches!(inv.cause, Cause::Lend(_)) => format!(
+                        "{} : gets {mutated}, and it can mutate through it",
+                        at.label
+                    ),
                     (true, Some(target)) => format!("{target} : new value"),
                     (true, None) => format!("{} : mut({mutated})", at.label),
                     (false, _) => format!("{} : {}", at.label, at.detail),
@@ -321,11 +325,12 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
     for c in conflicts {
         let at = f.node(c.at);
         let task = &f.tasks[c.task.index()];
-        let (verb, other) = match (c.task_writes, c.free) {
-            (true, None) => ("mutates", "accesses"),
-            (false, None) => ("reads", "mutates"),
-            (true, Some(_)) => ("mutates", "frees"),
-            (false, Some(_)) => ("reads", "frees"),
+        let verb = if c.task_writes { "mutates" } else { "reads" };
+        let other = match (c.task_writes, c.free, c.lends) {
+            (_, _, true) => "gives a function value that can mutate",
+            (true, None, false) => "accesses",
+            (false, None, false) => "mutates",
+            (_, Some(_), false) => "frees",
         };
         out.push(
             Diagnostic::error(

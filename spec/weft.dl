@@ -15,7 +15,7 @@
 //   wildcard(P)              P stands for any place at or below its parent.
 //   step_alias(P, Q)         the last steps of P and Q can name the same memory.
 //   step_within(P, Q)        the last step of P names a subset of the last step of Q.
-//   param_rooted(P)          the root of P is a parameter or an rc group.
+//   param_rooted(P)          the root of P is a parameter of the function or an rc group.
 //   cfg_edge(P, Q)           control can flow from node P to node Q.
 //   points_into(R, Path)     reference holder R can point into Path.
 //   mutates_at(P, M)         node P mutates place M.
@@ -51,6 +51,7 @@
 //   uniq(V)                  V is `@ uniq`.
 //   call_mut(P, M, I)        the call at P mutates M through callee root I.
 //   call_arg(P, A, I)        the call at P passes place A as callee root I.
+//   lends_mut(P, M)          the call at P gives M to a function value that can mutate through it.
 //   library()                the module is a library.
 //   handler(H, E)            H handles effect E.
 //   std_effect(E)            E is a standard effect.
@@ -114,6 +115,13 @@ invalidated_at(R, P) :- points_into(R, Path), frees_at(P, M), prefix(M, Path).
 invalidated_at(R, P) :- points_into(R, Path), wild_at(Path, B), mutates_at(P, M), overlaps(M, B).
 invalidated_at(R, P) :- points_into(R, Path), wild_at(Path, B), frees_at(P, M), overlaps(M, B).
 invalidated_at(R, P) :- points_into(R, Path), mutates_at(P, M), wild_at(M, B), prefix(B, Path).
+// A function value can mutate through each reference that it gets. Its caller sees
+// that mutation where it gives the function value, so the signature here does not
+// state it. The call invalidates references as a mutation does.
+invalidated_at(R, P) :- points_into(R, Path), lends_mut(P, M),
+                        strict_prefix(M, Path), crosses_unstable(M, Path).
+invalidated_at(R, P) :- points_into(R, Path), wild_at(Path, B), lends_mut(P, M), overlaps(M, B).
+invalidated_at(R, P) :- points_into(R, Path), lends_mut(P, M), wild_at(M, B), prefix(B, Path).
 invalid(R, Q)        :- invalidated_at(R, P), cfg_edge(P, Q).
 invalid(R, Q)        :- invalid(R, P), cfg_edge(P, Q), !rebound_at(R, P).
 error(R, P)          :- uses(R, P), invalid(R, P).
@@ -184,6 +192,7 @@ task_accesses(T, A)  :- task_writes(T, A).
 task_conflict(T, P)  :- active(T, P), task_writes(T, M), accesses(P, A), overlaps(M, A).
 task_conflict(T, P)  :- active(T, P), task_reads(T, A), mutates_at(P, M), overlaps(M, A).
 task_conflict(T, P)  :- active(T, P), task_accesses(T, A), frees_at(P, M), overlaps(M, A).
+task_conflict(T, P)  :- active(T, P), task_accesses(T, A), lends_mut(P, M), overlaps(M, A).
 
 // ---------------------------------------------------------------------------
 // W0401, W0403: fork branches are portable; work stealing follows from modes

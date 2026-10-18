@@ -21,6 +21,8 @@ pub enum Cause {
     ScopeEnd(VarId),
     /// The node moves the value at this place out of its owner.
     MovePart(PlaceId),
+    /// The node gives this place to a function value that can mutate through it.
+    Lend(PlaceId),
 }
 
 /// Why a reference was invalidated: the evidence for one W0301 error.
@@ -53,6 +55,8 @@ pub struct Conflict {
     pub task_writes: bool,
     /// The node frees `node_place`: a move or the end of its owner.
     pub free: Option<Cause>,
+    /// The node gives `node_place` to a function value that can mutate through it.
+    pub lends: bool,
 }
 
 /// The checker result: violations plus the evidence for diagnostics.
@@ -74,6 +78,8 @@ struct Ctx<'a> {
     /// `mutates_at`, with the footprint rule applied.
     muts: Vec<Vec<PlaceId>>,
     reads: Vec<Vec<PlaceId>>,
+    /// `lends_mut`.
+    lends: Vec<Vec<PlaceId>>,
     /// `frees_at`, with the cause of each free.
     frees: Vec<Vec<(PlaceId, Cause)>>,
     /// `wild_at(P, B)` by place.
@@ -110,6 +116,10 @@ impl<'a> Ctx<'a> {
         for &(p, a) in &f.reads_at {
             reads[p.index()].push(a);
         }
+        let mut lends = vec![Vec::new(); n];
+        for &(p, m) in &f.lends_mut {
+            lends[p.index()].push(m);
+        }
         // A parent comes before its children.
         let mut bases: Vec<Vec<PlaceId>> = Vec::with_capacity(f.places.len());
         for p in &f.places {
@@ -125,6 +135,7 @@ impl<'a> Ctx<'a> {
             pred,
             muts,
             reads,
+            lends,
             frees: vec![Vec::new(); n],
             bases,
         };
@@ -261,20 +272,23 @@ fn invalidation(
     }
     for (&v, ps) in &paths {
         let Some(used) = uses.get(&v) else { continue };
-        // invalidated_at(R, P) with the first witness per node
+        // invalidated_at(R, P) with the first witness per node: a mutation, or a
+        // place that the node gives to a function value.
         let mut gens: Vec<(NodeId, PlaceId, Cause)> = Vec::new();
-        for (i, ms) in cx.muts.iter().enumerate() {
-            let hit = ms.iter().find_map(|&m| {
-                ps.iter()
-                    .find(|&&p| cx.mutation_kills(m, p))
-                    .map(|&p| (m, p))
-            });
-            if let Some((m, p)) = hit {
-                gens.push((
-                    NodeId(u32::try_from(i).unwrap_or(u32::MAX)),
-                    p,
-                    Cause::Mutation(m),
-                ));
+        for (i, (ms, ls)) in cx.muts.iter().zip(&cx.lends).enumerate() {
+            let changes = ms
+                .iter()
+                .map(|&m| (m, Cause::Mutation(m)))
+                .chain(ls.iter().map(|&m| (m, Cause::Lend(m))));
+            let mut hit = None;
+            for (m, cause) in changes {
+                if let Some(&p) = ps.iter().find(|&&p| cx.mutation_kills(m, p)) {
+                    hit = Some((p, cause));
+                    break;
+                }
+            }
+            if let Some((p, cause)) = hit {
+                gens.push((NodeId(u32::try_from(i).unwrap_or(u32::MAX)), p, cause));
             }
         }
         // A free of `M` with `prefix(M, Path)`.
@@ -494,14 +508,28 @@ fn tasks(cx: &Ctx<'_>, r: &mut Report) {
             let mut found = None;
             for &a in accesses {
                 if let Some(&m) = tw.iter().find(|&&m| cx.overlaps(m, a)) {
-                    found = Some((m, a, true, None));
+                    found = Some((m, a, true, None, false));
                     break;
                 }
             }
             if found.is_none() {
                 for &m in &cx.muts[i] {
                     if let Some(&a) = tr.iter().find(|&&a| cx.overlaps(m, a)) {
-                        found = Some((a, m, false, None));
+                        found = Some((a, m, false, None, false));
+                        break;
+                    }
+                }
+            }
+            // A place that the node gives to a function value, which can mutate it.
+            if found.is_none() {
+                for &m in &cx.lends[i] {
+                    let hit = tr
+                        .iter()
+                        .map(|&a| (a, false))
+                        .chain(tw.iter().map(|&a| (a, true)))
+                        .find(|&(a, _)| cx.overlaps(m, a));
+                    if let Some((a, writes)) = hit {
+                        found = Some((a, m, writes, None, true));
                         break;
                     }
                 }
@@ -515,12 +543,12 @@ fn tasks(cx: &Ctx<'_>, r: &mut Report) {
                         .chain(tw.iter().map(|&a| (a, true)))
                         .find(|&(a, _)| cx.overlaps(m, a));
                     if let Some((a, writes)) = hit {
-                        found = Some((a, m, writes, Some(cause)));
+                        found = Some((a, m, writes, Some(cause), false));
                         break;
                     }
                 }
             }
-            if let Some((task_place, node_place, task_writes, free)) = found {
+            if let Some((task_place, node_place, task_writes, free, lends)) = found {
                 r.violations.task_conflict.insert((t, node));
                 r.conflicts.push(Conflict {
                     task: t,
@@ -529,6 +557,7 @@ fn tasks(cx: &Ctx<'_>, r: &mut Report) {
                     node_place,
                     task_writes,
                     free,
+                    lends,
                 });
             }
         }

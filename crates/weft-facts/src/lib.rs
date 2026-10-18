@@ -87,6 +87,10 @@ pub enum RootKind {
     Local,
     /// The group of an `rc` type. Mutations need a declaration.
     Group,
+    /// The referent of a reference parameter of a closure or a handler clause.
+    /// A mutation through it changes what the caller gives, and the caller sees
+    /// that mutation. So it needs no declaration here.
+    Arg,
 }
 
 /// A place root.
@@ -306,6 +310,9 @@ pub struct FnFacts {
     pub call_mut: Vec<(NodeId, PlaceId, u32)>,
     /// `call_arg(P, A, I)`.
     pub call_arg: Vec<(NodeId, PlaceId, u32)>,
+    /// `lends_mut(P, M)`: the call at `P` gives `M` to a function value that can
+    /// mutate through it.
+    pub lends_mut: Vec<(NodeId, PlaceId)>,
 
     /// `library()`.
     pub library: bool,
@@ -474,6 +481,7 @@ impl FnFacts {
         nd(&mut self.mut_through);
         nd(&mut self.call_mut);
         nd(&mut self.call_arg);
+        nd(&mut self.lends_mut);
     }
 }
 
