@@ -31,9 +31,13 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             _ => format!("`{}`", var.name),
         };
         // What the node does, and why that invalidates the reference.
+        // The place behind an `Rc` handle `a` shows as `a.*`.
+        let handle = path.strip_suffix(".*");
         let inside = |owner: &str, verb: &str| {
             let head = if path == owner {
                 format!("{owner} {verb}")
+            } else if handle == Some(owner) {
+                format!("{owner} is an `Rc` handle on the way to the place, and it {verb}")
             } else {
                 format!("{path} is inside {owner}, which {verb}")
             };
@@ -42,10 +46,10 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         let (what, why) = match inv.cause {
             Cause::Mutation(m) => {
                 let mutated = &f.place(m).display;
-                let what = if at.detail.is_empty() {
-                    format!("{} : mut({mutated})", at.label)
-                } else {
-                    format!("{} : {}", at.label, at.detail)
+                let what = match (at.detail.is_empty(), at.label.strip_suffix(" =")) {
+                    (true, Some(target)) => format!("{target} : new value"),
+                    (true, None) => format!("{} : mut({mutated})", at.label),
+                    (false, _) => format!("{} : {}", at.label, at.detail),
                 };
                 let why = match (f.wild_base(inv.path), f.wild_base(m)) {
                     (Some(b), _) => format!(
@@ -55,6 +59,9 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
                     (None, Some(b)) => format!(
                         "{mutated} can be any place inside {}, which holds {path}  →  invalidated at line {{line:{line}}}",
                         f.place(b).display
+                    ),
+                    (None, None) if handle == Some(mutated.as_str()) => format!(
+                        "{mutated} is an `Rc` handle on the way to the place, and a new value of it can free the object  →  invalidated at line {{line:{line}}}"
                     ),
                     (None, None) => format!(
                         "{mutated} is a strict prefix of {path}, through an unstable step  →  invalidated at line {{line:{line}}}"
@@ -66,12 +73,20 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
                 let owner = &f.var(o).name;
                 (format!("{owner} : moved"), inside(owner, "is moved"))
             }
+            Cause::ScopeEnd(o) if f.var(o).kind == VarKind::Temp => (
+                "temporary : goes out of scope at the end of the statement".to_string(),
+                format!("{path} is inside a temporary value, which goes out of scope at line {{line:{line}}}  →  invalidated at line {{line:{line}}}"),
+            ),
             Cause::ScopeEnd(o) => {
                 let owner = &f.var(o).name;
-                (
-                    format!("{owner} : goes out of scope"),
-                    inside(owner, "goes out of scope"),
-                )
+                // A local of a closure or a handler clause goes out of scope
+                // when the body returns at a call or an operation.
+                let when = match at.label.as_str() {
+                    "end of block" | "end of statement" | "exit" | "return" | "jump"
+                    | "drop" => "goes out of scope".to_string(),
+                    callee => format!("goes out of scope when `{callee}` returns"),
+                };
+                (format!("{owner} : {when}"), inside(owner, &when))
             }
             Cause::MovePart(m) => {
                 let moved = &f.place(m).display;
@@ -80,6 +95,12 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         };
         let holder = if var.kind == VarKind::Closure || var.ty.starts_with("fn(") {
             format!("{} : {}, captures {path}", var.name, var.ty)
+        } else if let Some(h) = handle {
+            format!(
+                "{} : &{} through the `Rc` handle {h}",
+                var.name,
+                var.ty.trim_start_matches('&')
+            )
         } else {
             format!(
                 "{} : &{} in {path}",
@@ -91,10 +112,12 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         // A block value is held only across the end of its block.
         let block_value = var.kind == VarKind::BlockValue;
         let d = if let (true, Cause::ScopeEnd(o)) = (block_value, inv.cause) {
-            let head = if var.ty.starts_with("fn(") {
-                format!("the closure that this block returns captures `{path}`")
-            } else {
-                format!("the value of this block points into `{path}`")
+            let head = match (var.ty.starts_with("fn("), handle) {
+                (true, _) => format!("the closure that this block returns captures `{path}`"),
+                (false, Some(h)) => {
+                    format!("the value of this block points into the object behind `{h}`")
+                }
+                (false, None) => format!("the value of this block points into `{path}`"),
             };
             Diagnostic::error(
                 "W0301",

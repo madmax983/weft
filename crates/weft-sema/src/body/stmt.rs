@@ -245,9 +245,14 @@ impl Lower<'_> {
         if matches!(ret, Ty::Unit) {
             self.drop_value(v, span);
         } else {
+            let before = self.diags.len();
             self.unify(&ret, &v.ty, span);
+            let typed = self.diags.len() == before;
             self.consume(v, span);
-            self.check_returned_refs(v, span);
+            // An ill-typed value gets no second error for its places.
+            if typed {
+                self.check_returned_refs(v, span);
+            }
         }
     }
 
@@ -356,8 +361,8 @@ impl Lower<'_> {
         self.block_with(b, true)
     }
 
-    /// Lowers a block. With `hold`, a value that points into a local of the block
-    /// is held across the end of the block, so that the end invalidates it.
+    /// Lowers a block. With `hold`, it holds a value that points into a local of
+    /// the block across the end of the block, so that the end invalidates it.
     pub(super) fn block_with(&mut self, b: &Block, hold: bool) -> Val {
         self.frames.push(Frame {
             names: Vec::new(),

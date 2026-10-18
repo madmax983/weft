@@ -278,7 +278,7 @@ impl Lower<'_> {
                 span,
             );
         }
-        // Evaluate the arguments in order. Each argument is typed, held and moved
+        // Evaluate the arguments in order. Type, hold and move each argument
         // before the next one runs, so that a later argument cannot hide a
         // mutation from an earlier reference.
         let mut recv = recv;
@@ -632,7 +632,7 @@ impl Lower<'_> {
                 span,
             );
         }
-        // Each argument is typed, held and moved before the next one runs.
+        // Type, hold and move each argument before the next one runs.
         let mut held = Vec::new();
         let mut arg_places: Vec<Vec<PlaceId>> = Vec::new();
         let mut closures = Vec::new();
@@ -708,7 +708,7 @@ impl Lower<'_> {
                 }
             }
             refs
-        } else if matches!(self.inf.shallow(&fty.ret), Ty::Ref(_)) {
+        } else if self.holds_refs(&fty.ret) {
             // An unknown function can return a reference to any place inside a
             // reference argument.
             arg_refs

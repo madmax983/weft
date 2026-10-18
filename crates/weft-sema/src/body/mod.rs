@@ -341,8 +341,8 @@ impl<'p> Lower<'p> {
         self.hold_as(v, name, VarKind::Temp, span)
     }
 
-    /// Holds an operand while the later operands run. The value of a variable
-    /// is held too, because a later operand can give the variable a new value.
+    /// Holds an operand while the later operands run. It holds the value of a
+    /// variable too, because a later operand can give the variable a new value.
     fn hold_later(&mut self, v: &Val, name: &str, span: Span) -> Option<VarId> {
         self.hold_as(v, name, VarKind::Temp, span)
     }
@@ -874,6 +874,11 @@ impl<'p> Lower<'p> {
         self.adt_fields(&t)
             .iter()
             .any(|f| self.deep_any(f, pred, depth + 1))
+    }
+
+    /// Returns true if a value of type `t` can hold a reference.
+    fn holds_refs(&self, t: &Ty) -> bool {
+        self.deep_any(t, &|_, t| matches!(t, Ty::Ref(_) | Ty::Slice(_)), 0)
     }
 
     fn is_linear(&self, t: &Ty) -> bool {

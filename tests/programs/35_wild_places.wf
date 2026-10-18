@@ -13,6 +13,15 @@ fn via_param(f: fn(&World) -> &Entity, world: &World) / mut(world.entities) {
     print(r.hp)   //~ W0301
 }
 
+fn via_param_option(f: fn(&World) -> Option<&Entity>, world: &World) / mut(world.entities) {
+    let o = f(world)
+    world.entities.clear()
+    match o {   //~ W0301
+        Some(e) => print(e.hp),
+        None => {},
+    }
+}
+
 // A signature place cannot hide an unstable step below it.
 fn coarse(w: &World) -> &Entity in w.entities { &w.entities[0] }   //~ W0204
 fn coarse_payload(m: &Machine) -> &Vec<u64> in m.state {

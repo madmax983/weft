@@ -69,7 +69,7 @@ impl Lower<'_> {
                 }
             }
             ExprKind::Tuple(es) => {
-                // Each part is moved and held before the next one runs.
+                // Move and hold each part before the next one runs.
                 let mut parts: Vec<Val> = Vec::new();
                 let mut held = Vec::new();
                 for (i, x) in es.iter().enumerate() {

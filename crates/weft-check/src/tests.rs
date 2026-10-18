@@ -737,3 +737,47 @@ fn w0301_a_wildcard_mutation_invalidates_every_reference_below_its_base() {
     b.use_(r, n2);
     assert!(check(&b.f).violations.error.contains(&(r, n2)));
 }
+
+/// Returns the rendered diagnostics of a source.
+fn rendered(src: &str) -> String {
+    let checked = crate::check_source("t.wf", src, weft_sema::Options::default());
+    let file = weft_syntax::SourceFile::new("t.wf", src);
+    checked.diags.iter().map(|d| d.render(&file)).collect()
+}
+
+#[test]
+fn w0301_says_why_the_owner_is_gone() {
+    let out = rendered(
+        "fn f() {
+             let keep: Vec<u64> = Vec.new()
+             let q = &keep
+             let g = || { let v: Vec<u64> = Vec.new(); q = &v; 0 }
+             let z = g()
+             print(q)
+         }
+         struct C { items: Vec<u64> }
+         fn h() {
+             let a = Rc.new(C { items: Vec.new() })
+             let r = &a.items
+             a = Rc.new(C { items: Vec.new() })
+             print(r)
+         }",
+    );
+    assert!(
+        out.contains("v : goes out of scope when `g` returns"),
+        "{out}"
+    );
+    assert!(
+        out.contains("r : &Vec<u64> through the `Rc` handle a"),
+        "{out}"
+    );
+    assert!(out.contains("a : new value"), "{out}");
+}
+
+#[test]
+fn an_ill_typed_return_gets_no_place_error() {
+    let out =
+        rendered("fn f() -> u64 { let v: Vec<u64> = Vec.new(); v.push(1); let r = &v[0]; r }");
+    assert!(out.contains("W0102"), "{out}");
+    assert!(!out.contains("W0204"), "{out}");
+}
