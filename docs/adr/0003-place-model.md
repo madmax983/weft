@@ -16,6 +16,9 @@ Status: accepted. Date: 2026-10-18.
 - The two sides of one split never alias. This proves `split_mut` parts disjoint.
 - `mut(p..)` is equal to `mut(p)`. A Verus lemma (`lemma_deeper_mutation_weaker`) proves
   that a deeper mutation invalidates no more.
+- Assignment follows the interpreter. `x = v` on a local gives the local a new value; on
+  a reference local, `v` must be a reference. `c += v` (and `-=`, `*=`) on a reference
+  writes through it: it mutates every place that `c` points into.
 
 ## Consequences
 

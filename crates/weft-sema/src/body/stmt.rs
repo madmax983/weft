@@ -608,9 +608,14 @@ impl Lower<'_> {
     }
 
     fn assign(&mut self, target: &ast::Expr, op: AssignOp, value: &ast::Expr, span: Span) {
-        // `x = v` on a local rebinds it.
+        // `x = v` on a local rebinds it. `c += v` on a reference writes through
+        // it, as the interpreter does: the general path below mutates its places.
         if let ExprKind::Name(id) = &target.kind {
-            if let Some(l) = self.lookup_local(&id.name) {
+            let local = self.lookup_local(&id.name).filter(|&l| {
+                op == AssignOp::Assign
+                    || !matches!(self.inf.shallow(&self.locals[l].ty), Ty::Ref(_))
+            });
+            if let Some(l) = local {
                 let v = self.expr(value);
                 let lt = self.locals[l].ty.clone();
                 if op == AssignOp::Assign {
