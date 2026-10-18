@@ -1,0 +1,19 @@
+// weft: library
+// A library cannot install root handlers through a function value either.
+fn body() { print(1) }
+fn apply(f: fn(u64, fn())) { f(1, body) }
+
+fn sim_value() {
+    let r = sim.run   //~ W0802
+    r(1, body)
+}
+
+fn sim_passed() {
+    apply(sim.run)   //~ W0802
+}
+
+// Control: other function values are fine in a library.
+fn other_value() {
+    let g = body
+    g()
+}

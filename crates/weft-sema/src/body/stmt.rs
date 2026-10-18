@@ -197,29 +197,13 @@ impl Lower<'_> {
                 }
             };
             // `mut(p..)` is equal to `mut(p)`: a mutation anywhere below `p` is one of `p`.
-            let info = self
-                .facts
-                .place(self.facts.wild_base(m).unwrap_or(m))
-                .clone();
-            let steps: Vec<SigStep> = info
-                .steps
-                .iter()
-                .map(|s| match s.kind {
-                    StepKind::Seg { .. } => SigStep::Step(
-                        weft_facts::Step {
-                            kind: StepKind::Elem,
-                            unstable: s.unstable,
-                        },
-                        "[]".into(),
-                    ),
-                    _ => SigStep::Step(*s, String::new()),
-                })
-                .take(8)
-                .collect();
+            let base = self.facts.wild_base(m).unwrap_or(m);
+            let mut steps = self.sig_steps(base);
+            steps.truncate(8);
             let sp = SigPlace {
                 root: sig_root,
                 steps,
-                text: info.display.clone(),
+                text: self.facts.place(base).display.clone(),
             };
             if !muts.contains(&sp) {
                 muts.push(sp);
@@ -237,6 +221,35 @@ impl Lower<'_> {
             .cloned()
             .collect();
         out.muts = keep;
+        out
+    }
+
+    /// Returns the steps of place `p` from its root, each with its text, so that a
+    /// caller shows the place as the body names it. A split side becomes an element step.
+    pub(super) fn sig_steps(&self, p: PlaceId) -> Vec<SigStep> {
+        let mut out = Vec::new();
+        let mut at = p;
+        while let Some(parent) = self.facts.place(at).parent {
+            let info = self.facts.place(at);
+            if let Some(&s) = info.steps.last() {
+                let step = if let StepKind::Seg { .. } = s.kind {
+                    let elem = weft_facts::Step {
+                        kind: StepKind::Elem,
+                        unstable: s.unstable,
+                    };
+                    SigStep::Step(elem, "[]".into())
+                } else {
+                    let text = info
+                        .display
+                        .get(self.facts.place(parent).display.len()..)
+                        .unwrap_or("");
+                    SigStep::Step(s, text.to_string())
+                };
+                out.push(step);
+            }
+            at = parent;
+        }
+        out.reverse();
         out
     }
 

@@ -89,7 +89,7 @@ impl Lower<'_> {
             Some(PathRef::Mod(m)) => {
                 return match self.prog.lookup_in(m, &method.name) {
                     Some(ItemRef::Fn(f)) => {
-                        if self.prog.fns[f].path == "run" && self.prog.mods[m].name == "sim" {
+                        if self.is_sim_run(f) {
                             return self.sim_run(f, args, trailing, span);
                         }
                         self.call_fn(f, None, args, trailing, span)

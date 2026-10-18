@@ -2,7 +2,7 @@
 
 use super::{
     ast, block_tail, effects, elem_step, expr_tail, field_step, AdtKind, BinOp, ContInfo, Deref,
-    Expr, ExprKind, FnTy, Frame, HandlerFrame, HandlerInfo, IntTy, ItemRef, LVal, Lit, Lower,
+    Expr, ExprKind, FnId, FnTy, Frame, HandlerFrame, HandlerInfo, IntTy, ItemRef, LVal, Lit, Lower,
     NodeId, PathRef, Pattern, PlaceId, Rc, RootKind, Span, StrPart, Summary, Ty, UnOp, Val,
     VarKind, PRELUDE,
 };
@@ -189,29 +189,7 @@ impl Lower<'_> {
             }
             PathRef::Mod(m) => {
                 if let Some(ItemRef::Fn(f)) = self.prog.lookup_in(m, &name.name) {
-                    let id = ast::Ident {
-                        name: self.prog.fns[f].name.clone(),
-                        span: name.span,
-                    };
-                    let _ = id;
-                    let sig = &self.sigs[f];
-                    let targs: Vec<Ty> = sig.generics.iter().map(|_| self.inf.fresh()).collect();
-                    let ty = Ty::Fn(Rc::new(FnTy {
-                        params: sig
-                            .params
-                            .iter()
-                            .map(|p| super::subst(&p.ty, &targs))
-                            .collect(),
-                        ret: super::subst(&sig.ret, &targs),
-                        effects: Some(effects::close(&sig.effects.named).into_iter().collect()),
-                        summary: None,
-                        item: Some(f),
-                    }));
-                    Some(Val {
-                        ty,
-                        item: Some(f),
-                        ..Val::default()
-                    })
+                    Some(self.item_value(f, name.span))
                 } else {
                     self.err(
                         "W0104",
@@ -295,24 +273,7 @@ impl Lower<'_> {
             };
         }
         if let Some(ItemRef::Fn(f)) = self.prog.lookup(self.module, &id.name) {
-            let sig = &self.sigs[f];
-            let targs: Vec<Ty> = sig.generics.iter().map(|_| self.inf.fresh()).collect();
-            let ty = Ty::Fn(Rc::new(FnTy {
-                params: sig
-                    .params
-                    .iter()
-                    .map(|p| super::subst(&p.ty, &targs))
-                    .collect(),
-                ret: super::subst(&sig.ret, &targs),
-                effects: Some(effects::close(&sig.effects.named).into_iter().collect()),
-                summary: None,
-                item: Some(f),
-            }));
-            Val {
-                ty,
-                item: Some(f),
-                ..Val::default()
-            }
+            self.item_value(f, span)
         } else {
             if let Some(v) = self.unit_variant(&id.name) {
                 return v;
@@ -323,6 +284,42 @@ impl Lower<'_> {
                 ..Val::default()
             }
         }
+    }
+
+    /// A function item used as a value.
+    fn item_value(&mut self, f: FnId, span: Span) -> Val {
+        // A call through the value can install the root handlers of `sim.run`.
+        if self.is_sim_run(f) && self.library && !self.in_test {
+            self.err(
+                "W0802",
+                "only binaries and tests can install root handlers (`sim.run`)",
+                span,
+            );
+        }
+        let sig = &self.sigs[f];
+        let targs: Vec<Ty> = sig.generics.iter().map(|_| self.inf.fresh()).collect();
+        let ty = Ty::Fn(Rc::new(FnTy {
+            params: sig
+                .params
+                .iter()
+                .map(|p| super::subst(&p.ty, &targs))
+                .collect(),
+            ret: super::subst(&sig.ret, &targs),
+            effects: Some(effects::close(&sig.effects.named).into_iter().collect()),
+            summary: None,
+            item: Some(f),
+        }));
+        Val {
+            ty,
+            item: Some(f),
+            ..Val::default()
+        }
+    }
+
+    /// Returns true for the test harness `sim.run` of the prelude.
+    pub(super) fn is_sim_run(&self, f: FnId) -> bool {
+        let def = &self.prog.fns[f];
+        def.is_std && def.path == "run" && self.prog.mods[def.module].name == "sim"
     }
 
     fn unit_variant(&mut self, name: &str) -> Option<Val> {

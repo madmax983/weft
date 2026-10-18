@@ -781,3 +781,23 @@ fn an_ill_typed_return_gets_no_place_error() {
     assert!(out.contains("W0102"), "{out}");
     assert!(!out.contains("W0204"), "{out}");
 }
+
+#[test]
+fn inferred_places_keep_their_names() {
+    let out = rendered(
+        "struct Stats { count: u64, hist: Vec<u64> }
+         struct Cell { v: Vec<u64> }
+         fn priv_bump(s: &Stats) { s.count += 1 }
+         fn shared_caller(s: &Stats @ shared) { priv_bump(s) }
+         fn grow(c: &Cell) { c.v.push(1) }
+         pub fn pub_grow(c: &Cell) { grow(c) }",
+    );
+    assert!(
+        out.contains("`priv_bump` mutates `s.count` through a `@ shared` reference"),
+        "{out}"
+    );
+    assert!(
+        out.contains("must state its effects: `/ mut(c.v)`"),
+        "{out}"
+    );
+}
