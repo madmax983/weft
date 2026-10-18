@@ -169,5 +169,6 @@ Status: accepted. Date: 2026-10-18.
     the clause does not get it.
   - W0402 inside a higher-order function: a callback that gets a place of a `@ shared`
     parameter can mutate it. The caller sees the mutation on its own place only.
-  - A reference inside a payload that a `match` binds by value, and a reference
-    parameter inside an `Option` of a function item, have no places (the RT3 family).
+  - A reference inside a payload that a `match` binds by value, and a parameter of a
+    function item that holds a reference inside an `Option` or a tuple, have no places
+    (the RT3 family).
