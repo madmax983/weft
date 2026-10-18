@@ -1,8 +1,9 @@
 //! Verified state machines for one-shot continuations and linear values.
 //!
 //! The interpreter uses these types at run time. The proofs show that a `once`
-//! continuation resumes at most once, and that a linear value ends consumed or
-//! aborted exactly once.
+//! continuation resumes at most once, and that a linear value is consumed or
+//! aborted at most once. They do not show that each linear value is finished:
+//! the static checker (W0601) and the unwinder of the interpreter must do that.
 
 use vstd::prelude::*;
 

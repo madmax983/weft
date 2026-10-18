@@ -6,6 +6,10 @@ This grammar defines the syntax that the parser accepts. The AST is in
 ## Lexical rules
 
 - Comments start with `//` and end at the end of the line.
+- A line comment `// weft: WORD ...` is a file marker. The words are `library` (check
+  the file as a library) and `no-runtime` (the embedded profile). `weft check`, `weft run`,
+  `weft test` and the corpus tests read the markers of a single file. A package uses
+  `weft.toml` instead. The flags `--lib` and `--no-runtime` add to the markers.
 - Identifiers: `[A-Za-z_][A-Za-z0-9_]*`. Integers: `[0-9][0-9_]*`.
 - `2.s` is the integer `2`, a dot, and the name `s`. A float needs a digit after the dot.
   Phase 1 has no floats.
@@ -59,6 +63,7 @@ sep         = "," | NL
 ```
 type        = type_atom ( "@" MODE+ )?
 type_atom   = "&" type_atom ( "in" place )?
+            | "*" type_atom
             | "(" ( type ( "," type )* ","? )? ")"
             | "[" type ( ";" INT )? "]"
             | "fn" "(" ( type ( "," type )* )? ")" ( "->" type )? ( "/" fn_row )?
@@ -74,6 +79,10 @@ MODE        = uniq | aliased | portable | nonportable | uncontended | shared | o
 
 Notes:
 
+- `*T` is a raw pointer for foreign functions, for example
+  `extern fn sqlite3_step(stmt: *Stmt) -> i32 / blocking`. It is valid only in an
+  `extern fn` signature and in a local (W0116). It is an opaque copy value with no place:
+  it has no fields, no elements and no deref.
 - The wildcard step `..` must be the last step: `mut(world..)`.
 - In a function type, a row with more than one item needs parentheses:
   `fn(Request) -> Response / (net, log)`.
@@ -152,7 +161,16 @@ These rules complete the grammar above.
 8. In a method chain, the name after `.` must be on the same line as the `.`.
 9. Comparison chains and range chains are errors. `&&x` is `&(&x)`. `>=` after type
    arguments splits into `>` and `=`.
-10. Deep nesting (about 96 levels) is an error, not a stack overflow.
+10. Nesting deeper than 96 levels is an error, not a stack overflow. A function body
+    is one level, a statement in it is one level, and each nested block, parenthesis,
+    closure, `if`, `match`, type, pattern or item is one more level. A chain of more than about 150 prefix operators,
+    postfix steps (`.name`, `.method()`, `(args)`, `[i]`) or `else if` branches is also an
+    error. These limits keep every stage on a 2 MiB thread stack
+    (`crates/weft-cli/tests/limits.rs`).
+11. A chain of binary operators has no limit. In a chain of more than 32 operators, the
+    parser keeps each part of 32 operators in a hidden local of a block, and the rest of
+    the chain starts from that local. The value, the order of evaluation and the
+    short-circuit of `&&` and `||` do not change. No program can name a hidden local.
 
 The pretty-printer (`weft_syntax::pretty`) prints a file that parses back to the same
-tree.
+tree. It prints the block of a long chain as the chain.

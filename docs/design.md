@@ -100,6 +100,13 @@ Places and `mut` effects are inferred inside function bodies. Public signatures 
 
 Weft enforces shared-XOR-mutable only where threads or tasks meet, using OxCaml-style modes instead of `Send`/`Sync` traits. Within one task, group borrowing allows shared mutation.
 
+> **Phase 1 note.** At a call, the checker is stricter than this. A callee sees each
+> reference parameter as a separate place, so `attack(x, y)` with `x` and `y` both in
+> `world.entities[]` gets W0312 when `attack` mutates them. To allow the aliasing, the
+> callee states the shared place with `in`:
+> `fn attack(w: &World, a: &Entity in w.entities[], b: &Entity in w.entities[]) / mut(a, b)`.
+> See ADR 0005 and `tests/programs/27_alias_in_one_task.wf`.
+
 | Mode axis | Values | Meaning |
 | --- | --- | --- |
 | Uniqueness | `uniq`, `aliased` | Whether other references to the value may exist |

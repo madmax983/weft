@@ -14,6 +14,25 @@ Status: accepted. Date: 2026-10-18.
 - Call-site aliasing (W0312): a callee sees its reference parameters as separate places.
   So the caller must not pass overlapping places when the callee (or a handler that the
   callee reaches) mutates one of them.
+- W0312 is stronger than the design. The design lets one task mutate through aliases
+  (group borrowing). But with `fn attack(a: &Entity, b: &Entity) / mut(a, b)`, the call
+  `attack(x, y)` with `x` and `y` both in `world.entities[]` gets W0312. The workaround
+  states the shared place with `in`, so the callee knows that the two can alias:
+
+  ```weft
+  fn attack(w: &World, a: &Entity in w.entities[], b: &Entity in w.entities[]) / mut(a, b) {
+      a.hp -= 1
+      b.hp -= 1
+  }
+  ```
+
+  The caller then passes `attack(world, x, y)`, and the check accepts it.
+  `tests/programs/27_alias_in_one_task.wf` has both forms.
+- Effect inference iterates over the call graph to a fixpoint. The bound is
+  `10 * (n + 2)` rounds for `n` user functions (`weft_sema::round_limit`). If the
+  signatures are not a fixpoint at the bound, each function whose effects can still
+  change gets W0706, an error. The checker never uses effects that can be incomplete
+  without an error.
 - Every named effect can abort (the handler can drop the continuation). A linear value
   live across such a node needs `on abort` (W0602).
 - `resume` consumes a `once` continuation (W0501). A `multi` operation needs `many` values
