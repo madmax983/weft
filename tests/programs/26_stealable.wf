@@ -1,0 +1,51 @@
+// Work stealing follows from modes (design doc "Tasks"). The checker marks a
+// task `stealable` if it captures no nonportable value and writes through no
+// shared reference. Other tasks stay on their worker.
+struct Node { v: u64 }
+struct Stats { count: u64 }
+
+fn work(n: u64) -> u64 { n + 1 }
+
+fn plain_data() -> u64 / async {
+    let n = 2
+    scope { s =>
+        let a = s.spawn(|| work(n))   //~ stealable
+        a.join()
+    }
+}
+
+fn reads_shared(st: &Stats) -> u64 / async {
+    scope { s =>
+        let a = s.spawn(|| st.count + 1)   //~ stealable
+        a.join()
+    }
+}
+
+fn writes_uniq(st: &Stats @ uniq) / mut(st.count), async {
+    scope { s =>
+        let a = s.spawn(|| st.count += 1)   //~ stealable
+        a.join()
+    }
+}
+
+// An `rc` value is nonportable: the task that captures it is pinned.
+fn captures_rc() -> u64 / async {
+    let n = Rc.new(Node { v: 1 })
+    scope { s =>
+        let a = s.spawn(|| n.v + 1)   //~ pinned
+        a.join()
+    }
+}
+
+// A write through a reference that is not `@ uniq` pins the task.
+fn writes_shared(st: &Stats) / mut(st.count), async {
+    scope { s =>
+        let a = s.spawn(|| st.count += 1)   //~ pinned
+        a.join()
+    }
+}
+
+// Fork branches must be portable, so both are stealable.
+fn forks(st: &Stats) -> (u64, u64) / par {
+    fork(|| work(1), || st.count)   //~ stealable
+}

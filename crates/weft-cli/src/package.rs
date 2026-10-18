@@ -110,13 +110,23 @@ pub struct Package {
 }
 
 impl Package {
-    /// Returns the analysis options of the root.
-    pub fn options(&self, lib_flag: bool, no_runtime_flag: bool) -> weft_sema::Options {
-        let m = self.manifest.as_ref().map(|m| &m.package);
-        weft_sema::Options {
-            library: lib_flag || m.is_some_and(|p| p.kind == Kind::Lib),
-            no_runtime: no_runtime_flag || m.is_some_and(|p| p.runtime == Runtime::None),
-        }
+    /// Returns the analysis options of the root. A package takes them from its
+    /// manifest, a single file from its file markers (`// weft: library`). The
+    /// flags add to them.
+    pub fn options(&self, flags: weft_sema::Options) -> weft_sema::Options {
+        let own = match &self.manifest {
+            Some(m) => weft_sema::Options {
+                library: m.package.kind == Kind::Lib,
+                no_runtime: m.package.runtime == Runtime::None,
+            },
+            None => self
+                .files
+                .get(1)
+                .map_or_else(weft_sema::Options::default, |f| {
+                    weft_sema::Options::from_markers(&f.text)
+                }),
+        };
+        own.or(flags)
     }
 }
 

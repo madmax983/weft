@@ -4,6 +4,11 @@
 //! The parser stops at the first error. It does not panic on any input: a
 //! nesting budget limits the recursion depth and the depth of the tree.
 //!
+//! A long chain of binary operators does not use the budget. The parser keeps
+//! each part of [`CHAIN_PART`] operators in a hidden local of a block (see
+//! [`crate::ast::CHAIN_PART_PREFIX`]). The value and the order of evaluation do
+//! not change, and the tree stays shallow.
+//!
 //! The functions on the recursive path are small on purpose. Debug builds give
 //! each local its own stack slot, so large functions use much stack per level.
 
@@ -11,7 +16,7 @@ use crate::ast::{
     Arg, Arm, AssignOp, BinOp, Block, EffectDecl, EffectItem, EffectRow, EnumDecl, Expr, ExprKind,
     ExternTypeDecl, FieldDecl, File, FnDecl, HandlerClause, Ident, ImplBlock, Item, ItemKind, Lit,
     ModDecl, Mode, OpDecl, Param, Pattern, PlaceExpr, PlaceStep, Span, Stmt, StmtKind, StrPart,
-    StructDecl, TestDecl, TypeExpr, TypeExprKind, TypeProp, UnOp, VariantDecl,
+    StructDecl, TestDecl, TypeExpr, TypeExprKind, TypeProp, UnOp, VariantDecl, CHAIN_PART_PREFIX,
 };
 use crate::lexer::{lex_at, StrPiece, Token, TokenKind as T};
 
@@ -38,13 +43,21 @@ impl ParseError {
 /// The nesting budget. A nested construct costs [`NEST_COST`]. One step of an
 /// operator chain costs [`CHAIN_COST`]. The budget limits the parser stack and
 /// the depth of the tree, so that code that walks the tree has enough stack too.
+/// The whole pipeline must run on a 2 MiB thread for every tree in the budget:
+/// `crates/weft-cli/tests/limits.rs` tests this.
 const MAX_DEPTH: u32 = 768;
 
-/// The budget cost of one nested expression, block, type, pattern or item.
+/// The budget cost of one nested expression, block, type, pattern or item:
+/// 96 levels.
 const NEST_COST: u32 = 8;
 
-/// The budget cost of one operator, postfix step or `else if` in a chain.
-const CHAIN_COST: u32 = 2;
+/// The budget cost of one prefix operator, postfix step, `else if`, or binary
+/// operator in one part of a chain: about 150 steps. Sema uses about 8 KiB of
+/// stack for each step of a method chain in a debug build.
+const CHAIN_COST: u32 = 5;
+
+/// The number of binary operators in one part of a long chain.
+const CHAIN_PART: usize = 32;
 
 /// The text that lists the item keywords.
 const ITEM_START: &str =
@@ -752,6 +765,10 @@ impl Parser {
                 self.bump();
                 self.double_ref_ty(lo)?
             }
+            T::Star => {
+                self.bump();
+                self.ptr_ty()?
+            }
             T::LParen => return self.paren_ty(),
             T::LBracket => {
                 self.bump();
@@ -784,6 +801,14 @@ impl Parser {
             None
         };
         Ok(TypeExprKind::Ref { inner, place })
+    }
+
+    /// Parses the rest of `*T` after the `*`.
+    fn ptr_ty(&mut self) -> PResult<TypeExprKind> {
+        self.enter()?;
+        let inner = self.ty_atom();
+        self.leave();
+        Ok(TypeExprKind::Ptr(Box::new(inner?)))
     }
 
     /// Parses the rest of `&&T` after the `&&`. The inner `&T` takes the first `in`.
@@ -1009,7 +1034,19 @@ impl Parser {
 // ------------------------------------------------------------------ statements and patterns
 
 impl Parser {
+    /// Parses a block of a statement or an item. It costs one nesting level.
     fn block(&mut self, what: &str) -> PResult<Block> {
+        let lo = self.lo();
+        self.expect(&T::LBrace, what)?;
+        self.enter()?;
+        let r = self.block_rest(lo);
+        self.leave();
+        r
+    }
+
+    /// Parses a block that is part of an expression. The `expr` call of the
+    /// expression paid for the nesting level.
+    fn expr_block(&mut self, what: &str) -> PResult<Block> {
         let lo = self.lo();
         self.expect(&T::LBrace, what)?;
         self.block_rest(lo)
@@ -1017,11 +1054,9 @@ impl Parser {
 
     /// Parses the statements of a block after its `{`, up to and with the `}`.
     fn block_rest(&mut self, lo: u32) -> PResult<Block> {
-        self.enter()?;
         let old = self.set_ns(false);
         let r = self.stmts(lo);
         self.no_struct = old;
-        self.leave();
         r
     }
 
@@ -1246,10 +1281,16 @@ impl Parser {
     }
 
     /// Parses binary operators of precedence `min` and higher (precedence climbing).
+    ///
+    /// The loop folds each operator into `lhs`, so `lhs` is always the left
+    /// operand of the next operator. After [`CHAIN_PART`] operators, a hidden
+    /// local takes the value of `lhs` and the chain continues from that local.
     fn binary(&mut self, min: u8) -> PResult<Expr> {
         let saved = self.depth;
         let mut lhs = self.unary()?;
         let mut after_cmp = false;
+        let mut folds = 0;
+        let mut parts = Vec::new();
         while let Some((op, prec)) = bin_op(self.kind()) {
             if prec < min {
                 break;
@@ -1261,13 +1302,19 @@ impl Parser {
                 ));
             }
             after_cmp = prec == CMP_PREC;
+            if folds == CHAIN_PART {
+                lhs = chain_part(&mut parts, lhs);
+                folds = 0;
+                self.depth = saved;
+            }
             self.chain_step()?;
             self.bump();
             let rhs = self.binary(prec + 1)?;
             lhs = binary(op, lhs, rhs);
+            folds += 1;
         }
         self.depth = saved;
-        Ok(lhs)
+        Ok(chain_block(parts, lhs))
     }
 
     fn unary(&mut self) -> PResult<Expr> {
@@ -1424,7 +1471,7 @@ impl Parser {
         if self.no_struct || !self.at(&T::LBrace) || self.peek().starts_line {
             return Ok(None);
         }
-        let block = self.block("`{`")?;
+        let block = self.expr_block("`{`")?;
         let span = block.span;
         let body = Box::new(Expr {
             kind: ExprKind::Block(block),
@@ -1445,7 +1492,7 @@ impl Parser {
             T::LParen => self.paren(),
             T::LBracket => self.array(),
             T::LBrace => {
-                let b = self.block("`{`")?;
+                let b = self.expr_block("`{`")?;
                 Ok(Expr {
                     span: b.span,
                     kind: ExprKind::Block(b),
@@ -1639,7 +1686,7 @@ impl Parser {
         loop {
             let lo = self.bump().lo;
             let cond = self.head_expr()?;
-            let then = self.block("`{` after the `if` condition")?;
+            let then = self.expr_block("`{` after the `if` condition")?;
             links.push((lo, cond, then));
             if !self.skip_ends_before(|k| k == &T::Else) {
                 break;
@@ -1652,7 +1699,7 @@ impl Parser {
             if !self.at(&T::LBrace) {
                 return Err(self.expected("`{` or `if` after `else`"));
             }
-            let b = self.block("`{`")?;
+            let b = self.expr_block("`{`")?;
             last_else = Some(Box::new(Expr {
                 span: b.span,
                 kind: ExprKind::Block(b),
@@ -1743,7 +1790,7 @@ impl Parser {
         let op = self.name("the operation name")?;
         self.expect(&T::LParen, "`(` after the operation name")?;
         let params = self.params(&T::RParen, "`,` or `)` after a parameter")?;
-        let body = self.block("`{` to start the handler clause body")?;
+        let body = self.expr_block("`{` to start the handler clause body")?;
         Ok(HandlerClause {
             op,
             params,
@@ -1859,6 +1906,42 @@ const fn bin_op(k: &T) -> Option<(BinOp, u8)> {
         T::Percent => (BinOp::Rem, 4),
         _ => return None,
     })
+}
+
+/// Moves a finished part of a long chain into a hidden local. Returns the name
+/// of the local, which is the left operand of the rest of the chain.
+fn chain_part(parts: &mut Vec<Stmt>, lhs: Expr) -> Expr {
+    let span = lhs.span;
+    let name = format!("{CHAIN_PART_PREFIX}{}.{}", span.lo, parts.len());
+    parts.push(Stmt {
+        kind: StmtKind::Let {
+            pat: Pattern::Bind(Ident::new(name.clone(), span)),
+            ty: None,
+            init: Some(lhs),
+        },
+        span,
+    });
+    Expr {
+        kind: ExprKind::Name(Ident::new(name, span)),
+        span,
+    }
+}
+
+/// Puts the hidden locals of a long chain and the rest of the chain in a block.
+fn chain_block(parts: Vec<Stmt>, rest: Expr) -> Expr {
+    if parts.is_empty() {
+        return rest;
+    }
+    let span = rest.span;
+    let mut stmts = parts;
+    stmts.push(Stmt {
+        kind: StmtKind::Expr(rest),
+        span,
+    });
+    Expr {
+        kind: ExprKind::Block(Block { stmts, span }),
+        span,
+    }
 }
 
 fn binary(op: BinOp, lhs: Expr, rhs: Expr) -> Expr {

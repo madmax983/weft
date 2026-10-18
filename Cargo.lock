@@ -844,6 +844,7 @@ dependencies = [
  "weft-check",
  "weft-datalog",
  "weft-facts",
+ "weft-interp",
  "weft-sema",
  "weft-syntax",
 ]

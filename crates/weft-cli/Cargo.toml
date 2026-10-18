@@ -22,6 +22,7 @@ weft-facts.workspace = true
 weft-sema.workspace = true
 weft-check.workspace = true
 weft-datalog.workspace = true
+weft-interp.workspace = true
 
 [lints]
 workspace = true

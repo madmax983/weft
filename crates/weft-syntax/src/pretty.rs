@@ -1,12 +1,14 @@
 //! Pretty printer: turns an AST back into Weft source.
 //!
 //! The output parses back to the same tree, spans aside. The printer adds
-//! parentheses only where precedence or the grammar needs them.
+//! parentheses only where precedence or the grammar needs them. It prints the
+//! block that the parser makes for a long chain of binary operators as the
+//! chain.
 
 use crate::ast::{
-    Arg, BinOp, Block, EffectItem, EffectRow, Expr, ExprKind, File, FnDecl, Item, ItemKind, Lit,
-    Mode, Param, Pattern, PlaceExpr, PlaceStep, Stmt, StmtKind, StrPart, StructDecl, TypeExpr,
-    TypeExprKind, UnOp,
+    is_chain_part, Arg, BinOp, Block, EffectItem, EffectRow, Expr, ExprKind, File, FnDecl, Item,
+    ItemKind, Lit, Mode, Param, Pattern, PlaceExpr, PlaceStep, Stmt, StmtKind, StrPart, StructDecl,
+    TypeExpr, TypeExprKind, UnOp,
 };
 use crate::lexer::escape_text;
 
@@ -32,9 +34,43 @@ pub fn pretty_expr(e: &Expr) -> String {
     p.out
 }
 
+/// Returns the parts of the block that the parser makes for a long chain: the
+/// values of the hidden locals, and the rest of the chain.
+fn chain_parts(e: &Expr) -> Option<(Vec<&Expr>, &Expr)> {
+    let ExprKind::Block(b) = &e.kind else {
+        return None;
+    };
+    let (last, lets) = b.stmts.split_last()?;
+    let StmtKind::Expr(rest) = &last.kind else {
+        return None;
+    };
+    if lets.is_empty() || !matches!(rest.kind, ExprKind::Binary { .. }) {
+        return None;
+    }
+    lets.iter()
+        .map(|s| match &s.kind {
+            StmtKind::Let {
+                pat: Pattern::Bind(id),
+                ty: None,
+                init: Some(init),
+            } if is_chain_part(&id.name) => Some(init),
+            _ => None,
+        })
+        .collect::<Option<Vec<&Expr>>>()
+        .map(|inits| (inits, rest))
+}
+
+/// Binding strength of an expression. A long chain binds like its last operator.
+fn prec(e: &Expr) -> u8 {
+    match chain_parts(e) {
+        Some((_, rest)) => prec_kind(&rest.kind),
+        None => prec_kind(&e.kind),
+    }
+}
+
 /// Binding strength of an expression form. Closures and `handle` are 0
 /// because their bodies extend as far to the right as possible.
-const fn prec(kind: &ExprKind) -> u8 {
+const fn prec_kind(kind: &ExprKind) -> u8 {
     match kind {
         ExprKind::Closure { .. } | ExprKind::Handle { .. } => 0,
         ExprKind::Range { .. } => 1,
@@ -86,6 +122,24 @@ const fn mode_text(m: Mode) -> &'static str {
         Mode::Shared => "shared",
         Mode::Once => "once",
         Mode::Many => "many",
+    }
+}
+
+/// True if the inner type of `*T` needs parentheses.
+fn wrap_ptr_inner(inner: &TypeExpr) -> bool {
+    !inner.modes.is_empty() || matches!(inner.kind, TypeExprKind::Fn { .. })
+}
+
+/// True if a type, printed with no parentheses, takes an `in place` that
+/// follows it: it ends in a reference with no place.
+fn takes_in(t: &TypeExpr) -> bool {
+    if !t.modes.is_empty() {
+        return false;
+    }
+    match &t.kind {
+        TypeExprKind::Ref { place, .. } => place.is_none(),
+        TypeExprKind::Ptr(inner) => !wrap_ptr_inner(inner) && takes_in(inner),
+        _ => false,
     }
 }
 
@@ -360,11 +414,11 @@ impl Printer {
             }
             TypeExprKind::Ref { inner, place } => {
                 self.push("&");
+                // `&&T in p` gives `p` to the inner reference. Parentheses are
+                // needed only if the inner type would take the `in`.
                 let wrap = !inner.modes.is_empty()
-                    || matches!(
-                        inner.kind,
-                        TypeExprKind::Ref { .. } | TypeExprKind::Fn { .. }
-                    );
+                    || matches!(inner.kind, TypeExprKind::Fn { .. })
+                    || (place.is_some() && takes_in(inner));
                 if wrap {
                     self.push("(");
                     self.ty(inner);
@@ -375,6 +429,18 @@ impl Printer {
                 if let Some(pl) = place {
                     self.push(" in ");
                     self.place(pl);
+                }
+            }
+            TypeExprKind::Ptr(inner) => {
+                self.push("*");
+                // `*T @ m` gives the mode to the pointer, and a function type
+                // takes a later `/` row. Parentheses keep both with the inner type.
+                if wrap_ptr_inner(inner) {
+                    self.push("(");
+                    self.ty(inner);
+                    self.push(")");
+                } else {
+                    self.ty(inner);
                 }
             }
             TypeExprKind::Tuple(ts) => {
@@ -583,10 +649,21 @@ impl Printer {
     /// Writes `e`. It gets parentheses if it binds weaker than `min`, or if
     /// `head` is true and `e` cannot stand at the top of a head.
     fn expr(&mut self, e: &Expr, min: u8, head: bool) {
-        if prec(&e.kind) < min || (head && needs_parens_in_head(e)) {
+        if prec(e) < min || (head && needs_parens_in_head(e)) {
             self.push("(");
             self.expr(e, 0, false);
             self.push(")");
+            return;
+        }
+        if let Some((inits, rest)) = chain_parts(e) {
+            // Each part starts with the hidden local of the part before it.
+            let mut parts = inits.into_iter().chain(std::iter::once(rest));
+            if let Some(first) = parts.next() {
+                self.expr(first, 0, head);
+            }
+            for part in parts {
+                self.chain_rest(part, head);
+            }
             return;
         }
         match &e.kind {
@@ -766,7 +843,7 @@ impl Printer {
                 } => {
                     (cond, then, else_) = (c, t, e.as_deref());
                 }
-                ExprKind::Block(b) => {
+                ExprKind::Block(b) if chain_parts(next).is_none() => {
                     self.block(b);
                     return;
                 }
@@ -778,6 +855,22 @@ impl Printer {
                 }
             }
         }
+    }
+
+    /// Writes a part of a long chain after its first operand: ` + b + c`. The
+    /// first operand is the hidden local of the part before it.
+    fn chain_rest(&mut self, e: &Expr, head: bool) {
+        let ExprKind::Binary { op, lhs, rhs } = &e.kind else {
+            return;
+        };
+        if !matches!(&lhs.kind, ExprKind::Name(id) if is_chain_part(&id.name)) {
+            self.chain_rest(lhs, head);
+        }
+        let p = bin_prec(*op);
+        self.push(" ");
+        self.push(bin_text(*op));
+        self.push(" ");
+        self.expr(rhs, p + 1, head);
     }
 
     fn args(&mut self, args: &[Arg]) {
@@ -797,7 +890,7 @@ impl Printer {
         self.push(" ");
         match &t.kind {
             ExprKind::Closure { params, body } if params.is_empty() => {
-                if let ExprKind::Block(b) = &body.kind {
+                if let (ExprKind::Block(b), None) = (&body.kind, chain_parts(body)) {
                     self.block(b);
                 } else {
                     self.push("{ ");

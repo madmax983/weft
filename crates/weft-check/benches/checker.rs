@@ -44,10 +44,7 @@ fn bench(c: &mut Criterion) {
     if let Ok(dir) = std::fs::read_dir(corpus) {
         for e in dir.flatten() {
             if let Ok(text) = std::fs::read_to_string(e.path()) {
-                let opts = Options {
-                    library: text.contains("// weft: library"),
-                    no_runtime: false,
-                };
+                let opts = Options::from_markers(&text);
                 all.extend(
                     check_source("x.wf", &text, opts)
                         .analysis

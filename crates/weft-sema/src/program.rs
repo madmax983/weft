@@ -310,10 +310,33 @@ pub struct Program {
     pub variants: HashMap<String, Vec<(AdtId, usize)>>,
     /// The user root module.
     pub root: ModId,
+    /// The definition behind raw pointer types `*T`. No module names it.
+    pub ptr: Option<AdtId>,
 }
 
 /// The prelude module.
 pub const PRELUDE: ModId = 0;
+
+/// The name of the definition behind `*T`. It is not an identifier, so no
+/// program can name it.
+pub const PTR_NAME: &str = "*";
+
+/// Returns the span of the first raw pointer type in `t`.
+fn ptr_span(t: &TypeExpr) -> Option<Span> {
+    match &t.kind {
+        TypeExprKind::Ptr(_) => Some(t.span),
+        TypeExprKind::Ref { inner, .. }
+        | TypeExprKind::Array { elem: inner, .. }
+        | TypeExprKind::Slice(inner) => ptr_span(inner),
+        TypeExprKind::Path { args: ts, .. } | TypeExprKind::Tuple(ts) => {
+            ts.iter().find_map(ptr_span)
+        }
+        TypeExprKind::Fn { params, ret, .. } => {
+            params.iter().chain(ret.as_deref()).find_map(ptr_span)
+        }
+        TypeExprKind::SelfType => None,
+    }
+}
 
 /// Names of built-in type definitions that sema refers to.
 #[derive(Clone, Debug, Default)]
@@ -416,13 +439,18 @@ impl Collector {
         // Pass 1: names.
         let mut unit_mods = Vec::new();
         for (i, u) in units.iter().enumerate() {
-            let parent = (i > 1).then_some(1);
-            let m = c.new_mod(&u.name, parent, u.is_std, i);
+            // A dependency sees its own items and the prelude, not the root.
+            let m = c.new_mod(&u.name, None, u.is_std, i);
             if i == 1 {
                 c.prog.root = m;
             }
             if i > 1 {
-                c.prog.mods[1].items.insert(u.name.clone(), ItemRef::Mod(m));
+                // The root names a dependency as a module. The prelude declares
+                // nested modules first, so the root is not module 1.
+                let root = c.prog.root;
+                c.prog.mods[root]
+                    .items
+                    .insert(u.name.clone(), ItemRef::Mod(m));
             }
             unit_mods.push(m);
             let before = c.diags.len();
@@ -431,6 +459,7 @@ impl Collector {
                 d.unit = i;
             }
         }
+        c.declare_ptr();
         // Pass 2: bodies of type definitions and signatures.
         let mut seen = 0;
         for (i, u) in units.iter().enumerate() {
@@ -443,6 +472,41 @@ impl Collector {
         }
         c.resolve_signatures();
         (c.prog, c.diags)
+    }
+
+    /// Declares the definition of `*T` after all named types, so that the
+    /// indices of named types do not change. A raw pointer is an opaque copy
+    /// value: no fields, no elements, no deref. It is nonportable, because the
+    /// checker cannot know if the foreign object allows other threads.
+    fn declare_ptr(&mut self) {
+        self.prog.adts.push(AdtDef {
+            name: PTR_NAME.into(),
+            generics: vec!["T".into()],
+            kind: AdtKind::Extern {
+                elem_unstable: None,
+                deref: None,
+            },
+            linear: false,
+            on_abort: None,
+            has_on_abort: false,
+            immovable: false,
+            copy: true,
+            nonportable: true,
+            module: PRELUDE,
+            span: Span::default(),
+        });
+        self.prog.ptr = Some(self.prog.adts.len() - 1);
+    }
+
+    /// W0116: a raw pointer type outside an `extern fn` signature or a local.
+    fn no_ptr(&mut self, t: &TypeExpr) {
+        if let Some(span) = ptr_span(t) {
+            self.diags.push(Diagnostic::error(
+                "W0116",
+                "a raw pointer type is valid only in an `extern fn` signature or a local",
+                span,
+            ));
+        }
     }
 
     /// Gives the unit index to diagnostics made since the last mark.
@@ -587,6 +651,7 @@ impl Collector {
                     );
                     let mut fields = Vec::new();
                     for f in &s.fields {
+                        self.no_ptr(&f.ty);
                         let ty = self.resolve_ty(&f.ty, m, &gens, Some(&self_ty));
                         fields.push(FieldDef {
                             name: f.name.name.clone(),
@@ -610,7 +675,7 @@ impl Collector {
                                         uniq: false,
                                         span: f.span,
                                     }];
-                                    let sp = self.resolve_sig_place(p, &params, &BTreeMap::new());
+                                    let sp = self.resolve_sig_place(p, &params, &BTreeMap::new(), m);
                                     fields[i].place = sp;
                                 }
                                 _ => self.diags.push(Diagnostic::error(
@@ -633,6 +698,9 @@ impl Collector {
                     let gens: Vec<String> = e.generics.iter().map(|g| g.name.clone()).collect();
                     let mut vs = Vec::new();
                     for (vi, v) in e.variants.iter().enumerate() {
+                        for t in &v.fields {
+                            self.no_ptr(t);
+                        }
                         let fields = v
                             .fields
                             .iter()
@@ -656,6 +724,9 @@ impl Collector {
                     };
                     let mut ops = Vec::new();
                     for o in &e.ops {
+                        for t in o.params.iter().filter_map(|p| p.ty.as_ref()).chain(&o.ret) {
+                            self.no_ptr(t);
+                        }
                         let params = o
                             .params
                             .iter()
@@ -686,6 +757,7 @@ impl Collector {
                 }
                 ItemKind::Impl(imp) => {
                     let gens: Vec<String> = imp.generics.iter().map(|g| g.name.clone()).collect();
+                    self.no_ptr(&imp.self_ty);
                     let self_ty = self.resolve_ty(&imp.self_ty, m, &gens, None);
                     let Ty::Adt(owner, _) = self_ty else {
                         self.diags.push(Diagnostic::error(
@@ -784,6 +856,11 @@ impl Collector {
                         .collect(),
                 )
             });
+            if !f.is_extern {
+                for t in f.params.iter().filter_map(|p| p.ty.as_ref()).chain(&f.ret) {
+                    self.no_ptr(t);
+                }
+            }
             let mut params = Vec::new();
             for p in &f.params {
                 let (ty, modes) = match (&p.ty, &self_ty) {
@@ -824,7 +901,7 @@ impl Collector {
                     ..
                 }) = &p.ty
                 {
-                    params[i].place = self.resolve_sig_place(pl, &params, &fn_params);
+                    params[i].place = self.resolve_sig_place(pl, &params, &fn_params, m);
                 }
             }
             let ret = f
@@ -833,7 +910,14 @@ impl Collector {
                 .map_or(Ty::Unit, |t| self.resolve_ty(t, m, &gens, self_ty.as_ref()));
             let mut ret_places = Vec::new();
             if let Some(t) = &f.ret {
-                self.collect_ret_places(t, &params, &fn_params, &mut Vec::new(), &mut ret_places);
+                self.collect_ret_places(
+                    t,
+                    &params,
+                    &fn_params,
+                    m,
+                    &mut Vec::new(),
+                    &mut ret_places,
+                );
             }
             let mut effects = EffectSig::default();
             if let Some(row) = &f.effects {
@@ -841,7 +925,8 @@ impl Collector {
                     match item {
                         EffectItem::Mut(ps) => {
                             for pl in ps {
-                                if let Some(sp) = self.resolve_sig_place(pl, &params, &fn_params) {
+                                if let Some(sp) = self.resolve_sig_place(pl, &params, &fn_params, m)
+                                {
                                     effects.muts.push(sp);
                                 }
                             }
@@ -877,13 +962,14 @@ impl Collector {
         t: &TypeExpr,
         params: &[ParamSig],
         names: &BTreeMap<String, usize>,
+        m: ModId,
         path: &mut Vec<usize>,
         out: &mut Vec<RetPlace>,
     ) {
         match &t.kind {
             TypeExprKind::Ref { place, .. } => match place {
                 Some(pl) => {
-                    if let Some(sp) = self.resolve_sig_place(pl, params, names) {
+                    if let Some(sp) = self.resolve_sig_place(pl, params, names, m) {
                         out.push(RetPlace {
                             path: path.clone(),
                             place: sp,
@@ -900,7 +986,7 @@ impl Collector {
             TypeExprKind::Tuple(ts) => {
                 for (i, t) in ts.iter().enumerate() {
                     path.push(i);
-                    self.collect_ret_places(t, params, names, path, out);
+                    self.collect_ret_places(t, params, names, m, path, out);
                     path.pop();
                 }
             }
@@ -923,12 +1009,14 @@ impl Collector {
         .resolve(t, m, gens, self_ty)
     }
 
-    /// Resolves a written place against parameter types.
+    /// Resolves a written place against parameter types. An `rc` type root is
+    /// looked up from module `m`, the module of the signature.
     pub fn resolve_sig_place(
         &mut self,
         pl: &PlaceExpr,
         params: &[ParamSig],
         names: &BTreeMap<String, usize>,
+        m: ModId,
     ) -> Option<SigPlace> {
         let rootname = pl.root.name.as_str();
         let (root, mut ty) = if let Some(&i) = names.get(rootname) {
@@ -943,7 +1031,7 @@ impl Collector {
                 t => t.clone(),
             };
             (SigRoot::Param(0), t)
-        } else if let Some(ItemRef::Adt(a)) = self.prog.lookup(self.prog.root, rootname) {
+        } else if let Some(ItemRef::Adt(a)) = self.prog.lookup(m, rootname) {
             let n = self.prog.adts[a].generics.len();
             (SigRoot::Group(a), Ty::Adt(a, vec![Ty::Error; n]))
         } else {
@@ -1048,6 +1136,10 @@ impl TyResolver<'_> {
             }),
             TypeExprKind::Ref { inner, .. } => {
                 Ty::Ref(Box::new(self.resolve(inner, m, gens, self_ty)))
+            }
+            TypeExprKind::Ptr(inner) => {
+                let inner = self.resolve(inner, m, gens, self_ty);
+                self.prog.ptr.map_or(Ty::Error, |p| Ty::Adt(p, vec![inner]))
             }
             TypeExprKind::Tuple(ts) if ts.is_empty() => Ty::Unit,
             TypeExprKind::Tuple(ts) => Ty::Tuple(

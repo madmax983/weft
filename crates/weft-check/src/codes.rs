@@ -15,6 +15,7 @@ pub struct Code {
 
 /// All codes, in order.
 pub const CODES: &[Code] = &[
+    Code { code: "L0001", title: "lint warning", rule: "user lint rules", text: "A rule of the file that `weft lint --rules` reads derived `lint(Name, Node)` for this node." },
     Code { code: "W0001", title: "syntax error", rule: "parser", text: "The source does not follow docs/grammar.md." },
     Code { code: "W0101", title: "unknown name", rule: "names", text: "No local, item, effect or module has this name in scope." },
     Code { code: "W0102", title: "type mismatch", rule: "types", text: "Two types must be equal and they are not." },
@@ -22,6 +23,15 @@ pub const CODES: &[Code] = &[
     Code { code: "W0104", title: "unknown field, method or operation", rule: "types", text: "The type, module or effect has no member with this name." },
     Code { code: "W0105", title: "not callable", rule: "types", text: "Only functions, closures and constructors can be called." },
     Code { code: "W0107", title: "duplicate definition", rule: "names", text: "Two items in one module have the same name." },
+    Code { code: "W0108", title: "unknown extern type property", rule: "items", text: "An extern type property must be `elem`, `deref`, `copy`, `linear`, `on_abort` or `nonportable`." },
+    Code { code: "W0109", title: "impl of an unnamed type", rule: "items", text: "An `impl` block needs a named struct, enum or extern type." },
+    Code { code: "W0110", title: "parameter type missing", rule: "signatures", text: "Each parameter needs a type. Only `self` in an `impl` can have no type." },
+    Code { code: "W0111", title: "break or continue outside a loop", rule: "control flow", text: "`break` and `continue` are valid only in a `while`, `for` or `loop` body." },
+    Code { code: "W0112", title: "assignment to a value", rule: "places", text: "The left side of an assignment must be a place: a local, a field, an element or a variant payload." },
+    Code { code: "W0113", title: "variant pattern outside match", rule: "patterns", text: "`let` can destructure a tuple or a struct. An enum variant needs `match`, because the value can be another variant." },
+    Code { code: "W0114", title: "range outside for", rule: "types", text: "A range `a..b` is valid only as the iterated value of a `for` loop." },
+    Code { code: "W0115", title: "incomplete construct", rule: "types", text: "A struct literal must give every field that is not a place field. `s.spawn` needs the capability `s` of an enclosing `scope`." },
+    Code { code: "W0116", title: "raw pointer outside FFI", rule: "types", text: "A raw pointer `*T` is valid only in an `extern fn` signature and in a local that holds the result of an `extern fn`. It is an opaque copy value with no place: it has no fields and no deref." },
     Code { code: "W0201", title: "bad place root", rule: "signatures", text: "A place in a signature must start at a parameter, `self` or an `rc` type." },
     Code { code: "W0203", title: "argument points elsewhere", rule: "signatures", text: "A reference argument must point inside the place that the parameter states with `in`." },
     Code { code: "W0204", title: "returned reference place", rule: "signatures", text: "A returned reference must state its place, and the body must return a reference inside it." },
@@ -47,6 +57,7 @@ pub const CODES: &[Code] = &[
     Code { code: "W0702", title: "effect not in signature", rule: "unauthorized_effect(P, E)", text: "The body performs an effect that the signature does not state and no local handler handles." },
     Code { code: "W0703", title: "mutation not in signature", rule: "unauthorized_mut(P, M)", text: "The body mutates a place reached from a parameter that no `mut(...)` in the signature covers." },
     Code { code: "W0705", title: "function argument effects", rule: "signatures", text: "A function argument performs an effect that the parameter type does not allow." },
+    Code { code: "W0706", title: "effect inference does not converge", rule: "effect inference", text: "Effect inference stopped at its round limit before it reached a fixpoint, so the inferred effects can be incomplete. State the effects of the function. Report the program, because a monotone inference converges in the limit." },
     Code { code: "W0801", title: "root handler in a library", rule: "root_handler_in_lib(H)", text: "Only binaries and tests install root handlers for standard effects. Libraries may intercept them." },
     Code { code: "W0802", title: "simulation in a library", rule: "root handlers", text: "`sim.run` replaces every root handler. Only binaries and tests can use it." },
     Code { code: "W0803", title: "no runtime", rule: "runtime profile", text: "With `runtime = \"none\"`, `main` must handle every standard effect that it performs." },
@@ -74,5 +85,59 @@ mod tests {
         assert_eq!(codes, sorted);
         assert!(super::lookup("w0301").is_some());
         assert!(super::lookup("X").is_none());
+    }
+
+    /// Collects the words `W` or `L` and four digits in the files under `dir`.
+    fn scan(dir: &std::path::Path, out: &mut std::collections::BTreeMap<String, String>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in entries.flatten() {
+            let path = e.path();
+            if path.is_dir() {
+                if path.file_name().is_some_and(|n| n != "target") {
+                    scan(&path, out);
+                }
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let b = text.as_bytes();
+            for i in 0..b.len().saturating_sub(4) {
+                let word_start = i == 0 || !b[i - 1].is_ascii_alphanumeric();
+                let word_end = b.get(i + 5).is_none_or(|c| !c.is_ascii_alphanumeric());
+                if word_start
+                    && word_end
+                    && matches!(b[i], b'W' | b'L')
+                    && b[i + 1..i + 5].iter().all(u8::is_ascii_digit)
+                {
+                    out.entry(text[i..i + 5].to_string())
+                        .or_insert_with(|| path.display().to_string());
+                }
+            }
+        }
+    }
+
+    /// Every code that the sources emit or the docs name has a text for
+    /// `weft explain`. The tests of `crates/*/tests` may name unknown codes.
+    #[test]
+    fn every_code_in_the_sources_is_explained() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut found = std::collections::BTreeMap::new();
+        let crates = std::fs::read_dir(root.join("crates")).into_iter().flatten();
+        for c in crates.flatten() {
+            scan(&c.path().join("src"), &mut found);
+        }
+        for dir in ["spec", "std", "docs", "tests/programs", "examples"] {
+            scan(&root.join(dir), &mut found);
+        }
+        assert!(found.contains_key("W0301"), "the scan finds nothing");
+        let missing: Vec<String> = found
+            .iter()
+            .filter(|(code, _)| super::lookup(code).is_none())
+            .map(|(code, file)| format!("{code} (in {file})"))
+            .collect();
+        assert!(missing.is_empty(), "codes with no text: {missing:?}");
     }
 }

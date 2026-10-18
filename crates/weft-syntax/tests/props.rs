@@ -109,6 +109,23 @@ fn pretty_output_examples() {
         "if (P {}).x {\n    f(|| 1) {\n        2\n    }\n} else if y {\n    \"a{{ 1 }}\\n\"\n}"
     );
     assert_eq!(pretty(&File::default()), "");
+    let f = parse_file(
+        "extern fn g(a: *T, b: &*T in p, c: *(T @ uniq), d: *(fn() / io)) -> *(fn()) / io",
+    )
+    .unwrap();
+    assert_eq!(
+        pretty(&f),
+        "extern fn g(a: *T, b: &*T in p, c: *(T @ uniq), d: *(fn() / io)) -> *(fn()) / io\n"
+    );
+    check_round_trip(&f).unwrap();
+    // Parentheses only where an inner reference would take the `in`.
+    let f =
+        parse_file("fn g(a: &&&T, b: &(&T) in p, c: &&T in a in b, d: &(*&T) in p) {}").unwrap();
+    assert_eq!(
+        pretty(&f),
+        "fn g(a: &&&T, b: &(&T) in p, c: &&T in a in b, d: &(*&T) in p) {}\n"
+    );
+    check_round_trip(&f).unwrap();
 }
 
 #[test]
@@ -375,6 +392,7 @@ fn ty() -> impl Strategy<Value = TypeExpr> + Clone {
                 inner: Box::new(t),
                 place
             }),
+            inner.clone().prop_map(|t| TypeExprKind::Ptr(Box::new(t))),
             prop::collection::vec(inner.clone(), 0..3).prop_map(TypeExprKind::Tuple),
             (inner.clone(), any::<u64>()).prop_map(|(t, len)| TypeExprKind::Array {
                 elem: Box::new(t),
