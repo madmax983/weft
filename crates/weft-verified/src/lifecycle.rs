@@ -4,10 +4,14 @@
 //! continuation resumes at most once, and that a linear value ends consumed or
 //! aborted exactly once.
 //!
-//! `proofs/link` includes this file. It proves that these state machines refine
-//! the continuation and resource records of the effects model
-//! (`proofs/link/src/lifecycle_link.rs`). Run `proofs/link/verify.sh` after a
-//! change to a spec in this file.
+//! `proofs/link` includes this file (`proofs/link/src/lifecycle_link.rs`). It
+//! proves that each operation is a step of the continuation and resource
+//! records of the effects model, and that each operation fails where the
+//! model step is an error. Two differences are about `multi` continuations:
+//! `drop_now` aborts a fresh `multi` continuation, and a resume after that
+//! abort fails. The model does not abort it, and it allows the resume.
+//! `proofs/verify-all.sh` does not run the link yet. Run
+//! `proofs/link/verify.sh` after a change to a spec in this file.
 
 use vstd::prelude::*;
 

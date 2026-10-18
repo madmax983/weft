@@ -19,15 +19,28 @@
 //! * `thm_model_invalid_contains_lfp` (minimality): each annotation that
 //!   passes `cfg_check` marks `v` invalid at each node of the fixpoint of
 //!   `gen` minus `kill`.
+//! * `thm_must_invalid_in_lfp` (the soundness direction as sets): if W0301
+//!   accepts, each node where every accepted annotation marks `v` invalid
+//!   is in the fixpoint or in `unb`.
 //! * `thm_dataflow_exact`: if no node both invalidates and rebinds `v`, the
-//!   fixpoint is exactly the set of nodes where every accepted annotation
-//!   marks `v` invalid.
+//!   fixpoint is inside the set of nodes where every accepted annotation
+//!   marks `v` invalid. With the result above, the two sets are equal
+//!   outside `unb`.
 //! * `invalid_at`: the exec `propagate` returns this fixpoint.
 //!
-//! The direction: the checker set always contains the model must-invalid set
-//! (`lemma_lfp_monotone`). The sets are equal when no node both invalidates
-//! and rebinds `v`. At such a node the checker marks `v` invalid after the
-//! node, but the model keeps the new value of `v` valid.
+//! The direction. Let `must` be the set of nodes where each accepted model
+//! annotation with the static groups marks `v` invalid.
+//!
+//! * Soundness needs `must` inside the checker set. This holds outside
+//!   `unb`, if `facts_ok`, `w0301_ok` and `bound_before_use` hold
+//!   (`thm_must_invalid_in_lfp`, from `thm_lfp_annotation_checks`).
+//!   `facts_ok` excludes closures.
+//! * The fixpoint of `gen` minus `kill` is inside `must` for each B1 CFG
+//!   (`thm_model_invalid_contains_lfp`). That fixpoint is inside the checker
+//!   fixpoint (`lemma_lfp_contains_eff`).
+//! * If no node both invalidates and rebinds `v`, the two fixpoints are
+//!   equal. At a node that does both, the checker marks `v` invalid after the
+//!   node, but the model keeps the new value of `v` valid (`ex_gen_and_kill`).
 
 use vstd::prelude::*;
 use crate::dataflow::{spec_edge, spec_closed, spec_in_lfp, spec_well_formed, spec_view, propagate, lemma_step_sound};
@@ -636,8 +649,7 @@ pub proof fn thm_model_invalid_contains_lfp(cfg: Cfg, ss0: SState, g: Map<Var, G
     assert(invalid_set(a, v).contains(n));
 }
 
-/// The fixpoint grows with `gen`. Thus the checker set (with all of `gen`)
-/// contains the model must-invalid set (with `gen` minus `kill`).
+/// The fixpoint grows with `gen`.
 pub proof fn lemma_lfp_monotone(succ: Seq<Seq<usize>>, gen1: Seq<bool>, gen2: Seq<bool>, kill: Seq<bool>, n: int)
     requires
         gen1.len() == gen2.len(),
@@ -651,7 +663,9 @@ pub proof fn lemma_lfp_monotone(succ: Seq<Seq<usize>>, gen1: Seq<bool>, gen2: Se
     }
 }
 
-/// The checker set contains the model must-invalid set.
+/// The checker fixpoint (with all of `gen`) contains the fixpoint of `gen`
+/// minus `kill`. `thm_model_invalid_contains_lfp` puts the second fixpoint
+/// inside the model must-invalid set.
 pub proof fn lemma_lfp_contains_eff(cfg: Cfg, g: Map<Var, Group>, v: Var, n: int)
     requires
         spec_in_lfp(cfg_succ(cfg), gen_eff_seq(cfg, g, v), kill_seq(cfg, v), n),
@@ -659,6 +673,40 @@ pub proof fn lemma_lfp_contains_eff(cfg: Cfg, g: Map<Var, Group>, v: Var, n: int
         lfp(cfg, g, v, n),
 {
     lemma_lfp_monotone(cfg_succ(cfg), gen_eff_seq(cfg, g, v), gen_seq(cfg, g, v), kill_seq(cfg, v), n);
+}
+
+/// The annotation of the checker result has the static groups.
+pub proof fn lemma_lfp_ann_agrees(cfg: Cfg, ss0: SState, g: Map<Var, Group>, unb: spec_fn(Var, int) -> bool)
+    ensures
+        agrees(lfp_ann(cfg, ss0, g, unb), g),
+{
+    let la = lfp_ann(cfg, ss0, g, unb);
+    assert forall|k: int, w: Var| 0 <= k < la.len() && #[trigger] la[k].vars.contains_key(w) implies g.contains_key(w)
+        && la[k].vars[w] == g[w] by {
+        lemma_ann_vars(cfg, g, unb, k);
+    }
+}
+
+/// **The soundness direction as sets.** If the static facts hold, W0301
+/// accepts and each reference is bound before each use: each node where
+/// every accepted annotation with the static groups marks `v` invalid is in
+/// the checker fixpoint or in `unb`.
+pub proof fn thm_must_invalid_in_lfp(cfg: Cfg, ss0: SState, g: Map<Var, Group>, unb: spec_fn(Var, int) -> bool, v: Var, n: int)
+    requires
+        facts_ok(cfg, ss0, g),
+        w0301_ok(cfg, g),
+        bound_before_use(cfg, ss0, g, unb),
+        0 <= n < cfg.len(),
+        g.contains_key(v),
+        forall|a: Seq<SState>| cfg_check(cfg, ss0, a) && agrees(a, g) ==> !(#[trigger] a[n].vars.contains_key(v)),
+    ensures
+        lfp(cfg, g, v, n) || unb(v, n),
+{
+    thm_lfp_annotation_checks(cfg, ss0, g, unb);
+    lemma_lfp_ann_agrees(cfg, ss0, g, unb);
+    lemma_ann_vars(cfg, g, unb, n);
+    let la = lfp_ann(cfg, ss0, g, unb);
+    assert(!la[n].vars.contains_key(v));
 }
 
 /// No node both invalidates and rebinds `v`.
@@ -686,11 +734,7 @@ pub proof fn thm_dataflow_exact(cfg: Cfg, ss0: SState, g: Map<Var, Group>, unb: 
             cfg_check(cfg, ss0, a) && agrees(a, g) && lfp(cfg, g, v, n) ==> !(#[trigger] a[n].vars.contains_key(v)),
 {
     thm_lfp_annotation_checks(cfg, ss0, g, unb);
-    let la = lfp_ann(cfg, ss0, g, unb);
-    assert forall|k: int, w: Var| 0 <= k < la.len() && #[trigger] la[k].vars.contains_key(w) implies g.contains_key(w)
-        && la[k].vars[w] == g[w] by {
-        lemma_ann_vars(cfg, g, unb, k);
-    }
+    lemma_lfp_ann_agrees(cfg, ss0, g, unb);
     lemma_ann_vars(cfg, g, unb, n);
     assert(gen_eff_seq(cfg, g, v) =~= gen_seq(cfg, g, v));
     assert forall|a: Seq<SState>|

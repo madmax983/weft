@@ -5,8 +5,9 @@
 //! `#[path]`. It does not copy them. Thus each proof here is about the exact
 //! code and the exact model definitions. A change to an included file can
 //! break this crate. Then the link is broken, and `verify.sh` fails.
-//! `check-copies.sh` checks that each included file is a module of its home
-//! crate, and that this crate has no copy of an included item.
+//! `check-copies.sh` checks that this file includes the expected files, that
+//! each included file is a module of its home crate, and that this crate has
+//! no copy of an included item. `verify.sh` runs it first.
 
 // The verified exec core: the code that the checker and the interpreter run.
 // Source: crates/weft-verified/src/.
@@ -18,8 +19,10 @@ pub mod dataflow;
 pub mod lifecycle;
 
 // The group-borrowing model: the base model, its soundness, B1 (CFG) and B3
-// (layout). Source: proofs/borrowing/src/. The names stay the same, because
-// `cfg.rs` and `layout.rs` refer to `crate::model` and `crate::soundness`.
+// (layout, its soundness proof and its examples). Source:
+// proofs/borrowing/src/. The names stay the same, because the files refer to
+// `crate::model`, `crate::soundness`, `crate::layout` and
+// `crate::layout_proof`.
 #[path = "../../borrowing/src/model.rs"]
 pub mod model;
 #[path = "../../borrowing/src/soundness.rs"]
@@ -28,6 +31,10 @@ pub mod soundness;
 pub mod cfg;
 #[path = "../../borrowing/src/layout.rs"]
 pub mod layout;
+#[path = "../../borrowing/src/layout_proof.rs"]
+pub mod layout_proof;
+#[path = "../../borrowing/src/layout_examples.rs"]
+pub mod layout_examples;
 
 // The effects model: the abstract machine. Source: proofs/effects/src/model.rs.
 #[path = "../../effects/src/model.rs"]

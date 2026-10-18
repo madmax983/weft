@@ -10,19 +10,33 @@
 //! function below calls one exec operation and proves, from the
 //! postcondition of that operation only:
 //!
-//! * the exec operation succeeds only where the model step is allowed, and
-//!   the new exec record is related to the model record after that step;
+//! * the exec operation succeeds only where the model allows the step, and
+//!   the relation holds between the new exec record and the model record
+//!   after that step;
 //! * where the model step is an error, the exec operation fails and does
 //!   not change the record.
 //!
 //! The steps are the model functions themselves: `do_perform`, `do_resume`,
 //! `do_return`, `do_drop`, `do_acquire`, `do_consume` and `do_abort`.
 //!
-//! One difference is proved, not hidden: `drop_now` on a fresh `multi`
-//! continuation reports an abort. The model does not unwind a `multi`
-//! continuation (`holds_fresh` is false). E5 says that such a continuation
-//! holds no linear value and no fresh `once` continuation, so the unwind has
-//! nothing to finalize. This file does not prove that consequence.
+//! Each function requires `kont_rel` or `lin_rel` and gives it again after a
+//! step that the model takes. Thus the relations hold along each sequence of
+//! these operations, as long as each exec operation is a model step.
+//!
+//! Two differences are proved, not hidden. Both are about `multi`
+//! continuations:
+//!
+//! * `drop_now` on a fresh `multi` continuation reports an abort. The model
+//!   does not unwind a `multi` continuation (`holds_fresh` is false). E5 says
+//!   that such a continuation holds no linear value and no fresh `once`
+//!   continuation, so the unwind has nothing to finalize. This file does not
+//!   prove that consequence.
+//! * After that abort, the exec record is `Dropped`, and an exec resume
+//!   fails. The model record of a `multi` continuation does not change, and
+//!   the model allows a resume (`ex_multi_dropped_resume`). The interpreter
+//!   copies the clause frames of a `multi` continuation with the same record.
+//!   Thus a copy that resumes after another copy returns faults in exec, but
+//!   continues in the model.
 
 use vstd::prelude::*;
 use crate::lifecycle::{Continuation, ContState, ContError, Linear, LinState, LinError};
@@ -57,8 +71,8 @@ pub open spec fn kont_rel(c: Continuation, kt: Kont) -> bool {
     }
 }
 
-/// A perform makes a continuation. The exec record of `Continuation::new`
-/// is related to the record that `do_perform` adds.
+/// A perform makes a continuation. `kont_rel` holds between the exec record
+/// of `Continuation::new` and the record that `do_perform` adds.
 pub fn perform_linked(
     multi: bool,
     Ghost(prog): Ghost<Prog>,
@@ -79,6 +93,9 @@ pub fn perform_linked(
 
 /// **Resume.** A successful exec resume is the model step `step_resume`. A
 /// resume that the model calls an error (`err_resume_used`) fails in exec.
+/// Before a drop, the exec resume succeeds exactly when the model allows it.
+/// After a drop, the exec resume fails. For a `multi` record, the model can
+/// still allow it (see the module comment).
 pub fn resume_linked(k: &mut Continuation, Ghost(prog): Ghost<Prog>, Ghost(s): Ghost<State>) -> (r: Result<(), ContError>)
     requires
         at_instr(prog, s),
@@ -92,6 +109,7 @@ pub fn resume_linked(k: &mut Continuation, Ghost(prog): Ghost<Prog>, Ghost(s): G
         r is Err ==> *final(k) == *old(k),
         err_resume_used(prog, s) ==> r is Err,
         old(k).state != ContState::Dropped ==> (r is Ok <==> resume_ok_dyn(s, tf(s))),
+        old(k).state == ContState::Dropped ==> r is Err,
 {
     k.resume()
 }
@@ -158,8 +176,8 @@ pub open spec fn lin_rel(l: Linear, r: Res) -> bool {
     }
 }
 
-/// **Acquire.** The exec record of `Linear::new` is related to the resource
-/// that `do_acquire` adds.
+/// **Acquire.** `lin_rel` holds between the exec record of `Linear::new` and
+/// the resource that `do_acquire` adds.
 pub fn acquire_linked(Ghost(prog): Ghost<Prog>, Ghost(s): Ghost<State>, Ghost(slot): Ghost<Slot>, Ghost(on_abort): Ghost<bool>) -> (l: Linear)
     requires
         at_instr(prog, s),

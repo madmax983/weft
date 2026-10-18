@@ -13,8 +13,13 @@
 //! [`propagate`] computes exactly that least fixpoint. Backward analyses use it
 //! on the reversed graph.
 //!
-//! `proofs/link` includes this file. It proves that the W0301 fixpoint is the
-//! invalid set of the B1 CFG model (`proofs/link/src/dataflow_link.rs`). Run
+//! `proofs/link` includes this file (`proofs/link/src/dataflow_link.rs`). On
+//! B1 CFGs without closures, it proves: if W0301 accepts, the fixpoint gives
+//! an annotation that the B1 checker accepts, so no run has UB. Each accepted
+//! annotation marks at least the fixpoint of `gen` minus `kill` invalid. If
+//! no node both invalidates and rebinds the reference, the fixpoint is the
+//! invalid set of the model, outside the nodes where the reference can be
+//! unbound. `proofs/verify-all.sh` does not run the link yet. Run
 //! `proofs/link/verify.sh` after a change to a spec in this file.
 
 use vstd::prelude::*;
