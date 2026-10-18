@@ -488,7 +488,8 @@ impl<'r, 'a> Machine<'r, 'a> {
             stealable,
             scope,
             result: None,
-            handle: Linear::new(),
+            // The runtime cancels the task: that is the `on abort` of a handle.
+            handle: Linear::new(true),
             cancel: false,
             aborting: false,
             interrupt: None,

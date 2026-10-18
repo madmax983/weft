@@ -202,7 +202,7 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             )
             .note(format!(
                 "add `{}` to the effects after `/`, or handle it here",
-                written_effect(e)
+                effects::written_name(e)
             )),
         );
     }
@@ -297,16 +297,6 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
     }
     out.sort_by(|a, b| (a.span.lo, &a.code).cmp(&(b.span.lo, &b.code)));
     out
-}
-
-/// Returns an effect as a signature writes it: a standard effect by its
-/// lowercase alias (`log`), a user effect by its name (`Log2`).
-fn written_effect(e: &str) -> String {
-    if effects::is_std(e) {
-        e.to_lowercase()
-    } else {
-        e.to_string()
-    }
 }
 
 /// Replaces `{line:N}` markers (byte offsets) with line numbers.

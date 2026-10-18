@@ -333,7 +333,7 @@ pub fn package_diags(pkg: &Package, a: &Analysis) -> Vec<Diagnostic> {
             if extra.is_empty() {
                 continue;
             }
-            let wanted: Vec<String> = extra.iter().map(|e| e.to_lowercase()).collect();
+            let wanted: Vec<String> = extra.iter().map(|e| effects::written_name(e)).collect();
             let mut d = Diagnostic::error(
                 "W0901",
                 format!(

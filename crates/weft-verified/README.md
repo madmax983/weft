@@ -134,10 +134,10 @@ The interpreter uses these state machines at run time.
 | --- | --- |
 | `Continuation::new` | The state is `Fresh`. |
 | `Continuation::resume` | The resume succeeds only if the state is `Fresh`, or `Resumed` for a `multi` continuation. A second resume of a `once` continuation fails with `AlreadyResumed`. A resume after a drop fails with `AlreadyDropped`. A failure does not change the state. |
-| `Continuation::drop_now` | The drop aborts only a `Fresh` continuation. Otherwise it does not change the state. |
-| `Linear::new` | The state is `Live`. |
-| `Linear::consume` | The consume succeeds only for a `Live` value. A failure does not change the state. |
-| `Linear::unwind` | `on abort` runs only for a `Live` value. Otherwise the state does not change. |
+| `Continuation::drop_now` | The drop aborts only a `Fresh` continuation. Otherwise it does not change the state. The mode does not change. |
+| `Linear::new` | The state is `Live`. The record keeps the `on abort` flag of the type. |
+| `Linear::consume` | The consume succeeds only for a `Live` value. A failure (`NotLive`) does not change the record. |
+| `Linear::unwind` | `Ok(true)`: `on abort` runs, only for a `Live` value with `on abort`. `Ok(false)`: the value is finished. `Err(NoOnAbort)`: a `Live` value with no `on abort`. Only `Ok(true)` changes the record. |
 | `Linear::is_finished` | `r == (state != Live)` |
 
 | Lemma | Statement |

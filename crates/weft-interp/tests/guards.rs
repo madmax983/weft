@@ -148,17 +148,45 @@ fn unwinding_finds_nested_linear_values_innermost_first() {
     // Values in a frame unwind from the newest local to the oldest; values inside
     // a Vec, a Box, a tuple or a struct field are found too.
     let src = "linear struct Tx { id: u64 }\n on abort = undo\n\
-        linear struct Bare { id: u64 }\n\
         struct Holder { tx: Tx, n: u64 }\n\
         fn undo(t: Tx) { let Tx(id) = t\n print(\"undo {id}\") }\n\
         fn work() / fail {\n let txs = Vec.new()\n txs.push(Tx { id: 1 })\n txs.push(Tx { id: 2 })\n\
          let h = Holder { tx: Tx { id: 3 }, n: 0 }\n let b = Box.new(Tx { id: 4 })\n\
-         let pair = (Tx { id: 5 }, 1)\n let bare = Bare { id: 6 }\n let e = Some(Tx { id: 7 })\n fail(\"stop\")\n }\n\
+         let pair = (Tx { id: 5 }, 1)\n let e = Some(Tx { id: 7 })\n fail(\"stop\")\n }\n\
         fn main() { handle Fail { fn fail(m) { print(\"caught {m}\") } } in work() }";
     let o = run(src).unwrap();
     assert_eq!(
         o.stdout,
         "caught stop\nundo 7\nundo 5\nundo 4\nundo 3\nundo 1\nundo 2\n"
+    );
+}
+
+/// The checker rejects a linear value with no `on abort` across an abort
+/// (W0602). The unwinder cannot finish such a value, so it stops.
+#[test]
+fn unwinding_a_linear_value_with_no_on_abort_is_a_fault() {
+    let src = "linear struct Bare { id: u64 }\n\
+        fn work() / fail {\n let bare = Bare { id: 6 }\n fail(\"stop\")\n }\n\
+        fn main() { handle Fail { fn fail(m) { print(\"caught {m}\") } } in work() }";
+    fault(src, "a linear value of type `Bare` has no `on abort`");
+}
+
+/// Each copy of the frames of a `multi` continuation has the same linear
+/// record. When one copy aborts, `on abort` finishes the value. A later
+/// consume in another copy is a fault.
+#[test]
+fn consuming_an_aborted_linear_value_is_a_fault() {
+    let src = "effect Choice { multi fn choose() -> bool }\n\
+        effect Stop { fn stop() }\n\
+        linear struct Tx { id: u64 }\n on abort = undo\n\
+        fn undo(t: Tx) { let Tx(i) = t\n print(\"undo {i}\") }\n\
+        fn finish(t: Tx) { let Tx(i) = t\n print(\"finish {i}\") }\n\
+        fn work() / Choice, Stop {\n let t = Tx { id: 1 }\n if choose() { stop() }\n finish(t)\n }\n\
+        fn main() {\n handle Choice { fn choose() { resume(true); resume(false) } } in {\n\
+         handle Stop { fn stop() { print(\"stopped\") } } in work()\n }\n }";
+    fault(
+        src,
+        "a linear value was consumed after `on abort` finished it",
     );
 }
 

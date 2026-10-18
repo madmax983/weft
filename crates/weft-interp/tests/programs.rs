@@ -8,7 +8,8 @@
 //! - `// expect-error: TEXT`: `main` must fail with a message that contains TEXT.
 //! - `// seed: N`: the scheduler seed.
 //! - `// leaked: N`, `// blocking: N`: the expected counters.
-//! - `// weft: no-runtime`: the embedded profile.
+//! - `// weft: library`, `// weft: no-runtime`: the file markers, as in
+//!   `weft check` (`weft_sema::Options::from_markers`).
 //!
 //! Set `WEFT_BLESS=1` to write the `.out` files from the current output.
 
@@ -43,15 +44,9 @@ fn programs(dir: &Path) -> Vec<PathBuf> {
 fn run_program(path: &Path) -> Result<String, String> {
     let src = fs::read_to_string(path).unwrap();
     let name = path.file_name().unwrap().to_string_lossy().into_owned();
-    let no_runtime = src.contains("// weft: no-runtime");
-    let checked = weft_check::check_source(
-        &name,
-        &src,
-        Options {
-            library: src.contains("// weft: library"),
-            no_runtime,
-        },
-    );
+    let options = Options::from_markers(&src);
+    let no_runtime = options.no_runtime;
+    let checked = weft_check::check_source(&name, &src, options);
     let file = SourceFile::new(&name, src.as_str());
     if directive(&src, "unchecked").is_none() && !checked.ok() {
         let mut msg = format!("{name}: the checker rejects the program\n");
@@ -160,15 +155,9 @@ fn static_corpus_runs() {
         if !has_main && !has_tests {
             continue;
         }
-        let no_runtime = src.contains("// weft: no-runtime");
-        let checked = weft_check::check_source(
-            "corpus",
-            &src,
-            Options {
-                library: src.contains("// weft: library"),
-                no_runtime,
-            },
-        );
+        let options = Options::from_markers(&src);
+        let no_runtime = options.no_runtime;
+        let checked = weft_check::check_source("corpus", &src, options);
         let opts = RunOptions {
             max_steps: Some(1_000_000),
             max_requests: Some(0),

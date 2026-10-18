@@ -8,7 +8,9 @@
 //! it with an explicit frame stack per task. A perform captures the frames up to
 //! its handler as a delimited continuation. The verified state machines in
 //! `weft_verified::lifecycle` guard each continuation (`once` resumes at most
-//! once) and each linear value (finished exactly once).
+//! once) and each linear value (it finishes at most once). The state machines
+//! do not make sure that each linear value finishes. The checker (W0601,
+//! W0602) and the unwinder do that.
 //!
 //! The scheduler is deterministic: one OS thread, `N` virtual workers and a
 //! seeded random choice among ready tasks. An idle worker steals only a task that

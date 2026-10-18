@@ -86,4 +86,4 @@ values, so it cannot come back from another thread.
 | `dataflow::propagate` | result is exactly the least fixpoint of the gen/kill rules | every dataflow rule |
 | `modes::{submode, join}` | partial order and least upper bound | not yet used (mode rules use flags in the facts) |
 | `lifecycle::Continuation` | a `once` continuation resumes at most once | interpreter |
-| `lifecycle::Linear` | a linear value is consumed or aborted at most once | interpreter |
+| `lifecycle::Linear` | a linear value is consumed or aborted at most once; a live value with no `on abort` does not unwind | interpreter |

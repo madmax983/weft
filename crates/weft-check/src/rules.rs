@@ -159,18 +159,12 @@ pub(crate) fn first_reaching(
 ) -> Vec<Option<usize>> {
     // The nodes that reach a target: a predecessor of a target, or of a node
     // that reaches a target and is not a kill node.
-    let mut near = vec![false; succ.len()];
-    let mut work: Vec<usize> = Vec::new();
-    for &t in targets {
-        if !near[t] {
-            near[t] = true;
-            work.push(t);
-        }
-    }
     let mut is_target = vec![false; succ.len()];
     for &t in targets {
         is_target[t] = true;
     }
+    let mut near = is_target.clone();
+    let mut work: Vec<usize> = (0..succ.len()).filter(|&t| is_target[t]).collect();
     while let Some(q) = work.pop() {
         if kill[q] && !is_target[q] {
             continue;

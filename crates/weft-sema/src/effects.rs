@@ -47,6 +47,16 @@ pub fn std_alias(name: &str) -> Option<Vec<String>> {
     Some(vec![std.to_string()])
 }
 
+/// Returns an effect name as a signature writes it: a standard effect by its
+/// lowercase alias (`Log` becomes `log`), a user effect by its own name.
+pub fn written_name(name: &str) -> String {
+    if is_std(name) {
+        name.to_lowercase()
+    } else {
+        name.to_string()
+    }
+}
+
 /// Returns the effects that a declared effect implies, itself included.
 ///
 /// Net, Fs, Clock and Blocking suspend, so they imply Async.
@@ -74,5 +84,7 @@ mod tests {
         assert!(c.contains("Async") && c.contains("Net") && c.contains("Log"));
         assert!(is_std("Par"));
         assert!(!is_std("Choice"));
+        assert_eq!(written_name("Log"), "log");
+        assert_eq!(written_name("Log2"), "Log2");
     }
 }

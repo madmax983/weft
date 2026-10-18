@@ -1,0 +1,8 @@
+// weft:no-runtime
+// unchecked
+// expect-error: no runtime: nothing handles `Log.info`
+// The marker has no space after `weft:`. It still selects the embedded
+// profile, so no root handler handles `log`.
+fn main() {
+    log.info("x")
+}
