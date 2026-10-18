@@ -176,7 +176,10 @@ fn shape() -> impl Strategy<Value = Shape> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig { cases: 512, ..ProptestConfig::default() })]
+    #![proptest_config(ProptestConfig {
+        cases: std::env::var("PROPTEST_CASES").ok().and_then(|v| v.parse().ok()).unwrap_or(512),
+        ..ProptestConfig::default()
+    })]
 
     #[test]
     fn checker_agrees_with_spec(s in shape()) {
