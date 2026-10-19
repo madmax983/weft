@@ -242,7 +242,7 @@ The standard library defines the concurrency and IO effects and ships one runtim
 The standard effects are `Async`, `Net`, `Fs`, `Clock`, `Rand`, `Log` and `Blocking`. `std.rt` handles all of them with a work-stealing scheduler sized to the machine's cores, on io\_uring, kqueue or IOCP.
 
 - **Only binaries and test harnesses may install a root handler** for a standard effect.
-- Libraries may *intercept* standard effects (retries, tracing, rate limiting, mocks) but can never be the runtime.
+- Libraries may *intercept* standard effects (retries, tracing, rate limiting, mocks) but can never be the runtime. A handler intercepts if a clause performs the effect again, through a handler outside it. A handler that never does, for example a mock that answers each operation itself, is a root handler: only a binary or a test can install it (W0801).
 - The runtime handles only the standard effects. So `main` and each test must handle every other effect that they perform (W0805).
 
 Libraries are written against the effect interfaces and can't name a runtime, so the ecosystem can't split by runtime.

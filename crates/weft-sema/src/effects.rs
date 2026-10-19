@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::program::{ItemRef, ModId, Program};
+use crate::program::{EffectId, ItemRef, ModId, Program};
 
 /// The standard effects.
 pub const STD_EFFECTS: [&str; 10] = [
@@ -23,7 +23,7 @@ pub fn is_std(name: &str) -> bool {
 /// are aliases of standard effects. `io` expands to its members.
 pub fn canonical(prog: &Program, m: ModId, name: &str) -> Option<Vec<String>> {
     if let Some(ItemRef::Effect(e)) = prog.lookup(m, name) {
-        return Some(vec![prog.effects[e].name.clone()]);
+        return Some(vec![identity(prog, e)]);
     }
     std_alias(name)
 }
@@ -47,16 +47,6 @@ pub fn std_alias(name: &str) -> Option<Vec<String>> {
     Some(vec![std.to_string()])
 }
 
-/// Returns an effect name as a signature writes it: a standard effect by its
-/// lowercase alias (`Log` becomes `log`), a user effect by its own name.
-pub fn written_name(name: &str) -> String {
-    if is_std(name) {
-        name.to_lowercase()
-    } else {
-        name.to_string()
-    }
-}
-
 /// Returns the effects that a declared effect implies, itself included.
 ///
 /// Net, Fs, Clock and Blocking suspend, so they imply Async.
@@ -73,6 +63,57 @@ pub fn close(names: &BTreeSet<String>) -> BTreeSet<String> {
     names.iter().flat_map(|n| implied(n)).collect()
 }
 
+/// Returns the identity of effect `e` in the facts and the signatures.
+///
+/// A standard effect keeps its name. A user effect gets its module path and its
+/// name (`main.Log`, `json.parse.Log`). So a user effect can have the name of a
+/// standard effect, but not its identity.
+pub fn identity(prog: &Program, e: EffectId) -> String {
+    let def = &prog.effects[e];
+    if def.is_std {
+        return def.name.clone();
+    }
+    let mut path = vec![def.name.as_str()];
+    let mut at = Some(def.module);
+    while let Some(m) = at {
+        let md = &prog.mods[m];
+        match (md.parent, md.name.as_str()) {
+            (None, "") => path.push("main"),
+            (_, name) => path.push(name),
+        }
+        at = md.parent;
+    }
+    path.reverse();
+    path.join(".")
+}
+
+/// Finds an effect by its identity.
+pub fn by_identity(prog: &Program, id: &str) -> Option<EffectId> {
+    let name = shown(id);
+    (0..prog.effects.len())
+        .filter(|&e| prog.effects[e].name == name)
+        .find(|&e| identity(prog, e) == id)
+}
+
+/// Returns the name of an effect identity as the source writes it: `main.Log`
+/// is `Log`.
+pub fn shown(id: &str) -> &str {
+    id.rsplit('.').next().unwrap_or(id)
+}
+
+/// Returns an effect identity as a signature writes it.
+///
+/// A standard effect has its lowercase alias (`Log` is `log`). A user effect has
+/// its name (`main.Log2` is `Log2`). A bare effect name gives the same text as
+/// its identity.
+pub fn in_signature(id: &str) -> String {
+    if is_std(id) {
+        id.to_lowercase()
+    } else {
+        shown(id).to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -84,7 +125,10 @@ mod tests {
         assert!(c.contains("Async") && c.contains("Net") && c.contains("Log"));
         assert!(is_std("Par"));
         assert!(!is_std("Choice"));
-        assert_eq!(written_name("Log"), "log");
-        assert_eq!(written_name("Log2"), "Log2");
+        assert_eq!(in_signature("Log"), "log");
+        assert_eq!(in_signature("Log2"), "Log2");
+        assert_eq!(in_signature("main.Log2"), "Log2");
+        assert_eq!(in_signature("main.Log"), "Log");
+        assert_eq!(in_signature("json.sub.Note"), "Note");
     }
 }

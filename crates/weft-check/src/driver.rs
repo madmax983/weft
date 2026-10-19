@@ -45,8 +45,9 @@ pub fn check_analysis(analysis: Analysis, files: &[SourceFile], opts: Options) -
         let mut ds = diagnose(&b.facts, &r);
         if let Some(who) = started_body(&analysis, b) {
             let no_runtime = opts.no_runtime && b.func.is_some();
-            // The facts name an effect, so a user effect that has the name
-            // of a standard effect looks like the standard effect here.
+            // The facts name each effect by its identity. A user effect has a
+            // module path (`main.Log`), so it never passes `is_std`, also when
+            // it has the name of a standard effect.
             ds.extend(root_effects(&b.facts, &who, no_runtime, &effects::is_std));
         }
         for d in &mut ds {

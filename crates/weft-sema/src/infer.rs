@@ -15,12 +15,15 @@
 //! A signature also has parts that the body always infers, also for a function
 //! that states its effects: what it lends to its function parameters, what its
 //! returned function value does, which function parameters it stores, whether
-//! it can run a stored function value, what it gives to that value, and whether
-//! an unknown function value that it calls can resume more than once. Each new
-//! lowering replaces these parts, so they do not only grow. A part that is not
-//! known yet can be larger than its final value: for example, a callee with no
-//! inferred returned function value counts as unknown. So the inference does
-//! not join these parts. Instead, the parts of one function can change at most
+//! it can run a stored function value, what it gives to that value, whether an
+//! unknown function value that it calls can resume more than once, which
+//! function parameters a task of the body can call, which function parameters it
+//! gives to an operation of a handler of a caller, which effects its tasks perform
+//! through a handler of a caller, and which function parameters it can call more
+//! than once. Each new lowering replaces these parts, so they do not only grow. A
+//! part that is not known yet can be larger than its final value: for example, a
+//! callee with no inferred returned function value counts as unknown. So the
+//! inference does not join these parts. Instead, the parts of one function can change at most
 //! [`parts_limit`] times. After that, the inference keeps the parts of that
 //! function as they are, and it continues with the other functions. At the
 //! end, each function whose parts still change gets W0704. Its row can still
@@ -139,6 +142,11 @@ fn same_parts(a: &EffectSig, b: &EffectSig) -> bool {
         && a.reaches == b.reaches
         && a.reach_given == b.reach_given
         && a.multi == b.multi
+        && a.tasks == b.tasks
+        && a.op_fns == b.op_fns
+        && a.task_effects == b.task_effects
+        && a.repeats == b.repeats
+        && a.drops == b.drops
 }
 
 /// Returns the row of `row` with the other parts of `body`.
@@ -150,6 +158,11 @@ fn with_parts(row: &EffectSig, body: &EffectSig) -> EffectSig {
         reaches: body.reaches,
         reach_given: body.reach_given.clone(),
         multi: body.multi,
+        tasks: body.tasks.clone(),
+        op_fns: body.op_fns.clone(),
+        task_effects: body.task_effects.clone(),
+        repeats: body.repeats.clone(),
+        drops: body.drops.clone(),
         ..row.clone()
     }
 }

@@ -57,8 +57,8 @@ Status: accepted. Date: 2026-10-18.
   and types, and on the number of different steps in the places of the program. A row
   that grows past the bound shows a checker bug: the inference stops, and each
   function whose signature can still change gets W0706, an error.
-- The other parts of a signature (`lent`, `ret`, `stores`, `reach` and `multi`, see
-  below) are not part of the row. The body always infers them, also when the signature
+- The other parts of a signature (`lent`, `ret`, `stores`, `reach`, `multi` and `tasks`,
+  see below and ADR 0006, and `drops`, see ADR 0007) are not part of the row. The body always infers them, also when the signature
   states the row, and each new lowering replaces them. They do not only grow: a part
   that is not known yet can be larger than its final value. So the parts of one
   function can change at most 32 times and two more times for each function
@@ -72,8 +72,44 @@ Status: accepted. Date: 2026-10-18.
   live across such a node needs `on abort` (W0602).
 - `resume` consumes a `once` continuation (W0501). A `multi` operation needs `many` values
   around it (W0503).
-- A spawned task or fork branch cannot perform a user effect (W0314): the handler is on
-  another task's stack.
+- The abort rule and the multi rule apply at each suspension point (rule 1 of
+  `proofs/effects`): an operation, a call that reaches a handler, a node that runs a
+  clause, and a `resume`. A node that runs a clause can resume more than once if a
+  clause of the handler can (`clause_multi`). A `resume` runs the handled computation
+  and, at its operations, the clauses again. So it can resume more than once if the body
+  (`body_multi`) or a clause can. A `once` continuation is a `once` value (rule 2): a
+  clause cannot hold one across a `multi` operation, also not across a call that can
+  perform one.
+- A clause runs in the environment of its `handle` (rule 6): its operations go to the
+  handlers outside the `handle`. The value of a clause is the value of the `handle`, so
+  a function value or a reference in it joins the value of the body. A reference into a
+  reference parameter of the clause points into what each operation gets. A `resume`
+  gives its argument to the handled computation, so the argument cannot hold a
+  capability of a handler inside the clause (W0313). There the argument is the result
+  of the operation: the result carries the capabilities of the function values that a
+  `resume` gives (W0313 if it leaves an outer handler). The handler of an operation is
+  not installed in its clause. So a function value that performs through that handler
+  cannot go to the operation (W0313), also through a callee or a closure that gives
+  its function parameter to an operation. A signature has an `op_fns` part: the
+  function parameters that the body gives to an operation of a handler of a caller.
+- A handler intercepts its effect if a clause performs the effect again, through a
+  handler outside it (`clause_performs`, `forwards`). In a library, a handler of a
+  standard effect that never forwards is a root handler (W0801), also when the function
+  states the effect. The root handlers of `sim.run` get W0802 instead.
+- A spawned task or fork branch cannot reach a handler on the stack of another task
+  (W0314, ADR 0006).
+- A capability lives only while its handled body runs (rule (d) of `proofs/effects`). A
+  function value that performs through it cannot leave the body (W0313): not as the
+  value of the body (also inside a tuple, a struct, a container or another closure), not
+  through a local outside the body, and not to a place or code that can keep it: a
+  field or an element behind a reference, a callee that stores it or has no body, a
+  function value that the body does not know, a closure that stores its parameter, and
+  an operation of a handler outside the body. A struct or a container that a local of
+  the body owns can hold the value: it goes out of scope with the body. A callee with a
+  body can keep a function argument only in what its reference arguments point into
+  or in its result, so a `Box`, an `Rc` or a generic result holds it as a local of the
+  body does. A callee result that is not a function value, for example a tuple, holds
+  the function arguments of the call.
 - Extern functions in user code default to `blocking`.
 - `print` is a debug built-in with no effect.
 
@@ -163,11 +199,23 @@ Status: accepted. Date: 2026-10-18.
 
 ### Dependency authority
 
-- `weft deps` checks each function of a dependency, also a private one: the project can
-  call it. A function needs its stated effects and the effects that its body infers,
-  with the closures that it makes and returns.
-- Only the standard effects count. A user effect of a dependency needs no authority,
-  because the caller must handle it.
+- The project can name only the `pub` functions of a dependency, and a dependency only
+  the `pub` functions of another unit (W0101). `weft deps` checks each function of a
+  dependency, also a private one: a public function or a returned closure can run it. A
+  function needs its stated effects and the effects that its body infers, with the
+  closures that it makes and returns.
+- Authority names standard effects only. A user effect of a dependency needs a handler
+  of the caller, not authority.
+- Each effect has an identity in the facts and the signatures: a standard effect keeps
+  its name, and a user effect gets its module path and its name (`main.Log`,
+  `json.Log`). So a user effect with the name of a standard effect is a different
+  effect: for W0702, W0803, W0805, W0801, W0314 and the authority check. Diagnostics
+  show the written name (`effects::shown`, `effects::in_signature`). Some diagnostics
+  show the identity when the written name can also name another effect. W0702 does
+  this when another stated effect of the function has that name. W0803 and W0805 do
+  this when the name is the name of a standard effect, or of another effect that leaves
+  the same body. In a module that defines `Log`, `Log` names that effect and the alias
+  `log` names the standard one.
 
 ## Consequences
 
@@ -197,6 +245,17 @@ Status: accepted. Date: 2026-10-18.
     no effect row in a program that has a `multi` operation.
   - A function argument of an operation runs at the perform, with any place inside the
     reference arguments of the operation, also when the clause does not call it.
+  - W0313 counts each function value given to code that can keep it, also when that
+    code only calls it, and each part of a local of the body that can hold a function.
+    A local only adds capabilities: a local outside the body that gets a closure that
+    performs through the handler counts, also when it gets another value before the
+    body ends.
+  - The result of an operation carries what each `resume` of its handler gives, also a
+    `resume` of another operation of the handler.
+  - W0314 counts each function value given to a function value that the body does not
+    know (a function parameter): it can run the value as a task.
+  - A `resume` can resume more than once if a clause of its handler can, also when the
+    handled computation does not perform the operation again.
 - What stays open (not checked):
   - A function value inside a returned tuple or struct, or a closure that a callee
     makes and stores in a place of the caller: the caller does not see what a later
@@ -204,8 +263,16 @@ Status: accepted. Date: 2026-10-18.
     at the call of the maker.
   - A stored function value that runs inside a handler clause: the operation that runs
     the clause does not get it.
+  - W0313 does not follow a callee that copies a function value out of a reference
+    argument into another place, or a clause of a handler inside the body that keeps
+    its function parameter.
+  - W0314 does not follow a function value that a task gets from a place behind a
+    reference. W0313 rejects a store there of a value that performs through a local
+    handler.
+  - Only functions of a dependency are checked for `pub`, not its types and effects.
   - W0402 inside a higher-order function: a callback that gets a place of a `@ shared`
     parameter can mutate it. The caller sees the mutation on its own place only.
-  - A reference inside a payload that a `match` binds by value, and a parameter of a
-    function item that holds a reference inside an `Option` or a tuple, have no places
-    (the RT3 family).
+  - A reference that a function value gets inside another reference: the value sees
+    the outer place only (ADR 0003).
+  - The result of an operation that holds a reference has no places: the clauses
+    that give it are lowered after the handled body.

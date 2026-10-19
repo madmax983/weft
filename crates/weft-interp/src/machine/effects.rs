@@ -622,7 +622,10 @@ impl super::Machine<'_, '_> {
         if !e.is_std {
             return Err(self.fault(format!("no handler for `{ename}.{opname}` on this task")));
         }
-        if self.opts.no_runtime && self.sim.is_none() {
+        // A failure of a task goes to the task that joins it, also with no runtime.
+        let child = self.tasks.get(self.cur).is_some_and(|t| t.scope.is_some());
+        let to_joiner = ename == "Fail" && child;
+        if self.opts.no_runtime && self.sim.is_none() && !to_joiner {
             return Err(self.fault(format!("no runtime: nothing handles `{ename}.{opname}`")));
         }
         let arg = args.into_iter().next();

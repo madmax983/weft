@@ -2,9 +2,10 @@
 //!
 //! A project grants each dependency a set of standard effects. The code of
 //! the dependency must stay inside that set. This applies to the row of each
-//! function, also a private one: name resolution does not enforce `pub` yet,
-//! so the root can call it. It also applies to the effects that its body
-//! infers beyond its signature. It also applies to each effect that a closure
+//! function, also a private one: the root can call only a `pub` function
+//! (W0101), but a public function or a returned closure can run a private
+//! one. It also applies to the effects that its body infers beyond its
+//! signature. It also applies to each effect that a closure
 //! in a body performs, because the closure can leave the dependency as a
 //! value. Only the standard effects count. A user effect of a dependency
 //! needs no authority, because the caller must handle it. When the project
@@ -317,14 +318,17 @@ pub fn package_diags(pkg: &Package, a: &Analysis) -> Vec<Diagnostic> {
             out.push(d);
         }
         for (i, f) in a.program.fns.iter().enumerate() {
-            // The project can call every function of the dependency. A function
-            // needs what it states and what its body does, with the closures that
-            // the body makes and returns, also a closure that the body does not call.
+            // Each function of the dependency counts, also a private one: a public
+            // function or a returned closure can run it. A function needs what it
+            // states and what its body does, with the closures that the body makes
+            // and returns, also a closure that the body does not call.
             if a.program.mods[f.module].unit != dep.unit {
                 continue;
             }
-            // Only the standard effects count. The caller must handle a user
-            // effect, so authority does not grant it.
+            // Authority names standard effects only. A user effect of the
+            // dependency needs a handler of the caller, not authority. The facts
+            // name a user effect by its identity (`dep.Log`), so a user effect with
+            // the name of a standard effect does not count either.
             let mut performs = a.sigs[i].effects.named.clone();
             for b in a.bodies.iter().filter(|b| b.func == Some(i)) {
                 performs.extend(b.effects.named.iter().cloned());
@@ -339,7 +343,7 @@ pub fn package_diags(pkg: &Package, a: &Analysis) -> Vec<Diagnostic> {
             if extra.is_empty() {
                 continue;
             }
-            let wanted: Vec<String> = extra.iter().map(|e| effects::written_name(e)).collect();
+            let wanted: Vec<String> = extra.iter().map(|e| effects::in_signature(e)).collect();
             let mut d = Diagnostic::error(
                 "W0901",
                 format!(

@@ -1,0 +1,130 @@
+// A handler capability lives only while its handled body runs. A closure that
+// performs through it cannot leave the body (W0313): not as the result, also
+// inside a tuple, a struct or another closure, not through a local outside the
+// body, and not to a place or code that can keep it. A local of the body that
+// holds the closure goes out of scope with the body.
+effect Log { fn log(msg: String) }
+effect Reg { fn reg(f: fn()) }
+struct Cb { f: fn() }
+struct Holder { cb: fn() }
+
+fn store_it(h: &Holder, f: fn()) / mut(h) { h.cb = f }
+fn run_it(f: fn()) { f() }
+
+// The result of the handled body.
+fn as_result() {
+    let f = handle Log { fn log(m) { resume(()) } } in || log("late")   //~ W0313
+}
+fn in_tuple() {
+    let p = handle Log { fn log(m) { resume(()) } } in (|| log("late"), 1)   //~ W0313
+}
+fn in_struct() {
+    let b = handle Log { fn log(m) { resume(()) } } in Cb { f: || log("late") }   //~ W0313
+}
+fn in_closure() {
+    let g = handle Log { fn log(m) { resume(()) } } in || {   //~ W0313
+        let f = || log("late")
+        f()
+    }
+}
+fn in_container() {
+    let v = handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        let w = Vec.new()
+        w.push(|| log("late"))
+        w
+    }
+}
+
+// A local outside the body.
+fn to_outer_local() {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        f = || log("late")
+    }
+    f()
+}
+fn to_outer_container() {
+    let v = Vec.new()
+    handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        v.push(|| log("late"))
+    }
+}
+fn struct_to_outer_local() {
+    let out = Cb { f: || print(0) }
+    handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        let cb = Cb { f: || log("late") }
+        out = cb
+    }
+}
+fn capture_to_outer_local() {
+    let out = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        let cb = Cb { f: || log("late") }
+        out = || {
+            let g = cb.f
+            g()
+        }
+    }
+}
+fn in_loop(n: u64) {
+    let out = Cb { f: || print(0) }
+    handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        let cb = Cb { f: || print(1) }
+        let i = 0
+        while i < n {
+            out = cb
+            cb = Cb { f: || log("late") }
+            i += 1
+        }
+    }
+}
+
+// A place or code that can keep it.
+fn to_field(h: &Holder) / mut(h) {
+    handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        h.cb = || log("late")
+    }
+}
+fn to_storing_callee(h: &Holder) / mut(h) {
+    handle Log { fn log(m) { resume(()) } } in store_it(h, || log("late"))   //~ W0313
+}
+// `k` can also run the closure as a task (W0314).
+fn to_parameter(k: fn(fn())) {
+    handle Log { fn log(m) { resume(()) } } in k(|| log("late"))   //~ W0313 W0314
+}
+fn to_outer_operation() / Reg {
+    handle Log { fn log(m) { resume(()) } } in reg(|| log("late"))   //~ W0313
+}
+fn to_storing_closure() {
+    let v = Vec.new()
+    let keep = |g: fn()| v.push(g)
+    handle Log { fn log(m) { resume(()) } } in keep(|| log("late"))   //~ W0313
+}
+
+// Controls: the closure stays in the body, or performs through an outer handler.
+fn stays_inside() {
+    handle Log { fn log(m) { resume(()) } } in {
+        let f = || log("x")
+        f()
+        run_it(|| log("y"))
+        let cb = Cb { f: || log("z") }
+        let g = cb.f
+        g()
+        let v = Vec.new()
+        v.push(|| log("w"))
+        let a = [|| log("v")]
+    }
+}
+fn outer_capability() / Log {
+    let f = || print(0)
+    handle Reg { fn reg(g: fn()) { resume(()) } } in {
+        f = || log("ok")
+        reg(|| log("ok"))
+    }
+    f()
+}
+fn inner_operation() {
+    handle Log { fn log(m) { resume(()) } } in {
+        handle Reg { fn reg(g: fn()) { g(); resume(()) } } in reg(|| log("x"))
+    }
+}

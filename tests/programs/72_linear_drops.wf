@@ -1,0 +1,306 @@
+// A linear value cannot go away silently. A pattern `_`, a call that only reads
+// it, a new value of its place and a place whose type is not linear drop it.
+
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+
+fn let_wild() {
+    let _ = begin()   //~ W0601
+}
+fn let_wild_local() {
+    let tx = begin()
+    let _ = tx   //~ W0601
+}
+fn let_bound() {
+    let t = begin()
+    rollback(t)
+}
+fn tuple_wild() {
+    let (a, _) = (begin(), begin())   //~ W0601
+    rollback(a)
+}
+fn tuple_both() {
+    let (a, b) = (begin(), begin())
+    rollback(a)
+    rollback(b)
+}
+fn printed() {
+    print(begin())   //~ W0601
+}
+fn printed_field() {
+    let tx = begin()
+    print(tx.id)
+    rollback(tx)
+}
+
+// A `match` arm that does not bind a linear part drops it.
+fn match_wild() {
+    match begin() { _ => {} }   //~ W0601
+}
+fn match_bound() {
+    match begin() { t => rollback(t) }
+}
+fn match_part_wild() {
+    match (begin(), 1) {
+        (_, n) => print(n),   //~ W0601
+    }
+}
+fn match_payload_wild(o: Option<Tx>) {   //~ W0601
+    match o {
+        Some(_) => {},
+        None => {}
+    }
+}
+fn match_payload_bound(o: Option<Tx>) {
+    match o {
+        Some(t) => rollback(t),
+        None => {}
+    }
+}
+fn match_temp_option(v: &Vec<Tx>) / mut(v) {
+    match v.pop() {
+        Some(t) => rollback(t),
+        None => {}
+    }
+}
+fn match_temp_option_wild(v: &Vec<Tx>) / mut(v) {
+    match v.pop() {
+        Some(_) => {},   //~ W0601
+        None => {}
+    }
+}
+
+// A new value of a place drops the old value.
+struct Pair { tx: Tx, n: u64 }
+fn field_overwrite() {
+    let p = Pair { tx: begin(), n: 1 }
+    p.tx = begin()   //~ W0601
+    let Pair(t, n) = p
+    rollback(t)
+}
+fn field_plain_write() {
+    let p = Pair { tx: begin(), n: 1 }
+    p.n = 2
+    let Pair(t, n) = p
+    rollback(t)
+}
+fn field_through_ref(p: &Pair) / mut(p.tx) {
+    p.tx = begin()   //~ W0601
+}
+fn element_overwrite(v: &Vec<Tx>) / mut(v[]) {
+    v[0] = begin()   //~ W0601
+}
+
+// A new value inside a closure or a clause overwrites the captured value.
+fn closure_overwrite() {
+    let tx = begin()
+    let f = || { tx = begin() }   //~ W0601
+    f()
+    rollback(tx)
+}
+fn closure_reads() {
+    let tx = begin()
+    let f = || print(tx.id)
+    f()
+    rollback(tx)
+}
+effect Note { fn note(n: u64) }
+fn clause_overwrite() {
+    let tx = begin()
+    handle Note { fn note(n) { tx = begin()   //~ W0601
+ resume(()) } } in note(1)
+    rollback(tx)
+}
+fn clause_reads() {
+    let tx = begin()
+    handle Note { fn note(n) { print(tx.id)
+ resume(()) } } in note(1)
+    rollback(tx)
+}
+
+// A place whose type is not linear cannot keep a linear closure.
+struct Cb { f: fn() }
+fn closure_in_field() {
+    let tx = begin()
+    let c = Cb { f: || rollback(tx) }   //~ W0601
+    let g = c.f
+    g()
+}
+struct Holder<T> { x: T }
+fn closure_in_generic() {
+    let tx = begin()
+    let h = Holder { x: || rollback(tx) }
+    let Holder(g) = h
+    g()
+}
+
+// A generic function does not know that its value is linear: it can drop it.
+fn drop_it<T>(x: T) {}
+fn keep_it<T>(x: T) -> T { x }
+fn pick<T>(a: T, b: T) -> T { a }
+fn generic_drop() {
+    drop_it(begin())   //~ W0601
+}
+fn generic_pick() {
+    let t = pick(begin(), begin())   //~ W0601
+    rollback(t)
+}
+fn generic_keep() {
+    let t = keep_it(begin())
+    rollback(t)
+}
+fn drop_through<T>(x: T) { drop_it(x) }
+fn generic_drop_through() {
+    drop_through(begin())   //~ W0601
+}
+
+// A temporary that a call, a field, a borrow or a comparison only reads goes away.
+impl Tx {
+    fn show(self) { print(self.id) }
+}
+fn receiver_temp() {
+    begin().show()   //~ W0601
+}
+fn receiver_local() {
+    let t = begin()
+    t.show()
+    rollback(t)
+}
+fn field_of_temp() {
+    let n = begin().id   //~ W0601
+}
+fn borrow_temp() {
+    let r = &begin()   //~ W0601
+}
+fn compared() -> bool {
+    begin() == begin()   //~ W0601
+}
+
+// A generic body treats a value of a type parameter as linear where a value can
+// go away. The type parameters that it can drop are in its signature (`drops`).
+struct Wrap<T> { x: T }
+fn wrap_drop<T>(x: T) { let o = Some(x) }
+fn tuple_drop<T>(x: T) { let p = (x, 1) }
+fn closure_drop<T>(x: T) { let c = || { let y = x } }
+fn local_drop<T>(x: T) { let y = x }
+fn vec_drop<T>(x: T) { let v = Vec.new()
+ v.push(x) }
+fn overwrite<T>(x: T, y: T) -> T { let z = x
+ z = y
+ z }
+fn put<T>(w: &Wrap<T>, y: T) / mut(w.x) { w.x = y }
+fn holder_drops() {
+    wrap_drop(begin())   //~ W0601
+    tuple_drop(begin())   //~ W0601
+    closure_drop(begin())   //~ W0601
+    local_drop(begin())   //~ W0601
+    vec_drop(begin())   //~ W0601
+}
+fn overwrite_drops() {
+    let t = overwrite(begin(), begin())   //~ W0601
+    rollback(t)
+}
+fn put_drops() {
+    let w = Wrap { x: begin() }
+    put(&w, begin())   //~ W0601
+    let Wrap(t) = w
+    rollback(t)
+}
+fn plain_through_generics() {
+    wrap_drop(1)
+    local_drop(2)
+    let n = overwrite(1, 2)
+}
+
+// A generic body that consumes the value in each branch drops nothing.
+fn opt_take<T>(o: Option<T>, f: fn(T)) {
+    match o { Some(x) => f(x), None => {} }
+}
+fn keep_branch<T>(x: T, c: bool) -> T { if c { x } else { x } }
+fn keep_match<T>(x: T, n: u64) -> T { match n { 0 => x, _ => x } }
+fn generic_consumes() {
+    opt_take(Some(begin()), rollback)
+    rollback(keep_branch(begin(), true))
+    rollback(keep_match(begin(), 1))
+}
+
+// The flags of a value come from the type that the whole body infers.
+fn late_wild() {
+    let v = Vec.new()
+    let _ = v.pop()   //~ W0601
+    v.push(begin())
+    match v.pop() { Some(t) => rollback(t), None => {} }
+}   //~ W0601
+fn untyped_param() {
+    let f = |y| { let z = y
+ rollback(z) }
+    f(begin())
+}
+fn untyped_param_result() {
+    let f = |y| { let z = y
+ z }
+    rollback(f(begin()))
+}
+
+// A value of a branch moves into the value of the `if` or the `match`.
+fn branch_value(c: bool) {
+    let a = begin()
+    let x = if c { a } else { rollback(a)
+ begin() }
+    rollback(x)
+}
+fn branch_value_lost(c: bool) {
+    let a = begin()
+    let b = begin()
+    let x = if c { a } else { b }
+    rollback(x)
+}   //~ W0601 W0601
+fn arm_value(n: u64) {
+    let a = begin()
+    let x = match n { 0 => a, _ => { rollback(a)
+ begin() } }
+    rollback(x)
+}
+fn arm_value_lost(n: u64) {
+    let a = begin()
+    let x = match n { 0 => a, _ => begin() }
+    rollback(x)
+}   //~ W0601
+
+// A linear operand is on its way while the later operands run: an abort there
+// loses it unless its type has `on abort`.
+linear struct Tok { id: u64 }
+fn spend(t: Tok) { let Tok(i) = t }
+fn mint() -> Tok { Tok { id: 1 } }
+fn risky_tok() -> Tok / fail { fail("no")
+ mint() }
+fn spend_pair(a: Tok, b: Tok) { spend(a)
+ spend(b) }
+struct Two { a: Tok, b: Tok }
+fn arg_across_abort() / fail {
+    spend_pair(mint(), risky_tok())   //~ W0602
+}
+fn part_across_abort() / fail {
+    let p = (mint(), risky_tok())   //~ W0602
+    let (a, b) = p
+    spend(a)
+    spend(b)
+}
+fn field_across_abort() / fail {
+    let p = Two { a: mint(), b: risky_tok() }   //~ W0602
+    let Two(a, b) = p
+    spend(a)
+    spend(b)
+}
+fn risky_tx() -> Tx / fail { fail("no")
+ begin() }
+fn pair(a: Tx, b: Tx) { rollback(a)
+ rollback(b) }
+fn guarded_across_abort() / fail {
+    pair(begin(), risky_tx())
+}
+fn abort_first() / fail {
+    spend_pair(risky_tok(), mint())
+}

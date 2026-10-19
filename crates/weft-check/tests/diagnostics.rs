@@ -175,4 +175,58 @@ fn w0805_needs_a_handler_for_each_effect_that_is_not_standard() {
     // Another function may let the effect escape.
     let src = "effect Note { fn note(m: u64) }\nfn other() { note(1) }\n";
     assert_eq!(diags(src, "W0805"), Vec::new());
+    // A user effect with the name of a standard effect shows its identity.
+    let src = "effect Log { fn log(m: u64) }\nfn main() { log(1) }\n";
+    let d = diags(src, "W0805");
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(
+        d[0].message,
+        "`main` performs `main.Log`, and no handler handles it"
+    );
+    // Two user effects with one name: each error shows the identity.
+    let src = "effect Note { fn note(m: u64) }\nmod a {\n    pub effect Note { fn note(m: u64) }\n    pub fn f() / Note { note(2) }\n}\nfn main() {\n    note(1)\n    a.f()\n}\n";
+    let d = diags(src, "W0805");
+    let messages: Vec<&str> = d.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(
+        messages,
+        [
+            "`main` performs `main.Note`, and no handler handles it",
+            "`main` performs `main.a.Note`, and no handler handles it"
+        ]
+    );
+    assert_eq!(
+        notes(&d[1]),
+        ["the runtime handles only the standard effects; handle `main.a.Note` in `main`"]
+    );
+}
+
+#[test]
+fn w0803_and_w0805_tell_a_user_log_from_the_standard_log() {
+    // With no runtime, `main` must handle the standard `Log` (W0803) and the
+    // user `Log` (W0805). The user effect shows its identity.
+    let src =
+        "effect Log { fn log(m: u64) }\nfn main() / log {\n    log(1)\n    log.info(\"x\")\n}\n";
+    let opts = Options {
+        no_runtime: true,
+        ..Options::default()
+    };
+    let d: Vec<Diagnostic> = check_source("t.wf", src, opts)
+        .diags
+        .into_iter()
+        .filter(|d| d.code == "W0803" || d.code == "W0805")
+        .collect();
+    let messages: Vec<(&str, &str)> = d
+        .iter()
+        .map(|d| (d.code.as_str(), d.message.as_str()))
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            (
+                "W0805",
+                "`main` performs `main.Log`, and no handler handles it"
+            ),
+            ("W0803", "with no runtime, `main` must handle `Log` itself")
+        ]
+    );
 }

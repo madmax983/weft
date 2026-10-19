@@ -130,6 +130,8 @@ pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
     rel2!("uses", f.uses);
     rel2!("moved_at", f.moved_at);
     rel2!("scope_end", f.scope_end);
+    rel2!("overwrites", f.overwrites);
+    rel2!("unset_at", f.unset_at);
     rel2!("owner", f.owner);
     rel2!("moved_part", f.moved_part);
     rel2!("spawned_at", f.spawned_at);
@@ -147,6 +149,16 @@ pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
     }
     for n in &f.multi_at {
         emit("multi_at", &[s(n)]);
+    }
+    for c in &f.clause_multi {
+        emit("clause_multi", &[s(c)]);
+    }
+    for c in &f.body_multi {
+        emit("body_multi", &[s(c)]);
+    }
+    rel2!("resumes_at", f.resumes_at);
+    for (h, e) in &f.clause_performs {
+        emit("clause_performs", &[s(h), s(e)]);
     }
     for d in &f.declared_mut {
         emit("declared_mut", &[s(d)]);
@@ -301,6 +313,7 @@ pub fn violations(out: &Output) -> Result<Violations, SpecError> {
     Ok(Violations {
         error: read(out, "error", vn)?,
         use_after_move: read(out, "use_after_move", vn)?,
+        use_before_set: read(out, "use_before_set", vn)?,
         moved_immovable: read(out, "moved_immovable", vn)?,
         unconsumed: read(out, "unconsumed", vn)?,
         overwritten: read(out, "overwritten", vn)?,
@@ -578,9 +591,10 @@ fn render(d: &Derivation, f: &FnFacts, line_of: &dyn Fn(u32) -> usize, out: &mut
 }
 
 /// The violation relations of the spec, in report order.
-pub const VIOLATION_RELATIONS: [&str; 15] = [
+pub const VIOLATION_RELATIONS: [&str; 16] = [
     "error",
     "use_after_move",
+    "use_before_set",
     "moved_immovable",
     "unconsumed",
     "overwritten",

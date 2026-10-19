@@ -320,9 +320,7 @@ impl<'a> Compiler<'a> {
                         if names.len() != 1 {
                             return None;
                         }
-                        self.prog
-                            .effect_named(PRELUDE, &names[0])
-                            .map(PathRef::Effect)
+                        effects::by_identity(self.prog, &names[0]).map(PathRef::Effect)
                     }
                 }
             }
@@ -373,10 +371,12 @@ impl<'a> Compiler<'a> {
         found
     }
 
+    /// Finds the effect that a written name names. `canonical` gives an identity:
+    /// in a module that defines `Log`, `log` is still the standard effect.
     fn effect_of(&self, name: &str) -> Option<EffectId> {
         let m = self.module();
         match effects::canonical(self.prog, m, name) {
-            Some(names) if names.len() == 1 => self.prog.effect_named(m, &names[0]),
+            Some(names) if names.len() == 1 => effects::by_identity(self.prog, &names[0]),
             _ => None,
         }
     }
@@ -1109,6 +1109,47 @@ impl<'a> Compiler<'a> {
     // Calls
     // -----------------------------------------------------------------------
 
+    /// Pushes the arguments of operation `op` of effect `e` in parameter order. A
+    /// named argument goes to the parameter with its name, and a trailing block to
+    /// the last free parameter, as in semantic analysis.
+    fn op_args(&mut self, e: EffectId, op: usize, args: &[Arg], trailing: Option<&Expr>) -> u32 {
+        let names: Vec<String> = self.prog.effects[e]
+            .ops
+            .get(op)
+            .map(|o| o.param_names.clone())
+            .unwrap_or_default();
+        let n = names.len();
+        let mut slots: Vec<Option<&Expr>> = vec![None; n];
+        let mut pos = 0;
+        for a in args {
+            let idx = if let Some(nm) = &a.name {
+                names.iter().position(|p| *p == nm.name)
+            } else {
+                while pos < n && slots[pos].is_some() {
+                    pos += 1;
+                }
+                Some(pos)
+            };
+            if let Some(i) = idx.filter(|&i| i < n) {
+                slots[i] = Some(&a.value);
+            }
+        }
+        if let Some(t) = trailing {
+            if let Some(i) = slots.iter().rposition(Option::is_none) {
+                slots[i] = Some(t);
+            }
+        }
+        for slot in &slots {
+            match slot {
+                Some(x) => self.fn_arg(x),
+                None => {
+                    self.emit(fault("an operation misses an argument"));
+                }
+            }
+        }
+        u32_of(n)
+    }
+
     fn args(&mut self, args: &[Arg], trailing: Option<&Expr>) -> u32 {
         for a in args {
             self.expr(&a.value);
@@ -1176,7 +1217,7 @@ impl<'a> Compiler<'a> {
             return;
         }
         if let Some((e, op)) = self.find_op(&id.name) {
-            let n = self.args(args, trailing);
+            let n = self.op_args(e, op, args, trailing);
             self.set_span(span);
             self.emit(Op::Perform { effect: e, op, n });
             return;
@@ -1281,7 +1322,7 @@ impl<'a> Compiler<'a> {
                     .position(|o| o.name == method.name)
                 {
                     Some(op) => {
-                        let n = self.args(args, trailing);
+                        let n = self.op_args(e, op, args, trailing);
                         self.set_span(span);
                         self.emit(Op::Perform { effect: e, op, n });
                     }

@@ -120,7 +120,7 @@ fn deps_rejects_overreaching_dependency() {
 
 #[test]
 fn authority_covers_private_dependency_functions() {
-    // The root can call a private function of a dependency, so it counts too.
+    // A private function of a dependency counts too: a public one can call it.
     let pkg = scratch(
         "private_authority",
         &[
@@ -130,7 +130,7 @@ fn authority_covers_private_dependency_functions() {
             ),
             (
                 "src/main.wf",
-                "fn main(env: Env) / io, net {\n    json.phone_home(\"x\")\n    print(json.parse(\"[1]\"))\n}\n",
+                "fn main(env: Env) / io, net {\n    print(json.parse(\"[1]\"))\n}\n",
             ),
             (
                 "deps/json/src/lib.wf",
@@ -815,6 +815,6 @@ fn deps_sees_effects_that_signatures_hide() {
         "{}",
         out.text
     );
-    // A private function counts: the project can call it.
+    // A private function counts: a public function can call it.
     assert!(out.text.contains("function `helper` needs"), "{}", out.text);
 }

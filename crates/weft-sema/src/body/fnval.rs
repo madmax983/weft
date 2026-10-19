@@ -12,8 +12,8 @@
 use std::collections::BTreeSet;
 
 use super::{
-    CapId, FnId, FnTy, Lower, NodeId, PlaceId, Rc, RootKind, SigRoot, Summary, Ty, Val, VarId,
-    VarKind,
+    CapId, FnId, FnTy, Lower, NodeId, PlaceId, Rc, RootKind, SigRoot, Summary, TaskId, Ty, Val,
+    VarId, VarKind,
 };
 use crate::program::{EffectDef, GivenPlace, LentPlace, RetFn, SigPlace};
 
@@ -291,6 +291,8 @@ impl Lower<'_> {
     /// Joins the values of two branches. Function values inside tuples and type
     /// arguments join too.
     pub(super) fn join_val(&mut self, a: &Val, b: &Val) -> Val {
+        let mut caps = self.val_caps(a);
+        caps.extend(self.val_caps(b));
         if let (Ty::Fn(fa), Ty::Fn(fb)) = (self.inf.shallow(&a.ty), self.inf.shallow(&b.ty)) {
             let ia = (self.fn_info(a), fa.effects.clone());
             let ib = (self.fn_info(b), fb.effects.clone());
@@ -304,6 +306,7 @@ impl Lower<'_> {
                 summary: info.summary,
                 item: info.item,
                 fn_param: info.param,
+                caps,
                 ..Val::default()
             };
         }
@@ -320,7 +323,7 @@ impl Lower<'_> {
             }
             _ => None,
         };
-        let ty = if self.has_fn(&a.ty, 0) || self.has_fn(&b.ty, 0) {
+        let ty = if self.has_fn(&a.ty) || self.has_fn(&b.ty) {
             self.join_ty(&a.ty, &b.ty)
         } else {
             a.ty.clone()
@@ -328,23 +331,15 @@ impl Lower<'_> {
         Val {
             ty,
             parts,
+            caps,
+            task: a.task.or(b.task),
             ..Val::default()
         }
     }
 
     /// Returns true if a type can hold a function value.
-    pub(super) fn has_fn(&self, t: &Ty, depth: usize) -> bool {
-        if depth > 6 {
-            return false;
-        }
-        match self.inf.shallow(t) {
-            Ty::Fn(_) => true,
-            Ty::Ref(t) | Ty::Slice(t) => self.has_fn(&t, depth + 1),
-            t => self
-                .adt_fields(&t)
-                .iter()
-                .any(|f| self.has_fn(f, depth + 1)),
-        }
+    pub(super) fn has_fn(&self, t: &Ty) -> bool {
+        self.ty_has(t, crate::props::Prop::Fns)
     }
 
     /// Joins the function values inside two types of the same shape.
@@ -569,6 +564,46 @@ impl Lower<'_> {
             self.facts.scope_end.push((v, n));
         }
         self.sum().dropped.extend(sum.dropped.iter().copied());
+        // The tasks that the body spawns into an outer scope start here. They
+        // start where the body around this node runs too, if their scope is
+        // outside that body.
+        for &t in &sum.spawns {
+            self.facts.spawned_at.push((t, n));
+        }
+        let outside = self.spawns_outside(&sum.spawns);
+        self.sum().spawns.extend(outside);
+        self.sum().own_caps.extend(sum.own_caps.iter().copied());
+    }
+
+    /// A callee gets function value `info` at node `n` and can call what a call of
+    /// it returns: the tasks that the result spawns start at `n`.
+    pub(super) fn start_ret_spawns(&mut self, n: NodeId, info: &FnInfo) {
+        let Some(s) = info.summary else {
+            return;
+        };
+        let tasks = self.closures[s].ret_spawns.clone();
+        for &t in &tasks {
+            self.facts.spawned_at.push((t, n));
+        }
+        let outside = self.spawns_outside(&tasks);
+        self.sum().spawns.extend(outside);
+    }
+
+    /// Returns the tasks of `spawns` whose scope is outside the closure or the
+    /// clause around the current node: they start where that body runs.
+    pub(super) fn spawns_outside(&self, spawns: &BTreeSet<TaskId>) -> Vec<TaskId> {
+        let Some(bi) = self.frames.iter().rposition(|f| f.barrier.is_some()) else {
+            return Vec::new();
+        };
+        spawns
+            .iter()
+            .copied()
+            .filter(|t| {
+                self.task_scope
+                    .get(t)
+                    .is_some_and(|&binder| self.local_frame(binder) < bi)
+            })
+            .collect()
     }
 
     /// A function item runs at node `n` with the places `given`.
@@ -579,8 +614,13 @@ impl Lower<'_> {
             let mut places = Vec::new();
             match m.root {
                 SigRoot::Param(i) => {
-                    // A by-value parameter is a copy: the callee mutates its own value.
-                    if !sig.params.get(i).is_some_and(|p| p.ty.is_ref()) {
+                    // A by-value parameter is a copy: the callee mutates its own
+                    // value. One that holds references can mutate what they point into.
+                    if !sig
+                        .params
+                        .get(i)
+                        .is_some_and(|p| p.ty.is_ref() || self.byval_refs(&p.ty))
+                    {
                         continue;
                     }
                     for g in given {
@@ -618,6 +658,8 @@ impl Lower<'_> {
         if !sig.effects.named.is_empty() || !sig.effects.passthrough.is_empty() {
             self.abortive(n);
         }
+        let span = self.facts.node(n).span;
+        self.check_callee_tasks(f, span);
     }
 
     /// A call of function parameter `p` of the body at summary index `d`: the
@@ -626,6 +668,7 @@ impl Lower<'_> {
         if d == 0 {
             self.sum().passthrough.insert(p);
         }
+        self.note_param_run((d, p));
         for g in given {
             self.note_lent((d, p), g);
             self.lend(n, g.place, g.root);
@@ -715,7 +758,7 @@ impl Lower<'_> {
 
     /// Returns true if an operation of effect `e` takes a reference.
     pub(super) fn effect_lends(&self, e: &str) -> bool {
-        self.prog.effect_named(self.module, e).is_some_and(|id| {
+        crate::effects::by_identity(self.prog, e).is_some_and(|id| {
             self.prog.effects[id]
                 .ops
                 .iter()
@@ -761,8 +804,14 @@ impl Lower<'_> {
             Some((0, p)) => {
                 self.sums[0].stores.insert(p);
             }
-            // A closure parameter is unknown outside the closure.
-            Some(_) => info.param = None,
+            // A closure parameter is unknown outside the closure. The closure
+            // stores it: a caller gives the closure a value that it keeps.
+            Some((d, p)) => {
+                if let Some(s) = self.sums.get_mut(d) {
+                    s.stores.insert(p);
+                }
+                info.param = None;
+            }
             None => {}
         }
         if info == FnInfo::default() {
@@ -848,6 +897,7 @@ impl Lower<'_> {
             }
             for st in &escaped {
                 self.apply_value(r.node, &st.info, st.row.as_deref(), 800, &r.given);
+                self.note_repeat(r.node, &st.info, false);
                 // The value uses what it captures, and it points into it as an argument does.
                 if let Some(v) = st.var {
                     self.facts.uses.push((v, r.node));

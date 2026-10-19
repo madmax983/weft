@@ -1,10 +1,11 @@
 //! Functions, blocks, statements and patterns.
 
 use super::{
-    ast, block_tail, effects, AssignOp, Block, EffectSig, ExprKind, FnId, Frame, LVal, LoopFrame,
+    ast, block_tail, effects, AssignOp, Block, EffectSig, ExprKind, FnId, Jump, LVal, LoopFrame,
     Lower, Lowered, NodeId, Pattern, PlaceId, RootKind, SigPlace, SigRoot, SigStep, Span, StepKind,
     Stmt, StmtKind, Ty, Val, VarId, VarKind,
 };
+use crate::props::Prop;
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
@@ -14,6 +15,7 @@ impl Lower<'_> {
         let def = &self.prog.fns[id];
         let sig = self.sigs[id].clone();
         self.self_fn = Some(id);
+        self.generic = !sig.generics.is_empty();
         self.ret_ty = sig.ret.clone();
         let Some(body) = def.decl.body.clone() else {
             return self.finish(EffectSig::default());
@@ -33,7 +35,13 @@ impl Lower<'_> {
             } else {
                 let r = self.facts.add_root(&p.name, RootKind::Local);
                 self.set_root(l, r);
-                vec![r]
+                // A by-value parameter that holds references, such as an
+                // `Option<&T>`, points into places of the caller.
+                if self.byval_refs(&p.ty) {
+                    vec![r, self.facts.add_root(&p.name, RootKind::Param)]
+                } else {
+                    vec![r]
+                }
             };
             bases.push(base);
         }
@@ -47,7 +55,7 @@ impl Lower<'_> {
             let refs = if p.ty.is_ref() {
                 bases[i].clone()
             } else {
-                Vec::new()
+                bases[i].get(1).copied().into_iter().collect()
             };
             let v = Val {
                 ty: p.ty.clone(),
@@ -70,10 +78,8 @@ impl Lower<'_> {
             self.facts.declared_effect = effects::close(&sig.effects.named).into_iter().collect();
         }
         let exit = self.facts.add_node(def.span, "exit", String::new());
-        self.frames.push(Frame {
-            names: Vec::new(),
-            barrier: None,
-        });
+        self.jumps.push(Jump::Function { exit: Some(exit) });
+        self.push_frame(None);
         // The temporaries of the value of the body live until the return.
         self.open_stmt();
         let v = self.block_inner(&body);
@@ -88,13 +94,13 @@ impl Lower<'_> {
             self.facts.cfg_edge.push((c, exit));
         }
         self.cur = Some(exit);
-        self.frames.pop();
+        self.pop_frame();
         // Parameters go out of scope at the exit.
         for &l in &param_locals {
             let var = self.locals[l].var;
             self.facts.scope_end.push((var, exit));
         }
-        let _ = &self.loops;
+        self.jumps.pop();
         self.apply_stored();
         let eff = self.summary_to_sig(&bases);
         let fdef = &self.prog.fns[id];
@@ -115,6 +121,9 @@ impl Lower<'_> {
     /// Lowers a test body. Tests have no signature and may install root handlers.
     pub fn lower_test(mut self, body: &Block, span: Span) -> Lowered {
         self.in_test = true;
+        // A test is a harness: it can install root handlers, also in a library (W0801).
+        self.facts.library = false;
+        self.jumps.push(Jump::Function { exit: None });
         let _ = self.start(span, "test");
         self.open_stmt();
         let v = self.block(body);
@@ -126,25 +135,51 @@ impl Lower<'_> {
         self.finish(eff)
     }
 
-    fn finish(mut self, eff: EffectSig) -> Lowered {
-        // Show the types of the locals as the whole body inferred them. A local
-        // that gets a function type after its `let` can be called too.
+    fn finish(mut self, mut eff: EffectSig) -> Lowered {
+        self.check_int_lits();
+        self.settle_moves();
+        // The types of the locals as the whole body inferred them. A local can get
+        // its type after its `let`: `let v = Vec.new()` with a later `v.push(x)`.
+        // So its flags come from the inferred type too. A local that gets a
+        // function type after its `let` is `callable`. A hidden variable gets its
+        // flags from its inferred type in the same way.
+        let mut maybe: Vec<(VarId, Ty)> = Vec::new();
         for i in 0..self.locals.len() {
-            let ty = self.locals[i].ty.clone();
-            let shown = self.show(&ty);
-            let callable = matches!(self.inf.resolve(&ty), Ty::Fn(_));
+            let t = self.inf.resolve(&self.locals[i].ty);
+            let shown = self.show(&t);
+            let has = |me: &Self, p: Prop| me.local_has_strict(i, p);
+            let (linear, no_abort) = (has(&self, Prop::Linear), has(&self, Prop::NoOnAbort));
+            let (immovable, nonportable) =
+                (has(&self, Prop::Immovable), has(&self, Prop::Nonportable));
+            if self.generic && !linear && self.local_has(i, Prop::Linear) {
+                maybe.push((self.locals[i].var, t.clone()));
+            }
+            self.mark_modes(i);
             let var = self.locals[i].var;
-            let info = &mut self.facts.vars[var.index()];
-            info.ty = shown;
-            info.callable |= callable;
+            let v = &mut self.facts.vars[var.index()];
+            v.ty = shown;
+            v.linear = linear;
+            v.has_on_abort = !no_abort;
+            v.immovable |= immovable;
+            v.nonportable |= nonportable;
+            v.once |= v.linear;
+            v.callable |= matches!(t, Ty::Fn(_));
         }
-        let declared: BTreeSet<String> = if self.facts.has_signature {
-            self.facts.declared_effect.iter().cloned().collect()
-        } else {
-            effects::close(&eff.named)
-        };
-        for h in &mut self.facts.handlers {
-            h.forwards = h.forwards || declared.contains(&h.effect);
+        for (var, ty) in std::mem::take(&mut self.late_vars) {
+            let t = self.inf.resolve(&ty);
+            let linear = self.ty_has_strict(&t, Prop::Linear);
+            if self.generic && !linear && self.is_linear(&t) {
+                maybe.push((var, t.clone()));
+            }
+            let has_on_abort = self.has_on_abort(&t);
+            let v = &mut self.facts.vars[var.index()];
+            v.linear = linear;
+            v.has_on_abort = has_on_abort;
+            v.once |= linear;
+            v.callable |= matches!(t, Ty::Fn(_));
+        }
+        if self.generic {
+            eff.drops = self.dropped_params(&maybe);
         }
         self.facts.normalize();
         let unit = self.prog.mods[self.module].unit;
@@ -158,6 +193,47 @@ impl Lower<'_> {
         }
     }
 
+    /// Drops each move of `Lower::tentative` whose value the body infers to be
+    /// plain data: it is a copy.
+    fn settle_moves(&mut self) {
+        let copies: BTreeSet<(VarId, NodeId)> = std::mem::take(&mut self.tentative)
+            .into_iter()
+            .filter(|(_, _, t)| self.is_copy(&self.inf.resolve(t)))
+            .map(|(v, n, _)| (v, n))
+            .collect();
+        if copies.is_empty() {
+            return;
+        }
+        let nodes: BTreeSet<NodeId> = copies.iter().map(|&(_, n)| n).collect();
+        self.facts.moved_at.retain(|m| !copies.contains(m));
+        self.facts.moved_part.retain(|(_, n)| !nodes.contains(n));
+    }
+
+    /// Reports W0102 for an integer literal that does not fit the type that the
+    /// body infers for it. A literal with no other type is an `i64`.
+    fn check_int_lits(&mut self) {
+        let lits = std::mem::take(&mut self.int_lits);
+        let mut seen = BTreeSet::new();
+        for (n, neg, ty, span) in lits {
+            let Ty::Int(it) = self.inf.resolve(&ty) else {
+                continue;
+            };
+            if !seen.insert((span.lo, span.hi)) {
+                continue;
+            }
+            let (min, max) = int_range(it);
+            let value = if neg { -i128::from(n) } else { i128::from(n) };
+            if value < min || value > max {
+                let shown = if neg { format!("-{n}") } else { n.to_string() };
+                self.err(
+                    "W0102",
+                    format!("`{shown}` does not fit in `{}`", it.name()),
+                    span,
+                );
+            }
+        }
+    }
+
     /// Text form of an effect row.
     pub(super) fn effect_text(e: &EffectSig) -> String {
         let mut parts: Vec<String> = Vec::new();
@@ -165,7 +241,7 @@ impl Lower<'_> {
             let ps: Vec<&str> = e.muts.iter().map(|m| m.text.as_str()).collect();
             parts.push(format!("mut({})", ps.join(", ")));
         }
-        parts.extend(e.named.iter().map(|n| n.to_lowercase()));
+        parts.extend(e.named.iter().map(|n| effects::in_signature(n)));
         parts.join(", ")
     }
 
@@ -185,9 +261,26 @@ impl Lower<'_> {
             reaches: !self.reaches.is_empty(),
             reach_given: self.reach_sig(bases),
             multi: self.unknown_multi,
+            tasks: sum.tasks.clone(),
+            op_fns: sum
+                .op_fns
+                .iter()
+                .filter(|(_, cap, _)| cap.is_none())
+                .map(|(p, _, e)| (*p, e.clone()))
+                .collect(),
+            task_effects: sum.task_effects.clone(),
+            repeats: self.repeats_sig(),
             ..EffectSig::default()
         };
         let mut changed: Vec<PlaceId> = sum.muts.iter().copied().collect();
+        // A by-value parameter that holds references stands for the places that
+        // its references point into: a change of its own value is local.
+        let own: Vec<_> = bases
+            .iter()
+            .filter(|b| b.len() > 1)
+            .filter_map(|b| b.first().map(|&r| self.facts.place(r).root))
+            .collect();
+        changed.retain(|&m| !own.contains(&self.facts.place(m).root));
         for c in &self.closures {
             out.named.extend(c.escapes.iter().cloned());
             changed.extend(c.muts.iter().copied().filter(|&m| {
@@ -379,16 +472,13 @@ impl Lower<'_> {
     /// Lowers a block. With `hold`, it holds a value that points into a local of
     /// the block across the end of the block, so that the end invalidates it.
     pub(super) fn block_with(&mut self, b: &Block, hold: bool) -> Val {
-        self.frames.push(Frame {
-            names: Vec::new(),
-            barrier: None,
-        });
+        self.push_frame(None);
         let v = self.block_inner(b);
         let v = self.hand_out(v, b.span);
         let tail = block_tail(b);
         let held = if hold { self.hold_out(&v, tail) } else { None };
         self.end_frame(b.span);
-        self.frames.pop();
+        self.pop_frame();
         if self.use_held(held, tail) {
             Val { var: None, ..v }
         } else {
@@ -437,13 +527,18 @@ impl Lower<'_> {
     pub(super) fn hand_out(&mut self, mut v: Val, span: Span) -> Val {
         if let Some(l) = v.local {
             let top = self.frames.len() - 1;
-            let local_here = self.frames[top].names.iter().any(|(_, i)| *i == l);
+            let local_here = self.local_frame(l) == top;
             if local_here && self.cur.is_some() {
                 let ty = self.locals[l].ty.clone();
-                if !self.is_copy(&ty) {
+                let copy = self.is_copy(&ty);
+                let unknown = copy && self.has_unknown(&ty);
+                if !copy || unknown {
                     let n = self.emit(span, "block value", String::new());
                     let var = self.locals[l].var;
                     self.move_var(var, n);
+                    if unknown {
+                        self.tentative.push((var, n, ty));
+                    }
                 }
                 v.var = None;
                 v.local = None;
@@ -495,7 +590,7 @@ impl Lower<'_> {
 
     /// Ends every frame above `keep`: for `return`, `break` and `continue`. The
     /// temporaries of the statements in these frames go out of scope too.
-    fn end_frames_above(&mut self, keep: usize, n: NodeId) {
+    pub(super) fn end_frames_above(&mut self, keep: usize, n: NodeId) {
         let mut vars = Vec::new();
         for f in &self.frames[keep..] {
             for (_, l) in &f.names {
@@ -514,17 +609,23 @@ impl Lower<'_> {
 
     /// Discards a value. A linear temporary is an error at this point.
     pub(super) fn drop_value(&mut self, v: &Val, span: Span) {
-        if v.var.is_some() || v.task.is_some() || self.cur.is_none() {
+        if self.cur.is_none() {
+            return;
+        }
+        // A closure that no local holds: if it moves a linear value, the value is lost.
+        if let (Some(var), Some(s), None) = (v.var, v.summary, v.local) {
+            if self.closure_is_once(s) && self.closure_linear(s) {
+                let d = self.emit(span, "drop", String::new());
+                self.facts.scope_end.push((var, d));
+            }
+            return;
+        }
+        if v.var.is_some() || v.task.is_some() {
             return;
         }
         let t = self.inf.resolve(&v.ty);
-        if self.is_linear(&t) {
-            let info = self.var_info("temporary", VarKind::Temp, span, &t, false);
-            let var = self.facts.add_var(info);
-            let n = self.emit(span, "drop", String::new());
-            self.bind(var, n);
-            let d = self.emit(span, "drop", String::new());
-            self.facts.scope_end.push((var, d));
+        if self.may_be_linear(&t) {
+            self.drop_linear("temporary", &t, span);
         }
     }
 
@@ -552,8 +653,30 @@ impl Lower<'_> {
                 if init.is_some() {
                     self.consume(&v, s.span);
                 }
+                self.check_binders(pat);
                 let n = self.emit(s.span, "let", String::new());
+                let bound = self.facts.rebound_at.len();
                 self.bind_pattern(pat, &v, n);
+                // A pattern that reads references out of a local uses the local here.
+                self.flush(s.span);
+                // `let x: T` with no value declares `x` only (W0304).
+                if init.is_none() {
+                    let declared: Vec<_> = self.facts.rebound_at.drain(bound..).collect();
+                    self.facts.unset_at.extend(declared);
+                }
+                // A `_` drops its part of the value. A new task handle goes to its scope.
+                let fresh_task = v.task.is_some() && v.local.is_none();
+                if init.is_some() && !(fresh_task && matches!(pat, Pattern::Wild(_))) {
+                    let whole = matches!(pat, Pattern::Wild(_));
+                    for (span, ty) in self.wild_drops(pat, &v.ty) {
+                        let name = if whole {
+                            self.val_name(&v)
+                        } else {
+                            "temporary".to_string()
+                        };
+                        self.drop_linear(&name, &ty, span);
+                    }
+                }
             }
             StmtKind::Expr(e) => {
                 let v = self.expr(e);
@@ -562,28 +685,56 @@ impl Lower<'_> {
             StmtKind::Assign { target, op, value } => self.assign(target, *op, value, s.span),
             StmtKind::Return(e) => {
                 let v = e.as_ref().map_or_else(Val::default, |e| self.expr(e));
-                if self.cur.is_some() {
-                    self.finish_return(&v, s.span);
-                    let n = self.emit(s.span, "return", String::new());
-                    self.end_frames_above(1, n);
-                    // The exit node is node 1 of the function component when it exists.
-                    if let Some(exit) = self.exit_node() {
-                        self.facts.cfg_edge.push((n, exit));
+                match self.jumps.last().cloned() {
+                    _ if self.cur.is_none() => {}
+                    Some(Jump::Fence(what)) => {
+                        self.err("W0315", format!("`return` cannot leave a {what}"), s.span);
                     }
+                    Some(Jump::Closure { .. }) => self.closure_return(&v, s.span),
+                    Some(Jump::Function { exit }) => {
+                        self.finish_return(&v, s.span);
+                        let n = self.emit(s.span, "return", String::new());
+                        self.end_frames_above(1, n);
+                        if let Some(exit) = exit {
+                            self.facts.cfg_edge.push((n, exit));
+                        }
+                    }
+                    None => {}
                 }
                 self.cur = None;
             }
             StmtKind::Break | StmtKind::Continue => {
-                let Some(lf) = self.loops.last() else {
+                let word = if matches!(s.kind, StmtKind::Break) {
+                    "break"
+                } else {
+                    "continue"
+                };
+                let Some(lf) = self.loops.last().cloned() else {
                     self.err("W0111", "`break` or `continue` outside a loop", s.span);
                     return;
                 };
+                let fence = self.jumps[lf.jumps.min(self.jumps.len())..]
+                    .iter()
+                    .find_map(|j| match j {
+                        Jump::Fence(what) => Some(*what),
+                        _ => None,
+                    });
+                if let Some(what) = fence {
+                    if self.cur.is_some() {
+                        self.err("W0315", format!("`{word}` cannot leave a {what}"), s.span);
+                    }
+                    self.cur = None;
+                    return;
+                }
                 let (target, keep) = if matches!(s.kind, StmtKind::Break) {
                     (lf.exit, lf.frames)
                 } else {
                     (lf.header, lf.frames)
                 };
                 if self.cur.is_some() {
+                    let st = self.branch_state();
+                    self.loop_jumps
+                        .push((matches!(s.kind, StmtKind::Break), st));
                     let n = self.emit(s.span, "jump", String::new());
                     self.end_frames_above(keep, n);
                     self.facts.cfg_edge.push((n, target));
@@ -611,7 +762,9 @@ impl Lower<'_> {
                 let header = self.emit(s.span, "loop", String::new());
                 let exit = self.facts.add_node(s.span, "end loop", String::new());
                 self.lower_loop(&mut |me: &mut Self| me.loop_body(body, header, exit));
-                self.cur = Some(exit);
+                // A `loop` that no `break` leaves does not end normally.
+                let left = self.facts.cfg_edge.iter().any(|&(_, q)| q == exit);
+                self.cur = left.then_some(exit);
             }
             StmtKind::For { pat, iter, body } => self.for_loop(pat, iter, body, s.span),
             StmtKind::Assert(e) => {
@@ -629,6 +782,7 @@ impl Lower<'_> {
             header,
             exit,
             frames: self.frames.len(),
+            jumps: self.jumps.len(),
         });
         let v = self.block(body);
         self.drop_value(&v, body.span);
@@ -652,17 +806,45 @@ impl Lower<'_> {
         const MAX_LOOP_PASSES: usize = 8;
         let outer = self.locals.len();
         let made = (self.facts.roots.len(), self.facts.vars.len());
+        let entry = self.branch_state();
         let mut passes = 0;
         loop {
-            let start = self.carried(outer, made);
+            let start = self.carried(outer, made, None);
             let head = self.clone();
+            let head_state = self.branch_state();
+            let outer_jumps = std::mem::take(&mut self.loop_jumps);
             pass(self);
+            let jumps = std::mem::replace(&mut self.loop_jumps, outer_jumps);
             passes += 1;
-            if passes >= MAX_LOOP_PASSES || self.carried(outer, made) == start {
+            // The next pass starts with the states of the back edges: the end of
+            // the body and each `continue`.
+            let mut back = vec![head_state];
+            back.extend(jumps.iter().filter(|(b, _)| !b).map(|(_, st)| st.clone()));
+            if self.cur.is_some() {
+                back.push(self.branch_state());
+            }
+            let next = Self::joined(&back);
+            if passes >= MAX_LOOP_PASSES || self.carried(outer, made, Some(&next)) == start {
+                // The loop ends at its head, before a pass or after one, or at a `break`.
+                let mut exits = back;
+                exits.push(entry);
+                exits.extend(jumps.into_iter().filter(|(b, _)| *b).map(|(_, st)| st));
+                let st = Self::joined(&exits);
+                self.set_branch(&st);
                 return;
             }
             let values: Vec<_> = self.locals[..outer].to_vec();
             self.rewind(head);
+            // The references that the parts of outer locals got in this pass are
+            // there at the start of the next pass.
+            for h in next.holders.iter().filter(|h| h.local < outer) {
+                if !self.part_holders.iter().any(|x| x.var == h.var) {
+                    for &p in &h.refs {
+                        self.facts.points_into.push((h.var, p));
+                    }
+                    self.part_holders.push(h.clone());
+                }
+            }
             for (l, v) in values.into_iter().enumerate() {
                 let var = self.locals[l].var;
                 for &p in &v.refs {
@@ -676,7 +858,8 @@ impl Lower<'_> {
                 loc.fn_param = v.fn_param;
                 loc.task = v.task;
                 loc.bound = v.bound;
-                loc.uniq = v.uniq;
+                loc.uniq = next.uniq.get(l).copied().unwrap_or(v.uniq);
+                loc.caps = v.caps;
             }
         }
     }
@@ -684,16 +867,36 @@ impl Lower<'_> {
     /// The values of the first `outer` locals that an iteration passes to the next,
     /// as keys that are the same in each pass. `made` is the number of roots and
     /// variables before the loop.
-    fn carried(&self, outer: usize, made: (usize, usize)) -> Vec<BTreeSet<String>> {
+    /// `state` is the state at the head of the next pass: by default, the state now.
+    fn carried(
+        &self,
+        outer: usize,
+        made: (usize, usize),
+        state: Option<&super::BranchState>,
+    ) -> Vec<BTreeSet<String>> {
+        let holders = state.map_or(&self.part_holders, |st| &st.holders);
         self.locals[..outer]
             .iter()
-            .map(|loc| {
+            .enumerate()
+            .map(|(l, loc)| {
                 let mut key: BTreeSet<String> = loc
                     .refs
                     .iter()
                     .map(|&p| format!("ref {}", self.place_key(p, made.0)))
                     .collect();
+                let uniq = state.map_or(loc.uniq, |st| st.uniq.get(l).copied().unwrap_or(loc.uniq));
+                if uniq {
+                    key.insert("uniq".to_string());
+                }
+                for h in holders.iter().filter(|h| h.local == l) {
+                    key.extend(
+                        h.refs
+                            .iter()
+                            .map(|&p| format!("part ref {}", self.place_key(p, made.0))),
+                    );
+                }
                 key.extend(loc.task.map(|t| format!("task {t}")));
+                key.extend(loc.caps.iter().map(|c| format!("cap {}", c.0)));
                 let info = super::FnInfo {
                     summary: loc.summary,
                     item: None,
@@ -765,6 +968,12 @@ impl Lower<'_> {
         out.extend(sum.items.iter().map(|f| format!("item {f}")));
         out.extend(sum.params.iter().map(|p| format!("param {p}")));
         out.extend(sum.stores.iter().map(|p| format!("stores {p}")));
+        out.extend(sum.tasks.iter().map(|p| format!("tasks {p}")));
+        out.extend(sum.spawns.iter().map(|t| format!("spawns {t}")));
+        out.extend(sum.ret_spawns.iter().map(|t| format!("ret spawns {t}")));
+        out.extend(sum.ret_caps.iter().map(|c| format!("ret cap {c}")));
+        out.extend(sum.ret_tasks.iter().map(|t| format!("ret task {t}")));
+        out.extend(sum.own_caps.iter().map(|c| format!("own cap {c}")));
         out.extend(sum.captures.iter().map(|&v| format!("capture {}", vk(v))));
         out.extend(
             sum.moved_captures
@@ -823,19 +1032,9 @@ impl Lower<'_> {
         self.split = split;
     }
 
-    fn exit_node(&self) -> Option<NodeId> {
-        self.facts
-            .nodes
-            .iter()
-            .position(|n| n.label == "exit")
-            .map(|i| NodeId(u32::try_from(i).unwrap_or(0)))
-    }
-
     fn for_loop(&mut self, pat: &Pattern, iter: &ast::Expr, body: &Block, span: Span) {
-        self.frames.push(Frame {
-            names: Vec::new(),
-            barrier: None,
-        });
+        self.push_frame(None);
+        self.iter_uniq = false;
         let (elem_val, it_refs) = match &iter.kind {
             ExprKind::Range { lo, hi } => {
                 let a = self.expr(lo);
@@ -852,16 +1051,19 @@ impl Lower<'_> {
             ExprKind::Index { base, index: None } => self.elem_iter(base, iter.span),
             _ => self.elem_iter(iter, iter.span),
         };
-        // The hidden iterator points into the elements. Each iteration uses it.
+        // The hidden iterator points into the elements. Each iteration uses it. It
+        // is `@ uniq` if its source is, so it is not `many` either.
         let it = if it_refs.is_empty() {
             None
         } else {
             let ty = elem_val.ty.clone();
-            let l = self.new_local("{iterator}", VarKind::Iterator, iter.span, ty, false);
+            let uniq = self.iter_uniq;
+            let l = self.new_local("{iterator}", VarKind::Iterator, iter.span, ty, uniq);
             let init = self.emit(iter.span, "iterator", String::new());
             let v = Val {
                 ty: elem_val.ty.clone(),
                 refs: it_refs,
+                uniq,
                 ..Val::default()
             };
             self.assign_local(l, &v, init);
@@ -881,26 +1083,33 @@ impl Lower<'_> {
         let exit = self.facts.add_node(span, "end for", String::new());
         self.facts.cfg_edge.push((header, exit));
         self.lower_loop(&mut |me: &mut Self| {
+            me.check_binders(pat);
             let bindn = me.emit(pat.span(), "for binding", String::new());
             me.bind_pattern(pat, &elem_val, bindn);
             me.loop_body(body, header, exit);
         });
         self.cur = Some(exit);
         self.end_frame(span);
-        self.frames.pop();
+        self.pop_frame();
     }
 
     /// Returns the element value of `for e in x[]` and the element places.
     fn elem_iter(&mut self, base: &ast::Expr, span: Span) -> (Val, Vec<PlaceId>) {
         let lv = self.place_or_temp(base);
+        self.iter_uniq = lv.uniq;
         let t = self.deref_ty(&lv.ty);
         if let Some((step, elem)) = super::elem_step(self.prog, &self.inf.deep(&t)) {
             let mut places: Vec<PlaceId> = match step {
                 Some(s) => lv.places.iter().map(|&p| self.child(p, s, "[]")).collect(),
                 None => lv.places.clone(),
             };
-            // The elements depend on the `Rc` handles on the way.
+            // The elements depend on the `Rc` handles on the way. An element that
+            // holds references points where they point.
             places.extend(lv.deps.iter().copied());
+            if self.holds_refs(&elem) && !self.is_scalar(&elem) {
+                let inner = self.held_refs(&lv.places);
+                places.extend(inner);
+            }
             // Copy elements bind by value; other elements bind by reference.
             let v = if self.is_scalar(&elem) {
                 Val {
@@ -957,6 +1166,7 @@ impl Lower<'_> {
             }
         }
         let v = self.expr(value);
+        let mark = self.pend_uses.len();
         let Some(lv) = self.place_expr(target) else {
             self.err(
                 "W0112",
@@ -965,6 +1175,27 @@ impl Lower<'_> {
             );
             return;
         };
+        // A self-reference field of a `!Move` struct can point only into its struct.
+        if op == AssignOp::Assign {
+            self.check_self_ref(target, &v, value.span);
+        }
+        // The target does not read the references that the new value replaces.
+        if let (AssignOp::Assign, Some(l), false) = (op, lv.owner, lv.through_ref) {
+            let replaced: Vec<VarId> = self
+                .part_holders
+                .iter()
+                .filter(|h| h.local == l && self.below_any(&h.places, &lv.places))
+                .map(|h| h.var)
+                .collect();
+            let mut i = mark;
+            while i < self.pend_uses.len() {
+                if replaced.contains(&self.pend_uses[i]) {
+                    self.pend_uses.remove(i);
+                } else {
+                    i += 1;
+                }
+            }
+        }
         // `p op= v` on a place that holds a reference writes through it, as the
         // interpreter does: it mutates what the reference points into.
         let mut places = lv.places.clone();
@@ -978,6 +1209,7 @@ impl Lower<'_> {
         }
         if op == AssignOp::Assign {
             self.unify(&lv.ty, &v.ty, value.span);
+            self.keep_modes(&v, &lv.ty, value.span);
         } else {
             for &p in &places {
                 self.read(p);
@@ -986,11 +1218,100 @@ impl Lower<'_> {
         }
         // A function value in a field or an element: the body does not follow it.
         self.escape(&v);
+        self.store_into(&v, &lv.places);
         self.consume(&v, value.span);
+        // A part of a local that gets a reference points where it points from
+        // here on. A hidden variable holds it, and a use of the local uses it.
+        // The new value replaces what the part held before, and what each part
+        // below it held.
+        let holder = match (op, lv.owner, lv.through_ref) {
+            (AssignOp::Assign, Some(l), false) => {
+                // A holder of the same part with the same places gets the new value.
+                let same = self
+                    .part_holders
+                    .iter()
+                    .find(|h| h.local == l && h.places == lv.places && h.refs == v.refs)
+                    .map(|h| h.var);
+                self.retire_holders(l, &lv.places);
+                (!v.refs.is_empty()).then(|| {
+                    if let Some(h) = same {
+                        self.part_holders.push(super::PartHolder {
+                            local: l,
+                            places: lv.places.clone(),
+                            var: h,
+                            refs: v.refs.clone(),
+                        });
+                        return h;
+                    }
+                    let name = format!("value in `{}`", self.place_text(&lv.places));
+                    let mut info = self.var_info(&name, VarKind::Temp, target.span, &v.ty, v.uniq);
+                    info.linear = false;
+                    info.has_on_abort = true;
+                    let h = self.facts.add_var(info);
+                    for &p in &v.refs {
+                        self.facts.points_into.push((h, p));
+                    }
+                    self.part_holders.push(super::PartHolder {
+                        local: l,
+                        places: lv.places.clone(),
+                        var: h,
+                        refs: v.refs.clone(),
+                    });
+                    h
+                })
+            }
+            _ => None,
+        };
+        // A new value of a linear place drops the old one. Behind a reference the
+        // old value is always there: a borrowed place cannot be moved out.
+        let old_linear = op == AssignOp::Assign && self.is_linear(&lv.ty);
+        let owner = lv.owner.filter(|_| !lv.through_ref);
+        if old_linear && owner.is_none() {
+            let name = self.place_text(&lv.places);
+            self.drop_linear(&name, &lv.ty, target.span);
+        }
         let detail = format!("mut({})", self.place_text(&places));
         let n = self.emit(span, "assign", detail);
+        // A place field gets its value.
+        let set: Vec<VarId> = self
+            .unset_places
+            .iter()
+            .filter(|(p, _)| lv.places.contains(p))
+            .map(|&(_, var)| var)
+            .collect();
+        for var in set.into_iter().chain(holder) {
+            self.bind(var, n);
+        }
+        if let (true, Some(l)) = (old_linear, owner) {
+            let var = self.locals[l].var;
+            self.facts.overwrites.push((var, n));
+        }
         for &p in &places {
             self.mutate(n, p);
+        }
+    }
+
+    /// Reports W0605 if `target` is a self-reference field of a `!Move` struct
+    /// and value `v` points outside the place that the field states.
+    fn check_self_ref(&mut self, target: &ast::Expr, v: &Val, span: Span) {
+        let Some(allowed) = self.field_referents(target) else {
+            return;
+        };
+        let (named, _) = self.split_deps(&v.refs);
+        for r in named {
+            if allowed.iter().any(|&a| self.sig_allows(a, r)) {
+                continue;
+            }
+            let (rt, at) = (
+                self.facts.place(r).display.clone(),
+                self.place_text(&allowed),
+            );
+            self.err(
+                "W0605",
+                format!("this field can point only into `{at}` of its own struct, but the value points into `{rt}`"),
+                span,
+            );
+            return;
         }
     }
 
@@ -1024,7 +1345,7 @@ impl Lower<'_> {
             Pattern::Wild(_) | Pattern::Lit(..) => {}
             Pattern::Tuple(ps, span) => {
                 let t = self.inf.shallow(&v.ty);
-                let tys: Vec<Ty> = match t {
+                let tys: Vec<Ty> = match t.clone() {
                     Ty::Tuple(ts) if ts.len() == ps.len() => ts,
                     Ty::Ref(inner) => match self.inf.shallow(&inner) {
                         Ty::Tuple(ts) if ts.len() == ps.len() => {
@@ -1045,6 +1366,17 @@ impl Lower<'_> {
                         return;
                     }
                 };
+                // A part behind a reference to a tuple points where the part
+                // points, too, if it holds references.
+                let behind = matches!(t, Ty::Ref(_));
+                let mut refs = v.refs.clone();
+                let inner_refs = tys
+                    .iter()
+                    .any(|t| matches!(self.inf.shallow(t), Ty::Ref(x) if self.holds_refs(&x)));
+                if behind && inner_refs {
+                    let (named, _) = self.split_deps(&v.refs);
+                    refs.extend(self.held_refs(&named));
+                }
                 for (i, p) in ps.iter().enumerate() {
                     let part = v
                         .parts
@@ -1052,7 +1384,7 @@ impl Lower<'_> {
                         .and_then(|parts| parts.get(i).cloned())
                         .unwrap_or_else(|| Val {
                             ty: tys[i].clone(),
-                            refs: v.refs.clone(),
+                            refs: refs.clone(),
                             ..Val::default()
                         });
                     let part = Val {
@@ -1088,15 +1420,45 @@ impl Lower<'_> {
                 }
                 for (p, d) in fields.iter().zip(&defs) {
                     let ft = super::subst(&d.ty, &args);
+                    // A field that holds references points where the struct points.
+                    let refs = if self.holds_refs(&ft) {
+                        v.refs.clone()
+                    } else {
+                        Vec::new()
+                    };
                     self.bind_pattern(
                         p,
                         &Val {
                             ty: ft,
+                            refs,
                             ..Val::default()
                         },
                         n,
                     );
                 }
+            }
+        }
+    }
+
+    /// Reports W0107 for a name that pattern `pat` binds twice.
+    pub(super) fn check_binders(&mut self, pat: &Pattern) {
+        fn walk<'a>(p: &'a Pattern, out: &mut Vec<&'a ast::Ident>) {
+            match p {
+                Pattern::Bind(id) => out.push(id),
+                Pattern::Tuple(ps, _) => ps.iter().for_each(|q| walk(q, out)),
+                Pattern::Variant { fields, .. } => fields.iter().for_each(|q| walk(q, out)),
+                Pattern::Wild(_) | Pattern::Lit(..) => {}
+            }
+        }
+        let mut names = Vec::new();
+        walk(pat, &mut names);
+        for (i, id) in names.iter().enumerate() {
+            if names[..i].iter().any(|o| o.name == id.name) {
+                self.err(
+                    "W0107",
+                    format!("`{}` is bound twice in this pattern", id.name),
+                    id.span,
+                );
             }
         }
     }
@@ -1133,7 +1495,14 @@ impl Lower<'_> {
                 deps,
             };
         }
+        // The temporary goes away at the end of the statement.
+        self.drop_value(&v, e.span);
         let r = self.temp_root(e.span, &v.ty);
+        // The temporary points where its value points.
+        if !v.refs.is_empty() {
+            let root = self.facts.place(r).root;
+            self.temp_refs.insert(root, v.refs.clone());
+        }
         LVal {
             places: vec![r],
             ty: v.ty,
@@ -1147,10 +1516,17 @@ impl Lower<'_> {
             return;
         }
         let ty = self.inf.resolve(&v.ty);
-        if self.is_copy(&ty) {
+        // A value whose type is not known yet moves for now: `finish` keeps the
+        // move only if the inferred type is not plain data.
+        let copy = self.is_copy(&ty);
+        let unknown = copy && self.has_unknown(&ty);
+        if copy && !unknown {
             return;
         }
         if let Some(lv) = &v.place {
+            if lv.through_ref && unknown {
+                return;
+            }
             if lv.through_ref {
                 let shown = self.show(&ty);
                 self.err(
@@ -1171,6 +1547,9 @@ impl Lower<'_> {
         };
         let n = self.emit(span, "move", String::new());
         self.move_var(var, n);
+        if unknown {
+            self.tentative.push((var, n, v.ty.clone()));
+        }
         // A move of a part of the owner frees that part only.
         if v.var.is_none() {
             if let Some(lv) = &v.place {
@@ -1182,5 +1561,20 @@ impl Lower<'_> {
                 }
             }
         }
+    }
+}
+
+/// Returns the smallest and the largest value of an integer type.
+const fn int_range(t: super::IntTy) -> (i128, i128) {
+    use super::IntTy;
+    match t {
+        IntTy::I8 => (i8::MIN as i128, i8::MAX as i128),
+        IntTy::I16 => (i16::MIN as i128, i16::MAX as i128),
+        IntTy::I32 => (i32::MIN as i128, i32::MAX as i128),
+        IntTy::I64 => (i64::MIN as i128, i64::MAX as i128),
+        IntTy::U8 => (0, u8::MAX as i128),
+        IntTy::U16 => (0, u16::MAX as i128),
+        IntTy::U32 => (0, u32::MAX as i128),
+        IntTy::U64 | IntTy::Usize => (0, u64::MAX as i128),
     }
 }

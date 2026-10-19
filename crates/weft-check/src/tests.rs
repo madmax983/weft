@@ -998,8 +998,50 @@ fn w0502_needs_a_callable_variable() {
     }
     let closure = VarInfo::plain("c", VarKind::Closure, Span::default(), "T");
     assert!(closure.callable);
+    // The type text does not decide: sema sets the flag from the resolved type.
     let param = VarInfo::plain("p", VarKind::Param, Span::default(), "fn() -> u64");
-    assert!(param.callable);
+    assert!(!param.callable);
     let plain = VarInfo::plain("x", VarKind::Local, Span::default(), "u64");
     assert!(!plain.callable);
+}
+
+#[test]
+fn w0702_names_the_effect_when_two_effects_have_one_name() {
+    // `a.Note` is not the `Note` that `mixed` states, so the message names it.
+    let src = "effect Note { fn note() }
+effect Log { fn log(m: String) }
+mod a {
+    effect Note { fn note() }
+    pub fn f() / Note { note() }
+}
+fn mixed() / Note {
+    a.f()
+}
+fn other() / async {
+    a.f()
+}
+fn std_log() / Log {
+    log.info(\"x\")
+}
+";
+    let c = crate::check_source("t.wf", src, weft_sema::Options::default());
+    let msgs: Vec<&str> = c
+        .diags
+        .iter()
+        .filter(|d| d.code == "W0702")
+        .map(|d| d.message.as_str())
+        .collect();
+    assert!(
+        msgs.iter().any(|m| m.contains("performs `main.a.Note`")),
+        "{msgs:?}"
+    );
+    assert!(
+        msgs.iter().any(|m| m.contains("`f` performs `Note`")),
+        "{msgs:?}"
+    );
+    assert!(
+        msgs.iter()
+            .any(|m| m.contains("performs the standard effect `Log`")),
+        "{msgs:?}"
+    );
 }

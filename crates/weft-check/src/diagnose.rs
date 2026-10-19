@@ -234,6 +234,18 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         };
         out.push(note_more(d, f, rest, noun));
     }
+    for &(var, n) in &v.use_before_set {
+        let info = f.var(var);
+        out.push(
+            Diagnostic::error(
+                "W0304",
+                format!("`{}` is used before it has a value", info.name),
+                node_span(f, n),
+            )
+            .note_at(format!("{} : {}", info.name, info.ty), info.span)
+            .note("give it a value on every path before this use"),
+        );
+    }
     for &(var, n) in &v.moved_immovable {
         let info = f.var(var);
         out.push(
@@ -253,6 +265,18 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
                 format!("task handle `{}` is not joined or detached", info.name),
                 node_span(f, n),
             )
+        } else if info.callable {
+            let who = if matches!(info.kind, VarKind::Closure | VarKind::Temp) {
+                "a closure".to_string()
+            } else {
+                format!("closure `{}`", info.name)
+            };
+            Diagnostic::error(
+                "W0601",
+                format!("{who} moves a linear value, but it can go out of scope without a call"),
+                node_span(f, n),
+            )
+            .note("call the closure once on every normal path; a callee that gets it can drop it")
         } else {
             Diagnostic::error(
                 "W0601",
@@ -312,11 +336,16 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         };
         let info = f.var(var);
         let at = f.node(first);
+        let name = if info.kind == VarKind::Iterator {
+            "the loop iterator".to_string()
+        } else {
+            format!("`{}`", info.name)
+        };
         let d = Diagnostic::error(
             "W0503",
             format!(
-                "`{}` is not `many`, but it is live across `{}`, which can resume more than once",
-                info.name, at.label
+                "{name} is not `many`, but it is live across `{}`, which can resume more than once",
+                at.label
             ),
             at.span,
         )
@@ -355,14 +384,15 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             Diagnostic::error(
                 "W0702",
                 format!(
-                    "`{}` performs `{e}`, which the signature does not allow",
-                    at.label
+                    "`{}` performs {}, which the signature does not allow",
+                    at.label,
+                    effect_text(e, &f.declared_effect)
                 ),
                 at.span,
             )
             .note(format!(
                 "add `{}` to the effects after `/`, or handle it here",
-                effects::written_name(e)
+                effects::in_signature(e)
             )),
         );
     }
@@ -508,6 +538,7 @@ pub fn root_effects(
     for (n, e) in &f.escapes_at {
         by_effect.entry(e).or_default().push(*n);
     }
+    let escaping: Vec<&str> = by_effect.keys().copied().collect();
     let mut out = Vec::new();
     for (e, mut sites) in by_effect {
         sites.sort_by_key(|&n| node_span(f, n).lo);
@@ -515,19 +546,20 @@ pub fn root_effects(
             continue;
         };
         let span = node_span(f, first);
+        let name = root_effect_text(e, &escaping);
         let d = if !has_root_handler(e) {
             Diagnostic::error(
                 "W0805",
-                format!("{who} performs `{e}`, and no handler handles it"),
+                format!("{who} performs `{name}`, and no handler handles it"),
                 span,
             )
             .note(format!(
-                "the runtime handles only the standard effects; handle `{e}` in {who}"
+                "the runtime handles only the standard effects; handle `{name}` in {who}"
             ))
         } else if no_runtime {
             Diagnostic::error(
                 "W0803",
-                format!("with no runtime, {who} must handle `{e}` itself"),
+                format!("with no runtime, {who} must handle `{name}` itself"),
                 span,
             )
         } else {
@@ -536,6 +568,25 @@ pub fn root_effects(
         out.push(note_more(d, f, rest, ("site", "sites")));
     }
     out
+}
+
+/// Returns effect identity `e` as W0805 and W0803 show it.
+///
+/// The facts name a user effect by its identity, such as `main.Note`. The text
+/// shows the written name (`Note`). The text shows the identity when the written
+/// name can also name another effect: a standard effect (`Log` alone names the
+/// standard one), or another effect in `escaping` (`main.Note` and `main.a.Note`).
+fn root_effect_text<'a>(e: &'a str, escaping: &[&str]) -> &'a str {
+    let shown = effects::shown(e);
+    let std_name = effects::is_std(shown) && !effects::is_std(e);
+    let clash = escaping
+        .iter()
+        .any(|&d| d != e && effects::shown(d) == shown);
+    if std_name || clash {
+        e
+    } else {
+        shown
+    }
 }
 
 /// Replaces `{line:N}` markers (byte offsets) with line numbers. A
@@ -577,5 +628,17 @@ pub fn resolve_lines(d: &mut Diagnostic, file: &weft_syntax::SourceFile) {
             n.text
                 .replace_range(start..=(start + end), &line.to_string());
         }
+    }
+}
+
+/// Returns effect identity `e` as a diagnostic shows it. When a stated effect of
+/// the function has the same written name, the text names the effect that `e` is.
+fn effect_text(e: &str, stated: &[String]) -> String {
+    let shown = effects::shown(e);
+    let clash = stated.iter().any(|d| d != e && effects::shown(d) == shown);
+    match (clash, effects::is_std(e)) {
+        (false, _) => format!("`{shown}`"),
+        (true, true) => format!("the standard effect `{shown}`"),
+        (true, false) => format!("`{e}`"),
     }
 }

@@ -1,0 +1,20 @@
+// A user effect `Log` has the name of the standard effect. `Log` names the
+// user effect, and the alias `log` names the standard one. Each handler gets
+// the operations of its own effect.
+effect Log { fn log(msg: String) }
+
+fn both() {
+    handle Log { fn log(m) { print("user", m); resume(()) } } in {
+        handle log { fn info(m) { print("std", m); resume(()) } } in {
+            log("x")
+            log.info("y")
+        }
+    }
+}
+
+fn main() {
+    handle log { fn info(m) { print("caught", m); resume(()) } } in {
+        log.info("z")
+    }
+    both()
+}

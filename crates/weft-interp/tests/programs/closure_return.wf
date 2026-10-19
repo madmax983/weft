@@ -1,0 +1,45 @@
+// `return` in a closure returns from the closure, and `break` in a closure
+// leaves a loop of the closure. The code after the call runs.
+fn first_big(v: &Vec<u64>) -> u64 {
+    let find = |w: &Vec<u64>| {
+        for x in w[] {
+            if x > 2 { return x }
+        }
+        0
+    }
+    find(v) + 1
+}
+
+fn count(n: u64) -> u64 {
+    let i = 0
+    loop {
+        let step = || {
+            let j = 0
+            loop {
+                j += 1
+                if j == 2 { break }
+            }
+            j
+        }
+        i += step()
+        if i > n { break }
+    }
+    i
+}
+
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    v.push(5)
+    v.push(7)
+    print(first_big(&v))
+    let f = |x: u64| {
+        if x > 1 { return x * 10 }
+        x
+    }
+    print(f(1), f(3))
+    print(count(4))
+    let g = || { return }
+    g()
+    print("after")
+}

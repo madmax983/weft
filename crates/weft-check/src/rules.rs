@@ -311,6 +311,7 @@ pub fn check(f: &FnFacts) -> Report {
 
     invalidation(&cx, &rebound, &uses, &mut r);
     moves(&cx, &rebound, &uses, &moved, &mut r.violations);
+    unset(&cx, &rebound, &uses, &mut r.violations);
     linear(&cx, &rebound, &moved, &mut r.violations);
     multi(&cx, &rebound, &uses, &mut r.violations);
     effects(&cx, &mut r.violations);
@@ -434,6 +435,26 @@ fn moves(
     }
 }
 
+/// W0304: `use_before_set(V, P)`.
+fn unset(
+    cx: &Ctx<'_>,
+    rebound: &BTreeMap<VarId, Vec<NodeId>>,
+    uses: &BTreeMap<VarId, Vec<NodeId>>,
+    out: &mut Violations,
+) {
+    for (v, ds) in by_var(&cx.f.unset_at) {
+        let Some(used) = uses.get(&v) else { continue };
+        let gen = cx.mask(ds);
+        let kill = cx.mask(rebound.get(&v).cloned().unwrap_or_default());
+        let after = cx.forward(&gen, &kill);
+        for &u in used {
+            if after[u.index()] {
+                out.use_before_set.insert((v, u));
+            }
+        }
+    }
+}
+
 /// W0601, W0602.
 fn linear(
     cx: &Ctx<'_>,
@@ -443,6 +464,7 @@ fn linear(
 ) {
     let f = cx.f;
     let ends = by_var(&f.scope_end);
+    let overwrites = by_var(&f.overwrites);
     let aborts = cx.mask(f.may_abort.iter().copied());
     for (&v, binds) in rebound {
         let info = f.var(v);
@@ -457,7 +479,8 @@ fn linear(
                 out.unconsumed.insert((v, e));
             }
         }
-        for &b in binds {
+        let parts = overwrites.get(&v).map_or(&[][..], Vec::as_slice);
+        for &b in binds.iter().chain(parts) {
             if live[b.index()] {
                 out.overwritten.insert((v, b));
             }
@@ -481,7 +504,20 @@ fn multi(
     out: &mut Violations,
 ) {
     let f = cx.f;
-    if f.multi_at.is_empty() {
+    // A node that runs a clause, and a resume, can resume more than once if the
+    // clause or the handled computation can.
+    let mut multi: BTreeSet<NodeId> = f.multi_at.iter().copied().collect();
+    for &(p, c) in &f.performs_at {
+        if f.clause_multi.contains(&c) {
+            multi.insert(p);
+        }
+    }
+    for &(p, c) in &f.resumes_at {
+        if f.clause_multi.contains(&c) || f.body_multi.contains(&c) {
+            multi.insert(p);
+        }
+    }
+    if multi.is_empty() {
         return;
     }
     for (&v, us) in uses {
@@ -491,7 +527,7 @@ fn multi(
         let gen = cx.mask(us.iter().copied());
         let kill = cx.mask(rebound.get(&v).cloned().unwrap_or_default());
         let live_out = cx.backward(&gen, &kill);
-        for &p in &f.multi_at {
+        for &p in &multi {
             if live_out[p.index()] {
                 out.live_across_multi.insert((v, p));
             }
@@ -544,9 +580,14 @@ fn effects(cx: &Ctx<'_>, out: &mut Violations) {
             .map(|h| h.effect.as_str())
             .collect();
         for (i, h) in f.handlers.iter().enumerate() {
-            if std_names.contains(h.effect.as_str()) && !h.forwards {
-                out.root_handler_in_lib
-                    .insert(HandlerId(u32::try_from(i).unwrap_or(u32::MAX)));
+            let id = HandlerId(u32::try_from(i).unwrap_or(u32::MAX));
+            // A clause that performs the effect again forwards it.
+            let forwards = h.forwards
+                || f.clause_performs
+                    .iter()
+                    .any(|(g, e)| *g == id && *e == h.effect);
+            if std_names.contains(h.effect.as_str()) && !forwards {
+                out.root_handler_in_lib.insert(id);
             }
         }
     }

@@ -1,0 +1,157 @@
+// A task that a closure spawns is active from each node where the closure
+// runs. A task cannot reach a handler on another task's stack, also through a
+// function item or a function parameter (W0314). The root handlers of
+// `sim.run` are not on a task's stack.
+effect Note { fn note(x: u64) }
+struct Stats { count: u64 }
+
+fn noter() / Note { note(1) }
+fn quiet() -> u64 { 1 }
+fn sleeper() / clock { sleep(1.ms) }
+fn run(f: fn() -> u64) -> u64 { f() }
+
+// A closure spawns the task. The task is active after the call of the closure.
+fn spawn_in_closure(st: &Stats) / mut(st), async {
+    scope { s =>
+        let sp = || {
+            s.spawn(|| st.count += 1)
+            0
+        }
+        sp()
+        print(st.count)   //~ W0405
+    }
+}
+fn spawn_in_closure_joined(st: &Stats) / mut(st), async {
+    scope { s =>
+        let sp = || {
+            s.spawn(|| st.count += 1)
+            0
+        }
+        sp()
+    }
+    print(st.count)
+}
+// A callee runs the closure that spawns.
+fn spawn_through_callee(st: &Stats) / mut(st), async {
+    scope { s =>
+        run(|| {
+            s.spawn(|| st.count += 1)
+            0
+        })
+        print(st.count)   //~ W0405
+    }
+}
+// The task joins at the end of its own scope, not at the end of an inner scope.
+fn spawn_into_outer_scope(st: &Stats) / mut(st), async {
+    scope { a =>
+        scope { b =>
+            a.spawn(|| st.count += 1)
+            print(0)
+        }
+        print(st.count)   //~ W0405
+    }
+    print(st.count)
+}
+
+// A function item that performs a user effect cannot run as a task.
+fn spawn_item() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        scope { s => s.spawn(noter) }   //~ W0314
+    }
+}
+fn fork_items() / par {
+    handle Note { fn note(x) { resume(()) } } in fork(noter, noter)   //~ W0314
+}
+fn spawn_item_out() / async, Note {
+    scope { s => s.spawn(noter) }   //~ W0314
+}
+fn spawn_items_ok() / async, clock, par {
+    scope { s =>
+        s.spawn(quiet)
+        s.spawn(sleeper)
+    }
+    fork(quiet, sleeper)
+}
+
+// A function parameter that runs in a task: the caller must not give it a
+// function value that performs through a local handler.
+fn spawn_param(f: fn()) / async {
+    scope { s => s.spawn(|| f()) }
+}
+fn spawn_param_direct(f: fn()) / async {
+    scope { s => s.spawn(f) }
+}
+fn spawn_param_twice(f: fn()) / async {
+    spawn_param(f)
+}
+fn spawn_param_callers() / async, clock {
+    handle Note { fn note(x) { resume(()) } } in spawn_param(|| note(1))   //~ W0314
+    handle Note { fn note(x) { resume(()) } } in spawn_param_direct(|| note(1))   //~ W0314
+    handle Note { fn note(x) { resume(()) } } in spawn_param_twice(|| note(1))   //~ W0314
+    handle Note { fn note(x) { resume(()) } } in spawn_param(noter)   //~ W0314
+    spawn_param(|| print(1))
+    spawn_param(sleeper)
+}
+fn spawn_param_typed(f: fn() / Note) / async, Note {
+    scope { s => s.spawn(f) }   //~ W0314
+}
+
+// The root handlers of `sim.run` replace the runtime for every task.
+fn simulated() {
+    sim.run(seed: 1) {
+        scope { s =>
+            s.spawn(|| sleep(1.ms))
+            s.spawn(sleeper)
+        }
+        fork(|| sleep(1.ms), sleeper)
+    }
+}
+// A local handler of a standard effect is on the parent's stack.
+fn local_log() / async {
+    handle Log { fn info(m) { resume(()) } } in {
+        scope { s => s.spawn(|| log.info("x")) }   //~ W0314
+    }
+}
+
+// A task handle that a handled body returns stays a task handle.
+fn handled_task() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        scope { s => s.spawn(|| 1) }
+    }
+}
+
+// A handler clause that spawns into an outer scope starts the task at each
+// operation that it handles. Here the task runs while `resume` runs the rest of
+// the handled body.
+fn spawn_in_clause(st: &Stats) / mut(st), async {
+    scope { s =>
+        handle Note {
+            fn note(x) {
+                s.spawn(|| st.count += 1)
+                resume(())   //~ W0405
+            }
+        } in {
+            print(st.count)
+            note(1)
+            print(st.count)   //~ W0405
+        }
+    }
+}
+fn spawn_in_clause_joined(st: &Stats) / mut(st), async {
+    scope { s =>
+        handle Note {
+            fn note(x) {
+                resume(())
+                s.spawn(|| st.count += 1)
+                print(0)
+            }
+        } in note(1)
+    }
+    print(st.count)
+}
+
+// A function value that the body does not know can run its argument as a task.
+fn unknown_spawner(k: fn(fn())) / async {
+    handle Note { fn note(x) { resume(()) } } in k(|| note(1))   //~ W0313 W0314
+    k(|| print(1))
+}

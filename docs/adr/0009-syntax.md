@@ -9,7 +9,19 @@ Status: accepted. Date: 2026-10-18.
   `with_timeout(2.s) { ... }`.
 - No struct literal and no trailing block in `if`, `while`, `for` and `match` heads.
 - `handle`, `scope` and the mode words are contextual keywords.
+- A `return` in a closure returns from the closure. Its value has the result type of
+  the closure, not of the function. `break` and `continue` in a closure go only to a
+  loop of the closure (W0111). No jump (`return`, `break`, `continue`) can leave a
+  handled body, a handler clause or a scope body (W0315): the interpreter runs each of
+  them as separate code, and the handler or the scope must end first.
+- A `loop` that no `break` leaves does not end normally. As the last statement of a
+  body it has the type `!`, so `fn f(xs: T) -> T { loop { return xs } }` is correct.
 - A function type with more than one effect needs parentheses: `fn() / (net, log)`.
+- An argument of a call or of an effect operation can name its parameter
+  (`put(b: 1, a: v)`). A named argument binds by name, the others fill the free
+  parameters in order, and a trailing block goes to the last free parameter (W0103 for
+  an unknown name, a name given twice, or a wrong count). `s.spawn` takes one closure
+  with no parameters, and `fork` takes at least two (W0102, W0103).
 - `*T` is a raw pointer for foreign functions. A written `*T` is valid only in an
   `extern fn` signature, in a local and in a closure parameter (W0116). The check looks
   only at written types. A type argument can still hold a raw pointer (`Option<*Stmt>`,

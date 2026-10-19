@@ -174,21 +174,20 @@ pub struct VarInfo {
 impl VarInfo {
     /// Makes a plain `many`, portable, aliased variable.
     ///
-    /// `callable` is true for a closure, and for a type that shows as
-    /// `fn(...)`. A producer that knows the type sets `callable` itself.
+    /// `callable` is true for a closure. A producer that knows the type sets
+    /// `callable` itself.
     pub fn plain(
         name: impl Into<String>,
         kind: VarKind,
         span: Span,
         ty: impl Into<String>,
     ) -> Self {
-        let ty = ty.into();
         Self {
             name: name.into(),
-            callable: kind == VarKind::Closure || ty.starts_with("fn("),
+            callable: kind == VarKind::Closure,
             kind,
             span,
-            ty,
+            ty: ty.into(),
             linear: false,
             has_on_abort: false,
             once: false,
@@ -235,7 +234,9 @@ pub struct HandlerInfo {
     pub effect: String,
     /// The effect is a standard effect.
     pub is_std: bool,
-    /// The enclosing function can still perform the effect, so the handler intercepts.
+    /// The handler forwards its effect whatever its clauses do: a root handler of
+    /// `sim.run`, which W0802 checks. Other handlers forward through their clauses
+    /// (`clause_performs`).
     pub forwards: bool,
     /// The source location.
     pub span: Span,
@@ -281,6 +282,11 @@ pub struct FnFacts {
     pub moved_at: Vec<(VarId, NodeId)>,
     /// `scope_end(V, P)`.
     pub scope_end: Vec<(VarId, NodeId)>,
+    /// `overwrites(V, P)`: node `P` gives a part of `V` a new value, and the old
+    /// value of the part goes away.
+    pub overwrites: Vec<(VarId, NodeId)>,
+    /// `unset_at(V, P)`: node `P` declares `V` with no value.
+    pub unset_at: Vec<(VarId, NodeId)>,
     /// `owner(Rt, V)`: the root place `Rt` holds the value of `V`.
     pub owner: Vec<(PlaceId, VarId)>,
     /// `moved_part(M, P)`: node `P` moves the value at place `M` out of its owner.
@@ -289,6 +295,18 @@ pub struct FnFacts {
     pub may_abort: Vec<NodeId>,
     /// `multi_at(P)`.
     pub multi_at: Vec<NodeId>,
+    /// `clause_multi(Cap)`: a clause of the handler behind `Cap` can resume a
+    /// `multi` continuation more than once.
+    pub clause_multi: Vec<CapId>,
+    /// `body_multi(Cap)`: the computation that the handler behind `Cap` handles
+    /// can resume a `multi` continuation more than once.
+    pub body_multi: Vec<CapId>,
+    /// `resumes_at(P, Cap)`: node `P` resumes the computation that the handler
+    /// behind `Cap` handles.
+    pub resumes_at: Vec<(NodeId, CapId)>,
+    /// `clause_performs(H, E)`: a clause of handler `H` performs effect `E`
+    /// through a handler outside `H`.
+    pub clause_performs: Vec<(HandlerId, String)>,
 
     /// `has_signature()`.
     pub has_signature: bool,
@@ -473,10 +491,16 @@ impl FnFacts {
         nd(&mut self.uses);
         nd(&mut self.moved_at);
         nd(&mut self.scope_end);
+        nd(&mut self.overwrites);
+        nd(&mut self.unset_at);
         nd(&mut self.owner);
         nd(&mut self.moved_part);
         nd(&mut self.may_abort);
         nd(&mut self.multi_at);
+        nd(&mut self.clause_multi);
+        nd(&mut self.body_multi);
+        nd(&mut self.resumes_at);
+        nd(&mut self.clause_performs);
         nd(&mut self.declared_mut);
         nd(&mut self.declared_effect);
         nd(&mut self.escapes_at);
@@ -500,6 +524,8 @@ pub struct Violations {
     pub error: BTreeSet<(VarId, NodeId)>,
     /// `use_after_move(V, P)`: W0302, W0501, W0502.
     pub use_after_move: BTreeSet<(VarId, NodeId)>,
+    /// `use_before_set(V, P)`: W0304.
+    pub use_before_set: BTreeSet<(VarId, NodeId)>,
     /// `moved_immovable(V, P)`: W0604.
     pub moved_immovable: BTreeSet<(VarId, NodeId)>,
     /// `unconsumed(V, P)`: W0601.
@@ -535,6 +561,7 @@ impl Violations {
     pub fn is_clean(&self) -> bool {
         self.error.is_empty()
             && self.use_after_move.is_empty()
+            && self.use_before_set.is_empty()
             && self.moved_immovable.is_empty()
             && self.unconsumed.is_empty()
             && self.overwritten.is_empty()

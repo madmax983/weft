@@ -113,8 +113,10 @@ pub struct OpDef {
 /// An effect.
 #[derive(Clone, Debug)]
 pub struct EffectDef {
-    /// The canonical name.
+    /// The name as the source writes it. `effects::identity` is the name in the facts.
     pub name: String,
+    /// The module of the definition.
+    pub module: ModId,
     /// The operations.
     pub ops: Vec<OpDef>,
     /// The effect is a standard effect.
@@ -271,6 +273,24 @@ pub struct EffectSig {
     /// The body calls a function value that it does not know, and that call can
     /// resume a `multi` continuation more than once. The body always infers this part.
     pub multi: bool,
+    /// Function parameters that a task or a fork branch of the body can call. The
+    /// body always infers this part.
+    pub tasks: BTreeSet<usize>,
+    /// Function parameters that the body gives to an operation of a handler of a
+    /// caller, with the effect. The clause can call or keep them. The body always
+    /// infers this part.
+    pub op_fns: BTreeSet<(usize, String)>,
+    /// Effects that a task or a fork branch of the body performs through a handler
+    /// of a caller. The body always infers this part.
+    pub task_effects: BTreeSet<String>,
+    /// Function parameters that the body can call more than once. The body always
+    /// infers this part.
+    pub repeats: BTreeSet<usize>,
+    /// Type parameters, by index in `FnSig::generics`, of the values that the
+    /// body can drop. On some path, a value of such a type goes out of scope or
+    /// gets a new value. A caller that gives a linear type there loses a value
+    /// (W0601). The body always infers this part.
+    pub drops: BTreeSet<usize>,
 }
 
 impl EffectSig {
@@ -383,6 +403,8 @@ pub struct Program {
     pub root: ModId,
     /// The definition behind raw pointer types `*T`. No module names it.
     pub ptr: Option<AdtId>,
+    /// The type properties of the definitions (`Program::props`).
+    pub props: std::sync::OnceLock<crate::props::TypeProps>,
 }
 
 /// The prelude module.
@@ -472,7 +494,7 @@ impl Program {
     pub fn effect_named(&self, module: ModId, name: &str) -> Option<EffectId> {
         match self.lookup(module, name) {
             Some(ItemRef::Effect(e)) => Some(e),
-            _ => None,
+            _ => effects::by_identity(self, name),
         }
     }
 }
@@ -724,6 +746,7 @@ impl Collector {
                 ItemKind::Effect(e) => {
                     self.prog.effects.push(EffectDef {
                         name: e.name.name.clone(),
+                        module: m,
                         ops: Vec::new(),
                         is_std,
                     });
@@ -1246,6 +1269,45 @@ impl Collector {
                     self.collect_ret_places(t, params, names, m, path, out);
                     path.pop();
                 }
+            }
+            // A reference inside another type, such as `Option<&T in p>`, can
+            // state its place. With no place, the caller takes the places of the
+            // arguments.
+            TypeExprKind::Path { args, .. } => {
+                for t in args {
+                    self.collect_nested_places(t, params, names, m, path, out);
+                }
+            }
+            TypeExprKind::Array { elem, .. } => {
+                self.collect_nested_places(elem, params, names, m, path, out);
+            }
+            _ => {}
+        }
+    }
+
+    /// Collects the stated places of the references inside a type argument of a
+    /// returned type. A reference with no place is not an error here.
+    fn collect_nested_places(
+        &mut self,
+        t: &TypeExpr,
+        params: &[ParamSig],
+        names: &BTreeMap<String, usize>,
+        m: ModId,
+        path: &mut Vec<usize>,
+        out: &mut Vec<RetPlace>,
+    ) {
+        match &t.kind {
+            TypeExprKind::Ref { place: None, inner } => {
+                self.collect_nested_places(inner, params, names, m, path, out);
+            }
+            TypeExprKind::Ref { .. } => self.collect_ret_places(t, params, names, m, path, out),
+            TypeExprKind::Tuple(ts) | TypeExprKind::Path { args: ts, .. } => {
+                for x in ts {
+                    self.collect_nested_places(x, params, names, m, path, out);
+                }
+            }
+            TypeExprKind::Array { elem, .. } | TypeExprKind::Slice(elem) => {
+                self.collect_nested_places(elem, params, names, m, path, out);
             }
             _ => {}
         }

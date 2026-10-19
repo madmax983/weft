@@ -1,0 +1,38 @@
+// A closure that a callee gives back keeps its modes: a `once` closure stays
+// `once`. A closure that a function returns cannot capture the locals of the
+// function (W0204), so it cannot move them.
+
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) {}
+fn pass_through(f: fn()) -> fn() { f }
+fn gen_keep<T>(x: T) -> T { x }
+
+fn passed_twice() {
+    let b = Buf { items: Vec.new() }
+    let g = pass_through(|| eat(b))
+    g()
+    g()   //~ W0502
+}
+fn passed_once() {
+    let b = Buf { items: Vec.new() }
+    let g = pass_through(|| eat(b))
+    g()
+}
+fn kept_twice() {
+    let b = Buf { items: Vec.new() }
+    let g = gen_keep(|| eat(b))
+    g()
+    g()   //~ W0502
+}
+fn kept_once() {
+    let b = Buf { items: Vec.new() }
+    let g = gen_keep(|| eat(b))
+    g()
+}
+fn returns_local() -> fn() {
+    let b = Buf { items: Vec.new() }
+    || eat(b)   //~ W0204
+}
+fn returns_param(b: Buf) -> fn() {
+    || eat(b)   //~ W0204
+}
