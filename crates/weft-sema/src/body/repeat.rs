@@ -22,10 +22,97 @@ impl Lower<'_> {
         };
         let nested =
             body.is_none_or(|b| self.frames.iter().skip(b + 1).any(|f| f.barrier.is_some()));
+        // A call of a parameter of the function in a closure counts where the
+        // closure runs (`repeats_sig`). Each closure around the call keeps it.
+        let inner = self.frames.iter().rposition(|f| f.barrier.is_some());
+        if d == 0 && nested && inner.is_some_and(|fi| self.is_closure_frame(fi)) {
+            let loops = !self.loops.is_empty();
+            for fi in 1..self.frames.len() {
+                let Some(si) = self.frames[fi].barrier else {
+                    continue;
+                };
+                if self.is_closure_frame(fi) {
+                    let again = Some(fi) != inner || loops;
+                    self.sums[si].param_calls.push((p, again));
+                }
+            }
+            return;
+        }
         let again = nested || !self.loops.is_empty();
         let e = self.param_runs.entry((d, p)).or_insert((0, false));
         e.0 += 1;
         e.1 |= again;
+    }
+
+    /// Returns true if frame `fi` starts the body of a closure, not of a clause.
+    fn is_closure_frame(&self, fi: usize) -> bool {
+        self.jumps
+            .iter()
+            .any(|j| matches!(j, super::Jump::Closure { frame, .. } if *frame == fi))
+    }
+
+    /// A callee can run function value `v` again at node `n`, right after the run
+    /// at `n`: a new node after `n` uses the value again. A change of the first run
+    /// invalidates what the value captures for the second run (W0301). Returns the
+    /// new node.
+    pub(super) fn run_again(&mut self, n: NodeId, v: &Val) -> NodeId {
+        if self.cur.is_none() {
+            return n;
+        }
+        let span = self.facts.node(n).span;
+        let again = self.emit(span, "call again", "the callee can call it again".into());
+        if let Some(var) = v.var {
+            self.facts.uses.push((var, again));
+        }
+        again
+    }
+
+    /// Returns true if closure `id` can run in the body: a node of the body, of a
+    /// clause or of a closure that can run applies it, or the body stores it.
+    fn closure_runs(&self, id: usize, seen: &mut Vec<usize>) -> bool {
+        if seen.contains(&id) {
+            return false;
+        }
+        seen.push(id);
+        let stored = self.escaped.iter().any(|st| {
+            st.info
+                .summary
+                .is_some_and(|s| self.closures[s].members.contains(&id))
+        });
+        if stored {
+            return true;
+        }
+        for a in &self.applied {
+            if !self.closures[a.summary].members.contains(&id) {
+                continue;
+            }
+            match a.scope {
+                super::fnval::Scope::Closure(y) => {
+                    if self.closure_runs(y, seen) {
+                        return true;
+                    }
+                }
+                _ => return true,
+            }
+        }
+        false
+    }
+
+    /// Returns true if closure `id` runs only where the function returns it: the
+    /// function returns it, or runs it only in a closure that it returns.
+    fn only_returned(&self, id: usize) -> bool {
+        if self.closure_runs(id, &mut Vec::new()) {
+            return false;
+        }
+        let returned = self.rets.iter().any(|(info, _)| {
+            info.summary
+                .is_some_and(|s| self.closures[s].members.contains(&id))
+        });
+        returned
+            || self
+                .applied
+                .iter()
+                .any(|a| self.closures[a.summary].members.contains(&id))
     }
 
     /// Function value `info` can run more than once at node `n`. A parameter in it
@@ -110,11 +197,17 @@ impl Lower<'_> {
 
     /// A callee gets function value `v` at node `n` and can call it. A closure that
     /// runs only once moves there, because the callee can call it. If the callee
-    /// can call it more than once, the second call is a use after that move
-    /// (W0502). A callee can also drop the closure without a call. So a linear
+    /// can call it again at node `again` (`run_again`), the second call is a use
+    /// after that move (W0502). A callee can also drop the closure without a call. So a linear
     /// closure goes out of scope at `n` (W0601). `exactly_once` says that the
     /// callee calls it once on every path: then it does not.
-    pub(super) fn give_fn(&mut self, n: NodeId, v: &Val, repeats: bool, exactly_once: bool) {
+    pub(super) fn give_fn(
+        &mut self,
+        n: NodeId,
+        v: &Val,
+        again: Option<NodeId>,
+        exactly_once: bool,
+    ) {
         let (Some(var), Some(s)) = (v.var, self.fn_info(v).summary) else {
             return;
         };
@@ -125,10 +218,8 @@ impl Lower<'_> {
             self.facts.scope_end.push((var, n));
         }
         self.move_var(var, n);
-        if repeats {
-            let span = self.facts.node(n).span;
-            let again = self.emit(span, "call again", "the callee can call it again".into());
-            self.move_var(var, again);
+        if let Some(a) = again.filter(|&a| a != n) {
+            self.move_var(var, a);
         }
     }
 
@@ -168,6 +259,13 @@ impl Lower<'_> {
             .filter(|(_, &(count, again))| again || count > 1)
             .map(|(&(_, p), _)| p)
             .collect();
+        // A call in a closure can run more than once, unless the function only
+        // returns the closure: then the `ret` part has it.
+        for (id, c) in self.closures.iter().enumerate() {
+            if !c.param_calls.is_empty() && c.members.contains(&id) && !self.only_returned(id) {
+                out.extend(c.param_calls.iter().map(|&(p, _)| p));
+            }
+        }
         out.extend(self.sums[0].stores.iter().copied());
         out.extend(self.multi_live_params());
         out

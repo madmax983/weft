@@ -254,6 +254,9 @@ pub struct RetFn {
     pub op_fns: BTreeSet<(usize, String)>,
     /// Parameters of the value that a task of the call can call.
     pub tasks: BTreeSet<usize>,
+    /// Function parameters of the function that the call can call more than
+    /// once. A caller runs the value two times in a row where it calls it.
+    pub repeats: BTreeSet<usize>,
 }
 
 /// The effect part of a signature.

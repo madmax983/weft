@@ -749,12 +749,15 @@ impl Lower<'_> {
             self.apply_value(n, &info, row.as_deref(), root, &given);
             self.start_ret_spawns(n, &info);
             let repeats = self.callee_repeats(&Callee::Item(f), i);
-            if repeats {
+            let again = if repeats {
                 self.note_repeat(n, &info, true);
                 self.repeat_unknown(n, &info, &given);
-            }
+                Some(self.run_again(n, &av.val))
+            } else {
+                None
+            };
             let once = self.item_runs_once(f);
-            self.give_fn(n, &av.val, repeats, once);
+            self.give_fn(n, &av.val, again, once);
         }
         for &j in &sig.effects.passthrough {
             if let Some((0, fp)) = vals.get(j).and_then(|v| v.val.fn_param) {
@@ -1384,6 +1387,18 @@ impl Lower<'_> {
         self.note_cap_run(l, &direct);
         // The value runs with the arguments.
         self.apply_value(n, &callee, fty.effects.as_deref(), 800, &direct);
+        // A value that runs a function value that it holds more than once runs it
+        // again right after.
+        if callee.summary.is_some_and(|s| self.closures[s].repeat_runs) {
+            let held = Val {
+                var: Some(loc.var),
+                ..Val::default()
+            };
+            let again = self.run_again(n, &held);
+            if callee.summary.is_some_and(|s| self.closure_once_now(s)) {
+                self.move_var(loc.var, again);
+            }
+        }
         // The value can give a function argument to an operation.
         if let Some(s) = callee.summary {
             let sum = self.closures[s].clone();
@@ -1465,7 +1480,8 @@ impl Lower<'_> {
             }
             if let Some((_, v)) = fn_vals.iter().find(|(j, _)| *j == i) {
                 let v = v.clone();
-                self.give_fn(n, &v, repeats, false);
+                let again = repeats.then(|| self.run_again(n, &v));
+                self.give_fn(n, &v, again, false);
             }
         }
         // A value that the body does not know can start a task that runs a
@@ -1956,7 +1972,8 @@ impl Lower<'_> {
             self.repeat_unknown(n, &info, &given);
             if let Some((_, v, _)) = fn_args.iter().find(|(j, ..)| *j == i) {
                 let v = v.clone();
-                self.give_fn(n, &v, true, false);
+                let again = self.run_again(n, &v);
+                self.give_fn(n, &v, Some(again), false);
             }
         }
         if o.multi {

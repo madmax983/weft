@@ -1139,6 +1139,23 @@ impl Lower<'_> {
 
     /// Returns what a call of the returned function value does, in the places of
     /// the parameters. `bases` are the places of the parameters.
+    /// Returns the function parameters that a call of the returned value `u` can
+    /// call more than once: at two nodes, in a loop or in a closure inside it. A
+    /// value that runs a function value that it holds more than once runs each
+    /// parameter that it can call more than once.
+    fn ret_repeats(u: &Summary) -> BTreeSet<usize> {
+        let mut out = BTreeSet::new();
+        for &(p, again) in &u.param_calls {
+            if again || u.param_calls.iter().filter(|(q, _)| *q == p).count() > 1 {
+                out.insert(p);
+            }
+        }
+        if u.repeat_runs {
+            out.extend(u.params.iter().chain(&u.passthrough).copied());
+        }
+        out
+    }
+
     pub(super) fn ret_sig(&self, bases: &[Vec<PlaceId>]) -> Option<Box<RetFn>> {
         if self.rets.is_empty() {
             return None;
@@ -1162,6 +1179,7 @@ impl Lower<'_> {
                 .map(|(p, _, e)| (*p, e.clone()))
                 .collect(),
             tasks: u.tasks.to_set(),
+            repeats: Self::ret_repeats(&u),
             ..RetFn::default()
         };
         let mut muts = (Vec::new(), Vec::new());
@@ -1401,6 +1419,8 @@ impl Lower<'_> {
             sum.op_fns.insert((*p, cap, e.clone()));
         }
         sum.tasks.extend(rf.tasks.iter().copied());
+        // The result can run a function argument more than once.
+        sum.repeat_runs = !rf.repeats.is_empty();
         // A call of the result can do what the result does: the effects of the
         // values that it returns are part of it.
         let r = self.closures.len();

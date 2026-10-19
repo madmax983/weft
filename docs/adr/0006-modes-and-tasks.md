@@ -65,6 +65,12 @@ Status: accepted. Date: 2026-10-18.
   node runs again for each resume. A function with no body can call each function
   argument more than once, except `with_timeout`. A clause can call each function
   argument of its operation more than once.
+- Such a call runs the closure two times in a row: a node right after the call uses the
+  closure again. So a change in the first run that invalidates what the closure
+  captures is W0301 at the call, as for `g(); g()`. A call of a function parameter in a
+  closure counts where the closure runs. A function that only returns the closure
+  does not run it: the value that it returns has a `repeats` part of its own
+  (`RetFn::repeats`), and a call of that value runs it two times in a row.
 - A node that can run a stored closure more than once starts its tasks again after it
   (W0405). These nodes are:
   - A call of a callee whose body can run a stored value in a loop or in a closure.
@@ -133,6 +139,9 @@ Status: accepted. Date: 2026-10-18.
     it before the spawn.
   - A call of a closure that returns a closure that spawns starts the task also when
     nothing calls the result, if a callee gets the maker.
+  - A call that can run its function argument again uses the argument again after
+    each change at the call. The change can be one of the callee, not of the first
+    run, and the callee can run the closure before it.
   - `repeats` counts a call in a closure or in a loop, and a call at two nodes, also
     on two branches of an `if`. The `reach` part counts two nodes only if one can
     follow the other.

@@ -1,0 +1,76 @@
+// A callee that can call its function parameter more than once (`repeats`,
+// ADR 0006) runs a closure that it gets two times in a row. So a change in
+// the closure invalidates the references that the closure captures for the
+// second run. A closure that a function returns, and that calls a function
+// parameter more than once, does the same where it runs.
+fn twice(f: fn()) { f()
+ f() }
+fn each(n: u64, f: fn()) { for i in 0..n { f() } }
+fn twice2(f: fn()) { twice(f) }
+fn wrap(f: fn()) -> fn() { || { f()
+ f() } }
+fn once(f: fn()) { f() }
+
+fn via_twice() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    twice(|| { print(r + 1)   //~ W0301
+ v.clear() })
+}
+fn via_loop_callee() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    each(2, || { print(r + 1)   //~ W0301
+ v.clear() })
+}
+fn via_two_levels() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    twice2(|| { print(r + 1)   //~ W0301
+ v.clear() })
+}
+fn via_returned() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let g = wrap(|| { print(r + 1)
+ v.clear() })
+    g()   //~ W0301
+}
+// A local closure that a callee calls twice.
+fn local_twice() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let f = || { print(r + 1)
+ v.clear() }
+    twice(f)   //~ W0301
+}
+
+// Clean: the same callees with a closure that does not clear.
+fn twice_reads() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    twice(|| print(r + 1))
+    each(2, || print(r + 1))
+    twice2(|| print(r + 1))
+    let g = wrap(|| print(r + 1))
+    g()
+}
+// Clean: a change that does not invalidate what the closure captures.
+fn twice_pushes() {
+    let v = Vec.new()
+    twice(|| v.push(1))
+}
+// Clean: a callee that calls the closure once.
+fn once_clears() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    once(|| { print(r + 1)
+ v.clear() })
+}

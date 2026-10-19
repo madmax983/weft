@@ -40,6 +40,8 @@ fn tuple_closure() {
 }
 
 // A perform: the clause frees the place, then runs the closure or reads the payload.
+// A clause can run the closure more than once: a run after the change reads a
+// freed place (W0301, ADR 0006).
 fn closure_perform() {
     let v: Vec<u64> = Vec.new()
     v.push(1)
@@ -51,7 +53,7 @@ fn closure_perform() {
             resume(())
         }
     } in {
-        run(|| print(r))   //~ W0312
+        run(|| print(r))   //~ W0312 W0301
     }
 }
 fn option_perform() {

@@ -11,10 +11,11 @@ fn give_two(f: fn(&World, &Entity), w: &World) {
     f(w, &w.entities[0])   //~ W0312
 }
 
-// The function parameter gets `world` and a closure that points into it.
+// The function parameter gets `world` and a closure that points into it. It
+// can change `world` and then run the closure (W0301, ADR 0006).
 fn give_closure(g: fn(fn(), &World), world: &World) {
     let r = &world.entities[0]
-    g(|| print(r.hp), world)   //~ W0312
+    g(|| print(r.hp), world)   //~ W0312 W0301
 }
 
 // A closure argument lends its parameter and reads a capture inside it.

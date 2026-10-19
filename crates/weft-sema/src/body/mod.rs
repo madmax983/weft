@@ -246,7 +246,9 @@ pub(super) struct SumMark {
     binds: usize,
     cap_runs: usize,
     uniq_needs: usize,
+    param_calls: usize,
     may_abort: bool,
+    repeat_runs: bool,
     multi: bool,
     literal: bool,
     unknown: bool,
@@ -349,6 +351,15 @@ pub struct Summary {
     /// `@ uniq`, with the text of W0406. A node that runs the closure checks
     /// that the variable is still `@ uniq` there.
     uniq_needs: Vec<(VarId, String)>,
+    /// The function parameters of the function that the body calls, each with
+    /// true if the call can run more than once in one run of the body: in a loop
+    /// of the body or in a closure inside it. A call in a closure counts for the
+    /// function where the closure runs (`Lower::repeats_sig`).
+    pub param_calls: Vec<(usize, bool)>,
+    /// A call of the value runs a function value that it holds more than once:
+    /// the value that a function returns calls a function argument more than
+    /// once (`RetFn::repeats`).
+    pub repeat_runs: bool,
 }
 
 impl Summary {
@@ -394,6 +405,8 @@ impl Summary {
             ret_spawns,
             cap_runs,
             uniq_needs,
+            param_calls,
+            repeat_runs,
         } = self;
         SumMark {
             muts: muts.mark(),
@@ -429,7 +442,9 @@ impl Summary {
             binds: binds.len(),
             cap_runs: cap_runs.len(),
             uniq_needs: uniq_needs.len(),
+            param_calls: param_calls.len(),
             may_abort: *may_abort,
+            repeat_runs: *repeat_runs,
             multi: *multi,
             literal: *literal,
             unknown: *unknown,
@@ -478,6 +493,8 @@ impl Summary {
             ret_spawns,
             cap_runs,
             uniq_needs,
+            param_calls,
+            repeat_runs,
         } = self;
         muts.cut(mark.muts);
         reads.cut(mark.reads);
@@ -512,7 +529,9 @@ impl Summary {
         binds.truncate(mark.binds);
         cap_runs.truncate(mark.cap_runs);
         uniq_needs.truncate(mark.uniq_needs);
+        param_calls.truncate(mark.param_calls);
         *may_abort = mark.may_abort;
+        *repeat_runs = mark.repeat_runs;
         *multi = mark.multi;
         *literal = mark.literal;
         *unknown = mark.unknown;
@@ -583,6 +602,8 @@ impl Summary {
                 self.uniq_needs.push(u.clone());
             }
         }
+        self.param_calls.extend(o.param_calls.iter().copied());
+        self.repeat_runs |= o.repeat_runs;
     }
 
     /// Adds what a call of the function value that `o` stands for can do. A call of
