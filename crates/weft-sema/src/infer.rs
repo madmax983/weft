@@ -85,7 +85,9 @@ pub fn growth_limit(prog: &Program, sig: &FnSig, steps: usize) -> usize {
 
 /// Returns true if `a` is `b` or a place that holds `b`. The texts do not count.
 fn place_covers(a: &SigPlace, b: &SigPlace) -> bool {
+    let held = |p: &SigPlace| p.steps.first() == Some(&SigStep::Held);
     a.root == b.root
+        && held(a) == held(b)
         && a.steps.len() <= b.steps.len()
         && a.steps.iter().zip(&b.steps).all(|(x, y)| match (x, y) {
             (SigStep::Step(s, _), SigStep::Step(t, _)) => s == t,

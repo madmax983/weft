@@ -287,6 +287,9 @@ pub struct FnFacts {
     pub overwrites: Vec<(VarId, NodeId)>,
     /// `unset_at(V, P)`: node `P` declares `V` with no value.
     pub unset_at: Vec<(VarId, NodeId)>,
+    /// `empty_at(V, P)`: node `P` gives `V` a new value with no linear part, such
+    /// as `None`.
+    pub empty_at: Vec<(VarId, NodeId)>,
     /// `owner(Rt, V)`: the root place `Rt` holds the value of `V`.
     pub owner: Vec<(PlaceId, VarId)>,
     /// `moved_part(M, P)`: node `P` moves the value at place `M` out of its owner.
@@ -493,6 +496,7 @@ impl FnFacts {
         nd(&mut self.scope_end);
         nd(&mut self.overwrites);
         nd(&mut self.unset_at);
+        nd(&mut self.empty_at);
         nd(&mut self.owner);
         nd(&mut self.moved_part);
         nd(&mut self.may_abort);

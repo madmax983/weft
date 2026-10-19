@@ -53,6 +53,7 @@ impl Lower<'_> {
                 bases[i] = self.subst_place(pl, &bases.clone(), 0);
             }
         }
+        self.param_bases = bases.iter().flatten().copied().collect();
         for (i, p) in sig.params.iter().enumerate() {
             let l = param_locals[i];
             let refs = if p.ty.is_ref() {
@@ -109,6 +110,7 @@ impl Lower<'_> {
         }
         self.jumps.pop();
         self.apply_stored();
+        self.op_refs();
         let eff = self.summary_to_sig(&bases);
         let fdef = &self.prog.fns[id];
         if fdef.is_pub && !sig.declared && !eff.is_empty() && !fdef.decl.is_extern {
@@ -138,6 +140,7 @@ impl Lower<'_> {
         self.drop_value(&v, span);
         self.flush(block_tail(body));
         self.apply_stored();
+        self.op_refs();
         let eff = self.summary_to_sig(&[]);
         self.finish(eff)
     }
@@ -312,7 +315,9 @@ impl Lower<'_> {
         }
         // Keep only places that no other place covers.
         let covered = |a: &SigPlace, b: &SigPlace| {
+            let held = |p: &SigPlace| p.steps.first() == Some(&SigStep::Held);
             a.root == b.root
+                && held(a) == held(b)
                 && b.steps.len() < a.steps.len()
                 && a.steps[..b.steps.len()] == b.steps[..]
         };
@@ -745,9 +750,9 @@ impl Lower<'_> {
                 };
                 if self.cur.is_some() {
                     let st = self.branch_state();
-                    self.loop_jumps
-                        .push((matches!(s.kind, StmtKind::Break), st));
                     let n = self.emit(s.span, "jump", String::new());
+                    self.loop_jumps
+                        .push((matches!(s.kind, StmtKind::Break), st, n));
                     self.end_frames_above(keep, n);
                     self.leave_in_flight(n, lf.jumps, self.loops.len());
                     self.facts.cfg_edge.push((n, target));
@@ -804,6 +809,7 @@ impl Lower<'_> {
         if let Some(c) = self.cur {
             self.facts.cfg_edge.push((c, header));
         }
+        self.last_loop = Some((header, exit));
     }
 
     /// Lowers one iteration of a loop with `pass` until the values of the locals
@@ -831,18 +837,28 @@ impl Lower<'_> {
             passes += 1;
             // The next pass starts with the states of the back edges: the end of
             // the body and each `continue`.
-            let mut back = vec![head_state];
-            back.extend(jumps.iter().filter(|(b, _)| !b).map(|(_, st)| st.clone()));
-            if self.cur.is_some() {
-                back.push(self.branch_state());
-            }
+            let mut back = vec![head_state.clone()];
+            back.extend(
+                jumps
+                    .iter()
+                    .filter(|(b, ..)| !b)
+                    .map(|(_, st, _)| st.clone()),
+            );
+            let end_state = self.cur.map(|_| self.branch_state());
+            back.extend(end_state.clone());
             let next = Self::joined(&back);
             if passes >= MAX_LOOP_PASSES || self.carried(outer, made, Some(&next)) == start {
                 // The loop ends at its head, before a pass or after one, or at a `break`.
                 let mut exits = back;
-                exits.push(entry);
-                exits.extend(jumps.into_iter().filter(|(b, _)| *b).map(|(_, st)| st));
+                exits.push(entry.clone());
+                exits.extend(
+                    jumps
+                        .iter()
+                        .filter(|(b, ..)| *b)
+                        .map(|(_, st, _)| st.clone()),
+                );
                 let st = Self::joined(&exits);
+                self.retire_loop_stale(&head_state, &entry, end_state.as_ref(), &jumps, &st);
                 self.set_branch(&st);
                 return;
             }
@@ -874,6 +890,60 @@ impl Lower<'_> {
                 loc.uniq = next.uniq.get(l).copied().unwrap_or(v.uniq);
                 loc.caps = v.caps;
             }
+        }
+    }
+
+    /// Retires the stale part holders on the edges into the head and the exit of
+    /// the loop that `lower_loop` lowered last (`retire_stale`). `head` is the
+    /// state at the head in the last pass, `entry` the state before the loop,
+    /// `end` the state at the end of the body, `jumps` the `break`s and the
+    /// `continue`s, and `exit` the state after the loop.
+    fn retire_loop_stale(
+        &mut self,
+        head: &super::BranchState,
+        entry: &super::BranchState,
+        end: Option<&super::BranchState>,
+        jumps: &[(bool, super::BranchState, NodeId)],
+        exit: &super::BranchState,
+    ) {
+        let Some((header, out)) = self.last_loop else {
+            return;
+        };
+        let into_head: Vec<NodeId> = self
+            .facts
+            .cfg_edge
+            .iter()
+            .filter(|&&(_, b)| b == header)
+            .map(|&(a, _)| a)
+            .collect();
+        for a in into_head {
+            let state = if a.index() < header.index() {
+                Some(entry)
+            } else if let Some((_, st, _)) = jumps.iter().find(|(b, _, n)| !b && *n == a) {
+                Some(st)
+            } else if Some(a) == self.cur {
+                end
+            } else {
+                None
+            };
+            if let Some(st) = state {
+                self.retire_stale(a, header, st, head);
+            }
+        }
+        let into_exit: Vec<NodeId> = self
+            .facts
+            .cfg_edge
+            .iter()
+            .filter(|&&(_, b)| b == out)
+            .map(|&(a, _)| a)
+            .collect();
+        for a in into_exit {
+            // The other edges leave the head: the loop condition.
+            let st = jumps
+                .iter()
+                .find(|(b, _, n)| *b && *n == a)
+                .map_or(head, |(_, st, _)| st);
+            self.retire_stale(a, out, st, exit);
         }
     }
 

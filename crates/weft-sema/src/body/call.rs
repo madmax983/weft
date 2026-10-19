@@ -852,6 +852,18 @@ impl Lower<'_> {
             out.parts = parts;
         }
         self.call_flows(&sig, &vals, &arg_places, &ptys, &muts, &ret, &mut out);
+        // The callee can return what a clause of a local handler resumes with.
+        if self.holds_refs(&ret) {
+            let caps: Vec<CapId> = self.facts.performs_at[performs_from..]
+                .iter()
+                .filter(|(m, _)| *m == n)
+                .map(|&(_, c)| c)
+                .collect();
+            for c in caps {
+                let rs = self.op_result_refs(Some(c), None);
+                out.refs.extend(rs);
+            }
+        }
         out
     }
 
@@ -1459,6 +1471,9 @@ impl Lower<'_> {
             self.keep_for_op(&v, depth);
             let caps = self.val_caps(&v);
             self.resumed.entry(cap).or_default().extend(caps);
+            if !v.refs.is_empty() {
+                self.resume_refs_pending.push((cap, v.refs.clone()));
+            }
             self.consume(&v, a.value.span);
         }
         let var = self.locals[l].var;
@@ -1737,8 +1752,14 @@ impl Lower<'_> {
             // follow.
             caps.insert(cap.map_or(super::caps::UNKNOWN_FN, super::caps::resumed_cap));
         }
+        let refs = if self.holds_refs(&o.ret) {
+            self.op_result_refs(cap, Some(op))
+        } else {
+            Vec::new()
+        };
         Val {
             ty: o.ret.clone(),
+            refs,
             caps,
             ..Val::default()
         }

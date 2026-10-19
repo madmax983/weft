@@ -1256,6 +1256,17 @@ impl Lower<'_> {
     pub(super) fn sig_place(&self, p: PlaceId, bases: &[Vec<PlaceId>]) -> Option<SigPlace> {
         let root = self.facts.place(p).root;
         let rp = self.root_place(p);
+        // What the references behind a reference parameter point into.
+        if let Some(&i) = self.held_of.get(&root) {
+            let mut steps = vec![crate::program::SigStep::Held];
+            steps.extend(self.sig_steps(p));
+            steps.truncate(crate::infer::SIG_PLACE_STEPS as usize);
+            return Some(SigPlace {
+                root: SigRoot::Param(i),
+                steps,
+                text: self.facts.place(p).display.clone(),
+            });
+        }
         let sig_root = if let Some(i) = bases.iter().position(|b| b.first() == Some(&rp)) {
             SigRoot::Param(i)
         } else if let Some((&a, _)) = self.groups.iter().find(|(_, &g)| g == rp) {

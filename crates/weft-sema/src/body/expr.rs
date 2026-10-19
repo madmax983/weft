@@ -232,6 +232,7 @@ impl Lower<'_> {
                                 .collect();
                             return Some(Val {
                                 ty: Ty::Adt(a, args),
+                                empty: true,
                                 ..Val::default()
                             });
                         }
@@ -341,6 +342,7 @@ impl Lower<'_> {
                 fn_param: loc.fn_param,
                 item: None,
                 caps: loc.caps,
+                empty: false,
             };
         }
         if let Some(ItemRef::Fn(f)) = self.prog.lookup(self.module, &id.name) {
@@ -408,6 +410,7 @@ impl Lower<'_> {
             .collect();
         Some(Val {
             ty: Ty::Adt(adt, args),
+            empty: true,
             ..Val::default()
         })
     }
@@ -870,16 +873,21 @@ impl Lower<'_> {
         }
         let b_end = self.cur;
         let b_state = self.branch_state();
-        let ends: Vec<_> = [(a_end, a_state), (b_end, b_state)]
+        let pairs: Vec<_> = [(a_end, a_state), (b_end, b_state)]
             .into_iter()
-            .filter_map(|(end, st)| end.map(|_| st))
+            .filter_map(|(end, st)| end.map(|n| (n, st)))
             .collect();
+        let ends: Vec<_> = pairs.iter().map(|(_, st)| st.clone()).collect();
         self.join_branches(&ends);
         let join = self.facts.add_node(span, "join", String::new());
         let mut any = false;
         for end in [a_end, b_end].into_iter().flatten() {
             self.facts.cfg_edge.push((end, join));
             any = true;
+        }
+        let joined = Self::joined(&ends);
+        for (end, st) in &pairs {
+            self.retire_stale(*end, join, st, &joined);
         }
         self.cur = if any { Some(join) } else { None };
         let mut refs = a.refs.clone();
@@ -966,6 +974,7 @@ impl Lower<'_> {
         let mut task = None;
         let before = self.branch_state();
         let mut ends = Vec::new();
+        let mut end_nodes = Vec::new();
         for arm in arms {
             self.cur = Some(br);
             self.set_branch(&before);
@@ -1012,9 +1021,14 @@ impl Lower<'_> {
                 self.facts.cfg_edge.push((c, join));
                 reached = true;
                 ends.push(self.branch_state());
+                end_nodes.push(c);
             }
         }
         self.join_branches(&ends);
+        let at_join = Self::joined(&ends);
+        for (end, st) in end_nodes.iter().zip(&ends) {
+            self.retire_stale(*end, join, st, &at_join);
+        }
         self.cur = if reached { Some(join) } else { None };
         self.match_deps = saved_deps;
         // A `match` with an error has no second error for its arms.
@@ -1660,6 +1674,7 @@ impl Lower<'_> {
         let mut clause_sum = Summary::default();
         let mut clauses_done = Vec::new();
         let mut clause_vals: Vec<Val> = Vec::new();
+        let mut clause_locals: Vec<PlaceId> = Vec::new();
         for c in clauses {
             let Some(op) = def.ops.iter().find(|o| o.name == c.op.name).cloned() else {
                 self.err(
@@ -1760,6 +1775,12 @@ impl Lower<'_> {
             let mut cs = self.sums.pop().unwrap_or_default();
             self.captures_live_at(&cs.captures, entry);
             cs.param_roots = param_roots;
+            // The places that the `resume`s give: the result of the operation
+            // points into them. A local of the clause ends with the `handle`.
+            let oi = def.ops.iter().position(|o| o.name == op.name);
+            let own = cs.own_roots.clone();
+            let local = self.note_resumed_refs(cap, oi, &cs.param_roots, &own);
+            clause_locals.extend(local);
             // The value of the clause is the value of the `handle`. A reference into
             // a parameter points into what each node gives to the operation.
             if returns {
@@ -1875,7 +1896,30 @@ impl Lower<'_> {
         self.run_handler(&mut h, &calls, &args);
         self.handled.push(h);
         self.cur = saved;
-        let _ = self.emit(span, "end handle", String::new());
+        let end = self.emit(span, "end handle", String::new());
+        // A reference that a clause resumes with into its own local is not valid
+        // after the `handle`: the clause has ended.
+        let results: Vec<PlaceId> = self
+            .op_results
+            .iter()
+            .filter(|((c, _), _)| *c == cap)
+            .map(|(_, &r)| r)
+            .collect();
+        for p in clause_locals {
+            let root = self.facts.place(p).root;
+            if let Some(l) = self.root_owner(root) {
+                let var = self.locals[l].var;
+                self.facts.scope_end.push((var, end));
+                if v_refs_result(&self.facts, &results, &v.refs) {
+                    let name = self.locals[l].name.clone();
+                    self.err(
+                        "W0204",
+                        format!("the `handle` returns a reference into `{name}`: the local of the clause goes out of scope when the clause ends"),
+                        span,
+                    );
+                }
+            }
+        }
         // The value of the handled body: also a task handle or a function value. A
         // clause value that holds references or function values joins it.
         let mut out = v;
@@ -1894,7 +1938,7 @@ impl Lower<'_> {
     /// Returns the places that `refs` of a clause of operation `op` stand for: a
     /// place below the root of a reference parameter is that place below each
     /// place that a node gives to the operation of the handler behind `cap`.
-    fn clause_refs_onto_args(
+    pub(super) fn clause_refs_onto_args(
         &mut self,
         refs: &[PlaceId],
         param_roots: &std::collections::BTreeMap<PlaceId, usize>,
@@ -2217,4 +2261,13 @@ fn neg_literal(e: &Expr) -> bool {
         } => neg_literal(expr),
         _ => false,
     }
+}
+
+/// Returns true if one of the places `refs` is below one of the root places `results`.
+fn v_refs_result(facts: &weft_facts::FnFacts, results: &[PlaceId], refs: &[PlaceId]) -> bool {
+    refs.iter().any(|&p| {
+        results
+            .iter()
+            .any(|&r| facts.place(r).root == facts.place(p).root)
+    })
 }

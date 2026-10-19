@@ -1,0 +1,121 @@
+// A reference parameter can point to a value that holds references, such as a
+// `Vec<&T>` (ADR 0003). A reference that the body reads out of it points into
+// what the references behind the parameter point into: `*rs` in the facts. The
+// signature names these places with `rs..`, and a caller puts in the places that
+// the references in its argument point into. A part of a local can hold the
+// references of each branch after a join. On a path where a later value replaced
+// them, they are stale, and a change of their places there does not count.
+struct Counter { items: Vec<u64> }
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Wrap<T> { x: T }
+
+fn first(rs: &Vec<&u64>) -> &u64 in rs.. { rs[0] }
+fn first_elem(rs: &Vec<&u64>) -> &u64 in rs[] { rs[0] }   //~ W0204
+fn grow(rs: &Vec<&Counter>) / mut(rs..) { let c = rs[0]
+ c.items.clear() }
+fn grow_undeclared(rs: &Vec<&Counter>) / mut(rs) { let c = rs[0]
+ c.items.clear() }   //~ W0703
+fn grow_inferred(rs: &Vec<&Counter>) { let c = rs[0]
+ c.items.clear() }
+fn grow_opt(o: &Option<&Counter>) / mut(o..) { match o { Some(c) => c.items.clear(), None => {} } }
+fn grow_through(rs: &Vec<&Counter>) / mut(rs..) { grow(rs) }
+
+fn read_back() {
+    let v = Vec.new()
+    v.push(1)
+    let rs = Vec.new()
+    rs.push(&v[0])
+    let r = first(&rs)
+    v.clear()
+    print(r)   //~ W0301
+}
+fn mutates_stored() {
+    let c = Counter { items: Vec.new() }
+    c.items.push(7)
+    let at = &c.items[0]
+    let rs = Vec.new()
+    rs.push(&c)
+    grow(&rs)
+    print(at)   //~ W0301
+}
+fn mutates_inferred() {
+    let c = Counter { items: Vec.new() }
+    c.items.push(7)
+    let at = &c.items[0]
+    let rs = Vec.new()
+    rs.push(&c)
+    grow_inferred(&rs)
+    print(at)   //~ W0301
+}
+fn mutates_in_option() {
+    let c = Counter { items: Vec.new() }
+    c.items.push(7)
+    let at = &c.items[0]
+    let o = Some(&c)
+    grow_opt(&o)
+    print(at)   //~ W0301
+}
+fn mutates_through_callee() {
+    let c = Counter { items: Vec.new() }
+    c.items.push(7)
+    let at = &c.items[0]
+    let rs = Vec.new()
+    rs.push(&c)
+    grow_through(&rs)
+    print(at)   //~ W0301
+}
+
+// Stale holders after a join.
+fn branch_stale(a: &World, b: &World, c: bool) / mut(a.entities) {
+    let w = Wrap { x: &b.entities[0] }
+    if c {
+        w.x = &a.entities[0]
+        w.x = &b.entities[0]
+        a.entities.clear()
+    } else {
+        w.x = &a.entities[0]
+    }
+    print(w.x.hp)
+}
+fn continue_stale(a: &World, b: &World, n: u64) / mut(a.entities) {
+    let w = Wrap { x: &b.entities[0] }
+    for i in 0..n {
+        print(w.x.hp)
+        w.x = &a.entities[0]
+        if i == 1 { continue }
+        w.x = &b.entities[0]
+        a.entities.clear()
+    }
+}
+fn branch_live(a: &World, b: &World, c: bool) / mut(a.entities) {
+    let w = Wrap { x: &b.entities[0] }
+    if c {
+        w.x = &a.entities[0]
+    } else {
+        w.x = &b.entities[0]
+    }
+    a.entities.clear()
+    print(w.x.hp)   //~ W0301
+}
+
+// Controls.
+fn read_back_ok() {
+    let v = Vec.new()
+    v.push(1)
+    let rs = Vec.new()
+    rs.push(&v[0])
+    let r = first(&rs)
+    print(r)
+}
+fn grow_other() {
+    let c = Counter { items: Vec.new() }
+    c.items.push(7)
+    let d = Counter { items: Vec.new() }
+    d.items.push(8)
+    let at = &c.items[0]
+    let rs = Vec.new()
+    rs.push(&d)
+    grow(&rs)
+    print(at)
+}

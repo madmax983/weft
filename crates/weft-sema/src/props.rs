@@ -142,6 +142,23 @@ impl Program {
     pub fn props(&self) -> &TypeProps {
         self.props.get_or_init(|| TypeProps::new(self))
     }
+
+    /// Returns true if a value of the resolved type `t` can hold a reference. A
+    /// type parameter does not count: the body cannot read a reference out of it.
+    pub fn ty_holds_refs(&self, t: &Ty) -> bool {
+        match t {
+            Ty::Ref(_) | Ty::Slice(_) => true,
+            Ty::Adt(a, args) => self.props().get(*a, Prop::Refs).is_some_and(|h| {
+                h.always
+                    || h.params
+                        .iter()
+                        .any(|&j| args.get(j).is_some_and(|x| self.ty_holds_refs(x)))
+            }),
+            Ty::Tuple(ts) => ts.iter().any(|x| self.ty_holds_refs(x)),
+            Ty::Array(x, _) => self.ty_holds_refs(x),
+            _ => false,
+        }
+    }
 }
 
 /// Returns the part types of definition `a`, with its type parameters as

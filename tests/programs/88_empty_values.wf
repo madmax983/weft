@@ -1,0 +1,58 @@
+// A new value with no linear part, such as `None`, gives a linear variable
+// nothing to consume (ADR 0007): `empty_at(V, P)` in the spec. A later new value
+// of the variable or of a part makes it live. A `Vec` of linear values has no
+// consumer yet: it is W0601 at its end, also when each element is popped
+// (a known imprecision, kept on purpose; the last cases show it).
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { let Lock(i) = l }
+fn lock() -> Lock { Lock { id: 1 } }
+
+fn none_then_some() {
+    let o = None
+    o = Some(lock())
+    match o { Some(l) => unlock(l), None => {} }
+}
+fn none_in_loop(n: u64) {
+    let o = None
+    for i in 0..n {
+        o = Some(lock())
+        match o { Some(l) => unlock(l), None => {} }
+        o = None
+    }
+}
+fn none_by_path() {
+    let o = Option.None
+    o = Some(lock())
+    match o { Some(l) => unlock(l), None => {} }
+}
+fn none_then_left() {
+    let o = None
+    o = Some(lock())
+}   //~ W0601
+fn some_then_some() {
+    let o = Some(lock())
+    o = Some(lock())   //~ W0601
+    match o { Some(l) => unlock(l), None => {} }
+}
+fn some_then_none() {
+    let o = Some(lock())
+    o = None   //~ W0601
+}   //~ W0601
+fn none_then_payload() {
+    let o = None
+    o.Some = lock()
+}   //~ W0601
+fn none_if(c: bool) {
+    let o = if c { None } else { Some(lock()) }
+}   //~ W0601
+
+// Known imprecision: nothing consumes a `Vec` of linear values.
+fn vec_drained() {
+    let v = Vec.new()
+    v.push(lock())
+    match v.pop() { Some(l) => unlock(l), None => {} }
+}   //~ W0601
+fn vec_left() {
+    let v = Vec.new()
+    v.push(lock())
+}   //~ W0601

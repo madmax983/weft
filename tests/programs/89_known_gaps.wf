@@ -1,0 +1,51 @@
+// A read inside a handler clause of a variable with no value is W0304 at the
+// read. The clause runs at each operation that it handles, so the diagnostic
+// also names that node.
+//
+// Known gaps. Each case below expects the result of today. The ADRs state why
+// the checker keeps it.
+effect Op { fn op() }
+effect Log { fn log(msg: String) }
+
+fn clause_reads_unset() / Op {
+    let x: u64
+    handle Op { fn op() {
+        print(x)   //~ W0304
+        resume(())
+    } } in op()
+}
+fn clause_reads_set() / Op {
+    let x: u64
+    x = 1
+    handle Op { fn op() {
+        print(x)
+        resume(())
+    } } in op()
+}
+
+// Known gap (ADR 0005, imprecise): the capabilities of a local only grow. A
+// local outside the body that gets a new value before the body ends still
+// counts as holding the closure. A flow-sensitive set would need the abort
+// paths of the clauses, which the graph does not have (next case).
+fn reassigned() {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        f = || log("x")
+        f()
+        f = || print(1)
+    }
+    f()
+}
+
+// Known gap (ADR 0005, open): a clause that does not resume ends the handled
+// body at the operation. The graph has no edge from the operation to the end of
+// the `handle`, so the code after the operation in the body counts as run. Here
+// `r` keeps its old value on that path, and the clause changes `v`.
+fn abort_path(v: &Vec<u64>, w: &Vec<u64>) / mut(v) {
+    let r = &v[0]
+    handle Fail { fn fail(m) { v.clear() } } in {
+        fail("x")
+        r = &w[0]
+    }
+    print(r)
+}

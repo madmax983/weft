@@ -12,8 +12,9 @@ impl Lower<'_> {
     /// Returns the places that the values at places `ps` point into: the
     /// references that the locals and the temporaries at these places hold. The
     /// read uses these locals, so a reference in them that is not valid is an
-    /// error. A place behind a reference parameter holds references that this
-    /// body cannot name: it adds nothing (ADR 0003).
+    /// error. A place behind a reference parameter of the function holds
+    /// references that the caller gives: they point anywhere into the root of
+    /// what they point into (`held_root`, ADR 0003).
     pub(super) fn held_refs(&mut self, ps: &[PlaceId]) -> Vec<PlaceId> {
         let mut out = Vec::new();
         for &p in ps {
@@ -30,6 +31,13 @@ impl Lower<'_> {
                 None => {
                     if let Some(rs) = self.temp_refs.get(&root) {
                         out.extend(rs.iter().copied());
+                    } else if let Some(&(0, i)) = self.param_of_root.get(&root) {
+                        let h = self.held_root(i);
+                        out.push(self.facts.wildcard(h));
+                    } else if let Some(&i) = self.held_of.get(&root) {
+                        // A reference behind a stored reference: also the caller's.
+                        let h = self.held_root(i);
+                        out.push(self.facts.wildcard(h));
                     }
                 }
             }
@@ -37,6 +45,24 @@ impl Lower<'_> {
         out.sort();
         out.dedup();
         out
+    }
+
+    /// Returns the root place of what the references behind reference parameter
+    /// `i` of the function point into. A caller puts in the places that the
+    /// references in its argument point into (`SigStep::Held`).
+    pub(super) fn held_root(&mut self, i: usize) -> PlaceId {
+        if let Some(&r) = self.held_roots.get(&i) {
+            return r;
+        }
+        let name = self
+            .self_fn
+            .and_then(|f| self.sigs[f].params.get(i))
+            .map_or_else(|| "parameter".to_string(), |p| format!("*{}", p.name));
+        let r = self.facts.add_root(name, super::RootKind::Param);
+        self.held_roots.insert(i, r);
+        let id = self.facts.place(r).root;
+        self.held_of.insert(id, i);
+        r
     }
 
     /// Returns the places that an argument with places `refs` can give to the

@@ -132,6 +132,7 @@ pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
     rel2!("scope_end", f.scope_end);
     rel2!("overwrites", f.overwrites);
     rel2!("unset_at", f.unset_at);
+    rel2!("empty_at", f.empty_at);
     rel2!("owner", f.owner);
     rel2!("moved_part", f.moved_part);
     rel2!("spawned_at", f.spawned_at);

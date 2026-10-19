@@ -465,13 +465,25 @@ fn linear(
     let f = cx.f;
     let ends = by_var(&f.scope_end);
     let overwrites = by_var(&f.overwrites);
+    let empty: BTreeSet<(VarId, NodeId)> = f.empty_at.iter().copied().collect();
     let aborts = cx.mask(f.may_abort.iter().copied());
-    for (&v, binds) in rebound {
+    let vars: BTreeSet<VarId> = rebound.keys().chain(overwrites.keys()).copied().collect();
+    for v in vars {
+        let binds = rebound.get(&v).map_or(&[][..], Vec::as_slice);
         let info = f.var(v);
         if !info.linear {
             continue;
         }
-        let gen = cx.mask(binds.iter().copied());
+        // A new value with no linear part has nothing to consume. A new value of
+        // a part can give the variable a linear value.
+        let parts = overwrites.get(&v).map_or(&[][..], Vec::as_slice);
+        let gen = cx.mask(
+            binds
+                .iter()
+                .copied()
+                .filter(|&b| !empty.contains(&(v, b)))
+                .chain(parts.iter().copied()),
+        );
         let kill = cx.mask(moved.get(&v).cloned().unwrap_or_default());
         let live = cx.forward(&gen, &kill);
         for &e in ends.get(&v).map_or(&[][..], Vec::as_slice) {
@@ -479,7 +491,6 @@ fn linear(
                 out.unconsumed.insert((v, e));
             }
         }
-        let parts = overwrites.get(&v).map_or(&[][..], Vec::as_slice);
         for &b in binds.iter().chain(parts) {
             if live[b.index()] {
                 out.overwritten.insert((v, b));

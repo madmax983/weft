@@ -44,10 +44,19 @@ impl Lower<'_> {
         let mut binds: BTreeMap<VarId, Vec<usize>> = BTreeMap::new();
         let mut moves: BTreeMap<VarId, BTreeSet<usize>> = BTreeMap::new();
         let mut ends: BTreeMap<VarId, BTreeSet<usize>> = BTreeMap::new();
+        let empty: BTreeSet<(VarId, super::NodeId)> = self.facts.empty_at.iter().copied().collect();
         for &(v, p) in &self.facts.rebound_at {
             if wanted.contains(&v) {
-                binds.entry(v).or_default().push(p.index());
+                // A new value with no linear part has nothing to drop.
+                if !empty.contains(&(v, p)) {
+                    binds.entry(v).or_default().push(p.index());
+                }
                 ends.entry(v).or_default().insert(p.index());
+            }
+        }
+        for &(v, p) in &self.facts.overwrites {
+            if wanted.contains(&v) {
+                binds.entry(v).or_default().push(p.index());
             }
         }
         for &(v, p) in &self.facts.moved_at {
@@ -121,8 +130,10 @@ impl Lower<'_> {
         let wanted: BTreeSet<VarId> = vars.iter().map(|(v, _)| *v).collect();
         let mut binds: BTreeMap<VarId, Vec<usize>> = BTreeMap::new();
         let mut moves: BTreeMap<VarId, BTreeSet<usize>> = BTreeMap::new();
-        for &(v, p) in &self.facts.rebound_at {
-            if wanted.contains(&v) {
+        let empty_at: BTreeSet<(VarId, super::NodeId)> =
+            self.facts.empty_at.iter().copied().collect();
+        for &(v, p) in self.facts.rebound_at.iter().chain(&self.facts.overwrites) {
+            if wanted.contains(&v) && !empty_at.contains(&(v, p)) {
                 binds.entry(v).or_default().push(p.index());
             }
         }

@@ -146,6 +146,10 @@ pub enum SigStep {
     Step(weft_facts::Step, String),
     /// The wildcard step `..`: any place at or below.
     Wild,
+    /// The places that the references at or below the place point into. It
+    /// comes first, after a reference parameter. A caller puts in the places that
+    /// the references in its argument point into (ADR 0003).
+    Held,
     /// A split side at the parameter with this index.
     Seg {
         /// The parameter that names the split point.
@@ -1156,9 +1160,13 @@ impl Collector {
                                 if let Some(mut sp) =
                                     self.resolve_sig_place(pl, &params, &fn_params, m)
                                 {
-                                    // `mut(p..)` is equal to `mut(p)`.
+                                    // `mut(p..)` is equal to `mut(p)`. It also
+                                    // covers what the references in `p` point into.
                                     if sp.steps.last() == Some(&SigStep::Wild) {
                                         sp.steps.pop();
+                                        if let Some(held) = held_place(&self.prog, &sp, &params) {
+                                            effects.muts.push(held);
+                                        }
                                     }
                                     effects.muts.push(sp);
                                 }
@@ -1269,6 +1277,16 @@ impl Collector {
                                     ),
                                     pl.span,
                                 ));
+                            }
+                        }
+                        // `p..` also covers what the references in `p` point into.
+                        if sp.steps.last() == Some(&SigStep::Wild) {
+                            if let Some(held) = held_place(&self.prog, &sp, params) {
+                                out.push(RetPlace {
+                                    path: path.clone(),
+                                    place: held,
+                                    uniq: t.modes.contains(&Mode::Uniq),
+                                });
                             }
                         }
                         out.push(RetPlace {
@@ -1930,4 +1948,24 @@ pub fn elem_step(prog: &Program, ty: &Ty) -> Option<(Option<weft_facts::Step>, T
         },
         _ => None,
     }
+}
+
+/// Returns the place of what the references in a written place `sp` point into,
+/// if its root is a reference parameter to a value that can hold references:
+/// the step `Held`. In the body it is any place inside what they point into.
+fn held_place(prog: &Program, sp: &SigPlace, params: &[ParamSig]) -> Option<SigPlace> {
+    let SigRoot::Param(i) = sp.root else {
+        return None;
+    };
+    let Some(Ty::Ref(inner)) = params.get(i).map(|p| &p.ty) else {
+        return None;
+    };
+    if !prog.ty_holds_refs(inner) {
+        return None;
+    }
+    Some(SigPlace {
+        root: sp.root.clone(),
+        steps: vec![SigStep::Held],
+        text: sp.text.clone(),
+    })
 }

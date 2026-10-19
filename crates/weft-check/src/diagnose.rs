@@ -15,6 +15,42 @@ fn node_span(f: &FnFacts, n: NodeId) -> weft_facts::Span {
     f.node(n).span
 }
 
+/// Returns the place to state for a mutation of `p`. What the references behind a
+/// parameter `x` point into (`*x` in the facts) is part of `x..`.
+fn mut_hint(f: &FnFacts, p: PlaceId) -> String {
+    let root = &f.roots[f.place(p).root.index()].name;
+    match root.strip_prefix('*') {
+        Some(param) => format!("{param}.."),
+        None => f.place(p).display.clone(),
+    }
+}
+
+/// Returns the first node that uses `var` in a handler clause that node `n` runs:
+/// `n` performs through a local handler, and the use is in a part of the graph
+/// that the entry of the function does not reach.
+fn clause_read(f: &FnFacts, var: VarId, n: NodeId) -> Option<NodeId> {
+    if !f.performs_at.iter().any(|&(p, _)| p == n) || f.nodes.is_empty() {
+        return None;
+    }
+    let mut succ: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
+    for &(a, b) in &f.cfg_edge {
+        succ.entry(a).or_default().push(b);
+    }
+    let mut seen = vec![false; f.nodes.len()];
+    let mut work = vec![NodeId(0)];
+    while let Some(a) = work.pop() {
+        if std::mem::replace(&mut seen[a.index()], true) {
+            continue;
+        }
+        work.extend(succ.get(&a).into_iter().flatten().copied());
+    }
+    f.uses
+        .iter()
+        .filter(|&&(v, q)| v == var && !seen[q.index()])
+        .map(|&(_, q)| q)
+        .min()
+}
+
 fn once_closure(f: &FnFacts, n: NodeId) -> Diagnostic {
     Diagnostic::error("W0502", "a `once` closure is called twice", node_span(f, n))
         .note("the closure moves a captured value, so it can run only once")
@@ -236,15 +272,22 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
     }
     for &(var, n) in &v.use_before_set {
         let info = f.var(var);
-        out.push(
-            Diagnostic::error(
-                "W0304",
-                format!("`{}` is used before it has a value", info.name),
+        // A handler clause uses its captures at each node that runs it. The
+        // diagnostic shows the read in the clause, and the node as a note.
+        let read = clause_read(f, var, n);
+        let mut d = Diagnostic::error(
+            "W0304",
+            format!("`{}` is used before it has a value", info.name),
+            node_span(f, read.unwrap_or(n)),
+        )
+        .note_at(format!("{} : {}", info.name, info.ty), info.span);
+        if read.is_some() {
+            d = d.note_at(
+                "a handler clause reads it when it runs here",
                 node_span(f, n),
-            )
-            .note_at(format!("{} : {}", info.name, info.ty), info.span)
-            .note("give it a value on every path before this use"),
-        );
+            );
+        }
+        out.push(d.note("give it a value on every path before this use"));
     }
     for &(var, n) in &v.moved_immovable {
         let info = f.var(var);
@@ -374,7 +417,7 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             )
             .note(format!(
                 "add `mut({})` to the effects after `/`",
-                f.place(p).display
+                mut_hint(f, p)
             )),
         );
     }

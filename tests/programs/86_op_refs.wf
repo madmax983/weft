@@ -1,0 +1,115 @@
+// The result of an operation can hold a reference. It points where the values
+// that the clauses resume with point (ADR 0005). The clauses are lowered after the
+// handled body, so the places of the result join it at the end of the body. A
+// result from a handler of a caller can point into any place of the parameters.
+// A reference into a local of the clause is not valid after the `handle`.
+effect Pick { fn pick() -> &u64 }
+effect PickOpt { fn pick_opt() -> Option<&u64> }
+effect PickIn { fn pick_in(v: &Vec<u64>) -> &u64 }
+struct Counter { items: Vec<u64> }
+fn pick_some() -> Option<&u64> / PickOpt { pick_opt() }
+effect PickC { fn pick_c() -> &Counter }
+
+fn picks() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r = pick()
+        v.clear()
+        print(r)   //~ W0301
+    }
+}
+fn picks_opt() {
+    let v = Vec.new()
+    v.push(1)
+    handle PickOpt { fn pick_opt() { resume(Some(&v[0])) } } in {
+        let r = pick_opt()
+        v.clear()
+        match r {   //~ W0301
+            Some(x) => print(x),
+            None => print(0),
+        }
+    }
+}
+fn picks_through_callee() {
+    let v = Vec.new()
+    v.push(1)
+    handle PickOpt { fn pick_opt() { resume(Some(&v[0])) } } in {
+        let r = pick_some()
+        v.clear()
+        match r {   //~ W0301
+            Some(x) => print(x),
+            None => print(0),
+        }
+    }
+}
+fn picks_from_argument() {
+    let w = Vec.new()
+    w.push(2)
+    handle PickIn { fn pick_in(v) { resume(&v[0]) } } in {
+        let r = pick_in(&w)
+        w.clear()
+        print(r)   //~ W0301
+    }
+}
+fn picks_out_of_handle() {
+    let v = Vec.new()
+    v.push(3)
+    let r = handle Pick { fn pick() { resume(&v[0]) } } in pick()
+    v.clear()
+    print(r)   //~ W0301
+}
+fn picks_clause_local() {
+    let r = handle Pick { fn pick() {   //~ W0204
+        let w = Vec.new()
+        w.push(4)
+        resume(&w[0])
+    } } in pick()
+    print(r)
+}
+fn picks_from_caller(v: &Vec<u64>) / mut(v), Pick {
+    let r = pick()
+    v.clear()
+    print(r)   //~ W0301
+}
+fn mutates_through(c: &Counter) / mut(c) {
+    let first = &c.items[0]
+    handle PickC { fn pick_c() { resume(c) } } in {
+        let r = pick_c()
+        r.items.clear()
+    }
+    print(first)   //~ W0301
+}
+fn mutates_undeclared(c: &Counter) / async {
+    handle PickC { fn pick_c() { resume(c) } } in {   //~ W0703
+        let r = pick_c()
+        r.items.clear()   //~ W0703
+    }
+}
+
+// Controls.
+fn picks_other() {
+    let v = Vec.new()
+    v.push(1)
+    let w = Vec.new()
+    w.push(2)
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r = pick()
+        w.clear()
+        print(r)
+    }
+}
+fn picks_clause_local_inside() {
+    handle Pick { fn pick() {
+        let w = Vec.new()
+        w.push(4)
+        resume(&w[0])
+    } } in {
+        let r = pick()
+        print(r)
+    }
+}
+fn picks_from_caller_ok(v: &Vec<u64>) / Pick {
+    let r = pick()
+    print(r)
+}

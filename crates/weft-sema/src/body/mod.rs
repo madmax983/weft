@@ -31,6 +31,7 @@ mod exhaust;
 mod expr;
 mod flow;
 mod fnval;
+mod oprefs;
 mod repeat;
 mod stmt;
 
@@ -262,6 +263,8 @@ struct Val {
     /// The capabilities of the function values inside the value that its type
     /// does not show, for example in a struct field.
     caps: BTreeSet<CapId>,
+    /// The value has no linear part: a variant with no payload, such as `None`.
+    empty: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -511,7 +514,9 @@ pub struct Lower<'p> {
     scope: BTreeMap<String, Vec<usize>>,
     /// The `break` (true) and `continue` jumps of the loop that is being lowered,
     /// with the state at each jump.
-    loop_jumps: Vec<(bool, BranchState)>,
+    loop_jumps: Vec<(bool, BranchState, NodeId)>,
+    /// The header and the exit of the loop whose body was lowered last.
+    last_loop: Option<(NodeId, NodeId)>,
     /// The holders of the values on their way to the node that takes them
     /// (`hold_moved`), with the depths of `jumps` and `loops` where they start. A
     /// jump out of that code leaves the value: it goes out of scope there.
@@ -524,6 +529,21 @@ pub struct Lower<'p> {
     /// The parameter roots of the function, the closures and the clauses: the
     /// summary index of the body and the parameter index.
     param_of_root: BTreeMap<weft_facts::RootId, (usize, usize)>,
+    /// The root place of the result of each operation of a local handler that
+    /// holds references: the capability and the operation (`None`: any). The
+    /// places that the clauses resume with replace it at the end (`op_refs`).
+    op_results: BTreeMap<(CapId, Option<usize>), PlaceId>,
+    /// The places that the `resume`s of the clause of each operation give.
+    resumed_refs: BTreeMap<(CapId, Option<usize>), Vec<PlaceId>>,
+    /// The places that the `resume`s give, while a clause is lowered.
+    resume_refs_pending: Vec<(CapId, Vec<PlaceId>)>,
+    /// The root places of the parameters of the function.
+    param_bases: Vec<PlaceId>,
+    /// The root place of what the references behind each reference parameter of
+    /// the function point into, by parameter index, and the parameter of each
+    /// such root.
+    held_roots: BTreeMap<usize, PlaceId>,
+    held_of: BTreeMap<weft_facts::RootId, usize>,
 }
 
 impl<'p> Lower<'p> {
@@ -606,10 +626,17 @@ impl<'p> Lower<'p> {
             frame_ids: 0,
             scope: BTreeMap::new(),
             loop_jumps: Vec::new(),
+            last_loop: None,
             in_flight: Vec::new(),
             reach_runs: (0, false),
             repeated: BTreeSet::new(),
             param_of_root: BTreeMap::new(),
+            op_results: BTreeMap::new(),
+            resumed_refs: BTreeMap::new(),
+            resume_refs_pending: Vec::new(),
+            param_bases: Vec::new(),
+            held_roots: BTreeMap::new(),
+            held_of: BTreeMap::new(),
         }
     }
 
@@ -1064,31 +1091,39 @@ impl<'p> Lower<'p> {
         };
         let mut out = Vec::new();
         for base in bases {
-            let mut p = base;
+            let mut ps = vec![base];
             for st in &sp.steps {
-                p = match st {
-                    SigStep::Step(s, text) => self.child(p, *s, text),
-                    SigStep::Wild => self.facts.wildcard(p),
-                    SigStep::Seg {
-                        label,
-                        hi,
-                        unstable,
-                    } => {
-                        let split = split_base * 64 + u32::try_from(*label).unwrap_or(0);
-                        let text = if *hi { "[k..]" } else { "[..k]" };
-                        self.child(
-                            p,
-                            Step {
-                                kind: StepKind::Seg { split, hi: *hi },
-                                unstable: *unstable,
-                            },
-                            text,
-                        )
+                let mut next = Vec::new();
+                for p in ps {
+                    match st {
+                        SigStep::Step(s, text) => next.push(self.child(p, *s, text)),
+                        SigStep::Wild => next.push(self.facts.wildcard(p)),
+                        // What the references at or below the place point into.
+                        SigStep::Held => next.extend(self.held_refs(&[p])),
+                        SigStep::Seg {
+                            label,
+                            hi,
+                            unstable,
+                        } => {
+                            let split = split_base * 64 + u32::try_from(*label).unwrap_or(0);
+                            let text = if *hi { "[k..]" } else { "[..k]" };
+                            next.push(self.child(
+                                p,
+                                Step {
+                                    kind: StepKind::Seg { split, hi: *hi },
+                                    unstable: *unstable,
+                                },
+                                text,
+                            ));
+                        }
                     }
-                };
+                }
+                ps = next;
             }
-            out.push(p);
+            out.extend(ps);
         }
+        out.sort();
+        out.dedup();
         out
     }
 
@@ -1355,6 +1390,10 @@ impl<'p> Lower<'p> {
         let var = self.locals[l].var;
         let first = !self.locals[l].bound;
         self.bind(var, n);
+        // A value with no linear part gives the variable nothing to consume.
+        if v.empty && v.var.is_none() {
+            self.facts.empty_at.push((var, n));
+        }
         // A new value of the whole local replaces the values of its parts.
         self.part_holders.retain(|h| h.local != l);
         let caps = self.val_caps(v);
@@ -1547,6 +1586,45 @@ impl<'p> Lower<'p> {
             }
         }
         BranchState { uniq, holders }
+    }
+
+    /// A branch reaches a join over the edge `from` to `to` with the state
+    /// `state`. A part holder of the state at the join that the branch does not
+    /// have is stale on this path: a later value of the part replaced it. A new
+    /// node on the edge gives it a new value, so a use after the join does not
+    /// see a change that came after it was replaced.
+    pub(super) fn retire_stale(
+        &mut self,
+        from: NodeId,
+        to: NodeId,
+        state: &BranchState,
+        joined: &BranchState,
+    ) {
+        let stale: Vec<VarId> = joined
+            .holders
+            .iter()
+            .filter(|h| !state.holders.iter().any(|x| x.var == h.var))
+            .map(|h| h.var)
+            .collect();
+        if stale.is_empty() {
+            return;
+        }
+        let span = self.facts.node(to).span;
+        let m = self.facts.add_node(span, "stale part", String::new());
+        let mut found = false;
+        for e in &mut self.facts.cfg_edge {
+            if *e == (from, to) {
+                e.1 = m;
+                found = true;
+            }
+        }
+        if !found {
+            return;
+        }
+        self.facts.cfg_edge.push((m, to));
+        for v in stale {
+            self.bind(v, m);
+        }
     }
 
     /// The parts of local `l` at places `ps`, and the parts below them, get new

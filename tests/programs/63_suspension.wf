@@ -113,6 +113,67 @@ fn fresh_continuation_call() / Choice {
     } in log("x")
 }
 
+// A closure that holds a fresh `once` continuation is a `once` value too: it
+// moves the continuation (rule 2 through closures).
+struct Job { f: fn() }
+fn twice(f: fn()) { f()
+ f() }
+fn fresh_in_closure() / Choice {
+    handle Log {
+        fn log(m) {
+            let k = || resume(())
+            let b = choose()   //~ W0503
+            k()
+        }
+    } in log("x")
+}
+fn fresh_in_closure_twice() {
+    handle Log {
+        fn log(m) {
+            let k = || resume(())
+            k()
+            k()   //~ W0502
+        }
+    } in log("x")
+}
+fn fresh_in_nested_closure() / Choice {
+    handle Log {
+        fn log(m) {
+            let k = || resume(())
+            let k2 = || k()
+            let b = choose()   //~ W0503
+            k2()
+        }
+    } in log("x")
+}
+fn fresh_in_field() / Choice {
+    handle Log {
+        fn log(m) {
+            let j = Job { f: || resume(()) }   //~ W0502
+            let b = chooser()   //~ W0503
+            let g = j.f
+            g()
+        }
+    } in log("x")
+}
+fn fresh_to_callee() {
+    handle Log {
+        fn log(m) {
+            let k = || resume(())
+            twice(k)   //~ W0502
+        }
+    } in log("x")
+}
+fn fresh_in_closure_after() / Choice {
+    handle Log {
+        fn log(m) {
+            let k = || resume(())
+            k()
+            let b = choose()
+        }
+    } in log("x")
+}
+
 // A clause value is the value of the `handle`: a call of it does what it does.
 fn clause_value(world: &World) / mut(world.entities) {
     let first = &world.entities[0]
