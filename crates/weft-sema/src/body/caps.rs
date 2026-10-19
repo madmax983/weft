@@ -8,7 +8,7 @@
 use std::collections::BTreeSet;
 
 use super::{
-    effects, CapId, FnId, FnInfo, Lower, NodeId, PlaceId, RootKind, Span, Summary, Ty, Val,
+    effects, CapId, FnId, FnInfo, Lower, NodeId, PlaceId, RootKind, Span, Summary, Ty, Val, VarId,
 };
 
 /// The bit that marks a capability as `resumed_cap`.
@@ -772,62 +772,70 @@ impl Lower<'_> {
         end: NodeId,
         span: Span,
     ) {
-        for l in 0..start.locals {
-            let var = self.locals[l].var;
-            let mut caps = self.locals[l].sticky.clone();
-            let binds: Vec<(NodeId, BTreeSet<CapId>)> = self
+        let outside = |me: &Self, v: VarId| me.local_of(v).is_some_and(|l| l < start.locals);
+        let mut keeps: Option<usize> =
+            (0..start.locals).find(|&l| self.expand_caps(&self.locals[l].sticky).contains(&cap));
+        if keeps.is_none() {
+            let binds: Vec<(VarId, NodeId)> = self
                 .bind_caps
                 .iter()
-                .filter(|(v, ..)| *v == var)
-                .map(|(_, n, cs)| (*n, cs.clone()))
+                .filter(|(v, _, cs)| outside(self, *v) && self.expand_caps(cs).contains(&cap))
+                .map(|(v, n, _)| (*v, *n))
                 .collect();
-            let kills: BTreeSet<NodeId> = self
-                .facts
-                .rebound_at
-                .iter()
-                .filter(|(v, _)| *v == var)
-                .map(|&(_, n)| n)
-                .collect();
-            for (n, cs) in binds {
-                if self.expand_caps(&cs).contains(&cap) && self.reaches_past(n, end, &kills) {
-                    caps.extend(cs);
+            if !binds.is_empty() {
+                let succ = self.successors();
+                for (var, n) in binds {
+                    let kills: BTreeSet<NodeId> = self
+                        .facts
+                        .rebound_at
+                        .iter()
+                        .filter(|(v, _)| *v == var)
+                        .map(|&(_, m)| m)
+                        .collect();
+                    if Self::reaches_past(&succ, n, end, &kills) {
+                        keeps = self.local_of(var);
+                        break;
+                    }
                 }
             }
-            if self.expand_caps(&caps).contains(&cap) {
-                let name = self.locals[l].name.clone();
-                self.err(
-                    "W0313",
-                    format!("a closure that performs `{effect}` escapes its handler: the local `{name}` keeps it"),
-                    span,
-                );
-                return;
-            }
+        }
+        if let Some(l) = keeps {
+            let name = self.locals[l].name.clone();
+            self.err(
+                "W0313",
+                format!("a closure that performs `{effect}` escapes its handler: the local `{name}` keeps it"),
+                span,
+            );
         }
     }
 
-    /// Returns true if a path leads from a successor of node `from` to node `to`
-    /// that does not pass through a node of `kills` before `to`.
-    fn reaches_past(&self, from: NodeId, to: NodeId, kills: &BTreeSet<NodeId>) -> bool {
-        let mut seen = BTreeSet::new();
-        let mut work: Vec<NodeId> = self
-            .facts
-            .cfg_edge
-            .iter()
-            .filter(|(a, _)| *a == from)
-            .map(|&(_, b)| b)
-            .collect();
+    /// Returns the successors of each node, by node index.
+    pub(super) fn successors(&self) -> Vec<Vec<NodeId>> {
+        let mut succ = vec![Vec::new(); self.facts.nodes.len()];
+        for &(a, b) in &self.facts.cfg_edge {
+            succ[a.index()].push(b);
+        }
+        succ
+    }
+
+    /// Returns true if a path of the successors `succ` leads from a successor of
+    /// node `from` to node `to` that does not pass through a node of `kills` first.
+    fn reaches_past(
+        succ: &[Vec<NodeId>],
+        from: NodeId,
+        to: NodeId,
+        kills: &BTreeSet<NodeId>,
+    ) -> bool {
+        let mut seen = vec![false; succ.len()];
+        let mut work: Vec<NodeId> = succ[from.index()].clone();
         while let Some(a) = work.pop() {
             if a == to {
                 return true;
             }
-            if kills.contains(&a) || !seen.insert(a) {
+            if kills.contains(&a) || std::mem::replace(&mut seen[a.index()], true) {
                 continue;
             }
-            for &(x, y) in &self.facts.cfg_edge {
-                if x == a {
-                    work.push(y);
-                }
-            }
+            work.extend(succ[a.index()].iter().copied());
         }
         false
     }

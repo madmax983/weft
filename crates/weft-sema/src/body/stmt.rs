@@ -911,6 +911,10 @@ impl Lower<'_> {
         let Some((header, out)) = self.last_loop else {
             return;
         };
+        // With no holder at the head or after the loop, no holder is stale.
+        if head.holders.is_empty() && exit.holders.is_empty() {
+            return;
+        }
         let into_head: Vec<NodeId> = self
             .facts
             .cfg_edge

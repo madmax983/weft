@@ -2319,6 +2319,14 @@ impl Lower<'_> {
     /// Returns true if a path of edges leads from node `from` to node `to` that does
     /// not pass through a node of `stops`.
     fn reaches_without(&self, from: NodeId, to: NodeId, stops: &[NodeId]) -> bool {
+        // The nodes of the clause come after its entry.
+        let mut succ: std::collections::BTreeMap<NodeId, Vec<NodeId>> =
+            std::collections::BTreeMap::new();
+        for &(x, y) in &self.facts.cfg_edge {
+            if x.index() >= from.index() {
+                succ.entry(x).or_default().push(y);
+            }
+        }
         let mut seen = std::collections::BTreeSet::new();
         let mut work = vec![from];
         while let Some(a) = work.pop() {
@@ -2328,11 +2336,7 @@ impl Lower<'_> {
             if stops.contains(&a) || !seen.insert(a) {
                 continue;
             }
-            for &(x, y) in &self.facts.cfg_edge {
-                if x == a {
-                    work.push(y);
-                }
-            }
+            work.extend(succ.get(&a).into_iter().flatten().copied());
         }
         false
     }
