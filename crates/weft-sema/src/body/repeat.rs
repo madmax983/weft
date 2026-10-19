@@ -33,6 +33,9 @@ impl Lower<'_> {
     /// scope starts again at a new node after `n`, where it conflicts with the
     /// first start (W0405).
     pub(super) fn note_repeat(&mut self, n: NodeId, info: &FnInfo, restart: bool) {
+        if restart {
+            self.repeated.insert(n);
+        }
         if let Some(dp) = info.param {
             self.param_runs.entry(dp).or_insert((0, false)).1 = true;
         }
@@ -48,7 +51,27 @@ impl Lower<'_> {
         }
         let span = self.facts.node(n).span;
         let again = self.emit(span, "spawn again", "the value can run again".into());
-        for &t in &sum.spawns {
+        self.restart_tasks(again, &sum.spawns);
+    }
+
+    /// Function value `info` can run more than once at node `n`, and the body is
+    /// lowered: a new node after `n` starts its tasks again (W0405). `apply_stored`
+    /// calls it for a stored value at a node that can run the value more than once.
+    pub(super) fn restart_after(&mut self, n: NodeId, info: &FnInfo) {
+        let Some(s) = info.summary else {
+            return;
+        };
+        let spawns = self.closures[s].spawns.clone();
+        if spawns.is_empty() {
+            return;
+        }
+        let again = self.insert_after(n, "spawn again", "the value can run again".into());
+        self.restart_tasks(again, &spawns);
+    }
+
+    /// Node `again` starts the tasks `spawns` again: it mutates and reads what they do.
+    fn restart_tasks(&mut self, again: NodeId, spawns: &BTreeSet<super::TaskId>) {
+        for &t in spawns {
             let writes: Vec<_> = self
                 .facts
                 .task_writes

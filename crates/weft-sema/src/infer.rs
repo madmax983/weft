@@ -141,12 +141,16 @@ fn same_parts(a: &EffectSig, b: &EffectSig) -> bool {
         && a.stores == b.stores
         && a.reaches == b.reaches
         && a.reach_given == b.reach_given
+        && a.reach_repeats == b.reach_repeats
         && a.multi == b.multi
         && a.tasks == b.tasks
         && a.op_fns == b.op_fns
+        && a.op_effects == b.op_effects
         && a.task_effects == b.task_effects
         && a.repeats == b.repeats
+        && a.fn_stores == b.fn_stores
         && a.drops == b.drops
+        && a.holds == b.holds
 }
 
 /// Returns the row of `row` with the other parts of `body`.
@@ -157,12 +161,16 @@ fn with_parts(row: &EffectSig, body: &EffectSig) -> EffectSig {
         stores: body.stores.clone(),
         reaches: body.reaches,
         reach_given: body.reach_given.clone(),
+        reach_repeats: body.reach_repeats,
         multi: body.multi,
         tasks: body.tasks.clone(),
         op_fns: body.op_fns.clone(),
+        op_effects: body.op_effects.clone(),
         task_effects: body.task_effects.clone(),
         repeats: body.repeats.clone(),
+        fn_stores: body.fn_stores.clone(),
         drops: body.drops.clone(),
+        holds: body.holds.clone(),
         ..row.clone()
     }
 }

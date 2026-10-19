@@ -30,7 +30,10 @@ impl Lower<'_> {
                 if p.place.is_some() {
                     Vec::new()
                 } else {
-                    vec![self.facts.add_root(&p.name, RootKind::Param)]
+                    let r = self.facts.add_root(&p.name, RootKind::Param);
+                    let rid = self.facts.place(r).root;
+                    self.param_of_root.insert(rid, (0, bases.len()));
+                    vec![r]
                 }
             } else {
                 let r = self.facts.add_root(&p.name, RootKind::Local);
@@ -65,6 +68,10 @@ impl Lower<'_> {
                 ..Val::default()
             };
             self.assign_local(l, &v, entry);
+            // The parameter holds the function values that the caller gives.
+            if !matches!(p.ty, Ty::Fn(_)) && self.has_fn(&p.ty) {
+                self.locals[l].caps.insert(super::caps::param_cap(i));
+            }
             if p.shared {
                 self.facts.shared_root.extend(bases[i].iter().copied());
             }
@@ -180,6 +187,7 @@ impl Lower<'_> {
         }
         if self.generic {
             eff.drops = self.dropped_params(&maybe);
+            eff.holds = self.held_params(&maybe);
         }
         self.facts.normalize();
         let unit = self.prog.mods[self.module].unit;
@@ -260,8 +268,11 @@ impl Lower<'_> {
             stores: sum.stores.clone(),
             reaches: !self.reaches.is_empty(),
             reach_given: self.reach_sig(bases),
+            reach_repeats: self.reach_runs.1 || self.reach_runs.0 > 1,
             multi: self.unknown_multi,
             tasks: sum.tasks.clone(),
+            fn_stores: sum.fn_stores.clone(),
+            op_effects: sum.op_effects.clone(),
             op_fns: sum
                 .op_fns
                 .iter()
@@ -695,6 +706,7 @@ impl Lower<'_> {
                         self.finish_return(&v, s.span);
                         let n = self.emit(s.span, "return", String::new());
                         self.end_frames_above(1, n);
+                        self.leave_in_flight(n, self.jumps.len(), 0);
                         if let Some(exit) = exit {
                             self.facts.cfg_edge.push((n, exit));
                         }
@@ -737,6 +749,7 @@ impl Lower<'_> {
                         .push((matches!(s.kind, StmtKind::Break), st));
                     let n = self.emit(s.span, "jump", String::new());
                     self.end_frames_above(keep, n);
+                    self.leave_in_flight(n, lf.jumps, self.loops.len());
                     self.facts.cfg_edge.push((n, target));
                 }
                 self.cur = None;
@@ -1219,6 +1232,9 @@ impl Lower<'_> {
         // A function value in a field or an element: the body does not follow it.
         self.escape(&v);
         self.store_into(&v, &lv.places);
+        if self.has_fn(&v.ty) {
+            self.note_fn_store(&lv.places);
+        }
         self.consume(&v, value.span);
         // A part of a local that gets a reference points where it points from
         // here on. A hidden variable holds it, and a use of the local uses it.

@@ -3,7 +3,7 @@
 use super::fnval::{Callee, Given};
 use super::{
     ast, effects, AdtKind, Arg, CapId, ContInfo, Expr, ExprKind, FnId, FnSig, FnTy, ItemRef, Lower,
-    NodeId, PathRef, PlaceId, Rc, SigRoot, Span, TaskKind, Ty, Val, PRELUDE,
+    NodeId, PathRef, PlaceId, Rc, SigRoot, Span, TaskKind, Ty, Val, VarId, VarKind, PRELUDE,
 };
 
 /// One evaluated argument.
@@ -539,7 +539,9 @@ impl Lower<'_> {
             parts.extend(sig.effects.named.iter().map(|n| effects::in_signature(n)));
             parts.join(", ")
         };
+        let generic_held = self.hold_generic(&sig, &targs, &vals, span);
         let n = self.emit(span, &name, detail);
+        self.release_generic(&generic_held, span);
         let performs_from = self.facts.performs_at.len();
         for v in held_vars {
             self.facts.uses.push((v, n));
@@ -634,6 +636,21 @@ impl Lower<'_> {
             abort = true;
         }
         self.check_callee_tasks(f, span);
+        // A task of the callee can run a function value that an argument holds, in
+        // a field or a container. Foreign code and `http.serve` can too.
+        for (i, av) in vals.iter().enumerate() {
+            if matches!(self.inf.shallow(&av.val.ty), Ty::Fn(_)) {
+                continue;
+            }
+            if sig.effects.tasks.contains(&i) || self.item_runs_tasks(f) {
+                let held = self.arg_held(&av.val, &arg_places[i]);
+                self.check_task_value(&super::FnInfo::default(), None, &held, av.span);
+            }
+            for (_, e) in sig.effects.op_fns.iter().filter(|(p, _)| *p == i) {
+                self.give_held_to_op(&av.val, &arg_places[i], e, av.span);
+            }
+        }
+        self.callee_op_effects(&sig.effects.op_effects, span);
         // The callee can call a function argument with the places that it lends to it.
         let mut fns = Vec::new();
         for (i, av) in vals.iter().enumerate() {
@@ -699,6 +716,7 @@ impl Lower<'_> {
                     self.keep(&av.val, super::caps::KeptTo::Stored);
                 } else if sig.effects.stores.contains(&i) && !into.is_empty() {
                     self.store_into(&av.val, &into);
+                    self.note_fn_store(&into);
                 }
             } else if self.has_fn(&ty) {
                 holds_fn = true;
@@ -706,7 +724,9 @@ impl Lower<'_> {
         }
         if holds_fn {
             if let Some(given) = self.reach_of(f, &arg_places, &roots) {
-                self.reach(n, &given);
+                // A foreign callee can run a stored value any number of times.
+                let again = foreign || self.sigs[f].effects.reach_repeats;
+                self.reach(n, &given, again);
             }
         }
         if abort {
@@ -734,10 +754,35 @@ impl Lower<'_> {
                 self.keep(v, super::caps::KeptTo::Stored);
             } else if !into.is_empty() {
                 self.store_into(v, &into);
+                if self.has_fn(&v.ty) {
+                    self.note_fn_store(&into);
+                }
             }
             if ret_fn {
                 out.caps.extend(self.val_caps(v));
             }
+        }
+        // The callee can copy a function value out of what a reference argument
+        // points to: into what another reference argument points to, or into
+        // its result.
+        let mut copied = std::collections::BTreeSet::new();
+        for (i, ps) in arg_places.iter().enumerate() {
+            if self.points_to_fn(&ptys[i]) {
+                copied.extend(self.place_caps(ps));
+            }
+        }
+        if foreign {
+            self.keep_caps(copied.clone(), super::caps::KeptTo::Stored);
+        }
+        for (j, ps) in arg_places.iter().enumerate() {
+            let changed = foreign || sig.effects.fn_stores.contains(&j);
+            if changed && self.points_to_fn(&ptys[j]) {
+                self.store_caps_into(&copied, ps);
+                self.note_fn_store(ps);
+            }
+        }
+        if ret_fn {
+            out.caps.extend(copied);
         }
         if ret_fn {
             // A result that is not a function value can hold a function argument,
@@ -810,6 +855,13 @@ impl Lower<'_> {
         out
     }
 
+    /// Returns true if function item `f` can put a function value into what a
+    /// reference argument points to: a foreign function, or a body with `fn_stores`.
+    fn item_fn_stores(&self, f: FnId) -> bool {
+        let def = &self.prog.fns[f];
+        (def.decl.body.is_none() && !def.is_std) || !self.sigs[f].effects.fn_stores.is_empty()
+    }
+
     /// Returns true if function item `f` builds its argument in place on the heap:
     /// `Box.new` and `Rc.new` of the prelude.
     fn builds_in_place(&self, f: FnId) -> bool {
@@ -830,19 +882,76 @@ impl Lower<'_> {
             if !self.may_be_linear(&t) {
                 continue;
             }
-            // The diagnostic names the argument if only one parameter is of the type.
-            let param = u32::try_from(j).unwrap_or(u32::MAX);
-            let args: Vec<usize> = (0..sig.params.len())
-                .filter(|&i| super::flow::mentions(&sig.params[i].ty, param))
-                .collect();
-            let (name, at) = match (args.as_slice(), args.first().and_then(|&i| vals.get(i))) {
-                ([i], Some(av)) if sig.params[*i].ty == Ty::Param(param) => {
-                    (self.val_name(&av.val), av.span)
-                }
-                (_, Some(av)) => ("temporary".to_string(), av.span),
-                (_, None) => ("temporary".to_string(), span),
-            };
+            let (name, at) = self.generic_arg(sig, j, vals, span);
             self.drop_linear(&name, &t, at);
+        }
+    }
+
+    /// Returns the name and the span of the argument that gives a value of type
+    /// parameter `j` to a call. The diagnostic names the argument if only one
+    /// parameter is of the type.
+    fn generic_arg(&self, sig: &FnSig, j: usize, vals: &[ArgVal], span: Span) -> (String, Span) {
+        let param = u32::try_from(j).unwrap_or(u32::MAX);
+        let args: Vec<usize> = (0..sig.params.len())
+            .filter(|&i| super::flow::mentions(&sig.params[i].ty, param))
+            .collect();
+        match (args.as_slice(), args.first().and_then(|&i| vals.get(i))) {
+            ([i], Some(av)) if sig.params[*i].ty == Ty::Param(param) => {
+                (self.val_name(&av.val), av.span)
+            }
+            (_, Some(av)) => ("temporary".to_string(), av.span),
+            (_, None) => ("temporary".to_string(), span),
+        }
+    }
+
+    /// A generic callee with signature `sig` can hold a value of each type
+    /// parameter in its `holds` part at a node that can abort or resume more than
+    /// once. If the call gives a linear type there, a hidden variable holds a value
+    /// of the type across the call node. The rules of W0602 and W0503 then check
+    /// the call. `finish` decides from the inferred type argument. Returns the
+    /// variables; `release_generic` ends them after the call node.
+    fn hold_generic(
+        &mut self,
+        sig: &FnSig,
+        targs: &[Ty],
+        vals: &[ArgVal],
+        span: Span,
+    ) -> Vec<VarId> {
+        let mut out = Vec::new();
+        if self.cur.is_none() {
+            return out;
+        }
+        for &j in &sig.effects.holds {
+            let Some(t) = targs.get(j).cloned() else {
+                continue;
+            };
+            if !self.may_be_linear(&t) {
+                continue;
+            }
+            let (name, at) = self.generic_arg(sig, j, vals, span);
+            let info = self.var_info(&name, VarKind::Temp, at, &t, false);
+            let var = self.new_var(info, &t);
+            out.push(var);
+        }
+        if !out.is_empty() {
+            let n = self.emit(span, "held by the callee", String::new());
+            for &v in &out {
+                self.bind(v, n);
+            }
+        }
+        out
+    }
+
+    /// Ends the variables of `hold_generic` after the call node: the callee gives
+    /// the values back or consumes them.
+    fn release_generic(&mut self, held: &[VarId], span: Span) {
+        if held.is_empty() || self.cur.is_none() {
+            return;
+        }
+        let n = self.emit(span, "given back by the callee", String::new());
+        for &v in held {
+            self.facts.uses.push((v, n));
+            self.facts.moved_at.push((v, n));
         }
     }
 
@@ -1011,6 +1120,7 @@ impl Lower<'_> {
         let mut fn_vals: Vec<(usize, Val)> = Vec::new();
         let mut value_refs: Vec<(usize, Vec<PlaceId>)> = Vec::new();
         let mut taken = Vec::new();
+        let mut holders: Vec<(usize, Val, Span)> = Vec::new();
         for (i, a) in exprs.iter().enumerate() {
             let later = i + 1 < exprs.len();
             let mut v = match (&a.kind, fty.params.get(i).map(|t| self.inf.shallow(t))) {
@@ -1023,6 +1133,11 @@ impl Lower<'_> {
                 self.unify_arg(pt, &mut v, a.span);
             }
             arg_tys.push(v.ty.clone());
+            if !matches!(self.inf.shallow(&v.ty), Ty::Fn(_))
+                && (self.has_fn(&v.ty) || self.points_to_fn(&v.ty))
+            {
+                holders.push((i, v.clone(), a.span));
+            }
             if matches!(self.inf.shallow(&v.ty), Ty::Ref(_)) {
                 arg_places.push(v.refs.clone());
                 held.extend(self.hold_operand(&v, later, a.span));
@@ -1178,13 +1293,32 @@ impl Lower<'_> {
                 self.give_fn(n, &v, repeats, false);
             }
         }
+        // A value that the body does not know can start a task that runs a
+        // function value that an argument holds.
+        let unknown = callee.param.is_some()
+            || callee.summary.map_or_else(
+                || callee.item.is_none(),
+                |s| self.closures[s].unknown || !self.closures[s].params.is_empty(),
+            );
+        if unknown {
+            for (i, v, sp) in &holders {
+                let held = self.arg_held(v, &arg_places[*i]);
+                self.check_task_value(&super::FnInfo::default(), None, &held, *sp);
+            }
+        }
         // The value can run a stored function value that an argument holds.
         if arg_tys
             .iter()
             .any(|t| !matches!(self.inf.shallow(t), Ty::Fn(_)) && self.has_fn(t))
         {
             let given = Self::any_arg(&arg_places, &roots);
-            self.reach(n, &given);
+            // A closure passes on the nodes in its body (`apply_stored`). Another
+            // value can run a stored value any number of times.
+            let again = callee.summary.is_none_or(|s| {
+                let sum = &self.closures[s];
+                sum.unknown || !sum.params.is_empty()
+            });
+            self.reach(n, &given, again);
         }
         // The places of the result.
         let refs = self.value_call_refs(&callee, &fty, &arg_places, &arg_refs);
@@ -1213,12 +1347,35 @@ impl Lower<'_> {
                 (sum.ret_caps.clone(), sum.ret_tasks.first().copied())
             },
         );
+        // The value can copy a function value out of what a reference argument
+        // points to: into what another one points to, or into its result. A
+        // value that the body does not know can do it with each argument.
+        let mut copied = std::collections::BTreeSet::new();
+        for (i, ps) in arg_places.iter().enumerate() {
+            if self.points_to_fn(&arg_tys[i]) {
+                copied.extend(self.place_caps(ps));
+            }
+        }
+        for (j, ps) in arg_places.iter().enumerate() {
+            let changed = callee.summary.is_none_or(|s| {
+                let sum = &self.closures[s];
+                sum.unknown
+                    || !sum.params.is_empty()
+                    || sum.fn_stores.contains(&j)
+                    || sum.items.iter().any(|&f| self.item_fn_stores(f))
+            });
+            if changed && self.points_to_fn(&arg_tys[j]) {
+                self.store_caps_into(&copied, ps);
+                self.note_fn_store(ps);
+            }
+        }
         if self.has_fn(&fty.ret) {
             // A result that is not a function value can hold a function argument.
             if !matches!(self.inf.shallow(&fty.ret), Ty::Fn(_)) {
                 caps.extend(fn_caps);
             }
             caps.extend(self.resumed_at(n, performs_from));
+            caps.extend(copied);
         }
         Val {
             ty,
@@ -1505,6 +1662,7 @@ impl Lower<'_> {
                     fn_args.push((i, v.clone(), x.span));
                 } else if self.has_fn(&v.ty) {
                     self.escape_all(&v);
+                    fn_args.push((i, v.clone(), x.span));
                 }
                 // The clause can keep a function value that it gets. It runs outside
                 // its own handler, where only the handlers outside the `handle` live.
@@ -1574,8 +1732,10 @@ impl Lower<'_> {
         self.abortive(n);
         // The result is what a clause resumes with.
         let mut caps = std::collections::BTreeSet::new();
-        if let (Some(c), true) = (cap, self.has_fn(&o.ret)) {
-            caps.insert(super::caps::resumed_cap(c));
+        if self.has_fn(&o.ret) {
+            // A clause of a handler of a caller gives a value that the body cannot
+            // follow.
+            caps.insert(cap.map_or(super::caps::UNKNOWN_FN, super::caps::resumed_cap));
         }
         Val {
             ty: o.ret.clone(),
@@ -1785,10 +1945,20 @@ impl Lower<'_> {
             let e = &self.sigs[f].effects;
             here.extend(e.named.iter().chain(&e.task_effects).cloned());
         }
-        bad |= self
-            .expand_caps(held)
+        let held = self.expand_caps(held);
+        bad |= held
             .iter()
             .any(|c| Self::is_cap(*c) && self.cap_on_this_stack(*c, &own));
+        // The marks of the values in a store that the task can run.
+        for m in Self::task_marks(&held) {
+            match m {
+                super::caps::TaskMark::Escapes(id) => {
+                    outside.push(effects::identity(self.prog, id));
+                }
+                super::caps::TaskMark::Param(p) => params.push((0, p)),
+                super::caps::TaskMark::Unknown => bad = true,
+            }
+        }
         // A failure of a task goes to the task that joins it, not to a handler.
         for e in outside.into_iter().filter(|e| e != "Fail") {
             if self.is_user_effect(&e) {

@@ -115,6 +115,12 @@ pub struct Summary {
     pub task_effects: BTreeSet<String>,
     /// Function parameters that the body can call more than once.
     pub repeats: BTreeSet<usize>,
+    /// Reference parameters whose pointee can get a function value from the body.
+    pub fn_stores: BTreeSet<usize>,
+    /// For the function values that the body gives to an operation of a handler of
+    /// a caller: the effect of the operation, and an effect that the value performs
+    /// through a handler of a caller.
+    pub op_effects: BTreeSet<(String, String)>,
     /// Tasks that the function values that a call of the value returns spawn into
     /// a scope outside. A callee that calls such a result starts them.
     pub ret_spawns: BTreeSet<TaskId>,
@@ -171,6 +177,8 @@ impl Summary {
         self.task_effects.extend(o.task_effects.iter().cloned());
         self.repeats.extend(o.repeats.iter().copied());
         self.ret_spawns.extend(o.ret_spawns.iter().copied());
+        self.fn_stores.extend(o.fn_stores.iter().copied());
+        self.op_effects.extend(o.op_effects.iter().cloned());
     }
 
     /// Adds what a call of the function value that `o` stands for can do. A call of
@@ -188,6 +196,8 @@ impl Summary {
         o.ret_tasks.clear();
         o.op_fns.clear();
         o.repeats.clear();
+        o.fn_stores.clear();
+        o.op_effects.clear();
         o.literal = false;
         self.union(&o);
     }
@@ -502,6 +512,18 @@ pub struct Lower<'p> {
     /// The `break` (true) and `continue` jumps of the loop that is being lowered,
     /// with the state at each jump.
     loop_jumps: Vec<(bool, BranchState)>,
+    /// The holders of the values on their way to the node that takes them
+    /// (`hold_moved`), with the depths of `jumps` and `loops` where they start. A
+    /// jump out of that code leaves the value: it goes out of scope there.
+    in_flight: Vec<(VarId, usize, usize)>,
+    /// The number of nodes that can run a stored function value, and whether one
+    /// of them can run it more than once (`Lower::reach`).
+    reach_runs: (usize, bool),
+    /// The nodes where a function value can run more than once (`note_repeat`).
+    repeated: BTreeSet<NodeId>,
+    /// The parameter roots of the function, the closures and the clauses: the
+    /// summary index of the body and the parameter index.
+    param_of_root: BTreeMap<weft_facts::RootId, (usize, usize)>,
 }
 
 impl<'p> Lower<'p> {
@@ -584,6 +606,10 @@ impl<'p> Lower<'p> {
             frame_ids: 0,
             scope: BTreeMap::new(),
             loop_jumps: Vec::new(),
+            in_flight: Vec::new(),
+            reach_runs: (0, false),
+            repeated: BTreeSet::new(),
+            param_of_root: BTreeMap::new(),
         }
     }
 
@@ -628,6 +654,23 @@ impl<'p> Lower<'p> {
             self.facts.reads_at.push((n, p));
         }
         n
+    }
+
+    /// Adds a node right after node `n`: the edges out of `n` leave the new node
+    /// instead. The current node moves too if it is `n`.
+    fn insert_after(&mut self, n: NodeId, label: &str, detail: String) -> NodeId {
+        let span = self.facts.node(n).span;
+        let m = self.facts.add_node(span, label, detail);
+        for e in &mut self.facts.cfg_edge {
+            if e.0 == n {
+                e.0 = m;
+            }
+        }
+        self.facts.cfg_edge.push((n, m));
+        if self.cur == Some(n) {
+            self.cur = Some(m);
+        }
+        m
     }
 
     /// Starts a new component: a node with no predecessor.
@@ -714,6 +757,8 @@ impl<'p> Lower<'p> {
         for &p in &v.refs {
             self.facts.points_into.push((var, p));
         }
+        self.in_flight
+            .push((var, self.jumps.len(), self.loops.len()));
         Some(var)
     }
 
@@ -722,6 +767,18 @@ impl<'p> Lower<'p> {
         for &v in held {
             self.facts.uses.push((v, n));
             self.facts.moved_at.push((v, n));
+        }
+        self.in_flight.retain(|(v, ..)| !held.contains(v));
+    }
+
+    /// A jump at node `n` leaves the values on their way that started at a depth
+    /// of at least `jumps` in `Lower::jumps` and `loops` in `Lower::loops`. They go
+    /// out of scope at `n`. A linear value is lost there (W0601).
+    pub(super) fn leave_in_flight(&mut self, n: NodeId, jumps: usize, loops: usize) {
+        for &(v, j, l) in &self.in_flight {
+            if j >= jumps && l >= loops {
+                self.facts.scope_end.push((v, n));
+            }
         }
     }
 

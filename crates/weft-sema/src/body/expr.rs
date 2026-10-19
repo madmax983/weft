@@ -1253,11 +1253,16 @@ impl Lower<'_> {
             let refs = if self.holds_refs(&ty) {
                 let r = self.root(&p.name.name, RootKind::Arg);
                 param_roots.insert(r, i);
+                let rid = self.facts.place(r).root;
+                self.param_of_root.insert(rid, (si, i));
                 vec![r]
             } else {
                 Vec::new()
             };
             let fn_param = matches!(self.inf.shallow(&ty), Ty::Fn(_)).then_some((si, i));
+            // A parameter that holds a function value in a field or an element holds
+            // what each call gives: the body cannot follow it.
+            let mark = !matches!(self.inf.shallow(&ty), Ty::Fn(_)) && self.has_fn(&ty);
             self.assign_local(
                 l,
                 &Val {
@@ -1268,6 +1273,9 @@ impl Lower<'_> {
                 },
                 entry,
             );
+            if mark {
+                self.locals[l].caps.insert(super::caps::UNKNOWN_FN);
+            }
         }
         // The body returns its value: W0204 reports a value into its own locals.
         let v = match &body.kind {
@@ -1455,6 +1463,7 @@ impl Lower<'_> {
         let caps = self.val_caps(v);
         let n = self.emit(span, "return", String::new());
         self.end_frames_above(frame, n);
+        self.leave_in_flight(n, self.jumps.len(), 0);
         let exit = exit.unwrap_or_else(|| {
             let close = match self.jumps.last() {
                 Some(Jump::Closure { span, .. }) => *span,
@@ -1684,6 +1693,8 @@ impl Lower<'_> {
                 let refs = if self.holds_refs(pt) {
                     let r = self.root(&p.name.name, RootKind::Arg);
                     param_roots.insert(r, i);
+                    let rid = self.facts.place(r).root;
+                    self.param_of_root.insert(rid, (si, i));
                     vec![r]
                 } else {
                     Vec::new()
@@ -1701,6 +1712,23 @@ impl Lower<'_> {
                     },
                     entry,
                 );
+                // The parameter holds the function values that the nodes give to
+                // the operation. The clause can keep them (W0313).
+                let oi = def.ops.iter().position(|o| o.name == op.name);
+                let given: std::collections::BTreeSet<weft_facts::CapId> = self
+                    .op_fn_args
+                    .iter()
+                    .filter(|a| a.cap == cap && (a.op.is_none() || a.op == oi))
+                    .filter(|a| a.pos.is_none_or(|p| p == i))
+                    .flat_map(|a| a.held.iter().copied())
+                    .collect();
+                self.locals[l].caps.extend(given);
+                // A callee can give a value that holds a function value in a field or
+                // an element: the clause cannot follow it.
+                if !matches!(self.inf.shallow(pt), Ty::Fn(_)) && self.has_fn(pt) {
+                    self.locals[l].caps.insert(super::caps::UNKNOWN_FN);
+                }
+                self.mark_modes(l);
             }
             let kty = Ty::Cont(Box::new(op.ret.clone()), Box::new(ty.clone()));
             let k = self.new_local("resume", VarKind::Continuation, c.span, kty, false);

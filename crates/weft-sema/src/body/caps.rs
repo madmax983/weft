@@ -7,7 +7,9 @@
 
 use std::collections::BTreeSet;
 
-use super::{CapId, FnId, FnInfo, Lower, NodeId, PlaceId, RootKind, Span, Summary, Ty, Val};
+use super::{
+    effects, CapId, FnId, FnInfo, Lower, NodeId, PlaceId, RootKind, Span, Summary, Ty, Val,
+};
 
 /// The bit that marks a capability as `resumed_cap`.
 const RESUMED: u32 = 1 << 31;
@@ -21,8 +23,45 @@ pub(super) const NONPORTABLE: CapId = CapId(1 << 30);
 /// holds it is not `many` either (W0503).
 pub(super) const NOT_MANY: CapId = CapId(1 << 29);
 
+/// The bit of the mark of a value that holds a closure that performs an effect
+/// through a handler outside the function. The low bits are the effect.
+const ESCAPES: u32 = 1 << 28;
+
+/// The bit of the mark of a value that can hold a function value of a parameter
+/// of the function. The low bits are the parameter index.
+const PARAM: u32 = 1 << 27;
+
+/// The mark of a value that can hold a function value that the body cannot
+/// follow: from a parameter of a closure or a clause, or from an operation of
+/// a handler of a caller. A task that runs it is W0314.
+pub(super) const UNKNOWN_FN: CapId = CapId(1 << 26);
+
 /// The bits of the marks: a capability with one of them is not a handler.
-const MARKS: u32 = RESUMED | NONPORTABLE.0 | NOT_MANY.0;
+const MARKS: u32 = RESUMED | NONPORTABLE.0 | NOT_MANY.0 | ESCAPES | PARAM | UNKNOWN_FN.0;
+
+/// The low bits of a mark with an index.
+const INDEX: u32 = (1 << 26) - 1;
+
+/// Returns the mark of a closure that performs effect `e` (an index in
+/// `Program::effects`) through a handler outside the function.
+pub(super) fn escaped_cap(e: usize) -> CapId {
+    CapId(ESCAPES | (u32::try_from(e).unwrap_or(INDEX) & INDEX))
+}
+
+/// Returns the mark of a value that can hold a function value of parameter `i`.
+pub(super) fn param_cap(i: usize) -> CapId {
+    CapId(PARAM | (u32::try_from(i).unwrap_or(INDEX) & INDEX))
+}
+
+/// What a mark of a task value means for W0314 (`Lower::task_marks`).
+pub(super) enum TaskMark {
+    /// A closure performs this effect through a handler outside the function.
+    Escapes(usize),
+    /// A function value of this parameter of the function.
+    Param(usize),
+    /// A function value that the body cannot follow.
+    Unknown,
+}
 
 /// Returns the mark of the values that a `resume` of the handler behind `cap` gives
 /// to the handled computation. An operation result carries the mark, and
@@ -86,8 +125,8 @@ impl Lower<'_> {
     pub(super) fn val_caps(&self, v: &Val) -> BTreeSet<CapId> {
         let mut out = v.caps.clone();
         if let Some(s) = self.fn_info(v).summary {
-            self.mode_marks(s, &mut out);
-            out.extend(self.closures[s].performs.iter().copied());
+            self.summary_marks(s, &mut out);
+            out.extend(self.closure_caps(s));
             // A closure can call or return what it captures.
             for &c in &self.closures[s].captures {
                 if let Some(l) = self.local_of(c) {
@@ -104,6 +143,73 @@ impl Lower<'_> {
         if let (Some(l), true) = (owner, self.has_fn(&v.ty)) {
             out.extend(self.locals[l].caps.iter().copied());
         }
+        // A place behind a reference parameter holds what the caller gives.
+        if let (Some(lv), true) = (&v.place, self.has_fn(&v.ty)) {
+            out.extend(self.behind_ref_marks(&lv.places));
+        }
+        out
+    }
+
+    /// Returns the marks of the function values at places `ps` behind a reference
+    /// parameter: `param_cap` for a parameter of the function, and `UNKNOWN_FN`
+    /// for a parameter of a closure or a clause.
+    pub(super) fn behind_ref_marks(&self, ps: &[PlaceId]) -> BTreeSet<CapId> {
+        let mut out = BTreeSet::new();
+        for &p in ps {
+            let root = self.facts.place(p).root;
+            match self.facts.roots[root.index()].kind {
+                RootKind::Param => {
+                    if let Some(&(0, i)) = self.param_of_root.get(&root) {
+                        out.insert(param_cap(i));
+                    }
+                }
+                RootKind::Arg => {
+                    out.insert(UNKNOWN_FN);
+                }
+                RootKind::Local | RootKind::Group => {}
+            }
+        }
+        out
+    }
+
+    /// Returns the capabilities that closure `s` performs through, except those of
+    /// the handlers that it installs itself.
+    fn closure_caps(&self, s: usize) -> BTreeSet<CapId> {
+        let sum = &self.closures[s];
+        sum.performs.difference(&sum.own_caps).copied().collect()
+    }
+
+    /// Adds the marks of closure `s`: its modes, the effects that it performs
+    /// through handlers outside the function, and the function parameters that it
+    /// can call.
+    fn summary_marks(&self, s: usize, out: &mut BTreeSet<CapId>) {
+        self.mode_marks(s, out);
+        let sum = &self.closures[s];
+        for e in sum.escapes.iter().chain(&sum.row) {
+            if let Some(id) = effects::by_identity(self.prog, e) {
+                out.insert(escaped_cap(id));
+            }
+        }
+        for &p in sum.passthrough.iter().chain(&sum.params) {
+            out.insert(param_cap(p));
+        }
+    }
+
+    /// Returns what the marks in `caps` mean for a task that runs the value.
+    pub(super) fn task_marks(caps: &BTreeSet<CapId>) -> Vec<TaskMark> {
+        let mut out = Vec::new();
+        for &c in caps {
+            if c.0 & RESUMED != 0 {
+                continue;
+            }
+            if c.0 & ESCAPES != 0 {
+                out.push(TaskMark::Escapes((c.0 & INDEX) as usize));
+            } else if c.0 & PARAM != 0 {
+                out.push(TaskMark::Param((c.0 & INDEX) as usize));
+            } else if c == UNKNOWN_FN {
+                out.push(TaskMark::Unknown);
+            }
+        }
         out
     }
 
@@ -114,8 +220,8 @@ impl Lower<'_> {
         match self.inf.shallow(t) {
             Ty::Fn(f) => {
                 if let Some(s) = f.summary {
-                    self.mode_marks(s, out);
-                    out.extend(self.closures[s].performs.iter().copied());
+                    self.summary_marks(s, out);
+                    out.extend(self.closure_caps(s));
                 }
             }
             Ty::Ref(inner) | Ty::Slice(inner) | Ty::Array(inner, _) => self.ty_caps(&inner, out),
@@ -192,7 +298,8 @@ impl Lower<'_> {
     fn local_caps(&self, l: usize) -> BTreeSet<CapId> {
         let mut out = self.locals[l].caps.clone();
         if let Some(s) = self.local_fn_info(l).summary {
-            out.extend(self.closures[s].performs.iter().copied());
+            self.summary_marks(s, &mut out);
+            out.extend(self.closure_caps(s));
         }
         self.ty_caps(&self.locals[l].ty, &mut out);
         out
@@ -211,6 +318,69 @@ impl Lower<'_> {
     /// the body does not follow them.
     pub(super) fn store_into(&mut self, v: &Val, into: &[PlaceId]) {
         let caps = self.val_caps(v);
+        self.store_caps_into(&caps, into);
+    }
+
+    /// Records that a function value goes into the places `into`. A place below a
+    /// reference parameter of the function, of a closure or of a clause is part of
+    /// the `fn_stores` of that body: a caller can lose a function value there.
+    pub(super) fn note_fn_store(&mut self, into: &[PlaceId]) {
+        for &p in into {
+            let root = self.facts.place(p).root;
+            if let Some(&(d, i)) = self.param_of_root.get(&root) {
+                if let Some(s) = self.sums.get_mut(d) {
+                    s.fn_stores.insert(i);
+                }
+            }
+        }
+    }
+
+    /// Records that function values with the capabilities `caps` go to `to`.
+    pub(super) fn keep_caps(&mut self, caps: BTreeSet<CapId>, to: KeptTo) {
+        if !caps.is_empty() {
+            self.kept.push(Kept { caps, to });
+        }
+    }
+
+    /// Returns the capabilities of the function values that the values at the
+    /// places `ps` can hold: the values of the locals that own them.
+    pub(super) fn place_caps(&self, ps: &[PlaceId]) -> BTreeSet<CapId> {
+        let mut out = BTreeSet::new();
+        for &p in ps {
+            if let Some(l) = self.place_local(p) {
+                out.extend(self.local_caps(l));
+            }
+        }
+        out
+    }
+
+    /// Returns the capabilities and the marks of the function values that an
+    /// argument `v` with places `ps` holds: in its value, and in what it points to.
+    pub(super) fn arg_held(&self, v: &Val, ps: &[PlaceId]) -> BTreeSet<CapId> {
+        let mut out = BTreeSet::new();
+        if self.has_fn(&v.ty) {
+            out.extend(self.val_caps(v));
+        }
+        if self.points_to_fn(&v.ty) {
+            out.extend(self.place_caps(ps));
+            out.extend(self.behind_ref_marks(ps));
+        }
+        out
+    }
+
+    /// Returns true if a reference of type `t` points to a value that can hold a
+    /// function value.
+    pub(super) fn points_to_fn(&self, t: &Ty) -> bool {
+        match self.inf.shallow(t) {
+            Ty::Ref(inner) | Ty::Slice(inner) => self.has_fn(&inner),
+            _ => false,
+        }
+    }
+
+    /// Records that function values with the capabilities `caps` go into the
+    /// places `into`, as `store_into` does.
+    pub(super) fn store_caps_into(&mut self, caps: &BTreeSet<CapId>, into: &[PlaceId]) {
+        let caps = caps.clone();
         if caps.is_empty() {
             return;
         }
@@ -325,6 +495,9 @@ impl Lower<'_> {
     pub(super) fn give_to_op(&mut self, v: &Val, e: &str) {
         let at = self.handlers.iter().rposition(|h| h.effect == e);
         self.keep_for_op(v, at.unwrap_or(0));
+        if at.is_none() {
+            self.give_to_caller_op(v, e);
+        }
         let Some((d, p)) = v.fn_param else {
             return;
         };
@@ -376,11 +549,109 @@ impl Lower<'_> {
             if let Some(i) = live {
                 self.keep_for_op(v, i);
             }
+            if cap.is_none() {
+                self.give_to_caller_op(v, e);
+            }
             if let Some((d, p)) = v.fn_param.filter(|&(d, _)| d > 0 || cap.is_none()) {
                 if let Some(s) = self.sums.get_mut(d) {
                     s.op_fns.insert((p, *cap, e.clone()));
                 }
             }
+        }
+    }
+
+    /// Function value `v` goes to an operation of effect `e` of a handler of a
+    /// caller. A clause there can run it as a task. So the effects that it performs
+    /// through a handler of a caller are part of `Summary::op_effects`, and a
+    /// parameter of the function that it holds is part of `Summary::op_fns`. The
+    /// caller checks them (`callee_op_effects`).
+    fn give_to_caller_op(&mut self, v: &Val, e: &str) {
+        let held = self.expand_caps(&self.val_caps(v));
+        for m in Self::task_marks(&held) {
+            match m {
+                TaskMark::Escapes(id) => {
+                    let f = effects::identity(self.prog, id);
+                    self.sums[0].op_effects.insert((e.to_string(), f));
+                }
+                TaskMark::Param(p) => {
+                    self.sums[0].op_fns.insert((p, None, e.to_string()));
+                }
+                TaskMark::Unknown => {}
+            }
+        }
+    }
+
+    /// A callee gives function values to operations of handlers here: `effects`
+    /// has the effect of each operation and an effect that the value performs. A
+    /// local handler of the operation can run the value as a task: its clauses
+    /// check it (`check_clause_tasks`). Else the operation goes to a handler of a
+    /// caller, and the value goes on with it. A value that performs through a
+    /// local handler that has ended when the clause runs escapes (W0313).
+    pub(super) fn callee_op_effects(&mut self, effects: &BTreeSet<(String, String)>, span: Span) {
+        for (e, f) in effects {
+            let op_at = self.handlers.iter().rposition(|h| &h.effect == e);
+            let f_at = self.handlers.iter().rposition(|h| &h.effect == f);
+            let mut held = BTreeSet::new();
+            match f_at {
+                Some(i) => {
+                    held.insert(self.handlers[i].cap);
+                }
+                None => {
+                    if let Some(id) = effects::by_identity(self.prog, f) {
+                        held.insert(escaped_cap(id));
+                    }
+                }
+            }
+            // A local handler inside the handler of the operation, or any local
+            // handler for an operation of a caller, has ended in the clause.
+            if let Some(fi) = f_at {
+                if op_at.is_none_or(|oi| fi > oi) {
+                    self.keep_caps(BTreeSet::from([self.handlers[fi].cap]), KeptTo::Given);
+                }
+            }
+            match op_at {
+                Some(oi) => {
+                    let rec = OpFn {
+                        cap: self.handlers[oi].cap,
+                        op: None,
+                        pos: None,
+                        info: FnInfo::default(),
+                        row: None,
+                        held,
+                        span,
+                    };
+                    self.op_fn_args.push(rec);
+                }
+                None if f_at.is_none() => {
+                    self.sums[0].op_effects.insert((e.clone(), f.clone()));
+                }
+                None => {}
+            }
+        }
+    }
+
+    /// A callee gives argument `v` (with places `ps`) to an operation of effect
+    /// `e`, and the argument holds function values in a field or an element. A
+    /// local handler of the operation checks them in its clauses.
+    pub(super) fn give_held_to_op(&mut self, v: &Val, ps: &[PlaceId], e: &str, span: Span) {
+        let held = self.arg_held(v, ps);
+        if let Some(oi) = self.handlers.iter().rposition(|h| h.effect == e) {
+            let rec = OpFn {
+                cap: self.handlers[oi].cap,
+                op: None,
+                pos: None,
+                info: FnInfo::default(),
+                row: None,
+                held,
+                span,
+            };
+            self.op_fn_args.push(rec);
+        } else {
+            let v = Val {
+                caps: held,
+                ..Val::default()
+            };
+            self.give_to_caller_op(&v, e);
         }
     }
 

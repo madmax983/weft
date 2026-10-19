@@ -1,0 +1,109 @@
+// A task cannot reach a handler on the stack of another task (W0314, ADR 0006).
+// A task can run a function value from a store: a field or a container, behind a
+// reference or in a by-value parameter. The body does not know that value. So
+// such a parameter is part of the `tasks` part of the signature, and the caller
+// checks the function values that the argument holds. A closure in a store that
+// performs a user effect through a handler of a caller reaches that handler too.
+effect Note { fn note(x: u64) }
+effect Get { fn get() -> fn() }
+struct Job { f: fn() }
+
+fn start(j: &Job) / async {
+    scope { s =>
+        let t = s.spawn(j.f)
+        t.join()
+    }
+}
+fn start_vec(v: &Vec<fn()>) / async {
+    scope { s =>
+        let t = s.spawn(v[0])
+        t.join()
+    }
+}
+fn start_inside(j: &Job) / async {
+    scope { s =>
+        let t = s.spawn(|| { let g = j.f
+ g() })
+        t.join()
+    }
+}
+fn start_owned(j: Job) / async {
+    scope { s => s.spawn(j.f) }
+}
+fn start_through(j: &Job) / async { start(j) }
+
+fn behind_ref() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let j = Job { f: || note(1) }
+        start(&j)   //~ W0314
+    }
+}
+fn behind_ref_vec() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let v = Vec.new()
+        v.push(|| note(2))
+        start_vec(&v)   //~ W0314
+    }
+}
+fn behind_ref_closure() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let j = Job { f: || note(3) }
+        start_inside(&j)   //~ W0314
+    }
+}
+fn by_value() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        start_owned(Job { f: || note(4) })   //~ W0314
+    }
+}
+fn through_callee() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let j = Job { f: || note(5) }
+        start_through(&j)   //~ W0314
+    }
+}
+// The closure in the field performs `Note` through a handler of a caller.
+fn field_escapes() / Note, async {
+    let j = Job { f: || note(6) }
+    scope { s => s.spawn(j.f) }   //~ W0314
+}
+fn vec_escapes() / Note, async {
+    let v = Vec.new()
+    v.push(|| note(7))
+    scope { s => s.spawn(v[0]) }   //~ W0314
+}
+// A value from an operation of a handler of a caller, from a parameter of a
+// closure, or given to a function value that the body does not know.
+fn from_operation() / Get, async {
+    let g = get()
+    scope { s => s.spawn(g) }   //~ W0314
+}
+fn from_closure_param() / async {
+    let c = |j: &Job| scope { s => s.spawn(j.f) }   //~ W0314
+    let j = Job { f: || print(1) }
+    c(&j)
+}
+fn to_unknown(run: fn(&Job)) / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let j = Job { f: || note(9) }
+        run(&j)   //~ W0314
+    }
+}
+
+// Controls.
+fn behind_ref_ok() / async {
+    let j = Job { f: || print(1) }
+    start(&j)
+}
+fn behind_ref_std() / async, log {
+    let j = Job { f: || log.info("x") }
+    start(&j)
+}
+fn field_ok() / async {
+    let j = Job { f: || print(2) }
+    scope { s => s.spawn(j.f) }
+}
+fn local_handler_inside_task() / async {
+    let j = Job { f: || handle Note { fn note(x) { resume(()) } } in note(8) }
+    start(&j)
+}

@@ -98,6 +98,74 @@ impl Lower<'_> {
         out
     }
 
+    /// Returns the type parameters of the values that a generic body holds at a
+    /// node that can abort or resume more than once. Each variable of `vars` is
+    /// linear only because a type parameter can be. Such a value is live from a
+    /// new value to a move, as in the rules of W0602 and W0503. A caller that
+    /// gives a linear type to one of these type parameters checks the call
+    /// (`hold_generic`).
+    pub(super) fn held_params(&self, vars: &[(VarId, Ty)]) -> BTreeSet<usize> {
+        let mut out = BTreeSet::new();
+        if vars.is_empty() {
+            return out;
+        }
+        let n = self.facts.nodes.len();
+        let mut succ = vec![Vec::new(); n];
+        for &(a, b) in &self.facts.cfg_edge {
+            succ[a.index()].push(b.index());
+        }
+        let mut risky = vec![false; n];
+        for p in self.facts.may_abort.iter().chain(&self.facts.multi_at) {
+            risky[p.index()] = true;
+        }
+        let wanted: BTreeSet<VarId> = vars.iter().map(|(v, _)| *v).collect();
+        let mut binds: BTreeMap<VarId, Vec<usize>> = BTreeMap::new();
+        let mut moves: BTreeMap<VarId, BTreeSet<usize>> = BTreeMap::new();
+        for &(v, p) in &self.facts.rebound_at {
+            if wanted.contains(&v) {
+                binds.entry(v).or_default().push(p.index());
+            }
+        }
+        for &(v, p) in &self.facts.moved_at {
+            if wanted.contains(&v) {
+                moves.entry(v).or_default().insert(p.index());
+            }
+        }
+        let empty = BTreeSet::new();
+        for (v, ty) in vars {
+            let mv = moves.get(v).unwrap_or(&empty);
+            let mut live = vec![false; n];
+            let mut work: Vec<usize> = Vec::new();
+            for &b in binds.get(v).into_iter().flatten() {
+                work.extend(succ[b].iter().copied());
+            }
+            let mut held = false;
+            while let Some(a) = work.pop() {
+                if std::mem::replace(&mut live[a], true) {
+                    continue;
+                }
+                if mv.contains(&a) {
+                    continue;
+                }
+                if risky[a] {
+                    held = true;
+                    break;
+                }
+                work.extend(succ[a].iter().copied());
+            }
+            if held {
+                let mut ps = BTreeSet::new();
+                self.ty_params(ty, &mut ps, &mut Vec::new());
+                if ps.is_empty() {
+                    let all = self.self_fn.map_or(0, |f| self.sigs[f].generics.len());
+                    ps.extend(0..all);
+                }
+                out.extend(ps);
+            }
+        }
+        out
+    }
+
     /// Adds the type parameters that a value of type `t` can hold. A closure
     /// holds the values that it moves.
     fn ty_params(&self, t: &Ty, out: &mut BTreeSet<usize>, seen: &mut Vec<usize>) {

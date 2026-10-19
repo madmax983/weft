@@ -1,0 +1,62 @@
+// A linear value on its way to a call, a tuple or a struct literal is live while
+// the later operands run (ADR 0007). A `return`, a `break` or a `continue` in a
+// later operand leaves the value behind: it goes out of scope at the jump (W0601).
+
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { let Lock(i) = l }
+fn lock() -> Lock { Lock { id: 1 } }
+fn take2(l: Lock, n: u64) { unlock(l) }
+struct Pair { l: Lock, n: u64 }
+fn call(f: fn() -> u64) -> u64 { f() }
+
+fn return_in_arg(c: bool) -> u64 {
+    take2(lock(), if c { return 1 } else { 2 })   //~ W0601
+    0
+}
+fn break_in_arg(c: bool) {
+    loop {
+        take2(lock(), if c { break } else { 2 })   //~ W0601
+        return
+    }
+}
+fn continue_in_arg(n: u64) {
+    for i in 0..n {
+        take2(lock(), if i == 1 { continue } else { 2 })   //~ W0601
+    }
+}
+fn return_in_tuple(c: bool) -> u64 {
+    let (l, n) = (lock(), if c { return 1 } else { 2 })   //~ W0601
+    unlock(l)
+    n
+}
+fn return_in_field(c: bool) -> u64 {
+    let p = Pair { l: lock(), n: if c { return 1 } else { 2 } }   //~ W0601
+    let Pair(l, n) = p
+    unlock(l)
+    n
+}
+fn return_in_closure(c: bool) -> u64 {
+    let f = || {
+        take2(lock(), if c { return 1 } else { 2 })   //~ W0601
+        0
+    }
+    f()
+}
+
+// Controls. A jump that stays inside the later operand does not leave the value.
+fn break_inside_operand() {
+    take2(lock(), { loop { break }
+ 2 })
+}
+fn return_inside_closure_operand() {
+    take2(lock(), call(|| { return 2 }))
+}
+fn jump_before_operand(c: bool) -> u64 {
+    if c { return 1 }
+    take2(lock(), 2)
+    0
+}
+fn return_after_call(c: bool) -> u64 {
+    take2(lock(), if c { 1 } else { 2 })
+    return 0
+}

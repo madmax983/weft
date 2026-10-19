@@ -245,6 +245,11 @@ pub struct RetFn {
     pub multi: bool,
     /// The call can call a function value that the function does not know.
     pub unknown: bool,
+    /// Parameters of the value that the call gives to an operation of a handler
+    /// at the call site of the function, with the effect.
+    pub op_fns: BTreeSet<(usize, String)>,
+    /// Parameters of the value that a task of the call can call.
+    pub tasks: BTreeSet<usize>,
 }
 
 /// The effect part of a signature.
@@ -270,6 +275,9 @@ pub struct EffectSig {
     /// The places that the body gives to such a function value. The body always
     /// infers this part.
     pub reach_given: Vec<GivenPlace>,
+    /// The body can run such a function value more than once: at two nodes, in a
+    /// loop or in a closure. The body always infers this part.
+    pub reach_repeats: bool,
     /// The body calls a function value that it does not know, and that call can
     /// resume a `multi` continuation more than once. The body always infers this part.
     pub multi: bool,
@@ -280,17 +288,30 @@ pub struct EffectSig {
     /// caller, with the effect. The clause can call or keep them. The body always
     /// infers this part.
     pub op_fns: BTreeSet<(usize, String)>,
+    /// The effects that the function values that the body gives to an operation
+    /// of a handler of a caller perform through a handler of a caller: the
+    /// effect of the operation and the performed effect. A clause can run such a
+    /// value as a task (W0314). The body always infers this part.
+    pub op_effects: BTreeSet<(String, String)>,
     /// Effects that a task or a fork branch of the body performs through a handler
     /// of a caller. The body always infers this part.
     pub task_effects: BTreeSet<String>,
     /// Function parameters that the body can call more than once. The body always
     /// infers this part.
     pub repeats: BTreeSet<usize>,
+    /// Reference parameters whose pointee can get a function value from the body,
+    /// for example a copy out of another argument. The body always infers this part.
+    pub fn_stores: BTreeSet<usize>,
     /// Type parameters, by index in `FnSig::generics`, of the values that the
     /// body can drop. On some path, a value of such a type goes out of scope or
     /// gets a new value. A caller that gives a linear type there loses a value
     /// (W0601). The body always infers this part.
     pub drops: BTreeSet<usize>,
+    /// Type parameters, by index in `FnSig::generics`, of the values that the
+    /// body holds at a node that can abort or resume more than once. A caller
+    /// that gives a linear type there holds a linear value across the call (W0602,
+    /// W0503). The body always infers this part.
+    pub holds: BTreeSet<usize>,
 }
 
 impl EffectSig {

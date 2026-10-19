@@ -1,0 +1,60 @@
+// A closure that spawns into an outer scope can be stored in a field or a
+// container. A callee that gets the store can run it, also more than once (ADR
+// 0006). Then the task starts again after the call and conflicts with its first
+// start (W0405). The `reach` part of a signature says if the body can run a
+// stored value more than once.
+struct Stats { count: u64 }
+struct Job { f: fn() }
+
+fn run_twice(j: &Job) { let g = j.f
+ g()
+ g() }
+fn run_in_loop(v: &Vec<fn()>, n: u64) { for i in 0..n { let g = v[0]
+ g() } }
+fn run_once(j: &Job) { let g = j.f
+ g() }
+fn run_through(j: &Job) { run_twice(j) }
+fn run_closure(j: &Job) { let c = || { let g = j.f
+ g() }
+ c()
+ c() }
+
+fn stored_in_field(st: &Stats) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| st.count += 1); () } }
+        run_twice(&j)   //~ W0405
+    }
+}
+fn stored_in_vec(st: &Stats, n: u64) / mut(st), async {
+    scope { s =>
+        let v = Vec.new()
+        v.push(|| { s.spawn(|| st.count += 1); () })
+        run_in_loop(&v, n)   //~ W0405
+    }
+}
+fn stored_through_callee(st: &Stats) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| st.count += 1); () } }
+        run_through(&j)   //~ W0405
+    }
+}
+fn stored_closure_runs_twice(st: &Stats) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| st.count += 1); () } }
+        run_closure(&j)   //~ W0405
+    }
+}
+
+// Controls. A callee that runs the stored value once starts one task.
+fn stored_run_once(st: &Stats) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| st.count += 1); () } }
+        run_once(&j)
+    }
+}
+fn stored_reads_only(st: &Stats) / async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| print(st.count)); () } }
+        run_twice(&j)
+    }
+}

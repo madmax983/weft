@@ -93,6 +93,9 @@ pub(super) struct Reach {
     pub given: Vec<Given>,
     /// The body around the node.
     pub scope: Scope,
+    /// The node can run a stored value more than once: a callee that runs it in a
+    /// loop, for example.
+    pub again: bool,
 }
 
 /// A node where a summary runs, with the places that it gives.
@@ -703,8 +706,9 @@ impl Lower<'_> {
         for g in given {
             self.lend(n, g.place, g.root);
         }
-        // A function value that the body stores can be this value.
-        self.reach(n, given);
+        // A function value that the body stores can be this value. The call runs
+        // it once.
+        self.reach(n, given, false);
     }
 
     /// Node `n` performs effect `e` and gives the places `args` to the operation.
@@ -855,14 +859,21 @@ impl Lower<'_> {
         }
     }
 
-    /// Node `n` can run a function value that the body stores, with the places `given`.
-    pub(super) fn reach(&mut self, n: NodeId, given: &[Given]) {
+    /// Node `n` can run a function value that the body stores, with the places
+    /// `given`. With `again`, it can run the value more than once. A node in a loop
+    /// or in a closure can run more than once too: then the body can run a stored
+    /// value more than once (`EffectSig::reach_repeats`).
+    pub(super) fn reach(&mut self, n: NodeId, given: &[Given], again: bool) {
         let scope = self.scope_now();
         self.reaches.push(Reach {
             node: n,
             given: given.to_vec(),
             scope,
+            again,
         });
+        let nested = !self.loops.is_empty() || self.frames.iter().any(|f| f.barrier.is_some());
+        self.reach_runs.0 += 1;
+        self.reach_runs.1 |= again || nested;
     }
 
     /// Runs each stored function value at each node that can reach it. This runs
@@ -889,15 +900,23 @@ impl Lower<'_> {
             }
         }
         let mut work: Vec<Reach> = self.reaches.clone();
-        let mut seen: BTreeSet<(NodeId, Vec<GivenKey>)> = BTreeSet::new();
+        let mut seen: BTreeSet<(NodeId, bool, Vec<GivenKey>)> = BTreeSet::new();
         while let Some(r) = work.pop() {
-            let key = (r.node, r.given.iter().map(|g| (g.pos, g.place)).collect());
+            let key = (
+                r.node,
+                r.again,
+                r.given.iter().map(|g| (g.pos, g.place)).collect(),
+            );
             if !seen.insert(key) {
                 continue;
             }
             for st in &escaped {
                 self.apply_value(r.node, &st.info, st.row.as_deref(), 800, &r.given);
                 self.note_repeat(r.node, &st.info, false);
+                // A node that runs the value more than once starts its tasks again.
+                if r.again {
+                    self.restart_after(r.node, &st.info);
+                }
                 // The value uses what it captures, and it points into it as an argument does.
                 if let Some(v) = st.var {
                     self.facts.uses.push((v, r.node));
@@ -930,10 +949,13 @@ impl Lower<'_> {
                         Rooted::Outer => given.push(*g),
                     }
                 }
+                // The node runs the closure more than once, or the closure runs
+                // the value more than once.
                 work.push(Reach {
                     node: a.node,
                     given,
                     scope: a.scope,
+                    again: r.again || self.repeated.contains(&a.node),
                 });
             }
         }
@@ -1090,6 +1112,14 @@ impl Lower<'_> {
             abort: u.may_abort,
             multi: u.multi,
             unknown: u.unknown,
+            // A local handler of the function has ended when the value runs.
+            op_fns: u
+                .op_fns
+                .iter()
+                .filter(|(_, cap, _)| cap.is_none())
+                .map(|(p, _, e)| (*p, e.clone()))
+                .collect(),
+            tasks: u.tasks.clone(),
             ..RetFn::default()
         };
         let mut muts = (Vec::new(), Vec::new());
@@ -1307,6 +1337,17 @@ impl Lower<'_> {
         }
         sum.items.extend(rf.items.iter().copied());
         sum.unknown |= rf.unknown;
+        // The operations of the value go to the handlers at this call site.
+        for (p, e) in &rf.op_fns {
+            let cap = self
+                .handlers
+                .iter()
+                .rev()
+                .find(|h| &h.effect == e)
+                .map(|h| h.cap);
+            sum.op_fns.insert((*p, cap, e.clone()));
+        }
+        sum.tasks.extend(rf.tasks.iter().copied());
         // A call of the result can do what the result does: the effects of the
         // values that it returns are part of it.
         let r = self.closures.len();

@@ -92,7 +92,7 @@ fn clause_task() / async {
         handle Run {
             fn run(f) {
                 scope { s =>
-                    let t = s.spawn(f)
+                    let t = s.spawn(f)   //~ W0314
                     t.join()
                 }
                 resume(())
