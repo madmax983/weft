@@ -1,9 +1,9 @@
 //! Functions, blocks, statements and patterns.
 
 use super::{
-    ast, block_tail, effects, AssignOp, Block, EffectSig, ExprKind, FnId, Frame, LVal, LoopFrame,
-    Lower, Lowered, NodeId, Pattern, PlaceId, RootKind, SigPlace, SigRoot, SigStep, Span, StepKind,
-    Stmt, StmtKind, Ty, Val, VarId, VarKind,
+    ast, block_tail, effects, AssignOp, Block, EffectSig, ExprKind, FnId, Frame, Jump, LVal,
+    LoopFrame, Lower, Lowered, NodeId, Pattern, PlaceId, RootKind, SigPlace, SigRoot, SigStep,
+    Span, StepKind, Stmt, StmtKind, Ty, Val, VarId, VarKind,
 };
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -70,6 +70,7 @@ impl Lower<'_> {
             self.facts.declared_effect = effects::close(&sig.effects.named).into_iter().collect();
         }
         let exit = self.facts.add_node(def.span, "exit", String::new());
+        self.jumps.push(Jump::Function { exit: Some(exit) });
         self.frames.push(Frame {
             names: Vec::new(),
             barrier: None,
@@ -94,7 +95,7 @@ impl Lower<'_> {
             let var = self.locals[l].var;
             self.facts.scope_end.push((var, exit));
         }
-        let _ = &self.loops;
+        self.jumps.pop();
         self.apply_stored();
         let eff = self.summary_to_sig(&bases);
         let fdef = &self.prog.fns[id];
@@ -115,6 +116,7 @@ impl Lower<'_> {
     /// Lowers a test body. Tests have no signature and may install root handlers.
     pub fn lower_test(mut self, body: &Block, span: Span) -> Lowered {
         self.in_test = true;
+        self.jumps.push(Jump::Function { exit: None });
         let _ = self.start(span, "test");
         self.open_stmt();
         let v = self.block(body);
@@ -491,7 +493,7 @@ impl Lower<'_> {
 
     /// Ends every frame above `keep`: for `return`, `break` and `continue`. The
     /// temporaries of the statements in these frames go out of scope too.
-    fn end_frames_above(&mut self, keep: usize, n: NodeId) {
+    pub(super) fn end_frames_above(&mut self, keep: usize, n: NodeId) {
         let mut vars = Vec::new();
         for f in &self.frames[keep..] {
             for (_, l) in &f.names {
@@ -558,22 +560,47 @@ impl Lower<'_> {
             StmtKind::Assign { target, op, value } => self.assign(target, *op, value, s.span),
             StmtKind::Return(e) => {
                 let v = e.as_ref().map_or_else(Val::default, |e| self.expr(e));
-                if self.cur.is_some() {
-                    self.finish_return(&v, s.span);
-                    let n = self.emit(s.span, "return", String::new());
-                    self.end_frames_above(1, n);
-                    // The exit node is node 1 of the function component when it exists.
-                    if let Some(exit) = self.exit_node() {
-                        self.facts.cfg_edge.push((n, exit));
+                match self.jumps.last().cloned() {
+                    _ if self.cur.is_none() => {}
+                    Some(Jump::Fence(what)) => {
+                        self.err("W0315", format!("`return` cannot leave a {what}"), s.span);
                     }
+                    Some(Jump::Closure { .. }) => self.closure_return(&v, s.span),
+                    Some(Jump::Function { exit }) => {
+                        self.finish_return(&v, s.span);
+                        let n = self.emit(s.span, "return", String::new());
+                        self.end_frames_above(1, n);
+                        if let Some(exit) = exit {
+                            self.facts.cfg_edge.push((n, exit));
+                        }
+                    }
+                    None => {}
                 }
                 self.cur = None;
             }
             StmtKind::Break | StmtKind::Continue => {
-                let Some(lf) = self.loops.last() else {
+                let word = if matches!(s.kind, StmtKind::Break) {
+                    "break"
+                } else {
+                    "continue"
+                };
+                let Some(lf) = self.loops.last().cloned() else {
                     self.err("W0111", "`break` or `continue` outside a loop", s.span);
                     return;
                 };
+                let fence = self.jumps[lf.jumps.min(self.jumps.len())..]
+                    .iter()
+                    .find_map(|j| match j {
+                        Jump::Fence(what) => Some(*what),
+                        _ => None,
+                    });
+                if let Some(what) = fence {
+                    if self.cur.is_some() {
+                        self.err("W0315", format!("`{word}` cannot leave a {what}"), s.span);
+                    }
+                    self.cur = None;
+                    return;
+                }
                 let (target, keep) = if matches!(s.kind, StmtKind::Break) {
                     (lf.exit, lf.frames)
                 } else {
@@ -607,7 +634,9 @@ impl Lower<'_> {
                 let header = self.emit(s.span, "loop", String::new());
                 let exit = self.facts.add_node(s.span, "end loop", String::new());
                 self.lower_loop(&mut |me: &mut Self| me.loop_body(body, header, exit));
-                self.cur = Some(exit);
+                // A `loop` that no `break` leaves does not end normally.
+                let left = self.facts.cfg_edge.iter().any(|&(_, q)| q == exit);
+                self.cur = left.then_some(exit);
             }
             StmtKind::For { pat, iter, body } => self.for_loop(pat, iter, body, s.span),
             StmtKind::Assert(e) => {
@@ -625,6 +654,7 @@ impl Lower<'_> {
             header,
             exit,
             frames: self.frames.len(),
+            jumps: self.jumps.len(),
         });
         let v = self.block(body);
         self.drop_value(&v, body.span);
@@ -817,14 +847,6 @@ impl Lower<'_> {
         self.groups = groups;
         self.dep_places = deps;
         self.split = split;
-    }
-
-    fn exit_node(&self) -> Option<NodeId> {
-        self.facts
-            .nodes
-            .iter()
-            .position(|n| n.label == "exit")
-            .map(|i| NodeId(u32::try_from(i).unwrap_or(0)))
     }
 
     fn for_loop(&mut self, pat: &Pattern, iter: &ast::Expr, body: &Block, span: Span) {

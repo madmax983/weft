@@ -221,6 +221,27 @@ struct LoopFrame {
     header: NodeId,
     exit: NodeId,
     frames: usize,
+    /// The depth of `Lower::jumps` at the loop.
+    jumps: usize,
+}
+
+/// A body that a jump (`return`, `break`, `continue`) can leave or not.
+#[derive(Clone)]
+enum Jump {
+    /// A function or a test: `return` goes to its exit.
+    Function { exit: Option<NodeId> },
+    /// A closure: `return` goes to its exit node, with a value of type `ret`.
+    /// `frame` is the frame of its parameters, and `span` the span of the closure.
+    Closure {
+        exit: Option<NodeId>,
+        ret: Ty,
+        frame: usize,
+        /// The values of the `return`s, with the places that they point into.
+        values: Vec<Val>,
+        span: Span,
+    },
+    /// A handled body, a handler clause or a scope body: no jump can leave it.
+    Fence(&'static str),
 }
 
 /// Returns the effect row of a function type.
@@ -300,6 +321,8 @@ pub struct Lower<'p> {
     closures: Vec<Summary>,
     handlers: Vec<HandlerFrame>,
     loops: Vec<LoopFrame>,
+    /// The bodies around the current node that a jump can leave or not.
+    jumps: Vec<Jump>,
     cur: Option<NodeId>,
     pend_uses: Vec<VarId>,
     pend_reads: Vec<PlaceId>,
@@ -366,6 +389,7 @@ impl<'p> Lower<'p> {
             closures: Vec::new(),
             handlers: Vec::new(),
             loops: Vec::new(),
+            jumps: Vec::new(),
             cur: None,
             pend_uses: Vec::new(),
             pend_reads: Vec::new(),

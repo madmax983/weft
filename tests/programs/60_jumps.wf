@@ -1,0 +1,171 @@
+// `return`, `break` and `continue` stay inside the body that they are in. A
+// `return` in a closure returns from the closure, and `break` and `continue` in
+// a closure go to a loop of the closure. A jump cannot leave a handled body, a
+// handler clause or a scope body (W0315).
+effect Log { fn log(msg: String) }
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+
+// The type of a `return` in a closure is the result type of the closure, not
+// the result type of the function.
+fn closure_returns() -> String {
+    let f = |x: u64| { if x > 1 { return x }; x + 1 }
+    let n: u64 = f(2)
+    "a"
+}
+fn closure_return_type() -> String {
+    let f = |x: u64| {
+        if x > 1 { return "big" }
+        x   //~ W0102
+    }
+    "a"
+}
+
+// The code after a call of the closure runs, so it sees the mutation.
+fn closure_return_runs_on(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let f = || {
+        world.entities.push(Entity { hp: 1 })
+        return
+    }
+    f()
+    print(first.hp)   //~ W0301
+}
+
+// A returned reference of a closure points where the `return` says.
+fn closure_return_ref(world: &World) / mut(world.entities) {
+    let f = |w: &World| {
+        if w.entities.len() > 1 { return &w.entities[1] }
+        &w.entities[0]
+    }
+    let r = f(world)
+    world.entities.clear()
+    print(r.hp)   //~ W0301
+}
+fn closure_return_local() {
+    let f = || {
+        let v: Vec<u64> = Vec.new()
+        if v.len() > 0 { return &v[0] }   //~ W0204
+        &v[1]   //~ W0204
+    }
+}
+
+// A returned closure of a closure runs where the result is called.
+fn closure_returns_closure(world: &World, c: bool) / mut(world.entities) {
+    let first = &world.entities[0]
+    let mk = || {
+        if c { return || world.entities.clear() }
+        || print(1)
+    }
+    let g = mk()
+    g()
+    print(first.hp)   //~ W0301
+}
+
+// A loop inside the closure is fine, also with `return` in it.
+fn closure_loops(v: &Vec<u64>) -> u64 {
+    let count = || {
+        let i = 0
+        loop {
+            if i > 3 { break }
+            i += 1
+        }
+        i
+    }
+    let first_big = |w: &Vec<u64>| {
+        for x in w[] {
+            if x > 2 { return x }
+            if x == 0 { continue }
+        }
+        0
+    }
+    count() + first_big(v)
+}
+
+// `break` and `continue` in a closure cannot go to a loop outside it.
+fn closure_break(n: u64) {
+    let i = 0
+    while i < n {
+        i += 1
+        let f = || { break }   //~ W0111
+        let g = || { continue }   //~ W0111
+        f()
+        g()
+    }
+}
+
+// No jump can leave a handled body, a handler clause or a scope body.
+fn handled_return(world: &World) / mut(world.entities) {
+    handle Log { fn log(m) { resume(()) } } in {
+        world.entities.push(Entity { hp: 1 })
+        return   //~ W0315
+    }
+}
+fn clause_return() {
+    handle Log { fn log(m) { return } } in log("x")   //~ W0315
+}
+fn scope_return(world: &World) / mut(world.entities), async {
+    scope { s =>
+        world.entities.push(Entity { hp: 1 })
+        return   //~ W0315
+    }
+}
+fn fenced_loops(n: u64) / async {
+    let i = 0
+    while i < n {
+        i += 1
+        handle Log { fn log(m) { resume(()) } } in { if i > 2 { break } }   //~ W0315
+        handle Log { fn log(m) { continue } } in log("x")   //~ W0315
+        scope { s => if i > 3 { break } }   //~ W0315
+    }
+}
+
+// Jumps that stay inside these bodies are fine.
+fn fenced_inside(v: &Vec<u64>) -> u64 / async {
+    let a = handle Log { fn log(m) { resume(()) } } in {
+        let t = 0
+        for x in v[] {
+            if x > 3 { break }
+            t += x
+        }
+        t
+    }
+    scope { s =>
+        for x in v[] {
+            if x == 0 { continue }
+        }
+    }
+    handle Log {
+        fn log(m) {
+            let f = || { return 1 }
+            let k = f()
+            resume(())
+        }
+    } in log("x")
+    let b = handle Log { fn log(m) { resume(()) } } in {
+        let f = |x: u64| { if x > 1 { return 2 }; 3 }
+        f(1)
+    }
+    a + b
+}
+
+// A `loop` that no `break` leaves never ends normally: as the last statement
+// of a body it has the type `!`.
+fn loop_tail(xs: Vec<u64>) -> Vec<u64> {
+    loop { return xs }
+}
+fn loop_tail_value(n: u64) -> u64 {
+    let i = 0
+    loop {
+        if i > n { return i }
+        i += 1
+    }
+}
+fn loop_tail_closure() -> u64 {
+    let f = || { loop { return 3 } }
+    f()
+}
+// A `loop` with a `break` ends with `()`.
+fn loop_break_tail() -> u64 {
+    loop { break }   //~ W0102
+}

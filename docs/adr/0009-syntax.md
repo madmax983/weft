@@ -9,6 +9,13 @@ Status: accepted. Date: 2026-10-18.
   `with_timeout(2.s) { ... }`.
 - No struct literal and no trailing block in `if`, `while`, `for` and `match` heads.
 - `handle`, `scope` and the mode words are contextual keywords.
+- A `return` in a closure returns from the closure. Its value has the result type of
+  the closure, not of the function. `break` and `continue` in a closure go only to a
+  loop of the closure (W0111). No jump (`return`, `break`, `continue`) can leave a
+  handled body, a handler clause or a scope body (W0315): the interpreter runs each of
+  them as separate code, and the handler or the scope must end first.
+- A `loop` that no `break` leaves does not end normally. As the last statement of a
+  body it has the type `!`, so `fn f(xs: T) -> T { loop { return xs } }` is correct.
 - A function type with more than one effect needs parentheses: `fn() / (net, log)`.
 - `*T` is a raw pointer for foreign functions. A written `*T` is valid only in an
   `extern fn` signature, in a local and in a closure parameter (W0116). The check looks

@@ -2,8 +2,8 @@
 
 use super::{
     ast, block_tail, effects, elem_step, expr_tail, field_step, AdtKind, BinOp, ContInfo, Deref,
-    Expr, ExprKind, FnId, FnTy, Frame, HandlerFrame, HandlerInfo, IntTy, ItemRef, LVal, Lit, Lower,
-    NodeId, PathRef, Pattern, PlaceId, Rc, RootKind, Span, StrPart, Summary, Ty, UnOp, Val,
+    Expr, ExprKind, FnId, FnTy, Frame, HandlerFrame, HandlerInfo, IntTy, ItemRef, Jump, LVal, Lit,
+    Lower, NodeId, PathRef, Pattern, PlaceId, Rc, RootKind, Span, StrPart, Summary, Ty, UnOp, Val,
     VarKind, PRELUDE,
 };
 use weft_facts::{Step, StepKind};
@@ -1060,11 +1060,24 @@ impl Lower<'_> {
         let saved = self.cur;
         let saved_pending = self.take_pending();
         let saved_stmts = std::mem::take(&mut self.stmt_temps);
+        // A jump in the closure stays in it: `break` and `continue` go to its own loops.
+        let saved_loops = std::mem::take(&mut self.loops);
         self.sums.push(Summary::default());
         let si = self.sums.len() - 1;
         self.frames.push(Frame {
             names: Vec::new(),
             barrier: Some(si),
+        });
+        let ret = match expected {
+            Some(f) if !matches!(self.inf.shallow(&f.ret), Ty::Unit) => f.ret.clone(),
+            _ => self.inf.fresh(),
+        };
+        self.jumps.push(Jump::Closure {
+            exit: None,
+            ret: ret.clone(),
+            frame: self.frames.len() - 1,
+            values: Vec::new(),
+            span,
         });
         let entry = self.start(span, "closure entry");
         self.open_stmt();
@@ -1103,30 +1116,60 @@ impl Lower<'_> {
             ExprKind::Block(b) => self.block_with(b, false),
             _ => self.expr(body),
         };
-        if let Some(f) = expected {
-            if !matches!(self.inf.shallow(&f.ret), Ty::Unit) {
-                self.unify(&f.ret, &v.ty, body.span);
-            }
+        // The body can end normally, or only through `return`.
+        let falls = self.cur.is_some();
+        let stated = expected.is_some_and(|f| !matches!(self.inf.shallow(&f.ret), Ty::Unit));
+        if stated {
+            self.unify(&ret, &v.ty, body.span);
         }
         let v = self.hand_out(v, body.span);
-        let ret_refs = self.closure_ret_refs(&v, expr_tail(body));
+        let mut ret_refs = self.closure_ret_refs(&v, expr_tail(body));
+        let Some(Jump::Closure {
+            exit,
+            values: returned,
+            ..
+        }) = self.jumps.pop()
+        else {
+            return Val::default();
+        };
+        self.loops = saved_loops;
+        // With a `return`, the result type is the type of the returns.
+        let ret_ty = if returned.is_empty() {
+            v.ty.clone()
+        } else {
+            if falls && !stated {
+                self.unify(&ret, &v.ty, expr_tail(body));
+            }
+            ret.clone()
+        };
+        for r in &returned {
+            ret_refs.extend(r.refs.iter().copied());
+        }
         self.sum().ret_refs = ret_refs;
         self.sum().param_roots = param_roots;
         self.sum().literal = true;
-        let ret_ty = v.ty.clone();
         self.drop_value(&v, body.span);
         self.flush(expr_tail(body));
         self.end_frame(span);
+        if let Some(x) = exit {
+            if let Some(c) = self.cur {
+                self.facts.cfg_edge.push((c, x));
+            }
+            self.cur = Some(x);
+        }
         let end = self.cur;
         self.frames.pop();
         let mut sum = self.sums.pop().unwrap_or_default();
         // A returned function value: a call of the closure can do what it does.
-        if let Ty::Fn(f) = self.inf.shallow(&ret_ty) {
-            let info = self.fn_info(&v);
-            let r = self.value_summary(&info, f.effects.as_deref());
-            let ret = self.closures[r].clone();
-            sum.union_ret(&ret);
-            sum.rets.insert(r);
+        let tail = falls.then_some(&v);
+        for rv in returned.iter().chain(tail) {
+            if let Ty::Fn(f) = self.inf.shallow(&rv.ty) {
+                let info = self.fn_info(rv);
+                let r = self.value_summary(&info, f.effects.as_deref());
+                let ret = self.closures[r].clone();
+                sum.union_ret(&ret);
+                sum.rets.insert(r);
+            }
         }
         // A captured linear value that the closure moves must be consumed inside it.
         for &var in &sum.moved_captures {
@@ -1205,6 +1248,49 @@ impl Lower<'_> {
             var: Some(var),
             summary: Some(id),
             ..Val::default()
+        }
+    }
+
+    /// Lowers `return` in a closure: the value is the result of the closure, and
+    /// control goes to the exit of the closure.
+    pub(super) fn closure_return(&mut self, v: &Val, span: Span) {
+        let Some(Jump::Closure {
+            exit, ret, frame, ..
+        }) = self.jumps.last().cloned()
+        else {
+            return;
+        };
+        let before = self.diags.len();
+        self.unify(&ret, &v.ty, span);
+        let typed = self.diags.len() == before;
+        self.consume(v, span);
+        let refs = if typed {
+            self.closure_ret_refs(v, span)
+        } else {
+            Vec::new()
+        };
+        let n = self.emit(span, "return", String::new());
+        self.end_frames_above(frame, n);
+        let exit = exit.unwrap_or_else(|| {
+            let close = match self.jumps.last() {
+                Some(Jump::Closure { span, .. }) => *span,
+                _ => span,
+            };
+            self.facts.add_node(close, "closure exit", String::new())
+        });
+        self.facts.cfg_edge.push((n, exit));
+        if let Some(Jump::Closure {
+            exit: e, values, ..
+        }) = self.jumps.last_mut()
+        {
+            *e = Some(exit);
+            values.push(Val {
+                refs,
+                var: None,
+                local: None,
+                place: None,
+                ..v.clone()
+            });
         }
     }
 
@@ -1358,7 +1444,9 @@ impl Lower<'_> {
             multi: def.has_multi(),
         });
         self.sums.push(Summary::default());
+        self.jumps.push(Jump::Fence("handled body"));
         let v = self.expr(body);
+        self.jumps.pop();
         self.flush(expr_tail(body));
         let body_sum = self.sums.pop().unwrap_or_default();
         self.merge_summary(&body_sum);
@@ -1433,7 +1521,9 @@ impl Lower<'_> {
             let kv = self.locals[k].var;
             self.bind(kv, entry);
             let resumes_before = self.resumes.len();
+            self.jumps.push(Jump::Fence("handler clause"));
             let cv = self.block(&c.body);
+            self.jumps.pop();
             self.flush(block_tail(&c.body));
             if !matches!(self.inf.shallow(&cv.ty), Ty::Never) {
                 self.unify(&ty, &cv.ty, c.body.span);
@@ -1801,7 +1891,9 @@ impl Lower<'_> {
             names: Vec::new(),
             barrier: None,
         });
+        self.jumps.push(Jump::Fence("scope body"));
         let v = self.block_inner(body);
+        self.jumps.pop();
         let v = self.hand_out(v, body.span);
         let tail = block_tail(body);
         self.flush(tail);
