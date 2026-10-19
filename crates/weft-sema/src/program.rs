@@ -315,6 +315,11 @@ pub struct EffectSig {
     /// a caller takes a place anywhere inside each reference argument. The body
     /// always infers this part.
     pub ret_refs: Option<Vec<SigPlace>>,
+    /// The parameters whose references the body can put into an `rc` object,
+    /// each with the `rc` type: the parameter and the type definition. The
+    /// object stays after the return, so a caller must not give a reference into
+    /// its own local there (W0204). The body always infers this part.
+    pub group_stores: BTreeSet<(usize, usize)>,
     /// Type parameters, by index in `FnSig::generics`, of the values that the
     /// body can drop. On some path, a value of such a type goes out of scope or
     /// gets a new value. A caller that gives a linear type there loses a value

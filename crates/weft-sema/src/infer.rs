@@ -159,6 +159,7 @@ fn same_parts(a: &EffectSig, b: &EffectSig) -> bool {
         && a.repeats == b.repeats
         && a.fn_stores == b.fn_stores
         && a.ret_refs == b.ret_refs
+        && a.group_stores == b.group_stores
         && a.drops == b.drops
         && a.holds == b.holds
 }
@@ -180,6 +181,7 @@ fn with_parts(row: &EffectSig, body: &EffectSig) -> EffectSig {
         repeats: body.repeats.clone(),
         fn_stores: body.fn_stores.clone(),
         ret_refs: body.ret_refs.clone(),
+        group_stores: body.group_stores.clone(),
         drops: body.drops.clone(),
         holds: body.holds.clone(),
         ..row.clone()

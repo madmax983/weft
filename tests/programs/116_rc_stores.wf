@@ -1,0 +1,48 @@
+// A reference that a function puts into an `rc` object stays there after the
+// function returns: each function with a handle can read it, as a global. So it
+// must not point into a local, a by-value parameter or a temporary of the
+// function (W0204), as for a reference behind a reference parameter (ADR 0003).
+struct Cache { refs: Vec<&u64>, data: Vec<u64> }
+fn stash(c: Rc<Cache>, x: &u64) / mut(Cache) {
+    c.refs.push(x)
+}
+fn put(rs: &Vec<&u64>, x: &u64) / mut(rs) { rs.push(x) }
+
+fn fill(c: Rc<Cache>) / mut(Cache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    stash(c, &v[0])   //~ W0204
+}
+fn fill_direct(c: Rc<Cache>) / mut(Cache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    c.refs.push(&v[0])   //~ W0204
+}
+fn fill_through_ref(c: Rc<Cache>) / mut(Cache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    put(&c.refs, &v[0])   //~ W0204
+}
+fn fill_param(c: Rc<Cache>, x: u64) / mut(Cache) {
+    c.refs.push(&x)   //~ W0204
+}
+// A function that passes a reference on to `stash` puts it there too.
+fn pass_on(c: Rc<Cache>, x: &u64) / mut(Cache) {
+    stash(c, x)
+}
+fn fill_two_levels(c: Rc<Cache>) / mut(Cache) {
+    let n: u64 = 3
+    pass_on(c, &n)   //~ W0204
+}
+
+// Clean: a reference into the group itself.
+fn fill_self(c: Rc<Cache>) / mut(Cache) {
+    c.data.push(7)
+    c.refs.push(&c.data[0])
+}
+// Clean: a callee that changes the object, but keeps no reference.
+fn count(c: Rc<Cache>, x: &u64) / mut(Cache) { c.data.push(x + 0) }
+fn fill_value(c: Rc<Cache>) / mut(Cache) {
+    let n: u64 = 3
+    count(c, &n)
+}

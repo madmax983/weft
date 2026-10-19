@@ -127,13 +127,24 @@ impl Lower<'_> {
         };
         let fname = self.prog.fns[id].name.clone();
         let mut seen = Vec::new();
-        for (i, refs, span) in std::mem::take(&mut self.stored_behind) {
+        for (behind, refs, span) in std::mem::take(&mut self.stored_behind) {
             let refs = self.resolve_op_refs(&refs);
             let (named, _) = self.split_deps(&refs);
             for r in named {
                 let root = self.facts.place(r).root;
+                // A reference that the caller gives goes into the `rc` object too:
+                // the caller checks it (`group_stores`).
+                if let super::Behind::Group(a) = behind {
+                    let param = match self.param_of_root.get(&root) {
+                        Some(&(0, i)) => Some(i),
+                        _ => self.held_of.get(&root).copied(),
+                    };
+                    if let Some(i) = param {
+                        self.group_stores.insert((i, a));
+                    }
+                }
                 let info = &self.facts.roots[root.index()];
-                if info.kind != RootKind::Local || seen.contains(&(i, root)) {
+                if info.kind != RootKind::Local || seen.contains(&(behind, root)) {
                     continue;
                 }
                 // An operation result with no `resume` that gives a place.
@@ -144,21 +155,38 @@ impl Lower<'_> {
                 {
                     continue;
                 }
-                seen.push((i, root));
+                seen.push((behind, root));
                 let name = info.name.clone();
+                let by_value = (0..self.sigs[id].params.len()).any(|i| {
+                    self.locals
+                        .get(i)
+                        .and_then(|l| l.root)
+                        .map(|p| self.facts.place(p).root)
+                        == Some(root)
+                });
                 let what = if name == "temporary" {
                     "a temporary value".to_string()
+                } else if by_value {
+                    format!("the by-value parameter `{name}`")
                 } else {
                     format!("the local `{name}`")
                 };
-                let param = self.sigs[id]
-                    .params
-                    .get(i)
-                    .map_or_else(String::new, |p| p.name.clone());
                 let shown = self.facts.place(r).display.clone();
+                let into = match behind {
+                    super::Behind::Param(i) => {
+                        let param = self.sigs[id]
+                            .params
+                            .get(i)
+                            .map_or_else(String::new, |p| p.name.clone());
+                        format!("behind the parameter `{param}`")
+                    }
+                    super::Behind::Group(a) => {
+                        format!("into an `rc` object of type `{}`", self.prog.adts[a].name)
+                    }
+                };
                 self.err(
                     "W0204",
-                    format!("`{fname}` puts a reference into `{shown}` behind the parameter `{param}`: {what} goes out of scope at the return"),
+                    format!("`{fname}` puts a reference into `{shown}` {into}: {what} goes out of scope at the return"),
                     span,
                 );
             }
@@ -170,12 +198,22 @@ impl Lower<'_> {
     /// (`check_stored_behind`).
     pub(super) fn note_stored_behind(&mut self, p: PlaceId, refs: &[PlaceId], span: Span) {
         let root = self.facts.place(p).root;
-        let param = match self.param_of_root.get(&root) {
-            Some(&(0, i)) => Some(i),
-            _ => self.held_of.get(&root).copied(),
+        let rp = self.root_place(p);
+        let behind = match self.param_of_root.get(&root) {
+            Some(&(0, i)) => Some(super::Behind::Param(i)),
+            _ => self
+                .held_of
+                .get(&root)
+                .map(|&i| super::Behind::Param(i))
+                .or_else(|| {
+                    self.groups
+                        .iter()
+                        .find(|(_, &g)| g == rp)
+                        .map(|(&a, _)| super::Behind::Group(a))
+                }),
         };
-        if let (Some(i), false) = (param, refs.is_empty()) {
-            self.stored_behind.push((i, refs.to_vec(), span));
+        if let (Some(b), false) = (behind, refs.is_empty()) {
+            self.stored_behind.push((b, refs.to_vec(), span));
         }
     }
 

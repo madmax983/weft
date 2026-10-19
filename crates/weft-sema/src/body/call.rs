@@ -926,6 +926,7 @@ impl Lower<'_> {
             out.parts = parts;
         }
         self.call_flows(&sig, &vals, &arg_places, &ptys, &muts, &ret, &mut out, span);
+        self.group_stores_of(f, &sig, &vals, &arg_places, &ptys, span);
         // The callee can return what a handler of a caller resumes with, unless
         // its signature states the places of the result.
         let unstated = super::flow::count_refs(&sig.ret) > sig.ret_places.len()
@@ -1162,7 +1163,8 @@ impl Lower<'_> {
                 }
                 let owner = self.root_owner(root);
                 let behind = self.param_of_root.get(&root).is_some_and(|&(d, _)| d == 0)
-                    || self.held_of.contains_key(&root);
+                    || self.held_of.contains_key(&root)
+                    || self.facts.roots[root.index()].kind == weft_facts::RootKind::Group;
                 if owner.is_none() && !behind {
                     continue;
                 }
@@ -1199,6 +1201,49 @@ impl Lower<'_> {
                         None => self.note_stored_behind(p, f, span),
                     }
                 }
+            }
+        }
+    }
+
+    /// The callee can put a reference that an argument gives into an `rc` object
+    /// (`EffectSig::group_stores`). The object keeps it after the return, so it
+    /// must not point into a local of this function (`check_stored_behind`). A
+    /// foreign function that changes an `rc` type can put each argument there.
+    fn group_stores_of(
+        &mut self,
+        f: FnId,
+        sig: &FnSig,
+        vals: &[ArgVal],
+        arg_places: &[Vec<PlaceId>],
+        ptys: &[Ty],
+        span: Span,
+    ) {
+        let mut stores: Vec<(usize, usize)> = sig.effects.group_stores.iter().copied().collect();
+        let def = &self.prog.fns[f];
+        if def.decl.body.is_none() && !def.is_std {
+            for m in &sig.effects.muts {
+                if let SigRoot::Group(a) = m.root {
+                    stores.extend((0..vals.len()).map(|i| (i, a)));
+                }
+            }
+        }
+        for (i, a) in stores {
+            let Some(av) = vals.get(i) else {
+                continue;
+            };
+            let refs = match arg_places.get(i) {
+                Some(ps) if !ps.is_empty() => ps.clone(),
+                _ => av.val.refs.clone(),
+            };
+            let declared = sig.params.get(i).map_or(Ty::Error, |p| p.ty.clone());
+            let pointee = match ptys.get(i).map(|t| self.inf.shallow(t)) {
+                Some(Ty::Ref(inner)) => Some(*inner),
+                _ => None,
+            };
+            let flows = self.flow_refs(&declared, &refs, pointee.as_ref(), true, None);
+            if !flows.is_empty() {
+                self.stored_behind
+                    .push((super::Behind::Group(a), flows, span));
             }
         }
     }

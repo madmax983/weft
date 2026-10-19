@@ -837,6 +837,7 @@ impl Lower<'_> {
             lowered: _,
             // Empty until the end of the body.
             returned_places: _,
+            group_stores: _,
             // `frames` keeps the names of `scope` (`restore_frames`).
             scope: _,
             // The changes of the locals (`Locals::begin`).
@@ -992,6 +993,7 @@ impl Lower<'_> {
             late_stack: _,
             lowered: _,
             returned_places: _,
+            group_stores: _,
             scope,
             locals,
             task_scope,

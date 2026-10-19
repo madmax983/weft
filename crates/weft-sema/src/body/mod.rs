@@ -872,6 +872,15 @@ struct LVal {
     held: BTreeSet<CapId>,
 }
 
+/// Where the body puts a reference that the caller keeps after the return.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Behind {
+    /// Behind reference parameter `i` of the function.
+    Param(usize),
+    /// Into an object of the `rc` type with this definition.
+    Group(usize),
+}
+
 /// A method call through a reference local that can write through the local
 /// (`Lower::note_via_call`).
 #[derive(Clone, Debug)]
@@ -1209,8 +1218,12 @@ pub struct Lower<'p> {
     returned_places: Vec<PlaceId>,
     /// References that the body puts behind a reference parameter: the
     /// parameter, the places that they point into, and the span. A caller
-    /// keeps them after the return (`check_stored_behind`).
-    stored_behind: Vec<(usize, Vec<PlaceId>, Span)>,
+    /// keeps them after the return (`check_stored_behind`). An `rc` object
+    /// keeps them too: the parameter is then the `rc` type.
+    stored_behind: Vec<(Behind, Vec<PlaceId>, Span)>,
+    /// The parameters whose references the body puts into an `rc` object, with
+    /// the `rc` type (`EffectSig::group_stores`). `check_stored_behind` finds them.
+    group_stores: BTreeSet<(usize, usize)>,
     /// The places that the `resume`s give, while a clause is lowered.
     resume_refs_pending: Vec<(CapId, Vec<PlaceId>)>,
     /// The root places of the parameters of the function.
@@ -1338,6 +1351,7 @@ impl<'p> Lower<'p> {
             caller_runs: Vec::new(),
             returned: Vec::new(),
             stored_behind: Vec::new(),
+            group_stores: BTreeSet::new(),
             resume_refs_pending: Vec::new(),
             param_bases: Vec::new(),
             held_roots: BTreeMap::new(),

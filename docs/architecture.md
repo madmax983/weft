@@ -106,6 +106,7 @@ its signature:
 - Which effects its tasks perform through a handler of a caller.
 - Which function parameters it can call more than once.
 - Which reference parameters can get a function value.
+- Which parameters give references that it can put into an `rc` object.
 - The type parameters of the values that it can drop or hold across an abort (ADR
   0007).
 

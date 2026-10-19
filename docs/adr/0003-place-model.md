@@ -243,6 +243,16 @@ Status: accepted. Date: 2026-10-18.
   `rs.push(&w[0])` does that. The caller keeps the reference after the return
   (W0204). This also holds for a result of an operation that points into a local of a
   clause.
+- The same holds for a reference that a function puts into an `rc` object, at a place
+  under an `rc` group root: each function with a handle can read it after the return,
+  as a global. A callee that puts a reference that a parameter gives into an `rc`
+  object has that parameter in a `group_stores` part of its signature, so its caller
+  checks the argument at the call, as `call_flows` does for a reference parameter. A
+  foreign function that changes an `rc` type can put each argument there. The
+  borrowing proof assumes that no reference is stored in the heap (the "no back
+  channels" assumption of `proofs/borrowing/README.md`). The checker mirrors that
+  assumption for references behind reference parameters and in `rc` objects: such a
+  reference cannot point into a local of a function that has returned.
 - Evaluation order follows the interpreter: arguments and operands run from left to
   right. A by-value argument moves when it is evaluated, so `f(v, v.len())` is a use
   after move. A hidden variable holds the value on its way to the call while the later

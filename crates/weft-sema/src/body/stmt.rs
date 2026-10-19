@@ -307,6 +307,7 @@ impl Lower<'_> {
             task_effects: sum.task_effects.to_set(),
             repeats: self.repeats_sig(),
             ret_refs: self.ret_refs_sig(bases),
+            group_stores: self.group_stores.clone(),
             ..EffectSig::default()
         };
         let mut changed: Vec<PlaceId> = sum.muts.iter().copied().collect();
