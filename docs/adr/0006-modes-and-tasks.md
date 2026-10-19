@@ -8,15 +8,6 @@ Status: accepted. Date: 2026-10-18.
   (`weft_verified::modes`), but the checker does not use it yet: the mode rules use the
   flags `nonportable`, `uniq` and `shared` in the facts (ADR 0004).
 - `@ shared` forbids mutation through the reference (W0402).
-- A closure takes its modes from what it captures. It is nonportable if it captures a
-  nonportable value, because it refers to the variable. It is not `many` if it runs
-  only once (ADR 0007) or captures a value that is not `many`, such as a `@ uniq`
-  reference: a copy of it would copy that value (W0503). It is `@ uniq` if each
-  captured variable that holds a reference is.
-- A local is `@ uniq` while it holds a `@ uniq` value: a new aliased value ends it
-  (W0406). Its variable is `@ uniq` only if each of its values is, and not `many` if
-  one is. The hidden iterator of a `for` loop is `@ uniq` if its source is, so it is
-  not `many` either.
 - A fork branch must be portable: no nonportable captures (W0401) and no mutation
   through an aliased reference (W0403). `split_mut` gives `@ uniq` parts.
 - Separation (W0405): a task is active from its spawn to its join or the scope end. Each
@@ -72,6 +63,15 @@ Status: accepted. Date: 2026-10-18.
   failure of a task goes to the task that joins it, not to a handler, so `Fail` is not
   part of the rule. The interpreter gives the failure to the joiner also with no
   runtime.
+- A closure takes its modes from what it captures. It is nonportable if it captures a
+  nonportable value, because it refers to the variable. It is not `many` if it runs
+  only once (ADR 0007) or captures a value that is not `many`, such as a `@ uniq`
+  reference: a copy of it would copy that value (W0503). It is `@ uniq` if each
+  captured variable that holds a reference is.
+- A local is `@ uniq` while it holds a `@ uniq` value: a new aliased value ends it
+  (W0406). Its variable is `@ uniq` only if each of its values is, and not `many` if
+  one is. The hidden iterator of a `for` loop is `@ uniq` if its source is, so it is
+  not `many` either.
 
 ## Consequences
 
