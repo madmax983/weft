@@ -271,6 +271,9 @@ pub struct EffectSig {
     /// The body calls a function value that it does not know, and that call can
     /// resume a `multi` continuation more than once. The body always infers this part.
     pub multi: bool,
+    /// Function parameters that a task or a fork branch of the body can call. The
+    /// body always infers this part.
+    pub tasks: BTreeSet<usize>,
 }
 
 impl EffectSig {

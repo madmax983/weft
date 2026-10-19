@@ -183,6 +183,7 @@ impl Lower<'_> {
             reaches: !self.reaches.is_empty(),
             reach_given: self.reach_sig(bases),
             multi: self.unknown_multi,
+            tasks: sum.tasks.clone(),
             ..EffectSig::default()
         };
         let mut changed: Vec<PlaceId> = sum.muts.iter().copied().collect();
@@ -791,6 +792,9 @@ impl Lower<'_> {
         out.extend(sum.items.iter().map(|f| format!("item {f}")));
         out.extend(sum.params.iter().map(|p| format!("param {p}")));
         out.extend(sum.stores.iter().map(|p| format!("stores {p}")));
+        out.extend(sum.tasks.iter().map(|p| format!("tasks {p}")));
+        out.extend(sum.spawns.iter().map(|t| format!("spawns {t}")));
+        out.extend(sum.own_caps.iter().map(|c| format!("own cap {c}")));
         out.extend(sum.captures.iter().map(|&v| format!("capture {}", vk(v))));
         out.extend(
             sum.moved_captures

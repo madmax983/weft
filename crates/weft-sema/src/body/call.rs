@@ -176,7 +176,7 @@ impl Lower<'_> {
         let rty = self.deref_ty(&rv.ty);
         let rty = self.inf.resolve(&rty);
         match (&rty, method.name.as_str()) {
-            (Ty::Scope, "spawn") => return self.spawn(args, trailing, span),
+            (Ty::Scope, "spawn") => return self.spawn(&rv, args, trailing, span),
             (Ty::Adt(a, _), "join" | "detach") if Some(*a) == self.b.task => {
                 return self.join(&rv, method.name == "join", span);
             }
@@ -561,6 +561,10 @@ impl Lower<'_> {
             if let Some(s) = info.summary {
                 self.check_fn_arg_effects(&ptys[i], s, av.span);
             }
+            // A task of the callee can call the argument.
+            if sig.effects.tasks.contains(&i) {
+                self.check_task_value(&info, row.as_deref(), av.span);
+            }
             let given = self.lent_to(&Callee::Item(f), i, &arg_places, &roots);
             self.apply_value(n, &info, row.as_deref(), root, &given);
         }
@@ -812,6 +816,19 @@ impl Lower<'_> {
         // The value can call a function argument with the places that it lends to it.
         let value = Callee::Value(callee.clone());
         for (i, info, row, refs) in fns.clone() {
+            // A task of the value can call the argument.
+            let spawned = callee.summary.is_some_and(|s| {
+                let sum = &self.closures[s];
+                sum.tasks.contains(&i)
+                    || sum
+                        .items
+                        .iter()
+                        .any(|&f| self.sigs[f].effects.tasks.contains(&i))
+            });
+            if spawned {
+                let span = exprs.get(i).map_or(span, |e| e.span);
+                self.check_task_value(&info, row.as_deref(), span);
+            }
             let root = 810 + u32::try_from(i).unwrap_or(0);
             for p in refs {
                 self.facts.call_arg.push((n, p, root));
@@ -1160,7 +1177,7 @@ impl Lower<'_> {
         }
     }
 
-    /// Starts a task for a closure at a new node. Returns the task.
+    /// Starts a task for a function value at a new node. Returns the task.
     fn start_task(&mut self, kind: TaskKind, v: &Val, span: Span) -> (weft_facts::TaskId, NodeId) {
         let t = self.facts.add_task(kind, span);
         if let Some(var) = v.var {
@@ -1173,18 +1190,21 @@ impl Lower<'_> {
         };
         let n = self.emit(span, label, String::new());
         self.facts.spawned_at.push((t, n));
-        let Some(s) = v.summary else {
-            if let Some(item) = v.item {
-                for e in self.sigs[item].effects.named.clone() {
-                    self.perform_effect(n, &e);
-                }
-            }
-            return (t, n);
+        let info = self.fn_info(v);
+        let row = match self.inf.shallow(&v.ty) {
+            Ty::Fn(f) => f.effects.clone(),
+            _ => None,
         };
+        self.check_task_value(&info, row.as_deref(), span);
+        // A function item or parameter runs as a value with no captures.
+        let s = self.value_summary(&info, row.as_deref());
         let sum = self.closures[s].clone();
         let own = |me: &Self, p: PlaceId| sum.own_roots.contains(&me.facts.place(p).root);
         // A place that the task lends can change as a mutation does.
-        let writes: Vec<PlaceId> = sum.muts.iter().chain(&sum.lends).copied().collect();
+        let mut writes: Vec<PlaceId> = sum.muts.iter().chain(&sum.lends).copied().collect();
+        for &f in &sum.items {
+            writes.extend(self.item_group_muts(f));
+        }
         for &m in &writes {
             if !own(self, m) {
                 self.facts.task_writes.push((t, m));
@@ -1218,28 +1238,89 @@ impl Lower<'_> {
                 self.facts.mut_through.push((t, c));
             }
         }
-        // Effect handlers live on one task's stack: a task cannot reach them.
-        let user = sum
-            .escapes
-            .iter()
-            .filter(|e| {
-                self.prog
-                    .effect_named(self.module, e)
-                    .is_some_and(|id| !self.prog.effects[id].is_std)
-            })
-            .count();
-        if !sum.performs.is_empty() || user > 0 {
+        self.apply_summary(n, s, 700, &[]);
+        (t, n)
+    }
+
+    /// The `mut` places of function item `f` below `rc` groups: a call with no
+    /// arguments mutates them.
+    fn item_group_muts(&mut self, f: FnId) -> Vec<PlaceId> {
+        let sig = self.sigs[f].clone();
+        let split = self.fresh_split();
+        let mut out = Vec::new();
+        for m in &sig.effects.muts {
+            if matches!(m.root, SigRoot::Group(_)) {
+                out.extend(self.subst_place(m, &[], split));
+            }
+        }
+        out
+    }
+
+    /// Reports W0314 if a task that runs function value `info` can perform an
+    /// operation of a handler on the stack of this task: a local handler, or the
+    /// handler of a user effect, which only a caller can install. The root
+    /// handlers of `sim.run` are not on a stack. A task of the body can call a
+    /// function parameter: then the caller checks the value that it gives.
+    pub(super) fn check_task_value(
+        &mut self,
+        info: &super::fnval::FnInfo,
+        row: Option<&[String]>,
+        span: Span,
+    ) {
+        let mut bad = row.into_iter().flatten().any(|e| self.on_this_stack(e));
+        let mut items: Vec<FnId> = info.item.into_iter().collect();
+        let mut params: Vec<(usize, usize)> = info.param.into_iter().collect();
+        if let Some(s) = info.summary {
+            let sum = self.closures[s].clone();
+            bad |= sum
+                .performs
+                .iter()
+                .any(|c| !self.root_caps.contains(c) && !sum.own_caps.contains(c));
+            bad |= sum
+                .escapes
+                .iter()
+                .chain(&sum.row)
+                .any(|e| self.is_user_effect(e));
+            items.extend(sum.items.iter().copied());
+            params.extend(sum.params.iter().map(|&p| (0, p)));
+            params.extend(sum.passthrough.iter().map(|&p| (0, p)));
+        }
+        for f in items {
+            let named = self.sigs[f].effects.named.clone();
+            bad |= named.iter().any(|e| self.on_this_stack(e));
+        }
+        for (d, p) in params {
+            if let Some(sum) = self.sums.get_mut(d) {
+                sum.tasks.insert(p);
+            }
+        }
+        if bad {
             self.err(
                 "W0314",
                 "a task cannot perform a user effect: its handler runs on another task",
                 span,
             );
         }
-        self.apply_summary(n, s, 700, &[]);
-        (t, n)
     }
 
-    fn spawn(&mut self, args: &[Arg], trailing: Option<&Expr>, span: Span) -> Val {
+    /// Returns true if effect `e` is a user effect: only a local handler of a caller handles it.
+    fn is_user_effect(&self, e: &str) -> bool {
+        self.prog
+            .effect_named(self.module, e)
+            .is_some_and(|id| !self.prog.effects[id].is_std)
+    }
+
+    /// Returns true if an operation of effect `e` that a task performs here goes to
+    /// a handler on the stack of this task: a local handler that is not a root
+    /// handler of `sim.run`, or the handler of a user effect.
+    fn on_this_stack(&self, e: &str) -> bool {
+        match self.handlers.iter().rev().find(|h| h.effect == e) {
+            Some(h) => !self.root_caps.contains(&h.cap),
+            None => self.is_user_effect(e),
+        }
+    }
+
+    fn spawn(&mut self, recv: &Val, args: &[Arg], trailing: Option<&Expr>, span: Span) -> Val {
         let Some(e) = args.first().map(|a| &a.value).or(trailing) else {
             self.err("W0103", "`spawn` takes a closure", span);
             return Val {
@@ -1255,8 +1336,29 @@ impl Lower<'_> {
         let (t, n) = self.start_task(TaskKind::Spawn, &v, e.span);
         self.perform_effect(n, "Async");
         self.abortive(n);
-        if let Some(sc) = self.scopes.last_mut() {
-            sc.push(t);
+        // The task joins at the end of the scope of the receiver. A receiver that
+        // is not a scope binder of this body joins at the end of the outermost scope.
+        let at = self
+            .scopes
+            .iter()
+            .rposition(|(b, _)| Some(*b) == recv.local)
+            .or_else(|| (!self.scopes.is_empty()).then_some(0));
+        if let Some(i) = at {
+            let binder = self.scopes[i].0;
+            self.scopes[i].1.push(t);
+            // A closure or a clause between the scope and the spawn starts the
+            // task where it runs.
+            let depth = self.local_frame(binder);
+            let bodies: Vec<usize> = self
+                .frames
+                .iter()
+                .enumerate()
+                .filter(|&(fi, _)| fi > depth)
+                .filter_map(|(_, f)| f.barrier)
+                .collect();
+            for si in bodies {
+                self.sums[si].spawns.insert(t);
+            }
         } else {
             self.err("W0115", "`spawn` needs a `scope`", span);
         }
@@ -1364,6 +1466,7 @@ impl Lower<'_> {
                 cap,
                 multi: false,
             });
+            self.root_caps.insert(cap);
         }
         let v = self.closure_arg(body, Some(Ty::Unit));
         let n = self.emit(span, "sim.run", String::new());

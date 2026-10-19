@@ -1443,6 +1443,7 @@ impl Lower<'_> {
             cap,
             multi: def.has_multi(),
         });
+        self.sum().own_caps.insert(cap);
         self.sums.push(Summary::default());
         self.jumps.push(Jump::Fence("handled body"));
         let v = self.expr(body);
@@ -1557,6 +1558,7 @@ impl Lower<'_> {
                 .moved_captures
                 .extend(cs.moved_captures.iter().copied());
             clause_sum.dropped.extend(cs.dropped.iter().copied());
+            clause_sum.spawns.extend(cs.spawns.iter().copied());
             for &r in &cs.reads {
                 if !cs.own_roots.contains(&self.facts.place(r).root) {
                     clause_sum.reads.insert(r);
@@ -1628,13 +1630,8 @@ impl Lower<'_> {
             }
         }
         let _ = self.emit(span, "end handle", String::new());
-        Val {
-            ty,
-            refs: v.refs,
-            parts: v.parts,
-            uniq: v.uniq,
-            ..Val::default()
-        }
+        // The value of the handled body: also a task handle or a function value.
+        v
     }
 
     /// The clauses of handler `h` run at the nodes `calls`, and they get the places
@@ -1695,6 +1692,10 @@ impl Lower<'_> {
             }
             for &v in &h.clause_sum.dropped {
                 self.facts.scope_end.push((v, n));
+            }
+            // A task that a clause spawns into an outer scope starts there.
+            for &t in &h.clause_sum.spawns {
+                self.facts.spawned_at.push((t, n));
             }
         }
     }
@@ -1856,6 +1857,9 @@ impl Lower<'_> {
         t.moved_captures.extend(s.moved_captures.iter().copied());
         t.dropped.extend(s.dropped.iter().copied());
         t.lends.extend(s.lends.iter().copied());
+        t.spawns.extend(s.spawns.iter().copied());
+        t.own_caps.extend(s.own_caps.iter().copied());
+        t.tasks.extend(s.tasks.iter().copied());
         for &a in &s.op_args {
             if !t.op_args.contains(&a) {
                 t.op_args.push(a);
@@ -1885,7 +1889,7 @@ impl Lower<'_> {
         );
         self.perform_effect(n, "Async");
         self.abortive(n);
-        self.scopes.push(Vec::new());
+        self.scopes.push((l, Vec::new()));
         // The tasks join before the locals of the body go out of scope.
         self.frames.push(Frame {
             names: Vec::new(),
@@ -1897,7 +1901,7 @@ impl Lower<'_> {
         let v = self.hand_out(v, body.span);
         let tail = block_tail(body);
         self.flush(tail);
-        let tasks = self.scopes.pop().unwrap_or_default();
+        let (_, tasks) = self.scopes.pop().unwrap_or_default();
         let end = self.emit(span, "scope end", String::new());
         for t in tasks {
             self.facts.joined_at.push((t, end));

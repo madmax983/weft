@@ -15,8 +15,9 @@
 //! A signature also has parts that the body always infers, also for a function
 //! that states its effects: what it lends to its function parameters, what its
 //! returned function value does, which function parameters it stores, whether
-//! it can run a stored function value, what it gives to that value, and whether
-//! an unknown function value that it calls can resume more than once. Each new
+//! it can run a stored function value, what it gives to that value, whether an
+//! unknown function value that it calls can resume more than once, and which
+//! function parameters a task of the body can call. Each new
 //! lowering replaces these parts, so they do not only grow. A part that is not
 //! known yet can be larger than its final value: for example, a callee with no
 //! inferred returned function value counts as unknown. So the inference does
@@ -139,6 +140,7 @@ fn same_parts(a: &EffectSig, b: &EffectSig) -> bool {
         && a.reaches == b.reaches
         && a.reach_given == b.reach_given
         && a.multi == b.multi
+        && a.tasks == b.tasks
 }
 
 /// Returns the row of `row` with the other parts of `body`.
@@ -150,6 +152,7 @@ fn with_parts(row: &EffectSig, body: &EffectSig) -> EffectSig {
         reaches: body.reaches,
         reach_given: body.reach_given.clone(),
         multi: body.multi,
+        tasks: body.tasks.clone(),
         ..row.clone()
     }
 }

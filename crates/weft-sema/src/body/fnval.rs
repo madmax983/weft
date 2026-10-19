@@ -569,6 +569,12 @@ impl Lower<'_> {
             self.facts.scope_end.push((v, n));
         }
         self.sum().dropped.extend(sum.dropped.iter().copied());
+        // The tasks that the body spawns into an outer scope start here.
+        for &t in &sum.spawns {
+            self.facts.spawned_at.push((t, n));
+        }
+        self.sum().spawns.extend(sum.spawns.iter().copied());
+        self.sum().own_caps.extend(sum.own_caps.iter().copied());
     }
 
     /// A function item runs at node `n` with the places `given`.

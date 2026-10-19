@@ -33,3 +33,14 @@ Status: accepted. Date: 2026-10-18.
   `tests/programs/33_stealable.wf` marks each task closure `//~ stealable` or
   `//~ pinned`, and the corpus test checks the marks.
 - A spawn in statement position gives its handle to the scope. A bound handle is linear.
+- A task joins at the end of the scope of its receiver (`a.spawn` in an inner scope joins
+  at the end of the scope of `a`). A closure or a handler clause that spawns into a scope
+  outside it starts the task at each node where it runs: a call of the closure, a call
+  that gets the closure, and an operation that runs the clause. A `handle` around a
+  spawn keeps the task handle.
+- A task cannot perform through a handler on the stack of another task (W0314). This
+  holds for a closure, a function item and a function parameter that runs as a task:
+  the effects of an item resolve against the handlers at the spawn. A signature has a
+  `tasks` part: the function parameters that a task of the body can call. The caller
+  checks the function value that it gives to such a parameter. The root handlers of
+  `sim.run` replace the runtime, so a task of the simulation body reaches them.

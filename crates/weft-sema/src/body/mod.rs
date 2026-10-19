@@ -89,6 +89,13 @@ pub struct Summary {
     /// Locals outside the body that the body gives a place below one of its
     /// parameters: the local and the place.
     pub binds: Vec<(usize, PlaceId)>,
+    /// Tasks that the body spawns into a scope outside it. Each node where the
+    /// body runs starts them.
+    pub spawns: BTreeSet<TaskId>,
+    /// Capabilities of the handlers that the body installs.
+    pub own_caps: BTreeSet<CapId>,
+    /// Function parameters of the value that a task of its body can call.
+    pub tasks: BTreeSet<usize>,
 }
 
 impl Summary {
@@ -124,6 +131,9 @@ impl Summary {
                 self.binds.push(*b);
             }
         }
+        self.spawns.extend(o.spawns.iter().copied());
+        self.own_caps.extend(o.own_caps.iter().copied());
+        self.tasks.extend(o.tasks.iter().copied());
     }
 
     /// Adds what a call of the function value that `o` stands for can do. A call of
@@ -133,6 +143,7 @@ impl Summary {
         o.ret_refs.clear();
         o.dropped.clear();
         o.rets.clear();
+        o.tasks.clear();
         o.literal = false;
         self.union(&o);
     }
@@ -327,7 +338,10 @@ pub struct Lower<'p> {
     pend_uses: Vec<VarId>,
     pend_reads: Vec<PlaceId>,
     groups: BTreeMap<usize, PlaceId>,
-    scopes: Vec<Vec<TaskId>>,
+    /// The open scopes: the local of the binder, and the tasks that join at the end.
+    scopes: Vec<(usize, Vec<TaskId>)>,
+    /// The capabilities of the root handlers that `sim.run` installs. A task reaches them.
+    root_caps: BTreeSet<CapId>,
     ret_ty: Ty,
     in_test: bool,
     library: bool,
@@ -395,6 +409,7 @@ impl<'p> Lower<'p> {
             pend_reads: Vec::new(),
             groups: BTreeMap::new(),
             scopes: Vec::new(),
+            root_caps: BTreeSet::new(),
             ret_ty: Ty::Unit,
             in_test: false,
             library,
