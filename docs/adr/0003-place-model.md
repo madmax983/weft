@@ -162,6 +162,20 @@ Status: accepted. Date: 2026-10-18.
   closure can leave the scope. A closure that captures another value cannot outlive the
   variable (W0204, W0301). A temporary of plain data stays readable too, as a constant
   does. A reference into a local of plain data is still invalid after the scope.
+- A closure refers to the cells of the variables that it captures by reference, so it
+  reads each variable when it runs, not when it is made. The lowering of the closure
+  body uses the values that the variables have where the closure is made. So each node
+  where the closure runs joins the values that the variables have there: a call, a call
+  that takes the closure, a spawn, and a node that runs a stored value. For a variable
+  with a place that it did not have where the closure was made, the node uses the
+  variable (W0301), and it mutates, reads and lends the places of the closure below the
+  old places, moved onto the new places (W0301, W0402). For a function variable with
+  another value, the node runs that value where the closure runs the variable, with the
+  places that the closure gives it there. If that value runs only once, so does the
+  closure (W0502). A variable that the closure gives to a `@ uniq` parameter must still
+  be `@ uniq` at the node (W0406). A task runs while its parent goes on: at the end of
+  the body, its spawn node joins each value that its captured variables get, and the
+  task writes and reads what they reach (W0405).
 - A closure that moves a captured variable takes the value when the closure is made: a
   by-value capture, as Rust infers it. The facts move the variable at the node that
   makes the closure (`moved_at`), and the interpreter moves the value into a cell of the
@@ -243,6 +257,11 @@ Status: accepted. Date: 2026-10-18.
 - `writes_via` is only for a write at an assignment or at a method call that changes
   only its receiver. A call of a function, also with the reference as its only
   argument, can invalidate the reference by the wildcard rules, as before.
+- A node that runs a closure moves each place of the closure below an old place of a
+  captured variable onto each new place, also when the place comes from another
+  capture that points there too. A task gets the new values of its captured variables
+  also from before its spawn and after its join. A node that runs a stored value joins
+  the values that the variables have at the end of the body.
 - `points_into` is not flow-sensitive. A reference that got a place inside a block, and
   then a place outside it before the block ends, is still invalid after the end. This
   is the same imprecision as for mutations.

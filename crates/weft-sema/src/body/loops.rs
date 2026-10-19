@@ -139,6 +139,7 @@ struct LoopHead {
     resume_refs_pending: Vec<(CapId, Vec<PlaceId>)>,
     bind_caps: usize,
     via_calls: usize,
+    task_runs: usize,
 }
 
 impl LoopHead {
@@ -828,6 +829,12 @@ impl Lower<'_> {
             held_roots: _,
             held_of: _,
             work: _,
+            // The values of the captures of each closure, by closure index.
+            cap_values: _,
+            // Empty between the nodes.
+            late_stack: _,
+            // False until the end of the body.
+            lowered: _,
             // `frames` keeps the names of `scope` (`restore_frames`).
             scope: _,
             // The changes of the locals (`Locals::begin`).
@@ -890,6 +897,7 @@ impl Lower<'_> {
             resume_refs_pending,
             bind_caps,
             via_calls,
+            task_runs,
         } = self;
         LoopHead {
             facts: facts.mark(),
@@ -947,6 +955,7 @@ impl Lower<'_> {
             resume_refs_pending: resume_refs_pending.clone(),
             bind_caps: bind_caps.len(),
             via_calls: via_calls.len(),
+            task_runs: task_runs.len(),
         }
     }
 
@@ -977,6 +986,9 @@ impl Lower<'_> {
             held_roots: _,
             held_of: _,
             work: _,
+            cap_values: _,
+            late_stack: _,
+            lowered: _,
             scope,
             locals,
             task_scope,
@@ -1036,6 +1048,7 @@ impl Lower<'_> {
             resume_refs_pending,
             bind_caps,
             via_calls,
+            task_runs,
         } = self;
         facts.rewind(&head.facts);
         let node = NodeId(u32::try_from(head.nodes).unwrap_or(u32::MAX));
@@ -1100,6 +1113,7 @@ impl Lower<'_> {
         *resume_refs_pending = head.resume_refs_pending;
         bind_caps.truncate(head.bind_caps);
         via_calls.truncate(head.via_calls);
+        task_runs.truncate(head.task_runs);
     }
 }
 

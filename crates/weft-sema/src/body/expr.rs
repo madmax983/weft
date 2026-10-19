@@ -1461,6 +1461,9 @@ impl Lower<'_> {
         }
         refs.sort();
         refs.dedup();
+        // A node that runs the closure joins the values that the other captures
+        // have there (`Lower::late_join`).
+        self.note_cap_values(id, &caps, &moved);
         // The moved captures are moved before the closure exists, so that the
         // move does not invalidate the new closure. The interpreter moves them
         // into the closure there (`FnFacts::by_value`).
@@ -1610,6 +1613,8 @@ impl Lower<'_> {
                 None => out.push(r),
             }
         }
+        // A captured variable can have a new value where the closure runs.
+        out.extend(self.late_ret_refs(s));
         out
     }
 

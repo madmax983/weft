@@ -29,7 +29,7 @@ pub(super) struct FnInfo {
 }
 
 /// A place that a call gives to a parameter of a function value.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Given {
     /// The parameter, or `None` for any parameter.
     pub pos: Option<usize>,
@@ -459,7 +459,7 @@ impl Lower<'_> {
 
     /// The places that place `p` of summary `sum` stands for where the summary runs
     /// with the places `given`. `root` is the callee root index of the captures.
-    fn places_of(
+    pub(super) fn places_of(
         &mut self,
         sum: &Summary,
         p: PlaceId,
@@ -499,6 +499,9 @@ impl Lower<'_> {
             given: given.to_vec(),
             scope,
         });
+        // The captured variables can have new values here.
+        let at_run = !self.lowered;
+        self.late_join(n, s, root, given, at_run);
         for &m in &sum.muts {
             for (q, i) in self.places_of(&sum, m, root, given) {
                 self.mutate(n, q);
@@ -914,7 +917,6 @@ impl Lower<'_> {
         }
         let escaped = self.escaped.clone();
         let applied = self.applied.clone();
-        let (calls_before, args_before) = (self.cap_calls.len(), self.op_args.len());
         // A call of a closure that the body stores uses what the closure captures,
         // also when the value comes back from the store with its type only.
         for st in &escaped {
@@ -988,7 +990,17 @@ impl Lower<'_> {
                 });
             }
         }
-        // A stored value can perform an operation of a handler that is lowered: its
+    }
+
+    /// Runs the values that the body gives at its nodes after the body is
+    /// lowered: the stored values (`apply_stored`) and the new values of the
+    /// variables that the tasks capture (`finish_task_values`).
+    pub(super) fn finish_values(&mut self) {
+        self.lowered = true;
+        let (calls_before, args_before) = (self.cap_calls.len(), self.op_args.len());
+        self.finish_task_values();
+        self.apply_stored();
+        // Such a value can perform an operation of a handler that is lowered: its
         // clauses run at the new nodes too.
         let mut handled = std::mem::take(&mut self.handled);
         for h in &mut handled {

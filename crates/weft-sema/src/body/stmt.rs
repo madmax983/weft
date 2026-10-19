@@ -120,7 +120,7 @@ impl Lower<'_> {
             self.facts.scope_end.push((var, exit));
         }
         self.jumps.pop();
-        self.apply_stored();
+        self.finish_values();
         self.finish_aborts();
         self.op_refs();
         self.finish_op_env();
@@ -154,7 +154,7 @@ impl Lower<'_> {
         self.stmt_temps.pop();
         self.drop_value(&v, span);
         self.flush(block_tail(body));
-        self.apply_stored();
+        self.finish_values();
         self.finish_aborts();
         self.op_refs();
         self.finish_op_env();

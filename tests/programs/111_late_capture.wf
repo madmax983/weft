@@ -1,0 +1,133 @@
+// A closure refers to the cells of the variables that it captures (ADR 0003).
+// It reads a variable when it runs, so it sees a new value that the variable
+// gets after the closure is made. Each node that runs the closure joins the
+// places, the function values and the modes that the variables have there.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Buf { items: Vec<u64> }
+struct Stats { count: u64 }
+fn eat(b: Buf) { print("eat") }
+fn run(f: fn()) { f() }
+fn needs_uniq(es: &[u64] @ uniq) / mut(es) {}
+
+// A captured reference variable gets a new value.
+fn late_ref(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let f = || print(r.hp)
+    r = &world.entities[0]
+    world.entities.clear()
+    f()   //~ W0301
+}
+// The same through a higher-order callee.
+fn late_ref_hof(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let f = || print(r.hp)
+    r = &world.entities[0]
+    world.entities.clear()
+    run(f)   //~ W0301
+}
+// The closure mutates through the new value.
+fn late_mut(world: &World, d: &World) / mut(world.entities, d.entities) {
+    let r = d
+    let f = || r.entities.clear()
+    r = world
+    let first = &world.entities[0]
+    f()
+    print(first.hp)   //~ W0301
+}
+// A task reads the captured reference after the parent clears its new target.
+fn late_ref_task(world: &World, d: &Entity) / mut(world.entities), async, clock {
+    let r = d
+    scope { s =>
+        s.spawn(|| { sleep(1.ms)
+ print(r.hp) })
+        r = &world.entities[0]
+        world.entities.clear()   //~ W0405
+    }
+}
+// A captured function variable gets a closure that mutates.
+fn late_fn(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g = || print(0)
+    let f = || g()
+    g = || world.entities.clear()
+    f()
+    print(first.hp)   //~ W0301
+}
+// A captured function variable gets a `once` closure.
+fn late_once() {
+    let b = Buf { items: Vec.new() }
+    let c = || print(0)
+    let k = || c()
+    c = || eat(b)
+    k()
+    k()   //~ W0502
+}
+// A captured reference variable gets a `@ shared` place: the closure writes it.
+fn late_shared(st: &Stats @ shared, d: &Stats) / mut(d, st) {
+    let r = d
+    let f = || r.count += 1
+    r = st
+    f()   //~ W0402
+}
+// A captured `@ uniq` variable gets an aliased value.
+fn late_alias(v: &Vec<u64>, w: &Vec<u64>) / mut(v, w) {
+    let (l, r) = v.split_mut(1)
+    let f = || needs_uniq(l)
+    let (a, b) = w.split_at(1)
+    l = a
+    f()   //~ W0406
+}
+
+// Clean: the new value is valid where the closure runs.
+fn late_ref_valid(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let f = || print(r.hp)
+    world.entities.clear()
+    world.entities.push(Entity { hp: 2 })
+    r = &world.entities[0]
+    f()
+}
+// Clean: the closure runs before the change.
+fn late_ref_before(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let f = || print(r.hp)
+    r = &world.entities[0]
+    f()
+    world.entities.clear()
+}
+// Clean: the task reads a new value that the parent does not change.
+fn late_task_other(world: &World, d: &Entity) / mut(world.entities), async {
+    let r = d
+    let e = Entity { hp: 3 }
+    scope { s =>
+        s.spawn(|| print(r.hp))
+        r = &e
+        world.entities.clear()
+    }
+}
+// Clean: the new function value runs, and the reference is taken after it.
+fn late_fn_before(world: &World) / mut(world.entities) {
+    let g = || print(0)
+    let f = || g()
+    g = || world.entities.clear()
+    f()
+    let first = &world.entities[0]
+    print(first.hp)
+}
+// Clean: the closure with the `once` value runs once.
+fn late_once_once() {
+    let b = Buf { items: Vec.new() }
+    let c = || print(0)
+    let k = || c()
+    c = || eat(b)
+    k()
+}
+// Clean: the new value is `@ uniq` too.
+fn late_uniq(v: &Vec<u64>, w: &Vec<u64>) / mut(v, w) {
+    let (l, r) = v.split_mut(1)
+    let f = || needs_uniq(l)
+    let (a, b) = w.split_mut(1)
+    l = a
+    f()
+}

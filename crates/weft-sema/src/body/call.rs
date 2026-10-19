@@ -669,6 +669,14 @@ impl Lower<'_> {
                     format!("`{name}` needs a `@ uniq` reference for `{}`", p.name),
                     vals[i].span,
                 );
+            } else if let (true, true, Some(l)) = (p.uniq, p.ty.is_ref(), vals[i].val.local) {
+                // A closure around the call that captures the local needs it to
+                // be `@ uniq` where the closure runs.
+                let text = format!(
+                    "`{name}` needs a `@ uniq` reference for `{}`: the closure gives it `{}`, which is not `@ uniq` here",
+                    p.name, self.locals[l].name
+                );
+                self.note_cap_uniq(l, &text);
             }
         }
         // Effects. An operation of a local handler gets the reference arguments.
@@ -735,6 +743,9 @@ impl Lower<'_> {
                 self.check_task_value(&info, row.as_deref(), &held, av.span);
             }
             let given = self.lent_to(&Callee::Item(f), i, &arg_places, &roots);
+            if let Some(l) = av.val.local {
+                self.note_cap_run(l, &given);
+            }
             self.apply_value(n, &info, row.as_deref(), root, &given);
             self.start_ret_spawns(n, &info);
             let repeats = self.callee_repeats(&Callee::Item(f), i);
@@ -1337,10 +1348,16 @@ impl Lower<'_> {
             }
         }
         // A closure that moves a capture runs once: the call takes the value. A
-        // closure around this call that captures the value moves it too.
-        if callee.summary.is_some_and(|s| self.closure_is_once(s)) {
+        // closure around this call that captures the value moves it too. So does
+        // a closure that runs a captured function variable that runs once now.
+        if callee.summary.is_some_and(|s| self.closure_once_now(s)) {
+            self.facts.vars[loc.var.index()].once = true;
             self.move_var(loc.var, n);
         }
+        // A closure around the node that captures the local runs its value
+        // here: a node that runs that closure runs the value that the local has
+        // there.
+        self.note_cap_run(l, &direct);
         // The value runs with the arguments.
         self.apply_value(n, &callee, fty.effects.as_deref(), 800, &direct);
         // The value can give a function argument to an operation.
@@ -1408,6 +1425,13 @@ impl Lower<'_> {
                 self.facts.call_arg.push((n, p, root));
             }
             let given = self.lent_to(&value, i, &arg_places, &roots);
+            if let Some(l) = fn_vals
+                .iter()
+                .find(|(j, _)| *j == i)
+                .and_then(|(_, v)| v.local)
+            {
+                self.note_cap_run(l, &given);
+            }
             self.apply_value(n, &info, row.as_deref(), root, &given);
             self.start_ret_spawns(n, &info);
             let repeats = self.callee_repeats(&value, i);
@@ -1992,7 +2016,7 @@ impl Lower<'_> {
         self.facts.spawned_at.push((t, n));
         // The task takes the closure and runs it once.
         if let (Some(var), Some(s)) = (v.var, self.fn_info(v).summary) {
-            if self.closure_is_once(s) {
+            if self.closure_once_now(s) {
                 self.move_var(var, n);
             }
         }
@@ -2045,7 +2069,12 @@ impl Lower<'_> {
                 self.facts.mut_through.push((t, c));
             }
         }
+        // The task also writes and reads what the new values of its captured
+        // variables reach, here and while it runs (`late::finish_task_values`).
+        let from = self.place_marks();
         self.apply_summary(n, s, 700, &[]);
+        self.task_places_from(t, n, from);
+        self.note_task_run(t, n, s);
         (t, n)
     }
 

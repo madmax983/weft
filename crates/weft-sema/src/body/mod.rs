@@ -32,12 +32,13 @@ mod exhaust;
 mod expr;
 mod flow;
 mod fnval;
+mod late;
 pub mod loops;
 mod oprefs;
 mod repeat;
 mod stmt;
 
-use fnval::{Applied, FnInfo, OpArg, Reach};
+use fnval::{Applied, FnInfo, Given, OpArg, Reach};
 
 /// A set that only grows during a loop pass, with the order of its elements.
 ///
@@ -243,6 +244,8 @@ pub(super) struct SumMark {
     lent: usize,
     op_args: usize,
     binds: usize,
+    cap_runs: usize,
+    uniq_needs: usize,
     may_abort: bool,
     multi: bool,
     literal: bool,
@@ -338,6 +341,14 @@ pub struct Summary {
     /// Tasks that the function values that a call of the value returns spawn into
     /// a scope outside. A callee that calls such a result starts them.
     pub ret_spawns: Grow<TaskId>,
+    /// The runs of captured function variables in the body: the variable and the
+    /// places that the body gives to it there. A node that runs the closure runs
+    /// the value that the variable has there (`Lower::late_join`).
+    cap_runs: Vec<(VarId, Vec<Given>)>,
+    /// Captured variables that the body gives to a parameter that must be
+    /// `@ uniq`, with the text of W0406. A node that runs the closure checks
+    /// that the variable is still `@ uniq` there.
+    uniq_needs: Vec<(VarId, String)>,
 }
 
 impl Summary {
@@ -381,6 +392,8 @@ impl Summary {
             fn_stores,
             op_effects,
             ret_spawns,
+            cap_runs,
+            uniq_needs,
         } = self;
         SumMark {
             muts: muts.mark(),
@@ -414,6 +427,8 @@ impl Summary {
             lent: lent.len(),
             op_args: op_args.len(),
             binds: binds.len(),
+            cap_runs: cap_runs.len(),
+            uniq_needs: uniq_needs.len(),
             may_abort: *may_abort,
             multi: *multi,
             literal: *literal,
@@ -461,6 +476,8 @@ impl Summary {
             fn_stores,
             op_effects,
             ret_spawns,
+            cap_runs,
+            uniq_needs,
         } = self;
         muts.cut(mark.muts);
         reads.cut(mark.reads);
@@ -493,6 +510,8 @@ impl Summary {
         lent.truncate(mark.lent);
         op_args.truncate(mark.op_args);
         binds.truncate(mark.binds);
+        cap_runs.truncate(mark.cap_runs);
+        uniq_needs.truncate(mark.uniq_needs);
         *may_abort = mark.may_abort;
         *multi = mark.multi;
         *literal = mark.literal;
@@ -554,6 +573,16 @@ impl Summary {
         self.ret_spawns.extend(o.ret_spawns.iter().copied());
         self.fn_stores.extend(o.fn_stores.iter().copied());
         self.op_effects.extend(o.op_effects.iter().cloned());
+        for r in &o.cap_runs {
+            if !self.cap_runs.contains(r) {
+                self.cap_runs.push(r.clone());
+            }
+        }
+        for u in &o.uniq_needs {
+            if !self.uniq_needs.contains(u) {
+                self.uniq_needs.push(u.clone());
+            }
+        }
     }
 
     /// Adds what a call of the function value that `o` stands for can do. A call of
@@ -573,6 +602,8 @@ impl Summary {
         o.repeats.clear();
         o.fn_stores.clear();
         o.op_effects.clear();
+        o.cap_runs.clear();
+        o.uniq_needs.clear();
         o.literal = false;
         self.union(&o);
     }
@@ -1170,6 +1201,19 @@ pub struct Lower<'p> {
     /// The new values of whole locals in their own part of the graph: the
     /// variable, the node and the capabilities of the value.
     bind_caps: Vec<(VarId, NodeId, BTreeSet<CapId>)>,
+    /// The variables that each closure captures by reference, with their values
+    /// where the closure is made, by closure index (`late::CapValue`).
+    cap_values: BTreeMap<usize, Vec<late::CapValue>>,
+    /// The closures whose late values `late_join` adds now: a value can call
+    /// itself.
+    late_stack: Vec<usize>,
+    /// The body is lowered: the nodes that `apply_stored` gives a stored value
+    /// to are not in the order of the lowering.
+    lowered: bool,
+    /// The tasks with their spawn nodes and summaries. At the end of the body,
+    /// each task gets the values that its captured variables get while it runs
+    /// (`late::finish_task_values`).
+    task_runs: Vec<(TaskId, NodeId, usize)>,
     /// The work so far. A loop rewind keeps it.
     work: crate::Work,
     /// The most passes of one loop, for a test. `None`: [`loops::loop_pass_bound`].
@@ -1275,6 +1319,10 @@ impl<'p> Lower<'p> {
             held_of: BTreeMap::new(),
             abort_ctx: BTreeMap::new(),
             bind_caps: Vec::new(),
+            cap_values: BTreeMap::new(),
+            late_stack: Vec::new(),
+            lowered: false,
+            task_runs: Vec::new(),
             work: crate::Work::default(),
             loop_bound: None,
         }

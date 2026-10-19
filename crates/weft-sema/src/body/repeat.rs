@@ -118,7 +118,7 @@ impl Lower<'_> {
         let (Some(var), Some(s)) = (v.var, self.fn_info(v).summary) else {
             return;
         };
-        if self.cur.is_none() || !self.closure_is_once(s) {
+        if self.cur.is_none() || !self.closure_once_now(s) {
             return;
         }
         if !exactly_once && self.closure_linear(s) {

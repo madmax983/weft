@@ -130,6 +130,9 @@ Status: accepted. Date: 2026-10-18.
   payload and behind a `Box`. A read or a borrow of such a field, or of the whole
   struct, before the body gives the field a value is W0304.
   - A closure reads the places that its body reads. It reads them where it is made.
+  - A local that a `let` declares with no value is the same: a closure, a handler
+    clause or a task uses its captures where it is made (W0304). So a local cannot
+    get its first value in one of them. Rust rejects the closure form too.
   - `print` and a string interpolation read the whole value.
   - A move of the whole value is not a read. It is W0604.
 
@@ -159,6 +162,9 @@ Status: accepted. Date: 2026-10-18.
     Then the checks of `holds` and `drops` apply twice: at the value and at the call.
   - A borrow of a struct with a place field that has no value is W0304, also when the
     callee gives the field a value first. A `match` on such a value reads it too.
+  - A local with no value that only a closure, a clause or a task gives a value is
+    W0304 where the closure is made, and at each use after it, also after the closure
+    ran. `tests/programs/112_unset_capture.wf` has the cases.
   - A call result that can hold a function value gets the modes of the arguments,
     also when the callee does not keep them.
   - A closure is not plain data. A branch value, a variable and an argument of a type
