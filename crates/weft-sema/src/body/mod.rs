@@ -1376,6 +1376,8 @@ impl<'p> Lower<'p> {
     }
 
     fn unify(&mut self, a: &Ty, b: &Ty, span: Span) {
+        let mut joins = Vec::new();
+        self.fn_joins(a, b, &mut joins, 0);
         if !self.inf.unify(a, b) {
             let (x, y) = (self.show(a), self.show(b));
             self.err(
@@ -1383,6 +1385,91 @@ impl<'p> Lower<'p> {
                 format!("type mismatch: expected `{x}`, found `{y}`"),
                 span,
             );
+            return;
+        }
+        // A type variable of a function type that gets another function value, as
+        // the element of a `Vec` does: it can be each of them (RR2).
+        for (v, old, new) in joins {
+            let a = (
+                fnval::FnInfo {
+                    summary: old.summary,
+                    item: old.item,
+                    param: None,
+                },
+                old.effects.clone(),
+            );
+            let b = (
+                fnval::FnInfo {
+                    summary: new.summary,
+                    item: new.item,
+                    param: None,
+                },
+                new.effects.clone(),
+            );
+            let info = self.join_fn(&a, &b);
+            self.inf.rebind_fn(
+                v,
+                Rc::new(FnTy {
+                    summary: info.summary,
+                    item: info.item,
+                    ..(*old).clone()
+                }),
+            );
+        }
+    }
+
+    /// Finds the type variables in `a` and `b` that are bound to a function type
+    /// where the other type has a function type with another function value.
+    /// Each pair has the variable, its function type and the other one.
+    fn fn_joins(&self, a: &Ty, b: &Ty, out: &mut Vec<(u32, Rc<FnTy>, Rc<FnTy>)>, depth: usize) {
+        if depth > 16 {
+            return;
+        }
+        let (sa, sb) = (self.inf.shallow(a), self.inf.shallow(b));
+        if let (Ty::Fn(fa), Ty::Fn(fb)) = (&sa, &sb) {
+            // A written function type, such as `fn()` in `Vec<fn()>`, stays as it
+            // is: a value that the body does not know. A call of it runs the
+            // stored values (`apply_stored`).
+            for (var_side, other) in [(a, fb), (b, fa)] {
+                if let Some((v, bound)) = self.inf.bound_fn(var_side) {
+                    let known = bound.summary.is_some() || bound.item.is_some();
+                    if known && !self.fn_covers(&bound, other) {
+                        out.push((v, bound, Rc::clone(other)));
+                    }
+                }
+            }
+            return;
+        }
+        match (&sa, &sb) {
+            (Ty::Tuple(xs), Ty::Tuple(ys)) | (Ty::Adt(_, xs), Ty::Adt(_, ys)) => {
+                for (x, y) in xs.iter().zip(ys) {
+                    self.fn_joins(x, y, out, depth + 1);
+                }
+            }
+            (Ty::Ref(x), Ty::Ref(y))
+            | (Ty::Slice(x), Ty::Slice(y))
+            | (Ty::Array(x, _), Ty::Array(y, _)) => self.fn_joins(x, y, out, depth + 1),
+            _ => {}
+        }
+    }
+
+    /// Returns true if function type `a` stands for each function value that `b`
+    /// can be.
+    fn fn_covers(&self, a: &FnTy, b: &FnTy) -> bool {
+        if (a.summary, a.item) == (b.summary, b.item) {
+            return true;
+        }
+        let Some(sa) = a.summary else {
+            return false;
+        };
+        let sum = &self.closures[sa];
+        match (b.summary, b.item) {
+            (Some(sb), _) => {
+                let m = &self.closures[sb].members;
+                !m.is_empty() && m.iter().all(|x| sum.members.contains(x))
+            }
+            (None, Some(f)) => sum.items.contains(&f),
+            (None, None) => false,
         }
     }
 

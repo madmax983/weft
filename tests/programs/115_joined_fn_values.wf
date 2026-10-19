@@ -1,0 +1,112 @@
+// Two closures that meet in one type, such as the elements of an array or a
+// `Vec`, a new value of an `Option` local or of a generic field: the type can
+// be each of them (ADR 0005). A call of a value of that type runs what each
+// closure does, and the value has the joined modes (`once`, linear,
+// nonportable, `@ uniq`).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Stats { count: u64 }
+struct Wrap<T> { x: T }
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print("eat {b.items.len()}") }
+
+fn array_second(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let a = [|| print(1), || world.entities.clear()]
+    let g = a[1]
+    g()
+    print(first.hp)   //~ W0301
+}
+fn vec_second(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let v = Vec.new()
+    v.push(|| print(1))
+    v.push(|| world.entities.clear())
+    let g = v[1]
+    g()
+    print(first.hp)   //~ W0301
+}
+fn element_assign(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let a = [|| print(1)]
+    a[0] = || world.entities.clear()
+    let g = a[0]
+    g()
+    print(first.hp)   //~ W0301
+}
+fn option_new_value(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let o = Some(|| print(1))
+    o = Some(|| world.entities.clear())
+    match o { Some(g) => g(), None => {} }
+    print(first.hp)   //~ W0301
+}
+fn generic_field(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let w = Wrap { x: || print(1) }
+    w.x = || world.entities.clear()
+    let g = w.x
+    g()
+    print(first.hp)   //~ W0301
+}
+fn task_second(st: &Stats) / mut(st), async {
+    let v = Vec.new()
+    v.push(|| print(1))
+    v.push(|| st.count += 1)
+    let g = v[1]
+    scope { s =>
+        s.spawn(g)
+        print(st.count)   //~ W0405
+    }
+}
+// The second call eats a moved `Buf`.
+fn once_second() {
+    let b = Buf { items: Vec.new() }
+    let v = Vec.new()
+    v.push(|| print(1))
+    v.push(|| eat(b))
+    let g = v[1]
+    g()
+    g()   //~ W0502
+}
+// The order of the closures does not count.
+fn vec_first(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let v = Vec.new()
+    v.push(|| world.entities.clear())
+    v.push(|| print(1))
+    let g = v[1]
+    g()
+    print(first.hp)   //~ W0301
+}
+
+// Clean: no closure changes what `first` points into.
+fn vec_reads(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let v = Vec.new()
+    v.push(|| print(1))
+    v.push(|| print(world.entities.len()))
+    let g = v[1]
+    g()
+    print(first.hp)
+}
+// Clean: the reference is taken after the call.
+fn vec_then_ref(world: &World) / mut(world.entities) {
+    let v = Vec.new()
+    v.push(|| print(1))
+    v.push(|| world.entities.clear())
+    let g = v[1]
+    g()
+    world.entities.push(Entity { hp: 1 })
+    let first = &world.entities[0]
+    print(first.hp)
+}
+// Clean: the closure that runs only once runs once.
+fn once_once() {
+    let b = Buf { items: Vec.new() }
+    let v = Vec.new()
+    v.push(|| print(1))
+    v.push(|| eat(b))
+    let g = v[1]
+    g()
+}

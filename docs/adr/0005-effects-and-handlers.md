@@ -213,6 +213,15 @@ Status: accepted. Date: 2026-10-18.
   either. In a loop, a call before the new value also gets it: the body is lowered
   again with the joined value (ADR 0003). Function values also flow through tuples,
   generic results and the result of a closure call.
+- A function type that the body infers carries the function value: the type of a
+  closure has its summary. Two function values can meet in one type variable: the
+  elements of an array or a `Vec`, a new value of an `Option` or of a generic field, an
+  element assignment. Then the variable gets the join of both values, so a value of
+  that type can be each of them, with the joined modes (`once`, linear, nonportable,
+  `@ uniq`). A variable that unifies with a bound variable links to it, so a later join
+  reaches each use of the type. A written function type, such as `fn()` in
+  `Vec<fn()>`, stays a value that the body does not know: a call of it runs the stored
+  values.
 - A closure belongs to the function that makes it. So the effect row of a function has
   the effects and the mutations of each closure that the body makes, also one that it
   returns or stores and does not call. A signature with a stated row must allow them

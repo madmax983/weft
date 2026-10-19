@@ -524,7 +524,9 @@ impl Lower<'_> {
                     self.unify(&Ty::Int(IntTy::Usize), &t, ix.span);
                 }
                 let t = self.deref_ty(&lv.ty);
-                let rt = self.inf.deep(&t);
+                // The element type keeps its type variables: a new function value
+                // in the element joins the values of the type (`Lower::unify`).
+                let rt = self.inf.shallow(&t);
                 if let Some((step, elem)) = elem_step(self.prog, &rt) {
                     let places = match step {
                         Some(s) => lv.places.iter().map(|&p| self.child(p, s, "[]")).collect(),
@@ -589,6 +591,13 @@ impl Lower<'_> {
         }
         let t = self.inf.deep(&lv.ty);
         if let Some((steps, next, _)) = field_step(self.prog, &t, &name.name) {
+            // The field type keeps the type variables of the struct type: a new
+            // function value in the field joins the values of the type
+            // (`Lower::unify`).
+            let next = match field_step(self.prog, &self.inf.shallow(&lv.ty), &name.name) {
+                Some((s, n, _)) if s.len() == steps.len() => n,
+                _ => next,
+            };
             let mut places = lv.places.clone();
             for (s, text) in &steps {
                 let label = if text == "*" {

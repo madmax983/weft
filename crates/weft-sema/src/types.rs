@@ -253,6 +253,10 @@ impl Infer {
 
     /// Makes two types equal. Returns false if they cannot be equal.
     pub fn unify(&mut self, a: &Ty, b: &Ty) -> bool {
+        // An unbound variable links to a bound variable on the other side, not to
+        // a copy of its type: a later change of that type reaches it too
+        // (`rebind_fn`).
+        let (ra, rb) = (self.bound_var(a), self.bound_var(b));
         let a = self.shallow(a);
         let b = self.shallow(b);
         if let (Ty::Var(x), Ty::Var(y)) | (Ty::IntVar(x), Ty::IntVar(y)) = (&a, &b) {
@@ -271,8 +275,10 @@ impl Infer {
                 self.union(*x, &a, *y, &b);
                 true
             }
-            (Ty::Var(x), _) | (Ty::IntVar(x), Ty::Int(_)) => self.bind(*x, &b),
-            (_, Ty::Var(y)) | (Ty::Int(_), Ty::IntVar(y)) => self.bind(*y, &a),
+            (Ty::Var(x), _) => self.bind_to(*x, &b, rb),
+            (_, Ty::Var(y)) => self.bind_to(*y, &a, ra),
+            (Ty::IntVar(x), Ty::Int(_)) => self.bind(*x, &b),
+            (Ty::Int(_), Ty::IntVar(y)) => self.bind(*y, &a),
             (Ty::Int(x), Ty::Int(y)) => x == y,
             (Ty::Tuple(xs), Ty::Tuple(ys)) if xs.len() == ys.len() => {
                 xs.iter().zip(ys).all(|(x, y)| self.unify(x, y))
@@ -292,6 +298,57 @@ impl Infer {
             }
             (Ty::Param(x), Ty::Param(y)) => x == y,
             _ => false,
+        }
+    }
+
+    /// Returns the variable that type variable `t` links to last, if it is bound
+    /// to a function type, with that type.
+    pub fn bound_fn(&self, t: &Ty) -> Option<(u32, Rc<FnTy>)> {
+        let Ty::Var(_) = t else {
+            return None;
+        };
+        let Ty::Var(v) = self.find(t) else {
+            return None;
+        };
+        match self.vars.borrow()[v as usize].clone() {
+            Some(Ty::Fn(f)) => Some((v, f)),
+            _ => None,
+        }
+    }
+
+    /// Gives variable `v`, which is bound to a function type, another function
+    /// type of the same shape: one that can be more function values.
+    pub fn rebind_fn(&mut self, v: u32, f: Rc<FnTy>) {
+        if let Some(slot) = self.vars.get_mut().get_mut(v as usize) {
+            if matches!(slot, Some(Ty::Fn(_))) {
+                *slot = Some(Ty::Fn(f));
+            }
+        }
+    }
+
+    /// Returns the last variable of type variable `t` if it is bound to a type.
+    fn bound_var(&self, t: &Ty) -> Option<u32> {
+        let Ty::Var(_) = t else {
+            return None;
+        };
+        let Ty::Var(v) = self.find(t) else {
+            return None;
+        };
+        self.vars.borrow()[v as usize].is_some().then_some(v)
+    }
+
+    /// Binds variable `v` to type `t`. If `t` is the type of the bound variable
+    /// `root`, `v` links to `root`.
+    fn bind_to(&mut self, v: u32, t: &Ty, root: Option<u32>) -> bool {
+        match root {
+            Some(r) if r != v => {
+                if self.occurs(v, t) {
+                    return false;
+                }
+                self.vars.get_mut()[v as usize] = Some(Ty::Var(r));
+                true
+            }
+            _ => self.bind(v, t),
         }
     }
 
@@ -458,6 +515,45 @@ mod tests {
         assert!(!inf.unify(&a, &Ty::Ref(Box::new(b.clone()))));
         assert!(inf.unify(&b, &Ty::Bool));
         assert_eq!(inf.resolve(&a), Ty::Bool);
+    }
+
+    #[test]
+    fn a_variable_links_to_a_bound_function_type() {
+        let mut inf = Infer::default();
+        let fn_ty = |summary| {
+            Ty::Fn(Rc::new(FnTy {
+                params: Vec::new(),
+                ret: Ty::Unit,
+                effects: None,
+                summary,
+                item: None,
+            }))
+        };
+        // The element of a `Vec` gets a closure, and a second use of the type
+        // links to the element variable, not to a copy of its type.
+        let elem = inf.fresh();
+        assert!(inf.unify(&elem, &fn_ty(Some(1))));
+        let other = inf.fresh();
+        assert!(inf.unify(&other, &elem));
+        let Some((v, f)) = inf.bound_fn(&other) else {
+            panic!("the variable is bound to a function type");
+        };
+        assert_eq!(f.summary, Some(1));
+        // A new function value for the type reaches both variables.
+        inf.rebind_fn(
+            v,
+            Rc::new(FnTy {
+                summary: Some(2),
+                ..(*f).clone()
+            }),
+        );
+        assert_eq!(inf.resolve(&elem), fn_ty(Some(2)));
+        assert_eq!(inf.resolve(&other), fn_ty(Some(2)));
+        // A cycle through a bound variable is still an error.
+        let w = inf.fresh();
+        let list = inf.fresh();
+        assert!(inf.unify(&list, &Ty::Adt(0, vec![w.clone()])));
+        assert!(!inf.unify(&w, &list));
     }
 
     #[test]
