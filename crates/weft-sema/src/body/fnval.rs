@@ -725,7 +725,7 @@ impl Lower<'_> {
 
     /// Returns true if an operation of effect `e` takes a reference.
     pub(super) fn effect_lends(&self, e: &str) -> bool {
-        self.prog.effect_named(self.module, e).is_some_and(|id| {
+        crate::effects::by_identity(self.prog, e).is_some_and(|id| {
             self.prog.effects[id]
                 .ops
                 .iter()

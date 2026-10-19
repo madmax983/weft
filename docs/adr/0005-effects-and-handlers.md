@@ -188,9 +188,19 @@ Status: accepted. Date: 2026-10-18.
 
 ### Dependency authority
 
-- `weft deps` checks each function of a dependency, also a private one: the project can
-  call it. A function needs its stated effects and the effects that its body infers,
-  with the closures that it makes and returns.
+- The project can name only the `pub` functions of a dependency, and a dependency only
+  the `pub` functions of another unit (W0101). `weft deps` checks each function of a
+  dependency, also a private one: a public function or a returned closure can run it. A
+  function needs its stated effects and the effects that its body infers, with the
+  closures that it makes and returns.
+- Authority names standard effects only. A user effect of a dependency needs a handler
+  of the caller, not authority.
+- Each effect has an identity in the facts and the signatures: a standard effect keeps
+  its name, and a user effect gets its module path and its name (`main.Log`,
+  `json.Log`). So a user effect with the name of a standard effect is a different
+  effect: for W0702, W0803, W0801, W0314 and the authority check. Diagnostics show the
+  written name (`effects::shown`, `effects::in_signature`). In a module that defines
+  `Log`, `Log` names that effect and the alias `log` names the standard one.
 
 ## Consequences
 

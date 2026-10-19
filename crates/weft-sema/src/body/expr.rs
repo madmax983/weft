@@ -4,7 +4,7 @@ use super::{
     ast, block_tail, effects, elem_step, expr_tail, field_step, AdtKind, BinOp, ContInfo, Deref,
     Expr, ExprKind, FnId, FnTy, Frame, HandlerFrame, HandlerInfo, IntTy, ItemRef, Jump, LVal, Lit,
     Lower, NodeId, PathRef, Pattern, PlaceId, Rc, RootKind, Span, StrPart, Summary, Ty, UnOp, Val,
-    VarKind, PRELUDE,
+    VarKind,
 };
 use weft_facts::{Step, StepKind};
 
@@ -197,6 +197,7 @@ impl Lower<'_> {
             }
             PathRef::Mod(m) => {
                 if let Some(ItemRef::Fn(f)) = self.prog.lookup_in(m, &name.name) {
+                    self.check_visible(f, name.span);
                     Some(self.item_value(f, name.span))
                 } else {
                     self.err(
@@ -366,9 +367,7 @@ impl Lower<'_> {
                         if names.len() != 1 {
                             return None;
                         }
-                        self.prog
-                            .effect_named(PRELUDE, &names[0])
-                            .map(PathRef::Effect)
+                        effects::by_identity(self.prog, &names[0]).map(PathRef::Effect)
                     }
                 }
             }
@@ -1429,7 +1428,7 @@ impl Lower<'_> {
         span: Span,
     ) -> Val {
         let eid = match effects::canonical(self.prog, self.module, &effect.name) {
-            Some(names) if names.len() == 1 => self.prog.effect_named(self.module, &names[0]),
+            Some(names) if names.len() == 1 => effects::by_identity(self.prog, &names[0]),
             _ => None,
         };
         let Some(eid) = eid else {
@@ -1441,16 +1440,17 @@ impl Lower<'_> {
             return self.expr(body);
         };
         let def = self.prog.effects[eid].clone();
+        let ident = effects::identity(self.prog, eid);
         let cap = self.facts.add_cap();
         let hid = weft_facts::HandlerId(u32::try_from(self.facts.handlers.len()).unwrap_or(0));
         self.facts.handlers.push(HandlerInfo {
-            effect: def.name.clone(),
+            effect: ident.clone(),
             is_std: def.is_std,
             forwards: false,
             span,
         });
         self.handlers.push(HandlerFrame {
-            effect: def.name.clone(),
+            effect: ident,
             cap,
             multi: def.has_multi(),
         });

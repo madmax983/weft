@@ -113,8 +113,10 @@ pub struct OpDef {
 /// An effect.
 #[derive(Clone, Debug)]
 pub struct EffectDef {
-    /// The canonical name.
+    /// The name as the source writes it. `effects::identity` is the name in the facts.
     pub name: String,
+    /// The module of the definition.
+    pub module: ModId,
     /// The operations.
     pub ops: Vec<OpDef>,
     /// The effect is a standard effect.
@@ -474,7 +476,7 @@ impl Program {
     pub fn effect_named(&self, module: ModId, name: &str) -> Option<EffectId> {
         match self.lookup(module, name) {
             Some(ItemRef::Effect(e)) => Some(e),
-            _ => None,
+            _ => effects::by_identity(self, name),
         }
     }
 }
@@ -663,6 +665,7 @@ impl Collector {
                 ItemKind::Effect(e) => {
                     self.prog.effects.push(EffectDef {
                         name: e.name.name.clone(),
+                        module: m,
                         ops: Vec::new(),
                         is_std,
                     });

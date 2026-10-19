@@ -41,7 +41,7 @@ impl Lower<'_> {
                 return self.variant_ctor(adt, vi, args, span);
             }
             if let Some((e, op)) = self.find_op(&id.name) {
-                return self.perform_op(e, op, args, span);
+                return self.perform_op(e, op, args, trailing, span);
             }
             self.err("W0101", format!("unknown function `{}`", id.name), id.span);
             for a in args {
@@ -90,6 +90,7 @@ impl Lower<'_> {
             Some(PathRef::Mod(m)) => {
                 return match self.prog.lookup_in(m, &method.name) {
                     Some(ItemRef::Fn(f)) => {
+                        self.check_visible(f, method.span);
                         if self.is_sim_run(f) {
                             return self.sim_run(f, args, trailing, span);
                         }
@@ -111,6 +112,7 @@ impl Lower<'_> {
             }
             Some(PathRef::Adt(a)) => {
                 if let Some(&f) = self.prog.methods.get(&(a, method.name.clone())) {
+                    self.check_visible(f, method.span);
                     return self.call_fn(f, None, args, trailing, span);
                 }
                 if let AdtKind::Enum(vs) = &self.prog.adts[a].kind {
@@ -135,7 +137,7 @@ impl Lower<'_> {
                     .iter()
                     .position(|o| o.name == method.name)
                 {
-                    self.perform_op(e, op, args, span)
+                    self.perform_op(e, op, args, trailing, span)
                 } else {
                     let n = self.prog.effects[e].name.clone();
                     self.err(
@@ -204,7 +206,22 @@ impl Lower<'_> {
                 ..Val::default()
             };
         };
+        self.check_visible(f, method.span);
         self.call_fn(f, Some(rv), args, trailing, span)
+    }
+
+    /// Reports W0101 if function `f` is private in another unit: the project
+    /// can name only the `pub` functions of a dependency, and the reverse.
+    pub(super) fn check_visible(&mut self, f: FnId, span: Span) {
+        let def = &self.prog.fns[f];
+        let (here, there) = (
+            self.prog.mods[self.module].unit,
+            self.prog.mods[def.module].unit,
+        );
+        if !def.is_pub && !def.is_std && here != there {
+            let msg = format!("`{}` is private: it is not `pub` in its package", def.path);
+            self.err("W0101", msg, span);
+        }
     }
 
     /// Calls a function item. `recv` is the evaluated receiver of a method call.
@@ -452,7 +469,7 @@ impl Lower<'_> {
                     .collect();
                 parts.push(format!("mut({})", ps.join(", ")));
             }
-            parts.extend(sig.effects.named.iter().map(|n| n.to_lowercase()));
+            parts.extend(sig.effects.named.iter().map(|n| effects::in_signature(n)));
             parts.join(", ")
         };
         let n = self.emit(span, &name, detail);
@@ -701,7 +718,7 @@ impl Lower<'_> {
                     .escapes
                     .iter()
                     .filter(|e| !allowed.contains(*e))
-                    .cloned()
+                    .map(|e| effects::shown(e).to_string())
                     .collect();
                 if !extra.is_empty() {
                     self.err("W0705", format!("this function argument performs `{}`, which its parameter type does not allow", extra.join(", ")), span);
@@ -1086,40 +1103,46 @@ impl Lower<'_> {
     }
 
     /// Performs an effect operation.
-    fn perform_op(&mut self, e: usize, op: usize, args: &[Arg], span: Span) -> Val {
+    fn perform_op(
+        &mut self,
+        e: usize,
+        op: usize,
+        args: &[Arg],
+        trailing: Option<&Expr>,
+        span: Span,
+    ) -> Val {
         let eff = self.prog.effects[e].clone();
+        let ident = effects::identity(self.prog, e);
         let o = &eff.ops[op];
-        if o.params.len() != args.len() {
-            self.err(
-                "W0103",
-                format!("operation `{}` takes {} arguments", o.name, o.params.len()),
-                span,
-            );
-        }
+        let slots = self.op_slots(o, args, trailing, span);
         // A perform is a call: each reference argument stays valid until it.
         let mut held = Vec::new();
         let mut arg_places = Vec::new();
         let mut value_refs: Vec<(usize, Vec<PlaceId>)> = Vec::new();
         let mut fns = Vec::new();
-        for (i, (pt, a)) in o.params.iter().zip(args).enumerate() {
-            let later = i + 1 < args.len();
-            let v = match (&a.value.kind, self.inf.shallow(pt)) {
-                (ExprKind::Closure { params, body }, Ty::Fn(f)) => {
-                    self.closure(params, body, Some(&f), a.value.span)
-                }
-                _ => self.expr(&a.value),
+        for (i, pt) in o.params.iter().enumerate() {
+            let Some(x) = slots[i] else {
+                arg_places.push(Vec::new());
+                continue;
             };
-            self.unify(pt, &v.ty, a.value.span);
+            let later = slots[i + 1..].iter().any(Option::is_some);
+            let v = match (&x.kind, self.inf.shallow(pt)) {
+                (ExprKind::Closure { params, body }, Ty::Fn(f)) => {
+                    self.closure(params, body, Some(&f), x.span)
+                }
+                _ => self.expr(x),
+            };
+            self.unify(pt, &v.ty, x.span);
             if v.summary.is_none() {
-                self.consume(&v, a.value.span);
+                self.consume(&v, x.span);
             }
             if matches!(self.inf.shallow(&v.ty), Ty::Ref(_)) {
                 arg_places.push(v.refs.clone());
-                held.extend(self.hold_operand(&v, later, a.value.span));
+                held.extend(self.hold_operand(&v, later, x.span));
             } else {
                 arg_places.push(Vec::new());
                 if later || !v.refs.is_empty() {
-                    held.extend(self.hold_operand(&v, later, a.value.span));
+                    held.extend(self.hold_operand(&v, later, x.span));
                 }
                 // A by-value argument that holds references, for example a closure,
                 // points into them until the perform.
@@ -1132,18 +1155,18 @@ impl Lower<'_> {
                     self.escape_all(&v);
                 }
                 // The clause can keep a function value that it gets.
-                let at = self.handlers.iter().rposition(|h| h.effect == eff.name);
+                let at = self.handlers.iter().rposition(|h| h.effect == ident);
                 self.keep_for_op(&v, at);
             }
         }
         self.pend_uses.extend(held);
-        let n = self.emit(span, &o.name, eff.name.to_lowercase());
-        self.perform_effect(n, &eff.name);
+        let n = self.emit(span, &o.name, effects::in_signature(&ident));
+        self.perform_effect(n, &ident);
         let cap = self
             .handlers
             .iter()
             .rev()
-            .find(|h| h.effect == eff.name)
+            .find(|h| h.effect == ident)
             .map(|h| h.cap);
         if let Some(c) = cap {
             self.cap_calls.push((n, c));
@@ -1190,6 +1213,60 @@ impl Lower<'_> {
             ty: o.ret.clone(),
             ..Val::default()
         }
+    }
+
+    /// Orders the arguments of operation `o`: a named argument goes to the
+    /// parameter with its name, and the others fill the free parameters in order.
+    /// A trailing block goes to the last free parameter, as in a call.
+    fn op_slots<'e>(
+        &mut self,
+        o: &crate::program::OpDef,
+        args: &'e [Arg],
+        trailing: Option<&'e Expr>,
+        span: Span,
+    ) -> Vec<Option<&'e Expr>> {
+        let n = o.params.len();
+        let mut slots: Vec<Option<&Expr>> = vec![None; n];
+        let mut pos = 0;
+        let mut extra = false;
+        for a in args {
+            let idx = if let Some(nm) = &a.name {
+                let Some(i) = o.param_names.iter().position(|p| *p == nm.name) else {
+                    let msg = format!("operation `{}` has no parameter `{}`", o.name, nm.name);
+                    self.err("W0103", msg, nm.span);
+                    continue;
+                };
+                if slots[i].is_some() {
+                    let msg = format!("argument `{}` is given twice", nm.name);
+                    self.err("W0103", msg, nm.span);
+                    continue;
+                }
+                i
+            } else {
+                while pos < n && slots[pos].is_some() {
+                    pos += 1;
+                }
+                pos
+            };
+            match slots.get_mut(idx) {
+                Some(s) => *s = Some(&a.value),
+                None => extra = true,
+            }
+        }
+        if let Some(t) = trailing {
+            match slots.iter().rposition(Option::is_none) {
+                Some(i) => slots[i] = Some(t),
+                None => extra = true,
+            }
+        }
+        if extra || slots.iter().any(Option::is_none) {
+            self.err(
+                "W0103",
+                format!("operation `{}` takes {} arguments", o.name, n),
+                span,
+            );
+        }
+        slots
     }
 
     // -----------------------------------------------------------------------
@@ -1340,9 +1417,7 @@ impl Lower<'_> {
 
     /// Returns true if effect `e` is a user effect: only a local handler of a caller handles it.
     fn is_user_effect(&self, e: &str) -> bool {
-        self.prog
-            .effect_named(self.module, e)
-            .is_some_and(|id| !self.prog.effects[id].is_std)
+        effects::by_identity(self.prog, e).is_some_and(|id| !self.prog.effects[id].is_std)
     }
 
     /// Returns true if an operation of effect `e` that a task performs here goes to
@@ -1363,10 +1438,15 @@ impl Lower<'_> {
                 ..Val::default()
             };
         };
+        if args.len() + usize::from(trailing.is_some()) > 1 {
+            self.err("W0103", "`spawn` takes one closure", span);
+        }
         let v = self.closure_arg(e, None);
-        let ret = match self.inf.shallow(&v.ty) {
-            Ty::Fn(f) => f.ret.clone(),
-            _ => Ty::Error,
+        let Some(ret) = self.task_ret(&v, "spawn", e.span) else {
+            return Val {
+                ty: Ty::Error,
+                ..Val::default()
+            };
         };
         let (t, n) = self.start_task(TaskKind::Spawn, &v, e.span);
         self.perform_effect(n, "Async");
@@ -1435,16 +1515,47 @@ impl Lower<'_> {
         Val::default()
     }
 
+    /// Returns the result type of a task that runs `v`. Reports W0102 if `v` is not
+    /// a function, and W0103 if it takes arguments: a task gets none.
+    fn task_ret(&mut self, v: &Val, what: &str, span: Span) -> Option<Ty> {
+        let Ty::Fn(f) = self.inf.shallow(&v.ty) else {
+            if !matches!(self.inf.shallow(&v.ty), Ty::Error) {
+                let shown = self.show(&v.ty);
+                let noun = if what == "fork" {
+                    "closures"
+                } else {
+                    "a closure"
+                };
+                self.err(
+                    "W0102",
+                    format!("`{what}` takes {noun}, found `{shown}`"),
+                    span,
+                );
+            }
+            return None;
+        };
+        if !f.params.is_empty() {
+            self.err(
+                "W0103",
+                format!("a closure of `{what}` takes no arguments"),
+                span,
+            );
+        }
+        Some(f.ret.clone())
+    }
+
     fn fork(&mut self, args: &[Arg], trailing: Option<&Expr>, span: Span) -> Val {
         let mut tasks = Vec::new();
         let mut rets = Vec::new();
-        for e in args.iter().map(|a| &a.value).chain(trailing) {
+        let branches: Vec<&Expr> = args.iter().map(|a| &a.value).chain(trailing).collect();
+        if branches.len() < 2 {
+            self.err("W0103", "`fork` needs at least two closures", span);
+        }
+        for e in branches {
             let v = self.closure_arg(e, None);
-            let ret = if let Ty::Fn(f) = self.inf.shallow(&v.ty) {
-                f.ret.clone()
-            } else {
-                self.err("W0102", "`fork` takes closures", e.span);
-                Ty::Error
+            let Some(ret) = self.task_ret(&v, "fork", e.span) else {
+                rets.push(Ty::Error);
+                continue;
             };
             rets.push(ret);
             let (t, _) = self.start_task(TaskKind::Fork, &v, e.span);

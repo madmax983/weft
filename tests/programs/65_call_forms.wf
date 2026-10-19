@@ -1,0 +1,45 @@
+// `spawn` takes one closure with no parameters, and `fork` at least two. An
+// argument of an effect operation can have the name of its parameter: it binds
+// by name, as in a call of a function.
+effect Pair { fn put(a: &Vec<u64>, b: u64) }
+struct Stats { count: u64 }
+
+fn spawn_value() / async {
+    scope { s => s.spawn(5) }   //~ W0102
+}
+fn spawn_two() / async {
+    scope { s => s.spawn(|| 1, || 2) }   //~ W0103
+}
+fn spawn_param_closure() / async {
+    scope { s => s.spawn(|x: u64| x) }   //~ W0103
+}
+fn fork_none() / par {
+    fork()   //~ W0103
+}
+fn fork_one() / par {
+    fork(|| 1)   //~ W0103
+}
+fn fork_value() / par {
+    fork(|| 1, 2)   //~ W0102
+}
+fn spawn_ok() / async, par {
+    scope { s => s.spawn(|| 1) }
+    let (a, b) = fork(|| 1, || 2)
+}
+
+// Named arguments of an operation bind by name.
+fn named_put(v: &Vec<u64>) / Pair {
+    put(b: 1, a: v)
+    put(v, b: 2)
+}
+fn named_wrong(v: &Vec<u64>) / Pair {
+    put(c: 1, a: v)   //~ W0103
+    put(a: v, a: v, b: 1)   //~ W0103
+    put(b: 1)   //~ W0103
+}
+// The clause gets the reference argument by name: it mutates the place.
+fn named_mutation(v: &Vec<u64>) / mut(v) {
+    let first = &v[0]
+    handle Pair { fn put(a, b) { a.push(b); resume(()) } } in put(b: 1, a: v)
+    print(first)   //~ W0301
+}

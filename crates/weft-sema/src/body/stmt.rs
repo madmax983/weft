@@ -155,7 +155,7 @@ impl Lower<'_> {
             let ps: Vec<&str> = e.muts.iter().map(|m| m.text.as_str()).collect();
             parts.push(format!("mut({})", ps.join(", ")));
         }
-        parts.extend(e.named.iter().map(|n| n.to_lowercase()));
+        parts.extend(e.named.iter().map(|n| effects::in_signature(n)));
         parts.join(", ")
     }
 

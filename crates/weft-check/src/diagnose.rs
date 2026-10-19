@@ -266,14 +266,15 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             Diagnostic::error(
                 "W0702",
                 format!(
-                    "`{}` performs `{e}`, which the signature does not allow",
-                    at.label
+                    "`{}` performs `{}`, which the signature does not allow",
+                    at.label,
+                    weft_sema::effects::shown(e)
                 ),
                 at.span,
             )
             .note(format!(
                 "add `{}` to the effects after `/`, or handle it here",
-                e.to_lowercase()
+                weft_sema::effects::in_signature(e)
             )),
         );
     }

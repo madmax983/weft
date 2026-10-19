@@ -649,10 +649,9 @@ impl<'p> Lower<'p> {
         }
     }
 
+    /// Returns true if effect `e` (an identity, see `effects::identity`) has a `multi` operation.
     fn effect_has_multi(&self, e: &str) -> bool {
-        self.prog
-            .effect_named(self.module, e)
-            .is_some_and(|id| self.prog.effects[id].has_multi())
+        effects::by_identity(self.prog, e).is_some_and(|id| self.prog.effects[id].has_multi())
     }
 
     // -----------------------------------------------------------------------

@@ -1,0 +1,43 @@
+// A user effect can have the name of a standard effect. The facts give each
+// effect an identity: a standard effect keeps its name, a user effect gets its
+// module path and its name (`main.Log`). So the user `Log` is not the standard
+// `log`, also where both names meet. Diagnostics show the written names.
+effect Log { fn log(msg: String) }
+
+// `Log` names the user effect; `log` names the standard one.
+fn user_log() / Log { log("x") }
+fn std_log() / log { log.info("x") }
+fn both() / Log, log {
+    log("x")
+    log.info("y")
+}
+fn user_for_std() / log {
+    log("x")   //~ W0702
+}
+fn std_for_user() / Log {
+    log.info("x")   //~ W0702
+}
+// A call carries the identity too.
+fn calls_user() / log {
+    user_log()   //~ W0702
+}
+fn calls_std() / Log {
+    std_log()   //~ W0702
+}
+// `io` has the standard `Log` only.
+fn bundle() / io {
+    log("x")   //~ W0702
+}
+// A local handler of the user effect handles the user operations only.
+fn handled() / log {
+    handle Log { fn log(m) { resume(()) } } in {
+        log("x")
+        log.info("y")
+    }
+}
+fn handled_std() / Log {
+    handle log { fn info(m) { resume(()) } } in {
+        log("x")
+        log.info("y")
+    }
+}

@@ -327,9 +327,11 @@ pub fn package_diags(pkg: &Package, a: &Analysis) -> Vec<Diagnostic> {
                 performs.extend(b.facts.escapes_at.iter().map(|(_, e)| e.clone()));
             }
             let needs: BTreeSet<String> = effects::close(&performs);
+            // Authority names standard effects. A user effect of the dependency
+            // needs a handler of the caller, not authority.
             let extra: Vec<&String> = needs
                 .iter()
-                .filter(|e| !dep.authority.contains(*e))
+                .filter(|e| effects::is_std(e) && !dep.authority.contains(*e))
                 .collect();
             if extra.is_empty() {
                 continue;

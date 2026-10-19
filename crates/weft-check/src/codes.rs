@@ -17,7 +17,7 @@ pub struct Code {
 pub const CODES: &[Code] = &[
     Code { code: "L0001", title: "lint warning", rule: "user lint rules", text: "A rule of the file that `weft lint --rules` reads derived `lint(Name, Node)` for this node." },
     Code { code: "W0001", title: "syntax error", rule: "parser", text: "The source does not follow docs/grammar.md." },
-    Code { code: "W0101", title: "unknown name", rule: "names", text: "No local, item, effect or module has this name in scope." },
+    Code { code: "W0101", title: "unknown name", rule: "names", text: "No local, item, effect or module has this name in scope. A function of another package is in scope only if it is `pub`." },
     Code { code: "W0102", title: "type mismatch", rule: "types", text: "Two types must be equal and they are not." },
     Code { code: "W0103", title: "wrong number of arguments or fields", rule: "types", text: "The call or the pattern has a different number of parts than the declaration." },
     Code { code: "W0104", title: "unknown field, method or operation", rule: "types", text: "The type, module or effect has no member with this name." },
