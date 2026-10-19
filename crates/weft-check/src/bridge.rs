@@ -120,6 +120,16 @@ pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
     for n in &f.multi_at {
         emit("multi_at", &[s(n)]);
     }
+    for c in &f.clause_multi {
+        emit("clause_multi", &[s(c)]);
+    }
+    for c in &f.body_multi {
+        emit("body_multi", &[s(c)]);
+    }
+    rel2!("resumes_at", f.resumes_at);
+    for (h, e) in &f.clause_performs {
+        emit("clause_performs", &[s(h), s(e)]);
+    }
     for d in &f.declared_mut {
         emit("declared_mut", &[s(d)]);
     }

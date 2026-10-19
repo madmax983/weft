@@ -946,6 +946,7 @@ impl Lower<'_> {
             multi,
             muts,
             cap,
+            depth,
         }) = self.locals[l].cont.clone()
         else {
             return Val {
@@ -959,6 +960,9 @@ impl Lower<'_> {
         for a in args {
             let v = self.expr(&a.value);
             self.unify(&arg, &v.ty, a.value.span);
+            // The handled computation gets the value: a handler inside the clause
+            // ends before it runs.
+            self.keep_for_op(&v, depth.checked_sub(1));
             self.consume(&v, a.value.span);
         }
         let var = self.locals[l].var;

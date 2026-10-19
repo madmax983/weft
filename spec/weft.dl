@@ -34,6 +34,11 @@
 //   immovable(V)             the type of V is `!Move`.
 //   may_abort(P)             an effect can abort the scope at node P.
 //   multi_at(P)              node P can resume a `multi` continuation more than once.
+//   clause_multi(Cap)        a clause of the handler behind Cap can resume a `multi`
+//                            continuation more than once.
+//   body_multi(Cap)          the computation that the handler behind Cap handles can
+//                            resume a `multi` continuation more than once.
+//   resumes_at(P, Cap)       node P resumes the computation that the handler behind Cap handles.
 //   has_signature()          the function states its effects.
 //   declared_mut(D)          the signature states `mut(D)`.
 //   declared_effect(E)       the signature states effect E (closed under implication).
@@ -55,7 +60,8 @@
 //   library()                the module is a library.
 //   handler(H, E)            H handles effect E.
 //   std_effect(E)            E is a standard effect.
-//   forwards(H)              the function around H can still perform the effect of H.
+//   clause_performs(H, E)    a clause of H performs E through a handler outside H.
+//   forwards(H)              H is a root handler of `sim.run` (W0802 checks it).
 
 // ---------------------------------------------------------------------------
 // Places
@@ -156,6 +162,15 @@ live_in(V, P)        :- uses(V, P).
 live_in(V, P)        :- live_out(V, P), !rebound_at(V, P).
 live_out(V, P)       :- cfg_edge(P, Q), live_in(V, Q).
 
+// Each suspension point counts, not only the operation. A node that runs a clause
+// waits until the clause resumes it; if the clause can resume a `multi`
+// continuation more than once, so can the node. A resume runs the handled
+// computation and, at its operations, the clauses again. A `once` continuation
+// is a `once` value, so a clause cannot hold one across such a node.
+multi_at(P)          :- performs_at(P, Cap), clause_multi(Cap).
+multi_at(P)          :- resumes_at(P, Cap), body_multi(Cap).
+multi_at(P)          :- resumes_at(P, Cap), clause_multi(Cap).
+
 live_across_multi(V, P) :- multi_at(P), live_out(V, P), once_var(V).
 
 // ---------------------------------------------------------------------------
@@ -209,4 +224,8 @@ stealable(T)         :- task(T), !pinned(T).
 // W0801: only binaries and tests install root handlers for standard effects
 // ---------------------------------------------------------------------------
 
+// A handler forwards its effect if a clause performs the effect again, through a
+// handler outside it. Such a handler intercepts (retries, tracing, mocks). A
+// handler that never forwards is a root handler.
+forwards(H)            :- handler(H, E), clause_performs(H, E).
 root_handler_in_lib(H) :- library(), handler(H, E), std_effect(E), !forwards(H).

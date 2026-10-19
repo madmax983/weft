@@ -406,7 +406,20 @@ fn multi(
     out: &mut Violations,
 ) {
     let f = cx.f;
-    if f.multi_at.is_empty() {
+    // A node that runs a clause, and a resume, can resume more than once if the
+    // clause or the handled computation can.
+    let mut multi: BTreeSet<NodeId> = f.multi_at.iter().copied().collect();
+    for &(p, c) in &f.performs_at {
+        if f.clause_multi.contains(&c) {
+            multi.insert(p);
+        }
+    }
+    for &(p, c) in &f.resumes_at {
+        if f.clause_multi.contains(&c) || f.body_multi.contains(&c) {
+            multi.insert(p);
+        }
+    }
+    if multi.is_empty() {
         return;
     }
     for (&v, us) in uses {
@@ -416,7 +429,7 @@ fn multi(
         let gen = cx.mask(us.iter().copied());
         let kill = cx.mask(rebound.get(&v).cloned().unwrap_or_default());
         let live_out = cx.backward(&gen, &kill);
-        for &p in &f.multi_at {
+        for &p in &multi {
             if live_out[p.index()] {
                 out.live_across_multi.insert((v, p));
             }
@@ -465,9 +478,14 @@ fn effects(cx: &Ctx<'_>, out: &mut Violations) {
             .map(|h| h.effect.as_str())
             .collect();
         for (i, h) in f.handlers.iter().enumerate() {
-            if std_names.contains(h.effect.as_str()) && !h.forwards {
-                out.root_handler_in_lib
-                    .insert(HandlerId(u32::try_from(i).unwrap_or(u32::MAX)));
+            let id = HandlerId(u32::try_from(i).unwrap_or(u32::MAX));
+            // A clause that performs the effect again forwards it.
+            let forwards = h.forwards
+                || f.clause_performs
+                    .iter()
+                    .any(|(g, e)| *g == id && *e == h.effect);
+            if std_names.contains(h.effect.as_str()) && !forwards {
+                out.root_handler_in_lib.insert(id);
             }
         }
     }

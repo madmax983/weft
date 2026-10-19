@@ -72,6 +72,23 @@ Status: accepted. Date: 2026-10-18.
   live across such a node needs `on abort` (W0602).
 - `resume` consumes a `once` continuation (W0501). A `multi` operation needs `many` values
   around it (W0503).
+- The abort rule and the multi rule apply at each suspension point (rule 1 of
+  `proofs/effects`): an operation, a call that reaches a handler, a node that runs a
+  clause, and a `resume`. A node that runs a clause can resume more than once if a
+  clause of the handler can (`clause_multi`). A `resume` runs the handled computation
+  and, at its operations, the clauses again. So it can resume more than once if the body
+  (`body_multi`) or a clause can. A `once` continuation is a `once` value (rule 2): a
+  clause cannot hold one across a `multi` operation, also not across a call that can
+  perform one.
+- A clause runs in the environment of its `handle` (rule 6): its operations go to the
+  handlers outside the `handle`. The value of a clause is the value of the `handle`, so
+  a function value or a reference in it joins the value of the body. A `resume` gives its
+  argument to the handled computation, so the argument cannot hold a capability of a
+  handler inside the clause (W0313).
+- A handler intercepts its effect if a clause performs the effect again, through a
+  handler outside it (`clause_performs`, `forwards`). In a library, a handler of a
+  standard effect that never forwards is a root handler (W0801), also when the function
+  states the effect. The root handlers of `sim.run` get W0802 instead.
 - A spawned task or fork branch cannot perform a user effect (W0314): the handler is on
   another task's stack.
 - A capability lives only while its handled body runs (rule (d) of `proofs/effects`). A
@@ -205,6 +222,8 @@ Status: accepted. Date: 2026-10-18.
     reference arguments of the operation, also when the clause does not call it.
   - W0313 counts each function value given to code that can keep it, also when that
     code only calls it, and each part of a local of the body that can hold a function.
+  - A `resume` can resume more than once if a clause of its handler can, also when the
+    handled computation does not perform the operation again.
 - What stays open (not checked):
   - A function value inside a returned tuple or struct, or a closure that a callee
     makes and stores in a place of the caller: the caller does not see what a later

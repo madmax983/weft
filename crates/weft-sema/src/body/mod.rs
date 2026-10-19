@@ -168,6 +168,8 @@ struct ContInfo {
     multi: bool,
     muts: Vec<PlaceId>,
     cap: CapId,
+    /// The depth of `Lower::handlers` in the clause: a handler above it is inside the clause.
+    depth: usize,
 }
 
 #[derive(Clone, Debug)]

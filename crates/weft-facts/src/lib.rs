@@ -227,7 +227,9 @@ pub struct HandlerInfo {
     pub effect: String,
     /// The effect is a standard effect.
     pub is_std: bool,
-    /// The enclosing function can still perform the effect, so the handler intercepts.
+    /// The handler forwards its effect whatever its clauses do: a root handler of
+    /// `sim.run`, which W0802 checks. Other handlers forward through their clauses
+    /// (`clause_performs`).
     pub forwards: bool,
     /// The source location.
     pub span: Span,
@@ -281,6 +283,18 @@ pub struct FnFacts {
     pub may_abort: Vec<NodeId>,
     /// `multi_at(P)`.
     pub multi_at: Vec<NodeId>,
+    /// `clause_multi(Cap)`: a clause of the handler behind `Cap` can resume a
+    /// `multi` continuation more than once.
+    pub clause_multi: Vec<CapId>,
+    /// `body_multi(Cap)`: the computation that the handler behind `Cap` handles
+    /// can resume a `multi` continuation more than once.
+    pub body_multi: Vec<CapId>,
+    /// `resumes_at(P, Cap)`: node `P` resumes the computation that the handler
+    /// behind `Cap` handles.
+    pub resumes_at: Vec<(NodeId, CapId)>,
+    /// `clause_performs(H, E)`: a clause of handler `H` performs effect `E`
+    /// through a handler outside `H`.
+    pub clause_performs: Vec<(HandlerId, String)>,
 
     /// `has_signature()`.
     pub has_signature: bool,
@@ -469,6 +483,10 @@ impl FnFacts {
         nd(&mut self.moved_part);
         nd(&mut self.may_abort);
         nd(&mut self.multi_at);
+        nd(&mut self.clause_multi);
+        nd(&mut self.body_multi);
+        nd(&mut self.resumes_at);
+        nd(&mut self.clause_performs);
         nd(&mut self.declared_mut);
         nd(&mut self.declared_effect);
         nd(&mut self.escapes_at);

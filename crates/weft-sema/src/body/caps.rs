@@ -7,7 +7,7 @@
 
 use std::collections::BTreeSet;
 
-use super::{CapId, FnId, FnInfo, Lower, PlaceId, RootKind, Span, Ty, Val};
+use super::{CapId, FnId, FnInfo, Lower, PlaceId, RootKind, Span, Summary, Ty, Val};
 
 /// A function value that can live after the node that gives it away.
 #[derive(Clone, Debug)]
@@ -176,6 +176,19 @@ impl Lower<'_> {
     fn item_keeps(&self, f: FnId, i: usize) -> bool {
         let def = &self.prog.fns[f];
         (def.decl.body.is_none() && !def.is_std) || self.sigs[f].effects.stores.contains(&i)
+    }
+
+    /// Returns the effects that clause summary `cs` performs outside its handler:
+    /// the effects that escape the function, and the effects of the handlers
+    /// outside the `handle` that it uses.
+    pub(super) fn clause_effects(&self, cs: &Summary) -> BTreeSet<String> {
+        let mut out: BTreeSet<String> = cs.escapes.iter().cloned().collect();
+        for c in cs.performs.difference(&cs.own_caps) {
+            if let Some(h) = self.handlers.iter().find(|h| h.cap == *c) {
+                out.insert(h.effect.clone());
+            }
+        }
+        out
     }
 
     /// Notes the start of the body of a handler.

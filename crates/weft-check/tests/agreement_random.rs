@@ -5,8 +5,8 @@
 use proptest::prelude::*;
 use weft_check::{bridge, check};
 use weft_facts::{
-    CapId, FnFacts, HandlerInfo, NodeId, PlaceId, RootKind, Span, Step, StepKind, TaskId, TaskKind,
-    VarId, VarInfo, VarKind,
+    CapId, FnFacts, HandlerId, HandlerInfo, NodeId, PlaceId, RootKind, Span, Step, StepKind,
+    TaskId, TaskKind, VarId, VarInfo, VarKind,
 };
 
 #[derive(Clone, Debug)]
@@ -109,8 +109,10 @@ fn build(s: &Shape) -> FnFacts {
         f.cfg_edge.push((n(a), n(b)));
     }
     let has_tasks = !s.tasks.is_empty();
+    let nh = s.handlers.len();
+    let cap = |x: usize| CapId(u32::try_from(x).unwrap() % caps);
     for &(rel, a, b, c) in &s.rels {
-        match rel % 25 {
+        match rel % 29 {
             0 => f.points_into.push((v(a), p(b))),
             1 => f.mutates_at.push((n(a), p(b))),
             2 => f.reads_at.push((n(a), p(b))),
@@ -148,6 +150,13 @@ fn build(s: &Shape) -> FnFacts {
             22 => f.owner.push((p(a), v(b))),
             23 => f.moved_part.push((p(a), n(b))),
             24 => f.lends_mut.push((n(a), p(b))),
+            25 => f.clause_multi.push(cap(a)),
+            26 => f.body_multi.push(cap(a)),
+            27 => f.resumes_at.push((n(a), cap(b))),
+            28 if nh > 0 => f.clause_performs.push((
+                HandlerId(u32::try_from(a % nh).unwrap()),
+                format!("E{}", b % 2),
+            )),
             _ => {}
         }
     }

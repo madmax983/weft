@@ -136,14 +136,6 @@ impl Lower<'_> {
             let var = self.locals[i].var;
             self.facts.vars[var.index()].ty = shown;
         }
-        let declared: BTreeSet<String> = if self.facts.has_signature {
-            self.facts.declared_effect.iter().cloned().collect()
-        } else {
-            effects::close(&eff.named)
-        };
-        for h in &mut self.facts.handlers {
-            h.forwards = h.forwards || declared.contains(&h.effect);
-        }
         self.facts.normalize();
         let unit = self.prog.mods[self.module].unit;
         for d in &mut self.diags {

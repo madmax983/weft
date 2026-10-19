@@ -1442,6 +1442,7 @@ impl Lower<'_> {
         };
         let def = self.prog.effects[eid].clone();
         let cap = self.facts.add_cap();
+        let hid = weft_facts::HandlerId(u32::try_from(self.facts.handlers.len()).unwrap_or(0));
         self.facts.handlers.push(HandlerInfo {
             effect: def.name.clone(),
             is_std: def.is_std,
@@ -1472,6 +1473,7 @@ impl Lower<'_> {
         let mut lent = Vec::new();
         let mut clause_sum = Summary::default();
         let mut clauses_done = Vec::new();
+        let mut clause_vals: Vec<Val> = Vec::new();
         for c in clauses {
             let Some(op) = def.ops.iter().find(|o| o.name == c.op.name).cloned() else {
                 self.err(
@@ -1531,6 +1533,7 @@ impl Lower<'_> {
                 multi: op.multi,
                 muts: body_sum.muts.iter().copied().collect(),
                 cap,
+                depth: self.handlers.len(),
             });
             let kv = self.locals[k].var;
             self.bind(kv, entry);
@@ -1539,7 +1542,8 @@ impl Lower<'_> {
             let cv = self.block(&c.body);
             self.jumps.pop();
             self.flush(block_tail(&c.body));
-            if !matches!(self.inf.shallow(&cv.ty), Ty::Never) {
+            let returns = !matches!(self.inf.shallow(&cv.ty), Ty::Never);
+            if returns {
                 self.unify(&ty, &cv.ty, c.body.span);
             }
             self.end_frame(c.span);
@@ -1548,6 +1552,18 @@ impl Lower<'_> {
             self.close_scope(si, super::fnval::Scope::Clause);
             let mut cs = self.sums.pop().unwrap_or_default();
             cs.param_roots = param_roots;
+            // The value of the clause is the value of the `handle`.
+            if returns {
+                let mut cv = cv;
+                cv.refs
+                    .retain(|&p| !cs.own_roots.contains(&self.facts.place(p).root));
+                clause_vals.push(cv);
+            }
+            // The clause runs in the environment of the `handle`: what it performs
+            // goes to the handlers outside this one.
+            for e in self.clause_effects(&cs) {
+                self.facts.clause_performs.push((hid, e));
+            }
             for &m in &cs.muts {
                 if !cs.own_roots.contains(&self.facts.place(m).root) {
                     footprint.push(m);
@@ -1583,6 +1599,14 @@ impl Lower<'_> {
         for &m in &footprint {
             self.facts.footprint.push((cap, m));
         }
+        // The suspension points of the handler (effects rule 1): a node that runs a
+        // clause, and a resume, can resume more than once if a clause or the body can.
+        if clauses_done.iter().any(|(_, cs, _)| cs.multi) {
+            self.facts.clause_multi.push(cap);
+        }
+        if body_sum.multi {
+            self.facts.body_multi.push(cap);
+        }
         lent.sort();
         lent.dedup();
         // Resumes run the handled computation and the clauses again.
@@ -1593,6 +1617,7 @@ impl Lower<'_> {
             .map(|(n, _)| *n)
             .collect();
         for &n in &resumes {
+            self.facts.resumes_at.push((n, cap));
             for &m in &footprint {
                 self.facts.mutates_at.push((n, m));
             }
@@ -1632,8 +1657,19 @@ impl Lower<'_> {
         self.handled.push(h);
         self.cur = saved;
         let _ = self.emit(span, "end handle", String::new());
-        // The value of the handled body: also a task handle or a function value.
-        v
+        // The value of the handled body: also a task handle or a function value. A
+        // clause value that holds references or function values joins it.
+        let mut out = v;
+        for cv in clause_vals {
+            if cv.refs.is_empty() && !self.has_fn(&cv.ty, 0) {
+                continue;
+            }
+            let mut refs = out.refs.clone();
+            refs.extend(cv.refs.iter().copied());
+            let j = self.join_val(&out, &cv);
+            out = Val { refs, ..j };
+        }
+        out
     }
 
     /// The clauses of handler `h` run at the nodes `calls`, and they get the places

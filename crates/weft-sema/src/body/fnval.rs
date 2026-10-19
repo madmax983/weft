@@ -291,6 +291,8 @@ impl Lower<'_> {
     /// Joins the values of two branches. Function values inside tuples and type
     /// arguments join too.
     pub(super) fn join_val(&mut self, a: &Val, b: &Val) -> Val {
+        let mut caps = self.val_caps(a);
+        caps.extend(self.val_caps(b));
         if let (Ty::Fn(fa), Ty::Fn(fb)) = (self.inf.shallow(&a.ty), self.inf.shallow(&b.ty)) {
             let ia = (self.fn_info(a), fa.effects.clone());
             let ib = (self.fn_info(b), fb.effects.clone());
@@ -304,6 +306,7 @@ impl Lower<'_> {
                 summary: info.summary,
                 item: info.item,
                 fn_param: info.param,
+                caps,
                 ..Val::default()
             };
         }
@@ -328,6 +331,7 @@ impl Lower<'_> {
         Val {
             ty,
             parts,
+            caps,
             ..Val::default()
         }
     }
