@@ -74,6 +74,31 @@ fn ref_into_taken() {
     f()
 }
 
+// A closure that takes a value cannot use another capture that points into
+// it: the value moved when the closure was made.
+fn grow(v: &Vec<u64>) { v.push(9) }
+fn apply(f: fn()) { f() }
+fn capture_into_taken() {
+    let v = Vec.new()
+    let f = || grow(&v)
+    let g = || {   //~ W0301
+        apply(f)
+        print(take(v))
+    }
+    g()
+}
+// Clean: the other capture points somewhere else.
+fn capture_elsewhere() {
+    let v = Vec.new()
+    let w = Vec.new()
+    let f = || grow(&w)
+    let g = || {
+        apply(f)
+        print(take(v))
+    }
+    g()
+}
+
 fn main() {
     new_value_after()
     task_new_value()

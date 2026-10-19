@@ -182,8 +182,11 @@ Status: accepted. Date: 2026-10-18.
   closure there. Semantic analysis gives the interpreter these captures for each
   closure span (`FnFacts::by_value`), so the two sides agree by construction. A new
   value of the variable after that point stays in the variable. The closure has the
-  value also if it never runs, so a use of the variable after that point is W0302. An
-  inner closure that moves a capture makes each closure around it take the value too.
+  value also if it never runs, so a use of the variable after that point is W0302. The
+  closure uses its other captures after the move: a capture that points into the moved
+  value is not valid in the closure (W0301). An inner closure that moves a capture
+  makes each closure around it take the value too. A capture of a handler clause in a
+  closure is a capture of the closure only if the closure does not declare it.
   Such a closure still cannot leave the scope of the variable (W0204, W0301): its type
   does not show that it runs only once or that it holds a linear value. This is
   conservative. A task closure does the same (ADR 0006).

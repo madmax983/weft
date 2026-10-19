@@ -1456,6 +1456,7 @@ impl Lower<'_> {
             .filter(|&v| !self.is_copy_var(v))
             .collect();
         let mut refs = Vec::new();
+        let mut used = Vec::new();
         let caps: Vec<_> = sum.captures.iter().copied().collect();
         for v in &caps {
             if let Some(l) = self.local_of(*v) {
@@ -1464,7 +1465,9 @@ impl Lower<'_> {
                 if !loc.ty.is_ref() && self.may_free(&loc.ty) {
                     refs.extend(loc.root);
                 }
-                self.pend_uses.push(*v);
+                if !moved.contains(v) {
+                    used.push(*v);
+                }
                 self.note_capture(l);
             }
         }
@@ -1475,7 +1478,9 @@ impl Lower<'_> {
         self.note_cap_values(id, &caps, &moved);
         // The moved captures are moved before the closure exists, so that the
         // move does not invalidate the new closure. The interpreter moves them
-        // into the closure there (`FnFacts::by_value`).
+        // into the closure there (`FnFacts::by_value`). The other captures are
+        // used after the move: a capture that points into a moved value is not
+        // valid in the closure (W0301).
         if !moved.is_empty() {
             let m = self.emit(span, "move", String::new());
             for v in moved {
@@ -1483,6 +1488,7 @@ impl Lower<'_> {
                 self.facts.by_value.push((span, v));
             }
         }
+        self.pend_uses.extend(used);
         let n = self.emit(span, "closure", String::new());
         let fty = FnTy {
             params: ptys,
@@ -2497,6 +2503,25 @@ impl Lower<'_> {
     fn merge_summary(&mut self, s: &Summary) {
         let own = s.own_roots.clone();
         let spawns = self.spawns_outside(&s.spawns.to_set());
+        // A capture of the clause is a capture of the body around it only if the
+        // body does not declare it: a local of a closure is not a capture of it.
+        let barrier = self.frames.iter().rposition(|f| f.barrier.is_some());
+        let outer = |me: &Self, v: VarId| match (barrier, me.local_of(v)) {
+            (Some(bi), Some(l)) => me.local_frame(l) < bi,
+            _ => true,
+        };
+        let captures: Vec<VarId> = s
+            .captures
+            .iter()
+            .copied()
+            .filter(|&v| outer(self, v))
+            .collect();
+        let moved: Vec<VarId> = s
+            .moved_captures
+            .iter()
+            .copied()
+            .filter(|&v| outer(self, v))
+            .collect();
         let t = self.sum();
         t.spawns.extend(spawns);
         for &m in &s.muts {
@@ -2509,8 +2534,8 @@ impl Lower<'_> {
         t.multi |= s.multi;
         t.passthrough.extend(s.passthrough.iter().copied());
         t.own_roots.extend(own);
-        t.captures.extend(s.captures.iter().copied());
-        t.moved_captures.extend(s.moved_captures.iter().copied());
+        t.captures.extend(captures);
+        t.moved_captures.extend(moved);
         t.dropped.extend(s.dropped.iter().copied());
         t.lends.extend(s.lends.iter().copied());
         t.own_caps.extend(s.own_caps.iter().copied());
