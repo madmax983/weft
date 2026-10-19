@@ -66,6 +66,21 @@ fn once_local_twice() {
     f()   //~ W0502
 }
 
+// A place of plain data cannot hold a `once` closure: a copy of it could call
+// the closure again.
+struct Cb { f: fn() }
+fn once_in_field() {
+    let b = Buf { items: Vec.new() }
+    let c = Cb { f: || eat(b) }   //~ W0502
+}
+fn many_in_field() {
+    let n = 1
+    let c = Cb { f: || print(n) }
+    let g = c.f
+    g()
+    g()
+}
+
 // A closure that calls a `once` closure is `once` too.
 fn nested_once() {
     let b = Buf { items: Vec.new() }

@@ -156,3 +156,25 @@ fn drop_through<T>(x: T) { drop_it(x) }
 fn generic_drop_through() {
     drop_through(begin())   //~ W0601
 }
+
+// A temporary that a call, a field, a borrow or a comparison only reads goes away.
+impl Tx {
+    fn show(self) { print(self.id) }
+}
+fn receiver_temp() {
+    begin().show()   //~ W0601
+}
+fn receiver_local() {
+    let t = begin()
+    t.show()
+    rollback(t)
+}
+fn field_of_temp() {
+    let n = begin().id   //~ W0601
+}
+fn borrow_temp() {
+    let r = &begin()   //~ W0601
+}
+fn compared() -> bool {
+    begin() == begin()   //~ W0601
+}

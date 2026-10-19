@@ -27,13 +27,17 @@ Status: accepted. Date: 2026-10-18.
   W0601, except for `with_timeout`, which runs its block once. A closure that moves a
   value that is not plain data runs only once: a second call is W0502, also when a
   callee that can call its argument more than once gets it, and an operation of a
-  handler gets it (a clause can call it more than once). A closure that calls a
-  `once` closure or resumes a `once` continuation moves it, so it is `once` too.
+  handler gets it (a clause can call it more than once). A place of plain data, such
+  as a field of type `fn()`, cannot hold it: a copy of the place could call it again
+  (W0502). A closure that calls a `once` closure or resumes a `once` continuation
+  moves it, so it is `once` too.
 - A linear value cannot go away silently:
   - A pattern `_` drops its part: in a `let`, for a temporary that a `match` takes, and
     in an arm that binds a part by value. An arm that matches a value with no linear
     part, such as `None`, consumes its local scrutinee.
-  - `print` only reads its arguments: a linear temporary goes away after it.
+  - `print`, a comparison, a receiver that a method borrows, a field read and a
+    borrow only read a temporary: a linear temporary goes away at the end of its
+    statement.
   - A new value of a place drops the old value. `p.tx = v` on a live linear local `p`
     is `overwrites(V, P)` in the spec (W0601). Behind a reference the old value is
     always there, so a new value there is W0601.

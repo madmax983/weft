@@ -82,11 +82,22 @@ impl Lower<'_> {
 
     /// Value `v` goes into a place of type `into`. If the value is linear and the
     /// type is not, the value can go away there unseen: for example a closure that
-    /// moves a linear value, in a field of type `fn()`.
-    pub(super) fn keep_linear(&mut self, v: &Val, into: &Ty, span: Span) {
+    /// moves a linear value, in a field of type `fn()` (W0601). A closure that runs
+    /// only once cannot go into a place of plain data: a copy of the place could
+    /// call it again (W0502).
+    pub(super) fn keep_modes(&mut self, v: &Val, into: &Ty, span: Span) {
         if self.is_linear(&v.ty) && !self.is_linear(into) {
             let name = self.val_name(v);
             self.drop_linear(&name, &v.ty, span);
+        } else if let Some(s) = self.fn_info(v).summary {
+            if self.closure_is_once(s) && self.is_copy(into) {
+                let shown = self.show(into);
+                self.err(
+                    "W0502",
+                    format!("a `once` closure cannot go into a place of type `{shown}`: a copy of the place could call it again"),
+                    span,
+                );
+            }
         }
     }
 

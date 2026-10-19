@@ -395,9 +395,13 @@ impl Lower<'_> {
             let arg_is_ref = matches!(self.inf.shallow(&av.val.ty), Ty::Ref(_));
             if is_ref_param && !arg_is_ref && i == 0 && first == 1 {
                 // `x.m()` borrows `x` when `m` takes `self` by reference.
-                let places = match av.val.place.as_ref() {
-                    Some(lv) => lv.places.clone(),
-                    None => vec![self.temp_root(av.span, &av.val.ty)],
+                let places = if let Some(lv) = av.val.place.as_ref() {
+                    lv.places.clone()
+                } else {
+                    // A temporary receiver goes away after the call.
+                    let v = av.val.clone();
+                    self.drop_value(&v, av.span);
+                    vec![self.temp_root(av.span, &av.val.ty)]
                 };
                 recv_deps = av
                     .val
@@ -461,7 +465,7 @@ impl Lower<'_> {
                 }
                 if !matches!(self.inf.shallow(&pt), Ty::Fn(_)) || av.val.summary.is_none() {
                     let v = av.val.clone();
-                    self.keep_linear(&v, &pt, av.span);
+                    self.keep_modes(&v, &pt, av.span);
                     // A generic callee can drop a value that it does not know is linear.
                     // A value of a type parameter here can be dropped there too.
                     if sig.effects.drops.contains(&i) {
@@ -1288,7 +1292,7 @@ impl Lower<'_> {
             let v = self.expr(&arg.value);
             let ft = super::subst(&d.ty, &targs);
             self.unify(&ft, &v.ty, arg.value.span);
-            self.keep_linear(&v, &ft, arg.value.span);
+            self.keep_modes(&v, &ft, arg.value.span);
             self.escape(&v);
             caps.extend(self.val_caps(&v));
             self.consume(&v, arg.value.span);
@@ -1333,7 +1337,7 @@ impl Lower<'_> {
             let v = self.expr(&a.value);
             let ft = super::subst(ft, &targs);
             self.unify(&ft, &v.ty, a.value.span);
-            self.keep_linear(&v, &ft, a.value.span);
+            self.keep_modes(&v, &ft, a.value.span);
             self.escape(&v);
             caps.extend(self.val_caps(&v));
             self.consume(&v, a.value.span);

@@ -199,7 +199,7 @@ impl Lower<'_> {
         for (i, x) in es.iter().enumerate() {
             let v = self.expr(x);
             self.unify(elem, &v.ty, x.span);
-            self.keep_linear(&v, elem, x.span);
+            self.keep_modes(&v, elem, x.span);
             self.escape(&v);
             caps.extend(self.val_caps(&v));
             self.consume(&v, x.span);
@@ -668,6 +668,8 @@ impl Lower<'_> {
                 } else {
                     let v = self.expr(inner);
                     self.consume(&v, inner.span);
+                    // A borrowed temporary goes away at the end of the statement.
+                    self.drop_value(&v, inner.span);
                     let r = self.temp_root(inner.span, &v.ty);
                     LVal {
                         places: vec![r],
@@ -714,6 +716,9 @@ impl Lower<'_> {
                 let at = self.deref_ty(&a.ty);
                 let bt = self.deref_ty(&b.ty);
                 self.unify(&at, &bt, span);
+                // A comparison only reads its operands: a temporary goes away.
+                self.drop_value(&a, lhs.span);
+                self.drop_value(&b, rhs.span);
                 Val {
                     ty: Ty::Bool,
                     ..Val::default()
@@ -783,7 +788,7 @@ impl Lower<'_> {
                 Some(d) => {
                     let ft = super::subst(&d.ty, &args);
                     self.unify(&ft, &v.ty, value.span);
-                    self.keep_linear(&v, &ft, value.span);
+                    self.keep_modes(&v, &ft, value.span);
                     // A literal is not in a place yet, so nothing can point into it.
                     if let (Some(sp), false) = (&d.place, v.refs.is_empty()) {
                         let at = self.place_text(&v.refs);

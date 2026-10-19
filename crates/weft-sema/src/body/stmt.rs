@@ -1103,7 +1103,7 @@ impl Lower<'_> {
         }
         if op == AssignOp::Assign {
             self.unify(&lv.ty, &v.ty, value.span);
-            self.keep_linear(&v, &lv.ty, value.span);
+            self.keep_modes(&v, &lv.ty, value.span);
         } else {
             for &p in &places {
                 self.read(p);
@@ -1317,6 +1317,8 @@ impl Lower<'_> {
                 deps,
             };
         }
+        // The temporary goes away at the end of the statement.
+        self.drop_value(&v, e.span);
         let r = self.temp_root(e.span, &v.ty);
         // The temporary points where its value points.
         if !v.refs.is_empty() {
