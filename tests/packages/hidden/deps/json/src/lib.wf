@@ -1,0 +1,15 @@
+// A JSON "parser" that hides its network use in closures.
+pub fn parse(text: String) -> fn() -> u64 {
+    || phone_home(text)
+}
+
+// The signature states less than the body does.
+pub fn quiet(text: String) -> u64 / log {
+    let later = || phone_home(text)
+    3
+}
+
+// A private function: the root can call it too.
+fn helper() / fs {}
+
+fn phone_home(text: String) -> u64 / net { 3 }

@@ -7,7 +7,7 @@ use weft_facts::{
     VarId, VarInfo, VarKind,
 };
 
-use crate::{bridge, Report};
+use crate::{bridge, Cause, Report};
 
 /// Runs the production checker and asserts that the Datalog spec agrees.
 fn check(f: &FnFacts) -> Report {
@@ -162,6 +162,58 @@ fn w0301_element_mutation_keeps_element_refs() {
     let n3 = b.node("e.hp");
     b.use_(e, n3);
     assert!(check(&b.f).violations.is_clean());
+}
+
+/// `let v = ..; let r = &v.items; DROP(v); use r`, where DROP is a move or a scope end.
+fn drop_facts(scope_end: bool) -> (B, VarId, VarId, NodeId, NodeId) {
+    let mut b = B::new();
+    let v_root = b.local("v");
+    let items = b.field(v_root, 0, "items");
+    let v = b.var("v");
+    b.f.owner.push((v_root, v));
+    let r = b.var("r");
+    let n0 = b.node("let r");
+    b.bind(r, n0);
+    b.f.points_into.push((r, items));
+    let n1 = b.node("drop v");
+    if scope_end {
+        b.f.scope_end.push((v, n1));
+    } else {
+        b.mv(v, n1);
+    }
+    let n2 = b.node("print(r)");
+    b.use_(r, n2);
+    (b, v, r, n1, n2)
+}
+
+#[test]
+fn w0301_a_move_of_the_owner_invalidates_stable_parts() {
+    // frees_at(P, Rt) :- owner(Rt, V), moved_at(V, P), !part_moved_at(V, P).
+    // invalidated_at(R, P) :- points_into(R, Path), frees_at(P, M), prefix(M, Path).
+    let (b, v, r, n1, n2) = drop_facts(false);
+    let rep = check(&b.f);
+    assert!(rep.violations.error.contains(&(r, n2)));
+    assert_eq!(rep.invalidations[0].at, n1);
+    assert_eq!(rep.invalidations[0].cause, Cause::Move(v));
+}
+
+#[test]
+fn w0301_the_scope_end_of_the_owner_invalidates() {
+    // frees_at(P, Rt) :- owner(Rt, V), scope_end(V, P).
+    let (mut b, v, r, n1, n2) = drop_facts(true);
+    let rep = check(&b.f);
+    assert!(rep.violations.error.contains(&(r, n2)));
+    assert_eq!(rep.invalidations[0].cause, Cause::ScopeEnd(v));
+    // A reference into another root survives, and a rebind revives the reference.
+    b.f.owner.clear();
+    assert!(check(&b.f).violations.error.is_empty());
+    let (mut b, _, r, _, n2) = drop_facts(true);
+    let n3 = b.f.add_node(Span::default(), "r = &..", "");
+    b.f.cfg_edge.retain(|&(p, q)| !(p == n1 && q == n2));
+    b.edge(n1, n3);
+    b.edge(n3, n2);
+    b.bind(r, n3);
+    assert!(check(&b.f).violations.error.is_empty());
 }
 
 #[test]
@@ -475,6 +527,82 @@ fn w0405_join_ends_the_task() {
 }
 
 #[test]
+fn w0301_a_partial_move_frees_the_part_only() {
+    // frees_at(P, M) :- moved_part(M, P).
+    let mut b = B::new();
+    let p_root = b.local("p");
+    let a = b.field(p_root, 0, "a");
+    let other = b.field(p_root, 1, "b");
+    let p = b.var("p");
+    b.f.owner.push((p_root, p));
+    let r = b.var("r");
+    let q = b.var("q");
+    let n0 = b.node("let r, q");
+    b.bind(r, n0);
+    b.bind(q, n0);
+    b.f.points_into.push((r, a));
+    b.f.points_into.push((q, other));
+    let n1 = b.node("take(p.a)");
+    b.mv(p, n1);
+    b.f.moved_part.push((a, n1));
+    let n2 = b.node("print(r, q)");
+    b.use_(r, n2);
+    b.use_(q, n2);
+    let rep = check(&b.f);
+    assert!(rep.violations.error.contains(&(r, n2)));
+    assert!(!rep.violations.error.contains(&(q, n2)));
+    assert_eq!(rep.invalidations[0].cause, Cause::MovePart(a));
+}
+
+#[test]
+fn w0405_a_free_conflicts_with_a_task() {
+    // task_conflict(T, P) :- active(T, P), task_accesses(T, A), frees_at(P, M), overlaps(M, A).
+    let mut b = B::new();
+    let v_root = b.local("v");
+    let elem = b.elem(v_root);
+    let v = b.var("v");
+    b.f.owner.push((v_root, v));
+    let t = b.f.add_task(TaskKind::Spawn, Span::default());
+    let n0 = b.node("spawn");
+    b.f.spawned_at.push((t, n0));
+    b.f.task_reads.push((t, elem));
+    let n1 = b.node("take(v)");
+    b.mv(v, n1);
+    let rep = check(&b.f);
+    assert!(rep.violations.task_conflict.contains(&(t, n1)));
+    assert_eq!(rep.conflicts[0].free, Some(Cause::Move(v)));
+    // A free after the join is not a conflict.
+    b.f.moved_at.clear();
+    let n2 = b.node("join");
+    b.f.joined_at.push((t, n2));
+    let n3 = b.node("end of v");
+    b.f.scope_end.push((v, n3));
+    assert!(check(&b.f).violations.task_conflict.is_empty());
+}
+
+#[test]
+fn w0405_a_reference_is_not_an_access_by_itself() {
+    // A use of a holder is an access only through the reads that sema records.
+    let mut b = B::new();
+    let stats = b.param("stats");
+    let count = b.field(stats, 0, "count");
+    let name = b.field(stats, 1, "name");
+    let r = b.var("r");
+    b.f.points_into.push((r, stats));
+    let t = b.f.add_task(TaskKind::Spawn, Span::default());
+    b.f.captures.push((t, r));
+    let n0 = b.node("spawn");
+    b.f.spawned_at.push((t, n0));
+    b.f.task_writes.push((t, count));
+    let n1 = b.node("print(stats.name)");
+    b.use_(r, n1);
+    b.f.reads_at.push((n1, name));
+    assert!(check(&b.f).violations.task_conflict.is_empty());
+    b.f.reads_at.push((n1, count));
+    assert!(check(&b.f).violations.task_conflict.contains(&(t, n1)));
+}
+
+#[test]
 fn w0405_split_halves_are_disjoint() {
     let mut b = B::new();
     let world = b.param("world");
@@ -556,4 +684,193 @@ fn w0801_root_handler_in_library() {
     assert_eq!(v.root_handler_in_lib.len(), 1);
     b.f.library = false;
     assert!(check(&b.f).violations.root_handler_in_lib.is_empty());
+}
+
+#[test]
+fn w0301_a_wildcard_reference_is_invalid_after_an_overlapping_change() {
+    // invalidated_at(R, P) :- points_into(R, Path), wild_at(Path, B), mutates_at(P, M), overlaps(M, B).
+    let mut b = B::new();
+    let world = b.param("world");
+    let ents = b.field(world, 0, "entities");
+    let score = b.field(world, 1, "score");
+    let other = b.param("other");
+    let any = b.f.wildcard(world);
+    let r = b.var("r");
+    let n0 = b.node("let r = f(world)");
+    b.bind(r, n0);
+    b.f.points_into.push((r, any));
+    let n1 = b.node("other.clear()");
+    b.f.mutates_at.push((n1, other));
+    let n2 = b.node("world.entities.clear()");
+    b.f.mutates_at.push((n2, ents));
+    let n3 = b.node("print(r)");
+    b.use_(r, n3);
+    let rep = check(&b.f);
+    assert!(rep.violations.error.contains(&(r, n3)));
+    assert_eq!(rep.invalidations[0].at, n2);
+    // overlaps(P, Q) :- wild_at(P, B), overlaps(B, Q): a wildcard place overlaps
+    // every place inside its base, and nothing else.
+    let n4 = b.node("call");
+    b.f.call_mut.push((n4, score, 0));
+    b.f.call_mut.push((n4, other, 0));
+    b.f.call_arg.push((n4, any, 1));
+    let rep = check(&b.f);
+    assert!(rep.violations.alias_conflict.contains(&(n4, score, any)));
+    assert!(!rep.violations.alias_conflict.contains(&(n4, other, any)));
+}
+
+#[test]
+fn w0301_a_wildcard_mutation_invalidates_every_reference_below_its_base() {
+    // invalidated_at(R, P) :- points_into(R, Path), mutates_at(P, M), wild_at(M, B), prefix(B, Path).
+    let mut b = B::new();
+    let world = b.param("world");
+    let score = b.field(world, 1, "score");
+    let any = b.f.wildcard(world);
+    let r = b.var("r");
+    let n0 = b.node("let r = &world.score");
+    b.bind(r, n0);
+    b.f.points_into.push((r, score));
+    let n1 = b.node("e.hp += 1");
+    let hp = b.field(any, 0, "hp");
+    b.f.mutates_at.push((n1, hp));
+    let n2 = b.node("print(r)");
+    b.use_(r, n2);
+    assert!(check(&b.f).violations.error.contains(&(r, n2)));
+}
+
+/// Returns the rendered diagnostics of a source.
+fn rendered(src: &str) -> String {
+    let checked = crate::check_source("t.wf", src, weft_sema::Options::default());
+    let file = weft_syntax::SourceFile::new("t.wf", src);
+    checked.diags.iter().map(|d| d.render(&file)).collect()
+}
+
+#[test]
+fn w0301_says_why_the_owner_is_gone() {
+    let out = rendered(
+        "fn f() {
+             let keep: Vec<u64> = Vec.new()
+             let q = &keep
+             let g = || { let v: Vec<u64> = Vec.new(); q = &v; 0 }
+             let z = g()
+             print(q)
+         }
+         struct C { items: Vec<u64> }
+         fn h() {
+             let a = Rc.new(C { items: Vec.new() })
+             let r = &a.items
+             a = Rc.new(C { items: Vec.new() })
+             print(r)
+         }",
+    );
+    assert!(
+        out.contains("v : goes out of scope when `g` returns"),
+        "{out}"
+    );
+    assert!(
+        out.contains("r : &Vec<u64> through the `Rc` handle a"),
+        "{out}"
+    );
+    assert!(out.contains("a : new value"), "{out}");
+}
+
+#[test]
+fn an_ill_typed_return_gets_no_place_error() {
+    let out =
+        rendered("fn f() -> u64 { let v: Vec<u64> = Vec.new(); v.push(1); let r = &v[0]; r }");
+    assert!(out.contains("W0102"), "{out}");
+    assert!(!out.contains("W0204"), "{out}");
+}
+
+#[test]
+fn inferred_places_keep_their_names() {
+    let out = rendered(
+        "struct Stats { count: u64, hist: Vec<u64> }
+         struct Cell { v: Vec<u64> }
+         fn priv_bump(s: &Stats) { s.count += 1 }
+         fn shared_caller(s: &Stats @ shared) { priv_bump(s) }
+         fn grow(c: &Cell) { c.v.push(1) }
+         pub fn pub_grow(c: &Cell) { grow(c) }",
+    );
+    assert!(
+        out.contains("`priv_bump` mutates `s.count` through a `@ shared` reference"),
+        "{out}"
+    );
+    assert!(
+        out.contains("must state its effects: `/ mut(c.v)`"),
+        "{out}"
+    );
+}
+
+#[test]
+fn w0301_w0405_a_lent_place_can_change() {
+    // `let first = &w.entities[0]; f(w); print(first)` with `f` a function parameter.
+    let mut b = B::new();
+    let w = b.param("w");
+    let ents = b.field(w, 0, "entities");
+    let elem = b.elem(ents);
+    let first = b.var("first");
+    let n0 = b.node("let first");
+    b.bind(first, n0);
+    b.f.points_into.push((first, elem));
+    let n1 = b.node("f");
+    b.f.lends_mut.push((n1, w));
+    let n2 = b.node("print");
+    b.use_(first, n2);
+    // The signature does not state the mutation: the caller of `f` sees it.
+    b.f.has_signature = true;
+    let r = check(&b.f);
+    assert!(r.violations.error.contains(&(first, n2)));
+    assert_eq!(r.invalidations[0].cause, Cause::Lend(w));
+    assert!(r.violations.unauthorized_mut.is_empty());
+    assert!(r.violations.shared_mutation.is_empty());
+    // A reference into the lent place itself survives.
+    b.f.points_into.clear();
+    b.f.points_into.push((first, w));
+    assert!(check(&b.f).violations.error.is_empty());
+
+    // A task that reads `w.entities` while the parent lends `w`.
+    let mut b = B::new();
+    let w = b.param("w");
+    let ents = b.field(w, 0, "entities");
+    let t = b.f.add_task(TaskKind::Spawn, Span::default());
+    let s = b.node("spawn");
+    b.f.spawned_at.push((t, s));
+    b.f.task_reads.push((t, ents));
+    let n1 = b.node("f");
+    b.f.lends_mut.push((n1, w));
+    let end = b.node("scope end");
+    b.f.joined_at.push((t, end));
+    let r = check(&b.f);
+    assert!(r.violations.task_conflict.contains(&(t, n1)));
+    assert!(r.conflicts[0].lends);
+}
+
+#[test]
+fn w0312_a_lent_place_pairs_with_the_other_arguments() {
+    // `f(w, &w.entities[0])` with `f` a function parameter: both places are lent.
+    let mut b = B::new();
+    let w = b.param("w");
+    let ents = b.field(w, 0, "entities");
+    let elem = b.elem(ents);
+    let n = b.node("f");
+    b.f.lends_mut.push((n, w));
+    b.f.lends_mut.push((n, elem));
+    b.f.call_mut.push((n, w, 0));
+    b.f.call_mut.push((n, elem, 1));
+    b.f.call_arg.push((n, w, 0));
+    b.f.call_arg.push((n, elem, 1));
+    let r = check(&b.f);
+    // Each place pairs with the other one.
+    assert!(r.violations.alias_conflict.contains(&(n, w, elem)));
+    assert!(r.violations.alias_conflict.contains(&(n, elem, w)));
+    // The diagnostics show one error for the call, with the outer place mutated.
+    let ds = crate::diagnose::diagnose(&b.f, &r);
+    let w0312: Vec<_> = ds.iter().filter(|d| d.code == "W0312").collect();
+    assert_eq!(w0312.len(), 1);
+    assert!(
+        w0312[0].message.contains("mutates `w` while"),
+        "{}",
+        w0312[0].message
+    );
 }

@@ -25,7 +25,10 @@ use crate::types::{subst, Display, FnTy, Infer, IntTy, Ty};
 
 mod call;
 mod expr;
+mod fnval;
 mod stmt;
+
+use fnval::{Applied, FnInfo, OpArg, Reach};
 
 /// What a body does, in the places of the enclosing function.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -50,6 +53,89 @@ pub struct Summary {
     pub captures: BTreeSet<VarId>,
     /// Captured variables that the body moves.
     pub moved_captures: BTreeSet<VarId>,
+    /// Owners that the body declares. They go out of scope when the body returns.
+    pub dropped: BTreeSet<VarId>,
+    /// The places that the result of a closure points into.
+    pub ret_refs: Vec<PlaceId>,
+    /// The root place of each reference parameter of a function value, with the
+    /// parameter index. A place below it stands for a place that the call gives.
+    pub param_roots: BTreeMap<PlaceId, usize>,
+    /// The value is a closure of the body, or can be one: it moves, it is not copied.
+    pub literal: bool,
+    /// Function items that a call of the value can call. Their effects resolve where it is called.
+    pub items: BTreeSet<FnId>,
+    /// Function parameters that the value can be.
+    pub params: BTreeSet<usize>,
+    /// The value can be a function value that the body does not know.
+    pub unknown: bool,
+    /// Effects that a call of the value performs where it is called: the effect
+    /// rows of the parameters and unknown values that it can be.
+    pub row: BTreeSet<String>,
+    /// Places that the body gives to its function parameters: the parameter, the
+    /// argument position (`None`: any position), and the place.
+    pub lent: Vec<(usize, Option<usize>, PlaceId)>,
+    /// Places that the body gives to operations of local handlers: the capability,
+    /// the operation and the argument position (`None`: any), and the place.
+    pub op_args: Vec<(CapId, Option<usize>, Option<usize>, PlaceId)>,
+    /// The closures of the body that the value can be.
+    pub members: BTreeSet<usize>,
+    /// Function parameters that the body stores.
+    pub stores: BTreeSet<usize>,
+    /// Places that the body gives to code that can mutate through them: a function
+    /// parameter, an unknown function value or an operation of an outer handler.
+    pub lends: BTreeSet<PlaceId>,
+    /// The summaries of the function values that a call of the value returns.
+    pub rets: BTreeSet<usize>,
+    /// Locals outside the body that the body gives a place below one of its
+    /// parameters: the local and the place.
+    pub binds: Vec<(usize, PlaceId)>,
+}
+
+impl Summary {
+    /// Adds what `o` does: a call of the result can do either.
+    fn union(&mut self, o: &Self) {
+        self.muts.extend(o.muts.iter().copied());
+        self.reads.extend(o.reads.iter().copied());
+        self.escapes.extend(o.escapes.iter().cloned());
+        self.performs.extend(o.performs.iter().copied());
+        self.may_abort |= o.may_abort;
+        self.multi |= o.multi;
+        self.passthrough.extend(o.passthrough.iter().copied());
+        self.own_roots.extend(o.own_roots.iter().copied());
+        self.captures.extend(o.captures.iter().copied());
+        self.moved_captures.extend(o.moved_captures.iter().copied());
+        self.dropped.extend(o.dropped.iter().copied());
+        self.ret_refs.extend(o.ret_refs.iter().copied());
+        self.param_roots
+            .extend(o.param_roots.iter().map(|(&r, &i)| (r, i)));
+        self.literal |= o.literal;
+        self.items.extend(o.items.iter().copied());
+        self.params.extend(o.params.iter().copied());
+        self.unknown |= o.unknown;
+        self.row.extend(o.row.iter().cloned());
+        self.lent.extend(o.lent.iter().copied());
+        self.op_args.extend(o.op_args.iter().copied());
+        self.members.extend(o.members.iter().copied());
+        self.stores.extend(o.stores.iter().copied());
+        self.lends.extend(o.lends.iter().copied());
+        self.rets.extend(o.rets.iter().copied());
+        for b in &o.binds {
+            if !self.binds.contains(b) {
+                self.binds.push(*b);
+            }
+        }
+    }
+
+    /// Adds what a call of the function value that `o` stands for can do. A call of
+    /// the result runs it later, and a callee that calls the result sees it here.
+    fn union_ret(&mut self, o: &Self) {
+        let mut o = o.clone();
+        o.ret_refs.clear();
+        o.dropped.clear();
+        o.rets.clear();
+        o.literal = false;
+        self.union(&o);
+    }
 }
 
 /// The result of lowering one function.
@@ -82,8 +168,11 @@ struct Local {
     uniq: bool,
     task: Option<TaskId>,
     summary: Option<usize>,
-    fn_param: Option<usize>,
+    /// A function parameter: the summary index of its body and the parameter index.
+    fn_param: Option<(usize, usize)>,
     cont: Option<ContInfo>,
+    /// The local has a value: a new value joins the function values.
+    bound: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -97,34 +186,69 @@ struct Val {
     task: Option<TaskId>,
     parts: Option<Vec<Self>>,
     place: Option<LVal>,
-    fn_param: Option<usize>,
+    fn_param: Option<(usize, usize)>,
     item: Option<FnId>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct LVal {
     places: Vec<PlaceId>,
     ty: Ty,
     owner: Option<usize>,
     through_ref: bool,
     uniq: bool,
+    /// The `Rc` handles on the way to the place. The place stays valid only
+    /// while each handle keeps its value. A reference to the place also points
+    /// into these handle places.
+    deps: Vec<PlaceId>,
 }
 
+#[derive(Clone)]
 struct Frame {
     names: Vec<(String, usize)>,
     barrier: Option<usize>,
 }
 
+#[derive(Clone)]
 struct HandlerFrame {
     effect: String,
     cap: CapId,
     multi: bool,
 }
 
+#[derive(Clone)]
 struct LoopFrame {
     header: NodeId,
     exit: NodeId,
     frames: usize,
+}
+
+/// Returns the effect row of a function type.
+fn fn_row(t: &Ty) -> Option<Vec<String>> {
+    match t {
+        Ty::Fn(f) => f.effects.clone(),
+        _ => None,
+    }
+}
+
+/// The span of the value of a block: its last statement.
+fn block_tail(b: &Block) -> Span {
+    match b.stmts.last() {
+        Some(Stmt {
+            kind: StmtKind::Expr(e),
+            ..
+        }) => expr_tail(e),
+        Some(s) => s.span,
+        None => b.span,
+    }
+}
+
+/// The span of the value of an expression: the last statement of a block.
+fn expr_tail(e: &Expr) -> Span {
+    match &e.kind {
+        ExprKind::Block(b) => block_tail(b),
+        _ => e.span,
+    }
 }
 
 /// A path that names something other than a value.
@@ -134,7 +258,33 @@ enum PathRef {
     Effect(usize),
 }
 
+/// A handler whose clauses are lowered: what they do at each node that runs them.
+#[derive(Clone)]
+struct Handled {
+    /// The capability of the handler.
+    cap: CapId,
+    /// Each clause: its operation, its summary and its resumes.
+    clauses: Vec<(Option<usize>, Summary, Vec<NodeId>)>,
+    /// The places outside the clauses that they mutate.
+    footprint: Vec<PlaceId>,
+    /// The places outside the clauses that they lend.
+    lent: Vec<PlaceId>,
+    /// The captures, reads and locals of the clauses.
+    clause_sum: Summary,
+    /// The resumes of the clauses.
+    resumes: Vec<NodeId>,
+    /// The places that the handled computation changes.
+    changes: Vec<PlaceId>,
+}
+
 /// The lowering state of one function.
+///
+/// A loop body can be lowered more than once (`lower_loop`). A pass after the
+/// first starts from a copy of the state at the loop head. Only the interned
+/// tables stay from the pass before: places, roots, variables, closure
+/// summaries and the inference table. Put a new field that can refer to these
+/// tables in `lower_loop` too.
+#[derive(Clone)]
 pub struct Lower<'p> {
     prog: &'p Program,
     sigs: &'p [FnSig],
@@ -163,6 +313,27 @@ pub struct Lower<'p> {
     cap_calls: Vec<(NodeId, CapId)>,
     resumes: Vec<(NodeId, CapId)>,
     match_moves: bool,
+    match_deps: Vec<PlaceId>,
+    /// The handle places of `LVal::deps`.
+    dep_places: BTreeSet<PlaceId>,
+    /// The open statements: the frame depth at the start, and the owners of
+    /// the temporaries that go out of scope at the end.
+    stmt_temps: Vec<(usize, Vec<VarId>)>,
+    /// The function values that the function returns.
+    rets: Vec<fnval::RowFn>,
+    /// The places that nodes give to operations of local handlers.
+    op_args: Vec<OpArg>,
+    /// Function values that the body stores where it does not follow them.
+    escaped: Vec<fnval::Stored>,
+    /// The nodes where a stored function value can run.
+    reaches: Vec<Reach>,
+    /// The nodes where a summary runs.
+    applied: Vec<Applied>,
+    /// The handlers whose clauses are lowered.
+    handled: Vec<Handled>,
+    /// A call of a function value that the body does not know can resume a
+    /// `multi` continuation more than once.
+    unknown_multi: bool,
 }
 
 impl<'p> Lower<'p> {
@@ -208,6 +379,16 @@ impl<'p> Lower<'p> {
             cap_calls: Vec::new(),
             resumes: Vec::new(),
             match_moves: false,
+            match_deps: Vec::new(),
+            dep_places: BTreeSet::new(),
+            stmt_temps: Vec::new(),
+            rets: Vec::new(),
+            op_args: Vec::new(),
+            escaped: Vec::new(),
+            reaches: Vec::new(),
+            applied: Vec::new(),
+            handled: Vec::new(),
+            unknown_multi: false,
         }
     }
 
@@ -258,6 +439,79 @@ impl<'p> Lower<'p> {
     fn start(&mut self, span: Span, label: &str) -> NodeId {
         self.cur = None;
         self.emit(span, label, String::new())
+    }
+
+    /// Writes the queued uses and reads into a new node on the current path.
+    /// Call it before control leaves a branch, a loop body or a component, so
+    /// that the queue does not go into a node of another path.
+    fn flush(&mut self, span: Span) {
+        if self.pend_uses.is_empty() && self.pend_reads.is_empty() {
+            return;
+        }
+        if self.cur.is_none() {
+            // The queue belongs to code that cannot run.
+            self.pend_uses.clear();
+            self.pend_reads.clear();
+            return;
+        }
+        let _ = self.emit(span, "use", String::new());
+    }
+
+    /// Takes the queue away before a new component starts.
+    fn take_pending(&mut self) -> (Vec<VarId>, Vec<PlaceId>) {
+        (
+            std::mem::take(&mut self.pend_uses),
+            std::mem::take(&mut self.pend_reads),
+        )
+    }
+
+    /// Puts back a queue that `take_pending` took.
+    fn restore_pending(&mut self, saved: (Vec<VarId>, Vec<PlaceId>)) {
+        let (mut uses, mut reads) = saved;
+        uses.append(&mut self.pend_uses);
+        reads.append(&mut self.pend_reads);
+        self.pend_uses = uses;
+        self.pend_reads = reads;
+    }
+
+    /// Holds a reference value in a temporary from this point, so that later
+    /// code that invalidates it is seen. The consumer must use the temporary.
+    fn hold(&mut self, v: &Val, name: &str, span: Span) -> Option<VarId> {
+        if v.var.is_some() {
+            return None;
+        }
+        self.hold_as(v, name, VarKind::Temp, span)
+    }
+
+    /// Holds an operand while the later operands run. It holds the value of a
+    /// variable too, because a later operand can give the variable a new value.
+    fn hold_later(&mut self, v: &Val, name: &str, span: Span) -> Option<VarId> {
+        self.hold_as(v, name, VarKind::Temp, span)
+    }
+
+    /// Returns the variable that a call uses for an argument: a held copy if
+    /// later arguments follow, else the variable of the value or a temporary.
+    fn hold_operand(&mut self, v: &Val, later: bool, span: Span) -> Option<VarId> {
+        if later {
+            self.hold_later(v, "argument", span).or(v.var)
+        } else {
+            v.var.or_else(|| self.hold(v, "argument", span))
+        }
+    }
+
+    /// Holds a reference value in a new variable of kind `kind`.
+    fn hold_as(&mut self, v: &Val, name: &str, kind: VarKind, span: Span) -> Option<VarId> {
+        if v.refs.is_empty() || self.cur.is_none() {
+            return None;
+        }
+        let info = self.var_info(name, kind, span, &v.ty, v.uniq);
+        let var = self.facts.add_var(info);
+        let n = self.emit(span, name, String::new());
+        self.bind(var, n);
+        for &p in &v.refs {
+            self.facts.points_into.push((var, p));
+        }
+        Some(var)
     }
 
     fn sum(&mut self) -> &mut Summary {
@@ -362,6 +616,48 @@ impl<'p> Lower<'p> {
         p
     }
 
+    /// Makes the root place of a temporary value. A temporary that is not plain
+    /// data goes out of scope at the end of its statement, as in the interpreter.
+    fn temp_root(&mut self, span: Span, ty: &Ty) -> PlaceId {
+        let r = self.root("temporary", RootKind::Local);
+        if !self.may_free(ty) {
+            return r;
+        }
+        let shown = self.show(ty);
+        let var = self
+            .facts
+            .add_var(VarInfo::plain("temporary", VarKind::Temp, span, shown));
+        self.facts.owner.push((r, var));
+        if let Some(si) = self.frames.iter().rev().find_map(|f| f.barrier) {
+            self.sums[si].dropped.insert(var);
+        }
+        if let Some((_, temps)) = self.stmt_temps.last_mut() {
+            temps.push(var);
+        }
+        r
+    }
+
+    /// Opens a statement. The temporaries from here go out of scope at its end.
+    fn open_stmt(&mut self) {
+        let depth = self.frames.len();
+        self.stmt_temps.push((depth, Vec::new()));
+    }
+
+    /// Closes a statement: its temporaries go out of scope at its end.
+    fn close_stmt(&mut self, span: Span) {
+        let Some((_, temps)) = self.stmt_temps.pop() else {
+            return;
+        };
+        if temps.is_empty() || self.cur.is_none() {
+            return;
+        }
+        let end = Span::new(span.hi.saturating_sub(1), span.hi);
+        let n = self.emit(end, "end of statement", String::new());
+        for v in temps {
+            self.facts.scope_end.push((v, n));
+        }
+    }
+
     fn group_root(&mut self, adt: usize) -> PlaceId {
         if let Some(&p) = self.groups.get(&adt) {
             return p;
@@ -398,6 +694,7 @@ impl<'p> Lower<'p> {
             for st in &sp.steps {
                 p = match st {
                     SigStep::Step(s, text) => self.child(p, *s, text),
+                    SigStep::Wild => self.facts.wildcard(p),
                     SigStep::Seg {
                         label,
                         hi,
@@ -419,6 +716,158 @@ impl<'p> Lower<'p> {
             out.push(p);
         }
         out
+    }
+
+    /// Returns the handle places of `Rc` handles at `ps`. A reference through a
+    /// handle depends on the handle: a move, a scope end or a new value of the
+    /// handle can free the object.
+    fn handle_deps(&mut self, ps: &[PlaceId]) -> Vec<PlaceId> {
+        let step = Step {
+            kind: StepKind::Deref,
+            unstable: true,
+        };
+        let mut out = Vec::new();
+        for &p in ps {
+            let d = self.child(p, step, ".*");
+            self.dep_places.insert(d);
+            out.push(d);
+        }
+        out
+    }
+
+    /// Returns the handle places of the `Rc` handles in a value of type `ty` at
+    /// place `p`. A group place that a callee reaches through the value depends
+    /// on them. Past the depth limit, it depends on any handle inside `p`.
+    fn inner_handle_deps(&mut self, p: PlaceId, ty: &Ty, depth: usize) -> Vec<PlaceId> {
+        if depth > 4 {
+            let any = self.facts.wildcard(p);
+            return self.handle_deps(&[any]);
+        }
+        let t = self.inf.deep(ty);
+        let mut out = Vec::new();
+        match &t {
+            Ty::Ref(_) => out = self.handle_deps(&[p]),
+            Ty::Tuple(ts) => {
+                for (i, ft) in ts.iter().enumerate() {
+                    let step = Step {
+                        kind: StepKind::Field {
+                            id: u32::try_from(i).unwrap_or(0),
+                        },
+                        unstable: false,
+                    };
+                    let c = self.child(p, step, &format!(".{i}"));
+                    out.extend(self.inner_handle_deps(c, ft, depth + 1));
+                }
+            }
+            Ty::Adt(a, args) => match &self.prog.adts[*a].kind {
+                AdtKind::Extern {
+                    deref: Some(Deref::Group),
+                    ..
+                } => out = self.handle_deps(&[p]),
+                AdtKind::Struct(_) | AdtKind::Enum(_) => {
+                    let names: Vec<String> = match &self.prog.adts[*a].kind {
+                        AdtKind::Struct(fs) => fs.iter().map(|f| f.name.clone()).collect(),
+                        AdtKind::Enum(vs) => vs.iter().map(|v| v.name.clone()).collect(),
+                        AdtKind::Extern { .. } => Vec::new(),
+                    };
+                    for name in &names {
+                        if let Some((steps, next, _)) = field_step(self.prog, &t, name) {
+                            let mut c = p;
+                            for (st, text) in &steps {
+                                c = self.child(c, *st, text);
+                            }
+                            out.extend(self.inner_handle_deps(c, &next, depth + 1));
+                        }
+                    }
+                }
+                AdtKind::Extern { .. } => {
+                    if let Some((Some(step), elem)) = elem_step(self.prog, &t) {
+                        let c = self.child(p, step, "[]");
+                        out.extend(self.inner_handle_deps(c, &elem, depth + 1));
+                    } else if let (AdtKind::Extern { deref: Some(d), .. }, Some(inner)) =
+                        (&self.prog.adts[*a].kind, args.first())
+                    {
+                        let step = Step {
+                            kind: StepKind::Deref,
+                            unstable: *d == Deref::Unstable,
+                        };
+                        let inner = inner.clone();
+                        let c = self.child(p, step, "");
+                        out.extend(self.inner_handle_deps(c, &inner, depth + 1));
+                    }
+                }
+            },
+            _ => {}
+        }
+        out
+    }
+
+    /// Returns the handle places that a group place in a call result depends
+    /// on: the handle places of the arguments, and the `Rc` handles inside the
+    /// values that the reference arguments point to.
+    fn group_arg_deps(&mut self, args: &[Vec<PlaceId>], ptys: &[Ty]) -> Vec<PlaceId> {
+        let mut out = Vec::new();
+        for (i, ps) in args.iter().enumerate() {
+            let pointee = match ptys.get(i).map(|t| self.inf.shallow(t)) {
+                Some(Ty::Ref(inner)) => Some(*inner),
+                _ => None,
+            };
+            for &p in ps {
+                if self.is_dep(p) {
+                    out.push(p);
+                } else if let Some(t) = &pointee {
+                    out.extend(self.inner_handle_deps(p, t, 0));
+                }
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// Returns true if `p` is a handle place of `handle_deps` or inside one.
+    fn is_dep(&self, p: PlaceId) -> bool {
+        let mut at = Some(p);
+        while let Some(a) = at {
+            if self.dep_places.contains(&a) {
+                return true;
+            }
+            at = self.facts.place(a).parent;
+        }
+        false
+    }
+
+    /// Splits the places of a reference into the places it names and its handle places.
+    fn split_deps(&self, refs: &[PlaceId]) -> (Vec<PlaceId>, Vec<PlaceId>) {
+        refs.iter().partition(|&&p| !self.is_dep(p))
+    }
+
+    /// Returns true if the signature place `a` allows a reference into `r`.
+    /// Below a plain place only stable steps can follow, because a caller sees
+    /// the reference at `a`. Below a wildcard place any step can follow.
+    fn sig_allows(&self, a: PlaceId, r: PlaceId) -> bool {
+        let (pa, pr) = (self.facts.place(a), self.facts.place(r));
+        if pa.root != pr.root {
+            return false;
+        }
+        match (pa.is_wildcard(), pa.parent) {
+            (true, Some(base)) => {
+                weft_verified::places::within(&pr.steps, &self.facts.place(base).steps)
+            }
+            _ => {
+                weft_verified::places::within(&pr.steps, &pa.steps)
+                    && pr.steps[pa.steps.len()..].iter().all(|s| !s.unstable)
+            }
+        }
+    }
+
+    /// Returns true if `r` is inside `a` only through an unstable step below it.
+    fn below_unstable(&self, a: PlaceId, r: PlaceId) -> bool {
+        let (pa, pr) = (self.facts.place(a), self.facts.place(r));
+        pa.root == pr.root
+            && !pa.is_wildcard()
+            && weft_verified::places::within(&pr.steps, &pa.steps)
+            && !self.sig_allows(a, r)
     }
 
     fn place_text(&self, ps: &[PlaceId]) -> String {
@@ -468,6 +917,7 @@ impl<'p> Lower<'p> {
             summary: None,
             fn_param: None,
             cont: None,
+            bound: false,
         });
         let l = self.locals.len() - 1;
         let top = self.frames.len() - 1;
@@ -475,22 +925,41 @@ impl<'p> Lower<'p> {
         l
     }
 
+    /// Gives local `l` the root place `r`: the local owns the memory under `r`.
+    fn set_root(&mut self, l: usize, r: PlaceId) {
+        self.locals[l].root = Some(r);
+        let var = self.locals[l].var;
+        self.facts.owner.push((r, var));
+        let depth = self.local_frame(l);
+        if let Some(si) = self.frames[..=depth].iter().rev().find_map(|f| f.barrier) {
+            self.sums[si].dropped.insert(var);
+        }
+    }
+
     /// Gives a local the value `v` at node `n`.
     fn assign_local(&mut self, l: usize, v: &Val, n: NodeId) {
         let var = self.locals[l].var;
         self.bind(var, n);
         for &p in &v.refs {
-            self.facts.points_into.push((var, p));
-            if !self.locals[l].refs.contains(&p) {
-                self.locals[l].refs.push(p);
-            }
+            self.point_local(l, p);
         }
         if v.task.is_some() {
             self.locals[l].task = v.task;
         }
-        if v.summary.is_some() {
-            self.locals[l].summary = v.summary;
+        // A function value. A new value of the local joins the old one: a later
+        // call can call either.
+        if let Ty::Fn(fty) = self.inf.shallow(&self.locals[l].ty) {
+            let new = (self.fn_info(v), fn_row(&self.inf.shallow(&v.ty)));
+            let info = if self.locals[l].bound {
+                let old = (self.local_fn_info(l), fty.effects.clone());
+                self.join_fn(&old, &new)
+            } else {
+                new.0
+            };
+            self.locals[l].summary = info.summary;
+            self.locals[l].fn_param = info.param;
         }
+        self.locals[l].bound = true;
         if v.uniq {
             self.locals[l].uniq = true;
             self.facts.vars[var.index()].uniq = true;
@@ -507,7 +976,28 @@ impl<'p> Lower<'p> {
         {
             let name = self.locals[l].name.clone();
             let r = self.root(&name, RootKind::Local);
-            self.locals[l].root = Some(r);
+            self.set_root(l, r);
+        }
+    }
+
+    /// Local `l` can point into place `p`. A place below a parameter of the body
+    /// around the node, given to a local outside the body, is a place of each call.
+    fn point_local(&mut self, l: usize, p: PlaceId) {
+        let var = self.locals[l].var;
+        self.facts.points_into.push((var, p));
+        if !self.locals[l].refs.contains(&p) {
+            self.locals[l].refs.push(p);
+        }
+        let arg = self.facts.roots[self.facts.place(p).root.index()].kind == RootKind::Arg;
+        let barrier = self.frames.iter().rposition(|f| f.barrier.is_some());
+        if let (true, Some(bi)) = (arg, barrier) {
+            if self.local_frame(l) < bi {
+                if let Some(si) = self.frames[bi].barrier {
+                    if !self.sums[si].binds.contains(&(l, p)) {
+                        self.sums[si].binds.push((l, p));
+                    }
+                }
+            }
         }
     }
 
@@ -527,7 +1017,7 @@ impl<'p> Lower<'p> {
     // Type properties
     // -----------------------------------------------------------------------
 
-    fn adt_fields(&self, t: &Ty) -> Vec<Ty> {
+    pub(super) fn adt_fields(&self, t: &Ty) -> Vec<Ty> {
         match t {
             Ty::Adt(a, args) => match &self.prog.adts[*a].kind {
                 AdtKind::Struct(fs) => fs.iter().map(|f| subst(&f.ty, args)).collect(),
@@ -557,6 +1047,11 @@ impl<'p> Lower<'p> {
         self.adt_fields(&t)
             .iter()
             .any(|f| self.deep_any(f, pred, depth + 1))
+    }
+
+    /// Returns true if a value of type `t` can hold a reference.
+    fn holds_refs(&self, t: &Ty) -> bool {
+        self.deep_any(t, &|_, t| matches!(t, Ty::Ref(_) | Ty::Slice(_)), 0)
     }
 
     fn is_linear(&self, t: &Ty) -> bool {
@@ -606,7 +1101,7 @@ impl<'p> Lower<'p> {
             | Ty::Error
             | Ty::Var(_)
             | Ty::Scope => true,
-            Ty::Fn(f) => f.summary.is_none(),
+            Ty::Fn(f) => f.summary.is_none_or(|s| !self.closures[s].literal),
             Ty::Tuple(ts) => ts.iter().all(|t| self.is_copy_d(t, d + 1)),
             Ty::Adt(a, args) => {
                 let def = &self.prog.adts[a];
@@ -634,6 +1129,13 @@ impl<'p> Lower<'p> {
             }
             _ => false,
         }
+    }
+
+    /// Returns true if the end of a variable of type `t` can free memory: the
+    /// value is not plain data, or its type is not known yet.
+    fn may_free(&self, t: &Ty) -> bool {
+        let t = self.inf.shallow(t);
+        matches!(t, Ty::Var(_)) || !self.is_copy(&t)
     }
 
     /// Scalars: integers, `bool`, unit, `String` and `Duration`. A loop or a match

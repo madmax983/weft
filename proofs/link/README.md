@@ -146,6 +146,13 @@ in `ann[n].vars`.
 `lemma_grp_invalidates` proves that `grp_invalidates` is the B1 kill rule
 (`strict_child`).
 
+`spec/weft.dl` has more `invalidated_at` rules: a free of an owner
+(`frees_at`), a wildcard place (`wild_at`) and a place that a call lends
+(`lends_mut`). The link definition has only the call rule. So the theorems
+apply to `v` only when these other rules do not fire for `v`. The other rules
+only add nodes to `gen`, so the checker set gets larger and the checker
+rejects more. The link does not prove this step.
+
 ### Hypotheses
 
 The link does not prove these hypotheses. Tests check them.

@@ -1,9 +1,10 @@
 //! Expressions, places, closures, handlers and scopes.
 
 use super::{
-    ast, effects, elem_step, field_step, AdtKind, BinOp, ContInfo, Deref, Expr, ExprKind, FnTy,
-    Frame, HandlerFrame, HandlerInfo, IntTy, ItemRef, LVal, Lit, Lower, NodeId, PathRef, Pattern,
-    PlaceId, Rc, RootKind, Span, StrPart, Summary, Ty, UnOp, Val, VarKind, PRELUDE,
+    ast, block_tail, effects, elem_step, expr_tail, field_step, AdtKind, BinOp, ContInfo, Deref,
+    Expr, ExprKind, FnId, FnTy, Frame, HandlerFrame, HandlerInfo, IntTy, ItemRef, LVal, Lit, Lower,
+    NodeId, PathRef, Pattern, PlaceId, Rc, RootKind, Span, StrPart, Summary, Ty, UnOp, Val,
+    VarKind, PRELUDE,
 };
 use weft_facts::{Step, StepKind};
 
@@ -68,10 +69,18 @@ impl Lower<'_> {
                 }
             }
             ExprKind::Tuple(es) => {
-                let parts: Vec<Val> = es.iter().map(|x| self.expr(x)).collect();
-                for (p, x) in parts.iter().zip(es) {
-                    self.consume(p, x.span);
+                // Move and hold each part before the next one runs.
+                let mut parts: Vec<Val> = Vec::new();
+                let mut held = Vec::new();
+                for (i, x) in es.iter().enumerate() {
+                    let p = self.expr(x);
+                    self.consume(&p, x.span);
+                    if i + 1 < es.len() {
+                        held.extend(self.hold_later(&p, "tuple part", x.span));
+                    }
+                    parts.push(p);
                 }
+                self.pend_uses.extend(held);
                 let ty = Ty::Tuple(parts.iter().map(|p| p.ty.clone()).collect());
                 let refs = parts.iter().flat_map(|p| p.refs.clone()).collect();
                 Val {
@@ -96,6 +105,7 @@ impl Lower<'_> {
                 for x in es {
                     let v = self.expr(x);
                     self.unify(&t, &v.ty, x.span);
+                    self.escape(&v);
                     self.consume(&v, x.span);
                 }
                 let ty = self.b.vec.map_or(Ty::Error, |v| Ty::Adt(v, vec![t]));
@@ -127,6 +137,7 @@ impl Lower<'_> {
                 for x in es {
                     let v = self.expr(x);
                     self.unify(&elem, &v.ty, x.span);
+                    self.escape(&v);
                     self.consume(&v, x.span);
                 }
                 if u64::try_from(es.len()).ok() != Some(n) {
@@ -180,29 +191,7 @@ impl Lower<'_> {
             }
             PathRef::Mod(m) => {
                 if let Some(ItemRef::Fn(f)) = self.prog.lookup_in(m, &name.name) {
-                    let id = ast::Ident {
-                        name: self.prog.fns[f].name.clone(),
-                        span: name.span,
-                    };
-                    let _ = id;
-                    let sig = &self.sigs[f];
-                    let targs: Vec<Ty> = sig.generics.iter().map(|_| self.inf.fresh()).collect();
-                    let ty = Ty::Fn(Rc::new(FnTy {
-                        params: sig
-                            .params
-                            .iter()
-                            .map(|p| super::subst(&p.ty, &targs))
-                            .collect(),
-                        ret: super::subst(&sig.ret, &targs),
-                        effects: Some(effects::close(&sig.effects.named).into_iter().collect()),
-                        summary: None,
-                        item: Some(f),
-                    }));
-                    Some(Val {
-                        ty,
-                        item: Some(f),
-                        ..Val::default()
-                    })
+                    Some(self.item_value(f, name.span))
                 } else {
                     self.err(
                         "W0104",
@@ -253,6 +242,12 @@ impl Lower<'_> {
         if let Some(l) = self.lookup_local(&id.name) {
             self.use_local(l);
             let loc = self.locals[l].clone();
+            // A reference used as a value reads the places that it points into.
+            if matches!(self.inf.shallow(&loc.ty), Ty::Ref(_)) {
+                for &p in &loc.refs {
+                    self.read(p);
+                }
+            }
             let place = if loc.ty.is_ref() {
                 None
             } else {
@@ -262,6 +257,7 @@ impl Lower<'_> {
                     owner: Some(l),
                     through_ref: false,
                     uniq: loc.uniq,
+                    deps: Vec::new(),
                 })
             };
             return Val {
@@ -279,24 +275,7 @@ impl Lower<'_> {
             };
         }
         if let Some(ItemRef::Fn(f)) = self.prog.lookup(self.module, &id.name) {
-            let sig = &self.sigs[f];
-            let targs: Vec<Ty> = sig.generics.iter().map(|_| self.inf.fresh()).collect();
-            let ty = Ty::Fn(Rc::new(FnTy {
-                params: sig
-                    .params
-                    .iter()
-                    .map(|p| super::subst(&p.ty, &targs))
-                    .collect(),
-                ret: super::subst(&sig.ret, &targs),
-                effects: Some(effects::close(&sig.effects.named).into_iter().collect()),
-                summary: None,
-                item: Some(f),
-            }));
-            Val {
-                ty,
-                item: Some(f),
-                ..Val::default()
-            }
+            self.item_value(f, span)
         } else {
             if let Some(v) = self.unit_variant(&id.name) {
                 return v;
@@ -307,6 +286,42 @@ impl Lower<'_> {
                 ..Val::default()
             }
         }
+    }
+
+    /// A function item used as a value.
+    fn item_value(&mut self, f: FnId, span: Span) -> Val {
+        // A call through the value can install the root handlers of `sim.run`.
+        if self.is_sim_run(f) && self.library && !self.in_test {
+            self.err(
+                "W0802",
+                "only binaries and tests can install root handlers (`sim.run`)",
+                span,
+            );
+        }
+        let sig = &self.sigs[f];
+        let targs: Vec<Ty> = sig.generics.iter().map(|_| self.inf.fresh()).collect();
+        let ty = Ty::Fn(Rc::new(FnTy {
+            params: sig
+                .params
+                .iter()
+                .map(|p| super::subst(&p.ty, &targs))
+                .collect(),
+            ret: super::subst(&sig.ret, &targs),
+            effects: Some(effects::close(&sig.effects.named).into_iter().collect()),
+            summary: None,
+            item: Some(f),
+        }));
+        Val {
+            ty,
+            item: Some(f),
+            ..Val::default()
+        }
+    }
+
+    /// Returns true for the test harness `sim.run` of the prelude.
+    pub(super) fn is_sim_run(&self, f: FnId) -> bool {
+        let def = &self.prog.fns[f];
+        def.is_std && def.path == "run" && self.prog.mods[def.module].name == "sim"
     }
 
     fn unit_variant(&mut self, name: &str) -> Option<Val> {
@@ -375,19 +390,23 @@ impl Lower<'_> {
                 self.use_local(l);
                 let loc = self.locals[l].clone();
                 match self.inf.shallow(&loc.ty) {
-                    Ty::Ref(inner) => Some(LVal {
-                        places: loc.refs,
-                        ty: *inner,
-                        owner: None,
-                        through_ref: true,
-                        uniq: loc.uniq,
-                    }),
+                    Ty::Ref(inner) => {
+                        let (places, deps) = self.split_deps(&loc.refs);
+                        Some(LVal {
+                            places,
+                            ty: *inner,
+                            owner: None,
+                            through_ref: true,
+                            uniq: loc.uniq,
+                            deps,
+                        })
+                    }
                     t => {
                         let r = if let Some(r) = loc.root {
                             r
                         } else {
                             let r = self.root(&loc.name, RootKind::Local);
-                            self.locals[l].root = Some(r);
+                            self.set_root(l, r);
                             r
                         };
                         Some(LVal {
@@ -396,6 +415,7 @@ impl Lower<'_> {
                             owner: Some(l),
                             through_ref: false,
                             uniq: loc.uniq,
+                            deps: Vec::new(),
                         })
                     }
                 }
@@ -418,7 +438,7 @@ impl Lower<'_> {
                     self.unify(&Ty::Int(IntTy::Usize), &t, ix.span);
                 }
                 let t = self.deref_ty(&lv.ty);
-                let rt = self.inf.resolve(&t);
+                let rt = self.inf.deep(&t);
                 if let Some((step, elem)) = elem_step(self.prog, &rt) {
                     let places = match step {
                         Some(s) => lv.places.iter().map(|&p| self.child(p, s, "[]")).collect(),
@@ -466,18 +486,21 @@ impl Lower<'_> {
                         Ty::Adt(ia, _) => self.group_root(ia),
                         _ => self.group_root(a),
                     };
+                    let mut deps = lv.deps.clone();
+                    deps.extend(self.handle_deps(&lv.places));
                     lv = LVal {
                         places: vec![g],
                         ty: inner,
                         owner: None,
                         through_ref: true,
                         uniq: false,
+                        deps,
                     };
                 }
                 _ => break,
             }
         }
-        let t = self.inf.resolve(&lv.ty);
+        let t = self.inf.deep(&lv.ty);
         if let Some((steps, next, _)) = field_step(self.prog, &t, &name.name) {
             let mut places = lv.places.clone();
             for (s, text) in &steps {
@@ -520,23 +543,11 @@ impl Lower<'_> {
         for &p in &lv.places {
             self.read(p);
         }
-        // A reference field of a `!Move` struct points into the same struct.
-        let mut refs = Vec::new();
-        if let (ExprKind::Field { base, name }, Ty::Ref(_)) = (&e.kind, self.inf.shallow(&lv.ty)) {
-            if let Some(blv) = self.place_expr(base) {
-                if let Ty::Adt(a, _) = self.deref_ty(&blv.ty) {
-                    if let AdtKind::Struct(fs) = &self.prog.adts[a].kind {
-                        if let Some(sp) = fs
-                            .iter()
-                            .find(|f| f.name == name.name)
-                            .and_then(|f| f.place.clone())
-                        {
-                            refs = self.subst_place(&sp, std::slice::from_ref(&blv.places), 0);
-                        }
-                    }
-                }
-            }
-        }
+        let refs = if matches!(self.inf.shallow(&lv.ty), Ty::Ref(_)) {
+            self.field_referents(e).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         Val {
             ty: lv.ty.clone(),
             refs,
@@ -545,13 +556,33 @@ impl Lower<'_> {
         }
     }
 
+    /// Returns the places that a reference field of a `!Move` struct points
+    /// into: the place of the field type, in the same struct.
+    pub(super) fn field_referents(&mut self, e: &Expr) -> Option<Vec<PlaceId>> {
+        let ExprKind::Field { base, name } = &e.kind else {
+            return None;
+        };
+        let blv = self.place_expr(base)?;
+        let Ty::Adt(a, _) = self.deref_ty(&blv.ty) else {
+            return None;
+        };
+        let AdtKind::Struct(fs) = &self.prog.adts[a].kind else {
+            return None;
+        };
+        let sp = fs
+            .iter()
+            .find(|f| f.name == name.name)
+            .and_then(|f| f.place.clone())?;
+        Some(self.subst_place(&sp, std::slice::from_ref(&blv.places), 0))
+    }
+
     fn borrow(&mut self, inner: &Expr) -> Val {
         // `&x[]` and `&x.f` name places; `&value` borrows a temporary.
         let lv = match &inner.kind {
             ExprKind::Index { base, index: None } => {
                 let lv = self.place_or_temp(base);
                 let t = self.deref_ty(&lv.ty);
-                let rt = self.inf.resolve(&t);
+                let rt = self.inf.deep(&t);
                 match elem_step(self.prog, &rt) {
                     Some((step, elem)) => {
                         let places = match step {
@@ -573,20 +604,20 @@ impl Lower<'_> {
                 } else {
                     let v = self.expr(inner);
                     self.consume(&v, inner.span);
-                    let r = self.root("temporary", RootKind::Local);
+                    let r = self.temp_root(inner.span, &v.ty);
                     LVal {
                         places: vec![r],
                         ty: v.ty,
-                        owner: None,
-                        through_ref: false,
-                        uniq: false,
+                        ..LVal::default()
                     }
                 }
             }
         };
+        let mut refs = lv.places;
+        refs.extend(lv.deps);
         Val {
-            ty: Ty::Ref(Box::new(lv.ty.clone())),
-            refs: lv.places,
+            ty: Ty::Ref(Box::new(lv.ty)),
+            refs,
             uniq: false,
             ..Val::default()
         }
@@ -601,6 +632,7 @@ impl Lower<'_> {
             let b = self.expr(rhs);
             let bt = self.deref_ty(&b.ty);
             self.unify(&Ty::Bool, &bt, rhs.span);
+            self.flush(expr_tail(rhs));
             let join = self.emit(span, "join", String::new());
             self.facts.cfg_edge.push((br, join));
             return Val {
@@ -609,7 +641,9 @@ impl Lower<'_> {
             };
         }
         let a = self.expr(lhs);
+        let held = self.hold_later(&a, "operand", lhs.span);
         let b = self.expr(rhs);
+        self.pend_uses.extend(held);
         match op {
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                 let at = self.deref_ty(&a.ty);
@@ -675,6 +709,7 @@ impl Lower<'_> {
                 }
                 None => self.err("W0104", format!("no field `{}`", name.name), name.span),
             }
+            self.escape(&v);
             self.consume(&v, value.span);
         }
         for d in &defs {
@@ -711,9 +746,13 @@ impl Lower<'_> {
         self.unify(&Ty::Bool, &ct, cond.span);
         let br = self.emit(cond.span, "branch", String::new());
         let a = self.block(then);
+        self.flush(block_tail(then));
         let a_end = self.cur;
         self.cur = Some(br);
         let b = else_.map_or_else(Val::default, |e| self.expr(e));
+        if let Some(e) = else_ {
+            self.flush(expr_tail(e));
+        }
         let b_end = self.cur;
         let join = self.facts.add_node(span, "join", String::new());
         let mut any = false;
@@ -722,39 +761,61 @@ impl Lower<'_> {
             any = true;
         }
         self.cur = if any { Some(join) } else { None };
-        let ty = if else_.is_none() {
-            Ty::Unit
-        } else if matches!(self.inf.shallow(&a.ty), Ty::Never) {
-            b.ty.clone()
-        } else {
-            self.unify(&a.ty, &b.ty, span);
-            a.ty.clone()
-        };
         let mut refs = a.refs.clone();
         refs.extend(b.refs.iter().copied());
         let uniq = a.uniq && b.uniq;
+        // The value of either branch: function values in it join.
+        let v = if else_.is_none() {
+            Val {
+                ty: Ty::Unit,
+                ..Val::default()
+            }
+        } else if matches!(self.inf.shallow(&a.ty), Ty::Never) {
+            Val {
+                refs: Vec::new(),
+                ..b
+            }
+        } else if matches!(self.inf.shallow(&b.ty), Ty::Never) {
+            Val {
+                refs: Vec::new(),
+                ..a
+            }
+        } else {
+            self.unify(&a.ty, &b.ty, span);
+            self.join_val(&a, &b)
+        };
         Val {
-            ty,
             refs,
             uniq,
-            ..Val::default()
+            var: None,
+            local: None,
+            place: None,
+            task: None,
+            ..v
         }
     }
 
     fn match_expr(&mut self, scrut: &Expr, arms: &[ast::Arm], span: Span) -> Val {
         let lv = self.place_expr(scrut);
+        // A binding by reference depends on the `Rc` handles on the way.
+        let deps = lv.as_ref().map(|l| l.deps.clone()).unwrap_or_default();
+        let saved_deps = std::mem::replace(&mut self.match_deps, deps);
         let (sty, by_ref, places, sval) = if let Some(lv) = lv {
             let by_ref = lv.through_ref;
+            // A by-value binding moves the local, or a part of it.
+            let whole = lv
+                .owner
+                .filter(|&l| self.locals[l].root.is_some_and(|r| lv.places == [r]));
             let v = Val {
                 ty: lv.ty.clone(),
                 place: Some(lv.clone()),
-                var: lv.owner.map(|l| self.locals[l].var),
+                var: whole.map(|l| self.locals[l].var),
                 ..Val::default()
             };
             (lv.ty.clone(), by_ref, lv.places, v)
         } else {
             let v = self.expr(scrut);
-            let r = self.root("temporary", RootKind::Local);
+            let r = self.temp_root(scrut.span, &v.ty);
             (v.ty.clone(), false, vec![r], v)
         };
         for &p in &places {
@@ -765,6 +826,7 @@ impl Lower<'_> {
         let result = self.inf.fresh();
         let mut refs = Vec::new();
         let mut reached = false;
+        let mut joined: Option<Val> = None;
         for arm in arms {
             self.cur = Some(br);
             self.frames.push(Frame {
@@ -779,24 +841,43 @@ impl Lower<'_> {
                 self.consume(&sval, arm.pat.span());
             }
             let v = self.expr(&arm.body);
+            self.flush(expr_tail(&arm.body));
             if !matches!(self.inf.shallow(&v.ty), Ty::Never) {
                 self.unify(&result, &v.ty, arm.body.span);
+                // The function values of the arms join.
+                joined = Some(match joined.take() {
+                    Some(j) => self.join_val(&j, &v),
+                    None => Val {
+                        ty: v.ty.clone(),
+                        summary: v.summary,
+                        item: v.item,
+                        fn_param: v.fn_param,
+                        parts: v.parts.clone(),
+                        ..Val::default()
+                    },
+                });
             }
             refs.extend(v.refs.iter().copied());
             let v = self.hand_out(v, arm.span);
-            let _ = v;
+            let tail = expr_tail(&arm.body);
+            let held = self.hold_out(&v, tail);
             self.end_frame(arm.span);
             self.frames.pop();
+            let _ = self.use_held(held, tail);
             if let Some(c) = self.cur {
                 self.facts.cfg_edge.push((c, join));
                 reached = true;
             }
         }
         self.cur = if reached { Some(join) } else { None };
-        Val {
-            ty: result,
-            refs,
-            ..Val::default()
+        self.match_deps = saved_deps;
+        match joined {
+            Some(j) if self.has_fn(&j.ty, 0) => Val { refs, ..j },
+            _ => Val {
+                ty: result,
+                refs,
+                ..Val::default()
+            },
         }
     }
 
@@ -825,9 +906,11 @@ impl Lower<'_> {
                     }
                 }
                 let v = if by_ref {
+                    let mut refs = places.to_vec();
+                    refs.extend(self.match_deps.iter().copied());
                     Val {
                         ty: Ty::Ref(Box::new(t)),
-                        refs: places.to_vec(),
+                        refs,
                         ..Val::default()
                     }
                 } else {
@@ -843,7 +926,7 @@ impl Lower<'_> {
                 self.assign_local(l, &v, n);
             }
             Pattern::Tuple(ps, s) => {
-                let rt = self.inf.resolve(&t);
+                let rt = self.inf.deep(&t);
                 let Ty::Tuple(ts) = rt else {
                     self.err("W0102", "this value is not a tuple", *s);
                     return;
@@ -874,7 +957,7 @@ impl Lower<'_> {
             }
             Pattern::Variant { path, fields, span } => {
                 let name = &path[path.len() - 1].name;
-                let rt = self.inf.resolve(&t);
+                let rt = self.inf.deep(&t);
                 let (adt, args) = match rt {
                     Ty::Adt(a, args) => (a, args),
                     Ty::Var(_) | Ty::Error => {
@@ -975,6 +1058,8 @@ impl Lower<'_> {
         span: Span,
     ) -> Val {
         let saved = self.cur;
+        let saved_pending = self.take_pending();
+        let saved_stmts = std::mem::take(&mut self.stmt_temps);
         self.sums.push(Summary::default());
         let si = self.sums.len() - 1;
         self.frames.push(Frame {
@@ -982,7 +1067,9 @@ impl Lower<'_> {
             barrier: Some(si),
         });
         let entry = self.start(span, "closure entry");
+        self.open_stmt();
         let mut ptys = Vec::new();
+        let mut param_roots = std::collections::BTreeMap::new();
         for (i, p) in params.iter().enumerate() {
             let ty = match (&p.ty, expected.and_then(|f| f.params.get(i))) {
                 (Some(t), _) => self.local_ty_pub(t),
@@ -991,34 +1078,56 @@ impl Lower<'_> {
             };
             ptys.push(ty.clone());
             let l = self.new_local(&p.name.name, VarKind::Param, p.span, ty.clone(), false);
-            let refs = if ty.is_ref() {
-                vec![self.root(&p.name.name, RootKind::Param)]
+            // A parameter that holds references points into what the call gives.
+            let refs = if self.holds_refs(&ty) {
+                let r = self.root(&p.name.name, RootKind::Arg);
+                param_roots.insert(r, i);
+                vec![r]
             } else {
                 Vec::new()
             };
+            let fn_param = matches!(self.inf.shallow(&ty), Ty::Fn(_)).then_some((si, i));
             self.assign_local(
                 l,
                 &Val {
                     ty,
                     refs,
+                    fn_param,
                     ..Val::default()
                 },
                 entry,
             );
         }
-        let v = self.expr(body);
+        // The body returns its value: W0204 reports a value into its own locals.
+        let v = match &body.kind {
+            ExprKind::Block(b) => self.block_with(b, false),
+            _ => self.expr(body),
+        };
         if let Some(f) = expected {
             if !matches!(self.inf.shallow(&f.ret), Ty::Unit) {
                 self.unify(&f.ret, &v.ty, body.span);
             }
         }
         let v = self.hand_out(v, body.span);
+        let ret_refs = self.closure_ret_refs(&v, expr_tail(body));
+        self.sum().ret_refs = ret_refs;
+        self.sum().param_roots = param_roots;
+        self.sum().literal = true;
         let ret_ty = v.ty.clone();
         self.drop_value(&v, body.span);
+        self.flush(expr_tail(body));
         self.end_frame(span);
         let end = self.cur;
         self.frames.pop();
-        let sum = self.sums.pop().unwrap_or_default();
+        let mut sum = self.sums.pop().unwrap_or_default();
+        // A returned function value: a call of the closure can do what it does.
+        if let Ty::Fn(f) = self.inf.shallow(&ret_ty) {
+            let info = self.fn_info(&v);
+            let r = self.value_summary(&info, f.effects.as_deref());
+            let ret = self.closures[r].clone();
+            sum.union_ret(&ret);
+            sum.rets.insert(r);
+        }
         // A captured linear value that the closure moves must be consumed inside it.
         for &var in &sum.moved_captures {
             if self.facts.var(var).linear {
@@ -1033,21 +1142,24 @@ impl Lower<'_> {
             let _ = outer;
         }
         let id = self.closures.len();
+        sum.members.insert(id);
+        self.close_scope(si, super::fnval::Scope::Closure(id));
         self.closures.push(sum.clone());
         self.cur = saved;
-        // The creation node uses the captures and moves the moved ones.
+        self.restore_pending(saved_pending);
+        self.stmt_temps = saved_stmts;
+        // The closure refers to the variables that it captures, as in the
+        // interpreter. A captured copy value stays readable after its scope
+        // ends; another value goes away with its variable, also a value that the
+        // closure moves when it runs.
         let mut refs = Vec::new();
         let caps: Vec<_> = sum.captures.iter().copied().collect();
         for v in &caps {
             if let Some(l) = self.locals.iter().position(|l| l.var == *v) {
                 let loc = self.locals[l].clone();
                 refs.extend(loc.refs.iter().copied());
-                if !loc.ty.is_ref() {
-                    if let Some(r) = loc.root {
-                        if !sum.moved_captures.contains(v) {
-                            refs.push(r);
-                        }
-                    }
+                if !loc.ty.is_ref() && self.may_free(&loc.ty) {
+                    refs.extend(loc.root);
                 }
                 self.pend_uses.push(*v);
                 self.note_capture(l);
@@ -1055,12 +1167,21 @@ impl Lower<'_> {
         }
         refs.sort();
         refs.dedup();
-        let n = self.emit(span, "closure", String::new());
-        for v in &sum.moved_captures {
-            if !self.is_copy_var(*v) {
-                self.move_var(*v, n);
+        // The moved captures are moved before the closure exists, so that the
+        // move does not invalidate the new closure.
+        let moved: Vec<_> = sum
+            .moved_captures
+            .iter()
+            .copied()
+            .filter(|&v| !self.is_copy_var(v))
+            .collect();
+        if !moved.is_empty() {
+            let m = self.emit(span, "move", String::new());
+            for v in moved {
+                self.move_var(v, m);
             }
         }
+        let n = self.emit(span, "closure", String::new());
         let fty = FnTy {
             params: ptys,
             ret: ret_ty,
@@ -1087,6 +1208,105 @@ impl Lower<'_> {
         }
     }
 
+    /// Returns the places of a closure result. A place inside a local of the
+    /// closure is W0204: the local goes out of scope when the closure returns.
+    fn closure_ret_refs(&mut self, v: &Val, span: Span) -> Vec<PlaceId> {
+        let own = self.sum().own_roots.clone();
+        let mut out = Vec::new();
+        let mut reported = Vec::new();
+        for &r in &v.refs {
+            let root = self.facts.place(r).root;
+            let local = self.facts.roots[root.index()].kind == RootKind::Local;
+            if own.contains(&root) && local {
+                if !reported.contains(&root) {
+                    reported.push(root);
+                    let name = self.facts.roots[root.index()].name.clone();
+                    let param = self.facts.owner.iter().any(|&(rt, var)| {
+                        self.facts.place(rt).root == root
+                            && self.facts.var(var).kind == VarKind::Param
+                    });
+                    let whose = match (param, name.as_str()) {
+                        (true, _) => format!("its parameter `{name}`"),
+                        (false, "temporary") => "its temporary value".to_string(),
+                        (false, _) => format!("its local `{name}`"),
+                    };
+                    let shown = &self.facts.place(r).display;
+                    let head = if v.summary.is_some() {
+                        format!("the closure returns a closure that captures `{shown}`")
+                    } else {
+                        format!("the closure returns a reference into `{shown}`")
+                    };
+                    self.err(
+                        "W0204",
+                        format!("{head}: {whose} goes out of scope at the return"),
+                        span,
+                    );
+                }
+            } else {
+                out.push(r);
+            }
+        }
+        out
+    }
+
+    /// The places of a closure call result: a place under a reference parameter of
+    /// the closure stands for the places of that argument.
+    pub(super) fn closure_call_refs(&mut self, s: usize, args: &[Vec<PlaceId>]) -> Vec<PlaceId> {
+        let sum = self.closures[s].clone();
+        let mut out = Vec::new();
+        for &r in &sum.ret_refs {
+            let root = self.root_place(r);
+            match sum.param_roots.get(&root).copied() {
+                Some(i) => {
+                    for &a in args.get(i).map_or(&[][..], Vec::as_slice) {
+                        out.push(self.rebase(r, root, a));
+                    }
+                }
+                None => out.push(r),
+            }
+        }
+        out
+    }
+
+    /// Returns the root place of `p`.
+    pub(super) fn root_place(&self, p: PlaceId) -> PlaceId {
+        let mut p = p;
+        while let Some(q) = self.facts.place(p).parent {
+            p = q;
+        }
+        p
+    }
+
+    /// Moves place `p` from under `from` to under `onto`, with the same steps.
+    pub(super) fn rebase(&mut self, p: PlaceId, from: PlaceId, onto: PlaceId) -> PlaceId {
+        let mut chain = Vec::new();
+        let mut at = p;
+        while at != from {
+            let Some(parent) = self.facts.place(at).parent else {
+                return p;
+            };
+            chain.push((at, parent));
+            at = parent;
+        }
+        let mut out = onto;
+        for &(child, parent) in chain.iter().rev() {
+            let info = self.facts.place(child);
+            let Some(&step) = info.steps.last() else {
+                return p;
+            };
+            let text = info
+                .display
+                .get(self.facts.place(parent).display.len()..)
+                .unwrap_or("")
+                .to_string();
+            out = self.child(out, step, &text);
+            if self.dep_places.contains(&child) {
+                self.dep_places.insert(out);
+            }
+        }
+        out
+    }
+
     pub(super) fn local_ty_pub(&mut self, t: &ast::TypeExpr) -> Ty {
         let gens: Vec<String> = self
             .self_fn
@@ -1099,41 +1319,6 @@ impl Lower<'_> {
             diags: &mut self.diags,
         }
         .resolve(t, module, &gens, None)
-    }
-
-    /// Applies a closure summary at a node: the closure runs there.
-    pub(super) fn apply_summary(&mut self, n: NodeId, s: usize, root_index: u32) {
-        let sum = self.closures[s].clone();
-        let own = |me: &Self, p: PlaceId| sum.own_roots.contains(&me.facts.place(p).root);
-        for &m in &sum.muts {
-            if !own(self, m) {
-                self.mutate(n, m);
-                self.facts.call_mut.push((n, m, root_index));
-            }
-        }
-        for &r in &sum.reads {
-            if !own(self, r) {
-                self.facts.reads_at.push((n, r));
-                self.sum().reads.insert(r);
-            }
-        }
-        for e in &sum.escapes {
-            self.facts.escapes_at.push((n, e.clone()));
-            self.sum().escapes.insert(e.clone());
-        }
-        for &c in &sum.performs {
-            self.facts.performs_at.push((n, c));
-            self.sum().performs.insert(c);
-            self.cap_calls.push((n, c));
-        }
-        if sum.may_abort {
-            self.abortive(n);
-        }
-        if sum.multi {
-            self.multi_node(n);
-        }
-        let pt = sum.passthrough.clone();
-        self.sum().passthrough.extend(pt);
     }
 
     // -----------------------------------------------------------------------
@@ -1174,12 +1359,17 @@ impl Lower<'_> {
         });
         self.sums.push(Summary::default());
         let v = self.expr(body);
+        self.flush(expr_tail(body));
         let body_sum = self.sums.pop().unwrap_or_default();
         self.merge_summary(&body_sum);
         self.handlers.pop();
         let ty = v.ty.clone();
         let saved = self.cur;
         let mut footprint = Vec::new();
+        // The places that the clauses lend outside them: each node that runs a clause lends them.
+        let mut lent = Vec::new();
+        let mut clause_sum = Summary::default();
+        let mut clauses_done = Vec::new();
         for c in clauses {
             let Some(op) = def.ops.iter().find(|o| o.name == c.op.name).cloned() else {
                 self.err(
@@ -1207,12 +1397,24 @@ impl Lower<'_> {
                 barrier: Some(si),
             });
             let entry = self.start(c.span, "handler clause");
-            for (p, pt) in c.params.iter().zip(&op.params) {
+            let saved_stmts = std::mem::take(&mut self.stmt_temps);
+            self.open_stmt();
+            // A parameter that holds references points into what the operation gets.
+            let mut param_roots = std::collections::BTreeMap::new();
+            for (i, (p, pt)) in c.params.iter().zip(&op.params).enumerate() {
                 let l = self.new_local(&p.name.name, VarKind::Param, p.span, pt.clone(), false);
+                let refs = if self.holds_refs(pt) {
+                    let r = self.root(&p.name.name, RootKind::Arg);
+                    param_roots.insert(r, i);
+                    vec![r]
+                } else {
+                    Vec::new()
+                };
                 self.assign_local(
                     l,
                     &Val {
                         ty: pt.clone(),
+                        refs,
                         ..Val::default()
                     },
                     entry,
@@ -1230,25 +1432,54 @@ impl Lower<'_> {
             });
             let kv = self.locals[k].var;
             self.bind(kv, entry);
+            let resumes_before = self.resumes.len();
             let cv = self.block(&c.body);
+            self.flush(block_tail(&c.body));
             if !matches!(self.inf.shallow(&cv.ty), Ty::Never) {
                 self.unify(&ty, &cv.ty, c.body.span);
             }
             self.end_frame(c.span);
             self.frames.pop();
-            let cs = self.sums.pop().unwrap_or_default();
+            self.stmt_temps = saved_stmts;
+            self.close_scope(si, super::fnval::Scope::Clause);
+            let mut cs = self.sums.pop().unwrap_or_default();
+            cs.param_roots = param_roots;
             for &m in &cs.muts {
                 if !cs.own_roots.contains(&self.facts.place(m).root) {
                     footprint.push(m);
                 }
             }
+            for &l in &cs.lends {
+                if !cs.own_roots.contains(&self.facts.place(l).root) {
+                    lent.push(l);
+                }
+            }
+            let oi = def.ops.iter().position(|o| o.name == op.name);
+            let own_resumes: Vec<NodeId> = self.resumes[resumes_before..]
+                .iter()
+                .filter(|(_, c)| *c == cap)
+                .map(|(n, _)| *n)
+                .collect();
+            clauses_done.push((oi, cs.clone(), own_resumes));
             self.merge_summary(&cs);
+            clause_sum.captures.extend(cs.captures.iter().copied());
+            clause_sum
+                .moved_captures
+                .extend(cs.moved_captures.iter().copied());
+            clause_sum.dropped.extend(cs.dropped.iter().copied());
+            for &r in &cs.reads {
+                if !cs.own_roots.contains(&self.facts.place(r).root) {
+                    clause_sum.reads.insert(r);
+                }
+            }
         }
         footprint.sort();
         footprint.dedup();
         for &m in &footprint {
             self.facts.footprint.push((cap, m));
         }
+        lent.sort();
+        lent.dedup();
         // Resumes run the handled computation and the clauses again.
         let resumes: Vec<NodeId> = self
             .resumes
@@ -1256,23 +1487,44 @@ impl Lower<'_> {
             .filter(|(_, c)| *c == cap)
             .map(|(n, _)| *n)
             .collect();
-        for n in resumes {
+        for &n in &resumes {
             for &m in &footprint {
                 self.facts.mutates_at.push((n, m));
             }
+            for &l in &lent {
+                self.facts.lends_mut.push((n, l));
+            }
         }
-        // A call that reaches this handler must not pass places that the handler mutates.
+        let mut changes: Vec<PlaceId> = body_sum
+            .muts
+            .iter()
+            .chain(&body_sum.lends)
+            .copied()
+            .collect();
+        changes.extend(footprint.iter().chain(&lent).copied());
+        let mut h = super::Handled {
+            cap,
+            clauses: clauses_done,
+            footprint,
+            lent,
+            clause_sum,
+            resumes,
+            changes,
+        };
         let calls: Vec<NodeId> = self
             .cap_calls
             .iter()
             .filter(|(_, c)| *c == cap)
             .map(|(n, _)| *n)
             .collect();
-        for n in calls {
-            for &m in &footprint {
-                self.facts.call_mut.push((n, m, 1000 + cap.0));
-            }
-        }
+        let args: Vec<super::OpArg> = self
+            .op_args
+            .iter()
+            .filter(|a| a.cap == cap)
+            .copied()
+            .collect();
+        self.run_handler(&mut h, &calls, &args);
+        self.handled.push(h);
         self.cur = saved;
         if let Ty::Fn(f) = self.inf.resolve(&ty) {
             if let Some(s) = f.summary {
@@ -1295,6 +1547,208 @@ impl Lower<'_> {
         }
     }
 
+    /// The clauses of handler `h` run at the nodes `calls`, and they get the places
+    /// `args`. `apply_stored` calls it again for the nodes that it adds.
+    pub(super) fn run_handler(
+        &mut self,
+        h: &mut super::Handled,
+        calls: &[NodeId],
+        args: &[super::OpArg],
+    ) {
+        // A call that reaches this handler must not pass places that the handler mutates.
+        for &n in calls {
+            for &m in h.footprint.iter().chain(&h.lent) {
+                self.facts.call_mut.push((n, m, 1000 + h.cap.0));
+            }
+            for &l in &h.lent {
+                self.facts.lends_mut.push((n, l));
+            }
+        }
+        // A clause mutates and reads through its parameters what the operation gets.
+        let mut changes: Vec<PlaceId> = Vec::new();
+        for (oi, cs, _) in &h.clauses {
+            changes.extend(self.clause_through_params(args, *oi, cs));
+        }
+        // A resume runs the handled computation, also these changes. The node that
+        // gives the places reports a mutation that needs a declaration, so the
+        // resume only lends them.
+        for &n in &h.resumes {
+            for &q in &changes {
+                self.facts.lends_mut.push((n, q));
+            }
+        }
+        h.changes.extend(changes);
+        // A clause that holds a reference into what its parameter gets across
+        // `resume` sees each change of the argument place as a change of the parameter.
+        let all: Vec<super::OpArg> = self
+            .op_args
+            .iter()
+            .filter(|a| a.cap == h.cap)
+            .copied()
+            .collect();
+        for (oi, cs, own_resumes) in &h.clauses {
+            self.resume_through_params(&all, *oi, cs, own_resumes, &h.changes);
+        }
+        // A clause runs at each operation that it handles. There it uses its
+        // captures, moves the moved ones, and its locals go out of scope.
+        for &n in calls {
+            for &v in &h.clause_sum.captures {
+                self.facts.uses.push((v, n));
+            }
+            for &r in &h.clause_sum.reads {
+                self.facts.reads_at.push((n, r));
+            }
+            for &v in &h.clause_sum.moved_captures {
+                if !self.is_copy_var(v) {
+                    self.move_var(v, n);
+                }
+            }
+            for &v in &h.clause_sum.dropped {
+                self.facts.scope_end.push((v, n));
+            }
+        }
+    }
+
+    /// Applies what clause `cs` of operation `op` does through its reference
+    /// parameters at each node of `args` that gives places to the operation.
+    /// Returns the places that change: the clause mutates them or lends them.
+    fn clause_through_params(
+        &mut self,
+        args: &[super::OpArg],
+        op: Option<usize>,
+        cs: &Summary,
+    ) -> Vec<PlaceId> {
+        let mut changed = Vec::new();
+        let here = self.frames.iter().rev().find_map(|f| f.barrier);
+        let args: Vec<_> = args
+            .iter()
+            .filter(|a| a.op.is_none() || a.op == op)
+            .copied()
+            .collect();
+        let through = |me: &mut Self, p: PlaceId, a: &super::OpArg| -> Vec<PlaceId> {
+            let r = me.root_place(p);
+            let Some(&k) = cs.param_roots.get(&r) else {
+                return Vec::new();
+            };
+            let given = super::fnval::Given {
+                pos: a.pos,
+                place: a.place,
+                root: a.root,
+            };
+            me.through(p, r, k, &[given])
+                .into_iter()
+                .map(|g| g.place)
+                .collect()
+        };
+        for a in &args {
+            for &m in &cs.muts {
+                for q in through(self, m, a) {
+                    changed.push(q);
+                    // The summary of the body gets the change only for its own nodes.
+                    if a.body == here {
+                        self.mutate(a.node, q);
+                    } else {
+                        self.facts.mutates_at.push((a.node, q));
+                    }
+                    self.facts.call_mut.push((a.node, q, a.root));
+                }
+            }
+            for &r in &cs.reads {
+                for q in through(self, r, a) {
+                    self.facts.reads_at.push((a.node, q));
+                    if a.body == here {
+                        self.sum().reads.insert(q);
+                    }
+                }
+            }
+            for &(l, p) in &cs.binds {
+                for q in through(self, p, a) {
+                    self.point_local(l, q);
+                }
+            }
+            for &l in &cs.lends {
+                for q in through(self, l, a) {
+                    changed.push(q);
+                    if a.body == here {
+                        self.lend(a.node, q, a.root);
+                    } else {
+                        self.facts.lends_mut.push((a.node, q));
+                        self.facts.call_mut.push((a.node, q, a.root));
+                    }
+                }
+            }
+        }
+        changed
+    }
+
+    /// At each resume of clause `cs` of operation `op`, a change of a place that
+    /// the operation gets is a change of the parameter of the clause.
+    fn resume_through_params(
+        &mut self,
+        args: &[super::OpArg],
+        op: Option<usize>,
+        cs: &Summary,
+        resumes: &[NodeId],
+        changes: &[PlaceId],
+    ) {
+        if resumes.is_empty() {
+            return;
+        }
+        let args: Vec<_> = args
+            .iter()
+            .filter(|a| a.op.is_none() || a.op == op)
+            .copied()
+            .collect();
+        let mut out = Vec::new();
+        for (&x, &k) in &cs.param_roots {
+            for a in args.iter().filter(|a| a.pos.is_none_or(|i| i == k)) {
+                for &m in changes {
+                    out.extend(self.onto_param(m, a.place, x, a.pos.is_some()));
+                }
+            }
+        }
+        out.sort();
+        out.dedup();
+        for &n in resumes {
+            for &q in &out {
+                self.facts.mutates_at.push((n, q));
+            }
+        }
+    }
+
+    /// Returns the place below parameter root `x` that a change of `m` changes, where
+    /// `x` stands for argument place `p`. With `exact` false, `x` can be anywhere inside `p`.
+    fn onto_param(&mut self, m: PlaceId, p: PlaceId, x: PlaceId, exact: bool) -> Option<PlaceId> {
+        let (pm, pp) = (self.facts.place(m), self.facts.place(p));
+        if pm.root != pp.root {
+            return None;
+        }
+        let base = |me: &Self, q: PlaceId| me.facts.wild_base(q).unwrap_or(q);
+        let (bm, bp) = (base(self, m), base(self, p));
+        let overlap = weft_verified::places::overlaps(
+            &self.facts.place(bm).steps,
+            &self.facts.place(bp).steps,
+        );
+        if !overlap {
+            return None;
+        }
+        // A change at or below the argument place keeps its steps below `x`.
+        let mut at = Some(m);
+        while let Some(q) = at {
+            if q == p {
+                return Some(if exact {
+                    self.rebase(m, p, x)
+                } else {
+                    self.facts.wildcard(x)
+                });
+            }
+            at = self.facts.place(q).parent;
+        }
+        // A change above the argument place, or one that can alias it, can change
+        // any place below `x`.
+        Some(self.facts.wildcard(x))
+    }
+
     fn merge_summary(&mut self, s: &Summary) {
         let own = s.own_roots.clone();
         let t = self.sum();
@@ -1310,6 +1764,13 @@ impl Lower<'_> {
         t.own_roots.extend(own);
         t.captures.extend(s.captures.iter().copied());
         t.moved_captures.extend(s.moved_captures.iter().copied());
+        t.dropped.extend(s.dropped.iter().copied());
+        t.lends.extend(s.lends.iter().copied());
+        for &a in &s.op_args {
+            if !t.op_args.contains(&a) {
+                t.op_args.push(a);
+            }
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -1335,13 +1796,28 @@ impl Lower<'_> {
         self.perform_effect(n, "Async");
         self.abortive(n);
         self.scopes.push(Vec::new());
-        let v = self.block(body);
+        // The tasks join before the locals of the body go out of scope.
+        self.frames.push(Frame {
+            names: Vec::new(),
+            barrier: None,
+        });
+        let v = self.block_inner(body);
+        let v = self.hand_out(v, body.span);
+        let tail = block_tail(body);
+        self.flush(tail);
         let tasks = self.scopes.pop().unwrap_or_default();
-        let v = self.hand_out(v, span);
         let end = self.emit(span, "scope end", String::new());
         for t in tasks {
             self.facts.joined_at.push((t, end));
         }
+        let held = self.hold_out(&v, tail);
+        self.end_frame(body.span);
+        self.frames.pop();
+        let v = if self.use_held(held, tail) {
+            Val { var: None, ..v }
+        } else {
+            v
+        };
         self.end_frame(span);
         self.frames.pop();
         v

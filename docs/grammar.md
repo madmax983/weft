@@ -87,7 +87,9 @@ Notes:
   `Some(stmt)` or `id(stmt)` with `fn id<T>(x: T) -> T`. A raw pointer is an opaque copy
   value with no place: it has no fields, no elements and no deref. It is nonportable,
   and so is each value that holds one.
-- The wildcard step `..` must be the last step: `mut(world..)`.
+- The wildcard step `..` must be the last step: `mut(world..)`. In a reference type,
+  `&T in world..` is a reference to any place inside `world`. Without `..`, the
+  reference is at the place or below it through stable steps only.
 - In a function type, a row with more than one item needs parentheses:
   `fn(Request) -> Response / (net, log)`.
 

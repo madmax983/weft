@@ -171,7 +171,15 @@ fn authority_covers_private_dependency_functions() {
         "{}",
         out.text
     );
-    assert!(out.text.contains("1 error(s)"), "{}", out.text);
+    // The closure belongs to `get`, so the public signature of `get` must state
+    // `net` too (ADR 0005).
+    assert!(
+        out.text
+            .contains("error[W0701]: public function `get` must state its effects: `/ net`"),
+        "{}",
+        out.text
+    );
+    assert!(out.text.contains("2 error(s)"), "{}", out.text);
 }
 
 #[test]
@@ -529,4 +537,26 @@ fn binary_test_writes_each_log_before_its_result() {
     let at = |s: &str| text.find(s).unwrap_or_else(|| panic!("no {s:?} in {text}"));
     assert!(at("info: hello log") < at("test logs: ok"), "{text}");
     assert!(at("test logs: ok") < at("later"), "{text}");
+}
+
+#[test]
+fn deps_sees_effects_that_signatures_hide() {
+    let out = cmd(&["deps", "tests/packages/hidden"]);
+    assert_eq!(out.code, 1, "{}", out.text);
+    // A returned closure has the effects of its maker.
+    assert!(
+        out.text
+            .contains("error[W0901]: dependency `json` function `parse` needs `async, net`"),
+        "{}",
+        out.text
+    );
+    // The body counts, not only the stated effects.
+    assert!(
+        out.text
+            .contains("function `quiet` needs `async, log, net`"),
+        "{}",
+        out.text
+    );
+    // A private function counts: the project can call it.
+    assert!(out.text.contains("function `helper` needs"), "{}", out.text);
 }

@@ -3,9 +3,10 @@
 //! A project grants each dependency a set of effects. The code of the
 //! dependency must stay inside that set: the row of each function, a private
 //! one too (name resolution does not enforce `pub` yet, so the root can call
-//! it), and each effect that a closure in a body performs (the closure can
-//! leave the dependency as a value). A JSON parser that asks for `Net` is
-//! rejected when the project loads it ("install time").
+//! it), the effects that its body infers beyond its signature, and each effect
+//! that a closure in a body performs (the closure can leave the dependency as
+//! a value). A JSON parser that asks for `Net` is rejected when the project
+//! loads it ("install time").
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -314,13 +315,15 @@ pub fn package_diags(pkg: &Package, a: &Analysis) -> Vec<Diagnostic> {
             out.push(d);
         }
         for (i, f) in a.program.fns.iter().enumerate() {
+            // The project can call every function of the dependency. A function
+            // needs what it states and what its body does, with the closures that
+            // the body makes and returns, also a closure that the body does not call.
             if a.program.mods[f.module].unit != dep.unit {
                 continue;
             }
-            // The effects that leave the body, also from a closure that the
-            // body does not call.
             let mut performs = a.sigs[i].effects.named.clone();
             for b in a.bodies.iter().filter(|b| b.func == Some(i)) {
+                performs.extend(b.effects.named.iter().cloned());
                 performs.extend(b.facts.escapes_at.iter().map(|(_, e)| e.clone()));
             }
             let needs: BTreeSet<String> = effects::close(&performs);

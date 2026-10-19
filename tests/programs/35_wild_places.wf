@@ -1,0 +1,79 @@
+// `in P` names the place of a reference, up to stable steps below `P`. `in P..`
+// names any place inside `P`. The result of an unknown function can point
+// anywhere inside its reference arguments.
+struct Entity { hp: i32, items: Vec<u64> }
+struct World { entities: Vec<Entity>, score: u64 }
+enum State { Idle, Running(Vec<u64>) }
+struct Machine { state: State }
+
+// An unknown function result points anywhere inside the argument.
+fn via_param(f: fn(&World) -> &Entity, world: &World) / mut(world.entities) {
+    let r = f(world)
+    world.entities.clear()
+    print(r.hp)   //~ W0301
+}
+
+fn via_param_option(f: fn(&World) -> Option<&Entity>, world: &World) / mut(world.entities) {
+    let o = f(world)
+    world.entities.clear()
+    match o {   //~ W0301
+        Some(e) => print(e.hp),
+        None => {},
+    }
+}
+
+// A signature place cannot hide an unstable step below it.
+fn coarse(w: &World) -> &Entity in w.entities { &w.entities[0] }   //~ W0204
+fn coarse_payload(m: &Machine) -> &Vec<u64> in m.state {
+    match m.state {   //~ W0204
+        Running(v) => v,
+        Idle => coarse_payload(m),
+    }
+}
+
+// `in P..` says that the reference can be anywhere inside `P`.
+fn any_entity(w: &World) -> &Entity in w.entities.. { &w.entities[0] }
+fn any_payload(m: &Machine) -> &Vec<u64> in m.state.. {
+    match m.state {
+        Running(v) => v,
+        Idle => any_payload(m),
+    }
+}
+
+fn uses_any(w: &World) / mut(w.entities) {
+    let r = any_entity(w)
+    w.entities.clear()
+    print(r.hp)   //~ W0301
+}
+
+fn uses_any_payload(m: &Machine) / mut(m.state) {
+    let r = any_payload(m)
+    m.state = Idle
+    print(r.len())   //~ W0301
+}
+
+// An argument for `in P` must be at `P` or below it through stable steps.
+fn takes_items(w: &World, x: &Vec<u64> in w.entities) {}
+fn takes_any(w: &World, x: &u64 in w.entities..) {}
+fn passes_deep(w: &World) {
+    takes_items(w, &w.entities[0].items)   //~ W0203
+    takes_any(w, &w.entities[0].items[0])
+}
+
+// A returned reference cannot point into a by-value parameter.
+extern fn into_value(v: Vec<u64>) -> &u64 in v[]   //~ W0204
+
+// Controls: an exact place, a stable step below the place, and a mutation of
+// another field.
+fn exact(w: &World) -> &Entity in w.entities[] { &w.entities[0] }
+fn stable_below(w: &World) -> &Vec<u64> in w.entities[] { &w.entities[0].items }
+fn other_field(f: fn(&World) -> &Entity, world: &World, other: &World) / mut(other.entities) {
+    let r = f(world)
+    other.entities.clear()
+    print(r.hp)
+}
+fn any_other_field(w: &World) / mut(w.score) {
+    let r = any_entity(w)
+    w.score += 1
+    print(r.hp)
+}

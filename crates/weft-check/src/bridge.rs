@@ -48,6 +48,9 @@ pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
         if p.steps.last().is_some_and(|st| st.unstable) {
             emit("unstable", &[s(&id)]);
         }
+        if p.is_wildcard() {
+            emit("wildcard", &[s(&id)]);
+        }
         if f.param_rooted(id) {
             emit("param_rooted", &[s(&id)]);
         }
@@ -99,12 +102,15 @@ pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
     rel2!("uses", f.uses);
     rel2!("moved_at", f.moved_at);
     rel2!("scope_end", f.scope_end);
+    rel2!("owner", f.owner);
+    rel2!("moved_part", f.moved_part);
     rel2!("spawned_at", f.spawned_at);
     rel2!("joined_at", f.joined_at);
     rel2!("task_reads", f.task_reads);
     rel2!("task_writes", f.task_writes);
     rel2!("captures", f.captures);
     rel2!("mut_through", f.mut_through);
+    rel2!("lends_mut", f.lends_mut);
     for (p, e) in &f.escapes_at {
         emit("escapes_at", &[s(p), s(e)]);
     }

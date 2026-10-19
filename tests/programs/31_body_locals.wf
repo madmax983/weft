@@ -1,0 +1,117 @@
+// The locals of a closure or a handler clause go out of scope when its body
+// returns. A clause runs at each operation that it handles.
+effect Log { fn log(m: String) }
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+
+fn take(v: Vec<u64>) {}
+
+// A closure stores a reference into its own local in a captured reference.
+fn closure_local() {
+    let keep: Vec<u64> = Vec.new()
+    keep.push(1)
+    let q = &keep[0]
+    let g = || { let v = Vec.new(); v.push(5); q = &v[0]; 0 }
+    let z = g()
+    print(q)   //~ W0301
+}
+
+// The same with a by-value parameter of the closure.
+fn closure_param() {
+    let keep: Vec<u64> = Vec.new()
+    keep.push(1)
+    let p = &keep[0]
+    let h = |v: Vec<u64>| { p = &v[0]; 0 }
+    let w: Vec<u64> = Vec.new()
+    w.push(6)
+    let y = h(w)
+    print(p)   //~ W0301
+}
+
+// A closure that calls an inner closure: the inner locals end too.
+fn nested_closure() {
+    let keep: Vec<u64> = Vec.new()
+    keep.push(1)
+    let q = &keep[0]
+    let g = || {
+        let inner = || { let v = Vec.new(); v.push(5); q = &v[0]; 0 }
+        inner()
+    }
+    let z = g()
+    print(q)   //~ W0301
+}
+
+// A handler clause stores a reference into its own local.
+fn clause_local() {
+    let keep: Vec<u64> = Vec.new()
+    keep.push(1)
+    let s = &keep[0]
+    handle Log { fn log(m) { let u = Vec.new(); u.push(7); s = &u[0]; resume(()) } } in log("x")
+    print(s)   //~ W0301
+}
+
+// A handler clause moves a captured owner at the operation.
+fn clause_move() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Log { fn log(m) { take(v); resume(()) } } in {
+        log("x")
+        print(r)   //~ W0301
+    }
+}
+
+// The clause moves the owner each time it runs.
+fn clause_move_twice() {
+    let v: Vec<u64> = Vec.new()
+    handle Log { fn log(m) { take(v); resume(()) } } in {
+        log("x")
+        log("y")   //~ W0302
+    }
+}
+
+// A handler clause reads a captured reference at the operation, after the
+// handled body invalidated it.
+fn clause_capture(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    handle Log { fn log(m) { print(first.hp); resume(()) } } in {
+        world.entities.clear()
+        log("x")   //~ W0301
+    }
+}
+
+// Controls: the closure keeps its local to itself, the reference is used
+// before the call, and the clause reads a reference that stays valid.
+fn closure_keeps_local() {
+    let keep: Vec<u64> = Vec.new()
+    keep.push(1)
+    let q = &keep[0]
+    let g = || { let v = Vec.new(); v.push(5); let r = &v[0]; print(r); 0 }
+    let z = g()
+    print(q)
+}
+
+fn use_before_call() {
+    let keep: Vec<u64> = Vec.new()
+    keep.push(1)
+    let q = &keep[0]
+    let g = || { let v = Vec.new(); v.push(5); q = &v[0]; 0 }
+    print(q)
+    let z = g()
+}
+
+fn clause_capture_valid(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    handle Log { fn log(m) { print(first.hp); resume(()) } } in {
+        log("x")
+        world.entities.clear()
+    }
+}
+
+fn clause_rebinds_to_outer() {
+    let keep: Vec<u64> = Vec.new()
+    keep.push(1)
+    let s = &keep[0]
+    handle Log { fn log(m) { s = &keep[0]; resume(()) } } in log("x")
+    print(s)
+}

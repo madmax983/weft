@@ -212,7 +212,7 @@ This closes the hole where a handler resumes twice and uses the same moved value
 
 ### Authority
 
-Effects double as capabilities. `main` receives the root capabilities (filesystem, network, clock, randomness) through `env`. The package manager checks each dependency's effect signatures against the authority the project grants it, so a JSON parser that asks for `Net` is rejected at install time.
+Effects double as capabilities. `main` receives the root capabilities (filesystem, network, clock, randomness) through `env`. The package manager checks the effects of each dependency function against the authority that the project grants to the dependency. Each function counts, also a private one, with its signature, the effects that its body infers and the effects of the closures that it makes. So a JSON parser that asks for `Net` is rejected when the project loads it (W0901).
 
 ## Memory without a garbage collector
 

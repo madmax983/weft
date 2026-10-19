@@ -49,11 +49,15 @@ pub fn check(prog: &Program, sigs: &[FnSig], f: FnId) -> Vec<Diagnostic> {
     for name in c.owned.clone() {
         let (lo, hi) = uses_block(body, &name);
         if lo != 1 || hi != 1 {
+            // A count of `usize::MAX` saturated, so it is only a lower bound.
+            let found = if hi == usize::MAX {
+                format!("{lo} or more")
+            } else {
+                format!("{lo} to {hi}")
+            };
             c.diags.push(Diagnostic::error(
                 "W1002",
-                format!(
-                    "`fip` needs `{name}` used exactly once on every path (found {lo} to {hi})"
-                ),
+                format!("`fip` needs `{name}` used exactly once on every path (found {found})"),
                 def.decl.name.span,
             ));
         }
@@ -274,7 +278,9 @@ impl Fip<'_> {
     }
 }
 
-/// Counts the uses of a name: the least and the most over all paths.
+/// Counts the uses of a name: the least and the most over all paths. The
+/// counts saturate: a loop doubles the most uses, so nested loops can give more
+/// than a `usize` holds.
 fn uses_block(b: &Block, name: &str) -> (usize, usize) {
     let mut lo = 0;
     let mut hi = 0;
@@ -293,22 +299,21 @@ fn uses_block(b: &Block, name: &str) -> (usize, usize) {
             } => {
                 let c = uses_expr(cond, name);
                 let b = uses_block(body, name);
-                (c.0, c.1 + b.1 * 2)
+                (c.0, c.1.saturating_add(b.1.saturating_mul(2)))
             }
             StmtKind::Loop(body) => {
                 let b = uses_block(body, name);
-                (0, b.1 * 2)
+                (0, b.1.saturating_mul(2))
             }
             _ => (0, 0),
         };
-        lo += a;
-        hi += z;
+        (lo, hi) = add((lo, hi), (a, z));
     }
     (lo, hi)
 }
 
 const fn add(a: (usize, usize), b: (usize, usize)) -> (usize, usize) {
-    (a.0 + b.0, a.1 + b.1)
+    (a.0.saturating_add(b.0), a.1.saturating_add(b.1))
 }
 
 fn uses_expr(e: &Expr, name: &str) -> (usize, usize) {
@@ -376,7 +381,7 @@ fn uses_expr(e: &Expr, name: &str) -> (usize, usize) {
             let c = uses_expr(cond, name);
             let t = uses_block(then, name);
             let f = else_.as_ref().map_or((0, 0), |x| uses_expr(x, name));
-            (c.0 + t.0.min(f.0), c.1 + t.1.max(f.1))
+            add(c, (t.0.min(f.0), t.1.max(f.1)))
         }
         ExprKind::Match { scrutinee, arms } => {
             let s = uses_expr(scrutinee, name);
@@ -390,7 +395,7 @@ fn uses_expr(e: &Expr, name: &str) -> (usize, usize) {
             if arms.is_empty() {
                 lo = 0;
             }
-            (s.0 + lo, s.1 + hi)
+            add(s, (lo, hi))
         }
         ExprKind::Handle { body, clauses, .. } => {
             let mut acc = uses_expr(body, name);

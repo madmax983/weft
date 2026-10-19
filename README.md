@@ -73,6 +73,7 @@ win over the markers and the manifest.
 | `proofs/` | Verus soundness models: group borrowing and algebraic effects. See `proofs/README.md`. |
 | `std/prelude.wf` | The standard prelude. |
 | `tests/programs` | The design examples and at least one negative program per rule. |
+| `tests/packages` | Packages for the tests of `weft deps`. |
 | `examples/` | A package with dependencies, a library, and a lint rule file. |
 | `docs/` | The design, the plan, ADRs, the grammar and the architecture. |
 
@@ -82,8 +83,9 @@ win over the markers and the manifest.
   on random fact sets. Agreement is over the facts that sema emits. The fact generator
   is not proved.
 - Phase 1 gate 1a (mechanized soundness): not complete. `proofs/borrowing` proves B1-B5
-  for its model, and `proofs/effects` proves E1 and E4. `proofs/README.md` lists what is
-  proved and what is not.
+  for its model, and `proofs/effects` proves E1-E5 for its model. `proofs/link` proves
+  B6: the exec core agrees with the models. `proofs/link/README.md` gives its gaps.
+  `proofs/README.md` lists what is proved and what is not.
 - The reference interpreter runs `main` and test blocks (`weft run`, `weft test`). It is
   the dynamic semantics, not the Phase 2 runtime.
 - Phase 2 (native compiler, `std.rt` on io_uring/kqueue/IOCP, HTTP/2/3, TLS) and Phase 3

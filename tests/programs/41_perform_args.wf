@@ -1,0 +1,143 @@
+// A perform is a call with the footprint of the handler. The clause gets the
+// reference arguments, and it can mutate through its parameters.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Peek { fn peek(x: &i64) }
+effect Bump { fn bump(v: &Vec<u64>) }
+effect Touch { fn touch(w: &World) }
+effect Store { fn keep(v: &Vec<u64>), fn drop_all(v: &Vec<u64>) }
+
+// The clause clears `v` while the argument points into it.
+fn alias_perform() {
+    let v = Vec.new()
+    v.push(1)
+    handle Peek { fn peek(x) { v.clear(); print(x); resume(()) } } in {
+        let r = &v[0]
+        peek(r)   //~ W0312
+    }
+}
+
+// The clause mutates through its parameter: the perform mutates the argument.
+fn through_param() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump { fn bump(x) { x.push(2); resume(()) } } in {
+        let r = &v[0]
+        bump(&v)
+        print(r)   //~ W0301
+    }
+}
+
+// The same through a callee that performs the operation, and through a closure.
+fn bumps(v: &Vec<u64>) / Bump { bump(v) }
+fn via_callee() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump { fn bump(x) { x.push(2); resume(()) } } in {
+        let r = &v[0]
+        bumps(&v)
+        print(r)   //~ W0301
+    }
+}
+fn via_closure() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump { fn bump(x) { x.push(2); resume(()) } } in {
+        let r = &v[0]
+        let f = |y: &Vec<u64>| bump(y)
+        f(&v)
+        print(r)   //~ W0301
+    }
+}
+
+// Inside the clause, a reference into the parameter is invalid after a mutation through it.
+fn inside_clause() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump {
+        fn bump(x) {
+            let e = &x[0]
+            x.push(2)
+            print(e)   //~ W0301
+            resume(())
+        }
+    } in bump(&v)
+}
+
+// A clause holds a reference into its parameter across `resume`. The handled
+// computation frees the argument, directly or through another operation.
+fn across_resume() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump {
+        fn bump(x) {
+            let e = &x[0]
+            resume(())
+            print(e)   //~ W0301
+        }
+    } in {
+        bump(&v)
+        v.clear()
+    }
+}
+fn across_resume_op() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Store {
+        fn keep(x) {
+            let e = &x[0]
+            resume(())
+            print(e)   //~ W0301
+        }
+        fn drop_all(y) {
+            y.clear()
+            resume(())
+        }
+    } in {
+        keep(&v)
+        drop_all(&v)
+    }
+}
+
+// A handler outside the function can mutate through what the operation gets.
+fn touches(w: &World) / Touch {
+    let first = &w.entities[0]
+    touch(w)
+    print(first.hp)   //~ W0301
+}
+
+// Controls: a clause that reads its parameter and mutates another place, and a
+// reference into the argument itself.
+fn reads_param() {
+    let v = Vec.new()
+    v.push(1)
+    let w = Vec.new()
+    w.push(2)
+    handle Peek { fn peek(x) { w.clear(); print(x); resume(()) } } in {
+        let r = &v[0]
+        peek(r)
+        print(r)
+    }
+}
+fn touches_elem(w: &World) / Touch {
+    let all = &w.entities
+    touch(w)
+    print(all.len())
+}
+// The handled computation changes another place across `resume`.
+fn across_resume_other() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let w: Vec<u64> = Vec.new()
+    w.push(2)
+    handle Bump {
+        fn bump(x) {
+            let e = &x[0]
+            resume(())
+            print(e)
+        }
+    } in {
+        bump(&v)
+        w.clear()
+    }
+}

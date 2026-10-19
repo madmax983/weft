@@ -80,6 +80,9 @@ pub struct BodyFacts {
     pub unit: usize,
     /// The facts.
     pub facts: FnFacts,
+    /// The effects that the body infers, also for a function that states its
+    /// effects. They include the closures that the body makes.
+    pub effects: program::EffectSig,
 }
 
 /// The result of analysis.
@@ -115,8 +118,15 @@ fn unit_of(prog: &Program, m: program::ModId) -> usize {
 /// Analyzes the units. Unit 0 must be the prelude and unit 1 the root.
 ///
 /// Effect inference ([`infer`]) gives a row to each function that does not
-/// state its effects. If it does not reach a fixpoint, each function whose row
-/// can still grow gets W0706.
+/// state its effects. Each function, also one that states its effects, also
+/// gets the parts of its signature that its body always infers: what it lends
+/// to its function parameters, what its returned function value does, which
+/// function parameters it stores, whether it can run a stored function value,
+/// what it gives to that value, and whether an unknown function value that it
+/// calls can resume more than once. If these other parts of a function still
+/// change after [`infer::parts_limit`] changes, the function gets W0704. If a
+/// row grows past the height of its lattice, the inference has a bug: it
+/// stops, and each function whose signature can still change gets W0706.
 pub fn analyze(units: &[Unit], opts: Options) -> Analysis {
     analyze_bounded(units, opts, None)
 }
@@ -148,6 +158,7 @@ fn analyze_bounded(units: &[Unit], opts: Options, limit: Option<usize>) -> Analy
             func: Some(f),
             unit: unit_of(&prog, prog.fns[f].module),
             facts: l.facts,
+            effects: l.effects,
         });
     }
     for t in &prog.tests {
@@ -159,6 +170,7 @@ fn analyze_bounded(units: &[Unit], opts: Options, limit: Option<usize>) -> Analy
             func: None,
             unit: unit_of(&prog, t.module),
             facts: l.facts,
+            effects: l.effects,
         });
     }
     for &f in &user_fns {

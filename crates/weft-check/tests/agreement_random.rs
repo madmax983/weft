@@ -23,6 +23,9 @@ struct Shape {
 }
 
 fn step(kind: u8, id: u8, unstable: bool) -> Step {
+    if kind % 7 == 6 {
+        return weft_facts::WILD;
+    }
     let id = u32::from(id % 3);
     let kind = match kind % 6 {
         0 => StepKind::Field { id },
@@ -47,10 +50,11 @@ fn build(s: &Shape) -> FnFacts {
         ..FnFacts::default()
     };
     for (i, k) in s.roots.iter().enumerate() {
-        let kind = match k % 3 {
+        let kind = match k % 4 {
             0 => RootKind::Param,
             1 => RootKind::Local,
-            _ => RootKind::Group,
+            2 => RootKind::Group,
+            _ => RootKind::Arg,
         };
         f.add_root(format!("r{i}"), kind);
     }
@@ -106,7 +110,7 @@ fn build(s: &Shape) -> FnFacts {
     }
     let has_tasks = !s.tasks.is_empty();
     for &(rel, a, b, c) in &s.rels {
-        match rel % 22 {
+        match rel % 25 {
             0 => f.points_into.push((v(a), p(b))),
             1 => f.mutates_at.push((n(a), p(b))),
             2 => f.reads_at.push((n(a), p(b))),
@@ -141,6 +145,9 @@ fn build(s: &Shape) -> FnFacts {
             }
             20 => f.call_mut.push((n(a), p(b), u32::try_from(c % 3).unwrap())),
             21 => f.call_arg.push((n(a), p(b), u32::try_from(c % 3).unwrap())),
+            22 => f.owner.push((p(a), v(b))),
+            23 => f.moved_part.push((p(a), n(b))),
+            24 => f.lends_mut.push((n(a), p(b))),
             _ => {}
         }
     }

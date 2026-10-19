@@ -157,17 +157,28 @@ impl Infer {
 
     /// Replaces all bound variables. Unbound integer variables become `i64`.
     pub fn resolve(&self, t: &Ty) -> Ty {
+        self.expand(t, true)
+    }
+
+    /// Replaces all bound variables. Unbound variables stay, so that a later
+    /// unification can still give an integer literal its type.
+    pub fn deep(&self, t: &Ty) -> Ty {
+        self.expand(t, false)
+    }
+
+    fn expand(&self, t: &Ty, default_int: bool) -> Ty {
+        let e = |t: &Ty| self.expand(t, default_int);
         match self.shallow(t) {
-            Ty::IntVar(_) => Ty::Int(IntTy::I64),
-            Ty::Tuple(ts) => Ty::Tuple(ts.iter().map(|t| self.resolve(t)).collect()),
-            Ty::Adt(id, ts) => Ty::Adt(id, ts.iter().map(|t| self.resolve(t)).collect()),
-            Ty::Ref(t) => Ty::Ref(Box::new(self.resolve(&t))),
-            Ty::Slice(t) => Ty::Slice(Box::new(self.resolve(&t))),
-            Ty::Array(t, n) => Ty::Array(Box::new(self.resolve(&t)), n),
-            Ty::Cont(a, b) => Ty::Cont(Box::new(self.resolve(&a)), Box::new(self.resolve(&b))),
+            Ty::IntVar(_) if default_int => Ty::Int(IntTy::I64),
+            Ty::Tuple(ts) => Ty::Tuple(ts.iter().map(e).collect()),
+            Ty::Adt(id, ts) => Ty::Adt(id, ts.iter().map(e).collect()),
+            Ty::Ref(t) => Ty::Ref(Box::new(e(&t))),
+            Ty::Slice(t) => Ty::Slice(Box::new(e(&t))),
+            Ty::Array(t, n) => Ty::Array(Box::new(e(&t)), n),
+            Ty::Cont(a, b) => Ty::Cont(Box::new(e(&a)), Box::new(e(&b))),
             Ty::Fn(f) => Ty::Fn(Rc::new(FnTy {
-                params: f.params.iter().map(|t| self.resolve(t)).collect(),
-                ret: self.resolve(&f.ret),
+                params: f.params.iter().map(e).collect(),
+                ret: e(&f.ret),
                 effects: f.effects.clone(),
                 summary: f.summary,
                 item: f.item,

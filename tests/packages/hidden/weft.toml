@@ -1,0 +1,8 @@
+# A binary whose dependency hides effects from its public signatures.
+[package]
+name = "hidden"
+kind = "bin"
+
+[dependencies.json]
+path = "deps/json"
+authority = []

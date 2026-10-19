@@ -1,0 +1,203 @@
+// A use stays on the path and in the body that runs it.
+// A reference argument is held from the point where it is taken.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Stats { count: u64 }
+effect Log { fn log(msg: String) }
+
+impl Entity {
+    fn heal(self, n: u64) / mut(self) { self.hp += 1 }
+}
+
+fn grow(w: &World) -> u64 / mut(w.entities) {
+    w.entities.push(Entity { hp: 1 })
+    0
+}
+fn show(e: &Entity, n: u64) { print(e.hp) }
+fn apply2(n: i32, f: fn()) { f() }
+fn apply3(n: u64, f: fn()) { f() }
+
+// The use on the then branch stays on that branch.
+fn then_use(world: &World, c: bool) -> i32 / mut(world.entities) {
+    let first = &world.entities[0]
+    let x = if c {
+        world.entities.push(Entity { hp: 1 })
+        first.hp   //~ W0301
+    } else {
+        print(0)
+        1
+    }
+    x
+}
+
+// Control: the use on the else branch does not follow the then branch.
+fn else_use(world: &World, c: bool) -> i32 / mut(world.entities) {
+    let first = &world.entities[0]
+    let x = if c {
+        world.entities.push(Entity { hp: 1 })
+        1
+    } else {
+        print(0)
+        first.hp
+    }
+    x
+}
+
+// The tail of a match arm stays in that arm.
+fn arm_use(world: &World, c: bool) -> i32 / mut(world.entities) {
+    let first = &world.entities[0]
+    let x = match c {
+        true => {
+            world.entities.push(Entity { hp: 1 })
+            first.hp   //~ W0301
+        }
+        false => 1,
+    }
+    x
+}
+
+// Control: the use in the second arm does not follow the first arm.
+fn other_arm(world: &World, c: bool) -> i32 / mut(world.entities) {
+    let first = &world.entities[0]
+    let x = match c {
+        true => {
+            world.entities.push(Entity { hp: 1 })
+            1
+        }
+        false => first.hp,
+    }
+    x
+}
+
+// The tail of a handled body stays in the body.
+fn handled_tail(world: &World) -> i32 / mut(world.entities) {
+    let first = &world.entities[0]
+    world.entities.push(Entity { hp: 1 })
+    handle Log { fn log(m) { resume(()) } } in first.hp   //~ W0301
+}
+
+// The tail of a handler clause stays in the clause.
+fn clause_tail(world: &World) -> i32 / mut(world.entities) {
+    let first = &world.entities[0]
+    handle Log {
+        fn log(m) {
+            world.entities.push(Entity { hp: 1 })
+            first.hp   //~ W0301
+        }
+    } in {
+        log("a")
+        0
+    }
+}
+
+// An argument before a closure is used at the call, not in the closure.
+fn before_closure(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    world.entities.push(Entity { hp: 1 })
+    apply2(first.hp, || print(1))   //~ W0301
+}
+
+fn before_closure_task(stats: &Stats) / mut(stats), async {
+    scope { s =>
+        s.spawn(|| stats.count += 1)
+        apply3(stats.count, || print(1))   //~ W0405
+    }
+}
+
+// The tail of a closure body stays in the closure.
+fn closure_tail(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let f = || {
+        world.entities.push(Entity { hp: 1 })
+        first.hp   //~ W0301
+    }
+    print(f())
+}
+
+// The tail of a loop body stays in the loop.
+fn loop_tail(world: &World, n: u64) / mut(world.entities) {
+    let first = &world.entities[0]
+    let i = 0
+    while i < n {
+        i += 1
+        world.entities.push(Entity { hp: 1 })
+        first.hp   //~ W0301
+    }
+    print(i)
+}
+
+// The right side of `&&` stays on its path.
+fn and_rhs(world: &World, c: bool) -> bool / mut(world.entities) {
+    let first = &world.entities[0]
+    let b = c && grow(world) == 0 && first.hp > 0   //~ W0301
+    b
+}
+
+// Control: a named reference argument.
+fn named_arg(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    show(first, grow(world))   //~ W0301
+}
+
+// A reference argument is taken before the later arguments run.
+fn temp_arg(world: &World) / mut(world.entities) {
+    show(&world.entities[0], grow(world))   //~ W0301
+}
+
+fn temp_tuple(world: &World) / mut(world.entities) {
+    let t = (&world.entities[0], grow(world))   //~ W0301
+    let (a, b) = t
+    print(a.hp)
+}
+
+fn temp_print(world: &World) / mut(world.entities) {
+    print(&world.entities[0], grow(world))   //~ W0301
+}
+
+fn temp_closure_call(world: &World) / mut(world.entities) {
+    let f = |e: &Entity, n: u64| print(e.hp)
+    f(&world.entities[0], grow(world))   //~ W0301
+}
+
+fn temp_receiver(world: &World) / mut(world.entities, world.entities[]) {
+    world.entities[0].heal(grow(world))   //~ W0301
+}
+
+// Control: the arguments run before the reference is taken.
+fn temp_after(world: &World) / mut(world.entities) {
+    let n = grow(world)
+    show(&world.entities[0], n)
+}
+
+// A closure argument refers to its captures until the call.
+fn closure_arg(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    apply3(grow(world), || print(first.hp))   //~ W0301
+}
+
+fn closure_arg_first(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    apply4(|| print(first.hp), grow(world))   //~ W0301
+}
+
+// A later argument that gives a named argument a new value does not hide
+// the old value.
+fn rebound_later(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    show(first, { world.entities.push(Entity { hp: 1 }); first = &world.entities[0]; 0 })   //~ W0301
+}
+
+fn print_named(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    print(first, grow(world))   //~ W0301
+}
+
+// A closure value that a closure call takes runs in the call.
+fn closure_to_closure(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let run = |f: fn()| f()
+    run(|| world.entities.clear())
+    print(first.hp)   //~ W0301
+}
+
+fn apply4(f: fn(), n: u64) { f() }

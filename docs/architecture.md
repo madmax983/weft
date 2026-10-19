@@ -27,27 +27,59 @@ flowchart TD
     call["call f(args)"] --> subst["substitute f's mut(...) with argument places"] --> mut["mutates_at(P, M)"]
     perform["perform op"] --> cap["performs_at(P, Cap)"] --> fp["footprint(Cap, M)"] --> mut
     spawn["s.spawn(closure)"] --> tw["task_writes(T, M)"] --> mut
+    value["call of a closure or an item value"] --> given["substitute its parameter places with the given places"] --> mut
+    unknown["call of a function parameter or an unknown value"] --> lend["lends_mut(P, M)"] --> inv
+    lend --> tc
     mut --> inv["invalidated_at(R, P)"] --> invalid["invalid(R, Q)"] --> err["error(R, P) = W0301"]
+    drop["moved_at(V, P), scope_end(V, P), moved_part(M, P)"] --> own["owner(Rt, V)"] --> frees["frees_at(P, M)"] --> inv
+    frees --> tc["task_conflict(T, P) = W0405"]
+    mut --> tc
 ```
+
+A mutation invalidates a reference only through an unstable step. A move or the end of
+the owner frees the memory, so it invalidates every reference into the owned value. A
+free or a mutation while a task is active must not overlap the task footprint.
+
+A function value can mutate through its reference parameters. A call that knows the
+value (a closure or an item, also one that a higher-order callee lends places to)
+mutates the places that it gives. A call of a function parameter or of an unknown
+value gives its places away: `lends_mut` invalidates references as a mutation does,
+and the caller sees the real mutation. A lent place is also a `call_mut` of the call,
+so it must not overlap another argument (W0312). See ADR 0005.
 
 ## Effect inference
 
 Sema infers the effects of each function that does not state them
 (`crates/weft-sema/src/infer.rs`). A worklist lowers callees before callers. When a
-signature grows, sema lowers again only the bodies that name that function. A new row
-is joined with the old row, so a row only grows, and the lattice of rows is finite.
-So the inference reaches a fixpoint. The bound for one row is the height of its
-lattice (`infer::growth_limit`). A row that grows past it shows a checker bug: each
-function whose row can still grow gets W0706, an error.
+signature changes, sema lowers again only the bodies that name that function. A last
+lowering of every body finds a read that the names do not show. A new row is joined
+with the old row, so a row only grows, and the lattice of rows is finite. So the
+inference reaches a fixpoint. The bound for one row is the height of its lattice
+(`infer::growth_limit`). A row that grows past it shows a checker bug: the inference
+stops, and each function whose signature can still change gets W0706, an error.
+
+Each body, also one whose function states its effects, also infers the other parts of
+its signature: what it lends to its function parameters, what its returned function
+value does, which function parameters it stores, whether it can run a stored function
+value, what it gives to that value, and whether an unknown function value that it calls
+can resume more than once. A new lowering replaces these parts, so they do not only
+grow. The parts of one function can change at most 32 times and two more times for
+each function (`infer::parts_limit`). After that, the inference keeps the last parts of
+that function, and its callers use them. Its row can still grow. A function whose parts
+still change at the end gets W0704, an error.
 
 ## Commands
 
 | Command | Stages |
 | --- | --- |
-| `weft check` | load (file or package) → sema → checker → diagnostics; `--explain` adds the spec derivations |
+| `weft check` | load (file or package) → sema → checker and, for a package, dependency authority (W0901, W0902) → diagnostics; `--explain` adds the spec derivations |
 | `weft agree` | load → sema → checker and spec → compare the violation sets |
 | `weft run`, `weft test` | load → sema → checker → refuse on errors (unless `--unchecked`) → interpreter |
 | `weft deps` | load → sema → dependency authority (W0901, W0902) |
+
+`weft run` and `weft test` use the same checks as `weft check`, so an authority error of
+a package also stops them. `weft deps` shows only the authority errors and the authority
+of each dependency.
 
 A single file takes its options from marker lines: `// weft: library` and
 `// weft: no-runtime`. A package takes them from `weft.toml`. The flags `--lib` and

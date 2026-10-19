@@ -1,9 +1,9 @@
 //! Diagnostics from checker results. Each diagnostic shows its derivation.
 
-use weft_facts::{FnFacts, NodeId, VarKind};
+use weft_facts::{FnFacts, NodeId, PlaceId, VarKind};
 use weft_syntax::diag::Diagnostic;
 
-use crate::rules::Report;
+use crate::rules::{Cause, Conflict, Report};
 
 fn node_span(f: &FnFacts, n: NodeId) -> weft_facts::Span {
     f.node(n).span
@@ -23,26 +23,127 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
     for inv in &r.invalidations {
         let var = f.var(inv.var);
         let path = &f.place(inv.path).display;
-        let mutated = &f.place(inv.mutated).display;
         let at = f.node(inv.at);
-        let mut_text = if at.detail.is_empty() {
-            format!("mut({mutated})")
-        } else {
-            at.detail.clone()
+        let line = at.span.lo;
+        let name = match var.kind {
+            VarKind::Iterator => "the loop iterator".to_string(),
+            VarKind::Temp | VarKind::BlockValue => format!("the {}", var.name),
+            _ => format!("`{}`", var.name),
         };
-        let name = if var.kind == VarKind::Iterator {
-            "the loop iterator".to_string()
-        } else {
-            format!("`{}`", var.name)
+        // What the node does, and why that invalidates the reference.
+        // The place behind an `Rc` handle `a` shows as `a.*`.
+        let handle = path.strip_suffix(".*");
+        let inside = |owner: &str, verb: &str| {
+            let head = if path == owner {
+                format!("{owner} {verb}")
+            } else if handle == Some(owner) {
+                format!("{owner} is an `Rc` handle on the way to the place, and it {verb}")
+            } else {
+                format!("{path} is inside {owner}, which {verb}")
+            };
+            format!("{head} at line {{line:{line}}}  →  invalidated at line {{line:{line}}}")
         };
-        let d = Diagnostic::error("W0301", format!("{name} used after it was invalidated"), node_span(f, inv.used_at))
-            .note_at(format!("{} : &{} in {path}", var.name, var.ty.trim_start_matches('&')), var.span)
-            .note_at(format!("{} : {mut_text}", at.label), at.span)
-            .note(format!(
-                "{mutated} is a strict prefix of {path}, through an unstable step  →  invalidated at line {{line:{}}}",
-                at.span.lo
-            ))
-            .note(format!("used at line {{line:{}}}", node_span(f, inv.used_at).lo));
+        let (what, why) = match inv.cause {
+            Cause::Mutation(m) | Cause::Lend(m) => {
+                let mutated = &f.place(m).display;
+                let what = match (at.detail.is_empty(), at.label.strip_suffix(" =")) {
+                    _ if matches!(inv.cause, Cause::Lend(_)) => format!(
+                        "{} : gets {mutated}, and it can mutate through it",
+                        at.label
+                    ),
+                    (true, Some(target)) => format!("{target} : new value"),
+                    (true, None) => format!("{} : mut({mutated})", at.label),
+                    (false, _) => format!("{} : {}", at.label, at.detail),
+                };
+                let why = match (f.wild_base(inv.path), f.wild_base(m)) {
+                    (Some(b), _) => format!(
+                        "{path} can be any place inside {}, and {mutated} overlaps it  →  invalidated at line {{line:{line}}}",
+                        f.place(b).display
+                    ),
+                    (None, Some(b)) => format!(
+                        "{mutated} can be any place inside {}, which holds {path}  →  invalidated at line {{line:{line}}}",
+                        f.place(b).display
+                    ),
+                    (None, None) if handle == Some(mutated.as_str()) => format!(
+                        "{mutated} is an `Rc` handle on the way to the place, and a new value of it can free the object  →  invalidated at line {{line:{line}}}"
+                    ),
+                    (None, None) => format!(
+                        "{mutated} is a strict prefix of {path}, through an unstable step  →  invalidated at line {{line:{line}}}"
+                    ),
+                };
+                (what, why)
+            }
+            Cause::Move(o) => {
+                let owner = &f.var(o).name;
+                (format!("{owner} : moved"), inside(owner, "is moved"))
+            }
+            Cause::ScopeEnd(o) if f.var(o).kind == VarKind::Temp => (
+                "temporary : goes out of scope at the end of the statement".to_string(),
+                format!("{path} is inside a temporary value, which goes out of scope at line {{line:{line}}}  →  invalidated at line {{line:{line}}}"),
+            ),
+            Cause::ScopeEnd(o) => {
+                let owner = &f.var(o).name;
+                // A local of a closure or a handler clause goes out of scope
+                // when the body returns at a call or an operation.
+                let when = match at.label.as_str() {
+                    "end of block" | "end of statement" | "exit" | "return" | "jump"
+                    | "drop" => "goes out of scope".to_string(),
+                    callee => format!("goes out of scope when `{callee}` returns"),
+                };
+                (format!("{owner} : {when}"), inside(owner, &when))
+            }
+            Cause::MovePart(m) => {
+                let moved = &f.place(m).display;
+                (format!("{moved} : moved"), inside(moved, "is moved"))
+            }
+        };
+        let holder = if var.kind == VarKind::Closure || var.ty.starts_with("fn(") {
+            format!("{} : {}, captures {path}", var.name, var.ty)
+        } else if let Some(h) = handle {
+            format!(
+                "{} : &{} through the `Rc` handle {h}",
+                var.name,
+                var.ty.trim_start_matches('&')
+            )
+        } else {
+            format!(
+                "{} : &{} in {path}",
+                var.name,
+                var.ty.trim_start_matches('&')
+            )
+        };
+        let used = node_span(f, inv.used_at);
+        // A block value is held only across the end of its block.
+        let block_value = var.kind == VarKind::BlockValue;
+        let d = if let (true, Cause::ScopeEnd(o)) = (block_value, inv.cause) {
+            let head = match (var.ty.starts_with("fn("), handle) {
+                (true, _) => format!("the closure that this block returns captures `{path}`"),
+                (false, Some(h)) => {
+                    format!("the value of this block points into the object behind `{h}`")
+                }
+                (false, None) => format!("the value of this block points into `{path}`"),
+            };
+            Diagnostic::error(
+                "W0301",
+                format!(
+                    "{head}, but `{}` goes out of scope at the end of the block",
+                    f.var(o).name
+                ),
+                used,
+            )
+            .note_at(holder, var.span)
+            .note_at(what, at.span)
+        } else {
+            Diagnostic::error(
+                "W0301",
+                format!("{name} used after it was invalidated"),
+                used,
+            )
+            .note_at(holder, var.span)
+            .note_at(what, at.span)
+            .note(why)
+            .note(format!("used at line {{line:{}}}", used.lo))
+        };
         out.push(d);
     }
 
@@ -188,7 +289,20 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             at.span,
         ));
     }
-    for &(n, m, a) in &v.alias_conflict {
+    // One W0312 for each call: the pair with the outermost mutated place. Two
+    // overlapping places that both change give the pair in both directions.
+    let mut pairs: Vec<(NodeId, PlaceId, PlaceId)> = v.alias_conflict.iter().copied().collect();
+    pairs.sort_by_key(|&(n, m, a)| {
+        (
+            n,
+            f.place(m).steps.len(),
+            std::cmp::Reverse(f.place(a).steps.len()),
+            m,
+            a,
+        )
+    });
+    pairs.dedup_by_key(|p| p.0);
+    for (n, m, a) in pairs {
         let at = f.node(n);
         out.push(
             Diagnostic::error(
@@ -204,20 +318,41 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             .note("the callee sees them as separate places, so it cannot protect the references"),
         );
     }
-    for c in &r.conflicts {
+    // Several nodes of one expression can conflict with the same task: show the
+    // conflict with the most specific places once.
+    let mut conflicts: Vec<&Conflict> = r.conflicts.iter().collect();
+    let depth = |c: &Conflict| {
+        (
+            f.place(c.node_place).steps.len(),
+            f.place(c.task_place).steps.len(),
+        )
+    };
+    conflicts.sort_by_key(|c| {
+        let s = f.node(c.at).span;
+        (c.task, s.lo, s.hi, std::cmp::Reverse(depth(c)))
+    });
+    conflicts.dedup_by_key(|c| {
+        let s = f.node(c.at).span;
+        (c.task, s.lo, s.hi)
+    });
+    for c in conflicts {
         let at = f.node(c.at);
         let task = &f.tasks[c.task.index()];
-        let (verb, other) = if c.task_writes {
-            ("mutates", "accesses")
-        } else {
-            ("reads", "mutates")
+        let verb = if c.task_writes { "mutates" } else { "reads" };
+        let node_place = &f.place(c.node_place).display;
+        let what = match (c.task_writes, c.free, c.lends) {
+            (_, _, true) => {
+                format!("gives `{node_place}` to a function value that can mutate it")
+            }
+            (true, None, false) => format!("accesses `{node_place}`"),
+            (false, None, false) => format!("mutates `{node_place}`"),
+            (_, Some(_), false) => format!("frees `{node_place}`"),
         };
         out.push(
             Diagnostic::error(
                 "W0405",
                 format!(
-                    "this code {other} `{}` while a task {verb} `{}`",
-                    f.place(c.node_place).display,
+                    "this code {what} while a task {verb} `{}`",
                     f.place(c.task_place).display
                 ),
                 at.span,

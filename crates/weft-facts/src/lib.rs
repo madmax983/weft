@@ -71,6 +71,13 @@ id_type!(
     "h"
 );
 
+/// The last step of a wildcard place. A wildcard place stands for any place at or
+/// below its parent. No type has a field with this id.
+pub const WILD: Step = Step {
+    kind: StepKind::Field { id: u32::MAX },
+    unstable: true,
+};
+
 /// What a place root is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RootKind {
@@ -80,6 +87,10 @@ pub enum RootKind {
     Local,
     /// The group of an `rc` type. Mutations need a declaration.
     Group,
+    /// The referent of a reference parameter of a closure or a handler clause.
+    /// A mutation through it changes what the caller gives, and the caller sees
+    /// that mutation. So it needs no declaration here.
+    Arg,
 }
 
 /// A place root.
@@ -104,6 +115,13 @@ pub struct PlaceInfo {
     pub display: String,
 }
 
+impl PlaceInfo {
+    /// Returns true if the last step is the wildcard step.
+    pub fn is_wildcard(&self) -> bool {
+        self.steps.last() == Some(&WILD)
+    }
+}
+
 /// What a variable is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum VarKind {
@@ -113,6 +131,8 @@ pub enum VarKind {
     Param,
     /// A temporary value inside an expression.
     Temp,
+    /// The value of a block, held across the end of the block.
+    BlockValue,
     /// The hidden iterator of a `for` loop.
     Iterator,
     /// A closure value.
@@ -253,6 +273,10 @@ pub struct FnFacts {
     pub moved_at: Vec<(VarId, NodeId)>,
     /// `scope_end(V, P)`.
     pub scope_end: Vec<(VarId, NodeId)>,
+    /// `owner(Rt, V)`: the root place `Rt` holds the value of `V`.
+    pub owner: Vec<(PlaceId, VarId)>,
+    /// `moved_part(M, P)`: node `P` moves the value at place `M` out of its owner.
+    pub moved_part: Vec<(PlaceId, NodeId)>,
     /// `may_abort(P)`.
     pub may_abort: Vec<NodeId>,
     /// `multi_at(P)`.
@@ -286,6 +310,9 @@ pub struct FnFacts {
     pub call_mut: Vec<(NodeId, PlaceId, u32)>,
     /// `call_arg(P, A, I)`.
     pub call_arg: Vec<(NodeId, PlaceId, u32)>,
+    /// `lends_mut(P, M)`: the call at `P` gives `M` to a function value that can
+    /// mutate through it.
+    pub lends_mut: Vec<(NodeId, PlaceId)>,
 
     /// `library()`.
     pub library: bool,
@@ -343,15 +370,40 @@ impl FnFacts {
         let base = self.place(parent);
         let mut steps = base.steps.clone();
         steps.push(step);
+        // A place below a wildcard place is still somewhere inside its base.
+        let display = if base.steps.contains(&WILD) {
+            base.display.clone()
+        } else {
+            format!("{}{}", base.display, text)
+        };
         let info = PlaceInfo {
             root: base.root,
             parent: Some(parent),
             steps,
-            display: format!("{}{}", base.display, text),
+            display,
         };
         let id = self.push_place(info);
         self.place_index.insert((parent, step), id);
         id
+    }
+
+    /// Returns the wildcard place under `p`: any place at or below `p`.
+    pub fn wildcard(&mut self, p: PlaceId) -> PlaceId {
+        self.child(p, WILD, "..")
+    }
+
+    /// Returns the parent of the outermost wildcard step on the path of `p`.
+    /// `p` can be any place at or below it.
+    pub fn wild_base(&self, p: PlaceId) -> Option<PlaceId> {
+        let mut base = None;
+        let mut at = p;
+        while let Some(q) = self.place(at).parent {
+            if self.place(at).is_wildcard() {
+                base = Some(q);
+            }
+            at = q;
+        }
+        base
     }
 
     fn push_place(&mut self, info: PlaceInfo) -> PlaceId {
@@ -413,6 +465,8 @@ impl FnFacts {
         nd(&mut self.uses);
         nd(&mut self.moved_at);
         nd(&mut self.scope_end);
+        nd(&mut self.owner);
+        nd(&mut self.moved_part);
         nd(&mut self.may_abort);
         nd(&mut self.multi_at);
         nd(&mut self.declared_mut);
@@ -427,6 +481,7 @@ impl FnFacts {
         nd(&mut self.mut_through);
         nd(&mut self.call_mut);
         nd(&mut self.call_arg);
+        nd(&mut self.lends_mut);
     }
 }
 

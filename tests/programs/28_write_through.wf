@@ -1,0 +1,82 @@
+// `c += v` on a reference writes through it: it mutates every place that `c` points into.
+// `c = r` with a reference `r` gives `c` a new value, as the interpreter does.
+struct Stats { count: u64, hist: Vec<u64> }
+
+fn shared_bump(s: &Stats @ shared) {
+    let c = &s.count
+    c += 1   //~ W0402
+}
+
+pub fn pub_bump(s: &Stats) {   //~ W0701
+    let c = &s.count
+    c += 1
+}
+
+fn param_bump(c: &u64) { c += 1 }
+
+pub fn calls_param_bump(s: &Stats) {   //~ W0701
+    param_bump(&s.count)
+}
+
+fn undeclared(s: &Stats) / mut(s.hist) {
+    let c = &s.count
+    c -= 1   //~ W0703
+}
+
+fn declared(s: &Stats) / mut(s.count) {
+    let c = &s.count
+    c *= 2
+    print(c)
+}
+
+fn task_race(s: &Stats) / mut(s.count), async {
+    let c = &s.count
+    scope { sc =>
+        sc.spawn(|| print(s.count))
+        c += 1   //~ W0405
+    }
+}
+
+// A plain assignment of a reference is a rebind: nothing is written.
+fn rebind(s: &Stats @ shared, t: &Stats) {
+    let c = &s.count
+    c = &t.count
+    print(c)
+}
+
+// The interpreter replaces the local, so a value of another type is a type error.
+fn store_value(s: &Stats) {
+    let c = &s.count
+    c = 5   //~ W0102
+}
+
+// Control: an owned local is not a reference.
+fn owned() -> u64 {
+    let n = 1
+    n += 1
+    n
+}
+
+// A compound assignment to a reference field or a reference part writes through it.
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+
+fn field_bump(f: &Frame) / mut(f.cur) {
+    f.cur += 1   //~ W0703
+}
+
+fn field_bump_declared(f: &Frame) / mut(f.buf) {
+    f.cur += 1
+}
+
+fn field_race(f: &Frame) / mut(f.buf), async {
+    let b = &f.buf
+    scope { s =>
+        s.spawn(|| print(b))
+        f.cur += 1   //~ W0405
+    }
+}
+
+fn tuple_part(s: &Stats @ shared) {
+    let t = (&s.count, 1)
+    t.0 += 1   //~ W0402
+}

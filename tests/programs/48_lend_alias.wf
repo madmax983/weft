@@ -1,0 +1,33 @@
+// A function value can mutate through each reference that it gets, and it sees
+// its parameters as separate places. So a call that gives it a place must not
+// give it another place that overlaps it (W0312), as for a callee that mutates.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+
+fn apply(f: fn(&World), w: &World) { f(w) }
+
+// The function parameter gets `w` and a place inside it.
+fn give_two(f: fn(&World, &Entity), w: &World) {
+    f(w, &w.entities[0])   //~ W0312
+}
+
+// The function parameter gets `world` and a closure that points into it.
+fn give_closure(g: fn(fn(), &World), world: &World) {
+    let r = &world.entities[0]
+    g(|| print(r.hp), world)   //~ W0312
+}
+
+// A closure argument lends its parameter and reads a capture inside it.
+fn lend_and_read(f: fn(&World), w: &World) {
+    let r = &w.entities[0]
+    apply(|x| { f(x); print(r.hp) }, w)   //~ W0312
+}
+
+// Controls: places that do not overlap.
+fn give_other(f: fn(&World, &Entity), w: &World, o: &World) {
+    f(w, &o.entities[0])
+}
+fn lend_other(f: fn(&World), w: &World, o: &World) {
+    let r = &o.entities[0]
+    apply(|x| { f(x); print(r.hp) }, w)
+}

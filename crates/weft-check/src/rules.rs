@@ -10,6 +10,21 @@ use weft_facts::{FnFacts, HandlerId, NodeId, PlaceId, TaskId, TaskKind, VarId, V
 use weft_verified::dataflow::propagate;
 use weft_verified::places;
 
+/// What a node does that invalidates a reference.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Cause {
+    /// The node mutates this place.
+    Mutation(PlaceId),
+    /// The node moves this owner of the place.
+    Move(VarId),
+    /// This owner of the place goes out of scope at the node.
+    ScopeEnd(VarId),
+    /// The node moves the value at this place out of its owner.
+    MovePart(PlaceId),
+    /// The node gives this place to a function value that can mutate through it.
+    Lend(PlaceId),
+}
+
 /// Why a reference was invalidated: the evidence for one W0301 error.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Invalidation {
@@ -17,10 +32,10 @@ pub struct Invalidation {
     pub var: VarId,
     /// The place the reference points into.
     pub path: PlaceId,
-    /// The node that mutates.
+    /// The node that invalidates.
     pub at: NodeId,
-    /// The mutated place.
-    pub mutated: PlaceId,
+    /// What the node does.
+    pub cause: Cause,
     /// The use of the invalid reference.
     pub used_at: NodeId,
 }
@@ -38,6 +53,10 @@ pub struct Conflict {
     pub node_place: PlaceId,
     /// True if the task writes `task_place`.
     pub task_writes: bool,
+    /// The node frees `node_place`: a move or the end of its owner.
+    pub free: Option<Cause>,
+    /// The node gives `node_place` to a function value that can mutate through it.
+    pub lends: bool,
 }
 
 /// The checker result: violations plus the evidence for diagnostics.
@@ -59,6 +78,12 @@ struct Ctx<'a> {
     /// `mutates_at`, with the footprint rule applied.
     muts: Vec<Vec<PlaceId>>,
     reads: Vec<Vec<PlaceId>>,
+    /// `lends_mut`.
+    lends: Vec<Vec<PlaceId>>,
+    /// `frees_at`, with the cause of each free.
+    frees: Vec<Vec<(PlaceId, Cause)>>,
+    /// `wild_at(P, B)` by place.
+    bases: Vec<Vec<PlaceId>>,
 }
 
 impl<'a> Ctx<'a> {
@@ -91,13 +116,62 @@ impl<'a> Ctx<'a> {
         for &(p, a) in &f.reads_at {
             reads[p.index()].push(a);
         }
-        Self {
+        let mut lends = vec![Vec::new(); n];
+        for &(p, m) in &f.lends_mut {
+            lends[p.index()].push(m);
+        }
+        // A parent comes before its children.
+        let mut bases: Vec<Vec<PlaceId>> = Vec::with_capacity(f.places.len());
+        for p in &f.places {
+            let mut b = p.parent.map_or_else(Vec::new, |q| bases[q.index()].clone());
+            if let (true, Some(q)) = (p.is_wildcard(), p.parent) {
+                b.push(q);
+            }
+            bases.push(b);
+        }
+        let mut cx = Self {
             f,
             succ,
             pred,
             muts,
             reads,
+            lends,
+            frees: vec![Vec::new(); n],
+            bases,
+        };
+        cx.frees = cx.frees_at();
+        cx
+    }
+
+    /// `frees_at(P, M)`: a move of a part frees the part; a move of the whole
+    /// value or the end of the owner frees each root that it owns.
+    fn frees_at(&self) -> Vec<Vec<(PlaceId, Cause)>> {
+        let f = self.f;
+        let mut out = vec![Vec::new(); self.n()];
+        let mut owned: BTreeMap<VarId, Vec<PlaceId>> = BTreeMap::new();
+        for &(rt, v) in &f.owner {
+            owned.entry(v).or_default().push(rt);
         }
+        let none: Vec<PlaceId> = Vec::new();
+        for &(m, p) in &f.moved_part {
+            out[p.index()].push((m, Cause::MovePart(m)));
+        }
+        for &(v, p) in &f.moved_at {
+            let roots = owned.get(&v).unwrap_or(&none);
+            // part_moved_at(V, P)
+            let part = f
+                .moved_part
+                .iter()
+                .any(|&(m, q)| q == p && roots.iter().any(|&rt| self.prefix(rt, m)));
+            if !part {
+                out[p.index()].extend(roots.iter().map(|&rt| (rt, Cause::Move(v))));
+            }
+        }
+        for &(v, p) in &f.scope_end {
+            let roots = owned.get(&v).unwrap_or(&none);
+            out[p.index()].extend(roots.iter().map(|&rt| (rt, Cause::ScopeEnd(v))));
+        }
+        out
     }
 
     fn n(&self) -> usize {
@@ -108,12 +182,31 @@ impl<'a> Ctx<'a> {
         self.f.place(a).root == self.f.place(b).root
     }
 
+    fn prefix(&self, m: PlaceId, p: PlaceId) -> bool {
+        self.same_root(m, p) && places::may_prefix(&self.f.place(m).steps, &self.f.place(p).steps)
+    }
+
     fn invalidates(&self, m: PlaceId, p: PlaceId) -> bool {
         self.same_root(m, p) && places::invalidates(&self.f.place(m).steps, &self.f.place(p).steps)
     }
 
+    /// `overlaps(P, Q)`. A wildcard place overlaps what its base overlaps.
     fn overlaps(&self, a: PlaceId, b: PlaceId) -> bool {
-        self.same_root(a, b) && places::overlaps(&self.f.place(a).steps, &self.f.place(b).steps)
+        (self.same_root(a, b) && places::overlaps(&self.f.place(a).steps, &self.f.place(b).steps))
+            || self.bases[a.index()].iter().any(|&x| self.overlaps(x, b))
+            || self.bases[b.index()].iter().any(|&y| self.overlaps(a, y))
+    }
+
+    /// `invalidated_at` by a mutation of `m`, for a reference into `p`.
+    fn mutation_kills(&self, m: PlaceId, p: PlaceId) -> bool {
+        self.invalidates(m, p)
+            || self.bases[p.index()].iter().any(|&b| self.overlaps(m, b))
+            || self.bases[m.index()].iter().any(|&b| self.prefix(b, p))
+    }
+
+    /// `invalidated_at` by a free of `m`, for a reference into `p`.
+    fn free_kills(&self, m: PlaceId, p: PlaceId) -> bool {
+        self.prefix(m, p) || self.bases[p.index()].iter().any(|&b| self.overlaps(m, b))
     }
 
     fn within(&self, p: PlaceId, d: PlaceId) -> bool {
@@ -179,19 +272,41 @@ fn invalidation(
     }
     for (&v, ps) in &paths {
         let Some(used) = uses.get(&v) else { continue };
-        // invalidated_at(R, P) with the first witness per node
-        let mut gens: Vec<(NodeId, PlaceId, PlaceId)> = Vec::new();
-        for (i, ms) in cx.muts.iter().enumerate() {
-            let hit = ms
+        // invalidated_at(R, P) with the first witness per node: a mutation, or a
+        // place that the node gives to a function value.
+        let mut gens: Vec<(NodeId, PlaceId, Cause)> = Vec::new();
+        for (i, (ms, ls)) in cx.muts.iter().zip(&cx.lends).enumerate() {
+            let changes = ms
                 .iter()
-                .find_map(|&m| ps.iter().find(|&&p| cx.invalidates(m, p)).map(|&p| (m, p)));
-            if let Some((m, p)) = hit {
-                gens.push((NodeId(u32::try_from(i).unwrap_or(u32::MAX)), p, m));
+                .map(|&m| (m, Cause::Mutation(m)))
+                .chain(ls.iter().map(|&m| (m, Cause::Lend(m))));
+            let mut hit = None;
+            for (m, cause) in changes {
+                if let Some(&p) = ps.iter().find(|&&p| cx.mutation_kills(m, p)) {
+                    hit = Some((p, cause));
+                    break;
+                }
+            }
+            if let Some((p, cause)) = hit {
+                gens.push((NodeId(u32::try_from(i).unwrap_or(u32::MAX)), p, cause));
+            }
+        }
+        // A free of `M` with `prefix(M, Path)`.
+        for (i, fs) in cx.frees.iter().enumerate() {
+            let node = NodeId(u32::try_from(i).unwrap_or(u32::MAX));
+            for &(m, cause) in fs {
+                for &p in ps {
+                    if cx.free_kills(m, p) {
+                        gens.push((node, p, cause));
+                    }
+                }
             }
         }
         if gens.is_empty() {
             continue;
         }
+        gens.sort_by_key(|g| (g.0, g.2));
+        gens.dedup_by_key(|g| g.0);
         let kill = cx.mask(rebound.get(&v).cloned().unwrap_or_default());
         let gen = cx.mask(gens.iter().map(|g| g.0));
         let invalid = cx.forward(&gen, &kill);
@@ -200,15 +315,15 @@ fn invalidation(
                 continue;
             }
             r.violations.error.insert((v, u));
-            // Evidence: the first mutation that reaches this use on its own.
-            for &(at, path, mutated) in &gens {
+            // Evidence: the first invalidation that reaches this use on its own.
+            for &(at, path, cause) in &gens {
                 let one = cx.mask([at]);
                 if cx.forward(&one, &kill)[u.index()] {
                     r.invalidations.push(Invalidation {
                         var: v,
                         path,
                         at,
-                        mutated,
+                        cause,
                         used_at: u,
                     });
                     break;
@@ -393,19 +508,47 @@ fn tasks(cx: &Ctx<'_>, r: &mut Report) {
             let mut found = None;
             for &a in accesses {
                 if let Some(&m) = tw.iter().find(|&&m| cx.overlaps(m, a)) {
-                    found = Some((m, a, true));
+                    found = Some((m, a, true, None, false));
                     break;
                 }
             }
             if found.is_none() {
                 for &m in &cx.muts[i] {
                     if let Some(&a) = tr.iter().find(|&&a| cx.overlaps(m, a)) {
-                        found = Some((a, m, false));
+                        found = Some((a, m, false, None, false));
                         break;
                     }
                 }
             }
-            if let Some((task_place, node_place, task_writes)) = found {
+            // A place that the node gives to a function value, which can mutate it.
+            if found.is_none() {
+                for &m in &cx.lends[i] {
+                    let hit = tr
+                        .iter()
+                        .map(|&a| (a, false))
+                        .chain(tw.iter().map(|&a| (a, true)))
+                        .find(|&(a, _)| cx.overlaps(m, a));
+                    if let Some((a, writes)) = hit {
+                        found = Some((a, m, writes, None, true));
+                        break;
+                    }
+                }
+            }
+            // A free of what the task reads or writes.
+            if found.is_none() {
+                for &(m, cause) in &cx.frees[i] {
+                    let hit = tr
+                        .iter()
+                        .map(|&a| (a, false))
+                        .chain(tw.iter().map(|&a| (a, true)))
+                        .find(|&(a, _)| cx.overlaps(m, a));
+                    if let Some((a, writes)) = hit {
+                        found = Some((a, m, writes, Some(cause), false));
+                        break;
+                    }
+                }
+            }
+            if let Some((task_place, node_place, task_writes, free, lends)) = found {
                 r.violations.task_conflict.insert((t, node));
                 r.conflicts.push(Conflict {
                     task: t,
@@ -413,6 +556,8 @@ fn tasks(cx: &Ctx<'_>, r: &mut Report) {
                     task_place,
                     node_place,
                     task_writes,
+                    free,
+                    lends,
                 });
             }
         }
