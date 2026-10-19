@@ -25,6 +25,12 @@ pub fn canonical(prog: &Program, m: ModId, name: &str) -> Option<Vec<String>> {
     if let Some(ItemRef::Effect(e)) = prog.lookup(m, name) {
         return Some(vec![prog.effects[e].name.clone()]);
     }
+    std_alias(name)
+}
+
+/// Maps the alias of a standard effect to canonical names: `net` becomes
+/// `Net`, and `io` becomes the members of the bundle.
+pub fn std_alias(name: &str) -> Option<Vec<String>> {
     let std = match name {
         "async" => "Async",
         "net" => "Net",
@@ -39,6 +45,16 @@ pub fn canonical(prog: &Program, m: ModId, name: &str) -> Option<Vec<String>> {
         _ => return None,
     };
     Some(vec![std.to_string()])
+}
+
+/// Returns an effect name as a signature writes it: a standard effect by its
+/// lowercase alias (`Log` becomes `log`), a user effect by its own name.
+pub fn written_name(name: &str) -> String {
+    if is_std(name) {
+        name.to_lowercase()
+    } else {
+        name.to_string()
+    }
 }
 
 /// Returns the effects that a declared effect implies, itself included.
@@ -68,5 +84,7 @@ mod tests {
         assert!(c.contains("Async") && c.contains("Net") && c.contains("Log"));
         assert!(is_std("Par"));
         assert!(!is_std("Choice"));
+        assert_eq!(written_name("Log"), "log");
+        assert_eq!(written_name("Log2"), "Log2");
     }
 }

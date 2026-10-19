@@ -27,8 +27,8 @@ with it. Polonius showed that a general engine is slow for Rust, but the model i
   signatures, `in` places (W0203, W0204), moves out of a borrowed place (W0303),
   reference fields (W0605), W0313, W0314, W0406, W0705, effect inference that does not
   become stable (W0704) or does not converge (W0706), W0802 and the `fip` checks. The
-  driver reports W0803. The CLI reports unknown file markers (W0804), and the package
-  loader reports W0901 and W0902.
+  driver reports W0803 and W0805. The CLI reports unknown file markers (W0804), and the
+  package loader reports W0901 and W0902.
 - Agreement is over the facts that sema emits. It does not show that the facts are
   complete.
 - A rule change needs all of these edits:

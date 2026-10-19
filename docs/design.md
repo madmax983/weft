@@ -120,6 +120,7 @@ Weft enforces shared-XOR-mutable only where threads or tasks meet, using OxCaml-
 - Closures passed to `fork` or spawned as stealable tasks must be `portable`.
 - Data visible to several threads must be `shared`, or split into `uniq` parts whose places are proven disjoint.
 - Immutable plain data crosses modes automatically (mode crossing), so most code writes no modes at all.
+- A type has at most one mode on each axis. Also `uniq` and `shared` contradict: other threads can read a `shared` value, so other references to it exist. Both are errors (W0119).
 
 Modes are inferred in bodies and appear only in public signatures that need them.
 
@@ -212,7 +213,7 @@ This closes the hole where a handler resumes twice and uses the same moved value
 
 ### Authority
 
-Effects double as capabilities. `main` receives the root capabilities (filesystem, network, clock, randomness) through `env`. The package manager checks the effects of each dependency function against the authority that the project grants to the dependency. Each function counts, also a private one, with its signature, the effects that its body infers and the effects of the closures that it makes. So a JSON parser that asks for `Net` is rejected when the project loads it (W0901).
+Effects double as capabilities. `main` receives the root capabilities (filesystem, network, clock, randomness) through `env`. The package manager checks the effects of each dependency function against the authority that the project grants to the dependency. Each function counts, also a private one, with its signature, the effects that its body infers and the effects of the closures that it makes. Only the standard effects count. A user effect of a dependency needs no authority, because the caller must handle it. So a JSON parser that asks for `Net` is rejected when the project loads it (W0901).
 
 ## Memory without a garbage collector
 
@@ -242,6 +243,7 @@ The standard effects are `Async`, `Net`, `Fs`, `Clock`, `Rand`, `Log` and `Block
 
 - **Only binaries and test harnesses may install a root handler** for a standard effect.
 - Libraries may *intercept* standard effects (retries, tracing, rate limiting, mocks) but can never be the runtime.
+- The runtime handles only the standard effects. So `main` and each test must handle every other effect that they perform (W0805).
 
 Libraries are written against the effect interfaces and can't name a runtime, so the ecosystem can't split by runtime.
 

@@ -5,12 +5,20 @@ use std::fmt::Write as _;
 use crate::ast::Span;
 use crate::source::SourceFile;
 
+/// The unit index of the standard prelude.
+pub const PRELUDE_UNIT: usize = 0;
+
+/// The unit index of the root: the file or the package that the command
+/// checks. Dependencies have the indices after it.
+pub const ROOT_UNIT: usize = 1;
+
 /// How serious a diagnostic is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Severity {
-    /// The program is rejected.
+    /// The checker rejects the program.
     Error,
-    /// The program is accepted, but a rule (for example a user lint) fired.
+    /// The checker accepts the program, but a rule (for example a user lint)
+    /// fired.
     Warning,
 }
 
@@ -36,7 +44,7 @@ pub struct Diagnostic {
     pub span: Span,
     /// The explanation, one fact per line.
     pub notes: Vec<Note>,
-    /// The source unit: 0 is the prelude, 1 is the root file, higher are dependencies.
+    /// The source unit: [`PRELUDE_UNIT`], [`ROOT_UNIT`], or a dependency.
     pub unit: usize,
 }
 
@@ -49,7 +57,7 @@ impl Diagnostic {
             message: message.into(),
             span,
             notes: Vec::new(),
-            unit: 1,
+            unit: ROOT_UNIT,
         }
     }
 
@@ -81,11 +89,16 @@ impl Diagnostic {
         self
     }
 
-    /// Renders the diagnostic in the format of the design doc.
+    /// Renders the diagnostic in the format of the design doc: the message,
+    /// the location, then one line for each note. A note with a location
+    /// shows its line.
     ///
     /// ```text
     /// error[W0301]: `first` used after it was invalidated
-    ///   first  : &Entity in world.entities[]          (line 2)
+    ///   --> world.wf:9:5
+    ///   first : &Entity in world.entities[]  (line 7)
+    ///   push : mut(world.entities)           (line 8)
+    ///   used at line 9
     /// ```
     pub fn render(&self, file: &SourceFile) -> String {
         let kind = match self.severity {

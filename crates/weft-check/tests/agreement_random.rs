@@ -3,7 +3,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use proptest::prelude::*;
-use weft_check::{bridge, check};
+use weft_check::{bridge, check, Cause};
 use weft_facts::{
     CapId, FnFacts, HandlerInfo, NodeId, PlaceId, RootKind, Span, Step, StepKind, TaskId, TaskKind,
     VarId, VarInfo, VarKind,
@@ -196,5 +196,76 @@ proptest! {
         let fast = check(&f).violations;
         let spec = bridge::check_spec(&f).expect("spec evaluates");
         prop_assert_eq!(fast, spec);
+    }
+
+    /// Each W0301 error has one piece of evidence. Its node does what its cause
+    /// says, and it reaches the use alone. The spec gives the nodes that
+    /// invalidate the reference (`invalidated_at`). The evidence node is one of
+    /// them, and no earlier one reaches the use alone.
+    #[test]
+    fn each_invalid_use_has_the_first_evidence(s in shape()) {
+        let f = build(&s);
+        let r = check(&f);
+        let out = bridge::evaluate_spec(&f, false).expect("spec evaluates");
+        let id = |v, prefix: char| -> u32 {
+            let text = out.display_value(v);
+            let text = text.trim_matches('"');
+            text.strip_prefix(prefix)
+                .and_then(|x| x.parse().ok())
+                .unwrap_or_else(|| panic!("bad id {text}"))
+        };
+        let mut gens: Vec<(VarId, NodeId)> = out
+            .tuples("invalidated_at")
+            .iter()
+            .map(|t| (VarId(id(t[0], 'v')), NodeId(id(t[1], 'n'))))
+            .collect();
+        gens.sort();
+        gens.dedup();
+        let n = f.nodes.len();
+        let mut succ = vec![Vec::new(); n];
+        for &(a, b) in &f.cfg_edge {
+            succ[a.index()].push(b.index());
+        }
+        let reaches = |v: VarId, at: NodeId, u: NodeId| {
+            let mut kill = vec![false; n];
+            for &(x, q) in &f.rebound_at {
+                if x == v {
+                    kill[q.index()] = true;
+                }
+            }
+            let mut one = vec![false; n];
+            one[at.index()] = true;
+            weft_verified::dataflow::propagate(&succ, &one, &kill)[u.index()]
+        };
+        for &(v, u) in &r.violations.error {
+            let evidence: Vec<_> = r
+                .invalidations
+                .iter()
+                .filter(|i| i.var == v && i.used_at == u)
+                .collect();
+            prop_assert_eq!(evidence.len(), 1, "error {:?}", (v, u));
+            let inv = evidence[0];
+            prop_assert!(f.points_into.contains(&(v, inv.path)));
+            let at = inv.at;
+            let done = match inv.cause {
+                Cause::Mutation(m) => {
+                    f.mutates_at.contains(&(at, m))
+                        || f.performs_at.iter().any(|&(q, c)| {
+                            q == at && f.footprint.contains(&(c, m))
+                        })
+                }
+                Cause::Lend(m) => f.lends_mut.contains(&(at, m)),
+                Cause::Move(o) => f.moved_at.contains(&(o, at)),
+                Cause::ScopeEnd(o) => f.scope_end.contains(&(o, at)),
+                Cause::MovePart(m) => f.moved_part.contains(&(m, at)),
+            };
+            prop_assert!(done, "{:?}", inv);
+            prop_assert!(reaches(v, at, u), "{:?}", inv);
+            prop_assert!(gens.contains(&(v, at)), "{:?} is not a spec gen", inv);
+            for &(_, p) in gens.iter().filter(|&&(x, p)| x == v && p < at) {
+                prop_assert!(!reaches(v, p, u), "gen {:?} before {:?}", p, inv);
+            }
+        }
+        prop_assert_eq!(r.invalidations.len(), r.violations.error.len());
     }
 }

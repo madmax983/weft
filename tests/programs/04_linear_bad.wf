@@ -23,6 +23,15 @@ fn aborts() / fail {
     release(l)
 }
 
+// One error for each value: the first site, and a note for the others.
+fn aborts_often() / fail {
+    let l = take()
+    risky()   //~ W0602
+    risky()
+    risky()
+    release(l)
+}
+
 fn fine() / fail {
     let tx = begin()
     risky()

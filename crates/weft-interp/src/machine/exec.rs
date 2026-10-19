@@ -411,11 +411,14 @@ impl super::Machine<'_, '_> {
                         *slot = v;
                     }
                 }
-                let lin = if self.rt.adts.get(*adt).is_some_and(|a| a.linear) {
-                    self.lins.push(LinRec { l: Linear::new() });
-                    Some(self.lins.len() - 1)
-                } else {
-                    None
+                let lin = match self.rt.adts.get(*adt) {
+                    Some(a) if a.linear => {
+                        self.lins.push(LinRec {
+                            l: Linear::new(a.on_abort.is_some()),
+                        });
+                        Some(self.lins.len() - 1)
+                    }
+                    _ => None,
                 };
                 self.push(Value::Struct(Box::new(Obj {
                     adt: *adt,
@@ -756,15 +759,21 @@ impl super::Machine<'_, '_> {
         Ok(())
     }
 
-    /// Consumes a linear value on the normal path.
+    /// Consumes a linear value on the normal path. A value that is already
+    /// finished is a fault: the verified record refuses the consume.
     pub(crate) fn consume_lin(&mut self, id: usize) -> R<()> {
         let Some(rec) = self.lins.get_mut(id) else {
             return Err(self.fault("internal: bad linear record"));
         };
-        if rec.l.consume().is_err() && rec.l.state != LinState::Aborted {
-            return Err(self.fault("a linear value was consumed twice"));
+        if rec.l.consume().is_ok() {
+            return Ok(());
         }
-        Ok(())
+        let aborted = rec.l.state == LinState::Aborted;
+        Err(self.fault(if aborted {
+            "a linear value was consumed after `on abort` finished it"
+        } else {
+            "a linear value was consumed twice"
+        }))
     }
 
     // -----------------------------------------------------------------------

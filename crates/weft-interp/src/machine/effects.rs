@@ -326,7 +326,7 @@ impl super::Machine<'_, '_> {
                 }
                 let mut live = Vec::new();
                 for v in found {
-                    if self.unwind_lin(&v) {
+                    if self.unwind_lin(&v)? {
                         live.push(v);
                     } else {
                         self.heap.drop_value(v);
@@ -476,22 +476,39 @@ impl super::Machine<'_, '_> {
     }
 
     /// Marks a linear value as aborted. Returns true if `on abort` must run.
-    fn unwind_lin(&mut self, v: &Value) -> bool {
-        match v {
+    /// A live value whose type has no `on abort` is a fault: the checker
+    /// rejects it (W0602), and the unwinder cannot finish it.
+    fn unwind_lin(&mut self, v: &Value) -> R<bool> {
+        let r = match v {
             Value::Struct(o) => o
                 .lin
                 .and_then(|id| self.lins.get_mut(id))
-                .is_some_and(|l| l.l.unwind()),
-            Value::Task(t) => self.tasks.get_mut(*t).is_some_and(|x| x.handle.unwind()),
-            _ => false,
-        }
+                .map_or(Ok(false), |l| l.l.unwind()),
+            Value::Task(t) => self
+                .tasks
+                .get_mut(*t)
+                .map_or(Ok(false), |x| x.handle.unwind()),
+            _ => Ok(false),
+        };
+        r.map_err(|_| {
+            let ty = match v {
+                Value::Struct(o) => self.rt.adts.get(o.adt).map_or("?", |a| &*a.name),
+                _ => "Task",
+            };
+            self.fault(format!(
+                "a linear value of type `{ty}` has no `on abort`, so the unwinder cannot finish it"
+            ))
+        })
     }
 
-    /// Runs `on abort` for one linear value.
+    /// Runs `on abort` for one linear value. The record of the value is
+    /// finished (`Aborted`), so the `on abort` function gets the value
+    /// without its record.
     fn run_on_abort(&mut self, v: Value) -> R<Flow> {
         let cur = self.cur;
         match v {
-            Value::Struct(o) => {
+            Value::Struct(mut o) => {
+                o.lin = None;
                 let info = &self.rt.adts[o.adt];
                 let ty = info.name.to_string();
                 let f = info.on_abort;

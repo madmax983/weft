@@ -1,8 +1,7 @@
 //! The production checker: one specialized function per rule group of `spec/weft.dl`.
 //!
-//! Each forward or backward analysis calls the verified
-//! [`propagate`](weft_verified::dataflow::propagate). Each place comparison calls the
-//! verified place algebra.
+//! Each forward or backward analysis calls the verified [`propagate`]. Each
+//! place comparison calls the verified place algebra.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -215,12 +214,12 @@ impl<'a> Ctx<'a> {
 
     /// Forward propagation from `gen` nodes, stopped after `kill` nodes.
     fn forward(&self, gen: &[bool], kill: &[bool]) -> Vec<bool> {
-        propagate(&self.succ, &gen.to_vec(), &kill.to_vec())
+        propagate(&self.succ, gen, kill)
     }
 
     /// Backward propagation on the reversed graph.
     fn backward(&self, gen: &[bool], kill: &[bool]) -> Vec<bool> {
-        propagate(&self.pred, &gen.to_vec(), &kill.to_vec())
+        propagate(&self.pred, gen, kill)
     }
 
     fn mask(&self, nodes: impl IntoIterator<Item = NodeId>) -> Vec<bool> {
@@ -230,6 +229,67 @@ impl<'a> Ctx<'a> {
         }
         m
     }
+}
+
+/// Finds, for each node in `targets`, the first gen node that reaches it
+/// alone. "Reaches" has the meaning of [`propagate`] with only that gen. The
+/// result has the index in `gens` for each node. Only the entries of the
+/// targets are exact.
+///
+/// First a backward search finds the nodes that can reach a target. A path
+/// from a gen to a target goes only through these nodes. Then one search runs
+/// from each gen, in order, in these nodes. A search marks each node that it
+/// reaches and that no earlier search marked, and it stops at marked nodes.
+/// When a search marks a node that is not a kill node, it marks the
+/// successors too. Thus an earlier search reached all that a later search can
+/// reach through a marked node. The cost is linear in the size of the graph.
+pub(crate) fn first_reaching(
+    succ: &[Vec<usize>],
+    pred: &[Vec<usize>],
+    gens: &[usize],
+    kill: &[bool],
+    targets: &[usize],
+) -> Vec<Option<usize>> {
+    // The nodes that reach a target: a predecessor of a target, or of a node
+    // that reaches a target and is not a kill node.
+    let mut is_target = vec![false; succ.len()];
+    for &t in targets {
+        is_target[t] = true;
+    }
+    let mut near = is_target.clone();
+    let mut work: Vec<usize> = (0..succ.len()).filter(|&t| is_target[t]).collect();
+    while let Some(q) = work.pop() {
+        if kill[q] && !is_target[q] {
+            continue;
+        }
+        for &p in &pred[q] {
+            if !near[p] {
+                near[p] = true;
+                work.push(p);
+            }
+        }
+    }
+    let mut first = vec![None; succ.len()];
+    for (k, &g) in gens.iter().enumerate() {
+        if !near[g] {
+            continue;
+        }
+        // A gen marks its successors, also when it is a kill node.
+        let mut next = &succ[g];
+        loop {
+            for &q in next {
+                if near[q] && first[q].is_none() {
+                    first[q] = Some(k);
+                    if !kill[q] {
+                        work.push(q);
+                    }
+                }
+            }
+            let Some(p) = work.pop() else { break };
+            next = &succ[p];
+        }
+    }
+    first
 }
 
 /// Groups a `(var, node)` relation by variable.
@@ -258,6 +318,47 @@ pub fn check(f: &FnFacts) -> Report {
     r
 }
 
+/// `invalidated_at(R, P)` for a reference that points into `ps`: each node
+/// that invalidates it, with the first witness `(node, path, cause)`. A node
+/// invalidates the reference if it mutates a place, gives a place to a function
+/// value (`lends_mut`) or frees a place (`frees_at`). The result has one
+/// witness for each node, in the order of the nodes: the witness with the least
+/// cause.
+fn invalidated_at(cx: &Ctx<'_>, ps: &[PlaceId]) -> Vec<(NodeId, PlaceId, Cause)> {
+    let mut gens: Vec<(NodeId, PlaceId, Cause)> = Vec::new();
+    // A mutation, or a place that the node gives to a function value.
+    for (i, (ms, ls)) in cx.muts.iter().zip(&cx.lends).enumerate() {
+        let changes = ms
+            .iter()
+            .map(|&m| (m, Cause::Mutation(m)))
+            .chain(ls.iter().map(|&m| (m, Cause::Lend(m))));
+        let mut hit = None;
+        for (m, cause) in changes {
+            if let Some(&p) = ps.iter().find(|&&p| cx.mutation_kills(m, p)) {
+                hit = Some((p, cause));
+                break;
+            }
+        }
+        if let Some((p, cause)) = hit {
+            gens.push((NodeId(u32::try_from(i).unwrap_or(u32::MAX)), p, cause));
+        }
+    }
+    // A free of `M` with `prefix(M, Path)`.
+    for (i, fs) in cx.frees.iter().enumerate() {
+        let node = NodeId(u32::try_from(i).unwrap_or(u32::MAX));
+        for &(m, cause) in fs {
+            for &p in ps {
+                if cx.free_kills(m, p) {
+                    gens.push((node, p, cause));
+                }
+            }
+        }
+    }
+    gens.sort_by_key(|g| (g.0, g.2));
+    gens.dedup_by_key(|g| g.0);
+    gens
+}
+
 /// W0301: `error(R, P)`.
 fn invalidation(
     cx: &Ctx<'_>,
@@ -270,64 +371,38 @@ fn invalidation(
     for &(v, p) in &f.points_into {
         paths.entry(v).or_default().push(p);
     }
+    // References that point into the same places share their gens.
+    let mut gens_of: BTreeMap<&[PlaceId], Vec<(NodeId, PlaceId, Cause)>> = BTreeMap::new();
     for (&v, ps) in &paths {
         let Some(used) = uses.get(&v) else { continue };
-        // invalidated_at(R, P) with the first witness per node: a mutation, or a
-        // place that the node gives to a function value.
-        let mut gens: Vec<(NodeId, PlaceId, Cause)> = Vec::new();
-        for (i, (ms, ls)) in cx.muts.iter().zip(&cx.lends).enumerate() {
-            let changes = ms
-                .iter()
-                .map(|&m| (m, Cause::Mutation(m)))
-                .chain(ls.iter().map(|&m| (m, Cause::Lend(m))));
-            let mut hit = None;
-            for (m, cause) in changes {
-                if let Some(&p) = ps.iter().find(|&&p| cx.mutation_kills(m, p)) {
-                    hit = Some((p, cause));
-                    break;
-                }
-            }
-            if let Some((p, cause)) = hit {
-                gens.push((NodeId(u32::try_from(i).unwrap_or(u32::MAX)), p, cause));
-            }
-        }
-        // A free of `M` with `prefix(M, Path)`.
-        for (i, fs) in cx.frees.iter().enumerate() {
-            let node = NodeId(u32::try_from(i).unwrap_or(u32::MAX));
-            for &(m, cause) in fs {
-                for &p in ps {
-                    if cx.free_kills(m, p) {
-                        gens.push((node, p, cause));
-                    }
-                }
-            }
-        }
+        let gens = gens_of
+            .entry(ps.as_slice())
+            .or_insert_with(|| invalidated_at(cx, ps));
         if gens.is_empty() {
             continue;
         }
-        gens.sort_by_key(|g| (g.0, g.2));
-        gens.dedup_by_key(|g| g.0);
         let kill = cx.mask(rebound.get(&v).cloned().unwrap_or_default());
         let gen = cx.mask(gens.iter().map(|g| g.0));
         let invalid = cx.forward(&gen, &kill);
-        for &u in used {
-            if !invalid[u.index()] {
-                continue;
-            }
+        let errors: Vec<NodeId> = used
+            .iter()
+            .copied()
+            .filter(|u| invalid[u.index()])
+            .collect();
+        // Evidence: the first invalidation that reaches each use on its own.
+        let gen_nodes: Vec<usize> = gens.iter().map(|g| g.0.index()).collect();
+        let targets: Vec<usize> = errors.iter().map(|u| u.index()).collect();
+        let first = first_reaching(&cx.succ, &cx.pred, &gen_nodes, &kill, &targets);
+        for u in errors {
             r.violations.error.insert((v, u));
-            // Evidence: the first invalidation that reaches this use on its own.
-            for &(at, path, cause) in &gens {
-                let one = cx.mask([at]);
-                if cx.forward(&one, &kill)[u.index()] {
-                    r.invalidations.push(Invalidation {
-                        var: v,
-                        path,
-                        at,
-                        cause,
-                        used_at: u,
-                    });
-                    break;
-                }
+            if let Some(&(at, path, cause)) = first[u.index()].and_then(|k| gens.get(k)) {
+                r.invalidations.push(Invalidation {
+                    var: v,
+                    path,
+                    at,
+                    cause,
+                    used_at: u,
+                });
             }
         }
     }
@@ -449,9 +524,13 @@ fn effects(cx: &Ctx<'_>, out: &mut Violations) {
             }
         }
     }
+    let mut args: BTreeMap<NodeId, Vec<(PlaceId, u32)>> = BTreeMap::new();
+    for &(q, a, j) in &f.call_arg {
+        args.entry(q).or_default().push((a, j));
+    }
     for &(p, m, i) in &f.call_mut {
-        for &(q, a, j) in &f.call_arg {
-            if p == q && i != j && cx.overlaps(m, a) {
+        for &(a, j) in args.get(&p).map_or(&[][..], Vec::as_slice) {
+            if i != j && cx.overlaps(m, a) {
                 out.alias_conflict.insert((p, m, a));
             }
         }

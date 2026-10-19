@@ -1,12 +1,15 @@
 //! Packages: `weft.toml`, dependencies and their authority.
 //!
-//! A project grants each dependency a set of effects. The code of the
-//! dependency must stay inside that set: the row of each function, a private
-//! one too (name resolution does not enforce `pub` yet, so the root can call
-//! it), the effects that its body infers beyond its signature, and each effect
-//! that a closure in a body performs (the closure can leave the dependency as
-//! a value). A JSON parser that asks for `Net` is rejected when the project
-//! loads it ("install time").
+//! A project grants each dependency a set of standard effects. The code of
+//! the dependency must stay inside that set. This applies to the row of each
+//! function, also a private one: name resolution does not enforce `pub` yet,
+//! so the root can call it. It also applies to the effects that its body
+//! infers beyond its signature. It also applies to each effect that a closure
+//! in a body performs, because the closure can leave the dependency as a
+//! value. Only the standard effects count. A user effect of a dependency
+//! needs no authority, because the caller must handle it. When the project
+//! loads a JSON parser that asks for `Net`, W0901 rejects it ("install
+//! time").
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -15,7 +18,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use weft_sema::{effects, Analysis, Unit};
-use weft_syntax::diag::Diagnostic;
+use weft_syntax::diag::{Diagnostic, ROOT_UNIT};
 use weft_syntax::{parse_file, SourceFile};
 
 /// The kind of package.
@@ -42,6 +45,7 @@ pub enum Runtime {
 
 /// The `[package]` table.
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PackageTable {
     /// The package name.
     pub name: String,
@@ -58,6 +62,7 @@ pub struct PackageTable {
 
 /// A `[dependencies.NAME]` table.
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DepTable {
     /// The path of the dependency, relative to the manifest.
     pub path: String,
@@ -68,6 +73,7 @@ pub struct DepTable {
 
 /// A parsed `weft.toml`.
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Manifest {
     /// The package table.
     pub package: PackageTable,
@@ -96,14 +102,17 @@ pub struct Dependency {
     pub authority: BTreeSet<String>,
     /// The granted effects as written.
     pub written: Vec<String>,
-    /// The dependency's own manifest.
+    /// The dependency's own manifest. A dependency with no `weft.toml` is a
+    /// plain library.
     pub manifest: Option<Manifest>,
 }
 
 /// A loaded program: a file or a package directory.
 #[derive(Clone, Debug)]
 pub struct Package {
-    /// The source of each unit. Unit 0 is the prelude, unit 1 the root.
+    /// The source of each unit: the prelude
+    /// ([`PRELUDE_UNIT`](weft_syntax::diag::PRELUDE_UNIT)), the root
+    /// ([`ROOT_UNIT`]), then the dependencies.
     pub files: Vec<SourceFile>,
     /// The parsed units.
     pub units: Vec<Unit>,
@@ -135,7 +144,7 @@ impl Package {
             },
             None => self
                 .files
-                .get(1)
+                .get(ROOT_UNIT)
                 .map_or_else(weft_sema::Options::default, |f| {
                     weft_sema::Options::from_markers(&f.text)
                 }),
@@ -149,7 +158,11 @@ impl Package {
     /// W0804: a word in a file marker that is not a marker. A package takes
     /// its options from the manifest, so only a single file is checked.
     pub fn marker_diags(&self) -> Vec<Diagnostic> {
-        let Some(f) = self.files.get(1).filter(|_| self.manifest.is_none()) else {
+        let Some(f) = self
+            .files
+            .get(ROOT_UNIT)
+            .filter(|_| self.manifest.is_none())
+        else {
             return Vec::new();
         };
         weft_sema::marker_words(&f.text)
@@ -167,7 +180,7 @@ impl Package {
                     "the markers are `{}`",
                     weft_sema::MARKERS.join("`, `")
                 ));
-                d.unit = 1;
+                d.unit = ROOT_UNIT;
                 d
             })
             .collect()
@@ -204,7 +217,10 @@ fn parse_unit(name: &str, path: &Path) -> Result<(SourceFile, Unit)> {
 
 /// Loads a file, or a package directory with `weft.toml`.
 pub fn load(path: &Path) -> Result<Package> {
-    let prelude = weft_sema::prelude_unit();
+    if !path.exists() {
+        bail!("cannot read {}: no such file or directory", path.display());
+    }
+    let prelude = weft_sema::prelude_unit()?;
     let mut files = vec![SourceFile::new("prelude.wf", weft_sema::PRELUDE_SRC)];
     let mut units = vec![prelude];
     if path.is_file() {
@@ -226,13 +242,18 @@ pub fn load(path: &Path) -> Result<Package> {
     let mut deps = Vec::new();
     for (name, d) in &manifest.dependencies {
         let dir: PathBuf = path.join(&d.path);
-        let dm = Manifest::read(&dir.join("weft.toml")).ok();
+        let dm_path = dir.join("weft.toml");
+        let dm = if dm_path.exists() {
+            Some(Manifest::read(&dm_path)?)
+        } else {
+            None
+        };
         let src = root_source(&dir, Kind::Lib)?;
         let (sf, u) = parse_unit(name, &src)?;
         let mut authority = BTreeSet::new();
         for a in &d.authority {
             // Authority names standard effects: `net`, `log`, `io`, ...
-            let canon = canonical_std(a)
+            let canon = effects::std_alias(&a.to_ascii_lowercase())
                 .with_context(|| format!("unknown effect `{a}` in the authority of `{name}`"))?;
             authority.extend(canon);
         }
@@ -253,26 +274,6 @@ pub fn load(path: &Path) -> Result<Package> {
         manifest: Some(manifest),
         deps,
     })
-}
-
-fn canonical_std(name: &str) -> Option<Vec<String>> {
-    let p = weft_sema::Program::default();
-    let _ = p;
-    let lower = name.to_ascii_lowercase();
-    let v = match lower.as_str() {
-        "io" => effects::IO.iter().map(|s| (*s).to_string()).collect(),
-        "async" => vec!["Async".into()],
-        "net" => vec!["Net".into()],
-        "fs" => vec!["Fs".into()],
-        "clock" => vec!["Clock".into()],
-        "rand" => vec!["Rand".into()],
-        "log" => vec!["Log".into()],
-        "blocking" => vec!["Blocking".into()],
-        "fail" => vec!["Fail".into()],
-        "par" => vec!["Par".into()],
-        _ => return None,
-    };
-    Some(v)
 }
 
 fn root_source(dir: &Path, kind: Kind) -> Result<PathBuf> {
@@ -296,8 +297,9 @@ pub fn package_diags(pkg: &Package, a: &Analysis) -> Vec<Diagnostic> {
                 "W0902",
                 "a library cannot enable the GC tier; only a binary may",
                 weft_syntax::ast::Span::default(),
-            );
-            d.unit = 1;
+            )
+            .note("weft.toml sets `gc = true` in [package]");
+            d.unit = ROOT_UNIT;
             out.push(d);
         }
     }
@@ -321,11 +323,14 @@ pub fn package_diags(pkg: &Package, a: &Analysis) -> Vec<Diagnostic> {
             if a.program.mods[f.module].unit != dep.unit {
                 continue;
             }
+            // Only the standard effects count. The caller must handle a user
+            // effect, so authority does not grant it.
             let mut performs = a.sigs[i].effects.named.clone();
             for b in a.bodies.iter().filter(|b| b.func == Some(i)) {
                 performs.extend(b.effects.named.iter().cloned());
                 performs.extend(b.facts.escapes_at.iter().map(|(_, e)| e.clone()));
             }
+            performs.retain(|e| effects::is_std(e));
             let needs: BTreeSet<String> = effects::close(&performs);
             let extra: Vec<&String> = needs
                 .iter()
@@ -334,7 +339,7 @@ pub fn package_diags(pkg: &Package, a: &Analysis) -> Vec<Diagnostic> {
             if extra.is_empty() {
                 continue;
             }
-            let wanted: Vec<String> = extra.iter().map(|e| e.to_lowercase()).collect();
+            let wanted: Vec<String> = extra.iter().map(|e| effects::written_name(e)).collect();
             let mut d = Diagnostic::error(
                 "W0901",
                 format!(

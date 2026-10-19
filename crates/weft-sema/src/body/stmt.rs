@@ -127,12 +127,16 @@ impl Lower<'_> {
     }
 
     fn finish(mut self, eff: EffectSig) -> Lowered {
-        // Show the types of the locals as the whole body inferred them.
+        // Show the types of the locals as the whole body inferred them. A local
+        // that gets a function type after its `let` can be called too.
         for i in 0..self.locals.len() {
             let ty = self.locals[i].ty.clone();
             let shown = self.show(&ty);
+            let callable = matches!(self.inf.resolve(&ty), Ty::Fn(_));
             let var = self.locals[i].var;
-            self.facts.vars[var.index()].ty = shown;
+            let info = &mut self.facts.vars[var.index()];
+            info.ty = shown;
+            info.callable |= callable;
         }
         let declared: BTreeSet<String> = if self.facts.has_signature {
             self.facts.declared_effect.iter().cloned().collect()

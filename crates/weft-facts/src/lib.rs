@@ -166,21 +166,29 @@ pub struct VarInfo {
     pub uniq: bool,
     /// The value cannot cross threads.
     pub nonportable: bool,
+    /// The value is a function value: a closure, a function parameter or a
+    /// function item. A second call of a `once` function value is W0502.
+    pub callable: bool,
 }
 
 impl VarInfo {
     /// Makes a plain `many`, portable, aliased variable.
+    ///
+    /// `callable` is true for a closure, and for a type that shows as
+    /// `fn(...)`. A producer that knows the type sets `callable` itself.
     pub fn plain(
         name: impl Into<String>,
         kind: VarKind,
         span: Span,
         ty: impl Into<String>,
     ) -> Self {
+        let ty = ty.into();
         Self {
             name: name.into(),
+            callable: kind == VarKind::Closure || ty.starts_with("fn("),
             kind,
             span,
-            ty: ty.into(),
+            ty,
             linear: false,
             has_on_abort: false,
             once: false,

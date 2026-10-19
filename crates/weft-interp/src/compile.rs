@@ -722,9 +722,12 @@ impl<'a> Compiler<'a> {
                     Some(PathRef::Effect(_)) => {
                         self.emit(fault("an effect operation needs a call"));
                     }
-                    None => {
-                        self.place(e);
+                    // A literal has no fields, so `place` gives no place.
+                    None if self.place(e) => {
                         self.emit(Op::Read);
+                    }
+                    None => {
+                        self.emit(fault(format!("no field `{}` here", name.name)));
                     }
                 }
             }

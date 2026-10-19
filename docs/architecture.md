@@ -93,11 +93,20 @@ prefix operators, postfix steps or `else if` branches. It keeps each part of 32 
 operators of a long chain in a hidden local, so a flat chain has no limit. Sema and the
 interpreter walk the tree recursively. `crates/weft-cli/tests/limits.rs` runs the
 parser, the printer, sema, the checker, the spec and the interpreter on a 2 MiB thread
-for the largest program that parses. The derivation printer of `check --explain`
-(`weft_check::bridge::render`) recurses once for each step of a derivation, so a long
-path in one body (thousands of statements, or a long flat chain) needs a deep stack,
-and its indented output grows with the square of the depth. The `weft` binary runs
-each command on a 256 MiB stack. An iterative printer is still to do.
+for the largest program that parses, also for chains inside nested blocks.
+
+The derivation printer of `check --explain` (`weft_check::bridge::render_derivation`)
+uses a stack, not recursion. It shows at most 32 levels of indent. A chain is a path of
+premises whose relations depend on each other in the spec: `invalid` after `invalid`, or
+`live_out` and `live_in` in turn. The printer folds a chain of more than 8 steps. It
+shows the first 3 and the last 3 steps, and one line ``... N more `invalid` steps ...``.
+So a path of 10 000 statements gives a few kilobytes of text. `limits.rs` tests this on
+a 2 MiB thread for the derivations of W0301 and W0503.
+
+`weft_cli::run` runs each command on a thread with a 256 MiB stack, as a margin. The
+library entry points of sema and the checker (`weft_sema::analyze`,
+`weft_check::check_source`) run on the stack of the caller. Their result holds `Rc`
+values, so it cannot come back from another thread.
 
 ## Verified pieces
 
@@ -106,9 +115,9 @@ each command on a 256 MiB stack. An iterative printer is still to do.
 | `places::invalidates` | equals rule 3 (strict prefix, unstable step after it) | checker W0301 |
 | `places::within` | inclusion; a cover invalidates at least as much | checker W0703, W0402; sema W0203, W0204 |
 | `places::overlaps` | symmetric may-alias; split sides are disjoint | checker W0312, W0405 |
-| `places::{step_alias, step_within}` | equal their spec functions | bridge (pairwise step facts) |
+| `places::{step_alias, step_within, step_class}` | equal their spec functions; steps of different classes are not related | bridge (pairwise step facts) |
 | `places::concat` | concatenation of paths | not yet used (sema substitutes places with its own code) |
 | `dataflow::propagate` | result is exactly the least fixpoint of the gen/kill rules | every dataflow rule |
 | `modes::{submode, join}` | partial order and least upper bound | not yet used (mode rules use flags in the facts) |
 | `lifecycle::Continuation` | a `once` continuation resumes at most once | interpreter |
-| `lifecycle::Linear` | a linear value is consumed or aborted at most once | interpreter |
+| `lifecycle::Linear` | a linear value is consumed or aborted at most once; a live value with no `on abort` does not unwind | interpreter |

@@ -874,3 +874,132 @@ fn w0312_a_lent_place_pairs_with_the_other_arguments() {
         w0312[0].message
     );
 }
+
+/// The pairwise step facts are the pairs of one class: a wide struct gives
+/// one `step_alias` and one `step_within` fact per field, quickly.
+#[test]
+fn step_facts_of_a_wide_struct_are_linear() {
+    let mut b = B::new();
+    let s = b.param("s");
+    let n = 3200;
+    for i in 0..n {
+        b.field(s, i, &format!("f{i}"));
+    }
+    let v = b.local("v");
+    let elem = b.elem(v);
+    let lo = b.seg(v, false);
+    let hi = b.seg(v, true);
+    let start = std::time::Instant::now();
+    let mut alias = Vec::new();
+    let mut within = Vec::new();
+    bridge::each_fact(&b.f, &mut |rel, args| {
+        let pair = || format!("{args:?}");
+        match rel {
+            "step_alias" => alias.push(pair()),
+            "step_within" => within.push(pair()),
+            _ => {}
+        }
+    });
+    let time = start.elapsed();
+    let sym = |p: PlaceId| bridge::Arg::Sym(p.to_string());
+    let field0 = PlaceId(1);
+    assert!(alias.contains(&format!("{:?}", [sym(field0), sym(field0)])));
+    // The three element places: each pair aliases, except the two sides.
+    let n = n as usize;
+    assert_eq!(alias.len(), n + 7, "{:?}", &alias[n..]);
+    assert!(!alias.contains(&format!("{:?}", [sym(lo), sym(hi)])));
+    assert!(within.contains(&format!("{:?}", [sym(lo), sym(elem)])));
+    assert!(!within.contains(&format!("{:?}", [sym(elem), sym(lo)])));
+    assert_eq!(within.len(), n + 5, "{:?}", &within[n..]);
+    assert!(time.as_millis() < 500, "{time:?}");
+}
+
+#[test]
+fn the_spec_parses() {
+    let p = weft_datalog::parse_program_named("spec/weft.dl", bridge::SPEC_SRC);
+    assert!(p.is_ok(), "{p:?}");
+    assert_eq!(p.ok().as_ref(), Some(bridge::spec()));
+    assert!(!bridge::spec().rules().is_empty());
+}
+
+/// A violation fact with a value that is not an id is an error, so that it
+/// cannot hide a disagreement.
+#[test]
+fn a_violation_that_does_not_parse_is_an_error() {
+    let p = weft_datalog::parse_program_named("t.dl", "error(x, n1).\nstealable(t2).")
+        .expect("the program parses");
+    let options = weft_datalog::EvalOptions { provenance: false };
+    let out = weft_datalog::evaluate(&p, weft_datalog::Database::new(), options)
+        .expect("the program evaluates");
+    assert_eq!(
+        bridge::violations(&out),
+        Err(bridge::SpecError::BadTuple("error(x, n1)".into()))
+    );
+    let p = weft_datalog::parse_program_named("t.dl", "error(v0, n1).\nstealable(t2).")
+        .expect("the program parses");
+    let out = weft_datalog::evaluate(&p, weft_datalog::Database::new(), options)
+        .expect("the program evaluates");
+    let v = bridge::violations(&out).expect("the facts parse");
+    assert!(v.error.contains(&(VarId(0), NodeId(1))));
+    assert!(v.stealable.contains(&TaskId(2)));
+}
+
+proptest::proptest! {
+    /// The search for W0301 evidence finds, for each target, the first gen
+    /// that reaches it alone in the verified propagation.
+    #[test]
+    fn first_reaching_is_the_first_gen_that_reaches_alone(
+        n in 1usize..12,
+        edges in proptest::collection::vec((0usize..12, 0usize..12), 0..30),
+        gens in proptest::collection::vec(0usize..12, 0..6),
+        kills in proptest::collection::vec(proptest::bool::ANY, 12),
+        targets in proptest::collection::vec(0usize..12, 0..6),
+    ) {
+        let mut succ = vec![Vec::new(); n];
+        let mut pred = vec![Vec::new(); n];
+        for (a, b) in edges {
+            succ[a % n].push(b % n);
+            pred[b % n].push(a % n);
+        }
+        let gens: Vec<usize> = gens.into_iter().map(|g| g % n).collect();
+        let targets: Vec<usize> = targets.into_iter().map(|t| t % n).collect();
+        let kill = kills[..n].to_vec();
+        let first = crate::rules::first_reaching(&succ, &pred, &gens, &kill, &targets);
+        for &t in &targets {
+            let naive = gens.iter().position(|&g| {
+                let mut one = vec![false; n];
+                one[g] = true;
+                weft_verified::dataflow::propagate(&succ, &one, &kill)[t]
+            });
+            proptest::prop_assert_eq!(first[t], naive, "target {}", t);
+        }
+    }
+}
+
+/// W0502 or W0302: the `callable` flag of the variable decides, not its type text.
+#[test]
+fn w0502_needs_a_callable_variable() {
+    for (callable, code) in [(true, "W0502"), (false, "W0302")] {
+        let mut b = B::new();
+        let f = b.var_with("f", |v| {
+            v.ty = "fn()".into();
+            v.callable = callable;
+        });
+        let n0 = b.node("let f");
+        b.bind(f, n0);
+        let n1 = b.node("f");
+        b.mv(f, n1);
+        let n2 = b.node("f");
+        b.mv(f, n2);
+        let r = check(&b.f);
+        let d = crate::diagnose::diagnose(&b.f, &r);
+        let codes: Vec<&str> = d.iter().map(|d| d.code.as_str()).collect();
+        assert_eq!(codes, [code], "callable: {callable}");
+    }
+    let closure = VarInfo::plain("c", VarKind::Closure, Span::default(), "T");
+    assert!(closure.callable);
+    let param = VarInfo::plain("p", VarKind::Param, Span::default(), "fn() -> u64");
+    assert!(param.callable);
+    let plain = VarInfo::plain("x", VarKind::Local, Span::default(), "u64");
+    assert!(!plain.callable);
+}

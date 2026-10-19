@@ -44,13 +44,6 @@ impl SourceFile {
         self.line_col(span.lo).0
     }
 
-    /// Returns the source text of a span.
-    pub fn snippet(&self, span: Span) -> &str {
-        let lo = (span.lo as usize).min(self.text.len());
-        let hi = (span.hi as usize).clamp(lo, self.text.len());
-        &self.text[lo..hi]
-    }
-
     /// Returns the text of a 1-based line, without the line break.
     pub fn line_text(&self, line: usize) -> &str {
         let Some(&start) = self.line_starts.get(line.wrapping_sub(1)) else {
@@ -76,6 +69,5 @@ mod tests {
         assert_eq!(f.line_col(4), (2, 2));
         assert_eq!(f.line_text(2), "cd");
         assert_eq!(f.line_text(9), "");
-        assert_eq!(f.snippet(Span::new(3, 5)), "cd");
     }
 }

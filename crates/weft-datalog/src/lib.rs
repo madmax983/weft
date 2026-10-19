@@ -33,9 +33,9 @@
 //!
 //! - Arity: all atoms of a relation have the same number of arguments. Input
 //!   tuples must also agree with the program.
-//! - Range restriction: each variable in the head, in a negated atom or in a
-//!   comparison must occur in a positive body atom of the same rule. A
-//!   wildcard is not permitted in the head or in a comparison. A wildcard in
+//! - Range restriction: a variable in the head, in a negated atom or in a
+//!   comparison must also be in a positive body atom. A wildcard is not
+//!   permitted in the head or in a comparison. A wildcard in
 //!   a negated atom means "any value".
 //! - Stratification: a rule must not negate a relation in its own recursive
 //!   cycle.
@@ -50,8 +50,8 @@
 //! # Provenance
 //!
 //! With [`EvalOptions::provenance`] on (the default), each derived tuple
-//! records its first derivation: the rule index and the rows that matched
-//! the positive body atoms. [`Output::explain`] uses this record to build a
+//! records its first derivation. The record has the rule index and the rows
+//! that matched the positive body atoms. [`Output::explain`] uses this record to build a
 //! [`Derivation`] tree. The tree also shows the negated atoms and the
 //! comparisons that held, with the values of the derivation. Input facts and
 //! program facts are leaves. The tree is finite, because each premise row is

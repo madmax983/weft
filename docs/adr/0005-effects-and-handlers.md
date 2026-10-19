@@ -166,6 +166,8 @@ Status: accepted. Date: 2026-10-18.
 - `weft deps` checks each function of a dependency, also a private one: the project can
   call it. A function needs its stated effects and the effects that its body infers,
   with the closures that it makes and returns.
+- Only the standard effects count. A user effect of a dependency needs no authority,
+  because the caller must handle it.
 
 ## Consequences
 

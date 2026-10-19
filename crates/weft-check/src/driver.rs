@@ -1,11 +1,14 @@
 //! The check pipeline: parse, analyze, check, diagnose.
 
-use weft_sema::{Analysis, Options};
+use weft_sema::program::ItemRef;
+use weft_sema::{effects, Analysis, BodyFacts, Options, ROOT_UNIT};
 use weft_syntax::diag::{Diagnostic, Severity};
 use weft_syntax::SourceFile;
 
-use crate::bridge;
-use crate::diagnose::{diagnose, resolve_lines};
+use weft_facts::{FnFacts, Violations};
+
+use crate::bridge::{self, SpecError};
+use crate::diagnose::{diagnose, resolve_lines, root_effects};
 use crate::rules::{check, Report};
 
 /// The result of checking a program.
@@ -40,6 +43,12 @@ pub fn check_analysis(analysis: Analysis, files: &[SourceFile], opts: Options) -
     for b in &analysis.bodies {
         let r = check(&b.facts);
         let mut ds = diagnose(&b.facts, &r);
+        if let Some(who) = started_body(&analysis, b) {
+            let no_runtime = opts.no_runtime && b.func.is_some();
+            // The facts name an effect, so a user effect that has the name
+            // of a standard effect looks like the standard effect here.
+            ds.extend(root_effects(&b.facts, &who, no_runtime, &effects::is_std));
+        }
         for d in &mut ds {
             d.unit = b.unit;
             if let Some(f) = files.get(b.unit) {
@@ -49,10 +58,7 @@ pub fn check_analysis(analysis: Analysis, files: &[SourceFile], opts: Options) -
         diags.extend(ds);
         reports.push(r);
     }
-    if opts.no_runtime {
-        diags.extend(no_runtime_diags(&analysis));
-    }
-    diags.sort_by_key(|d| (d.unit, d.span.lo, d.code.clone()));
+    diags.sort_by(|a, b| (a.unit, a.span.lo, &a.code).cmp(&(b.unit, b.span.lo, &b.code)));
     diags.dedup();
     Checked {
         analysis,
@@ -61,25 +67,17 @@ pub fn check_analysis(analysis: Analysis, files: &[SourceFile], opts: Options) -
     }
 }
 
-/// W0803: in the embedded profile, `main` must handle every standard effect.
-fn no_runtime_diags(a: &Analysis) -> Vec<Diagnostic> {
-    let mut out = Vec::new();
-    for b in &a.bodies {
-        let Some(f) = b.func else { continue };
-        if a.program.fns[f].name != "main" || b.unit != 1 {
-            continue;
-        }
-        for (n, e) in &b.facts.escapes_at {
-            if weft_sema::effects::is_std(e) {
-                out.push(Diagnostic::error(
-                    "W0803",
-                    format!("with no runtime, `main` must handle `{e}` itself"),
-                    b.facts.node(*n).span,
-                ));
-            }
-        }
+/// Names a body of the root that the runtime starts: `main` or a test.
+/// Returns `None` for another body.
+fn started_body(a: &Analysis, b: &BodyFacts) -> Option<String> {
+    if b.unit != ROOT_UNIT {
+        return None;
     }
-    out
+    match (b.func, a.program.lookup(a.program.root, "main")) {
+        (None, _) => Some(b.facts.name.clone()),
+        (Some(f), Some(ItemRef::Fn(main))) if f == main => Some("`main`".to_string()),
+        _ => None,
+    }
 }
 
 /// Parses, analyzes and checks one source text.
@@ -110,22 +108,28 @@ pub struct Disagreement {
     /// The function name.
     pub function: String,
     /// The checker result.
-    pub checker: weft_facts::Violations,
-    /// The spec result.
-    pub spec: weft_facts::Violations,
+    pub checker: Violations,
+    /// The spec result, or the reason that the spec has no result.
+    pub spec: Result<Violations, SpecError>,
 }
 
 /// Runs the Datalog spec on every body and compares it with the checker.
 ///
-/// Returns the number of bodies that agree, or the disagreements.
+/// Returns the number of bodies that agree, or the disagreements. A body
+/// where the spec fails is a disagreement.
 pub fn agreement(c: &Checked) -> Result<usize, Vec<Disagreement>> {
+    agreement_with(c, bridge::check_spec)
+}
+
+/// Compares the checker with the violations that `spec` gives for each body.
+fn agreement_with(
+    c: &Checked,
+    spec: impl Fn(&FnFacts) -> Result<Violations, SpecError>,
+) -> Result<usize, Vec<Disagreement>> {
     let mut bad = Vec::new();
     for (b, r) in c.analysis.bodies.iter().zip(&c.reports) {
-        let spec = match bridge::check_spec(&b.facts) {
-            Ok(v) => v,
-            Err(e) => panic!("spec evaluation failed for {}: {e}", b.facts.name),
-        };
-        if spec != r.violations {
+        let spec = spec(&b.facts);
+        if spec.as_ref() != Ok(&r.violations) {
             bad.push(Disagreement {
                 function: b.facts.name.clone(),
                 checker: r.violations.clone(),
@@ -137,5 +141,45 @@ pub fn agreement(c: &Checked) -> Result<usize, Vec<Disagreement>> {
         Ok(c.analysis.bodies.len())
     } else {
         Err(bad)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agreement_counts_the_bodies() {
+        let c = check_source("a.wf", "fn f() {}\nfn g() {}\n", Options::default());
+        assert_eq!(agreement(&c).map_err(|d| d.len()), Ok(2));
+    }
+
+    #[test]
+    fn a_spec_that_fails_is_a_disagreement() {
+        let c = check_source("a.wf", "fn f() {}\n", Options::default());
+        let Err(e) = weft_datalog::parse_program_named("bad.dl", "x(") else {
+            panic!("`x(` parses");
+        };
+        let fail = |_: &FnFacts| Err(SpecError::Eval(e.clone()));
+        let Err(bad) = agreement_with(&c, fail) else {
+            panic!("a failed spec agrees");
+        };
+        assert_eq!(bad.len(), 1);
+        assert_eq!(bad[0].function, "f");
+        assert_eq!(bad[0].checker, Violations::default());
+        let text = bad[0].spec.as_ref().map_err(ToString::to_string);
+        assert_eq!(
+            text,
+            Err(format!("the spec does not evaluate: {e}")),
+            "{:?}",
+            bad[0].spec
+        );
+        // A different result is a disagreement too.
+        let mut other = Violations::default();
+        other.stealable.insert(weft_facts::TaskId(0));
+        let Err(bad) = agreement_with(&c, |_| Ok(other.clone())) else {
+            panic!("different violations agree");
+        };
+        assert_eq!(bad[0].spec, Ok(other));
     }
 }

@@ -1,0 +1,61 @@
+// The paths of the fully in-place checks: returns, loops, arrays and calls.
+enum List { Cons(u64, List), Nil }
+struct Pair { a: List, b: List }
+
+fip fn swap(p: Pair) -> Pair {
+    let Pair(a, b) = p
+    Pair { a: b, b: a }   //~ W1001
+}
+
+fip fn keep_head(xs: List) -> List {
+    match xs {
+        Cons(x, rest) => Cons(x + 1, rest),
+        Nil => Nil,
+    }
+}
+
+fip fn drop_rest(xs: List) -> List {
+    match xs {
+        Cons(x, rest) => Nil,   //~ W1002
+        Nil => Nil,
+    }
+}
+
+fip fn methods(xs: List) -> List {
+    let n = "{1}".len()   //~ W1003
+    xs
+}
+
+fip fn arrays(xs: List) -> List {
+    let v = [1, 2]   //~ W1001
+    let t = (1, 2)
+    let i = v[0] + t.0
+    xs
+}
+
+fip fn loops(xs: List) -> List {
+    let n = 0
+    loop { break }
+    for i in 0..3 { n = n + i }
+    xs
+}
+
+// A return ends its path, so each path uses `xs` once.
+fip fn early_return(xs: List, flag: bool) -> List {
+    if flag { return xs }
+    xs
+}
+
+fip fn scopes(xs: List) -> List {   //~ W1004
+    scope { s => 1 }   //~ W1003
+    xs
+}
+
+fip fn unknown(xs: List) -> List {
+    nope(xs)   //~ W0101 W1003
+}
+
+fip fn interpolated(xs: List) -> List {   //~ W1002
+    let s = "{xs}"
+    xs
+}
