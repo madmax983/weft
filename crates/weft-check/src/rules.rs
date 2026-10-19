@@ -66,6 +66,9 @@ pub struct Conflict {
 pub struct Work {
     /// The calls of `overlaps`, also the calls inside other place relations.
     pub overlaps: u64,
+    /// The searches of the graph: each propagation and each evidence search.
+    /// One search costs at most the size of the graph.
+    pub searches: u64,
 }
 
 /// The checker result: violations plus the evidence for diagnostics.
@@ -101,6 +104,8 @@ struct Ctx<'a> {
     one: Vec<Option<PlaceId>>,
     /// The calls of [`Ctx::overlaps`].
     overlaps_calls: std::cell::Cell<u64>,
+    /// The searches of the graph (`Work::searches`).
+    searches: std::cell::Cell<u64>,
 }
 
 impl<'a> Ctx<'a> {
@@ -159,6 +164,7 @@ impl<'a> Ctx<'a> {
             outer,
             one,
             overlaps_calls: std::cell::Cell::new(0),
+            searches: std::cell::Cell::new(0),
         };
         cx.frees = cx.frees_at();
         cx
@@ -262,11 +268,13 @@ impl<'a> Ctx<'a> {
 
     /// Forward propagation from `gen` nodes, stopped after `kill` nodes.
     fn forward(&self, gen: &[bool], kill: &[bool]) -> Vec<bool> {
+        self.searches.set(self.searches.get() + 1);
         propagate(&self.succ, gen, kill)
     }
 
     /// Backward propagation on the reversed graph.
     fn backward(&self, gen: &[bool], kill: &[bool]) -> Vec<bool> {
+        self.searches.set(self.searches.get() + 1);
         propagate(&self.pred, gen, kill)
     }
 
@@ -371,6 +379,7 @@ pub fn check_counted(f: &FnFacts) -> (Report, Work) {
     tasks(&cx, &mut r);
     let work = Work {
         overlaps: cx.overlaps_calls.get(),
+        searches: cx.searches.get(),
     };
     (r, work)
 }
@@ -449,6 +458,7 @@ fn invalidation(
         // Evidence: the first invalidation that reaches each use on its own.
         let gen_nodes: Vec<usize> = gens.iter().map(|g| g.0.index()).collect();
         let targets: Vec<usize> = errors.iter().map(|u| u.index()).collect();
+        cx.searches.set(cx.searches.get() + 1);
         let first = first_reaching(&cx.succ, &cx.pred, &gen_nodes, &kill, &targets);
         for u in errors {
             r.violations.error.insert((v, u));

@@ -430,6 +430,9 @@ pub struct Program {
     pub ptr: Option<AdtId>,
     /// The type properties of the definitions (`Program::props`).
     pub props: std::sync::OnceLock<crate::props::TypeProps>,
+    /// The steps of the item checks: the work list of the size check, the walks
+    /// of the `in` places and the modes of the mode checks ([`Program::item_steps`]).
+    steps: std::cell::Cell<usize>,
 }
 
 /// The prelude module.
@@ -476,6 +479,16 @@ pub struct Builtins {
 }
 
 impl Program {
+    /// The steps of the item checks so far. A test can put a limit on them.
+    pub fn item_steps(&self) -> usize {
+        self.steps.get()
+    }
+
+    /// Adds `n` steps of an item check.
+    pub(crate) fn add_steps(&self, n: usize) {
+        self.steps.set(self.steps.get().saturating_add(n));
+    }
+
     /// Returns the names of all type definitions, for type display.
     pub fn adt_names(&self) -> Vec<String> {
         self.adts.iter().map(|a| a.name.clone()).collect()
@@ -599,7 +612,9 @@ impl Collector {
     /// W0117: a struct that holds itself with no indirection has no finite
     /// size.
     fn check_sizes(&mut self) {
-        for a in infinite_structs(&self.prog) {
+        let (bad, steps) = size_check(&self.prog);
+        self.prog.add_steps(steps);
+        for a in bad {
             let def = &self.prog.adts[a];
             let d = Diagnostic::error(
                 "W0117",
@@ -1210,7 +1225,9 @@ impl Collector {
     /// W0201: the `in` place of a parameter cannot start at the parameter
     /// itself, and the `in` places cannot form a cycle.
     fn check_in_cycles(&mut self, params: &[ParamSig]) {
-        for mut cycle in in_place_order(params).1 {
+        let (_, cycles, steps) = in_place_order(params);
+        self.prog.add_steps(steps);
+        for mut cycle in cycles {
             // Report the cycle at its first parameter.
             if let Some(first) = (0..cycle.len()).min_by_key(|&i| cycle[i]) {
                 cycle.rotate_left(first);
@@ -1474,7 +1491,7 @@ fn report_duplicates<'a>(
 /// Two values of one axis contradict, for example `once` and `many`. Also
 /// `uniq` and `shared` contradict: other threads can read a `shared` value,
 /// so other references to it exist.
-fn mode_conflict(modes: &[Mode]) -> Option<String> {
+fn mode_conflict(modes: &[Mode], steps: &mut usize) -> Option<String> {
     let axis = |m: Mode| match m {
         Mode::Uniq | Mode::Aliased => 0,
         Mode::Portable | Mode::Nonportable => 1,
@@ -1484,6 +1501,7 @@ fn mode_conflict(modes: &[Mode]) -> Option<String> {
     // The first mode on each axis.
     let mut seen: [Option<Mode>; 4] = [None; 4];
     for &b in modes {
+        *steps += 1;
         match seen[axis(b)] {
             Some(a) if a != b => {
                 return Some(format!(
@@ -1524,6 +1542,12 @@ fn mode_conflict(modes: &[Mode]) -> Option<String> {
 /// graph gets an edge from `a` to `b` when `a` holds `b` directly. A struct
 /// holds itself when it is on a cycle of this graph.
 pub fn infinite_structs(prog: &Program) -> Vec<AdtId> {
+    size_check(prog).0
+}
+
+/// Returns [`infinite_structs`], and the number of steps: the structs that the
+/// work list took, and one for each struct in the graph of direct holds.
+fn size_check(prog: &Program) -> (Vec<AdtId>, usize) {
     /// What a value holds inline: a struct or a type parameter.
     enum Held {
         Adt(AdtId),
@@ -1593,7 +1617,9 @@ pub fn infinite_structs(prog: &Program) -> Vec<AdtId> {
     let mut params: Vec<BTreeSet<u32>> = vec![BTreeSet::new(); n];
     let mut queued = vec![true; n];
     let mut work: Vec<AdtId> = (0..n).rev().collect();
+    let mut steps = n;
     while let Some(a) = work.pop() {
+        steps += 1;
         queued[a] = false;
         let mut found = BTreeSet::new();
         for f in fields(a) {
@@ -1628,7 +1654,7 @@ pub fn infinite_structs(prog: &Program) -> Vec<AdtId> {
         })
         .collect();
     let cyclic = on_cycles(&edges);
-    (0..n).filter(|&a| cyclic[a]).collect()
+    ((0..n).filter(|&a| cyclic[a]).collect(), steps)
 }
 
 /// Returns, for each node of a graph, whether a cycle goes through it. The
@@ -1701,7 +1727,10 @@ pub struct TyResolver<'a> {
 impl TyResolver<'_> {
     /// Resolves a type expression. `gens` names the type parameters in scope.
     pub fn resolve(&mut self, t: &TypeExpr, m: ModId, gens: &[String], self_ty: Option<&Ty>) -> Ty {
-        if let Some(message) = mode_conflict(&t.modes) {
+        let mut steps = 0;
+        let conflict = mode_conflict(&t.modes, &mut steps);
+        self.prog.add_steps(steps);
+        if let Some(message) = conflict {
             self.diags.push(Diagnostic::error("W0119", message, t.span));
         }
         match &t.kind {
@@ -1953,12 +1982,13 @@ fn held_place(prog: &Program, sp: &SigPlace, params: &[ParamSig]) -> Option<SigP
 ///
 /// The root parameter of each `in` place comes before the parameter, so that
 /// its places are known when the lowering substitutes the place. The second
-/// part has the cycles of `in` places (W0201).
+/// part has the cycles of `in` places (W0201), and the third the number of
+/// steps of the walks.
 ///
 /// Each parameter has at most one `in` place, so a walk from a parameter has
 /// one way. A walk stops at a parameter that an earlier walk saw, so the time
 /// is linear.
-pub fn in_place_order(params: &[ParamSig]) -> (Vec<usize>, Vec<Vec<usize>>) {
+pub fn in_place_order(params: &[ParamSig]) -> (Vec<usize>, Vec<Vec<usize>>, usize) {
     let root_of = |i: usize| match params.get(i).and_then(|p| p.place.as_ref()) {
         Some(SigPlace {
             root: SigRoot::Param(j),
@@ -1970,10 +2000,12 @@ pub fn in_place_order(params: &[ParamSig]) -> (Vec<usize>, Vec<Vec<usize>>) {
     let mut state = vec![0_u8; params.len()];
     let mut order = Vec::with_capacity(params.len());
     let mut cycles = Vec::new();
+    let mut steps = 0;
     for start in 0..params.len() {
         let mut path = Vec::new();
         let mut at = Some(start);
         while let Some(j) = at {
+            steps += 1;
             if state.get(j) != Some(&0) {
                 break;
             }
@@ -1993,5 +2025,5 @@ pub fn in_place_order(params: &[ParamSig]) -> (Vec<usize>, Vec<Vec<usize>>) {
             order.push(k);
         }
     }
-    (order, cycles)
+    (order, cycles, steps)
 }

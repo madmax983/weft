@@ -1485,6 +1485,7 @@ impl<'p> Lower<'p> {
         let v = self.locals[l].var;
         self.pend_uses.push(v);
         // A use of the local uses the references that its parts got.
+        self.work.holder_steps += self.part_holders.len();
         let parts: Vec<VarId> = self
             .part_holders
             .iter()
@@ -2045,6 +2046,7 @@ impl<'p> Lower<'p> {
             self.facts.empty_at.push((var, n));
         }
         // A new value of the whole local replaces the values of its parts.
+        self.work.holder_steps += self.part_holders.len();
         self.part_holders.retain(|h| h.local != l);
         let caps = self.val_caps(v);
         self.locals.get_mut(l).caps.extend(caps.iter().copied());
@@ -2301,6 +2303,7 @@ impl<'p> Lower<'p> {
     /// values: their holders no longer hold a reference.
     pub(super) fn retire_holders(&mut self, l: usize, ps: &[PlaceId]) {
         let mut holders = std::mem::take(&mut self.part_holders);
+        self.work.holder_steps += holders.len();
         holders.retain(|h| h.local != l || !self.below_any(&h.places, ps));
         self.part_holders = holders;
     }

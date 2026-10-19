@@ -84,6 +84,11 @@ pub struct Work {
     pub loop_copies: usize,
     /// The links between type variables that the type inference followed.
     pub type_steps: usize,
+    /// The part holders that the lowering looked at: a use of a local and a new
+    /// value of a part look at the holders.
+    pub holder_steps: usize,
+    /// The steps of the item checks ([`program::Program::item_steps`]).
+    pub item_steps: usize,
 }
 
 impl Work {
@@ -92,6 +97,8 @@ impl Work {
         self.loop_passes += o.loop_passes;
         self.loop_copies += o.loop_copies;
         self.type_steps += o.type_steps;
+        self.holder_steps += o.holder_steps;
+        self.item_steps += o.item_steps;
     }
 }
 
@@ -232,6 +239,7 @@ fn analyze_bounded(
             }));
         }
     }
+    work.item_steps = prog.item_steps();
     Analysis {
         program: prog,
         sigs,

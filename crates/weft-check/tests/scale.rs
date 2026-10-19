@@ -3,9 +3,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::fmt::Write as _;
-use std::time::{Duration, Instant};
 
-use weft_check::{check, check_counted, check_source, Cause};
+use weft_check::{check_counted, check_source, Cause};
 use weft_sema::Options;
 use weft_syntax::SourceFile;
 
@@ -24,9 +23,7 @@ fn rebound_references_check_quickly() {
     let src = rebind(n);
     let c = check_source("rebind.wf", &src, Options::default());
     let facts = &c.analysis.bodies[0].facts;
-    let start = Instant::now();
-    let r = check(facts);
-    let time = start.elapsed();
+    let (r, work) = check_counted(facts);
     assert_eq!(r.violations.error.len(), n);
     assert_eq!(r.invalidations.len(), n);
     // The evidence of each error is the push just before the use.
@@ -36,8 +33,11 @@ fn rebound_references_check_quickly() {
         let used = file.line(facts.node(inv.used_at).span);
         assert_eq!(at + 1, used, "{inv:?}");
     }
-    // About 0.35 s in a debug build. The first checker took more than 30 s.
-    assert!(time < Duration::from_secs(1), "{time:?}");
+    // The first checker took more than 30 s: it searched from each
+    // invalidating node. Now each reference has one search for its uses and one
+    // for the evidence, and the other rules search once for each variable.
+    assert!(work.searches <= 3 * n as u64, "{work:?}");
+    assert_eq!(work.overlaps, 0, "{work:?}");
 }
 
 /// A name, the number of uses `n`, the program and a test for the cause.
@@ -118,9 +118,7 @@ fn each_cause_checks_quickly() {
             panic!("{name}: no body");
         };
         let facts = &body.facts;
-        let start = Instant::now();
-        let r = check(facts);
-        let time = start.elapsed();
+        let (r, work) = check_counted(facts);
         assert_eq!(r.violations.error.len(), n, "{name}");
         assert_eq!(r.invalidations.len(), n, "{name}");
         let file = SourceFile::new("causes.wf", src.as_str());
@@ -130,8 +128,10 @@ fn each_cause_checks_quickly() {
             let used = file.line(facts.node(inv.used_at).span);
             assert_eq!(at + 1, used, "{name}: {inv:?}");
         }
-        // Each one takes less than 0.3 s in a debug build.
-        assert!(time < Duration::from_secs(1), "{name}: {time:?}");
+        // One search for each reference and its evidence, not one for each
+        // invalidating node.
+        assert!(work.searches <= 3 * n as u64 + 50, "{name}: {work:?}");
+        assert!(work.overlaps <= 2 * n as u64, "{name}: {work:?}");
     }
 }
 
@@ -196,6 +196,94 @@ fn nested_wildcard_places_check_quickly() {
             assert!(
                 work.overlaps < 20_000,
                 "{calls} calls, {loops} loops: {work:?}"
+            );
+        }
+    }
+}
+
+/// The work of sema and of the checker for a program: the counts of sema, and
+/// the sum of the counts of the checker over the bodies.
+fn work_of(src: &str) -> (weft_sema::Work, usize, u64, u64) {
+    let c = check_source("work.wf", src, Options::default());
+    assert!(c.analysis.diags.is_empty(), "{:?}", c.analysis.diags);
+    let (mut overlaps, mut searches) = (0, 0);
+    for b in &c.analysis.bodies {
+        let (_, w) = check_counted(&b.facts);
+        overlaps += w.overlaps;
+        searches += w.searches;
+    }
+    (c.analysis.work, c.analysis.lowerings, overlaps, searches)
+}
+
+/// `n` loops one after the other (QA7), and `n` updates of an untyped integer
+/// (QA8).
+fn seq_loops(n: usize) -> String {
+    let mut s = String::from("fn f(n: u64) {\n    let s = 0\n");
+    for i in 0..n {
+        let _ = write!(
+            s,
+            "    let i{i}: u64 = 0\n    while i{i} < n {{ s += 1\n        i{i} += 1 }}\n"
+        );
+    }
+    s.push_str("    print(s)\n}\n");
+    s
+}
+
+/// A name, a program of size `n`, and a size.
+type Shape = (&'static str, fn(usize) -> String, usize);
+
+/// The work of sema and of the checker grows linearly with the shapes of the
+/// round-2 reports: a walk through a function value in a line and in loops
+/// (QA4), many loops (QA7) and many updates of an untyped integer (QA8). Each
+/// count for `2n` is at most a little more than twice the count for `n`.
+#[test]
+fn sema_and_check_work_grow_linearly() {
+    let shapes: [Shape; 4] = [
+        ("walk in a line", |n| walk(n, 0, true), 200),
+        ("walk in loops", |n| walk(0, n, true), 8),
+        ("loops", seq_loops, 300),
+        (
+            "integer updates",
+            |n| {
+                format!(
+                    "fn f() {{\n    let s = 0\n{}    print(s)\n}}\n",
+                    "    s += 1\n".repeat(n)
+                )
+            },
+            1000,
+        ),
+    ];
+    let linear = |a: u64, b: u64| b <= 2 * a + a / 4 + 64;
+    for (name, make, n) in shapes {
+        let (wa, la, oa, sa) = work_of(&make(n));
+        let (wb, lb, ob, sb) = work_of(&make(2 * n));
+        let as_u64 = |x: usize| u64::try_from(x).unwrap_or(u64::MAX);
+        let pairs = [
+            ("lowerings", as_u64(la), as_u64(lb)),
+            (
+                "loop passes",
+                as_u64(wa.loop_passes),
+                as_u64(wb.loop_passes),
+            ),
+            (
+                "loop copies",
+                as_u64(wa.loop_copies),
+                as_u64(wb.loop_copies),
+            ),
+            ("type steps", as_u64(wa.type_steps), as_u64(wb.type_steps)),
+            (
+                "holder steps",
+                as_u64(wa.holder_steps),
+                as_u64(wb.holder_steps),
+            ),
+            ("overlaps", oa, ob),
+            ("searches", sa, sb),
+        ];
+        for (what, a, b) in pairs {
+            assert!(
+                linear(a, b),
+                "{name}: {what} {a} for {n}, {b} for {}",
+                2 * n
             );
         }
     }

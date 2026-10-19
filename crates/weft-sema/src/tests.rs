@@ -1043,20 +1043,26 @@ fn generic_chain(n: usize) -> String {
 
 #[test]
 fn the_size_check_is_fast_on_a_long_chain() {
-    use std::time::{Duration, Instant};
+    // The first check took 150 s for 800 structs. The steps of the item
+    // checks grow linearly with the chain.
     let n = 3000;
-    for (src, want) in [
-        (struct_chain(n, false), Vec::new()),
-        (struct_chain(n, true), Vec::new()),
-        (generic_chain(n), vec![(ROOT_UNIT, "W0117".to_string())]),
+    for (make, want) in [
+        (
+            (|n| struct_chain(n, false)) as fn(usize) -> String,
+            Vec::new(),
+        ),
+        (|n| struct_chain(n, true), Vec::new()),
+        (generic_chain, vec![(ROOT_UNIT, "W0117".to_string())]),
     ] {
-        let start = Instant::now();
-        let a = analyze_units(&src, &[]);
-        let time = start.elapsed();
+        let half = analyze_units(&make(n / 2), &[]);
+        let a = analyze_units(&make(n), &[]);
         assert_eq!(codes(&a), want);
-        // About 0.06 s in a debug build. The first check took 150 s for
-        // 800 structs.
-        assert!(time < Duration::from_secs(2), "{time:?}");
+        let (h, f) = (half.work.item_steps, a.work.item_steps);
+        assert!(
+            f <= 2 * h + 1000 && f <= 4 * n,
+            "{} structs: {h}, {n}: {f}",
+            n / 2
+        );
     }
     let a = analyze_units(&generic_chain(3), &[]);
     let top = a.program.lookup(a.program.root, "Top");
@@ -1067,17 +1073,15 @@ fn the_size_check_is_fast_on_a_long_chain() {
 
 #[test]
 fn the_in_place_check_is_fast_on_a_long_chain() {
-    use std::time::{Duration, Instant};
     let n = 3000;
     let params: Vec<String> = (0..n)
         .map(|i| format!("x{i}: &u32 in x{}", i + 1))
         .collect();
     let src = format!("fn f({}, x{n}: &u32) {{}}\n", params.join(", "));
-    let start = Instant::now();
     let a = analyze_units(&src, &[]);
-    let time = start.elapsed();
     assert_eq!(codes(&a), Vec::new());
-    assert!(time < Duration::from_secs(2), "{time:?}");
+    // The walks of the cycle check see each parameter once.
+    assert!(a.work.item_steps <= 3 * n, "{}", a.work.item_steps);
     // Each parameter points into the root of the last one. The `in` places
     // are substituted in the order of the chain, not of the parameters.
     let f = a.bodies.iter().find(|b| b.facts.name == "f").unwrap();
@@ -1103,13 +1107,12 @@ fn the_in_place_check_is_fast_on_a_long_chain() {
 
 #[test]
 fn the_mode_check_is_fast_on_a_long_list() {
-    use std::time::{Duration, Instant};
-    let src = format!("fn f(x: &u32 @{}) {{}}\n", " uniq".repeat(100_000));
-    let start = Instant::now();
+    let n = 100_000;
+    let src = format!("fn f(x: &u32 @{}) {{}}\n", " uniq".repeat(n));
     let a = analyze_units(&src, &[]);
-    let time = start.elapsed();
     assert_eq!(codes(&a), Vec::new());
-    assert!(time < Duration::from_secs(2), "{time:?}");
+    // Each check of the list looks at each mode once.
+    assert!(a.work.item_steps <= 2 * n, "{}", a.work.item_steps);
     let src = format!("fn f(x: &u32 @{} shared) {{}}\n", " uniq".repeat(100_000));
     assert_eq!(
         root_diags(&src),
@@ -1209,7 +1212,6 @@ fn many_locals_and_part_values_are_fast() {
         body.push_str("    w.x = &v[0]\n    print(w.x)\n");
     }
     let src = format!("struct Wrap<T> {{ x: T }}\nfn f(v: &Vec<u64>) {{\n{body}}}\n");
-    let start = std::time::Instant::now();
     let a = analyze_source(&src, Options::default()).unwrap();
     assert!(a.diags.is_empty(), "{:?}", a.diags);
     let f = a.bodies.iter().find(|b| b.facts.name == "f").unwrap();
@@ -1220,7 +1222,8 @@ fn many_locals_and_part_values_are_fast() {
         .filter(|v| v.name.starts_with("value in"))
         .count();
     assert_eq!(holders, 1);
-    assert!(start.elapsed().as_secs() < 10, "{:?}", start.elapsed());
+    // A use and a new value of the part look at one holder each time.
+    assert!(a.work.holder_steps <= 10 * 2_000, "{:?}", a.work);
 }
 
 /// A loop with a chain of `n` reference locals. The last one gets a place in
