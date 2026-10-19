@@ -326,6 +326,7 @@ impl Lower<'_> {
         let mut vals: Vec<ArgVal> = Vec::new();
         let mut arg_places: Vec<Vec<PlaceId>> = Vec::new();
         let mut held_vars = Vec::new();
+        let mut kept_vals: Vec<Val> = Vec::new();
         for i in 0..slots.len() {
             let later = slots[i + 1..].iter().any(Option::is_some);
             let mut av = if let (0, Some(r)) = (i, recv.take()) {
@@ -412,6 +413,7 @@ impl Lower<'_> {
                     // The callee keeps the value, for example in a container.
                     let v = av.val.clone();
                     self.escape_all(&v);
+                    kept_vals.push(v);
                 }
                 if !matches!(self.inf.shallow(&pt), Ty::Fn(_)) || av.val.summary.is_none() {
                     let v = av.val.clone();
@@ -583,6 +585,7 @@ impl Lower<'_> {
             if matches!(ty, Ty::Fn(_)) {
                 if foreign || sig.effects.stores.contains(&i) {
                     self.escape(&av.val);
+                    self.keep(&av.val, super::caps::KeptTo::Stored);
                 }
             } else if self.has_fn(&ty, 0) {
                 holds_fn = true;
@@ -606,10 +609,19 @@ impl Lower<'_> {
             Some(t) => t.ret.clone(),
             None => super::subst(&sig.ret, &targs),
         };
+        // A value that the callee keeps can be in a reference argument or in the result.
         let mut out = Val {
             ty: ret.clone(),
             ..Val::default()
         };
+        let into: Vec<PlaceId> = arg_places.iter().flatten().copied().collect();
+        let ret_fn = self.has_fn(&ret, 0);
+        for v in &kept_vals {
+            self.store_into(v, &into);
+            if ret_fn {
+                out.caps.extend(self.val_caps(v));
+            }
+        }
         // A returned function value does what the callee states about it.
         if let (Some(rf), Ty::Fn(fty)) = (&sig.effects.ret, self.inf.shallow(&ret)) {
             let s = self.ret_summary(rf, &fty, &arg_places, &fns);
@@ -763,6 +775,7 @@ impl Lower<'_> {
                 if self.has_fn(&v.ty, 0) && !matches!(self.inf.shallow(&v.ty), Ty::Fn(_)) {
                     // The callee keeps the value: it can run a function value in it.
                     self.escape_all(&v);
+                    self.keep(&v, super::caps::KeptTo::Given);
                 }
             }
             // A closure argument is lent to the call, as in `call_fn`.
@@ -816,6 +829,15 @@ impl Lower<'_> {
         // The value can call a function argument with the places that it lends to it.
         let value = Callee::Value(callee.clone());
         for (i, info, row, refs) in fns.clone() {
+            // A value that the body does not know, or one that stores the argument, keeps it.
+            if self.value_keeps(&callee, i) {
+                let kept = Val {
+                    ty: arg_tys[i].clone(),
+                    summary: info.summary,
+                    ..Val::default()
+                };
+                self.keep(&kept, super::caps::KeptTo::Given);
+            }
             // A task of the value can call the argument.
             let spawned = callee.summary.is_some_and(|s| {
                 let sum = &self.closures[s];
@@ -995,11 +1017,13 @@ impl Lower<'_> {
             );
         }
         let mut held = Vec::new();
+        let mut caps = std::collections::BTreeSet::new();
         for (i, (d, arg)) in defs.iter().zip(args).enumerate() {
             let v = self.expr(&arg.value);
             let ft = super::subst(&d.ty, &targs);
             self.unify(&ft, &v.ty, arg.value.span);
             self.escape(&v);
+            caps.extend(self.val_caps(&v));
             self.consume(&v, arg.value.span);
             if i + 1 < args.len() {
                 held.extend(self.hold_later(&v, "argument", arg.value.span));
@@ -1008,6 +1032,7 @@ impl Lower<'_> {
         self.pend_uses.extend(held);
         Val {
             ty: Ty::Adt(a, targs),
+            caps,
             ..Val::default()
         }
     }
@@ -1034,11 +1059,13 @@ impl Lower<'_> {
         }
         let mut refs = Vec::new();
         let mut held = Vec::new();
+        let mut caps = std::collections::BTreeSet::new();
         for (i, (ft, a)) in fields.iter().zip(args).enumerate() {
             let v = self.expr(&a.value);
             let ft = super::subst(ft, &targs);
             self.unify(&ft, &v.ty, a.value.span);
             self.escape(&v);
+            caps.extend(self.val_caps(&v));
             self.consume(&v, a.value.span);
             if i + 1 < args.len() {
                 held.extend(self.hold_later(&v, "argument", a.value.span));
@@ -1049,6 +1076,7 @@ impl Lower<'_> {
         Val {
             ty: Ty::Adt(adt, targs),
             refs,
+            caps,
             ..Val::default()
         }
     }
@@ -1099,6 +1127,9 @@ impl Lower<'_> {
                 } else if self.has_fn(&v.ty, 0) {
                     self.escape_all(&v);
                 }
+                // The clause can keep a function value that it gets.
+                let at = self.handlers.iter().rposition(|h| h.effect == eff.name);
+                self.keep_for_op(&v, at);
             }
         }
         self.pend_uses.extend(held);

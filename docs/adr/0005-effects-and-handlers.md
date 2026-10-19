@@ -74,6 +74,14 @@ Status: accepted. Date: 2026-10-18.
   around it (W0503).
 - A spawned task or fork branch cannot perform a user effect (W0314): the handler is on
   another task's stack.
+- A capability lives only while its handled body runs (rule (d) of `proofs/effects`). A
+  function value that performs through it cannot leave the body (W0313): not as the
+  value of the body (also inside a tuple, a struct, a container or another closure), not
+  through a local outside the body, and not to a place or code that can keep it: a
+  field or an element behind a reference, a callee that stores it or has no body, a
+  function value that the body does not know, a closure that stores its parameter, and
+  an operation of a handler outside the body. A struct or a container that a local of
+  the body owns can hold the value: it goes out of scope with the body.
 - Extern functions in user code default to `blocking`.
 - `print` is a debug built-in with no effect.
 
@@ -195,6 +203,8 @@ Status: accepted. Date: 2026-10-18.
     no effect row in a program that has a `multi` operation.
   - A function argument of an operation runs at the perform, with any place inside the
     reference arguments of the operation, also when the clause does not call it.
+  - W0313 counts each function value given to code that can keep it, also when that
+    code only calls it, and each part of a local of the body that can hold a function.
 - What stays open (not checked):
   - A function value inside a returned tuple or struct, or a closure that a callee
     makes and stores in a place of the caller: the caller does not see what a later
@@ -202,6 +212,9 @@ Status: accepted. Date: 2026-10-18.
     at the call of the maker.
   - A stored function value that runs inside a handler clause: the operation that runs
     the clause does not get it.
+  - W0313 does not follow a callee that copies a function value out of a reference
+    argument into another place, or a clause of a handler inside the body that keeps
+    its function parameter.
   - W0402 inside a higher-order function: a callback that gets a place of a `@ shared`
     parameter can mutate it. The caller sees the mutation on its own place only.
   - A reference inside a payload that a `match` binds by value, and a parameter of a

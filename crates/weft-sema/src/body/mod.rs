@@ -24,6 +24,7 @@ use crate::program::{
 use crate::types::{subst, Display, FnTy, Infer, IntTy, Ty};
 
 mod call;
+mod caps;
 mod expr;
 mod fnval;
 mod stmt;
@@ -79,7 +80,7 @@ pub struct Summary {
     pub op_args: Vec<(CapId, Option<usize>, Option<usize>, PlaceId)>,
     /// The closures of the body that the value can be.
     pub members: BTreeSet<usize>,
-    /// Function parameters that the body stores.
+    /// Function parameters that the body stores. For a closure: its own parameters.
     pub stores: BTreeSet<usize>,
     /// Places that the body gives to code that can mutate through them: a function
     /// parameter, an unknown function value or an operation of an outer handler.
@@ -184,6 +185,8 @@ struct Local {
     cont: Option<ContInfo>,
     /// The local has a value: a new value joins the function values.
     bound: bool,
+    /// The capabilities of the function values that the local can hold.
+    caps: BTreeSet<CapId>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -199,6 +202,9 @@ struct Val {
     place: Option<LVal>,
     fn_param: Option<(usize, usize)>,
     item: Option<FnId>,
+    /// The capabilities of the function values inside the value that its type
+    /// does not show, for example in a struct field.
+    caps: BTreeSet<CapId>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -371,6 +377,8 @@ pub struct Lower<'p> {
     /// A call of a function value that the body does not know can resume a
     /// `multi` continuation more than once.
     unknown_multi: bool,
+    /// Function values that perform through local handlers, where they can live on.
+    kept: Vec<caps::Kept>,
 }
 
 impl<'p> Lower<'p> {
@@ -428,6 +436,7 @@ impl<'p> Lower<'p> {
             applied: Vec::new(),
             handled: Vec::new(),
             unknown_multi: false,
+            kept: Vec::new(),
         }
     }
 
@@ -957,6 +966,7 @@ impl<'p> Lower<'p> {
             fn_param: None,
             cont: None,
             bound: false,
+            caps: BTreeSet::new(),
         });
         let l = self.locals.len() - 1;
         let top = self.frames.len() - 1;
@@ -979,6 +989,8 @@ impl<'p> Lower<'p> {
     fn assign_local(&mut self, l: usize, v: &Val, n: NodeId) {
         let var = self.locals[l].var;
         self.bind(var, n);
+        let caps = self.val_caps(v);
+        self.locals[l].caps.extend(caps);
         for &p in &v.refs {
             self.point_local(l, p);
         }

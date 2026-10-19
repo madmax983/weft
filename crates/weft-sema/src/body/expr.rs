@@ -102,15 +102,18 @@ impl Lower<'_> {
             }
             ExprKind::Array(es) => {
                 let t = self.inf.fresh();
+                let mut caps = std::collections::BTreeSet::new();
                 for x in es {
                     let v = self.expr(x);
                     self.unify(&t, &v.ty, x.span);
                     self.escape(&v);
+                    caps.extend(self.val_caps(&v));
                     self.consume(&v, x.span);
                 }
                 let ty = self.b.vec.map_or(Ty::Error, |v| Ty::Adt(v, vec![t]));
                 Val {
                     ty,
+                    caps,
                     ..Val::default()
                 }
             }
@@ -134,10 +137,12 @@ impl Lower<'_> {
     pub(super) fn expr_with(&mut self, e: &Expr, expected: Option<&Ty>) -> Val {
         match (&e.kind, expected.map(|t| self.inf.shallow(t))) {
             (ExprKind::Array(es), Some(Ty::Array(elem, n))) => {
+                let mut caps = std::collections::BTreeSet::new();
                 for x in es {
                     let v = self.expr(x);
                     self.unify(&elem, &v.ty, x.span);
                     self.escape(&v);
+                    caps.extend(self.val_caps(&v));
                     self.consume(&v, x.span);
                 }
                 if u64::try_from(es.len()).ok() != Some(n) {
@@ -149,6 +154,7 @@ impl Lower<'_> {
                 }
                 Val {
                     ty: Ty::Array(elem, n),
+                    caps,
                     ..Val::default()
                 }
             }
@@ -272,6 +278,7 @@ impl Lower<'_> {
                 place,
                 fn_param: loc.fn_param,
                 item: None,
+                caps: loc.caps,
             };
         }
         if let Some(ItemRef::Fn(f)) = self.prog.lookup(self.module, &id.name) {
@@ -696,6 +703,7 @@ impl Lower<'_> {
             .iter()
             .map(|_| self.inf.fresh())
             .collect();
+        let mut caps = std::collections::BTreeSet::new();
         for (name, value) in fields {
             let expected = defs
                 .iter()
@@ -710,6 +718,7 @@ impl Lower<'_> {
                 None => self.err("W0104", format!("no field `{}`", name.name), name.span),
             }
             self.escape(&v);
+            caps.extend(self.val_caps(&v));
             self.consume(&v, value.span);
         }
         for d in &defs {
@@ -719,6 +728,7 @@ impl Lower<'_> {
         }
         Val {
             ty: Ty::Adt(adt, args),
+            caps,
             ..Val::default()
         }
     }
@@ -1446,8 +1456,11 @@ impl Lower<'_> {
         self.sum().own_caps.insert(cap);
         self.sums.push(Summary::default());
         self.jumps.push(Jump::Fence("handled body"));
+        let start = self.handle_start();
         let v = self.expr(body);
         self.jumps.pop();
+        // A function value that performs through the handler cannot leave its body.
+        self.check_cap_escape(cap, &def.name, start, &v, span);
         self.flush(expr_tail(body));
         let body_sum = self.sums.pop().unwrap_or_default();
         self.merge_summary(&body_sum);
@@ -1618,17 +1631,6 @@ impl Lower<'_> {
         self.run_handler(&mut h, &calls, &args);
         self.handled.push(h);
         self.cur = saved;
-        if let Ty::Fn(f) = self.inf.resolve(&ty) {
-            if let Some(s) = f.summary {
-                if self.closures[s].performs.contains(&cap) {
-                    self.err(
-                        "W0313",
-                        format!("a closure that performs `{}` escapes its handler", def.name),
-                        span,
-                    );
-                }
-            }
-        }
         let _ = self.emit(span, "end handle", String::new());
         // The value of the handled body: also a task handle or a function value.
         v

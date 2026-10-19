@@ -704,6 +704,7 @@ impl Lower<'_> {
                 loc.task = v.task;
                 loc.bound = v.bound;
                 loc.uniq = v.uniq;
+                loc.caps = v.caps;
             }
         }
     }
@@ -721,6 +722,7 @@ impl Lower<'_> {
                     .map(|&p| format!("ref {}", self.place_key(p, made.0)))
                     .collect();
                 key.extend(loc.task.map(|t| format!("task {t}")));
+                key.extend(loc.caps.iter().map(|c| format!("cap {}", c.0)));
                 let info = super::FnInfo {
                     summary: loc.summary,
                     item: None,
@@ -1008,6 +1010,7 @@ impl Lower<'_> {
         }
         // A function value in a field or an element: the body does not follow it.
         self.escape(&v);
+        self.store_into(&v, &lv.places);
         self.consume(&v, value.span);
         let detail = format!("mut({})", self.place_text(&places));
         let n = self.emit(span, "assign", detail);

@@ -767,8 +767,14 @@ impl Lower<'_> {
             Some((0, p)) => {
                 self.sums[0].stores.insert(p);
             }
-            // A closure parameter is unknown outside the closure.
-            Some(_) => info.param = None,
+            // A closure parameter is unknown outside the closure. The closure
+            // stores it: a caller gives the closure a value that it keeps.
+            Some((d, p)) => {
+                if let Some(s) = self.sums.get_mut(d) {
+                    s.stores.insert(p);
+                }
+                info.param = None;
+            }
             None => {}
         }
         if info == FnInfo::default() {
