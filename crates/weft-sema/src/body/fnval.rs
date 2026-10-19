@@ -526,6 +526,7 @@ impl Lower<'_> {
             self.facts.performs_at.push((n, c));
             self.sum().performs.insert(c);
             self.cap_calls.push((n, c));
+            self.note_abort_path(n, c);
         }
         // The places that the value gives to operations of local handlers.
         for &(cap, op, pos, p) in &sum.op_args {
@@ -723,6 +724,7 @@ impl Lower<'_> {
             .map(|h| h.cap)
         {
             self.cap_calls.push((n, cap));
+            self.note_abort_path(n, cap);
             for &(p, i) in args {
                 self.give_op(n, cap, None, None, p, i);
             }

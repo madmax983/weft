@@ -42,6 +42,8 @@ flowchart TD
 flowchart TD
     bind["rebound_at(V, P)"] --> live["live_linear(V, Q)"]
     moved["moved_at(V, P)"] -. "ends" .-> live
+    empty["empty_at(V, P)"] -. "nothing to consume" .-> live
+    over["overwrites(V, P)"] -. "a new part" .-> live
     live --> unc["unconsumed(V, P) = W0601"]
     send["scope_end(V, P)"] --> unc
     live --> ow["overwritten(V, P) = W0601"]
@@ -54,11 +56,13 @@ flowchart TD
     uses["uses(V, P)"] --> ubs
 ```
 
-A linear variable is live from a new value until a move. It must not be live where it
-goes out of scope or where it gets a new value. A new value of a part drops the old
-value of the part too (`overwrites`). An abort while it is live needs `on abort`. A
-`let` can declare a variable with no value, and a place field can have no value. Each
-path must give it a value before a use.
+A linear variable is live from a new value until a move. A new value with no linear
+part, such as `None`, has nothing to consume (`empty_at`). A new value of a part makes
+the variable live too. It must not be live where it goes out of scope or where it gets
+a new value. A new value of a part drops the old value of the part too (`overwrites`).
+An abort while it is live needs `on abort`. A `let` can declare a variable with no
+value, and a place field can have no value. Each path must give it a value before a
+use.
 
 A mutation invalidates a reference only through an unstable step. A move or the end of
 the owner frees the memory, so it invalidates every reference into the owned value. A
@@ -85,12 +89,14 @@ stops, and each function whose signature can still change gets W0706, an error.
 Each body, also one whose function states its effects, also infers the other parts of
 its signature: what it lends to its function parameters, what its returned function
 value does, which function parameters it stores, whether it can run a stored function
-value, what it gives to that value, whether an unknown function value that it calls
-can resume more than once, which function parameters a task of the body can call,
-which function parameters it gives to an operation of a handler of a caller, which
-effects its tasks perform through a handler of a caller, which function parameters
-it can call more than once, and the type parameters of the values that it can drop
-(ADR 0007). A new lowering replaces these parts, so they do not only
+value, what it gives to that value and whether it can run one more than once,
+whether an unknown function value that it calls can resume more than once, which
+parameters a task of the body can call, which function parameters it gives to an
+operation of a handler of a caller and what the values that it gives there perform,
+which effects its tasks perform through a handler of a caller, which function
+parameters it can call more than once, which reference parameters can get a
+function value, and the type parameters of the values that it can drop or hold
+across an abort (ADR 0007). A new lowering replaces these parts, so they do not only
 grow. The parts of one function can change at most 32 times and two more times for
 each function (`infer::parts_limit`). After that, the inference keeps the last parts
 of that function, and its callers use them. Its row can still grow. A function whose

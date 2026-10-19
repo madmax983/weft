@@ -85,12 +85,22 @@ Status: accepted. Date: 2026-10-18.
   that node on. A hidden variable holds it, and each use of the local uses it. A later
   new value of the same part, of a part around it, or of the whole local replaces it.
   Each branch of an `if` or a `match` replaces only on its own path. So after the join
-  the part can hold the references of each branch. A loop keeps the references
-  that a pass gives for the next pass. A destructuring `let S(a, b) = s` gives each
-  part the places of `s`.
+  the part can hold the references of each branch. On the edge from a branch, or into
+  the head or the exit of a loop, a holder that the branch replaced gets a new value:
+  a change of its places after it was replaced does not count after the join. A loop
+  keeps the references that a pass gives for the next pass. A destructuring
+  `let S(a, b) = s` gives each part the places of `s`.
 - A by-value parameter that holds references, such as `o: Option<&World>`, points into
   a parameter root. The callee can mutate through it. The caller puts in the places of
   the argument. A new value of the parameter itself is local.
+- A reference parameter can point to a value that holds references, such as
+  `rs: &Vec<&T>`. A reference that the body reads out of it points into a root of its
+  own: what the references behind `rs` point into (`*rs` in the facts). It can point
+  anywhere inside that root. A signature names these places with the step `Held`: a
+  caller puts in the places that the references in its argument point into, and the
+  steps after them. A written `rs..` covers them, in `mut(rs..)` and in `&T in rs..`.
+  So a mutation through a stored reference needs `mut(rs..)` (W0703), and a returned
+  stored reference needs `in rs..` (W0204).
 - Evaluation order follows the interpreter: arguments and operands run from left to
   right. A by-value argument moves when it is evaluated, so `f(v, v.len())` is a use
   after move. A hidden variable holds the value on its way to the call while the later
@@ -112,9 +122,13 @@ Status: accepted. Date: 2026-10-18.
 - A result with no stated place points anywhere inside the reference arguments, also
   when the callee returns a reference to one element only.
 - After a join, a part can hold the references of each branch. A use after the join
-  uses each of them, also on a path where a later new value replaced one of them.
+  uses each of them. A change of the places of a replaced holder before the join does
+  not count, but a change after the join does.
+- A reference read behind a reference parameter can point anywhere inside what the
+  references there point into. A caller puts in each place that its argument's
+  references point into, also when the callee reads only one of them. `mut(rs..)` and
+  `in rs..` cover the places of `rs` and these places.
 - W0605 is about written reference fields. A generic type such as `Option<&T>`,
   `Vec<&T>` or `Wrap<&T>` can hold references: the facts follow their places.
-- What stays open (not checked): a reference stored behind a reference parameter. The
-  callee sees it as a reference to any place inside the parameter. The caller puts in
-  the places of the parameter, not the places that the stored reference points into.
+- What stays open (not checked): a reference stored behind a reference parameter of a
+  closure or a clause. The value sees the outer place only (ADR 0005).

@@ -1696,6 +1696,7 @@ impl Lower<'_> {
             .map(|h| h.cap);
         if let Some(c) = cap {
             self.cap_calls.push((n, c));
+            self.note_abort_path(n, c);
             for (i, v, sp) in &fn_args {
                 self.note_op_fn(c, (Some(op), Some(*i)), v, *sp);
             }
@@ -2267,6 +2268,7 @@ impl Lower<'_> {
                 effect: e.clone(),
                 cap,
                 multi: false,
+                frames: self.frames.len(),
             });
             self.root_caps.insert(cap);
         }

@@ -124,7 +124,11 @@ impl Lower<'_> {
     /// through: of its summary, of its parts, and of the closures in its type.
     pub(super) fn val_caps(&self, v: &Val) -> BTreeSet<CapId> {
         let mut out = v.caps.clone();
-        if let Some(s) = self.fn_info(v).summary {
+        let info = self.fn_info(v);
+        if let Some(f) = info.item {
+            self.item_marks(f, &mut out);
+        }
+        if let Some(s) = info.summary {
             self.summary_marks(s, &mut out);
             out.extend(self.closure_caps(s));
             // A closure can call or return what it captures.
@@ -193,6 +197,21 @@ impl Lower<'_> {
         for &p in sum.passthrough.iter().chain(&sum.params) {
             out.insert(param_cap(p));
         }
+        for &f in &sum.items {
+            self.item_marks(f, out);
+        }
+    }
+
+    /// Adds the marks of function item `f` as a value: the effects of its
+    /// signature and of its tasks. A task that runs the item performs them where
+    /// it runs, through a handler of a caller of this function.
+    fn item_marks(&self, f: FnId, out: &mut BTreeSet<CapId>) {
+        let e = &self.sigs[f].effects;
+        for name in e.named.iter().chain(&e.task_effects) {
+            if let Some(id) = effects::by_identity(self.prog, name) {
+                out.insert(escaped_cap(id));
+            }
+        }
     }
 
     /// Returns what the marks in `caps` mean for a task that runs the value.
@@ -222,6 +241,9 @@ impl Lower<'_> {
                 if let Some(s) = f.summary {
                     self.summary_marks(s, out);
                     out.extend(self.closure_caps(s));
+                }
+                if let Some(g) = f.item {
+                    self.item_marks(g, out);
                 }
             }
             Ty::Ref(inner) | Ty::Slice(inner) | Ty::Array(inner, _) => self.ty_caps(&inner, out),
@@ -389,6 +411,7 @@ impl Lower<'_> {
             match self.place_local(p) {
                 Some(l) => {
                     self.locals[l].caps.extend(caps.iter().copied());
+                    self.locals[l].sticky.extend(caps.iter().copied());
                     self.mark_modes(l);
                 }
                 None => stored = true,
@@ -701,8 +724,9 @@ impl Lower<'_> {
     }
 
     /// Reports W0313 if a function value that performs through `cap` leaves the
-    /// handled body that started at `start`: as its value `v`, through a local
-    /// outside it, or to a place or code that can keep it.
+    /// handled body that started at `start`: as its value `v`, or to a place or code
+    /// that can keep it. Returns true if it reports. `check_local_keeps` checks the
+    /// locals outside the body after the clauses.
     pub(super) fn check_cap_escape(
         &mut self,
         cap: CapId,
@@ -710,11 +734,11 @@ impl Lower<'_> {
         start: HandleStart,
         v: &Val,
         span: Span,
-    ) {
+    ) -> bool {
         let head = format!("a closure that performs `{effect}` escapes its handler");
         if self.expand_caps(&self.val_caps(v)).contains(&cap) {
             self.err("W0313", head, span);
-            return;
+            return true;
         }
         let mut how = None;
         for k in &self.kept[start.kept..] {
@@ -727,13 +751,84 @@ impl Lower<'_> {
             });
             break;
         }
-        if how.is_none() {
-            how = (0..start.locals)
-                .find(|&l| self.expand_caps(&self.local_caps(l)).contains(&cap))
-                .map(|l| format!("the local `{}` keeps it", self.locals[l].name));
-        }
         if let Some(how) = how {
             self.err("W0313", format!("{head}: {how}"), span);
+            return true;
         }
+        false
+    }
+
+    /// Reports W0313 if a local outside the handled body that started at `start`
+    /// can hold a function value that performs through `cap` where the `handle`
+    /// ends, at node `end`. A new value of the whole local in the same part of the
+    /// graph counts only if it reaches `end` (`Lower::bind_caps`): the abort paths
+    /// of the clauses are edges to `end` too. Other values count always
+    /// (`Local::sticky`).
+    pub(super) fn check_local_keeps(
+        &mut self,
+        cap: CapId,
+        effect: &str,
+        start: HandleStart,
+        end: NodeId,
+        span: Span,
+    ) {
+        for l in 0..start.locals {
+            let var = self.locals[l].var;
+            let mut caps = self.locals[l].sticky.clone();
+            let binds: Vec<(NodeId, BTreeSet<CapId>)> = self
+                .bind_caps
+                .iter()
+                .filter(|(v, ..)| *v == var)
+                .map(|(_, n, cs)| (*n, cs.clone()))
+                .collect();
+            let kills: BTreeSet<NodeId> = self
+                .facts
+                .rebound_at
+                .iter()
+                .filter(|(v, _)| *v == var)
+                .map(|&(_, n)| n)
+                .collect();
+            for (n, cs) in binds {
+                if self.expand_caps(&cs).contains(&cap) && self.reaches_past(n, end, &kills) {
+                    caps.extend(cs);
+                }
+            }
+            if self.expand_caps(&caps).contains(&cap) {
+                let name = self.locals[l].name.clone();
+                self.err(
+                    "W0313",
+                    format!("a closure that performs `{effect}` escapes its handler: the local `{name}` keeps it"),
+                    span,
+                );
+                return;
+            }
+        }
+    }
+
+    /// Returns true if a path leads from a successor of node `from` to node `to`
+    /// that does not pass through a node of `kills` before `to`.
+    fn reaches_past(&self, from: NodeId, to: NodeId, kills: &BTreeSet<NodeId>) -> bool {
+        let mut seen = BTreeSet::new();
+        let mut work: Vec<NodeId> = self
+            .facts
+            .cfg_edge
+            .iter()
+            .filter(|(a, _)| *a == from)
+            .map(|&(_, b)| b)
+            .collect();
+        while let Some(a) = work.pop() {
+            if a == to {
+                return true;
+            }
+            if kills.contains(&a) || !seen.insert(a) {
+                continue;
+            }
+            for &(x, y) in &self.facts.cfg_edge {
+                if x == a {
+                    work.push(y);
+                }
+            }
+        }
+        false
     }
 }

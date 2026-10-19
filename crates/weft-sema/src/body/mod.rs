@@ -245,6 +245,10 @@ struct Local {
     frame: (usize, usize),
     /// The capabilities of the function values that the local can hold.
     caps: BTreeSet<CapId>,
+    /// The part of `caps` that does not come from a new value of the whole local in
+    /// its own part of the graph (`Lower::bind_caps`): a store into a part, a new
+    /// value in a closure or a clause, and the value of a parameter.
+    sticky: BTreeSet<CapId>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -316,6 +320,8 @@ struct HandlerFrame {
     effect: String,
     cap: CapId,
     multi: bool,
+    /// The number of frames when the handled body starts.
+    frames: usize,
 }
 
 #[derive(Clone)]
@@ -544,6 +550,13 @@ pub struct Lower<'p> {
     /// such root.
     held_roots: BTreeMap<usize, PlaceId>,
     held_of: BTreeMap<weft_facts::RootId, usize>,
+    /// The nodes of a handled body that run a clause of a local handler: the
+    /// capability, the node, and the owners of the body that go out of scope
+    /// there if the clause does not resume.
+    abort_paths: Vec<(CapId, NodeId, Vec<VarId>)>,
+    /// The new values of whole locals in their own part of the graph: the
+    /// variable, the node and the capabilities of the value.
+    bind_caps: Vec<(VarId, NodeId, BTreeSet<CapId>)>,
 }
 
 impl<'p> Lower<'p> {
@@ -637,6 +650,8 @@ impl<'p> Lower<'p> {
             param_bases: Vec::new(),
             held_roots: BTreeMap::new(),
             held_of: BTreeMap::new(),
+            abort_paths: Vec::new(),
+            bind_caps: Vec::new(),
         }
     }
 
@@ -980,6 +995,34 @@ impl<'p> Lower<'p> {
     fn multi_node(&mut self, n: NodeId) {
         self.facts.multi_at.push(n);
         self.sum().multi = true;
+    }
+
+    /// Node `n` runs a clause of the local handler behind `cap`. If the clause does
+    /// not resume, control goes from `n` to the end of the `handle`. Records the
+    /// node and the owners that the handled body declares, for `handle`. A node in
+    /// a closure or a clause inside the body does not count here: the node that
+    /// runs that closure does.
+    pub(super) fn note_abort_path(&mut self, n: NodeId, cap: CapId) {
+        if self.root_caps.contains(&cap) {
+            return;
+        }
+        let Some(h) = self.handlers.iter().rev().find(|h| h.cap == cap) else {
+            return;
+        };
+        let start = h.frames.min(self.frames.len());
+        if self.frames[start..].iter().any(|f| f.barrier.is_some()) {
+            return;
+        }
+        let mut vars = Vec::new();
+        for f in &self.frames[start..] {
+            for &(_, l) in &f.names {
+                let loc = &self.locals[l];
+                if loc.root.is_some() && !self.may_be_linear(&loc.ty) {
+                    vars.push(loc.var);
+                }
+            }
+        }
+        self.abort_paths.push((cap, n, vars));
     }
 
     /// Records that node `n` performs effect `e`. A lexical handler takes it if one is in scope.
@@ -1341,6 +1384,7 @@ impl<'p> Lower<'p> {
             cont: None,
             bound: false,
             caps: BTreeSet::new(),
+            sticky: BTreeSet::new(),
             frame: (top, self.frames[top].id),
         });
         let l = self.locals.len() - 1;
@@ -1397,7 +1441,16 @@ impl<'p> Lower<'p> {
         // A new value of the whole local replaces the values of its parts.
         self.part_holders.retain(|h| h.local != l);
         let caps = self.val_caps(v);
-        self.locals[l].caps.extend(caps);
+        self.locals[l].caps.extend(caps.iter().copied());
+        // A new value in the part of the graph of the local: W0313 follows it to the
+        // end of a `handle` (`check_local_keeps`). Another one counts always.
+        let depth = self.local_frame(l);
+        let same = !self.frames[depth + 1..].iter().any(|f| f.barrier.is_some());
+        if same {
+            self.bind_caps.push((var, n, caps));
+        } else {
+            self.locals[l].sticky.extend(caps);
+        }
         self.mark_modes(l);
         for &p in &v.refs {
             self.point_local(l, p);

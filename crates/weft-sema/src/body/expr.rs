@@ -1289,6 +1289,7 @@ impl Lower<'_> {
             );
             if mark {
                 self.locals[l].caps.insert(super::caps::UNKNOWN_FN);
+                self.locals[l].sticky.insert(super::caps::UNKNOWN_FN);
             }
         }
         // The body returns its value: W0204 reports a value into its own locals.
@@ -1653,6 +1654,7 @@ impl Lower<'_> {
             effect: ident,
             cap,
             multi: def.has_multi(),
+            frames: self.frames.len(),
         });
         self.sum().own_caps.insert(cap);
         self.sums.push(Summary::default());
@@ -1661,7 +1663,7 @@ impl Lower<'_> {
         let v = self.expr(body);
         self.jumps.pop();
         // A function value that performs through the handler cannot leave its body.
-        self.check_cap_escape(cap, &def.name, start, &v, span);
+        let escaped = self.check_cap_escape(cap, &def.name, start, &v, span);
         self.flush(expr_tail(body));
         let body_sum = self.sums.pop().unwrap_or_default();
         self.merge_summary(&body_sum);
@@ -1675,6 +1677,7 @@ impl Lower<'_> {
         let mut clauses_done = Vec::new();
         let mut clause_vals: Vec<Val> = Vec::new();
         let mut clause_locals: Vec<PlaceId> = Vec::new();
+        let mut aborts = false;
         for c in clauses {
             let Some(op) = def.ops.iter().find(|o| o.name == c.op.name).cloned() else {
                 self.err(
@@ -1737,11 +1740,13 @@ impl Lower<'_> {
                     .filter(|a| a.pos.is_none_or(|p| p == i))
                     .flat_map(|a| a.held.iter().copied())
                     .collect();
-                self.locals[l].caps.extend(given);
+                self.locals[l].caps.extend(given.iter().copied());
+                self.locals[l].sticky.extend(given);
                 // A callee can give a value that holds a function value in a field or
                 // an element: the clause cannot follow it.
                 if !matches!(self.inf.shallow(pt), Ty::Fn(_)) && self.has_fn(pt) {
                     self.locals[l].caps.insert(super::caps::UNKNOWN_FN);
+                    self.locals[l].sticky.insert(super::caps::UNKNOWN_FN);
                 }
                 self.mark_modes(l);
             }
@@ -1768,6 +1773,16 @@ impl Lower<'_> {
                 self.unify(&ty, &cv.ty, c.body.span);
             }
             self.end_frame(c.span);
+            // A clause that can end with no `resume` ends the handled body at the
+            // node that runs it.
+            if let Some(end) = self.cur {
+                let stops: Vec<NodeId> = self.resumes[resumes_before..]
+                    .iter()
+                    .filter(|(_, rc)| *rc == cap)
+                    .map(|(n, _)| *n)
+                    .collect();
+                aborts |= self.reaches_without(entry, end, &stops);
+            }
             self.pop_frame();
             self.stmt_temps = saved_stmts;
             self.close_scope(si, super::fnval::Scope::Clause);
@@ -1897,6 +1912,34 @@ impl Lower<'_> {
         self.handled.push(h);
         self.cur = saved;
         let end = self.emit(span, "end handle", String::new());
+        // A clause that does not resume ends the handled body at the node that runs
+        // it: control goes from there to the end of the `handle`. The owners of the
+        // body go out of scope on the way.
+        let paths: Vec<(weft_facts::CapId, NodeId, Vec<VarId>)> = self
+            .abort_paths
+            .iter()
+            .filter(|(c, ..)| *c == cap)
+            .cloned()
+            .collect();
+        self.abort_paths.retain(|(c, ..)| *c != cap);
+        if aborts {
+            for (_, n, vars) in paths {
+                let at = self.facts.node(n).span;
+                let u =
+                    self.facts
+                        .add_node(at, "abort", String::from("the clause does not resume"));
+                self.facts.cfg_edge.push((n, u));
+                self.facts.cfg_edge.push((u, end));
+                for v in vars {
+                    self.facts.scope_end.push((v, u));
+                }
+            }
+        }
+        // A local outside the body can keep a function value that performs through
+        // the handler: on the normal path and on each abort path.
+        if !escaped {
+            self.check_local_keeps(cap, &def.name, start, end, span);
+        }
         // A reference that a clause resumes with into its own local is not valid
         // after the `handle`: the clause has ended.
         let results: Vec<PlaceId> = self
@@ -2270,4 +2313,27 @@ fn v_refs_result(facts: &weft_facts::FnFacts, results: &[PlaceId], refs: &[Place
             .iter()
             .any(|&r| facts.place(r).root == facts.place(p).root)
     })
+}
+
+impl Lower<'_> {
+    /// Returns true if a path of edges leads from node `from` to node `to` that does
+    /// not pass through a node of `stops`.
+    fn reaches_without(&self, from: NodeId, to: NodeId, stops: &[NodeId]) -> bool {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut work = vec![from];
+        while let Some(a) = work.pop() {
+            if a == to {
+                return true;
+            }
+            if stops.contains(&a) || !seen.insert(a) {
+                continue;
+            }
+            for &(x, y) in &self.facts.cfg_edge {
+                if x == a {
+                    work.push(y);
+                }
+            }
+        }
+        false
+    }
 }

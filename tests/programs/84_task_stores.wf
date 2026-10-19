@@ -31,6 +31,7 @@ fn start_owned(j: Job) / async {
     scope { s => s.spawn(j.f) }
 }
 fn start_through(j: &Job) / async { start(j) }
+fn worker() / Note { note(10) }
 
 fn behind_ref() / async {
     handle Note { fn note(x) { resume(()) } } in {
@@ -71,6 +72,15 @@ fn vec_escapes() / Note, async {
     let v = Vec.new()
     v.push(|| note(7))
     scope { s => s.spawn(v[0]) }   //~ W0314
+}
+// A function item in a store performs its effects where the task runs it.
+fn item_behind_ref() / Note, async {
+    let j = Job { f: worker }
+    start(&j)   //~ W0314
+}
+fn item_in_field() / Note, async {
+    let j = Job { f: worker }
+    scope { s => s.spawn(j.f) }   //~ W0314
 }
 // A value from an operation of a handler of a caller, from a parameter of a
 // closure, or given to a function value that the body does not know.

@@ -72,6 +72,7 @@ impl Lower<'_> {
             // The parameter holds the function values that the caller gives.
             if !matches!(p.ty, Ty::Fn(_)) && self.has_fn(&p.ty) {
                 self.locals[l].caps.insert(super::caps::param_cap(i));
+                self.locals[l].sticky.insert(super::caps::param_cap(i));
             }
             if p.shared {
                 self.facts.shared_root.extend(bases[i].iter().copied());
@@ -889,6 +890,7 @@ impl Lower<'_> {
                 loc.bound = v.bound;
                 loc.uniq = next.uniq.get(l).copied().unwrap_or(v.uniq);
                 loc.caps = v.caps;
+                loc.sticky = v.sticky;
             }
         }
     }

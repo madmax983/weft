@@ -77,10 +77,26 @@ Status: accepted. Date: 2026-10-18.
   rules of W0601. Their type parameters are the `drops` part of the signature. A call
   that gives a linear type to a type parameter in `drops` drops a value of it (W0601).
   The check uses the inferred type argument.
+- A generic function can hold a value of a type parameter at a node that can abort or
+  resume more than once. `finish` follows these values as the rules of W0602 and W0503
+  do: from a new value to a move. Their type parameters are the `holds` part of the
+  signature. A call that gives a linear type to a type parameter in `holds` has a
+  hidden variable of that type: it gets a value before the call node and moves after
+  it. So the rules see a linear value across the call. W0602 applies if the call can
+  abort and the type has no `on abort`. W0503 applies if the call can resume more than
+  once. In a generic caller the variable is linear only because a type parameter can
+  be, so the caller gets the type parameter in its own `holds`.
 - A linear value can be on its way to a call, a tuple, a struct literal, a constructor
   or an array. It is live while the later operands run. A hidden variable holds it
   from its operand to the node that takes it. An abort in a later operand loses the
-  value. Its type must have `on abort` (W0602).
+  value. Its type must have `on abort` (W0602). A `return`, a `break` or a `continue`
+  in a later operand leaves the value: the hidden variable goes out of scope at the
+  jump (W0601). A jump that stays inside the later operand does not leave it.
+- A new value with no linear part, such as a variant with no payload (`None`), gives
+  a linear variable nothing to consume: `empty_at(V, P)` in the spec. `live_linear`
+  does not start there. A new value of a part (`overwrites`) starts it, because the
+  part can now hold a linear value. A `Vec.new()` result is not such a value: `push`
+  can add a linear value to it without a new value of the variable.
 - `!Move` passes through the parts that hold a value inline. A pointer such as `Box`
   or `Rc` does not move its target, so it does not pass `!Move` on. A prelude type
   with no elements, such as `Weak<T>`, is a pointer or a handle too.
@@ -110,17 +126,18 @@ Status: accepted. Date: 2026-10-18.
   - A new value in a closure counts the captured value as live at the closure start,
     also when the closure runs after the value moves.
   - A new value of a local that holds a linear type overwrites its old value. This is
-    also so when the old value is `None` or an empty `Vec`.
+    also so when the old value is an empty `Vec`. After `None` it is not.
+  - A call of a generic callee in `holds` holds a linear value across the call node,
+    also when the callee holds the value at another node than the one that can abort.
   - A `Vec` of linear values is linear, and nothing consumes it. It is W0601 at its
-    end, also when each element is popped and consumed.
+    end, also when each element is popped and consumed. A sound consumer needs a
+    check at run time that the `Vec` is empty, and an abort path for the elements when
+    it is not. The checker keeps the error. `tests/programs/88_empty_values.wf` has the
+    cases.
   - A borrow of a struct with a place field that has no value is W0304, also when the
     callee gives the field a value first. A `match` on such a value reads it too.
   - A call result that can hold a function value gets the modes of the arguments,
     also when the callee does not keep them.
   - A closure is not plain data. A branch value, a variable and an argument of a type
     parameter move it, also when it moves nothing that it captures.
-- What stays open (not checked):
-  - A generic function can abort, or resume more than once, while it holds a value of
-    a type parameter. W0602 and W0503 do not see that the caller gave a linear value.
-  - A `return` or a `break` in a later operand can leave a linear value that is on
-    its way to a call.
+- What stays open (not checked): no known gap.

@@ -35,11 +35,12 @@ with it. Polonius showed that a general engine is slow for Rust, but the model i
   `match` with `_` in the other columns costs little. A `match` that needs more steps
   is W0120 too: the check cannot show that the arms cover each value.
 - W0304 (`use_before_set`): `let x: T` with no value declares `x`. A use of `x` on a
-  path with no assignment before it is W0304. A closure and a handler clause use what
-  they capture where they are made. So an assignment inside a closure does not give
-  `x` a value for the code after the closure. A compound assignment such as `x += 1`
-  reads `x`. A place field of a `!Move` struct with no value works in the same way
-  (ADR 0007).
+  path with no assignment before it is W0304. A closure uses what it captures where it
+  is made. A handler clause uses it at each node that runs the clause, and the
+  diagnostic shows the read in the clause. So an assignment inside a closure does not
+  give `x` a value for the code after the closure. A compound assignment such as
+  `x += 1` reads `x`. A place field of a `!Move` struct with no value works in the same
+  way (ADR 0007).
 - Agreement is over the facts that sema emits. It does not show that the facts are
   complete.
 - A rule change needs all of these edits:

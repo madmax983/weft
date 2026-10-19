@@ -52,14 +52,32 @@ Status: accepted. Date: 2026-10-18.
   closure, or after a store). A function with no body can call each function argument
   more than once, except `with_timeout`. A clause can call each function argument of
   its operation more than once.
+- A node that can run a stored closure more than once starts its tasks again after it
+  (W0405): a call of a callee whose body can run a stored value at two nodes, in a loop
+  or in a closure (the `reach` part), of a function with no body, or of a function
+  value that the body does not know with an argument that holds a function value. A
+  call of a function value that the body does not know runs a stored value once.
 - A task cannot perform through a handler on the stack of another task (W0314). This
   holds for a closure, a function item and a function parameter that runs as a task:
   the effects of an item resolve against the handlers at the spawn. It holds for the
   function values that the task holds or captures, also in a field of a local. A
-  signature has a `tasks` part: the function parameters that a task of the body can
-  call. The caller checks the function value that it gives to such a parameter. A
-  clause can run its function parameter as a task: each operation that gives it a
-  function value checks the value, with the handlers of the `handle`. A foreign
+  signature has a `tasks` part: the parameters whose function values a task of the
+  body can call. The caller checks the function value that it gives to such a
+  parameter, and the function values that an argument holds in a field or a container
+  or points to. A clause can run its function parameter as a task: each operation that
+  gives it a function value checks the value, with the handlers of the `handle`. Such
+  a value can come from a callee: a closure that the callee gives to an operation of a
+  handler of its caller (the `op_effects` part, ADR 0005), or a parameter of a closure
+  that a callee returns (the `ret` part). A closure that a callee returns can run its
+  parameter as a task too.
+- The capabilities of a value carry marks for W0314: an effect that a closure or a
+  function item in the value performs through a handler of a caller, a parameter of
+  the function whose function values the value can hold, and a value that the body
+  cannot follow. A task that runs a value with a mark of a user effect is W0314. A
+  standard effect is part of `task_effects`, and a parameter is part of `tasks`. A
+  value that the body cannot follow comes from a parameter of a closure or a clause
+  that holds a function value in a field or an element, or from an operation of a
+  handler of a caller. A task that runs it is W0314. A foreign
   function and `http.serve` can run each function argument as a task. A signature has
   a `task_effects` part: the effects that its tasks perform through a handler of a
   caller. A caller checks that its local handlers do not get them. The root handlers of
@@ -92,9 +110,13 @@ Status: accepted. Date: 2026-10-18.
   - `repeats` counts a call in a closure or in a loop, and a call at two nodes, also
     on two branches of an `if`.
   - W0314 counts each function value that a task holds or captures, also when the
-    task does not call it.
-- What stays open (not checked):
-  - A stored closure that spawns and runs at a node that can reach it starts the task
-    there once: the copies of a second run are not seen.
-  - A clause that runs a parameter of a closure as a task: the closure has ended when
-    the clause is lowered, so its callers do not check the value.
+    task does not call it. It counts each function value in an argument of a
+    parameter in `tasks`, also when the task runs another one.
+  - A task that runs a function value from a parameter of a closure or a clause, in a
+    field or an element, or from an operation of a handler of a caller, is W0314.
+  - A node that can run a stored value more than once starts each stored closure that
+    spawns again, also a closure that the callee does not run.
+  - A clause that runs its parameter as a task reports W0314 at the operation and at
+    the spawn in the clause.
+- What stays open (not checked): a function value that the body cannot follow and
+  that goes to an operation of a handler of a caller (ADR 0005).
