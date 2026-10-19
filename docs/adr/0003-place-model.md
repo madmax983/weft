@@ -24,7 +24,11 @@ Status: accepted. Date: 2026-10-18.
   overlaps what `p` overlaps. A reference to it is invalid after any mutation or free
   that overlaps `p`, and a mutation of it invalidates every reference below `p`. The
   result of an unknown function value (a parameter of function type) points to the
-  wildcard place of each reference argument.
+  wildcard place of each reference argument. The wildcard place of a place at or below
+  `b..` is `b..` itself: `b.. ..` is the same set. So no place has two wildcard steps,
+  and `cur = step(cur)` stays at `b..`. The checker compares the outermost wildcard
+  bases only. The place relations are closed under prefixes, so this is exact also
+  for facts with nested wildcard steps.
 - A returned place cannot be in a by-value parameter (W0204), also in an `extern`
   signature.
 - Each owned local and each by-value parameter owns its root place (`owner(Rt, V)`). A

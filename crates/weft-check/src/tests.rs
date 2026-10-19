@@ -738,6 +738,56 @@ fn w0301_a_wildcard_mutation_invalidates_every_reference_below_its_base() {
     assert!(check(&b.f).violations.error.contains(&(r, n2)));
 }
 
+#[test]
+fn nested_wildcard_places_agree_with_the_spec() {
+    // wild_at(P, B) for each wildcard step on the path of P. The checker uses
+    // the outermost base only. Facts can still name nested wildcard places,
+    // because `child` makes them, so the spec must agree on them.
+    let mut b = B::new();
+    let world = b.param("world");
+    let ents = b.field(world, 0, "entities");
+    let score = b.field(world, 1, "score");
+    let other = b.param("other");
+    let mut deep = b.f.wildcard(ents);
+    for i in 0..12 {
+        let x = b.field(deep, i % 2, "x");
+        deep = b.f.child(x, weft_facts::WILD, "..");
+    }
+    assert_eq!(b.f.wildcard(deep), b.f.wildcard(ents), "the normal form");
+    let r = b.var("r");
+    let n0 = b.node("let r = f(world.entities)");
+    b.bind(r, n0);
+    b.f.points_into.push((r, deep));
+    let n1 = b.node("world.score += 1");
+    b.f.mutates_at.push((n1, score));
+    let n2 = b.node("other.clear()");
+    b.f.mutates_at.push((n2, other));
+    let n3 = b.node("print(r)");
+    b.use_(r, n3);
+    let (rep, work) = crate::check_counted(&b.f);
+    assert!(rep.violations.error.is_empty(), "{rep:?}");
+    assert!(work.overlaps < 10, "{work:?}");
+    check(&b.f);
+    let n4 = b.node("world.entities.clear()");
+    b.f.mutates_at.push((n4, ents));
+    let n5 = b.node("print(r)");
+    b.use_(r, n5);
+    let rep = check(&b.f);
+    assert!(rep.violations.error.contains(&(r, n5)));
+    // A mutation of a nested wildcard place: every reference below its
+    // outermost base.
+    let s = b.var("s");
+    let n6 = b.node("let s = &world.entities[0]");
+    b.bind(s, n6);
+    let el = b.elem(ents);
+    b.f.points_into.push((s, el));
+    let n7 = b.node("g(deep)");
+    b.f.mutates_at.push((n7, deep));
+    let n8 = b.node("print(s)");
+    b.use_(s, n8);
+    assert!(check(&b.f).violations.error.contains(&(s, n8)));
+}
+
 /// Returns the rendered diagnostics of a source.
 fn rendered(src: &str) -> String {
     let checked = crate::check_source("t.wf", src, weft_sema::Options::default());

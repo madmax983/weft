@@ -60,6 +60,14 @@ pub struct Conflict {
     pub lends: bool,
 }
 
+/// The work of one check. A test can put a limit on it, as a clock cannot be
+/// stable on a loaded machine.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Work {
+    /// The calls of `overlaps`, also the calls inside other place relations.
+    pub overlaps: u64,
+}
+
 /// The checker result: violations plus the evidence for diagnostics.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Report {
@@ -83,8 +91,12 @@ struct Ctx<'a> {
     lends: Vec<Vec<PlaceId>>,
     /// `frees_at`, with the cause of each free.
     frees: Vec<Vec<(PlaceId, Cause)>>,
-    /// `wild_at(P, B)` by place.
-    bases: Vec<Vec<PlaceId>>,
+    /// The outermost `B` of `wild_at(P, B)` by place. Each other `B` of `P` is
+    /// below it, and the place relations are closed under prefixes, so the
+    /// wildcard rules need only this one.
+    outer: Vec<Option<PlaceId>>,
+    /// The calls of [`Ctx::overlaps`].
+    overlaps_calls: std::cell::Cell<u64>,
 }
 
 impl<'a> Ctx<'a> {
@@ -122,13 +134,10 @@ impl<'a> Ctx<'a> {
             lends[p.index()].push(m);
         }
         // A parent comes before its children.
-        let mut bases: Vec<Vec<PlaceId>> = Vec::with_capacity(f.places.len());
+        let mut outer: Vec<Option<PlaceId>> = Vec::with_capacity(f.places.len());
         for p in &f.places {
-            let mut b = p.parent.map_or_else(Vec::new, |q| bases[q.index()].clone());
-            if let (true, Some(q)) = (p.is_wildcard(), p.parent) {
-                b.push(q);
-            }
-            bases.push(b);
+            let above = p.parent.and_then(|q| outer[q.index()]);
+            outer.push(above.or_else(|| p.parent.filter(|_| p.is_wildcard())));
         }
         let mut cx = Self {
             f,
@@ -138,7 +147,8 @@ impl<'a> Ctx<'a> {
             reads,
             lends,
             frees: vec![Vec::new(); n],
-            bases,
+            outer,
+            overlaps_calls: std::cell::Cell::new(0),
         };
         cx.frees = cx.frees_at();
         cx
@@ -195,23 +205,33 @@ impl<'a> Ctx<'a> {
         self.same_root(m, p) && places::invalidates(&self.f.place(m).steps, &self.f.place(p).steps)
     }
 
+    /// The outermost wildcard base of `p`, or `p` if it has none.
+    fn outermost(&self, p: PlaceId) -> PlaceId {
+        self.outer[p.index()].unwrap_or(p)
+    }
+
     /// `overlaps(P, Q)`. A wildcard place overlaps what its base overlaps.
+    ///
+    /// The spec gives `overlaps(P, Q)` if some `A` in `P` and its bases and
+    /// some `C` in `Q` and its bases overlap with no wildcard rule. Each such
+    /// `A` has the outermost base of `P` as a prefix, and the relation is
+    /// closed under prefixes. So the outermost bases decide it.
     fn overlaps(&self, a: PlaceId, b: PlaceId) -> bool {
-        (self.same_root(a, b) && places::overlaps(&self.f.place(a).steps, &self.f.place(b).steps))
-            || self.bases[a.index()].iter().any(|&x| self.overlaps(x, b))
-            || self.bases[b.index()].iter().any(|&y| self.overlaps(a, y))
+        self.overlaps_calls.set(self.overlaps_calls.get() + 1);
+        let (a, b) = (self.outermost(a), self.outermost(b));
+        self.same_root(a, b) && places::overlaps(&self.f.place(a).steps, &self.f.place(b).steps)
     }
 
     /// `invalidated_at` by a mutation of `m`, for a reference into `p`.
     fn mutation_kills(&self, m: PlaceId, p: PlaceId) -> bool {
         self.invalidates(m, p)
-            || self.bases[p.index()].iter().any(|&b| self.overlaps(m, b))
-            || self.bases[m.index()].iter().any(|&b| self.prefix(b, p))
+            || (self.outer[p.index()].is_some() && self.overlaps(m, p))
+            || self.outer[m.index()].is_some_and(|b| self.prefix(b, p))
     }
 
     /// `invalidated_at` by a free of `m`, for a reference into `p`.
     fn free_kills(&self, m: PlaceId, p: PlaceId) -> bool {
-        self.prefix(m, p) || self.bases[p.index()].iter().any(|&b| self.overlaps(m, b))
+        self.prefix(m, p) || (self.outer[p.index()].is_some() && self.overlaps(m, p))
     }
 
     fn within(&self, p: PlaceId, d: PlaceId) -> bool {
@@ -309,6 +329,11 @@ fn by_var(rel: &[(VarId, NodeId)]) -> BTreeMap<VarId, Vec<NodeId>> {
 
 /// Runs every rule of the spec on one function.
 pub fn check(f: &FnFacts) -> Report {
+    check_counted(f).0
+}
+
+/// Runs every rule of the spec on one function, and counts the work.
+pub fn check_counted(f: &FnFacts) -> (Report, Work) {
     let cx = Ctx::new(f);
     let mut r = Report::default();
     let rebound = by_var(&f.rebound_at);
@@ -322,7 +347,10 @@ pub fn check(f: &FnFacts) -> Report {
     multi(&cx, &rebound, &uses, &mut r.violations);
     effects(&cx, &mut r.violations);
     tasks(&cx, &mut r);
-    r
+    let work = Work {
+        overlaps: cx.overlaps_calls.get(),
+    };
+    (r, work)
 }
 
 /// `invalidated_at(R, P)` for a reference that points into `ps`: each node

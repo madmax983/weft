@@ -2,9 +2,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
-use weft_check::{check, check_source, Cause};
+use weft_check::{check, check_counted, check_source, Cause};
 use weft_sema::Options;
 use weft_syntax::SourceFile;
 
@@ -131,5 +132,63 @@ fn each_cause_checks_quickly() {
         }
         // Each one takes less than 0.3 s in a debug build.
         assert!(time < Duration::from_secs(1), "{name}: {time:?}");
+    }
+}
+
+/// A walk through a function value: `cur = step(cur)`, `calls` times in a
+/// straight line, then in `loops` loops. The result of each call points into
+/// the wildcard place of its argument. With `push`, a mutation of `head.next`
+/// invalidates `cur` before its last use.
+fn walk(calls: usize, loops: usize, push: bool) -> String {
+    let mut s = String::from(
+        "struct Node { val: u64, next: Vec<Node> }\n\
+         fn walk(step: fn(&Node) -> &Node, head: &Node, n: u64) / mut(head.next) {\n\
+         \x20   let cur = step(head)\n",
+    );
+    s.push_str(&"    cur = step(cur)\n".repeat(calls));
+    for i in 0..loops {
+        let _ = write!(
+            s,
+            "    let i{i} = 0\n    while i{i} < n {{ cur = step(cur)\n        i{i} += 1 }}\n"
+        );
+    }
+    if push {
+        s.push_str("    head.next.push(Node { val: 1, next: Vec.new() })\n");
+    }
+    s.push_str("    print(cur.val)\n}\n");
+    s
+}
+
+/// A place below a wildcard place gets no deeper wildcard place, and the
+/// checker compares the outermost wildcard bases only. The first checker took
+/// time 2^depth: 32 calls took 47 s, and 4 loops did not finish.
+#[test]
+fn nested_wildcard_places_check_quickly() {
+    for (calls, loops) in [(32, 0), (0, 4), (64, 8)] {
+        for push in [false, true] {
+            let src = walk(calls, loops, push);
+            let c = check_source("walk.wf", &src, Options::default());
+            assert!(c.analysis.diags.is_empty(), "{:?}", c.analysis.diags);
+            let body = c.analysis.bodies.iter().find(|b| b.facts.name == "walk");
+            let Some(body) = body else { panic!("no body") };
+            let wild = body.facts.places.iter().filter(|p| p.is_wildcard()).count();
+            assert!(
+                wild <= 2,
+                "{calls} calls, {loops} loops: {wild} wildcard places"
+            );
+            let (r, work) = check_counted(&body.facts);
+            let facts = &body.facts;
+            let cur = r
+                .violations
+                .error
+                .iter()
+                .filter(|(v, _)| facts.var(*v).name == "cur")
+                .count();
+            assert_eq!(cur, usize::from(push), "{src}");
+            assert!(
+                work.overlaps < 20_000,
+                "{calls} calls, {loops} loops: {work:?}"
+            );
+        }
     }
 }

@@ -420,8 +420,14 @@ impl FnFacts {
     }
 
     /// Returns the wildcard place under `p`: any place at or below `p`.
+    ///
+    /// If `p` is already at or below a wildcard place `b..`, the result is the
+    /// outermost one, `b..`. Each place at or below `p` is inside `b..`, so
+    /// this set includes the set of `p..`. Thus no place has two wildcard
+    /// steps, and a chain such as `cur = step(cur)` stops at `b..`.
     pub fn wildcard(&mut self, p: PlaceId) -> PlaceId {
-        self.child(p, WILD, "..")
+        let base = self.wild_base(p).unwrap_or(p);
+        self.child(base, WILD, "..")
     }
 
     /// Returns the parent of the outermost wildcard step on the path of `p`.
