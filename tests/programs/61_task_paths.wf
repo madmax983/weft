@@ -121,15 +121,14 @@ fn handled_task() / async {
 }
 
 // A handler clause that spawns into an outer scope starts the task at each
-// operation that it handles. (A spawn before `resume` would also conflict with
-// the resumed computation: it can run the clause again.)
+// operation that it handles. Here the task runs while `resume` runs the rest of
+// the handled body.
 fn spawn_in_clause(st: &Stats) / mut(st), async {
     scope { s =>
         handle Note {
             fn note(x) {
-                resume(())
                 s.spawn(|| st.count += 1)
-                print(0)
+                resume(())   //~ W0405
             }
         } in {
             print(st.count)

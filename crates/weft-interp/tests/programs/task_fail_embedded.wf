@@ -1,0 +1,16 @@
+// weft: no-runtime
+// A failure of a task goes to the task that joins it, also with no runtime:
+// the handler of `main` gets it at the join.
+fn work() / async, fail {
+    scope { s =>
+        let t = s.spawn(|| fail("boom"))
+        t.join()
+    }
+}
+
+fn main() {
+    handle Async { fn suspend() { resume(()) } } in {
+        handle Fail { fn fail(msg) { print("caught:", msg) } } in work()
+    }
+    print("after")
+}

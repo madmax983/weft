@@ -22,6 +22,16 @@ fn fork_one() / par {
 fn fork_value() / par {
     fork(|| 1, 2)   //~ W0102
 }
+// A closure parameter with no written type is a function.
+fn spawn_untyped() / async, par {
+    scope { s =>
+        let go = |f| s.spawn(f)
+        let t = go(|| 1)
+        t.join()
+    }
+    let both = |f, g| fork(f, g)
+    let r = both(|| 1, || 2)
+}
 fn spawn_ok() / async, par {
     scope { s => s.spawn(|| 1) }
     let (a, b) = fork(|| 1, || 2)

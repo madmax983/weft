@@ -82,15 +82,22 @@ Status: accepted. Date: 2026-10-18.
   perform one.
 - A clause runs in the environment of its `handle` (rule 6): its operations go to the
   handlers outside the `handle`. The value of a clause is the value of the `handle`, so
-  a function value or a reference in it joins the value of the body. A `resume` gives its
-  argument to the handled computation, so the argument cannot hold a capability of a
-  handler inside the clause (W0313).
+  a function value or a reference in it joins the value of the body. A reference into a
+  reference parameter of the clause points into what each operation gets. A `resume`
+  gives its argument to the handled computation, so the argument cannot hold a
+  capability of a handler inside the clause (W0313). There the argument is the result
+  of the operation: the result carries the capabilities of the function values that a
+  `resume` gives (W0313 if it leaves an outer handler). The handler of an operation is
+  not installed in its clause. So a function value that performs through that handler
+  cannot go to the operation (W0313), also through a callee or a closure that gives
+  its function parameter to an operation. A signature has an `op_fns` part: the
+  function parameters that the body gives to an operation of a handler of a caller.
 - A handler intercepts its effect if a clause performs the effect again, through a
   handler outside it (`clause_performs`, `forwards`). In a library, a handler of a
   standard effect that never forwards is a root handler (W0801), also when the function
   states the effect. The root handlers of `sim.run` get W0802 instead.
-- A spawned task or fork branch cannot perform a user effect (W0314): the handler is on
-  another task's stack.
+- A spawned task or fork branch cannot reach a handler on the stack of another task
+  (W0314, ADR 0006).
 - A capability lives only while its handled body runs (rule (d) of `proofs/effects`). A
   function value that performs through it cannot leave the body (W0313): not as the
   value of the body (also inside a tuple, a struct, a container or another closure), not
@@ -98,7 +105,11 @@ Status: accepted. Date: 2026-10-18.
   field or an element behind a reference, a callee that stores it or has no body, a
   function value that the body does not know, a closure that stores its parameter, and
   an operation of a handler outside the body. A struct or a container that a local of
-  the body owns can hold the value: it goes out of scope with the body.
+  the body owns can hold the value: it goes out of scope with the body. A callee with a
+  body can keep a function argument only in what its reference arguments point into
+  or in its result, so a `Box`, an `Rc` or a generic result holds it as a local of the
+  body does. A callee result that is not a function value, for example a tuple, holds
+  the function arguments of the call.
 - Extern functions in user code default to `blocking`.
 - `print` is a debug built-in with no effect.
 
@@ -232,6 +243,11 @@ Status: accepted. Date: 2026-10-18.
     reference arguments of the operation, also when the clause does not call it.
   - W0313 counts each function value given to code that can keep it, also when that
     code only calls it, and each part of a local of the body that can hold a function.
+    A local only adds capabilities: a local outside the body that gets a closure that
+    performs through the handler counts, also when it gets another value before the
+    body ends.
+  - The result of an operation carries what each `resume` of its handler gives, also a
+    `resume` of another operation of the handler.
   - W0314 counts each function value given to a function value that the body does not
     know (a function parameter): it can run the value as a task.
   - A `resume` can resume more than once if a clause of its handler can, also when the
@@ -246,8 +262,9 @@ Status: accepted. Date: 2026-10-18.
   - W0313 does not follow a callee that copies a function value out of a reference
     argument into another place, or a clause of a handler inside the body that keeps
     its function parameter.
-  - W0314 does not see a function value that a task runs from a store (a field or a
-    container).
+  - W0314 does not follow a function value that a task gets from a place behind a
+    reference. W0313 rejects a store there of a value that performs through a local
+    handler.
   - Only functions of a dependency are checked for `pub`, not its types and effects.
   - W0402 inside a higher-order function: a callback that gets a place of a `@ shared`
     parameter can mutate it. The caller sees the mutation on its own place only.

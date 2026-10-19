@@ -62,11 +62,14 @@ Each body, also one whose function states its effects, also infers the other par
 its signature: what it lends to its function parameters, what its returned function
 value does, which function parameters it stores, whether it can run a stored function
 value, what it gives to that value, whether an unknown function value that it calls
-can resume more than once, and which function parameters a task of the body can call.
-A new lowering replaces these parts, so they do not only grow. The parts of one function can change at most 32 times and two more times for
-each function (`infer::parts_limit`). After that, the inference keeps the last parts of
-that function, and its callers use them. Its row can still grow. A function whose parts
-still change at the end gets W0704, an error.
+can resume more than once, which function parameters a task of the body can call,
+which function parameters it gives to an operation of a handler of a caller, which
+effects its tasks perform through a handler of a caller, and which function parameters
+it can call more than once. A new lowering replaces these parts, so they do not only
+grow. The parts of one function can change at most 32 times and two more times for
+each function (`infer::parts_limit`). After that, the inference keeps the last parts
+of that function, and its callers use them. Its row can still grow. A function whose
+parts still change at the end gets W0704, an error.
 
 ## Commands
 

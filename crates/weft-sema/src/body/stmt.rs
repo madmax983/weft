@@ -116,6 +116,8 @@ impl Lower<'_> {
     /// Lowers a test body. Tests have no signature and may install root handlers.
     pub fn lower_test(mut self, body: &Block, span: Span) -> Lowered {
         self.in_test = true;
+        // A test is a harness: it can install root handlers, also in a library (W0801).
+        self.facts.library = false;
         self.jumps.push(Jump::Function { exit: None });
         let _ = self.start(span, "test");
         self.open_stmt();
@@ -176,6 +178,14 @@ impl Lower<'_> {
             reach_given: self.reach_sig(bases),
             multi: self.unknown_multi,
             tasks: sum.tasks.clone(),
+            op_fns: sum
+                .op_fns
+                .iter()
+                .filter(|(_, cap, _)| cap.is_none())
+                .map(|(p, _, e)| (*p, e.clone()))
+                .collect(),
+            task_effects: sum.task_effects.clone(),
+            repeats: self.repeats_sig(),
             ..EffectSig::default()
         };
         let mut changed: Vec<PlaceId> = sum.muts.iter().copied().collect();
@@ -788,6 +798,9 @@ impl Lower<'_> {
         out.extend(sum.stores.iter().map(|p| format!("stores {p}")));
         out.extend(sum.tasks.iter().map(|p| format!("tasks {p}")));
         out.extend(sum.spawns.iter().map(|t| format!("spawns {t}")));
+        out.extend(sum.ret_spawns.iter().map(|t| format!("ret spawns {t}")));
+        out.extend(sum.ret_caps.iter().map(|c| format!("ret cap {c}")));
+        out.extend(sum.ret_tasks.iter().map(|t| format!("ret task {t}")));
         out.extend(sum.own_caps.iter().map(|c| format!("own cap {c}")));
         out.extend(sum.captures.iter().map(|&v| format!("capture {}", vk(v))));
         out.extend(

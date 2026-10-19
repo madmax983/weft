@@ -29,4 +29,5 @@ fn sim_in_lib() {
 
 test "tests may install root handlers" {
     sim.run(seed: 1) { print(1) }
+    handle Log { fn info(m) { resume(()) } } in log.info("x")
 }

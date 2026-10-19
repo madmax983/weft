@@ -266,9 +266,9 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             Diagnostic::error(
                 "W0702",
                 format!(
-                    "`{}` performs `{}`, which the signature does not allow",
+                    "`{}` performs {}, which the signature does not allow",
                     at.label,
-                    weft_sema::effects::shown(e)
+                    effect_text(e, &f.declared_effect)
                 ),
                 at.span,
             )
@@ -417,5 +417,19 @@ pub fn resolve_lines(d: &mut Diagnostic, file: &weft_syntax::SourceFile) {
             n.text
                 .replace_range(start..=(start + end), &line.to_string());
         }
+    }
+}
+
+/// Returns effect identity `e` as a diagnostic shows it. When a stated effect of
+/// the function has the same written name, the text names the effect that `e` is.
+fn effect_text(e: &str, stated: &[String]) -> String {
+    let shown = weft_sema::effects::shown(e);
+    let clash = stated
+        .iter()
+        .any(|d| d != e && weft_sema::effects::shown(d) == shown);
+    match (clash, weft_sema::effects::is_std(e)) {
+        (false, _) => format!("`{shown}`"),
+        (true, true) => format!("the standard effect `{shown}`"),
+        (true, false) => format!("`{e}`"),
     }
 }

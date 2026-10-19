@@ -276,6 +276,16 @@ pub struct EffectSig {
     /// Function parameters that a task or a fork branch of the body can call. The
     /// body always infers this part.
     pub tasks: BTreeSet<usize>,
+    /// Function parameters that the body gives to an operation of a handler of a
+    /// caller, with the effect. The clause can call or keep them. The body always
+    /// infers this part.
+    pub op_fns: BTreeSet<(usize, String)>,
+    /// Effects that a task or a fork branch of the body performs through a handler
+    /// of a caller. The body always infers this part.
+    pub task_effects: BTreeSet<String>,
+    /// Function parameters that the body can call more than once. The body always
+    /// infers this part.
+    pub repeats: BTreeSet<usize>,
 }
 
 impl EffectSig {

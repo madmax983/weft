@@ -2,7 +2,7 @@
 
 use super::fnval::{Callee, Given};
 use super::{
-    ast, effects, AdtKind, Arg, ContInfo, Expr, ExprKind, FnId, FnSig, FnTy, ItemRef, Lower,
+    ast, effects, AdtKind, Arg, CapId, ContInfo, Expr, ExprKind, FnId, FnSig, FnTy, ItemRef, Lower,
     NodeId, PathRef, PlaceId, Rc, SigRoot, Span, TaskKind, Ty, Val, PRELUDE,
 };
 
@@ -473,6 +473,7 @@ impl Lower<'_> {
             parts.join(", ")
         };
         let n = self.emit(span, &name, detail);
+        let performs_from = self.facts.performs_at.len();
         for v in held_vars {
             self.facts.uses.push((v, n));
         }
@@ -563,6 +564,7 @@ impl Lower<'_> {
             }
             abort = true;
         }
+        self.check_callee_tasks(f, span);
         // The callee can call a function argument with the places that it lends to it.
         let mut fns = Vec::new();
         for (i, av) in vals.iter().enumerate() {
@@ -580,12 +582,27 @@ impl Lower<'_> {
             if let Some(s) = info.summary {
                 self.check_fn_arg_effects(&ptys[i], s, av.span);
             }
-            // A task of the callee can call the argument.
-            if sig.effects.tasks.contains(&i) {
-                self.check_task_value(&info, row.as_deref(), av.span);
+            // The callee can give the argument to an operation.
+            let to: Vec<(Option<CapId>, String)> = sig
+                .effects
+                .op_fns
+                .iter()
+                .filter(|(p, _)| *p == i)
+                .map(|(_, e)| (None, e.clone()))
+                .collect();
+            self.give_to_ops(&av.val, &to, false, av.span);
+            // A task of the callee can call the argument. Foreign code and
+            // `http.serve` can call it on another thread.
+            if sig.effects.tasks.contains(&i) || self.item_runs_tasks(f) {
+                let held = self.val_caps(&av.val);
+                self.check_task_value(&info, row.as_deref(), &held, av.span);
             }
             let given = self.lent_to(&Callee::Item(f), i, &arg_places, &roots);
             self.apply_value(n, &info, row.as_deref(), root, &given);
+            self.start_ret_spawns(n, &info);
+            if self.callee_repeats(&Callee::Item(f), i) {
+                self.note_repeat(n, &info, true);
+            }
         }
         for &j in &sig.effects.passthrough {
             if let Some((0, fp)) = vals.get(j).and_then(|v| v.val.fn_param) {
@@ -597,12 +614,19 @@ impl Lower<'_> {
         let def = &self.prog.fns[f];
         let foreign = def.decl.body.is_none() && !def.is_std;
         let mut holds_fn = false;
+        let into: Vec<PlaceId> = arg_places.iter().flatten().copied().collect();
         for (i, av) in vals.iter().enumerate() {
             let ty = self.inf.shallow(&av.val.ty);
             if matches!(ty, Ty::Fn(_)) {
                 if foreign || sig.effects.stores.contains(&i) {
                     self.escape(&av.val);
+                }
+                // A callee with a body can store it only in what its reference
+                // arguments point into. A foreign callee can store it anywhere.
+                if foreign {
                     self.keep(&av.val, super::caps::KeptTo::Stored);
+                } else if sig.effects.stores.contains(&i) && !into.is_empty() {
+                    self.store_into(&av.val, &into);
                 }
             } else if self.has_fn(&ty, 0) {
                 holds_fn = true;
@@ -627,17 +651,34 @@ impl Lower<'_> {
             None => super::subst(&sig.ret, &targs),
         };
         // A value that the callee keeps can be in a reference argument or in the result.
+        // A foreign callee can keep it anywhere.
         let mut out = Val {
             ty: ret.clone(),
             ..Val::default()
         };
-        let into: Vec<PlaceId> = arg_places.iter().flatten().copied().collect();
         let ret_fn = self.has_fn(&ret, 0);
         for v in &kept_vals {
-            self.store_into(v, &into);
+            if foreign {
+                self.keep(v, super::caps::KeptTo::Stored);
+            } else if !into.is_empty() {
+                self.store_into(v, &into);
+            }
             if ret_fn {
                 out.caps.extend(self.val_caps(v));
             }
+        }
+        if ret_fn {
+            // A result that is not a function value can hold a function argument,
+            // for example in a tuple. The `ret` part covers a function result.
+            if !matches!(self.inf.shallow(&ret), Ty::Fn(_)) {
+                for av in &vals {
+                    if matches!(self.inf.shallow(&av.val.ty), Ty::Fn(_)) {
+                        out.caps.extend(self.val_caps(&av.val));
+                    }
+                }
+            }
+            // The callee can return what a clause of a local handler resumes with.
+            out.caps.extend(self.resumed_at(n, performs_from));
         }
         // A returned function value does what the callee states about it.
         if let (Some(rf), Ty::Fn(fty)) = (&sig.effects.ret, self.inf.shallow(&ret)) {
@@ -762,6 +803,8 @@ impl Lower<'_> {
         let mut arg_places: Vec<Vec<PlaceId>> = Vec::new();
         let mut arg_tys = Vec::new();
         let mut fns = Vec::new();
+        let mut fn_caps = std::collections::BTreeSet::new();
+        let mut fn_vals: Vec<(usize, Val)> = Vec::new();
         let mut value_refs: Vec<(usize, Vec<PlaceId>)> = Vec::new();
         for (i, a) in exprs.iter().enumerate() {
             let later = i + 1 < exprs.len();
@@ -785,6 +828,8 @@ impl Lower<'_> {
                 }
                 if let Ty::Fn(f) = self.inf.shallow(&v.ty) {
                     fns.push((i, self.fn_info(&v), f.effects.clone(), v.refs.clone()));
+                    fn_caps.extend(self.val_caps(&v));
+                    fn_vals.push((i, v.clone()));
                 } else if !v.refs.is_empty() {
                     // A by-value argument that holds references points into them.
                     value_refs.push((i, v.refs.clone()));
@@ -803,6 +848,7 @@ impl Lower<'_> {
         let arg_refs: Vec<PlaceId> = arg_places.iter().flatten().copied().collect();
         self.use_local(l);
         let n = self.emit(span, &loc.name, String::new());
+        let performs_from = self.facts.performs_at.len();
         for v in held {
             self.facts.uses.push((v, n));
         }
@@ -843,6 +889,29 @@ impl Lower<'_> {
         }
         // The value runs with the arguments.
         self.apply_value(n, &callee, fty.effects.as_deref(), 800, &direct);
+        // The value can give a function argument to an operation.
+        if let Some(s) = callee.summary {
+            let sum = self.closures[s].clone();
+            for (i, v) in &fn_vals {
+                let to: Vec<(Option<CapId>, String)> = sum
+                    .op_fns
+                    .iter()
+                    .filter(|(p, ..)| p == i)
+                    .map(|(_, c, e)| (*c, e.clone()))
+                    .collect();
+                self.give_to_ops(v, &to, true, span);
+                for &f in &sum.items {
+                    let to: Vec<(Option<CapId>, String)> = self.sigs[f]
+                        .effects
+                        .op_fns
+                        .iter()
+                        .filter(|(p, _)| p == i)
+                        .map(|(_, e)| (None, e.clone()))
+                        .collect();
+                    self.give_to_ops(v, &to, false, span);
+                }
+            }
+        }
         // The value can call a function argument with the places that it lends to it.
         let value = Callee::Value(callee.clone());
         for (i, info, row, refs) in fns.clone() {
@@ -873,7 +942,12 @@ impl Lower<'_> {
                 );
             if spawned {
                 let span = exprs.get(i).map_or(span, |e| e.span);
-                self.check_task_value(&info, row.as_deref(), span);
+                let held = fn_vals
+                    .iter()
+                    .find(|(j, _)| *j == i)
+                    .map(|(_, v)| self.val_caps(v))
+                    .unwrap_or_default();
+                self.check_task_value(&info, row.as_deref(), &held, span);
             }
             let root = 810 + u32::try_from(i).unwrap_or(0);
             for p in refs {
@@ -881,6 +955,10 @@ impl Lower<'_> {
             }
             let given = self.lent_to(&value, i, &arg_places, &roots);
             self.apply_value(n, &info, row.as_deref(), root, &given);
+            self.start_ret_spawns(n, &info);
+            if self.callee_repeats(&value, i) {
+                self.note_repeat(n, &info, true);
+            }
         }
         // The value can run a stored function value that an argument holds.
         if arg_tys
@@ -909,10 +987,27 @@ impl Lower<'_> {
                 ..(*rty).clone()
             }));
         }
+        // The function values and the task handle in the result.
+        let (mut caps, task) = callee.summary.map_or_else(
+            || (std::collections::BTreeSet::new(), None),
+            |s| {
+                let sum = &self.closures[s];
+                (sum.ret_caps.clone(), sum.ret_tasks.first().copied())
+            },
+        );
+        if self.has_fn(&fty.ret, 0) {
+            // A result that is not a function value can hold a function argument.
+            if !matches!(self.inf.shallow(&fty.ret), Ty::Fn(_)) {
+                caps.extend(fn_caps);
+            }
+            caps.extend(self.resumed_at(n, performs_from));
+        }
         Val {
             ty,
             refs,
             summary,
+            task,
+            caps,
             ..Val::default()
         }
     }
@@ -985,8 +1080,10 @@ impl Lower<'_> {
             let v = self.expr(&a.value);
             self.unify(&arg, &v.ty, a.value.span);
             // The handled computation gets the value: a handler inside the clause
-            // ends before it runs.
-            self.keep_for_op(&v, depth.checked_sub(1));
+            // ends before it runs. The value is the result of the operation there.
+            self.keep_for_op(&v, depth);
+            let caps = self.val_caps(&v);
+            self.resumed.entry(cap).or_default().extend(caps);
             self.consume(&v, a.value.span);
         }
         let var = self.locals[l].var;
@@ -1127,6 +1224,7 @@ impl Lower<'_> {
         let mut arg_places = Vec::new();
         let mut value_refs: Vec<(usize, Vec<PlaceId>)> = Vec::new();
         let mut fns = Vec::new();
+        let mut fn_args: Vec<(usize, Val, Span)> = Vec::new();
         for (i, pt) in o.params.iter().enumerate() {
             let Some(x) = slots[i] else {
                 arg_places.push(Vec::new());
@@ -1158,12 +1256,13 @@ impl Lower<'_> {
                 }
                 if let Ty::Fn(f) = self.inf.shallow(&v.ty) {
                     fns.push((i, self.fn_info(&v), f.effects.clone()));
+                    fn_args.push((i, v.clone(), x.span));
                 } else if self.has_fn(&v.ty, 0) {
                     self.escape_all(&v);
                 }
-                // The clause can keep a function value that it gets.
-                let at = self.handlers.iter().rposition(|h| h.effect == ident);
-                self.keep_for_op(&v, at);
+                // The clause can keep a function value that it gets. It runs outside
+                // its own handler, where only the handlers outside the `handle` live.
+                self.give_to_op(&v, &ident);
             }
         }
         self.pend_uses.extend(held);
@@ -1177,6 +1276,9 @@ impl Lower<'_> {
             .map(|h| h.cap);
         if let Some(c) = cap {
             self.cap_calls.push((n, c));
+            for (i, v, sp) in &fn_args {
+                self.note_op_fn(c, (Some(op), Some(*i)), v, *sp);
+            }
         }
         // The clause gets the reference arguments. It pairs with the footprint of
         // the handler in `call_mut` (W0312), and it can mutate through them.
@@ -1208,16 +1310,25 @@ impl Lower<'_> {
             .map(|i| u32::try_from(i).unwrap_or(0))
             .collect();
         let given = Self::any_arg(&arg_places, &roots);
+        // A clause can call a function argument more than once.
         for (i, info, row) in fns {
             let root = 800 + u32::try_from(i).unwrap_or(0);
             self.apply_value(n, &info, row.as_deref(), root, &given);
+            self.start_ret_spawns(n, &info);
+            self.note_repeat(n, &info, true);
         }
         if o.multi {
             self.multi_node(n);
         }
         self.abortive(n);
+        // The result is what a clause resumes with.
+        let mut caps = std::collections::BTreeSet::new();
+        if let (Some(c), true) = (cap, self.has_fn(&o.ret, 0)) {
+            caps.insert(super::caps::resumed_cap(c));
+        }
         Val {
             ty: o.ret.clone(),
+            caps,
             ..Val::default()
         }
     }
@@ -1314,7 +1425,8 @@ impl Lower<'_> {
             Ty::Fn(f) => f.effects.clone(),
             _ => None,
         };
-        self.check_task_value(&info, row.as_deref(), span);
+        let held = self.val_caps(v);
+        self.check_task_value(&info, row.as_deref(), &held, span);
         // A function item or parameter runs as a value with no captures.
         let s = self.value_summary(&info, row.as_deref());
         let sum = self.closures[s].clone();
@@ -1378,35 +1490,62 @@ impl Lower<'_> {
     /// Reports W0314 if a task that runs function value `info` can perform an
     /// operation of a handler on the stack of this task: a local handler, or the
     /// handler of a user effect, which only a caller can install. The root
-    /// handlers of `sim.run` are not on a stack. A task of the body can call a
-    /// function parameter: then the caller checks the value that it gives.
+    /// handlers of `sim.run` are not on a stack. `held` has the capabilities of
+    /// the function values that the value holds or captures, for example in a
+    /// field. A task of the body can call a function parameter: then the caller
+    /// checks the value that it gives. A task that performs an effect through a
+    /// handler of a caller is part of the `task_effects` of the function: the
+    /// caller checks its handler.
     pub(super) fn check_task_value(
         &mut self,
         info: &super::fnval::FnInfo,
         row: Option<&[String]>,
+        held: &std::collections::BTreeSet<CapId>,
         span: Span,
     ) {
-        let mut bad = row.into_iter().flatten().any(|e| self.on_this_stack(e));
+        // Effects that go to a handler outside the function: of a row or of a
+        // closure. A user effect has a handler on the stack of a caller.
+        let mut outside: Vec<String> = row.into_iter().flatten().cloned().collect();
+        // Effects of function items: they resolve against the handlers here.
+        let mut here: Vec<String> = Vec::new();
         let mut items: Vec<FnId> = info.item.into_iter().collect();
         let mut params: Vec<(usize, usize)> = info.param.into_iter().collect();
+        let mut own = std::collections::BTreeSet::new();
+        let mut bad = false;
         if let Some(s) = info.summary {
             let sum = self.closures[s].clone();
             bad |= sum
                 .performs
                 .iter()
-                .any(|c| !self.root_caps.contains(c) && !sum.own_caps.contains(c));
-            bad |= sum
-                .escapes
-                .iter()
-                .chain(&sum.row)
-                .any(|e| self.is_user_effect(e));
+                .any(|c| self.cap_on_this_stack(*c, &sum.own_caps));
+            outside.extend(sum.escapes.iter().chain(&sum.row).cloned());
             items.extend(sum.items.iter().copied());
             params.extend(sum.params.iter().map(|&p| (0, p)));
             params.extend(sum.passthrough.iter().map(|&p| (0, p)));
+            own = sum.own_caps;
         }
         for f in items {
-            let named = self.sigs[f].effects.named.clone();
-            bad |= named.iter().any(|e| self.on_this_stack(e));
+            let e = &self.sigs[f].effects;
+            here.extend(e.named.iter().chain(&e.task_effects).cloned());
+        }
+        bad |= self
+            .expand_caps(held)
+            .iter()
+            .any(|c| Self::is_cap(*c) && self.cap_on_this_stack(*c, &own));
+        // A failure of a task goes to the task that joins it, not to a handler.
+        for e in outside.into_iter().filter(|e| e != "Fail") {
+            if self.is_user_effect(&e) {
+                bad = true;
+            } else {
+                self.sums[0].task_effects.insert(e);
+            }
+        }
+        for e in here.into_iter().filter(|e| e != "Fail") {
+            if self.on_this_stack(&e) {
+                bad = true;
+            } else if !self.handlers.iter().any(|h| h.effect == e) {
+                self.sums[0].task_effects.insert(e);
+            }
         }
         for (d, p) in params {
             if let Some(sum) = self.sums.get_mut(d) {
@@ -1416,10 +1555,44 @@ impl Lower<'_> {
         if bad {
             self.err(
                 "W0314",
-                "a task cannot perform a user effect: its handler runs on another task",
+                "a task cannot perform through a handler of this task: the handler runs on another task",
                 span,
             );
         }
+    }
+
+    /// Reports W0314 if a task of callee `f` performs an effect through a handler on
+    /// the stack of this task. An effect that no local handler handles goes to a
+    /// handler of a caller: it is part of the `task_effects` of this function.
+    pub(super) fn check_callee_tasks(&mut self, f: FnId, span: Span) {
+        let effects = self.sigs[f].effects.task_effects.clone();
+        let mut bad = false;
+        for e in effects {
+            match self.handlers.iter().rev().find(|h| h.effect == e) {
+                Some(h) => bad |= !self.root_caps.contains(&h.cap),
+                None => {
+                    self.sums[0].task_effects.insert(e);
+                }
+            }
+        }
+        if bad {
+            let name = self.prog.fns[f].name.clone();
+            self.err(
+                "W0314",
+                format!("a task of `{name}` performs through a handler of this task: the handler runs on another task"),
+                span,
+            );
+        }
+    }
+
+    /// Returns true if function item `f` can run each function argument on another
+    /// thread: a foreign function, or `http.serve`.
+    fn item_runs_tasks(&self, f: FnId) -> bool {
+        let def = &self.prog.fns[f];
+        if def.decl.body.is_some() {
+            return false;
+        }
+        !def.is_std || (def.path == "serve" && self.prog.mods[def.module].name == "http")
     }
 
     /// Returns true if effect `e` is a user effect: only a local handler of a caller handles it.
@@ -1427,10 +1600,23 @@ impl Lower<'_> {
         effects::by_identity(self.prog, e).is_some_and(|id| !self.prog.effects[id].is_std)
     }
 
+    /// Returns true if a task that performs through capability `c` reaches a
+    /// handler on the stack of another task: not a root handler of `sim.run`, not a
+    /// handler that the task installs (`own`), and not a handler of `Fail`.
+    fn cap_on_this_stack(&self, c: CapId, own: &std::collections::BTreeSet<CapId>) -> bool {
+        !self.root_caps.contains(&c)
+            && !own.contains(&c)
+            && self.cap_effects.get(&c).is_none_or(|e| e != "Fail")
+    }
+
     /// Returns true if an operation of effect `e` that a task performs here goes to
     /// a handler on the stack of this task: a local handler that is not a root
     /// handler of `sim.run`, or the handler of a user effect.
     fn on_this_stack(&self, e: &str) -> bool {
+        // A failure of a task goes to the task that joins it.
+        if e == "Fail" {
+            return false;
+        }
         match self.handlers.iter().rev().find(|h| h.effect == e) {
             Some(h) => !self.root_caps.contains(&h.cap),
             None => self.is_user_effect(e),
@@ -1468,17 +1654,19 @@ impl Lower<'_> {
         if let Some(i) = at {
             let binder = self.scopes[i].0;
             self.scopes[i].1.push(t);
+            self.task_scope.insert(t, binder);
             // A closure or a clause between the scope and the spawn starts the
-            // task where it runs.
+            // task where it runs. A body around it starts the task where it
+            // runs this one (`apply_summary`).
             let depth = self.local_frame(binder);
-            let bodies: Vec<usize> = self
+            let body = self
                 .frames
                 .iter()
                 .enumerate()
+                .rev()
                 .filter(|&(fi, _)| fi > depth)
-                .filter_map(|(_, f)| f.barrier)
-                .collect();
-            for si in bodies {
+                .find_map(|(_, f)| f.barrier);
+            if let Some(si) = body {
                 self.sums[si].spawns.insert(t);
             }
         } else {
@@ -1525,6 +1713,18 @@ impl Lower<'_> {
     /// Returns the result type of a task that runs `v`. Reports W0102 if `v` is not
     /// a function, and W0103 if it takes arguments: a task gets none.
     fn task_ret(&mut self, v: &Val, what: &str, span: Span) -> Option<Ty> {
+        // A value whose type is not known yet, for example a closure parameter,
+        // is a function with no parameters.
+        if matches!(self.inf.shallow(&v.ty), Ty::Var(_)) {
+            let f = Ty::Fn(Rc::new(FnTy {
+                params: Vec::new(),
+                ret: self.inf.fresh(),
+                effects: None,
+                summary: None,
+                item: None,
+            }));
+            self.unify(&f, &v.ty, span);
+        }
         let Ty::Fn(f) = self.inf.shallow(&v.ty) else {
             if !matches!(self.inf.shallow(&v.ty), Ty::Error) {
                 let shown = self.show(&v.ty);
@@ -1608,6 +1808,7 @@ impl Lower<'_> {
         let base = self.handlers.len();
         for e in &caps {
             let cap = self.facts.add_cap();
+            self.cap_effects.insert(cap, e.clone());
             self.facts.handlers.push(weft_facts::HandlerInfo {
                 effect: e.clone(),
                 is_std: true,

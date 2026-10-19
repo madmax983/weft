@@ -12,8 +12,8 @@
 use std::collections::BTreeSet;
 
 use super::{
-    CapId, FnId, FnTy, Lower, NodeId, PlaceId, Rc, RootKind, SigRoot, Summary, Ty, Val, VarId,
-    VarKind,
+    CapId, FnId, FnTy, Lower, NodeId, PlaceId, Rc, RootKind, SigRoot, Summary, TaskId, Ty, Val,
+    VarId, VarKind,
 };
 use crate::program::{EffectDef, GivenPlace, LentPlace, RetFn, SigPlace};
 
@@ -332,6 +332,7 @@ impl Lower<'_> {
             ty,
             parts,
             caps,
+            task: a.task.or(b.task),
             ..Val::default()
         }
     }
@@ -573,12 +574,46 @@ impl Lower<'_> {
             self.facts.scope_end.push((v, n));
         }
         self.sum().dropped.extend(sum.dropped.iter().copied());
-        // The tasks that the body spawns into an outer scope start here.
+        // The tasks that the body spawns into an outer scope start here. They
+        // start where the body around this node runs too, if their scope is
+        // outside that body.
         for &t in &sum.spawns {
             self.facts.spawned_at.push((t, n));
         }
-        self.sum().spawns.extend(sum.spawns.iter().copied());
+        let outside = self.spawns_outside(&sum.spawns);
+        self.sum().spawns.extend(outside);
         self.sum().own_caps.extend(sum.own_caps.iter().copied());
+    }
+
+    /// A callee gets function value `info` at node `n` and can call what a call of
+    /// it returns: the tasks that the result spawns start at `n`.
+    pub(super) fn start_ret_spawns(&mut self, n: NodeId, info: &FnInfo) {
+        let Some(s) = info.summary else {
+            return;
+        };
+        let tasks = self.closures[s].ret_spawns.clone();
+        for &t in &tasks {
+            self.facts.spawned_at.push((t, n));
+        }
+        let outside = self.spawns_outside(&tasks);
+        self.sum().spawns.extend(outside);
+    }
+
+    /// Returns the tasks of `spawns` whose scope is outside the closure or the
+    /// clause around the current node: they start where that body runs.
+    pub(super) fn spawns_outside(&self, spawns: &BTreeSet<TaskId>) -> Vec<TaskId> {
+        let Some(bi) = self.frames.iter().rposition(|f| f.barrier.is_some()) else {
+            return Vec::new();
+        };
+        spawns
+            .iter()
+            .copied()
+            .filter(|t| {
+                self.task_scope
+                    .get(t)
+                    .is_some_and(|&binder| self.local_frame(binder) < bi)
+            })
+            .collect()
     }
 
     /// A function item runs at node `n` with the places `given`.
@@ -628,6 +663,8 @@ impl Lower<'_> {
         if !sig.effects.named.is_empty() || !sig.effects.passthrough.is_empty() {
             self.abortive(n);
         }
+        let span = self.facts.node(n).span;
+        self.check_callee_tasks(f, span);
     }
 
     /// A call of function parameter `p` of the body at summary index `d`: the
@@ -636,6 +673,7 @@ impl Lower<'_> {
         if d == 0 {
             self.sum().passthrough.insert(p);
         }
+        self.note_param_run((d, p));
         for g in given {
             self.note_lent((d, p), g);
             self.lend(n, g.place, g.root);
@@ -864,6 +902,7 @@ impl Lower<'_> {
             }
             for st in &escaped {
                 self.apply_value(r.node, &st.info, st.row.as_deref(), 800, &r.given);
+                self.note_repeat(r.node, &st.info, false);
                 // The value uses what it captures, and it points into it as an argument does.
                 if let Some(v) = st.var {
                     self.facts.uses.push((v, r.node));

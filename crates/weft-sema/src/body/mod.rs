@@ -27,6 +27,7 @@ mod call;
 mod caps;
 mod expr;
 mod fnval;
+mod repeat;
 mod stmt;
 
 use fnval::{Applied, FnInfo, OpArg, Reach};
@@ -97,6 +98,22 @@ pub struct Summary {
     pub own_caps: BTreeSet<CapId>,
     /// Function parameters of the value that a task of its body can call.
     pub tasks: BTreeSet<usize>,
+    /// The capabilities of the function values inside the values that a call of
+    /// the value returns, also inside a tuple or a struct.
+    pub ret_caps: BTreeSet<CapId>,
+    /// The tasks of the task handles that a call of the value returns.
+    pub ret_tasks: BTreeSet<TaskId>,
+    /// Function parameters that the body gives to an operation, with the
+    /// capability of a local handler outside the body (`None`: a handler of a
+    /// caller) and the effect. The clause can call or keep them.
+    pub op_fns: BTreeSet<(usize, Option<CapId>, String)>,
+    /// Effects that a task of the body performs through a handler outside the function.
+    pub task_effects: BTreeSet<String>,
+    /// Function parameters that the body can call more than once.
+    pub repeats: BTreeSet<usize>,
+    /// Tasks that the function values that a call of the value returns spawn into
+    /// a scope outside. A callee that calls such a result starts them.
+    pub ret_spawns: BTreeSet<TaskId>,
 }
 
 impl Summary {
@@ -135,16 +152,29 @@ impl Summary {
         self.spawns.extend(o.spawns.iter().copied());
         self.own_caps.extend(o.own_caps.iter().copied());
         self.tasks.extend(o.tasks.iter().copied());
+        self.ret_caps.extend(o.ret_caps.iter().copied());
+        self.ret_tasks.extend(o.ret_tasks.iter().copied());
+        self.op_fns.extend(o.op_fns.iter().cloned());
+        self.task_effects.extend(o.task_effects.iter().cloned());
+        self.repeats.extend(o.repeats.iter().copied());
+        self.ret_spawns.extend(o.ret_spawns.iter().copied());
     }
 
     /// Adds what a call of the function value that `o` stands for can do. A call of
     /// the result runs it later, and a callee that calls the result sees it here.
+    /// The tasks of `o` start where a call of the result runs, or where a callee
+    /// gets this value (`ret_spawns`).
     fn union_ret(&mut self, o: &Self) {
         let mut o = o.clone();
+        o.ret_spawns.extend(std::mem::take(&mut o.spawns));
         o.ret_refs.clear();
         o.dropped.clear();
         o.rets.clear();
         o.tasks.clear();
+        o.ret_caps.clear();
+        o.ret_tasks.clear();
+        o.op_fns.clear();
+        o.repeats.clear();
         o.literal = false;
         self.union(&o);
     }
@@ -348,8 +378,12 @@ pub struct Lower<'p> {
     groups: BTreeMap<usize, PlaceId>,
     /// The open scopes: the local of the binder, and the tasks that join at the end.
     scopes: Vec<(usize, Vec<TaskId>)>,
+    /// The local of the scope binder of each task.
+    task_scope: BTreeMap<TaskId, usize>,
     /// The capabilities of the root handlers that `sim.run` installs. A task reaches them.
     root_caps: BTreeSet<CapId>,
+    /// The effect of the handler behind each capability.
+    cap_effects: BTreeMap<CapId, String>,
     ret_ty: Ty,
     in_test: bool,
     library: bool,
@@ -381,6 +415,13 @@ pub struct Lower<'p> {
     unknown_multi: bool,
     /// Function values that perform through local handlers, where they can live on.
     kept: Vec<caps::Kept>,
+    /// The capabilities of the values that the `resume`s of each local handler give.
+    resumed: BTreeMap<CapId, BTreeSet<CapId>>,
+    /// Function values that nodes give to operations of local handlers.
+    op_fn_args: Vec<caps::OpFn>,
+    /// The calls of each function parameter (summary index, parameter): their
+    /// number, and whether one can run more than once.
+    param_runs: BTreeMap<(usize, usize), (usize, bool)>,
 }
 
 impl<'p> Lower<'p> {
@@ -419,7 +460,9 @@ impl<'p> Lower<'p> {
             pend_reads: Vec::new(),
             groups: BTreeMap::new(),
             scopes: Vec::new(),
+            task_scope: BTreeMap::new(),
             root_caps: BTreeSet::new(),
+            cap_effects: BTreeMap::new(),
             ret_ty: Ty::Unit,
             in_test: false,
             library,
@@ -439,6 +482,9 @@ impl<'p> Lower<'p> {
             handled: Vec::new(),
             unknown_multi: false,
             kept: Vec::new(),
+            resumed: BTreeMap::new(),
+            param_runs: BTreeMap::new(),
+            op_fn_args: Vec::new(),
         }
     }
 
