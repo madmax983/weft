@@ -282,7 +282,7 @@ fn branch_keeps_part(a: &World, b: &World, c: bool) / mut(b.entities) {
     w.x = &b.entities[0]
     if c { w.x = &a.entities[0] }
     b.entities.clear()
-    print(w.x.hp)   //~ W0301 W0301
+    print(w.x.hp)   //~ W0301
 }
 fn loop_keeps_part(a: &World, b: &World) / mut(a.entities) {
     let w = Wrap { x: &b.entities[0] }

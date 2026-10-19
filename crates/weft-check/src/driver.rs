@@ -8,7 +8,7 @@ use weft_syntax::SourceFile;
 use weft_facts::{FnFacts, Violations};
 
 use crate::bridge::{self, SpecError};
-use crate::diagnose::{diagnose, resolve_lines, root_effects};
+use crate::diagnose::{diagnose_marked, resolve_lines, root_effects};
 use crate::rules::{check, Report};
 
 /// The result of checking a program.
@@ -42,7 +42,7 @@ pub fn check_analysis(analysis: Analysis, files: &[SourceFile], opts: Options) -
     let mut reports = Vec::new();
     for b in &analysis.bodies {
         let r = check(&b.facts);
-        let mut ds = diagnose(&b.facts, &r);
+        let mut ds = diagnose_marked(&b.facts, &r);
         if let Some(who) = started_body(&analysis, b) {
             let no_runtime = opts.no_runtime && b.func.is_some();
             // The facts name each effect by its identity. A user effect has a

@@ -137,6 +137,67 @@ fn w0301_is_reported_once_for_each_reference_and_mutation() {
 }
 
 #[test]
+fn w0301_is_reported_once_for_each_use_and_mutation() {
+    // `w` and the hidden holder of `w.x` are invalid at one use for one
+    // mutation: one error names `w`, and a note names the holder.
+    let src = "struct Entity { hp: i32 }\nstruct World { entities: Vec<Entity> }\nstruct Wrap<T> { x: T }\nfn f(b: &World) / mut(b.entities) {\n    let w = Wrap { x: &b.entities[0] }\n    let e = &b.entities[0]\n    w.x = e\n    b.entities.clear()\n    print(w.x.hp)\n}\n";
+    let d = diags(src, "W0301");
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(d[0].message, "`w` used after it was invalidated");
+    let n = notes(&d[0]);
+    assert!(
+        n.iter()
+            .any(|t| t.starts_with("also the value in `w.x` : &Entity in b.entities[]")),
+        "{n:?}"
+    );
+    // A stored closure and the reference to its holder, in one call: one error,
+    // with no hidden name in braces.
+    let src = "struct Entity { hp: i32 }\nstruct World { entities: Vec<Entity> }\nstruct Cb { f: fn() }\nfn run_ref(cb: &Cb) {\n    let g = cb.f\n    g()\n}\nfn stored_use(world: &World) / mut(world.entities) {\n    let r = &world.entities[0]\n    let cb = Cb { f: || print(r.hp) }\n    world.entities.clear()\n    run_ref(&cb)\n}\n";
+    let d = diags(src, "W0301");
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(d[0].message, "`cb` used after it was invalidated");
+    let n = notes(&d[0]);
+    assert!(
+        n.iter()
+            .any(|t| t.starts_with("also the stored closure : fn() -> ()")),
+        "{n:?}"
+    );
+    assert!(n.iter().all(|t| !t.contains('{')), "{n:?}");
+    // A closure with no name.
+    let src = "fn twice(f: fn()) { f()\n f() }\nfn g() {\n    let v = Vec.new()\n    v.push(1)\n    let r = &v[0]\n    twice(|| { print(r + 1)\n v.clear() })\n}\n";
+    let d = diags(src, "W0301");
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(d[0].message, "the closure used after it was invalidated");
+}
+
+#[test]
+fn the_public_diagnose_resolves_line_numbers() {
+    // A library user calls `diagnose` on the facts of one body. The notes give
+    // line numbers, not the offsets of the nodes.
+    let src = "fn bad(v: &Vec<u32>) / mut(v) {\n    let r = &v[0]\n    v.push(1)\n    print(r)\n    print(r)\n}\n";
+    let a = weft_sema::analyze_source(src, Options::default()).unwrap();
+    let file = weft_syntax::SourceFile::new("t.wf", src);
+    let mut texts = Vec::new();
+    for b in a.bodies.iter().filter(|b| b.unit == weft_sema::ROOT_UNIT) {
+        let r = weft_check::check(&b.facts);
+        for d in weft_check::diagnose::diagnose(&b.facts, &r, &file) {
+            texts.extend(d.notes.into_iter().map(|n| n.text));
+        }
+    }
+    assert!(texts.iter().any(|t| t == "used at line 4"), "{texts:?}");
+    assert!(
+        texts.iter().any(|t| t == "and 1 more use, at line 5"),
+        "{texts:?}"
+    );
+    assert!(
+        texts
+            .iter()
+            .all(|t| !t.contains("line:") && !t.contains('\u{1}')),
+        "{texts:?}"
+    );
+}
+
+#[test]
 fn w0501_is_reported_once_for_each_continuation() {
     let src = "effect Log { fn log(m: u64) }\nfn f() {\n    handle Log { fn log(m) {\n        resume(())\n        resume(())\n        resume(())\n    } } in log(1)\n}\n";
     let d = diags(src, "W0501");

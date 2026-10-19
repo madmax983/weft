@@ -1033,7 +1033,7 @@ fn w0312_a_lent_place_pairs_with_the_other_arguments() {
     assert!(r.violations.alias_conflict.contains(&(n, w, elem)));
     assert!(r.violations.alias_conflict.contains(&(n, elem, w)));
     // The diagnostics show one error for the call, with the outer place mutated.
-    let ds = crate::diagnose::diagnose(&b.f, &r);
+    let ds = crate::diagnose::diagnose_marked(&b.f, &r);
     let w0312: Vec<_> = ds.iter().filter(|d| d.code == "W0312").collect();
     assert_eq!(w0312.len(), 1);
     assert!(
@@ -1160,7 +1160,7 @@ fn w0502_needs_a_callable_variable() {
         let n2 = b.node("f");
         b.mv(f, n2);
         let r = check(&b.f);
-        let d = crate::diagnose::diagnose(&b.f, &r);
+        let d = crate::diagnose::diagnose_marked(&b.f, &r);
         let codes: Vec<&str> = d.iter().map(|d| d.code.as_str()).collect();
         assert_eq!(codes, [code], "callable: {callable}");
     }

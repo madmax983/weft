@@ -163,10 +163,16 @@ fn a_part_holder_is_named_by_its_part() {
         "struct Wrap<T> { x: T }\n\
          fn f(v: &Vec<u64>) / mut(v) { let w = Wrap { x: &v[0] }\n w.x = &v[1]\n v.clear()\n print(w.x) }\n",
     );
+    // One error names the local. A note names the holder of the part.
     assert!(
-        out.contains("error[W0301]: the value in `w.x` used after it was invalidated"),
+        out.contains("error[W0301]: `w` used after it was invalidated"),
         "{out}"
     );
+    assert!(
+        out.contains("also the value in `w.x` : &u64 in v[]"),
+        "{out}"
+    );
+    assert_eq!(out.matches("error[W0301]").count(), 1, "{out}");
 }
 
 #[test]

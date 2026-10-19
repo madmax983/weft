@@ -85,7 +85,7 @@ fn by_var<'a>(
 /// Adds a note for the other sites of an error that a variable has at more
 /// than one node, for example `and 2 more sites that can abort, at lines 8,
 /// 9`. `noun` is the singular and the plural of the word after the count.
-/// [`resolve_lines`] changes the `{lines:...}` marker into line numbers.
+/// [`resolve_lines`] changes the marker of the offsets into line numbers.
 fn note_more(d: Diagnostic, f: &FnFacts, rest: &[NodeId], noun: (&str, &str)) -> Diagnostic {
     if rest.is_empty() {
         return d;
@@ -96,17 +96,130 @@ fn note_more(d: Diagnostic, f: &FnFacts, rest: &[NodeId], noun: (&str, &str)) ->
         .collect();
     let noun = if rest.len() == 1 { noun.0 } else { noun.1 };
     d.note(format!(
-        "and {} more {noun}, at {{lines:{}}}",
+        "and {} more {noun}, at \u{1}lines:{}\u{1}",
         rest.len(),
         offsets.join(" ")
     ))
 }
 
-/// Turns a checker report into diagnostics, in source order.
+/// Returns true if variable `var` is a hidden variable of the lowering, not a
+/// variable of the program: a temporary, the holder of a part, a closure with
+/// no name or the hidden iterator of a loop.
+fn is_hidden(var: &weft_facts::VarInfo) -> bool {
+    matches!(
+        var.kind,
+        VarKind::Temp | VarKind::BlockValue | VarKind::Iterator | VarKind::Closure
+    ) || var.name.starts_with('{')
+}
+
+/// Returns true if the lowering gives variable `var` a name of its own, such
+/// as `{closure}`, not a name of the program.
+fn described(var: &weft_facts::VarInfo) -> bool {
+    var.kind == VarKind::Iterator || var.name.starts_with('{')
+}
+
+/// Returns the name of variable `var` as a diagnostic shows it. A variable
+/// with a name of the lowering gets a description, with no braces.
+fn shown_name(var: &weft_facts::VarInfo) -> String {
+    if var.kind == VarKind::Iterator {
+        "the loop iterator".to_string()
+    } else if var.name.starts_with('{') {
+        format!("the {}", var.name.trim_matches(|c| c == '{' || c == '}'))
+    } else {
+        format!("`{}`", var.name)
+    }
+}
+
+/// Returns the note that shows variable `var` and its type.
+fn decl_note(var: &weft_facts::VarInfo) -> String {
+    let name = if described(var) {
+        shown_name(var)
+    } else {
+        var.name.clone()
+    };
+    format!("{name} : {}", var.ty)
+}
+
+/// Returns the text of the note about the variable of `inv` and what it holds.
+/// With `also`, the note is about another holder of the same places.
+fn holder_text(f: &FnFacts, inv: &Invalidation, also: bool) -> String {
+    let var = f.var(inv.var);
+    let path = &f.place(inv.path).display;
+    let name = if described(var) {
+        shown_name(var)
+    } else if also && matches!(var.kind, VarKind::Temp | VarKind::BlockValue) {
+        format!("the {}", var.name)
+    } else {
+        var.name.clone()
+    };
+    if var.callable {
+        format!("{name} : {}, captures {path}", var.ty)
+    } else if let Some(h) = path.strip_suffix(".*") {
+        format!(
+            "{name} : &{} through the `Rc` handle {h}",
+            var.ty.trim_start_matches('&')
+        )
+    } else {
+        format!("{name} : &{} in {path}", var.ty.trim_start_matches('&'))
+    }
+}
+
+/// Groups the W0301 entries (a reference, its first use, and its other uses)
+/// that have one invalidating node and uses in one expression: the span of one
+/// use is inside the span of the other. The first entry of each group names a
+/// variable of the program, if one is in the group, with the earliest use.
+fn group_uses<'a>(
+    f: &FnFacts,
+    entries: Vec<(&'a Invalidation, Vec<NodeId>)>,
+) -> Vec<Vec<(&'a Invalidation, Vec<NodeId>)>> {
+    let inside = |a: NodeId, b: NodeId| {
+        let (x, y) = (node_span(f, a), node_span(f, b));
+        (x.lo >= y.lo && x.hi <= y.hi) || (y.lo >= x.lo && y.hi <= x.hi)
+    };
+    let mut groups: Vec<Vec<(&Invalidation, Vec<NodeId>)>> = Vec::new();
+    for e in entries {
+        let found = groups.iter_mut().find(|g| {
+            g.iter()
+                .any(|(o, _)| o.at == e.0.at && inside(o.used_at, e.0.used_at))
+        });
+        match found {
+            Some(g) => g.push(e),
+            None => groups.push(vec![e]),
+        }
+    }
+    for g in &mut groups {
+        g.sort_by_key(|(inv, _)| {
+            (
+                is_hidden(f.var(inv.var)),
+                node_span(f, inv.used_at).lo,
+                inv.var,
+            )
+        });
+    }
+    groups
+}
+
+/// The character around a marker of node offsets in the text of a note
+/// (`line:N`, `lines:N M`). No source text has it, so no other text can look
+/// like a marker. [`resolve_lines`] changes each marker into line numbers.
+const MARK: char = '\u{1}';
+
+/// Turns a checker report into diagnostics, in source order. `file` is the
+/// source of the body: the notes give line numbers in it.
 ///
 /// A rule that fails at many nodes for one variable gives one error, at the
 /// first node. A note lists the other nodes.
-pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
+pub fn diagnose(f: &FnFacts, r: &Report, file: &weft_syntax::SourceFile) -> Vec<Diagnostic> {
+    let mut out = diagnose_marked(f, r);
+    for d in &mut out {
+        resolve_lines(d, file);
+    }
+    out
+}
+
+/// Turns a checker report into diagnostics whose notes can hold markers of
+/// node offsets (`MARK`).
+pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     let v = &r.violations;
 
@@ -120,23 +233,31 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             .or_default()
             .push(inv);
     }
+    // One entry for each reference and invalidating node, at its first use.
+    let mut entries: Vec<(&Invalidation, Vec<NodeId>)> = Vec::new();
     for mut uses in invalidations.into_values() {
         uses.sort_by_key(|inv| node_span(f, inv.used_at).lo);
         let Some((&inv, rest)) = uses.split_first() else {
             continue;
         };
-        let rest: Vec<NodeId> = rest.iter().map(|i| i.used_at).collect();
+        entries.push((inv, rest.iter().map(|i| i.used_at).collect()));
+    }
+    // Entries with one invalidating node and uses in one expression are one
+    // error: it names a variable of the program, and a note names each other
+    // holder, such as the hidden variable of a part or of a stored closure.
+    for group in group_uses(f, entries) {
+        let Some(((inv, rest), others)) = group.split_first() else {
+            continue;
+        };
+        let inv = *inv;
         let var = f.var(inv.var);
         let path = &f.place(inv.path).display;
         let at = f.node(inv.at);
         let line = at.span.lo;
         let name = match var.kind {
-            VarKind::Iterator => "the loop iterator".to_string(),
             VarKind::Temp | VarKind::BlockValue => format!("the {}", var.name),
-            _ => format!("`{}`", var.name),
+            _ => shown_name(var),
         };
-        // What the node does, and why that invalidates the reference.
-        // The place behind an `Rc` handle `a` shows as `a.*`.
         let handle = path.strip_suffix(".*");
         let inside = |owner: &str, verb: &str| {
             let head = if path == owner {
@@ -146,7 +267,7 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             } else {
                 format!("{path} is inside {owner}, which {verb}")
             };
-            format!("{head} at line {{line:{line}}}  →  invalidated at line {{line:{line}}}")
+            format!("{head} at line \u{1}line:{line}\u{1}  →  invalidated at line \u{1}line:{line}\u{1}")
         };
         let (what, why) = match inv.cause {
             Cause::Mutation(m) | Cause::Lend(m) => {
@@ -165,21 +286,21 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
                 let same = one.is_some() && one == f.one_place_of(inv.path);
                 let why = match (f.wild_base(inv.path), f.wild_base(m)) {
                     _ if same => format!(
-                        "{mutated} is a strict prefix of {path}, through an unstable step  →  invalidated at line {{line:{line}}}"
+                        "{mutated} is a strict prefix of {path}, through an unstable step  →  invalidated at line \u{1}line:{line}\u{1}"
                     ),
                     (Some(b), _) => format!(
-                        "{path} can be any place inside {}, and {mutated} overlaps it  →  invalidated at line {{line:{line}}}",
+                        "{path} can be any place inside {}, and {mutated} overlaps it  →  invalidated at line \u{1}line:{line}\u{1}",
                         f.place(b).display
                     ),
                     (None, Some(b)) => format!(
-                        "{mutated} can be any place inside {}, which holds {path}  →  invalidated at line {{line:{line}}}",
+                        "{mutated} can be any place inside {}, which holds {path}  →  invalidated at line \u{1}line:{line}\u{1}",
                         f.place(b).display
                     ),
                     (None, None) if handle == Some(mutated.as_str()) => format!(
-                        "{mutated} is an `Rc` handle on the way to the place, and a new value of it can free the object  →  invalidated at line {{line:{line}}}"
+                        "{mutated} is an `Rc` handle on the way to the place, and a new value of it can free the object  →  invalidated at line \u{1}line:{line}\u{1}"
                     ),
                     (None, None) => format!(
-                        "{mutated} is a strict prefix of {path}, through an unstable step  →  invalidated at line {{line:{line}}}"
+                        "{mutated} is a strict prefix of {path}, through an unstable step  →  invalidated at line \u{1}line:{line}\u{1}"
                     ),
                 };
                 (what, why)
@@ -190,7 +311,7 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             }
             Cause::ScopeEnd(o) if f.var(o).kind == VarKind::Temp => (
                 "temporary : goes out of scope at the end of the statement".to_string(),
-                format!("{path} is inside a temporary value, which goes out of scope at line {{line:{line}}}  →  invalidated at line {{line:{line}}}"),
+                format!("{path} is inside a temporary value, which goes out of scope at line \u{1}line:{line}\u{1}  →  invalidated at line \u{1}line:{line}\u{1}"),
             ),
             Cause::ScopeEnd(o) => {
                 let owner = &f.var(o).name;
@@ -223,21 +344,7 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
                 )
             }
         };
-        let holder = if var.callable {
-            format!("{} : {}, captures {path}", var.name, var.ty)
-        } else if let Some(h) = handle {
-            format!(
-                "{} : &{} through the `Rc` handle {h}",
-                var.name,
-                var.ty.trim_start_matches('&')
-            )
-        } else {
-            format!(
-                "{} : &{} in {path}",
-                var.name,
-                var.ty.trim_start_matches('&')
-            )
-        };
+        let holder = holder_text(f, inv, false);
         let used = node_span(f, inv.used_at);
         // A block value is held only across the end of its block.
         let block_value = var.kind == VarKind::BlockValue;
@@ -268,9 +375,14 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             .note_at(holder, var.span)
             .note_at(what, at.span)
             .note(why)
-            .note(format!("used at line {{line:{}}}", used.lo))
+            .note(format!("used at line \u{1}line:{}\u{1}", used.lo))
         };
-        out.push(note_more(d, f, &rest, ("use", "uses")));
+        let mut d = note_more(d, f, rest, ("use", "uses"));
+        for (other, _) in others {
+            let text = format!("also {}", holder_text(f, other, true));
+            d = d.note_at(text, f.var(other.var).span);
+        }
+        out.push(d);
     }
 
     for (var, sites) in by_var(f, &v.use_after_move) {
@@ -292,10 +404,10 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             _ => (
                 Diagnostic::error(
                     "W0302",
-                    format!("`{}` used after it was moved", info.name),
+                    format!("{} used after it was moved", shown_name(info)),
                     node_span(f, n),
                 )
-                .note_at(format!("{} : {}", info.name, info.ty), info.span),
+                .note_at(decl_note(info), info.span),
                 ("use after a move", "uses after a move"),
             ),
         };
@@ -308,10 +420,10 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         let read = clause_read(f, var, n);
         let mut d = Diagnostic::error(
             "W0304",
-            format!("`{}` is used before it has a value", info.name),
+            format!("{} is used before it has a value", shown_name(info)),
             node_span(f, read.unwrap_or(n)),
         )
-        .note_at(format!("{} : {}", info.name, info.ty), info.span);
+        .note_at(decl_note(info), info.span);
         if read.is_some() {
             d = d.note_at(
                 "a handler clause reads it when it runs here",
@@ -325,7 +437,7 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         out.push(
             Diagnostic::error(
                 "W0604",
-                format!("`{}` has a `!Move` type and cannot move", info.name),
+                format!("{} has a `!Move` type and cannot move", shown_name(info)),
                 node_span(f, n),
             )
             .note("construct it in place and use it through references"),
@@ -355,12 +467,12 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             Diagnostic::error(
                 "W0601",
                 format!(
-                    "linear value `{}` is dropped without being consumed",
-                    info.name
+                    "linear value {} is dropped without being consumed",
+                    shown_name(info)
                 ),
                 node_span(f, n),
             )
-            .note_at(format!("{} : {} (linear)", info.name, info.ty), info.span)
+            .note_at(format!("{} (linear)", decl_note(info)), info.span)
             .note("move it into a call that consumes it on every normal path")
         };
         out.push(d);
@@ -370,8 +482,8 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         out.push(Diagnostic::error(
             "W0601",
             format!(
-                "linear value `{}` is overwritten before it is consumed",
-                info.name
+                "linear value {} is overwritten before it is consumed",
+                shown_name(info)
             ),
             node_span(f, n),
         ));
@@ -386,13 +498,14 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         let d = Diagnostic::error(
             "W0602",
             format!(
-                "linear value `{}` is live across `{}`, which can abort",
-                info.name, at.label
+                "linear value {} is live across `{}`, which can abort",
+                shown_name(info),
+                at.label
             ),
             at.span,
         )
         .note_at(
-            format!("{} : {} (linear, no `on abort`)", info.name, info.ty),
+            format!("{} (linear, no `on abort`)", decl_note(info)),
             info.span,
         )
         .note("declare `on abort = f` on the type, or consume the value before this call");
@@ -410,11 +523,7 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         };
         let info = f.var(var);
         let at = f.node(first);
-        let name = if info.kind == VarKind::Iterator {
-            "the loop iterator".to_string()
-        } else {
-            format!("`{}`", info.name)
-        };
+        let name = shown_name(info);
         let d = Diagnostic::error(
             "W0503",
             format!(
@@ -423,7 +532,7 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             ),
             at.span,
         )
-        .note_at(format!("{} : {}", info.name, info.ty), info.span);
+        .note_at(decl_note(info), info.span);
         out.push(note_more(
             d,
             f,
@@ -562,8 +671,8 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         out.push(Diagnostic::error(
             "W0401",
             format!(
-                "a `fork` branch captures `{}`, which is nonportable",
-                info.name
+                "a `fork` branch captures {}, which is nonportable",
+                shown_name(info)
             ),
             f.tasks[t.index()].span,
         ));
@@ -574,8 +683,8 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             Diagnostic::error(
                 "W0403",
                 format!(
-                    "a `fork` branch mutates through `{}`, a shared-mutable reference",
-                    info.name
+                    "a `fork` branch mutates through {}, a shared-mutable reference",
+                    shown_name(info)
                 ),
                 f.tasks[t.index()].span,
             )
@@ -663,45 +772,56 @@ fn root_effect_text<'a>(e: &'a str, escaping: &[&str]) -> &'a str {
     }
 }
 
-/// Replaces `{line:N}` markers (byte offsets) with line numbers. A
-/// `{lines:N M ...}` marker becomes `line L` or `lines L1, L2`: each line one
-/// time, at most `LISTED_SITES` lines.
-pub fn resolve_lines(d: &mut Diagnostic, file: &weft_syntax::SourceFile) {
+/// Changes the markers of node offsets in the notes of `d` into line numbers
+/// of `file`: `line:N` gives one line, and `lines:N M` gives a list with at
+/// most [`LISTED_SITES`] lines.
+pub(crate) fn resolve_lines(d: &mut Diagnostic, file: &weft_syntax::SourceFile) {
     for n in &mut d.notes {
-        while let Some(start) = n.text.find("{lines:") {
-            let Some(end) = n.text[start..].find('}') else {
-                break;
-            };
-            let mut lines: Vec<usize> = n.text[start + 7..start + end]
-                .split(' ')
-                .filter_map(|o| o.parse().ok())
-                .map(|o| file.line_col(o).0)
-                .collect();
-            lines.sort_unstable();
-            lines.dedup();
-            let word = if lines.len() == 1 { "line" } else { "lines" };
-            let shown: Vec<String> = lines
-                .iter()
-                .take(LISTED_SITES)
-                .map(ToString::to_string)
-                .collect();
-            let more = if lines.len() > LISTED_SITES {
-                ", ..."
+        let mut text = String::new();
+        let mut parts = n.text.split(MARK);
+        if let Some(first) = parts.next() {
+            text.push_str(first);
+        }
+        // The parts alternate: a marker, then plain text.
+        let mut marker = true;
+        for part in parts {
+            if !marker {
+                text.push_str(part);
+                marker = true;
+                continue;
+            }
+            marker = false;
+            if let Some(list) = part.strip_prefix("lines:") {
+                let mut lines: Vec<usize> = list
+                    .split(' ')
+                    .filter_map(|o| o.parse().ok())
+                    .map(|o| file.line_col(o).0)
+                    .collect();
+                lines.sort_unstable();
+                lines.dedup();
+                let word = if lines.len() == 1 { "line" } else { "lines" };
+                let shown: Vec<String> = lines
+                    .iter()
+                    .take(LISTED_SITES)
+                    .map(ToString::to_string)
+                    .collect();
+                let more = if lines.len() > LISTED_SITES {
+                    ", ..."
+                } else {
+                    ""
+                };
+                text.push_str(word);
+                text.push(' ');
+                text.push_str(&shown.join(", "));
+                text.push_str(more);
+            } else if let Some(num) = part.strip_prefix("line:") {
+                let offset: u32 = num.parse().unwrap_or(0);
+                text.push_str(&file.line_col(offset).0.to_string());
             } else {
-                ""
-            };
-            let text = format!("{word} {}{more}", shown.join(", "));
-            n.text.replace_range(start..=(start + end), &text);
+                text.push_str(part);
+            }
         }
-        while let Some(start) = n.text.find("{line:") {
-            let Some(end) = n.text[start..].find('}') else {
-                break;
-            };
-            let num: u32 = n.text[start + 6..start + end].parse().unwrap_or(0);
-            let line = file.line_col(num).0;
-            n.text
-                .replace_range(start..=(start + end), &line.to_string());
-        }
+        n.text = text;
     }
 }
 
