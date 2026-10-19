@@ -159,7 +159,9 @@ fn transfer(db: &Db, from: Id, to: Id, amt: u64) / io, fail {
 
 - A linear value must be moved or consumed on every normal path.
 - It may be live across an operation that can abort only if its type declares `on abort`.
-- `on abort` runs during unwinding (cancellation, `fail`), never on the normal path.
+- `on abort` runs during unwinding (cancellation, `fail`), never on the normal path. It
+  runs with the root handlers only: it can perform the standard effects other than
+  `fail`, and it changes only the value that it gets (ADR 0007).
 - A linear value may not be live across a `multi` effect operation (see Effects).
 
 This gives the guarantee Rust's proposed `!Forget` trait aims for, and it covers async cleanup with the same rule.

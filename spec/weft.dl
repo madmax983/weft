@@ -40,10 +40,14 @@
 //                            a clause parameter points into.
 //   linear(V)                V holds a linear value.
 //   has_on_abort(V)          the type of V declares `on abort`.
-//   once_var(V)              V is not `many`: linear, uniq, a once closure or a continuation.
+//   once_var(V)              V is not `many`: linear, uniq, a once closure, a continuation, or a
+//                            value that a `multi` resume cannot copy (a task, a scope, a resource).
 //   immovable(V)             the type of V is `!Move`.
 //   may_abort(P)             an effect can abort the scope at node P.
 //   multi_at(P)              node P can resume a `multi` continuation more than once.
+//   spared_at(V, P)          an abort or a `multi` resume at node P does not reach V: each handler
+//                            that P suspends to is a local handler, and V lives outside its
+//                            handled body.
 //   clause_multi(Cap)        a clause of the handler behind Cap can resume a `multi`
 //                            continuation more than once.
 //   body_multi(Cap)          the computation that the handler behind Cap handles can
@@ -73,7 +77,7 @@
 //   handler(H, E)            H handles effect E.
 //   std_effect(E)            E is a standard effect.
 //   clause_performs(H, E)    a clause of H performs E through a handler outside H.
-//   forwards(H)              H is a root handler of `sim.run` (W0802 checks it).
+//   sim_root(H)              H is a root handler of `sim.run` (W0802 checks it).
 
 // ---------------------------------------------------------------------------
 // Places
@@ -188,7 +192,8 @@ moved_immovable(V, P) :- moved_at(V, P), immovable(V).
 
 // A new value with no linear part has nothing to consume. A new value of a part
 // can give the variable a linear value. On an abort path the unwinder finishes
-// the value (`may_abort` needs its `on abort`, W0602).
+// the value (`may_abort` needs its `on abort`, W0602). An operation of a local
+// handler aborts only the values of the handled body (`spared_at`).
 live_linear(V, Q)     :- linear(V), rebound_at(V, P), !empty_at(V, P), cfg_edge(P, Q).
 live_linear(V, Q)     :- linear(V), overwrites(V, P), cfg_edge(P, Q).
 live_linear(V, Q)     :- live_linear(V, P), cfg_edge(P, Q), !moved_at(V, P), !unwound_at(V, P).
@@ -196,7 +201,8 @@ live_linear(V, Q)     :- live_linear(V, P), cfg_edge(P, Q), !moved_at(V, P), !un
 unconsumed(V, P)      :- live_linear(V, P), scope_end(V, P).
 overwritten(V, P)     :- live_linear(V, P), rebound_at(V, P).
 overwritten(V, P)     :- live_linear(V, P), overwrites(V, P).
-abort_unhandled(V, P) :- live_linear(V, P), may_abort(P), !moved_at(V, P), !has_on_abort(V).
+abort_unhandled(V, P) :- live_linear(V, P), may_abort(P), !moved_at(V, P), !has_on_abort(V),
+                         !spared_at(V, P).
 
 // ---------------------------------------------------------------------------
 // W0503: values live across a `multi` operation must be `many`
@@ -210,12 +216,17 @@ live_out(V, P)       :- cfg_edge(P, Q), live_in(V, Q).
 // waits until the clause resumes it; if the clause can resume a `multi`
 // continuation more than once, so can the node. A resume runs the handled
 // computation and, at its operations, the clauses again. A `once` continuation
-// is a `once` value, so a clause cannot hold one across such a node.
+// is a `once` value, so a clause cannot hold one across such a node. An operation
+// of a local handler copies only the values of the handled body (`spared_at`).
 multi_at(P)          :- performs_at(P, Cap), clause_multi(Cap).
 multi_at(P)          :- resumes_at(P, Cap), body_multi(Cap).
 multi_at(P)          :- resumes_at(P, Cap), clause_multi(Cap).
 
-live_across_multi(V, P) :- multi_at(P), live_out(V, P), once_var(V).
+// A resume copies the values of the handled body. A `!Move` value keeps its
+// address, so a copy cannot stand for it: it is not `many` either.
+once_var(V)          :- immovable(V).
+
+live_across_multi(V, P) :- multi_at(P), live_out(V, P), once_var(V), !spared_at(V, P).
 
 // ---------------------------------------------------------------------------
 // W0702, W0703, W0402: effects in signatures
@@ -270,6 +281,8 @@ stealable(T)         :- task(T), !pinned(T).
 
 // A handler forwards its effect if a clause performs the effect again, through a
 // handler outside it. Such a handler intercepts (retries, tracing, mocks). A
-// handler that never forwards is a root handler.
+// root handler of `sim.run` forwards too: W0802 checks it. A handler that never
+// forwards is a root handler.
+forwards(H)            :- sim_root(H).
 forwards(H)            :- handler(H, E), clause_performs(H, E).
 root_handler_in_lib(H) :- library(), handler(H, E), std_effect(E), !forwards(H).

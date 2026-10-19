@@ -198,9 +198,10 @@ fn a_generic_drop_names_the_argument() {
         out.contains("error[W0601]: linear value `t` is dropped without being consumed"),
         "{out}"
     );
-    // Two parameters of the type: the diagnostic cannot name one of them.
+    // Two parameters of the type: the diagnostic cannot name one of them, so it
+    // names the callee.
     assert!(
-        out.contains("error[W0601]: linear value `temporary` is dropped without being consumed"),
+        out.contains("error[W0601]: `keep_first` drops a value of the linear type `Tx`"),
         "{out}"
     );
 }

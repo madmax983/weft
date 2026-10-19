@@ -550,6 +550,7 @@ impl Lower<'_> {
     pub(super) fn give_to_op(&mut self, v: &Val, e: &str) {
         let at = self.handlers.iter().rposition(|h| h.effect == e);
         self.keep_for_op(v, at.unwrap_or(0));
+        self.keep_conts_for_op(v, at);
         if at.is_none() {
             self.give_to_caller_op(v, e);
         }
@@ -603,6 +604,7 @@ impl Lower<'_> {
             };
             if let Some(i) = live {
                 self.keep_for_op(v, i);
+                self.keep_conts_for_op(v, cap.is_some().then_some(i));
             }
             if cap.is_none() {
                 self.give_to_caller_op(v, e);
@@ -788,6 +790,92 @@ impl Lower<'_> {
             return true;
         }
         false
+    }
+
+    /// Reports W0313 if a closure that resumes the continuation of a clause
+    /// (capability `kcap`) leaves the clause that started at `start`: as the
+    /// value `v` of the clause, to a place or code that can keep it, or through
+    /// a local outside the `handle` (index below `outer`). A `resume` can give
+    /// the closure to the handled body, and the body can put it into such a
+    /// local too. The continuation lives only while its clause runs. A later
+    /// call would resume a continuation that the handler dropped. The
+    /// diagnostic is at the clause `span`, or at the end of the clause body
+    /// `body` for its value.
+    pub(super) fn check_cont_escape(
+        &mut self,
+        kcap: CapId,
+        op: &str,
+        (start, outer): (HandleStart, usize),
+        v: &Val,
+        (span, body): (Span, Span),
+    ) {
+        let head = format!("a closure that resumes the continuation of `{op}` escapes its clause");
+        if self.expand_caps(&self.val_caps(v)).contains(&kcap) {
+            let end = Span::new(body.hi.saturating_sub(1), body.hi);
+            self.err(
+                "W0313",
+                format!("{head}: it is the value of the clause"),
+                end,
+            );
+            return;
+        }
+        let how = if let Some(k) = self.kept[start.kept..]
+            .iter()
+            .find(|k| self.expand_caps(&k.caps).contains(&kcap))
+        {
+            Some(match k.to {
+                KeptTo::Stored => "the clause stores it".to_string(),
+                KeptTo::Given => "the clause gives it to code that can keep it".to_string(),
+            })
+        } else {
+            // A local of the clause, or of the handled body, ends before the
+            // continuation does. A local outside the `handle` gets the closure
+            // from the clause, or from the handled body as the result of the
+            // operation: in a part, or as a new value of the whole local.
+            let binds: BTreeSet<VarId> = self
+                .bind_caps
+                .iter()
+                .filter(|(_, _, cs)| self.expand_caps(cs).contains(&kcap))
+                .map(|&(v, _, _)| v)
+                .collect();
+            (0..start.locals)
+                .find(|&l| {
+                    l < outer
+                        && (self.expand_caps(&self.locals[l].sticky).contains(&kcap)
+                            || binds.contains(&self.locals[l].var))
+                })
+                .map(|l| format!("the local `{}` keeps it", self.locals[l].name))
+        };
+        if let Some(how) = how {
+            self.err("W0313", format!("{head}: {how}"), span);
+        }
+    }
+
+    /// Records that `v` goes to an operation of the local handler at index `at`
+    /// of `Lower::handlers` (`None`: a handler of a caller). The clause of the
+    /// operation runs outside each clause whose `handle` is inside that handler,
+    /// so it can keep a closure that resumes their continuations.
+    pub(super) fn keep_conts_for_op(&mut self, v: &Val, at: Option<usize>) {
+        let dead: BTreeSet<CapId> = self
+            .clause_conts
+            .iter()
+            .filter(|&&(_, depth)| at.is_none_or(|i| i < depth))
+            .map(|&(k, _)| k)
+            .collect();
+        if dead.is_empty() {
+            return;
+        }
+        let caps: BTreeSet<CapId> = self
+            .expand_caps(&self.val_caps(v))
+            .intersection(&dead)
+            .copied()
+            .collect();
+        if !caps.is_empty() {
+            self.kept.push(Kept {
+                caps,
+                to: KeptTo::Given,
+            });
+        }
     }
 
     /// Reports W0313 if a local outside the body of the handled computation `h`

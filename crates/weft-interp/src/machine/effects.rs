@@ -12,7 +12,10 @@ use std::rc::Rc;
 use weft_sema::program::EffectId;
 use weft_verified::lifecycle::{ContError, Continuation, LinState};
 
-use super::{After, CodeFrame, ContRec, Flow, Frame, SimSaved, TaskResult, Timer, Unwind, Wait, R};
+use super::{
+    After, CodeFrame, ContRec, Flow, Frame, HandleMark, SimSaved, TaskResult, Timer, Unwind, Wait,
+    R,
+};
 use crate::error::ErrorKind;
 use crate::heap::SlotKind;
 use crate::trace::{SuspendReason, TraceEvent};
@@ -539,10 +542,31 @@ impl super::Machine<'_, '_> {
     }
 
     /// Copies the frames of a `multi` continuation. Cells that the frames own get
-    /// fresh copies, so each resume starts from the captured state.
+    /// fresh copies, so each resume starts from the captured state. A clause
+    /// frame in them gets a copy of its continuation, with a copy of its frames:
+    /// each copy resumes or drops its own continuation. The clauses of a handler
+    /// mark in them capture the copied cells.
     fn copy_frames(&mut self, frames: &[Frame]) -> Vec<Frame> {
+        // The continuations of the clause frames, also inside those continuations.
+        let mut nested: Vec<(ContId, Vec<Frame>)> = Vec::new();
+        let mut work = clause_conts(frames);
+        while let Some(k) = work.pop() {
+            if nested.iter().any(|(j, _)| *j == k) {
+                continue;
+            }
+            let fs = self
+                .conts
+                .get(k)
+                .map(|c| c.frames.clone())
+                .unwrap_or_default();
+            work.extend(clause_conts(&fs));
+            nested.push((k, fs));
+        }
+        let lists: Vec<&[Frame]> = std::iter::once(frames)
+            .chain(nested.iter().map(|(_, fs)| fs.as_slice()))
+            .collect();
         let mut owned: Vec<CellId> = Vec::new();
-        for f in frames {
+        for f in lists.iter().copied().flatten() {
             if let Frame::Code(cf) = f {
                 owned.extend(cf.slots.iter().flatten().copied());
                 owned.extend(cf.temps.iter().copied());
@@ -554,7 +578,7 @@ impl super::Machine<'_, '_> {
                 self.heap.owned_cells(&s.val, &mut extra);
             }
         }
-        for f in frames {
+        for f in lists.iter().copied().flatten() {
             if let Frame::Code(cf) = f {
                 for v in &cf.stack {
                     self.heap.owned_cells(v, &mut extra);
@@ -562,6 +586,18 @@ impl super::Machine<'_, '_> {
             }
         }
         owned.extend(extra);
+        // Each nested continuation gets a record of its own, in the same state.
+        let mut kmap: BTreeMap<ContId, ContId> = BTreeMap::new();
+        for (k, _) in &nested {
+            let Some(state) = self.conts.get(*k).map(|c| c.k) else {
+                continue;
+            };
+            kmap.insert(*k, self.conts.len());
+            self.conts.push(ContRec {
+                k: state,
+                frames: Vec::new(),
+            });
+        }
         let mut map: BTreeMap<CellId, CellId> = BTreeMap::new();
         for c in owned {
             if map.contains_key(&c) {
@@ -578,17 +614,38 @@ impl super::Machine<'_, '_> {
                 .slot(old)
                 .map(|s| s.val.clone())
                 .unwrap_or_default();
-            let nv = self.heap.remap(&v, &map);
+            let nv = remap_conts(self.heap.remap(&v, &map), &kmap);
             if let Ok(s) = self.heap.slot_mut(new) {
                 s.val = nv;
             }
         }
+        for (k, fs) in &nested {
+            let copy = self.copy_list(fs, &map, &kmap);
+            if let Some(rec) = kmap.get(k).and_then(|&n| self.conts.get_mut(n)) {
+                rec.frames = copy;
+            }
+        }
+        self.copy_list(frames, &map, &kmap)
+    }
+
+    /// Copies a list of frames with the cell map `map` and the continuation map
+    /// `kmap` of `copy_frames`.
+    fn copy_list(
+        &mut self,
+        frames: &[Frame],
+        map: &BTreeMap<CellId, CellId>,
+        kmap: &BTreeMap<ContId, ContId>,
+    ) -> Vec<Frame> {
         let m = |c: &CellId| map.get(c).copied().unwrap_or(*c);
         let mut out = Vec::new();
         for f in frames {
             out.push(match f {
                 Frame::Code(cf) => {
-                    let stack = cf.stack.iter().map(|v| self.heap.remap(v, &map)).collect();
+                    let stack = cf
+                        .stack
+                        .iter()
+                        .map(|v| remap_conts(self.heap.remap(v, map), kmap))
+                        .collect();
                     Frame::Code(CodeFrame {
                         code: Rc::clone(&cf.code),
                         pc: cf.pc,
@@ -601,6 +658,18 @@ impl super::Machine<'_, '_> {
                         henv: cf.henv.clone(),
                     })
                 }
+                Frame::Handle(h) => Frame::Handle(HandleMark {
+                    id: h.id,
+                    clauses: h
+                        .clauses
+                        .iter()
+                        .map(|(op, code, cells)| (*op, *code, cells.iter().map(m).collect()))
+                        .collect(),
+                    outer: h.outer.clone(),
+                }),
+                Frame::Clause { cont } => Frame::Clause {
+                    cont: kmap.get(cont).copied().unwrap_or(*cont),
+                },
                 other => other.clone(),
             });
         }
@@ -698,5 +767,39 @@ impl super::Machine<'_, '_> {
             reason: SuspendReason::Yield,
         });
         Ok(Flow::Yield)
+    }
+}
+
+/// Returns the continuations of the clause frames in `frames`.
+fn clause_conts(frames: &[Frame]) -> Vec<ContId> {
+    frames
+        .iter()
+        .filter_map(|f| match f {
+            Frame::Clause { cont } => Some(*cont),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Returns `v` with each continuation of `kmap` replaced by its copy.
+fn remap_conts(v: Value, kmap: &BTreeMap<ContId, ContId>) -> Value {
+    if kmap.is_empty() {
+        return v;
+    }
+    match v {
+        Value::Cont(k) => Value::Cont(kmap.get(&k).copied().unwrap_or(k)),
+        Value::Tuple(vs) => Value::Tuple(vs.into_iter().map(|x| remap_conts(x, kmap)).collect()),
+        Value::List(vs) => Value::List(vs.into_iter().map(|x| remap_conts(x, kmap)).collect()),
+        Value::Struct(mut o) => {
+            let fields = std::mem::take(&mut o.fields);
+            o.fields = fields.into_iter().map(|x| remap_conts(x, kmap)).collect();
+            Value::Struct(o)
+        }
+        Value::Enum(mut e) => {
+            let fields = std::mem::take(&mut e.fields);
+            e.fields = fields.into_iter().map(|x| remap_conts(x, kmap)).collect();
+            Value::Enum(e)
+        }
+        other => other,
     }
 }

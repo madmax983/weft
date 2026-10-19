@@ -1519,3 +1519,31 @@ fn an_in_place_can_name_a_later_parameter() {
         assert_eq!(points_of(&a, "b"), vec!["v[]".to_string()], "{params}");
     }
 }
+
+#[test]
+fn an_on_abort_function_with_no_runtime_has_no_root_handler() {
+    let src = "linear struct T { id: u64 }\n    on abort = undo\nfn undo(t: T) / clock {\n    let T(i) = t\n    sleep(1.ms)\n}\nfn plain(t: T) { let T(i) = t }\n";
+    let ok = analyze_source(src, Options::default()).expect("parses");
+    assert!(ok.diags.iter().all(|d| d.code != "W0118"), "{:?}", ok.diags);
+    let opts = Options {
+        no_runtime: true,
+        ..Options::default()
+    };
+    let a = analyze_source(src, opts).expect("parses");
+    let w: Vec<_> = a.diags.iter().filter(|d| d.code == "W0118").collect();
+    assert_eq!(w.len(), 1, "{:?}", a.diags);
+    assert!(w[0].message.contains("`clock`"), "{}", w[0].message);
+    assert_eq!(w[0].unit, ROOT_UNIT);
+}
+
+#[test]
+fn an_on_abort_function_in_a_dependency_is_checked_there() {
+    let a = analyze_units(
+        "fn main() { }",
+        &[(
+            "dep",
+            "effect Note { fn note(x: u64) }\nlinear struct T { id: u64 }\n    on abort = undo\nfn undo(t: T) / Note { let T(i) = t\n note(i) }\n",
+        )],
+    );
+    assert_eq!(codes(&a), vec![(2, "W0118".to_string())]);
+}

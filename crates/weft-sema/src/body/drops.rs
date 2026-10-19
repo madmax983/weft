@@ -12,10 +12,16 @@ impl Lower<'_> {
     /// A linear value of type `ty` goes away at `span`. `name` names it in the
     /// diagnostic.
     pub(super) fn drop_linear(&mut self, name: &str, ty: &Ty, span: Span) {
+        self.drop_linear_as(name, VarKind::Temp, ty, span);
+    }
+
+    /// A linear value of type `ty` goes away at `span`, in a hidden variable of
+    /// kind `kind`.
+    pub(super) fn drop_linear_as(&mut self, name: &str, kind: VarKind, ty: &Ty, span: Span) {
         if self.cur.is_none() {
             return;
         }
-        let info = self.var_info(name, VarKind::Temp, span, ty, false);
+        let info = self.var_info(name, kind, span, ty, false);
         let var = self.new_var(info, ty);
         let n = self.emit(span, "drop", String::new());
         self.bind(var, n);
@@ -71,9 +77,9 @@ impl Lower<'_> {
             if !self.may_be_linear(&t) {
                 continue;
             }
-            let shown = sig.generics.get(j).cloned().unwrap_or_default();
+            // The diagnostic names the item and the type argument.
             let _ = self.start(span, &name);
-            self.drop_linear(&shown, &t, span);
+            self.drop_linear_as(&name, VarKind::Dropped, &t, span);
         }
         self.cur = saved;
         self.restore_pending(pending);

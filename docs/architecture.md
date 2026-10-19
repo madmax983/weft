@@ -26,7 +26,7 @@ flowchart LR
 flowchart TD
     call["call f(args)"] --> subst["substitute f's mut(...) with argument places"] --> mut["mutates_at(P, M)"]
     perform["perform op"] --> cap["performs_at(P, Cap)"] --> fp["footprint(Cap, M)"] --> mut
-    spawn["s.spawn(closure)"] --> tw["task_writes(T, M)"] --> mut
+    spawn["s.spawn(closure)"] -- "sema" --> mut
     value["call of a closure or an item value"] --> given["substitute its parameter places with the given places"] --> mut
     unknown["call of a function parameter or an unknown value"] --> lend["lends_mut(P, M)"] --> inv
     lend --> tc
@@ -54,6 +54,7 @@ flowchart TD
     over["overwrites(V, P)"] --> ow
     live --> ab["abort_unhandled(V, P) = W0602"]
     abort["may_abort(P)"] --> ab
+    spared["spared_at(V, P)"] -. "outside the body of a local handler" .-> ab
     decl["unset_at(V, P)"] --> unset["unset(V, Q)"] --> ubs["use_before_set(V, P) = W0304"]
     bind -. "ends" .-> unset
     uses["uses(V, P)"] --> ubs
@@ -63,7 +64,8 @@ A linear variable is live from a new value until a move. A new value with no lin
 part, such as `None`, has nothing to consume (`empty_at`). A new value of a part makes
 the variable live too. It must not be live where it goes out of scope or where it gets
 a new value. A new value of a part drops the old value of the part too (`overwrites`).
-An abort while it is live needs `on abort`. On the path of an abort to the end of a
+An abort while it is live needs `on abort`. An operation of a local handler aborts only
+the values of its handled body (`spared_at`). On the path of an abort to the end of a
 `handle`, the unwinder finishes the values of the handled body (`unwound_at`). A `let`
 can declare a variable with no value, and a place field can have no value. Each path
 must give it a value before a use.

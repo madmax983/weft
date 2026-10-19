@@ -1,0 +1,73 @@
+// A `multi` resume copies the frames of the handled body. Owned cells (a `Vec`,
+// a `Box`) get copies, and `rc` objects are shared. A value that a copy cannot
+// keep is not `many`: a `!Move` value keeps its address, and a task handle, a
+// scope or a resource of an extern type that is not plain data cannot be copied.
+// So such a value cannot be live across an operation that can resume more than
+// once (W0503, ADR 0005 and ADR 0007).
+effect Choice { multi fn choose() -> bool }
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+extern type Sock { nonportable }
+extern fn open() -> Sock / blocking
+extern fn close(s: Sock) / blocking
+struct Node { n: u64 }
+
+fn immovable() -> u8 / Choice {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[2]
+    let b = choose()   //~ W0503
+    f.buf[2] = if b { 7 } else { 8 }
+    let r = f.cur
+    r + 0
+}
+
+fn scope_binder() / Choice, async {
+    scope { s =>
+        let b = choose()   //~ W0503
+        s.spawn(|| print(b))
+    }
+}
+
+fn resource() / Choice, blocking {
+    let s = open()
+    let b = choose()   //~ W0503
+    close(s)
+}
+
+// Owned cells get copies, and `rc` objects are shared: these values are `many`.
+fn consume(v: Vec<u64>) -> usize { v.len() }
+fn affine() -> usize / Choice {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let b = choose()
+    consume(v)
+}
+fn boxed() -> usize / Choice {
+    let x = Box.new(Node { n: 5 })
+    let b = choose()
+    let y = x
+    1
+}
+fn shared() -> u64 / Choice {
+    let r = Rc.new(Node { n: 1 })
+    let b = choose()
+    r.n
+}
+// A `!Move` value made after the operation is not live across it.
+fn immovable_after() -> u8 / Choice {
+    let b = choose()
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[2]
+    let r = f.cur
+    r + 0
+}
+
+fn main() {
+    let out: Vec<usize> = Vec.new()
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        out.push(affine())
+        out.push(boxed())
+        let n = shared()
+        let m = immovable_after()
+    }
+    print(out.len())
+}

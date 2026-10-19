@@ -260,11 +260,13 @@ The link states these differences in the theorems. It does not hide them.
   consequence.
 * After that abort, the exec record is `Dropped`, and an exec resume fails.
   The model record does not change, and the model allows the resume
-  (`ex_multi_dropped_resume`). The interpreter copies the `Clause` frames of
-  a `multi` continuation with the same record
-  (`crates/weft-interp/src/machine/effects.rs`, `copy_frames`). Thus, if one
-  copy returns without a resume and another copy then resumes, the
-  interpreter faults where the model continues.
+  (`ex_multi_dropped_resume`). The interpreter does not get to this state
+  for a copy of a frame. A copy of a `multi` continuation gives each
+  `Clause` frame in it a copy of its continuation record, with copies of its
+  frames (`crates/weft-interp/src/machine/effects.rs`, `copy_frames`). So one
+  copy can return without a resume, and another copy can then resume its own
+  record (`crates/weft-interp/tests/programs/multi_nested_drop.wf`). The
+  exec resume still fails for the one record that the abort dropped.
 
 ## Examples (`src/examples.rs`)
 

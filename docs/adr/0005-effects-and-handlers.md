@@ -32,7 +32,10 @@ Status: accepted. Date: 2026-10-18.
   inside the argument of the callee, so each change at or below that argument frees it.
   The handled computation can also move a local from outside the `handle`, or a part of
   it. Then each `resume` frees that place, so a reference of the clause into it, or a
-  clause parameter that points into it, is invalid after the `resume`.
+  clause parameter that points into it, is invalid after the `resume`. A local or a
+  temporary of the handled body goes out of scope before the `resume` returns, and a
+  move in the body frees what it moves. So a clause parameter that points into one of
+  them is invalid after the `resume` too (`releases_at`).
 - A clause of a handler of an effect with a `multi` operation can resume the handled
   computation more than once. The code after a node that runs the clause then runs
   again. The locals from outside the handled body keep the values of the run before.
@@ -49,6 +52,14 @@ Status: accepted. Date: 2026-10-18.
   the body that the first run moves is moved there. If each clause names `resume` at
   most once, and not in a loop, a closure or a clause of another handler, the body
   runs at most once after each operation, and it is lowered once.
+- In Phase 1 a `multi` resume copies the owned values of the handled body: each
+  buffer (`Vec`, `Box`) gets a copy, and the copies share an `rc` object. This is the
+  meaning of a `multi` resume for an affine value. A native runtime pays for a copy of
+  each owned value at each resume. A value that a copy cannot keep is not `many`
+  (W0503): a `!Move` value (the copy would have another address), a task handle, a
+  scope, and a value of an extern type that is not plain data (a resource). The effects
+  proof (E5) has no affine values, so it does not cover the copy. This is a gap of the
+  proof.
 - A clause that can end with no `resume` ends the handled body at the node that runs
   it. Each node of the body that can run a clause of the handler gets an edge to the
   end of the `handle`. Such a node can be a perform, or a call of a closure or a
@@ -113,8 +124,19 @@ Status: accepted. Date: 2026-10-18.
   recursive function that gives one more place to a function parameter on each call
   can need more changes than the bound. The checker never uses effects that can be
   incomplete without an error.
+- In Phase 1 the effect rows are the capabilities: a function gets a standard effect
+  through its row, not through a value. `env` holds only handles to resources
+  (`Env { fs, net, stdout }`). So `main` and a helper can perform `rand` and `clock`
+  with no `env`.
 - Every named effect can abort (the handler can drop the continuation). A linear value
   live across such a node needs `on abort` (W0602).
+- A clause of `Fail.fail` cannot resume (W0504), also not in a closure, and it cannot
+  name its continuation. A failure has no value to go on with: the runtime raises it
+  at a `join` of a failed task, at the end of a scope with a failed child, at a
+  `fork`, at a `with_timeout` deadline and at a failed read. There the code after the
+  failure needs a value of another type. The effects proof models `fail` as an
+  operation whose clause does not resume, and this rule mirrors it. A clause of a user
+  effect can resume.
 - `resume` consumes a `once` continuation (W0501). A `multi` operation needs `many` values
   around it (W0503).
 - The abort rule and the multi rule apply at each suspension point (rule 1 of
@@ -125,6 +147,19 @@ Status: accepted. Date: 2026-10-18.
   (`body_multi`) or a clause can. A `once` continuation is a `once` value (rule 2): a
   clause cannot hold one across a `multi` operation, also not across a call that can
   perform one.
+- An operation of a local handler suspends only the handled body: the continuation
+  holds the frames from the handler up to the operation. An abort there unwinds only
+  the values of the body, and a `multi` resume copies only them. So W0602 and W0503
+  count only the values that live inside the handled body at the operation. A value
+  outside the body is spared there (`spared_at(V, P)`). It meets the `handle` node,
+  which passes up the environment to the body and the clauses (rule 1): only what the
+  outer handlers can do counts for it, at the nodes that perform through them. The
+  value is spared only if nothing else at the node suspends, and if no clause of the
+  handler suspends the code outside the body. A clause does that if it performs
+  through a handler outside its `handle`, or calls code that can (a `resume` of the
+  clause does not count: the resumed body suspends at its own nodes). A root handler
+  of `sim.run` is the scheduler: it can cancel the task, so its operations spare
+  nothing.
 - A clause runs in the environment of its `handle` (rule 6): its operations go to the
   handlers outside the `handle`. The value of a clause is the value of the `handle`, so
   a function value or a reference in it joins the value of the body. A reference into a
@@ -149,6 +184,17 @@ Status: accepted. Date: 2026-10-18.
   states the effect. The root handlers of `sim.run` get W0802 instead.
 - A spawned task or fork branch cannot reach a handler on the stack of another task
   (W0314, ADR 0006).
+- A continuation is a capability of its clause. It lives only while the clause runs:
+  when the clause ends, the handler resumes the computation or drops it. So a closure
+  that calls `resume` cannot leave the clause (W0313), by the rules below with the
+  clause as the handled body: not as the value of the clause, not through a local
+  outside the clause, not into a field, an element or an `Option` that can keep it,
+  not to a callee that stores it or that the body does not know, and not to an
+  operation of a handler outside the clause. A `resume` can give it to the handled
+  body: a local outside the `handle` that gets it there keeps it too. A clause can call
+  such a closure, and give it to code that only calls it. A spawned task or a fork
+  branch cannot run it (W0314): the rest of the handled body would run on another task,
+  away from the handlers of this task and at the same time as the clause.
 - A capability lives only while its handled body runs (rule (d) of `proofs/effects`). A
   function value that performs through it cannot leave the body (W0313): not as the
   value of the body (also inside a tuple, a struct, a container or another closure), not
@@ -379,6 +425,14 @@ Status: accepted. Date: 2026-10-18.
   - If one clause of a handler can end with no `resume`, each node that runs a clause
     of the handler gets an abort path. A node that runs a clause that always resumes
     gets one too.
+  - Only an operation itself spares the values outside the handled body of its local
+    handler. A call of a function or a closure that performs the operation suspends
+    each value of the function. A clause that performs through an outer handler on one
+    path, or that calls a function that can abort, makes each operation of its handler
+    suspend each value.
+  - A closure that resumes counts as kept by a local outside the `handle` that the
+    handled body gives it to, also when a later new value replaces it before the end
+    of the `handle`.
 - What stays open (not checked):
   - A `multi` operation of a handler of a caller can resume the rest of the function
     more than once. The code after the operation then runs again with the values that

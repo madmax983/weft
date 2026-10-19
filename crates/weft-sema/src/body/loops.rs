@@ -140,6 +140,7 @@ struct LoopHead {
     bind_caps: usize,
     via_calls: usize,
     task_runs: usize,
+    local_performs: usize,
 }
 
 impl LoopHead {
@@ -853,7 +854,11 @@ impl Lower<'_> {
             // Maps by node, task or capability: the numbers below.
             task_scope: _,
             root_caps: _,
+            cont_caps: _,
             cap_effects: _,
+            out_suspends: _,
+            // A pass starts and ends outside a clause that it lowers.
+            clause_conts: _,
             repeated: _,
             abort_ctx: _,
             facts,
@@ -909,6 +914,7 @@ impl Lower<'_> {
             bind_caps,
             via_calls,
             task_runs,
+            local_performs,
         } = self;
         LoopHead {
             facts: facts.mark(),
@@ -967,6 +973,7 @@ impl Lower<'_> {
             bind_caps: bind_caps.len(),
             via_calls: via_calls.len(),
             task_runs: task_runs.len(),
+            local_performs: local_performs.len(),
         }
     }
 
@@ -1010,7 +1017,10 @@ impl Lower<'_> {
             locals,
             task_scope,
             root_caps,
+            cont_caps,
             cap_effects,
+            out_suspends,
+            clause_conts: _,
             repeated,
             abort_ctx,
             facts,
@@ -1066,14 +1076,17 @@ impl Lower<'_> {
             bind_caps,
             via_calls,
             task_runs,
+            local_performs,
         } = self;
         facts.rewind(&head.facts);
         let node = NodeId(u32::try_from(head.nodes).unwrap_or(u32::MAX));
         let task = TaskId(u32::try_from(head.tasks).unwrap_or(u32::MAX));
         let _ = repeated.split_off(&node);
+        let _ = out_suspends.split_off(&node);
         let _ = abort_ctx.split_off(&node);
         let _ = task_scope.split_off(&task);
         let _ = root_caps.split_off(&CapId(head.caps));
+        let _ = cont_caps.split_off(&CapId(head.caps));
         let _ = cap_effects.split_off(&CapId(head.caps));
         locals.restore(undo);
         restore_frames(frames, scope, &head.frames);
@@ -1131,6 +1144,7 @@ impl Lower<'_> {
         bind_caps.truncate(head.bind_caps);
         via_calls.truncate(head.via_calls);
         task_runs.truncate(head.task_runs);
+        local_performs.truncate(head.local_performs);
     }
 }
 

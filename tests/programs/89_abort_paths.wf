@@ -190,16 +190,16 @@ fn clause_reads_after_closure(c: bool) / Op {
 // Controls.
 fn resumed_keeps_reference(v: &Vec<u64>, w: &Vec<u64>) / mut(v) {
     let r = &v[0]
-    handle Fail { fn fail(m) { resume(()) } } in {
-        fail("x")
+    handle Op { fn op() { resume(()) } } in {
+        op()
         r = &w[0]
     }
     print(r)
 }
 fn resumed_consumes() {
     let t = begin()
-    handle Fail { fn fail(m) { resume(()) } } in {
-        fail("x")
+    handle Op { fn op() { resume(()) } } in {
+        op()
         commit(t)
     }
 }

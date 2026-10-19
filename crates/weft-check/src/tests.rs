@@ -665,23 +665,34 @@ fn w0801_root_handler_in_library() {
     b.f.handlers.push(HandlerInfo {
         effect: "Net".into(),
         is_std: true,
-        forwards: false,
+        sim_root: false,
         span: Span::default(),
     });
     b.f.handlers.push(HandlerInfo {
         effect: "Net".into(),
         is_std: true,
-        forwards: true,
+        sim_root: true,
         span: Span::default(),
     });
     b.f.handlers.push(HandlerInfo {
         effect: "Log".into(),
         is_std: false,
-        forwards: false,
+        sim_root: false,
         span: Span::default(),
     });
     let v = check(&b.f).violations;
     assert_eq!(v.root_handler_in_lib.len(), 1);
+    // The input names a root handler of `sim.run`; the spec derives `forwards`.
+    let text = crate::bridge::facts_text(&b.f);
+    assert!(text.contains("sim_root(h1)."), "{text}");
+    assert!(!text.contains("forwards("), "{text}");
+    let out = crate::bridge::evaluate_spec(&b.f, false).expect("spec evaluates");
+    let derived: Vec<String> = out
+        .tuples("forwards")
+        .iter()
+        .map(|t| out.display_tuple("forwards", t))
+        .collect();
+    assert_eq!(derived, ["forwards(h1)"]);
     b.f.library = false;
     assert!(check(&b.f).violations.root_handler_in_lib.is_empty());
 }

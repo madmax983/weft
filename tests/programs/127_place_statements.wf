@@ -1,0 +1,56 @@
+// A place of a local in statement position, such as `v` or `p.tx` on its own
+// line, names the place only. It moves nothing and drops nothing, in the
+// checker and in the interpreter (ADR 0003). Its operands run.
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(id) = t }
+struct P { tx: Tx, n: u64 }
+struct Fr: !Move { buf: [u64; 2], cur: &u64 in self.buf[] }
+
+// The statement does not consume the value.
+fn not_consumed() {
+    let t = Tx { id: 1 }
+    t
+}   //~ W0601
+
+// The value is still there after the statement.
+fn used_after() {
+    let v = Vec.new()
+    v.push(1)
+    v
+    print(v.len())
+}
+fn reference_stays() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    v
+    v[0]
+    print(r + 1)
+}
+fn linear_stays() {
+    let t = Tx { id: 1 }
+    t
+    commit(t)
+}
+fn field_stays() {
+    let p = P { tx: Tx { id: 2 }, n: 3 }
+    p.tx
+    p.n
+    let P(tx, n) = p
+    commit(tx)
+}
+fn immovable_stays() {
+    let f = Fr { buf: [1, 2] }
+    f.cur = &f.buf[1]
+    let c = f.cur
+    f
+    print(c)
+}
+
+fn main() {
+    used_after()
+    reference_stays()
+    linear_stays()
+    field_stays()
+    immovable_stays()
+}

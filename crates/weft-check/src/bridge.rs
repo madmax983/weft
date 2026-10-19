@@ -140,6 +140,7 @@ pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
     rel2!("owner", f.owner);
     rel2!("moved_part", f.moved_part);
     rel2!("releases_at", f.releases_at);
+    rel2!("spared_at", f.spared_at);
     rel2!("spawned_at", f.spawned_at);
     rel2!("joined_at", f.joined_at);
     rel2!("task_reads", f.task_reads);
@@ -217,8 +218,8 @@ pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
         if h.is_std {
             emit("std_effect", &[e]);
         }
-        if h.forwards {
-            emit("forwards", &[id]);
+        if h.sim_root {
+            emit("sim_root", &[id]);
         }
     }
 }

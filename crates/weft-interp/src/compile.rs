@@ -452,7 +452,11 @@ impl<'a> Compiler<'a> {
                 None => self.declare_uninit(pat),
             },
             StmtKind::Expr(e) => {
-                self.expr(e);
+                // A place of a local only names the place: it moves nothing
+                // and drops nothing. Its operands run (ADR 0003).
+                if !(self.local_place(e) && self.place(e)) {
+                    self.expr(e);
+                }
                 self.emit(Op::Pop);
             }
             StmtKind::Assign { target, op, value } => {
@@ -993,6 +997,20 @@ impl<'a> Compiler<'a> {
             }
         }
         self.emit(fault(format!("unknown name `{}`", id.name)));
+    }
+
+    /// Returns true if `e` is a place below a local: the local, a field or an
+    /// element. Sema checks a statement of this form as a plain use.
+    fn local_place(&self, e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Name(id) => self.is_var(&id.name),
+            ExprKind::Field { base, .. }
+            | ExprKind::Index {
+                base,
+                index: Some(_),
+            } => self.local_place(base),
+            _ => false,
+        }
     }
 
     /// Pushes the place that an expression names. Returns false, and emits

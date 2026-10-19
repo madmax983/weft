@@ -8,7 +8,15 @@ Status: accepted. Date: 2026-10-18.
   copied. `String` is immutable and copied.
 - A `linear` value must be consumed on every normal path: moved into a call, or
   destructured with `let S(a, b) = s` (W0601).
-- `on abort = f` names the function that unwinding runs.
+- `on abort = f` names the function that unwinding runs. The unwinder runs it with the
+  root handlers only. So its effects, also inferred ones, can name only the standard
+  effects that the root handlers serve: not `fail` (the failure does not reach the
+  handlers of the code that aborts), no user effect, and with no runtime none (W0118).
+  It can change only the value that it gets: not an `rc` group, and not a place that a
+  reference in the value points to (W0118). The node that aborts does not state such a
+  change. The effects proof models `on abort` as atomic: it cannot perform or fail.
+  This rule mirrors that assumption. A standard effect that a root handler serves
+  (`clock`, `log`) does not suspend the unwinder into a handler of the program.
 - `struct S: !Move` keeps its address. Moving a named value is an error (W0604). A
   function can return a struct literal: it is built in place.
 - Only a `!Move` struct may hold a reference field, and only into `self` (W0605).
@@ -65,6 +73,13 @@ Status: accepted. Date: 2026-10-18.
     value. The value is live where the closure or the clause starts.
   - A place whose type is not linear cannot keep a linear value. A field of type
     `fn()` or a `Vec<fn()>` cannot hold a linear closure.
+- A prelude function can drop values of a type parameter: `Vec.clear` drops each
+  element, `Task.detach` drops the result of the task, and `Response.json` drops its
+  argument. Their signatures have the type parameter in `drops`, so a call with a
+  linear type argument is W0601. A generic function that calls one with its own type
+  parameter has that parameter in its `drops` too. When the diagnostic cannot name the
+  argument, it names the callee and the type, for example "`clear` drops a value of
+  the linear type `Tx`". It does so for a generic function item used as a value too.
 - A generic function does not know that a value of a type parameter is linear. So its
   body treats such a value as linear where a linear value can go away:
   - in a pattern `_`;
@@ -115,7 +130,18 @@ Status: accepted. Date: 2026-10-18.
 - On an abort path (ADR 0005) the unwinder finishes each value of the handled body:
   `unwound_at(V, P)` in the spec. `live_linear` stops there, and the owner frees its
   memory. The node that aborts needs `on abort` for each live linear value (W0602).
-  A linear value outside the body stays live.
+  A linear value outside the body stays live. An operation of a local handler aborts
+  only the values of its handled body, so W0602 spares a value outside the body there
+  (`spared_at(V, P)`), and W0503 does too. This holds if no clause of the handler
+  performs through a handler outside its `handle` (ADR 0005).
+- A `multi` resume copies the values of the handled body (ADR 0005). A value that a
+  copy cannot keep is not `many`: a `!Move` value (`once_var(V) :- immovable(V)` in
+  the spec), a task handle, a scope, and a value of an extern type that is not plain
+  data, also as a part of another value. A copy of a `Vec` or a `Box` copies its
+  buffer, and the copies share an `rc` object, so these do not count. Another owned
+  value is copied: this is the Phase 1 meaning of a `multi` resume. A native runtime
+  pays for the copy at each resume, and the effects proof (E5) does not cover it
+  (ADR 0005).
 - `!Move` passes through the parts that hold a value inline. A pointer such as `Box`
   or `Rc` does not move its target, so it does not pass `!Move` on. A prelude type
   with no elements, such as `Weak<T>`, is a pointer or a handle too.

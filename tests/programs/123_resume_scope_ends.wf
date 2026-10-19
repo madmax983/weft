@@ -1,0 +1,91 @@
+// A `resume` runs the handled computation. A local of the handled body goes out
+// of scope there, and a move there frees what it moves. So a clause parameter
+// that points into such a local is not valid after the `resume` (ADR 0005).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Peek { fn peek(e: &Entity) }
+fn mk() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+fn take_e(e: Entity) {}
+
+fn local_ends() {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)   //~ W0301
+        }
+    } in {
+        let local = Entity { hp: 1 }
+        peek(&local)
+    }
+}
+
+fn element_of_local_ends() {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)   //~ W0301
+        }
+    } in {
+        let w = mk()
+        peek(&w.entities[0])
+    }
+}
+
+fn local_moves() {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)   //~ W0301
+        }
+    } in {
+        let local = Entity { hp: 1 }
+        peek(&local)
+        take_e(local)
+    }
+}
+
+fn temporary_ends() {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)   //~ W0301
+        }
+    } in {
+        peek(&mk().entities[0])
+    }
+}
+
+// The clause uses its parameter before the `resume`: the local is still there.
+fn used_before() {
+    handle Peek {
+        fn peek(e) {
+            print(e.hp)
+            resume(())
+        }
+    } in {
+        let local = Entity { hp: 1 }
+        peek(&local)
+    }
+}
+
+// A local from outside the handled body lives on after the `resume`.
+fn outer_local() {
+    let local = Entity { hp: 1 }
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)
+        }
+    } in {
+        peek(&local)
+    }
+}
+
+fn main() {
+    used_before()
+    outer_local()
+}

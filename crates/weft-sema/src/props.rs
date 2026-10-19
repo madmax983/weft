@@ -35,10 +35,15 @@ pub enum Prop {
     /// A linear part has no `on abort`, and no type around it on the way has
     /// one. A type with `on abort` finishes its parts itself.
     NoOnAbort,
+    /// A part is a resource that a `multi` resume cannot copy: a task handle, a
+    /// scope, or a value of an extern type that is not plain data, not a buffer
+    /// (`Vec`, `Box`) and not an `rc` handle. A resume copies a buffer, and the
+    /// copies share an `rc` object, so `Rc` and `Weak` do not pass it on.
+    Resource,
 }
 
 /// The properties, in table order.
-pub const PROPS: [Prop; 7] = [
+pub const PROPS: [Prop; 8] = [
     Prop::Linear,
     Prop::Nonportable,
     Prop::Immovable,
@@ -46,6 +51,7 @@ pub const PROPS: [Prop; 7] = [
     Prop::Fns,
     Prop::NotCopy,
     Prop::NoOnAbort,
+    Prop::Resource,
 ];
 
 impl Prop {
@@ -58,6 +64,7 @@ impl Prop {
             Self::Fns => 4,
             Self::NotCopy => 5,
             Self::NoOnAbort => 6,
+            Self::Resource => 7,
         }
     }
 }
@@ -87,14 +94,14 @@ impl Holds {
 /// The properties of each definition, by `AdtId`.
 #[derive(Clone, Debug, Default)]
 pub struct TypeProps {
-    table: Vec<[Holds; 7]>,
+    table: Vec<[Holds; 8]>,
 }
 
 impl TypeProps {
     /// Computes the table for every definition of `prog`.
     pub fn new(prog: &Program) -> Self {
         let n = prog.adts.len();
-        let mut table: Vec<[Holds; 7]> = vec![Default::default(); n];
+        let mut table: Vec<[Holds; 8]> = vec![Default::default(); n];
         // The definitions that name each definition in their parts.
         let mut users: Vec<Vec<usize>> = vec![Vec::new(); n];
         for a in 0..n {
@@ -307,7 +314,7 @@ fn extern_copy(prog: &Program, a: usize) -> bool {
 }
 
 /// Computes the row of definition `a` from the rows of the definitions in `table`.
-fn eval_adt(prog: &Program, a: usize, table: &[[Holds; 7]]) -> [Holds; 7] {
+fn eval_adt(prog: &Program, a: usize, table: &[[Holds; 8]]) -> [Holds; 8] {
     let def = &prog.adts[a];
     let parts = parts(prog, a);
     let ext = match &def.kind {
@@ -317,7 +324,7 @@ fn eval_adt(prog: &Program, a: usize, table: &[[Holds; 7]]) -> [Holds; 7] {
         } => Some((*elem_unstable, *deref)),
         _ => None,
     };
-    let mut out: [Holds; 7] = Default::default();
+    let mut out: [Holds; 8] = Default::default();
     for p in PROPS {
         let h = &mut out[p.index()];
         let passes = match (p, ext) {
@@ -330,6 +337,8 @@ fn eval_adt(prog: &Program, a: usize, table: &[[Holds; 7]]) -> [Holds; 7] {
             }
             // An extern type is plain data or not, whatever its arguments are.
             (Prop::NotCopy, Some(_)) => false,
+            // The copies of a resume share an `rc` object and what it holds.
+            (Prop::Resource, Some(_)) => !is_rc_handle(prog, a),
             _ => true,
         };
         h.always = match p {
@@ -340,6 +349,10 @@ fn eval_adt(prog: &Program, a: usize, table: &[[Holds; 7]]) -> [Holds; 7] {
                 def.linear || def.immovable || (ext.is_some() && !extern_copy(prog, a))
             }
             Prop::NoOnAbort => def.linear && !def.has_on_abort,
+            Prop::Resource => {
+                let buffer = def.module == PRELUDE && matches!(def.name.as_str(), "Vec" | "Box");
+                ext.is_some() && !extern_copy(prog, a) && !is_rc_handle(prog, a) && !buffer
+            }
             Prop::Refs | Prop::Fns => false,
         };
         // A type with `on abort` finishes its linear parts.
@@ -354,7 +367,7 @@ fn eval_adt(prog: &Program, a: usize, table: &[[Holds; 7]]) -> [Holds; 7] {
 }
 
 /// Returns when property `p` holds for type term `t` of a definition, from the rows in `table`.
-fn eval(t: &Ty, p: Prop, table: &[[Holds; 7]]) -> Holds {
+fn eval(t: &Ty, p: Prop, table: &[[Holds; 8]]) -> Holds {
     let always = |b: bool| Holds {
         always: b,
         params: Vec::new(),
@@ -398,9 +411,16 @@ fn eval(t: &Ty, p: Prop, table: &[[Holds; 7]]) -> Holds {
         },
         Ty::Fn(_) => always(p == Prop::Fns),
         Ty::Cont(..) => always(p == Prop::NotCopy),
-        Ty::Scope => always(p == Prop::Nonportable),
+        Ty::Scope => always(matches!(p, Prop::Nonportable | Prop::Resource)),
         _ => Holds::default(),
     }
+}
+
+/// Returns true if definition `a` is the prelude `Rc` or `Weak`: a handle to a
+/// shared `rc` object.
+fn is_rc_handle(prog: &Program, a: usize) -> bool {
+    let def = &prog.adts[a];
+    def.module == PRELUDE && matches!(def.name.as_str(), "Rc" | "Weak")
 }
 
 #[cfg(test)]
@@ -444,6 +464,15 @@ mod tests {
         assert_eq!(get("Vec", Prop::Immovable).params, vec![0]);
         assert!(get("Box", Prop::Immovable).params.is_empty());
         assert!(get("Weak", Prop::Immovable).params.is_empty());
+        // A resume copies a buffer and shares an `rc` object. It cannot copy a
+        // task or a scope.
+        assert!(get("Task", Prop::Resource).always);
+        assert!(get("Scope", Prop::Resource).always);
+        assert!(!get("Vec", Prop::Resource).always);
+        assert_eq!(get("Vec", Prop::Resource).params, vec![0]);
+        assert!(get("Rc", Prop::Resource).params.is_empty());
+        assert!(!get("Rc", Prop::Resource).always);
+        assert!(!get("String", Prop::Resource).always);
     }
 
     #[test]

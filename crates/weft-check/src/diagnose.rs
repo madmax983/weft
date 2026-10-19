@@ -104,11 +104,15 @@ fn note_more(d: Diagnostic, f: &FnFacts, rest: &[NodeId], noun: (&str, &str)) ->
 
 /// Returns true if variable `var` is a hidden variable of the lowering, not a
 /// variable of the program: a temporary, the holder of a part, a closure with
-/// no name or the hidden iterator of a loop.
+/// no name, the hidden iterator of a loop or a value that a generic item drops.
 fn is_hidden(var: &weft_facts::VarInfo) -> bool {
     matches!(
         var.kind,
-        VarKind::Temp | VarKind::BlockValue | VarKind::Iterator | VarKind::Closure
+        VarKind::Temp
+            | VarKind::BlockValue
+            | VarKind::Iterator
+            | VarKind::Closure
+            | VarKind::Dropped
     ) || var.name.starts_with('{')
 }
 
@@ -458,6 +462,19 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
                 format!("task handle `{}` is not joined or detached", info.name),
                 node_span(f, n),
             )
+        } else if info.kind == VarKind::Dropped {
+            Diagnostic::error(
+                "W0601",
+                format!(
+                    "`{}` drops a value of the linear type `{}`",
+                    info.name, info.ty
+                ),
+                node_span(f, n),
+            )
+            .note(format!(
+                "`{}` can drop a value of its type parameter here; a linear value must be consumed on every normal path",
+                info.name
+            ))
         } else if info.callable {
             let who = if matches!(info.kind, VarKind::Closure | VarKind::Temp) {
                 "a closure".to_string()
@@ -531,7 +548,7 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         let info = f.var(var);
         let at = f.node(first);
         let name = shown_name(info);
-        let d = Diagnostic::error(
+        let mut d = Diagnostic::error(
             "W0503",
             format!(
                 "{name} is not `many`, but it is live across `{}`, which can resume more than once",
@@ -540,6 +557,11 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             at.span,
         )
         .note_at(decl_note(info), info.span);
+        if info.immovable && !info.once {
+            d = d.note(
+                "a `!Move` value keeps its address, and each resume runs with a copy of the value",
+            );
+        }
         out.push(note_more(
             d,
             f,

@@ -614,7 +614,7 @@ impl Lower<'_> {
             self.facts.uses.push((v, n));
         }
         self.take_held(&taken, n);
-        self.callee_drops(&sig, &targs, &vals, span);
+        self.callee_drops(&name, &sig, &targs, &vals, span);
         for (p, idx) in &muts {
             self.mutate(n, *p);
             self.facts.call_mut.push((n, *p, *idx));
@@ -1014,7 +1014,14 @@ impl Lower<'_> {
     /// parameter in its `drops` part. If the call gives a linear type there, the
     /// value goes away at the call (W0601). `finish` decides from the inferred
     /// type argument. The diagnostic names the argument of that type.
-    fn callee_drops(&mut self, sig: &FnSig, targs: &[Ty], vals: &[ArgVal], span: Span) {
+    fn callee_drops(
+        &mut self,
+        callee: &str,
+        sig: &FnSig,
+        targs: &[Ty],
+        vals: &[ArgVal],
+        span: Span,
+    ) {
         for &j in &sig.effects.drops {
             let Some(t) = targs.get(j).cloned() else {
                 continue;
@@ -1023,7 +1030,13 @@ impl Lower<'_> {
                 continue;
             }
             let (name, at) = self.generic_arg(sig, j, vals, span);
-            self.drop_linear(&name, &t, at);
+            // An argument that the diagnostic cannot name: it names the callee.
+            if name == "temporary" {
+                let callee = callee.to_string();
+                self.drop_linear_as(&callee, VarKind::Dropped, &t, at);
+            } else {
+                self.drop_linear(&name, &t, at);
+            }
         }
     }
 
@@ -1813,6 +1826,7 @@ impl Lower<'_> {
             frees,
             cap,
             depth,
+            fail,
         }) = self.locals[l].cont.clone()
         else {
             return Val {
@@ -1822,6 +1836,9 @@ impl Lower<'_> {
         };
         if args.len() != 1 {
             self.err("W0103", "`resume` takes one argument", span);
+        }
+        if fail {
+            self.fail_resume(span);
         }
         for a in args {
             let v = self.expr(&a.value);
@@ -1858,11 +1875,27 @@ impl Lower<'_> {
             self.facts.releases_at.push((n, m));
         }
         self.resumes.push((n, cap));
-        self.abortive(n);
+        // The resumed computation suspends at its own nodes: the values outside
+        // the body meet those nodes. A value of the clause meets the resume.
+        self.abortive_local(n);
         Val {
             ty: ret,
             ..Val::default()
         }
+    }
+
+    /// W0504: a clause of `Fail.fail` resumes, or names its continuation. A
+    /// failure has no value to go on with: the runtime raises it where the code
+    /// after it needs a value of another type. The effects proof models `fail`
+    /// as an operation whose clause does not resume (ADR 0005).
+    pub(super) fn fail_resume(&mut self, span: Span) {
+        let d = weft_syntax::diag::Diagnostic::error(
+            "W0504",
+            "a clause of `fail` cannot resume the computation that failed",
+            span,
+        )
+        .note("the code after a failure has no value to go on with; give the value of the `handle` instead");
+        self.diags.push(d);
     }
 
     fn print(&mut self, args: &[Arg], span: Span) -> Val {
@@ -2123,10 +2156,25 @@ impl Lower<'_> {
                 self.give_fn(n, &v, Some(again), false);
             }
         }
-        if o.multi {
-            self.multi_node(n);
+        // An operation of a local handler suspends the handled body only. A
+        // root handler of `sim.run` is the scheduler: it can cancel the task.
+        let local = cap
+            .filter(|c| !self.root_caps.contains(c))
+            .and_then(|c| self.handlers.iter().rposition(|h| h.cap == c));
+        if let Some(hi) = local {
+            if o.multi {
+                self.multi_local(n);
+            }
+            self.abortive_local(n);
+            let outside = self.outside_vars(hi);
+            self.local_performs
+                .push((n, self.handlers[hi].cap, outside));
+        } else {
+            if o.multi {
+                self.multi_node(n);
+            }
+            self.abortive(n);
         }
-        self.abortive(n);
         // The result is what a clause resumes with.
         let mut caps = std::collections::BTreeSet::new();
         if self.has_fn(&o.ret) {
@@ -2394,7 +2442,13 @@ impl Lower<'_> {
                 sum.tasks.insert(p);
             }
         }
-        if bad {
+        if bad && held.iter().any(|c| self.cont_caps.contains(c)) {
+            self.err(
+                "W0314",
+                "a task cannot resume a continuation of this task: the rest of the handled body would run on another task",
+                span,
+            );
+        } else if bad {
             self.err(
                 "W0314",
                 "a task cannot perform through a handler of this task: the handler runs on another task",
@@ -2566,6 +2620,10 @@ impl Lower<'_> {
                 ..Val::default()
             };
         }
+        // `detach` drops the result of the task (ADR 0007).
+        if self.may_be_linear(&ret) {
+            self.drop_linear_as("detach", VarKind::Dropped, &ret, span);
+        }
         Val::default()
     }
 
@@ -2679,7 +2737,7 @@ impl Lower<'_> {
             self.facts.handlers.push(weft_facts::HandlerInfo {
                 effect: e.clone(),
                 is_std: true,
-                forwards: true,
+                sim_root: true,
                 span,
             });
             self.handlers.push(super::HandlerFrame {

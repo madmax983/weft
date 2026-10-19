@@ -182,6 +182,9 @@ pub enum VarKind {
     Continuation,
     /// A task handle.
     Task,
+    /// A value that a generic function item can drop where the body uses the
+    /// item as a value. The name is the item.
+    Dropped,
 }
 
 /// A variable and its static properties.
@@ -275,10 +278,10 @@ pub struct HandlerInfo {
     pub effect: String,
     /// The effect is a standard effect.
     pub is_std: bool,
-    /// The handler forwards its effect whatever its clauses do: a root handler of
-    /// `sim.run`, which W0802 checks. Other handlers forward through their clauses
-    /// (`clause_performs`).
-    pub forwards: bool,
+    /// The handler is a root handler of `sim.run`, which W0802 checks
+    /// (`sim_root(H)`). It forwards its effect whatever its clauses do. Other
+    /// handlers forward through their clauses (`clause_performs`).
+    pub sim_root: bool,
     /// The source location.
     pub span: Span,
 }
@@ -317,6 +320,7 @@ pub struct FactMark {
     releases_at: usize,
     may_abort: usize,
     multi_at: usize,
+    spared_at: usize,
     clause_multi: usize,
     body_multi: usize,
     resumes_at: usize,
@@ -405,6 +409,10 @@ pub struct FnFacts {
     pub may_abort: Vec<NodeId>,
     /// `multi_at(P)`.
     pub multi_at: Vec<NodeId>,
+    /// `spared_at(V, P)`: an abort or a `multi` resume at node `P` does not
+    /// reach `V`. Each handler that `P` suspends to is a local handler, and `V`
+    /// lives outside its handled body.
+    pub spared_at: Vec<(VarId, NodeId)>,
     /// `clause_multi(Cap)`: a clause of the handler behind `Cap` can resume a
     /// `multi` continuation more than once.
     pub clause_multi: Vec<CapId>,
@@ -497,6 +505,7 @@ impl FnFacts {
             releases_at,
             may_abort,
             multi_at,
+            spared_at,
             clause_multi,
             body_multi,
             resumes_at,
@@ -543,6 +552,7 @@ impl FnFacts {
             releases_at: releases_at.len(),
             may_abort: may_abort.len(),
             multi_at: multi_at.len(),
+            spared_at: spared_at.len(),
             clause_multi: clause_multi.len(),
             body_multi: body_multi.len(),
             resumes_at: resumes_at.len(),
@@ -599,6 +609,7 @@ impl FnFacts {
             releases_at,
             may_abort,
             multi_at,
+            spared_at,
             clause_multi,
             body_multi,
             resumes_at,
@@ -644,6 +655,7 @@ impl FnFacts {
         releases_at.truncate(mark.releases_at);
         may_abort.truncate(mark.may_abort);
         multi_at.truncate(mark.multi_at);
+        spared_at.truncate(mark.spared_at);
         clause_multi.truncate(mark.clause_multi);
         body_multi.truncate(mark.body_multi);
         resumes_at.truncate(mark.resumes_at);
@@ -842,6 +854,7 @@ impl FnFacts {
         nd(&mut self.releases_at);
         nd(&mut self.may_abort);
         nd(&mut self.multi_at);
+        nd(&mut self.spared_at);
         nd(&mut self.clause_multi);
         nd(&mut self.body_multi);
         nd(&mut self.resumes_at);

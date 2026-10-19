@@ -163,6 +163,7 @@ impl Lower<'_> {
     }
 
     fn finish(mut self, mut eff: EffectSig) -> Lowered {
+        self.finish_spared();
         self.check_int_lits();
         self.settle_moves();
         self.finish_via_calls();
@@ -179,6 +180,7 @@ impl Lower<'_> {
             let (linear, no_abort) = (has(&self, Prop::Linear), has(&self, Prop::NoOnAbort));
             let (immovable, nonportable) =
                 (has(&self, Prop::Immovable), has(&self, Prop::Nonportable));
+            let resource = has(&self, Prop::Resource);
             if self.generic && !linear && self.local_has(i, Prop::Linear) {
                 maybe.push((self.locals[i].var, t.clone()));
             }
@@ -190,7 +192,7 @@ impl Lower<'_> {
             v.has_on_abort = !no_abort;
             v.immovable |= immovable;
             v.nonportable |= nonportable;
-            v.once |= v.linear;
+            v.once |= v.linear || resource;
             v.callable |= matches!(t, Ty::Fn(_));
         }
         for (var, ty) in std::mem::take(&mut self.late_vars) {
@@ -200,10 +202,13 @@ impl Lower<'_> {
                 maybe.push((var, t.clone()));
             }
             let has_on_abort = self.has_on_abort(&t);
+            let resource = self.ty_has_strict(&t, Prop::Resource);
+            let shown = self.show(&t);
             let v = &mut self.facts.vars[var.index()];
+            v.ty = shown;
             v.linear = linear;
             v.has_on_abort = has_on_abort;
-            v.once |= linear;
+            v.once |= linear || resource;
             v.callable |= matches!(t, Ty::Fn(_));
         }
         if self.generic {
@@ -694,6 +699,20 @@ impl Lower<'_> {
         }
     }
 
+    /// Returns true if `e` is a place below a local: the local, a field or an
+    /// element. The interpreter compiles it as a place in statement position.
+    fn local_place(&self, e: &ast::Expr) -> bool {
+        match &e.kind {
+            ExprKind::Name(id) => self.lookup_local(&id.name).is_some(),
+            ExprKind::Field { base, .. }
+            | ExprKind::Index {
+                base,
+                index: Some(_),
+            } => self.local_place(base),
+            _ => false,
+        }
+    }
+
     /// Discards a value. A linear temporary is an error at this point.
     pub(super) fn drop_value(&mut self, v: &Val, span: Span) {
         if self.cur.is_none() {
@@ -767,7 +786,11 @@ impl Lower<'_> {
             }
             StmtKind::Expr(e) => {
                 let v = self.expr(e);
-                self.drop_value(&v, e.span);
+                // A place of a local in statement position only names the
+                // place. It moves nothing and drops nothing (ADR 0003).
+                if !self.local_place(e) {
+                    self.drop_value(&v, e.span);
+                }
             }
             StmtKind::Assign { target, op, value } => self.assign(target, *op, value, s.span),
             StmtKind::Return(e) => {

@@ -568,6 +568,7 @@ fn linear(
     let empty: BTreeSet<(VarId, NodeId)> = f.empty_at.iter().copied().collect();
     let unwound = by_var(&f.unwound_at);
     let aborts = cx.mask(f.may_abort.iter().copied());
+    let spared: BTreeSet<(VarId, NodeId)> = f.spared_at.iter().copied().collect();
     let vars: BTreeSet<VarId> = rebound.keys().chain(overwrites.keys()).copied().collect();
     for v in vars {
         let binds = rebound.get(&v).map_or(&[][..], Vec::as_slice);
@@ -608,9 +609,9 @@ fn linear(
         }
         if !info.has_on_abort {
             for (i, &l) in live.iter().enumerate() {
-                if l && aborts[i] && !moves[i] {
-                    out.abort_unhandled
-                        .insert((v, NodeId(u32::try_from(i).unwrap_or(u32::MAX))));
+                let node = NodeId(u32::try_from(i).unwrap_or(u32::MAX));
+                if l && aborts[i] && !moves[i] && !spared.contains(&(v, node)) {
+                    out.abort_unhandled.insert((v, node));
                 }
             }
         }
@@ -641,15 +642,17 @@ fn multi(
     if multi.is_empty() {
         return;
     }
+    let spared: BTreeSet<(VarId, NodeId)> = f.spared_at.iter().copied().collect();
     for (&v, us) in uses {
-        if !f.var(v).once {
+        // once_var(V) :- immovable(V): a copy would give the value a new address.
+        if !f.var(v).once && !f.var(v).immovable {
             continue;
         }
         let gen = cx.mask(us.iter().copied());
         let kill = cx.mask(rebound.get(&v).cloned().unwrap_or_default());
         let live_out = cx.backward(&gen, &kill);
         for &p in &multi {
-            if live_out[p.index()] {
+            if live_out[p.index()] && !spared.contains(&(v, p)) {
                 out.live_across_multi.insert((v, p));
             }
         }
@@ -702,8 +705,9 @@ fn effects(cx: &Ctx<'_>, out: &mut Violations) {
             .collect();
         for (i, h) in f.handlers.iter().enumerate() {
             let id = HandlerId(u32::try_from(i).unwrap_or(u32::MAX));
-            // A clause that performs the effect again forwards it.
-            let forwards = h.forwards
+            // A root handler of `sim.run` forwards its effect, and so does a
+            // handler whose clause performs the effect again.
+            let forwards = h.sim_root
                 || f.clause_performs
                     .iter()
                     .any(|(g, e)| *g == id && *e == h.effect);

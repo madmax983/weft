@@ -1,0 +1,55 @@
+// A prelude function can drop values of a type parameter: `Vec.clear` drops
+// each element, `Task.detach` drops the result of the task, and
+// `Response.json` drops its argument. For a linear type each call is W0601. A
+// generic function that calls one drops values of its own type parameter
+// (ADR 0007).
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+
+fn reset(v: &Vec<Tx>) / mut(v) {
+    v.clear()   //~ W0601
+}
+fn clear_any<T>(v: &Vec<T>) / mut(v) { v.clear() }
+fn reset_generic(v: &Vec<Tx>) / mut(v) {
+    clear_any(v)   //~ W0601
+}
+fn detach_tx() / async {
+    scope { s =>
+        let t = s.spawn(|| begin())
+        t.detach()   //~ W0601
+    }
+}
+fn json_tx() -> Response {
+    Response.json(begin())   //~ W0601
+}
+
+// Plain data: nothing linear goes away.
+fn reset_ints(v: &Vec<u64>) / mut(v) {
+    v.clear()
+}
+fn clear_ints() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    clear_any(&v)
+}
+fn detach_int() / async {
+    scope { s =>
+        let t = s.spawn(|| 5)
+        t.detach()
+    }
+}
+fn json_int() -> Response {
+    Response.json(5)
+}
+
+fn main() / async {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    reset_ints(&v)
+    print(v.len())
+    clear_ints()
+    detach_int()
+    let r = json_int()
+}

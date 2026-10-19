@@ -321,3 +321,17 @@ fn w0803_and_w0805_tell_a_user_log_from_the_standard_log() {
         ]
     );
 }
+
+#[test]
+fn w0601_names_the_generic_item_value_and_the_type() {
+    let src = "linear struct Tx { id: u64 }\n    on abort = rollback\nfn rollback(tx: Tx) { let Tx(i) = tx }\nfn begin() -> Tx { Tx { id: 1 } }\nfn sink<T>(x: T) {}\nfn feed_tx(x: Tx, f: fn(Tx)) { f(x) }\nfn feed<T>(x: T, f: fn(T)) { f(x) }\n\nfn typed() {\n    feed_tx(begin(), sink)\n}\nfn generic() {\n    feed(begin(), sink)\n}\n";
+    let d = diags(src, "W0601");
+    assert_eq!(d.len(), 2, "{d:?}");
+    for x in &d {
+        assert_eq!(x.message, "`sink` drops a value of the linear type `Tx`");
+        assert_eq!(
+            notes(x),
+            ["`sink` can drop a value of its type parameter here; a linear value must be consumed on every normal path"]
+        );
+    }
+}

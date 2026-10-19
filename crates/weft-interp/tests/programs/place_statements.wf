@@ -1,0 +1,32 @@
+// A place in statement position (not the value of a block) names the place
+// only. It moves nothing and drops nothing. Its operands run.
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(id) = t; print("commit {id}") }
+struct P { tx: Tx, n: u64 }
+struct Fr: !Move { buf: [u64; 2], cur: &u64 in self.buf[] }
+
+fn idx(i: usize) -> usize { print("index {i}"); i }
+
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    v
+    print(v.len())
+    let r = &v[0]
+    v
+    v[idx(0)]
+    print(r + 1)
+    let t = Tx { id: 1 }
+    t
+    commit(t)
+    let p = P { tx: Tx { id: 2 }, n: 3 }
+    p.tx
+    p.n
+    let P(tx, n) = p
+    commit(tx)
+    let f = Fr { buf: [1, 2] }
+    f.cur = &f.buf[1]
+    let c = f.cur
+    f
+    print(c)
+}

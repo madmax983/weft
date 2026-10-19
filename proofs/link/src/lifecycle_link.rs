@@ -34,9 +34,9 @@
 //! * After that abort, the exec record is `Dropped`, and an exec resume
 //!   fails. The model record of a `multi` continuation does not change, and
 //!   the model allows a resume (`ex_multi_dropped_resume`). The interpreter
-//!   copies the clause frames of a `multi` continuation with the same record.
-//!   Thus a copy that resumes after another copy returns faults in exec, but
-//!   continues in the model.
+//!   gives each copy of a clause frame in a `multi` continuation a copy of its
+//!   record. So a copy that resumes after another copy returns resumes its own
+//!   record. Only a resume of the one record that the abort dropped fails.
 
 use vstd::prelude::*;
 use crate::lifecycle::{Continuation, ContState, ContError, Linear, LinState, LinError};

@@ -326,6 +326,9 @@ impl Lower<'_> {
 
     fn name(&mut self, id: &ast::Ident, span: Span) -> Val {
         if let Some(l) = self.lookup_local(&id.name) {
+            if self.locals[l].cont.as_ref().is_some_and(|k| k.fail) {
+                self.fail_resume(span);
+            }
             self.use_local(l);
             let loc = self.locals[l].clone();
             // A reference used as a value reads the places that it points into.
@@ -1733,7 +1736,7 @@ impl Lower<'_> {
         self.facts.handlers.push(HandlerInfo {
             effect: ident.clone(),
             is_std: def.is_std,
-            forwards: false,
+            sim_root: false,
             span,
         });
         self.handlers.push(HandlerFrame {
@@ -1748,12 +1751,23 @@ impl Lower<'_> {
         self.jumps.push(Jump::Fence("handled body"));
         let start = self.handle_start();
         let moves_before = (self.facts.moved_at.len(), self.facts.moved_part.len());
+        let ends_before = self.facts.scope_end.len();
+        // The handled body runs in a frame of its own, as a closure does in the
+        // interpreter. So the temporaries of its value go out of scope at its
+        // end, and an abort path finishes them with the body.
+        self.stmt_temps.push((self.frames.len() + 1, Vec::new()));
         let v = if def.has_multi() && !resumes_at_most_once(clauses) {
             self.handled_again(body, cap)
         } else {
             self.expr(body)
         };
+        self.close_stmt(expr_tail(body));
         let body_frees = self.body_frees(moves_before, start.locals);
+        // A clause parameter can point into a local of the body too.
+        let mut arg_frees = body_frees.clone();
+        arg_frees.extend(self.inner_frees(moves_before.0, ends_before));
+        arg_frees.sort();
+        arg_frees.dedup();
         self.jumps.pop();
         // A function value that performs through the handler cannot leave its body.
         let escaped = self.check_cap_escape(cap, &def.name, start, &v, span);
@@ -1771,6 +1785,8 @@ impl Lower<'_> {
         let mut clause_vals: Vec<Val> = Vec::new();
         let mut clause_locals: Vec<(Option<usize>, PlaceId)> = Vec::new();
         let mut aborts = false;
+        let mut clause_nodes = Vec::new();
+        let mut inner_caps = BTreeSet::new();
         for c in clauses {
             let Some(op) = def.ops.iter().find(|o| o.name == c.op.name).cloned() else {
                 self.err(
@@ -1794,6 +1810,9 @@ impl Lower<'_> {
             self.sums.push(Summary::default());
             let si = self.sums.len() - 1;
             self.push_frame(Some(si));
+            // The locals and the kept values from here are of the clause.
+            let clause_start = self.handle_start();
+            let first_node = NodeId(u32::try_from(self.facts.nodes.len()).unwrap_or(u32::MAX));
             let entry = self.start(c.span, "handler clause");
             // The detail names the capability: a diagnostic finds the clause that
             // a node runs (`clause_read` in `weft-check`).
@@ -1860,13 +1879,28 @@ impl Lower<'_> {
                 frees: body_frees.clone(),
                 cap,
                 depth: self.handlers.len(),
+                fail: def.is_std && def.name == "Fail",
             });
             let kv = self.locals[k].var;
             self.bind(kv, entry);
+            // The continuation is a capability of the clause: a closure that
+            // resumes it holds the capability, and it cannot leave the clause.
+            let kcap = self.facts.add_cap();
+            self.cont_caps.insert(kcap);
+            self.locals.get_mut(k).caps.insert(kcap);
+            self.clause_conts.push((kcap, self.handlers.len()));
             let resumes_before = self.resumes.len();
             self.jumps.push(Jump::Fence("handler clause"));
             let cv = self.block(&c.body);
             self.jumps.pop();
+            self.clause_conts.pop();
+            self.check_cont_escape(
+                kcap,
+                &op.name,
+                (clause_start, start.locals),
+                &cv,
+                (c.span, c.body.span),
+            );
             let returns = !matches!(self.inf.shallow(&cv.ty), Ty::Never);
             if returns {
                 self.unify(&ty, &cv.ty, c.body.span);
@@ -1890,6 +1924,9 @@ impl Lower<'_> {
             self.close_scope(si, super::fnval::Scope::Clause);
             let _ = self.take_repeats(si);
             let mut cs = self.sums.pop().unwrap_or_default();
+            let end_node = NodeId(u32::try_from(self.facts.nodes.len()).unwrap_or(u32::MAX));
+            clause_nodes.push((first_node, end_node));
+            inner_caps.extend(cs.own_caps.iter().copied());
             self.captures_live_at(&cs.captures.to_set(), entry);
             cs.param_roots = param_roots;
             // The places that the `resume`s give: the result of the operation
@@ -2005,13 +2042,15 @@ impl Lower<'_> {
             clause_sum,
             resumes,
             changes,
-            frees: body_frees,
+            frees: arg_frees,
             end: NodeId(0),
             aborts,
             locals: start.locals,
             clause_caps,
             clause_vars: Vec::new(),
             keeps: (!escaped).then(|| (def.name.clone(), span)),
+            clause_nodes,
+            inner_caps,
         };
         let calls: Vec<NodeId> = self
             .cap_calls
@@ -2379,6 +2418,23 @@ impl Lower<'_> {
         out.sort();
         out.dedup();
         out
+    }
+
+    /// Returns the roots that the handled body frees since the lengths `moves`
+    /// of `moved_at` and `ends` of `scope_end`: the owners that move, and the
+    /// owners that go out of scope, such as a local or a temporary of the body.
+    /// An operation can give a clause parameter a place inside them. The body
+    /// frees them before the `resume` of the clause returns.
+    fn inner_frees(&self, moves: usize, ends: usize) -> Vec<PlaceId> {
+        let moved = self.facts.moved_at.get(moves..).unwrap_or_default();
+        let ended = self.facts.scope_end.get(ends..).unwrap_or_default();
+        let vars: BTreeSet<VarId> = moved.iter().chain(ended).map(|&(v, _)| v).collect();
+        self.facts
+            .owner
+            .iter()
+            .filter(|(_, v)| vars.contains(v))
+            .map(|&(r, _)| r)
+            .collect()
     }
 
     /// At each resume of clause `cs` of operation `op`, a change of a place that

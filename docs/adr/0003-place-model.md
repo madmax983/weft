@@ -95,7 +95,14 @@ Status: accepted. Date: 2026-10-18.
   a later use of `p`, also of `p.b`, is a use after move. This is conservative.
 - A temporary value that is not plain data has an owner too. It goes out of scope at
   the end of its statement, as in the interpreter. The value of a block is part of the
-  enclosing statement, and the condition of `while` is a statement of its own.
+  enclosing statement, and the condition of `while` is a statement of its own. A
+  handled body runs in a frame of its own, as a closure does in the interpreter: the
+  temporaries of its value go out of scope at its end.
+- A place of a local in statement position, such as `v`, `p.tx` or `v[i]` on its own
+  line and not the value of its block, names the place only. It moves nothing and drops
+  nothing. Its operands run, for example the index `i`. The interpreter compiles it as
+  a place, and the checker sees a plain use. So the value is still in the local after
+  the statement, and a linear value still needs a consumer (W0601).
 - The locals and temporaries of a closure go out of scope at each node where the
   closure runs: a call of it, a call that takes it, a spawn. A handler clause runs at
   each operation that it handles. There it uses its captures, moves the captures that

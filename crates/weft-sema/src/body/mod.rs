@@ -672,6 +672,8 @@ struct ContInfo {
     cap: CapId,
     /// The depth of `Lower::handlers` in the clause: a handler above it is inside the clause.
     depth: usize,
+    /// The clause is a clause of `Fail.fail`: it cannot resume (W0504).
+    fail: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1094,6 +1096,10 @@ struct Handled {
     /// the effect and the span of the `handle`. `None` if the `handle` already
     /// reports W0313.
     keeps: Option<(String, Span)>,
+    /// The nodes of each clause, from the first to the one after the last.
+    clause_nodes: Vec<(NodeId, NodeId)>,
+    /// The capabilities of the handlers that the clauses install.
+    inner_caps: BTreeSet<CapId>,
 }
 
 /// The lowering state of one function.
@@ -1128,6 +1134,19 @@ pub struct Lower<'p> {
     task_scope: BTreeMap<TaskId, usize>,
     /// The capabilities of the root handlers that `sim.run` installs. A task reaches them.
     root_caps: BTreeSet<CapId>,
+    /// The capabilities of the continuations of the clauses. A closure that
+    /// calls `resume` holds the one of its clause (`check_cont_escape`).
+    cont_caps: BTreeSet<CapId>,
+    /// The clauses that are being lowered: the capability of the continuation,
+    /// and the number of handlers outside the `handle` of the clause.
+    clause_conts: Vec<(CapId, usize)>,
+    /// The nodes that can abort or resume more than once in a way that can
+    /// reach each value of the function: not only through an operation of a
+    /// local handler (`finish_spared`).
+    out_suspends: BTreeSet<NodeId>,
+    /// The operations of local handlers: the node, the capability and the
+    /// variables outside the handled body (`outside_vars`).
+    local_performs: Vec<(NodeId, CapId, Vec<VarId>)>,
     /// The effect of the handler behind each capability.
     cap_effects: BTreeMap<CapId, String>,
     ret_ty: Ty,
@@ -1343,6 +1362,10 @@ impl<'p> Lower<'p> {
             scopes: Vec::new(),
             task_scope: BTreeMap::new(),
             root_caps: BTreeSet::new(),
+            cont_caps: BTreeSet::new(),
+            clause_conts: Vec::new(),
+            out_suspends: BTreeSet::new(),
+            local_performs: Vec::new(),
             cap_effects: BTreeMap::new(),
             ret_ty: Ty::Unit,
             in_test: false,
@@ -1847,14 +1870,59 @@ impl<'p> Lower<'p> {
         }
     }
 
+    /// Node `n` can abort. The abort can reach each value of the function
+    /// (`out_suspends`).
     fn abortive(&mut self, n: NodeId) {
+        self.out_suspends.insert(n);
+        self.abortive_local(n);
+    }
+
+    /// Node `n` can abort, but only to a local handler: an operation of the
+    /// handler, or a `resume` of its clause. `finish_spared` decides which
+    /// values the abort can reach.
+    fn abortive_local(&mut self, n: NodeId) {
         self.facts.may_abort.push(n);
         self.sum().may_abort = true;
     }
 
+    /// Node `n` can resume a `multi` continuation more than once. The copy can
+    /// hold each value of the function (`out_suspends`).
     fn multi_node(&mut self, n: NodeId) {
+        self.out_suspends.insert(n);
+        self.multi_local(n);
+    }
+
+    /// Node `n` can resume a `multi` continuation of a local handler more than
+    /// once, as an operation of the handler (`finish_spared`).
+    fn multi_local(&mut self, n: NodeId) {
         self.facts.multi_at.push(n);
         self.sum().multi = true;
+    }
+
+    /// Returns the variables that live outside the handled body of the local
+    /// handler at index `hi` of `Lower::handlers`: the locals of the frames
+    /// below the handler, the temporaries of the statements around it, and the
+    /// values on their way to a node outside it. An operation of the handler
+    /// does not suspend them.
+    fn outside_vars(&self, hi: usize) -> Vec<VarId> {
+        let Some(h) = self.handlers.get(hi) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for f in &self.frames[..h.frames.min(self.frames.len())] {
+            out.extend(f.names.iter().map(|&(_, l)| self.locals[l].var));
+        }
+        for (depth, temps) in &self.stmt_temps {
+            if *depth <= h.frames {
+                out.extend(temps.iter().copied());
+            }
+        }
+        for &(v, j, _) in &self.in_flight {
+            if j <= h.jumps {
+                out.push(v);
+            }
+        }
+        out
     }
 
     /// Node `n` can run a clause of a local handler. A clause that does not
@@ -1926,7 +1994,7 @@ impl<'p> Lower<'p> {
             self.facts.performs_at.push((n, cap));
             self.sum().performs.insert(cap);
             if multi {
-                self.multi_node(n);
+                self.multi_local(n);
             }
         } else {
             self.facts.escapes_at.push((n, e.to_string()));
@@ -2244,7 +2312,11 @@ impl<'p> Lower<'p> {
         v.immovable = self.is_immovable(&t);
         v.nonportable = self.is_nonportable(&t);
         v.uniq = uniq;
-        v.once = v.linear || uniq || matches!(kind, VarKind::Continuation);
+        // A value that a `multi` resume cannot copy is not `many` either.
+        v.once = v.linear
+            || uniq
+            || matches!(kind, VarKind::Continuation)
+            || self.ty_has_strict(&t, Prop::Resource);
         v
     }
 
@@ -2833,14 +2905,14 @@ impl<'p> Lower<'p> {
             Ty::Fn(f) => match p {
                 Prop::Fns => true,
                 Prop::NotCopy => f.summary.is_some_and(|s| self.closures[s].literal),
-                Prop::Linear | Prop::NoOnAbort | Prop::Nonportable => {
+                Prop::Linear | Prop::NoOnAbort | Prop::Nonportable | Prop::Resource => {
                     f.summary.is_some_and(|s| self.closure_has(s, p, h))
                 }
                 Prop::Immovable | Prop::Refs => false,
             },
             Ty::Param(_) => p == Prop::NotCopy || (p == Prop::Linear && h.params),
             Ty::Cont(..) => p == Prop::NotCopy,
-            Ty::Scope => p == Prop::Nonportable,
+            Ty::Scope => matches!(p, Prop::Nonportable | Prop::Resource),
             _ => false,
         }
     }

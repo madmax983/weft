@@ -288,6 +288,11 @@ The proof needs these rules. Some are not obvious from the language description.
    (the body and the clauses can use it). A `resume` passes up the clause's
    environment (the resumed frames can perform through it and capture the clause
    frame). The two "suspension rule" mutations show that these checks are necessary.
+   A perform does not capture the frames below its handler frame. So the Weft checker
+   applies the rules at an operation of a local handler to the values of its handled
+   body only (`spared_at`). If a clause of the handler performs through an outer
+   capability, the clause passes the environment up again, and the values outside the
+   body count at the operation too.
 2. **A usable `once` continuation is a `once` value for the multi rule.** A clause that
    holds a fresh `k` must not perform a `multi` operation through an outer capability,
    and must not call code that can. Otherwise a copy of the clause frame resumes `k`
@@ -303,6 +308,14 @@ The proof needs these rules. Some are not obvious from the language description.
    that an inner continuation is older than the one that holds it.
 6. **Clauses run in the handle-site environment.** A clause does not get the new
    capability, and a clause returns no capabilities.
+7. **`fail` does not resume.** The model has no value for the code after a failure.
+   The Weft checker rejects a resume in a clause of `Fail.fail`, also in a closure
+   (W0504, ADR 0005).
+8. **`on abort` is atomic.** The model runs `on abort` in one step. The Weft checker
+   lets an `on abort` function perform only the standard effects that the root
+   handlers serve, not `fail`, and change only the value that it gets (W0118, ADR
+   0007). A root handler serves the operation on the task itself: it does not capture
+   frames into a handler of the program.
 
 ## Scope and limitations
 
@@ -316,11 +329,15 @@ The proof needs these rules. Some are not obvious from the language description.
   checker states (as in the borrowing proof).
 * **One task.** Cancellation is a nondeterministic abort at any perform, up to the
   handler of that perform. Whole-task cancellation is the case where that handler is
-  the root (scheduler) handler. `fail` is an operation whose clause does not resume.
-* **`on abort` is atomic.** It cannot perform or fail.
+  the root (scheduler) handler. `fail` is an operation whose clause does not resume
+  (rule 7 mirrors it).
+* **`on abort` is atomic.** It cannot perform or fail (rule 8 mirrors it).
 * **Deep handlers only.** A resume puts the handler frame back.
-* **Spec checker.** `check` is a Verus spec. The exec checker in
-  `crates/weft-verified` is not linked to it here.
+* **Spec checker.** `check` is a Verus spec. `crates/weft-verified` has no effects
+  checker. The Weft checker applies the abort rule and the multi rule through the
+  suspension facts of sema (`may_abort`, `multi_at`, `clause_multi`, `body_multi`,
+  `resumes_at` and `spared_at`) and the spec rules of W0602 and W0503
+  (`spec/weft.dl`). That part is not linked to this model.
 * **No interaction with group borrowing.** References are not in this model.
 
 ## Files

@@ -1230,6 +1230,11 @@ impl Collector {
                 }
                 effects.drops = all;
             }
+            // A prelude function can drop values of a type parameter too.
+            if self.prog.mods[m].is_std {
+                let owner_name = owner.map(|o| self.prog.adts[o].name.as_str());
+                effects.drops.extend(std_drops(owner_name, &f.name.name));
+            }
             let declared = f.effects.is_some() || f.is_extern;
             self.prog.fns[id].sig = FnSig {
                 generics: gens,
@@ -2046,4 +2051,112 @@ pub fn in_place_order(params: &[ParamSig]) -> (Vec<usize>, Vec<Vec<usize>>, usiz
         }
     }
     (order, cycles, steps)
+}
+
+/// W0118: the effects of each `on abort` function, from its final signature.
+///
+/// The unwinder runs the function with the root handlers only (ADR 0007). So its
+/// row can name only the standard effects that the root handlers serve: not
+/// `fail`, and with no runtime none at all. It can change only the places of
+/// the value that it gets: not an `rc` group, and not a place that a reference in
+/// the value points to. The effects proof models `on abort` as atomic
+/// (`proofs/effects`), and this check mirrors that assumption.
+pub fn check_on_abort_rows(prog: &Program, sigs: &[FnSig], no_runtime: bool) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    for def in &prog.adts {
+        let Some(name) = &def.on_abort else {
+            continue;
+        };
+        let Some(ItemRef::Fn(f)) = prog.lookup(def.module, name) else {
+            continue;
+        };
+        let (Some(sig), Some(fd)) = (sigs.get(f), prog.fns.get(f)) else {
+            continue;
+        };
+        if !seen.insert(f) || fd.is_std {
+            continue;
+        }
+        let unit = prog.mods[fd.module].unit;
+        let span = fd.decl.name.span;
+        let e = &sig.effects;
+        let fails = e.named.contains("Fail");
+        let bad: Vec<String> = e
+            .named
+            .iter()
+            .chain(&e.task_effects)
+            .filter(|n| n.as_str() != "Fail" && (no_runtime || !effects::is_std(n)))
+            .map(|n| format!("`{}`", effects::in_signature(n)))
+            .collect::<BTreeSet<String>>()
+            .into_iter()
+            .collect();
+        if fails {
+            let mut d = Diagnostic::error(
+                "W0118",
+                format!(
+                    "`on abort` function `{}` can fail, and a failure there does not reach the handlers of the code that aborts",
+                    fd.name
+                ),
+                span,
+            )
+            .note("handle the failure inside the function, or do the work after a normal path");
+            d.unit = unit;
+            out.push(d);
+        }
+        if !bad.is_empty() {
+            let note = if no_runtime {
+                "with no runtime, no root handler serves an effect where the unwinder runs it"
+            } else {
+                "an `on abort` function can perform only the standard effects other than `fail`"
+            };
+            let mut d = Diagnostic::error(
+                "W0118",
+                format!(
+                    "`on abort` function `{}` performs {}, but the unwinder runs it with the root handlers only",
+                    fd.name,
+                    bad.join(", ")
+                ),
+                span,
+            )
+            .note(note);
+            d.unit = unit;
+            out.push(d);
+        }
+        let outside: Vec<String> = e
+            .muts
+            .iter()
+            .filter(|m| m.root != SigRoot::Param(0) || m.steps.contains(&SigStep::Held))
+            .map(|m| format!("`{}`", m.text))
+            .collect();
+        if !outside.is_empty() {
+            let mut d = Diagnostic::error(
+                "W0118",
+                format!(
+                    "`on abort` function `{}` changes {}, a place outside the value that it gets",
+                    fd.name,
+                    outside.join(", ")
+                ),
+                span,
+            )
+            .note(
+                "the unwinder runs it where a node aborts, and that node does not state the change",
+            );
+            d.unit = unit;
+            out.push(d);
+        }
+    }
+    out
+}
+
+/// Returns the type parameters, by index in the signature, of the values that a
+/// prelude function drops (ADR 0007). `Vec.clear` drops each element,
+/// `Task.detach` the result of the task, and `Response.json` its argument. Sema
+/// lowers `detach` itself, so its entry is for the signature only.
+fn std_drops(owner: Option<&str>, name: &str) -> Vec<usize> {
+    match (owner, name) {
+        (Some("Vec"), "clear") | (Some("Task"), "detach") | (Some("Response"), "json") => {
+            vec![0]
+        }
+        _ => Vec::new(),
+    }
 }

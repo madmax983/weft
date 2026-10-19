@@ -74,11 +74,12 @@ fn none_from_each() {
     match o { Some(l) => unlock(l), None => {} }
 }
 // The value of the body moves into the value of the `handle` at the end of the
-// body. When the clause does not resume, `a` does not move.
+// body. When the clause does not resume, `a` does not move. The abort does not
+// reach `a`: it is a local outside the handled body (no W0602).
 fn body_value_moves() {
     let a = Some(lock())
     let o = handle Op { fn op() { Some(lock()) } } in {
-        op()   //~ W0602
+        op()
         a
     }
     match o { Some(l) => unlock(l), None => {} }

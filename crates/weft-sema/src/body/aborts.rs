@@ -80,4 +80,45 @@ impl Lower<'_> {
         }
         self.handled = handled;
     }
+
+    /// Adds `spared_at(V, P)` for each operation `P` of a local handler. The
+    /// operation suspends the handled body only: an abort unwinds its values,
+    /// and a `multi` resume copies them. A value outside the body is spared if
+    /// nothing else at `P` suspends, and if no clause of the handler suspends
+    /// the code outside the body. A clause does that when it performs through
+    /// a handler outside its `handle`, or calls code that can (rule 1 of
+    /// `proofs/effects`: the `handle` passes up the environment to the clauses).
+    /// The resumes of a clause do not count: the resumed body suspends at its
+    /// own nodes, where the values outside the body are live.
+    pub(super) fn finish_spared(&mut self) {
+        if self.local_performs.is_empty() {
+            return;
+        }
+        let mut by_node: BTreeMap<NodeId, Vec<CapId>> = BTreeMap::new();
+        for (n, c, _) in &self.local_performs {
+            by_node.entry(*n).or_default().push(*c);
+        }
+        // The handlers whose clauses do not suspend the code outside the body.
+        let contained: BTreeSet<CapId> = self
+            .handled
+            .iter()
+            .filter(|h| {
+                h.clause_nodes.iter().all(|&(a, b)| {
+                    self.out_suspends.range(a..b).next().is_none()
+                        && by_node
+                            .range(a..b)
+                            .flat_map(|(_, cs)| cs)
+                            .all(|c| h.inner_caps.contains(c))
+                })
+            })
+            .map(|h| h.cap)
+            .collect();
+        let mut spared = Vec::new();
+        for (n, cap, vars) in &self.local_performs {
+            if !self.out_suspends.contains(n) && contained.contains(cap) {
+                spared.extend(vars.iter().map(|&v| (v, *n)));
+            }
+        }
+        self.facts.spared_at.extend(spared);
+    }
 }

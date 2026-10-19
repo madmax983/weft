@@ -1,0 +1,72 @@
+// An operation of a local handler suspends only the handled body: the
+// continuation holds the frames from the handler up to the operation. So an
+// abort or a `multi` resume there reaches only the values of the handled body.
+// A value from outside the body meets the `handle` node, and only what the
+// outer handlers can do counts there (rule 1 of `proofs/effects`). If a clause
+// of the handler performs through an outer handler, the operation suspends the
+// code outside the body too (ADR 0005, ADR 0007).
+effect Ask { fn ask() -> u64 }
+effect Pick { multi fn pick() -> bool }
+effect Choice { multi fn choose() -> bool }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+
+fn inline_abort() {
+    let l = Lk { id: 1 }
+    let n = handle Ask { fn ask() { 0 } } in { ask() + 1 }
+    print(n)
+    unlock(l)
+}
+
+fn inline_multi() {
+    let l = Lk { id: 2 }
+    let out = 0
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        if pick() { out += 1 } else { out += 2 }
+    }
+    print(out)
+    unlock(l)
+}
+
+// A value of the handled body is live across the operation.
+fn inside_abort() {
+    let n = handle Ask { fn ask() { 0 } } in {
+        let l = Lk { id: 3 }
+        let x = ask()   //~ W0602
+        unlock(l)
+        x
+    }
+    print(n)
+}
+
+fn inside_multi() {
+    let out = 0
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let l = Lk { id: 4 }
+        if pick() { out += 1 } else { out += 2 }   //~ W0503 W0602
+        unlock(l)
+    }
+    print(out)
+}
+
+// A clause that fails suspends the code outside the body too.
+fn clause_fails() / fail {
+    let l = Lk { id: 5 }
+    let n = handle Ask { fn ask() { fail("no"); 0 } } in { ask() + 1 }   //~ W0602
+    print(n)
+    unlock(l)
+}
+
+// A clause that performs a `multi` operation of an outer handler copies the
+// code outside its own handled body.
+fn clause_chooses() / Choice {
+    let l = Lk { id: 6 }
+    let n = handle Ask { fn ask() { if choose() { 1 } else { 2 } } } in { ask() + 1 }   //~ W0503 W0602
+    print(n)
+    unlock(l)
+}
+
+fn main() {
+    inline_abort()
+    inline_multi()
+}

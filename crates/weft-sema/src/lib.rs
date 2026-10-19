@@ -203,6 +203,7 @@ fn analyze_bounded(
     };
     let inferred = infer::infer(&prog, &mut sigs, &user_fns, limit, &lower);
     diags.extend(inferred.diags);
+    diags.extend(program::check_on_abort_rows(&prog, &sigs, opts.no_runtime));
     let mut bodies = Vec::new();
     let mut work = Work::default();
     for (&f, l) in user_fns.iter().zip(inferred.lowered) {

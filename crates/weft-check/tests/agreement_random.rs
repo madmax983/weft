@@ -91,11 +91,11 @@ fn build(s: &Shape) -> FnFacts {
             Span::default(),
         );
     }
-    for &(is_std, forwards, e) in &s.handlers {
+    for &(is_std, sim_root, e) in &s.handlers {
         f.handlers.push(HandlerInfo {
             effect: format!("E{}", e % 2),
             is_std,
-            forwards,
+            sim_root,
             span: Span::default(),
         });
     }
@@ -115,7 +115,7 @@ fn build(s: &Shape) -> FnFacts {
     let nh = s.handlers.len();
     let cap = |x: usize| CapId(u32::try_from(x).unwrap() % caps);
     for &(rel, a, b, c) in &s.rels {
-        match rel % 35 {
+        match rel % 36 {
             0 => f.points_into.push((v(a), p(b))),
             1 => f.mutates_at.push((n(a), p(b))),
             2 => f.reads_at.push((n(a), p(b))),
@@ -166,6 +166,7 @@ fn build(s: &Shape) -> FnFacts {
             32 => f.unwound_at.push((v(a), n(b))),
             33 => f.releases_at.push((n(a), p(b))),
             34 => f.writes_via.push((n(a), v(b))),
+            35 => f.spared_at.push((v(a), n(b))),
             _ => {}
         }
     }
