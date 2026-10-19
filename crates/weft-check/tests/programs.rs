@@ -10,8 +10,8 @@
 //! mark every line with a task closure.
 //! The file markers `// weft: library` and `// weft: no-runtime` set the options,
 //! as in `weft check`. For every body, the production checker must agree with
-//! the Datalog spec. Each violation relation of the spec, and `stealable`, must
-//! hold for some body of the corpus.
+//! the Datalog spec. Each rule of the spec must fire, and each violation
+//! relation of the spec and `stealable` must hold, for some body of the corpus.
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
@@ -19,6 +19,7 @@ use std::fs;
 use std::path::Path;
 
 use weft_check::{agreement, bridge, check_source, Checked};
+use weft_datalog::{evaluate, parse_program_named, EvalOptions, Value};
 use weft_sema::Options;
 use weft_syntax::diag::Severity;
 use weft_syntax::SourceFile;
@@ -134,27 +135,56 @@ fn corpus_paths() -> Vec<std::path::PathBuf> {
     paths
 }
 
-/// Each violation relation of the spec, and `stealable`, holds for at least one
-/// body of the corpus. So each rule has a corpus program that exercises it.
+/// Each rule of the spec derives a fact for at least one body of the corpus, and
+/// each violation relation and `stealable` hold for one. One probe rule
+/// `rule_fired(I)` with the body of rule `I` for each rule `I` shows the rules.
+/// So a new rule, also one that derives no sink relation, needs a corpus
+/// program.
 #[test]
 fn corpus_exercises_every_rule() {
+    let spec = bridge::spec();
+    let mut probes = String::new();
+    for (i, rule) in spec.rules().iter().enumerate() {
+        let body: Vec<String> = rule.body.iter().map(ToString::to_string).collect();
+        let _ = writeln!(probes, "rule_fired({i}) :- {}.", body.join(", "));
+    }
+    let mut program = spec.clone();
+    program.extend(parse_program_named("rule probes", &probes).expect("the probes parse"));
     let mut want: BTreeSet<&str> = bridge::VIOLATION_RELATIONS.into_iter().collect();
     want.insert("stealable");
-    let mut seen = BTreeSet::new();
+    let (mut seen, mut fired) = (BTreeSet::new(), BTreeSet::new());
     for path in corpus_paths() {
         let src = fs::read_to_string(&path).expect("the program is readable");
         let checked = check_source("corpus.wf", &src, Options::from_markers(&src));
         for b in &checked.analysis.bodies {
-            let out = bridge::evaluate_spec(&b.facts, false).expect("the spec runs");
+            let opts = EvalOptions { provenance: false };
+            let out = evaluate(&program, bridge::database(&b.facts), opts).expect("the spec runs");
             for rel in &want {
                 if !out.tuples(rel).is_empty() {
                     seen.insert(*rel);
+                }
+            }
+            for t in out.tuples("rule_fired") {
+                if let [Value::Int(i)] = t.as_slice() {
+                    fired.insert(*i);
                 }
             }
         }
     }
     let missing: Vec<&&str> = want.iter().filter(|r| !seen.contains(*r)).collect();
     assert!(missing.is_empty(), "no corpus program derives {missing:?}");
+    let missing: Vec<String> = spec
+        .rules()
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !i64::try_from(*i).is_ok_and(|i| fired.contains(&i)))
+        .map(|(_, r)| format!("{}: {r}", r.loc))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "no corpus program fires these rules:\n{}",
+        missing.join("\n")
+    );
 }
 
 #[test]

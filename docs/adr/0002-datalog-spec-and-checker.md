@@ -57,7 +57,8 @@ with it. Polonius showed that a general engine is slow for Rust, but the model i
   8. the generator of `crates/weft-check/tests/agreement_random.rs` for a new input
      relation.
 - Tests find some missed edits: the agreement tests (on the corpus and on random facts),
-  `corpus_exercises_every_rule` (each sink relation holds for some corpus body),
+  `corpus_exercises_every_rule` (each rule of the spec fires, and each sink relation
+  holds, for some corpus body: a probe rule with the body of each rule shows it),
   `every_code_in_the_sources_is_explained` (each code has a text) and
   `every_code_has_a_test` (a test names each code of the table).
 - The corpus runner counts the errors. A marker `//~ W0601 W0601` expects two errors
