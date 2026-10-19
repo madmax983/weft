@@ -335,7 +335,7 @@ impl Lower<'_> {
             ty,
             parts,
             caps,
-            task: a.task.or(b.task),
+            tasks: a.tasks.union(&b.tasks).copied().collect(),
             ..Val::default()
         }
     }

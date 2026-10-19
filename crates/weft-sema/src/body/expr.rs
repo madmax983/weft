@@ -6,7 +6,9 @@ use super::{
     NodeId, PathRef, Pattern, PlaceId, Rc, RootKind, Span, StrPart, Summary, Ty, UnOp, Val, VarId,
     VarKind,
 };
-use weft_facts::{Step, StepKind};
+use std::collections::BTreeSet;
+
+use weft_facts::{Step, StepKind, TaskId};
 
 impl Lower<'_> {
     /// Lowers an expression and returns its value.
@@ -337,7 +339,7 @@ impl Lower<'_> {
                 local: Some(l),
                 uniq: loc.uniq,
                 summary: loc.summary,
-                task: loc.task,
+                tasks: loc.tasks,
                 parts: None,
                 place,
                 fn_param: loc.fn_param,
@@ -900,11 +902,12 @@ impl Lower<'_> {
         refs.extend(b.refs.iter().copied());
         let uniq = a.uniq && b.uniq;
         // A new task handle, for example of a scope with a spawn at its end.
-        let task = [&a, &b]
+        let tasks: BTreeSet<TaskId> = [&a, &b]
             .iter()
             .filter(|x| x.local.is_none() && !matches!(self.inf.shallow(&x.ty), Ty::Never))
-            .find_map(|x| x.task)
-            .filter(|_| else_.is_some());
+            .flat_map(|x| x.tasks.iter().copied())
+            .filter(|_| else_.is_some())
+            .collect();
         // The value of either branch: function values in it join.
         let v = if else_.is_none() {
             Val {
@@ -931,7 +934,7 @@ impl Lower<'_> {
             var: None,
             local: None,
             place: None,
-            task,
+            tasks,
             ..v
         }
     }
@@ -977,7 +980,7 @@ impl Lower<'_> {
         let mut refs = Vec::new();
         let mut reached = false;
         let mut joined: Option<Val> = None;
-        let mut task = None;
+        let mut tasks: BTreeSet<TaskId> = BTreeSet::new();
         let before = self.branch_state();
         let mut ends = Vec::new();
         let mut end_nodes = Vec::new();
@@ -998,7 +1001,7 @@ impl Lower<'_> {
             self.flush(expr_tail(&arm.body));
             if !matches!(self.inf.shallow(&v.ty), Ty::Never) {
                 if v.local.is_none() {
-                    task = task.or(v.task);
+                    tasks.extend(v.tasks.iter().copied());
                 }
                 self.unify(&result, &v.ty, arm.body.span);
                 // The function values of the arms join.
@@ -1043,11 +1046,11 @@ impl Lower<'_> {
             self.check_exhaustive(&pats, &sty, span);
         }
         match joined {
-            Some(j) if self.has_fn(&j.ty) => Val { refs, task, ..j },
+            Some(j) if self.has_fn(&j.ty) => Val { refs, tasks, ..j },
             _ => Val {
                 ty: result,
                 refs,
-                task,
+                tasks,
                 ..Val::default()
             },
         }
@@ -1353,7 +1356,7 @@ impl Lower<'_> {
         let tail = falls.then_some(&v);
         for rv in returned.iter().chain(tail) {
             sum.ret_caps.extend(self.val_caps(rv));
-            sum.ret_tasks.extend(rv.task);
+            sum.ret_tasks.extend(rv.tasks.iter().copied());
             if let Ty::Fn(f) = self.inf.shallow(&rv.ty) {
                 let info = self.fn_info(rv);
                 let r = self.value_summary(&info, f.effects.as_deref());

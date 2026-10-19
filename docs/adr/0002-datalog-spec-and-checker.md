@@ -27,7 +27,8 @@ with it. Polonius showed that a general engine is slow for Rust, but the model i
   signatures, `in` places (W0203, W0204), moves out of a borrowed place (W0303),
   reference fields (W0605), patterns that miss a value (W0120), W0313, W0314, W0315,
   W0406, W0705, effect inference that does not become stable (W0704) or does not
-  converge (W0706), W0802 and the `fip` checks. The driver reports W0803 and W0805. The
+  converge (W0706), a loop whose lowering does not become stable (W0707), W0802 and
+  the `fip` checks. The driver reports W0803 and W0805. The
   CLI reports unknown file markers (W0804), and the package loader reports W0901 and
   W0902.
 - W0120 checks a matrix of the arm patterns, with a budget of 20 000 steps for each

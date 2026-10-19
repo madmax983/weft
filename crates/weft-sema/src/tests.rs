@@ -1207,3 +1207,136 @@ fn many_locals_and_part_values_are_fast() {
     assert_eq!(holders, 1);
     assert!(start.elapsed().as_secs() < 10, "{:?}", start.elapsed());
 }
+
+/// A loop with a chain of `n` reference locals. The last one gets a place in
+/// `w`, and each iteration moves the places one local down the chain.
+fn ref_chain(n: usize) -> String {
+    let mut s = String::from("struct E { hp: i32 }\nfn f(d: &Vec<i32>, w: &Vec<E>) {\n");
+    for i in 0..n {
+        let _ = writeln!(s, "    let r{i} = &d[0]");
+    }
+    s.push_str("    let m = 0\n    while m < 3 {\n");
+    for i in 0..n - 1 {
+        let _ = writeln!(s, "        r{i} = r{}", i + 1);
+    }
+    let _ = writeln!(
+        s,
+        "        r{} = &w[0].hp\n        m += 1\n    }}\n    print(r0)\n}}",
+        n - 1
+    );
+    s
+}
+
+/// Returns the displays of the places that local `name` of `f` points into.
+fn points_of(a: &Analysis, name: &str) -> Vec<String> {
+    let f = a.bodies.iter().find(|b| b.facts.name == "f").unwrap();
+    let mut out: Vec<String> = f
+        .facts
+        .points_into
+        .iter()
+        .filter(|(v, _)| f.facts.var(*v).name == name)
+        .map(|&(_, p)| {
+            let info = f.facts.place(p);
+            let wild = if info.is_wildcard() {
+                " (wildcard)"
+            } else {
+                ""
+            };
+            format!("{}{wild}", info.display)
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+#[test]
+fn a_loop_chain_iterates_until_the_values_are_stable() {
+    // A chain of n locals needs one pass for each local, and one more pass that
+    // shows that the values are stable. The old lowering stopped after 8 passes.
+    for n in [3, 10, 30] {
+        let a = analyze_units(&ref_chain(n), &[]);
+        assert_eq!(codes(&a), Vec::new(), "n={n}");
+        assert_eq!(a.loop_passes, n + 1, "n={n}");
+        assert!(
+            points_of(&a, "r0").contains(&"w[].hp".to_string()),
+            "n={n}: {:?}",
+            points_of(&a, "r0")
+        );
+    }
+}
+
+#[test]
+fn a_reference_that_goes_deeper_becomes_a_wildcard_place() {
+    // Each iteration goes one level deeper. After the widening, a new place
+    // below a place at the head becomes the wildcard place of that place, so
+    // the loop stops.
+    let src = "struct Node { val: u64, next: Vec<Node> }
+fn f(head: &Node, n: u64) -> u64 {
+    let cur = head
+    let i = 0
+    while i < n {
+        cur = &cur.next[0]
+        i += 1
+    }
+    cur.val
+}
+";
+    let a = analyze_units(src, &[]);
+    assert_eq!(codes(&a), Vec::new());
+    let widen = crate::body::stmt::LOOP_WIDEN_AFTER;
+    assert!(a.loop_passes <= widen + 2, "{}", a.loop_passes);
+    let deep = format!("head{}.. (wildcard)", ".next[]".repeat(widen - 1));
+    assert!(
+        points_of(&a, "cur").contains(&deep),
+        "{:?}",
+        points_of(&a, "cur")
+    );
+}
+
+#[test]
+fn a_loop_that_is_not_stable_at_the_bound_is_an_error() {
+    let units = vec![prelude(), unit("", &ref_chain(10))];
+    let a = crate::analyze_with_loop_bound(&units, Options::default(), 4);
+    assert_eq!(codes(&a), vec![(ROOT_UNIT, "W0707".to_string())]);
+    assert!(
+        a.diags[0].message.contains("4 passes"),
+        "{}",
+        a.diags[0].message
+    );
+    let a = crate::analyze_with_loop_bound(&units, Options::default(), 11);
+    assert_eq!(codes(&a), Vec::new());
+}
+
+#[test]
+fn task_handles_that_a_loop_swaps_join_each_task() {
+    // After the loop each handle can hold each task, so each `join` joins both.
+    let src = "fn f() / async {
+    scope { s =>
+        let t0 = s.spawn(|| print(1))
+        let t1 = s.spawn(|| print(2))
+        let m = 0
+        while m < 3 {
+            let x = t0
+            t0 = t1
+            t1 = x
+            m += 1
+        }
+        t0.join()
+        t1.join()
+    }
+}
+";
+    let a = analyze_units(src, &[]);
+    assert_eq!(codes(&a), Vec::new());
+    let f = a.bodies.iter().find(|b| b.facts.name == "f").unwrap();
+    for t in 0..2 {
+        let joins = f
+            .facts
+            .joined_at
+            .iter()
+            .filter(|(x, _)| x.index() == t)
+            .count();
+        assert!(joins >= 2, "task {t}: {:?}", f.facts.joined_at);
+    }
+}

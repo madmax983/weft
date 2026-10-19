@@ -34,7 +34,7 @@ mod flow;
 mod fnval;
 mod oprefs;
 mod repeat;
-mod stmt;
+pub mod stmt;
 
 use fnval::{Applied, FnInfo, OpArg, Reach};
 
@@ -214,6 +214,8 @@ pub struct Lowered {
     pub effects: EffectSig,
     /// Type and signature diagnostics.
     pub diags: Vec<Diagnostic>,
+    /// The passes of the loop bodies (`lower_loop`), also of nested loops.
+    pub loop_passes: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -235,7 +237,8 @@ struct Local {
     root: Option<PlaceId>,
     refs: Vec<PlaceId>,
     uniq: bool,
-    task: Option<TaskId>,
+    /// The tasks of the task handles that the local can hold.
+    tasks: BTreeSet<TaskId>,
     summary: Option<usize>,
     /// A function parameter: the summary index of its body and the parameter index.
     fn_param: Option<(usize, usize)>,
@@ -260,7 +263,8 @@ struct Val {
     local: Option<usize>,
     uniq: bool,
     summary: Option<usize>,
-    task: Option<TaskId>,
+    /// The tasks of the task handles that the value can be.
+    tasks: BTreeSet<TaskId>,
     parts: Option<Vec<Self>>,
     place: Option<LVal>,
     fn_param: Option<(usize, usize)>,
@@ -612,6 +616,10 @@ pub struct Lower<'p> {
     /// The new values of whole locals in their own part of the graph: the
     /// variable, the node and the capabilities of the value.
     bind_caps: Vec<(VarId, NodeId, BTreeSet<CapId>)>,
+    /// The passes of the loop bodies so far. A loop rewind keeps it.
+    loop_passes: usize,
+    /// The most passes of one loop, for a test. `None`: [`stmt::loop_pass_bound`].
+    loop_bound: Option<usize>,
 }
 
 impl<'p> Lower<'p> {
@@ -711,7 +719,17 @@ impl<'p> Lower<'p> {
             held_of: BTreeMap::new(),
             abort_ctx: BTreeMap::new(),
             bind_caps: Vec::new(),
+            loop_passes: 0,
+            loop_bound: None,
         }
+    }
+
+    /// Sets the most passes of the lowering of one loop. A loop that needs more
+    /// gets W0707. Only a test lowers the bound.
+    #[must_use]
+    pub const fn with_loop_bound(mut self, bound: Option<usize>) -> Self {
+        self.loop_bound = bound;
+        self
     }
 
     fn err(&mut self, code: &str, msg: impl Into<String>, span: Span) {
@@ -1471,7 +1489,7 @@ impl<'p> Lower<'p> {
             root: None,
             refs: Vec::new(),
             uniq,
-            task: None,
+            tasks: BTreeSet::new(),
             summary: None,
             fn_param: None,
             cont: None,
@@ -1548,8 +1566,8 @@ impl<'p> Lower<'p> {
         for &p in &v.refs {
             self.point_local(l, p);
         }
-        if v.task.is_some() {
-            self.locals[l].task = v.task;
+        if !v.tasks.is_empty() {
+            self.locals[l].tasks.clone_from(&v.tasks);
         }
         // A function value. A new value of the local joins the old one: a later
         // call can call either.

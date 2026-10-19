@@ -1,5 +1,7 @@
 //! Calls: functions, methods, constructors, effect operations and built-ins.
 
+use std::collections::BTreeSet;
+
 use super::fnval::{Callee, Given};
 use super::{
     ast, effects, AdtKind, Arg, CapId, ContInfo, Expr, ExprKind, FnId, FnSig, FnTy, ItemRef, Lower,
@@ -164,8 +166,8 @@ impl Lower<'_> {
                 };
                 let local = lv.owner;
                 let var = local.map(|l| self.locals[l].var);
-                let (task, summary) = local.map_or((None, None), |l| {
-                    (self.locals[l].task, self.locals[l].summary)
+                let (tasks, summary) = local.map_or((BTreeSet::new(), None), |l| {
+                    (self.locals[l].tasks.clone(), self.locals[l].summary)
                 });
                 Val {
                     ty: lv.ty.clone(),
@@ -173,7 +175,7 @@ impl Lower<'_> {
                     var,
                     local,
                     place: Some(lv),
-                    task,
+                    tasks,
                     summary,
                     ..Val::default()
                 }
@@ -1416,11 +1418,11 @@ impl Lower<'_> {
             }));
         }
         // The function values and the task handle in the result.
-        let (mut caps, task) = callee.summary.map_or_else(
-            || (std::collections::BTreeSet::new(), None),
+        let (mut caps, tasks) = callee.summary.map_or_else(
+            || (BTreeSet::new(), BTreeSet::new()),
             |s| {
                 let sum = &self.closures[s];
-                (sum.ret_caps.clone(), sum.ret_tasks.first().copied())
+                (sum.ret_caps.clone(), sum.ret_tasks.clone())
             },
         );
         // The value can copy a function value out of what a reference argument
@@ -1457,7 +1459,7 @@ impl Lower<'_> {
             ty,
             refs,
             summary,
-            task,
+            tasks,
             caps,
             ..Val::default()
         }
@@ -2207,7 +2209,7 @@ impl Lower<'_> {
             .map_or(Ty::Error, |task| Ty::Adt(task, vec![ret]));
         Val {
             ty,
-            task: Some(t),
+            tasks: BTreeSet::from([t]),
             ..Val::default()
         }
     }
@@ -2218,15 +2220,16 @@ impl Lower<'_> {
         if let Some(var) = rv.var {
             self.move_var(var, n);
         }
-        let task = rv
-            .task
-            .or_else(|| rv.local.and_then(|l| self.locals[l].task));
+        let tasks = match rv.local {
+            Some(l) if rv.tasks.is_empty() => self.locals[l].tasks.clone(),
+            _ => rv.tasks.clone(),
+        };
         let ret = match self.deref_ty(&rv.ty) {
             Ty::Adt(_, args) => args.first().cloned().unwrap_or(Ty::Error),
             _ => Ty::Error,
         };
         if join {
-            if let Some(t) = task {
+            for t in tasks {
                 self.facts.joined_at.push((t, n));
             }
             self.perform_effect(n, "Async");

@@ -61,9 +61,32 @@ Status: accepted. Date: 2026-10-18.
   declared place, and a part of a local writes what the local points into.
 - A loop iteration starts with the values that the iterations before it gave. When the
   body gives a local from outside the loop a new value (a reference, a function value or
-  a task), the lowering joins it into the value at the loop head and lowers the body
-  again, until the values are stable. So a mutation through `cur` before `cur = b` in
-  the body also mutates `b`. After eight passes the values of the last pass stay.
+  a task handle), the lowering joins it into the value at the loop head and lowers the
+  body again, until the values are stable. So a mutation through `cur` before `cur = b`
+  in the body also mutates `b`. A chain of locals (`r0 = r1; r1 = r2; ...`) needs one
+  pass for each local. The join keeps the places, the function values and the tasks of
+  the head and of the end of the pass, so the values only grow.
+- After eight passes the join widens what still changes, so that the values become
+  stable:
+  - A new place below a place that the value had at the head becomes the wildcard place
+    of the deepest such place: `cur = &cur.next[0]` gets `cur.next[]...next[]..`.
+  - After one more pass for each local outside the loop and 16 more, a new place with
+    no such place above it becomes the wildcard place of its root.
+  - A function value that still changes becomes a function value that the body does not
+    know. It can still do what the joined values do.
+  - The tasks of a task handle join. A `join` of the handle joins each of them.
+  The widened value includes the value that it replaces: a wildcard place `q..` stands
+  for each place at or below `q`, and an unknown function value can do what any
+  function value can do with the places that it gets. A widened value is a value at the
+  loop head, so the next pass lowers the body with it. The loop stops when a pass gives
+  no value that the head does not have (by place shape, also for a root that the pass
+  made again). Then the head values include the values of each iteration: those of the
+  first iteration, and by induction those that the body makes from them. So the facts
+  of the last pass hold for each iteration. Widened places are finite: wildcard places
+  of known places and of roots, and a wildcard place of a wildcard place is itself. So
+  the loop stops. If a loop is not stable after twice the number of passes before the
+  root widening, and 32 more, the lowering reports W0707, an error. It never keeps the
+  values of the last pass with no error.
 - A closure refers to the variables that it captures, as the interpreter captures their
   cells. A captured value of plain data stays readable after its scope ends, so such a
   closure can leave the scope. A closure that captures another value cannot outlive the
@@ -124,9 +147,11 @@ Status: accepted. Date: 2026-10-18.
 - Element places are not index-sensitive. A mutation of one element can invalidate a
   reference into the unstable part of another element. This is safe and conservative.
 - A reference that goes deeper in each loop iteration (`cur = &cur.next[0]`) has the
-  places of eight iterations only. A reference that a deeper change invalidates is below
-  one of these places through an unstable step, so a change there invalidates it too. A
-  signature check does not see the deeper places.
+  places of seven iterations and the wildcard place below them. A change that overlaps
+  the base of the wildcard place invalidates it, also through stable steps only. A
+  signature check sees the wildcard place, so it needs a written `in p..` or `mut(p..)`.
+- A loop that needs more than eight passes can get a function value that the body does
+  not know. A call of it lends its arguments, can abort, and performs its effect row.
 - `points_into` is not flow-sensitive. A reference that got a place inside a block, and
   then a place outside it before the block ends, is still invalid after the end. This
   is the same imprecision as for mutations.

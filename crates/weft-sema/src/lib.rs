@@ -100,6 +100,8 @@ pub struct Analysis {
     pub diags: Vec<Diagnostic>,
     /// The number of body lowerings that effect inference used.
     pub lowerings: usize,
+    /// The passes of the loop bodies in the last lowering of each body.
+    pub loop_passes: usize,
 }
 
 /// Parses the prelude.
@@ -136,16 +138,27 @@ fn unit_of(prog: &Program, m: program::ModId) -> usize {
 /// row grows past the height of its lattice, the inference has a bug: it
 /// stops, and each function whose signature can still change gets W0706.
 pub fn analyze(units: &[Unit], opts: Options) -> Analysis {
-    analyze_bounded(units, opts, None)
+    analyze_bounded(units, opts, None, None)
 }
 
 /// Analyzes the units. The row of a function may grow at most `limit` times.
 #[cfg(test)]
 pub(crate) fn analyze_with_limit(units: &[Unit], opts: Options, limit: usize) -> Analysis {
-    analyze_bounded(units, opts, Some(limit))
+    analyze_bounded(units, opts, Some(limit), None)
 }
 
-fn analyze_bounded(units: &[Unit], opts: Options, limit: Option<usize>) -> Analysis {
+/// Analyzes the units. The lowering of a loop may take at most `passes` passes.
+#[cfg(test)]
+pub(crate) fn analyze_with_loop_bound(units: &[Unit], opts: Options, passes: usize) -> Analysis {
+    analyze_bounded(units, opts, None, Some(passes))
+}
+
+fn analyze_bounded(
+    units: &[Unit],
+    opts: Options,
+    limit: Option<usize>,
+    loop_bound: Option<usize>,
+) -> Analysis {
     let (prog, mut diags) = program::Collector::collect(units);
     let mut sigs: Vec<FnSig> = prog.fns.iter().map(|f| f.sig.clone()).collect();
     let user_fns: Vec<usize> = (0..prog.fns.len())
@@ -155,13 +168,17 @@ fn analyze_bounded(units: &[Unit], opts: Options, limit: Option<usize>) -> Analy
         |prog: &Program, f: usize| opts.library || unit_of(prog, prog.fns[f].module) > ROOT_UNIT;
     let lower = |sigs: &[FnSig], f: usize| {
         let lib = library_of(&prog, f);
-        body::Lower::new(&prog, sigs, prog.fns[f].module, &prog.fns[f].path, lib).lower_fn(f)
+        body::Lower::new(&prog, sigs, prog.fns[f].module, &prog.fns[f].path, lib)
+            .with_loop_bound(loop_bound)
+            .lower_fn(f)
     };
     let inferred = infer::infer(&prog, &mut sigs, &user_fns, limit, &lower);
     diags.extend(inferred.diags);
     let mut bodies = Vec::new();
+    let mut loop_passes = 0;
     for (&f, l) in user_fns.iter().zip(inferred.lowered) {
         diags.extend(l.diags);
+        loop_passes += l.loop_passes;
         bodies.push(BodyFacts {
             func: Some(f),
             unit: unit_of(&prog, prog.fns[f].module),
@@ -172,8 +189,11 @@ fn analyze_bounded(units: &[Unit], opts: Options, limit: Option<usize>) -> Analy
     for t in &prog.tests {
         let name = format!("test \"{}\"", t.name);
         let lib = opts.library || unit_of(&prog, t.module) > ROOT_UNIT;
-        let l = body::Lower::new(&prog, &sigs, t.module, &name, lib).lower_test(&t.body, t.span);
+        let l = body::Lower::new(&prog, &sigs, t.module, &name, lib)
+            .with_loop_bound(loop_bound)
+            .lower_test(&t.body, t.span);
         diags.extend(l.diags);
+        loop_passes += l.loop_passes;
         bodies.push(BodyFacts {
             func: None,
             unit: unit_of(&prog, t.module),
@@ -196,6 +216,7 @@ fn analyze_bounded(units: &[Unit], opts: Options, limit: Option<usize>) -> Analy
         bodies,
         diags,
         lowerings: inferred.lowerings,
+        loop_passes,
     }
 }
 
