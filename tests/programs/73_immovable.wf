@@ -75,3 +75,15 @@ fn cur_set_then_borrow() {
     let r = &f
     print(r.cur)
 }
+impl Frame {
+    fn peek(self) -> u8 { self.buf[0] }
+}
+fn method_before_set() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    let x = f.peek()   //~ W0304
+}
+fn method_after_set() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[0]
+    let x = f.peek()
+}

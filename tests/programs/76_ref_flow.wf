@@ -57,6 +57,20 @@ fn in_vec(world: &World) / mut(world.entities) {
     world.entities.push(Entity { hp: 1 })
     for r in rs[] { print(r.hp) }   //~ W0301
 }
+fn stated_place_keeps_its_element() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = v.get(0)
+    v[0] = 5
+    print(r)
+}
+fn store(rs: &Vec<&Entity>, w: &World) / mut(rs) { rs.push(&w.entities[0]) }
+fn stored_by_callee(world: &World) / mut(world.entities) {
+    let rs = Vec.new()
+    store(&rs, world)
+    world.entities.push(Entity { hp: 1 })
+    for r in rs[] { print(r.hp) }   //~ W0301
+}
 fn in_vec_ok(world: &World) / mut(world.entities) {
     let rs = Vec.new()
     rs.push(&world.entities[0])

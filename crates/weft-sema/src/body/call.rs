@@ -396,7 +396,10 @@ impl Lower<'_> {
             if is_ref_param && !arg_is_ref && i == 0 && first == 1 {
                 // `x.m()` borrows `x` when `m` takes `self` by reference.
                 let places = if let Some(lv) = av.val.place.as_ref() {
-                    lv.places.clone()
+                    // The callee can read a place field: it needs a value (W0304).
+                    let ps = lv.places.clone();
+                    self.touch_unset(&ps);
+                    ps
                 } else {
                     // A temporary receiver goes away after the call.
                     let v = av.val.clone();
@@ -799,10 +802,12 @@ impl Lower<'_> {
         ret: &Ty,
         out: &mut Val,
     ) {
-        let derive = self.holds_refs(ret)
-            && (super::flow::count_refs(&sig.ret) > sig.ret_places.len()
-                || super::flow::mentions_param(&sig.ret));
-        let mut flows: Vec<Vec<PlaceId>> = Vec::new();
+        // A reference of the result with no stated place can point anywhere
+        // inside the reference arguments. A type parameter in the result passes
+        // the values of the arguments on.
+        let unstated = super::flow::count_refs(&sig.ret) > sig.ret_places.len();
+        let derive = self.holds_refs(ret) && (unstated || super::flow::mentions_param(&sig.ret));
+        let mut args: Vec<(Ty, Vec<PlaceId>, Option<Ty>)> = Vec::new();
         for (i, av) in vals.iter().enumerate() {
             let refs = match arg_places.get(i) {
                 Some(ps) if !ps.is_empty() => ps.clone(),
@@ -813,16 +818,19 @@ impl Lower<'_> {
                 Some(Ty::Ref(inner)) => Some(*inner),
                 _ => None,
             };
-            flows.push(self.flow_refs(&declared, &refs, pointee.as_ref()));
+            args.push((declared, refs, pointee));
         }
         if derive {
-            for f in &flows {
-                out.refs.extend(f.iter().copied());
+            for (declared, refs, pointee) in &args {
+                let f = self.flow_refs(declared, refs, pointee.as_ref(), unstated);
+                out.refs.extend(f);
             }
             out.refs.sort();
             out.refs.dedup();
         }
-        // A mutated reference argument can keep the references of the others.
+        // A mutated reference argument can keep a reference to any place inside the
+        // other arguments, and the references in them.
+        let mut flows: Option<Vec<Vec<PlaceId>>> = None;
         for (j, ps) in arg_places.iter().enumerate() {
             let holds = match ptys.get(j).map(|t| self.inf.shallow(t)) {
                 Some(Ty::Ref(inner)) => self.holds_refs(&inner),
@@ -844,7 +852,17 @@ impl Lower<'_> {
                 else {
                     continue;
                 };
-                for (i, f) in flows.iter().enumerate() {
+                let all = if let Some(f) = &flows {
+                    f.clone()
+                } else {
+                    let f: Vec<Vec<PlaceId>> = args
+                        .iter()
+                        .map(|(d, r, t)| self.flow_refs(d, r, t.as_ref(), true))
+                        .collect();
+                    flows = Some(f.clone());
+                    f
+                };
+                for (i, f) in all.iter().enumerate() {
                     if i != j {
                         for &q in f {
                             self.point_local(l, q);

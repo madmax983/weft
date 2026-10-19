@@ -30,6 +30,18 @@ fn reads_only() {
     rollback(tx)
 }
 
+// A closure that moves a linear value must run on each path.
+fn branch_drops(c: bool) {
+    let tx = begin()
+    let f = || rollback(tx)
+    if c { f() }
+}   //~ W0601
+fn branch_calls(c: bool) {
+    let tx = begin()
+    let f = || rollback(tx)
+    if c { f() } else { f() }
+}
+
 // A callee that gets a linear closure can drop it.
 fn ignore(f: fn()) {}
 fn once(f: fn()) { f() }

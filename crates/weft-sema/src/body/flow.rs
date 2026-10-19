@@ -43,19 +43,21 @@ impl Lower<'_> {
 
     /// Returns the places that an argument with places `refs` can give to the
     /// result of a call or to another argument. `declared` is the type of the
-    /// parameter in the signature. A parameter with a reference type lets the
-    /// callee reach any place inside the argument. A parameter of a type
-    /// parameter passes the value on as it is. `pointee` is the type behind a
-    /// reference argument: if it holds references, the callee can read them too.
+    /// parameter in the signature. With `reach`, a parameter with a reference
+    /// type lets the callee make a reference to any place inside the argument.
+    /// A parameter of a type parameter passes the value on as it is. `pointee`
+    /// is the type behind a reference argument: if it holds references, the
+    /// callee can read them too.
     pub(super) fn flow_refs(
         &mut self,
         declared: &Ty,
         refs: &[PlaceId],
         pointee: Option<&Ty>,
+        reach: bool,
     ) -> Vec<PlaceId> {
         let (named, deps) = self.split_deps(refs);
         let mut out = Vec::new();
-        if self.holds_refs(declared) {
+        if reach && self.holds_refs(declared) {
             for &p in &named {
                 out.push(self.facts.wildcard(p));
             }
