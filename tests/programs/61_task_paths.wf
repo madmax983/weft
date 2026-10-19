@@ -150,3 +150,9 @@ fn spawn_in_clause_joined(st: &Stats) / mut(st), async {
     }
     print(st.count)
 }
+
+// A function value that the body does not know can run its argument as a task.
+fn unknown_spawner(k: fn(fn())) / async {
+    handle Note { fn note(x) { resume(()) } } in k(|| note(1))   //~ W0313 W0314
+    k(|| print(1))
+}

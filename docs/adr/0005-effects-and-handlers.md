@@ -232,6 +232,8 @@ Status: accepted. Date: 2026-10-18.
     reference arguments of the operation, also when the clause does not call it.
   - W0313 counts each function value given to code that can keep it, also when that
     code only calls it, and each part of a local of the body that can hold a function.
+  - W0314 counts each function value given to a function value that the body does not
+    know (a function parameter): it can run the value as a task.
   - A `resume` can resume more than once if a clause of its handler can, also when the
     handled computation does not perform the operation again.
 - What stays open (not checked):
@@ -244,6 +246,9 @@ Status: accepted. Date: 2026-10-18.
   - W0313 does not follow a callee that copies a function value out of a reference
     argument into another place, or a clause of a handler inside the body that keeps
     its function parameter.
+  - W0314 does not see a function value that a task runs from a store (a field or a
+    container).
+  - Only functions of a dependency are checked for `pub`, not its types and effects.
   - W0402 inside a higher-order function: a callback that gets a place of a `@ shared`
     parameter can mutate it. The caller sees the mutation on its own place only.
   - A reference inside a payload that a `match` binds by value, and a parameter of a

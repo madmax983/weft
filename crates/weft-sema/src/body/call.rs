@@ -855,15 +855,22 @@ impl Lower<'_> {
                 };
                 self.keep(&kept, super::caps::KeptTo::Given);
             }
-            // A task of the value can call the argument.
-            let spawned = callee.summary.is_some_and(|s| {
-                let sum = &self.closures[s];
-                sum.tasks.contains(&i)
-                    || sum
-                        .items
-                        .iter()
-                        .any(|&f| self.sigs[f].effects.tasks.contains(&i))
-            });
+            // A task of the value can call the argument. A value that the body
+            // does not know can start such a task too.
+            let spawned = callee.param.is_some()
+                || callee.summary.map_or_else(
+                    || callee.item.is_none(),
+                    |s| {
+                        let sum = &self.closures[s];
+                        sum.unknown
+                            || !sum.params.is_empty()
+                            || sum.tasks.contains(&i)
+                            || sum
+                                .items
+                                .iter()
+                                .any(|&f| self.sigs[f].effects.tasks.contains(&i))
+                    },
+                );
             if spawned {
                 let span = exprs.get(i).map_or(span, |e| e.span);
                 self.check_task_value(&info, row.as_deref(), span);
