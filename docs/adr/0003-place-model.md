@@ -160,9 +160,19 @@ Status: accepted. Date: 2026-10-18.
 - A closure refers to the variables that it captures, as the interpreter captures their
   cells. A captured value of plain data stays readable after its scope ends, so such a
   closure can leave the scope. A closure that captures another value cannot outlive the
-  variable (W0204, W0301), also when it moves the value: it takes the value only when it
-  runs. A temporary of plain data stays readable too, as a constant does. A reference
-  into a local of plain data is still invalid after the scope.
+  variable (W0204, W0301). A temporary of plain data stays readable too, as a constant
+  does. A reference into a local of plain data is still invalid after the scope.
+- A closure that moves a captured variable takes the value when the closure is made: a
+  by-value capture, as Rust infers it. The facts move the variable at the node that
+  makes the closure (`moved_at`), and the interpreter moves the value into a cell of the
+  closure there. Semantic analysis gives the interpreter these captures for each
+  closure span (`FnFacts::by_value`), so the two sides agree by construction. A new
+  value of the variable after that point stays in the variable. The closure has the
+  value also if it never runs, so a use of the variable after that point is W0302. An
+  inner closure that moves a capture makes each closure around it take the value too.
+  Such a closure still cannot leave the scope of the variable (W0204, W0301): its type
+  does not show that it runs only once or that it holds a linear value. This is
+  conservative. A task closure does the same (ADR 0006).
 - A field, an element or a part of a tuple can hold a reference. A place below it,
   such as `t.0.kids` for `t: (&Entity, &Entity)`, is a place where that reference
   points, not a place of `t`. These are the places of the references that the local

@@ -24,7 +24,10 @@ Status: accepted. Date: 2026-10-18.
   task and the parent can touch separate fields through one reference.
 - A move or the end of an owner frees its memory (`frees_at`). A free while a task is
   active must not overlap what the task reads or writes. A task closure that moves a
-  capture moves it when the closure is made. A move of a part frees that part only.
+  capture takes it when the closure is made, as each closure does (ADR 0003): the
+  interpreter moves the value into a cell of the closure there. A new value of the
+  variable while the task is active stays in the variable. A move of a part frees that
+  part only.
 - The tasks of a scope join before the locals of the scope body go out of scope, as in
   the interpreter.
 - The B4 proof covers a stronger rule: no write to a place that the other task *holds*

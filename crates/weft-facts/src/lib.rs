@@ -297,6 +297,7 @@ pub struct FactMark {
     nodes: usize,
     tasks: usize,
     handlers: usize,
+    by_value: usize,
     cfg_edge: usize,
     points_into: usize,
     mutates_at: usize,
@@ -353,6 +354,11 @@ pub struct FnFacts {
     pub tasks: Vec<TaskInfo>,
     /// The `handle` expressions.
     pub handlers: Vec<HandlerInfo>,
+    /// The captured variables that a closure takes by value when it is made: the
+    /// span of the closure and the variable. These are the captures that the
+    /// closure moves. The interpreter moves each of them into a cell of the
+    /// closure. This is not a relation of the spec.
+    pub by_value: Vec<(Span, VarId)>,
     /// The number of local capabilities.
     pub caps: u32,
 
@@ -471,6 +477,7 @@ impl FnFacts {
             nodes,
             tasks,
             handlers,
+            by_value,
             cfg_edge,
             points_into,
             mutates_at,
@@ -516,6 +523,7 @@ impl FnFacts {
             nodes: nodes.len(),
             tasks: tasks.len(),
             handlers: handlers.len(),
+            by_value: by_value.len(),
             cfg_edge: cfg_edge.len(),
             points_into: points_into.len(),
             mutates_at: mutates_at.len(),
@@ -571,6 +579,7 @@ impl FnFacts {
             nodes,
             tasks,
             handlers,
+            by_value,
             cfg_edge,
             points_into,
             mutates_at,
@@ -615,6 +624,7 @@ impl FnFacts {
         nodes.truncate(mark.nodes);
         tasks.truncate(mark.tasks);
         handlers.truncate(mark.handlers);
+        by_value.truncate(mark.by_value);
         cfg_edge.truncate(mark.cfg_edge);
         points_into.truncate(mark.points_into);
         mutates_at.truncate(mark.mutates_at);

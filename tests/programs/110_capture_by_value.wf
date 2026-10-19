@@ -1,0 +1,83 @@
+// A closure that moves a captured value takes the value when the closure is
+// made (ADR 0003). The closure keeps it in a cell of its own. A new value of
+// the variable after that point stays in the variable. A task closure does the
+// same (ADR 0006).
+fn take(v: Vec<u64>) -> usize { v.len() }
+
+// The closure has the first value. `v` has a new value of its own.
+fn new_value_after() {
+    let v = Vec.new()
+    v.push(1)
+    let f = || print(take(v))
+    v = Vec.new()
+    f()
+    print(v.len())
+}
+
+// A task closure takes the value at the spawn.
+fn task_new_value() {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let t = s.spawn(|| print(take(v)))
+        v = Vec.new()
+        t.join()
+    }
+    print(v.len())
+}
+
+// The closure still cannot leave the scope of the variable. Its type does
+// not show that it runs only once, or that it holds a linear value. This is
+// conservative: these closures run correctly.
+fn made_here() -> fn() {
+    let v = Vec.new()
+    v.push(3)
+    || print(take(v))   //~ W0204
+}
+fn block_value() {
+    let f = {
+        let v = Vec.new()
+        v.push(4)
+        || print(take(v))   //~ W0301
+    }
+    f()
+}
+
+// The closure has the value, also if it does not run.
+fn never_called() {
+    let v = Vec.new()
+    v.push(1)
+    let f = || print(take(v))
+    v.push(2)   //~ W0302
+}
+
+// An inner closure moves `v` when the outer closure runs. So the outer closure
+// takes `v` too, and it runs only once.
+fn twice(f: fn()) { f()
+ f() }
+fn nested() {
+    let v = Vec.new()
+    let g = || {
+        let h = || print(take(v))
+        h()
+    }
+    twice(g)   //~ W0502
+}
+
+// A reference into the value is invalid after the closure takes it.
+fn ref_into_taken() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let f = || print(take(v))
+    print(r)   //~ W0301
+    f()
+}
+
+fn main() {
+    new_value_after()
+    task_new_value()
+    let f = made_here()
+    f()
+    block_value()
+}

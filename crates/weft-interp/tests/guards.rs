@@ -216,3 +216,22 @@ fn unchecked_tests_run() {
     assert!(!ts[0].passed);
     assert!(ts[1].passed);
 }
+
+#[test]
+fn a_closure_takes_a_moved_capture_when_it_is_made() {
+    // The checker reports W0302 at `v.push(2)`: the closure has the value of
+    // `v`, also if it never runs.
+    fault(
+        "fn take(v: Vec<u64>) -> usize { v.len() }\n\
+         fn main() {\n let v = Vec.new()\n v.push(1)\n let f = || print(take(v))\n \
+         v.push(2)\n print(v.len())\n}",
+        "used after it was moved",
+    );
+    // A closure that only reads `v` reads its cell when it runs.
+    let o = run(
+        "fn main() {\n let v = Vec.new()\n let f = || print(v.len())\n \
+         v.push(2)\n f()\n}",
+    )
+    .unwrap();
+    assert_eq!(o.stdout, "1\n");
+}

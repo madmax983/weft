@@ -36,6 +36,7 @@ use weft_sema::Analysis;
 pub use error::{ErrorKind, RuntimeError};
 pub use trace::{SuspendReason, TaskEnd, TraceEvent};
 
+use crate::compile::ByValue;
 use crate::machine::{Machine, TaskResult};
 use crate::runtime::Runtime;
 use crate::value::{Cap, Obj, Value};
@@ -118,6 +119,24 @@ pub fn stealable_spans(checked: &Checked) -> BTreeSet<(u32, u32)> {
     out
 }
 
+/// Returns the captures that each closure takes by value when it is made.
+///
+/// These are the captures that the closure moves, as semantic analysis gives
+/// them (`FnFacts::by_value`). The checker sees each of these moves where the
+/// closure is made, so the interpreter moves the value there too.
+pub fn by_value_captures(analysis: &Analysis) -> ByValue {
+    let mut out = ByValue::new();
+    for b in &analysis.bodies {
+        for &(span, v) in &b.facts.by_value {
+            let name = b.facts.var(v).name.clone();
+            out.entry((b.unit, span.lo, span.hi))
+                .or_default()
+                .insert(name);
+        }
+    }
+    out
+}
+
 /// Runs `fn main` of a checked program.
 ///
 /// The interpreter does not refuse a program with diagnostics. Run-time guards
@@ -128,6 +147,7 @@ pub fn run_main(checked: &Checked, opts: &RunOptions) -> Result<RunOutcome, Runt
         &checked.analysis.program,
         &checked.analysis.sigs,
         stealable_spans(checked),
+        &by_value_captures(&checked.analysis),
     );
     run_main_with(&rt, opts)
 }
@@ -138,7 +158,12 @@ pub fn run_analysis_main(
     analysis: &Analysis,
     opts: &RunOptions,
 ) -> Result<RunOutcome, RuntimeError> {
-    let rt = Runtime::new(&analysis.program, &analysis.sigs, BTreeSet::new());
+    let rt = Runtime::new(
+        &analysis.program,
+        &analysis.sigs,
+        BTreeSet::new(),
+        &by_value_captures(analysis),
+    );
     run_main_with(&rt, opts)
 }
 
@@ -148,13 +173,19 @@ pub fn run_tests(checked: &Checked, opts: &RunOptions) -> Vec<TestOutcome> {
         &checked.analysis.program,
         &checked.analysis.sigs,
         stealable_spans(checked),
+        &by_value_captures(&checked.analysis),
     );
     run_tests_with(&rt, opts)
 }
 
 /// Runs every test block of an analysis that the checker did not see.
 pub fn run_analysis_tests(analysis: &Analysis, opts: &RunOptions) -> Vec<TestOutcome> {
-    let rt = Runtime::new(&analysis.program, &analysis.sigs, BTreeSet::new());
+    let rt = Runtime::new(
+        &analysis.program,
+        &analysis.sigs,
+        BTreeSet::new(),
+        &by_value_captures(analysis),
+    );
     run_tests_with(&rt, opts)
 }
 

@@ -9,7 +9,7 @@ use weft_sema::types::{AdtId, IntTy, Ty};
 use weft_sema::FnSig;
 use weft_syntax::ast::Span;
 
-use crate::compile::{Compiled, Compiler};
+use crate::compile::{ByValue, Compiled, Compiler};
 
 /// A function that the interpreter implements.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -236,9 +236,15 @@ fn native_of(prog: &Program, sigs: &[FnSig], f: FnId) -> Option<Native> {
 }
 
 impl<'a> Runtime<'a> {
-    /// Compiles a program and builds its tables.
-    pub fn new(prog: &'a Program, sigs: &'a [FnSig], stealable: BTreeSet<(u32, u32)>) -> Self {
-        let compiled = Compiler::compile(prog, sigs);
+    /// Compiles a program and builds its tables. `by_value` names the captures
+    /// that each closure takes by value (see [`ByValue`]).
+    pub fn new(
+        prog: &'a Program,
+        sigs: &'a [FnSig],
+        stealable: BTreeSet<(u32, u32)>,
+        by_value: &ByValue,
+    ) -> Self {
+        let compiled = Compiler::compile(prog, sigs, by_value);
         let natives = (0..prog.fns.len())
             .map(|f| native_of(prog, sigs, f))
             .collect();

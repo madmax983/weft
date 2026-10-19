@@ -12,6 +12,10 @@ Status: accepted. Date: 2026-10-18.
   comes from the checker (W0601) and the unwinder, and is tested, not proved.
 - One deterministic scheduler with virtual workers. Work stealing obeys `stealable(T)`.
   Preemption happens at loop back-edges.
+- A closure captures the cells of the variables that it reads. A capture that the
+  closure moves goes into a cell of the closure when the closure is made. Semantic
+  analysis names these captures (`weft_interp::by_value_captures`), as the checker
+  names the stealable tasks (ADR 0003).
 - `sim.run(seed)` replaces every root handler: virtual clock, seeded randomness,
   simulated network and scheduler. The same seed gives the same trace.
 

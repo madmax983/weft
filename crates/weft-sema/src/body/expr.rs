@@ -1432,11 +1432,20 @@ impl Lower<'_> {
         self.stmt_temps = saved_stmts;
         // The closure refers to the variables that it captures, as in the
         // interpreter. A captured copy value stays readable after its scope
-        // ends; another value goes away with its variable, also a value that the
-        // closure moves when it runs.
+        // ends; another value goes away with its variable. A capture that the
+        // closure moves goes into a cell of the closure when the closure is
+        // made. The closure still points into the variable, so it cannot leave
+        // the scope of the variable: its type does not show that it runs only
+        // once, or that it holds a linear value. This is conservative.
         // The closure can read a place field that has no value yet (W0304).
         let reads: Vec<PlaceId> = sum.reads.iter().copied().collect();
         self.touch_unset(&reads);
+        let moved: Vec<_> = sum
+            .moved_captures
+            .iter()
+            .copied()
+            .filter(|&v| !self.is_copy_var(v))
+            .collect();
         let mut refs = Vec::new();
         let caps: Vec<_> = sum.captures.iter().copied().collect();
         for v in &caps {
@@ -1453,17 +1462,13 @@ impl Lower<'_> {
         refs.sort();
         refs.dedup();
         // The moved captures are moved before the closure exists, so that the
-        // move does not invalidate the new closure.
-        let moved: Vec<_> = sum
-            .moved_captures
-            .iter()
-            .copied()
-            .filter(|&v| !self.is_copy_var(v))
-            .collect();
+        // move does not invalidate the new closure. The interpreter moves them
+        // into the closure there (`FnFacts::by_value`).
         if !moved.is_empty() {
             let m = self.emit(span, "move", String::new());
             for v in moved {
                 self.move_var(v, m);
+                self.facts.by_value.push((span, v));
             }
         }
         let n = self.emit(span, "closure", String::new());

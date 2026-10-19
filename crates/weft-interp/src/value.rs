@@ -71,12 +71,14 @@ pub struct EnumVal {
     pub fields: Vec<Value>,
 }
 
-/// A closure: code, captured cells (by reference) and the handlers where it was made.
+/// A closure: code, captured cells and the handlers where it was made.
 #[derive(Clone, Debug)]
 pub struct ClosureVal {
     /// The code.
     pub code: CodeId,
-    /// The captured cells.
+    /// The captured cells. A capture by reference is the cell of the variable. A
+    /// capture that the closure moves is a cell of its own: the closure took the
+    /// value when it was made.
     pub cells: Vec<CellId>,
     /// The lexical handlers at the creation point.
     pub henv: HEnv,

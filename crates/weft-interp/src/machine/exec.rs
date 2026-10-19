@@ -479,10 +479,22 @@ impl super::Machine<'_, '_> {
                 let henv = self.fr()?.henv.clone();
                 return self.perform(*effect, *op, args, &henv);
             }
-            Op::MakeClosure { code, caps } => {
+            Op::MakeClosure { code, caps, owned } => {
                 let mut cells = Vec::new();
-                for c in caps {
-                    cells.push(self.cell_of(*c)?);
+                for (i, c) in caps.iter().enumerate() {
+                    let cell = self.cell_of(*c)?;
+                    if owned.contains(&u32_of(i)) {
+                        // A capture that the closure moves: the closure takes the
+                        // value now, into a cell of its own.
+                        let p = Place::root(cell);
+                        if matches!(self.hget(&p)?, Value::Moved) {
+                            return Err(self.fault("a value is used after it was moved"));
+                        }
+                        let v = self.heap.take(&p).map_err(|e| self.fault(e))?;
+                        cells.push(self.heap.alloc(SlotKind::Local, v));
+                    } else {
+                        cells.push(cell);
+                    }
                 }
                 let henv = self.fr()?.henv.clone();
                 self.push(Value::Closure(Rc::new(ClosureVal {

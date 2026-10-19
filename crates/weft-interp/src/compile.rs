@@ -5,6 +5,7 @@
 //! A path such as `sim.net.partition` names a module item. `x.op()` performs an
 //! operation when `x` names an effect or an effect alias.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use weft_sema::effects;
@@ -18,6 +19,13 @@ use weft_syntax::ast::{
 
 use crate::code::{CPat, ClauseSpec, Code, CodeKind, HandleSpec, LitPat, Op, VarRef};
 use crate::value::CodeId;
+
+/// The captures that each closure takes by value when it is made.
+///
+/// The key is the unit and the span of the closure. The value has the names of
+/// the captured variables. Semantic analysis gives them (`FnFacts::by_value`):
+/// they are the captures that the closure moves.
+pub type ByValue = BTreeMap<(usize, u32, u32), BTreeSet<String>>;
 
 /// The compiled program.
 #[derive(Debug)]
@@ -63,6 +71,7 @@ struct Ctx {
 pub struct Compiler<'a> {
     prog: &'a Program,
     sigs: &'a [FnSig],
+    by_value: &'a ByValue,
     codes: Vec<Option<Code>>,
     ctxs: Vec<Ctx>,
 }
@@ -76,11 +85,13 @@ fn u32_of(n: usize) -> u32 {
 }
 
 impl<'a> Compiler<'a> {
-    /// Compiles every function body and every test of a program.
-    pub fn compile(prog: &'a Program, sigs: &'a [FnSig]) -> Compiled {
+    /// Compiles every function body and every test of a program. A closure
+    /// takes the captures that `by_value` names for it by value.
+    pub fn compile(prog: &'a Program, sigs: &'a [FnSig], by_value: &'a ByValue) -> Compiled {
         let mut c = Self {
             prog,
             sigs,
+            by_value,
             codes: Vec::new(),
             ctxs: Vec::new(),
         };
@@ -808,8 +819,17 @@ impl<'a> Compiler<'a> {
             }
             ExprKind::StructLit { path, fields } => self.struct_lit(path, fields),
             ExprKind::Closure { params, body } => {
-                let (code, caps) = self.closure(params, body, CodeKind::Closure);
-                self.emit(Op::MakeClosure { code, caps });
+                let unit = self.prog.mods.get(self.module()).map_or(0, |m| m.unit);
+                let (code, named) = self.closure_named(params, body, CodeKind::Closure);
+                let set = self.by_value.get(&(unit, e.span.lo, e.span.hi));
+                let owned = named
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (n, _))| set.is_some_and(|s| s.contains(n)))
+                    .map(|(i, _)| u32_of(i))
+                    .collect();
+                let caps = named.into_iter().map(|(_, v)| v).collect();
+                self.emit(Op::MakeClosure { code, caps, owned });
             }
             ExprKind::Block(b) => self.block(b),
             ExprKind::If { cond, then, else_ } => {
@@ -1080,6 +1100,17 @@ impl<'a> Compiler<'a> {
     }
 
     fn closure(&mut self, params: &[Param], body: &Expr, kind: CodeKind) -> (CodeId, Vec<VarRef>) {
+        let (id, named) = self.closure_named(params, body, kind);
+        (id, named.into_iter().map(|(_, v)| v).collect())
+    }
+
+    /// Compiles a closure body. Returns the code and each capture with its name.
+    fn closure_named(
+        &mut self,
+        params: &[Param],
+        body: &Expr,
+        kind: CodeKind,
+    ) -> (CodeId, Vec<(String, VarRef)>) {
         let id = self.reserve();
         let m = self.module();
         let name = match kind {
@@ -1095,7 +1126,7 @@ impl<'a> Compiler<'a> {
         self.expr(body);
         self.emit(Op::Return);
         let ctx = self.pop_ctx();
-        let caps = ctx.caps.iter().map(|(_, v)| *v).collect();
+        let caps = ctx.caps.clone();
         self.finish(id, ctx);
         (id, caps)
     }

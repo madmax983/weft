@@ -215,6 +215,9 @@ pub enum Op {
         code: CodeId,
         /// The captured variables.
         caps: Vec<VarRef>,
+        /// The indexes in `caps` of the captures that the closure takes by
+        /// value: it moves each value into a cell of its own.
+        owned: Vec<u32>,
     },
     /// Pushes a function item as a value.
     FnValue(FnId),
