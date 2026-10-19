@@ -1,6 +1,6 @@
 // A clause that does not resume ends the handled body at the node that runs it.
 // Control goes from that node to the end of the `handle` (ADR 0005). So the code
-// after the node in the body does not run on that path: a reference keeps its
+// after the node in the body does not run on that path. A reference keeps its
 // old value, and a linear value outside the body stays live. A local outside the
 // body keeps the function value that it has there. On other paths a new value of
 // the local replaces the old one (W0313 follows the new values).
@@ -8,13 +8,26 @@
 // A read inside a handler clause of a variable with no value is W0304 at the
 // read. The clause runs at each operation that it handles, so the diagnostic
 // also names that node.
+//
+// Each node that can run a clause gets the path. It can be a perform, a call of
+// a closure or a function, or a node that runs a stored value. A node that
+// runs a clause of a handler inside the body gets it too, if that clause performs
+// the operation. On the path the unwinder finishes the values of the body, and it
+// cancels the tasks of the scopes that the body opened.
 effect Op { fn op() }
 effect Log { fn log(msg: String) }
+effect Get { fn get() -> fn() }
+struct Job { f: fn() }
+struct Stats { count: u64 }
 linear struct Tx { id: u64 }
     on abort = rollback
 fn rollback(t: Tx) { let Tx(i) = t }
 fn commit(t: Tx) { let Tx(i) = t }
 fn begin() -> Tx { Tx { id: 1 } }
+fn run_job(j: &Job) {
+    let g = j.f
+    g()
+}
 
 fn abort_keeps_reference(v: &Vec<u64>, w: &Vec<u64>) / mut(v) {
     let r = &v[0]
@@ -48,8 +61,126 @@ fn branch_keeps_closure(c: bool) {
     }
     f()
 }
+// A callee runs a stored function value that performs the operation.
+fn stored_keeps_closure() {
+    let f = || print(0)
+    handle Log { fn log(m) { print(m) } } in {   //~ W0313
+        let j = Job { f: || log("y") }
+        f = || log("x")
+        run_job(&j)
+        f = || print(1)
+    }
+    f()
+}
+fn local_stored_keeps_closure() {
+    let f = || print(0)
+    handle Log { fn log(m) { print(m) } } in {   //~ W0313
+        let j = Job { f: || log("y") }
+        f = || log("x")
+        let g = j.f
+        g()
+        f = || print(1)
+    }
+    f()
+}
+fn stored_keeps_linear() {
+    let t = begin()
+    handle Fail { fn fail(m) { print(m) } } in {
+        let j = Job { f: || fail("q") }
+        let g = j.f
+        g()
+        commit(t)
+    }
+}   //~ W0601
+fn stored_keeps_unset() {
+    let x: u64
+    handle Op { fn op() { print(1) } } in {
+        let j = Job { f: || op() }
+        run_job(&j)
+        x = 1
+    }
+    print(x)   //~ W0304
+}
+// A clause of an inner handler performs the operation.
+fn inner_clause_keeps_linear() {
+    let t = begin()
+    handle Op { fn op() { print(9) } } in {
+        handle Log { fn log(m) {
+            op()
+            resume(())
+        } } in {
+            log("x")
+            commit(t)
+        }
+    }
+}   //~ W0601
+fn inner_clause_keeps_reference(v: &Vec<u64>, w: &Vec<u64>) / mut(v) {
+    let r = &v[0]
+    handle Op { fn op() { v.clear() } } in {
+        handle Log { fn log(m) {
+            op()
+            resume(())
+        } } in {
+            log("x")
+            r = &w[0]
+        }
+    }
+    print(r)   //~ W0301
+}
+// The node that runs the inner clause mutates the footprint of the outer one.
+fn inner_clause_mutates(v: &Vec<u64>) / mut(v) {
+    handle Op { fn op() {
+        v.clear()
+        resume(())
+    } } in {
+        handle Log { fn log(m) {
+            op()
+            resume(())
+        } } in {
+            let r = &v[0]
+            log("x")
+            print(r)   //~ W0301
+        }
+    }
+}
+// The path to the end of an outer `handle` leaves the inner body too.
+fn outer_abort_keeps_closure() {
+    let f = || print(0)
+    handle Op { fn op() { print(9) } } in {
+        handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+            f = || log("x")
+            op()
+            f = || print(1)
+        }
+    }
+    f()
+}
+// A call of a function value that a clause resumes with.
+fn resumed_keeps_closure() {
+    let f = || print(0)
+    handle Log { fn log(m) { print(m) } } in {   //~ W0313
+        handle Get { fn get() { resume(|| log("q")) } } in {
+            f = || log("x")
+            let g = get()
+            g()
+            f = || print(1)
+        }
+    }
+    f()
+}
 fn clause_reads_unset() / Op {
     let x: u64
+    handle Op { fn op() {
+        print(x)   //~ W0304
+        resume(())
+    } } in op()
+}
+
+// The read in the clause, not the read in another closure.
+fn clause_reads_after_closure(c: bool) / Op {
+    let x: u64
+    if c { x = 1 }
+    let k = || print(x)   //~ W0304
     handle Op { fn op() {
         print(x)   //~ W0304
         resume(())
@@ -99,4 +230,37 @@ fn clause_reads_set() / Op {
         print(x)
         resume(())
     } } in op()
+}
+// The unwinder finishes a linear value of the body: the next pass of the loop
+// gives the local a new value.
+fn retry_in_loop(n: u64) {
+    for i in 0..n {
+        handle Fail { fn fail(m) { print(m) } } in {
+            let t = begin()
+            fail("x")
+            commit(t)
+        }
+    }
+}
+// The unwinder cancels the tasks of a scope of the body and waits for them.
+fn scope_in_body(st: &Stats) / mut(st), async {
+    handle Fail { fn fail(m) { print(m) } } in {
+        scope { s =>
+            s.spawn(|| st.count += 1)
+            fail("stop")
+        }
+    }
+    st.count += 1
+}
+// A local of the outer body goes out of scope on the path.
+fn outer_abort_local_ends() {
+    handle Op { fn op() { print(9) } } in {
+        let f = || print(0)
+        handle Log { fn log(m) { resume(()) } } in {
+            f = || log("x")
+            op()
+            f = || print(1)
+        }
+        f()
+    }
 }

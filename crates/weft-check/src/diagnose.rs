@@ -25,11 +25,18 @@ fn mut_hint(f: &FnFacts, p: PlaceId) -> String {
     }
 }
 
-/// Returns the first node that uses `var` in a handler clause that node `n` runs:
-/// `n` performs through a local handler, and the use is in a part of the graph
-/// that the entry of the function does not reach.
+/// Returns the first node that uses `var` in a handler clause that node `n` runs.
+/// Node `n` performs through a local handler. The entry node of a clause names
+/// the capability of its handler in its detail (`c3`). The search covers the
+/// part of the graph that starts at such an entry.
 fn clause_read(f: &FnFacts, var: VarId, n: NodeId) -> Option<NodeId> {
-    if !f.performs_at.iter().any(|&(p, _)| p == n) || f.nodes.is_empty() {
+    let caps: Vec<String> = f
+        .performs_at
+        .iter()
+        .filter(|&&(p, _)| p == n)
+        .map(|&(_, c)| format!("c{}", c.0))
+        .collect();
+    if caps.is_empty() {
         return None;
     }
     let mut succ: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
@@ -37,7 +44,10 @@ fn clause_read(f: &FnFacts, var: VarId, n: NodeId) -> Option<NodeId> {
         succ.entry(a).or_default().push(b);
     }
     let mut seen = vec![false; f.nodes.len()];
-    let mut work = vec![NodeId(0)];
+    let mut work: Vec<NodeId> = (0..f.nodes.len())
+        .filter(|&i| f.nodes[i].label == "handler clause" && caps.contains(&f.nodes[i].detail))
+        .map(|i| NodeId(u32::try_from(i).unwrap_or(u32::MAX)))
+        .collect();
     while let Some(a) = work.pop() {
         if std::mem::replace(&mut seen[a.index()], true) {
             continue;
@@ -46,7 +56,7 @@ fn clause_read(f: &FnFacts, var: VarId, n: NodeId) -> Option<NodeId> {
     }
     f.uses
         .iter()
-        .filter(|&&(v, q)| v == var && !seen[q.index()])
+        .filter(|&&(v, q)| v == var && seen[q.index()])
         .map(|&(_, q)| q)
         .min()
 }
@@ -186,6 +196,11 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
                     callee => format!("goes out of scope when `{callee}` returns"),
                 };
                 (format!("{owner} : {when}"), inside(owner, &when))
+            }
+            Cause::Unwound(o) => {
+                let owner = &f.var(o).name;
+                let when = "goes out of scope on an abort path";
+                (format!("{owner} : {when}"), inside(owner, when))
             }
             Cause::MovePart(m) => {
                 let moved = &f.place(m).display;

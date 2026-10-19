@@ -489,6 +489,9 @@ impl Lower<'_> {
     /// Applies a summary at a node: the function value runs there.
     pub(super) fn apply_summary(&mut self, n: NodeId, s: usize, root: u32, given: &[Given]) {
         let sum = self.closures[s].clone();
+        // A stored value can run here too (`apply_stored`). An abort there leaves
+        // the node.
+        self.note_abort_ctx(n);
         let scope = self.scope_now();
         self.applied.push(Applied {
             summary: s,
@@ -526,7 +529,6 @@ impl Lower<'_> {
             self.facts.performs_at.push((n, c));
             self.sum().performs.insert(c);
             self.cap_calls.push((n, c));
-            self.note_abort_path(n, c);
         }
         // The places that the value gives to operations of local handlers.
         for &(cap, op, pos, p) in &sum.op_args {
@@ -672,6 +674,7 @@ impl Lower<'_> {
         if d == 0 {
             self.sum().passthrough.insert(p);
         }
+        self.caller_runs.push(n);
         self.note_param_run((d, p));
         for g in given {
             self.note_lent((d, p), g);
@@ -691,6 +694,7 @@ impl Lower<'_> {
     /// A call of a function value that the body does not know. It can be any
     /// function parameter in scope, so each of them can get the places.
     pub(super) fn call_unknown(&mut self, n: NodeId, given: &[Given]) {
+        self.caller_runs.push(n);
         let mut params = Vec::new();
         for f in &self.frames {
             for &(_, l) in &f.names {
@@ -724,7 +728,7 @@ impl Lower<'_> {
             .map(|h| h.cap)
         {
             self.cap_calls.push((n, cap));
-            self.note_abort_path(n, cap);
+            self.note_abort_ctx(n);
             for &(p, i) in args {
                 self.give_op(n, cap, None, None, p, i);
             }
@@ -863,9 +867,10 @@ impl Lower<'_> {
 
     /// Node `n` can run a function value that the body stores, with the places
     /// `given`. With `again`, it can run the value more than once. A node in a loop
-    /// or in a closure can run more than once too: then the body can run a stored
+    /// or in a closure can run more than once too. Then the body can run a stored
     /// value more than once (`EffectSig::reach_repeats`).
     pub(super) fn reach(&mut self, n: NodeId, given: &[Given], again: bool) {
+        self.note_abort_ctx(n);
         let scope = self.scope_now();
         self.reaches.push(Reach {
             node: n,
@@ -876,6 +881,28 @@ impl Lower<'_> {
         let nested = !self.loops.is_empty() || self.frames.iter().any(|f| f.barrier.is_some());
         self.reach_runs.0 += 1;
         self.reach_runs.1 |= again || nested;
+    }
+
+    /// Returns true if a node that can run a stored value can come after another
+    /// one. Then the body can run a stored value more than once. Two nodes on the
+    /// two branches of an `if` do not count.
+    pub(super) fn reaches_follow(&self) -> bool {
+        let nodes: BTreeSet<NodeId> = self.reaches.iter().map(|r| r.node).collect();
+        let succ = self.successors();
+        for &n in &nodes {
+            let mut seen = vec![false; succ.len()];
+            let mut work: Vec<NodeId> = succ[n.index()].clone();
+            while let Some(a) = work.pop() {
+                if nodes.contains(&a) {
+                    return true;
+                }
+                if std::mem::replace(&mut seen[a.index()], true) {
+                    continue;
+                }
+                work.extend(succ[a.index()].iter().copied());
+            }
+        }
+        false
     }
 
     /// Runs each stored function value at each node that can reach it. This runs
@@ -977,6 +1004,7 @@ impl Lower<'_> {
                 .collect();
             if !calls.is_empty() || !args.is_empty() {
                 self.run_handler(h, &calls, &args);
+                self.run_clause_caps(h, &calls);
             }
         }
         self.handled = handled;

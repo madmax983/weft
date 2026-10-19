@@ -24,6 +24,7 @@ use crate::program::{
 use crate::props::Prop;
 use crate::types::{subst, Display, FnTy, Infer, IntTy, Ty};
 
+mod aborts;
 mod call;
 mod caps;
 mod drops;
@@ -118,9 +119,9 @@ pub struct Summary {
     pub repeats: BTreeSet<usize>,
     /// Reference parameters whose pointee can get a function value from the body.
     pub fn_stores: BTreeSet<usize>,
-    /// For the function values that the body gives to an operation of a handler of
-    /// a caller: the effect of the operation, and an effect that the value performs
-    /// through a handler of a caller.
+    /// The function values that the body gives to an operation of a handler of a
+    /// caller. Each pair has the effect of the operation, and an effect that the
+    /// value performs through a handler of a caller.
     pub op_effects: BTreeSet<(String, String)>,
     /// Tasks that the function values that a call of the value returns spawn into
     /// a scope outside. A callee that calls such a result starts them.
@@ -246,8 +247,8 @@ struct Local {
     /// The capabilities of the function values that the local can hold.
     caps: BTreeSet<CapId>,
     /// The part of `caps` that does not come from a new value of the whole local in
-    /// its own part of the graph (`Lower::bind_caps`): a store into a part, a new
-    /// value in a closure or a clause, and the value of a parameter.
+    /// its own part of the graph (`Lower::bind_caps`). It has the stores into a
+    /// part, the new values in a closure or a clause, and the value of a parameter.
     sticky: BTreeSet<CapId>,
 }
 
@@ -282,6 +283,9 @@ struct LVal {
     /// while each handle keeps its value. A reference to the place also points
     /// into these handle places.
     deps: Vec<PlaceId>,
+    /// The capabilities of the function values that the reference on the way to
+    /// the place can reach: the place can hold them.
+    held: BTreeSet<CapId>,
 }
 
 /// A hidden variable that holds the references that a part of a local gets.
@@ -322,6 +326,27 @@ struct HandlerFrame {
     multi: bool,
     /// The number of frames when the handled body starts.
     frames: usize,
+    /// The depth of `Lower::jumps` when the handled body starts.
+    jumps: usize,
+}
+
+/// A local handler that an abort at a node can go to: a clause that does not
+/// resume ends the handled body there. The way to the end of the `handle` leaves
+/// the scopes that the body opened around the node.
+#[derive(Clone, Debug)]
+struct AbortTo {
+    /// The capability of the handler.
+    cap: CapId,
+    /// The values of the handled body in scope at the node: owners, linear
+    /// values, temporaries and values on their way to a call. The unwinder
+    /// finishes them (`unwound_at`).
+    vars: Vec<VarId>,
+    /// The binders of the scopes that the handled body opened around the node.
+    /// The unwinder cancels their tasks and waits for them.
+    scopes: Vec<usize>,
+    /// The local handlers inside the handled body around the node. The way to
+    /// the end leaves their bodies too.
+    inner: Vec<CapId>,
 }
 
 #[derive(Clone)]
@@ -404,6 +429,24 @@ struct Handled {
     resumes: Vec<NodeId>,
     /// The places that the handled computation changes.
     changes: Vec<PlaceId>,
+    /// The end node of the `handle`.
+    end: NodeId,
+    /// A clause can end with no `resume`: each node of the body that runs a
+    /// clause gets a path to `end` (`Lower::finish_aborts`).
+    aborts: bool,
+    /// The number of locals when the handled body starts: a local below it is
+    /// declared outside the body.
+    locals: usize,
+    /// The capabilities of the local handlers outside the `handle` that the
+    /// clauses perform through. A node that runs a clause runs their clauses too.
+    clause_caps: BTreeSet<CapId>,
+    /// The locals of the clauses that the result of an operation can point into.
+    /// They go out of scope at the end of the `handle`.
+    clause_vars: Vec<VarId>,
+    /// The check of the locals outside the body (W0313, `check_local_keeps`):
+    /// the effect and the span of the `handle`. `None` if the `handle` already
+    /// reports W0313.
+    keeps: Option<(String, Span)>,
 }
 
 /// The lowering state of one function.
@@ -541,19 +584,31 @@ pub struct Lower<'p> {
     op_results: BTreeMap<(CapId, Option<usize>), PlaceId>,
     /// The places that the `resume`s of the clause of each operation give.
     resumed_refs: BTreeMap<(CapId, Option<usize>), Vec<PlaceId>>,
+    /// The root place of what a handler of a caller can resume with: a place of
+    /// the caller that the parameters do not reach (`Lower::env_ref`).
+    env_root: Option<PlaceId>,
+    /// The nodes that call a function parameter or a function value that the
+    /// body does not know. Code of a caller runs there.
+    caller_runs: Vec<NodeId>,
+    /// The values that the function returns: their places, true for a closure,
+    /// and the span. `check_returns` checks them after `op_refs`.
+    returned: Vec<(Vec<PlaceId>, bool, Span)>,
+    /// References that the body puts behind a reference parameter: the
+    /// parameter, the places that they point into, and the span. A caller
+    /// keeps them after the return (`check_stored_behind`).
+    stored_behind: Vec<(usize, Vec<PlaceId>, Span)>,
     /// The places that the `resume`s give, while a clause is lowered.
     resume_refs_pending: Vec<(CapId, Vec<PlaceId>)>,
     /// The root places of the parameters of the function.
     param_bases: Vec<PlaceId>,
     /// The root place of what the references behind each reference parameter of
-    /// the function point into, by parameter index, and the parameter of each
-    /// such root.
+    /// the function point into, by parameter index. The second map gives the
+    /// parameter of each such root.
     held_roots: BTreeMap<usize, PlaceId>,
     held_of: BTreeMap<weft_facts::RootId, usize>,
-    /// The nodes of a handled body that run a clause of a local handler: the
-    /// capability, the node, and the owners of the body that go out of scope
-    /// there if the clause does not resume.
-    abort_paths: Vec<(CapId, NodeId, Vec<VarId>)>,
+    /// The local handlers that an abort at each node can go to (`note_abort_ctx`):
+    /// for a node that can run a clause of a local handler.
+    abort_ctx: BTreeMap<NodeId, Rc<Vec<AbortTo>>>,
     /// The new values of whole locals in their own part of the graph: the
     /// variable, the node and the capabilities of the value.
     bind_caps: Vec<(VarId, NodeId, BTreeSet<CapId>)>,
@@ -646,11 +701,15 @@ impl<'p> Lower<'p> {
             param_of_root: BTreeMap::new(),
             op_results: BTreeMap::new(),
             resumed_refs: BTreeMap::new(),
+            env_root: None,
+            caller_runs: Vec::new(),
+            returned: Vec::new(),
+            stored_behind: Vec::new(),
             resume_refs_pending: Vec::new(),
             param_bases: Vec::new(),
             held_roots: BTreeMap::new(),
             held_of: BTreeMap::new(),
-            abort_paths: Vec::new(),
+            abort_ctx: BTreeMap::new(),
             bind_caps: Vec::new(),
         }
     }
@@ -813,9 +872,10 @@ impl<'p> Lower<'p> {
         self.in_flight.retain(|(v, ..)| !held.contains(v));
     }
 
-    /// A jump at node `n` leaves the values on their way that started at a depth
-    /// of at least `jumps` in `Lower::jumps` and `loops` in `Lower::loops`. They go
-    /// out of scope at `n`. A linear value is lost there (W0601).
+    /// A jump at node `n` leaves the values on their way that started deep enough.
+    /// Their depth in `Lower::jumps` is `jumps` or more, and their depth in
+    /// `Lower::loops` is `loops` or more. They go out of scope at `n`. A linear
+    /// value is lost there (W0601).
     pub(super) fn leave_in_flight(&mut self, n: NodeId, jumps: usize, loops: usize) {
         for &(v, j, l) in &self.in_flight {
             if j >= jumps && l >= loops {
@@ -997,32 +1057,65 @@ impl<'p> Lower<'p> {
         self.sum().multi = true;
     }
 
-    /// Node `n` runs a clause of the local handler behind `cap`. If the clause does
-    /// not resume, control goes from `n` to the end of the `handle`. Records the
-    /// node and the owners that the handled body declares, for `handle`. A node in
-    /// a closure or a clause inside the body does not count here: the node that
-    /// runs that closure does.
-    pub(super) fn note_abort_path(&mut self, n: NodeId, cap: CapId) {
-        if self.root_caps.contains(&cap) {
+    /// Node `n` can run a clause of a local handler. A clause that does not
+    /// resume ends the handled body there: control goes from `n` to the end of the
+    /// `handle`. Records the handlers that the node can abort to, and what goes
+    /// out of scope on the way, for `finish_aborts`. A handler outside a closure
+    /// or a clause around the node does not count: the node that runs the closure
+    /// does.
+    pub(super) fn note_abort_ctx(&mut self, n: NodeId) {
+        if self.handlers.is_empty() || self.abort_ctx.contains_key(&n) {
             return;
         }
-        let Some(h) = self.handlers.iter().rev().find(|h| h.cap == cap) else {
-            return;
-        };
-        let start = h.frames.min(self.frames.len());
-        if self.frames[start..].iter().any(|f| f.barrier.is_some()) {
-            return;
-        }
-        let mut vars = Vec::new();
-        for f in &self.frames[start..] {
-            for &(_, l) in &f.names {
-                let loc = &self.locals[l];
-                if loc.root.is_some() && !self.may_be_linear(&loc.ty) {
-                    vars.push(loc.var);
+        let barrier = self
+            .frames
+            .iter()
+            .rposition(|f| f.barrier.is_some())
+            .map_or(0, |i| i + 1);
+        let mut out = Vec::new();
+        for (hi, h) in self.handlers.iter().enumerate() {
+            if self.root_caps.contains(&h.cap) || h.frames < barrier {
+                continue;
+            }
+            let start = h.frames.min(self.frames.len());
+            let mut vars = Vec::new();
+            let mut scopes = Vec::new();
+            for f in &self.frames[start..] {
+                for &(_, l) in &f.names {
+                    let loc = &self.locals[l];
+                    if loc.root.is_some() || self.may_be_linear(&loc.ty) {
+                        vars.push(loc.var);
+                    }
+                    if matches!(loc.ty, Ty::Scope) {
+                        scopes.push(l);
+                    }
                 }
             }
+            for (depth, temps) in &self.stmt_temps {
+                if *depth > h.frames {
+                    vars.extend(temps.iter().copied());
+                }
+            }
+            for &(v, j, _) in &self.in_flight {
+                if j > h.jumps {
+                    vars.push(v);
+                }
+            }
+            let inner = self.handlers[hi + 1..]
+                .iter()
+                .filter(|x| !self.root_caps.contains(&x.cap))
+                .map(|x| x.cap)
+                .collect();
+            out.push(AbortTo {
+                cap: h.cap,
+                vars,
+                scopes,
+                inner,
+            });
         }
-        self.abort_paths.push((cap, n, vars));
+        if !out.is_empty() {
+            self.abort_ctx.insert(n, Rc::new(out));
+        }
     }
 
     /// Records that node `n` performs effect `e`. A lexical handler takes it if one is in scope.
@@ -1642,10 +1735,10 @@ impl<'p> Lower<'p> {
     }
 
     /// A branch reaches a join over the edge `from` to `to` with the state
-    /// `state`. A part holder of the state at the join that the branch does not
-    /// have is stale on this path: a later value of the part replaced it. A new
-    /// node on the edge gives it a new value, so a use after the join does not
-    /// see a change that came after it was replaced.
+    /// `state`. The state at the join can have a part holder that the branch does
+    /// not have. That holder is stale on this path: a later value of the part
+    /// replaced it. A new node on the edge gives it a new value. So a use after
+    /// the join does not see a change that came after the replacement.
     pub(super) fn retire_stale(
         &mut self,
         from: NodeId,
@@ -1662,18 +1755,13 @@ impl<'p> Lower<'p> {
         if stale.is_empty() {
             return;
         }
+        // The edge into the join is new: look for it from the end.
+        let Some(at) = self.facts.cfg_edge.iter().rposition(|e| *e == (from, to)) else {
+            return;
+        };
         let span = self.facts.node(to).span;
         let m = self.facts.add_node(span, "stale part", String::new());
-        let mut found = false;
-        for e in &mut self.facts.cfg_edge {
-            if *e == (from, to) {
-                e.1 = m;
-                found = true;
-            }
-        }
-        if !found {
-            return;
-        }
+        self.facts.cfg_edge[at].1 = m;
         self.facts.cfg_edge.push((m, to));
         for v in stale {
             self.bind(v, m);

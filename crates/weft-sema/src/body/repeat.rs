@@ -8,7 +8,7 @@
 
 use std::collections::BTreeSet;
 
-use super::fnval::{Callee, FnInfo};
+use super::fnval::{Callee, FnInfo, Given};
 use super::{FnId, Lower, NodeId, Val};
 
 impl Lower<'_> {
@@ -54,8 +54,21 @@ impl Lower<'_> {
         self.restart_tasks(again, &sum.spawns);
     }
 
+    /// A callee can call function value `info` more than once at node `n`, with
+    /// the places `given`. A value that the body does not know can be a stored
+    /// value: the node can run a stored value more than once.
+    pub(super) fn repeat_unknown(&mut self, n: NodeId, info: &FnInfo, given: &[Given]) {
+        let unknown = match info.summary {
+            Some(s) => self.closures[s].unknown,
+            None => info.item.is_none() && info.param.is_none(),
+        };
+        if unknown {
+            self.reach(n, given, true);
+        }
+    }
+
     /// Function value `info` can run more than once at node `n`, and the body is
-    /// lowered: a new node after `n` starts its tasks again (W0405). `apply_stored`
+    /// lowered. A new node after `n` starts its tasks again (W0405). `apply_stored`
     /// calls it for a stored value at a node that can run the value more than once.
     pub(super) fn restart_after(&mut self, n: NodeId, info: &FnInfo) {
         let Some(s) = info.summary else {
@@ -146,7 +159,8 @@ impl Lower<'_> {
     }
 
     /// Returns the function parameters of the function that it can call more than
-    /// once: a stored one too.
+    /// once: a stored one too, and one that is live across a node that can resume
+    /// more than once (`multi_live_params`).
     pub(super) fn repeats_sig(&self) -> BTreeSet<usize> {
         let mut out: BTreeSet<usize> = self
             .param_runs
@@ -155,6 +169,78 @@ impl Lower<'_> {
             .map(|(&(_, p), _)| p)
             .collect();
         out.extend(self.sums[0].stores.iter().copied());
+        out.extend(self.multi_live_params());
+        out
+    }
+
+    /// Returns the function parameters of the function that are live across a node
+    /// that can resume more than once. The code after the node runs again for each
+    /// resume, so it can call the value again or give it back again. A caller must
+    /// not give a `once` value there (W0502).
+    fn multi_live_params(&self) -> BTreeSet<usize> {
+        let mut out = BTreeSet::new();
+        let Some(id) = self.self_fn else {
+            return out;
+        };
+        let f = &self.facts;
+        let clause: BTreeSet<_> = f.clause_multi.iter().copied().collect();
+        let body: BTreeSet<_> = f.body_multi.iter().copied().collect();
+        let mut multi: BTreeSet<NodeId> = f.multi_at.iter().copied().collect();
+        multi.extend(
+            f.performs_at
+                .iter()
+                .filter(|(_, c)| clause.contains(c))
+                .map(|&(n, _)| n),
+        );
+        multi.extend(
+            f.resumes_at
+                .iter()
+                .filter(|(_, c)| clause.contains(c) || body.contains(c))
+                .map(|&(n, _)| n),
+        );
+        if multi.is_empty() {
+            return out;
+        }
+        let n = f.nodes.len();
+        let mut pred = vec![Vec::new(); n];
+        for &(a, b) in &f.cfg_edge {
+            pred[b.index()].push(a);
+        }
+        for (i, p) in self.sigs[id].params.iter().enumerate() {
+            if !matches!(p.ty, super::Ty::Fn(_)) {
+                continue;
+            }
+            let Some(var) = self.locals.get(i).map(|l| l.var) else {
+                continue;
+            };
+            let binds: BTreeSet<NodeId> = f
+                .rebound_at
+                .iter()
+                .filter(|(v, _)| *v == var)
+                .map(|&(_, m)| m)
+                .collect();
+            // `live_in`: a use of the value can follow with no new value first.
+            let mut live = vec![false; n];
+            let mut work: Vec<NodeId> = f
+                .uses
+                .iter()
+                .filter(|(v, _)| *v == var)
+                .map(|&(_, m)| m)
+                .collect();
+            while let Some(q) = work.pop() {
+                if std::mem::replace(&mut live[q.index()], true) {
+                    continue;
+                }
+                for &a in &pred[q.index()] {
+                    if multi.contains(&a) {
+                        out.insert(i);
+                    }
+                    if !binds.contains(&a) {
+                        work.push(a);
+                    }
+                }
+            }
+        }
         out
     }
 

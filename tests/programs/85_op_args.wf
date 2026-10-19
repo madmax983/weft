@@ -1,8 +1,9 @@
 // A clause can run a function argument of its operation as a task (W0314, ADR
-// 0006). The value can come from a callee: a closure that the callee makes and
-// gives to an operation of a handler of its caller, or a parameter of a closure
-// that a callee returns. A closure that a callee returns can also run its
-// parameter as a task. The caller checks these values with its own handlers.
+// 0006). The value can come from a callee. It can be a closure that the callee
+// makes and gives to an operation of a handler of its caller. It can be a
+// parameter of a closure that a callee returns. A closure that a callee returns
+// can also run its parameter as a task. The caller checks these values with its
+// own handlers.
 effect Note { fn note(x: u64) }
 effect Run { fn run(f: fn()) }
 

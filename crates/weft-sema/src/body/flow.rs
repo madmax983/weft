@@ -13,7 +13,7 @@ impl Lower<'_> {
     /// references that the locals and the temporaries at these places hold. The
     /// read uses these locals, so a reference in them that is not valid is an
     /// error. A place behind a reference parameter of the function holds
-    /// references that the caller gives: they point anywhere into the root of
+    /// references that the caller gives. They point anywhere into the root of
     /// what they point into (`held_root`, ADR 0003).
     pub(super) fn held_refs(&mut self, ps: &[PlaceId]) -> Vec<PlaceId> {
         let mut out = Vec::new();
@@ -32,8 +32,11 @@ impl Lower<'_> {
                     if let Some(rs) = self.temp_refs.get(&root) {
                         out.extend(rs.iter().copied());
                     } else if let Some(&(0, i)) = self.param_of_root.get(&root) {
-                        let h = self.held_root(i);
-                        out.push(self.facts.wildcard(h));
+                        // Only a pointee that can hold references has a root for them.
+                        if self.param_points_to_refs(i) {
+                            let h = self.held_root(i);
+                            out.push(self.facts.wildcard(h));
+                        }
                     } else if let Some(&i) = self.held_of.get(&root) {
                         // A reference behind a stored reference: also the caller's.
                         let h = self.held_root(i);
@@ -45,6 +48,27 @@ impl Lower<'_> {
         out.sort();
         out.dedup();
         out
+    }
+
+    /// Returns true if the value behind a reference, of type `t`, can hold a
+    /// reference. The value behind a slice reference is its elements.
+    pub(super) fn pointee_refs(&self, t: &Ty) -> bool {
+        match self.inf.shallow(t) {
+            Ty::Slice(x) => self.holds_refs(&x),
+            t => self.holds_refs(&t),
+        }
+    }
+
+    /// Returns true if reference parameter `i` of the function points to a value
+    /// that can hold a reference.
+    pub(super) fn param_points_to_refs(&self, i: usize) -> bool {
+        let Some(p) = self.self_fn.and_then(|f| self.sigs[f].params.get(i)) else {
+            return false;
+        };
+        match &p.ty {
+            Ty::Ref(inner) => self.pointee_refs(inner),
+            _ => false,
+        }
     }
 
     /// Returns the root place of what the references behind reference parameter
@@ -89,7 +113,7 @@ impl Lower<'_> {
         } else if !declared.is_ref() && mentions_param(declared) {
             out.extend(refs.iter().copied());
         }
-        if pointee.is_some_and(|t| self.holds_refs(t)) {
+        if pointee.is_some_and(|t| self.pointee_refs(t)) {
             out.extend(self.held_refs(&named));
         }
         out.sort();

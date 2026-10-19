@@ -327,6 +327,7 @@ impl Lower<'_> {
                     through_ref: false,
                     uniq: loc.uniq,
                     deps: Vec::new(),
+                    held: std::collections::BTreeSet::new(),
                 })
             };
             return Val {
@@ -371,6 +372,8 @@ impl Lower<'_> {
         }
         let sig = &self.sigs[f];
         let targs: Vec<Ty> = sig.generics.iter().map(|_| self.inf.fresh()).collect();
+        self.check_item_value(f, &targs, span);
+        let sig = &self.sigs[f];
         let ty = Ty::Fn(Rc::new(FnTy {
             params: sig
                 .params
@@ -469,6 +472,7 @@ impl Lower<'_> {
                             through_ref: true,
                             uniq: loc.uniq,
                             deps,
+                            held: loc.caps,
                         })
                     }
                     t => {
@@ -486,6 +490,7 @@ impl Lower<'_> {
                             through_ref: false,
                             uniq: loc.uniq,
                             deps: Vec::new(),
+                            held: std::collections::BTreeSet::new(),
                         })
                     }
                 }
@@ -565,6 +570,7 @@ impl Lower<'_> {
                         through_ref: true,
                         uniq: false,
                         deps,
+                        held: std::mem::take(&mut lv.held),
                     };
                 }
                 _ => break,
@@ -1655,6 +1661,7 @@ impl Lower<'_> {
             cap,
             multi: def.has_multi(),
             frames: self.frames.len(),
+            jumps: self.jumps.len(),
         });
         self.sum().own_caps.insert(cap);
         self.sums.push(Summary::default());
@@ -1676,7 +1683,7 @@ impl Lower<'_> {
         let mut clause_sum = Summary::default();
         let mut clauses_done = Vec::new();
         let mut clause_vals: Vec<Val> = Vec::new();
-        let mut clause_locals: Vec<PlaceId> = Vec::new();
+        let mut clause_locals: Vec<(Option<usize>, PlaceId)> = Vec::new();
         let mut aborts = false;
         for c in clauses {
             let Some(op) = def.ops.iter().find(|o| o.name == c.op.name).cloned() else {
@@ -1702,6 +1709,9 @@ impl Lower<'_> {
             let si = self.sums.len() - 1;
             self.push_frame(Some(si));
             let entry = self.start(c.span, "handler clause");
+            // The detail names the capability: a diagnostic finds the clause that
+            // a node runs (`clause_read` in `weft-check`).
+            self.facts.nodes[entry.index()].detail = format!("c{}", cap.0);
             let saved_stmts = std::mem::take(&mut self.stmt_temps);
             self.open_stmt();
             // A parameter that holds references points into what the operation gets.
@@ -1767,11 +1777,13 @@ impl Lower<'_> {
             self.jumps.push(Jump::Fence("handler clause"));
             let cv = self.block(&c.body);
             self.jumps.pop();
-            self.flush(block_tail(&c.body));
             let returns = !matches!(self.inf.shallow(&cv.ty), Ty::Never);
             if returns {
                 self.unify(&ty, &cv.ty, c.body.span);
+                // The value of the clause moves into the value of the `handle`.
+                self.consume(&cv, block_tail(&c.body));
             }
+            self.flush(block_tail(&c.body));
             self.end_frame(c.span);
             // A clause that can end with no `resume` ends the handled body at the
             // node that runs it.
@@ -1795,7 +1807,7 @@ impl Lower<'_> {
             let oi = def.ops.iter().position(|o| o.name == op.name);
             let own = cs.own_roots.clone();
             let local = self.note_resumed_refs(cap, oi, &cs.param_roots, &own);
-            clause_locals.extend(local);
+            clause_locals.extend(local.into_iter().map(|p| (oi, p)));
             // The value of the clause is the value of the `handle`. A reference into
             // a parameter points into what each node gives to the operation.
             if returns {
@@ -1887,6 +1899,14 @@ impl Lower<'_> {
         // A clause that runs its parameter as a task: the value that a node gives
         // to the operation must not perform through a handler of this task.
         self.check_clause_tasks(cap, &clauses_done);
+        // The local handlers outside the `handle` that the clauses perform through.
+        // A node that runs a clause runs their clauses too.
+        let clause_caps: std::collections::BTreeSet<weft_facts::CapId> = clauses_done
+            .iter()
+            .flat_map(|(_, cs, _)| cs.performs.difference(&cs.own_caps))
+            .copied()
+            .filter(|c| self.handlers.iter().any(|h| h.cap == *c))
+            .collect();
         let mut h = super::Handled {
             cap,
             clauses: clauses_done,
@@ -1895,6 +1915,12 @@ impl Lower<'_> {
             clause_sum,
             resumes,
             changes,
+            end: NodeId(0),
+            aborts,
+            locals: start.locals,
+            clause_caps,
+            clause_vars: Vec::new(),
+            keeps: (!escaped).then(|| (def.name.clone(), span)),
         };
         let calls: Vec<NodeId> = self
             .cap_calls
@@ -1909,50 +1935,29 @@ impl Lower<'_> {
             .copied()
             .collect();
         self.run_handler(&mut h, &calls, &args);
-        self.handled.push(h);
+        self.run_clause_caps(&h, &calls);
         self.cur = saved;
+        // A clause can give the value of the `handle` too. Then the value of the body
+        // moves into it, as the value of a branch of an `if` does.
+        if !clause_vals.is_empty() {
+            self.consume(&v, expr_tail(body));
+        }
         let end = self.emit(span, "end handle", String::new());
-        // A clause that does not resume ends the handled body at the node that runs
-        // it: control goes from there to the end of the `handle`. The owners of the
-        // body go out of scope on the way.
-        let paths: Vec<(weft_facts::CapId, NodeId, Vec<VarId>)> = self
-            .abort_paths
-            .iter()
-            .filter(|(c, ..)| *c == cap)
-            .cloned()
-            .collect();
-        self.abort_paths.retain(|(c, ..)| *c != cap);
-        if aborts {
-            for (_, n, vars) in paths {
-                let at = self.facts.node(n).span;
-                let u =
-                    self.facts
-                        .add_node(at, "abort", String::from("the clause does not resume"));
-                self.facts.cfg_edge.push((n, u));
-                self.facts.cfg_edge.push((u, end));
-                for v in vars {
-                    self.facts.scope_end.push((v, u));
-                }
-            }
-        }
-        // A local outside the body can keep a function value that performs through
-        // the handler: on the normal path and on each abort path.
-        if !escaped {
-            self.check_local_keeps(cap, &def.name, start, end, span);
-        }
         // A reference that a clause resumes with into its own local is not valid
-        // after the `handle`: the clause has ended.
-        let results: Vec<PlaceId> = self
-            .op_results
-            .iter()
-            .filter(|((c, _), _)| *c == cap)
-            .map(|(_, &r)| r)
-            .collect();
-        for p in clause_locals {
+        // after the `handle`: the clause has ended. The result of an operation
+        // of that clause, or of a call that reaches the handler, can be one.
+        for (oi, p) in clause_locals {
+            let results: Vec<PlaceId> = self
+                .op_results
+                .iter()
+                .filter(|((c, o), _)| *c == cap && (o.is_none() || oi.is_none() || *o == oi))
+                .map(|(_, &r)| r)
+                .collect();
             let root = self.facts.place(p).root;
             if let Some(l) = self.root_owner(root) {
                 let var = self.locals[l].var;
                 self.facts.scope_end.push((var, end));
+                h.clause_vars.push(var);
                 if v_refs_result(&self.facts, &results, &v.refs) {
                     let name = self.locals[l].name.clone();
                     self.err(
@@ -1963,9 +1968,20 @@ impl Lower<'_> {
                 }
             }
         }
+        // The abort paths and the check of the locals outside the body come after
+        // the whole body (`finish_aborts`). A stored value can run a clause too.
+        h.end = end;
+        self.handled.push(h);
         // The value of the handled body: also a task handle or a function value. A
-        // clause value that holds references or function values joins it.
+        // clause value that holds references or function values joins it. A value
+        // with no linear part needs one from each clause too.
         let mut out = v;
+        if !clause_vals.is_empty() {
+            out.empty &= clause_vals.iter().all(|cv| cv.empty);
+            out.var = None;
+            out.local = None;
+            out.place = None;
+        }
         for cv in clause_vals {
             if cv.refs.is_empty() && !self.has_fn(&cv.ty) {
                 continue;
@@ -2074,6 +2090,19 @@ impl Lower<'_> {
             // A task that a clause spawns into an outer scope starts there.
             for &t in &h.clause_sum.spawns {
                 self.facts.spawned_at.push((t, n));
+            }
+        }
+    }
+
+    /// The clauses of handler `h` perform through the local handlers of
+    /// `Handled::clause_caps`. So each node of `calls` that runs a clause of `h`
+    /// runs their clauses too. It mutates their footprints. A clause of theirs
+    /// that does not resume ends their handled body there.
+    pub(super) fn run_clause_caps(&mut self, h: &super::Handled, calls: &[NodeId]) {
+        for &n in calls {
+            for &c in &h.clause_caps {
+                self.facts.performs_at.push((n, c));
+                self.cap_calls.push((n, c));
             }
         }
     }

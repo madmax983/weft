@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{ast, AdtKind, Lower, Pattern, Span, Ty, Val, VarId, VarKind};
+use super::{ast, AdtKind, FnId, Lower, Pattern, Span, Ty, Val, VarId, VarKind};
 
 impl Lower<'_> {
     /// A linear value of type `ty` goes away at `span`. `name` names it in the
@@ -21,6 +21,62 @@ impl Lower<'_> {
         self.bind(var, n);
         let d = self.emit(span, "drop", String::new());
         self.facts.scope_end.push((var, d));
+    }
+
+    /// Generic function item `f` is a value here, with the type arguments `targs`.
+    /// Code that the body does not follow can call it, so the checks of a call of
+    /// `f` apply here (`hold_generic`, `callee_drops`). A type argument in `holds`
+    /// gets a hidden variable across a node of its own. That node can abort or
+    /// resume more than once, as `f` can (W0602, W0503). A type argument in
+    /// `drops` gets a value that goes away (W0601). `finish` decides from the
+    /// inferred types. The node is in a part of the graph of its own: no other
+    /// value is live there.
+    pub(super) fn check_item_value(&mut self, f: FnId, targs: &[Ty], span: Span) {
+        let sig = self.sigs[f].clone();
+        if self.cur.is_none() || (sig.effects.holds.is_empty() && sig.effects.drops.is_empty()) {
+            return;
+        }
+        let name = self.prog.fns[f].name.clone();
+        let abort = !sig.effects.named.is_empty() || !sig.effects.passthrough.is_empty();
+        let multi = sig.effects.multi || sig.effects.named.iter().any(|e| self.effect_has_multi(e));
+        let saved = self.cur;
+        let pending = self.take_pending();
+        for &j in &sig.effects.holds {
+            let Some(t) = targs.get(j).cloned() else {
+                continue;
+            };
+            if !self.may_be_linear(&t) || !(abort || multi) {
+                continue;
+            }
+            let shown = sig.generics.get(j).cloned().unwrap_or_default();
+            let info = self.var_info(&shown, VarKind::Temp, span, &t, false);
+            let var = self.new_var(info, &t);
+            let b = self.start(span, "held by the callee");
+            self.bind(var, b);
+            let a = self.emit(span, &name, "a generic function used as a value".into());
+            if abort {
+                self.facts.may_abort.push(a);
+            }
+            if multi {
+                self.facts.multi_at.push(a);
+            }
+            let r = self.emit(span, "given back by the callee", String::new());
+            self.facts.uses.push((var, r));
+            self.facts.moved_at.push((var, r));
+        }
+        for &j in &sig.effects.drops {
+            let Some(t) = targs.get(j).cloned() else {
+                continue;
+            };
+            if !self.may_be_linear(&t) {
+                continue;
+            }
+            let shown = sig.generics.get(j).cloned().unwrap_or_default();
+            let _ = self.start(span, &name);
+            self.drop_linear(&shown, &t, span);
+        }
+        self.cur = saved;
+        self.restore_pending(pending);
     }
 
     /// Returns the type parameters of the values that a generic body can drop.

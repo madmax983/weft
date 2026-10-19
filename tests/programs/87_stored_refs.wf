@@ -119,3 +119,10 @@ fn grow_other() {
     grow(&rs)
     print(at)
 }
+// A slice of a `Vec<u64>` holds no reference: the place behind it is its own.
+fn same<T>(x: T) -> T { x }
+fn bump_all(es: &[u64]) / mut(es) { print(1) }
+fn slice_through_generic(v: &Vec<u64>) / mut(v) {
+    let (l, r) = v.split_at(1)
+    bump_all(same(l))
+}

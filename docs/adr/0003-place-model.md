@@ -85,22 +85,29 @@ Status: accepted. Date: 2026-10-18.
   that node on. A hidden variable holds it, and each use of the local uses it. A later
   new value of the same part, of a part around it, or of the whole local replaces it.
   Each branch of an `if` or a `match` replaces only on its own path. So after the join
-  the part can hold the references of each branch. On the edge from a branch, or into
-  the head or the exit of a loop, a holder that the branch replaced gets a new value:
-  a change of its places after it was replaced does not count after the join. A loop
-  keeps the references that a pass gives for the next pass. A destructuring
-  `let S(a, b) = s` gives each part the places of `s`.
+  the part can hold the references of each branch. A holder that the branch replaced
+  gets a new value on the edge from the branch. It gets one on the edges into the head
+  and the exit of a loop too. So a change of its places after the replacement does not
+  count after the join. A loop keeps the references that a pass gives for the next
+  pass. A destructuring `let S(a, b) = s` gives each part the places of `s`.
 - A by-value parameter that holds references, such as `o: Option<&World>`, points into
   a parameter root. The callee can mutate through it. The caller puts in the places of
   the argument. A new value of the parameter itself is local.
 - A reference parameter can point to a value that holds references, such as
   `rs: &Vec<&T>`. A reference that the body reads out of it points into a root of its
-  own: what the references behind `rs` point into (`*rs` in the facts). It can point
-  anywhere inside that root. A signature names these places with the step `Held`: a
-  caller puts in the places that the references in its argument point into, and the
-  steps after them. A written `rs..` covers them, in `mut(rs..)` and in `&T in rs..`.
-  So a mutation through a stored reference needs `mut(rs..)` (W0703), and a returned
-  stored reference needs `in rs..` (W0204).
+  own (`*rs` in the facts). That root is what the references behind `rs` point into.
+  The reference can point anywhere inside that root. Only such a parameter has this
+  root. The value behind a slice reference is its elements, so `es: &[u64]` has none.
+  A signature names these places with the step `Held`. A caller puts in the places
+  that the references in its argument point into, and the steps after them. A written
+  `rs..` covers them, in `mut(rs..)` and in `&T in rs..`. So a mutation through a
+  stored reference needs `mut(rs..)` (W0703), and a returned stored reference needs
+  `in rs..` (W0204).
+- A function cannot put a reference behind a reference parameter if the reference
+  points into its own local, a by-value parameter or a temporary. For example,
+  `rs.push(&w[0])` does that. The caller keeps the reference after the return
+  (W0204). This also holds for a result of an operation that points into a local of a
+  clause.
 - Evaluation order follows the interpreter: arguments and operands run from left to
   right. A by-value argument moves when it is evaluated, so `f(v, v.len())` is a use
   after move. A hidden variable holds the value on its way to the call while the later
@@ -131,4 +138,5 @@ Status: accepted. Date: 2026-10-18.
 - W0605 is about written reference fields. A generic type such as `Option<&T>`,
   `Vec<&T>` or `Wrap<&T>` can hold references: the facts follow their places.
 - What stays open (not checked): a reference stored behind a reference parameter of a
-  closure or a clause. The value sees the outer place only (ADR 0005).
+  closure or a clause. The value sees the outer place only (ADR 0005). A reference to
+  a local of the closure that the closure puts there is not checked either.

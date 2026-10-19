@@ -1,8 +1,8 @@
 // A new value with no linear part, such as `None`, gives a linear variable
 // nothing to consume (ADR 0007): `empty_at(V, P)` in the spec. A later new value
 // of the variable or of a part makes it live. A `Vec` of linear values has no
-// consumer yet: it is W0601 at its end, also when each element is popped
-// (a known imprecision, kept on purpose; the last cases show it).
+// consumer yet. It is W0601 at its end, also when each element is popped. This is
+// a known imprecision, kept on purpose; the last cases show it.
 linear struct Lock { id: u64 }
 fn unlock(l: Lock) { let Lock(i) = l }
 fn lock() -> Lock { Lock { id: 1 } }
@@ -44,6 +44,44 @@ fn none_then_payload() {
 }   //~ W0601
 fn none_if(c: bool) {
     let o = if c { None } else { Some(lock()) }
+}   //~ W0601
+// A clause gives the value of the `handle` too: when it does not resume, and
+// after a `resume`.
+effect Op { fn op() }
+fn unlock_opt(o: Option<Lock>) { match o { Some(l) => unlock(l), None => {} } }
+fn none_or_clause() {
+    let o = handle Op { fn op() { Some(lock()) } } in {
+        op()
+        None
+    }
+}   //~ W0601
+fn none_or_after_resume() {
+    let o = handle Op { fn op() {
+        let r = resume(())
+        unlock_opt(r)
+        Some(lock())
+    } } in {
+        op()
+        None
+    }
+}   //~ W0601
+fn none_from_each() {
+    let o = handle Op { fn op() { None } } in {
+        op()
+        None
+    }
+    o = Some(lock())
+    match o { Some(l) => unlock(l), None => {} }
+}
+// The value of the body moves into the value of the `handle` at the end of the
+// body. When the clause does not resume, `a` does not move.
+fn body_value_moves() {
+    let a = Some(lock())
+    let o = handle Op { fn op() { Some(lock()) } } in {
+        op()   //~ W0602
+        a
+    }
+    match o { Some(l) => unlock(l), None => {} }
 }   //~ W0601
 
 // Known imprecision: nothing consumes a `Vec` of linear values.

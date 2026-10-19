@@ -82,12 +82,14 @@ fn item_in_field() / Note, async {
     let j = Job { f: worker }
     scope { s => s.spawn(j.f) }   //~ W0314
 }
-// A value from an operation of a handler of a caller, from a parameter of a
-// closure, or given to a function value that the body does not know.
+// The value comes from an operation of a handler of a caller, or from a parameter
+// of a closure. Or the body gives it to a function value that it does not know.
 fn from_operation() / Get, async {
     let g = get()
     scope { s => s.spawn(g) }   //~ W0314
 }
+// Known imprecision: the task runs a value from a parameter of a closure. The
+// body cannot follow it, so it is W0314 also when the value is quiet.
 fn from_closure_param() / async {
     let c = |j: &Job| scope { s => s.spawn(j.f) }   //~ W0314
     let j = Job { f: || print(1) }
@@ -100,7 +102,75 @@ fn to_unknown(run: fn(&Job)) / async {
     }
 }
 
+// A value of a type parameter can be a function value or hold one.
+fn start_gen<T>(x: &T, run: fn(&T)) / async {
+    scope { s =>
+        let t = s.spawn(|| run(x))
+        t.join()
+    }
+}
+fn start_gen_value<T>(x: T, run: fn(T)) / async {
+    scope { s =>
+        let t = s.spawn(|| run(x))
+        t.join()
+    }
+}
+fn job_runs(j: &Job) {
+    let g = j.f
+    g()
+}
+fn through_generic() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let j = Job { f: || note(6) }
+        start_gen(&j, job_runs)   //~ W0314
+    }
+}
+fn through_generic_value() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        start_gen_value(|| note(7), |g: fn()| g())   //~ W0314
+    }
+}
+// A reference behind a reference parameter: the task runs what it points to.
+fn start_held(v: &Vec<&Job>) / async {
+    scope { s =>
+        let t = s.spawn(v[0].f)
+        t.join()
+    }
+}
+fn behind_held_ref() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let j = Job { f: || note(2) }
+        let v = Vec.new()
+        v.push(&j)
+        start_held(&v)   //~ W0314
+    }
+}
+// A callee copies the value out of a reference argument into its result.
+fn job_fn(j: &Job) -> fn() { j.f }
+fn start_copied(j: &Job) / async {
+    scope { s =>
+        let t = s.spawn(job_fn(j))
+        t.join()
+    }
+}
+fn copied_out() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let j = Job { f: || note(4) }
+        start_copied(&j)   //~ W0314
+    }
+}
+
 // Controls.
+fn through_generic_ok() / async {
+    let j = Job { f: || print(6) }
+    start_gen(&j, job_runs)
+}
+fn behind_held_ref_ok() / async {
+    let j = Job { f: || print(2) }
+    let v = Vec.new()
+    v.push(&j)
+    start_held(&v)
+}
 fn behind_ref_ok() / async {
     let j = Job { f: || print(1) }
     start(&j)

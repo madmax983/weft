@@ -13,6 +13,18 @@ fn run_in_loop(v: &Vec<fn()>, n: u64) { for i in 0..n { let g = v[0]
  g() } }
 fn run_once(j: &Job) { let g = j.f
  g() }
+fn call_twice(g: fn()) {
+    g()
+    g()
+}
+fn run_with(j: &Job, k: fn(fn())) { k(j.f) }
+fn run_both(j: &Job) {
+    run_once(j)
+    run_once(j)
+}
+fn run_either(j: &Job, c: bool) {
+    if c { run_once(j) } else { run_once(j) }
+}
 fn run_through(j: &Job) { run_twice(j) }
 fn run_closure(j: &Job) { let c = || { let g = j.f
  g() }
@@ -45,7 +57,43 @@ fn stored_closure_runs_twice(st: &Stats) / mut(st), async {
     }
 }
 
-// Controls. A callee that runs the stored value once starts one task.
+// The value comes out of the store by value: the callee calls it twice.
+fn field_to_twice(st: &Stats) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| st.count += 1); () } }
+        call_twice(j.f)   //~ W0405
+    }
+}
+fn local_to_twice(st: &Stats) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| st.count += 1); () } }
+        let g = j.f
+        call_twice(g)   //~ W0405
+    }
+}
+fn through_callback(st: &Stats) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| st.count += 1); () } }
+        run_with(&j, call_twice)   //~ W0405
+    }
+}
+
+// A callee runs the stored value at two nodes, one after the other.
+fn stored_run_by_two(st: &Stats) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| st.count += 1); () } }
+        run_both(&j)   //~ W0405
+    }
+}
+
+// Controls. A callee that runs the stored value once starts one task. Two
+// nodes on the two branches of an `if` run it once.
+fn stored_either_branch(st: &Stats, c: bool) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| st.count += 1); () } }
+        run_either(&j, c)
+    }
+}
 fn stored_run_once(st: &Stats) / mut(st), async {
     scope { s =>
         let j = Job { f: || { s.spawn(|| st.count += 1); () } }

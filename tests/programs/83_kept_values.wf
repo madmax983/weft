@@ -1,7 +1,7 @@
 // A closure that performs through a local handler cannot leave the handled body
-// (W0313, ADR 0005). It can leave through code that keeps it: a callee that copies
-// it out of a reference argument into another argument or into its result, and a
-// clause of a handler inside the body that keeps its function parameter.
+// (W0313, ADR 0005). It can leave through code that keeps it. A callee can copy
+// it out of a reference argument into another argument or into its result. A
+// clause of a handler inside the body can keep its function parameter.
 effect Note { fn note(x: u64) }
 effect Reg { fn reg(f: fn()) }
 effect RegJob { fn reg_job(j: Job) }
@@ -14,6 +14,19 @@ fn take_pair(src: &Job) -> (fn(), u64) { (src.f, 1) }
 fn read_only(src: &Job, dst: &Job) / mut(dst) { let g = src.f
  g() }
 fn reg_it(g: fn()) / Reg { reg(g) }
+fn copy_into_held(src: &Job, dsts: &Vec<&Job>) / mut(dsts..) {
+    let d = dsts[0]
+    d.f = src.f
+}
+fn take_held(srcs: &Vec<&Job>) -> fn() {
+    let s = srcs[0]
+    s.f
+}
+fn copy_held(srcs: &Vec<&Job>, dst: &Job) / mut(dst) {
+    let s = srcs[0]
+    dst.f = s.f
+}
+effect RegRef { fn reg_ref(j: &Job) }
 
 // A callee copies the value out of a reference argument.
 fn copies() {
@@ -129,6 +142,65 @@ fn copies_inside() {
         g()
     }
 }
+// The references behind a reference argument: the callee copies into what they
+// point to, or out of it.
+fn copies_into_held() {
+    let keep = Job { f: || print(0) }
+    handle Note { fn note(x) { resume(()) } } in {   //~ W0313
+        let j = Job { f: || note(1) }
+        let ds = Vec.new()
+        ds.push(&keep)
+        copy_into_held(&j, &ds)
+    }
+    let g = keep.f
+    g()
+}
+fn takes_held() {
+    let g = || print(0)
+    handle Note { fn note(x) { resume(()) } } in {   //~ W0313
+        let j = Job { f: || note(1) }
+        let v = Vec.new()
+        v.push(&j)
+        g = take_held(&v)
+    }
+    g()
+}
+fn copies_held() {
+    let keep = Job { f: || print(0) }
+    handle Note { fn note(x) { resume(()) } } in {   //~ W0313
+        let j = Job { f: || note(2) }
+        let v = Vec.new()
+        v.push(&j)
+        copy_held(&v, &keep)
+    }
+    let g = keep.f
+    g()
+}
+fn reads_held_here() {
+    let g = || print(0)
+    handle Note { fn note(x) { resume(()) } } in {   //~ W0313
+        let j = Job { f: || note(1) }
+        let v = Vec.new()
+        v.push(&j)
+        let s = v[0]
+        g = s.f
+    }
+    g()
+}
+// A clause reads the value through its reference parameter and keeps it.
+fn clause_keeps_through_ref() {
+    let keep = || print(0)
+    handle Note { fn note(x) { resume(()) } } in {   //~ W0313
+        handle RegRef { fn reg_ref(j) {
+            keep = j.f
+            resume(())
+        } } in {
+            let j = Job { f: || note(5) }
+            reg_ref(&j)
+        }
+    }
+    keep()
+}
 fn clause_calls_it() {
     let keep = || print(0)
     handle Note { fn note(x) { resume(()) } } in {
@@ -144,4 +216,14 @@ fn clause_keeps_harmless() {
  resume(()) } } in reg(|| print(1))
     }
     keep()
+}
+fn takes_held_harmless() {
+    let g = || print(0)
+    handle Note { fn note(x) { resume(()) } } in {
+        let j = Job { f: || print(1) }
+        let v = Vec.new()
+        v.push(&j)
+        g = take_held(&v)
+    }
+    g()
 }

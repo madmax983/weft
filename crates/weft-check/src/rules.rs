@@ -18,6 +18,8 @@ pub enum Cause {
     Move(VarId),
     /// This owner of the place goes out of scope at the node.
     ScopeEnd(VarId),
+    /// An abort path leaves the scope of this owner of the place at the node.
+    Unwound(VarId),
     /// The node moves the value at this place out of its owner.
     MovePart(PlaceId),
     /// The node gives this place to a function value that can mutate through it.
@@ -169,6 +171,10 @@ impl<'a> Ctx<'a> {
         for &(v, p) in &f.scope_end {
             let roots = owned.get(&v).unwrap_or(&none);
             out[p.index()].extend(roots.iter().map(|&rt| (rt, Cause::ScopeEnd(v))));
+        }
+        for &(v, p) in &f.unwound_at {
+            let roots = owned.get(&v).unwrap_or(&none);
+            out[p.index()].extend(roots.iter().map(|&rt| (rt, Cause::Unwound(v))));
         }
         out
     }
@@ -466,6 +472,7 @@ fn linear(
     let ends = by_var(&f.scope_end);
     let overwrites = by_var(&f.overwrites);
     let empty: BTreeSet<(VarId, NodeId)> = f.empty_at.iter().copied().collect();
+    let unwound = by_var(&f.unwound_at);
     let aborts = cx.mask(f.may_abort.iter().copied());
     let vars: BTreeSet<VarId> = rebound.keys().chain(overwrites.keys()).copied().collect();
     for v in vars {
@@ -484,7 +491,16 @@ fn linear(
                 .filter(|&b| !empty.contains(&(v, b)))
                 .chain(parts.iter().copied()),
         );
-        let kill = cx.mask(moved.get(&v).cloned().unwrap_or_default());
+        let moves = cx.mask(moved.get(&v).cloned().unwrap_or_default());
+        // On an abort path the unwinder finishes the value.
+        let kill = cx.mask(
+            moved
+                .get(&v)
+                .into_iter()
+                .chain(unwound.get(&v))
+                .flatten()
+                .copied(),
+        );
         let live = cx.forward(&gen, &kill);
         for &e in ends.get(&v).map_or(&[][..], Vec::as_slice) {
             if live[e.index()] {
@@ -498,7 +514,7 @@ fn linear(
         }
         if !info.has_on_abort {
             for (i, &l) in live.iter().enumerate() {
-                if l && aborts[i] && !kill[i] {
+                if l && aborts[i] && !moves[i] {
                     out.abort_unhandled
                         .insert((v, NodeId(u32::try_from(i).unwrap_or(u32::MAX))));
                 }

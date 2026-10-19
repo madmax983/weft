@@ -80,23 +80,42 @@ Status: accepted. Date: 2026-10-18.
 - A generic function can hold a value of a type parameter at a node that can abort or
   resume more than once. `finish` follows these values as the rules of W0602 and W0503
   do: from a new value to a move. Their type parameters are the `holds` part of the
-  signature. A call that gives a linear type to a type parameter in `holds` has a
-  hidden variable of that type: it gets a value before the call node and moves after
-  it. So the rules see a linear value across the call. W0602 applies if the call can
-  abort and the type has no `on abort`. W0503 applies if the call can resume more than
-  once. In a generic caller the variable is linear only because a type parameter can
-  be, so the caller gets the type parameter in its own `holds`.
+  signature. A call can give a linear type to a type parameter in `holds`. Then it has
+  a hidden variable of that type. The variable gets a value before the call node and
+  moves after it. So the rules see a linear value across the call. W0602 applies if
+  the call can abort and the type has no `on abort`. W0503 applies if the call can
+  resume more than once. In a generic caller the variable is linear only because a
+  type parameter can be. So the caller gets the type parameter in its own `holds`. A
+  value that is not `many`, such as a `once` closure, gets the hidden variable too
+  (W0503).
+- A generic function item can be a value, for example an argument of a parameter of
+  type `fn(Lock) -> Lock / fail`. Code that the body does not follow can call it. So
+  the value gets the checks of a call where the body makes it. A type argument in
+  `holds` gets a hidden variable across a node of its own. That node can abort or
+  resume more than once, as the item can (W0602, W0503). A type argument in `drops`
+  gets a value that goes away there (W0601). The node is in a part of the graph of
+  its own, so no other value is live there.
+- A foreign generic function (`extern fn` in user code) has each type parameter in
+  `drops`, and in `holds` if it can abort. It has no body to show what it does.
 - A linear value can be on its way to a call, a tuple, a struct literal, a constructor
   or an array. It is live while the later operands run. A hidden variable holds it
   from its operand to the node that takes it. An abort in a later operand loses the
   value. Its type must have `on abort` (W0602). A `return`, a `break` or a `continue`
   in a later operand leaves the value: the hidden variable goes out of scope at the
   jump (W0601). A jump that stays inside the later operand does not leave it.
-- A new value with no linear part, such as a variant with no payload (`None`), gives
-  a linear variable nothing to consume: `empty_at(V, P)` in the spec. `live_linear`
-  does not start there. A new value of a part (`overwrites`) starts it, because the
-  part can now hold a linear value. A `Vec.new()` result is not such a value: `push`
-  can add a linear value to it without a new value of the variable.
+- A new value with no linear part gives a linear variable nothing to consume. An
+  example is a variant with no payload (`None`). The spec has `empty_at(V, P)` for
+  it. `live_linear` does not start there. A new value of a part (`overwrites`) starts
+  it, because the part can now hold a linear value. A `Vec.new()` result is not such
+  a value: `push` can add a linear value to it without a new value of the variable.
+  A clause gives the value of a `handle` when it does not resume, or after a
+  `resume`. So the value of a `handle` has no linear part only if the value of the
+  body and the value of each clause have none. The value of the body moves into the
+  value of the `handle` then, as the value of a branch of an `if` does.
+- On an abort path (ADR 0005) the unwinder finishes each value of the handled body:
+  `unwound_at(V, P)` in the spec. `live_linear` stops there, and the owner frees its
+  memory. The node that aborts needs `on abort` for each live linear value (W0602).
+  A linear value outside the body stays live.
 - `!Move` passes through the parts that hold a value inline. A pointer such as `Box`
   or `Rc` does not move its target, so it does not pass `!Move` on. A prelude type
   with no elements, such as `Weak<T>`, is a pointer or a handle too.
@@ -127,13 +146,17 @@ Status: accepted. Date: 2026-10-18.
     also when the closure runs after the value moves.
   - A new value of a local that holds a linear type overwrites its old value. This is
     also so when the old value is an empty `Vec`. After `None` it is not.
-  - A call of a generic callee in `holds` holds a linear value across the call node,
-    also when the callee holds the value at another node than the one that can abort.
+  - A call of a generic callee in `holds` holds a linear value across the call node.
+    This is also so when the callee holds the value at another node than the one that
+    can abort.
   - A `Vec` of linear values is linear, and nothing consumes it. It is W0601 at its
-    end, also when each element is popped and consumed. A sound consumer needs a
-    check at run time that the `Vec` is empty, and an abort path for the elements when
-    it is not. The checker keeps the error. `tests/programs/88_empty_values.wf` has the
-    cases.
+    end, also when each element is popped and consumed. The prelude has no consumer
+    for it: `pop` leaves the `Vec`, and a `for` loop gives references. A consumer
+    could take the `Vec` by value, such as `drain(self, f: fn(T))`. That is a change
+    of the prelude and of the interpreter, not of the checker. The checker keeps the
+    error. `tests/programs/88_empty_values.wf` has the cases.
+  - A local can hold a generic function item, and a call of the local can run it.
+    Then the checks of `holds` and `drops` apply twice: at the value and at the call.
   - A borrow of a struct with a place field that has no value is W0304, also when the
     callee gives the field a value first. A `match` on such a value reads it too.
   - A call result that can hold a function value gets the modes of the arguments,

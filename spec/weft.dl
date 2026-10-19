@@ -29,6 +29,8 @@
 //   overwrites(V, P)         node P gives a part of V a new value; the old value of the part goes away.
 //   unset_at(V, P)           node P declares V with no value.
 //   empty_at(V, P)           node P gives V a new value with no linear part, such as `None`.
+//   unwound_at(V, P)         an abort path leaves the scope of V at node P: the unwinder
+//                            finishes V (its `on abort` runs).
 //   owner(Rt, V)             root place Rt holds the value of V. A move or the end of V frees it.
 //   moved_part(M, P)         node P moves the value at place M out of its owner (a partial move).
 //   linear(V)                V holds a linear value.
@@ -116,6 +118,7 @@ part_moved_at(V, P)  :- moved_part(M, P), owner(Rt, V), prefix(Rt, M).
 frees_at(P, M)       :- moved_part(M, P).
 frees_at(P, Rt)      :- owner(Rt, V), moved_at(V, P), !part_moved_at(V, P).
 frees_at(P, Rt)      :- owner(Rt, V), scope_end(V, P).
+frees_at(P, Rt)      :- owner(Rt, V), unwound_at(V, P).
 
 invalidated_at(R, P) :- points_into(R, Path), frees_at(P, M), prefix(M, Path).
 
@@ -157,10 +160,11 @@ moved_immovable(V, P) :- moved_at(V, P), immovable(V).
 // ---------------------------------------------------------------------------
 
 // A new value with no linear part has nothing to consume. A new value of a part
-// can give the variable a linear value.
+// can give the variable a linear value. On an abort path the unwinder finishes
+// the value (`may_abort` needs its `on abort`, W0602).
 live_linear(V, Q)     :- linear(V), rebound_at(V, P), !empty_at(V, P), cfg_edge(P, Q).
 live_linear(V, Q)     :- linear(V), overwrites(V, P), cfg_edge(P, Q).
-live_linear(V, Q)     :- live_linear(V, P), cfg_edge(P, Q), !moved_at(V, P).
+live_linear(V, Q)     :- live_linear(V, P), cfg_edge(P, Q), !moved_at(V, P), !unwound_at(V, P).
 
 unconsumed(V, P)      :- live_linear(V, P), scope_end(V, P).
 overwritten(V, P)     :- live_linear(V, P), rebound_at(V, P).

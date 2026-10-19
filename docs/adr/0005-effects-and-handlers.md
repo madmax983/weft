@@ -24,12 +24,23 @@ Status: accepted. Date: 2026-10-18.
   got is a change of the clause parameter, so a reference into the parameter that the
   clause holds across `resume` is invalid after it.
 - A clause that can end with no `resume` ends the handled body at the node that runs
-  it. The graph has an edge from each such node of the body to the end of the
-  `handle`, through a node where the owners of the body go out of scope. So on that
-  path the code after the node does not run: a reference keeps its old value (W0301),
-  a linear value outside the body stays live (W0601), and a local outside the body
-  keeps its function value (W0313). A node inside a closure or a clause of the body
-  does not get the edge: the node that runs the closure gets it.
+  it. Each node of the body that can run a clause of the handler gets an edge to the
+  end of the `handle`. Such a node can be a perform, or a call of a closure or a
+  function. It can also run a stored function value, or a clause of a handler inside
+  the body. The edge goes through an abort node. There the unwinder finishes the
+  values of the body (`unwound_at` in the spec). It frees the owners. A linear value
+  needs no consumer there: its `on abort` runs (W0602 checks the node that aborts).
+  The unwinder also cancels the tasks of the scopes that the body opened, and it
+  waits for them. So on that path the code after the node does not run. A reference
+  keeps its old value (W0301), and a linear value outside the body stays live
+  (W0601). A local outside the body keeps its function value (W0313). A node inside
+  a closure or a clause of the body does not get the edge: the node that runs the
+  closure gets it. The edges come after the whole body (`finish_aborts`), because a
+  stored function value can run a clause too.
+- A clause can perform an operation of a local handler outside its own `handle`. A
+  node that runs the clause then runs the clause of that handler too. It performs
+  through its capability. So it mutates the footprint of that handler, and it can
+  abort to the end of that `handle`.
 - Call-site aliasing (W0312): a callee sees its reference parameters as separate places.
   So the caller must not pass overlapping places when the callee (or a handler that the
   callee reaches) mutates one of them. A by-value argument that holds references points
@@ -64,9 +75,9 @@ Status: accepted. Date: 2026-10-18.
   and types, and on the number of different steps in the places of the program. A row
   that grows past the bound shows a checker bug: the inference stops, and each
   function whose signature can still change gets W0706, an error.
-- The other parts of a signature (`lent`, `ret`, `stores`, `reach`, `multi`,
-  `fn_stores`, `op_effects` and `tasks`, see below and ADR 0006, and `drops` and
-  `holds`, see ADR 0007) are not part of the row. The body always infers them, also
+- The other parts of a signature are not part of the row. They are `lent`, `ret`,
+  `stores`, `reach`, `multi`, `fn_stores`, `op_effects` and `tasks` (see below and
+  ADR 0006), and `drops` and `holds` (see ADR 0007). The body always infers them, also
   when the signature states the row, and each new lowering replaces them. They do not
   only grow: a part that is not known yet can be larger than its final value. So the
   parts of one function can change at most 32 times and two more times for each function
@@ -100,12 +111,12 @@ Status: accepted. Date: 2026-10-18.
   cannot go to the operation (W0313), also through a callee or a closure that gives
   its function parameter to an operation. A signature has an `op_fns` part: the
   function parameters that the body gives to an operation of a handler of a caller,
-  also inside a field or a container. It has an `op_effects` part: for each function
-  value that the body gives to such an operation, the effect of the operation and each
-  effect that the value performs through a handler of a caller. A clause can run the
-  value as a task, so the caller checks it with its own handlers (W0314, ADR 0006). A
-  value that performs through a local handler of the caller and goes to an operation
-  of a handler outside that handler escapes (W0313).
+  also inside a field or a container. It has an `op_effects` part for each function
+  value that the body gives to such an operation. The part has the effect of the
+  operation and each effect that the value performs through a handler of a caller. A
+  clause can run the value as a task, so the caller checks it with its own handlers
+  (W0314, ADR 0006). A value that performs through a local handler of the caller and
+  goes to an operation of a handler outside that handler escapes (W0313).
 - A handler intercepts its effect if a clause performs the effect again, through a
   handler outside it (`clause_performs`, `forwards`). In a library, a handler of a
   standard effect that never forwards is a root handler (W0801), also when the function
@@ -124,24 +135,41 @@ Status: accepted. Date: 2026-10-18.
   or in its result, so a `Box`, an `Rc` or a generic result holds it as a local of the
   body does. A callee result that is not a function value, for example a tuple, holds
   the function arguments of the call.
-- A callee can copy a function value out of what a reference argument points to: into
-  what another reference argument points to, or into its result. A signature has a
+- A callee can copy a function value out of what a reference argument points to. It
+  can put it behind another reference argument, or in its result. A signature has a
   `fn_stores` part: the reference parameters whose pointee can get a function value
   from the body. The caller puts the function values of each reference argument into
   the arguments of `fn_stores` and into a result that can hold a function value. A
   foreign function and a function value that the body does not know can do this with
-  each argument.
+  each argument. What a reference argument points to includes what the references
+  in it point to. So a callee can copy a value into or out of a struct behind a
+  stored reference (`dsts: &Vec<&Job>`). A reference to a value carries the function
+  values of that value, so a `Vec` that gets the reference gets them too.
 - A parameter of a clause holds the function values that the nodes give to its
-  operation. So a clause that keeps its parameter in a local outside the body, in a
-  field, in a container or in its value lets the value escape (W0313).
+  operation, also in what a reference argument points to. A clause can keep its
+  parameter, or a value that it reads through it. If it keeps it in a local outside
+  the body, in a field, in a container or in its value, the value escapes (W0313).
 - The result of an operation can hold a reference. It points where the values that the
   clauses `resume` with point. The clauses are lowered after the handled body, so the
   result first points into a root place of its own. At the end of the body, each fact
-  about a place below that root holds for the same place below each place that a
-  `resume` gives. A call that reaches a local handler gives its result these places
-  too. A reference into a local of a clause is not valid after the `handle`, and a
-  `handle` that returns one is W0204. A result from a handler of a caller can point
-  into any place of the parameters.
+  about a place below that root moves. It then holds for the same place below each
+  place that a `resume` gives. A call that reaches a local handler gives its result
+  these places too. A reference into a local of a clause is not valid after the
+  `handle`, and a `handle` that returns one is W0204. The returned references of the
+  function are checked after this step, so a result in a place that the signature
+  states is valid.
+- A result from a handler of a caller can point into any place of the parameters. It
+  can also point into a place of the caller that the parameters do not reach, for
+  example a local of the caller. That place is below a root of its own
+  (`a place of a caller`). Code of a caller can change that place. So a node lends the
+  root (`lends_mut`) if it performs an operation of a handler of a caller. A call of
+  a function parameter, or of a function value that the body does not know, lends it
+  too. A callee can perform through a handler of a caller and return a reference with
+  no stated place. Then its result can point there too. A function that returns such
+  a reference with a stated place gets W0204.
+- A `resume` gives its argument to the handled computation, where the body does not
+  follow it. So a function value in it is a stored value: a call of the operation
+  result runs it (`apply_stored`).
 - Extern functions in user code default to `blocking`.
 - `print` is a debug built-in with no effect.
 
@@ -166,8 +194,8 @@ Status: accepted. Date: 2026-10-18.
 - A function that returns a function value has a `ret` part in its signature: what a
   call of the result does, in the places of the parameters. A call of the result does
   that. The part also has the parameters of the result that it gives to an operation
-  of a handler at the call site of the function, and the parameters that its tasks
-  can call (ADR 0006). The body always infers this part, also when the signature
+  of a handler at the call site of the function. It also has the parameters that its
+  tasks can call (ADR 0006). The body always infers this part, also when the signature
   states the row. It includes the places that the result lends: to a function
   parameter of the function, or to a value that the function does not know.
 - A call of a function value returns a value that does what the callee states about
@@ -191,8 +219,9 @@ Status: accepted. Date: 2026-10-18.
   argument does (W0312). An operation of a handler that the stored value performs runs
   its clause at the node, as at a perform.
 - A signature has a `stores` part: the function parameters that the body stores. It has
-  a `reach` part: whether the body can run a stored value, whether it can run one more
-  than once, and the places that it gives to it, by argument position. A caller gives
+  a `reach` part: whether the body can run a stored value, and whether it can run one
+  more than once. The part also has the places that the body gives to it, by argument
+  position. A caller gives
   a stored value these places. A function with no body can store each function
   argument, and can run a stored value with any place inside its reference arguments.
 - A call of a function parameter, or of a function value that the body does not know,
@@ -281,10 +310,12 @@ Status: accepted. Date: 2026-10-18.
     reference arguments of the operation, also when the clause does not call it.
   - W0313 counts each function value given to code that can keep it, also when that
     code only calls it, and each part of a local of the body that can hold a function.
-    A new value of a local outside the body, in its own part of the graph, counts only
-    if it reaches the end of the `handle` (also on an abort path). Another value counts
-    always: a value in a part, and a new value in a closure or a clause, also when a
-    later new value replaces it.
+    Take a new value of a local outside the body, in the part of the graph of the
+    local. It counts only if it reaches the end of the `handle`. An abort path to that
+    end counts too. So does an abort path to the end of a `handle` around it, if the
+    local is declared outside that `handle`. Another value counts always: a value in a
+    part, or a new value in a closure or a clause. It counts also when a later new
+    value replaces it.
   - The result of an operation carries what each `resume` of its handler gives, also a
     `resume` of another operation of the handler.
   - W0314 counts each function value given to a function value that the body does not
@@ -292,15 +323,23 @@ Status: accepted. Date: 2026-10-18.
   - A `resume` can resume more than once if a clause of its handler can, also when the
     handled computation does not perform the operation again.
   - A clause that resumes only in a closure counts as a clause that can end with no
-    `resume`: the nodes that run it get an abort path.
+    `resume`. So the nodes that run it get an abort path.
   - A callee in `fn_stores` gets the function values of each other reference argument,
     also when it puts another value there. A result that can hold a function value
     gets them too.
   - A parameter of a clause holds the values that the nodes give to each operation of
     its handler, not only to its own operation.
-  - The result of an operation of a handler of a caller that holds a reference points
-    into each place of the parameters. A call that reaches a local handler gives its
-    result the places of each `resume` of the handler, also of another operation.
+  - The result of an operation of a handler of a caller can hold a reference. It
+    points into each place of the parameters and into a place of the caller. Each
+    operation of a handler of a caller and each call of a function parameter changes
+    that place.
+    A call that reaches a local handler gives its result the places of each `resume`
+    of the handler, also of another operation.
+  - A node that runs a clause of a handler inside the body runs each clause that the
+    clause performs through. This is also so when it performs it only on some paths.
+  - If one clause of a handler can end with no `resume`, each node that runs a clause
+    of the handler gets an abort path. A node that runs a clause that always resumes
+    gets one too.
 - What stays open (not checked):
   - A function value inside a returned tuple or struct, or a closure that a callee
     makes and stores in a place of the caller: the caller does not see what a later
@@ -313,8 +352,6 @@ Status: accepted. Date: 2026-10-18.
     parameter can mutate it. The caller sees the mutation on its own place only.
   - A reference that a function value gets inside another reference: the value sees
     the outer place only (ADR 0003).
-  - A node that runs a clause and that only the stored function values find (after
-    the body) gets no abort path.
-  - A function value that the body cannot follow (from a parameter of a closure, or
-    from an operation of a handler of a caller) and that goes to an operation of a
-    handler of a caller: the caller does not check it for W0314.
+  - A function value that the body cannot follow, and that goes to an operation of a
+    handler of a caller. The caller does not check it for W0314. Such a value comes
+    from a parameter of a closure, or from an operation of a handler of a caller.

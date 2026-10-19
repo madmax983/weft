@@ -13,20 +13,25 @@
 //! still change gets W0706.
 //!
 //! A signature also has parts that the body always infers, also for a function
-//! that states its effects: what it lends to its function parameters, what its
-//! returned function value does, which function parameters it stores, whether
-//! it can run a stored function value, what it gives to that value, whether an
-//! unknown function value that it calls can resume more than once, which
-//! parameters a task of the body can call, which function parameters it gives to
-//! an operation of a handler of a caller and what the values that it gives there
-//! perform, which effects its tasks perform through a handler of a caller, which
-//! function parameters it can call more than once, which reference parameters can
-//! get a function value, and the type parameters of the values that it can drop
-//! or hold across an abort. Each new lowering replaces these parts, so they do
-//! not only grow. A part that is not known yet can be larger than its final
-//! value: for example, a callee with no inferred returned function value counts
-//! as unknown. So the inference does not join these parts. Instead, the parts of
-//! one function can change at most [`parts_limit`] times. After that, the inference keeps the parts of that
+//! that states its effects:
+//! - what it lends to its function parameters;
+//! - what its returned function value does;
+//! - which function parameters it stores;
+//! - whether it can run a stored function value, and what it gives to that value;
+//! - whether an unknown function value that it calls can resume more than once;
+//! - which parameters a task of the body can call;
+//! - which function parameters it gives to an operation of a handler of a
+//!   caller, and what the values that it gives there perform;
+//! - which effects its tasks perform through a handler of a caller;
+//! - which function parameters it can call more than once;
+//! - which reference parameters can get a function value;
+//! - the type parameters of the values that it can drop or hold across an abort.
+//!
+//! Each new lowering replaces these parts, so they do not only grow. A part that
+//! is not known yet can be larger than its final value. For example, a callee
+//! with no inferred returned function value counts as unknown. So the inference
+//! does not join these parts. Instead, the parts of one function can change at
+//! most [`parts_limit`] times. After that, the inference keeps the parts of that
 //! function as they are, and it continues with the other functions. At the
 //! end, each function whose parts still change gets W0704. Its row can still
 //! grow, and its callers use its last parts.

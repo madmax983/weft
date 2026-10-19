@@ -69,8 +69,10 @@ impl Lower<'_> {
                 ..Val::default()
             };
             self.assign_local(l, &v, entry);
-            // The parameter holds the function values that the caller gives.
-            if !matches!(p.ty, Ty::Fn(_)) && self.has_fn(&p.ty) {
+            // The parameter holds the function values that the caller gives. A
+            // value of a type parameter can be one too.
+            let generic = super::flow::mentions_param(&p.ty);
+            if !matches!(p.ty, Ty::Fn(_)) && (self.has_fn(&p.ty) || generic) {
                 self.locals[l].caps.insert(super::caps::param_cap(i));
                 self.locals[l].sticky.insert(super::caps::param_cap(i));
             }
@@ -111,7 +113,11 @@ impl Lower<'_> {
         }
         self.jumps.pop();
         self.apply_stored();
+        self.finish_aborts();
         self.op_refs();
+        self.finish_op_env();
+        self.check_returns();
+        self.check_stored_behind();
         let eff = self.summary_to_sig(&bases);
         let fdef = &self.prog.fns[id];
         if fdef.is_pub && !sig.declared && !eff.is_empty() && !fdef.decl.is_extern {
@@ -141,7 +147,9 @@ impl Lower<'_> {
         self.drop_value(&v, span);
         self.flush(block_tail(body));
         self.apply_stored();
+        self.finish_aborts();
         self.op_refs();
+        self.finish_op_env();
         let eff = self.summary_to_sig(&[]);
         self.finish(eff)
     }
@@ -272,7 +280,7 @@ impl Lower<'_> {
             stores: sum.stores.clone(),
             reaches: !self.reaches.is_empty(),
             reach_given: self.reach_sig(bases),
-            reach_repeats: self.reach_runs.1 || self.reach_runs.0 > 1,
+            reach_repeats: self.reach_runs.1 || (self.reach_runs.0 > 1 && self.reaches_follow()),
             multi: self.unknown_multi,
             tasks: sum.tasks.clone(),
             fn_stores: sum.fn_stores.clone(),
@@ -374,9 +382,11 @@ impl Lower<'_> {
             self.unify(&ret, &v.ty, span);
             let typed = self.diags.len() == before;
             self.consume(v, span);
-            // An ill-typed value gets no second error for its places.
+            // An ill-typed value gets no second error for its places. The check
+            // comes after the body: an operation result gets its places there.
             if typed {
-                self.check_returned_refs(v, span);
+                self.returned
+                    .push((v.refs.clone(), v.summary.is_some(), span));
             }
         }
     }
@@ -384,13 +394,13 @@ impl Lower<'_> {
     /// A returned reference must be inside the place that the signature states. It
     /// cannot point into a local, a by-value parameter or a temporary of the
     /// function: they go out of scope at the return.
-    fn check_returned_refs(&mut self, v: &Val, span: Span) {
+    pub(super) fn check_returned_refs(&mut self, refs: &[PlaceId], closure: bool, span: Span) {
         let Some(id) = self.self_fn else { return };
         let sig = self.sigs[id].clone();
         let fname = self.prog.fns[id].name.clone();
         let mut reported = Vec::new();
         let mut rest = Vec::new();
-        for &r in &v.refs {
+        for &r in refs {
             let root = self.facts.place(r).root;
             if self.facts.roots[root.index()].kind != RootKind::Local {
                 rest.push(r);
@@ -421,7 +431,7 @@ impl Lower<'_> {
                 format!("the local `{name}`")
             };
             let shown = self.facts.place(r).display.clone();
-            let head = if v.summary.is_some() {
+            let head = if closure {
                 format!("the returned closure captures `{shown}`")
             } else {
                 format!("returned reference points into `{shown}`")
@@ -469,7 +479,12 @@ impl Lower<'_> {
                 self.facts.place(r).display.clone(),
                 self.place_text(&allowed),
             );
-            let msg = if allowed.iter().any(|&a| self.below_unstable(a, r)) {
+            let env = self
+                .env_root
+                .is_some_and(|e| self.facts.place(e).root == self.facts.place(r).root);
+            let msg = if env {
+                format!("the returned reference can come from a handler of a caller, which can give a place outside `{at}`")
+            } else if allowed.iter().any(|&a| self.below_unstable(a, r)) {
                 format!("returned reference points into `{rt}`, which is below `{at}` through an unstable step: state the place, or `{at}..`")
             } else {
                 format!("returned reference points into `{rt}`, but the signature says `{at}`")
@@ -896,10 +911,12 @@ impl Lower<'_> {
     }
 
     /// Retires the stale part holders on the edges into the head and the exit of
-    /// the loop that `lower_loop` lowered last (`retire_stale`). `head` is the
-    /// state at the head in the last pass, `entry` the state before the loop,
-    /// `end` the state at the end of the body, `jumps` the `break`s and the
-    /// `continue`s, and `exit` the state after the loop.
+    /// the loop that `lower_loop` lowered last (`retire_stale`). The states are:
+    /// - `head`: at the head in the last pass;
+    /// - `entry`: before the loop;
+    /// - `end`: at the end of the body;
+    /// - `jumps`: at the `break`s and the `continue`s;
+    /// - `exit`: after the loop.
     fn retire_loop_stale(
         &mut self,
         head: &super::BranchState,
@@ -1305,6 +1322,17 @@ impl Lower<'_> {
             }
             self.arith(&lv.ty, &v.ty, value.span);
         }
+        // A reference behind a reference parameter: the caller keeps it. A
+        // self-reference field has its own check (W0605).
+        if op == AssignOp::Assign
+            && lv.through_ref
+            && !v.refs.is_empty()
+            && self.field_referents(target).is_none()
+        {
+            for &p in &lv.places {
+                self.note_stored_behind(p, &v.refs, value.span);
+            }
+        }
         // A function value in a field or an element: the body does not follow it.
         self.escape(&v);
         self.store_into(&v, &lv.places);
@@ -1578,6 +1606,7 @@ impl Lower<'_> {
         let v = self.expr(e);
         if let Ty::Ref(inner) = self.inf.shallow(&v.ty) {
             let (places, deps) = self.split_deps(&v.refs);
+            let held = self.val_caps(&v);
             return LVal {
                 places,
                 ty: *inner,
@@ -1585,6 +1614,7 @@ impl Lower<'_> {
                 through_ref: true,
                 uniq: v.uniq,
                 deps,
+                held,
             };
         }
         // The temporary goes away at the end of the statement.

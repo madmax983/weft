@@ -290,6 +290,9 @@ pub struct FnFacts {
     /// `empty_at(V, P)`: node `P` gives `V` a new value with no linear part, such
     /// as `None`.
     pub empty_at: Vec<(VarId, NodeId)>,
+    /// `unwound_at(V, P)`: an abort path leaves the scope of `V` at node `P`. The
+    /// unwinder finishes `V`.
+    pub unwound_at: Vec<(VarId, NodeId)>,
     /// `owner(Rt, V)`: the root place `Rt` holds the value of `V`.
     pub owner: Vec<(PlaceId, VarId)>,
     /// `moved_part(M, P)`: node `P` moves the value at place `M` out of its owner.
@@ -497,6 +500,7 @@ impl FnFacts {
         nd(&mut self.overwrites);
         nd(&mut self.unset_at);
         nd(&mut self.empty_at);
+        nd(&mut self.unwound_at);
         nd(&mut self.owner);
         nd(&mut self.moved_part);
         nd(&mut self.may_abort);

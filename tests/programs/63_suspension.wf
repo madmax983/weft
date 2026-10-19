@@ -21,6 +21,15 @@ fn unlock(l: Lock) { let Lock(i) = l }
 fn lock() -> Lock { Lock { id: 1 } }
 
 fn chooser() -> bool / Choice { choose() }
+fn call_after_choose(f: fn()) / Choice {
+    let b = choose()
+    f()
+}
+fn hold_across<T>(x: T) -> T / Choice {
+    let b = choose()
+    x
+}
+fn take_world(w: World) { print(w.entities.len()) }
 fn asker() -> u64 / Ask { ask() }
 
 // A call: the callee performs through the capability of the caller.
@@ -164,6 +173,29 @@ fn fresh_to_callee() {
         }
     } in log("x")
 }
+// A callee can hold its argument across a node that can resume more than once.
+// Then it calls the argument again, or gives it back again, for each resume.
+fn fresh_to_holding_callee() / Choice {
+    handle Log {
+        fn log(m) {
+            let k = || resume(())
+            call_after_choose(k)   //~ W0502 W0503
+        }
+    } in log("x")
+}
+fn fresh_to_generic_holder() / Choice {
+    handle Log {
+        fn log(m) {
+            let k = || resume(())
+            let k2 = hold_across(k)   //~ W0503
+            k2()
+        }
+    } in log("x")
+}
+fn once_to_holding_callee() / Choice {
+    let w = World { entities: Vec.new() }
+    call_after_choose(|| take_world(w))   //~ W0502 W0503
+}
 fn fresh_in_closure_after() / Choice {
     handle Log {
         fn log(m) {
@@ -238,4 +270,7 @@ fn resume_gives_outer() / Log {
         let f = get()
         f()
     }
+}
+fn many_to_holding_callee() / Choice {
+    call_after_choose(|| print(1))
 }

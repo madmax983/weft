@@ -32,8 +32,8 @@ const ESCAPES: u32 = 1 << 28;
 const PARAM: u32 = 1 << 27;
 
 /// The mark of a value that can hold a function value that the body cannot
-/// follow: from a parameter of a closure or a clause, or from an operation of
-/// a handler of a caller. A task that runs it is W0314.
+/// follow. Such a value comes from a parameter of a closure or a clause, or from
+/// an operation of a handler of a caller. A task that runs it is W0314.
 pub(super) const UNKNOWN_FN: CapId = CapId(1 << 26);
 
 /// The bits of the marks: a capability with one of them is not a handler.
@@ -147,16 +147,28 @@ impl Lower<'_> {
         if let (Some(l), true) = (owner, self.has_fn(&v.ty)) {
             out.extend(self.locals[l].caps.iter().copied());
         }
-        // A place behind a reference parameter holds what the caller gives.
+        // A place behind a reference holds what the local that owns it holds, or
+        // what the caller gives behind a reference parameter.
         if let (Some(lv), true) = (&v.place, self.has_fn(&v.ty)) {
             out.extend(self.behind_ref_marks(&lv.places));
+            if lv.through_ref {
+                out.extend(self.place_caps(&lv.places));
+                out.extend(lv.held.iter().copied());
+            }
+        }
+        // A reference to a value that holds function values: a copy can come out
+        // of it through the reference.
+        if self.points_to_fn(&v.ty) {
+            out.extend(self.place_caps(&v.refs));
+            out.extend(self.behind_ref_marks(&v.refs));
         }
         out
     }
 
     /// Returns the marks of the function values at places `ps` behind a reference
-    /// parameter: `param_cap` for a parameter of the function, and `UNKNOWN_FN`
-    /// for a parameter of a closure or a clause.
+    /// parameter. A parameter of the function gives `param_cap`, also for a place
+    /// behind the references that it points to. A parameter of a closure or a
+    /// clause gives `UNKNOWN_FN`.
     pub(super) fn behind_ref_marks(&self, ps: &[PlaceId]) -> BTreeSet<CapId> {
         let mut out = BTreeSet::new();
         for &p in ps {
@@ -164,6 +176,8 @@ impl Lower<'_> {
             match self.facts.roots[root.index()].kind {
                 RootKind::Param => {
                     if let Some(&(0, i)) = self.param_of_root.get(&root) {
+                        out.insert(param_cap(i));
+                    } else if let Some(&i) = self.held_of.get(&root) {
                         out.insert(param_cap(i));
                     }
                 }
@@ -184,8 +198,8 @@ impl Lower<'_> {
     }
 
     /// Adds the marks of closure `s`: its modes, the effects that it performs
-    /// through handlers outside the function, and the function parameters that it
-    /// can call.
+    /// through handlers outside the function, and the function parameters that
+    /// it calls.
     fn summary_marks(&self, s: usize, out: &mut BTreeSet<CapId>) {
         self.mode_marks(s, out);
         let sum = &self.closures[s];
@@ -344,12 +358,19 @@ impl Lower<'_> {
     }
 
     /// Records that a function value goes into the places `into`. A place below a
-    /// reference parameter of the function, of a closure or of a clause is part of
-    /// the `fn_stores` of that body: a caller can lose a function value there.
+    /// reference parameter of a body is part of the `fn_stores` of that body. A
+    /// caller can lose a function value there. The body is the function, a closure
+    /// or a clause. A place behind a reference that a reference parameter points
+    /// to counts too.
     pub(super) fn note_fn_store(&mut self, into: &[PlaceId]) {
         for &p in into {
             let root = self.facts.place(p).root;
-            if let Some(&(d, i)) = self.param_of_root.get(&root) {
+            let at = self
+                .param_of_root
+                .get(&root)
+                .copied()
+                .or_else(|| self.held_of.get(&root).map(|&i| (0, i)));
+            if let Some((d, i)) = at {
                 if let Some(s) = self.sums.get_mut(d) {
                     s.fn_stores.insert(i);
                 }
@@ -377,7 +398,8 @@ impl Lower<'_> {
     }
 
     /// Returns the capabilities and the marks of the function values that an
-    /// argument `v` with places `ps` holds: in its value, and in what it points to.
+    /// argument `v` with places `ps` holds. They can be in its value, and in what
+    /// it points to.
     pub(super) fn arg_held(&self, v: &Val, ps: &[PlaceId]) -> BTreeSet<CapId> {
         let mut out = BTreeSet::new();
         if self.has_fn(&v.ty) {
@@ -395,6 +417,16 @@ impl Lower<'_> {
     pub(super) fn points_to_fn(&self, t: &Ty) -> bool {
         match self.inf.shallow(t) {
             Ty::Ref(inner) | Ty::Slice(inner) => self.has_fn(&inner),
+            _ => false,
+        }
+    }
+
+    /// Returns true if a reference of type `t` points to a value that can hold a
+    /// reference.
+    pub(super) fn points_to_refs(&self, t: &Ty) -> bool {
+        match self.inf.shallow(t) {
+            Ty::Ref(inner) => self.pointee_refs(&inner),
+            Ty::Slice(inner) => self.holds_refs(&inner),
             _ => false,
         }
     }
@@ -585,9 +617,9 @@ impl Lower<'_> {
 
     /// Function value `v` goes to an operation of effect `e` of a handler of a
     /// caller. A clause there can run it as a task. So the effects that it performs
-    /// through a handler of a caller are part of `Summary::op_effects`, and a
-    /// parameter of the function that it holds is part of `Summary::op_fns`. The
-    /// caller checks them (`callee_op_effects`).
+    /// through a handler of a caller are part of `Summary::op_effects`. A parameter
+    /// of the function that it holds is part of `Summary::op_fns`. The caller
+    /// checks them (`callee_op_effects`).
     fn give_to_caller_op(&mut self, v: &Val, e: &str) {
         let held = self.expand_caps(&self.val_caps(v));
         for m in Self::task_marks(&held) {
@@ -654,8 +686,8 @@ impl Lower<'_> {
     }
 
     /// A callee gives argument `v` (with places `ps`) to an operation of effect
-    /// `e`, and the argument holds function values in a field or an element. A
-    /// local handler of the operation checks them in its clauses.
+    /// `e`. The argument holds function values in a field or an element. A local
+    /// handler of the operation checks them in its clauses.
     pub(super) fn give_held_to_op(&mut self, v: &Val, ps: &[PlaceId], e: &str, span: Span) {
         let held = self.arg_held(v, ps);
         if let Some(oi) = self.handlers.iter().rposition(|h| h.effect == e) {
@@ -758,33 +790,36 @@ impl Lower<'_> {
         false
     }
 
-    /// Reports W0313 if a local outside the handled body that started at `start`
-    /// can hold a function value that performs through `cap` where the `handle`
-    /// ends, at node `end`. A new value of the whole local in the same part of the
-    /// graph counts only if it reaches `end` (`Lower::bind_caps`): the abort paths
-    /// of the clauses are edges to `end` too. Other values count always
-    /// (`Local::sticky`).
+    /// Reports W0313 if a local outside the body of the handled computation `h`
+    /// can hold a function value after the body. The value performs through the
+    /// capability of `h`. The checked nodes are the end of the `handle` and the
+    /// abort nodes of `exits` that leave the body. A pair of `exits` has the abort
+    /// node and the number of locals when the body of its target starts. Only a
+    /// local below that number lives on there. A new value of the whole local in
+    /// the same part of the graph counts only if it reaches one of these nodes
+    /// (`Lower::bind_caps`). Other values count always (`Local::sticky`).
     pub(super) fn check_local_keeps(
         &mut self,
-        cap: CapId,
+        h: &super::Handled,
         effect: &str,
-        start: HandleStart,
-        end: NodeId,
+        exits: &[(NodeId, usize)],
         span: Span,
     ) {
-        let outside = |me: &Self, v: VarId| me.local_of(v).is_some_and(|l| l < start.locals);
+        let cap = h.cap;
         let mut keeps: Option<usize> =
-            (0..start.locals).find(|&l| self.expand_caps(&self.locals[l].sticky).contains(&cap));
+            (0..h.locals).find(|&l| self.expand_caps(&self.locals[l].sticky).contains(&cap));
         if keeps.is_none() {
-            let binds: Vec<(VarId, NodeId)> = self
+            let binds: Vec<(usize, VarId, NodeId)> = self
                 .bind_caps
                 .iter()
-                .filter(|(v, _, cs)| outside(self, *v) && self.expand_caps(cs).contains(&cap))
-                .map(|(v, n, _)| (*v, *n))
+                .filter_map(|(v, n, cs)| {
+                    let l = self.local_of(*v).filter(|&l| l < h.locals)?;
+                    self.expand_caps(cs).contains(&cap).then_some((l, *v, *n))
+                })
                 .collect();
             if !binds.is_empty() {
                 let succ = self.successors();
-                for (var, n) in binds {
+                for (l, var, n) in binds {
                     let kills: BTreeSet<NodeId> = self
                         .facts
                         .rebound_at
@@ -792,8 +827,15 @@ impl Lower<'_> {
                         .filter(|(v, _)| *v == var)
                         .map(|&(_, m)| m)
                         .collect();
-                    if Self::reaches_past(&succ, n, end, &kills) {
-                        keeps = self.local_of(var);
+                    let mut targets = BTreeSet::from([h.end]);
+                    targets.extend(
+                        exits
+                            .iter()
+                            .filter(|&&(_, locals)| l < locals)
+                            .map(|&(u, _)| u),
+                    );
+                    if Self::reaches_past(&succ, n, &targets, &kills) {
+                        keeps = Some(l);
                         break;
                     }
                 }
@@ -819,17 +861,18 @@ impl Lower<'_> {
     }
 
     /// Returns true if a path of the successors `succ` leads from a successor of
-    /// node `from` to node `to` that does not pass through a node of `kills` first.
+    /// node `from` to a node of `to`. The path must not pass through a node of
+    /// `kills` first.
     fn reaches_past(
         succ: &[Vec<NodeId>],
         from: NodeId,
-        to: NodeId,
+        to: &BTreeSet<NodeId>,
         kills: &BTreeSet<NodeId>,
     ) -> bool {
         let mut seen = vec![false; succ.len()];
         let mut work: Vec<NodeId> = succ[from.index()].clone();
         while let Some(a) = work.pop() {
-            if a == to {
+            if to.contains(&a) {
                 return true;
             }
             if kills.contains(&a) || std::mem::replace(&mut seen[a.index()], true) {

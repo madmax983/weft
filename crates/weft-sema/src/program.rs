@@ -292,8 +292,8 @@ pub struct EffectSig {
     /// caller, with the effect. The clause can call or keep them. The body always
     /// infers this part.
     pub op_fns: BTreeSet<(usize, String)>,
-    /// The effects that the function values that the body gives to an operation
-    /// of a handler of a caller perform through a handler of a caller: the
+    /// The function values that the body gives to an operation of a handler of a
+    /// caller can perform effects through a handler of a caller. Each pair has the
     /// effect of the operation and the performed effect. A clause can run such a
     /// value as a task (W0314). The body always infers this part.
     pub op_effects: BTreeSet<(String, String)>,
@@ -1186,6 +1186,15 @@ impl Collector {
                 // A foreign call can block unless it says otherwise.
                 effects.named.insert("Blocking".into());
             }
+            // A foreign generic function can drop a value of each type parameter,
+            // and it can hold one while it can abort (ADR 0007).
+            if f.is_extern && !self.prog.mods[m].is_std && !gens.is_empty() {
+                let all: BTreeSet<usize> = (0..gens.len()).collect();
+                if !effects.named.is_empty() {
+                    effects.holds.clone_from(&all);
+                }
+                effects.drops = all;
+            }
             let declared = f.effects.is_some() || f.is_extern;
             self.prog.fns[id].sig = FnSig {
                 generics: gens,
@@ -1950,9 +1959,9 @@ pub fn elem_step(prog: &Program, ty: &Ty) -> Option<(Option<weft_facts::Step>, T
     }
 }
 
-/// Returns the place of what the references in a written place `sp` point into,
-/// if its root is a reference parameter to a value that can hold references:
-/// the step `Held`. In the body it is any place inside what they point into.
+/// Returns the place of what the references in a written place `sp` point into:
+/// the step `Held`. Its root must be a reference parameter to a value that can
+/// hold references. In the body it is any place inside what they point into.
 fn held_place(prog: &Program, sp: &SigPlace, params: &[ParamSig]) -> Option<SigPlace> {
     let SigRoot::Param(i) = sp.root else {
         return None;
@@ -1960,7 +1969,12 @@ fn held_place(prog: &Program, sp: &SigPlace, params: &[ParamSig]) -> Option<SigP
     let Some(Ty::Ref(inner)) = params.get(i).map(|p| &p.ty) else {
         return None;
     };
-    if !prog.ty_holds_refs(inner) {
+    // The pointee of a slice reference is its elements.
+    let pointee = match &**inner {
+        Ty::Slice(x) => &**x,
+        t => t,
+    };
+    if !prog.ty_holds_refs(pointee) {
         return None;
     }
     Some(SigPlace {
