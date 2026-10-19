@@ -88,3 +88,11 @@ fn stable_change() {
     v.push(2)
     f()
 }
+
+// The clean cases run.
+fn main() {
+    moved_after()
+    cleared_after()
+    value_arg()
+    stable_change()
+}

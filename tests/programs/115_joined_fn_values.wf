@@ -110,3 +110,17 @@ fn once_once() {
     let g = v[1]
     g()
 }
+
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+// The clean cases run.
+fn main() {
+    let w = mkw()
+    vec_reads(&w)
+    let w = mkw()
+    vec_then_ref(&w)
+    once_once()
+}

@@ -46,3 +46,11 @@ fn fill_value(c: Rc<Cache>) / mut(Cache) {
     let n: u64 = 3
     count(c, &n)
 }
+
+// The clean cases run.
+fn main() {
+    let c = Rc.new(Cache { refs: Vec.new(), data: Vec.new() })
+    fill_self(c.clone())
+    fill_value(c.clone())
+    print(c.refs.len(), c.data.len())
+}

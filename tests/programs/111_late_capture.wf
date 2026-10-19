@@ -96,15 +96,14 @@ fn late_ref_before(world: &World, d: &Entity) / mut(world.entities) {
     f()
     world.entities.clear()
 }
-// Clean: the task reads a new value that the parent does not change.
-fn late_task_other(world: &World, d: &Entity) / mut(world.entities), async {
+// Clean: the variable gets the new value after the task ends.
+fn late_task_after(world: &World, d: &Entity) / mut(world.entities), async {
     let r = d
-    let e = Entity { hp: 3 }
     scope { s =>
         s.spawn(|| print(r.hp))
-        r = &e
-        world.entities.clear()
     }
+    r = &world.entities[0]
+    world.entities.clear()
 }
 // Clean: the new function value runs, and the reference is taken after it.
 fn late_fn_before(world: &World) / mut(world.entities) {
@@ -112,6 +111,7 @@ fn late_fn_before(world: &World) / mut(world.entities) {
     let f = || g()
     g = || world.entities.clear()
     f()
+    world.entities.push(Entity { hp: 3 })
     let first = &world.entities[0]
     print(first.hp)
 }
@@ -130,4 +130,30 @@ fn late_uniq(v: &Vec<u64>, w: &Vec<u64>) / mut(v, w) {
     let (a, b) = w.split_mut(1)
     l = a
     f()
+}
+
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+// The clean cases run.
+fn main() / async {
+    let w = mkw()
+    let e = Entity { hp: 5 }
+    late_ref_valid(&w, &e)
+    let w = mkw()
+    late_ref_before(&w, &e)
+    let w = mkw()
+    late_task_after(&w, &e)
+    let w = mkw()
+    late_fn_before(&w)
+    late_once_once()
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    v.push(2)
+    let u: Vec<u64> = Vec.new()
+    u.push(3)
+    u.push(4)
+    late_uniq(&v, &u)
 }

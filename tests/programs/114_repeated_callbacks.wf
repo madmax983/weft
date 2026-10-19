@@ -74,3 +74,10 @@ fn once_clears() {
     once(|| { print(r + 1)
  v.clear() })
 }
+
+// The clean cases run.
+fn main() {
+    twice_reads()
+    twice_pushes()
+    once_clears()
+}
