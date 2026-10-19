@@ -146,6 +146,7 @@ fn same_parts(a: &EffectSig, b: &EffectSig) -> bool {
         && a.op_fns == b.op_fns
         && a.task_effects == b.task_effects
         && a.repeats == b.repeats
+        && a.drops == b.drops
 }
 
 /// Returns the row of `row` with the other parts of `body`.
@@ -161,6 +162,7 @@ fn with_parts(row: &EffectSig, body: &EffectSig) -> EffectSig {
         op_fns: body.op_fns.clone(),
         task_effects: body.task_effects.clone(),
         repeats: body.repeats.clone(),
+        drops: body.drops.clone(),
         ..row.clone()
     }
 }

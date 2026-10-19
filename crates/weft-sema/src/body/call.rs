@@ -299,9 +299,27 @@ impl Lower<'_> {
         let mut slots: Vec<Option<&Expr>> = vec![None; sig.params.len()];
         let mut pos = first;
         let mut extra = 0usize;
+        let mut named_bad = false;
         for a in args {
             let idx = if let Some(n) = &a.name {
-                sig.params.iter().position(|p| p.name == n.name)
+                let Some(i) = sig.params.iter().position(|p| p.name == n.name) else {
+                    let msg = format!("`{name}` has no parameter named `{}`", n.name);
+                    self.err("W0103", msg, n.span);
+                    named_bad = true;
+                    let _ = self.expr(&a.value);
+                    continue;
+                };
+                if slots[i].is_some() {
+                    self.err(
+                        "W0103",
+                        format!("argument `{}` is given twice", n.name),
+                        n.span,
+                    );
+                    named_bad = true;
+                    let _ = self.expr(&a.value);
+                    continue;
+                }
+                Some(i)
             } else {
                 while pos < slots.len() && slots[pos].is_some() {
                     pos += 1;
@@ -320,7 +338,7 @@ impl Lower<'_> {
             }
         }
         let missing = slots.iter().skip(first).filter(|s| s.is_none()).count();
-        if extra > 0 || missing > 0 {
+        if (extra > 0 || missing > 0) && !named_bad {
             self.err(
                 "W0103",
                 format!(
@@ -419,12 +437,21 @@ impl Lower<'_> {
                 arg_places.push(av.val.refs.clone());
                 held_vars.extend(self.hold_operand(&av.val, later, av.span));
             } else {
-                arg_places.push(Vec::new());
+                // A by-value parameter that holds references gets the places of the
+                // argument: the callee can change what they point into.
+                let declared = sig.params.get(i).map_or(Ty::Error, |p| p.ty.clone());
+                if self.byval_refs(&declared) {
+                    arg_places.push(av.val.refs.clone());
+                } else {
+                    arg_places.push(Vec::new());
+                }
                 // A by-value argument that holds references, for example a closure,
                 // points into them until the call.
                 if !av.val.refs.is_empty() {
                     held_vars.extend(self.hold_operand(&av.val, later, av.span));
-                    value_refs.push((i, av.val.refs.clone()));
+                    if !self.byval_refs(&declared) {
+                        value_refs.push((i, av.val.refs.clone()));
+                    }
                 }
                 if !callback(i) {
                     // The callee keeps the value, for example in a container.
@@ -434,6 +461,27 @@ impl Lower<'_> {
                 }
                 if !matches!(self.inf.shallow(&pt), Ty::Fn(_)) || av.val.summary.is_none() {
                     let v = av.val.clone();
+                    self.keep_linear(&v, &pt, av.span);
+                    // A generic callee can drop a value that it does not know is linear.
+                    // A value of a type parameter here can be dropped there too.
+                    if sig.effects.drops.contains(&i) {
+                        if self.is_linear(&v.ty) {
+                            let name = self.val_name(&v);
+                            self.drop_linear(&name, &v.ty, av.span);
+                        } else if let Some(var) = v.var {
+                            if super::flow::mentions_param(&self.inf.resolve(&v.ty)) {
+                                self.generic_drops.push(var);
+                            }
+                        }
+                    }
+                    // A `!Move` value built here is built in place for a parameter of
+                    // its own type. A type parameter lets the callee move it, as
+                    // `Vec.push` does when its buffer grows.
+                    let declared = sig.params.get(i).map_or(Ty::Error, |p| p.ty.clone());
+                    if v.var.is_none() && self.is_immovable(&v.ty) && !self.is_immovable(&declared)
+                    {
+                        self.move_temp(&v.ty, av.span);
+                    }
                     self.consume(&v, av.span);
                 }
             }
@@ -452,7 +500,8 @@ impl Lower<'_> {
             if let SigRoot::Param(i) = m.root {
                 let by_ref = matches!(self.inf.shallow(&ptys[i]), Ty::Ref(_));
                 let receiver = i == 0 && first == 1;
-                if !by_ref && !receiver {
+                let holds = sig.params.get(i).is_some_and(|p| self.byval_refs(&p.ty));
+                if !by_ref && !receiver && !holds {
                     continue;
                 }
             }
@@ -492,7 +541,7 @@ impl Lower<'_> {
             // A function value inside the argument runs as a stored value (root 800).
             let root = if callback(*i) {
                 800 + u32::try_from(*i).unwrap_or(0)
-            } else if self.has_fn(&vals[*i].val.ty, 0) {
+            } else if self.has_fn(&vals[*i].val.ty) {
                 800
             } else {
                 root_of(*i)
@@ -600,9 +649,12 @@ impl Lower<'_> {
             let given = self.lent_to(&Callee::Item(f), i, &arg_places, &roots);
             self.apply_value(n, &info, row.as_deref(), root, &given);
             self.start_ret_spawns(n, &info);
-            if self.callee_repeats(&Callee::Item(f), i) {
+            let repeats = self.callee_repeats(&Callee::Item(f), i);
+            if repeats {
                 self.note_repeat(n, &info, true);
             }
+            let once = self.item_runs_once(f);
+            self.give_fn(n, &av.val, repeats, once);
         }
         for &j in &sig.effects.passthrough {
             if let Some((0, fp)) = vals.get(j).and_then(|v| v.val.fn_param) {
@@ -628,7 +680,7 @@ impl Lower<'_> {
                 } else if sig.effects.stores.contains(&i) && !into.is_empty() {
                     self.store_into(&av.val, &into);
                 }
-            } else if self.has_fn(&ty, 0) {
+            } else if self.has_fn(&ty) {
                 holds_fn = true;
             }
         }
@@ -656,7 +708,7 @@ impl Lower<'_> {
             ty: ret.clone(),
             ..Val::default()
         };
-        let ret_fn = self.has_fn(&ret, 0);
+        let ret_fn = self.has_fn(&ret);
         for v in &kept_vals {
             if foreign {
                 self.keep(v, super::caps::KeptTo::Stored);
@@ -723,7 +775,80 @@ impl Lower<'_> {
             out.refs.extend(recv_deps);
             out.parts = parts;
         }
+        self.call_flows(&sig, &vals, &arg_places, &ptys, &muts, &ret, &mut out);
         out
+    }
+
+    /// The references that a call passes on, for a callee with signature `sig`. A
+    /// result that holds references, with no stated place for each of them,
+    /// points where the arguments that can flow into it point. A reference
+    /// argument whose pointee holds references and that the call mutates can get
+    /// the references of the other arguments, as `v.push(&x)` does.
+    #[allow(clippy::too_many_arguments)]
+    fn call_flows(
+        &mut self,
+        sig: &FnSig,
+        vals: &[ArgVal],
+        arg_places: &[Vec<PlaceId>],
+        ptys: &[Ty],
+        muts: &[(PlaceId, u32)],
+        ret: &Ty,
+        out: &mut Val,
+    ) {
+        let derive = self.holds_refs(ret)
+            && (super::flow::count_refs(&sig.ret) > sig.ret_places.len()
+                || super::flow::mentions_param(&sig.ret));
+        let mut flows: Vec<Vec<PlaceId>> = Vec::new();
+        for (i, av) in vals.iter().enumerate() {
+            let refs = match arg_places.get(i) {
+                Some(ps) if !ps.is_empty() => ps.clone(),
+                _ => av.val.refs.clone(),
+            };
+            let declared = sig.params.get(i).map_or(Ty::Error, |p| p.ty.clone());
+            let pointee = match ptys.get(i).map(|t| self.inf.shallow(t)) {
+                Some(Ty::Ref(inner)) => Some(*inner),
+                _ => None,
+            };
+            flows.push(self.flow_refs(&declared, &refs, pointee.as_ref()));
+        }
+        if derive {
+            for f in &flows {
+                out.refs.extend(f.iter().copied());
+            }
+            out.refs.sort();
+            out.refs.dedup();
+        }
+        // A mutated reference argument can keep the references of the others.
+        for (j, ps) in arg_places.iter().enumerate() {
+            let holds = match ptys.get(j).map(|t| self.inf.shallow(t)) {
+                Some(Ty::Ref(inner)) => self.holds_refs(&inner),
+                _ => false,
+            };
+            if !holds {
+                continue;
+            }
+            let (named, _) = self.split_deps(ps);
+            for &p in &named {
+                let root = self.facts.place(p).root;
+                if !muts.iter().any(|&(m, _)| self.facts.place(m).root == root) {
+                    continue;
+                }
+                let Some(l) = self
+                    .locals
+                    .iter()
+                    .position(|l| l.root.is_some_and(|r| self.facts.place(r).root == root))
+                else {
+                    continue;
+                };
+                for (i, f) in flows.iter().enumerate() {
+                    if i != j {
+                        for &q in f {
+                            self.point_local(l, q);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Unifies an argument with a parameter type. A reference to a copy value
@@ -834,7 +959,7 @@ impl Lower<'_> {
                     // A by-value argument that holds references points into them.
                     value_refs.push((i, v.refs.clone()));
                 }
-                if self.has_fn(&v.ty, 0) && !matches!(self.inf.shallow(&v.ty), Ty::Fn(_)) {
+                if self.has_fn(&v.ty) && !matches!(self.inf.shallow(&v.ty), Ty::Fn(_)) {
                     // The callee keeps the value: it can run a function value in it.
                     self.escape_all(&v);
                     self.keep(&v, super::caps::KeptTo::Given);
@@ -870,7 +995,7 @@ impl Lower<'_> {
         }
         for (i, ps) in &value_refs {
             // A function value inside the argument runs as a stored value (root 800).
-            let root = if self.has_fn(&arg_tys[*i], 0) {
+            let root = if self.has_fn(&arg_tys[*i]) {
                 800
             } else {
                 roots[*i]
@@ -884,8 +1009,10 @@ impl Lower<'_> {
                 });
             }
         }
-        if self.facts.var(loc.var).once {
-            self.facts.moved_at.push((loc.var, n));
+        // A closure that moves a capture runs once: the call takes the value. A
+        // closure around this call that captures the value moves it too.
+        if callee.summary.is_some_and(|s| self.closure_is_once(s)) {
+            self.move_var(loc.var, n);
         }
         // The value runs with the arguments.
         self.apply_value(n, &callee, fty.effects.as_deref(), 800, &direct);
@@ -956,14 +1083,19 @@ impl Lower<'_> {
             let given = self.lent_to(&value, i, &arg_places, &roots);
             self.apply_value(n, &info, row.as_deref(), root, &given);
             self.start_ret_spawns(n, &info);
-            if self.callee_repeats(&value, i) {
+            let repeats = self.callee_repeats(&value, i);
+            if repeats {
                 self.note_repeat(n, &info, true);
+            }
+            if let Some((_, v)) = fn_vals.iter().find(|(j, _)| *j == i) {
+                let v = v.clone();
+                self.give_fn(n, &v, repeats, false);
             }
         }
         // The value can run a stored function value that an argument holds.
         if arg_tys
             .iter()
-            .any(|t| !matches!(self.inf.shallow(t), Ty::Fn(_)) && self.has_fn(t, 0))
+            .any(|t| !matches!(self.inf.shallow(t), Ty::Fn(_)) && self.has_fn(t))
         {
             let given = Self::any_arg(&arg_places, &roots);
             self.reach(n, &given);
@@ -995,7 +1127,7 @@ impl Lower<'_> {
                 (sum.ret_caps.clone(), sum.ret_tasks.first().copied())
             },
         );
-        if self.has_fn(&fty.ret, 0) {
+        if self.has_fn(&fty.ret) {
             // A result that is not a function value can hold a function argument.
             if !matches!(self.inf.shallow(&fty.ret), Ty::Fn(_)) {
                 caps.extend(fn_caps);
@@ -1087,10 +1219,12 @@ impl Lower<'_> {
             self.consume(&v, a.value.span);
         }
         let var = self.locals[l].var;
-        self.pend_uses.push(var);
+        self.use_local(l);
         let n = self.emit(span, "resume", "the handled computation runs".into());
+        // A `once` continuation resumes at most once. A closure around the
+        // resume that captures it moves it too, so the closure is `once`.
         if !multi {
-            self.facts.moved_at.push((var, n));
+            self.move_var(var, n);
         }
         // The resumed computation mutates these places. They are not the handler's footprint.
         for m in muts {
@@ -1107,6 +1241,7 @@ impl Lower<'_> {
     fn print(&mut self, args: &[Arg], span: Span) -> Val {
         // `print` reads what its reference arguments point to.
         let mut held = Vec::new();
+        let mut vals = Vec::new();
         for (i, a) in args.iter().enumerate() {
             let v = self.expr(&a.value);
             for &p in &v.refs {
@@ -1115,9 +1250,14 @@ impl Lower<'_> {
             if i + 1 < args.len() {
                 held.extend(self.hold_later(&v, "argument", a.value.span));
             }
+            vals.push((v, a.value.span));
         }
         self.pend_uses.extend(held);
         let _ = self.emit(span, "print", String::new());
+        // `print` only reads its arguments: a temporary goes away after it.
+        for (v, s) in vals {
+            self.drop_value(&v, s);
+        }
         Val::default()
     }
 
@@ -1143,21 +1283,25 @@ impl Lower<'_> {
         }
         let mut held = Vec::new();
         let mut caps = std::collections::BTreeSet::new();
+        let mut refs = Vec::new();
         for (i, (d, arg)) in defs.iter().zip(args).enumerate() {
             let v = self.expr(&arg.value);
             let ft = super::subst(&d.ty, &targs);
             self.unify(&ft, &v.ty, arg.value.span);
+            self.keep_linear(&v, &ft, arg.value.span);
             self.escape(&v);
             caps.extend(self.val_caps(&v));
             self.consume(&v, arg.value.span);
             if i + 1 < args.len() {
                 held.extend(self.hold_later(&v, "argument", arg.value.span));
             }
+            refs.extend(v.refs.iter().copied());
         }
         self.pend_uses.extend(held);
         Val {
             ty: Ty::Adt(a, targs),
             caps,
+            refs,
             ..Val::default()
         }
     }
@@ -1189,6 +1333,7 @@ impl Lower<'_> {
             let v = self.expr(&a.value);
             let ft = super::subst(ft, &targs);
             self.unify(&ft, &v.ty, a.value.span);
+            self.keep_linear(&v, &ft, a.value.span);
             self.escape(&v);
             caps.extend(self.val_caps(&v));
             self.consume(&v, a.value.span);
@@ -1257,7 +1402,7 @@ impl Lower<'_> {
                 if let Ty::Fn(f) = self.inf.shallow(&v.ty) {
                     fns.push((i, self.fn_info(&v), f.effects.clone()));
                     fn_args.push((i, v.clone(), x.span));
-                } else if self.has_fn(&v.ty, 0) {
+                } else if self.has_fn(&v.ty) {
                     self.escape_all(&v);
                 }
                 // The clause can keep a function value that it gets. It runs outside
@@ -1299,7 +1444,7 @@ impl Lower<'_> {
             for &p in ps {
                 self.facts.call_arg.push((n, p, root));
                 // The parameter of the clause points into what the argument holds.
-                if let (Some(c), false) = (cap, self.has_fn(&o.params[*i], 0)) {
+                if let (Some(c), false) = (cap, self.has_fn(&o.params[*i])) {
                     self.give_op(n, c, Some(op), Some(*i), p, root);
                 }
             }
@@ -1316,6 +1461,10 @@ impl Lower<'_> {
             self.apply_value(n, &info, row.as_deref(), root, &given);
             self.start_ret_spawns(n, &info);
             self.note_repeat(n, &info, true);
+            if let Some((_, v, _)) = fn_args.iter().find(|(j, ..)| *j == i) {
+                let v = v.clone();
+                self.give_fn(n, &v, true, false);
+            }
         }
         if o.multi {
             self.multi_node(n);
@@ -1323,7 +1472,7 @@ impl Lower<'_> {
         self.abortive(n);
         // The result is what a clause resumes with.
         let mut caps = std::collections::BTreeSet::new();
-        if let (Some(c), true) = (cap, self.has_fn(&o.ret, 0)) {
+        if let (Some(c), true) = (cap, self.has_fn(&o.ret)) {
             caps.insert(super::caps::resumed_cap(c));
         }
         Val {
@@ -1420,6 +1569,12 @@ impl Lower<'_> {
         };
         let n = self.emit(span, label, String::new());
         self.facts.spawned_at.push((t, n));
+        // The task takes the closure and runs it once.
+        if let (Some(var), Some(s)) = (v.var, self.fn_info(v).summary) {
+            if self.closure_is_once(s) {
+                self.move_var(var, n);
+            }
+        }
         let info = self.fn_info(v);
         let row = match self.inf.shallow(&v.ty) {
             Ty::Fn(f) => f.effects.clone(),

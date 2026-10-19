@@ -1,0 +1,77 @@
+// `!Move` passes through each part that holds a value inline: a struct field, a
+// tuple part, an enum payload and a `Vec` element. A `Box` keeps its target in
+// place. A self-reference field points into its own struct, and it has no value
+// until the body gives it one.
+
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+
+struct Outer { f: Frame, n: u64 }
+fn keep(o: Outer) {}
+fn moves_outer() {
+    let o = Outer { f: Frame { buf: [1, 2, 3, 4] }, n: 1 }
+    keep(o)   //~ W0604
+}
+fn outer_in_place() {
+    let o = Outer { f: Frame { buf: [1, 2, 3, 4] }, n: 1 }
+    o.f.cur = &o.f.buf[0]
+    print(o.f.cur)
+}
+fn take_opt(o: Option<Frame>) {}
+fn in_option() {
+    let o = Some(Frame { buf: [1, 2, 3, 4] })
+    take_opt(o)   //~ W0604
+}
+fn in_tuple() {
+    let t = (Frame { buf: [1, 2, 3, 4] }, 1)
+    let u = t   //~ W0604
+}
+
+// A `Vec` moves its elements when its buffer grows.
+fn in_vec() {
+    let v = Vec.new()
+    v.push(Frame { buf: [1, 2, 3, 4] })   //~ W0604
+}
+fn boxed(b: Box<Frame>) -> Box<Frame> { b }
+
+// A self-reference field can point only into its own struct.
+fn cur_outside() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    let v: Vec<u8> = Vec.new()
+    v.push(1)
+    f.cur = &v[0]   //~ W0605
+    print(f.cur)
+}
+fn cur_inside() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[1]
+    print(f.cur)
+}
+fn cur_literal_outside(v: &Vec<u8>) {
+    let f = Frame { buf: [1, 2, 3, 4], cur: &v[0] }   //~ W0605
+}
+
+// A place field that the literal does not give has no value yet.
+fn cur_unset() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    print(f.cur)   //~ W0304
+}
+fn cur_unset_borrow() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    let r = &f   //~ W0304
+}
+fn cur_set_on_one_path(c: bool) {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    if c { f.cur = &f.buf[0] }
+    print(f.cur)   //~ W0304
+}
+fn buf_only() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.buf[0] = 9
+    print(f.buf[1])
+}
+fn cur_set_then_borrow() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[3]
+    let r = &f
+    print(r.cur)
+}

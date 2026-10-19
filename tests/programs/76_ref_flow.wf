@@ -1,0 +1,198 @@
+// A reference keeps its places through a generic function, a container, a
+// struct literal, an enum payload and a pattern.
+
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+
+fn id<T>(x: T) -> T { x }
+fn through_generic() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = id(&v[0])
+    v.clear()
+    print(r)   //~ W0301
+}
+fn through_generic_ok() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = id(&v[0])
+    print(r)
+    v.clear()
+}
+fn through_item_value() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let i = id
+    let r = i(&v[0])
+    v.clear()
+    print(r)   //~ W0301
+}
+
+struct Wrap<T> { x: T }
+fn in_struct(world: &World) / mut(world.entities) {
+    let h = Wrap { x: &world.entities[0] }
+    world.entities.clear()
+    print(h.x.hp)   //~ W0301
+}
+fn in_struct_ok(world: &World) / mut(world.entities) {
+    let h = Wrap { x: &world.entities[0] }
+    print(h.x.hp)
+    world.entities.clear()
+}
+fn in_box() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let b = Box.new(&v[0])
+    v.clear()
+    print(b)   //~ W0301
+}
+fn in_array(world: &World) / mut(world.entities) {
+    let rs = [&world.entities[0]]
+    world.entities.push(Entity { hp: 1 })
+    for r in rs[] { print(r.hp) }   //~ W0301
+}
+fn in_vec(world: &World) / mut(world.entities) {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    world.entities.push(Entity { hp: 1 })
+    for r in rs[] { print(r.hp) }   //~ W0301
+}
+fn in_vec_ok(world: &World) / mut(world.entities) {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    for r in rs[] { print(r.hp) }
+    world.entities.push(Entity { hp: 1 })
+}
+fn popped(world: &World) / mut(world.entities) {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    let o = rs.pop()
+    world.entities.push(Entity { hp: 1 })
+    match o {   //~ W0301
+        Some(r) => print(r.hp),
+        None => {}
+    }
+}
+
+// A by-value binding of an `Option<&T>` points where the payload points.
+fn match_binding(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    match o {
+        Some(r) => {
+            world.entities.push(Entity { hp: 1 })
+            print(r.hp)   //~ W0301
+        }
+        None => {}
+    }
+}
+fn match_binding_ok(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    match o {
+        Some(r) => print(r.hp),
+        None => {}
+    }
+    world.entities.push(Entity { hp: 1 })
+}
+
+// A tuple pattern over a reference to a tuple of references.
+fn nested_ref() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let t = (&v[0], 1)
+    let rt = &t
+    v.clear()
+    let (a, b) = rt   //~ W0301
+    print(a)
+}
+
+// A function returns a reference inside another value. With no stated place,
+// the result can point anywhere inside the reference arguments.
+fn find(v: &Vec<u64>) -> Option<&u64> { Some(&v[0]) }
+fn find_in(v: &Vec<u64>) -> Option<&u64 in v[]> { Some(&v[0]) }
+fn use_find() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let o = find(&v)
+    v.push(2)
+    match o {   //~ W0301
+        Some(r) => print(r),
+        None => {}
+    }
+}
+fn use_find_in() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let o = find_in(&v)
+    v.push(2)
+    match o {   //~ W0301
+        Some(r) => print(r),
+        None => {}
+    }
+}
+fn use_find_ok() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let o = find(&v)
+    match o {
+        Some(r) => print(r),
+        None => {}
+    }
+    v.push(2)
+}
+fn local_ref() -> Option<&u64> {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    Some(&v[0])   //~ W0204
+}
+fn wrapped_local() -> Wrap<&u64> {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    Wrap { x: &v[0] }   //~ W0204
+}
+fn find_wrong(v: &Vec<u64>, w: &Vec<u64>) -> Option<&u64 in v[]> {
+    Some(&w[0])   //~ W0204
+}
+
+// A by-value parameter that holds a reference: the callee mutates through it.
+fn grow_opt(o: Option<&World>) {
+    match o {
+        Some(x) => x.entities.push(Entity { hp: 1 }),
+        None => {}
+    }
+}
+fn item_opt(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    grow_opt(Some(world))
+    print(first.hp)   //~ W0301
+}
+fn apply_opt(f: fn(Option<&World>), w: &World) { f(Some(w)) }
+fn hof_opt(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    apply_opt(|o| match o { Some(x) => x.entities.push(Entity { hp: 1 }), None => {} }, world)
+    print(first.hp)   //~ W0301
+}
+fn direct_opt(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let f = |o: Option<&World>| match o { Some(x) => x.entities.push(Entity { hp: 1 }), None => {} }
+    f(Some(world))
+    print(first.hp)   //~ W0301
+}
+fn read_opt(o: Option<&World>) -> i32 {
+    match o {
+        Some(x) => x.entities[0].hp,
+        None => 0,
+    }
+}
+fn item_opt_read(world: &World) {
+    let first = &world.entities[0]
+    let n = read_opt(Some(world))
+    print(first.hp)
+}
+fn reset_opt(o: Option<&World>) {
+    o = None
+}
+fn item_opt_reset(world: &World) {
+    let first = &world.entities[0]
+    reset_opt(Some(world))
+    print(first.hp)
+}

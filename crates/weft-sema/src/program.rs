@@ -286,6 +286,10 @@ pub struct EffectSig {
     /// Function parameters that the body can call more than once. The body always
     /// infers this part.
     pub repeats: BTreeSet<usize>,
+    /// By-value parameters of a type parameter that the body can drop: on some
+    /// path the value does not move. A caller that gives a linear value there
+    /// loses it (W0601). The body always infers this part.
+    pub drops: BTreeSet<usize>,
 }
 
 impl EffectSig {
@@ -397,6 +401,8 @@ pub struct Program {
     pub root: ModId,
     /// The definition behind raw pointer types `*T`. No module names it.
     pub ptr: Option<AdtId>,
+    /// The type properties of the definitions (`Program::props`).
+    pub props: std::sync::OnceLock<crate::props::TypeProps>,
 }
 
 /// The prelude module.
@@ -1110,6 +1116,45 @@ impl Collector {
                     self.collect_ret_places(t, params, names, m, path, out);
                     path.pop();
                 }
+            }
+            // A reference inside another type, such as `Option<&T in p>`, can
+            // state its place. With no place, the caller takes the places of the
+            // arguments.
+            TypeExprKind::Path { args, .. } => {
+                for t in args {
+                    self.collect_nested_places(t, params, names, m, path, out);
+                }
+            }
+            TypeExprKind::Array { elem, .. } => {
+                self.collect_nested_places(elem, params, names, m, path, out);
+            }
+            _ => {}
+        }
+    }
+
+    /// Collects the stated places of the references inside a type argument of a
+    /// returned type. A reference with no place is not an error here.
+    fn collect_nested_places(
+        &mut self,
+        t: &TypeExpr,
+        params: &[ParamSig],
+        names: &BTreeMap<String, usize>,
+        m: ModId,
+        path: &mut Vec<usize>,
+        out: &mut Vec<RetPlace>,
+    ) {
+        match &t.kind {
+            TypeExprKind::Ref { place: None, inner } => {
+                self.collect_nested_places(inner, params, names, m, path, out);
+            }
+            TypeExprKind::Ref { .. } => self.collect_ret_places(t, params, names, m, path, out),
+            TypeExprKind::Tuple(ts) | TypeExprKind::Path { args: ts, .. } => {
+                for x in ts {
+                    self.collect_nested_places(x, params, names, m, path, out);
+                }
+            }
+            TypeExprKind::Array { elem, .. } | TypeExprKind::Slice(elem) => {
+                self.collect_nested_places(elem, params, names, m, path, out);
             }
             _ => {}
         }

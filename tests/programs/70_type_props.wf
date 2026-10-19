@@ -1,0 +1,94 @@
+// Type properties pass through every part of a type, at any depth: struct
+// fields, tuples, enum payloads and the arguments of `Vec` and `Box`.
+
+linear struct Tok { id: u64 }
+fn spend(t: Tok) { let Tok(i) = t }
+fn mint() -> Tok { Tok { id: 1 } }
+
+linear struct Tx { id: u64 }
+    on abort = undo
+fn undo(t: Tx) { let Tx(i) = t }
+fn begin() -> Tx { Tx { id: 1 } }
+
+fn risky() / fail { fail("no") }
+
+// A linear value nested seven levels deep is still linear.
+struct W0 { t: Tok }
+struct W1 { w: W0 }
+struct W2 { w: W1 }
+struct W3 { w: W2 }
+struct W4 { w: W3 }
+struct W5 { w: W4 }
+struct W6 { w: W5 }
+struct W7 { w: W6 }
+fn deep_dropped(w: W7) {   //~ W0601
+}
+fn deep_kept(w: W7) -> W7 { w }
+
+// A tuple has `on abort` only if each linear part has it.
+fn tuple_no_abort() / fail {
+    let p = (mint(), 1)
+    risky()   //~ W0602
+    let (t, n) = p
+    spend(t)
+}
+fn tuple_with_abort() / fail {
+    let p = (begin(), 1)
+    risky()
+    let (t, n) = p
+    undo(t)
+}
+fn tuple_mixed() / fail {
+    let p = (begin(), mint())
+    risky()   //~ W0602
+    let (a, b) = p
+    undo(a)
+    spend(b)
+}
+
+// A type with `on abort` finishes its linear parts itself.
+linear struct Guard { t: Tok }
+    on abort = drop_guard
+fn drop_guard(g: Guard) { let Guard(t) = g
+ spend(t) }
+fn guarded() / fail {
+    let g = Guard { t: mint() }
+    risky()
+    drop_guard(g)
+}
+
+// A `Vec` with no written type gets its element type later in the body.
+fn bare_vec() / fail {
+    let v = Vec.new()
+    v.push(Tok { id: 6 })
+    risky()   //~ W0602
+}   //~ W0601
+fn bare_vec_ok() -> Vec<Tok> {
+    let v = Vec.new()
+    v.push(mint())
+    v
+}
+
+effect Choice { multi fn choose() -> bool }
+fn multi_vec() -> bool / Choice {
+    let v = Vec.new()
+    v.push(begin())
+    let b = choose()   //~ W0503
+    match v.pop() {
+        Some(t) => undo(t),
+        None => {}
+    }
+    b
+}   //~ W0601
+fn multi_vec_ok() -> Vec<Tx> / Choice {
+    let b = choose()
+    let v = Vec.new()
+    v.push(begin())
+    v
+}
+
+// A linear value in an `Option` payload or a `Box`.
+fn in_option(o: Option<Tok>) {   //~ W0601
+}
+fn in_box(b: Box<Tok>) {   //~ W0601
+}

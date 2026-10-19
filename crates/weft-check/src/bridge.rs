@@ -102,6 +102,8 @@ pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
     rel2!("uses", f.uses);
     rel2!("moved_at", f.moved_at);
     rel2!("scope_end", f.scope_end);
+    rel2!("overwrites", f.overwrites);
+    rel2!("unset_at", f.unset_at);
     rel2!("owner", f.owner);
     rel2!("moved_part", f.moved_part);
     rel2!("spawned_at", f.spawned_at);
@@ -269,6 +271,7 @@ pub fn violations(out: &Output) -> Violations {
     };
     v.error = vn("error");
     v.use_after_move = vn("use_after_move");
+    v.use_before_set = vn("use_before_set");
     v.moved_immovable = vn("moved_immovable");
     v.unconsumed = vn("unconsumed");
     v.overwritten = vn("overwritten");
@@ -407,9 +410,10 @@ fn render(
 }
 
 /// The violation relations of the spec, in report order.
-pub const VIOLATION_RELATIONS: [&str; 15] = [
+pub const VIOLATION_RELATIONS: [&str; 16] = [
     "error",
     "use_after_move",
+    "use_before_set",
     "moved_immovable",
     "unconsumed",
     "overwritten",

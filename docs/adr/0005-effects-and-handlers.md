@@ -268,6 +268,5 @@ Status: accepted. Date: 2026-10-18.
   - Only functions of a dependency are checked for `pub`, not its types and effects.
   - W0402 inside a higher-order function: a callback that gets a place of a `@ shared`
     parameter can mutate it. The caller sees the mutation on its own place only.
-  - A reference inside a payload that a `match` binds by value, and a parameter of a
-    function item that holds a reference inside an `Option` or a tuple, have no places
-    (the RT3 family).
+  - A reference that a function value gets inside another reference: the value sees
+    the outer place only (ADR 0003).

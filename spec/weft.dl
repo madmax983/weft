@@ -26,6 +26,8 @@
 //   uses(V, P)               node P uses V.
 //   moved_at(V, P)           node P moves V (a move is also a use).
 //   scope_end(V, P)          V goes out of scope at node P on a normal path.
+//   overwrites(V, P)         node P gives a part of V a new value; the old value of the part goes away.
+//   unset_at(V, P)           node P declares V with no value.
 //   owner(Rt, V)             root place Rt holds the value of V. A move or the end of V frees it.
 //   moved_part(M, P)         node P moves the value at place M out of its owner (a partial move).
 //   linear(V)                V holds a linear value.
@@ -133,12 +135,18 @@ invalid(R, Q)        :- invalid(R, P), cfg_edge(P, Q), !rebound_at(R, P).
 error(R, P)          :- uses(R, P), invalid(R, P).
 
 // ---------------------------------------------------------------------------
-// W0302, W0501, W0502: use after move (affine values, once continuations)
+// W0302, W0501, W0502, W0304: use after move (affine values, once continuations)
+// and use before a value
 // ---------------------------------------------------------------------------
 
 moved(V, Q)          :- moved_at(V, P), cfg_edge(P, Q).
 moved(V, Q)          :- moved(V, P), cfg_edge(P, Q), !rebound_at(V, P).
 use_after_move(V, P) :- uses(V, P), moved(V, P).
+
+// W0304: a variable needs a value before a use, on every path.
+unset(V, Q)          :- unset_at(V, P), cfg_edge(P, Q).
+unset(V, Q)          :- unset(V, P), cfg_edge(P, Q), !rebound_at(V, P).
+use_before_set(V, P) :- uses(V, P), unset(V, P).
 
 // W0604: a `!Move` value keeps its address.
 moved_immovable(V, P) :- moved_at(V, P), immovable(V).
@@ -152,6 +160,7 @@ live_linear(V, Q)     :- live_linear(V, P), cfg_edge(P, Q), !moved_at(V, P).
 
 unconsumed(V, P)      :- live_linear(V, P), scope_end(V, P).
 overwritten(V, P)     :- live_linear(V, P), rebound_at(V, P).
+overwritten(V, P)     :- live_linear(V, P), overwrites(V, P).
 abort_unhandled(V, P) :- live_linear(V, P), may_abort(P), !moved_at(V, P), !has_on_abort(V).
 
 // ---------------------------------------------------------------------------

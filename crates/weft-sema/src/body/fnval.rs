@@ -323,7 +323,7 @@ impl Lower<'_> {
             }
             _ => None,
         };
-        let ty = if self.has_fn(&a.ty, 0) || self.has_fn(&b.ty, 0) {
+        let ty = if self.has_fn(&a.ty) || self.has_fn(&b.ty) {
             self.join_ty(&a.ty, &b.ty)
         } else {
             a.ty.clone()
@@ -338,18 +338,8 @@ impl Lower<'_> {
     }
 
     /// Returns true if a type can hold a function value.
-    pub(super) fn has_fn(&self, t: &Ty, depth: usize) -> bool {
-        if depth > 6 {
-            return false;
-        }
-        match self.inf.shallow(t) {
-            Ty::Fn(_) => true,
-            Ty::Ref(t) | Ty::Slice(t) => self.has_fn(&t, depth + 1),
-            t => self
-                .adt_fields(&t)
-                .iter()
-                .any(|f| self.has_fn(f, depth + 1)),
-        }
+    pub(super) fn has_fn(&self, t: &Ty) -> bool {
+        self.ty_has(t, crate::props::Prop::Fns)
     }
 
     /// Joins the function values inside two types of the same shape.
@@ -624,8 +614,13 @@ impl Lower<'_> {
             let mut places = Vec::new();
             match m.root {
                 SigRoot::Param(i) => {
-                    // A by-value parameter is a copy: the callee mutates its own value.
-                    if !sig.params.get(i).is_some_and(|p| p.ty.is_ref()) {
+                    // A by-value parameter is a copy: the callee mutates its own
+                    // value. One that holds references can mutate what they point into.
+                    if !sig
+                        .params
+                        .get(i)
+                        .is_some_and(|p| p.ty.is_ref() || self.byval_refs(&p.ty))
+                    {
                         continue;
                     }
                     for g in given {

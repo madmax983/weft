@@ -112,7 +112,7 @@ fn build(s: &Shape) -> FnFacts {
     let nh = s.handlers.len();
     let cap = |x: usize| CapId(u32::try_from(x).unwrap() % caps);
     for &(rel, a, b, c) in &s.rels {
-        match rel % 29 {
+        match rel % 31 {
             0 => f.points_into.push((v(a), p(b))),
             1 => f.mutates_at.push((n(a), p(b))),
             2 => f.reads_at.push((n(a), p(b))),
@@ -157,6 +157,8 @@ fn build(s: &Shape) -> FnFacts {
                 HandlerId(u32::try_from(a % nh).unwrap()),
                 format!("E{}", b % 2),
             )),
+            29 => f.overwrites.push((v(a), n(b))),
+            30 => f.unset_at.push((v(a), n(b))),
             _ => {}
         }
     }

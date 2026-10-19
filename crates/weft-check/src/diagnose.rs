@@ -97,7 +97,7 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
                 (format!("{moved} : moved"), inside(moved, "is moved"))
             }
         };
-        let holder = if var.kind == VarKind::Closure || var.ty.starts_with("fn(") {
+        let holder = if var.callable {
             format!("{} : {}, captures {path}", var.name, var.ty)
         } else if let Some(h) = handle {
             format!(
@@ -116,7 +116,7 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         // A block value is held only across the end of its block.
         let block_value = var.kind == VarKind::BlockValue;
         let d = if let (true, Cause::ScopeEnd(o)) = (block_value, inv.cause) {
-            let head = match (var.ty.starts_with("fn("), handle) {
+            let head = match (var.callable, handle) {
                 (true, _) => format!("the closure that this block returns captures `{path}`"),
                 (false, Some(h)) => {
                     format!("the value of this block points into the object behind `{h}`")
@@ -156,8 +156,7 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
                 node_span(f, n),
             )
             .note("an operation that is not `multi` resumes at most once"),
-            VarKind::Closure => once_closure(f, n),
-            _ if info.ty.starts_with("fn(") => once_closure(f, n),
+            _ if info.callable => once_closure(f, n),
             _ => Diagnostic::error(
                 "W0302",
                 format!("`{}` used after it was moved", info.name),
@@ -166,6 +165,18 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             .note_at(format!("{} : {}", info.name, info.ty), info.span),
         };
         out.push(d);
+    }
+    for &(var, n) in &v.use_before_set {
+        let info = f.var(var);
+        out.push(
+            Diagnostic::error(
+                "W0304",
+                format!("`{}` is used before it has a value", info.name),
+                node_span(f, n),
+            )
+            .note_at(format!("{} : {}", info.name, info.ty), info.span)
+            .note("give it a value on every path before this use"),
+        );
     }
     for &(var, n) in &v.moved_immovable {
         let info = f.var(var);
@@ -186,6 +197,18 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
                 format!("task handle `{}` is not joined or detached", info.name),
                 node_span(f, n),
             )
+        } else if info.callable {
+            let who = if matches!(info.kind, VarKind::Closure | VarKind::Temp) {
+                "a closure".to_string()
+            } else {
+                format!("closure `{}`", info.name)
+            };
+            Diagnostic::error(
+                "W0601",
+                format!("{who} moves a linear value, but it can go out of scope without a call"),
+                node_span(f, n),
+            )
+            .note("call the closure once on every normal path; a callee that gets it can drop it")
         } else {
             Diagnostic::error(
                 "W0601",
@@ -233,10 +256,15 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
     for &(var, n) in &v.live_across_multi {
         let info = f.var(var);
         let at = f.node(n);
+        let name = if info.kind == VarKind::Iterator {
+            "the loop iterator".to_string()
+        } else {
+            format!("`{}`", info.name)
+        };
         out.push(
             Diagnostic::error(
                 "W0503",
-                format!("`{}` is not `many`, but it is live across `{}`, which can resume more than once", info.name, at.label),
+                format!("{name} is not `many`, but it is live across `{}`, which can resume more than once", at.label),
                 at.span,
             )
             .note_at(format!("{} : {}", info.name, info.ty), info.span),

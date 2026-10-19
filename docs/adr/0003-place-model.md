@@ -66,6 +66,24 @@ Status: accepted. Date: 2026-10-18.
   variable (W0204, W0301), also when it moves the value: it takes the value only when it
   runs. A temporary of plain data stays readable too, as a constant does. A reference
   into a local of plain data is still invalid after the scope.
+- A value points where its parts point: a tuple, a struct literal, an array literal, an
+  enum payload and a call result. A local that holds such a value points into the
+  places of its references, so a change there invalidates the local. A pattern, an
+  element or a field that reads a reference out of a local uses the local, and the
+  reference points where the local points. A by-value binding of a reference payload
+  (`Some(r)` on an `Option<&T>`) is that reference.
+- A returned type can state the place of a reference inside it: `Option<&T in v[]>`.
+  A top-level reference and a tuple part must state it (W0204). Another reference with
+  no place is allowed: the result of the call points where the arguments can flow. An
+  argument of a reference type, or of a type with a reference inside, lets the callee
+  reach any place inside it (a wildcard place). An argument of a type parameter passes
+  its value on as it is, so `id(&v[0])` points into `v[]`. A reference argument whose
+  value holds references gives them too. A reference argument whose value holds
+  references, and that the call mutates, can keep the references of the other
+  arguments: `rs.push(&x)` makes `rs` point into `x`.
+- A by-value parameter that holds references, such as `o: Option<&World>`, points into
+  a parameter root: the callee can mutate through it, and the caller puts in the
+  places of the argument. A new value of the parameter itself is local.
 - Evaluation order follows the interpreter: arguments and operands run from left to
   right. A by-value argument moves when it is evaluated, so `f(v, v.len())` is a use
   after move. A reference argument, a closure argument and the value of a named
@@ -83,3 +101,10 @@ Status: accepted. Date: 2026-10-18.
 - `points_into` is not flow-sensitive. A reference that got a place inside a block, and
   then a place outside it before the block ends, is still invalid after the end. This
   is the same imprecision as for mutations.
+- A result with no stated place points anywhere inside the reference arguments, also
+  when the callee returns a reference to one element only.
+- W0605 is about written reference fields. A generic type such as `Option<&T>`,
+  `Vec<&T>` or `Wrap<&T>` can hold references: the facts follow their places.
+- What stays open (not checked): a reference stored behind a reference parameter. The
+  callee sees it as a reference to any place inside the parameter, and the caller puts
+  in the places of the parameter, not the places that the stored reference points into.

@@ -1,0 +1,126 @@
+// A closure takes its modes from what it captures. It is linear if it moves a
+// linear value, `once` if it moves a value that is not plain data, nonportable
+// if it captures a nonportable value, and not `many` if it captures a `@ uniq`
+// reference or a `once` value.
+
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+
+// A closure that moves a linear value must run on every normal path.
+fn never_called() {
+    let tx = begin()
+    let f = || rollback(tx)
+}   //~ W0601
+fn called_once() {
+    let tx = begin()
+    let f = || rollback(tx)
+    f()
+}
+fn literal_dropped() {
+    let tx = begin()
+    || rollback(tx)   //~ W0601
+}
+fn reads_only() {
+    let tx = begin()
+    let f = || print(tx.id)
+    f()
+    f()
+    rollback(tx)
+}
+
+// A callee that gets a linear closure can drop it.
+fn ignore(f: fn()) {}
+fn once(f: fn()) { f() }
+fn twice(f: fn()) { f()
+ f() }
+fn given_away() {
+    let tx = begin()
+    ignore(|| rollback(tx))   //~ W0601
+}
+fn given_to_twice() {
+    let tx = begin()
+    twice(|| rollback(tx))   //~ W0601 W0502
+}
+fn timed() / async, fail {
+    let tx = begin()
+    with_timeout(1.s) { rollback(tx) }
+}
+
+// A `once` closure that is not linear: a callee that calls it twice is an error.
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) {}
+fn once_to_twice() {
+    let b = Buf { items: Vec.new() }
+    twice(|| eat(b))   //~ W0502
+}
+fn once_to_once() {
+    let b = Buf { items: Vec.new() }
+    once(|| eat(b))
+}
+fn once_local_twice() {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    once(f)
+    f()   //~ W0502
+}
+
+// A closure that calls a `once` closure is `once` too.
+fn nested_once() {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    let g = || f()
+    g()
+    g()   //~ W0502
+}
+fn nested_once_ok() {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    let g = || f()
+    g()
+}
+
+// A closure that resumes a `once` continuation is `once`.
+effect Note { fn note(n: u64) }
+fn resume_twice() {
+    handle Note { fn note(n) { let k = || resume(())
+ k()
+ k() } } in note(1)   //~ W0502
+}
+fn resume_once() {
+    handle Note { fn note(n) { let k = || resume(())
+ k() } } in note(1)
+}
+
+// A closure that captures a nonportable value is nonportable.
+struct Node { v: u64 }
+fn rc_closure() / par {
+    let n = Rc.new(Node { v: 1 })
+    let c = || print(n.v)
+    fork(|| c(), || print(2))   //~ W0401
+}
+fn plain_closure() / par {
+    let n = Node { v: 1 }
+    let c = || print(n.v)
+    fork(|| c(), || print(2))
+}
+
+// A closure that captures a `@ uniq` part is not `many`.
+effect Choice { multi fn choose() -> bool }
+fn needs_uniq(es: &[u64] @ uniq) / mut(es) {}
+fn uniq_across_multi(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let (l, r) = v.split_mut(1)
+    let f = || needs_uniq(l)
+    let b = choose()   //~ W0503
+    f()
+    b
+}
+fn uniq_after_multi(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let b = choose()
+    let (l, r) = v.split_mut(1)
+    let f = || needs_uniq(l)
+    f()
+    f()
+    b
+}

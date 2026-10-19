@@ -9,6 +9,7 @@ pub mod effects;
 pub mod fip;
 pub mod infer;
 pub mod program;
+pub mod props;
 pub mod types;
 
 use weft_facts::FnFacts;

@@ -85,33 +85,32 @@ impl Lower<'_> {
         for p in v.parts.iter().flatten() {
             out.extend(self.val_caps(p));
         }
-        self.ty_caps(&v.ty, 0, &mut out);
+        self.ty_caps(&v.ty, &mut out);
         // A part of a local, for example a field, can hold what the local holds.
         let owner = v.local.or_else(|| v.place.as_ref().and_then(|p| p.owner));
-        if let (Some(l), true) = (owner, self.has_fn(&v.ty, 0)) {
+        if let (Some(l), true) = (owner, self.has_fn(&v.ty)) {
             out.extend(self.locals[l].caps.iter().copied());
         }
         out
     }
 
-    /// Adds the capabilities of the closures in type `t`.
-    fn ty_caps(&self, t: &Ty, depth: usize, out: &mut BTreeSet<CapId>) {
-        if depth > 6 {
-            return;
-        }
-        let t = self.inf.shallow(t);
-        match &t {
+    /// Adds the capabilities of the closures in type `t`. Only an inferred type
+    /// names a closure, so the walk goes through the type arguments and not
+    /// through the declared field types: it is finite for a recursive type too.
+    fn ty_caps(&self, t: &Ty, out: &mut BTreeSet<CapId>) {
+        match self.inf.shallow(t) {
             Ty::Fn(f) => {
                 if let Some(s) = f.summary {
                     out.extend(self.closures[s].performs.iter().copied());
                 }
             }
-            Ty::Ref(inner) => self.ty_caps(inner, depth + 1, out),
-            _ => {
-                for f in self.adt_fields(&t) {
-                    self.ty_caps(&f, depth + 1, out);
+            Ty::Ref(inner) | Ty::Slice(inner) | Ty::Array(inner, _) => self.ty_caps(&inner, out),
+            Ty::Tuple(ts) | Ty::Adt(_, ts) => {
+                for x in &ts {
+                    self.ty_caps(x, out);
                 }
             }
+            _ => {}
         }
     }
 
@@ -159,7 +158,7 @@ impl Lower<'_> {
         if let Some(s) = self.local_fn_info(l).summary {
             out.extend(self.closures[s].performs.iter().copied());
         }
-        self.ty_caps(&self.locals[l].ty, 0, &mut out);
+        self.ty_caps(&self.locals[l].ty, &mut out);
         out
     }
 

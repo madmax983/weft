@@ -166,10 +166,16 @@ pub struct VarInfo {
     pub uniq: bool,
     /// The value cannot cross threads.
     pub nonportable: bool,
+    /// The value is a function value: a closure, a function parameter or a
+    /// function item. A second call of a `once` function value is W0502.
+    pub callable: bool,
 }
 
 impl VarInfo {
     /// Makes a plain `many`, portable, aliased variable.
+    ///
+    /// `callable` is true for a closure. A producer that knows the type sets
+    /// `callable` itself.
     pub fn plain(
         name: impl Into<String>,
         kind: VarKind,
@@ -178,6 +184,7 @@ impl VarInfo {
     ) -> Self {
         Self {
             name: name.into(),
+            callable: kind == VarKind::Closure,
             kind,
             span,
             ty: ty.into(),
@@ -275,6 +282,11 @@ pub struct FnFacts {
     pub moved_at: Vec<(VarId, NodeId)>,
     /// `scope_end(V, P)`.
     pub scope_end: Vec<(VarId, NodeId)>,
+    /// `overwrites(V, P)`: node `P` gives a part of `V` a new value, and the old
+    /// value of the part goes away.
+    pub overwrites: Vec<(VarId, NodeId)>,
+    /// `unset_at(V, P)`: node `P` declares `V` with no value.
+    pub unset_at: Vec<(VarId, NodeId)>,
     /// `owner(Rt, V)`: the root place `Rt` holds the value of `V`.
     pub owner: Vec<(PlaceId, VarId)>,
     /// `moved_part(M, P)`: node `P` moves the value at place `M` out of its owner.
@@ -479,6 +491,8 @@ impl FnFacts {
         nd(&mut self.uses);
         nd(&mut self.moved_at);
         nd(&mut self.scope_end);
+        nd(&mut self.overwrites);
+        nd(&mut self.unset_at);
         nd(&mut self.owner);
         nd(&mut self.moved_part);
         nd(&mut self.may_abort);
@@ -510,6 +524,8 @@ pub struct Violations {
     pub error: BTreeSet<(VarId, NodeId)>,
     /// `use_after_move(V, P)`: W0302, W0501, W0502.
     pub use_after_move: BTreeSet<(VarId, NodeId)>,
+    /// `use_before_set(V, P)`: W0304.
+    pub use_before_set: BTreeSet<(VarId, NodeId)>,
     /// `moved_immovable(V, P)`: W0604.
     pub moved_immovable: BTreeSet<(VarId, NodeId)>,
     /// `unconsumed(V, P)`: W0601.
@@ -545,6 +561,7 @@ impl Violations {
     pub fn is_clean(&self) -> bool {
         self.error.is_empty()
             && self.use_after_move.is_empty()
+            && self.use_before_set.is_empty()
             && self.moved_immovable.is_empty()
             && self.unconsumed.is_empty()
             && self.overwritten.is_empty()

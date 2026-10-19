@@ -21,11 +21,15 @@ use crate::program::{
     elem_step, field_step, AdtKind, Builtins, Deref, EffectSig, FnId, FnSig, ItemRef, ModId,
     Program, SigPlace, SigRoot, SigStep, PRELUDE,
 };
+use crate::props::Prop;
 use crate::types::{subst, Display, FnTy, Infer, IntTy, Ty};
 
 mod call;
 mod caps;
+mod drops;
+mod exhaust;
 mod expr;
+mod flow;
 mod fnval;
 mod repeat;
 mod stmt;
@@ -237,6 +241,9 @@ struct Val {
     /// The capabilities of the function values inside the value that its type
     /// does not show, for example in a struct field.
     caps: BTreeSet<CapId>,
+    /// The place fields of a struct literal that it does not give: they have no
+    /// value yet.
+    unset: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -422,6 +429,19 @@ pub struct Lower<'p> {
     /// The calls of each function parameter (summary index, parameter): their
     /// number, and whether one can run more than once.
     param_runs: BTreeMap<(usize, usize), (usize, bool)>,
+    /// The place fields of locals that a struct literal did not give, each with a
+    /// hidden variable that has a value once the body sets the field.
+    unset_places: Vec<(PlaceId, VarId)>,
+    /// The source of the `for` loop that is being lowered is `@ uniq`.
+    iter_uniq: bool,
+    /// The places that the value of each temporary root points into.
+    temp_refs: BTreeMap<RootId, Vec<PlaceId>>,
+    /// Variables of a type parameter that the body gives to a callee that can drop them.
+    generic_drops: Vec<VarId>,
+    /// The integer literals: the value, true if it is negative, the type and the span.
+    int_lits: Vec<(u64, bool, Ty, Span)>,
+    /// The span of the literal that is being lowered.
+    lit_span: Span,
 }
 
 impl<'p> Lower<'p> {
@@ -485,6 +505,12 @@ impl<'p> Lower<'p> {
             resumed: BTreeMap::new(),
             param_runs: BTreeMap::new(),
             op_fn_args: Vec::new(),
+            unset_places: Vec::new(),
+            iter_uniq: false,
+            int_lits: Vec::new(),
+            lit_span: Span::default(),
+            temp_refs: BTreeMap::new(),
+            generic_drops: Vec::new(),
         }
     }
 
@@ -623,6 +649,24 @@ impl<'p> Lower<'p> {
     fn read(&mut self, p: PlaceId) {
         self.pend_reads.push(p);
         self.sum().reads.insert(p);
+        self.touch_unset(&[p]);
+    }
+
+    /// The node reads or borrows the places `ps`. A place field with no value at
+    /// or below one of them is used there (W0304).
+    fn touch_unset(&mut self, ps: &[PlaceId]) {
+        let mut used = Vec::new();
+        for &(u, var) in &self.unset_places {
+            let mut at = Some(u);
+            while let Some(a) = at {
+                if ps.contains(&a) {
+                    used.push(var);
+                    break;
+                }
+                at = self.facts.place(a).parent;
+            }
+        }
+        self.pend_uses.extend(used);
     }
 
     fn use_local(&mut self, l: usize) {
@@ -834,6 +878,10 @@ impl<'p> Lower<'p> {
     /// place `p`. A group place that a callee reaches through the value depends
     /// on them. Past the depth limit, it depends on any handle inside `p`.
     fn inner_handle_deps(&mut self, p: PlaceId, ty: &Ty, depth: usize) -> Vec<PlaceId> {
+        // An `Rc` handle is nonportable: a type with no nonportable part has none.
+        if !self.is_nonportable(ty) {
+            return Vec::new();
+        }
         if depth > 4 {
             let any = self.facts.wildcard(p);
             return self.handle_deps(&[any]);
@@ -989,6 +1037,7 @@ impl<'p> Lower<'p> {
     fn var_info(&self, name: &str, kind: VarKind, span: Span, ty: &Ty, uniq: bool) -> VarInfo {
         let t = self.inf.resolve(ty);
         let mut v = VarInfo::plain(name, kind, span, self.show(&t));
+        v.callable = matches!(t, Ty::Fn(_)) || kind == VarKind::Closure;
         v.linear = self.is_linear(&t);
         v.has_on_abort = self.has_on_abort(&t);
         v.immovable = self.is_immovable(&t);
@@ -1035,6 +1084,7 @@ impl<'p> Lower<'p> {
     /// Gives a local the value `v` at node `n`.
     fn assign_local(&mut self, l: usize, v: &Val, n: NodeId) {
         let var = self.locals[l].var;
+        let first = !self.locals[l].bound;
         self.bind(var, n);
         let caps = self.val_caps(v);
         self.locals[l].caps.extend(caps);
@@ -1058,13 +1108,14 @@ impl<'p> Lower<'p> {
             self.locals[l].fn_param = info.param;
         }
         self.locals[l].bound = true;
-        if v.uniq {
-            self.locals[l].uniq = true;
-            self.facts.vars[var.index()].uniq = true;
-            self.facts.vars[var.index()].once = true;
-        }
+        // The local is `@ uniq` while it holds a `@ uniq` value. The variable is
+        // `@ uniq` only if each of its values is, and not `many` if one is.
+        self.locals[l].uniq = v.uniq;
+        let info = &mut self.facts.vars[var.index()];
+        info.uniq = v.uniq && (first || info.uniq);
+        info.once |= v.uniq;
         if let Some(s) = v.summary {
-            if self.closure_is_once(s) {
+            if self.closure_not_many(s) {
                 self.facts.vars[var.index()].once = true;
             }
         }
@@ -1075,6 +1126,25 @@ impl<'p> Lower<'p> {
             let name = self.locals[l].name.clone();
             let r = self.root(&name, RootKind::Local);
             self.set_root(l, r);
+        }
+        // A place field that the struct literal does not give has no value yet.
+        if let (false, Some(r)) = (v.unset.is_empty(), self.locals[l].root) {
+            let ty = self.inf.deep(&self.locals[l].ty);
+            for field in &v.unset {
+                let Some((steps, fty, _)) = field_step(self.prog, &ty, field) else {
+                    continue;
+                };
+                let mut p = r;
+                for (st, text) in &steps {
+                    p = self.child(p, *st, text);
+                }
+                let name = self.facts.place(p).display.clone();
+                let span = self.facts.var(var).span;
+                let info = self.var_info(&name, VarKind::Local, span, &fty, false);
+                let hidden = self.facts.add_var(info);
+                self.facts.unset_at.push((hidden, n));
+                self.unset_places.push((p, hidden));
+            }
         }
     }
 
@@ -1099,9 +1169,42 @@ impl<'p> Lower<'p> {
         }
     }
 
+    /// Returns true if the closure with summary `s` can run only once: it moves a
+    /// captured value that is not plain data, so a call takes the value.
     fn closure_is_once(&self, s: usize) -> bool {
         let sum = &self.closures[s];
         sum.moved_captures.iter().any(|v| !self.is_copy_var(*v))
+    }
+
+    /// Returns true if the closure with summary `s` is not `many`: it runs only
+    /// once, or it captures a value that is not `many`, for example a `@ uniq`
+    /// reference. A copy of it would copy that value.
+    fn closure_not_many(&self, s: usize) -> bool {
+        self.closure_is_once(s)
+            || self.closures[s]
+                .captures
+                .iter()
+                .any(|&v| self.facts.var(v).once)
+    }
+
+    /// Returns true if each captured variable of the closure with summary `s` that
+    /// holds a reference is `@ uniq`, and there is one. The closure then holds
+    /// only parts that no other value can reach.
+    fn closure_uniq(&self, s: usize) -> bool {
+        let mut any = false;
+        for &v in &self.closures[s].captures {
+            let Some(l) = self.locals.iter().find(|l| l.var == v) else {
+                continue;
+            };
+            if l.refs.is_empty() {
+                continue;
+            }
+            if !self.facts.var(v).uniq {
+                return false;
+            }
+            any = true;
+        }
+        any
     }
 
     fn is_copy_var(&self, v: VarId) -> bool {
@@ -1115,118 +1218,120 @@ impl<'p> Lower<'p> {
     // Type properties
     // -----------------------------------------------------------------------
 
-    pub(super) fn adt_fields(&self, t: &Ty) -> Vec<Ty> {
-        match t {
-            Ty::Adt(a, args) => match &self.prog.adts[*a].kind {
-                AdtKind::Struct(fs) => fs.iter().map(|f| subst(&f.ty, args)).collect(),
-                AdtKind::Enum(vs) => vs
-                    .iter()
-                    .flat_map(|v| v.fields.iter().map(|t| subst(t, args)))
-                    .collect(),
-                AdtKind::Extern { .. } => args.clone(),
+    /// Returns true if property `p` holds for a value of type `t`: a part of it has
+    /// the property. The table of `Program::props` gives the definitions. A
+    /// closure has the properties of what it captures: see `closure_has`.
+    pub(super) fn ty_has(&self, t: &Ty, p: Prop) -> bool {
+        self.ty_has_in(t, p, &mut Vec::new())
+    }
+
+    /// `ty_has`, with the closure summaries on the way in `seen`.
+    fn ty_has_in(&self, t: &Ty, p: Prop, seen: &mut Vec<usize>) -> bool {
+        match self.inf.shallow(t) {
+            Ty::Adt(a, args) => self.prog.props().get(a, p).is_some_and(|h| {
+                h.always
+                    || h.params
+                        .iter()
+                        .any(|&j| args.get(j).is_some_and(|x| self.ty_has_in(x, p, seen)))
+            }),
+            Ty::Tuple(ts) => ts.iter().any(|x| self.ty_has_in(x, p, seen)),
+            Ty::Array(x, _) => p == Prop::NotCopy || self.ty_has_in(&x, p, seen),
+            Ty::Ref(x) => match p {
+                Prop::Refs => true,
+                Prop::Fns => self.ty_has_in(&x, p, seen),
+                _ => false,
             },
-            Ty::Tuple(ts) => ts.clone(),
-            Ty::Array(t, _) => vec![(**t).clone()],
-            _ => Vec::new(),
+            Ty::Slice(x) => match p {
+                Prop::Refs | Prop::NotCopy => true,
+                Prop::Fns => self.ty_has_in(&x, p, seen),
+                _ => false,
+            },
+            Ty::Fn(f) => match p {
+                Prop::Fns => true,
+                Prop::NotCopy => f.summary.is_some_and(|s| self.closures[s].literal),
+                Prop::Linear | Prop::NoOnAbort | Prop::Nonportable => {
+                    f.summary.is_some_and(|s| self.closure_has(s, p, seen))
+                }
+                Prop::Immovable | Prop::Refs => false,
+            },
+            Ty::Param(_) | Ty::Cont(..) => p == Prop::NotCopy,
+            Ty::Scope => p == Prop::Nonportable,
+            _ => false,
         }
     }
 
-    fn deep_any(&self, t: &Ty, pred: &dyn Fn(&Self, &Ty) -> bool, depth: usize) -> bool {
-        if depth > 6 {
+    /// Returns true if a closure with summary `s` has property `p`. It is linear if
+    /// it moves a linear capture: a call takes the value. It is nonportable if it
+    /// captures a nonportable value: it refers to the variable.
+    fn closure_has(&self, s: usize, p: Prop, seen: &mut Vec<usize>) -> bool {
+        if seen.contains(&s) {
             return false;
         }
-        let t = self.inf.shallow(t);
-        if pred(self, &t) {
-            return true;
-        }
-        if matches!(t, Ty::Ref(_) | Ty::Fn(_)) {
-            return false;
-        }
-        self.adt_fields(&t)
-            .iter()
-            .any(|f| self.deep_any(f, pred, depth + 1))
+        seen.push(s);
+        let sum = &self.closures[s];
+        let vars = if p == Prop::Nonportable {
+            &sum.captures
+        } else {
+            &sum.moved_captures
+        };
+        let found = vars.iter().any(|&v| self.var_has(v, p, seen));
+        seen.pop();
+        found
+    }
+
+    /// Returns true if variable `v` has property `p`: from the type of its local,
+    /// or from its flags if it is not a local.
+    fn var_has(&self, v: VarId, p: Prop, seen: &mut Vec<usize>) -> bool {
+        let info = self.facts.var(v);
+        let flag = match p {
+            Prop::Linear => info.linear,
+            Prop::Nonportable => info.nonportable,
+            Prop::NoOnAbort => info.linear && !info.has_on_abort,
+            _ => false,
+        };
+        flag || self.locals.iter().filter(|l| l.var == v).any(|l| {
+            self.ty_has_in(&l.ty, p, seen)
+                || l.summary.is_some_and(|s| {
+                    matches!(p, Prop::Linear | Prop::NoOnAbort | Prop::Nonportable)
+                        && self.closure_has(s, p, seen)
+                })
+        })
+    }
+
+    /// Returns true if local `l` has property `p`: from its type, and for a
+    /// function value from the closures that it can be.
+    pub(super) fn local_has(&self, l: usize, p: Prop) -> bool {
+        let v = self.locals[l].var;
+        self.var_has(v, p, &mut Vec::new())
     }
 
     /// Returns true if a value of type `t` can hold a reference.
-    fn holds_refs(&self, t: &Ty) -> bool {
-        self.deep_any(t, &|_, t| matches!(t, Ty::Ref(_) | Ty::Slice(_)), 0)
+    pub(super) fn holds_refs(&self, t: &Ty) -> bool {
+        self.ty_has(t, Prop::Refs)
     }
 
-    fn is_linear(&self, t: &Ty) -> bool {
-        self.deep_any(
-            t,
-            &|s, t| matches!(t, Ty::Adt(a, _) if s.prog.adts[*a].linear),
-            0,
-        )
+    pub(super) fn is_linear(&self, t: &Ty) -> bool {
+        self.ty_has(t, Prop::Linear)
     }
 
-    fn has_on_abort(&self, t: &Ty) -> bool {
-        match self.inf.shallow(t) {
-            Ty::Adt(a, _) => self.prog.adts[a].has_on_abort || !self.is_linear(t),
-            _ => true,
-        }
+    /// Returns true if each linear part of a value of type `t` has `on abort`.
+    /// A value with no linear part has it too.
+    pub(super) fn has_on_abort(&self, t: &Ty) -> bool {
+        !self.ty_has(t, Prop::NoOnAbort)
     }
 
-    fn is_immovable(&self, t: &Ty) -> bool {
-        matches!(self.inf.shallow(t), Ty::Adt(a, _) if self.prog.adts[a].immovable)
+    pub(super) fn is_immovable(&self, t: &Ty) -> bool {
+        self.ty_has(t, Prop::Immovable)
     }
 
-    fn is_nonportable(&self, t: &Ty) -> bool {
-        self.deep_any(
-            t,
-            &|s, t| matches!(t, Ty::Adt(a, _) if s.prog.adts[*a].nonportable),
-            0,
-        )
+    pub(super) fn is_nonportable(&self, t: &Ty) -> bool {
+        self.ty_has(t, Prop::Nonportable)
     }
 
     /// Plain data is copied, not moved: integers, `bool`, references, and
     /// structs and enums of plain data.
-    fn is_copy(&self, t: &Ty) -> bool {
-        self.is_copy_d(t, 0)
-    }
-
-    fn is_copy_d(&self, t: &Ty, d: usize) -> bool {
-        if d > 6 {
-            return false;
-        }
-        match self.inf.shallow(t) {
-            Ty::Int(_)
-            | Ty::IntVar(_)
-            | Ty::Bool
-            | Ty::Unit
-            | Ty::Never
-            | Ty::Ref(_)
-            | Ty::Error
-            | Ty::Var(_)
-            | Ty::Scope => true,
-            Ty::Fn(f) => f.summary.is_none_or(|s| !self.closures[s].literal),
-            Ty::Tuple(ts) => ts.iter().all(|t| self.is_copy_d(t, d + 1)),
-            Ty::Adt(a, args) => {
-                let def = &self.prog.adts[a];
-                if def.linear || def.immovable {
-                    return false;
-                }
-                match &def.kind {
-                    AdtKind::Extern { .. } => {
-                        def.copy
-                            || (def.generics.is_empty()
-                                && !def.nonportable
-                                && !def.linear
-                                && def.name != "String"
-                                && self.capability_like(a))
-                    }
-                    AdtKind::Struct(fs) => fs
-                        .iter()
-                        .all(|f| self.is_copy_d(&subst(&f.ty, &args), d + 1)),
-                    AdtKind::Enum(vs) => vs.iter().all(|v| {
-                        v.fields
-                            .iter()
-                            .all(|t| self.is_copy_d(&subst(t, &args), d + 1))
-                    }),
-                }
-            }
-            _ => false,
-        }
+    pub(super) fn is_copy(&self, t: &Ty) -> bool {
+        !self.ty_has(t, Prop::NotCopy)
     }
 
     /// Returns true if the end of a variable of type `t` can free memory: the
@@ -1244,18 +1349,6 @@ impl<'p> Lower<'p> {
             Ty::Adt(a, _) => Some(a) == self.b.string || Some(a) == self.b.duration,
             _ => false,
         }
-    }
-
-    /// Capability types and opaque handles from the prelude are copied.
-    fn capability_like(&self, a: usize) -> bool {
-        self.prog.adts[a].module == PRELUDE
-            || matches!(
-                self.prog.adts[a].kind,
-                AdtKind::Extern {
-                    elem_unstable: None,
-                    deref: None
-                }
-            )
     }
 
     fn deref_ty(&self, t: &Ty) -> Ty {

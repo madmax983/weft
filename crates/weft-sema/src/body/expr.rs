@@ -3,8 +3,8 @@
 use super::{
     ast, block_tail, effects, elem_step, expr_tail, field_step, AdtKind, BinOp, ContInfo, Deref,
     Expr, ExprKind, FnId, FnTy, Frame, HandlerFrame, HandlerInfo, IntTy, ItemRef, Jump, LVal, Lit,
-    Lower, NodeId, PathRef, Pattern, PlaceId, Rc, RootKind, Span, StrPart, Summary, Ty, UnOp, Val,
-    VarKind,
+    Lower, NodeId, PathRef, Pattern, PlaceId, Prop, Rc, RootKind, Span, StrPart, Summary, Ty, UnOp,
+    Val, VarId, VarKind,
 };
 use weft_facts::{Step, StepKind};
 
@@ -12,11 +12,32 @@ impl Lower<'_> {
     /// Lowers an expression and returns its value.
     pub(super) fn expr(&mut self, e: &Expr) -> Val {
         match &e.kind {
-            ExprKind::Lit(l) => self.lit(l),
+            ExprKind::Lit(l) => {
+                self.lit_span = e.span;
+                self.lit(l)
+            }
+            ExprKind::Unary {
+                op: UnOp::Neg,
+                expr,
+            } if matches!(expr.kind, ExprKind::Lit(Lit::Int(_))) => {
+                // `-128` is one literal: its value is negative.
+                let v = self.expr(expr);
+                if let Some(last) = self.int_lits.last_mut() {
+                    last.1 = true;
+                    last.3 = e.span;
+                }
+                let t = self.deref_ty(&v.ty);
+                self.arith(&t, &t, expr.span);
+                Val {
+                    ty: t,
+                    ..Val::default()
+                }
+            }
             ExprKind::Name(id) => self.name(id, e.span),
             ExprKind::Field { base, name } => {
-                if let ExprKind::Lit(Lit::Int(_)) = &base.kind {
-                    if matches!(name.name.as_str(), "s" | "ms") {
+                if let ExprKind::Lit(l) = &base.kind {
+                    // `2.s` and `500.ms` are durations. A literal has no other field.
+                    if matches!(l, Lit::Int(_)) && matches!(name.name.as_str(), "s" | "ms") {
                         let d = self
                             .b
                             .duration
@@ -26,6 +47,17 @@ impl Lower<'_> {
                             ..Val::default()
                         };
                     }
+                    self.lit_span = base.span;
+                    let _ = self.lit(l);
+                    self.err(
+                        "W0104",
+                        format!("a literal has no field `{}`", name.name),
+                        name.span,
+                    );
+                    return Val {
+                        ty: Ty::Error,
+                        ..Val::default()
+                    };
                 }
                 if let Some(v) = self.path_member(base, name) {
                     return v;
@@ -102,17 +134,11 @@ impl Lower<'_> {
             }
             ExprKind::Array(es) => {
                 let t = self.inf.fresh();
-                let mut caps = std::collections::BTreeSet::new();
-                for x in es {
-                    let v = self.expr(x);
-                    self.unify(&t, &v.ty, x.span);
-                    self.escape(&v);
-                    caps.extend(self.val_caps(&v));
-                    self.consume(&v, x.span);
-                }
+                let (caps, refs) = self.elements(es, &t);
                 let ty = self.b.vec.map_or(Ty::Error, |v| Ty::Adt(v, vec![t]));
                 Val {
                     ty,
+                    refs,
                     caps,
                     ..Val::default()
                 }
@@ -137,14 +163,7 @@ impl Lower<'_> {
     pub(super) fn expr_with(&mut self, e: &Expr, expected: Option<&Ty>) -> Val {
         match (&e.kind, expected.map(|t| self.inf.shallow(t))) {
             (ExprKind::Array(es), Some(Ty::Array(elem, n))) => {
-                let mut caps = std::collections::BTreeSet::new();
-                for x in es {
-                    let v = self.expr(x);
-                    self.unify(&elem, &v.ty, x.span);
-                    self.escape(&v);
-                    caps.extend(self.val_caps(&v));
-                    self.consume(&v, x.span);
-                }
+                let (caps, refs) = self.elements(es, &elem);
                 if u64::try_from(es.len()).ok() != Some(n) {
                     self.err(
                         "W0102",
@@ -155,6 +174,7 @@ impl Lower<'_> {
                 Val {
                     ty: Ty::Array(elem, n),
                     caps,
+                    refs,
                     ..Val::default()
                 }
             }
@@ -163,6 +183,35 @@ impl Lower<'_> {
             }
             _ => self.expr(e),
         }
+    }
+
+    /// Lowers the elements of an array literal with element type `elem`. Returns
+    /// the capabilities and the places of the elements: the array points where
+    /// its elements point. Each element is held while the later ones run.
+    fn elements(
+        &mut self,
+        es: &[Expr],
+        elem: &Ty,
+    ) -> (std::collections::BTreeSet<weft_facts::CapId>, Vec<PlaceId>) {
+        let mut caps = std::collections::BTreeSet::new();
+        let mut refs = Vec::new();
+        let mut held = Vec::new();
+        for (i, x) in es.iter().enumerate() {
+            let v = self.expr(x);
+            self.unify(elem, &v.ty, x.span);
+            self.keep_linear(&v, elem, x.span);
+            self.escape(&v);
+            caps.extend(self.val_caps(&v));
+            self.consume(&v, x.span);
+            if i + 1 < es.len() {
+                held.extend(self.hold_later(&v, "element", x.span));
+            }
+            refs.extend(v.refs.iter().copied());
+        }
+        self.pend_uses.extend(held);
+        refs.sort();
+        refs.dedup();
+        (caps, refs)
     }
 
     /// `Enum.Variant` and `module.function` used as values.
@@ -227,7 +276,11 @@ impl Lower<'_> {
 
     fn lit(&mut self, l: &Lit) -> Val {
         let ty = match l {
-            Lit::Int(_) => self.inf.fresh_int(),
+            Lit::Int(n) => {
+                let t = self.inf.fresh_int();
+                self.int_lits.push((*n, false, t.clone(), self.lit_span));
+                t
+            }
             Lit::Bool(_) => Ty::Bool,
             Lit::Unit => Ty::Unit,
             Lit::Str(parts) => {
@@ -255,6 +308,9 @@ impl Lower<'_> {
                     self.read(p);
                 }
             }
+            if let (false, Some(r)) = (loc.ty.is_ref(), loc.root) {
+                self.touch_unset(&[r]);
+            }
             let place = if loc.ty.is_ref() {
                 None
             } else {
@@ -280,6 +336,7 @@ impl Lower<'_> {
                 fn_param: loc.fn_param,
                 item: None,
                 caps: loc.caps,
+                unset: Vec::new(),
             };
         }
         if let Some(ItemRef::Fn(f)) = self.prog.lookup(self.module, &id.name) {
@@ -549,10 +606,11 @@ impl Lower<'_> {
         for &p in &lv.places {
             self.read(p);
         }
-        let refs = if matches!(self.inf.shallow(&lv.ty), Ty::Ref(_)) {
-            self.field_referents(e).unwrap_or_default()
-        } else {
-            Vec::new()
+        // A value that holds references points where the references at the place point.
+        let refs = match self.field_referents(e) {
+            Some(rs) if matches!(self.inf.shallow(&lv.ty), Ty::Ref(_)) => rs,
+            _ if self.holds_refs(&lv.ty) => self.held_refs(&lv.places),
+            _ => Vec::new(),
         };
         Val {
             ty: lv.ty.clone(),
@@ -619,6 +677,7 @@ impl Lower<'_> {
                 }
             }
         };
+        self.touch_unset(&lv.places);
         let mut refs = lv.places;
         refs.extend(lv.deps);
         Val {
@@ -703,7 +762,18 @@ impl Lower<'_> {
             .map(|_| self.inf.fresh())
             .collect();
         let mut caps = std::collections::BTreeSet::new();
-        for (name, value) in fields {
+        let mut given: Vec<&str> = Vec::new();
+        let mut refs = Vec::new();
+        let mut held = Vec::new();
+        for (i, (name, value)) in fields.iter().enumerate() {
+            if given.contains(&name.name.as_str()) {
+                self.err(
+                    "W0107",
+                    format!("field `{}` is given twice", name.name),
+                    name.span,
+                );
+            }
+            given.push(&name.name);
             let expected = defs
                 .iter()
                 .find(|d| d.name == name.name)
@@ -713,21 +783,42 @@ impl Lower<'_> {
                 Some(d) => {
                     let ft = super::subst(&d.ty, &args);
                     self.unify(&ft, &v.ty, value.span);
+                    self.keep_linear(&v, &ft, value.span);
+                    // A literal is not in a place yet, so nothing can point into it.
+                    if let (Some(sp), false) = (&d.place, v.refs.is_empty()) {
+                        let at = self.place_text(&v.refs);
+                        let msg = format!("`{}` can point only into `{}` of its own struct, but this value points into `{at}`; give the field its value after the struct has a place", name.name, sp.text);
+                        self.err("W0605", msg, value.span);
+                    }
                 }
                 None => self.err("W0104", format!("no field `{}`", name.name), name.span),
             }
             self.escape(&v);
             caps.extend(self.val_caps(&v));
             self.consume(&v, value.span);
+            // The struct points where its fields point. A field is held while the
+            // later fields run.
+            if i + 1 < fields.len() {
+                held.extend(self.hold_later(&v, "field", value.span));
+            }
+            refs.extend(v.refs.iter().copied());
         }
+        self.pend_uses.extend(held);
+        let mut unset = Vec::new();
         for d in &defs {
-            if !fields.iter().any(|(n, _)| n.name == d.name) && d.place.is_none() {
-                self.err("W0115", format!("missing field `{}`", d.name), span);
+            if !fields.iter().any(|(n, _)| n.name == d.name) {
+                if d.place.is_none() {
+                    self.err("W0115", format!("missing field `{}`", d.name), span);
+                } else {
+                    unset.push(d.name.clone());
+                }
             }
         }
         Val {
             ty: Ty::Adt(adt, args),
             caps,
+            refs,
+            unset,
             ..Val::default()
         }
     }
@@ -811,7 +902,9 @@ impl Lower<'_> {
     }
 
     fn match_expr(&mut self, scrut: &Expr, arms: &[ast::Arm], span: Span) -> Val {
+        let errors = self.diags.len();
         let lv = self.place_expr(scrut);
+        let temp = lv.is_none();
         // A binding by reference depends on the `Rc` handles on the way.
         let deps = lv.as_ref().map(|l| l.deps.clone()).unwrap_or_default();
         let saved_deps = std::mem::replace(&mut self.match_deps, deps);
@@ -821,10 +914,17 @@ impl Lower<'_> {
             let whole = lv
                 .owner
                 .filter(|&l| self.locals[l].root.is_some_and(|r| lv.places == [r]));
+            // A by-value binding points where the references in the value point.
+            let refs = if !by_ref && self.holds_refs(&lv.ty) {
+                self.held_refs(&lv.places)
+            } else {
+                Vec::new()
+            };
             let v = Val {
                 ty: lv.ty.clone(),
                 place: Some(lv.clone()),
                 var: whole.map(|l| self.locals[l].var),
+                refs,
                 ..Val::default()
             };
             (lv.ty.clone(), by_ref, lv.places, v)
@@ -856,6 +956,7 @@ impl Lower<'_> {
             if self.match_moves {
                 self.consume(&sval, arm.pat.span());
             }
+            self.match_drops(&arm.pat, &sty, &sval, temp || self.match_moves);
             let v = self.expr(&arm.body);
             self.flush(expr_tail(&arm.body));
             if !matches!(self.inf.shallow(&v.ty), Ty::Never) {
@@ -890,8 +991,13 @@ impl Lower<'_> {
         }
         self.cur = if reached { Some(join) } else { None };
         self.match_deps = saved_deps;
+        // A `match` with an error has no second error for its arms.
+        if self.diags.len() == errors {
+            let pats: Vec<&Pattern> = arms.iter().map(|a| &a.pat).collect();
+            self.check_exhaustive(&pats, &sty, span);
+        }
         match joined {
-            Some(j) if self.has_fn(&j.ty, 0) => Val { refs, task, ..j },
+            Some(j) if self.has_fn(&j.ty) => Val { refs, task, ..j },
             _ => Val {
                 ty: result,
                 refs,
@@ -914,6 +1020,7 @@ impl Lower<'_> {
         match pat {
             Pattern::Wild(_) => {}
             Pattern::Lit(l, s) => {
+                self.lit_span = *s;
                 let v = self.lit(l);
                 self.unify(&t, &v.ty, *s);
             }
@@ -934,8 +1041,9 @@ impl Lower<'_> {
                         ..Val::default()
                     }
                 } else {
+                    // A by-value binding of a reference payload is that reference.
                     Val {
-                        ty: t.clone(),
+                        ty: ty.clone(),
                         ..sval.clone()
                     }
                 };
@@ -1104,6 +1212,13 @@ impl Lower<'_> {
         let mut ptys = Vec::new();
         let mut param_roots = std::collections::BTreeMap::new();
         for (i, p) in params.iter().enumerate() {
+            if params[..i].iter().any(|q| q.name.name == p.name.name) {
+                self.err(
+                    "W0107",
+                    format!("parameter `{}` is defined twice", p.name.name),
+                    p.name.span,
+                );
+            }
             let ty = match (&p.ty, expected.and_then(|f| f.params.get(i))) {
                 (Some(t), _) => self.local_ty_pub(t),
                 (None, Some(t)) => t.clone(),
@@ -1191,14 +1306,23 @@ impl Lower<'_> {
                 sum.rets.insert(r);
             }
         }
-        // A captured linear value that the closure moves must be consumed inside it.
+        // A captured linear value is live where the closure starts, so a new value
+        // in the closure overwrites it (W0601). A value that the closure moves must
+        // be consumed inside it, before the closure ends.
+        self.captures_live_at(&sum.captures, entry);
+        let close = Span::new(span.hi.saturating_sub(1), span.hi);
+        let mut closure_end = None;
         for &var in &sum.moved_captures {
-            if self.facts.var(var).linear {
-                self.facts.rebound_at.push((var, entry));
-                if let Some(e) = end {
-                    self.facts.scope_end.push((var, e));
-                }
+            if !self.var_has(var, Prop::Linear, &mut Vec::new()) {
+                continue;
             }
+            let Some(c) = end else { break };
+            let e = *closure_end.get_or_insert_with(|| {
+                let e = self.facts.add_node(close, "closure end", String::new());
+                self.facts.cfg_edge.push((c, e));
+                e
+            });
+            self.facts.scope_end.push((var, e));
         }
         // Captures of an outer closure are captures of this one too.
         if let Some(outer) = self.sums.last_mut() {
@@ -1253,11 +1377,10 @@ impl Lower<'_> {
             item: None,
         };
         let ty = Ty::Fn(Rc::new(fty));
-        let info = self.var_info("{closure}", VarKind::Closure, span, &ty, false);
+        let mut info = self.var_info("{closure}", VarKind::Closure, span, &ty, false);
+        info.once |= self.closure_not_many(id);
+        info.uniq = self.closure_uniq(id);
         let var = self.facts.add_var(info);
-        if self.closure_is_once(id) {
-            self.facts.vars[var.index()].once = true;
-        }
         self.bind(var, n);
         for &p in &refs {
             self.facts.points_into.push((var, p));
@@ -1268,6 +1391,16 @@ impl Lower<'_> {
             var: Some(var),
             summary: Some(id),
             ..Val::default()
+        }
+    }
+
+    /// The linear values among `captures` are live at `entry`, the start of a
+    /// closure or a clause: a new value there overwrites the value from outside.
+    fn captures_live_at(&mut self, captures: &std::collections::BTreeSet<VarId>, entry: NodeId) {
+        for &var in captures {
+            if self.var_has(var, Prop::Linear, &mut Vec::new()) {
+                self.facts.rebound_at.push((var, entry));
+            }
         }
     }
 
@@ -1570,6 +1703,7 @@ impl Lower<'_> {
             self.close_scope(si, super::fnval::Scope::Clause);
             let _ = self.take_repeats(si);
             let mut cs = self.sums.pop().unwrap_or_default();
+            self.captures_live_at(&cs.captures, entry);
             cs.param_roots = param_roots;
             // The value of the clause is the value of the `handle`. A reference into
             // a parameter points into what each node gives to the operation.
@@ -1691,7 +1825,7 @@ impl Lower<'_> {
         // clause value that holds references or function values joins it.
         let mut out = v;
         for cv in clause_vals {
-            if cv.refs.is_empty() && !self.has_fn(&cv.ty, 0) {
+            if cv.refs.is_empty() && !self.has_fn(&cv.ty) {
                 continue;
             }
             let mut refs = out.refs.clone();
