@@ -306,6 +306,12 @@ pub struct EffectSig {
     /// Reference parameters whose pointee can get a function value from the body,
     /// for example a copy out of another argument. The body always infers this part.
     pub fn_stores: BTreeSet<usize>,
+    /// The places that the function values in the result point into, in the
+    /// places of the parameters: what a returned closure captures. `None` for a
+    /// result that holds no function value, and for a function with no body:
+    /// a caller takes a place anywhere inside each reference argument. The body
+    /// always infers this part.
+    pub ret_refs: Option<Vec<SigPlace>>,
     /// Type parameters, by index in `FnSig::generics`, of the values that the
     /// body can drop. On some path, a value of such a type goes out of scope or
     /// gets a new value. A caller that gives a linear type there loses a value

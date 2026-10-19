@@ -94,7 +94,8 @@ Each body, also one whose function states its effects, also infers the other par
 its signature:
 
 - What it lends to its function parameters.
-- What its returned function value does.
+- What its returned function value does, and the places of its parameters that the
+  value points into.
 - Which function parameters it stores.
 - Whether it can run a stored function value, what it gives to that value, and
   whether it can run one more than once.

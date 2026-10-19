@@ -1182,6 +1182,10 @@ pub struct Lower<'p> {
     /// The values that the function returns: their places, true for a closure,
     /// and the span. `check_returns` checks them after `op_refs`.
     returned: Vec<(Vec<PlaceId>, bool, Span)>,
+    /// The places of the values that the function returns, after `check_returns`
+    /// gave the operation results their places. `summary_to_sig` makes the
+    /// `ret_refs` part of the signature from them.
+    returned_places: Vec<PlaceId>,
     /// References that the body puts behind a reference parameter: the
     /// parameter, the places that they point into, and the span. A caller
     /// keeps them after the return (`check_stored_behind`).
@@ -1322,6 +1326,7 @@ impl<'p> Lower<'p> {
             cap_values: BTreeMap::new(),
             late_stack: Vec::new(),
             lowered: false,
+            returned_places: Vec::new(),
             task_runs: Vec::new(),
             work: crate::Work::default(),
             loop_bound: None,

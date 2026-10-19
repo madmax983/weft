@@ -1116,6 +1116,30 @@ impl Lower<'_> {
             out.refs.sort();
             out.refs.dedup();
         }
+        // A function value in the result can capture what the arguments reach.
+        // The body of the callee states the places in its parameters that it
+        // captures (`ret_refs`). With no body, it can capture a place anywhere
+        // inside a reference argument. It can also hold a function argument, so it
+        // points where that argument points. A call of the result uses these places.
+        if self.has_fn(ret) {
+            let stated = sig.effects.ret_refs.clone();
+            if let Some(rr) = &stated {
+                let split = self.fresh_split();
+                for sp in rr {
+                    out.refs.extend(self.subst_place(sp, arg_places, split));
+                }
+            }
+            for (declared, refs, pointee) in &args {
+                if !declared.is_ref() && self.has_fn(declared) {
+                    out.refs.extend(refs.iter().copied());
+                } else if stated.is_none() {
+                    let f = self.flow_refs(declared, refs, pointee.as_ref(), true, None);
+                    out.refs.extend(f);
+                }
+            }
+            out.refs.sort();
+            out.refs.dedup();
+        }
         // A mutated reference argument can keep a reference to any place inside the
         // other arguments, and the references in them.
         let mut flows: Option<Vec<Vec<PlaceId>>> = None;
@@ -1472,7 +1496,8 @@ impl Lower<'_> {
             self.reach(n, &given, again);
         }
         // The places of the result.
-        let refs = self.value_call_refs(&callee, &fty, &arg_places, &arg_refs);
+        let fn_refs: Vec<PlaceId> = fns.iter().flat_map(|f| f.3.iter().copied()).collect();
+        let refs = self.value_call_refs(&callee, &fty, &arg_places, &arg_refs, &fn_refs);
         // A function value in the result does what the callee states about it.
         let by_pos: Vec<Option<super::fnval::RowFn>> = (0..arg_places.len())
             .map(|i| {
@@ -1545,6 +1570,7 @@ impl Lower<'_> {
         fty: &FnTy,
         arg_places: &[Vec<PlaceId>],
         arg_refs: &[PlaceId],
+        fn_refs: &[PlaceId],
     ) -> Vec<PlaceId> {
         let (mut refs, items, unknown) = match callee.summary {
             Some(s) => {
@@ -1559,6 +1585,8 @@ impl Lower<'_> {
                 callee.item.is_none(),
             ),
         };
+        let mut wild = unknown;
+        let fn_ret = self.has_fn(&fty.ret);
         for f in items {
             let sig = self.sigs[f].clone();
             let split = self.fresh_split();
@@ -1567,6 +1595,16 @@ impl Lower<'_> {
                 if matches!(rp.place.root, SigRoot::Group(_)) {
                     refs.extend(self.group_arg_deps(arg_places, &fty.params));
                 }
+            }
+            // A function value in the result of the item: what it captures.
+            match (&sig.effects.ret_refs, fn_ret) {
+                (Some(rr), true) => {
+                    for sp in rr {
+                        refs.extend(self.subst_place(sp, arg_places, split));
+                    }
+                }
+                (None, true) => wild = true,
+                _ => {}
             }
         }
         // An unknown function can return a reference to any place inside a
@@ -1582,6 +1620,24 @@ impl Lower<'_> {
                 refs.push(q);
             }
         }
+        // A function value in the result of a value that the body does not know
+        // can capture a place anywhere inside a reference argument. A function
+        // value in the result can hold a function argument.
+        if fn_ret {
+            if wild {
+                for &p in arg_refs {
+                    let q = if self.is_dep(p) {
+                        p
+                    } else {
+                        self.facts.wildcard(p)
+                    };
+                    refs.push(q);
+                }
+            }
+            refs.extend(fn_refs.iter().copied());
+        }
+        refs.sort();
+        refs.dedup();
         refs
     }
 

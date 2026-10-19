@@ -306,6 +306,7 @@ impl Lower<'_> {
                 .collect(),
             task_effects: sum.task_effects.to_set(),
             repeats: self.repeats_sig(),
+            ret_refs: self.ret_refs_sig(bases),
             ..EffectSig::default()
         };
         let mut changed: Vec<PlaceId> = sum.muts.iter().copied().collect();
@@ -350,6 +351,26 @@ impl Lower<'_> {
             .collect();
         out.muts = keep;
         out
+    }
+
+    /// Returns the places that the function values in the result point into, in
+    /// the places of the parameters (`EffectSig::ret_refs`). A place in a local of
+    /// the function is W0204 at the return, so it is not part of them.
+    fn ret_refs_sig(&self, bases: &[Vec<PlaceId>]) -> Option<Vec<SigPlace>> {
+        if !self.has_fn(&self.ret_ty) {
+            return None;
+        }
+        let mut out: Vec<SigPlace> = Vec::new();
+        for &p in &self.returned_places {
+            let Some(sp) = self.sig_place(p, bases) else {
+                continue;
+            };
+            if !out.contains(&sp) {
+                out.push(sp);
+            }
+        }
+        out.sort_by(|a, b| a.text.cmp(&b.text));
+        Some(out)
     }
 
     /// Returns the steps of place `p` from its root, each with its text, so that a

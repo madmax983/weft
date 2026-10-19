@@ -1,0 +1,90 @@
+// A call result that can hold a function value points where the arguments can
+// flow (ADR 0003): a returned closure can capture a reference argument. The
+// callee states the places of its parameters that the closure captures
+// (`ret_refs`). A function value that the body does not know can capture a
+// place anywhere inside a reference argument. A call of the result uses these
+// places.
+fn reader(v: &Vec<u64>) -> fn() { || print(v.len()) }
+fn elem_reader(r: &u64) -> fn() { || print(r + 1) }
+fn take(v: Vec<u64>) {}
+fn pass(f: fn()) -> fn() { f }
+
+fn moved() {
+    let v = Vec.new()
+    v.push(1)
+    let f = reader(&v)
+    take(v)
+    f()   //~ W0301
+}
+// The block value is held across the end of the block (ADR 0003).
+fn scope_ended() {
+    let f = {
+        let v = Vec.new()
+        v.push(1)
+        reader(&v)   //~ W0301
+    }
+    f()
+}
+fn cleared() {
+    let v = Vec.new()
+    v.push(1)
+    let f = elem_reader(&v[0])
+    v.clear()
+    f()   //~ W0301
+}
+fn plain_scope_ended() {
+    let f = {
+        let x = 5
+        elem_reader(&x)   //~ W0301
+    }
+    f()
+}
+// A function argument flows into the result too.
+fn passed_on() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let f = pass(|| print(r + 1))
+    v.clear()
+    f()   //~ W0301
+}
+// A function value that the body does not know can return a closure too.
+fn unknown_maker(mk: fn(&Vec<u64>) -> fn()) {
+    let v = Vec.new()
+    v.push(1)
+    let f = mk(&v)
+    v.clear()
+    f()   //~ W0301
+}
+
+// Clean: each call runs before the move, the end of the scope or the change.
+fn moved_after() {
+    let v = Vec.new()
+    v.push(1)
+    let f = reader(&v)
+    f()
+    take(v)
+}
+fn cleared_after() {
+    let v = Vec.new()
+    v.push(1)
+    let f = elem_reader(&v[0])
+    f()
+    v.clear()
+}
+// Clean: a value argument is a copy, so the result does not point into it.
+fn counter(n: u64) -> fn() { || print(n) }
+fn value_arg() {
+    let x = 1
+    let f = counter(x)
+    x = 2
+    f()
+}
+// Clean: the closure captures the reference `v`, not a place inside it.
+fn stable_change() {
+    let v = Vec.new()
+    v.push(1)
+    let f = reader(&v)
+    v.push(2)
+    f()
+}

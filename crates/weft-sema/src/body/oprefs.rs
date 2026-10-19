@@ -113,6 +113,7 @@ impl Lower<'_> {
         for (refs, closure, span) in std::mem::take(&mut self.returned) {
             let refs = self.resolve_op_refs(&refs);
             self.check_returned_refs(&refs, closure, span);
+            self.returned_places.extend(refs);
         }
     }
 

@@ -206,6 +206,16 @@ Status: accepted. Date: 2026-10-18.
   value holds references gives them too. The call can mutate such an argument. Then
   it can keep the references of the other arguments: `rs.push(&x)` makes `rs` point
   into `x`.
+- A function value in a call result points where the arguments can flow too: a returned
+  closure can capture a reference argument. The body of the callee infers the places
+  of its parameters that the function values in its result point into
+  (`EffectSig::ret_refs`), and the caller puts in the places of its arguments. A
+  function argument can be in the result, so the result points where it points. A
+  function with no body, and a function value that the body does not know, can
+  capture a place anywhere inside each reference argument (its wildcard place). A
+  call of the result uses these places (W0301). A function value that a callee copies
+  out of a place behind a reference argument is a stored value: each node that can
+  run it uses what it captures (ADR 0005).
 - A new value of a part of a local, such as `w.x = &b[0]`, points where it points from
   that node on. A hidden variable holds it, and each use of the local uses it. A later
   new value of the same part, of a part around it, or of the whole local replaces it.
