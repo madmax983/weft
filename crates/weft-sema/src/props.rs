@@ -197,7 +197,7 @@ fn each_inline_adt(t: &Ty, f: &mut dyn FnMut(usize)) {
 }
 
 /// Returns, for each definition, true if a value of it can hold a value of the
-/// same definition: the definition is on a cycle of the graph of inline parts.
+/// same definition. The definition is then on a cycle of the graph of inline parts.
 /// The search is Tarjan's algorithm, with an explicit stack.
 fn recursive_adts(prog: &Program) -> Vec<bool> {
     let n = prog.adts.len();
@@ -305,8 +305,11 @@ fn eval_adt(prog: &Program, a: usize, table: &[[Holds; 7]]) -> [Holds; 7] {
         let h = &mut out[p.index()];
         let passes = match (p, ext) {
             // A pointer does not move its target, and plain data has no `!Move` part.
+            // A prelude type with no elements, such as `Weak<T>`, is a pointer or a
+            // handle. A user type can hold its arguments inline.
             (Prop::Immovable, Some((elem, deref))) => {
-                deref.is_none() && (elem.is_some() || !extern_copy(prog, a))
+                deref.is_none()
+                    && (elem.is_some() || (def.module != PRELUDE && !extern_copy(prog, a)))
             }
             // An extern type is plain data or not, whatever its arguments are.
             (Prop::NotCopy, Some(_)) => false,
@@ -423,6 +426,7 @@ mod tests {
         assert!(get("Vec", Prop::NotCopy).always);
         assert_eq!(get("Vec", Prop::Immovable).params, vec![0]);
         assert!(get("Box", Prop::Immovable).params.is_empty());
+        assert!(get("Weak", Prop::Immovable).params.is_empty());
     }
 
     #[test]

@@ -120,6 +120,15 @@ pub struct Summary {
     pub ret_spawns: BTreeSet<TaskId>,
 }
 
+/// The state of a property query (`Lower::ty_has`).
+#[derive(Default)]
+pub(super) struct Has {
+    /// The closure summaries on the way.
+    seen: Vec<usize>,
+    /// A value of a type parameter counts as linear.
+    params: bool,
+}
+
 impl Summary {
     /// Adds what `o` does: a call of the result can do either.
     fn union(&mut self, o: &Self) {
@@ -221,6 +230,8 @@ struct Local {
     cont: Option<ContInfo>,
     /// The local has a value: a new value joins the function values.
     bound: bool,
+    /// The index and the number (`Frame::id`) of the frame that declares it.
+    frame: (usize, usize),
     /// The capabilities of the function values that the local can hold.
     caps: BTreeSet<CapId>,
 }
@@ -241,9 +252,6 @@ struct Val {
     /// The capabilities of the function values inside the value that its type
     /// does not show, for example in a struct field.
     caps: BTreeSet<CapId>,
-    /// The place fields of a struct literal that it does not give: they have no
-    /// value yet.
-    unset: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -259,10 +267,35 @@ struct LVal {
     deps: Vec<PlaceId>,
 }
 
+/// A hidden variable that holds the references that a part of a local gets.
+#[derive(Clone, Debug)]
+struct PartHolder {
+    /// The local.
+    local: usize,
+    /// The places of the part.
+    places: Vec<PlaceId>,
+    /// The variable.
+    var: VarId,
+    /// The places that the references point into.
+    refs: Vec<PlaceId>,
+}
+
+/// The lowering state that each branch of an `if` or a `match` changes on its
+/// own path. The branches join it at their end.
+#[derive(Clone)]
+pub(super) struct BranchState {
+    /// Each local holds a `@ uniq` value.
+    uniq: Vec<bool>,
+    /// The holders of the references in the parts of locals.
+    holders: Vec<PartHolder>,
+}
+
 #[derive(Clone)]
 struct Frame {
     names: Vec<(String, usize)>,
     barrier: Option<usize>,
+    /// A number that no other frame of the body has.
+    id: usize,
 }
 
 #[derive(Clone)]
@@ -429,22 +462,46 @@ pub struct Lower<'p> {
     /// The calls of each function parameter (summary index, parameter): their
     /// number, and whether one can run more than once.
     param_runs: BTreeMap<(usize, usize), (usize, bool)>,
-    /// The place fields of locals that a struct literal did not give, each with a
-    /// hidden variable that has a value once the body sets the field.
+    /// The place fields of locals that have no value yet. Each has a hidden
+    /// variable that gets a value when the body sets the field.
     unset_places: Vec<(PlaceId, VarId)>,
     /// The source of the `for` loop that is being lowered is `@ uniq`.
     iter_uniq: bool,
     /// The places that the value of each temporary root points into.
     temp_refs: BTreeMap<RootId, Vec<PlaceId>>,
-    /// Variables of a type parameter that the body gives to a callee that can drop them.
-    generic_drops: Vec<VarId>,
-    /// Hidden variables that hold the references that a part of a local gets: the
-    /// local, the variable and the places. A use of the local uses them.
-    part_holders: Vec<(usize, VarId, Vec<PlaceId>)>,
+    /// Hidden variables that hold the references that the parts of locals get. A
+    /// use of the local uses them.
+    part_holders: Vec<PartHolder>,
     /// The integer literals: the value, true if it is negative, the type and the span.
     int_lits: Vec<(u64, bool, Ty, Span)>,
     /// The span of the literal that is being lowered.
     lit_span: Span,
+    /// The local of each variable, by variable index (`usize::MAX`: none). A
+    /// lookup checks the entry, because a loop pass can drop locals.
+    var_local: Vec<usize>,
+    /// The local that owns each root, by root index (`usize::MAX`: none).
+    root_local: Vec<usize>,
+    /// The program has a struct with a place field.
+    has_place_fields: bool,
+    /// Hidden variables and their types. `finish` sets their flags again from
+    /// the type that the whole body infers.
+    late_vars: Vec<(VarId, Ty)>,
+    /// The body is generic: a value of a type parameter can be linear for a
+    /// caller. The lowering then treats it as linear where a linear value can go
+    /// away, and `finish` finds the type parameters that the body can drop.
+    generic: bool,
+    /// Hidden variables that are linear only because a type parameter can be.
+    maybe_linear: BTreeSet<VarId>,
+    /// Moves of a value whose type the body does not know yet: the variable and
+    /// the node. `finish` drops the move if the type is plain data.
+    tentative: Vec<(VarId, NodeId, Ty)>,
+    /// The number of frames that the body opened.
+    frame_ids: usize,
+    /// The locals in scope by name, the innermost last.
+    scope: BTreeMap<String, Vec<usize>>,
+    /// The `break` (true) and `continue` jumps of the loop that is being lowered,
+    /// with the state at each jump.
+    loop_jumps: Vec<(bool, BranchState)>,
 }
 
 impl<'p> Lower<'p> {
@@ -472,6 +529,7 @@ impl<'p> Lower<'p> {
             frames: vec![Frame {
                 names: Vec::new(),
                 barrier: None,
+                id: 0,
             }],
             sums: vec![Summary::default()],
             closures: Vec::new(),
@@ -513,8 +571,19 @@ impl<'p> Lower<'p> {
             int_lits: Vec::new(),
             lit_span: Span::default(),
             temp_refs: BTreeMap::new(),
-            generic_drops: Vec::new(),
             part_holders: Vec::new(),
+            var_local: Vec::new(),
+            root_local: Vec::new(),
+            late_vars: Vec::new(),
+            has_place_fields: prog.adts.iter().any(
+                |a| matches!(&a.kind, AdtKind::Struct(fs) if fs.iter().any(|f| f.place.is_some())),
+            ),
+            generic: false,
+            maybe_linear: BTreeSet::new(),
+            tentative: Vec::new(),
+            frame_ids: 0,
+            scope: BTreeMap::new(),
+            loop_jumps: Vec::new(),
         }
     }
 
@@ -625,12 +694,81 @@ impl<'p> Lower<'p> {
         }
     }
 
+    /// Holds a by-value operand that moves before the node that takes it, while
+    /// the later operands run. The holder stands for the value on its way. It
+    /// points where the value points, and it is linear if the value is. So an
+    /// abort in a later operand sees the value (W0602). The node that takes the
+    /// value moves the holder (`take_held`).
+    fn hold_moved(&mut self, v: &Val, name: &str, span: Span) -> Option<VarId> {
+        self.cur?;
+        let ty = self.inf.resolve(&v.ty);
+        if v.refs.is_empty() && !self.is_linear(&ty) {
+            return None;
+        }
+        let mut info = self.var_info(name, VarKind::Temp, span, &ty, v.uniq);
+        // The move of the value itself is the move that W0604 sees.
+        info.immovable = false;
+        let var = self.new_var(info, &ty);
+        let n = self.emit(span, name, String::new());
+        self.bind(var, n);
+        for &p in &v.refs {
+            self.facts.points_into.push((var, p));
+        }
+        Some(var)
+    }
+
+    /// Node `n` takes the operands that `hold_moved` held.
+    fn take_held(&mut self, held: &[VarId], n: NodeId) {
+        for &v in held {
+            self.facts.uses.push((v, n));
+            self.facts.moved_at.push((v, n));
+        }
+    }
+
+    /// Takes the operands that `hold_moved` held at a new node, after the last
+    /// operand of a value that is built from parts.
+    fn take_held_here(&mut self, held: &[VarId], span: Span) {
+        if held.is_empty() || self.cur.is_none() {
+            return;
+        }
+        let n = self.emit(span, "value", String::new());
+        self.take_held(held, n);
+    }
+
+    /// Holds a part of a value that is built from parts, while the later parts
+    /// run. A part that moves goes to `taken` (`hold_moved`). Another part that
+    /// holds references goes to `held`, for the next node.
+    fn hold_part(
+        &mut self,
+        v: &Val,
+        name: &str,
+        span: Span,
+        held: &mut Vec<VarId>,
+        taken: &mut Vec<VarId>,
+    ) {
+        if self.moves_value(&v.ty) {
+            taken.extend(self.hold_moved(v, name, span));
+        } else {
+            held.extend(self.hold_later(v, name, span));
+        }
+    }
+
+    /// Returns true if a by-value use of a value of type `t` moves it. The value
+    /// is not plain data, or its type is not known yet (see `consume`).
+    pub(super) fn moves_value(&self, t: &Ty) -> bool {
+        self.may_free(t)
+    }
+
     /// Holds a reference value in a new variable of kind `kind`.
     fn hold_as(&mut self, v: &Val, name: &str, kind: VarKind, span: Span) -> Option<VarId> {
         if v.refs.is_empty() || self.cur.is_none() {
             return None;
         }
-        let info = self.var_info(name, kind, span, &v.ty, v.uniq);
+        // The holder only follows the references: the value itself has its own
+        // variable, or it is plain data.
+        let mut info = self.var_info(name, kind, span, &v.ty, v.uniq);
+        info.linear = false;
+        info.has_on_abort = true;
         let var = self.facts.add_var(info);
         let n = self.emit(span, name, String::new());
         self.bind(var, n);
@@ -680,8 +818,8 @@ impl<'p> Lower<'p> {
         let parts: Vec<VarId> = self
             .part_holders
             .iter()
-            .filter(|(o, ..)| *o == l)
-            .map(|&(_, h, _)| h)
+            .filter(|h| h.local == l)
+            .map(|h| h.var)
             .collect();
         self.pend_uses.extend(parts);
         self.note_capture(l);
@@ -700,11 +838,39 @@ impl<'p> Lower<'p> {
         }
     }
 
+    /// Returns the index of the frame that declares local `l`, or 0 if the frame
+    /// has ended.
     fn local_frame(&self, l: usize) -> usize {
-        self.frames
-            .iter()
-            .rposition(|f| f.names.iter().any(|(_, i)| *i == l))
-            .unwrap_or(0)
+        let (depth, id) = self.locals[l].frame;
+        if self.frames.get(depth).is_some_and(|f| f.id == id) {
+            depth
+        } else {
+            0
+        }
+    }
+
+    /// Ends the innermost frame: its names go out of scope.
+    pub(super) fn pop_frame(&mut self) {
+        let Some(f) = self.frames.pop() else { return };
+        for (name, _) in f.names.iter().rev() {
+            if let Some(ls) = self.scope.get_mut(name) {
+                ls.pop();
+                if ls.is_empty() {
+                    self.scope.remove(name);
+                }
+            }
+        }
+    }
+
+    /// Opens a frame for the locals of a block, a closure or a clause. `barrier`
+    /// is the summary of a body that the frame starts.
+    pub(super) fn push_frame(&mut self, barrier: Option<usize>) {
+        self.frame_ids += 1;
+        self.frames.push(Frame {
+            names: Vec::new(),
+            barrier,
+            id: self.frame_ids,
+        });
     }
 
     fn bind(&mut self, v: VarId, n: NodeId) {
@@ -1038,19 +1204,14 @@ impl<'p> Lower<'p> {
     // -----------------------------------------------------------------------
 
     fn lookup_local(&self, name: &str) -> Option<usize> {
-        for f in self.frames.iter().rev() {
-            if let Some((_, i)) = f.names.iter().rev().find(|(n, _)| n == name) {
-                return Some(*i);
-            }
-        }
-        None
+        self.scope.get(name).and_then(|ls| ls.last().copied())
     }
 
     fn var_info(&self, name: &str, kind: VarKind, span: Span, ty: &Ty, uniq: bool) -> VarInfo {
         let t = self.inf.resolve(ty);
         let mut v = VarInfo::plain(name, kind, span, self.show(&t));
         v.callable = matches!(t, Ty::Fn(_)) || kind == VarKind::Closure;
-        v.linear = self.is_linear(&t);
+        v.linear = self.ty_has_strict(&t, Prop::Linear);
         v.has_on_abort = self.has_on_abort(&t);
         v.immovable = self.is_immovable(&t);
         v.nonportable = self.is_nonportable(&t);
@@ -1059,9 +1220,22 @@ impl<'p> Lower<'p> {
         v
     }
 
+    /// Adds hidden variable `info` with a value of type `ty`. In a generic body
+    /// it can be linear only because a type parameter can be (`maybe_linear`).
+    pub(super) fn new_var(&mut self, info: VarInfo, ty: &Ty) -> VarId {
+        let wide = !info.linear && self.generic && self.is_linear(ty);
+        let var = self.facts.add_var(info);
+        self.late_vars.push((var, ty.clone()));
+        if wide {
+            self.maybe_linear.insert(var);
+        }
+        var
+    }
+
     fn new_local(&mut self, name: &str, kind: VarKind, span: Span, ty: Ty, uniq: bool) -> usize {
         let info = self.var_info(name, kind, span, &ty, uniq);
         let var = self.facts.add_var(info);
+        let top = self.frames.len() - 1;
         self.locals.push(Local {
             name: name.into(),
             var,
@@ -1075,16 +1249,42 @@ impl<'p> Lower<'p> {
             cont: None,
             bound: false,
             caps: BTreeSet::new(),
+            frame: (top, self.frames[top].id),
         });
         let l = self.locals.len() - 1;
-        let top = self.frames.len() - 1;
+        let i = var.index();
+        if self.var_local.len() <= i {
+            self.var_local.resize(i + 1, usize::MAX);
+        }
+        self.var_local[i] = l;
         self.frames[top].names.push((name.into(), l));
+        self.scope.entry(name.into()).or_default().push(l);
         l
+    }
+
+    /// Returns the local of variable `v`, if `v` is the variable of a local.
+    pub(super) fn local_of(&self, v: VarId) -> Option<usize> {
+        let l = *self.var_local.get(v.index())?;
+        self.locals.get(l).filter(|loc| loc.var == v).map(|_| l)
+    }
+
+    /// Returns the local that owns root `r`.
+    pub(super) fn root_owner(&self, r: RootId) -> Option<usize> {
+        let l = *self.root_local.get(r.index())?;
+        let loc = self.locals.get(l)?;
+        loc.root
+            .is_some_and(|p| self.facts.place(p).root == r)
+            .then_some(l)
     }
 
     /// Gives local `l` the root place `r`: the local owns the memory under `r`.
     fn set_root(&mut self, l: usize, r: PlaceId) {
         self.locals[l].root = Some(r);
+        let ri = self.facts.place(r).root.index();
+        if self.root_local.len() <= ri {
+            self.root_local.resize(ri + 1, usize::MAX);
+        }
+        self.root_local[ri] = l;
         let var = self.locals[l].var;
         self.facts.owner.push((r, var));
         let depth = self.local_frame(l);
@@ -1098,8 +1298,11 @@ impl<'p> Lower<'p> {
         let var = self.locals[l].var;
         let first = !self.locals[l].bound;
         self.bind(var, n);
+        // A new value of the whole local replaces the values of its parts.
+        self.part_holders.retain(|h| h.local != l);
         let caps = self.val_caps(v);
         self.locals[l].caps.extend(caps);
+        self.mark_modes(l);
         for &p in &v.refs {
             self.point_local(l, p);
         }
@@ -1139,25 +1342,176 @@ impl<'p> Lower<'p> {
             let r = self.root(&name, RootKind::Local);
             self.set_root(l, r);
         }
-        // A place field that the struct literal does not give has no value yet.
-        if let (false, Some(r)) = (v.unset.is_empty(), self.locals[l].root) {
-            let ty = self.inf.deep(&self.locals[l].ty);
-            for field in &v.unset {
-                let Some((steps, fty, _)) = field_step(self.prog, &ty, field) else {
-                    continue;
-                };
-                let mut p = r;
-                for (st, text) in &steps {
-                    p = self.child(p, *st, text);
-                }
-                let name = self.facts.place(p).display.clone();
-                let span = self.facts.var(var).span;
-                let info = self.var_info(&name, VarKind::Local, span, &fty, false);
-                let hidden = self.facts.add_var(info);
-                self.facts.unset_at.push((hidden, n));
-                self.unset_places.push((p, hidden));
+        // A new value that no place held before is built in place: its place
+        // fields have no value yet.
+        if v.var.is_none() && v.place.is_none() && v.local.is_none() {
+            if let Some(r) = self.locals[l].root {
+                self.unset_fields(l, r, n);
             }
         }
+    }
+
+    /// Gives each place field in local `l` (root place `r`) a hidden variable with
+    /// no value at node `n`. A read of the field before the body sets it is W0304.
+    fn unset_fields(&mut self, l: usize, r: PlaceId, n: NodeId) {
+        let ty = self.inf.deep(&self.locals[l].ty);
+        let var = self.locals[l].var;
+        for path in self.unset_paths(&ty) {
+            let mut p = r;
+            let mut at = ty.clone();
+            let mut found = true;
+            for name in &path {
+                let Some((steps, next, _)) = field_step(self.prog, &at, name) else {
+                    found = false;
+                    break;
+                };
+                for (st, text) in &steps {
+                    let text = if text == "*" { "" } else { text.as_str() };
+                    p = self.child(p, *st, text);
+                }
+                at = self.inf.deep(&next);
+            }
+            if !found {
+                continue;
+            }
+            let name = self.facts.place(p).display.clone();
+            let span = self.facts.var(var).span;
+            let info = self.var_info(&name, VarKind::Local, span, &at, false);
+            let hidden = self.facts.add_var(info);
+            self.facts.unset_at.push((hidden, n));
+            self.unset_places.push((p, hidden));
+        }
+    }
+
+    /// Returns the paths of the place fields that a value of type `t` holds: in
+    /// the value, in its parts and behind a `Box`. A struct literal cannot give a
+    /// place field a value, and a `!Move` value is built in place. So a value that
+    /// no place held before has no value in these fields.
+    fn unset_paths(&self, t: &Ty) -> Vec<Vec<String>> {
+        let mut out = Vec::new();
+        if self.has_place_fields {
+            self.unset_paths_into(t, &mut Vec::new(), &mut out, &mut Vec::new());
+        }
+        out
+    }
+
+    fn unset_paths_into(
+        &self,
+        t: &Ty,
+        path: &mut Vec<String>,
+        out: &mut Vec<Vec<String>>,
+        seen: &mut Vec<usize>,
+    ) {
+        match self.inf.deep(t) {
+            Ty::Tuple(ts) => {
+                for (i, x) in ts.iter().enumerate() {
+                    path.push(i.to_string());
+                    self.unset_paths_into(x, path, out, seen);
+                    path.pop();
+                }
+            }
+            Ty::Adt(a, args) => {
+                if seen.contains(&a) {
+                    return;
+                }
+                seen.push(a);
+                match &self.prog.adts[a].kind {
+                    AdtKind::Struct(fs) => {
+                        for f in fs {
+                            path.push(f.name.clone());
+                            if f.place.is_some() {
+                                out.push(path.clone());
+                            } else {
+                                self.unset_paths_into(&subst(&f.ty, &args), path, out, seen);
+                            }
+                            path.pop();
+                        }
+                    }
+                    AdtKind::Enum(vs) => {
+                        for v in vs {
+                            let payload = match v.fields.len() {
+                                0 => continue,
+                                1 => subst(&v.fields[0], &args),
+                                _ => Ty::Tuple(v.fields.iter().map(|f| subst(f, &args)).collect()),
+                            };
+                            path.push(v.name.clone());
+                            self.unset_paths_into(&payload, path, out, seen);
+                            path.pop();
+                        }
+                    }
+                    // A field step goes through a `Box` by itself.
+                    AdtKind::Extern { deref: Some(d), .. } if *d != Deref::Group => {
+                        if let Some(inner) = args.first() {
+                            self.unset_paths_into(inner, path, out, seen);
+                        }
+                    }
+                    AdtKind::Extern { .. } => {}
+                }
+                seen.pop();
+            }
+            _ => {}
+        }
+    }
+
+    /// Returns the state of this path that a branch changes.
+    pub(super) fn branch_state(&self) -> BranchState {
+        BranchState {
+            uniq: self.locals.iter().map(|l| l.uniq).collect(),
+            holders: self.part_holders.clone(),
+        }
+    }
+
+    /// Sets the state of `branch_state` again, at the start of another branch.
+    pub(super) fn set_branch(&mut self, state: &BranchState) {
+        for (l, &u) in self.locals.iter_mut().zip(&state.uniq) {
+            l.uniq = u;
+        }
+        self.part_holders.clone_from(&state.holders);
+    }
+
+    /// Joins the states at the ends of the branches that reach a join.
+    pub(super) fn join_branches(&mut self, ends: &[BranchState]) {
+        if !ends.is_empty() {
+            let st = Self::joined(ends);
+            self.set_branch(&st);
+        }
+    }
+
+    /// Returns the join of states `ends`. A local is `@ uniq` after the join only
+    /// if it is at the end of each branch. A part can hold the references of each
+    /// branch.
+    pub(super) fn joined(ends: &[BranchState]) -> BranchState {
+        let len = ends.iter().map(|e| e.uniq.len()).min().unwrap_or(0);
+        let uniq = (0..len).map(|i| ends.iter().all(|e| e.uniq[i])).collect();
+        let mut holders: Vec<PartHolder> = Vec::new();
+        for h in ends.iter().flat_map(|e| &e.holders) {
+            if !holders.iter().any(|x| x.var == h.var) {
+                holders.push(h.clone());
+            }
+        }
+        BranchState { uniq, holders }
+    }
+
+    /// The parts of local `l` at places `ps`, and the parts below them, get new
+    /// values: their holders no longer hold a reference.
+    pub(super) fn retire_holders(&mut self, l: usize, ps: &[PlaceId]) {
+        let mut holders = std::mem::take(&mut self.part_holders);
+        holders.retain(|h| h.local != l || !self.below_any(&h.places, ps));
+        self.part_holders = holders;
+    }
+
+    /// Returns true if each place of `hs` is one of `ps` or below one of them.
+    pub(super) fn below_any(&self, hs: &[PlaceId], ps: &[PlaceId]) -> bool {
+        hs.iter().all(|&hp| {
+            let mut at = Some(hp);
+            while let Some(a) = at {
+                if ps.contains(&a) {
+                    return true;
+                }
+                at = self.facts.place(a).parent;
+            }
+            false
+        })
     }
 
     /// Local `l` can point into place `p`. A place below a parameter of the body
@@ -1181,15 +1535,15 @@ impl<'p> Lower<'p> {
         }
     }
 
-    /// Returns true if the closure with summary `s` can run only once: it moves a
+    /// Returns true if the closure with summary `s` can run only once. It moves a
     /// captured value that is not plain data, so a call takes the value.
     fn closure_is_once(&self, s: usize) -> bool {
         let sum = &self.closures[s];
         sum.moved_captures.iter().any(|v| !self.is_copy_var(*v))
     }
 
-    /// Returns true if the closure with summary `s` is not `many`: it runs only
-    /// once, or it captures a value that is not `many`, for example a `@ uniq`
+    /// Returns true if the closure with summary `s` is not `many`. It runs only
+    /// once, or it captures a value that is not `many`, such as a `@ uniq`
     /// reference. A copy of it would copy that value.
     fn closure_not_many(&self, s: usize) -> bool {
         self.closure_is_once(s)
@@ -1205,7 +1559,7 @@ impl<'p> Lower<'p> {
     fn closure_uniq(&self, s: usize) -> bool {
         let mut any = false;
         for &v in &self.closures[s].captures {
-            let Some(l) = self.locals.iter().find(|l| l.var == v) else {
+            let Some(l) = self.local_of(v).map(|l| &self.locals[l]) else {
                 continue;
             };
             if l.refs.is_empty() {
@@ -1220,10 +1574,8 @@ impl<'p> Lower<'p> {
     }
 
     fn is_copy_var(&self, v: VarId) -> bool {
-        self.locals
-            .iter()
-            .find(|l| l.var == v)
-            .is_some_and(|l| self.is_copy(&l.ty))
+        self.local_of(v)
+            .is_some_and(|l| self.is_copy(&self.locals[l].ty))
     }
 
     // -----------------------------------------------------------------------
@@ -1232,41 +1584,58 @@ impl<'p> Lower<'p> {
 
     /// Returns true if property `p` holds for a value of type `t`: a part of it has
     /// the property. The table of `Program::props` gives the definitions. A
-    /// closure has the properties of what it captures: see `closure_has`.
+    /// closure has the properties of what it captures: see `closure_has`. In a
+    /// generic body a value of a type parameter can be linear (`Lower::generic`).
     pub(super) fn ty_has(&self, t: &Ty, p: Prop) -> bool {
-        self.ty_has_in(t, p, &mut Vec::new())
+        self.ty_has_in(t, p, &mut self.has())
     }
 
-    /// `ty_has`, with the closure summaries on the way in `seen`.
-    fn ty_has_in(&self, t: &Ty, p: Prop, seen: &mut Vec<usize>) -> bool {
+    /// `ty_has`, with a type parameter that is not linear: the flags of a variable.
+    pub(super) fn ty_has_strict(&self, t: &Ty, p: Prop) -> bool {
+        self.ty_has_in(t, p, &mut Has::default())
+    }
+
+    /// The state of a property query in the mode of the body.
+    pub(super) const fn has(&self) -> Has {
+        Has {
+            seen: Vec::new(),
+            params: self.generic,
+        }
+    }
+
+    /// `ty_has` with the state `h`.
+    fn ty_has_in(&self, t: &Ty, p: Prop, h: &mut Has) -> bool {
         match self.inf.shallow(t) {
-            Ty::Adt(a, args) => self.prog.props().get(a, p).is_some_and(|h| {
-                h.always
-                    || h.params
+            Ty::Adt(a, args) => self.prog.props().get(a, p).is_some_and(|x| {
+                x.always
+                    || x.params
                         .iter()
-                        .any(|&j| args.get(j).is_some_and(|x| self.ty_has_in(x, p, seen)))
+                        .any(|&j| args.get(j).is_some_and(|y| self.ty_has_in(y, p, h)))
             }),
-            Ty::Tuple(ts) => ts.iter().any(|x| self.ty_has_in(x, p, seen)),
-            Ty::Array(x, _) => p == Prop::NotCopy || self.ty_has_in(&x, p, seen),
+            Ty::Tuple(ts) => ts.iter().any(|x| self.ty_has_in(x, p, h)),
+            Ty::Array(x, _) => p == Prop::NotCopy || self.ty_has_in(&x, p, h),
+            // A reference to a nonportable value is nonportable: another thread
+            // could use the value through it.
             Ty::Ref(x) => match p {
                 Prop::Refs => true,
-                Prop::Fns => self.ty_has_in(&x, p, seen),
+                Prop::Fns | Prop::Nonportable => self.ty_has_in(&x, p, h),
                 _ => false,
             },
             Ty::Slice(x) => match p {
                 Prop::Refs | Prop::NotCopy => true,
-                Prop::Fns => self.ty_has_in(&x, p, seen),
+                Prop::Fns | Prop::Nonportable => self.ty_has_in(&x, p, h),
                 _ => false,
             },
             Ty::Fn(f) => match p {
                 Prop::Fns => true,
                 Prop::NotCopy => f.summary.is_some_and(|s| self.closures[s].literal),
                 Prop::Linear | Prop::NoOnAbort | Prop::Nonportable => {
-                    f.summary.is_some_and(|s| self.closure_has(s, p, seen))
+                    f.summary.is_some_and(|s| self.closure_has(s, p, h))
                 }
                 Prop::Immovable | Prop::Refs => false,
             },
-            Ty::Param(_) | Ty::Cont(..) => p == Prop::NotCopy,
+            Ty::Param(_) => p == Prop::NotCopy || (p == Prop::Linear && h.params),
+            Ty::Cont(..) => p == Prop::NotCopy,
             Ty::Scope => p == Prop::Nonportable,
             _ => false,
         }
@@ -1275,38 +1644,42 @@ impl<'p> Lower<'p> {
     /// Returns true if a closure with summary `s` has property `p`. It is linear if
     /// it moves a linear capture: a call takes the value. It is nonportable if it
     /// captures a nonportable value: it refers to the variable.
-    fn closure_has(&self, s: usize, p: Prop, seen: &mut Vec<usize>) -> bool {
-        if seen.contains(&s) {
+    fn closure_has(&self, s: usize, p: Prop, h: &mut Has) -> bool {
+        if h.seen.contains(&s) {
             return false;
         }
-        seen.push(s);
         let sum = &self.closures[s];
+        h.seen.push(s);
         let vars = if p == Prop::Nonportable {
             &sum.captures
         } else {
             &sum.moved_captures
         };
-        let found = vars.iter().any(|&v| self.var_has(v, p, seen));
-        seen.pop();
+        let found = vars.iter().any(|&v| self.var_has(v, p, h));
+        h.seen.pop();
         found
     }
 
     /// Returns true if variable `v` has property `p`: from the type of its local,
-    /// or from its flags if it is not a local.
-    fn var_has(&self, v: VarId, p: Prop, seen: &mut Vec<usize>) -> bool {
+    /// or from its flags if it is not a local. In a generic body a variable of a
+    /// type parameter can be linear (`Lower::maybe_linear`).
+    fn var_has(&self, v: VarId, p: Prop, h: &mut Has) -> bool {
         let info = self.facts.var(v);
+        let local = self.local_of(v);
         let flag = match p {
-            Prop::Linear => info.linear,
+            _ if local.is_some() => false,
+            Prop::Linear => info.linear || (h.params && self.maybe_linear.contains(&v)),
             Prop::Nonportable => info.nonportable,
             Prop::NoOnAbort => info.linear && !info.has_on_abort,
             _ => false,
         };
-        flag || self.locals.iter().filter(|l| l.var == v).any(|l| {
-            self.ty_has_in(&l.ty, p, seen)
+        flag || local.map(|l| &self.locals[l]).is_some_and(|l| {
+            self.ty_has_in(&l.ty, p, h)
                 || l.summary.is_some_and(|s| {
                     matches!(p, Prop::Linear | Prop::NoOnAbort | Prop::Nonportable)
-                        && self.closure_has(s, p, seen)
+                        && self.closure_has(s, p, h)
                 })
+                || (p == Prop::Nonportable && l.caps.contains(&caps::NONPORTABLE))
         })
     }
 
@@ -1314,7 +1687,23 @@ impl<'p> Lower<'p> {
     /// function value from the closures that it can be.
     pub(super) fn local_has(&self, l: usize, p: Prop) -> bool {
         let v = self.locals[l].var;
-        self.var_has(v, p, &mut Vec::new())
+        self.var_has(v, p, &mut self.has())
+    }
+
+    /// `local_has` with a type parameter that is not linear.
+    pub(super) fn local_has_strict(&self, l: usize, p: Prop) -> bool {
+        let v = self.locals[l].var;
+        self.var_has(v, p, &mut Has::default())
+    }
+
+    /// Returns true if closure `s` is linear, in the mode of the body.
+    pub(super) fn closure_linear(&self, s: usize) -> bool {
+        self.closure_has(s, Prop::Linear, &mut self.has())
+    }
+
+    /// Returns true if variable `v` is linear, in the mode of the body.
+    pub(super) fn var_linear(&self, v: VarId) -> bool {
+        self.var_has(v, Prop::Linear, &mut self.has())
     }
 
     /// Returns true if a value of type `t` can hold a reference.
@@ -1324,6 +1713,24 @@ impl<'p> Lower<'p> {
 
     pub(super) fn is_linear(&self, t: &Ty) -> bool {
         self.ty_has(t, Prop::Linear)
+    }
+
+    /// Returns true if a value of type `t` can be linear when the body knows its
+    /// whole type. It is linear, or a part of its type is not known yet. A drop
+    /// of such a value gets a hidden variable, and `finish` decides from the
+    /// inferred type.
+    pub(super) fn may_be_linear(&self, t: &Ty) -> bool {
+        self.is_linear(t) || self.has_unknown(t)
+    }
+
+    /// Returns true if a part of type `t` that a value holds inline is not known yet.
+    pub(super) fn has_unknown(&self, t: &Ty) -> bool {
+        match self.inf.shallow(t) {
+            Ty::Var(_) => true,
+            Ty::Adt(_, ts) | Ty::Tuple(ts) => ts.iter().any(|x| self.has_unknown(x)),
+            Ty::Array(x, _) => self.has_unknown(&x),
+            _ => false,
+        }
     }
 
     /// Returns true if each linear part of a value of type `t` has `on abort`.

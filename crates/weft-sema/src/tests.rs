@@ -931,3 +931,68 @@ fn fip_use_counts_do_not_overflow_in_nested_loops() {
         .unwrap_or_else(|| panic!("no W1002: {:?}", codes(&a)));
     assert!(d.message.contains("found 1 or more"), "{}", d.message);
 }
+
+#[test]
+fn a_match_too_large_to_check_is_an_error() {
+    // Each of the 256 values has its own arm. The check needs more steps than
+    // its budget (500 in a test build). So it cannot show that the arms cover
+    // each value.
+    let n = 8;
+    let cols: Vec<String> = (0..n).map(|i| format!("b{i}: bool")).collect();
+    let args: Vec<String> = (0..n).map(|i| format!("b{i}")).collect();
+    let mut arms = String::new();
+    for k in 0..(1u32 << n) {
+        let pat: Vec<&str> = (0..n)
+            .map(|i| if k >> i & 1 == 1 { "true" } else { "false" })
+            .collect();
+        let _ = writeln!(arms, "        ({}) => {k},", pat.join(", "));
+    }
+    let src = format!(
+        "fn g({}) -> u32 {{\n    match ({}) {{\n{arms}    }}\n}}\n",
+        cols.join(", "),
+        args.join(", ")
+    );
+    let a = analyze_source(&src, Options::default()).unwrap();
+    let w: Vec<&str> = a
+        .diags
+        .iter()
+        .filter(|d| d.code == "W0120")
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(w.len(), 1, "{:?}", a.diags);
+    assert!(w[0].contains("too large to check"), "{}", w[0]);
+}
+
+#[test]
+fn a_small_match_is_checked_in_full() {
+    let src = "fn g(a: bool, b: bool) -> u32 {\n    match (a, b) {\n        (true, _) => 0,\n        (_, true) => 1,\n        (false, false) => 2,\n    }\n}\n";
+    let a = analyze_source(src, Options::default()).unwrap();
+    assert!(a.diags.is_empty(), "{:?}", a.diags);
+}
+
+#[test]
+fn many_locals_and_part_values_are_fast() {
+    // A body with many locals, and many new values of one part of a local. The
+    // lowering looks a local up by its variable, and each new value of the
+    // part replaces the old one, so the cost grows linearly.
+    let mut body = String::from("    let w = Wrap { x: &v[0] }\n");
+    for i in 0..12_000 {
+        let _ = writeln!(body, "    let x{i} = {i}");
+    }
+    for _ in 0..2_000 {
+        body.push_str("    w.x = &v[0]\n    print(w.x)\n");
+    }
+    let src = format!("struct Wrap<T> {{ x: T }}\nfn f(v: &Vec<u64>) {{\n{body}}}\n");
+    let start = std::time::Instant::now();
+    let a = analyze_source(&src, Options::default()).unwrap();
+    assert!(a.diags.is_empty(), "{:?}", a.diags);
+    let f = a.bodies.iter().find(|b| b.facts.name == "f").unwrap();
+    let holders = f
+        .facts
+        .vars
+        .iter()
+        .filter(|v| v.name.starts_with("value in"))
+        .count();
+    assert_eq!(holders, 1);
+    assert!(start.elapsed().as_secs() < 10, "{:?}", start.elapsed());
+}

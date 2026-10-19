@@ -291,6 +291,13 @@ impl Lower<'_> {
             };
         }
         let targs: Vec<Ty> = sig.generics.iter().map(|_| self.inf.fresh()).collect();
+        // The type of the value gives the type arguments of a call through a local.
+        if let Some(t) = inst {
+            for (p, it) in sig.params.iter().zip(&t.params) {
+                let _ = self.inf.unify(&super::subst(&p.ty, &targs), it);
+            }
+            let _ = self.inf.unify(&super::subst(&sig.ret, &targs), &t.ret);
+        }
         let ptys: Vec<Ty> = match inst {
             Some(t) if t.params.len() == sig.params.len() => t.params.clone(),
             _ => sig
@@ -366,6 +373,7 @@ impl Lower<'_> {
         let mut vals: Vec<ArgVal> = Vec::new();
         let mut arg_places: Vec<Vec<PlaceId>> = Vec::new();
         let mut held_vars = Vec::new();
+        let mut taken = Vec::new();
         let mut kept_vals: Vec<Val> = Vec::new();
         for i in 0..slots.len() {
             let later = slots[i + 1..].iter().any(Option::is_some);
@@ -458,12 +466,19 @@ impl Lower<'_> {
                     arg_places.push(Vec::new());
                 }
                 // A by-value argument that holds references, for example a closure,
-                // points into them until the call.
-                if !av.val.refs.is_empty() {
-                    held_vars.extend(self.hold_operand(&av.val, later, av.span));
-                    if !self.byval_refs(&declared) {
-                        value_refs.push((i, av.val.refs.clone()));
+                // points into them until the call. An argument that moves before
+                // the call is on its way to the callee while the later arguments run.
+                let consumed =
+                    (!callback(i) || av.val.summary.is_none()) && self.moves_value(&av.val.ty);
+                if consumed {
+                    if later {
+                        taken.extend(self.hold_moved(&av.val, "argument", av.span));
                     }
+                } else if !av.val.refs.is_empty() {
+                    held_vars.extend(self.hold_operand(&av.val, later, av.span));
+                }
+                if !av.val.refs.is_empty() && !self.byval_refs(&declared) {
+                    value_refs.push((i, av.val.refs.clone()));
                 }
                 if !callback(i) {
                     // The callee keeps the value, for example in a container.
@@ -471,26 +486,17 @@ impl Lower<'_> {
                     self.escape_all(&v);
                     kept_vals.push(v);
                 }
-                if !matches!(self.inf.shallow(&pt), Ty::Fn(_)) || av.val.summary.is_none() {
+                if !callback(i) || av.val.summary.is_none() {
                     let v = av.val.clone();
                     self.keep_modes(&v, &pt, av.span);
-                    // A generic callee can drop a value that it does not know is linear.
-                    // A value of a type parameter here can be dropped there too.
-                    if sig.effects.drops.contains(&i) {
-                        if self.is_linear(&v.ty) {
-                            let name = self.val_name(&v);
-                            self.drop_linear(&name, &v.ty, av.span);
-                        } else if let Some(var) = v.var {
-                            if super::flow::mentions_param(&self.inf.resolve(&v.ty)) {
-                                self.generic_drops.push(var);
-                            }
-                        }
-                    }
                     // A `!Move` value built here is built in place for a parameter of
                     // its own type. A type parameter lets the callee move it, as
                     // `Vec.push` does when its buffer grows.
                     let declared = sig.params.get(i).map_or(Ty::Error, |p| p.ty.clone());
-                    if v.var.is_none() && self.is_immovable(&v.ty) && !self.is_immovable(&declared)
+                    if v.var.is_none()
+                        && self.is_immovable(&v.ty)
+                        && !self.is_immovable(&declared)
+                        && !self.builds_in_place(f)
                     {
                         self.move_temp(&v.ty, av.span);
                     }
@@ -538,6 +544,8 @@ impl Lower<'_> {
         for v in held_vars {
             self.facts.uses.push((v, n));
         }
+        self.take_held(&taken, n);
+        self.callee_drops(&sig, &targs, &vals, span);
         for (p, idx) in &muts {
             self.mutate(n, *p);
             self.facts.call_mut.push((n, *p, *idx));
@@ -743,6 +751,17 @@ impl Lower<'_> {
             }
             // The callee can return what a clause of a local handler resumes with.
             out.caps.extend(self.resumed_at(n, performs_from));
+            // A closure in the result can capture what an argument holds or points
+            // to: a nonportable value, or a value that is not `many`.
+            for av in &vals {
+                let held = self.val_caps(&av.val);
+                if self.is_nonportable(&av.val.ty) || held.contains(&super::caps::NONPORTABLE) {
+                    out.caps.insert(super::caps::NONPORTABLE);
+                }
+                if av.val.uniq || held.contains(&super::caps::NOT_MANY) {
+                    out.caps.insert(super::caps::NOT_MANY);
+                }
+            }
         }
         // A returned function value does what the callee states about it.
         if let (Some(rf), Ty::Fn(fty)) = (&sig.effects.ret, self.inf.shallow(&ret)) {
@@ -791,11 +810,48 @@ impl Lower<'_> {
         out
     }
 
+    /// Returns true if function item `f` builds its argument in place on the heap:
+    /// `Box.new` and `Rc.new` of the prelude.
+    fn builds_in_place(&self, f: FnId) -> bool {
+        let def = &self.prog.fns[f];
+        let owner = def.owner.map(|a| self.prog.adts[a].name.as_str());
+        def.is_std && def.name == "new" && matches!(owner, Some("Box" | "Rc"))
+    }
+
+    /// A generic callee with signature `sig` can drop a value of each type
+    /// parameter in its `drops` part. If the call gives a linear type there, the
+    /// value goes away at the call (W0601). `finish` decides from the inferred
+    /// type argument. The diagnostic names the argument of that type.
+    fn callee_drops(&mut self, sig: &FnSig, targs: &[Ty], vals: &[ArgVal], span: Span) {
+        for &j in &sig.effects.drops {
+            let Some(t) = targs.get(j).cloned() else {
+                continue;
+            };
+            if !self.may_be_linear(&t) {
+                continue;
+            }
+            // The diagnostic names the argument if only one parameter is of the type.
+            let param = u32::try_from(j).unwrap_or(u32::MAX);
+            let args: Vec<usize> = (0..sig.params.len())
+                .filter(|&i| super::flow::mentions(&sig.params[i].ty, param))
+                .collect();
+            let (name, at) = match (args.as_slice(), args.first().and_then(|&i| vals.get(i))) {
+                ([i], Some(av)) if sig.params[*i].ty == Ty::Param(param) => {
+                    (self.val_name(&av.val), av.span)
+                }
+                (_, Some(av)) => ("temporary".to_string(), av.span),
+                (_, None) => ("temporary".to_string(), span),
+            };
+            self.drop_linear(&name, &t, at);
+        }
+    }
+
     /// The references that a call passes on, for a callee with signature `sig`. A
     /// result that holds references, with no stated place for each of them,
     /// points where the arguments that can flow into it point. A reference
     /// argument whose pointee holds references and that the call mutates can get
     /// the references of the other arguments, as `v.push(&x)` does.
+    // The parts of one call: a struct for them would be used only here.
     #[allow(clippy::too_many_arguments)]
     fn call_flows(
         &mut self,
@@ -850,11 +906,7 @@ impl Lower<'_> {
                 if !muts.iter().any(|&(m, _)| self.facts.place(m).root == root) {
                     continue;
                 }
-                let Some(l) = self
-                    .locals
-                    .iter()
-                    .position(|l| l.root.is_some_and(|r| self.facts.place(r).root == root))
-                else {
+                let Some(l) = self.root_owner(root) else {
                     continue;
                 };
                 let all = if let Some(f) = &flows {
@@ -958,6 +1010,7 @@ impl Lower<'_> {
         let mut fn_caps = std::collections::BTreeSet::new();
         let mut fn_vals: Vec<(usize, Val)> = Vec::new();
         let mut value_refs: Vec<(usize, Vec<PlaceId>)> = Vec::new();
+        let mut taken = Vec::new();
         for (i, a) in exprs.iter().enumerate() {
             let later = i + 1 < exprs.len();
             let mut v = match (&a.kind, fty.params.get(i).map(|t| self.inf.shallow(t))) {
@@ -975,7 +1028,12 @@ impl Lower<'_> {
                 held.extend(self.hold_operand(&v, later, a.span));
             } else {
                 arg_places.push(Vec::new());
-                if !v.refs.is_empty() {
+                // An argument that moves before the call is on its way to the callee.
+                if v.summary.is_none() && self.moves_value(&v.ty) {
+                    if later {
+                        taken.extend(self.hold_moved(&v, "argument", a.span));
+                    }
+                } else if !v.refs.is_empty() {
                     held.extend(self.hold_operand(&v, later, a.span));
                 }
                 if let Ty::Fn(f) = self.inf.shallow(&v.ty) {
@@ -1004,6 +1062,7 @@ impl Lower<'_> {
         for v in held {
             self.facts.uses.push((v, n));
         }
+        self.take_held(&taken, n);
         let roots: Vec<u32> = (0..arg_places.len())
             .map(|i| u32::try_from(i).unwrap_or(0))
             .collect();
@@ -1271,6 +1330,10 @@ impl Lower<'_> {
         let mut vals = Vec::new();
         for (i, a) in args.iter().enumerate() {
             let v = self.expr(&a.value);
+            // `print` reads the whole value, also a place field in it (W0304).
+            if let Some(lv) = &v.place {
+                self.touch_unset(&lv.places);
+            }
             for &p in &v.refs {
                 self.read(p);
             }
@@ -1309,6 +1372,7 @@ impl Lower<'_> {
             );
         }
         let mut held = Vec::new();
+        let mut taken = Vec::new();
         let mut caps = std::collections::BTreeSet::new();
         let mut refs = Vec::new();
         for (i, (d, arg)) in defs.iter().zip(args).enumerate() {
@@ -1320,11 +1384,12 @@ impl Lower<'_> {
             caps.extend(self.val_caps(&v));
             self.consume(&v, arg.value.span);
             if i + 1 < args.len() {
-                held.extend(self.hold_later(&v, "argument", arg.value.span));
+                self.hold_part(&v, "argument", arg.value.span, &mut held, &mut taken);
             }
             refs.extend(v.refs.iter().copied());
         }
         self.pend_uses.extend(held);
+        self.take_held_here(&taken, span);
         Val {
             ty: Ty::Adt(a, targs),
             caps,
@@ -1355,6 +1420,7 @@ impl Lower<'_> {
         }
         let mut refs = Vec::new();
         let mut held = Vec::new();
+        let mut taken = Vec::new();
         let mut caps = std::collections::BTreeSet::new();
         for (i, (ft, a)) in fields.iter().zip(args).enumerate() {
             let v = self.expr(&a.value);
@@ -1365,11 +1431,12 @@ impl Lower<'_> {
             caps.extend(self.val_caps(&v));
             self.consume(&v, a.value.span);
             if i + 1 < args.len() {
-                held.extend(self.hold_later(&v, "argument", a.value.span));
+                self.hold_part(&v, "argument", a.value.span, &mut held, &mut taken);
             }
             refs.extend(v.refs);
         }
         self.pend_uses.extend(held);
+        self.take_held_here(&taken, span);
         Val {
             ty: Ty::Adt(adt, targs),
             refs,
@@ -1397,6 +1464,7 @@ impl Lower<'_> {
         let mut value_refs: Vec<(usize, Vec<PlaceId>)> = Vec::new();
         let mut fns = Vec::new();
         let mut fn_args: Vec<(usize, Val, Span)> = Vec::new();
+        let mut taken = Vec::new();
         for (i, pt) in o.params.iter().enumerate() {
             let Some(x) = slots[i] else {
                 arg_places.push(Vec::new());
@@ -1410,6 +1478,7 @@ impl Lower<'_> {
                 _ => self.expr(x),
             };
             self.unify(pt, &v.ty, x.span);
+            let consumed = v.summary.is_none() && self.moves_value(&v.ty);
             if v.summary.is_none() {
                 self.consume(&v, x.span);
             }
@@ -1418,7 +1487,12 @@ impl Lower<'_> {
                 held.extend(self.hold_operand(&v, later, x.span));
             } else {
                 arg_places.push(Vec::new());
-                if later || !v.refs.is_empty() {
+                // An argument that moves is on its way to the clause.
+                if consumed {
+                    if later {
+                        taken.extend(self.hold_moved(&v, "argument", x.span));
+                    }
+                } else if later || !v.refs.is_empty() {
                     held.extend(self.hold_operand(&v, later, x.span));
                 }
                 // A by-value argument that holds references, for example a closure,
@@ -1439,6 +1513,7 @@ impl Lower<'_> {
         }
         self.pend_uses.extend(held);
         let n = self.emit(span, &o.name, effects::in_signature(&ident));
+        self.take_held(&taken, n);
         self.perform_effect(n, &ident);
         let cap = self
             .handlers
@@ -1630,7 +1705,7 @@ impl Lower<'_> {
         }
         for &c in &sum.captures {
             self.facts.captures.push((t, c));
-            let refs = self.locals.iter().find(|l| l.var == c).map(|l| {
+            let refs = self.local_of(c).map(|l| &self.locals[l]).map(|l| {
                 let mut r = l.refs.clone();
                 if !l.ty.is_ref() {
                     r.extend(l.root);

@@ -286,9 +286,10 @@ pub struct EffectSig {
     /// Function parameters that the body can call more than once. The body always
     /// infers this part.
     pub repeats: BTreeSet<usize>,
-    /// By-value parameters of a type parameter that the body can drop: on some
-    /// path the value does not move. A caller that gives a linear value there
-    /// loses it (W0601). The body always infers this part.
+    /// Type parameters, by index in `FnSig::generics`, of the values that the
+    /// body can drop. On some path, a value of such a type goes out of scope or
+    /// gets a new value. A caller that gives a linear type there loses a value
+    /// (W0601). The body always infers this part.
     pub drops: BTreeSet<usize>,
 }
 

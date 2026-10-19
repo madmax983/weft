@@ -254,3 +254,60 @@ fn item_opt_reset(world: &World) {
     reset_opt(Some(world))
     print(first.hp)
 }
+
+// A by-value argument that holds references moves at the call. A new value of a
+// part, or of the whole local, replaces the references that the part held.
+fn take_refs(v: Vec<&u64>) {}
+fn moved_refs() {
+    let x = 1
+    let v = [&x]
+    take_refs(v)
+}
+fn reassign_part(a: &World, b: &World) / mut(a.entities) {
+    let w = Wrap { x: &b.entities[0] }
+    w.x = &a.entities[0]
+    w.x = &b.entities[0]
+    a.entities.clear()
+    print(w.x.hp)
+}
+fn reassign_whole(a: &World, b: &World) / mut(a.entities) {
+    let w = Wrap { x: &b.entities[0] }
+    w.x = &a.entities[0]
+    w = Wrap { x: &b.entities[0] }
+    a.entities.clear()
+    print(w.x.hp)
+}
+fn branch_keeps_part(a: &World, b: &World, c: bool) / mut(b.entities) {
+    let w = Wrap { x: &b.entities[0] }
+    w.x = &b.entities[0]
+    if c { w.x = &a.entities[0] }
+    b.entities.clear()
+    print(w.x.hp)   //~ W0301
+}
+fn loop_keeps_part(a: &World, b: &World) / mut(a.entities) {
+    let w = Wrap { x: &b.entities[0] }
+    for i in 0..3 {
+        print(w.x.hp)   //~ W0301
+        w.x = &a.entities[0]
+        a.entities.clear()
+    }
+}
+fn break_keeps_part(a: &World, b: &World, c: bool) / mut(a.entities) {
+    let w = Wrap { x: &b.entities[0] }
+    loop {
+        w.x = &a.entities[0]
+        if c { break }
+        w.x = &b.entities[0]
+    }
+    a.entities.clear()
+    print(w.x.hp)   //~ W0301
+}
+fn loop_replaces_part(a: &World, b: &World, n: u64) / mut(a.entities) {
+    let w = Wrap { x: &b.entities[0] }
+    for i in 0..n {
+        w.x = &a.entities[0]
+        w.x = &b.entities[0]
+    }
+    a.entities.clear()
+    print(w.x.hp)
+}

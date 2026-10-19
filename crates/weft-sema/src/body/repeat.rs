@@ -9,7 +9,7 @@
 use std::collections::BTreeSet;
 
 use super::fnval::{Callee, FnInfo};
-use super::{FnId, Lower, NodeId, Prop, Val};
+use super::{FnId, Lower, NodeId, Val};
 
 impl Lower<'_> {
     /// Records a call of function parameter `p` of the body at summary index `d`.
@@ -75,9 +75,9 @@ impl Lower<'_> {
     /// A callee gets function value `v` at node `n` and can call it. A closure that
     /// runs only once moves there, because the callee can call it. If the callee
     /// can call it more than once, the second call is a use after that move
-    /// (W0502). A callee can also drop the closure without a call: a linear
-    /// closure goes out of scope at `n` (W0601), unless `exactly_once` says that
-    /// the callee calls it once on every path.
+    /// (W0502). A callee can also drop the closure without a call. So a linear
+    /// closure goes out of scope at `n` (W0601). `exactly_once` says that the
+    /// callee calls it once on every path: then it does not.
     pub(super) fn give_fn(&mut self, n: NodeId, v: &Val, repeats: bool, exactly_once: bool) {
         let (Some(var), Some(s)) = (v.var, self.fn_info(v).summary) else {
             return;
@@ -85,7 +85,7 @@ impl Lower<'_> {
         if self.cur.is_none() || !self.closure_is_once(s) {
             return;
         }
-        if !exactly_once && self.closure_has(s, Prop::Linear, &mut Vec::new()) {
+        if !exactly_once && self.closure_linear(s) {
             self.facts.scope_end.push((var, n));
         }
         self.move_var(var, n);

@@ -12,6 +12,18 @@ use super::{CapId, FnId, FnInfo, Lower, NodeId, PlaceId, RootKind, Span, Summary
 /// The bit that marks a capability as `resumed_cap`.
 const RESUMED: u32 = 1 << 31;
 
+/// The mark of a value that holds a closure that refers to a nonportable value.
+/// The mark goes where the capabilities of the value go, also into a field of
+/// type `fn()` or a `Vec<fn()>`. The local that holds it is nonportable.
+pub(super) const NONPORTABLE: CapId = CapId(1 << 30);
+
+/// The mark of a value that holds a closure that is not `many`. The local that
+/// holds it is not `many` either (W0503).
+pub(super) const NOT_MANY: CapId = CapId(1 << 29);
+
+/// The bits of the marks: a capability with one of them is not a handler.
+const MARKS: u32 = RESUMED | NONPORTABLE.0 | NOT_MANY.0;
+
 /// Returns the mark of the values that a `resume` of the handler behind `cap` gives
 /// to the handled computation. An operation result carries the mark, and
 /// `Lower::expand_caps` replaces it with the capabilities of those values when the
@@ -74,10 +86,11 @@ impl Lower<'_> {
     pub(super) fn val_caps(&self, v: &Val) -> BTreeSet<CapId> {
         let mut out = v.caps.clone();
         if let Some(s) = self.fn_info(v).summary {
+            self.mode_marks(s, &mut out);
             out.extend(self.closures[s].performs.iter().copied());
             // A closure can call or return what it captures.
             for &c in &self.closures[s].captures {
-                if let Some(l) = self.locals.iter().position(|l| l.var == c) {
+                if let Some(l) = self.local_of(c) {
                     out.extend(self.locals[l].caps.iter().copied());
                 }
             }
@@ -95,12 +108,13 @@ impl Lower<'_> {
     }
 
     /// Adds the capabilities of the closures in type `t`. Only an inferred type
-    /// names a closure, so the walk goes through the type arguments and not
-    /// through the declared field types: it is finite for a recursive type too.
+    /// names a closure. So the walk goes through the type arguments, not through
+    /// the declared field types. It is finite for a recursive type too.
     fn ty_caps(&self, t: &Ty, out: &mut BTreeSet<CapId>) {
         match self.inf.shallow(t) {
             Ty::Fn(f) => {
                 if let Some(s) = f.summary {
+                    self.mode_marks(s, out);
                     out.extend(self.closures[s].performs.iter().copied());
                 }
             }
@@ -114,9 +128,31 @@ impl Lower<'_> {
         }
     }
 
-    /// Returns true if `c` is the capability of a handler, not a `resumed_cap` mark.
+    /// Adds the marks of the modes of closure `s`: `NONPORTABLE` and `NOT_MANY`.
+    fn mode_marks(&self, s: usize, out: &mut BTreeSet<CapId>) {
+        if self.closure_has(s, super::Prop::Nonportable, &mut self.has()) {
+            out.insert(NONPORTABLE);
+        }
+        if self.closure_not_many(s) {
+            out.insert(NOT_MANY);
+        }
+    }
+
+    /// Gives the variable of local `l` the modes of the marks in its capabilities.
+    pub(super) fn mark_modes(&mut self, l: usize) {
+        let (np, nm) = (
+            self.locals[l].caps.contains(&NONPORTABLE),
+            self.locals[l].caps.contains(&NOT_MANY),
+        );
+        let v = &mut self.facts.vars[self.locals[l].var.index()];
+        v.nonportable |= np;
+        v.once |= nm;
+    }
+
+    /// Returns true if `c` is the capability of a handler, not a mark such as
+    /// `resumed_cap`.
     pub(super) const fn is_cap(c: CapId) -> bool {
-        c.0 & RESUMED == 0
+        c.0 & MARKS == 0
     }
 
     /// Returns `caps` with the capabilities that each `resumed_cap` mark in it stands for.
@@ -181,7 +217,10 @@ impl Lower<'_> {
         let mut stored = into.is_empty();
         for &p in into {
             match self.place_local(p) {
-                Some(l) => self.locals[l].caps.extend(caps.iter().copied()),
+                Some(l) => {
+                    self.locals[l].caps.extend(caps.iter().copied());
+                    self.mark_modes(l);
+                }
                 None => stored = true,
             }
         }
@@ -200,7 +239,8 @@ impl Lower<'_> {
         if kind != RootKind::Local {
             return None;
         }
-        self.locals.iter().position(|l| l.root == Some(root))
+        self.root_owner(self.facts.place(root).root)
+            .filter(|&l| self.locals[l].root == Some(root))
     }
 
     /// Records that `v` goes to code that runs where only the first `live` handlers

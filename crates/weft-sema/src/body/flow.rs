@@ -18,16 +18,12 @@ impl Lower<'_> {
         let mut out = Vec::new();
         for &p in ps {
             let root = self.facts.place(p).root;
-            let owner = self
-                .locals
-                .iter()
-                .position(|l| l.root.is_some_and(|r| self.facts.place(r).root == root));
-            match owner {
+            match self.root_owner(root) {
                 // Reading the references uses the local that holds them.
                 Some(l) => {
                     out.extend(self.locals[l].refs.iter().copied());
-                    for (_, _, ps) in self.part_holders.iter().filter(|(o, ..)| *o == l) {
-                        out.extend(ps.iter().copied());
+                    for h in self.part_holders.iter().filter(|h| h.local == l) {
+                        out.extend(h.refs.iter().copied());
                     }
                     self.use_local(l);
                 }
@@ -93,6 +89,18 @@ pub(super) fn mentions_param(t: &Ty) -> bool {
         Ty::Ref(x) | Ty::Slice(x) | Ty::Array(x, _) => mentions_param(x),
         Ty::Cont(a, b) => mentions_param(a) || mentions_param(b),
         Ty::Fn(f) => f.params.iter().any(mentions_param) || mentions_param(&f.ret),
+        _ => false,
+    }
+}
+
+/// Returns true if type `t` names type parameter `j`.
+pub(super) fn mentions(t: &Ty, j: u32) -> bool {
+    match t {
+        Ty::Param(i) => *i == j,
+        Ty::Tuple(ts) | Ty::Adt(_, ts) => ts.iter().any(|x| mentions(x, j)),
+        Ty::Ref(x) | Ty::Slice(x) | Ty::Array(x, _) => mentions(x, j),
+        Ty::Cont(a, b) => mentions(a, j) || mentions(b, j),
+        Ty::Fn(f) => f.params.iter().any(|x| mentions(x, j)) || mentions(&f.ret, j),
         _ => false,
     }
 }

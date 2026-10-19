@@ -87,3 +87,61 @@ fn method_after_set() {
     f.cur = &f.buf[0]
     let x = f.peek()
 }
+
+// A value that no place held before is built in place. So a call result, a
+// by-value parameter and a part of a literal have no value in a place field.
+fn mk() -> Frame { Frame { buf: [1, 2, 3, 4] } }
+fn from_call() {
+    let f = mk()
+    print(f.cur)   //~ W0304
+}
+fn from_call_set() {
+    let f = mk()
+    f.cur = &f.buf[0]
+    print(f.cur)
+}
+fn nested_literal() {
+    let o = Outer { f: Frame { buf: [1, 2, 3, 4] }, n: 1 }
+    print(o.f.cur)   //~ W0304
+}
+fn tuple_literal() {
+    let t = (Frame { buf: [1, 2, 3, 4] }, 1)
+    print(t.0.cur)   //~ W0304
+}
+fn param_frame(f: Frame) {
+    print(f.cur)   //~ W0304
+}
+fn param_frame_set(f: Frame) {
+    f.cur = &f.buf[1]
+    print(f.cur)
+}
+
+// A closure that reads a place field reads it where the closure is made.
+fn closure_reads_unset() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    let c = || print(f.cur)   //~ W0304
+    c()
+}
+fn closure_reads_set() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[0]
+    let c = || print(f.cur)
+    c()
+}
+fn closure_reads_buf() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    let c = || print(f.buf[0])
+    c()
+}
+
+// A branch value moves into the value of the `if`.
+fn branch_moves(c: bool) {
+    let a = Frame { buf: [1, 2, 3, 4] }
+    let x = if c { a } else { Frame { buf: [5, 6, 7, 8] } }   //~ W0604
+}
+// `Box.new` and `Rc.new` build their argument in place on the heap.
+fn boxed_in_place() {
+    let b = Box.new(Frame { buf: [1, 2, 3, 4] })
+    b.cur = &b.buf[0]
+    print(b.cur)
+}

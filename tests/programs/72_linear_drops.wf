@@ -1,6 +1,5 @@
-// A linear value cannot go away silently: not in a pattern `_`, not in a call
-// that only reads it, not under a new value of its place, and not in a place
-// whose type is not linear.
+// A linear value cannot go away silently. A pattern `_`, a call that only reads
+// it, a new value of its place and a place whose type is not linear drop it.
 
 linear struct Tx { id: u64 }
     on abort = rollback
@@ -177,4 +176,131 @@ fn borrow_temp() {
 }
 fn compared() -> bool {
     begin() == begin()   //~ W0601
+}
+
+// A generic body treats a value of a type parameter as linear where a value can
+// go away. The type parameters that it can drop are in its signature (`drops`).
+struct Wrap<T> { x: T }
+fn wrap_drop<T>(x: T) { let o = Some(x) }
+fn tuple_drop<T>(x: T) { let p = (x, 1) }
+fn closure_drop<T>(x: T) { let c = || { let y = x } }
+fn local_drop<T>(x: T) { let y = x }
+fn vec_drop<T>(x: T) { let v = Vec.new()
+ v.push(x) }
+fn overwrite<T>(x: T, y: T) -> T { let z = x
+ z = y
+ z }
+fn put<T>(w: &Wrap<T>, y: T) / mut(w.x) { w.x = y }
+fn holder_drops() {
+    wrap_drop(begin())   //~ W0601
+    tuple_drop(begin())   //~ W0601
+    closure_drop(begin())   //~ W0601
+    local_drop(begin())   //~ W0601
+    vec_drop(begin())   //~ W0601
+}
+fn overwrite_drops() {
+    let t = overwrite(begin(), begin())   //~ W0601
+    rollback(t)
+}
+fn put_drops() {
+    let w = Wrap { x: begin() }
+    put(&w, begin())   //~ W0601
+    let Wrap(t) = w
+    rollback(t)
+}
+fn plain_through_generics() {
+    wrap_drop(1)
+    local_drop(2)
+    let n = overwrite(1, 2)
+}
+
+// A generic body that consumes the value in each branch drops nothing.
+fn opt_take<T>(o: Option<T>, f: fn(T)) {
+    match o { Some(x) => f(x), None => {} }
+}
+fn keep_branch<T>(x: T, c: bool) -> T { if c { x } else { x } }
+fn keep_match<T>(x: T, n: u64) -> T { match n { 0 => x, _ => x } }
+fn generic_consumes() {
+    opt_take(Some(begin()), rollback)
+    rollback(keep_branch(begin(), true))
+    rollback(keep_match(begin(), 1))
+}
+
+// The flags of a value come from the type that the whole body infers.
+fn late_wild() {
+    let v = Vec.new()
+    let _ = v.pop()   //~ W0601
+    v.push(begin())
+    match v.pop() { Some(t) => rollback(t), None => {} }
+}   //~ W0601
+fn untyped_param() {
+    let f = |y| { let z = y
+ rollback(z) }
+    f(begin())
+}
+fn untyped_param_result() {
+    let f = |y| { let z = y
+ z }
+    rollback(f(begin()))
+}
+
+// A value of a branch moves into the value of the `if` or the `match`.
+fn branch_value(c: bool) {
+    let a = begin()
+    let x = if c { a } else { rollback(a)
+ begin() }
+    rollback(x)
+}
+fn branch_value_lost(c: bool) {
+    let a = begin()
+    let b = begin()
+    let x = if c { a } else { b }
+    rollback(x)
+}   //~ W0601 W0601
+fn arm_value(n: u64) {
+    let a = begin()
+    let x = match n { 0 => a, _ => { rollback(a)
+ begin() } }
+    rollback(x)
+}
+fn arm_value_lost(n: u64) {
+    let a = begin()
+    let x = match n { 0 => a, _ => begin() }
+    rollback(x)
+}   //~ W0601
+
+// A linear operand is on its way while the later operands run: an abort there
+// loses it unless its type has `on abort`.
+linear struct Tok { id: u64 }
+fn spend(t: Tok) { let Tok(i) = t }
+fn mint() -> Tok { Tok { id: 1 } }
+fn risky_tok() -> Tok / fail { fail("no")
+ mint() }
+fn spend_pair(a: Tok, b: Tok) { spend(a)
+ spend(b) }
+struct Two { a: Tok, b: Tok }
+fn arg_across_abort() / fail {
+    spend_pair(mint(), risky_tok())   //~ W0602
+}
+fn part_across_abort() / fail {
+    let p = (mint(), risky_tok())   //~ W0602
+    let (a, b) = p
+    spend(a)
+    spend(b)
+}
+fn field_across_abort() / fail {
+    let p = Two { a: mint(), b: risky_tok() }   //~ W0602
+    let Two(a, b) = p
+    spend(a)
+    spend(b)
+}
+fn risky_tx() -> Tx / fail { fail("no")
+ begin() }
+fn pair(a: Tx, b: Tx) { rollback(a)
+ rollback(b) }
+fn guarded_across_abort() / fail {
+    pair(begin(), risky_tx())
+}
+fn abort_first() / fail {
+    spend_pair(risky_tok(), mint())
 }

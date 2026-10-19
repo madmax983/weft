@@ -10,9 +10,10 @@ use std::cell::Cell;
 
 use super::{AdtKind, Diagnostic, Lit, Lower, Pattern, Ty};
 
-/// The most matrix steps that one `match` can take. A larger check stops and
-/// reports nothing, so that a large match cannot take a long time.
-const BUDGET: usize = 20_000;
+/// The most matrix steps that one `match` can take. A larger check stops, so
+/// that a large match cannot take a long time. It then reports W0120 too: the
+/// check cannot show that the arms cover each value.
+const BUDGET: usize = if cfg!(test) { 500 } else { 20_000 };
 
 /// One row of the matrix: a pattern for each column. `None` matches anything.
 type Row<'a> = Vec<Option<&'a Pattern>>;
@@ -22,15 +23,18 @@ impl Lower<'_> {
     pub(super) fn check_exhaustive(&mut self, pats: &[&Pattern], ty: &Ty, span: super::Span) {
         let rows: Vec<Row<'_>> = pats.iter().map(|&p| vec![Some(p)]).collect();
         let budget = Cell::new(BUDGET);
-        if !self.covers(&rows, std::slice::from_ref(ty), &budget) && budget.get() > 0 {
+        if !self.covers(&rows, std::slice::from_ref(ty), &budget) {
             let shown = self.show(&self.deref_ty(ty));
-            self.diags.push(
-                Diagnostic::error(
-                    "W0120",
-                    format!("this `match` does not cover every value of `{shown}`"),
-                    span,
+            let msg = if budget.get() == 0 {
+                format!(
+                    "this `match` is too large to check that it covers every value of `{shown}`"
                 )
-                .note("add an arm for each missing value, or an arm `_ => ...`"),
+            } else {
+                format!("this `match` does not cover every value of `{shown}`")
+            };
+            self.diags.push(
+                Diagnostic::error("W0120", msg, span)
+                    .note("add an arm for each missing value, or an arm `_ => ...`"),
             );
         }
     }
@@ -39,11 +43,15 @@ impl Lower<'_> {
     fn covers(&self, rows: &[Row<'_>], tys: &[Ty], budget: &Cell<usize>) -> bool {
         let left = budget.get();
         if left == 0 {
-            return true;
+            return false;
         }
         budget.set(left - 1);
+        // A row that matches anything in each column covers each value.
+        if rows.iter().any(|r| r.iter().all(|p| is_wild(*p))) {
+            return true;
+        }
         let Some((first, rest)) = tys.split_first() else {
-            return !rows.is_empty();
+            return false;
         };
         let t = self.inf.deep(&self.deref_ty(first));
         // Split by constructors only if a row names one: each split then uses up
@@ -108,7 +116,7 @@ impl Lower<'_> {
         let rows: Vec<Row<'_>> = rows
             .iter()
             .filter(|r| match r.first() {
-                Some(None | Some(Pattern::Wild(_) | Pattern::Bind(_))) => true,
+                Some(p) if is_wild(*p) => true,
                 Some(Some(Pattern::Lit(Lit::Unit, _))) => unit,
                 _ => false,
             })
@@ -117,9 +125,9 @@ impl Lower<'_> {
         self.covers(&rows, rest, budget)
     }
 
-    /// The rows for one constructor with `arity` parts: a row that matches anything
-    /// in the first column matches anything in each part, and `parts` gives the
-    /// parts of a row whose first pattern is this constructor.
+    /// The rows for one constructor with `arity` parts. A row that matches anything
+    /// in the first column matches anything in each part. `parts` gives the parts
+    /// of a row whose first pattern is this constructor.
     fn specialize<'a>(
         rows: &[Row<'a>],
         arity: usize,
@@ -128,12 +136,12 @@ impl Lower<'_> {
         let mut out = Vec::new();
         for r in rows {
             let head = match r.first() {
-                Some(None | Some(Pattern::Wild(_) | Pattern::Bind(_))) => vec![None; arity],
-                Some(Some(p)) => match parts(p) {
+                None => continue,
+                Some(p) if is_wild(*p) => vec![None; arity],
+                Some(p) => match p.and_then(&parts) {
                     Some(ps) => ps,
                     None => continue,
                 },
-                None => continue,
             };
             let mut row = head;
             row.extend(r[1..].iter().copied());
@@ -141,4 +149,9 @@ impl Lower<'_> {
         }
         out
     }
+}
+
+/// Returns true if a cell of the matrix matches anything.
+const fn is_wild(p: Option<&Pattern>) -> bool {
+    matches!(p, None | Some(Pattern::Wild(_) | Pattern::Bind(_)))
 }

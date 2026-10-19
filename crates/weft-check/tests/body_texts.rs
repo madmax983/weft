@@ -156,3 +156,61 @@ fn overwrites_of_a_live_linear_value_are_errors() {
         bridge::check_spec(&f).expect("spec evaluates")
     );
 }
+
+#[test]
+fn a_part_holder_is_named_by_its_part() {
+    let out = errors(
+        "struct Wrap<T> { x: T }\n\
+         fn f(v: &Vec<u64>) / mut(v) { let w = Wrap { x: &v[0] }\n w.x = &v[1]\n v.clear()\n print(w.x) }\n",
+    );
+    assert!(
+        out.contains("error[W0301]: the value in `w.x` used after it was invalidated"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_name_bound_twice_is_named() {
+    let out = errors("fn f() { let (a, a) = (1, 2) }\n");
+    assert!(
+        out.contains("error[W0107]: `a` is bound twice in this pattern"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_generic_drop_names_the_argument() {
+    let out = errors(
+        "linear struct Tx { id: u64 }\n\
+         fn drop_it<T>(a: T, n: u64) {}\n\
+         fn keep_first<T>(a: T, b: T) -> T { a }\n\
+         fn rollback(t: Tx) { let Tx(i) = t }\n\
+         fn f() { let t = Tx { id: 1 }\n drop_it(t, 1) }\n\
+         fn g() { let t = Tx { id: 1 }\n let u = Tx { id: 2 }\n rollback(keep_first(t, u)) }\n",
+    );
+    assert!(
+        out.contains("error[W0601]: linear value `t` is dropped without being consumed"),
+        "{out}"
+    );
+    // Two parameters of the type: the diagnostic cannot name one of them.
+    assert!(
+        out.contains("error[W0601]: linear value `temporary` is dropped without being consumed"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_linear_operand_across_an_abort_is_named() {
+    let out = errors(
+        "linear struct Tok { id: u64 }\n\
+         fn spend(a: Tok, b: Tok) { let Tok(i) = a\n let Tok(j) = b }\n\
+         fn risky() -> Tok / fail { fail(\"no\")\n Tok { id: 2 } }\n\
+         fn f() / fail { spend(Tok { id: 1 }, risky()) }\n",
+    );
+    assert!(
+        out.contains(
+            "error[W0602]: linear value `argument` is live across `risky`, which can abort"
+        ),
+        "{out}"
+    );
+}

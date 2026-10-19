@@ -1,7 +1,8 @@
-// A closure takes its modes from what it captures. It is linear if it moves a
-// linear value, `once` if it moves a value that is not plain data, nonportable
-// if it captures a nonportable value, and not `many` if it captures a `@ uniq`
-// reference or a `once` value.
+// A closure takes its modes from what it captures:
+// - linear if it moves a linear value;
+// - `once` if it moves a value that is not plain data;
+// - nonportable if it captures a nonportable value;
+// - not `many` if it captures a `@ uniq` reference or a `once` value.
 
 linear struct Tx { id: u64 }
     on abort = rollback
@@ -151,3 +152,155 @@ fn uniq_after_multi(v: &Vec<u64>) -> bool / mut(v), Choice {
     f()
     b
 }
+
+// A closure that goes to a parameter of a type parameter moves there, and it
+// keeps its modes. A `Vec<fn()>` is a place of plain data: an element read
+// copies the closure.
+fn gen_drop<T>(x: T) {}
+fn gen_keep<T>(x: T) -> T { x }
+fn linear_to_generic() {
+    let tx = begin()
+    gen_drop(|| rollback(tx))   //~ W0601
+}
+fn linear_through_generic() {
+    let tx = begin()
+    let f = || rollback(tx)
+    let g = gen_keep(f)
+    g()
+}
+fn linear_in_vec() {
+    let tx = begin()
+    let v: Vec<fn()> = Vec.new()
+    v.push(|| rollback(tx))   //~ W0601
+}
+fn once_in_vec() {
+    let b = Buf { items: Vec.new() }
+    let v: Vec<fn()> = Vec.new()
+    v.push(|| eat(b))   //~ W0502
+}
+fn once_pushed_then_called() {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    let v = Vec.new()
+    v.push(f)
+    f()   //~ W0502
+}
+fn many_in_vec() {
+    let n = 1
+    let v: Vec<fn()> = Vec.new()
+    v.push(|| print(n))
+    let g = v[0]
+    g()
+    g()
+}
+
+// The modes stay with a closure in a field, an element, a tuple or an `Option`.
+fn rc_in_field() / par {
+    let n = Rc.new(Node { v: 1 })
+    let c = Cb { f: || print(n.v) }
+    fork(|| { let g = c.f   //~ W0401
+ g() }, || print(2))
+}
+fn rc_assigned_to_field() / par {
+    let n = Rc.new(Node { v: 1 })
+    let c = Cb { f: || print(1) }
+    c.f = || print(n.v)
+    fork(|| { let g = c.f   //~ W0401
+ g() }, || print(2))
+}
+fn rc_in_vec() / par {
+    let n = Rc.new(Node { v: 1 })
+    let v: Vec<fn()> = Vec.new()
+    v.push(|| print(n.v))
+    fork(|| print(v.len()), || print(2))   //~ W0401
+}
+fn plain_in_field() / par {
+    let n = Node { v: 1 }
+    let c = Cb { f: || print(n.v) }
+    fork(|| { let g = c.f
+ g() }, || print(2))
+}
+fn uniq_in_tuple(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let (l, r) = v.split_mut(1)
+    let t = (|| needs_uniq(l), 1)
+    let b = choose()   //~ W0503
+    let (g, n) = t
+    g()
+    b
+}
+fn uniq_in_option(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let (l, r) = v.split_mut(1)
+    let o = Some(|| needs_uniq(l))
+    let b = choose()   //~ W0503
+    match o { Some(g) => g(), None => {} }
+    b
+}
+fn uniq_in_field(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let (l, r) = v.split_mut(1)
+    let c = Cb { f: || needs_uniq(l) }
+    let b = choose()   //~ W0503
+    let g = c.f
+    g()
+    b
+}
+fn uniq_in_field_after(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let b = choose()
+    let (l, r) = v.split_mut(1)
+    let c = Cb { f: || needs_uniq(l) }
+    let g = c.f
+    g()
+    b
+}
+
+// A reference to a nonportable value is nonportable.
+fn rc_by_ref() / par {
+    let n = Rc.new(Node { v: 1 })
+    let r = &n
+    fork(|| print(r.v), || print(2))   //~ W0401
+}
+fn rc_param_ref(r: &Rc<Node>) / par {
+    fork(|| print(r.v), || print(2))   //~ W0401
+}
+fn plain_by_ref() / par {
+    let n = Node { v: 1 }
+    let r = &n
+    fork(|| print(r.v), || print(2))
+}
+
+// The value of a closure body is its result: a linear value moves there.
+fn returns_linear() {
+    let f = || begin()
+    rollback(f())
+}
+fn returns_linear_local() {
+    let f = || { let t = begin()
+ t }
+    rollback(f())
+}
+fn result_dropped() {
+    let f = || begin()
+    f()   //~ W0601
+}
+
+// A closure that a callee returns can hold what an argument points to.
+fn mk_rc(n: &Rc<Node>) -> fn() { || print(n.v) }
+fn mk_node(n: &Node) -> fn() { || print(n.v) }
+fn mk_uniq(l: &[u64] @ uniq) -> fn() / mut(l) { || needs_uniq(l) }
+fn returned_rc() / par {
+    let n = Rc.new(Node { v: 1 })
+    let c = mk_rc(&n)
+    fork(|| c(), || print(2))   //~ W0401
+}
+fn returned_plain() / par {
+    let n = Node { v: 1 }
+    let c = mk_node(&n)
+    fork(|| c(), || print(2))
+}
+fn returned_uniq(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let (l, r) = v.split_mut(1)
+    let g = mk_uniq(l)
+    let b = choose()   //~ W0503
+    g()
+    b
+}
+

@@ -1,5 +1,5 @@
 // Checks of the body: a name given twice, an integer literal that does not fit
-// its type, a field of a literal, and the named arguments of a call.
+// its type, a field of a literal and the named arguments of a call.
 
 struct P { a: u64, b: u64 }
 fn twice_field() -> P {
@@ -46,4 +46,24 @@ fn named_args() {
     one(y: 1)   //~ W0103
     one(x: 1, x: 2)   //~ W0103
     one(x: 1)
+}
+
+fn twice_bound() {
+    let (a, a) = (1, 2)   //~ W0107
+}
+fn twice_in_arm(o: Option<(u64, u64)>) -> u64 {
+    match o {
+        Some((x, x)) => x,   //~ W0107
+        None => 0,
+    }
+}
+fn bound_once() {
+    let (a, b) = (1, 2)
+}
+
+// A chain of negations of a literal is one literal: `--128` is 128.
+fn negated_twice() {
+    let x: i8 = --128   //~ W0102
+    let y: u8 = --1
+    let z: i8 = ---128
 }
