@@ -1,0 +1,39 @@
+// An `in` place can name a parameter that comes later, also one with an `in`
+// place of its own. The lowering substitutes the places in the order of the
+// `in` places, so each parameter gets the places of its root (ADR 0003).
+struct E { hp: i32 }
+
+fn later(v: &Vec<E>, a: &E in b, b: &E in v[]) / mut(v) {
+    v.push(E { hp: 1 })
+    print(a.hp)   //~ W0301
+}
+
+fn earlier(v: &Vec<E>, b: &E in v[], a: &E in b) / mut(v) {
+    v.push(E { hp: 1 })
+    print(a.hp)   //~ W0301
+}
+
+// A chain in the reverse order of the parameters.
+fn chain(v: &Vec<E>, x0: &E in x1, x1: &E in x2, x2: &E in v[]) / mut(v) {
+    v.clear()
+    print(x0.hp)   //~ W0301
+}
+
+// A mutation of another place does not invalidate them.
+fn other(v: &Vec<E>, w: &Vec<E>, a: &E in b, b: &E in v[]) / mut(w) {
+    w.push(E { hp: 1 })
+    print(a.hp)
+}
+
+// A caller gives places that the `in` places allow.
+fn look(v: &Vec<E>, a: &E in b, b: &E in v[]) {
+    print(a.hp)
+}
+
+fn caller(v: &Vec<E>) {
+    look(v, &v[0], &v[1])
+}
+
+fn caller_bad(v: &Vec<E>, w: &Vec<E>) {
+    look(v, &w[0], &v[1])   //~ W0203
+}

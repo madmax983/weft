@@ -1078,6 +1078,21 @@ fn the_in_place_check_is_fast_on_a_long_chain() {
     let time = start.elapsed();
     assert_eq!(codes(&a), Vec::new());
     assert!(time < Duration::from_secs(2), "{time:?}");
+    // Each parameter points into the root of the last one. The `in` places
+    // are substituted in the order of the chain, not of the parameters.
+    let f = a.bodies.iter().find(|b| b.facts.name == "f").unwrap();
+    let last = f.facts.roots.iter().position(|r| r.name == format!("x{n}"));
+    for i in 0..=n {
+        let name = format!("x{i}");
+        let into: Vec<_> = f
+            .facts
+            .points_into
+            .iter()
+            .filter(|(v, _)| f.facts.var(*v).name == name)
+            .map(|&(_, p)| f.facts.place(p).root.index())
+            .collect();
+        assert_eq!(into, last.into_iter().collect::<Vec<_>>(), "{name}");
+    }
     // The chain closes into a cycle: one error, at its first parameter.
     let src = format!("fn f({}, x{n}: &u32 in x0) {{}}\n", params.join(", "));
     assert_eq!(
@@ -1403,4 +1418,20 @@ fn integer_variables_unify_in_linear_work() {
     let (a, b) = (small.work.type_steps, large.work.type_steps);
     assert!(b <= 2 * a + 1000, "1000 updates: {a}, 2000 updates: {b}");
     assert!(b <= 40 * 2000, "{b}");
+}
+
+#[test]
+fn an_in_place_can_name_a_later_parameter() {
+    // `a` names `b`, which comes after it and has an `in` place of its own.
+    // Both orders give `a` the places of `b`: `v[]` (QA3).
+    for params in [
+        "v: &Vec<E>, a: &E in b, b: &E in v[]",
+        "v: &Vec<E>, b: &E in v[], a: &E in b",
+    ] {
+        let src = format!("struct E {{ hp: i32 }}\nfn f({params}) {{ print(a.hp) }}\n");
+        let a = analyze_units(&src, &[]);
+        assert_eq!(codes(&a), Vec::new());
+        assert_eq!(points_of(&a, "a"), vec!["v[]".to_string()], "{params}");
+        assert_eq!(points_of(&a, "b"), vec!["v[]".to_string()], "{params}");
+    }
 }

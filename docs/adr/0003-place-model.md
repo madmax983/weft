@@ -19,7 +19,10 @@ Status: accepted. Date: 2026-10-18.
 - `&T in p` names the place of the reference up to stable steps below `p`. The body
   must return (or the caller must pass) a reference at `p` or below it through stable
   steps only (W0204, W0203). So a caller can treat the reference as a reference at `p`.
-  `&T in p..` names any place inside `p`.
+  `&T in p..` names any place inside `p`. An `in` place can name a parameter that comes
+  later, also one with an `in` place of its own. The lowering substitutes the `in`
+  places in the order of their roots, so each parameter gets the places of its root.
+  W0201 rejects a cycle.
 - A wildcard place (`p..`, the step `WILD`) stands for any place at or below `p`. It
   overlaps what `p` overlaps. A reference to it is invalid after any mutation or free
   that overlaps `p`, and a mutation of it invalidates every reference below `p`. The

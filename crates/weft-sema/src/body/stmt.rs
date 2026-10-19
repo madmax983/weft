@@ -47,9 +47,12 @@ impl Lower<'_> {
             };
             bases.push(base);
         }
-        for (i, p) in sig.params.iter().enumerate() {
-            if let Some(pl) = &p.place {
-                bases[i] = self.subst_place(pl, &bases.clone(), 0);
+        // The root parameter of an `in` place first: it can come later in the
+        // list, and it can have an `in` place itself.
+        for i in crate::program::in_place_order(&sig.params).0 {
+            if let Some(pl) = &sig.params[i].place {
+                let b = self.subst_place(pl, &bases, 0);
+                bases[i] = b;
             }
         }
         self.param_bases = bases.iter().flatten().copied().collect();

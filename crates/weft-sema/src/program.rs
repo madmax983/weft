@@ -1210,42 +1210,7 @@ impl Collector {
     /// W0201: the `in` place of a parameter cannot start at the parameter
     /// itself, and the `in` places cannot form a cycle.
     fn check_in_cycles(&mut self, params: &[ParamSig]) {
-        let root_of = |i: usize| match params.get(i).and_then(|p| p.place.as_ref()) {
-            Some(SigPlace {
-                root: SigRoot::Param(j),
-                ..
-            }) => Some(*j),
-            _ => None,
-        };
-        // Each parameter has at most one `in` place, so a walk has one way.
-        // A walk stops at a parameter that an earlier walk saw, so the time
-        // is linear. The states: 0 is new, 1 is on this walk, 2 is done.
-        let mut state = vec![0_u8; params.len()];
-        for start in 0..params.len() {
-            let mut path = Vec::new();
-            let mut at = Some(start);
-            while let Some(j) = at {
-                if state.get(j) != Some(&0) {
-                    break;
-                }
-                state[j] = 1;
-                path.push(j);
-                at = root_of(j);
-            }
-            // A walk that meets itself closes a cycle.
-            let cycle = match at {
-                Some(j) if state.get(j) == Some(&1) => path
-                    .iter()
-                    .position(|&k| k == j)
-                    .map(|p| path[p..].to_vec()),
-                _ => None,
-            };
-            for &k in &path {
-                state[k] = 2;
-            }
-            let Some(mut cycle) = cycle else {
-                continue;
-            };
+        for mut cycle in in_place_order(params).1 {
             // Report the cycle at its first parameter.
             if let Some(first) = (0..cycle.len()).min_by_key(|&i| cycle[i]) {
                 cycle.rotate_left(first);
@@ -1982,4 +1947,51 @@ fn held_place(prog: &Program, sp: &SigPlace, params: &[ParamSig]) -> Option<SigP
         steps: vec![SigStep::Held],
         text: sp.text.clone(),
     })
+}
+
+/// Returns the parameters in the order of their `in` places, and the cycles.
+///
+/// The root parameter of each `in` place comes before the parameter, so that
+/// its places are known when the lowering substitutes the place. The second
+/// part has the cycles of `in` places (W0201).
+///
+/// Each parameter has at most one `in` place, so a walk from a parameter has
+/// one way. A walk stops at a parameter that an earlier walk saw, so the time
+/// is linear.
+pub fn in_place_order(params: &[ParamSig]) -> (Vec<usize>, Vec<Vec<usize>>) {
+    let root_of = |i: usize| match params.get(i).and_then(|p| p.place.as_ref()) {
+        Some(SigPlace {
+            root: SigRoot::Param(j),
+            ..
+        }) => Some(*j),
+        _ => None,
+    };
+    // The states: 0 is new, 1 is on this walk, 2 is done.
+    let mut state = vec![0_u8; params.len()];
+    let mut order = Vec::with_capacity(params.len());
+    let mut cycles = Vec::new();
+    for start in 0..params.len() {
+        let mut path = Vec::new();
+        let mut at = Some(start);
+        while let Some(j) = at {
+            if state.get(j) != Some(&0) {
+                break;
+            }
+            state[j] = 1;
+            path.push(j);
+            at = root_of(j);
+        }
+        // A walk that meets itself closes a cycle.
+        if let Some(j) = at.filter(|&j| state.get(j) == Some(&1)) {
+            if let Some(p) = path.iter().position(|&k| k == j) {
+                cycles.push(path[p..].to_vec());
+            }
+        }
+        // The end of the walk is nearest to the root: it comes first.
+        for &k in path.iter().rev() {
+            state[k] = 2;
+            order.push(k);
+        }
+    }
+    (order, cycles)
 }
