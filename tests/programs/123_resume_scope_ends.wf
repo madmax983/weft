@@ -1,6 +1,7 @@
 // A `resume` runs the handled computation. A local of the handled body goes out
 // of scope there, and a move there frees what it moves. So a clause parameter
-// that points into such a local is not valid after the `resume` (ADR 0005).
+// that points into such a local is not valid after the `resume`. A closure or a
+// callee that runs the `resume` frees the same places (ADR 0005).
 struct Entity { hp: i32 }
 struct World { entities: Vec<Entity> }
 effect Peek { fn peek(e: &Entity) }
@@ -59,6 +60,77 @@ fn temporary_ends() {
     }
 }
 
+// The operation runs in a callee of the handled body. The parameter can point
+// into a local of the callee, which ends before the `resume` returns.
+fn peek_local() / Peek {
+    let local = Entity { hp: 1 }
+    peek(&local)
+}
+fn in_a_callee() {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)   //~ W0301
+        }
+    } in peek_local()
+}
+
+// A closure or a callee that runs a `resume` runs the handled computation
+// where it runs: the frees and the changes of the body happen there.
+fn call_it(f: fn()) { f() }
+fn resume_in_closure() {
+    handle Peek {
+        fn peek(e) {
+            let k = || resume(())
+            k()
+            print(e.hp)   //~ W0301
+        }
+    } in {
+        let local = Entity { hp: 1 }
+        peek(&local)
+    }
+}
+fn resume_in_callee() {
+    handle Peek {
+        fn peek(e) {
+            call_it(|| resume(()))
+            print(e.hp)   //~ W0301
+        }
+    } in {
+        let local = Entity { hp: 1 }
+        peek(&local)
+    }
+}
+effect Note { fn note(x: u64) }
+fn take_w(w: World) {}
+fn moved_in_closure() {
+    let world = mk()
+    handle Note {
+        fn note(x) {
+            let r = &world.entities[0]
+            let k = || resume(())
+            k()
+            print(r.hp)   //~ W0301
+        }
+    } in {
+        note(1)
+        take_w(world)
+    }
+}
+fn cleared_in_closure(world: &World) / mut(world.entities) {
+    handle Note {
+        fn note(x) {
+            let r = &world.entities[0]
+            let k = || resume(())
+            k()
+            print(r.hp)   //~ W0301
+        }
+    } in {
+        note(1)
+        world.entities.clear()
+    }
+}
+
 // The clause uses its parameter before the `resume`: the local is still there.
 fn used_before() {
     handle Peek {
@@ -85,7 +157,22 @@ fn outer_local() {
     }
 }
 
+// A callee that performs the operation with a place of the caller, and a
+// closure that resumes before the clause uses its parameter.
+fn peek_at(e: &Entity) / Peek { peek(e) }
+fn callee_used_before() {
+    let local = Entity { hp: 1 }
+    handle Peek {
+        fn peek(e) {
+            print(e.hp)
+            let k = || resume(())
+            k()
+        }
+    } in peek_at(&local)
+}
+
 fn main() {
     used_before()
     outer_local()
+    callee_used_before()
 }

@@ -872,6 +872,24 @@ fn a_closure_has_the_effects_of_the_closure_that_it_returns() {
 }
 
 #[test]
+fn a_signature_states_a_failure_of_the_runtime() {
+    let src = "fn quick() -> u64 { 5 }
+         fn opens() / async { scope { s => s.spawn(|| quick()) } }
+         fn calls() { opens() }
+         fn reads(f: FsCap) -> String / fs { f.read(\"x\") }
+         fn forks() / par { let (a, b) = fork(|| quick(), || quick()) }
+         fn makes() { let g = || opens() }
+         fn caught() { handle Fail { fn fail(m) { print(m) } } in { opens() } }
+         fn plain() -> u64 { quick() }";
+    for f in ["opens", "calls", "reads", "forks", "makes"] {
+        assert!(sig(src, f).effects.raises, "{f} raises");
+    }
+    // A local `Fail` handler gets the failure.
+    assert!(!sig(src, "caught").effects.raises);
+    assert!(!sig(src, "plain").effects.raises);
+}
+
+#[test]
 fn a_signature_states_what_a_body_gives_a_stored_value() {
     let src = "struct W { n: u64 } struct H { f: fn(&W) }
          fn dispatch(h: &H, w: &W) { let f = h.f; f(w) }

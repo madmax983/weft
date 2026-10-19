@@ -4,7 +4,8 @@
 // of the clause, not through a local outside the clause, not into a field or an
 // `Option`, and not to code that can keep it. It cannot run as a task or a fork
 // branch either (W0314): the rest of the handled body would run on another task,
-// away from the handlers of this one (ADR 0005).
+// away from the handlers of this one. A `resume` cannot give it to the handled
+// body (ADR 0005).
 effect Note { fn note(x: u64) }
 effect Ask { fn ask() -> u64 }
 effect Keep { fn keep(f: fn()) }
@@ -55,6 +56,45 @@ fn through_resume_value() {
         k = f
     }
     k()
+}
+// The body could keep the closure in the value of the `handle`, in a stored
+// place or in a task, so a `resume` cannot give it to the body.
+effect Give { multi fn give() -> fn() -> u64 }
+fn hold(v: &Vec<fn() -> u64>, f: fn() -> u64) / mut(v) { v.push(f) }
+fn resume_value_returned() -> (fn() -> u64, u64) {
+    handle Give {
+        fn give() {
+            let k = || { let (h, s) = resume(|| 7); h() + s }
+            resume(k)   //~ W0313
+        }
+    } in {
+        let f = give()
+        (f, 1)
+    }
+}
+fn resume_value_stored(v: &Vec<fn() -> u64>) / mut(v) {
+    handle Give {
+        fn give() {
+            let k = || { resume(|| 7); 0 }
+            resume(k)   //~ W0313
+        }
+    } in {
+        let f = give()
+        hold(v, f)
+    }
+}
+fn resume_value_in_task() / async {
+    let r = handle Give {
+        fn give() {
+            let k = || { let x = resume(|| 7); x }
+            resume(k)   //~ W0313
+        }
+    } in {
+        let f = give()
+        scope { s => s.spawn(|| print(f())); () }
+        5
+    }
+    print(r)
 }
 fn in_a_task() {
     handle Note { fn note(x) { print(x); resume(()) } } in {

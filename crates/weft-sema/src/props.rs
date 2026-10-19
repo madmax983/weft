@@ -349,9 +349,12 @@ fn eval_adt(prog: &Program, a: usize, table: &[[Holds; 8]]) -> [Holds; 8] {
                 def.linear || def.immovable || (ext.is_some() && !extern_copy(prog, a))
             }
             Prop::NoOnAbort => def.linear && !def.has_on_abort,
+            // A `!Move` value keeps its address, so a copy cannot stand for it,
+            // also inside a buffer.
             Prop::Resource => {
                 let buffer = def.module == PRELUDE && matches!(def.name.as_str(), "Vec" | "Box");
-                ext.is_some() && !extern_copy(prog, a) && !is_rc_handle(prog, a) && !buffer
+                def.immovable
+                    || (ext.is_some() && !extern_copy(prog, a) && !is_rc_handle(prog, a) && !buffer)
             }
             Prop::Refs | Prop::Fns => false,
         };
@@ -360,14 +363,15 @@ fn eval_adt(prog: &Program, a: usize, table: &[[Holds; 8]]) -> [Holds; 8] {
             continue;
         }
         for t in &parts {
-            h.join(&eval(t, p, table));
+            h.join(&eval(prog, t, p, table));
         }
     }
     out
 }
 
-/// Returns when property `p` holds for type term `t` of a definition, from the rows in `table`.
-fn eval(t: &Ty, p: Prop, table: &[[Holds; 8]]) -> Holds {
+/// Returns when property `p` holds for type term `t` of a definition of
+/// `prog`, from the rows in `table`.
+fn eval(prog: &Program, t: &Ty, p: Prop, table: &[[Holds; 8]]) -> Holds {
     let always = |b: bool| Holds {
         always: b,
         params: Vec::new(),
@@ -377,6 +381,18 @@ fn eval(t: &Ty, p: Prop, table: &[[Holds; 8]]) -> Holds {
             always: false,
             params: vec![*i as usize],
         },
+        // The copies of a resume share an `rc` object. A function value or a
+        // reference in it still points into the locals of the first run, so a
+        // handle to such an object is not `many`. If that depends on a type
+        // parameter, the property holds for every instance.
+        Ty::Adt(b, args) if p == Prop::Resource && is_rc_handle(prog, *b) => {
+            let Some(x) = args.first() else {
+                return Holds::default();
+            };
+            let mut h = eval(prog, x, Prop::Fns, table);
+            h.join(&eval(prog, x, Prop::Refs, table));
+            always(h.always || !h.params.is_empty())
+        }
         Ty::Adt(b, args) => {
             let Some(row) = table.get(*b) else {
                 return Holds::default();
@@ -385,7 +401,7 @@ fn eval(t: &Ty, p: Prop, table: &[[Holds; 8]]) -> Holds {
             let mut out = always(h.always);
             for &j in &h.params {
                 if let Some(x) = args.get(j) {
-                    out.join(&eval(x, p, table));
+                    out.join(&eval(prog, x, p, table));
                 }
             }
             out
@@ -393,20 +409,20 @@ fn eval(t: &Ty, p: Prop, table: &[[Holds; 8]]) -> Holds {
         Ty::Tuple(ts) => {
             let mut out = Holds::default();
             for x in ts {
-                out.join(&eval(x, p, table));
+                out.join(&eval(prog, x, p, table));
             }
             out
         }
         Ty::Array(..) if p == Prop::NotCopy => always(true),
-        Ty::Array(x, _) => eval(x, p, table),
+        Ty::Array(x, _) => eval(prog, x, p, table),
         Ty::Ref(x) => match p {
             Prop::Refs => always(true),
-            Prop::Fns => eval(x, p, table),
+            Prop::Fns => eval(prog, x, p, table),
             _ => Holds::default(),
         },
         Ty::Slice(x) => match p {
             Prop::Refs | Prop::NotCopy => always(true),
-            Prop::Fns => eval(x, p, table),
+            Prop::Fns => eval(prog, x, p, table),
             _ => Holds::default(),
         },
         Ty::Fn(_) => always(p == Prop::Fns),
@@ -418,7 +434,7 @@ fn eval(t: &Ty, p: Prop, table: &[[Holds; 8]]) -> Holds {
 
 /// Returns true if definition `a` is the prelude `Rc` or `Weak`: a handle to a
 /// shared `rc` object.
-fn is_rc_handle(prog: &Program, a: usize) -> bool {
+pub(crate) fn is_rc_handle(prog: &Program, a: usize) -> bool {
     let def = &prog.adts[a];
     def.module == PRELUDE && matches!(def.name.as_str(), "Rc" | "Weak")
 }
@@ -444,7 +460,11 @@ mod tests {
                    struct Frame: !Move { buf: [u8; 4] }\n\
                    struct Outer { f: Frame }\n\
                    struct Boxed { f: Box<Frame> }\n\
-                   struct Loop { next: Option<Box<Loop>>, t: Tok }\n";
+                   struct Loop { next: Option<Box<Loop>>, t: Tok }\n\
+                   struct Hook { f: fn() }\n\
+                   struct Hooks { h: Rc<Hook> }\n\
+                   struct Nums { n: Rc<u64> }\n\
+                   struct Gen<T> { r: Rc<T> }\n";
         let Ok(a) = analyze_source(src, Options::default()) else {
             unreachable!("the source parses")
         };
@@ -473,6 +493,13 @@ mod tests {
         assert!(get("Rc", Prop::Resource).params.is_empty());
         assert!(!get("Rc", Prop::Resource).always);
         assert!(!get("String", Prop::Resource).always);
+        // A `!Move` value keeps its address, also in a buffer.
+        assert!(get("Frame", Prop::Resource).always);
+        assert!(get("Boxed", Prop::Resource).always);
+        // The copies share an `rc` object, and a function value in it.
+        assert!(get("Hooks", Prop::Resource).always);
+        assert!(!get("Nums", Prop::Resource).always);
+        assert!(get("Gen", Prop::Resource).always);
     }
 
     #[test]

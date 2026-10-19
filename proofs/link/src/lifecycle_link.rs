@@ -23,7 +23,7 @@
 //! step that the model takes. Thus the relations hold along each sequence of
 //! these operations, as long as each exec operation is a model step.
 //!
-//! Two differences are proved, not hidden. Both are about `multi`
+//! Three differences are proved, not hidden. All are about `multi`
 //! continuations:
 //!
 //! * `drop_now` on a fresh `multi` continuation reports an abort. The model
@@ -37,6 +37,11 @@
 //!   gives each copy of a clause frame in a `multi` continuation a copy of its
 //!   record. So a copy that resumes after another copy returns resumes its own
 //!   record. Only a resume of the one record that the abort dropped fails.
+//! * When the clause of a continuation ends, the interpreter ends the exec
+//!   record (`end_linked`): it is `Dropped`, and an exec resume fails. The
+//!   model record of a `multi` continuation does not change, and the model
+//!   allows a resume. A closure that resumes cannot leave its clause (W0313,
+//!   W0314), so a checked program does not resume there.
 
 use vstd::prelude::*;
 use crate::lifecycle::{Continuation, ContState, ContError, Linear, LinState, LinError};
@@ -136,6 +141,23 @@ pub fn return_linked(k: &mut Continuation, Ghost(prog): Ghost<Prog>, Ghost(s): G
         !aborts ==> *final(k) == *old(k),
 {
     k.drop_now()
+}
+
+/// **End of a clause.** The interpreter ends the exec record after the drop
+/// of a clause return, of an unwind or of a frame that does not run. Then an
+/// exec resume fails. The model has no step here: its record does not change,
+/// and the records stay related. For a `multi` record the model can still
+/// allow a resume, so the exec is stricter (see the module comment).
+pub fn end_linked(k: &mut Continuation, Ghost(kt): Ghost<Kont>)
+    requires
+        old(k).state != ContState::Fresh,
+        kont_rel(*old(k), kt),
+    ensures
+        final(k).state == ContState::Dropped,
+        final(k).multi == old(k).multi,
+        kont_rel(*final(k), kt),
+{
+    k.end()
 }
 
 /// **Unwind of a clause frame.** The exec drop is the model step

@@ -336,6 +336,12 @@ pub struct EffectSig {
     /// that gives a linear type there holds a linear value across the call (W0602,
     /// W0503). The body always infers this part.
     pub holds: BTreeSet<usize>,
+    /// The body can raise a failure that the runtime makes, with no `fail` in
+    /// the row: a `join` of a failed task, a scope or a `fork` with a failed
+    /// child, or a read of a file. A closure that the body makes and a callee
+    /// count too. An `on abort` function cannot raise one (W0118). The body
+    /// always infers this part.
+    pub raises: bool,
 }
 
 impl EffectSig {
@@ -1234,6 +1240,10 @@ impl Collector {
             if self.prog.mods[m].is_std {
                 let owner_name = owner.map(|o| self.prog.adts[o].name.as_str());
                 effects.drops.extend(std_drops(owner_name, &f.name.name));
+                effects.raises = std_raises(owner_name, &f.name.name);
+            } else if f.is_extern {
+                // Foreign code can fail where the runtime runs it.
+                effects.raises = true;
             }
             let declared = f.effects.is_some() || f.is_extern;
             self.prog.fns[id].sig = FnSig {
@@ -2080,7 +2090,9 @@ pub fn check_on_abort_rows(prog: &Program, sigs: &[FnSig], no_runtime: bool) -> 
         let unit = prog.mods[fd.module].unit;
         let span = fd.decl.name.span;
         let e = &sig.effects;
-        let fails = e.named.contains("Fail");
+        // A failure that the runtime raises in the function (a `join`, a scope,
+        // a `fork`, a read) goes where a `fail` goes.
+        let fails = e.named.contains("Fail") || e.raises;
         let bad: Vec<String> = e
             .named
             .iter()
@@ -2100,6 +2112,9 @@ pub fn check_on_abort_rows(prog: &Program, sigs: &[FnSig], no_runtime: bool) -> 
                 span,
             )
             .note("handle the failure inside the function, or do the work after a normal path");
+            if !e.named.contains("Fail") {
+                d = d.note("a `join`, a scope, a `fork` and a read of a file can fail at run time");
+            }
             d.unit = unit;
             out.push(d);
         }
@@ -2119,6 +2134,22 @@ pub fn check_on_abort_rows(prog: &Program, sigs: &[FnSig], no_runtime: bool) -> 
                 span,
             )
             .note(note);
+            d.unit = unit;
+            out.push(d);
+        }
+        // A function value that the function does not know, for example from a
+        // field of its value, can do what its maker can: perform through a
+        // handler of the code that aborts, fail, or change a place outside.
+        if e.reaches {
+            let mut d = Diagnostic::error(
+                "W0118",
+                format!(
+                    "`on abort` function `{}` calls a function value that it does not know, but the unwinder runs it with the root handlers only",
+                    fd.name
+                ),
+                span,
+            )
+            .note("the value can perform through a handler of the code that aborts, fail, or change a place outside the value; call only known functions there");
             d.unit = unit;
             out.push(d);
         }
@@ -2146,6 +2177,17 @@ pub fn check_on_abort_rows(prog: &Program, sigs: &[FnSig], no_runtime: bool) -> 
         }
     }
     out
+}
+
+/// Returns true if a prelude function can raise a failure that the runtime
+/// makes (ADR 0007): `FsCap.read` when it cannot read the file, `Task.join` of
+/// a failed task, and `with_timeout` at its deadline. Sema lowers `join`
+/// itself, so its entry is for the signature only.
+fn std_raises(owner: Option<&str>, name: &str) -> bool {
+    matches!(
+        (owner, name),
+        (Some("FsCap"), "read") | (Some("Task"), "join") | (None, "with_timeout")
+    )
 }
 
 /// Returns the type parameters, by index in the signature, of the values that a

@@ -335,3 +335,26 @@ fn w0601_names_the_generic_item_value_and_the_type() {
         );
     }
 }
+
+#[test]
+fn w0601_at_a_generic_drop_of_a_closure_says_that_the_closure_moves_a_linear_value() {
+    let src = "linear struct Tx { id: u64 }\nfn rollback(tx: Tx) { let Tx(i) = tx }\nfn gen_drop<T>(x: T) {}\nfn closure_arg() {\n    let tx = Tx { id: 1 }\n    gen_drop(|| rollback(tx))\n}\n";
+    let d = diags(src, "W0601");
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(
+        d[0].message,
+        "a closure moves a linear value, but it can go out of scope without a call"
+    );
+}
+
+#[test]
+fn w0601_at_a_generic_drop_names_a_local_called_temporary() {
+    // The name of the local, not a callee text: no name is a marker.
+    let src = "linear struct Tx { id: u64 }\nfn sink<T>(x: T) {}\nfn named() {\n    let temporary = Tx { id: 1 }\n    sink(temporary)\n}\n";
+    let d = diags(src, "W0601");
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(
+        d[0].message,
+        "linear value `temporary` is dropped without being consumed"
+    );
+}

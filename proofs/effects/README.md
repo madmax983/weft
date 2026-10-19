@@ -313,8 +313,9 @@ The proof needs these rules. Some are not obvious from the language description.
    (W0504, ADR 0005).
 8. **`on abort` is atomic.** The model runs `on abort` in one step. The Weft checker
    lets an `on abort` function perform only the standard effects that the root
-   handlers serve, not `fail`, and change only the value that it gets (W0118, ADR
-   0007). A root handler serves the operation on the task itself: it does not capture
+   handlers serve, not `fail` and not a failure of the runtime, and change only the
+   value that it gets. It cannot call a function value that it does not know (W0118,
+   ADR 0007). A root handler serves the operation on the task itself: it does not capture
    frames into a handler of the program.
 
 ## Scope and limitations

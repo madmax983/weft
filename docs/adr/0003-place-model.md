@@ -103,6 +103,14 @@ Status: accepted. Date: 2026-10-18.
   nothing. Its operands run, for example the index `i`. The interpreter compiles it as
   a place, and the checker sees a plain use. So the value is still in the local after
   the statement, and a linear value still needs a consumer (W0601).
+- The tail of a block is its value, not a statement: a place there moves into the
+  value of the block, as a branch of an `if` or an arm of a `match` does. This holds
+  also when nothing uses the value of the block: a block statement `{ v }`, the body
+  of a loop, and the branch of an `if` with no `else`. There the value goes away at
+  the end of the block. So the checker sees the move and the drop: a later use is
+  W0302, a reference into the value is invalid (W0301), a linear value is dropped
+  (W0601), and a `!Move` value cannot move (W0604). A value that is plain data is
+  copied.
 - The locals and temporaries of a closure go out of scope at each node where the
   closure runs: a call of it, a call that takes it, a spawn. A handler clause runs at
   each operation that it handles. There it uses its captures, moves the captures that

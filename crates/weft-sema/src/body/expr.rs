@@ -6,7 +6,7 @@ use super::{
     NodeId, PathRef, Pattern, PlaceId, Rc, RootKind, Span, StrPart, Summary, Ty, UnOp, Val, VarId,
     VarKind,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use weft_facts::{Step, StepKind, TaskId};
 
@@ -929,6 +929,9 @@ impl Lower<'_> {
         // interpreter: a local that a branch names is moved there.
         if else_.is_some() {
             self.consume(&a, block_tail(then));
+        } else {
+            // With no `else`, nothing uses the value of the branch.
+            self.discard_block_value(&a, block_tail(then));
         }
         self.flush(block_tail(then));
         let a_end = self.cur;
@@ -1315,6 +1318,7 @@ impl Lower<'_> {
             span,
         });
         let entry = self.start(span, "closure entry");
+        let first_node = u32::try_from(entry.index()).unwrap_or(u32::MAX);
         self.open_stmt();
         let mut ptys = Vec::new();
         let mut param_roots = std::collections::BTreeMap::new();
@@ -1453,6 +1457,10 @@ impl Lower<'_> {
         }
         let id = self.closures.len();
         sum.members.insert(id);
+        sum.nodes = (
+            first_node,
+            u32::try_from(self.facts.nodes.len()).unwrap_or(u32::MAX),
+        );
         self.close_scope(si, super::fnval::Scope::Closure(id));
         self.closures.push(sum.clone());
         self.cur = saved;
@@ -2197,8 +2205,18 @@ impl Lower<'_> {
             .filter(|a| a.cap == h.cap)
             .copied()
             .collect();
+        // An operation that a callee performs can give a place in a local of
+        // the callee, which ends before the `resume` returns.
+        let callee = self.callee_ops.contains(&h.cap);
         for (oi, cs, own_resumes) in &h.clauses {
             self.resume_through_params(&all, *oi, cs, own_resumes, &h.changes, &h.frees);
+            if callee {
+                for &n in own_resumes {
+                    for &x in cs.param_roots.keys() {
+                        self.facts.releases_at.push((n, x));
+                    }
+                }
+            }
         }
         // A clause runs at each operation that it handles. There it uses its
         // captures, moves the moved ones, and its locals go out of scope.
@@ -2490,6 +2508,79 @@ impl Lower<'_> {
         }
     }
 
+    /// A node that runs a closure that calls `resume` runs the handled
+    /// computation there: a call of the closure, or a call that gets it. So it
+    /// changes, lends and frees what each `resume` in the closure does
+    /// (`mutates_at`, `lends_mut`, `releases_at`). A closure that calls such a
+    /// closure passes the facts on to each node where it runs.
+    pub(super) fn finish_resume_runs(&mut self) {
+        if self.resumes.is_empty() {
+            return;
+        }
+        // The resumes that each node runs, the resume nodes themselves first.
+        let mut runs: BTreeMap<NodeId, BTreeSet<NodeId>> = self
+            .resumes
+            .iter()
+            .map(|&(n, _)| (n, BTreeSet::from([n])))
+            .collect();
+        let ranges: Vec<(NodeId, Vec<(u32, u32)>)> = self
+            .applied
+            .iter()
+            .map(|a| {
+                let mut rs: Vec<(u32, u32)> = self.closures[a.summary]
+                    .members
+                    .iter()
+                    .filter_map(|&m| self.closures.get(m).map(|c| c.nodes))
+                    .collect();
+                rs.push(self.closures[a.summary].nodes);
+                (a.node, rs)
+            })
+            .collect();
+        loop {
+            let mut grew = false;
+            for (n, rs) in &ranges {
+                let inner: BTreeSet<NodeId> = runs
+                    .iter()
+                    .filter(|(m, _)| rs.iter().any(|&(a, b)| (a..b).contains(&m.0)))
+                    .flat_map(|(_, r)| r.iter().copied())
+                    .collect();
+                let set = runs.entry(*n).or_default();
+                let before = set.len();
+                set.extend(inner);
+                grew |= set.len() > before;
+            }
+            if !grew {
+                break;
+            }
+        }
+        let mut muts = Vec::new();
+        let mut lends = Vec::new();
+        let mut frees = Vec::new();
+        for (&n, rs) in &runs {
+            if rs.contains(&n) {
+                continue;
+            }
+            for &(m, q) in &self.facts.mutates_at {
+                if rs.contains(&m) {
+                    muts.push((n, q));
+                }
+            }
+            for &(m, q) in &self.facts.lends_mut {
+                if rs.contains(&m) {
+                    lends.push((n, q));
+                }
+            }
+            for &(m, q) in &self.facts.releases_at {
+                if rs.contains(&m) {
+                    frees.push((n, q));
+                }
+            }
+        }
+        self.facts.mutates_at.extend(muts);
+        self.facts.lends_mut.extend(lends);
+        self.facts.releases_at.extend(frees);
+    }
+
     /// Returns what a change of `m` does to parameter root `x`, where `x` stands
     /// for argument place `p`. With `exact` false, `x` can be anywhere inside
     /// `p`. The result has the place below `x` that the change mutates, and true
@@ -2645,6 +2736,8 @@ impl Lower<'_> {
         );
         self.perform_effect(n, "Async");
         self.abortive(n);
+        // A scope with a failed child raises the failure at its end.
+        self.raise_here();
         self.scopes.push((l, Vec::new()));
         // The tasks join before the locals of the body go out of scope.
         self.push_frame(None);

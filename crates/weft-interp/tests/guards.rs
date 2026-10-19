@@ -235,3 +235,25 @@ fn a_closure_takes_a_moved_capture_when_it_is_made() {
     .unwrap();
     assert_eq!(o.stdout, "1\n");
 }
+
+#[test]
+fn a_multi_continuation_cannot_resume_after_its_clause_ends() {
+    // The clause gives a closure that resumes to the body, which returns it.
+    // The clause has ended when `main` calls it (W0313 in the checker).
+    fault(
+        "effect Ask { multi fn ask() -> fn() -> u64 }
+         fn make() -> (fn() -> u64, u64) {
+             handle Ask {
+                 fn ask() {
+                     let k = || { let (h, s) = resume(|| 7); h() + s }
+                     resume(k)
+                 }
+             } in {
+                 let f = ask()
+                 (f, 1)
+             }
+         }
+         fn main() { let (g, s) = make()\n print(g()) }",
+        "resumed after it was dropped",
+    );
+}

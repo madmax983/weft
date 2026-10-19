@@ -233,6 +233,7 @@ of that operation. Each model step is the model function itself.
 | `perform_linked` | `Continuation::new` | `do_perform` adds a model record. The new exec record and that record satisfy `kont_rel`. |
 | `resume_linked` | `resume` | A success is the model step `step_resume`, and the records stay related. If the model state is `err_resume_used`, the exec resume fails and does not change the record. Before a drop, the exec succeeds exactly when the model allows the resume. After a drop, the exec resume fails. |
 | `return_linked` | `drop_now` at a clause return | The step is `step_return`, and the records stay related. For a `once` continuation, the exec aborts exactly when the model sends the captured frames to the unwinder. |
+| `end_linked` | `end` after a drop | The model record does not change. The exec record is `Dropped`, and the records stay related. |
 | `unwind_drop_linked` | `drop_now` in the unwinder | If the model drops (`holds_fresh`), the exec aborts and the step is `step_unwind_drop`. Else the records stay related. |
 | `acquire_linked` | `Linear::new` | `do_acquire` adds a model resource. The new exec record and that resource satisfy `lin_rel`. The interpreter gives the `on abort` flag of the type. |
 | `consume_linked` | `consume` | A success is the model step `step_consume`. If the model state is `err_consumed_twice`, the exec consume fails and does not change the record. |
@@ -267,6 +268,13 @@ The link states these differences in the theorems. It does not hide them.
   copy can return without a resume, and another copy can then resume its own
   record (`crates/weft-interp/tests/programs/multi_nested_drop.wf`). The
   exec resume still fails for the one record that the abort dropped.
+* When the clause of a continuation ends (a return, an unwind, or a drop of
+  frames that do not run), the interpreter ends the exec record with `end`
+  (`end_linked`). The record is then `Dropped`, and an exec resume fails. The
+  model has no step there: the model record does not change, and for a
+  `multi` record the model allows a resume. The checker keeps a closure that
+  resumes inside its clause (W0313, W0314), so a checked program does not
+  resume an ended record. The exec fault catches the rest.
 
 ## Examples (`src/examples.rs`)
 

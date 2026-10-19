@@ -41,7 +41,9 @@
 //   linear(V)                V holds a linear value.
 //   has_on_abort(V)          the type of V declares `on abort`.
 //   once_var(V)              V is not `many`: linear, uniq, a once closure, a continuation, or a
-//                            value that a `multi` resume cannot copy (a task, a scope, a resource).
+//                            value that a `multi` resume cannot copy (a task, a scope, a resource,
+//                            a `!Move` value in a buffer, an `Rc` to an object that can hold a
+//                            function value or a reference).
 //   immovable(V)             the type of V is `!Move`.
 //   may_abort(P)             an effect can abort the scope at node P.
 //   multi_at(P)              node P can resume a `multi` continuation more than once.
@@ -227,6 +229,14 @@ multi_at(P)          :- resumes_at(P, Cap), clause_multi(Cap).
 once_var(V)          :- immovable(V).
 
 live_across_multi(V, P) :- multi_at(P), live_out(V, P), once_var(V), !spared_at(V, P).
+
+// A reference into a `!Move` value uses the value: the copy of a resume gives
+// the value a new address, and the reference then points into the copy. A
+// reference argument of the node uses it there too.
+live_across_multi(V, P) :- multi_at(P), live_out(R, P), points_into(R, Path), owner(Rt, V),
+                           prefix(Rt, Path), immovable(V), !spared_at(V, P).
+live_across_multi(V, P) :- multi_at(P), call_arg(P, Path, I), owner(Rt, V), prefix(Rt, Path),
+                           immovable(V), !spared_at(V, P).
 
 // ---------------------------------------------------------------------------
 // W0702, W0703, W0402: effects in signatures

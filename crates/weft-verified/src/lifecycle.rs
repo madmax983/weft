@@ -9,9 +9,10 @@
 //! `proofs/link` includes this file (`proofs/link/src/lifecycle_link.rs`). It
 //! proves that each operation is a step of the continuation and resource
 //! records of the effects model, and that each operation fails where the
-//! model step is an error. Two differences are about `multi` continuations:
-//! `drop_now` aborts a fresh `multi` continuation, and a resume after that
-//! abort fails. The model does not abort it, and it allows the resume.
+//! model step is an error. Three differences are about `multi` continuations:
+//! `drop_now` aborts a fresh `multi` continuation, a resume after that abort
+//! fails, and a resume after `end` fails. The model does not abort it, and it
+//! allows the resume.
 //! `proofs/verify-all.sh` runs the link. Run `proofs/link/verify.sh` after a
 //! change to a spec in this file.
 
@@ -98,6 +99,17 @@ impl Continuation {
             },
             _ => false,
         }
+    }
+
+    /// Records the end of the clause of the continuation. The handler is done
+    /// with it: a later resume fails, also for a `multi` continuation. The
+    /// mode does not change.
+    pub const fn end(&mut self)
+        ensures
+            final(self).multi == old(self).multi,
+            final(self).state == ContState::Dropped,
+    {
+        self.state = ContState::Dropped;
     }
 }
 
@@ -222,6 +234,17 @@ mod tests {
         let mut k = Continuation::new(true);
         assert_eq!(k.resume(), Ok(()));
         assert_eq!(k.resume(), Ok(()));
+    }
+
+    #[test]
+    fn ended_multi_continuation_cannot_resume() {
+        let mut k = Continuation::new(true);
+        assert_eq!(k.resume(), Ok(()));
+        assert_eq!(k.resume(), Ok(()));
+        assert!(!k.drop_now());
+        k.end();
+        assert_eq!(k.resume(), Err(ContError::AlreadyDropped));
+        assert!(k.multi);
     }
 
     #[test]

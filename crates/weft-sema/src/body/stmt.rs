@@ -1,9 +1,9 @@
 //! Functions, blocks, statements and patterns.
 
 use super::{
-    ast, block_tail, effects, AssignOp, Block, EffectSig, ExprKind, FnId, Jump, LVal, LoopFrame,
-    Lower, Lowered, NodeId, Pattern, PlaceId, RootKind, SigPlace, SigRoot, SigStep, Span, StepKind,
-    Stmt, StmtKind, Ty, Val, VarId, VarKind,
+    ast, block_tail, effects, expr_tail, AssignOp, Block, EffectSig, ExprKind, FnId, Jump, LVal,
+    LoopFrame, Lower, Lowered, NodeId, Pattern, PlaceId, RootKind, SigPlace, SigRoot, SigStep,
+    Span, StepKind, Stmt, StmtKind, Ty, Val, VarId, VarKind,
 };
 use crate::props::Prop;
 use std::collections::{BTreeMap, BTreeSet};
@@ -163,6 +163,7 @@ impl Lower<'_> {
     }
 
     fn finish(mut self, mut eff: EffectSig) -> Lowered {
+        self.finish_resume_runs();
         self.finish_spared();
         self.check_int_lits();
         self.settle_moves();
@@ -300,6 +301,7 @@ impl Lower<'_> {
             reach_given: self.reach_sig(bases),
             reach_repeats: self.reach_repeats(),
             multi: self.unknown_multi,
+            raises: self.raises,
             tasks: sum.tasks.to_set(),
             fn_stores: sum.fn_stores.to_set(),
             op_effects: sum.op_effects.to_set(),
@@ -735,6 +737,28 @@ impl Lower<'_> {
         }
     }
 
+    /// Discards the value of a block that nothing uses: a block statement, a
+    /// loop body, or the branch of an `if` with no `else`. A tail that names a
+    /// place is a value, as in the interpreter: it moves out of the place, and
+    /// it goes away here (ADR 0003).
+    pub(super) fn discard_block_value(&mut self, v: &Val, span: Span) {
+        if v.place.is_none() {
+            self.drop_value(v, span);
+            return;
+        }
+        let t = self.inf.resolve(&v.ty);
+        if self.is_copy(&t) && !self.has_unknown(&t) {
+            return;
+        }
+        self.consume(v, span);
+        if self.may_be_linear(&t) {
+            let name = v
+                .local
+                .map_or_else(|| "temporary".to_string(), |l| self.locals[l].name.clone());
+            self.drop_linear(&name, &t, span);
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Statements
     // -----------------------------------------------------------------------
@@ -787,8 +811,11 @@ impl Lower<'_> {
             StmtKind::Expr(e) => {
                 let v = self.expr(e);
                 // A place of a local in statement position only names the
-                // place. It moves nothing and drops nothing (ADR 0003).
-                if !self.local_place(e) {
+                // place. It moves nothing and drops nothing (ADR 0003). The
+                // tail of a block is a value: it moves (`discard_block_value`).
+                if matches!(e.kind, ExprKind::Block(_)) {
+                    self.discard_block_value(&v, expr_tail(e));
+                } else if !self.local_place(e) {
                     self.drop_value(&v, e.span);
                 }
             }
@@ -899,7 +926,7 @@ impl Lower<'_> {
             jumps: self.jumps.len(),
         });
         let v = self.block(body);
-        self.drop_value(&v, body.span);
+        self.discard_block_value(&v, block_tail(body));
         self.flush(block_tail(body));
         self.loops.pop();
         if let Some(c) = self.cur {

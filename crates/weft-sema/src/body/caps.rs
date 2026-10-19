@@ -795,9 +795,9 @@ impl Lower<'_> {
     /// Reports W0313 if a closure that resumes the continuation of a clause
     /// (capability `kcap`) leaves the clause that started at `start`: as the
     /// value `v` of the clause, to a place or code that can keep it, or through
-    /// a local outside the `handle` (index below `outer`). A `resume` can give
-    /// the closure to the handled body, and the body can put it into such a
-    /// local too. The continuation lives only while its clause runs. A later
+    /// a local outside the `handle` (index below `outer`). A `resume` cannot
+    /// give the closure to the handled body (`cont_to_body`). The continuation
+    /// lives only while its clause runs. A later
     /// call would resume a continuation that the handler dropped. The
     /// diagnostic is at the clause `span`, or at the end of the clause body
     /// `body` for its value.

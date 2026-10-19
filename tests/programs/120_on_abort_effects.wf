@@ -2,8 +2,9 @@
 // can perform only standard effects that the root handlers serve. It cannot
 // fail: no handler takes the failure there. It cannot perform a user effect, and
 // it cannot change a place outside its value, such as an `rc` group: no node of
-// the code that aborts states the change (ADR 0007). The effects proof models
-// `on abort` as atomic; this rule mirrors it.
+// the code that aborts states the change. It cannot call a function value that
+// it does not know (ADR 0007). The effects proof models `on abort` as atomic;
+// this rule mirrors it.
 effect Ask { fn ask() -> u64 }
 effect Note { fn note(x: u64) }
 effect Stop { fn stop() }
@@ -47,6 +48,59 @@ fn undo_timeout(e: E) {   //~ W0118
     let x = with_timeout(10.ms) { i }
 }
 
+// A function value from the value can perform through a handler of the code
+// that aborts, fail, or change a place outside the value.
+linear struct I { f: fn() }
+    on abort = undo_field
+fn undo_field(i: I) {   //~ W0118
+    let I(f) = i
+    f()
+}
+
+linear struct J { fs: Vec<fn()> }
+    on abort = undo_elems
+fn undo_elems(j: J) {   //~ W0118
+    let J(fs) = j
+    let f = fs[0]
+    f()
+}
+
+// The runtime raises a failure at a read of a file, a `join` of a failed
+// task, a `fork` with a failed branch and the end of a scope with a failed
+// child. A failure there does not reach the handlers of the code that aborts.
+linear struct K { fs: FsCap }
+    on abort = undo_read
+fn undo_read(k: K) / fs {   //~ W0118
+    let K(fs) = k
+    print(fs.read("undo.txt"))
+}
+
+linear struct L { t: Task<u64> }
+    on abort = undo_join
+fn undo_join(l: L) / async {   //~ W0118
+    let L(t) = l
+    print(t.join())
+}
+
+fn quick() -> u64 { 5 }
+
+linear struct M { id: u64 }
+    on abort = undo_fork
+fn undo_fork(m: M) / par {   //~ W0118
+    let M(i) = m
+    let (a, b) = fork(|| quick(), || quick())
+}
+
+linear struct N { id: u64 }
+    on abort = undo_scope
+fn helper_scope() / async {
+    scope { s => s.spawn(|| quick()) }
+}
+fn undo_scope(n: N) {   //~ W0118
+    let N(i) = n
+    helper_scope()
+}
+
 // Standard effects that the root handlers serve.
 linear struct F { id: u64 }
     on abort = undo_clock
@@ -71,15 +125,39 @@ fn undo_local(h: H) {
     items.push(1)
 }
 
+// A local `Fail` handler gets a failure of the runtime.
+linear struct P { t: Task<u64> }
+    on abort = undo_caught
+fn undo_caught(p: P) / async {
+    let P(t) = p
+    handle Fail { fn fail(m) { print("caught {m}") } } in { print(t.join()) }
+}
+
+// A closure that the function makes is known.
+linear struct Q { id: u64 }
+    on abort = undo_known
+fn undo_known(q: Q) {
+    let Q(i) = q
+    let f = || print("known {i}")
+    f()
+}
+
 // The clean `on abort` functions run when `stop` aborts the body.
-fn clean_aborts() / Stop {
+fn clean_aborts() / Stop, async {
     let f = F { id: 5 }
     let g = G { id: 6 }
     let h = H { items: Vec.new() }
-    stop()
+    let q = Q { id: 7 }
+    scope { s =>
+        let p = P { t: s.spawn(|| quick()) }
+        stop()
+        let P(t) = p
+        print(t.join())
+    }
     let F(x6) = f
     let G(x7) = g
     let H(x8) = h
+    let Q(x9) = q
 }
 
 fn main() {

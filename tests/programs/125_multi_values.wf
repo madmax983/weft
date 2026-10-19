@@ -1,9 +1,12 @@
 // A `multi` resume copies the frames of the handled body. Owned cells (a `Vec`,
 // a `Box`) get copies, and `rc` objects are shared. A value that a copy cannot
-// keep is not `many`: a `!Move` value keeps its address, and a task handle, a
-// scope or a resource of an extern type that is not plain data cannot be copied.
-// So such a value cannot be live across an operation that can resume more than
-// once (W0503, ADR 0005 and ADR 0007).
+// keep is not `many`: a `!Move` value keeps its address (also in a `Box`, and
+// through a reference into it), and a task handle, a scope or a resource of an
+// extern type that is not plain data cannot be copied. An `Rc` to an object that
+// holds a function value or a reference is not `many` either: the copies share
+// the object, and it points into the locals of one run. So such a value cannot
+// be live across an operation that can resume more than once (W0503, ADR 0005
+// and ADR 0007).
 effect Choice { multi fn choose() -> bool }
 struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
 extern type Sock { nonportable }
@@ -33,6 +36,53 @@ fn resource() / Choice, blocking {
     close(s)
 }
 
+// A generic callee holds a temporary resource across the operation.
+fn hold_value<T>(x: T) / Choice {
+    let b = choose()
+    let y = x
+}
+fn resource_temporary() / Choice, blocking {
+    hold_value(open())   //~ W0503
+}
+
+// A copy of a `Box` copies the `!Move` value in it to a new address.
+fn boxed_immovable() -> u8 / Choice {
+    let f = Box.new(Frame { buf: [1, 2, 3, 4] })
+    let b = choose()   //~ W0503
+    f.buf[0]
+}
+
+// A reference into a `!Move` value uses the value: in the copy, it points into
+// the value at its new address.
+fn reference_into_immovable() -> u8 / Choice {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[2]
+    let r = &f.buf[1]
+    let b = choose()   //~ W0503
+    r + 0
+}
+fn hold_ref(x: &Frame) -> u8 / Choice {
+    let b = choose()
+    x.buf[0]
+}
+fn argument_into_immovable() -> u8 / Choice {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[2]
+    hold_ref(&f)   //~ W0503
+}
+
+// The copies share an `rc` object. A closure in it still points into the
+// locals of the first run.
+struct Hook { f: fn() }
+fn shared_closure() -> u64 / Choice {
+    let count = 0
+    let h = Rc.new(Hook { f: || count += 1 })
+    let b = choose()   //~ W0503
+    let g = h.f
+    g()
+    count
+}
+
 // Owned cells get copies, and `rc` objects are shared: these values are `many`.
 fn consume(v: Vec<u64>) -> usize { v.len() }
 fn affine() -> usize / Choice {
@@ -52,6 +102,16 @@ fn shared() -> u64 / Choice {
     let b = choose()
     r.n
 }
+// A closure in an owned cell is copied with the locals that it points into.
+fn owned_closure() -> u64 / Choice {
+    let count = 0
+    let hooks: Vec<fn()> = Vec.new()
+    hooks.push(|| count += 1)
+    let b = choose()
+    let g = hooks[0]
+    g()
+    count
+}
 // A `!Move` value made after the operation is not live across it.
 fn immovable_after() -> u8 / Choice {
     let b = choose()
@@ -68,6 +128,7 @@ fn main() {
         out.push(boxed())
         let n = shared()
         let m = immovable_after()
+        let k = owned_closure()
     }
     print(out.len())
 }

@@ -710,6 +710,9 @@ impl Lower<'_> {
             }
             abort = true;
         }
+        if sig.effects.raises {
+            self.raise_here();
+        }
         self.check_callee_tasks(f, span);
         // A task of the callee can run a function value that an argument holds.
         // The value can be in a field or a container, or at a parameter of a type
@@ -985,11 +988,13 @@ impl Lower<'_> {
     }
 
     /// Returns true if value `v` is not `many`. A copy of it would copy a value
-    /// that can be used only once, such as a `once` closure or a `@ uniq` value.
+    /// that can be used only once, such as a `once` closure or a `@ uniq` value,
+    /// or a value that a `multi` resume cannot copy, also a temporary one.
     fn val_not_many(&self, v: &super::Val) -> bool {
         v.uniq
             || matches!(self.inf.shallow(&v.ty), Ty::Cont(..))
             || v.var.is_some_and(|x| self.facts.var(x).once)
+            || self.ty_has_strict(&v.ty, crate::props::Prop::Resource)
             || v.summary.is_some_and(|s| self.closure_not_many(s))
             || self.val_caps(v).contains(&super::caps::NOT_MANY)
     }
@@ -1030,30 +1035,34 @@ impl Lower<'_> {
                 continue;
             }
             let (name, at) = self.generic_arg(sig, j, vals, span);
-            // An argument that the diagnostic cannot name: it names the callee.
-            if name == "temporary" {
-                let callee = callee.to_string();
-                self.drop_linear_as(&callee, VarKind::Dropped, &t, at);
-            } else {
-                self.drop_linear(&name, &t, at);
+            match name {
+                Some(name) => self.drop_linear(&name, &t, at),
+                // An argument that the diagnostic cannot name: it names the callee.
+                None => self.drop_linear_as(callee, VarKind::Dropped, &t, at),
             }
         }
     }
 
     /// Returns the name and the span of the argument that gives a value of type
     /// parameter `j` to a call. The diagnostic names the argument if only one
-    /// parameter is of the type.
-    fn generic_arg(&self, sig: &FnSig, j: usize, vals: &[ArgVal], span: Span) -> (String, Span) {
+    /// parameter is of the type. The name is `None` if no argument has one.
+    fn generic_arg(
+        &self,
+        sig: &FnSig,
+        j: usize,
+        vals: &[ArgVal],
+        span: Span,
+    ) -> (Option<String>, Span) {
         let param = u32::try_from(j).unwrap_or(u32::MAX);
         let args: Vec<usize> = (0..sig.params.len())
             .filter(|&i| super::flow::mentions(&sig.params[i].ty, param))
             .collect();
         match (args.as_slice(), args.first().and_then(|&i| vals.get(i))) {
             ([i], Some(av)) if sig.params[*i].ty == Ty::Param(param) => {
-                (self.val_name(&av.val), av.span)
+                (av.val.local.map(|l| self.locals[l].name.clone()), av.span)
             }
-            (_, Some(av)) => ("temporary".to_string(), av.span),
-            (_, None) => ("temporary".to_string(), span),
+            (_, Some(av)) => (None, av.span),
+            (_, None) => (None, span),
         }
     }
 
@@ -1089,6 +1098,7 @@ impl Lower<'_> {
                 continue;
             }
             let (name, at) = self.generic_arg(sig, j, vals, span);
+            let name = name.unwrap_or_else(|| "temporary".to_string());
             let mut info = self.var_info(&name, VarKind::Temp, at, &t, false);
             info.once |= once;
             let var = self.new_var(info, &t);
@@ -1852,7 +1862,14 @@ impl Lower<'_> {
                 self.escape_all(&v);
             }
             let caps = self.val_caps(&v);
-            self.resumed.entry(cap).or_default().extend(caps);
+            // A closure that resumes a continuation of a clause cannot go to the
+            // handled computation: the computation can keep it after the clause.
+            let conts: BTreeSet<CapId> = self.clause_conts.iter().map(|&(k, _)| k).collect();
+            if self.expand_caps(&caps).iter().any(|c| conts.contains(c)) {
+                self.cont_to_body(a.value.span);
+            } else {
+                self.resumed.entry(cap).or_default().extend(caps);
+            }
             if !v.refs.is_empty() {
                 self.resume_refs_pending.push((cap, v.refs.clone()));
             }
@@ -1882,6 +1899,21 @@ impl Lower<'_> {
             ty: ret,
             ..Val::default()
         }
+    }
+
+    /// W0313: a `resume` gives the handled computation a closure that resumes a
+    /// continuation of a clause. The computation can keep the closure after the
+    /// clause ends: in the value of the `handle`, in a stored place or in a
+    /// task. A later call would resume a continuation that the handler dropped
+    /// (ADR 0005).
+    fn cont_to_body(&mut self, span: Span) {
+        let d = weft_syntax::diag::Diagnostic::error(
+            "W0313",
+            "a `resume` gives the handled computation a closure that resumes a continuation",
+            span,
+        )
+        .note("the continuation lives only while its clause runs; call the closure in the clause instead");
+        self.diags.push(d);
     }
 
     /// W0504: a clause of `Fail.fail` resumes, or names its continuation. A
@@ -2615,6 +2647,8 @@ impl Lower<'_> {
             }
             self.perform_effect(n, "Async");
             self.abortive(n);
+            // A `join` of a failed task raises the failure.
+            self.raise_here();
             return Val {
                 ty: ret,
                 ..Val::default()
@@ -2699,6 +2733,8 @@ impl Lower<'_> {
         }
         self.perform_effect(n, "Par");
         self.abortive(n);
+        // A failed branch raises its failure at the `fork`.
+        self.raise_here();
         let all_unit = rets.iter().all(|r| matches!(self.inf.resolve(r), Ty::Unit));
         let ty = if all_unit { Ty::Unit } else { Ty::Tuple(rets) };
         Val {

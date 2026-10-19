@@ -14,7 +14,13 @@ Status: accepted. Date: 2026-10-18.
   handlers of the code that aborts), no user effect, and with no runtime none (W0118).
   It can change only the value that it gets: not an `rc` group, and not a place that a
   reference in the value points to (W0118). The node that aborts does not state such a
-  change. The effects proof models `on abort` as atomic: it cannot perform or fail.
+  change. It cannot raise a failure of the runtime either: a `join` of a failed task,
+  a scope or a `fork` with a failed child, and a read of a file can fail with no `fail`
+  in the row. The signature has a `raises` part for this. A callee and a closure that
+  the function makes count, but not a node that a `Fail` handler of the function
+  gets. It cannot call a function value that it does not know, for example one from
+  a field of its value: the maker of the value states what it does, not the function
+  (W0118). The effects proof models `on abort` as atomic: it cannot perform or fail.
   This rule mirrors that assumption. A standard effect that a root handler serves
   (`clock`, `log`) does not suspend the unwinder into a handler of the program.
 - `struct S: !Move` keeps its address. Moving a named value is an error (W0604). A
@@ -133,12 +139,19 @@ Status: accepted. Date: 2026-10-18.
   A linear value outside the body stays live. An operation of a local handler aborts
   only the values of its handled body, so W0602 spares a value outside the body there
   (`spared_at(V, P)`), and W0503 does too. This holds if no clause of the handler
-  performs through a handler outside its `handle` (ADR 0005).
+  performs through a handler outside its `handle`, and if the operation is not in a
+  closure or a clause inside the body (ADR 0005).
 - A `multi` resume copies the values of the handled body (ADR 0005). A value that a
   copy cannot keep is not `many`: a `!Move` value (`once_var(V) :- immovable(V)` in
   the spec), a task handle, a scope, and a value of an extern type that is not plain
-  data, also as a part of another value. A copy of a `Vec` or a `Box` copies its
-  buffer, and the copies share an `rc` object, so these do not count. Another owned
+  data, also as a part of another value. A `!Move` value in a `Box` or a `Vec` moves
+  with the copy of the buffer. A reference that is live across the node into a
+  `!Move` value, or a reference argument of the node into it, uses the value there
+  (`live_across_multi` in the spec): in the copy it points into the value at its new
+  address. A copy of a `Vec` or a `Box` copies its buffer, and the copies share an
+  `rc` object, so these do not count. A handle to an `rc` object that can hold a
+  function value or a reference counts: the object still points into the locals of
+  the run before. Another owned
   value is copied: this is the Phase 1 meaning of a `multi` resume. A native runtime
   pays for the copy at each resume, and the effects proof (E5) does not cover it
   (ADR 0005).

@@ -643,17 +643,59 @@ fn multi(
         return;
     }
     let spared: BTreeSet<(VarId, NodeId)> = f.spared_at.iter().copied().collect();
+    // The `!Move` variables, with their roots.
+    let immovable: Vec<(PlaceId, VarId)> = f
+        .owner
+        .iter()
+        .copied()
+        .filter(|&(_, v)| f.var(v).immovable)
+        .collect();
+    // The `!Move` variables that place `a` can be inside.
+    let inside = |a: PlaceId| -> Vec<VarId> {
+        immovable
+            .iter()
+            .filter(|&&(rt, _)| cx.prefix(rt, a))
+            .map(|&(_, v)| v)
+            .collect()
+    };
     for (&v, us) in uses {
         // once_var(V) :- immovable(V): a copy would give the value a new address.
-        if !f.var(v).once && !f.var(v).immovable {
+        let once = f.var(v).once || f.var(v).immovable;
+        // A reference into a `!Move` value uses the value.
+        let into: BTreeSet<VarId> = if immovable.is_empty() {
+            BTreeSet::new()
+        } else {
+            f.points_into
+                .iter()
+                .filter(|&&(r, _)| r == v)
+                .flat_map(|&(_, a)| inside(a))
+                .collect()
+        };
+        if !once && into.is_empty() {
             continue;
         }
         let gen = cx.mask(us.iter().copied());
         let kill = cx.mask(rebound.get(&v).cloned().unwrap_or_default());
         let live_out = cx.backward(&gen, &kill);
         for &p in &multi {
-            if live_out[p.index()] && !spared.contains(&(v, p)) {
-                out.live_across_multi.insert((v, p));
+            if !live_out[p.index()] {
+                continue;
+            }
+            for w in once.then_some(v).into_iter().chain(into.iter().copied()) {
+                if !spared.contains(&(w, p)) {
+                    out.live_across_multi.insert((w, p));
+                }
+            }
+        }
+    }
+    // A reference argument into a `!Move` value uses it at the node.
+    for &(p, a, _) in &f.call_arg {
+        if !multi.contains(&p) {
+            continue;
+        }
+        for w in inside(a) {
+            if !spared.contains(&(w, p)) {
+                out.live_across_multi.insert((w, p));
             }
         }
     }

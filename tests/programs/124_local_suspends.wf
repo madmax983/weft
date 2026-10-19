@@ -66,6 +66,38 @@ fn clause_chooses() / Choice {
     unlock(l)
 }
 
+// A closure or a clause in the handled body that takes the value by value
+// holds it in a cell of its own, inside the body. An abort at an operation
+// in it unwinds that cell.
+effect Note { fn note(x: u64) }
+
+fn closure_captures() {
+    let l = Lk { id: 7 }
+    let n = handle Ask { fn ask() { 0 } } in {
+        let g = || { let x = ask(); unlock(l); x }   //~ W0602
+        g()
+    }
+    print(n)
+}
+
+fn nested_closure() {
+    let l = Lk { id: 8 }
+    let n = handle Ask { fn ask() { 0 } } in {
+        let g = || { let h = || { let x = ask(); unlock(l); x }; h() }   //~ W0602
+        g()
+    }
+    print(n)
+}
+
+fn clause_capture() {
+    let l = Lk { id: 9 }
+    let n = handle Ask { fn ask() { 0 } } in {
+        handle Note { fn note(x) { let y = ask(); unlock(l); resume(()) } } in note(1)   //~ W0602
+        5
+    }
+    print(n)
+}
+
 fn main() {
     inline_abort()
     inline_multi()

@@ -1,6 +1,7 @@
 // A place of a local in statement position, such as `v` or `p.tx` on its own
 // line, names the place only. It moves nothing and drops nothing, in the
-// checker and in the interpreter (ADR 0003). Its operands run.
+// checker and in the interpreter (ADR 0003). Its operands run. The tail of a
+// block is not a statement: it is the value of the block.
 linear struct Tx { id: u64 }
 fn commit(t: Tx) { let Tx(id) = t }
 struct P { tx: Tx, n: u64 }
@@ -47,7 +48,45 @@ fn immovable_stays() {
     print(c)
 }
 
+// The tail of a block is its value: it moves, as in the interpreter. When
+// nothing uses the value of the block (a block statement, a loop body, or the
+// branch of an `if` with no `else`), the value goes away there.
+fn block_tail_moves() {
+    let t = Tx { id: 4 }
+    {
+        t   //~ W0601
+    }
+    commit(t)   //~ W0302
+}
+fn loop_tail_moves() {
+    let v = Vec.new()
+    v.push(1)
+    for i in 0..2 { v }   //~ W0302
+}
+fn if_tail_moves(c: bool) {
+    let v = Vec.new()
+    v.push(1)
+    if c { v }
+    print(v.len())   //~ W0302
+}
+fn freed_by_tail() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    { v }
+    print(r + 1)   //~ W0301
+}
+
+// A value that is plain data is copied: the tail moves nothing.
+fn copy_tail() {
+    let n = 5
+    { n }
+    for i in 0..2 { n }
+    print(n)
+}
+
 fn main() {
+    copy_tail()
     used_after()
     reference_stays()
     linear_stays()

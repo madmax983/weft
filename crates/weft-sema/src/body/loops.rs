@@ -857,6 +857,9 @@ impl Lower<'_> {
             cont_caps: _,
             cap_effects: _,
             out_suspends: _,
+            // Only grows: a node of an old pass that raises raises in the last pass too.
+            raises: _,
+            callee_ops: _,
             // A pass starts and ends outside a clause that it lowers.
             clause_conts: _,
             repeated: _,
@@ -1020,6 +1023,8 @@ impl Lower<'_> {
             cont_caps,
             cap_effects,
             out_suspends,
+            raises: _,
+            callee_ops,
             clause_conts: _,
             repeated,
             abort_ctx,
@@ -1087,6 +1092,7 @@ impl Lower<'_> {
         let _ = task_scope.split_off(&task);
         let _ = root_caps.split_off(&CapId(head.caps));
         let _ = cont_caps.split_off(&CapId(head.caps));
+        let _ = callee_ops.split_off(&CapId(head.caps));
         let _ = cap_effects.split_off(&CapId(head.caps));
         locals.restore(undo);
         restore_frames(frames, scope, &head.frames);

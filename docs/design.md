@@ -161,7 +161,8 @@ fn transfer(db: &Db, from: Id, to: Id, amt: u64) / io, fail {
 - It may be live across an operation that can abort only if its type declares `on abort`.
 - `on abort` runs during unwinding (cancellation, `fail`), never on the normal path. It
   runs with the root handlers only: it can perform the standard effects other than
-  `fail`, and it changes only the value that it gets (ADR 0007).
+  `fail`, it cannot raise a failure of the runtime or call a function value that it
+  does not know, and it changes only the value that it gets (ADR 0007).
 - A linear value may not be live across a `multi` effect operation (see Effects).
 
 This gives the guarantee Rust's proposed `!Forget` trait aims for, and it covers async cleanup with the same rule.
@@ -209,7 +210,7 @@ fn main(env: Env) / io {
 A continuation is a value with a mode and the places it captured.
 
 - Continuations are `once` by default: a handler may resume at most once.
-- An operation declared `multi` may resume several times. Everything live across its perform site must be `@ many`, which rules out linear values and unique borrows there.
+- An operation declared `multi` may resume several times. Everything live across its perform site must be `@ many`, which rules out linear values and unique borrows there. For a handler in the same function, this counts only the values of the handled body: the resume copies only them, and a value outside the body is spared (ADR 0005).
 
 This closes the hole where a handler resumes twice and uses the same moved value twice.
 

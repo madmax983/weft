@@ -702,6 +702,9 @@ impl Lower<'_> {
         if !sig.effects.named.is_empty() || !sig.effects.passthrough.is_empty() {
             self.abortive(n);
         }
+        if sig.effects.raises {
+            self.raise_here();
+        }
         let span = self.facts.node(n).span;
         self.check_callee_tasks(f, span);
     }
@@ -767,6 +770,7 @@ impl Lower<'_> {
         {
             self.cap_calls.push((n, cap));
             self.note_abort_ctx(n);
+            self.callee_ops.insert(cap);
             for &(p, i) in args {
                 self.give_op(n, cap, None, None, p, i);
             }

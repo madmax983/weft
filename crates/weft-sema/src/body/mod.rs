@@ -320,6 +320,9 @@ pub struct Summary {
     pub spawns: Grow<TaskId>,
     /// Capabilities of the handlers that the body installs.
     pub own_caps: Grow<CapId>,
+    /// The nodes of the body of a closure: from its entry to the one after its
+    /// last node. A nested closure is inside.
+    pub nodes: (u32, u32),
     /// Function parameters of the value that a task of its body can call.
     pub tasks: Grow<usize>,
     /// The capabilities of the function values inside the values that a call of
@@ -415,6 +418,8 @@ impl Summary {
             param_calls,
             repeat_runs,
             param_stores,
+            // Set when the closure ends, after each pass of a loop in it.
+            nodes: _,
         } = self;
         SumMark {
             muts: muts.mark(),
@@ -505,6 +510,8 @@ impl Summary {
             param_calls,
             repeat_runs,
             param_stores,
+            // Set when the closure ends, after each pass of a loop in it.
+            nodes: _,
         } = self;
         muts.cut(mark.muts);
         reads.cut(mark.reads);
@@ -1184,6 +1191,13 @@ pub struct Lower<'p> {
     /// A call of a function value that the body does not know can resume a
     /// `multi` continuation more than once.
     unknown_multi: bool,
+    /// The local handlers whose operations a callee, or code that the body does
+    /// not see, can perform. A reference parameter of a clause can then point
+    /// into a local of that code, which ends before a `resume` returns.
+    callee_ops: BTreeSet<CapId>,
+    /// A node of the body can raise a failure that the runtime makes, and no
+    /// `Fail` handler of the body gets it (`EffectSig::raises`).
+    raises: bool,
     /// Function values that perform through local handlers, where they can live on.
     kept: Vec<caps::Kept>,
     /// The capabilities of the values that the `resume`s of each local handler give.
@@ -1387,6 +1401,8 @@ impl<'p> Lower<'p> {
             applied: Vec::new(),
             handled: Vec::new(),
             unknown_multi: false,
+            raises: false,
+            callee_ops: BTreeSet::new(),
             kept: Vec::new(),
             resumed: BTreeMap::new(),
             param_runs: BTreeMap::new(),
@@ -1885,6 +1901,23 @@ impl<'p> Lower<'p> {
         self.sum().may_abort = true;
     }
 
+    /// The current node can raise a failure that the runtime makes. It counts
+    /// for the signature (`EffectSig::raises`) unless a local `Fail` handler
+    /// gets it. A closure can run after its `handle`, so a handler outside the
+    /// closure does not count.
+    fn raise_here(&mut self) {
+        let caught = self.handlers.iter().any(|h| {
+            h.effect == "Fail"
+                && !self
+                    .jumps
+                    .get(h.jumps..)
+                    .is_some_and(|js| js.iter().any(|j| matches!(j, Jump::Closure { .. })))
+        });
+        if !caught {
+            self.raises = true;
+        }
+    }
+
     /// Node `n` can resume a `multi` continuation more than once. The copy can
     /// hold each value of the function (`out_suspends`).
     fn multi_node(&mut self, n: NodeId) {
@@ -1904,10 +1937,22 @@ impl<'p> Lower<'p> {
     /// below the handler, the temporaries of the statements around it, and the
     /// values on their way to a node outside it. An operation of the handler
     /// does not suspend them.
+    ///
+    /// An operation in a closure or a clause inside the handled body gets no
+    /// variables: the closure or the clause can hold a value from outside the
+    /// body in a cell of its own (a capture by value, or a clause cell), and
+    /// it names that value by the outer variable.
     fn outside_vars(&self, hi: usize) -> Vec<VarId> {
         let Some(h) = self.handlers.get(hi) else {
             return Vec::new();
         };
+        let in_fn = self.jumps.get(h.jumps..).is_some_and(|js| {
+            js.iter()
+                .any(|j| matches!(j, Jump::Closure { .. } | Jump::Fence("handler clause")))
+        });
+        if in_fn {
+            return Vec::new();
+        }
         let mut out = Vec::new();
         for f in &self.frames[..h.frames.min(self.frames.len())] {
             out.extend(f.names.iter().map(|&(_, l)| self.locals[l].var));
@@ -2882,6 +2927,13 @@ impl<'p> Lower<'p> {
     /// `ty_has` with the state `h`.
     fn ty_has_in(&self, t: &Ty, p: Prop, h: &mut Has) -> bool {
         match self.inf.shallow(t) {
+            // The copies of a `multi` resume share an `rc` object: a function
+            // value or a reference in it points into the locals of one run.
+            Ty::Adt(a, args) if p == Prop::Resource && crate::props::is_rc_handle(self.prog, a) => {
+                args.first().is_some_and(|x| {
+                    self.ty_has_in(x, Prop::Fns, h) || self.ty_has_in(x, Prop::Refs, h)
+                })
+            }
             Ty::Adt(a, args) => self.prog.props().get(a, p).is_some_and(|x| {
                 x.always
                     || x.params

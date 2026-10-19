@@ -462,7 +462,7 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
                 format!("task handle `{}` is not joined or detached", info.name),
                 node_span(f, n),
             )
-        } else if info.kind == VarKind::Dropped {
+        } else if info.kind == VarKind::Dropped && !info.callable {
             Diagnostic::error(
                 "W0601",
                 format!(
@@ -476,7 +476,10 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
                 info.name
             ))
         } else if info.callable {
-            let who = if matches!(info.kind, VarKind::Closure | VarKind::Temp) {
+            let who = if matches!(
+                info.kind,
+                VarKind::Closure | VarKind::Temp | VarKind::Dropped
+            ) {
                 "a closure".to_string()
             } else {
                 format!("closure `{}`", info.name)
@@ -557,7 +560,7 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             at.span,
         )
         .note_at(decl_note(info), info.span);
-        if info.immovable && !info.once {
+        if info.immovable {
             d = d.note(
                 "a `!Move` value keeps its address, and each resume runs with a copy of the value",
             );

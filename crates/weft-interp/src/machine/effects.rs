@@ -169,6 +169,9 @@ impl super::Machine<'_, '_> {
                         })));
                         return Ok(Flow::Continue);
                     }
+                    // The clause ends: a closure that it gave away cannot
+                    // resume the continuation later.
+                    self.conts[k].k.end();
                     self.drop_frames(frames);
                 }
                 Frame::Fork { .. } => {
@@ -342,6 +345,7 @@ impl super::Machine<'_, '_> {
                 if self.conts[cont].k.drop_now() {
                     self.unwind_top()?.frames.extend(frames);
                 } else {
+                    self.conts[cont].k.end();
                     self.drop_frames(frames);
                 }
             }
@@ -402,6 +406,7 @@ impl super::Machine<'_, '_> {
                 Frame::Clause { cont } => {
                     let fs = std::mem::take(&mut self.conts[cont].frames);
                     let _ = self.conts[cont].k.drop_now();
+                    self.conts[cont].k.end();
                     self.drop_frames(fs);
                 }
                 Frame::Timeout { id, .. } => self.remove_timeout(id),

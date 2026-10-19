@@ -35,7 +35,11 @@ Status: accepted. Date: 2026-10-18.
   clause parameter that points into it, is invalid after the `resume`. A local or a
   temporary of the handled body goes out of scope before the `resume` returns, and a
   move in the body frees what it moves. So a clause parameter that points into one of
-  them is invalid after the `resume` too (`releases_at`).
+  them is invalid after the `resume` too (`releases_at`). An operation that a callee
+  performs can give a place in a local of the callee, so each `resume` of the handler
+  frees each reference parameter of the clause. A node that runs a closure that calls
+  `resume` (a call of the closure, or a call that gets it) runs the handled
+  computation there: it changes, lends and frees what the `resume` does.
 - A clause of a handler of an effect with a `multi` operation can resume the handled
   computation more than once. The code after a node that runs the clause then runs
   again. The locals from outside the handled body keep the values of the run before.
@@ -56,10 +60,13 @@ Status: accepted. Date: 2026-10-18.
   buffer (`Vec`, `Box`) gets a copy, and the copies share an `rc` object. This is the
   meaning of a `multi` resume for an affine value. A native runtime pays for a copy of
   each owned value at each resume. A value that a copy cannot keep is not `many`
-  (W0503): a `!Move` value (the copy would have another address), a task handle, a
-  scope, and a value of an extern type that is not plain data (a resource). The effects
-  proof (E5) has no affine values, so it does not cover the copy. This is a gap of the
-  proof.
+  (W0503): a `!Move` value (the copy would have another address), also in a `Box`, a
+  task handle, a scope, and a value of an extern type that is not plain data (a
+  resource). A reference into a `!Move` value, and a reference argument into it,
+  use the value at the node. An `Rc` or a `Weak` to an object that can hold a
+  function value or a reference is not `many` either: the copies share the object,
+  and what it holds points into the locals of one run. The effects proof (E5) has no
+  affine values, so it does not cover the copy. This is a gap of the proof.
 - A clause that can end with no `resume` ends the handled body at the node that runs
   it. Each node of the body that can run a clause of the handler gets an edge to the
   end of the `handle`. Such a node can be a perform, or a call of a closure or a
@@ -114,8 +121,8 @@ Status: accepted. Date: 2026-10-18.
   function whose signature can still change gets W0706, an error.
 - The other parts of a signature are not part of the row. They are `lent`, `ret`,
   `stores`, `reach`, `multi`, `fn_stores`, `op_effects` and `tasks` (see below and
-  ADR 0006), and `drops` and `holds` (see ADR 0007). The body always infers them, also
-  when the signature states the row, and each new lowering replaces them. They do not
+  ADR 0006), and `drops`, `holds` and `raises` (see ADR 0007). The body always infers
+  them, also when the signature states the row, and each new lowering replaces them. They do not
   only grow: a part that is not known yet can be larger than its final value. So the
   parts of one function can change at most 32 times and two more times for each function
   (`weft_sema::infer::parts_limit`). After that, the inference keeps the last parts of
@@ -159,7 +166,9 @@ Status: accepted. Date: 2026-10-18.
   through a handler outside its `handle`, or calls code that can (a `resume` of the
   clause does not count: the resumed body suspends at its own nodes). A root handler
   of `sim.run` is the scheduler: it can cancel the task, so its operations spare
-  nothing.
+  nothing. An operation in a closure or a clause inside the handled body spares
+  nothing too: the closure or the clause can hold a value from outside the body in a
+  cell of its own (a capture by value, or a clause cell), and the abort unwinds it.
 - A clause runs in the environment of its `handle` (rule 6): its operations go to the
   handlers outside the `handle`. The value of a clause is the value of the `handle`, so
   a function value or a reference in it joins the value of the body. A reference into a
@@ -190,8 +199,9 @@ Status: accepted. Date: 2026-10-18.
   clause as the handled body: not as the value of the clause, not through a local
   outside the clause, not into a field, an element or an `Option` that can keep it,
   not to a callee that stores it or that the body does not know, and not to an
-  operation of a handler outside the clause. A `resume` can give it to the handled
-  body: a local outside the `handle` that gets it there keeps it too. A clause can call
+  operation of a handler outside the clause. A `resume` cannot give it to the handled
+  body: the body could keep it in the value of the `handle`, in a stored place or in a
+  task, and the result of the operation does not follow it there. A clause can call
   such a closure, and give it to code that only calls it. A spawned task or a fork
   branch cannot run it (W0314): the rest of the handled body would run on another task,
   away from the handlers of this task and at the same time as the clause.
@@ -427,12 +437,15 @@ Status: accepted. Date: 2026-10-18.
     gets one too.
   - Only an operation itself spares the values outside the handled body of its local
     handler. A call of a function or a closure that performs the operation suspends
-    each value of the function. A clause that performs through an outer handler on one
+    each value of the function. An operation in a closure or a clause inside the
+    handled body spares nothing, also when the closure only reads the value. A clause that performs through an outer handler on one
     path, or that calls a function that can abort, makes each operation of its handler
     suspend each value.
-  - A closure that resumes counts as kept by a local outside the `handle` that the
-    handled body gives it to, also when a later new value replaces it before the end
-    of the `handle`.
+  - A `resume` cannot give the handled body a closure that resumes, also when the
+    body only calls it.
+  - If a callee of the handled body can perform an operation of the handler, each
+    `resume` of the handler frees each reference parameter of each clause, also when
+    the callee gives a place of the caller.
 - What stays open (not checked):
   - A `multi` operation of a handler of a caller can resume the rest of the function
     more than once. The code after the operation then runs again with the values that
