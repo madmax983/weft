@@ -270,3 +270,5 @@ Status: accepted. Date: 2026-10-18.
     parameter can mutate it. The caller sees the mutation on its own place only.
   - A reference that a function value gets inside another reference: the value sees
     the outer place only (ADR 0003).
+  - The result of an operation that holds a reference has no places: the clauses
+    that give it are lowered after the handled body.
