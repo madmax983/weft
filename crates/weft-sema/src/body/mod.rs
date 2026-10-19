@@ -438,6 +438,9 @@ pub struct Lower<'p> {
     temp_refs: BTreeMap<RootId, Vec<PlaceId>>,
     /// Variables of a type parameter that the body gives to a callee that can drop them.
     generic_drops: Vec<VarId>,
+    /// Hidden variables that hold the references that a part of a local gets: the
+    /// local, the variable and the places. A use of the local uses them.
+    part_holders: Vec<(usize, VarId, Vec<PlaceId>)>,
     /// The integer literals: the value, true if it is negative, the type and the span.
     int_lits: Vec<(u64, bool, Ty, Span)>,
     /// The span of the literal that is being lowered.
@@ -511,6 +514,7 @@ impl<'p> Lower<'p> {
             lit_span: Span::default(),
             temp_refs: BTreeMap::new(),
             generic_drops: Vec::new(),
+            part_holders: Vec::new(),
         }
     }
 
@@ -672,6 +676,14 @@ impl<'p> Lower<'p> {
     fn use_local(&mut self, l: usize) {
         let v = self.locals[l].var;
         self.pend_uses.push(v);
+        // A use of the local uses the references that its parts got.
+        let parts: Vec<VarId> = self
+            .part_holders
+            .iter()
+            .filter(|(o, ..)| *o == l)
+            .map(|&(_, h, _)| h)
+            .collect();
+        self.pend_uses.extend(parts);
         self.note_capture(l);
     }
 

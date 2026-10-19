@@ -26,8 +26,10 @@ impl Lower<'_> {
                 // Reading the references uses the local that holds them.
                 Some(l) => {
                     out.extend(self.locals[l].refs.iter().copied());
-                    let var = self.locals[l].var;
-                    self.pend_uses.push(var);
+                    for (_, _, ps) in self.part_holders.iter().filter(|(o, ..)| *o == l) {
+                        out.extend(ps.iter().copied());
+                    }
+                    self.use_local(l);
                 }
                 None => {
                     if let Some(rs) = self.temp_refs.get(&root) {
@@ -45,7 +47,7 @@ impl Lower<'_> {
     /// result of a call or to another argument. `declared` is the type of the
     /// parameter in the signature. With `reach`, a parameter with a reference
     /// type lets the callee make a reference to any place inside the argument.
-    /// A parameter of a type parameter passes the value on as it is. `pointee`
+    /// A by-value parameter of a type parameter passes the value on as it is. `pointee`
     /// is the type behind a reference argument: if it holds references, the
     /// callee can read them too.
     pub(super) fn flow_refs(
@@ -62,7 +64,7 @@ impl Lower<'_> {
                 out.push(self.facts.wildcard(p));
             }
             out.extend(deps);
-        } else if mentions_param(declared) {
+        } else if !declared.is_ref() && mentions_param(declared) {
             out.extend(refs.iter().copied());
         }
         if pointee.is_some_and(|t| self.holds_refs(t)) {

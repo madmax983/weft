@@ -1114,6 +1114,21 @@ impl Lower<'_> {
         self.escape(&v);
         self.store_into(&v, &lv.places);
         self.consume(&v, value.span);
+        // A part of a local that gets a reference points where it points from
+        // here on: a hidden variable holds it, and a use of the local uses it.
+        let holder = match (op, lv.owner, lv.through_ref, v.refs.is_empty()) {
+            (AssignOp::Assign, Some(l), false, false) => {
+                let name = self.place_text(&lv.places);
+                let info = self.var_info(&name, VarKind::Temp, target.span, &v.ty, v.uniq);
+                let h = self.facts.add_var(info);
+                for &p in &v.refs {
+                    self.facts.points_into.push((h, p));
+                }
+                self.part_holders.push((l, h, v.refs.clone()));
+                Some(h)
+            }
+            _ => None,
+        };
         // A new value of a linear place drops the old one. Behind a reference the
         // old value is always there: a borrowed place cannot be moved out.
         let old_linear = op == AssignOp::Assign && self.is_linear(&lv.ty);
@@ -1131,7 +1146,7 @@ impl Lower<'_> {
             .filter(|(p, _)| lv.places.contains(p))
             .map(|&(_, var)| var)
             .collect();
-        for var in set {
+        for var in set.into_iter().chain(holder) {
             self.bind(var, n);
         }
         if let (true, Some(l)) = (old_linear, owner) {
@@ -1272,10 +1287,17 @@ impl Lower<'_> {
                 }
                 for (p, d) in fields.iter().zip(&defs) {
                     let ft = super::subst(&d.ty, &args);
+                    // A field that holds references points where the struct points.
+                    let refs = if self.holds_refs(&ft) {
+                        v.refs.clone()
+                    } else {
+                        Vec::new()
+                    };
                     self.bind_pattern(
                         p,
                         &Val {
                             ty: ft,
+                            refs,
                             ..Val::default()
                         },
                         n,

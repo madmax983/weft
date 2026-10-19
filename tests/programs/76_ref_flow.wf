@@ -39,6 +39,50 @@ fn in_struct_ok(world: &World) / mut(world.entities) {
     print(h.x.hp)
     world.entities.clear()
 }
+impl<T> Wrap<T> {
+    fn get(self: Wrap<T>) -> T {
+        let Wrap(x) = self
+        x
+    }
+}
+fn through_method(world: &World) / mut(world.entities) {
+    let w = Wrap { x: &world.entities[0] }
+    let r = w.get()
+    world.entities.clear()
+    print(r.hp)   //~ W0301
+}
+fn method_value_outlives_wrap(world: &World) {
+    let r = {
+        let w = Wrap { x: &world.entities[0] }
+        w.get()
+    }
+    print(r.hp)
+}
+fn destructured(world: &World) / mut(world.entities) {
+    let w = Wrap { x: &world.entities[0] }
+    let Wrap(r) = w
+    world.entities.clear()
+    print(r.hp)   //~ W0301
+}
+fn new_part_value(world: &World, other: &World) / mut(other.entities) {
+    let w = Wrap { x: &world.entities[0] }
+    w.x = &other.entities[0]
+    other.entities.clear()
+    print(w.x.hp)   //~ W0301
+}
+fn new_part_read(world: &World, other: &World) / mut(other.entities) {
+    let w = Wrap { x: &world.entities[0] }
+    w.x = &other.entities[0]
+    let r = w.x
+    other.entities.clear()
+    print(r.hp)   //~ W0301
+}
+fn new_part_before_change(world: &World, other: &World) / mut(other.entities) {
+    let w = Wrap { x: &world.entities[0] }
+    other.entities.push(Entity { hp: 1 })
+    w.x = &other.entities[0]
+    print(w.x.hp)
+}
 fn in_box() {
     let v: Vec<u64> = Vec.new()
     v.push(1)

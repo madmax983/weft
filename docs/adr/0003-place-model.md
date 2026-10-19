@@ -81,6 +81,9 @@ Status: accepted. Date: 2026-10-18.
   value holds references gives them too. A reference argument whose value holds
   references, and that the call mutates, can keep the references of the other
   arguments: `rs.push(&x)` makes `rs` point into `x`.
+- A new value of a part of a local, such as `w.x = &b[0]`, points where it points from
+  that node on: a hidden variable holds it, and each use of the local uses it. A
+  destructuring `let S(a, b) = s` gives each part the places of `s`.
 - A by-value parameter that holds references, such as `o: Option<&World>`, points into
   a parameter root: the callee can mutate through it, and the caller puts in the
   places of the argument. A new value of the parameter itself is local.

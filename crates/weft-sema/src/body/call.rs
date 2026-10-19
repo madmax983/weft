@@ -156,7 +156,12 @@ impl Lower<'_> {
         // A method on a value.
         let rv = match self.place_expr(recv) {
             Some(lv) => {
-                let refs = Vec::new();
+                // A receiver that holds references points where they point.
+                let refs = if lv.through_ref || !self.holds_refs(&lv.ty) {
+                    Vec::new()
+                } else {
+                    self.held_refs(&lv.places)
+                };
                 let local = lv.owner;
                 let var = local.map(|l| self.locals[l].var);
                 let (task, summary) = local.map_or((None, None), |l| {
