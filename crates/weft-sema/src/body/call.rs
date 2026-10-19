@@ -1422,7 +1422,7 @@ impl Lower<'_> {
             || (BTreeSet::new(), BTreeSet::new()),
             |s| {
                 let sum = &self.closures[s];
-                (sum.ret_caps.clone(), sum.ret_tasks.clone())
+                (sum.ret_caps.to_set(), sum.ret_tasks.to_set())
             },
         );
         // The value can copy a function value out of what a reference argument
@@ -2035,15 +2035,16 @@ impl Lower<'_> {
         let mut bad = false;
         if let Some(s) = info.summary {
             let sum = self.closures[s].clone();
+            let own_caps = sum.own_caps.to_set();
             bad |= sum
                 .performs
                 .iter()
-                .any(|c| self.cap_on_this_stack(*c, &sum.own_caps));
+                .any(|c| self.cap_on_this_stack(*c, &own_caps));
             outside.extend(sum.escapes.iter().chain(&sum.row).cloned());
             items.extend(sum.items.iter().copied());
             params.extend(sum.params.iter().map(|&p| (0, p)));
             params.extend(sum.passthrough.iter().map(|&p| (0, p)));
-            own = sum.own_caps;
+            own = own_caps;
         }
         for f in items {
             let e = &self.sigs[f].effects;

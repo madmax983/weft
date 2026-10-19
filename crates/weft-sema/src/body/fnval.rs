@@ -576,7 +576,7 @@ impl Lower<'_> {
         for &t in &sum.spawns {
             self.facts.spawned_at.push((t, n));
         }
-        let outside = self.spawns_outside(&sum.spawns);
+        let outside = self.spawns_outside(&sum.spawns.to_set());
         self.sum().spawns.extend(outside);
         self.sum().own_caps.extend(sum.own_caps.iter().copied());
     }
@@ -591,7 +591,7 @@ impl Lower<'_> {
         for &t in &tasks {
             self.facts.spawned_at.push((t, n));
         }
-        let outside = self.spawns_outside(&tasks);
+        let outside = self.spawns_outside(&tasks.to_set());
         self.sum().spawns.extend(outside);
     }
 
@@ -1138,7 +1138,7 @@ impl Lower<'_> {
         let mut out = RetFn {
             named: u.escapes.iter().chain(&u.row).cloned().collect(),
             passthrough: u.params.iter().chain(&u.passthrough).copied().collect(),
-            items: u.items.clone(),
+            items: u.items.to_set(),
             abort: u.may_abort,
             multi: u.multi,
             unknown: u.unknown,
@@ -1149,7 +1149,7 @@ impl Lower<'_> {
                 .filter(|(_, cap, _)| cap.is_none())
                 .map(|(p, _, e)| (*p, e.clone()))
                 .collect(),
-            tasks: u.tasks.clone(),
+            tasks: u.tasks.to_set(),
             ..RetFn::default()
         };
         let mut muts = (Vec::new(), Vec::new());

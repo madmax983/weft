@@ -32,37 +32,249 @@ mod exhaust;
 mod expr;
 mod flow;
 mod fnval;
+pub mod loops;
 mod oprefs;
 mod repeat;
-pub mod stmt;
+mod stmt;
 
 use fnval::{Applied, FnInfo, OpArg, Reach};
+
+/// A set that only grows during a loop pass, with the order of its elements.
+///
+/// A loop pass takes its size at the head ([`Grow::mark`]). A rewind removes
+/// the elements after it ([`Grow::cut`]). So a rewind costs as much as the
+/// elements of the pass, not as much as the whole set. An empty set has no
+/// allocation, and the value is one pointer, so a [`Summary`] stays small on
+/// the stack.
+#[derive(Clone, Debug)]
+pub struct Grow<T>(Option<Box<GrowInner<T>>>);
+
+#[derive(Clone, Debug)]
+struct GrowInner<T> {
+    set: BTreeSet<T>,
+    order: Vec<T>,
+}
+
+/// The iterator of a [`Grow`] set.
+pub type GrowIter<'a, T> =
+    std::iter::Flatten<std::option::IntoIter<std::collections::btree_set::Iter<'a, T>>>;
+
+impl<T> Default for Grow<T> {
+    fn default() -> Self {
+        Self(None)
+    }
+}
+
+impl<T: Ord> PartialEq for Grow<T> {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (Some(a), Some(b)) => a.set == b.set,
+            (Some(x), None) | (None, Some(x)) => x.set.is_empty(),
+            (None, None) => true,
+        }
+    }
+}
+
+impl<T: Ord> Eq for Grow<T> {}
+
+impl<T: Ord + Clone> Grow<T> {
+    /// Adds `x`. Returns true if it is new.
+    pub fn insert(&mut self, x: T) -> bool {
+        let inner = self.0.get_or_insert_with(|| {
+            Box::new(GrowInner {
+                set: BTreeSet::new(),
+                order: Vec::new(),
+            })
+        });
+        if inner.set.insert(x.clone()) {
+            inner.order.push(x);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Returns true if the set has `x`.
+    pub fn contains(&self, x: &T) -> bool {
+        self.0.as_ref().is_some_and(|g| g.set.contains(x))
+    }
+
+    /// The elements, in their order.
+    pub fn iter(&self) -> GrowIter<'_, T> {
+        self.0.as_ref().map(|g| g.set.iter()).into_iter().flatten()
+    }
+
+    /// The number of elements.
+    pub fn len(&self) -> usize {
+        self.0.as_ref().map_or(0, |g| g.set.len())
+    }
+
+    /// Returns true if the set has no element.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The least element.
+    pub fn first(&self) -> Option<&T> {
+        self.0.as_ref().and_then(|g| g.set.first())
+    }
+
+    /// Removes each element.
+    pub fn clear(&mut self) {
+        self.0 = None;
+    }
+
+    /// A copy of the set.
+    pub fn to_set(&self) -> BTreeSet<T> {
+        self.0
+            .as_ref()
+            .map_or_else(BTreeSet::new, |g| g.set.clone())
+    }
+
+    /// The set, as a value.
+    pub fn into_set(self) -> BTreeSet<T> {
+        self.0.map_or_else(BTreeSet::new, |g| g.set)
+    }
+
+    /// The elements that `other` does not have.
+    pub fn difference<'a>(&'a self, other: &'a Self) -> impl Iterator<Item = &'a T> + 'a {
+        self.iter().filter(move |x| !other.contains(x))
+    }
+
+    /// Returns true if the set has no element of `other`.
+    pub fn is_disjoint(&self, other: &Self) -> bool {
+        self.iter().all(|x| !other.contains(x))
+    }
+
+    /// The size now, for [`Grow::cut`].
+    pub fn mark(&self) -> usize {
+        self.0.as_ref().map_or(0, |g| g.order.len())
+    }
+
+    /// Removes the elements that came after `mark`.
+    pub fn cut(&mut self, mark: usize) {
+        if let Some(g) = &mut self.0 {
+            let from = mark.min(g.order.len());
+            for x in g.order.drain(from..) {
+                g.set.remove(&x);
+            }
+        }
+    }
+}
+
+impl<T: Ord + Clone> Extend<T> for Grow<T> {
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        for x in iter {
+            self.insert(x);
+        }
+    }
+}
+
+impl<'a, T: Ord + Clone + 'a> Extend<&'a T> for Grow<T> {
+    fn extend<I: IntoIterator<Item = &'a T>>(&mut self, iter: I) {
+        for x in iter {
+            self.insert(x.clone());
+        }
+    }
+}
+
+impl<T: Ord + Clone> FromIterator<T> for Grow<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let mut g = Self::default();
+        g.extend(iter);
+        g
+    }
+}
+
+impl<T: Ord + Clone> From<BTreeSet<T>> for Grow<T> {
+    fn from(set: BTreeSet<T>) -> Self {
+        set.into_iter().collect()
+    }
+}
+
+impl<T> IntoIterator for Grow<T> {
+    type Item = T;
+    type IntoIter =
+        std::iter::Flatten<std::option::IntoIter<std::collections::btree_set::IntoIter<T>>>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.map(|g| g.set.into_iter()).into_iter().flatten()
+    }
+}
+
+impl<'a, T: Ord + Clone> IntoIterator for &'a Grow<T> {
+    type Item = &'a T;
+    type IntoIter = GrowIter<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+/// The sizes of a [`Summary`] at a loop head: a rewind cuts it back to them.
+#[derive(Clone, Debug)]
+pub(super) struct SumMark {
+    muts: usize,
+    reads: usize,
+    escapes: usize,
+    performs: usize,
+    passthrough: usize,
+    own_roots: usize,
+    captures: usize,
+    moved_captures: usize,
+    dropped: usize,
+    items: usize,
+    params: usize,
+    row: usize,
+    members: usize,
+    stores: usize,
+    lends: usize,
+    rets: usize,
+    spawns: usize,
+    own_caps: usize,
+    tasks: usize,
+    ret_caps: usize,
+    ret_tasks: usize,
+    op_fns: usize,
+    task_effects: usize,
+    repeats: usize,
+    fn_stores: usize,
+    op_effects: usize,
+    ret_spawns: usize,
+    ret_refs: usize,
+    lent: usize,
+    op_args: usize,
+    binds: usize,
+    may_abort: bool,
+    multi: bool,
+    literal: bool,
+    unknown: bool,
+    param_roots: BTreeMap<PlaceId, usize>,
+}
 
 /// What a body does, in the places of the enclosing function.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Summary {
     /// Mutated places.
-    pub muts: BTreeSet<PlaceId>,
+    pub muts: Grow<PlaceId>,
     /// Read places.
-    pub reads: BTreeSet<PlaceId>,
+    pub reads: Grow<PlaceId>,
     /// Effects that no local handler handles.
-    pub escapes: BTreeSet<String>,
+    pub escapes: Grow<String>,
     /// Local capabilities used.
-    pub performs: BTreeSet<CapId>,
+    pub performs: Grow<CapId>,
     /// Some node can abort.
     pub may_abort: bool,
     /// Some node can resume a `multi` continuation.
     pub multi: bool,
     /// Function parameters that the body calls.
-    pub passthrough: BTreeSet<usize>,
+    pub passthrough: Grow<usize>,
     /// Roots made inside the body. They are not visible outside.
-    pub own_roots: BTreeSet<RootId>,
+    pub own_roots: Grow<RootId>,
     /// Variables of the enclosing function that the body uses.
-    pub captures: BTreeSet<VarId>,
+    pub captures: Grow<VarId>,
     /// Captured variables that the body moves.
-    pub moved_captures: BTreeSet<VarId>,
+    pub moved_captures: Grow<VarId>,
     /// Owners that the body declares. They go out of scope when the body returns.
-    pub dropped: BTreeSet<VarId>,
+    pub dropped: Grow<VarId>,
     /// The places that the result of a closure points into.
     pub ret_refs: Vec<PlaceId>,
     /// The root place of each reference parameter of a function value, with the
@@ -71,14 +283,14 @@ pub struct Summary {
     /// The value is a closure of the body, or can be one: it moves, it is not copied.
     pub literal: bool,
     /// Function items that a call of the value can call. Their effects resolve where it is called.
-    pub items: BTreeSet<FnId>,
+    pub items: Grow<FnId>,
     /// Function parameters that the value can be.
-    pub params: BTreeSet<usize>,
+    pub params: Grow<usize>,
     /// The value can be a function value that the body does not know.
     pub unknown: bool,
     /// Effects that a call of the value performs where it is called: the effect
     /// rows of the parameters and unknown values that it can be.
-    pub row: BTreeSet<String>,
+    pub row: Grow<String>,
     /// Places that the body gives to its function parameters: the parameter, the
     /// argument position (`None`: any position), and the place.
     pub lent: Vec<(usize, Option<usize>, PlaceId)>,
@@ -86,46 +298,207 @@ pub struct Summary {
     /// the operation and the argument position (`None`: any), and the place.
     pub op_args: Vec<(CapId, Option<usize>, Option<usize>, PlaceId)>,
     /// The closures of the body that the value can be.
-    pub members: BTreeSet<usize>,
+    pub members: Grow<usize>,
     /// Function parameters that the body stores. For a closure: its own parameters.
-    pub stores: BTreeSet<usize>,
+    pub stores: Grow<usize>,
     /// Places that the body gives to code that can mutate through them: a function
     /// parameter, an unknown function value or an operation of an outer handler.
-    pub lends: BTreeSet<PlaceId>,
+    pub lends: Grow<PlaceId>,
     /// The summaries of the function values that a call of the value returns.
-    pub rets: BTreeSet<usize>,
+    pub rets: Grow<usize>,
     /// Locals outside the body that the body gives a place below one of its
     /// parameters: the local and the place.
     pub binds: Vec<(usize, PlaceId)>,
     /// Tasks that the body spawns into a scope outside it. Each node where the
     /// body runs starts them.
-    pub spawns: BTreeSet<TaskId>,
+    pub spawns: Grow<TaskId>,
     /// Capabilities of the handlers that the body installs.
-    pub own_caps: BTreeSet<CapId>,
+    pub own_caps: Grow<CapId>,
     /// Function parameters of the value that a task of its body can call.
-    pub tasks: BTreeSet<usize>,
+    pub tasks: Grow<usize>,
     /// The capabilities of the function values inside the values that a call of
     /// the value returns, also inside a tuple or a struct.
-    pub ret_caps: BTreeSet<CapId>,
+    pub ret_caps: Grow<CapId>,
     /// The tasks of the task handles that a call of the value returns.
-    pub ret_tasks: BTreeSet<TaskId>,
+    pub ret_tasks: Grow<TaskId>,
     /// Function parameters that the body gives to an operation, with the
     /// capability of a local handler outside the body (`None`: a handler of a
     /// caller) and the effect. The clause can call or keep them.
-    pub op_fns: BTreeSet<(usize, Option<CapId>, String)>,
+    pub op_fns: Grow<(usize, Option<CapId>, String)>,
     /// Effects that a task of the body performs through a handler outside the function.
-    pub task_effects: BTreeSet<String>,
+    pub task_effects: Grow<String>,
     /// Function parameters that the body can call more than once.
-    pub repeats: BTreeSet<usize>,
+    pub repeats: Grow<usize>,
     /// Reference parameters whose pointee can get a function value from the body.
-    pub fn_stores: BTreeSet<usize>,
+    pub fn_stores: Grow<usize>,
     /// The function values that the body gives to an operation of a handler of a
     /// caller. Each pair has the effect of the operation, and an effect that the
     /// value performs through a handler of a caller.
-    pub op_effects: BTreeSet<(String, String)>,
+    pub op_effects: Grow<(String, String)>,
     /// Tasks that the function values that a call of the value returns spawn into
     /// a scope outside. A callee that calls such a result starts them.
-    pub ret_spawns: BTreeSet<TaskId>,
+    pub ret_spawns: Grow<TaskId>,
+}
+
+impl Summary {
+    /// The sizes now, for [`Summary::cut`]. Each field is named, so that a new
+    /// field gets a decision here.
+    pub(super) fn mark(&self) -> SumMark {
+        let Self {
+            muts,
+            reads,
+            escapes,
+            performs,
+            may_abort,
+            multi,
+            passthrough,
+            own_roots,
+            captures,
+            moved_captures,
+            dropped,
+            ret_refs,
+            param_roots,
+            literal,
+            items,
+            params,
+            unknown,
+            row,
+            lent,
+            op_args,
+            members,
+            stores,
+            lends,
+            rets,
+            binds,
+            spawns,
+            own_caps,
+            tasks,
+            ret_caps,
+            ret_tasks,
+            op_fns,
+            task_effects,
+            repeats,
+            fn_stores,
+            op_effects,
+            ret_spawns,
+        } = self;
+        SumMark {
+            muts: muts.mark(),
+            reads: reads.mark(),
+            escapes: escapes.mark(),
+            performs: performs.mark(),
+            passthrough: passthrough.mark(),
+            own_roots: own_roots.mark(),
+            captures: captures.mark(),
+            moved_captures: moved_captures.mark(),
+            dropped: dropped.mark(),
+            items: items.mark(),
+            params: params.mark(),
+            row: row.mark(),
+            members: members.mark(),
+            stores: stores.mark(),
+            lends: lends.mark(),
+            rets: rets.mark(),
+            spawns: spawns.mark(),
+            own_caps: own_caps.mark(),
+            tasks: tasks.mark(),
+            ret_caps: ret_caps.mark(),
+            ret_tasks: ret_tasks.mark(),
+            op_fns: op_fns.mark(),
+            task_effects: task_effects.mark(),
+            repeats: repeats.mark(),
+            fn_stores: fn_stores.mark(),
+            op_effects: op_effects.mark(),
+            ret_spawns: ret_spawns.mark(),
+            ret_refs: ret_refs.len(),
+            lent: lent.len(),
+            op_args: op_args.len(),
+            binds: binds.len(),
+            may_abort: *may_abort,
+            multi: *multi,
+            literal: *literal,
+            unknown: *unknown,
+            param_roots: param_roots.clone(),
+        }
+    }
+
+    /// Goes back to the sizes of `mark`: a loop pass only adds to a summary.
+    pub(super) fn cut(&mut self, mark: SumMark) {
+        let Self {
+            muts,
+            reads,
+            escapes,
+            performs,
+            may_abort,
+            multi,
+            passthrough,
+            own_roots,
+            captures,
+            moved_captures,
+            dropped,
+            ret_refs,
+            param_roots,
+            literal,
+            items,
+            params,
+            unknown,
+            row,
+            lent,
+            op_args,
+            members,
+            stores,
+            lends,
+            rets,
+            binds,
+            spawns,
+            own_caps,
+            tasks,
+            ret_caps,
+            ret_tasks,
+            op_fns,
+            task_effects,
+            repeats,
+            fn_stores,
+            op_effects,
+            ret_spawns,
+        } = self;
+        muts.cut(mark.muts);
+        reads.cut(mark.reads);
+        escapes.cut(mark.escapes);
+        performs.cut(mark.performs);
+        passthrough.cut(mark.passthrough);
+        own_roots.cut(mark.own_roots);
+        captures.cut(mark.captures);
+        moved_captures.cut(mark.moved_captures);
+        dropped.cut(mark.dropped);
+        items.cut(mark.items);
+        params.cut(mark.params);
+        row.cut(mark.row);
+        members.cut(mark.members);
+        stores.cut(mark.stores);
+        lends.cut(mark.lends);
+        rets.cut(mark.rets);
+        spawns.cut(mark.spawns);
+        own_caps.cut(mark.own_caps);
+        tasks.cut(mark.tasks);
+        ret_caps.cut(mark.ret_caps);
+        ret_tasks.cut(mark.ret_tasks);
+        op_fns.cut(mark.op_fns);
+        task_effects.cut(mark.task_effects);
+        repeats.cut(mark.repeats);
+        fn_stores.cut(mark.fn_stores);
+        op_effects.cut(mark.op_effects);
+        ret_spawns.cut(mark.ret_spawns);
+        ret_refs.truncate(mark.ret_refs);
+        lent.truncate(mark.lent);
+        op_args.truncate(mark.op_args);
+        binds.truncate(mark.binds);
+        *may_abort = mark.may_abort;
+        *multi = mark.multi;
+        *literal = mark.literal;
+        *unknown = mark.unknown;
+        *param_roots = mark.param_roots;
+    }
 }
 
 /// The state of a property query (`Lower::ty_has`).
@@ -214,8 +587,8 @@ pub struct Lowered {
     pub effects: EffectSig,
     /// Type and signature diagnostics.
     pub diags: Vec<Diagnostic>,
-    /// The passes of the loop bodies (`lower_loop`), also of nested loops.
-    pub loop_passes: usize,
+    /// The work of the lowering.
+    pub work: crate::Work,
 }
 
 #[derive(Clone, Debug)]
@@ -236,7 +609,6 @@ struct Local {
     ty: Ty,
     root: Option<PlaceId>,
     refs: Vec<PlaceId>,
-    uniq: bool,
     /// The tasks of the task handles that the local can hold.
     tasks: BTreeSet<TaskId>,
     summary: Option<usize>,
@@ -253,6 +625,128 @@ struct Local {
     /// its own part of the graph (`Lower::bind_caps`). It has the stores into a
     /// part, the new values in a closure or a clause, and the value of a parameter.
     sticky: BTreeSet<CapId>,
+}
+
+/// The locals of a body, in the order of their declarations.
+///
+/// A loop pass can change a local from outside the loop. Each change goes
+/// through [`Locals::get_mut`], which keeps the old value for each open loop
+/// pass (`Locals::begin`). A rewind (`Locals::restore`) puts the old values
+/// back and drops the locals of the pass. So a rewind costs as much as the
+/// changes of the pass, not as much as all the locals.
+#[derive(Clone, Debug, Default)]
+struct Locals {
+    items: Vec<Local>,
+    /// The locals that hold a `@ uniq` value now.
+    uniq: BTreeSet<usize>,
+    /// The open loop passes, the innermost last.
+    undo: Vec<Undo>,
+}
+
+/// The changes of the locals in one loop pass.
+#[derive(Clone, Debug, Default)]
+struct Undo {
+    /// The number of locals at the start of the pass.
+    floor: usize,
+    /// The old value of each local below `floor` that the pass changed.
+    old: BTreeMap<usize, Local>,
+    /// The old `@ uniq` mark of each local below `floor` that the pass changed.
+    old_uniq: BTreeMap<usize, bool>,
+}
+
+impl std::ops::Index<usize> for Locals {
+    type Output = Local;
+    fn index(&self, l: usize) -> &Local {
+        &self.items[l]
+    }
+}
+
+impl Locals {
+    fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    fn get(&self, l: usize) -> Option<&Local> {
+        self.items.get(l)
+    }
+
+    fn push(&mut self, local: Local, uniq: bool) {
+        if uniq {
+            self.uniq.insert(self.items.len());
+        }
+        self.items.push(local);
+    }
+
+    /// Returns true if local `l` holds a `@ uniq` value now.
+    fn is_uniq(&self, l: usize) -> bool {
+        self.uniq.contains(&l)
+    }
+
+    /// The locals that hold a `@ uniq` value now.
+    const fn uniq_set(&self) -> &BTreeSet<usize> {
+        &self.uniq
+    }
+
+    /// Returns local `l` to change it. Each open loop pass keeps its old value.
+    fn get_mut(&mut self, l: usize) -> &mut Local {
+        for u in &mut self.undo {
+            if l < u.floor && !u.old.contains_key(&l) {
+                u.old.insert(l, self.items[l].clone());
+            }
+        }
+        &mut self.items[l]
+    }
+
+    /// Sets the `@ uniq` mark of local `l`. Each open loop pass keeps the old mark.
+    fn set_uniq(&mut self, l: usize, uniq: bool) {
+        let was = self.uniq.contains(&l);
+        if was == uniq {
+            return;
+        }
+        for u in &mut self.undo {
+            if l < u.floor {
+                u.old_uniq.entry(l).or_insert(was);
+            }
+        }
+        if uniq {
+            self.uniq.insert(l);
+        } else {
+            self.uniq.remove(&l);
+        }
+    }
+
+    /// Starts a loop pass: the changes from now on are kept.
+    fn begin(&mut self) {
+        let floor = self.items.len();
+        self.undo.push(Undo {
+            floor,
+            old: BTreeMap::new(),
+            old_uniq: BTreeMap::new(),
+        });
+    }
+
+    /// Ends the innermost loop pass, and returns its changes.
+    fn end(&mut self) -> Undo {
+        self.undo.pop().unwrap_or_default()
+    }
+
+    /// Puts back the values before the pass `u`, and drops the locals of the pass.
+    fn restore(&mut self, u: Undo) {
+        for (l, old) in u.old {
+            if let Some(slot) = self.items.get_mut(l) {
+                *slot = old;
+            }
+        }
+        for (l, was) in u.old_uniq {
+            if was {
+                self.uniq.insert(l);
+            } else {
+                self.uniq.remove(&l);
+            }
+        }
+        self.items.truncate(u.floor);
+        let _ = self.uniq.split_off(&u.floor);
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -309,8 +803,10 @@ struct PartHolder {
 /// own path. The branches join it at their end.
 #[derive(Clone)]
 pub(super) struct BranchState {
-    /// Each local holds a `@ uniq` value.
-    uniq: Vec<bool>,
+    /// The locals that hold a `@ uniq` value.
+    uniq: BTreeSet<usize>,
+    /// The number of locals: a local at this index or above has no mark here.
+    len: usize,
     /// The holders of the references in the parts of locals.
     holders: Vec<PartHolder>,
 }
@@ -455,12 +951,9 @@ struct Handled {
 
 /// The lowering state of one function.
 ///
-/// A loop body can be lowered more than once (`lower_loop`). A pass after the
-/// first starts from a copy of the state at the loop head. Only the interned
-/// tables stay from the pass before: places, roots, variables, closure
-/// summaries and the inference table. Put a new field that can refer to these
-/// tables in `lower_loop` too.
-#[derive(Clone)]
+/// A loop body can be lowered more than once (`loops::lower_loop`). A pass
+/// after the first starts from the state at the loop head. `loops::LoopHead`
+/// names each field: a new field needs a decision there.
 pub struct Lower<'p> {
     prog: &'p Program,
     sigs: &'p [FnSig],
@@ -470,7 +963,7 @@ pub struct Lower<'p> {
     pub facts: FnFacts,
     diags: Vec<Diagnostic>,
     inf: Infer,
-    locals: Vec<Local>,
+    locals: Locals,
     frames: Vec<Frame>,
     sums: Vec<Summary>,
     closures: Vec<Summary>,
@@ -616,9 +1109,9 @@ pub struct Lower<'p> {
     /// The new values of whole locals in their own part of the graph: the
     /// variable, the node and the capabilities of the value.
     bind_caps: Vec<(VarId, NodeId, BTreeSet<CapId>)>,
-    /// The passes of the loop bodies so far. A loop rewind keeps it.
-    loop_passes: usize,
-    /// The most passes of one loop, for a test. `None`: [`stmt::loop_pass_bound`].
+    /// The work so far. A loop rewind keeps it.
+    work: crate::Work,
+    /// The most passes of one loop, for a test. `None`: [`loops::loop_pass_bound`].
     loop_bound: Option<usize>,
 }
 
@@ -643,7 +1136,7 @@ impl<'p> Lower<'p> {
             },
             diags: Vec::new(),
             inf: Infer::default(),
-            locals: Vec::new(),
+            locals: Locals::default(),
             frames: vec![Frame {
                 names: Vec::new(),
                 barrier: None,
@@ -719,7 +1212,7 @@ impl<'p> Lower<'p> {
             held_of: BTreeMap::new(),
             abort_ctx: BTreeMap::new(),
             bind_caps: Vec::new(),
-            loop_passes: 0,
+            work: crate::Work::default(),
             loop_bound: None,
         }
     }
@@ -1482,22 +1975,24 @@ impl<'p> Lower<'p> {
         let info = self.var_info(name, kind, span, &ty, uniq);
         let var = self.facts.add_var(info);
         let top = self.frames.len() - 1;
-        self.locals.push(Local {
-            name: name.into(),
-            var,
-            ty,
-            root: None,
-            refs: Vec::new(),
+        self.locals.push(
+            Local {
+                name: name.into(),
+                var,
+                ty,
+                root: None,
+                refs: Vec::new(),
+                tasks: BTreeSet::new(),
+                summary: None,
+                fn_param: None,
+                cont: None,
+                bound: false,
+                caps: BTreeSet::new(),
+                sticky: BTreeSet::new(),
+                frame: (top, self.frames[top].id),
+            },
             uniq,
-            tasks: BTreeSet::new(),
-            summary: None,
-            fn_param: None,
-            cont: None,
-            bound: false,
-            caps: BTreeSet::new(),
-            sticky: BTreeSet::new(),
-            frame: (top, self.frames[top].id),
-        });
+        );
         let l = self.locals.len() - 1;
         let i = var.index();
         if self.var_local.len() <= i {
@@ -1526,7 +2021,7 @@ impl<'p> Lower<'p> {
 
     /// Gives local `l` the root place `r`: the local owns the memory under `r`.
     fn set_root(&mut self, l: usize, r: PlaceId) {
-        self.locals[l].root = Some(r);
+        self.locals.get_mut(l).root = Some(r);
         let ri = self.facts.place(r).root.index();
         if self.root_local.len() <= ri {
             self.root_local.resize(ri + 1, usize::MAX);
@@ -1552,7 +2047,7 @@ impl<'p> Lower<'p> {
         // A new value of the whole local replaces the values of its parts.
         self.part_holders.retain(|h| h.local != l);
         let caps = self.val_caps(v);
-        self.locals[l].caps.extend(caps.iter().copied());
+        self.locals.get_mut(l).caps.extend(caps.iter().copied());
         // A new value in the part of the graph of the local: W0313 follows it to the
         // end of a `handle` (`check_local_keeps`). Another one counts always.
         let depth = self.local_frame(l);
@@ -1560,14 +2055,14 @@ impl<'p> Lower<'p> {
         if same {
             self.bind_caps.push((var, n, caps));
         } else {
-            self.locals[l].sticky.extend(caps);
+            self.locals.get_mut(l).sticky.extend(caps);
         }
         self.mark_modes(l);
         for &p in &v.refs {
             self.point_local(l, p);
         }
         if !v.tasks.is_empty() {
-            self.locals[l].tasks.clone_from(&v.tasks);
+            self.locals.get_mut(l).tasks.clone_from(&v.tasks);
         }
         // A function value. A new value of the local joins the old one: a later
         // call can call either.
@@ -1579,13 +2074,13 @@ impl<'p> Lower<'p> {
             } else {
                 new.0
             };
-            self.locals[l].summary = info.summary;
-            self.locals[l].fn_param = info.param;
+            self.locals.get_mut(l).summary = info.summary;
+            self.locals.get_mut(l).fn_param = info.param;
         }
-        self.locals[l].bound = true;
+        self.locals.get_mut(l).bound = true;
         // The local is `@ uniq` while it holds a `@ uniq` value. The variable is
         // `@ uniq` only if each of its values is, and not `many` if one is.
-        self.locals[l].uniq = v.uniq;
+        self.locals.set_uniq(l, v.uniq);
         let info = &mut self.facts.vars[var.index()];
         info.uniq = v.uniq && (first || info.uniq);
         info.once |= v.uniq;
@@ -1716,15 +2211,24 @@ impl<'p> Lower<'p> {
     /// Returns the state of this path that a branch changes.
     pub(super) fn branch_state(&self) -> BranchState {
         BranchState {
-            uniq: self.locals.iter().map(|l| l.uniq).collect(),
+            uniq: self.locals.uniq_set().clone(),
+            len: self.locals.len(),
             holders: self.part_holders.clone(),
         }
     }
 
     /// Sets the state of `branch_state` again, at the start of another branch.
     pub(super) fn set_branch(&mut self, state: &BranchState) {
-        for (l, &u) in self.locals.iter_mut().zip(&state.uniq) {
-            l.uniq = u;
+        let len = state.len.min(self.locals.len());
+        let changed: Vec<usize> = self
+            .locals
+            .uniq_set()
+            .symmetric_difference(&state.uniq)
+            .copied()
+            .filter(|&l| l < len)
+            .collect();
+        for l in changed {
+            self.locals.set_uniq(l, state.uniq.contains(&l));
         }
         self.part_holders.clone_from(&state.holders);
     }
@@ -1741,15 +2245,22 @@ impl<'p> Lower<'p> {
     /// if it is at the end of each branch. A part can hold the references of each
     /// branch.
     pub(super) fn joined(ends: &[BranchState]) -> BranchState {
-        let len = ends.iter().map(|e| e.uniq.len()).min().unwrap_or(0);
-        let uniq = (0..len).map(|i| ends.iter().all(|e| e.uniq[i])).collect();
+        let len = ends.iter().map(|e| e.len).min().unwrap_or(0);
+        let uniq = ends.first().map_or_else(BTreeSet::new, |first| {
+            first
+                .uniq
+                .iter()
+                .copied()
+                .filter(|&l| l < len && ends.iter().all(|e| e.uniq.contains(&l)))
+                .collect()
+        });
         let mut holders: Vec<PartHolder> = Vec::new();
         for h in ends.iter().flat_map(|e| &e.holders) {
             if !holders.iter().any(|x| x.var == h.var) {
                 holders.push(h.clone());
             }
         }
-        BranchState { uniq, holders }
+        BranchState { uniq, len, holders }
     }
 
     /// A branch reaches a join over the edge `from` to `to` with the state
@@ -1814,7 +2325,7 @@ impl<'p> Lower<'p> {
         let var = self.locals[l].var;
         self.facts.points_into.push((var, p));
         if !self.locals[l].refs.contains(&p) {
-            self.locals[l].refs.push(p);
+            self.locals.get_mut(l).refs.push(p);
         }
         let arg = self.facts.roots[self.facts.place(p).root.index()].kind == RootKind::Arg;
         let barrier = self.frames.iter().rposition(|f| f.barrier.is_some());

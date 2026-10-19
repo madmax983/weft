@@ -7,7 +7,6 @@ use super::{
 };
 use crate::props::Prop;
 use std::collections::BTreeSet;
-use std::fmt::Write as _;
 
 impl Lower<'_> {
     /// Lowers a function body.
@@ -73,8 +72,14 @@ impl Lower<'_> {
             // value of a type parameter can be one too.
             let generic = super::flow::mentions_param(&p.ty);
             if !matches!(p.ty, Ty::Fn(_)) && (self.has_fn(&p.ty) || generic) {
-                self.locals[l].caps.insert(super::caps::param_cap(i));
-                self.locals[l].sticky.insert(super::caps::param_cap(i));
+                self.locals
+                    .get_mut(l)
+                    .caps
+                    .insert(super::caps::param_cap(i));
+                self.locals
+                    .get_mut(l)
+                    .sticky
+                    .insert(super::caps::param_cap(i));
             }
             if p.shared {
                 self.facts.shared_root.extend(bases[i].iter().copied());
@@ -210,7 +215,7 @@ impl Lower<'_> {
             facts: self.facts,
             effects: eff,
             diags: self.diags,
-            loop_passes: self.loop_passes,
+            work: self.work,
         }
     }
 
@@ -274,25 +279,25 @@ impl Lower<'_> {
     fn summary_to_sig(&self, bases: &[Vec<PlaceId>]) -> EffectSig {
         let sum = &self.sums[0];
         let mut out = EffectSig {
-            named: sum.escapes.clone(),
-            passthrough: sum.passthrough.clone(),
+            named: sum.escapes.to_set(),
+            passthrough: sum.passthrough.to_set(),
             lent: self.lent_sig(bases),
             ret: self.ret_sig(bases),
-            stores: sum.stores.clone(),
+            stores: sum.stores.to_set(),
             reaches: !self.reaches.is_empty(),
             reach_given: self.reach_sig(bases),
             reach_repeats: self.reach_runs.1 || (self.reach_runs.0 > 1 && self.reaches_follow()),
             multi: self.unknown_multi,
-            tasks: sum.tasks.clone(),
-            fn_stores: sum.fn_stores.clone(),
-            op_effects: sum.op_effects.clone(),
+            tasks: sum.tasks.to_set(),
+            fn_stores: sum.fn_stores.to_set(),
+            op_effects: sum.op_effects.to_set(),
             op_fns: sum
                 .op_fns
                 .iter()
                 .filter(|(_, cap, _)| cap.is_none())
                 .map(|(p, _, e)| (*p, e.clone()))
                 .collect(),
-            task_effects: sum.task_effects.clone(),
+            task_effects: sum.task_effects.to_set(),
             repeats: self.repeats_sig(),
             ..EffectSig::default()
         };
@@ -829,503 +834,6 @@ impl Lower<'_> {
             self.facts.cfg_edge.push((c, header));
         }
         self.last_loop = Some((header, exit));
-    }
-
-    /// Lowers one iteration of a loop with `pass` until the values of the locals
-    /// from outside the loop are stable. An iteration starts with the values that
-    /// the iterations before it gave: references, function values and tasks. So
-    /// when the body gives a local a new value, the body is lowered again from
-    /// the loop head, with the old and the new values joined. A chain of locals
-    /// needs one more pass for each local.
-    ///
-    /// After [`LOOP_WIDEN_AFTER`] passes the join widens what still changes
-    /// (`next_carry`), so that the values become stable. A loop that is not
-    /// stable after [`loop_pass_bound`] passes gets W0707: the lowering never
-    /// keeps the partial values of the last pass with no error.
-    fn lower_loop(&mut self, span: Span, pass: &mut dyn FnMut(&mut Self)) {
-        let outer = self.locals.len();
-        let made = (self.facts.roots.len(), self.facts.vars.len());
-        let entry = self.branch_state();
-        let bound = self.loop_bound.unwrap_or_else(|| loop_pass_bound(outer));
-        let mut passes = 0;
-        loop {
-            let start = self.carried(outer, made, None);
-            let head = self.clone();
-            let head_state = self.branch_state();
-            let outer_jumps = std::mem::take(&mut self.loop_jumps);
-            pass(self);
-            let jumps = std::mem::replace(&mut self.loop_jumps, outer_jumps);
-            passes += 1;
-            self.loop_passes += 1;
-            // The next pass starts with the states of the back edges: the end of
-            // the body and each `continue`.
-            let mut back = vec![head_state.clone()];
-            back.extend(
-                jumps
-                    .iter()
-                    .filter(|(b, ..)| !b)
-                    .map(|(_, st, _)| st.clone()),
-            );
-            let end_state = self.cur.map(|_| self.branch_state());
-            back.extend(end_state.clone());
-            let mut next = Self::joined(&back);
-            let carry = self.next_carry(&head, outer, made, &mut next, passes);
-            let stable = self.carry_key(&carry, &next.holders, made) == start;
-            if stable || passes >= bound {
-                if !stable {
-                    self.diags.push(
-                        weft_syntax::diag::Diagnostic::error(
-                            "W0707",
-                            format!(
-                                "the analysis of this loop stopped after {passes} passes before its values were stable"
-                            ),
-                            span,
-                        )
-                        .note("the facts of the loop can be incomplete; report the program as a checker bug"),
-                    );
-                }
-                // The loop ends at its head, before a pass or after one, or at a `break`.
-                let mut exits = back;
-                exits.push(entry.clone());
-                exits.extend(
-                    jumps
-                        .iter()
-                        .filter(|(b, ..)| *b)
-                        .map(|(_, st, _)| st.clone()),
-                );
-                let st = Self::joined(&exits);
-                self.retire_loop_stale(&head_state, &entry, end_state.as_ref(), &jumps, &st);
-                self.set_branch(&st);
-                return;
-            }
-            self.rewind(head);
-            // The references that the parts of outer locals got in this pass are
-            // there at the start of the next pass.
-            for h in next.holders.iter().filter(|h| h.local < outer) {
-                if !self.part_holders.iter().any(|x| x.var == h.var) {
-                    for &p in &h.refs {
-                        self.facts.points_into.push((h.var, p));
-                    }
-                    self.part_holders.push(h.clone());
-                }
-            }
-            for (l, c) in carry.into_iter().enumerate() {
-                let var = self.locals[l].var;
-                for &p in &c.refs {
-                    if !self.locals[l].refs.contains(&p) {
-                        self.facts.points_into.push((var, p));
-                    }
-                }
-                let loc = &mut self.locals[l];
-                loc.refs = c.refs;
-                loc.summary = c.summary;
-                loc.fn_param = c.fn_param;
-                loc.tasks = c.tasks;
-                loc.bound = c.bound;
-                loc.uniq = c.uniq;
-                loc.caps = c.caps;
-                loc.sticky = c.sticky;
-            }
-        }
-    }
-
-    /// The values of the first `outer` locals at the head of the next pass of a
-    /// loop. `head` is the state at the head of this pass, and `self` the state at
-    /// its end. `next` is the joined state of the back edges.
-    ///
-    /// Each value is the join of the value at the head and the value at the end:
-    /// the references of both, the function values of both (the end value already
-    /// joins the head value), and the tasks of both. After [`LOOP_WIDEN_AFTER`]
-    /// passes the join widens what still changes:
-    /// - A new place below a place that the value had at the head becomes the
-    ///   wildcard place of the deepest such place. After [`loop_roots_after`]
-    ///   passes, another new place becomes the wildcard place of its root.
-    /// - A function value that still changes becomes a function value that the
-    ///   body does not know, which can also do what the value did.
-    ///
-    /// The part holders of `next` get the same widening of their places.
-    fn next_carry(
-        &mut self,
-        head: &Self,
-        outer: usize,
-        made: (usize, usize),
-        next: &mut super::BranchState,
-        passes: usize,
-    ) -> Vec<Carried> {
-        let widen = passes >= LOOP_WIDEN_AFTER;
-        let to_root = passes >= loop_roots_after(outer);
-        let mut out = Vec::with_capacity(outer);
-        for l in 0..outer {
-            let h = &head.locals[l];
-            let e = self.locals[l].clone();
-            let mut refs = h.refs.clone();
-            let new: Vec<PlaceId> = e
-                .refs
-                .iter()
-                .copied()
-                .filter(|p| !h.refs.contains(p))
-                .collect();
-            let known: BTreeSet<String> =
-                h.refs.iter().map(|&p| self.place_key(p, made.0)).collect();
-            for p in new {
-                let q = if widen {
-                    self.widen_place(p, &known, made.0, to_root)
-                } else {
-                    p
-                };
-                if !refs.contains(&q) {
-                    refs.push(q);
-                }
-            }
-            let mut c = Carried {
-                refs,
-                summary: e.summary,
-                fn_param: e.fn_param,
-                tasks: h.tasks.union(&e.tasks).copied().collect(),
-                bound: e.bound,
-                uniq: next.uniq.get(l).copied().unwrap_or(e.uniq),
-                caps: e.caps.clone(),
-                sticky: e.sticky.clone(),
-            };
-            if widen {
-                let head_info = super::FnInfo {
-                    summary: h.summary,
-                    item: None,
-                    param: h.fn_param,
-                };
-                let end_info = super::FnInfo {
-                    summary: e.summary,
-                    item: None,
-                    param: e.fn_param,
-                };
-                if self.fn_key(&head_info, made) != self.fn_key(&end_info, made) {
-                    let row = super::fn_row(&self.inf.shallow(&e.ty));
-                    let mut m = super::Summary::default();
-                    self.add_fn(&mut m, &end_info, row.as_deref());
-                    m.unknown = true;
-                    m.may_abort = true;
-                    m.multi |= self.may_be_multi(row.as_deref());
-                    m.row.extend(row.into_iter().flatten());
-                    self.closures.push(m);
-                    c.summary = Some(self.closures.len() - 1);
-                }
-            }
-            out.push(c);
-        }
-        if widen {
-            for i in 0..next.holders.len() {
-                let hl = next.holders[i].local;
-                if hl >= outer
-                    || head
-                        .part_holders
-                        .iter()
-                        .any(|x| x.var == next.holders[i].var)
-                {
-                    continue;
-                }
-                let known: BTreeSet<String> = head
-                    .part_holders
-                    .iter()
-                    .filter(|x| x.local == hl)
-                    .flat_map(|x| &x.refs)
-                    .map(|&p| self.place_key(p, made.0))
-                    .collect();
-                let refs = next.holders[i].refs.clone();
-                let mut widened = Vec::with_capacity(refs.len());
-                for p in refs {
-                    let q = self.widen_place(p, &known, made.0, to_root);
-                    if !widened.contains(&q) {
-                        widened.push(q);
-                    }
-                }
-                next.holders[i].refs = widened;
-            }
-        }
-        out
-    }
-
-    /// Widens place `p` for the head of the next pass of a loop. `known` has the
-    /// keys of the places at the head. A place with a known key stays. A place
-    /// below a known place becomes the wildcard place of the deepest one. Another
-    /// place stays, or with `to_root` becomes the wildcard place of its root.
-    fn widen_place(
-        &mut self,
-        p: PlaceId,
-        known: &BTreeSet<String>,
-        roots: usize,
-        to_root: bool,
-    ) -> PlaceId {
-        if known.contains(&self.place_key(p, roots)) {
-            return p;
-        }
-        let mut top = p;
-        let mut at = self.facts.place(p).parent;
-        while let Some(q) = at {
-            if known.contains(&self.place_key(q, roots)) {
-                return self.facts.wildcard(q);
-            }
-            top = q;
-            at = self.facts.place(q).parent;
-        }
-        if to_root {
-            self.facts.wildcard(top)
-        } else {
-            p
-        }
-    }
-
-    /// Retires the stale part holders on the edges into the head and the exit of
-    /// the loop that `lower_loop` lowered last (`retire_stale`). The states are:
-    /// - `head`: at the head in the last pass;
-    /// - `entry`: before the loop;
-    /// - `end`: at the end of the body;
-    /// - `jumps`: at the `break`s and the `continue`s;
-    /// - `exit`: after the loop.
-    fn retire_loop_stale(
-        &mut self,
-        head: &super::BranchState,
-        entry: &super::BranchState,
-        end: Option<&super::BranchState>,
-        jumps: &[(bool, super::BranchState, NodeId)],
-        exit: &super::BranchState,
-    ) {
-        let Some((header, out)) = self.last_loop else {
-            return;
-        };
-        // With no holder at the head or after the loop, no holder is stale.
-        if head.holders.is_empty() && exit.holders.is_empty() {
-            return;
-        }
-        let into_head: Vec<NodeId> = self
-            .facts
-            .cfg_edge
-            .iter()
-            .filter(|&&(_, b)| b == header)
-            .map(|&(a, _)| a)
-            .collect();
-        for a in into_head {
-            let state = if a.index() < header.index() {
-                Some(entry)
-            } else if let Some((_, st, _)) = jumps.iter().find(|(b, _, n)| !b && *n == a) {
-                Some(st)
-            } else if Some(a) == self.cur {
-                end
-            } else {
-                None
-            };
-            if let Some(st) = state {
-                self.retire_stale(a, header, st, head);
-            }
-        }
-        let into_exit: Vec<NodeId> = self
-            .facts
-            .cfg_edge
-            .iter()
-            .filter(|&&(_, b)| b == out)
-            .map(|&(a, _)| a)
-            .collect();
-        for a in into_exit {
-            // The other edges leave the head: the loop condition.
-            let st = jumps
-                .iter()
-                .find(|(b, _, n)| *b && *n == a)
-                .map_or(head, |(_, st, _)| st);
-            self.retire_stale(a, out, st, exit);
-        }
-    }
-
-    /// The values of the first `outer` locals that an iteration passes to the next,
-    /// as keys that are the same in each pass. `made` is the number of roots and
-    /// variables before the loop.
-    /// `state` is the state at the head of the next pass: by default, the state now.
-    fn carried(
-        &self,
-        outer: usize,
-        made: (usize, usize),
-        state: Option<&super::BranchState>,
-    ) -> Vec<BTreeSet<String>> {
-        let holders = state.map_or(&self.part_holders, |st| &st.holders);
-        let carry: Vec<Carried> = self.locals[..outer]
-            .iter()
-            .enumerate()
-            .map(|(l, loc)| Carried {
-                refs: loc.refs.clone(),
-                summary: loc.summary,
-                fn_param: loc.fn_param,
-                tasks: loc.tasks.clone(),
-                bound: loc.bound,
-                uniq: state.map_or(loc.uniq, |st| st.uniq.get(l).copied().unwrap_or(loc.uniq)),
-                caps: loc.caps.clone(),
-                sticky: loc.sticky.clone(),
-            })
-            .collect();
-        self.carry_key(&carry, holders, made)
-    }
-
-    /// The keys of the values `carry` of the locals outside a loop, with the part
-    /// holders `holders`. The keys are the same in each pass of the loop.
-    fn carry_key(
-        &self,
-        carry: &[Carried],
-        holders: &[super::PartHolder],
-        made: (usize, usize),
-    ) -> Vec<BTreeSet<String>> {
-        carry
-            .iter()
-            .enumerate()
-            .map(|(l, c)| {
-                let mut key: BTreeSet<String> = c
-                    .refs
-                    .iter()
-                    .map(|&p| format!("ref {}", self.place_key(p, made.0)))
-                    .collect();
-                if c.uniq {
-                    key.insert("uniq".to_string());
-                }
-                for h in holders.iter().filter(|h| h.local == l) {
-                    key.extend(
-                        h.refs
-                            .iter()
-                            .map(|&p| format!("part ref {}", self.place_key(p, made.0))),
-                    );
-                }
-                key.extend(c.tasks.iter().map(|t| format!("task {t}")));
-                key.extend(c.caps.iter().map(|c| format!("cap {}", c.0)));
-                let info = super::FnInfo {
-                    summary: c.summary,
-                    item: None,
-                    param: c.fn_param,
-                };
-                key.extend(self.fn_key(&info, made));
-                key
-            })
-            .collect()
-    }
-
-    /// A key of place `p` that is the same in each pass of a loop. A root that the
-    /// loop makes (index `roots` or more) has its kind and name, and a split has its side.
-    fn place_key(&self, p: PlaceId, roots: usize) -> String {
-        let info = self.facts.place(p);
-        let r = info.root.index();
-        let mut key = if r < roots {
-            format!("r{r}")
-        } else {
-            let root = &self.facts.roots[r];
-            format!("{:?} {}", root.kind, root.name)
-        };
-        for s in &info.steps {
-            let _ = match s.kind {
-                StepKind::Seg { hi, .. } => write!(key, "/seg {hi} {}", s.unstable),
-                k => write!(key, "/{k:?} {}", s.unstable),
-            };
-        }
-        key
-    }
-
-    /// The keys of what a call of function value `info` does, the same in each pass of a loop.
-    fn fn_key(&self, info: &super::FnInfo, made: (usize, usize)) -> BTreeSet<String> {
-        let mut out = BTreeSet::new();
-        out.extend(info.param.map(|p| format!("param {p:?}")));
-        let Some(s) = info.summary else {
-            return out;
-        };
-        let sum = &self.closures[s];
-        let pk = |p: PlaceId| self.place_key(p, made.0);
-        let vk = |v: VarId| {
-            if v.index() < made.1 {
-                format!("{v}")
-            } else {
-                self.facts.var(v).name.clone()
-            }
-        };
-        for (tag, ps) in [
-            ("mut", &sum.muts),
-            ("read", &sum.reads),
-            ("lend", &sum.lends),
-        ] {
-            out.extend(ps.iter().map(|&p| format!("{tag} {}", pk(p))));
-        }
-        out.extend(sum.ret_refs.iter().map(|&p| format!("ret {}", pk(p))));
-        out.extend(
-            sum.binds
-                .iter()
-                .map(|&(l, p)| format!("bind {l} {}", pk(p))),
-        );
-        out.extend(
-            sum.escapes
-                .iter()
-                .chain(&sum.row)
-                .map(|e| format!("effect {e}")),
-        );
-        out.extend(sum.performs.iter().map(|c| format!("cap {c}")));
-        out.extend(sum.passthrough.iter().map(|p| format!("passthrough {p}")));
-        out.extend(sum.items.iter().map(|f| format!("item {f}")));
-        out.extend(sum.params.iter().map(|p| format!("param {p}")));
-        out.extend(sum.stores.iter().map(|p| format!("stores {p}")));
-        out.extend(sum.tasks.iter().map(|p| format!("tasks {p}")));
-        out.extend(sum.spawns.iter().map(|t| format!("spawns {t}")));
-        out.extend(sum.ret_spawns.iter().map(|t| format!("ret spawns {t}")));
-        out.extend(sum.ret_caps.iter().map(|c| format!("ret cap {c}")));
-        out.extend(sum.ret_tasks.iter().map(|t| format!("ret task {t}")));
-        out.extend(sum.own_caps.iter().map(|c| format!("own cap {c}")));
-        out.extend(sum.captures.iter().map(|&v| format!("capture {}", vk(v))));
-        out.extend(
-            sum.moved_captures
-                .iter()
-                .map(|&v| format!("moved {}", vk(v))),
-        );
-        out.extend(
-            sum.param_roots
-                .iter()
-                .map(|(&r, k)| format!("root {k} {}", pk(r))),
-        );
-        out.extend(
-            sum.op_args
-                .iter()
-                .map(|(c, op, pos, p)| format!("op {c} {op:?} {pos:?} {}", pk(*p))),
-        );
-        out.extend(
-            sum.lent
-                .iter()
-                .map(|(f, pos, p)| format!("lent {f} {pos:?} {}", pk(*p))),
-        );
-        for (flag, on) in [
-            ("abort", sum.may_abort),
-            ("multi", sum.multi),
-            ("unknown", sum.unknown),
-            ("literal", sum.literal),
-        ] {
-            if on {
-                out.insert(flag.to_string());
-            }
-        }
-        out
-    }
-
-    /// Goes back to the state `head` at a loop head. The interned tables stay, so
-    /// that the values of the pass before stay valid.
-    fn rewind(&mut self, head: Self) {
-        let roots = std::mem::take(&mut self.facts.roots);
-        let places = std::mem::take(&mut self.facts.places);
-        let index = std::mem::take(&mut self.facts.place_index);
-        let vars = std::mem::take(&mut self.facts.vars);
-        let closures = std::mem::take(&mut self.closures);
-        let inf = std::mem::take(&mut self.inf);
-        let groups = std::mem::take(&mut self.groups);
-        let deps = std::mem::take(&mut self.dep_places);
-        let split = self.split;
-        let passes = self.loop_passes;
-        *self = head;
-        self.facts.roots = roots;
-        self.facts.places = places;
-        self.facts.place_index = index;
-        self.facts.vars = vars;
-        self.closures = closures;
-        self.inf = inf;
-        self.groups = groups;
-        self.dep_places = deps;
-        self.split = split;
-        self.loop_passes = passes;
     }
 
     fn for_loop(&mut self, pat: &Pattern, iter: &ast::Expr, body: &Block, span: Span) {
@@ -1889,38 +1397,4 @@ const fn int_range(t: super::IntTy) -> (i128, i128) {
         IntTy::U32 => (0, u32::MAX as i128),
         IntTy::U64 | IntTy::Usize => (0, u64::MAX as i128),
     }
-}
-
-/// The passes of a loop before the lowering widens the values that still change.
-pub const LOOP_WIDEN_AFTER: usize = 8;
-
-/// The passes of a loop with `outer` locals outside it before the root widening.
-///
-/// After them, the lowering widens a new place with no known place above it to
-/// the wildcard place of its root. A chain of locals needs one pass for each
-/// local, so a chain is complete before this widening.
-pub const fn loop_roots_after(outer: usize) -> usize {
-    outer.saturating_add(16)
-}
-
-/// Returns the most passes of the lowering of a loop with `outer` locals outside it.
-///
-/// After the widening of new places to wildcard places of roots, each pass that
-/// is not the last adds a value that the head did not have, and the widened
-/// values are finite. A loop that needs more passes shows a checker bug (W0707).
-pub const fn loop_pass_bound(outer: usize) -> usize {
-    loop_roots_after(outer).saturating_mul(2).saturating_add(32)
-}
-
-/// The value of a local outside a loop that an iteration passes to the next.
-#[derive(Clone, Debug)]
-struct Carried {
-    refs: Vec<PlaceId>,
-    summary: Option<usize>,
-    fn_param: Option<(usize, usize)>,
-    tasks: BTreeSet<weft_facts::TaskId>,
-    bound: bool,
-    uniq: bool,
-    caps: BTreeSet<weft_facts::CapId>,
-    sticky: BTreeSet<weft_facts::CapId>,
 }

@@ -51,7 +51,7 @@ impl Lower<'_> {
         }
         let span = self.facts.node(n).span;
         let again = self.emit(span, "spawn again", "the value can run again".into());
-        self.restart_tasks(again, &sum.spawns);
+        self.restart_tasks(again, &sum.spawns.to_set());
     }
 
     /// A callee can call function value `info` more than once at node `n`, with
@@ -79,7 +79,7 @@ impl Lower<'_> {
             return;
         }
         let again = self.insert_after(n, "spawn again", "the value can run again".into());
-        self.restart_tasks(again, &spawns);
+        self.restart_tasks(again, &spawns.to_set());
     }
 
     /// Node `again` starts the tasks `spawns` again: it mutates and reads what they do.

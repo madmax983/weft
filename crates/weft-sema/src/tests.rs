@@ -1257,7 +1257,7 @@ fn a_loop_chain_iterates_until_the_values_are_stable() {
     for n in [3, 10, 30] {
         let a = analyze_units(&ref_chain(n), &[]);
         assert_eq!(codes(&a), Vec::new(), "n={n}");
-        assert_eq!(a.loop_passes, n + 1, "n={n}");
+        assert_eq!(a.work.loop_passes, n + 1, "n={n}");
         assert!(
             points_of(&a, "r0").contains(&"w[].hp".to_string()),
             "n={n}: {:?}",
@@ -1284,8 +1284,8 @@ fn f(head: &Node, n: u64) -> u64 {
 ";
     let a = analyze_units(src, &[]);
     assert_eq!(codes(&a), Vec::new());
-    let widen = crate::body::stmt::LOOP_WIDEN_AFTER;
-    assert!(a.loop_passes <= widen + 2, "{}", a.loop_passes);
+    let widen = crate::body::loops::LOOP_WIDEN_AFTER;
+    assert!(a.work.loop_passes <= widen + 2, "{}", a.work.loop_passes);
     let deep = format!("head{}.. (wildcard)", ".next[]".repeat(widen - 1));
     assert!(
         points_of(&a, "cur").contains(&deep),
@@ -1339,4 +1339,47 @@ fn task_handles_that_a_loop_swaps_join_each_task() {
             .count();
         assert!(joins >= 2, "task {t}: {:?}", f.facts.joined_at);
     }
+}
+
+/// `n` loops one after the other, each with a new local and a counter.
+fn seq_loops(n: usize) -> String {
+    let mut s = String::from("fn f(n: u64) {\n    let s: u64 = 0\n");
+    for i in 0..n {
+        let _ = writeln!(
+            s,
+            "    let i{i}: u64 = 0\n    while i{i} < n {{ s += 1\n        i{i} += 1 }}"
+        );
+    }
+    s.push_str("    print(s)\n}\n");
+    s
+}
+
+#[test]
+fn loops_one_after_the_other_cost_linear_work() {
+    // Each pass copied the whole lowering state, so a function with many loops
+    // was quadratic (QA7: 2000 loops took 5.7 s). A pass now copies the state
+    // of the head only, and a rewind puts back the locals that the pass changed.
+    let small = analyze_units(&seq_loops(500), &[]);
+    let large = analyze_units(&seq_loops(1000), &[]);
+    assert_eq!(codes(&large), Vec::new());
+    assert_eq!(small.work.loop_passes, 500);
+    assert_eq!(large.work.loop_passes, 1000);
+    let (a, b) = (small.work.loop_copies, large.work.loop_copies);
+    assert!(b <= 2 * a + 100, "500 loops: {a}, 1000 loops: {b}");
+    assert!(b <= 20 * 1000, "{b}");
+}
+
+#[test]
+fn a_grow_set_cuts_back_to_a_mark() {
+    let mut g: crate::body::Grow<u32> = [3, 1].into_iter().collect();
+    let mark = g.mark();
+    assert!(g.insert(2));
+    assert!(!g.insert(1));
+    g.extend([5, 4]);
+    assert_eq!(g.iter().copied().collect::<Vec<_>>(), vec![1, 2, 3, 4, 5]);
+    g.cut(mark);
+    assert_eq!(g.iter().copied().collect::<Vec<_>>(), vec![1, 3]);
+    assert!(!g.contains(&2) && g.contains(&3));
+    let empty = crate::body::Grow::<u32>::default();
+    assert!(empty.is_empty() && empty.mark() == 0 && empty == crate::body::Grow::default());
 }

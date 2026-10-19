@@ -73,6 +73,25 @@ impl Options {
     }
 }
 
+/// Counts of the work of an analysis. A test can put a limit on them, as a
+/// clock cannot be stable on a loaded machine.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Work {
+    /// The passes of the loop bodies, also of nested loops.
+    pub loop_passes: usize,
+    /// The values that the loop heads copied and the rewinds put back: the
+    /// state at each head, and the locals that each pass changed.
+    pub loop_copies: usize,
+}
+
+impl Work {
+    /// Adds the counts of `o`.
+    pub const fn add(&mut self, o: Self) {
+        self.loop_passes += o.loop_passes;
+        self.loop_copies += o.loop_copies;
+    }
+}
+
 /// The facts of one body.
 #[derive(Clone, Debug)]
 pub struct BodyFacts {
@@ -100,8 +119,8 @@ pub struct Analysis {
     pub diags: Vec<Diagnostic>,
     /// The number of body lowerings that effect inference used.
     pub lowerings: usize,
-    /// The passes of the loop bodies in the last lowering of each body.
-    pub loop_passes: usize,
+    /// The work of the last lowering of each body.
+    pub work: Work,
 }
 
 /// Parses the prelude.
@@ -175,10 +194,10 @@ fn analyze_bounded(
     let inferred = infer::infer(&prog, &mut sigs, &user_fns, limit, &lower);
     diags.extend(inferred.diags);
     let mut bodies = Vec::new();
-    let mut loop_passes = 0;
+    let mut work = Work::default();
     for (&f, l) in user_fns.iter().zip(inferred.lowered) {
         diags.extend(l.diags);
-        loop_passes += l.loop_passes;
+        work.add(l.work);
         bodies.push(BodyFacts {
             func: Some(f),
             unit: unit_of(&prog, prog.fns[f].module),
@@ -193,7 +212,7 @@ fn analyze_bounded(
             .with_loop_bound(loop_bound)
             .lower_test(&t.body, t.span);
         diags.extend(l.diags);
-        loop_passes += l.loop_passes;
+        work.add(l.work);
         bodies.push(BodyFacts {
             func: None,
             unit: unit_of(&prog, t.module),
@@ -216,7 +235,7 @@ fn analyze_bounded(
         bodies,
         diags,
         lowerings: inferred.lowerings,
-        loop_passes,
+        work,
     }
 }
 

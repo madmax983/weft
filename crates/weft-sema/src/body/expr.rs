@@ -327,7 +327,7 @@ impl Lower<'_> {
                     ty: loc.ty.clone(),
                     owner: Some(l),
                     through_ref: false,
-                    uniq: loc.uniq,
+                    uniq: self.locals.is_uniq(l),
                     deps: Vec::new(),
                     held: std::collections::BTreeSet::new(),
                 })
@@ -337,7 +337,7 @@ impl Lower<'_> {
                 refs: loc.refs.clone(),
                 var: Some(loc.var),
                 local: Some(l),
-                uniq: loc.uniq,
+                uniq: self.locals.is_uniq(l),
                 summary: loc.summary,
                 tasks: loc.tasks,
                 parts: None,
@@ -472,7 +472,7 @@ impl Lower<'_> {
                             ty: *inner,
                             owner: None,
                             through_ref: true,
-                            uniq: loc.uniq,
+                            uniq: self.locals.is_uniq(l),
                             deps,
                             held: loc.caps,
                         })
@@ -490,7 +490,7 @@ impl Lower<'_> {
                             ty: t,
                             owner: Some(l),
                             through_ref: false,
-                            uniq: loc.uniq,
+                            uniq: self.locals.is_uniq(l),
                             deps: Vec::new(),
                             held: std::collections::BTreeSet::new(),
                         })
@@ -1297,8 +1297,11 @@ impl Lower<'_> {
                 entry,
             );
             if mark {
-                self.locals[l].caps.insert(super::caps::UNKNOWN_FN);
-                self.locals[l].sticky.insert(super::caps::UNKNOWN_FN);
+                self.locals.get_mut(l).caps.insert(super::caps::UNKNOWN_FN);
+                self.locals
+                    .get_mut(l)
+                    .sticky
+                    .insert(super::caps::UNKNOWN_FN);
             }
         }
         // The body returns its value: W0204 reports a value into its own locals.
@@ -1351,7 +1354,7 @@ impl Lower<'_> {
         let end = self.cur;
         self.pop_frame();
         let mut sum = self.sums.pop().unwrap_or_default();
-        sum.repeats = self.take_repeats(si);
+        sum.repeats = self.take_repeats(si).into();
         // A returned function value: a call of the closure can do what it does.
         let tail = falls.then_some(&v);
         for rv in returned.iter().chain(tail) {
@@ -1368,7 +1371,7 @@ impl Lower<'_> {
         // A captured linear value is live where the closure starts, so a new value
         // in the closure overwrites it (W0601). A value that the closure moves must
         // be consumed inside it, before the closure ends.
-        self.captures_live_at(&sum.captures, entry);
+        self.captures_live_at(&sum.captures.to_set(), entry);
         let close = Span::new(span.hi.saturating_sub(1), span.hi);
         let mut closure_end = None;
         for &var in &sum.moved_captures {
@@ -1753,20 +1756,23 @@ impl Lower<'_> {
                     .filter(|a| a.pos.is_none_or(|p| p == i))
                     .flat_map(|a| a.held.iter().copied())
                     .collect();
-                self.locals[l].caps.extend(given.iter().copied());
-                self.locals[l].sticky.extend(given);
+                self.locals.get_mut(l).caps.extend(given.iter().copied());
+                self.locals.get_mut(l).sticky.extend(given);
                 // A callee can give a value that holds a function value in a field or
                 // an element: the clause cannot follow it.
                 if !matches!(self.inf.shallow(pt), Ty::Fn(_)) && self.has_fn(pt) {
-                    self.locals[l].caps.insert(super::caps::UNKNOWN_FN);
-                    self.locals[l].sticky.insert(super::caps::UNKNOWN_FN);
+                    self.locals.get_mut(l).caps.insert(super::caps::UNKNOWN_FN);
+                    self.locals
+                        .get_mut(l)
+                        .sticky
+                        .insert(super::caps::UNKNOWN_FN);
                 }
                 self.mark_modes(l);
             }
             let kty = Ty::Cont(Box::new(op.ret.clone()), Box::new(ty.clone()));
             let k = self.new_local("resume", VarKind::Continuation, c.span, kty, false);
             self.facts.vars[self.locals[k].var.index()].once = !op.multi;
-            self.locals[k].cont = Some(ContInfo {
+            self.locals.get_mut(k).cont = Some(ContInfo {
                 arg: op.ret.clone(),
                 ret: ty.clone(),
                 multi: op.multi,
@@ -1803,12 +1809,12 @@ impl Lower<'_> {
             self.close_scope(si, super::fnval::Scope::Clause);
             let _ = self.take_repeats(si);
             let mut cs = self.sums.pop().unwrap_or_default();
-            self.captures_live_at(&cs.captures, entry);
+            self.captures_live_at(&cs.captures.to_set(), entry);
             cs.param_roots = param_roots;
             // The places that the `resume`s give: the result of the operation
             // points into them. A local of the clause ends with the `handle`.
             let oi = def.ops.iter().position(|o| o.name == op.name);
-            let own = cs.own_roots.clone();
+            let own = cs.own_roots.to_set();
             let local = self.note_resumed_refs(cap, oi, &cs.param_roots, &own);
             clause_locals.extend(local.into_iter().map(|p| (oi, p)));
             // The value of the clause is the value of the `handle`. A reference into
@@ -2252,7 +2258,7 @@ impl Lower<'_> {
 
     fn merge_summary(&mut self, s: &Summary) {
         let own = s.own_roots.clone();
-        let spawns = self.spawns_outside(&s.spawns);
+        let spawns = self.spawns_outside(&s.spawns.to_set());
         let t = self.sum();
         t.spawns.extend(spawns);
         for &m in &s.muts {

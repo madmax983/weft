@@ -242,6 +242,57 @@ pub struct HandlerInfo {
     pub span: Span,
 }
 
+/// The sizes of the relations of [`FnFacts`] at one point of the lowering.
+///
+/// [`FnFacts::rewind`] cuts the relations back to these sizes. The lowering of
+/// a loop body uses it to start each pass again from the loop head. The
+/// tables of roots, places and variables stay, so that the values of the pass
+/// before stay valid.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FactMark {
+    caps: u32,
+    has_signature: bool,
+    library: bool,
+    nodes: usize,
+    tasks: usize,
+    handlers: usize,
+    cfg_edge: usize,
+    points_into: usize,
+    mutates_at: usize,
+    reads_at: usize,
+    performs_at: usize,
+    footprint: usize,
+    rebound_at: usize,
+    uses: usize,
+    moved_at: usize,
+    scope_end: usize,
+    overwrites: usize,
+    unset_at: usize,
+    empty_at: usize,
+    unwound_at: usize,
+    owner: usize,
+    moved_part: usize,
+    may_abort: usize,
+    multi_at: usize,
+    clause_multi: usize,
+    body_multi: usize,
+    resumes_at: usize,
+    clause_performs: usize,
+    declared_mut: usize,
+    declared_effect: usize,
+    escapes_at: usize,
+    shared_root: usize,
+    spawned_at: usize,
+    joined_at: usize,
+    task_reads: usize,
+    task_writes: usize,
+    captures: usize,
+    mut_through: usize,
+    call_mut: usize,
+    call_arg: usize,
+    lends_mut: usize,
+}
+
 /// All facts of one function.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FnFacts {
@@ -355,6 +406,196 @@ pub struct FnFacts {
 }
 
 impl FnFacts {
+    /// Returns the sizes of the relations now (see [`FactMark`]).
+    pub fn mark(&self) -> FactMark {
+        // Each field is named, so that a new field gets a decision here.
+        let Self {
+            name: _,
+            roots: _,
+            places: _,
+            vars: _,
+            place_index: _,
+            caps,
+            has_signature,
+            library,
+            nodes,
+            tasks,
+            handlers,
+            cfg_edge,
+            points_into,
+            mutates_at,
+            reads_at,
+            performs_at,
+            footprint,
+            rebound_at,
+            uses,
+            moved_at,
+            scope_end,
+            overwrites,
+            unset_at,
+            empty_at,
+            unwound_at,
+            owner,
+            moved_part,
+            may_abort,
+            multi_at,
+            clause_multi,
+            body_multi,
+            resumes_at,
+            clause_performs,
+            declared_mut,
+            declared_effect,
+            escapes_at,
+            shared_root,
+            spawned_at,
+            joined_at,
+            task_reads,
+            task_writes,
+            captures,
+            mut_through,
+            call_mut,
+            call_arg,
+            lends_mut,
+        } = self;
+        FactMark {
+            caps: *caps,
+            has_signature: *has_signature,
+            library: *library,
+            nodes: nodes.len(),
+            tasks: tasks.len(),
+            handlers: handlers.len(),
+            cfg_edge: cfg_edge.len(),
+            points_into: points_into.len(),
+            mutates_at: mutates_at.len(),
+            reads_at: reads_at.len(),
+            performs_at: performs_at.len(),
+            footprint: footprint.len(),
+            rebound_at: rebound_at.len(),
+            uses: uses.len(),
+            moved_at: moved_at.len(),
+            scope_end: scope_end.len(),
+            overwrites: overwrites.len(),
+            unset_at: unset_at.len(),
+            empty_at: empty_at.len(),
+            unwound_at: unwound_at.len(),
+            owner: owner.len(),
+            moved_part: moved_part.len(),
+            may_abort: may_abort.len(),
+            multi_at: multi_at.len(),
+            clause_multi: clause_multi.len(),
+            body_multi: body_multi.len(),
+            resumes_at: resumes_at.len(),
+            clause_performs: clause_performs.len(),
+            declared_mut: declared_mut.len(),
+            declared_effect: declared_effect.len(),
+            escapes_at: escapes_at.len(),
+            shared_root: shared_root.len(),
+            spawned_at: spawned_at.len(),
+            joined_at: joined_at.len(),
+            task_reads: task_reads.len(),
+            task_writes: task_writes.len(),
+            captures: captures.len(),
+            mut_through: mut_through.len(),
+            call_mut: call_mut.len(),
+            call_arg: call_arg.len(),
+            lends_mut: lends_mut.len(),
+        }
+    }
+
+    /// Cuts the relations back to the sizes of `mark`. The tables of roots,
+    /// places and variables stay.
+    pub fn rewind(&mut self, mark: &FactMark) {
+        let Self {
+            name: _,
+            roots: _,
+            places: _,
+            vars: _,
+            place_index: _,
+            caps,
+            has_signature,
+            library,
+            nodes,
+            tasks,
+            handlers,
+            cfg_edge,
+            points_into,
+            mutates_at,
+            reads_at,
+            performs_at,
+            footprint,
+            rebound_at,
+            uses,
+            moved_at,
+            scope_end,
+            overwrites,
+            unset_at,
+            empty_at,
+            unwound_at,
+            owner,
+            moved_part,
+            may_abort,
+            multi_at,
+            clause_multi,
+            body_multi,
+            resumes_at,
+            clause_performs,
+            declared_mut,
+            declared_effect,
+            escapes_at,
+            shared_root,
+            spawned_at,
+            joined_at,
+            task_reads,
+            task_writes,
+            captures,
+            mut_through,
+            call_mut,
+            call_arg,
+            lends_mut,
+        } = self;
+        *caps = mark.caps;
+        *has_signature = mark.has_signature;
+        *library = mark.library;
+        nodes.truncate(mark.nodes);
+        tasks.truncate(mark.tasks);
+        handlers.truncate(mark.handlers);
+        cfg_edge.truncate(mark.cfg_edge);
+        points_into.truncate(mark.points_into);
+        mutates_at.truncate(mark.mutates_at);
+        reads_at.truncate(mark.reads_at);
+        performs_at.truncate(mark.performs_at);
+        footprint.truncate(mark.footprint);
+        rebound_at.truncate(mark.rebound_at);
+        uses.truncate(mark.uses);
+        moved_at.truncate(mark.moved_at);
+        scope_end.truncate(mark.scope_end);
+        overwrites.truncate(mark.overwrites);
+        unset_at.truncate(mark.unset_at);
+        empty_at.truncate(mark.empty_at);
+        unwound_at.truncate(mark.unwound_at);
+        owner.truncate(mark.owner);
+        moved_part.truncate(mark.moved_part);
+        may_abort.truncate(mark.may_abort);
+        multi_at.truncate(mark.multi_at);
+        clause_multi.truncate(mark.clause_multi);
+        body_multi.truncate(mark.body_multi);
+        resumes_at.truncate(mark.resumes_at);
+        clause_performs.truncate(mark.clause_performs);
+        declared_mut.truncate(mark.declared_mut);
+        declared_effect.truncate(mark.declared_effect);
+        escapes_at.truncate(mark.escapes_at);
+        shared_root.truncate(mark.shared_root);
+        spawned_at.truncate(mark.spawned_at);
+        joined_at.truncate(mark.joined_at);
+        task_reads.truncate(mark.task_reads);
+        task_writes.truncate(mark.task_writes);
+        captures.truncate(mark.captures);
+        mut_through.truncate(mark.mut_through);
+        call_mut.truncate(mark.call_mut);
+        call_arg.truncate(mark.call_arg);
+        lends_mut.truncate(mark.lends_mut);
+    }
+
     /// Returns the place record.
     pub fn place(&self, p: PlaceId) -> &PlaceInfo {
         &self.places[p.index()]
@@ -612,6 +853,30 @@ mod tests {
         assert!(f.param_rooted(a));
         let l = f.add_root("lines", RootKind::Local);
         assert!(!f.param_rooted(l));
+    }
+
+    #[test]
+    fn a_rewind_cuts_the_relations_and_keeps_the_tables() {
+        let mut f = FnFacts::default();
+        let w = f.add_root("world", RootKind::Param);
+        let n0 = f.add_node(Span::default(), "a", "");
+        f.mutates_at.push((n0, w));
+        let mark = f.mark();
+        let before = f.clone();
+        let l = f.add_root("lines", RootKind::Local);
+        let n1 = f.add_node(Span::default(), "b", "");
+        f.mutates_at.push((n1, l));
+        f.cfg_edge.push((n0, n1));
+        let _ = f.add_cap();
+        let _ = f.add_task(TaskKind::Spawn, Span::default());
+        f.rewind(&mark);
+        assert_eq!(f.nodes, before.nodes);
+        assert_eq!(f.mutates_at, before.mutates_at);
+        assert!(f.cfg_edge.is_empty() && f.tasks.is_empty());
+        assert_eq!(f.add_cap(), CapId(0));
+        // The tables stay, so that the places of the pass before stay valid.
+        assert_eq!(f.roots.len(), 2);
+        assert_eq!(f.place(l).display, "lines");
     }
 
     #[test]

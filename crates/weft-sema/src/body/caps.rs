@@ -442,8 +442,8 @@ impl Lower<'_> {
         for &p in into {
             match self.place_local(p) {
                 Some(l) => {
-                    self.locals[l].caps.extend(caps.iter().copied());
-                    self.locals[l].sticky.extend(caps.iter().copied());
+                    self.locals.get_mut(l).caps.extend(caps.iter().copied());
+                    self.locals.get_mut(l).sticky.extend(caps.iter().copied());
                     self.mark_modes(l);
                 }
                 None => stored = true,
