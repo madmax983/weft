@@ -243,6 +243,7 @@ The standard effects are `Async`, `Net`, `Fs`, `Clock`, `Rand`, `Log` and `Block
 
 - **Only binaries and test harnesses may install a root handler** for a standard effect.
 - Libraries may *intercept* standard effects (retries, tracing, rate limiting, mocks) but can never be the runtime.
+- The runtime handles only the standard effects. So `main` and each test must handle every other effect that they perform (W0805).
 
 Libraries are written against the effect interfaces and can't name a runtime, so the ecosystem can't split by runtime.
 

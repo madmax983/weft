@@ -1,13 +1,14 @@
 //! The check pipeline: parse, analyze, check, diagnose.
 
-use weft_sema::{Analysis, Options};
+use weft_sema::program::ItemRef;
+use weft_sema::{effects, Analysis, BodyFacts, Options, ROOT_UNIT};
 use weft_syntax::diag::{Diagnostic, Severity};
 use weft_syntax::SourceFile;
 
 use weft_facts::{FnFacts, Violations};
 
 use crate::bridge::{self, SpecError};
-use crate::diagnose::{diagnose, resolve_lines};
+use crate::diagnose::{diagnose, resolve_lines, root_effects};
 use crate::rules::{check, Report};
 
 /// The result of checking a program.
@@ -42,6 +43,12 @@ pub fn check_analysis(analysis: Analysis, files: &[SourceFile], opts: Options) -
     for b in &analysis.bodies {
         let r = check(&b.facts);
         let mut ds = diagnose(&b.facts, &r);
+        if let Some(who) = started_body(&analysis, b) {
+            let no_runtime = opts.no_runtime && b.func.is_some();
+            // The facts name an effect, so a user effect that has the name
+            // of a standard effect looks like the standard effect here.
+            ds.extend(root_effects(&b.facts, &who, no_runtime, &effects::is_std));
+        }
         for d in &mut ds {
             d.unit = b.unit;
             if let Some(f) = files.get(b.unit) {
@@ -50,9 +57,6 @@ pub fn check_analysis(analysis: Analysis, files: &[SourceFile], opts: Options) -
         }
         diags.extend(ds);
         reports.push(r);
-    }
-    if opts.no_runtime {
-        diags.extend(no_runtime_diags(&analysis));
     }
     diags.sort_by(|a, b| (a.unit, a.span.lo, &a.code).cmp(&(b.unit, b.span.lo, &b.code)));
     diags.dedup();
@@ -63,25 +67,17 @@ pub fn check_analysis(analysis: Analysis, files: &[SourceFile], opts: Options) -
     }
 }
 
-/// W0803: in the embedded profile, `main` must handle every standard effect.
-fn no_runtime_diags(a: &Analysis) -> Vec<Diagnostic> {
-    let mut out = Vec::new();
-    for b in &a.bodies {
-        let Some(f) = b.func else { continue };
-        if a.program.fns[f].name != "main" || b.unit != weft_sema::ROOT_UNIT {
-            continue;
-        }
-        for (n, e) in &b.facts.escapes_at {
-            if weft_sema::effects::is_std(e) {
-                out.push(Diagnostic::error(
-                    "W0803",
-                    format!("with no runtime, `main` must handle `{e}` itself"),
-                    b.facts.node(*n).span,
-                ));
-            }
-        }
+/// Names a body of the root that the runtime starts: `main` or a test.
+/// Returns `None` for another body.
+fn started_body(a: &Analysis, b: &BodyFacts) -> Option<String> {
+    if b.unit != ROOT_UNIT {
+        return None;
     }
-    out
+    match (b.func, a.program.lookup(a.program.root, "main")) {
+        (None, _) => Some(b.facts.name.clone()),
+        (Some(f), Some(ItemRef::Fn(main))) if f == main => Some("`main`".to_string()),
+        _ => None,
+    }
 }
 
 /// Parses, analyzes and checks one source text.

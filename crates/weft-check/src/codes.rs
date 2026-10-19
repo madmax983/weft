@@ -65,6 +65,7 @@ pub const CODES: &[Code] = &[
     Code { code: "W0802", title: "simulation in a library", rule: "root handlers", text: "`sim.run` replaces every root handler. Only binaries and tests can use it." },
     Code { code: "W0803", title: "no runtime", rule: "runtime profile", text: "With `runtime = \"none\"`, `main` must handle every standard effect that it performs." },
     Code { code: "W0804", title: "unknown file marker", rule: "file markers", text: "A `// weft:` line has a word that is not a marker, so the word has no effect. The markers are `library` and `no-runtime`." },
+    Code { code: "W0805", title: "effect with no handler", rule: "root handlers", text: "The runtime has root handlers only for the standard effects. So `main` and each test must handle every other effect that they perform. A handler clause runs outside its own handler, so a perform in a clause goes to the next handler out." },
     Code { code: "W0901", title: "dependency authority", rule: "package", text: "A function of a dependency needs an effect that the project does not grant to it. Private functions count too." },
     Code { code: "W0902", title: "library enables the GC", rule: "package", text: "Libraries may never require the GC tier. Only a binary may switch it on." },
     Code { code: "W1001", title: "fip allocation", rule: "fip", text: "A `fip` function must reuse a freed cell of the same size for each constructor." },

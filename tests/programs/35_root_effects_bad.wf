@@ -1,0 +1,23 @@
+// The runtime has root handlers only for the standard effects. So `main`
+// and each test must handle every other effect that they perform.
+effect Note { fn note(m: u64) }
+effect Tick { fn tick() }
+
+fn noisy() / Note { note(1) }
+
+fn quiet() {
+    handle Note { fn note(m) { resume(()) } } in noisy()
+}
+
+// A clause runs outside its own handler. So a perform in the clause goes to
+// the next handler out.
+fn again() -> u64 {
+    handle Tick { fn tick() { tick(); resume(()) } } in { tick() }
+    1
+}
+
+fn main() {
+    quiet()
+    noisy()   //~ W0805
+    print(again())   //~ W0805
+}

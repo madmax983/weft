@@ -143,3 +143,36 @@ fn w0501_is_reported_once_for_each_continuation() {
     assert_eq!(d.len(), 1, "{d:?}");
     assert_eq!(notes(&d[0])[1], "and 1 more resume, at line 6");
 }
+
+#[test]
+fn w0805_needs_a_handler_for_each_effect_that_is_not_standard() {
+    // A clause runs outside its own handler.
+    let src = "effect Note { fn note(m: u64) }\nfn f() -> u64 {\n    handle Note { fn note(m) { note(m); resume(()) } } in { note(1) }\n    1\n}\nfn main() {\n    print(f())\n    print(f())\n}\n";
+    let d = diags(src, "W0805");
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(
+        d[0].message,
+        "`main` performs `Note`, and no handler handles it"
+    );
+    assert_eq!(
+        notes(&d[0]),
+        [
+            "the runtime handles only the standard effects; handle `Note` in `main`",
+            "and 1 more site, at line 8"
+        ]
+    );
+    // A test block too.
+    let src = "effect Note { fn note(m: u64) }\ntest \"noisy\" { note(1) }\n";
+    let d = diags(src, "W0805");
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(
+        d[0].message,
+        "test \"noisy\" performs `Note`, and no handler handles it"
+    );
+    // A handled effect and a standard effect need no handler.
+    let src = "effect Note { fn note(m: u64) }\nfn main() / clock {\n    handle Note { fn note(m) { resume(()) } } in note(1)\n    sleep(1.ms)\n    log.info(\"x\")\n}\n";
+    assert_eq!(diags(src, "W0805"), Vec::new());
+    // Another function may let the effect escape.
+    let src = "effect Note { fn note(m: u64) }\nfn other() { note(1) }\n";
+    assert_eq!(diags(src, "W0805"), Vec::new());
+}

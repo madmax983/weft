@@ -357,6 +357,51 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
     out
 }
 
+/// W0805 and W0803: the effects that leave `main` or a test.
+///
+/// The runtime starts these bodies. `who` names the body. `has_root_handler`
+/// is true for an effect that the runtime handles. With `no_runtime`, the
+/// runtime handles no effect (W0803). Each effect gets one error.
+pub fn root_effects(
+    f: &FnFacts,
+    who: &str,
+    no_runtime: bool,
+    has_root_handler: &dyn Fn(&str) -> bool,
+) -> Vec<Diagnostic> {
+    let mut by_effect: BTreeMap<&str, Vec<NodeId>> = BTreeMap::new();
+    for (n, e) in &f.escapes_at {
+        by_effect.entry(e).or_default().push(*n);
+    }
+    let mut out = Vec::new();
+    for (e, mut sites) in by_effect {
+        sites.sort_by_key(|&n| node_span(f, n).lo);
+        let Some((&first, rest)) = sites.split_first() else {
+            continue;
+        };
+        let span = node_span(f, first);
+        let d = if !has_root_handler(e) {
+            Diagnostic::error(
+                "W0805",
+                format!("{who} performs `{e}`, and no handler handles it"),
+                span,
+            )
+            .note(format!(
+                "the runtime handles only the standard effects; handle `{e}` in {who}"
+            ))
+        } else if no_runtime {
+            Diagnostic::error(
+                "W0803",
+                format!("with no runtime, {who} must handle `{e}` itself"),
+                span,
+            )
+        } else {
+            continue;
+        };
+        out.push(note_more(d, f, rest, ("site", "sites")));
+    }
+    out
+}
+
 /// Replaces `{line:N}` markers (byte offsets) with line numbers. A
 /// `{lines:N M ...}` marker becomes `line L` or `lines L1, L2`: each line one
 /// time, at most `LISTED_SITES` lines.

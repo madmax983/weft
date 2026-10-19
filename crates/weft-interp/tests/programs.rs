@@ -176,10 +176,11 @@ fn static_corpus_runs() {
             }
         }
         if has_main {
-            let main_rejected = checked
-                .diags
-                .iter()
-                .any(|d| d.severity == weft_syntax::diag::Severity::Error && d.code == "W0803");
+            // W0803 and W0805: no handler handles an effect of `main`.
+            let main_rejected = checked.diags.iter().any(|d| {
+                d.severity == weft_syntax::diag::Severity::Error
+                    && (d.code == "W0803" || d.code == "W0805")
+            });
             match run_main(&checked, &opts) {
                 Ok(_) => assert!(
                     !main_rejected,
