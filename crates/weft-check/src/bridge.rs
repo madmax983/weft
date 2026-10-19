@@ -139,6 +139,7 @@ pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
     rel2!("unwound_at", f.unwound_at);
     rel2!("owner", f.owner);
     rel2!("moved_part", f.moved_part);
+    rel2!("releases_at", f.releases_at);
     rel2!("spawned_at", f.spawned_at);
     rel2!("joined_at", f.joined_at);
     rel2!("task_reads", f.task_reads);
@@ -146,6 +147,7 @@ pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
     rel2!("captures", f.captures);
     rel2!("mut_through", f.mut_through);
     rel2!("lends_mut", f.lends_mut);
+    rel2!("writes_via", f.writes_via);
     for (p, e) in &f.escapes_at {
         emit("escapes_at", &[s(p), s(e)]);
     }

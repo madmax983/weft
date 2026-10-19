@@ -35,6 +35,9 @@
 //                            finishes V (its `on abort` runs).
 //   owner(Rt, V)             root place Rt holds the value of V. A move or the end of V frees it.
 //   moved_part(M, P)         node P moves the value at place M out of its owner (a partial move).
+//   releases_at(P, M)        node P can free the memory at place M, as a move out of its owner
+//                            does: a resume, after the handled body changed a place above what
+//                            a clause parameter points into.
 //   linear(V)                V holds a linear value.
 //   has_on_abort(V)          the type of V declares `on abort`.
 //   once_var(V)              V is not `many`: linear, uniq, a once closure or a continuation.
@@ -64,6 +67,8 @@
 //   call_mut(P, M, I)        the call at P mutates M through callee root I.
 //   call_arg(P, A, I)        the call at P passes place A as callee root I.
 //   lends_mut(P, M)          the call at P gives M to a function value that can mutate through it.
+//   writes_via(P, R)         each mutation at node P is at or below the place that the reference
+//                            R points to when P runs. R holds one reference.
 //   library()                the module is a library.
 //   handler(H, E)            H handles effect E.
 //   std_effect(E)            E is a standard effect.
@@ -91,17 +96,18 @@ crosses_unstable(M, P) :- parent(P, Q), crosses_unstable(M, Q).
 overlaps(P, Q)         :- prefix(P, Q).
 overlaps(P, Q)         :- prefix(Q, P).
 
-// A wildcard place, and each place below it, can be any place at or below B.
-wild_at(P, B)          :- wildcard(P), parent(P, B).
-wild_at(P, B)          :- parent(P, Q), wild_at(Q, B).
-overlaps(P, Q)         :- wild_at(P, B), overlaps(B, Q).
-overlaps(P, Q)         :- wild_at(Q, B), overlaps(P, B).
-
 // The places at or below one one-place wildcard place W are inside one place, so
 // two of them compare by their steps below W, as places with no wildcard do.
 in_one(W, W)           :- one_place(W), wildcard(W).
 in_one(P, W)           :- parent(P, Q), in_one(Q, W).
 same_one(M, P)         :- in_one(M, W), in_one(P, W).
+
+// A wildcard place, and each place below it, can be any place at or below B.
+// Two places inside one one-place wildcard place overlap by their steps only.
+wild_at(P, B)          :- wildcard(P), parent(P, B).
+wild_at(P, B)          :- parent(P, Q), wild_at(Q, B).
+overlaps(P, Q)         :- wild_at(P, B), overlaps(B, Q), !same_one(P, Q).
+overlaps(P, Q)         :- wild_at(Q, B), overlaps(P, B), !same_one(P, Q).
 
 // P and D have the same depth, and each step of P names a subset of the step of D.
 pointwise(P, P)        :- place(P).
@@ -117,16 +123,21 @@ within(P, D)           :- parent(P, Q), within(Q, D).
 
 mutates_at(P, M)     :- performs_at(P, Cap), footprint(Cap, M).   // effects feed the same relation
 
+// A mutation through R, at the place of R or below it, leaves R valid (rule 4):
+// R points to one place, and no change at or below that place is a strict prefix
+// of it. So the mutation rules do not apply to R at a node with `writes_via(P, R)`.
 invalidated_at(R, P) :- points_into(R, Path), mutates_at(P, M),
-                        strict_prefix(M, Path), crosses_unstable(M, Path).
+                        strict_prefix(M, Path), crosses_unstable(M, Path), !writes_via(P, R).
 
 // A move or the end of the owner frees the memory under its root. A move of a part
-// frees that part only. A free needs no unstable step.
+// frees that part only. A free needs no unstable step. A `resume` can free what a
+// clause parameter points to (`releases_at`).
 part_moved_at(V, P)  :- moved_part(M, P), owner(Rt, V), prefix(Rt, M).
 frees_at(P, M)       :- moved_part(M, P).
 frees_at(P, Rt)      :- owner(Rt, V), moved_at(V, P), !part_moved_at(V, P).
 frees_at(P, Rt)      :- owner(Rt, V), scope_end(V, P).
 frees_at(P, Rt)      :- owner(Rt, V), unwound_at(V, P).
+frees_at(P, M)       :- releases_at(P, M).
 
 invalidated_at(R, P) :- points_into(R, Path), frees_at(P, M), prefix(M, Path).
 
@@ -136,11 +147,11 @@ invalidated_at(R, P) :- points_into(R, Path), frees_at(P, M), prefix(M, Path).
 // to a change and a reference inside one one-place wildcard place: rule 3 and
 // the free rule above compare their steps (`same_one`).
 invalidated_at(R, P) :- points_into(R, Path), wild_at(Path, B), mutates_at(P, M), overlaps(M, B),
-                        !same_one(M, Path).
+                        !same_one(M, Path), !writes_via(P, R).
 invalidated_at(R, P) :- points_into(R, Path), wild_at(Path, B), frees_at(P, M), overlaps(M, B),
                         !same_one(M, Path).
 invalidated_at(R, P) :- points_into(R, Path), mutates_at(P, M), wild_at(M, B), strict_prefix(B, Path),
-                        !same_one(M, Path).
+                        !same_one(M, Path), !writes_via(P, R).
 // A function value can mutate through each reference that it gets. Its caller sees
 // that mutation where it gives the function value, so the signature here does not
 // state it. The call invalidates references as a mutation does.

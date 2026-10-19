@@ -1286,9 +1286,9 @@ fn a_loop_chain_iterates_until_the_values_are_stable() {
 
 #[test]
 fn a_reference_that_goes_deeper_becomes_a_wildcard_place() {
-    // Each iteration goes one level deeper. After the widening, a new place
-    // below a place at the head becomes the wildcard place of that place, so
-    // the loop stops.
+    // Each iteration goes one level deeper. The second time the value goes
+    // deeper, the new place becomes the wildcard place of the place that the
+    // loop added, so the loop stops after three passes.
     let src = "struct Node { val: u64, next: Vec<Node> }
 fn f(head: &Node, n: u64) -> u64 {
     let cur = head
@@ -1302,14 +1302,89 @@ fn f(head: &Node, n: u64) -> u64 {
 ";
     let a = analyze_units(src, &[]);
     assert_eq!(codes(&a), Vec::new());
-    let widen = crate::body::loops::LOOP_WIDEN_AFTER;
-    assert!(a.work.loop_passes <= widen + 2, "{}", a.work.loop_passes);
-    let deep = format!("head{}.. (wildcard)", ".next[]".repeat(widen - 1));
+    assert_eq!(a.work.loop_passes, 3);
+    let points = points_of(&a, "cur");
     assert!(
-        points_of(&a, "cur").contains(&deep),
-        "{:?}",
-        points_of(&a, "cur")
+        points.contains(&"head.next[].. (wildcard)".to_string()),
+        "{points:?}"
     );
+    // The body of the last pass goes one level below the head places only.
+    assert!(
+        !points.iter().any(|p| p.contains("next[].next[].next[]")),
+        "{points:?}"
+    );
+}
+
+#[test]
+fn a_walk_in_branches_and_nested_loops_stays_small() {
+    // A walk with k branches, each one level deeper, in two nested loops. Each
+    // pass of the old lowering multiplied the places by k. A branch also sees the
+    // places that the branches before it gave (a value only grows), so the places
+    // of one pass grow with 2^k, up to the limit for one root.
+    for k in [2, 4, 8] {
+        let fields: Vec<String> = (0..k).map(|i| format!("f{i}: Vec<Node>")).collect();
+        let mut branches = String::from("x = &x.f0[0]");
+        for i in 1..k {
+            branches = format!("if i == {i} {{ x = &x.f{i}[0] }} else {{ {branches} }}");
+        }
+        let src = format!(
+            "struct Node {{ val: u64, {} }}
+fn f(head: &Node, n: u64) -> u64 {{
+    let x = head
+    let j = 0
+    while j < n {{
+        let i = 0
+        while i < n {{
+            {branches}
+            i += 1
+        }}
+        j += 1
+    }}
+    x.val
+}}
+",
+            fields.join(", ")
+        );
+        let a = analyze_units(&src, &[]);
+        assert_eq!(codes(&a), Vec::new(), "k={k}");
+        assert!(a.work.loop_passes <= 12, "k={k}: {}", a.work.loop_passes);
+        let points = points_of(&a, "x");
+        assert!(points.len() <= 100, "k={k}: {} places", points.len());
+    }
+}
+
+#[test]
+fn a_call_result_in_a_loop_is_not_one_place() {
+    // The values of an iteration go to the next one, so two values can hold the
+    // results of two iterations. A result in a loop gets the shared wildcard
+    // place; a result outside a loop is one place.
+    let src = "struct Entity { hp: i32, kids: Vec<Entity> }
+fn find(v: &Vec<Entity>) -> Option<&Entity> { Some(&v[0]) }
+fn f(v: &Vec<Entity>, n: u64) {
+    let i = 0
+    while i < n {
+        match find(v) {
+            Some(e) => print(e.hp),
+            None => {}
+        }
+        i += 1
+    }
+}
+fn g(v: &Vec<Entity>) {
+    match find(v) {
+        Some(e) => print(e.hp),
+        None => {}
+    }
+}
+";
+    let a = analyze_units(src, &[]);
+    assert_eq!(codes(&a), Vec::new());
+    let ones = |name: &str| {
+        let f = a.bodies.iter().find(|b| b.facts.name == name).unwrap();
+        f.facts.places.iter().filter(|p| p.is_one_place()).count()
+    };
+    assert_eq!(ones("f"), 0);
+    assert!(ones("g") > 0);
 }
 
 #[test]
@@ -1327,8 +1402,10 @@ fn a_loop_that_is_not_stable_at_the_bound_is_an_error() {
 }
 
 #[test]
-fn task_handles_that_a_loop_swaps_join_each_task() {
-    // After the loop each handle can hold each task, so each `join` joins both.
+fn a_join_ends_a_task_only_if_no_other_handle_can_hold_it() {
+    // After the loop each handle can hold each task. A handle holds one task, so
+    // the first `join` ends no task: the other handle can hold either one. The
+    // second `join` ends both, as no other handle holds them then.
     let src = "fn f() / async {
     scope { s =>
         let t0 = s.spawn(|| print(1))
@@ -1348,15 +1425,19 @@ fn task_handles_that_a_loop_swaps_join_each_task() {
     let a = analyze_units(src, &[]);
     assert_eq!(codes(&a), Vec::new());
     let f = a.bodies.iter().find(|b| b.facts.name == "f").unwrap();
-    for t in 0..2 {
-        let joins = f
-            .facts
-            .joined_at
-            .iter()
-            .filter(|(x, _)| x.index() == t)
-            .count();
-        assert!(joins >= 2, "task {t}: {:?}", f.facts.joined_at);
-    }
+    let first = node(&f.facts, "join");
+    let at = |n: weft_facts::NodeId| f.facts.joined_at.iter().filter(|&&(_, m)| m == n).count();
+    assert_eq!(at(first), 0, "{:?}", f.facts.joined_at);
+    let second = f
+        .facts
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, x)| x.label == "join")
+        .map(|(i, _)| weft_facts::NodeId(u32::try_from(i).unwrap()))
+        .next_back()
+        .unwrap();
+    assert_eq!(at(second), 2, "{:?}", f.facts.joined_at);
 }
 
 /// `n` loops one after the other, each with a new local and a counter.

@@ -22,3 +22,11 @@ fn lend_wild_base(world: &World, other: &World, h: fn(&World) -> &Entity, g: fn(
     print(world.score)
     print(s.hp)
 }
+
+// Only the lend of the wildcard place invalidates `s`: `e` points into
+// `world..` by its signature, and nothing else lends or changes `world`.
+fn lend_param_wild(world: &World, e: &Entity in world.., g: fn(&Entity)) {
+    let s = &world.entities[0]
+    g(e)
+    print(s.hp)   //~ W0301
+}

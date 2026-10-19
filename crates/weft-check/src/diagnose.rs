@@ -212,6 +212,16 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
                 let moved = &f.place(m).display;
                 (format!("{moved} : moved"), inside(moved, "is moved"))
             }
+            Cause::Release(m) => {
+                let freed = &f.place(m).display;
+                (
+                    format!(
+                        "{} : the handled body changed a place above what {freed} points to",
+                        at.label
+                    ),
+                    inside(freed, "can be freed"),
+                )
+            }
         };
         let holder = if var.callable {
             format!("{} : {}, captures {path}", var.name, var.ty)

@@ -509,6 +509,15 @@ impl Lower<'_> {
             }
             ExprKind::Index { base, index } => {
                 let lv = self.place_or_temp(base);
+                // An element through a reference that a part holds: the elements
+                // are where the reference points.
+                let lv = match self.inf.shallow(&lv.ty) {
+                    Ty::Ref(inner) => LVal {
+                        ty: *inner,
+                        ..self.deref_lval(lv)
+                    },
+                    _ => lv,
+                };
                 if let Some(ix) = index {
                     let v = self.expr(ix);
                     let t = self.deref_ty(&v.ty);
@@ -545,8 +554,8 @@ impl Lower<'_> {
         loop {
             match self.inf.shallow(&lv.ty) {
                 Ty::Ref(inner) => {
+                    lv = self.deref_lval(lv);
                     lv.ty = *inner;
-                    lv.through_ref = true;
                 }
                 Ty::Adt(a, args)
                     if matches!(
@@ -607,6 +616,30 @@ impl Lower<'_> {
                 ty: Ty::Error,
                 ..lv
             }
+        }
+    }
+
+    /// Follows the reference that the places of `lv` hold: a part of a tuple, a
+    /// field or an element of type `&T`. The result has the places that the
+    /// reference points into (`held_refs`), so a field of it is a place there,
+    /// not a place of the value that holds the reference. If the body does not
+    /// know them, the places stay.
+    fn deref_lval(&mut self, lv: LVal) -> LVal {
+        let held = self.held_refs(&lv.places);
+        let (named, deps) = self.split_deps(&held);
+        if named.is_empty() {
+            return LVal {
+                through_ref: true,
+                ..lv
+            };
+        }
+        let mut all_deps = lv.deps;
+        all_deps.extend(deps);
+        LVal {
+            places: named,
+            through_ref: true,
+            deps: all_deps,
+            ..lv
         }
     }
 
@@ -1673,7 +1706,13 @@ impl Lower<'_> {
         self.sums.push(Summary::default());
         self.jumps.push(Jump::Fence("handled body"));
         let start = self.handle_start();
-        let v = self.expr(body);
+        let moves_before = (self.facts.moved_at.len(), self.facts.moved_part.len());
+        let v = if def.has_multi() && !resumes_at_most_once(clauses) {
+            self.handled_again(body, cap)
+        } else {
+            self.expr(body)
+        };
+        let body_frees = self.body_frees(moves_before, start.locals);
         self.jumps.pop();
         // A function value that performs through the handler cannot leave its body.
         let escaped = self.check_cap_escape(cap, &def.name, start, &v, span);
@@ -1777,6 +1816,7 @@ impl Lower<'_> {
                 ret: ty.clone(),
                 multi: op.multi,
                 muts: body_sum.muts.iter().copied().collect(),
+                frees: body_frees.clone(),
                 cap,
                 depth: self.handlers.len(),
             });
@@ -1924,6 +1964,7 @@ impl Lower<'_> {
             clause_sum,
             resumes,
             changes,
+            frees: body_frees,
             end: NodeId(0),
             aborts,
             locals: start.locals,
@@ -2077,7 +2118,7 @@ impl Lower<'_> {
             .copied()
             .collect();
         for (oi, cs, own_resumes) in &h.clauses {
-            self.resume_through_params(&all, *oi, cs, own_resumes, &h.changes);
+            self.resume_through_params(&all, *oi, cs, own_resumes, &h.changes, &h.frees);
         }
         // A clause runs at each operation that it handles. There it uses its
         // captures, moves the moved ones, and its locals go out of scope.
@@ -2188,8 +2229,114 @@ impl Lower<'_> {
         changed
     }
 
+    /// Lowers the handled body of a handler with a `multi` operation. A clause can
+    /// resume the body more than once: the code after a node that runs a clause
+    /// then runs again. The locals from outside the body keep the values of the
+    /// run before; the locals of the body get a copy of their values at the node
+    /// (the interpreter copies the frames of the continuation). So the body is
+    /// lowered as a loop (`lower_loop`) until the values of the locals from
+    /// outside it are stable. Its end gets a path back to the nodes after each
+    /// node that runs a clause of the handler (`cap`), through a node that gives
+    /// each local of the body its copy again (`again_node`).
+    fn handled_again(&mut self, body: &Expr, cap: weft_facts::CapId) -> Val {
+        let mut out = None;
+        self.lower_loop(body.span, &mut |me: &mut Self| {
+            let calls = me.cap_calls.len();
+            let outer = me.locals.len();
+            let v = me.expr(body);
+            if let Some(end) = me.cur {
+                let again: Vec<NodeId> = me.cap_calls[calls..]
+                    .iter()
+                    .filter(|&&(_, c)| c == cap)
+                    .map(|&(n, _)| n)
+                    .collect();
+                // The run goes on after the node that runs the clause: the node
+                // itself, with its arguments, does not run again.
+                let next: BTreeSet<NodeId> = me
+                    .facts
+                    .cfg_edge
+                    .iter()
+                    .filter(|(a, _)| again.contains(a))
+                    .map(|&(_, b)| b)
+                    .collect();
+                if !next.is_empty() {
+                    let node = me.again_node(body.span, outer);
+                    me.facts.cfg_edge.push((end, node));
+                    for n in next {
+                        me.facts.cfg_edge.push((node, n));
+                    }
+                }
+            }
+            // The body is not a loop of the source: no part holder retires at
+            // its edges.
+            me.last_loop = None;
+            out = Some(v);
+        });
+        out.unwrap_or_default()
+    }
+
+    /// Adds the node where a handled body runs again after a `multi` resume. Each
+    /// local of the body (index `outer` or more) gets a copy of its value at the
+    /// operation there, so a move or a free of its own value later in the run
+    /// before does not count. A local that can point into a place of another value
+    /// keeps its state: the copy points there too. (W0503 rejects a linear value or
+    /// another value that is not `many` across the operation.)
+    fn again_node(&mut self, span: Span, outer: usize) -> NodeId {
+        let node = self
+            .facts
+            .add_node(span, "resume again", "the handled body runs again");
+        let inner = |me: &Self, p: PlaceId| {
+            me.root_owner(me.facts.place(p).root)
+                .is_some_and(|l| l >= outer)
+        };
+        for l in outer..self.locals.len() {
+            let var = self.locals[l].var;
+            let own = self
+                .facts
+                .points_into
+                .iter()
+                .filter(|&&(v, _)| v == var)
+                .all(|&(_, p)| inner(self, p));
+            // The copy has the state of the local at the node of the operation,
+            // which the path from there gives: the state at the end does not
+            // count. So no linear value starts here (`empty_at`).
+            if own {
+                self.facts.rebound_at.push((var, node));
+                self.facts.empty_at.push((var, node));
+            }
+        }
+        node
+    }
+
+    /// Returns the places that the moves since `before` (the lengths of `moved_at`
+    /// and `moved_part`) free, for the locals below index `locals`: the root of a
+    /// local that moves, and a part that moves. A handled body that moves a local
+    /// from outside the `handle` frees it before the `resume` returns.
+    fn body_frees(&self, before: (usize, usize), locals: usize) -> Vec<PlaceId> {
+        let mut out: Vec<PlaceId> = self.facts.moved_at[before.0..]
+            .iter()
+            .filter_map(|&(v, _)| self.local_of(v))
+            .filter(|&l| l < locals)
+            .filter_map(|l| self.locals[l].root)
+            .collect();
+        out.extend(
+            self.facts.moved_part[before.1..]
+                .iter()
+                .map(|&(m, _)| m)
+                .filter(|&m| {
+                    self.root_owner(self.facts.place(m).root)
+                        .is_some_and(|l| l < locals)
+                }),
+        );
+        out.sort();
+        out.dedup();
+        out
+    }
+
     /// At each resume of clause `cs` of operation `op`, a change of a place that
-    /// the operation gets is a change of the parameter of the clause.
+    /// the operation gets is a change of the parameter of the clause. A change
+    /// above the argument place can also free what the parameter points to
+    /// (`releases_at`).
     fn resume_through_params(
         &mut self,
         args: &[super::OpArg],
@@ -2197,6 +2344,7 @@ impl Lower<'_> {
         cs: &Summary,
         resumes: &[NodeId],
         changes: &[PlaceId],
+        frees: &[PlaceId],
     ) {
         if resumes.is_empty() {
             return;
@@ -2207,25 +2355,50 @@ impl Lower<'_> {
             .copied()
             .collect();
         let mut out = Vec::new();
+        let mut freed = Vec::new();
         for (&x, &k) in &cs.param_roots {
             for a in args.iter().filter(|a| a.pos.is_none_or(|i| i == k)) {
                 for &m in changes {
-                    out.extend(self.onto_param(m, a.place, x, a.pos.is_some()));
+                    if let Some((q, frees)) = self.onto_param(m, a.place, x, a.pos.is_some()) {
+                        out.push(q);
+                        if frees {
+                            freed.push(x);
+                        }
+                    }
+                }
+                // A move of the argument place, or of a place above it, frees it.
+                if frees.iter().any(|&m| self.free_kills(m, a.place)) {
+                    freed.push(x);
                 }
             }
         }
         out.sort();
         out.dedup();
+        freed.sort();
+        freed.dedup();
         for &n in resumes {
             for &q in &out {
                 self.facts.mutates_at.push((n, q));
             }
+            for &x in &freed {
+                self.facts.releases_at.push((n, x));
+            }
         }
     }
 
-    /// Returns the place below parameter root `x` that a change of `m` changes, where
-    /// `x` stands for argument place `p`. With `exact` false, `x` can be anywhere inside `p`.
-    fn onto_param(&mut self, m: PlaceId, p: PlaceId, x: PlaceId, exact: bool) -> Option<PlaceId> {
+    /// Returns what a change of `m` does to parameter root `x`, where `x` stands
+    /// for argument place `p`. With `exact` false, `x` can be anywhere inside
+    /// `p`. The result has the place below `x` that the change mutates, and true
+    /// if the change can also free what `x` stands for: the change is above it.
+    /// The wildcard place `x..` stands for places at or below `x` only, so a
+    /// change above `x` needs the free (ADR 0005).
+    fn onto_param(
+        &mut self,
+        m: PlaceId,
+        p: PlaceId,
+        x: PlaceId,
+        exact: bool,
+    ) -> Option<(PlaceId, bool)> {
         let (pm, pp) = (self.facts.place(m), self.facts.place(p));
         if pm.root != pp.root {
             return None;
@@ -2244,16 +2417,62 @@ impl Lower<'_> {
         while let Some(q) = at {
             if q == p {
                 return Some(if exact {
-                    self.rebase(m, p, x)
+                    (self.rebase(m, p, x), false)
                 } else {
-                    self.facts.wildcard(x)
+                    // `x` can be below the change.
+                    (self.facts.wildcard(x), true)
                 });
             }
             at = self.facts.place(q).parent;
         }
         // A change above the argument place, or one that can alias it, can change
-        // any place below `x`.
-        Some(self.facts.wildcard(x))
+        // any place below `x`. It frees `x` if it invalidates a reference to `p`.
+        let frees = !exact || self.change_kills(m, p);
+        Some((self.facts.wildcard(x), frees))
+    }
+
+    /// Returns true if a free of `m` invalidates a reference into `p`, by the free
+    /// rules of the spec (`free_kills` in `weft-check`).
+    fn free_kills(&self, m: PlaceId, p: PlaceId) -> bool {
+        use weft_verified::places;
+        let (pm, pp) = (self.facts.place(m), self.facts.place(p));
+        if pm.root != pp.root {
+            return false;
+        }
+        if places::may_prefix(&pm.steps, &pp.steps) {
+            return true;
+        }
+        let one = self.facts.one_place_of(m);
+        if one.is_some() && one == self.facts.one_place_of(p) {
+            return false;
+        }
+        let (wm, wp) = (self.facts.wild_base(m), self.facts.wild_base(p));
+        let steps = |q: PlaceId| &self.facts.place(q).steps;
+        wp.is_some() && places::overlaps(steps(wm.unwrap_or(m)), steps(wp.unwrap_or(p)))
+    }
+
+    /// Returns true if a mutation of `m` invalidates a reference into `p`, by
+    /// rule 3 or a wildcard rule of the spec (`mutation_kills` in `weft-check`).
+    fn change_kills(&self, m: PlaceId, p: PlaceId) -> bool {
+        use weft_verified::places;
+        let (pm, pp) = (self.facts.place(m), self.facts.place(p));
+        if pm.root != pp.root {
+            return false;
+        }
+        if places::invalidates(&pm.steps, &pp.steps) {
+            return true;
+        }
+        let one = self.facts.one_place_of(m);
+        if one.is_some() && one == self.facts.one_place_of(p) {
+            return false;
+        }
+        let (wm, wp) = (self.facts.wild_base(m), self.facts.wild_base(p));
+        let steps = |q: PlaceId| &self.facts.place(q).steps;
+        let overlaps = places::overlaps(steps(wm.unwrap_or(m)), steps(wp.unwrap_or(p)));
+        (wp.is_some() && overlaps)
+            || wm.is_some_and(|b| {
+                steps(b).len() < pp.steps.len() && places::may_prefix(steps(b), &pp.steps)
+            })
     }
 
     fn merge_summary(&mut self, s: &Summary) {
@@ -2377,5 +2596,153 @@ impl Lower<'_> {
             work.extend(succ.get(&a).into_iter().flatten().copied());
         }
         false
+    }
+}
+
+/// Returns true if each clause of `clauses` resumes at most once each time it
+/// runs: it names `resume` at most once, and not in a loop, a closure or a
+/// clause of another handler. Then the handled body runs at most once after
+/// each operation, also for an effect with a `multi` operation.
+fn resumes_at_most_once(clauses: &[ast::HandlerClause]) -> bool {
+    clauses.iter().all(|c| {
+        let mut seen = Resumes::default();
+        for st in &c.body.stmts {
+            seen.stmt(st, false);
+        }
+        seen.count <= 1 && !seen.again
+    })
+}
+
+/// The names `resume` in a clause body (`resumes_at_most_once`).
+#[derive(Default)]
+struct Resumes {
+    /// The number of names.
+    count: usize,
+    /// A name is in code that can run more than once in one run of the clause.
+    again: bool,
+}
+
+impl Resumes {
+    fn stmt(&mut self, st: &ast::Stmt, again: bool) {
+        match &st.kind {
+            ast::StmtKind::Let { init, .. } => {
+                if let Some(e) = init {
+                    self.expr(e, again);
+                }
+            }
+            ast::StmtKind::Expr(e) | ast::StmtKind::Assert(e) => self.expr(e, again),
+            ast::StmtKind::Assign { target, value, .. } => {
+                self.expr(target, again);
+                self.expr(value, again);
+            }
+            ast::StmtKind::Return(e) => {
+                if let Some(e) = e {
+                    self.expr(e, again);
+                }
+            }
+            ast::StmtKind::Break | ast::StmtKind::Continue => {}
+            ast::StmtKind::While { cond, body } => {
+                self.expr(cond, true);
+                self.block(body, true);
+            }
+            ast::StmtKind::For { iter, body, .. } => {
+                self.expr(iter, again);
+                self.block(body, true);
+            }
+            ast::StmtKind::Loop(body) => self.block(body, true),
+        }
+    }
+
+    fn block(&mut self, b: &ast::Block, again: bool) {
+        for st in &b.stmts {
+            self.stmt(st, again);
+        }
+    }
+
+    fn expr(&mut self, e: &Expr, again: bool) {
+        match &e.kind {
+            ExprKind::Lit(_) => {}
+            ExprKind::Name(id) => {
+                if id.name == "resume" {
+                    self.count += 1;
+                    self.again |= again;
+                }
+            }
+            ExprKind::Field { base, .. } => self.expr(base, again),
+            ExprKind::Index { base, index } => {
+                self.expr(base, again);
+                if let Some(i) = index {
+                    self.expr(i, again);
+                }
+            }
+            ExprKind::Call {
+                callee,
+                args,
+                trailing,
+            } => {
+                self.expr(callee, again);
+                for a in args {
+                    self.expr(&a.value, again);
+                }
+                if let Some(t) = trailing {
+                    self.expr(t, true);
+                }
+            }
+            ExprKind::MethodCall {
+                receiver,
+                args,
+                trailing,
+                ..
+            } => {
+                self.expr(receiver, again);
+                for a in args {
+                    self.expr(&a.value, again);
+                }
+                if let Some(t) = trailing {
+                    self.expr(t, true);
+                }
+            }
+            ExprKind::Unary { expr, .. } => self.expr(expr, again),
+            ExprKind::Binary { lhs, rhs, .. } => {
+                self.expr(lhs, again);
+                self.expr(rhs, again);
+            }
+            ExprKind::Range { lo, hi } => {
+                self.expr(lo, again);
+                self.expr(hi, again);
+            }
+            ExprKind::Tuple(es) | ExprKind::Array(es) => {
+                for x in es {
+                    self.expr(x, again);
+                }
+            }
+            ExprKind::StructLit { fields, .. } => {
+                for (_, x) in fields {
+                    self.expr(x, again);
+                }
+            }
+            ExprKind::Closure { body, .. } => self.expr(body, true),
+            ExprKind::Block(b) => self.block(b, again),
+            ExprKind::If { cond, then, else_ } => {
+                self.expr(cond, again);
+                self.block(then, again);
+                if let Some(x) = else_ {
+                    self.expr(x, again);
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.expr(scrutinee, again);
+                for a in arms {
+                    self.expr(&a.body, again);
+                }
+            }
+            ExprKind::Handle { clauses, body, .. } => {
+                for c in clauses {
+                    self.block(&c.body, true);
+                }
+                self.expr(body, again);
+            }
+            ExprKind::Scope { body, .. } => self.block(body, again),
+        }
     }
 }

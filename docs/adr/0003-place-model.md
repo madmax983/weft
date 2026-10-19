@@ -35,15 +35,33 @@ Status: accepted. Date: 2026-10-18.
 - A change anywhere in `b..` invalidates each reference strictly inside `b`
   (`strict_prefix(B, Path)`). A reference to `b` itself survives: a change at or below
   `b` is not a strict prefix of `b`, so rule 3 spares `b` for each place that `b..`
-  can be (rule 4).
+  can be (rule 4). So `x..` never stands for a change above `x`: a change above a place
+  that the facts name by a root of their own, such as a clause parameter, is a free of
+  that root (`releases_at`, ADR 0005).
+- A write through a reference `R`, at the place of `R` or below it, leaves `R` valid
+  (`writes_via(P, R)`). At run time `R` points to one place `c`, and the write is at
+  `c` or below it. No such place is a strict prefix of `c`, so by rule 3 and rule 4 no
+  mutation at the node invalidates `R`. This holds for each place that the facts give
+  `R`, also a wildcard place: they are the places that `c` can be. The mutation rules
+  (rule 3 and the two wildcard rules for a mutation) do not apply to `R` at such a
+  node. The free rules and the lend rules still apply. Sema gives `writes_via` to an
+  assignment whose target starts at a local `R` that holds one reference (`&T`, and
+  `T` holds no reference), if each mutated place is at or below a place of `R`. It also
+  gives it to the node of a method call on a part of `R`, if the method states no
+  effect, takes and runs no function value, mutates only places of `self`, and each
+  mutation at the node is at or below a place of `R` (checked at the end of the body,
+  when the clauses and the stored values added their changes). Another reference into
+  the same places, also a copy of `R`, is still checked.
 - The result of one call with no stated place is one place inside the arguments: a
   one-place wildcard place `(b..)` (`one_place(P)`, a new instance for each call). A
   place below it, such as `(b..).items`, is a place inside that one place. A change
   and a reference below one instance compare by their steps below it, with rule 3
   (`same_one(M, Path)`). So `e.hp -= 1` does not invalidate `e`, and `e.kids.push(x)`
-  invalidates a reference into `e.kids[]`. Two instances, or an instance and another
-  place, use the wildcard rules: two results can be one place, or one can be inside
-  the other.
+  invalidates a reference into `e.kids[]`. Two places inside one instance also
+  overlap by their steps only (`overlaps`, for W0312 and W0405): a task that writes
+  `e.hp` and a parent that reads `e.id` have separate footprints. Two instances, or
+  an instance and another place, use the wildcard rules: two results can be one
+  place, or one can be inside the other.
 - An instance is sound only while all places below it come from one value of one
   reference, so sema makes one only where that holds:
   - The result type is `&T` or `Option<&T>`, and `T` holds no reference. A result with
@@ -51,10 +69,17 @@ Status: accepted. Date: 2026-10-18.
   - The call is in the body of the function, not in a closure or a clause. One
     lowering of a closure body stands for each call of the closure, so its results
     get the shared wildcard place.
-  - In a loop, each pass makes new instances (the counter of splits), and a key of a
-    loop value names an instance by its shape only. So the values that an iteration
-    gives to the next have the instances of the pass before, and the final pass
-    compares the result of this iteration with them by the wildcard rules.
+  - The code of the call cannot run again in one run of the body: it is not in the
+    handled body of a handler of an effect with a `multi` operation, and the function
+    cannot perform such an operation through a handler of a caller (its row has no
+    such effect, no unknown `multi` call and no function parameter that can perform
+    one). After a `multi` resume the code runs again, and the locals keep the results
+    of the run before.
+  - The call is not in a loop body. The values that an iteration gives to the next
+    can hold the results of two iterations with one instance, for example after a
+    rotation through the parts of a tuple. So a result in a loop gets the shared
+    wildcard place. A write through the result itself still keeps it valid
+    (`writes_via`).
   - A caller sees a returned instance as `..`, and makes its own instance.
   - A local that gets the results of two calls inside one base points into the shared
     wildcard place of the base for the second one. A local only gets places, so else
@@ -96,15 +121,30 @@ Status: accepted. Date: 2026-10-18.
   in the body also mutates `b`. A chain of locals (`r0 = r1; r1 = r2; ...`) needs one
   pass for each local. The join keeps the places, the function values and the tasks of
   the head and of the end of the pass, so the values only grow.
+- The join widens a value that goes deeper a second time, in each pass: a new place
+  below a place that an earlier pass of the loop added (a place that the value did
+  not have before the loop) becomes the wildcard place of the outermost such place.
+  So `cur = &cur.next[0]` gets `cur.next[]..` in the second pass, also with branches
+  that go into different fields. A new place below a wildcard place `b..` (not a
+  one-place instance) becomes `b..`: it is one of the places of `b..`. A local also
+  points into `b..` in place of a place below it. A value whose places in one root
+  are more than 16 at a loop head (64 for a local anywhere) becomes the wildcard place
+  of the longest common prefix of these places. Each of these wider places includes
+  the places that it replaces. So the number of places of a value does not grow with
+  each pass, also in nested loops, where each entry of an inner loop starts again.
 - After eight passes the join widens what still changes, so that the values become
   stable:
   - A new place below a place that the value had at the head becomes the wildcard place
-    of the deepest such place: `cur = &cur.next[0]` gets `cur.next[]...next[]..`.
+    of the deepest such place.
   - After one more pass for each local outside the loop and 16 more, a new place with
     no such place above it becomes the wildcard place of its root.
-  - A function value that still changes becomes a function value that the body does not
-    know. It can still do what the joined values do.
-  - The tasks of a task handle join. A `join` of the handle joins each of them.
+  - After as many passes, a function value that still changes becomes a function value
+    that the body does not know. It can still do what the joined values do. A chain of
+    locals that pass function values along needs one pass for each local, as for
+    places, so a chain of known closures stays known.
+  - A local keeps the set of the tasks that it can hold on its own path, and the head
+    joins the sets of the head, of the end of the body and of each `continue` (ADR 0006
+    has the rule for a `join`).
   The widened value includes the value that it replaces: a wildcard place `q..` stands
   for each place at or below `q`, and an unknown function value can do what any
   function value can do with the places that it gets. A widened value is a value at the
@@ -123,6 +163,10 @@ Status: accepted. Date: 2026-10-18.
   variable (W0204, W0301), also when it moves the value: it takes the value only when it
   runs. A temporary of plain data stays readable too, as a constant does. A reference
   into a local of plain data is still invalid after the scope.
+- A field, an element or a part of a tuple can hold a reference. A place below it,
+  such as `t.0.kids` for `t: (&Entity, &Entity)`, is a place where that reference
+  points, not a place of `t`. These are the places of the references that the local
+  holds (`held_refs`), so a write there invalidates the references into them.
 - A value points where its parts point: a tuple, a struct literal, an array literal, an
   enum payload and a call result. A local that holds such a value points into the
   places of its references, so a change there invalidates the local. A pattern, an
@@ -177,19 +221,35 @@ Status: accepted. Date: 2026-10-18.
 - Element places are not index-sensitive. A mutation of one element can invalidate a
   reference into the unstable part of another element. This is safe and conservative.
 - A reference that goes deeper in each loop iteration (`cur = &cur.next[0]`) has the
-  places of seven iterations and the wildcard place below them. A change that overlaps
-  the base of the wildcard place invalidates it, also through stable steps only. A
-  signature check sees the wildcard place, so it needs a written `in p..` or `mut(p..)`.
-- A loop that needs more than eight passes can get a function value that the body does
-  not know. A call of it lends its arguments, can abort, and performs its effect row.
+  place one level below the place before the loop and the wildcard place below it. A
+  change that overlaps the base of the wildcard place invalidates it, also through
+  stable steps only, unless the change goes through the reference itself. A signature
+  check sees the wildcard place, so it needs a written `in p..` or `mut(p..)`. A value
+  with very many places in one root, such as a long walk in straight code or a walk
+  in many branches, gets the wildcard place of their common prefix.
+- A loop that needs more passes than its locals and 16 more can get a function value
+  that the body does not know. A call of it lends its arguments, can abort, and
+  performs its effect row.
+- `writes_via` is only for a write at an assignment or at a method call that changes
+  only its receiver. A call of a function, also with the reference as its only
+  argument, can invalidate the reference by the wildcard rules, as before.
 - `points_into` is not flow-sensitive. A reference that got a place inside a block, and
   then a place outside it before the block ends, is still invalid after the end. This
   is the same imprecision as for mutations.
 - A result with no stated place points anywhere inside the reference arguments, also
   when the callee returns a reference to one element only. A change through another
   result, or through a result of an iteration before, invalidates it, also a change
-  of a scalar field. Two places below one instance overlap for W0312 and W0405, as
-  places below one wildcard place do.
+  of a scalar field. In a loop body or after a `multi` operation, a result is not one
+  place: a change through another reference into it invalidates each reference into
+  it.
+- A reference parameter with `in p..` points into the shared wildcard place `p..`, not
+  into an instance. A write through it keeps it valid (`writes_via`), and so does a
+  write through a local that it gives its value to, for that local. A change through
+  another reference into `p..` invalidates it, also a change of a scalar field.
+- A place below a part of a tuple or an element that holds a reference is a place of
+  each reference that the local holds: the parts are not told apart. So a write
+  through `t.0` also counts as a write where `t.1` points. A write through a part does
+  not keep the part valid: `writes_via` is for a local that holds one reference.
 - After a join, a part can hold the references of each branch. A use after the join
   uses each of them. A change of the places of a replaced holder before the join does
   not count, but a change after the join does.

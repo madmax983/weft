@@ -597,6 +597,9 @@ struct ContInfo {
     ret: Ty,
     multi: bool,
     muts: Vec<PlaceId>,
+    /// The places that the handled body frees: a move of a local from outside the
+    /// `handle`, or of a part of it. A resume frees them (`releases_at`).
+    frees: Vec<PlaceId>,
     cap: CapId,
     /// The depth of `Lower::handlers` in the clause: a handler above it is inside the clause.
     depth: usize,
@@ -627,6 +630,11 @@ struct Local {
     sticky: BTreeSet<CapId>,
 }
 
+/// The most places with one root in the value of one local. A value with more
+/// widens (`Lower::collapse_places`). Each place of the wider value includes
+/// places of the old one, so the facts stay sound.
+const LOCAL_PLACES_MAX: usize = 64;
+
 /// The locals of a body, in the order of their declarations.
 ///
 /// A loop pass can change a local from outside the loop. Each change goes
@@ -639,6 +647,8 @@ struct Locals {
     items: Vec<Local>,
     /// The locals that hold a `@ uniq` value now.
     uniq: BTreeSet<usize>,
+    /// The locals that can hold a task handle now: their task set is not empty.
+    tasked: BTreeSet<usize>,
     /// The open loop passes, the innermost last.
     undo: Vec<Undo>,
 }
@@ -697,6 +707,24 @@ impl Locals {
         &mut self.items[l]
     }
 
+    /// The locals that can hold a task handle now.
+    const fn tasked(&self) -> &BTreeSet<usize> {
+        &self.tasked
+    }
+
+    /// Sets the tasks of the handles that local `l` can hold.
+    fn set_tasks(&mut self, l: usize, tasks: BTreeSet<TaskId>) {
+        if self.items[l].tasks == tasks {
+            return;
+        }
+        if tasks.is_empty() {
+            self.tasked.remove(&l);
+        } else {
+            self.tasked.insert(l);
+        }
+        self.get_mut(l).tasks = tasks;
+    }
+
     /// Sets the `@ uniq` mark of local `l`. Each open loop pass keeps the old mark.
     fn set_uniq(&mut self, l: usize, uniq: bool) {
         let was = self.uniq.contains(&l);
@@ -734,6 +762,11 @@ impl Locals {
     fn restore(&mut self, u: Undo) {
         for (l, old) in u.old {
             if let Some(slot) = self.items.get_mut(l) {
+                if old.tasks.is_empty() {
+                    self.tasked.remove(&l);
+                } else {
+                    self.tasked.insert(l);
+                }
                 *slot = old;
             }
         }
@@ -746,6 +779,7 @@ impl Locals {
         }
         self.items.truncate(u.floor);
         let _ = self.uniq.split_off(&u.floor);
+        let _ = self.tasked.split_off(&u.floor);
     }
 }
 
@@ -786,6 +820,22 @@ struct LVal {
     held: BTreeSet<CapId>,
 }
 
+/// A method call through a reference local that can write through the local
+/// (`Lower::note_via_call`).
+#[derive(Clone, Debug)]
+struct ViaCall {
+    /// The variable of the local.
+    var: VarId,
+    /// The places of the local at the call.
+    refs: Vec<PlaceId>,
+    /// The number of nodes before the call.
+    from: usize,
+    /// The span of the call node.
+    span: Span,
+    /// The label of the call node: the method name.
+    label: String,
+}
+
 /// A hidden variable that holds the references that a part of a local gets.
 #[derive(Clone, Debug)]
 struct PartHolder {
@@ -805,6 +855,8 @@ struct PartHolder {
 pub(super) struct BranchState {
     /// The locals that hold a `@ uniq` value.
     uniq: BTreeSet<usize>,
+    /// The tasks of the handles that each local can hold, for the locals with any.
+    tasks: BTreeMap<usize, BTreeSet<TaskId>>,
     /// The number of locals: a local at this index or above has no mark here.
     len: usize,
     /// The holders of the references in the parts of locals.
@@ -906,6 +958,7 @@ fn expr_tail(e: &Expr) -> Span {
 }
 
 /// A path that names something other than a value.
+#[derive(Clone, Copy)]
 enum PathRef {
     Mod(ModId),
     Adt(usize),
@@ -929,6 +982,8 @@ struct Handled {
     resumes: Vec<NodeId>,
     /// The places that the handled computation changes.
     changes: Vec<PlaceId>,
+    /// The places that the handled computation frees (`Lower::body_frees`).
+    frees: Vec<PlaceId>,
     /// The end node of the `handle`.
     end: NodeId,
     /// A clause can end with no `resume`: each node of the body that runs a
@@ -994,6 +1049,12 @@ pub struct Lower<'p> {
     match_deps: Vec<PlaceId>,
     /// The handle places of `LVal::deps`.
     dep_places: BTreeSet<PlaceId>,
+    /// The loop keys of places (`Lower::place_key`), by place and the number of
+    /// roots before the loop. A place does not change, so a key stays valid.
+    keys: std::cell::RefCell<std::collections::HashMap<(PlaceId, usize), Rc<str>>>,
+    /// The method calls that can write through a reference local, for
+    /// `writes_via` at the end of the body.
+    via_calls: Vec<ViaCall>,
     /// The open statements: the frame depth at the start, and the owners of
     /// the temporaries that go out of scope at the end.
     stmt_temps: Vec<(usize, Vec<VarId>)>,
@@ -1165,6 +1226,8 @@ impl<'p> Lower<'p> {
             match_moves: false,
             match_deps: Vec::new(),
             dep_places: BTreeSet::new(),
+            keys: std::cell::RefCell::default(),
+            via_calls: Vec::new(),
             stmt_temps: Vec::new(),
             rets: Vec::new(),
             op_args: Vec::new(),
@@ -2064,7 +2127,7 @@ impl<'p> Lower<'p> {
             self.point_local(l, p);
         }
         if !v.tasks.is_empty() {
-            self.locals.get_mut(l).tasks.clone_from(&v.tasks);
+            self.locals.set_tasks(l, v.tasks.clone());
         }
         // A function value. A new value of the local joins the old one: a later
         // call can call either.
@@ -2214,6 +2277,12 @@ impl<'p> Lower<'p> {
     pub(super) fn branch_state(&self) -> BranchState {
         BranchState {
             uniq: self.locals.uniq_set().clone(),
+            tasks: self
+                .locals
+                .tasked()
+                .iter()
+                .map(|&l| (l, self.locals[l].tasks.clone()))
+                .collect(),
             len: self.locals.len(),
             holders: self.part_holders.clone(),
         }
@@ -2231,6 +2300,19 @@ impl<'p> Lower<'p> {
             .collect();
         for l in changed {
             self.locals.set_uniq(l, state.uniq.contains(&l));
+        }
+        // The task sets of the state, also an empty set for a local with none there.
+        let tasked: Vec<usize> = self
+            .locals
+            .tasked()
+            .iter()
+            .chain(state.tasks.keys())
+            .copied()
+            .filter(|&l| l < len)
+            .collect();
+        for l in tasked {
+            let want = state.tasks.get(&l).cloned().unwrap_or_default();
+            self.locals.set_tasks(l, want);
         }
         self.part_holders.clone_from(&state.holders);
     }
@@ -2262,7 +2344,19 @@ impl<'p> Lower<'p> {
                 holders.push(h.clone());
             }
         }
-        BranchState { uniq, len, holders }
+        // A local can hold the tasks of each branch.
+        let mut tasks: BTreeMap<usize, BTreeSet<TaskId>> = BTreeMap::new();
+        for (&l, ts) in ends.iter().flat_map(|e| &e.tasks) {
+            if l < len {
+                tasks.entry(l).or_default().extend(ts.iter().copied());
+            }
+        }
+        BranchState {
+            uniq,
+            tasks,
+            len,
+            holders,
+        }
     }
 
     /// A branch reaches a join over the edge `from` to `to` with the state
@@ -2331,11 +2425,27 @@ impl<'p> Lower<'p> {
         // call, as in `cur = step(cur)`. The wildcard rules then compare them.
         let p = match self.facts.one_place_of(p) {
             Some(w) if self.two_results(l, w) => self.facts.wildcard(p),
-            _ => p,
+            _ => self.below_shared_wild(p).unwrap_or(p),
         };
         self.facts.points_into.push((var, p));
         if !self.locals[l].refs.contains(&p) {
             self.locals.get_mut(l).refs.push(p);
+            // A value with very many places in one root, such as a walk in many
+            // branches, widens to the wildcard place of their common prefix.
+            let root = self.facts.place(p).root;
+            let same = self.locals[l]
+                .refs
+                .iter()
+                .filter(|&&q| self.facts.place(q).root == root)
+                .count();
+            if same > LOCAL_PLACES_MAX {
+                let refs = self.locals[l].refs.clone();
+                let wide = self.collapse_places(&refs, LOCAL_PLACES_MAX);
+                for &q in &wide {
+                    self.facts.points_into.push((var, q));
+                }
+                self.locals.get_mut(l).refs = wide;
+            }
         }
         let arg = self.facts.roots[self.facts.place(p).root.index()].kind == RootKind::Arg;
         let barrier = self.frames.iter().rposition(|f| f.barrier.is_some());
@@ -2348,6 +2458,21 @@ impl<'p> Lower<'p> {
                 }
             }
         }
+    }
+
+    /// Returns the wildcard place `b..` if `p` is strictly below it and `b..` is
+    /// not a one-place instance. Each place below `b..` is one of its places, so
+    /// a local can point into `b..` instead: the wildcard rules decide the same,
+    /// and a walk through `b..` does not make a new place at each step.
+    fn below_shared_wild(&mut self, p: PlaceId) -> Option<PlaceId> {
+        let b = self.facts.wild_base(p)?;
+        let depth = self.facts.place(b).steps.len();
+        let info = self.facts.place(p);
+        let shared = info
+            .steps
+            .get(depth)
+            .is_some_and(|s| !weft_facts::is_one_step(s));
+        (shared && info.steps.len() > depth + 1).then(|| self.facts.wildcard(p))
     }
 
     /// Returns true if local `l` already points into a one-place wildcard place

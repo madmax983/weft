@@ -8,6 +8,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
+use std::rc::Rc;
 
 use weft_facts::{CapId, FactMark, NodeId, PlaceId, StepKind, TaskId, VarId};
 use weft_syntax::diag::Diagnostic;
@@ -20,6 +21,11 @@ use crate::program::FnId;
 
 /// The passes of a loop before the lowering widens the values that still change.
 pub const LOOP_WIDEN_AFTER: usize = 8;
+
+/// The most places with one root in one value at the head of a loop pass. A
+/// value with more widens: these places become the wildcard place of their
+/// common prefix (`Lower::collapse_places`).
+pub const LOOP_PLACES_MAX: usize = 16;
 
 /// The passes of a loop with `outer` locals outside it before the root widening.
 ///
@@ -37,6 +43,15 @@ pub const fn loop_roots_after(outer: usize) -> usize {
 /// values are finite. A loop that needs more passes shows a checker bug (W0707).
 pub const fn loop_pass_bound(outer: usize) -> usize {
     loop_roots_after(outer).saturating_mul(2).saturating_add(32)
+}
+
+/// What the passes of one loop found so far.
+#[derive(Default)]
+struct Progress {
+    /// The number of passes.
+    passes: usize,
+    /// The keys of the places of each changed local before the loop.
+    entry: BTreeMap<usize, BTreeSet<String>>,
 }
 
 /// The value of a local outside a loop that an iteration passes to the next.
@@ -123,6 +138,7 @@ struct LoopHead {
     stored_behind: usize,
     resume_refs_pending: Vec<(CapId, Vec<PlaceId>)>,
     bind_caps: usize,
+    via_calls: usize,
 }
 
 impl LoopHead {
@@ -167,7 +183,7 @@ impl Lower<'_> {
         let made = (self.facts.roots.len(), self.facts.vars.len());
         let entry = self.branch_state();
         let bound = self.loop_bound.unwrap_or_else(|| loop_pass_bound(outer));
-        let mut passes = 0;
+        let mut progress = Progress::default();
         loop {
             let head = self.loop_head();
             let head_state = self.branch_state();
@@ -176,7 +192,8 @@ impl Lower<'_> {
             pass(self);
             let jumps = std::mem::replace(&mut self.loop_jumps, outer_jumps);
             let undo = self.locals.end();
-            passes += 1;
+            progress.passes += 1;
+            let passes = progress.passes;
             self.work.loop_passes += 1;
             self.work.loop_copies += head.size()
                 + head_state.uniq.len()
@@ -195,8 +212,14 @@ impl Lower<'_> {
             let end_state = self.cur.map(|_| self.branch_state());
             back.extend(end_state.clone());
             let mut next = Self::joined(&back);
-            let (carry, stable) =
-                self.next_carry(&undo, &head.part_holders, outer, made, &mut next, passes);
+            let (carry, stable) = self.next_carry(
+                &undo,
+                &head.part_holders,
+                outer,
+                made,
+                &mut next,
+                &mut progress,
+            );
             if stable || passes >= bound {
                 if !stable {
                     self.diags.push(
@@ -242,11 +265,11 @@ impl Lower<'_> {
                         self.facts.points_into.push((var, p));
                     }
                 }
+                self.locals.set_tasks(l, c.tasks);
                 let loc = self.locals.get_mut(l);
                 loc.refs = c.refs;
                 loc.summary = c.summary;
                 loc.fn_param = c.fn_param;
-                loc.tasks = c.tasks;
                 loc.bound = c.bound;
                 loc.caps = c.caps;
                 loc.sticky = c.sticky;
@@ -265,13 +288,18 @@ impl Lower<'_> {
     ///
     /// Each value is the join of the value at the head and the value at the end:
     /// the references of both, the function values of both (the end value already
-    /// joins the head value), and the tasks of both. After [`LOOP_WIDEN_AFTER`]
-    /// passes the join widens what still changes:
+    /// joins the head value), and the tasks of both. A value that goes deeper a
+    /// second time widens at once: a new place below a place that an earlier pass
+    /// added becomes the wildcard place of the outermost such place. `progress`
+    /// has the number of passes and the keys of the places of each local before
+    /// the loop. After [`LOOP_WIDEN_AFTER`] passes the join widens what still
+    /// changes:
     /// - A new place below a place that the value had at the head becomes the
     ///   wildcard place of the deepest such place. After [`loop_roots_after`]
     ///   passes, another new place becomes the wildcard place of its root.
-    /// - A function value that still changes becomes a function value that the
-    ///   body does not know, which can also do what the value did.
+    /// - After [`loop_roots_after`] passes, a function value that still changes
+    ///   becomes a function value that the body does not know, which can also do
+    ///   what the value did.
     ///
     /// The new part holders of `next` get the same widening of their places.
     fn next_carry(
@@ -281,10 +309,10 @@ impl Lower<'_> {
         outer: usize,
         made: (usize, usize),
         next: &mut BranchState,
-        passes: usize,
+        progress: &mut Progress,
     ) -> (Vec<(usize, Carried)>, bool) {
-        let widen = passes >= LOOP_WIDEN_AFTER;
-        let to_root = passes >= loop_roots_after(outer);
+        let widen = progress.passes >= LOOP_WIDEN_AFTER;
+        let to_root = progress.passes >= loop_roots_after(outer);
         let new_holder =
             |h: &PartHolder| h.local < outer && !head_holders.iter().any(|x| x.var == h.var);
         let mut changed: BTreeSet<usize> = undo
@@ -315,7 +343,7 @@ impl Lower<'_> {
                 let refs = next.holders[i].refs.clone();
                 let mut widened = Vec::with_capacity(refs.len());
                 for p in refs {
-                    let q = self.widen_place(p, &known, made.0, to_root);
+                    let q = self.widen_place(p, &known, None, made.0, to_root);
                     if !widened.contains(&q) {
                         widened.push(q);
                     }
@@ -331,21 +359,37 @@ impl Lower<'_> {
             let mut refs = h.refs.clone();
             let known: BTreeSet<String> =
                 h.refs.iter().map(|&p| self.place_key(p, made.0)).collect();
+            // A local that no pass changed before has its value from before the loop.
+            let before = progress
+                .entry
+                .entry(l)
+                .or_insert_with(|| known.clone())
+                .clone();
             for &p in e.refs.iter().filter(|p| !h.refs.contains(p)) {
                 let q = if widen {
-                    self.widen_place(p, &known, made.0, to_root)
+                    self.widen_place(p, &known, Some(&before), made.0, to_root)
                 } else {
-                    p
+                    self.widen_deeper(p, &known, &before, made.0)
                 };
                 if !refs.contains(&q) {
                     refs.push(q);
                 }
             }
+            if refs.len() > LOOP_PLACES_MAX {
+                refs = self.collapse_places(&refs, LOOP_PLACES_MAX);
+            }
             let mut c = Carried {
                 refs,
                 summary: e.summary,
                 fn_param: e.fn_param,
-                tasks: h.tasks.union(&e.tasks).copied().collect(),
+                // The tasks of the head, of the end and of each `continue`.
+                tasks: h
+                    .tasks
+                    .iter()
+                    .chain(&e.tasks)
+                    .chain(next.tasks.get(&l).into_iter().flatten())
+                    .copied()
+                    .collect(),
                 bound: e.bound,
                 uniq: if l < next.len {
                     next.uniq.contains(&l)
@@ -369,7 +413,10 @@ impl Lower<'_> {
                 caps: h.caps.clone(),
                 sticky: h.sticky.clone(),
             };
-            if widen {
+            // A chain of locals that pass function values along needs one pass
+            // for each local, as for places. So a function value widens only
+            // with the roots.
+            if to_root {
                 let head_info = FnInfo {
                     summary: h.summary,
                     item: None,
@@ -401,24 +448,31 @@ impl Lower<'_> {
         (out, stable)
     }
 
-    /// Widens place `p` for the head of the next pass of a loop. `known` has the
-    /// keys of the places at the head. A place with a known key stays. A place
-    /// below a known place becomes the wildcard place of the deepest one. Another
-    /// place stays, or with `to_root` becomes the wildcard place of its root.
+    /// Widens place `p` for the head of the next pass of a loop, as
+    /// [`Lower::widen_deeper`] does with `entry`. Then a place below a known place
+    /// becomes the wildcard place of the deepest one. Another place stays, or
+    /// with `to_root` becomes the wildcard place of its root.
     fn widen_place(
         &mut self,
         p: PlaceId,
         known: &BTreeSet<String>,
+        entry: Option<&BTreeSet<String>>,
         roots: usize,
         to_root: bool,
     ) -> PlaceId {
-        if known.contains(&self.place_key(p, roots)) {
+        if known.contains(&*self.key_of(p, roots)) {
             return p;
+        }
+        if let Some(before) = entry {
+            let q = self.widen_deeper(p, known, before, roots);
+            if q != p {
+                return q;
+            }
         }
         let mut top = p;
         let mut at = self.facts.place(p).parent;
         while let Some(q) = at {
-            if known.contains(&self.place_key(q, roots)) {
+            if known.contains(&*self.key_of(q, roots)) {
                 return self.facts.wildcard(q);
             }
             top = q;
@@ -429,6 +483,94 @@ impl Lower<'_> {
         } else {
             p
         }
+    }
+
+    /// Widens the places `refs` of a value with too many places: the places of a
+    /// root with more than `max` of them become the wildcard place of their
+    /// longest common prefix. Each place is at or below that prefix, so the
+    /// result includes each place. The other places and the handle places
+    /// (`LVal::deps`) stay.
+    pub(super) fn collapse_places(&mut self, refs: &[PlaceId], max: usize) -> Vec<PlaceId> {
+        let (named, mut out) = self.split_deps(refs);
+        let mut count: BTreeMap<weft_facts::RootId, usize> = BTreeMap::new();
+        for &p in &named {
+            *count.entry(self.facts.place(p).root).or_default() += 1;
+        }
+        let mut prefix: BTreeMap<weft_facts::RootId, PlaceId> = BTreeMap::new();
+        for p in named {
+            let root = self.facts.place(p).root;
+            if count.get(&root).is_none_or(|&c| c <= max) {
+                if !out.contains(&p) {
+                    out.push(p);
+                }
+                continue;
+            }
+            let common = match prefix.get(&root) {
+                None => p,
+                Some(&q) => {
+                    // The deepest place on the path of `q` that is also on the path of `p`.
+                    let mut on_p = BTreeSet::new();
+                    let mut at = Some(p);
+                    while let Some(x) = at {
+                        on_p.insert(x);
+                        at = self.facts.place(x).parent;
+                    }
+                    let mut at = Some(q);
+                    let mut found = q;
+                    while let Some(x) = at {
+                        if on_p.contains(&x) {
+                            found = x;
+                            break;
+                        }
+                        at = self.facts.place(x).parent;
+                    }
+                    found
+                }
+            };
+            prefix.insert(root, common);
+        }
+        for q in prefix.into_values() {
+            let w = self.facts.wildcard(q);
+            if !out.contains(&w) {
+                out.push(w);
+            }
+        }
+        out
+    }
+
+    /// Widens a place `p` that goes deeper a second time. `known` has the keys of
+    /// the places at the head, and `before` the keys of the places before the
+    /// loop. A place with a known key stays. A place below a known place that is
+    /// not a place from before the loop (an earlier pass added it) becomes the
+    /// wildcard place of the outermost such place. A place below a wildcard
+    /// place `b..` becomes `b..`. So a walk such as `cur = &cur.next[0]` stops
+    /// after two passes, also with branches and in nested loops: the number of
+    /// places does not grow with each pass.
+    fn widen_deeper(
+        &mut self,
+        p: PlaceId,
+        known: &BTreeSet<String>,
+        before: &BTreeSet<String>,
+        roots: usize,
+    ) -> PlaceId {
+        if known.contains(&*self.key_of(p, roots)) {
+            return p;
+        }
+        // A place below a wildcard place `b..` (not a one-place instance) is one
+        // of the places of `b..`.
+        if let Some(w) = self.below_shared_wild(p) {
+            return w;
+        }
+        let mut added = None;
+        let mut at = self.facts.place(p).parent;
+        while let Some(q) = at {
+            let key = self.key_of(q, roots);
+            if known.contains(&*key) && !before.contains(&*key) {
+                added = Some(q);
+            }
+            at = self.facts.place(q).parent;
+        }
+        added.map_or(p, |q| self.facts.wildcard(q))
     }
 
     /// The key of value `c` of local `l` outside a loop, with the part holders
@@ -529,23 +671,52 @@ impl Lower<'_> {
     /// A key of place `p` that is the same in each pass of a loop. A root that the
     /// loop makes (index `roots` or more) has its kind and name, and a split has its side.
     fn place_key(&self, p: PlaceId, roots: usize) -> String {
-        let info = self.facts.place(p);
-        let r = info.root.index();
-        let mut key = if r < roots {
-            format!("r{r}")
-        } else {
-            let root = &self.facts.roots[r];
-            format!("{:?} {}", root.kind, root.name)
-        };
-        for s in &info.steps {
-            let _ = match s.kind {
-                StepKind::Seg { hi, .. } => write!(key, "/seg {hi} {}", s.unstable),
-                // A pass makes new instances: they are the same place shape.
-                _ if weft_facts::is_one_step(s) => write!(key, "/one"),
-                k => write!(key, "/{k:?} {}", s.unstable),
-            };
+        self.key_of(p, roots).to_string()
+    }
+
+    /// The key of place `p` ([`Lower::place_key`]). It extends the key of the
+    /// parent, and the table `keys` keeps it.
+    fn key_of(&self, p: PlaceId, roots: usize) -> Rc<str> {
+        if let Some(k) = self.keys.borrow().get(&(p, roots)) {
+            return k.clone();
         }
-        key
+        // The places on the way up with no key yet, the deepest first.
+        let mut todo = vec![p];
+        let mut base: Option<Rc<str>> = None;
+        while let Some(q) = self.facts.place(todo[todo.len() - 1]).parent {
+            if let Some(k) = self.keys.borrow().get(&(q, roots)) {
+                base = Some(k.clone());
+                break;
+            }
+            todo.push(q);
+        }
+        let mut key = base.map(|k| k.to_string()).unwrap_or_default();
+        for &q in todo.iter().rev() {
+            let info = self.facts.place(q);
+            match info.steps.last() {
+                None => {
+                    let r = info.root.index();
+                    key = if r < roots {
+                        format!("r{r}")
+                    } else {
+                        let root = &self.facts.roots[r];
+                        format!("{:?} {}", root.kind, root.name)
+                    };
+                }
+                Some(s) => {
+                    let _ = match s.kind {
+                        StepKind::Seg { hi, .. } => write!(key, "/seg {hi} {}", s.unstable),
+                        // A pass makes new instances: they are the same place shape.
+                        _ if weft_facts::is_one_step(s) => write!(key, "/one"),
+                        k => write!(key, "/{k:?} {}", s.unstable),
+                    };
+                }
+            }
+            self.keys
+                .borrow_mut()
+                .insert((q, roots), Rc::from(key.as_str()));
+        }
+        Rc::from(key)
     }
 
     /// The keys of what a call of function value `info` does, the same in each pass of a loop.
@@ -647,6 +818,7 @@ impl Lower<'_> {
             groups: _,
             split: _,
             dep_places: _,
+            keys: _,
             var_local: _,
             root_local: _,
             maybe_linear: _,
@@ -717,6 +889,7 @@ impl Lower<'_> {
             stored_behind,
             resume_refs_pending,
             bind_caps,
+            via_calls,
         } = self;
         LoopHead {
             facts: facts.mark(),
@@ -773,6 +946,7 @@ impl Lower<'_> {
             stored_behind: stored_behind.len(),
             resume_refs_pending: resume_refs_pending.clone(),
             bind_caps: bind_caps.len(),
+            via_calls: via_calls.len(),
         }
     }
 
@@ -793,6 +967,7 @@ impl Lower<'_> {
             groups: _,
             split: _,
             dep_places: _,
+            keys: _,
             var_local: _,
             root_local: _,
             maybe_linear: _,
@@ -860,6 +1035,7 @@ impl Lower<'_> {
             stored_behind,
             resume_refs_pending,
             bind_caps,
+            via_calls,
         } = self;
         facts.rewind(&head.facts);
         let node = NodeId(u32::try_from(head.nodes).unwrap_or(u32::MAX));
@@ -923,6 +1099,7 @@ impl Lower<'_> {
         stored_behind.truncate(head.stored_behind);
         *resume_refs_pending = head.resume_refs_pending;
         bind_caps.truncate(head.bind_caps);
+        via_calls.truncate(head.via_calls);
     }
 }
 

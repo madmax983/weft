@@ -11,10 +11,11 @@ use super::{Lower, PlaceId, Ty};
 impl Lower<'_> {
     /// Returns a new instance of one-place wildcard places for the result of a
     /// call, if the result is one reference: a `&T` or an `Option<&T>` where `T`
-    /// holds no reference. The call must be in the body of the function, not in
-    /// a closure or a clause, which can run more than once with one lowering. A
-    /// loop lowers its body again, with new instances, so a result of an
-    /// iteration before has another instance (`stmt::lower_loop`).
+    /// holds no reference. The call must run at most once in one run of the
+    /// body: it is in the body of the function, not in a closure or a clause, not
+    /// in a loop, and not after a `multi` operation (`may_run_again`). In a loop
+    /// the values of an iteration go to the next one, so two values can have one
+    /// instance and be the results of two iterations.
     pub(super) fn one_result(&mut self, ret: &Ty) -> Option<u32> {
         let one = |me: &Self, t: &Ty| match me.inf.shallow(t) {
             Ty::Ref(inner) => !me.holds_refs(&inner),
@@ -26,7 +27,28 @@ impl Lower<'_> {
             }
             t => one(self, &t),
         };
-        (single && self.scope_now() == super::fnval::Scope::Function).then(|| self.fresh_split())
+        let once = self.scope_now() == super::fnval::Scope::Function
+            && self.loops.is_empty()
+            && !self.may_run_again();
+        (single && once).then(|| self.fresh_split())
+    }
+
+    /// Returns true if the code here can run more than once in one run of the
+    /// body: a `multi` operation can resume the computation after it again. This
+    /// holds in the handled body of a local handler of an effect with a `multi`
+    /// operation, and in a body that can perform such an operation through a
+    /// handler of a caller. The locals keep their values from the run before.
+    pub(super) fn may_run_again(&self) -> bool {
+        if self.handlers.iter().any(|h| h.multi) {
+            return true;
+        }
+        let Some(f) = self.self_fn else {
+            return false;
+        };
+        let e = &self.sigs[f].effects;
+        e.multi
+            || e.named.iter().any(|x| self.effect_has_multi(x))
+            || (!e.passthrough.is_empty() && self.may_be_multi(None))
     }
 
     /// Returns the places that the values at places `ps` point into: the

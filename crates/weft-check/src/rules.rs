@@ -24,6 +24,10 @@ pub enum Cause {
     MovePart(PlaceId),
     /// The node gives this place to a function value that can mutate through it.
     Lend(PlaceId),
+    /// The node can free the memory at this place (`releases_at`): a `resume`
+    /// after the handled body changed a place above what a clause parameter
+    /// points into.
+    Release(PlaceId),
 }
 
 /// Why a reference was invalidated: the evidence for one W0301 error.
@@ -183,6 +187,9 @@ impl<'a> Ctx<'a> {
         for &(m, p) in &f.moved_part {
             out[p.index()].push((m, Cause::MovePart(m)));
         }
+        for &(p, m) in &f.releases_at {
+            out[p.index()].push((m, Cause::Release(m)));
+        }
         for &(v, p) in &f.moved_at {
             let roots = owned.get(&v).unwrap_or(&none);
             // part_moved_at(V, P)
@@ -231,9 +238,16 @@ impl<'a> Ctx<'a> {
     /// The spec gives `overlaps(P, Q)` if some `A` in `P` and its bases and
     /// some `C` in `Q` and its bases overlap with no wildcard rule. Each such
     /// `A` has the outermost base of `P` as a prefix, and the relation is
-    /// closed under prefixes. So the outermost bases decide it.
+    /// closed under prefixes. So the outermost bases decide it. Two places
+    /// inside one one-place wildcard place use no wildcard rule (`same_one`):
+    /// their steps decide.
     fn overlaps(&self, a: PlaceId, b: PlaceId) -> bool {
         self.overlaps_calls.set(self.overlaps_calls.get() + 1);
+        // Inside one one-place wildcard place the steps decide, with no wildcard rule.
+        if self.same_one(a, b) {
+            return self.same_root(a, b)
+                && places::overlaps(&self.f.place(a).steps, &self.f.place(b).steps);
+        }
         let (a, b) = (self.outermost(a), self.outermost(b));
         self.same_root(a, b) && places::overlaps(&self.f.place(a).steps, &self.f.place(b).steps)
     }
@@ -385,28 +399,28 @@ pub fn check_counted(f: &FnFacts) -> (Report, Work) {
 }
 
 /// `invalidated_at(R, P)` for a reference that points into `ps`: each node
-/// that invalidates it, with the first witness `(node, path, cause)`. A node
+/// that invalidates it, with witnesses `(node, path, cause)`. A node
 /// invalidates the reference if it mutates a place, gives a place to a function
-/// value (`lends_mut`) or frees a place (`frees_at`). The result has one
-/// witness for each node, in the order of the nodes: the witness with the least
-/// cause.
+/// value (`lends_mut`) or frees a place (`frees_at`). The result has the first
+/// witness of a mutation and of a lend at each node, and each free, in the
+/// order of the nodes. [`first_witnesses`] picks one for each node.
 fn invalidated_at(cx: &Ctx<'_>, ps: &[PlaceId]) -> Vec<(NodeId, PlaceId, Cause)> {
     let mut gens: Vec<(NodeId, PlaceId, Cause)> = Vec::new();
     // A mutation, or a place that the node gives to a function value.
     for (i, (ms, ls)) in cx.muts.iter().zip(&cx.lends).enumerate() {
-        let changes = ms
-            .iter()
-            .map(|&m| (m, Cause::Mutation(m)))
-            .chain(ls.iter().map(|&m| (m, Cause::Lend(m))));
-        let mut hit = None;
-        for (m, cause) in changes {
-            if let Some(&p) = ps.iter().find(|&&p| cx.mutation_kills(m, p)) {
-                hit = Some((p, cause));
-                break;
+        let node = NodeId(u32::try_from(i).unwrap_or(u32::MAX));
+        for (changes, cause) in [
+            (ms, Cause::Mutation as fn(PlaceId) -> Cause),
+            (ls, Cause::Lend as fn(PlaceId) -> Cause),
+        ] {
+            let hit = changes.iter().find_map(|&m| {
+                ps.iter()
+                    .find(|&&p| cx.mutation_kills(m, p))
+                    .map(|&p| (p, m))
+            });
+            if let Some((p, m)) = hit {
+                gens.push((node, p, cause(m)));
             }
-        }
-        if let Some((p, cause)) = hit {
-            gens.push((NodeId(u32::try_from(i).unwrap_or(u32::MAX)), p, cause));
         }
     }
     // A free of `M` with `prefix(M, Path)`.
@@ -421,8 +435,23 @@ fn invalidated_at(cx: &Ctx<'_>, ps: &[PlaceId]) -> Vec<(NodeId, PlaceId, Cause)>
         }
     }
     gens.sort_by_key(|g| (g.0, g.2));
-    gens.dedup_by_key(|g| g.0);
     gens
+}
+
+/// The witnesses of `invalidated_at(R, P)` for reference `v`, one for each node:
+/// the one with the least cause. A mutation at a node with `writes_via(P, R)`
+/// does not count (`via` has these nodes).
+fn first_witnesses(
+    gens: &[(NodeId, PlaceId, Cause)],
+    via: Option<&BTreeSet<NodeId>>,
+) -> Vec<(NodeId, PlaceId, Cause)> {
+    let mut out: Vec<(NodeId, PlaceId, Cause)> = gens
+        .iter()
+        .copied()
+        .filter(|g| !(matches!(g.2, Cause::Mutation(_)) && via.is_some_and(|ns| ns.contains(&g.0))))
+        .collect();
+    out.dedup_by_key(|g| g.0);
+    out
 }
 
 /// W0301: `error(R, P)`.
@@ -437,13 +466,18 @@ fn invalidation(
     for &(v, p) in &f.points_into {
         paths.entry(v).or_default().push(p);
     }
-    // References that point into the same places share their gens.
+    let mut via: BTreeMap<VarId, BTreeSet<NodeId>> = BTreeMap::new();
+    for &(p, v) in &f.writes_via {
+        via.entry(v).or_default().insert(p);
+    }
+    // References that point into the same places share their witnesses.
     let mut gens_of: BTreeMap<&[PlaceId], Vec<(NodeId, PlaceId, Cause)>> = BTreeMap::new();
     for (&v, ps) in &paths {
         let Some(used) = uses.get(&v) else { continue };
-        let gens = gens_of
+        let all = gens_of
             .entry(ps.as_slice())
             .or_insert_with(|| invalidated_at(cx, ps));
+        let gens = first_witnesses(all, via.get(&v));
         if gens.is_empty() {
             continue;
         }

@@ -6,7 +6,7 @@ use super::{
     Stmt, StmtKind, Ty, Val, VarId, VarKind,
 };
 use crate::props::Prop;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 impl Lower<'_> {
     /// Lowers a function body.
@@ -165,6 +165,7 @@ impl Lower<'_> {
     fn finish(mut self, mut eff: EffectSig) -> Lowered {
         self.check_int_lits();
         self.settle_moves();
+        self.finish_via_calls();
         // The types of the locals as the whole body inferred them. A local can get
         // its type after its `let`: `let v = Vec.new()` with a later `v.push(x)`.
         // So its flags come from the inferred type too. A local that gets a
@@ -1117,6 +1118,82 @@ impl Lower<'_> {
         for &p in &places {
             self.mutate(n, p);
         }
+        // A write through a reference local at its place or below it leaves the
+        // local valid (`writes_via`).
+        if let Some(l) = base_name(target)
+            .and_then(|id| self.lookup_local(&id.name))
+            .filter(|&l| self.writes_through(l, &places))
+        {
+            let var = self.locals[l].var;
+            self.facts.writes_via.push((n, var));
+        }
+    }
+
+    /// Returns true if local `l` holds one reference and each place of `places` is
+    /// at or below a place that it points to now. Then a write of `places` is a
+    /// write through `l`, at the one place of `l` or below it.
+    fn writes_through(&self, l: usize, places: &[PlaceId]) -> bool {
+        self.one_ref_local(l) && self.all_below(places, &self.locals[l].refs)
+    }
+
+    /// Returns true if local `l` is a reference to a value with no reference in it.
+    pub(super) fn one_ref_local(&self, l: usize) -> bool {
+        match self.inf.shallow(&self.locals[l].ty) {
+            Ty::Ref(inner) => !self.holds_refs(&inner),
+            _ => false,
+        }
+    }
+
+    /// Returns true if `places` is not empty and each place in it is at or below
+    /// a place of `refs`.
+    fn all_below(&self, places: &[PlaceId], refs: &[PlaceId]) -> bool {
+        !places.is_empty()
+            && places.iter().all(|&p| {
+                let mut at = Some(p);
+                while let Some(q) = at {
+                    if refs.contains(&q) {
+                        return true;
+                    }
+                    at = self.facts.place(q).parent;
+                }
+                false
+            })
+    }
+
+    /// Gives `writes_via` to the node of each call of `Lower::via_calls`: each
+    /// mutation at the node is at or below a place that the local had at the
+    /// call, the node performs nothing, and no node of the call gives the local
+    /// a new value. All facts of the body are there now, also the changes that a
+    /// clause or a stored value adds to a node later.
+    fn finish_via_calls(&mut self) {
+        let calls = std::mem::take(&mut self.via_calls);
+        if calls.is_empty() {
+            return;
+        }
+        let mut muts: BTreeMap<NodeId, Vec<PlaceId>> = BTreeMap::new();
+        for &(n, p) in &self.facts.mutates_at {
+            muts.entry(n).or_default().push(p);
+        }
+        let performs: BTreeSet<NodeId> = self.facts.performs_at.iter().map(|&(n, _)| n).collect();
+        for c in calls {
+            let found = (c.from..self.facts.nodes.len()).find(|&i| {
+                let node = &self.facts.nodes[i];
+                node.span == c.span && node.label == c.label
+            });
+            let Some(i) = found else {
+                continue;
+            };
+            let n = NodeId(u32::try_from(i).unwrap_or(u32::MAX));
+            let rebound = self
+                .facts
+                .rebound_at
+                .iter()
+                .any(|&(v, m)| v == c.var && m.index() >= c.from && m.index() <= i);
+            let places = muts.get(&n).map_or(&[][..], Vec::as_slice);
+            if !rebound && !performs.contains(&n) && self.all_below(places, &c.refs) {
+                self.facts.writes_via.push((n, c.var));
+            }
+        }
     }
 
     /// Reports W0605 if `target` is a self-reference field of a `!Move` struct
@@ -1380,6 +1457,10 @@ impl Lower<'_> {
         if unknown {
             self.tentative.push((var, n, v.ty.clone()));
         }
+        // A local that moves its whole value holds no task handle after the move.
+        if let Some(l) = v.var.and_then(|x| self.local_of(x)) {
+            self.locals.set_tasks(l, BTreeSet::new());
+        }
         // A move of a part of the owner frees that part only.
         if v.var.is_none() {
             if let Some(lv) = &v.place {
@@ -1406,5 +1487,14 @@ const fn int_range(t: super::IntTy) -> (i128, i128) {
         IntTy::U16 => (0, u16::MAX as i128),
         IntTy::U32 => (0, u32::MAX as i128),
         IntTy::U64 | IntTy::Usize => (0, u64::MAX as i128),
+    }
+}
+
+/// Returns the name at the base of place expression `e`: `cur` in `cur.next[0].val`.
+pub(super) fn base_name(e: &ast::Expr) -> Option<&ast::Ident> {
+    match &e.kind {
+        ExprKind::Name(id) => Some(id),
+        ExprKind::Field { base, .. } | ExprKind::Index { base, .. } => base_name(base),
+        _ => None,
     }
 }

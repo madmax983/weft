@@ -44,7 +44,15 @@ Status: accepted. Date: 2026-10-18.
   closure starts the task where it runs the closure. A closure that returns a closure
   that spawns does not start the task: a call of the result does, and so does a callee
   that gets the maker. A task handle stays a task handle through a `handle`, an `if`, a
-  `match` and the result of a closure. A join of it joins the task.
+  `match` and the result of a closure. A handle can hold one of several tasks: after
+  an `if` or a `match`, or in a loop that passes handles from one local to another.
+  Each local keeps the set of tasks that it can hold on its own path; a join of paths
+  joins the sets. At run time a handle holds one task. So a join of it ends a task of
+  its set only if no other local can hold that task there (`joined_at` is a must
+  fact: `active` stops at it). A move of the whole handle, and its join, empty the set
+  of the local. After `h.join(); h = s.spawn(...)` in a loop, `h` is the only holder,
+  so the join ends each task of its set. After a swap of two handles, the first join
+  ends no task, and the second join ends both.
 - A callee, a function value or a clause can call a closure more than once. Then a task
   that the closure spawns starts again at a node after the call, where it conflicts
   with its first start (W0405). A signature has a `repeats` part: the function

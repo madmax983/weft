@@ -32,6 +32,8 @@ flowchart TD
     lend --> tc
     mut --> inv["invalidated_at(R, P)"] --> invalid["invalid(R, Q)"] --> err["error(R, P) = W0301"]
     drop["moved_at(V, P), scope_end(V, P), unwound_at(V, P), moved_part(M, P)"] --> own["owner(Rt, V)"] --> frees["frees_at(P, M)"] --> inv
+    resume["resume after a change above a clause parameter"] --> rel["releases_at(P, M)"] --> frees
+    via["write through a reference R"] --> wv["writes_via(P, R)"] -. "spares R" .-> inv
     frees --> tc["task_conflict(T, P) = W0405"]
     mut --> tc
 ```

@@ -143,6 +143,12 @@ pub struct PlaceInfo {
     pub steps: Vec<Step>,
     /// The text form, for example `world.entities[]`.
     pub display: String,
+    /// The parent of the outermost wildcard step on the path
+    /// ([`FnFacts::wild_base`]).
+    pub wild_base: Option<PlaceId>,
+    /// The outermost one-place wildcard place at or above the place
+    /// ([`FnFacts::one_place_of`]).
+    pub one: Option<PlaceId>,
 }
 
 impl PlaceInfo {
@@ -307,6 +313,7 @@ pub struct FactMark {
     unwound_at: usize,
     owner: usize,
     moved_part: usize,
+    releases_at: usize,
     may_abort: usize,
     multi_at: usize,
     clause_multi: usize,
@@ -326,6 +333,7 @@ pub struct FactMark {
     call_mut: usize,
     call_arg: usize,
     lends_mut: usize,
+    writes_via: usize,
 }
 
 /// All facts of one function.
@@ -383,6 +391,10 @@ pub struct FnFacts {
     pub owner: Vec<(PlaceId, VarId)>,
     /// `moved_part(M, P)`: node `P` moves the value at place `M` out of its owner.
     pub moved_part: Vec<(PlaceId, NodeId)>,
+    /// `releases_at(P, M)`: node `P` can free the memory at place `M`, as a move
+    /// out of its owner does. A `resume` does this for what a clause parameter
+    /// points into.
+    pub releases_at: Vec<(NodeId, PlaceId)>,
     /// `may_abort(P)`.
     pub may_abort: Vec<NodeId>,
     /// `multi_at(P)`.
@@ -431,6 +443,9 @@ pub struct FnFacts {
     /// `lends_mut(P, M)`: the call at `P` gives `M` to a function value that can
     /// mutate through it.
     pub lends_mut: Vec<(NodeId, PlaceId)>,
+    /// `writes_via(P, R)`: each mutation at node `P` is at or below the place
+    /// that the reference `R` points to when `P` runs. `R` holds one reference.
+    pub writes_via: Vec<(NodeId, VarId)>,
 
     /// `library()`.
     pub library: bool,
@@ -472,6 +487,7 @@ impl FnFacts {
             unwound_at,
             owner,
             moved_part,
+            releases_at,
             may_abort,
             multi_at,
             clause_multi,
@@ -491,6 +507,7 @@ impl FnFacts {
             call_mut,
             call_arg,
             lends_mut,
+            writes_via,
         } = self;
         FactMark {
             caps: *caps,
@@ -515,6 +532,7 @@ impl FnFacts {
             unwound_at: unwound_at.len(),
             owner: owner.len(),
             moved_part: moved_part.len(),
+            releases_at: releases_at.len(),
             may_abort: may_abort.len(),
             multi_at: multi_at.len(),
             clause_multi: clause_multi.len(),
@@ -534,6 +552,7 @@ impl FnFacts {
             call_mut: call_mut.len(),
             call_arg: call_arg.len(),
             lends_mut: lends_mut.len(),
+            writes_via: writes_via.len(),
         }
     }
 
@@ -568,6 +587,7 @@ impl FnFacts {
             unwound_at,
             owner,
             moved_part,
+            releases_at,
             may_abort,
             multi_at,
             clause_multi,
@@ -587,6 +607,7 @@ impl FnFacts {
             call_mut,
             call_arg,
             lends_mut,
+            writes_via,
         } = self;
         *caps = mark.caps;
         *has_signature = mark.has_signature;
@@ -610,6 +631,7 @@ impl FnFacts {
         unwound_at.truncate(mark.unwound_at);
         owner.truncate(mark.owner);
         moved_part.truncate(mark.moved_part);
+        releases_at.truncate(mark.releases_at);
         may_abort.truncate(mark.may_abort);
         multi_at.truncate(mark.multi_at);
         clause_multi.truncate(mark.clause_multi);
@@ -629,6 +651,7 @@ impl FnFacts {
         call_mut.truncate(mark.call_mut);
         call_arg.truncate(mark.call_arg);
         lends_mut.truncate(mark.lends_mut);
+        writes_via.truncate(mark.writes_via);
     }
 
     /// Returns the place record.
@@ -667,6 +690,8 @@ impl FnFacts {
             parent: None,
             steps: Vec::new(),
             display: name,
+            wild_base: None,
+            one: None,
         })
     }
 
@@ -689,11 +714,18 @@ impl FnFacts {
             Some(_) => base.display.clone(),
             None => format!("{}{}", base.display, text),
         };
+        let id = PlaceId(u32::try_from(self.places.len()).unwrap_or(u32::MAX));
+        let wild_base = base
+            .wild_base
+            .or_else(|| is_wild_step(&step).then_some(parent));
+        let one = base.one.or_else(|| is_one_step(&step).then_some(id));
         let info = PlaceInfo {
             root: base.root,
             parent: Some(parent),
             steps,
             display,
+            wild_base,
+            one,
         };
         let id = self.push_place(info);
         self.place_index.insert((parent, step), id);
@@ -723,29 +755,13 @@ impl FnFacts {
     /// Returns the outermost one-place wildcard place at or above `p`. Two places
     /// with the same one are inside one place.
     pub fn one_place_of(&self, p: PlaceId) -> Option<PlaceId> {
-        let mut found = None;
-        let mut at = Some(p);
-        while let Some(q) = at {
-            if self.place(q).is_one_place() {
-                found = Some(q);
-            }
-            at = self.place(q).parent;
-        }
-        found
+        self.place(p).one
     }
 
     /// Returns the parent of the outermost wildcard step on the path of `p`.
     /// `p` can be any place at or below it.
     pub fn wild_base(&self, p: PlaceId) -> Option<PlaceId> {
-        let mut base = None;
-        let mut at = p;
-        while let Some(q) = self.place(at).parent {
-            if self.place(at).is_wildcard() {
-                base = Some(q);
-            }
-            at = q;
-        }
-        base
+        self.place(p).wild_base
     }
 
     fn push_place(&mut self, info: PlaceInfo) -> PlaceId {
@@ -813,6 +829,7 @@ impl FnFacts {
         nd(&mut self.unwound_at);
         nd(&mut self.owner);
         nd(&mut self.moved_part);
+        nd(&mut self.releases_at);
         nd(&mut self.may_abort);
         nd(&mut self.multi_at);
         nd(&mut self.clause_multi);
@@ -832,6 +849,7 @@ impl FnFacts {
         nd(&mut self.call_mut);
         nd(&mut self.call_arg);
         nd(&mut self.lends_mut);
+        nd(&mut self.writes_via);
     }
 }
 

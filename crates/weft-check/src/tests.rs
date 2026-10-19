@@ -765,6 +765,58 @@ fn w0301_a_wildcard_change_spares_a_reference_to_its_base() {
 }
 
 #[test]
+fn w0301_a_write_through_a_reference_spares_that_reference() {
+    // invalidated_at(R, P) :- ..., mutates_at(P, M), ..., !writes_via(P, R).
+    // `cur` points anywhere below `head`; a write of `cur.next` through `cur`
+    // keeps `cur` valid. A copy `r` of `cur` is another reference.
+    let mut b = B::new();
+    let head = b.param("head");
+    let any = b.f.wildcard(head);
+    let next = b.field(any, 1, "next");
+    let n0 = b.node("entry");
+    let cur = b.var("cur");
+    let r = b.var("r");
+    for v in [cur, r] {
+        b.bind(v, n0);
+        b.f.points_into.push((v, any));
+    }
+    let n1 = b.node("cur.next = Vec.new()");
+    b.f.mutates_at.push((n1, next));
+    b.f.writes_via.push((n1, cur));
+    let n2 = b.node("print(cur.val)");
+    b.use_(cur, n2);
+    b.use_(r, n2);
+    let v = check(&b.f).violations;
+    assert!(!v.error.contains(&(cur, n2)), "{v:?}");
+    assert!(v.error.contains(&(r, n2)), "{v:?}");
+}
+
+#[test]
+fn w0301_a_release_frees_what_a_clause_parameter_points_to() {
+    // frees_at(P, M) :- releases_at(P, M).
+    // invalidated_at(R, P) :- points_into(R, Path), frees_at(P, M), prefix(M, Path).
+    let mut b = B::new();
+    let x = b.f.add_root("e", RootKind::Arg);
+    let other = b.f.add_root("o", RootKind::Arg);
+    let n0 = b.node("handler clause");
+    let e = b.var("e");
+    let o = b.var("o");
+    b.bind(e, n0);
+    b.bind(o, n0);
+    b.f.points_into.push((e, x));
+    b.f.points_into.push((o, other));
+    let n1 = b.node("resume");
+    b.f.releases_at.push((n1, x));
+    let n2 = b.node("print(e.hp)");
+    b.use_(e, n2);
+    b.use_(o, n2);
+    let r = check(&b.f);
+    assert!(r.violations.error.contains(&(e, n2)), "{:?}", r.violations);
+    assert!(!r.violations.error.contains(&(o, n2)), "{:?}", r.violations);
+    assert_eq!(r.invalidations[0].cause, Cause::Release(x));
+}
+
+#[test]
 fn w0301_a_change_inside_one_call_result_follows_rule_3() {
     // same_one(M, P): a change and a reference inside one one-place wildcard
     // place compare by their steps. Another instance uses the wildcard rules.

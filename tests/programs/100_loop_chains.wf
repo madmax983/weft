@@ -100,6 +100,37 @@ fn fn_chain(world: &World) / mut(world.entities) {
     }
 }
 
+// The same chain of closures with no closure that changes `world`.
+fn fn_chain_clean(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let f0 = || print(0)
+    let f1 = || print(0)
+    let f2 = || print(0)
+    let f3 = || print(0)
+    let f4 = || print(0)
+    let f5 = || print(0)
+    let f6 = || print(0)
+    let f7 = || print(0)
+    let f8 = || print(0)
+    let f9 = || print(0)
+    let m = 0
+    while m < 12 {
+        f0()
+        print(first.hp)
+        f0 = f1
+        f1 = f2
+        f2 = f3
+        f3 = f4
+        f4 = f5
+        f5 = f6
+        f6 = f7
+        f7 = f8
+        f8 = f9
+        f9 = || print(world.entities.len())
+        m += 1
+    }
+}
+
 // Function items: the 9th iteration calls `grow`.
 fn item_chain(world: &World, n: u64) / mut(world.entities) {
     let first = &world.entities[0]
@@ -179,6 +210,32 @@ pub fn clear_one(a: &World, b: &World, n: u64) / mut(a.entities) {
     }
 }
 
+// The same chain of locals with `a` only: the signature states it.
+pub fn clear_one_clean(a: &World, b: &World, n: u64) / mut(a.entities) {
+    let c0 = a
+    let c1 = a
+    let c2 = a
+    let c3 = a
+    let c4 = a
+    let c5 = a
+    let c6 = a
+    let c7 = a
+    let i = 0
+    while i < n {
+        c0.entities.clear()
+        c0 = c1
+        c1 = c2
+        c2 = c3
+        c3 = c4
+        c4 = c5
+        c5 = c6
+        c6 = c7
+        c7 = a
+        i += 1
+    }
+    print(b.entities.len())
+}
+
 // Task closures: the closure that writes `st.count` reaches `g0` after ten passes.
 fn task_chain(st: &Stats) / mut(st), async {
     scope { s =>
@@ -206,6 +263,38 @@ fn task_chain(st: &Stats) / mut(st), async {
             g7 = g8
             g8 = g9
             g9 = || st.count += 1
+            m += 1
+        }
+    }
+}
+
+// The same chain of task closures with no closure that writes `st.count`.
+fn task_chain_clean(st: &Stats) / mut(st), async {
+    scope { s =>
+        let g0 = || print(0)
+        let g1 = || print(0)
+        let g2 = || print(0)
+        let g3 = || print(0)
+        let g4 = || print(0)
+        let g5 = || print(0)
+        let g6 = || print(0)
+        let g7 = || print(0)
+        let g8 = || print(0)
+        let g9 = || print(0)
+        let m = 0
+        while m < 12 {
+            s.spawn(g0)
+            print(st.count)
+            g0 = g1
+            g1 = g2
+            g2 = g3
+            g3 = g4
+            g4 = g5
+            g5 = g6
+            g6 = g7
+            g7 = g8
+            g8 = g9
+            g9 = || print(st.count)
             m += 1
         }
     }

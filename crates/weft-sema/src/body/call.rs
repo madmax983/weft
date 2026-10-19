@@ -88,72 +88,10 @@ impl Lower<'_> {
         trailing: Option<&Expr>,
         span: Span,
     ) -> Val {
-        match self.path_ref(recv) {
-            Some(PathRef::Mod(m)) => {
-                return match self.prog.lookup_in(m, &method.name) {
-                    Some(ItemRef::Fn(f)) => {
-                        self.check_visible(f, method.span);
-                        if self.is_sim_run(f) {
-                            return self.sim_run(f, args, trailing, span);
-                        }
-                        self.call_fn(f, None, args, trailing, span)
-                    }
-                    Some(ItemRef::Adt(a)) => self.positional_struct(a, args, span),
-                    _ => {
-                        self.err(
-                            "W0101",
-                            format!("no function `{}` in this module", method.name),
-                            method.span,
-                        );
-                        Val {
-                            ty: Ty::Error,
-                            ..Val::default()
-                        }
-                    }
-                };
-            }
-            Some(PathRef::Adt(a)) => {
-                if let Some(&f) = self.prog.methods.get(&(a, method.name.clone())) {
-                    self.check_visible(f, method.span);
-                    return self.call_fn(f, None, args, trailing, span);
-                }
-                if let AdtKind::Enum(vs) = &self.prog.adts[a].kind {
-                    if let Some(vi) = vs.iter().position(|v| v.name == method.name) {
-                        return self.variant_ctor(a, vi, args, span);
-                    }
-                }
-                let n = self.prog.adts[a].name.clone();
-                self.err(
-                    "W0104",
-                    format!("`{n}` has no function `{}`", method.name),
-                    method.span,
-                );
-                return Val {
-                    ty: Ty::Error,
-                    ..Val::default()
-                };
-            }
-            Some(PathRef::Effect(e)) => {
-                return if let Some(op) = self.prog.effects[e]
-                    .ops
-                    .iter()
-                    .position(|o| o.name == method.name)
-                {
-                    self.perform_op(e, op, args, trailing, span)
-                } else {
-                    let n = self.prog.effects[e].name.clone();
-                    self.err(
-                        "W0104",
-                        format!("effect `{n}` has no operation `{}`", method.name),
-                        method.span,
-                    );
-                    Val {
-                        ty: Ty::Error,
-                        ..Val::default()
-                    }
-                };
-            }
-            None => {}
+        // The receiver chain of a long method chain recurses through here, so the
+        // rare paths are in functions of their own: this frame stays small.
+        if let Some(pr) = self.path_ref(recv) {
+            return self.method_on_path(pr, method, args, trailing, span);
         }
         // A method on a value.
         let rv = match self.place_expr(recv) {
@@ -197,24 +135,133 @@ impl Lower<'_> {
         };
         let Some(f) = owner.and_then(|a| self.prog.methods.get(&(a, method.name.clone())).copied())
         else {
-            if !matches!(rty, Ty::Error) {
-                let shown = self.show(&rty);
-                self.err(
-                    "W0104",
-                    format!("`{shown}` has no method `{}`", method.name),
-                    method.span,
-                );
-            }
-            for a in args {
-                let _ = self.expr(&a.value);
-            }
-            return Val {
-                ty: Ty::Error,
-                ..Val::default()
-            };
+            return self.no_method(&rty, method, args);
         };
         self.check_visible(f, method.span);
+        self.note_via_call(recv, f, &method.name, span);
         self.call_fn(f, Some(rv), args, trailing, span)
+    }
+
+    /// Reports W0104 for a method that type `rty` does not have. The arguments
+    /// are still lowered.
+    fn no_method(&mut self, rty: &Ty, method: &ast::Ident, args: &[Arg]) -> Val {
+        if !matches!(rty, Ty::Error) {
+            let shown = self.show(rty);
+            self.err(
+                "W0104",
+                format!("`{shown}` has no method `{}`", method.name),
+                method.span,
+            );
+        }
+        for a in args {
+            let _ = self.expr(&a.value);
+        }
+        Val {
+            ty: Ty::Error,
+            ..Val::default()
+        }
+    }
+
+    /// Records a call of method `f` (`name`) at `span` whose receiver is a part of
+    /// a reference local with one reference, if the method changes only places of
+    /// its receiver: it states no effect, takes no function value, runs no stored
+    /// value, and each place that it mutates is in `self`. `finish_via_calls`
+    /// then gives the call node `writes_via` if its mutations are below the
+    /// local. The record keeps the places of the local now.
+    fn note_via_call(&mut self, recv: &Expr, f: FnId, name: &str, span: Span) {
+        let Some(l) = super::stmt::base_name(recv).and_then(|id| self.lookup_local(&id.name))
+        else {
+            return;
+        };
+        let sig = &self.sigs[f];
+        let e = &sig.effects;
+        let quiet = e.named.is_empty()
+            && e.passthrough.is_empty()
+            && e.lent.is_empty()
+            && e.stores.is_empty()
+            && !e.multi
+            && !e.reaches
+            && e.muts.iter().all(|m| m.root == SigRoot::Param(0))
+            && !sig.params.iter().any(|p| self.has_fn(&p.ty));
+        if !quiet || !self.one_ref_local(l) {
+            return;
+        }
+        self.via_calls.push(super::ViaCall {
+            var: self.locals[l].var,
+            refs: self.locals[l].refs.clone(),
+            from: self.facts.nodes.len(),
+            span,
+            label: name.to_string(),
+        });
+    }
+
+    /// A call `M.f(...)` on a module, a type or an effect `pr`.
+    fn method_on_path(
+        &mut self,
+        pr: PathRef,
+        method: &ast::Ident,
+        args: &[Arg],
+        trailing: Option<&Expr>,
+        span: Span,
+    ) -> Val {
+        let error = Val {
+            ty: Ty::Error,
+            ..Val::default()
+        };
+        match pr {
+            PathRef::Mod(m) => match self.prog.lookup_in(m, &method.name) {
+                Some(ItemRef::Fn(f)) => {
+                    self.check_visible(f, method.span);
+                    if self.is_sim_run(f) {
+                        return self.sim_run(f, args, trailing, span);
+                    }
+                    self.call_fn(f, None, args, trailing, span)
+                }
+                Some(ItemRef::Adt(a)) => self.positional_struct(a, args, span),
+                _ => {
+                    self.err(
+                        "W0101",
+                        format!("no function `{}` in this module", method.name),
+                        method.span,
+                    );
+                    error
+                }
+            },
+            PathRef::Adt(a) => {
+                if let Some(&f) = self.prog.methods.get(&(a, method.name.clone())) {
+                    self.check_visible(f, method.span);
+                    return self.call_fn(f, None, args, trailing, span);
+                }
+                if let AdtKind::Enum(vs) = &self.prog.adts[a].kind {
+                    if let Some(vi) = vs.iter().position(|v| v.name == method.name) {
+                        return self.variant_ctor(a, vi, args, span);
+                    }
+                }
+                let n = self.prog.adts[a].name.clone();
+                self.err(
+                    "W0104",
+                    format!("`{n}` has no function `{}`", method.name),
+                    method.span,
+                );
+                error
+            }
+            PathRef::Effect(e) => {
+                if let Some(op) = self.prog.effects[e]
+                    .ops
+                    .iter()
+                    .position(|o| o.name == method.name)
+                {
+                    return self.perform_op(e, op, args, trailing, span);
+                }
+                let n = self.prog.effects[e].name.clone();
+                self.err(
+                    "W0104",
+                    format!("effect `{n}` has no operation `{}`", method.name),
+                    method.span,
+                );
+                error
+            }
+        }
     }
 
     /// Reports W0101 if function `f` is private in another unit: the project
@@ -1520,6 +1567,7 @@ impl Lower<'_> {
             ret,
             multi,
             muts,
+            frees,
             cap,
             depth,
         }) = self.locals[l].cont.clone()
@@ -1561,6 +1609,10 @@ impl Lower<'_> {
         // The resumed computation mutates these places. They are not the handler's footprint.
         for m in muts {
             self.facts.mutates_at.push((n, m));
+        }
+        // The resumed computation can move a local that the clause points into.
+        for m in frees {
+            self.facts.releases_at.push((n, m));
         }
         self.resumes.push((n, cap));
         self.abortive(n);
@@ -2232,9 +2284,25 @@ impl Lower<'_> {
             Ty::Adt(_, args) => args.first().cloned().unwrap_or(Ty::Error),
             _ => Ty::Error,
         };
+        // A handle holds one task at run time. The join ends a task of its set
+        // only if no other handle can hold that task: else the task that the
+        // other handle holds can still run. A join of the whole local takes its
+        // handle; a join of a part of it leaves the other parts.
+        if let Some(l) = rv.local {
+            let whole = rv.place.as_ref().is_none_or(|p| {
+                self.locals[l]
+                    .root
+                    .is_some_and(|r| p.places == [r] && !p.through_ref)
+            });
+            if whole {
+                self.locals.set_tasks(l, BTreeSet::new());
+            }
+        }
         if join {
             for t in tasks {
-                self.facts.joined_at.push((t, n));
+                if !self.task_held(t) {
+                    self.facts.joined_at.push((t, n));
+                }
             }
             self.perform_effect(n, "Async");
             self.abortive(n);
@@ -2244,6 +2312,14 @@ impl Lower<'_> {
             };
         }
         Val::default()
+    }
+
+    /// Returns true if a local can hold a handle of task `t`.
+    fn task_held(&self, t: weft_facts::TaskId) -> bool {
+        self.locals
+            .tasked()
+            .iter()
+            .any(|&l| self.locals[l].tasks.contains(&t))
     }
 
     /// Returns the result type of a task that runs `v`. Reports W0102 if `v` is not

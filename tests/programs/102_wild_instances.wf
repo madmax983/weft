@@ -109,3 +109,62 @@ fn both(v: &Vec<Entity>) / mut(v..) {
     b.kids.clear()
     print(k.hp)   //~ W0301
 }
+
+// After a `multi` operation the handled body runs again, and its locals keep
+// their values from the run before. So a call result there is not one place:
+// the result of the first run and of the second run can differ. In the second
+// run `last` is the result of the first run, and the push through `e` can free
+// it (ADR 0003, ADR 0005).
+effect Choice { multi fn choose() -> bool }
+fn pick(v: &Vec<Entity>, b: bool) -> Option<&Entity> {
+    if b { Some(&v[0].kids[0]) } else { Some(&v[0]) }
+}
+fn twice(v: &Vec<Entity>, w: &Vec<Entity>) / mut(v.., w..) {
+    let last = &w[0]
+    handle Choice {
+        fn choose() {
+            resume(true)
+            resume(false)
+        }
+    } in {
+        let b = choose()
+        match pick(v, b) {
+            Some(e) => {
+                let k = &last.hp
+                e.kids.push(Entity { hp: 7, id: 9, kids: Vec.new() })
+                print(k)   //~ W0301
+                last = e
+            }
+            None => {}
+        }
+    }
+}
+
+// A task and its parent use two fields of one result: the steps below the
+// result decide, so the footprints are separate.
+fn split_fields(v: &Vec<Entity>) / mut(v..), async {
+    match find(v, 1) {
+        Some(e) => {
+            scope { s =>
+                let t = s.spawn(|| e.hp += 1)
+                print(e.id)
+                t.join()
+            }
+        }
+        None => {}
+    }
+}
+
+// The same field of one result.
+fn same_field(v: &Vec<Entity>) / mut(v..), async {
+    match find(v, 1) {
+        Some(e) => {
+            scope { s =>
+                let t = s.spawn(|| e.hp += 1)
+                print(e.hp)   //~ W0405
+                t.join()
+            }
+        }
+        None => {}
+    }
+}

@@ -22,7 +22,33 @@ Status: accepted. Date: 2026-10-18.
   whole argument counts as mutated.
 - A `resume` runs the handled computation. A change there of a place that the operation
   got is a change of the clause parameter, so a reference into the parameter that the
-  clause holds across `resume` is invalid after it.
+  clause holds across `resume` is invalid after it. A change at or below the argument
+  place keeps its steps below the parameter. A change above the argument place, or one
+  that can alias it, can change any place below the parameter (`x..`). If such a change
+  invalidates a reference to the argument place in the caller, the `resume` can also
+  free what the parameter points to (`releases_at(resume, x)`). A wildcard place `x..`
+  stands for places at or below `x` only, so it never stands for a change above `x`
+  (ADR 0003, rule 4). When an operation runs in a callee, the parameter can be anywhere
+  inside the argument of the callee, so each change at or below that argument frees it.
+  The handled computation can also move a local from outside the `handle`, or a part of
+  it. Then each `resume` frees that place, so a reference of the clause into it, or a
+  clause parameter that points into it, is invalid after the `resume`.
+- A clause of a handler of an effect with a `multi` operation can resume the handled
+  computation more than once. The code after a node that runs the clause then runs
+  again. The locals from outside the handled body keep the values of the run before.
+  The locals of the body get a copy of their values at that node: the interpreter
+  copies the frames of the continuation, and a reference into a copied local points
+  into the copy. So the lowering lowers the handled body as a loop (ADR 0003) until
+  the values of the locals from outside it are stable. The end of the body gets a
+  path back to the nodes after each node of the body that runs a clause of the
+  handler, through a node that gives each local of the body its copy again
+  (`rebound_at`, with `empty_at`: the copy has the state that the path from the
+  operation gives, so no linear value starts there). A local of the body that can
+  point into a place of another value keeps its state there. So a reference that the
+  first run invalidates is invalid in the second run too, and a value from outside
+  the body that the first run moves is moved there. If each clause names `resume` at
+  most once, and not in a loop, a closure or a clause of another handler, the body
+  runs at most once after each operation, and it is lowered once.
 - A clause that can end with no `resume` ends the handled body at the node that runs
   it. Each node of the body that can run a clause of the handler gets an edge to the
   end of the `handle`. Such a node can be a perform, or a call of a closure or a
@@ -341,6 +367,13 @@ Status: accepted. Date: 2026-10-18.
     of the handler gets an abort path. A node that runs a clause that always resumes
     gets one too.
 - What stays open (not checked):
+  - A `multi` operation of a handler of a caller can resume the rest of the function
+    more than once. The code after the operation then runs again with the values that
+    its locals got in the run before. The lowering does not follow these values for
+    the function body: it lowers it as code that runs once. W0503 keeps `once` values
+    out of such a run, and a call result there is not one place (ADR 0003), but a
+    reference that a local of the run before holds is not followed into the next run.
+    For a local handler the lowering follows them (see the decision above).
   - A function value inside a returned tuple or struct, or a closure that a callee
     makes and stores in a place of the caller: the caller does not see what a later
     call of it does. Its effects and mutations still count in the row of its maker,

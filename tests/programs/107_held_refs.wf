@@ -1,0 +1,65 @@
+// A part of a tuple or an element can hold a reference. A place below it is a
+// place where that reference points (ADR 0003). So a write through `t.0`
+// changes what `t.0` points to, not the tuple `t`.
+struct Entity { hp: i32, id: u64, kids: Vec<Entity> }
+
+// `t.1` points into the kids of what `t.0` points to.
+fn tuple_parts(v: &Vec<Entity>) / mut(v..) {
+    let t = (&v[0], &v[0].kids[0])
+    let r = &t.1.hp
+    t.0.kids.push(Entity { hp: 7, id: 9, kids: Vec.new() })
+    print(r)   //~ W0301
+}
+
+// The parts get new values: `t.1` points into `v[0].kids`.
+fn tuple_parts_set(v: &Vec<Entity>, w: &Vec<Entity>) / mut(v.., w..) {
+    let t = (&w[0], &w[0])
+    t.0 = &v[0]
+    t.1 = &v[0].kids[0]
+    let r = &t.1.hp
+    t.0.kids.push(Entity { hp: 7, id: 9, kids: Vec.new() })
+    print(r)   //~ W0301
+}
+
+// An element of a vector of references.
+fn element(v: &Vec<Entity>) / mut(v..) {
+    let rs = Vec.new()
+    rs.push(&v[0])
+    let r = &v[0].kids[0].hp
+    rs[0].kids.clear()
+    print(r)   //~ W0301
+}
+
+// A write of a scalar field through a part: a reference to a scalar field
+// stays valid.
+fn tuple_scalar(v: &Vec<Entity>) / mut(v..) {
+    let t = (&v[0], &v[0].kids[0])
+    let r = &t.1.hp
+    t.0.hp = 3
+    print(r)
+}
+
+// A change of what a part points to, and a reference into another root.
+fn tuple_other_root(v: &Vec<Entity>, w: &Vec<Entity>) / mut(v[].kids) {
+    let t = (&v[0], 1)
+    let r = &w[0].kids[0]
+    t.0.kids.clear()
+    print(r.hp)
+    print(t.1)
+}
+
+// An element through a reference that a part holds.
+fn part_index_push(v: &Vec<Vec<u64>>) / mut(v[]) {
+    let t = (v, 1)
+    let r = &v[0][0]
+    t.0[0].push(5)
+    print(r)   //~ W0301
+}
+
+// A new value of an element keeps a reference to the element valid.
+fn part_index_set(v: &Vec<u64>) / mut(v[]) {
+    let t = (v, 1)
+    let r = &v[0]
+    t.0[0] = 5
+    print(r)
+}
