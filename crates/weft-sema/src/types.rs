@@ -1,5 +1,6 @@
 //! Types and unification.
 
+use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::rc::Rc;
 
@@ -123,35 +124,87 @@ impl Ty {
 }
 
 /// The inference table.
+///
+/// The variables form a union-find structure. A variable that is bound to
+/// another variable is a link. A lookup follows the links to the last
+/// variable, and then points each variable on the way to it (path
+/// compression). A union of two unbound variables of the same kind binds the
+/// one of lower rank, or the newer one, to the other (union by rank). So the
+/// links stay short, also when each `s += 1` makes a new integer variable.
 #[derive(Clone, Debug, Default)]
 pub struct Infer {
-    vars: Vec<Option<Ty>>,
+    /// The binding of each variable. A lookup can shorten the links, so this
+    /// is a `RefCell`: the meaning of the table does not change.
+    vars: RefCell<Vec<Option<Ty>>>,
+    /// The rank of each variable: a bound on the length of the links to it.
+    rank: Vec<u32>,
+    /// The links that the lookups followed, for a test of the work.
+    steps: Cell<usize>,
 }
 
 impl Infer {
     /// Makes a new type variable.
     pub fn fresh(&mut self) -> Ty {
-        self.vars.push(None);
-        Ty::Var(u32::try_from(self.vars.len() - 1).unwrap_or(u32::MAX))
+        Ty::Var(self.push())
     }
 
     /// Makes a new integer variable.
     pub fn fresh_int(&mut self) -> Ty {
-        self.vars.push(None);
-        Ty::IntVar(u32::try_from(self.vars.len() - 1).unwrap_or(u32::MAX))
+        Ty::IntVar(self.push())
+    }
+
+    fn push(&mut self) -> u32 {
+        let vars = self.vars.get_mut();
+        vars.push(None);
+        self.rank.push(0);
+        u32::try_from(vars.len() - 1).unwrap_or(u32::MAX)
+    }
+
+    /// The links between variables that the lookups followed so far.
+    pub fn steps(&self) -> usize {
+        self.steps.get()
+    }
+
+    /// Follows the links from the variable `t` to the last variable, and
+    /// returns that variable as a type (`Ty::Var` or `Ty::IntVar`). Each
+    /// variable on the way then links to it directly.
+    fn find(&self, t: &Ty) -> Ty {
+        let mut vars = self.vars.borrow_mut();
+        let mut last = t.clone();
+        while let Ty::Var(v) | Ty::IntVar(v) = last {
+            match &vars[v as usize] {
+                Some(b @ (Ty::Var(_) | Ty::IntVar(_))) => {
+                    self.steps.set(self.steps.get() + 1);
+                    last = b.clone();
+                }
+                _ => break,
+            }
+        }
+        let mut at = t.clone();
+        while let Ty::Var(v) | Ty::IntVar(v) = at {
+            if at == last {
+                break;
+            }
+            let next = vars[v as usize].replace(last.clone());
+            match next {
+                Some(n) => at = n,
+                None => break,
+            }
+        }
+        last
     }
 
     /// Replaces bound variables, one level deep.
     pub fn shallow(&self, t: &Ty) -> Ty {
-        let mut t = t.clone();
-        loop {
-            match t {
-                Ty::Var(v) | Ty::IntVar(v) => match &self.vars[v as usize] {
-                    Some(b) => t = b.clone(),
-                    None => return t,
-                },
-                _ => return t,
+        match t {
+            Ty::Var(_) | Ty::IntVar(_) => {
+                let last = self.find(t);
+                let (Ty::Var(v) | Ty::IntVar(v)) = last else {
+                    return last;
+                };
+                self.vars.borrow()[v as usize].clone().unwrap_or(last)
             }
+            _ => t.clone(),
         }
     }
 
@@ -213,7 +266,12 @@ impl Infer {
             | (Ty::Bool, Ty::Bool)
             | (Ty::Unit, Ty::Unit)
             | (Ty::Scope, Ty::Scope) => true,
-            (Ty::Var(x), _) | (Ty::IntVar(x), Ty::Int(_) | Ty::IntVar(_)) => self.bind(*x, &b),
+            // Two unbound variables of one kind: no cycle can form.
+            (Ty::Var(x), Ty::Var(y)) | (Ty::IntVar(x), Ty::IntVar(y)) => {
+                self.union(*x, &a, *y, &b);
+                true
+            }
+            (Ty::Var(x), _) | (Ty::IntVar(x), Ty::Int(_)) => self.bind(*x, &b),
             (_, Ty::Var(y)) | (Ty::Int(_), Ty::IntVar(y)) => self.bind(*y, &a),
             (Ty::Int(x), Ty::Int(y)) => x == y,
             (Ty::Tuple(xs), Ty::Tuple(ys)) if xs.len() == ys.len() => {
@@ -238,11 +296,32 @@ impl Infer {
     }
 
     fn bind(&mut self, v: u32, t: &Ty) -> bool {
-        if self.occurs(v, t) {
+        // A variable to a variable makes no cycle: `unify` gives two
+        // different unbound variables.
+        if !matches!(t, Ty::Var(_) | Ty::IntVar(_)) && self.occurs(v, t) {
             return false;
         }
-        self.vars[v as usize] = Some(t.clone());
+        self.vars.get_mut()[v as usize] = Some(t.clone());
         true
+    }
+
+    /// Joins the unbound variables `x` (the type `a`) and `y` (the type `b`)
+    /// of one kind. The variable of lower rank links to the other. With equal
+    /// ranks, the newer variable links to the older one, and the older one
+    /// gets a higher rank.
+    fn union(&mut self, x: u32, a: &Ty, y: u32, b: &Ty) {
+        let (rx, ry) = (self.rank[x as usize], self.rank[y as usize]);
+        // `x` links to `y` if its rank is lower, or if the ranks are equal and
+        // `x` is newer.
+        let (from, to, root) = if (rx, y) < (ry, x) {
+            (x, b, y)
+        } else {
+            (y, a, x)
+        };
+        if rx == ry {
+            self.rank[root as usize] += 1;
+        }
+        self.vars.get_mut()[from as usize] = Some(to.clone());
     }
 }
 
@@ -353,6 +432,32 @@ mod tests {
         let j = inf.fresh_int();
         assert!(!inf.unify(&j, &Ty::Bool));
         assert_eq!(inf.resolve(&j), Ty::Int(IntTy::I64));
+    }
+
+    #[test]
+    fn a_union_of_variables_keeps_the_links_short() {
+        let mut inf = Infer::default();
+        // Each update unifies the type of `s` with a new integer variable.
+        let s = inf.fresh_int();
+        for _ in 0..1000 {
+            let lit = inf.fresh_int();
+            assert!(inf.unify(&s, &lit));
+            assert_eq!(inf.shallow(&lit), inf.shallow(&s));
+        }
+        assert!(inf.steps() < 4000, "{}", inf.steps());
+        // A plain variable links to an integer variable, not the reverse.
+        let v = inf.fresh();
+        assert!(inf.unify(&s, &v));
+        assert!(matches!(inf.shallow(&v), Ty::IntVar(_)));
+        assert!(!inf.unify(&v, &Ty::Bool));
+        assert!(inf.unify(&v, &Ty::Int(IntTy::U8)));
+        assert_eq!(inf.resolve(&s), Ty::Int(IntTy::U8));
+        // Two plain variables, and a cycle through a type.
+        let (a, b) = (inf.fresh(), inf.fresh());
+        assert!(inf.unify(&a, &b));
+        assert!(!inf.unify(&a, &Ty::Ref(Box::new(b.clone()))));
+        assert!(inf.unify(&b, &Ty::Bool));
+        assert_eq!(inf.resolve(&a), Ty::Bool);
     }
 
     #[test]

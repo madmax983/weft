@@ -82,6 +82,8 @@ pub struct Work {
     /// The values that the loop heads copied and the rewinds put back: the
     /// state at each head, and the locals that each pass changed.
     pub loop_copies: usize,
+    /// The links between type variables that the type inference followed.
+    pub type_steps: usize,
 }
 
 impl Work {
@@ -89,6 +91,7 @@ impl Work {
     pub const fn add(&mut self, o: Self) {
         self.loop_passes += o.loop_passes;
         self.loop_copies += o.loop_copies;
+        self.type_steps += o.type_steps;
     }
 }
 

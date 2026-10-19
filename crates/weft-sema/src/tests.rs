@@ -1383,3 +1383,24 @@ fn a_grow_set_cuts_back_to_a_mark() {
     let empty = crate::body::Grow::<u32>::default();
     assert!(empty.is_empty() && empty.mark() == 0 && empty == crate::body::Grow::default());
 }
+
+/// One untyped integer local, updated `n` times.
+fn int_updates(n: usize) -> String {
+    format!(
+        "fn f() {{\n    let s = 0\n{}    print(s)\n}}\n",
+        "    s += 1\n".repeat(n)
+    )
+}
+
+#[test]
+fn integer_variables_unify_in_linear_work() {
+    // Each `s += 1` bound the end of the variable chain of `s` to the variable
+    // of the new literal, and each lookup walked the whole chain (QA8: 16000
+    // updates took 10.9 s). Union by rank keeps the chains short.
+    let small = analyze_units(&int_updates(1000), &[]);
+    let large = analyze_units(&int_updates(2000), &[]);
+    assert_eq!(codes(&large), Vec::new());
+    let (a, b) = (small.work.type_steps, large.work.type_steps);
+    assert!(b <= 2 * a + 1000, "1000 updates: {a}, 2000 updates: {b}");
+    assert!(b <= 40 * 2000, "{b}");
+}

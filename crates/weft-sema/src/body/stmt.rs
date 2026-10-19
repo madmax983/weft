@@ -215,7 +215,10 @@ impl Lower<'_> {
             facts: self.facts,
             effects: eff,
             diags: self.diags,
-            work: self.work,
+            work: crate::Work {
+                type_steps: self.inf.steps(),
+                ..self.work
+            },
         }
     }
 
