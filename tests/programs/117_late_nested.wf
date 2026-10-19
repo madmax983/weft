@@ -1,0 +1,161 @@
+// A closure reads its captured variables where it runs (ADR 0003). That holds
+// also for a variable that an inner closure captures, for a part of a captured
+// local, and for a closure that leaves the function: a return or a store keeps
+// the places that the captures have at the end of the body.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Buf { items: Vec<u64> }
+struct Holder { f: fn() }
+fn eat(b: Buf) { print("eat") }
+fn run(f: fn()) { f() }
+fn noop() { print(0) }
+
+// The new value reaches a closure that another closure runs.
+fn nested_ref(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let g = || print(r.hp)
+    let f = || g()
+    r = &world.entities[0]
+    world.entities.clear()
+    f()   //~ W0301
+}
+// The same through higher-order callees.
+fn nested_hof(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let g = || print(r.hp)
+    let f = || run(g)
+    r = &world.entities[0]
+    world.entities.clear()
+    run(f)   //~ W0301
+}
+// A function variable two levels down gets a closure that mutates.
+fn nested_fn(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g = || print(0)
+    let h = || g()
+    let f = || h()
+    g = || world.entities.clear()
+    f()
+    print(first.hp)   //~ W0301
+}
+// A task runs an inner closure whose capture gets a new value.
+fn nested_task(world: &World, d: &Entity) / mut(world.entities), async, clock {
+    let r = d
+    let g = || print(r.hp)
+    scope { s =>
+        s.spawn(|| { sleep(1.ms)
+ g() })
+        r = &world.entities[0]
+        world.entities.clear()   //~ W0405
+    }
+}
+// A function variable two levels down gets a `once` closure.
+fn nested_once() {
+    let b = Buf { items: Vec.new() }
+    let c = || print(0)
+    let k = || c()
+    let j = || k()
+    c = || eat(b)
+    j()
+    j()   //~ W0502
+}
+// A part of a captured local gets a new reference.
+fn part_late(world: &World, d: &Entity) / mut(world.entities) {
+    let t = (d, 1)
+    let f = || print(t.0.hp)
+    t.0 = &world.entities[0]
+    world.entities.clear()
+    f()   //~ W0301
+}
+// A returned closure points where its capture points at the return.
+fn mk_late(a: &World, b: &World) -> fn() {
+    let r = &a.entities[0]
+    let f = || print(r.hp)
+    r = &b.entities[0]
+    f
+}
+fn returned_late() {
+    let a = mkw(1)
+    let b = mkw(2)
+    let f = mk_late(&a, &b)
+    b.entities.clear()
+    f()   //~ W0301
+}
+fn mk_local(a: &World) -> fn() {
+    let r = &a.entities[0]
+    let f = || print(r.hp)
+    let w = mkw(3)
+    r = &w.entities[0]
+    f   //~ W0204
+}
+// A closure behind a reference parameter keeps the new value of its capture.
+fn store_late(h: &Holder, a: &World) / mut(h) {
+    let r = &a.entities[0]
+    h.f = || print(r.hp)   //~ W0204
+    let w = mkw(3)
+    r = &w.entities[0]
+}
+
+// Clean: the inner capture gets a valid value.
+fn nested_valid(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let g = || print(r.hp)
+    let f = || g()
+    world.entities.clear()
+    world.entities.push(Entity { hp: 2 })
+    r = &world.entities[0]
+    f()
+}
+// Clean: the inner `once` closure runs once.
+fn nested_once_once() {
+    let b = Buf { items: Vec.new() }
+    let c = || print(0)
+    let k = || c()
+    let j = || k()
+    c = || eat(b)
+    j()
+}
+// Clean: the part gets a new value after the closure runs.
+fn part_after(world: &World, d: &Entity) / mut(world.entities) {
+    let t = (d, 1)
+    let f = || print(t.0.hp)
+    f()
+    t.0 = &world.entities[0]
+    world.entities.clear()
+}
+// Clean: the returned closure runs before the change.
+fn returned_before() {
+    let a = mkw(1)
+    let b = mkw(2)
+    let f = mk_late(&a, &b)
+    f()
+    b.entities.clear()
+}
+// Clean: the capture of the stored closure gets a place of the caller.
+fn store_param(h: &Holder, a: &World, b: &World) / mut(h) {
+    let r = &a.entities[0]
+    h.f = || print(r.hp)
+    r = &b.entities[0]
+}
+
+fn mkw(n: i32) -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: n })
+    w
+}
+// The clean cases run.
+fn main() {
+    let w = mkw(1)
+    let e = Entity { hp: 5 }
+    nested_valid(&w, &e)
+    nested_once_once()
+    let w = mkw(1)
+    part_after(&w, &e)
+    returned_before()
+    let h = Holder { f: noop }
+    let a = mkw(1)
+    let b = mkw(2)
+    store_param(&h, &a, &b)
+    let g = h.f
+    g()
+}

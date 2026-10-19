@@ -165,23 +165,30 @@ fn holder_text(f: &FnFacts, inv: &Invalidation, also: bool) -> String {
 }
 
 /// Groups the W0301 entries (a reference, its first use, and its other uses)
-/// that have one invalidating node and uses in one expression: the span of one
-/// use is inside the span of the other. The first entry of each group names a
-/// variable of the program, if one is in the group, with the earliest use.
+/// that have one invalidating node and one use. One use is one use node. A
+/// hidden variable and a variable of the program have one use also if the span
+/// of one use is inside the span of the other. Two variables of one kind with
+/// different use nodes stay apart: a loop node has the span of the whole loop. The first entry of each group names a variable
+/// of the program, if one is in the group, with the earliest use.
 fn group_uses<'a>(
     f: &FnFacts,
     entries: Vec<(&'a Invalidation, Vec<NodeId>)>,
 ) -> Vec<Vec<(&'a Invalidation, Vec<NodeId>)>> {
-    let inside = |a: NodeId, b: NodeId| {
-        let (x, y) = (node_span(f, a), node_span(f, b));
+    let one_use = |a: &Invalidation, b: &Invalidation| {
+        if a.used_at == b.used_at {
+            return true;
+        }
+        if is_hidden(f.var(a.var)) == is_hidden(f.var(b.var)) {
+            return false;
+        }
+        let (x, y) = (node_span(f, a.used_at), node_span(f, b.used_at));
         (x.lo >= y.lo && x.hi <= y.hi) || (y.lo >= x.lo && y.hi <= x.hi)
     };
     let mut groups: Vec<Vec<(&Invalidation, Vec<NodeId>)>> = Vec::new();
     for e in entries {
-        let found = groups.iter_mut().find(|g| {
-            g.iter()
-                .any(|(o, _)| o.at == e.0.at && inside(o.used_at, e.0.used_at))
-        });
+        let found = groups
+            .iter_mut()
+            .find(|g| g.iter().any(|(o, _)| o.at == e.0.at && one_use(o, e.0)));
         match found {
             Some(g) => g.push(e),
             None => groups.push(vec![e]),

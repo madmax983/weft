@@ -126,12 +126,49 @@ impl Lower<'_> {
             return;
         };
         let fname = self.prog.fns[id].name.clone();
+        // A stored closure points where its captures point at the end of the body.
+        for (behind, s, span) in std::mem::take(&mut self.late_stores) {
+            let refs = self.late_refs(s);
+            if !refs.is_empty() {
+                self.stored_behind.push(super::StoredRef {
+                    behind,
+                    refs,
+                    span,
+                    closure: true,
+                });
+            }
+        }
         let mut seen = Vec::new();
-        for (behind, refs, span) in std::mem::take(&mut self.stored_behind) {
+        for st in std::mem::take(&mut self.stored_behind) {
+            let super::StoredRef {
+                behind,
+                refs,
+                span,
+                closure,
+            } = st;
             let refs = self.resolve_op_refs(&refs);
-            let (named, _) = self.split_deps(&refs);
+            // A place behind an `Rc` handle of a local goes away with the handle
+            // if no other handle keeps the object. A handle of the `rc` type of
+            // the store can be a handle of the object itself: the reference then
+            // goes away with the object.
+            let (mut named, deps) = self.split_deps(&refs);
+            named.extend(deps.into_iter().filter(|&d| {
+                let root = self.facts.place(d).root;
+                self.facts.roots[root.index()].kind == RootKind::Local
+                    && !matches!(behind, super::Behind::Group(a) if self.handle_of(root) == Some(a))
+            }));
             for r in named {
                 let root = self.facts.place(r).root;
+                // A closure behind a reference parameter that captures a place of
+                // the caller: the argument of the caller points there too.
+                if let (true, super::Behind::Param(j)) = (closure, behind) {
+                    let kind = self.facts.roots[root.index()].kind;
+                    if matches!(kind, RootKind::Param | RootKind::Group)
+                        && !self.fn_store_places.contains(&(j, r))
+                    {
+                        self.fn_store_places.push((j, r));
+                    }
+                }
                 // A reference that the caller gives goes into the `rc` object too:
                 // the caller checks it (`group_stores`).
                 if let super::Behind::Group(a) = behind {
@@ -172,6 +209,11 @@ impl Lower<'_> {
                     format!("the local `{name}`")
                 };
                 let shown = self.facts.place(r).display.clone();
+                let what_in = if closure {
+                    format!("a closure that captures `{shown}`")
+                } else {
+                    format!("a reference into `{shown}`")
+                };
                 let into = match behind {
                     super::Behind::Param(i) => {
                         let param = self.sigs[id]
@@ -186,10 +228,29 @@ impl Lower<'_> {
                 };
                 self.err(
                     "W0204",
-                    format!("`{fname}` puts a reference into `{shown}` {into}: {what} goes out of scope at the return"),
+                    format!(
+                        "`{fname}` puts {what_in} {into}: {what} goes out of scope at the return"
+                    ),
                     span,
                 );
             }
+        }
+    }
+
+    /// Returns the `rc` type of the object that the `Rc` handle in the local
+    /// with root `root` refers to.
+    fn handle_of(&self, root: weft_facts::RootId) -> Option<usize> {
+        let l = self.root_owner(root)?;
+        let ty = self.inf.deep(&self.locals[l].ty);
+        let super::Ty::Adt(rc, args) = ty else {
+            return None;
+        };
+        if Some(rc) != self.b.rc {
+            return None;
+        }
+        match args.first() {
+            Some(super::Ty::Adt(a, _)) => Some(*a),
+            _ => None,
         }
     }
 
@@ -197,9 +258,37 @@ impl Lower<'_> {
     /// reference parameter of the function keeps them for the caller
     /// (`check_stored_behind`).
     pub(super) fn note_stored_behind(&mut self, p: PlaceId, refs: &[PlaceId], span: Span) {
+        self.note_stored_as(p, refs, span, false);
+    }
+
+    /// Records that function value `v` goes behind place `p`, as
+    /// `note_stored_behind` does for a reference. A closure points into what it
+    /// captures, and into each value that its captures get later
+    /// (`late_stores`). A function parameter that goes into an `rc` object is
+    /// part of `group_stores`: the caller checks what its argument captures.
+    pub(super) fn note_stored_fn(&mut self, p: PlaceId, v: &super::Val, span: Span) {
+        self.note_stored_as(p, &v.refs, span, true);
+        let Some(behind) = self.behind_of(p) else {
+            return;
+        };
+        let mut work = vec![v];
+        while let Some(x) = work.pop() {
+            if let Some(s) = self.fn_info(x).summary {
+                self.late_stores.push((behind, s, span));
+            }
+            if let (super::Behind::Group(a), Some((0, i))) = (behind, x.fn_param) {
+                self.group_stores.insert((i, a));
+            }
+            work.extend(x.parts.iter().flatten());
+        }
+    }
+
+    /// Returns where a store into place `p` puts a value that the caller keeps.
+    /// That is behind a reference parameter of the function or in an `rc` object.
+    fn behind_of(&self, p: PlaceId) -> Option<super::Behind> {
         let root = self.facts.place(p).root;
         let rp = self.root_place(p);
-        let behind = match self.param_of_root.get(&root) {
+        match self.param_of_root.get(&root) {
             Some(&(0, i)) => Some(super::Behind::Param(i)),
             _ => self
                 .held_of
@@ -211,10 +300,47 @@ impl Lower<'_> {
                         .find(|(_, &g)| g == rp)
                         .map(|(&a, _)| super::Behind::Group(a))
                 }),
-        };
-        if let (Some(b), false) = (behind, refs.is_empty()) {
-            self.stored_behind.push((b, refs.to_vec(), span));
         }
+    }
+
+    /// Records that the references `refs` go behind place `p`. With `closure`,
+    /// they are the captures of a closure.
+    pub(super) fn note_stored_as(
+        &mut self,
+        p: PlaceId,
+        refs: &[PlaceId],
+        span: Span,
+        closure: bool,
+    ) {
+        let Some(behind) = self.behind_of(p) else {
+            return;
+        };
+        if refs.is_empty() {
+            return;
+        }
+        // A reference that an open closure or clause gets in its parameter: each
+        // node that runs the body puts the places that it gives there.
+        for &r in refs {
+            let root = self.facts.place(r).root;
+            let open = |d: usize| self.frames.iter().any(|f| f.barrier == Some(d));
+            if let Some(&(d, _)) = self
+                .param_of_root
+                .get(&root)
+                .filter(|&&(d, _)| d > 0 && open(d))
+            {
+                if let Some(sum) = self.sums.get_mut(d) {
+                    if !sum.param_stores.contains(&(p, r, span)) {
+                        sum.param_stores.push((p, r, span));
+                    }
+                }
+            }
+        }
+        self.stored_behind.push(super::StoredRef {
+            behind,
+            refs: refs.to_vec(),
+            span,
+            closure,
+        });
     }
 
     /// Records the places that the `resume`s of the clause of operation `op` of

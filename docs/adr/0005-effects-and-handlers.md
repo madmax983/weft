@@ -214,14 +214,18 @@ Status: accepted. Date: 2026-10-18.
   again with the joined value (ADR 0003). Function values also flow through tuples,
   generic results and the result of a closure call.
 - A function type that the body infers carries the function value: the type of a
-  closure has its summary. Two function values can meet in one type variable: the
-  elements of an array or a `Vec`, a new value of an `Option` or of a generic field, an
-  element assignment. Then the variable gets the join of both values, so a value of
-  that type can be each of them, with the joined modes (`once`, linear, nonportable,
-  `@ uniq`). A variable that unifies with a bound variable links to it, so a later join
-  reaches each use of the type. A written function type, such as `fn()` in
-  `Vec<fn()>`, stays a value that the body does not know: a call of it runs the stored
-  values.
+  closure has its summary. Two function values can meet in one type variable. Examples
+  are the elements of an array or a `Vec`, a new value of an `Option` or of a generic
+  field, and an element assignment. Then the variable gets the join of both values. So
+  a value of that type can be each of them, with the joined modes (`once`, linear,
+  nonportable, `@ uniq`). A variable that unifies with a bound variable links to it, so
+  a later join reaches each use of the type. A written function type, such as `fn()`
+  in `Vec<fn()>`, stays a value that the body does not know. A call of it runs the
+  stored values.
+- A part of a tuple literal can hold a function value. Then it gets a type variable of
+  its own, as the element of a `Vec` does. So two closures that meet in a tuple join
+  too: at a new value of a part (`t.0 = f`) or of the whole tuple. They join in the
+  tuples of a `Vec` or an array, and in a tuple in a generic field.
 - A closure belongs to the function that makes it. So the effect row of a function has
   the effects and the mutations of each closure that the body makes, also one that it
   returns or stores and does not call. A signature with a stated row must allow them

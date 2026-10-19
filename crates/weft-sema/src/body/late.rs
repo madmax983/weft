@@ -9,7 +9,7 @@
 //! that its captured variables get after the spawn too.
 
 use super::fnval::{FnInfo, Given, RowFn};
-use super::{fn_row, Lower, NodeId, PlaceId, TaskId, Ty, VarId};
+use super::{fn_row, Lower, NodeId, PlaceId, Summary, TaskId, Ty, Val, VarId};
 
 /// A variable that a closure captures by reference, with its value where the
 /// closure is made.
@@ -33,6 +33,9 @@ struct Change {
     old: Vec<PlaceId>,
     /// The places that it has now, and did not have there.
     new: Vec<PlaceId>,
+    /// The hidden variables of the parts of the local (`PartHolder`). A run of
+    /// the closure uses them too.
+    parts: Vec<VarId>,
     /// The function value that it has now, if it is another one.
     now: Option<FnInfo>,
     /// The closure needs it to be `@ uniq`, and it is not `@ uniq` now.
@@ -52,11 +55,35 @@ impl Lower<'_> {
             let fn_value = matches!(ty, Ty::Fn(_)).then(|| (self.local_fn_info(l), fn_row(&ty)));
             out.push(CapValue {
                 var,
-                refs: self.locals[l].refs.clone(),
+                refs: self.cap_refs_now(l).0,
                 fn_value,
             });
         }
         self.cap_values.insert(id, out);
+    }
+
+    /// The places that local `l` points into now, also through its parts, and the
+    /// hidden variables of its parts. At the end of the body, each part value
+    /// that the local had counts, as each value of the local does.
+    pub(super) fn cap_refs_now(&self, l: usize) -> (Vec<PlaceId>, Vec<VarId>) {
+        let mut refs = self.locals[l].refs.clone();
+        let mut vars = Vec::new();
+        let holders = if self.lowered {
+            &self.holder_log
+        } else {
+            &self.part_holders
+        };
+        for h in holders.iter().filter(|h| h.local == l) {
+            for &p in &h.refs {
+                if !refs.contains(&p) {
+                    refs.push(p);
+                }
+            }
+            if !vars.contains(&h.var) {
+                vars.push(h.var);
+            }
+        }
+        (refs, vars)
     }
 
     /// Records that the body runs local `l` with the places `given`. Each closure
@@ -131,12 +158,17 @@ impl Lower<'_> {
     /// is the callee root index of the captures. For each captured variable with
     /// a value that it did not have where the closure was made, the node:
     ///
-    /// - uses the variable: the closure reads it here;
+    /// - uses the variable and the hidden variables of its parts: the closure
+    ///   reads them here;
     /// - mutates, reads and lends the places of the closure below the old places,
     ///   moved onto the new places;
     /// - runs the new function value where the closure runs the variable;
     /// - reports W0406 (with `at_run`) if the closure needs the variable to be
     ///   `@ uniq` and it is not `@ uniq` here.
+    ///
+    /// A captured function variable that the closure runs, and that has the same
+    /// value, can run a closure whose own captures have new values. The node joins
+    /// them too.
     pub(super) fn late_join(
         &mut self,
         n: NodeId,
@@ -151,7 +183,8 @@ impl Lower<'_> {
                 continue;
             }
             let changes = self.late_changes(c, at_run);
-            if changes.is_empty() {
+            let inner = self.late_inner(c);
+            if changes.is_empty() && inner.is_empty() {
                 continue;
             }
             self.late_stack.push(c);
@@ -159,6 +192,9 @@ impl Lower<'_> {
             for ch in changes {
                 if !ch.new.is_empty() || ch.now.is_some() {
                     self.facts.uses.push((ch.var, n));
+                    for &h in &ch.parts {
+                        self.facts.uses.push((h, n));
+                    }
                     if at_run {
                         self.note_capture(ch.local);
                     }
@@ -190,16 +226,7 @@ impl Lower<'_> {
                         if *v != ch.var {
                             continue;
                         }
-                        let mut mapped = Vec::new();
-                        for g in inner {
-                            for (q, r) in self.places_of(&sum, g.place, root, given) {
-                                mapped.push(Given {
-                                    pos: g.pos,
-                                    place: q,
-                                    root: r,
-                                });
-                            }
-                        }
+                        let mapped = self.map_given(&sum, inner, root, given);
                         self.apply_value(n, info, row.as_deref(), root, &mapped);
                     }
                 }
@@ -212,8 +239,65 @@ impl Lower<'_> {
                     }
                 }
             }
+            for (var, t) in inner {
+                for (v, runs) in &sum.cap_runs {
+                    if *v != var {
+                        continue;
+                    }
+                    let mapped = self.map_given(&sum, runs, root, given);
+                    self.late_join(n, t, root, &mapped, at_run);
+                }
+            }
             self.late_stack.pop();
         }
+    }
+
+    /// The places that the places `inner` of summary `sum` stand for where the
+    /// summary runs with the places `given`.
+    fn map_given(
+        &mut self,
+        sum: &Summary,
+        inner: &[Given],
+        root: u32,
+        given: &[Given],
+    ) -> Vec<Given> {
+        let mut mapped = Vec::new();
+        for g in inner {
+            for (q, r) in self.places_of(sum, g.place, root, given) {
+                mapped.push(Given {
+                    pos: g.pos,
+                    place: q,
+                    root: r,
+                });
+            }
+        }
+        mapped
+    }
+
+    /// The captured function variables of closure `c` that the closure runs and
+    /// that have the same value now. Each has the closure summary of the value.
+    fn late_inner(&self, c: usize) -> Vec<(VarId, usize)> {
+        let mut out = Vec::new();
+        let sum = &self.closures[c];
+        for cv in self.cap_values.get(&c).into_iter().flatten() {
+            let Some((old, _)) = &cv.fn_value else {
+                continue;
+            };
+            if !sum.cap_runs.iter().any(|(v, _)| *v == cv.var) {
+                continue;
+            }
+            let Some(l) = self.local_of(cv.var) else {
+                continue;
+            };
+            let now = self.local_fn_info(l);
+            if &now != old {
+                continue;
+            }
+            if let Some(t) = now.summary {
+                out.push((cv.var, t));
+            }
+        }
+        out
     }
 
     /// The captured variables of closure `c` whose values changed since the
@@ -226,10 +310,9 @@ impl Lower<'_> {
             let Some(l) = self.local_of(cv.var) else {
                 continue;
             };
-            let new: Vec<PlaceId> = self.locals[l]
-                .refs
-                .iter()
-                .copied()
+            let (now_refs, parts) = self.cap_refs_now(l);
+            let new: Vec<PlaceId> = now_refs
+                .into_iter()
                 .filter(|p| !cv.refs.contains(p))
                 .collect();
             let now = match &cv.fn_value {
@@ -244,12 +327,116 @@ impl Lower<'_> {
                     local: l,
                     old: cv.refs.clone(),
                     new,
+                    parts,
                     now,
                     not_uniq,
                 });
             }
         }
         out
+    }
+
+    /// The places that the closures of summary `s` point into now through their
+    /// captured variables, and did not where they were made. A captured function
+    /// variable adds the places of its value now. A closure that leaves the body
+    /// (a return or a store) points into them too.
+    pub(super) fn late_refs(&self, s: usize) -> Vec<PlaceId> {
+        let mut out = Vec::new();
+        self.late_refs_into(s, &mut Vec::new(), &mut out);
+        out
+    }
+
+    /// The places that the closures in value `v` and in its parts point into
+    /// now, and did not where they were made (`late_refs`).
+    pub(super) fn val_late_refs(&self, v: &Val) -> Vec<PlaceId> {
+        let mut out = Vec::new();
+        let mut seen = Vec::new();
+        let mut work = vec![v];
+        while let Some(x) = work.pop() {
+            if let Some(s) = self.fn_info(x).summary {
+                self.late_refs_into(s, &mut seen, &mut out);
+            }
+            work.extend(x.parts.iter().flatten());
+        }
+        out
+    }
+
+    /// Returns value `v` with the places that its function values point into
+    /// now. A closure points where its captures point now (`val_late_refs`). A
+    /// local holds the closures in its parts and its containers too
+    /// (`held_fn_refs`). A value that leaves the body, or goes into a tuple, a
+    /// struct or an array, keeps them.
+    pub(super) fn with_fn_refs(&self, v: Val) -> Val {
+        if !self.has_fn(&v.ty) {
+            return v;
+        }
+        let mut v = v;
+        let mut more = self.val_late_refs(&v);
+        if !matches!(self.inf.shallow(&v.ty), Ty::Fn(_)) {
+            more.extend(self.held_fn_refs(&v));
+        }
+        for p in more {
+            if !v.refs.contains(&p) {
+                v.refs.push(p);
+            }
+        }
+        v
+    }
+
+    /// The places that the function values in the locals of value `v` and of its
+    /// parts point into. The values are in their parts (`PartHolder`) and in
+    /// their containers (`Lower::held_fns`). The new values of their captures
+    /// count too.
+    pub(super) fn held_fn_refs(&self, v: &Val) -> Vec<PlaceId> {
+        let mut out = Vec::new();
+        let mut seen = Vec::new();
+        let mut work = vec![v];
+        while let Some(x) = work.pop() {
+            work.extend(x.parts.iter().flatten());
+            let Some(l) = x.local else {
+                continue;
+            };
+            for p in self.cap_refs_now(l).0 {
+                if !out.contains(&p) {
+                    out.push(p);
+                }
+            }
+            for (_, f) in self.held_fns.iter().filter(|(m, _)| *m == l) {
+                for &p in &f.refs {
+                    if !out.contains(&p) {
+                        out.push(p);
+                    }
+                }
+                if let Some(s) = self.fn_info(f).summary {
+                    self.late_refs_into(s, &mut seen, &mut out);
+                }
+            }
+        }
+        out
+    }
+
+    fn late_refs_into(&self, s: usize, seen: &mut Vec<usize>, out: &mut Vec<PlaceId>) {
+        for &c in &self.closures[s].members {
+            if seen.contains(&c) {
+                continue;
+            }
+            seen.push(c);
+            for cv in self.cap_values.get(&c).into_iter().flatten() {
+                let Some(l) = self.local_of(cv.var) else {
+                    continue;
+                };
+                for p in self.cap_refs_now(l).0 {
+                    if !cv.refs.contains(&p) && !out.contains(&p) {
+                        out.push(p);
+                    }
+                }
+                if cv.fn_value.is_some() {
+                    if let Some(t) = self.local_fn_info(l).summary {
+                        self.late_refs_into(t, seen, out);
+                    }
+                }
+            }
+        }
     }
 
     /// The places that a call of a closure of summary `s` returns through the new
@@ -263,10 +450,10 @@ impl Lower<'_> {
                 let Some(l) = self.local_of(cv.var) else {
                     continue;
                 };
-                let new: Vec<PlaceId> = self.locals[l]
-                    .refs
-                    .iter()
-                    .copied()
+                let new: Vec<PlaceId> = self
+                    .cap_refs_now(l)
+                    .0
+                    .into_iter()
                     .filter(|p| !cv.refs.contains(p))
                     .collect();
                 out.extend(self.rebased(&rets, &cv.refs, &new));
@@ -299,12 +486,10 @@ impl Lower<'_> {
                 let Some(l) = self.local_of(cv.var) else {
                     continue;
                 };
+                // The same value can run a closure whose captures have new values.
                 let now = self.local_fn_info(l);
-                if &now == old {
-                    continue;
-                }
                 if let Some(t) = now.summary {
-                    if self.closure_is_once(t) || self.late_once(t, seen) {
+                    if (&now != old && self.closure_is_once(t)) || self.late_once(t, seen) {
                         return true;
                     }
                 }

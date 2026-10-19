@@ -14,6 +14,23 @@ struct ArgVal {
     span: Span,
 }
 
+/// The parts of one call that `Lower::call_flows` reads.
+#[derive(Clone, Copy)]
+struct Flows<'a> {
+    /// The signature of the callee.
+    sig: &'a FnSig,
+    /// The arguments.
+    vals: &'a [ArgVal],
+    /// The places of the reference arguments, by position.
+    arg_places: &'a [Vec<PlaceId>],
+    /// The parameter types of the call.
+    ptys: &'a [Ty],
+    /// The places that the call mutates, with their callee root indexes.
+    muts: &'a [(PlaceId, u32)],
+    /// The callee has no body: a function of the prelude or a foreign function.
+    no_body: bool,
+}
+
 impl Lower<'_> {
     pub(super) fn call(
         &mut self,
@@ -748,7 +765,9 @@ impl Lower<'_> {
             }
             self.apply_value(n, &info, row.as_deref(), root, &given);
             self.start_ret_spawns(n, &info);
-            let repeats = self.callee_repeats(&Callee::Item(f), i);
+            // The callee can run the value more than once, or the value runs a
+            // value that it holds more than once.
+            let repeats = self.callee_repeats(&Callee::Item(f), i) || self.runs_held_again(&info);
             let again = if repeats {
                 self.note_repeat(n, &info, true);
                 self.repeat_unknown(n, &info, &given);
@@ -925,8 +944,18 @@ impl Lower<'_> {
             out.refs.extend(recv_deps);
             out.parts = parts;
         }
-        self.call_flows(&sig, &vals, &arg_places, &ptys, &muts, &ret, &mut out, span);
+        let no_body = self.prog.fns[f].decl.body.is_none();
+        let flows = Flows {
+            sig: &sig,
+            vals: &vals,
+            arg_places: &arg_places,
+            ptys: &ptys,
+            muts: &muts,
+            no_body,
+        };
+        self.call_flows(&flows, &ret, &mut out, span);
         self.group_stores_of(f, &sig, &vals, &arg_places, &ptys, span);
+        self.fn_stores_of(&sig, &arg_places, span);
         // The callee can return what a handler of a caller resumes with, unless
         // its signature states the places of the result.
         let unstated = super::flow::count_refs(&sig.ret) > sig.ret_places.len()
@@ -1079,19 +1108,22 @@ impl Lower<'_> {
     /// points where the arguments that can flow into it point. A reference
     /// argument whose pointee holds references and that the call mutates can get
     /// the references of the other arguments, as `v.push(&x)` does.
-    // The parts of one call: a struct for them would be used only here.
-    #[allow(clippy::too_many_arguments)]
-    fn call_flows(
-        &mut self,
-        sig: &FnSig,
-        vals: &[ArgVal],
-        arg_places: &[Vec<PlaceId>],
-        ptys: &[Ty],
-        muts: &[(PlaceId, u32)],
-        ret: &Ty,
-        out: &mut Val,
-        span: Span,
-    ) {
+    ///
+    /// A callee that can put a function value behind a reference argument
+    /// (`fn_stores`, or no body) puts the closures of the other arguments there.
+    /// A closure points into what it captures, so a place behind a reference
+    /// parameter or in an `rc` object gets those places as for a reference. For
+    /// a place that a local of this body owns, the stored closure has its own
+    /// variable (`Lower::escape`).
+    fn call_flows(&mut self, flows: &Flows<'_>, ret: &Ty, out: &mut Val, span: Span) {
+        let Flows {
+            sig,
+            vals,
+            arg_places,
+            ptys,
+            muts,
+            no_body,
+        } = *flows;
         // A reference of the result with no stated place can point anywhere
         // inside the reference arguments. A type parameter in the result passes
         // the values of the arguments on.
@@ -1152,7 +1184,9 @@ impl Lower<'_> {
                 Some(Ty::Ref(inner)) => self.pointee_refs(&inner),
                 _ => false,
             };
-            if !holds {
+            let fn_into = ptys.get(j).is_some_and(|t| self.points_to_fn(t))
+                && (no_body || sig.effects.fn_stores.contains(&j));
+            if !holds && !fn_into {
                 continue;
             }
             let (named, _) = self.split_deps(ps);
@@ -1184,21 +1218,42 @@ impl Lower<'_> {
                     }
                     // The callee can keep the function values that the argument
                     // holds or points to there too.
-                    if let Some(av) = vals.get(i).filter(|av| self.has_fn(&av.val.ty)) {
+                    let fn_arg = vals.get(i).filter(|av| self.has_fn(&av.val.ty));
+                    if let Some(av) = fn_arg {
                         let caps = self.val_caps(&av.val);
                         self.store_caps_into(&caps, &[p]);
                         if !caps.is_empty() {
                             self.note_fn_store(&[p]);
                         }
                     }
-                    match owner {
-                        Some(l) => {
-                            for &q in f {
-                                self.point_local(l, q);
+                    if holds {
+                        match owner {
+                            Some(l) => {
+                                for &q in f {
+                                    self.point_local(l, q);
+                                }
                             }
+                            // The place is behind a reference parameter: the caller keeps it.
+                            None => self.note_stored_behind(p, f, span),
                         }
-                        // The place is behind a reference parameter: the caller keeps it.
-                        None => self.note_stored_behind(p, f, span),
+                    }
+                    // A closure that the callee puts there points into its captures.
+                    // A reference argument points into what it refers to: a
+                    // function value that the callee copies out of it has its own
+                    // captures (`Lower::escape`).
+                    let by_value = |me: &Self, av: &ArgVal| {
+                        !matches!(me.inf.shallow(&av.val.ty), Ty::Ref(_) | Ty::Slice(_))
+                    };
+                    let Some(av) = fn_arg.filter(|av| fn_into && by_value(self, av)) else {
+                        continue;
+                    };
+                    let v = av.val.clone();
+                    match owner {
+                        // A place of a local: the stored closure has its own
+                        // variable (`Lower::escape`). The local keeps the closure
+                        // for a return.
+                        Some(l) => self.held_fns.push((l, v)),
+                        None => self.note_stored_fn(p, &v, span),
                     }
                 }
             }
@@ -1236,14 +1291,61 @@ impl Lower<'_> {
                 _ => av.val.refs.clone(),
             };
             let declared = sig.params.get(i).map_or(Ty::Error, |p| p.ty.clone());
+            // A function value points into what it captures.
+            let closure = !declared.is_ref() && self.has_fn(&av.val.ty);
+            if closure {
+                let v = self.with_fn_refs(av.val.clone());
+                if let Some(s) = self.fn_info(&v).summary {
+                    self.late_stores.push((super::Behind::Group(a), s, span));
+                }
+                if !v.refs.is_empty() {
+                    self.stored_behind.push(super::StoredRef {
+                        behind: super::Behind::Group(a),
+                        refs: v.refs,
+                        span,
+                        closure: true,
+                    });
+                }
+                continue;
+            }
             let pointee = match ptys.get(i).map(|t| self.inf.shallow(t)) {
                 Some(Ty::Ref(inner)) => Some(*inner),
                 _ => None,
             };
             let flows = self.flow_refs(&declared, &refs, pointee.as_ref(), true, None);
             if !flows.is_empty() {
-                self.stored_behind
-                    .push((super::Behind::Group(a), flows, span));
+                self.stored_behind.push(super::StoredRef {
+                    behind: super::Behind::Group(a),
+                    refs: flows,
+                    span,
+                    closure: false,
+                });
+            }
+        }
+    }
+
+    /// The callee puts a closure behind reference argument `j` that points into
+    /// places of the arguments (`EffectSig::fn_store_refs`). The argument points
+    /// into them too, from the call on. A local that owns the place gets a
+    /// hidden variable that points into them (`PartHolder`). A place behind a
+    /// reference parameter or in an `rc` object keeps them for a caller.
+    fn fn_stores_of(&mut self, sig: &FnSig, arg_places: &[Vec<PlaceId>], span: Span) {
+        if sig.effects.fn_store_refs.is_empty() {
+            return;
+        }
+        let split = self.fresh_split();
+        for (j, sp) in &sig.effects.fn_store_refs {
+            let places = self.subst_place(sp, arg_places, split);
+            if places.is_empty() {
+                continue;
+            }
+            let into = arg_places.get(*j).cloned().unwrap_or_default();
+            let (named, _) = self.split_deps(&into);
+            for p in named {
+                match self.root_owner(self.facts.place(p).root) {
+                    Some(l) => self.hold_in_part(l, p, &places, span),
+                    None => self.note_stored_as(p, &places, span, true),
+                }
             }
         }
     }
@@ -1518,7 +1620,7 @@ impl Lower<'_> {
             }
             self.apply_value(n, &info, row.as_deref(), root, &given);
             self.start_ret_spawns(n, &info);
-            let repeats = self.callee_repeats(&value, i);
+            let repeats = self.callee_repeats(&value, i) || self.runs_held_again(&info);
             if repeats {
                 self.note_repeat(n, &info, true);
                 self.repeat_unknown(n, &info, &given);
@@ -2193,6 +2295,12 @@ impl Lower<'_> {
         self.apply_summary(n, s, 700, &[]);
         self.task_places_from(t, n, from);
         self.note_task_run(t, n, s);
+        // A value can run a function value that it holds more than once. Then
+        // the task runs it again. A change of the first run can invalidate what
+        // the value captures for the second run (W0301).
+        if self.runs_held_again(&info) {
+            let _ = self.run_again(n, v);
+        }
         (t, n)
     }
 

@@ -247,6 +247,7 @@ pub(super) struct SumMark {
     cap_runs: usize,
     uniq_needs: usize,
     param_calls: usize,
+    param_stores: usize,
     may_abort: bool,
     repeat_runs: bool,
     multi: bool,
@@ -351,15 +352,21 @@ pub struct Summary {
     /// `@ uniq`, with the text of W0406. A node that runs the closure checks
     /// that the variable is still `@ uniq` there.
     uniq_needs: Vec<(VarId, String)>,
-    /// The function parameters of the function that the body calls, each with
+    /// The function parameters of the function that the body calls. Each has
     /// true if the call can run more than once in one run of the body: in a loop
-    /// of the body or in a closure inside it. A call in a closure counts for the
-    /// function where the closure runs (`Lower::repeats_sig`).
-    pub param_calls: Vec<(usize, bool)>,
+    /// or in a closure inside the body. Each has true too if the call is in the
+    /// body itself, not in a closure inside it. A call in a closure counts for
+    /// the function where the closure runs (`Lower::repeats_sig`).
+    pub param_calls: Vec<(usize, bool, bool)>,
     /// A call of the value runs a function value that it holds more than once:
     /// the value that a function returns calls a function argument more than
     /// once (`RetFn::repeats`).
     pub repeat_runs: bool,
+    /// References that the body gets in its own parameters and puts behind a
+    /// reference parameter of the function or into an `rc` object. Each has the
+    /// place where they go, the place below the parameter, and the span. A node
+    /// that runs the body puts the places that it gives there.
+    param_stores: Vec<(PlaceId, PlaceId, Span)>,
 }
 
 impl Summary {
@@ -407,6 +414,7 @@ impl Summary {
             uniq_needs,
             param_calls,
             repeat_runs,
+            param_stores,
         } = self;
         SumMark {
             muts: muts.mark(),
@@ -443,6 +451,7 @@ impl Summary {
             cap_runs: cap_runs.len(),
             uniq_needs: uniq_needs.len(),
             param_calls: param_calls.len(),
+            param_stores: param_stores.len(),
             may_abort: *may_abort,
             repeat_runs: *repeat_runs,
             multi: *multi,
@@ -495,6 +504,7 @@ impl Summary {
             uniq_needs,
             param_calls,
             repeat_runs,
+            param_stores,
         } = self;
         muts.cut(mark.muts);
         reads.cut(mark.reads);
@@ -530,6 +540,7 @@ impl Summary {
         cap_runs.truncate(mark.cap_runs);
         uniq_needs.truncate(mark.uniq_needs);
         param_calls.truncate(mark.param_calls);
+        param_stores.truncate(mark.param_stores);
         *may_abort = mark.may_abort;
         *repeat_runs = mark.repeat_runs;
         *multi = mark.multi;
@@ -604,6 +615,11 @@ impl Summary {
         }
         self.param_calls.extend(o.param_calls.iter().copied());
         self.repeat_runs |= o.repeat_runs;
+        for st in &o.param_stores {
+            if !self.param_stores.contains(st) {
+                self.param_stores.push(*st);
+            }
+        }
     }
 
     /// Adds what a call of the function value that `o` stands for can do. A call of
@@ -625,6 +641,7 @@ impl Summary {
         o.op_effects.clear();
         o.cap_runs.clear();
         o.uniq_needs.clear();
+        o.param_stores.clear();
         o.literal = false;
         self.union(&o);
     }
@@ -879,6 +896,20 @@ enum Behind {
     Param(usize),
     /// Into an object of the `rc` type with this definition.
     Group(usize),
+}
+
+/// References that the body puts where a caller keeps them after the return
+/// (`Lower::check_stored_behind`).
+#[derive(Clone, Debug)]
+struct StoredRef {
+    /// Where they go.
+    behind: Behind,
+    /// The places that they point into.
+    refs: Vec<PlaceId>,
+    /// The span of the store.
+    span: Span,
+    /// They are the captures of a closure.
+    closure: bool,
 }
 
 /// A method call through a reference local that can write through the local
@@ -1153,6 +1184,10 @@ pub struct Lower<'p> {
     /// Hidden variables that hold the references that the parts of locals get. A
     /// use of the local uses them.
     part_holders: Vec<PartHolder>,
+    /// Each holder that `part_holders` had. At the end of the body, a closure
+    /// that can still run gets the values of the parts of its captures from it
+    /// (`Lower::cap_refs_now`).
+    holder_log: Vec<PartHolder>,
     /// The integer literals: the value, true if it is negative, the type and the span.
     int_lits: Vec<(u64, bool, Ty, Span)>,
     /// The span of the literal that is being lowered.
@@ -1220,7 +1255,18 @@ pub struct Lower<'p> {
     /// parameter, the places that they point into, and the span. A caller
     /// keeps them after the return (`check_stored_behind`). An `rc` object
     /// keeps them too: the parameter is then the `rc` type.
-    stored_behind: Vec<(Behind, Vec<PlaceId>, Span)>,
+    stored_behind: Vec<StoredRef>,
+    /// The closures that the body puts behind a reference parameter or into an
+    /// `rc` object: where they go, the summary and the span. At the end of the
+    /// body, the new values of their captures go there too (`Lower::late_refs`).
+    late_stores: Vec<(Behind, usize, Span)>,
+    /// The places of the caller that the closures behind each reference
+    /// parameter point into: the parameter and the place
+    /// (`EffectSig::fn_store_refs`). `check_stored_behind` finds them.
+    fn_store_places: Vec<(usize, PlaceId)>,
+    /// The function values that the body puts into a container of a local, such
+    /// as `v.push(f)`, with the local. A return of the local returns them too.
+    held_fns: Vec<(usize, Val)>,
     /// The parameters whose references the body puts into an `rc` object, with
     /// the `rc` type (`EffectSig::group_stores`). `check_stored_behind` finds them.
     group_stores: BTreeSet<(usize, usize)>,
@@ -1328,6 +1374,7 @@ impl<'p> Lower<'p> {
             lit_span: Span::default(),
             temp_refs: BTreeMap::new(),
             part_holders: Vec::new(),
+            holder_log: Vec::new(),
             var_local: Vec::new(),
             root_local: Vec::new(),
             late_vars: Vec::new(),
@@ -1351,6 +1398,9 @@ impl<'p> Lower<'p> {
             caller_runs: Vec::new(),
             returned: Vec::new(),
             stored_behind: Vec::new(),
+            late_stores: Vec::new(),
+            fn_store_places: Vec::new(),
+            held_fns: Vec::new(),
             group_stores: BTreeSet::new(),
             resume_refs_pending: Vec::new(),
             param_bases: Vec::new(),
@@ -2575,6 +2625,34 @@ impl<'p> Lower<'p> {
         self.work.holder_steps += holders.len();
         holders.retain(|h| h.local != l || !self.below_any(&h.places, ps));
         self.part_holders = holders;
+    }
+
+    /// Part `p` of local `l` gets a value that points into the places `refs`,
+    /// for example a closure that a callee puts there. A hidden variable holds
+    /// them from the current node on, and a use of the local uses it. The value
+    /// does not replace what the part held before.
+    pub(super) fn hold_in_part(&mut self, l: usize, p: PlaceId, refs: &[PlaceId], span: Span) {
+        let Some(n) = self.cur else {
+            return;
+        };
+        let name = format!("value in `{}`", self.place_text(&[p]));
+        let ty = self.locals[l].ty.clone();
+        let mut info = self.var_info(&name, VarKind::Temp, span, &ty, false);
+        info.linear = false;
+        info.has_on_abort = true;
+        let h = self.facts.add_var(info);
+        self.bind(h, n);
+        for &q in refs {
+            self.facts.points_into.push((h, q));
+        }
+        let holder = PartHolder {
+            local: l,
+            places: vec![p],
+            var: h,
+            refs: refs.to_vec(),
+        };
+        self.holder_log.push(holder.clone());
+        self.part_holders.push(holder);
     }
 
     /// Returns true if each place of `hs` is one of `ps` or below one of them.

@@ -57,6 +57,92 @@ fn unknown_maker(mk: fn(&Vec<u64>) -> fn()) {
     f()   //~ W0301
 }
 
+// A result that holds closures in a container, a part or a field. The
+// callee puts the closure there after it makes the value.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct H { f: fn() }
+struct Wrap<T> { x: T }
+fn noop() { print(0) }
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+fn vec_of(v: &Vec<u64>) -> Vec<fn()> {
+    let o = Vec.new()
+    o.push(|| print(v.len()))
+    o
+}
+fn tuple_of(v: &Vec<u64>) -> (Vec<fn()>, u64) {
+    let o = Vec.new()
+    o.push(|| print(v.len()))
+    (o, 1)
+}
+fn field_of(w: &World) -> H {
+    let r = &w.entities[0]
+    let h = H { f: noop }
+    h.f = || print(r.hp)
+    h
+}
+fn wrap_of(w: &World) -> Wrap<fn()> {
+    let r = &w.entities[0]
+    let h = Wrap { x: || print(0) }
+    h.x = || print(r.hp)
+    h
+}
+// A callee puts a closure behind a reference argument.
+fn out(v: &Vec<u64>, o: &Vec<fn()>) / mut(o) { o.push(|| print(v.len())) }
+fn out_elem(r: &u64, o: &Vec<fn()>) / mut(o) { o.push(|| print(r + 1)) }
+fn in_vec() {
+    let v = Vec.new()
+    v.push(1)
+    let fs = vec_of(&v)
+    take(v)
+    let f = fs[0]   //~ W0301
+    f()
+}
+fn in_tuple() {
+    let v = Vec.new()
+    v.push(1)
+    let (fs, n) = tuple_of(&v)
+    take(v)
+    let f = fs[0]   //~ W0301
+    f()
+}
+fn in_field() {
+    let w = mkw()
+    let h = field_of(&w)
+    w.entities.clear()
+    let g = h.f   //~ W0301
+    g()
+}
+fn in_wrap() {
+    let w = mkw()
+    let h = wrap_of(&w)
+    w.entities.clear()
+    let g = h.x   //~ W0301
+    g()
+}
+fn out_param() {
+    let v = Vec.new()
+    v.push(1)
+    let fs = Vec.new()
+    out(&v, &fs)
+    take(v)
+    let f = fs[0]   //~ W0301
+    f()
+}
+fn out_elem_param() {
+    let fs = Vec.new()
+    let v = Vec.new()
+    v.push(1)
+    out_elem(&v[0], &fs)
+    v.clear()
+    let f = fs[0]   //~ W0301
+    f()
+}
+
 // Clean: each call runs before the move, the end of the scope or the change.
 fn moved_after() {
     let v = Vec.new()
@@ -89,10 +175,43 @@ fn stable_change() {
     f()
 }
 
+// Clean: the closures in the containers and fields run before the change.
+fn held_before() {
+    let v = Vec.new()
+    v.push(1)
+    let fs = vec_of(&v)
+    let f = fs[0]
+    f()
+    let (gs, n) = tuple_of(&v)
+    let g = gs[0]
+    g()
+    let hs = Vec.new()
+    out(&v, &hs)
+    let k = hs[0]
+    k()
+    // The container is made before the change of `v`: it points into `v[]`
+    // only from the call on.
+    let es = Vec.new()
+    v.push(2)
+    out_elem(&v[0], &es)
+    let e = es[0]
+    e()
+    take(v)
+    let w = mkw()
+    let h = field_of(&w)
+    let g = h.f
+    g()
+    let x = wrap_of(&w)
+    let g = x.x
+    g()
+    w.entities.clear()
+}
+
 // The clean cases run.
 fn main() {
     moved_after()
     cleared_after()
     value_arg()
     stable_change()
+    held_before()
 }

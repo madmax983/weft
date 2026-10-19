@@ -108,6 +108,7 @@ impl Lower<'_> {
                 let (mut held, mut taken) = (Vec::new(), Vec::new());
                 for (i, x) in es.iter().enumerate() {
                     let p = self.expr(x);
+                    let p = self.with_fn_refs(p);
                     self.consume(&p, x.span);
                     if i + 1 < es.len() {
                         self.hold_part(&p, "tuple part", x.span, &mut held, &mut taken);
@@ -116,7 +117,20 @@ impl Lower<'_> {
                 }
                 self.pend_uses.extend(held);
                 self.take_held_here(&taken, e.span);
-                let ty = Ty::Tuple(parts.iter().map(|p| p.ty.clone()).collect());
+                // A part that can hold a function value gets a type variable, as
+                // the element of a `Vec` does. So a new function value in the part
+                // joins the values of the type (`Lower::unify`).
+                let mut tys = Vec::new();
+                for p in &parts {
+                    if self.has_fn(&p.ty) {
+                        let tv = self.inf.fresh();
+                        let _ = self.inf.unify(&tv, &p.ty);
+                        tys.push(tv);
+                    } else {
+                        tys.push(p.ty.clone());
+                    }
+                }
+                let ty = Ty::Tuple(tys);
                 let refs = parts.iter().flat_map(|p| p.refs.clone()).collect();
                 Val {
                     ty,
@@ -201,6 +215,7 @@ impl Lower<'_> {
         let (mut held, mut taken) = (Vec::new(), Vec::new());
         for (i, x) in es.iter().enumerate() {
             let v = self.expr(x);
+            let v = self.with_fn_refs(v);
             self.unify(elem, &v.ty, x.span);
             self.keep_modes(&v, elem, x.span);
             self.escape(&v);
@@ -841,6 +856,7 @@ impl Lower<'_> {
                 .find(|d| d.name == name.name)
                 .map(|d| super::subst(&d.ty, &args));
             let v = self.expr_with(value, expected.as_ref());
+            let v = self.with_fn_refs(v);
             match defs.iter().find(|d| d.name == name.name) {
                 Some(d) => {
                     let ft = super::subst(&d.ty, &args);
@@ -2238,6 +2254,13 @@ impl Lower<'_> {
                 for q in through(self, p, a) {
                     self.point_local(l, q);
                 }
+            }
+            // The clause puts what the operation gets behind a reference
+            // parameter of the function or into an `rc` object.
+            let at = self.facts.node(a.node).span;
+            for &(to, p, _) in &cs.param_stores {
+                let qs = through(self, p, a);
+                self.note_stored_as(to, &qs, at, false);
             }
             for &l in &cs.lends {
                 for q in through(self, l, a) {

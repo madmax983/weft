@@ -32,8 +32,10 @@ impl Lower<'_> {
                     continue;
                 };
                 if self.is_closure_frame(fi) {
-                    let again = Some(fi) != inner || loops;
-                    self.sums[si].param_calls.push((p, again));
+                    let direct = Some(fi) == inner;
+                    self.sums[si]
+                        .param_calls
+                        .push((p, !direct || loops, direct));
                 }
             }
             return;
@@ -96,6 +98,46 @@ impl Lower<'_> {
             }
         }
         false
+    }
+
+    /// Returns true if closure `id` can run more than once in one run of the
+    /// body. That is so if the body stores it or gives it to an operation, or
+    /// runs it at two nodes. It is so for a run in a loop or at a node that can
+    /// run it again. It is so for a run in a clause or in a closure that can run
+    /// more than once. `path` has the closures on the way.
+    fn closure_runs_again(&self, id: usize, path: &mut Vec<usize>) -> bool {
+        if path.contains(&id) {
+            return true;
+        }
+        let has = |info: &FnInfo| {
+            info.summary
+                .is_some_and(|s| self.closures[s].members.contains(&id))
+        };
+        if self.escaped.iter().any(|st| has(&st.info))
+            || self.op_fn_args.iter().any(|o| has(&o.info))
+        {
+            return true;
+        }
+        path.push(id);
+        let mut nodes = BTreeSet::new();
+        let mut again = false;
+        for a in &self.applied {
+            if !self.closures[a.summary].members.contains(&id) {
+                continue;
+            }
+            nodes.insert(a.node);
+            again |= a.in_loop || self.repeated.contains(&a.node);
+            again |= match a.scope {
+                super::fnval::Scope::Closure(y) => self.closure_runs_again(y, path),
+                super::fnval::Scope::Function => false,
+                super::fnval::Scope::Open(_) | super::fnval::Scope::Clause => true,
+            };
+            if again {
+                break;
+            }
+        }
+        path.pop();
+        again || nodes.len() > 1
     }
 
     /// Returns true if closure `id` runs only where the function returns it: the
@@ -249,6 +291,28 @@ impl Lower<'_> {
         out
     }
 
+    /// Returns true if the body can run a stored function value more than once
+    /// (`EffectSig::reach_repeats`). That is so if a node can run it more than
+    /// once, or if a node is in a loop. It is so for a node in a closure that can
+    /// run more than once, and if a node can come after another one.
+    pub(super) fn reach_repeats(&self) -> bool {
+        if self.reach_runs.1 {
+            return true;
+        }
+        let nested = self.reaches.iter().any(|r| match r.scope {
+            super::fnval::Scope::Function => false,
+            super::fnval::Scope::Closure(id) => self.closure_runs_again(id, &mut Vec::new()),
+            super::fnval::Scope::Open(_) | super::fnval::Scope::Clause => true,
+        });
+        nested || (self.reach_runs.0 > 1 && self.reaches_follow())
+    }
+
+    /// Returns true if a call of function value `info` runs a function value
+    /// that it holds more than once (`Summary::repeat_runs`).
+    pub(super) fn runs_held_again(&self, info: &FnInfo) -> bool {
+        info.summary.is_some_and(|s| self.closures[s].repeat_runs)
+    }
+
     /// Returns the function parameters of the function that it can call more than
     /// once: a stored one too, and one that is live across a node that can resume
     /// more than once (`multi_live_params`).
@@ -259,11 +323,25 @@ impl Lower<'_> {
             .filter(|(_, &(count, again))| again || count > 1)
             .map(|(&(_, p), _)| p)
             .collect();
-        // A call in a closure can run more than once, unless the function only
-        // returns the closure: then the `ret` part has it.
+        // A call in a closure counts if it can run more than once in one run of
+        // the closure. It counts if the closure can run more than once too. A
+        // call in an inner closure counts there. If the function only returns
+        // the closure, the `ret` part has the call.
         for (id, c) in self.closures.iter().enumerate() {
-            if !c.param_calls.is_empty() && c.members.contains(&id) && !self.only_returned(id) {
-                out.extend(c.param_calls.iter().map(|&(p, _)| p));
+            if c.param_calls.is_empty() || !c.members.contains(&id) || self.only_returned(id) {
+                continue;
+            }
+            let direct: Vec<(usize, bool)> = c
+                .param_calls
+                .iter()
+                .filter(|e| e.2)
+                .map(|&(p, again, _)| (p, again))
+                .collect();
+            let runs_again = self.closure_runs_again(id, &mut Vec::new());
+            for &(p, again) in &direct {
+                if runs_again || again || direct.iter().filter(|(q, _)| *q == p).count() > 1 {
+                    out.insert(p);
+                }
             }
         }
         out.extend(self.sums[0].stores.iter().copied());

@@ -107,6 +107,8 @@ its signature:
 - Which function parameters it can call more than once.
 - Which reference parameters can get a function value.
 - Which parameters give references that it can put into an `rc` object.
+- The places of its parameters that the closures that it puts behind a reference
+  parameter point into.
 - The type parameters of the values that it can drop or hold across an abort (ADR
   0007).
 

@@ -50,6 +50,117 @@ fn local_twice() {
     twice(f)   //~ W0301
 }
 
+// The callee gets the closure in a container: a tuple, a struct, an `Option`,
+// a `Vec` or a generic struct.
+struct H { f: fn() }
+struct Wrap<T> { x: T }
+fn twice_tuple(t: (fn(), u64)) {
+    let f = t.0
+    f()
+    f()
+}
+fn twice_struct(h: H) {
+    let f = h.f
+    f()
+    f()
+}
+fn twice_option(o: Option<fn()>) {
+    match o { Some(f) => { f()
+ f() }, None => {} }
+}
+fn twice_vec(fs: Vec<fn()>) {
+    let f = fs[0]
+    f()
+    f()
+}
+fn twice_wrap(w: Wrap<fn()>) {
+    let f = w.x
+    f()
+    f()
+}
+fn via_tuple() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    twice_tuple((|| { print(r + 1)   //~ W0301
+ v.clear() }, 1))
+}
+fn via_struct() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    twice_struct(H { f: || { print(r + 1)   //~ W0301
+ v.clear() } })
+}
+fn via_option() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    twice_option(Some(|| { print(r + 1)   //~ W0301
+ v.clear() }))
+}
+fn via_vec() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let fs = Vec.new()
+    fs.push(|| { print(r + 1)
+ v.clear() })
+    twice_vec(fs)   //~ W0301
+}
+fn via_wrap() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    twice_wrap(Wrap { x: || { print(r + 1)   //~ W0301
+ v.clear() } })
+}
+// A returned closure that calls a function argument two times, given to a
+// callee or to a task.
+fn run(f: fn()) { f() }
+fn returned_given() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let g = wrap(|| { print(r + 1)
+ v.clear() })
+    run(g)   //~ W0301
+}
+fn returned_task() / async {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let g = wrap(|| { print(r + 1)
+ v.clear() })
+    scope { s =>
+        s.spawn(g)   //~ W0301
+    }
+}
+// The callee calls the function parameter in a closure that runs more than once.
+fn in_loop(f: fn()) {
+    let g = || f()
+    for i in 0..2 { g() }
+}
+fn two_nodes(f: fn()) {
+    let g = || f()
+    g()
+    g()
+}
+fn via_in_loop() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    in_loop(|| { print(r + 1)   //~ W0301
+ v.clear() })
+}
+fn via_two_nodes() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    two_nodes(|| { print(r + 1)   //~ W0301
+ v.clear() })
+}
+
 // Clean: the same callees with a closure that does not clear.
 fn twice_reads() {
     let v = Vec.new()
@@ -74,10 +185,70 @@ fn once_clears() {
     once(|| { print(r + 1)
  v.clear() })
 }
+// Clean: a callee calls the function parameter in a closure that runs once.
+fn with_cb(f: fn()) {
+    let g = || f()
+    g()
+}
+fn timed(f: fn()) { run(|| f()) }
+fn nested_once(f: fn()) {
+    let h = || {
+        let g = || f()
+        g()
+    }
+    h()
+}
+fn wrappers_clear() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    with_cb(|| { print(r + 1)
+ v.clear() })
+    v.push(2)
+    let r = &v[0]
+    timed(|| { print(r + 1)
+ v.clear() })
+    v.push(3)
+    let r = &v[0]
+    nested_once(|| { print(r + 1)
+ v.clear() })
+}
+// Clean: a callee that stores the closure and calls the stored value two
+// times, with a closure that only reads.
+struct Keep { f: fn() }
+fn keep_twice(f: fn()) {
+    let k = Keep { f: f }
+    let g = k.f
+    g()
+    g()
+}
+fn kept_reads() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    keep_twice(|| print(r + 1))
+}
+// Clean: the containers hold closures that do not clear.
+fn containers_read() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    twice_tuple((|| print(r + 1), 1))
+    twice_struct(H { f: || print(r + 1) })
+    twice_option(Some(|| print(r + 1)))
+    let fs = Vec.new()
+    fs.push(|| print(r + 1))
+    twice_vec(fs)
+    twice_wrap(Wrap { x: || print(r + 1) })
+    run(wrap(|| print(r + 1)))
+}
 
 // The clean cases run.
 fn main() {
     twice_reads()
     twice_pushes()
     once_clears()
+    wrappers_clear()
+    kept_reads()
+    containers_read()
 }

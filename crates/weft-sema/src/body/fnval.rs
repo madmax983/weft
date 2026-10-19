@@ -109,6 +109,8 @@ pub(super) struct Applied {
     pub given: Vec<Given>,
     /// The body around the node.
     pub scope: Scope,
+    /// The node is in a loop: it can run more than once.
+    pub in_loop: bool,
 }
 
 /// A function value with its effect row.
@@ -134,6 +136,23 @@ pub(super) enum Callee {
     Item(FnId),
     /// A function value.
     Value(FnInfo),
+}
+
+/// Returns, for each node, true if a path leads to it from a successor of a node
+/// of `from`.
+fn after_nodes(succ: &[Vec<NodeId>], from: &[NodeId]) -> Vec<bool> {
+    let mut seen = vec![false; succ.len()];
+    let mut work: Vec<NodeId> = from
+        .iter()
+        .flat_map(|n| succ[n.index()].iter().copied())
+        .collect();
+    while let Some(a) = work.pop() {
+        if std::mem::replace(&mut seen[a.index()], true) {
+            continue;
+        }
+        work.extend(succ[a.index()].iter().copied());
+    }
+    seen
 }
 
 /// Where a place of a summary is rooted.
@@ -493,11 +512,13 @@ impl Lower<'_> {
         // the node.
         self.note_abort_ctx(n);
         let scope = self.scope_now();
+        let in_loop = !self.loops.is_empty();
         self.applied.push(Applied {
             summary: s,
             node: n,
             given: given.to_vec(),
             scope,
+            in_loop,
         });
         // The captured variables can have new values here.
         let at_run = !self.lowered;
@@ -523,6 +544,20 @@ impl Lower<'_> {
             for (q, _) in self.places_of(&sum, p, root, given) {
                 self.point_local(l, q);
             }
+        }
+        // The value puts what it gets behind a reference parameter of the
+        // function or into an `rc` object.
+        let at = self.facts.node(n).span;
+        for &(to, p, _) in &sum.param_stores {
+            if !matches!(self.rooted(&sum, p), Rooted::Param(..)) {
+                continue;
+            }
+            let qs: Vec<PlaceId> = self
+                .places_of(&sum, p, root, given)
+                .into_iter()
+                .map(|(q, _)| q)
+                .collect();
+            self.note_stored_as(to, &qs, at, false);
         }
         for e in &sum.escapes {
             self.facts.escapes_at.push((n, e.clone()));
@@ -875,15 +910,16 @@ impl Lower<'_> {
     pub(super) fn reach(&mut self, n: NodeId, given: &[Given], again: bool) {
         self.note_abort_ctx(n);
         let scope = self.scope_now();
+        let in_loop = !self.loops.is_empty();
         self.reaches.push(Reach {
             node: n,
             given: given.to_vec(),
             scope,
             again,
         });
-        let nested = !self.loops.is_empty() || self.frames.iter().any(|f| f.barrier.is_some());
+        // A node in a closure counts at the end of the body (`reach_repeats`).
         self.reach_runs.0 += 1;
-        self.reach_runs.1 |= again || nested;
+        self.reach_runs.1 |= again || in_loop;
     }
 
     /// Returns true if a node that can run a stored value can come after another
@@ -917,15 +953,45 @@ impl Lower<'_> {
         }
         let escaped = self.escaped.clone();
         let applied = self.applied.clone();
+        // A stored value is there only after the node that stores it. A node
+        // before the store, and not after it, runs the closure, not the stored
+        // value. A node of another part of the graph, such as the handled body
+        // of a clause that stores the value, can run it.
+        let succ = self.successors();
+        let mut pred = vec![Vec::new(); succ.len()];
+        for &(a, b) in &self.facts.cfg_edge {
+            pred[b.index()].push(a);
+        }
+        let early: Vec<Option<Vec<bool>>> = escaped
+            .iter()
+            .map(|st| {
+                let v = st.var?;
+                let stores: Vec<NodeId> = self
+                    .facts
+                    .rebound_at
+                    .iter()
+                    .filter(|(x, _)| *x == v)
+                    .map(|&(_, n)| n)
+                    .collect();
+                let after = after_nodes(&succ, &stores);
+                let before = after_nodes(&pred, &stores);
+                Some(before.iter().zip(&after).map(|(&b, &a)| b && !a).collect())
+            })
+            .collect();
+        let is_after = |k: usize, n: NodeId| {
+            early[k]
+                .as_ref()
+                .is_none_or(|e| !e.get(n.index()).copied().unwrap_or(false))
+        };
         // A call of a closure that the body stores uses what the closure captures,
         // also when the value comes back from the store with its type only.
-        for st in &escaped {
+        for (k, st) in escaped.iter().enumerate() {
             let (Some(v), Some(s)) = (st.var, st.info.summary) else {
                 continue;
             };
             let members = self.closures[s].members.clone();
             for a in &applied {
-                if !self.closures[a.summary].members.is_disjoint(&members) {
+                if is_after(k, a.node) && !self.closures[a.summary].members.is_disjoint(&members) {
                     self.facts.uses.push((v, a.node));
                 }
             }
@@ -941,12 +1007,26 @@ impl Lower<'_> {
             if !seen.insert(key) {
                 continue;
             }
-            for st in &escaped {
+            for (k, st) in escaped.iter().enumerate() {
+                if !is_after(k, r.node) {
+                    continue;
+                }
                 self.apply_value(r.node, &st.info, st.row.as_deref(), 800, &r.given);
                 self.note_repeat(r.node, &st.info, false);
-                // A node that runs the value more than once starts its tasks again.
+                // A node that runs the value more than once starts its tasks
+                // again. It runs the value again right after the first run. A
+                // change of the first run can invalidate what the value captures
+                // for the second run (W0301).
                 if r.again {
                     self.restart_after(r.node, &st.info);
+                    if let Some(v) = st.var {
+                        let again = self.insert_after(
+                            r.node,
+                            "call again",
+                            "the callee can call it again".into(),
+                        );
+                        self.facts.uses.push((v, again));
+                    }
                 }
                 // The value uses what it captures, and it points into it as an argument does.
                 if let Some(v) = st.var {
@@ -1137,16 +1217,14 @@ impl Lower<'_> {
     // Returned function values
     // -----------------------------------------------------------------------
 
-    /// Returns what a call of the returned function value does, in the places of
-    /// the parameters. `bases` are the places of the parameters.
     /// Returns the function parameters that a call of the returned value `u` can
     /// call more than once: at two nodes, in a loop or in a closure inside it. A
     /// value that runs a function value that it holds more than once runs each
     /// parameter that it can call more than once.
     fn ret_repeats(u: &Summary) -> BTreeSet<usize> {
         let mut out = BTreeSet::new();
-        for &(p, again) in &u.param_calls {
-            if again || u.param_calls.iter().filter(|(q, _)| *q == p).count() > 1 {
+        for &(p, again, _) in &u.param_calls {
+            if again || u.param_calls.iter().filter(|e| e.0 == p).count() > 1 {
                 out.insert(p);
             }
         }
@@ -1156,6 +1234,8 @@ impl Lower<'_> {
         out
     }
 
+    /// Returns what a call of the returned function value does, in the places of
+    /// the parameters. `bases` are the places of the parameters.
     pub(super) fn ret_sig(&self, bases: &[Vec<PlaceId>]) -> Option<Box<RetFn>> {
         if self.rets.is_empty() {
             return None;

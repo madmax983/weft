@@ -293,7 +293,7 @@ impl Lower<'_> {
             stores: sum.stores.to_set(),
             reaches: !self.reaches.is_empty(),
             reach_given: self.reach_sig(bases),
-            reach_repeats: self.reach_runs.1 || (self.reach_runs.0 > 1 && self.reaches_follow()),
+            reach_repeats: self.reach_repeats(),
             multi: self.unknown_multi,
             tasks: sum.tasks.to_set(),
             fn_stores: sum.fn_stores.to_set(),
@@ -308,6 +308,7 @@ impl Lower<'_> {
             repeats: self.repeats_sig(),
             ret_refs: self.ret_refs_sig(bases),
             group_stores: self.group_stores.clone(),
+            fn_store_refs: self.fn_store_refs_sig(bases),
             ..EffectSig::default()
         };
         let mut changed: Vec<PlaceId> = sum.muts.iter().copied().collect();
@@ -374,6 +375,21 @@ impl Lower<'_> {
         Some(out)
     }
 
+    /// Returns the places that the closures behind each reference parameter
+    /// point into, in the places of the parameters (`EffectSig::fn_store_refs`).
+    fn fn_store_refs_sig(&self, bases: &[Vec<PlaceId>]) -> Vec<(usize, SigPlace)> {
+        let mut out = Vec::new();
+        for &(j, p) in &self.fn_store_places {
+            let Some(sp) = self.sig_place(p, bases) else {
+                continue;
+            };
+            if !out.contains(&(j, sp.clone())) {
+                out.push((j, sp));
+            }
+        }
+        out
+    }
+
     /// Returns the steps of place `p` from its root, each with its text, so that a
     /// caller shows the place as the body names it. A split side becomes an element step.
     pub(super) fn sig_steps(&self, p: PlaceId) -> Vec<SigStep> {
@@ -424,8 +440,8 @@ impl Lower<'_> {
             // An ill-typed value gets no second error for its places. The check
             // comes after the body: an operation result gets its places there.
             if typed {
-                self.returned
-                    .push((v.refs.clone(), v.summary.is_some(), span));
+                let refs = self.with_fn_refs(v.clone()).refs;
+                self.returned.push((refs, v.summary.is_some(), span));
             }
         }
     }
@@ -1055,13 +1071,14 @@ impl Lower<'_> {
         }
         // A reference behind a reference parameter: the caller keeps it. A
         // self-reference field has its own check (W0605).
-        if op == AssignOp::Assign
-            && lv.through_ref
-            && !v.refs.is_empty()
-            && self.field_referents(target).is_none()
-        {
+        if op == AssignOp::Assign && lv.through_ref && self.field_referents(target).is_none() {
+            let closure = matches!(self.inf.shallow(&v.ty), Ty::Fn(_));
             for &p in &lv.places {
-                self.note_stored_behind(p, &v.refs, value.span);
+                if closure {
+                    self.note_stored_fn(p, &v, value.span);
+                } else {
+                    self.note_stored_behind(p, &v.refs, value.span);
+                }
             }
         }
         // A function value in a field or an element: the body does not follow it.
@@ -1086,12 +1103,14 @@ impl Lower<'_> {
                 self.retire_holders(l, &lv.places);
                 (!v.refs.is_empty()).then(|| {
                     if let Some(h) = same {
-                        self.part_holders.push(super::PartHolder {
+                        let holder = super::PartHolder {
                             local: l,
                             places: lv.places.clone(),
                             var: h,
                             refs: v.refs.clone(),
-                        });
+                        };
+                        self.holder_log.push(holder.clone());
+                        self.part_holders.push(holder);
                         return h;
                     }
                     let name = format!("value in `{}`", self.place_text(&lv.places));
@@ -1102,12 +1121,14 @@ impl Lower<'_> {
                     for &p in &v.refs {
                         self.facts.points_into.push((h, p));
                     }
-                    self.part_holders.push(super::PartHolder {
+                    let holder = super::PartHolder {
                         local: l,
                         places: lv.places.clone(),
                         var: h,
                         refs: v.refs.clone(),
-                    });
+                    };
+                    self.holder_log.push(holder.clone());
+                    self.part_holders.push(holder);
                     h
                 })
             }

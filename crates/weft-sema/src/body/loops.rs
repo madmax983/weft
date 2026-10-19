@@ -831,6 +831,14 @@ impl Lower<'_> {
             work: _,
             // The values of the captures of each closure, by closure index.
             cap_values: _,
+            // Only grows: an old holder adds places, as an old value of a local does.
+            holder_log: _,
+            // Only grows: a store of an old pass adds places that the last pass has too.
+            late_stores: _,
+            // Empty until the end of the body.
+            fn_store_places: _,
+            // Only grows: a store of an old pass adds places that the last pass has too.
+            held_fns: _,
             // Empty between the nodes.
             late_stack: _,
             // False until the end of the body.
@@ -990,6 +998,10 @@ impl Lower<'_> {
             held_of: _,
             work: _,
             cap_values: _,
+            holder_log: _,
+            late_stores: _,
+            fn_store_places: _,
+            held_fns: _,
             late_stack: _,
             lowered: _,
             returned_places: _,

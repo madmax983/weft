@@ -67,14 +67,27 @@ Status: accepted. Date: 2026-10-18.
   argument of its operation more than once.
 - Such a call runs the closure two times in a row: a node right after the call uses the
   closure again. So a change in the first run that invalidates what the closure
-  captures is W0301 at the call, as for `g(); g()`. A call of a function parameter in a
-  closure counts where the closure runs. A function that only returns the closure
-  does not run it: the value that it returns has a `repeats` part of its own
-  (`RetFn::repeats`), and a call of that value runs it two times in a row.
+  captures is W0301 at the call, as for `g(); g()`. A function that only returns the
+  closure does not run it. The value that it returns has a `repeats` part of its own
+  (`RetFn::repeats`). A call of that value runs it two times in a row, and so does a
+  callee or a task that gets that value.
+- A call of a function parameter in a closure counts where the closure runs. It is
+  part of `repeats` if the closure can run more than once. That is so if the body
+  stores the closure or runs it at two nodes. It is so if the closure runs in a loop
+  or at a node that can run it again. It is so if it runs in a closure or a clause
+  that can run more than once. A closure that runs once does not count. An example is
+  the closure of `fn timed(f: fn()) { run(|| f()) }`.
+- A callee can get the closure inside a value: a tuple, a struct, an `Option`, a `Vec`
+  or a generic struct. Then the closure is a stored value of the caller (ADR 0005).
+  The callee can run such a value more than once (`reach_repeats`): a node right after
+  the call uses the stored closure again (W0301). `reach_repeats` counts a node in a
+  closure only if the closure can run more than once. A stored value is there only
+  after the node that stores it, so a node before the store does not run it.
 - A node that can run a stored closure more than once starts its tasks again after it
   (W0405). These nodes are:
-  - A call of a callee whose body can run a stored value in a loop or in a closure.
-    Two nodes where one can follow the other count too (the `reach` part).
+  - A call of a callee whose body can run a stored value in a loop or in a closure
+    that can run more than once. Two nodes where one can follow the other count too
+    (the `reach` part).
   - A call of a function with no body.
   - A call of a function value that the body does not know, with an argument that
     holds a function value.
@@ -142,9 +155,9 @@ Status: accepted. Date: 2026-10-18.
   - A call that can run its function argument again uses the argument again after
     each change at the call. The change can be one of the callee, not of the first
     run, and the callee can run the closure before it.
-  - `repeats` counts a call in a closure or in a loop, and a call at two nodes, also
-    on two branches of an `if`. The `reach` part counts two nodes only if one can
-    follow the other.
+  - `repeats` counts a call in a loop and a call at two nodes, also on two branches
+    of an `if`. It counts a call in a closure that runs at two nodes the same way. The
+    `reach` part counts two nodes only if one can follow the other.
   - W0314 counts each function value that a task holds or captures, also when the
     task does not call it. It counts each function value in an argument of a
     parameter in `tasks`, also when the task runs another one.

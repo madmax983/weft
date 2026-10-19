@@ -162,33 +162,46 @@ Status: accepted. Date: 2026-10-18.
   closure can leave the scope. A closure that captures another value cannot outlive the
   variable (W0204, W0301). A temporary of plain data stays readable too, as a constant
   does. A reference into a local of plain data is still invalid after the scope.
-- A closure refers to the cells of the variables that it captures by reference, so it
+- A closure refers to the cells of the variables that it captures by reference. So it
   reads each variable when it runs, not when it is made. The lowering of the closure
   body uses the values that the variables have where the closure is made. So each node
-  where the closure runs joins the values that the variables have there: a call, a call
-  that takes the closure, a spawn, and a node that runs a stored value. For a variable
-  with a place that it did not have where the closure was made, the node uses the
-  variable (W0301), and it mutates, reads and lends the places of the closure below the
-  old places, moved onto the new places (W0301, W0402). For a function variable with
-  another value, the node runs that value where the closure runs the variable, with the
-  places that the closure gives it there. If that value runs only once, so does the
-  closure (W0502). A variable that the closure gives to a `@ uniq` parameter must still
-  be `@ uniq` at the node (W0406). A task runs while its parent goes on: at the end of
-  the body, its spawn node joins each value that its captured variables get, and the
-  task writes and reads what they reach (W0405).
-- A closure that moves a captured variable takes the value when the closure is made: a
-  by-value capture, as Rust infers it. The facts move the variable at the node that
-  makes the closure (`moved_at`), and the interpreter moves the value into a cell of the
-  closure there. Semantic analysis gives the interpreter these captures for each
-  closure span (`FnFacts::by_value`), so the two sides agree by construction. A new
+  where the closure runs joins the values that the variables have there. These nodes
+  are a call, a call that takes the closure, a spawn, and a node that runs a stored
+  value. The joins are these:
+  - A variable can have a place that it did not have where the closure was made. Then
+    the node uses the variable (W0301). The places of the closure below the old places
+    move onto the new places. The node mutates, reads and lends them there (W0301,
+    W0402).
+  - A part of a captured local can get a new reference, as in `t.0 = &x`. The node
+    uses the hidden variable of the part too, and the new places count as above.
+  - A function variable can have another value. Then the node runs that value where the
+    closure runs the variable, with the places that the closure gives it there. If that
+    value runs only once, so does the closure (W0502).
+  - A function variable with the same value can run a closure whose own captures have
+    new values. The node joins them too, through each level of closures.
+  - A variable that the closure gives to a `@ uniq` parameter must still be `@ uniq` at
+    the node (W0406).
+  - A task runs while its parent goes on. At the end of the body, its spawn node joins
+    each value that its captured variables get. The task writes and reads what they
+    reach (W0405).
+- A closure that leaves the body keeps the values that its captures have later. A
+  returned closure points into the places that its captures have at the return. A new
+  place in a local is W0204. A new place in a parameter is part of `ret_refs` for the
+  caller. A closure can go behind a reference parameter or into an `rc` object. It then
+  points into the places that its captures have at the end of the body (W0204).
+- A closure that moves a captured variable takes the value when the closure is made.
+  This is a by-value capture, as Rust infers it. The facts move the variable at the
+  node that makes the closure (`moved_at`). The interpreter moves the value into a cell
+  of the closure there. Semantic analysis gives the interpreter these captures for each
+  closure span (`FnFacts::by_value`). So the two sides agree by construction. A new
   value of the variable after that point stays in the variable. The closure has the
   value also if it never runs, so a use of the variable after that point is W0302. The
-  closure uses its other captures after the move: a capture that points into the moved
-  value is not valid in the closure (W0301). An inner closure that moves a capture
-  makes each closure around it take the value too. A capture of a handler clause in a
-  closure is a capture of the closure only if the closure does not declare it.
-  Such a closure still cannot leave the scope of the variable (W0204, W0301): its type
-  does not show that it runs only once or that it holds a linear value. This is
+  closure uses its other captures after the move. So a capture that points into the
+  moved value is not valid in the closure (W0301). An inner closure that moves a
+  capture makes each closure around it take the value too. A capture of a handler
+  clause in a closure is a capture of the closure only if the closure does not declare
+  it. Such a closure still cannot leave the scope of the variable (W0204, W0301). Its
+  type does not show that it runs only once or that it holds a linear value. This is
   conservative. A task closure does the same (ADR 0006).
 - A field, an element or a part of a tuple can hold a reference. A place below it,
   such as `t.0.kids` for `t: (&Entity, &Entity)`, is a place where that reference
@@ -209,16 +222,30 @@ Status: accepted. Date: 2026-10-18.
   value holds references gives them too. The call can mutate such an argument. Then
   it can keep the references of the other arguments: `rs.push(&x)` makes `rs` point
   into `x`.
-- A function value in a call result points where the arguments can flow too: a returned
-  closure can capture a reference argument. The body of the callee infers the places
-  of its parameters that the function values in its result point into
-  (`EffectSig::ret_refs`), and the caller puts in the places of its arguments. A
-  function argument can be in the result, so the result points where it points. A
-  function with no body, and a function value that the body does not know, can
-  capture a place anywhere inside each reference argument (its wildcard place). A
-  call of the result uses these places (W0301). A function value that a callee copies
-  out of a place behind a reference argument is a stored value: each node that can
-  run it uses what it captures (ADR 0005).
+- A function value in a call result points where the arguments can flow too. A
+  returned closure can capture a reference argument. The body of the callee infers the
+  places of its parameters that the function values in its result point into
+  (`EffectSig::ret_refs`). The caller puts in the places of its arguments. A function
+  argument can be in the result, so the result points where it points. A function
+  with no body can capture a place anywhere inside each reference argument (its
+  wildcard place). So can a function value that the body does not know. A call of the
+  result
+  uses these places (W0301). A function value that a callee copies out of a place
+  behind a reference argument is a stored value. Each node that can run it uses what
+  it captures (ADR 0005).
+- The result can hold the closure in a container, a part or a field, as in
+  `o.push(|| ...)` and a return of `o`. A local keeps the closures that the body puts
+  into its containers. A part of a local keeps its new value in a hidden variable. A
+  return of the local returns their places too. A tuple, a struct or an array literal
+  points where the closures in its parts point, also through such a local. A local
+  container that gets a closure does not point into its captures itself. The stored
+  closure has a variable of its own from the store on (ADR 0005).
+- A callee can put a closure behind a reference argument, as in `o.push(|| v.len())`
+  for `o: &Vec<fn()>`. The body infers the places of its parameters that such a closure
+  points into (`EffectSig::fn_store_refs`). The argument of the caller points into the
+  places of its arguments there, from the call on. A local that owns the argument gets
+  a hidden variable for them, as for a new value of a part. A place behind a reference
+  parameter or in an `rc` object of the caller keeps them for its own caller (W0204).
 - A new value of a part of a local, such as `w.x = &b[0]`, points where it points from
   that node on. A hidden variable holds it, and each use of the local uses it. A later
   new value of the same part, of a part around it, or of the whole local replaces it.
@@ -247,15 +274,28 @@ Status: accepted. Date: 2026-10-18.
   (W0204). This also holds for a result of an operation that points into a local of a
   clause.
 - The same holds for a reference that a function puts into an `rc` object, at a place
-  under an `rc` group root: each function with a handle can read it after the return,
+  under an `rc` group root. Each function with a handle can read it after the return,
   as a global. A callee that puts a reference that a parameter gives into an `rc`
-  object has that parameter in a `group_stores` part of its signature, so its caller
+  object has that parameter in a `group_stores` part of its signature. So its caller
   checks the argument at the call, as `call_flows` does for a reference parameter. A
-  foreign function that changes an `rc` type can put each argument there. The
-  borrowing proof assumes that no reference is stored in the heap (the "no back
-  channels" assumption of `proofs/borrowing/README.md`). The checker mirrors that
-  assumption for references behind reference parameters and in `rc` objects: such a
-  reference cannot point into a local of a function that has returned.
+  foreign function that changes an `rc` type can put each argument there.
+- A closure points into what it captures. A closure that goes behind a reference
+  parameter or into an `rc` object counts as a reference to its captures. It can go
+  there by a push into a container, by a field assignment, or by a callee. A callee
+  that puts a function parameter into an `rc` object has it in `group_stores`. A
+  closure or a handler clause can put its own reference parameter there. Then each node
+  that runs it puts the places that it gives (`Summary::param_stores`). These nodes are
+  a call, a call that takes the closure, and a node that performs the operation.
+- A reference into an object behind a local `Rc` handle depends on the handle. The
+  object can go away with the handle. So a store of such a reference behind a
+  reference parameter is W0204. A store into an `rc` object of another type is W0204
+  too. This is the same as for a returned reference. A handle of the `rc` type of the
+  store can be a handle of the object itself. So a reference into that type is
+  allowed.
+- The borrowing proof assumes that no reference is stored in the heap. This is the
+  "no back channels" assumption of `proofs/borrowing/README.md`. The checker mirrors
+  it for references and closures behind reference parameters and in `rc` objects.
+  They cannot point into a local of a function that has returned.
 - Evaluation order follows the interpreter: arguments and operands run from left to
   right. A by-value argument moves when it is evaluated, so `f(v, v.len())` is a use
   after move. A hidden variable holds the value on its way to the call while the later
@@ -281,10 +321,21 @@ Status: accepted. Date: 2026-10-18.
   only its receiver. A call of a function, also with the reference as its only
   argument, can invalidate the reference by the wildcard rules, as before.
 - A node that runs a closure moves each place of the closure below an old place of a
-  captured variable onto each new place, also when the place comes from another
-  capture that points there too. A task gets the new values of its captured variables
-  also from before its spawn and after its join. A node that runs a stored value joins
-  the values that the variables have at the end of the body.
+  captured variable onto each new place. This also moves a place that comes from
+  another capture that points there too. A task gets the new values of its captured
+  variables also from before its spawn and after its join. A node that runs a stored
+  value joins the values that the variables have at the end of the body. A stored
+  closure points into each value that its captures get after the closure is made,
+  also a value that a later change replaces. A returned local holds each closure that
+  the body puts into a container of it, also one that a later change removes.
+- A reference can go into an `rc` object through a handle of the same `rc` type. This
+  is allowed, also when the handle refers to another object. Such a reference can
+  dangle when that object goes away.
+- A closure or a clause can put its reference parameter behind a reference parameter
+  or into an `rc` object. The check covers only the nodes that run it in the body. A
+  function value does not state where the references that it gets live. So the check
+  does not cover unknown code that runs such a closure. It does not cover a callee
+  that gives it a reference into its own local either.
 - `points_into` is not flow-sensitive. A reference that got a place inside a block, and
   then a place outside it before the block ends, is still invalid after the end. This
   is the same imprecision as for mutations.

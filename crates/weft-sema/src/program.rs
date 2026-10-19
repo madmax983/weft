@@ -320,6 +320,12 @@ pub struct EffectSig {
     /// object stays after the return, so a caller must not give a reference into
     /// its own local there (W0204). The body always infers this part.
     pub group_stores: BTreeSet<(usize, usize)>,
+    /// The places that the closures that the body puts behind a reference
+    /// parameter point into, in the places of the parameters. Each has the
+    /// parameter and the place. A caller's argument there points into them too,
+    /// as for a reference that the body puts there. The body always infers this
+    /// part.
+    pub fn_store_refs: Vec<(usize, SigPlace)>,
     /// Type parameters, by index in `FnSig::generics`, of the values that the
     /// body can drop. On some path, a value of such a type goes out of scope or
     /// gets a new value. A caller that gives a linear type there loses a value

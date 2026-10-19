@@ -79,6 +79,48 @@ fn vec_first(world: &World) / mut(world.entities) {
     g()
     print(first.hp)   //~ W0301
 }
+// Two closures that meet in a tuple type: at a part or a new value of a tuple
+// local, in a `Vec` or an array of tuples, and in a generic field.
+fn tuple_part(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let t = (|| print(1), 1)
+    t.0 = || world.entities.clear()
+    let g = t.0
+    g()
+    print(first.hp)   //~ W0301
+}
+fn tuple_whole(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let t = (1, || print(1))
+    t = (2, || world.entities.clear())
+    let (n, g) = t
+    g()
+    print(first.hp)   //~ W0301
+}
+fn tuple_in_vec(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let v = Vec.new()
+    v.push((1, || print(1)))
+    v.push((2, || world.entities.clear()))
+    let (n, g) = v[1]
+    g()
+    print(first.hp)   //~ W0301
+}
+fn tuple_in_array(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let a = [(1, || print(1)), (2, || world.entities.clear())]
+    let (n, g) = a[1]
+    g()
+    print(first.hp)   //~ W0301
+}
+fn tuple_in_wrap(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let w = Wrap { x: (|| print(1), 1) }
+    w.x.0 = || world.entities.clear()
+    let g = w.x.0
+    g()
+    print(first.hp)   //~ W0301
+}
 
 // Clean: no closure changes what `first` points into.
 fn vec_reads(world: &World) / mut(world.entities) {
@@ -110,6 +152,21 @@ fn once_once() {
     let g = v[1]
     g()
 }
+// Clean: the closure in the tuple that changes the place is the only one,
+// and the reference is taken after it runs.
+fn tuple_then_ref(world: &World) / mut(world.entities) {
+    let v = Vec.new()
+    v.push((1, || print(1)))
+    v.push((2, || world.entities.clear()))
+    let (n, g) = v[1]
+    g()
+    world.entities.push(Entity { hp: 1 })
+    let first = &world.entities[0]
+    let t = (|| print(first.hp), 1)
+    t.0 = || print(first.hp + 1)
+    let h = t.0
+    h()
+}
 
 fn mkw() -> World {
     let w = World { entities: Vec.new() }
@@ -123,4 +180,6 @@ fn main() {
     let w = mkw()
     vec_then_ref(&w)
     once_once()
+    let w = mkw()
+    tuple_then_ref(&w)
 }

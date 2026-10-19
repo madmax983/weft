@@ -168,6 +168,36 @@ fn w0301_is_reported_once_for_each_use_and_mutation() {
     let d = diags(src, "W0301");
     assert_eq!(d.len(), 1, "{d:?}");
     assert_eq!(d[0].message, "the closure used after it was invalidated");
+    // The iterators of two nested loops have different use nodes: two errors,
+    // also though the span of the outer loop holds the inner loop.
+    let src = "fn f(v: &Vec<u64>) / mut(v) {
+    for x in v[] {
+        for y in v[] {
+            v.push(1)
+        }
+    }
+}
+";
+    let d = diags(src, "W0301");
+    assert_eq!(d.len(), 2, "{d:?}");
+    // A callee that stores the closure and runs it two times: one error, from
+    // the second run. The stored value is not there before the call.
+    let src = "struct Wrap { f: fn() }
+fn st(f: fn()) { let w = Wrap { f: f }
+ let g = w.f
+ g()
+ g() }
+fn g() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    st(|| { print(r + 1)
+ v.clear() })
+}
+";
+    let d = diags(src, "W0301");
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(d[0].message, "the closure used after it was invalidated");
 }
 
 #[test]
