@@ -58,7 +58,7 @@ Status: accepted. Date: 2026-10-18.
   that grows past the bound shows a checker bug: the inference stops, and each
   function whose signature can still change gets W0706, an error.
 - The other parts of a signature (`lent`, `ret`, `stores`, `reach`, `multi` and `tasks`,
-  see below and ADR 0006) are not part of the row. The body always infers them, also when the signature
+  see below and ADR 0006, and `drops`, see ADR 0007) are not part of the row. The body always infers them, also when the signature
   states the row, and each new lowering replaces them. They do not only grow: a part
   that is not known yet can be larger than its final value. So the parts of one
   function can change at most 32 times and two more times for each function

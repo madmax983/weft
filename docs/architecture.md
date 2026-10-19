@@ -64,8 +64,9 @@ value does, which function parameters it stores, whether it can run a stored fun
 value, what it gives to that value, whether an unknown function value that it calls
 can resume more than once, which function parameters a task of the body can call,
 which function parameters it gives to an operation of a handler of a caller, which
-effects its tasks perform through a handler of a caller, and which function parameters
-it can call more than once. A new lowering replaces these parts, so they do not only
+effects its tasks perform through a handler of a caller, which function parameters
+it can call more than once, and which by-value parameters of a type parameter it can
+drop (ADR 0007). A new lowering replaces these parts, so they do not only
 grow. The parts of one function can change at most 32 times and two more times for
 each function (`infer::parts_limit`). After that, the inference keeps the last parts
 of that function, and its callers use them. Its row can still grow. A function whose
