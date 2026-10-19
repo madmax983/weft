@@ -23,8 +23,11 @@ struct Shape {
 }
 
 fn step(kind: u8, id: u8, unstable: bool) -> Step {
-    if kind % 7 == 6 {
-        return weft_facts::WILD;
+    // Wildcard places, and one-place wildcard places of two instances.
+    match kind % 9 {
+        7 => return weft_facts::WILD,
+        8 => return weft_facts::wild_one(u32::from(id % 2)),
+        _ => {}
     }
     let id = u32::from(id % 3);
     let kind = match kind % 6 {

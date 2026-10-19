@@ -9,6 +9,26 @@
 use super::{Lower, PlaceId, Ty};
 
 impl Lower<'_> {
+    /// Returns a new instance of one-place wildcard places for the result of a
+    /// call, if the result is one reference: a `&T` or an `Option<&T>` where `T`
+    /// holds no reference. The call must be in the body of the function, not in
+    /// a closure or a clause, which can run more than once with one lowering. A
+    /// loop lowers its body again, with new instances, so a result of an
+    /// iteration before has another instance (`stmt::lower_loop`).
+    pub(super) fn one_result(&mut self, ret: &Ty) -> Option<u32> {
+        let one = |me: &Self, t: &Ty| match me.inf.shallow(t) {
+            Ty::Ref(inner) => !me.holds_refs(&inner),
+            _ => false,
+        };
+        let single = match self.inf.shallow(ret) {
+            Ty::Adt(a, args) if Some(a) == self.b.option => {
+                args.first().is_some_and(|t| one(self, t))
+            }
+            t => one(self, &t),
+        };
+        (single && self.scope_now() == super::fnval::Scope::Function).then(|| self.fresh_split())
+    }
+
     /// Returns the places that the values at places `ps` point into: the
     /// references that the locals and the temporaries at these places hold. The
     /// read uses these locals, so a reference in them that is not valid is an
@@ -95,19 +115,24 @@ impl Lower<'_> {
     /// type lets the callee make a reference to any place inside the argument.
     /// A by-value parameter of a type parameter passes the value on as it is. `pointee`
     /// is the type behind a reference argument: if it holds references, the
-    /// callee can read them too.
+    /// callee can read them too. With `one`, the place inside the argument is
+    /// the one-place wildcard place of that instance (`Lower::one_result`).
     pub(super) fn flow_refs(
         &mut self,
         declared: &Ty,
         refs: &[PlaceId],
         pointee: Option<&Ty>,
         reach: bool,
+        one: Option<u32>,
     ) -> Vec<PlaceId> {
         let (named, deps) = self.split_deps(refs);
         let mut out = Vec::new();
         if reach && self.holds_refs(declared) {
             for &p in &named {
-                out.push(self.facts.wildcard(p));
+                out.push(match one {
+                    Some(k) => self.facts.wildcard_one(p, k),
+                    None => self.facts.wildcard(p),
+                });
             }
             out.extend(deps);
         } else if !declared.is_ref() && mentions_param(declared) {

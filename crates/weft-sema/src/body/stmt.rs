@@ -359,7 +359,11 @@ impl Lower<'_> {
         while let Some(parent) = self.facts.place(at).parent {
             let info = self.facts.place(at);
             if let Some(&s) = info.steps.last() {
-                let step = if let StepKind::Seg { .. } = s.kind {
+                // A wildcard place, also one of one call result, is `..` for a
+                // caller: the caller makes its own places.
+                let step = if weft_facts::is_wild_step(&s) {
+                    SigStep::Wild
+                } else if let StepKind::Seg { .. } = s.kind {
                     let elem = weft_facts::Step {
                         kind: StepKind::Elem,
                         unstable: s.unstable,

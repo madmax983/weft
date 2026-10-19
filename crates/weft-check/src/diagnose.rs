@@ -160,7 +160,13 @@ pub fn diagnose(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
                     (true, None) => format!("{} : mut({mutated})", at.label),
                     (false, _) => format!("{} : {}", at.label, at.detail),
                 };
+                // Inside one one-place wildcard place, rule 3 compares the steps.
+                let one = f.one_place_of(m);
+                let same = one.is_some() && one == f.one_place_of(inv.path);
                 let why = match (f.wild_base(inv.path), f.wild_base(m)) {
+                    _ if same => format!(
+                        "{mutated} is a strict prefix of {path}, through an unstable step  →  invalidated at line {{line:{line}}}"
+                    ),
                     (Some(b), _) => format!(
                         "{path} can be any place inside {}, and {mutated} overlaps it  →  invalidated at line {{line:{line}}}",
                         f.place(b).display

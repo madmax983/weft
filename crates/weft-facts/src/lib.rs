@@ -78,6 +78,36 @@ pub const WILD: Step = Step {
     unstable: true,
 };
 
+/// The first field id of the steps of one-place wildcard places ([`wild_one`]).
+/// No type has a field with such an id.
+const ONE_FIRST: u32 = 1 << 31;
+
+/// The last step of the one-place wildcard place `inst`.
+///
+/// Such a place stands for one place at or below its parent: the place that
+/// one reference points to, such as the result of one call. All places at or
+/// below it are inside that one place. Two different instances can be the same
+/// place, as two wildcard places can.
+pub const fn wild_one(inst: u32) -> Step {
+    Step {
+        kind: StepKind::Field {
+            id: ONE_FIRST + inst % (u32::MAX - ONE_FIRST),
+        },
+        unstable: true,
+    }
+}
+
+/// Returns true if `s` is the last step of a wildcard place: [`WILD`] or a
+/// step of [`wild_one`].
+pub const fn is_wild_step(s: &Step) -> bool {
+    matches!(s.kind, StepKind::Field { id } if id >= ONE_FIRST) && s.unstable
+}
+
+/// Returns true if `s` is the last step of a one-place wildcard place.
+pub const fn is_one_step(s: &Step) -> bool {
+    is_wild_step(s) && !matches!(s.kind, StepKind::Field { id: u32::MAX })
+}
+
 /// What a place root is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RootKind {
@@ -116,9 +146,14 @@ pub struct PlaceInfo {
 }
 
 impl PlaceInfo {
-    /// Returns true if the last step is the wildcard step.
+    /// Returns true if the last step is a wildcard step ([`is_wild_step`]).
     pub fn is_wildcard(&self) -> bool {
-        self.steps.last() == Some(&WILD)
+        self.steps.last().is_some_and(is_wild_step)
+    }
+
+    /// Returns true if the place is a one-place wildcard place ([`wild_one`]).
+    pub fn is_one_place(&self) -> bool {
+        self.steps.last().is_some_and(is_one_step)
     }
 }
 
@@ -643,11 +678,16 @@ impl FnFacts {
         let base = self.place(parent);
         let mut steps = base.steps.clone();
         steps.push(step);
-        // A place below a wildcard place is still somewhere inside its base.
-        let display = if base.steps.contains(&WILD) {
-            base.display.clone()
-        } else {
-            format!("{}{}", base.display, text)
+        // A place below a wildcard place is still somewhere inside its base. A
+        // place below a one-place wildcard place `b..` is a place inside that
+        // one place: `(b..).x`.
+        let display = match base.steps.iter().find(|s| is_wild_step(s)) {
+            Some(w) if is_one_step(w) && base.is_one_place() => {
+                format!("({}){}", base.display, text)
+            }
+            Some(w) if is_one_step(w) => format!("{}{}", base.display, text),
+            Some(_) => base.display.clone(),
+            None => format!("{}{}", base.display, text),
         };
         let info = PlaceInfo {
             root: base.root,
@@ -669,6 +709,29 @@ impl FnFacts {
     pub fn wildcard(&mut self, p: PlaceId) -> PlaceId {
         let base = self.wild_base(p).unwrap_or(p);
         self.child(base, WILD, "..")
+    }
+
+    /// Returns the one-place wildcard place `inst` under `p` ([`wild_one`]): one
+    /// place at or below `p`. As with [`FnFacts::wildcard`], a place at or below
+    /// a wildcard place `b..` gives a place under `b`, so no place has two
+    /// wildcard steps.
+    pub fn wildcard_one(&mut self, p: PlaceId, inst: u32) -> PlaceId {
+        let base = self.wild_base(p).unwrap_or(p);
+        self.child(base, wild_one(inst), "..")
+    }
+
+    /// Returns the outermost one-place wildcard place at or above `p`. Two places
+    /// with the same one are inside one place.
+    pub fn one_place_of(&self, p: PlaceId) -> Option<PlaceId> {
+        let mut found = None;
+        let mut at = Some(p);
+        while let Some(q) = at {
+            if self.place(q).is_one_place() {
+                found = Some(q);
+            }
+            at = self.place(q).parent;
+        }
+        found
     }
 
     /// Returns the parent of the outermost wildcard step on the path of `p`.

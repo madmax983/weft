@@ -72,6 +72,9 @@ pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
         if p.is_wildcard() {
             emit("wildcard", &[s(&id)]);
         }
+        if p.is_one_place() {
+            emit("one_place", &[s(&id)]);
+        }
         if f.param_rooted(id) {
             emit("param_rooted", &[s(&id)]);
         }

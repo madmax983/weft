@@ -1049,8 +1049,10 @@ impl Lower<'_> {
             args.push((declared, refs, pointee));
         }
         if derive {
+            // One reference: a place of its own inside the arguments.
+            let one = self.one_result(ret);
             for (declared, refs, pointee) in &args {
-                let f = self.flow_refs(declared, refs, pointee.as_ref(), unstated);
+                let f = self.flow_refs(declared, refs, pointee.as_ref(), unstated, one);
                 out.refs.extend(f);
             }
             out.refs.sort();
@@ -1084,7 +1086,7 @@ impl Lower<'_> {
                 } else {
                     let f: Vec<Vec<PlaceId>> = args
                         .iter()
-                        .map(|(d, r, t)| self.flow_refs(d, r, t.as_ref(), true))
+                        .map(|(d, r, t)| self.flow_refs(d, r, t.as_ref(), true, None))
                         .collect();
                     flows = Some(f.clone());
                     f
@@ -1497,13 +1499,14 @@ impl Lower<'_> {
             }
         }
         // An unknown function can return a reference to any place inside a
-        // reference argument.
+        // reference argument. One reference is a place of its own there.
         if unknown && self.holds_refs(&fty.ret) {
+            let one = self.one_result(&fty.ret);
             for &p in arg_refs {
-                let q = if self.is_dep(p) {
-                    p
-                } else {
-                    self.facts.wildcard(p)
+                let q = match one {
+                    _ if self.is_dep(p) => p,
+                    Some(k) => self.facts.wildcard_one(p, k),
+                    None => self.facts.wildcard(p),
                 };
                 refs.push(q);
             }

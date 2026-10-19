@@ -2323,6 +2323,13 @@ impl<'p> Lower<'p> {
     /// around the node, given to a local outside the body, is a place of each call.
     fn point_local(&mut self, l: usize, p: PlaceId) {
         let var = self.locals[l].var;
+        // A local that gets the results of two calls inside one base points into
+        // the shared wildcard place of the base: else its places grow with each
+        // call, as in `cur = step(cur)`. The wildcard rules then compare them.
+        let p = match self.facts.one_place_of(p) {
+            Some(w) if self.two_results(l, w) => self.facts.wildcard(p),
+            _ => p,
+        };
         self.facts.points_into.push((var, p));
         if !self.locals[l].refs.contains(&p) {
             self.locals.get_mut(l).refs.push(p);
@@ -2338,6 +2345,17 @@ impl<'p> Lower<'p> {
                 }
             }
         }
+    }
+
+    /// Returns true if local `l` already points into a one-place wildcard place
+    /// with the base of `w` that is not `w`.
+    fn two_results(&self, l: usize, w: PlaceId) -> bool {
+        let base = self.facts.place(w).parent;
+        self.locals[l].refs.iter().any(|&q| {
+            self.facts
+                .one_place_of(q)
+                .is_some_and(|x| x != w && self.facts.place(x).parent == base)
+        })
     }
 
     /// Returns true if the closure with summary `s` can run only once. It moves a

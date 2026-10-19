@@ -13,6 +13,8 @@
 //   parent(P, Q)             place P is place Q plus one step.
 //   unstable(P)              the step into P is unstable.
 //   wildcard(P)              P stands for any place at or below its parent.
+//   one_place(P)             the wildcard place P stands for one place at or below its
+//                            parent: the place of one reference, such as one call result.
 //   step_alias(P, Q)         the last steps of P and Q can name the same memory.
 //   step_within(P, Q)        the last step of P names a subset of the last step of Q.
 //   param_rooted(P)          the root of P is a parameter of the function or an rc group.
@@ -95,6 +97,12 @@ wild_at(P, B)          :- parent(P, Q), wild_at(Q, B).
 overlaps(P, Q)         :- wild_at(P, B), overlaps(B, Q).
 overlaps(P, Q)         :- wild_at(Q, B), overlaps(P, B).
 
+// The places at or below one one-place wildcard place W are inside one place, so
+// two of them compare by their steps below W, as places with no wildcard do.
+in_one(W, W)           :- one_place(W), wildcard(W).
+in_one(P, W)           :- parent(P, Q), in_one(Q, W).
+same_one(M, P)         :- in_one(M, W), in_one(P, W).
+
 // P and D have the same depth, and each step of P names a subset of the step of D.
 pointwise(P, P)        :- place(P).
 pointwise(P, D)        :- parent(P, Q), parent(D, E), pointwise(Q, E), step_within(P, D).
@@ -123,17 +131,25 @@ frees_at(P, Rt)      :- owner(Rt, V), unwound_at(V, P).
 invalidated_at(R, P) :- points_into(R, Path), frees_at(P, M), prefix(M, Path).
 
 // A reference that can point anywhere below B is invalid after any change that
-// overlaps B. A mutation anywhere below B invalidates every reference below B.
-invalidated_at(R, P) :- points_into(R, Path), wild_at(Path, B), mutates_at(P, M), overlaps(M, B).
-invalidated_at(R, P) :- points_into(R, Path), wild_at(Path, B), frees_at(P, M), overlaps(M, B).
-invalidated_at(R, P) :- points_into(R, Path), mutates_at(P, M), wild_at(M, B), prefix(B, Path).
+// overlaps B. A mutation anywhere below B invalidates every reference strictly
+// below B; a reference to B itself survives (rule 4). These rules do not apply
+// to a change and a reference inside one one-place wildcard place: rule 3 and
+// the free rule above compare their steps (`same_one`).
+invalidated_at(R, P) :- points_into(R, Path), wild_at(Path, B), mutates_at(P, M), overlaps(M, B),
+                        !same_one(M, Path).
+invalidated_at(R, P) :- points_into(R, Path), wild_at(Path, B), frees_at(P, M), overlaps(M, B),
+                        !same_one(M, Path).
+invalidated_at(R, P) :- points_into(R, Path), mutates_at(P, M), wild_at(M, B), strict_prefix(B, Path),
+                        !same_one(M, Path).
 // A function value can mutate through each reference that it gets. Its caller sees
 // that mutation where it gives the function value, so the signature here does not
 // state it. The call invalidates references as a mutation does.
 invalidated_at(R, P) :- points_into(R, Path), lends_mut(P, M),
                         strict_prefix(M, Path), crosses_unstable(M, Path).
-invalidated_at(R, P) :- points_into(R, Path), wild_at(Path, B), lends_mut(P, M), overlaps(M, B).
-invalidated_at(R, P) :- points_into(R, Path), lends_mut(P, M), wild_at(M, B), prefix(B, Path).
+invalidated_at(R, P) :- points_into(R, Path), wild_at(Path, B), lends_mut(P, M), overlaps(M, B),
+                        !same_one(M, Path).
+invalidated_at(R, P) :- points_into(R, Path), lends_mut(P, M), wild_at(M, B), strict_prefix(B, Path),
+                        !same_one(M, Path).
 invalid(R, Q)        :- invalidated_at(R, P), cfg_edge(P, Q).
 invalid(R, Q)        :- invalid(R, P), cfg_edge(P, Q), !rebound_at(R, P).
 error(R, P)          :- uses(R, P), invalid(R, P).

@@ -95,6 +95,10 @@ struct Ctx<'a> {
     /// below it, and the place relations are closed under prefixes, so the
     /// wildcard rules need only this one.
     outer: Vec<Option<PlaceId>>,
+    /// The outermost one-place wildcard place `W` of `in_one(P, W)` by place.
+    /// Two places have a `W` in common if and only if their outermost ones are
+    /// equal, as both are on the path from the root to the common one.
+    one: Vec<Option<PlaceId>>,
     /// The calls of [`Ctx::overlaps`].
     overlaps_calls: std::cell::Cell<u64>,
 }
@@ -135,9 +139,14 @@ impl<'a> Ctx<'a> {
         }
         // A parent comes before its children.
         let mut outer: Vec<Option<PlaceId>> = Vec::with_capacity(f.places.len());
-        for p in &f.places {
+        let mut one: Vec<Option<PlaceId>> = Vec::with_capacity(f.places.len());
+        for (i, p) in f.places.iter().enumerate() {
             let above = p.parent.and_then(|q| outer[q.index()]);
             outer.push(above.or_else(|| p.parent.filter(|_| p.is_wildcard())));
+            let id = PlaceId(u32::try_from(i).unwrap_or(u32::MAX));
+            let one_above = p.parent.and_then(|q| one[q.index()]);
+            let own = (p.is_one_place() && p.is_wildcard()).then_some(id);
+            one.push(one_above.or(own));
         }
         let mut cx = Self {
             f,
@@ -148,6 +157,7 @@ impl<'a> Ctx<'a> {
             lends,
             frees: vec![Vec::new(); n],
             outer,
+            one,
             overlaps_calls: std::cell::Cell::new(0),
         };
         cx.frees = cx.frees_at();
@@ -222,16 +232,28 @@ impl<'a> Ctx<'a> {
         self.same_root(a, b) && places::overlaps(&self.f.place(a).steps, &self.f.place(b).steps)
     }
 
+    /// `strict_prefix(M, P)`: `m` can be a prefix of `p`, and `p` is longer.
+    fn strict_prefix(&self, m: PlaceId, p: PlaceId) -> bool {
+        self.f.place(m).steps.len() < self.f.place(p).steps.len() && self.prefix(m, p)
+    }
+
+    /// `same_one(M, P)`: `m` and `p` are inside one one-place wildcard place.
+    fn same_one(&self, m: PlaceId, p: PlaceId) -> bool {
+        self.one[m.index()].is_some() && self.one[m.index()] == self.one[p.index()]
+    }
+
     /// `invalidated_at` by a mutation of `m`, for a reference into `p`.
     fn mutation_kills(&self, m: PlaceId, p: PlaceId) -> bool {
         self.invalidates(m, p)
-            || (self.outer[p.index()].is_some() && self.overlaps(m, p))
-            || self.outer[m.index()].is_some_and(|b| self.prefix(b, p))
+            || (!self.same_one(m, p)
+                && ((self.outer[p.index()].is_some() && self.overlaps(m, p))
+                    || self.outer[m.index()].is_some_and(|b| self.strict_prefix(b, p))))
     }
 
     /// `invalidated_at` by a free of `m`, for a reference into `p`.
     fn free_kills(&self, m: PlaceId, p: PlaceId) -> bool {
-        self.prefix(m, p) || (self.outer[p.index()].is_some() && self.overlaps(m, p))
+        self.prefix(m, p)
+            || (!self.same_one(m, p) && self.outer[p.index()].is_some() && self.overlaps(m, p))
     }
 
     fn within(&self, p: PlaceId, d: PlaceId) -> bool {

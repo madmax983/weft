@@ -739,6 +739,72 @@ fn w0301_a_wildcard_mutation_invalidates_every_reference_below_its_base() {
 }
 
 #[test]
+fn w0301_a_wildcard_change_spares_a_reference_to_its_base() {
+    // invalidated_at(R, P) :- points_into(R, Path), mutates_at(P, M), wild_at(M, B),
+    //                         strict_prefix(B, Path), !same_one(M, Path).
+    let mut b = B::new();
+    let boxes = b.param("boxes");
+    let any = b.f.wildcard(boxes);
+    let items = b.field(any, 0, "items");
+    let r = b.var("boxes");
+    let n0 = b.node("entry");
+    b.bind(r, n0);
+    b.f.points_into.push((r, boxes));
+    let s = b.var("s");
+    b.bind(s, n0);
+    let inner = b.elem(boxes);
+    b.f.points_into.push((s, inner));
+    let n1 = b.node("b.items.push(1)");
+    b.f.mutates_at.push((n1, items));
+    let n2 = b.node("print(boxes.len())");
+    b.use_(r, n2);
+    b.use_(s, n2);
+    let v = check(&b.f).violations;
+    assert!(!v.error.contains(&(r, n2)), "{v:?}");
+    assert!(v.error.contains(&(s, n2)), "{v:?}");
+}
+
+#[test]
+fn w0301_a_change_inside_one_call_result_follows_rule_3() {
+    // same_one(M, P): a change and a reference inside one one-place wildcard
+    // place compare by their steps. Another instance uses the wildcard rules.
+    let mut b = B::new();
+    let v = b.param("v");
+    let e = b.f.wildcard_one(v, 1);
+    let other = b.f.wildcard_one(v, 2);
+    let hp = b.field(e, 0, "hp");
+    let kids = b.field(e, 1, "kids");
+    let kid = b.elem(kids);
+    let r = b.var("e");
+    let n0 = b.node("let e = find(v)");
+    b.bind(r, n0);
+    b.f.points_into.push((r, e));
+    let k = b.var("k");
+    let n1 = b.node("let k = &e.kids[0]");
+    b.bind(k, n1);
+    b.f.points_into.push((k, kid));
+    let o = b.var("o");
+    b.bind(o, n1);
+    b.f.points_into.push((o, other));
+    let n2 = b.node("e.hp -= 1");
+    b.f.mutates_at.push((n2, hp));
+    let n3 = b.node("print(e.hp, o.hp)");
+    b.use_(r, n3);
+    b.use_(o, n3);
+    let v1 = check(&b.f).violations;
+    assert!(!v1.error.contains(&(r, n3)), "{v1:?}");
+    assert!(v1.error.contains(&(o, n3)), "{v1:?}");
+    let n4 = b.node("e.kids.push(x)");
+    b.f.mutates_at.push((n4, kids));
+    let n5 = b.node("print(k.hp)");
+    b.use_(k, n5);
+    b.use_(r, n5);
+    let v2 = check(&b.f).violations;
+    assert!(v2.error.contains(&(k, n5)), "{v2:?}");
+    assert!(!v2.error.contains(&(r, n5)), "{v2:?}");
+}
+
+#[test]
 fn nested_wildcard_places_agree_with_the_spec() {
     // wild_at(P, B) for each wildcard step on the path of P. The checker uses
     // the outermost base only. Facts can still name nested wildcard places,

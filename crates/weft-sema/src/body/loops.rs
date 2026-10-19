@@ -540,6 +540,8 @@ impl Lower<'_> {
         for s in &info.steps {
             let _ = match s.kind {
                 StepKind::Seg { hi, .. } => write!(key, "/seg {hi} {}", s.unstable),
+                // A pass makes new instances: they are the same place shape.
+                _ if weft_facts::is_one_step(s) => write!(key, "/one"),
                 k => write!(key, "/{k:?} {}", s.unstable),
             };
         }

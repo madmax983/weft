@@ -164,17 +164,25 @@ fn walk(calls: usize, loops: usize, push: bool) -> String {
 /// time 2^depth: 32 calls took 47 s, and 4 loops did not finish.
 #[test]
 fn nested_wildcard_places_check_quickly() {
-    for (calls, loops) in [(32, 0), (0, 4), (64, 8)] {
+    for (calls, loops) in [(32, 0), (0, 4), (64, 8), (1000, 0)] {
         for push in [false, true] {
             let src = walk(calls, loops, push);
             let c = check_source("walk.wf", &src, Options::default());
             assert!(c.analysis.diags.is_empty(), "{:?}", c.analysis.diags);
             let body = c.analysis.bodies.iter().find(|b| b.facts.name == "walk");
             let Some(body) = body else { panic!("no body") };
-            let wild = body.facts.places.iter().filter(|p| p.is_wildcard()).count();
+            // Each call result is a one-place wildcard place of its own, but no
+            // place is below two wildcard steps.
+            let nested = body.facts.places.iter().any(|p| {
+                p.steps
+                    .iter()
+                    .filter(|s| weft_facts::is_wild_step(s))
+                    .count()
+                    > 1
+            });
             assert!(
-                wild <= 2,
-                "{calls} calls, {loops} loops: {wild} wildcard places"
+                !nested,
+                "{calls} calls, {loops} loops: nested wildcard places"
             );
             let (r, work) = check_counted(&body.facts);
             let facts = &body.facts;

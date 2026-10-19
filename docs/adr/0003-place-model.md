@@ -32,6 +32,33 @@ Status: accepted. Date: 2026-10-18.
   and `cur = step(cur)` stays at `b..`. The checker compares the outermost wildcard
   bases only. The place relations are closed under prefixes, so this is exact also
   for facts with nested wildcard steps.
+- A change anywhere in `b..` invalidates each reference strictly inside `b`
+  (`strict_prefix(B, Path)`). A reference to `b` itself survives: a change at or below
+  `b` is not a strict prefix of `b`, so rule 3 spares `b` for each place that `b..`
+  can be (rule 4).
+- The result of one call with no stated place is one place inside the arguments: a
+  one-place wildcard place `(b..)` (`one_place(P)`, a new instance for each call). A
+  place below it, such as `(b..).items`, is a place inside that one place. A change
+  and a reference below one instance compare by their steps below it, with rule 3
+  (`same_one(M, Path)`). So `e.hp -= 1` does not invalidate `e`, and `e.kids.push(x)`
+  invalidates a reference into `e.kids[]`. Two instances, or an instance and another
+  place, use the wildcard rules: two results can be one place, or one can be inside
+  the other.
+- An instance is sound only while all places below it come from one value of one
+  reference, so sema makes one only where that holds:
+  - The result type is `&T` or `Option<&T>`, and `T` holds no reference. A result with
+    more references, such as a tuple or a `Vec<&T>`, gets the shared wildcard place.
+  - The call is in the body of the function, not in a closure or a clause. One
+    lowering of a closure body stands for each call of the closure, so its results
+    get the shared wildcard place.
+  - In a loop, each pass makes new instances (the counter of splits), and a key of a
+    loop value names an instance by its shape only. So the values that an iteration
+    gives to the next have the instances of the pass before, and the final pass
+    compares the result of this iteration with them by the wildcard rules.
+  - A caller sees a returned instance as `..`, and makes its own instance.
+  - A local that gets the results of two calls inside one base points into the shared
+    wildcard place of the base for the second one. A local only gets places, so else
+    `cur = step(cur)` would give `cur` one more place for each call.
 - A returned place cannot be in a by-value parameter (W0204), also in an `extern`
   signature.
 - Each owned local and each by-value parameter owns its root place (`owner(Rt, V)`). A
@@ -159,7 +186,10 @@ Status: accepted. Date: 2026-10-18.
   then a place outside it before the block ends, is still invalid after the end. This
   is the same imprecision as for mutations.
 - A result with no stated place points anywhere inside the reference arguments, also
-  when the callee returns a reference to one element only.
+  when the callee returns a reference to one element only. A change through another
+  result, or through a result of an iteration before, invalidates it, also a change
+  of a scalar field. Two places below one instance overlap for W0312 and W0405, as
+  places below one wildcard place do.
 - After a join, a part can hold the references of each branch. A use after the join
   uses each of them. A change of the places of a replaced holder before the join does
   not count, but a change after the join does.
