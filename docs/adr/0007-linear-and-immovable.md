@@ -14,62 +14,113 @@ Status: accepted. Date: 2026-10-18.
 - Only a `!Move` struct may hold a reference field, and only into `self` (W0605).
 - A property of a type holds if a part has it: a field, a tuple part, an enum payload,
   an element and a type argument. `linear`, `nonportable` and `!Move` work so at any
-  depth. A table for each type definition (`weft_sema::props`) gives the parts that
-  pass a property on, as a least fixpoint over the definitions. A type that holds
-  itself, such as `enum List { Cons(u64, List), Nil }`, is not plain data. The flags
-  of a local come from the type that the whole body infers, so `let v = Vec.new()`
-  and a later `v.push(tx)` make `v` linear.
-- A value has `on abort` for W0602 if each linear part has it, or if a type around the
-  part has it: that `on abort` finishes its parts. A tuple of a `Tx` with `on abort`
-  and a `Lock` without it has none.
+  depth. A reference to a nonportable value is nonportable too. Another thread could
+  use the value through it (W0401).
+- A table for each type definition (`weft_sema::props`) gives the parts that pass a
+  property on. It is a least fixpoint over the definitions. A type that holds itself,
+  such as `enum List { Cons(u64, List), Nil }`, is not plain data.
+- The flags of a variable come from the type that the whole body infers. So
+  `let v = Vec.new()` and a later `v.push(tx)` make `v` linear. Then `let _ = v.pop()`
+  before the push drops a linear value. A move of a value whose type is not known yet
+  stays a move until `finish` knows the type. If the value is plain data, it is a
+  copy, and the move goes away.
+- A value has `on abort` for W0602 if each linear part has it. A type around the part
+  can have it too: that `on abort` finishes its parts. A tuple of a `Tx` with
+  `on abort` and a `Lock` without it has none.
 - A closure that moves a linear value is linear: it must run once on every normal path
-  (W0601). A callee that gets it can drop it, so a function argument of this kind is
-  W0601, except for `with_timeout`, which runs its block once. A closure that moves a
-  value that is not plain data runs only once: a second call is W0502, also when a
-  callee that can call its argument more than once gets it, and an operation of a
-  handler gets it (a clause can call it more than once). A place of plain data, such
-  as a field of type `fn()`, cannot hold it: a copy of the place could call it again
-  (W0502). A closure that calls a `once` closure or resumes a `once` continuation
+  (W0601). A callee that gets it can drop it. So a function argument of this kind is
+  W0601, except for `with_timeout`, which runs its block once.
+- A closure that moves a value that is not plain data runs only once. A second call
+  is W0502. A callee that can call its argument more than once cannot get it. An
+  operation of a handler cannot get it either: a clause can call it more than once.
+- A place of plain data, such as a field of type `fn()` or an element of a
+  `Vec<fn()>`, cannot hold a `once` closure. A copy of the place could call it again
+  (W0502). A closure that calls a `once` closure, or resumes a `once` continuation,
   moves it, so it is `once` too.
+- A closure that goes to a parameter of a type parameter moves there, as another value
+  does. It keeps its modes, so `gen_keep(f)` gives back a closure with the modes of
+  `f`. A place of the declared type gets the checks above, for example `Vec<fn()>` in
+  `v.push(f)`.
+- The modes of a closure stay with it in a field, an element, a tuple part and an
+  enum payload. This is also so in a place of type `fn()`. A local that holds it is
+  nonportable if the closure is (W0401). It is not `many` if the closure is not
+  (W0503).
+- A closure that a callee returns can hold what an argument points to. So a call
+  result that can hold a function value is nonportable if an argument is. It is not
+  `many` if an argument is not.
+- The value of a branch of an `if` or a `match` moves into the value of the
+  expression, as in the interpreter. The value of a closure body moves into the
+  result of the closure, as the value of a function body does.
 - A linear value cannot go away silently:
-  - A pattern `_` drops its part: in a `let`, for a temporary that a `match` takes, and
-    in an arm that binds a part by value. An arm that matches a value with no linear
-    part, such as `None`, consumes its local scrutinee.
-  - `print`, a comparison, a receiver that a method borrows, a field read and a
-    borrow only read a temporary: a linear temporary goes away at the end of its
-    statement.
+  - A pattern `_` drops its part: in a `let`, in a temporary that a `match` takes, and
+    in an arm that binds a part by value. An arm can match a value with no linear
+    part, such as `None`. Then it consumes its local scrutinee.
+  - Some operations only read a temporary: `print`, a comparison, a receiver that a
+    method borrows, a field read and a borrow. A linear temporary of this kind goes
+    away at the end of its statement.
   - A new value of a place drops the old value. `p.tx = v` on a live linear local `p`
     is `overwrites(V, P)` in the spec (W0601). Behind a reference the old value is
     always there, so a new value there is W0601.
   - A new value inside a closure or a handler clause overwrites a captured linear
-    value: the value is live where the closure or the clause starts.
-  - A place whose type is not linear cannot keep a linear value: a field of type
+    value. The value is live where the closure or the clause starts.
+  - A place whose type is not linear cannot keep a linear value. A field of type
     `fn()` or a `Vec<fn()>` cannot hold a linear closure.
-  - A generic function does not know that a value of a type parameter is linear. Its
-    signature has a `drops` part: the by-value parameters of a type parameter that a
-    path of the body does not move. A caller that gives a linear value there gets W0601.
+- A generic function does not know that a value of a type parameter is linear. So its
+  body treats such a value as linear where a linear value can go away:
+  - in a pattern `_`;
+  - in a holder that goes out of scope: a local, a tuple, an `Option`, a `Vec` or a
+    closure;
+  - under a new value;
+  - in a callee that can drop it.
+
+  These values have no `linear` flag in the facts. `finish` follows them with the
+  rules of W0601. Their type parameters are the `drops` part of the signature. A call
+  that gives a linear type to a type parameter in `drops` drops a value of it (W0601).
+  The check uses the inferred type argument.
+- A linear value can be on its way to a call, a tuple, a struct literal, a constructor
+  or an array. It is live while the later operands run. A hidden variable holds it
+  from its operand to the node that takes it. An abort in a later operand loses the
+  value. Its type must have `on abort` (W0602).
 - `!Move` passes through the parts that hold a value inline. A pointer such as `Box`
-  or `Rc` does not move its target, so it does not pass `!Move` on. A `!Move` value
-  that a call builds for a parameter of its own type is built in place. For a
-  parameter of a type parameter the callee can move it, as `Vec.push` does when its
-  buffer grows (W0604).
+  or `Rc` does not move its target, so it does not pass `!Move` on. A prelude type
+  with no elements, such as `Weak<T>`, is a pointer or a handle too.
+- A call builds a `!Move` value in place for a parameter of its own type. It builds the
+  argument of `Box.new` and `Rc.new` in place too. A callee with another parameter of
+  a type parameter can move the value, as `Vec.push` does when its buffer grows
+  (W0604).
 - A self-reference field gets only a reference into its own struct (W0605). A struct
-  literal cannot give it one: the struct has no place yet. A place field that the
-  literal does not give has no value. A read or a borrow of the field, or of the
+  literal cannot give it one: the struct has no place yet.
+- A value that no place held before is built in place: a literal, a call result and a
+  by-value parameter. Its place fields have no value, also in a part, in an enum
+  payload and behind a `Box`. A read or a borrow of such a field, or of the whole
   struct, before the body gives the field a value is W0304.
+  - A closure reads the places that its body reads. It reads them where it is made.
+  - `print` and a string interpolation read the whole value.
+  - A move of the whole value is not a read. It is W0604.
 
 ## Consequences
 
 - What stays imprecise (sound, but it can reject a correct program):
   - A linear closure given to a function parameter is W0601, also when the callee calls
     it once on every path.
-  - `drops` counts a path that does not move the value, also when the value there is
-    `None` of an `Option<T>`.
+  - `drops` names type parameters, not values. A call reports each type parameter in
+    `drops` that gets a linear type. It reports it at the first argument that names
+    the type parameter. It names that argument only if no other parameter has the
+    type.
   - A new value in a closure counts the captured value as live at the closure start,
     also when the closure runs after the value moves.
+  - A new value of a local that holds a linear type overwrites its old value. This is
+    also so when the old value is `None` or an empty `Vec`.
+  - A `Vec` of linear values is linear, and nothing consumes it. It is W0601 at its
+    end, also when each element is popped and consumed.
   - A borrow of a struct with a place field that has no value is W0304, also when the
-    callee gives the field a value first.
+    callee gives the field a value first. A `match` on such a value reads it too.
+  - A call result that can hold a function value gets the modes of the arguments,
+    also when the callee does not keep them.
+  - A closure is not plain data. A branch value, a variable and an argument of a type
+    parameter move it, also when it moves nothing that it captures.
 - What stays open (not checked):
-  - A generic function that can abort or resume more than once while it holds a value
-    of a type parameter: W0602 and W0503 do not see that the caller gave a linear value.
-  - A `Vec` of linear values is linear, and nothing consumes it: it is W0601 at its end.
+  - A generic function can abort, or resume more than once, while it holds a value of
+    a type parameter. W0602 and W0503 do not see that the caller gave a linear value.
+  - A `return` or a `break` in a later operand can leave a linear value that is on
+    its way to a call.

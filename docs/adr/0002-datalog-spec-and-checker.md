@@ -29,6 +29,16 @@ with it. Polonius showed that a general engine is slow for Rust, but the model i
   W0406, W0705, effect inference that does not become stable (W0704) or does not
   converge (W0706), W0802 and the `fip` checks. The driver reports W0803. The CLI reports unknown file markers (W0804), and the package
   loader reports W0901 and W0902.
+- W0120 checks a matrix of the arm patterns, with a budget of 20 000 steps for each
+  `match`. A row that matches anything ends the check of its part at once, so a wide
+  `match` with `_` in the other columns costs little. A `match` that needs more steps
+  is W0120 too: the check cannot show that the arms cover each value.
+- W0304 (`use_before_set`): `let x: T` with no value declares `x`. A use of `x` on a
+  path with no assignment before it is W0304. A closure and a handler clause use what
+  they capture where they are made. So an assignment inside a closure does not give
+  `x` a value for the code after the closure. A compound assignment such as `x += 1`
+  reads `x`. A place field of a `!Move` struct with no value works in the same way
+  (ADR 0007).
 - Agreement is over the facts that sema emits. It does not show that the facts are
   complete.
 - A rule change needs all of these edits:

@@ -36,6 +36,30 @@ flowchart TD
     mut --> tc
 ```
 
+## Linear values and values that are not set
+
+```mermaid
+flowchart TD
+    bind["rebound_at(V, P)"] --> live["live_linear(V, Q)"]
+    moved["moved_at(V, P)"] -. "ends" .-> live
+    live --> unc["unconsumed(V, P) = W0601"]
+    send["scope_end(V, P)"] --> unc
+    live --> ow["overwritten(V, P) = W0601"]
+    bind --> ow
+    over["overwrites(V, P)"] --> ow
+    live --> ab["abort_unhandled(V, P) = W0602"]
+    abort["may_abort(P)"] --> ab
+    decl["unset_at(V, P)"] --> unset["unset(V, Q)"] --> ubs["use_before_set(V, P) = W0304"]
+    bind -. "ends" .-> unset
+    uses["uses(V, P)"] --> ubs
+```
+
+A linear variable is live from a new value until a move. It must not be live where it
+goes out of scope or where it gets a new value. A new value of a part drops the old
+value of the part too (`overwrites`). An abort while it is live needs `on abort`. A
+`let` can declare a variable with no value, and a place field can have no value. Each
+path must give it a value before a use.
+
 A mutation invalidates a reference only through an unstable step. A move or the end of
 the owner frees the memory, so it invalidates every reference into the owned value. A
 free or a mutation while a task is active must not overlap the task footprint.
@@ -65,8 +89,8 @@ value, what it gives to that value, whether an unknown function value that it ca
 can resume more than once, which function parameters a task of the body can call,
 which function parameters it gives to an operation of a handler of a caller, which
 effects its tasks perform through a handler of a caller, which function parameters
-it can call more than once, and which by-value parameters of a type parameter it can
-drop (ADR 0007). A new lowering replaces these parts, so they do not only
+it can call more than once, and the type parameters of the values that it can drop
+(ADR 0007). A new lowering replaces these parts, so they do not only
 grow. The parts of one function can change at most 32 times and two more times for
 each function (`infer::parts_limit`). After that, the inference keeps the last parts
 of that function, and its callers use them. Its row can still grow. A function whose

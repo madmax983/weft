@@ -69,9 +69,13 @@ Status: accepted. Date: 2026-10-18.
   reference: a copy of it would copy that value (W0503). It is `@ uniq` if each
   captured variable that holds a reference is.
 - A local is `@ uniq` while it holds a `@ uniq` value: a new aliased value ends it
-  (W0406). Its variable is `@ uniq` only if each of its values is, and not `many` if
-  one is. The hidden iterator of a `for` loop is `@ uniq` if its source is, so it is
-  not `many` either.
+  (W0406). After an `if`, a `match` or a loop, it is `@ uniq` only if it is at the
+  end of each branch. Its variable is `@ uniq` only if each of its values is, and not
+  `many` if one is. The hidden iterator of a `for` loop is `@ uniq` if its source is,
+  so it is not `many` either.
+- A reference to a nonportable value is nonportable. A closure keeps its modes in a
+  field, an element, a tuple part and an enum payload, also in a place of type `fn()`.
+  The local that holds it gets them (ADR 0007).
 
 ## Consequences
 

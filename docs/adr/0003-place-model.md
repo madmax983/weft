@@ -69,7 +69,7 @@ Status: accepted. Date: 2026-10-18.
 - A value points where its parts point: a tuple, a struct literal, an array literal, an
   enum payload and a call result. A local that holds such a value points into the
   places of its references, so a change there invalidates the local. A pattern, an
-  element or a field that reads a reference out of a local uses the local, and the
+  element or a field can read a reference out of a local. It uses the local, and the
   reference points where the local points. A by-value binding of a reference payload
   (`Some(r)` on an `Option<&T>`) is that reference.
 - A returned type can state the place of a reference inside it: `Option<&T in v[]>`.
@@ -78,18 +78,23 @@ Status: accepted. Date: 2026-10-18.
   argument of a reference type, or of a type with a reference inside, lets the callee
   reach any place inside it (a wildcard place). An argument of a type parameter passes
   its value on as it is, so `id(&v[0])` points into `v[]`. A reference argument whose
-  value holds references gives them too. A reference argument whose value holds
-  references, and that the call mutates, can keep the references of the other
-  arguments: `rs.push(&x)` makes `rs` point into `x`.
+  value holds references gives them too. The call can mutate such an argument. Then
+  it can keep the references of the other arguments: `rs.push(&x)` makes `rs` point
+  into `x`.
 - A new value of a part of a local, such as `w.x = &b[0]`, points where it points from
-  that node on: a hidden variable holds it, and each use of the local uses it. A
-  destructuring `let S(a, b) = s` gives each part the places of `s`.
+  that node on. A hidden variable holds it, and each use of the local uses it. A later
+  new value of the same part, of a part around it, or of the whole local replaces it.
+  Each branch of an `if` or a `match` replaces only on its own path. So after the join
+  the part can hold the references of each branch. A loop keeps the references
+  that a pass gives for the next pass. A destructuring `let S(a, b) = s` gives each
+  part the places of `s`.
 - A by-value parameter that holds references, such as `o: Option<&World>`, points into
-  a parameter root: the callee can mutate through it, and the caller puts in the
-  places of the argument. A new value of the parameter itself is local.
+  a parameter root. The callee can mutate through it. The caller puts in the places of
+  the argument. A new value of the parameter itself is local.
 - Evaluation order follows the interpreter: arguments and operands run from left to
   right. A by-value argument moves when it is evaluated, so `f(v, v.len())` is a use
-  after move. A reference argument, a closure argument and the value of a named
+  after move. A hidden variable holds the value on its way to the call while the later
+  arguments run: it points where the value points. A reference argument, a closure argument and the value of a named
   variable are held from the point where they are taken, so a later argument that
   invalidates or rebinds them is seen.
 
@@ -106,8 +111,10 @@ Status: accepted. Date: 2026-10-18.
   is the same imprecision as for mutations.
 - A result with no stated place points anywhere inside the reference arguments, also
   when the callee returns a reference to one element only.
+- After a join, a part can hold the references of each branch. A use after the join
+  uses each of them, also on a path where a later new value replaced one of them.
 - W0605 is about written reference fields. A generic type such as `Option<&T>`,
   `Vec<&T>` or `Wrap<&T>` can hold references: the facts follow their places.
 - What stays open (not checked): a reference stored behind a reference parameter. The
-  callee sees it as a reference to any place inside the parameter, and the caller puts
-  in the places of the parameter, not the places that the stored reference points into.
+  callee sees it as a reference to any place inside the parameter. The caller puts in
+  the places of the parameter, not the places that the stored reference points into.
