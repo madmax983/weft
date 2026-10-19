@@ -96,34 +96,35 @@ mod tests {
         assert!(super::lookup("X").is_none());
     }
 
-    /// Collects the words `W` or `L` and four digits in the files under `dir`.
-    fn scan(dir: &std::path::Path, out: &mut std::collections::BTreeMap<String, String>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
+    /// Collects the words `W` or `L` and four digits in the file `path`, or in
+    /// the files under the directory `path`.
+    fn scan(path: &std::path::Path, out: &mut std::collections::BTreeMap<String, String>) {
+        if path.is_dir() {
+            let Ok(entries) = std::fs::read_dir(path) else {
+                return;
+            };
+            for e in entries.flatten() {
+                let sub = e.path();
+                if sub.file_name().is_some_and(|n| n != "target") {
+                    scan(&sub, out);
+                }
+            }
+            return;
+        }
+        let Ok(text) = std::fs::read_to_string(path) else {
             return;
         };
-        for e in entries.flatten() {
-            let path = e.path();
-            if path.is_dir() {
-                if path.file_name().is_some_and(|n| n != "target") {
-                    scan(&path, out);
-                }
-                continue;
-            }
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            let b = text.as_bytes();
-            for i in 0..b.len().saturating_sub(4) {
-                let word_start = i == 0 || !b[i - 1].is_ascii_alphanumeric();
-                let word_end = b.get(i + 5).is_none_or(|c| !c.is_ascii_alphanumeric());
-                if word_start
-                    && word_end
-                    && matches!(b[i], b'W' | b'L')
-                    && b[i + 1..i + 5].iter().all(u8::is_ascii_digit)
-                {
-                    out.entry(text[i..i + 5].to_string())
-                        .or_insert_with(|| path.display().to_string());
-                }
+        let b = text.as_bytes();
+        for i in 0..b.len().saturating_sub(4) {
+            let word_start = i == 0 || !b[i - 1].is_ascii_alphanumeric();
+            let word_end = b.get(i + 5).is_none_or(|c| !c.is_ascii_alphanumeric());
+            if word_start
+                && word_end
+                && matches!(b[i], b'W' | b'L')
+                && b[i + 1..i + 5].iter().all(u8::is_ascii_digit)
+            {
+                out.entry(text[i..i + 5].to_string())
+                    .or_insert_with(|| path.display().to_string());
             }
         }
     }
@@ -148,5 +149,26 @@ mod tests {
             .map(|(code, file)| format!("{code} (in {file})"))
             .collect();
         assert!(missing.is_empty(), "codes with no text: {missing:?}");
+    }
+
+    /// Each code of the table occurs in a test: a corpus program, a test file of
+    /// a crate or a unit test module. So each code has a test that gives it.
+    #[test]
+    fn every_code_has_a_test() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut found = std::collections::BTreeMap::new();
+        scan(&root.join("tests"), &mut found);
+        let crates = std::fs::read_dir(root.join("crates")).into_iter().flatten();
+        for c in crates.flatten() {
+            scan(&c.path().join("tests"), &mut found);
+            scan(&c.path().join("src/tests.rs"), &mut found);
+            scan(&c.path().join("src/tests"), &mut found);
+        }
+        let missing: Vec<&str> = super::CODES
+            .iter()
+            .map(|c| c.code)
+            .filter(|c| !found.contains_key(*c))
+            .collect();
+        assert!(missing.is_empty(), "codes with no test: {missing:?}");
     }
 }

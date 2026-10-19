@@ -175,7 +175,7 @@ fn borrow_temp() {
     let r = &begin()   //~ W0601
 }
 fn compared() -> bool {
-    begin() == begin()   //~ W0601
+    begin() == begin()   //~ W0601 W0601
 }
 
 // A generic body treats a value of a type parameter as linear where a value can

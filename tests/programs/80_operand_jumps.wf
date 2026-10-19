@@ -21,7 +21,7 @@ fn break_in_arg(c: bool) {
 }
 fn continue_in_arg(n: u64) {
     for i in 0..n {
-        take2(lock(), if i == 1 { continue } else { 2 })   //~ W0601
+        take2(lock(), if i == 1 { continue } else { 2 })   //~ W0601 W0601
     }
 }
 fn return_in_tuple(c: bool) -> u64 {

@@ -44,7 +44,7 @@ fn stored_use(world: &World) / mut(world.entities) {
     let r = &world.entities[0]
     let cb = Cb { f: || print(r.hp) }
     world.entities.clear()
-    run_ref(&cb)   //~ W0301
+    run_ref(&cb)   //~ W0301 W0301
 }
 
 // The same when the stored closure comes back from a container with its type.

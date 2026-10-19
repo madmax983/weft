@@ -3,6 +3,8 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 //!
 //! A line that ends with `//~ CODE ...` expects those error codes on that line.
+//! A code that occurs two times expects two errors with that code: the test
+//! counts the errors.
 //! The words `stealable` and `pinned` after `//~` expect each task closure on
 //! that line to be stealable, or not. A file that uses one of these words must
 //! mark every line with a task closure.
@@ -27,21 +29,24 @@ const TASK_WORDS: [&str; 2] = ["stealable", "pinned"];
 /// A set of `(line, word)` pairs.
 type Marks = BTreeSet<(usize, String)>;
 
+/// A sorted list of `(line, code)` pairs. A pair can occur more than one time.
+type Codes = Vec<(usize, String)>;
+
 /// Returns the expected `(line, word)` pairs: error codes, and task words.
-fn expected(src: &str) -> (Marks, Marks) {
-    let (mut codes, mut tasks) = (BTreeSet::new(), BTreeSet::new());
+fn expected(src: &str) -> (Codes, Marks) {
+    let (mut codes, mut tasks) = (Vec::new(), BTreeSet::new());
     for (i, line) in src.lines().enumerate() {
         if let Some(pos) = line.find("//~") {
             for word in line[pos + 3..].split_whitespace() {
-                let set = if TASK_WORDS.contains(&word) {
-                    &mut tasks
+                if TASK_WORDS.contains(&word) {
+                    tasks.insert((i + 1, word.to_string()));
                 } else {
-                    &mut codes
-                };
-                set.insert((i + 1, word.to_string()));
+                    codes.push((i + 1, word.to_string()));
+                }
             }
         }
     }
+    codes.sort();
     (codes, tasks)
 }
 
@@ -77,12 +82,13 @@ fn run(path: &Path) -> Result<(), String> {
     let opts = Options::from_markers(&src);
     let checked = check_source(&name, &src, opts);
     let file = SourceFile::new(&name, src.as_str());
-    let actual: BTreeSet<(usize, String)> = checked
+    let mut actual: Codes = checked
         .diags
         .iter()
         .filter(|d| d.severity == Severity::Error)
         .map(|d| (file.line(d.span), d.code.clone()))
         .collect();
+    actual.sort();
     let (want, want_tasks) = expected(&src);
     let mut msg = String::new();
     if actual != want {

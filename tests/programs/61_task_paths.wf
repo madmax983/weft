@@ -60,7 +60,7 @@ fn spawn_item() / async {
     }
 }
 fn fork_items() / par {
-    handle Note { fn note(x) { resume(()) } } in fork(noter, noter)   //~ W0314
+    handle Note { fn note(x) { resume(()) } } in fork(noter, noter)   //~ W0314 W0314
 }
 fn spawn_item_out() / async, Note {
     scope { s => s.spawn(noter) }   //~ W0314

@@ -43,7 +43,7 @@ fn named_put(v: &Vec<u64>) / Pair {
     put(v, b: 2)
 }
 fn named_wrong(v: &Vec<u64>) / Pair {
-    put(c: 1, a: v)   //~ W0103
+    put(c: 1, a: v)   //~ W0103 W0103
     put(a: v, a: v, b: 1)   //~ W0103
     put(b: 1)   //~ W0103
 }
