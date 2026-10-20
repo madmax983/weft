@@ -125,8 +125,12 @@ impl Lower<'_> {
                 binds.entry(v).or_default().push(p.index());
             }
         }
+        // A move of a part that leaves a linear part does not end the value
+        // (`ends_linear`).
+        let rest: BTreeSet<(VarId, super::NodeId)> =
+            self.facts.rest_linear.iter().copied().collect();
         for &(v, p) in &self.facts.moved_at {
-            if wanted.contains(&v) {
+            if wanted.contains(&v) && !rest.contains(&(v, p)) {
                 moves.entry(v).or_default().insert(p.index());
             }
         }
@@ -203,8 +207,10 @@ impl Lower<'_> {
                 binds.entry(v).or_default().push(p.index());
             }
         }
+        let rest: BTreeSet<(VarId, super::NodeId)> =
+            self.facts.rest_linear.iter().copied().collect();
         for &(v, p) in &self.facts.moved_at {
-            if wanted.contains(&v) {
+            if wanted.contains(&v) && !rest.contains(&(v, p)) {
                 moves.entry(v).or_default().insert(p.index());
             }
         }
@@ -315,8 +321,9 @@ impl Lower<'_> {
 
     /// Returns true if a value of type `ty` keeps a part that can be linear
     /// after a move of its part at `steps` (review round 3, R3RT1): a part on
-    /// another branch of the type, another element of an array or a buffer, or
-    /// a part of a step that the walk does not know.
+    /// another branch of the type, another element of an array or a buffer, a
+    /// part of a step that the walk does not know, or the value itself if its
+    /// struct or enum is `linear`: the shell stays.
     pub(super) fn rest_linear(&self, ty: &Ty, steps: &[Step]) -> bool {
         let Some((step, rest)) = steps.split_first() else {
             return false;
@@ -336,19 +343,24 @@ impl Lower<'_> {
                 AdtKind::Struct(fields) => {
                     let ts: Vec<Ty> = fields.iter().map(|f| subst(&f.ty, args)).collect();
                     let i = *id as usize;
-                    others(&ts, i) || ts.get(i).is_some_and(|t| self.rest_linear(t, rest))
+                    self.prog.adts[*a].linear
+                        || others(&ts, i)
+                        || ts.get(i).is_some_and(|t| self.rest_linear(t, rest))
                 }
                 _ => self.may_be_linear(&ty),
             },
             // A value of an enum is one variant: its payload is the rest.
             (StepKind::Variant { id }, Ty::Adt(a, args)) => match &self.prog.adts[*a].kind {
-                AdtKind::Enum(vs) => vs.get(*id as usize).is_some_and(|v| {
-                    let ts: Vec<Ty> = v.fields.iter().map(|t| subst(t, args)).collect();
-                    match ts.as_slice() {
-                        [t] => self.rest_linear(t, rest),
-                        _ => self.rest_linear(&Ty::Tuple(ts), rest),
-                    }
-                }),
+                AdtKind::Enum(vs) => {
+                    self.prog.adts[*a].linear
+                        || vs.get(*id as usize).is_some_and(|v| {
+                            let ts: Vec<Ty> = v.fields.iter().map(|t| subst(t, args)).collect();
+                            match ts.as_slice() {
+                                [t] => self.rest_linear(t, rest),
+                                _ => self.rest_linear(&Ty::Tuple(ts), rest),
+                            }
+                        })
+                }
                 _ => self.may_be_linear(&ty),
             },
             // The other elements stay: an array of one element has none.

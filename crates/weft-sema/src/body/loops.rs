@@ -778,6 +778,7 @@ impl Lower<'_> {
                 .iter()
                 .map(|&v| format!("moved {}", vk(v))),
         );
+        out.extend(sum.rest_captures.iter().map(|&v| format!("rest {}", vk(v))));
         out.extend(
             sum.param_roots
                 .iter()

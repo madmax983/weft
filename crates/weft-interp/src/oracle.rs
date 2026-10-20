@@ -72,6 +72,9 @@ pub struct Oracle {
     clocks: Vec<Vec<u32>>,
     /// The accesses of each cell, for each task.
     log: HashMap<CellId, BTreeMap<usize, TaskLog>>,
+    /// The tasks that no task joined yet. A joined task is done: it makes no
+    /// more accesses.
+    live: BTreeSet<usize>,
 }
 
 impl Oracle {
@@ -83,6 +86,7 @@ impl Oracle {
             let mut v = vec![0; n + 1];
             v[n] = 1;
             self.clocks.push(v);
+            self.live.insert(n);
         }
     }
 
@@ -133,6 +137,17 @@ impl Oracle {
     pub fn join(&mut self, u: usize) {
         let t = self.cur;
         self.merge(t, u);
+        if u != t {
+            self.live.remove(&u);
+        }
+    }
+
+    /// Returns true if the log of task `u` on a cell, with largest clock
+    /// `last`, cannot find a race any more: `u` is done, and each task that
+    /// can still make an access sees each access of `u` in the log. A task
+    /// that starts later gets the clock of its parent, so it sees them too.
+    fn forgotten(&self, u: usize, last: u32) -> bool {
+        !self.live.contains(&u) && self.live.iter().all(|&w| self.at(w, u) >= last)
     }
 
     /// Records an access of the running task to `path` in `cell`, and finds a
@@ -141,10 +156,16 @@ impl Oracle {
         let t = self.cur;
         self.ensure(t);
         let epoch = self.at(t, t);
+        // The logs of done tasks that each task sees: they are dropped, so
+        // the cost of an access does not grow with the number of done tasks.
+        let mut stale = Vec::new();
         let race = self.log.get(&cell).and_then(|logs| {
             logs.iter().filter(|(&u, _)| u != t).find_map(|(&u, l)| {
                 let known = self.at(t, u);
                 if l.last <= known {
+                    if self.forgotten(u, l.last) {
+                        stale.push(u);
+                    }
                     return None;
                 }
                 // A write overlaps each access; a read overlaps a write only.
@@ -167,7 +188,11 @@ impl Oracle {
             );
             self.flag(msg);
         }
-        let l = self.log.entry(cell).or_default().entry(t).or_default();
+        let logs = self.log.entry(cell).or_default();
+        for u in stale {
+            logs.remove(&u);
+        }
+        let l = logs.entry(t).or_default();
         l.last = l.last.max(epoch);
         let m = if write { &mut l.writes } else { &mut l.reads };
         m.insert(path.to_vec(), epoch);
@@ -257,20 +282,52 @@ mod tests {
             v.as_deref().is_some_and(|m| m.contains("[299, 0]")),
             "{v:?}"
         );
-        // A read of the whole cell overlaps each path. A read of another
-        // path of the parent after a join does not race.
+        // A read of the whole cell overlaps each path.
         o.access(9, &[], false, "buffer");
         assert!(o.take_violation().is_some());
+        // Each task keeps one record for each path and kind.
+        let logs = &o.log[&9];
+        assert_eq!(logs[&1].writes.len(), 300);
+        assert_eq!(logs[&2].reads.len(), 1);
+        // A read of another path of the parent after a join does not race.
         o.set_task(0);
         o.join(1);
         o.join(2);
         o.access(9, &[5], false, "buffer");
         o.access(9, &[], true, "buffer");
         assert!(o.take_violation().is_none());
-        // Each task keeps one record for each path and kind.
-        let logs = &o.log[&9];
-        assert_eq!(logs[&1].writes.len(), 300);
-        assert_eq!(logs[&2].reads.len(), 1);
+    }
+
+    #[test]
+    fn the_log_forgets_a_joined_task_that_each_task_sees() {
+        // Task 0 starts and joins one task after the other. Each task reads
+        // the cell. After the join, task 0 is the only task that can make an
+        // access, and it sees the reads: the log drops them.
+        let mut o = Oracle::default();
+        o.set_task(0);
+        o.access(3, &[0], true, "buffer");
+        for u in 1..100 {
+            o.spawn(0, u);
+            o.set_task(u);
+            o.access(3, &[0], false, "buffer");
+            o.set_task(0);
+            o.join(u);
+            o.access(3, &[0], true, "buffer");
+        }
+        assert!(o.take_violation().is_none());
+        assert_eq!(o.log[&3].len(), 1, "{:?}", o.log[&3].keys());
+        // A task that can still run and does not see a done task keeps its
+        // log: task 101 races with the write of task 100.
+        o.spawn(0, 100);
+        o.spawn(0, 101);
+        o.set_task(100);
+        o.access(3, &[1], true, "buffer");
+        o.set_task(0);
+        o.join(100);
+        o.access(3, &[2], false, "buffer");
+        o.set_task(101);
+        o.access(3, &[1], false, "buffer");
+        assert!(o.take_violation().is_some());
     }
 
     #[test]

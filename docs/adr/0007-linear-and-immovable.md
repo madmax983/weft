@@ -141,7 +141,12 @@ Status: accepted. Date: 2026-10-18.
   value is W0601, and an abort after the move is W0602. A later use of the value is
   still a use after a move (W0302, ADR 0003), so the program must destructure the
   value to consume each part (`let (a, b) = t`). The diagnostic says so. A part move
-  that leaves no linear part ends the value, as before.
+  that leaves no linear part ends the value, as before. The shell of a `linear` struct
+  or enum is a linear part too: a move of a field that is not linear leaves it. A
+  handler clause that moves a part of a capture leaves the rest at each node that runs
+  the clause (`Summary::rest_captures`). The drop check of a generic body
+  (`dropped_params`, `held_params`) does not end a value of a type parameter at such a
+  move, so a linear argument is W0601 at the call (review of R3a).
 - On an abort path (ADR 0005) the unwinder finishes each value of the handled body:
   `unwound_at(V, P)` in the spec. `live_linear` stops there, and the owner frees its
   memory. The node that aborts needs `on abort` for each live linear value (W0602).
@@ -179,15 +184,34 @@ Status: accepted. Date: 2026-10-18.
   by-value parameter. Its place fields have no value, also in a part, in an enum
   payload and behind a `Box`. A read or a borrow of such a field, or of the whole
   struct, before the body gives the field a value is W0304.
-  - The search for the place fields of a type walks each full type (a definition
-    with its type arguments) once for a body, and keeps its paths in a table
-    (`Lower::place_paths`, review round 3, Q3-1, Q3-4). Most types have none. A
+  - The search for the place fields of a type walks full types (a definition with
+    its type arguments) and keeps the paths of each one in a table
+    (`Lower::place_paths`, review round 3, Q3-1, Q3-4). A type whose definitions
+    cannot hold a place field is not walked (`TypeProps::may_hold_place_field`). A
     second use of one generic definition with other arguments is another type, so
     `Wrap<Wrap<Frame>>`, `Box<Hold>` with a `Box<Frame>` in it and an `Option` in an
-    `Option` get their place fields too. A recursive type stops at the second use of
-    the same full type on the way: a value behind it was built by another node, and
-    its fields can have values. The cost grows with the number of types, not with
-    the number of paths through a type that holds no place field.
+    `Option` get their place fields too.
+  - A recursive type has a place field at each depth: one literal or one callee can
+    build two nodes, and the body gives a value only to the fields that it names.
+    So the search cannot stop with no path. It stops at a struct or an enum whose
+    cycle of definitions (`TypeProps::cycle`) is already on the way, and gives a
+    path that stands for each place field below it. A read or a borrow at, above or
+    below that place uses its hidden variable (W0304). A new value of the place, or
+    of a place above it, that no place held before gives the variable a value, and
+    the place fields of the new value get hidden variables again. `None` has none.
+    Each infinite search meets such a struct or enum, also for a type that grows at
+    each depth (`Nest<T> { next: Option<Box<Nest<Box<T>>>> }`), so the search stops.
+    The result for a type depends only on the type and the cycles on the way, so
+    the table keeps it, and each type is walked once for each set of cycles. A type
+    with more than 64 paths gets one path for each part that holds place fields,
+    which stands for the place fields below it. So the cost and the number of
+    hidden variables grow with the number of types, not with the number of paths
+    (`scale.rs`, `place_fields_of_a_deep_type_are_found_in_linear_work`).
+  - An assignment of a new value to a place gives the place fields of the new value
+    hidden variables with no value, as a `let` does. A `let` or an assignment that
+    moves a value out of a place does not follow its place fields: each of them
+    must have a value at the move (W0304). A `!Move` value cannot move (W0604), so
+    this counts only for a place field behind a `Box`.
   - A closure reads the places that its body reads. It reads them where it is made.
   - A local that a `let` declares with no value is the same: a closure, a handler
     clause or a task uses its captures where it is made (W0304). So a local cannot
@@ -231,4 +255,11 @@ Status: accepted. Date: 2026-10-18.
   - The length of a `Vec` is not known. A move of an element of a `Vec` of linear
     values leaves the other elements, also when there are none
     (`tests/programs/153_partial_linear.wf`).
+  - The search for place fields follows the type, not the value. A read or a borrow
+    of a part of a recursive type is W0304 until the body gives the part a new
+    value, also if the literal gave it `None`. A type with more than 64 paths to
+    place fields has one hidden variable for each part, and the body must give the
+    part a new value. A `let` or an assignment that moves a value before the body
+    gives its place fields a value is W0304, also if the body gives them a value
+    through the new holder later (`tests/programs/154_unset_nested.wf`).
 - What stays open (not checked): no known gap.

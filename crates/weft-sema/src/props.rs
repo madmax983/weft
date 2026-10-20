@@ -95,13 +95,22 @@ impl Holds {
 #[derive(Clone, Debug, Default)]
 pub struct TypeProps {
     table: Vec<[Holds; 8]>,
+    /// For each definition: a value of an instance can hold a place field.
+    /// The type arguments do not count: a type term names them itself.
+    places: Vec<bool>,
+    /// For each definition on a cycle of the graph of inline parts: the
+    /// number of its cycle (its strongly connected component).
+    cycles: Vec<Option<u32>>,
 }
 
 impl TypeProps {
     /// Computes the table for every definition of `prog`.
     pub fn new(prog: &Program) -> Self {
+        let cycles = adt_cycles(prog);
         Self {
-            table: fixpoint(prog).0,
+            table: fixpoint(prog, &cycles).0,
+            places: place_holders(prog),
+            cycles,
         }
     }
 
@@ -109,11 +118,28 @@ impl TypeProps {
     pub fn get(&self, a: AdtId, p: Prop) -> Option<&Holds> {
         self.table.get(a.index()).map(|h| &h[p.index()])
     }
+
+    /// Returns the number of the cycle of definition `a`, if a value of `a`
+    /// can hold a value of a definition on the same cycle (`a` itself too).
+    pub fn cycle(&self, a: AdtId) -> Option<u32> {
+        self.cycles.get(a.index()).copied().flatten()
+    }
+
+    /// Returns true if a value of type `t` can hold a place field: in the
+    /// value, in its parts, or behind a `Box`. The answer can be true for a
+    /// type that holds none, but it is never false for a type that holds one.
+    pub fn may_hold_place_field(&self, t: &Ty) -> bool {
+        let mut found = false;
+        each_inline_adt(t, &mut |a| {
+            found |= self.places.get(a).copied().unwrap_or(false);
+        });
+        found
+    }
 }
 
 /// Computes the table for every definition of `prog`, and the number of
 /// evaluations of a definition that the worklist made (the work).
-fn fixpoint(prog: &Program) -> (Vec<[Holds; 8]>, usize) {
+fn fixpoint(prog: &Program, cycles: &[Option<u32>]) -> (Vec<[Holds; 8]>, usize) {
     let n = prog.adts.len();
     let mut table: Vec<[Holds; 8]> = vec![Default::default(); n];
     // The definitions that name each definition in their parts.
@@ -129,7 +155,7 @@ fn fixpoint(prog: &Program) -> (Vec<[Holds; 8]>, usize) {
     }
     // A type that holds itself has its parts in heap cells, as an enum
     // payload does: it is not plain data.
-    let recursive = recursive_adts(prog);
+    let recursive: Vec<bool> = cycles.iter().map(Option::is_some).collect();
     for (a, &r) in recursive.iter().enumerate() {
         table[a][Prop::NotCopy.index()].always = r;
     }
@@ -230,22 +256,17 @@ fn each_inline_adt(t: &Ty, f: &mut dyn FnMut(usize)) {
     }
 }
 
-/// Returns, for each definition, true if a value of it can hold a value of the
-/// same definition. The definition is then on a cycle of the graph of inline parts.
-/// The search is Tarjan's algorithm, with an explicit stack.
-fn recursive_adts(prog: &Program) -> Vec<bool> {
+/// Returns, for each definition, the number of its cycle if a value of it can
+/// hold a value of the same definition. The definition is then on a cycle of
+/// the graph of inline parts, and each definition on the same cycle (the same
+/// strongly connected component) gets the same number. The search is Tarjan's
+/// algorithm, with an explicit stack.
+fn adt_cycles(prog: &Program) -> Vec<Option<u32>> {
     let n = prog.adts.len();
-    let mut edges: Vec<Vec<usize>> = vec![Vec::new(); n];
-    for (a, out) in edges.iter_mut().enumerate() {
-        for t in parts(prog, a) {
-            each_inline_adt(&t, &mut |b| {
-                if b < n && !out.contains(&b) {
-                    out.push(b);
-                }
-            });
-        }
-    }
-    let mut recursive = vec![false; n];
+    let edges = inline_edges(prog);
+    let mut cycles: Vec<Option<u32>> = vec![None; n];
+    let mut count: u32 = 0;
+    let mut self_loop = vec![false; n];
     let mut index = vec![usize::MAX; n];
     let mut low = vec![0; n];
     let mut on_stack = vec![false; n];
@@ -266,7 +287,7 @@ fn recursive_adts(prog: &Program) -> Vec<bool> {
             if let Some(&b) = edges[a].get(*e) {
                 *e += 1;
                 if b == a {
-                    recursive[a] = true;
+                    self_loop[a] = true;
                 }
                 if index[b] == usize::MAX {
                     index[b] = next;
@@ -293,15 +314,60 @@ fn recursive_adts(prog: &Program) -> Vec<bool> {
                         break;
                     }
                 }
-                if members.len() > 1 {
+                if members.len() > 1 || self_loop[a] {
                     for b in members {
-                        recursive[b] = true;
+                        cycles[b] = Some(count);
                     }
+                    count += 1;
                 }
             }
         }
     }
-    recursive
+    cycles
+}
+
+/// Returns, for each definition, the definitions that its parts hold inline.
+fn inline_edges(prog: &Program) -> Vec<Vec<usize>> {
+    let n = prog.adts.len();
+    let mut edges: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (a, out) in edges.iter_mut().enumerate() {
+        for t in parts(prog, a) {
+            each_inline_adt(&t, &mut |b| {
+                if b < n && !out.contains(&b) {
+                    out.push(b);
+                }
+            });
+        }
+    }
+    edges
+}
+
+/// Returns, for each definition, true if a value of it can hold a place field:
+/// the definition has one, or one of its parts holds a definition that can
+/// hold one. The search goes back from the definitions with a place field.
+fn place_holders(prog: &Program) -> Vec<bool> {
+    let n = prog.adts.len();
+    let mut users: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (a, out) in inline_edges(prog).into_iter().enumerate() {
+        for b in out {
+            users[b].push(a);
+        }
+    }
+    let mut holds: Vec<bool> = prog
+        .adts
+        .iter()
+        .map(|d| matches!(&d.kind, AdtKind::Struct(fs) if fs.iter().any(|f| f.place.is_some())))
+        .collect();
+    let mut work: Vec<usize> = (0..n).filter(|&a| holds[a]).collect();
+    while let Some(b) = work.pop() {
+        for &a in &users[b] {
+            if !holds[a] {
+                holds[a] = true;
+                work.push(a);
+            }
+        }
+    }
+    holds
 }
 
 /// Returns true if the extern or capability type `a` is plain data: values of it are copied.
@@ -539,6 +605,34 @@ mod tests {
     }
 
     #[test]
+    fn place_fields_and_cycles_of_the_definitions() {
+        let src = "struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }\n\
+                   struct Wrap<T> { x: T }\n\
+                   struct Node: !Move { f: Frame, next: Option<Box<Node>> }\n\
+                   struct A { b: Option<Box<B>> }\n\
+                   struct B { a: Option<Box<A>> }\n\
+                   struct ByRef { f: &Frame }\n";
+        let Ok(a) = analyze_source(src, Options::default()) else {
+            unreachable!("the source parses")
+        };
+        let p = a.program.props();
+        let ty = |n: &str, args: Vec<Ty>| Ty::Adt(adt(&a.program, n), args);
+        let frame = ty("Frame", Vec::new());
+        assert!(p.may_hold_place_field(&frame));
+        assert!(p.may_hold_place_field(&ty("Node", Vec::new())));
+        assert!(p.may_hold_place_field(&ty("Wrap", vec![frame.clone()])));
+        assert!(p.may_hold_place_field(&ty("Box", vec![frame])));
+        assert!(!p.may_hold_place_field(&ty("Wrap", vec![Ty::Bool])));
+        assert!(!p.may_hold_place_field(&ty("A", Vec::new())));
+        assert!(!p.may_hold_place_field(&ty("ByRef", Vec::new())));
+        let cycle = |n: &str| p.cycle(adt(&a.program, n));
+        assert!(cycle("Node").is_some());
+        assert!(cycle("A").is_some() && cycle("A") == cycle("B"));
+        assert_ne!(cycle("A"), cycle("Node"));
+        assert!(cycle("Wrap").is_none() && cycle("Option").is_none());
+    }
+
+    #[test]
     fn a_wide_recursive_type_is_fast() {
         // The work of the fixpoint does not grow with the number of fields
         // of a recursive type: each definition is evaluated again only when a
@@ -557,7 +651,7 @@ mod tests {
                 .get(adt(&a.program, "A"), Prop::Linear)
                 .is_some_and(|h| h.always));
             let n = a.program.adts.len();
-            let (_, evals) = fixpoint(&a.program);
+            let (_, evals) = fixpoint(&a.program, &adt_cycles(&a.program));
             assert!(evals <= 3 * n, "{evals} evaluations for {n} definitions");
             evals
         };

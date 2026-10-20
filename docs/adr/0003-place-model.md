@@ -143,8 +143,13 @@ Status: accepted. Date: 2026-10-18.
   tail place in each frame (a block, a `handle`, a `multi` `handle`, a scope,
   `with_timeout`, a closure, a `fork` branch, the branches of `if` and `match`, a loop
   body), in statement and in value position, with and without a task that reads into
-  the place. Each run that faults gets an error, and each clean form is accepted
-  (`tests/programs/150_frame_tails.wf`).
+  the place. Each run that faults gets an error (`tests/programs/150_frame_tails.wf`).
+  Two forms that ran clean in the sweep stay rejected (W0302): a tail place of a
+  `multi` handled body, and a tail place of an outer local in a loop body. The sweep
+  runs each of them once, but a second `resume` or a second pass moves the value
+  again.
+- A frame tail in statement position that moves a task handle out of its local drops
+  the handle: a bound handle is linear (W0601, ADR 0006), as for `{ h }`.
 - The locals and temporaries of a closure go out of scope at each node where the
   closure runs: a call of it, a call that takes it, a spawn. A handler clause runs at
   each operation that it handles. There it uses its captures, moves the captures that

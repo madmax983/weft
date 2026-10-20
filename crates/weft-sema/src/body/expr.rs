@@ -2086,7 +2086,7 @@ impl Lower<'_> {
         self.end_frame(c.span);
         // The clause runs in a frame of its own, as in the interpreter: its
         // temporaries go out of scope at its end.
-        self.close_stmt(c.span);
+        self.close_temps(c.span, "end of the clause");
         self.frame_value_end(held, tail);
         // The `resume`s of this clause.
         let own_resumes: Vec<NodeId> = self.resumes[resumes_before..]
@@ -2150,6 +2150,7 @@ impl Lower<'_> {
         let sum = &mut done.clause_sum;
         sum.captures.extend(cs.captures.iter().copied());
         sum.moved_captures.extend(cs.moved_captures.iter().copied());
+        sum.rest_captures.extend(cs.rest_captures.iter().copied());
         sum.dropped.extend(cs.dropped.iter().copied());
         sum.spawns.extend(cs.spawns.iter().copied());
         for r in reads {
@@ -2431,6 +2432,10 @@ impl Lower<'_> {
                 if !self.is_copy_var(v) {
                     self.move_var(v, n);
                 }
+            }
+            // A move of a part in the clause leaves the other linear parts.
+            for &v in &h.clause_sum.rest_captures {
+                self.rest_move(v, n);
             }
             for &v in &h.clause_sum.dropped {
                 self.facts.scope_end.push((v, n));
@@ -2904,6 +2909,12 @@ impl Lower<'_> {
             .copied()
             .filter(|&v| outer(self, v))
             .collect();
+        let rest: Vec<VarId> = s
+            .rest_captures
+            .iter()
+            .copied()
+            .filter(|&v| outer(self, v))
+            .collect();
         let t = self.sum();
         t.spawns.extend(spawns);
         for &m in &s.muts {
@@ -2918,6 +2929,7 @@ impl Lower<'_> {
         t.own_roots.extend(own);
         t.captures.extend(captures);
         t.moved_captures.extend(moved);
+        t.rest_captures.extend(rest);
         t.dropped.extend(s.dropped.iter().copied());
         t.lends.extend(s.lends.iter().copied());
         t.own_caps.extend(s.own_caps.iter().copied());
@@ -2983,7 +2995,7 @@ impl Lower<'_> {
         }
         self.end_tasks(&tasks, span);
         self.end_frame(body.span);
-        self.close_stmt(body.span);
+        self.close_temps(body.span, "end of the scope body");
         self.pop_frame();
         self.end_frame(span);
         self.pop_frame();

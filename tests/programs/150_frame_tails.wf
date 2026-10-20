@@ -77,6 +77,23 @@ fn scope_value_with_task() {
     print(x.1)
 }
 
+// A bound task handle is linear: a frame tail in statement position that
+// moves it out of its local drops it, as `{ h }` does (ADR 0006).
+fn scope_task_handle_dropped() / async {
+    scope { s =>
+        let h = s.spawn(|| 1)
+        scope { s2 => h }   //~ W0601
+        print(0)
+    }
+}
+fn block_task_handle_dropped() / async {
+    scope { s =>
+        let h = s.spawn(|| 1)
+        { h }   //~ W0601
+        print(0)
+    }
+}
+
 // A handled body with a `multi` operation: each `resume` runs the tail again.
 fn multi_tail_place() {
     let v = mk_v()
@@ -156,7 +173,18 @@ fn multi_tail_local() {
     print(w.len())
 }
 
+// Clean: the task handle goes out of the frame into a local, and the body
+// joins it.
+fn scope_task_handle_kept() / async {
+    scope { s =>
+        let h = s.spawn(|| 1)
+        let g = scope { s2 => h }
+        print(g.join())
+    }
+}
+
 fn main() {
+    scope_task_handle_kept()
     scope_value_used()
     scope_copy_tail()
     scope_linear_value()

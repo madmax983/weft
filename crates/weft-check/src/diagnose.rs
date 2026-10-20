@@ -351,6 +351,19 @@ fn w0301(f: &FnFacts, r: &Report, out: &mut Vec<Diagnostic>) {
             )
             .note_at(holder, var.span)
             .note_at(what, at.span)
+        } else if let (VarKind::Closure, Cause::ScopeEnd(o)) = (var.kind, inv.cause) {
+            // A closure with no name that captures a local of a frame, such as
+            // the value of a scope body.
+            Diagnostic::error(
+                Code::W0301,
+                format!(
+                    "the closure captures `{path}`, but `{}` goes out of scope before this use",
+                    f.var(o).name
+                ),
+                used,
+            )
+            .note_at(holder, var.span)
+            .note_at(what, at.span)
         } else {
             Diagnostic::error(
                 Code::W0301,
@@ -472,7 +485,13 @@ fn w0301_cause(f: &FnFacts, inv: &Invalidation) -> (String, String) {
             (format!("{owner} : moved"), inside(owner, "is moved"))
         }
         Cause::ScopeEnd(o) if f.var(o).kind == VarKind::Temp => (
-            "temporary : goes out of scope at the end of the statement".to_string(),
+            // A scope body and a clause end their own temporaries.
+            match at.label.as_str() {
+                l @ ("end of the scope body" | "end of the clause") => {
+                    format!("temporary : goes out of scope at the {l}")
+                }
+                _ => "temporary : goes out of scope at the end of the statement".to_string(),
+            },
             format!("{path} is inside a temporary value, which goes out of scope at line \u{1}line:{line}\u{1}  →  invalidated at line \u{1}line:{line}\u{1}"),
         ),
         Cause::ScopeEnd(o) => {
@@ -658,10 +677,7 @@ fn unconsumed(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
         } else {
             Diagnostic::error(
                 Code::W0601,
-                format!(
-                    "linear value {} is dropped without being consumed",
-                    shown_name(info)
-                ),
+                format!("{} is dropped without being consumed", linear_subject(info)),
                 node_span(f, n),
             )
             .note_at(format!("{} (linear)", decl_note(info)), info.span)
@@ -680,8 +696,8 @@ fn overwritten(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
             Diagnostic::error(
                 Code::W0601,
                 format!(
-                    "linear value {} is overwritten before it is consumed",
-                    shown_name(info)
+                    "{} is overwritten before it is consumed",
+                    linear_subject(info)
                 ),
                 node_span(f, n),
             )
@@ -700,11 +716,17 @@ fn abort_unhandled(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
         };
         let info = f.var(var);
         let at = f.node(first);
+        // The end of a scope aborts if a task of the scope failed.
+        let how = if at.label == "scope end" {
+            "a task of the scope can fail, and the end of the scope then aborts; declare `on abort = f` on the type, or consume the value before the end of the scope"
+        } else {
+            "declare `on abort = f` on the type, or consume the value before this call"
+        };
         let d = Diagnostic::error(
             Code::W0602,
             format!(
-                "linear value {} is live across `{}`, which can abort",
-                shown_name(info),
+                "{} is live across `{}`, which can abort",
+                linear_subject(info),
                 at.label
             ),
             at.span,
@@ -713,10 +735,20 @@ fn abort_unhandled(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
             format!("{} (linear, no `on abort`)", decl_note(info)),
             info.span,
         )
-        .note("declare `on abort = f` on the type, or consume the value before this call");
+        .note(how);
         let d = note_more(d, f, rest, ("site that can abort", "sites that can abort"));
         let d = rest_note(f, var, d);
         out.push(d.with_facts(var_keys("abort_unhandled", var, &sites)));
+    }
+}
+
+/// Returns the subject of a diagnostic about linear variable `info`: "linear
+/// value `t`", or "the linear scope body value" for the value of a frame.
+fn linear_subject(info: &weft_facts::VarInfo) -> String {
+    if info.kind == VarKind::BlockValue {
+        format!("the linear {}", info.name)
+    } else {
+        format!("linear value {}", shown_name(info))
     }
 }
 
@@ -726,12 +758,39 @@ fn rest_note(f: &FnFacts, var: VarId, d: Diagnostic) -> Diagnostic {
     let Some(&(_, n)) = f.rest_linear.iter().find(|&&(v, _)| v == var) else {
         return d;
     };
-    let name = &f.var(var).name;
-    d.note_at(
-        format!(
-            "a move of a part leaves the other linear parts in `{name}`; destructure the value to consume each part, as in `let (x, y) = {name}`"
-        ),
-        node_span(f, n),
+    let info = f.var(var);
+    d.note_at(rest_hint(&info.name, &info.ty), node_span(f, n))
+}
+
+/// Returns how the program can consume each part of `name`, a value of the
+/// type with text `ty`, after a move of one part.
+fn rest_hint(name: &str, ty: &str) -> String {
+    let ty = ty.trim();
+    if ty.starts_with("Vec<") || ty.starts_with('[') {
+        return format!(
+            "a move of an element leaves the other elements in `{name}`; nothing consumes a `Vec` or an array of linear values, so keep them in a tuple or a struct"
+        );
+    }
+    let pattern = if let Some(inner) = ty.strip_prefix('(').and_then(|t| t.strip_suffix(')')) {
+        // The number of parts: the commas at the top level of the tuple.
+        let mut depth = 0usize;
+        let mut parts = 1;
+        for c in inner.chars() {
+            match c {
+                '(' | '<' | '[' => depth += 1,
+                ')' | '>' | ']' => depth = depth.saturating_sub(1),
+                ',' if depth == 0 => parts += 1,
+                _ => {}
+            }
+        }
+        let names: Vec<String> = (0..parts).map(|i| format!("x{i}")).collect();
+        format!("`let ({}) = {name}`", names.join(", "))
+    } else {
+        let head = ty.split('<').next().unwrap_or(ty);
+        format!("`let {head}(x0, x1, ...) = {name}`, with one name for each field")
+    };
+    format!(
+        "a move of a part leaves the other linear parts in `{name}`; destructure the value to consume each part: {pattern}"
     )
 }
 

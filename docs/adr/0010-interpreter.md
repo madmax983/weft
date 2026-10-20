@@ -76,9 +76,14 @@ Status: accepted. Date: 2026-10-18.
 - The race detector logs each read and each write of a place of a cell (review round
   3, O3-13): a use of a place, a read through a reference or a `Box` on the way to a
   place, a read through a reference in an operand or in an argument of a callee
-  (`Machine::deref_value`), a display of a value (`print`, string interpolation), and
-  each write. For each cell it keeps the last access of each task, path and kind (a
-  read or a write), with no limit on the number of records (I3-12).
+  (`Machine::deref_value`), a display of a value (`print`, string interpolation), the
+  test of a literal pattern and of a variant pattern in a `match`, a copy of a part in
+  a destructure through a reference (`let (a, b) = q`), and each write. For each cell
+  it keeps the last access of each task, path and kind (a read or a write), with no
+  limit on the number of records (I3-12). It drops the records of a task when a join
+  has ended the task and each task that can still run sees its accesses: such records
+  cannot find a race any more, and a task that starts later sees them through its
+  parent. So the cost of an access does not grow with the number of joined tasks.
 - With the oracle checks on, a display of a moved value, of a freed cell or buffer, or
   of a value through a dangling reference is a fault, as each other read of it is.
   The stock machine shows `<moved>`, `<freed>` or `<dangling>` and goes on.

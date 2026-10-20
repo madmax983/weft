@@ -615,12 +615,22 @@ fn sema_and_check_work_grow_linearly() {
 }
 
 /// A program with a place field in one struct and a type `T{d-1}` of depth
-/// `d`, where each level has `f` fields of the level below it. A body makes
-/// `locals` new values of the deepest type (review round 3, Q3-4).
-fn type_dag(d: usize, f: usize, locals: usize) -> String {
-    let mut s = String::from(
-        "struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }\nstruct T0 { x: u64 }\n",
-    );
+/// `d`, where each level has `f` fields of the level below it. `T0` holds the
+/// struct with the place field, so each of the `f` to the power `d - 1` paths
+/// ends at a place field. With `back`, `T0` also holds the deepest type, so
+/// the types make a cycle. A body makes `locals` new values of the deepest
+/// type (review round 3, Q3-4).
+fn type_dag(d: usize, f: usize, locals: usize, back: bool) -> String {
+    let mut s = String::from("struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }\n");
+    if back {
+        let _ = writeln!(
+            s,
+            "struct T0 {{ x: u64, fr: Frame, back: Option<Box<T{}>> }}",
+            d - 1
+        );
+    } else {
+        s.push_str("struct T0 { x: u64, fr: Frame }\n");
+    }
     for i in 1..d {
         let fields: Vec<String> = (0..f).map(|j| format!("f{j}: T{}", i - 1)).collect();
         let _ = writeln!(s, "struct T{i} {{ {} }}", fields.join(", "));
@@ -634,14 +644,52 @@ fn type_dag(d: usize, f: usize, locals: usize) -> String {
     s
 }
 
+/// A program with `n` structs that each hold a place field and an
+/// `Option<Box<..>>` of each other struct, as the nodes of a syntax tree do.
+/// A body makes two new values of the first struct.
+fn mutual_types(n: usize) -> String {
+    let mut s = String::from("struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }\n");
+    for i in 0..n {
+        let fields: Vec<String> = (0..n)
+            .filter(|&j| j != i)
+            .map(|j| format!("f{j}: Option<Box<A{j}>>"))
+            .collect();
+        let _ = writeln!(s, "struct A{i} {{ fr: Frame, {} }}", fields.join(", "));
+    }
+    s.push_str("fn make() -> A0 { make() }\nfn f() {\n    let a = make()\n    let b = make()\n    print(1)\n}\n");
+    s
+}
+
 /// The search for place fields walks each full type once for a body, so its
 /// work grows with the number of types, not with the `f` to the power `d`
 /// paths through them (Q3-4). Before the table of paths, depth 16 with three
-/// fields and five locals took about a minute.
+/// fields and five locals took about a minute. A cycle of types, types that
+/// each hold all the others, and a type that grows at each depth (review of
+/// R3a) also cost linear work.
 #[test]
 fn place_fields_of_a_deep_type_are_found_in_linear_work() {
-    let (wa, ..) = work_of(&type_dag(16, 3, 5));
-    let (wb, ..) = work_of(&type_dag(32, 3, 5));
-    assert!(wa.place_types <= 2 * 16 + 16, "{wa:?}");
-    assert!(wb.place_types <= 2 * wa.place_types + 16, "{wa:?} {wb:?}");
+    for back in [false, true] {
+        let (wa, ..) = work_of(&type_dag(16, 3, 5, back));
+        let (wb, ..) = work_of(&type_dag(32, 3, 5, back));
+        // With no cycle the search walks each level. With the cycle it stops
+        // at the first level below the root.
+        let least = if back { 1 } else { 16 };
+        assert!(
+            wa.place_types >= least && wa.place_types <= 2 * 16 + 16,
+            "{wa:?}"
+        );
+        assert!(wb.place_types <= 2 * wa.place_types + 16, "{wa:?} {wb:?}");
+    }
+    let (wa, ..) = work_of(&mutual_types(8));
+    let (wb, ..) = work_of(&mutual_types(16));
+    assert!(wa.place_types >= 8 && wa.place_types <= 4 * 8 + 8, "{wa:?}");
+    assert!(wb.place_types <= 2 * wa.place_types + 8, "{wa:?} {wb:?}");
+    // Each depth of `G` makes a new type: `G<(T, T)>`, `G<(T, Frame)>` and so
+    // on. The search stops at the second `G` on the way.
+    let (wg, ..) = work_of(
+        "struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }\n\
+         struct G<T> { x: T, a: Option<Box<G<(T, T)>>>, b: Option<Box<G<(T, Frame)>>> }\n\
+         fn f() {\n    let g = G { x: 1, a: None, b: None }\n    print(g.x)\n}\n",
+    );
+    assert!(wg.place_types >= 1 && wg.place_types <= 8, "{wg:?}");
 }

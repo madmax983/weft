@@ -800,8 +800,11 @@ impl super::Machine<'_, '_> {
                 for i in (0..n).rev() {
                     let q = p.child(u32_of(i));
                     let x = self.hget(&q)?;
+                    // A scalar part behind the reference is copied: a read.
                     let item = if is_scalar(x) {
-                        x.clone()
+                        let x = x.clone();
+                        self.heap.log_read(&q);
+                        x
                     } else {
                         Value::Ref(q)
                     };
@@ -833,8 +836,11 @@ impl super::Machine<'_, '_> {
                 for i in (0..n).rev() {
                     let q = p.child(u32_of(i));
                     let x = self.hget(&q)?;
+                    // A scalar part behind the reference is copied: a read.
                     let item = if is_scalar(x) {
-                        x.clone()
+                        let x = x.clone();
+                        self.heap.log_read(&q);
+                        x
                     } else {
                         Value::Ref(q)
                     };
@@ -873,6 +879,7 @@ impl super::Machine<'_, '_> {
             CPat::Wild | CPat::Bind(_) => true,
             CPat::Lit(l) => {
                 let (p, _) = self.resolve(p.clone(), false)?;
+                self.heap.log_read(&p);
                 match (l, self.hget(&p)?) {
                     (LitPat::Int(a), Value::Int(b)) => a == b,
                     (LitPat::Bool(a), Value::Bool(b)) => a == b,
@@ -931,6 +938,8 @@ impl super::Machine<'_, '_> {
                 let v = if tr {
                     let x = self.hget(p)?;
                     if is_scalar(x) {
+                        // A part behind a reference is copied: a read.
+                        self.heap.log_read(p);
                         x.clone()
                     } else {
                         Value::Ref(p.clone())

@@ -232,6 +232,7 @@ pub(super) struct SumMark {
     own_roots: usize,
     captures: usize,
     moved_captures: usize,
+    rest_captures: usize,
     dropped: usize,
     items: usize,
     params: usize,
@@ -290,6 +291,9 @@ pub struct Summary {
     pub captures: Grow<VarId>,
     /// Captured variables that the body moves.
     pub moved_captures: Grow<VarId>,
+    /// Captured variables of which the body moves a part that leaves a linear
+    /// part in the variable (`rest_linear`).
+    pub rest_captures: Grow<VarId>,
     /// Owners that the body declares. They go out of scope when the body returns.
     pub dropped: Grow<VarId>,
     /// The places that the result of a closure points into.
@@ -398,6 +402,7 @@ impl Summary {
             own_roots,
             captures,
             moved_captures,
+            rest_captures,
             dropped,
             ret_refs,
             param_roots,
@@ -441,6 +446,7 @@ impl Summary {
             own_roots: own_roots.mark(),
             captures: captures.mark(),
             moved_captures: moved_captures.mark(),
+            rest_captures: rest_captures.mark(),
             dropped: dropped.mark(),
             items: items.mark(),
             params: params.mark(),
@@ -490,6 +496,7 @@ impl Summary {
             own_roots,
             captures,
             moved_captures,
+            rest_captures,
             dropped,
             ret_refs,
             param_roots,
@@ -532,6 +539,7 @@ impl Summary {
         own_roots.cut(mark.own_roots);
         captures.cut(mark.captures);
         moved_captures.cut(mark.moved_captures);
+        rest_captures.cut(mark.rest_captures);
         dropped.cut(mark.dropped);
         items.cut(mark.items);
         params.cut(mark.params);
@@ -590,6 +598,7 @@ impl Summary {
         self.own_roots.extend(o.own_roots.iter().copied());
         self.captures.extend(o.captures.iter().copied());
         self.moved_captures.extend(o.moved_captures.iter().copied());
+        self.rest_captures.extend(o.rest_captures.iter().copied());
         self.dropped.extend(o.dropped.iter().copied());
         self.ret_refs.extend(o.ret_refs.iter().copied());
         self.param_roots
@@ -925,6 +934,15 @@ struct Val {
     empty: bool,
 }
 
+/// The number of paths to place fields above which `Lower::place_paths` gives
+/// one path for each part of a type.
+const PLACE_PATHS_LIMIT: usize = 64;
+
+/// A path to a place field, by the names of its steps (`Lower::place_paths`).
+/// With `true`, the path stops at a recursive type: it stands for each place
+/// field at or below it.
+type PlacePath = (Vec<String>, bool);
+
 #[derive(Clone, Debug, Default)]
 struct LVal {
     places: Vec<PlaceId>,
@@ -1231,9 +1249,11 @@ pub struct Lower<'p> {
     /// The loop keys of places (`Lower::place_key`), by place and the number of
     /// roots before the loop. A place does not change, so a key stays valid.
     keys: std::cell::RefCell<std::collections::HashMap<(PlaceId, usize), Rc<str>>>,
-    /// The paths to the place fields of each full type (`Lower::place_paths`).
-    /// The paths of a type do not change, so an entry stays valid.
-    place_paths: std::collections::HashMap<Ty, Rc<[Vec<String>]>>,
+    /// The paths to the place fields of each full type (`Lower::place_paths`),
+    /// by the cycles of recursive types on the way to it. The paths of a type
+    /// do not change, so an entry stays valid.
+    place_paths:
+        std::collections::HashMap<Vec<u32>, std::collections::HashMap<Ty, Rc<[PlacePath]>>>,
     /// The method calls that can write through a reference local, for
     /// `writes_via` at the end of the body.
     via_calls: Vec<ViaCall>,
@@ -1272,8 +1292,9 @@ pub struct Lower<'p> {
     /// number, and whether one can run more than once.
     param_runs: BTreeMap<(usize, usize), (usize, bool)>,
     /// The place fields of locals that have no value yet. Each has a hidden
-    /// variable that gets a value when the body sets the field.
-    unset_places: Vec<(PlaceId, VarId)>,
+    /// variable that gets a value when the body sets the field. A place with
+    /// `true` stands for each place field at or below it (`PlacePath`).
+    unset_places: Vec<(PlaceId, VarId, bool)>,
     /// The source of the `for` loop that is being lowered is `@ uniq`.
     iter_uniq: bool,
     /// The places that the value of each temporary root points into.
@@ -1896,20 +1917,29 @@ impl<'p> Lower<'p> {
     }
 
     /// The node reads or borrows the places `ps`. A place field with no value at
-    /// or below one of them is used there (W0304).
-    fn touch_unset(&mut self, ps: &[PlaceId]) {
+    /// or below one of them is used there (W0304). So is a place that stands
+    /// for the place fields below it, if one of `ps` is at or below it.
+    pub(super) fn touch_unset(&mut self, ps: &[PlaceId]) {
         let mut used = Vec::new();
-        for &(u, var) in &self.unset_places {
-            let mut at = Some(u);
-            while let Some(a) = at {
-                if ps.contains(&a) {
-                    used.push(var);
-                    break;
-                }
-                at = self.facts.place(a).parent;
+        for &(u, var, below) in &self.unset_places {
+            if self.below_one_of(u, ps) || (below && ps.iter().any(|&p| self.below_one_of(p, &[u])))
+            {
+                used.push(var);
             }
         }
         self.pend_uses.extend(used);
+    }
+
+    /// Returns true if place `p` is one of `ps` or below one of them.
+    pub(super) fn below_one_of(&self, p: PlaceId, ps: &[PlaceId]) -> bool {
+        let mut at = Some(p);
+        while let Some(a) = at {
+            if ps.contains(&a) {
+                return true;
+            }
+            at = self.facts.place(a).parent;
+        }
+        false
     }
 
     /// Returns the place of the variable of local `l`: the root place of an
@@ -1998,6 +2028,19 @@ impl<'p> Lower<'p> {
         for s in &mut self.sums[..sums_len] {
             if s.captures.contains(&v) {
                 s.moved_captures.insert(v);
+            }
+        }
+    }
+
+    /// The move of a part of variable `v` at node `n` leaves a linear part in
+    /// it (`rest_linear`). A summary that captures `v` keeps this, so a node
+    /// that runs the body leaves the rest too.
+    pub(super) fn rest_move(&mut self, v: VarId, n: NodeId) {
+        self.facts.rest_linear.push((v, n));
+        let sums_len = self.sums.len();
+        for s in &mut self.sums[..sums_len] {
+            if s.captures.contains(&v) {
+                s.rest_captures.insert(v);
             }
         }
     }
@@ -2211,6 +2254,12 @@ impl<'p> Lower<'p> {
 
     /// Closes a statement: its temporaries go out of scope at its end.
     fn close_stmt(&mut self, span: Span) {
+        self.close_temps(span, "end of statement");
+    }
+
+    /// Closes the temporaries of a frame that has them of its own, such as a
+    /// scope body or a clause. `label` names the end of the frame.
+    pub(super) fn close_temps(&mut self, span: Span, label: &str) {
         let Some((_, temps)) = self.stmt_temps.pop() else {
             return;
         };
@@ -2218,7 +2267,7 @@ impl<'p> Lower<'p> {
             return;
         }
         let end = Span::new(span.hi.saturating_sub(1), span.hi);
-        let n = self.emit(end, "end of statement", String::new());
+        let n = self.emit(end, label, String::new());
         for v in temps {
             self.facts.scope_end.push((v, n));
         }
@@ -2610,7 +2659,7 @@ impl<'p> Lower<'p> {
         }
         // A new value that no place held before is built in place: its place
         // fields have no value yet.
-        if v.var.is_none() && v.place.is_none() && v.local.is_none() {
+        if v.var.is_none() && v.place.is_none() && v.local.is_none() && !v.empty {
             if let Some(r) = self.locals[l].root {
                 self.unset_fields(l, r, n);
             }
@@ -2621,8 +2670,15 @@ impl<'p> Lower<'p> {
     /// no value at node `n`. A read of the field before the body sets it is W0304.
     fn unset_fields(&mut self, l: usize, r: PlaceId, n: NodeId) {
         let ty = self.inf.deep(&self.locals[l].ty);
-        let var = self.locals[l].var;
-        for path in self.unset_paths(&ty) {
+        let span = self.facts.var(self.locals[l].var).span;
+        self.unset_fields_at(r, &ty, span, n);
+    }
+
+    /// Gives each place field of a new value of type `ty` at place `r` a hidden
+    /// variable with no value at node `n` (`unset_fields`). `span` is the span of
+    /// the declaration.
+    pub(super) fn unset_fields_at(&mut self, r: PlaceId, ty: &Ty, span: Span, n: NodeId) {
+        for (path, below) in self.unset_paths(ty) {
             let mut p = r;
             let mut at = ty.clone();
             let mut found = true;
@@ -2640,12 +2696,16 @@ impl<'p> Lower<'p> {
             if !found {
                 continue;
             }
-            let name = self.facts.place(p).display.clone();
-            let span = self.facts.var(var).span;
+            let display = self.facts.place(p).display.clone();
+            let name = if below {
+                format!("{{place field below `{display}`}}")
+            } else {
+                display
+            };
             let info = self.var_info(&name, VarKind::Local, span, &at, false);
             let hidden = self.facts.add_var(info);
             self.facts.unset_at.push((hidden, n));
-            self.unset_places.push((p, hidden));
+            self.unset_places.push((p, hidden, below));
         }
     }
 
@@ -2653,34 +2713,45 @@ impl<'p> Lower<'p> {
     /// the value, in its parts and behind a `Box`. A struct literal cannot give a
     /// place field a value, and a `!Move` value is built in place. So a value that
     /// no place held before has no value in these fields.
-    fn unset_paths(&mut self, t: &Ty) -> Vec<Vec<String>> {
+    fn unset_paths(&mut self, t: &Ty) -> Vec<PlacePath> {
         if !self.has_place_fields {
             return Vec::new();
         }
         let t = self.inf.deep(t);
-        self.place_paths(&t, &mut Vec::new()).0.to_vec()
+        self.place_paths(&t, &[]).to_vec()
     }
 
     /// Returns the paths to the place fields that a value of the full type `t`
-    /// holds (review round 3, Q3-1). The table `place_paths` keeps the paths of
-    /// each full type, so each type is walked once: most types have none. A
-    /// recursive type stops at the second use of the same full type on the way
-    /// (`stack`), not at the second use of its definition: `Wrap<Wrap<Frame>>`
-    /// walks both levels. A result that such a stop cut depends on the types on
-    /// the way, so the table does not keep it. The second value is true then.
-    fn place_paths(&mut self, t: &Ty, stack: &mut Vec<Ty>) -> (Rc<[Vec<String>]>, bool) {
-        if let Some(ps) = self.place_paths.get(t) {
-            return (Rc::clone(ps), false);
+    /// holds (review round 3, Q3-1). `cycles` are the cycles of the recursive
+    /// structs and enums on the way to `t` (`TypeProps::cycle`), in order.
+    ///
+    /// A recursive type holds a place field at each depth, so it has no end of
+    /// paths. The search stops at a struct or an enum whose cycle is already on
+    /// the way, and gives a path that stands for each place field below it
+    /// (`PlacePath`). Each infinite search meets such a type, so the search
+    /// stops, also for a type that grows at each depth, such as
+    /// `Nest<T> { next: Option<Box<Nest<Box<T>>>> }`. A generic type that does
+    /// not hold itself does not stop it: `Wrap<Wrap<Frame>>` walks both levels.
+    ///
+    /// The result depends only on `t` and `cycles`, so the table keeps each
+    /// result, and each type is walked once for each set of cycles. A type that
+    /// cannot hold a place field (`TypeProps::may_hold_place_field`) is not
+    /// walked.
+    fn place_paths(&mut self, t: &Ty, cycles: &[u32]) -> Rc<[PlacePath]> {
+        let props = self.prog.props();
+        if !props.may_hold_place_field(t) {
+            return Rc::from([]);
         }
-        if stack.contains(t) {
-            return (Rc::from([]), true);
+        if let Some(ps) = self.place_paths.get(cycles).and_then(|m| m.get(t)) {
+            return Rc::clone(ps);
         }
         self.work.place_types += 1;
         // The parts: the step of each part (none for the target of a `Box`: a
         // field step goes through it by itself) and its type. A place field
         // is a path of its own.
-        let mut out: Vec<Vec<String>> = Vec::new();
+        let mut out: Vec<PlacePath> = Vec::new();
         let mut parts: Vec<(Option<String>, Ty)> = Vec::new();
+        let mut inner = cycles.to_vec();
         match t {
             Ty::Tuple(ts) => {
                 parts.extend(
@@ -2689,49 +2760,88 @@ impl<'p> Lower<'p> {
                         .map(|(i, x)| (Some(i.to_string()), x.clone())),
                 );
             }
-            Ty::Adt(a, args) => match &self.prog.adts[*a].kind {
-                AdtKind::Struct(fs) => {
-                    for f in fs {
-                        if f.place.is_some() {
-                            out.push(vec![f.name.clone()]);
-                        } else {
-                            parts.push((Some(f.name.clone()), subst(&f.ty, args)));
+            Ty::Adt(a, args) => {
+                match &self.prog.adts[*a].kind {
+                    AdtKind::Struct(fs) => {
+                        for f in fs {
+                            if f.place.is_some() {
+                                out.push((vec![f.name.clone()], false));
+                            } else {
+                                parts.push((Some(f.name.clone()), subst(&f.ty, args)));
+                            }
                         }
                     }
+                    AdtKind::Enum(vs) => {
+                        for v in vs {
+                            let payload = match v.fields.len() {
+                                0 => continue,
+                                1 => subst(&v.fields[0], args),
+                                _ => Ty::Tuple(v.fields.iter().map(|f| subst(f, args)).collect()),
+                            };
+                            parts.push((Some(v.name.clone()), payload));
+                        }
+                    }
+                    AdtKind::Extern { deref: Some(d), .. } if *d != Deref::Group => {
+                        parts.extend(args.first().map(|inner| (None, inner.clone())));
+                    }
+                    AdtKind::Extern { .. } => {}
                 }
-                AdtKind::Enum(vs) => {
-                    for v in vs {
-                        let payload = match v.fields.len() {
-                            0 => continue,
-                            1 => subst(&v.fields[0], args),
-                            _ => Ty::Tuple(v.fields.iter().map(|f| subst(f, args)).collect()),
-                        };
-                        parts.push((Some(v.name.clone()), payload));
+                if let Some(c) = props.cycle(*a) {
+                    if let Err(i) = inner.binary_search(&c) {
+                        inner.insert(i, c);
                     }
                 }
-                AdtKind::Extern { deref: Some(d), .. } if *d != Deref::Group => {
-                    parts.extend(args.first().map(|inner| (None, inner.clone())));
-                }
-                AdtKind::Extern { .. } => {}
-            },
+            }
             _ => {}
         }
-        stack.push(t.clone());
-        let mut cut = false;
+        let mut found: Vec<(Option<String>, Rc<[PlacePath]>)> = Vec::new();
         for (name, x) in parts {
             let x = self.inf.deep(&x);
-            let (ps, c) = self.place_paths(&x, stack);
-            cut |= c;
-            for p in ps.iter() {
-                out.push(name.iter().cloned().chain(p.iter().cloned()).collect());
+            // A struct or an enum of a cycle on the way: each place field below
+            // it is a place field with no value.
+            let again = match &x {
+                Ty::Adt(b, _) => {
+                    !matches!(self.prog.adts[*b].kind, AdtKind::Extern { .. })
+                        && props
+                            .cycle(*b)
+                            .is_some_and(|c| inner.binary_search(&c).is_ok())
+                }
+                _ => false,
+            };
+            if again {
+                if props.may_hold_place_field(&x) {
+                    found.push((name, Rc::from([(Vec::new(), true)])));
+                }
+                continue;
+            }
+            let ps = self.place_paths(&x, &inner);
+            if !ps.is_empty() {
+                found.push((name, ps));
             }
         }
-        stack.pop();
-        let ps: Rc<[Vec<String>]> = out.into();
-        if !cut {
-            self.place_paths.insert(t.clone(), Rc::clone(&ps));
+        // A type with very many place fields, such as a deep tree of structs
+        // that each hold one, gets one path for each part that holds them. So
+        // the number of paths, and of hidden variables, stays small.
+        let many =
+            out.len() + found.iter().map(|(_, ps)| ps.len()).sum::<usize>() > PLACE_PATHS_LIMIT;
+        for (name, ps) in found {
+            if many {
+                out.push((name.into_iter().collect(), true));
+                continue;
+            }
+            for (p, below) in ps.iter() {
+                out.push((
+                    name.iter().cloned().chain(p.iter().cloned()).collect(),
+                    *below,
+                ));
+            }
         }
-        (ps, cut)
+        let ps: Rc<[PlacePath]> = out.into();
+        self.place_paths
+            .entry(cycles.to_vec())
+            .or_default()
+            .insert(t.clone(), Rc::clone(&ps));
+        ps
     }
 
     /// Returns the state of this path that a branch changes.

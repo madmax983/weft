@@ -311,6 +311,24 @@ fn the_oracle_reports_what_the_stock_machine_lets_pass() {
              fn main() / async { let n = 1\n scope { s =>\n s.spawn(|| { n = 5 })\n show(&n)\n } }",
             "data race",
         ),
+        // A literal pattern reads the value that it tests, also through a
+        // reference, and a destructure through a reference reads each part
+        // that it copies (review of R3a).
+        (
+            "fn main() / async { let n = 1\n scope { s =>\n s.spawn(|| { n = 5 })\n\
+             match n { 1 => print(0), _ => print(1) }\n } }",
+            "data race",
+        ),
+        (
+            "fn main() / async { let n = 1\n scope { s =>\n s.spawn(|| { n = 5 })\n\
+             let q = &n\n match q { 1 => print(0), _ => print(1) }\n } }",
+            "data race",
+        ),
+        (
+            "fn main() / async { let t = (1, 2)\n scope { s =>\n s.spawn(|| { t.0 = 5 })\n\
+             let q = &t\n let (a, b) = q\n print(0)\n } }",
+            "data race",
+        ),
         // `print` of a moved value, and of a reference into a moved value.
         (
             "fn take_v(v: Vec<u64>) -> usize { v.len() }\n\

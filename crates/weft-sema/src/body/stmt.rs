@@ -911,7 +911,7 @@ impl Lower<'_> {
                 return;
             }
             self.consume(v, span);
-        } else if v.var.is_some() || v.local.is_none() || !v.tasks.is_empty() {
+        } else if v.var.is_some() || v.local.is_none() {
             self.drop_value(v, span);
             return;
         }
@@ -945,6 +945,7 @@ impl Lower<'_> {
                     },
                 };
                 if init.is_some() {
+                    self.use_moved_fields(&v);
                     self.consume(&v, s.span);
                 }
                 self.check_binders(pat);
@@ -1269,6 +1270,9 @@ impl Lower<'_> {
         if self.has_fn(&v.ty) {
             self.note_fn_store(&lv.places);
         }
+        if op == AssignOp::Assign {
+            self.use_moved_fields(&v);
+        }
         self.consume(&v, value.span);
         let holder = match (op, lv.owner, lv.through_ref) {
             (AssignOp::Assign, Some(l), false) => self.part_holder(l, &lv.places, &v, target.span),
@@ -1284,15 +1288,28 @@ impl Lower<'_> {
         }
         let detail = format!("mut({})", self.place_text(&places));
         let n = self.emit(span, "assign", detail);
-        // A place field gets its value.
+        // A place field gets its value. A new value that no place held before
+        // has no value in its own place fields (`Lower::unset_fields`), so they
+        // get hidden variables again. Such a value also replaces the place
+        // fields below a recursive type (`PlacePath`).
+        let fresh =
+            op == AssignOp::Assign && v.var.is_none() && v.place.is_none() && v.local.is_none();
         let set: Vec<VarId> = self
             .unset_places
             .iter()
-            .filter(|(p, _)| lv.places.contains(p))
-            .map(|&(_, var)| var)
+            .filter(|&&(p, _, below)| {
+                lv.places.contains(&p) || (below && fresh && self.below_one_of(p, &lv.places))
+            })
+            .map(|&(_, var, _)| var)
             .collect();
         for var in set.into_iter().chain(holder) {
             self.bind(var, n);
+        }
+        if fresh && !v.empty {
+            let ty = self.inf.deep(&lv.ty);
+            for &p in &lv.places {
+                self.unset_fields_at(p, &ty, target.span, n);
+            }
         }
         if let (true, Some(l)) = (old_linear, owner) {
             let var = self.locals[l].var;
@@ -1711,6 +1728,26 @@ impl Lower<'_> {
         }
     }
 
+    /// Value `v` moves out of its place into a local or a place (`let`, `=`).
+    /// The new holder gets no hidden variables for the place fields of the
+    /// value, so each of them needs a value here (W0304). A `!Move` value
+    /// cannot move (W0604), so only a place field behind a `Box` counts.
+    fn use_moved_fields(&mut self, v: &Val) {
+        if self.unset_places.is_empty() || self.is_immovable(&v.ty) {
+            return;
+        }
+        let mut ps: Vec<PlaceId> = v
+            .place
+            .iter()
+            .filter(|lv| !lv.through_ref)
+            .flat_map(|lv| lv.places.iter().copied())
+            .collect();
+        if ps.is_empty() {
+            ps.extend(v.local.and_then(|l| self.locals[l].root));
+        }
+        self.touch_unset(&ps);
+    }
+
     /// Records a by-value use of a value: copy types are read, other values move.
     pub(super) fn consume(&mut self, v: &Val, span: Span) {
         if self.cur.is_none() {
@@ -1772,7 +1809,7 @@ impl Lower<'_> {
                     }
                 }
                 if rest {
-                    self.facts.rest_linear.push((var, n));
+                    self.rest_move(var, n);
                 }
             }
         }
