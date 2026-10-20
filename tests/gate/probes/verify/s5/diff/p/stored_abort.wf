@@ -1,0 +1,29 @@
+effect Op { fn op() }
+effect Note { fn note() }
+struct Job { f: fn() }
+fn run_it(j: &Job) { let g = j.f
+ g() }
+
+fn stored_abort() {
+    let f = || print(0)
+    handle Op { fn op() { print(9) } } in {
+        handle Note { fn note() { resume(()) } } in {
+            f = || note()
+            let j = Job { f: || op() }
+            run_it(&j)
+            f = || print(1)
+        }
+    }
+    f()
+}
+fn stored_abort_same() {
+    let f = || print(0)
+    handle Note { fn note() { print(8) } } in {
+        let j = Job { f: || note() }
+        f = || note()
+        run_it(&j)
+        f = || print(1)
+    }
+    f()
+}
+fn main() { stored_abort_same(); stored_abort() }

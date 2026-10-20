@@ -1,0 +1,11 @@
+// A local item value that a callee sets through a reference.
+fn diff(a: i32, b: i32) -> i32 { a - b }
+fn rdiff(b: i32, a: i32) -> i32 { a - b }
+struct Box1 { g: fn(i32, i32) -> i32 }
+fn swap(h: &Box1) / mut(h) { h.g = rdiff }
+fn main() {
+    let h = Box1 { g: diff }
+    swap(&h)
+    let g = h.g
+    print(g(b: 10, a: 3))
+}

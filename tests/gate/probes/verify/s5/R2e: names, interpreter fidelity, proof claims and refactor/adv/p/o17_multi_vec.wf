@@ -1,0 +1,17 @@
+effect Pick { multi fn pick() -> bool }
+fn body() -> usize / Pick {
+    let v = [1, 2]
+    let b = pick()
+    if b { v.push(3) }
+    let r = &v[0]
+    print(r)
+    v.len()
+}
+fn main() {
+    let n = handle Pick { fn pick() {
+        let a = resume(true)
+        let c = resume(false)
+        a + c
+    } } in body()
+    print(n)
+}

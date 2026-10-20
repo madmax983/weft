@@ -1,0 +1,7 @@
+
+
+fn main() {
+    scope { s1 =>
+        let t2 = s1.spawn(|| print(0))
+    }
+}

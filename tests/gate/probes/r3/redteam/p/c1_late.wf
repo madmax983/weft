@@ -1,0 +1,95 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Note { fn note(x: u64) }
+fn run(f: fn()) { f() }
+struct Hold { f: fn() }
+fn run_hold(h: Hold) { let g = h.f; g() }
+
+// r gets a new value inside another closure.
+fn set_in_closure(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let f = || print(r.hp)
+    let set = || { r = &world.entities[0] }
+    set()
+    world.entities.clear()
+    f()   //~ W0301
+}
+// r gets a new value inside a handler clause.
+fn set_in_clause(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let f = || print(r.hp)
+    handle Note { fn note(x) { r = &world.entities[0]; resume(()) } } in {
+        note(1)
+    }
+    world.entities.clear()
+    f()   //~ W0301
+}
+// r gets a new value in a task.
+fn set_in_task(world: &World, d: &Entity) / mut(world.entities), async {
+    let r = d
+    let f = || print(r.hp)
+    scope { s =>
+        s.spawn(|| { r = &world.entities[0] })
+    }
+    world.entities.clear()
+    f()   //~ W0301
+}
+// The closure runs from a by-value struct argument.
+fn via_struct_arg(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let h = Hold { f: || print(r.hp) }
+    r = &world.entities[0]
+    world.entities.clear()
+    run_hold(h)   //~ W0301
+}
+// Nested: an outer closure calls a closure that captures r.
+fn nested(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let f = || print(r.hp)
+    let g = || f()
+    let h = || g()
+    r = &world.entities[0]
+    world.entities.clear()
+    h()   //~ W0301
+}
+// r gets the new value in a loop before the closure runs on the next pass.
+fn in_loop(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let f = || print(r.hp)
+    let i = 0
+    while i < 3 {
+        f()   //~ W0301
+        r = &world.entities[0]
+        world.entities.clear()
+        i += 1
+    }
+}
+// r is a tuple part that gets a new value.
+fn tuple_part(world: &World, d: &Entity) / mut(world.entities) {
+    let t = (d, 1)
+    let f = || print(t.0.hp)
+    t.0 = &world.entities[0]
+    world.entities.clear()
+    f()   //~ W0301
+}
+// r is an Option that gets a new value.
+fn option_part(world: &World, d: &Entity) / mut(world.entities) {
+    let o = Some(d)
+    let f = || match o { Some(e) => print(e.hp), None => {} }
+    o = Some(&world.entities[0])
+    world.entities.clear()
+    f()   //~ W0301
+}
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+test "set_in_closure" { let w = mkw(); let e = Entity { hp: 5 }; set_in_closure(&w, &e) }
+test "set_in_clause" { let w = mkw(); let e = Entity { hp: 5 }; set_in_clause(&w, &e) }
+test "set_in_task" { let w = mkw(); let e = Entity { hp: 5 }; set_in_task(&w, &e) }
+test "via_struct_arg" { let w = mkw(); let e = Entity { hp: 5 }; via_struct_arg(&w, &e) }
+test "nested" { let w = mkw(); let e = Entity { hp: 5 }; nested(&w, &e) }
+test "in_loop" { let w = mkw(); let e = Entity { hp: 5 }; in_loop(&w, &e) }
+test "tuple_part" { let w = mkw(); let e = Entity { hp: 5 }; tuple_part(&w, &e) }
+test "option_part" { let w = mkw(); let e = Entity { hp: 5 }; option_part(&w, &e) }

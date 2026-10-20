@@ -1,0 +1,20 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { let Tx(id) = t; print("rollback {id}") }
+fn commit(t: Tx) { let Tx(id) = t; print("commit {id}") }
+
+fn main() / io, async {
+    let hs = Vec.new()
+    handle Fail { fn fail(m) { print("caught: {m}") } } in {
+        with_timeout(10.ms) {
+            scope { s =>
+                hs.push(s.spawn(|| Tx { id: 1 }))
+                sleep(100.ms)
+            }
+        }
+    }
+    while hs.len() > 0 {
+        commit(hs.pop().join())
+    }
+    print("end")
+}

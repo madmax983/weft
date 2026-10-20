@@ -1,0 +1,7 @@
+struct E { hp: u64 }
+fn main() {
+    let o = Some(E { hp: 1 })
+    let r = match o { Some(e) => &e.hp, None => &0 }
+    o = None
+    print(r + 1)
+}

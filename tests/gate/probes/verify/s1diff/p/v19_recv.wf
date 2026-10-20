@@ -1,0 +1,16 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+impl Entity {
+    fn heal(self, n: u64) / mut(self) { self.hp += 1 }
+}
+fn grow(w: &World) -> u64 / mut(w.entities) { w.entities.push(Entity { hp: 1 }); 0 }
+fn ref_recv(world: &World) / mut(world.entities, world.entities[]) {
+    let r = &world.entities[0]
+    r.heal(grow(world))
+}
+fn trailing(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    world.entities.push(Entity { hp: 1 })
+    apply(first.hp) { print(1) }
+}
+fn apply(n: i32, f: fn()) { f() }

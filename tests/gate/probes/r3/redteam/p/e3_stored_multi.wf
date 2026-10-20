@@ -1,0 +1,26 @@
+effect Choice { multi fn choose() -> bool }
+effect Stop { fn stop() }
+linear struct Lock { id: u64 }
+fn release(l: Lock) { let Lock(i) = l }
+fn run_all(v: &Vec<fn()>) { let f = v[0]; f() }
+struct Hold { f: fn() }
+fn run_hold(h: &Hold) { let g = h.f; g() }
+
+fn stored_multi() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        let l = Lock { id: 1 }
+        let v = Vec.new()
+        v.push(|| { let b = choose() })
+        run_all(&v)   //~ W0503
+        release(l)
+    }
+}
+fn stored_abort() {
+    handle Stop { fn stop() { () } } in {
+        let l = Lock { id: 1 }
+        let h = Hold { f: || stop() }
+        run_hold(&h)   //~ W0602
+        release(l)
+    }
+}
+fn main() {}

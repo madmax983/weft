@@ -1,0 +1,9 @@
+struct G { items: Vec<u64> }
+fn main() {
+    let a = Rc.new(G { items: Vec.new() })
+    a.items.push(1)
+    let b = a.clone()
+    let r = &a.items[0]
+    b.items.clear()
+    print(r + 1)
+}

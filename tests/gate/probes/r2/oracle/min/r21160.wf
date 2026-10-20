@@ -1,0 +1,31 @@
+struct E { hp: u64, tag: u64 }
+struct W { es: Vec<E>, ns: Vec<u64>, score: u64, b: Box<E> }
+effect Ask { fn ask() -> u64 }
+
+fn mk_w() -> W {
+    let w = W { es: Vec.new(), ns: Vec.new(), score: 0, b: Box.new(E { hp: 1, tag: 0 }) }
+    w.es.push(E { hp: 6, tag: 2 })
+    w
+}
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v
+}
+fn grow_w(w: &W) { w.es.push(E { hp: 1, tag: 9 }) }
+fn bump(e: &E) { e.hp += 1 }
+
+fn h0(p0: &E, p1: Vec<u64>, p2: u64) -> fn() {
+    || bump(p0)
+}
+
+fn main() {
+    let w4 = mk_w()
+    let f5 = h0(&w4.es[0], mk_v(), 1)
+    grow_w(&w4)
+    handle Ask { fn ask() { resume(5) } } in {
+        let g7 = || {
+            f5()
+        }
+        g7()
+    }
+}

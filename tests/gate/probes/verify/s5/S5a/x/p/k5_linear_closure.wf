@@ -1,0 +1,15 @@
+effect Choice { multi fn choose() -> bool }
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { print("unlocked")
+ let Lock(i) = l }
+fn lock() -> Lock { Lock { id: 1 } }
+fn run_after_choose(f: fn()) / Choice { let b = choose()
+ f() }
+fn m_lin() / Choice {
+    let l = lock()
+    run_after_choose(|| unlock(l))
+}
+fn main() {
+    handle Choice { fn choose() { resume(true)
+ resume(false) } } in m_lin()
+}

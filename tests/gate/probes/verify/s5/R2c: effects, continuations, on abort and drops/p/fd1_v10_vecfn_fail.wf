@@ -1,0 +1,22 @@
+// on abort calls a closure from the value that fails.
+effect Stop { fn stop() }
+linear struct T { fs: Vec<fn()> }
+    on abort = undo
+fn undo(t: T) {
+    let T(fs) = t
+    let f = fs[0]
+    f()
+}
+fn done(t: T) { let T(fs) = t }
+fn main() {
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        handle Stop { fn stop() { () } } in {
+            let v: Vec<fn()> = Vec.new()
+            v.push(|| fail("boom"))
+            let t = T { fs: v }
+            stop()
+            done(t)
+        }
+    }
+    print("end")
+}

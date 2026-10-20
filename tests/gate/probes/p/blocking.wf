@@ -1,0 +1,7 @@
+extern fn db_step(x: u64) -> u64 / blocking
+
+fn main() / io {
+    let a = db_step(1)
+    let b = db_step(2)
+    print(a + b)
+}

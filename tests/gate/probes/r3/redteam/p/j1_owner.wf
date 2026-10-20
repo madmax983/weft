@@ -1,0 +1,71 @@
+struct Buf { items: Vec<u64> }
+fn mk() -> Buf { let b = Buf { items: Vec.new() }; b.items.push(7); b }
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(3); v }
+fn id<T>(x: T) -> T { x }
+fn first(v: &Vec<u64>) -> &u64 in v[] { &v[0] }
+
+fn temp_in_let() {
+    let r = &mkv()[0]
+    print(r)   //~ W0301
+}
+fn temp_through_callee() {
+    let r = first(&mkv())
+    print(r)   //~ W0301
+}
+fn loop_var_ref() {
+    let r = &0
+    for x in 0..3 { r = &x }
+    print(r)   //~ W0301
+}
+fn match_temp() {
+    let r = &0
+    match mk() { b => { r = &b.items[0] } }
+    print(r)   //~ W0301
+}
+fn while_cond_temp() {
+    let r = &0
+    let i = 0
+    while { r = &mkv()[0]; i < 2 } { i += 1 }
+    print(r)   //~ W0301
+}
+fn if_cond_temp() {
+    let r = &0
+    if { let v = mkv(); r = &v[0]; true } { print(1) }
+    print(r)   //~ W0301
+}
+fn closure_local() {
+    let r = &0
+    let f = || { let v = mkv(); r = &v[0] }
+    f()
+    print(r)   //~ W0301
+}
+fn generic_temp() {
+    let r = &id(mkv())[0]
+    print(r)   //~ W0301
+}
+fn arg_temp() {
+    let r = &0
+    let g = |v: Vec<u64>| { r = &v[0] }
+    g(mkv())
+    print(r)   //~ W0301
+}
+fn method_temp() {
+    let r = mkv().get(0)
+    print(r)   //~ W0301
+}
+fn interp_temp() {
+    let r = &0
+    print("{ { let v = mkv(); r = &v[0]; 1 } }")
+    print(r)   //~ W0301
+}
+test "temp_in_let" { temp_in_let() }
+test "temp_through_callee" { temp_through_callee() }
+test "loop_var_ref" { loop_var_ref() }
+test "match_temp" { match_temp() }
+test "while_cond_temp" { while_cond_temp() }
+test "if_cond_temp" { if_cond_temp() }
+test "closure_local" { closure_local() }
+test "generic_temp" { generic_temp() }
+test "arg_temp" { arg_temp() }
+test "method_temp" { method_temp() }
+test "interp_temp" { interp_temp() }

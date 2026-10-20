@@ -1,0 +1,7 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity>, score: u64 }
+fn bump_elem(w: &World) { w.entities[0].hp += 1 }
+pub fn top(w: &World) / mut(w.entities[].hp) { bump_elem(w) }
+enum Shape { Circle(Entity), Square(u64) }
+fn bump_shape(s: &Shape) { match s { Circle(e) => { e.hp += 1 }, Square(n) => {} } }
+pub fn top3(s: &Shape) / mut(s.Circle.hp) { bump_shape(s) }

@@ -1,0 +1,14 @@
+// Control: the same counting with a closure (body caps are remapped).
+effect Choice { multi fn choose() -> bool }
+
+fn main() {
+    let all = Vec.new()
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        let count = 0
+        let b = choose()
+        let f = || { count += 1 }
+        f()
+        all.push(count)
+    }
+    print(all)
+}

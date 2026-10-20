@@ -1,0 +1,11 @@
+enum Sh { Circle(u64), Sq(Vec<u64>) }
+fn main() {
+    let s = Sq(Vec.new())
+    match s {
+        Sq(v) => {
+            v.push(1)
+        }
+        Circle(n) => print(n),
+    }
+    print(1)
+}

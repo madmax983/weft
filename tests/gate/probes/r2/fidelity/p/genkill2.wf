@@ -1,0 +1,26 @@
+struct Entity { hp: i32, kids: Vec<Entity> }
+struct World { entities: Vec<Entity> }
+fn grow(w: &World) -> &Entity in w.entities[] / mut(w.entities) {
+    w.entities.push(Entity { hp: 1, kids: Vec.new() })
+    &w.entities[0]
+}
+fn ents(w: &World) -> &Vec<Entity> in w.entities / mut(w.entities) {
+    w.entities.push(Entity { hp: 1, kids: Vec.new() })
+    &w.entities
+}
+fn f(world: &World, c: bool) / mut(world.entities) {
+    let r = &world.entities[0]
+    r = if c { grow(world) } else { r }
+    print(r.hp)
+    let s = &ents(world)[0]
+    print(s.hp)
+    let t = &world.entities[0]
+    t = &grow(world).kids[0]
+    print(t.hp)
+    let u = &world.entities[0]
+    while c { u = grow(world) }
+    print(u.hp)
+    let x = &world.entities[0]
+    x = { world.entities.clear(); &world.entities[0] }
+    print(x.hp)
+}

@@ -1,0 +1,20 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn keep_g<T>(v: &Vec<T>, x: T) / mut(v) { v.push(x) }
+// A generic callee stores the closure in the caller's Vec.
+fn generic_store(world: &World) / mut(world.entities) {
+    let v: Vec<fn()> = Vec.new()
+    keep_g(&v, || world.entities.clear())
+    let first = &world.entities[0]
+    let g = v[0]
+    g()
+    print(first.hp)   // expect W0301
+}
+// The effect of a stored item is lost for a public function.
+fn noisy() / log { log.info("x") }
+pub fn store_item() {   // expect W0701 (/ log)
+    let v: Vec<fn()> = Vec.new()
+    v.push(noisy)
+    let g = v[0]
+    g()
+}

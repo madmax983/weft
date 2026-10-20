@@ -1,0 +1,15 @@
+effect Log { fn log(msg: String) }
+effect Op { fn op() }
+
+fn nested_abort() {
+    let f = || print(0)
+    handle Op { fn op() { print(9) } } in {
+        handle Log { fn log(m) { resume(()) } } in {
+            f = || log("x")
+            op()
+            f = || print(1)
+        }
+    }
+    f()
+}
+fn main() { nested_abort() }

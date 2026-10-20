@@ -1,0 +1,8 @@
+fn main() {
+    let x = util.mk()
+    print(x.diff(b: 10, a: 3))
+    let g = util.sub
+    print(g(b: 10, a: 3))
+    print(util.inner(util.mk()))
+    print(util.sub(b: 1, a: 2))
+}

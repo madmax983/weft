@@ -1,0 +1,32 @@
+struct L0 { items: Vec<u64> }
+struct L1 { x: L0 }
+struct L2 { x: L1 }
+struct L3 { x: L2 }
+struct L4 { x: L3 }
+struct L5 { x: L4 }
+struct L6 { x: L5 }
+struct L7 { x: L6 }
+struct L8 { x: L7 }
+struct L9 { x: L8 }
+struct L10 { x: L9 }
+fn grow(w: &L10) { w.x.x.x.x.x.x.x.x.x.x.items.push(1) }
+fn grow_decl(w: &L10) / mut(w.x.x.x.x.x.x.x.x.x.x.items) { w.x.x.x.x.x.x.x.x.x.x.items.push(1) }
+fn grow_mid(w: &L10) { let m = &w.x.x.x
+ m.x.x.x.x.x.x.x.items.push(1) }
+fn user(w: &L10) / mut(w..) {
+    let r = &w.x.x.x.x.x.x.x.x.x.x.items[0]
+    grow(w)
+    print(r)   //~ W0301
+}
+fn user2(w: &L10) / mut(w..) {
+    let r = &w.x.x.x.x.x.x.x.x.x.x.items[0]
+    grow_decl(w)
+    print(r)   //~ W0301
+}
+fn user3(w: &L10) / mut(w..) {
+    let r = &w.x.x.x.x.x.x.x.x.x.x.items[0]
+    grow_mid(w)
+    print(r)   //~ W0301
+}
+pub fn pub_grow(w: &L10) { w.x.x.x.x.x.x.x.x.x.x.items.push(1) }   //~ W0701
+fn narrow(w: &L10) / mut(w.x) { w.x.x.x.x.x.x.x.x.x.x.items.push(1) }

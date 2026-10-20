@@ -1,0 +1,22 @@
+// ESCAPE (RT1 x tasks): the parent moves and frees the owner while a task
+// reads through a captured reference.
+fn take(v: Vec<u64>) {}
+fn parent_move() / async {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    scope { s =>
+        s.spawn(|| { suspend(); print(r) })
+        take(v)   // expected W0405 (or W0301): the task still reads v[]
+    }
+}
+fn parent_clear() / async {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    scope { s =>
+        s.spawn(|| { suspend(); print(r) })
+        v.clear()   // control: W0405
+    }
+}
+fn main() / async { parent_move() }

@@ -1,0 +1,29 @@
+effect Choice { multi fn choose() -> bool }
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { let Lock(i) = l; print("unlock") }
+fn lock() -> Lock { Lock { id: 1 } }
+fn hold_fail<T>(x: T) -> T / fail { fail("boom")
+ x }
+fn hold_vec<T>(x: T) -> Vec<T> / fail { let v = Vec.new()
+ v.push(x)
+ fail("boom")
+ v }
+fn hold_opt<T>(x: Option<T>) -> Option<T> / fail { fail("boom")
+ x }
+fn hold_ref<T>(x: T, r: &u64) -> T / fail { fail("boom")
+ x }
+fn via_value() / fail {
+    let h = hold_fail
+    let m = h(lock())
+    unlock(m)
+}
+fn via_hof(k: fn(Lock) -> Lock / fail) / fail {
+    let m = k(lock())
+    unlock(m)
+}
+fn caller_hof() / fail { via_hof(hold_fail) }
+fn in_opt() / fail {
+    let o = hold_opt(Some(lock()))
+    match o { Some(l) => unlock(l), None => {} }
+}
+fn main() { }

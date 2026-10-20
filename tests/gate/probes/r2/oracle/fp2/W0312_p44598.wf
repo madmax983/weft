@@ -1,0 +1,16 @@
+struct E { hp: u64, tag: u64 }
+
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v
+}
+
+fn h0(p0: &u64, p1: Vec<u64>, p2: fn()) -> u64 {
+    1
+}
+
+fn h1(p0: &Vec<u64>, p1: &E) {
+    let v1 = mk_v()
+    let n2 = h0(&v1[0], mk_v(), || v1.clear())
+}
+

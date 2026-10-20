@@ -1,0 +1,28 @@
+linear struct Tok { id: u64 }
+fn spend(t: Tok) { let Tok(i) = t }
+fn mint() -> Tok { Tok { id: 1 } }
+fn risky() / fail { fail("no") }
+fn risky_tok() -> Tok / fail { risky()
+ mint() }
+fn spend_pair(a: Tok, b: Tok) { spend(a)
+ spend(b) }
+fn temp_across() / fail {
+    spend_pair(mint(), risky_tok())   //~ W0602
+}
+fn tuple_temp() / fail {
+    let p = (mint(), risky_tok())   //~ W0602
+    let (a, b) = p
+    spend(a)
+    spend(b)
+}
+struct Two { a: Tok, b: Tok }
+fn struct_temp() / fail {
+    let p = Two { a: mint(), b: risky_tok() }   //~ W0602
+    let Two(a, b) = p
+    spend(a)
+    spend(b)
+}
+fn arr_temp() / fail {
+    let v = [mint(), risky_tok()]   //~ W0602
+    print(1)
+}

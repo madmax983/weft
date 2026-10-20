@@ -1,0 +1,4 @@
+effect Ask { fn ask() -> u64 }
+fn main() {
+    handle Ask { fn ask() { for i in 0..2 { resume(i) } } } in print(ask())
+}

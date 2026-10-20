@@ -1,0 +1,15 @@
+mod a {
+    pub effect Note { fn note(x: u64) }
+    pub fn f() / Note { note(4) }
+}
+struct S { f: fn() / a.Note }
+fn run(s: S) / a.Note {
+    let g = s.f
+    g()
+}
+fn main() {
+    handle a.Note { fn note(v) {
+        print(v)
+        resume(())
+    } } in run(S { f: a.f })
+}

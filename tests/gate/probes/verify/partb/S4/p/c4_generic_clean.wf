@@ -1,0 +1,32 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn gen_keep<T>(x: T) -> T { x }
+fn named_through_id() {
+    let tx = begin()
+    let f = || rollback(tx)
+    let g = gen_keep(f)
+    g()
+}
+fn literal_through_id() {
+    let tx = begin()
+    let g = gen_keep(|| rollback(tx))
+    g()
+}
+fn value_through_id() {
+    let tx = begin()
+    let t = gen_keep(tx)
+    rollback(t)
+}
+fn closure_moved_to_local() {
+    let tx = begin()
+    let f = || rollback(tx)
+    let g = f
+    g()
+}
+fn closure_in_some() {
+    let tx = begin()
+    let o = Some(|| rollback(tx))
+    match o { Some(g) => g(), None => {} }
+}

@@ -1,0 +1,9 @@
+fn diff(a: i32, b: i32) -> i32 { a - b }
+fn rdiff(b: i32, a: i32) -> i32 { b * 100 + a }
+fn main() {
+    let f = |diff: fn(i32, i32) -> i32| diff(b: 10, a: 3)
+    print(f(rdiff))
+    let g = diff
+    let k = |g: fn(i32, i32) -> i32| g(b: 10, a: 3)
+    print(k(rdiff))
+}

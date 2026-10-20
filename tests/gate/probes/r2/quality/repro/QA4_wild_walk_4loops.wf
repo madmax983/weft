@@ -1,0 +1,24 @@
+// QA4: `weft check` does not finish (more than 300 s in release).
+// Each `cur = step(cur)` makes a new wildcard place under the old one
+// (`head.. .. ..`), and each loop runs 8 passes, so 4 loops give 32 nested
+// wildcard steps. `Ctx::overlaps` (crates/weft-check/src/rules.rs) calls
+// itself for each wildcard base of each side, so its cost is 2^depth.
+// 3 loops: 1.7 s. 4 loops: no result after 300 s. `weft agree` on the 3-loop
+// program shows that the spec agrees; the time is in the production checker.
+struct Node { val: u64, next: Vec<Node> }
+fn walk(step: fn(&Node) -> &Node, head: &Node, n: u64) -> u64 {
+    let cur = head
+    let i0 = 0
+    while i0 < n { cur = step(cur)
+        i0 += 1 }
+    let i1 = 0
+    while i1 < n { cur = step(cur)
+        i1 += 1 }
+    let i2 = 0
+    while i2 < n { cur = step(cur)
+        i2 += 1 }
+    let i3 = 0
+    while i3 < n { cur = step(cur)
+        i3 += 1 }
+    cur.val
+}

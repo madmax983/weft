@@ -1,0 +1,2 @@
+effect Empty {}
+fn main() { handle Empty {} in print(1) }

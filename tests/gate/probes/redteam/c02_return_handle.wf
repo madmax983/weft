@@ -1,0 +1,28 @@
+effect Log { fn log(msg: String) }
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+// `return` in a handled body: the interpreter continues after the handle.
+fn after_handle(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    handle Log { fn log(m) { resume(()) } } in {
+        world.entities.push(Entity { hp: 1 })
+        return
+    }
+    print(first.hp)
+}
+linear struct Lock { id: u64 }
+fn take() -> Lock { Lock { id: 1 } }
+// `return` in a handler clause: the code after the handle still runs.
+fn clause_return() {
+    let l = handle Log { fn log(m) { return } } in {
+        log("x")
+        take()
+    }
+}
+// `return` in a closure: the checker sees the code after it as dead.
+fn closure_return(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let f = || { world.entities.push(Entity { hp: 1 }); return }
+    f()
+    print(first.hp)
+}

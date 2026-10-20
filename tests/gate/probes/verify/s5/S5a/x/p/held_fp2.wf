@@ -1,0 +1,31 @@
+fn id<T>(x: T) -> T { x }
+struct Counter { items: Vec<u64> }
+struct World { cs: Vec<Counter> }
+fn grow(c: &Counter) / mut(c) { c.items.push(1) }
+fn a(w: &World) / mut(w.cs[]) {
+    let c = &w.cs[0]
+    let c2 = id(c)
+    grow(c2)
+}
+fn b(w: &World) / mut(w.cs[]) {
+    let c = w.cs.get(0)
+    let c2 = id(c)
+    grow(c2)
+}
+fn pair(w: &World) / mut(w.cs[]) {
+    let p = (&w.cs[0], 1)
+    let (c, n) = id(p)
+    grow(c)
+}
+fn opt(w: &World) / mut(w.cs[]) {
+    let o = id(Some(&w.cs[0]))
+    match o { Some(c) => grow(c), None => {} }
+}
+fn main() {
+    let w = World { cs: Vec.new() }
+    w.cs.push(Counter { items: Vec.new() })
+    a(&w)
+    b(&w)
+    pair(&w)
+    opt(&w)
+}

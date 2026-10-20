@@ -1,0 +1,58 @@
+effect Ask { fn ask() -> u64 }
+effect Pick { multi fn pick() -> bool }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn take2(l: Lk, x: u64) -> u64 { unlock(l); x }
+fn take3(l: Lk, b: bool) { unlock(l) }
+
+// The outer value is on its way to a call when the operation runs.
+fn arg_in_flight() {
+    let l = Lk { id: 6 }
+    let n = handle Ask { fn ask() { 0 } } in { take2(l, ask()) }
+    print(n)
+}
+
+fn arg_in_flight_multi() {
+    let l = Lk { id: 7 }
+    handle Pick { fn pick() { resume(true); resume(false) } } in { take3(l, pick()) }
+}
+
+// A tuple holds the outer value when the operation runs.
+fn tuple_in_flight() {
+    let l = Lk { id: 8 }
+    let n = handle Ask { fn ask() { 0 } } in {
+        let (a, x) = (l, ask())
+        unlock(a)
+        x
+    }
+    print(n)
+}
+
+// A body closure holds the outer value; the body performs.
+fn closure_holds() {
+    let l = Lk { id: 9 }
+    let n = handle Ask { fn ask() { 0 } } in {
+        let g = || unlock(l)
+        let x = ask()
+        g()
+        x
+    }
+    print(n)
+}
+
+// A struct literal holds the outer value when the operation runs.
+struct Pair { l: Lk, x: u64 }
+fn struct_in_flight() {
+    let l = Lk { id: 10 }
+    let n = handle Ask { fn ask() { 0 } } in {
+        let p = Pair { l: l, x: ask() }
+        let Pair(a, x) = p
+        unlock(a)
+        x
+    }
+    print(n)
+}
+
+fn main() {
+    arg_in_flight()
+}

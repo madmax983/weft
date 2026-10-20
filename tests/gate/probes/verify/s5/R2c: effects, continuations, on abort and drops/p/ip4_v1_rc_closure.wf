@@ -1,0 +1,15 @@
+// A closure in an rc object captures a local of the multi continuation by reference.
+effect Choice { multi fn choose() -> bool }
+struct H { f: fn() }
+fn main() {
+    let all: Vec<u64> = Vec.new()
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        let count = 0
+        let h = Rc.new(H { f: || count += 1 })
+        let b = choose()
+        let g = h.f
+        g()
+        all.push(count)
+    }
+    print(all)
+}

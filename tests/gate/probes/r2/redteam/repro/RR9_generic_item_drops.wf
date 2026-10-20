@@ -1,0 +1,27 @@
+// RR9: a generic function item used as a function value keeps its `drops`
+// part out of the check. `sink<T>` drops its argument. A direct call
+// `sink(begin())` and `let g = sink; g(begin())` get W0601. Given to a
+// parameter of type `fn(Tx)` or `fn(T)`, it drops the linear value silently.
+// Expected: W0601 at each marked line. Actual: no error. The tests fault with the
+// instrumented interpreter (a linear leak).
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn sink<T>(x: T) {}
+fn feed<T>(x: T, f: fn(T)) { f(x) }
+fn feed_tx(x: Tx, f: fn(Tx)) { f(x) }
+
+fn to_generic_param() {
+    feed(begin(), sink)   //~ W0601
+}
+fn to_typed_param() {
+    feed_tx(begin(), sink)   //~ W0601
+}
+fn through_local() {
+    let g = sink
+    feed_tx(begin(), g)   //~ W0601
+}
+test "to_generic_param" { to_generic_param() }
+test "to_typed_param" { to_typed_param() }
+test "through_local" { through_local() }

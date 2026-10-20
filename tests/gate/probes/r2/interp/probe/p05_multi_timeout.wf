@@ -1,0 +1,14 @@
+// A `with_timeout` block inside a `multi` continuation. Each copy runs the block.
+effect Choice { multi fn choose() -> bool }
+
+fn main() / io {
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        handle Choice { fn choose() { resume(true); resume(false) } } in {
+            with_timeout(10.ms) {
+                let b = choose()
+                if b { print("fast") } else { sleep(50.ms); print("slow finished after its deadline") }
+            }
+        }
+    }
+    print("end")
+}

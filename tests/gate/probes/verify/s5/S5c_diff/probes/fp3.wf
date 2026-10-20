@@ -1,0 +1,30 @@
+struct Stats { count: u64 }
+struct Job { f: fn() }
+fn twice(g: fn()) { g()
+ g() }
+fn field0(st: &Stats) / mut(st) {
+    let j = Job { f: || { st.count += 1 } }
+    twice(j.f)
+}
+fn field_local0(st: &Stats) / mut(st) {
+    let j = Job { f: || { st.count += 1 } }
+    let g = j.f
+    twice(g)
+}
+fn vec_local0(st: &Stats) / mut(st) {
+    let v = Vec.new()
+    v.push(|| { st.count += 1 })
+    let g = v[0]
+    twice(g)
+}
+fn vec_read0(st: &Stats) / mut(st) {
+    let v = Vec.new()
+    v.push(|| { print(st.count) })
+    twice(v[0])
+}
+fn each(v: &Vec<u64>, g: fn(u64)) { }
+fn vec_each(st: &Stats, w: &Vec<u64>) / mut(st) {
+    let v = Vec.new()
+    v.push(|x| { st.count += x })
+    each(w, v[0])
+}

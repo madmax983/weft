@@ -1,0 +1,44 @@
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+// A struct that holds a !Move field.
+struct Outer { f: Frame, n: u64 }
+fn keep(o: Outer) {}
+fn moves_outer() {
+    let o = Outer { f: Frame { buf: [1, 2, 3, 4] }, n: 1 }
+    o.f.cur = &o.f.buf[0]
+    keep(o)
+}
+// !Move values in a Vec move when the buffer grows.
+fn in_vec() {
+    let v = Vec.new()
+    v.push(Frame { buf: [1, 2, 3, 4] })
+    v.push(Frame { buf: [5, 6, 7, 8] })
+}
+// !Move in an Option, moved by a match.
+fn take_opt(o: Option<Frame>) {}
+fn in_option() {
+    let o = Some(Frame { buf: [1, 2, 3, 4] })
+    take_opt(o)
+}
+// A self-reference field pointing outside self.
+fn cur_outside() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    let v: Vec<u8> = Vec.new()
+    v.push(1)
+    f.cur = &v[0]
+    v.push(2)
+    print(f.cur)
+}
+// The self-reference field is read before it is set.
+fn cur_uninit() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    print(f.cur)
+}
+// Uninitialized locals.
+fn uninit_local() -> u64 {
+    let x: u64
+    x
+}
+fn uninit_ref() {
+    let r: &u64
+    print(r)
+}

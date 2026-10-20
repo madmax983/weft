@@ -4,18 +4,25 @@
 //! weft-gate manifest --tier 1|2 [--repo DIR] [--probes DIR] [--out FILE]
 //! weft-gate archive --tier 2 [--repo DIR] [--probes DIR] [--out FILE]
 //! weft-gate unpack --archive FILE --out DIR [--repo DIR]
+//! weft-gate copy-probes [--repo DIR] [--probes DIR]
 //! ```
 //!
 //! `--repo` is the repository (default: the workspace of this crate). `--probes` is
-//! the tier-2 root (default: `WEFT_GATE_PROBES`, else the scratch directory of the
-//! plan).
+//! the tier-2 root. Its default is `WEFT_GATE_PROBES`, else the committed archive
+//! (`tests/gate/probes-tier2.tar.zst`), unpacked into `target/gate/probes-tier2`
+//! after a check of its hash. The scratch directory of the plan (`SCRATCH`) is a
+//! root only through `--probes` or `WEFT_GATE_PROBES`.
+//!
+//! `copy-probes` copies the hand probes (plan §2.2) from the tier-2 root into
+//! `tests/gate/probes`. Run it with `SCRATCH`: the archive does not have the judge
+//! traces (`ir/judge_sound/*.dl`, `run_all.sh`).
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{bail, Context, Result};
-use weft_gate::archive;
 use weft_gate::manifest::{self, Group, Manifest, Options, Root};
+use weft_gate::{archive, copy};
 
 /// The tier-1 manifest, relative to the repository.
 const TIER1_OUT: &str = "tests/gate/manifest-tier1.tsv";
@@ -23,13 +30,12 @@ const TIER1_OUT: &str = "tests/gate/manifest-tier1.tsv";
 const TIER2_OUT: &str = "target/gate/manifest-tier2.tsv";
 /// The tier-2 archive, relative to the repository (not committed).
 const ARCHIVE_OUT: &str = "target/gate/probes-tier2.tar.zst";
-/// The committed hash of the tier-2 archive, relative to the repository.
-const ARCHIVE_HASH: &str = "tests/gate/probes-tier2.sha256";
 
 const USAGE: &str = "usage:
   weft-gate manifest --tier 1|2 [--repo DIR] [--probes DIR] [--out FILE]
   weft-gate archive --tier 2 [--repo DIR] [--probes DIR] [--out FILE]
-  weft-gate unpack --archive FILE --out DIR [--repo DIR]";
+  weft-gate unpack --archive FILE --out DIR [--repo DIR]
+  weft-gate copy-probes [--repo DIR] [--probes DIR]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -47,8 +53,21 @@ struct Flags {
     tier: Option<u8>,
     archive: Option<PathBuf>,
     repo: PathBuf,
-    probes: PathBuf,
+    probes: Option<PathBuf>,
     out: Option<PathBuf>,
+}
+
+impl Flags {
+    /// The tier-2 root: `--probes`, else `WEFT_GATE_PROBES`, else the unpacked
+    /// committed archive.
+    fn probes(&self) -> Result<PathBuf> {
+        let root = archive::probes_root(
+            &self.repo,
+            self.probes.clone(),
+            std::env::var_os("WEFT_GATE_PROBES"),
+        )?;
+        Ok(root)
+    }
 }
 
 fn parse_flags(args: &[String]) -> Result<Flags> {
@@ -79,9 +98,6 @@ fn parse_flags(args: &[String]) -> Result<Flags> {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         std::fs::canonicalize(&dir).unwrap_or(dir)
     });
-    let probes = probes
-        .or_else(|| std::env::var_os("WEFT_GATE_PROBES").map(PathBuf::from))
-        .unwrap_or_else(|| PathBuf::from(manifest::DEFAULT_PROBES));
     Ok(Flags {
         tier,
         archive,
@@ -103,7 +119,7 @@ fn run(args: &[String]) -> Result<()> {
                 let m = tier1(&flags)?;
                 (m, flags.out.unwrap_or_else(|| flags.repo.join(TIER1_OUT)))
             } else {
-                let m = tier2(&flags)?;
+                let m = tier2(&flags.probes()?)?;
                 (m, flags.out.unwrap_or_else(|| flags.repo.join(TIER2_OUT)))
             };
             write_text(&out, &m.to_tsv())?;
@@ -114,31 +130,53 @@ fn run(args: &[String]) -> Result<()> {
             if flags.tier != Some(2) {
                 bail!("only tier 2 has an archive: use --tier 2");
             }
-            let m = tier2(&flags)?;
+            let probes = flags.probes()?;
+            let m = tier2(&probes)?;
             write_text(&flags.repo.join(TIER2_OUT), &m.to_tsv())?;
             let out = flags.out.unwrap_or_else(|| flags.repo.join(ARCHIVE_OUT));
-            let hash = archive::write(&flags.probes, &m, &out)
+            let hash = archive::write(&probes, &m, &out)
                 .with_context(|| format!("write {}", out.display()))?;
             let name = out
                 .file_name()
                 .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-            write_text(&flags.repo.join(ARCHIVE_HASH), &format!("{hash}  {name}\n"))?;
+            write_text(
+                &flags.repo.join(archive::COMMITTED_HASH),
+                &format!("{hash}  {name}\n"),
+            )?;
             println!("wrote {} (sha256 {hash})", out.display());
             Ok(())
         }
         "unpack" => {
             let file = flags.archive.context("--archive is necessary")?;
             let dest = flags.out.context("--out is necessary")?;
-            let hash = archive::sha256_file(&file)?;
-            let committed =
-                std::fs::read_to_string(flags.repo.join(ARCHIVE_HASH)).unwrap_or_default();
-            if committed.split_whitespace().next() != Some(hash.as_str()) {
-                eprintln!("warning: the sha256 {hash} is not the hash in {ARCHIVE_HASH}");
+            let committed = archive::committed_hash(&flags.repo).unwrap_or_default();
+            if let Err(e) = archive::check_hash(&file, &committed) {
+                eprintln!("warning: {e}");
             }
             archive::unpack(&file, &dest)?;
             println!(
                 "unpacked into {}; set WEFT_GATE_PROBES to it",
                 dest.display()
+            );
+            Ok(())
+        }
+        "copy-probes" => {
+            let probes = flags.probes()?;
+            let r = copy::copy_probes(&probes, &flags.repo)
+                .with_context(|| format!("copy the probes from {}", probes.display()))?;
+            println!(
+                "copied {} files and {} packages ({} bytes) from {} directories into {}",
+                r.files,
+                r.packages,
+                r.bytes,
+                r.selection.dirs.len(),
+                copy::PROBES_DIR
+            );
+            println!(
+                "skipped {} programs of the repository sets and {} files larger than {} bytes",
+                r.deduped.len(),
+                r.selection.large.len(),
+                copy::MAX_PROBE_BYTES
             );
             Ok(())
         }
@@ -159,17 +197,17 @@ fn tier1(flags: &Flags) -> Result<Manifest> {
     Ok(m)
 }
 
-fn tier2(flags: &Flags) -> Result<Manifest> {
+fn tier2(probes: &Path) -> Result<Manifest> {
     let tier = manifest::tier2_roots();
     let roots: Vec<Root> = tier.iter().map(|t| t.root.clone()).collect();
     let m = manifest::build(
-        &flags.probes,
+        probes,
         &roots,
         Options {
             exclude_copies: true,
         },
     )
-    .with_context(|| format!("read {}", flags.probes.display()))?;
+    .with_context(|| format!("read {}", probes.display()))?;
     report(&m, &roots);
     for (group, name) in [
         (Group::Report, "report roots"),

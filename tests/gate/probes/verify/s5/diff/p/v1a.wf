@@ -1,0 +1,101 @@
+effect Note { fn note(x: u64) }
+struct Job { f: fn() }
+struct Outer { j: Job }
+struct Wrap<T> { x: T }
+
+fn start_nested(o: &Outer) / async {
+    scope { s =>
+        let t = s.spawn(o.j.f)
+        t.join()
+    }
+}
+fn start_vecjob(v: &Vec<Job>) / async {
+    scope { s =>
+        let t = s.spawn(v[0].f)
+        t.join()
+    }
+}
+fn start_wrap(w: &Wrap<fn()>) / async {
+    scope { s =>
+        let t = s.spawn(w.x)
+        t.join()
+    }
+}
+fn start_tuple(p: &(fn(), u64)) / async {
+    scope { s =>
+        let t = s.spawn(p.0)
+        t.join()
+    }
+}
+fn start_opt(o: Option<fn()>) / async {
+    scope { s =>
+        match o { Some(g) => { let t = s.spawn(g)
+ t.join() }, None => {} }
+    }
+}
+fn start_box(b: &Box<fn()>) / async {
+    scope { s =>
+        let t = s.spawn(|| b())
+        t.join()
+    }
+}
+fn start_fork(j: &Job) / async {
+    fork(j.f, || print(1))
+}
+fn start_copy(j: &Job) / async {
+    let g = j.f
+    scope { s =>
+        let t = s.spawn(|| g())
+        t.join()
+    }
+}
+
+fn nested() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let o = Outer { j: Job { f: || note(1) } }
+        start_nested(&o)
+    }
+}
+fn vecjob() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let v = Vec.new()
+        v.push(Job { f: || note(2) })
+        start_vecjob(&v)
+    }
+}
+fn wrap() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let w = Wrap { x: || note(3) }
+        start_wrap(&w)
+    }
+}
+fn tuple() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let p = (|| note(4), 1)
+        start_tuple(&p)
+    }
+}
+fn opt() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        start_opt(Some(|| note(5)))
+    }
+}
+fn boxed() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let b = Box.new(|| note(6))
+        start_box(&b)
+    }
+}
+fn forked() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let j = Job { f: || note(7) }
+        start_fork(&j)
+    }
+}
+fn copied() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let j = Job { f: || note(8) }
+        start_copy(&j)
+    }
+}
+fn main() / async { nested(); vecjob(); wrap(); tuple(); opt(); boxed(); forked(); copied() }

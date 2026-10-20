@@ -1,0 +1,26 @@
+// on abort calls a closure from the value that changes an rc group.
+effect Stop { fn stop() }
+struct Node { items: Vec<u64> }
+linear struct T { fs: Vec<fn()> }
+    on abort = undo
+fn undo(t: T) {
+    let T(fs) = t
+    let f = fs[0]
+    f()
+}
+fn done(t: T) { let T(fs) = t }
+fn inner(a: Rc<Node>) / Stop, mut(Node) {
+    let v: Vec<fn()> = Vec.new()
+    v.push(|| { a.items.push(9); a.items.push(9); a.items.push(9) })
+    let t = T { fs: v }
+    stop()
+    done(t)
+}
+fn main() {
+    let a = Rc.new(Node { items: Vec.new() })
+    a.items.push(1)
+    let r = &a.items[0]
+    handle Stop { fn stop() { () } } in inner(a.clone())
+    print(r)
+    print(a.items.len())
+}

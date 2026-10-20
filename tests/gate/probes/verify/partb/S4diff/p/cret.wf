@@ -1,0 +1,16 @@
+linear struct Tx { id: u64 }
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn ret_in_closure(b: bool) {
+    let t = begin()
+    let c = || { if b { rollback(t) }
+ return }   //~ W0601
+    c()
+}
+fn ret_in_closure2(b: bool) {
+    let t = begin()
+    let c = || { if b { rollback(t)
+ return }
+ print(1) }   //~ W0601
+    c()
+}

@@ -1,0 +1,28 @@
+effect Op { fn op() }
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { print("unlocked")
+ let Lock(i) = l }
+fn lock() -> Lock { Lock { id: 1 } }
+
+fn body_local_ref() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Op { fn op() { print("abort") } } in {
+        let w = Vec.new()
+        w.push(2)
+        r = &w[0]
+        op()
+        r = &v[0]
+    }
+    print(r)
+}
+fn body_linear() {
+    handle Op { fn op() { print("abort") } } in {
+        let l = lock()
+        op()
+        unlock(l)
+    }
+}
+fn main() { body_local_ref()
+ body_linear() }

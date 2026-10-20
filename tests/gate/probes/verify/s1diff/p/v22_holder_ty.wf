@@ -1,0 +1,9 @@
+fn take(v: Vec<u64>) {}
+fn f() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    v.push(2)
+    print(r)
+    take(v)
+}

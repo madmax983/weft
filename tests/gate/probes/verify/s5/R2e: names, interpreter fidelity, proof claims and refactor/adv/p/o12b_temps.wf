@@ -1,0 +1,21 @@
+struct E { hp: u64 }
+fn mk() -> E { E { hp: 3 } }
+fn mkv() -> Vec<u64> { [4, 5] }
+fn show(e: &E) { print(e.hp) }
+fn first(v: &Vec<u64>) -> &u64 in v[] { &v[0] }
+fn main() {
+    let r = &mk()
+    print(r.hp)
+    let q = &(1 + 2)
+    print(q)
+    show(&mk())
+    let t = &mk().hp
+    print(t)
+    for x in mkv()[] { print(x) }
+    let z = { let y = mk()
+        y }
+    let zz = &z
+    print(zz.hp)
+    let m = match 1 { 1 => &mk(), _ => &mk() }
+    print(m.hp)
+}

@@ -1,0 +1,15 @@
+effect Note { fn note(x: u64) }
+struct H { f: fn() }
+linear struct Tx { id: u64, h: H }
+    on abort = tx_abort
+fn tx_abort(t: Tx) { let Tx(id, h) = t; let g = h.f; g() }
+fn commit(t: Tx) { let Tx(id, h) = t; print("commit", id) }
+fn main() {
+    handle Note { fn note(x) { print(x); resume(()) } } in {
+        handle Fail { fn fail(m) { print(m) } } in {
+            let t = Tx { id: 1, h: H { f: || note(3) } }
+            fail("x")
+            commit(t)
+        }
+    }
+}

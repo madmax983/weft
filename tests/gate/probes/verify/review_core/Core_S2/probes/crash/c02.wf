@@ -1,0 +1,3 @@
+struct World { n: u64 }
+fn grow(w: &World) / mut(w.n) { w.n += 1 }
+fn f(world: &World) { let g = grow; g(world, world, world) }

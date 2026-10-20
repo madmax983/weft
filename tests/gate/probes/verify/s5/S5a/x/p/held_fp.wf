@@ -1,0 +1,29 @@
+fn id<T>(x: T) -> T { x }
+fn bump(es: &[u64]) / mut(es) { print(1) }
+fn bump_v(es: &Vec<u64>) / mut(es) { es.push(1) }
+fn f(v: &Vec<u64>) / mut(v) {
+    let (l, r) = v.split_mut(1)
+    let l2 = id(l)
+    bump(l2)
+}
+fn g(v: &Vec<u64>) / mut(v) {
+    let l2 = id(v)
+    bump_v(l2)
+}
+fn h(v: &Vec<u64>) / mut(v) {
+    let (l, r) = v.split_at(1)
+    let l2 = id(l)
+    bump(l2)
+}
+fn k(v: &Vec<u64>) / mut(v) {
+    let e = id(&v[0])
+    print(e)
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    f(&v)
+    g(&v)
+    h(&v)
+}

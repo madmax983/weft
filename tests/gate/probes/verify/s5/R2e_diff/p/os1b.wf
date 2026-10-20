@@ -1,0 +1,20 @@
+struct Node { v: u64 }
+struct S { rc: Rc<Node>, n: u64 }
+fn reads_field(st: &S) -> u64 / async {
+    let r = &st.n
+    scope { s =>
+        let a = s.spawn(|| r + 1)   //~ stealable
+        a.join()
+    }
+}
+fn reads_whole(st: &S) -> u64 / async {
+    scope { s =>
+        let a = s.spawn(|| st.n + 1)
+        a.join()
+    }
+}
+fn main() / async {
+    let s = S { rc: Rc.new(Node { v: 1 }), n: 2 }
+
+    print(reads_whole(&s))
+}

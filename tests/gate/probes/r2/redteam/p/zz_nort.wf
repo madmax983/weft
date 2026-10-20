@@ -1,0 +1,9 @@
+// weft: no-runtime
+struct Job { f: fn() }
+fn run_job(j: &Job) { let g = j.f
+ g() }
+fn spawner() / async { scope { s => s.spawn(|| log.info("x")) } }
+fn main() / async {   //~ W0803
+    let j = Job { f: || log.info("a") }
+    handle Async { fn suspend() { resume(()) } } in run_job(&j)
+}

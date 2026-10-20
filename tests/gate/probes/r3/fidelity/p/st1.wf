@@ -1,0 +1,32 @@
+struct Wrap<T> { x: T }
+fn boxed() -> Box<&u64> {
+    let x = 5
+    Box.new(&x)   // expected W0204
+}
+fn vec_of_refs() -> Vec<&u64> {
+    let x = 5
+    let v = Vec.new()
+    v.push(&x)
+    v   // expected W0204
+}
+fn wrapped() -> Wrap<&u64> {
+    let x = 5
+    Wrap { x: &x }   // expected W0204
+}
+fn into_param(v: Vec<&u64>) -> Vec<&u64> {
+    let x = 5
+    v.push(&x)
+    v   // expected W0204
+}
+fn opt() -> Option<&u64> {
+    let x = 5
+    Some(&x)   // expected W0204
+}
+fn main() {
+    let a = boxed()
+    let b = vec_of_refs()
+    let c = wrapped()
+    let d = into_param(Vec.new())
+    let e = opt()
+    print(c.x)
+}

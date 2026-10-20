@@ -1,0 +1,12 @@
+fn f() -> u64 { { let t = 1 + 2; t + 3 } }
+fn g(a: u8, b: u8) -> u8 { { let t = a + b; t + 1 } }
+fn h(x: bool, y: bool) -> bool { { let t = x && y; t || x } }
+fn s(a: String) -> String { { let t = a + "x"; t + "y" } }
+fn main() {
+    print(f())
+    print(g(1, 2))
+    print(h(true, false))
+    print(s("a"))
+    let q = { let t = 250; t + 10 }
+    print(q)
+}

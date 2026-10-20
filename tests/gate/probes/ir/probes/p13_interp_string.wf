@@ -1,0 +1,7 @@
+struct E { hp: u64 }
+fn main() {
+    let v = Vec.new()
+    v.push(E { hp: 1 })
+    let r = &v[0]
+    print("{r.hp} {v.push(E { hp: 2 })}")
+}

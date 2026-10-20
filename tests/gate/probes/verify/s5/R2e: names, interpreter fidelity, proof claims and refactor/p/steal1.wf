@@ -1,0 +1,8 @@
+fn main() / async {
+    let r = Rc.new(5)
+    scope { s =>
+        let t = s.spawn(|| { let q = r.clone()
+ 1 })
+        print(t.join())
+    }
+}

@@ -1,0 +1,10 @@
+struct B { items: Vec<u64> }
+impl B {
+    fn eat(self, n: usize) -> usize { n }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let b = B { items: v }
+    print(b.eat(b.items.len()))
+}

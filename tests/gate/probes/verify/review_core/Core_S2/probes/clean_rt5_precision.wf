@@ -1,0 +1,31 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity>, score: u64 }
+fn apply(f: fn(), w: &World) / mut(w.entities) { w.entities.clear(); f() }
+fn apply_score(f: fn(), w: &World) / mut(w.score) { w.score += 1; f() }
+
+// p1: the closure captures the whole reference and reads a field that the callee does not touch.
+fn reads_score(world: &World) / mut(world.entities) {
+    apply(|| print(world.score), world)
+}
+// p2: the closure reads a reference into entities; the callee mutates only the score.
+fn reads_entity(world: &World) / mut(world.score) {
+    let r = &world.entities[0]
+    apply_score(|| print(r.hp), world)
+}
+// p3: control for p1 with references: two disjoint fields.
+fn apply_ref(s: &u64, w: &World) / mut(w.entities) { w.entities.clear(); print(s) }
+fn disjoint_refs(world: &World) / mut(world.entities) {
+    apply_ref(&world.score, world)
+}
+// p4: the closure captures the whole reference, and the callee is a method on it.
+impl World {
+    fn each(self: &World, f: fn(&Entity)) { for e in self.entities[] { f(e) } }
+}
+fn method_hof(world: &World) {
+    world.each(|e| print(world.score))
+}
+// p5: the reference analog of p1: the whole world as a second argument.
+fn apply_two(a: &World, w: &World) / mut(w.entities) { w.entities.clear(); print(a.score) }
+fn whole_ref(world: &World) / mut(world.entities) {
+    apply_two(world, world)
+}

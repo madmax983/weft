@@ -1,0 +1,49 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn take(v: Vec<u64>) {}
+struct Pair { tx: Tx, n: u64 }
+
+fn match_ref(o: &Option<Vec<u64>>) {
+    match o { Some(x) => take(x), None => {} }   //~ W0303
+}
+fn match_ref_linear(o: &Option<Tx>) {
+    match o { Some(t) => rollback(t), None => {} }   //~ W0303
+}
+fn let_ref(p: &Pair) {
+    let Pair(t, n) = p   //~ W0303
+    rollback(t)
+}
+fn tuple_ref(p: &(Tx, u64)) {
+    let (t, n) = p   //~ W0303
+    rollback(t)
+}
+fn local_ref() {
+    let p = Pair { tx: begin(), n: 1 }
+    let r = &p
+    let Pair(t, n) = r   //~ W0303
+    rollback(t)
+    let Pair(u, m) = p
+    rollback(u)
+}
+fn elem_ref(v: &Vec<Tx>) {
+    let t = v[0]   //~ W0303
+    rollback(t)
+}
+fn for_ref(v: &Vec<Tx>) {
+    for t in v[] { rollback(t) }   //~ W0303
+}
+fn field_of_ref(p: &Pair) {
+    rollback(p.tx)   //~ W0303
+}
+fn closure_param_ref() {
+    let f = |p: &Pair| rollback(p.tx)   //~ W0303
+}
+fn generic_ref<T>(x: &T) -> T { x }   //~ W0102
+fn main() {
+    let p = Pair { tx: begin(), n: 1 }
+    local_ref()
+    let Pair(t, n) = p
+    rollback(t)
+}

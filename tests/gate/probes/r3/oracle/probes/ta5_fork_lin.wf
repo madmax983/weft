@@ -1,0 +1,18 @@
+effect Note { fn note(x: u64) }
+effect Ask { fn ask() -> u64 }
+linear struct Tx { id: u64 }
+    on abort = tx_abort
+linear struct Lk { id: u64 }
+fn tx_abort(t: Tx) { let Tx(id) = t; print("abort", id) }
+fn commit(t: Tx) { let Tx(id) = t; print("commit", id) }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v.push(2); v }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn take<T>(x: T) { }
+fn apply(f: fn()) { f() }
+fn id<T>(x: T) -> T { x }
+fn main() {
+    let p = fork(|| Lk { id: 3 }, || 1)
+    let (l, n) = p
+    print(n)
+}

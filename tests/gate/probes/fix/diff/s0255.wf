@@ -1,0 +1,2 @@
+struct S0<T0> {  }
+fn main() {}

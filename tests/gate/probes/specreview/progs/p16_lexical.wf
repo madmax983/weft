@@ -1,0 +1,17 @@
+effect Note { fn note(x: u64) }
+fn lexical() {
+    let a = Vec.new()
+    let b = Vec.new()
+    a.push(1)
+    b.push(1)
+    handle Note { fn note(x) { a.push(x); resume(()) } } in {
+        let f = || note(1)
+        handle Note { fn note(x) { b.push(x); resume(()) } } in {
+            let ra = &a[0]
+            let rb = &b[0]
+            f()
+            print(ra)
+            print(rb)
+        }
+    }
+}

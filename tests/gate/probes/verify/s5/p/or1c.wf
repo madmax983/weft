@@ -1,0 +1,65 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct H { f: fn() }
+struct Wrap<T> { x: T }
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+fn noop() { print(0) }
+// A field gets the closure after the struct is made.
+fn mk_h(w: &World) -> H {
+    let r = &w.entities[0]
+    let h = H { f: noop }
+    h.f = || print(r.hp)
+    h
+}
+fn field_set() {
+    let w = mkw()
+    let h = mk_h(&w)
+    w.entities.clear()
+    let g = h.f
+    g()
+}
+// A generic field gets the closure after the struct is made.
+fn mk_wrap(w: &World) -> Wrap<fn()> {
+    let r = &w.entities[0]
+    let h = Wrap { x: || print(0) }
+    h.x = || print(r.hp)
+    h
+}
+fn wrap_set() {
+    let w = mkw()
+    let h = mk_wrap(&w)
+    w.entities.clear()
+    let g = h.x
+    g()
+}
+// An early return.
+fn mk_ret(w: &World, c: bool) -> fn() {
+    let r = &w.entities[0]
+    if c { return || print(r.hp) }
+    || print(0)
+}
+fn early_return() {
+    let w = mkw()
+    let f = mk_ret(&w, true)
+    w.entities.clear()
+    f()
+}
+// An array.
+fn mk_arr(w: &World) -> [fn(); 1] {
+    let r = &w.entities[0]
+    [|| print(r.hp)]
+}
+fn in_array() {
+    let w = mkw()
+    let a = mk_arr(&w)
+    w.entities.clear()
+    let g = a[0]
+    g()
+}
+fn main() {
+    field_set()
+}

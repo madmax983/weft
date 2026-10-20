@@ -1,0 +1,44 @@
+effect Choice { multi fn choose() -> bool }
+struct Slot { f: fn() -> u64 }
+fn twice(f: fn() -> u64) -> u64 { f() + f() }
+fn work() -> u64 { 1 }
+
+// A closure reads a file through a capability that it captures by reference.
+fn reads_twice(env: Env) / fs {
+    let fs = env.fs
+    let rd = || { let s = fs.read("x"); s.len() }
+    let n = rd() + rd()
+    print(n)
+}
+
+// The closure goes to a callee that calls it twice.
+fn to_twice(env: Env) / fs {
+    let fs = env.fs
+    let n = twice(|| { let s = fs.read("x"); 1 })
+    print(n)
+}
+
+// A closure that captures a scope by reference.
+fn scope_twice() / async {
+    scope { s =>
+        let n = twice(|| { let t = s.spawn(|| work()); t.join() })
+        print(n)
+    }
+}
+
+// The closure goes into a field of type `fn`.
+fn to_field(env: Env) / fs {
+    let fs = env.fs
+    let sl = Slot { f: || { let s = fs.read("x"); 1 } }
+    let g = sl.f
+    print(g())
+}
+
+// A capability live across a multi operation.
+fn env_across_multi(env: Env) / Choice, io {
+    let b = choose()
+    env.stdout.write("hi")
+}
+
+fn main() {
+}

@@ -1,0 +1,17 @@
+// ESCAPE (RT1, call_value result): an unknown fn parameter returns a reference
+// "into any reference argument". The result points into `world` itself, so a
+// later mutation of `world.entities` is not a strict prefix and does not
+// invalidate it, but the callee may return `&world.entities[0]`.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn pick(w: &World) -> &Entity in w.entities[] { &w.entities[0] }
+fn via_param(f: fn(&World) -> &Entity, world: &World) / mut(world.entities) {
+    let r = f(world)
+    world.entities.clear()
+    print(r.hp)   // expected W0301
+}
+fn main() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    via_param(pick, &w)
+}

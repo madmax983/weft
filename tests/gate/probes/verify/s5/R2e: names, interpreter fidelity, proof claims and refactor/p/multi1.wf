@@ -1,0 +1,16 @@
+effect Choice { multi fn choose() -> bool }
+struct P { x: u64 }
+fn pick() -> u64 / Choice {
+    let p = P { x: 5 }
+    let r = &p
+    let v: Vec<usize> = [1]
+    if choose() { v.push(2); r.x + 1 } else { r.x + 10 }
+}
+fn main() {
+    let v = handle Choice { fn choose() {
+        let a = resume(true)
+        let b = resume(false)
+        a + b
+    } } in pick()
+    print(v)
+}

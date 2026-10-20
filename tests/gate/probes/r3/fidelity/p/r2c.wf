@@ -1,0 +1,41 @@
+// Rule 2 of the effects proof: a clause that holds a fresh `once`
+// continuation must not perform a `multi` operation through an outer handler.
+effect Ask { fn ask() -> u64 }
+effect Choice { multi fn choose() -> bool }
+
+// k held in a closure across choose()
+fn held_in_closure() / Choice {
+    let n = handle Ask { fn ask() {
+        let g = || resume(1)
+        if choose() { print("a") } else { print("b") }   // expected W0503
+        g()
+    } } in { ask() + 1 }
+    print(n)
+}
+
+// k held in a tuple across choose()
+fn held_in_tuple() / Choice {
+    let n = handle Ask { fn ask() {
+        let g = (|| resume(2), 5)
+        if choose() { print("a") } else { print("b") }   // expected W0503
+        let f = g.0
+        f()
+    } } in { ask() + 1 }
+    print(n)
+}
+
+// the closure is passed through a generic identity
+fn id<T>(x: T) -> T { x }
+fn held_generic() / Choice {
+    let n = handle Ask { fn ask() {
+        let g = id(|| resume(3))
+        if choose() { print("a") } else { print("b") }   // expected W0503
+        g()
+    } } in { ask() + 1 }
+    print(n)
+}
+fn main() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        held_in_closure()
+    }
+}

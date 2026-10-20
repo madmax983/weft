@@ -1,0 +1,104 @@
+struct H { f: fn() }
+struct Wrap<T> { x: T }
+fn noop() { print(0) }
+fn twice(f: fn()) {
+    f()
+    f()
+}
+// Recursion.
+fn rec(f: fn(), n: u64) {
+    if n > 0 {
+        f()
+        rec(f, n - 1)
+    }
+}
+fn via_rec() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    rec(|| { print(r + 1)
+ v.clear() }, 2)
+}
+// A tuple argument.
+fn twice_t(t: (fn(), u64)) {
+    let f = t.0
+    f()
+    f()
+}
+fn via_tuple() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    twice_t((|| { print(r + 1)
+ v.clear() }, 1))
+}
+// A struct argument with a written fn field.
+fn twice_h(h: H) {
+    let f = h.f
+    f()
+    f()
+}
+fn via_struct() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    twice_h(H { f: || { print(r + 1)
+ v.clear() } })
+}
+// An Option argument.
+fn twice_o(o: Option<fn()>) {
+    match o { Some(f) => { f()
+ f() }, None => {} }
+}
+fn via_option() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    twice_o(Some(|| { print(r + 1)
+ v.clear() }))
+}
+// A generic struct argument.
+fn twice_w(w: Wrap<fn()>) {
+    let f = w.x
+    f()
+    f()
+}
+fn via_wrap() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    twice_w(Wrap { x: || { print(r + 1)
+ v.clear() } })
+}
+// A stored callback that runs twice.
+fn reg(h: &H, f: fn()) { h.f = f }
+fn run_h(h: &H) {
+    let f = h.f
+    f()
+    f()
+}
+fn via_stored() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let h = H { f: noop }
+    reg(&h, || { print(r + 1)
+ v.clear() })
+    run_h(&h)
+}
+// A callback that a callee gives to an inner closure that it runs twice.
+fn inner_twice(f: fn()) {
+    let g = || f()
+    g()
+    g()
+}
+fn via_inner() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    inner_twice(|| { print(r + 1)
+ v.clear() })
+}
+fn main() {
+    via_rec()
+}

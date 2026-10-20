@@ -1,0 +1,40 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+linear struct Lock { id: u64 }
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn take() -> Lock { Lock { id: 1 } }
+fn release(l: Lock) { let Lock(i) = l }
+fn risky() / fail { fail("no") }
+fn a01() / fail { let o = Some(take())
+ risky()
+ match o { Some(l) => release(l), None => {} } }
+fn a02() / fail { let l = take()
+ let f = || release(l)
+ risky()
+ f() }
+fn a03() / fail { let t = begin()
+ let f = || rollback(t)
+ risky()
+ f() }
+struct Pair<A, B> { a: A, b: B }
+fn a04() / fail { let p = Pair { a: begin(), b: take() }
+ risky()
+ let Pair(t, l) = p
+ rollback(t)
+ release(l) }
+fn a05() / fail { let p = Pair { a: begin(), b: 1 }
+ risky()
+ let Pair(t, n) = p
+ rollback(t) }
+fn a06() / fail { let t = (begin(), (1, take()))
+ risky()
+ let (x, (n, l)) = t
+ rollback(x)
+ release(l) }
+fn a07() / fail { let a = [take()]
+ risky()
+ let b = a }
+fn a08() / fail { let f = || release(take())
+ risky()
+ f() }

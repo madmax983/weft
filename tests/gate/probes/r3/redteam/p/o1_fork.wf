@@ -1,0 +1,53 @@
+struct Entity { hp: u64 }
+struct World { entities: Vec<Entity>, score: u64 }
+struct Node { v: u64 }
+struct Wrap<T> { x: T }
+fn bump(w: &World) / mut(w.score) { w.score += 1 }
+
+// Mutation through a reference inside a captured tuple.
+fn tuple_ref(world: &World) / mut(world.score), par {
+    let t = (world, 1)
+    fork(|| { let (w, n) = t; w.score += n }, || print(1))   //~ W0403
+}
+// Through a generic wrapper.
+fn wrap_ref(world: &World) / mut(world.score), par {
+    let w = Wrap { x: world }
+    fork(|| bump(w.x), || print(1))   //~ W0403
+}
+// Through an Option.
+fn opt_ref(world: &World) / mut(world.score), par {
+    let o = Some(world)
+    fork(|| match o { Some(w) => { w.score += 1 }, None => {} }, || print(1))   //~ W0403
+}
+// Through a Vec of references.
+fn vec_ref(world: &World) / mut(world.score), par {
+    let v = Vec.new()
+    v.push(world)
+    fork(|| bump(v[0]), || print(1))   //~ W0403
+}
+// Through a nested closure.
+fn nested(world: &World) / mut(world.score), par {
+    let g = || bump(world)
+    fork(|| g(), || print(1))   //~ W0403
+}
+// The Rc in a Wrap in a tuple.
+fn rc_deep() / par {
+    let t = (1, Wrap { x: Some(Rc.new(Node { v: 1 })) })
+    fork(|| { let (a, b) = t; print(a) }, || print(2))   //~ W0401
+}
+// A reference to a struct that holds a Weak.
+struct HoldsWeak { w: Weak<Node>, n: u64 }
+fn weak_ref(h: &HoldsWeak) / par {
+    fork(|| print(h.n), || print(2))   //~ W0401
+}
+// The second fork branch only.
+fn second_branch(world: &World) / mut(world.score), par {
+    fork(|| print(1), || bump(world))   //~ W0403
+}
+// A branch made in a local before the fork.
+fn branch_local(world: &World) / mut(world.score), par {
+    let b = || bump(world)
+    fork(b, || print(1))   //~ W0403
+}
+// A branch that is a function item value with a captured... (items capture nothing)
+fn main() {}

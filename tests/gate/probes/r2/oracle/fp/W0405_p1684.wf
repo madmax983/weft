@@ -1,0 +1,12 @@
+
+
+fn main() {
+    let n6 = 2
+    if false {
+        scope { s8 =>
+            s8.spawn(|| n6 += 1)
+            n6 += 1
+        }
+    } else {
+    }
+}

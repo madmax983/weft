@@ -1,0 +1,12 @@
+# A binary that grants each dependency a set of effects.
+[package]
+name = "app"
+kind = "bin"
+
+[dependencies.json]
+path = "deps/json"
+authority = []          # a JSON parser needs no effects
+
+[dependencies.logger]
+path = "deps/logger"
+authority = ["log"]

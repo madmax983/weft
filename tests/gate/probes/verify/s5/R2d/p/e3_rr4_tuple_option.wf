@@ -1,0 +1,41 @@
+// RR4 shapes that stay open: the scope capability in a tuple or an Option.
+// A closure that captures the tuple or the Option leaves the scope, and its
+// call starts a task after the scope ended.
+struct Stats { count: u64 }
+
+fn in_tuple(st: &Stats) / mut(st), async, clock {
+    let k = || print(0)
+    scope { s =>
+        let t = (s, 1)
+        k = || { let (a, b) = t
+ a.spawn(|| { sleep(1.ms); st.count += 1; print("task runs {st.count}") })
+ () }
+    }
+    k()   // expected W0301
+}
+
+fn in_option(st: &Stats) / mut(st), async, clock {
+    let k = || print(0)
+    scope { s =>
+        let o = Some(s)
+        k = || { match o { Some(a) => { a.spawn(|| { sleep(1.ms); st.count += 1; print("task runs {st.count}") })
+ () }, None => () } }
+    }
+    k()   // expected W0301
+}
+
+fn caller() / async, clock {
+    let st = Stats { count: 0 }
+    in_tuple(&st)
+}
+
+fn caller2() / async, clock {
+    let st = Stats { count: 0 }
+    in_option(&st)
+}
+
+fn main() / async, clock {
+    caller()
+    caller2()
+    sleep(5.ms)
+}

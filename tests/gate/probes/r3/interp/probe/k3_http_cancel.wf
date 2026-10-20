@@ -1,0 +1,23 @@
+// A with_timeout cancels http.serve while a request task runs. The request
+// task is not in a scope: it goes on after the server ended.
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(t: Tx) { let Tx(id) = t; print("rollback {id}") }
+fn commit(t: Tx) / io { let Tx(id) = t; print("commit {id}") }
+
+fn main(env: Env) / io {
+    handle Fail { fn fail(m) { print("caught: {m} at {Clock.now()}") } } in {
+        with_timeout(50.ms) {
+            http.serve(env.net.listen(":18443"), |req| {
+                let t = Tx { id: 1 }
+                sleep(1000.ms)
+                commit(t)
+                print("request done at {Clock.now()}")
+                Response.text("ok")
+            })
+        }
+    }
+    sleep(5000.ms)
+    print("main ends at {Clock.now()}")
+}

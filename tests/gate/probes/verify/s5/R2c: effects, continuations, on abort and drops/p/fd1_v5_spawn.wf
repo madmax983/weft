@@ -1,0 +1,17 @@
+// on abort spawns a task in a scope.
+effect Stop { fn stop() }
+linear struct T { id: u64 }
+    on abort = undo
+fn undo(t: T) {
+    let T(i) = t
+    scope { s => let h = s.spawn(|| print("in task {i}")); h.join() }
+}
+fn done(t: T) { let T(i) = t }
+fn main() {
+    handle Stop { fn stop() { () } } in {
+        let t = T { id: 1 }
+        stop()
+        done(t)
+    }
+    print("end")
+}

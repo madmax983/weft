@@ -1,0 +1,37 @@
+fn diff(a: i32, b: i32) -> i32 { a - b }
+fn rdiff(b: i32, a: i32) -> i32 { a - b }
+fn t1() {
+    let (g, h) = (diff, rdiff)
+    print(g(b: 10, a: 3))
+    print(h(b: 10, a: 3))
+}
+fn t2() {
+    let p = (diff, rdiff)
+    let (h, g) = p
+    print(g(b: 10, a: 3))
+}
+fn t3() {
+    let o = Some(rdiff)
+    match o { Some(g) => print(g(b: 10, a: 3)), None => {} }
+}
+fn t4() {
+    let g = diff
+    let k = g
+    g = rdiff
+    print(k(b: 10, a: 3))
+}
+fn t5() {
+    let g = diff
+    for i in 0..2 {
+        let k = g
+        print(k(b: 10, a: 3))
+        g = rdiff
+    }
+}
+fn main() {
+    t1()
+    t2()
+    t3()
+    t4()
+    t5()
+}

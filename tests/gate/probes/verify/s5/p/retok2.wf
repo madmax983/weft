@@ -1,0 +1,20 @@
+struct Entity { hp: u64 }
+struct World { entities: Vec<Entity> }
+
+fn pick(w: &World, e: &Entity in w.entities[]) -> &Entity in w.entities[] / mut(w.entities) {
+    w.entities.push(Entity { hp: 1 })
+    e
+}
+fn pick2(w: &World, e: &Entity in w.entities[]) -> &Entity in w.entities[] / mut(w.entities) {
+    let k = e
+    w.entities.clear()
+    k
+}
+
+fn main() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 5 })
+    let x = &w.entities[0]
+    let r = pick(&w, x)
+    print(r.hp)
+}

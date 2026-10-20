@@ -1,0 +1,3 @@
+effect Opt { fn None() -> u64 }
+fn main() {
+}

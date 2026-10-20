@@ -1,0 +1,95 @@
+// RT1 Rc variants.
+struct Cell2 { items: Vec<u64> }
+impl Cell2 { fn items_ref(self) -> &Vec<u64> in self.items { &self.items } }
+struct H { c: Rc<Cell2>, n: u64 }
+fn take_rc(c: Rc<Cell2>) {}
+fn mk_rc() -> Rc<Cell2> { Rc.new(Cell2 { items: Vec.new() }) }
+fn group_ret(h: &Rc<Cell2>) -> &Vec<u64> in Cell2.items { &h.items }
+
+// 1. A callee returns a group place through a reference to the only handle.
+fn via_callee() {
+    let a = Rc.new(Cell2 { items: Vec.new() })
+    let r = group_ret(&a)
+    a = Rc.new(Cell2 { items: Vec.new() })
+    print(r.len())   // ERR
+}
+// 2. A method through the handle.
+fn via_method() {
+    let a = Rc.new(Cell2 { items: Vec.new() })
+    let r = a.items_ref()
+    a = Rc.new(Cell2 { items: Vec.new() })
+    print(r.len())   // ERR
+}
+// 3. A temporary handle.
+fn via_temp() {
+    let r = &mk_rc().items
+    print(r.len())   // ERR? the temporary handle is dropped
+}
+// 4. A handle moved into a struct, then the struct dropped at block end.
+fn via_struct() {
+    let a = Rc.new(Cell2 { items: Vec.new() })
+    let r = &a.items
+    {
+        let h = H { c: a, n: 1 }
+    }
+    print(r.len())   // ERR
+}
+// 5. A reference to the handle, then the handle is replaced.
+fn via_ref_to_handle() {
+    let a = Rc.new(Cell2 { items: Vec.new() })
+    let x = &a
+    let r = &x.items
+    a = Rc.new(Cell2 { items: Vec.new() })
+    print(r.len())   // ERR
+}
+// 6. Iteration over the items of the only handle, which is replaced.
+fn via_iter() {
+    let a = Rc.new(Cell2 { items: Vec.new() })
+    a.items.push(1)
+    for x in a.items[] {
+        a = Rc.new(Cell2 { items: Vec.new() })   // ERR at the next iteration
+    }
+}
+// 7. A handle moved into a closure that drops it.
+fn via_closure() {
+    let a = Rc.new(Cell2 { items: Vec.new() })
+    let r = &a.items
+    let f = || take_rc(a)
+    f()
+    print(r.len())   // ERR
+}
+// 8. A handle in a Vec, the slot replaced.
+fn via_vec_slot() {
+    let hs: Vec<Rc<Cell2>> = Vec.new()
+    hs.push(Rc.new(Cell2 { items: Vec.new() }))
+    let r = &hs[0].items
+    hs[0] = Rc.new(Cell2 { items: Vec.new() })
+    print(r.len())   // ERR
+}
+// 9. A handle field of a struct local, the struct moved.
+fn via_moved_struct() {
+    let h = H { c: Rc.new(Cell2 { items: Vec.new() }), n: 1 }
+    let r = &h.c.items
+    let g = h
+    g.c = Rc.new(Cell2 { items: Vec.new() })
+    print(r.len())   // ERR
+}
+// 10. Group root reached through a by-value match binding.
+fn via_match(o: Option<Rc<Cell2>>) {
+    match o {
+        Some(a) => {
+            let r = &a.items
+            a = Rc.new(Cell2 { items: Vec.new() })
+            print(r.len())   // ERR
+        }
+        None => {}
+    }
+}
+// 11. A closure returns a group reference through a captured handle.
+fn via_closure_ret() {
+    let a = Rc.new(Cell2 { items: Vec.new() })
+    let f = || &a.items
+    let r = f()
+    a = Rc.new(Cell2 { items: Vec.new() })
+    print(r.len())   // ERR
+}

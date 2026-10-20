@@ -1,0 +1,32 @@
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn boom() / fail { fail("boom") }
+
+// A closure from a call.
+fn mk(tx: Tx) -> fn() { || commit(tx) }
+fn spawn_made() / async, fail {
+    scope { s =>
+        s.spawn(|| boom())
+        let tx = begin(1)
+        s.spawn(mk(tx))
+    }
+}
+
+// A closure that moves a handle of a task with a linear result.
+fn spawn_handle() / async, fail {
+    scope { s =>
+        let h = s.spawn(|| begin(2))
+        s.spawn(|| boom())
+        s.spawn(|| commit(h.join()))
+    }
+}
+
+// A closure that moves a tuple with a linear part.
+fn spawn_tuple() / async, fail {
+    scope { s =>
+        s.spawn(|| boom())
+        let p = (begin(3), 4)
+        s.spawn(|| { let (t, n) = p; commit(t) })
+    }
+}

@@ -1,0 +1,12 @@
+// `return` inside a closure.
+fn s() -> String {
+    let f = |x: u64| { if x > 1 { return x }; x }
+    "a"
+}
+// `break` inside a closure inside a loop.
+fn brk() {
+    loop {
+        let f = || { break }
+        f()
+    }
+}

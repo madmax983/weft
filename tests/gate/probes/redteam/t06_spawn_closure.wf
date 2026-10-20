@@ -1,0 +1,8 @@
+struct Stats { count: u64 }
+fn spawn_in_closure(st: &Stats) / mut(st), async {
+    scope { s =>
+        let sp = || { s.spawn(|| st.count += 1); 0 }
+        sp()
+        print(st.count)
+    }
+}

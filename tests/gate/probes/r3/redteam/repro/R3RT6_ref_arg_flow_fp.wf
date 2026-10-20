@@ -1,0 +1,40 @@
+// R3RT6 (false positive): a callee that mutates a reference argument can keep
+// the references of the other reference arguments (ADR 0003). The caller makes
+// the mutated argument point into the wildcard place of each other reference
+// argument, also when the types cannot hold such a reference: `dst` holds
+// `&Entity`, and `&some` is a `&Vec<&Entity>`. `points_into` is not flow
+// sensitive, so a change of `some` BEFORE the call invalidates `dst` too.
+// A common helper (`extend`) makes each later use of `all` an error.
+// Expected: no error. Found: W0301 at each use of `all` (and of `a`, `b`).
+// Run: weft run --unchecked --oracle R3RT6_ref_arg_flow_fp.wf   prints 2, 0, 2.
+struct Entity { hp: i32 }
+fn extend(dst: &Vec<&Entity>, src: &Vec<&Entity>) / mut(dst) {
+    let i = 0
+    while i < src.len() { dst.push(src[i]); i += 1 }
+}
+fn move_one(a: &Vec<&Entity>, b: &Vec<&Entity>) / mut(a, b) {
+    match a.pop() { Some(e) => b.push(e), None => {} }
+}
+fn caller_extend(x: &Entity, y: &Entity) {
+    let all = Vec.new()
+    let some = Vec.new()
+    some.push(x)
+    some.push(y)
+    extend(&all, &some)
+    print(all.len())                 // W0301 today
+}
+fn caller_move(x: &Entity, y: &Entity) {
+    let a = Vec.new()
+    a.push(x)
+    let b = Vec.new()
+    b.push(y)
+    move_one(&a, &b)                 // W0301 today (`a`, because of `b.push` above)
+    print(a.len())
+    print(b.len())                   // W0301 today
+}
+fn main() {
+    let x = Entity { hp: 1 }
+    let y = Entity { hp: 2 }
+    caller_extend(&x, &y)
+    caller_move(&x, &y)
+}

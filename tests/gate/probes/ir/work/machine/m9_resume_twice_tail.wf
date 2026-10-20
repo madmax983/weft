@@ -1,0 +1,17 @@
+effect Choice { multi fn choose() -> bool }
+
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let n = handle Choice {
+        fn choose() {
+            let a = resume(true)
+            let b = resume(false)
+            a + b
+        }
+    } in {
+        let c = choose()
+        if c { 1 } else { 2 }
+    }
+    print(n)
+}

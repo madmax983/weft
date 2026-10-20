@@ -1,0 +1,15 @@
+struct Stats { count: u64, name: u64 }
+struct Entity { hp: u64 }
+struct World { entities: Vec<Entity>, score: u64 }
+fn sum_hp(es: &[Entity]) -> u64 { 0 }
+// Two fork branches touch separate fields of one struct. Expect clean.
+fn fork_fields(stats: &Stats @ uniq) / mut(stats.count), par {
+    fork(|| stats.count += 1, || print(stats.name))
+}
+// A task reads one field, the parent writes another. Expect clean.
+fn world_fields(world: &World) / mut(world.score), async {
+    scope { s =>
+        s.spawn(|| print(world.entities.len()))
+        world.score += 1
+    }
+}

@@ -1,0 +1,17 @@
+// O3-12 (minor, false positive, also in 328a39b). A clause spawns a task that
+// changes a captured variable, then resumes. The clause reads its captures at
+// the operation (ADR 0006), and the task starts at the operation, so the
+// clause conflicts with its own task (W0405 at the spawn). Nothing else
+// touches `n` while the task runs.
+effect Note { fn note(x: u64) }
+
+fn main() {
+    let n = 0
+    scope { s =>
+        handle Note { fn note(x) { s.spawn(|| { n += 1 }); resume(()) } } in {
+            note(1)       // W0405 at the spawn in the clause
+            print(7)
+        }
+    }
+    print(n)
+}

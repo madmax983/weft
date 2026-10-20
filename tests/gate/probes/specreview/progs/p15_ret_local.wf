@@ -1,0 +1,15 @@
+struct Entity { hp: i32 }
+fn dangling_closure() {
+    let f = || { let e = Entity { hp: 1 }; &e.hp }
+    let r = f()
+    print(r)
+}
+fn dangling_block() {
+    let r = { let e = Entity { hp: 1 }; &e.hp }
+    print(r)
+}
+fn ret_local(v: &Vec<u64>) -> &u64 in v[] {
+    let w = Vec.new()
+    w.push(1)
+    &w[0]
+}

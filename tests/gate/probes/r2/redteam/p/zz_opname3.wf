@@ -1,0 +1,4 @@
+effect Out { fn print(x: u64) }
+fn main() {
+    handle Out { fn print(x) { resume(()) } } in print(5)
+}

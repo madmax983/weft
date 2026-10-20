@@ -1,0 +1,2 @@
+effect Log2 { fn l(m: String) }
+fn f() { handle Log2 {} in l("x") }

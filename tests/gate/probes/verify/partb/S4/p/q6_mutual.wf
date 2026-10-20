@@ -1,0 +1,5 @@
+linear struct Tok { id: u64 }
+enum A<T> { X(B<T>), N }
+enum B<T> { Y(A<T>), M(T) }
+fn f(x: A<Tok>) { }
+fn g(x: A<u64>) { }

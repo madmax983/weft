@@ -1,0 +1,38 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Cb { f: fn() }
+fn run_ref(c: &Cb) { let g = c.f
+ g() }
+fn s01(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    let cb = Cb { f: || print(r.hp) }
+    world.entities.clear()
+    run_ref(&cb)
+}
+fn clear_then_cb(c: Cb, w: &World) / mut(w.entities) { w.entities.clear()
+ let g = c.f
+ g() }
+fn s02(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    clear_then_cb(Cb { f: || print(r.hp) }, world)
+}
+fn clear_with(t: (&Entity, u64), w: &World) / mut(w.entities) { w.entities.clear() }
+fn s03(world: &World) / mut(world.entities) {
+    clear_with((&world.entities[0], 1), world)
+}
+fn opt_fn(o: Option<&Entity>, w: &World) / mut(w.entities) { w.entities.clear() }
+fn s04(world: &World) / mut(world.entities) {
+    opt_fn(Some(&world.entities[0]), world)
+}
+effect Ed { fn ed(o: Option<&Entity>) }
+fn s05(world: &World) / mut(world.entities) {
+    handle Ed { fn ed(o) { world.entities.clear()
+ resume(()) } } in ed(Some(&world.entities[0]))
+}
+fn s06(world: &World) / mut(world.entities) {
+    let cbs = Vec.new()
+    let r = &world.entities[0]
+    cbs.push(|| print(r.hp))
+    world.entities.clear()
+    for c in cbs[] { c() }
+}

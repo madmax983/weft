@@ -1,0 +1,114 @@
+effect Pick { multi fn pick() -> bool }
+effect Note { fn note(x: u64) }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn helper() / Pick { let b = pick() }
+fn helper_ret() -> bool / Pick { pick() }
+
+fn multi_if_tail() {
+    let c = true
+    let v = mk_v()
+    let w = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        let b = pick()
+        if c { v } else { mk_v() }
+    }
+    print(w.len())
+}
+fn multi_match_tail() {
+    let v = mk_v()
+    let w = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        let b = pick()
+        match b { true => v, false => mk_v() }
+    }
+    print(w.len())
+}
+fn multi_nested_handle_tail() {
+    let v = mk_v()
+    let w = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        let b = pick()
+        handle Note { fn note(x) { resume(()) } } in { v }
+    }
+    print(w.len())
+}
+fn multi_scope_tail() / async {
+    let v = mk_v()
+    let w = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        let b = pick()
+        scope { s => v }
+    }
+    print(w.len())
+}
+fn multi_part_tail() {
+    let t = (mk_v(), mk_v())
+    let w = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        let b = pick()
+        t.0
+    }
+    print(w.len())
+}
+fn multi_helper() {
+    let v = mk_v()
+    let w = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        helper()
+        v
+    }
+    print(w.len())
+}
+fn multi_helper_ret() {
+    let v = mk_v()
+    let w = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        let b = helper_ret()
+        v
+    }
+    print(w.len())
+}
+fn multi_closure() {
+    let v = mk_v()
+    let w = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        let f = || pick()
+        let b = f()
+        v
+    }
+    print(w.len())
+}
+fn multi_tuple_tail() {
+    let v = mk_v()
+    let w = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        let b = pick()
+        (v, 1)
+    }
+    print(w.0.len())
+}
+fn multi_tail_in_arg() {
+    let v = mk_v()
+    let w = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        pick()
+        v
+    }
+    print(w.len())
+}
+fn multi_ref_tail() {
+    let v = mk_v()
+    let w = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        let b = pick()
+        &v
+    }
+    print(w.len())
+}
+fn multi_stmt_if_tail() {
+    let c = true
+    let v = mk_v()
+    handle Pick { fn pick() { resume(true); resume(true) } } in {
+        let b = pick()
+        if c { v } else { mk_v() }
+    }
+}
+fn multi_tail_pick_in_tail() {
+    let v = mk_v()
+    let w = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        if pick() { v } else { mk_v() }
+    }
+    print(w.len())
+}
+fn main() {
+    multi_ref_tail()
+}

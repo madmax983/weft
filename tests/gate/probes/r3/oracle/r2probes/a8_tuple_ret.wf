@@ -1,0 +1,10 @@
+fn pair(v: &Vec<u64>) -> (u64, fn()) { (1, || print(v[0] + 1)) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let (n, f) = pair(&v)
+    {
+        let w = v
+    }
+    f()
+}

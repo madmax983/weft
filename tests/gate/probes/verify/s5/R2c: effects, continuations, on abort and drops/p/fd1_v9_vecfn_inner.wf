@@ -1,0 +1,24 @@
+// on abort calls a closure from a Vec<fn()> in its value. The closure performs
+// through a handler inside the aborted body.
+effect Ask { fn ask() -> u64 }
+effect Stop { fn stop() }
+linear struct T { fs: Vec<fn()> }
+    on abort = undo
+fn undo(t: T) {
+    let T(fs) = t
+    let f = fs[0]
+    f()
+}
+fn done(t: T) { let T(fs) = t }
+fn main() {
+    handle Stop { fn stop() { () } } in {
+        handle Ask { fn ask() { resume(5) } } in {
+            let v: Vec<fn()> = Vec.new()
+            v.push(|| print(ask()))
+            let t = T { fs: v }
+            stop()
+            done(t)
+        }
+    }
+    print("end")
+}

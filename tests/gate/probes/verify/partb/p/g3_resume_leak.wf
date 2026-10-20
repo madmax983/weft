@@ -1,0 +1,17 @@
+// A clause of Get resumes with a closure that performs through the outer Log
+// handler. The body of Get gives the closure back as the value of the `handle`,
+// and the body of Log returns it. The closure leaves the Log handler.
+effect Get { fn get() -> fn() }
+effect Log { fn log(m: String) }
+
+fn leak() -> fn() {
+    handle Log { fn log(m) { resume(()) } } in {
+        handle Get { fn get() { resume(|| log("late")) } } in get()
+    }
+}
+
+fn main() {
+    let f = leak()
+    f()
+    print("done")
+}

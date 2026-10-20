@@ -1,0 +1,16 @@
+struct Stats { count: u64 }
+struct Runner { n: u64 }
+impl Runner {
+    fn go(self: &Runner, g: fn()) { g() }
+}
+fn f(st: &Stats) / mut(st) {
+    let v = Vec.new()
+    v.push(|| { st.count += 1 })
+    let r = Runner { n: 1 }
+    r.go(v[0])
+}
+fn main() {
+    let st = Stats { count: 0 }
+    f(&st)
+    print(st.count)
+}

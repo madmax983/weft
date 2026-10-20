@@ -1,0 +1,38 @@
+// O3-3 (blocker, also in 328a39b). A reference into a temporary of a handler
+// clause leaves the `handle`: through the value of a clause that does not
+// resume, or through `resume` and the value of the handled body. The clause
+// frees its temporaries at the end of its statement, before the `handle`
+// gives its value. The same code with a local of the clause gets W0301 or
+// W0204.
+effect Ask { fn ask() -> u64 }
+effect Give { fn give() -> &u64 }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v.push(2); v }
+fn first(v: &Vec<u64>) -> &u64 in v[] { &v[0] }
+
+fn clause_value() {
+    let u = mk_v()
+    let r = handle Ask { fn ask() { first(&mk_v()) } } in { let k = ask(); &u[0] }
+    print(r + 1)          // oracle: a read of a freed cell
+}
+
+fn resume_value() {
+    let r = handle Give { fn give() { resume(first(&mk_v())) } } in { give() }
+    print(r + 1)          // oracle: a read of a freed cell
+}
+
+fn clause_value_local() {
+    // With a local of the clause: W0301 (correct).
+    let u = mk_v()
+    let r = handle Ask { fn ask() { let t = mk_v(); first(&t) } } in { let k = ask(); &u[0] }
+    print(r + 1)
+}
+
+fn resume_value_local() {
+    // With a local of the clause: W0204 (correct).
+    let r = handle Give { fn give() { let t = mk_v(); resume(first(&t)) } } in { give() }
+    print(r + 1)
+}
+
+fn main() {
+    clause_value()
+}

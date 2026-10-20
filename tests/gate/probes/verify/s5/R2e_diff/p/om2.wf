@@ -1,0 +1,17 @@
+effect Choice { multi fn choose() -> bool }
+fn pick() -> u64 / Choice {
+    let base = 10
+    let r = &base
+    if choose() { r + 1 } else { r + 2 }
+}
+fn main() {
+    let out = Vec.new()
+    handle Choice { fn choose() { resume(true)
+ resume(false) } } in {
+        let x = 7
+        let rx = &x
+        let p = pick()
+        out.push(p + rx)
+    }
+    print(out.len())
+}

@@ -1,0 +1,11 @@
+effect Note { fn note(m: u64) }
+fn helper() / Note { note(1) }
+fn held() {
+    let lines: Vec<u64> = Vec.new()
+    lines.push(1)
+    handle Note { fn note(m) { lines.push(m); resume(()) } } in {
+        let first = &lines[0]
+        helper()
+        print(first)
+    }
+}

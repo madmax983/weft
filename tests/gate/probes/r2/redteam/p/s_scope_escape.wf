@@ -1,0 +1,26 @@
+struct Stats { count: u64 }
+
+// The capability `s` of a scope leaves the scope in a closure. A call of the
+// closure after the scope ends starts a task that no scope joins.
+fn escape(st: &Stats) / mut(st), async {
+    let keep = || print(0)
+    scope { s =>
+        keep = || {
+            s.spawn(|| { st.count += 1
+ print("task runs, count {st.count}") })
+            ()
+        }
+    }
+    keep()
+    print("escape returns")
+}
+fn caller() / async {
+    let st = Stats { count: 0 }
+    escape(&st)
+    print("caller ends")
+}
+fn main() / async, clock {
+    caller()
+    sleep(1.ms)
+    print("main ends")
+}

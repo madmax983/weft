@@ -1,0 +1,22 @@
+// A clause runs its function argument as a task. The argument performs through
+// a handler on the stack of the parent task.
+effect Note { fn note(x: u64) }
+effect Run { fn run(f: fn()) }
+
+fn clause_task() / async {
+    handle Note { fn note(x) { print("note", x); resume(()) } } in {
+        handle Run {
+            fn run(f) {
+                scope { s =>
+                    let t = s.spawn(f)
+                    t.join()
+                }
+                resume(())
+            }
+        } in run(|| note(1))
+    }
+}
+fn main() / async {
+    clause_task()
+    print("done")
+}

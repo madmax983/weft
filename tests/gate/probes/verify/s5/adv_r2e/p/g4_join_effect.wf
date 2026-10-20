@@ -1,0 +1,8 @@
+effect Ask { fn ask() -> u64 }
+fn main() / par, async {
+    scope { s =>
+        let t = s.spawn(|| 5)
+        let r = t.join(ask())
+        print(r)
+    }
+}

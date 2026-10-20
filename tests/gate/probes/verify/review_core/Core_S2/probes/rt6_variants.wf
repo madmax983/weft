@@ -1,0 +1,138 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct S { f: fn(&World) }
+linear struct Lock { id: u64 }
+fn take() -> Lock { Lock { id: 1 } }
+fn release(l: Lock) { let Lock(i) = l }
+fn risky() / fail { fail("no") }
+fn safe() {}
+mod m {
+    pub struct Entity2 { hp: i32 }
+    pub fn grow2(v: &Vec<u64>) / mut(v) { v.push(1) }
+}
+impl World {
+    fn add(self: &World) / mut(self.entities) { self.entities.push(Entity { hp: 1 }) }
+}
+fn grow(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 1 }) }
+fn noop(w: &World) {}
+fn apply(f: fn(&World), w: &World) { f(w) }
+fn apply2(f: fn(&World), w: &World) { f(w) }
+fn pick() -> fn(&World) { grow }
+fn grow_g<T>(v: &Vec<T>, x: T) / mut(v) { v.push(x) }
+
+// v1: a module item as a value.
+fn module_item() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let g = m.grow2
+    g(&v)
+    print(r)   // expect W0301
+}
+// v2: an item through a tuple.
+fn item_tuple(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let t = (grow, 1)
+    let (g, n) = t
+    g(world)
+    print(first.hp)   // expect W0301
+}
+// v3: an item in a struct field, called in the same body.
+fn item_field(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let s = S { f: grow }
+    let g = s.f
+    g(world)
+    print(first.hp)   // expect W0301
+}
+pub fn item_field_pub(world: &World) {   // expect W0701
+    let s = S { f: grow }
+    let g = s.f
+    g(world)
+}
+// v4: an item returned by a function.
+fn item_returned(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g = pick()
+    g(world)
+    print(first.hp)   // expect W0301
+}
+pub fn item_returned_pub(world: &World) {   // expect W0701
+    let g = pick()
+    g(world)
+}
+// v5: an item joined with a closure.
+fn item_or_closure(world: &World, c: bool) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g = if c { grow } else { |w: &World| print(1) }
+    g(world)
+    print(first.hp)   // expect W0301
+}
+// v6: a method as a value.
+fn method_value(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g = World.add
+    g(world)
+    print(first.hp)   // expect W0301
+}
+// v7: a generic item as a value.
+fn generic_item() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let g = grow_g
+    g(&v, 2)
+    print(r)   // expect W0301
+}
+// v8: joined higher-order items with a closure argument.
+fn joined_hof(world: &World, c: bool) {
+    let first = &world.entities[0]
+    let g = if c { apply } else { apply2 }
+    g(|x| x.entities.clear(), world)
+    print(first.hp)   // expect W0301
+}
+// v9: abort through an item joined by `match`.
+fn abort_match(n: u64) / fail {
+    let l = take()
+    let r = match n { 0 => safe, _ => risky }
+    r()   // expect W0602
+    release(l)
+}
+// v10: a reassignment in a loop, after the call in the text.
+fn loop_reassign(world: &World, n: u64) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g = noop
+    let i = 0
+    while i < n {
+        g(world)
+        print(first.hp)   // expect W0301 (second iteration)
+        g = grow
+        i += 1
+    }
+}
+// v11: a copy chain.
+fn copy_chain(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g = grow
+    let h = g
+    let k = h
+    k(world)
+    print(first.hp)   // expect W0301
+}
+// v12: an item passed to a fn parameter of another function, which calls it.
+fn call_with(f: fn(&World), w: &World) { let g = f; g(w) }
+fn item_through_copy(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    call_with(grow, world)
+    print(first.hp)   // expect W0301
+}
+// v13: an item inside an Option.
+fn item_option(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let o = Some(grow)
+    match o {
+        Some(g) => g(world),
+        None => {}
+    }
+    print(first.hp)   // expect W0301
+}

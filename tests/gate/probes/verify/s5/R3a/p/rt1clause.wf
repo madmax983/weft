@@ -1,0 +1,34 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { print(tx.id); let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+effect Note { fn note(x: u64) }
+effect Ask { fn ask() -> u64 }
+struct Two { a: Tx, b: Tx }
+
+fn clause_part() {
+    let t = (begin(1), begin(2))
+    handle Note { fn note(x) { rollback(t.0); resume(()) } } in { note(1) }
+}
+fn clause_part_no_resume() {
+    let t = (begin(1), begin(2))
+    handle Ask { fn ask() { rollback(t.0); 5 } } in { ask() }
+}
+fn clause_field() {
+    let s = Two { a: begin(1), b: begin(2) }
+    handle Note { fn note(x) { rollback(s.a); resume(()) } } in { note(1) }
+}
+fn clause_part_value() {
+    let t = (begin(1), begin(2))
+    let k = handle Ask { fn ask() { rollback(t.0); resume(5) } } in { ask() }
+    print(k)
+}
+fn clause_whole_clean() {
+    let t = (begin(1), begin(2))
+    handle Note { fn note(x) { let (a, b) = t; rollback(a); rollback(b); resume(()) } } in { note(1) }
+}
+test "clause_part" { clause_part() }
+test "clause_part_no_resume" { clause_part_no_resume() }
+test "clause_field" { clause_field() }
+test "clause_part_value" { clause_part_value() }
+test "clause_whole_clean" { clause_whole_clean() }

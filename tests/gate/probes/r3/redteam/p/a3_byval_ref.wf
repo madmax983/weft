@@ -1,0 +1,25 @@
+struct Buf { items: Vec<u64> }
+struct Pair<T> { r: T, b: Buf }
+fn eat<T>(p: Pair<T>) -> T { p.r }
+fn moved_holder(v: &Vec<u64>) / mut(v) {
+    let p = Pair { r: &v[0], b: Buf { items: Vec.new() } }
+    let f = || { let x = eat(p); print(x) }
+    v.clear()
+    f()   //~ W0301
+}
+fn moved_holder_scope() {
+    let f = || print(0)
+    {
+        let v = Vec.new()
+        v.push(1)
+        let p = Pair { r: &v[0], b: Buf { items: Vec.new() } }
+        f = || { let x = eat(p); print(x) }
+    }
+    f()   //~ W0301
+}
+fn main() {
+    let v = Vec.new()
+    v.push(5)
+    moved_holder(&v)
+    moved_holder_scope()
+}

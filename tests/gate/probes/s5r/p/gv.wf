@@ -1,0 +1,17 @@
+effect Note { fn note(x: u64) }
+fn start_gen_value<T>(x: T, run: fn(T)) / async {
+    scope { s =>
+        let t = s.spawn(|| run(x))
+        t.join()
+    }
+}
+fn through_generic_value() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        start_gen_value(|| note(7), |g: fn()| g())
+    }
+}
+fn through_generic_value2() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        start_gen_value(|| note(7), |g: fn()| g())
+    }
+}

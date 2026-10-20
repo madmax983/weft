@@ -1,0 +1,15 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+// The loop pushes to the vector that it walks. The hidden iterator is invalid
+// at the next iteration.
+fn grow_while_walking(world: &World) / mut(world.entities) {
+    for e in world.entities[] {
+        world.entities.push(Entity { hp: 1 })
+    }
+}
+fn main() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    grow_while_walking(&w)
+    print(w.entities.len())
+}

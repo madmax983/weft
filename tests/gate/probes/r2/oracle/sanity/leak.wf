@@ -1,0 +1,6 @@
+linear struct Tx { id: u64 }
+fn mk() -> Tx { Tx { id: 1 } }
+fn main() {
+    let t = mk()
+    print(t.id)
+}

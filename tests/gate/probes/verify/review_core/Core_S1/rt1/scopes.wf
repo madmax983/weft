@@ -1,0 +1,153 @@
+// RT1 variants: the owner goes out of scope in other shapes.
+struct Entity { hp: i32 }
+effect Log { fn log(m: String) }
+
+// 1. A match arm local.
+fn arm_local(c: bool) {
+    let keep = Entity { hp: 1 }
+    let r = &keep.hp
+    match c {
+        true => { let e = Entity { hp: 2 }; r = &e.hp }
+        false => {}
+    }
+    print(r)   // ERR
+}
+// 2. A handled body local.
+fn handled_local() {
+    let keep = Entity { hp: 1 }
+    let r = &keep.hp
+    handle Log { fn log(m) { resume(()) } } in {
+        let e = Entity { hp: 2 }
+        r = &e.hp
+    }
+    print(r)   // ERR
+}
+// 3. A closure local assigned to a captured reference.
+fn closure_local() {
+    let keep = Entity { hp: 1 }
+    let r = &keep.hp
+    let f = || { let e = Entity { hp: 2 }; r = &e.hp }
+    f()
+    print(r)   // ERR
+}
+// 4. A by-value loop variable.
+fn loop_var() {
+    let keep: u64 = 1
+    let r = &keep
+    for x in 0..3 {
+        r = &x
+    }
+    print(r)   // ERR
+}
+// 5. A loop body local with break.
+fn break_local() {
+    let keep = Entity { hp: 1 }
+    let r = &keep.hp
+    loop {
+        let e = Entity { hp: 2 }
+        r = &e.hp
+        break
+    }
+    print(r)   // ERR
+}
+// 6. A loop body local with continue, used at the next iteration.
+fn continue_local(n: u64) {
+    let keep = Entity { hp: 1 }
+    let r = &keep.hp
+    let i = 0
+    while i < n {
+        i += 1
+        print(r)   // ERR (second iteration)
+        let e = Entity { hp: 2 }
+        r = &e.hp
+        if i > 1 { continue }
+    }
+}
+// 7. A by-value match binding.
+fn by_value_binding() {
+    let keep = Entity { hp: 1 }
+    let r = &keep.hp
+    let o = Some(Entity { hp: 2 })
+    match o {
+        Some(e) => { r = &e.hp }
+        None => {}
+    }
+    print(r)   // ERR
+}
+// 8. A tuple pattern local in a block.
+fn tuple_local() {
+    let keep = Entity { hp: 1 }
+    let r = &keep.hp
+    {
+        let (a, b) = (Entity { hp: 2 }, 1)
+        r = &a.hp
+    }
+    print(r)   // ERR
+}
+// 9. A by-value closure parameter.
+fn closure_param() {
+    let keep = Entity { hp: 1 }
+    let r = &keep.hp
+    let f = |e: Entity| { r = &e.hp }
+    f(Entity { hp: 2 })
+    print(r)   // ERR
+}
+// 10. A scope body local.
+fn scope_local() / async {
+    let keep = Entity { hp: 1 }
+    let r = &keep.hp
+    scope { s =>
+        let e = Entity { hp: 2 }
+        r = &e.hp
+    }
+    print(r)   // ERR
+}
+// 11. A handler clause local.
+fn clause_local() {
+    let keep = Entity { hp: 1 }
+    let r = &keep.hp
+    handle Log { fn log(m) { let e = Entity { hp: 2 }; r = &e.hp; resume(()) } } in log("x")
+    print(r)   // ERR
+}
+// 12. Nested blocks: the inner value goes out through two blocks.
+fn nested_block() {
+    let r = {
+        let e = Entity { hp: 2 }
+        { &e.hp }
+    }
+    print(r)   // ERR (at the block)
+}
+// 13. An if expression value.
+fn if_value(c: bool) {
+    let keep = Entity { hp: 1 }
+    let r = if c { let e = Entity { hp: 2 }; &e.hp } else { &keep.hp }
+    print(r)   // ERR (at the block)
+}
+// 14. A match arm value.
+fn match_value(c: bool) {
+    let keep = Entity { hp: 1 }
+    let r = match c { true => { let e = Entity { hp: 2 }; &e.hp }, false => &keep.hp }
+    print(r)   // ERR (at the arm)
+}
+// 15. A block value that is a tuple.
+fn tuple_value() {
+    let t = { let e = Entity { hp: 2 }; (&e.hp, 1) }
+    let (a, b) = t
+    print(a)   // ERR
+}
+// 16. A block value through a closure that captures the block local.
+fn closure_value() {
+    let f = { let e = Entity { hp: 2 }; || print(e.hp) }
+    f()   // ERR
+}
+// 17. A loop that keeps a block value of the previous iteration.
+fn loop_block(n: u64) {
+    let keep = Entity { hp: 1 }
+    let r = &keep.hp
+    let i = 0
+    while i < n {
+        print(r)   // ERR (second iteration)
+        r = { let e = Entity { hp: 2 }; &e.hp }
+        i += 1
+    }
+}

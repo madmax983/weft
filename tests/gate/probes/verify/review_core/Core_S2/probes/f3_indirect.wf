@@ -1,0 +1,79 @@
+effect Bump { fn bump(v: &Vec<u64>) }
+struct Cb { f: fn(&Vec<u64>) }
+fn bumps(v: &Vec<u64>) / Bump { bump(v) }
+fn apply_v(f: fn(&Vec<u64>), v: &Vec<u64>) { f(v) }
+fn run_cb(cb: &Cb, v: &Vec<u64>) { let g = cb.f; g(v) }
+
+// i1: a closure that performs, given to a higher-order function.
+fn via_hof() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump { fn bump(x) { x.push(2); resume(()) } } in {
+        let r = &v[0]
+        apply_v(|y| bump(y), &v)
+        print(r)   // expect W0301
+    }
+}
+// i2: an item value that performs.
+fn via_item_value() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump { fn bump(x) { x.push(2); resume(()) } } in {
+        let r = &v[0]
+        let g = bumps
+        g(&v)
+        print(r)   // expect W0301
+    }
+}
+// i3: an item given to a higher-order function.
+fn via_item_hof() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump { fn bump(x) { x.push(2); resume(()) } } in {
+        let r = &v[0]
+        apply_v(bumps, &v)
+        print(r)   // expect W0301
+    }
+}
+// i4: a stored closure that performs.
+fn via_stored() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump { fn bump(x) { x.push(2); resume(()) } } in {
+        let cb = Cb { f: |y| bump(y) }
+        let r = &v[0]
+        run_cb(&cb, &v)
+        print(r)   // expect W0301
+    }
+}
+// i5: the clause mutates its parameter through a callee.
+fn grows(v: &Vec<u64>) / mut(v) { v.push(3) }
+fn clause_callee() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump { fn bump(x) { grows(x); resume(()) } } in {
+        let r = &v[0]
+        bump(&v)
+        print(r)   // expect W0301
+    }
+}
+// i6: the clause mutates its parameter through a closure.
+fn clause_closure() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump { fn bump(x) { let c = || x.push(4); c(); resume(()) } } in {
+        let r = &v[0]
+        bump(&v)
+        print(r)   // expect W0301
+    }
+}
+// i7: the clause gives its parameter to a higher-order function with a mutating closure.
+fn clause_hof() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump { fn bump(x) { apply_v(|z| z.push(5), x); resume(()) } } in {
+        let r = &v[0]
+        bump(&v)
+        print(r)   // expect W0301
+    }
+}

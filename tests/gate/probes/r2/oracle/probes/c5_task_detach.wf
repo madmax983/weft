@@ -1,0 +1,9 @@
+fn main() {
+    let n = 0
+    scope { s =>
+        let t = s.spawn(|| n += 1)
+        t.detach()
+    }
+    n += 1
+    print(n)
+}

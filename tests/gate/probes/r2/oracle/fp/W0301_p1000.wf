@@ -1,0 +1,13 @@
+
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(3)
+    v
+}
+
+fn main() {
+    let v10 = mk_v()
+    let r11 = &v10[0]
+    let v12 = v10
+    r11 += 1
+}

@@ -1,0 +1,6 @@
+effect Log2 { fn log2(m: String) }
+effect MyNet { fn ping() }
+pub fn loud() { log2("x") }
+pub fn pinger() / Log2 { ping() }
+fn inner() { ping() }
+pub fn outer() / Log2 { inner() }

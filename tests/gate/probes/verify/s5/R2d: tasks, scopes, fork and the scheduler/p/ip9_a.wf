@@ -1,0 +1,19 @@
+fn spin(id: u64) {
+    let i = 0
+    let acc = 0
+    while i < 4000 {
+        acc += i
+        if i % 1000 == 0 { print("task {id} at {i}") }
+        i += 1
+    }
+}
+
+test "compute loops" {
+    sim.run(seed: 7) {
+        scope { s =>
+            s.spawn(|| spin(1))
+            s.spawn(|| spin(2))
+            s.spawn(|| spin(3))
+        }
+    }
+}

@@ -1,0 +1,11 @@
+fn bg(f: fn()) {
+    scope { s =>
+        for i in 0..2 { s.spawn(f) }
+    }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    bg(|| v.push(2))
+    print(v.len())
+}

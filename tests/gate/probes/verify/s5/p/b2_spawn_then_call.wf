@@ -1,0 +1,10 @@
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    let f = || print("task {v.len()}")
+    scope { s =>
+        s.spawn(f)
+    }
+    f()
+    print("end")
+}

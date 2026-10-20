@@ -1,0 +1,3210 @@
+effect Pick { fn pick() -> &u64 }
+effect Lg { fn lg(m: String) }
+
+fn big() {
+    let v = Vec.new()
+    v.push(1)
+    let f = || print(0)
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r0 = pick()
+        f = || print(0)
+        lg("x")
+        print(r0)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r1 = pick()
+        f = || print(1)
+        lg("x")
+        print(r1)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r2 = pick()
+        f = || print(2)
+        lg("x")
+        print(r2)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r3 = pick()
+        f = || print(3)
+        lg("x")
+        print(r3)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r4 = pick()
+        f = || print(4)
+        lg("x")
+        print(r4)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r5 = pick()
+        f = || print(5)
+        lg("x")
+        print(r5)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r6 = pick()
+        f = || print(6)
+        lg("x")
+        print(r6)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r7 = pick()
+        f = || print(7)
+        lg("x")
+        print(r7)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r8 = pick()
+        f = || print(8)
+        lg("x")
+        print(r8)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r9 = pick()
+        f = || print(9)
+        lg("x")
+        print(r9)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r10 = pick()
+        f = || print(10)
+        lg("x")
+        print(r10)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r11 = pick()
+        f = || print(11)
+        lg("x")
+        print(r11)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r12 = pick()
+        f = || print(12)
+        lg("x")
+        print(r12)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r13 = pick()
+        f = || print(13)
+        lg("x")
+        print(r13)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r14 = pick()
+        f = || print(14)
+        lg("x")
+        print(r14)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r15 = pick()
+        f = || print(15)
+        lg("x")
+        print(r15)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r16 = pick()
+        f = || print(16)
+        lg("x")
+        print(r16)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r17 = pick()
+        f = || print(17)
+        lg("x")
+        print(r17)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r18 = pick()
+        f = || print(18)
+        lg("x")
+        print(r18)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r19 = pick()
+        f = || print(19)
+        lg("x")
+        print(r19)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r20 = pick()
+        f = || print(20)
+        lg("x")
+        print(r20)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r21 = pick()
+        f = || print(21)
+        lg("x")
+        print(r21)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r22 = pick()
+        f = || print(22)
+        lg("x")
+        print(r22)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r23 = pick()
+        f = || print(23)
+        lg("x")
+        print(r23)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r24 = pick()
+        f = || print(24)
+        lg("x")
+        print(r24)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r25 = pick()
+        f = || print(25)
+        lg("x")
+        print(r25)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r26 = pick()
+        f = || print(26)
+        lg("x")
+        print(r26)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r27 = pick()
+        f = || print(27)
+        lg("x")
+        print(r27)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r28 = pick()
+        f = || print(28)
+        lg("x")
+        print(r28)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r29 = pick()
+        f = || print(29)
+        lg("x")
+        print(r29)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r30 = pick()
+        f = || print(30)
+        lg("x")
+        print(r30)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r31 = pick()
+        f = || print(31)
+        lg("x")
+        print(r31)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r32 = pick()
+        f = || print(32)
+        lg("x")
+        print(r32)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r33 = pick()
+        f = || print(33)
+        lg("x")
+        print(r33)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r34 = pick()
+        f = || print(34)
+        lg("x")
+        print(r34)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r35 = pick()
+        f = || print(35)
+        lg("x")
+        print(r35)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r36 = pick()
+        f = || print(36)
+        lg("x")
+        print(r36)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r37 = pick()
+        f = || print(37)
+        lg("x")
+        print(r37)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r38 = pick()
+        f = || print(38)
+        lg("x")
+        print(r38)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r39 = pick()
+        f = || print(39)
+        lg("x")
+        print(r39)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r40 = pick()
+        f = || print(40)
+        lg("x")
+        print(r40)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r41 = pick()
+        f = || print(41)
+        lg("x")
+        print(r41)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r42 = pick()
+        f = || print(42)
+        lg("x")
+        print(r42)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r43 = pick()
+        f = || print(43)
+        lg("x")
+        print(r43)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r44 = pick()
+        f = || print(44)
+        lg("x")
+        print(r44)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r45 = pick()
+        f = || print(45)
+        lg("x")
+        print(r45)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r46 = pick()
+        f = || print(46)
+        lg("x")
+        print(r46)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r47 = pick()
+        f = || print(47)
+        lg("x")
+        print(r47)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r48 = pick()
+        f = || print(48)
+        lg("x")
+        print(r48)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r49 = pick()
+        f = || print(49)
+        lg("x")
+        print(r49)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r50 = pick()
+        f = || print(50)
+        lg("x")
+        print(r50)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r51 = pick()
+        f = || print(51)
+        lg("x")
+        print(r51)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r52 = pick()
+        f = || print(52)
+        lg("x")
+        print(r52)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r53 = pick()
+        f = || print(53)
+        lg("x")
+        print(r53)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r54 = pick()
+        f = || print(54)
+        lg("x")
+        print(r54)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r55 = pick()
+        f = || print(55)
+        lg("x")
+        print(r55)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r56 = pick()
+        f = || print(56)
+        lg("x")
+        print(r56)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r57 = pick()
+        f = || print(57)
+        lg("x")
+        print(r57)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r58 = pick()
+        f = || print(58)
+        lg("x")
+        print(r58)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r59 = pick()
+        f = || print(59)
+        lg("x")
+        print(r59)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r60 = pick()
+        f = || print(60)
+        lg("x")
+        print(r60)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r61 = pick()
+        f = || print(61)
+        lg("x")
+        print(r61)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r62 = pick()
+        f = || print(62)
+        lg("x")
+        print(r62)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r63 = pick()
+        f = || print(63)
+        lg("x")
+        print(r63)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r64 = pick()
+        f = || print(64)
+        lg("x")
+        print(r64)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r65 = pick()
+        f = || print(65)
+        lg("x")
+        print(r65)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r66 = pick()
+        f = || print(66)
+        lg("x")
+        print(r66)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r67 = pick()
+        f = || print(67)
+        lg("x")
+        print(r67)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r68 = pick()
+        f = || print(68)
+        lg("x")
+        print(r68)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r69 = pick()
+        f = || print(69)
+        lg("x")
+        print(r69)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r70 = pick()
+        f = || print(70)
+        lg("x")
+        print(r70)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r71 = pick()
+        f = || print(71)
+        lg("x")
+        print(r71)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r72 = pick()
+        f = || print(72)
+        lg("x")
+        print(r72)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r73 = pick()
+        f = || print(73)
+        lg("x")
+        print(r73)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r74 = pick()
+        f = || print(74)
+        lg("x")
+        print(r74)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r75 = pick()
+        f = || print(75)
+        lg("x")
+        print(r75)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r76 = pick()
+        f = || print(76)
+        lg("x")
+        print(r76)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r77 = pick()
+        f = || print(77)
+        lg("x")
+        print(r77)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r78 = pick()
+        f = || print(78)
+        lg("x")
+        print(r78)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r79 = pick()
+        f = || print(79)
+        lg("x")
+        print(r79)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r80 = pick()
+        f = || print(80)
+        lg("x")
+        print(r80)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r81 = pick()
+        f = || print(81)
+        lg("x")
+        print(r81)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r82 = pick()
+        f = || print(82)
+        lg("x")
+        print(r82)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r83 = pick()
+        f = || print(83)
+        lg("x")
+        print(r83)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r84 = pick()
+        f = || print(84)
+        lg("x")
+        print(r84)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r85 = pick()
+        f = || print(85)
+        lg("x")
+        print(r85)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r86 = pick()
+        f = || print(86)
+        lg("x")
+        print(r86)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r87 = pick()
+        f = || print(87)
+        lg("x")
+        print(r87)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r88 = pick()
+        f = || print(88)
+        lg("x")
+        print(r88)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r89 = pick()
+        f = || print(89)
+        lg("x")
+        print(r89)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r90 = pick()
+        f = || print(90)
+        lg("x")
+        print(r90)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r91 = pick()
+        f = || print(91)
+        lg("x")
+        print(r91)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r92 = pick()
+        f = || print(92)
+        lg("x")
+        print(r92)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r93 = pick()
+        f = || print(93)
+        lg("x")
+        print(r93)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r94 = pick()
+        f = || print(94)
+        lg("x")
+        print(r94)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r95 = pick()
+        f = || print(95)
+        lg("x")
+        print(r95)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r96 = pick()
+        f = || print(96)
+        lg("x")
+        print(r96)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r97 = pick()
+        f = || print(97)
+        lg("x")
+        print(r97)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r98 = pick()
+        f = || print(98)
+        lg("x")
+        print(r98)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r99 = pick()
+        f = || print(99)
+        lg("x")
+        print(r99)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r100 = pick()
+        f = || print(100)
+        lg("x")
+        print(r100)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r101 = pick()
+        f = || print(101)
+        lg("x")
+        print(r101)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r102 = pick()
+        f = || print(102)
+        lg("x")
+        print(r102)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r103 = pick()
+        f = || print(103)
+        lg("x")
+        print(r103)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r104 = pick()
+        f = || print(104)
+        lg("x")
+        print(r104)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r105 = pick()
+        f = || print(105)
+        lg("x")
+        print(r105)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r106 = pick()
+        f = || print(106)
+        lg("x")
+        print(r106)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r107 = pick()
+        f = || print(107)
+        lg("x")
+        print(r107)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r108 = pick()
+        f = || print(108)
+        lg("x")
+        print(r108)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r109 = pick()
+        f = || print(109)
+        lg("x")
+        print(r109)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r110 = pick()
+        f = || print(110)
+        lg("x")
+        print(r110)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r111 = pick()
+        f = || print(111)
+        lg("x")
+        print(r111)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r112 = pick()
+        f = || print(112)
+        lg("x")
+        print(r112)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r113 = pick()
+        f = || print(113)
+        lg("x")
+        print(r113)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r114 = pick()
+        f = || print(114)
+        lg("x")
+        print(r114)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r115 = pick()
+        f = || print(115)
+        lg("x")
+        print(r115)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r116 = pick()
+        f = || print(116)
+        lg("x")
+        print(r116)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r117 = pick()
+        f = || print(117)
+        lg("x")
+        print(r117)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r118 = pick()
+        f = || print(118)
+        lg("x")
+        print(r118)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r119 = pick()
+        f = || print(119)
+        lg("x")
+        print(r119)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r120 = pick()
+        f = || print(120)
+        lg("x")
+        print(r120)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r121 = pick()
+        f = || print(121)
+        lg("x")
+        print(r121)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r122 = pick()
+        f = || print(122)
+        lg("x")
+        print(r122)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r123 = pick()
+        f = || print(123)
+        lg("x")
+        print(r123)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r124 = pick()
+        f = || print(124)
+        lg("x")
+        print(r124)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r125 = pick()
+        f = || print(125)
+        lg("x")
+        print(r125)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r126 = pick()
+        f = || print(126)
+        lg("x")
+        print(r126)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r127 = pick()
+        f = || print(127)
+        lg("x")
+        print(r127)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r128 = pick()
+        f = || print(128)
+        lg("x")
+        print(r128)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r129 = pick()
+        f = || print(129)
+        lg("x")
+        print(r129)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r130 = pick()
+        f = || print(130)
+        lg("x")
+        print(r130)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r131 = pick()
+        f = || print(131)
+        lg("x")
+        print(r131)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r132 = pick()
+        f = || print(132)
+        lg("x")
+        print(r132)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r133 = pick()
+        f = || print(133)
+        lg("x")
+        print(r133)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r134 = pick()
+        f = || print(134)
+        lg("x")
+        print(r134)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r135 = pick()
+        f = || print(135)
+        lg("x")
+        print(r135)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r136 = pick()
+        f = || print(136)
+        lg("x")
+        print(r136)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r137 = pick()
+        f = || print(137)
+        lg("x")
+        print(r137)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r138 = pick()
+        f = || print(138)
+        lg("x")
+        print(r138)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r139 = pick()
+        f = || print(139)
+        lg("x")
+        print(r139)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r140 = pick()
+        f = || print(140)
+        lg("x")
+        print(r140)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r141 = pick()
+        f = || print(141)
+        lg("x")
+        print(r141)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r142 = pick()
+        f = || print(142)
+        lg("x")
+        print(r142)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r143 = pick()
+        f = || print(143)
+        lg("x")
+        print(r143)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r144 = pick()
+        f = || print(144)
+        lg("x")
+        print(r144)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r145 = pick()
+        f = || print(145)
+        lg("x")
+        print(r145)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r146 = pick()
+        f = || print(146)
+        lg("x")
+        print(r146)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r147 = pick()
+        f = || print(147)
+        lg("x")
+        print(r147)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r148 = pick()
+        f = || print(148)
+        lg("x")
+        print(r148)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r149 = pick()
+        f = || print(149)
+        lg("x")
+        print(r149)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r150 = pick()
+        f = || print(150)
+        lg("x")
+        print(r150)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r151 = pick()
+        f = || print(151)
+        lg("x")
+        print(r151)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r152 = pick()
+        f = || print(152)
+        lg("x")
+        print(r152)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r153 = pick()
+        f = || print(153)
+        lg("x")
+        print(r153)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r154 = pick()
+        f = || print(154)
+        lg("x")
+        print(r154)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r155 = pick()
+        f = || print(155)
+        lg("x")
+        print(r155)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r156 = pick()
+        f = || print(156)
+        lg("x")
+        print(r156)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r157 = pick()
+        f = || print(157)
+        lg("x")
+        print(r157)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r158 = pick()
+        f = || print(158)
+        lg("x")
+        print(r158)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r159 = pick()
+        f = || print(159)
+        lg("x")
+        print(r159)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r160 = pick()
+        f = || print(160)
+        lg("x")
+        print(r160)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r161 = pick()
+        f = || print(161)
+        lg("x")
+        print(r161)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r162 = pick()
+        f = || print(162)
+        lg("x")
+        print(r162)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r163 = pick()
+        f = || print(163)
+        lg("x")
+        print(r163)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r164 = pick()
+        f = || print(164)
+        lg("x")
+        print(r164)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r165 = pick()
+        f = || print(165)
+        lg("x")
+        print(r165)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r166 = pick()
+        f = || print(166)
+        lg("x")
+        print(r166)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r167 = pick()
+        f = || print(167)
+        lg("x")
+        print(r167)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r168 = pick()
+        f = || print(168)
+        lg("x")
+        print(r168)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r169 = pick()
+        f = || print(169)
+        lg("x")
+        print(r169)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r170 = pick()
+        f = || print(170)
+        lg("x")
+        print(r170)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r171 = pick()
+        f = || print(171)
+        lg("x")
+        print(r171)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r172 = pick()
+        f = || print(172)
+        lg("x")
+        print(r172)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r173 = pick()
+        f = || print(173)
+        lg("x")
+        print(r173)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r174 = pick()
+        f = || print(174)
+        lg("x")
+        print(r174)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r175 = pick()
+        f = || print(175)
+        lg("x")
+        print(r175)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r176 = pick()
+        f = || print(176)
+        lg("x")
+        print(r176)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r177 = pick()
+        f = || print(177)
+        lg("x")
+        print(r177)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r178 = pick()
+        f = || print(178)
+        lg("x")
+        print(r178)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r179 = pick()
+        f = || print(179)
+        lg("x")
+        print(r179)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r180 = pick()
+        f = || print(180)
+        lg("x")
+        print(r180)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r181 = pick()
+        f = || print(181)
+        lg("x")
+        print(r181)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r182 = pick()
+        f = || print(182)
+        lg("x")
+        print(r182)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r183 = pick()
+        f = || print(183)
+        lg("x")
+        print(r183)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r184 = pick()
+        f = || print(184)
+        lg("x")
+        print(r184)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r185 = pick()
+        f = || print(185)
+        lg("x")
+        print(r185)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r186 = pick()
+        f = || print(186)
+        lg("x")
+        print(r186)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r187 = pick()
+        f = || print(187)
+        lg("x")
+        print(r187)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r188 = pick()
+        f = || print(188)
+        lg("x")
+        print(r188)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r189 = pick()
+        f = || print(189)
+        lg("x")
+        print(r189)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r190 = pick()
+        f = || print(190)
+        lg("x")
+        print(r190)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r191 = pick()
+        f = || print(191)
+        lg("x")
+        print(r191)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r192 = pick()
+        f = || print(192)
+        lg("x")
+        print(r192)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r193 = pick()
+        f = || print(193)
+        lg("x")
+        print(r193)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r194 = pick()
+        f = || print(194)
+        lg("x")
+        print(r194)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r195 = pick()
+        f = || print(195)
+        lg("x")
+        print(r195)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r196 = pick()
+        f = || print(196)
+        lg("x")
+        print(r196)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r197 = pick()
+        f = || print(197)
+        lg("x")
+        print(r197)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r198 = pick()
+        f = || print(198)
+        lg("x")
+        print(r198)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r199 = pick()
+        f = || print(199)
+        lg("x")
+        print(r199)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r200 = pick()
+        f = || print(200)
+        lg("x")
+        print(r200)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r201 = pick()
+        f = || print(201)
+        lg("x")
+        print(r201)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r202 = pick()
+        f = || print(202)
+        lg("x")
+        print(r202)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r203 = pick()
+        f = || print(203)
+        lg("x")
+        print(r203)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r204 = pick()
+        f = || print(204)
+        lg("x")
+        print(r204)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r205 = pick()
+        f = || print(205)
+        lg("x")
+        print(r205)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r206 = pick()
+        f = || print(206)
+        lg("x")
+        print(r206)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r207 = pick()
+        f = || print(207)
+        lg("x")
+        print(r207)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r208 = pick()
+        f = || print(208)
+        lg("x")
+        print(r208)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r209 = pick()
+        f = || print(209)
+        lg("x")
+        print(r209)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r210 = pick()
+        f = || print(210)
+        lg("x")
+        print(r210)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r211 = pick()
+        f = || print(211)
+        lg("x")
+        print(r211)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r212 = pick()
+        f = || print(212)
+        lg("x")
+        print(r212)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r213 = pick()
+        f = || print(213)
+        lg("x")
+        print(r213)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r214 = pick()
+        f = || print(214)
+        lg("x")
+        print(r214)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r215 = pick()
+        f = || print(215)
+        lg("x")
+        print(r215)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r216 = pick()
+        f = || print(216)
+        lg("x")
+        print(r216)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r217 = pick()
+        f = || print(217)
+        lg("x")
+        print(r217)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r218 = pick()
+        f = || print(218)
+        lg("x")
+        print(r218)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r219 = pick()
+        f = || print(219)
+        lg("x")
+        print(r219)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r220 = pick()
+        f = || print(220)
+        lg("x")
+        print(r220)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r221 = pick()
+        f = || print(221)
+        lg("x")
+        print(r221)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r222 = pick()
+        f = || print(222)
+        lg("x")
+        print(r222)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r223 = pick()
+        f = || print(223)
+        lg("x")
+        print(r223)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r224 = pick()
+        f = || print(224)
+        lg("x")
+        print(r224)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r225 = pick()
+        f = || print(225)
+        lg("x")
+        print(r225)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r226 = pick()
+        f = || print(226)
+        lg("x")
+        print(r226)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r227 = pick()
+        f = || print(227)
+        lg("x")
+        print(r227)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r228 = pick()
+        f = || print(228)
+        lg("x")
+        print(r228)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r229 = pick()
+        f = || print(229)
+        lg("x")
+        print(r229)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r230 = pick()
+        f = || print(230)
+        lg("x")
+        print(r230)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r231 = pick()
+        f = || print(231)
+        lg("x")
+        print(r231)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r232 = pick()
+        f = || print(232)
+        lg("x")
+        print(r232)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r233 = pick()
+        f = || print(233)
+        lg("x")
+        print(r233)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r234 = pick()
+        f = || print(234)
+        lg("x")
+        print(r234)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r235 = pick()
+        f = || print(235)
+        lg("x")
+        print(r235)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r236 = pick()
+        f = || print(236)
+        lg("x")
+        print(r236)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r237 = pick()
+        f = || print(237)
+        lg("x")
+        print(r237)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r238 = pick()
+        f = || print(238)
+        lg("x")
+        print(r238)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r239 = pick()
+        f = || print(239)
+        lg("x")
+        print(r239)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r240 = pick()
+        f = || print(240)
+        lg("x")
+        print(r240)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r241 = pick()
+        f = || print(241)
+        lg("x")
+        print(r241)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r242 = pick()
+        f = || print(242)
+        lg("x")
+        print(r242)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r243 = pick()
+        f = || print(243)
+        lg("x")
+        print(r243)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r244 = pick()
+        f = || print(244)
+        lg("x")
+        print(r244)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r245 = pick()
+        f = || print(245)
+        lg("x")
+        print(r245)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r246 = pick()
+        f = || print(246)
+        lg("x")
+        print(r246)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r247 = pick()
+        f = || print(247)
+        lg("x")
+        print(r247)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r248 = pick()
+        f = || print(248)
+        lg("x")
+        print(r248)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r249 = pick()
+        f = || print(249)
+        lg("x")
+        print(r249)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r250 = pick()
+        f = || print(250)
+        lg("x")
+        print(r250)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r251 = pick()
+        f = || print(251)
+        lg("x")
+        print(r251)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r252 = pick()
+        f = || print(252)
+        lg("x")
+        print(r252)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r253 = pick()
+        f = || print(253)
+        lg("x")
+        print(r253)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r254 = pick()
+        f = || print(254)
+        lg("x")
+        print(r254)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r255 = pick()
+        f = || print(255)
+        lg("x")
+        print(r255)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r256 = pick()
+        f = || print(256)
+        lg("x")
+        print(r256)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r257 = pick()
+        f = || print(257)
+        lg("x")
+        print(r257)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r258 = pick()
+        f = || print(258)
+        lg("x")
+        print(r258)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r259 = pick()
+        f = || print(259)
+        lg("x")
+        print(r259)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r260 = pick()
+        f = || print(260)
+        lg("x")
+        print(r260)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r261 = pick()
+        f = || print(261)
+        lg("x")
+        print(r261)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r262 = pick()
+        f = || print(262)
+        lg("x")
+        print(r262)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r263 = pick()
+        f = || print(263)
+        lg("x")
+        print(r263)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r264 = pick()
+        f = || print(264)
+        lg("x")
+        print(r264)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r265 = pick()
+        f = || print(265)
+        lg("x")
+        print(r265)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r266 = pick()
+        f = || print(266)
+        lg("x")
+        print(r266)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r267 = pick()
+        f = || print(267)
+        lg("x")
+        print(r267)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r268 = pick()
+        f = || print(268)
+        lg("x")
+        print(r268)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r269 = pick()
+        f = || print(269)
+        lg("x")
+        print(r269)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r270 = pick()
+        f = || print(270)
+        lg("x")
+        print(r270)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r271 = pick()
+        f = || print(271)
+        lg("x")
+        print(r271)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r272 = pick()
+        f = || print(272)
+        lg("x")
+        print(r272)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r273 = pick()
+        f = || print(273)
+        lg("x")
+        print(r273)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r274 = pick()
+        f = || print(274)
+        lg("x")
+        print(r274)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r275 = pick()
+        f = || print(275)
+        lg("x")
+        print(r275)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r276 = pick()
+        f = || print(276)
+        lg("x")
+        print(r276)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r277 = pick()
+        f = || print(277)
+        lg("x")
+        print(r277)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r278 = pick()
+        f = || print(278)
+        lg("x")
+        print(r278)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r279 = pick()
+        f = || print(279)
+        lg("x")
+        print(r279)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r280 = pick()
+        f = || print(280)
+        lg("x")
+        print(r280)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r281 = pick()
+        f = || print(281)
+        lg("x")
+        print(r281)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r282 = pick()
+        f = || print(282)
+        lg("x")
+        print(r282)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r283 = pick()
+        f = || print(283)
+        lg("x")
+        print(r283)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r284 = pick()
+        f = || print(284)
+        lg("x")
+        print(r284)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r285 = pick()
+        f = || print(285)
+        lg("x")
+        print(r285)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r286 = pick()
+        f = || print(286)
+        lg("x")
+        print(r286)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r287 = pick()
+        f = || print(287)
+        lg("x")
+        print(r287)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r288 = pick()
+        f = || print(288)
+        lg("x")
+        print(r288)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r289 = pick()
+        f = || print(289)
+        lg("x")
+        print(r289)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r290 = pick()
+        f = || print(290)
+        lg("x")
+        print(r290)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r291 = pick()
+        f = || print(291)
+        lg("x")
+        print(r291)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r292 = pick()
+        f = || print(292)
+        lg("x")
+        print(r292)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r293 = pick()
+        f = || print(293)
+        lg("x")
+        print(r293)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r294 = pick()
+        f = || print(294)
+        lg("x")
+        print(r294)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r295 = pick()
+        f = || print(295)
+        lg("x")
+        print(r295)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r296 = pick()
+        f = || print(296)
+        lg("x")
+        print(r296)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r297 = pick()
+        f = || print(297)
+        lg("x")
+        print(r297)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r298 = pick()
+        f = || print(298)
+        lg("x")
+        print(r298)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r299 = pick()
+        f = || print(299)
+        lg("x")
+        print(r299)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r300 = pick()
+        f = || print(300)
+        lg("x")
+        print(r300)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r301 = pick()
+        f = || print(301)
+        lg("x")
+        print(r301)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r302 = pick()
+        f = || print(302)
+        lg("x")
+        print(r302)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r303 = pick()
+        f = || print(303)
+        lg("x")
+        print(r303)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r304 = pick()
+        f = || print(304)
+        lg("x")
+        print(r304)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r305 = pick()
+        f = || print(305)
+        lg("x")
+        print(r305)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r306 = pick()
+        f = || print(306)
+        lg("x")
+        print(r306)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r307 = pick()
+        f = || print(307)
+        lg("x")
+        print(r307)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r308 = pick()
+        f = || print(308)
+        lg("x")
+        print(r308)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r309 = pick()
+        f = || print(309)
+        lg("x")
+        print(r309)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r310 = pick()
+        f = || print(310)
+        lg("x")
+        print(r310)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r311 = pick()
+        f = || print(311)
+        lg("x")
+        print(r311)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r312 = pick()
+        f = || print(312)
+        lg("x")
+        print(r312)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r313 = pick()
+        f = || print(313)
+        lg("x")
+        print(r313)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r314 = pick()
+        f = || print(314)
+        lg("x")
+        print(r314)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r315 = pick()
+        f = || print(315)
+        lg("x")
+        print(r315)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r316 = pick()
+        f = || print(316)
+        lg("x")
+        print(r316)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r317 = pick()
+        f = || print(317)
+        lg("x")
+        print(r317)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r318 = pick()
+        f = || print(318)
+        lg("x")
+        print(r318)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r319 = pick()
+        f = || print(319)
+        lg("x")
+        print(r319)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r320 = pick()
+        f = || print(320)
+        lg("x")
+        print(r320)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r321 = pick()
+        f = || print(321)
+        lg("x")
+        print(r321)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r322 = pick()
+        f = || print(322)
+        lg("x")
+        print(r322)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r323 = pick()
+        f = || print(323)
+        lg("x")
+        print(r323)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r324 = pick()
+        f = || print(324)
+        lg("x")
+        print(r324)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r325 = pick()
+        f = || print(325)
+        lg("x")
+        print(r325)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r326 = pick()
+        f = || print(326)
+        lg("x")
+        print(r326)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r327 = pick()
+        f = || print(327)
+        lg("x")
+        print(r327)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r328 = pick()
+        f = || print(328)
+        lg("x")
+        print(r328)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r329 = pick()
+        f = || print(329)
+        lg("x")
+        print(r329)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r330 = pick()
+        f = || print(330)
+        lg("x")
+        print(r330)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r331 = pick()
+        f = || print(331)
+        lg("x")
+        print(r331)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r332 = pick()
+        f = || print(332)
+        lg("x")
+        print(r332)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r333 = pick()
+        f = || print(333)
+        lg("x")
+        print(r333)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r334 = pick()
+        f = || print(334)
+        lg("x")
+        print(r334)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r335 = pick()
+        f = || print(335)
+        lg("x")
+        print(r335)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r336 = pick()
+        f = || print(336)
+        lg("x")
+        print(r336)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r337 = pick()
+        f = || print(337)
+        lg("x")
+        print(r337)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r338 = pick()
+        f = || print(338)
+        lg("x")
+        print(r338)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r339 = pick()
+        f = || print(339)
+        lg("x")
+        print(r339)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r340 = pick()
+        f = || print(340)
+        lg("x")
+        print(r340)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r341 = pick()
+        f = || print(341)
+        lg("x")
+        print(r341)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r342 = pick()
+        f = || print(342)
+        lg("x")
+        print(r342)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r343 = pick()
+        f = || print(343)
+        lg("x")
+        print(r343)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r344 = pick()
+        f = || print(344)
+        lg("x")
+        print(r344)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r345 = pick()
+        f = || print(345)
+        lg("x")
+        print(r345)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r346 = pick()
+        f = || print(346)
+        lg("x")
+        print(r346)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r347 = pick()
+        f = || print(347)
+        lg("x")
+        print(r347)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r348 = pick()
+        f = || print(348)
+        lg("x")
+        print(r348)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r349 = pick()
+        f = || print(349)
+        lg("x")
+        print(r349)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r350 = pick()
+        f = || print(350)
+        lg("x")
+        print(r350)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r351 = pick()
+        f = || print(351)
+        lg("x")
+        print(r351)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r352 = pick()
+        f = || print(352)
+        lg("x")
+        print(r352)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r353 = pick()
+        f = || print(353)
+        lg("x")
+        print(r353)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r354 = pick()
+        f = || print(354)
+        lg("x")
+        print(r354)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r355 = pick()
+        f = || print(355)
+        lg("x")
+        print(r355)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r356 = pick()
+        f = || print(356)
+        lg("x")
+        print(r356)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r357 = pick()
+        f = || print(357)
+        lg("x")
+        print(r357)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r358 = pick()
+        f = || print(358)
+        lg("x")
+        print(r358)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r359 = pick()
+        f = || print(359)
+        lg("x")
+        print(r359)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r360 = pick()
+        f = || print(360)
+        lg("x")
+        print(r360)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r361 = pick()
+        f = || print(361)
+        lg("x")
+        print(r361)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r362 = pick()
+        f = || print(362)
+        lg("x")
+        print(r362)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r363 = pick()
+        f = || print(363)
+        lg("x")
+        print(r363)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r364 = pick()
+        f = || print(364)
+        lg("x")
+        print(r364)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r365 = pick()
+        f = || print(365)
+        lg("x")
+        print(r365)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r366 = pick()
+        f = || print(366)
+        lg("x")
+        print(r366)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r367 = pick()
+        f = || print(367)
+        lg("x")
+        print(r367)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r368 = pick()
+        f = || print(368)
+        lg("x")
+        print(r368)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r369 = pick()
+        f = || print(369)
+        lg("x")
+        print(r369)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r370 = pick()
+        f = || print(370)
+        lg("x")
+        print(r370)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r371 = pick()
+        f = || print(371)
+        lg("x")
+        print(r371)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r372 = pick()
+        f = || print(372)
+        lg("x")
+        print(r372)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r373 = pick()
+        f = || print(373)
+        lg("x")
+        print(r373)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r374 = pick()
+        f = || print(374)
+        lg("x")
+        print(r374)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r375 = pick()
+        f = || print(375)
+        lg("x")
+        print(r375)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r376 = pick()
+        f = || print(376)
+        lg("x")
+        print(r376)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r377 = pick()
+        f = || print(377)
+        lg("x")
+        print(r377)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r378 = pick()
+        f = || print(378)
+        lg("x")
+        print(r378)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r379 = pick()
+        f = || print(379)
+        lg("x")
+        print(r379)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r380 = pick()
+        f = || print(380)
+        lg("x")
+        print(r380)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r381 = pick()
+        f = || print(381)
+        lg("x")
+        print(r381)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r382 = pick()
+        f = || print(382)
+        lg("x")
+        print(r382)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r383 = pick()
+        f = || print(383)
+        lg("x")
+        print(r383)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r384 = pick()
+        f = || print(384)
+        lg("x")
+        print(r384)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r385 = pick()
+        f = || print(385)
+        lg("x")
+        print(r385)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r386 = pick()
+        f = || print(386)
+        lg("x")
+        print(r386)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r387 = pick()
+        f = || print(387)
+        lg("x")
+        print(r387)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r388 = pick()
+        f = || print(388)
+        lg("x")
+        print(r388)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r389 = pick()
+        f = || print(389)
+        lg("x")
+        print(r389)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r390 = pick()
+        f = || print(390)
+        lg("x")
+        print(r390)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r391 = pick()
+        f = || print(391)
+        lg("x")
+        print(r391)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r392 = pick()
+        f = || print(392)
+        lg("x")
+        print(r392)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r393 = pick()
+        f = || print(393)
+        lg("x")
+        print(r393)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r394 = pick()
+        f = || print(394)
+        lg("x")
+        print(r394)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r395 = pick()
+        f = || print(395)
+        lg("x")
+        print(r395)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r396 = pick()
+        f = || print(396)
+        lg("x")
+        print(r396)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r397 = pick()
+        f = || print(397)
+        lg("x")
+        print(r397)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r398 = pick()
+        f = || print(398)
+        lg("x")
+        print(r398)
+    }
+    }
+    handle Lg { fn lg(m) { print(m) } } in {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r399 = pick()
+        f = || print(399)
+        lg("x")
+        print(r399)
+    }
+    }
+    f()
+}
+fn main() { big() }

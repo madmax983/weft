@@ -1,0 +1,41 @@
+struct Entity { hp: i32, kids: Vec<Entity> }
+struct World { entities: Vec<Entity> }
+fn apply(f: fn(&Vec<&Entity>), rs: &Vec<&Entity>) { f(rs) }
+// A closure mutates through a held reference of its parameter.
+fn closure_held(world: &World) / mut(world.entities..) {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    let k = &world.entities[0].kids[0]
+    let f = |v: &Vec<&Entity>| v[0].kids.clear()
+    f(&rs)
+    print(k.hp)   //~ W0301
+}
+// The same through a higher-order callee.
+fn closure_held_hof(world: &World) / mut(world.entities..) {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    let k = &world.entities[0].kids[0]
+    apply(|v: &Vec<&Entity>| v[0].kids.clear(), &rs)
+    print(k.hp)   //~ W0301
+}
+// An operation whose clause mutates through a held reference.
+effect Hit { fn hit(rs: &Vec<&Entity>) }
+fn clause_held(world: &World) / mut(world.entities..) {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    let k = &world.entities[0].kids[0]
+    handle Hit { fn hit(v) { v[0].kids.clear(); resume(()) } } in {
+        hit(&rs)
+        print(k.hp)   //~ W0301
+    }
+}
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    let e = Entity { hp: 1, kids: Vec.new() }
+    e.kids.push(Entity { hp: 2, kids: Vec.new() })
+    w.entities.push(e)
+    w
+}
+test "closure_held" { let w = mkw(); closure_held(&w) }
+test "closure_held_hof" { let w = mkw(); closure_held_hof(&w) }
+test "clause_held" { let w = mkw(); clause_held(&w) }

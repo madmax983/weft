@@ -1,0 +1,34 @@
+struct P { a: u64, b: u64 }
+fn show(r: &u64) { print(r) }
+fn main() {
+    let i = 0
+    while i < 3 {
+        let x = i * 2
+        let r = &x
+        show(r)
+        let p = P { a: i, b: 1 }
+        let q = &p.a
+        print(q)
+        i += 1
+    }
+    for k in 0..3 {
+        let y = k
+        let s = &y
+        print(s)
+    }
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    for e in &v {
+        let z = e
+        print(z)
+    }
+    let t = 0
+    loop {
+        let w = t
+        let rw = &w
+        print(rw)
+        t += 1
+        if t > 2 { break }
+    }
+}

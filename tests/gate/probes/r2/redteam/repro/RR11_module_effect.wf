@@ -1,0 +1,15 @@
+// RR11: an effect that another module declares has no name outside that
+// module. `handle` takes one NAME, a row item is one NAME, and the lookup is in
+// the current module only. So code outside the module cannot handle the effect
+// and cannot state it. The diagnostics give fixes that do not compile.
+// Expected: no error (the program handles the effect). Actual: W0101 and W0805.
+mod a {
+    pub effect Note { fn note(x: u64) }
+    pub fn f() / Note { note(1) }
+}
+fn main() {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in a.f()
+}
+// The hint of W0702 says "add `Note` to the effects"; that gives W0101.
+fn g() / Note { a.f() }

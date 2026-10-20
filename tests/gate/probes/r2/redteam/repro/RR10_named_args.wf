@@ -1,0 +1,24 @@
+// RR10: sema binds named arguments by name for a method call on a value
+// receiver and for a call of a function item value. The interpreter compiles
+// both with `args` (written order, by position: `Op::CallMethod`,
+// `Op::CallValue`), so it ignores the names. A checked program gets the wrong
+// argument in each parameter.
+// Expected: both sides bind by name (or sema rejects the names). Actual: 0
+// errors; the run prints -7, 7, 7 (sema means -7 each time), then faults with
+// "this value has no field `hp`" (an `&Entity` parameter gets an `i32`).
+struct Entity { hp: i32 }
+fn diff(a: i32, b: i32) -> i32 { a - b }
+fn show(e: &Entity, n: i32) { print("e.hp = {e.hp}, n = {n}") }
+impl Entity {
+    fn diff(self, a: i32, b: i32) -> i32 { a - b }
+}
+fn main() {
+    let x = Entity { hp: 1 }
+    let y = Entity { hp: 2 }
+    print(diff(b: 10, a: 3))
+    print(x.diff(b: 10, a: 3))
+    let g = diff
+    print(g(b: 10, a: 3))
+    let h = show
+    h(n: 5, e: &y)
+}

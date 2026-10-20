@@ -1,0 +1,22 @@
+linear struct Lock { id: u64 }
+fn release(l: Lock) { let Lock(i) = l }
+fn take() -> Lock { Lock { id: 1 } }
+fn risky() / fail { fail("no") }
+fn direct() / fail {
+    let l = take()
+    risky()
+    release(l)
+}
+fn tupled() / fail {
+    let p = (take(), 1)
+    risky()
+    let (l, x) = p
+    release(l)
+}
+struct Wrap { l: Lock }
+fn wrapped() / fail {
+    let w = Wrap { l: take() }
+    risky()
+    let Wrap(l) = w
+    release(l)
+}

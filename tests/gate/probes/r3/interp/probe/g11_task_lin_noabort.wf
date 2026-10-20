@@ -1,0 +1,17 @@
+// A task closure moves a linear value whose type has no `on abort`. A sibling
+// fails, so the task is cancelled before it uses the value.
+linear struct Tx { id: u64 }
+
+fn commit(t: Tx) / io { let Tx(id) = t; print("commit {id}") }
+
+fn main() / io, par {
+    handle Fail { fn fail(m) { print("caught: {m}") } } in {
+        let t = Tx { id: 7 }
+        scope { s =>
+            s.spawn(|| { sleep(50.ms); commit(t) })
+            s.spawn(|| { sleep(5.ms); fail("sibling failed") })
+            print("spawned")
+        }
+    }
+    print("end")
+}

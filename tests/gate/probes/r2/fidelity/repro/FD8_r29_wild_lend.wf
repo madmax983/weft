@@ -1,0 +1,11 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity>, score: u64 }
+// `e` is the result of an unknown function value: it points to the wildcard
+// place `world..`. The call `g(e)` lends that place to a function value that
+// can mutate through it. A mutation anywhere below `world` can invalidate `s`.
+fn f(world: &World, h: fn(&World) -> &Entity, g: fn(&Entity)) {
+    let s = &world.entities[0]
+    let e = h(world)
+    g(e)
+    print(s.hp)   //~ W0301
+}

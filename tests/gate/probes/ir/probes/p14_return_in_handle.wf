@@ -1,0 +1,10 @@
+effect Note { fn note(x: u64) }
+fn f() -> u64 {
+    let r = handle Note { fn note(x) { resume(()) } } in {
+        note(1)
+        return 5
+    }
+    print("after handle")
+    r + 1
+}
+fn main() { print(f()) }

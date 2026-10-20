@@ -1,0 +1,21 @@
+// The design: "An operation declared `multi` may resume several times.
+// Everything live across its perform site must be `@ many` ... This closes the
+// hole where a handler resumes twice and uses the same moved value twice."
+// Here an affine `Vec` (not plain data, so not `many`) is live across `choose`
+// and the code after it moves the value. The second resume moves it again.
+effect Choice { multi fn choose() -> bool }
+
+fn consume(v: Vec<u64>) -> usize { v.len() }
+
+fn twice() -> usize / Choice {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let b = choose()
+    consume(v)
+}
+
+fn main() {
+    let out: Vec<usize> = Vec.new()
+    handle Choice { fn choose() { resume(true); resume(false) } } in out.push(twice())
+    print(out.len())
+}

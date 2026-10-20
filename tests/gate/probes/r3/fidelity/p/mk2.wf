@@ -1,0 +1,2 @@
+// weft: library
+fn main() { handle Log { fn info(m) { resume(()) } fn warn(m) { resume(()) } } in log.info("x") }

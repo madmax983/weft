@@ -1,0 +1,22 @@
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn boom() / fail { fail("boom") }
+
+// A generic function whose task closure takes a value of a type parameter.
+fn bg<T>(x: T) -> T / async, fail {
+    scope { s =>
+        s.spawn(|| boom())
+        let t = s.spawn(|| x)
+        t.join()
+    }
+}
+
+fn caller() / async, fail {
+    let tx = begin(1)
+    commit(bg(tx))
+}
+
+fn main() / async {
+    handle Fail { fn fail(m) { print("failed: {m}") } } in caller()
+}

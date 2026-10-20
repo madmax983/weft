@@ -1,0 +1,91 @@
+effect Choice { multi fn choose() -> bool }
+effect Log { fn log(msg: String) }
+effect Ask { fn ask() -> u64 }
+linear struct Tok { id: u64 }
+fn mint() -> Tok { Tok { id: 1 } }
+fn spend(t: Tok) {}
+fn chooser() -> bool / Choice { choose() }
+fn asker() -> u64 / Ask { ask() }
+// (1) a call: the callee performs a multi operation through the caller's capability.
+fn at_call() -> bool / Choice {
+    let t = mint()
+    let b = chooser()
+    spend(t)
+    b
+}
+// a call of a closure
+fn at_closure() -> bool / Choice {
+    let f = || choose()
+    let t = mint()
+    let b = f()
+    spend(t)
+    b
+}
+// a call with a local multi handler
+fn at_local() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        let t = mint()
+        let b = chooser()
+        spend(t)
+    }
+}
+// (1) a handle: the clause of a once operation performs a multi operation and drops k.
+fn at_handle() / Choice {
+    let t = mint()
+    handle Log { fn log(m) { let b = choose() } } in log("x")
+    spend(t)
+}
+// the clause calls code that performs a multi operation
+fn at_handle_call() / Choice {
+    let t = mint()
+    handle Log { fn log(m) { let b = chooser() } } in log("x")
+    spend(t)
+}
+// (1) a resume: the handled computation performs a multi operation.
+fn at_resume() / Choice {
+    handle Log {
+        fn log(m) {
+            let t = mint()
+            resume(())
+            spend(t)
+        }
+    } in {
+        log("x")
+        let b = choose()
+    }
+}
+// (2) a fresh once continuation held across a multi operation.
+fn fresh_k() / Choice {
+    handle Log {
+        fn log(m) {
+            let b = choose()
+            resume(())
+        }
+    } in log("x")
+}
+fn fresh_k_call() / Choice {
+    handle Log {
+        fn log(m) {
+            let b = chooser()
+            resume(())
+        }
+    } in log("x")
+}
+// abort rule at a call through a local handler: the clause can drop k.
+fn abort_local() {
+    handle Ask { fn ask() { 0 } } in {
+        let t = mint()
+        let n = asker()
+        spend(t)
+        n
+    }
+}
+// clean: the clause resumes first.
+fn clean_resume_first() / Choice {
+    handle Log {
+        fn log(m) {
+            resume(())
+            let b = choose()
+        }
+    } in log("x")
+}

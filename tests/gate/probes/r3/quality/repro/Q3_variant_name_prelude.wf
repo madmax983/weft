@@ -1,0 +1,15 @@
+// A user enum with a variant name that the prelude also uses (`None`).
+// The bare name resolves to the prelude variant, so a correct program gets W0102.
+enum Lookup { Found(u64), None }
+
+fn find(k: u64) -> Lookup {
+    if k == 0 { return None }   // W0102 here: expected `Lookup`, found `Option<..>`
+    Found(k)
+}
+
+fn show(l: Lookup) -> u64 {
+    match l {
+        Found(x) => x,
+        None => 0,
+    }
+}

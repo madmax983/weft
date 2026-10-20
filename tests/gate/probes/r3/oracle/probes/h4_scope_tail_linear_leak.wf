@@ -1,0 +1,7 @@
+linear struct Lk { id: u64 }
+fn main() {
+    let l = Lk { id: 1 }
+    scope { s =>
+        l
+    }
+}

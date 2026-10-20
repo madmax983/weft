@@ -1,0 +1,7 @@
+fn mk(v: Vec<u64>) -> fn() { || print(v.len()) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let f = mk(v)
+    f()
+}

@@ -1,0 +1,15 @@
+effect Choice { multi fn choose() -> bool }
+struct Entity { hp: u64 }
+// The unique borrow lives on in the hidden iterator across `choose`.
+fn walk(es: &[Entity] @ uniq) / mut(es[]), Choice {
+    for e in es[] {
+        if choose() { e.hp += 1 }
+    }
+}
+// Control: the unique element is used after the operation.
+fn walk2(es: &[Entity] @ uniq) / mut(es[]), Choice {
+    for e in es[] {
+        let b = choose()
+        e.hp += 1
+    }
+}

@@ -1,0 +1,60 @@
+linear struct Tx { id: u64 }
+fn begin() -> Tx { Tx { id: 1 } }
+fn commit(t: Tx) { let Tx(i) = t }
+fn boom() / fail { fail("boom") }
+fn helper(s: &Scope) / async { s.spawn(|| boom()) }
+
+fn outer_live() / async, fail {
+    let t = begin()
+    scope { s => s.spawn(|| boom()) }
+    commit(t)
+}
+fn helper_child() / async, fail {
+    let t = scope { s =>
+        helper(s)
+        begin()
+    }
+    commit(t)
+}
+fn closure_child() / async, fail {
+    let t = scope { s =>
+        let f = || s.spawn(|| boom())
+        f()
+        begin()
+    }
+    commit(t)
+}
+fn body_sleep() / async, fail {
+    scope { s =>
+        s.spawn(|| boom())
+        let t = begin()
+        sleep(1.ms)
+        commit(t)
+    }
+}
+fn tuple_value() / async, fail {
+    let p = scope { s =>
+        s.spawn(|| boom())
+        (begin(), 1)
+    }
+    let (t, n) = p
+    commit(t)
+}
+fn local_tail() / async, fail {
+    let t = scope { s =>
+        let x = begin()
+        s.spawn(|| boom())
+        x
+    }
+    commit(t)
+}
+fn handled_tail() / async, fail {
+    scope { s =>
+        s.spawn(|| boom())
+        let t = handle Fail { fn fail(m) { begin() } } in { begin() }
+        commit(t)
+    }
+}
+fn main() / async {
+    handle Fail { fn fail(m) { print("failed: {m}") } } in outer_live()
+}

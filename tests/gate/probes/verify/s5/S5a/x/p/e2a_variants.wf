@@ -1,0 +1,59 @@
+struct Stats { count: u64 }
+struct Job { f: fn() }
+
+fn run_once(j: &Job) { let g = j.f
+ g() }
+fn run_rec(j: &Job, n: u64) { let g = j.f
+ g()
+ if n > 0 { run_rec(j, n - 1) } }
+fn apply(j: &Job, k: fn(&Job)) { k(j) }
+fn run_while(j: &Job, n: u64) { let i = 0
+ while i < n { let g = j.f
+ g()
+ i += 1 } }
+fn run_cb(j: &Job, k: fn(fn())) { k(j.f) }
+
+fn s_rec(st: &Stats) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| { st.count += 1; print(st.count) }); () } }
+        run_rec(&j, 1)
+    }
+}
+fn s_twice_caller(st: &Stats) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| { st.count += 1; print(st.count) }); () } }
+        run_once(&j)
+        run_once(&j)
+    }
+}
+fn s_apply(st: &Stats) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| { st.count += 1; print(st.count) }); () } }
+        apply(&j, |x: &Job| { let g = x.f
+ g()
+ g() })
+    }
+}
+fn s_while(st: &Stats) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| { st.count += 1; print(st.count) }); () } }
+        run_while(&j, 2)
+    }
+}
+fn s_cb(st: &Stats) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| { st.count += 1; print(st.count) }); () } }
+        run_cb(&j, |g: fn()| { g()
+ g() })
+    }
+}
+fn s_caller_loop(st: &Stats, n: u64) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| { st.count += 1; print(st.count) }); () } }
+        for i in 0..n { run_once(&j) }
+    }
+}
+fn main() / async {
+    let st = Stats { count: 0 }
+    s_rec(&st)
+}

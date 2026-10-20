@@ -1,0 +1,11 @@
+struct E { hp: u64 }
+fn main() {
+    let v = Vec.new()
+    v.push(E { hp: 1 })
+    scope { s =>
+        for e in v[] {
+            s.spawn(|| { sleep(1.s); print(e.hp) })
+        }
+        v.clear()
+    }
+}

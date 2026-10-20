@@ -1,0 +1,15 @@
+
+fn grow(v: &Vec<u64>) { v.push(9) }
+
+
+fn h1(p0: &Vec<u64>) {
+    let g6 = || {
+        let f7 = || grow(p0)
+        scope { s8 =>
+            s8.spawn(|| grow(p0))
+            f7()
+        }
+    }
+}
+
+

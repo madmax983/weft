@@ -1,0 +1,84 @@
+fn id<T>(x: T) -> T { x }
+struct Wrap<T> { x: T }
+fn wrap<T>(x: T) -> Wrap<T> { Wrap { x: x } }
+fn some<T>(x: T) -> Option<T> { Some(x) }
+fn dup<T>(x: T) -> (T, u64) { (x, 1) }
+fn r01() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let r = id(id(&v[0]))
+ v.clear()
+ print(r) }
+fn r02() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let w = wrap(&v[0])
+ v.clear()
+ print(w.x) }
+fn r03() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let (r, n) = dup(&v[0])
+ v.clear()
+ print(r) }
+fn r04() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let o = some(&v[0])
+ v.clear()
+ match o { Some(r) => print(r), None => {} } }
+fn r05(n: u32) { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let rs = Vec.new()
+ for i in 0..n { rs.push(&v[0]) }
+ v.clear()
+ for r in rs[] { print(r) } }
+fn r06() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let w = Wrap { x: (&v[0], 1) }
+ v.clear()
+ let (r, n) = w.x
+ print(r) }
+fn r07() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let x = 5
+ let w = Wrap { x: &x }
+ w.x = &v[0]
+ v.clear()
+ print(w.x) }
+fn r08() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let x = 5
+ let rs = [&x]
+ rs[0] = &v[0]
+ v.clear()
+ print(rs[0]) }
+fn r09() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let f = |y: &u64| y
+ let r = f(&v[0])
+ v.clear()
+ print(r) }
+fn r10(c: bool) { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let o = if c { Some(&v[0]) } else { None }
+ v.clear()
+ match o { Some(r) => print(r), None => {} } }
+fn r11() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let w = Wrap { x: &v[0] }
+ let Wrap(r) = w
+ v.clear()
+ print(r) }
+fn r12() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let o = Some(Some(&v[0]))
+ v.clear()
+ match o { Some(Some(r)) => print(r), _ => {} } }
+fn r13() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let b = Box.new(Wrap { x: &v[0] })
+ v.clear()
+ print(b.x) }
+fn r14() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let t = (1, (2, &v[0]))
+ v.clear()
+ let (a, (b, r)) = t
+ print(r) }

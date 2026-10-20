@@ -1,0 +1,16 @@
+effect Lg { fn lg(msg: String) }
+struct Job { f: fn() }
+fn run_once(j: &Job) { let g = j.f
+ g() }
+
+fn stored_abort() {
+    let f = || print(0)
+    handle Lg { fn lg(m) { print(m) } } in {
+        let h = Job { f: || lg("y") }
+        f = || lg("x")
+        run_once(&h)
+        f = || print(1)
+    }
+    f()
+}
+fn main() { stored_abort() }

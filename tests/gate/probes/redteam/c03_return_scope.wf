@@ -1,0 +1,10 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn ret_scope(world: &World) / mut(world.entities), async {
+    let first = &world.entities[0]
+    scope { s =>
+        world.entities.push(Entity { hp: 1 })
+        return
+    }
+    print(first.hp)
+}

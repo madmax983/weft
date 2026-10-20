@@ -1,0 +1,21 @@
+struct S: !Move { r: &u8 in self.r }
+extern type G<T> { deref: group }
+struct N { v: u64 }
+fn grp(g: G<N>) { g.v = 1 }
+enum E { A(u64), B }
+fn m(e: E) -> u64 {
+    match e {
+        A(x) => x,
+        B => 0,
+        C => 1,
+    }
+}
+fn nested_tuple() {
+    let ((a, b), c) = ((1, 2), 3)
+    print(a)
+}
+fn match_tuple(t: (u64, u64)) -> u64 {
+    match t {
+        (a, b) => a + b,
+    }
+}

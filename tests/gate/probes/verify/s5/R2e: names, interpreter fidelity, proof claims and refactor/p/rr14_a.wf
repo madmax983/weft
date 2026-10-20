@@ -1,0 +1,25 @@
+fn id<T>(x: T) -> T { x }
+struct W<T> { v: T }
+fn ret8() -> u8 { 300 }
+fn a() { let c: u8 = 250; c += 10; print(c) }
+fn b() { let c: u8 = 20; c -= 30; print(c) }
+fn c() { let c: u8 = 20; c *= 30; print(c) }
+fn d() { let x: i64 = 9223372036854775807; print(x + 1) }
+fn e() { let x: u64 = 18446744073709551615; print(x) }
+fn f() { let x: u64 = 9223372036854775807; print(x + 1) }
+fn g() { let x: i8 = -128; print(-x) }
+fn h() { let x: i64 = -9223372036854775807 - 1; print(x / -1) }
+fn i() { let t: (u8, u8) = (250, 250); print(t.0 + t.1) }
+fn j() { let z: u8 = 250; let w = W { v: z }; print(w.v + 10) }
+fn k() { let c: u8 = 250; print(id(c) + 10) }
+fn l() { let f = |x: u8| x + 10; print(f(250)) }
+fn m() { let c: u8 = 250; let d = c + 10; print(d) }
+fn n() { print(ret8()) }
+fn o() { let v: Vec<u8> = [250]; print(v[0] + 10) }
+fn p() { let c: u32 = 4294967295; print(c * c) }
+fn q() { let x: i64 = 3037000500; print(x * x) }
+fn r() { let x: u64 = 5; print(x % 0) }
+fn s() { let x: usize = 0; print(x - 1) }
+fn main() {
+    a()
+}

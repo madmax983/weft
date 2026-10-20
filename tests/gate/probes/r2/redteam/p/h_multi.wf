@@ -1,0 +1,80 @@
+effect Choice { multi fn choose() -> bool }
+effect Ask { fn ask() -> u64 }
+linear struct Token { id: u64 }
+    on abort = spend
+fn spend(t: Token) { let Token(i) = t }
+fn mint() -> Token { Token { id: 1 } }
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { let Lock(i) = l }
+fn lock() -> Lock { Lock { id: 1 } }
+struct Cb { f: fn() -> bool }
+fn chooser() -> bool / Choice { choose() }
+fn asker() -> u64 / Ask { ask() }
+
+fn item_value() -> bool / Choice {
+    let g = chooser
+    let t = mint()
+    let b = g()   //~ W0503
+    spend(t)
+    b
+}
+fn option_item() -> bool / Choice {
+    let o = Some(chooser)
+    let t = mint()
+    let b = match o { Some(g) => g(), None => false }   //~ W0503
+    spend(t)
+    b
+}
+fn field_closure() -> bool / Choice {
+    let c = Cb { f: || choose() }
+    let t = mint()
+    let g = c.f
+    let b = g()   //~ W0503
+    spend(t)
+    b
+}
+fn linear_closure_across() -> bool / Choice {
+    let t = mint()
+    let f = || spend(t)
+    let b = choose()   //~ W0503
+    f()
+    b
+}
+fn typed_param(f: fn() -> u64 / Ask) -> u64 / Ask {
+    let t = mint()
+    let n = f()
+    spend(t)
+    n
+}
+fn wrong_row() / Choice {
+    handle Ask { fn ask() { resume(1) } } in {
+        let n = typed_param(|| { let b = choose()   //~ W0705
+ 1 })
+    }
+}
+fn abort_item() -> u64 / Ask {
+    let g = asker
+    let l = lock()
+    let n = g()   //~ W0602
+    unlock(l)
+    n
+}
+fn abort_field() -> u64 / Ask {
+    let c = Cb { f: || { let n = ask()
+ true } }
+    let l = lock()
+    let g = c.f
+    let b = g()   //~ W0602
+    unlock(l)
+    1
+}
+fn abort_timeout() / async, fail {
+    let l = lock()
+    with_timeout(1.s) { print(1) }   //~ W0602
+    unlock(l)
+}
+fn multi_in_timeout() / async, fail, Choice {
+    let t = mint()
+    with_timeout(1.s) { let b = choose() }   //~ W0503
+    spend(t)
+}

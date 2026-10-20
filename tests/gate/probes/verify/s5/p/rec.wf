@@ -1,0 +1,26 @@
+struct Node { v: u64, next: Option<Box<Node>> }
+fn mk(n: &Node, d: u64) -> fn() {
+    if d == 0 { return || print(n.v) }
+    match n.next {
+        Some(b) => mk(&b, d - 1),
+        None => || print(0),
+    }
+}
+struct L { v: Vec<u64>, kids: Vec<L> }
+fn mk2(l: &L, d: u64) -> fn() {
+    if d == 0 {
+        let r = &l.v[0]
+        return || print(r + 0)
+    }
+    mk2(&l.kids[0], d - 1)
+}
+fn use_it() {
+    let l = L { v: Vec.new(), kids: Vec.new() }
+    l.v.push(1)
+    let f = mk2(&l, 0)
+    l.v.clear()
+    f()
+}
+fn main() {
+    use_it()
+}

@@ -1,0 +1,9 @@
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let g = || v.push(2)
+    scope { s =>
+        s.spawn(g)
+        print(v.len())
+    }
+}

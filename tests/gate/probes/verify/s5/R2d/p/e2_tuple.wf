@@ -1,0 +1,58 @@
+struct Stats { count: u64 }
+
+// s in a tuple.
+fn in_tuple(st: &Stats) / mut(st), async, clock {
+    let k = || print(0)
+    scope { s =>
+        let t = (s, 1)
+        k = || { let (a, b) = t
+ a.spawn(|| { sleep(1.ms); st.count += 1; print("task runs {st.count}") })
+ () }
+    }
+    k()
+}
+
+// s in a struct field.
+struct H { s: Scope }
+fn in_struct(st: &Stats) / mut(st), async, clock {
+    let k = || print(0)
+    scope { s =>
+        let h = H { s: s }
+        k = || { h.s.spawn(|| { sleep(1.ms); st.count += 1; print("task runs {st.count}") })
+ () }
+    }
+    k()
+}
+
+// s in an Option.
+fn in_option(st: &Stats) / mut(st), async, clock {
+    let k = || print(0)
+    scope { s =>
+        let o = Some(s)
+        k = || { match o { Some(a) => { a.spawn(|| { sleep(1.ms); st.count += 1; print("task runs {st.count}") })
+ () }, None => () } }
+    }
+    k()
+}
+
+fn caller() / async, clock {
+    let st = Stats { count: 0 }
+    in_tuple(&st)
+}
+
+fn caller2() / async, clock {
+    let st = Stats { count: 0 }
+    in_struct(&st)
+}
+
+fn caller3() / async, clock {
+    let st = Stats { count: 0 }
+    in_option(&st)
+}
+
+fn main() / async, clock {
+    caller()
+    caller2()
+    caller3()
+    sleep(5.ms)
+}

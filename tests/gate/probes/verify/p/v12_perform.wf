@@ -1,0 +1,52 @@
+effect Peek { fn peek(x: &i64) }
+effect Bump { fn bump(v: &Vec<u64>) }
+fn peeks(x: &i64) / Peek { peek(x) }
+fn via_callee_alias() {
+    let v = Vec.new()
+    v.push(1)
+    handle Peek { fn peek(x) { v.clear(); print(x); resume(()) } } in {
+        let r = &v[0]
+        peeks(r)
+    }
+}
+fn via_closure_alias() {
+    let v = Vec.new()
+    v.push(1)
+    handle Peek { fn peek(x) { v.clear(); print(x); resume(()) } } in {
+        let r = &v[0]
+        let f = |y: &i64| peek(y)
+        f(r)
+    }
+}
+fn apply(f: fn(&Vec<u64>), v: &Vec<u64>) { f(v) }
+fn via_hof_closure() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump { fn bump(x) { x.push(2); resume(()) } } in {
+        let r = &v[0]
+        apply(|y| bump(y), &v)
+        print(r)
+    }
+}
+// The clause mutates through its parameter; two arguments overlap.
+effect Two { fn two(a: &Vec<u64>, b: &u64) }
+fn two_alias() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Two { fn two(a, b) { a.clear(); print(b); resume(()) } } in {
+        two(&v, &v[0])
+    }
+}
+// A stored closure that performs and runs inside the handled body.
+struct Cb { f: fn(&Vec<u64>) }
+fn run_cb(cb: &Cb, v: &Vec<u64>) { let g = cb.f; g(v) }
+fn stored_perform() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump { fn bump(x) { x.push(2); resume(()) } } in {
+        let cb = Cb { f: |y| bump(y) }
+        let r = &v[0]
+        run_cb(&cb, &v)
+        print(r)
+    }
+}

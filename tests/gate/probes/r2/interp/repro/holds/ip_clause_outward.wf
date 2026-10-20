@@ -1,0 +1,9 @@
+// A clause performs its own effect: it goes to the handler outside (rule 6).
+effect E { fn op() -> u64 }
+
+fn main() {
+    let r = handle E { fn op() { resume(1) } } in {
+        handle E { fn op() { let x = op(); resume(x + 10) } } in op()
+    }
+    print(r)
+}

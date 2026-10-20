@@ -1,0 +1,11 @@
+struct C { k: u64 }
+fn bump(c: &C) { c.k += 1 }
+fn main() {
+    let c = C { k: 0 }
+    let f = || bump(&c)
+    scope { s =>
+        s.spawn(f)
+        f()
+    }
+    print(c.k)
+}

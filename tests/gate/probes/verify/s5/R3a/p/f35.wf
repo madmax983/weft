@@ -1,0 +1,97 @@
+struct In { x: Vec<u64> }
+struct Out { a: In, b: In }
+struct Deep { o: Out, n: u64 }
+struct Holds { r: &Out }
+fn take(i: In) -> usize { i.x.len() }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn peek(o: &Out) -> usize { o.a.x.len() }
+fn id(o: &Out) -> &Out in o { o }
+fn mk_in() -> In { let i = In { x: Vec.new() }; i.x.push(4); i }
+
+fn mid_ref() {
+    let d = Deep { o: Out { a: mk_in(), b: mk_in() }, n: 1 }
+    let r = &d.o
+    let n = take_v(d.o.a.x)
+    print(r.a.x.len())
+}
+fn through_id() {
+    let p = Out { a: mk_in(), b: mk_in() }
+    let r = id(&p)
+    let n = take(p.a)
+    print(r.a.x.len())
+}
+fn in_struct() {
+    let p = Out { a: mk_in(), b: mk_in() }
+    let h = Holds { r: &p }
+    let n = take(p.a)
+    print(h.r.a.x.len())
+}
+fn in_tuple() {
+    let p = Out { a: mk_in(), b: mk_in() }
+    let h = (&p, 1)
+    let n = take(p.a)
+    print(h.0.a.x.len())
+}
+fn let_part() {
+    let p = Out { a: mk_in(), b: mk_in() }
+    let r = &p
+    let x = p.a
+    print(r.a.x.len())
+    print(x.x.len())
+}
+fn closure_ref() {
+    let p = Out { a: mk_in(), b: mk_in() }
+    let f = || print(p.a.x.len())
+    let n = take(p.a)
+    f()
+}
+fn closure_move_part() {
+    let p = Out { a: mk_in(), b: mk_in() }
+    let r = &p
+    let f = || take(p.a)
+    let n = f()
+    print(r.a.x.len())
+}
+fn vec_ref() {
+    let v = Vec.new()
+    v.push(mk_in())
+    v.push(mk_in())
+    let r = &v
+    let n = take(v[0])
+    print(r[0].x.len())
+}
+fn ref_to_ref() {
+    let p = Out { a: mk_in(), b: mk_in() }
+    let r = &p
+    let rr = &r
+    let n = take(p.a)
+    print(rr.a.x.len())
+}
+fn branch_move() {
+    let c = true
+    let p = Out { a: mk_in(), b: mk_in() }
+    let r = &p
+    if c { let n = take(p.a) }
+    print(r.a.x.len())
+}
+fn match_move() {
+    let p = (Some(mk_in()), 1)
+    let r = &p
+    match p.0 { Some(i) => print(take(i)), None => {} }
+    match r.0 { Some(i) => print(i.x.len()), None => {} }
+}
+fn tail_move_ref() {
+    let p = Out { a: mk_in(), b: mk_in() }
+    let r = &p
+    let x = { p.a }
+    print(r.a.x.len())
+}
+fn sibling_mid_clean() {
+    let d = Deep { o: Out { a: mk_in(), b: mk_in() }, n: 1 }
+    let r = &d.o.b
+    let n = take_v(d.o.a.x)
+    print(r.x.len())
+}
+fn main() {
+    sibling_mid_clean()
+}

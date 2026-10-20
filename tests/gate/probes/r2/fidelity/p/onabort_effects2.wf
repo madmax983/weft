@@ -1,0 +1,27 @@
+// Two live linear values when `work` fails. The `on abort` of `B` fails too.
+// Does the unwinder still run the `on abort` of `A`?
+linear struct A { id: u64 }
+    on abort = undo_a
+linear struct B { id: u64 }
+    on abort = undo_b
+fn undo_a(a: A) {
+    let A(i) = a
+    print("undo a")
+}
+fn undo_b(b: B) / fail {
+    let B(i) = b
+    print("undo b fails")
+    fail("undo b failed")
+}
+fn done_a(a: A) { let A(i) = a }
+fn done_b(b: B) { let B(i) = b }
+fn work() / fail {
+    let a = A { id: 1 }
+    let b = B { id: 2 }
+    fail("abort the scope")
+    done_b(b)
+    done_a(a)
+}
+fn main() / fail {
+    work()
+}

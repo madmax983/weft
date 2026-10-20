@@ -1,0 +1,40 @@
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v.push(2); v }
+fn print_vec() {
+    let v = mk_v()
+    scope { s =>
+        s.spawn(|| v.clear())
+        print(v)
+    }
+}
+fn print_int() {
+    let n = 2
+    scope { s =>
+        s.spawn(|| n += 1)
+        print(n)
+    }
+}
+fn print_int_after_join() {
+    let n = 2
+    scope { s =>
+        let t = s.spawn(|| n += 1)
+        t.join()
+        let u = s.spawn(|| n += 1)
+        print(n)
+        u.join()
+    }
+}
+fn let_int() {
+    let n = 2
+    scope { s =>
+        s.spawn(|| n += 1)
+        let m = n
+    }
+}
+fn print_field() {
+    let v = mk_v()
+    scope { s =>
+        s.spawn(|| v.clear())
+        print(v[0])
+    }
+}
+fn main() { print_int() }

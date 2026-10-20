@@ -1,0 +1,21 @@
+// Capability handles and responses live across a multi operation.
+effect Choice { multi fn choose() -> bool }
+fn writes(out: Stdout) -> u64 / Choice, io {
+    let b = choose()
+    out.write(if b { "yes" } else { "no" })
+    1
+}
+fn respond() -> u64 / Choice {
+    let r = Response.text("hi")
+    let b = choose()
+    let s = r
+    1
+}
+fn main(env: Env) / io {
+    let all: Vec<u64> = Vec.new()
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        all.push(writes(env.stdout))
+        all.push(respond())
+    }
+    print(all.len())
+}

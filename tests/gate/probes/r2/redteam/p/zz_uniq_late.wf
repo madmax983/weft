@@ -1,0 +1,14 @@
+fn needs_uniq(es: &[u64] @ uniq) / mut(es) {}
+fn late_alias(v: &Vec<u64>, w: &Vec<u64>) / mut(v, w) {
+    let (l, r) = v.split_mut(1)
+    let f = || needs_uniq(l)
+    let (a, b) = w.split_at(1)
+    l = a
+    f()   //~ W0406
+}
+fn direct_alias(v: &Vec<u64>, w: &Vec<u64>) / mut(v, w) {
+    let (l, r) = v.split_mut(1)
+    let (a, b) = w.split_at(1)
+    l = a
+    needs_uniq(l)   //~ W0406
+}

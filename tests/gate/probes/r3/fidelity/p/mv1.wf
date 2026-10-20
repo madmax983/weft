@@ -1,0 +1,47 @@
+effect Choice { multi fn choose() -> bool }
+extern type Sock { nonportable }
+extern fn open() -> Sock / blocking
+extern fn close(s: Sock) / blocking
+struct Holder { s: Sock, n: u64 }
+struct Node { r: Vec<&u64> }
+struct Hook { f: fn() }
+fn in_struct() / Choice, blocking {
+    let h = Holder { s: open(), n: 1 }
+    let b = choose()   // expected W0503
+    let Holder(s, n) = h
+    close(s)
+}
+fn in_option() / Choice, blocking {
+    let o = Some(open())
+    let b = choose()   // expected W0503
+    match o { Some(s) => close(s), None => {} }
+}
+fn in_vec() / Choice, blocking {
+    let v = Vec.new()
+    v.push(open())
+    let b = choose()   // expected W0503
+    match v.pop() { Some(s) => close(s), None => {} }
+}
+fn task_in_tuple() / Choice, async {
+    scope { s =>
+        let t = (s.spawn(|| 5), 1)
+        let b = choose()   // expected W0503
+        let (h, k) = t
+        print(h.join())
+    }
+}
+fn rc_refs() -> u64 / Choice {
+    let x = 5
+    let r = Rc.new(Node { r: Vec.new() })
+    r.r.push(&x)
+    let b = choose()   // expected W0503
+    5
+}
+fn weak_hook() -> u64 / Choice {
+    let count = 0
+    let h = Rc.new(Hook { f: || count += 1 })
+    let w = h.downgrade()
+    let b = choose()   // expected W0503 for w (and h)
+    match w.upgrade() { Some(k) => { let g = k.f; g() }, None => {} }
+    count
+}

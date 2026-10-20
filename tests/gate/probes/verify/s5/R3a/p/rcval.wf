@@ -1,0 +1,24 @@
+effect Note { fn note(x: u64) }
+struct Bag { v: Vec<u64> }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn first(v: &Vec<u64>) -> &u64 in v[] { &v[0] }
+
+fn block_rc() {
+    let r = { let h = Rc.new(Bag { v: mk_v() }); first(&h.v) }
+    print(r + 1)
+}
+fn scope_rc() / async {
+    let r = scope { s => let h = Rc.new(Bag { v: mk_v() }); first(&h.v) }
+    print(r + 1)
+}
+fn handled_rc() {
+    let r = handle Note { fn note(x) { resume(()) } } in { let h = Rc.new(Bag { v: mk_v() }); first(&h.v) }
+    print(r + 1)
+}
+fn scope_rc_temp() / async {
+    let r = scope { s => first(&Rc.new(Bag { v: mk_v() }).v) }
+    print(r + 1)
+}
+fn main() {
+    block_rc()
+}

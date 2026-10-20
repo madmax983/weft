@@ -1,0 +1,54 @@
+// RR7 missed shape: a closure that leaves the function (return, store behind
+// a parameter) keeps the places of its captures from where it was made.
+// Expected: W0301 at f() in returned_late; W0204 in mk_local and store_late.
+// HEAD: 0 errors, each faults.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Holder { f: fn() }
+fn mkw(n: i32) -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: n })
+    w
+}
+fn mk(a: &World, b: &World) -> fn() {
+    let r = &a.entities[0]
+    let f = || print(r.hp)
+    r = &b.entities[0]
+    f
+}
+fn returned_late() {
+    let a = mkw(1)
+    let b = mkw(2)
+    let f = mk(&a, &b)
+    b.entities.clear()
+    f()
+}
+fn mk_local(a: &World) -> fn() {
+    let r = &a.entities[0]
+    let f = || print(r.hp)
+    let w = mkw(3)
+    r = &w.entities[0]
+    f
+}
+fn returned_local() {
+    let a = mkw(1)
+    let f = mk_local(&a)
+    f()
+}
+fn store_late(h: &Holder, a: &World) {
+    let r = &a.entities[0]
+    h.f = || print(r.hp)
+    let w = mkw(3)
+    r = &w.entities[0]
+}
+fn noop() { print(0) }
+fn stored_param() {
+    let a = mkw(1)
+    let h = Holder { f: noop }
+    store_late(&h, &a)
+    let g = h.f
+    g()
+}
+fn main() {
+    returned_late()
+}

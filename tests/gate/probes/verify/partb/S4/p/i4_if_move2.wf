@@ -1,0 +1,8 @@
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) {}
+fn a(c: bool) { let a = Buf { items: Vec.new() }
+ let x = if c { a } else { Buf { items: Vec.new() } }
+ eat(a) }
+fn b() { let a = Buf { items: Vec.new() }
+ let x = { a }
+ eat(a) }

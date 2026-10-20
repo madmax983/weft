@@ -1,0 +1,53 @@
+effect Pick { fn pick() -> &u64 }
+effect Clear { fn clear() }
+effect PickW { fn pick_w() -> Wrap<&u64> }
+struct Wrap<T> { x: T }
+
+fn uses_pick_then_clear() / Pick, Clear {
+    let r = pick()
+    clear()
+    print(r)
+}
+fn d_caller_handler() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        handle Clear { fn clear() { v.clear()
+ resume(()) } } in uses_pick_then_clear()
+    }
+}
+fn d_wrap() {
+    let v = Vec.new()
+    v.push(2)
+    handle PickW { fn pick_w() { resume(Wrap { x: &v[0] }) } } in {
+        let w = pick_w()
+        v.clear()
+        print(w.x)
+    }
+}
+fn d_closure_capture() {
+    let v = Vec.new()
+    v.push(3)
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r = pick()
+        let c = || print(r)
+        v.clear()
+        c()
+    }
+}
+fn d_loop() {
+    let v = Vec.new()
+    v.push(4)
+    let w = Vec.new()
+    w.push(5)
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r = &w[0]
+        for i in 0..2 {
+            print(r)
+            r = pick()
+            v.clear()
+            v.push(6)
+        }
+    }
+}
+fn main() { d_caller_handler() }

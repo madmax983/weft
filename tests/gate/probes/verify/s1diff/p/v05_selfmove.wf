@@ -1,0 +1,15 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+impl World { fn eat(self: World) {} }
+fn self_move() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    let r = &w.entities[0]
+    w.eat()
+    print(r.hp)
+}
+fn self_move_then_use() {
+    let w = World { entities: Vec.new() }
+    w.eat()
+    print(w.entities.len())
+}

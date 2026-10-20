@@ -1,0 +1,35 @@
+effect Note { fn note(x: u64) }
+effect Ask { fn ask() -> u64 }
+struct Cb { f: fn() }
+
+// A closure that resumes leaves its clause through an outer local.
+fn k_escape() {
+    let k = || print(0)
+    handle Note { fn note(x) { k = || resume(()) } } in {
+        note(1)
+        print("body after note")
+    }
+    k()
+    print("after k")
+}
+// The continuation leaves through a field of an outer local.
+fn k_escape_field() {
+    let c = Cb { f: || print(0) }
+    handle Note { fn note(x) { c.f = || resume(()) } } in note(1)
+    let g = c.f
+    g()
+}
+// The continuation leaves as the value of the handle.
+fn k_escape_value() {
+    let g = handle Ask { fn ask() { || { let n = resume(5)
+ print(n) } } } in {
+        let n = ask()
+        || print(n)
+    }
+    g()
+}
+fn main() {
+    k_escape()
+}
+test "field" { k_escape_field() }
+test "value" { k_escape_value() }

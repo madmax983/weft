@@ -1,0 +1,11 @@
+effect Nap { fn nap() }
+mod m {
+    pub fn nap() {}
+    pub fn user() / Nap { nap() }
+}
+fn main() {
+    handle Nap { fn nap() {
+        print("clause ran")
+        resume(())
+    } } in m.user()
+}

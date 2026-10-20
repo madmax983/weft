@@ -1,0 +1,10 @@
+linear struct Tx { id: u64 }
+struct Holder { t: Option<Tx> }
+fn commit(t: Tx) { let Tx(id) = t }
+fn set(h: &Holder) { h.t = Some(Tx { id: 2 }) }
+fn main() {
+    let h = Holder { t: None }
+    set(&h)
+    set(&h)
+    match h.t { Some(t) => commit(t), None => print(0) }
+}

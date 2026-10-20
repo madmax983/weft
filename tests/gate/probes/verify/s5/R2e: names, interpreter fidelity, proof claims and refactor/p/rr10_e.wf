@@ -1,0 +1,14 @@
+// Method via a reference receiver and via a field.
+struct Entity { hp: i32 }
+struct Holder { e: Entity }
+impl Entity {
+    fn diff(self: &Entity, a: i32, b: i32) -> i32 { a - b + self.hp }
+}
+fn main() {
+    let x = Entity { hp: 0 }
+    let r = &x
+    print(r.diff(b: 10, a: 3))
+    let h = Holder { e: Entity { hp: 0 } }
+    print(h.e.diff(b: 10, a: 3))
+    print(Entity.diff(&x, b: 10, a: 3))
+}

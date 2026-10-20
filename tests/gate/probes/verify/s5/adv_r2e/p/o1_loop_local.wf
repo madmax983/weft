@@ -1,0 +1,21 @@
+fn main() {
+    for i in 0..3 {
+        let x = i
+        let r = &x
+        print(r)
+    }
+    let j = 0
+    while j < 3 {
+        let y = j * 2
+        let q = &y
+        print(q)
+        j += 1
+    }
+    let f = |k: i64| {
+        let z = k + 1
+        let w = &z
+        print(w)
+    }
+    f(1)
+    f(2)
+}

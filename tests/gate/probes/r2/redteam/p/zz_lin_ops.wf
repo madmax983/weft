@@ -1,0 +1,40 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+effect Give { fn give(t: Tx) }
+effect Take { fn take() -> Tx }
+effect MTake { multi fn mtake() -> Tx }
+
+fn clause_drops_arg() {
+    handle Give { fn give(t) { resume(()) } } in give(begin())   //~ W0601
+}
+fn clause_keeps_arg() {
+    handle Give { fn give(t) { rollback(t)
+ resume(()) } } in give(begin())
+}
+fn result_dropped() {
+    handle Take { fn take() { resume(begin()) } } in { let t = take() }   //~ W0601
+}
+fn clause_aborts_with_value() {
+    let x = handle Take { fn take() { begin() } } in { let t = take()
+ rollback(t)
+ begin() }
+    rollback(x)
+}
+fn multi_result() {
+    handle MTake { fn mtake() { resume(begin())
+ resume(begin()) } } in { let t = mtake()
+ rollback(t) }
+}
+// The body value of the handle is linear; the clause aborts with no value.
+fn clause_unit() {
+    let x = handle Take { fn take() { print(0) } } in { let t = take()   //~ W0102
+ t }
+}
+// A clause that resumes twice an operation that gives a linear value to the body.
+fn give_twice() {
+    handle Give { fn give(t) { rollback(t)
+ resume(())
+ resume(()) } } in give(begin())   //~ W0501
+}

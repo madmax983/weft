@@ -1,0 +1,8 @@
+fn main() {
+    let vv = [[1, 2], [3]]
+    vv[1].push(5)
+    let r = &vv[0][1]
+    print(r)
+    vv[0].push(6)
+    print(vv[0][2])
+}

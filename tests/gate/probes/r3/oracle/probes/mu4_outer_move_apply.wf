@@ -1,0 +1,15 @@
+effect Pick { multi fn pick() -> bool }
+linear struct Tx { id: u64 }
+    on abort = tx_abort
+fn tx_abort(t: Tx) { let Tx(id) = t; print("abort", id) }
+fn commit(t: Tx) { let Tx(id) = t; print("commit", id) }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn apply(f: fn()) { f() }
+fn main() {
+    let v = mk_v()
+    handle Pick { fn pick() { resume(true); resume(true) } } in {
+        let b = pick()
+        apply(|| print(take_v(v)))
+    }
+}

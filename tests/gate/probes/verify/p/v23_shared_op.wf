@@ -1,0 +1,16 @@
+effect Peek { fn peek(v: &Vec<u64> @ shared) }
+fn show(v: &Vec<u64>) / Peek {
+    let first = &v[0]
+    peek(v)
+    print(first)
+}
+fn hof(f: fn(&Vec<u64> @ shared), v: &Vec<u64>) {
+    let first = &v[0]
+    f(v)
+    print(first)
+}
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Peek { fn peek(x) { x.push(2); resume(()) } } in show(&v)
+}

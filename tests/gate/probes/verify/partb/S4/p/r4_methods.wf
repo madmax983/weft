@@ -1,0 +1,57 @@
+struct Wrap<T> { x: T }
+impl<T> Wrap<T> {
+    fn into(self: Wrap<T>) -> T { let Wrap(x) = self
+ x }
+    fn peek(self) -> &T in self { &self.x }
+}
+fn m01() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let r = Wrap { x: &v[0] }.into()
+ v.clear()
+ print(r) }
+fn m02() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let w = Wrap { x: &v[0] }
+ let r = w.into()
+ v.clear()
+ print(r) }
+fn m03() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let w = Wrap { x: &v[0] }
+ let r = w.peek()
+ v.clear()
+ print(r) }
+fn pick<T>(a: T, b: T, c: bool) -> T { if c { a } else { b } }
+fn m04(c: bool) { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let x = 5
+ let r = pick(&x, &v[0], c)
+ v.clear()
+ print(r) }
+fn m05() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let o = Some(&v[0])
+ let r = match o { Some(y) => y, None => &v[0] }
+ v.clear()
+ print(r) }
+fn m06() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let rs: Vec<&u64> = Vec.new()
+ rs.push(&v[0])
+ let r = rs.pop()
+ v.clear()
+ match r { Some(y) => print(y), None => {} } }
+fn m07() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let rs: Vec<&u64> = Vec.new()
+ rs.push(&v[0])
+ let r = rs[0]
+ v.clear()
+ print(r) }
+fn m08() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let rs: Vec<&u64> = Vec.new()
+ rs.push(&v[0])
+ let r = rs.get(0)
+ v.clear()
+ print(r) }

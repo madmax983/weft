@@ -1,0 +1,12 @@
+effect Ask { fn ask() -> u64 }
+effect Pick { multi fn pick() -> bool }
+fn apply(f: fn()) { f() }
+fn twice(f: fn()) { f(); f() }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v.push(2); v }
+
+fn main() {
+    let fs = Vec.new()
+    let n = handle Ask { fn ask() { fs.push(|| { let _ = resume(1) }); 7 } } in { ask() + 1 }
+    print(n)
+    for f in fs[] { f() }
+}

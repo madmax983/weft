@@ -1,0 +1,19 @@
+effect Note { fn note(x: u64) }
+struct Job { f: fn() }
+
+fn copy_into(src: &Job, dsts: &Vec<&Job>) / mut(dsts..) { let d = dsts[0]
+ d.f = src.f }
+
+fn p_into() {
+    let keep = Job { f: || print(0) }
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let j = Job { f: || note(1) }
+        let ds = Vec.new()
+        ds.push(&keep)
+        copy_into(&j, &ds)
+    }
+    let g = keep.f
+    g()
+}
+fn main() { p_into() }

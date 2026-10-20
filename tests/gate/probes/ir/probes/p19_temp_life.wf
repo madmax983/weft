@@ -1,0 +1,24 @@
+fn show(o: Option<Rc<u64>>) {
+    match o {
+        Some(r) => print("some"),
+        None => print("none"),
+    }
+}
+fn main() {
+    let w = Rc.new(5).downgrade()
+    show(w.upgrade())
+    show(Rc.new(6).downgrade().upgrade())
+    let w2 = { Rc.new(7).downgrade() }
+    show(w2.upgrade())
+    let w3 = {
+        let k = Rc.new(8)
+        k.downgrade()
+    }
+    show(w3.upgrade())
+    let r = Rc.new(9)
+    let w4 = r.downgrade()
+    let r2 = r
+    show(w4.upgrade())
+    let f = || r2
+    show(w4.upgrade())
+}

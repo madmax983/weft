@@ -1,0 +1,25 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn apply2(n: i32, f: fn()) { f() }
+// The use of `first` is queued, then flushed into the closure's entry node.
+fn pend(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    world.entities.push(Entity { hp: 1 })
+    apply2(first.hp, || print(1))
+}
+// Control: no closure argument.
+fn apply1(n: i32) {}
+fn pend_ctrl(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    world.entities.push(Entity { hp: 1 })
+    apply1(first.hp)
+}
+struct Stats { count: u64 }
+// A task conflict hidden the same way.
+fn pend_task(stats: &Stats) / mut(stats), async {
+    scope { s =>
+        s.spawn(|| stats.count += 1)
+        apply3(stats.count, || print(1))
+    }
+}
+fn apply3(n: u64, f: fn()) { f() }

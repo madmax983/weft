@@ -1,0 +1,48 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Peek { fn peek(e: &Entity) }
+fn mk() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+
+fn local_rebound() {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)   //~ W0301
+        }
+    } in {
+        let w = mk()
+        peek(&w.entities[0])
+        w = mk()
+    }
+}
+fn nested_block_local() {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)   //~ W0301
+        }
+    } in {
+        {
+            let w = mk()
+            peek(&w.entities[0])
+        }
+        print(1)
+    }
+}
+fn closure_local() {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)   //~ W0301
+        }
+    } in {
+        let f = || { let w = mk(); peek(&w.entities[0]) }
+        f()
+    }
+}
+fn main() {
+}

@@ -1,0 +1,89 @@
+effect Note { fn note(x: u64) }
+struct Job { f: fn() }
+struct OptJob { f: Option<fn()> }
+
+fn start_opt(j: &OptJob) / async {
+    scope { s =>
+        let t = s.spawn(|| { match j.f { Some(g) => g(), None => {} } })
+        t.join()
+    }
+}
+fn start_refs(v: &Vec<&Job>) / async {
+    scope { s =>
+        let t = s.spawn(v[0].f)
+        t.join()
+    }
+}
+fn start_box(b: &Box<Job>) / async {
+    scope { s =>
+        let t = s.spawn(b.f)
+        t.join()
+    }
+}
+fn get(j: &Job) -> fn() { j.f }
+fn start_get(j: &Job) / async {
+    scope { s =>
+        let t = s.spawn(get(j))
+        t.join()
+    }
+}
+fn start_twice_removed(j: &Job) / async {
+    let c = || scope { s => s.spawn(j.f) }
+    c()
+}
+fn start_gen<T>(x: &T, run: fn(&T)) / async {
+    scope { s =>
+        let t = s.spawn(|| run(x))
+        t.join()
+    }
+}
+fn run_job(j: &Job) { let g = j.f
+ g() }
+
+fn p_opt() / async {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let j = OptJob { f: Some(|| note(1)) }
+        start_opt(&j)
+    }
+}
+fn p_refs() / async {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let j = Job { f: || note(2) }
+        let v = Vec.new()
+        v.push(&j)
+        start_refs(&v)
+    }
+}
+fn p_box() / async {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let b = Box.new(Job { f: || note(3) })
+        start_box(&b)
+    }
+}
+fn p_get() / async {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let j = Job { f: || note(4) }
+        start_get(&j)
+    }
+}
+fn p_twice_removed() / async {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let j = Job { f: || note(5) }
+        start_twice_removed(&j)
+    }
+}
+fn p_gen() / async {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let j = Job { f: || note(6) }
+        start_gen(&j, run_job)
+    }
+}
+fn main() / async {
+    p_get()
+}

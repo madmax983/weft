@@ -1,0 +1,88 @@
+// 1. The owner waits in a join of a slow sibling when a child fails.
+fn in_join() / io {
+    handle Fail { fn fail(m) { print("scope handler: {m}") } } in {
+        scope { s =>
+            s.spawn(|| { sleep(5.ms); fail("child failed") })
+            let t = s.spawn(|| { sleep(30.ms); 7 })
+            let x = t.join()
+            print("joined {x}")
+        }
+        print("scope returned normally")
+    }
+}
+
+// 2. The owner waits at the end of an inner scope when a child of the outer scope fails.
+fn in_inner_scope() / io {
+    handle Fail { fn fail(m) { print("outer scope handler: {m}") } } in {
+        scope { a =>
+            a.spawn(|| { sleep(5.ms); fail("child failed") })
+            handle Fail { fn fail(m) { print("inner handler: {m}") } } in {
+                scope { b =>
+                    b.spawn(|| { sleep(30.ms); print("inner child done") })
+                }
+                print("inner scope done")
+            }
+            print("outer body done")
+        }
+        print("scope returned normally")
+    }
+}
+
+// 3. The owner is in a with_timeout block inside the scope.
+fn in_timeout() / io {
+    handle Fail { fn fail(m) { print("scope handler: {m}") } } in {
+        scope { s =>
+            s.spawn(|| { sleep(5.ms); fail("child failed") })
+            let v = with_timeout(50.ms) { sleep(20.ms); 3 }
+            print("timeout block gave {v}")
+        }
+        print("scope returned normally")
+    }
+}
+
+// 4. The owner is in a clause of a local handler in the scope body.
+effect Ask { fn ask() -> u64 }
+fn in_local_clause() / io {
+    handle Fail { fn fail(m) { print("scope handler: {m}") } } in {
+        scope { s =>
+            s.spawn(|| { sleep(5.ms); fail("child failed") })
+            handle Ask { fn ask() { sleep(20.ms); print("clause done"); resume(1) } } in {
+                let x = ask()
+                print("body got {x}")
+            }
+            print("scope body done")
+        }
+        print("scope returned normally")
+    }
+}
+
+// 5. Two children fail.
+fn two_fail() / io {
+    handle Fail { fn fail(m) { print("scope handler: {m}") } } in {
+        scope { s =>
+            s.spawn(|| { sleep(5.ms); fail("first failed") })
+            s.spawn(|| { sleep(5.ms); fail("second failed") })
+            sleep(20.ms)
+            print("scope body done")
+        }
+        print("scope returned normally")
+    }
+}
+
+// 6. A fork branch fails while the other branch runs.
+fn in_fork() / io, par {
+    handle Fail { fn fail(m) { print("fork handler: {m}") } } in {
+        let r = fork(|| { sleep(5.ms); fail("branch failed"); 1 }, || { sleep(20.ms); 2 })
+        print("fork returned normally")
+    }
+}
+
+fn main() / io, par {
+    in_join()
+    in_inner_scope()
+    in_timeout()
+    in_local_clause()
+    two_fail()
+    in_fork()
+    print("end")
+}

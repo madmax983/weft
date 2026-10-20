@@ -1,0 +1,21 @@
+// A reference to a tuple that holds a reference.
+fn nested_ref() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let t = (&v[0], 1)
+    let rt = &t
+    v.clear()
+    let (a, b) = rt
+    print(a)
+}
+struct Stats { count: u64 }
+// `break` out of a scope inside a loop: the scope still joins its tasks.
+fn break_scope(stats: &Stats) / mut(stats), async {
+    loop {
+        scope { s =>
+            s.spawn(|| stats.count += 1)
+            break
+        }
+    }
+    print(stats.count)
+}

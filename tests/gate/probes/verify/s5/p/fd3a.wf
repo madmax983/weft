@@ -1,0 +1,107 @@
+struct Cache { refs: Vec<&u64>, data: Vec<u64> }
+struct Inner { refs: Vec<&u64> }
+struct Cache2 { inner: Inner }
+struct CbCache { cbs: Vec<fn()> }
+
+// A closure stores the reference.
+fn fill_closure(c: Rc<Cache>) / mut(Cache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    let put = |x: &u64| c.refs.push(x)
+    put(&v[0])
+}
+// A closure that captures a local goes into an rc object.
+fn fill_cb(c: Rc<CbCache>) / mut(CbCache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    let r = &v[0]
+    c.cbs.push(|| print(r + 0))
+}
+// A nested field.
+fn fill_nested(c: Rc<Cache2>) / mut(Cache2) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    c.inner.refs.push(&v[0])
+}
+// A local of the reference through a let.
+fn fill_let(c: Rc<Cache>) / mut(Cache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    let rs = &c.refs
+    rs.push(&v[0])
+}
+// Through a generic callee.
+fn put_any<T>(rs: &Vec<T>, x: T) / mut(rs) { rs.push(x) }
+fn fill_generic(c: Rc<Cache>) / mut(Cache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    put_any(&c.refs, &v[0])
+}
+// Through a function value.
+fn stash(c: Rc<Cache>, x: &u64) / mut(Cache) {
+    c.refs.push(x)
+}
+fn fill_value(c: Rc<Cache>) / mut(Cache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    let s = stash
+    s(c, &v[0])
+}
+// Element assignment.
+fn fill_assign(c: Rc<Cache>) / mut(Cache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    c.refs[0] = &v[0]
+}
+fn read(c: Rc<Cache>) -> u64 {
+    let r = c.refs[0]
+    r + 0
+}
+fn readcb(c: Rc<CbCache>) {
+    let f = c.cbs[0]
+    f()
+}
+fn read2(c: Rc<Cache2>) -> u64 {
+    let r = c.inner.refs[0]
+    r + 0
+}
+fn t_closure() {
+    let c = Rc.new(Cache { refs: Vec.new(), data: Vec.new() })
+    fill_closure(c.clone())
+    print(read(c.clone()))
+}
+fn t_cb() {
+    let c = Rc.new(CbCache { cbs: Vec.new() })
+    fill_cb(c.clone())
+    readcb(c.clone())
+}
+fn t_nested() {
+    let c = Rc.new(Cache2 { inner: Inner { refs: Vec.new() } })
+    fill_nested(c.clone())
+    print(read2(c.clone()))
+}
+fn t_let() {
+    let c = Rc.new(Cache { refs: Vec.new(), data: Vec.new() })
+    fill_let(c.clone())
+    print(read(c.clone()))
+}
+fn t_generic() {
+    let c = Rc.new(Cache { refs: Vec.new(), data: Vec.new() })
+    fill_generic(c.clone())
+    print(read(c.clone()))
+}
+fn t_value() {
+    let c = Rc.new(Cache { refs: Vec.new(), data: Vec.new() })
+    fill_value(c.clone())
+    print(read(c.clone()))
+}
+fn t_assign() {
+    let n: u64 = 1
+    let c = Rc.new(Cache { refs: Vec.new(), data: Vec.new() })
+    c.refs.push(&n)
+    fill_assign(c.clone())
+    print(read(c.clone()))
+}
+fn main() {
+    t_closure()
+}

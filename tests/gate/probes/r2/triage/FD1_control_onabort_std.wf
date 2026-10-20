@@ -1,0 +1,18 @@
+effect Stop { fn stop() }
+linear struct T { id: u64 }
+    on abort = undo
+fn undo(t: T) / clock {
+    let T(i) = t
+    print("undo {i}")
+    sleep(1.ms)
+    print("slept")
+}
+fn done(t: T) { let T(i) = t }
+fn main() / clock {
+    handle Stop { fn stop() { () } } in {
+        let t = T { id: 1 }
+        stop()
+        done(t)
+    }
+    print("end")
+}

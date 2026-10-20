@@ -1,0 +1,8 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn direct_opt(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let f = |o: Option<&World>| match o { Some(x) => x.entities.push(Entity { hp: 1 }), None => {} }
+    f(Some(world))
+    print(first.hp)
+}

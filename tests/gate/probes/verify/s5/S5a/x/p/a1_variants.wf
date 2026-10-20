@@ -1,0 +1,100 @@
+effect Note { fn note(x: u64) }
+struct Job { f: fn() }
+struct OptJob { f: Option<fn()> }
+struct Outer { j: Job }
+struct Holder { j: &Job }
+
+fn start_opt(j: &OptJob) / async {
+    scope { s =>
+        match j.f {
+            Some(g) => { let t = s.spawn(g)
+ t.join() },
+            None => {},
+        }
+    }
+}
+fn start_tuple(p: &(fn(), u64)) / async {
+    scope { s =>
+        let t = s.spawn(p.0)
+        t.join()
+    }
+}
+fn start_nested(o: &Outer) / async {
+    scope { s =>
+        let t = s.spawn(o.j.f)
+        t.join()
+    }
+}
+fn start_holder(h: &Holder) / async {
+    scope { s =>
+        let t = s.spawn(h.j.f)
+        t.join()
+    }
+}
+fn run_it(j: &Job) { let g = j.f
+ g() }
+fn start_via_callee(j: &Job) / async {
+    scope { s =>
+        let t = s.spawn(|| run_it(j))
+        t.join()
+    }
+}
+fn start_vec_jobs(v: &Vec<Job>) / async {
+    scope { s =>
+        let t = s.spawn(v[0].f)
+        t.join()
+    }
+}
+
+fn p_opt() / async {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let j = OptJob { f: Some(|| note(1)) }
+        start_opt(&j)
+    }
+}
+fn p_tuple() / async {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let p = (|| note(2), 1)
+        start_tuple(&p)
+    }
+}
+fn p_nested() / async {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let o = Outer { j: Job { f: || note(3) } }
+        start_nested(&o)
+    }
+}
+fn p_holder() / async {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let j = Job { f: || note(4) }
+        let h = Holder { j: &j }
+        start_holder(&h)
+    }
+}
+fn p_via_callee() / async {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let j = Job { f: || note(5) }
+        start_via_callee(&j)
+    }
+}
+fn p_vec_jobs() / async {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let v = Vec.new()
+        v.push(Job { f: || note(6) })
+        start_vec_jobs(&v)
+    }
+}
+fn main() / async {
+    p_opt()
+    p_tuple()
+    p_nested()
+    p_holder()
+    p_via_callee()
+    p_vec_jobs()
+}

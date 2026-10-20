@@ -1,0 +1,62 @@
+effect Note { fn note(x: u64) }
+effect Give { fn give(s: &Slot) }
+struct Slot { f: fn() }
+struct Wrap<T> { x: T }
+fn ident<T>(x: T) -> T { x }
+fn wrapf(f: fn()) -> fn() { f }
+
+fn to_vec() {
+    let v: Vec<fn()> = Vec.new()
+    handle Note { fn note(x) { v.push(|| resume(())) } } in note(1)   //~ W0313
+    let g = v.get(0)
+    g()
+}
+fn to_rc() {
+    let r = Rc.new(Slot { f: || print(0) })
+    let r2 = r.clone()
+    handle Note { fn note(x) { r2.f = || resume(()) } } in note(1)   //~ W0313
+    let g = r.f
+    g()
+}
+fn to_box() {
+    let b = Box.new(|| print(0))
+    handle Note { fn note(x) { b = Box.new(|| resume(())) } } in note(1)   //~ W0313
+}
+fn through_ident() {
+    let k = || print(0)
+    handle Note { fn note(x) { k = ident(|| resume(())) } } in note(1)   //~ W0313
+    k()
+}
+fn through_wrapf() {
+    let k = || print(0)
+    handle Note { fn note(x) { k = wrapf(|| resume(())) } } in note(1)   //~ W0313
+    k()
+}
+fn through_maker() {
+    let k = || print(0)
+    handle Note { fn note(x) { let mk = || (|| resume(())); k = mk() } } in note(1)   //~ W0313
+    k()
+}
+fn cont_value() {
+    let o = None
+    handle Note { fn note(x) { o = Some(resume) } } in note(1)   //~ W0313
+}
+fn via_param() {
+    let s = Slot { f: || print(0) }
+    handle Give { fn give(p) { p.f = || resume(()) } } in give(&s)   //~ W0313
+    let g = s.f
+    g()
+}
+fn in_loop() {
+    let k = || print(0)
+    handle Note { fn note(x) { for i in 0..2 { if i == 1 { k = || resume(()) } } } } in note(1)   //~ W0313
+    k()
+}
+fn tuple_field() {
+    let t = (1, || print(0))
+    handle Note { fn note(x) { t.1 = || resume(()) } } in note(1)   //~ W0313
+    let g = t.1
+    g()
+}
+fn main() {
+}

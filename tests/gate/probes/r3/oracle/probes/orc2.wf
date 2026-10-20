@@ -1,0 +1,9 @@
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        s.spawn(|| { v[0] = 3 })
+        v[0] = 4
+    }
+    print(v[0])
+}

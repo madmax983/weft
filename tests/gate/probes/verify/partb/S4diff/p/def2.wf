@@ -1,0 +1,29 @@
+effect Note { fn note(n: u64) }
+fn clause_after_set() {
+    let x: u64
+    handle Note { fn note(n) { print(x)
+ resume(()) } } in { x = 1
+ note(1) }
+}
+fn set_in_body_used_after() {
+    let x: u64
+    handle Note { fn note(n) { resume(()) } } in { x = 1 }
+    print(x)
+}
+fn set_in_clause() {
+    let x: u64
+    handle Note { fn note(n) { x = n
+ resume(()) } } in note(1)
+    print(x)   //~ W0304
+}
+fn set_in_scope() / async {
+    let x: u64
+    scope { s => x = 1 }
+    print(x)
+}
+fn set_in_closure_body() {
+    let x: u64
+    let f = || 1
+    x = f()
+    print(x)
+}

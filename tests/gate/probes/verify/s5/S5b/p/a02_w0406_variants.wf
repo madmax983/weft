@@ -1,0 +1,31 @@
+fn needs_uniq(es: &[u64] @ uniq) / mut(es) {}
+fn needs_two(a: &[u64] @ uniq, b: &[u64] @ uniq) / mut(a, b) {}
+fn g1(v: &Vec<u64>) / mut(v[]) {
+    let (l, r) = v.split_at(1)
+    needs_two(l, r)
+}
+fn g2(v: &Vec<u64>) / mut(v[]) {
+    let (l, r) = v.split_mut(1)
+    needs_two(l, r)
+    needs_two(r, &v[])
+}
+fn g3(v: &Vec<u64>) / mut(v[]) {
+    let (l, r) = v.split_mut(1)
+    let f = || needs_uniq(l)
+    l = &v[]
+    f()
+}
+fn g4(v: &Vec<u64>) / mut(v[]) {
+    let (l, r) = v.split_mut(1)
+    let f = || { needs_uniq(l); needs_uniq(r) }
+    l = &v[]
+    r = &v[]
+    f()
+    f()
+}
+fn g5(v: &Vec<u64>) / mut(v[]) {
+    let (l, r) = v.split_mut(1)
+    let f = || needs_two(l, r)
+    l = &v[]
+    f()
+}

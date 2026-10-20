@@ -1,0 +1,31 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+struct Pair { tx: Tx, n: u64 }
+
+fn closure_result_ok() {
+    let f = || begin()
+    let t = f()
+    rollback(t)
+}
+fn closure_result_ok2() {
+    let f = || { let t = begin()
+ t }
+    let t = f()
+    rollback(t)
+}
+fn partial_then_reset() {
+    let p = Pair { tx: begin(), n: 1 }
+    let t = p.tx
+    rollback(t)
+    p.tx = begin()
+    let Pair(a, b) = p
+    rollback(a)
+}
+fn opt_take<T>(o: Option<T>, f: fn(T)) {
+    match o { Some(x) => f(x), None => {} }
+}
+fn generic_opt_ok() {
+    opt_take(Some(begin()), rollback)
+}

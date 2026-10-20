@@ -1,0 +1,8 @@
+effect Ask { fn ask(q: u64) -> u64 }
+struct S { x: u8 }
+fn sub(a: u64, b: u64) -> u64 { a - b }
+fn main() / async {
+    let a: u8 = 250
+    let b = if true { a + 10 } else { 0 }
+    print(b)
+}

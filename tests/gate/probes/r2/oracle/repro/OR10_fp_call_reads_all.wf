@@ -1,0 +1,16 @@
+// OR10 (false positive, minor). A call reads all of its reference arguments
+// for W0405. A task that calls a helper with `&w` conflicts with a parent
+// write to any field of `w`, also when the helper touches only `w.es`.
+struct E { hp: u64 }
+struct W { es: Vec<E>, ns: Vec<u64>, score: u64 }
+fn grow_w(w: &W) { w.es.push(E { hp: 1 }) }
+
+fn main() {
+    let w = W { es: Vec.new(), ns: Vec.new(), score: 0 }
+    scope { s =>
+        let t = s.spawn(|| grow_w(&w))
+        w.score += 1          // W0405: "mutates `w.score` while a task reads `w`"
+        t.join()
+    }
+    print(w.es.len(), w.score)
+}

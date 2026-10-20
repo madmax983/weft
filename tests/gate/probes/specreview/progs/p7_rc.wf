@@ -1,0 +1,6 @@
+struct Node { kids: Vec<i32> }
+fn g(a: Rc<Node>, b: Rc<Node>) / mut(Node) {
+    let r = &a.kids[0]
+    b.kids.push(1)
+    print(r)
+}

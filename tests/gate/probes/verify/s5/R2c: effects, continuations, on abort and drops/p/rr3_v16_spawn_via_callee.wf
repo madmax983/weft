@@ -1,0 +1,17 @@
+// A clause gives a resuming closure to a callee that runs it as a task.
+effect Ask { fn ask() -> u64 }
+fn in_task(f: fn() -> u64) / async {
+    scope { s => s.spawn(|| { let x = f(); print(x) }); () }
+}
+fn main() / async {
+    let r = handle Ask {
+        fn ask() {
+            in_task(|| resume(1))
+            0
+        }
+    } in {
+        let a = ask()
+        a + 1
+    }
+    print(r)
+}

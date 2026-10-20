@@ -1,0 +1,10 @@
+// The clause stores a resuming closure into an rc object that it captures.
+struct H { f: fn() }
+effect Note { fn note() }
+fn main() {
+    let h = Rc.new(H { f: || print(0) })
+    let h2 = h.clone()
+    handle Note { fn note() { h2.f = || resume(()) } } in note()
+    let g = h.f
+    g()
+}

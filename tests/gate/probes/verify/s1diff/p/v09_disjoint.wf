@@ -1,0 +1,23 @@
+struct Stats { count: u64, name: u64 }
+// Two tasks touch separate fields of one reference parameter. Expect clean.
+fn two_fields(stats: &Stats) / mut(stats.count), async {
+    scope { s =>
+        s.spawn(|| stats.count += 1)
+        s.spawn(|| print(stats.name))
+    }
+}
+// The parent reads another field while a task writes. Expect clean.
+fn parent_field(stats: &Stats) / mut(stats.count), async {
+    scope { s =>
+        s.spawn(|| stats.count += 1)
+        print(stats.name)
+    }
+}
+// The parent reads another field through a reference local. Expect clean.
+fn parent_ref_field(stats: &Stats) / mut(stats.count), async {
+    let r = stats
+    scope { s =>
+        s.spawn(|| stats.count += 1)
+        print(r.name)
+    }
+}

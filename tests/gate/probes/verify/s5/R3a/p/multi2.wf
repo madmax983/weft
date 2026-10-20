@@ -1,0 +1,49 @@
+effect Pick { multi fn pick() -> bool }
+effect Note { fn note(x: u64) }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+
+fn multi_inner_handle_pick() {
+    let v = mk_v()
+    let w = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        handle Note { fn note(x) { resume(()) } } in { let b = pick(); v }
+    }
+    print(w.len())
+}
+fn multi_inner_scope_pick() / async {
+    let v = mk_v()
+    let w = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        scope { s => let b = pick(); v }
+    }
+    print(w.len())
+}
+fn multi_inner_block_pick() {
+    let v = mk_v()
+    let w = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        { let b = pick(); v }
+    }
+    print(w.len())
+}
+fn multi_inner_handle_pick_stmt() {
+    let v = mk_v()
+    handle Pick { fn pick() { resume(true); resume(true) } } in {
+        handle Note { fn note(x) { resume(()) } } in { let b = pick(); v }
+        print(1)
+    }
+}
+fn multi_inner_scope_pick_stmt() / async {
+    let v = mk_v()
+    handle Pick { fn pick() { resume(true); resume(true) } } in {
+        scope { s => let b = pick(); v }
+        print(1)
+    }
+}
+fn multi_clause_tail_inner() {
+    let v = mk_v()
+    let w = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        handle Note { fn note(x) { v } } in { let b = pick(); note(1); mk_v() }
+    }
+    print(w.len())
+}
+fn main() {
+    multi_inner_block_pick()
+}

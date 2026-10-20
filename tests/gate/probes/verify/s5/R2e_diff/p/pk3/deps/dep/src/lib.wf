@@ -1,0 +1,2 @@
+effect Note { fn note(x: u64) }
+pub fn noisy() / Note { note(1) }

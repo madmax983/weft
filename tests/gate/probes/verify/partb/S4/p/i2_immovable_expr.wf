@@ -1,0 +1,19 @@
+struct Plain: !Move { n: u64 }
+struct Outer { f: Plain, n: u64 }
+fn keep_p(p: Plain) {}
+fn keep_o(o: Outer) {}
+fn j01(c: bool) { let a = Plain { n: 1 }
+ let b = Plain { n: 2 }
+ let x = if c { a } else { b } }
+fn j02() { let a = Plain { n: 1 }
+ let x = { a } }
+fn j03(c: bool) { let a = Plain { n: 1 }
+ let b = Plain { n: 2 }
+ let x = match c { true => a, false => b } }
+fn j04(c: bool) { let a = Outer { f: Plain { n: 1 }, n: 1 }
+ let b = Outer { f: Plain { n: 2 }, n: 2 }
+ keep_o(if c { a } else { b }) }
+fn j05() { let a = Plain { n: 1 }
+ keep_p({ a }) }
+fn j06() { let a = Outer { f: Plain { n: 1 }, n: 1 }
+ let x = { a } }

@@ -1,0 +1,10 @@
+// Item in a match/if join with different names.
+fn diff(a: i32, b: i32) -> i32 { a - b }
+fn rdiff(b: i32, a: i32) -> i32 { a - b }
+fn main() {
+    let c = true
+    let g = if c { rdiff } else { diff }
+    print(g(b: 10, a: 3))
+    let h = if c { rdiff } else { rdiff }
+    print(h(b: 10, a: 3))
+}

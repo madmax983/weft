@@ -1,0 +1,61 @@
+struct HR { r: &u64 }
+
+fn vec_of_refs() / io {
+    scope { s =>
+        {
+            let n = 5
+            let vs = Vec.new()
+            vs.push(&n)
+            s.spawn(|| { sleep(1.ms); print(n); print(vs[0]) })
+        }
+        print(1)
+    }
+}
+
+fn struct_of_ref() / io {
+    scope { s =>
+        {
+            let n = 5
+            let h = HR { r: &n }
+            s.spawn(|| { sleep(1.ms); print(n); print(h.r) })
+        }
+        print(1)
+    }
+}
+
+fn tuple_of_ref() / io {
+    scope { s =>
+        {
+            let n = 5
+            let h = (&n, 1)
+            s.spawn(|| { sleep(1.ms); print(n); print(h.0) })
+        }
+        print(1)
+    }
+}
+
+fn closure_ref() / io {
+    scope { s =>
+        {
+            let n = 5
+            let g = || print(n)
+            let r = &n
+            let g2 = || print(r)
+            s.spawn(|| { sleep(1.ms); print(n); g2() })
+        }
+        print(1)
+    }
+}
+
+fn task_makes_ref_then_body_ends() / io {
+    scope { s =>
+        {
+            let n = 5
+            s.spawn(|| { let r = &n; sleep(1.ms); print(r) })
+        }
+        print(1)
+    }
+}
+
+fn main() / io {
+}

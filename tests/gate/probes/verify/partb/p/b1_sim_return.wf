@@ -1,0 +1,33 @@
+fn run_it(f: fn()) { f() }
+
+test "return in sim body" {
+    sim.run(seed: 1) {
+        print("in")
+        return
+    }
+    print("after sim")
+}
+
+test "return in trailing block" {
+    run_it() {
+        print("block")
+        return
+    }
+    print("after block")
+}
+
+test "return in fork branch" {
+    let (a, b) = fork(|| { return 1 }, || { if true { return 2 }; 3 })
+    print(a + b)
+}
+
+test "break in scope body loop" {
+    scope { s =>
+        let i = 0
+        loop {
+            i += 1
+            if i > 2 { break }
+        }
+        print(i)
+    }
+}

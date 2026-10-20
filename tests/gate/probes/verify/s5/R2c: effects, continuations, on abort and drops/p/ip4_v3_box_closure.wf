@@ -1,0 +1,12 @@
+// A closure that captures by move a Vec, copied at each resume.
+effect Choice { multi fn choose() -> bool }
+fn main() {
+    let all: Vec<usize> = Vec.new()
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        let w: Vec<u64> = Vec.new()
+        let f = || { let n = w.len(); n }
+        let b = choose()
+        all.push(f())
+    }
+    print(all)
+}

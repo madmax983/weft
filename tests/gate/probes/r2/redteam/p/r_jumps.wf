@@ -1,0 +1,81 @@
+effect Log { fn log(msg: String) }
+fn run(f: fn()) { f() }
+fn run_val(f: fn() -> u64) -> u64 { f() }
+
+fn timeout_break() / async, fail {
+    let i = 0
+    while i < 3 {
+        i += 1
+        with_timeout(1.s) { break }   //~ W0111
+    }
+}
+fn trailing_continue() {
+    let i = 0
+    while i < 3 {
+        i += 1
+        run() { continue }   //~ W0111
+    }
+}
+fn trailing_return() -> u64 {
+    let n = run_val() { return 5 }
+    n
+}
+fn sim_return() {
+    sim.run(seed: 1) { return }
+    print(1)
+}
+// A break in a match arm inside a clause.
+fn clause_match_break(n: u64) {
+    let i = 0
+    while i < n {
+        i += 1
+        handle Log { fn log(m) { match i { 0 => { break }, _ => resume(()) } } } in log("x")   //~ W0315
+    }
+}
+// A break in a closure inside a clause, the loop is inside the clause.
+fn clause_inner_loop() {
+    handle Log {
+        fn log(m) {
+            let i = 0
+            while i < 2 {
+                i += 1
+                let f = || { break }   //~ W0111
+                f()
+            }
+            resume(())
+        }
+    } in log("x")
+}
+// A return inside a clause inside a closure.
+fn closure_clause_return() {
+    let f = || {
+        handle Log { fn log(m) { return } } in log("x")   //~ W0315
+    }
+    f()
+}
+// A break in the condition of an if inside a scope body in a loop.
+fn scope_cond_break(n: u64) / async {
+    let i = 0
+    while i < n {
+        i += 1
+        scope { s => if { break
+ true } { print(1) } }   //~ W0315
+    }
+}
+// A break in a while condition.
+fn while_cond_break() {
+    let i = 0
+    loop {
+        while { if i > 2 { break }
+ true } { i += 1 }
+        i += 1
+        if i > 10 { break }
+    }
+}
+// A jump in the iterated value of a for loop.
+fn for_iter_jump(v: &Vec<u64>) {
+    loop {
+        for x in { break
+ v }[] { print(x) }
+    }
+}

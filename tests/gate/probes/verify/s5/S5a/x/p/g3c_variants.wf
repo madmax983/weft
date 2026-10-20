@@ -1,0 +1,62 @@
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { print("unlocked")
+ let Lock(i) = l }
+fn lock() -> Lock { print("locked")
+ Lock { id: 1 } }
+fn take2(l: Lock, n: u64) { unlock(l) }
+fn take_ll(a: Lock, b: Lock) { unlock(a)
+ unlock(b) }
+struct Pair { l: Lock, n: u64 }
+enum E { A(Lock, u64), B }
+effect Take { fn take(l: Lock, n: u64) }
+impl Lock {
+    fn with(self: Lock, n: u64) { unlock(self) }
+}
+fn id(n: u64) -> u64 { n }
+
+fn h_match(c: bool) -> u64 {
+    take2(lock(), match c { true => { return 1 }, false => 2 })
+    0
+}
+fn h_nested(c: bool) -> u64 {
+    take2(lock(), id(if c { return 1 } else { 2 }))
+    0
+}
+fn h_array(c: bool) -> u64 {
+    let a = [lock(), if c { return 1 } else { lock() }]
+    0
+}
+fn h_variant(c: bool) -> u64 {
+    let e = E.A(lock(), if c { return 1 } else { 2 })
+    match e { E.A(l, n) => unlock(l), E.B => {} }
+    0
+}
+fn h_method(c: bool) -> u64 {
+    lock().with(if c { return 1 } else { 2 })
+    0
+}
+fn h_op(c: bool) -> u64 / Take {
+    take(lock(), if c { return 1 } else { 2 })
+    0
+}
+fn h_inner_loop(n: u64) {
+    for i in 0..n {
+        take2(lock(), { for j in 0..n { if j == 1 { break } }
+ if i == 1 { break }
+ 2 })
+    }
+}
+fn h_two_linear(c: bool) -> u64 {
+    take_ll(lock(), if c { return 1 } else { lock() })
+    0
+}
+fn h_while(n: u64) {
+    let i = 0
+    while i < n {
+        i += 1
+        take2(lock(), if i == 1 { continue } else { 2 })
+    }
+}
+fn main() {
+    h_match(true)
+}

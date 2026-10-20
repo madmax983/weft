@@ -1,0 +1,5 @@
+effect Rand { fn random() -> u64 }
+fn roll() -> u64 / Rand { random() }
+fn main() / rand {
+    print(roll())   //~ W0805
+}

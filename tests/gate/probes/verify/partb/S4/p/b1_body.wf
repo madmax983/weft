@@ -1,0 +1,36 @@
+struct P { a: u8, b: u64 }
+enum E { V(u64), W }
+fn b01() -> P { P { b: 3, a: 1, b: 4 } }
+fn b02() { let f = |a, a| 1 }
+fn b03() { let (a, a) = (1, 2) }
+fn b04(a: u64, a: u64) {}
+fn b05() -> P { P { a: 300, b: 1 } }
+fn take8(x: u8) {}
+fn b06() { take8(256) }
+fn b07() -> u8 { 300 }
+fn b08() { let a: [u8; 1] = [300] }
+fn b09(x: u8) -> bool { x == 300 }
+fn b10() { let v: Vec<u8> = Vec.new()
+ v.push(300) }
+fn b11() { let x: i64 = 9223372036854775808 }
+fn b12() { }
+fn b13() { let x: i8 = -129 }
+fn b14() { let x: u8 = --1 }
+fn b15(x: u8) { let y = x + 300 }
+fn b16() { let o: Option<u8> = Some(300) }
+fn two(x: u64, y: u64) {}
+fn b17() { two(1, x: 2) }
+fn b18() { two(y: 1, 2) }
+struct S { n: u64 }
+impl S { fn m(self, k: u64) {} }
+fn b19(s: S) { s.m(j: 1) }
+fn b20(s: S) { s.m(k: 1, k: 2) }
+fn b21() { let x = 1.5.x }
+fn b22() { let x = "s".len }
+fn b23() { let x = true.x }
+fn b24() / par { fork() }
+fn b25() / par { fork(|| 1) }
+fn b26() { let x: u8 = 0 - 1 }
+fn b27() { let t: (u8, u8) = (1, 256) }
+fn b28() { let x = -1
+ let y: u32 = x }

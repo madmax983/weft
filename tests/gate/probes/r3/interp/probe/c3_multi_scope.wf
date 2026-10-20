@@ -1,0 +1,17 @@
+// A multi operation inside a scope with a running child. Each copy of the
+// continuation runs the rest of the scope body.
+effect Choice { multi fn choose() -> bool }
+
+fn main() / io, par {
+    handle Choice { fn choose() { resume(true); resume(false); print("clause done") } } in {
+        scope { s =>
+            s.spawn(|| { sleep(5.ms); print("child at {Clock.now()}") })
+            let b = choose()
+            print("branch {b}")
+            sleep(10.ms)
+            print("branch {b} ends at {Clock.now()}")
+        }
+        print("scope ended")
+    }
+    print("end")
+}

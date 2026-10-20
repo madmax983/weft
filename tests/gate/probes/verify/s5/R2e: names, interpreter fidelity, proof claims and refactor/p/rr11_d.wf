@@ -1,0 +1,14 @@
+// Bad paths: a function, a module, a type, too long, an op.
+mod a {
+    pub effect Note { fn note(x: u64) }
+    pub fn f() / Note { note(1) }
+    pub struct S { x: u64 }
+}
+fn g1() / a.f { }
+fn g2() / a { }
+fn g3() / a.S { }
+fn g4() / a.Note.note { }
+fn g5() / b.Note { }
+fn main() {
+    handle a.f { fn note(x) { resume(()) } } in a.f()
+}

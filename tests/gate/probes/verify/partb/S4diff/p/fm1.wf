@@ -1,0 +1,15 @@
+effect Choice { multi fn choose() -> bool }
+struct Entity { hp: i32 }
+linear struct Tok { id: u64 }
+fn spend(t: Tok) { let Tok(i) = t }
+fn mint() -> Tok { Tok { id: 1 } }
+fn with_lin(e: &Entity, f: fn(&Entity)) {
+    let t = mint()
+    f(e)
+    spend(t)
+}
+fn with_uniq(v: &Vec<Entity> @ uniq, f: fn(&Entity)) {
+    let r = &v[0]
+    f(r)
+    print(v[0].hp)
+}

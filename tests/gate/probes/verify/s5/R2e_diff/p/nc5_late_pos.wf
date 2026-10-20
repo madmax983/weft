@@ -1,0 +1,10 @@
+fn d1(a: i32, b: i32) -> i32 { print("d1") 
+ a - b }
+fn d2(b: i32, a: i32) -> i32 { print("d2") 
+ a - b }
+fn main() {
+    let g = d1
+    let c = || g(3, 10)
+    g = d2
+    print(c())
+}

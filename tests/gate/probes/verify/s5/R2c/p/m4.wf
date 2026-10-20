@@ -1,0 +1,22 @@
+effect Choice { multi fn choose() -> bool }
+fn work() -> u64 { 1 }
+fn spawn_then_choose() / Choice, async {
+    scope { s =>
+        let t = s.spawn(|| work())
+        let b = choose()
+        print(b)
+        t.detach()
+    }
+}
+fn choose_in_scope() / Choice, async {
+    scope { s =>
+        s.spawn(|| print(7))
+        let b = choose()
+        print(b)
+    }
+}
+fn main() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        choose_in_scope()
+    }
+}

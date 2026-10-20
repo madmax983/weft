@@ -1,0 +1,10 @@
+struct C { k: u64 }
+fn main() {
+    let c = C { k: 0 }
+    scope { s =>
+        let go = || s.spawn(|| c.k += 1)
+        go()
+        go()
+    }
+    print(c.k)
+}

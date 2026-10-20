@@ -1,0 +1,30 @@
+effect Pick { fn pick() -> &u64 }
+effect Clear { fn clear() }
+
+fn uses_pick_then_clear() / Pick, Clear {
+    let r = pick()
+    clear()
+    print(r)
+}
+fn d_caller_handler() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        handle Clear { fn clear() { v.clear()
+ resume(()) } } in uses_pick_then_clear()
+    }
+}
+fn d_local() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        handle Clear { fn clear() { v.clear()
+ resume(()) } } in {
+            let r = pick()
+            clear()
+            print(r)
+        }
+    }
+}
+fn main() { d_caller_handler() 
+ d_local() }

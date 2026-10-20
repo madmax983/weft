@@ -1,0 +1,33 @@
+// OR5. The parent borrows into a place that an active task mutates, and uses
+// the reference after the join. The checker treats the spawn node as the
+// mutation, and the borrow comes after it, so the reference stays valid.
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+
+fn use_after_join() {
+    let v = mk_v()
+    scope { s =>
+        let t = s.spawn(|| v.clear())
+        let r = &v[1]
+        t.join()
+        print(r + 1)          // stock: "a place does not exist"
+    }
+}
+
+fn use_after_scope() {
+    let v = mk_v()
+    let r = &v[0]
+    scope { s =>
+        s.spawn(|| v.clear())
+        r = &v[1]
+    }
+    print(r + 1)              // stock: "a place does not exist"
+}
+
+fn main() {
+    use_after_join()
+}

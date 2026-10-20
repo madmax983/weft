@@ -19,13 +19,6 @@ use crate::Error;
 /// repository. The repository sets of tier 1 have the current versions.
 pub const EXCLUDED_COMPONENTS: [&str; 5] = ["target", "crates", "tests", "std", "examples"];
 
-/// The default root of tier 2 when `WEFT_GATE_PROBES` is not set.
-///
-/// It is the scratch directory of the session that made the plan. It can go away;
-/// then use the unpacked archive (`tests/gate/probes-tier2.sha256` names its hash).
-pub const DEFAULT_PROBES: &str =
-    "/tmp/claude-0/-home-user-weft/da0e5bf6-1701-54dd-be37-5c174a731219/scratchpad";
-
 /// The header line of the manifest text.
 pub const HEADER: &str = "hash\tpath\tset\tmode\thas_main\thas_tests\tother_paths";
 
@@ -149,13 +142,14 @@ pub struct Manifest {
     pub missing: Vec<String>,
 }
 
-/// The roots of tier 1: the repository sets of plan §2.1.
+/// The roots of tier 1: the repository sets of plan §2.1, then the hand probes.
 pub fn tier1_roots() -> Vec<Root> {
     vec![
         Root::new("corpus", "tests/programs", Scope::Files),
         Root::new("interp", "crates/weft-interp/tests/programs", Scope::Files),
         Root::new("examples", "examples", Scope::Tree),
         Root::new("packages", "tests/packages", Scope::Tree),
+        Root::new("ir_targets", "tests/ir_targets", Scope::Files),
         Root::new("probes", "tests/gate/probes", Scope::Tree),
     ]
 }
@@ -501,7 +495,7 @@ pub fn hex(bytes: &[u8]) -> String {
 
 /// The kind of a directory entry. A symbolic link is [`Kind::Other`].
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Kind {
+pub(crate) enum Kind {
     File,
     Dir,
     Other,
@@ -509,7 +503,7 @@ enum Kind {
 
 /// Reads a directory. The names are in sorted order; a name that is not UTF-8 is
 /// converted with replacement characters.
-fn read_dir_sorted(dir: &Path) -> Result<Vec<(String, Kind)>, Error> {
+pub(crate) fn read_dir_sorted(dir: &Path) -> Result<Vec<(String, Kind)>, Error> {
     let rd = fs::read_dir(dir).map_err(|e| Error::io(dir, e))?;
     let mut out = Vec::new();
     for ent in rd {
@@ -528,15 +522,15 @@ fn read_dir_sorted(dir: &Path) -> Result<Vec<(String, Kind)>, Error> {
     Ok(out)
 }
 
-fn is_real_dir(path: &Path) -> bool {
+pub(crate) fn is_real_dir(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
 }
 
-fn is_wf(name: &str) -> bool {
+pub(crate) fn is_wf(name: &str) -> bool {
     Path::new(name).extension().is_some_and(|e| e == "wf")
 }
 
-fn join_rel(rel: &str, name: &str) -> String {
+pub(crate) fn join_rel(rel: &str, name: &str) -> String {
     if rel.is_empty() {
         name.to_string()
     } else {
@@ -552,7 +546,7 @@ fn slash_path(p: &Path) -> String {
 }
 
 /// Applies the exclusion rule to the root directory `dir` itself.
-fn root_is_excluded(base: &Path, dir: &Path) -> bool {
+pub(crate) fn root_is_excluded(base: &Path, dir: &Path) -> bool {
     let mut at = base.to_path_buf();
     if at.join("Cargo.toml").is_file() {
         return true;

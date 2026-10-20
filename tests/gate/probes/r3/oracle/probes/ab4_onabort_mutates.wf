@@ -1,0 +1,16 @@
+struct Log { lines: Vec<u64> }
+linear struct Tx { id: u64, r: &Vec<u64> }
+    on abort = tx_abort
+fn tx_abort(t: Tx) { let Tx(id, r) = t; r.push(id) }
+fn commit(t: Tx) { let Tx(id, r) = t; print("commit", id) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let first = &v[0]
+    handle Fail { fn fail(m) { print(m) } } in {
+        let t = Tx { id: 1, r: &v }
+        fail("x")
+        commit(t)
+    }
+    print(first)
+}

@@ -1,0 +1,18 @@
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print(b.items.len()) }
+fn twice(f: fn()) {
+    f()
+    f()
+}
+fn once_twice() {
+    let b = Buf { items: Vec.new() }
+    twice(|| eat(b))
+}
+fn once_twice_named() {
+    let b = Buf { items: Vec.new() }
+    let k = || eat(b)
+    twice(k)
+}
+fn main() {
+    once_twice()
+}

@@ -1,0 +1,20 @@
+struct Node { v: u64 }
+fn t1() / par {
+    let n = Rc.new(Node { v: 1 })
+    let t = (|| print(n.v), 1)
+    fork(|| { let (g, k) = t
+ g() }, || print(2))
+}
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+effect Choice { multi fn choose() -> bool }
+fn t2() / Choice {
+    let tx = begin()
+    let f = || rollback(tx)
+    let t = (f, 1)
+    let b = choose()
+    let (g, k) = t
+    g()
+}

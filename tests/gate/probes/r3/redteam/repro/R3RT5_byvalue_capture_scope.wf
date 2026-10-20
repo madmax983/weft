@@ -1,0 +1,49 @@
+// R3RT5 (false positive): a closure that moves a captured variable takes the
+// value when it is made (a by-value capture, ADR 0003, R2b-1). The closure owns
+// the value. But the checker still ties the closure to the variable: the end of
+// the variable (a return, the end of a block, the end of a loop iteration)
+// invalidates the closure (W0204, W0301).
+// Expected: no error. Found: 5 errors.
+// Run: weft run --unchecked --oracle R3RT5_byvalue_capture_scope.wf
+//      prints "0", "release 7", "0", "0", "0" with no oracle fault.
+linear struct Tx { id: u64 }
+fn release(t: Tx) { print("release {t.id}"); let Tx(i) = t }
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print(b.items.len()) }
+fn mkbuf() -> Buf { Buf { items: Vec.new() } }
+
+// A maker returns a closure that consumes its by-value parameter.
+fn mk_eat(b: Buf) -> fn() { || eat(b) }                     // W0204 today
+fn mk_release(t: Tx) -> fn() { || release(t) }              // W0204 today
+fn mk_local() -> fn() { let c = mkbuf(); || eat(c) }        // W0204 today
+
+// The closure outlives a block.
+fn block_scope() {
+    let k = || print(0)
+    {
+        let b = mkbuf()
+        k = || eat(b)
+    }
+    k()                                                      // W0301 today
+}
+// The closure outlives a loop iteration.
+fn loop_scope() {
+    let ks = Vec.new()
+    let i = 0
+    while i < 3 {
+        let b = mkbuf()
+        ks.push(|| eat(b))
+        i += 1
+    }
+    match ks.pop() { Some(f) => f(), None => {} }            // W0301 today
+}
+fn main() {
+    let g = mk_eat(mkbuf())
+    g()
+    let h = mk_release(Tx { id: 7 })
+    h()
+    let l = mk_local()
+    l()
+    block_scope()
+    loop_scope()
+}

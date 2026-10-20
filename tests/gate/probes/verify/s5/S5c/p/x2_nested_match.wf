@@ -1,0 +1,47 @@
+enum Color { Red, Green, Blue }
+enum Shape { Dot(Color), Line(Color, Color), Empty }
+fn f(s: Shape) -> u64 {
+    match s {
+        Dot(Red) => 1,
+        Line(_, Blue) => 2,
+        Dot(_) => 3,
+        Line(Red, _) => 4,
+        Empty => 5,
+    }
+}
+fn g(s: Shape) -> u64 {
+    match s {
+        Dot(Red) => 1,
+        Line(Green, Blue) => 2,
+        Dot(Green) => 3,
+        Empty => 5,
+        Dot(Blue) => 6,
+    }
+}
+fn h(p: (Shape, Option<Color>)) -> u64 {
+    match p {
+        (Empty, None) => 1,
+        (Dot(c), Some(Red)) => 2,
+        (_, Some(Green)) => 3,
+        (Line(a, b), _) => 4,
+        (Empty, Some(_)) => 5,
+    }
+}
+fn k(p: (Shape, Option<Color>)) -> u64 {
+    match p {
+        (Empty, None) => 1,
+        (Dot(c), Some(Red)) => 2,
+        (_, Some(Green)) => 3,
+        (Line(a, b), _) => 4,
+        (Empty, Some(_)) => 5,
+        (Dot(_), None) => 6,
+        (Dot(_), Some(Blue)) => 7,
+    }
+}
+fn m(o: Option<Option<Color>>) -> u64 {
+    match o { Some(Some(Red)) => 1, Some(None) => 2, None => 3, Some(Some(_)) => 4 }
+}
+fn n(o: Option<Option<Color>>) -> u64 {
+    match o { Some(Some(Red)) => 1, Some(None) => 2, None => 3 }
+}
+fn main() { print(f(Empty)) }

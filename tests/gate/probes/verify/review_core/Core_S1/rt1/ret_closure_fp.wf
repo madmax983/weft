@@ -1,0 +1,22 @@
+// Returned closures: which are accepted?
+fn consume(t: String) -> u64 { 1 }
+// A. The closure moves its capture: the closure owns it.
+fn owns(t: String) -> fn() -> u64 { || consume(t) }
+// B. The closure copies a scalar parameter.
+fn adder(n: u64) -> fn(u64) -> u64 { |x| x + n }
+// C. The closure captures a Vec local by reference.
+fn lenf() -> fn() -> usize {
+    let w: Vec<u64> = Vec.new()
+    w.push(1)
+    || w.len()
+}
+// D. No capture.
+fn plain() -> fn() -> u64 { || 1 }
+fn main() {
+    let f = owns("a")
+    print(f())
+    let g = adder(2)
+    print(g(3))
+    let h = lenf()
+    print(h())
+}

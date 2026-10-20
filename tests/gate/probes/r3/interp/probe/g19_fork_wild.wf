@@ -1,0 +1,8 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { let Tx(id) = t; print("rollback {id}") }
+fn commit(t: Tx) / io { let Tx(id) = t; print("commit {id}") }
+fn main() / io, par {
+    let (a, _) = fork(|| Tx { id: 5 }, || Tx { id: 6 })
+    commit(a)
+}

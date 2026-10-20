@@ -1,0 +1,29 @@
+linear struct Lease { id: u64 }
+    on abort = release
+
+fn release(l: Lease) {
+    let Lease(id) = l
+    print("release {id}")
+}
+
+fn run() / io, fail {
+    scope { s =>
+        let a = s.spawn(|| {
+            let l = Lease { id: 7 }
+            sleep(10.s)
+            let Lease(id) = l
+            print("finished {id}")
+        })
+        let b = s.spawn(|| {
+            sleep(1.s)
+            fail("boom")
+        })
+        a.join()
+        b.join()
+    }
+}
+
+fn main() / io {
+    handle Fail { fn fail(msg) { print("caught: {msg}") } } in run()
+    print("after")
+}

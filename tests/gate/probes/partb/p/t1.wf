@@ -1,0 +1,2 @@
+fn find(v: &Vec<u64>) -> Option<&u64 in v[]> { Some(&v[0]) }
+fn main() {}

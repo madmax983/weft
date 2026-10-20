@@ -1,0 +1,15 @@
+linear struct Tx { id: u64 }
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn main() {
+    let i = 0
+    loop {
+        let t = begin()
+        while { if i > 2 { break }
+ true } { i += 1 }
+        print("after while")
+        rollback(t)
+        break
+    }
+    print("after loop {i}")
+}

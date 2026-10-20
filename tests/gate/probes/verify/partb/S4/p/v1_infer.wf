@@ -1,0 +1,30 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+linear struct Lock { id: u64 }
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn take() -> Lock { Lock { id: 1 } }
+fn release(l: Lock) { let Lock(i) = l }
+fn risky() / fail { fail("no") }
+fn v01() { let o = None
+ o = Some(begin()) }
+fn fill(v: &Vec<Tx>) / mut(v) { v.push(begin()) }
+fn v02() { let v = Vec.new()
+ fill(&v) }
+fn v03() / fail { let o = None
+ o = Some(take())
+ risky()
+ match o { Some(l) => release(l), None => {} } }
+struct Plain: !Move { n: u64 }
+fn keepv(v: Vec<Plain>) {}
+fn v04() { let o = None
+ o = Some(Plain { n: 1 })
+ let p = o }
+effect Choice { multi fn choose() -> bool }
+fn v05() / Choice { let o = None
+ o = Some(begin())
+ let b = choose()
+ match o { Some(t) => rollback(t), None => {} } }
+fn v06() { let x = None
+ let f = || { match x { Some(t) => rollback(t), None => {} } }
+ x = Some(begin()) }

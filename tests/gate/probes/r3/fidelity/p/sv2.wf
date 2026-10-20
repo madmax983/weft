@@ -1,0 +1,18 @@
+// The same with a `handle` whose clause does not resume: the value of the
+// body is linear, and the abort happens after the body made it? No: a
+// `with_timeout` block whose value is linear and whose deadline passes at a
+// suspension point after the value is made.
+linear struct Tx { id: u64 }
+fn begin() -> Tx { Tx { id: 1 } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn work() / async, clock, fail {
+    let t = with_timeout(10.ms) {
+        let x = begin()
+        sleep(50.ms)
+        x
+    }
+    commit(t)
+}
+fn main() / async, clock {
+    handle Fail { fn fail(m) { print("failed: {m}") } } in work()
+}

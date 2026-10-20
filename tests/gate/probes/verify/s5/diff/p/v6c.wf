@@ -1,0 +1,21 @@
+effect Op { fn op() }
+fn two_reads(c: bool) / Op {
+    let x: u64
+    if c { x = 1 }
+    let k = || print(x)
+    handle Op { fn op() {
+        print(x)
+        resume(())
+    } } in op()
+}
+fn two_reads_later() / Op {
+    let x: u64
+    handle Op { fn op() {
+        print(x)
+        resume(())
+    } } in op()
+    x = 2
+    let k = || print(x)
+    k()
+}
+fn main() { }

@@ -1,0 +1,16 @@
+// Task `a` captures nothing, so the checker marks it stealable. It makes an
+// `Rc` and spawns a pinned child `b` that captures the `Rc`. Both wake at 5 ms.
+// The scheduler runs `b` on its worker and steals `a` to another worker, so
+// two workers change the count of one `Rc` in the same instant.
+fn main() / io {
+    scope { s =>
+        s.spawn(|| {
+            let r = Rc.new(0)
+            scope { t =>
+                t.spawn(|| { sleep(5.ms); let y = r.clone() })
+                sleep(5.ms)
+                let z = r.clone()
+            }
+        })
+    }
+}

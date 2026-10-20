@@ -1,0 +1,77 @@
+effect Note { fn note(x: u64) }
+struct P { x: u64, y: u64 }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn first(v: &Vec<u64>) -> &u64 in v[] { &v[0] }
+
+fn copy_tail_race() / async {
+    let n = 1
+    let x = scope { s =>
+        s.spawn(|| { n = 5 })
+        n
+    }
+    print(x)
+}
+fn copy_field_tail_race() / async {
+    let p = P { x: 1, y: 2 }
+    let x = scope { s =>
+        s.spawn(|| { p.x = 5 })
+        p.x
+    }
+    print(x)
+}
+fn copy_tail_stmt_race() / async {
+    let n = 1
+    scope { s =>
+        s.spawn(|| { n = 5 })
+        n
+    }
+}
+fn copy_index_tail_race() / async {
+    let v = mk_v()
+    let x = scope { s =>
+        s.spawn(|| { v[0] = 5 })
+        v[0]
+    }
+    print(x)
+}
+fn copy_block_tail_race() / async {
+    let n = 1
+    let x = scope { s =>
+        s.spawn(|| { n = 5 })
+        { n }
+    }
+    print(x)
+}
+fn copy_if_tail_race() / async {
+    let n = 1
+    let c = true
+    let x = scope { s =>
+        s.spawn(|| { n = 5 })
+        if c { n } else { 0 }
+    }
+    print(x)
+}
+fn ref_deref_tail_race() / async {
+    let n = 1
+    let r = &n
+    let x = scope { s =>
+        s.spawn(|| { n = 5 })
+        r + 0
+    }
+    print(x)
+}
+fn scope_local_ref() / async {
+    let r = scope { s => let v = mk_v(); first(&v) }
+    print(r + 1)
+}
+fn handled_copy_tail_in_scope() / async {
+    let n = 1
+    scope { s =>
+        s.spawn(|| { n = 5 })
+        let x = handle Note { fn note(k) { resume(()) } } in { n }
+        print(x)
+    }
+}
+fn main() / async {
+    copy_tail_race()
+}

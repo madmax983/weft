@@ -1,0 +1,138 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Cb { f: fn() }
+mod api {
+    pub fn fetch(x: u64) -> u64 / net { x + 1 }
+}
+fn noop() {}
+
+// v1: a closure re-assigned in a loop, after the call in the text.
+fn loop_closure(world: &World, n: u64) / mut(world.entities) {
+    let first = &world.entities[0]
+    let h = || print(1)
+    let i = 0
+    while i < n {
+        h()
+        print(first.hp)   // expect W0301 (second iteration)
+        h = || world.entities.clear()
+        i += 1
+    }
+}
+// v2: a closure returned through two makers.
+fn mk_grow(w: &World) -> fn() / mut(w.entities) { || w.entities.push(Entity { hp: 1 }) }
+fn mk2(w: &World) -> fn() / mut(w.entities) { mk_grow(w) }
+fn two_levels(world: &World) / mut(world.entities) {
+    let f = mk2(world)
+    let first = &world.entities[0]
+    f()
+    print(first.hp)   // expect W0301
+}
+// v3: a maker that chooses with `if`.
+fn mk_if(w: &World, c: bool) -> fn() / mut(w.entities) {
+    if c { || print(1) } else { || w.entities.clear() }
+}
+fn via_mk_if(world: &World, c: bool) / mut(world.entities) {
+    let f = mk_if(world, c)
+    let first = &world.entities[0]
+    f()
+    print(first.hp)   // expect W0301
+}
+// v4: an early return of a closure.
+fn mk_early(w: &World, c: bool) -> fn() / mut(w.entities) {
+    if c { return || w.entities.clear() }
+    || print(1)
+}
+fn via_mk_early(world: &World, c: bool) / mut(world.entities) {
+    let f = mk_early(world, c)
+    let first = &world.entities[0]
+    f()
+    print(first.hp)   // expect W0301
+}
+// v5: a closure that makes a closure.
+fn closure_maker(world: &World) / mut(world.entities) {
+    let mk = || || world.entities.clear()
+    let f = mk()
+    let first = &world.entities[0]
+    f()
+    print(first.hp)   // expect W0301
+}
+// v6: a returned closure that mutates through its parameter.
+fn mk_clear() -> fn(&World) { |x| x.entities.clear() }
+fn via_mk_clear(world: &World) {
+    let f = mk_clear()
+    let first = &world.entities[0]
+    f(world)
+    print(first.hp)   // expect W0301
+}
+// v7: a public maker must state the effect of the closure that it returns.
+pub fn mk_pub() -> fn() { || log.info("x") }   // expect W0701
+// v8: a closure in a returned struct (ADR 0005 says open).
+fn mk_struct(w: &World) -> Cb / mut(w.entities) { Cb { f: || w.entities.clear() } }
+fn via_struct(world: &World) / mut(world.entities) {
+    let s = mk_struct(world)
+    let first = &world.entities[0]
+    let g = s.f
+    g()
+    print(first.hp)   // expect W0301
+}
+// v9: a closure in a returned Option.
+fn mk_opt(w: &World) -> Option<fn()> / mut(w.entities) { Some(|| w.entities.clear()) }
+fn via_opt(world: &World) / mut(world.entities) {
+    let o = mk_opt(world)
+    let first = &world.entities[0]
+    match o {
+        Some(g) => g(),
+        None => {}
+    }
+    print(first.hp)   // expect W0301
+}
+// v10: a closure in a Vec.
+fn in_vec(world: &World) / mut(world.entities) {
+    let v: Vec<fn()> = Vec.new()
+    v.push(|| world.entities.clear())
+    let first = &world.entities[0]
+    let g = v[0]
+    g()
+    print(first.hp)   // expect W0301
+}
+// v11: a closure through `match` arms.
+fn in_match(world: &World, n: u64) / mut(world.entities) {
+    let first = &world.entities[0]
+    let h = match n {
+        0 => || print(0),
+        1 => || print(1),
+        _ => || world.entities.clear(),
+    }
+    h()
+    print(first.hp)   // expect W0301
+}
+// v12: a returned closure that performs net, called by a function with a clock row.
+fn mk_net() -> fn() -> u64 { || api.fetch(1) }
+fn caller_net() -> u64 / clock {
+    let f = mk_net()   // expect W0702
+    f()   // expect W0702
+}
+// v13: a returned closure through a generic identity.
+fn id<T>(x: T) -> T { x }
+fn via_id(world: &World) / mut(world.entities) {
+    let f = id(|| world.entities.clear())
+    let first = &world.entities[0]
+    f()
+    print(first.hp)   // expect W0301
+}
+// v14: a closure through a nested tuple.
+fn nested_tuple(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let t = (1, (2, || world.entities.clear()))
+    let (a, (b, h)) = t
+    h()
+    print(first.hp)   // expect W0301
+}
+// v15: a closure through a tuple field access.
+fn tuple_field(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let t = (|| world.entities.clear(), 1)
+    let h = t.0
+    h()
+    print(first.hp)   // expect W0301
+}

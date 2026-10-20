@@ -1,0 +1,2 @@
+struct S0 { f0: Box<Option<S0>>, f1: S0, f2: Box<[S0; 2]> }
+fn main() {}

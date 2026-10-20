@@ -1,0 +1,15 @@
+// A closure that moves its capture owns it. Returning the closure is safe.
+struct Bag { items: Vec<u64> }
+fn take(b: Bag) -> usize { b.items.len() }
+fn mk(b: Bag) -> fn() -> usize { || take(b) }
+fn mk_local() -> fn() -> usize {
+    let b = Bag { items: Vec.new() }
+    b.items.push(1)
+    || take(b)
+}
+fn main() {
+    let f = mk(Bag { items: Vec.new() })
+    print(f())
+    let g = mk_local()
+    print(g())
+}

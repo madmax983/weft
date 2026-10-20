@@ -1,0 +1,13 @@
+struct H { f: fn() }
+struct HH { h: H, n: u64 }
+struct G<T> { x: T }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn run_h(h: &H) { let g = h.f; g() }
+fn main() {
+    let v = mk_v()
+    let gs = G { x: || v.push(2) }
+    scope { s =>
+        s.spawn(|| { let g = gs.x; g() })
+        print(v.len())
+    }
+}

@@ -1,0 +1,29 @@
+struct Stats { count: u64 }
+struct Job { f: fn() }
+fn twice(g: fn()) { g()
+ g() }
+
+fn s_local(st: &Stats) / mut(st), async {
+    scope { s =>
+        let c = || { s.spawn(|| { st.count += 1; print(st.count) }); () }
+        twice(c)
+    }
+}
+fn s_field(st: &Stats) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| { st.count += 1; print(st.count) }); () } }
+        twice(j.f)
+    }
+}
+fn s_field_local(st: &Stats) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| { st.count += 1; print(st.count) }); () } }
+        let g = j.f
+        g()
+        g()
+    }
+}
+fn main() / async {
+    let st = Stats { count: 0 }
+    s_local(&st)
+}

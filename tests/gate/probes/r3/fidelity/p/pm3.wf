@@ -1,0 +1,10 @@
+// A whole-value move with a reference to it: the control.
+struct In { x: Vec<u64> }
+struct Out { a: In, b: In }
+fn take_all(o: Out) -> usize { 1 }
+fn main() {
+    let p = Out { a: In { x: Vec.new() }, b: In { x: Vec.new() } }
+    let r = &p
+    let n = take_all(p)
+    print(r.a.x.len())   // W0301
+}

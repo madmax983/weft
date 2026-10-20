@@ -1,0 +1,21 @@
+effect Log { fn note(m: String) }
+fn both() / clock {
+    note("a")
+    log.info("b")
+}
+fn one_stated() / Log {
+    note("a")
+    log.info("b")
+}
+fn only_user() / clock {
+    note("a")
+}
+fn via_callee() / clock {
+    helper()
+    log.info("b")
+}
+fn helper() / Log { note("x") }
+fn in_closure() / clock {
+    let f = || note("a")
+    log.info("b")
+}

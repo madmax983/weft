@@ -1,0 +1,12 @@
+// RR15: an operation with the name of a prelude function (`sleep`, `print`) has
+// no bare-name call: the prelude function wins in sema and in the interpreter.
+// The clause below never runs, and `napper` gets W0702 for `Clock`. Nothing
+// says that the operation name is shadowed.
+// Expected: W0107 (or a warning) at the operation. Actual: no error in `main`;
+// the run prints nothing.
+effect Nap { fn sleep(d: Duration) }
+fn napper() / Nap { sleep(1.ms) }
+fn main() / clock {
+    handle Nap { fn sleep(d) { print("user nap")
+ resume(()) } } in sleep(1.ms)
+}

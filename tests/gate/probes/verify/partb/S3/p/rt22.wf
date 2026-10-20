@@ -1,0 +1,34 @@
+effect Note { fn note(x: u64) }
+effect Other { fn other() }
+fn a() / async {
+    handle Note { fn note(x) { resume(()) } } in scope { s => s.spawn(|| 1) }
+}
+fn b() / async {
+    handle Note { fn note(x) { resume(()) } } in handle Other { fn other() { resume(()) } } in {
+        scope { s => s.spawn(|| 1) }
+    }
+}
+fn c() / async {
+    let f = || handle Note { fn note(x) { resume(()) } } in { scope { s => s.spawn(|| 1) } }
+    f()
+}
+fn d() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        note(1)
+        scope { s => s.spawn(|| 1) }
+    }
+}
+fn e() -> u64 / async {
+    scope { s =>
+        let t = handle Note { fn note(x) { resume(()) } } in s.spawn(|| 1)
+        t.join()
+    }
+}
+fn e_bad() / async {
+    scope { s =>
+        let t = handle Note { fn note(x) { resume(()) } } in s.spawn(|| 1)
+    }   // W0601
+}
+fn f2(c: bool) / async {
+    if c { handle Note { fn note(x) { resume(()) } } in scope { s => s.spawn(|| 1) } } else { scope { s => s.spawn(|| 2) } }
+}

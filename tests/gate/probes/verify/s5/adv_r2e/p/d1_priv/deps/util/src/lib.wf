@@ -1,0 +1,4 @@
+effect Hidden { fn hid(x: u64) }
+pub effect Note { fn note(x: u64) }
+pub fn noting() / Hidden { hid(1) }
+pub fn noting2() / Note { note(2) }

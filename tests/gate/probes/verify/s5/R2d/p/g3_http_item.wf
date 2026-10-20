@@ -1,0 +1,7 @@
+fn handle(req: Request) -> Response / log {
+    Response.text("hit")
+}
+
+fn main(env: Env) / io {
+    http.serve(env.net.listen("127.0.0.1:18439"), handle)
+}

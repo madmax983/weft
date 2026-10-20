@@ -1,0 +1,11 @@
+fn main() / async {
+    let v: Vec<u64> = [1, 2, 3, 4]
+    let (l, r) = v.split_mut(2)
+    scope { s =>
+        let t1 = s.spawn(|| { l[0] = 10 })
+        let t2 = s.spawn(|| { r[0] = 20 })
+        t1.join()
+        t2.join()
+    }
+    print(v[0] + v[2])
+}

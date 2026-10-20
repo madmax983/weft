@@ -1,0 +1,20 @@
+// A task returns a linear value. The task finishes. Then the owner aborts
+// before it joins the task. The `on abort` of the handle cancels the task,
+// but the task is done: nothing finishes its linear result.
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(t: Tx) { let Tx(id) = t; print("rollback {id}") }
+fn commit(t: Tx) / io { let Tx(id) = t; print("commit {id}") }
+
+fn main() / io, par {
+    handle Fail { fn fail(m) { print("caught: {m}") } } in {
+        scope { s =>
+            let t = s.spawn(|| Tx { id: 3 })
+            sleep(5.ms)
+            fail("abort before the join")
+            commit(t.join())
+        }
+    }
+    print("end")
+}

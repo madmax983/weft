@@ -1,0 +1,34 @@
+// A task runs `on abort` for a timeout of its own. A sibling fails while the
+// `on abort` function sleeps, so the task is cancelled. The cancellation cuts
+// the `on abort` function in the middle.
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(t: Tx) / clock {
+    let Tx(id) = t
+    print("rollback {id} starts at {Clock.now()}")
+    sleep(5.ms)
+    print("rollback {id} ends at {Clock.now()}")
+}
+fn commit(t: Tx) / io { let Tx(id) = t; print("commit {id}") }
+
+fn worker() / io {
+    handle Fail { fn fail(m) { print("worker caught: {m} at {Clock.now()}") } } in {
+        with_timeout(10.ms) {
+            let t = Tx { id: 1 }
+            sleep(100.ms)
+            commit(t)
+        }
+    }
+}
+
+fn main() / io, par {
+    handle Fail { fn fail(m) { print("main caught: {m} at {Clock.now()}") } } in {
+        scope { s =>
+            s.spawn(|| worker())
+            s.spawn(|| { sleep(12.ms); fail("sibling failed") })
+            print("spawned")
+        }
+    }
+    print("end at {Clock.now()}")
+}

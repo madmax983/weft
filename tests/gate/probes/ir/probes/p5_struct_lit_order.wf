@@ -1,0 +1,9 @@
+struct P { a: u64, b: u64 }
+fn a() -> u64 { print("a"); 1 }
+fn b() -> u64 { print("b"); 2 }
+fn main() {
+    let p = P { b: b(), a: a() }
+    print(p.a)
+    let q = P(b: b(), a: a())
+    print(q.b)
+}

@@ -1,0 +1,29 @@
+struct Entity { hp: i32 }
+fn extend(dst: &Vec<&Entity>, src: &Vec<&Entity>) / mut(dst) {
+    let i = 0
+    while i < src.len() { dst.push(src[i]); i += 1 }
+}
+fn extend_vals(dst: &Vec<u64>, src: &Vec<u64>) / mut(dst) {
+    for x in src[] { dst.push(x) }
+}
+fn caller(x: &Entity, y: &Entity) {
+    let all = Vec.new()
+    let some = Vec.new()
+    some.push(x)
+    some.push(y)
+    extend(&all, &some)
+    print(all.len())
+}
+fn caller_vals() {
+    let all = Vec.new()
+    let some = Vec.new()
+    some.push(1)
+    extend_vals(&all, &some)
+    print(all.len())
+}
+fn main() {
+    let x = Entity { hp: 1 }
+    let y = Entity { hp: 2 }
+    caller(&x, &y)
+    caller_vals()
+}

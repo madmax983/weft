@@ -1,0 +1,16 @@
+// Judge probe J4: a reference local of a `multi` handled body points into an
+// outer place. The first run clears the outer place after the operation. The
+// second run starts from the copy of the frames at the operation: `r` is the
+// copied reference, and it points into the cleared `o` (shared, not copied).
+effect Pick { multi fn pick() -> bool }
+
+fn main() {
+    let o = Vec.new()
+    o.push(1)
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let r = &o[0]
+        let b = pick()
+        print(r + 1)      // second run: `o` was cleared by the first run
+        o.clear()
+    }
+}

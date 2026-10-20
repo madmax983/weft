@@ -1,0 +1,9 @@
+fn f() -> u64 / async, clock {
+    scope { s =>
+        s.spawn(|| { sleep(10.ms); print("child done") })
+        return 5
+    }
+    print("after scope")
+    7
+}
+fn main() / async, clock { print(f()); print("main end") }

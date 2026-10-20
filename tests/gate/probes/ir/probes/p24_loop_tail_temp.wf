@@ -1,0 +1,17 @@
+fn stash(ws: &Vec<Weak<usize>>, r: &Rc<usize>) / mut(ws) { ws.push(r.downgrade()) }
+fn alive(w: &Weak<usize>) -> bool {
+    match w.upgrade() {
+        Some(r) => true,
+        None => false,
+    }
+}
+fn main() {
+    let ws = Vec.new()
+    let i = 0
+    while i < 3 {
+        if i > 0 { print("iteration", i, "previous tail temp alive:", alive(&ws[i - 1])) }
+        i += 1
+        stash(&ws, &Rc.new(i))
+    }
+    print("after loop:", alive(&ws[0]))
+}

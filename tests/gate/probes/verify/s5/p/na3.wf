@@ -1,0 +1,46 @@
+fn diff(a: i32, b: i32) -> i32 { a - b }
+fn diff2(b: i32, a: i32) -> i32 { a - b }
+fn pick<T>(c: bool, x: T, y: T) -> T { if c { x } else { y } }
+fn id<T>(x: T) -> T { x }
+fn second<T>(x: T, y: T) -> T { y }
+fn picked(c: bool) {
+    let g = pick(c, diff, diff2)
+    print(g(b: 10, a: 3))
+}
+fn id_join(c: bool) {
+    let g = id(if c { diff } else { diff2 })
+    print(g(b: 10, a: 3))
+}
+fn sec() {
+    let g = second(diff, diff2)
+    print(g(b: 10, a: 3))
+}
+fn tup(c: bool) {
+    let t = if c { (diff, 1) } else { (diff2, 2) }
+    let (g, _) = t
+    print(g(b: 10, a: 3))
+}
+fn opt(c: bool) {
+    let o = if c { Some(diff) } else { Some(diff2) }
+    match o {
+        Some(g) => print(g(b: 10, a: 3)),
+        None => {}
+    }
+}
+fn vecs() {
+    let v = Vec.new()
+    v.push(diff)
+    v.push(diff2)
+    match v.pop() {
+        Some(g) => print(g(b: 10, a: 3)),
+        None => {}
+    }
+}
+fn main() {
+    picked(false)
+    id_join(false)
+    sec()
+    tup(false)
+    opt(false)
+    vecs()
+}

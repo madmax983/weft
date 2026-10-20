@@ -1,0 +1,18 @@
+linear struct Tx { id: u64 }
+fn commit(tx: Tx) {
+    let Tx(id) = tx
+    print(id)
+}
+fn mk(c: bool) -> Option<Tx> {
+    if c { Some(Tx { id: 9 }) } else { None }
+}
+fn main() {
+    match mk(true) {
+        Some(t) => commit(t)
+        None => {}
+    }
+    match mk(false) {
+        Some(t) => commit(t)
+        None => {}
+    }
+}

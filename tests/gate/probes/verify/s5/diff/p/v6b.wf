@@ -1,0 +1,29 @@
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { let Lock(i) = l }
+fn lock() -> Lock { Lock { id: 1 } }
+struct Pair { l: Lock, n: u64 }
+fn take_pair(p: Pair) { let Pair(l, n) = p
+ unlock(l) }
+fn moved_then_part() {
+    let p = Pair { l: lock(), n: 1 }
+    take_pair(p)
+    p.n = 5
+}
+fn part_moved_then_part() {
+    let p = Pair { l: lock(), n: 1 }
+    unlock(p.l)
+    p.n = 5
+}
+fn part_moved_then_refill() {
+    let p = Pair { l: lock(), n: 1 }
+    unlock(p.l)
+    p.l = lock()
+    take_pair(p)
+}
+fn opt_part() {
+    let o: Option<Lock> = None
+    o = Some(lock())
+    match o { Some(l) => unlock(l), None => {} }
+    o = None
+}
+fn main() { moved_then_part(); part_moved_then_part(); part_moved_then_refill(); opt_part() }

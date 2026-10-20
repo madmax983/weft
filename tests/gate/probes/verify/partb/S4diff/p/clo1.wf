@@ -1,0 +1,73 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+
+fn mk(t: Tx) -> fn() { || rollback(t) }
+fn returned_twice() {
+    let g = mk(begin())
+    g()
+    g()   //~ W0502
+}
+fn returned_never() {
+    let g = mk(begin())
+}   //~ W0601
+fn in_tuple() {
+    let t = begin()
+    let p = (|| rollback(t), 1)
+}   //~ W0601
+fn in_loop() {
+    let t = begin()
+    let c = || rollback(t)
+    for i in 0..3 { c() }   //~ W0502
+}
+fn twice(f: fn()) { f()
+ f() }
+fn once_to_twice() {
+    let s = "a"
+    let t = begin()
+    twice(|| rollback(t))   //~ W0502
+}
+fn via_value() {
+    let t = begin()
+    let h = twice
+    h(|| rollback(t))   //~ W0502
+}
+fn copy_then_both() {
+    let t = begin()
+    let c = || rollback(t)
+    let d = c
+    c()   //~ W0302
+    d()
+}
+fn nested_once() {
+    let t = begin()
+    let c = || rollback(t)
+    let d = || c()
+    d()
+    d()   //~ W0502
+}
+fn branch_in_closure(b: bool) {
+    let t = begin()
+    let c = || { if b { rollback(t) } }   //~ W0601
+    c()
+}
+fn run(f: fn()) { f() }
+fn run_once_user() {
+    let t = begin()
+    run(|| rollback(t))
+}
+fn vec_of_closures() {
+    let t = begin()
+    let v = Vec.new()
+    v.push(|| rollback(t))
+}   //~ W0601
+fn opt_closure() {
+    let t = begin()
+    let o = Some(|| rollback(t))
+}   //~ W0601
+struct Holder { f: fn() }
+fn field_closure() {
+    let t = begin()
+    let h = Holder { f: || rollback(t) }   //~ W0601
+}

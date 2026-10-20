@@ -1,0 +1,32 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+linear struct Lock { id: u64 }
+fn rollback(tx: Tx) { print(tx.id); let Tx(i) = tx }
+fn unlock(l: Lock) { print(l.id); let Lock(i) = l }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+effect Stop { fn stop() }
+// A closure moves one part of a captured tuple.
+fn closure_part() {
+    let t = (begin(1), begin(2))
+    let f = || rollback(t.0)
+    f()
+}   //~ W0601
+// After a part moves, the other part is live across an abort with no `on abort`.
+fn part_then_abort() / Stop {
+    let t = (begin(1), Lock { id: 2 })
+    rollback(t.0)
+    stop()   //~ W0602
+}
+// A move of a part into a new local, then the end.
+fn part_to_local() {
+    let t = (begin(1), begin(2))
+    let x = t.0
+    rollback(x)
+}   //~ W0601
+fn main() {
+    closure_part()
+    part_to_local()
+}
+test "abort" {
+    handle Stop { fn stop() { print("stopped") } } in part_then_abort()
+}

@@ -1,0 +1,20 @@
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct T0 { x: u64 }
+struct T1 { f0: T0, f1: T0, f2: T0 }
+struct T2 { f0: T1, f1: T1, f2: T1 }
+struct T3 { f0: T2, f1: T2, f2: T2 }
+struct T4 { f0: T3, f1: T3, f2: T3 }
+struct T5 { f0: T4, f1: T4, f2: T4 }
+struct T6 { f0: T5, f1: T5, f2: T5 }
+struct T7 { f0: T6, f1: T6, f2: T6 }
+struct T8 { f0: T7, f1: T7, f2: T7 }
+struct T9 { f0: T8, f1: T8, f2: T8 }
+struct T10 { f0: T9, f1: T9, f2: T9 }
+struct T11 { f0: T10, f1: T10, f2: T10 }
+struct T12 { f0: T11, f1: T11, f2: T11 }
+struct T13 { f0: T12, f1: T12, f2: T12 }
+fn make() -> T13 { make() }
+fn f() {
+    let t = make()
+    print(1)
+}

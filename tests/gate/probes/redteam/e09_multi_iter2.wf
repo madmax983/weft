@@ -1,0 +1,8 @@
+effect Choice { multi fn choose() -> bool }
+struct Entity { hp: u64 }
+fn walk3(es: &[Entity] @ uniq) / mut(es[]), Choice {
+    for e in es[] {
+        e.hp += 1
+        let b = choose()
+    }
+}

@@ -1,0 +1,12 @@
+linear struct Lk { id: u64 }
+effect Ask { fn ask() -> u64 }
+
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+
+fn main() {
+    let lk1 = Lk { id: 1 }
+    handle Ask { fn ask() { resume(5) } } in {
+        let _ = ask()
+    }
+    unlock(lk1)
+}

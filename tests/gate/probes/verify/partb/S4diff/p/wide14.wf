@@ -1,0 +1,6 @@
+linear struct Tok { id: u64 }
+struct A { f0: A, f1: A, f2: A, f3: A, f4: A, f5: A, f6: A, f7: A, f8: A, f9: A, f10: A, f11: A, f12: A, f13: A, t: Tok }
+struct B<T> { g0: Option<B<(T, T)>>, g1: Option<B<(T, T)>>, g2: Option<B<(T, T)>>, g3: Option<B<(T, T)>>, x: T }
+fn f(x: A) { let y = x }
+fn g(b: B<Tok>) { }
+fn h(b: B<u64>) -> B<u64> { b }

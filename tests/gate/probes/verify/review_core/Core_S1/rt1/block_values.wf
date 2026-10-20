@@ -1,0 +1,12 @@
+// RT1 block values in other expression forms.
+struct Entity { hp: i32 }
+effect Log { fn log(m: String) }
+fn main() / async {
+    let r = handle Log { fn log(m) { resume(()) } } in { let v = Vec.new(); v.push(1); &v[0] }
+    print(r)      // ERR: v ended with the handled body
+    let q = scope { s => let w = Vec.new(); w.push(2); &w[0] }
+    print(q)      // ERR: w ended with the scope body
+    let o = Some(Vec.new())
+    let p = match o { Some(u) => &u[0], None => &Vec.new()[0] }
+    print(p)      // ERR: u (by-value binding) ended with the arm
+}

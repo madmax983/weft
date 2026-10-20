@@ -1,0 +1,10 @@
+fn d1(a: i32, b: i32) -> i32 { a - b }
+fn d2(b: i32, a: i32) -> i32 { a - b }
+fn main() {
+    let g = d1
+    if true {
+        let g = d2
+        print(g(b: 10, a: 3))
+    }
+    print(g(b: 10, a: 3))
+}

@@ -1,0 +1,47 @@
+// OR6 shape left open (also at base). A place is the tail of a block whose
+// value is discarded: a block statement, or the body of `for` or `while`. The
+// interpreter moves the value into the block value and drops it. Sema sees no
+// move. HEAD 3af6118: 0 errors. Stock: "a value is used after it was moved" or
+// "a place does not exist"; oracle: linear leak or "access to a freed cell".
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(id) = t; print("commit {id}") }
+struct Fr: !Move { buf: [u64; 2], cur: &u64 in self.buf[] }
+
+fn block_tail() {
+    let t = Tx { id: 1 }
+    {
+        t
+    }
+    commit(t)
+}
+fn for_tail() {
+    let t = Tx { id: 1 }
+    for i in 0..2 {
+        t
+    }
+    commit(t)
+}
+fn while_tail() {
+    let t = Tx { id: 1 }
+    let i = 0
+    while i < 1 { i += 1; t }
+    commit(t)
+}
+fn vec_block_tail() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    { v }
+    print(r + 1)
+}
+fn immovable_block_tail() {
+    let f = Fr { buf: [1, 2] }
+    f.cur = &f.buf[1]
+    {
+        f
+    }
+    print(f.cur)
+}
+fn main() {
+    block_tail()
+}

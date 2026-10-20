@@ -1,0 +1,44 @@
+effect Ask { fn ask() -> u64 }
+effect Choose { multi fn choose() -> bool }
+effect Note { fn note(x: u64) }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v.push(2); v }
+fn eat(v: Vec<u64>) { print(v.len()) }
+
+fn clause_call_twice() {
+    let v = mk_v()
+    let r = handle Ask { fn ask() { eat(v); resume(1) } } in { let a = ask(); let b = ask(); a + b }
+    print(r)
+}
+fn clause_tail_twice() {
+    let v = mk_v()
+    let r = handle Ask { fn ask() { v } } in { let a = ask(); let b = ask(); mk_v() }
+    print(r.len())
+}
+fn multi_clause_tail() {
+    let v = mk_v()
+    let r = handle Choose { fn choose() { let a = resume(true); let b = resume(false); v } } in { let b = choose(); let c = choose(); mk_v() }
+    print(r.len())
+}
+fn multi_clause_tail_block() {
+    let v = mk_v()
+    let r = handle Choose { fn choose() { let a = resume(true); let b = resume(false); { v } } } in { let b = choose(); let c = choose(); mk_v() }
+    print(r.len())
+}
+fn multi_clause_call() {
+    let v = mk_v()
+    let r = handle Choose { fn choose() { let a = resume(true); let b = resume(false); eat(v); mk_v() } } in { let b = choose(); let c = choose(); mk_v() }
+    print(r.len())
+}
+fn multi_clause_stmt_tail() {
+    let v = mk_v()
+    handle Choose { fn choose() { let a = resume(true); let b = resume(false); v } } in { let b = choose(); let c = choose(); mk_v() }
+    print(1)
+}
+fn clause_after_tail() {
+    let v = mk_v()
+    let r = handle Ask { fn ask() { v } } in { let a = ask(); mk_v() }
+    print(v.len())
+}
+fn main() {
+    clause_call_twice()
+}

@@ -1,0 +1,20 @@
+struct E { hp: u64, tag: u64 }
+struct W { es: Vec<E>, ns: Vec<u64>, score: u64, b: Box<E> }
+linear struct Tx { id: u64 }
+
+fn commit(t: Tx) { let Tx(id) = t; print("commit", id) }
+fn mk_w() -> W {
+    let w = W { es: Vec.new(), ns: Vec.new(), score: 0, b: Box.new(E { hp: 1, tag: 0 }) }
+    w.es.push(E { hp: 6, tag: 2 })
+    w
+}
+
+fn main() {
+    let w2 = mk_w()
+    loop {
+        fork(|| w2.score += 1, || print(w2.es[0].hp))
+        break
+    }
+    let tx4 = Tx { id: 4 }
+    commit(tx4)
+}

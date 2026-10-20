@@ -1,0 +1,7 @@
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(id) = t }
+fn main() {
+    let p = (Tx { id: 1 }, 2)
+    let (a, b) = p
+    print(b)
+}

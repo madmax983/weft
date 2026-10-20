@@ -1,0 +1,56 @@
+struct Entity { hp: u64 }
+// The reference from the last iteration is used before the new local exists. Expect W0301.
+fn prev_iter(n: u64) {
+    let keep = Entity { hp: 1 }
+    let r = &keep.hp
+    let i = 0
+    while i < n {
+        print(r)
+        let e = Entity { hp: 2 }
+        r = &e.hp
+        i += 1
+    }
+}
+// Control: the rebind comes before the use. Expect clean.
+fn same_iter(n: u64) {
+    let i = 0
+    while i < n {
+        let e = Entity { hp: 2 }
+        let r = &e.hp
+        print(r)
+        i += 1
+    }
+}
+// break out of a loop with a reference into a body local. Expect W0301.
+fn break_out(n: u64) {
+    let keep = Entity { hp: 1 }
+    let r = &keep.hp
+    loop {
+        let e = Entity { hp: 2 }
+        r = &e.hp
+        break
+    }
+    print(r)
+}
+// continue: the reference into the body local survives to the header. Expect W0301 at the use.
+fn cont(n: u64) {
+    let keep = Entity { hp: 1 }
+    let r = &keep.hp
+    let i = 0
+    while i < n {
+        i += 1
+        print(r)
+        let e = Entity { hp: 2 }
+        r = &e.hp
+        continue
+    }
+}
+// A for loop variable by value.
+fn for_val(v: &Vec<u64>) {
+    let k = 0
+    let r = &k
+    for x in v[] {
+        r = &x
+    }
+    print(r)
+}

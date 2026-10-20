@@ -1,0 +1,23 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Get { fn get() -> fn() }
+fn call_with(k: fn(fn()), f: fn()) { k(f) }
+fn closure_param_fn(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    handle Get { fn get() { let k = |f: fn()| resume(f); k(|| world.entities.clear()) } } in {
+        let g = get()
+        g()
+        print(first.hp)   //~ W0301
+    }
+}
+fn hof_param_fn(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    handle Get { fn get() { call_with(|f: fn()| resume(f), || world.entities.clear()) } } in {
+        let g = get()
+        g()
+        print(first.hp)   //~ W0301
+    }
+}
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+test "closure_param_fn" { let w = mkw(); closure_param_fn(&w) }
+test "hof_param_fn" { let w = mkw(); hof_param_fn(&w) }

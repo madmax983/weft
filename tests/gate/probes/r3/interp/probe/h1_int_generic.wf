@@ -1,0 +1,14 @@
+// Integer widths in generic code and through closures.
+fn twice<T>(f: fn(T) -> T, x: T) -> T { f(f(x)) }
+
+fn add_u8(a: u8, b: u8) -> u8 { a + b }
+
+fn main() / io {
+    let small: u8 = 200
+    let g = |x: u8| x + 50
+    let r = twice(g, small)
+    print("closure through generic: {r}")
+    let h = add_u8
+    let s = twice(|x: u8| h(x, 30), small)
+    print("fn item through generic: {s}")
+}

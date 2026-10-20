@@ -1,0 +1,41 @@
+effect Choice { multi fn choose() -> bool }
+effect Log { fn log(msg: String) }
+linear struct Token { id: u64 }
+    on abort = spend
+fn spend(t: Token) { let Token(i) = t }
+fn mint() -> Token { Token { id: 1 } }
+fn chooser() -> bool / Choice { choose() }
+
+fn body_call() / Choice {
+    handle Log { fn log(m) { let t = mint(); resume(()); spend(t) } } in {   
+        log("x")
+        let b = chooser()
+    }
+}
+fn body_param(f: fn() -> bool) {
+    handle Log { fn log(m) { let t = mint(); resume(()); spend(t) } } in {
+        log("x")
+        let b = f()
+    }
+}
+fn body_closure() / Choice {
+    let c = || choose()
+    handle Log { fn log(m) { let t = mint(); resume(()); spend(t) } } in {
+        log("x")
+        let b = c()
+    }
+}
+// nested handle: inner body performs multi through outer cap, resume in the outer Log clause
+fn nested_body() / Choice {
+    handle Log { fn log(m) { let t = mint(); resume(()); spend(t) } } in {
+        log("x")
+        handle Log { fn log(m) { resume(()) } } in { let b = choose() }
+    }
+}
+// the clause of an inner handler is multi; the outer handled body runs it
+fn clause_in_body() / Choice {
+    handle Log { fn log(m) { let t = mint(); resume(()); spend(t) } } in {
+        log("x")
+        handle Log { fn log(m) { let b = choose(); resume(()) } } in log("y")
+    }
+}

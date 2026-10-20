@@ -1,0 +1,7 @@
+fn both<T>(a: T, b: T) -> T { a }
+fn main() {
+    let f = || print(0)
+    let h = both(f, || print(1))
+    h()
+    f()
+}

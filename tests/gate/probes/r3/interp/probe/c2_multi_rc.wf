@@ -1,0 +1,14 @@
+// An Rc that is live across a multi operation. Each copy of the continuation
+// reads it and then drops it.
+effect Choice { multi fn choose() -> bool }
+
+fn main() / io {
+    let all = Vec.new()
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        let r = Rc.new(41)
+        let b = choose()
+        print("branch {b}: {r}")
+        all.push(b)
+    }
+    print("{all}")
+}

@@ -1,0 +1,6 @@
+struct S { items: Vec<u64>, n: u64 }
+fn consume(v: Vec<u64>, n: u64) -> u64 { n }
+fn main() {
+    let s = S { items: Vec.new(), n: 3 }
+    print(consume(s.items, s.n))
+}

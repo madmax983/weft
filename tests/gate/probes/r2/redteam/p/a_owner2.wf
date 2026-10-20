@@ -1,0 +1,92 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+fn take(v: Vec<u64>) {}
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn id<T>(x: T) -> T { x }
+fn first<T>(v: &Vec<T>) -> &T in v[] { &v[0] }
+
+// A self-reference copied out of a !Move struct that goes out of scope.
+fn self_ref_out() {
+    let d: Vec<u8> = Vec.new()
+    d.push(1)
+    let r = &d[0]
+    {
+        let f = Frame { buf: [1, 2, 3, 4] }
+        f.cur = &f.buf[0]
+        r = f.cur
+    }
+    print(r)   //~ W0301
+}
+// Returned from a function.
+fn self_ref_ret() -> &u8 {   //~ W0204
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[0]
+    f.cur
+}
+// A reference through a generic call into a block local.
+fn generic_block() {
+    let r = {
+        let v = mkv()
+        id(first(&v))
+    }
+    print(r)   //~ W0301
+}
+// A closure result that is a reference into a closure local through a generic.
+fn closure_generic_local() {
+    let f = || {
+        let v = mkv()
+        id(&v[0])   //~ W0204
+    }
+    print(f())
+}
+// A closure that captures a local, then the local goes out of scope.
+fn closure_outlives() {
+    let g = || print(0)
+    {
+        let v = mkv()
+        g = || print(v[0])
+    }
+    g()   //~ W0301
+}
+// A closure that captures a local returned from a block.
+fn closure_block_value() {
+    let g = {
+        let v = mkv()
+        || print(v[0])
+    }   //~ W0301
+    g()
+}
+// A Vec of references to a block local.
+fn vec_of_refs() {
+    let rs: Vec<&u64> = Vec.new()
+    {
+        let v = mkv()
+        rs.push(&v[0])
+    }
+    print(rs[0])   //~ W0301
+}
+// An Option of a reference to a block local.
+fn opt_of_ref() {
+    let o: Option<&u64> = None
+    {
+        let v = mkv()
+        o = Some(&v[0])
+    }
+    match o { Some(r) => print(r), None => {} }   //~ W0301
+}
+// A reference in a tuple in an outer local, set by a part write.
+fn tuple_part() {
+    let d = mkv()
+    let t = (&d[0], 1)
+    {
+        let v = mkv()
+        t.0 = &v[0]
+    }
+    print(t.0)   //~ W0301
+}
+fn main() {
+    self_ref_out()
+}

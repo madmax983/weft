@@ -1,0 +1,16 @@
+// A private effect of a dependency.
+pub fn quiet() {
+    dep.noisy()
+}
+fn sig() / dep.Note {
+    dep.noisy()
+}
+fn h() {
+    handle dep.Note { fn note(x) { resume(()) } } in dep.noisy()
+}
+fn g() / log {
+    dep.noisy()
+}
+fn main() {
+    dep.noisy()
+}

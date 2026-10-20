@@ -1,0 +1,16 @@
+struct E { hp: u64, tag: u64 }
+
+fn mk_e(n: u64) -> E { E { hp: n, tag: n } }
+
+
+
+
+fn main() {
+    let rc5 = Rc.new(mk_e(5))
+    let r6 = &rc5.hp
+    scope { s7 =>
+        let t8 = s7.spawn(|| print(r6))
+        r6 = &rc5.hp
+        t8.join()
+    }
+}

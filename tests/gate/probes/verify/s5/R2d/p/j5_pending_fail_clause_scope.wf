@@ -1,0 +1,28 @@
+// The child of scope A fails while the frame of A is in the continuation of a
+// clause. The clause has a scope B of its own, and a child of B fails while
+// the clause waits in B.
+effect Ask { fn ask() -> u64 }
+
+fn main() / io {
+    handle Fail { fn fail(m) { print("outer handler: {m}") } } in {
+        handle Ask { fn ask() {
+            handle Fail { fn fail(m) { print("clause handler: {m}") } } in {
+                scope { b =>
+                    b.spawn(|| { sleep(10.ms); fail("child of B failed") })
+                    sleep(20.ms)
+                    print("clause scope goes on")
+                }
+            }
+            resume(1)
+        } } in {
+            scope { a =>
+                a.spawn(|| { sleep(5.ms); fail("child of A failed") })
+                let x = ask()
+                sleep(10.ms)
+                print("scope A body done {x}")
+            }
+            print("scope A returned normally")
+        }
+    }
+    print("end")
+}

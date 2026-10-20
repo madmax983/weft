@@ -1,0 +1,71 @@
+// R3RT1: a move of one part of a linear aggregate ends `live_linear` for the
+// whole local. The other linear parts go away with no consumer (W0601), and
+// they are not checked across an abort (W0602).
+// Expected: each `//~` code. Found: 0 errors.
+// Run: weft test --unchecked --oracle R3RT1_partial_linear_move.wf
+//      each test fails with "linear leak" or "has no `on abort`".
+linear struct Tx { id: u64 }
+    on abort = rollback
+linear struct Lock { id: u64 }
+fn rollback(tx: Tx) { print(tx.id); let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+struct Two { a: Tx, b: Tx }
+effect Stop { fn stop() }
+
+// One element of an array moves. The other element is dropped.
+fn array_element() {
+    let a = [begin(1), begin(2)]
+    rollback(a[0])
+}   //~ W0601
+
+// One part of a tuple moves. The other part is dropped.
+fn tuple_part() {
+    let t = (begin(1), begin(2))
+    rollback(t.0)
+}   //~ W0601
+
+// One field moves. The other field is dropped.
+fn struct_field() {
+    let s = Two { a: begin(1), b: begin(2) }
+    rollback(s.a)
+}   //~ W0601
+
+// A part moves into a new local. The other part is dropped.
+fn part_to_local() {
+    let t = (begin(1), begin(2))
+    let x = t.0
+    rollback(x)
+}   //~ W0601
+
+// A closure moves one part of a captured tuple.
+fn closure_part() {
+    let t = (begin(1), begin(2))
+    let f = || rollback(t.0)
+    f()
+}   //~ W0601
+
+// After a part moves, the `Lock` part is live across an operation that can
+// abort, and `Lock` has no `on abort`.
+fn part_then_abort() / Stop {
+    let t = (begin(1), Lock { id: 2 })
+    rollback(t.0)
+    stop()   //~ W0602
+}
+
+// Clean control: destructuring consumes both parts.
+fn destructure() {
+    let t = (begin(1), begin(2))
+    let (x, y) = t
+    rollback(x)
+    rollback(y)
+}
+
+test "array_element" { array_element() }
+test "tuple_part" { tuple_part() }
+test "struct_field" { struct_field() }
+test "part_to_local" { part_to_local() }
+test "closure_part" { closure_part() }
+test "part_then_abort" {
+    handle Stop { fn stop() { print("stopped") } } in part_then_abort()
+}
+test "destructure" { destructure() }

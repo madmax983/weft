@@ -1,0 +1,16 @@
+// The body of sim.run spawns a task into a scope outside the simulation. The
+// task outlives the simulation.
+test "a task outlives its simulation" {
+    sleep(100.ms)
+    scope { o =>
+        sim.run(seed: 1) {
+            o.spawn(|| {
+                sleep(50.ms)
+                print("late task: clock {Clock.now()}, random {Rand.random() % 100}")
+            })
+            print("simulation body ends at {Clock.now()}")
+        }
+        print("after sim.run: clock {Clock.now()}")
+    }
+    print("after scope: clock {Clock.now()}")
+}

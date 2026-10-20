@@ -1,0 +1,58 @@
+struct C { k: u64, j: u64 }
+fn id_ref(r: &u64) -> &u64 in r { r }
+// The task gets a reference through a captured closure that borrows.
+fn via_closure() / async, clock {
+    scope { s =>
+        {
+            let n = 5
+            let mk = || &n
+            s.spawn(|| { let r = mk(); sleep(1.ms); print(r) })
+        }   //~ W0405
+        print(1)
+    }
+}
+// The task borrows inside a nested closure that it calls.
+fn via_inner_closure() / async, clock {
+    scope { s =>
+        {
+            let n = 5
+            s.spawn(|| { let g = || &n; let r = g(); sleep(1.ms); print(r) })
+        }   //~ W0405
+        print(1)
+    }
+}
+// A match by reference on a kept copy tuple.
+fn via_match_ref() / async, clock {
+    scope { s =>
+        {
+            let t = (1, 2)
+            s.spawn(|| { let p = &t; match p { (a, b) => { sleep(1.ms); print(a) } } })
+        }   //~ W0405
+        print(1)
+    }
+}
+// A reference made by a callee from a by-value argument? (copy) A reference argument.
+fn via_id(x: u64) / async, clock {
+    scope { s =>
+        {
+            let n = 5
+            s.spawn(|| { let r = id_ref(&n); sleep(1.ms); print(r) })
+        }   //~ W0405
+        print(1)
+    }
+}
+// The task uses a string interpolation of a reference into the kept variable.
+fn via_for() / async, clock {
+    scope { s =>
+        {
+            let a = [1, 2, 3]
+            s.spawn(|| { for x in a[] { sleep(1.ms); print(x) } })
+        }   //~ W0405
+        print(1)
+    }
+}
+test "via_closure" { via_closure() }
+test "via_inner_closure" { via_inner_closure() }
+test "via_match_ref" { via_match_ref() }
+test "via_id" { via_id(1) }
+test "via_for" { via_for() }

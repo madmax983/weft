@@ -1,0 +1,23 @@
+effect Log { fn log(msg: String) }
+struct Registry { cbs: Vec<fn()> }
+impl Registry {
+    fn add(self, f: fn()) / mut(self) { self.cbs.push(f) }
+}
+fn rec(n: u64, f: fn()) { if n > 0 { f(); rec(n - 1, f) } }
+fn inner(f: fn()) { f() }
+fn outer(f: fn()) { inner(f) }
+fn timed(f: fn() -> u64) -> u64 / async, fail { with_timeout(1.s, f) }
+fn mapo(o: Option<u64>, f: fn(u64) -> u64) -> Option<u64> { match o { Some(x) => Some(f(x)), None => None } }
+fn wrap(f: fn()) -> u64 { let g = || f(); g(); 1 }
+
+fn c_registry_local() {
+    handle Log { fn log(m) { resume(()) } } in {
+        let r = Registry { cbs: Vec.new() }
+        r.add(|| log("x"))
+    }
+}
+fn c_rec() { handle Log { fn log(m) { resume(()) } } in rec(3, || log("x")) }
+fn c_outer() { handle Log { fn log(m) { resume(()) } } in outer(|| log("x")) }
+fn c_timed() / async, fail { let n = handle Log { fn log(m) { resume(()) } } in timed(|| { log("x"); 1 }) }
+fn c_map() { let o = handle Log { fn log(m) { resume(()) } } in mapo(Some(1), |x| { log("x"); x }) }
+fn c_wrap() { let n = handle Log { fn log(m) { resume(()) } } in wrap(|| log("x")) }

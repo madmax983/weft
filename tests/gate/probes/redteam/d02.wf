@@ -1,0 +1,8 @@
+fn main() {
+    let r = {
+        let v = Vec.new()
+        v.push(1)
+        &v[0]
+    }
+    print(r)
+}

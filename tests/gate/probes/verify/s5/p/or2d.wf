@@ -1,0 +1,63 @@
+fn take(v: Vec<u64>) -> usize { v.len() }
+// The variable is moved before the closure; the closure gives it a value and then moves it.
+fn moved_before() {
+    let v = Vec.new()
+    take(v)
+    let f = || {
+        v = Vec.new()
+        print(take(v))
+    }
+    f()
+}
+// The closure moves the variable only on one branch.
+fn branch_move() {
+    let v = Vec.new()
+    v.push(1)
+    let f = || { if true { print(take(v)) } }
+    v = Vec.new()
+    f()
+    print(v.len())
+}
+// A closure in a closure parameter position (spawn of a named closure).
+fn named_task() / async {
+    let v = Vec.new()
+    v.push(1)
+    let f = || print(take(v))
+    scope { s =>
+        let t = s.spawn(f)
+        t.join()
+    }
+}
+// A by-value closure made in a loop, the variable gets a new value each pass.
+fn loop_new() {
+    let v = Vec.new()
+    let i = 0
+    while i < 3 {
+        let f = || print(take(v))
+        v = Vec.new()
+        v.push(i)
+        f()
+        i = i + 1
+    }
+}
+// Parens around the closure.
+fn parens() {
+    let v = Vec.new()
+    v.push(1)
+    let f = (|| print(take(v)))
+    v = Vec.new()
+    f()
+    print(v.len())
+}
+// A closure given directly to a callee.
+fn run(f: fn()) { f() }
+fn direct_arg() {
+    let v = Vec.new()
+    v.push(1)
+    run(|| print(take(v)))
+    v = Vec.new()
+    print(v.len())
+}
+fn main() {
+    moved_before()
+}

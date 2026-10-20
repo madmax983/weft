@@ -1,0 +1,27 @@
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print(b.items.len()) }
+fn run_all(fs: &Vec<fn()>) { let i = 0
+ while i < fs.len() { let f = fs[i]
+ f()
+ i = i + 1 } }
+fn stored_once_twice() {
+    let fs: Vec<fn()> = Vec.new()
+    let b = Buf { items: Vec.new() }
+    fs.push(|| eat(b))
+    run_all(&fs)
+    run_all(&fs)
+}
+struct H { f: fn() }
+fn call_h(h: &H) {
+    let f = h.f
+    f()
+}
+fn field_once_twice() {
+    let b = Buf { items: Vec.new() }
+    let h = H { f: || eat(b) }
+    call_h(&h)
+    call_h(&h)
+}
+fn main() {
+    stored_once_twice()
+}

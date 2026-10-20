@@ -1,0 +1,8 @@
+struct E { hp: u64 }
+fn main() {
+    let v = Vec.new()
+    v.push(Rc.new(E { hp: 1 }))
+    scope { s =>
+        s.spawn(|| print(v.len()))
+    }
+}

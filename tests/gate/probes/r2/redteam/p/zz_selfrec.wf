@@ -1,0 +1,31 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn rec(world: &World, n: u64) / mut(world.entities) {
+    let first = &world.entities[0]
+    let f = || print(0)
+    let k = n
+    f = || {
+        if k > 0 {
+            k -= 1
+            f()
+        } else {
+            world.entities.clear()
+        }
+    }
+    f()
+    print(first.hp)   //~ W0301
+}
+// Mutual: g calls h, h is set after g.
+fn mutual(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let h = || print(0)
+    let g = || h()
+    h = || world.entities.clear()
+    g()
+    print(first.hp)   //~ W0301
+}
+fn mkw() -> World { let w = World { entities: Vec.new() }
+ w.entities.push(Entity { hp: 1 })
+ w }
+test "rec" { let w = mkw()
+ rec(&w, 2) }

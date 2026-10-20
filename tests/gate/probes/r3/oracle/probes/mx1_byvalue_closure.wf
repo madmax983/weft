@@ -1,0 +1,11 @@
+effect Pick { multi fn pick() -> bool }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn main() {
+    let v = mk_v()
+    handle Pick { fn pick() { resume(true); resume(true) } } in {
+        let b = pick()
+        let g = || print(take_v(v))
+        g()
+    }
+}

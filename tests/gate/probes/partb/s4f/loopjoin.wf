@@ -1,0 +1,42 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Wrap<T> { x: T }
+fn needs_uniq(es: &[u64] @ uniq) / mut(es) {}
+fn break_alias(v: &Vec<u64>, w: &Vec<u64>, c: bool) / mut(v[], w[]) {
+    let (l, r) = v.split_mut(1)
+    loop {
+        if c { l = &w[]
+ break }
+        l = r
+    }
+    needs_uniq(l)
+}
+fn break_keeps(a: &World, b: &World, c: bool) / mut(a.entities) {
+    let w = Wrap { x: &b.entities[0] }
+    loop {
+        w.x = &a.entities[0]
+        if c { break }
+        w.x = &b.entities[0]
+    }
+    a.entities.clear()
+    print(w.x.hp)
+}
+fn continue_keeps(a: &World, b: &World, n: u64) / mut(a.entities) {
+    let w = Wrap { x: &b.entities[0] }
+    for i in 0..n {
+        print(w.x.hp)
+        w.x = &a.entities[0]
+        if i == 1 { continue }
+        w.x = &b.entities[0]
+        a.entities.clear()
+    }
+}
+fn while_ok(a: &World, b: &World, n: u64) / mut(a.entities) {
+    let w = Wrap { x: &b.entities[0] }
+    for i in 0..n {
+        w.x = &a.entities[0]
+        w.x = &b.entities[0]
+    }
+    a.entities.clear()
+    print(w.x.hp)
+}

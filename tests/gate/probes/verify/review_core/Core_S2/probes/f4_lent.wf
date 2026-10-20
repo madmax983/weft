@@ -1,0 +1,44 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+
+// l1: the callee swaps the argument positions in a second call.
+fn ap(f: fn(&World, &World), a: &World, b: &World) { f(a, b); f(b, a) }
+fn swapped(w1: &World, w2: &World) {
+    let first = &w1.entities[0]
+    ap(|x, y| y.entities.clear(), w1, w2)
+    print(first.hp)   // expect W0301
+}
+// l2: the callee re-assigns a reference local in a loop and lends it.
+fn ap_loop(f: fn(&World), a: &World, b: &World, n: u64) {
+    let cur = a
+    let i = 0
+    while i < n {
+        f(cur)
+        cur = b
+        i += 1
+    }
+}
+fn loop_lent(w1: &World, w2: &World) {
+    let first = &w2.entities[0]
+    ap_loop(|x| x.entities.clear(), w1, w2, 2)
+    print(first.hp)   // expect W0301
+}
+// l3: the callee picks the place with `if`.
+fn ap_if(f: fn(&World), a: &World, b: &World, c: bool) {
+    let t = if c { a } else { b }
+    f(t)
+}
+fn if_lent(w1: &World, w2: &World, c: bool) {
+    let first = &w2.entities[0]
+    ap_if(|x| x.entities.clear(), w1, w2, c)
+    print(first.hp)   // expect W0301
+}
+// l4: the callee lends an element that it finds by a returned reference.
+struct Bag { items: Vec<World> }
+fn pick(b: &Bag) -> &World in b.items[] { &b.items[0] }
+fn ap_pick(f: fn(&World), b: &Bag) { f(pick(b)) }
+fn picked(bag: &Bag) {
+    let inner = &bag.items[0].entities[0]
+    ap_pick(|x| x.entities.clear(), bag)
+    print(inner.hp)   // expect W0301
+}

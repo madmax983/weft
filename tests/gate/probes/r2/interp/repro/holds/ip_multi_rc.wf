@@ -1,0 +1,16 @@
+// An `Rc` live across a `multi` operation. Each copy holds one more count.
+effect Choice { multi fn choose() -> bool }
+
+fn body() -> u64 / Choice {
+    let r = Rc.new(5)
+    let b = choose()
+    let r2 = r.clone()
+    if b { 1 } else { 2 }
+}
+
+fn main() {
+    let n = handle Choice { fn choose() { let a = resume(true); let b = resume(false); a + b } } in body()
+    print(n)
+    let m = handle Choice { fn choose() { 7 } } in body()
+    print(m)
+}

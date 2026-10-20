@@ -1,0 +1,70 @@
+struct Counter { items: Vec<u64> }
+fn grow2(rss: &Vec<&Vec<&Counter>>) / mut(rss..) { let rs = rss[0]
+ let c = rs[0]
+ c.items.clear() }
+fn grow2_inf(rss: &Vec<&Vec<&Counter>>) { let rs = rss[0]
+ let c = rs[0]
+ c.items.clear() }
+fn put(rs: &Vec<&u64>, x: &u64) / mut(rs) { rs.push(x) }
+fn first(rs: &Vec<&u64>) -> &u64 in rs.. { rs[0] }
+fn first2(rss: &Vec<&Vec<&u64>>) -> &u64 in rss.. { let rs = rss[0]
+ rs[0] }
+fn swap_in(rs: &Vec<&u64>, x: &u64) / mut(rs) { rs[0] = x }
+
+fn two_levels() {
+    let c = Counter { items: Vec.new() }
+    c.items.push(7)
+    let at = &c.items[0]
+    let rs = Vec.new()
+    rs.push(&c)
+    let rss = Vec.new()
+    rss.push(&rs)
+    grow2(&rss)
+    print(at)
+}
+fn two_levels_inf() {
+    let c = Counter { items: Vec.new() }
+    c.items.push(7)
+    let at = &c.items[0]
+    let rs = Vec.new()
+    rs.push(&c)
+    let rss = Vec.new()
+    rss.push(&rs)
+    grow2_inf(&rss)
+    print(at)
+}
+fn read2() {
+    let v = Vec.new()
+    v.push(1)
+    let rs = Vec.new()
+    rs.push(&v[0])
+    let rss = Vec.new()
+    rss.push(&rs)
+    let r = first2(&rss)
+    v.clear()
+    print(r)
+}
+fn put_then() {
+    let w = Vec.new()
+    w.push(0)
+    let v = Vec.new()
+    v.push(1)
+    let rs = Vec.new()
+    rs.push(&w[0])
+    put(&rs, &v[0])
+    v.clear()
+    print(rs[1])
+}
+fn swap_then() {
+    let w = Vec.new()
+    w.push(0)
+    let v = Vec.new()
+    v.push(1)
+    let rs = Vec.new()
+    rs.push(&w[0])
+    swap_in(&rs, &v[0])
+    v.clear()
+    let r = first(&rs)
+    print(r)
+}
+fn main() { two_levels(); two_levels_inf(); read2(); put_then(); swap_then() }

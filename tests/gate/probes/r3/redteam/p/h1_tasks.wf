@@ -1,0 +1,84 @@
+struct Stats { count: u64, other: u64 }
+effect Note { fn note(x: u64) }
+impl Stats {
+    fn get(self: &Stats) -> u64 { self.count }
+    fn bump(self: &Stats) / mut(self) { self.count += 1 }
+}
+// A task reads through a reference stored in a Vec.
+fn ref_in_vec(st: &Stats) / mut(st), async, clock {
+    let rs = Vec.new()
+    rs.push(&st.count)
+    scope { s =>
+        s.spawn(|| { sleep(1.ms); print(rs[0]) })
+        st.count += 1   //~ W0405
+    }
+}
+// The parent writes through a closure that it calls while the task runs.
+fn write_by_closure(st: &Stats) / mut(st), async, clock {
+    let w = || st.count += 1
+    scope { s =>
+        s.spawn(|| { sleep(1.ms); print(st.count) })
+        w()   //~ W0405
+    }
+}
+// The parent writes through a local handler clause while the task runs.
+fn write_by_clause(st: &Stats) / mut(st), async, clock {
+    handle Note { fn note(x) { st.count += x; resume(()) } } in {
+        scope { s =>
+            s.spawn(|| { sleep(1.ms); print(st.count) })
+            note(1)   //~ W0405
+        }
+    }
+}
+// The task writes through a reference in a tuple.
+fn write_in_tuple(st: &Stats) / mut(st), async, clock {
+    let t = (st, 1)
+    scope { s =>
+        s.spawn(|| { let (r, n) = t; r.count += n })
+        print(st.count)   //~ W0405
+    }
+}
+// The task is joined in one branch only.
+fn join_one_branch(st: &Stats, c: bool) / mut(st), async, clock {
+    scope { s =>
+        let t = s.spawn(|| { sleep(1.ms); st.count += 1 })
+        if c { t.join() } else { t.detach() }
+        print(st.count)   //~ W0405
+    }
+}
+// The handle goes into a Vec, and a pop joins it.
+fn join_from_vec(st: &Stats) / mut(st), async, clock {
+    scope { s =>
+        let hs = Vec.new()
+        hs.push(s.spawn(|| { sleep(1.ms); st.count += 1 }))
+        print(st.count)   //~ W0405
+        match hs.pop() { Some(h) => h.join(), None => {} }
+    }
+}
+// Method call that reads.
+fn method_read(st: &Stats) / mut(st), async, clock {
+    scope { s =>
+        s.spawn(|| { sleep(1.ms); st.count += 1 })
+        print(st.get())   //~ W0405
+    }
+}
+// A task spawned in a loop iteration; the next iteration writes.
+fn loop_spawn(st: &Stats) / mut(st), async, clock {
+    scope { s =>
+        let i = 0
+        while i < 2 {
+            s.spawn(|| { sleep(1.ms); print(st.count) })
+            st.count += 1   //~ W0405
+            i += 1
+        }
+    }
+}
+fn mk() -> Stats { Stats { count: 0, other: 0 } }
+test "ref_in_vec" { let st = mk(); ref_in_vec(&st) }
+test "write_by_closure" { let st = mk(); write_by_closure(&st) }
+test "write_by_clause" { let st = mk(); write_by_clause(&st) }
+test "write_in_tuple" { let st = mk(); write_in_tuple(&st) }
+test "join_one_branch" { let st = mk(); join_one_branch(&st, false) }
+test "join_from_vec" { let st = mk(); join_from_vec(&st) }
+test "method_read" { let st = mk(); method_read(&st) }
+test "loop_spawn" { let st = mk(); loop_spawn(&st) }

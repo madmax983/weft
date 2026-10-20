@@ -1,0 +1,4 @@
+effect Ask { fn ask() -> u64 }
+fn main() {
+    handle Ask { fn ask() { let fs = [|| resume(1)]; for f in fs[] { f() }; for f in fs[] { f() } } } in print(ask())
+}

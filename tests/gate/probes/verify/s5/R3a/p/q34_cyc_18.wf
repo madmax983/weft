@@ -1,0 +1,27 @@
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct L0 { a: L1, b: L1 }
+struct L1 { a: L2, b: L2 }
+struct L2 { a: L3, b: L3 }
+struct L3 { a: L4, b: L4 }
+struct L4 { a: L5, b: L5 }
+struct L5 { a: L6, b: L6 }
+struct L6 { a: L7, b: L7 }
+struct L7 { a: L8, b: L8 }
+struct L8 { a: L9, b: L9 }
+struct L9 { a: L10, b: L10 }
+struct L10 { a: L11, b: L11 }
+struct L11 { a: L12, b: L12 }
+struct L12 { a: L13, b: L13 }
+struct L13 { a: L14, b: L14 }
+struct L14 { a: L15, b: L15 }
+struct L15 { a: L16, b: L16 }
+struct L16 { a: L17, b: L17 }
+struct L17 { a: L18, b: L18 }
+struct L18 { back: Option<Box<L0>>, n: u64 }
+fn mk() -> L0 { mk() }
+fn f() {
+    let x = mk()
+    let y = mk()
+    let z = mk()
+}
+fn main() { f() }

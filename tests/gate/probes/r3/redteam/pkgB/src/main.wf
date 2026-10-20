@@ -1,0 +1,8 @@
+fn main() {
+    print(dep.inner.f())
+    handle dep.inner.Note { fn note(x) { resume(()) } } in dep.inner.g()
+    handle dep.Priv { fn ping() { resume(()) } } in dep.uses_priv()
+    let s = dep.mk()
+    print(s.hidden())
+    print(s.shown())
+}

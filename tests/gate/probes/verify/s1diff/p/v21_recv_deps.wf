@@ -1,0 +1,27 @@
+struct Cell2 { items: Vec<u64>, n: u64 }
+struct W { items: Vec<u64> }
+struct S { h: Rc<Cell2> }
+fn mk() -> Rc<Cell2> { Rc.new(Cell2 { items: Vec.new(), n: 4 }) }
+fn eat(c: Rc<Cell2>) -> u64 { 0 }
+fn eat_w(w: W) -> u64 { 0 }
+fn reset(s: &S) -> u64 / mut(s.h) { s.h = mk(); 0 }
+// Owned receiver: caught.
+fn owned() {
+    let w = W { items: Vec.new() }
+    w.items.push(eat_w(w))
+}
+// Rc receiver: the later argument drops the only handle. Expect W0301.
+fn rc_recv() {
+    let a = mk()
+    a.items.push(eat(a))
+}
+// A reference through the handle as the receiver. Expect W0301.
+fn rc_ref_recv() {
+    let a = mk()
+    let r = &a.items
+    r.push(eat(a))
+}
+// The handle in a field gets a new value in a later argument. Expect W0301.
+fn rc_field_recv(s: &S) / mut(s.h, Cell2) {
+    s.h.items.push(reset(s))
+}

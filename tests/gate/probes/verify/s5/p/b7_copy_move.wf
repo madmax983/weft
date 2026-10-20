@@ -1,0 +1,14 @@
+fn take(x: u64) { print("take {x}") }
+struct P { a: u64 }
+fn takep(p: P) { print("takep {p.a}") }
+fn main() / async {
+    let n = 5
+    let p = P { a: 3 }
+    let f = || { take(n); takep(p) }
+    scope { s =>
+        s.spawn(f)
+        s.spawn(f)
+    }
+    f()
+    print("end")
+}

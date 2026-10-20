@@ -1,0 +1,22 @@
+struct Stats { count: u64 }
+fn twice(g: fn()) { g()
+ g() }
+fn loop_each(st: &Stats) / mut(st) {
+    let v = Vec.new()
+    v.push(|| { st.count += 1 })
+    for g in v { twice(g) }
+}
+fn opt(st: &Stats) / mut(st) {
+    let o = Some(|| { st.count += 1 })
+    match o { Some(g) => twice(g), None => () }
+}
+fn reader(st: &Stats) / mut(st) {
+    let v = Vec.new()
+    v.push(|| { print(st.count) })
+    twice(v[0])
+}
+fn writer_no_capture_read(st: &Stats) / mut(st) {
+    let v = Vec.new()
+    v.push(|| { st.count = 5 })
+    twice(v[0])
+}

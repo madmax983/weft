@@ -1,0 +1,7 @@
+fn main() / par, async {
+    let t = (5, Rc.new(1))
+    let r = &t.0
+    scope { s =>
+        s.spawn(|| print(r))
+    }
+}

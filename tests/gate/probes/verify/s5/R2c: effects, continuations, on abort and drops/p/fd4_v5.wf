@@ -1,0 +1,69 @@
+effect Choice { multi fn choose() -> bool }
+extern type Sock { nonportable }
+extern fn open() -> Sock / blocking
+extern fn close(s: Sock) / blocking
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct Node { n: u64 }
+
+// A generic function holds a value of a type parameter across a multi operation.
+fn hold<T>(x: T) -> T / Choice {
+    let b = choose()
+    x
+}
+fn generic_resource() / Choice, blocking {
+    let s = open()
+    let t = hold(s)
+    close(t)
+}
+// A resource in a struct.
+struct HasSock { s: Sock, n: u64 }
+fn in_struct() / Choice, blocking {
+    let h = HasSock { s: open(), n: 1 }
+    let b = choose()
+    let HasSock(s, n) = h
+    close(s)
+}
+// A resource in a tuple and an Option.
+fn in_option() / Choice, blocking {
+    let o = Some(open())
+    let b = choose()
+    match o { Some(s) => close(s), None => {} }
+}
+// A closure that captures a resource by move.
+fn in_closure() / Choice, blocking {
+    let s = open()
+    let f = || close(s)
+    let b = choose()
+    f()
+}
+// A !Move value in a Box.
+fn boxed_immovable() -> u8 / Choice {
+    let f = Box.new(Frame { buf: [1, 2, 3, 4] })
+    let b = choose()
+    f.buf[0]
+}
+// A !Move value in a Vec.
+fn vec_immovable() -> usize / Choice {
+    let v: Vec<Frame> = Vec.new()
+    v.push(Frame { buf: [1, 2, 3, 4] })
+    let b = choose()
+    v.len()
+}
+// A reference to a !Move local.
+fn ref_immovable() -> u8 / Choice {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    let r = &f
+    let b = choose()
+    r.buf[0]
+}
+// An immovable value given to a generic function that holds it across a multi operation:
+// the call passes a reference.
+fn hold_ref<T>(x: &T) -> u64 / Choice {
+    let b = choose()
+    1
+}
+fn generic_immovable() -> u64 / Choice {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    hold_ref(&f)
+}
+fn main() {}

@@ -1,0 +1,7 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn heal(xs: &[Entity]) / mut(xs) { }
+fn heal_all(world: &World, mid: usize) / mut(world.entities[]), par {
+    let (l, r) = world.entities.split_mut(mid)
+    fork(|| heal(l), || heal(l))
+}

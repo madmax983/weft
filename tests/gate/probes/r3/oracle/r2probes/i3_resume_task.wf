@@ -1,0 +1,9 @@
+effect Ask { fn ask() -> u64 }
+fn main() {
+    let n = 0
+    handle Ask { fn ask() { scope { s => s.spawn(|| { let _ = resume(1) }); n += 1 } } } in {
+        n += ask()
+        print(n)
+    }
+    print(n)
+}

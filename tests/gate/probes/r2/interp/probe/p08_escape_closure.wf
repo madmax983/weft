@@ -1,0 +1,11 @@
+// A closure that captures a local Vec leaves the function.
+fn mk() -> fn() -> usize {
+    let v = Vec.new()
+    v.push(1)
+    || v.len()
+}
+
+fn main() {
+    let f = mk()
+    print(f())
+}

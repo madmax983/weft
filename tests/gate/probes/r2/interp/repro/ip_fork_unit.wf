@@ -1,0 +1,5 @@
+// Both fork branches return `()`. The checker types the result as a tuple.
+fn main() / par {
+    let (a, b) = fork(|| print("left"), || print("right"))
+    print("joined")
+}

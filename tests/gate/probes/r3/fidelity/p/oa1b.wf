@@ -1,0 +1,25 @@
+// on abort through a reference held in a generic field of the value
+effect Stop { fn stop() }
+linear struct R { o: Option<&Vec<u64>> }
+    on abort = undo_ref
+pub fn undo_ref(r: R) / log {
+    let R(o) = r
+    match o {
+        Some(v) => v.push(7),
+        None => {},
+    }
+}
+fn body(v: &Vec<u64>) / Stop {
+    let first = &v[0]
+    let r = R { o: Some(v) }
+    stop()
+    let R(o) = r
+    print(first)
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let first = &v[0]
+    handle Stop { fn stop() { () } } in body(&v)
+    print(first)
+}

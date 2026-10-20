@@ -1,0 +1,38 @@
+fn in_loop() / async, clock {
+    scope { s =>
+        let i = 0
+        while i < 2 {
+            s.spawn(|| {
+                let r = Rc.new(0)
+                scope { t =>
+                    t.spawn(|| { sleep(5.ms); let y = r.clone() })
+                    sleep(5.ms)
+                    let z = r.clone()
+                }
+            })
+            i += 1
+        }
+    }
+}
+
+fn in_loop_task() / async, clock {
+    scope { s =>
+        s.spawn(|| {
+            let r = Rc.new(0)
+            let k = 0
+            while k < 2 {
+                scope { t =>
+                    t.spawn(|| { sleep(5.ms); let y = r.clone() })
+                    sleep(5.ms)
+                    let z = r.clone()
+                }
+                k += 1
+            }
+        })
+    }
+}
+
+fn main() / async, clock {
+    in_loop()
+    in_loop_task()
+}

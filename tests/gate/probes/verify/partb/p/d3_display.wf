@@ -1,0 +1,9 @@
+effect Log { fn log(msg: String) }
+fn user_log() / Log { log("x") }
+fn takes(f: fn() / log) { f() }
+fn bad_arg() / log, Log {
+    takes(|| log("x"))
+}
+fn ok() / Log { user_log() }
+fn infer_me() { user_log() }
+fn caller() / log { infer_me() }

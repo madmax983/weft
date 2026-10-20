@@ -1,0 +1,10 @@
+fn with_log(f: fn() / log) { f() }
+fn ticker() / clock { sleep(1.s) }
+fn not_allowed_item() / clock, log {
+    with_log(ticker)
+}
+fn not_allowed_var() / clock, log {
+    let g = || sleep(1.s)
+    let h = g
+    with_log(h)
+}

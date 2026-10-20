@@ -1,0 +1,4 @@
+fn main() {
+    let t: (u8, u8) = (250, 10)
+    print(t.0 + t.1)
+}

@@ -1,0 +1,11 @@
+fn with_log(f: fn() / log) / log { f() }
+fn ticker() / clock { sleep(1.s) }
+fn caller() / log {
+    with_log(ticker)
+}
+fn caller2() / log {
+    with_log(|| sleep(1.s))
+}
+fn main() / log {
+    caller()
+}

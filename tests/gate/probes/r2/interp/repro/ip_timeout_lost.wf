@@ -1,0 +1,19 @@
+// The deadline of `with_timeout` passes while the block waits in a handler
+// clause outside it. When the block runs again, it must time out at its next
+// suspension point. The interpreter drops the deadline.
+effect Ask { fn ask() -> u64 }
+
+fn main() / io {
+    handle Fail { fn fail(m) { print("caught: {m}") } } in {
+        let v = handle Ask { fn ask() { sleep(50.ms); resume(1) } } in {
+            with_timeout(10.ms) {
+                let x = ask()
+                sleep(100.ms)
+                print("block finished after its deadline")
+                x
+            }
+        }
+        print("v = {v}")
+    }
+    print("end")
+}

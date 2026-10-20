@@ -1,0 +1,57 @@
+struct Job { f: fn() }
+
+fn bg_one(f: fn()) / async {
+    scope { s =>
+        s.spawn(f)
+    }
+}
+
+fn bg_job(j: Job) / async {
+    scope { s =>
+        s.spawn(j.f)
+    }
+}
+
+// 1: a local closure of the task spawns the child.
+fn local_closure() / async, clock {
+    scope { s =>
+        s.spawn(|| {
+            let r = Rc.new(0)
+            let g = || {
+                scope { t =>
+                    t.spawn(|| { sleep(5.ms); let y = r.clone() })
+                    sleep(5.ms)
+                    let z = r.clone()
+                }
+            }
+            g()
+        })
+    }
+}
+
+// 2: a closure in a struct field.
+fn via_job() / async, clock {
+    scope { s =>
+        s.spawn(|| {
+            let r = Rc.new(0)
+            bg_job(Job { f: || { sleep(5.ms); let y = r.clone() } })
+        })
+    }
+}
+
+// 4: an item as a value.
+fn via_item_value() / async, clock {
+    scope { s =>
+        s.spawn(|| {
+            let r = Rc.new(0)
+            let h = bg_one
+            h(|| { sleep(5.ms); let y = r.clone() })
+        })
+    }
+}
+
+fn main() / async, clock {
+    local_closure()
+    via_job()
+    via_item_value()
+}

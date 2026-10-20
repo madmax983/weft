@@ -1,0 +1,13 @@
+struct Cell2 { items: Vec<u64>, n: u64 }
+struct S { h: Rc<Cell2> }
+fn mk() -> Rc<Cell2> { Rc.new(Cell2 { items: Vec.new(), n: 4 }) }
+fn reset(s: &S) -> u64 / mut(s.h) { s.h = mk(); 0 }
+fn eat(c: Rc<Cell2>) -> u64 { 0 }
+fn main() {
+    let s = S { h: mk() }
+    s.h.items.push(reset(&s))
+    print(s.h.items.len())
+    let a = mk()
+    let r = &a.items
+    r.push(eat(a))
+}

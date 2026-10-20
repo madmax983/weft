@@ -1,0 +1,11 @@
+// weft: library
+// A user effect with the name of a standard effect is a different effect. A
+// library may install a handler for it (no W0801).
+effect Log { fn log(msg: String) }
+fn user_log() {
+    handle Log { fn log(m) { resume(()) } } in log("x")
+}
+// The standard `Log` (alias `log`) still needs forwarding in a library.
+fn std_log() {
+    handle log { fn info(m) { resume(()) } } in log.info("x")   //~ W0801
+}

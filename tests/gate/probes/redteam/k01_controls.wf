@@ -1,0 +1,53 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+struct Stats { count: u64 }
+// Expect W0301: the task clears v; r used after the join.
+fn after_join(v: &Vec<u64>) / mut(v), async {
+    let r = &v[0]
+    scope { s =>
+        let t = s.spawn(|| v.clear())
+        t.join()
+    }
+    print(r)
+}
+// Expect W0601: consumed in one arm only.
+fn one_arm(c: bool) {
+    let tx = begin()
+    match c {
+        true => rollback(tx),
+        false => {},
+    }
+}
+// Expect W0601: break skips the consumption.
+fn brk(c: bool) {
+    let tx = begin()
+    loop {
+        if c { break }
+        rollback(tx)
+        return
+    }
+}
+// Expect W0601 inside the task closure.
+fn task_drop() / async {
+    let tx = begin()
+    scope { s => s.spawn(|| { let u = tx }) }
+}
+// Expect W0302: moved in a loop.
+fn loop_move(c: bool) {
+    let tx = begin()
+    while c { rollback(tx) }
+}
+// Expect W0405: parent mutates while task reads.
+fn parent_mut(stats: &Stats) / mut(stats), async {
+    scope { s =>
+        s.spawn(|| print(stats.count))
+        stats.count += 1
+    }
+}
+// Expect W0402: shared via private callee with inferred mut.
+fn priv_bump(s: &Stats) { s.count += 1 }
+fn shared_priv(s: &Stats @ shared) { priv_bump(s) }
+// Expect W0703: undeclared mutation through a callee.
+pub fn under(s: &Stats, v: &Vec<u64>) / mut(s) { v.clear() }

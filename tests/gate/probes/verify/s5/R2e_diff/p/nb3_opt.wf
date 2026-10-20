@@ -1,0 +1,10 @@
+fn d1(a: i32, b: i32) -> i32 { a - b }
+fn d2(b: i32, a: i32) -> i32 { a - b }
+fn main() {
+    let o = Some(d1)
+    o = Some(d2)
+    match o {
+        Some(g) => print(g(b: 10, a: 3)),
+        None => print(0),
+    }
+}

@@ -1,0 +1,5 @@
+effect Note { fn note(x: u64) }
+// The root handles its own `Note`, but `main.noisy` performs the dependency's `Note`.
+pub fn quiet() {
+    handle Note { fn note(x) { resume(()) } } in main.noisy()
+}

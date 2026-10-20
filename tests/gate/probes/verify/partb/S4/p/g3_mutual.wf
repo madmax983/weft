@@ -1,0 +1,10 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn a<T>(x: T, n: u32) { if n > 0 { b(x, n - 1) } }
+fn b<T>(x: T, n: u32) { a(x, n) }
+fn c1() { b(begin(), 3) }
+fn keep<T>(x: T, n: u32) -> T { if n > 0 { keep2(x, n - 1) } else { x } }
+fn keep2<T>(x: T, n: u32) -> T { keep(x, n) }
+fn c2() { rollback(keep2(begin(), 3)) }

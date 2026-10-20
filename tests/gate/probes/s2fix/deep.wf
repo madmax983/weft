@@ -1,0 +1,19 @@
+struct Node { hp: i32, next: Vec<Node> }
+fn walk(list: &Node, n: u64) {
+    let cur = list
+    let i = 0
+    while i < n {
+        cur.hp += 1
+        cur = &cur.next[0]
+        i += 1
+    }
+}
+fn walk2(list: &Node, n: u64) / mut(list.hp, list.next[].hp) {
+    let cur = list
+    let i = 0
+    while i < n {
+        cur.hp += 1
+        cur = &cur.next[0]
+        i += 1
+    }
+}

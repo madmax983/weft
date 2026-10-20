@@ -1,0 +1,12 @@
+// O3-2 (callee form) in the machine design: _0 of the handled body H; frame end
+// (Drop/Dead of the tail temporary); Return of H; Exit of the Handle uses _0.
+place(pt1). place(pt1_e). parent(pt1_e, pt1). unstable(pt1_e).
+owner(pt1, t1).
+cfg_edge(m0, c1). rebound_at(t1, c1).
+cfg_edge(c1, b2). rebound_at(t2, b2). points_into(t2, pt1).
+cfg_edge(b2, cm). uses(t2, cm). call_arg(cm, pt1, 0).
+cfg_edge(cm, cr). rebound_at(oh, cr). points_into(oh, pt1_e).
+cfg_edge(cr, dr). scope_end(t1, dr).
+cfg_edge(dr, hr). cfg_edge(hr, ex). uses(oh, ex). rebound_at(r, ex). points_into(r, pt1_e).
+cfg_edge(ex, post). cfg_edge(post, pr). uses(r, pr).
+lint("machine O3-2: W0301 at Exit", ex) :- error(oh, ex).

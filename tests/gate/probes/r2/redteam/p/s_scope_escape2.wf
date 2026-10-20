@@ -1,0 +1,30 @@
+struct Stats { count: u64 }
+struct Job { f: fn() }
+fn as_value(st: &Stats) / mut(st), async {
+    let k = scope { s => || { s.spawn(|| st.count += 1)
+ () } }
+    k()
+}
+fn as_field(st: &Stats) / mut(st), async {
+    let j = Job { f: || print(0) }
+    scope { s => j.f = || { s.spawn(|| st.count += 1)
+ () } }
+    let g = j.f
+    g()
+}
+fn nested_scope_ok(st: &Stats) / mut(st), async {
+    scope { a =>
+        let k = scope { b => || { a.spawn(|| st.count += 1)
+ () } }
+        k()
+    }
+}
+fn via_ref_scope(st: &Stats) / mut(st), async {
+    let k = || print(0)
+    scope { s =>
+        let r = &s
+        k = || { r.spawn(|| st.count += 1)
+ () }
+    }
+    k()
+}

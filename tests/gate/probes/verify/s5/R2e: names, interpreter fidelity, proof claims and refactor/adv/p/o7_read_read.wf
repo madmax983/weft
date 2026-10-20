@@ -1,0 +1,8 @@
+fn main() / par, async {
+    let n = 5
+    scope { s =>
+        s.spawn(|| print(n))
+        s.spawn(|| print(n))
+        print(n)
+    }
+}

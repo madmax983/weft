@@ -1,0 +1,50 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+struct Pair { tx: Tx, n: u64 }
+effect Note { fn note(n: u64) }
+fn field_in_closure() {
+    let p = Pair { tx: begin(), n: 1 }
+    let f = || { p.tx = begin() }   //~ W0601
+    f()
+    let Pair(t, n) = p
+    rollback(t)
+}
+fn field_in_clause() {
+    let p = Pair { tx: begin(), n: 1 }
+    handle Note { fn note(n) { p.tx = begin()   //~ W0601
+ resume(()) } } in note(1)
+    let Pair(t, n) = p
+    rollback(t)
+}
+fn tuple_part() {
+    let t = (begin(), 1)
+    t.0 = begin()   //~ W0601
+    let (a, b) = t
+    rollback(a)
+}
+fn nested_part() {
+    let o = Some(Pair { tx: begin(), n: 1 })
+    match o { Some(p) => { p.tx = begin()   //~ W0601
+ let Pair(t, n) = p
+ rollback(t) }, None => {} }
+}
+fn in_loop() {
+    let p = Pair { tx: begin(), n: 1 }
+    for i in 0..2 {
+        p.tx = begin()   //~ W0601
+    }
+    let Pair(t, n) = p
+    rollback(t)
+}
+fn local_vec() {
+    let v = Vec.new()
+    v.push(begin())
+    v[0] = begin()   //~ W0601
+    match v.pop() { Some(t) => rollback(t), None => {} }
+}
+fn option_set() {
+    let o = Some(begin())
+    o = None   //~ W0601
+}

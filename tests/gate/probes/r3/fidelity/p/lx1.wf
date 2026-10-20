@@ -1,0 +1,23 @@
+effect Note { fn note(m: String) }
+struct Node { items: Vec<u64> }
+fn main() {
+    let out: Vec<u64> = Vec.new()
+    out.push(1)
+    let inner_v: Vec<u64> = Vec.new()
+    inner_v.push(2)
+    handle Note { fn note(m) { print("outer {m}"); out.push(3); resume(()) } } in {
+        let f = || note("x")
+        let r = &inner_v[0]
+        handle Note { fn note(m) { print("inner {m}"); inner_v.push(4); resume(()) } } in { f() }
+        print(r)    // fine: f reaches the outer handler, which changes `out` only
+        let q = &out[0]
+        handle Note { fn note(m) { print("inner2 {m}"); resume(()) } } in { f() }
+        print(q)    // expected W0301: f reaches the outer handler, which pushes to `out`
+    }
+    let a = Rc.new(Node { items: Vec.new() })
+    a.items.push(1)
+    let b = a.clone()
+    let s = &a.items[0]
+    b.items.push(2)
+    print(s)   // expected W0301 (rc group)
+}

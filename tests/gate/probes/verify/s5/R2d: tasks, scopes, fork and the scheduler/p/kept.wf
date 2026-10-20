@@ -1,0 +1,99 @@
+struct C { k: u64, j: u64 }
+struct H { v: Vec<u64> }
+
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+
+// copy local in the body, the task reads it after the body ends.
+fn copy_after_body() / io {
+    scope { s =>
+        let n = 5
+        s.spawn(|| { sleep(1.ms); print(n) })
+    }
+}
+
+// ref local in the body, captured by the task.
+fn ref_after_body() / io {
+    let v = mk_v()
+    scope { s =>
+        let r = &v[0]
+        s.spawn(|| { sleep(1.ms); print(r) })
+    }
+}
+
+// copy struct; the task borrows into it later.
+fn copy_struct_borrow() / io {
+    scope { s =>
+        let c = C { k: 1, j: 2 }
+        s.spawn(|| { sleep(1.ms); let r = &c.k; sleep(1.ms); print(r) })
+    }
+}
+
+// a closure local in the body that captures a vec local of the body.
+fn closure_after_body() / io {
+    scope { s =>
+        let w = mk_v()
+        let g = || print(w[0])
+        s.spawn(|| { sleep(1.ms); g() })
+    }
+}
+
+// a String local
+fn string_after_body() / io {
+    scope { s =>
+        let t = "hello"
+        s.spawn(|| { sleep(1.ms); print(t) })
+    }
+}
+
+// a copy local that the task writes after its scope.
+fn copy_write_after_body() / io {
+    scope { s =>
+        let n = 5
+        s.spawn(|| { sleep(1.ms); n += 1; print(n) })
+    }
+}
+
+// a Vec local
+fn vec_after_body() / io {
+    scope { s =>
+        let w = mk_v()
+        s.spawn(|| { sleep(1.ms); print(w[0]) })
+    }
+}
+
+// a ref to a vec in the body, the vec is in the body too.
+fn ref_into_body_vec() / io {
+    scope { s =>
+        let w = mk_v()
+        let r = &w[0]
+        s.spawn(|| { sleep(1.ms); print(r) })
+    }
+}
+
+// copy local in a nested block of a task's parent where the scope outlives it
+fn copy_in_block() / io {
+    scope { s =>
+        {
+            let n = 5
+            s.spawn(|| { sleep(1.ms); print(n) })
+        }
+        let m = 7
+        print(m)
+    }
+}
+
+// copy local of struct H? H has a Vec, not copy.
+fn holder_after_body() / io {
+    scope { s =>
+        let h = H { v: mk_v() }
+        s.spawn(|| { sleep(1.ms); print(h.v[0]) })
+    }
+}
+
+fn main() / io {
+}

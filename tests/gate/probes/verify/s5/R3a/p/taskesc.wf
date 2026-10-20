@@ -1,0 +1,18 @@
+effect Note { fn note(x: u64) }
+fn esc_scope() / async {
+    let h = scope { s => s.spawn(|| 1) }
+    print(h.join())
+}
+fn esc_scope_local() / async {
+    let h = scope { s => let g = s.spawn(|| 1); g }
+    print(h.join())
+}
+fn esc_handle_in_scope() / async {
+    scope { s =>
+        let h = handle Note { fn note(x) { resume(()) } } in { s.spawn(|| 1) }
+        print(h.join())
+    }
+}
+fn main() / async {
+    esc_handle_in_scope()
+}

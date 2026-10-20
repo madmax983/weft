@@ -1,0 +1,44 @@
+effect Op { fn op() }
+effect Choice { multi fn choose() -> bool }
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { print("unlocked")
+ let Lock(i) = l }
+fn lock() -> Lock { print("locked")
+ Lock { id: 1 } }
+struct Cell<T> { x: T }
+
+fn hold_op<T>(x: T) -> T / Op { op()
+ x }
+fn hold_call<T>(x: T, f: fn()) -> T { f()
+ x }
+fn hold_opt_fail<T>(x: T) -> T / fail { fail("boom")
+ x }
+impl<T> Cell<T> {
+    fn hold(self, f: fn()) / mut(self) { f() }
+}
+fn hold_in_cell<T>(x: T) -> T / fail { let c = Cell { x: x }
+ fail("c")
+ let Cell(y) = c
+ y }
+
+fn g_op() {
+    handle Op { fn op() { print("aborted") } } in {
+        let m = hold_op(lock())
+        unlock(m)
+    }
+}
+fn g_multi_param() / Choice {
+    let m = hold_call(lock(), || { let b = choose() })
+    unlock(m)
+}
+fn g_opt() / fail {
+    let m = hold_opt_fail(Some(lock()))
+    match m { Some(l) => unlock(l), None => {} }
+}
+fn g_cell() / fail {
+    let m = hold_in_cell(lock())
+    unlock(m)
+}
+fn main() {
+    g_op()
+}

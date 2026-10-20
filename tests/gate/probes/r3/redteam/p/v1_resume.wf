@@ -1,0 +1,65 @@
+struct Entity { hp: i32, kids: Vec<Entity> }
+struct World { entities: Vec<Entity> }
+effect Look { fn look(e: &Entity) }
+effect Look2 { fn look2(e: &Entity) -> u64 }
+fn mke() -> Entity { Entity { hp: 3, kids: Vec.new() } }
+
+// The clause keeps the argument in an outer local; the body local ends.
+fn keep_body_local() {
+    let d = mke()
+    let keep = &d
+    handle Look { fn look(e) { keep = e; resume(()) } } in {
+        let x = mke()
+        look(&x)
+    }
+    print(keep.hp)   //~ W0301
+}
+// The clause holds the argument across resume; the body moves the owner.
+fn hold_across_move() {
+    handle Look { fn look(e) { resume(()); print(e.hp) } } in {   //~ W0301
+        let x = mke()
+        look(&x)
+        let y = x
+    }
+}
+// The clause holds a reference into the argument's kids; the body pushes.
+fn hold_kids_push() {
+    let x = mke()
+    x.kids.push(mke())
+    handle Look { fn look(e) { let k = &e.kids[0]; resume(()); print(k.hp) } } in {   //~ W0301
+        look(&x)
+        x.kids.push(mke())
+    }
+}
+// The body clears through a closure.
+fn hold_closure_clear(w: &World) / mut(w.entities) {
+    let f = || w.entities.clear()
+    handle Look { fn look(e) { resume(()); print(e.hp) } } in {   //~ W0301
+        look(&w.entities[0])
+        f()
+    }
+}
+// The resume is in a closure that the clause calls.
+fn resume_in_closure(w: &World) / mut(w.entities) {
+    handle Look { fn look(e) { let k = || resume(()); k(); print(e.hp) } } in {   //~ W0301
+        look(&w.entities[0])
+        w.entities.clear()
+    }
+}
+// The body frees through a nested handler's clause.
+effect Clr { fn clr() }
+fn nested_clause_clear(w: &World) / mut(w.entities) {
+    handle Look { fn look(e) { resume(()); print(e.hp) } } in {   //~ W0301
+        handle Clr { fn clr() { w.entities.clear(); resume(()) } } in {
+            look(&w.entities[0])
+            clr()
+        }
+    }
+}
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(mke()); w }
+test "keep_body_local" { keep_body_local() }
+test "hold_across_move" { hold_across_move() }
+test "hold_kids_push" { hold_kids_push() }
+test "hold_closure_clear" { let w = mkw(); hold_closure_clear(&w) }
+test "resume_in_closure" { let w = mkw(); resume_in_closure(&w) }
+test "nested_clause_clear" { let w = mkw(); nested_clause_clear(&w) }

@@ -1,0 +1,12 @@
+// A handler that captures nothing, makes an `Rc` and starts a pinned task
+// that shares it. The request task must be pinned too.
+fn main(env: Env) / io {
+    http.serve(env.net.listen("127.0.0.1:18437"), |req| {
+        let r = Rc.new(0)
+        scope { t =>
+            t.spawn(|| { let y = r.clone() })
+            let z = r.clone()
+        }
+        Response.text("hit")
+    })
+}

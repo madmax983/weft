@@ -1,0 +1,8 @@
+fn id(x: i64) -> i64 { x }
+fn narrow() -> u8 {
+    let v: u8 = 200
+    v + v
+}
+fn main() {
+    print(narrow())
+}

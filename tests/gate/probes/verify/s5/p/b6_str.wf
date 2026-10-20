@@ -1,0 +1,10 @@
+fn show(s: String) { print("show {s}") }
+fn main() / async {
+    let name = "abc"
+    let f = || show(name)
+    scope { s =>
+        s.spawn(f)
+        s.spawn(f)
+    }
+    print("end")
+}

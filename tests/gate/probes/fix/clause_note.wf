@@ -1,0 +1,6 @@
+effect Note { fn note(m: u64) }
+fn f() -> u64 {
+    handle Note { fn note(m) { note(m); resume(()) } } in { note(1) }
+    1
+}
+fn main() { print(f()) }

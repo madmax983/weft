@@ -1,0 +1,24 @@
+effect Log { fn log(msg: String) }
+struct Cb { f: fn() }
+fn c_box() {
+    handle Log { fn log(m) { resume(()) } } in { let b = Box.new(|| log("x")) }
+}
+fn c_some() {
+    handle Log { fn log(m) { resume(()) } } in { let o = Some(|| log("y")) }
+}
+fn c_rc() {
+    handle Log { fn log(m) { resume(()) } } in { let r = Rc.new(|| log("z")) }
+}
+fn c_field_local() {
+    handle Log { fn log(m) { resume(()) } } in { let c = Cb { f: || print(1) }; c.f = || log("x") }
+}
+fn c_ref_local_body() {
+    handle Log { fn log(m) { resume(()) } } in { let c = Cb { f: || print(1) }; let p = &c; p.f = || log("x") }
+}
+fn c_vec_elem() {
+    handle Log { fn log(m) { resume(()) } } in {
+        let v: Vec<Cb> = Vec.new()
+        v.push(Cb { f: || print(1) })
+        for c in v[] { c.f = || log("x") }
+    }
+}

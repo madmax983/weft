@@ -1,0 +1,16 @@
+// A task closure moves a linear value. A sibling fails first, so the scope
+// cancels the task, maybe before it starts.
+linear struct Tx { id: u64 }
+fn begin() -> Tx { Tx { id: 1 } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn boom() / fail { fail("boom") }
+fn work() / async, fail {
+    let tx = begin()
+    scope { s =>
+        s.spawn(|| boom())
+        s.spawn(|| commit(tx))
+    }
+}
+fn main() / async {
+    handle Fail { fn fail(m) { print("failed: {m}") } } in work()
+}

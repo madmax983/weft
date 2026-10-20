@@ -1,0 +1,60 @@
+// O3-8 (major, false positive, also in 328a39b). A closure that handles a
+// `multi` operation inside its own body. Each call of the closure gets
+// `performs_at` of the capability of the inner handler, so it is a `multi`
+// point and an abort point (`multi_at`, `may_abort`). A linear value of the
+// caller that lives across the call gets W0503 and W0602. The operation
+// cannot leave the closure: its handler is inside. The same body as a block,
+// or as a function item, is accepted.
+effect Pick { multi fn pick() -> bool }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn apply(f: fn()) { f() }
+fn inner() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        if pick() { print(1) }
+    }
+}
+
+fn closure() {
+    let l = Lk { id: 1 }
+    let g = || {
+        handle Pick { fn pick() { resume(true); resume(false) } } in {
+            if pick() { print(1) }
+        }
+    }
+    g()                   // W0503, W0602
+    unlock(l)
+}
+
+fn callback() {
+    let l = Lk { id: 2 }
+    apply(|| {
+        handle Pick { fn pick() { resume(true); resume(false) } } in {
+            if pick() { print(1) }
+        }
+    })                    // W0503, W0602
+    unlock(l)
+}
+
+fn block() {
+    let l = Lk { id: 3 }
+    {
+        handle Pick { fn pick() { resume(true); resume(false) } } in {
+            if pick() { print(1) }
+        }
+    }                     // accepted
+    unlock(l)
+}
+
+fn item() {
+    let l = Lk { id: 4 }
+    inner()               // accepted
+    unlock(l)
+}
+
+fn main() {
+    closure()
+    callback()
+    block()
+    item()
+}

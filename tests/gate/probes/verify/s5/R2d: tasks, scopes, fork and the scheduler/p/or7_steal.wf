@@ -1,0 +1,15 @@
+// A callee keeps a function parameter in a Vec and spawns a task that runs it.
+// The checker marks the task stealable. The argument holds an Rc.
+fn via_vec(f: fn() / clock) / async, clock {
+    let fs = Vec.new()
+    fs.push(f)
+    scope { s =>
+        s.spawn(|| { let g = fs[0]; g() })
+        sleep(5.ms)
+    }
+}
+
+fn main() / io {
+    let a = Rc.new(0)
+    via_vec(|| { sleep(5.ms); let y = a.clone() })
+}

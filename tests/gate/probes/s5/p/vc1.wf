@@ -1,0 +1,21 @@
+struct Stats { count: u64 }
+fn twice(g: fn()) {
+    g()
+    g()
+}
+fn value_call(st: &Stats) / mut(st) {
+    let h = twice
+    h(|| { st.count += 1 })
+}
+fn item_call(st: &Stats) / mut(st) {
+    twice(|| { st.count += 1 })
+}
+fn param_call(h: fn(fn()), st: &Stats) / mut(st) {
+    h(|| { st.count += 1 })
+}
+fn main() {
+    let st = Stats { count: 0 }
+    value_call(&st)
+    item_call(&st)
+    print(st.count)
+}

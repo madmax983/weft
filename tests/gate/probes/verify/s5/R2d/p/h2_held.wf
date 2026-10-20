@@ -1,0 +1,40 @@
+struct Job { f: fn() }
+
+fn bg_vec(v: Vec<fn()>) / async {
+    scope { s =>
+        let i = 0
+        while i < 2 {
+            match v.pop() {
+                Some(f) => { s.spawn(f)
+ () },
+                None => (),
+            }
+            i += 1
+        }
+    }
+}
+
+fn bg_ref_job(j: &Job) / async {
+    scope { s =>
+        s.spawn(j.f)
+        s.spawn(j.f)
+    }
+}
+
+fn via_vec() / async, clock {
+    let n = 0
+    let v = Vec.new()
+    v.push(|| { sleep(1.ms); n += 1 })
+    v.push(|| { sleep(1.ms); n += 2 })
+    bg_vec(v)
+}
+
+fn via_ref_job() / async, clock {
+    let n = 0
+    let j = Job { f: || { sleep(1.ms); n += 1 } }
+    bg_ref_job(&j)
+}
+
+fn main() / async, clock {
+    via_vec()
+}

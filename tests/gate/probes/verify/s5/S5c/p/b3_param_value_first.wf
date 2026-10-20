@@ -1,0 +1,13 @@
+struct Keep { f: fn() }
+fn run_first(g: fn(), k: Keep) { g()
+ let h = k.f
+ h() }
+fn callback_first(rf: fn(fn(), Keep), v: &Vec<u64>) / mut(v) {
+    let r = &v[0]
+    rf(|| v.push(1), Keep { f: || print(r) })
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    callback_first(run_first, &v)
+}

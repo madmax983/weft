@@ -1,0 +1,13 @@
+// Control: the Rc moves into a local of an inner block, not into a closure.
+fn main() / io {
+    let r = Rc.new(5)
+    let w = r.downgrade()
+    if true {
+        let q = r
+        print("q is not used")
+    }
+    match w.upgrade() {
+        Some(x) => print("upgrade gives {x}: the Rc is still alive"),
+        None => print("upgrade gives None"),
+    }
+}

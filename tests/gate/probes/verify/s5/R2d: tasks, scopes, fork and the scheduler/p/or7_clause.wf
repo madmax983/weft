@@ -1,0 +1,45 @@
+struct E { hp: u64 }
+effect Run { fn run(f: fn()) }
+effect Run2 { fn run2(f: fn(), g: fn()) }
+
+// A clause forks the op argument with itself: the closure holds an Rc.
+fn clause_fork_rc() / par {
+    let a = Rc.new(E { hp: 1 })
+    handle Run { fn run(f) { fork(f, || ())
+    resume(()) } } in {
+        run(|| print(a.hp))
+    }
+}
+
+// The clause spawns the op argument in its own scope: the task holds an Rc.
+fn clause_spawn_rc() / async {
+    let a = Rc.new(E { hp: 1 })
+    handle Run { fn run(f) { scope { s =>
+        s.spawn(f)
+        ()
+    }
+    resume(()) } } in {
+        run(|| print(a.hp))
+    }
+}
+
+// A function that performs run: the handler is in the caller.
+fn uses_run(k: u64) / Run {
+    let n = k
+    run(|| n += 1)
+    print(n)
+}
+
+fn caller_handles() / async {
+    handle Run { fn run(f) { scope { s =>
+        s.spawn(f)
+        s.spawn(f)
+        ()
+    }
+    resume(()) } } in {
+        uses_run(1)
+    }
+}
+
+fn main() / async, par {
+}

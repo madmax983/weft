@@ -1,0 +1,16 @@
+enum Color { Red, Green, Blue }
+enum Tree { Leaf, Node(Tree, Tree) }
+fn a(c: Color) -> u64 { match c { Color.Red => 1, Color.Green => 2 } }   //~ W0120
+fn b(c: Color) -> u64 { match c { Red => 1, Green => 2, Blue => 3 } }
+fn c(c: &Color) -> u64 { match c { Red => 1, Green => 2 } }   //~ W0120
+fn d(t: Tree) -> u64 { match t { Leaf => 1, Node(Leaf, _) => 2 } }   //~ W0120
+fn e(t: Tree) -> u64 { match t { Leaf => 1, Node(Leaf, _) => 2, Node(Node(_, _), x) => 3 } }
+fn f(s: String) -> u64 { match s { "a" => 1 } }   //~ W0120
+fn g(n: u64) -> u64 { match n { 0 => 1, 1 => 2 } }   //~ W0120
+fn h(b: bool, c: bool) -> u64 { match (b, c) { (true, true) => 1, (false, _) => 2, (_, false) => 3 } }
+fn i(o: Option<Option<u64>>) -> u64 { match o { Some(Some(x)) => x, None => 0 } }   //~ W0120
+fn j(o: Result<u64, String>) -> u64 { match o { Ok(x) => x } }   //~ W0120
+fn k(x: ()) -> u64 { match x { () => 1 } }
+fn l<T>(x: T) -> u64 { match x { y => 1 } }
+fn m(c: Color) -> u64 { match c { Red => 1, _ => 2 } }
+fn n(c: Color) { match c { Red => {}, Red => {}, Green => {} } }   //~ W0120

@@ -1,0 +1,20 @@
+// A multi clause gives a resuming closure to the handled body. The body runs it
+// as a task: the rest of the handled body runs on that task.
+effect Ask { multi fn ask() -> fn() -> u64 }
+effect Note { fn note(x: u64) }
+fn main() / async {
+    handle Note { fn note(x) { print(x); resume(()) } } in {
+        let r = handle Ask {
+            fn ask() {
+                let k = || { let x = resume(|| 7); x }
+                resume(k)
+            }
+        } in {
+            let f = ask()
+            scope { s => s.spawn(|| { let r = f(); print(r) }); () }
+            note(1)
+            5
+        }
+        print(r)
+    }
+}

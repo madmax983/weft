@@ -1,0 +1,7 @@
+
+
+fn main() {
+    scope { s3 =>
+        let t4 = s3.spawn(|| print(0))
+    }
+}

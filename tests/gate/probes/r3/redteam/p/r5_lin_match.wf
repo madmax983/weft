@@ -1,0 +1,45 @@
+linear struct Tx { id: u64 }
+fn rollback(tx: Tx) { print(tx.id); let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+enum E { A(Tx), B(Tx) }
+enum F { P(Tx, Tx), Q }
+fn wild_arm(e: E) {
+    match e {
+        A(t) => rollback(t),
+        _ => {},   //~ W0601
+    }
+}
+fn wild_payload(e: E) {
+    match e {
+        A(t) => rollback(t),
+        B(_) => {},   //~ W0601
+    }
+}
+fn half_payload(f: F) {
+    match f {
+        P(a, _) => rollback(a),   //~ W0601
+        Q => {},
+    }
+}
+fn binding_unused(f: F) {
+    match f {
+        P(a, b) => rollback(a),   //~ W0601
+        Q => {},
+    }
+}
+fn nested_tuple() {
+    let ((a, b), c) = ((begin(1), begin(2)), begin(3))
+    rollback(a)
+    rollback(c)
+}   //~ W0601
+fn whole_binding(e: E) {
+    match e {
+        x => {},   //~ W0601
+    }
+}
+fn main() {
+    wild_arm(B(begin(1)))
+    half_payload(P(begin(1), begin(2)))
+    binding_unused(P(begin(1), begin(2)))
+    nested_tuple()
+}

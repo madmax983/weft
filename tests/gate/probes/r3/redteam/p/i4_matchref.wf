@@ -1,0 +1,60 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Wrap<T> { x: T }
+fn clear_then(o: &Option<&Entity>, w: &World) / mut(w.entities) {
+    w.entities.clear()
+    match o { Some(e) => print(e.hp), None => {} }
+}
+fn local_ref_opt(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    let p = &o
+    world.entities.clear()
+    match p { Some(e) => print(e.hp), None => {} }   //~ W0301
+}
+fn callee_clears(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    clear_then(&o, world)   //~ W0312
+}
+fn field_of_ref(world: &World) / mut(world.entities) {
+    let w = Wrap { x: Some(&world.entities[0]) }
+    let p = &w
+    world.entities.clear()
+    match p.x { Some(e) => print(e.hp), None => {} }   //~ W0301
+}
+fn ref_result(world: &World) / mut(world.entities) {
+    let r: Result<&Entity, u64> = Ok(&world.entities[0])
+    let p = &r
+    world.entities.clear()
+    match p { Ok(e) => print(e.hp), Err(n) => {} }   //~ W0301
+}
+fn ref_opt_in_vec(world: &World) / mut(world.entities) {
+    let v = Vec.new()
+    v.push(Some(&world.entities[0]))
+    let p = &v[0]
+    world.entities.clear()
+    match p { Some(e) => print(e.hp), None => {} }   //~ W0301
+}
+fn ref_opt_reborrow(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    let p = &o
+    world.entities.clear()
+    match p { Some(e) => { let q = e; print(q.hp) }, None => {} }   //~ W0301
+}
+fn ref_opt_mut_through(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    let p = &o
+    world.entities.clear()
+    match p { Some(e) => { e.hp = 5 }, None => {} }   //~ W0301
+}
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+test "local_ref_opt" { let w = mkw(); local_ref_opt(&w) }
+test "callee_clears" { let w = mkw(); callee_clears(&w) }
+test "field_of_ref" { let w = mkw(); field_of_ref(&w) }
+test "ref_result" { let w = mkw(); ref_result(&w) }
+test "ref_opt_in_vec" { let w = mkw(); ref_opt_in_vec(&w) }
+test "ref_opt_reborrow" { let w = mkw(); ref_opt_reborrow(&w) }
+test "ref_opt_mut_through" { let w = mkw(); ref_opt_mut_through(&w) }

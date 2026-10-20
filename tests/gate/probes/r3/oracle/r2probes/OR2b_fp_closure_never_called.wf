@@ -1,0 +1,17 @@
+// OR2b (the false-positive side of OR2). ADR 0003 says that a closure takes
+// a captured value only when it runs. This closure never runs, so `v` is
+// never moved. The checker puts the move at the node that makes the closure
+// and reports W0302 at the next use.
+fn take(v: Vec<u64>) -> usize { v.len() }
+
+fn never_called() {
+    let v = Vec.new()
+    v.push(1)
+    let f = || print(take(v))
+    v.push(2)                 // W0302, but no code moves `v`
+    print(v.len())
+}
+
+fn main() {
+    never_called()
+}

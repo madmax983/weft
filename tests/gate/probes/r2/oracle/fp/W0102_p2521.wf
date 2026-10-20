@@ -1,0 +1,10 @@
+
+
+fn main() {
+    if false {
+    } else {
+        scope { s5 =>
+            s5.spawn(|| print(0))
+        }
+    }
+}

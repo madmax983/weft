@@ -1,0 +1,13 @@
+struct Stats { count: u64, name: u64 }
+fn parent_reads_other(stats: &Stats) / mut(stats.count), async {
+    scope { s =>
+        s.spawn(|| stats.count += 1)
+        print(stats.name)
+    }
+}
+fn parent_writes_other(stats: &Stats) / mut(stats.count, stats.name), async {
+    scope { s =>
+        s.spawn(|| stats.count += 1)
+        stats.name += 1
+    }
+}

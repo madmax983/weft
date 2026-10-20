@@ -1,0 +1,13 @@
+linear struct Lk { id: u64 }
+
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+
+fn main() {
+    let lk5 = Lk { id: 5 }
+    let c6 = 0
+    while c6 < 2 {
+        c6 += 1
+        fork(|| print(0), || print(0))
+    }
+    unlock(lk5)
+}

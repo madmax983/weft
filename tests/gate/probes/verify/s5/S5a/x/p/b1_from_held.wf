@@ -1,0 +1,32 @@
+effect Note { fn note(x: u64) }
+struct Job { f: fn() }
+
+fn take_held(srcs: &Vec<&Job>) -> fn() { let s = srcs[0]
+ s.f }
+fn copy_held(srcs: &Vec<&Job>, dst: &Job) / mut(dst) { let s = srcs[0]
+ dst.f = s.f }
+
+fn p_take() {
+    let g = || print(0)
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let j = Job { f: || note(1) }
+        let v = Vec.new()
+        v.push(&j)
+        g = take_held(&v)
+    }
+    g()
+}
+fn p_copy() {
+    let keep = Job { f: || print(0) }
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let j = Job { f: || note(2) }
+        let v = Vec.new()
+        v.push(&j)
+        copy_held(&v, &keep)
+    }
+    let g = keep.f
+    g()
+}
+fn main() { p_take() }

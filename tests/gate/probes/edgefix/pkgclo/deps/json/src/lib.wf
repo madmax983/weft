@@ -1,0 +1,3 @@
+pub fn get() -> fn() / net {
+    || net.net_poll()
+}

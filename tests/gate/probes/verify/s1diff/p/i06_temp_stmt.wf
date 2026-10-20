@@ -1,0 +1,14 @@
+struct Entity { hp: u64 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 7 })
+    w
+}
+fn show(e: &Entity) { print(e.hp) }
+fn main() {
+    show(&mkw().entities[0])
+    print(&mkw().entities[0].hp)
+    let n = mkw().entities[0].hp
+    print(n)
+}

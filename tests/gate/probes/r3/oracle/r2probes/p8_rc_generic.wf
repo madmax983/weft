@@ -1,0 +1,8 @@
+struct E { hp: u64 }
+struct Wrap<T> { x: T }
+fn main() {
+    let w = Wrap { x: Rc.new(E { hp: 1 }) }
+    scope { s =>
+        s.spawn(|| print(w.x.hp))
+    }
+}

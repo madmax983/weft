@@ -1,0 +1,11 @@
+struct Node { v: u64, xs: Vec<u64> }
+fn take<T>(x: T) { }
+fn mk() -> Rc<Node> { let n = Node { v: 5, xs: Vec.new() }; n.xs.push(1); Rc.new(n) }
+effect Note { fn note(x: u64) }
+fn main() {
+    let shared = mk()
+    handle Note { fn note(x) { print(shared.v); resume(()) } } in {
+        take(shared)
+        note(1)
+    }
+}

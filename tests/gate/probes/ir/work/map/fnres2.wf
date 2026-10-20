@@ -1,0 +1,15 @@
+fn body(f: fn(bool) -> &u64) {
+    let r = f(false)
+    let s = f(true)
+    print(r)
+    print(s)
+}
+
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    body(|b| {
+        if b { v.push(2) }
+        &v[0]
+    })
+}

@@ -1,0 +1,15 @@
+struct P { x: u64, y: u64 }
+struct W { v: Vec<u64>, p: P }
+
+fn tuple_parts(w: &W) / mut(w.v) {
+    let t = (&w.p.x, &w.v[0])
+    print(t.0)
+    w.v.push(1)
+    print(t.0)
+}
+
+fn main() / io {
+    let w = W { v: Vec.new(), p: P { x: 1, y: 2 } }
+    w.v.push(5)
+    tuple_parts(&w)
+}

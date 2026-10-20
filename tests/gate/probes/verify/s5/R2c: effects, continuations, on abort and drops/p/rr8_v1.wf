@@ -1,0 +1,50 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn commit(t: Tx) { let Tx(i) = t }
+
+// A generic function that detaches a task of its type parameter.
+fn detach_any<T>(t: Task<T>) { t.detach() }
+fn generic_detach() / async {
+    scope { s =>
+        let t = s.spawn(|| begin())
+        detach_any(t)
+    }
+}
+// A generic function that makes a json response.
+fn respond<T>(x: T) -> Response { Response.json(x) }
+fn generic_json() -> Response { respond(begin()) }
+
+// Clear through a function value of a generic item.
+fn clear_any<T>(v: &Vec<T>) / mut(v) { v.clear() }
+fn clear_value(v: &Vec<Tx>) / mut(v) {
+    let f = clear_any
+    f(v)
+}
+// Clear a Vec of Option<Tx> and a Vec of tuples.
+fn clear_opt(v: &Vec<Option<Tx>>) / mut(v) { v.clear() }
+fn clear_tuple(v: &Vec<(u64, Tx)>) / mut(v) { v.clear() }
+// Clear a Vec of Vec of Tx.
+fn clear_nested(v: &Vec<Vec<Tx>>) / mut(v) { v.clear() }
+// Clear a Vec held in a struct field.
+struct Batch { txs: Vec<Tx> }
+fn clear_field(b: &Batch) / mut(b.txs) { b.txs.clear() }
+// Clear a Vec in an rc object.
+struct Pool { txs: Vec<Tx> }
+fn clear_rc(p: Rc<Pool>) / mut(Pool) { p.txs.clear() }
+// An Rc of a linear value goes out of scope.
+fn rc_drop() {
+    let r = Rc.new(begin())
+}
+fn rc_clone_drop() {
+    let r = Rc.new(begin())
+    let r2 = r.clone()
+}
+// Detach through a method call on a field.
+struct Holder { t: Task<Tx> }
+fn detach_field(h: Holder) {
+    let Holder(t) = h
+    t.detach()
+}
+fn main() {}

@@ -1,0 +1,17 @@
+struct Entity { id: u64, hp: i32 }
+struct World { entities: Vec<Entity> }
+fn find(w: &World, id: u64) -> Option<&Entity> {
+    for e in w.entities[] { if e.id == id { return Some(e) } }
+    None
+}
+fn find_stated(w: &World, id: u64) -> Option<&Entity in w.entities[]> {
+    for e in w.entities[] { if e.id == id { return Some(e) } }
+    None
+}
+fn damage(w: &World, id: u64) / mut(w.entities[].hp) {
+    match find(w, id) { Some(e) => { e.hp -= 1 }, None => {} }
+}
+fn damage2(w: &World, id: u64) / mut(w.entities[].hp) {
+    match find_stated(w, id) { Some(e) => { e.hp -= 1 }, None => {} }
+}
+fn main() {}

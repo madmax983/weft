@@ -1,0 +1,16 @@
+effect Tick { fn tick() }
+fn worker() / Tick, async, clock {
+    sleep(1.ms)
+    tick()
+}
+fn main() / async, clock {
+    let n = 0
+    handle Tick { fn tick() { n += 1
+ resume(()) } } in {
+        scope { s =>
+            s.spawn(|| worker())
+            s.spawn(|| worker())
+        }
+    }
+    print(n)
+}

@@ -1,0 +1,8 @@
+fn f() {
+    loop { return }
+    let x: u64 = "a"
+}
+fn g() {
+    return
+    let y: u64 = "b"
+}

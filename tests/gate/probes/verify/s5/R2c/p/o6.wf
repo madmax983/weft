@@ -1,0 +1,15 @@
+effect Ask { fn ask() -> u64 }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+
+// The handle is inside the closure; the closure captured the value by value.
+fn handle_in_closure() {
+    let l = Lk { id: 1 }
+    let g = || {
+        handle Ask { fn ask() { 0 } } in { let x = ask(); unlock(l); x }
+    }
+    print(g())
+}
+fn main() {
+    handle_in_closure()
+}

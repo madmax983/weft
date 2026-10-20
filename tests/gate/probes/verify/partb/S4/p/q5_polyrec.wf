@@ -1,0 +1,5 @@
+linear struct Tok { id: u64 }
+struct W<T> { x: T }
+enum A<T> { Nil, Cons(T, Box<A<W<T>>>) }
+fn f(x: A<Tok>) { }
+fn g(x: A<u64>) { }

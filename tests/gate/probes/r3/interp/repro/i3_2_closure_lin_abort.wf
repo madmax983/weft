@@ -1,0 +1,22 @@
+// A closure moves a linear value. An abort happens before the call. The
+// unwinder must run `on abort` for the value inside the closure.
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(t: Tx) { let Tx(id) = t; print("rollback {id}") }
+fn commit(t: Tx) / io { let Tx(id) = t; print("commit {id}") }
+
+fn work(n: u64) / io, fail {
+    let t = Tx { id: n }
+    let f = || commit(t)
+    if n > 1 { fail("abort before the call") }
+    f()
+}
+
+fn main() / io {
+    handle Fail { fn fail(m) { print("caught: {m}") } } in {
+        work(1)
+        work(2)
+    }
+    print("end")
+}

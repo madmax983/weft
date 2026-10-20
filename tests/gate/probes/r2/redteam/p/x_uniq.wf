@@ -1,0 +1,45 @@
+fn bump(es: &[u64] @ uniq) / mut(es) { print(es.len()) }
+fn bump_any(es: &[u64]) / mut(es) { print(es.len()) }
+
+// A copy of a `@ uniq` reference: two fork branches mutate one place.
+fn uniq_copy(v: &Vec<u64>) / mut(v), par {
+    let (l, r) = v.split_mut(1)
+    let l2 = l
+    fork(|| bump(l), || bump(l2))   //~ W0403
+}
+// The same through a tuple.
+fn uniq_tuple(v: &Vec<u64>) / mut(v), par {
+    let (l, r) = v.split_mut(1)
+    let t = (l, l)
+    let (a, b) = t
+    fork(|| bump(a), || bump(b))   //~ W0403
+}
+// The same through a generic.
+fn id<T>(x: T) -> T { x }
+fn uniq_generic(v: &Vec<u64>) / mut(v), par {
+    let (l, r) = v.split_mut(1)
+    let l2 = id(l)
+    fork(|| bump(l), || bump(l2))   //~ W0403
+}
+// Both branches capture the same uniq reference.
+fn uniq_same(v: &Vec<u64>) / mut(v), par {
+    let (l, r) = v.split_mut(1)
+    fork(|| bump(l), || bump(l))   //~ W0403
+}
+// The parts of split_at are not uniq.
+fn split_at_mut(v: &Vec<u64>) / mut(v), par {
+    let (l, r) = v.split_at(1)
+    fork(|| bump_any(l), || bump_any(r))   //~ W0403 W0403
+}
+// Disjoint uniq parts: fine.
+fn uniq_ok(v: &Vec<u64>) / mut(v), par {
+    let (l, r) = v.split_mut(1)
+    fork(|| bump(l), || bump(r))
+}
+fn main() / par {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    uniq_copy(&v)
+    uniq_same(&v)
+}

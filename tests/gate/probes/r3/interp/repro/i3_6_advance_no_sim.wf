@@ -1,0 +1,6 @@
+// sim.clock.advance outside any simulation.
+fn main() / io {
+    sim.clock.advance(5.s)
+    print("now {Clock.now()}")
+    sim.net.partition([0], [1])
+}

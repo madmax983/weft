@@ -1,0 +1,18 @@
+// New false positive (OR3): a callee runs the callback once, inside a closure
+// that it runs once. `repeats_sig` counts every call in a closure, and the new
+// "call again" node turns that into W0301. Base: 0 errors. HEAD: W0301 at
+// with_cb(...). It runs cleanly and prints 2.
+fn with_cb(f: fn()) {
+    let g = || f()
+    g()
+}
+fn clear_through_closure() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    with_cb(|| { print(r + 1)
+ v.clear() })
+}
+fn main() {
+    clear_through_closure()
+}

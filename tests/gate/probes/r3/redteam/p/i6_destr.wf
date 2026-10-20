@@ -1,0 +1,29 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn destr_ref_tuple(world: &World) / mut(world.entities) {
+    let t = (1, &world.entities[0])
+    let p = &t
+    world.entities.clear()
+    let (n, e) = p
+    print(e.hp)   //~ W0301
+}
+fn match_ref_tuple(world: &World) / mut(world.entities) {
+    let t = (1, &world.entities[0])
+    let p = &t
+    world.entities.clear()
+    match p { (n, e) => print(e.hp) }   //~ W0301
+}
+fn match_ref_opt_whole(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    let p = &o
+    world.entities.clear()
+    match p { x => match x { Some(e) => print(e.hp), None => {} } }   //~ W0301
+}
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+test "destr_ref_tuple" { let w = mkw(); destr_ref_tuple(&w) }
+test "match_ref_tuple" { let w = mkw(); match_ref_tuple(&w) }
+test "match_ref_opt_whole" { let w = mkw(); match_ref_opt_whole(&w) }

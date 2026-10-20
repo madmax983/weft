@@ -1,0 +1,35 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+// References stored in an array literal lose their place.
+fn refs_in_array(world: &World) / mut(world.entities) {
+    let rs = [&world.entities[0]]
+    world.entities.push(Entity { hp: 1 })
+    for r in rs[] { print(r.hp) }
+}
+// References pushed into a Vec lose their place.
+fn refs_in_vec(world: &World) / mut(world.entities) {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    world.entities.push(Entity { hp: 1 })
+    for r in rs[] { print(r.hp) }
+}
+// A by-value match binding of an owned Option<&T>.
+fn match_binding(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    match o {
+        Some(r) => {
+            world.entities.push(Entity { hp: 1 })
+            print(r.hp)
+        }
+        None => {}
+    }
+}
+// Control: the Option itself after the mutation.
+fn option_after(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    world.entities.push(Entity { hp: 1 })
+    match o {
+        Some(r) => print(r.hp),
+        None => {}
+    }
+}

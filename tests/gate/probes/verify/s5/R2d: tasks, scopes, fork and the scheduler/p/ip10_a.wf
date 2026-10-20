@@ -1,0 +1,27 @@
+// A task spawned in the simulation into a scope outside it outlives the simulation.
+test "task outlives the simulation" {
+    scope { o =>
+        sim.run(seed: 1) {
+            o.spawn(|| {
+                sleep(3.ms)
+                print("late task at {now()}")
+            })
+            sleep(1.ms)
+            print("sim body at {now()}")
+        }
+        print("after sim at {now()}")
+        sleep(5.ms)
+        print("outer at {now()}")
+    }
+}
+
+test "nested simulations" {
+    sim.run(seed: 1) {
+        sleep(2.ms)
+        sim.run(seed: 2) {
+            sleep(1.ms)
+            print("inner at {now()}")
+        }
+        print("outer sim at {now()}")
+    }
+}

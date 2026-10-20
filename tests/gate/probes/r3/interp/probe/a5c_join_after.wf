@@ -1,0 +1,12 @@
+// The task fails before the owner calls join.
+fn main() / io, par {
+    handle Fail { fn fail(m) { print("scope handler: {m}") } } in {
+        scope { s =>
+            let t = s.spawn(|| { fail("task failed"); 1 })
+            sleep(10.ms)
+            let v = handle Fail { fn fail(m) { print("join handler: {m}"); 0 } } in t.join()
+            print("v = {v}")
+        }
+        print("scope returned normally")
+    }
+}

@@ -1,0 +1,8 @@
+// The handler of http.serve moves a capture: it can run only once.
+fn take(v: Vec<u64>) -> u64 { v.len() }
+
+fn main(env: Env) / io {
+    let v = Vec.new()
+    v.push(1)
+    http.serve(env.net.listen("127.0.0.1:18446"), |req| Response.text("n={take(v)}"))
+}

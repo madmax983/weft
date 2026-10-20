@@ -1,0 +1,24 @@
+effect Log { fn log(msg: String) }
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+// The then-branch use of `first` is flushed into the else-branch node.
+fn branch_pend(world: &World, c: bool) -> i32 / mut(world.entities) {
+    let first = &world.entities[0]
+    let x = if c { world.entities.push(Entity { hp: 1 }); first.hp } else { print(0); 1 }
+    x
+}
+// The same with match arms.
+fn match_pend(world: &World, c: bool) -> i32 / mut(world.entities) {
+    let first = &world.entities[0]
+    let x = match c {
+        true => { world.entities.push(Entity { hp: 1 }); first.hp }
+        false => 1,
+    }
+    x
+}
+// The handled body's tail read is flushed into the clause.
+fn handle_pend(world: &World) -> i32 / mut(world.entities) {
+    let first = &world.entities[0]
+    world.entities.push(Entity { hp: 1 })
+    handle Log { fn log(m) { resume(()) } } in first.hp
+}

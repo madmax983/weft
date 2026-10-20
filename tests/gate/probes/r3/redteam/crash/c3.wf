@@ -1,0 +1,2 @@
+effect E { fn op() -> fn() / E }
+fn main() { handle E { fn op() { resume(|| op()) } } in { let g = op(); g() } }

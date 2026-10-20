@@ -1,0 +1,121 @@
+// RR1: the loop lowering stops after eight passes (MAX_LOOP_PASSES in
+// crates/weft-sema/src/body/stmt.rs). A chain of ten locals that rotate their
+// values needs ten passes, so the values of the last locals do not reach the first.
+// Expected: W0301, W0301, W0405. Actual: no error. Each test faults with the
+// instrumented interpreter (stock: `<dangling>` and a silent race).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Stats { count: u64 }
+
+// References. The places reach `r0` only after ten passes.
+fn ref_chain(world: &World, d: &Vec<i32>) / mut(world.entities) {
+    let r0 = &d[0]
+    let r1 = &d[0]
+    let r2 = &d[0]
+    let r3 = &d[0]
+    let r4 = &d[0]
+    let r5 = &d[0]
+    let r6 = &d[0]
+    let r7 = &d[0]
+    let r8 = &d[0]
+    let r9 = &d[0]
+    let m = 0
+    while m < 12 {
+        r0 = r1
+        r1 = r2
+        r2 = r3
+        r3 = r4
+        r4 = r5
+        r5 = r6
+        r6 = r7
+        r7 = r8
+        r8 = r9
+        r9 = &world.entities[0].hp
+        m += 1
+    }
+    world.entities.clear()
+    print(r0)   //~ W0301
+}
+
+// Function values.
+fn fn_chain(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let f0 = || print(0)
+    let f1 = || print(0)
+    let f2 = || print(0)
+    let f3 = || print(0)
+    let f4 = || print(0)
+    let f5 = || print(0)
+    let f6 = || print(0)
+    let f7 = || print(0)
+    let f8 = || print(0)
+    let f9 = || print(0)
+    let m = 0
+    while m < 12 {
+        f0()
+        print(first.hp)   //~ W0301
+        f0 = f1
+        f1 = f2
+        f2 = f3
+        f3 = f4
+        f4 = f5
+        f5 = f6
+        f6 = f7
+        f7 = f8
+        f8 = f9
+        f9 = || world.entities.push(Entity { hp: 1 })
+        m += 1
+    }
+}
+
+// Task closures.
+fn task_chain(st: &Stats) / mut(st), async {
+    scope { s =>
+        let g0 = || print(0)
+        let g1 = || print(0)
+        let g2 = || print(0)
+        let g3 = || print(0)
+        let g4 = || print(0)
+        let g5 = || print(0)
+        let g6 = || print(0)
+        let g7 = || print(0)
+        let g8 = || print(0)
+        let g9 = || print(0)
+        let m = 0
+        while m < 12 {
+            s.spawn(g0)
+            print(st.count)   //~ W0405
+            g0 = g1
+            g1 = g2
+            g2 = g3
+            g3 = g4
+            g4 = g5
+            g5 = g6
+            g6 = g7
+            g7 = g8
+            g8 = g9
+            g9 = || st.count += 1
+            m += 1
+        }
+    }
+}
+
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+test "ref_chain" {
+    let w = mkw()
+    let d = Vec.new()
+    d.push(5)
+    ref_chain(&w, &d)
+}
+test "fn_chain" {
+    let w = mkw()
+    fn_chain(&w)
+}
+test "task_chain" {
+    let st = Stats { count: 0 }
+    task_chain(&st)
+}

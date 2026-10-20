@@ -1,0 +1,13 @@
+effect Ask { fn ask() -> u64 }
+
+
+fn main() {
+    let v4 = [1, 2, 3]
+    if false {
+        handle Ask { fn ask() { v4.clear(); resume(5) } } in {
+            scope { s6 =>
+                s6.spawn(|| print(ask()))
+            }
+        }
+    }
+}

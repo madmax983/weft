@@ -1,0 +1,39 @@
+// weft: library
+fn work() / log { log.info("w") }
+fn twice(f: fn()) { f()
+ f() }
+fn fwd_with(f: fn(String), m: String) { f(m) }
+pub fn called_closure() / log {
+    handle log {
+        fn info(m) { let f = || log.info(m)
+ f()
+ resume(()) }
+        fn warn(m) { log.warn(m)
+ resume(()) }
+    } in work()
+}
+pub fn via_hof() / log {
+    handle log {
+        fn info(m) { twice(|| log.info(m))
+ resume(()) }
+        fn warn(m) { log.warn(m)
+ resume(()) }
+    } in work()
+}
+pub fn via_item_value() / log {
+    handle log {
+        fn info(m) { let g = log.info
+ g(m)
+ resume(()) }
+        fn warn(m) { log.warn(m)
+ resume(()) }
+    } in work()
+}
+pub fn after_resume() / log {
+    handle log {
+        fn info(m) { resume(())
+ log.info(m) }
+        fn warn(m) { resume(())
+ log.warn(m) }
+    } in work()
+}

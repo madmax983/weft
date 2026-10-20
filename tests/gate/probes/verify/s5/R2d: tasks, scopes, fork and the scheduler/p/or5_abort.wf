@@ -1,0 +1,26 @@
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+
+// The join raises the failure of the task; the reference made while the task ran is used on the abort path.
+fn failed_join() / io {
+    let v = mk_v()
+    let w = mk_v()
+    let r = &w[0]
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        scope { s =>
+            let t = s.spawn(|| { v.clear(); fail("x") })
+            r = &v[1]
+            t.join()
+        }
+        r = &w[1]
+    }
+    print(r + 1)
+}
+
+// The fork fails; the reference made in a branch's sibling... (the parent cannot run during a fork).
+fn main() / io {
+}

@@ -1,0 +1,7 @@
+struct E { hp: u64 }
+fn main() {
+    let o = Some(Rc.new(E { hp: 1 }))
+    scope { s =>
+        s.spawn(|| match o { Some(a) => print(a.hp), None => print(0) })
+    }
+}

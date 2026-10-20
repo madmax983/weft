@@ -1,0 +1,13 @@
+mod a {
+    pub effect Note { fn note(x: u64) }
+    pub fn f() / Note { note(1) }
+}
+mod b {
+    pub fn g() {
+        handle a.Note { fn note(v) {
+            print("b handles {v}")
+            resume(())
+        } } in a.f()
+    }
+}
+fn main() { b.g() }

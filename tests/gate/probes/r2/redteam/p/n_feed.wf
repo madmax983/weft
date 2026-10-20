@@ -1,0 +1,28 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn sink<T>(x: T) {}
+fn feed<T>(x: T, f: fn(T)) { f(x) }
+fn feed_tx(x: Tx, f: fn(Tx)) { f(x) }
+fn ignore_tx(x: Tx) {
+}   //~ W0601
+
+fn closure_drops() {
+    feed(begin(), |x| {})   //~ W0601
+}
+fn closure_drops_typed() {
+    feed_tx(begin(), |x: Tx| {})   //~ W0601
+}
+fn generic_item() {
+    feed(begin(), sink)   //~ W0601
+}
+fn generic_item_tx() {
+    feed_tx(begin(), sink)   //~ W0601
+}
+fn generic_item_local() {
+    let g = sink
+    feed_tx(begin(), g)   //~ W0601
+}
+test "a" { closure_drops() }
+test "b" { generic_item_tx() }

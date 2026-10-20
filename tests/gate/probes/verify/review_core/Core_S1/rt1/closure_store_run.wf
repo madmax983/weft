@@ -1,0 +1,14 @@
+struct Entity { hp: i32 }
+effect Log { fn log(m: String) }
+fn main() {
+    let keep = Entity { hp: 1 }
+    let r = &keep.hp
+    let f = || { let e = Entity { hp: 2 }; r = &e.hp }
+    f()
+    let g = || { let e2 = Entity { hp: 7 }; print(e2.hp) }
+    g()
+    print(r)
+    let q = &keep.hp
+    handle Log { fn log(m) { let e3 = Entity { hp: 3 }; q = &e3.hp; resume(()) } } in log("x")
+    print(q)
+}

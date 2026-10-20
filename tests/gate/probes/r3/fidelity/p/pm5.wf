@@ -1,0 +1,12 @@
+struct In { x: Vec<u64> }
+struct Out { a: In, b: In }
+fn take(i: In) -> usize { i.x.len() }
+fn main() {
+    let p = Out { a: In { x: Vec.new() }, b: In { x: Vec.new() } }
+    p.b.x.push(4)
+    let r = &p.b.x[0]
+    let f = || take(p.a)   // the closure takes part `a` of p
+    print(r)
+    print(f())
+    print(r)
+}

@@ -1,0 +1,11 @@
+// weft: library
+effect Log { fn log(msg: String) }
+effect Async { fn go() }
+fn user_root() {
+    handle Log { fn log(m) { resume(()) } } in log("x")
+}
+fn std_root() / log {
+    handle log { fn info(m) { resume(()) } } in log.info("x")   // W0801
+}
+fn user_async() / Async { go() }
+fn net_implies() / net { user_async() }   // W0702: Async user

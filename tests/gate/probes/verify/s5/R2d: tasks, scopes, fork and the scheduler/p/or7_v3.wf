@@ -1,0 +1,57 @@
+effect Run { fn run(f: fn()) }
+effect Run2 { fn run2(f: fn(), g: fn()) }
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+fn spawn_rc(f: fn(), r: Rc<Vec<u64>>) / async {
+    scope { s =>
+        s.spawn(f)
+        r.clear()
+    }
+}
+
+// A local clause runs the op argument as two tasks.
+fn clause_twice() / async {
+    let n = 0
+    handle Run { fn run(f) { scope { s =>
+        s.spawn(f)
+        s.spawn(f)
+        ()
+    }
+    resume(()) } } in {
+        run(|| n += 1)
+    }
+}
+
+// A clause forks two op arguments.
+fn clause_fork() / async, par {
+    let n = 0
+    handle Run2 { fn run2(f, g) { fork(f, g)
+    resume(()) } } in {
+        run2(|| n += 1, || n += 2)
+    }
+}
+
+// A clause spawns the op argument and the body goes on after resume while it runs.
+fn clause_spawn_resume() / async {
+    let n = 0
+    scope { s =>
+        handle Run { fn run(f) { s.spawn(f)
+        resume(()) } } in {
+            run(|| n += 1)
+            print(n)
+        }
+    }
+}
+
+// A callee clears an Rc while the task of f runs.
+fn rc_callee() / async {
+    let a = Rc.new(mk_v())
+    spawn_rc(|| print(a[0]), a.clone())
+}
+
+fn main() / async, par {
+}

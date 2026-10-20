@@ -1,0 +1,27 @@
+test "min divided by minus one" {
+    let a: i64 = 0 - 9223372036854775807 - 1
+    let b: i64 = 0 - 1
+    print(a / b)
+}
+test "min remainder minus one" {
+    let a: i64 = 0 - 9223372036854775807 - 1
+    let b: i64 = 0 - 1
+    print(a % b)
+}
+test "negate min" {
+    let a: i64 = 0 - 9223372036854775807 - 1
+    print(-a)
+}
+test "divide by zero" {
+    let a: i64 = 5
+    let b: i64 = 0
+    print(a / b)
+}
+test "u64 max" {
+    let a: u64 = 18446744073709551615
+    print(a)
+}
+test "multiply overflow" {
+    let a: i64 = 9223372036854775807
+    print(a * 2)
+}

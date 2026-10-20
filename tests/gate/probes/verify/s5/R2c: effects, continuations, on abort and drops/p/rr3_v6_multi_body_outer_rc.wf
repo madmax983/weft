@@ -1,0 +1,17 @@
+// A multi clause gives a resuming closure to the body; the body stores it in an rc object.
+struct H { f: fn() }
+effect Ask { multi fn ask() -> fn() }
+fn main() {
+    let h = Rc.new(H { f: || print(0) })
+    let h2 = h.clone()
+    handle Ask {
+        fn ask() {
+            let k = || { resume(|| print(1)); () }
+            resume(k)
+        }
+    } in {
+        h2.f = ask()
+    }
+    let g = h.f
+    g()
+}

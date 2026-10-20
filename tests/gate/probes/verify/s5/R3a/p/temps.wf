@@ -1,0 +1,79 @@
+effect Note { fn note(x: u64) }
+effect Ask { fn ask() -> u64 }
+effect Give { fn give() -> &u64 }
+effect Choose { multi fn choose() -> bool }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v.push(2); v }
+fn first(v: &Vec<u64>) -> &u64 in v[] { &v[0] }
+fn id(r: &u64) -> &u64 in r { r }
+
+fn if_branch() {
+    let c = true
+    let r = if c { first(&mk_v()) } else { first(&mk_v()) }
+    print(r + 1)
+}
+fn match_arm() {
+    let r = match 1 { 1 => first(&mk_v()), _ => first(&mk_v()) }
+    print(r + 1)
+}
+fn block_plain() {
+    let r = { first(&mk_v()) }
+    print(r + 1)
+}
+fn block_let() {
+    let r = { let k = 1; first(&mk_v()) }
+    print(r + 1)
+}
+fn handled_if_tail() {
+    let c = true
+    let u = mk_v()
+    let r = handle Note { fn note(x) { resume(()) } } in { if c { first(&mk_v()) } else { &u[0] } }
+    print(r + 1)
+}
+fn handled_match_tail() {
+    let u = mk_v()
+    let r = handle Note { fn note(x) { resume(()) } } in { match 1 { 1 => first(&mk_v()), _ => &u[0] } }
+    print(r + 1)
+}
+fn handled_nested_block() {
+    let r = handle Note { fn note(x) { resume(()) } } in { { first(&mk_v()) } }
+    print(r + 1)
+}
+fn handled_id() {
+    let r = handle Note { fn note(x) { resume(()) } } in { id(first(&mk_v())) }
+    print(r + 1)
+}
+fn scope_if_tail() / async {
+    let c = true
+    let u = mk_v()
+    let r = scope { s => if c { first(&mk_v()) } else { &u[0] } }
+    print(r + 1)
+}
+fn scope_in_handle() / async {
+    let r = handle Note { fn note(x) { resume(()) } } in { scope { s => first(&mk_v()) } }
+    print(r + 1)
+}
+fn multi_handled() {
+    let r = handle Choose { fn choose() { resume(true) } } in { let b = choose(); first(&mk_v()) }
+    print(r + 1)
+}
+fn multi_handled2() {
+    let r = handle Choose { fn choose() { resume(true); resume(false) } } in { let b = choose(); first(&mk_v()) }
+    print(r + 1)
+}
+fn clause_if_value() {
+    let c = true
+    let u = mk_v()
+    let r = handle Ask { fn ask() { if c { first(&mk_v()) } else { &u[0] } } } in { let k = ask(); &u[0] }
+    print(r + 1)
+}
+fn clause_resume_id() {
+    let r = handle Give { fn give() { resume(id(first(&mk_v()))) } } in { give() }
+    print(r + 1)
+}
+fn clause_resume_inner_use() {
+    let r = handle Give { fn give() { resume(first(&mk_v())) } } in { let q = give(); q + 0 }
+    print(r + 1)
+}
+fn main() {
+    if_branch()
+}

@@ -1,0 +1,63 @@
+struct S { f: fn(i32, i32) -> i32 }
+fn diff(a: i32, b: i32) -> i32 { a - b }
+fn diff2(b: i32, a: i32) -> i32 { a - b }
+fn id<T>(x: T) -> T { x }
+
+fn same_join(c: bool) {
+    let g = if c { diff } else { diff }
+    print(g(b: 10, a: 3))
+}
+fn other_join(c: bool) {
+    let g = if c { diff } else { diff2 }
+    print(g(b: 10, a: 3))
+}
+fn reassigned(c: bool) {
+    let g = diff
+    if c { g = diff2 }
+    print(g(b: 10, a: 3))
+}
+fn reassigned_loop() {
+    let g = diff
+    let i = 0
+    while i < 2 {
+        print(g(b: 10, a: 3))
+        g = diff2
+        i += 1
+    }
+}
+fn field() {
+    let s = S { f: diff }
+    let g = s.f
+    print(g(b: 10, a: 3))
+}
+fn tuple() {
+    let t = (diff, 1)
+    let (g, _) = t
+    print(g(b: 10, a: 3))
+}
+fn generic() {
+    let g = id(diff)
+    print(g(b: 10, a: 3))
+}
+fn captured() {
+    let g = diff
+    let c = || g(b: 10, a: 3)
+    print(c())
+}
+fn option() {
+    match Some(diff) {
+        Some(g) => print(g(b: 10, a: 3)),
+        None => {}
+    }
+}
+fn main() {
+    same_join(true)
+    other_join(false)
+    reassigned(true)
+    reassigned_loop()
+    field()
+    tuple()
+    generic()
+    captured()
+    option()
+}

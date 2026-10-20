@@ -1,0 +1,14 @@
+// The maker returns a closure that spawns. The maker itself does not spawn,
+// and nothing calls the returned closure.
+struct Stats { count: u64 }
+fn maker(st: &Stats) / mut(st), async {
+    scope { s =>
+        let mk = || || { s.spawn(|| st.count += 1); 0 }
+        let g = mk()
+        print(st.count)
+    }
+}
+fn main() / async {
+    let st = Stats { count: 0 }
+    maker(&st)
+}

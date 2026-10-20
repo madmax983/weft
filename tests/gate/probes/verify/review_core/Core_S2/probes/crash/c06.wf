@@ -1,0 +1,2 @@
+fn rec() -> fn() { rec() }
+fn f() { let g = rec(); g() }

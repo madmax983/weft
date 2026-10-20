@@ -1,0 +1,26 @@
+linear struct Tx { id: u64 }
+fn commit(tx: Tx) { print(tx.id); let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn none_of<T>() -> Option<T> { None }
+struct Wrap<T> { x: T }
+fn branch_value(c: bool) {
+    let o = Some(begin(1))
+    match o { Some(t) => commit(t), None => {} }
+    o = if c { None } else { Some(begin(2)) }
+}   //~ W0601
+fn generic_none() {
+    let o = Some(begin(1))
+    match o { Some(t) => commit(t), None => {} }
+    o = none_of()
+    o = Some(begin(3))
+}   //~ W0601
+fn handle_none() {
+    let o = Some(begin(1))
+    match o { Some(t) => commit(t), None => {} }
+    o = { let x = begin(4); Some(x) }
+}   //~ W0601
+fn wrap_none() {
+    let w = Wrap { x: None }
+    w = Wrap { x: Some(begin(5)) }
+}   //~ W0601
+fn main() { branch_value(false); handle_none(); wrap_none() }

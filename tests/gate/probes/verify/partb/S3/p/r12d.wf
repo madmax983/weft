@@ -1,0 +1,67 @@
+effect Note { fn note(x: u64) }
+struct H { f: fn() }
+struct K {}
+impl K { fn knote() / Note { note(2) } }
+fn noter() / Note { note(1) }
+fn noter_inf() { noter() }
+fn logger() / log { log.info("x") }
+fn idf<T>(x: T) -> T { x }
+fn quiet() {}
+
+fn via_local() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let g = noter
+        scope { s => s.spawn(g) }   // W0314
+    }
+}
+fn via_if(c: bool) / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let g = if c { noter } else { quiet }
+        scope { s => s.spawn(g) }   // W0314
+    }
+}
+fn via_field() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let h = H { f: noter }
+        let g = h.f
+        scope { s => s.spawn(g) }   // W0314
+    }
+}
+fn via_generic() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        scope { s => s.spawn(idf(noter)) }   // W0314
+    }
+}
+fn via_inferred() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        scope { s => s.spawn(noter_inf) }   // W0314
+    }
+}
+fn via_static() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        scope { s => s.spawn(K.knote) }   // W0314
+    }
+}
+fn std_local_item() / async {
+    handle Log { fn info(m) { resume(()) } } in {
+        scope { s => s.spawn(logger) }   // W0314
+    }
+}
+fn std_root_item() / async, log {
+    scope { s => s.spawn(logger) }   // clean
+}
+fn handler_inside_scope() / async {
+    scope { s => handle Note { fn note(x) { resume(()) } } in s.spawn(|| note(1)) }   // W0314
+}
+fn handler_inside_task() / async {
+    scope { s => s.spawn(|| handle Note { fn note(x) { resume(()) } } in note(1)) }   // clean
+}
+fn item_inside_task() / async {
+    scope { s => s.spawn(|| handle Note { fn note(x) { resume(()) } } in noter()) }   // clean
+}
+fn fork_mix() / par {
+    handle Note { fn note(x) { resume(()) } } in fork(|| 1, noter_inf)   // W0314
+}
+fn fork_trailing() / par {
+    handle Note { fn note(x) { resume(()) } } in fork(|| 1) { note(1) }   // W0314
+}

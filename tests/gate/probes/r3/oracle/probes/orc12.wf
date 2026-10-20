@@ -1,0 +1,8 @@
+fn get(r: &u64) -> u64 { r + 0 }
+fn main() {
+    let n = 1
+    scope { s =>
+        s.spawn(|| { n = 5 })
+        print(get(&n))
+    }
+}

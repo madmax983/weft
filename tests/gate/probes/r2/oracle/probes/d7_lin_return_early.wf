@@ -1,0 +1,9 @@
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(id) = t }
+fn f(c: bool) -> u64 {
+    let t = Tx { id: 1 }
+    if c { return 5 }
+    commit(t)
+    0
+}
+fn main() { print(f(true)) }

@@ -1,0 +1,43 @@
+struct W { items: Vec<u64>, kids: Vec<W> }
+fn grow(w: &W) -> &u64 in w.items[] / mut(w.items) { w.items.push(1); &w.items[0] }
+fn grow2(w: &W, r: &u64) -> &u64 in w.items[] / mut(w.items) { w.items.push(1); &w.items[0] }
+fn a(w: &W) / mut(w.items) {
+    let r = &w.items[0]
+    r = grow(w)
+    print(r)
+}
+fn b(w: &W) / mut(w.items) {
+    let r = &w.items[0]
+    r = grow2(w, r)
+    print(r)
+}
+fn c(w: &W) / mut(w.items) {
+    let r = &w.items[0]
+    r = if w.items.len() > 2 { grow(w) } else { &w.items[1] }
+    print(r)
+}
+fn d(w: &W) / mut(w.items) {
+    let r = &w.items[0]
+    let i = 0
+    while i < 3 {
+        r = grow(w)
+        i += 1
+    }
+    print(r)
+}
+fn e(w: &W) / mut(w.items) {
+    let t = (&w.items[0], 1)
+    t = (grow(w), 2)
+    print(t.0)
+}
+fn f(w: &W) / mut(w.items) {
+    let r = &w.items[0]
+    r = { w.items.push(3); &w.items[1] }
+    print(r)
+}
+fn g(w: &W) / mut(w.items) {
+    let r = &w.items[0]
+    let h = || { r = grow(w) }
+    h()
+    print(r)
+}

@@ -1,0 +1,17 @@
+struct E { hp: u64 }
+fn main() {
+    let es = [E { hp: 1 }, E { hp: 2 }]
+    let best = &es[0]
+    for e in es[] {
+        if e.hp > best.hp { best = e }
+    }
+    print(best.hp)
+    let i = 0
+    let cur = &es[0]
+    while i < 2 {
+        let tmp = &es[i]
+        cur = tmp
+        i += 1
+    }
+    print(cur.hp)
+}

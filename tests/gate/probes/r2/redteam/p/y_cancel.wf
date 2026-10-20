@@ -1,0 +1,49 @@
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { let Lock(i) = l
+ print("unlock {i}") }
+fn lock() -> Lock { Lock { id: 1 } }
+fn wait() / async { suspend() }
+
+// A task holds a Lock with no `on abort` across a suspension point. A failing
+// sibling cancels it there.
+fn run() / async, fail {
+    scope { s =>
+        s.spawn(|| {
+            let l = lock()
+            suspend()   //~ W0602
+            unlock(l)
+        })
+        s.spawn(|| { fail("boom") })
+    }
+}
+// The suspension point is in a callee.
+fn run2() / async, fail {
+    scope { s =>
+        s.spawn(|| {
+            let l = lock()
+            wait()   //~ W0602
+            unlock(l)
+        })
+        s.spawn(|| { fail("boom") })
+    }
+}
+// The lock is held across a join of another task.
+fn run3() / async, fail {
+    scope { s =>
+        let t = s.spawn(|| { fail("boom") })
+        let l = lock()
+        t.join()   //~ W0602
+        unlock(l)
+    }
+}
+// The lock is held across the end of a scope that waits for its tasks.
+fn run4() / async, fail {
+    let l = lock()
+    scope { s =>
+        s.spawn(|| { fail("boom") })
+    }   //~ W0602
+    unlock(l)
+}
+fn main() / async {
+    handle Fail { fn fail(m) { print("caught {m}") } } in run4()
+}

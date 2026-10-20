@@ -1,0 +1,96 @@
+effect Note { fn note(x: u64) }
+effect Log2 { fn log2(m: String) }
+struct Stats { count: u64 }
+struct Holder { f: fn() -> u64 }
+fn noter() / Note { note(1) }
+fn noter2() { noter() }
+fn run(f: fn() -> u64) -> u64 { f() }
+fn run_twice(f: fn() -> u64) -> u64 { f() + f() }
+
+// 1. closure called twice: two copies of the task conflict
+fn twice(st: &Stats) / mut(st), async {
+    scope { s =>
+        let sp = || { s.spawn(|| st.count += 1); 0 }
+        sp()
+        sp()
+    }
+}
+// 2. closure never called: clean
+fn never_called(st: &Stats) / mut(st), async {
+    scope { s =>
+        let sp = || { s.spawn(|| st.count += 1); 0 }
+        print(st.count)
+    }
+}
+// 3. nested closures
+fn nested(st: &Stats) / mut(st), async {
+    scope { s =>
+        let a = || { let b = || { s.spawn(|| st.count += 1); 0 }; b() }
+        a()
+        print(st.count)   // W0405
+    }
+}
+// 4. closure returned from a closure
+fn returned(st: &Stats) / mut(st), async {
+    scope { s =>
+        let mk = || || { s.spawn(|| st.count += 1); 0 }
+        let g = mk()
+        g()
+        print(st.count)   // W0405
+    }
+}
+// 5. closure stored in a struct field
+fn in_field(st: &Stats) / mut(st), async {
+    scope { s =>
+        let h = Holder { f: || { s.spawn(|| st.count += 1); 0 } }
+        let k = (h.f)()
+        print(st.count)   // W0405
+    }
+}
+// 6. closure stored in a Vec
+fn in_vec(st: &Stats) / mut(st), async {
+    scope { s =>
+        let v: Vec<fn() -> u64> = Vec.new()
+        v.push(|| { s.spawn(|| st.count += 1); 0 })
+        let k = v[0]()
+        print(st.count)   // W0405
+    }
+}
+// 7. closure called in a callee twice: conflict
+fn callee_twice(st: &Stats) / mut(st), async {
+    scope { s =>
+        run_twice(|| { s.spawn(|| st.count += 1); 0 })
+    }
+}
+// 8. closure via a tuple
+fn in_tuple(st: &Stats) / mut(st), async {
+    scope { s =>
+        let t = (|| { s.spawn(|| st.count += 1); 0 }, 1)
+        let (g, _) = t
+        g()
+        print(st.count)   // W0405
+    }
+}
+// 9. spawn inside a closure chosen by if
+fn by_if(st: &Stats, c: bool) / mut(st), async {
+    scope { s =>
+        let g = if c { || { s.spawn(|| st.count += 1); 0 } } else { || 1 }
+        g()
+        print(st.count)   // W0405
+    }
+}
+// 10. a task that spawns a nested task in the same scope
+fn nested_task(st: &Stats) / mut(st), async {
+    scope { s =>
+        s.spawn(|| { s.spawn(|| st.count += 1); 0 })
+        print(st.count)   // W0405
+    }
+}
+// 11. closure param receiving the scope
+fn scope_param(st: &Stats) / mut(st), async {
+    scope { s =>
+        let sp = |sc: Scope| { sc.spawn(|| st.count += 1); 0 }
+        sp(s)
+        print(st.count)   // W0405
+    }
+}

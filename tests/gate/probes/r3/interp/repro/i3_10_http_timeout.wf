@@ -1,0 +1,10 @@
+// A server with a deadline of 60 s. A client sends a request at once. The
+// virtual clock moves to the deadline before the server accepts it.
+fn main(env: Env) / io {
+    handle Fail { fn fail(m) { print("caught: {m} at {Clock.now()}") } } in {
+        with_timeout(60.s) {
+            http.serve(env.net.listen("127.0.0.1:18445"), |req| Response.text("hello"))
+        }
+    }
+    print("end")
+}

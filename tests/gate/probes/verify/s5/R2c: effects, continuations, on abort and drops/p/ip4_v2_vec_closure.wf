@@ -1,0 +1,15 @@
+// A closure in a Vec captures a local of the multi continuation by reference.
+effect Choice { multi fn choose() -> bool }
+fn main() {
+    let all: Vec<u64> = Vec.new()
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        let count = 0
+        let v: Vec<fn()> = Vec.new()
+        v.push(|| count += 1)
+        let b = choose()
+        let g = v[0]
+        g()
+        all.push(count)
+    }
+    print(all)
+}

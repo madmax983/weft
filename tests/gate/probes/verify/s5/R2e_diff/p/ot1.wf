@@ -1,0 +1,8 @@
+struct E { hp: u64 }
+fn mk() -> E { E { hp: 3 } }
+fn main() {
+    let r = &mk().hp
+    print(r)
+    let q = &mk()
+    print(q.hp)
+}

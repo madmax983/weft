@@ -1,0 +1,78 @@
+// O3-9 (major, false positive, also in 328a39b). A join that the body does
+// not make on a local handle does not end the task. The task stays active to
+// the end of the scope, so each later access to what it touches is W0405.
+// The interpreter has joined the task. Forms: a handle in a tuple, in an
+// `Option`, through `id`, a join in a callee, and a join in a closure. A
+// direct `t.join()` ends the task (accepted).
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn join_it(t: Task<()>) { t.join() }
+fn id<T>(x: T) -> T { x }
+
+fn direct() {
+    let v = mk_v()
+    scope { s =>
+        let t = s.spawn(|| v.push(1))
+        t.join()
+        v.push(2)             // accepted
+    }
+}
+
+fn helper() {
+    let v = mk_v()
+    scope { s =>
+        let t = s.spawn(|| v.push(1))
+        join_it(t)
+        v.push(2)             // W0405
+    }
+}
+
+fn tuple() {
+    let v = mk_v()
+    scope { s =>
+        let p = (s.spawn(|| v.push(1)), 1)
+        let (t, _) = p
+        t.join()
+        v.push(2)             // W0405
+    }
+}
+
+fn option() {
+    let v = mk_v()
+    scope { s =>
+        let o = Some(s.spawn(|| v.push(1)))
+        match o {
+            Some(t) => t.join(),
+            None => {}
+        }
+        v.push(2)             // W0405
+    }
+}
+
+fn through_id() {
+    let v = mk_v()
+    scope { s =>
+        let t = s.spawn(|| v.push(1))
+        let u = id(t)
+        u.join()
+        v.push(2)             // W0405
+    }
+}
+
+fn closure() {
+    let v = mk_v()
+    scope { s =>
+        let t = s.spawn(|| v.push(1))
+        let g = || t.join()
+        g()
+        v.push(2)             // W0405
+    }
+}
+
+fn main() {
+    direct()
+    helper()
+    tuple()
+    option()
+    through_id()
+    closure()
+}

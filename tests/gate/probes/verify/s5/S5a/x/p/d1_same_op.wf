@@ -1,0 +1,26 @@
+effect Pick { fn pick() -> &u64 }
+
+fn picks_twice() / Pick {
+    let r = pick()
+    let r2 = pick()
+    print(r)
+}
+fn d_caller_handler() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { v.clear()
+ v.push(2)
+ resume(&v[0]) } } in picks_twice()
+}
+fn picks_with_cb(f: fn()) / Pick {
+    let r = pick()
+    f()
+    print(r)
+}
+fn d_cb() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(&v[0]) } } in picks_with_cb(|| v.clear())
+}
+fn main() { d_caller_handler() 
+ d_cb() }

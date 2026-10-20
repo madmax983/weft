@@ -1,0 +1,6 @@
+fn d2(b: i32, a: i32) -> i32 { a - b }
+fn main() {
+    let g = d2
+    let c = || g(b: 10, a: 3)
+    print(c())
+}

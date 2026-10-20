@@ -1,0 +1,9 @@
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn id<T>(x: T) -> T { x }
+fn main() {
+    let v = mk_v()
+    let f = id(|| print(take_v(v)))
+    f()
+    f()
+}

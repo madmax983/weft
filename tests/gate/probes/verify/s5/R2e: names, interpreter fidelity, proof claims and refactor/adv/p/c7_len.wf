@@ -1,0 +1,5 @@
+fn main() {
+    let v: Vec<i32> = []
+    let n = v.len() - 1
+    print(n)
+}

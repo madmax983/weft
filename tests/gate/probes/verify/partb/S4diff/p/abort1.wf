@@ -1,0 +1,51 @@
+linear struct Tok { id: u64 }
+fn spend(t: Tok) { let Tok(i) = t }
+fn mint() -> Tok { Tok { id: 1 } }
+linear struct Tx { id: u64 }
+    on abort = undo
+fn undo(t: Tx) { let Tx(i) = t }
+fn begin() -> Tx { Tx { id: 1 } }
+fn risky() / fail { fail("no") }
+struct Wrap<T> { x: T }
+
+fn closure_abort() / fail {
+    let t = mint()
+    let c = || spend(t)
+    risky()   //~ W0602
+    c()
+}
+fn closure_abort_ok() / fail {
+    let t = begin()
+    let c = || undo(t)
+    risky()
+    c()
+}
+fn wrap_abort() / fail {
+    let w = Wrap { x: mint() }
+    risky()   //~ W0602
+    let Wrap(t) = w
+    spend(t)
+}
+fn array_abort() / fail {
+    let a: [Tok; 1] = [mint()]
+    risky()   //~ W0602
+    spend_arr(a)
+}
+fn option_abort() / fail {
+    let o = Some(mint())
+    risky()   //~ W0602
+    match o { Some(t) => spend(t), None => {} }
+}
+fn box_abort() / fail {
+    let b = Box.new(mint())
+    risky()   //~ W0602
+    spend_box(b)
+}
+fn temp_across(c: bool) / fail {
+    spend_pair(mint(), risky_tok())   //~ W0602
+}
+fn risky_tok() -> Tok / fail { fail("x") }
+fn spend_pair(a: Tok, b: Tok) { spend(a)
+ spend(b) }
+fn spend_arr(a: [Tok; 1]) { }
+fn spend_box(b: Box<Tok>) { }

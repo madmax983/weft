@@ -1,0 +1,112 @@
+effect Log { fn log(msg: String) }
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+linear struct Lock { id: u64 }
+fn take() -> Lock { Lock { id: 1 } }
+fn give(l: Lock) {}
+
+// 1. trailing block of with_timeout is a closure: return leaves only it. then print sees the push.
+fn tmo(world: &World) / mut(world.entities), async, fail {
+    let first = &world.entities[0]
+    let k = with_timeout(5) {
+        world.entities.push(Entity { hp: 1 })
+        return 3
+    }
+    print(first.hp)   // expect W0301
+}
+
+// 2. nested closures, return in inner closure
+fn nested(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let outer = || {
+        let inner = || { world.entities.clear(); return 1 }
+        let k = inner()
+        return k + 1
+    }
+    let n = outer()
+    print(first.hp)  // expect W0301
+}
+
+// 3. return from closure leaves a linear local unconsumed
+fn leak_in_closure() {
+    let f = || {
+        let t = take()
+        if true { return 1 }
+        give(t)
+        2
+    }
+    let x = f()
+}
+
+// 4. return inside a match arm inside a handled body
+fn match_in_handle(c: bool) {
+    handle Log { fn log(m) { resume(()) } } in {
+        match c {
+            true => { return },
+            false => {}
+        }
+    }
+}
+
+// 5. return inside a handled body inside a closure
+fn handle_in_closure() {
+    let f = || {
+        handle Log { fn log(m) { resume(()) } } in { return 1 }
+    }
+}
+
+// 6. loop in a clause returning
+fn loop_clause() {
+    handle Log { fn log(m) { loop { return } } } in log("x")
+}
+
+// 7. break in a while inside closure inside handled body: legal.
+fn ok_nested_loop() {
+    let f = || {
+        handle Log { fn log(m) { resume(()) } } in {
+            let i = 0
+            while i < 3 { i += 1; if i == 2 { break } }
+        }
+    }
+    f()
+}
+
+// 8. break in handled body inside a while in a closure: W0315
+fn fence_in_closure_loop() {
+    let f = || {
+        let i = 0
+        while i < 3 {
+            i += 1
+            handle Log { fn log(m) { resume(()) } } in { break }
+        }
+    }
+    f()
+}
+
+// 9. closure return type mismatch
+fn mismatch() {
+    let f = |x: u64| { if x > 1 { return 1 }; "a" }
+}
+
+// 10. return in spawned closure inside a scope: legal
+fn spawn_ret() / async {
+    scope { s =>
+        let t = s.spawn(|| { if true { return 1 }; 2 })
+        let v = t.join()
+    }
+}
+
+// 11. return in fork closures: legal, typed
+fn fork_ret() -> u64 / async {
+    let (a, b) = fork(|| { return 1 }, || { 2 })
+    a + b
+}
+
+// 12. return with a reference into a closure local through a tuple
+fn tuple_ref() {
+    let f = || {
+        let v: Vec<u64> = Vec.new()
+        v.push(1)
+        return (&v[0], 1)
+    }
+}

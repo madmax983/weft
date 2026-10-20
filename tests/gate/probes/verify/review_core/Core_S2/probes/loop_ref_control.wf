@@ -1,0 +1,26 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+// Control: a reference local re-assigned in a loop, mutated directly.
+fn m_loop(a: &World, b: &World, n: u64) {
+    let cur = a
+    let i = 0
+    while i < n {
+        cur.entities.clear()
+        cur = b
+        i += 1
+    }
+}
+fn direct_loop(w1: &World, w2: &World) {
+    let first = &w2.entities[0]
+    m_loop(w1, w2, 2)
+    print(first.hp)   // expect W0301
+}
+pub fn m_loop_pub(a: &World, b: &World, n: u64) / mut(a.entities) {
+    let cur = a
+    let i = 0
+    while i < n {
+        cur.entities.clear()   // expect W0703 for b.entities
+        cur = b
+        i += 1
+    }
+}

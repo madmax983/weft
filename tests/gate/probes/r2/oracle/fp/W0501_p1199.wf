@@ -1,0 +1,11 @@
+linear struct Tx { id: u64 }
+effect Ask { fn ask() -> u64 }
+
+fn commit(t: Tx) { let Tx(id) = t; print("commit", id) }
+
+fn main() {
+    let tx1 = Tx { id: 1 }
+    handle Ask { fn ask() { resume(1); resume(2) } } in {
+    }
+    commit(tx1)
+}

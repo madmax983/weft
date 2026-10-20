@@ -1,0 +1,12 @@
+fn main() {
+    let x: u8 = 1
+    let y: u8 = 2
+    let a: u64 = 200
+    let b: u64 = 100
+    let ok = x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299 && x + y < 255 && a + b > 299
+    print(ok)
+    let s = a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a + a
+    print(s)
+    let t = x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x + x
+    print(t)
+}

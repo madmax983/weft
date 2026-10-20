@@ -1,0 +1,100 @@
+// A temporary value goes out of scope at the end of its statement. The value
+// of a block is part of the enclosing statement.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Bag { items: Vec<u64> }
+struct Cell2 { items: Vec<u64>, n: u64 }
+
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(5); v }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 7 }); w }
+fn mk_bag() -> Bag { let b = Bag { items: Vec.new() }; b.items.push(6); b }
+fn mk_rc() -> Rc<Cell2> { Rc.new(Cell2 { items: Vec.new(), n: 4 }) }
+
+fn temp_elem() {
+    let r = &mkv()[0]
+    print(r)   //~ W0301
+}
+
+fn temp_field() {
+    let s = &mk_bag().items[0]
+    print(s)   //~ W0301
+}
+
+fn temp_receiver() {
+    let t = mk_bag().items.get(0)
+    print(t)   //~ W0301
+}
+
+fn temp_whole() {
+    let t = &mkv()
+    print(t.len())   //~ W0301
+}
+
+fn temp_deep() {
+    let r = &mkw().entities[0].hp
+    print(r)   //~ W0301
+}
+
+fn temp_rc_handle() {
+    let r = &mk_rc().n
+    print(r)   //~ W0301
+}
+
+fn temp_block_value() {
+    let r = { &mkv()[0] }
+    print(r)   //~ W0301
+}
+
+fn temp_loop(n: u64) {
+    let keep = Entity { hp: 1 }
+    let r = &keep.hp
+    let i = 0
+    while i < n {
+        r = &mkw().entities[0].hp
+        i += 1
+    }
+    print(r)   //~ W0301
+}
+
+fn temp_if(c: bool) {
+    let keep = mkv()
+    let r = &keep
+    if c { r = &mkv() }
+    print(r.len())   //~ W0301
+}
+
+fn temp_break() {
+    let keep = Entity { hp: 1 }
+    let r = &keep.hp
+    loop {
+        r = &mkw().entities[0].hp
+        break
+    }
+    print(r)   //~ W0301
+}
+
+// Controls: a temporary used in its own statement, a copy temporary, and a
+// value that is moved into a local.
+fn temp_same_statement() {
+    print(&mkv()[0])
+    let n = mkv().len()
+    print(mkw().entities[0].hp)
+    for x in mkv()[] { print(x) }
+    print(n)
+}
+
+fn temp_copy() {
+    let r = &1
+    print(r)
+}
+
+fn temp_moved_to_local() {
+    let v = mkv()
+    let r = &v[0]
+    print(r)
+}
+fn main() {
+  temp_same_statement()
+  temp_copy()
+  temp_moved_to_local()
+}

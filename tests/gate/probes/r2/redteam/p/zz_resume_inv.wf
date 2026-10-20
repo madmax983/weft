@@ -1,0 +1,67 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Note { fn note(x: u64) }
+effect Peek { fn peek(e: &Entity) }
+fn grow(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 1 }) }
+
+// The clause holds a reference into a captured place across `resume`.
+fn captured(world: &World) / mut(world.entities) {
+    handle Note {
+        fn note(x) {
+            let r = &world.entities[0]
+            resume(())
+            print(r.hp)   //~ W0301
+        }
+    } in {
+        note(1)
+        world.entities.clear()
+    }
+}
+// Through a callee in the handled body.
+fn captured_callee(world: &World) / mut(world.entities) {
+    handle Note {
+        fn note(x) {
+            let r = &world.entities[0]
+            resume(())
+            print(r.hp)   //~ W0301
+        }
+    } in {
+        note(1)
+        grow(world)
+    }
+}
+// The handled body moves the owner.
+fn take_w(w: World) {}
+fn captured_move() {
+    let world = World { entities: Vec.new() }
+    world.entities.push(Entity { hp: 1 })
+    handle Note {
+        fn note(x) {
+            let r = &world.entities[0]
+            resume(())
+            print(r.hp)   //~ W0301
+        }
+    } in {
+        note(1)
+        take_w(world)
+    }
+}
+// The handled body runs the operation in a loop: the second clause run sees
+// the mutation of the first resume.
+fn clause_param(world: &World) / mut(world.entities) {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)   //~ W0301
+        }
+    } in {
+        peek(&world.entities[0])
+        world.entities.clear()
+    }
+}
+fn mkw() -> World { let w = World { entities: Vec.new() }
+ w.entities.push(Entity { hp: 1 })
+ w }
+test "captured" { let w = mkw()
+ captured(&w) }
+test "captured_move" { captured_move() }

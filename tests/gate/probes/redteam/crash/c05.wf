@@ -1,0 +1,1 @@
+fn f() / async { scope { s => s.spawn(5) } }

@@ -1,0 +1,17 @@
+effect Ask { multi fn ask() -> u64 }
+
+linear struct Tx { id: u64 }
+    on abort = undo
+
+fn undo(t: Tx) {
+    let Tx(id) = t
+}
+
+fn body() -> u64 / Ask {
+    let t = Tx { id: 9 }
+    let n = ask()
+    let Tx(i) = t
+    n + i
+}
+
+

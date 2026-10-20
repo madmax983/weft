@@ -1,0 +1,2 @@
+effect E { fn op() -> u64 }
+fn f() -> u64 { handle E { fn op() { resume(1); 0 } } in op() }

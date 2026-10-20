@@ -1,0 +1,10 @@
+struct E { hp: u64 }
+fn show(a: &Rc<E>) { print(a.hp) }
+fn main() {
+    let a = Rc.new(E { hp: 1 })
+    let g = || show(&a)
+    let h = g
+    scope { s =>
+        s.spawn(h)
+    }
+}

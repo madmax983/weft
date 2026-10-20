@@ -1,0 +1,15 @@
+struct Bag { items: Vec<u64>, other: Vec<u64> }
+fn take(v: Vec<u64>) {}
+fn partial_use() {
+    let b = Bag { items: Vec.new(), other: Vec.new() }
+    b.items.push(1)
+    take(b.other)
+    print(b.items.len())
+}
+fn main() {
+    let b = Bag { items: Vec.new(), other: Vec.new() }
+    b.items.push(1)
+    let r = &b.items[0]
+    take(b.other)
+    print(r)
+}

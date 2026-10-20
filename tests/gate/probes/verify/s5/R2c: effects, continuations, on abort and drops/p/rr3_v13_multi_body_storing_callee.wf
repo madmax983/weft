@@ -1,0 +1,20 @@
+// The body gives the resuming closure to a callee that keeps it in an rc object.
+struct H { f: fn() -> u64 }
+effect Ask { multi fn ask() -> fn() -> u64 }
+fn keep(h: Rc<H>, f: fn() -> u64) / mut(H) { h.f = f }
+fn main() {
+    let h = Rc.new(H { f: || 0 })
+    let h2 = h.clone()
+    handle Ask {
+        fn ask() {
+            let k = || { let (a, b) = resume(|| 7); a + b }
+            resume(k)
+        }
+    } in {
+        let f = ask()
+        keep(h2.clone(), f)
+        (1, 2)
+    }
+    let g = h.f
+    print(g())
+}

@@ -1,0 +1,11 @@
+struct E { hp: u64, tag: u64 }
+struct W { es: Vec<E>, ns: Vec<u64>, score: u64, b: Box<E> }
+
+fn pair_of(v: &Vec<u64>) -> (&u64 in v[], u64) { (&v[0], 1) }
+
+
+fn h1(p0: Vec<u64>, p1: &W, p2: &u64) -> &u64 in p1.ns[] {
+    let (x3, _) = pair_of(&p0); p0.clear(); print(x3)
+    &p1.ns[0]
+}
+

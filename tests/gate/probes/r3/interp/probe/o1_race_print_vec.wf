@@ -1,0 +1,11 @@
+// Two tasks: one pushes to a Vec, one prints the Vec. The checker rejects
+// this. With --unchecked, the oracle must find the race.
+fn main() / io, par {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        s.spawn(|| { sleep(1.ms); v.push(2) })
+        s.spawn(|| { sleep(1.ms); print(v) })
+        print("spawned")
+    }
+}

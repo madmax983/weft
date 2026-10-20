@@ -1,0 +1,6 @@
+fn main() {
+    scope { s =>
+        s.spawn(|| print(1))
+        s.spawn(|| print(2))
+    }
+}

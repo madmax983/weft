@@ -1,0 +1,34 @@
+// The task clears `v`. The parent borrows into `v[]` while the task is
+// active, and uses the reference after the join. The spawn node is the only
+// mutation that the checker sees, and it comes before the borrow.
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+
+fn use_after_join() {
+    let v = mk_v()
+    scope { s =>
+        let t = s.spawn(|| v.clear())
+        let r = &v[1]
+        t.join()
+        print(r + 1)
+    }
+}
+
+fn use_after_scope() {
+    let v = mk_v()
+    let r = &v[0]
+    scope { s =>
+        s.spawn(|| v.clear())
+        r = &v[1]
+    }
+    print(r + 1)
+}
+
+fn main() {
+    use_after_scope()
+    use_after_join()
+}

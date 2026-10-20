@@ -1,0 +1,25 @@
+// Arguments run in the order of the parameters.
+struct S { a: usize, b: usize }
+struct T { x: usize }
+impl T {
+    fn m(self: &T, a: usize, b: usize) -> usize { a + b }
+}
+effect E { fn op(a: usize, b: usize) -> usize }
+fn consume(v: Vec<usize>) -> usize { 1 }
+fn f(a: usize, b: usize) -> usize { a + b }
+fn g1() { let v: Vec<usize> = [1]; print(f(b: consume(v), a: v.len())) }
+fn g2() { let v: Vec<usize> = [1]; let t = T { x: 1 }; print(t.m(b: consume(v), a: v.len())) }
+fn g3() { let v: Vec<usize> = [1]; let h = f; print(h(b: consume(v), a: v.len())) }
+fn g4() { let v: Vec<usize> = [1]; let s = S(b: consume(v), a: v.len()); print(s.a) }
+fn g5() { let v: Vec<usize> = [1]; print(handle E { fn op(a, b) { resume(a + b) } } in op(b: consume(v), a: v.len())) }
+fn g6() { let v: Vec<usize> = [1]; let h = f; let c = || h(b: consume(v), a: v.len()); print(c()) }
+fn g7() { let v: Vec<usize> = [1]; print(T.m(&T { x: 1 }, b: consume(v), a: v.len())) }
+fn main() {
+    g1()
+    g2()
+    g3()
+    g4()
+    g5()
+    g6()
+    g7()
+}

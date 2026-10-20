@@ -1,0 +1,5 @@
+// The project cannot name `util.Note`, so it cannot handle it.
+fn main() {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in util.noting()
+}

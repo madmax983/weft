@@ -1,0 +1,13 @@
+// A task fails. The owner joins it inside a Fail handler. ADR 0006: the
+// failure of a task goes to the task that joins it, so the handler at the
+// join gets it.
+fn main() / io, par {
+    handle Fail { fn fail(m) { print("scope handler: {m}") } } in {
+        scope { s =>
+            let t = s.spawn(|| { fail("task failed"); 1 })
+            let v = handle Fail { fn fail(m) { print("join handler: {m}"); 0 } } in t.join()
+            print("v = {v}")
+        }
+        print("scope returned normally")
+    }
+}

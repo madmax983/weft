@@ -1,0 +1,30 @@
+struct A { v: Vec<u64> }
+struct B { v: Vec<u64> }
+impl A {
+    fn f(self: &A) / mut(self.v) {
+        let r = &self.v[0]
+        self.v.push(1)
+        print(r)
+    }
+}
+impl B {
+    fn f(self: &B) / mut(self.v) {
+        let r = &self.v[0]
+        self.v.push(1)
+        print(r)
+    }
+}
+test "t" {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    v.push(2)
+    print(r)
+}
+test "t" {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    v.push(2)
+    print(r)
+}

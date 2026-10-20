@@ -1,0 +1,32 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Peek { fn peek(e: &Entity) }
+fn big(world: &World) / mut(world.entities) {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)
+        }
+    } in {
+        peek(&world.entities[0])
+        world.entities.clear()
+    }
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)
+        }
+    } in {
+        peek(&world.entities[0])
+        world.entities.clear()
+    }
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)
+        }
+    } in {
+        peek(&world.entities[0])
+        world.entities.clear()
+    }
+}

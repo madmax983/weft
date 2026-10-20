@@ -1,0 +1,53 @@
+effect Pick { fn pick() -> &u64 }
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn first(v: &Vec<u64>) -> &u64 in v[] { &v[0] }
+fn call_with(f: fn(&u64), x: &u64) { f(x) }
+// resume in a closure, with the closure parameter.
+fn closure_param() {
+    let v = mkv()
+    handle Pick { fn pick() { let k = |x: &u64| resume(x); k(&v[0]) } } in {
+        let r = pick()
+        v.clear()
+        print(r)   //~ W0301
+    }
+}
+// resume in a closure, with a captured clause local.
+fn closure_capture() {
+    let v = mkv()
+    handle Pick { fn pick() { let x = &v[0]; let k = || resume(x); k() } } in {
+        let r = pick()
+        v.clear()
+        print(r)   //~ W0301
+    }
+}
+// resume with a callee result.
+fn callee_value() {
+    let v = mkv()
+    handle Pick { fn pick() { resume(first(&v)) } } in {
+        let r = pick()
+        v.clear()
+        print(r)   //~ W0301
+    }
+}
+// resume in a closure that a callee calls with the reference.
+fn hof_param() {
+    let v = mkv()
+    handle Pick { fn pick() { call_with(|x: &u64| resume(x), &v[0]) } } in {
+        let r = pick()
+        v.clear()
+        print(r)   //~ W0301
+    }
+}
+// resume in a closure with a clause-local reference parameter.
+fn closure_param_local() {
+    let keep = &0
+    handle Pick { fn pick() { let w = mkv(); let k = |x: &u64| resume(x); k(&w[0]) } } in {
+        keep = pick()
+    }
+    print(keep)   //~ W0301
+}
+test "closure_param" { closure_param() }
+test "closure_capture" { closure_capture() }
+test "callee_value" { callee_value() }
+test "hof_param" { hof_param() }
+test "closure_param_local" { closure_param_local() }

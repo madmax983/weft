@@ -1,0 +1,10 @@
+struct E { hp: u64 }
+fn main() {
+    let v = Vec.new()
+    v.push(E { hp: 1 })
+    v.push(E { hp: 2 })
+    let a = &v[0]
+    let b = &v[1]
+    fork(|| a.hp += 1, || b.hp += 1)
+    print(v[0].hp)
+}

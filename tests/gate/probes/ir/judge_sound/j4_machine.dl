@@ -1,0 +1,10 @@
+// J4 in the machine design: Copy(P) rebinds only variables whose places are all
+// in the roots of the copied frames; r points into o (outside), so no rebind.
+place(po). place(po_e). parent(po_e, po). unstable(po_e).
+cfg_edge(hs, d0). rebound_at(r, d0). points_into(r, po_e).
+cfg_edge(d0, pk). uses(r, pk). multi_at(pk).
+cfg_edge(pk, pret). cfg_edge(cp, pret).
+cfg_edge(pret, pr). uses(r, pr).
+cfg_edge(pr, cl). mutates_at(cl, po).
+cfg_edge(cl, hret). cfg_edge(hret, ex). cfg_edge(ex, post). cfg_edge(post, cp). cfg_edge(post, out).
+lint("machine J4: W0301 at print(r)", pr) :- error(r, pr).

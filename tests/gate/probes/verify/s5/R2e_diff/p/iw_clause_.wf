@@ -1,0 +1,7 @@
+effect Ask { fn ask(q: u64) -> u64 }
+struct S { x: u8 }
+fn sub(a: u64, b: u64) -> u64 { a - b }
+fn main() / async {
+    let v = handle Ask { fn ask(q) { resume(q - 10) } } in ask(2)
+    print(v)
+}

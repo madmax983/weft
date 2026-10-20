@@ -1,0 +1,5 @@
+// The root of the example package.
+fn main(env: Env) / io {
+    let n = http.json.parse("[1, 2, 3]")
+    http.logger.note("parsed {n} items")
+}

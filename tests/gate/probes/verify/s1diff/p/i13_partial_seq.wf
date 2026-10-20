@@ -1,0 +1,7 @@
+struct S { items: Vec<u64>, n: u64 }
+fn take(v: Vec<u64>) {}
+fn main() {
+    let s = S { items: Vec.new(), n: 3 }
+    take(s.items)
+    print(s.n)
+}

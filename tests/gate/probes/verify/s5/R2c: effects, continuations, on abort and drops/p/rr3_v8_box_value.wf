@@ -1,0 +1,12 @@
+// The clause value is a Box of a resuming closure.
+effect Ask { fn ask() -> u64 }
+fn main() {
+    let t = handle Ask {
+        fn ask() { Box.new(|| { let n = resume(5); print(n) }) }
+    } in {
+        let n = ask()
+        Box.new(|| print(n))
+    }
+    let g = t.get()
+    g()
+}

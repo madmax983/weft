@@ -1,0 +1,70 @@
+struct Counter { items: Vec<u64> }
+
+fn put(rs: &Vec<&u64>, x: &u64) / mut(rs) { rs.push(x) }
+fn mv(a: &Vec<&u64>, b: &Vec<&u64>) / mut(b) { b.push(a[0]) }
+fn clone_refs(rs: &Vec<&u64>) -> Vec<&u64> { let out = Vec.new()
+ out.push(rs[0])
+ out }
+fn deep(rss: &Vec<&Vec<&Counter>>) { let inner = rss[0]
+ let c = inner[0]
+ c.items.clear() }
+fn tup(t: &(&Counter, u64)) { let c = t.0
+ c.items.clear() }
+fn first_opt(rs: &Vec<&u64>) -> Option<&u64> { Some(rs[0]) }
+
+fn i_put() {
+    let v = Vec.new()
+    v.push(1)
+    let rs = Vec.new()
+    put(&rs, &v[0])
+    v.clear()
+    print(rs[0])
+}
+fn i_mv() {
+    let v = Vec.new()
+    v.push(2)
+    let a = Vec.new()
+    a.push(&v[0])
+    let b = Vec.new()
+    mv(&a, &b)
+    v.clear()
+    print(b[0])
+}
+fn i_clone() {
+    let v = Vec.new()
+    v.push(3)
+    let a = Vec.new()
+    a.push(&v[0])
+    let out = clone_refs(&a)
+    v.clear()
+    print(out[0])
+}
+fn i_deep() {
+    let c = Counter { items: Vec.new() }
+    c.items.push(4)
+    let at = &c.items[0]
+    let inner = Vec.new()
+    inner.push(&c)
+    let rss = Vec.new()
+    rss.push(&inner)
+    deep(&rss)
+    print(at)
+}
+fn i_tup() {
+    let c = Counter { items: Vec.new() }
+    c.items.push(5)
+    let at = &c.items[0]
+    let t = (&c, 1)
+    tup(&t)
+    print(at)
+}
+fn i_opt() {
+    let v = Vec.new()
+    v.push(6)
+    let a = Vec.new()
+    a.push(&v[0])
+    let o = first_opt(&a)
+    v.clear()
+    match o { Some(r) => print(r), None => {} }
+}
+fn main() { i_mv() }

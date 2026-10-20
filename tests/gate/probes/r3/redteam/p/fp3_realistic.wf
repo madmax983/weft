@@ -1,0 +1,51 @@
+linear struct Tx { id: u64, log: Vec<String> }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i, l) = tx }
+fn commit(tx: Tx) { let Tx(i, l) = tx; print("commit {i}") }
+fn begin(id: u64) -> Tx { Tx { id: id, log: Vec.new() } }
+impl Tx {
+    fn note(self: &Tx, m: String) / mut(self) { self.log.push(m) }
+}
+effect Choice { multi fn choose() -> bool }
+struct Node { v: u64, next: Option<Rc<Node>> }
+
+fn transfer(a: u64) / fail {
+    let tx = begin(a)
+    tx.note("debit")
+    if a == 0 { fail("zero") }
+    tx.note("credit")
+    commit(tx)
+}
+fn all_pairs() -> Vec<(bool, bool)> {
+    let out = Vec.new()
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        let a = choose()
+        let b = choose()
+        out.push((a, b))
+    }
+    out
+}
+fn chain() -> u64 {
+    let tail = Rc.new(Node { v: 2, next: None })
+    let head = Rc.new(Node { v: 1, next: Some(tail.clone()) })
+    tail.v += 10
+    match head.next { Some(n) => n.v, None => 0 }
+}
+fn opt_take(o: Option<Tx>) {
+    match o { Some(t) => commit(t), None => {} }
+}
+fn swap_tx() {
+    let a = begin(1)
+    let b = begin(2)
+    let (x, y) = (b, a)
+    commit(x)
+    commit(y)
+}
+fn main() {
+    handle Fail { fn fail(m) { print("failed: {m}") } } in transfer(1)
+    handle Fail { fn fail(m) { print("failed: {m}") } } in transfer(0)
+    print(all_pairs().len())
+    print(chain())
+    opt_take(Some(begin(5)))
+    swap_tx()
+}

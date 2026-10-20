@@ -1,0 +1,8 @@
+struct Big { xs: Vec<i32> }
+effect Eat { fn eat(a: Big, b: i32) -> i32 }
+fn size(x: &Big) -> i32 { 1 }
+fn main() {
+    let v = Big { xs: [1, 2] }
+    let r = handle Eat { fn eat(a, b) { resume(b) } } in eat(b: size(&v), a: v)
+    print(r)
+}

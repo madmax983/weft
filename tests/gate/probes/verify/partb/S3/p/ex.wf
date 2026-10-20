@@ -1,0 +1,11 @@
+effect Choice { multi fn choose() -> bool }
+effect Log { fn log(msg: String) }
+linear struct Token { id: u64 }
+    on abort = spend
+fn spend(t: Token) { let Token(i) = t }
+fn mint() -> Token { Token { id: 1 } }
+fn at_clause() / Choice {
+    let t = mint()
+    handle Log { fn log(m) { let b = choose() } } in log("x")
+    spend(t)
+}

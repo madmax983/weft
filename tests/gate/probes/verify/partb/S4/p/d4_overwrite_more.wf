@@ -1,0 +1,54 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+struct Pair { tx: Tx, n: u64 }
+effect Note { fn note() }
+fn h1() {
+    let t = begin()
+    handle Note { fn note() { t = begin()
+ resume(()) } } in note()
+    rollback(t)
+}
+fn h2(p: &Pair) {
+    handle Note { fn note() { p.tx = begin()
+ resume(()) } } in note()
+}
+fn h3() {
+    let p = Pair { tx: begin(), n: 1 }
+    let f = || { p.tx = begin() }
+    f()
+    let Pair(t, n) = p
+    rollback(t)
+}
+fn h4(v: &Vec<Tx>) / mut(v[]) {
+    let f = || { v[0] = begin() }
+    f()
+}
+fn h5(v: &Vec<Tx>) / mut(v[]) {
+    for x in v[] { x = begin() }
+}
+fn h6(p: &Pair) {
+    let r = &p.tx
+    r = begin()
+}
+fn set(p: &Pair, t: Tx) / mut(p.tx) { p.tx = t }
+fn h7() {
+    let p = Pair { tx: begin(), n: 1 }
+    set(&p, begin())
+    let Pair(t, n) = p
+    rollback(t)
+}
+fn h8(o: &Option<Tx>) { o = None }
+fn h9() {
+    let t = begin()
+    let g = || { let k = || { t = begin() }
+ k() }
+    g()
+    rollback(t)
+}
+fn h10(n: u32) {
+    let t = begin()
+    for i in 0..n { t = begin() }
+    rollback(t)
+}

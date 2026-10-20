@@ -1,0 +1,19 @@
+fn first_elem() -> u64 {
+    let v = Vec.new()
+    v.push(1)
+    v[0]
+}
+fn first_ref(w: &Vec<u64>) -> u64 {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let x: u64 = r
+    x
+}
+fn loop_sum() -> u64 {
+    let v = Vec.new()
+    v.push(1)
+    let total: u64 = 0
+    for x in v[] { total += x }
+    total
+}

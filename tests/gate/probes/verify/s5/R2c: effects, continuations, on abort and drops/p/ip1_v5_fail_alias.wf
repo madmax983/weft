@@ -1,0 +1,9 @@
+// The lowercase alias `fail` in a handle.
+fn work() -> u64 / fail {
+    fail("boom")
+    5
+}
+fn main() {
+    let r = handle fail { fn fail(m) { resume(()) } } in work() + 1
+    print(r)
+}

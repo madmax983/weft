@@ -1,0 +1,57 @@
+// The clause resumes through a closure. The handled body moves or changes the
+// world that the clause reference points into.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Note { fn note(x: u64) }
+fn take_w(w: World) {}
+
+fn moved_via_closure() {
+    let world = World { entities: Vec.new() }
+    world.entities.push(Entity { hp: 1 })
+    handle Note {
+        fn note(x) {
+            let r = &world.entities[0]
+            let k = || resume(())
+            k()
+            print(r.hp)
+        }
+    } in {
+        note(1)
+        take_w(world)
+    }
+}
+fn cleared_via_closure(world: &World) / mut(world.entities) {
+    handle Note {
+        fn note(x) {
+            let r = &world.entities[0]
+            let k = || resume(())
+            k()
+            print(r.hp)
+        }
+    } in {
+        note(1)
+        world.entities.clear()
+        world.entities.push(Entity { hp: 2 })
+    }
+}
+fn cleared_via_closure_t() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    cleared_via_closure(&w)
+}
+fn moved_via_callee() {
+    let world = World { entities: Vec.new() }
+    world.entities.push(Entity { hp: 1 })
+    handle Note {
+        fn note(x) {
+            let r = &world.entities[0]
+            call_it(|| resume(()))
+            print(r.hp)
+        }
+    } in {
+        note(1)
+        take_w(world)
+    }
+}
+fn call_it(f: fn()) { f() }
+fn main() { moved_via_closure() }

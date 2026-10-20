@@ -1,0 +1,9 @@
+effect Ask { fn ask() -> u64 }
+fn keep<T>(x: T) -> T { x }
+fn mkf() -> fn() { || print(ask()) }
+fn main() {
+    let g = handle Ask { fn ask() { resume(1) } } in {
+        Rc.new(|| print(ask()))
+    }
+    print(1)
+}

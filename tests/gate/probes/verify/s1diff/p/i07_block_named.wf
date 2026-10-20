@@ -1,0 +1,9 @@
+struct Entity { hp: u64 }
+fn main() {
+    let x = {
+        let e = Entity { hp: 1 }
+        let r = &e.hp
+        r
+    }
+    print(x)
+}

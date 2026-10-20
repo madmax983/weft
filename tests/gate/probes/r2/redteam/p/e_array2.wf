@@ -1,0 +1,59 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Cb { f: fn() }
+
+fn second(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let a = [|| print(1), || world.entities.clear()]
+    let g = a[1]
+    g()
+    print(first.hp)   //~ W0301
+}
+fn first_el(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let a = [|| world.entities.clear(), || print(1)]
+    let g = a[1]
+    g()
+    print(first.hp)   //~ W0301
+}
+fn vec_two(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let v = Vec.new()
+    v.push(|| print(1))
+    v.push(|| world.entities.clear())
+    let g = v[1]
+    g()
+    print(first.hp)   //~ W0301
+}
+fn tuple_two(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let t = (|| print(1), || world.entities.clear())
+    let (a, b) = t
+    b()
+    print(first.hp)   //~ W0301
+}
+fn field_reassign(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let c = Cb { f: || print(1) }
+    c.f = || world.entities.clear()
+    let g = c.f
+    g()
+    print(first.hp)   //~ W0301
+}
+fn elem_assign(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let a = [|| print(1)]
+    a[0] = || world.entities.clear()
+    let g = a[0]
+    g()
+    print(first.hp)   //~ W0301
+}
+fn mkw() -> World { let w = World { entities: Vec.new() }
+ w.entities.push(Entity { hp: 1 })
+ w }
+test "second" { let w = mkw()
+ second(&w) }
+test "vec_two" { let w = mkw()
+ vec_two(&w) }
+test "elem_assign" { let w = mkw()
+ elem_assign(&w) }

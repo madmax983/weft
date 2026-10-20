@@ -1,0 +1,19 @@
+struct Entity { hp: u64 }
+struct World { entities: Vec<Entity> }
+fn pick(w: &World, e: &Entity in w.entities[]) -> u64 { e.hp }
+fn good() {
+    let w = World { entities: [Entity { hp: 3 }] }
+    print(pick(e: &w.entities[0], w: &w))
+}
+fn bad() {
+    let w = World { entities: [Entity { hp: 3 }] }
+    let o = World { entities: [Entity { hp: 4 }] }
+    print(pick(e: &o.entities[0], w: &w))
+}
+fn bad2() {
+    let w = World { entities: [Entity { hp: 3 }] }
+    let o = World { entities: [Entity { hp: 4 }] }
+    let g = pick
+    print(g(e: &o.entities[0], w: &w))
+}
+fn main() { good() }

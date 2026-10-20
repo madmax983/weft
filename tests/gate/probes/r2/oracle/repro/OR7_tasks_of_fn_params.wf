@@ -1,0 +1,56 @@
+// OR7. A callee runs a function parameter as a task or a fork branch. The
+// caller checks only W0314 for the value it gives. It does not check
+// separation (W0405) between the runs, portability (W0401, W0403), or that
+// the task must be pinned. The direct forms get W0403 and W0405.
+struct E { hp: u64 }
+
+fn par(f: fn(), g: fn()) / par { fork(f, g) }
+
+fn bg(f: fn()) {
+    scope { s =>
+        s.spawn(f)
+        s.spawn(f)
+    }
+}
+
+fn bg_and_call(f: fn(), g: fn()) {
+    scope { s =>
+        s.spawn(f)
+        g()
+    }
+}
+
+fn bg_one(f: fn()) {
+    scope { s =>
+        s.spawn(f)
+    }
+}
+
+fn via_fork() / par {
+    let n = 0
+    par(|| n += 1, || n += 2)          // two threads write `n`
+    print(n)
+}
+
+fn via_spawn_twice() / async {
+    let n = 0
+    bg(|| n += 1)                      // two tasks write `n`
+    print(n)
+}
+
+fn via_spawn_and_call() / async {
+    let n = 0
+    bg_and_call(|| n += 1, || print(n))
+}
+
+fn stealable_rc() / async {
+    let a = Rc.new(E { hp: 1 })
+    bg_one(|| print(a.hp))             // the task is stealable, but it holds an `Rc`
+}
+
+fn main() / par, async {
+    via_fork()
+    via_spawn_twice()
+    via_spawn_and_call()
+    stealable_rc()
+}

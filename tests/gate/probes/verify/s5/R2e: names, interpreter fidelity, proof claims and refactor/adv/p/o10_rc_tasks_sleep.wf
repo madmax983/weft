@@ -1,0 +1,16 @@
+struct Node { value: u64 }
+fn bump(n: Rc<Node>) / mut(Node), clock {
+    let v = n.value
+    sleep(1.ms)
+    n.value = v + 1
+}
+fn main() / par, async, clock {
+    let r = Rc.new(Node { value: 0 })
+    let a = r.clone()
+    let b = r.clone()
+    scope { s =>
+        s.spawn(|| bump(a))
+        s.spawn(|| bump(b))
+    }
+    print(r.value)
+}

@@ -1,0 +1,5 @@
+struct Entity { hp: u64 }
+impl Entity { fn new() -> Entity { Entity { hp: 1 } } }
+fn f(e: Entity) {
+    let x = e.new()
+}

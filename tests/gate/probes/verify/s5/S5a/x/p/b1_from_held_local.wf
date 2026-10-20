@@ -1,0 +1,26 @@
+effect Note { fn note(x: u64) }
+struct Job { f: fn() }
+fn p_take() {
+    let g = || print(0)
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let j = Job { f: || note(1) }
+        let v = Vec.new()
+        v.push(&j)
+        let s = v[0]
+        g = s.f
+    }
+    g()
+}
+fn take(src: &Job) -> fn() { src.f }
+fn p_take_ref() {
+    let g = || print(0)
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let j = Job { f: || note(1) }
+        let r = &j
+        g = take(r)
+    }
+    g()
+}
+fn main() { p_take() }

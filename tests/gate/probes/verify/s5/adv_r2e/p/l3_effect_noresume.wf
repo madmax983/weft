@@ -1,0 +1,18 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) {
+    let Tx(id) = tx
+    print("rollback {id}")
+}
+fn commit(tx: Tx) {
+    let Tx(id) = tx
+}
+effect Stop { fn stop() }
+fn work() / Stop {
+    let tx = Tx { id: 3 }
+    stop()
+    commit(tx)
+}
+fn main() {
+    handle Stop { fn stop() { print("stopped") } } in work()
+}

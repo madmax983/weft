@@ -1,0 +1,12 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn keep3<T>(x: T, c: bool) -> T { if c { x } else { x } }
+fn c3() { rollback(keep3(begin(), true)) }
+fn keep4<T>(x: T, c: bool) -> Option<T> { if c { Some(x) } else { None } }
+fn keep5<T>(x: T) -> T { let y = { x }
+ y }
+fn c5() { rollback(keep5(begin())) }
+fn keep6<T>(x: T, c: bool) -> T { match c { true => x, false => x } }
+fn c6() { rollback(keep6(begin(), true)) }

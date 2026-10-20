@@ -1,0 +1,30 @@
+// sim.clock.advance inside a simulation moves the clock of a task outside it.
+test "advance inside a simulation" {
+    scope { s =>
+        s.spawn(|| {
+            sleep(20.ms)
+            print("outside task woke at {Clock.now()}")
+        })
+        s.spawn(|| {
+            sleep(1.ms)
+            sim.run(seed: 1) {
+                sim.clock.advance(30.s)
+                print("inside: {Clock.now()}")
+            }
+        })
+        print("spawned")
+    }
+}
+
+test "advance inside a simulation and a timeout outside it" {
+    handle Fail { fn fail(m) { print("caught: {m} at {Clock.now()}") } } in {
+        with_timeout(1.s) {
+            sim.run(seed: 1) {
+                sim.clock.advance(30.s)
+                sleep(1.ms)
+                print("simulation done at {Clock.now()}")
+            }
+            print("block done")
+        }
+    }
+}

@@ -1,0 +1,14 @@
+effect Note { fn note(x: u64) }
+effect Pick { multi fn pick() -> bool }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+
+fn clause_capture_multi() {
+    let l = Lk { id: 1 }
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        handle Note { fn note(x) { let b = pick(); unlock(l); resume(()) } } in note(1)
+    }
+}
+fn main() {
+    clause_capture_multi()
+}

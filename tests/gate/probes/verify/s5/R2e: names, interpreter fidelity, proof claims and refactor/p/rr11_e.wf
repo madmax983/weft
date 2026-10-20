@@ -1,0 +1,10 @@
+// Effect path in a function type and with a perform by path.
+mod a {
+    pub effect Note { fn note(x: u64) }
+}
+fn call(f: fn() / a.Note) / a.Note { f() }
+fn noisy() / a.Note { a.Note.note(3) }
+fn main() {
+    handle a.Note { fn note(x) { print(x)
+ resume(()) } } in call(noisy)
+}

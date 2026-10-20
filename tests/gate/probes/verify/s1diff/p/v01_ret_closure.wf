@@ -1,0 +1,8 @@
+struct Entity { hp: u64 }
+// A closure that captures a by-value parameter and is returned.
+fn adder(n: u64) -> fn(u64) -> u64 { |x| x + n }
+fn mk_print(e: Entity) -> fn() { || print(e.hp) }
+fn use_adder() -> u64 {
+    let f = adder(2)
+    f(3)
+}

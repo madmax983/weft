@@ -1,0 +1,5 @@
+fn main() {
+    handle util.sub.Deep { fn deep() { print(9)
+ resume(()) } } in util.deep()
+    handle util.Priv { fn p() { resume(()) } } in util.priv()
+}

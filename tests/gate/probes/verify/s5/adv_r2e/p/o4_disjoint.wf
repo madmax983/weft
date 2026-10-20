@@ -1,0 +1,9 @@
+struct W { a: u64, b: u64 }
+fn main() / par, async {
+    let w = W { a: 0, b: 0 }
+    scope { s =>
+        s.spawn(|| w.a += 1)
+        s.spawn(|| w.b += 1)
+    }
+    print(w.a + w.b)
+}

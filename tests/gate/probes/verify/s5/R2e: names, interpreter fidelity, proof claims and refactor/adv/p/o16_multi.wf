@@ -1,0 +1,23 @@
+effect Pick { multi fn pick() -> bool }
+fn body() -> u64 / Pick {
+    let x = 5
+    let r = &x
+    let total = 0
+    {
+        let y = 1
+        let b = pick()
+        let q = &y
+        print(q)
+        if b { total += 1 }
+    }
+    print(r)
+    total
+}
+fn main() {
+    let n = handle Pick { fn pick() {
+        let a = resume(true)
+        let c = resume(false)
+        a + c
+    } } in body()
+    print(n)
+}

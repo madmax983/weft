@@ -1,0 +1,2 @@
+struct S0 { f0: [S0; 2] }
+fn main() {}

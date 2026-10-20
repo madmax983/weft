@@ -1,0 +1,7 @@
+struct E { hp: u64 }
+fn main() {
+    let a = Rc.new(E { hp: 1 })
+    scope { s =>
+        s.spawn(|| print(a.hp))
+    }
+}

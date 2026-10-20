@@ -1,0 +1,10 @@
+fn use_cb(f: fn() -> &u64, g: fn()) {
+    let r = f()
+    g()
+    print(r)
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    use_cb(|| &v[0], || v.clear())
+}

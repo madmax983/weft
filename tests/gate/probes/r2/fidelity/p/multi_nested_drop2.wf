@@ -1,0 +1,26 @@
+// Two `multi` operations. The clause of `Pick` holds its fresh `multi`
+// continuation while it performs `choose` through the outer handler. The outer
+// clause resumes twice, so the clause frame of `Pick` runs twice. The first
+// copy returns without a resume, which drops the continuation of `pick`. The
+// second copy resumes it. The effects model allows this (a `multi`
+// continuation is never "used"); the interpreter shares one record between
+// the two copies (proofs/link/README.md, "Differences").
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick() -> u64 }
+
+fn body() -> u64 / Pick { pick() + 1 }
+
+fn run() -> u64 / Choice {
+    handle Pick {
+        fn pick() {
+            let b = choose()
+            if b { resume(10) } else { 0 }
+        }
+    } in body()
+}
+
+fn main() {
+    let out: Vec<u64> = Vec.new()
+    handle Choice { fn choose() { resume(true); resume(false) } } in out.push(run())
+    print(out.len())
+}

@@ -1,0 +1,27 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Wrap<T> { x: T }
+fn branch_keeps_old(a: &World, b: &World, c: bool) / mut(a.entities, b.entities) {
+    let w = Wrap { x: &b.entities[0] }
+    w.x = &b.entities[0]
+    if c { w.x = &a.entities[0] }
+    b.entities.clear()
+    print(w.x.hp)
+}
+fn loop_carries(a: &World, b: &World) / mut(a.entities) {
+    let w = Wrap { x: &b.entities[0] }
+    for i in 0..3 {
+        print(w.x.hp)
+        w.x = &a.entities[0]
+        a.entities.clear()
+    }
+}
+fn loop_skips(a: &World, b: &World, n: u64) / mut(b.entities) {
+    let w = Wrap { x: &b.entities[0] }
+    w.x = &b.entities[0]
+    for i in 0..n {
+        w.x = &a.entities[0]
+    }
+    b.entities.clear()
+    print(w.x.hp)
+}

@@ -1,0 +1,3 @@
+[package]
+name = "main"
+kind = "lib"

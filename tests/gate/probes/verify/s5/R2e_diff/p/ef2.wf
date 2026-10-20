@@ -1,0 +1,7 @@
+effect Note { fn note(x: u64) }
+pub fn rootnote() / Note { note(1) }
+mod a {
+    pub effect Note { fn note(x: u64) }
+    pub fn f() / Note { rootnote() }
+}
+fn main() {}

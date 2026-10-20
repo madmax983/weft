@@ -1,0 +1,6 @@
+fn main() {
+    let t = scope { s =>
+        s.spawn(|| 5)
+    }
+    print(t.join())
+}

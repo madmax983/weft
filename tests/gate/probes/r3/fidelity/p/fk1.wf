@@ -1,0 +1,21 @@
+fn two_branches() / par {
+    let x = 0
+    let (a, b) = fork(|| x += 1, || print(x))   // expected W0405 or W0403
+}
+fn two_writers() / par {
+    let v = Vec.new()
+    v.push(1)
+    let (a, b) = fork(|| v.push(2), || v.push(3))   // expected W0405 or W0403
+}
+fn spawn_two() / async {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        s.spawn(|| v.push(2))
+        s.spawn(|| v.push(3))   // expected W0405
+    }
+}
+fn main() {
+    two_branches()
+    two_writers()
+}

@@ -1,0 +1,54 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+struct Wrap { t: Tx }
+struct Pair { tx: Tx, n: u64 }
+impl Tx { fn show(self: &Tx) { print(self.id) } }
+fn d01() { let (_, b) = (begin(), begin())
+ rollback(b) }
+fn d02() { let w = Wrap { t: begin() }
+ let Wrap(_) = w }
+fn d03() { let w = Wrap { t: begin() }
+ match w { Wrap(_) => {} } }
+fn d04() { print((begin(), 1)) }
+fn d05() { print(Wrap { t: begin() }) }
+fn d06() { let b = begin() == begin() }
+fn d07() { let x = begin().id }
+fn d08() { let r = &begin() }
+fn d09() { let a = [begin(), begin()] }
+fn d10(p: &Pair) { p.tx = begin() }
+fn d11() { let t = begin()
+ loop { t = begin()
+ break }
+ rollback(t) }
+fn d12() { let o = Some(begin())
+ o = None }
+fn d13(o: Option<Tx>) { o = None }
+fn d14() { begin().show() }
+fn d15() { match begin() { Tx(_) => {} } }
+fn d16() { match begin() { t => {} } }
+fn d17(c: bool) { if begin().id == 1 { print(1) } }
+fn d18() { let f = || begin()
+ f() }
+effect Mk { fn mk() -> Tx }
+fn d19() / Mk { mk() }
+effect Give { fn give(t: Tx) }
+fn d20() { handle Give { fn give(t) { resume(()) } } in give(begin()) }
+fn d21() { handle Give { fn give(t) { rollback(t)
+ resume(()) } } in give(begin()) }
+fn d22() { let t = begin()
+ let f = || { t = begin() }
+ f()
+ rollback(t) }
+fn d23() { let p = Pair { tx: begin(), n: 1 }
+ let f = || { p.tx = begin() }
+ f()
+ let Pair(t, n) = p
+ rollback(t) }
+fn d24() { let w = (begin(), 1)
+ w.0 = begin()
+ let (t, n) = w
+ rollback(t) }
+fn d25() { let x = (begin(), 1).1 }
+fn d26() { let n = Wrap { t: begin() }.t.id }

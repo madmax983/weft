@@ -1,0 +1,22 @@
+// The borrowing proof has no stored references ("no back channels").
+// Here a callee stores a reference into an `rc` object. The owner of the
+// referenced value goes out of scope. A later function reads the stored
+// reference through another handle.
+struct Cache { refs: Vec<&u64> }
+fn stash(c: Rc<Cache>, x: &u64) / mut(Cache) {
+    c.refs.push(x)
+}
+fn fill(c: Rc<Cache>) / mut(Cache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    stash(c, &v[0])
+}   // `v` goes out of scope here; `c.refs[0]` dangles
+fn read(c: Rc<Cache>) -> u64 {
+    let r = c.refs[0]
+    r + 0
+}
+fn main() {
+    let c = Rc.new(Cache { refs: Vec.new() })
+    fill(c.clone())
+    print(read(c.clone()))
+}

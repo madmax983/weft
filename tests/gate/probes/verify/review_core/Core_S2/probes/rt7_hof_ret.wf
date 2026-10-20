@@ -1,0 +1,22 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn ap(f: fn() -> fn()) { let g = f(); g() }
+
+// r1: the callback returns a closure that mutates; the callee calls both.
+fn caller(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    ap(|| || world.entities.clear())
+    print(first.hp)   // expect W0301
+}
+// r2: the same, with a public function: the row must state the mutation.
+pub fn caller_pub(world: &World) / mut(world.entities) {
+    ap(|| || world.entities.clear())
+}
+// r3: a local closure that returns a closure, called directly.
+fn direct(world: &World) / mut(world.entities) {
+    let mk = || || world.entities.clear()
+    let first = &world.entities[0]
+    let g = mk()
+    g()
+    print(first.hp)   // expect W0301
+}

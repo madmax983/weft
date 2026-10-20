@@ -1,0 +1,32 @@
+// A task in a simulation joins a task outside it. The order in the
+// simulation then depends on the scheduler of the run.
+fn busy(id: u64, n: u64) / io {
+    let i = 0
+    let acc = 0
+    while i < n {
+        acc += i
+        i += 1
+    }
+    print("task {id} done")
+}
+
+fn noise(n: u64) -> u64 {
+    let i = 0
+    let acc = 0
+    while i < n { acc += i; i += 1 }
+    acc
+}
+
+test "a simulation joins a task outside it" {
+    scope { o =>
+        let u = o.spawn(|| noise(3000))
+        sim.run(seed: 5) {
+            scope { s =>
+                s.spawn(|| busy(1, 2500))
+                s.spawn(|| busy(2, 1200))
+                let v = u.join()
+                print("joined")
+            }
+        }
+    }
+}

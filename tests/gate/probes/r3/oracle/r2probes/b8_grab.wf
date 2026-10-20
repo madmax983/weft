@@ -1,0 +1,11 @@
+effect Grab { fn grab(r: &u64) -> u64 }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let w = Vec.new()
+    w.push(2)
+    handle Grab { fn grab(r) { let k = r + 0; resume(k) } } in {
+        let a = &v[0]
+        print(grab(a))
+    }
+}

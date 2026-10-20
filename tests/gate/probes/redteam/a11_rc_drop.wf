@@ -1,0 +1,25 @@
+struct Cell2 { items: Vec<u64> }
+fn take_rc(c: Rc<Cell2>) {}
+// The only Rc handle is overwritten: the old object is freed.
+fn rc_overwrite() {
+    let a = Rc.new(Cell2 { items: Vec.new() })
+    a.items.push(1)
+    let r = &a.items[0]
+    a = Rc.new(Cell2 { items: Vec.new() })
+    print(r)
+}
+// The only Rc handle is moved into a call that drops it.
+fn rc_moved() {
+    let a = Rc.new(Cell2 { items: Vec.new() })
+    a.items.push(1)
+    let r = &a.items
+    take_rc(a)
+    print(r.len())
+}
+// Control: the same with a Box.
+fn box_overwrite() {
+    let b = Box.new(Cell2 { items: Vec.new() })
+    let r = &b.items
+    b = Box.new(Cell2 { items: Vec.new() })
+    print(r.len())
+}

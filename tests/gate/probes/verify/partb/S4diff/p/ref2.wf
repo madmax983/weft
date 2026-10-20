@@ -1,0 +1,62 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Wrap<T> { x: T }
+
+fn reassign_part_ok(a: &World, b: &World) / mut(a.entities) {
+    let w = Wrap { x: &b.entities[0] }
+    w.x = &a.entities[0]
+    w.x = &b.entities[0]
+    a.entities.clear()
+    print(w.x.hp)
+}
+fn reassign_whole_ok(a: &World, b: &World) / mut(a.entities) {
+    let w = Wrap { x: &b.entities[0] }
+    w.x = &a.entities[0]
+    w = Wrap { x: &b.entities[0] }
+    a.entities.clear()
+    print(w.x.hp)
+}
+fn loop_holder(a: &World, b: &World) / mut(a.entities) {
+    let w = Wrap { x: &b.entities[0] }
+    for i in 0..3 {
+        w.x = &a.entities[0]
+        a.entities.clear()   
+        print(w.x.hp)   //~ W0301
+    }
+}
+fn tuple_match_val(world: &World) / mut(world.entities) {
+    let x = 1
+    let r = match (1, &world.entities[0]) { (_, r) => r }
+    world.entities.clear()
+    print(r.hp)   //~ W0301
+}
+fn take_opt(o: Option<&Entity>) -> i32 {
+    match o { Some(r) => r.hp, None => 0 }
+}
+fn opt_param_ok(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    let n = take_opt(o)
+    world.entities.clear()
+    print(n)
+}
+fn pop_ref(world: &World) / mut(world.entities) {
+    let rs = Vec.new()
+    rs.push(Some(&world.entities[0]))
+    let o = rs.pop()
+    world.entities.clear()
+    match o { Some(Some(r)) => print(r.hp), _ => {} }   //~ W0301
+}
+fn outer_field(world: &World) / mut(world.entities) {
+    let w = Wrap { x: None }
+    w.x = Some(&world.entities[0])
+    world.entities.clear()
+    match w.x { Some(r) => print(r.hp), None => {} }   //~ W0301
+}
+fn mutate_through_opt(o: Option<&World>) / mut(o) {
+    match o { Some(w) => w.entities.clear(), None => {} }
+}
+fn caller_mut(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    mutate_through_opt(Some(world))
+    print(r.hp)   //~ W0301
+}

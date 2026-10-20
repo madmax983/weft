@@ -5,10 +5,15 @@
 //! archive is equal to the manifest of the source), the files of each package, and
 //! the manifest text as `manifest.tsv`. The archive is reproducible: the names are in
 //! sorted order, and each header has the time 0, the owner 0 and the mode `0644`.
+//!
+//! The repository holds the archive ([`COMMITTED_ARCHIVE`]) and its hash
+//! ([`COMMITTED_HASH`]). The default root of tier 2 is this archive, unpacked into
+//! [`UNPACKED_DIR`] when it is necessary ([`default_probes`]).
 
+use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
@@ -17,6 +22,19 @@ use crate::Error;
 
 /// The name of the manifest text in the archive.
 pub const MANIFEST_NAME: &str = "manifest.tsv";
+
+/// The committed archive of the tier-2 probes, relative to the repository.
+pub const COMMITTED_ARCHIVE: &str = "tests/gate/probes-tier2.tar.zst";
+
+/// The committed SHA-256 of [`COMMITTED_ARCHIVE`], relative to the repository. The
+/// first word of the file is the hash in lower-case hex.
+pub const COMMITTED_HASH: &str = "tests/gate/probes-tier2.sha256";
+
+/// The directory of the unpacked committed archive, relative to the repository.
+pub const UNPACKED_DIR: &str = "target/gate/probes-tier2";
+
+/// The file in [`UNPACKED_DIR`] that records the hash of the unpacked archive.
+const STAMP: &str = ".sha256";
 
 /// The zstd level.
 const LEVEL: i32 = 19;
@@ -126,4 +144,77 @@ pub fn sha256_file(path: &Path) -> Result<String, Error> {
         h.update(buf.get(..n).unwrap_or_default());
     }
     Ok(crate::manifest::hex(&h.finalize()))
+}
+
+/// Reads the committed hash of the archive (the first word of [`COMMITTED_HASH`]).
+pub fn committed_hash(repo: &Path) -> Result<String, Error> {
+    let path = repo.join(COMMITTED_HASH);
+    let text = fs::read_to_string(&path).map_err(|e| Error::io(&path, e))?;
+    Ok(text
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_string())
+}
+
+/// Makes sure that the SHA-256 of the file `path` is `expected`.
+pub fn check_hash(path: &Path, expected: &str) -> Result<(), Error> {
+    let found = sha256_file(path)?;
+    if found == expected {
+        Ok(())
+    } else {
+        Err(Error::Hash {
+            path: path.to_path_buf(),
+            expected: expected.to_string(),
+            found,
+        })
+    }
+}
+
+/// The default root of tier 2: the committed archive of `repo`, unpacked into
+/// [`UNPACKED_DIR`].
+///
+/// If the directory records the committed hash, this function does not unpack
+/// again. Else it checks the hash of the archive, unpacks it into a new directory,
+/// records the hash, and then puts the directory in the place of the old one.
+pub fn default_probes(repo: &Path) -> Result<PathBuf, Error> {
+    let expected = committed_hash(repo)?;
+    let dest = repo.join(UNPACKED_DIR);
+    let stamp = dest.join(STAMP);
+    if fs::read_to_string(&stamp).is_ok_and(|s| s.trim() == expected) {
+        return Ok(dest);
+    }
+    let file = repo.join(COMMITTED_ARCHIVE);
+    check_hash(&file, &expected)?;
+    let mut partial = dest.clone().into_os_string();
+    partial.push(".partial");
+    let partial = PathBuf::from(partial);
+    remove_dir(&partial)?;
+    unpack(&file, &partial)?;
+    let new_stamp = partial.join(STAMP);
+    fs::write(&new_stamp, format!("{expected}\n")).map_err(|e| Error::io(&new_stamp, e))?;
+    remove_dir(&dest)?;
+    fs::rename(&partial, &dest).map_err(|e| Error::io(&dest, e))?;
+    Ok(dest)
+}
+
+/// The root of tier 2: the value of the flag `--probes`, else the value of the
+/// environment variable `WEFT_GATE_PROBES`, else [`default_probes`].
+pub fn probes_root(
+    repo: &Path,
+    flag: Option<PathBuf>,
+    env: Option<OsString>,
+) -> Result<PathBuf, Error> {
+    match flag.or_else(|| env.map(PathBuf::from)) {
+        Some(p) => Ok(p),
+        None => default_probes(repo),
+    }
+}
+
+/// Removes the directory `dir` and its contents, if it exists.
+fn remove_dir(dir: &Path) -> Result<(), Error> {
+    match fs::remove_dir_all(dir) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(Error::io(dir, e)),
+        _ => Ok(()),
+    }
 }

@@ -1,0 +1,22 @@
+effect Stop { fn stop() }
+linear struct R { fs: FsCap }
+    on abort = undo_read
+fn undo_read(r: R) / fs {
+    let R(fs) = r
+    print("undo")
+    print(fs.read("/nonexistent/missing.txt"))
+    print("after read")
+}
+fn done(r: R) { let R(fs) = r }
+fn main(env: Env) / fail, fs {
+    let fs = env.fs
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        handle Stop { fn stop() { () } } in {
+            let r = R { fs: fs }
+            stop()
+            done(r)
+        }
+        print("after inner")
+    }
+    print("end")
+}

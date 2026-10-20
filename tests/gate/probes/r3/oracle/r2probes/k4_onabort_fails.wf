@@ -1,0 +1,10 @@
+linear struct Tx { id: u64 }
+    on abort = rb
+fn rb(t: Tx) { let Tx(id) = t; fail("in abort") }
+fn main() / io {
+    handle Fail { fn fail(m) { print("caught", m) } } in {
+        let t = Tx { id: 1 }
+        fail("first")
+        let Tx(i) = t
+    }
+}

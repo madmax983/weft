@@ -1,0 +1,51 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+// One level: the callee mutates what a stored reference points into.
+fn one(rs: &Vec<&Entity>, w: &World) / mut(w.entities) {
+    let e = rs[0]
+    w.entities.clear()
+    print(e.hp)
+}
+// Two levels.
+fn two(rss: &Vec<&Vec<&Entity>>, w: &World) / mut(w.entities) {
+    let rs = rss[0]
+    let e = rs[0]
+    w.entities.clear()
+    print(e.hp)
+}
+// By-value parameter with two levels.
+fn two_val(o: Option<&Vec<&Entity>>, w: &World) / mut(w.entities) {
+    match o {
+        Some(rs) => {
+            let e = rs[0]
+            w.entities.clear()
+            print(e.hp)
+        }
+        None => {}
+    }
+}
+fn call_one(world: &World) / mut(world.entities) {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    one(&rs, world)   //~ W0312
+}
+fn call_two(world: &World) / mut(world.entities) {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    let rss = Vec.new()
+    rss.push(&rs)
+    two(&rss, world)   //~ W0312
+}
+fn call_two_val(world: &World) / mut(world.entities) {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    two_val(Some(&rs), world)   //~ W0312
+}
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+test "call_one" { let w = mkw(); call_one(&w) }
+test "call_two" { let w = mkw(); call_two(&w) }
+test "call_two_val" { let w = mkw(); call_two_val(&w) }

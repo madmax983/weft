@@ -1,0 +1,15 @@
+struct C { n: u64 }
+pub fn apply(f: fn()) { f() }
+pub fn apply_ref(f: fn(&C), c: &C) { f(c); f(c) }
+pub fn apply_task(f: fn()) / async { scope { s => { s.spawn(f); s.spawn(f) } } }
+fn main() / async {
+    let c = C { n: 1 }
+    let v = Vec.new()
+    v.push(1)
+    apply(|| v.push(2))
+    let r = &v[0]
+    apply_ref(|x| { x.n += 1 }, &c)
+    print(r)
+    print(c.n)
+    apply_task(|| print(1))
+}

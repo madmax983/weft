@@ -1,0 +1,12 @@
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct VF: !Move { items: Vec<u64>, cur: &u64 in self.items[] }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v.push(2); v }
+fn id<T>(x: T) -> T { x }
+fn apply(f: fn()) { f() }
+fn main() {
+    let fs = Vec.new()
+    fs.push(VF { items: mk_v() })
+    fs[0].cur = &fs[0].items[0]
+    fs.push(VF { items: mk_v() })
+    print(fs[0].cur)
+}

@@ -1,0 +1,65 @@
+// OR3 missed shape: the callback reaches the repeating callee in a tuple, a
+// struct, an Option or a generic struct, or a returned repeating closure is
+// given to a callee or spawned.
+// Expected: W0301 at each call. HEAD: 0 errors, each faults.
+struct H { f: fn() }
+fn twice_t(t: (fn(), u64)) {
+    let f = t.0
+    f()
+    f()
+}
+fn via_tuple() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    twice_t((|| { print(r + 1)
+ v.clear() }, 1))
+}
+fn twice_h(h: H) {
+    let f = h.f
+    f()
+    f()
+}
+fn via_struct() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    twice_h(H { f: || { print(r + 1)
+ v.clear() } })
+}
+fn twice_o(o: Option<fn()>) {
+    match o { Some(f) => { f()
+ f() }, None => {} }
+}
+fn via_option() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    twice_o(Some(|| { print(r + 1)
+ v.clear() }))
+}
+fn wrap(f: fn()) -> fn() { || {
+ f()
+ f() } }
+fn run(f: fn()) { f() }
+fn returned_given() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let g = wrap(|| { print(r + 1)
+ v.clear() })
+    run(g)
+}
+fn returned_task() / async {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let g = wrap(|| { print(r + 1)
+ v.clear() })
+    scope { s =>
+        s.spawn(g)
+    }
+}
+fn main() / async {
+    via_tuple()
+}

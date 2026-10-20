@@ -1,0 +1,22 @@
+// The operation runs in a callee of the handled body. The callee frees the
+// element that the operation gets before the resume returns.
+struct Entity { hp: i32 }
+effect Peek { fn peek(e: &Entity) }
+fn take(v: Vec<Entity>) {}
+fn helper() / Peek {
+    let v: Vec<Entity> = Vec.new()
+    v.push(Entity { hp: 1 })
+    peek(&v[0])
+    v.clear()
+    v.push(Entity { hp: 2 })
+    take(v)
+}
+fn callee_frees() {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)
+        }
+    } in helper()
+}
+fn main() { callee_frees() }

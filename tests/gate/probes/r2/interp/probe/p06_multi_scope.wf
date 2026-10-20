@@ -1,0 +1,13 @@
+// A scope inside a `multi` continuation, with a child spawned before the operation.
+effect Choice { multi fn choose() -> bool }
+
+fn main() / io {
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        scope { s =>
+            s.spawn(|| { sleep(5.ms); print("child") })
+            let b = choose()
+            print("branch {b}")
+        }
+    }
+    print("end")
+}

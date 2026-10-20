@@ -1,0 +1,10 @@
+// FALSE POSITIVE (new): a block value that is a closure capturing a copy local.
+fn main() {
+    let f = {
+        let n: u64 = 5
+        || n + 1
+    }
+    print(f())
+    let r = { let x: u64 = 7; &x }
+    print(r)
+}

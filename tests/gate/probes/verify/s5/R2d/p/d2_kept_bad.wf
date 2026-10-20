@@ -1,0 +1,25 @@
+// The task holds a reference into a copy variable of the scope body: the end
+// of the variable frees what the task reads.
+fn kept_held_ref() / async, clock {
+    scope { s =>
+        let x = 1
+        let r = &x
+        s.spawn(|| { sleep(2.ms); print(r) })
+        print("body ends")
+    }
+}
+
+// The task captures the copy variable and also holds a reference into it.
+fn kept_and_ref() / async, clock {
+    scope { s =>
+        let x = 1
+        let r = &x
+        s.spawn(|| { sleep(2.ms); print(x); print(r) })
+        print("body ends")
+    }
+}
+
+fn main() / async, clock {
+    kept_held_ref()
+    kept_and_ref()
+}

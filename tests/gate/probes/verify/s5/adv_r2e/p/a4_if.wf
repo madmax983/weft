@@ -1,0 +1,10 @@
+fn diff(a: i32, b: i32) -> i32 { a - b }
+fn rdiff(b: i32, a: i32) -> i32 { b - a }
+fn pick(c: bool) {
+    let g = if c { diff } else { rdiff }
+    print(g(b: 10, a: 3))
+}
+fn main() {
+    pick(true)
+    pick(false)
+}

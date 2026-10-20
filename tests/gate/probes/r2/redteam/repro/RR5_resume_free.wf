@@ -1,0 +1,38 @@
+// RR5: a `resume` carries the mutations of the handled computation to the
+// clause, but not its frees. The handled body moves `world`, and the clause
+// holds a reference into `world` across `resume`.
+// Expected: W0301. Actual: no error. The test faults with the instrumented
+// interpreter (a dangling reference).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Note { fn note(x: u64) }
+fn take_w(w: World) {}
+
+fn moved_in_body() {
+    let world = World { entities: Vec.new() }
+    world.entities.push(Entity { hp: 1 })
+    handle Note {
+        fn note(x) {
+            let r = &world.entities[0]
+            resume(())
+            print(r.hp)   //~ W0301
+        }
+    } in {
+        note(1)
+        take_w(world)
+    }
+}
+// Control: a mutation in the handled body is seen.
+fn cleared_in_body(world: &World) / mut(world.entities) {
+    handle Note {
+        fn note(x) {
+            let r = &world.entities[0]
+            resume(())
+            print(r.hp)   //~ W0301
+        }
+    } in {
+        note(1)
+        world.entities.clear()
+    }
+}
+test "moved_in_body" { moved_in_body() }

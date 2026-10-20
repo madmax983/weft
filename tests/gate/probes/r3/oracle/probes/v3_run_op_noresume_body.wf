@@ -1,0 +1,9 @@
+effect Run { fn run(f: fn()) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(f) { f(); resume(()) } } in {
+        run(|| print(5))
+    }
+    print(v.len())
+}

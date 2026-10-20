@@ -1,0 +1,83 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Holder { f: fn() }
+fn mkw(n: i32) -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: n })
+    w
+}
+fn run_all(fs: &Vec<fn()>) { let i = 0
+ while i < fs.len() { let f = fs[i]
+ f()
+ i = i + 1 } }
+
+// A returned closure: the capture gets a place in a local before the return.
+fn mk_local(a: &World) -> fn() {
+    let r = &a.entities[0]
+    let f = || print(r.hp)
+    let w = mkw(3)
+    r = &w.entities[0]
+    f
+}
+fn returned_local() {
+    let a = mkw(1)
+    let f = mk_local(&a)
+    f()
+}
+
+// A block value: the capture gets a place in a local of the block.
+fn block_late() {
+    let a = mkw(1)
+    let f = {
+        let r = &a.entities[0]
+        let g = || print(r.hp)
+        let w = mkw(3)
+        r = &w.entities[0]
+        g
+    }
+    f()
+}
+
+// A closure stored behind a parameter: the capture gets a place in a local.
+fn store_late(h: &Holder, a: &World) {
+    let r = &a.entities[0]
+    h.f = || print(r.hp)
+    let w = mkw(3)
+    r = &w.entities[0]
+}
+fn stored_param() {
+    let a = mkw(1)
+    let h = Holder { f: || print(0) }
+    store_late(&h, &a)
+    let g = h.f
+    g()
+}
+
+// A stored closure runs with a middle value; the end value is the first one.
+fn vec_mid() {
+    let a = mkw(1)
+    let b = mkw(2)
+    let r = &a.entities[0]
+    let fs: Vec<fn()> = Vec.new()
+    fs.push(|| print(r.hp))
+    r = &b.entities[0]
+    b.entities.clear()
+    run_all(&fs)
+    r = &a.entities[0]
+}
+
+// The capture gets a place in a block local; the closure runs after the block.
+fn scope_late() {
+    let a = mkw(1)
+    let r = &a.entities[0]
+    let f = || print(r.hp)
+    {
+        let w = mkw(3)
+        r = &w.entities[0]
+    }
+    f()
+}
+
+fn main() {
+    returned_local()
+}

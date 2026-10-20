@@ -1,0 +1,39 @@
+struct P { a: u8 }
+fn tuple_let() -> u8 {
+    let t = (1, 2)
+    let (a, b) = t
+    a
+}
+fn arr_idx() -> u8 {
+    let v = [1, 2, 3]
+    v[1]
+}
+fn field_tuple() -> u8 {
+    let t = (1, 2)
+    t.0
+}
+fn get_opt() -> u64 {
+    let v = Vec.new()
+    v.push(1)
+    match v.get(0) { Some(x) => x, None => 0 }
+}
+fn slice_ref() -> u32 {
+    let v = Vec.new()
+    v.push(1)
+    let s = &v[]
+    let t: u32 = 0
+    for x in s { t += x }
+    t
+}
+fn nested_vec() -> u16 {
+    let v = Vec.new()
+    let w = Vec.new()
+    w.push(1)
+    v.push(w)
+    v[0][0]
+}
+fn ref_tuple() -> u8 {
+    let t = (1, 2)
+    let r = &t
+    r.0
+}

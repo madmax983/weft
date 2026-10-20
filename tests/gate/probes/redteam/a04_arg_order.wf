@@ -1,0 +1,16 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn grow(w: &World) -> u64 / mut(w.entities) { w.entities.push(Entity { hp: 1 }); 0 }
+fn show(e: &Entity, n: u64) { print(e.hp) }
+fn nested_held(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    show(first, grow(world))
+}
+fn nested_temp(world: &World) / mut(world.entities) {
+    show(&world.entities[0], grow(world))
+}
+fn tuple_temp(world: &World) / mut(world.entities) {
+    let t = (&world.entities[0], grow(world))
+    let (a, b) = t
+    print(a.hp)
+}

@@ -1,0 +1,3 @@
+struct S { v: u64 }
+struct S { v: u64 }
+fn main() {}

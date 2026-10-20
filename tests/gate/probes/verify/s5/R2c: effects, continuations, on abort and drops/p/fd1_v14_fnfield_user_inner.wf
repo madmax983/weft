@@ -1,0 +1,20 @@
+// on abort calls a fn field; the closure performs Ask through a handler inside the aborted body.
+effect Ask { fn ask() -> u64 }
+effect Stop { fn stop() }
+linear struct T { f: fn() }
+    on abort = undo
+fn undo(t: T) {
+    let T(f) = t
+    f()
+}
+fn done(t: T) { let T(f) = t }
+fn main() {
+    handle Stop { fn stop() { () } } in {
+        handle Ask { fn ask() { resume(5) } } in {
+            let t = T { f: || print(ask()) }
+            stop()
+            done(t)
+        }
+    }
+    print("end")
+}

@@ -1,0 +1,6 @@
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    if true { v } else { Vec.new() }
+    print(v.len())
+}

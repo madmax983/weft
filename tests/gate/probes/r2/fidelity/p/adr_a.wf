@@ -1,0 +1,24 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity>, score: u64 }
+struct Stats { count: u64 }
+fn take2(v: Vec<u64>, n: usize) {}
+// A: a by-value argument moves when it is evaluated.
+fn a() {
+    let v: Vec<u64> = Vec.new()
+    take2(v, v.len())   //~ W0302
+}
+// B: a function cannot return a reference into its own by-value parameter.
+fn b(v: Vec<u64>) -> &u64 in v[] {   //~ W0204
+    &v[0]
+}
+// C: an extern signature cannot return a place in a by-value parameter.
+extern fn c(v: Vec<u64>) -> &u64 in v[]   //~ W0204
+// I: a callee mutates through a shared reference.
+fn bump(c: &Stats) / mut(c) { c.count += 1 }
+fn i(s: &Stats @ shared) {
+    bump(s)   //~ W0402
+}
+fn i2(s: &Stats @ shared) {
+    let c = &s.count
+    c += 1   //~ W0402
+}

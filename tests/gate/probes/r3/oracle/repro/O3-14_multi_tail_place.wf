@@ -1,0 +1,60 @@
+// O3-14 (blocker, also in 328a39b). The handled body of a handler with a
+// `multi` operation ends with a place of an outer variable. Each `resume` runs
+// the rest of the body again, so the tail moves `v` once for each resume. The
+// second move reads a moved variable (stock: "a value is used after it was
+// moved"). The checker accepts it. A tail that is a call (`take_v(v)`), `id(v)`,
+// `(v, 1)`, `Some(v)`, a `let` and then the local, or an `if` gets W0302
+// (correct). ADR 0003 and ADR 0005: a local handler with a `multi` operation is
+// lowered as a loop, so the tail move must count in each pass.
+effect Pick { multi fn pick() -> bool }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+
+fn tail_place() {
+    let v = mk_v()
+    let w = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        let b = pick()
+        v                     // moved again by the second resume
+    }
+    print(w.len())
+}
+
+fn tail_block() {
+    let v = mk_v()
+    let w = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        let b = pick()
+        { v }
+    }
+    print(w.len())
+}
+
+fn statement() {
+    let v = mk_v()
+    handle Pick { fn pick() { resume(true); resume(true) } } in {
+        let b = pick()
+        v
+    }
+}
+
+fn clause_keeps_both() {
+    let v = mk_v()
+    let w = handle Pick { fn pick() { let x = resume(true); let y = resume(false); y } } in {
+        let b = pick()
+        v
+    }
+    print(w.len())
+}
+
+fn tail_call() {
+    // Correct: W0302.
+    let v = mk_v()
+    let n = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        let b = pick()
+        take_v(v)
+    }
+    print(n)
+}
+
+fn main() {
+    tail_place()
+}

@@ -1,0 +1,31 @@
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(id) = t; print("commit {id}") }
+struct Bag { v: Vec<u64> }
+impl Bag {
+    fn touch(self) -> usize {
+        self.v
+        self
+        self.v.len()
+    }
+}
+fn in_closure() {
+    let t = Tx { id: 1 }
+    let f = || { t; commit(t) }
+    f()
+}
+fn by_ref(b: &Bag) -> usize {
+    b
+    b.v
+    b.v.len()
+}
+fn param_linear(t: Tx) {
+    t
+    commit(t)
+}
+fn main() {
+    let b = Bag { v: Vec.new() }
+    print(b.touch())
+    in_closure()
+    print(by_ref(&b))
+    param_linear(Tx { id: 2 })
+}

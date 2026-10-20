@@ -1,0 +1,20 @@
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print(b.items.len()) }
+fn mk_eat(b: Buf) -> fn() { || eat(b) }
+fn mk_eat2(b: Buf) { let f = || eat(b); f() }
+fn mk_eat3(b: Buf) -> fn() { let c = b; || eat(c) }
+fn mk_eat4() -> fn() { let c = Buf { items: Vec.new() }; || eat(c) }
+fn main() {
+    let g = mk_eat(Buf { items: Vec.new() })
+    g()
+    let h = mk_eat4()
+    h()
+}
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn mk_tx(t: Tx) -> fn() { || rollback(t) }
+fn mk_tx2(t: Tx) { let g = || rollback(t); let h = g; h() }
+fn ret_val(b: Buf) -> Buf { let c = b; c }
+fn mk_inf(b: Buf) { let k = mk_eat_inf(b); k() }
+fn mk_eat_inf(b: Buf) -> fn() { let f = || eat(b); f }

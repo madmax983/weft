@@ -1,0 +1,7 @@
+effect Ask { fn ask(q: u64) -> u64 }
+fn user() -> u64 / Ask { ask(1) }
+fn main() {
+    let f = |a: u64, b: u64| a - b
+    let v = handle Ask { fn ask(q) { resume(q - 2) } } in user()
+    print(v)
+}

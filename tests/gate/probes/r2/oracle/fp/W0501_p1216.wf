@@ -1,0 +1,9 @@
+effect Ask { fn ask() -> u64 }
+
+
+fn main() {
+    {
+        handle Ask { fn ask() { resume(1); resume(2) } } in {
+        }
+    }
+}

@@ -1,0 +1,82 @@
+struct Stats { count: u64, other: u64 }
+fn id<T>(x: T) -> T { x }
+fn show(x: u64) { print(x) }
+
+fn interp(st: &Stats) / mut(st), async {
+    let c = &st.count
+    scope { s =>
+        s.spawn(|| st.count += 1)
+        print("{c}")   //~ W0405
+    }
+}
+fn compare(st: &Stats) / mut(st), async {
+    let c = &st.count
+    scope { s =>
+        s.spawn(|| st.count += 1)
+        let b = c == 1   //~ W0405
+    }
+}
+fn arith(st: &Stats) / mut(st), async {
+    let c = &st.count
+    scope { s =>
+        s.spawn(|| st.count += 1)
+        let b = c + 1   //~ W0405
+    }
+}
+fn by_value_arg(st: &Stats) / mut(st), async {
+    let c = &st.count
+    scope { s =>
+        s.spawn(|| st.count += 1)
+        show(c)   //~ W0405
+    }
+}
+fn via_generic(st: &Stats) / mut(st), async {
+    let c = &st.count
+    scope { s =>
+        s.spawn(|| st.count += 1)
+        let d = id(c)
+        print(d)   //~ W0405
+    }
+}
+fn match_ref(st: &Stats) / mut(st), async {
+    let c = &st.count
+    scope { s =>
+        s.spawn(|| st.count += 1)
+        match c { 0 => print(0), _ => print(1) }   //~ W0405
+    }
+}
+fn if_cond(st: &Stats) / mut(st), async {
+    let c = &st.count
+    scope { s =>
+        s.spawn(|| st.count += 1)
+        if c > 0 { print(1) }   //~ W0405
+    }
+}
+fn in_task_reads(st: &Stats) / mut(st), async {
+    let c = &st.count
+    scope { s =>
+        s.spawn(|| print("{c}"))
+        st.count += 1   //~ W0405
+    }
+}
+fn in_task_cmp(st: &Stats) / mut(st), async {
+    let c = &st.count
+    scope { s =>
+        s.spawn(|| { let b = c == 1 })
+        st.count += 1   //~ W0405
+    }
+}
+fn while_cond(st: &Stats) / mut(st), async {
+    let c = &st.count
+    scope { s =>
+        s.spawn(|| st.count += 1)
+        while c < 1 { print(0) }   //~ W0405
+    }
+}
+fn ok_other(st: &Stats) / mut(st), async {
+    let c = &st.other
+    scope { s =>
+        s.spawn(|| st.count += 1)
+        print(c)
+    }
+}

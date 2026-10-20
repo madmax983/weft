@@ -1,0 +1,90 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+struct Pair { tx: Tx, n: u64 }
+struct Outer { p: Pair }
+struct Wrap<T> { x: T }
+
+fn whole_struct() {
+    let p = Pair { tx: begin(), n: 1 }
+    p = Pair { tx: begin(), n: 2 }   //~ W0601
+    let Pair(t, n) = p
+    rollback(t)
+}
+fn nested_field() {
+    let o = Outer { p: Pair { tx: begin(), n: 1 } }
+    o.p.tx = begin()   //~ W0601
+    let Outer(p) = o
+    let Pair(t, n) = p
+    rollback(t)
+}
+fn nested_part() {
+    let o = Outer { p: Pair { tx: begin(), n: 1 } }
+    o.p = Pair { tx: begin(), n: 3 }   //~ W0601
+    let Outer(p) = o
+    let Pair(t, n) = p
+    rollback(t)
+}
+fn param_field(p: Pair) {
+    p.tx = begin()   //~ W0601
+    let Pair(t, n) = p
+    rollback(t)
+}
+fn tuple_part() {
+    let t = (begin(), 1)
+    t.0 = begin()   //~ W0601
+    let (a, b) = t
+    rollback(a)
+}
+fn array_elem() {
+    let a = [begin(), begin()]
+    a[0] = begin()   //~ W0601
+}
+fn in_loop() {
+    let p = Pair { tx: begin(), n: 1 }
+    let i = 0
+    while i < 2 {
+        p.tx = begin()   //~ W0601
+        i += 1
+    }
+    let Pair(t, n) = p
+    rollback(t)
+}
+fn variant_payload() {
+    let o = Some(begin())
+    o.Some = begin()   //~ W0601
+    match o { Some(t) => rollback(t), None => {} }
+}
+fn closure_field() {
+    let p = Pair { tx: begin(), n: 1 }
+    let f = || { p.tx = begin() }   //~ W0601
+    f()
+    let Pair(t, n) = p
+    rollback(t)
+}
+fn generic_wrap() {
+    let w = Wrap { x: begin() }
+    w.x = begin()   //~ W0601
+    let Wrap(t) = w
+    rollback(t)
+}
+fn rc_field() {
+    let r = Rc.new(Pair { tx: begin(), n: 1 })
+    r.tx = begin()   //~ W0601
+}
+fn after_move_ok() {
+    let p = Pair { tx: begin(), n: 1 }
+    let Pair(t, n) = p
+    rollback(t)
+    p = Pair { tx: begin(), n: 2 }
+    let Pair(u, m) = p
+    rollback(u)
+}
+fn part_moved_then_set() {
+    let p = Pair { tx: begin(), n: 1 }
+    rollback(p.tx)
+    p.tx = begin()
+    let Pair(t, n) = p
+    rollback(t)
+}

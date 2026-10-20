@@ -1,0 +1,22 @@
+fn tail_temp(v: &Vec<u64>) -> u64 / mut(v) {
+    let r = &v[0]
+    v.push(1)
+    0
+}
+
+fn clo(v: &Vec<u64>) / mut(v) {
+    let f = || v.push(2)
+    let r = &v[0]
+    f()
+    print(r)
+}
+
+effect Note { fn note(x: u64) }
+
+fn h(v: &Vec<u64>) / mut(v) {
+    handle Note { fn note(x) { v.push(x); resume(()) } } in {
+        let r = &v[0]
+        note(1)
+        print(r)
+    }
+}

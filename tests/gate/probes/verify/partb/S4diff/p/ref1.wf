@@ -1,0 +1,93 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Wrap<T> { x: T }
+
+fn via_if(world: &World, c: bool) / mut(world.entities) {
+    let o = if c { Some(&world.entities[0]) } else { None }
+    world.entities.clear()
+    match o { Some(r) => print(r.hp), None => {} }   //~ W0301
+}
+fn via_block(world: &World) / mut(world.entities) {
+    let o = { Some(&world.entities[0]) }
+    world.entities.clear()
+    match o { Some(r) => print(r.hp), None => {} }   //~ W0301
+}
+fn via_copy(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    let p = o
+    world.entities.clear()
+    match p { Some(r) => print(r.hp), None => {} }   //~ W0301
+}
+fn via_vec_index(world: &World) / mut(world.entities) {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    let r = rs[0]
+    world.entities.clear()
+    print(r.hp)   //~ W0301
+}
+fn via_for(world: &World) / mut(world.entities) {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    for r in rs[] {
+        world.entities.clear()
+        print(r.hp)   //~ W0301
+    }
+}
+fn via_closure_ret(world: &World) / mut(world.entities) {
+    let f = |w: &World| Some(&w.entities[0])
+    let o = f(world)
+    world.entities.clear()
+    match o { Some(r) => print(r.hp), None => {} }   //~ W0301
+}
+fn via_closure_capture(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    let f = || match o { Some(r) => print(r.hp), None => {} }
+    world.entities.clear()
+    f()   //~ W0301
+}
+fn via_tuple(world: &World) / mut(world.entities) {
+    let t = (&world.entities[0], 1)
+    let (r, n) = t
+    world.entities.clear()
+    print(r.hp)   //~ W0301
+}
+fn via_tuple_field(world: &World) / mut(world.entities) {
+    let t = (&world.entities[0], 1)
+    world.entities.clear()
+    print(t.0.hp)   //~ W0301
+}
+fn via_nested(world: &World) / mut(world.entities) {
+    let w = Wrap { x: Some(&world.entities[0]) }
+    world.entities.clear()
+    match w.x { Some(r) => print(r.hp), None => {} }   //~ W0301
+}
+fn mk<T>(x: T) -> Wrap<T> { Wrap { x: x } }
+fn via_generic_ctor(world: &World) / mut(world.entities) {
+    let w = mk(&world.entities[0])
+    world.entities.clear()
+    print(w.x.hp)   //~ W0301
+}
+fn first(v: &Vec<Entity>) -> Option<&Entity> { Some(&v[0]) }
+fn via_unstated(world: &World) / mut(world.entities) {
+    let o = first(&world.entities)
+    world.entities.clear()
+    match o { Some(r) => print(r.hp), None => {} }   //~ W0301
+}
+fn local_opt() -> Option<&u64> {
+    let x = 1
+    Some(&x)   //~ W0204
+}
+fn local_wrap() -> Wrap<&u64> {
+    let x = 1
+    Wrap { x: &x }   //~ W0204
+}
+fn local_tuple() -> (&u64, u64) {   //~ W0204
+    let x = 1
+    (&x, 1)
+}
+fn local_vec() -> Vec<&u64> {
+    let x = 1
+    let v = Vec.new()
+    v.push(&x)
+    v   //~ W0204
+}

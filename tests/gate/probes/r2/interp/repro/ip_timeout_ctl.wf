@@ -1,0 +1,13 @@
+// Control: the same block without the handler times out.
+fn main() / io {
+    handle Fail { fn fail(m) { print("caught: {m}") } } in {
+        let v = with_timeout(10.ms) {
+            sleep(50.ms)
+            sleep(100.ms)
+            print("block finished after its deadline")
+            1
+        }
+        print("v = {v}")
+    }
+    print("end")
+}

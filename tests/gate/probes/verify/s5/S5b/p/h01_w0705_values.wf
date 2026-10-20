@@ -1,0 +1,6 @@
+fn with_log(f: fn() / log) { f() }
+fn named() / clock { sleep(1.s) }
+fn a() / clock, log { let g = || sleep(1.s); with_log(g) }
+fn b() / clock, log { with_log(named) }
+fn c() / clock, log { let g = named; with_log(g) }
+fn d(h: fn() / clock) / clock, log { with_log(h) }

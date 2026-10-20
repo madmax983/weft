@@ -1,0 +1,11 @@
+fn take(s: String) { print(s) }
+fn a() { let s = "x"
+ take(s)
+ take(s) }
+fn b() { let s = "x"
+ let f = || take(s)
+ f()
+ f() }
+fn c(env: Env) / io { let f = || env.stdout.write("x")
+ f()
+ f() }

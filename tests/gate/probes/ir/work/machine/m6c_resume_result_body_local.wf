@@ -1,0 +1,19 @@
+effect Tick { fn tick() }
+
+fn main() {
+    let g = Vec.new()
+    g.push(7)
+    let r = handle Tick {
+        fn tick() {
+            let x = resume(())
+            print(x)
+            &g[0]
+        }
+    } in {
+        let w = Vec.new()
+        w.push(5)
+        tick()
+        &w[0]
+    }
+    print(r)
+}

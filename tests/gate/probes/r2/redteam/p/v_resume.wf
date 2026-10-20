@@ -1,0 +1,48 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Get { fn get() -> fn() }
+effect GetT { fn gett() -> (fn(), u64) }
+effect GetO { fn geto() -> Option<fn()> }
+effect GetR { fn getr() -> &Entity }
+
+fn resume_closure(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    handle Get { fn get() { resume(|| world.entities.clear()) } } in {
+        let f = get()
+        f()
+        print(first.hp)   //~ W0301
+    }
+}
+fn resume_tuple(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    handle GetT { fn gett() { resume((|| world.entities.clear(), 1)) } } in {
+        let (f, n) = gett()
+        f()
+        print(first.hp)   //~ W0301
+    }
+}
+fn resume_option(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    handle GetO { fn geto() { resume(Some(|| world.entities.clear())) } } in {
+        match geto() { Some(f) => f(), None => {} }
+        print(first.hp)   //~ W0301
+    }
+}
+fn resume_ref(world: &World) / mut(world.entities) {
+    handle GetR { fn getr() { resume(&world.entities[0]) } } in {
+        let r = getr()
+        world.entities.clear()
+        print(r.hp)   //~ W0301
+    }
+}
+fn mkw() -> World { let w = World { entities: Vec.new() }
+ w.entities.push(Entity { hp: 1 })
+ w }
+test "tuple" { let w = mkw()
+ resume_tuple(&w) }
+test "option" { let w = mkw()
+ resume_option(&w) }
+test "ref" { let w = mkw()
+ resume_ref(&w) }
+test "closure" { let w = mkw()
+ resume_closure(&w) }

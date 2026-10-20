@@ -1,0 +1,19 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mk(n: u64, w: &World) -> fn() {
+    if n == 0 { || w.entities.push(Entity { hp: 1 }) } else { mk(n - 1, w) }
+}
+fn mk_a(n: u64, w: &World) -> fn(&World) { if n == 0 { mk_b(n, w) } else { |x: &World| x.entities.clear() } }
+fn mk_b(n: u64, w: &World) -> fn(&World) { if n == 0 { mk_a(n, w) } else { |x: &World| print(1) } }
+fn user(world: &World) / mut(world.entities) {
+    let f = mk(3, world)
+    let first = &world.entities[0]
+    f()
+    print(first.hp)
+}
+fn user2(world: &World, other: &World) {
+    let f = mk_b(3, other)
+    let first = &world.entities[0]
+    f(world)
+    print(first.hp)
+}

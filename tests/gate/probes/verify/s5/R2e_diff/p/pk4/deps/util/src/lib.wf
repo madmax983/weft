@@ -1,0 +1,5 @@
+mod inner {
+    pub effect N { fn n(x: u64) }
+    pub fn f() / N { n(3) }
+}
+pub fn noting() {}

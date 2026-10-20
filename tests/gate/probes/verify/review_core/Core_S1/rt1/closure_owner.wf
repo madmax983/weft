@@ -1,0 +1,55 @@
+struct Cell2 { items: Vec<u64> }
+fn take(v: Vec<u64>) {}
+fn take_world(w: Cell2) {}
+fn apply(f: fn()) { f() }
+// 1. A closure rebinds a captured owner.
+fn rebinds_owner() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let g = || { v = Vec.new() }
+    g()
+    print(r)   // ERR
+}
+// 2. A closure rebinds a captured struct owner; the reference is to a stable part.
+fn rebinds_struct_owner_stable() {
+    let c = Cell2 { items: Vec.new() }
+    let r = &c.items
+    let g = || { c = Cell2 { items: Vec.new() } }
+    g()
+    print(r.len())   // OK: the stable part keeps its address
+}
+// 3. A closure passed to a higher-order function moves the owner.
+fn moves_via_hof() {
+    let c = Cell2 { items: Vec.new() }
+    c.items.push(1)
+    let r = &c.items[0]
+    apply(|| take_world(c))
+    print(r)   // ERR
+}
+// 4. A closure moves a field of a captured owner.
+fn moves_field_in_closure() {
+    let c = Cell2 { items: Vec.new() }
+    c.items.push(1)
+    let r = &c.items[0]
+    let g = || take(c.items)
+    g()
+    print(r)   // ERR
+}
+// 5. A closure that rebinds a captured Rc handle.
+fn rebinds_rc() {
+    let a = Rc.new(Cell2 { items: Vec.new() })
+    a.items.push(1)
+    let r = &a.items[0]
+    let g = || { a = Rc.new(Cell2 { items: Vec.new() }) }
+    g()
+    print(r)   // ERR
+}
+// 6. A spawned task moves the owner.
+fn task_moves(v: Vec<u64>) / async {
+    let r = &v[0]
+    scope { s =>
+        s.spawn(|| take(v))
+        print(r)   // ERR (W0301 or W0405)
+    }
+}

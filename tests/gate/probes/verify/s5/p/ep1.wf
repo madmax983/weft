@@ -1,0 +1,16 @@
+mod a {
+    pub effect Note { fn note(x: u64) }
+}
+effect Note { fn note(x: u64) }
+fn perf() / a.Note { a.Note.note(5) }
+fn perf2() / Note, a.Note { note(6) }
+fn main() {
+    handle a.Note { fn note(x) { print("a {x}")
+ resume(()) } } in {
+        handle Note { fn note(x) { print("root {x}")
+ resume(()) } } in {
+            perf()
+            perf2()
+        }
+    }
+}

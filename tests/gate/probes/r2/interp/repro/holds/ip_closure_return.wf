@@ -1,0 +1,8 @@
+fn main() / io {
+    let f = || { return 3 }
+    print("f = {f()}")
+    let g = handle Log { fn info(m) { resume(()) } fn warn(m) { resume(()) } } in {
+        return
+    }
+    print("after handle")
+}

@@ -1,0 +1,35 @@
+effect Note { fn note(x: u64) }
+struct Job { f: fn() }
+fn noter() / Note { note(1) }
+fn worker() / async, Note { scope { s => s.spawn(noter) } }
+fn worker2() / async, Note { worker() }
+fn worker_closure() / async, Note { let f = || note(2)
+ scope { s => s.spawn(f) } }
+fn worker_field(j: &Job) / async { scope { s => s.spawn(j.f) } }
+fn worker_vec(v: &Vec<fn()>) / async { scope { s => let g = v[0]
+ s.spawn(g) } }
+
+fn direct() / async {
+    handle Note { fn note(x) { resume(()) } } in worker()   //~ W0314
+}
+fn two_levels() / async {
+    handle Note { fn note(x) { resume(()) } } in worker2()   //~ W0314
+}
+fn via_closure() / async {
+    handle Note { fn note(x) { resume(()) } } in worker_closure()   //~ W0314
+}
+fn via_field() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let j = Job { f: || note(1) }
+        worker_field(&j)   //~ W0314
+    }
+}
+fn via_vec() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let v = Vec.new()
+        v.push(|| note(1))
+        worker_vec(&v)   //~ W0314
+    }
+}
+test "field" { via_field() }
+test "vec" { via_vec() }

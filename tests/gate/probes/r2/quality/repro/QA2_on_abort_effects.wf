@@ -1,0 +1,20 @@
+// QA2: the effects of an `on abort` function do not count. `f` holds a `Tx`
+// across `work()`, which can abort. The abort runs `rollback`, which performs
+// `Note`. No handler of `Note` exists, and no signature states it.
+//   weft check QA2_on_abort_effects.wf  ->  0 errors
+//   weft run   QA2_on_abort_effects.wf  ->  runtime error: no handler for `Note.note`
+// Expected: W0702 at `f` (or at `main`): the abort path performs `Note`.
+effect Note { fn note(x: u64) }
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { note(1); let Tx(i) = t }
+fn commit(t: Tx) { let Tx(i) = t }
+fn work() / fail { fail("x") }
+fn f() / fail {
+    let t = Tx { id: 1 }
+    work()
+    commit(t)
+}
+fn main() / fail {
+    f()
+}

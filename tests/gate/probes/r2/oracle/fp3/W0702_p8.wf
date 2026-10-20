@@ -1,0 +1,21 @@
+struct Entity { hp: u64 }
+struct World { entities: Vec<Entity> }
+
+fn sum_hp(es: &[Entity]) -> u64 {
+    let total = 0
+    total
+}
+
+
+fn total_hp(world: &World @ shared) -> u64 / par {
+    let (l, r) = world.entities.split_at(world.entities.len() / 2)
+    let (a, b) = fork(|| sum_hp(l), || sum_hp(r))
+    a + b
+}
+
+
+fn main() / par {
+    let world = World { entities: Vec.new() }
+    scope { s_w => s_w.spawn(|| { print(total_hp(&world)) }) }
+}
+

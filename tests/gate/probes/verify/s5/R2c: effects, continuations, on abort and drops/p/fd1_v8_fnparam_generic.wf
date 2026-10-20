@@ -1,0 +1,20 @@
+// on abort calls a fn value in a Box.
+effect Ask { fn ask() -> u64 }
+effect Stop { fn stop() }
+linear struct T { f: Box<fn()> }
+    on abort = undo
+fn undo(t: T) {
+    let T(b) = t
+    let f = *b
+    f()
+}
+fn done(t: T) { let T(f) = t }
+fn main() {
+    handle Ask { fn ask() { resume(5) } } in {
+        handle Stop { fn stop() { () } } in {
+            let t = T { f: Box.new(|| print(ask())) }
+            stop()
+            done(t)
+        }
+    }
+}

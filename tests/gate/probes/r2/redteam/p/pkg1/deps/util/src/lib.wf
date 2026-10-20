@@ -1,0 +1,13 @@
+pub struct Conn { id: u64 }
+impl Conn {
+    fn secret(self) -> u64 / net { 1 }
+    pub fn open() -> Conn { Conn { id: 1 } }
+}
+fn hidden() -> u64 / net { 2 }
+mod inner {
+    fn deep() -> u64 / fs { 3 }
+    pub fn deep_pub() -> u64 { 4 }
+}
+pub effect Note { fn note(x: u64) }
+pub fn noting() / Note { note(1) }
+pub fn apply(f: fn() -> u64) -> u64 { f() }

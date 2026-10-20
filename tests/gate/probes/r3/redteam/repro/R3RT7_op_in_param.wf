@@ -1,0 +1,37 @@
+// R3RT7 (minor): an `in` place on a parameter of an effect operation has no
+// effect. For a function, `in` lets the caller pass aliased references (ADR
+// 0005, the W0312 workaround), and an argument outside the stated place is
+// W0203. For an operation, the aliased form gets W0312 (a false positive), and
+// an argument outside the place gets W0312, not W0203. The run of the clean
+// case has no fault.
+// Run: weft run --unchecked --oracle R3RT7_op_in_param.wf   prints 0 0.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity>, other: Vec<Entity> }
+effect Hit { fn hit_op(w: &World, a: &Entity in w.entities[]) }
+fn attack(w: &World, a: &Entity in w.entities[]) / mut(a) { a.hp -= 1; print(w.other.len()) }
+
+// Clean with a function: no error.
+fn fn_ok(world: &World) / mut(world.entities[]) {
+    attack(world, &world.entities[0])
+}
+// The same with an operation: W0312 today. Expected: no error.
+fn op_ok(world: &World) / mut(world.entities[]) {
+    handle Hit { fn hit_op(w, a) { a.hp -= 1; print(w.other.len()); resume(()) } } in {
+        hit_op(world, &world.entities[0])
+    }
+}
+// Outside the stated place: W0203 for the function, W0312 for the operation.
+fn fn_outside(world: &World) / mut(world.other[]) {
+    attack(world, &world.other[0])   //~ W0203
+}
+fn op_outside(world: &World) / mut(world.other[]) {
+    handle Hit { fn hit_op(w, a) { a.hp -= 1; resume(()) } } in {
+        hit_op(world, &world.other[0])   //~ W0203
+    }
+}
+fn main() {
+    let w = World { entities: Vec.new(), other: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    fn_ok(&w)
+    op_ok(&w)
+}

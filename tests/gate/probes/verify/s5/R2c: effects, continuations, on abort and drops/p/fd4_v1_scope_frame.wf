@@ -1,0 +1,13 @@
+// A multi operation inside a scope body. The scope binder is not used after it,
+// but the scope frame is in the continuation: each resume ends the scope.
+effect Choice { multi fn choose() -> bool }
+fn main() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        scope { s =>
+            s.spawn(|| print("task"))
+            let b = choose()
+            print(b)
+        }
+    }
+    print("end")
+}

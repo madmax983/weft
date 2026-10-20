@@ -1,0 +1,12 @@
+// ESCAPE? (RT1): a reference into a temporary outlives the statement.
+struct Bag { items: Vec<u64> }
+fn mk() -> Vec<u64> { let v = Vec.new(); v.push(5); v }
+fn mk_bag() -> Bag { let b = Bag { items: Vec.new() }; b.items.push(6); b }
+fn main() {
+    let r = &mk()[0]
+    print(r)
+    let s = &mk_bag().items[0]
+    print(s)
+    let t = mk_bag().items.get(0)
+    print(t)
+}

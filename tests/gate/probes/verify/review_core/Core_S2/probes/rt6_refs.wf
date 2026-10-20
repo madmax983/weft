@@ -1,0 +1,32 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn first_of(w: &World) -> &Entity in w.entities[] { &w.entities[0] }
+fn last_of(w: &World) -> &Entity in w.entities[] { &w.entities[0] }
+fn hit(e: &Entity in w.entities[], w: &World) { print(e.hp) }
+
+// r1: a returned reference through an item value.
+fn ret_via_item(world: &World) / mut(world.entities) {
+    let g = first_of
+    let r = g(world)
+    world.entities.clear()
+    print(r.hp)   // expect W0301
+}
+// r2: a returned reference through a joined item value.
+fn ret_via_join(world: &World, c: bool) / mut(world.entities) {
+    let g = if c { first_of } else { last_of }
+    let r = g(world)
+    world.entities.clear()
+    print(r.hp)   // expect W0301
+}
+// r3: an `in` place through an item value.
+fn in_via_item(world: &World, other: &World) {
+    let g = hit
+    g(&other.entities[0], world)   // expect W0203
+}
+// r4: a returned reference through an item passed to a higher-order function.
+fn call_ret(f: fn(&World) -> &Entity, w: &World) -> &Entity in w.entities[] { f(w) }
+fn ret_via_hof(world: &World) / mut(world.entities) {
+    let r = call_ret(first_of, world)
+    world.entities.clear()
+    print(r.hp)   // expect W0301
+}

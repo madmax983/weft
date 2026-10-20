@@ -1,0 +1,44 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) {}
+fn v01() {
+    let b = Buf { items: Vec.new() }
+    let v: Vec<fn()> = Vec.new()
+    v.push(|| eat(b))
+    let g = v[0]
+    let h = v[0]
+    g()
+    h()
+}
+fn v02() {
+    let tx = begin()
+    let v: Vec<fn()> = Vec.new()
+    v.push(|| rollback(tx))
+}
+fn v03() {
+    let tx = begin()
+    let v: Vec<fn()> = Vec.new()
+    v.push(|| rollback(tx))
+    let g = v[0]
+    let h = v[0]
+    g()
+    h()
+}
+fn v04() {
+    let b = Buf { items: Vec.new() }
+    let v = Vec.new()
+    v.push(|| eat(b))
+    let g = v[0]
+    let h = v[0]
+    g()
+    h()
+}
+fn v05() {
+    let b = Buf { items: Vec.new() }
+    let o: Option<fn()> = Some(|| eat(b))
+    match o { Some(g) => { g()
+ g() }, None => {} }
+}

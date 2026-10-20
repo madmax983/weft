@@ -1,0 +1,44 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity>, score: u64 }
+linear struct Lock { id: u64 }
+fn take() -> Lock { Lock { id: 1 } }
+fn release(l: Lock) { let Lock(i) = l }
+fn risky() / fail { fail("no") }
+// A HOF that iterates and calls the callback on each element.
+fn each(f: fn(&Entity), w: &World) {
+    for e in w.entities[] { f(e) }
+}
+fn each_mut(w: &World) / mut(w.entities[].hp) {
+    for e in w.entities[] { e.hp += 1 }
+}
+fn use_each(world: &World) / mut(world.entities[].hp) {
+    let first = &world.entities[0]
+    each(|e| e.hp += 1, world)
+    print(first.hp)
+}
+// A local handler handles what the closure performs.
+fn handled() {
+    handle Log { fn info(m) { resume(()) } fn warn(m) { resume(()) } } in {
+        let f = || log.info("x")
+        f()
+    }
+}
+// A closure that can abort is made but not called while a linear value is live.
+fn made_not_called() / fail {
+    let l = take()
+    let f = || risky()
+    release(l)
+    f()
+}
+// A HOF that holds a reference into a part that the callback cannot reach.
+fn holds_other(f: fn(&Entity), w: &World) {
+    let s = &w.score
+    f(&w.entities[0])
+    print(s)
+}
+// A callback that gets a stable part.
+fn holds_vec(f: fn(&Vec<Entity>), w: &World) {
+    let first = &w.entities
+    f(&w.entities)
+    print(first.len())
+}

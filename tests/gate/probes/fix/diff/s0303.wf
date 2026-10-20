@@ -1,0 +1,2 @@
+struct S0 { f0: u64 }
+fn main() {}

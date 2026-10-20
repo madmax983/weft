@@ -1,0 +1,15 @@
+fn id<T>(x: T) -> T { x }
+fn bump(es: &[u64]) / mut(es) { print(1) }
+fn direct(v: &Vec<u64>) / mut(v) {
+    let (l, r) = v.split_at(1)
+    bump(l)
+}
+fn via_id(v: &Vec<u64>) / mut(v) {
+    let (l, r) = v.split_at(1)
+    bump(id(l))
+}
+fn via_id_tuple(v: &Vec<u64>) / mut(v) {
+    let (l, r) = id(v.split_at(1))
+    bump(l)
+}
+fn main() {}

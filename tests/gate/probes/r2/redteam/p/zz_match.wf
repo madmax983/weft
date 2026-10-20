@@ -1,0 +1,35 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity>, opt: Option<Vec<u64>> }
+fn grow(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 1 }) }
+
+fn scrut_ref(world: &World) / mut(world.entities) {
+    match &world.entities[0] {
+        e => { grow(world)
+ print(e.hp) },   //~ W0301
+    }
+}
+fn payload_ref(world: &World) / mut(world.opt) {
+    match world.opt {
+        Some(v) => { world.opt = None
+ print(v.len()) },   //~ W0301
+        None => {}
+    }
+}
+fn payload_ref2(world: &World) / mut(world.opt) {
+    let o = &world.opt
+    match o {
+        Some(v) => { world.opt = None
+ print(v[0]) },   //~ W0301
+        None => {}
+    }
+}
+fn if_ref(world: &World, c: bool) / mut(world.entities) {
+    let e = if c { &world.entities[0] } else { &world.entities[1] }
+    grow(world)
+    print(e.hp)   //~ W0301
+}
+fn mkw() -> World { let w = World { entities: Vec.new(), opt: Some(Vec.new()) }
+ w.entities.push(Entity { hp: 1 })
+ w }
+test "payload" { let w = mkw()
+ payload_ref(&w) }

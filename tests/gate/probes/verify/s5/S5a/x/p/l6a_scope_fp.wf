@@ -1,0 +1,27 @@
+effect Note { fn note(x: u64) }
+struct Stats { count: u64 }
+fn h(st: &Stats) / mut(st), async {
+    handle Note { fn note(x) { print("stop") } } in {
+        scope { s =>
+            s.spawn(|| st.count += 1)
+            note(1)
+        }
+    }
+    st.count += 1
+    print(st.count)
+}
+fn h_fail(st: &Stats) / mut(st), async {
+    handle Fail { fn fail(m) { print(m) } } in {
+        scope { s =>
+            s.spawn(|| st.count += 1)
+            fail("stop")
+        }
+    }
+    st.count += 1
+    print(st.count)
+}
+fn main() / async {
+    let st = Stats { count: 0 }
+    h(&st)
+    h_fail(&st)
+}

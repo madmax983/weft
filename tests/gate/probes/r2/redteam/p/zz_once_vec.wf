@@ -1,0 +1,29 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx
+ print("rollback {i}") }
+fn begin() -> Tx { Tx { id: 1 } }
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print("eat {b.items.len()}") }
+
+// The first element fixes the element type. The second element is a `once`
+// closure, and a copy of it runs twice.
+fn once_second() {
+    let b = Buf { items: Vec.new() }
+    let v = Vec.new()
+    v.push(|| print(1))
+    v.push(|| eat(b))   //~ W0502
+    let g = v[1]
+    g()
+    g()
+}
+// The same with a linear capture: the transaction is rolled back twice.
+fn linear_second() {
+    let tx = begin()
+    let a = [|| print(1), || rollback(tx)]   //~ W0601
+    let g = a[1]
+    g()
+    g()
+}
+test "once_second" { once_second() }
+test "linear_second" { linear_second() }

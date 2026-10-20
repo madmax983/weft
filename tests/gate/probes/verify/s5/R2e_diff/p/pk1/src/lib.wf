@@ -1,0 +1,12 @@
+pub fn quiet() / dep.Note {
+    dep.noisy()
+}
+pub fn q2() {
+    handle dep.Note { fn note(x) { resume(()) } } in dep.noisy()
+}
+fn q3() {
+    dep.noisy()
+}
+pub fn q4() {
+    dep.noisy()
+}

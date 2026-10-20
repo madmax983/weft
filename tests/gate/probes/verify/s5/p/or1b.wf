@@ -1,0 +1,55 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+fn mk_v(w: &World) -> Vec<fn()> {
+    let r = &w.entities[0]
+    let v = Vec.new()
+    v.push(|| print(r.hp))
+    v
+}
+fn in_vec() {
+    let w = mkw()
+    let v = mk_v(&w)
+    w.entities.clear()
+    let g = v[0]
+    g()
+}
+fn mk_v2(w: &World) -> Vec<fn()> {
+    let r = &w.entities[0]
+    let v: Vec<fn()> = Vec.new()
+    v.push(|| print(r.hp))
+    v
+}
+fn in_vec2() {
+    let w = mkw()
+    let v = mk_v2(&w)
+    w.entities.clear()
+    let g = v[0]
+    g()
+}
+// Local only: the Vec of closures.
+fn local_vec() {
+    let w = mkw()
+    let r = &w.entities[0]
+    let v = Vec.new()
+    v.push(|| print(r.hp))
+    w.entities.clear()
+    let g = v[0]
+    g()
+}
+fn local_vec_written() {
+    let w = mkw()
+    let r = &w.entities[0]
+    let v: Vec<fn()> = Vec.new()
+    v.push(|| print(r.hp))
+    w.entities.clear()
+    let g = v[0]
+    g()
+}
+fn main() {
+    in_vec()
+}

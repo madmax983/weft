@@ -1,0 +1,65 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw(n: i32) -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: n })
+    w
+}
+fn run(f: fn()) { f() }
+// The new value comes at the end of a loop pass.
+fn loop_late() {
+    let a = mkw(1)
+    let b = mkw(2)
+    let r = &a.entities[0]
+    let f = || print(r.hp)
+    let i = 0
+    while i < 2 {
+        f()
+        r = &b.entities[0]
+        b.entities.clear()
+        b.entities.push(Entity { hp: 3 })
+        i = i + 1
+    }
+}
+// A closure in a struct field run by a callee.
+struct H { f: fn() }
+fn run_h(h: &H) {
+    let g = h.f
+    g()
+}
+fn field_late() {
+    let a = mkw(1)
+    let b = mkw(2)
+    let r = &a.entities[0]
+    let h = H { f: || print(r.hp) }
+    r = &b.entities[0]
+    b.entities.clear()
+    run_h(&h)
+}
+// A captured reference and a clause.
+effect Go { fn go() }
+fn clause_late() {
+    let a = mkw(1)
+    let b = mkw(2)
+    let r = &a.entities[0]
+    handle Go { fn go() { print(r.hp)
+ resume(()) } } in {
+        r = &b.entities[0]
+        b.entities.clear()
+        go()
+    }
+}
+// A closure that a callee runs, given as a closure parameter of a closure.
+fn late_in_arg() {
+    let a = mkw(1)
+    let b = mkw(2)
+    let r = &a.entities[0]
+    let f = || print(r.hp)
+    let k = |g: fn()| g()
+    r = &b.entities[0]
+    b.entities.clear()
+    k(f)
+}
+fn main() {
+    loop_late()
+}

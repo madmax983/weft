@@ -1,0 +1,16 @@
+struct E { hp: u64, tag: u64 }
+
+fn mk_e(n: u64) -> E { E { hp: n, tag: n } }
+
+fn h0(p0: &Vec<u64>, p1: &E) -> &u64 in p0[] {
+    let bx1 = Box.new(mk_e(1))
+    let g2 = || {
+        let bx3 = bx1
+        let c5 = 0
+        while c5 < 2 {
+            let bx6 = bx3
+        }
+    }
+    &p0[0]
+}
+

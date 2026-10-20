@@ -1,0 +1,12 @@
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct Wrap<T> { x: T, n: u64 }
+
+fn two_levels() -> u8 {
+    let w = Wrap { x: Frame { buf: [1, 2, 3, 4] }, n: 0 }
+    let c = w.x.cur
+    c + 1   // reads through a reference that has no value
+}
+
+fn main() {
+    print(two_levels())
+}

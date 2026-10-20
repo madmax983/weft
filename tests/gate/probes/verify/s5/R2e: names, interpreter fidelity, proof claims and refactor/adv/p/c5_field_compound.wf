@@ -1,0 +1,7 @@
+struct S { v: u8 }
+fn bump(s: &S) / mut(s.v) { s.v += 10 }
+fn main() {
+    let s = S { v: 250 }
+    bump(&s)
+    print(s.v)
+}

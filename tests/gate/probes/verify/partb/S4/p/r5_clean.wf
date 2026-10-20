@@ -1,0 +1,51 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity>, log: Vec<u64> }
+fn id<T>(x: T) -> T { x }
+fn find(w: &World) -> Option<&Entity> { Some(&w.entities[0]) }
+fn k01(world: &World) / mut(world.log) {
+    let o = find(world)
+    world.log.push(1)
+    match o { Some(e) => print(e.hp), None => {} }
+}
+fn k02() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let r = id(&v[0])
+ print(r)
+ v.clear() }
+fn k03(world: &World) / mut(world.log) {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    world.log.push(1)
+    for r in rs[] { print(r.hp) }
+}
+struct Wrap<T> { x: T }
+fn k04(world: &World) / mut(world.log) {
+    let w = Wrap { x: &world.entities[0] }
+    world.log.push(1)
+    print(w.x.hp)
+}
+fn k05(world: &World) / mut(world.log) {
+    let t = (&world.entities[0], 1)
+    world.log.push(1)
+    let (e, n) = t
+    print(e.hp)
+}
+fn findp(w: &World) -> Option<&Entity in w.entities[]> { Some(&w.entities[0]) }
+fn k06(world: &World) / mut(world.log) {
+    let o = findp(world)
+    world.log.push(1)
+    match o { Some(e) => print(e.hp), None => {} }
+}
+fn k07(world: &World) {
+    let x = 5
+    let o = Some(&x)
+    match o { Some(r) => print(r), None => {} }
+}
+fn k08() -> u64 {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let o = Some(&v[0])
+    let n = match o { Some(r) => r + 1, None => 0 }
+    v.clear()
+    n
+}

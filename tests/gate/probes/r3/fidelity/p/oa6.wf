@@ -1,0 +1,18 @@
+effect Stop { fn stop() }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+linear struct G<T> { x: T }
+    on abort = undo_g
+fn undo_g<T>(g: G<T>) {
+    let G(x) = g
+    print("undo")
+}   // drops x, a value of a type parameter
+fn body() / Stop {
+    let g = G { x: Tx { id: 1 } }
+    stop()
+    let G(t) = g
+    commit(t)
+}
+fn main() {
+    handle Stop { fn stop() { () } } in body()
+}

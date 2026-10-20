@@ -1,0 +1,7 @@
+// Rand inside sim.run must not depend on --seed.
+test "rand" {
+    sim.run(seed: 3) {
+        print(Rand.random())
+        print(Clock.now())
+    }
+}

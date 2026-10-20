@@ -1,0 +1,25 @@
+effect Choice { multi fn choose() -> bool }
+fn work() -> u64 { 1 }
+fn generic_hold<T>(x: T) -> T / Choice {
+    let b = choose()
+    x
+}
+fn scope_generic() / Choice, async {
+    scope { s =>
+        let s2 = generic_hold(s)
+        s2.spawn(|| print(1))
+    }
+}
+fn scope_closure() / Choice, async {
+    scope { s =>
+        let f = || s.spawn(|| print(2))
+        let b = choose()
+        f()
+    }
+}
+fn main() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        scope_generic()
+        scope_closure()
+    }
+}

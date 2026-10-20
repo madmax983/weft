@@ -1,0 +1,7 @@
+place(q0).
+cfg_edge(a1, a2).
+points_into(r1, q0).
+owner(q0, w1).
+scope_end(w1, a1).
+uses(r1, a2).
+lint("w0301", P) :- error(R, P).

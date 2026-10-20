@@ -1,0 +1,12 @@
+
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v
+}
+
+fn main() {
+    let v1 = mk_v()
+    v1.push(7)
+    let fr2 = |x: &u64| { print(x); v1.clear() }
+    fr2(v1.get(0))
+}

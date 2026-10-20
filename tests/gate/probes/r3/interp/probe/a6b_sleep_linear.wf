@@ -1,0 +1,15 @@
+// Control: the linear value is live across a sleep in the scope body.
+linear struct Tx { id: u64 }
+
+fn commit(t: Tx) / io { let Tx(id) = t; print("commit {id}") }
+
+fn main() / io, par {
+    handle Fail { fn fail(m) { print("scope handler: {m}") } } in {
+        scope { s =>
+            s.spawn(|| { sleep(5.ms); fail("task failed") })
+            let tx = Tx { id: 1 }
+            sleep(10.ms)
+            commit(tx)
+        }
+    }
+}

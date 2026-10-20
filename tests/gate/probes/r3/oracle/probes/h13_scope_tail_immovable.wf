@@ -1,0 +1,8 @@
+struct Pin: !Move { x: u64 }
+fn main() {
+    let p = Pin { x: 1 }
+    scope { s =>
+        p
+    }
+    print(p.x)
+}

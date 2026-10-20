@@ -1,0 +1,15 @@
+fn direct_fork() / par {
+    let n = 0
+    fork(|| n += 1, || n += 2)
+    print(n)
+}
+fn direct_spawn() {
+    let n = 0
+    let f = || n += 1
+    scope { s =>
+        s.spawn(f)
+        s.spawn(f)
+    }
+    print(n)
+}
+fn main() / par { direct_fork() }

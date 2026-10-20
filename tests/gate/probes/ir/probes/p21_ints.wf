@@ -1,0 +1,15 @@
+struct S { a: u8 }
+fn id8(x: u8) -> u8 { x }
+fn main() {
+    let x: u8 = 255
+    print(x)
+    let s = S { a: 200 }
+    print(s.a)
+    let big: u64 = 9223372036854775807
+    print(big)
+    let y: u8 = 250
+    let z = id8(y)
+    print(z)
+    let w: i8 = -100
+    print(w - 20)
+}

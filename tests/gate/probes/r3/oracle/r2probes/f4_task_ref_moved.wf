@@ -1,0 +1,10 @@
+fn take(v: Vec<u64>) {}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    scope { s =>
+        s.spawn(|| { sleep(1.s); print(r + 1) })
+        take(v)
+    }
+}

@@ -1,0 +1,31 @@
+enum State { Idle, Running(Vec<u64>), Done(u64) }
+struct Pair { s: State, n: u64 }
+fn elem_assign(v: &Vec<State>) / mut(v[]) {
+    match v[0] {
+        Running(w) => {
+            v[0] = Idle
+            print(w.len())
+        }
+        _ => {}
+    }
+}
+fn nested_assign(p: &Pair) / mut(p) {
+    match p.s {
+        Running(w) => {
+            p.s = Done(2)
+            print(w.len())
+        }
+        _ => {}
+    }
+}
+fn whole_struct_assign() {
+    let p = Pair { s: Running(Vec.new()), n: 1 }
+    let rp = &p
+    match rp.s {
+        Running(w) => {
+            p = Pair { s: Idle, n: 2 }
+            print(w.len())
+        }
+        _ => {}
+    }
+}

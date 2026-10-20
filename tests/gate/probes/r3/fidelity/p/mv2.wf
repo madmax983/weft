@@ -1,0 +1,9 @@
+effect Choice { multi fn choose() -> bool }
+struct Node { data: Vec<u64>, r: Vec<&u64> }
+fn rc_refs(x: &u64) -> u64 / Choice, mut(Node.r) {
+    let r = Rc.new(Node { data: Vec.new(), r: Vec.new() })
+    let y = 7
+    let b = choose()
+    r.r.push(x)
+    r.r.len()
+}

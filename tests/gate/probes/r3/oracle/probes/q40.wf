@@ -1,0 +1,6 @@
+effect Note { fn note(x: u64) }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn main() {
+    let r = handle Note { fn note(x) { resume(()) } } in { &mk_v()[0] }
+    print(r)
+}

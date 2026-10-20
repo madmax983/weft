@@ -1,0 +1,9 @@
+struct E { hp: u64 }
+struct H { r: Rc<E>, n: u64 }
+fn main() {
+    let h = H { r: Rc.new(E { hp: 1 }), n: 2 }
+    let p = &h
+    scope { s =>
+        s.spawn(|| print(p.n))
+    }
+}

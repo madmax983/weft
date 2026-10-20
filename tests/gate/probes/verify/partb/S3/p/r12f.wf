@@ -1,0 +1,15 @@
+effect Note { fn note(x: u64) }
+fn run(f: fn()) { f() }
+fn fork_params(f: fn() -> u64, g: fn() -> u64) / par { let (a, b) = fork(f, g) }
+fn spawn_via_item(f: fn()) / async { scope { s => s.spawn(|| run(f)) } }
+fn spawn_via_closure_param(f: fn()) / async {
+    let w = |h: fn()| h()
+    scope { s => s.spawn(|| w(f)) }
+}
+fn callers() / par, async {
+    handle Note { fn note(x) { resume(()) } } in fork_params(|| { note(1); 1 }, || 2)   // W0314
+    handle Note { fn note(x) { resume(()) } } in spawn_via_item(|| note(1))   // W0314
+    handle Note { fn note(x) { resume(()) } } in spawn_via_closure_param(|| note(1))   // W0314
+    fork_params(|| 1, || 2)
+    spawn_via_item(|| print(1))
+}

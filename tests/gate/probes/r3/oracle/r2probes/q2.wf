@@ -1,0 +1,9 @@
+fn work() {
+    let f = || {
+        scope { s =>
+            s.spawn(|| print(1))
+        }
+    }
+    f()
+}
+fn main() { work() }

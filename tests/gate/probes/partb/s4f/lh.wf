@@ -1,0 +1,11 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Wrap<T> { x: T }
+fn loop_holder(a: &World, b: &World) / mut(a.entities) {
+    let w = Wrap { x: &b.entities[0] }
+    for i in 0..3 {
+        w.x = &a.entities[0]
+        a.entities.clear()   
+        print(w.x.hp)   //~ W0301
+    }
+}

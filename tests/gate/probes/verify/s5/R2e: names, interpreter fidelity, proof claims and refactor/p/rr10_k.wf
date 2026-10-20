@@ -1,0 +1,11 @@
+// A handler clause reassigns.
+effect E { fn e() }
+fn diff(a: i32, b: i32) -> i32 { a - b }
+fn rdiff(b: i32, a: i32) -> i32 { a - b }
+fn go() / E { e() }
+fn main() {
+    let g = diff
+    handle E { fn e() { g = rdiff
+ resume(()) } } in go()
+    print(g(b: 10, a: 3))
+}

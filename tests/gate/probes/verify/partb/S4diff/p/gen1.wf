@@ -1,0 +1,26 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+
+fn wrap_drop<T>(x: T) { let o = Some(x) }
+fn a() { wrap_drop(begin()) }   //~ W0601
+fn tuple_drop<T>(x: T) { let p = (x, 1) }
+fn b() { tuple_drop(begin()) }   //~ W0601
+fn closure_drop<T>(x: T) { let c = || { let y = x } }
+fn c() { closure_drop(begin()) }   //~ W0601
+fn let_wild<T>(x: T) { let _ = x }
+fn d() { let_wild(begin()) }   //~ W0601
+fn overwrite<T>(x: T, y: T) -> T { let z = x
+ z = y
+ z }
+fn e() { let t = overwrite(begin(), begin())
+ rollback(t) }   //~ W0601
+fn field_set<T>(p: &Option<T>, x: T) / mut(p) { p = Some(x) }
+fn f(o: &Option<Tx>) / mut(o) { field_set(o, begin()) }   //~ W0601
+fn vec_drop<T>(x: T) { let v = Vec.new()
+ v.push(x) }
+fn g() { vec_drop(begin()) }   //~ W0601
+fn two<T>(x: T, y: T) -> T { x }
+fn h() { let t = two(begin(), begin())
+ rollback(t) }   //~ W0601

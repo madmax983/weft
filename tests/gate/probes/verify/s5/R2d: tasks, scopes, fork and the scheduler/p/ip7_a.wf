@@ -1,0 +1,9 @@
+// The handler captures g, a fn value that captures an Rc.
+fn main(env: Env) / io {
+    let hits = Rc.new(0)
+    let g = || { let h = hits.clone() }
+    http.serve(env.net.listen("127.0.0.1:18441"), |req| {
+        g()
+        Response.text("hit")
+    })
+}

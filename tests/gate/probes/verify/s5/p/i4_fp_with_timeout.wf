@@ -1,0 +1,20 @@
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+
+// A block of with_timeout commits a value and starts a follow-up task in the
+// scope around it.
+fn timed() / async, clock, fail {
+    scope { s =>
+        let tx = begin(1)
+        with_timeout(1.s) {
+            commit(tx)
+            s.spawn(|| print("notify"))
+            print("committed")
+        }
+    }
+}
+
+fn main() / async, clock {
+    handle Fail { fn fail(m) { print("failed: {m}") } } in timed()
+}

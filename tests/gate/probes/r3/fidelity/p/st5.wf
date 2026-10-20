@@ -1,0 +1,11 @@
+effect Keep { fn keep(r: &u64) }
+fn main() {
+    let store: Vec<&u64> = Vec.new()
+    let y = 9
+    handle Keep { fn keep(r) { store.push(r); resume(()) } } in {
+        let x = 5
+        keep(&x)
+        print(store[0])   // ok here? x is live
+    }
+    print(store[0])   // expected W0301
+}

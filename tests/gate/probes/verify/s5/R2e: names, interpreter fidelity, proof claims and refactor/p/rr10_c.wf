@@ -1,0 +1,8 @@
+// Unconditional reassignment.
+fn diff(a: i32, b: i32) -> i32 { a - b }
+fn rdiff(b: i32, a: i32) -> i32 { a - b }
+fn main() {
+    let g = diff
+    g = rdiff
+    print(g(b: 10, a: 3))
+}

@@ -1,0 +1,25 @@
+effect Op { fn op() }
+effect Mk { fn mk() -> fn() }
+fn clause_value_ref() {
+    let v = Vec.new()
+    v.push(1)
+    let w = Vec.new()
+    w.push(2)
+    let r = handle Op { fn op() { &v[0] } } in {
+        op()
+        &w[0]
+    }
+    v.clear()
+    print(r)
+}
+fn clause_value_fn() / Op {
+    let g = handle Op { fn op() { || op() } } in {
+        op()
+        || print(1)
+    }
+    g()
+}
+fn main() {
+    clause_value_ref()
+    handle Op { fn op() { print("outer"); resume(()) } } in clause_value_fn()
+}

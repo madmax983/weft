@@ -1,0 +1,16 @@
+// A closure made in a clause performs `note`. Lexically, the clause runs
+// outside the handler, so the operation goes to the outer handler. The body
+// calls the closure while the inner handler is installed.
+effect Note { fn note(x: u64) }
+effect Get { fn get() -> fn() }
+
+fn main() {
+    handle Note { fn note(x) { print("outer", x); resume(()) } } in {
+        handle Note { fn note(x) { print("inner", x); resume(()) } } in {
+            handle Get { fn get() { resume(|| note(1)) } } in {
+                let f = get()
+                f()
+            }
+        }
+    }
+}

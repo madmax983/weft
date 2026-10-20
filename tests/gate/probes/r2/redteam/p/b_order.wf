@@ -1,0 +1,72 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn grow(w: &World) -> i32 / mut(w.entities) { w.entities.push(Entity { hp: 1 })
+ 0 }
+fn growu(w: &World) -> usize / mut(w.entities) { w.entities.push(Entity { hp: 1 })
+ 0 }
+fn show(e: &Entity, n: i32) { print(e.hp) }
+fn show2(n: i32, e: &Entity) { print(e.hp) }
+
+// Named arguments in another order than the parameters.
+fn named_order(world: &World) / mut(world.entities) {
+    show2(e: &world.entities[0], n: grow(world))   //~ W0301
+}
+fn named_order2(world: &World) / mut(world.entities) {
+    show(n: grow(world), e: &world.entities[0])
+}
+// A binary operator: the left operand reads first.
+fn binop(world: &World) -> i32 / mut(world.entities) {
+    let first = &world.entities[0]
+    first.hp + grow(world)   //~ W0301
+}
+// Compound assignment: the place and then the value.
+fn compound(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    first.hp += grow(world)   //~ W0301
+}
+// An index whose index expression mutates.
+fn index_mut(world: &World) -> i32 / mut(world.entities) {
+    let es = &world.entities
+    es[growu(world)].hp   //~ W0301
+}
+// A method receiver taken before the arguments.
+impl Entity {
+    fn plus(self, n: i32) -> i32 { self.hp + n }
+}
+fn receiver(world: &World) -> i32 / mut(world.entities) {
+    world.entities[0].plus(grow(world))   //~ W0301
+}
+// A struct literal with a borrowed part (generic).
+struct Wrap<T> { x: T, n: i32 }
+fn lit_order(world: &World) / mut(world.entities) {
+    let w = Wrap { x: &world.entities[0], n: grow(world) }   //~ W0301
+    print(w.x.hp)
+}
+fn lit_order_named(world: &World) / mut(world.entities) {
+    let w = Wrap { n: grow(world), x: &world.entities[0] }
+    print(w.x.hp)
+}
+// An array literal.
+fn arr_order(world: &World) / mut(world.entities) {
+    let a = [&world.entities[0], { grow(world); &world.entities[1] }]   //~ W0301
+    print(a[0].hp)
+}
+// A comparison.
+fn cmp_order(world: &World) -> bool / mut(world.entities) {
+    world.entities[0].hp == grow(world)
+}
+fn cmp_order_ref(world: &World) -> bool / mut(world.entities) {
+    let first = &world.entities[0]
+    first.hp == grow(world)   //~ W0301
+}
+// String interpolation.
+fn interp(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    print("{first.hp} {grow(world)}")
+    print("{grow(world)} {first.hp}")   //~ W0301
+}
+fn main() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    named_order(&w)
+}

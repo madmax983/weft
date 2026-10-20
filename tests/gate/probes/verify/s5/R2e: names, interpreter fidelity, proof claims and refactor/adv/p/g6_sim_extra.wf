@@ -1,0 +1,7 @@
+struct Big { xs: Vec<u64> }
+fn take(b: Big) -> u64 { 1 }
+fn main() / clock {
+    let v = Big { xs: [1] }
+    sim.run(1, 2, take(v)) { print("in") }
+    print(v.xs.len())
+}

@@ -1,0 +1,6 @@
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    with_timeout(5.s) { v }
+    print(v.len())
+}

@@ -1,0 +1,14 @@
+linear struct Tx { id: u64 }
+fn finish(t: Tx) { let Tx(i) = t }
+fn local_opt(o: Option<Tx>) {
+    match o {
+        Some(t) => finish(t),
+        None => {}
+    }
+}
+fn temp_opt(v: Vec<Tx>) / mut(v) {
+    match v.pop() {
+        Some(t) => finish(t),
+        None => {}
+    }
+}

@@ -1,0 +1,71 @@
+effect Log { fn log(msg: String) }
+struct Cb { f: fn() }
+fn idg<T>(x: T) -> T { x }
+
+// A task in an outer scope keeps a closure that performs through the inner handler.
+fn task_outer_scope() / async {
+    scope { s =>
+        handle Log { fn log(m) { print(m); resume(()) } } in {   //~ W0314
+            s.spawn(|| log("late"))
+        }
+    }
+}
+// The value of an inner scope.
+fn scope_value() {
+    let g = handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        scope { s => || log("late") }
+    }
+    g()
+}
+// with_timeout returns the closure.
+fn timeout_value() / async, fail {
+    let g = handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        with_timeout(1.s) { || log("late") }
+    }
+    g()
+}
+// A match arm value.
+fn match_value(o: Option<u64>) {
+    let g = handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        match o { Some(x) => || log("a"), None => || print(0) }
+    }
+    g()
+}
+// A loop that breaks... the value of a loop body.
+fn loop_carry() {
+    let g = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        let i = 0
+        let h = || print(1)
+        while i < 2 {
+            g = h
+            h = || log("late")
+            i += 1
+        }
+    }
+    g()
+}
+// A Weak upgrade in the body puts it into an outer Rc.
+fn via_rc_outer() {
+    let r = Rc.new(Cb { f: || print(0) })
+    handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        let r2 = r.clone()
+        r2.f = || log("late")
+    }
+    let g = r.f
+    g()
+}
+// A generic identity of a tuple.
+fn generic_tuple() {
+    let p = handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        idg((1, || log("late")))
+    }
+    let (a, g) = p
+    g()
+}
+test "task_outer_scope" { task_outer_scope() }
+test "scope_value" { scope_value() }
+test "match_value" { match_value(Some(1)) }
+test "loop_carry" { loop_carry() }
+test "via_rc_outer" { via_rc_outer() }
+test "generic_tuple" { generic_tuple() }

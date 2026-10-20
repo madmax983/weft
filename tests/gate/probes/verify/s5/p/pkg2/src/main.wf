@@ -1,0 +1,4 @@
+fn g() { util.Priv.hidden(3) }
+fn main() {
+    g()
+}

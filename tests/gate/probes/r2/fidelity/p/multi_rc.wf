@@ -1,0 +1,19 @@
+// An `Rc` handle is live across a `multi` operation. Another handle to the
+// same object lives outside the handled computation. After each resume the
+// body pushes through its handle. Do both resumes share the object with the
+// outside handle?
+effect Choice { multi fn choose() -> bool }
+struct Cell { items: Vec<u64> }
+
+fn body(a: Rc<Cell>) / Choice, mut(Cell) {
+    let mine = a.clone()
+    let b = choose()
+    mine.items.push(if b { 1 } else { 2 })
+}
+
+fn main() {
+    let shared = Rc.new(Cell { items: Vec.new() })
+    let h = shared.clone()
+    handle Choice { fn choose() { resume(true); resume(false) } } in body(h)
+    print(shared.items.len())
+}

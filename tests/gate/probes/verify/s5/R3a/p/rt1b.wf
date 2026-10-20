@@ -1,0 +1,58 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { print(tx.id); let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+impl Tx { fn finish(self) { rollback(self) } }
+effect Note { fn note(x: u64) }
+
+fn method_part() {
+    let t = (begin(1), begin(2))
+    t.0.finish()
+}
+fn spawn_part() / async {
+    let t = (begin(1), begin(2))
+    scope { s => s.spawn(|| rollback(t.0)) }
+}
+fn clause_part() {
+    let t = (begin(1), begin(2))
+    handle Note { fn note(x) { rollback(t.0); resume(()) } } in { note(1) }
+}
+fn match_part() {
+    let t = (begin(1), begin(2))
+    match t.0 { x => rollback(x) }
+}
+fn if_let_part() {
+    let t = (Some(begin(1)), begin(2))
+    match t.0 { Some(x) => rollback(x), None => {} }
+}
+fn frame_tail_part() / async {
+    let t = (begin(1), begin(2))
+    let x = scope { s => t.0 }
+    rollback(x)
+}
+fn handle_tail_part() {
+    let t = (begin(1), begin(2))
+    let x = handle Note { fn note(k) { resume(()) } } in { t.0 }
+    rollback(x)
+}
+fn block_tail_part() {
+    let t = (begin(1), begin(2))
+    let x = { t.0 }
+    rollback(x)
+}
+fn assign_part() {
+    let t = (begin(1), begin(2))
+    let x = begin(3)
+    rollback(x)
+    x = t.0
+    rollback(x)
+}
+test "method_part" { method_part() }
+test "spawn_part" { spawn_part() }
+test "clause_part" { clause_part() }
+test "match_part" { match_part() }
+test "if_let_part" { if_let_part() }
+test "frame_tail_part" { frame_tail_part() }
+test "handle_tail_part" { handle_tail_part() }
+test "block_tail_part" { block_tail_part() }
+test "assign_part" { assign_part() }

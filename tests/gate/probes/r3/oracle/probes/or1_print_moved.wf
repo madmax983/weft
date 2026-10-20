@@ -1,0 +1,11 @@
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+struct P { a: Vec<u64>, n: u64 }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    print(take_v(v))
+    print(v)                // prints <moved>
+    let p = P { a: Vec.new(), n: 1 }
+    print(take_v(p.a))
+    print(p)                // prints a struct with a <moved> part
+}

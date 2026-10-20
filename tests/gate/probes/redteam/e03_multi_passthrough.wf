@@ -1,0 +1,16 @@
+effect Choice { multi fn choose() -> bool }
+linear struct Token { id: u64 }
+    on abort = spend
+fn spend(t: Token) { let Token(i) = t }
+fn mint() -> Token { Token { id: 1 } }
+// The multi operation is performed inside the fn argument, while `t` is live in `run`.
+fn run(f: fn() -> bool) -> bool {
+    let t = mint()
+    let b = f()
+    spend(t)
+    b
+}
+fn caller() -> bool / Choice { run(|| choose()) }
+fn all() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in caller()
+}

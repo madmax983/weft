@@ -1,0 +1,26 @@
+effect Note { fn note(x: u64) }
+// A closure gives the local its value.
+fn closure_sets() {
+    let x: u64
+    let f = || { x = 1 }
+    f()
+    print(x)
+}
+// A handler clause gives the local its value.
+fn clause_sets() {
+    let x: u64
+    handle Note { fn note(n) { x = n
+ resume(()) } } in note(7)
+    print(x)
+}
+// A task gives the local its value before the join.
+fn task_sets() / async {
+    let x: u64
+    scope { s => s.spawn(|| { x = 3 }) }
+    print(x)
+}
+fn main() / async {
+    closure_sets()
+    clause_sets()
+    task_sets()
+}

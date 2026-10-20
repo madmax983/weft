@@ -1,0 +1,8 @@
+enum L { Cons(u64, Box<L>), Nil }
+fn a(x: (u64, u64)) -> u64 { match x { (a, b, c) => 1 } }
+fn b(o: Option<u64>) -> u64 { match o { Some(a, b) => 1, None => 0 } }
+fn c<T>(x: Option<T>) { match x { Some(_) => {} } }
+fn d(l: L) -> u64 { match l { L.Cons(1, _) => 1, L.Nil => 0 } }
+fn e(x: u64) -> u64 { match x { } }
+fn f(x: bool) -> u64 { match (x, (x, (x, x))) { (true, (_, (_, true))) => 1, (false, _) => 2 } }
+fn g(o: Option<u64>) -> u64 { match o { None => 0, Some(1) => 1 } }

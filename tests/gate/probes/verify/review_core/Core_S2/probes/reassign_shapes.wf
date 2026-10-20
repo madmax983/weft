@@ -1,0 +1,60 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn grow(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 1 }) }
+fn noop(w: &World) {}
+
+// s1: a closure re-assigns a captured function value.
+fn set_in_closure(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let h = noop
+    let set = || { h = grow }
+    set()
+    h(world)
+    print(first.hp)   // expect W0301
+}
+// s2: a closure that re-assigns, made before, called in a loop after the call.
+fn set_later(world: &World, n: u64) / mut(world.entities) {
+    let first = &world.entities[0]
+    let h = noop
+    let i = 0
+    while i < n {
+        h(world)
+        print(first.hp)   // expect W0301 (second iteration)
+        h = grow
+        i += 1
+    }
+}
+// s3: a `for` loop with the re-assignment after the call.
+fn for_reassign(world: &World, v: &Vec<u64>) / mut(world.entities) {
+    let first = &world.entities[0]
+    let h = noop
+    for x in v[] {
+        h(world)
+        print(first.hp)   // expect W0301 (second iteration)
+        h = grow
+    }
+}
+// s4: re-assignment in a match arm.
+fn match_reassign(world: &World, n: u64) / mut(world.entities) {
+    let first = &world.entities[0]
+    let h = noop
+    match n {
+        0 => { h = grow }
+        _ => {}
+    }
+    h(world)
+    print(first.hp)   // expect W0301
+}
+// s5: re-assignment of a captured value inside a loop body closure (stored once).
+fn loop_closure_reassign(world: &World, n: u64) / mut(world.entities) {
+    let first = &world.entities[0]
+    let h = || print(1)
+    let i = 0
+    while i < n {
+        let k = h
+        k()
+        print(first.hp)   // expect W0301 (second iteration)
+        h = || world.entities.clear()
+        i += 1
+    }
+}

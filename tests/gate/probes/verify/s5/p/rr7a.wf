@@ -1,0 +1,74 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn run(f: fn()) { f() }
+
+// A returned closure whose captured reference gets a new value before the return.
+fn mk(a: &World, b: &World) -> fn() {
+    let r = &a.entities[0]
+    let f = || print(r.hp)
+    r = &b.entities[0]
+    f
+}
+fn returned_late() {
+    let a = World { entities: Vec.new() }
+    a.entities.push(Entity { hp: 1 })
+    let b = World { entities: Vec.new() }
+    b.entities.push(Entity { hp: 2 })
+    let f = mk(&a, &b)
+    b.entities.clear()
+    f()
+}
+
+// A returned closure that captures a reference variable, assigned in a branch.
+fn mk2(a: &World, b: &World, c: bool) -> fn() {
+    let r = &a.entities[0]
+    let f = || print(r.hp)
+    if c { r = &b.entities[0] }
+    f
+}
+fn returned_late2() {
+    let a = World { entities: Vec.new() }
+    a.entities.push(Entity { hp: 1 })
+    let b = World { entities: Vec.new() }
+    b.entities.push(Entity { hp: 2 })
+    let f = mk2(&a, &b, true)
+    b.entities.clear()
+    f()
+}
+
+// The closure is copied into a tuple and run later.
+fn tuple_late() {
+    let a = World { entities: Vec.new() }
+    a.entities.push(Entity { hp: 1 })
+    let b = World { entities: Vec.new() }
+    b.entities.push(Entity { hp: 2 })
+    let r = &a.entities[0]
+    let f = || print(r.hp)
+    let t = (f, 1)
+    r = &b.entities[0]
+    b.entities.clear()
+    let g = t.0
+    g()
+}
+
+// The closure is stored in a Vec and run by a callee.
+fn run_all(fs: &Vec<fn()>) { let i = 0
+ while i < fs.len() { let f = fs[i]
+ f()
+ i = i + 1 } }
+fn vec_late() {
+    let a = World { entities: Vec.new() }
+    a.entities.push(Entity { hp: 1 })
+    let b = World { entities: Vec.new() }
+    b.entities.push(Entity { hp: 2 })
+    let r = &a.entities[0]
+    let fs: Vec<fn()> = Vec.new()
+    fs.push(|| print(r.hp))
+    r = &b.entities[0]
+    b.entities.clear()
+    run_all(&fs)
+}
+
+fn main() {
+    returned_late()
+}

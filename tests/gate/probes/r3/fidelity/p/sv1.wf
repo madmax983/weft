@@ -1,0 +1,16 @@
+// The value of a scope body is linear. A child fails, so the end of the scope
+// raises the failure, and the value of the body goes away.
+linear struct Tx { id: u64 }
+fn begin() -> Tx { Tx { id: 1 } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn boom() / fail { fail("boom") }
+fn work() / async, fail {
+    let t = scope { s =>
+        s.spawn(|| boom())
+        begin()
+    }
+    commit(t)
+}
+fn main() / async {
+    handle Fail { fn fail(m) { print("failed: {m}") } } in work()
+}

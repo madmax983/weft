@@ -1,0 +1,32 @@
+fn work(id: u64) / clock {
+    let i = 0
+    while i < 3 {
+        print("task {id} step {i}")
+        sleep(1.ms)
+        i += 1
+    }
+}
+
+fn noise() / clock {
+    let i = 0
+    while i < 7 {
+        sleep(1.ms)
+        i += 1
+    }
+}
+
+test "sim order with a sibling outside" {
+    scope { o =>
+        o.spawn(|| noise())
+        o.spawn(|| noise())
+        o.spawn(|| {
+            sim.run(seed: 7) {
+                scope { s =>
+                    s.spawn(|| work(1))
+                    s.spawn(|| work(2))
+                    s.spawn(|| work(3))
+                }
+            }
+        })
+    }
+}

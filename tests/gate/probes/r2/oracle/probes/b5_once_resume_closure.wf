@@ -1,0 +1,6 @@
+effect Ask { fn ask() -> u64 }
+fn twice(f: fn()) { f(); f() }
+fn main() {
+    let n = handle Ask { fn ask() { twice(|| print(resume(1))); 0 } } in ask()
+    print(n)
+}

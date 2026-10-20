@@ -1,0 +1,23 @@
+fn if_plain(c: bool) / async {
+    if c { scope { s => s.spawn(|| 1) } } else { scope { s => s.spawn(|| 2) } }
+}
+fn match_plain(c: bool) / async {
+    match c {
+        true => scope { s => s.spawn(|| 1) },
+        false => scope { s => s.spawn(|| 2) },
+    }
+}
+fn block_plain() / async {
+    { scope { s => s.spawn(|| 1) } }
+}
+fn closure_plain() / async {
+    let f = || scope { s => s.spawn(|| 1) }
+    f()
+}
+fn let_plain() / async {
+    let t = scope { s => s.spawn(|| 1) }
+}
+fn stmt_plain() / async {
+    scope { s => s.spawn(|| 1) }
+    print(1)
+}

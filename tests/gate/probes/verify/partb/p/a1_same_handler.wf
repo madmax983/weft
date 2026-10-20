@@ -1,0 +1,18 @@
+// A closure that performs through handler Reg goes to an operation of Reg itself.
+// The clause runs outside Reg, so the call g() in the clause has no live Reg handler.
+effect Reg {
+    fn reg(f: fn())
+    fn ping()
+}
+
+fn same_handler() {
+    handle Reg {
+        fn reg(g) { g(); resume(()) }
+        fn ping() { print("ping"); resume(()) }
+    } in reg(|| ping())
+}
+
+fn main() {
+    same_handler()
+    print("done")
+}

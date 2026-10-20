@@ -1,0 +1,43 @@
+struct P { a: u64, b: u64 }
+
+// A task of the callee writes through x while another task runs f.
+fn bg_two(f: fn(), x: &u64) / mut(x), async {
+    scope { s =>
+        s.spawn(f)
+        s.spawn(|| x += 1)
+    }
+}
+
+// The callee forks f with its own write through x.
+fn par_write(f: fn(), x: &u64) / mut(x), par {
+    let _ = fork(f, || x += 1)
+}
+
+// A plain-data struct.
+fn bg_struct(f: fn(), p: &P) / mut(p), async, clock {
+    scope { s =>
+        s.spawn(f)
+        p.a += 1
+    }
+}
+
+fn two_tasks() / async {
+    let n = 0
+    bg_two(|| print(n), &n)
+}
+
+fn fork_write() / par {
+    let n = 0
+    par_write(|| print(n), &n)
+}
+
+fn struct_write() / async, clock {
+    let p = P { a: 1, b: 2 }
+    bg_struct(|| print(p.a), &p)
+}
+
+fn main() / async, clock, par {
+    two_tasks()
+    fork_write()
+    struct_write()
+}

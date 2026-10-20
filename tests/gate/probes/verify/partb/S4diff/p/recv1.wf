@@ -1,0 +1,13 @@
+linear struct Tx { id: u64 }
+fn begin() -> Tx { Tx { id: 1 } }
+impl Tx {
+    fn done(self: Tx) { let Tx(i) = self }
+    fn peek(self) -> u64 { self.id }
+    fn peek2(self: &Tx) -> u64 { self.id }
+}
+fn by_value_ok() { begin().done() }
+fn by_ref_bad() -> u64 { begin().peek() }   //~ W0601
+fn by_ref_bad2() -> u64 { begin().peek2() }   //~ W0601
+fn local_ok() { let t = begin()
+ let n = t.peek()
+ t.done() }

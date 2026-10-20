@@ -1,0 +1,10 @@
+fn grow(v: &Vec<u64>) { v.push(9) }
+fn sum(v: &Vec<u64>) -> u64 { let t = 0; for x in v[] { t += x }; t }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        s.spawn(|| grow(&v))
+        print(sum(&v))
+    }
+}

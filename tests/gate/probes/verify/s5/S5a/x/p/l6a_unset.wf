@@ -1,0 +1,23 @@
+effect Op { fn op() }
+struct Job { f: fn() }
+fn run_once(j: &Job) { let g = j.f
+ g() }
+fn abort_unset() {
+    let x: u64
+    handle Op { fn op() { print("abort") } } in {
+        op()
+        x = 1
+    }
+    print(x)
+}
+fn abort_unset_stored() {
+    let x: u64
+    handle Op { fn op() { print("abort") } } in {
+        let j = Job { f: || op() }
+        run_once(&j)
+        x = 1
+    }
+    print(x)
+}
+fn main() { abort_unset() 
+ abort_unset_stored() }

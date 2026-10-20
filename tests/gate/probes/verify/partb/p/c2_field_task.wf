@@ -1,0 +1,19 @@
+// A task runs a closure from a field of a local struct. The closure performs
+// through a handler on the stack of the parent task.
+effect Note { fn note(x: u64) }
+struct Job { f: fn() }
+
+fn from_field() / async {
+    handle Note { fn note(x) { print(x); resume(()) } } in {
+        let j = Job { f: || note(1) }
+        scope { s =>
+            let t = s.spawn(j.f)
+            t.join()
+        }
+    }
+}
+
+fn main() / async {
+    from_field()
+    print("done")
+}

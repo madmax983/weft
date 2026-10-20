@@ -1,0 +1,41 @@
+// O3-7 (major, false positive, regression of round 2). An operation with one
+// closure argument that changes what it captures gets W0312: "`run` mutates
+// `v` while another argument points into `v`". There is no other argument.
+// The derivation compares `call_mut(run, v, 3000000)` (the root of the clause
+// footprint, `roots::clause`) with `call_arg(run, v, 1000000)` (the closure
+// argument, `roots::fn_arg`): the footprint of the clause holds what the
+// closure itself changes. The same closure given to a function is accepted.
+// Commit 328a39b and acd05a8 (end of R2c) accept `op`.
+effect Run { fn run(f: fn()) }
+fn run_fn(f: fn()) { f() }
+
+fn op() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(f) { f(); resume(()) } } in {
+        run(|| v.push(5))         // W0312
+    }
+    print(v.len())
+}
+
+fn op_clause_no_call() {
+    let v = Vec.new()
+    v.push(1)
+    handle Run { fn run(f) { resume(()) } } in {
+        run(|| v.clear())         // accepted: the clause does not call `f`
+    }
+    print(v.len())
+}
+
+fn function() {
+    let v = Vec.new()
+    v.push(1)
+    run_fn(|| v.push(5))          // accepted
+    print(v.len())
+}
+
+fn main() {
+    op()
+    op_clause_no_call()
+    function()
+}

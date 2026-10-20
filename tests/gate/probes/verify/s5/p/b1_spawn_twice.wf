@@ -1,0 +1,10 @@
+fn main() / async {
+    let n = 5
+    let f = || print("task {n}")
+    scope { s =>
+        s.spawn(f)
+        s.spawn(f)
+    }
+    f()
+    print("end")
+}

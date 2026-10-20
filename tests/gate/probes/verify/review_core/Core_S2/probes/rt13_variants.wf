@@ -1,0 +1,97 @@
+effect Choice { multi fn choose() -> bool }
+linear struct Token { id: u64 }
+    on abort = spend
+fn spend(t: Token) { let Token(i) = t }
+fn mint() -> Token { Token { id: 1 } }
+struct S { f: fn() -> bool }
+struct Entity { hp: i32 }
+fn chooser() -> bool / Choice { choose() }
+fn plain() -> bool { true }
+fn mk_c() -> fn() -> bool { || choose() }
+
+// v1: the parameter type states a row with the multi effect.
+fn run_row(f: fn() -> bool / Choice) -> bool / Choice {
+    let t = mint()
+    let b = f()   // expect W0503
+    spend(t)
+    b
+}
+// v2: a function value from a struct field.
+fn run_field(s: S) -> bool {
+    let t = mint()
+    let g = s.f
+    let b = g()   // expect W0503
+    spend(t)
+    b
+}
+// v3: the parameter called inside a local closure.
+fn run_in_closure(f: fn() -> bool) -> bool {
+    let h = || f()
+    let t = mint()
+    let b = h()   // expect W0503
+    spend(t)
+    b
+}
+// v4: the parameter passed in a struct to another function.
+fn run_s(s: S) -> bool { let g = s.f; g() }
+fn pass_struct(f: fn() -> bool) -> bool {
+    let t = mint()
+    let b = run_s(S { f: f })   // expect W0503
+    spend(t)
+    b
+}
+// v5: an item value with a multi effect.
+fn item_multi() -> bool / Choice {
+    let g = chooser
+    let t = mint()
+    let b = g()   // expect W0503
+    spend(t)
+    b
+}
+// v6: a joined item.
+fn joined_multi(c: bool) -> bool / Choice {
+    let g = if c { chooser } else { plain }
+    let t = mint()
+    let b = g()   // expect W0503
+    spend(t)
+    b
+}
+// v7: a returned closure that performs the multi operation.
+fn ret_multi() -> bool / Choice {
+    let f = mk_c()
+    let t = mint()
+    let b = f()   // expect W0503
+    spend(t)
+    b
+}
+// v8: a uniq reference live across a call of a parameter.
+fn uniq_across(f: fn() -> bool, e: &Entity @ uniq) -> bool {
+    let b = f()   // expect W0503 (e is uniq and live)
+    e.hp += 1
+    b
+}
+// v9: a call of a parameter in a loop.
+fn run_loop(f: fn() -> bool, n: u64) -> bool {
+    let t = mint()
+    let i = 0
+    let b = false
+    while i < n {
+        b = f()   // expect W0503
+        i += 1
+    }
+    spend(t)
+    b
+}
+// v10: the parameter passed through a method call.
+impl S {
+    fn call(self: &S) -> bool { let g = self.f; g() }
+}
+fn method_pass(s: &S) -> bool {
+    let t = mint()
+    let b = s.call()   // expect W0503
+    spend(t)
+    b
+}
+// v11: a closure caller that gives a multi closure to a once-only parameter.
+fn run_log(f: fn() -> bool / log) -> bool / log { f() }
+fn bad_arg() -> bool / log, Choice { run_log(|| choose()) }   // expect W0705

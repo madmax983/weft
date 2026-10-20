@@ -1,0 +1,14 @@
+struct Entity { hp: i32 }
+impl Entity {
+    fn show2(self, e: &Entity, n: i32) { print("e.hp={e.hp} n={n}") }
+    fn sub(self, a: i32, b: i32) -> i32 { a - b }
+}
+fn main() {
+    let x = Entity { hp: 1 }
+    let y = Entity { hp: 2 }
+    x.show2(n: 5, e: &y)
+    print(x.sub(b: 10, a: 3))
+    print(Entity.sub(x, b: 10, a: 3))
+    let f = |a: i32, b: i32| a - b
+    print(f(b: 10, a: 3))
+}

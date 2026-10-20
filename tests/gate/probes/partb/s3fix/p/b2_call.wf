@@ -1,0 +1,42 @@
+effect Reg {
+    fn reg(f: fn())
+    fn ping()
+}
+effect Log { fn log(m: String) }
+fn reg_it(g: fn()) / Reg { reg(g) }
+fn reg_closure_param() {
+    let r = |g: fn()| reg(g)
+    handle Reg {
+        fn reg(g) { g(); resume(()) }
+        fn ping() { resume(()) }
+    } in r(|| ping())
+}
+// bad: the callee gives the closure to its own handler's operation
+fn through_call() {
+    handle Reg {
+        fn reg(g) { g(); resume(()) }
+        fn ping() { resume(()) }
+    } in reg_it(|| ping())
+}
+// clean: the closure performs through an outer handler, live in the clause
+fn through_call_outer() {
+    handle Log { fn log(m) { resume(()) } } in {
+        handle Reg {
+            fn reg(g) { g(); resume(()) }
+            fn ping() { resume(()) }
+        } in reg_it(|| log("x"))
+    }
+}
+// bad: a closure defined inside the handle gives its parameter to the operation
+fn closure_inside() {
+    handle Reg {
+        fn reg(g) { g(); resume(()) }
+        fn ping() { resume(()) }
+    } in {
+        let r = |g: fn()| reg(g)
+        r(|| ping())
+    }
+}
+fn main() {
+    through_call_outer()
+}

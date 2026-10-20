@@ -1,0 +1,12 @@
+// The clause value is a tuple whose part is a resuming closure.
+effect Ask { fn ask() -> u64 }
+fn main() {
+    let t = handle Ask {
+        fn ask() { (|| { let n = resume(5); print(n) }, 1) }
+    } in {
+        let n = ask()
+        (|| print(n), 2)
+    }
+    let (g, x) = t
+    g()
+}

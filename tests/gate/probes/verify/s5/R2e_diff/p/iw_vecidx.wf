@@ -1,0 +1,9 @@
+effect Ask { fn ask(q: u64) -> u64 }
+struct S { x: u8 }
+fn sub(a: u64, b: u64) -> u64 { a - b }
+fn main() / async {
+    let v: Vec<u8> = Vec.new()
+    v.push(250)
+    v[0] += 10
+    print(v[0])
+}

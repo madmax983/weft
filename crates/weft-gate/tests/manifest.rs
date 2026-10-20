@@ -280,7 +280,17 @@ fn skips_symbolic_links() {
 #[test]
 fn the_tier_roots_follow_the_plan() {
     let t1: Vec<_> = manifest::tier1_roots().into_iter().map(|r| r.set).collect();
-    assert_eq!(t1, ["corpus", "interp", "examples", "packages", "probes"]);
+    assert_eq!(
+        t1,
+        [
+            "corpus",
+            "interp",
+            "examples",
+            "packages",
+            "ir_targets",
+            "probes"
+        ]
+    );
     let t2 = manifest::tier2_roots();
     let report: Vec<_> = t2
         .iter()
@@ -361,4 +371,153 @@ fn the_unpacked_archive_gives_the_same_manifest() {
     assert_eq!(again.to_tsv(), m.to_tsv());
     let text = fs::read_to_string(dest.join("manifest.tsv")).expect("read the manifest");
     assert_eq!(text, m.to_tsv());
+}
+
+/// The repository of this crate.
+fn repo() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+/// The committed tier-1 manifest.
+fn tier1() -> Manifest {
+    let text = fs::read_to_string(repo().join("tests/gate/manifest-tier1.tsv"))
+        .expect("read the tier-1 manifest");
+    Manifest::from_tsv(&text).expect("parse the tier-1 manifest")
+}
+
+#[test]
+fn the_tier1_manifest_holds_the_probes_and_controls_of_ir_10_2() {
+    let m = tier1();
+    let all: Vec<&str> = m.all_paths().map(|(_, p)| p).collect();
+    let probes = [
+        // M1 to M4.
+        "work/machine/m1_post_resume.wf",
+        "work/mir/postres.wf",
+        "work/machine/m6b_resume_result_ref.wf",
+        "work/machine/m8_abort_value_into_body.wf",
+        "work/machine/m10_abort_value_callee_local.wf",
+        // J1 to J6.
+        "judge_sound/j1_post_resume_keep.wf",
+        "judge_sound/j2_post_resume_closure.wf",
+        "judge_sound/j3_resuming_clause_value.wf",
+        "judge_sound/j4_multi_outer_ref.wf",
+        "judge_sound/j5_kept_borrow.wf",
+        "judge_sound/j5d_maker_borrow.wf",
+        "judge_sound/j6_resume_temp_keep.wf",
+        // map N1, N2.
+        "work/map/opres.wf",
+        "work/map/fnres2.wf",
+        // sem N1 to N4.
+        "probes/p2_late_operand_ref.wf",
+        "probes/p9_print_late.wf",
+        "probes/p10_index_late.wf",
+        "probes/p25_assert_abort.wf",
+        "probes/p27_assert_callee.wf",
+        // The controls.
+        "judge_sound/j5b_kept_write.wf",
+        "judge_sound/j5c_kept_borrow_task.wf",
+        "work/judge/p/d5_count.wf",
+        "work/machine/m6_resume_result_body_local.wf",
+        "work/machine/m9_resume_twice_tail.wf",
+    ];
+    let missing: Vec<String> = probes
+        .iter()
+        .map(|p| format!("tests/gate/probes/ir/{p}"))
+        .filter(|p| !all.contains(&p.as_str()))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "not in the tier-1 manifest: {missing:?}"
+    );
+}
+
+/// The repro paths of the tables of `docs/ir.md` §10.4. A name without `/` is in the
+/// directory of the path before it in the same cell.
+fn repros_of_ir_10_4() -> Vec<String> {
+    let text = fs::read_to_string(repo().join("docs/ir.md")).expect("read docs/ir.md");
+    let start = text.find("### 10.4 ").expect("docs/ir.md has section 10.4");
+    let rest = text.get(start..).unwrap_or_default();
+    let end = rest.find("\n## ").unwrap_or(rest.len());
+    let mut out = Vec::new();
+    for line in rest.get(..end).unwrap_or_default().lines() {
+        let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+        // `| Id | Class | Verdict | Mechanism | Repro | Group | Claim |`: the repro is
+        // cell 5 (cell 0 is the empty text before the first `|`).
+        let Some(cell) = cells.get(5).filter(|_| cells.len() == 9) else {
+            continue;
+        };
+        let mut dir = String::new();
+        for (i, span) in cell.split('`').enumerate() {
+            if i % 2 == 0 || Path::new(span).extension().is_none_or(|e| e != "wf") {
+                continue;
+            }
+            let path = match span.rsplit_once('/') {
+                Some((d, _)) => {
+                    dir = d.to_string();
+                    span.to_string()
+                }
+                None => format!("{dir}/{span}"),
+            };
+            out.push(path);
+        }
+    }
+    out
+}
+
+/// True if the file name `name` matches `pattern`, where `*` matches any text.
+fn glob(pattern: &str, name: &str) -> bool {
+    match pattern.split_once('*') {
+        None => pattern == name,
+        Some((head, tail)) => {
+            let Some(rest) = name.strip_prefix(head) else {
+                return false;
+            };
+            (0..=rest.len()).any(|i| rest.is_char_boundary(i) && glob(tail, &rest[i..]))
+        }
+    }
+}
+
+#[test]
+fn each_repro_of_ir_10_4_is_in_the_copy() {
+    let repros = repros_of_ir_10_4();
+    // 26 rows of round 2, 20 of round 3 and 14 items; some rows have two paths.
+    assert!(repros.len() >= 60, "only {} repro paths", repros.len());
+    let probes = repo().join("tests/gate/probes");
+    let mut missing = Vec::new();
+    for r in &repros {
+        let (dir, name) = r.rsplit_once('/').unwrap_or(("", r));
+        let found = fs::read_dir(probes.join(dir)).is_ok_and(|rd| {
+            rd.filter_map(Result::ok)
+                .any(|e| glob(name, &e.file_name().to_string_lossy()))
+        });
+        if !found {
+            missing.push(r.clone());
+        }
+    }
+    assert!(missing.is_empty(), "not in tests/gate/probes: {missing:?}");
+}
+
+#[test]
+fn the_committed_tier1_manifest_is_current() {
+    let fresh = manifest::build(
+        &repo(),
+        &manifest::tier1_roots(),
+        Options {
+            exclude_copies: false,
+        },
+    )
+    .expect("build the tier-1 manifest");
+    assert!(
+        fresh.missing.is_empty(),
+        "missing roots: {:?}",
+        fresh.missing
+    );
+    assert_eq!(
+        fresh.to_tsv(),
+        tier1().to_tsv(),
+        "run `cargo run -p weft-gate -- manifest --tier 1`"
+    );
+    let sets = |s: &str| fresh.entries.iter().filter(|e| e.set == s).count();
+    assert_eq!(sets("ir_targets"), 6);
+    assert!(sets("probes") > 3000, "{} probes", sets("probes"));
 }

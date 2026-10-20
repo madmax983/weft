@@ -1,0 +1,8 @@
+fn twice(f: fn()) { f(); f() }
+fn twice2(f: fn()) { twice(f) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    twice2(|| { print(r + 1); v.clear() })
+}

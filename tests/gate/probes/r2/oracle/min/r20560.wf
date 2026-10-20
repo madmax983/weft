@@ -1,0 +1,21 @@
+effect Pick { multi fn pick() -> bool }
+
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(2)
+    v.push(3)
+    v
+}
+
+
+
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let v14 = mk_v()
+        scope { s15 =>
+            let t16 = s15.spawn(|| v14.clear())
+            let r17 = &v14[1]
+            t16.join()
+        }
+    }
+}

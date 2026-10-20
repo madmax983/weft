@@ -1,0 +1,19 @@
+// ADR 0010: a failure of a child waits while the frame of its scope is in a
+// continuation, and the owner raises it when a resume puts the frame back.
+effect Ask { fn ask() -> u64 }
+
+fn main() / io, par {
+    handle Ask { fn ask() { sleep(20.ms); print("clause resumes"); resume(1) } } in {
+        handle Fail { fn fail(m) { print("scope handler: {m}") } } in {
+            scope { s =>
+                s.spawn(|| { sleep(5.ms); fail("child failed") })
+                let x = ask()
+                print("the body goes on after the resume, x = {x}")
+                let i = 0
+                while i < 3 { print("work {i}"); i += 1 }
+                sleep(1.ms)
+                print("not reached")
+            }
+        }
+    }
+}

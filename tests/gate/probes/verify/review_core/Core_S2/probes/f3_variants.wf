@@ -1,0 +1,125 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Two { fn two(a: &Vec<u64>, b: &u64) }
+effect Bump { fn bump(v: &Vec<u64>) }
+effect Peek { fn peek(x: &u64) }
+effect Run { fn run(f: fn()) }
+effect Opt { fn opt(x: Option<&u64>) }
+effect Pair { fn pair(t: (&Vec<u64>, u64)) }
+
+// v1: the clause mutates its first parameter while the second points into it.
+fn two_params() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Two { fn two(a, b) { a.clear(); print(b); resume(()) } } in {
+        two(&v, &v[0])   // expect W0312
+    }
+}
+
+// v2: the perform in a loop; the reference is from before the loop.
+fn in_loop(n: u64) {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump { fn bump(x) { x.push(2); resume(()) } } in {
+        let r = &v[0]
+        let i = 0
+        while i < n {
+            print(r)   // expect W0301 (second iteration)
+            bump(&v)
+            i += 1
+        }
+    }
+}
+
+// v3: an inner handler for another effect between the clause and the perform.
+fn nested_handlers() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump { fn bump(x) { x.clear(); resume(()) } } in {
+        handle Peek { fn peek(y) { print(y); resume(()) } } in {
+            let r = &v[0]
+            bump(&v)
+            print(r)   // expect W0301
+        }
+    }
+}
+
+// v4: named arguments to the operation.
+fn named_args() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Two { fn two(a, b) { a.clear(); print(b); resume(()) } } in {
+        two(b: &v[0], a: &v)   // expect W0312
+    }
+}
+
+// v5: a closure argument that captured a reference into the place the clause clears.
+fn closure_arg() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Run { fn run(f) { v.clear(); f(); resume(()) } } in {
+        run(|| print(r))   // expect W0312 (like a call)
+    }
+}
+
+// v6: an Option of a reference.
+fn option_arg() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Opt { fn opt(x) { v.clear(); match x { Some(r) => print(r), None => print(0) }; resume(()) } } in {
+        opt(Some(&v[0]))   // expect W0312
+    }
+}
+
+// v7: the clause keeps its parameter in an outer local; the caller then frees the place.
+fn clause_escape() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let w: Vec<u64> = Vec.new()
+    w.push(5)
+    let keep = &w[0]
+    handle Peek { fn peek(x) { keep = x; resume(()) } } in {
+        peek(&v[0])
+    }
+    v.clear()
+    print(keep)   // expect W0301
+}
+
+// v8: a reference into the parameter held across resume; the handled body frees it.
+fn across_resume() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump {
+        fn bump(x) {
+            let e = &x[0]
+            resume(())
+            print(e)   // expect W0301
+        }
+    } in {
+        bump(&v)
+        v.clear()
+    }
+}
+
+// v9: the clause performs the operation of an outer handler with its parameter.
+fn forward_outer(w: &World) / Bump {
+    handle Peek { fn peek(y) { print(y); resume(()) } } in {
+        let v: Vec<u64> = Vec.new()
+        v.push(1)
+        let r = &v[0]
+        bump(&v)
+        print(r)   // expect W0301 (outer handler can mutate)
+    }
+}
+
+// v10: tuple argument with a reference.
+fn tuple_arg() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Pair { fn pair(t) { let (a, n) = t; a.clear(); resume(()) } } in {
+        let r = &v[0]
+        pair((&v, 1))
+        print(r)   // expect W0301
+    }
+}

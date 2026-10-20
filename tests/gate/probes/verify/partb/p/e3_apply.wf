@@ -1,0 +1,19 @@
+effect Log { fn log(msg: String) }
+fn run_it(f: fn()) { f() }
+fn apply_twice(f: fn()) { f(); f() }
+fn nested_apply(f: fn()) { run_it(f) }
+
+fn local_apply() {
+    handle Log { fn log(m) { resume(()) } } in {
+        let apply = |g: fn()| g()
+        apply(|| log("x"))
+        apply_twice(|| log("y"))
+        nested_apply(|| log("z"))
+        let k = run_it
+        k(|| log("w"))
+    }
+}
+// A fn param that the body calls with a closure that performs through a local handler.
+fn param_apply(k: fn(fn())) {
+    handle Log { fn log(m) { resume(()) } } in k(|| log("late"))
+}

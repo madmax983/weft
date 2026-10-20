@@ -1,0 +1,15 @@
+// ESCAPE (RT1, Rc): a callee returns a place in the group through a reference
+// to the only handle. Replacing the handle frees the object; the caller's
+// reference does not depend on the handle.
+struct Cell2 { items: Vec<u64> }
+fn group_ret(h: &Rc<Cell2>) -> &Vec<u64> in Cell2.items { &h.items }
+fn mk_rc() -> Rc<Cell2> { Rc.new(Cell2 { items: Vec.new() }) }
+fn main() {
+    let a = Rc.new(Cell2 { items: Vec.new() })
+    a.items.push(1)
+    let r = group_ret(&a)
+    a = Rc.new(Cell2 { items: Vec.new() })
+    print(r)          // expected W0301: the old object was freed
+    let t = &mk_rc().items
+    print(t)          // temporary handle
+}

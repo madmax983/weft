@@ -1,0 +1,21 @@
+effect Note { fn note(x: u64) }
+struct Job { f: fn() }
+fn par_run(j: &Job) / par { let g = j.f
+ fork(g, || print(0)) }
+fn par_run2(j: &Job) / par { fork(|| { let g = j.f
+ g() }, || print(0)) }
+fn p_fork() / par {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let j = Job { f: || note(1) }
+        par_run(&j)
+    }
+}
+fn p_fork2() / par {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let j = Job { f: || note(2) }
+        par_run2(&j)
+    }
+}
+fn main() / par { p_fork2() }

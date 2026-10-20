@@ -1,0 +1,9 @@
+// weft: no-runtime
+effect Log { fn info(m: String) }
+fn main() / main.Log, log, clock {
+    info("a")
+    log.info("b")
+    sleep(1.s)
+    log.info("c")
+}
+test "t" { log.info("x") }

@@ -1,0 +1,20 @@
+// on abort of an inner linear value: an outer linear struct holds it, outer has on abort that
+// performs Ask, inner none.
+effect Ask { fn ask() -> u64 }
+effect Stop { fn stop() }
+linear struct In { id: u64 }
+    on abort = undo_in
+fn undo_in(i: In) { let In(x) = i; print(ask()) }
+linear struct Out { i: In }
+    on abort = undo_out
+fn undo_out(o: Out) { let Out(i) = o; let In(x) = i }
+fn done(o: Out) { let Out(i) = o; let In(x) = i }
+fn main() {
+    handle Ask { fn ask() { resume(5) } } in {
+        handle Stop { fn stop() { () } } in {
+            let t = Out { i: In { id: 1 } }
+            stop()
+            done(t)
+        }
+    }
+}

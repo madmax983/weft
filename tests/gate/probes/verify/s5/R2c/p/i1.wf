@@ -1,0 +1,23 @@
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick() -> u64 }
+struct Wrap { f: fn() -> u64 }
+
+fn body() -> u64 / Pick { pick() + 1 }
+
+fn run_rc() -> u64 / Choice {
+    handle Pick {
+        fn pick() {
+            let r = Rc.new(Wrap { f: || resume(10) })
+            let b = choose()
+            let g = r.f
+            if b { 0 } else { g() }
+        }
+    } in body()
+}
+
+
+fn main() {
+    let out: Vec<u64> = Vec.new()
+    handle Choice { fn choose() { resume(true); resume(false) } } in out.push(run_rc())
+    print(out.len())
+}

@@ -1,0 +1,8 @@
+// A variable as an expression statement. The interpreter moves the value out
+// and drops it. The checker does not see a move.
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    v
+    print(v.len())
+}

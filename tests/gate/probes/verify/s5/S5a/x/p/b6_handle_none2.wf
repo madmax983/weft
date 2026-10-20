@@ -1,0 +1,17 @@
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { print("unlocked") 
+ let Lock(i) = l }
+fn lock() -> Lock { print("locked") 
+ Lock { id: 1 } }
+effect Op { fn op() }
+
+fn handle_none() {
+    let o = handle Op { fn op() { Some(lock()) } } in {
+        op()
+        None
+    }
+    print("end")
+}
+fn main() / Op {
+    handle_none()
+}

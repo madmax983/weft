@@ -1,0 +1,28 @@
+struct Entity { hp: i32, kids: Vec<Entity> }
+struct World { entities: Vec<Entity> }
+fn read_val(o: Option<&Entity>, w: &World) / mut(w.entities) {
+    w.entities.clear()
+    match o { Some(e) => print(e.hp), None => {} }
+}
+fn read_ref_opt(o: &Option<&Entity>, w: &World) / mut(w.entities) {
+    w.entities.clear()
+    match o { Some(e) => print(e.hp), None => {} }
+}
+fn read_ref_ref(r: &&Entity, w: &World) / mut(w.entities) {
+    w.entities.clear()
+    print(r.hp)
+}
+fn caller_val(world: &World) / mut(world.entities) {
+    read_val(Some(&world.entities[0]), world)   //~ W0312
+}
+fn caller_ref_ref(world: &World) / mut(world.entities) {
+    let e = &world.entities[0]
+    read_ref_ref(&e, world)   //~ W0312
+}
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1, kids: Vec.new() })
+    w
+}
+test "caller_val" { let w = mkw(); caller_val(&w) }
+test "caller_ref_ref" { let w = mkw(); caller_ref_ref(&w) }

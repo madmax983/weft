@@ -1,0 +1,17 @@
+struct Stats { count: u64 }
+// Spawn inside a closure: the task's activity is in the closure's component only.
+fn spawn_in_closure(st: &Stats) / mut(st), async {
+    scope { s =>
+        let sp = || s.spawn(|| st.count += 1)
+        sp()
+        print(st.count)
+    }
+}
+// Spawn in a helper that receives the scope.
+fn helper(s: Scope, st: &Stats) / mut(st), async { s.spawn(|| st.count += 1) }
+fn spawn_in_helper(st: &Stats) / mut(st), async {
+    scope { s =>
+        helper(s, st)
+        print(st.count)
+    }
+}

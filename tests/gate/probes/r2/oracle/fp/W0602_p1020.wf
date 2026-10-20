@@ -1,0 +1,14 @@
+linear struct Tx { id: u64 }
+linear struct Lk { id: u64 }
+
+fn commit(t: Tx) { let Tx(id) = t; print("commit", id) }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+
+fn main() {
+    let lk2 = Lk { id: 2 }
+    let tx3 = Tx { id: 3 }
+    scope { s5 =>
+    }
+    unlock(lk2)
+    commit(tx3)
+}

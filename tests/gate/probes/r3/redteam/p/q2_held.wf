@@ -1,0 +1,41 @@
+struct Entity { hp: i32, kids: Vec<Entity> }
+struct World { entities: Vec<Entity> }
+fn clear_kids(rs: &Vec<&Entity>) / mut(rs..) {
+    rs[0].kids.clear()
+}
+fn read_both(rs: &Vec<&Entity>, w: &World) / mut(w.entities) {
+    let e = rs[0]
+    w.entities.clear()
+    print(e.hp)
+}
+fn read_both_tuple(t: &(&Entity, u64), w: &World) / mut(w.entities) {
+    let e = t.0
+    w.entities.clear()
+    print(e.hp)
+}
+fn caller_ref(world: &World) / mut(world.entities..) {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    let k = &world.entities[0].kids[0]
+    clear_kids(&rs)
+    print(k.hp)   //~ W0301
+}
+fn caller_alias(world: &World) / mut(world.entities) {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    read_both(&rs, world)   //~ W0312
+}
+fn caller_alias_tuple(world: &World) / mut(world.entities) {
+    let t = (&world.entities[0], 1)
+    read_both_tuple(&t, world)   //~ W0312
+}
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    let e = Entity { hp: 1, kids: Vec.new() }
+    e.kids.push(Entity { hp: 2, kids: Vec.new() })
+    w.entities.push(e)
+    w
+}
+test "caller_ref" { let w = mkw(); caller_ref(&w) }
+test "caller_alias" { let w = mkw(); caller_alias(&w) }
+test "caller_alias_tuple" { let w = mkw(); caller_alias_tuple(&w) }

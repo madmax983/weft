@@ -1,0 +1,26 @@
+effect Bump { fn bump(v: &Vec<u64>) }
+struct Cb { f: fn(&Vec<u64>) }
+fn run_cb(cb: &Cb, v: &Vec<u64>) { let g = cb.f; g(v) }
+// The clause mutates a capture (the footprint).
+fn stored_footprint() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let w: Vec<u64> = Vec.new()
+    handle Bump { fn bump(x) { v.clear(); resume(()) } } in {
+        let cb = Cb { f: |y| bump(y) }
+        let r = &v[0]
+        run_cb(&cb, &w)
+        print(r)
+    }
+}
+// The clause mutates through its parameter.
+fn stored_param() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump { fn bump(x) { x.push(2); resume(()) } } in {
+        let cb = Cb { f: |y| bump(y) }
+        let r = &v[0]
+        run_cb(&cb, &v)
+        print(r)
+    }
+}

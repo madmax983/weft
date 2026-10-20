@@ -1,0 +1,13 @@
+// A multi operation inside a with_timeout block.
+effect Choice { multi fn choose() -> bool }
+fn main() / clock, fail {
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        let x = with_timeout(50.ms) {
+            let b = choose()
+            sleep(10.ms)
+            if b { 1 } else { 2 }
+        }
+        print(x)
+    }
+    print("end")
+}

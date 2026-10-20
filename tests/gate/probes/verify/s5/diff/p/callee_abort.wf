@@ -1,0 +1,35 @@
+effect Op { fn op() }
+effect Note { fn note() }
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { let Tx(i) = t; print("rollback") }
+fn commit(t: Tx) { let Tx(i) = t; print("commit") }
+fn begin() -> Tx { Tx { id: 1 } }
+fn g() / Op { op() }
+fn h(k: fn() / Op) / Op { k() }
+
+fn callee_lin() {
+    let t = begin()
+    handle Op { fn op() { print(9) } } in {
+        g()
+        commit(t)
+    }
+}
+fn hof_lin() {
+    let t = begin()
+    handle Op { fn op() { print(9) } } in {
+        h(|| op())
+        commit(t)
+    }
+}
+fn stored_lin() {
+    let t = begin()
+    handle Op { fn op() { print(9) } } in {
+        let v = Vec.new()
+        v.push(|| op())
+        let k = v.pop()
+        match k { Some(f) => f(), None => {} }
+        commit(t)
+    }
+}
+fn main() { callee_lin(); hof_lin(); stored_lin() }

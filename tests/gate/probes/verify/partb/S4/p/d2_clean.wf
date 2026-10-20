@@ -1,0 +1,63 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+struct Pair { tx: Tx, n: u64 }
+fn c01() { let t = begin()
+ t = { rollback(t)
+ begin() }
+ rollback(t) }
+fn c02() { let t = begin()
+ rollback(t)
+ t = begin()
+ rollback(t) }
+fn c03() { let p = Pair { tx: begin(), n: 1 }
+ rollback(p.tx)
+ p.tx = begin()
+ let Pair(t, n) = p
+ rollback(t) }
+fn c04() { let p = Pair { tx: begin(), n: 1 }
+ p.n = 2
+ let Pair(t, n) = p
+ rollback(t) }
+fn c05(c: bool) { let t = begin()
+ if c { rollback(t) } else { rollback(t) } }
+fn c06() { let o = Some(begin())
+ match o { Some(t) => rollback(t), None => {} } }
+fn c07() { match Some(begin()) { Some(t) => rollback(t), None => {} } }
+fn c08() { let (a, b) = (begin(), begin())
+ rollback(a)
+ rollback(b) }
+fn c09() { let t = begin()
+ let n = t.id
+ rollback(t) }
+fn c10() { let t = begin()
+ print(t.id)
+ rollback(t) }
+fn c11() -> Tx { let t = begin()
+ t }
+fn c12() -> Tx { begin() }
+fn c13() { let f = || begin()
+ rollback(f()) }
+fn c14(ts: &Vec<u64>) { let t = begin()
+ for x in ts[] { print(x) }
+ rollback(t) }
+fn c15() { let t = begin()
+ let r = &t
+ print(r.id)
+ rollback(t) }
+fn c16() { let a = [1, 2]
+ a[0] = 3 }
+fn c17() { let t = begin()
+ let b = t.id == 1
+ rollback(t) }
+impl Tx { fn id2(self: &Tx) -> u64 { self.id } }
+fn c18() { let t = begin()
+ let n = t.id2()
+ rollback(t) }
+fn c19() { let o: Option<Tx> = None
+ match o { Some(t) => rollback(t), None => {} } }
+fn c20() { let t = begin()
+ let w = Pair { tx: t, n: 1 }
+ let Pair(t2, n) = w
+ rollback(t2) }

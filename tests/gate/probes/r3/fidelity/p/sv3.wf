@@ -1,0 +1,12 @@
+// Control: a linear local of the caller across the scope is W0602.
+linear struct Tx { id: u64 }
+fn begin() -> Tx { Tx { id: 1 } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn boom() / fail { fail("boom") }
+fn work() / async, fail {
+    let t = begin()
+    scope { s =>
+        s.spawn(|| boom())
+    }
+    commit(t)
+}

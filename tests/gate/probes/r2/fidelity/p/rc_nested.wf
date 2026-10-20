@@ -1,0 +1,16 @@
+// A call returns a reference into the group `Node`, reached through an `Rc`
+// stored inside another `rc` object. The caller then replaces that inner
+// handle, which frees the old `Node` (it was the last handle).
+struct Node { items: Vec<u64> }
+struct Outer { inner: Rc<Node> }
+fn first(o: Rc<Outer>) -> &u64 in Node.items[] {
+    &o.inner.items[0]
+}
+fn main() {
+    let n = Rc.new(Node { items: Vec.new() })
+    n.items.push(5)
+    let o = Rc.new(Outer { inner: n })
+    let r = first(o.clone())
+    o.inner = Rc.new(Node { items: Vec.new() })
+    print(r)
+}

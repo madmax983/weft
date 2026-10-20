@@ -1,0 +1,23 @@
+// Two modules each define an enum with the same variant names. A bare variant
+// name in module `b` resolves to the variant of module `a`.
+mod a {
+    pub enum Shape { Circle(u64), Square(u64) }
+    pub fn area(s: Shape) -> u64 {
+        match s {
+            Circle(r) => 3 * r * r,
+            Square(x) => x * x,
+        }
+    }
+    pub fn unit() -> Shape { Circle(1) }
+}
+mod b {
+    pub enum Shape { Circle(u64), Square(u64) }
+    pub fn area(s: Shape) -> u64 {
+        match s {
+            Circle(r) => 3 * r * r,   // W0102 here: expected `Shape`, found `Shape`
+            Square(x) => x * x,
+        }
+    }
+    pub fn unit() -> Shape { Circle(1) }   // W0102 here too
+}
+

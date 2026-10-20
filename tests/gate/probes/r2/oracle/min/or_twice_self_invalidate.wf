@@ -1,0 +1,28 @@
+fn twice(f: fn()) { f(); f() }
+
+fn direct() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let g = || { print(r + 1); v.clear() }
+    g()
+    g()
+}
+
+fn via_twice() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let g = || { print(r + 1); v.clear() }
+    twice(g)
+}
+
+fn in_loop() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let g = || { print(r + 1); v.clear() }
+    for i in 0..2 { g() }
+}
+
+fn main() { via_twice() }

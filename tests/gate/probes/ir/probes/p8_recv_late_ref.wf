@@ -1,0 +1,10 @@
+struct E { hp: u64 }
+impl E {
+    fn add(self: &E, n: u64) -> u64 { self.hp + n }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(E { hp: 1 })
+    let r = &v[0]
+    print(r.add({ v.push(E { hp: 2 }); 1 }))
+}

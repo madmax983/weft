@@ -1,0 +1,32 @@
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct Outer { f: Frame, n: u64 }
+fn id<T>(x: T) -> T { x }
+fn s01(fr: &Frame, v: &Vec<u8>) / mut(fr.cur) { fr.cur = &v[0] }
+fn s02() { let o = Outer { f: Frame { buf: [1, 2, 3, 4] }, n: 1 }
+ let o2 = Outer { f: Frame { buf: [1, 2, 3, 4] }, n: 1 }
+ o.f.cur = &o2.f.buf[0] }
+fn s03() { let f = Frame { buf: [1, 2, 3, 4] }
+ let g = Frame { buf: [1, 2, 3, 4] }
+ f.cur = &g.buf[0] }
+fn s04(c: bool, v: &Vec<u8>) { let f = Frame { buf: [1, 2, 3, 4] }
+ f.cur = if c { &f.buf[0] } else { &v[0] } }
+fn s05(v: &Vec<u8>) { let f = Frame { buf: [1, 2, 3, 4] }
+ f.cur = id(&v[0]) }
+fn s06() { let f = Frame { buf: [1, 2, 3, 4] }
+ let c = || print(f.cur) }
+fn s07(v: &Vec<u8>) { let f = Frame { buf: [1, 2, 3, 4] }
+ let r = &v[0]
+ f.cur = r }
+fn s08(fr: &Frame) / mut(fr.cur) { fr.cur = &fr.buf[1] }
+fn s09() { let f = Frame { buf: [1, 2, 3, 4] }
+ f.cur = &f.buf[0]
+ let g = &f
+ g.cur = &g.buf[1] }
+fn s10(v: &Vec<u8>) { let f = Frame { buf: [1, 2, 3, 4] }
+ let g = &f
+ f.cur = &f.buf[0]
+ g.cur = &v[0] }
+fn s11() { let f = Frame { buf: [1, 2, 3, 4] }
+ let x = f.cur }
+fn s12() { let f = Frame { buf: [1, 2, 3, 4] }
+ f.buf = [5, 6, 7, 8] }

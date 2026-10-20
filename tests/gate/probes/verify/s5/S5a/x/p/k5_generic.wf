@@ -1,0 +1,50 @@
+effect Choice { multi fn choose() -> bool }
+effect Log { fn log(msg: String) }
+
+fn run_after_choose(f: fn()) / Choice { let b = choose()
+ f() }
+fn hold_multi<T>(x: T) -> T / Choice { let b = choose()
+ x }
+
+fn m_callee() / Choice {
+    handle Log {
+        fn log(m) {
+            let k = || resume(())
+            run_after_choose(k)
+        }
+    } in log("x")
+}
+fn m_generic() / Choice {
+    handle Log {
+        fn log(m) {
+            let k = || resume(())
+            let k2 = hold_multi(k)
+            k2()
+        }
+    } in log("x")
+}
+fn m_tuple() / Choice {
+    handle Log {
+        fn log(m) {
+            let p = (|| resume(()), 1)
+            let b = choose()
+            let (g, n) = p
+            g()
+        }
+    } in log("x")
+}
+fn m_vec() / Choice {
+    handle Log {
+        fn log(m) {
+            let v = Vec.new()
+            v.push(|| resume(()))
+            let b = choose()
+            let g = v[0]
+            g()
+        }
+    } in log("x")
+}
+fn main() {
+    handle Choice { fn choose() { resume(true)
+ resume(false) } } in m_generic()
+}

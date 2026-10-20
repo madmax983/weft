@@ -1,0 +1,14 @@
+// References inside tuple and Option arguments.
+fn pf(t: (&Vec<u64>, u64), e: &u64) { print(e) }
+fn clear_with(t: (&u64, u64), v: &Vec<u64>) / mut(v) { v.clear(); let (r, n) = t; print(r) }
+fn tuple_call() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    clear_with((&v[0], 1), &v)   // expect W0312
+}
+fn tuple_closure() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let f = |t: (&u64, u64)| { v.clear(); let (r, n) = t; print(r) }
+    f((&v[0], 1))   // expect W0312
+}

@@ -1,0 +1,14 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn annotated() { let o: Option<Tx> = None
+ o = Some(begin())
+ match o { Some(t) => rollback(t), None => {} } }
+fn inferred() { let o = None
+ o = Some(begin())
+ match o { Some(t) => rollback(t), None => {} } }
+fn vec_inferred() { let v = Vec.new()
+ v = Vec.new()
+ v.push(begin())
+ match v.pop() { Some(t) => rollback(t), None => {} } }

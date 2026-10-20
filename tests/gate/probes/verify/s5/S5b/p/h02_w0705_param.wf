@@ -1,0 +1,8 @@
+effect Note { fn note(m: u64) }
+fn with_log(f: fn() / log) / log { f() }
+fn d(h: fn() / Note) / log { with_log(h) }
+fn main() / log {
+    handle Note { fn note(m) { resume(()) } } in {
+        d(|| note(1))
+    }
+}

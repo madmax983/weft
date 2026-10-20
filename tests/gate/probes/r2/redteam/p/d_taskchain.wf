@@ -1,0 +1,33 @@
+struct Stats { count: u64 }
+fn chain(st: &Stats) / mut(st), async {
+    scope { s =>
+        let f0 = || print(0)
+        let f1 = || print(0)
+        let f2 = || print(0)
+        let f3 = || print(0)
+        let f4 = || print(0)
+        let f5 = || print(0)
+        let f6 = || print(0)
+        let f7 = || print(0)
+        let f8 = || print(0)
+        let f9 = || print(0)
+        let m = 0
+        while m < 12 {
+            s.spawn(f0)
+            print(st.count)   //~ W0405
+            f0 = f1
+            f1 = f2
+            f2 = f3
+            f3 = f4
+            f4 = f5
+            f5 = f6
+            f6 = f7
+            f7 = f8
+            f8 = f9
+            f9 = || st.count += 1
+            m += 1
+        }
+    }
+}
+test "chain" { let st = Stats { count: 0 }
+ chain(&st) }

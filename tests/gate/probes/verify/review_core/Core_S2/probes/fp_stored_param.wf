@@ -1,0 +1,21 @@
+struct Entity { hp: i32, tags: Vec<u64> }
+struct World { entities: Vec<Entity>, score: u64 }
+struct Handler { on_hit: fn(&Entity) }
+fn dispatch(h: &Handler, w: &World) {
+    for e in w.entities[] {
+        let g = h.on_hit
+        g(e)
+    }
+}
+// The stored callback only pushes to an element's tags.
+fn declared(w: &World) / mut(w.entities[].tags) {
+    let h = Handler { on_hit: |e| e.tags.push(1) }
+    dispatch(&h, w)
+}
+// The same callback given directly: no error.
+fn for_each(v: &Vec<Entity>, f: fn(&Entity)) { for e in v[] { f(e) } }
+fn direct(w: &World) / mut(w.entities[].tags) {
+    let first = &w.entities[0]
+    for_each(&w.entities, |e| e.tags.push(1))
+    print(first.hp)
+}

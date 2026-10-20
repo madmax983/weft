@@ -1,0 +1,15 @@
+
+
+
+
+
+fn main() {
+    let n7 = 2
+    scope { s8 =>
+        let t9 = s8.spawn(|| n7 += 1)
+        t9.join()
+        let t10 = s8.spawn(|| n7 += 1)
+        print(n7)
+        t10.join()
+    }
+}

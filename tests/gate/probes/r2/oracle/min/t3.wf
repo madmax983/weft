@@ -1,0 +1,19 @@
+struct E { hp: u64, tag: u64 }
+fn bump(e: &E) { e.hp += 1 }
+fn mk(p0: &E) -> fn() { || bump(p0) }
+fn direct() {
+    let v = Vec.new()
+    v.push(E { hp: 1, tag: 1 })
+    let f = mk(&v[0])
+    v.clear()
+    f()
+}
+fn wrapped() {
+    let v = Vec.new()
+    v.push(E { hp: 1, tag: 1 })
+    let f = mk(&v[0])
+    v.clear()
+    let g = || f()
+    g()
+}
+fn main() { direct() }

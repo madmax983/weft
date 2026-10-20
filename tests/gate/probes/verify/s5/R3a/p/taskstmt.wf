@@ -1,0 +1,32 @@
+effect Note { fn note(x: u64) }
+fn block_task_stmt() / async {
+    scope { s =>
+        let h = s.spawn(|| 1)
+        { h }
+        print(0)
+    }
+}
+fn handle_task_stmt() / async {
+    scope { s =>
+        let h = s.spawn(|| 1)
+        handle Note { fn note(x) { resume(()) } } in { h }
+        print(0)
+    }
+}
+fn inner_scope_task_stmt() / async {
+    scope { s =>
+        let h = s.spawn(|| 1)
+        scope { s2 => h }
+        print(0)
+    }
+}
+fn handle_task_value_clean() / async {
+    scope { s =>
+        let h = s.spawn(|| 1)
+        let g = handle Note { fn note(x) { resume(()) } } in { h }
+        print(g.join())
+    }
+}
+fn main() / async {
+    handle_task_value_clean()
+}

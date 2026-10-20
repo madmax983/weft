@@ -1,0 +1,23 @@
+struct E { hp: u64, tag: u64 }
+struct W { es: Vec<E>, ns: Vec<u64>, score: u64, b: Box<E> }
+
+fn mk_w() -> W {
+    let w = W { es: Vec.new(), ns: Vec.new(), score: 0, b: Box.new(E { hp: 1, tag: 0 }) }
+    w
+}
+fn grow_w(w: &W) { w.es.push(E { hp: 1, tag: 9 }) }
+
+fn main() {
+    let w2 = mk_w()
+    let w3 = w2
+    if false {
+    } else {
+        {
+            scope { s7 =>
+                s7.spawn(|| w3.score += 1)
+                let t8 = s7.spawn(|| grow_w(&w3))
+                t8.join()
+            }
+        }
+    }
+}

@@ -1,0 +1,4 @@
+effect Log { fn info(msg: String) }
+fn main() / log {
+    info("x")   //~ W0805
+}

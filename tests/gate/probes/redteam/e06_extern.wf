@@ -1,0 +1,7 @@
+extern fn c_call() -> u64
+fn uses_c() -> u64 / net { c_call() }
+fn with_log(f: fn() / log) { f() }
+fn sleeper() / clock { sleep(1.s) }
+fn item_to_typed() / clock, log {
+    with_log(sleeper)
+}

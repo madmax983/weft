@@ -1,0 +1,19 @@
+// on abort calls a fn field typed with no row; the closure fails.
+effect Stop { fn stop() }
+linear struct T { f: fn() }
+    on abort = undo
+fn undo(t: T) {
+    let T(f) = t
+    f()
+}
+fn done(t: T) { let T(f) = t }
+fn main() {
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        handle Stop { fn stop() { () } } in {
+            let t = T { f: || fail("boom") }
+            stop()
+            done(t)
+        }
+    }
+    print("end")
+}

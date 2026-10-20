@@ -1,0 +1,15 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity>, score: u64 }
+struct Cb { f: fn(&World) }
+fn run(cb: &Cb, w: &World) { let h = cb.f; h(w) }
+fn user(world: &World) / mut(world.entities) {
+    let cb = Cb { f: |x| x.entities.push(Entity { hp: 1 }) }
+    run(&cb, world)
+}
+// A stored closure that only bumps the score: the reference into the elements survives.
+fn user2(world: &World) / mut(world.score) {
+    let cb = Cb { f: |x| x.score += 1 }
+    let first = &world.entities[0]
+    run(&cb, world)
+    print(first.hp)
+}

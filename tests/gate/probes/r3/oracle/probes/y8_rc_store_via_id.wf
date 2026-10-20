@@ -1,0 +1,18 @@
+struct Cache { refs: Vec<&u64>, fs: Vec<fn()> }
+fn mk_c() -> Rc<Cache> { Rc.new(Cache { refs: Vec.new(), fs: Vec.new() }) }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v.push(2); v }
+fn put(c: Rc<Cache>, r: &u64) / mut(Cache) { c.refs.push(r) }
+fn put_f(c: Rc<Cache>, f: fn()) / mut(Cache) { c.fs.push(f) }
+impl Cache {
+    fn add(self, r: &u64) { self.refs.push(r) }
+}
+fn id<T>(x: T) -> T { x }
+fn main() {
+    let c = mk_c()
+    {
+        let v = mk_v()
+        let cc = id(c.clone())
+        cc.refs.push(&v[0])
+    }
+    print(c.refs[0])
+}

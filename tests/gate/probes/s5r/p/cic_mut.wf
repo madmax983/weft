@@ -1,0 +1,19 @@
+effect Log { fn log(msg: String) }
+effect Op { fn op() }
+
+fn cic(v: &Vec<u64>) / mut(v) {
+    handle Op { fn op() { v.clear()
+ resume(()) } } in {
+        handle Log { fn log(m) { op()
+ resume(()) } } in {
+            let r = &v[0]
+            log("x")
+            print(r)
+        }
+    }
+}
+fn main() {
+    let a = Vec.new()
+    a.push(1)
+    cic(&a)
+}

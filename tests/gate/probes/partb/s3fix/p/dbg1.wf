@@ -1,0 +1,6 @@
+effect Log { fn log(msg: String) }
+effect Get { fn get() -> fn() }
+fn get_it() -> fn() / Get { get() }
+fn resumed_through_call() {
+    handle Get { fn get() { resume(|| print(1)) } } in { let f = get_it() }
+}

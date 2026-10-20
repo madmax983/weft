@@ -1,0 +1,22 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn apply(f: fn(), w: &World) / mut(w.entities) {
+    w.entities.clear()
+    f()
+}
+// The callee frees `world.entities`, then runs the closure, which reads `r`.
+fn caller(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    apply(|| print(r.hp), world)
+}
+// The same with a named closure.
+fn caller2(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    let c = || print(r.hp)
+    apply(c, world)
+}
+// Control: a ref argument (W0312).
+fn apply_ref(e: &Entity, w: &World) / mut(w.entities) { w.entities.clear(); print(e.hp) }
+fn caller3(world: &World) / mut(world.entities) {
+    apply_ref(&world.entities[0], world)
+}

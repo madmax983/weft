@@ -1,0 +1,9 @@
+// weft: library
+pub fn fake_runtime(f: fn() / net) / net {
+    handle Net { fn net_poll() { resume(()) } }
+    in f()
+}
+pub fn real_runtime(f: fn() / net) {
+    handle Net { fn net_poll() { resume(()) } }
+    in f()
+}

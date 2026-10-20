@@ -1,0 +1,51 @@
+// Clean programs about effects and function values. A correct checker accepts all.
+effect Note { fn note(x: u64) }
+linear struct Lock { id: u64 }
+    on abort = release
+fn take() -> Lock { Lock { id: 1 } }
+fn release(l: Lock) { let Lock(i) = l }
+struct Cb { f: fn() }
+
+// e1: a callee that handles the effect of its callback.
+fn with_note(f: fn() / Note) {
+    handle Note { fn note(x) { resume(()) } } in f()
+}
+fn uses_with_note() {
+    with_note(|| note(1))
+}
+// e2: a closure made under a local handler and called there.
+fn local_only() {
+    handle Note { fn note(x) { resume(()) } } in {
+        let c = || note(2)
+        c()
+    }
+}
+// e3: a pure function value stored in a struct and called.
+fn pure_cb() {
+    let cb = Cb { f: || print(1) }
+    let g = cb.f
+    g()
+}
+// e4: a linear value with on abort live across a callback.
+fn guarded(f: fn()) {
+    let l = take()
+    f()
+    release(l)
+}
+// e5: a declared row that matches what the closure does.
+fn declared() / log {
+    let c = || log.info("x")
+    c()
+}
+// e6: an item value whose effect the row states.
+fn noisy() / log { log.info("y") }
+fn item_ok() / log {
+    let g = noisy
+    g()
+}
+// e7: a returned pure closure used in a pure function.
+fn mk() -> fn(u64) -> u64 { |x| x + 1 }
+fn pure_user() -> u64 {
+    let f = mk()
+    f(2)
+}

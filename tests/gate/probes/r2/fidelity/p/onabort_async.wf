@@ -1,0 +1,24 @@
+// The `on abort` function of `Tx` suspends (`sleep`). A sibling failure
+// cancels the task that holds the `Tx`; the unwinder runs `undo`, which
+// suspends again while the task unwinds.
+linear struct Tx { id: u64 }
+    on abort = undo
+fn undo(t: Tx) / clock {
+    print("undo start")
+    let Tx(i) = t
+    sleep(1.ms)
+    print("undo done")
+}
+fn done(t: Tx) { let Tx(i) = t }
+fn worker() / clock {
+    let t = Tx { id: 1 }
+    print("made t")
+    sleep(10.ms)
+    done(t)
+}
+fn main() / clock, fail {
+    scope { s =>
+        s.spawn(|| worker())
+        s.spawn(|| fail("stop"))
+    }
+}

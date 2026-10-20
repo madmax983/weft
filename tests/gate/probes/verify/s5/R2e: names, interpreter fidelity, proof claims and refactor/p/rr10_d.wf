@@ -1,0 +1,7 @@
+// Captured item in a closure.
+fn diff(a: i32, b: i32) -> i32 { a - b }
+fn main() {
+    let g = diff
+    let c = || g(b: 10, a: 3)
+    print(c())
+}

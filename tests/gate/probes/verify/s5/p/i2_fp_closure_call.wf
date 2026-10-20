@@ -1,0 +1,25 @@
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+
+// A closure that spawns into the outer scope, called with a linear argument.
+fn call_with_arg() / async {
+    scope { s =>
+        let run = |t: Tx| { commit(t); s.spawn(|| print("bg")) }
+        run(begin(1))
+    }
+}
+
+// A once closure that moves a linear capture and spawns into the outer scope.
+fn call_once() / async {
+    scope { s =>
+        let tx = begin(2)
+        let f = || { commit(tx); s.spawn(|| print("bg")) }
+        f()
+    }
+}
+
+fn main() / async {
+    call_with_arg()
+    call_once()
+}

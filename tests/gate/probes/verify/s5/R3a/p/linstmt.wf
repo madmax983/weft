@@ -1,0 +1,53 @@
+effect Note { fn note(x: u64) }
+effect Ask { fn ask() -> u64 }
+effect Pick { multi fn pick() -> bool }
+linear struct Tx { id: u64 }
+fn begin() -> Tx { Tx { id: 1 } }
+fn commit(t: Tx) { let Tx(i) = t }
+
+fn scope_stmt_linear() / async {
+    scope { s => begin() }
+    print(1)
+}
+fn handle_stmt_linear() {
+    handle Note { fn note(x) { resume(()) } } in { begin() }
+    print(1)
+}
+fn clause_stmt_linear() {
+    handle Ask { fn ask() { begin() } } in { let k = ask(); begin() }
+    print(1)
+}
+fn clause_value_linear_dropped() {
+    let t = handle Ask { fn ask() { begin() } } in { let k = ask(); begin() }
+    print(1)
+}
+fn multi_linear_value() {
+    let t = handle Pick { fn pick() { resume(true); resume(false) } } in { let b = pick(); begin() }
+    commit(t)
+}
+fn multi_linear_value_clause_keeps() {
+    let t = handle Pick { fn pick() { let a = resume(true); let b = resume(false); commit(a); b } } in { let b = pick(); begin() }
+    commit(t)
+}
+fn scope_local_linear_stmt() / async {
+    let t = begin()
+    scope { s => t }
+    print(1)
+}
+fn handle_local_linear_stmt() {
+    let t = begin()
+    handle Note { fn note(x) { resume(()) } } in { t }
+    print(1)
+}
+fn scope_local_linear_value() / async {
+    let t = begin()
+    let u = scope { s => t }
+    commit(u)
+}
+fn handled_linear_value_clean() {
+    let u = handle Note { fn note(x) { resume(()) } } in { note(1); begin() }
+    commit(u)
+}
+fn main() {
+    handled_linear_value_clean()
+}

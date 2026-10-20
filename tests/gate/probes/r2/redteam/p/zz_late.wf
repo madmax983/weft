@@ -1,0 +1,68 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Stats { count: u64 }
+effect Note { fn note(x: u64) }
+
+// A closure calls a captured function variable that gets a new value later.
+fn late_rebind(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g = || print(0)
+    let f = || g()
+    g = || world.entities.clear()
+    f()
+    print(first.hp)   //~ W0301
+}
+// The same with a reference captured by the closure.
+fn late_ref(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let f = || print(r.hp)
+    r = &world.entities[0]
+    world.entities.clear()
+    f()   //~ W0301
+}
+// A task closure calls a captured function variable that gets a new value.
+fn late_task(st: &Stats) / mut(st), async {
+    let g = || print(0)
+    scope { s =>
+        g = || print(1)
+        s.spawn(|| g())
+        g = || st.count += 1
+        print(st.count)
+    }
+}
+// A handler clause calls a captured function variable that gets a new value.
+fn late_clause(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g = || print(0)
+    handle Note { fn note(x) { g()
+ resume(()) } } in {
+        g = || world.entities.clear()
+        note(1)
+        print(first.hp)   //~ W0301
+    }
+}
+// A local handler captured by a closure; the closure is called through a variable rebound later.
+fn late_effect() / clock {
+    let g = || print(0)
+    let f = || g()
+    g = || sleep(1.ms)
+    f()
+}
+pub fn late_effect_pub() {   //~ W0701
+    let g = || print(0)
+    let f = || g()
+    g = || sleep(1.ms)
+    f()
+}
+fn mkw() -> World { let w = World { entities: Vec.new() }
+ w.entities.push(Entity { hp: 1 })
+ w }
+test "late_rebind" { let w = mkw()
+ late_rebind(&w) }
+test "late_clause" { let w = mkw()
+ late_clause(&w) }
+test "late_ref" { let w = mkw()
+ let e = Entity { hp: 5 }
+ late_ref(&w, &e) }
+test "late_task" { let st = Stats { count: 0 }
+ late_task(&st) }

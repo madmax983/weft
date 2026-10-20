@@ -1,0 +1,12 @@
+struct Box2 { n: u64 }
+fn main() / clock, async {
+    let b = Box2 { n: 1 }
+    b.n = 5
+    let out = Vec.new()
+    sim.run(seed: 1) {
+        sleep(1.ms)
+        out.push(b.n + 1)
+    }
+    b.n = 7
+    print(out[0] + b.n)
+}

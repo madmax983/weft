@@ -1,0 +1,10 @@
+// An HTTP handler closure that captures an `Rc` (nonportable).
+// The checker must pin its tasks, or reject it. The interpreter makes each
+// request task stealable.
+fn main(env: Env) / io {
+    let hits = Rc.new(0)
+    http.serve(env.net.listen("127.0.0.1:18431"), |req| {
+        let h = hits.clone()
+        Response.text("hit")
+    })
+}

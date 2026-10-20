@@ -1,0 +1,14 @@
+mod a {
+    pub fn f(v: &Vec<u64>) / mut(v) {
+        let r = &v[0]
+        v.push(1)
+        print(r)
+    }
+}
+mod b {
+    pub fn f(v: &Vec<u64>) / mut(v) {
+        let r = &v[0]
+        v.push(1)
+        print(r)
+    }
+}

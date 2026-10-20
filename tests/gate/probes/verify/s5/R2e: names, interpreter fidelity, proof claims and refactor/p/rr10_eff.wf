@@ -1,0 +1,12 @@
+effect Note { fn note(x: u64) }
+fn quiet(a: u64) {}
+fn loud(a: u64) / Note { note(a) }
+fn pick(c: bool) {
+    let g = quiet
+    let k = || g(1)
+    if c { g = loud }
+    k()
+}
+fn main() {
+    pick(true)
+}

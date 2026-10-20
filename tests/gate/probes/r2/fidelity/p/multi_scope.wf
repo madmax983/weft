@@ -1,0 +1,17 @@
+// A `multi` operation inside a scope body. Each resume copies the frames of
+// the scope body, so the scope and its tasks are in two copies.
+effect Choice { multi fn choose() -> bool }
+
+fn body() -> u64 / Choice, async {
+    scope { s =>
+        s.spawn(|| print(1))
+        let b = choose()
+        if b { 1 } else { 2 }
+    }
+}
+
+fn main() {
+    let out: Vec<u64> = Vec.new()
+    handle Choice { fn choose() { resume(true); resume(false) } } in out.push(body())
+    print(out.len())
+}

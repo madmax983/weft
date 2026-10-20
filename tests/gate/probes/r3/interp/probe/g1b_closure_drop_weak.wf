@@ -1,0 +1,20 @@
+// A closure that moves an Rc capture goes out of scope without a call. The Rc
+// must go away with it: the Weak cannot upgrade after that.
+fn take(r: Rc<u64>) / io { print("took {r}") }
+
+fn make(w: Weak<u64>) -> Weak<u64> / io {
+    w
+}
+
+fn main() / io {
+    let r = Rc.new(5)
+    let w = r.downgrade()
+    if true {
+        let f = || take(r)
+        print("f is not called")
+    }
+    match w.upgrade() {
+        Some(x) => print("upgrade gives {x}: the Rc is still alive"),
+        None => print("upgrade gives None"),
+    }
+}

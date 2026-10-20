@@ -1,0 +1,9 @@
+struct Stats { count: u64 }
+fn returned(st: &Stats) / mut(st), async {
+    scope { s =>
+        let mk = || || { s.spawn(|| st.count += 1); 0 }
+        let g = mk()
+        print(5)
+        g()
+    }
+}

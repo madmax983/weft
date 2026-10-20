@@ -1,0 +1,12 @@
+fn main() {
+    let v = [1, 2, 3]
+    let n = v.pop()
+    let r = &v[0]
+    print(r)
+    v.push(4)
+    let q = &v[1]
+    print(q)
+    v.clear()
+    v.push(7)
+    for x in v[] { print(x) }
+}

@@ -1,0 +1,82 @@
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(id) = t }
+struct P { tx: Tx, n: u64 }
+
+fn paren() {
+    let v = Vec.new()
+    v.push(1)
+    (v)
+    print(v.len())
+}
+fn in_closure() {
+    let v = Vec.new()
+    v.push(1)
+    let f = || { v; print(v.len()) }
+    f()
+    print(v.len())
+}
+fn in_closure_moved() {
+    let v = Vec.new()
+    v.push(1)
+    let f = || { v; let w = v; print(w.len()) }
+    f()
+}
+fn loop_tail() {
+    let v = Vec.new()
+    v.push(1)
+    for i in 0..2 { v }
+    print(v.len())
+}
+fn while_tail() {
+    let v = Vec.new()
+    v.push(1)
+    let i = 0
+    while i < 2 { i += 1; v }
+    print(v.len())
+}
+fn if_stmt(c: bool) {
+    let v = Vec.new()
+    v.push(1)
+    if c { v } else { v }
+    print(v.len())
+}
+fn if_stmt_t() { if_stmt(true) }
+fn block_stmt() {
+    let v = Vec.new()
+    v.push(1)
+    { v }
+    print(v.len())
+}
+fn linear_in_closure() {
+    let t = Tx { id: 1 }
+    let f = || { t; commit(t) }
+    f()
+}
+fn param_place(p: P) {
+    p.tx
+    let P(tx, n) = p
+    commit(tx)
+}
+fn param_place_t() { param_place(P { tx: Tx { id: 1 }, n: 2 }) }
+fn match_arm_tail() {
+    let v = Vec.new()
+    v.push(1)
+    let c = 1
+    match c { 1 => { v }, _ => {} }
+    print(v.len())
+}
+fn match_arm_tail2() {
+    let v = Vec.new()
+    v.push(1)
+    let c = 1
+    match c { 1 => v, _ => v }
+    print(v.len())
+}
+fn handle_body_tail() {
+    let v = Vec.new()
+    v.push(1)
+    handle Fail { fn fail(m) { () } } in { v }
+    print(v.len())
+}
+fn main() {
+}

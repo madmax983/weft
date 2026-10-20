@@ -1,0 +1,31 @@
+struct Node { v: u64 }
+struct Cb { f: fn() }
+fn mk(n: &Rc<Node>) -> fn() { || print(n.v) }
+fn mk_cb(n: &Rc<Node>) -> Cb { Cb { f: || print(n.v) } }
+fn returned() / par {
+    let n = Rc.new(Node { v: 1 })
+    let c = mk(&n)
+    fork(|| c(), || print(2))
+}
+fn returned_cb() / par {
+    let n = Rc.new(Node { v: 1 })
+    let c = mk_cb(&n)
+    fork(|| { let g = c.f
+ g() }, || print(2))
+}
+effect Choice { multi fn choose() -> bool }
+fn needs_uniq(es: &[u64] @ uniq) / mut(es) {}
+fn mk_u(l: &[u64] @ uniq) -> fn() / mut(l) { || needs_uniq(l) }
+fn uniq_returned(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let (l, r) = v.split_mut(1)
+    let g = mk_u(l)
+    let b = choose()
+    g()
+    b
+}
+fn plain_returned() / par {
+    let n = Node { v: 1 }
+    let c = mk_plain(&n)
+    fork(|| c(), || print(2))
+}
+fn mk_plain(n: &Node) -> fn() { || print(n.v) }

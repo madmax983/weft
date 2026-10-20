@@ -1,0 +1,10 @@
+fn main() / io {
+    print(dep.a())
+    print(dep.b())
+    dep.c()
+    let f = dep.d()
+    print(f())
+    print(dep.e(1))
+    print(dep.g())
+    dep.h()
+}

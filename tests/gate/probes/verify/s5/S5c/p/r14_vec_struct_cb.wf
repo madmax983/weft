@@ -1,0 +1,13 @@
+struct Job { f: fn() }
+fn twice(g: fn()) { g()
+ g() }
+fn f(xs: &Vec<u64>) / mut(xs) {
+    let jobs = Vec.new()
+    jobs.push(Job { f: || { xs.push(1) } })
+    twice(jobs[0].f)
+}
+fn main() {
+    let xs = Vec.new()
+    f(&xs)
+    print(xs.len())
+}

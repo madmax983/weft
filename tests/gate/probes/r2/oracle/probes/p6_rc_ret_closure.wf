@@ -1,0 +1,9 @@
+struct E { hp: u64 }
+fn mk(a: Rc<E>) -> fn() { || print(a.hp) }
+fn main() {
+    let a = Rc.new(E { hp: 1 })
+    let f = mk(a)
+    scope { s =>
+        s.spawn(|| f())
+    }
+}

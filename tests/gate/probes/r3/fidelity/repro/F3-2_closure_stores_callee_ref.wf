@@ -1,0 +1,10 @@
+// The same with a vector outside the closure.
+fn apply(f: fn(&u64)) {
+    let x = 5
+    f(&x)
+}
+fn main() {
+    let keep: Vec<&u64> = Vec.new()
+    apply(|r| keep.push(r))
+    print(keep[0])   // expected W0301
+}

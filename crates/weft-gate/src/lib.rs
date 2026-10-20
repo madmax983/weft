@@ -1,11 +1,13 @@
 //! The diff gate of the core IR migration (`docs/plan/core-ir.md`, section 2).
 //!
 //! [`manifest`] lists the programs of the gate. [`archive`] packs the tier-2 probes
-//! into one reproducible file.
+//! into one reproducible file and unpacks the committed archive. [`copy`] copies the
+//! hand probes into the repository.
 
 use std::path::PathBuf;
 
 pub mod archive;
+pub mod copy;
 pub mod manifest;
 
 /// An error of the gate tools.
@@ -26,6 +28,16 @@ pub enum Error {
         line: usize,
         /// What is wrong.
         message: String,
+    },
+    /// The SHA-256 of a file is not the committed hash.
+    #[error("{path}: the SHA-256 is {found}, but the committed hash is `{expected}`")]
+    Hash {
+        /// The file.
+        path: PathBuf,
+        /// The committed hash.
+        expected: String,
+        /// The hash of the file.
+        found: String,
     },
 }
 

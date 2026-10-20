@@ -1,0 +1,10 @@
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v.push(2); v }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+effect Note { fn note(x: u64) }
+struct R { items: Vec<u64>, n: u64 }
+
+fn main() {
+    let v = mk_v()
+    let f = || v.push(3)
+    for x in v[] { f(); print(x) }
+}

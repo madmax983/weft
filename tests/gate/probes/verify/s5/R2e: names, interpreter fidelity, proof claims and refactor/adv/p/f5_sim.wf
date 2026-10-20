@@ -1,0 +1,3 @@
+fn main() / clock {
+    sim.run(seed: 3, workers: 2) { print("in sim") }
+}

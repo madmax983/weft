@@ -1,0 +1,10 @@
+fn bg(f: fn(), g: fn()) {
+    scope { s =>
+        s.spawn(f)
+        g()
+    }
+}
+fn main() {
+    let n = 0
+    bg(|| n += 1, || print(n))
+}

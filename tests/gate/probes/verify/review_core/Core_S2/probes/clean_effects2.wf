@@ -1,0 +1,19 @@
+effect Note { fn note(x: u64) }
+effect Choice { multi fn choose() -> bool }
+struct Entity { hp: i32 }
+fn with_note(f: fn() / Note) {
+    handle Note { fn note(x) { resume(()) } } in f()
+}
+// The callee handles Note, so the caller states no effects.
+pub fn uses_pub() {
+    with_note(|| note(1))
+}
+fn uses_log() / log {
+    with_note(|| note(1))
+}
+// A uniq loop over elements with a callback, in a program that has a multi operation.
+fn each_mut(v: &Vec<Entity> @ uniq, f: fn(&Entity)) {
+    for e in v[] {
+        f(e)
+    }
+}

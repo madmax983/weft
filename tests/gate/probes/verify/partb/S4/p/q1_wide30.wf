@@ -1,0 +1,3 @@
+linear struct Tok { id: u64 }
+struct A { f0: A, f1: A, f2: A, f3: A, f4: A, f5: A, f6: A, f7: A, f8: A, f9: A, f10: A, f11: A, f12: A, f13: A, f14: A, f15: A, f16: A, f17: A, f18: A, f19: A, f20: A, f21: A, f22: A, f23: A, f24: A, f25: A, f26: A, f27: A, f28: A, f29: A, t: Tok }
+fn f(x: A) { let y = x }

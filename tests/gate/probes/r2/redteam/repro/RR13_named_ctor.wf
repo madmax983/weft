@@ -1,0 +1,17 @@
+// RR13: named arguments to a positional struct constructor and to a closure
+// bind by position. Sema and the interpreter both ignore the names, and an
+// unknown name is accepted. A function call binds named arguments by name, so
+// the same text means two things. Here `Range(hi: 10, lo: 2)` makes `lo = 10`,
+// `hi = 2`, and `f(b: 10, a: 3)` gives `a = 10`.
+// Expected: the names bind by name, or an error for a named argument here.
+// Actual: no error; the program prints 8, -8, 8 and 7.
+struct Range { lo: u64, hi: u64 }
+fn span(r: Range) -> u64 { r.hi - r.lo }
+fn mk(lo: u64, hi: u64) -> Range { Range { lo: lo, hi: hi } }
+fn main() {
+    print(span(mk(hi: 10, lo: 2)))
+    print(span(Range(hi: 10, lo: 2)))
+    print(span(Range(nope: 2, other: 10)))
+    let f = |a: i64, b: i64| a - b
+    print(f(b: 10, a: 3))
+}

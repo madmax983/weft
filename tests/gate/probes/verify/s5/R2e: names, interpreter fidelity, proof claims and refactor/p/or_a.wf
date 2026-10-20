@@ -1,0 +1,60 @@
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { let Lock(i) = l }
+struct Pt { x: u64, y: u64 }
+struct Box2 { a: Pt, b: Pt }
+fn f1() {
+    let v: Vec<u64> = [1, 2]
+    let r = &v
+    print(r.len())
+    v.push(3)
+    let r2 = &v
+    print(r2.len())
+}
+fn f3() / async {
+    let b = Box2 { a: Pt { x: 1, y: 2 }, b: Pt { x: 3, y: 4 } }
+    scope { s =>
+        let t1 = s.spawn(|| { b.a.x = 10 })
+        let t2 = s.spawn(|| { b.b.y = 20 })
+        t1.join()
+        t2.join()
+    }
+    print(b.a.x + b.b.y)
+}
+fn f4() / async {
+    let b = Pt { x: 1, y: 2 }
+    scope { s =>
+        let t1 = s.spawn(|| b.x + b.y)
+        let t2 = s.spawn(|| b.x * b.y)
+        print(t1.join() + t2.join())
+    }
+}
+fn f5() {
+    let v: Vec<u64> = [1, 2]
+    let e = &v[0]
+    print(e)
+    v.clear()
+    v.push(5)
+    let e2 = &v[0]
+    print(e2)
+}
+fn f6() {
+    let l = Lock { id: 3 }
+    let p = (l, 5)
+    let (a, b) = p
+    unlock(a)
+}
+fn pick(w: &Box2) -> &Pt in w.a { &w.a }
+fn f7() {
+    let b = Box2 { a: Pt { x: 1, y: 2 }, b: Pt { x: 3, y: 4 } }
+    let r = pick(&b)
+    b.b.x = 9
+    print(r.x)
+}
+fn main() / async {
+    f1()
+    f3()
+    f4()
+    f5()
+    f6()
+    f7()
+}

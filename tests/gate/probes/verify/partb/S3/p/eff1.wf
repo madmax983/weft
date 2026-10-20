@@ -1,0 +1,101 @@
+effect Choice { multi fn choose() -> bool }
+effect Log { fn log(msg: String) }
+effect Ask { fn ask() -> u64 }
+effect B { fn b() }
+linear struct Token { id: u64 }
+    on abort = spend
+fn spend(t: Token) { let Token(i) = t }
+fn mint() -> Token { Token { id: 1 } }
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { let Lock(i) = l }
+fn lock() -> Lock { Lock { id: 1 } }
+fn chooser() -> bool / Choice { choose() }
+
+// A1: the clause performs an outer once op; the body holds a Lock across the perform.
+fn a1() / Ask {
+    handle Log { fn log(m) { let n = ask(); resume(()) } } in {
+        let l = lock()
+        log("x")     // W0602
+        unlock(l)
+    }
+}
+// A2: a resume runs the handled computation, which can abort through Ask.
+fn a2() / Ask {
+    handle Log {
+        fn log(m) {
+            let l = lock()
+            resume(())    // W0602
+            unlock(l)
+        }
+    } in {
+        log("x")
+        let n = ask()
+    }
+}
+// A3: a clause holds a Lock across a call that reaches an outer once handler.
+fn asker() -> u64 / Ask { ask() }
+fn a3() / Ask {
+    handle Log { fn log(m) { let l = lock(); let n = asker(); unlock(l); resume(()) } } in log("x")   // W0602
+}
+// R2a: a clause captures resume into a closure, then calls choose.
+fn r2a() / Choice {
+    handle Log {
+        fn log(m) {
+            let k = || resume(())
+            let b = choose()    // W0503
+            k()
+        }
+    } in log("x")
+}
+// R2b: the clause runs a closure that performs choose before resume.
+fn r2b() / Choice {
+    let c = || choose()
+    handle Log {
+        fn log(m) {
+            let b = c()    // W0503
+            resume(())
+        }
+    } in log("x")
+}
+// R2c: the clause has a nested handle whose body performs choose through the outer cap.
+fn r2c() / Choice {
+    handle Log {
+        fn log(m) {
+            let b = handle Ask { fn ask() { resume(1) } } in choose()    // W0503
+            resume(())
+        }
+    } in log("x")
+}
+// R2d: clause calls a fn param that may perform multi
+fn r2d(f: fn() -> bool) {
+    handle Log {
+        fn log(m) {
+            let b = f()    // W0503 (passthrough)
+            resume(())
+        }
+    } in log("x")
+}
+// R6a: clause performs its own effect: goes outward.
+fn r6a() {
+    handle Log { fn log(m) { log("again"); resume(()) } } in log("x")    // W0702 Log
+}
+// R6b: clause performs an effect handled only inside the body.
+fn r6b() {
+    handle Ask { fn ask() { b(); resume(1) } } in {     // W0702 B
+        handle B { fn b() { resume(()) } } in { let n = ask() }
+    }
+}
+// R6c: clause performs with Lock held at multi resume in body (at_resume with Token)
+fn r6c() / Choice {
+    handle Log {
+        fn log(m) {
+            let t = mint()
+            resume(())     // W0503
+            spend(t)
+        }
+    } in {
+        log("x")
+        let f = || choose()
+        let b = f()
+    }
+}

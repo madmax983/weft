@@ -1,0 +1,8 @@
+// A Fail handler that resumes. with_timeout is typed `-> T`.
+fn main() / io {
+    let r = handle Fail { fn fail(m) { print("caught {m}"); resume(()) } } in {
+        let v = with_timeout(10.ms) { sleep(100.ms); 5 }
+        v + 1
+    }
+    print("r = {r}")
+}

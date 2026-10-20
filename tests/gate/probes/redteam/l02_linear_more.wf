@@ -1,0 +1,41 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+// Bound to `_`.
+fn wild() {
+    let _ = begin()
+}
+// Half of a tuple bound to `_`.
+fn wild_tuple() {
+    let (a, _) = (begin(), begin())
+    rollback(a)
+}
+// Passed to print.
+fn printed() {
+    print(begin())
+}
+// A wildcard match arm on a linear temporary.
+fn match_wild() {
+    match begin() { _ => {} }
+}
+// A once closure passed to a parameter that calls it twice.
+fn twice(f: fn()) { f(); f() }
+fn once_to_many() {
+    let t = begin()
+    twice(|| rollback(t))
+}
+// A once closure captured by another closure, which is called twice.
+fn once_in_closure() {
+    let t = begin()
+    let f = || rollback(t)
+    let g = || f()
+    g()
+    g()
+}
+// A non-exhaustive match on a linear Option.
+fn non_exhaustive(o: Option<Tx>) {
+    match o {
+        Some(t) => rollback(t),
+    }
+}

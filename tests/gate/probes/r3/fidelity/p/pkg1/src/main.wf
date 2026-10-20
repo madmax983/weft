@@ -1,0 +1,4 @@
+fn main() / log {
+    mock.silent(|| log.info("hi"))
+    mock.simulate(|| print(1))
+}

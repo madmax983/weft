@@ -1,0 +1,77 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Cb { f: fn() }
+impl World {
+    fn apply_m(self: &World, f: fn()) / mut(self.entities) { self.entities.clear(); f() }
+}
+fn apply(f: fn(), w: &World) / mut(w.entities) { w.entities.clear(); f() }
+fn apply_cb(cb: Cb, w: &World) / mut(w.entities) { w.entities.clear(); let g = cb.f; g() }
+fn apply_pair(t: (fn(), u64), w: &World) / mut(w.entities) { w.entities.clear(); let (g, n) = t; g() }
+fn apply_late(w: &World, f: fn()) / mut(w.entities) { w.entities.clear(); f() }
+fn apply_g<T>(x: T, w: &World) / mut(w.entities) { w.entities.clear() }
+
+// v1: method call syntax.
+fn method(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    world.apply_m(|| print(r.hp))   // expect W0312
+}
+
+// v2: the closure inside a struct argument.
+fn in_struct(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    apply_cb(Cb { f: || print(r.hp) }, world)   // expect W0312
+}
+
+// v3: the closure inside a tuple argument.
+fn in_tuple(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    apply_pair((|| print(r.hp), 1), world)   // expect W0312
+}
+
+// v4: a closure that captured a closure that captured the reference.
+fn nested(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    let c = || print(r.hp)
+    apply(|| c(), world)   // expect W0312
+}
+
+// v5: the closure argument comes after the place argument.
+fn order(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    apply_late(world, || print(r.hp))   // expect W0312
+}
+
+// v6: a call of a function parameter that gets the place and a closure into it.
+fn via_param(g: fn(fn(), &World), world: &World) {
+    let r = &world.entities[0]
+    g(|| print(r.hp), world)   // expect an error: g can clear world.entities, then run the closure
+}
+
+// v7: a closure chosen by `if`, passed as the argument.
+fn joined(world: &World, c: bool) / mut(world.entities) {
+    let r = &world.entities[0]
+    let h = if c { || print(r.hp) } else { || print(1) }
+    apply(h, world)   // expect W0312
+}
+
+// v8: a closure in a loop: the second iteration.
+fn looped(world: &World, n: u64) / mut(world.entities) {
+    let i = 0
+    while i < n {
+        let r = &world.entities[0]
+        apply(|| print(r.hp), world)   // expect W0312
+        i += 1
+    }
+}
+
+// v9: a closure that captured a reference, given to a generic by-value parameter.
+fn generic_arg(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    apply_g(|| print(r.hp), world)   // the callee cannot call it: no error needed
+}
+
+// v10: trailing closure syntax.
+fn trailing(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    apply_late(world) { print(r.hp) }   // expect W0312
+}

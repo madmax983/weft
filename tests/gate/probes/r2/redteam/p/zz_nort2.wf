@@ -1,0 +1,8 @@
+// weft: no-runtime
+fn spawner() / async, log { scope { s => s.spawn(|| log.info("x")) } }
+fn main() / async {
+    handle Async { fn suspend() { resume(()) } } in {
+        handle log { fn info(m) { print(m)
+ resume(()) } fn warn(m) { resume(()) } } in spawner()   //~ W0314
+    }
+}

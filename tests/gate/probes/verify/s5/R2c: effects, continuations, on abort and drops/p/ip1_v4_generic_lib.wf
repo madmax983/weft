@@ -1,0 +1,8 @@
+// A generic helper installs a Fail handler that resumes.
+fn catching(f: fn() -> u64 / fail) -> u64 {
+    handle Fail { fn fail(m) { resume(()) } } in f()
+}
+fn main() / io {
+    let r = catching(|| { scope { s => let t = s.spawn(|| { std.fail("x"); 5 }); t.join() + 1 } })
+    print(r)
+}

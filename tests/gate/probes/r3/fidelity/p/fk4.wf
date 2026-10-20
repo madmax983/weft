@@ -1,0 +1,15 @@
+// One fork branch gives a linear value at once. The other sleeps past the
+// deadline of `with_timeout`, so the parent unwinds the fork.
+linear struct Tx { id: u64 }
+fn begin() -> Tx { Tx { id: 1 } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn slow() -> u64 / clock { sleep(100.ms); 2 }
+fn work() / par, clock {
+    let (a, b) = fork(|| begin(), || slow())
+    commit(a)
+}
+fn main() / par, clock {
+    handle Fail { fn fail(m) { print("failed: {m}") } } in {
+        with_timeout(10.ms) { work() }
+    }
+}

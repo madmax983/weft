@@ -1,0 +1,11 @@
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn main() / io {
+    handle Fail { fn fail(m) { print("caught", m) } } in {
+        with_timeout(1.s) {
+            let l = Lk { id: 1 }
+            sleep(5.s)
+            unlock(l)
+        }
+    }
+}

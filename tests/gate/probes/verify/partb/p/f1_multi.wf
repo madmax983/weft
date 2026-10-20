@@ -1,0 +1,25 @@
+effect Choice { multi fn choose() -> bool }
+effect Run { fn run(f: fn()) }
+linear struct Token { id: u64 }
+    on abort = spend
+fn spend(t: Token) { let Token(i) = t }
+fn mint() -> Token { Token { id: 1 } }
+
+// The clause holds its once continuation and calls a function argument that
+// performs a multi operation of an outer handler.
+fn holds_k() / Choice {
+    handle Run { fn run(f) { f(); resume(()) } } in run(|| { let b = choose() })
+}
+// Same, with a local outer multi handler.
+fn holds_k_local() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        handle Run { fn run(f) { f(); resume(()) } } in run(|| { let b = choose() })
+    }
+}
+// A linear value of the body is live across an operation whose clause calls
+// a function argument that can resume more than once.
+fn body_value() / Choice {
+    let t = mint()
+    handle Run { fn run(f) { f(); resume(()) } } in run(|| { let b = choose() })
+    spend(t)
+}

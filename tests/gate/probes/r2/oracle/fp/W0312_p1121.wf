@@ -1,0 +1,12 @@
+
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v
+}
+fn run_both(f: fn(), g: fn()) { f(); g() }
+
+fn main() {
+    let v1 = mk_v()
+    let f2 = || v1.push(4)
+    run_both(f2, f2)
+}

@@ -1,0 +1,17 @@
+// Judge probe J1 (M1 family, no use of the resume result in the clause).
+// The clause changes `v` after `resume`. The handled body stores a reference
+// into `v` in an outer local after the operation. The handle value is ().
+effect Tick { fn tick() }
+
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() { resume(()); v.clear() } } in {
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1)       // the clause cleared `v` after the body set `keep`
+}

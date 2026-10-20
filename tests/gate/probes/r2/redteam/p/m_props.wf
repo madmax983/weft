@@ -1,0 +1,42 @@
+linear struct Tok { id: u64 }
+fn spend(t: Tok) { let Tok(i) = t }
+fn mint() -> Tok { Tok { id: 1 } }
+struct Node { v: u64 }
+enum List<T> { Cons(T, Box<List<T>>), Nil }
+struct A { b: Option<Box<B>> }
+struct B { t: Tok, a: A }
+struct Phantom<T> { n: u64 }
+struct Pair<X, Y> { x: X, y: Y }
+struct Holder<T> { inner: Pair<u64, T> }
+
+fn list_drop(l: List<Tok>) {   //~ W0601
+}
+fn mutual_drop(a: A) {   //~ W0601
+}
+fn phantom_ok(p: Phantom<Tok>) {
+}
+fn nested_generic_drop(h: Holder<Tok>) {   //~ W0601
+}
+fn nested_generic_ok(h: Holder<u64>) {
+}
+fn fn_type_ok(f: fn() -> Tok) {
+}
+fn result_drop(r: Result<u64, Tok>) {   //~ W0601
+}
+fn list_rc() / par {
+    let l = List.Cons(Rc.new(Node { v: 1 }), Box.new(List.Nil))
+    fork(|| { let m = l }, || print(2))   //~ W0401
+}
+fn holder_rc() / par {
+    let h = Holder { inner: Pair { x: 1, y: Rc.new(Node { v: 1 }) } }
+    fork(|| print(h.inner.x), || print(2))   //~ W0401
+}
+fn phantom_rc_ok() / par {
+    let p: Phantom<Rc<Node>> = Phantom { n: 1 }
+    fork(|| print(p.n), || print(2))
+}
+fn task_in_struct() / async {
+    scope { s =>
+        let h = Holder { inner: Pair { x: 1, y: s.spawn(|| 1) } }
+    }   //~ W0601
+}

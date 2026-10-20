@@ -1,0 +1,22 @@
+effect Pick { fn pick() -> &u64 }
+effect PickIn { fn pick_in(v: &Vec<u64>) -> &u64 }
+fn ret_ok(u: &Vec<u64>) -> &u64 in u[] {
+    handle Pick { fn pick() { resume(&u[0]) } } in pick()
+}
+fn ret_ok_wild(u: &Vec<u64>) -> &u64 in u.. {
+    handle Pick { fn pick() { resume(&u[0]) } } in pick()
+}
+fn ret_ok_arg(u: &Vec<u64>) -> &u64 in u.. {
+    handle PickIn { fn pick_in(v) { resume(&v[0]) } } in pick_in(u)
+}
+fn ret_caller(u: &Vec<u64>) -> &u64 in u.. / Pick {
+    pick()
+}
+fn main() {
+    let u = Vec.new()
+    u.push(6)
+    let q = ret_ok(&u)
+    print(q)
+    let q2 = ret_ok_arg(&u)
+    print(q2)
+}

@@ -1,0 +1,1 @@
+fn f(a: &u64 in b, b: &u64 in a) {}

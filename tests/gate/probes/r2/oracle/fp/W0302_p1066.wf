@@ -1,0 +1,16 @@
+
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v
+}
+fn grow(v: &Vec<u64>) { v.push(9) }
+
+fn main() {
+    let v2 = mk_v()
+    if true {
+        if false {
+            let f9 = || { let m = v2; print(m.len()) }
+        }
+    }
+    grow(&v2)
+}

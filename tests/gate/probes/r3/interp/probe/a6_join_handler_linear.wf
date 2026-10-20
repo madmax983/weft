@@ -1,0 +1,18 @@
+// A linear value with no `on abort` is live across a join that a local Fail
+// handler wraps. The runtime sends the failure of the task to the handler of
+// the scope, so the unwinder meets the linear value.
+linear struct Tx { id: u64 }
+
+fn commit(t: Tx) / io { let Tx(id) = t; print("commit {id}") }
+
+fn main() / io, par {
+    handle Fail { fn fail(m) { print("scope handler: {m}") } } in {
+        scope { s =>
+            let t = s.spawn(|| { sleep(5.ms); fail("task failed"); 1 })
+            let tx = Tx { id: 1 }
+            let v = handle Fail { fn fail(m) { print("join handler: {m}"); 0 } } in t.join()
+            commit(tx)
+            print("v = {v}")
+        }
+    }
+}

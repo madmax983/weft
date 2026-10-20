@@ -1,0 +1,7 @@
+fn rep(f: fn(), g: fn()) { f(); g(); f() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    rep(|| print(r + 1), || v.clear())
+}

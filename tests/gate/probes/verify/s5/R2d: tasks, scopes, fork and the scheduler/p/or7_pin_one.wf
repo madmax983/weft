@@ -1,0 +1,43 @@
+struct E { hp: u64 }
+struct Job { f: fn() }
+
+fn via_tuple(f: fn()) / async {
+    let t = (f, 1)
+    scope { s =>
+        s.spawn(|| { let g = t.0; g() })
+    }
+}
+
+
+fn via_vec_spawn(f: fn()) / async {
+    let fs = Vec.new()
+    fs.push(f)
+    scope { s =>
+        s.spawn(fs[0])
+    }
+}
+
+fn via_vec_jobs(f: fn()) / async {
+    let js = Vec.new()
+    js.push(Job { f: f })
+    scope { s =>
+        s.spawn(|| { let j = js[0]; let g = j.f; g() })
+    }
+}
+
+fn via_param_vec(fs: Vec<fn()>) / async {
+    scope { s =>
+        s.spawn(|| { let g = fs[0]; g() })
+    }
+}
+
+fn via_param_vec2(fs: &Vec<fn()>) / async {
+    scope { s =>
+        s.spawn(|| { let g = fs[0]; g() })
+    }
+}
+
+fn main() / async {
+    let a = Rc.new(E { hp: 1 })
+    via_vec_spawn(|| print(a.hp))
+}

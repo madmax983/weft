@@ -1,0 +1,34 @@
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { let Lock(i) = l }
+fn lock() -> Lock { Lock { id: 1 } }
+fn take2(l: Lock, n: u64) { unlock(l) }
+fn take3(l: Lock, n: u64, m: u64) { unlock(l) }
+fn id(n: u64) -> u64 { n }
+fn match_arm(c: bool) -> u64 {
+    take2(lock(), match c { true => { return 1 }, false => 2 })
+    0
+}
+fn nested_call(c: bool) -> u64 {
+    take2(lock(), id(if c { return 1 } else { 2 }))
+    0
+}
+fn block_stmt(c: bool) -> u64 {
+    take2(lock(), { if c { return 1 }
+ 2 })
+    0
+}
+fn third(c: bool) -> u64 {
+    take3(lock(), 1, if c { return 1 } else { 2 })
+    0
+}
+fn while_break(c: bool) {
+    while true {
+        take2(lock(), if c { break } else { 2 })
+    }
+}
+fn handle_ret(c: bool) -> u64 {
+    let l = lock()
+    take2(l, if c { return 1 } else { 2 })
+    0
+}
+fn main() { }

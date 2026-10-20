@@ -1,0 +1,27 @@
+// A clause resumes its continuation inside a task. The rest of the handled
+// body then runs on that task, at the same time as the clause.
+effect Ask { fn ask() -> u64 }
+effect Note { fn note(x: u64) }
+struct C { k: u64 }
+
+fn race() {
+    let c = C { k: 0 }
+    handle Ask { fn ask() { scope { s => s.spawn(|| { let _ = resume(1) }); c.k += 1 } } } in {
+        c.k += ask()
+    }
+    print(c.k)
+}
+
+fn lost_handler() {
+    handle Note { fn note(x) { print(x); resume(()) } } in {
+        handle Ask { fn ask() { scope { s => s.spawn(|| { let _ = resume(1) }); print("clause") } } } in {
+            let a = ask()
+            note(a)
+        }
+    }
+}
+
+fn main() {
+    lost_handler()
+    race()
+}

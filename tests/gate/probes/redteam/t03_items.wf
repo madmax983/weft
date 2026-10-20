@@ -1,0 +1,25 @@
+effect Note { fn note(x: u64) }
+fn noter() / Note { note(1) }
+// A spawned fn item performs a user effect whose handler is on the parent's stack.
+fn spawn_item() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        scope { s => s.spawn(noter) }
+    }
+}
+// Control: the same through a closure.
+fn spawn_closure() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        scope { s => s.spawn(|| noter()) }
+    }
+}
+// Fork of a fn item that performs a user effect.
+fn fork_item() / par {
+    handle Note { fn note(x) { resume(()) } } in fork(noter, noter)
+}
+// A closure that calls a fn param inside a spawn: the param may perform a user effect.
+fn spawn_param(f: fn()) / async {
+    scope { s => s.spawn(|| f()) }
+}
+fn spawn_param_caller() / async {
+    handle Note { fn note(x) { resume(()) } } in spawn_param(|| note(1))
+}

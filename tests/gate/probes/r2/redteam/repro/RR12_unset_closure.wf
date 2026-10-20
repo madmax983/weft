@@ -1,0 +1,29 @@
+// RR12: a closure, a handler clause or a task that gives a `let x: T` local
+// its value gets W0304 twice: where the closure is made and at the later use.
+// The program runs and prints 1, 7 and 3. ADR 0007 states that a closure reads
+// a place field where it is made, but not that this holds for a local that only
+// gets a value inside the closure.
+// Expected: no error (or a documented limit). Actual: six W0304.
+effect Note { fn note(x: u64) }
+fn closure_sets() {
+    let x: u64
+    let f = || { x = 1 }
+    f()
+    print(x)
+}
+fn clause_sets() {
+    let x: u64
+    handle Note { fn note(n) { x = n
+ resume(()) } } in note(7)
+    print(x)
+}
+fn task_sets() / async {
+    let x: u64
+    scope { s => s.spawn(|| { x = 3 }) }
+    print(x)
+}
+fn main() / async {
+    closure_sets()
+    clause_sets()
+    task_sets()
+}

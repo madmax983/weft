@@ -1,0 +1,52 @@
+effect Ask { fn ask() -> u64 }
+effect Pick { multi fn pick() -> bool }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+
+// Outer linear value consumed in the body after a multi operation.
+fn multi_consume() {
+    let l = Lk { id: 1 }
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let b = pick()
+        unlock(l)
+    }
+}
+
+// Outer linear value consumed in the body after an aborting operation.
+fn abort_consume() {
+    let l = Lk { id: 2 }
+    let n = handle Ask { fn ask() { 0 } } in { let x = ask(); unlock(l); x }
+    print(n)
+}
+
+// The clause calls a closure from outside that fails.
+fn clause_calls_failing() / fail {
+    let l = Lk { id: 3 }
+    let f = || fail("x")
+    let n = handle Ask { fn ask() { f(); 0 } } in { ask() + 1 }
+    print(n)
+    unlock(l)
+}
+
+// A closure in the body captures the outer value by value and performs.
+fn closure_captures() {
+    let l = Lk { id: 4 }
+    let n = handle Ask { fn ask() { 0 } } in {
+        let g = || { let x = ask(); unlock(l); x }
+        g()
+    }
+    print(n)
+}
+
+// Multi: a closure in the body captures the outer value and picks.
+fn closure_multi() {
+    let l = Lk { id: 5 }
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let g = || { let b = pick(); unlock(l) }
+        g()
+    }
+}
+
+fn main() {
+    multi_consume()
+}

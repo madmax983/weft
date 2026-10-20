@@ -1,0 +1,8 @@
+linear struct Lk { id: u64 }
+fn done(l: Lk) { let Lk(i) = l; print("done", i) }
+fn check(x: u64) { assert x == 4 }
+fn main() {
+    let l = Lk { id: 1 }
+    check(3)
+    done(l)
+}

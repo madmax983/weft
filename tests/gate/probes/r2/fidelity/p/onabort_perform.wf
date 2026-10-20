@@ -1,0 +1,20 @@
+// The `on abort` function of `T` performs `Ask`. The clause of `Ask` drops the
+// continuation of `ask()`, so the unwinder runs `undo(t)`. The effects proof
+// assumes that `on abort` performs nothing (proofs/effects/README.md).
+effect Ask { fn ask() -> u64 }
+linear struct T { id: u64 }
+    on abort = undo
+fn undo(t: T) / Ask {
+    let T(i) = t
+    print(ask())
+}
+fn done(t: T) { let T(i) = t }
+fn main() {
+    let r = handle Ask { fn ask() { 0 } } in {
+        let t = T { id: 1 }
+        let n = ask()
+        done(t)
+        n
+    }
+    print(r)
+}

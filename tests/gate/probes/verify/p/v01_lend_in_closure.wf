@@ -1,0 +1,38 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Touch { fn touch(w: &World) }
+// Control from the corpus: W0301.
+fn holds(f: fn(&World), w: &World) {
+    let first = &w.entities[0]
+    f(w)
+    print(first.hp)
+}
+// The call of the fn parameter is inside a closure that captures w.
+fn holds_closure(f: fn(&World), w: &World) {
+    let first = &w.entities[0]
+    let g = || f(w)
+    g()
+    print(first.hp)
+}
+// The call of the fn parameter is inside a closure that gets w as its parameter.
+fn holds_closure_param(f: fn(&World), w: &World) {
+    let first = &w.entities[0]
+    let g = |y: &World| f(y)
+    g(w)
+    print(first.hp)
+}
+// An operation of an outer handler inside a closure.
+fn touches_closure(w: &World) / Touch {
+    let first = &w.entities[0]
+    let g = || touch(w)
+    g()
+    print(first.hp)
+}
+// An unknown value inside a closure.
+struct Cb { f: fn(&World) }
+fn unknown_closure(cb: &Cb, w: &World) {
+    let first = &w.entities[0]
+    let g = || { let h = cb.f; h(w) }
+    g()
+    print(first.hp)
+}

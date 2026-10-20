@@ -1,0 +1,10 @@
+effect Note { fn note(x: u64) }
+fn main() {
+    loop {
+        handle Note { fn note(x) { resume(()) } } in {
+            note(1)
+            break
+        }
+    }
+    print("out")
+}

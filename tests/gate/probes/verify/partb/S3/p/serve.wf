@@ -1,0 +1,6 @@
+fn main(env: Env) / io {
+    let l = env.net.listen("127.0.0.1:0")
+    handle Log { fn info(m) { print("local", m); resume(()) } fn warn(m) { resume(()) } } in {
+        http.serve(l, |r| { log.info("req"); Response.text("a") })
+    }
+}

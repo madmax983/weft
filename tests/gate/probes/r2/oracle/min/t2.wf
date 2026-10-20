@@ -1,0 +1,36 @@
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v.push(2); v }
+fn use_after_join() {
+    let v = mk_v()
+    scope { s =>
+        let t = s.spawn(|| v.clear())
+        let r = &v[1]
+        t.join()
+        print(r + 1)
+    }
+}
+fn use_after_scope() {
+    let v = mk_v()
+    let r = &v[0]
+    scope { s =>
+        s.spawn(|| v.push(3))
+        r = &v[1]
+    }
+    print(r + 1)
+}
+fn get_form() {
+    let v = mk_v()
+    scope { s =>
+        let t = s.spawn(|| v.clear())
+        let r = v.get(1)
+        t.join()
+    }
+}
+fn read_form() {
+    let v = mk_v()
+    scope { s =>
+        let t = s.spawn(|| v.clear())
+        let n = v[1]
+        t.join()
+    }
+}
+fn main() { use_after_join() }

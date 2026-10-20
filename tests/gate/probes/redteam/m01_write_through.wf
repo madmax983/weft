@@ -1,0 +1,22 @@
+struct Stats { count: u64, hist: Vec<u64> }
+// `c += 1` on a local reference.
+fn shared_bump(s: &Stats @ shared) {
+    let c = &s.count
+    c += 1
+}
+pub fn pub_bump(s: &Stats) {
+    let c = &s.count
+    c += 1
+}
+fn param_bump(c: &u64) { c += 1 }
+pub fn calls_param_bump(s: &Stats) {
+    param_bump(&s.count)
+}
+fn ref_reassign(s: &Stats @ shared) {
+    let c = &s.count
+    c = 5
+}
+// Control: a field write on a shared root.
+fn shared_field(s: &Stats @ shared) {
+    s.count += 1
+}

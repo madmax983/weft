@@ -1,0 +1,25 @@
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct S0 { x: u64 }
+struct S1 { a: S0, b: S0, c: (S0, u64) }
+struct S2 { a: S1, b: S1, c: (S1, u64) }
+struct S3 { a: S2, b: S2, c: (S2, u64) }
+struct S4 { a: S3, b: S3, c: (S3, u64) }
+struct S5 { a: S4, b: S4, c: (S4, u64) }
+struct S6 { a: S5, b: S5, c: (S5, u64) }
+struct S7 { a: S6, b: S6, c: (S6, u64) }
+struct S8 { a: S7, b: S7, c: (S7, u64) }
+struct S9 { a: S8, b: S8, c: (S8, u64) }
+struct S10 { a: S9, b: S9, c: (S9, u64) }
+struct S11 { a: S10, b: S10, c: (S10, u64) }
+struct S12 { a: S11, b: S11, c: (S11, u64) }
+struct S13 { a: S12, b: S12, c: (S12, u64) }
+struct S14 { a: S13, b: S13, c: (S13, u64) }
+struct S15 { a: S14, b: S14, c: (S14, u64) }
+fn mk() -> S15 { mk() }
+fn f() {
+    let t0 = mk()
+    let t1 = mk()
+    let t2 = mk()
+    let t3 = mk()
+    let t4 = mk()
+}

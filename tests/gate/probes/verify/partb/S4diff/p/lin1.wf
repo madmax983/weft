@@ -1,0 +1,80 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+struct Pair { tx: Tx, n: u64 }
+
+fn tuple_field_read() -> u64 {
+    let x = (begin(), 1).1   //~ W0601
+    x
+}
+fn array_index_read() {
+    let t = [begin(), begin()][0]   //~ W0601
+    rollback(t)
+}
+fn if_stmt(c: bool) {
+    if c { begin() } else { begin() }   //~ W0601
+    print(1)
+}
+fn block_stmt() {
+    { begin() }   //~ W0601
+    print(1)
+}
+fn closure_result() {
+    let f = || begin()
+    f()   //~ W0601
+}
+fn box_dropped() {
+    let b = Box.new(begin())   //~ W0601
+}
+fn vec_dropped() {
+    let v = Vec.new()
+    v.push(begin())
+}   //~ W0601
+fn vec_pop_dropped() {
+    let v = Vec.new()
+    v.push(begin())
+    v.pop()   //~ W0601
+}
+fn partial_then_reset() {
+    let p = Pair { tx: begin(), n: 1 }
+    let t = p.tx
+    rollback(t)
+    p.tx = begin()
+}   //~ W0601
+fn method_on_temp() -> u64 {
+    begin().id   //~ W0601
+}
+fn field_read_temp() -> u64 {
+    let n = begin().id   //~ W0601
+    n
+}
+fn some_temp() {
+    let o = Some(begin())
+}   //~ W0601
+fn ignore<T>(x: T) {}
+fn generic_drop() {
+    ignore(begin())   //~ W0601
+}
+fn keep<T>(x: T) -> T { x }
+fn generic_keep() {
+    let t = keep(begin())
+    rollback(t)
+}
+fn pass<T>(x: T) { ignore(x) }
+fn generic_drop2() {
+    pass(begin())   //~ W0601
+}
+fn opt_take<T>(o: Option<T>, f: fn(T)) {
+    match o { Some(x) => f(x), None => {} }
+}
+fn generic_opt_ok() {
+    opt_take(Some(begin()), rollback)
+}
+fn cond_drop<T>(c: bool, x: T) -> Option<T> {
+    if c { Some(x) } else { None }
+}
+fn generic_cond() {
+    let o = cond_drop(true, begin())   //~ W0601
+    match o { Some(t) => rollback(t), None => {} }
+}

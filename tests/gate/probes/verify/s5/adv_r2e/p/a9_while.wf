@@ -1,0 +1,11 @@
+fn diff(a: i32, b: i32) -> i32 { a - b }
+fn rdiff(b: i32, a: i32) -> i32 { b - a }
+fn main() {
+    let g = diff
+    let i = 0
+    while i < 2 {
+        print(g(b: 10, a: 3))
+        g = rdiff
+        i = i + 1
+    }
+}

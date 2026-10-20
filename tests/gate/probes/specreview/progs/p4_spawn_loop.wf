@@ -1,0 +1,8 @@
+struct Stats { count: u32 }
+fn ingest(stats: &Stats, n: u32) / mut(stats), async {
+    scope { s =>
+        for i in 0..n {
+            s.spawn(|| stats.count += 1)
+        }
+    }
+}

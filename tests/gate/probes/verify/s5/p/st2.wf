@@ -1,0 +1,11 @@
+fn f(x: Vec<Rc<u64>>) / async {
+    scope { s =>
+        s.spawn(|| print(x.len()))
+    }
+}
+fn main() / async {
+    let r = Rc.new(1)
+    let v = Vec.new()
+    v.push(r)
+    f(v)
+}

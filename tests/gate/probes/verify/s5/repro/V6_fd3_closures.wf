@@ -1,0 +1,48 @@
+// FD3 missed shape: a closure puts a reference into an rc object, or a
+// closure that captures a local goes into an rc object.
+// Expected: W0204 in each fill function. HEAD: 0 errors, each faults.
+struct Cache { refs: Vec<&u64> }
+struct CbCache { cbs: Vec<fn()> }
+fn fill_closure(c: Rc<Cache>) / mut(Cache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    let put = |x: &u64| c.refs.push(x)
+    put(&v[0])
+}
+fn fill_cb(c: Rc<CbCache>) / mut(CbCache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    let r = &v[0]
+    c.cbs.push(|| print(r + 0))
+}
+fn fill_cb_owned(c: Rc<CbCache>) / mut(CbCache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    c.cbs.push(|| print(v.len()))
+}
+fn read(c: Rc<Cache>) -> u64 {
+    let r = c.refs[0]
+    r + 0
+}
+fn readcb(c: Rc<CbCache>) {
+    let f = c.cbs[0]
+    f()
+}
+fn t_closure() {
+    let c = Rc.new(Cache { refs: Vec.new() })
+    fill_closure(c.clone())
+    print(read(c.clone()))
+}
+fn t_cb() {
+    let c = Rc.new(CbCache { cbs: Vec.new() })
+    fill_cb(c.clone())
+    readcb(c.clone())
+}
+fn t_cb_owned() {
+    let c = Rc.new(CbCache { cbs: Vec.new() })
+    fill_cb_owned(c.clone())
+    readcb(c.clone())
+}
+fn main() {
+    t_closure()
+}

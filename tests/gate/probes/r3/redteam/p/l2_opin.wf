@@ -1,0 +1,19 @@
+struct Entity { hp: i32, kids: Vec<Entity> }
+struct World { entities: Vec<Entity>, other: Vec<Entity> }
+effect Hit { fn hit_op(w: &World, a: &Entity in w.entities[]) }
+fn hit_fn(w: &World, a: &Entity in w.entities[]) / mut(w.other) { w.other.clear(); print(a.hp) }
+// The clause trusts the stated place of `a`.
+fn local_op(world: &World) / mut(world.other) {
+    handle Hit { fn hit_op(w, a) { w.other.clear(); print(a.hp); resume(()) } } in {
+        hit_op(world, &world.other[0])   //~ W0203
+    }
+}
+// The same with a function: W0203.
+fn as_fn(world: &World) / mut(world.other) {
+    hit_fn(world, &world.other[0])   //~ W0203
+}
+fn main() {
+    let w = World { entities: Vec.new(), other: Vec.new() }
+    w.other.push(Entity { hp: 1, kids: Vec.new() })
+    local_op(&w)
+}

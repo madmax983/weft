@@ -1,0 +1,7 @@
+effect Ask { fn ask() -> u64 }
+fn f() -> u64 {
+    let r = handle Ask { fn ask() { return 9 } } in { ask() + 1 }
+    print("after handle")
+    r
+}
+fn main() { print(f()) }

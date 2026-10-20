@@ -1,0 +1,50 @@
+// A place field has no value until the body gives it one (W0304).
+// `Lower::unset_paths_into` (crates/weft-sema/src/body/mod.rs) keeps a stack
+// of the ADTs on the path, keyed by the ADT id only. So a second use of one
+// generic ADT on the path (`Wrap`, `Option`, `Box`) stops the walk, and the
+// place field below it gets no "unset" variable: no W0304.
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct Wrap<T> { x: T, n: u64 }
+struct Holder { inner: Wrap<Frame> }
+
+// One level: W0304, as expected.
+fn one_level() {
+    let w = Wrap { x: Frame { buf: [1, 2, 3, 4] }, n: 0 }
+    print(w.x.cur)   // W0304 here
+}
+
+// Two levels of the same generic struct: no W0304.
+fn two_levels() {
+    let w = Wrap { x: Wrap { x: Frame { buf: [1, 2, 3, 4] }, n: 0 }, n: 0 }
+    print(w.x.x.cur)   // expected W0304, the checker gives nothing
+}
+
+// A call result: no W0304.
+fn mk() -> Wrap<Wrap<Frame>> { Wrap { x: Wrap { x: Frame { buf: [1, 2, 3, 4] }, n: 0 }, n: 0 } }
+fn from_call() {
+    let w = mk()
+    print(w.x.x.cur)   // expected W0304, the checker gives nothing
+}
+
+// Two different structs, with the generic wrapper on the path two times.
+fn other_struct() {
+    let w = Wrap { x: Holder { inner: Wrap { x: Frame { buf: [1, 2, 3, 4] }, n: 0 } }, n: 0 }
+    print(w.x.inner.x.cur)   // expected W0304, the checker gives nothing
+}
+
+// The control: the same path with no repeated ADT gives W0304.
+fn control() {
+    let h = Holder { inner: Wrap { x: Frame { buf: [1, 2, 3, 4] }, n: 0 } }
+    print(h.inner.x.cur)   // W0304 here
+}
+
+// `Box` on the path two times: no W0304.
+struct HoldBox { b: Box<Frame> }
+fn one_box() {
+    let h = HoldBox { b: Box.new(Frame { buf: [1, 2, 3, 4] }) }
+    print(h.b.cur)   // W0304 here
+}
+fn two_boxes() {
+    let h = Box.new(HoldBox { b: Box.new(Frame { buf: [1, 2, 3, 4] }) })
+    print(h.b.cur)   // expected W0304, the checker gives nothing
+}

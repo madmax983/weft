@@ -1,0 +1,19 @@
+// A closure moves a linear value whose type has no `on abort`. An abort
+// happens before the call.
+linear struct Tx { id: u64 }
+
+fn commit(t: Tx) / io { let Tx(id) = t; print("commit {id}") }
+
+fn work(n: u64) / io, fail {
+    let t = Tx { id: n }
+    let f = || commit(t)
+    if n > 1 { fail("abort before the call") }
+    f()
+}
+
+fn main() / io {
+    handle Fail { fn fail(m) { print("caught: {m}") } } in {
+        work(2)
+    }
+    print("end")
+}

@@ -1,0 +1,38 @@
+struct Bag { items: Vec<u64> }
+fn apply(f: fn() -> u64) -> u64 { f() }
+fn via_call() {
+    let keep: Vec<u64> = Vec.new()
+    keep.push(1)
+    let q = &keep[0]
+    let z = apply(|| { let v = Vec.new(); v.push(5); q = &v[0]; 0 })
+    print(q)   // ERR
+}
+fn loop_closure() {
+    let f = || 0
+    let i = 0
+    while i < 3 {
+        let v: Vec<u64> = Vec.new()
+        v.push(1)
+        f = || v.len()
+        i += 1
+    }
+    print(f())   // ERR
+}
+fn loop_task() / async {
+    scope { s =>
+        let i = 0
+        while i < 3 {
+            let v: Vec<u64> = Vec.new()
+            v.push(1)
+            s.spawn(|| { suspend(); print(v.len()) })
+            i += 1
+        }   // ERR W0405
+    }
+}
+fn temp_closure() {
+    let f = || &Bag { items: Vec.new() }.items
+    print(f())   // ERR W0204
+}
+fn main() / async {
+    via_call()
+}

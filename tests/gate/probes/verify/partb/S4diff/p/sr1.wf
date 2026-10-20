@@ -1,0 +1,14 @@
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+fn init(f: &Frame) / mut(f.cur) { f.cur = &f.buf[0] }
+fn copy_other(f: &Frame, g: &Frame) / mut(f.cur) { f.cur = g.cur }   //~ W0605
+fn from_param(f: &Frame, r: &u8) / mut(f.cur) { f.cur = r }   //~ W0605
+fn cond(f: &Frame, c: bool) / mut(f.cur) { f.cur = if c { &f.buf[0] } else { &f.buf[1] } }
+fn via_local(f: &Frame) / mut(f.cur) {
+    let x: u8 = 3
+    let r = &x
+    f.cur = r   //~ W0605
+}
+fn via_id<T>(x: T) -> T { x }
+fn via_generic(f: &Frame, v: &Vec<u8>) / mut(f.cur) {
+    f.cur = via_id(&v[0])   //~ W0605
+}

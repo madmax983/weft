@@ -1,0 +1,82 @@
+effect Log { fn log(msg: String) }
+effect Other { fn other() }
+struct Cb { f: fn() }
+struct Two { a: Cb, n: u64 }
+fn id_f(f: fn()) -> fn() { f }
+fn idg<T>(x: T) -> T { x }
+fn logger() / Log { log("x") }
+
+fn v3_outer_struct_field() {
+    let out = Cb { f: || print(0) }
+    handle Log { fn log(m) { resume(()) } } in {
+        out.f = || log("late")     // W0313
+    }
+    let g = out.f
+    g()
+}
+fn v4_box() {
+    let b = handle Log { fn log(m) { resume(()) } } in Box.new(|| log("x"))   // W0313
+}
+fn v5_option() {
+    let o = handle Log { fn log(m) { resume(()) } } in Some(|| log("x"))   // W0313
+}
+fn v6_outer_option() {
+    let o = None
+    handle Log { fn log(m) { resume(()) } } in {
+        o = Some(|| log("x"))    // W0313
+    }
+}
+fn v7_match(c: bool) {
+    let f = handle Log { fn log(m) { resume(()) } } in match c { true => || log("x"), false => || print(1) }   // W0313
+}
+fn v8_if(c: bool) {
+    let f = handle Log { fn log(m) { resume(()) } } in { if c { || log("x") } else { || print(1) } }   // W0313
+}
+fn v9_capture() {
+    let f = handle Log { fn log(m) { resume(()) } } in { let g = || log("x"); || g() }   // W0313
+}
+fn v10_nested_handle() {
+    let f = handle Log { fn log(m) { resume(()) } } in { handle Other { fn other() { resume(()) } } in || log("x") }   // W0313
+}
+fn v12_id_fn() {
+    let f = handle Log { fn log(m) { resume(()) } } in id_f(|| log("x"))   // W0313
+}
+fn v13_generic() {
+    let f = handle Log { fn log(m) { resume(()) } } in idg(|| log("x"))   // W0313
+}
+fn v14_tuple_outer() {
+    let t = (|| print(0), 1)
+    handle Log { fn log(m) { resume(()) } } in {
+        t = (|| log("x"), 2)    // W0313
+    }
+}
+fn v16_closure_assigns_outer() {
+    let out = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {
+        let set = || { out = || log("late") }    // W0313
+        set()
+    }
+    out()
+}
+fn v19_rc() {
+    let r = handle Log { fn log(m) { resume(()) } } in Rc.new(|| log("x"))   // W0313
+}
+fn v21_nested_struct() {
+    let t = handle Log { fn log(m) { resume(()) } } in Two { a: Cb { f: || log("x") }, n: 1 }   // W0313
+}
+fn v22_array() {
+    let a = handle Log { fn log(m) { resume(()) } } in [|| log("x")]   // W0313
+}
+fn v23_block_let() {
+    let f = handle Log { fn log(m) { resume(()) } } in { let k = || log("x"); k }   // W0313
+}
+// clean controls
+fn c1_item() {
+    let f = handle Log { fn log(m) { resume(()) } } in logger
+}
+fn c2_inner_handler() {
+    let f = handle Log { fn log(m) { resume(()) } } in || handle Log { fn log(m) { resume(()) } } in log("x")
+}
+fn c3_value() -> u64 {
+    handle Log { fn log(m) { resume(()) } } in { let f = || log("x"); f(); 3 }
+}

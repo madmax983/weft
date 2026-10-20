@@ -1,0 +1,45 @@
+effect Log { fn log(msg: String) }
+struct Cb { f: fn() }
+fn v_rc_alias() {
+    let r = Rc.new(Cb { f: || print(0) })
+    handle Log { fn log(m) { resume(()) } } in {
+        let r2 = r.clone()
+        r2.f = || log("x")    // W0313: r sees it
+    }
+    let g = r.f
+    g()
+}
+fn v_ref_local() {
+    let o = Cb { f: || print(0) }
+    handle Log { fn log(m) { resume(()) } } in {
+        let p = &o
+        p.f = || log("x")    // W0313
+    }
+}
+fn v_for_elem(cbs: &Vec<Cb>) / mut(cbs) {
+    handle Log { fn log(m) { resume(()) } } in {
+        for c in cbs[] { c.f = || log("x") }    // W0313
+    }
+}
+fn v_task_result() / async {
+    scope { s =>
+        let t = handle Log { fn log(m) { resume(()) } } in s.spawn(|| || log("x"))
+        let f = t.join()
+        f()
+    }
+}
+fn c_with_timeout() / async, fail {
+    handle Log { fn log(m) { resume(()) } } in with_timeout(1.s) { log("x") }
+}
+fn c_counter() -> u64 {
+    let out = 0
+    handle Log { fn log(m) { resume(()) } } in { let f = || { out += 1; log("x") }; f() }
+    out
+}
+fn c_box_local() {
+    handle Log { fn log(m) { resume(()) } } in {
+        let b = Box.new(|| log("x"))
+        let o = Some(|| log("y"))
+        let r = Rc.new(|| log("z"))
+    }
+}

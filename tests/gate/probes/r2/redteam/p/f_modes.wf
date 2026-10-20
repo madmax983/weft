@@ -1,0 +1,85 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print(b.items.len()) }
+fn gen_keep<T>(x: T) -> T { x }
+struct Node { v: u64 }
+
+// A maker returns a closure that moves its by-value parameter.
+fn mk_eat(b: Buf) -> fn() { || eat(b) }
+fn mk_tx(t: Tx) -> fn() { || rollback(t) }
+fn maker_once() {
+    let g = mk_eat(Buf { items: Vec.new() })
+    g()
+    g()   //~ W0502
+}
+fn maker_linear_dropped() {
+    let g = mk_tx(begin())
+}   //~ W0601
+fn maker_linear_twice() {
+    let g = mk_tx(begin())
+    g()
+    g()   //~ W0502
+}
+// Once through a generic.
+fn generic_once() {
+    let b = Buf { items: Vec.new() }
+    let g = gen_keep(|| eat(b))
+    g()
+    g()   //~ W0502
+}
+// Once through an Option payload.
+fn option_once() {
+    let b = Buf { items: Vec.new() }
+    let o = Some(|| eat(b))
+    match o { Some(g) => { g()
+ g() }, None => {} }   //~ W0502
+}
+// Once through a tuple.
+fn tuple_once() {
+    let b = Buf { items: Vec.new() }
+    let t = (|| eat(b), 1)
+    let (g, n) = t
+    g()
+    g()   //~ W0502
+}
+// Once through a nested closure.
+fn nested_once() {
+    let b = Buf { items: Vec.new() }
+    let f = || { let h = || eat(b)
+ h() }
+    f()
+    f()   //~ W0502
+}
+// Nonportable through a nested closure and a struct with Rc.
+struct Holder { r: Rc<Node> }
+fn rc_nested() / par {
+    let n = Rc.new(Node { v: 1 })
+    let c = || print(n.v)
+    let d = || c()
+    fork(|| d(), || print(2))   //~ W0401
+}
+fn rc_struct_ref() / par {
+    let h = Holder { r: Rc.new(Node { v: 1 }) }
+    let r = &h
+    fork(|| print(r.r.v), || print(2))   //~ W0401
+}
+fn weak_capture() / par {
+    let n = Rc.new(Node { v: 1 })
+    let w = n.downgrade()
+    fork(|| { let x = w }, || print(2))   //~ W0401
+}
+fn maker_rc_by_value() / par {
+    let n = Rc.new(Node { v: 1 })
+    let c = gen_keep(|| print(n.v))
+    fork(|| c(), || print(2))   //~ W0401
+}
+fn mk_rc_val(n: Rc<Node>) -> fn() { || print(n.v) }
+fn maker_rc_moved() / par {
+    let c = mk_rc_val(Rc.new(Node { v: 1 }))
+    fork(|| c(), || print(2))   //~ W0401
+}
+test "maker_once" { maker_once() }
+test "maker_linear_twice" { maker_linear_twice() }

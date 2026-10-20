@@ -1,0 +1,21 @@
+// RT1 shape: a handler clause moves a captured owner when the body performs.
+effect Log { fn log(m: String) }
+fn take(v: Vec<u64>) {}
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Log { fn log(m) { take(v); resume(()) } } in {
+        log("x")
+        print(r)      // expected W0301: the clause moved v at the perform
+    }
+}
+fn rebind_in_clause() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Log { fn log(m) { v = Vec.new(); resume(()) } } in {
+        log("x")
+        print(r)      // expected W0301: the clause gave v a new value
+    }
+}

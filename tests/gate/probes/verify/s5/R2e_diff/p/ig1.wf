@@ -1,0 +1,7 @@
+fn twice<T>(x: T, f: fn(T) -> T) -> T { f(f(x)) }
+fn main() {
+    let a: u8 = 100
+    print(twice(a, |v| v + 1))
+    let b: i64 = 1000
+    print(twice(b, |v| v + 1))
+}

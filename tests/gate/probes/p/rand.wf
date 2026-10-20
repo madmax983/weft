@@ -1,0 +1,7 @@
+test "seeded random" {
+    sim.run(seed: 5) {
+        let a = random()
+        let b = random()
+        print(a == b, a % 1000, b % 1000)
+    }
+}

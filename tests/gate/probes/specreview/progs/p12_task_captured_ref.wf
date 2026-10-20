@@ -1,0 +1,14 @@
+struct Stats { count: u64 }
+fn race3(stats: &Stats) / mut(stats), async {
+    let r = &stats.count
+    scope { s =>
+        s.spawn(|| print(r))
+        stats.count += 1
+    }
+}
+fn race4(stats: &Stats) / mut(stats), async {
+    scope { s =>
+        s.spawn(|| print(stats.count))
+        stats.count += 1
+    }
+}

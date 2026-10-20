@@ -1,0 +1,9 @@
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(id) = t }
+fn main() {
+    loop {
+        let t = Tx { id: 1 }
+        if true { break }
+        commit(t)
+    }
+}

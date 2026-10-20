@@ -1,0 +1,4 @@
+effect Log2 { fn log2(msg: String) }
+pub fn loud() { log2("x") }
+pub fn std_log() { info("x") }
+fn quiet() / par { log2("x") }

@@ -1,0 +1,69 @@
+struct P { x: u64, y: u64 }
+struct W { v: Vec<u64>, p: P, o: Option<u64> }
+struct H { r: &u64 }
+
+fn opt_ref(w: &W) / mut(w.v) {
+    let o = Some(&w.p.x)
+    w.v.push(1)
+    match o {
+        Some(r) => print(r),
+        None => print("none"),
+    }
+}
+
+fn while_rebind(w: &W) / mut(w.v) {
+    let i = 0
+    let r = &w.p.y
+    while i < 3 {
+        print(r)
+        w.v.push(i)
+        r = &w.v[0]
+        print(r)
+        r = &w.p.x
+        i += 1
+    }
+    print(r)
+}
+
+fn branch_bind(w: &W, c: bool) {
+    let r: &u64 = &w.p.x
+    if c { r = &w.p.y }
+    print(r)
+}
+
+fn match_ref(w: &W) {
+    match &w.o {
+        Some(x) => print(x),
+        None => print("none"),
+    }
+}
+
+fn holder(w: &W) / mut(w.v) {
+    let h = H { r: &w.p.x }
+    w.v.push(2)
+    print(h.r)
+}
+
+fn for_refs(w: &W) {
+    for e in w.v[] {
+        print(e)
+    }
+}
+
+fn labeled(w: &W, c: bool) / mut(w.v) {
+    let r = if c { &w.p.x } else { &w.p.y }
+    w.v.push(3)
+    print(r)
+}
+
+fn main() / io {
+    let w = W { v: Vec.new(), p: P { x: 1, y: 2 }, o: Some(4) }
+    w.v.push(5)
+    opt_ref(&w)
+    while_rebind(&w)
+    branch_bind(&w, true)
+    match_ref(&w)
+    holder(&w)
+    for_refs(&w)
+    labeled(&w, false)
+}

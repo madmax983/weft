@@ -1,0 +1,42 @@
+struct Wrap<T> { x: T, y: T }
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn tuple_part_rebind() {
+    let a = mkv()
+    let b = mkv()
+    let c = mkv()
+    let t = (&a[0], &b[0])
+    b.clear()
+    t.0 = &c[0]
+    print(t.1)   //~ W0301
+}
+fn wrap_part_rebind() {
+    let a = mkv()
+    let b = mkv()
+    let c = mkv()
+    let w = Wrap { x: &a[0], y: &b[0] }
+    b.clear()
+    w.x = &c[0]
+    print(w.y)   //~ W0301
+}
+fn vec_elem_rebind() {
+    let a = mkv()
+    let b = mkv()
+    let rs = Vec.new()
+    rs.push(&a[0])
+    rs.push(&b[0])
+    b.clear()
+    rs[0] = &a[0]
+    print(rs[1])   //~ W0301
+}
+fn opt_rebind_some() {
+    let a = mkv()
+    let b = mkv()
+    let t = (Some(&a[0]), Some(&b[0]))
+    b.clear()
+    t.0 = None
+    match t.1 { Some(r) => print(r), None => {} }   //~ W0301
+}
+test "tuple_part_rebind" { tuple_part_rebind() }
+test "wrap_part_rebind" { wrap_part_rebind() }
+test "vec_elem_rebind" { vec_elem_rebind() }
+test "opt_rebind_some" { opt_rebind_some() }

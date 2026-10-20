@@ -1,0 +1,32 @@
+struct Tree { v: u64, kids: Vec<Tree> }
+fn pick(t: &Tree, i: u64) -> Option<&Tree> {
+    if i == 0 { Some(t) } else { Some(&t.kids[0]) }
+}
+fn un(o: Option<&Tree>, d: &Tree) -> &Tree in d { match o { Some(x) => d, None => d } }
+// The call is in a `while` condition.
+fn in_cond(t: &Tree) / mut(t..) {
+    let a = pick(t, 5)
+    let b = pick(t, 5)
+    let i = 0
+    while { b = a; a = pick(t, i); i < 1 } { i += 1 }
+    match b { Some(bb) => bb.kids.clear(), None => {} }
+    match a { Some(aa) => print(aa.v), None => {} }   //~ W0301
+}
+// The call is in a loop body (control).
+fn in_body(t: &Tree) / mut(t..) {
+    let a = pick(t, 5)
+    let b = pick(t, 5)
+    let i = 0
+    while i < 2 { b = a; a = pick(t, i); i += 1 }
+    match b { Some(bb) => bb.kids.clear(), None => {} }
+    match a { Some(aa) => print(aa.v), None => {} }   //~ W0301
+}
+fn mk() -> Tree {
+    let t = Tree { v: 1, kids: Vec.new() }
+    let k = Tree { v: 2, kids: Vec.new() }
+    k.kids.push(Tree { v: 3, kids: Vec.new() })
+    t.kids.push(k)
+    t
+}
+test "in_cond" { let t = mk(); in_cond(&t) }
+test "in_body" { let t = mk(); in_body(&t) }

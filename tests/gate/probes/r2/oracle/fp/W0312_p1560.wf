@@ -1,0 +1,19 @@
+linear struct Tx { id: u64 }
+
+fn commit(t: Tx) { let Tx(id) = t; print("commit", id) }
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v
+}
+fn clear_then(v: &Vec<u64>, f: fn()) { v.clear(); f() }
+
+fn main() {
+    let v1 = mk_v()
+    let v2 = v1
+    let f7 = || v2.push(4)
+    let g8 = || {
+        clear_then(&v2, f7)
+        let tx9 = Tx { id: 9 }
+        commit(tx9)
+    }
+}

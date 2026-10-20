@@ -1,0 +1,9 @@
+struct Holder { items: Vec<u64>, n: u64 }
+struct Pair { a: Holder, b: Holder }
+fn take_h(h: Holder) {}
+fn main() {
+    let p = Pair { a: Holder { items: Vec.new(), n: 1 }, b: Holder { items: Vec.new(), n: 2 } }
+    let r = &p.a.n
+    take_h(p.b)
+    print(r)
+}

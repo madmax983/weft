@@ -1,0 +1,69 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Wrap<T> { x: T }
+
+fn k_copy(a: &World, b: &World, c: bool) / mut(a.entities) {
+    let w = Wrap { x: &a.entities[0] }
+    let y = Wrap { x: w.x }
+    if c {
+        w.x = &b.entities[0]
+        a.entities.clear()
+    } else {
+    }
+    print(y.x.hp)
+}
+fn k_loop_continue(a: &World, b: &World, n: u64) / mut(a.entities) {
+    let w = Wrap { x: &a.entities[0] }
+    for i in 0..n {
+        print(w.x.hp)
+        if i == 0 { a.entities.clear()
+ continue }
+        w.x = &b.entities[0]
+    }
+}
+fn k_stale_then_restore(a: &World, b: &World, c: bool) / mut(a.entities) {
+    let w = Wrap { x: &a.entities[0] }
+    let saved = w.x
+    if c {
+        w.x = &b.entities[0]
+        a.entities.clear()
+        w.x = saved
+    }
+    print(w.x.hp)
+}
+fn k_match(a: &World, b: &World, n: u64) / mut(a.entities) {
+    let w = Wrap { x: &a.entities[0] }
+    match n {
+        0 => { w.x = &b.entities[0]
+ a.entities.clear() },
+        _ => { a.entities.clear() },
+    }
+    print(w.x.hp)
+}
+fn k_closure(a: &World, b: &World, c: bool) / mut(a.entities) {
+    let w = Wrap { x: &a.entities[0] }
+    let f = || print(w.x.hp)
+    if c {
+        w.x = &b.entities[0]
+        a.entities.clear()
+    }
+    f()
+}
+fn k_break(a: &World, b: &World, n: u64) / mut(a.entities) {
+    let w = Wrap { x: &a.entities[0] }
+    for i in 0..n {
+        w.x = &b.entities[0]
+        a.entities.clear()
+        if i == 0 { break }
+        w.x = &a.entities[0]
+    }
+    print(w.x.hp)
+}
+fn mk() -> World { let w = World { entities: Vec.new() }
+ w.entities.push(Entity { hp: 1 })
+ w }
+fn main() {
+    let a = mk()
+    let b = mk()
+    k_copy(&a, &b, true)
+}

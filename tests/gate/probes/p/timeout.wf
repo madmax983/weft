@@ -1,0 +1,25 @@
+linear struct Guard { id: u64 }
+    on abort = drop_guard
+
+fn drop_guard(g: Guard) {
+    let Guard(id) = g
+    print("guard {id} aborted")
+}
+
+fn slow() -> u64 / clock {
+    let g = Guard { id: 1 }
+    sleep(5.s)
+    let Guard(id) = g
+    print("slow done")
+    42
+}
+
+fn main() / io {
+    handle Fail { fn fail(msg) { print("failed: {msg}") } } in {
+        let r = with_timeout(10.s) { 7 }
+        print("fast: {r}")
+        let r = with_timeout(1.s) { slow() }
+        print("slow: {r}")
+    }
+    print("end")
+}

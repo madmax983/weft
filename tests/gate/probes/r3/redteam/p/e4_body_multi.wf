@@ -1,0 +1,33 @@
+effect Choice { multi fn choose() -> bool }
+effect Outer { fn op() }
+linear struct Lock { id: u64 }
+fn release(l: Lock) { print("release"); let Lock(i) = l }
+fn pick() -> bool / Choice { choose() }
+fn body_multi() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        handle Outer { fn op() { let l = Lock { id: 1 }; resume(()); release(l) } } in {   //~ W0503
+            op()
+            let b = choose()
+        }
+    }
+}
+fn body_multi_callee() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        handle Outer { fn op() { let l = Lock { id: 1 }; resume(()); release(l) } } in {   //~ W0503
+            op()
+            let b = pick()
+        }
+    }
+}
+fn body_multi_closure() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        let f = || choose()
+        handle Outer { fn op() { let l = Lock { id: 1 }; resume(()); release(l) } } in {   //~ W0503
+            op()
+            let b = f()
+        }
+    }
+}
+test "body_multi" { body_multi() }
+test "body_multi_callee" { body_multi_callee() }
+test "body_multi_closure" { body_multi_closure() }

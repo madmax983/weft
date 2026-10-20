@@ -1,0 +1,21 @@
+effect Stop { fn stop() }
+linear struct T { id: u64 }
+    on abort = undo
+fn undo(t: T) / fail {
+    let T(i) = t
+    print("undo {i}")
+    fail("in undo")
+    print("after fail")
+}
+fn done(t: T) { let T(i) = t }
+fn main() / fail {
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        handle Stop { fn stop() { () } } in {
+            let t = T { id: 1 }
+            stop()
+            done(t)
+        }
+        print("after inner")
+    }
+    print("end")
+}

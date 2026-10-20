@@ -1,0 +1,14 @@
+linear struct Tx { id: u64 }
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+struct Pair { tx: Tx, n: u64 }
+fn a() -> u64 {
+    let x: u64
+    x
+}
+fn b() {
+    let p = Pair { tx: begin(), n: 1 }
+    p.tx = begin()
+    let Pair(t, n) = p
+    rollback(t)
+}

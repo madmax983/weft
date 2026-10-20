@@ -1,0 +1,12 @@
+struct Entity { hp: i32 }
+impl Entity { fn new() -> Entity { Entity { hp: 10 } } }
+
+fn outlives() {
+    let keep = Entity.new()
+    let r = &keep.hp
+    if true {
+        let inner = Entity.new()
+        r = &inner.hp
+    }
+    print(r)
+}

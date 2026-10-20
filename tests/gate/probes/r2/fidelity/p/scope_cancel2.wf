@@ -1,0 +1,26 @@
+// A callee waits at the end of its `scope`, which is a cancellation point. The
+// caller holds `l` (no `on abort`) across the call.
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { let Lock(i) = l }
+fn lock() -> Lock { Lock { id: 1 } }
+
+fn helper() {
+    scope { s =>
+        s.spawn(|| { let i = 0; while i < 100000 { i += 1 } })
+    }
+}
+
+fn worker() {
+    let l = lock()
+    helper()
+    unlock(l)
+}
+
+fn pair(a: u64, b: u64) -> u64 { a + b }
+
+fn main() {
+    scope { s =>
+        s.spawn(|| worker())
+        s.spawn(|| { let j = 0; while j < 10 { j += 1 }; fail("stop") })
+    }
+}

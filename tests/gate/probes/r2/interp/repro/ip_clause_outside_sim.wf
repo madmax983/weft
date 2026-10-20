@@ -1,0 +1,11 @@
+// The clause of a handler outside sim.run runs while the simulation is active.
+effect Ask { fn ask() -> u64 }
+
+test "a clause outside the simulation" {
+    sleep(10.ms)
+    print("before: {Clock.now()}")
+    let v = handle Ask { fn ask() { print("clause clock: {Clock.now()}"); resume(1) } } in {
+        sim.run(seed: 1) { sleep(5.ms); ask() }
+    }
+    print("after: {Clock.now()} v={v}")
+}

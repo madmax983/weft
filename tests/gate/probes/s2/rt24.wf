@@ -1,0 +1,6 @@
+struct Stats { count: u64, hist: Vec<u64> }
+struct Cell { v: Vec<u64> }
+fn priv_bump(s: &Stats) { s.count += 1 }
+fn shared_caller(s: &Stats @ shared) { priv_bump(s) }
+fn grow(c: &Cell) { c.v.push(1) }
+pub fn pub_grow(c: &Cell) { grow(c) }

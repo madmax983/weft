@@ -1,0 +1,24 @@
+struct B { b: Box<u64>, a: [u64; 3], v: Vec<u64>, o: Option<u64>, r: Rc<u64> }
+
+fn places(w: &B) {
+    let x = &w.b
+    let y = &w.a[1]
+    let z = &w.v[0]
+    let q = &w.o
+    let rr = &w.r
+    print(x)
+    print(y)
+    print(z)
+    print(q)
+    print(rr)
+}
+
+fn main() / io {
+    let v = Vec.new()
+    v.push(1)
+    let w = B { b: Box.new(1), a: [1, 2, 3], v: v, o: Some(1), r: Rc.new(1) }
+    places(&w)
+    let lb = Box.new(5)
+    let p = &lb
+    print(p)
+}

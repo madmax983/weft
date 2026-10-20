@@ -1,0 +1,15 @@
+// The parameter points into a binding of a match arm in the body.
+struct Entity { hp: i32 }
+effect Peek { fn peek(e: &Entity) }
+fn mko() -> Option<Entity> { Some(Entity { hp: 1 }) }
+fn arm() {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)
+        }
+    } in {
+        match mko() { Some(x) => peek(&x), None => {} }
+    }
+}
+fn main() { arm() }

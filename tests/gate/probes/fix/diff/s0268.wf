@@ -1,0 +1,6 @@
+struct S0<T0, T1> { f0: Vec<Option<S0<bool, T1>>> }
+struct S1<T0> { f0: Box<S4> }
+struct S2 {  }
+struct S3<T0> { f0: T0, f1: S2 }
+struct S4 {  }
+fn main() {}

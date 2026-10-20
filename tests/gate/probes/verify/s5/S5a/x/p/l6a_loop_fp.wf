@@ -1,0 +1,29 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { print("rollback")
+ let Tx(i) = t }
+fn commit(t: Tx) { print("commit")
+ let Tx(i) = t }
+fn begin() -> Tx { Tx { id: 1 } }
+effect Op { fn op() }
+
+fn in_loop(n: u64) {
+    for i in 0..n {
+        handle Op { fn op() { print("stop") } } in {
+            let t = begin()
+            op()
+            commit(t)
+        }
+    }
+}
+fn in_loop_fail(n: u64) {
+    for i in 0..n {
+        handle Fail { fn fail(m) { print(m) } } in {
+            let t = begin()
+            fail("x")
+            commit(t)
+        }
+    }
+}
+fn main() { in_loop(2) 
+ in_loop_fail(2) }

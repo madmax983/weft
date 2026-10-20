@@ -1,0 +1,7 @@
+fn d1(a: i32, b: i32) -> i32 { a - b }
+fn d2(b: i32, a: i32) -> i32 { a - b }
+fn second<T>(x: T, y: T) -> T { y }
+fn main() {
+    let g = second(d1, d2)
+    print(g(b: 10, a: 3))
+}

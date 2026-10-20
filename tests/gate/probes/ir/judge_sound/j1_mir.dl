@@ -1,0 +1,10 @@
+// J1 in MIR: versions of keep; footprint at the perform; after-body node applies
+// the part of the clause after its resume point.
+place(pu). place(pu_e). parent(pu_e, pu). unstable(pu_e).
+place(pv). place(pv_e). parent(pv_e, pv). unstable(pv_e).
+cfg_edge(k0, hs). rebound_at(keep0, k0). points_into(keep0, pu_e).
+cfg_edge(hs, pt). performs_at(pt, c0). footprint(c0, pv). uses(keep0, pt).
+cfg_edge(pt, pret). cfg_edge(pret, k1). rebound_at(keep1, k1). points_into(keep1, pv_e).
+cfg_edge(k1, hret). cfg_edge(hret, aft). mutates_at(aft, pv).
+cfg_edge(aft, rn). cfg_edge(rn, pr). uses(keep1, pr).
+lint("MIR J1: W0301 at print(keep)", pr) :- error(keep1, pr).

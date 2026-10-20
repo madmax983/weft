@@ -1,0 +1,18 @@
+struct Stats { count: u64 }
+fn show(x: &u64) { print(x) }
+fn race(stats: &Stats) / mut(stats), async {
+    let r = &stats.count
+    scope { s =>
+        s.spawn(|| stats.count += 1)
+        print(r)
+        show(r)
+    }
+}
+fn race2(stats: &Stats) / mut(stats), async {
+    let r = &stats.count
+    scope { s =>
+        s.spawn(|| stats.count += 1)
+        let y = r + 1
+        print(y)
+    }
+}

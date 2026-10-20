@@ -1,0 +1,35 @@
+// Can one node invalidate a reference and rebind it?
+fn grow_first(v: &Vec<u64>) -> &u64 in v[] / mut(v) {
+    v.push(1)
+    &v[0]
+}
+
+fn reassign_from_call(v: &Vec<u64>) / mut(v) {
+    let r = &v[0]
+    r = grow_first(v)
+    print(r)
+}
+
+fn reassign_block(v: &Vec<u64>) / mut(v) {
+    let r = &v[0]
+    r = { v.push(2); &v[0] }
+    print(r)
+}
+
+fn loop_head(v: &Vec<u64>, n: u64) / mut(v) {
+    let r = &v[0]
+    let i = 0
+    while i < n {
+        print(r)
+        r = { v.push(3); &v[0] }
+        i += 1
+    }
+}
+
+fn main() {
+    let v = Vec.new()
+    v.push(0)
+    reassign_from_call(&v)
+    reassign_block(&v)
+    loop_head(&v, 2)
+}

@@ -1,0 +1,13 @@
+
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v
+}
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn make_reader(v: &Vec<u64>) -> fn() { || print(v.len()) }
+
+fn main() {
+    let v1 = mk_v()
+    let f5 = || print(take_v(v1))
+    let f6 = make_reader(&v1)
+}

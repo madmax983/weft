@@ -1,0 +1,43 @@
+// RR4: a closure that captures the capability `s` of a scope can leave the
+// scope: through a local outside it, a field, or as the value of the scope. A
+// call of the closure after the scope ends spawns a task that no scope joins. The
+// task outlives the frame of `escape`, and it writes `st` after `caller` ended.
+// A closure that captures `&s` gets W0301; a closure that captures `s` does not:
+// the closure does not point into the root of `s`.
+// Expected: W0301 at each marked line. Actual: no error. `weft run --unchecked`
+// prints "task runs, count 1" from a dead local; the instrumented interpreter
+// faults (a dangling reference).
+struct Stats { count: u64 }
+struct Job { f: fn() }
+
+fn escape(st: &Stats) / mut(st), async {
+    let keep = || print(0)
+    scope { s =>
+        keep = || {
+            s.spawn(|| { st.count += 1
+ print("task runs, count {st.count}") })
+            ()
+        }
+    }
+    keep()   //~ W0301
+}
+fn as_value(st: &Stats) / mut(st), async {
+    let k = scope { s => || { s.spawn(|| st.count += 1)
+ () } }
+    k()   //~ W0301
+}
+fn as_field(st: &Stats) / mut(st), async {
+    let j = Job { f: || print(0) }
+    scope { s => j.f = || { s.spawn(|| st.count += 1)
+ () } }
+    let g = j.f
+    g()   //~ W0301
+}
+fn caller() / async {
+    let st = Stats { count: 0 }
+    escape(&st)
+}
+fn main() / async, clock {
+    caller()
+    sleep(1.ms)
+}

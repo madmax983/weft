@@ -1,0 +1,31 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+
+fn in_scope() / async {
+    let t = begin()
+    scope { s =>
+        let h = s.spawn(|| rollback(t))
+        h.join()
+    }
+}
+fn in_scope_detach() / async {
+    let t = begin()
+    scope { s =>
+        s.spawn(|| rollback(t))
+    }
+}
+fn forked() / async {
+    let a = begin()
+    let b = begin()
+    fork(|| rollback(a), || rollback(b))
+}
+fn timeout_ok() / async, fail {
+    let t = begin()
+    with_timeout(1.s, || rollback(t))
+}
+fn sim_ok() {
+    let t = begin()
+    sim.run(seed: 1) { rollback(t) }
+}

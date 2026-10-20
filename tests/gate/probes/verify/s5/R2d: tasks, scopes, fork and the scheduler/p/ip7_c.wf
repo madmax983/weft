@@ -1,0 +1,9 @@
+// The handler through a helper function parameter.
+fn serve_with(l: Listener, h: fn(Request) -> Response / (net, log)) / net { http.serve(l, h) }
+fn main(env: Env) / io {
+    let hits = Rc.new(0)
+    serve_with(env.net.listen("127.0.0.1:18443"), |req| {
+        let h = hits.clone()
+        Response.text("hit")
+    })
+}

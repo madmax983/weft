@@ -1,0 +1,51 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity>, other: Vec<Entity> }
+fn hit(a: &Entity, b: &World) / mut(b.entities) { b.entities.clear(); print(a.hp) }
+fn hit2(b: &Entity, a: &World) / mut(a.entities) { a.entities.clear(); print(b.hp) }
+fn via_option(w: &World, c: bool) / mut(w.entities) {
+    let o = Some(hit2)
+    if c { o = Some(hit) }
+    match o {
+        Some(g) => g(b: &w.other[0], a: w),
+        None => {}
+    }
+}
+fn via_tuple(w: &World, c: bool) / mut(w.entities) {
+    let t = (hit2, hit2)
+    if c { t = (hit, hit) }
+    let g = t.1
+    g(b: &w.other[0], a: w)
+}
+fn via_tuple_part(w: &World, c: bool) / mut(w.entities) {
+    let t = (hit2, 1)
+    if c { t.0 = hit }
+    let g = t.0
+    g(b: &w.other[0], a: w)
+}
+fn via_vec(w: &World) / mut(w.entities) {
+    let v = Vec.new()
+    v.push(hit2)
+    v.push(hit)
+    let g = v[1]
+    g(b: &w.other[0], a: w)
+}
+fn main() {
+    let w = World { entities: Vec.new(), other: Vec.new() }
+    w.other.push(Entity { hp: 3 })
+    via_option(&w, true)
+}
+test "tuple" {
+    let w = World { entities: Vec.new(), other: Vec.new() }
+    w.other.push(Entity { hp: 3 })
+    via_tuple(&w, true)
+}
+test "part" {
+    let w = World { entities: Vec.new(), other: Vec.new() }
+    w.other.push(Entity { hp: 3 })
+    via_tuple_part(&w, true)
+}
+test "vec" {
+    let w = World { entities: Vec.new(), other: Vec.new() }
+    w.other.push(Entity { hp: 3 })
+    via_vec(&w)
+}

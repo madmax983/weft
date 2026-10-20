@@ -1,0 +1,16 @@
+// Judge probe J3: a clause that resumes and then returns a value that is not
+// the result of `resume`. The handle value is the clause value.
+effect Tick { fn tick() }
+
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let r = handle Tick { fn tick() { let x = resume(()); &u[0] } } in {
+        tick()
+        &v[0]
+    }
+    u.clear()
+    print(r + 1)          // r points into u, which is cleared
+}

@@ -1,0 +1,16 @@
+// Judge probe J2 (M1 family through a closure that resumes). The resume point
+// of the clause is a call of a closure, not a `resume` node of the clause.
+effect Tick { fn tick() }
+
+fn main() {
+    let u = Vec.new()
+    u.push(7)
+    let v = Vec.new()
+    v.push(1)
+    let keep = &u[0]
+    handle Tick { fn tick() { let k = || resume(()); k(); v.clear() } } in {
+        tick()
+        keep = &v[0]
+    }
+    print(keep + 1)
+}

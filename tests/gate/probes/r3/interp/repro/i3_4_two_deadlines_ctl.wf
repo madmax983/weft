@@ -1,0 +1,13 @@
+// Control: the inner deadline is 1 ms later than the outer one.
+fn main() / io {
+    handle Fail { fn fail(m) { print("outer caught: {m} at {Clock.now()}") } } in {
+        with_timeout(10.ms) {
+            handle Fail { fn fail(m) { print("inner caught: {m} at {Clock.now()}") } } in {
+                with_timeout(11.ms) { sleep(100.ms) }
+            }
+            sleep(100.ms)
+            print("outer block goes on after its deadline, at {Clock.now()}")
+        }
+    }
+    print("end at {Clock.now()}")
+}

@@ -1,0 +1,40 @@
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { print("unlocked")
+ let Lock(i) = l }
+fn lock() -> Lock { print("locked")
+ Lock { id: 1 } }
+struct Cell<T> { x: T }
+impl<T> Cell<T> {
+    fn take_after(self: Cell<T>) -> T / fail { fail("m")
+ let Cell(y) = self
+ y }
+}
+fn hold_closure<T>(x: T) -> T / fail { let c = || x
+ fail("x")
+ c() }
+fn hold_tuple<T>(p: (T, u64)) -> T / fail { fail("t")
+ let (a, b) = p
+ a }
+fn hold_two<T, U>(x: T, y: U) -> T / fail { fail("two")
+ x }
+
+fn g_method() / fail {
+    let c = Cell { x: lock() }
+    let m = c.take_after()
+    unlock(m)
+}
+fn g_closure() / fail {
+    let m = hold_closure(lock())
+    unlock(m)
+}
+fn g_tuple() / fail {
+    let m = hold_tuple((lock(), 1))
+    unlock(m)
+}
+fn g_second() / fail {
+    let m = hold_two(1, lock())
+    print(m)
+}
+fn main() {
+    handle Fail { fn fail(m) { print(m) } } in g_method()
+}

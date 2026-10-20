@@ -1,0 +1,91 @@
+// RT1 W0204 variants. Each `ERR` should give W0204 (or W0301).
+struct Entity { hp: i32 }
+struct Bag { items: Vec<u64> }
+impl Bag {
+    fn first(self) -> &u64 in self.items[] { &self.items[0] }
+}
+// 1. An early return statement.
+fn early(v: &Vec<u64>, c: bool) -> &u64 in v[] {
+    let w = Vec.new()
+    w.push(1)
+    if c { return &w[0] }   // ERR
+    &v[0]
+}
+// 2. An if expression as the tail.
+fn tail_if(v: &Vec<u64>, c: bool) -> &u64 in v[] {
+    let w = Vec.new()
+    w.push(1)
+    if c { &w[0] } else { &v[0] }   // ERR
+}
+// 3. A match arm as the tail.
+fn tail_match(v: &Vec<u64>, c: bool) -> &u64 in v[] {
+    let w = Vec.new()
+    w.push(1)
+    match c { true => &w[0], false => &v[0] }   // ERR
+}
+// 4. A tuple of references.
+fn tuple_ret(v: &Vec<u64>) -> (&u64 in v[], u64) {
+    let w = Vec.new()
+    w.push(1)
+    (&w[0], 1)   // ERR
+}
+// 5. Through a method of a local.
+fn via_method(v: &Vec<u64>) -> &u64 in v[] {
+    let b = Bag { items: Vec.new() }
+    b.items.push(1)
+    b.first()   // ERR
+}
+// 6. Through `get` on a by-value parameter.
+fn via_get(v: Vec<u64>) -> &u64 in v[] {
+    v.get(0)   // ERR
+}
+// 7. Through a local closure call.
+fn via_closure(v: &Vec<u64>) -> &u64 in v[] {
+    let w = Vec.new()
+    w.push(1)
+    let g = || &w[0]
+    g()   // ERR
+}
+// 8. A reference to a temporary.
+fn mk() -> Vec<u64> { Vec.new() }
+fn via_temp(v: &Vec<u64>) -> &u64 in v[] {
+    &mk()[0]   // ERR
+}
+// 9. Through a nested block.
+fn nested(v: &Vec<u64>) -> &u64 in v[] {
+    let w = Vec.new()
+    w.push(1)
+    { { &w[0] } }   // ERR
+}
+// 10. A closure returns its by-value capture? (moved capture is owned by the closure)
+fn closure_early() {
+    let f = |e: Entity| { if true { return &e.hp } ; &e.hp }   // ERR (twice)
+    print(0)
+}
+// 11. A closure returns a reference into a temporary.
+fn closure_temp() {
+    let f = || &mk()[0]   // ERR
+    print(f())
+}
+// 12. A closure returns a reference into a closure local via a nested block.
+fn closure_nested() {
+    let f = || { let w = Vec.new(); w.push(1); { &w[0] } }   // ERR
+    print(f())
+}
+// 13. A closure returns a reference from a local via a local reference.
+fn closure_via_ref() {
+    let f = || { let w = Vec.new(); w.push(1); let r = &w[0]; r }   // ERR
+    print(f())
+}
+// 14. A function returns a reference via a local reference.
+fn via_ref(v: &Vec<u64>) -> &u64 in v[] {
+    let w = Vec.new()
+    w.push(1)
+    let r = &w[0]
+    r   // ERR
+}
+// 15. A closure returned from a function that captures a local.
+fn ret_closure() -> fn() -> u64 {
+    let w: Vec<u64> = Vec.new()
+    || w.len()   // ERR? closure captures a local of ret_closure
+}

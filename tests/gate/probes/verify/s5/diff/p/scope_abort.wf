@@ -1,0 +1,26 @@
+effect Op { fn op() }
+struct Stats { count: u64 }
+fn scope_abort(st: &Stats) / mut(st), async {
+    handle Op { fn op() { print(9) } } in {
+        scope { s =>
+            s.spawn(|| st.count += 1)
+            op()
+        }
+    }
+    st.count += 1
+    print(st.count)
+}
+fn scope_resume(st: &Stats) / mut(st), async {
+    handle Op { fn op() { resume(()) } } in {
+        scope { s =>
+            s.spawn(|| st.count += 1)
+            op()
+        }
+    }
+    st.count += 1
+    print(st.count)
+}
+fn main() / async {
+    let st = Stats { count: 0 }
+    scope_abort(&st)
+}

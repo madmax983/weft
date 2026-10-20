@@ -1,0 +1,17 @@
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct Hold { b: Box<Frame> }
+fn one_box() {
+    let h = Hold { b: Box.new(Frame { buf: [1, 2, 3, 4] }) }
+    print(h.b.cur)
+}
+fn two_boxes() {
+    let h = Box.new(Hold { b: Box.new(Frame { buf: [1, 2, 3, 4] }) })
+    print(h.b.cur)
+}
+mod a {
+    enum Hidden { Circle(u64) }
+}
+fn private_variant() -> u64 {
+    let x = Circle(1)
+    1
+}

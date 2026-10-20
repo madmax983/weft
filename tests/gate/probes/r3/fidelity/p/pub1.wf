@@ -1,0 +1,5 @@
+// weft: library
+// A public function with no stated row: the design says public signatures state them.
+struct W { items: Vec<u64> }
+pub fn grow(w: &W) { w.items.push(1) }
+pub fn talk() { log.info("x") }

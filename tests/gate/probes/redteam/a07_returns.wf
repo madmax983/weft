@@ -1,0 +1,34 @@
+// A reference nested in a return type.
+fn find(v: &Vec<u64>) -> Option<&u64> { Some(&v[0]) }
+fn use_find() {
+    let v = Vec.new()
+    v.push(1)
+    let o = find(&v)
+    v.push(2)
+    match o {
+        Some(r) => print(r),
+        None => {}
+    }
+}
+// A reference to a local, nested in the return type.
+fn local_ref() -> Option<&u64> {
+    let v = Vec.new()
+    v.push(1)
+    Some(&v[0])
+}
+// Tuple of refs with places.
+fn pair(v: &Vec<u64>) -> (&u64 in v[], u64) { (&v[0], 1) }
+fn use_pair() {
+    let v = Vec.new()
+    v.push(1)
+    let (r, n) = pair(&v)
+    v.push(2)
+    print(r)
+}
+// A returned reference from a block-local inside a function with a place.
+fn bad_place(v: &Vec<u64>) -> &u64 in v[] {
+    let w = Vec.new()
+    w.push(1)
+    let r = &w[0]
+    r
+}

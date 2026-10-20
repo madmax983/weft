@@ -1,0 +1,8 @@
+pub effect Note { fn note(x: u64) }
+mod sub {
+    pub effect Deep { fn deep() }
+}
+effect Priv { fn p() }
+pub fn noting() / Note { note(1) }
+pub fn deep() / sub.Deep { sub.Deep.deep() }
+pub fn priv() / Priv { p() }

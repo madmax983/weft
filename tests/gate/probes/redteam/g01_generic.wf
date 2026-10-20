@@ -1,0 +1,35 @@
+fn id<T>(x: T) -> T { x }
+struct Wrap<T> { x: T }
+// A generic identity launders a reference.
+fn launder_id() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = id(&v[0])
+    v.clear()
+    print(r)
+}
+// A generic struct holds a reference.
+fn launder_struct() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let w = Wrap { x: &v[0] }
+    v.clear()
+    print(w.x)
+}
+// Box.new of a reference.
+fn launder_box() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let b = Box.new(&v[0])
+    v.clear()
+    print(b)
+}
+// A generic identity returns a ref to a local.
+fn local_id() -> u64 {
+    let r = {
+        let v: Vec<u64> = Vec.new()
+        v.push(1)
+        id(&v[0])
+    }
+    0
+}

@@ -1,0 +1,6 @@
+fn main() / par {
+    let x = fork(|| 5)
+    print(x)
+    let (p, q) = fork(|| 1, || print("u"))
+    print(p)
+}

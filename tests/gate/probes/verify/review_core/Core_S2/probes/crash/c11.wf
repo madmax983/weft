@@ -1,0 +1,3 @@
+struct World { n: u64 }
+impl World { fn m(self: &World) {} }
+fn f(w: &World) { let g = w.m; g() }

@@ -1,0 +1,14 @@
+struct E { hp: u64, tag: u64 }
+struct W { es: Vec<E>, ns: Vec<u64>, score: u64, b: Box<E> }
+
+fn mk_w() -> W {
+    let w = W { es: Vec.new(), ns: Vec.new(), score: 0, b: Box.new(E { hp: 1, tag: 0 }) }
+    w
+}
+fn run_both(f: fn(), g: fn()) { f(); g() }
+
+fn main() {
+    let w1 = mk_w()
+    let f2 = || w1.score += 1
+    run_both(f2, f2)
+}

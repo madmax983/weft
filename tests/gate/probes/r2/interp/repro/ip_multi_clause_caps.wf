@@ -1,0 +1,20 @@
+// An inner handler inside a `multi` continuation. Its clause captures a local of
+// the copied frames. Each resume must see its own copy of `count`.
+effect Choice { multi fn choose() -> bool }
+effect Tick { fn tick() }
+
+fn body() -> u64 / Choice, Tick {
+    let b = choose()
+    tick()
+    if b { 1 } else { 2 }
+}
+
+fn main() {
+    let all = Vec.new()
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        let count = 0
+        let r = handle Tick { fn tick() { count += 1; resume(()) } } in body()
+        all.push(count)
+    }
+    print(all)
+}

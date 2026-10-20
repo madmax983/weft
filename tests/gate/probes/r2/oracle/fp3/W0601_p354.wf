@@ -1,0 +1,9 @@
+test "tasks written in the simulation body" {
+    sim.run(seed: 1) {
+        scope { s =>
+            let b = s.spawn(|| { sleep(10.ms); print("early") })
+        }
+    }
+}
+
+

@@ -1,0 +1,36 @@
+struct Node { v: u64 }
+struct Entity { hp: u64 }
+struct World { entities: Vec<Entity> }
+fn heal(es: &[Entity]) / mut(es[]) {
+    for e in es[] { e.hp += 1 }
+}
+// Nonportable captured through a closure.
+fn rc_in_closure() / par {
+    let n = Rc.new(Node { v: 1 })
+    let c = || print(n.v)
+    fork(|| c(), || print(2))
+}
+// Nonportable captured through a reference.
+fn rc_by_ref() / par {
+    let n = Rc.new(Node { v: 1 })
+    let r = &n
+    fork(|| { let a = r.clone() }, || { let b = r.clone() })
+}
+// Nonportable inside a struct (control).
+struct Holder { n: Rc<Node> }
+fn rc_in_struct() / par {
+    let h = Holder { n: Rc.new(Node { v: 1 }) }
+    fork(|| print(h.n.v), || print(2))
+}
+// Two different splits overlap.
+fn two_splits(world: &World) / mut(world.entities[]), par {
+    let (l, r) = world.entities.split_mut(1)
+    let (l2, r2) = world.entities.split_mut(2)
+    fork(|| heal(l), || heal(r2))
+}
+// A shared-mutable reference reached through a closure.
+fn bump(w: &World) / mut(w.entities[]) { heal(&w.entities[]) }
+fn aliased_closure(world: &World) / mut(world.entities[]), par {
+    let c = || bump(world)
+    fork(|| c(), || print(1))
+}

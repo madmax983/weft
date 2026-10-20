@@ -1,0 +1,15 @@
+// The operation runs in a closure of the handled body, on a local of the closure.
+struct Entity { hp: i32 }
+effect Peek { fn peek(e: &Entity) }
+fn cl() {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)
+        }
+    } in {
+        let f = || { let local = Entity { hp: 1 }; peek(&local) }
+        f()
+    }
+}
+fn main() { cl() }

@@ -1,0 +1,13 @@
+// No caller passes a closure that performs `choose`.
+effect Choice { multi fn choose() -> bool }
+linear struct Lock { id: u64 }
+    on abort = release
+fn take() -> Lock { Lock { id: 1 } }
+fn release(l: Lock) { let Lock(i) = l }
+fn with_lock(f: fn()) {
+    let l = take()
+    f()
+    release(l)
+}
+fn user() { with_lock(|| print(1)) }
+fn elsewhere() -> bool / Choice { choose() }

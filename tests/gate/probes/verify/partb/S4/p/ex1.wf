@@ -1,0 +1,22 @@
+enum C { R, G, B }
+enum Sh { Circle(u64), Rect(u64, u64), Tri(C) }
+fn e01(oo: Option<Option<u64>>) -> u64 { match oo { Some(Some(x)) => x, None => 0 } }
+fn e02(a: bool, b: bool) -> u64 { match (a, b) { (true, _) => 1, (false, true) => 2 } }
+fn e03(c: bool) -> u64 { match c { true => 1 } }
+fn e04(n: u64) -> u64 { match n { 0 => 1, 1 => 2 } }
+fn e05(s: String) -> u64 { match s { "a" => 1 } }
+fn e06(r: Result<u64, u64>) -> u64 { match r { Ok(x) => x } }
+fn e07(c: C) -> u64 { match c { C.R => 1, C.G => 2 } }
+fn e08(o: &Option<u64>) -> u64 { match o { Some(x) => 1 } }
+fn e09(s: Sh) -> u64 { match s { Sh.Circle(r) => r, Sh.Rect(a, b) => a, Sh.Tri(C.R) => 1, Sh.Tri(C.G) => 2 } }
+fn e10(t: (C, bool)) -> u64 { match t { (C.R, true) => 1, (_, false) => 2, (C.G, _) => 3 } }
+fn e11(u: ()) -> u64 { match u { () => 1 } }
+fn e12(o: Option<u64>) -> u64 { let x = match o { Some(y) => y }
+ x }
+fn e13(c: C) -> u64 { match c { R => 1, G => 2 } }
+fn c01(oo: Option<Option<u64>>) -> u64 { match oo { Some(Some(x)) => x, Some(None) => 1, None => 0 } }
+fn c02(a: bool, b: bool) -> u64 { match (a, b) { (true, _) => 1, (_, true) => 2, (false, false) => 3 } }
+fn c03(s: Sh) -> u64 { match s { Sh.Circle(r) => r, Sh.Rect(a, b) => a, Sh.Tri(_) => 1 } }
+fn c04(c: C) -> u64 { match c { C.R => 1, C.G => 2, C.B => 3 } }
+fn c05(n: u64) -> u64 { match n { 0 => 1, k => k } }
+fn c06(o: &Option<u64>) -> u64 { match o { Some(x) => 1, None => 0 } }

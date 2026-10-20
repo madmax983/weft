@@ -1,0 +1,6 @@
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    match 1 { 1 => v, _ => Vec.new() }
+    print(v.len())
+}

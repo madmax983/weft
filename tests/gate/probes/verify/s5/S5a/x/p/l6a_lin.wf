@@ -1,0 +1,29 @@
+effect Other { fn other() }
+struct Job { f: fn() }
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { print("rollback")
+ let Tx(i) = t }
+fn commit(t: Tx) { print("commit")
+ let Tx(i) = t }
+fn begin() -> Tx { Tx { id: 1 } }
+
+fn lin_clause_in_clause() {
+    let t = begin()
+    handle Fail { fn fail(m) { print(m) } } in {
+        handle Other { fn other() { fail("q")
+ resume(()) } } in other()
+        commit(t)
+    }
+}
+fn lin_local_stored() {
+    let t = begin()
+    handle Fail { fn fail(m) { print(m) } } in {
+        let j = Job { f: || fail("q") }
+        let g = j.f
+        g()
+        commit(t)
+    }
+}
+fn main() { lin_clause_in_clause() 
+ lin_local_stored() }

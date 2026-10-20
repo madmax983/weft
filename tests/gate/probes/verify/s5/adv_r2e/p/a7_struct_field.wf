@@ -1,0 +1,7 @@
+fn diff(a: i32, b: i32) -> i32 { a - b }
+struct H { f: fn(i32, i32) -> i32 }
+fn main() {
+    let s = H { f: diff }
+    let g = s.f
+    print(g(b: 10, a: 3))
+}

@@ -1,0 +1,17 @@
+struct Counter { items: Vec<u64> }
+fn grow_elem(rs: &Vec<&Counter>) / mut(rs[]) { let c = rs[0]
+ c.items.clear() }
+fn grow_none(rs: &Vec<&Counter>) / log { let c = rs[0]
+ c.items.clear() }
+fn first_in(rs: &Vec<&u64>, w: &Vec<u64>) -> &u64 in w[] { rs[0] }
+fn i_main() / log {
+    let c = Counter { items: Vec.new() }
+    c.items.push(4)
+    let at = &c.items[0]
+    let rs = Vec.new()
+    rs.push(&c)
+    grow_elem(&rs)
+    grow_none(&rs)
+    print(at)
+}
+fn main() / log { i_main() }

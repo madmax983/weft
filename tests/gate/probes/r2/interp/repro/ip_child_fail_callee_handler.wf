@@ -1,0 +1,27 @@
+// A child of the scope fails at 5 ms. The scope owner is then inside
+// `quiet_wait`, whose own Fail handler resumes. The failure belongs to the
+// scope, but the handler of the callee gets it and the scope ends normally.
+// With `fail_at = 15` (after `quiet_wait` returns) the outer handler gets it.
+fn quiet_wait() / clock {
+    handle Fail { fn fail(m) { print("callee handler: {m}"); resume(()) } } in {
+        sleep(10.ms)
+    }
+}
+
+fn run(fail_at: Duration) / io {
+    handle Fail { fn fail(m) { print("main handler: {m}") } } in {
+        scope { s =>
+            s.spawn(|| { sleep(fail_at); fail("child failed") })
+            quiet_wait()
+            sleep(20.ms)
+            print("scope body done")
+        }
+        print("scope returned normally")
+    }
+}
+
+fn main() / io {
+    run(5.ms)
+    print("---")
+    run(15.ms)
+}

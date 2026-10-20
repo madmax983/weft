@@ -1,0 +1,9 @@
+struct S { v: Vec<u8> }
+fn main() {
+    let x: i8 = 127
+    let y = -x - 1
+    print(y)
+    let z: u8 = 3
+    let w = z * z * z * z * z
+    print(w)
+}

@@ -1,0 +1,8 @@
+// The clause pushes a resuming closure into an outer Vec.
+effect Note { fn note() }
+fn main() {
+    let v: Vec<fn()> = Vec.new()
+    handle Note { fn note() { v.push(|| resume(())) } } in note()
+    let g = v[0]
+    g()
+}

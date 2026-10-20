@@ -1,0 +1,2 @@
+effect Log { fn log(m: u64) }
+fn main() { log(1) }

@@ -1,0 +1,10 @@
+fn main(env: Env) / io {
+    let c = util.Conn.open()
+    let a = c.secret()
+    let b = util.hidden()
+    let d = util.inner.deep()
+    let e = util.inner.deep_pub()
+    let g = util.hidden
+    let h = util.apply(util.hidden)
+    util.noting()
+}

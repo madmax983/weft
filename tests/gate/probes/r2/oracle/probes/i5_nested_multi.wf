@@ -1,0 +1,13 @@
+effect Pick { multi fn pick() -> bool }
+effect Ask { fn ask() -> u64 }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        handle Ask { fn ask() { if pick() { resume(1) } else { resume(2) } } } in {
+            let l = Lk { id: 1 }
+            print(ask())
+            unlock(l)
+        }
+    }
+}

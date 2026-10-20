@@ -1,0 +1,37 @@
+effect Peek { fn peek(v: &Vec<u64>) -> u64 }
+effect Log { fn log(msg: String) }
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Keep { f: fn() }
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { let Lock(i) = l }
+fn lock() -> Lock { Lock { id: 1 } }
+
+// (b) The clause holds a reference into its parameter across `resume`; the
+// handled computation changes the place that the operation got.
+fn clause_param_resume() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Peek {
+        fn peek(x) {
+            let r = &x[0]
+            resume(0)
+            print(r)   //~ W0301
+        }
+    } in {
+        let n = peek(&v)
+        v.push(2)
+    }
+}
+// (d) A local handler whose clause always resumes: the perform still can abort.
+fn local_resumes() {
+    handle Log { fn log(m) { resume(()) } } in {
+        let l = lock()
+        log("x")   //~ W0602
+        unlock(l)
+    }
+}
+// (g) A stored closure that is never called counts in the row of its maker.
+pub fn stores(k: &Keep, w: &World) / mut(k) {
+    k.f = || w.entities.clear()   //~ W0703
+}

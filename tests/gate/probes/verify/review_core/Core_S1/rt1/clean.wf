@@ -1,0 +1,131 @@
+// RT1 clean programs: a correct fix must accept each of these.
+struct Entity { hp: i32 }
+struct Bag { items: Vec<u64>, other: Vec<u64> }
+struct Cell2 { items: Vec<u64> }
+fn take(v: Vec<u64>) {}
+fn take_rc(c: Rc<Cell2>) {}
+
+// 1. A block value that is a copy of an element of a block local.
+fn block_copy() -> u64 {
+    let x = { let v: Vec<u64> = Vec.new(); v.push(1); v[0] }
+    x
+}
+// 2. A block value that moves the block local out.
+fn block_move_out() -> usize {
+    let w = { let v: Vec<u64> = Vec.new(); v.push(1); v }
+    w.len()
+}
+// 3. A block value that is a struct holding the block local.
+fn block_struct() -> usize {
+    let b = { let v: Vec<u64> = Vec.new(); Bag { items: v, other: Vec.new() } }
+    b.items.len()
+}
+// 4. A match arm moves its binding out.
+fn arm_move_out(o: Option<Vec<u64>>) -> usize {
+    let w = match o { Some(v) => v, None => Vec.new() }
+    w.len()
+}
+// 5. A closure returns a reference into a captured outer local.
+fn closure_outer_local() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let f = || &v[0]
+    print(f())
+}
+// 6. A closure with a reference parameter returns a place inside it.
+fn closure_ref_param(e: &Entity) {
+    let f = |x: &Entity| &x.hp
+    print(f(e))
+}
+// 7. A block value that is a reference into an outer local.
+fn block_outer_ref() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = { let i: usize = 0; &v[i] }
+    print(r)
+}
+// 8. A reference into a loop-body local, used in the same iteration.
+fn loop_body_ref(n: u64) {
+    let i = 0
+    while i < n {
+        let e = Entity { hp: 1 }
+        let r = &e.hp
+        print(r)
+        i += 1
+    }
+}
+// 9. A partial move of another field.
+fn partial_other() {
+    let b = Bag { items: Vec.new(), other: Vec.new() }
+    b.items.push(1)
+    let r = &b.items[0]
+    take(b.other)
+    print(r)
+}
+// 10. A clone moved away.
+fn clone_moved(a: Rc<Cell2>) {
+    let r = &a.items
+    take_rc(a.clone())
+    print(r.len())
+}
+// 11. Rebinding the reference before the block ends.
+fn rebind_before_end() {
+    let keep = Entity { hp: 1 }
+    let r = &keep.hp
+    {
+        let e = Entity { hp: 2 }
+        r = &e.hp
+        print(r)
+        r = &keep.hp
+    }
+    print(r)
+}
+// 12. A reference to a by-value parameter used inside the function.
+fn by_value_param_use(v: Vec<u64>) {
+    let r = &v[0]
+    print(r)
+}
+// 13. A shadowed owner keeps its slot until the end of the scope.
+fn shadowed() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let v: Vec<u64> = Vec.new()
+    print(r)
+}
+// 14. A move of a reference copy, not of the owner.
+fn move_ref_copy() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let s = r
+    print(r)
+    print(s)
+}
+// 15. A for loop over a local, then the local is moved after the loop.
+fn loop_then_move() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    for x in v[] { print(x) }
+    take(v)
+}
+// 16. A closure created and called inside a block, then the block ends.
+fn closure_in_block() {
+    let n = {
+        let v: Vec<u64> = Vec.new()
+        v.push(1)
+        let f = || v.len()
+        f()
+    }
+    print(n)
+}
+// 17. A closure that returns a copy of a local field.
+fn closure_copy() {
+    let f = || { let e = Entity { hp: 1 }; e.hp }
+    print(f())
+}
+// 18. An if value that copies out of an inner local.
+fn if_copy(c: bool) -> i32 {
+    let x = if c { let e = Entity { hp: 1 }; e.hp } else { 2 }
+    x
+}

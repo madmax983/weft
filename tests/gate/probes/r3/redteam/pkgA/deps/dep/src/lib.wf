@@ -1,0 +1,11 @@
+extern fn c_call() -> u64
+effect Mine { fn mine() -> u64 }
+pub fn a() -> u64 { c_call() }
+pub fn b() -> u64 {
+    handle Mine { fn mine() { let t = now(); resume(1) } } in mine()
+}
+pub fn c() { sleep(1.ms) }
+pub fn d() -> fn() -> u64 { || random() }
+pub fn e<T>(x: T) -> T { let f = || info("x"); x }
+pub fn g() -> u64 / par { let (a, b) = fork(|| 1, || 2); a + b }
+pub fn h() / async { scope { s => s.spawn(|| 1); () } }

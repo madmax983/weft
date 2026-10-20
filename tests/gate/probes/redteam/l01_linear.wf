@@ -1,0 +1,38 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+linear struct Lock { id: u64 }
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn release(l: Lock) { let Lock(i) = l }
+fn begin() -> Tx { Tx { id: 1 } }
+fn take() -> Lock { Lock { id: 1 } }
+fn risky() / fail { fail("no") }
+// A closure that captures a linear value is never called.
+fn closure_dropped() {
+    let tx = begin()
+    let f = || rollback(tx)
+}
+// Passed to a function that ignores it.
+fn ignore(f: fn()) {}
+fn closure_ignored() {
+    let tx = begin()
+    ignore(|| rollback(tx))
+}
+// Overwriting a linear field.
+struct Pair { tx: Tx, n: u64 }
+fn field_overwrite() {
+    let p = Pair { tx: begin(), n: 1 }
+    p.tx = begin()
+    let Pair(t, n) = p
+    rollback(t)
+}
+// Abort through a fn item value: should be W0602.
+fn abort_via_item() / fail {
+    let l = take()
+    let r = risky
+    r()
+    release(l)
+}
+// Overwriting a linear element of a Vec.
+fn vec_overwrite(v: &Vec<Tx>) / mut(v[]) {
+    v[0] = begin()
+}

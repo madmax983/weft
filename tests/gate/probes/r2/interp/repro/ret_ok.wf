@@ -1,0 +1,17 @@
+// B1 `ret_ok`: a returned reference must come from an argument that the call
+// does not kill. Here the call mutates `w` (a strict prefix of `e`) and
+// returns a reference derived from `e`.
+struct Entity { hp: u64 }
+struct World { entities: Vec<Entity> }
+
+fn pick(w: &World, e: &Entity in w.entities[]) -> &Entity in w.entities[] / mut(w.entities) {
+    e
+}
+
+fn main() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 5 })
+    let x = &w.entities[0]
+    let r = pick(&w, x)
+    print(r.hp)
+}

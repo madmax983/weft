@@ -1,0 +1,43 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn top(world: &World) { let first = &world.entities[0]; ap39(|x| x.entities.clear(), world); print(first.hp) }
+fn ap39(f: fn(&World), w: &World) { ap38(f, w) }
+fn ap38(f: fn(&World), w: &World) { ap37(f, w) }
+fn ap37(f: fn(&World), w: &World) { ap36(f, w) }
+fn ap36(f: fn(&World), w: &World) { ap35(f, w) }
+fn ap35(f: fn(&World), w: &World) { ap34(f, w) }
+fn ap34(f: fn(&World), w: &World) { ap33(f, w) }
+fn ap33(f: fn(&World), w: &World) { ap32(f, w) }
+fn ap32(f: fn(&World), w: &World) { ap31(f, w) }
+fn ap31(f: fn(&World), w: &World) { ap30(f, w) }
+fn ap30(f: fn(&World), w: &World) { ap29(f, w) }
+fn ap29(f: fn(&World), w: &World) { ap28(f, w) }
+fn ap28(f: fn(&World), w: &World) { ap27(f, w) }
+fn ap27(f: fn(&World), w: &World) { ap26(f, w) }
+fn ap26(f: fn(&World), w: &World) { ap25(f, w) }
+fn ap25(f: fn(&World), w: &World) { ap24(f, w) }
+fn ap24(f: fn(&World), w: &World) { ap23(f, w) }
+fn ap23(f: fn(&World), w: &World) { ap22(f, w) }
+fn ap22(f: fn(&World), w: &World) { ap21(f, w) }
+fn ap21(f: fn(&World), w: &World) { ap20(f, w) }
+fn ap20(f: fn(&World), w: &World) { ap19(f, w) }
+fn ap19(f: fn(&World), w: &World) { ap18(f, w) }
+fn ap18(f: fn(&World), w: &World) { ap17(f, w) }
+fn ap17(f: fn(&World), w: &World) { ap16(f, w) }
+fn ap16(f: fn(&World), w: &World) { ap15(f, w) }
+fn ap15(f: fn(&World), w: &World) { ap14(f, w) }
+fn ap14(f: fn(&World), w: &World) { ap13(f, w) }
+fn ap13(f: fn(&World), w: &World) { ap12(f, w) }
+fn ap12(f: fn(&World), w: &World) { ap11(f, w) }
+fn ap11(f: fn(&World), w: &World) { ap10(f, w) }
+fn ap10(f: fn(&World), w: &World) { ap9(f, w) }
+fn ap9(f: fn(&World), w: &World) { ap8(f, w) }
+fn ap8(f: fn(&World), w: &World) { ap7(f, w) }
+fn ap7(f: fn(&World), w: &World) { ap6(f, w) }
+fn ap6(f: fn(&World), w: &World) { ap5(f, w) }
+fn ap5(f: fn(&World), w: &World) { ap4(f, w) }
+fn ap4(f: fn(&World), w: &World) { ap3(f, w) }
+fn ap3(f: fn(&World), w: &World) { ap2(f, w) }
+fn ap2(f: fn(&World), w: &World) { ap1(f, w) }
+fn ap1(f: fn(&World), w: &World) { ap0(f, w) }
+fn ap0(f: fn(&World), w: &World) { f(w) }

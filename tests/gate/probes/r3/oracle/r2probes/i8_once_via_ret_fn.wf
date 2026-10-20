@@ -1,0 +1,5 @@
+effect Ask { fn ask() -> u64 }
+fn wrap(f: fn() -> u64) -> fn() -> u64 { || f() + f() }
+fn main() {
+    handle Ask { fn ask() { let g = wrap(|| resume(1)); print(g()) } } in print(ask())
+}

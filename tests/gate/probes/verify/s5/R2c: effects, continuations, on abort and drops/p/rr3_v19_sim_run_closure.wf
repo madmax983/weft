@@ -1,0 +1,16 @@
+// A clause resumes the continuation inside sim.run; the body spawns a task in an outer scope.
+effect Ask { fn ask() -> u64 }
+fn main() / clock {
+    let r = handle Ask {
+        fn ask() {
+            sim.run(seed: 1) { let v = resume(1); print("in sim {v}") }
+            0
+        }
+    } in {
+        let a = ask()
+        sleep(10.ms)
+        print("slept")
+        a + 1
+    }
+    print(r)
+}

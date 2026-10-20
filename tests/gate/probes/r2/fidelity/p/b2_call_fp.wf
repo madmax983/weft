@@ -1,0 +1,50 @@
+effect Log { fn log(msg: String) }
+
+fn helper() / Log { log("h") }
+fn apply(f: fn()) { f() }
+fn apply_t<T>(x: T, f: fn(T)) { f(x) }
+struct Holder { f: fn() / Log }
+fn run_holder(h: &Holder) / Log { (h.f)() }
+
+// A plain call of a function that performs `log` gets the footprint of the
+// local handler (borrowing note 2).
+fn via_call() {
+    let lines: Vec<String> = Vec.new()
+    lines.push("a")
+    handle Log { fn log(m) { lines.push(m); resume(()) } } in {
+        let r = &lines[0]
+        helper()
+        print(r)   //~ W0301
+    }
+}
+// Through a higher-order callee.
+fn via_apply() {
+    let lines: Vec<String> = Vec.new()
+    lines.push("a")
+    handle Log { fn log(m) { lines.push(m); resume(()) } } in {
+        let r = &lines[0]
+        apply(|| log("x"))
+        print(r)   //~ W0301
+    }
+}
+// Through a generic higher-order callee.
+fn via_apply_t() {
+    let lines: Vec<String> = Vec.new()
+    lines.push("a")
+    handle Log { fn log(m) { lines.push(m); resume(()) } } in {
+        let r = &lines[0]
+        apply_t(1, |n| log("x"))
+        print(r)   //~ W0301
+    }
+}
+// Through a function item value.
+fn via_item() {
+    let lines: Vec<String> = Vec.new()
+    lines.push("a")
+    handle Log { fn log(m) { lines.push(m); resume(()) } } in {
+        let r = &lines[0]
+        let g = helper
+        g()
+        print(r)   //~ W0301
+    }
+}

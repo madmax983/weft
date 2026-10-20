@@ -1,0 +1,13 @@
+// A spawn whose handle is not kept. The task returns a linear value.
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(t: Tx) { let Tx(id) = t; print("rollback {id}") }
+
+fn main() / io, par {
+    scope { s =>
+        s.spawn(|| Tx { id: 4 });
+        print("spawned")
+    }
+    print("end")
+}

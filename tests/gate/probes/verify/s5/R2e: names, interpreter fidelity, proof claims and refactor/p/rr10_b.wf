@@ -1,0 +1,10 @@
+// Reassigned in a loop.
+fn diff(a: i32, b: i32) -> i32 { a - b }
+fn rdiff(b: i32, a: i32) -> i32 { a - b }
+fn main() {
+    let g = diff
+    for i in 0..2 {
+        print(g(b: 10, a: 3))
+        g = rdiff
+    }
+}

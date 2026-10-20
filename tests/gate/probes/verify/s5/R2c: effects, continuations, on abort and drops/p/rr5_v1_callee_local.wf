@@ -1,0 +1,17 @@
+// The operation runs in a callee of the handled body. The callee's local ends
+// before the resume returns.
+struct Entity { hp: i32 }
+effect Peek { fn peek(e: &Entity) }
+fn helper() / Peek {
+    let local = Entity { hp: 1 }
+    peek(&local)
+}
+fn callee_local() {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)
+        }
+    } in helper()
+}
+fn main() { callee_local() }

@@ -1,0 +1,8 @@
+// A task performs Log. A user handler of Log is on the parent stack.
+fn main() / io {
+    handle Log { fn info(m) { print("intercepted {m}"); resume(()) } fn warn(m) { resume(()) } } in {
+        scope { s =>
+            s.spawn(|| log.info("from task"))
+        }
+    }
+}

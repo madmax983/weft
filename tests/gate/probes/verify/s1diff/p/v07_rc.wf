@@ -1,0 +1,79 @@
+struct Cell2 { items: Vec<u64>, n: u64 }
+struct S { h: Rc<Cell2>, k: u64 }
+fn mk() -> Rc<Cell2> { Rc.new(Cell2 { items: Vec.new(), n: 1 }) }
+fn take_s(s: S) {}
+
+// 1. A handle in a struct field gets a new value. Expect W0301.
+fn field_overwrite() {
+    let s = S { h: mk(), k: 1 }
+    let r = &s.h.n
+    s.h = mk()
+    print(r)
+}
+
+// 2. The struct that holds the handle is moved. Expect W0301.
+fn holder_moved() {
+    let s = S { h: mk(), k: 1 }
+    let r = &s.h.n
+    take_s(s)
+    print(r)
+}
+
+// 3. The handle through a reference: the referent gets a new value. Expect W0301.
+fn through_ref(s: &S) / mut(s.h) {
+    let r = &s.h.n
+    s.h = mk()
+    print(r)
+}
+
+// 4. A temporary handle. Expect W0301 (the temporary dies).
+fn temp_handle() {
+    let r = &mk().n
+    print(r)
+}
+
+// 5. A handle in a block; the block ends. Expect W0301.
+fn block_handle() {
+    let r = {
+        let a = mk()
+        &a.n
+    }
+    print(r)
+}
+
+// 6. A clone outlives the block: the reference came through the outer handle. Expect clean.
+fn outer_handle_ok() {
+    let a = mk()
+    let r = &a.n
+    {
+        let b = a.clone()
+        b.n += 1
+    }
+    print(r)
+}
+
+// 7. A stable field of an Rc object reached through a handle that moves to a local. 
+fn handle_moved_local() {
+    let a = mk()
+    let r = &a.n
+    let b = a
+    print(r)
+}
+
+// 8. A match on a handle by reference, then a new value of the handle. Expect W0301.
+fn match_handle() {
+    let a = mk()
+    let r = match a { c => &c.n }
+    a = mk()
+    print(r)
+}
+
+// 9. A for loop over the items of an Rc object; the handle gets a new value in the body. Expect W0301.
+fn loop_handle() {
+    let a = mk()
+    a.items.push(1)
+    for x in a.items[] {
+        a = mk()
+        print(x)
+    }
+}

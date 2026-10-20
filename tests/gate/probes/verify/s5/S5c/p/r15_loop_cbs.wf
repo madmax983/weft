@@ -1,0 +1,12 @@
+fn run(g: fn()) { g() }
+fn f(xs: &Vec<u64>) / mut(xs) {
+    let cbs = Vec.new()
+    cbs.push(|| { xs.push(1) })
+    cbs.push(|| { xs.push(2) })
+    for i in 0..2 { run(cbs[i]) }
+}
+fn main() {
+    let xs = Vec.new()
+    f(&xs)
+    print(xs.len())
+}

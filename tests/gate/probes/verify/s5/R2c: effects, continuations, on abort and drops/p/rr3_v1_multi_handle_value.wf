@@ -1,0 +1,15 @@
+// A multi clause gives a resuming closure to the body as the operation result.
+// The body gives it back as the value of the handle.
+effect Ask { multi fn ask() -> fn() }
+fn main() {
+    let g = handle Ask {
+        fn ask() {
+            let k = || { resume(|| print(1)); () }
+            resume(k)
+        }
+    } in {
+        let f = ask()
+        f
+    }
+    g()
+}

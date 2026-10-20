@@ -1,0 +1,10 @@
+effect Pick { fn pick() -> &u64 }
+fn ret_pick(v: &Vec<u64>) -> &u64 in v.. {
+    handle Pick { fn pick() { resume(&v[0]) } } in pick()
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = ret_pick(&v)
+    print(r)
+}

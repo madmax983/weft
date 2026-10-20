@@ -1,0 +1,19 @@
+effect Choice { multi fn choose() -> bool }
+
+fn pick() -> u64 / Choice {
+    if choose() { 1 } else { 2 }
+}
+
+fn count() -> u64 / Choice {
+    let x = 10
+    if choose() { x += 1 } else { x += 2 }
+    x
+}
+
+fn main() {
+    let out = Vec.new()
+    handle Choice { fn choose() { resume(true); resume(false) } } in out.push(pick())
+    print(out)
+    let total = handle Choice { fn choose() { let a = resume(true); let b = resume(false); a + b } } in count()
+    print(total)
+}

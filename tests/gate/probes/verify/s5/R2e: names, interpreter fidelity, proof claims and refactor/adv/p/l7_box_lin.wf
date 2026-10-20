@@ -1,0 +1,5 @@
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(id) = t }
+fn main() {
+    let b = Box.new(Tx { id: 1 })
+}

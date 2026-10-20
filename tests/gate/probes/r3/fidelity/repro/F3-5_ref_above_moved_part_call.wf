@@ -1,0 +1,11 @@
+struct In { x: Vec<u64> }
+struct Out { a: In, b: In }
+fn take(i: In) -> usize { i.x.len() }
+fn peek(o: &Out) -> usize { o.a.x.len() }
+fn main() {
+    let p = Out { a: In { x: Vec.new() }, b: In { x: Vec.new() } }
+    p.a.x.push(4)
+    let r = &p
+    let n = take(p.a)
+    print(peek(r))   // expected W0301
+}

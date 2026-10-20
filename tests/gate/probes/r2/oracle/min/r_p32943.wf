@@ -1,0 +1,33 @@
+linear struct Tx { id: u64 }
+    on abort = tx_abort
+linear struct Lk { id: u64 }
+
+fn tx_abort(t: Tx) { let Tx(id) = t; print("abort", id) }
+fn commit(t: Tx) { let Tx(id) = t; print("commit", id) }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v.push(3)
+    v
+}
+
+fn h0(p0: Vec<u64>, p1: Tx) {
+    if p0.len() > 2 {
+        scope { s2 =>
+            s2.spawn(|| p0.clear())
+            print(p0)
+        }
+    } else {
+    }
+    let lk3 = Lk { id: 3 }
+    commit(p1)
+    unlock(lk3)
+}
+
+fn main() {
+    let v4 = mk_v()
+    let v5 = v4
+    h0(v5, Tx { id: 5 })
+}

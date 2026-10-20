@@ -1,0 +1,3 @@
+struct S { a: u64 }
+impl S { fn m(self) {} }
+fn f() { S.m(S { a: 1 }) }

@@ -1,0 +1,41 @@
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { print("unlock"); let Lock(i) = l }
+effect Stop { fn stop() }
+effect Choice { multi fn choose() -> bool }
+fn byval_inside() {
+    let l = Lock { id: 1 }
+    handle Stop { fn stop() { () } } in {
+        let f = || unlock(l)
+        stop()   //~ W0602
+        f()
+    }
+}
+fn byval_outside() {
+    let l = Lock { id: 1 }
+    let f = || unlock(l)
+    handle Stop { fn stop() { () } } in {
+        stop()
+    }
+    f()
+}
+fn byval_inside_multi() {
+    let l = Lock { id: 1 }
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        let f = || unlock(l)
+        let b = choose()   //~ W0503
+        f()
+    }
+}
+fn moved_into_body_tuple() {
+    let l = Lock { id: 1 }
+    handle Stop { fn stop() { () } } in {
+        let t = (l, 1)
+        stop()   //~ W0602
+        let (a, b) = t
+        unlock(a)
+    }
+}
+test "byval_inside" { byval_inside() }
+test "byval_outside" { byval_outside() }
+test "byval_inside_multi" { byval_inside_multi() }
+test "moved_into_body_tuple" { moved_into_body_tuple() }

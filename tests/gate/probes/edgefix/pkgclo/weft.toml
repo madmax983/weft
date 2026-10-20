@@ -1,0 +1,6 @@
+[package]
+name = "app"
+
+[dependencies.json]
+path = "deps/json"
+authority = []

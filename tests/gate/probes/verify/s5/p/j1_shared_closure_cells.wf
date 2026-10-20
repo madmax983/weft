@@ -1,0 +1,20 @@
+// A task in an outer scope takes a closure that owns a linear value. A
+// timeout aborts the block that made the closure, while the task waits.
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { let Tx(id) = t; print("rollback {id}") }
+fn commit(t: Tx) { let Tx(id) = t; print("commit {id}") }
+
+fn main() / io, async, clock {
+    scope { s =>
+        handle Fail { fn fail(m) { print("caught: {m}") } } in {
+            with_timeout(10.ms) {
+                let tx = Tx { id: 1 }
+                let f = || commit(tx)
+                s.spawn(|| { sleep(20.ms); f() })
+                sleep(100.ms)
+            }
+        }
+    }
+    print("end")
+}

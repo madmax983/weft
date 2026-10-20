@@ -1,0 +1,16 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+extern fn archive(v: Vec<Tx>) / blocking
+
+// `clear` drops each linear element, and nothing reports it.
+fn reset(v: &Vec<Tx>) / mut(v) {
+    v.clear()
+}
+fn main() / blocking {
+    let v = Vec.new()
+    v.push(begin())
+    reset(&v)
+    archive(v)
+}

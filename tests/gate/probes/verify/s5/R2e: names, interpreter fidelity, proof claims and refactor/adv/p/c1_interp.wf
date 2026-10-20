@@ -1,0 +1,11 @@
+fn f(a: u64, b: u64) {
+    print("{a - b}")
+}
+fn g(c: i64, d: i64) {
+    print("{c - d}")
+}
+fn main() {
+    g(2, 10)
+    print("i64 ok")
+    f(2, 10)
+}

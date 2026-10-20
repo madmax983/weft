@@ -1,0 +1,52 @@
+struct Entity { hp: i32 }
+impl Entity { fn new() -> Entity { Entity { hp: 10 } } }
+struct World { entities: Vec<Entity>, score: u64 }
+fn apply(f: fn(&World), w: &World) { f(w) }
+// 1. A closure that returns a mutating closure.
+fn nested(world: &World) / mut(world.entities) {
+    let mk = || (|| world.entities.clear())
+    let g = mk()
+    let first = &world.entities[0]
+    g()
+    print(first.hp)   // W0301
+}
+// 2. A closure callee that lends a captured place to its parameter.
+fn closure_hof(world: &World) / mut(world.entities) {
+    let run = |f: fn(&World)| f(world)
+    let first = &world.entities[0]
+    run(|x| x.entities.push(Entity.new()))
+    print(first.hp)   // W0301
+}
+// 3. A join with an unknown value.
+struct Cb { f: fn(&World) }
+fn joined(world: &World, cb: Cb, c: bool) {
+    let first = &world.entities[0]
+    let g = if c { cb.f } else { |x: &World| print(x.score) }
+    g(world)
+    print(first.hp)   // W0301: g can be anything
+}
+// 4. A returned closure with a parameter that it mutates.
+fn mk_pusher() -> fn(&World) { |x: &World| x.entities.push(Entity.new()) }
+fn pushes(world: &World) / mut(world.entities) {
+    let p = mk_pusher()
+    let first = &world.entities[0]
+    p(world)
+    print(first.hp)   // W0301
+}
+// 5. A lent place from a returned reference.
+fn ents(w: &World) -> &Vec<Entity> in w.entities { &w.entities }
+fn lend_derived(f: fn(&Vec<Entity>), w: &World) { f(ents(w)) }
+fn derived(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    lend_derived(|v| v.push(Entity.new()), world)
+    print(first.hp)   // W0301
+}
+// 6. Spawned returned closure that reads.
+fn mk_reader(w: &World) -> fn() { || print(w.score) }
+fn spawn_reader(world: &World) / mut(world.score), async {
+    let r = mk_reader(world)
+    scope { s =>
+        s.spawn(r)
+        world.score += 1   // W0405
+    }
+}

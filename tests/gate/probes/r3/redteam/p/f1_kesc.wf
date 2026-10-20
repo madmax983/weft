@@ -1,0 +1,75 @@
+effect Note { fn note(x: u64) }
+effect Ask { fn ask() -> u64 }
+struct Slot { f: fn() }
+struct Hook { f: fn() }
+
+// Into an Rc object made outside the clause.
+fn to_rc() {
+    let h = Rc.new(Hook { f: || print(0) })
+    handle Note { fn note(x) { h.f = || resume(()) } } in note(1)   //~ W0313
+    let g = h.f
+    g()
+}
+// Into a Box made outside the clause.
+fn to_box() {
+    let b = Box.new(Hook { f: || print(0) })
+    handle Note { fn note(x) { b.f = || resume(()) } } in note(1)   //~ W0313
+    let g = b.f
+    g()
+}
+// Into a Vec outside the clause.
+fn to_vec() {
+    let v = Vec.new()
+    v.push(|| print(0))
+    handle Note { fn note(x) { v.push(|| resume(())) } } in note(1)   //~ W0313
+    let g = v[1]
+    g()
+}
+// Wrapped in another closure that goes to an outer local.
+fn wrapped_closure() {
+    let k = || print(0)
+    handle Note { fn note(x) { let r = || resume(()); k = || r() } } in note(1)   //~ W0313
+    k()
+}
+// A tuple part of an outer local.
+fn tuple_part() {
+    let t = (|| print(0), 1)
+    handle Note { fn note(x) { t.0 = || resume(()) } } in note(1)   //~ W0313
+    let g = t.0
+    g()
+}
+// Through a nested handle in the clause whose value is the closure.
+fn nested_handle_value() {
+    let k = || print(0)
+    handle Note { fn note(x) {
+        k = handle Ask { fn ask() { resume(1) } } in { let n = ask(); || resume(()) }   //~ W0313
+    } } in note(1)
+    k()
+}
+// Through an inner function value returned by a local closure.
+fn via_maker() {
+    let k = || print(0)
+    handle Note { fn note(x) {
+        let mk = || { || resume(()) }
+        k = mk()   //~ W0313
+    } } in note(1)
+    k()
+}
+// Through a weak to an Rc.
+fn via_weak() {
+    let h = Rc.new(Hook { f: || print(0) })
+    let w = h.downgrade()
+    handle Note { fn note(x) {
+        match w.upgrade() { Some(r) => { r.f = || resume(()) }, None => {} }   //~ W0313
+    } } in note(1)
+    let g = h.f
+    g()
+}
+test "to_rc" { to_rc() }
+test "to_box" { to_box() }
+test "to_vec" { to_vec() }
+test "wrapped_closure" { wrapped_closure() }
+test "tuple_part" { tuple_part() }
+test "nested_handle_value" { nested_handle_value() }
+test "via_maker" { via_maker() }
+test "via_weak" { via_weak() }

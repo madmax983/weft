@@ -1,0 +1,3601 @@
+mod m0 {
+    pub effect E0 { fn op0(x: u64) }
+}
+mod m1 {
+    pub effect E1 { fn op1(x: u64) }
+}
+mod m2 {
+    pub effect E2 { fn op2(x: u64) }
+}
+mod m3 {
+    pub effect E3 { fn op3(x: u64) }
+}
+mod m4 {
+    pub effect E4 { fn op4(x: u64) }
+}
+mod m5 {
+    pub effect E5 { fn op5(x: u64) }
+}
+mod m6 {
+    pub effect E6 { fn op6(x: u64) }
+}
+mod m7 {
+    pub effect E7 { fn op7(x: u64) }
+}
+mod m8 {
+    pub effect E8 { fn op8(x: u64) }
+}
+mod m9 {
+    pub effect E9 { fn op9(x: u64) }
+}
+mod m10 {
+    pub effect E10 { fn op10(x: u64) }
+}
+mod m11 {
+    pub effect E11 { fn op11(x: u64) }
+}
+mod m12 {
+    pub effect E12 { fn op12(x: u64) }
+}
+mod m13 {
+    pub effect E13 { fn op13(x: u64) }
+}
+mod m14 {
+    pub effect E14 { fn op14(x: u64) }
+}
+mod m15 {
+    pub effect E15 { fn op15(x: u64) }
+}
+mod m16 {
+    pub effect E16 { fn op16(x: u64) }
+}
+mod m17 {
+    pub effect E17 { fn op17(x: u64) }
+}
+mod m18 {
+    pub effect E18 { fn op18(x: u64) }
+}
+mod m19 {
+    pub effect E19 { fn op19(x: u64) }
+}
+mod m20 {
+    pub effect E20 { fn op20(x: u64) }
+}
+mod m21 {
+    pub effect E21 { fn op21(x: u64) }
+}
+mod m22 {
+    pub effect E22 { fn op22(x: u64) }
+}
+mod m23 {
+    pub effect E23 { fn op23(x: u64) }
+}
+mod m24 {
+    pub effect E24 { fn op24(x: u64) }
+}
+mod m25 {
+    pub effect E25 { fn op25(x: u64) }
+}
+mod m26 {
+    pub effect E26 { fn op26(x: u64) }
+}
+mod m27 {
+    pub effect E27 { fn op27(x: u64) }
+}
+mod m28 {
+    pub effect E28 { fn op28(x: u64) }
+}
+mod m29 {
+    pub effect E29 { fn op29(x: u64) }
+}
+mod m30 {
+    pub effect E30 { fn op30(x: u64) }
+}
+mod m31 {
+    pub effect E31 { fn op31(x: u64) }
+}
+mod m32 {
+    pub effect E32 { fn op32(x: u64) }
+}
+mod m33 {
+    pub effect E33 { fn op33(x: u64) }
+}
+mod m34 {
+    pub effect E34 { fn op34(x: u64) }
+}
+mod m35 {
+    pub effect E35 { fn op35(x: u64) }
+}
+mod m36 {
+    pub effect E36 { fn op36(x: u64) }
+}
+mod m37 {
+    pub effect E37 { fn op37(x: u64) }
+}
+mod m38 {
+    pub effect E38 { fn op38(x: u64) }
+}
+mod m39 {
+    pub effect E39 { fn op39(x: u64) }
+}
+mod m40 {
+    pub effect E40 { fn op40(x: u64) }
+}
+mod m41 {
+    pub effect E41 { fn op41(x: u64) }
+}
+mod m42 {
+    pub effect E42 { fn op42(x: u64) }
+}
+mod m43 {
+    pub effect E43 { fn op43(x: u64) }
+}
+mod m44 {
+    pub effect E44 { fn op44(x: u64) }
+}
+mod m45 {
+    pub effect E45 { fn op45(x: u64) }
+}
+mod m46 {
+    pub effect E46 { fn op46(x: u64) }
+}
+mod m47 {
+    pub effect E47 { fn op47(x: u64) }
+}
+mod m48 {
+    pub effect E48 { fn op48(x: u64) }
+}
+mod m49 {
+    pub effect E49 { fn op49(x: u64) }
+}
+mod m50 {
+    pub effect E50 { fn op50(x: u64) }
+}
+mod m51 {
+    pub effect E51 { fn op51(x: u64) }
+}
+mod m52 {
+    pub effect E52 { fn op52(x: u64) }
+}
+mod m53 {
+    pub effect E53 { fn op53(x: u64) }
+}
+mod m54 {
+    pub effect E54 { fn op54(x: u64) }
+}
+mod m55 {
+    pub effect E55 { fn op55(x: u64) }
+}
+mod m56 {
+    pub effect E56 { fn op56(x: u64) }
+}
+mod m57 {
+    pub effect E57 { fn op57(x: u64) }
+}
+mod m58 {
+    pub effect E58 { fn op58(x: u64) }
+}
+mod m59 {
+    pub effect E59 { fn op59(x: u64) }
+}
+mod m60 {
+    pub effect E60 { fn op60(x: u64) }
+}
+mod m61 {
+    pub effect E61 { fn op61(x: u64) }
+}
+mod m62 {
+    pub effect E62 { fn op62(x: u64) }
+}
+mod m63 {
+    pub effect E63 { fn op63(x: u64) }
+}
+mod m64 {
+    pub effect E64 { fn op64(x: u64) }
+}
+mod m65 {
+    pub effect E65 { fn op65(x: u64) }
+}
+mod m66 {
+    pub effect E66 { fn op66(x: u64) }
+}
+mod m67 {
+    pub effect E67 { fn op67(x: u64) }
+}
+mod m68 {
+    pub effect E68 { fn op68(x: u64) }
+}
+mod m69 {
+    pub effect E69 { fn op69(x: u64) }
+}
+mod m70 {
+    pub effect E70 { fn op70(x: u64) }
+}
+mod m71 {
+    pub effect E71 { fn op71(x: u64) }
+}
+mod m72 {
+    pub effect E72 { fn op72(x: u64) }
+}
+mod m73 {
+    pub effect E73 { fn op73(x: u64) }
+}
+mod m74 {
+    pub effect E74 { fn op74(x: u64) }
+}
+mod m75 {
+    pub effect E75 { fn op75(x: u64) }
+}
+mod m76 {
+    pub effect E76 { fn op76(x: u64) }
+}
+mod m77 {
+    pub effect E77 { fn op77(x: u64) }
+}
+mod m78 {
+    pub effect E78 { fn op78(x: u64) }
+}
+mod m79 {
+    pub effect E79 { fn op79(x: u64) }
+}
+mod m80 {
+    pub effect E80 { fn op80(x: u64) }
+}
+mod m81 {
+    pub effect E81 { fn op81(x: u64) }
+}
+mod m82 {
+    pub effect E82 { fn op82(x: u64) }
+}
+mod m83 {
+    pub effect E83 { fn op83(x: u64) }
+}
+mod m84 {
+    pub effect E84 { fn op84(x: u64) }
+}
+mod m85 {
+    pub effect E85 { fn op85(x: u64) }
+}
+mod m86 {
+    pub effect E86 { fn op86(x: u64) }
+}
+mod m87 {
+    pub effect E87 { fn op87(x: u64) }
+}
+mod m88 {
+    pub effect E88 { fn op88(x: u64) }
+}
+mod m89 {
+    pub effect E89 { fn op89(x: u64) }
+}
+mod m90 {
+    pub effect E90 { fn op90(x: u64) }
+}
+mod m91 {
+    pub effect E91 { fn op91(x: u64) }
+}
+mod m92 {
+    pub effect E92 { fn op92(x: u64) }
+}
+mod m93 {
+    pub effect E93 { fn op93(x: u64) }
+}
+mod m94 {
+    pub effect E94 { fn op94(x: u64) }
+}
+mod m95 {
+    pub effect E95 { fn op95(x: u64) }
+}
+mod m96 {
+    pub effect E96 { fn op96(x: u64) }
+}
+mod m97 {
+    pub effect E97 { fn op97(x: u64) }
+}
+mod m98 {
+    pub effect E98 { fn op98(x: u64) }
+}
+mod m99 {
+    pub effect E99 { fn op99(x: u64) }
+}
+mod m100 {
+    pub effect E100 { fn op100(x: u64) }
+}
+mod m101 {
+    pub effect E101 { fn op101(x: u64) }
+}
+mod m102 {
+    pub effect E102 { fn op102(x: u64) }
+}
+mod m103 {
+    pub effect E103 { fn op103(x: u64) }
+}
+mod m104 {
+    pub effect E104 { fn op104(x: u64) }
+}
+mod m105 {
+    pub effect E105 { fn op105(x: u64) }
+}
+mod m106 {
+    pub effect E106 { fn op106(x: u64) }
+}
+mod m107 {
+    pub effect E107 { fn op107(x: u64) }
+}
+mod m108 {
+    pub effect E108 { fn op108(x: u64) }
+}
+mod m109 {
+    pub effect E109 { fn op109(x: u64) }
+}
+mod m110 {
+    pub effect E110 { fn op110(x: u64) }
+}
+mod m111 {
+    pub effect E111 { fn op111(x: u64) }
+}
+mod m112 {
+    pub effect E112 { fn op112(x: u64) }
+}
+mod m113 {
+    pub effect E113 { fn op113(x: u64) }
+}
+mod m114 {
+    pub effect E114 { fn op114(x: u64) }
+}
+mod m115 {
+    pub effect E115 { fn op115(x: u64) }
+}
+mod m116 {
+    pub effect E116 { fn op116(x: u64) }
+}
+mod m117 {
+    pub effect E117 { fn op117(x: u64) }
+}
+mod m118 {
+    pub effect E118 { fn op118(x: u64) }
+}
+mod m119 {
+    pub effect E119 { fn op119(x: u64) }
+}
+mod m120 {
+    pub effect E120 { fn op120(x: u64) }
+}
+mod m121 {
+    pub effect E121 { fn op121(x: u64) }
+}
+mod m122 {
+    pub effect E122 { fn op122(x: u64) }
+}
+mod m123 {
+    pub effect E123 { fn op123(x: u64) }
+}
+mod m124 {
+    pub effect E124 { fn op124(x: u64) }
+}
+mod m125 {
+    pub effect E125 { fn op125(x: u64) }
+}
+mod m126 {
+    pub effect E126 { fn op126(x: u64) }
+}
+mod m127 {
+    pub effect E127 { fn op127(x: u64) }
+}
+mod m128 {
+    pub effect E128 { fn op128(x: u64) }
+}
+mod m129 {
+    pub effect E129 { fn op129(x: u64) }
+}
+mod m130 {
+    pub effect E130 { fn op130(x: u64) }
+}
+mod m131 {
+    pub effect E131 { fn op131(x: u64) }
+}
+mod m132 {
+    pub effect E132 { fn op132(x: u64) }
+}
+mod m133 {
+    pub effect E133 { fn op133(x: u64) }
+}
+mod m134 {
+    pub effect E134 { fn op134(x: u64) }
+}
+mod m135 {
+    pub effect E135 { fn op135(x: u64) }
+}
+mod m136 {
+    pub effect E136 { fn op136(x: u64) }
+}
+mod m137 {
+    pub effect E137 { fn op137(x: u64) }
+}
+mod m138 {
+    pub effect E138 { fn op138(x: u64) }
+}
+mod m139 {
+    pub effect E139 { fn op139(x: u64) }
+}
+mod m140 {
+    pub effect E140 { fn op140(x: u64) }
+}
+mod m141 {
+    pub effect E141 { fn op141(x: u64) }
+}
+mod m142 {
+    pub effect E142 { fn op142(x: u64) }
+}
+mod m143 {
+    pub effect E143 { fn op143(x: u64) }
+}
+mod m144 {
+    pub effect E144 { fn op144(x: u64) }
+}
+mod m145 {
+    pub effect E145 { fn op145(x: u64) }
+}
+mod m146 {
+    pub effect E146 { fn op146(x: u64) }
+}
+mod m147 {
+    pub effect E147 { fn op147(x: u64) }
+}
+mod m148 {
+    pub effect E148 { fn op148(x: u64) }
+}
+mod m149 {
+    pub effect E149 { fn op149(x: u64) }
+}
+mod m150 {
+    pub effect E150 { fn op150(x: u64) }
+}
+mod m151 {
+    pub effect E151 { fn op151(x: u64) }
+}
+mod m152 {
+    pub effect E152 { fn op152(x: u64) }
+}
+mod m153 {
+    pub effect E153 { fn op153(x: u64) }
+}
+mod m154 {
+    pub effect E154 { fn op154(x: u64) }
+}
+mod m155 {
+    pub effect E155 { fn op155(x: u64) }
+}
+mod m156 {
+    pub effect E156 { fn op156(x: u64) }
+}
+mod m157 {
+    pub effect E157 { fn op157(x: u64) }
+}
+mod m158 {
+    pub effect E158 { fn op158(x: u64) }
+}
+mod m159 {
+    pub effect E159 { fn op159(x: u64) }
+}
+mod m160 {
+    pub effect E160 { fn op160(x: u64) }
+}
+mod m161 {
+    pub effect E161 { fn op161(x: u64) }
+}
+mod m162 {
+    pub effect E162 { fn op162(x: u64) }
+}
+mod m163 {
+    pub effect E163 { fn op163(x: u64) }
+}
+mod m164 {
+    pub effect E164 { fn op164(x: u64) }
+}
+mod m165 {
+    pub effect E165 { fn op165(x: u64) }
+}
+mod m166 {
+    pub effect E166 { fn op166(x: u64) }
+}
+mod m167 {
+    pub effect E167 { fn op167(x: u64) }
+}
+mod m168 {
+    pub effect E168 { fn op168(x: u64) }
+}
+mod m169 {
+    pub effect E169 { fn op169(x: u64) }
+}
+mod m170 {
+    pub effect E170 { fn op170(x: u64) }
+}
+mod m171 {
+    pub effect E171 { fn op171(x: u64) }
+}
+mod m172 {
+    pub effect E172 { fn op172(x: u64) }
+}
+mod m173 {
+    pub effect E173 { fn op173(x: u64) }
+}
+mod m174 {
+    pub effect E174 { fn op174(x: u64) }
+}
+mod m175 {
+    pub effect E175 { fn op175(x: u64) }
+}
+mod m176 {
+    pub effect E176 { fn op176(x: u64) }
+}
+mod m177 {
+    pub effect E177 { fn op177(x: u64) }
+}
+mod m178 {
+    pub effect E178 { fn op178(x: u64) }
+}
+mod m179 {
+    pub effect E179 { fn op179(x: u64) }
+}
+mod m180 {
+    pub effect E180 { fn op180(x: u64) }
+}
+mod m181 {
+    pub effect E181 { fn op181(x: u64) }
+}
+mod m182 {
+    pub effect E182 { fn op182(x: u64) }
+}
+mod m183 {
+    pub effect E183 { fn op183(x: u64) }
+}
+mod m184 {
+    pub effect E184 { fn op184(x: u64) }
+}
+mod m185 {
+    pub effect E185 { fn op185(x: u64) }
+}
+mod m186 {
+    pub effect E186 { fn op186(x: u64) }
+}
+mod m187 {
+    pub effect E187 { fn op187(x: u64) }
+}
+mod m188 {
+    pub effect E188 { fn op188(x: u64) }
+}
+mod m189 {
+    pub effect E189 { fn op189(x: u64) }
+}
+mod m190 {
+    pub effect E190 { fn op190(x: u64) }
+}
+mod m191 {
+    pub effect E191 { fn op191(x: u64) }
+}
+mod m192 {
+    pub effect E192 { fn op192(x: u64) }
+}
+mod m193 {
+    pub effect E193 { fn op193(x: u64) }
+}
+mod m194 {
+    pub effect E194 { fn op194(x: u64) }
+}
+mod m195 {
+    pub effect E195 { fn op195(x: u64) }
+}
+mod m196 {
+    pub effect E196 { fn op196(x: u64) }
+}
+mod m197 {
+    pub effect E197 { fn op197(x: u64) }
+}
+mod m198 {
+    pub effect E198 { fn op198(x: u64) }
+}
+mod m199 {
+    pub effect E199 { fn op199(x: u64) }
+}
+mod m200 {
+    pub effect E200 { fn op200(x: u64) }
+}
+mod m201 {
+    pub effect E201 { fn op201(x: u64) }
+}
+mod m202 {
+    pub effect E202 { fn op202(x: u64) }
+}
+mod m203 {
+    pub effect E203 { fn op203(x: u64) }
+}
+mod m204 {
+    pub effect E204 { fn op204(x: u64) }
+}
+mod m205 {
+    pub effect E205 { fn op205(x: u64) }
+}
+mod m206 {
+    pub effect E206 { fn op206(x: u64) }
+}
+mod m207 {
+    pub effect E207 { fn op207(x: u64) }
+}
+mod m208 {
+    pub effect E208 { fn op208(x: u64) }
+}
+mod m209 {
+    pub effect E209 { fn op209(x: u64) }
+}
+mod m210 {
+    pub effect E210 { fn op210(x: u64) }
+}
+mod m211 {
+    pub effect E211 { fn op211(x: u64) }
+}
+mod m212 {
+    pub effect E212 { fn op212(x: u64) }
+}
+mod m213 {
+    pub effect E213 { fn op213(x: u64) }
+}
+mod m214 {
+    pub effect E214 { fn op214(x: u64) }
+}
+mod m215 {
+    pub effect E215 { fn op215(x: u64) }
+}
+mod m216 {
+    pub effect E216 { fn op216(x: u64) }
+}
+mod m217 {
+    pub effect E217 { fn op217(x: u64) }
+}
+mod m218 {
+    pub effect E218 { fn op218(x: u64) }
+}
+mod m219 {
+    pub effect E219 { fn op219(x: u64) }
+}
+mod m220 {
+    pub effect E220 { fn op220(x: u64) }
+}
+mod m221 {
+    pub effect E221 { fn op221(x: u64) }
+}
+mod m222 {
+    pub effect E222 { fn op222(x: u64) }
+}
+mod m223 {
+    pub effect E223 { fn op223(x: u64) }
+}
+mod m224 {
+    pub effect E224 { fn op224(x: u64) }
+}
+mod m225 {
+    pub effect E225 { fn op225(x: u64) }
+}
+mod m226 {
+    pub effect E226 { fn op226(x: u64) }
+}
+mod m227 {
+    pub effect E227 { fn op227(x: u64) }
+}
+mod m228 {
+    pub effect E228 { fn op228(x: u64) }
+}
+mod m229 {
+    pub effect E229 { fn op229(x: u64) }
+}
+mod m230 {
+    pub effect E230 { fn op230(x: u64) }
+}
+mod m231 {
+    pub effect E231 { fn op231(x: u64) }
+}
+mod m232 {
+    pub effect E232 { fn op232(x: u64) }
+}
+mod m233 {
+    pub effect E233 { fn op233(x: u64) }
+}
+mod m234 {
+    pub effect E234 { fn op234(x: u64) }
+}
+mod m235 {
+    pub effect E235 { fn op235(x: u64) }
+}
+mod m236 {
+    pub effect E236 { fn op236(x: u64) }
+}
+mod m237 {
+    pub effect E237 { fn op237(x: u64) }
+}
+mod m238 {
+    pub effect E238 { fn op238(x: u64) }
+}
+mod m239 {
+    pub effect E239 { fn op239(x: u64) }
+}
+mod m240 {
+    pub effect E240 { fn op240(x: u64) }
+}
+mod m241 {
+    pub effect E241 { fn op241(x: u64) }
+}
+mod m242 {
+    pub effect E242 { fn op242(x: u64) }
+}
+mod m243 {
+    pub effect E243 { fn op243(x: u64) }
+}
+mod m244 {
+    pub effect E244 { fn op244(x: u64) }
+}
+mod m245 {
+    pub effect E245 { fn op245(x: u64) }
+}
+mod m246 {
+    pub effect E246 { fn op246(x: u64) }
+}
+mod m247 {
+    pub effect E247 { fn op247(x: u64) }
+}
+mod m248 {
+    pub effect E248 { fn op248(x: u64) }
+}
+mod m249 {
+    pub effect E249 { fn op249(x: u64) }
+}
+mod m250 {
+    pub effect E250 { fn op250(x: u64) }
+}
+mod m251 {
+    pub effect E251 { fn op251(x: u64) }
+}
+mod m252 {
+    pub effect E252 { fn op252(x: u64) }
+}
+mod m253 {
+    pub effect E253 { fn op253(x: u64) }
+}
+mod m254 {
+    pub effect E254 { fn op254(x: u64) }
+}
+mod m255 {
+    pub effect E255 { fn op255(x: u64) }
+}
+mod m256 {
+    pub effect E256 { fn op256(x: u64) }
+}
+mod m257 {
+    pub effect E257 { fn op257(x: u64) }
+}
+mod m258 {
+    pub effect E258 { fn op258(x: u64) }
+}
+mod m259 {
+    pub effect E259 { fn op259(x: u64) }
+}
+mod m260 {
+    pub effect E260 { fn op260(x: u64) }
+}
+mod m261 {
+    pub effect E261 { fn op261(x: u64) }
+}
+mod m262 {
+    pub effect E262 { fn op262(x: u64) }
+}
+mod m263 {
+    pub effect E263 { fn op263(x: u64) }
+}
+mod m264 {
+    pub effect E264 { fn op264(x: u64) }
+}
+mod m265 {
+    pub effect E265 { fn op265(x: u64) }
+}
+mod m266 {
+    pub effect E266 { fn op266(x: u64) }
+}
+mod m267 {
+    pub effect E267 { fn op267(x: u64) }
+}
+mod m268 {
+    pub effect E268 { fn op268(x: u64) }
+}
+mod m269 {
+    pub effect E269 { fn op269(x: u64) }
+}
+mod m270 {
+    pub effect E270 { fn op270(x: u64) }
+}
+mod m271 {
+    pub effect E271 { fn op271(x: u64) }
+}
+mod m272 {
+    pub effect E272 { fn op272(x: u64) }
+}
+mod m273 {
+    pub effect E273 { fn op273(x: u64) }
+}
+mod m274 {
+    pub effect E274 { fn op274(x: u64) }
+}
+mod m275 {
+    pub effect E275 { fn op275(x: u64) }
+}
+mod m276 {
+    pub effect E276 { fn op276(x: u64) }
+}
+mod m277 {
+    pub effect E277 { fn op277(x: u64) }
+}
+mod m278 {
+    pub effect E278 { fn op278(x: u64) }
+}
+mod m279 {
+    pub effect E279 { fn op279(x: u64) }
+}
+mod m280 {
+    pub effect E280 { fn op280(x: u64) }
+}
+mod m281 {
+    pub effect E281 { fn op281(x: u64) }
+}
+mod m282 {
+    pub effect E282 { fn op282(x: u64) }
+}
+mod m283 {
+    pub effect E283 { fn op283(x: u64) }
+}
+mod m284 {
+    pub effect E284 { fn op284(x: u64) }
+}
+mod m285 {
+    pub effect E285 { fn op285(x: u64) }
+}
+mod m286 {
+    pub effect E286 { fn op286(x: u64) }
+}
+mod m287 {
+    pub effect E287 { fn op287(x: u64) }
+}
+mod m288 {
+    pub effect E288 { fn op288(x: u64) }
+}
+mod m289 {
+    pub effect E289 { fn op289(x: u64) }
+}
+mod m290 {
+    pub effect E290 { fn op290(x: u64) }
+}
+mod m291 {
+    pub effect E291 { fn op291(x: u64) }
+}
+mod m292 {
+    pub effect E292 { fn op292(x: u64) }
+}
+mod m293 {
+    pub effect E293 { fn op293(x: u64) }
+}
+mod m294 {
+    pub effect E294 { fn op294(x: u64) }
+}
+mod m295 {
+    pub effect E295 { fn op295(x: u64) }
+}
+mod m296 {
+    pub effect E296 { fn op296(x: u64) }
+}
+mod m297 {
+    pub effect E297 { fn op297(x: u64) }
+}
+mod m298 {
+    pub effect E298 { fn op298(x: u64) }
+}
+mod m299 {
+    pub effect E299 { fn op299(x: u64) }
+}
+mod m300 {
+    pub effect E300 { fn op300(x: u64) }
+}
+mod m301 {
+    pub effect E301 { fn op301(x: u64) }
+}
+mod m302 {
+    pub effect E302 { fn op302(x: u64) }
+}
+mod m303 {
+    pub effect E303 { fn op303(x: u64) }
+}
+mod m304 {
+    pub effect E304 { fn op304(x: u64) }
+}
+mod m305 {
+    pub effect E305 { fn op305(x: u64) }
+}
+mod m306 {
+    pub effect E306 { fn op306(x: u64) }
+}
+mod m307 {
+    pub effect E307 { fn op307(x: u64) }
+}
+mod m308 {
+    pub effect E308 { fn op308(x: u64) }
+}
+mod m309 {
+    pub effect E309 { fn op309(x: u64) }
+}
+mod m310 {
+    pub effect E310 { fn op310(x: u64) }
+}
+mod m311 {
+    pub effect E311 { fn op311(x: u64) }
+}
+mod m312 {
+    pub effect E312 { fn op312(x: u64) }
+}
+mod m313 {
+    pub effect E313 { fn op313(x: u64) }
+}
+mod m314 {
+    pub effect E314 { fn op314(x: u64) }
+}
+mod m315 {
+    pub effect E315 { fn op315(x: u64) }
+}
+mod m316 {
+    pub effect E316 { fn op316(x: u64) }
+}
+mod m317 {
+    pub effect E317 { fn op317(x: u64) }
+}
+mod m318 {
+    pub effect E318 { fn op318(x: u64) }
+}
+mod m319 {
+    pub effect E319 { fn op319(x: u64) }
+}
+mod m320 {
+    pub effect E320 { fn op320(x: u64) }
+}
+mod m321 {
+    pub effect E321 { fn op321(x: u64) }
+}
+mod m322 {
+    pub effect E322 { fn op322(x: u64) }
+}
+mod m323 {
+    pub effect E323 { fn op323(x: u64) }
+}
+mod m324 {
+    pub effect E324 { fn op324(x: u64) }
+}
+mod m325 {
+    pub effect E325 { fn op325(x: u64) }
+}
+mod m326 {
+    pub effect E326 { fn op326(x: u64) }
+}
+mod m327 {
+    pub effect E327 { fn op327(x: u64) }
+}
+mod m328 {
+    pub effect E328 { fn op328(x: u64) }
+}
+mod m329 {
+    pub effect E329 { fn op329(x: u64) }
+}
+mod m330 {
+    pub effect E330 { fn op330(x: u64) }
+}
+mod m331 {
+    pub effect E331 { fn op331(x: u64) }
+}
+mod m332 {
+    pub effect E332 { fn op332(x: u64) }
+}
+mod m333 {
+    pub effect E333 { fn op333(x: u64) }
+}
+mod m334 {
+    pub effect E334 { fn op334(x: u64) }
+}
+mod m335 {
+    pub effect E335 { fn op335(x: u64) }
+}
+mod m336 {
+    pub effect E336 { fn op336(x: u64) }
+}
+mod m337 {
+    pub effect E337 { fn op337(x: u64) }
+}
+mod m338 {
+    pub effect E338 { fn op338(x: u64) }
+}
+mod m339 {
+    pub effect E339 { fn op339(x: u64) }
+}
+mod m340 {
+    pub effect E340 { fn op340(x: u64) }
+}
+mod m341 {
+    pub effect E341 { fn op341(x: u64) }
+}
+mod m342 {
+    pub effect E342 { fn op342(x: u64) }
+}
+mod m343 {
+    pub effect E343 { fn op343(x: u64) }
+}
+mod m344 {
+    pub effect E344 { fn op344(x: u64) }
+}
+mod m345 {
+    pub effect E345 { fn op345(x: u64) }
+}
+mod m346 {
+    pub effect E346 { fn op346(x: u64) }
+}
+mod m347 {
+    pub effect E347 { fn op347(x: u64) }
+}
+mod m348 {
+    pub effect E348 { fn op348(x: u64) }
+}
+mod m349 {
+    pub effect E349 { fn op349(x: u64) }
+}
+mod m350 {
+    pub effect E350 { fn op350(x: u64) }
+}
+mod m351 {
+    pub effect E351 { fn op351(x: u64) }
+}
+mod m352 {
+    pub effect E352 { fn op352(x: u64) }
+}
+mod m353 {
+    pub effect E353 { fn op353(x: u64) }
+}
+mod m354 {
+    pub effect E354 { fn op354(x: u64) }
+}
+mod m355 {
+    pub effect E355 { fn op355(x: u64) }
+}
+mod m356 {
+    pub effect E356 { fn op356(x: u64) }
+}
+mod m357 {
+    pub effect E357 { fn op357(x: u64) }
+}
+mod m358 {
+    pub effect E358 { fn op358(x: u64) }
+}
+mod m359 {
+    pub effect E359 { fn op359(x: u64) }
+}
+mod m360 {
+    pub effect E360 { fn op360(x: u64) }
+}
+mod m361 {
+    pub effect E361 { fn op361(x: u64) }
+}
+mod m362 {
+    pub effect E362 { fn op362(x: u64) }
+}
+mod m363 {
+    pub effect E363 { fn op363(x: u64) }
+}
+mod m364 {
+    pub effect E364 { fn op364(x: u64) }
+}
+mod m365 {
+    pub effect E365 { fn op365(x: u64) }
+}
+mod m366 {
+    pub effect E366 { fn op366(x: u64) }
+}
+mod m367 {
+    pub effect E367 { fn op367(x: u64) }
+}
+mod m368 {
+    pub effect E368 { fn op368(x: u64) }
+}
+mod m369 {
+    pub effect E369 { fn op369(x: u64) }
+}
+mod m370 {
+    pub effect E370 { fn op370(x: u64) }
+}
+mod m371 {
+    pub effect E371 { fn op371(x: u64) }
+}
+mod m372 {
+    pub effect E372 { fn op372(x: u64) }
+}
+mod m373 {
+    pub effect E373 { fn op373(x: u64) }
+}
+mod m374 {
+    pub effect E374 { fn op374(x: u64) }
+}
+mod m375 {
+    pub effect E375 { fn op375(x: u64) }
+}
+mod m376 {
+    pub effect E376 { fn op376(x: u64) }
+}
+mod m377 {
+    pub effect E377 { fn op377(x: u64) }
+}
+mod m378 {
+    pub effect E378 { fn op378(x: u64) }
+}
+mod m379 {
+    pub effect E379 { fn op379(x: u64) }
+}
+mod m380 {
+    pub effect E380 { fn op380(x: u64) }
+}
+mod m381 {
+    pub effect E381 { fn op381(x: u64) }
+}
+mod m382 {
+    pub effect E382 { fn op382(x: u64) }
+}
+mod m383 {
+    pub effect E383 { fn op383(x: u64) }
+}
+mod m384 {
+    pub effect E384 { fn op384(x: u64) }
+}
+mod m385 {
+    pub effect E385 { fn op385(x: u64) }
+}
+mod m386 {
+    pub effect E386 { fn op386(x: u64) }
+}
+mod m387 {
+    pub effect E387 { fn op387(x: u64) }
+}
+mod m388 {
+    pub effect E388 { fn op388(x: u64) }
+}
+mod m389 {
+    pub effect E389 { fn op389(x: u64) }
+}
+mod m390 {
+    pub effect E390 { fn op390(x: u64) }
+}
+mod m391 {
+    pub effect E391 { fn op391(x: u64) }
+}
+mod m392 {
+    pub effect E392 { fn op392(x: u64) }
+}
+mod m393 {
+    pub effect E393 { fn op393(x: u64) }
+}
+mod m394 {
+    pub effect E394 { fn op394(x: u64) }
+}
+mod m395 {
+    pub effect E395 { fn op395(x: u64) }
+}
+mod m396 {
+    pub effect E396 { fn op396(x: u64) }
+}
+mod m397 {
+    pub effect E397 { fn op397(x: u64) }
+}
+mod m398 {
+    pub effect E398 { fn op398(x: u64) }
+}
+mod m399 {
+    pub effect E399 { fn op399(x: u64) }
+}
+mod m400 {
+    pub effect E400 { fn op400(x: u64) }
+}
+mod m401 {
+    pub effect E401 { fn op401(x: u64) }
+}
+mod m402 {
+    pub effect E402 { fn op402(x: u64) }
+}
+mod m403 {
+    pub effect E403 { fn op403(x: u64) }
+}
+mod m404 {
+    pub effect E404 { fn op404(x: u64) }
+}
+mod m405 {
+    pub effect E405 { fn op405(x: u64) }
+}
+mod m406 {
+    pub effect E406 { fn op406(x: u64) }
+}
+mod m407 {
+    pub effect E407 { fn op407(x: u64) }
+}
+mod m408 {
+    pub effect E408 { fn op408(x: u64) }
+}
+mod m409 {
+    pub effect E409 { fn op409(x: u64) }
+}
+mod m410 {
+    pub effect E410 { fn op410(x: u64) }
+}
+mod m411 {
+    pub effect E411 { fn op411(x: u64) }
+}
+mod m412 {
+    pub effect E412 { fn op412(x: u64) }
+}
+mod m413 {
+    pub effect E413 { fn op413(x: u64) }
+}
+mod m414 {
+    pub effect E414 { fn op414(x: u64) }
+}
+mod m415 {
+    pub effect E415 { fn op415(x: u64) }
+}
+mod m416 {
+    pub effect E416 { fn op416(x: u64) }
+}
+mod m417 {
+    pub effect E417 { fn op417(x: u64) }
+}
+mod m418 {
+    pub effect E418 { fn op418(x: u64) }
+}
+mod m419 {
+    pub effect E419 { fn op419(x: u64) }
+}
+mod m420 {
+    pub effect E420 { fn op420(x: u64) }
+}
+mod m421 {
+    pub effect E421 { fn op421(x: u64) }
+}
+mod m422 {
+    pub effect E422 { fn op422(x: u64) }
+}
+mod m423 {
+    pub effect E423 { fn op423(x: u64) }
+}
+mod m424 {
+    pub effect E424 { fn op424(x: u64) }
+}
+mod m425 {
+    pub effect E425 { fn op425(x: u64) }
+}
+mod m426 {
+    pub effect E426 { fn op426(x: u64) }
+}
+mod m427 {
+    pub effect E427 { fn op427(x: u64) }
+}
+mod m428 {
+    pub effect E428 { fn op428(x: u64) }
+}
+mod m429 {
+    pub effect E429 { fn op429(x: u64) }
+}
+mod m430 {
+    pub effect E430 { fn op430(x: u64) }
+}
+mod m431 {
+    pub effect E431 { fn op431(x: u64) }
+}
+mod m432 {
+    pub effect E432 { fn op432(x: u64) }
+}
+mod m433 {
+    pub effect E433 { fn op433(x: u64) }
+}
+mod m434 {
+    pub effect E434 { fn op434(x: u64) }
+}
+mod m435 {
+    pub effect E435 { fn op435(x: u64) }
+}
+mod m436 {
+    pub effect E436 { fn op436(x: u64) }
+}
+mod m437 {
+    pub effect E437 { fn op437(x: u64) }
+}
+mod m438 {
+    pub effect E438 { fn op438(x: u64) }
+}
+mod m439 {
+    pub effect E439 { fn op439(x: u64) }
+}
+mod m440 {
+    pub effect E440 { fn op440(x: u64) }
+}
+mod m441 {
+    pub effect E441 { fn op441(x: u64) }
+}
+mod m442 {
+    pub effect E442 { fn op442(x: u64) }
+}
+mod m443 {
+    pub effect E443 { fn op443(x: u64) }
+}
+mod m444 {
+    pub effect E444 { fn op444(x: u64) }
+}
+mod m445 {
+    pub effect E445 { fn op445(x: u64) }
+}
+mod m446 {
+    pub effect E446 { fn op446(x: u64) }
+}
+mod m447 {
+    pub effect E447 { fn op447(x: u64) }
+}
+mod m448 {
+    pub effect E448 { fn op448(x: u64) }
+}
+mod m449 {
+    pub effect E449 { fn op449(x: u64) }
+}
+mod m450 {
+    pub effect E450 { fn op450(x: u64) }
+}
+mod m451 {
+    pub effect E451 { fn op451(x: u64) }
+}
+mod m452 {
+    pub effect E452 { fn op452(x: u64) }
+}
+mod m453 {
+    pub effect E453 { fn op453(x: u64) }
+}
+mod m454 {
+    pub effect E454 { fn op454(x: u64) }
+}
+mod m455 {
+    pub effect E455 { fn op455(x: u64) }
+}
+mod m456 {
+    pub effect E456 { fn op456(x: u64) }
+}
+mod m457 {
+    pub effect E457 { fn op457(x: u64) }
+}
+mod m458 {
+    pub effect E458 { fn op458(x: u64) }
+}
+mod m459 {
+    pub effect E459 { fn op459(x: u64) }
+}
+mod m460 {
+    pub effect E460 { fn op460(x: u64) }
+}
+mod m461 {
+    pub effect E461 { fn op461(x: u64) }
+}
+mod m462 {
+    pub effect E462 { fn op462(x: u64) }
+}
+mod m463 {
+    pub effect E463 { fn op463(x: u64) }
+}
+mod m464 {
+    pub effect E464 { fn op464(x: u64) }
+}
+mod m465 {
+    pub effect E465 { fn op465(x: u64) }
+}
+mod m466 {
+    pub effect E466 { fn op466(x: u64) }
+}
+mod m467 {
+    pub effect E467 { fn op467(x: u64) }
+}
+mod m468 {
+    pub effect E468 { fn op468(x: u64) }
+}
+mod m469 {
+    pub effect E469 { fn op469(x: u64) }
+}
+mod m470 {
+    pub effect E470 { fn op470(x: u64) }
+}
+mod m471 {
+    pub effect E471 { fn op471(x: u64) }
+}
+mod m472 {
+    pub effect E472 { fn op472(x: u64) }
+}
+mod m473 {
+    pub effect E473 { fn op473(x: u64) }
+}
+mod m474 {
+    pub effect E474 { fn op474(x: u64) }
+}
+mod m475 {
+    pub effect E475 { fn op475(x: u64) }
+}
+mod m476 {
+    pub effect E476 { fn op476(x: u64) }
+}
+mod m477 {
+    pub effect E477 { fn op477(x: u64) }
+}
+mod m478 {
+    pub effect E478 { fn op478(x: u64) }
+}
+mod m479 {
+    pub effect E479 { fn op479(x: u64) }
+}
+mod m480 {
+    pub effect E480 { fn op480(x: u64) }
+}
+mod m481 {
+    pub effect E481 { fn op481(x: u64) }
+}
+mod m482 {
+    pub effect E482 { fn op482(x: u64) }
+}
+mod m483 {
+    pub effect E483 { fn op483(x: u64) }
+}
+mod m484 {
+    pub effect E484 { fn op484(x: u64) }
+}
+mod m485 {
+    pub effect E485 { fn op485(x: u64) }
+}
+mod m486 {
+    pub effect E486 { fn op486(x: u64) }
+}
+mod m487 {
+    pub effect E487 { fn op487(x: u64) }
+}
+mod m488 {
+    pub effect E488 { fn op488(x: u64) }
+}
+mod m489 {
+    pub effect E489 { fn op489(x: u64) }
+}
+mod m490 {
+    pub effect E490 { fn op490(x: u64) }
+}
+mod m491 {
+    pub effect E491 { fn op491(x: u64) }
+}
+mod m492 {
+    pub effect E492 { fn op492(x: u64) }
+}
+mod m493 {
+    pub effect E493 { fn op493(x: u64) }
+}
+mod m494 {
+    pub effect E494 { fn op494(x: u64) }
+}
+mod m495 {
+    pub effect E495 { fn op495(x: u64) }
+}
+mod m496 {
+    pub effect E496 { fn op496(x: u64) }
+}
+mod m497 {
+    pub effect E497 { fn op497(x: u64) }
+}
+mod m498 {
+    pub effect E498 { fn op498(x: u64) }
+}
+mod m499 {
+    pub effect E499 { fn op499(x: u64) }
+}
+mod m500 {
+    pub effect E500 { fn op500(x: u64) }
+}
+mod m501 {
+    pub effect E501 { fn op501(x: u64) }
+}
+mod m502 {
+    pub effect E502 { fn op502(x: u64) }
+}
+mod m503 {
+    pub effect E503 { fn op503(x: u64) }
+}
+mod m504 {
+    pub effect E504 { fn op504(x: u64) }
+}
+mod m505 {
+    pub effect E505 { fn op505(x: u64) }
+}
+mod m506 {
+    pub effect E506 { fn op506(x: u64) }
+}
+mod m507 {
+    pub effect E507 { fn op507(x: u64) }
+}
+mod m508 {
+    pub effect E508 { fn op508(x: u64) }
+}
+mod m509 {
+    pub effect E509 { fn op509(x: u64) }
+}
+mod m510 {
+    pub effect E510 { fn op510(x: u64) }
+}
+mod m511 {
+    pub effect E511 { fn op511(x: u64) }
+}
+mod m512 {
+    pub effect E512 { fn op512(x: u64) }
+}
+mod m513 {
+    pub effect E513 { fn op513(x: u64) }
+}
+mod m514 {
+    pub effect E514 { fn op514(x: u64) }
+}
+mod m515 {
+    pub effect E515 { fn op515(x: u64) }
+}
+mod m516 {
+    pub effect E516 { fn op516(x: u64) }
+}
+mod m517 {
+    pub effect E517 { fn op517(x: u64) }
+}
+mod m518 {
+    pub effect E518 { fn op518(x: u64) }
+}
+mod m519 {
+    pub effect E519 { fn op519(x: u64) }
+}
+mod m520 {
+    pub effect E520 { fn op520(x: u64) }
+}
+mod m521 {
+    pub effect E521 { fn op521(x: u64) }
+}
+mod m522 {
+    pub effect E522 { fn op522(x: u64) }
+}
+mod m523 {
+    pub effect E523 { fn op523(x: u64) }
+}
+mod m524 {
+    pub effect E524 { fn op524(x: u64) }
+}
+mod m525 {
+    pub effect E525 { fn op525(x: u64) }
+}
+mod m526 {
+    pub effect E526 { fn op526(x: u64) }
+}
+mod m527 {
+    pub effect E527 { fn op527(x: u64) }
+}
+mod m528 {
+    pub effect E528 { fn op528(x: u64) }
+}
+mod m529 {
+    pub effect E529 { fn op529(x: u64) }
+}
+mod m530 {
+    pub effect E530 { fn op530(x: u64) }
+}
+mod m531 {
+    pub effect E531 { fn op531(x: u64) }
+}
+mod m532 {
+    pub effect E532 { fn op532(x: u64) }
+}
+mod m533 {
+    pub effect E533 { fn op533(x: u64) }
+}
+mod m534 {
+    pub effect E534 { fn op534(x: u64) }
+}
+mod m535 {
+    pub effect E535 { fn op535(x: u64) }
+}
+mod m536 {
+    pub effect E536 { fn op536(x: u64) }
+}
+mod m537 {
+    pub effect E537 { fn op537(x: u64) }
+}
+mod m538 {
+    pub effect E538 { fn op538(x: u64) }
+}
+mod m539 {
+    pub effect E539 { fn op539(x: u64) }
+}
+mod m540 {
+    pub effect E540 { fn op540(x: u64) }
+}
+mod m541 {
+    pub effect E541 { fn op541(x: u64) }
+}
+mod m542 {
+    pub effect E542 { fn op542(x: u64) }
+}
+mod m543 {
+    pub effect E543 { fn op543(x: u64) }
+}
+mod m544 {
+    pub effect E544 { fn op544(x: u64) }
+}
+mod m545 {
+    pub effect E545 { fn op545(x: u64) }
+}
+mod m546 {
+    pub effect E546 { fn op546(x: u64) }
+}
+mod m547 {
+    pub effect E547 { fn op547(x: u64) }
+}
+mod m548 {
+    pub effect E548 { fn op548(x: u64) }
+}
+mod m549 {
+    pub effect E549 { fn op549(x: u64) }
+}
+mod m550 {
+    pub effect E550 { fn op550(x: u64) }
+}
+mod m551 {
+    pub effect E551 { fn op551(x: u64) }
+}
+mod m552 {
+    pub effect E552 { fn op552(x: u64) }
+}
+mod m553 {
+    pub effect E553 { fn op553(x: u64) }
+}
+mod m554 {
+    pub effect E554 { fn op554(x: u64) }
+}
+mod m555 {
+    pub effect E555 { fn op555(x: u64) }
+}
+mod m556 {
+    pub effect E556 { fn op556(x: u64) }
+}
+mod m557 {
+    pub effect E557 { fn op557(x: u64) }
+}
+mod m558 {
+    pub effect E558 { fn op558(x: u64) }
+}
+mod m559 {
+    pub effect E559 { fn op559(x: u64) }
+}
+mod m560 {
+    pub effect E560 { fn op560(x: u64) }
+}
+mod m561 {
+    pub effect E561 { fn op561(x: u64) }
+}
+mod m562 {
+    pub effect E562 { fn op562(x: u64) }
+}
+mod m563 {
+    pub effect E563 { fn op563(x: u64) }
+}
+mod m564 {
+    pub effect E564 { fn op564(x: u64) }
+}
+mod m565 {
+    pub effect E565 { fn op565(x: u64) }
+}
+mod m566 {
+    pub effect E566 { fn op566(x: u64) }
+}
+mod m567 {
+    pub effect E567 { fn op567(x: u64) }
+}
+mod m568 {
+    pub effect E568 { fn op568(x: u64) }
+}
+mod m569 {
+    pub effect E569 { fn op569(x: u64) }
+}
+mod m570 {
+    pub effect E570 { fn op570(x: u64) }
+}
+mod m571 {
+    pub effect E571 { fn op571(x: u64) }
+}
+mod m572 {
+    pub effect E572 { fn op572(x: u64) }
+}
+mod m573 {
+    pub effect E573 { fn op573(x: u64) }
+}
+mod m574 {
+    pub effect E574 { fn op574(x: u64) }
+}
+mod m575 {
+    pub effect E575 { fn op575(x: u64) }
+}
+mod m576 {
+    pub effect E576 { fn op576(x: u64) }
+}
+mod m577 {
+    pub effect E577 { fn op577(x: u64) }
+}
+mod m578 {
+    pub effect E578 { fn op578(x: u64) }
+}
+mod m579 {
+    pub effect E579 { fn op579(x: u64) }
+}
+mod m580 {
+    pub effect E580 { fn op580(x: u64) }
+}
+mod m581 {
+    pub effect E581 { fn op581(x: u64) }
+}
+mod m582 {
+    pub effect E582 { fn op582(x: u64) }
+}
+mod m583 {
+    pub effect E583 { fn op583(x: u64) }
+}
+mod m584 {
+    pub effect E584 { fn op584(x: u64) }
+}
+mod m585 {
+    pub effect E585 { fn op585(x: u64) }
+}
+mod m586 {
+    pub effect E586 { fn op586(x: u64) }
+}
+mod m587 {
+    pub effect E587 { fn op587(x: u64) }
+}
+mod m588 {
+    pub effect E588 { fn op588(x: u64) }
+}
+mod m589 {
+    pub effect E589 { fn op589(x: u64) }
+}
+mod m590 {
+    pub effect E590 { fn op590(x: u64) }
+}
+mod m591 {
+    pub effect E591 { fn op591(x: u64) }
+}
+mod m592 {
+    pub effect E592 { fn op592(x: u64) }
+}
+mod m593 {
+    pub effect E593 { fn op593(x: u64) }
+}
+mod m594 {
+    pub effect E594 { fn op594(x: u64) }
+}
+mod m595 {
+    pub effect E595 { fn op595(x: u64) }
+}
+mod m596 {
+    pub effect E596 { fn op596(x: u64) }
+}
+mod m597 {
+    pub effect E597 { fn op597(x: u64) }
+}
+mod m598 {
+    pub effect E598 { fn op598(x: u64) }
+}
+mod m599 {
+    pub effect E599 { fn op599(x: u64) }
+}
+mod m600 {
+    pub effect E600 { fn op600(x: u64) }
+}
+mod m601 {
+    pub effect E601 { fn op601(x: u64) }
+}
+mod m602 {
+    pub effect E602 { fn op602(x: u64) }
+}
+mod m603 {
+    pub effect E603 { fn op603(x: u64) }
+}
+mod m604 {
+    pub effect E604 { fn op604(x: u64) }
+}
+mod m605 {
+    pub effect E605 { fn op605(x: u64) }
+}
+mod m606 {
+    pub effect E606 { fn op606(x: u64) }
+}
+mod m607 {
+    pub effect E607 { fn op607(x: u64) }
+}
+mod m608 {
+    pub effect E608 { fn op608(x: u64) }
+}
+mod m609 {
+    pub effect E609 { fn op609(x: u64) }
+}
+mod m610 {
+    pub effect E610 { fn op610(x: u64) }
+}
+mod m611 {
+    pub effect E611 { fn op611(x: u64) }
+}
+mod m612 {
+    pub effect E612 { fn op612(x: u64) }
+}
+mod m613 {
+    pub effect E613 { fn op613(x: u64) }
+}
+mod m614 {
+    pub effect E614 { fn op614(x: u64) }
+}
+mod m615 {
+    pub effect E615 { fn op615(x: u64) }
+}
+mod m616 {
+    pub effect E616 { fn op616(x: u64) }
+}
+mod m617 {
+    pub effect E617 { fn op617(x: u64) }
+}
+mod m618 {
+    pub effect E618 { fn op618(x: u64) }
+}
+mod m619 {
+    pub effect E619 { fn op619(x: u64) }
+}
+mod m620 {
+    pub effect E620 { fn op620(x: u64) }
+}
+mod m621 {
+    pub effect E621 { fn op621(x: u64) }
+}
+mod m622 {
+    pub effect E622 { fn op622(x: u64) }
+}
+mod m623 {
+    pub effect E623 { fn op623(x: u64) }
+}
+mod m624 {
+    pub effect E624 { fn op624(x: u64) }
+}
+mod m625 {
+    pub effect E625 { fn op625(x: u64) }
+}
+mod m626 {
+    pub effect E626 { fn op626(x: u64) }
+}
+mod m627 {
+    pub effect E627 { fn op627(x: u64) }
+}
+mod m628 {
+    pub effect E628 { fn op628(x: u64) }
+}
+mod m629 {
+    pub effect E629 { fn op629(x: u64) }
+}
+mod m630 {
+    pub effect E630 { fn op630(x: u64) }
+}
+mod m631 {
+    pub effect E631 { fn op631(x: u64) }
+}
+mod m632 {
+    pub effect E632 { fn op632(x: u64) }
+}
+mod m633 {
+    pub effect E633 { fn op633(x: u64) }
+}
+mod m634 {
+    pub effect E634 { fn op634(x: u64) }
+}
+mod m635 {
+    pub effect E635 { fn op635(x: u64) }
+}
+mod m636 {
+    pub effect E636 { fn op636(x: u64) }
+}
+mod m637 {
+    pub effect E637 { fn op637(x: u64) }
+}
+mod m638 {
+    pub effect E638 { fn op638(x: u64) }
+}
+mod m639 {
+    pub effect E639 { fn op639(x: u64) }
+}
+mod m640 {
+    pub effect E640 { fn op640(x: u64) }
+}
+mod m641 {
+    pub effect E641 { fn op641(x: u64) }
+}
+mod m642 {
+    pub effect E642 { fn op642(x: u64) }
+}
+mod m643 {
+    pub effect E643 { fn op643(x: u64) }
+}
+mod m644 {
+    pub effect E644 { fn op644(x: u64) }
+}
+mod m645 {
+    pub effect E645 { fn op645(x: u64) }
+}
+mod m646 {
+    pub effect E646 { fn op646(x: u64) }
+}
+mod m647 {
+    pub effect E647 { fn op647(x: u64) }
+}
+mod m648 {
+    pub effect E648 { fn op648(x: u64) }
+}
+mod m649 {
+    pub effect E649 { fn op649(x: u64) }
+}
+mod m650 {
+    pub effect E650 { fn op650(x: u64) }
+}
+mod m651 {
+    pub effect E651 { fn op651(x: u64) }
+}
+mod m652 {
+    pub effect E652 { fn op652(x: u64) }
+}
+mod m653 {
+    pub effect E653 { fn op653(x: u64) }
+}
+mod m654 {
+    pub effect E654 { fn op654(x: u64) }
+}
+mod m655 {
+    pub effect E655 { fn op655(x: u64) }
+}
+mod m656 {
+    pub effect E656 { fn op656(x: u64) }
+}
+mod m657 {
+    pub effect E657 { fn op657(x: u64) }
+}
+mod m658 {
+    pub effect E658 { fn op658(x: u64) }
+}
+mod m659 {
+    pub effect E659 { fn op659(x: u64) }
+}
+mod m660 {
+    pub effect E660 { fn op660(x: u64) }
+}
+mod m661 {
+    pub effect E661 { fn op661(x: u64) }
+}
+mod m662 {
+    pub effect E662 { fn op662(x: u64) }
+}
+mod m663 {
+    pub effect E663 { fn op663(x: u64) }
+}
+mod m664 {
+    pub effect E664 { fn op664(x: u64) }
+}
+mod m665 {
+    pub effect E665 { fn op665(x: u64) }
+}
+mod m666 {
+    pub effect E666 { fn op666(x: u64) }
+}
+mod m667 {
+    pub effect E667 { fn op667(x: u64) }
+}
+mod m668 {
+    pub effect E668 { fn op668(x: u64) }
+}
+mod m669 {
+    pub effect E669 { fn op669(x: u64) }
+}
+mod m670 {
+    pub effect E670 { fn op670(x: u64) }
+}
+mod m671 {
+    pub effect E671 { fn op671(x: u64) }
+}
+mod m672 {
+    pub effect E672 { fn op672(x: u64) }
+}
+mod m673 {
+    pub effect E673 { fn op673(x: u64) }
+}
+mod m674 {
+    pub effect E674 { fn op674(x: u64) }
+}
+mod m675 {
+    pub effect E675 { fn op675(x: u64) }
+}
+mod m676 {
+    pub effect E676 { fn op676(x: u64) }
+}
+mod m677 {
+    pub effect E677 { fn op677(x: u64) }
+}
+mod m678 {
+    pub effect E678 { fn op678(x: u64) }
+}
+mod m679 {
+    pub effect E679 { fn op679(x: u64) }
+}
+mod m680 {
+    pub effect E680 { fn op680(x: u64) }
+}
+mod m681 {
+    pub effect E681 { fn op681(x: u64) }
+}
+mod m682 {
+    pub effect E682 { fn op682(x: u64) }
+}
+mod m683 {
+    pub effect E683 { fn op683(x: u64) }
+}
+mod m684 {
+    pub effect E684 { fn op684(x: u64) }
+}
+mod m685 {
+    pub effect E685 { fn op685(x: u64) }
+}
+mod m686 {
+    pub effect E686 { fn op686(x: u64) }
+}
+mod m687 {
+    pub effect E687 { fn op687(x: u64) }
+}
+mod m688 {
+    pub effect E688 { fn op688(x: u64) }
+}
+mod m689 {
+    pub effect E689 { fn op689(x: u64) }
+}
+mod m690 {
+    pub effect E690 { fn op690(x: u64) }
+}
+mod m691 {
+    pub effect E691 { fn op691(x: u64) }
+}
+mod m692 {
+    pub effect E692 { fn op692(x: u64) }
+}
+mod m693 {
+    pub effect E693 { fn op693(x: u64) }
+}
+mod m694 {
+    pub effect E694 { fn op694(x: u64) }
+}
+mod m695 {
+    pub effect E695 { fn op695(x: u64) }
+}
+mod m696 {
+    pub effect E696 { fn op696(x: u64) }
+}
+mod m697 {
+    pub effect E697 { fn op697(x: u64) }
+}
+mod m698 {
+    pub effect E698 { fn op698(x: u64) }
+}
+mod m699 {
+    pub effect E699 { fn op699(x: u64) }
+}
+mod m700 {
+    pub effect E700 { fn op700(x: u64) }
+}
+mod m701 {
+    pub effect E701 { fn op701(x: u64) }
+}
+mod m702 {
+    pub effect E702 { fn op702(x: u64) }
+}
+mod m703 {
+    pub effect E703 { fn op703(x: u64) }
+}
+mod m704 {
+    pub effect E704 { fn op704(x: u64) }
+}
+mod m705 {
+    pub effect E705 { fn op705(x: u64) }
+}
+mod m706 {
+    pub effect E706 { fn op706(x: u64) }
+}
+mod m707 {
+    pub effect E707 { fn op707(x: u64) }
+}
+mod m708 {
+    pub effect E708 { fn op708(x: u64) }
+}
+mod m709 {
+    pub effect E709 { fn op709(x: u64) }
+}
+mod m710 {
+    pub effect E710 { fn op710(x: u64) }
+}
+mod m711 {
+    pub effect E711 { fn op711(x: u64) }
+}
+mod m712 {
+    pub effect E712 { fn op712(x: u64) }
+}
+mod m713 {
+    pub effect E713 { fn op713(x: u64) }
+}
+mod m714 {
+    pub effect E714 { fn op714(x: u64) }
+}
+mod m715 {
+    pub effect E715 { fn op715(x: u64) }
+}
+mod m716 {
+    pub effect E716 { fn op716(x: u64) }
+}
+mod m717 {
+    pub effect E717 { fn op717(x: u64) }
+}
+mod m718 {
+    pub effect E718 { fn op718(x: u64) }
+}
+mod m719 {
+    pub effect E719 { fn op719(x: u64) }
+}
+mod m720 {
+    pub effect E720 { fn op720(x: u64) }
+}
+mod m721 {
+    pub effect E721 { fn op721(x: u64) }
+}
+mod m722 {
+    pub effect E722 { fn op722(x: u64) }
+}
+mod m723 {
+    pub effect E723 { fn op723(x: u64) }
+}
+mod m724 {
+    pub effect E724 { fn op724(x: u64) }
+}
+mod m725 {
+    pub effect E725 { fn op725(x: u64) }
+}
+mod m726 {
+    pub effect E726 { fn op726(x: u64) }
+}
+mod m727 {
+    pub effect E727 { fn op727(x: u64) }
+}
+mod m728 {
+    pub effect E728 { fn op728(x: u64) }
+}
+mod m729 {
+    pub effect E729 { fn op729(x: u64) }
+}
+mod m730 {
+    pub effect E730 { fn op730(x: u64) }
+}
+mod m731 {
+    pub effect E731 { fn op731(x: u64) }
+}
+mod m732 {
+    pub effect E732 { fn op732(x: u64) }
+}
+mod m733 {
+    pub effect E733 { fn op733(x: u64) }
+}
+mod m734 {
+    pub effect E734 { fn op734(x: u64) }
+}
+mod m735 {
+    pub effect E735 { fn op735(x: u64) }
+}
+mod m736 {
+    pub effect E736 { fn op736(x: u64) }
+}
+mod m737 {
+    pub effect E737 { fn op737(x: u64) }
+}
+mod m738 {
+    pub effect E738 { fn op738(x: u64) }
+}
+mod m739 {
+    pub effect E739 { fn op739(x: u64) }
+}
+mod m740 {
+    pub effect E740 { fn op740(x: u64) }
+}
+mod m741 {
+    pub effect E741 { fn op741(x: u64) }
+}
+mod m742 {
+    pub effect E742 { fn op742(x: u64) }
+}
+mod m743 {
+    pub effect E743 { fn op743(x: u64) }
+}
+mod m744 {
+    pub effect E744 { fn op744(x: u64) }
+}
+mod m745 {
+    pub effect E745 { fn op745(x: u64) }
+}
+mod m746 {
+    pub effect E746 { fn op746(x: u64) }
+}
+mod m747 {
+    pub effect E747 { fn op747(x: u64) }
+}
+mod m748 {
+    pub effect E748 { fn op748(x: u64) }
+}
+mod m749 {
+    pub effect E749 { fn op749(x: u64) }
+}
+mod m750 {
+    pub effect E750 { fn op750(x: u64) }
+}
+mod m751 {
+    pub effect E751 { fn op751(x: u64) }
+}
+mod m752 {
+    pub effect E752 { fn op752(x: u64) }
+}
+mod m753 {
+    pub effect E753 { fn op753(x: u64) }
+}
+mod m754 {
+    pub effect E754 { fn op754(x: u64) }
+}
+mod m755 {
+    pub effect E755 { fn op755(x: u64) }
+}
+mod m756 {
+    pub effect E756 { fn op756(x: u64) }
+}
+mod m757 {
+    pub effect E757 { fn op757(x: u64) }
+}
+mod m758 {
+    pub effect E758 { fn op758(x: u64) }
+}
+mod m759 {
+    pub effect E759 { fn op759(x: u64) }
+}
+mod m760 {
+    pub effect E760 { fn op760(x: u64) }
+}
+mod m761 {
+    pub effect E761 { fn op761(x: u64) }
+}
+mod m762 {
+    pub effect E762 { fn op762(x: u64) }
+}
+mod m763 {
+    pub effect E763 { fn op763(x: u64) }
+}
+mod m764 {
+    pub effect E764 { fn op764(x: u64) }
+}
+mod m765 {
+    pub effect E765 { fn op765(x: u64) }
+}
+mod m766 {
+    pub effect E766 { fn op766(x: u64) }
+}
+mod m767 {
+    pub effect E767 { fn op767(x: u64) }
+}
+mod m768 {
+    pub effect E768 { fn op768(x: u64) }
+}
+mod m769 {
+    pub effect E769 { fn op769(x: u64) }
+}
+mod m770 {
+    pub effect E770 { fn op770(x: u64) }
+}
+mod m771 {
+    pub effect E771 { fn op771(x: u64) }
+}
+mod m772 {
+    pub effect E772 { fn op772(x: u64) }
+}
+mod m773 {
+    pub effect E773 { fn op773(x: u64) }
+}
+mod m774 {
+    pub effect E774 { fn op774(x: u64) }
+}
+mod m775 {
+    pub effect E775 { fn op775(x: u64) }
+}
+mod m776 {
+    pub effect E776 { fn op776(x: u64) }
+}
+mod m777 {
+    pub effect E777 { fn op777(x: u64) }
+}
+mod m778 {
+    pub effect E778 { fn op778(x: u64) }
+}
+mod m779 {
+    pub effect E779 { fn op779(x: u64) }
+}
+mod m780 {
+    pub effect E780 { fn op780(x: u64) }
+}
+mod m781 {
+    pub effect E781 { fn op781(x: u64) }
+}
+mod m782 {
+    pub effect E782 { fn op782(x: u64) }
+}
+mod m783 {
+    pub effect E783 { fn op783(x: u64) }
+}
+mod m784 {
+    pub effect E784 { fn op784(x: u64) }
+}
+mod m785 {
+    pub effect E785 { fn op785(x: u64) }
+}
+mod m786 {
+    pub effect E786 { fn op786(x: u64) }
+}
+mod m787 {
+    pub effect E787 { fn op787(x: u64) }
+}
+mod m788 {
+    pub effect E788 { fn op788(x: u64) }
+}
+mod m789 {
+    pub effect E789 { fn op789(x: u64) }
+}
+mod m790 {
+    pub effect E790 { fn op790(x: u64) }
+}
+mod m791 {
+    pub effect E791 { fn op791(x: u64) }
+}
+mod m792 {
+    pub effect E792 { fn op792(x: u64) }
+}
+mod m793 {
+    pub effect E793 { fn op793(x: u64) }
+}
+mod m794 {
+    pub effect E794 { fn op794(x: u64) }
+}
+mod m795 {
+    pub effect E795 { fn op795(x: u64) }
+}
+mod m796 {
+    pub effect E796 { fn op796(x: u64) }
+}
+mod m797 {
+    pub effect E797 { fn op797(x: u64) }
+}
+mod m798 {
+    pub effect E798 { fn op798(x: u64) }
+}
+mod m799 {
+    pub effect E799 { fn op799(x: u64) }
+}
+mod m800 {
+    pub effect E800 { fn op800(x: u64) }
+}
+mod m801 {
+    pub effect E801 { fn op801(x: u64) }
+}
+mod m802 {
+    pub effect E802 { fn op802(x: u64) }
+}
+mod m803 {
+    pub effect E803 { fn op803(x: u64) }
+}
+mod m804 {
+    pub effect E804 { fn op804(x: u64) }
+}
+mod m805 {
+    pub effect E805 { fn op805(x: u64) }
+}
+mod m806 {
+    pub effect E806 { fn op806(x: u64) }
+}
+mod m807 {
+    pub effect E807 { fn op807(x: u64) }
+}
+mod m808 {
+    pub effect E808 { fn op808(x: u64) }
+}
+mod m809 {
+    pub effect E809 { fn op809(x: u64) }
+}
+mod m810 {
+    pub effect E810 { fn op810(x: u64) }
+}
+mod m811 {
+    pub effect E811 { fn op811(x: u64) }
+}
+mod m812 {
+    pub effect E812 { fn op812(x: u64) }
+}
+mod m813 {
+    pub effect E813 { fn op813(x: u64) }
+}
+mod m814 {
+    pub effect E814 { fn op814(x: u64) }
+}
+mod m815 {
+    pub effect E815 { fn op815(x: u64) }
+}
+mod m816 {
+    pub effect E816 { fn op816(x: u64) }
+}
+mod m817 {
+    pub effect E817 { fn op817(x: u64) }
+}
+mod m818 {
+    pub effect E818 { fn op818(x: u64) }
+}
+mod m819 {
+    pub effect E819 { fn op819(x: u64) }
+}
+mod m820 {
+    pub effect E820 { fn op820(x: u64) }
+}
+mod m821 {
+    pub effect E821 { fn op821(x: u64) }
+}
+mod m822 {
+    pub effect E822 { fn op822(x: u64) }
+}
+mod m823 {
+    pub effect E823 { fn op823(x: u64) }
+}
+mod m824 {
+    pub effect E824 { fn op824(x: u64) }
+}
+mod m825 {
+    pub effect E825 { fn op825(x: u64) }
+}
+mod m826 {
+    pub effect E826 { fn op826(x: u64) }
+}
+mod m827 {
+    pub effect E827 { fn op827(x: u64) }
+}
+mod m828 {
+    pub effect E828 { fn op828(x: u64) }
+}
+mod m829 {
+    pub effect E829 { fn op829(x: u64) }
+}
+mod m830 {
+    pub effect E830 { fn op830(x: u64) }
+}
+mod m831 {
+    pub effect E831 { fn op831(x: u64) }
+}
+mod m832 {
+    pub effect E832 { fn op832(x: u64) }
+}
+mod m833 {
+    pub effect E833 { fn op833(x: u64) }
+}
+mod m834 {
+    pub effect E834 { fn op834(x: u64) }
+}
+mod m835 {
+    pub effect E835 { fn op835(x: u64) }
+}
+mod m836 {
+    pub effect E836 { fn op836(x: u64) }
+}
+mod m837 {
+    pub effect E837 { fn op837(x: u64) }
+}
+mod m838 {
+    pub effect E838 { fn op838(x: u64) }
+}
+mod m839 {
+    pub effect E839 { fn op839(x: u64) }
+}
+mod m840 {
+    pub effect E840 { fn op840(x: u64) }
+}
+mod m841 {
+    pub effect E841 { fn op841(x: u64) }
+}
+mod m842 {
+    pub effect E842 { fn op842(x: u64) }
+}
+mod m843 {
+    pub effect E843 { fn op843(x: u64) }
+}
+mod m844 {
+    pub effect E844 { fn op844(x: u64) }
+}
+mod m845 {
+    pub effect E845 { fn op845(x: u64) }
+}
+mod m846 {
+    pub effect E846 { fn op846(x: u64) }
+}
+mod m847 {
+    pub effect E847 { fn op847(x: u64) }
+}
+mod m848 {
+    pub effect E848 { fn op848(x: u64) }
+}
+mod m849 {
+    pub effect E849 { fn op849(x: u64) }
+}
+mod m850 {
+    pub effect E850 { fn op850(x: u64) }
+}
+mod m851 {
+    pub effect E851 { fn op851(x: u64) }
+}
+mod m852 {
+    pub effect E852 { fn op852(x: u64) }
+}
+mod m853 {
+    pub effect E853 { fn op853(x: u64) }
+}
+mod m854 {
+    pub effect E854 { fn op854(x: u64) }
+}
+mod m855 {
+    pub effect E855 { fn op855(x: u64) }
+}
+mod m856 {
+    pub effect E856 { fn op856(x: u64) }
+}
+mod m857 {
+    pub effect E857 { fn op857(x: u64) }
+}
+mod m858 {
+    pub effect E858 { fn op858(x: u64) }
+}
+mod m859 {
+    pub effect E859 { fn op859(x: u64) }
+}
+mod m860 {
+    pub effect E860 { fn op860(x: u64) }
+}
+mod m861 {
+    pub effect E861 { fn op861(x: u64) }
+}
+mod m862 {
+    pub effect E862 { fn op862(x: u64) }
+}
+mod m863 {
+    pub effect E863 { fn op863(x: u64) }
+}
+mod m864 {
+    pub effect E864 { fn op864(x: u64) }
+}
+mod m865 {
+    pub effect E865 { fn op865(x: u64) }
+}
+mod m866 {
+    pub effect E866 { fn op866(x: u64) }
+}
+mod m867 {
+    pub effect E867 { fn op867(x: u64) }
+}
+mod m868 {
+    pub effect E868 { fn op868(x: u64) }
+}
+mod m869 {
+    pub effect E869 { fn op869(x: u64) }
+}
+mod m870 {
+    pub effect E870 { fn op870(x: u64) }
+}
+mod m871 {
+    pub effect E871 { fn op871(x: u64) }
+}
+mod m872 {
+    pub effect E872 { fn op872(x: u64) }
+}
+mod m873 {
+    pub effect E873 { fn op873(x: u64) }
+}
+mod m874 {
+    pub effect E874 { fn op874(x: u64) }
+}
+mod m875 {
+    pub effect E875 { fn op875(x: u64) }
+}
+mod m876 {
+    pub effect E876 { fn op876(x: u64) }
+}
+mod m877 {
+    pub effect E877 { fn op877(x: u64) }
+}
+mod m878 {
+    pub effect E878 { fn op878(x: u64) }
+}
+mod m879 {
+    pub effect E879 { fn op879(x: u64) }
+}
+mod m880 {
+    pub effect E880 { fn op880(x: u64) }
+}
+mod m881 {
+    pub effect E881 { fn op881(x: u64) }
+}
+mod m882 {
+    pub effect E882 { fn op882(x: u64) }
+}
+mod m883 {
+    pub effect E883 { fn op883(x: u64) }
+}
+mod m884 {
+    pub effect E884 { fn op884(x: u64) }
+}
+mod m885 {
+    pub effect E885 { fn op885(x: u64) }
+}
+mod m886 {
+    pub effect E886 { fn op886(x: u64) }
+}
+mod m887 {
+    pub effect E887 { fn op887(x: u64) }
+}
+mod m888 {
+    pub effect E888 { fn op888(x: u64) }
+}
+mod m889 {
+    pub effect E889 { fn op889(x: u64) }
+}
+mod m890 {
+    pub effect E890 { fn op890(x: u64) }
+}
+mod m891 {
+    pub effect E891 { fn op891(x: u64) }
+}
+mod m892 {
+    pub effect E892 { fn op892(x: u64) }
+}
+mod m893 {
+    pub effect E893 { fn op893(x: u64) }
+}
+mod m894 {
+    pub effect E894 { fn op894(x: u64) }
+}
+mod m895 {
+    pub effect E895 { fn op895(x: u64) }
+}
+mod m896 {
+    pub effect E896 { fn op896(x: u64) }
+}
+mod m897 {
+    pub effect E897 { fn op897(x: u64) }
+}
+mod m898 {
+    pub effect E898 { fn op898(x: u64) }
+}
+mod m899 {
+    pub effect E899 { fn op899(x: u64) }
+}
+mod m900 {
+    pub effect E900 { fn op900(x: u64) }
+}
+mod m901 {
+    pub effect E901 { fn op901(x: u64) }
+}
+mod m902 {
+    pub effect E902 { fn op902(x: u64) }
+}
+mod m903 {
+    pub effect E903 { fn op903(x: u64) }
+}
+mod m904 {
+    pub effect E904 { fn op904(x: u64) }
+}
+mod m905 {
+    pub effect E905 { fn op905(x: u64) }
+}
+mod m906 {
+    pub effect E906 { fn op906(x: u64) }
+}
+mod m907 {
+    pub effect E907 { fn op907(x: u64) }
+}
+mod m908 {
+    pub effect E908 { fn op908(x: u64) }
+}
+mod m909 {
+    pub effect E909 { fn op909(x: u64) }
+}
+mod m910 {
+    pub effect E910 { fn op910(x: u64) }
+}
+mod m911 {
+    pub effect E911 { fn op911(x: u64) }
+}
+mod m912 {
+    pub effect E912 { fn op912(x: u64) }
+}
+mod m913 {
+    pub effect E913 { fn op913(x: u64) }
+}
+mod m914 {
+    pub effect E914 { fn op914(x: u64) }
+}
+mod m915 {
+    pub effect E915 { fn op915(x: u64) }
+}
+mod m916 {
+    pub effect E916 { fn op916(x: u64) }
+}
+mod m917 {
+    pub effect E917 { fn op917(x: u64) }
+}
+mod m918 {
+    pub effect E918 { fn op918(x: u64) }
+}
+mod m919 {
+    pub effect E919 { fn op919(x: u64) }
+}
+mod m920 {
+    pub effect E920 { fn op920(x: u64) }
+}
+mod m921 {
+    pub effect E921 { fn op921(x: u64) }
+}
+mod m922 {
+    pub effect E922 { fn op922(x: u64) }
+}
+mod m923 {
+    pub effect E923 { fn op923(x: u64) }
+}
+mod m924 {
+    pub effect E924 { fn op924(x: u64) }
+}
+mod m925 {
+    pub effect E925 { fn op925(x: u64) }
+}
+mod m926 {
+    pub effect E926 { fn op926(x: u64) }
+}
+mod m927 {
+    pub effect E927 { fn op927(x: u64) }
+}
+mod m928 {
+    pub effect E928 { fn op928(x: u64) }
+}
+mod m929 {
+    pub effect E929 { fn op929(x: u64) }
+}
+mod m930 {
+    pub effect E930 { fn op930(x: u64) }
+}
+mod m931 {
+    pub effect E931 { fn op931(x: u64) }
+}
+mod m932 {
+    pub effect E932 { fn op932(x: u64) }
+}
+mod m933 {
+    pub effect E933 { fn op933(x: u64) }
+}
+mod m934 {
+    pub effect E934 { fn op934(x: u64) }
+}
+mod m935 {
+    pub effect E935 { fn op935(x: u64) }
+}
+mod m936 {
+    pub effect E936 { fn op936(x: u64) }
+}
+mod m937 {
+    pub effect E937 { fn op937(x: u64) }
+}
+mod m938 {
+    pub effect E938 { fn op938(x: u64) }
+}
+mod m939 {
+    pub effect E939 { fn op939(x: u64) }
+}
+mod m940 {
+    pub effect E940 { fn op940(x: u64) }
+}
+mod m941 {
+    pub effect E941 { fn op941(x: u64) }
+}
+mod m942 {
+    pub effect E942 { fn op942(x: u64) }
+}
+mod m943 {
+    pub effect E943 { fn op943(x: u64) }
+}
+mod m944 {
+    pub effect E944 { fn op944(x: u64) }
+}
+mod m945 {
+    pub effect E945 { fn op945(x: u64) }
+}
+mod m946 {
+    pub effect E946 { fn op946(x: u64) }
+}
+mod m947 {
+    pub effect E947 { fn op947(x: u64) }
+}
+mod m948 {
+    pub effect E948 { fn op948(x: u64) }
+}
+mod m949 {
+    pub effect E949 { fn op949(x: u64) }
+}
+mod m950 {
+    pub effect E950 { fn op950(x: u64) }
+}
+mod m951 {
+    pub effect E951 { fn op951(x: u64) }
+}
+mod m952 {
+    pub effect E952 { fn op952(x: u64) }
+}
+mod m953 {
+    pub effect E953 { fn op953(x: u64) }
+}
+mod m954 {
+    pub effect E954 { fn op954(x: u64) }
+}
+mod m955 {
+    pub effect E955 { fn op955(x: u64) }
+}
+mod m956 {
+    pub effect E956 { fn op956(x: u64) }
+}
+mod m957 {
+    pub effect E957 { fn op957(x: u64) }
+}
+mod m958 {
+    pub effect E958 { fn op958(x: u64) }
+}
+mod m959 {
+    pub effect E959 { fn op959(x: u64) }
+}
+mod m960 {
+    pub effect E960 { fn op960(x: u64) }
+}
+mod m961 {
+    pub effect E961 { fn op961(x: u64) }
+}
+mod m962 {
+    pub effect E962 { fn op962(x: u64) }
+}
+mod m963 {
+    pub effect E963 { fn op963(x: u64) }
+}
+mod m964 {
+    pub effect E964 { fn op964(x: u64) }
+}
+mod m965 {
+    pub effect E965 { fn op965(x: u64) }
+}
+mod m966 {
+    pub effect E966 { fn op966(x: u64) }
+}
+mod m967 {
+    pub effect E967 { fn op967(x: u64) }
+}
+mod m968 {
+    pub effect E968 { fn op968(x: u64) }
+}
+mod m969 {
+    pub effect E969 { fn op969(x: u64) }
+}
+mod m970 {
+    pub effect E970 { fn op970(x: u64) }
+}
+mod m971 {
+    pub effect E971 { fn op971(x: u64) }
+}
+mod m972 {
+    pub effect E972 { fn op972(x: u64) }
+}
+mod m973 {
+    pub effect E973 { fn op973(x: u64) }
+}
+mod m974 {
+    pub effect E974 { fn op974(x: u64) }
+}
+mod m975 {
+    pub effect E975 { fn op975(x: u64) }
+}
+mod m976 {
+    pub effect E976 { fn op976(x: u64) }
+}
+mod m977 {
+    pub effect E977 { fn op977(x: u64) }
+}
+mod m978 {
+    pub effect E978 { fn op978(x: u64) }
+}
+mod m979 {
+    pub effect E979 { fn op979(x: u64) }
+}
+mod m980 {
+    pub effect E980 { fn op980(x: u64) }
+}
+mod m981 {
+    pub effect E981 { fn op981(x: u64) }
+}
+mod m982 {
+    pub effect E982 { fn op982(x: u64) }
+}
+mod m983 {
+    pub effect E983 { fn op983(x: u64) }
+}
+mod m984 {
+    pub effect E984 { fn op984(x: u64) }
+}
+mod m985 {
+    pub effect E985 { fn op985(x: u64) }
+}
+mod m986 {
+    pub effect E986 { fn op986(x: u64) }
+}
+mod m987 {
+    pub effect E987 { fn op987(x: u64) }
+}
+mod m988 {
+    pub effect E988 { fn op988(x: u64) }
+}
+mod m989 {
+    pub effect E989 { fn op989(x: u64) }
+}
+mod m990 {
+    pub effect E990 { fn op990(x: u64) }
+}
+mod m991 {
+    pub effect E991 { fn op991(x: u64) }
+}
+mod m992 {
+    pub effect E992 { fn op992(x: u64) }
+}
+mod m993 {
+    pub effect E993 { fn op993(x: u64) }
+}
+mod m994 {
+    pub effect E994 { fn op994(x: u64) }
+}
+mod m995 {
+    pub effect E995 { fn op995(x: u64) }
+}
+mod m996 {
+    pub effect E996 { fn op996(x: u64) }
+}
+mod m997 {
+    pub effect E997 { fn op997(x: u64) }
+}
+mod m998 {
+    pub effect E998 { fn op998(x: u64) }
+}
+mod m999 {
+    pub effect E999 { fn op999(x: u64) }
+}
+mod m1000 {
+    pub effect E1000 { fn op1000(x: u64) }
+}
+mod m1001 {
+    pub effect E1001 { fn op1001(x: u64) }
+}
+mod m1002 {
+    pub effect E1002 { fn op1002(x: u64) }
+}
+mod m1003 {
+    pub effect E1003 { fn op1003(x: u64) }
+}
+mod m1004 {
+    pub effect E1004 { fn op1004(x: u64) }
+}
+mod m1005 {
+    pub effect E1005 { fn op1005(x: u64) }
+}
+mod m1006 {
+    pub effect E1006 { fn op1006(x: u64) }
+}
+mod m1007 {
+    pub effect E1007 { fn op1007(x: u64) }
+}
+mod m1008 {
+    pub effect E1008 { fn op1008(x: u64) }
+}
+mod m1009 {
+    pub effect E1009 { fn op1009(x: u64) }
+}
+mod m1010 {
+    pub effect E1010 { fn op1010(x: u64) }
+}
+mod m1011 {
+    pub effect E1011 { fn op1011(x: u64) }
+}
+mod m1012 {
+    pub effect E1012 { fn op1012(x: u64) }
+}
+mod m1013 {
+    pub effect E1013 { fn op1013(x: u64) }
+}
+mod m1014 {
+    pub effect E1014 { fn op1014(x: u64) }
+}
+mod m1015 {
+    pub effect E1015 { fn op1015(x: u64) }
+}
+mod m1016 {
+    pub effect E1016 { fn op1016(x: u64) }
+}
+mod m1017 {
+    pub effect E1017 { fn op1017(x: u64) }
+}
+mod m1018 {
+    pub effect E1018 { fn op1018(x: u64) }
+}
+mod m1019 {
+    pub effect E1019 { fn op1019(x: u64) }
+}
+mod m1020 {
+    pub effect E1020 { fn op1020(x: u64) }
+}
+mod m1021 {
+    pub effect E1021 { fn op1021(x: u64) }
+}
+mod m1022 {
+    pub effect E1022 { fn op1022(x: u64) }
+}
+mod m1023 {
+    pub effect E1023 { fn op1023(x: u64) }
+}
+mod m1024 {
+    pub effect E1024 { fn op1024(x: u64) }
+}
+mod m1025 {
+    pub effect E1025 { fn op1025(x: u64) }
+}
+mod m1026 {
+    pub effect E1026 { fn op1026(x: u64) }
+}
+mod m1027 {
+    pub effect E1027 { fn op1027(x: u64) }
+}
+mod m1028 {
+    pub effect E1028 { fn op1028(x: u64) }
+}
+mod m1029 {
+    pub effect E1029 { fn op1029(x: u64) }
+}
+mod m1030 {
+    pub effect E1030 { fn op1030(x: u64) }
+}
+mod m1031 {
+    pub effect E1031 { fn op1031(x: u64) }
+}
+mod m1032 {
+    pub effect E1032 { fn op1032(x: u64) }
+}
+mod m1033 {
+    pub effect E1033 { fn op1033(x: u64) }
+}
+mod m1034 {
+    pub effect E1034 { fn op1034(x: u64) }
+}
+mod m1035 {
+    pub effect E1035 { fn op1035(x: u64) }
+}
+mod m1036 {
+    pub effect E1036 { fn op1036(x: u64) }
+}
+mod m1037 {
+    pub effect E1037 { fn op1037(x: u64) }
+}
+mod m1038 {
+    pub effect E1038 { fn op1038(x: u64) }
+}
+mod m1039 {
+    pub effect E1039 { fn op1039(x: u64) }
+}
+mod m1040 {
+    pub effect E1040 { fn op1040(x: u64) }
+}
+mod m1041 {
+    pub effect E1041 { fn op1041(x: u64) }
+}
+mod m1042 {
+    pub effect E1042 { fn op1042(x: u64) }
+}
+mod m1043 {
+    pub effect E1043 { fn op1043(x: u64) }
+}
+mod m1044 {
+    pub effect E1044 { fn op1044(x: u64) }
+}
+mod m1045 {
+    pub effect E1045 { fn op1045(x: u64) }
+}
+mod m1046 {
+    pub effect E1046 { fn op1046(x: u64) }
+}
+mod m1047 {
+    pub effect E1047 { fn op1047(x: u64) }
+}
+mod m1048 {
+    pub effect E1048 { fn op1048(x: u64) }
+}
+mod m1049 {
+    pub effect E1049 { fn op1049(x: u64) }
+}
+mod m1050 {
+    pub effect E1050 { fn op1050(x: u64) }
+}
+mod m1051 {
+    pub effect E1051 { fn op1051(x: u64) }
+}
+mod m1052 {
+    pub effect E1052 { fn op1052(x: u64) }
+}
+mod m1053 {
+    pub effect E1053 { fn op1053(x: u64) }
+}
+mod m1054 {
+    pub effect E1054 { fn op1054(x: u64) }
+}
+mod m1055 {
+    pub effect E1055 { fn op1055(x: u64) }
+}
+mod m1056 {
+    pub effect E1056 { fn op1056(x: u64) }
+}
+mod m1057 {
+    pub effect E1057 { fn op1057(x: u64) }
+}
+mod m1058 {
+    pub effect E1058 { fn op1058(x: u64) }
+}
+mod m1059 {
+    pub effect E1059 { fn op1059(x: u64) }
+}
+mod m1060 {
+    pub effect E1060 { fn op1060(x: u64) }
+}
+mod m1061 {
+    pub effect E1061 { fn op1061(x: u64) }
+}
+mod m1062 {
+    pub effect E1062 { fn op1062(x: u64) }
+}
+mod m1063 {
+    pub effect E1063 { fn op1063(x: u64) }
+}
+mod m1064 {
+    pub effect E1064 { fn op1064(x: u64) }
+}
+mod m1065 {
+    pub effect E1065 { fn op1065(x: u64) }
+}
+mod m1066 {
+    pub effect E1066 { fn op1066(x: u64) }
+}
+mod m1067 {
+    pub effect E1067 { fn op1067(x: u64) }
+}
+mod m1068 {
+    pub effect E1068 { fn op1068(x: u64) }
+}
+mod m1069 {
+    pub effect E1069 { fn op1069(x: u64) }
+}
+mod m1070 {
+    pub effect E1070 { fn op1070(x: u64) }
+}
+mod m1071 {
+    pub effect E1071 { fn op1071(x: u64) }
+}
+mod m1072 {
+    pub effect E1072 { fn op1072(x: u64) }
+}
+mod m1073 {
+    pub effect E1073 { fn op1073(x: u64) }
+}
+mod m1074 {
+    pub effect E1074 { fn op1074(x: u64) }
+}
+mod m1075 {
+    pub effect E1075 { fn op1075(x: u64) }
+}
+mod m1076 {
+    pub effect E1076 { fn op1076(x: u64) }
+}
+mod m1077 {
+    pub effect E1077 { fn op1077(x: u64) }
+}
+mod m1078 {
+    pub effect E1078 { fn op1078(x: u64) }
+}
+mod m1079 {
+    pub effect E1079 { fn op1079(x: u64) }
+}
+mod m1080 {
+    pub effect E1080 { fn op1080(x: u64) }
+}
+mod m1081 {
+    pub effect E1081 { fn op1081(x: u64) }
+}
+mod m1082 {
+    pub effect E1082 { fn op1082(x: u64) }
+}
+mod m1083 {
+    pub effect E1083 { fn op1083(x: u64) }
+}
+mod m1084 {
+    pub effect E1084 { fn op1084(x: u64) }
+}
+mod m1085 {
+    pub effect E1085 { fn op1085(x: u64) }
+}
+mod m1086 {
+    pub effect E1086 { fn op1086(x: u64) }
+}
+mod m1087 {
+    pub effect E1087 { fn op1087(x: u64) }
+}
+mod m1088 {
+    pub effect E1088 { fn op1088(x: u64) }
+}
+mod m1089 {
+    pub effect E1089 { fn op1089(x: u64) }
+}
+mod m1090 {
+    pub effect E1090 { fn op1090(x: u64) }
+}
+mod m1091 {
+    pub effect E1091 { fn op1091(x: u64) }
+}
+mod m1092 {
+    pub effect E1092 { fn op1092(x: u64) }
+}
+mod m1093 {
+    pub effect E1093 { fn op1093(x: u64) }
+}
+mod m1094 {
+    pub effect E1094 { fn op1094(x: u64) }
+}
+mod m1095 {
+    pub effect E1095 { fn op1095(x: u64) }
+}
+mod m1096 {
+    pub effect E1096 { fn op1096(x: u64) }
+}
+mod m1097 {
+    pub effect E1097 { fn op1097(x: u64) }
+}
+mod m1098 {
+    pub effect E1098 { fn op1098(x: u64) }
+}
+mod m1099 {
+    pub effect E1099 { fn op1099(x: u64) }
+}
+mod m1100 {
+    pub effect E1100 { fn op1100(x: u64) }
+}
+mod m1101 {
+    pub effect E1101 { fn op1101(x: u64) }
+}
+mod m1102 {
+    pub effect E1102 { fn op1102(x: u64) }
+}
+mod m1103 {
+    pub effect E1103 { fn op1103(x: u64) }
+}
+mod m1104 {
+    pub effect E1104 { fn op1104(x: u64) }
+}
+mod m1105 {
+    pub effect E1105 { fn op1105(x: u64) }
+}
+mod m1106 {
+    pub effect E1106 { fn op1106(x: u64) }
+}
+mod m1107 {
+    pub effect E1107 { fn op1107(x: u64) }
+}
+mod m1108 {
+    pub effect E1108 { fn op1108(x: u64) }
+}
+mod m1109 {
+    pub effect E1109 { fn op1109(x: u64) }
+}
+mod m1110 {
+    pub effect E1110 { fn op1110(x: u64) }
+}
+mod m1111 {
+    pub effect E1111 { fn op1111(x: u64) }
+}
+mod m1112 {
+    pub effect E1112 { fn op1112(x: u64) }
+}
+mod m1113 {
+    pub effect E1113 { fn op1113(x: u64) }
+}
+mod m1114 {
+    pub effect E1114 { fn op1114(x: u64) }
+}
+mod m1115 {
+    pub effect E1115 { fn op1115(x: u64) }
+}
+mod m1116 {
+    pub effect E1116 { fn op1116(x: u64) }
+}
+mod m1117 {
+    pub effect E1117 { fn op1117(x: u64) }
+}
+mod m1118 {
+    pub effect E1118 { fn op1118(x: u64) }
+}
+mod m1119 {
+    pub effect E1119 { fn op1119(x: u64) }
+}
+mod m1120 {
+    pub effect E1120 { fn op1120(x: u64) }
+}
+mod m1121 {
+    pub effect E1121 { fn op1121(x: u64) }
+}
+mod m1122 {
+    pub effect E1122 { fn op1122(x: u64) }
+}
+mod m1123 {
+    pub effect E1123 { fn op1123(x: u64) }
+}
+mod m1124 {
+    pub effect E1124 { fn op1124(x: u64) }
+}
+mod m1125 {
+    pub effect E1125 { fn op1125(x: u64) }
+}
+mod m1126 {
+    pub effect E1126 { fn op1126(x: u64) }
+}
+mod m1127 {
+    pub effect E1127 { fn op1127(x: u64) }
+}
+mod m1128 {
+    pub effect E1128 { fn op1128(x: u64) }
+}
+mod m1129 {
+    pub effect E1129 { fn op1129(x: u64) }
+}
+mod m1130 {
+    pub effect E1130 { fn op1130(x: u64) }
+}
+mod m1131 {
+    pub effect E1131 { fn op1131(x: u64) }
+}
+mod m1132 {
+    pub effect E1132 { fn op1132(x: u64) }
+}
+mod m1133 {
+    pub effect E1133 { fn op1133(x: u64) }
+}
+mod m1134 {
+    pub effect E1134 { fn op1134(x: u64) }
+}
+mod m1135 {
+    pub effect E1135 { fn op1135(x: u64) }
+}
+mod m1136 {
+    pub effect E1136 { fn op1136(x: u64) }
+}
+mod m1137 {
+    pub effect E1137 { fn op1137(x: u64) }
+}
+mod m1138 {
+    pub effect E1138 { fn op1138(x: u64) }
+}
+mod m1139 {
+    pub effect E1139 { fn op1139(x: u64) }
+}
+mod m1140 {
+    pub effect E1140 { fn op1140(x: u64) }
+}
+mod m1141 {
+    pub effect E1141 { fn op1141(x: u64) }
+}
+mod m1142 {
+    pub effect E1142 { fn op1142(x: u64) }
+}
+mod m1143 {
+    pub effect E1143 { fn op1143(x: u64) }
+}
+mod m1144 {
+    pub effect E1144 { fn op1144(x: u64) }
+}
+mod m1145 {
+    pub effect E1145 { fn op1145(x: u64) }
+}
+mod m1146 {
+    pub effect E1146 { fn op1146(x: u64) }
+}
+mod m1147 {
+    pub effect E1147 { fn op1147(x: u64) }
+}
+mod m1148 {
+    pub effect E1148 { fn op1148(x: u64) }
+}
+mod m1149 {
+    pub effect E1149 { fn op1149(x: u64) }
+}
+mod m1150 {
+    pub effect E1150 { fn op1150(x: u64) }
+}
+mod m1151 {
+    pub effect E1151 { fn op1151(x: u64) }
+}
+mod m1152 {
+    pub effect E1152 { fn op1152(x: u64) }
+}
+mod m1153 {
+    pub effect E1153 { fn op1153(x: u64) }
+}
+mod m1154 {
+    pub effect E1154 { fn op1154(x: u64) }
+}
+mod m1155 {
+    pub effect E1155 { fn op1155(x: u64) }
+}
+mod m1156 {
+    pub effect E1156 { fn op1156(x: u64) }
+}
+mod m1157 {
+    pub effect E1157 { fn op1157(x: u64) }
+}
+mod m1158 {
+    pub effect E1158 { fn op1158(x: u64) }
+}
+mod m1159 {
+    pub effect E1159 { fn op1159(x: u64) }
+}
+mod m1160 {
+    pub effect E1160 { fn op1160(x: u64) }
+}
+mod m1161 {
+    pub effect E1161 { fn op1161(x: u64) }
+}
+mod m1162 {
+    pub effect E1162 { fn op1162(x: u64) }
+}
+mod m1163 {
+    pub effect E1163 { fn op1163(x: u64) }
+}
+mod m1164 {
+    pub effect E1164 { fn op1164(x: u64) }
+}
+mod m1165 {
+    pub effect E1165 { fn op1165(x: u64) }
+}
+mod m1166 {
+    pub effect E1166 { fn op1166(x: u64) }
+}
+mod m1167 {
+    pub effect E1167 { fn op1167(x: u64) }
+}
+mod m1168 {
+    pub effect E1168 { fn op1168(x: u64) }
+}
+mod m1169 {
+    pub effect E1169 { fn op1169(x: u64) }
+}
+mod m1170 {
+    pub effect E1170 { fn op1170(x: u64) }
+}
+mod m1171 {
+    pub effect E1171 { fn op1171(x: u64) }
+}
+mod m1172 {
+    pub effect E1172 { fn op1172(x: u64) }
+}
+mod m1173 {
+    pub effect E1173 { fn op1173(x: u64) }
+}
+mod m1174 {
+    pub effect E1174 { fn op1174(x: u64) }
+}
+mod m1175 {
+    pub effect E1175 { fn op1175(x: u64) }
+}
+mod m1176 {
+    pub effect E1176 { fn op1176(x: u64) }
+}
+mod m1177 {
+    pub effect E1177 { fn op1177(x: u64) }
+}
+mod m1178 {
+    pub effect E1178 { fn op1178(x: u64) }
+}
+mod m1179 {
+    pub effect E1179 { fn op1179(x: u64) }
+}
+mod m1180 {
+    pub effect E1180 { fn op1180(x: u64) }
+}
+mod m1181 {
+    pub effect E1181 { fn op1181(x: u64) }
+}
+mod m1182 {
+    pub effect E1182 { fn op1182(x: u64) }
+}
+mod m1183 {
+    pub effect E1183 { fn op1183(x: u64) }
+}
+mod m1184 {
+    pub effect E1184 { fn op1184(x: u64) }
+}
+mod m1185 {
+    pub effect E1185 { fn op1185(x: u64) }
+}
+mod m1186 {
+    pub effect E1186 { fn op1186(x: u64) }
+}
+mod m1187 {
+    pub effect E1187 { fn op1187(x: u64) }
+}
+mod m1188 {
+    pub effect E1188 { fn op1188(x: u64) }
+}
+mod m1189 {
+    pub effect E1189 { fn op1189(x: u64) }
+}
+mod m1190 {
+    pub effect E1190 { fn op1190(x: u64) }
+}
+mod m1191 {
+    pub effect E1191 { fn op1191(x: u64) }
+}
+mod m1192 {
+    pub effect E1192 { fn op1192(x: u64) }
+}
+mod m1193 {
+    pub effect E1193 { fn op1193(x: u64) }
+}
+mod m1194 {
+    pub effect E1194 { fn op1194(x: u64) }
+}
+mod m1195 {
+    pub effect E1195 { fn op1195(x: u64) }
+}
+mod m1196 {
+    pub effect E1196 { fn op1196(x: u64) }
+}
+mod m1197 {
+    pub effect E1197 { fn op1197(x: u64) }
+}
+mod m1198 {
+    pub effect E1198 { fn op1198(x: u64) }
+}
+mod m1199 {
+    pub effect E1199 { fn op1199(x: u64) }
+}
+fn main() {}

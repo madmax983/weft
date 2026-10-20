@@ -1,0 +1,19 @@
+// on abort calls a function value from a field of its value. The field type states Ask.
+effect Ask { fn ask() -> u64 }
+effect Stop { fn stop() }
+linear struct T { f: fn() / Ask }
+    on abort = undo
+fn undo(t: T) {
+    let T(f) = t
+    f()
+}
+fn done(t: T) { let T(f) = t }
+fn main() {
+    handle Ask { fn ask() { resume(5) } } in {
+        handle Stop { fn stop() { () } } in {
+            let t = T { f: || print(ask()) }
+            stop()
+            done(t)
+        }
+    }
+}

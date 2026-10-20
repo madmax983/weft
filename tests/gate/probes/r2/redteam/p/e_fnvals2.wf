@@ -1,0 +1,65 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Wrap<T> { x: T }
+fn run_all(v: &Vec<fn()>) { let i = 0
+ while i < v.len() { let g = v[i]
+ g()
+ i += 1 } }
+fn run_first(v: &Vec<fn()>) { let g = v[0]
+ g() }
+
+fn opt_reassign(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let o = Some(|| print(1))
+    o = Some(|| world.entities.clear())
+    match o { Some(g) => g(), None => {} }
+    print(first.hp)   //~ W0301
+}
+fn wrap_reassign(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let w = Wrap { x: || print(1) }
+    w.x = || world.entities.clear()
+    let g = w.x
+    g()
+    print(first.hp)   //~ W0301
+}
+fn callee_runs_all(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let v = Vec.new()
+    v.push(|| print(1))
+    v.push(|| world.entities.clear())
+    run_all(&v)
+    print(first.hp)   //~ W0301
+}
+fn callee_runs_first(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let v = Vec.new()
+    v.push(|| world.entities.clear())
+    run_first(&v)
+    print(first.hp)   //~ W0301
+}
+fn if_two(world: &World, c: bool) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g = if c { || print(1) } else { || world.entities.clear() }
+    g()
+    print(first.hp)   //~ W0301
+}
+fn match_two(world: &World, n: u64) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g = match n { 0 => || print(1), _ => || world.entities.clear() }
+    g()
+    print(first.hp)   //~ W0301
+}
+fn opt_if(world: &World, c: bool) / mut(world.entities) {
+    let first = &world.entities[0]
+    let o = if c { Some(|| print(1)) } else { Some(|| world.entities.clear()) }
+    match o { Some(g) => g(), None => {} }
+    print(first.hp)   //~ W0301
+}
+fn mkw() -> World { let w = World { entities: Vec.new() }
+ w.entities.push(Entity { hp: 1 })
+ w }
+test "opt_reassign" { let w = mkw()
+ opt_reassign(&w) }
+test "callee_runs_all" { let w = mkw()
+ callee_runs_all(&w) }

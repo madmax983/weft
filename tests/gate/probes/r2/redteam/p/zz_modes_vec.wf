@@ -1,0 +1,42 @@
+struct Node { v: u64 }
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) {}
+effect Choice { multi fn choose() -> bool }
+fn needs_uniq(es: &[u64] @ uniq) / mut(es) {}
+
+fn rc_second() / par {
+    let n = Rc.new(Node { v: 1 })
+    let a = [|| print(1), || print(n.v)]
+    fork(|| { let g = a[1]
+ g() }, || print(2))   //~ W0401
+}
+fn once_second() {
+    let b = Buf { items: Vec.new() }
+    let v = Vec.new()
+    v.push(|| print(1))
+    v.push(|| eat(b))   //~ W0502
+}
+fn linear_second() {
+    let tx = begin()
+    let v = Vec.new()
+    v.push(|| print(1))
+    v.push(|| rollback(tx))   //~ W0601
+}
+fn uniq_second(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let (l, r) = v.split_mut(1)
+    let a = [|| print(1), || needs_uniq(l)]
+    let b = choose()   //~ W0503
+    let g = a[1]
+    g()
+    b
+}
+fn opt_rc_reassign() / par {
+    let n = Rc.new(Node { v: 1 })
+    let o = Some(|| print(1))
+    o = Some(|| print(n.v))
+    fork(|| { match o { Some(g) => g(), None => {} } }, || print(2))   //~ W0401
+}

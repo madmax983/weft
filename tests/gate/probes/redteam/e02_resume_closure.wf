@@ -1,0 +1,9 @@
+effect Log { fn log(msg: String) }
+// A once continuation resumed twice through a closure.
+fn twice_closure() {
+    handle Log { fn log(msg) { let f = || resume(()); f(); f() } } in log("a")
+}
+// Control.
+fn twice_direct() {
+    handle Log { fn log(msg) { resume(()); resume(()) } } in log("a")
+}

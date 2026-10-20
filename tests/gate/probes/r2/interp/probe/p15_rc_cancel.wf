@@ -1,0 +1,21 @@
+// Rc values in a cancelled task, in an aborted continuation and in a timed-out block.
+effect Stop { fn stop() }
+
+fn main() / io {
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        scope { s =>
+            s.spawn(|| { let r = Rc.new(1); let q = r.clone(); sleep(100.ms); print(q) })
+            s.spawn(|| { sleep(5.ms); fail("boom") })
+            print("scope body end")
+        }
+    }
+    handle Stop { fn stop() { print("stopped") } } in {
+        let r = Rc.new(2)
+        let q = r.clone()
+        stop()
+        print(q)
+    }
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        with_timeout(5.ms) { let r = Rc.new(3); sleep(10.ms); print(r) }
+    }
+}

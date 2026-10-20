@@ -1,0 +1,14 @@
+// A multi operation in a scope body; a task spawned before it runs during it.
+effect Choice { multi fn choose() -> bool }
+fn main() / clock {
+    let v: Vec<u64> = Vec.new()
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        scope { s =>
+            s.spawn(|| { sleep(5.ms); print("task") })
+            let b = choose()
+            sleep(10.ms)
+            print(b)
+        }
+    }
+    print("end")
+}

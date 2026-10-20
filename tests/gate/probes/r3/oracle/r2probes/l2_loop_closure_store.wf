@@ -1,0 +1,11 @@
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    let f = || print(0)
+    for x in v[] {
+        f = || print(x)
+    }
+    v.clear()
+    f()
+}

@@ -1,0 +1,19 @@
+effect Choice { multi fn choose() -> bool }
+struct Res { v: Vec<u64> }
+fn consume(r: Res) { print(r.v.len()) }
+fn run_after_choose(f: fn()) / Choice { let b = choose()
+ f() }
+fn m_aff() / Choice {
+    let r = Res { v: Vec.new() }
+    run_after_choose(|| consume(r))
+}
+fn m_aff_local() / Choice {
+    let r = Res { v: Vec.new() }
+    let f = || consume(r)
+    let b = choose()
+    f()
+}
+fn main() {
+    handle Choice { fn choose() { resume(true)
+ resume(false) } } in m_aff()
+}

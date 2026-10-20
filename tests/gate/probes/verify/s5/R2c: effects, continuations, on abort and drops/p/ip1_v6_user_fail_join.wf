@@ -1,0 +1,12 @@
+// A user effect named Fail and a failing child task.
+effect Fail { fn fail(m: String) }
+fn work() -> u64 { let v: Vec<u64> = Vec.new(); v[3] }
+fn main() / io, fail {
+    let r = handle Fail { fn fail(m) { print("caught {m}"); resume(()) } } in {
+        scope { s =>
+            let t = s.spawn(|| work())
+            t.join() + 1
+        }
+    }
+    print("r = {r}")
+}

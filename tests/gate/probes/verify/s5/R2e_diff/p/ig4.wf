@@ -1,0 +1,6 @@
+fn main() {
+    let inc = |v| v + 1
+    let a: u8 = 255
+    print(inc(a))
+    let b: i64 = 255
+}

@@ -1,0 +1,40 @@
+// Rc counts on several paths: a task result that nobody joins, a fork result,
+// an aborted continuation, a timeout, a cancelled task.
+effect Ask { fn ask() -> u64 }
+
+fn make() -> Rc<u64> { Rc.new(7) }
+
+fn main() / io, par {
+    // A result of a detached task.
+    scope { s =>
+        let t = s.spawn(|| make())
+        t.detach()
+    }
+    // A result of a fork.
+    let (a, b) = fork(|| make(), || make())
+    print("fork {a} {b}")
+    // An aborted continuation that holds an Rc.
+    let r = handle Ask { fn ask() { 0 } } in {
+        let x = make()
+        let y = ask()
+        print("not reached {x} {y}")
+        1
+    }
+    // A timeout that aborts a block that holds an Rc.
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        with_timeout(5.ms) {
+            let z = make()
+            sleep(10.ms)
+            print("not reached {z}")
+        }
+    }
+    // A cancelled task that holds an Rc.
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        scope { s =>
+            s.spawn(|| { let q = make(); sleep(10.ms); print("not reached {q}") })
+            s.spawn(|| { sleep(1.ms); fail("stop") })
+            print("spawned")
+        }
+    }
+    print("end {r}")
+}

@@ -1,0 +1,19 @@
+effect Tick { fn tick() }
+
+fn body(v: &Vec<u64>) -> &u64 / Tick {
+    tick()
+    &v[0]
+}
+
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = handle Tick {
+        fn tick() {
+            let x = resume(())
+            v.clear()
+            x
+        }
+    } in body(&v)
+    print(r)
+}

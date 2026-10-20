@@ -1,0 +1,8 @@
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(id) = t; print("commit {id}") }
+fn if_tail(c: bool) {
+    let t = Tx { id: 1 }
+    if c { t } else { t }
+    commit(t)
+}
+fn main() { if_tail(true) }

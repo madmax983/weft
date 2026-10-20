@@ -1,0 +1,5 @@
+fn f(self) {}
+fn g(x) { print(x) }
+struct A { a: A }
+fn h(a: A) -> A { a }
+fn big() -> u64 { 18446744073709551615 }

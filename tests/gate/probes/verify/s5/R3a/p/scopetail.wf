@@ -1,0 +1,126 @@
+effect Note { fn note(x: u64) }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v.push(2); v }
+
+fn if_tail() / async {
+    let c = true
+    let t = (mk_v(), 6)
+    let u = (mk_v(), 7)
+    let q = &t.1
+    let x = scope { s =>
+        s.spawn(|| { sleep(1.ms); print(q) })
+        if c { t } else { u }
+    }
+    print(x.1)
+}
+fn match_tail() / async {
+    let t = (mk_v(), 6)
+    let u = (mk_v(), 7)
+    let q = &t.1
+    let x = scope { s =>
+        s.spawn(|| { sleep(1.ms); print(q) })
+        match 1 { 1 => t, _ => u }
+    }
+    print(x.1)
+}
+fn handle_tail() / async {
+    let t = (mk_v(), 6)
+    let q = &t.1
+    let x = scope { s =>
+        s.spawn(|| { sleep(1.ms); print(q) })
+        handle Note { fn note(x) { resume(()) } } in { t }
+    }
+    print(x.1)
+}
+fn nested_scope_tail() / async {
+    let t = (mk_v(), 6)
+    let q = &t.1
+    let x = scope { s =>
+        s.spawn(|| { sleep(1.ms); print(q) })
+        scope { s2 => t }
+    }
+    print(x.1)
+}
+fn part_tail() / async {
+    let t = (mk_v(), 6)
+    let q = &t.0[0]
+    let x = scope { s =>
+        s.spawn(|| { sleep(1.ms); print(q) })
+        t.0
+    }
+    print(x.len())
+}
+fn box_tail() / async {
+    let b = Box.new(mk_v())
+    let q = &b[0]
+    let x = scope { s =>
+        s.spawn(|| { sleep(1.ms); print(q) })
+        b
+    }
+    print(x.len())
+}
+fn tuple_tail() / async {
+    let t = (mk_v(), 6)
+    let q = &t.1
+    let x = scope { s =>
+        s.spawn(|| { sleep(1.ms); print(q) })
+        (t, 1)
+    }
+    print(x.1)
+}
+fn stmt_if_tail() / async {
+    let c = true
+    let t = (mk_v(), 6)
+    let u = (mk_v(), 7)
+    let q = &t.1
+    scope { s =>
+        s.spawn(|| { sleep(1.ms); print(q) })
+        if c { t } else { u }
+    }
+}
+fn stmt_handle_tail() / async {
+    let t = (mk_v(), 6)
+    let q = &t.1
+    scope { s =>
+        s.spawn(|| { sleep(1.ms); print(q) })
+        handle Note { fn note(x) { resume(()) } } in { t }
+    }
+}
+fn stmt_scope_tail() / async {
+    let t = (mk_v(), 6)
+    let q = &t.1
+    scope { s =>
+        s.spawn(|| { sleep(1.ms); print(q) })
+        scope { s2 => t }
+    }
+}
+fn arg_tail() / async {
+    let t = (mk_v(), 6)
+    let q = &t.1
+    print(scope { s =>
+        s.spawn(|| { sleep(1.ms); print(q) })
+        t
+    }.1)
+}
+fn assign_tail() / async {
+    let t = (mk_v(), 6)
+    let x = (mk_v(), 9)
+    let q = &t.1
+    x = scope { s =>
+        s.spawn(|| { sleep(1.ms); print(q) })
+        t
+    }
+    print(x.1)
+}
+fn deref_ref_tail() / async {
+    let t = (mk_v(), 6)
+    let q = &t.1
+    let r = &t
+    let x = scope { s =>
+        s.spawn(|| { sleep(1.ms); print(q) })
+        r
+    }
+    print(x.1)
+}
+fn main() / async {
+    if_tail()
+}

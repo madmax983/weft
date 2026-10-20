@@ -1,0 +1,5 @@
+struct S0<T0> { f0: (Option<Vec<u64>>, S1), f1: Box<Box<S2>> }
+struct S1 {  }
+struct S2 {  }
+struct S3<T0> {  }
+fn main() {}

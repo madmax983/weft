@@ -1,0 +1,55 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+struct Bag<T> { items: Vec<T> }
+struct Wrap<T> { x: T }
+impl<T> Bag<T> {
+    fn reset(self: &Bag<T>) / mut(self) { self.items.clear() }
+}
+fn set_none<T>(o: &Option<T>) / mut(o) { o = None }
+fn set_field<T>(w: &Wrap<T>, y: T) / mut(w) { w.x = y }
+fn early<T>(x: T, c: bool) -> Option<T> { if c { return None }
+ Some(x) }
+fn match_drop<T>(x: T) { match x { _ => {} } }
+fn shadow<T>(x: T, y: T) -> T { let a = x
+ let a = y
+ a }
+fn detach_it<T>(t: Task<T>) { t.detach() }
+
+fn bag_reset() {
+    let b = Bag { items: Vec.new() }
+    b.items.push(begin())
+    b.reset()   //~ W0601
+    let Bag(v) = b
+}
+fn closure_clear() {
+    let f = |v: &Vec<Tx>| v.clear()   //~ W0601
+}
+fn none_through_ref() {
+    let o = Some(begin())
+    set_none(&o)   //~ W0601
+    match o { Some(t) => rollback(t), None => {} }
+}
+fn field_through_ref() {
+    let w = Wrap { x: begin() }
+    set_field(&w, begin())   //~ W0601
+    let Wrap(t) = w
+    rollback(t)
+}
+fn early_ret() {
+    match early(begin(), true) { Some(t) => rollback(t), None => {} }   //~ W0601
+}
+fn match_wild() {
+    match_drop(begin())   //~ W0601
+}
+fn shadowed() {
+    rollback(shadow(begin(), begin()))   //~ W0601
+}
+fn detach_tx() / async {
+    scope { s =>
+        let t = s.spawn(|| begin())
+        detach_it(t)   //~ W0601
+    }
+}
+fn main() {}

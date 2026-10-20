@@ -1,0 +1,26 @@
+// A failure cancels a sibling. The sibling has a child with a live linear value.
+linear struct Lease { id: u64 }
+    on abort = release
+
+fn release(l: Lease) {
+    let Lease(id) = l
+    print("release {id}")
+}
+
+fn main() / io {
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        scope { s =>
+            s.spawn(|| {
+                scope { t =>
+                    t.spawn(|| { let l = Lease { id: 1 }; sleep(100.ms); let Lease(i) = l })
+                    let k = Lease { id: 2 }
+                    sleep(100.ms)
+                    let Lease(j) = k
+                }
+            })
+            s.spawn(|| { sleep(5.ms); fail("boom") })
+        }
+        print("not reached")
+    }
+    print("end")
+}

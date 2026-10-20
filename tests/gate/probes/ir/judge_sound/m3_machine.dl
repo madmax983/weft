@@ -1,0 +1,12 @@
+// M3 as the machine design lowers it: AbortValue binds dest before the cleanup
+// copy for h, then Landing, then print.
+place(pw). place(pw_e). parent(pw_e, pw). unstable(pw_e).
+owner(pw, sw).
+cfg_edge(s0, r1). cfg_edge(r1, b1). cfg_edge(b1, pp).
+rebound_at(sw, r1).
+rebound_at(t6, b1). points_into(t6, pw).
+uses(t6, pp). call_arg(pp, pw, 0). may_abort(pp).
+cfg_edge(pp, av). rebound_at(rd, av). points_into(rd, pw_e).
+cfg_edge(av, c1). cfg_edge(c1, c2). unwound_at(sw, c2).
+cfg_edge(c2, land). cfg_edge(land, pr). uses(rd, pr).
+lint("machine M3: W0301 at print(r)", pr) :- error(rd, pr).

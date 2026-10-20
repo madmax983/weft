@@ -1,0 +1,17 @@
+// ESCAPE? A closure that moves a captured local outlives the local. The
+// interpreter captures by reference and drops the local at its scope end.
+struct Bag { items: Vec<u64> }
+fn take(b: Bag) -> usize { b.items.len() }
+fn mk_local() -> fn() -> usize {
+    let b = Bag { items: Vec.new() }
+    b.items.push(1)
+    || take(b)
+}
+fn main() {
+    let f = {
+        let b = Bag { items: Vec.new() }
+        b.items.push(1)
+        || take(b)
+    }
+    print(f())
+}

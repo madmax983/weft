@@ -1,0 +1,37 @@
+effect Op { fn op() }
+fn two_nodes(c: bool) / Op {
+    let x: u64
+    handle Op { fn op() {
+        print(x)
+        resume(())
+    } } in {
+        if c { x = 1 }
+        op()
+        x = 2
+        op()
+    }
+}
+fn nested_closure() / Op {
+    let x: u64
+    handle Op { fn op() {
+        let f = || print(x)
+        f()
+        resume(())
+    } } in op()
+}
+fn no_node() {
+    let x: u64
+    handle Op { fn op() {
+        print(x)
+        resume(())
+    } } in print(1)
+}
+fn via_callee() / Op {
+    let x: u64
+    handle Op { fn op() {
+        print(x)
+        resume(())
+    } } in do_op()
+}
+fn do_op() / Op { op() }
+fn main() / Op { two_nodes(false) }

@@ -1,0 +1,79 @@
+// Variants of values outside a local handle.
+effect Ask { fn ask() -> u64 }
+effect Pick { multi fn pick() -> bool }
+effect Choice { multi fn choose() -> bool }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn may_fail(x: u64) -> u64 / fail { if x == 0 { fail("zero") }; x }
+
+// a: an outer linear value consumed in the body after a local multi operation.
+fn consume_in_body() {
+    let l = Lk { id: 1 }
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let b = pick()
+        unlock(l)
+    }
+}
+
+// b: an outer once closure called in the body after a local multi operation.
+fn once_in_body() {
+    let l = Lk { id: 2 }
+    let f = || unlock(l)
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let b = pick()
+        f()
+    }
+}
+
+// q: the clause calls a function that can fail.
+fn clause_calls_fail() / fail {
+    let l = Lk { id: 3 }
+    let n = handle Ask { fn ask() { may_fail(0) } } in { ask() + 1 }
+    print(n)
+    unlock(l)
+}
+
+// r: the clause calls an outer closure that chooses.
+fn clause_calls_closure() / Choice {
+    let l = Lk { id: 4 }
+    let g = || choose()
+    let n = handle Ask { fn ask() { if g() { 1 } else { 2 } } } in { ask() + 1 }
+    print(n)
+    unlock(l)
+}
+
+// t: the clause sleeps: a suspension point where a cancel can abort the task.
+fn clause_sleeps() / clock {
+    let l = Lk { id: 5 }
+    let n = handle Ask { fn ask() { sleep(1.ms); 0 } } in { ask() + 1 }
+    print(n)
+    unlock(l)
+}
+
+// nested handles of one effect: the inner clause performs through the outer one.
+fn nested_same_effect() {
+    let n = handle Ask { fn ask() { 0 } } in {
+        let l = Lk { id: 6 }
+        let m = handle Ask { fn ask() { ask() + 1 } } in { ask() + 1 }
+        unlock(l)
+        m
+    }
+    print(n)
+}
+
+// the body gives an operation a closure that performs through the outer handler.
+effect Run { fn run(f: fn() -> u64) -> u64 }
+fn op_closure_param() {
+    let n = handle Ask { fn ask() { 0 } } in {
+        let l = Lk { id: 7 }
+        let m = handle Run { fn run(f) { resume(f()) } } in { run(|| ask()) }
+        unlock(l)
+        m
+    }
+    print(n)
+}
+
+fn main() / fail, Choice, clock {
+    consume_in_body()
+    once_in_body()
+}

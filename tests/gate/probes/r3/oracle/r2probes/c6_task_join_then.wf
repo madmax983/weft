@@ -1,0 +1,10 @@
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let t = s.spawn(|| v.push(2))
+        if v.len() > 5 { t.join() } else { t.join() }
+        v.push(3)
+    }
+    print(v.len())
+}

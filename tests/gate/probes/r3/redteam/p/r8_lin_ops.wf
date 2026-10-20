@@ -1,0 +1,22 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { print(tx.id); let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+effect Give { fn give(t: Tx) }
+effect Take { fn take() -> Tx }
+fn clause_drops() {
+    handle Give { fn give(t) { resume(()) } } in give(begin(1))   //~ W0601
+}
+fn body_drops_result() {
+    handle Take { fn take() { resume(begin(2)) } } in { let _ = take() }   //~ W0601
+}
+fn result_ignored() {
+    handle Take { fn take() { resume(begin(3)) } } in { take() }   //~ W0601
+}
+fn clause_no_resume_drops_value() {
+    let r = handle Take { fn take() { () } } in { let t = take(); rollback(t) }
+}
+fn multi_dup() {
+    handle Take { fn take() { resume(begin(4)) } } in { let t = take(); rollback(t) }
+}
+fn main() { clause_drops(); body_drops_result(); result_ignored() }

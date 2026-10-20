@@ -1,0 +1,19 @@
+// on abort calls a generic function value from a field: the type parameter is a closure.
+effect Ask { fn ask() -> u64 }
+effect Stop { fn stop() }
+linear struct T<F> { f: F }
+    on abort = undo
+fn undo<F>(t: T<F>) {
+    let T(f) = t
+    f()
+}
+fn done<F>(t: T<F>) { let T(f) = t }
+fn main() {
+    handle Ask { fn ask() { resume(5) } } in {
+        handle Stop { fn stop() { () } } in {
+            let t = T { f: || print(ask()) }
+            stop()
+            done(t)
+        }
+    }
+}

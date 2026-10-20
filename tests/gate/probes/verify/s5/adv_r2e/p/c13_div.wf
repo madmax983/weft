@@ -1,0 +1,5 @@
+fn main() {
+    let a: i8 = -128
+    let b: i8 = -1
+    print(a / b)
+}

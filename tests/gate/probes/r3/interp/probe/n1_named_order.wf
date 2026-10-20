@@ -1,0 +1,11 @@
+// Named arguments run in the order of the parameters. The second written
+// argument borrows an element; the first written argument pushes.
+fn pick(a: &u64, b: u64) -> u64 { a + b }
+
+fn push_zero(v: &Vec<u64>) -> u64 / mut(v) { v.push(2); 0 }
+
+fn main() / io {
+    let v = Vec.new()
+    v.push(1)
+    print(pick(b: push_zero(&v), a: &v[0]))
+}

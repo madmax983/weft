@@ -1,0 +1,52 @@
+struct Stats { count: u64 }
+struct Job { f: fn() }
+fn run_once(j: &Job) { let g = j.f
+ g() }
+fn run_vec_all(v: &Vec<fn()>) { for g in v { g() } }
+fn run_hof(j: &Job, k: fn(&Job)) { k(j) }
+fn run_two_callees(j: &Job) { run_once(j)
+ run_once(j) }
+fn run_branch(j: &Job, c: bool) { if c { run_once(j) } else { run_once(j) } }
+
+fn caller_loop(st: &Stats, n: u64) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| st.count += 1); () } }
+        for i in 0..n { run_once(&j) }
+    }
+}
+fn caller_twice(st: &Stats) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| st.count += 1); () } }
+        run_once(&j)
+        run_once(&j)
+    }
+}
+fn vec_all(st: &Stats) / mut(st), async {
+    scope { s =>
+        let v = Vec.new()
+        v.push(|| { s.spawn(|| st.count += 1); () })
+        run_vec_all(&v)
+    }
+}
+fn hof(st: &Stats) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| st.count += 1); () } }
+        run_hof(&j, |jj| { let g = jj.f
+ g()
+ g() })
+    }
+}
+fn two_callees(st: &Stats) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| st.count += 1); () } }
+        run_two_callees(&j)
+    }
+}
+fn branch_ok(st: &Stats, c: bool) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| st.count += 1); () } }
+        run_branch(&j, c)
+    }
+}
+fn main() / async { let st = Stats { count: 0 }
+ hof(&st) }

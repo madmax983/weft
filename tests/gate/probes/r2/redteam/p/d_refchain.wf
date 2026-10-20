@@ -1,0 +1,37 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn chain(world: &World, d: &Vec<i32>) / mut(world.entities) {
+    let r0 = &d[0]
+    let r1 = &d[0]
+    let r2 = &d[0]
+    let r3 = &d[0]
+    let r4 = &d[0]
+    let r5 = &d[0]
+    let r6 = &d[0]
+    let r7 = &d[0]
+    let r8 = &d[0]
+    let r9 = &d[0]
+    let m = 0
+    while m < 12 {
+        print(r0)   //~ W0301
+        r0 = r1
+        r1 = r2
+        r2 = r3
+        r3 = r4
+        r4 = r5
+        r5 = r6
+        r6 = r7
+        r7 = r8
+        r8 = r9
+        r9 = &world.entities[0].hp
+        world.entities.push(Entity { hp: 1 })
+        m += 1
+    }
+}
+fn main() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    let d = Vec.new()
+    d.push(5)
+    chain(&w, &d)
+}

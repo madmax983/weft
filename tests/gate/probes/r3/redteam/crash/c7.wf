@@ -1,0 +1,2 @@
+struct W<T> { x: Box<W<(T, T)>> }
+fn main() {}

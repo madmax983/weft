@@ -1,0 +1,18 @@
+// weft: no-runtime
+effect Stop { fn stop() }
+linear struct A { id: u64 }
+    on abort = undo_log
+fn undo_log(a: A) {
+    let A(i) = a
+    log.info("undo")
+}
+fn body() / Stop {
+    let a = A { id: 1 }
+    stop()
+    let A(i) = a
+}
+fn main() / log {
+    handle Log { fn info(m) { resume(()) } fn warn(m) { resume(()) } } in {
+        handle Stop { fn stop() { () } } in body()
+    }
+}

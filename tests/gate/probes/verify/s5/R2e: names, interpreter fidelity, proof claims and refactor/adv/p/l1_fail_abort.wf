@@ -1,0 +1,22 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) {
+    let Tx(id) = tx
+    print("rollback {id}")
+}
+fn commit(tx: Tx) {
+    let Tx(id) = tx
+}
+fn work(n: u64) / fail {
+    let tx = Tx { id: n }
+    if n > 1 { fail("big") }
+    commit(tx)
+}
+fn main() {
+    let r = handle Fail { fn fail(m) { 0 } } in {
+        work(5)
+        1
+    }
+    print(r)
+    work(1)
+}

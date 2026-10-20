@@ -1,0 +1,15 @@
+// A Fail handler that resumes. fork gives a tuple of results.
+fn a() -> u64 / fail {
+    fail("boom")
+    1
+}
+
+fn b() -> u64 { 2 }
+
+fn main() / io, par {
+    let r = handle Fail { fn fail(m) { print("caught {m}"); resume(()) } } in {
+        let (x, y) = fork(|| a(), || b())
+        x + y
+    }
+    print("r = {r}")
+}

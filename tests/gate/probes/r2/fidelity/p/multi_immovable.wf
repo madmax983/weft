@@ -1,0 +1,20 @@
+// A `!Move` value keeps its address for its whole life (design, ADR 0007).
+// A `multi` continuation that holds it is copied at each resume, so the value
+// gets a second address. The checker accepts it (no W0503, no W0604).
+effect Choice { multi fn choose() -> bool }
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+
+fn pick() -> u8 / Choice {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[2]
+    let b = choose()
+    f.buf[2] = if b { 7 } else { 8 }
+    let r = f.cur
+    r + 0
+}
+
+fn main() {
+    let out: Vec<u8> = Vec.new()
+    handle Choice { fn choose() { resume(true); resume(false) } } in out.push(pick())
+    print(out.len())
+}

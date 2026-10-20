@@ -1,0 +1,19 @@
+struct Entity { hp: u64 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 7 })
+    w
+}
+fn main() {
+    let r = { &mkw().entities[0].hp }
+    print(r)
+    let keep = Entity { hp: 1 }
+    let q = &keep.hp
+    let i = 0
+    while i < 2 {
+        q = &mkw().entities[0].hp
+        i += 1
+    }
+    print(q)
+}

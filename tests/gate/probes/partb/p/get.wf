@@ -1,0 +1,19 @@
+struct Entity { hp: u64 }
+fn elem_write() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = v.get(0)
+    v[0] = 5
+    print(r)
+}
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+impl Frame { fn peek(self) -> u8 { self.buf[0] } }
+fn method_unset() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    let x = f.peek()
+}
+fn method_set() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[0]
+    let x = f.peek()
+}

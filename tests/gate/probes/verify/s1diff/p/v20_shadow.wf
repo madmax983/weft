@@ -1,0 +1,29 @@
+struct Entity { hp: u64 }
+// Shadowing does not end the old local. Expect clean.
+fn shadow() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let v = 5
+    print(r)
+    print(v)
+}
+// Shadowing in an inner block. Expect clean.
+fn shadow_inner() {
+    let e = Entity { hp: 1 }
+    let r = &e.hp
+    {
+        let e = Entity { hp: 2 }
+        print(e.hp)
+    }
+    print(r)
+}
+// A clone of the owner is moved. Expect clean.
+fn moved_clone() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let w = v.clone()
+    let x = w
+    print(r)
+}

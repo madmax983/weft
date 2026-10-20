@@ -91,12 +91,13 @@ proof work.
 
 | Set | Source | Files (distinct) | Tier |
 | --- | --- | --- | --- |
-| corpus | `tests/programs/*.wf` (with `//~` markers) | 134 | 1 |
-| interpreter programs | `crates/weft-interp/tests/programs/*.wf` (with `.out`) | 42 | 1 |
+| corpus | `tests/programs/*.wf` (with `//~` markers) | 138 | 1 |
+| interpreter programs | `crates/weft-interp/tests/programs/*.wf` (with `.out`) | 61 | 1 |
 | examples | `examples/package`, `examples/gc-lib` (package mode), and each `.wf` below `examples/` | 2 packages | 1 |
 | packages | `tests/packages/*` | 1 package (`hidden`) | 1 |
-| hand probes | the hand-written probes of rounds 1 to 3, of their stage verifiers and of the IR design, copied into `tests/gate/probes/` by stage G2 (section 2.2) | about 3 100 | 1 |
-| all probes | every `.wf` under the report roots `SCRATCH/redteam`, `specreview`, `r2`, `r3`, `ir`, and the stage roots `SCRATCH/verify`, `fix`, `s2`, `s2fix`, `edge`, `edgefix`, `partb`, `s5`, `s5r`, `s1fix`, `p`, `core`, `backup` and the `.wf` files at the top of `SCRATCH`, with the exclusion rule below | 59 848 files, about 57 270 distinct (the report roots: 51 576 and 49 454; the stage roots add 8 272 and 7 813) | 2 |
+| IR targets (set `ir_targets`) | `tests/ir_targets/*.wf`: the bad cases that the checker accepts today and that the core IR must reject (`docs/traceability.md`) | 6 | 1 |
+| hand probes | the hand-written probes of rounds 1 to 3, of their stage verifiers and of the IR design, copied into `tests/gate/probes/` by stage G2 (section 2.2) | 3 112 (3 492 paths; 20 of the entries are packages) | 1 |
+| all probes | every `.wf` under the report roots `SCRATCH/redteam`, `specreview`, `r2`, `r3`, `ir`, and the stage roots `SCRATCH/verify`, `fix`, `s2`, `s2fix`, `edge`, `edgefix`, `partb`, `s5`, `s5r`, `s1fix`, `p`, `core`, `backup` and the `.wf` files at the top of `SCRATCH`, with the exclusion rule below | 59 944 paths, 57 393 distinct entries; a package is one entry (the report roots: 51 565 and 49 446; the stage roots and the top add 8 379 and 7 947) | 2 |
 
 The stage roots hold the repros of the stage verifiers (V001 to V138: 86 of the 180
 unsound findings) and of most of the open lists. A gate without them would miss half of
@@ -106,14 +107,15 @@ The exclusion rule of tier 2: skip a file below a directory that holds a `Cargo.
 (a copy of the source tree), and a file with a path component `target`, `crates`,
 `tests`, `std` or `examples` (copies of the repository; the repository sets have the
 current versions). Dedupe by SHA-256 of the text; keep the first path in sorted order and
-record the others. The tier-2 root is the environment variable `WEFT_GATE_PROBES`
-(default: `SCRATCH`). The manifest (`target/gate/manifest-tier2.tsv`) is not committed;
+record the others. The manifest (`target/gate/manifest-tier2.tsv`) is not committed;
 `tests/gate/manifest-tier1.tsv` is. `SCRATCH` can go away, so stage G1 also writes an
 archive of the tier-2 files (`target/gate/probes-tier2.tar.zst`; about 200 MB of text
-before compression),
-records its SHA-256 in `tests/gate/probes-tier2.sha256`, and stores it where each later
-agent and CI can fetch it (a release asset of the repository). `WEFT_GATE_PROBES` then
-names the unpacked archive.
+before compression), records its SHA-256 in `tests/gate/probes-tier2.sha256`, and
+commits the archive as `tests/gate/probes-tier2.tar.zst` (about 6 MB). The tier-2 root
+is the flag `--probes`, else the environment variable `WEFT_GATE_PROBES`, else (from
+stage G2) the committed archive: `weft-gate` checks its hash and unpacks it into
+`target/gate/probes-tier2` when that directory does not record the committed hash.
+`SCRATCH` is a tier-2 root only through the flag or `WEFT_GATE_PROBES`.
 
 ### 2.2 Hand probes (tier 1)
 
@@ -128,7 +130,9 @@ stage F15 reads), `ir/work/judge/p/`. From the stage roots it copies each direct
 `s2fix/`, `edge/`, `edgefix/`, `partb/`, `s5/`, `s5r/`, `s1fix/`, `p/` and `core/`.
 Generated sets (`runs`, `seeds*`, `sweep*`, `t0`, `gen*`, `fuzz*`, `fz*`, `mut*`,
 `effmut_*`, `genout`, `fuzzout`, and `verify/quality/gen/`) and each file larger than
-256 KB stay in tier 2. The hand set is then about 3 100 distinct files and about 10 MB. `SOURCES.md`
+256 KB stay in tier 2. Stage G2 also applies the exclusion rule of tier 2 (section 2.1),
+so that each copied file is also in the tier-2 archive. The hand set is then 3 112
+distinct entries (3 469 `.wf` files and 23 packages, 6.4 MB). `SOURCES.md`
 in `tests/gate/probes/` names the origin of each directory, and the report or stage
 result (`SCRATCH/round1a_results.json`, `round1b_results.json`, `round2_results.json`)
 that names each verifier repro.
@@ -394,14 +398,17 @@ rule 2 of section 1. "The common exit" is section 2.7.
   with `weft.toml` as one package entry.
 - Do: `manifest --tier 1` lists the repository sets of §2.1 and `tests/gate/probes/`
   (empty until G2) into `tests/gate/manifest-tier1.tsv`; `manifest --tier 2` reads
-  `WEFT_GATE_PROBES` (default `SCRATCH`), takes the report roots and the stage roots of
+  `WEFT_GATE_PROBES` (default: the committed archive from stage G2 on, section 2.1),
+  takes the report roots and the stage roots of
   §2.1, and writes `target/gate/manifest-tier2.tsv`. Columns: hash, path, set, mode (file
   or package), has_main, has_tests, other paths. `archive --tier 2` writes the archive of
   §2.1 and its SHA-256.
 - Gate: the common gates.
-- Exit: `cargo run -p weft-gate -- manifest --tier 2` lists about 57 270 distinct files
-  (59 848 paths): 49 454 (51 576) from the report roots and 7 813 more (8 272) from the
-  stage roots; the archive exists and its hash is committed; the tests pass.
+- Exit: `cargo run -p weft-gate -- manifest --tier 2` lists 57 393 distinct entries
+  (59 944 paths; a package is one entry): 49 446 (51 565) from the report roots and
+  7 947 more (8 379) from the stage roots and the `.wf` files at the top of `SCRATCH`;
+  tier 1 lists 138 corpus programs, 61 interpreter programs, 2 example packages and
+  1 package; the archive exists and its hash is committed; the tests pass.
 
 #### G2 Hand probes into `tests/gate/probes`
 
@@ -422,11 +429,17 @@ rule 2 of section 1. "The common exit" is section 2.7.
 - Do: copy the directories of §2.2, `.wf` files only (and package directories with their
   `weft.toml`, and the judge traces `ir/judge_sound/*.dl`). Keep the relative paths.
   Dedupe against the repository sets. Each repro path of `ir §10.4` must be in the copy.
+  Also: add `tests/ir_targets/` to tier 1 as its own set `ir_targets` (section 2.1);
+  make the committed archive the default tier-2 root (section 2.1), so that `SCRATCH`
+  is a root only through `WEFT_GATE_PROBES`.
 - Gate: the common gates. The repository grows by about 10 MB; check that `git status`
   shows only text files.
 - Exit: about 3 100 distinct hand probes in `tests/gate/probes/`, with the repros of the
   stage verifiers; the tests pass (also a test that each repro path of `ir §10.4` exists
-  in the copy).
+  in the copy). Result: 3 112 distinct entries (3 492 paths), from 78 directories;
+  `SCRATCH/edge/hold/26_stealable.wf` is not copied (it is
+  `tests/programs/54_stealable.wf`); each copied program is in the tier-2 archive.
+  The tier-1 manifest lists 3 320 distinct entries (3 700 paths).
 
 #### G3 Snapshots: diagnostics, violations, fact digest
 

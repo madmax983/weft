@@ -1,0 +1,5 @@
+effect Get { fn get() -> fn() }
+fn get_it() -> (fn()) / Get { get() }
+fn a() -> fn() {
+    handle Get { fn get() { resume(|| print(1)) } } in get_it()
+}

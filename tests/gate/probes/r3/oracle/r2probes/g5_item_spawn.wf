@@ -1,0 +1,14 @@
+fn bump() {}
+fn bg(f: fn()) {
+    scope { s =>
+        s.spawn(f)
+        s.spawn(f)
+    }
+}
+struct C { n: u64 }
+fn main() {
+    let c = C { n: 0 }
+    let r = &c
+    bg(|| r.n += 1)
+    print(c.n)
+}

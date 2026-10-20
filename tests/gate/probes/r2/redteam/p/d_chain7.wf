@@ -1,0 +1,25 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn chain(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let a = || print(0)
+    let b = || print(0)
+    let c = || print(0)
+    let d = || print(0)
+    let e = || print(0)
+    let f = || print(0)
+    let g = || print(0)
+    let m = 0
+    while m < 12 {
+        a()
+        print(first.hp)   //~ W0301
+        a = b
+        b = c
+        c = d
+        d = e
+        e = f
+        f = g
+        g = || world.entities.push(Entity { hp: 1 })
+        m += 1
+    }
+}
