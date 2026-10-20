@@ -36,7 +36,12 @@ impl super::Machine<'_, '_> {
     /// or a slice).
     fn vec_of(&self, recv: &Value) -> R<(CellId, u32, u32, bool)> {
         let p = match recv {
-            Value::Ref(p) | Value::Loc(p, _) => self.follow_refs(p.clone())?,
+            Value::Ref(p) | Value::Loc(p, _) => {
+                if let Value::Ref(p) = recv {
+                    self.heap.check_ref(p);
+                }
+                self.follow_refs(p.clone())?
+            }
             Value::Vec(buf) => {
                 let len = self.heap.list(*buf).map_err(|e| self.fault(e))?.len();
                 return Ok((*buf, 0, u32::try_from(len).unwrap_or(u32::MAX), true));
@@ -45,6 +50,7 @@ impl super::Machine<'_, '_> {
             _ => return Err(self.fault("a `Vec` is needed here")),
         };
         let (p, _) = self.resolve(p, false)?;
+        self.heap.log_read(&p);
         match self.hget(&p)? {
             Value::Vec(buf) => {
                 let len = self.heap.list(*buf).map_err(|e| self.fault(e))?.len();
@@ -53,6 +59,33 @@ impl super::Machine<'_, '_> {
             Value::Slice { buf, lo, hi } => Ok((*buf, *lo, *hi, false)),
             _ => Err(self.fault("a `Vec` is needed here")),
         }
+    }
+
+    /// With the oracle checks on, a change of the length of a `Vec` moves its
+    /// buffer, as a real `Vec` can when it grows or shrinks. The old buffer is
+    /// freed, so a reference into it dangles.
+    fn oracle_move_buffer(&mut self, recv: &Value) -> R<()> {
+        if self.heap.oracle().is_none() {
+            return Ok(());
+        }
+        let p = match recv {
+            Value::Ref(p) | Value::Loc(p, _) => self.follow_refs(p.clone())?,
+            _ => return Ok(()),
+        };
+        let (p, _) = self.resolve(p, false)?;
+        let Value::Vec(old) = self.hget(&p)?.clone() else {
+            return Ok(());
+        };
+        let list = self
+            .heap
+            .take(&Place::root(old))
+            .map_err(|e| self.fault(e))?;
+        let new = self.heap.alloc(SlotKind::Buf, list);
+        *self.hget_mut(&p)? = Value::Vec(new);
+        if let Ok(s) = self.heap.slot_mut(old) {
+            s.kind = SlotKind::Free;
+        }
+        Ok(())
     }
 
     fn list_mut(&mut self, buf: CellId) -> R<&mut Vec<Value>> {
@@ -114,6 +147,7 @@ impl super::Machine<'_, '_> {
             Native::VecPush => {
                 let recv = next();
                 let x = next();
+                self.oracle_move_buffer(&recv)?;
                 let (buf, _, _, whole) = self.vec_of(&recv)?;
                 if !whole {
                     return Err(self.fault("cannot push to a slice"));
@@ -123,12 +157,14 @@ impl super::Machine<'_, '_> {
             }
             Native::VecPop => {
                 let recv = next();
+                self.oracle_move_buffer(&recv)?;
                 let (buf, _, _, _) = self.vec_of(&recv)?;
                 let x = self.list_mut(buf)?.pop();
                 self.option(x)?
             }
             Native::VecClear => {
                 let recv = next();
+                self.oracle_move_buffer(&recv)?;
                 let (buf, _, _, _) = self.vec_of(&recv)?;
                 let xs = std::mem::take(self.list_mut(buf)?);
                 for x in xs {
@@ -410,6 +446,7 @@ impl super::Machine<'_, '_> {
         if self.tasks[t].handle.consume().is_err() {
             return Err(self.fault("a task handle was used twice"));
         }
+        self.oracle_join(t);
         let scope = self.tasks[t].scope;
         match self.tasks[t].result.take() {
             Some(TaskResult::Ok(v)) => self.deliver(v),

@@ -322,8 +322,9 @@ fn explain_and_help() {
     let help = cmd(&["help"]);
     assert_eq!(help.code, 0);
     for word in [
-        "run     [PROFILE] [--seed N]",
-        "test    [PROFILE] [--seed N]",
+        "run     [PROFILE] [RUN] PATH",
+        "test    [PROFILE] [RUN] PATH",
+        "RUN is [--seed N] [--workers N] [--unchecked] [--oracle].",
         "--unchecked",
         "--lib or --bin",
         "1 to 1024",
@@ -630,6 +631,7 @@ fn commands_reject_options_that_they_do_not_take() {
         vec!["run", "--rules", "x.dl", &path],
         vec!["check", "--seed", "1", &path],
         vec!["check", "--unchecked", &path],
+        vec!["check", "--oracle", &path],
         vec!["deps", "--lib", &path],
         vec!["explain", "--json", "W0301"],
     ] {
@@ -817,4 +819,35 @@ fn deps_sees_effects_that_signatures_hide() {
     );
     // A private function counts: a public function can call it.
     assert!(out.text.contains("function `helper` needs"), "{}", out.text);
+}
+
+#[test]
+fn oracle_turns_on_the_strict_run_time_checks() {
+    // A reference into a cleared `Vec`: the checker rejects it (W0301). The
+    // stock machine prints `<dangling>`; with --oracle the run fails (ADR 0010).
+    let dir = scratch(
+        "oracle",
+        &[(
+            "dangling.wf",
+            "fn main() {\n    let v = Vec.new()\n    v.push(1)\n    let r = &v[0]\n    v.clear()\n    print(r)\n}\n",
+        )],
+    );
+    let file = format!("{dir}/dangling.wf");
+    let out = cmd(&["run", "--unchecked", &file]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.text, "<dangling>\n");
+    let out = cmd(&["run", "--unchecked", "--oracle", &file]);
+    assert_eq!(out.code, 1, "{}", out.text);
+    assert!(
+        out.stderr.contains("oracle: a read of a freed cell"),
+        "{}",
+        out.stderr
+    );
+    // A correct program runs with the checks too.
+    let path = root()
+        .join("crates/weft-interp/tests/programs/places.wf")
+        .display()
+        .to_string();
+    let out = cmd(&["run", "--oracle", &path]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
 }

@@ -391,6 +391,11 @@ pub struct FnFacts {
     /// dependency `util`). A private effect of another unit has no written
     /// name. Diagnostics show these names. This is not a relation of the spec.
     pub effect_names: Vec<(String, String)>,
+    /// The integer type of each arithmetic result: the span of the expression
+    /// (the value of a compound assignment) and the name of the type (`u8`).
+    /// The interpreter checks that the result fits in the type. This is not a
+    /// relation of the spec.
+    pub int_ops: Vec<(Span, String)>,
     /// The number of local capabilities.
     pub caps: u32,
 
@@ -518,6 +523,7 @@ impl FnFacts {
             vars: _,
             place_index: _,
             effect_names: _,
+            int_ops: _,
             caps,
             has_signature,
             library,
@@ -631,6 +637,7 @@ impl FnFacts {
             vars: _,
             place_index: _,
             effect_names: _,
+            int_ops: _,
             caps,
             has_signature,
             library,

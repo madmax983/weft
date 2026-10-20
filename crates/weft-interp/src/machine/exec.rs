@@ -3,7 +3,7 @@
 use std::rc::Rc;
 
 use weft_sema::program::FnId;
-use weft_sema::types::Ty;
+use weft_sema::types::{IntTy, Ty};
 use weft_syntax::ast::Span;
 use weft_verified::lifecycle::LinState;
 
@@ -69,7 +69,10 @@ impl super::Machine<'_, '_> {
     pub(crate) fn pop_loc(&mut self) -> R<(Place, bool)> {
         match self.pop()? {
             Value::Loc(p, t) => Ok((p, t)),
-            Value::Ref(p) => Ok((p, true)),
+            Value::Ref(p) => {
+                self.heap.check_ref(&p);
+                Ok((p, true))
+            }
             v => {
                 // A value where a place is needed: keep it in a temporary.
                 let c = self.heap.alloc(SlotKind::Temp, v);
@@ -118,11 +121,17 @@ impl super::Machine<'_, '_> {
         for _ in 0..256 {
             match self.hget(&p)? {
                 Value::Ref(q) => {
+                    self.heap.log_read(&p);
+                    self.heap.check_ref(q);
                     p = q.clone();
                     tr = true;
                 }
-                Value::Boxed(c) => p = Place::root(*c),
+                Value::Boxed(c) => {
+                    self.heap.log_read(&p);
+                    p = Place::root(*c);
+                }
                 Value::Rc(c) => {
+                    self.heap.log_read(&p);
                     p = Place::root(*c);
                     tr = true;
                 }
@@ -137,7 +146,10 @@ impl super::Machine<'_, '_> {
         let mut p = p;
         for _ in 0..256 {
             match self.hget(&p)? {
-                Value::Ref(q) => p = q.clone(),
+                Value::Ref(q) => {
+                    self.heap.check_ref(q);
+                    p = q.clone();
+                }
                 _ => return Ok(p),
             }
         }
@@ -149,7 +161,11 @@ impl super::Machine<'_, '_> {
         let mut v = v;
         for _ in 0..256 {
             match v {
-                Value::Ref(p) | Value::Loc(p, _) => v = self.hget(&p)?.clone(),
+                Value::Ref(p) => {
+                    self.heap.check_ref(&p);
+                    v = self.hget(&p)?.clone();
+                }
+                Value::Loc(p, _) => v = self.hget(&p)?.clone(),
                 other => return Ok(other),
             }
         }
@@ -158,6 +174,7 @@ impl super::Machine<'_, '_> {
 
     /// Copies a copy value at a place, or moves any other value out of it.
     pub(crate) fn use_place(&mut self, p: &Place) -> R<Value> {
+        self.heap.log_read(p);
         let v = self.hget(p)?;
         if matches!(v, Value::Moved) {
             return Err(self.fault("a value is used after it was moved"));
@@ -293,13 +310,17 @@ impl super::Machine<'_, '_> {
                 let old = std::mem::replace(self.hget_mut(&p)?, v);
                 self.heap.drop_value(old);
             }
-            Op::CompoundStore(op) => {
+            Op::CompoundStore(op, int) => {
                 let (p, _) = self.pop_loc()?;
                 let v = self.pop()?;
                 let p = self.follow_refs(p)?;
                 let cur = self.hget(&p)?.clone();
                 let new = self.binop(*op, cur, v)?;
+                // The check of a field names the field, so it comes first.
                 self.check_unsigned(&p, &new)?;
+                if let Some(it) = int {
+                    self.check_int(*it, &new)?;
+                }
                 *self.hget_mut(&p)? = new;
             }
             Op::Pop => {
@@ -327,6 +348,11 @@ impl super::Machine<'_, '_> {
                     ),
                     _ => return Err(self.fault("`-` needs an integer")),
                 };
+                self.push(v)?;
+            }
+            Op::CheckInt(it) => {
+                let v = self.pop()?;
+                self.check_int(*it, &v)?;
                 self.push(v)?;
             }
             Op::Not => {
@@ -608,9 +634,18 @@ impl super::Machine<'_, '_> {
                         }
                     }
                     IterState::Elems { buf, next, end } => {
-                        let len = u32_of(self.heap.list(buf).map_or(0, Vec::len));
+                        // The oracle checks report an iteration over a freed
+                        // buffer. The stock machine ends the loop.
+                        let len = match self.heap.list(buf) {
+                            Ok(l) => u32_of(l.len()),
+                            Err(e) if self.heap.oracle().is_some() => {
+                                return Err(self.fault(e));
+                            }
+                            Err(_) => 0,
+                        };
                         if next < end.min(len) {
                             let ep = Place::root(buf).child(next);
+                            self.heap.log_read(&ep);
                             let v = self.hget(&ep)?;
                             let item = if is_scalar(v) {
                                 v.clone()
@@ -647,6 +682,30 @@ impl super::Machine<'_, '_> {
             Frame::Code(cf) => cf.code.spans.get(cf.pc.saturating_sub(1)).copied(),
             _ => None,
         })
+    }
+
+    /// Faults if integer `v` does not fit in type `it`. A `u64` or a `usize`
+    /// holds at most `i64::MAX` here: a larger value faults as an overflow of
+    /// the arithmetic before.
+    fn check_int(&self, it: IntTy, v: &Value) -> R<()> {
+        let Value::Int(i) = v else {
+            return Ok(());
+        };
+        let (min, max) = it.range();
+        let i = i128::from(*i);
+        if i < min {
+            return Err(self.fault(format!(
+                "integer underflow: {i} does not fit in `{}`",
+                it.name()
+            )));
+        }
+        if i > max {
+            return Err(self.fault(format!(
+                "integer overflow: {i} does not fit in `{}`",
+                it.name()
+            )));
+        }
+        Ok(())
     }
 
     /// An unsigned struct field cannot hold a negative integer.
@@ -686,6 +745,7 @@ impl super::Machine<'_, '_> {
 
     /// Returns the buffer and the index range of a `Vec` or a slice at a place.
     fn elems_of(&self, p: &Place, tr: bool) -> R<(CellId, u32, u32, bool)> {
+        self.heap.log_read(p);
         match self.hget(p)? {
             Value::Vec(buf) => {
                 let len = self.heap.list(*buf).map_err(|e| self.fault(e))?.len();
@@ -720,6 +780,7 @@ impl super::Machine<'_, '_> {
                 }
             }
             Value::Ref(p) | Value::Loc(p, _) => {
+                self.heap.check_ref(&p);
                 let (p, _) = self.resolve(p, true)?;
                 let len = match self.hget(&p)? {
                     Value::Tuple(vs) => vs.len(),
@@ -756,6 +817,7 @@ impl super::Machine<'_, '_> {
                 }
             }
             Value::Ref(p) | Value::Loc(p, _) => {
+                self.heap.check_ref(&p);
                 let (p, _) = self.resolve(p, true)?;
                 if !matches!(self.hget(&p)?, Value::Struct(o) if o.fields.len() == n) {
                     return Err(self.fault("this value is not a struct of that size"));
@@ -827,6 +889,7 @@ impl super::Machine<'_, '_> {
             }
             CPat::Variant { name, fields } => {
                 let (p, _) = self.resolve(p.clone(), false)?;
+                self.heap.log_read(&p);
                 let ok = match self.hget(&p)? {
                     Value::Enum(e) => {
                         self.rt.adts[e.adt]
@@ -997,7 +1060,10 @@ impl super::Machine<'_, '_> {
                 }
             }
             match v {
-                Value::Ref(q) => p = q.clone(),
+                Value::Ref(q) => {
+                    self.heap.check_ref(q);
+                    p = q.clone();
+                }
                 Value::Boxed(c) | Value::Rc(c) => p = Place::root(*c),
                 Value::Moved => return Err(self.fault("a value is used after it was moved")),
                 _ => return Err(self.fault(format!("this value has no method `{name}`"))),
@@ -1053,6 +1119,64 @@ impl super::Machine<'_, '_> {
         self.scopes.len() - 1
     }
 
+    /// With the oracle checks on, notes a violation if task value `f`, which
+    /// the checker marks stealable, reaches an `Rc`, a `Weak` or a `Scope`.
+    /// Those stay on one thread.
+    fn oracle_portable(&self, f: &Value) {
+        let Some(o) = self.heap.oracle() else {
+            return;
+        };
+        let mut work: Vec<Value> = vec![f.clone()];
+        let mut seen = std::collections::BTreeSet::new();
+        let found = loop {
+            let Some(v) = work.pop() else {
+                break None;
+            };
+            let cell = match v {
+                Value::Rc(_) => break Some("Rc"),
+                Value::Weak(_) => break Some("Weak"),
+                Value::Scope(_) => break Some("Scope"),
+                Value::Closure(c) => {
+                    for &cell in &c.cells {
+                        if seen.insert(cell) {
+                            if let Ok(s) = self.heap.slot(cell) {
+                                work.push(s.val.clone());
+                            }
+                        }
+                    }
+                    None
+                }
+                Value::Ref(p) | Value::Loc(p, _) => Some(p.cell),
+                Value::Vec(c) | Value::Boxed(c) | Value::Slice { buf: c, .. } => Some(c),
+                Value::Tuple(vs) | Value::List(vs) => {
+                    work.extend(vs);
+                    None
+                }
+                Value::Struct(o) => {
+                    work.extend(o.fields);
+                    None
+                }
+                Value::Enum(e) => {
+                    work.extend(e.fields);
+                    None
+                }
+                _ => None,
+            };
+            if let Some(c) = cell {
+                if seen.insert(c) {
+                    if let Ok(s) = self.heap.slot(c) {
+                        work.push(s.val.clone());
+                    }
+                }
+            }
+        };
+        if let Some(what) = found {
+            o.borrow_mut().flag(format!(
+                "oracle: a stealable task reaches a nonportable value (`{what}`)"
+            ));
+        }
+    }
+
     /// Makes the first frame of a task for a closure or a function item.
     fn task_frame(&mut self, f: Value) -> R<CodeFrame> {
         match f {
@@ -1081,8 +1205,11 @@ impl super::Machine<'_, '_> {
     pub(crate) fn spawn_task(&mut self, sid: ScopeId, f: Value, span: Span) -> R<usize> {
         // The span is in the code that spawns the task.
         let unit = self.fr().map_or(usize::MAX, |cf| cf.code.unit);
-        let frame = self.task_frame(f)?;
         let stealable = self.rt.is_stealable(unit, span);
+        if stealable {
+            self.oracle_portable(&f);
+        }
+        let frame = self.task_frame(f)?;
         let parent = self.cur;
         // The task runs in the simulation of its spawn site.
         let sim = self.sim_of(parent);
@@ -1121,6 +1248,14 @@ impl super::Machine<'_, '_> {
                 return Ok(f);
             }
             return Ok(self.block(Wait::Scope(sid), SuspendReason::Scope));
+        }
+        let kids = self
+            .scopes
+            .get(sid)
+            .map(|s| s.children.clone())
+            .unwrap_or_default();
+        for k in kids {
+            self.oracle_join(k);
         }
         self.raise_scope_failure(sid)
     }
@@ -1175,6 +1310,9 @@ impl super::Machine<'_, '_> {
         let Some(Frame::Fork { henv, .. }) = self.tasks[cur].frames.pop() else {
             return Err(self.fault("internal: no fork"));
         };
+        for &k in &tasks {
+            self.oracle_join(k);
+        }
         let failed = self.scopes.get(sid).and_then(|s| {
             if s.propagated {
                 None

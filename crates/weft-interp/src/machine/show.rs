@@ -127,10 +127,16 @@ impl super::Machine<'_, '_> {
             },
             Value::Boxed(c) | Value::Rc(c) => self.show_cell(*c, out, top, depth),
             Value::Weak(_) => out.push_str("Weak"),
-            Value::Ref(p) | Value::Loc(p, _) => match self.heap.get(p) {
-                Ok(x) => self.show_into(x, out, top, depth + 1),
-                Err(_) => out.push_str("<dangling>"),
-            },
+            Value::Ref(p) | Value::Loc(p, _) => {
+                if let Value::Ref(p) = v {
+                    self.heap.check_ref(p);
+                }
+                self.heap.log_read(p);
+                match self.heap.get(p) {
+                    Ok(x) => self.show_into(x, out, top, depth + 1),
+                    Err(_) => out.push_str("<dangling>"),
+                }
+            }
             Value::Closure(_) => out.push_str("<closure>"),
             Value::FnItem(f) => {
                 let _ = write!(

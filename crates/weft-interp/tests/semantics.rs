@@ -153,9 +153,15 @@ fn unsigned_underflow_is_an_error() {
         "{e}"
     );
     assert_eq!(e.outcome.stdout, "0\n");
+    // The result of `a - 3` has the type `u64` of the parameter: the check of
+    // the result stops the run before the call (RR14).
     let src = "fn f(x: u64) -> u64 { x }\nfn main() {\n let a = 2\n print(f(a - 3))\n}";
     let e = run(src, &opts(0)).unwrap_err();
-    assert!(e.message.contains("parameter `x` would be -1"), "{e}");
+    assert!(
+        e.message
+            .contains("integer underflow: -1 does not fit in `u64`"),
+        "{e}"
+    );
     let src = "struct S { x: i64 }\nfn main() {\n let s = S { x: 0 }\n s.x = 0 - 5\n print(s.x)\n}";
     assert_eq!(ok(src, 0).stdout, "-5\n");
 }

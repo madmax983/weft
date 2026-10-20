@@ -307,6 +307,11 @@ impl super::Machine<'_, '_> {
             let frames = std::mem::take(&mut u.frames);
             let mut kids = Vec::new();
             self.children_in(&frames, &mut kids);
+            for &k in &kids {
+                if self.is_done(k) {
+                    self.oracle_join(k);
+                }
+            }
             kids.retain(|&t| !self.is_done(t));
             for &t in &kids {
                 self.cancel(t);
@@ -316,9 +321,12 @@ impl super::Machine<'_, '_> {
             u.children = kids;
         }
         let kids = self.unwind_top()?.children.clone();
-        let pending: Vec<TaskId> = kids.into_iter().filter(|&t| !self.is_done(t)).collect();
+        let pending: Vec<TaskId> = kids.iter().copied().filter(|&t| !self.is_done(t)).collect();
         if !pending.is_empty() {
             return Ok(self.block(Wait::Children(pending), SuspendReason::Children));
+        }
+        for k in kids {
+            self.oracle_join(k);
         }
         let u = self.unwind_top()?;
         if let Some(v) = u.aborts.pop_front() {
@@ -370,14 +378,17 @@ impl super::Machine<'_, '_> {
                 }
             }
             Frame::Scope { scope } | Frame::Fork { scope, .. } => {
-                let kids: Vec<TaskId> = self
+                let all: Vec<TaskId> = self
                     .scopes
                     .get(scope)
                     .map(|s| s.children.clone())
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter(|&t| !self.is_done(t))
-                    .collect();
+                    .unwrap_or_default();
+                for &k in &all {
+                    if self.is_done(k) {
+                        self.oracle_join(k);
+                    }
+                }
+                let kids: Vec<TaskId> = all.into_iter().filter(|&t| !self.is_done(t)).collect();
                 if !kids.is_empty() {
                     for &t in &kids {
                         self.cancel(t);

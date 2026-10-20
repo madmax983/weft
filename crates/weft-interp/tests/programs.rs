@@ -55,10 +55,12 @@ fn run_program(path: &Path) -> Result<String, String> {
         }
         return Err(msg);
     }
+    // The oracle checks are on: an accepted program must not fault with them.
     let opts = RunOptions {
         seed: directive(&src, "seed:").map_or(0, |s| s.parse().unwrap()),
         max_steps: Some(5_000_000),
         no_runtime,
+        oracle: true,
         ..RunOptions::default()
     };
     let mut out = String::new();
@@ -162,6 +164,7 @@ fn static_corpus_runs() {
             max_steps: Some(1_000_000),
             max_requests: Some(0),
             no_runtime,
+            oracle: true,
             ..RunOptions::default()
         };
         if has_tests {

@@ -1235,6 +1235,8 @@ pub struct Lower<'p> {
     holder_log: Vec<PartHolder>,
     /// The integer literals: the value, true if it is negative, the type and the span.
     int_lits: Vec<(u64, bool, Ty, Span)>,
+    /// The arithmetic results: the type and the span (`FnFacts::int_ops`).
+    int_ops: Vec<(Ty, Span)>,
     /// The span of the literal that is being lowered.
     lit_span: Span,
     /// The local of each variable, by variable index (`usize::MAX`: none). A
@@ -1446,6 +1448,7 @@ impl<'p> Lower<'p> {
             unset_places: Vec::new(),
             iter_uniq: false,
             int_lits: Vec::new(),
+            int_ops: Vec::new(),
             lit_span: Span::default(),
             temp_refs: BTreeMap::new(),
             part_holders: Vec::new(),

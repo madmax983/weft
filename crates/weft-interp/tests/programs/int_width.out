@@ -1,0 +1,10 @@
+test an operand of print: FAILED: runtime error: integer underflow: -8 does not fit in `u64`
+test the result of a call: FAILED: runtime error: integer underflow: -8 does not fit in `u64`
+test an overflow of u8: FAILED: runtime error: integer overflow: 260 does not fit in `u8`
+test a compound assignment: FAILED: runtime error: integer overflow: 260 does not fit in `u8`
+test a negation: FAILED: runtime error: integer overflow: 128 does not fit in `i8`
+255
+8
+-15
+0
+test values that fit: ok

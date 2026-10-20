@@ -87,9 +87,11 @@ impl Lower<'_> {
             ExprKind::Unary { op, expr } => {
                 let v = self.expr(expr);
                 let t = self.deref_ty(&v.ty);
-                match op {
-                    UnOp::Not => self.unify(&Ty::Bool, &t, expr.span),
-                    _ => self.arith(&t, &t, expr.span),
+                if *op == UnOp::Not {
+                    self.unify(&Ty::Bool, &t, expr.span);
+                } else {
+                    self.arith(&t, &t, expr.span);
+                    self.int_ops.push((t.clone(), e.span));
                 }
                 Val {
                     ty: t,
@@ -816,8 +818,10 @@ impl Lower<'_> {
             }
             _ => {
                 self.arith(&a.ty, &b.ty, span);
+                let ty = self.deref_ty(&a.ty);
+                self.int_ops.push((ty.clone(), span));
                 Val {
-                    ty: self.deref_ty(&a.ty),
+                    ty,
                     ..Val::default()
                 }
             }

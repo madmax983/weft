@@ -3,9 +3,11 @@
 //! A cell never moves. A reference is a cell and a path, so a reference to a
 //! field of a `!Move` struct keeps its address while the struct stays in its cell.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
+use crate::oracle::Oracle;
 use crate::value::{CellId, ClosureVal, Place, Value};
 
 /// What a cell holds.
@@ -45,6 +47,8 @@ pub struct Heap {
     slots: Vec<Slot>,
     /// For each type definition: true if its values never copy (linear or `!Move`).
     move_only: Rc<[bool]>,
+    /// The state of the oracle checks, if they are on (see [`crate::oracle`]).
+    oracle: Option<RefCell<Oracle>>,
 }
 
 impl Heap {
@@ -53,6 +57,64 @@ impl Heap {
         Self {
             slots: Vec::new(),
             move_only,
+            oracle: None,
+        }
+    }
+
+    /// Turns the oracle checks on.
+    pub fn enable_oracle(&mut self) {
+        self.oracle = Some(RefCell::new(Oracle::default()));
+    }
+
+    /// Returns the state of the oracle checks, if they are on.
+    pub const fn oracle(&self) -> Option<&RefCell<Oracle>> {
+        self.oracle.as_ref()
+    }
+
+    /// With the oracle checks on, notes a violation and returns it as an error
+    /// if cell `c` is freed.
+    fn oracle_freed(&self, c: CellId, what: &str) -> Result<(), String> {
+        let Some(o) = &self.oracle else {
+            return Ok(());
+        };
+        if self.slots.get(c).is_some_and(|s| s.kind == SlotKind::Free) {
+            let msg = format!("oracle: {what} of a freed cell (a dangling reference)");
+            o.borrow_mut().flag(msg.clone());
+            return Err(msg);
+        }
+        Ok(())
+    }
+
+    /// With the oracle checks on, records an access to place `p` for the race
+    /// detector.
+    fn oracle_access(&self, cell: CellId, path: &[u32], write: bool) {
+        if let Some(o) = &self.oracle {
+            let what = match self.slots.get(cell).map(|s| s.kind) {
+                Some(SlotKind::Local) => "local",
+                Some(SlotKind::Temp) => "temporary",
+                Some(SlotKind::Buf) => "buffer",
+                Some(SlotKind::Boxed) => "box",
+                Some(SlotKind::Rc { .. }) => "counted cell",
+                Some(SlotKind::Free) | None => "freed cell",
+            };
+            o.borrow_mut().access(cell, path, write, what);
+        }
+    }
+
+    /// With the oracle checks on, records a read of the value at `p`.
+    pub fn log_read(&self, p: &Place) {
+        self.oracle_access(p.cell, &p.path, false);
+    }
+
+    /// With the oracle checks on, notes a violation if a reference to `p` is
+    /// followed after the scope of its local ended.
+    pub fn check_ref(&self, p: &Place) {
+        if let Some(o) = &self.oracle {
+            let ended = o.borrow().ended(p.cell);
+            if ended {
+                o.borrow_mut()
+                    .flag("oracle: a reference into a local whose scope ended is used (a dangling reference)");
+            }
         }
     }
 
@@ -84,6 +146,7 @@ impl Heap {
 
     /// Returns the value at a place.
     pub fn get(&self, p: &Place) -> Result<&Value, String> {
+        self.oracle_freed(p.cell, "a read")?;
         let mut v = &self.slot(p.cell)?.val;
         for &i in &p.path {
             let i = i as usize;
@@ -100,6 +163,8 @@ impl Heap {
 
     /// Returns the value at a place for writing.
     pub fn get_mut(&mut self, p: &Place) -> Result<&mut Value, String> {
+        self.oracle_freed(p.cell, "a write")?;
+        self.oracle_access(p.cell, &p.path, true);
         let mut v = &mut self.slot_mut(p.cell)?.val;
         for &i in &p.path {
             let i = i as usize;
@@ -121,6 +186,7 @@ impl Heap {
 
     /// Returns the elements of a buffer cell.
     pub fn list(&self, buf: CellId) -> Result<&Vec<Value>, String> {
+        self.oracle_freed(buf, "a read")?;
         match &self.slot(buf)?.val {
             Value::List(vs) => Ok(vs),
             _ => Err("a buffer was freed".into()),
@@ -129,6 +195,8 @@ impl Heap {
 
     /// Returns the elements of a buffer cell for writing.
     pub fn list_mut(&mut self, buf: CellId) -> Result<&mut Vec<Value>, String> {
+        self.oracle_freed(buf, "a write")?;
+        self.oracle_access(buf, &[], true);
         match &mut self.slot_mut(buf)?.val {
             Value::List(vs) => Ok(vs),
             _ => Err("a buffer was freed".into()),
@@ -207,7 +275,12 @@ impl Heap {
         while let Some(v) = work.pop() {
             match v {
                 Value::Tuple(vs) | Value::List(vs) => work.extend(vs),
-                Value::Struct(o) => work.extend(o.fields),
+                Value::Struct(o) => {
+                    if let (Some(id), Some(oracle)) = (o.lin, &self.oracle) {
+                        oracle.borrow_mut().drop_lin(id);
+                    }
+                    work.extend(o.fields);
+                }
                 Value::Enum(e) => work.extend(e.fields),
                 Value::Vec(c) | Value::Boxed(c) => {
                     if let Some(s) = self.slots.get_mut(c) {
@@ -252,7 +325,14 @@ impl Heap {
         let Some(s) = self.slots.get(c) else {
             return;
         };
-        if self.is_copy(&s.val) {
+        let copy = self.is_copy(&s.val);
+        if let Some(o) = &self.oracle {
+            // A reference into the cell dangles now, also for a copy value.
+            if s.kind == SlotKind::Local || !copy {
+                o.borrow_mut().end_cell(c);
+            }
+        }
+        if copy {
             return;
         }
         let v = take_moved(&mut self.slots[c].val);

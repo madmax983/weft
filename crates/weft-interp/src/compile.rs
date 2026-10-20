@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use weft_sema::effects;
 use weft_sema::program::{AdtKind, EffectId, FnId, ItemRef, ModId, Program, PRELUDE};
-use weft_sema::types::AdtId;
+use weft_sema::types::{AdtId, IntTy};
 use weft_sema::FnSig;
 use weft_syntax::ast::{
     Arg, BinOp, Block, EffectPath, Expr, ExprKind, Ident, Lit, Param, Pattern, Span, Stmt,
@@ -37,6 +37,10 @@ pub type ByValue = BTreeMap<(usize, u32, u32), BTreeSet<String>>;
 /// (`FnFacts::arg_order`), so both bind a named argument by name (ADR 0009).
 pub type ArgOrder = BTreeMap<(usize, u32, u32), Vec<Option<u32>>>;
 
+/// The integer type of each arithmetic result, by unit and span (see
+/// `FnFacts::int_ops`). The machine checks that the result fits.
+pub type IntOps = BTreeMap<(usize, u32, u32), IntTy>;
+
 /// What semantic analysis gives the compiler about the program.
 #[derive(Clone, Debug, Default)]
 pub struct Exports {
@@ -44,6 +48,8 @@ pub struct Exports {
     pub by_value: ByValue,
     /// The order of the arguments of some calls with named arguments.
     pub arg_order: ArgOrder,
+    /// The integer type of each arithmetic result.
+    pub int_ops: IntOps,
 }
 
 /// The compiled program.
@@ -92,6 +98,7 @@ pub struct Compiler<'a> {
     sigs: &'a [FnSig],
     by_value: &'a ByValue,
     arg_order: &'a ArgOrder,
+    int_ops: &'a IntOps,
     codes: Vec<Option<Code>>,
     ctxs: Vec<Ctx>,
 }
@@ -113,6 +120,7 @@ impl<'a> Compiler<'a> {
             sigs,
             by_value: &exports.by_value,
             arg_order: &exports.arg_order,
+            int_ops: &exports.int_ops,
             codes: Vec::new(),
             ctxs: Vec::new(),
         };
@@ -472,13 +480,22 @@ impl<'a> Compiler<'a> {
             }
             StmtKind::Assign { target, op, value } => {
                 self.expr(value);
+                // Semantic analysis gives the integer type of a compound
+                // assignment at the span of its value.
+                let int = self.int_type(value.span);
                 self.set_span(s.span);
                 if self.place(target) {
                     match op {
                         weft_syntax::ast::AssignOp::Assign => self.emit(Op::Store),
-                        weft_syntax::ast::AssignOp::Add => self.emit(Op::CompoundStore(BinOp::Add)),
-                        weft_syntax::ast::AssignOp::Sub => self.emit(Op::CompoundStore(BinOp::Sub)),
-                        weft_syntax::ast::AssignOp::Mul => self.emit(Op::CompoundStore(BinOp::Mul)),
+                        weft_syntax::ast::AssignOp::Add => {
+                            self.emit(Op::CompoundStore(BinOp::Add, int))
+                        }
+                        weft_syntax::ast::AssignOp::Sub => {
+                            self.emit(Op::CompoundStore(BinOp::Sub, int))
+                        }
+                        weft_syntax::ast::AssignOp::Mul => {
+                            self.emit(Op::CompoundStore(BinOp::Mul, int))
+                        }
                     };
                 } else {
                     self.emit(fault("the left side of an assignment must be a place"));
@@ -781,6 +798,7 @@ impl<'a> Compiler<'a> {
                 UnOp::Neg => {
                     self.operand(expr);
                     self.emit(Op::Neg);
+                    self.check_int(e.span);
                 }
                 UnOp::Not => {
                     self.operand(expr);
@@ -815,6 +833,7 @@ impl<'a> Compiler<'a> {
                     self.operand(rhs);
                     self.set_span(e.span);
                     self.emit(Op::Bin(*op));
+                    self.check_int(e.span);
                 }
             },
             ExprKind::Range { .. } => {
@@ -953,6 +972,20 @@ impl<'a> Compiler<'a> {
                 self.finish(id, ctx);
                 self.emit(Op::Scope { code: id, caps });
             }
+        }
+    }
+
+    /// Returns the integer type that semantic analysis gives the arithmetic
+    /// expression at `span`, if any.
+    fn int_type(&self, span: Span) -> Option<IntTy> {
+        let unit = self.prog.mods.get(self.module()).map_or(0, |m| m.unit);
+        self.int_ops.get(&(unit, span.lo, span.hi)).copied()
+    }
+
+    /// Checks that the arithmetic result at `span` fits in its integer type.
+    fn check_int(&mut self, span: Span) {
+        if let Some(it) = self.int_type(span) {
+            self.emit(Op::CheckInt(it));
         }
     }
 

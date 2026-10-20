@@ -7,7 +7,7 @@
 use std::rc::Rc;
 
 use weft_sema::program::{EffectId, FnId};
-use weft_sema::types::AdtId;
+use weft_sema::types::{AdtId, IntTy};
 use weft_syntax::ast::{BinOp, Span};
 
 use crate::value::CodeId;
@@ -113,8 +113,9 @@ pub enum Op {
     BorrowAll,
     /// `[value, place]`: stores the value and drops the old one.
     Store,
-    /// `[value, place]`: a compound assignment.
-    CompoundStore(BinOp),
+    /// `[value, place]`: a compound assignment. The new value must fit in the
+    /// integer type, if any (see [`Op::CheckInt`]).
+    CompoundStore(BinOp, Option<IntTy>),
     /// Drops the top value.
     Pop,
     /// Drops the value under the top value.
@@ -123,6 +124,9 @@ pub enum Op {
     Bin(BinOp),
     /// `-x`.
     Neg,
+    /// Faults if the integer on top of the stack does not fit in the integer
+    /// type that semantic analysis gives the expression (`FnFacts::int_ops`).
+    CheckInt(IntTy),
     /// `!x`.
     Not,
     /// Jumps.

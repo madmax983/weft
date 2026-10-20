@@ -372,10 +372,14 @@ impl<'r, 'a> Machine<'r, 'a> {
     /// Makes a machine for one run.
     pub fn new(rt: &'r Runtime<'a>, opts: &RunOptions) -> Self {
         let workers = opts.workers.max(1);
+        let mut heap = Heap::new(Rc::clone(&rt.move_only));
+        if opts.oracle {
+            heap.enable_oracle();
+        }
         Self {
             rt,
             opts: opts.clone(),
-            heap: Heap::new(Rc::clone(&rt.move_only)),
+            heap,
             tasks: Vec::new(),
             queues: (0..workers).map(|_| VecDeque::new()).collect(),
             scopes: Vec::new(),
@@ -535,6 +539,9 @@ impl<'r, 'a> Machine<'r, 'a> {
             suspended: true,
             sim,
         });
+        if let (Some(p), Some(o)) = (parent, self.heap.oracle()) {
+            o.borrow_mut().spawn(p, id);
+        }
         self.enqueue(id);
         id
     }
@@ -946,6 +953,9 @@ impl<'r, 'a> Machine<'r, 'a> {
 
     fn run_quantum(&mut self, t: TaskId) -> R<()> {
         self.cur = t;
+        if let Some(o) = self.heap.oracle() {
+            o.borrow_mut().set_task(t);
+        }
         self.quantum_used = 0;
         self.tasks[t].state = TState::Running;
         let mut flow = Flow::Continue;
@@ -983,6 +993,62 @@ impl<'r, 'a> Machine<'r, 'a> {
                 }
             }
             flow = self.step()?;
+            self.oracle_check()?;
+        }
+    }
+
+    /// With the oracle checks on, reports the first violation that a check
+    /// found, and a live linear value that the heap dropped with no consume
+    /// and no `on abort`.
+    pub(crate) fn oracle_check(&self) -> R<()> {
+        let Some(o) = self.heap.oracle() else {
+            return Ok(());
+        };
+        let (violation, lins) = {
+            let mut o = o.borrow_mut();
+            (o.take_violation(), o.take_dropped_lins())
+        };
+        if let Some(v) = violation {
+            return Err(self.fault(v));
+        }
+        let live = |id: usize| {
+            self.lins
+                .get(id)
+                .is_some_and(|l| l.l.state == weft_verified::lifecycle::LinState::Live)
+        };
+        if lins.into_iter().any(live) {
+            return Err(self.fault(
+                "oracle: linear leak: a live linear value goes away with no consume and no `on abort`",
+            ));
+        }
+        Ok(())
+    }
+
+    /// With the oracle checks on, reports a violation at the end of a normal
+    /// run, and a linear value that is still live.
+    pub(crate) fn oracle_end(&self) -> R<()> {
+        if self.heap.oracle().is_none() {
+            return Ok(());
+        }
+        self.oracle_check()?;
+        if self
+            .lins
+            .iter()
+            .any(|l| l.l.state == weft_verified::lifecycle::LinState::Live)
+        {
+            return Err(RuntimeError::new(
+                ErrorKind::Fault,
+                "oracle: linear leak: a linear value is still live at the end of the run",
+                None,
+            ));
+        }
+        Ok(())
+    }
+
+    /// With the oracle checks on, the running task sees that task `u` is done.
+    pub(crate) fn oracle_join(&self, u: TaskId) {
+        if let Some(o) = self.heap.oracle() {
+            o.borrow_mut().join(u);
         }
     }
 

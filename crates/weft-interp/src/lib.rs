@@ -23,6 +23,7 @@ pub mod compile;
 pub mod error;
 pub mod heap;
 mod machine;
+pub mod oracle;
 pub mod rng;
 pub mod runtime;
 pub mod trace;
@@ -36,7 +37,7 @@ use weft_sema::Analysis;
 pub use error::{ErrorKind, RuntimeError};
 pub use trace::{SuspendReason, TaskEnd, TraceEvent};
 
-use crate::compile::{ArgOrder, ByValue, Exports};
+use crate::compile::{ArgOrder, ByValue, Exports, IntOps};
 use crate::machine::{Machine, TaskResult};
 use crate::runtime::Runtime;
 use crate::value::{Cap, Obj, Value};
@@ -59,6 +60,10 @@ pub struct RunOptions {
     pub quantum: u64,
     /// The embedded profile: no root handlers for the standard effects.
     pub no_runtime: bool,
+    /// Turns on the oracle checks (see [`oracle`]): a dangling reference, a
+    /// buffer that a `Vec` moves, a linear leak, a data race and a stealable
+    /// task that reaches a nonportable value are faults. Off by default.
+    pub oracle: bool,
 }
 
 impl Default for RunOptions {
@@ -71,6 +76,7 @@ impl Default for RunOptions {
             max_requests: None,
             quantum: 1000,
             no_runtime: false,
+            oracle: false,
         }
     }
 }
@@ -149,11 +155,26 @@ pub fn arg_orders(analysis: &Analysis) -> ArgOrder {
     out
 }
 
+/// Returns the integer type of each arithmetic result (see [`IntOps`]), as
+/// semantic analysis gives it (`FnFacts::int_ops`).
+pub fn int_ops(analysis: &Analysis) -> IntOps {
+    let mut out = IntOps::new();
+    for b in &analysis.bodies {
+        for (span, name) in &b.facts.int_ops {
+            if let Some(it) = weft_sema::types::IntTy::from_name(name) {
+                out.insert((b.unit, span.lo, span.hi), it);
+            }
+        }
+    }
+    out
+}
+
 /// Returns what the compiler needs from semantic analysis.
 pub fn exports(analysis: &Analysis) -> Exports {
     Exports {
         by_value: by_value_captures(analysis),
         arg_order: arg_orders(analysis),
+        int_ops: int_ops(analysis),
     }
 }
 
@@ -242,6 +263,9 @@ fn finish_run(m: &mut Machine<'_, '_>, root: usize) -> Result<RunOutcome, Runtim
     match m.result(root).cloned() {
         Some(TaskResult::Ok(v)) => {
             m.drop_value(v);
+            if let Err(e) = m.oracle_end() {
+                return Err(with_outcome(e, m));
+            }
             Ok(m.outcome())
         }
         Some(TaskResult::Failed { msg, kind, span }) => {

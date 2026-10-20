@@ -171,6 +171,7 @@ impl Lower<'_> {
         self.finish_resume_runs();
         self.finish_spared();
         self.check_int_lits();
+        self.finish_int_ops();
         self.settle_moves();
         self.finish_via_calls();
         // The types of the locals as the whole body inferred them. A local can get
@@ -265,7 +266,7 @@ impl Lower<'_> {
             if !seen.insert((span.lo, span.hi)) {
                 continue;
             }
-            let (min, max) = int_range(it);
+            let (min, max) = it.range();
             let value = if neg { -i128::from(n) } else { i128::from(n) };
             if value < min || value > max {
                 let shown = if neg { format!("-{n}") } else { n.to_string() };
@@ -278,7 +279,20 @@ impl Lower<'_> {
         }
     }
 
-    /// Text form of an effect row.
+    /// Gives the facts the integer type of each arithmetic result
+    /// (`FnFacts::int_ops`): the interpreter checks that the value fits.
+    fn finish_int_ops(&mut self) {
+        let ops = std::mem::take(&mut self.int_ops);
+        let mut seen = BTreeSet::new();
+        for (ty, span) in ops {
+            if let Ty::Int(it) = self.inf.resolve(&ty) {
+                if seen.insert((span.lo, span.hi)) {
+                    self.facts.int_ops.push((span, it.name().to_string()));
+                }
+            }
+        }
+    }
+
     /// Returns a row as the signature of this body can write it. A user effect
     /// of another module has its path (`a.Note`, `util.Note`).
     pub(super) fn effect_text(&self, e: &EffectSig) -> String {
@@ -1084,6 +1098,7 @@ impl Lower<'_> {
                 } else {
                     self.use_local(l);
                     self.arith(&lt, &v.ty, value.span);
+                    self.int_ops.push((lt.clone(), value.span));
                 }
                 self.consume(&v, value.span);
                 let n = self.emit(span, &format!("{} =", id.name), String::new());
@@ -1146,6 +1161,8 @@ impl Lower<'_> {
                 self.read(p);
             }
             self.arith(&lv.ty, &v.ty, value.span);
+            let ty = self.deref_ty(&lv.ty);
+            self.int_ops.push((ty, value.span));
         }
         // A reference behind a reference parameter: the caller keeps it. A
         // self-reference field has its own check (W0605).
@@ -1593,21 +1610,6 @@ impl Lower<'_> {
                 }
             }
         }
-    }
-}
-
-/// Returns the smallest and the largest value of an integer type.
-const fn int_range(t: super::IntTy) -> (i128, i128) {
-    use super::IntTy;
-    match t {
-        IntTy::I8 => (i8::MIN as i128, i8::MAX as i128),
-        IntTy::I16 => (i16::MIN as i128, i16::MAX as i128),
-        IntTy::I32 => (i32::MIN as i128, i32::MAX as i128),
-        IntTy::I64 => (i64::MIN as i128, i64::MAX as i128),
-        IntTy::U8 => (0, u8::MAX as i128),
-        IntTy::U16 => (0, u16::MAX as i128),
-        IntTy::U32 => (0, u32::MAX as i128),
-        IntTy::U64 | IntTy::Usize => (0, u64::MAX as i128),
     }
 }
 

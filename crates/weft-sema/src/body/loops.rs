@@ -122,6 +122,7 @@ struct LoopHead {
     iter_uniq: bool,
     part_holders: Vec<PartHolder>,
     int_lits: usize,
+    int_ops: usize,
     lit_span: Span,
     late_vars: usize,
     tentative: usize,
@@ -907,6 +908,7 @@ impl Lower<'_> {
             iter_uniq,
             part_holders,
             int_lits,
+            int_ops,
             lit_span,
             late_vars,
             tentative,
@@ -969,6 +971,7 @@ impl Lower<'_> {
             iter_uniq: *iter_uniq,
             part_holders: part_holders.clone(),
             int_lits: int_lits.len(),
+            int_ops: int_ops.len(),
             lit_span: *lit_span,
             late_vars: late_vars.len(),
             tentative: tentative.len(),
@@ -1081,6 +1084,7 @@ impl Lower<'_> {
             iter_uniq,
             part_holders,
             int_lits,
+            int_ops,
             lit_span,
             late_vars,
             tentative,
@@ -1153,6 +1157,7 @@ impl Lower<'_> {
         *iter_uniq = head.iter_uniq;
         *part_holders = head.part_holders;
         int_lits.truncate(head.int_lits);
+        int_ops.truncate(head.int_ops);
         *lit_span = head.lit_span;
         late_vars.truncate(head.late_vars);
         tentative.truncate(head.tentative);

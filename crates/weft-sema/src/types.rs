@@ -58,6 +58,20 @@ impl IntTy {
             Self::Usize => "usize",
         }
     }
+
+    /// Returns the smallest and the largest value of the type.
+    pub const fn range(self) -> (i128, i128) {
+        match self {
+            Self::I8 => (i8::MIN as i128, i8::MAX as i128),
+            Self::I16 => (i16::MIN as i128, i16::MAX as i128),
+            Self::I32 => (i32::MIN as i128, i32::MAX as i128),
+            Self::I64 => (i64::MIN as i128, i64::MAX as i128),
+            Self::U8 => (0, u8::MAX as i128),
+            Self::U16 => (0, u16::MAX as i128),
+            Self::U32 => (0, u32::MAX as i128),
+            Self::U64 | Self::Usize => (0, u64::MAX as i128),
+        }
+    }
 }
 
 /// An index into the program's type definitions.

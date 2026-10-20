@@ -19,8 +19,8 @@ usage: weft <command> [options] PATH
 
 commands:
   check   [PROFILE] [--json] [--explain] PATH                    check a file or a package
-  run     [PROFILE] [--seed N] [--workers N] [--unchecked] PATH  check, then run `fn main`
-  test    [PROFILE] [--seed N] [--workers N] [--unchecked] PATH  check, then run the test blocks
+  run     [PROFILE] [RUN] PATH                                   check, then run `fn main`
+  test    [PROFILE] [RUN] PATH                                   check, then run the test blocks
   facts   [PROFILE] PATH [FUNCTION]                              print the facts in Datalog syntax
   agree   [PROFILE] PATH                                         compare the checker with spec/weft.dl
   lint    [PROFILE] --rules RULES.dl PATH                        run user lint rules over the facts
@@ -33,8 +33,12 @@ PROFILE is --lib or --bin, and --no-runtime or --runtime. A single file sets
 its profile with marker lines: `// weft: library` and `// weft: no-runtime`.
 A package sets it in weft.toml. A flag wins over both.
 
+RUN is [--seed N] [--workers N] [--unchecked] [--oracle].
 `run` and `test` do not run a program that has errors, unless --unchecked is given.
 --seed (default 0) and --workers (1 to 1024, default 4) set the deterministic scheduler.
+--oracle turns on strict run-time checks: a dangling reference, a moved `Vec`
+buffer, a linear leak, a data race and a stealable task that reaches a
+nonportable value are run-time errors.
 
 Exit codes: 0 on success; 1 when the program has errors or fails; 2 on a usage
 error or a file that cannot be read. With --unchecked, the exit code of `run`
@@ -72,6 +76,7 @@ struct Flags {
     json: bool,
     explain: bool,
     unchecked: bool,
+    oracle: bool,
     rules: Option<String>,
     seed: Option<u64>,
     workers: Option<usize>,
@@ -87,7 +92,7 @@ const PROFILE: [&str; 4] = ["--lib", "--bin", "--no-runtime", "--runtime"];
 fn options_of(cmd: &str) -> Option<Vec<&'static str>> {
     let own: &[&str] = match cmd {
         "check" => &["--json", "--explain"],
-        "run" | "test" => &["--seed", "--workers", "--unchecked"],
+        "run" | "test" => &["--seed", "--workers", "--unchecked", "--oracle"],
         "lint" => &["--rules"],
         "facts" | "agree" => &[],
         "explain" | "deps" | "spec" | "help" | "--help" | "-h" => return Some(Vec::new()),
@@ -151,6 +156,7 @@ fn flags(args: &[String]) -> Result<Flags> {
             "--json" => f.json = true,
             "--explain" => f.explain = true,
             "--unchecked" => f.unchecked = true,
+            "--oracle" => f.oracle = true,
             "--rules" => f.rules = Some(it.next().context("--rules needs a file")?.clone()),
             "--seed" => f.seed = Some(number(&mut it, "--seed")?),
             "--workers" => {
@@ -623,6 +629,7 @@ fn run_options(f: &Flags, pkg: &Package, capture: bool) -> RunOptions {
         workers: f.workers.unwrap_or(defaults.workers),
         capture_output: capture,
         no_runtime: pkg.options(f.profile).no_runtime,
+        oracle: f.oracle,
         ..defaults
     }
 }

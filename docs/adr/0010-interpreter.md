@@ -54,6 +54,22 @@ Status: accepted. Date: 2026-10-18.
   also when a spawned task enters it or two simulations run at one time, and a failing
   seed replays (`crates/weft-interp/tests/programs/sim_workers.wf`). The same seed
   gives the same trace.
+- The result of each arithmetic expression and compound assignment must fit in the
+  integer type that semantic analysis gives it (`FnFacts::int_ops`, review round 2,
+  RR14). So `a - b` on `u64` faults with an underflow where it is computed, also in a
+  local, a result or an operand of `print`. Before, only a field or a parameter got a
+  check. A value holds at most `i64::MAX`, so a larger `u64` faults as an overflow.
+- The oracle checks (`crates/weft-interp/src/oracle.rs`, review round 2, OR11) are off
+  by default. `RunOptions::oracle` and `weft run --oracle` turn them on. With them, the
+  machine faults on a read or a write of a freed cell or buffer, a `Vec` buffer that
+  moves on each `push`, `pop` and `clear` (as a real `Vec` can), a reference into a
+  local whose scope ended, a live linear value that goes away with no consume and no
+  `on abort` or that is live at the end of the run, a data race (a vector clock for
+  each task; spawn, join, the end of a scope or a `fork`, and unwinding order the
+  tasks), and a stealable task that reaches an `Rc`, a `Weak` or a `Scope`. The stock
+  machine prints `<dangling>` and goes on. The interpreter program tests and the runs
+  of the corpus programs turn the checks on: an accepted program must not fault with
+  them.
 - Phase 1 does not simulate the network. `sim.net.partition` and `sim.net.heal` only
   record the partition in the trace, and `http.serve` binds a real socket also in a
   simulation.

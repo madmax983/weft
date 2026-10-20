@@ -257,3 +257,68 @@ fn a_multi_continuation_cannot_resume_after_its_clause_ends() {
         "resumed after it was dropped",
     );
 }
+
+/// Runs `src` with the oracle checks, and with the stock machine.
+fn oracle_run(src: &str) -> (Result<RunOutcome, weft_interp::RuntimeError>, bool) {
+    let a = weft_sema::analyze_source(src, Options::default()).unwrap();
+    let stock = run_analysis_main(&a, &opts()).is_ok();
+    let strict = RunOptions {
+        oracle: true,
+        ..opts()
+    };
+    (run_analysis_main(&a, &strict), stock)
+}
+
+#[test]
+fn the_oracle_reports_what_the_stock_machine_lets_pass() {
+    // Each program is wrong by the design, and the checker rejects it. The
+    // stock machine runs it to the end; the oracle checks stop it (OR11).
+    let cases = [
+        (
+            "fn main() { let v = Vec.new()\n v.push(1)\n let r = &v[0]\n v.clear()\n print(r) }",
+            "a read of a freed cell",
+        ),
+        (
+            "fn main() { let r = &0\n {\n let x = 5\n r = &x\n }\n print(r) }",
+            "a local whose scope ended",
+        ),
+        (
+            "fn main() { let v = Vec.new()\n v.push(1)\n let r = &v[0]\n v.push(2)\n print(r) }",
+            "a read of a freed cell",
+        ),
+        (
+            "linear struct Tx { id: u64 }\nfn main() { let t = Tx { id: 1 } }",
+            "linear leak",
+        ),
+        (
+            "fn main() / async { let n = 0\n scope { s =>\n s.spawn(|| n += 1)\n s.spawn(|| n += 2)\n }\n print(n) }",
+            "data race",
+        ),
+    ];
+    for (src, want) in cases {
+        let (strict, stock) = oracle_run(src);
+        assert!(stock, "the stock machine fails: {src}");
+        match strict {
+            Ok(_) => panic!("expected `{want}`: {src}"),
+            Err(e) => assert!(
+                e.message.contains("oracle") && e.message.contains(want),
+                "expected `{want}`, found `{}`",
+                e.message
+            ),
+        }
+    }
+}
+
+#[test]
+fn the_oracle_accepts_correct_programs() {
+    // A join, the end of a scope and a consume order the accesses and end
+    // the linear value.
+    let src = "linear struct Tx { id: u64 }\nfn done(t: Tx) { let Tx(i) = t }\n\
+        fn main() / async { let n = 0\n let v = Vec.new()\n v.push(1)\n\
+        scope { s => s.spawn(|| n += 1) }\n n += 1\n v.push(2)\n let r = &v[1]\n print(r)\n\
+        let t = Tx { id: n }\n done(t)\n print(n) }";
+    let (strict, stock) = oracle_run(src);
+    assert!(stock);
+    let out = strict.expect("the oracle accepts the program");
+    assert_eq!(out.stdout, "2\n2\n");
+}
