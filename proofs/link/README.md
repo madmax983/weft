@@ -20,19 +20,19 @@ The results must be:
 
 ```text
 check-copies: 10 included source files, no shadow copies, 0 verbatim copies identical
-verification results:: 233 verified, 0 errors
+verification results:: 235 verified, 0 errors
 ```
 
 | Module | Verified | What it is |
 | --- | --- | --- |
-| `places`, `dataflow`, `lifecycle` | 25, 16, 14 | Included from `crates/weft-verified/src/` |
+| `places`, `dataflow`, `lifecycle` | 27, 16, 15 | Included from `crates/weft-verified/src/` |
 | `model`, `soundness`, `cfg` | 2, 24, 7 | Included from `proofs/borrowing/src/` (base model and B1) |
 | `layout`, `layout_proof`, `layout_examples` | 5, 34, 25 | Included from `proofs/borrowing/src/` (B3) |
 | `effects_model` | 0 (specs only) | Included from `proofs/effects/src/model.rs` |
 | `places_link` | 29 | L1: rule 3 and the B3 model |
 | `dataflow_link` | 20 | L2: `propagate` and the B1 CFG checker |
-| `lifecycle_link` | 7 | L3: the lifecycle state machines and the effects machine |
-| `examples` | 22 | Vacuity guards and gap witnesses |
+| `lifecycle_link` | 8 | L3: the lifecycle state machines and the effects machine |
+| `examples` | 23 | Vacuity guards and gap witnesses |
 
 The proofs do not use `assume`, `admit`, `external_body`, or new axioms.
 
@@ -155,7 +155,9 @@ rejects more. The link does not prove this step.
 
 ### Hypotheses
 
-The link does not prove these hypotheses. Tests check them.
+The link does not prove these hypotheses. Agreement with the spec does not test
+them: the checker and the spec run on the same facts. Only the sema unit tests and
+the corpus diagnostics test the facts.
 
 * `facts_ok`. Sema must give these facts: the CFG is well formed for
   `propagate`, each binding gives the static group that the model gives,
@@ -163,12 +165,22 @@ The link does not prove these hypotheses. Tests check them.
   no closure instructions.
 * `facts_ok` also has `ret_ok`. This is not a sema fact. It is a B1
   acceptance condition: a returned reference comes from an argument that the
-  call does not kill. No rule in `spec/weft.dl` states it directly. W0312
-  (no mutable argument overlaps another argument) probably gives it, but the
-  link does not prove that.
+  call does not kill. No rule in `spec/weft.dl` states it. W0312 does not give
+  it: the `in` form of ADR 0005 lets a mutated argument and the argument of the
+  result overlap. For example, `pick(w: &World, e: &Entity in w.entities[]) ->
+  &Entity in w.entities[] / mut(w.entities)` called as `pick(&w, x)` with
+  `x = &w.entities[0]` is accepted. The call mutates `w.entities` and returns
+  a reference that comes from `x`, so in B1 terms it kills the group of `x`,
+  and `ret_ok` is false. Rule 3 in the body of `pick` makes this program safe,
+  but `thm_w0301_no_ub` does not apply to it.
 * `w0301_ok`: the checker accepts. No node uses a reference in the fixpoint.
 * `bound_before_use`: `unb` covers each node where a reference can be unbound,
-  and no node uses a reference there. Sema gives this through lexical scope.
+  and no node uses a reference there. No proof shows that sema gives this. The
+  lint `lints/unbound_use.dl` finds a use where a reference can be unbound.
+  `crates/weft-check/tests/hypotheses.rs` runs it, and `lints/gen_kill.dl` for
+  `no_gen_kill`, on each corpus function with no expected error, and requires
+  no lint. Functions with an expected error can fail it (`stored_in_loop` in
+  `tests/programs/37_fn_values.wf`).
 
 ### Theorems
 
@@ -349,9 +361,12 @@ that postcondition.
 ## What stays only tested
 
 * The fact generation in sema (`crates/weft-sema/src/body/`): `points_into`,
-  `mutates_at`, `rebound_at`, `uses`, `cfg_edge` and lexical scope. The link
-  takes them as hypotheses (`facts_ok`, `bound_before_use`).
-* The B1 condition `ret_ok` in `facts_ok` (see "Hypotheses").
+  `mutates_at`, `rebound_at`, `uses` and `cfg_edge`. The link takes them as
+  hypotheses (`facts_ok`, `bound_before_use`). The sema unit tests, the corpus
+  diagnostics and the lints of `crates/weft-check/tests/hypotheses.rs` test
+  them.
+* The B1 condition `ret_ok` in `facts_ok`. It is false for some accepted
+  programs (see "Hypotheses").
 * The glue in `crates/weft-check/src/rules.rs` that builds `succ`, `gen` and
   `kill` from the facts, and the evidence search. `invalid_at` and
   `invalidates_in_model` state what the glue must compute.

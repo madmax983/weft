@@ -1,0 +1,6 @@
+// The B6 hypothesis `no_gen_kill` (proofs/link/README.md): no node both
+// invalidates and rebinds a reference. Then the checker fixpoint is the model
+// fixpoint (`thm_dataflow_exact`).
+// crates/weft-check/tests/hypotheses.rs runs this file on each function of the
+// corpus with no expected error, and it must give no lint.
+lint("gen_and_kill", P) :- invalidated_at(R, P), rebound_at(R, P).

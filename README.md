@@ -77,7 +77,7 @@ win over the markers and the manifest.
 | `tests/programs` | The design examples and at least one negative program per rule. |
 | `tests/packages` | Packages for the tests of `weft deps`. |
 | `examples/` | A package with dependencies, a library, and a lint rule file. |
-| `docs/` | The design, the plan, ADRs, the grammar and the architecture. |
+| `docs/` | The design, the plan, ADRs, the grammar, the architecture and the traceability matrix. |
 
 ## Status
 

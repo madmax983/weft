@@ -13,6 +13,11 @@ Status: accepted. Date: 2026-10-18.
   multi-shot restriction.
 - Each theorem has vacuity guards: an accepted program, a rejected program with a bad
   execution, a satisfiable-hypothesis witness, and a documented mutation test.
+- Each proof crate has a script for its mutation table: `proofs/borrowing/mutations/`,
+  `proofs/effects/mutations/` and `proofs/link/mutations/` (`run.sh`). A mutation is a
+  patch script that changes a copy of the sources; the test passes if `verify.sh`
+  fails on the copy. So each row of a table can run again from the tree (review round
+  2, FD15).
 
 ## Consequences
 

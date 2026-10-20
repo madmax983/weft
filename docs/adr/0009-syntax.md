@@ -44,8 +44,7 @@ Status: accepted. Date: 2026-10-18.
 - Nesting deeper than 96 levels, or a chain of more than about 150 prefix operators,
   postfix steps or `else if` branches, is a parser error. The parser, the printer,
   sema, the checker, the spec and the interpreter must run on a 2 MiB thread for every
-  program that parses (`crates/weft-cli/tests/limits.rs`). The derivation printer of
-  `check --explain` is not covered yet: it recurses once for each derivation step.
+  program that parses (`crates/weft-cli/tests/limits.rs`).
 - A chain of binary operators has no limit. The parser keeps each part of 32 operators
   in a hidden local of a block. The value, the order of evaluation and the
   short-circuit of `&&` and `||` do not change. The pretty-printer prints the chain.

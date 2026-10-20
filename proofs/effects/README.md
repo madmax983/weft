@@ -258,20 +258,29 @@ Each guard is a verified lemma.
 
 ## Mutation tests
 
-Each mutation weakens one checker rule in `src/checker.rs`. Each was run on a copy of
-`src/`. Each one makes a soundness lemma fail. The `*_rejected` guard of that rule also
-fails, as expected, because the weak checker accepts the bad program.
+Each mutation weakens one checker rule in `src/checker.rs`. Each one makes a soundness
+lemma fail. The `*_rejected` guard of that rule also fails, as expected, because the
+weak checker accepts the bad program. `mutations/run.sh` runs them: each mutation is a
+script `mutations/NAME.py` that changes a copy of the crate in a temporary directory.
+The test passes if `verify.sh` fails on the copy. The script shows the verification
+results and the functions that fail. It does not change the repository, and it takes
+about two minutes.
 
-| Mutation | Result | Soundness lemma that fails |
-| --- | --- | --- |
-| (a) drop `cap < env.len()` at `Perform` | 120 verified, 2 errors | `lemma_no_struct_error` (E1) |
-| (b) `Resume` keeps a `once` `k` usable | 119 verified, 3 errors | `lemma_b_resume` (E2: `k_sync`) |
-| (c) drop the abort rule at a `once` perform | 120 verified, 2 errors | `lemma_capture_rules` (E3) |
-| (c) `Return` without the empty-`lin` check | 120 verified, 2 errors | `lemma_no_own_error` (E3: `err_leak`) |
-| (d) allow `rets[j] <= env.len()` at `Handle` | 119 verified, 3 errors | `lemma_a_handle` (`based`: E1, E4), `lemma_up_rule` |
-| drop the multi rule at a `multi` perform | 120 verified, 2 errors | `lemma_capture_rules` (E5) |
-| drop the suspension rule at `Call` | 121 verified, 1 error | `lemma_up_rule` (E3, E5) |
-| drop the suspension rule at `Resume` | 121 verified, 1 error | `lemma_up_rule` (E3, E5) |
+```bash
+mutations/run.sh          # all mutations
+mutations/run.sh call     # one mutation
+```
+
+| Name | Mutation | Result | Soundness lemma that fails |
+| --- | --- | --- | --- |
+| `a` | (a) drop `cap < env.len()` at `Perform` | 120 verified, 2 errors | `lemma_no_struct_error` (E1) |
+| `b` | (b) `Resume` keeps a `once` `k` usable | 119 verified, 3 errors | `lemma_b_resume` (E2: `k_sync`) |
+| `c1` | (c) drop the abort rule at a `once` perform | 120 verified, 2 errors | `lemma_capture_rules` (E3) |
+| `c2` | (c) `Return` without the empty-`lin` check | 120 verified, 2 errors | `lemma_no_own_error` (E3: `err_leak`) |
+| `d` | (d) allow `rets[j] <= env.len()` at `Handle` | 119 verified, 3 errors | `lemma_a_handle` (`based`: E1, E4), `lemma_up_rule` |
+| `multi` | drop the multi rule at a `multi` perform | 120 verified, 2 errors | `lemma_capture_rules` (E5) |
+| `call` | drop the suspension rule at `Call` | 121 verified, 1 error | `lemma_up_rule` (E3, E5) |
+| `resume` | drop the suspension rule at `Resume` | 121 verified, 1 error | `lemma_up_rule` (E3, E5) |
 
 The source in this directory has no mutation. It verifies with 122 verified, 0 errors.
 

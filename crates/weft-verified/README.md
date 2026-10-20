@@ -19,15 +19,15 @@ verus crates/weft-verified/src/lib.rs --crate-type=lib
 The result must be:
 
 ```text
-verification results:: 66 verified, 0 errors
+verification results:: 67 verified, 0 errors
 ```
 
 | Module | Verified |
 | --- | --- |
-| `places` | 25 |
+| `places` | 27 |
 | `dataflow` | 16 |
 | `modes` | 9 |
-| `lifecycle` | 14 |
+| `lifecycle` | 15 |
 
 To verify one module, add `--verify-module <name>`.
 

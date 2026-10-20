@@ -180,9 +180,8 @@ These rules complete the grammar above.
     in a field at about 35. These limits keep the parser, the printer, sema, the
     checker, the spec and the interpreter on a 2 MiB thread stack
     (`crates/weft-cli/tests/limits.rs`). The derivation printer of
-    `weft check --explain` is not in this list: it recurses once for each step of a
-    derivation, and a long path in a body gives a deep derivation. The `weft` binary
-    runs each command on a 256 MiB stack for this reason.
+    `weft check --explain` uses a stack, not recursion, and `limits.rs` tests it on
+    a 2 MiB thread too (`docs/architecture.md`).
 11. A chain of binary operators has no limit. In a chain of more than 32 operators, the
     parser keeps each part of 32 operators in a hidden local of a block, and the rest of
     the chain starts from that local. The value, the order of evaluation and the
