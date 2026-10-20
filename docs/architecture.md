@@ -126,6 +126,18 @@ function can change at most 32 times and two more times for each function
 function, and its callers use them. Its row can still grow. A function whose parts
 still change at the end gets W0704, an error.
 
+## Code structure of calls and diagnostics
+
+Sema lowers a call of a function item in parts, each a function of its own
+(`crates/weft-sema/src/body/call.rs`, `call_fn_as`): the order of the arguments
+(`body/args.rs`), their evaluation, the call node, the checks of the argument places,
+the effects, the function values that the callee gets, what the callee keeps, and the
+result. `crates/weft-check/src/diagnose.rs` has one function for each rule.
+
+The capability set of a value holds `caps::Held` elements: the capability of a local
+handler (`Held::Cap`) or a mark, such as `Held::Nonportable`, `Held::NotMany` or
+`Held::Resumed`. A `CapId` is always the capability of a handler.
+
 ## Commands
 
 | Command | Stages |

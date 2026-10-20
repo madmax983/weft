@@ -14,6 +14,78 @@ struct ArgVal {
     span: Span,
 }
 
+/// A call of a function item while it is lowered (`Lower::call_fn_as`).
+struct ItemCall<'a> {
+    /// The callee.
+    f: FnId,
+    /// The signature of the callee.
+    sig: FnSig,
+    /// The name of the callee.
+    name: String,
+    /// The type of the item as a value, for a call through a local.
+    inst: Option<&'a FnTy>,
+    /// The type arguments of the call.
+    targs: Vec<Ty>,
+    /// The parameter types of the call.
+    ptys: Vec<Ty>,
+    /// 1 for a method call: the first parameter gets the receiver. Else 0.
+    first: usize,
+    /// The location of the call.
+    span: Span,
+}
+
+impl ItemCall<'_> {
+    /// Returns true if parameter `i` has a function type: it gets a callback
+    /// that the callee can call. A parameter of a type parameter gets a value
+    /// that the callee can only keep.
+    fn callback(&self, i: usize) -> bool {
+        self.sig
+            .params
+            .get(i)
+            .is_some_and(|p| matches!(p.ty, Ty::Fn(_)))
+    }
+
+    /// Returns the callee root index of parameter `i` (`Lower::sig_root`).
+    fn root_of(&self, i: usize) -> u32 {
+        Lower::sig_root(&self.sig, i)
+    }
+}
+
+/// The arguments of a call of a function item after their evaluation
+/// (`Lower::eval_item_args`), by parameter.
+struct ItemArgs {
+    /// The arguments.
+    vals: Vec<ArgVal>,
+    /// The places of the reference arguments.
+    arg_places: Vec<Vec<PlaceId>>,
+    /// The places that a by-value argument points into.
+    value_refs: Vec<(usize, Vec<PlaceId>)>,
+    /// The variables that hold the arguments until the call node.
+    held_vars: Vec<VarId>,
+    /// The variables of the arguments that move before the call.
+    taken: Vec<VarId>,
+    /// The values that the callee can keep, for example in a container.
+    kept_vals: Vec<Val>,
+    /// The places of the `Rc` handles on the way to the receiver.
+    recv_deps: Vec<PlaceId>,
+}
+
+/// The node of a call of a function item (`Lower::item_call_node`).
+struct ItemNode {
+    /// The node.
+    n: NodeId,
+    /// The split of the places of the call (`Lower::fresh_split`).
+    split: u32,
+    /// The places that the call mutates, with their callee root indexes.
+    muts: Vec<(PlaceId, u32)>,
+    /// The callee root index of each argument.
+    roots: Vec<u32>,
+    /// The length of `performs_at` before the call.
+    performs_from: usize,
+    /// The length of `escapes_at` before the call.
+    escapes_from: usize,
+}
+
 /// The parts of one call that `Lower::call_flows` reads.
 #[derive(Clone, Copy)]
 struct Flows<'a> {
@@ -318,6 +390,13 @@ impl Lower<'_> {
 
     /// Calls a function item. `inst` is the type of the item as a value, for a call
     /// through a local: the call uses its parameter and result types.
+    ///
+    /// Each part of the call is a function of its own: the order of the
+    /// arguments (`item_arg_slots`), their evaluation (`eval_item_args`), the call
+    /// node (`item_call_node`), the places of the arguments
+    /// (`check_arg_places`), the effects (`item_call_effects`), the function
+    /// values that the callee gets (`item_fn_args`), what the callee keeps
+    /// (`item_call_keeps`) and the result (`item_call_result`).
     pub(super) fn call_fn_as(
         &mut self,
         f: FnId,
@@ -331,24 +410,61 @@ impl Lower<'_> {
         let name = self.prog.fns[f].name.clone();
         // Only a function with `self` as its first parameter takes a receiver.
         if recv.is_some() && sig.params.first().is_none_or(|p| p.name != "self") {
-            let owner = self.prog.fns[f]
-                .owner
-                .map_or_else(String::new, |a| format!("{}.", self.prog.adts[a].name));
-            self.err(
-                "W0104",
-                format!("`{name}` has no `self` parameter: call it as `{owner}{name}(...)`"),
-                span,
-            );
-            for a in args.iter().map(|a| &a.value).chain(trailing) {
-                let _ = self.expr(a);
-            }
-            return Val {
-                ty: Ty::Error,
-                ..Val::default()
-            };
+            return self.no_self(f, &name, args, trailing, span);
         }
+        let (targs, ptys) = self.item_call_types(&sig, inst);
+        let call = ItemCall {
+            f,
+            first: usize::from(recv.is_some()),
+            sig,
+            name,
+            inst,
+            targs,
+            ptys,
+            span,
+        };
+        let slots = self.item_arg_slots(&call, args, trailing);
+        let mut a = self.eval_item_args(&call, recv, &slots);
+        let node = self.item_call_node(&call, &mut a);
+        self.check_arg_places(&call, &a, &node);
+        let abort = self.item_call_effects(&call, &a, &node);
+        let fns = self.item_fn_args(&call, &a, &node);
+        self.item_call_keeps(&call, &a, &node, abort);
+        self.item_call_result(&call, a, &node, &fns)
+    }
+
+    /// Reports W0104 for a method call of function `f` with no `self`
+    /// parameter. The arguments are still lowered.
+    fn no_self(
+        &mut self,
+        f: FnId,
+        name: &str,
+        args: &[Arg],
+        trailing: Option<&Expr>,
+        span: Span,
+    ) -> Val {
+        let owner = self.prog.fns[f]
+            .owner
+            .map_or_else(String::new, |a| format!("{}.", self.prog.adts[a].name));
+        self.err(
+            "W0104",
+            format!("`{name}` has no `self` parameter: call it as `{owner}{name}(...)`"),
+            span,
+        );
+        for a in args.iter().map(|a| &a.value).chain(trailing) {
+            let _ = self.expr(a);
+        }
+        Val {
+            ty: Ty::Error,
+            ..Val::default()
+        }
+    }
+
+    /// Returns the type arguments and the parameter types of a call of a
+    /// function with signature `sig`. The type of the value gives the type
+    /// arguments of a call through a local (`inst`).
+    fn item_call_types(&mut self, sig: &FnSig, inst: Option<&FnTy>) -> (Vec<Ty>, Vec<Ty>) {
         let targs: Vec<Ty> = sig.generics.iter().map(|_| self.inf.fresh()).collect();
-        // The type of the value gives the type arguments of a call through a local.
         if let Some(t) = inst {
             for (p, it) in sig.params.iter().zip(&t.params) {
                 let _ = self.inf.unify(&super::subst(&p.ty, &targs), it);
@@ -363,18 +479,28 @@ impl Lower<'_> {
                 .map(|p| super::subst(&p.ty, &targs))
                 .collect(),
         };
-        // Order the explicit arguments: named arguments go to their parameter.
-        let first = usize::from(recv.is_some());
+        (targs, ptys)
+    }
+
+    /// Orders the explicit arguments of a call: named arguments go to their
+    /// parameter (ADR 0009). Returns the argument of each parameter.
+    fn item_arg_slots<'e>(
+        &mut self,
+        call: &ItemCall<'_>,
+        args: &'e [Arg],
+        trailing: Option<&'e Expr>,
+    ) -> Vec<Option<&'e Expr>> {
+        let (first, span) = (call.first, call.span);
         let names = super::args::ParamNames {
-            what: format!("`{name}`"),
+            what: format!("`{}`", call.name),
             noun: "parameter",
-            names: sig.params.iter().map(|p| p.name.as_str()).collect(),
+            names: call.sig.params.iter().map(|p| p.name.as_str()).collect(),
             first,
         };
         let order = self.order_args(&names, args, trailing, span);
         // The interpreter does not know the callee of a method of a value or of
         // an item in a local when it compiles the call: it uses this order.
-        if (first == 1 || inst.is_some()) && args.iter().any(|a| a.name.is_some()) {
+        if (first == 1 || call.inst.is_some()) && args.iter().any(|a| a.name.is_some()) {
             let given = order
                 .iter()
                 .skip(first)
@@ -382,13 +508,19 @@ impl Lower<'_> {
                 .collect();
             self.facts.arg_order.push((span, given));
         }
-        let slots = super::args::slot_exprs(&order, args, trailing);
-        // Evaluate the arguments in order. Type, hold and move each argument
-        // before the next one runs, so that a later argument cannot hide a
-        // mutation from an earlier reference.
-        // A parameter of a function type gets a callback: the callee can call it. A
-        // parameter of a type parameter gets a value that the callee can only keep.
-        let callback = |i: usize| sig.params.get(i).is_some_and(|p| matches!(p.ty, Ty::Fn(_)));
+        super::args::slot_exprs(&order, args, trailing)
+    }
+
+    /// Evaluates the arguments of a call in the order of the parameters. `recv`
+    /// is the evaluated receiver of a method call.
+    fn eval_item_args(
+        &mut self,
+        call: &ItemCall<'_>,
+        recv: Option<Val>,
+        slots: &[Option<&Expr>],
+    ) -> ItemArgs {
+        let (f, sig, ptys, first, span) = (call.f, &call.sig, &call.ptys, call.first, call.span);
+        let callback = |i: usize| call.callback(i);
         let mut value_refs: Vec<(usize, Vec<PlaceId>)> = Vec::new();
         let mut recv = recv;
         let mut recv_deps = Vec::new();
@@ -527,7 +659,35 @@ impl Lower<'_> {
             }
             vals.push(av);
         }
-        let root_of = |i: usize| Self::sig_root(&sig, i);
+        ItemArgs {
+            vals,
+            arg_places,
+            value_refs,
+            held_vars,
+            taken,
+            kept_vals,
+            recv_deps,
+        }
+    }
+
+    /// Emits the node of a call: what it mutates, reads and holds. It takes the
+    /// variables that hold the arguments until the call.
+    fn item_call_node(&mut self, call: &ItemCall<'_>, a: &mut ItemArgs) -> ItemNode {
+        let (sig, name, ptys, first, span) = (
+            &call.sig,
+            call.name.as_str(),
+            &call.ptys,
+            call.first,
+            call.span,
+        );
+        let (targs, root_of, callback) = (
+            &call.targs,
+            |i: usize| call.root_of(i),
+            |i: usize| call.callback(i),
+        );
+        let held_vars = std::mem::take(&mut a.held_vars);
+        let taken = std::mem::take(&mut a.taken);
+        let (vals, arg_places, value_refs) = (&a.vals, &a.arg_places, &a.value_refs);
         let roots: Vec<u32> = (0..arg_places.len()).map(root_of).collect();
         // The call node.
         let split = self.fresh_split();
@@ -545,7 +705,7 @@ impl Lower<'_> {
                     continue;
                 }
             }
-            for p in self.subst_place(m, &arg_places, split) {
+            for p in self.subst_place(m, arg_places, split) {
                 muts.push((p, idx));
             }
         }
@@ -561,8 +721,8 @@ impl Lower<'_> {
             parts.extend(sig.effects.named.iter().map(|n| effects::in_signature(n)));
             parts.join(", ")
         };
-        let generic_held = self.hold_generic(&sig, &targs, &vals, span);
-        let n = self.emit(span, &name, detail);
+        let generic_held = self.hold_generic(sig, targs, vals, span);
+        let n = self.emit(span, name, detail);
         self.release_generic(&generic_held, span);
         let performs_from = self.facts.performs_at.len();
         let escapes_from = self.facts.escapes_at.len();
@@ -570,7 +730,7 @@ impl Lower<'_> {
             self.facts.uses.push((v, n));
         }
         self.take_held(&taken, n);
-        self.callee_drops(&name, &sig, &targs, &vals, span);
+        self.callee_drops(name, sig, targs, vals, span);
         for (p, idx) in &muts {
             self.mutate(n, *p);
             self.facts.call_mut.push((n, *p, *idx));
@@ -582,7 +742,7 @@ impl Lower<'_> {
                 self.facts.call_arg.push((n, p, root_of(i)));
             }
         }
-        for (i, ps) in &value_refs {
+        for (i, ps) in value_refs {
             // A function value inside the argument runs as a stored value (root 800).
             let root = if callback(*i) {
                 800 + u32::try_from(*i).unwrap_or(0)
@@ -595,11 +755,26 @@ impl Lower<'_> {
                 self.facts.call_arg.push((n, p, root));
             }
         }
+        ItemNode {
+            n,
+            split,
+            muts,
+            roots,
+            performs_from,
+            escapes_from,
+        }
+    }
+
+    /// Checks that the arguments point where the parameters say (W0203), and
+    /// that a `@ uniq` parameter gets a unique reference (W0406).
+    fn check_arg_places(&mut self, call: &ItemCall<'_>, a: &ItemArgs, node: &ItemNode) {
+        let (sig, name, split) = (&call.sig, call.name.as_str(), node.split);
+        let (vals, arg_places) = (&a.vals, &a.arg_places);
         // Arguments must point where the parameters say. A by-value argument is
         // the base of the places inside it.
         let bases: Vec<Vec<PlaceId>> = arg_places
             .iter()
-            .zip(&vals)
+            .zip(vals)
             .map(|(ps, av)| match (&av.val.place, ps.is_empty()) {
                 (Some(lv), true) => lv.places.clone(),
                 _ => ps.clone(),
@@ -652,11 +827,20 @@ impl Lower<'_> {
                 self.note_cap_uniq(l, &text);
             }
         }
+    }
+
+    /// The effects of a call: the operations that it performs, a failure that
+    /// it raises, the tasks of the callee and the operations that the callee
+    /// gives function values to. Returns true if the call can abort.
+    fn item_call_effects(&mut self, call: &ItemCall<'_>, a: &ItemArgs, node: &ItemNode) -> bool {
+        let (f, sig, span, n) = (call.f, &call.sig, call.span, node.n);
+        let callback = |i: usize| call.callback(i);
+        let (vals, arg_places, roots) = (&a.vals, &a.arg_places, &node.roots);
         // Effects. An operation of a local handler gets the reference arguments.
         let mut abort = false;
         let ref_args: Vec<(PlaceId, u32)> = arg_places
             .iter()
-            .zip(&roots)
+            .zip(roots)
             .flat_map(|(ps, &r)| ps.iter().map(move |&p| (p, r)))
             .collect();
         for e in &sig.effects.named {
@@ -689,6 +873,23 @@ impl Lower<'_> {
             }
         }
         self.callee_op_effects(&sig.effects.op_effects, span);
+        abort
+    }
+
+    /// The function values that the callee gets: it can call them with the
+    /// places that it lends to them, run them as tasks or more than once, and
+    /// give them to operations. Returns the information and the effect row of
+    /// each function argument, by position.
+    fn item_fn_args(
+        &mut self,
+        call: &ItemCall<'_>,
+        a: &ItemArgs,
+        node: &ItemNode,
+    ) -> Vec<Option<super::fnval::RowFn>> {
+        let (f, sig, ptys, span) = (call.f, &call.sig, &call.ptys, call.span);
+        let callback = |i: usize| call.callback(i);
+        let (vals, arg_places) = (&a.vals, &a.arg_places);
+        let (n, split, roots) = (node.n, node.split, &node.roots);
         // How the callee runs the function arguments as tasks, also the
         // arguments that hold function values (`arg_tasks`).
         let fn_pos: Vec<usize> = (0..vals.len())
@@ -728,7 +929,7 @@ impl Lower<'_> {
                 let held = self.val_caps(&av.val);
                 self.check_task_value(&info, row.as_deref(), &held, av.span);
             }
-            let given = self.lent_to(&Callee::Item(f), i, &arg_places, &roots);
+            let given = self.lent_to(&Callee::Item(f), i, arg_places, roots);
             if let Some(l) = av.val.local {
                 self.note_cap_run(l, &given);
             }
@@ -781,11 +982,21 @@ impl Lower<'_> {
             }
         }
         let access = if self.item_runs_tasks(f) {
-            Self::any_access(&runs, &arg_places)
+            Self::any_access(&runs, arg_places)
         } else {
-            self.run_access(&runs, &arg_places, split)
+            self.run_access(&runs, arg_places, split)
         };
         self.arg_tasks(&runs, &arg_runs, &access, span);
+        fns
+    }
+
+    /// What the callee can keep: a function argument that it stores, and a
+    /// stored value that an argument holds and that it can run. A foreign
+    /// function can do both. Then the abort and the `multi` resume of the call.
+    fn item_call_keeps(&mut self, call: &ItemCall<'_>, a: &ItemArgs, node: &ItemNode, abort: bool) {
+        let (f, sig) = (call.f, &call.sig);
+        let (vals, arg_places) = (&a.vals, &a.arg_places);
+        let (n, roots) = (node.n, &node.roots);
         // The callee can store a function argument, and it can run a stored one
         // that an argument holds. A foreign function can do both.
         let def = &self.prog.fns[f];
@@ -811,7 +1022,7 @@ impl Lower<'_> {
             }
         }
         if holds_fn {
-            if let Some(given) = self.reach_of(f, &arg_places, &roots) {
+            if let Some(given) = self.reach_of(f, arg_places, roots) {
                 // A foreign callee can run a stored value any number of times.
                 let again = foreign || self.sigs[f].effects.reach_repeats;
                 self.reach(n, &given, again);
@@ -825,10 +1036,25 @@ impl Lower<'_> {
             self.multi_node(n);
             self.unknown_multi = true;
         }
+    }
+
+    /// Returns the result of a call: its type, the places that it points into,
+    /// the function values in it and what they do.
+    fn item_call_result(
+        &mut self,
+        call: &ItemCall<'_>,
+        a: ItemArgs,
+        node: &ItemNode,
+        fns: &[Option<super::fnval::RowFn>],
+    ) -> Val {
+        let (f, sig, ptys, inst, span) = (call.f, &call.sig, &call.ptys, call.inst, call.span);
+        let targs = &call.targs;
+        let (n, muts) = (node.n, &node.muts);
+        let (performs_from, escapes_from) = (node.performs_from, node.escapes_from);
         // The result.
         let ret = match inst {
             Some(t) => t.ret.clone(),
-            None => super::subst(&sig.ret, &targs),
+            None => super::subst(&sig.ret, targs),
         };
         // A value that the callee keeps can be in a reference argument or in the result.
         // A foreign callee can keep it anywhere.
@@ -836,8 +1062,92 @@ impl Lower<'_> {
             ty: ret.clone(),
             ..Val::default()
         };
-        let ret_fn = self.has_fn(&ret);
-        for v in &kept_vals {
+        self.result_held(call, &a, node, &ret, &mut out);
+        let ItemArgs {
+            vals,
+            arg_places,
+            recv_deps,
+            ..
+        } = a;
+        // A returned function value does what the callee states about it.
+        if let (Some(rf), Ty::Fn(fty)) = (&sig.effects.ret, self.inf.shallow(&ret)) {
+            let s = self.ret_summary(rf, &fty, &arg_places, fns);
+            out.summary = Some(s);
+            out.ty = Ty::Fn(Rc::new(FnTy {
+                summary: Some(s),
+                item: None,
+                ..(*fty).clone()
+            }));
+        }
+        self.result_places(call, &arg_places, recv_deps, node, &ret, &mut out);
+        let no_body = self.prog.fns[f].decl.body.is_none();
+        let flows = Flows {
+            sig,
+            vals: &vals,
+            arg_places: &arg_places,
+            ptys,
+            muts,
+            no_body,
+        };
+        self.call_flows(&flows, &ret, &mut out, span);
+        self.group_stores_of(f, sig, &vals, &arg_places, ptys, span);
+        self.fn_stores_of(sig, &arg_places, span);
+        // The callee can return what a handler of a caller resumes with, unless
+        // its signature states the places of the result.
+        let unstated = super::flow::count_refs(&sig.ret) > sig.ret_places.len()
+            || super::flow::mentions_param(&sig.ret);
+        if unstated
+            && self.holds_refs(&ret)
+            && self.facts.escapes_at[escapes_from..]
+                .iter()
+                .any(|(m, _)| *m == n)
+        {
+            let e = self.env_ref();
+            out.refs.push(e);
+        }
+        // The callee can return what a clause of a local handler resumes with.
+        if self.holds_refs(&ret) {
+            let caps: Vec<CapId> = self.facts.performs_at[performs_from..]
+                .iter()
+                .filter(|(m, _)| *m == n)
+                .map(|&(_, c)| c)
+                .collect();
+            for c in caps {
+                let rs = self.op_result_refs(Some(c), None);
+                out.refs.extend(rs);
+            }
+        }
+        // A function value inside the result, for example in a field of a
+        // struct, can be one that the callee makes. The body does not follow
+        // it (`caps::MADE`, ADR 0006).
+        let rt = self.inf.shallow(&ret);
+        if !no_body && !matches!(rt, Ty::Fn(_)) && self.has_fn(&rt) {
+            out.caps.insert(super::caps::MADE);
+        }
+        out
+    }
+
+    /// Adds to the result of a call the function values that it can hold: the
+    /// values that the callee keeps or copies out of a reference argument, the
+    /// function arguments, and the values that a clause resumes with. A value
+    /// that the callee keeps can be in a reference argument or in the result. A
+    /// foreign callee can keep it anywhere.
+    fn result_held(
+        &mut self,
+        call: &ItemCall<'_>,
+        a: &ItemArgs,
+        node: &ItemNode,
+        ret: &Ty,
+        out: &mut Val,
+    ) {
+        let (f, sig, ptys) = (call.f, &call.sig, &call.ptys);
+        let (kept_vals, vals, arg_places) = (&a.kept_vals, &a.vals, &a.arg_places);
+        let (n, performs_from) = (node.n, node.performs_from);
+        let def = &self.prog.fns[f];
+        let foreign = def.decl.body.is_none() && !def.is_std;
+        let into: Vec<PlaceId> = arg_places.iter().flatten().copied().collect();
+        let ret_fn = self.has_fn(ret);
+        for v in kept_vals {
             if foreign {
                 self.keep(v, super::caps::KeptTo::Stored);
             } else if !into.is_empty() {
@@ -883,8 +1193,8 @@ impl Lower<'_> {
         if ret_fn {
             // A result that is not a function value can hold a function argument,
             // for example in a tuple. The `ret` part covers a function result.
-            if !matches!(self.inf.shallow(&ret), Ty::Fn(_)) {
-                for av in &vals {
+            if !matches!(self.inf.shallow(ret), Ty::Fn(_)) {
+                for av in vals {
                     if matches!(self.inf.shallow(&av.val.ty), Ty::Fn(_)) {
                         out.caps.extend(self.val_caps(&av.val));
                     }
@@ -894,7 +1204,7 @@ impl Lower<'_> {
             out.caps.extend(self.resumed_at(n, performs_from));
             // A closure in the result can capture what an argument holds or points
             // to: a nonportable value, or a value that is not `many`.
-            for av in &vals {
+            for av in vals {
                 let held = self.val_caps(&av.val);
                 if self.is_nonportable(&av.val.ty) || held.contains(&super::caps::NONPORTABLE) {
                     out.caps.insert(super::caps::NONPORTABLE);
@@ -904,18 +1214,22 @@ impl Lower<'_> {
                 }
             }
         }
-        // A returned function value does what the callee states about it.
-        if let (Some(rf), Ty::Fn(fty)) = (&sig.effects.ret, self.inf.shallow(&ret)) {
-            let s = self.ret_summary(rf, &fty, &arg_places, &fns);
-            out.summary = Some(s);
-            out.ty = Ty::Fn(Rc::new(FnTy {
-                summary: Some(s),
-                item: None,
-                ..(*fty).clone()
-            }));
-        }
+    }
+
+    /// Gives the result of a call the places that the signature states
+    /// (`FnSig::ret_places`), also for each part of a tuple.
+    fn result_places(
+        &mut self,
+        call: &ItemCall<'_>,
+        arg_places: &[Vec<PlaceId>],
+        recv_deps: Vec<PlaceId>,
+        node: &ItemNode,
+        ret: &Ty,
+        out: &mut Val,
+    ) {
+        let (sig, ptys, split) = (&call.sig, &call.ptys, node.split);
         if !sig.ret_places.is_empty() {
-            let mut parts: Option<Vec<Val>> = match self.inf.deep(&ret) {
+            let mut parts: Option<Vec<Val>> = match self.inf.deep(ret) {
                 Ty::Tuple(ts) => Some(
                     ts.into_iter()
                         .map(|t| Val {
@@ -927,10 +1241,10 @@ impl Lower<'_> {
                 _ => None,
             };
             for rp in &sig.ret_places {
-                let mut places = self.subst_place(&rp.place, &arg_places, split);
+                let mut places = self.subst_place(&rp.place, arg_places, split);
                 if matches!(rp.place.root, SigRoot::Group(_)) {
                     // A group place stays valid only while the handles on the way do.
-                    places.extend(self.group_arg_deps(&arg_places, &ptys));
+                    places.extend(self.group_arg_deps(arg_places, ptys));
                 }
                 match (rp.path.first(), parts.as_mut()) {
                     (Some(&i), Some(ps)) if i < ps.len() => {
@@ -947,51 +1261,6 @@ impl Lower<'_> {
             out.refs.extend(recv_deps);
             out.parts = parts;
         }
-        let no_body = self.prog.fns[f].decl.body.is_none();
-        let flows = Flows {
-            sig: &sig,
-            vals: &vals,
-            arg_places: &arg_places,
-            ptys: &ptys,
-            muts: &muts,
-            no_body,
-        };
-        self.call_flows(&flows, &ret, &mut out, span);
-        self.group_stores_of(f, &sig, &vals, &arg_places, &ptys, span);
-        self.fn_stores_of(&sig, &arg_places, span);
-        // The callee can return what a handler of a caller resumes with, unless
-        // its signature states the places of the result.
-        let unstated = super::flow::count_refs(&sig.ret) > sig.ret_places.len()
-            || super::flow::mentions_param(&sig.ret);
-        if unstated
-            && self.holds_refs(&ret)
-            && self.facts.escapes_at[escapes_from..]
-                .iter()
-                .any(|(m, _)| *m == n)
-        {
-            let e = self.env_ref();
-            out.refs.push(e);
-        }
-        // The callee can return what a clause of a local handler resumes with.
-        if self.holds_refs(&ret) {
-            let caps: Vec<CapId> = self.facts.performs_at[performs_from..]
-                .iter()
-                .filter(|(m, _)| *m == n)
-                .map(|&(_, c)| c)
-                .collect();
-            for c in caps {
-                let rs = self.op_result_refs(Some(c), None);
-                out.refs.extend(rs);
-            }
-        }
-        // A function value inside the result, for example in a field of a
-        // struct, can be one that the callee makes. The body does not follow
-        // it (`caps::MADE`, ADR 0006).
-        let rt = self.inf.shallow(&ret);
-        if !no_body && !matches!(rt, Ty::Fn(_)) && self.has_fn(&rt) {
-            out.caps.insert(super::caps::MADE);
-        }
-        out
     }
 
     /// Returns true if value `v` is not `many`. A copy of it would copy a value
@@ -1902,7 +2171,11 @@ impl Lower<'_> {
             // A closure that resumes a continuation of a clause cannot go to the
             // handled computation: the computation can keep it after the clause.
             let conts: BTreeSet<CapId> = self.clause_conts.iter().map(|&(k, _)| k).collect();
-            if self.expand_caps(&caps).iter().any(|c| conts.contains(c)) {
+            if self
+                .expand_caps(&caps)
+                .iter()
+                .any(|c| c.cap().is_some_and(|k| conts.contains(&k)))
+            {
                 self.cont_to_body(a.value.span);
             } else {
                 self.resumed.entry(cap).or_default().extend(caps);
@@ -2465,7 +2738,7 @@ impl Lower<'_> {
         &mut self,
         info: &super::fnval::FnInfo,
         row: Option<&[String]>,
-        held: &std::collections::BTreeSet<CapId>,
+        held: &std::collections::BTreeSet<super::caps::Held>,
         span: Span,
     ) {
         // Effects that go to a handler outside the function: of a row or of a
@@ -2497,7 +2770,8 @@ impl Lower<'_> {
         let held = self.expand_caps(held);
         bad |= held
             .iter()
-            .any(|c| Self::is_cap(*c) && self.cap_on_this_stack(*c, &own));
+            .filter_map(|c| c.cap())
+            .any(|c| self.cap_on_this_stack(c, &own));
         // The marks of the values in a store that the task can run.
         for m in Self::task_marks(&held) {
             match m {
@@ -2528,7 +2802,11 @@ impl Lower<'_> {
                 sum.tasks.insert(p);
             }
         }
-        if bad && held.iter().any(|c| self.cont_caps.contains(c)) {
+        if bad
+            && held
+                .iter()
+                .any(|c| c.cap().is_some_and(|k| self.cont_caps.contains(&k)))
+        {
             self.err(
                 "W0314",
                 "a task cannot resume a continuation of this task: the rest of the handled body would run on another task",

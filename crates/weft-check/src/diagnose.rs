@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use weft_facts::{FnFacts, NodeId, PlaceId, VarId, VarKind, ARG_TASK, TASK_END};
+use weft_facts::{FnFacts, NodeId, PlaceId, VarId, VarKind, Violations, ARG_TASK, TASK_END};
 use weft_sema::effects;
 use weft_syntax::diag::Diagnostic;
 
@@ -229,11 +229,33 @@ pub fn diagnose(f: &FnFacts, r: &Report, file: &weft_syntax::SourceFile) -> Vec<
 }
 
 /// Turns a checker report into diagnostics whose notes can hold markers of
-/// node offsets (`MARK`).
+/// node offsets (`MARK`). Each rule has a function of its own.
 pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
-    let mut out = Vec::new();
     let v = &r.violations;
+    let mut out = Vec::new();
+    w0301(f, r, &mut out);
+    use_after_move(f, v, &mut out);
+    use_before_set(f, v, &mut out);
+    moved_immovable(f, v, &mut out);
+    unconsumed(f, v, &mut out);
+    overwritten(f, v, &mut out);
+    abort_unhandled(f, v, &mut out);
+    live_across_multi(f, v, &mut out);
+    unauthorized_mut(f, v, &mut out);
+    unauthorized_effect(f, v, &mut out);
+    shared_mutation(f, v, &mut out);
+    alias_conflict(f, v, &mut out);
+    task_conflict(f, r, &mut out);
+    nonportable_capture(f, v, &mut out);
+    shared_mut_capture(f, v, &mut out);
+    root_handler_in_lib(f, v, &mut out);
+    // A stable sort: the errors at one place keep the order of the rules above.
+    out.sort_by(|a, b| (a.span.lo, &a.code).cmp(&(b.span.lo, &b.code)));
+    out
+}
 
+/// W0301: the derivation of the design doc (`error`).
+fn w0301(f: &FnFacts, r: &Report, out: &mut Vec<Diagnostic>) {
     // W0301: the derivation of the design doc. One error for each reference
     // and invalidating node, at the first use. The node can be a mutation, a
     // lend, a move, a part move or a scope end (`Cause`).
@@ -264,101 +286,12 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         let var = f.var(inv.var);
         let path = &f.place(inv.path).display;
         let at = f.node(inv.at);
-        let line = at.span.lo;
         let name = match var.kind {
             VarKind::Temp | VarKind::BlockValue => format!("the {}", var.name),
             _ => shown_name(var),
         };
         let handle = path.strip_suffix(".*");
-        let inside = |owner: &str, verb: &str| {
-            let head = if path == owner {
-                format!("{owner} {verb}")
-            } else if handle == Some(owner) {
-                format!("{owner} is an `Rc` handle on the way to the place, and it {verb}")
-            } else {
-                format!("{path} is inside {owner}, which {verb}")
-            };
-            format!("{head} at line \u{1}line:{line}\u{1}  →  invalidated at line \u{1}line:{line}\u{1}")
-        };
-        let (what, why) = match inv.cause {
-            Cause::Mutation(m) | Cause::Lend(m) => {
-                let mutated = &f.place(m).display;
-                let what = match (at.detail.is_empty(), at.label.strip_suffix(" =")) {
-                    // A task that ends here can have changed the place while it ran.
-                    _ if matches!(inv.cause, Cause::Lend(_)) && at.label == TASK_END => {
-                        format!("{TASK_END} : the task could change {mutated} while it ran")
-                    }
-                    _ if matches!(inv.cause, Cause::Lend(_)) => format!(
-                        "{} : gets {mutated}, and it can mutate through it",
-                        at.label
-                    ),
-                    (true, Some(target)) => format!("{target} : new value"),
-                    (true, None) => format!("{} : mut({mutated})", at.label),
-                    (false, _) => format!("{} : {}", at.label, at.detail),
-                };
-                // Inside one one-place wildcard place, rule 3 compares the steps.
-                let one = f.one_place_of(m);
-                let same = one.is_some() && one == f.one_place_of(inv.path);
-                let why = match (f.wild_base(inv.path), f.wild_base(m)) {
-                    _ if same => format!(
-                        "{mutated} is a strict prefix of {path}, through an unstable step  →  invalidated at line \u{1}line:{line}\u{1}"
-                    ),
-                    (Some(b), _) => format!(
-                        "{path} can be any place inside {}, and {mutated} overlaps it  →  invalidated at line \u{1}line:{line}\u{1}",
-                        f.place(b).display
-                    ),
-                    (None, Some(b)) => format!(
-                        "{mutated} can be any place inside {}, which holds {path}  →  invalidated at line \u{1}line:{line}\u{1}",
-                        f.place(b).display
-                    ),
-                    (None, None) if handle == Some(mutated.as_str()) => format!(
-                        "{mutated} is an `Rc` handle on the way to the place, and a new value of it can free the object  →  invalidated at line \u{1}line:{line}\u{1}"
-                    ),
-                    (None, None) => format!(
-                        "{mutated} is a strict prefix of {path}, through an unstable step  →  invalidated at line \u{1}line:{line}\u{1}"
-                    ),
-                };
-                (what, why)
-            }
-            Cause::Move(o) => {
-                let owner = &f.var(o).name;
-                (format!("{owner} : moved"), inside(owner, "is moved"))
-            }
-            Cause::ScopeEnd(o) if f.var(o).kind == VarKind::Temp => (
-                "temporary : goes out of scope at the end of the statement".to_string(),
-                format!("{path} is inside a temporary value, which goes out of scope at line \u{1}line:{line}\u{1}  →  invalidated at line \u{1}line:{line}\u{1}"),
-            ),
-            Cause::ScopeEnd(o) => {
-                let owner = &f.var(o).name;
-                // A local of a closure or a handler clause goes out of scope
-                // when the body returns at a call or an operation.
-                let when = match at.label.as_str() {
-                    "end of block" | "end of statement" | "exit" | "return" | "jump"
-                    | "drop" => "goes out of scope".to_string(),
-                    callee => format!("goes out of scope when `{callee}` returns"),
-                };
-                (format!("{owner} : {when}"), inside(owner, &when))
-            }
-            Cause::Unwound(o) => {
-                let owner = &f.var(o).name;
-                let when = "goes out of scope on an abort path";
-                (format!("{owner} : {when}"), inside(owner, when))
-            }
-            Cause::MovePart(m) => {
-                let moved = &f.place(m).display;
-                (format!("{moved} : moved"), inside(moved, "is moved"))
-            }
-            Cause::Release(m) => {
-                let freed = &f.place(m).display;
-                (
-                    format!(
-                        "{} : the handled body changed a place above what {freed} points to",
-                        at.label
-                    ),
-                    inside(freed, "can be freed"),
-                )
-            }
-        };
+        let (what, why) = w0301_cause(f, inv);
         let holder = holder_text(f, inv, false);
         let used = node_span(f, inv.used_at);
         // A block value is held only across the end of its block.
@@ -399,7 +332,111 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         }
         out.push(d);
     }
+}
 
+/// W0302, W0501 and W0502: a value, a continuation or a closure that is used
+/// after a move (`use_after_move`). One error for each variable.
+/// Returns the notes of W0301 about the node that invalidates the reference of
+/// `inv`: what the node does, and why that invalidates the reference.
+fn w0301_cause(f: &FnFacts, inv: &Invalidation) -> (String, String) {
+    let path = &f.place(inv.path).display;
+    let at = f.node(inv.at);
+    let line = at.span.lo;
+    let handle = path.strip_suffix(".*");
+    let inside = |owner: &str, verb: &str| {
+        let head = if path == owner {
+            format!("{owner} {verb}")
+        } else if handle == Some(owner) {
+            format!("{owner} is an `Rc` handle on the way to the place, and it {verb}")
+        } else {
+            format!("{path} is inside {owner}, which {verb}")
+        };
+        format!(
+            "{head} at line \u{1}line:{line}\u{1}  →  invalidated at line \u{1}line:{line}\u{1}"
+        )
+    };
+    match inv.cause {
+        Cause::Mutation(m) | Cause::Lend(m) => {
+            let mutated = &f.place(m).display;
+            let what = match (at.detail.is_empty(), at.label.strip_suffix(" =")) {
+                // A task that ends here can have changed the place while it ran.
+                _ if matches!(inv.cause, Cause::Lend(_)) && at.label == TASK_END => {
+                    format!("{TASK_END} : the task could change {mutated} while it ran")
+                }
+                _ if matches!(inv.cause, Cause::Lend(_)) => format!(
+                    "{} : gets {mutated}, and it can mutate through it",
+                    at.label
+                ),
+                (true, Some(target)) => format!("{target} : new value"),
+                (true, None) => format!("{} : mut({mutated})", at.label),
+                (false, _) => format!("{} : {}", at.label, at.detail),
+            };
+            // Inside one one-place wildcard place, rule 3 compares the steps.
+            let one = f.one_place_of(m);
+            let same = one.is_some() && one == f.one_place_of(inv.path);
+            let why = match (f.wild_base(inv.path), f.wild_base(m)) {
+                _ if same => format!(
+                    "{mutated} is a strict prefix of {path}, through an unstable step  →  invalidated at line \u{1}line:{line}\u{1}"
+                ),
+                (Some(b), _) => format!(
+                    "{path} can be any place inside {}, and {mutated} overlaps it  →  invalidated at line \u{1}line:{line}\u{1}",
+                    f.place(b).display
+                ),
+                (None, Some(b)) => format!(
+                    "{mutated} can be any place inside {}, which holds {path}  →  invalidated at line \u{1}line:{line}\u{1}",
+                    f.place(b).display
+                ),
+                (None, None) if handle == Some(mutated.as_str()) => format!(
+                    "{mutated} is an `Rc` handle on the way to the place, and a new value of it can free the object  →  invalidated at line \u{1}line:{line}\u{1}"
+                ),
+                (None, None) => format!(
+                    "{mutated} is a strict prefix of {path}, through an unstable step  →  invalidated at line \u{1}line:{line}\u{1}"
+                ),
+            };
+            (what, why)
+        }
+        Cause::Move(o) => {
+            let owner = &f.var(o).name;
+            (format!("{owner} : moved"), inside(owner, "is moved"))
+        }
+        Cause::ScopeEnd(o) if f.var(o).kind == VarKind::Temp => (
+            "temporary : goes out of scope at the end of the statement".to_string(),
+            format!("{path} is inside a temporary value, which goes out of scope at line \u{1}line:{line}\u{1}  →  invalidated at line \u{1}line:{line}\u{1}"),
+        ),
+        Cause::ScopeEnd(o) => {
+            let owner = &f.var(o).name;
+            // A local of a closure or a handler clause goes out of scope
+            // when the body returns at a call or an operation.
+            let when = match at.label.as_str() {
+                "end of block" | "end of statement" | "exit" | "return" | "jump"
+                | "drop" => "goes out of scope".to_string(),
+                callee => format!("goes out of scope when `{callee}` returns"),
+            };
+            (format!("{owner} : {when}"), inside(owner, &when))
+        }
+        Cause::Unwound(o) => {
+            let owner = &f.var(o).name;
+            let when = "goes out of scope on an abort path";
+            (format!("{owner} : {when}"), inside(owner, when))
+        }
+        Cause::MovePart(m) => {
+            let moved = &f.place(m).display;
+            (format!("{moved} : moved"), inside(moved, "is moved"))
+        }
+        Cause::Release(m) => {
+            let freed = &f.place(m).display;
+            (
+                format!(
+                    "{} : the handled body changed a place above what {freed} points to",
+                    at.label
+                ),
+                inside(freed, "can be freed"),
+            )
+        }
+    }
+}
+
+fn use_after_move(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     for (var, sites) in by_var(f, &v.use_after_move) {
         let Some((&n, rest)) = sites.split_first() else {
             continue;
@@ -428,6 +465,10 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         };
         out.push(note_more(d, f, rest, noun));
     }
+}
+
+/// W0304: a use before a value (`use_before_set`).
+fn use_before_set(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     for &(var, n) in &v.use_before_set {
         let info = f.var(var);
         // A handler clause uses its captures at each node that runs it. The
@@ -447,6 +488,10 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         }
         out.push(d.note("give it a value on every path before this use"));
     }
+}
+
+/// W0604: a move of a `!Move` value (`moved_immovable`).
+fn moved_immovable(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     for &(var, n) in &v.moved_immovable {
         let info = f.var(var);
         out.push(
@@ -458,6 +503,10 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             .note("construct it in place and use it through references"),
         );
     }
+}
+
+/// W0601: a linear value that goes away with no consume (`unconsumed`).
+fn unconsumed(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     for &(var, n) in &v.unconsumed {
         let info = f.var(var);
         let d = if info.kind == VarKind::Task {
@@ -508,6 +557,10 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         };
         out.push(d);
     }
+}
+
+/// W0601: a linear value that gets a new value before a consume (`overwritten`).
+fn overwritten(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     for &(var, n) in &v.overwritten {
         let info = f.var(var);
         out.push(Diagnostic::error(
@@ -519,6 +572,11 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             node_span(f, n),
         ));
     }
+}
+
+/// W0602: a linear value with no `on abort` that is live where code can abort
+/// (`abort_unhandled`).
+fn abort_unhandled(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     // W0602: one error for each value, at the first site that can abort.
     for (var, sites) in by_var(f, &v.abort_unhandled) {
         let Some((&first, rest)) = sites.split_first() else {
@@ -547,6 +605,11 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             ("site that can abort", "sites that can abort"),
         ));
     }
+}
+
+/// W0503: a value that is not `many` and is live across a `multi` operation
+/// (`live_across_multi`).
+fn live_across_multi(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     // W0503: one error for each value, at the first `multi` operation.
     for (var, sites) in by_var(f, &v.live_across_multi) {
         let Some((&first, rest)) = sites.split_first() else {
@@ -579,6 +642,10 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             ),
         ));
     }
+}
+
+/// W0703: a mutation that the signature does not state (`unauthorized_mut`).
+fn unauthorized_mut(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     for &(n, p) in &v.unauthorized_mut {
         let at = f.node(n);
         out.push(
@@ -597,6 +664,10 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             )),
         );
     }
+}
+
+/// W0702: an effect that the signature does not state (`unauthorized_effect`).
+fn unauthorized_effect(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     for (n, e) in &v.unauthorized_effect {
         let at = f.node(*n);
         let note = match written(f, e) {
@@ -616,6 +687,10 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             .note(note),
         );
     }
+}
+
+/// W0402: a mutation through a `@ shared` reference (`shared_mutation`).
+fn shared_mutation(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     for &(n, p) in &v.shared_mutation {
         let at = f.node(n);
         out.push(Diagnostic::error(
@@ -628,6 +703,11 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             at.span,
         ));
     }
+}
+
+/// W0312: a mutated argument that another argument points into
+/// (`alias_conflict`).
+fn alias_conflict(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     // One W0312 for each call: the pair with the outermost mutated place. Two
     // overlapping places that both change give the pair in both directions.
     let mut pairs: Vec<(NodeId, PlaceId, PlaceId)> = v.alias_conflict.iter().copied().collect();
@@ -657,6 +737,11 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             .note("the callee sees them as separate places, so it cannot protect the references"),
         );
     }
+}
+
+/// W0405: an access that overlaps the footprint of a task that can run at the
+/// same time (`task_conflict`).
+fn task_conflict(f: &FnFacts, r: &Report, out: &mut Vec<Diagnostic>) {
     // Several nodes of one expression can conflict with the same task: show the
     // conflict with the most specific places once.
     let mut conflicts: Vec<&Conflict> = r.conflicts.iter().collect();
@@ -712,6 +797,11 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             .note("tasks that can run at the same time need separate footprints"),
         );
     }
+}
+
+/// W0401: a `fork` branch that captures a nonportable value
+/// (`nonportable_capture`).
+fn nonportable_capture(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     for &(t, var) in &v.nonportable_capture {
         let info = f.var(var);
         out.push(Diagnostic::error(
@@ -723,6 +813,11 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             f.tasks[t.index()].span,
         ));
     }
+}
+
+/// W0403: a `fork` branch that mutates through a shared-mutable reference
+/// (`shared_mut_capture`).
+fn shared_mut_capture(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     for &(t, var) in &v.shared_mut_capture {
         let info = f.var(var);
         out.push(
@@ -737,6 +832,10 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             .note("a shared-mutable reference is nonportable; split it into `@ uniq` parts first"),
         );
     }
+}
+
+/// W0801: a library that installs a root handler (`root_handler_in_lib`).
+fn root_handler_in_lib(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     for &h in &v.root_handler_in_lib {
         let info = &f.handlers[h.index()];
         out.push(Diagnostic::error(
@@ -748,8 +847,6 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             info.span,
         ));
     }
-    out.sort_by(|a, b| (a.span.lo, &a.code).cmp(&(b.span.lo, &b.code)));
-    out
 }
 
 /// W0805 and W0803: the effects that leave `main` or a test.

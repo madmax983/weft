@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use weft_facts::{TaskId, TaskKind, ARG_TASK};
 
 use super::fnval::FnInfo;
-use super::{CapId, Lower, NodeId, PlaceId, RootId, Span, Summary, Ty, Val, VarId};
+use super::{Lower, NodeId, PlaceId, RootId, Span, Summary, Ty, Val, VarId};
 use crate::TaskRun;
 
 /// A task of the body (`Lower::task_runs`).
@@ -248,7 +248,7 @@ impl Lower<'_> {
         &mut self,
         v: &Val,
         ps: &[PlaceId],
-        held: &BTreeSet<CapId>,
+        held: &BTreeSet<super::caps::Held>,
     ) -> Vec<PlaceId> {
         let made =
             held.contains(&super::caps::MADE) || self.val_caps(v).contains(&super::caps::MADE);
@@ -270,7 +270,7 @@ impl Lower<'_> {
     pub(super) fn held_run(
         &mut self,
         pos: usize,
-        held: &BTreeSet<CapId>,
+        held: &BTreeSet<super::caps::Held>,
         made: &[PlaceId],
         span: Span,
     ) -> ArgRun {

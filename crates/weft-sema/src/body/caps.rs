@@ -11,52 +11,76 @@ use super::{
     effects, CapId, FnId, FnInfo, Lower, NodeId, PlaceId, RootKind, Span, Summary, Ty, Val, VarId,
 };
 
-/// The bit that marks a capability as `resumed_cap`.
-const RESUMED: u32 = 1 << 31;
+/// One element of the capability set of a value (`Val::caps`, the `caps` of a
+/// local): the capability of a local handler that a call of the value can
+/// perform through, or a mark. A mark is not a handler: each set keeps the two
+/// apart by type, so a user of the set does not need to filter the marks.
+///
+/// The order of the variants is the order of the old encoding in the high bits
+/// of a `CapId`: the capabilities first, then the marks. A loop over a set
+/// visits them in this order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Held {
+    /// The capability of a local handler.
+    Cap(CapId),
+    /// A function value that a callee makes and gives back inside its result,
+    /// for example in a field of a struct. The body does not follow it. It can
+    /// reach what the value points into, so a task that runs it can change and
+    /// read those places (ADR 0006).
+    Made,
+    /// A function value that the body cannot follow. Such a value comes from a
+    /// parameter of a closure or a clause, or from an operation of a handler of a
+    /// caller. A task that runs it is W0314.
+    UnknownFn,
+    /// A function value of this parameter of the function.
+    Param(usize),
+    /// A closure that performs this effect (an index in `Program::effects`)
+    /// through a handler outside the function.
+    Escapes(usize),
+    /// A closure that is not `many`. The local that holds it is not `many`
+    /// either (W0503).
+    NotMany,
+    /// A closure that refers to a nonportable value. The mark goes where the
+    /// capabilities of the value go, also into a field of type `fn()` or a
+    /// `Vec<fn()>`. The local that holds it is nonportable.
+    Nonportable,
+    /// The values that a `resume` of the handler behind the capability gives to
+    /// the handled computation (`resumed_cap`).
+    Resumed(CapId),
+}
+
+impl Held {
+    /// Returns the capability of a local handler, or `None` for a mark.
+    pub const fn cap(self) -> Option<CapId> {
+        match self {
+            Self::Cap(c) => Some(c),
+            _ => None,
+        }
+    }
+}
 
 /// The mark of a value that holds a closure that refers to a nonportable value.
-/// The mark goes where the capabilities of the value go, also into a field of
-/// type `fn()` or a `Vec<fn()>`. The local that holds it is nonportable.
-pub(super) const NONPORTABLE: CapId = CapId(1 << 30);
+pub(super) const NONPORTABLE: Held = Held::Nonportable;
 
-/// The mark of a value that holds a closure that is not `many`. The local that
-/// holds it is not `many` either (W0503).
-pub(super) const NOT_MANY: CapId = CapId(1 << 29);
-
-/// The bit of the mark of a value that holds a closure that performs an effect
-/// through a handler outside the function. The low bits are the effect.
-const ESCAPES: u32 = 1 << 28;
-
-/// The bit of the mark of a value that can hold a function value of a parameter
-/// of the function. The low bits are the parameter index.
-const PARAM: u32 = 1 << 27;
+/// The mark of a value that holds a closure that is not `many`.
+pub(super) const NOT_MANY: Held = Held::NotMany;
 
 /// The mark of a value that can hold a function value that the body cannot
-/// follow. Such a value comes from a parameter of a closure or a clause, or from
-/// an operation of a handler of a caller. A task that runs it is W0314.
-pub(super) const UNKNOWN_FN: CapId = CapId(1 << 26);
+/// follow.
+pub(super) const UNKNOWN_FN: Held = Held::UnknownFn;
 
-/// The mark of a value that can hold a function value that a callee makes and
-/// gives back inside its result, for example in a field of a struct. The body
-/// does not follow it. It can reach what the value points into, so a task that
-/// runs it can change and read those places (ADR 0006).
-pub(super) const MADE: CapId = CapId(1 << 25);
-
-/// The bits of the marks: a capability with one of them is not a handler.
-const MARKS: u32 = RESUMED | NONPORTABLE.0 | NOT_MANY.0 | ESCAPES | PARAM | UNKNOWN_FN.0 | MADE.0;
-
-/// The low bits of a mark with an index.
-const INDEX: u32 = (1 << 25) - 1;
+/// The mark of a value that can hold a function value that a callee makes.
+pub(super) const MADE: Held = Held::Made;
 
 /// Returns the mark of a closure that performs effect `e` (an index in
 /// `Program::effects`) through a handler outside the function.
-pub(super) fn escaped_cap(e: usize) -> CapId {
-    CapId(ESCAPES | (u32::try_from(e).unwrap_or(INDEX) & INDEX))
+pub(super) const fn escaped_cap(e: usize) -> Held {
+    Held::Escapes(e)
 }
 
 /// Returns the mark of a value that can hold a function value of parameter `i`.
-pub(super) fn param_cap(i: usize) -> CapId {
-    CapId(PARAM | (u32::try_from(i).unwrap_or(INDEX) & INDEX))
+pub(super) const fn param_cap(i: usize) -> Held {
+    Held::Param(i)
 }
 
 /// What a mark of a task value means for W0314 (`Lower::task_marks`).
@@ -73,15 +97,15 @@ pub(super) enum TaskMark {
 /// to the handled computation. An operation result carries the mark, and
 /// `Lower::expand_caps` replaces it with the capabilities of those values when the
 /// clauses are lowered.
-pub(super) const fn resumed_cap(cap: CapId) -> CapId {
-    CapId(cap.0 | RESUMED)
+pub(super) const fn resumed_cap(cap: CapId) -> Held {
+    Held::Resumed(cap)
 }
 
 /// A function value that can live after the node that gives it away.
 #[derive(Clone, Debug)]
 pub(super) struct Kept {
     /// The capabilities that a call of the value can perform through.
-    pub caps: BTreeSet<CapId>,
+    pub caps: BTreeSet<Held>,
     /// Where the value goes.
     pub to: KeptTo,
 }
@@ -111,7 +135,7 @@ pub(super) struct OpFn {
     /// The effect row of its type.
     pub row: Option<Vec<String>>,
     /// The capabilities of the function values that it holds.
-    pub held: BTreeSet<CapId>,
+    pub held: BTreeSet<Held>,
     /// The span of the argument.
     pub span: Span,
 }
@@ -128,7 +152,7 @@ pub(super) struct HandleStart {
 impl Lower<'_> {
     /// Returns the capabilities that a call of a function value in `v` can perform
     /// through: of its summary, of its parts, and of the closures in its type.
-    pub(super) fn val_caps(&self, v: &Val) -> BTreeSet<CapId> {
+    pub(super) fn val_caps(&self, v: &Val) -> BTreeSet<Held> {
         let mut out = v.caps.clone();
         let info = self.fn_info(v);
         if let Some(f) = info.item {
@@ -175,7 +199,7 @@ impl Lower<'_> {
     /// parameter. A parameter of the function gives `param_cap`, also for a place
     /// behind the references that it points to. A parameter of a closure or a
     /// clause gives `UNKNOWN_FN`.
-    pub(super) fn behind_ref_marks(&self, ps: &[PlaceId]) -> BTreeSet<CapId> {
+    pub(super) fn behind_ref_marks(&self, ps: &[PlaceId]) -> BTreeSet<Held> {
         let mut out = BTreeSet::new();
         for &p in ps {
             let root = self.facts.place(p).root;
@@ -198,15 +222,18 @@ impl Lower<'_> {
 
     /// Returns the capabilities that closure `s` performs through, except those of
     /// the handlers that it installs itself.
-    fn closure_caps(&self, s: usize) -> BTreeSet<CapId> {
+    fn closure_caps(&self, s: usize) -> BTreeSet<Held> {
         let sum = &self.closures[s];
-        sum.performs.difference(&sum.own_caps).copied().collect()
+        sum.performs
+            .difference(&sum.own_caps)
+            .map(|&c| Held::Cap(c))
+            .collect()
     }
 
     /// Adds the marks of closure `s`: its modes, the effects that it performs
     /// through handlers outside the function, and the function parameters that
     /// it calls.
-    fn summary_marks(&self, s: usize, out: &mut BTreeSet<CapId>) {
+    fn summary_marks(&self, s: usize, out: &mut BTreeSet<Held>) {
         self.mode_marks(s, out);
         let sum = &self.closures[s];
         for e in sum.escapes.iter().chain(&sum.row) {
@@ -225,7 +252,7 @@ impl Lower<'_> {
     /// Adds the marks of function item `f` as a value: the effects of its
     /// signature and of its tasks. A task that runs the item performs them where
     /// it runs, through a handler of a caller of this function.
-    fn item_marks(&self, f: FnId, out: &mut BTreeSet<CapId>) {
+    fn item_marks(&self, f: FnId, out: &mut BTreeSet<Held>) {
         let e = &self.sigs[f].effects;
         for name in e.named.iter().chain(&e.task_effects) {
             if let Some(id) = effects::by_identity(self.prog, name) {
@@ -235,18 +262,18 @@ impl Lower<'_> {
     }
 
     /// Returns what the marks in `caps` mean for a task that runs the value.
-    pub(super) fn task_marks(caps: &BTreeSet<CapId>) -> Vec<TaskMark> {
+    pub(super) fn task_marks(caps: &BTreeSet<Held>) -> Vec<TaskMark> {
         let mut out = Vec::new();
         for &c in caps {
-            if c.0 & RESUMED != 0 {
-                continue;
-            }
-            if c.0 & ESCAPES != 0 {
-                out.push(TaskMark::Escapes((c.0 & INDEX) as usize));
-            } else if c.0 & PARAM != 0 {
-                out.push(TaskMark::Param((c.0 & INDEX) as usize));
-            } else if c == UNKNOWN_FN {
-                out.push(TaskMark::Unknown);
+            match c {
+                Held::Escapes(e) => out.push(TaskMark::Escapes(e)),
+                Held::Param(i) => out.push(TaskMark::Param(i)),
+                Held::UnknownFn => out.push(TaskMark::Unknown),
+                Held::Cap(_)
+                | Held::Made
+                | Held::NotMany
+                | Held::Nonportable
+                | Held::Resumed(_) => {}
             }
         }
         out
@@ -255,7 +282,7 @@ impl Lower<'_> {
     /// Adds the capabilities of the closures in type `t`. Only an inferred type
     /// names a closure. So the walk goes through the type arguments, not through
     /// the declared field types. It is finite for a recursive type too.
-    fn ty_caps(&self, t: &Ty, out: &mut BTreeSet<CapId>) {
+    fn ty_caps(&self, t: &Ty, out: &mut BTreeSet<Held>) {
         match self.inf.shallow(t) {
             Ty::Fn(f) => {
                 if let Some(s) = f.summary {
@@ -277,7 +304,7 @@ impl Lower<'_> {
     }
 
     /// Adds the marks of the modes of closure `s`: `NONPORTABLE` and `NOT_MANY`.
-    fn mode_marks(&self, s: usize, out: &mut BTreeSet<CapId>) {
+    fn mode_marks(&self, s: usize, out: &mut BTreeSet<Held>) {
         if self.closure_has(s, super::Prop::Nonportable, &mut self.has()) {
             out.insert(NONPORTABLE);
         }
@@ -297,26 +324,15 @@ impl Lower<'_> {
         v.once |= nm;
     }
 
-    /// Returns true if `c` is the capability of a handler, not a mark such as
-    /// `resumed_cap`.
-    pub(super) const fn is_cap(c: CapId) -> bool {
-        c.0 & MARKS == 0
-    }
-
     /// Returns `caps` with the capabilities that each `resumed_cap` mark in it stands for.
-    pub(super) fn expand_caps(&self, caps: &BTreeSet<CapId>) -> BTreeSet<CapId> {
+    pub(super) fn expand_caps(&self, caps: &BTreeSet<Held>) -> BTreeSet<Held> {
         let mut out = caps.clone();
-        let mut work: Vec<CapId> = caps.iter().copied().collect();
+        let mut work: Vec<Held> = caps.iter().copied().collect();
         while let Some(c) = work.pop() {
-            if Self::is_cap(c) {
+            let Held::Resumed(k) = c else {
                 continue;
-            }
-            for &d in self
-                .resumed
-                .get(&CapId(c.0 & !RESUMED))
-                .into_iter()
-                .flatten()
-            {
+            };
+            for &d in self.resumed.get(&k).into_iter().flatten() {
                 if out.insert(d) {
                     work.push(d);
                 }
@@ -328,7 +344,7 @@ impl Lower<'_> {
     /// Returns the marks of the `resume` values of the local handlers that node `n`
     /// performs through. `from` is the length of `performs_at` before the node.
     /// The result of the node can be such a value.
-    pub(super) fn resumed_at(&self, n: NodeId, from: usize) -> BTreeSet<CapId> {
+    pub(super) fn resumed_at(&self, n: NodeId, from: usize) -> BTreeSet<Held> {
         self.facts.performs_at[from.min(self.facts.performs_at.len())..]
             .iter()
             .filter(|(m, _)| *m == n)
@@ -337,7 +353,7 @@ impl Lower<'_> {
     }
 
     /// Returns the capabilities of the function values in local `l`.
-    fn local_caps(&self, l: usize) -> BTreeSet<CapId> {
+    fn local_caps(&self, l: usize) -> BTreeSet<Held> {
         let mut out = self.locals[l].caps.clone();
         if let Some(s) = self.local_fn_info(l).summary {
             self.summary_marks(s, &mut out);
@@ -385,7 +401,7 @@ impl Lower<'_> {
     }
 
     /// Records that function values with the capabilities `caps` go to `to`.
-    pub(super) fn keep_caps(&mut self, caps: BTreeSet<CapId>, to: KeptTo) {
+    pub(super) fn keep_caps(&mut self, caps: BTreeSet<Held>, to: KeptTo) {
         if !caps.is_empty() {
             self.kept.push(Kept { caps, to });
         }
@@ -393,7 +409,7 @@ impl Lower<'_> {
 
     /// Returns the capabilities of the function values that the values at the
     /// places `ps` can hold: the values of the locals that own them.
-    pub(super) fn place_caps(&self, ps: &[PlaceId]) -> BTreeSet<CapId> {
+    pub(super) fn place_caps(&self, ps: &[PlaceId]) -> BTreeSet<Held> {
         let mut out = BTreeSet::new();
         for &p in ps {
             if let Some(l) = self.place_local(p) {
@@ -406,7 +422,7 @@ impl Lower<'_> {
     /// Returns the capabilities and the marks of the function values that an
     /// argument `v` with places `ps` holds. They can be in its value, and in what
     /// it points to.
-    pub(super) fn arg_held(&self, v: &Val, ps: &[PlaceId]) -> BTreeSet<CapId> {
+    pub(super) fn arg_held(&self, v: &Val, ps: &[PlaceId]) -> BTreeSet<Held> {
         let mut out = BTreeSet::new();
         if self.has_fn(&v.ty) {
             out.extend(self.val_caps(v));
@@ -439,7 +455,7 @@ impl Lower<'_> {
 
     /// Records that function values with the capabilities `caps` go into the
     /// places `into`, as `store_into` does.
-    pub(super) fn store_caps_into(&mut self, caps: &BTreeSet<CapId>, into: &[PlaceId]) {
+    pub(super) fn store_caps_into(&mut self, caps: &BTreeSet<Held>, into: &[PlaceId]) {
         let caps = caps.clone();
         if caps.is_empty() {
             return;
@@ -479,8 +495,13 @@ impl Lower<'_> {
     /// outside its `handle`), or the computation that a `resume` runs. That code can
     /// keep the value, so the value must not perform through another handler.
     pub(super) fn keep_for_op(&mut self, v: &Val, live: usize) {
-        let dead: BTreeSet<CapId> = self.handlers.iter().skip(live).map(|h| h.cap).collect();
-        let caps: BTreeSet<CapId> = self
+        let dead: BTreeSet<Held> = self
+            .handlers
+            .iter()
+            .skip(live)
+            .map(|h| Held::Cap(h.cap))
+            .collect();
+        let caps: BTreeSet<Held> = self
             .expand_caps(&self.val_caps(v))
             .intersection(&dead)
             .copied()
@@ -685,7 +706,7 @@ impl Lower<'_> {
             let mut held = BTreeSet::new();
             match f_at {
                 Some(i) => {
-                    held.insert(self.handlers[i].cap);
+                    held.insert(Held::Cap(self.handlers[i].cap));
                 }
                 None => {
                     if let Some(id) = effects::by_identity(self.prog, f) {
@@ -697,7 +718,10 @@ impl Lower<'_> {
             // handler for an operation of a caller, has ended in the clause.
             if let Some(fi) = f_at {
                 if op_at.is_none_or(|oi| fi > oi) {
-                    self.keep_caps(BTreeSet::from([self.handlers[fi].cap]), KeptTo::Given);
+                    self.keep_caps(
+                        BTreeSet::from([Held::Cap(self.handlers[fi].cap)]),
+                        KeptTo::Given,
+                    );
                 }
             }
             match op_at {
@@ -804,13 +828,16 @@ impl Lower<'_> {
         span: Span,
     ) -> bool {
         let head = format!("a closure that performs `{effect}` escapes its handler");
-        if self.expand_caps(&self.val_caps(v)).contains(&cap) {
+        if self
+            .expand_caps(&self.val_caps(v))
+            .contains(&Held::Cap(cap))
+        {
             self.err("W0313", head, span);
             return true;
         }
         let mut how = None;
         for k in &self.kept[start.kept..] {
-            if !self.expand_caps(&k.caps).contains(&cap) {
+            if !self.expand_caps(&k.caps).contains(&Held::Cap(cap)) {
                 continue;
             }
             how = Some(match k.to {
@@ -844,7 +871,10 @@ impl Lower<'_> {
         (span, body): (Span, Span),
     ) {
         let head = format!("a closure that resumes the continuation of `{op}` escapes its clause");
-        if self.expand_caps(&self.val_caps(v)).contains(&kcap) {
+        if self
+            .expand_caps(&self.val_caps(v))
+            .contains(&Held::Cap(kcap))
+        {
             let end = Span::new(body.hi.saturating_sub(1), body.hi);
             self.err(
                 "W0313",
@@ -855,7 +885,7 @@ impl Lower<'_> {
         }
         let how = if let Some(k) = self.kept[start.kept..]
             .iter()
-            .find(|k| self.expand_caps(&k.caps).contains(&kcap))
+            .find(|k| self.expand_caps(&k.caps).contains(&Held::Cap(kcap)))
         {
             Some(match k.to {
                 KeptTo::Stored => "the clause stores it".to_string(),
@@ -869,13 +899,15 @@ impl Lower<'_> {
             let binds: BTreeSet<VarId> = self
                 .bind_caps
                 .iter()
-                .filter(|(_, _, cs)| self.expand_caps(cs).contains(&kcap))
+                .filter(|(_, _, cs)| self.expand_caps(cs).contains(&Held::Cap(kcap)))
                 .map(|&(v, _, _)| v)
                 .collect();
             (0..start.locals)
                 .find(|&l| {
                     l < outer
-                        && (self.expand_caps(&self.locals[l].sticky).contains(&kcap)
+                        && (self
+                            .expand_caps(&self.locals[l].sticky)
+                            .contains(&Held::Cap(kcap))
                             || binds.contains(&self.locals[l].var))
                 })
                 .map(|l| format!("the local `{}` keeps it", self.locals[l].name))
@@ -890,16 +922,16 @@ impl Lower<'_> {
     /// operation runs outside each clause whose `handle` is inside that handler,
     /// so it can keep a closure that resumes their continuations.
     pub(super) fn keep_conts_for_op(&mut self, v: &Val, at: Option<usize>) {
-        let dead: BTreeSet<CapId> = self
+        let dead: BTreeSet<Held> = self
             .clause_conts
             .iter()
             .filter(|&&(_, depth)| at.is_none_or(|i| i < depth))
-            .map(|&(k, _)| k)
+            .map(|&(k, _)| Held::Cap(k))
             .collect();
         if dead.is_empty() {
             return;
         }
-        let caps: BTreeSet<CapId> = self
+        let caps: BTreeSet<Held> = self
             .expand_caps(&self.val_caps(v))
             .intersection(&dead)
             .copied()
@@ -928,15 +960,19 @@ impl Lower<'_> {
         span: Span,
     ) {
         let cap = h.cap;
-        let mut keeps: Option<usize> =
-            (0..h.locals).find(|&l| self.expand_caps(&self.locals[l].sticky).contains(&cap));
+        let mut keeps: Option<usize> = (0..h.locals).find(|&l| {
+            self.expand_caps(&self.locals[l].sticky)
+                .contains(&Held::Cap(cap))
+        });
         if keeps.is_none() {
             let binds: Vec<(usize, VarId, NodeId)> = self
                 .bind_caps
                 .iter()
                 .filter_map(|(v, n, cs)| {
                     let l = self.local_of(*v).filter(|&l| l < h.locals)?;
-                    self.expand_caps(cs).contains(&cap).then_some((l, *v, *n))
+                    self.expand_caps(cs)
+                        .contains(&Held::Cap(cap))
+                        .then_some((l, *v, *n))
                 })
                 .collect();
             if !binds.is_empty() {

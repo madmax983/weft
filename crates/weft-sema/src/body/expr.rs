@@ -213,7 +213,7 @@ impl Lower<'_> {
         &mut self,
         es: &[Expr],
         elem: &Ty,
-    ) -> (std::collections::BTreeSet<weft_facts::CapId>, Vec<PlaceId>) {
+    ) -> (std::collections::BTreeSet<super::caps::Held>, Vec<PlaceId>) {
         let mut caps = std::collections::BTreeSet::new();
         let mut refs = Vec::new();
         let (mut held, mut taken) = (Vec::new(), Vec::new());
@@ -1890,7 +1890,7 @@ impl Lower<'_> {
                 // The parameter holds the function values that the nodes give to
                 // the operation. The clause can keep them (W0313).
                 let oi = def.ops.iter().position(|o| o.name == op.name);
-                let given: std::collections::BTreeSet<weft_facts::CapId> = self
+                let given: std::collections::BTreeSet<super::caps::Held> = self
                     .op_fn_args
                     .iter()
                     .filter(|a| a.cap == cap && (a.op.is_none() || a.op == oi))
@@ -1935,7 +1935,10 @@ impl Lower<'_> {
             // resumes it holds the capability, and it cannot leave the clause.
             let kcap = self.facts.add_cap();
             self.cont_caps.insert(kcap);
-            self.locals.get_mut(k).caps.insert(kcap);
+            self.locals
+                .get_mut(k)
+                .caps
+                .insert(super::caps::Held::Cap(kcap));
             self.clause_conts.push((kcap, self.handlers.len()));
             let resumes_before = self.resumes.len();
             self.jumps.push(Jump::Fence("handler clause"));

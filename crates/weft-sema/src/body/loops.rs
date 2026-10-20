@@ -63,8 +63,8 @@ struct Carried {
     tasks: BTreeSet<TaskId>,
     bound: bool,
     uniq: bool,
-    caps: BTreeSet<CapId>,
-    sticky: BTreeSet<CapId>,
+    caps: BTreeSet<super::caps::Held>,
+    sticky: BTreeSet<super::caps::Held>,
 }
 
 /// The state at the head of a loop pass. A rewind ([`Lower::rewind`]) goes back
@@ -115,7 +115,7 @@ struct LoopHead {
     handled: usize,
     unknown_multi: bool,
     kept: usize,
-    resumed: BTreeMap<CapId, BTreeSet<CapId>>,
+    resumed: BTreeMap<CapId, BTreeSet<super::caps::Held>>,
     op_fn_args: usize,
     param_runs: BTreeMap<(usize, usize), (usize, bool)>,
     unset_places: usize,
@@ -604,7 +604,7 @@ impl Lower<'_> {
             );
         }
         key.extend(c.tasks.iter().map(|t| format!("task {t}")));
-        key.extend(c.caps.iter().map(|c| format!("cap {}", c.0)));
+        key.extend(c.caps.iter().map(|c| format!("cap {c:?}")));
         let info = FnInfo {
             summary: c.summary,
             item: None,
@@ -768,7 +768,7 @@ impl Lower<'_> {
         out.extend(sum.tasks.iter().map(|p| format!("tasks {p}")));
         out.extend(sum.spawns.iter().map(|t| format!("spawns {t}")));
         out.extend(sum.ret_spawns.iter().map(|t| format!("ret spawns {t}")));
-        out.extend(sum.ret_caps.iter().map(|c| format!("ret cap {c}")));
+        out.extend(sum.ret_caps.iter().map(|c| format!("ret cap {c:?}")));
         out.extend(sum.ret_tasks.iter().map(|t| format!("ret task {t}")));
         out.extend(sum.own_caps.iter().map(|c| format!("own cap {c}")));
         out.extend(sum.captures.iter().map(|&v| format!("capture {}", vk(v))));

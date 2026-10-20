@@ -329,7 +329,7 @@ pub struct Summary {
     pub tasks: Grow<usize>,
     /// The capabilities of the function values inside the values that a call of
     /// the value returns, also inside a tuple or a struct.
-    pub ret_caps: Grow<CapId>,
+    pub ret_caps: Grow<caps::Held>,
     /// The tasks of the task handles that a call of the value returns.
     pub ret_tasks: Grow<TaskId>,
     /// Function parameters that the body gives to an operation, with the
@@ -708,11 +708,11 @@ struct Local {
     /// The index and the number (`Frame::id`) of the frame that declares it.
     frame: (usize, usize),
     /// The capabilities of the function values that the local can hold.
-    caps: BTreeSet<CapId>,
+    caps: BTreeSet<caps::Held>,
     /// The part of `caps` that does not come from a new value of the whole local in
     /// its own part of the graph (`Lower::bind_caps`). It has the stores into a
     /// part, the new values in a closure or a clause, and the value of a parameter.
-    sticky: BTreeSet<CapId>,
+    sticky: BTreeSet<caps::Held>,
 }
 
 /// The most places with one root in the value of one local. A value with more
@@ -884,7 +884,7 @@ struct Val {
     item: Option<FnId>,
     /// The capabilities of the function values inside the value that its type
     /// does not show, for example in a struct field.
-    caps: BTreeSet<CapId>,
+    caps: BTreeSet<caps::Held>,
     /// The value has no linear part: a variant with no payload, such as `None`.
     empty: bool,
 }
@@ -902,7 +902,7 @@ struct LVal {
     deps: Vec<PlaceId>,
     /// The capabilities of the function values that the reference on the way to
     /// the place can reach: the place can hold them.
-    held: BTreeSet<CapId>,
+    held: BTreeSet<caps::Held>,
 }
 
 /// Where the body puts a reference that the caller keeps after the return.
@@ -1213,7 +1213,7 @@ pub struct Lower<'p> {
     /// Function values that perform through local handlers, where they can live on.
     kept: Vec<caps::Kept>,
     /// The capabilities of the values that the `resume`s of each local handler give.
-    resumed: BTreeMap<CapId, BTreeSet<CapId>>,
+    resumed: BTreeMap<CapId, BTreeSet<caps::Held>>,
     /// Function values that nodes give to operations of local handlers.
     op_fn_args: Vec<caps::OpFn>,
     /// The calls of each function parameter (summary index, parameter): their
@@ -1331,7 +1331,7 @@ pub struct Lower<'p> {
     abort_ctx: BTreeMap<NodeId, Rc<Vec<AbortTo>>>,
     /// The new values of whole locals in their own part of the graph: the
     /// variable, the node and the capabilities of the value.
-    bind_caps: Vec<(VarId, NodeId, BTreeSet<CapId>)>,
+    bind_caps: Vec<(VarId, NodeId, BTreeSet<caps::Held>)>,
     /// The variables that each closure captures by reference, with their values
     /// where the closure is made, by closure index (`late::CapValue`).
     cap_values: BTreeMap<usize, Vec<late::CapValue>>,
