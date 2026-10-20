@@ -43,7 +43,7 @@ fn literal_field() {
 
 fn one(x: u64) {}
 fn named_args() {
-    one(y: 1)   //~ W0103
+    one(y: 1)   //~ W0104
     one(x: 1, x: 2)   //~ W0103
     one(x: 1)
 }

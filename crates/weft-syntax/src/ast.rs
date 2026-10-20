@@ -288,8 +288,39 @@ pub struct EffectRow {
 pub enum EffectItem {
     /// `mut(p, q, ...)`.
     Mut(Vec<PlaceExpr>),
-    /// A named effect: `io`, `Log`, `net`, `par`.
-    Named(Ident),
+    /// A named effect: `io`, `Log`, `net`, `par`, or a path such as `a.Note`.
+    Named(EffectPath),
+}
+
+/// A written effect name: `Log`, or a path through modules such as `a.Note` or
+/// `util.Note`. It resolves like a type path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectPath {
+    /// The segments. The last one is the effect name. There is at least one.
+    pub segments: Vec<Ident>,
+    /// The location of the whole path.
+    pub span: Span,
+}
+
+impl EffectPath {
+    /// Makes a path of one name.
+    pub fn single(id: Ident) -> Self {
+        let span = id.span;
+        Self {
+            segments: vec![id],
+            span,
+        }
+    }
+
+    /// Returns the names of the segments.
+    pub fn names(&self) -> Vec<&str> {
+        self.segments.iter().map(|s| s.name.as_str()).collect()
+    }
+
+    /// Returns the path as the source writes it: `a.Note`.
+    pub fn text(&self) -> String {
+        self.names().join(".")
+    }
 }
 
 /// A struct declaration.
@@ -738,8 +769,8 @@ pub enum ExprKind {
     },
     /// `handle Effect { clauses } in body`.
     Handle {
-        /// The effect name.
-        effect: Ident,
+        /// The effect name or path.
+        effect: EffectPath,
         /// The operation clauses.
         clauses: Vec<HandlerClause>,
         /// The handled computation.

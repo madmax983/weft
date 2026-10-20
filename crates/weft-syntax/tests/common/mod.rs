@@ -169,7 +169,7 @@ pub fn sx(e: &Expr) -> String {
             clauses,
             body,
         } => {
-            let mut s = format!("(handle {}", effect.name);
+            let mut s = format!("(handle {}", effect.text());
             for c in clauses {
                 let _ = write!(
                     s,
@@ -430,7 +430,7 @@ pub fn sx_row(r: &EffectRow) -> String {
                     ps.iter().map(sx_place).collect::<Vec<_>>().join(", ")
                 )
             }
-            EffectItem::Named(n) => n.name.clone(),
+            EffectItem::Named(n) => n.text(),
         })
         .collect::<Vec<_>>()
         .join(", ")

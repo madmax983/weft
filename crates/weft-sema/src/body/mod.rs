@@ -25,6 +25,7 @@ use crate::props::Prop;
 use crate::types::{subst, Display, FnTy, Infer, IntTy, Ty};
 
 mod aborts;
+mod args;
 mod call;
 mod caps;
 mod drops;

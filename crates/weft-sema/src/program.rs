@@ -108,6 +108,8 @@ pub struct OpDef {
     pub ret: Ty,
     /// The operation is `multi`.
     pub multi: bool,
+    /// The location of the operation.
+    pub span: Span,
 }
 
 /// An effect.
@@ -121,6 +123,8 @@ pub struct EffectDef {
     pub ops: Vec<OpDef>,
     /// The effect is a standard effect.
     pub is_std: bool,
+    /// The effect is `pub`: another unit can name it.
+    pub is_pub: bool,
 }
 
 impl EffectDef {
@@ -584,6 +588,33 @@ impl Program {
         }
     }
 
+    /// Finds the effect operation that a bare call `name(...)` in module `m`
+    /// performs. The search goes from `m` outward, as a name lookup does: the
+    /// first module with a user effect that has the operation wins, and in one
+    /// module the first such effect. Then come the effects of the prelude. Only
+    /// the effects that `m` sees by name count. Sema and the interpreter both
+    /// use it.
+    pub fn find_op(&self, m: ModId, name: &str) -> Option<(EffectId, usize)> {
+        let op_in = |ei: EffectId| -> Option<(EffectId, usize)> {
+            let e = &self.effects[ei];
+            let oi = e.ops.iter().position(|o| o.name == name)?;
+            (self.effect_named(m, &e.name) == Some(ei)).then_some((ei, oi))
+        };
+        let mut at = Some(m);
+        while let Some(id) = at {
+            let found = (0..self.effects.len())
+                .filter(|&ei| self.effects[ei].module == id && !self.effects[ei].is_std)
+                .find_map(op_in);
+            if found.is_some() {
+                return found;
+            }
+            at = self.mods[id].parent;
+        }
+        (0..self.effects.len())
+            .filter(|&ei| self.effects[ei].is_std)
+            .find_map(op_in)
+    }
+
     /// Finds an effect by canonical name, from a module outward.
     pub fn effect_named(&self, module: ModId, name: &str) -> Option<EffectId> {
         match self.lookup(module, name) {
@@ -656,7 +687,63 @@ impl Collector {
         c.check_sizes();
         c.resolve_signatures();
         c.check_on_aborts();
+        c.check_op_names();
         (c.prog, c.diags)
+    }
+
+    /// W0107: a bare call `name(...)` in the module of an operation must reach
+    /// the operation. A call finds `print` and `fork`, then an item, then a
+    /// variant, and only then an operation (`Program::find_op`). So one of these
+    /// with the name of the operation hides it, and so does an earlier operation
+    /// with that name (RR15).
+    fn check_op_names(&mut self) {
+        let mut found = Vec::new();
+        for (ei, e) in self.prog.effects.iter().enumerate() {
+            if e.is_std {
+                continue;
+            }
+            for o in &e.ops {
+                let n = o.name.as_str();
+                let hider = if matches!(n, "print" | "fork") {
+                    Some(format!("the built-in function `{n}`"))
+                } else if let Some(r) = self.prog.lookup(e.module, n) {
+                    match r {
+                        ItemRef::Fn(f) if self.prog.fns[f].is_std => {
+                            Some(format!("the prelude function `{n}`"))
+                        }
+                        ItemRef::Fn(_) => Some(format!("the function `{n}`")),
+                        ItemRef::Adt(_) => Some(format!("the type `{n}`")),
+                        ItemRef::Mod(_) | ItemRef::Effect(_) => None,
+                    }
+                } else if self.prog.variants.get(n).is_some_and(|v| !v.is_empty()) {
+                    Some(format!("the variant `{n}`"))
+                } else {
+                    match self.prog.find_op(e.module, n) {
+                        Some((x, _)) if x != ei => Some(format!(
+                            "the operation `{n}` of `{}`",
+                            self.prog.effects[x].name
+                        )),
+                        _ => None,
+                    }
+                };
+                if let Some(h) = hider {
+                    found.push((e.module, e.name.clone(), o.name.clone(), o.span, h));
+                }
+            }
+        }
+        for (m, effect, name, span, hider) in found {
+            let d = Diagnostic::error(
+                "W0107",
+                format!(
+                    "operation `{name}` of `{effect}` has the name of {hider}, so a call `{name}(...)` does not reach it"
+                ),
+                span,
+            )
+            .note(format!(
+                "rename the operation, or perform it with the effect name: `{effect}.{name}(...)`"
+            ));
+            self.push_in(m, d);
+        }
     }
 
     /// Adds a diagnostic in the unit of module `m`.
@@ -720,23 +807,26 @@ impl Collector {
     /// prelude declares nested modules first, so the root is not module 1.
     ///
     /// W0107: the name must not hide a name that the root sees already: an item
-    /// of the root, a prelude item or a standard effect alias such as `log`.
+    /// of the root, a prelude item or a standard effect alias such as `log`. It
+    /// must not be `main` either: the effect identities of the root start with
+    /// `main` (`main.Note`), so the effects of a dependency `main` would get the
+    /// identities of the root (`effects::identity`).
     fn name_dependency(&mut self, name: &str, m: ModId, unit: usize) {
         let root = self.prog.root;
-        if self.prog.lookup(root, name).is_none()
+        let message = if name == effects::ROOT_PREFIX {
+            format!("a dependency cannot have the name `{name}`: the effects of the root have `{name}` in their identity")
+        } else if self.prog.lookup(root, name).is_none()
             && effects::canonical(&self.prog, root, name).is_none()
         {
             self.prog.mods[root]
                 .items
                 .insert(name.to_string(), ItemRef::Mod(m));
             return;
-        }
-        let mut d = Diagnostic::error(
-            "W0107",
-            format!("dependency `{name}` has the name of an item that the root sees already"),
-            Span::default(),
-        )
-        .note("give the dependency another name in weft.toml");
+        } else {
+            format!("dependency `{name}` has the name of an item that the root sees already")
+        };
+        let mut d = Diagnostic::error("W0107", message, Span::default())
+            .note("give the dependency another name in weft.toml");
         d.unit = unit;
         self.diags.push(d);
     }
@@ -845,6 +935,7 @@ impl Collector {
                         module: m,
                         ops: Vec::new(),
                         is_std,
+                        is_pub: it.is_pub,
                     });
                     let id = self.prog.effects.len() - 1;
                     self.insert(m, &e.name, ItemRef::Effect(id));
@@ -1028,6 +1119,7 @@ impl Collector {
                             param_names: o.params.iter().map(|p| p.name.name.clone()).collect(),
                             ret,
                             multi: o.is_multi,
+                            span: o.name.span,
                         });
                     }
                     self.prog.effects[id].ops = ops;
@@ -1243,13 +1335,9 @@ impl Collector {
                                 }
                             }
                         }
-                        EffectItem::Named(n) => match effects::canonical(&self.prog, m, &n.name) {
-                            Some(names) => effects.named.extend(names),
-                            None => self.diags.push(Diagnostic::error(
-                                "W0101",
-                                format!("unknown effect `{}`", n.name),
-                                n.span,
-                            )),
+                        EffectItem::Named(n) => match effects::resolve(&self.prog, m, n) {
+                            Ok(names) => effects.named.extend(names),
+                            Err(d) => self.diags.push(d),
                         },
                     }
                 }
@@ -1837,13 +1925,9 @@ impl TyResolver<'_> {
                     let mut names = BTreeSet::new();
                     for item in &row.items {
                         if let EffectItem::Named(n) = item {
-                            match effects::canonical(self.prog, m, &n.name) {
-                                Some(ns) => names.extend(ns),
-                                None => self.diags.push(Diagnostic::error(
-                                    "W0101",
-                                    format!("unknown effect `{}`", n.name),
-                                    n.span,
-                                )),
+                            match effects::resolve(self.prog, m, n) {
+                                Ok(ns) => names.extend(ns),
+                                Err(d) => self.diags.push(d),
                             }
                         }
                     }
@@ -2128,7 +2212,10 @@ pub fn check_on_abort_rows(prog: &Program, sigs: &[FnSig], no_runtime: bool) -> 
             .iter()
             .chain(&e.task_effects)
             .filter(|n| n.as_str() != "Fail" && (no_runtime || !effects::is_std(n)))
-            .map(|n| format!("`{}`", effects::in_signature(n)))
+            .map(|n| {
+                let w = effects::written(prog, fd.module, n).unwrap_or_else(|| n.clone());
+                format!("`{w}`")
+            })
             .collect::<BTreeSet<String>>()
             .into_iter()
             .collect();

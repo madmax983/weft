@@ -1,0 +1,65 @@
+// An effect of another module has a path, as a type has (ADR 0005): `handle
+// a.Note` and the row `/ a.Note`. The path resolves like a type path: the first
+// name from the module outward, the next names inside that module. A bare name
+// names only an effect that the module sees.
+mod a {
+    pub effect Note { fn note(x: u64) }
+    pub fn f() / Note { note(1) }
+    // Inside `a`, the bare name names the effect of `a`.
+    pub fn g() / Note { f() }
+    pub mod b {
+        pub effect Deep { fn deep() -> u64 }
+        pub fn h() -> u64 / Deep { deep() }
+    }
+}
+effect Note { fn note(x: u64) }
+
+fn unknown_in_module() / a.Nope {}   //~ W0101
+fn unknown_module() / z.Note {}   //~ W0101
+fn not_an_effect() / a.f {}   //~ W0101
+fn bare_name_is_the_root_effect() / Note {
+    a.f()   //~ W0702
+}
+fn handle_unknown() {
+    handle a.Nope { fn note(x) { resume(()) } } in print(1)   //~ W0101
+}
+fn handles_the_root_effect_only() / a.Note {
+    handle Note { fn note(x) { resume(()) } } in a.f()
+}
+fn type_row(f: fn() / a.Note) / Note {
+    f()   //~ W0702
+}
+
+// Clean: the paths name the effects of `a` and `a.b`.
+fn states_path() / a.Note { a.f() }
+fn states_nested() -> u64 / a.b.Deep { a.b.h() }
+fn handles_path() {
+    handle a.Note { fn note(x) {
+        print(x)
+        resume(())
+    } } in a.g()
+}
+fn handles_nested() -> u64 {
+    handle a.b.Deep { fn deep() { resume(7) } } in a.b.h()
+}
+fn calls_value(f: fn() / a.Note) / a.Note { f() }
+fn both() / Note, a.Note {
+    note(2)
+    a.f()
+}
+
+fn main() {
+    handles_path()
+    print(handles_nested())
+    handle a.Note { fn note(x) {
+        print(x + 10)
+        resume(())
+    } } in {
+        states_path()
+        calls_value(a.f)
+        handle Note { fn note(x) {
+            print(x + 20)
+            resume(())
+        } } in both()
+    }
+}

@@ -599,20 +599,21 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
     }
     for (n, e) in &v.unauthorized_effect {
         let at = f.node(*n);
+        let note = match written(f, e) {
+            Some(w) => format!("add `{w}` to the effects after `/`, or handle it here"),
+            None => private_note(e),
+        };
         out.push(
             Diagnostic::error(
                 "W0702",
                 format!(
                     "`{}` performs {}, which the signature does not allow",
                     at.label,
-                    effect_text(e, &f.declared_effect)
+                    effect_text(f, e)
                 ),
                 at.span,
             )
-            .note(format!(
-                "add `{}` to the effects after `/`, or handle it here",
-                effects::in_signature(e)
-            )),
+            .note(note),
         );
     }
     for &(n, p) in &v.shared_mutation {
@@ -774,16 +775,20 @@ pub fn root_effects(
             continue;
         };
         let span = node_span(f, first);
-        let name = root_effect_text(e, &escaping);
+        let name = root_effect_text(f, e, &escaping);
         let d = if !has_root_handler(e) {
+            let note = match written(f, e) {
+                Some(w) => {
+                    format!("the runtime handles only the standard effects; handle `{w}` in {who}")
+                }
+                None => private_note(e),
+            };
             Diagnostic::error(
                 "W0805",
                 format!("{who} performs `{name}`, and no handler handles it"),
                 span,
             )
-            .note(format!(
-                "the runtime handles only the standard effects; handle `{name}` in {who}"
-            ))
+            .note(note)
         } else if no_runtime {
             Diagnostic::error(
                 "W0803",
@@ -800,21 +805,50 @@ pub fn root_effects(
 
 /// Returns effect identity `e` as W0805 and W0803 show it.
 ///
-/// The facts name a user effect by its identity, such as `main.Note`. The text
-/// shows the written name (`Note`). The text shows the identity when the written
-/// name can also name another effect: a standard effect (`Log` alone names the
-/// standard one), or another effect in `escaping` (`main.Note` and `main.a.Note`).
-fn root_effect_text<'a>(e: &'a str, escaping: &[&str]) -> &'a str {
-    let shown = effects::shown(e);
+/// The facts name a user effect by its identity, such as `main.a.Note`. The
+/// text shows the name that body `f` can write (`a.Note`). The text shows the
+/// identity when that name is also the name of a standard effect (`Log`), or the
+/// text of another effect in `escaping`.
+fn root_effect_text<'a>(f: &'a FnFacts, e: &'a str, escaping: &[&str]) -> &'a str {
+    let shown = effect_shown(f, e);
     let std_name = effects::is_std(shown) && !effects::is_std(e);
     let clash = escaping
         .iter()
-        .any(|&d| d != e && effects::shown(d) == shown);
+        .any(|&d| d != e && effect_shown(f, d) == shown);
     if std_name || clash {
         e
     } else {
         shown
     }
+}
+
+/// Returns effect identity `e` as a message of body `f` shows it: a standard
+/// effect has its name (`Log`), and a user effect has the name that the body
+/// can write (`Note`, `a.Note`, `util.Note`). A user effect that the body cannot
+/// name has its identity.
+fn effect_shown<'a>(f: &'a FnFacts, e: &'a str) -> &'a str {
+    if effects::is_std(e) {
+        e
+    } else {
+        f.effect_name(e).unwrap_or(e)
+    }
+}
+
+/// Returns effect identity `e` as body `f` can write it in a row or in a
+/// `handle`: the alias of a standard effect (`log`), or the name or path of a
+/// user effect (`a.Note`). Returns `None` if the body cannot name it.
+fn written(f: &FnFacts, e: &str) -> Option<String> {
+    if effects::is_std(e) {
+        Some(effects::in_signature(e))
+    } else {
+        f.effect_name(e).map(str::to_string)
+    }
+}
+
+/// Returns the note for a user effect that the body cannot name: a private
+/// effect of another package.
+fn private_note(e: &str) -> String {
+    format!("`{e}` is private in its package: code outside the package cannot state or handle it; the package must make it `pub`")
 }
 
 /// Changes the markers of node offsets in the notes of `d` into line numbers
@@ -870,11 +904,15 @@ pub(crate) fn resolve_lines(d: &mut Diagnostic, file: &weft_syntax::SourceFile) 
     }
 }
 
-/// Returns effect identity `e` as a diagnostic shows it. When a stated effect of
-/// the function has the same written name, the text names the effect that `e` is.
-fn effect_text(e: &str, stated: &[String]) -> String {
-    let shown = effects::shown(e);
-    let clash = stated.iter().any(|d| d != e && effects::shown(d) == shown);
+/// Returns effect identity `e` as a diagnostic of body `f` shows it (see
+/// [`effect_shown`]). When a stated effect of the function shows the same text,
+/// the text names the effect that `e` is.
+fn effect_text(f: &FnFacts, e: &str) -> String {
+    let shown = effect_shown(f, e);
+    let clash = f
+        .declared_effect
+        .iter()
+        .any(|d| d != e && effect_shown(f, d) == shown);
     match (clash, effects::is_std(e)) {
         (false, _) => format!("`{shown}`"),
         (true, true) => format!("the standard effect `{shown}`"),

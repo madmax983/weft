@@ -2,6 +2,9 @@
 
 use std::collections::BTreeSet;
 
+use weft_syntax::ast::EffectPath;
+use weft_syntax::diag::Diagnostic;
+
 use crate::program::{EffectId, ItemRef, ModId, Program};
 
 /// The standard effects.
@@ -11,6 +14,10 @@ pub const STD_EFFECTS: [&str; 10] = [
 
 /// The members of the `io` bundle.
 pub const IO: [&str; 7] = ["Async", "Net", "Fs", "Clock", "Rand", "Log", "Blocking"];
+
+/// The first name of the identity of a user effect of the root module
+/// (`main.Note`). No dependency can have this name (W0107).
+pub const ROOT_PREFIX: &str = "main";
 
 /// Returns true for a standard effect name.
 pub fn is_std(name: &str) -> bool {
@@ -26,6 +33,125 @@ pub fn canonical(prog: &Program, m: ModId, name: &str) -> Option<Vec<String>> {
         return Some(vec![identity(prog, e)]);
     }
     std_alias(name)
+}
+
+/// Resolves a written effect name or path in module `m` to canonical names.
+///
+/// A path of one name is [`canonical`]. A longer path names modules first, as a
+/// type path does: `a.Note`, `util.Note`, `util.sub.Note`. A path into another
+/// unit needs a `pub` effect, as a call needs a `pub` function. W0101 is for an
+/// unknown or a private effect. Its note gives the paths that name an effect of
+/// this name from `m`.
+///
+/// # Errors
+///
+/// Returns the W0101 diagnostic if the path names no effect that `m` can name.
+pub fn resolve(prog: &Program, m: ModId, path: &EffectPath) -> Result<Vec<String>, Diagnostic> {
+    let names = path.names();
+    if let [name] = names.as_slice() {
+        if let Some(ns) = canonical(prog, m, name) {
+            return Ok(ns);
+        }
+    } else if let Some(e) = resolve_path(prog, m, &names) {
+        if visible(prog, m, e) {
+            return Ok(vec![identity(prog, e)]);
+        }
+        return Err(Diagnostic::error(
+            "W0101",
+            format!(
+                "effect `{}` is private: it is not `pub` in its package",
+                path.text()
+            ),
+            path.span,
+        ));
+    }
+    let d = Diagnostic::error(
+        "W0101",
+        format!("unknown effect `{}`", path.text()),
+        path.span,
+    );
+    let last = names.last().copied().unwrap_or_default();
+    let found: Vec<String> = (0..prog.effects.len())
+        .filter(|&e| prog.effects[e].name == last && !prog.effects[e].is_std)
+        .filter_map(|e| written(prog, m, &identity(prog, e)))
+        .map(|w| format!("`{w}`"))
+        .collect();
+    Err(match found.as_slice() {
+        [] => d,
+        [one] => d.note(format!("the effect with this name is written {one} here")),
+        _ => d.note(format!(
+            "the effects with this name are written {} here",
+            found.join(", ")
+        )),
+    })
+}
+
+/// Finds the effect that path `path` names from module `m`: the first name
+/// from `m` outward, the other names inside the module before them.
+pub fn resolve_path(prog: &Program, m: ModId, path: &[&str]) -> Option<EffectId> {
+    let mut module = m;
+    for (i, seg) in path.iter().enumerate() {
+        let found = if i == 0 {
+            prog.lookup(module, seg)
+        } else {
+            prog.lookup_in(module, seg)
+        };
+        match found? {
+            ItemRef::Mod(s) if i + 1 < path.len() => module = s,
+            ItemRef::Effect(e) if i + 1 == path.len() => return Some(e),
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// Returns true if code in module `m` can name effect `e`: a standard effect,
+/// an effect of the same unit, or a `pub` effect.
+pub fn visible(prog: &Program, m: ModId, e: EffectId) -> bool {
+    let def = &prog.effects[e];
+    def.is_std || def.is_pub || prog.mods[def.module].unit == prog.mods[m].unit
+}
+
+/// Returns effect identity `id` as code in module `from` can write it.
+///
+/// A standard effect has its lowercase alias (`log`). A user effect has the
+/// shortest path that names it from `from`: `Note` in its own module, `a.Note`
+/// from the parent of module `a`, `util.Note` for a dependency `util`. Returns
+/// `None` if `from` cannot name the effect, for example a private effect of
+/// another unit.
+pub fn written(prog: &Program, from: ModId, id: &str) -> Option<String> {
+    if is_std(id) {
+        return Some(id.to_lowercase());
+    }
+    let e = by_identity(prog, id)?;
+    if !visible(prog, from, e) {
+        return None;
+    }
+    let def = &prog.effects[e];
+    // The names of the modules from the top module of the unit to the module of
+    // the effect. The root module has no name.
+    let mut mods = Vec::new();
+    let mut at = Some(def.module);
+    while let Some(m) = at {
+        let md = &prog.mods[m];
+        if !md.name.is_empty() {
+            mods.push(md.name.as_str());
+        }
+        at = md.parent;
+    }
+    mods.reverse();
+    for i in (0..=mods.len()).rev() {
+        let mut path: Vec<&str> = mods[i..].to_vec();
+        path.push(def.name.as_str());
+        let names = match path.as_slice() {
+            [name] => canonical(prog, from, name),
+            _ => resolve_path(prog, from, &path).map(|x| vec![identity(prog, x)]),
+        };
+        if names.is_some_and(|ns| ns == [id]) {
+            return Some(path.join("."));
+        }
+    }
+    None
 }
 
 /// Maps the alias of a standard effect to canonical names: `net` becomes
@@ -78,7 +204,7 @@ pub fn identity(prog: &Program, e: EffectId) -> String {
     while let Some(m) = at {
         let md = &prog.mods[m];
         match (md.parent, md.name.as_str()) {
-            (None, "") => path.push("main"),
+            (None, "") => path.push(ROOT_PREFIX),
             (_, name) => path.push(name),
         }
         at = md.parent;

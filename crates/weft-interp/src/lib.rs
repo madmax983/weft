@@ -36,7 +36,7 @@ use weft_sema::Analysis;
 pub use error::{ErrorKind, RuntimeError};
 pub use trace::{SuspendReason, TaskEnd, TraceEvent};
 
-use crate::compile::ByValue;
+use crate::compile::{ArgOrder, ByValue, Exports};
 use crate::machine::{Machine, TaskResult};
 use crate::runtime::Runtime;
 use crate::value::{Cap, Obj, Value};
@@ -136,6 +136,27 @@ pub fn by_value_captures(analysis: &Analysis) -> ByValue {
     out
 }
 
+/// Returns the order of the arguments of the calls with named arguments whose
+/// callee the compiler does not know (see [`ArgOrder`]), as semantic analysis
+/// gives it (`FnFacts::arg_order`).
+pub fn arg_orders(analysis: &Analysis) -> ArgOrder {
+    let mut out = ArgOrder::new();
+    for b in &analysis.bodies {
+        for (span, order) in &b.facts.arg_order {
+            out.insert((b.unit, span.lo, span.hi), order.clone());
+        }
+    }
+    out
+}
+
+/// Returns what the compiler needs from semantic analysis.
+pub fn exports(analysis: &Analysis) -> Exports {
+    Exports {
+        by_value: by_value_captures(analysis),
+        arg_order: arg_orders(analysis),
+    }
+}
+
 /// Runs `fn main` of a checked program.
 ///
 /// The interpreter does not refuse a program with diagnostics. Run-time guards
@@ -146,7 +167,7 @@ pub fn run_main(checked: &Checked, opts: &RunOptions) -> Result<RunOutcome, Runt
         &checked.analysis.program,
         &checked.analysis.sigs,
         stealable_spans(checked),
-        &by_value_captures(&checked.analysis),
+        &exports(&checked.analysis),
     );
     run_main_with(&rt, opts)
 }
@@ -161,7 +182,7 @@ pub fn run_analysis_main(
         &analysis.program,
         &analysis.sigs,
         BTreeSet::new(),
-        &by_value_captures(analysis),
+        &exports(analysis),
     );
     run_main_with(&rt, opts)
 }
@@ -172,7 +193,7 @@ pub fn run_tests(checked: &Checked, opts: &RunOptions) -> Vec<TestOutcome> {
         &checked.analysis.program,
         &checked.analysis.sigs,
         stealable_spans(checked),
-        &by_value_captures(&checked.analysis),
+        &exports(&checked.analysis),
     );
     run_tests_with(&rt, opts)
 }
@@ -183,7 +204,7 @@ pub fn run_analysis_tests(analysis: &Analysis, opts: &RunOptions) -> Vec<TestOut
         &analysis.program,
         &analysis.sigs,
         BTreeSet::new(),
-        &by_value_captures(analysis),
+        &exports(analysis),
     );
     run_tests_with(&rt, opts)
 }

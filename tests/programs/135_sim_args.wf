@@ -6,7 +6,7 @@ fn no_seed() {
 }
 
 fn bad_name() {
-    sim.run(seed: 1, speed: 2) { print(1) }   //~ W0103
+    sim.run(seed: 1, speed: 2) { print(1) }   //~ W0104
 }
 
 fn given_twice() {

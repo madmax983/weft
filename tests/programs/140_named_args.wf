@@ -1,0 +1,75 @@
+// Named arguments (ADR 0009). A named argument binds by name where the callee
+// has parameter names: a function, a method, an operation, a function item in a
+// local and a struct constructor. An unknown name is W0104. A callee with no
+// parameter names takes no named argument (W0104): a closure, a function
+// parameter, a variant, `resume`, `print`, `fork` and `s.spawn`.
+struct Range { lo: u64, hi: u64 }
+enum Shape { Dot(u64), Line(u64, u64) }
+struct Entity { hp: i32 }
+impl Entity {
+    fn diff(self, a: i32, b: i32) -> i32 { a - b }
+}
+effect Ask { fn ask(q: u64) -> u64 }
+fn diff(a: i32, b: i32) -> i32 { a - b }
+fn show(e: &Entity, n: i32) { print("e.hp = {e.hp}, n = {n}") }
+fn mk(lo: u64, hi: u64) -> Range { Range { lo: lo, hi: hi } }
+fn span(r: Range) -> u64 { r.hi - r.lo }
+
+fn unknown_field() {
+    let r = Range(nope: 2, other: 10)   //~ W0104 W0104
+}
+fn unknown_parameter() {
+    print(diff(c: 1, a: 2))   //~ W0104
+}
+fn unknown_method_parameter() {
+    let x = Entity { hp: 1 }
+    print(x.diff(c: 1, a: 2))   //~ W0104
+}
+fn unknown_item_value_parameter() {
+    let g = diff
+    print(g(c: 1, a: 2))   //~ W0104
+}
+fn unknown_operation_parameter() / Ask {
+    print(ask(x: 1))   //~ W0104
+}
+fn closure_has_no_names() {
+    let f = |a: i64, b: i64| a - b
+    print(f(b: 10, a: 3))   //~ W0104 W0104
+}
+fn parameter_has_no_names(f: fn(i64, i64) -> i64) {
+    print(f(b: 10, a: 3))   //~ W0104 W0104
+}
+fn joined_values_have_no_names(c: bool) {
+    let g = if c { diff } else { |a: i32, b: i32| b - a }
+    print(g(b: 10, a: 3))   //~ W0104 W0104
+}
+fn variant_has_no_names() {
+    let s = Shape.Line(b: 1, a: 2)   //~ W0104 W0104
+    let d = Dot(x: 1)   //~ W0104
+}
+fn builtins_have_no_names() / par {
+    print(x: 1)   //~ W0104
+    let (a, b) = fork(l: || 1, r: || 2)   //~ W0104 W0104
+    let v = handle Ask { fn ask(q) { resume(v: q) } } in ask(1)   //~ W0104
+}
+
+// Clean: names bind by name in each form that has names.
+fn named() {
+    let x = Entity { hp: 1 }
+    let y = Entity { hp: 2 }
+    print(diff(b: 10, a: 3))
+    print(x.diff(b: 10, a: 3))
+    let g = diff
+    print(g(b: 10, a: 3))
+    let h = show
+    h(n: 5, e: &y)
+    print(span(mk(hi: 10, lo: 2)))
+    print(span(Range(hi: 10, lo: 2)))
+    print(span(Range(2, hi: 10)))
+    let v = handle Ask { fn ask(q) { resume(q + 1) } } in ask(q: 1)
+    print(v)
+}
+
+test "named arguments" {
+    named()
+}

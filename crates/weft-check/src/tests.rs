@@ -1226,7 +1226,8 @@ fn w0502_needs_a_callable_variable() {
 
 #[test]
 fn w0702_names_the_effect_when_two_effects_have_one_name() {
-    // `a.Note` is not the `Note` that `mixed` states, so the message names it.
+    // `a.Note` is not the `Note` that `mixed` states. The message shows the path
+    // that the body can write, so it names the effect (ADR 0005).
     let src = "effect Note { fn note() }
 effect Log { fn log(m: String) }
 mod a {
@@ -1250,12 +1251,11 @@ fn std_log() / Log {
         .filter(|d| d.code == "W0702")
         .map(|d| d.message.as_str())
         .collect();
-    assert!(
-        msgs.iter().any(|m| m.contains("performs `main.a.Note`")),
-        "{msgs:?}"
-    );
-    assert!(
-        msgs.iter().any(|m| m.contains("`f` performs `Note`")),
+    assert_eq!(
+        msgs.iter()
+            .filter(|m| m.contains("`f` performs `a.Note`"))
+            .count(),
+        2,
         "{msgs:?}"
     );
     assert!(

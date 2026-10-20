@@ -53,13 +53,13 @@ impl Lower<'_> {
             }
             match self.prog.lookup(self.module, &id.name) {
                 Some(ItemRef::Fn(f)) => return self.call_fn(f, None, args, trailing, span),
-                Some(ItemRef::Adt(a)) => return self.positional_struct(a, args, span),
+                Some(ItemRef::Adt(a)) => return self.positional_struct(a, args, trailing, span),
                 _ => {}
             }
             if let Some(&(adt, vi)) = self.prog.variants.get(&id.name).and_then(|v| v.first()) {
-                return self.variant_ctor(adt, vi, args, span);
+                return self.variant_ctor(adt, vi, args, trailing, span);
             }
-            if let Some((e, op)) = self.find_op(&id.name) {
+            if let Some((e, op)) = self.prog.find_op(self.module, &id.name) {
                 return self.perform_op(e, op, args, trailing, span);
             }
             self.err("W0101", format!("unknown function `{}`", id.name), id.span);
@@ -78,23 +78,6 @@ impl Lower<'_> {
             ty: Ty::Error,
             ..Val::default()
         }
-    }
-
-    /// Finds an effect operation by name: user effects first, then the prelude.
-    fn find_op(&self, name: &str) -> Option<(usize, usize)> {
-        let mut found = None;
-        for (ei, e) in self.prog.effects.iter().enumerate() {
-            if let Some(oi) = e.ops.iter().position(|o| o.name == name) {
-                // Only effects that are visible from this module.
-                if self.prog.effect_named(self.module, &e.name) == Some(ei) {
-                    if !e.is_std {
-                        return Some((ei, oi));
-                    }
-                    found = found.or(Some((ei, oi)));
-                }
-            }
-        }
-        found
     }
 
     pub(super) fn method_call(
@@ -234,7 +217,7 @@ impl Lower<'_> {
                     }
                     self.call_fn(f, None, args, trailing, span)
                 }
-                Some(ItemRef::Adt(a)) => self.positional_struct(a, args, span),
+                Some(ItemRef::Adt(a)) => self.positional_struct(a, args, trailing, span),
                 _ => {
                     self.err(
                         "W0101",
@@ -251,7 +234,7 @@ impl Lower<'_> {
                 }
                 if let AdtKind::Enum(vs) = &self.prog.adts[a].kind {
                     if let Some(vi) = vs.iter().position(|v| v.name == method.name) {
-                        return self.variant_ctor(a, vi, args, span);
+                        return self.variant_ctor(a, vi, args, trailing, span);
                     }
                 }
                 let n = self.prog.adts[a].name.clone();
@@ -263,6 +246,14 @@ impl Lower<'_> {
                 error
             }
             PathRef::Effect(e) => {
+                // A path into another unit names only a `pub` effect.
+                if !effects::visible(self.prog, self.module, e) {
+                    let msg = format!(
+                        "effect `{}` is private: it is not `pub` in its package",
+                        effects::identity(self.prog, e)
+                    );
+                    self.err("W0101", msg, method.span);
+                }
                 if let Some(op) = self.prog.effects[e]
                     .ops
                     .iter()
@@ -374,59 +365,24 @@ impl Lower<'_> {
         };
         // Order the explicit arguments: named arguments go to their parameter.
         let first = usize::from(recv.is_some());
-        let mut slots: Vec<Option<&Expr>> = vec![None; sig.params.len()];
-        let mut pos = first;
-        let mut extra = 0usize;
-        let mut named_bad = false;
-        for a in args {
-            let idx = if let Some(n) = &a.name {
-                let Some(i) = sig.params.iter().position(|p| p.name == n.name) else {
-                    let msg = format!("`{name}` has no parameter named `{}`", n.name);
-                    self.err("W0103", msg, n.span);
-                    named_bad = true;
-                    let _ = self.expr(&a.value);
-                    continue;
-                };
-                if slots[i].is_some() {
-                    self.err(
-                        "W0103",
-                        format!("argument `{}` is given twice", n.name),
-                        n.span,
-                    );
-                    named_bad = true;
-                    let _ = self.expr(&a.value);
-                    continue;
-                }
-                Some(i)
-            } else {
-                while pos < slots.len() && slots[pos].is_some() {
-                    pos += 1;
-                }
-                Some(pos)
-            };
-            match idx {
-                Some(i) if i < slots.len() => slots[i] = Some(&a.value),
-                _ => extra += 1,
-            }
+        let names = super::args::ParamNames {
+            what: format!("`{name}`"),
+            noun: "parameter",
+            names: sig.params.iter().map(|p| p.name.as_str()).collect(),
+            first,
+        };
+        let order = self.order_args(&names, args, trailing, span);
+        // The interpreter does not know the callee of a method of a value or of
+        // an item in a local when it compiles the call: it uses this order.
+        if (first == 1 || inst.is_some()) && args.iter().any(|a| a.name.is_some()) {
+            let given = order
+                .iter()
+                .skip(first)
+                .map(|s| s.and_then(|k| u32::try_from(k).ok()))
+                .collect();
+            self.facts.arg_order.push((span, given));
         }
-        if let Some(t) = trailing {
-            match slots.iter().rposition(Option::is_none) {
-                Some(i) if i >= first => slots[i] = Some(t),
-                _ => extra += 1,
-            }
-        }
-        let missing = slots.iter().skip(first).filter(|s| s.is_none()).count();
-        if (extra > 0 || missing > 0) && !named_bad {
-            self.err(
-                "W0103",
-                format!(
-                    "`{name}` takes {} arguments, found {}",
-                    sig.params.len() - first,
-                    args.len() + usize::from(trailing.is_some())
-                ),
-                span,
-            );
-        }
+        let slots = super::args::slot_exprs(&order, args, trailing);
         // Evaluate the arguments in order. Type, hold and move each argument
         // before the next one runs, so that a later argument cannot hide a
         // mutation from an earlier reference.
@@ -1492,6 +1448,9 @@ impl Lower<'_> {
             self.use_local(l);
             return self.call_fn_as(f, None, Some(&fty), args, trailing, span);
         }
+        // A closure, a function parameter and a join of values have no
+        // parameter names: the arguments bind by position.
+        self.no_names(&format!("`{}`", loc.name), args);
         let exprs: Vec<&Expr> = args.iter().map(|a| &a.value).chain(trailing).collect();
         if exprs.len() != fty.params.len() {
             self.err(
@@ -1924,6 +1883,7 @@ impl Lower<'_> {
         if args.len() != 1 {
             self.err("W0103", "`resume` takes one argument", span);
         }
+        self.no_names("`resume`", args);
         if fail {
             self.fail_resume(span);
         }
@@ -2008,6 +1968,7 @@ impl Lower<'_> {
     }
 
     fn print(&mut self, args: &[Arg], span: Span) -> Val {
+        self.no_names("`print`", args);
         // `print` reads what its reference arguments point to.
         let mut held = Vec::new();
         let mut vals = Vec::new();
@@ -2034,7 +1995,13 @@ impl Lower<'_> {
         Val::default()
     }
 
-    fn positional_struct(&mut self, a: usize, args: &[Arg], span: Span) -> Val {
+    fn positional_struct(
+        &mut self,
+        a: usize,
+        args: &[Arg],
+        trailing: Option<&Expr>,
+        span: Span,
+    ) -> Val {
         let AdtKind::Struct(defs) = self.prog.adts[a].kind.clone() else {
             self.err("W0105", "this type has no constructor", span);
             return Val {
@@ -2047,27 +2014,33 @@ impl Lower<'_> {
             .iter()
             .map(|_| self.inf.fresh())
             .collect();
-        if defs.len() != args.len() {
-            self.err(
-                "W0103",
-                format!("`{}` has {} fields", self.prog.adts[a].name, defs.len()),
-                span,
-            );
-        }
+        // A named argument gives the field with its name (ADR 0009).
+        let names = super::args::ParamNames {
+            what: format!("`{}`", self.prog.adts[a].name),
+            noun: "field",
+            names: defs.iter().map(|d| d.name.as_str()).collect(),
+            first: 0,
+        };
+        let order = self.order_args(&names, args, trailing, span);
+        let given: Vec<(usize, &Expr)> = super::args::slot_exprs(&order, args, trailing)
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, e)| e.map(|e| (i, e)))
+            .collect();
         let mut held = Vec::new();
         let mut taken = Vec::new();
         let mut caps = std::collections::BTreeSet::new();
         let mut refs = Vec::new();
-        for (i, (d, arg)) in defs.iter().zip(args).enumerate() {
-            let v = self.expr(&arg.value);
-            let ft = super::subst(&d.ty, &targs);
-            self.unify(&ft, &v.ty, arg.value.span);
-            self.keep_modes(&v, &ft, arg.value.span);
+        for (k, &(i, e)) in given.iter().enumerate() {
+            let v = self.expr(e);
+            let ft = super::subst(&defs[i].ty, &targs);
+            self.unify(&ft, &v.ty, e.span);
+            self.keep_modes(&v, &ft, e.span);
             self.escape(&v);
             caps.extend(self.val_caps(&v));
-            self.consume(&v, arg.value.span);
-            if i + 1 < args.len() {
-                self.hold_part(&v, "argument", arg.value.span, &mut held, &mut taken);
+            self.consume(&v, e.span);
+            if k + 1 < given.len() {
+                self.hold_part(&v, "argument", e.span, &mut held, &mut taken);
             }
             refs.extend(v.refs.iter().copied());
         }
@@ -2081,7 +2054,14 @@ impl Lower<'_> {
         }
     }
 
-    fn variant_ctor(&mut self, adt: usize, vi: usize, args: &[Arg], span: Span) -> Val {
+    fn variant_ctor(
+        &mut self,
+        adt: usize,
+        vi: usize,
+        args: &[Arg],
+        trailing: Option<&Expr>,
+        span: Span,
+    ) -> Val {
         let AdtKind::Enum(vs) = self.prog.adts[adt].kind.clone() else {
             return Val {
                 ty: Ty::Error,
@@ -2094,7 +2074,10 @@ impl Lower<'_> {
             .map(|_| self.inf.fresh())
             .collect();
         let fields = &vs[vi].fields;
-        if fields.len() != args.len() {
+        // A variant has no field names: its arguments bind by position.
+        self.no_names(&format!("variant `{}`", vs[vi].name), args);
+        let exprs: Vec<&Expr> = args.iter().map(|a| &a.value).chain(trailing).collect();
+        if fields.len() != exprs.len() {
             self.err(
                 "W0103",
                 format!("variant `{}` has {} fields", vs[vi].name, fields.len()),
@@ -2105,16 +2088,16 @@ impl Lower<'_> {
         let mut held = Vec::new();
         let mut taken = Vec::new();
         let mut caps = std::collections::BTreeSet::new();
-        for (i, (ft, a)) in fields.iter().zip(args).enumerate() {
-            let v = self.expr(&a.value);
+        for (i, (ft, e)) in fields.iter().zip(&exprs).enumerate() {
+            let v = self.expr(e);
             let ft = super::subst(ft, &targs);
-            self.unify(&ft, &v.ty, a.value.span);
-            self.keep_modes(&v, &ft, a.value.span);
+            self.unify(&ft, &v.ty, e.span);
+            self.keep_modes(&v, &ft, e.span);
             self.escape(&v);
             caps.extend(self.val_caps(&v));
-            self.consume(&v, a.value.span);
-            if i + 1 < args.len() {
-                self.hold_part(&v, "argument", a.value.span, &mut held, &mut taken);
+            self.consume(&v, e.span);
+            if i + 1 < exprs.len() {
+                self.hold_part(&v, "argument", e.span, &mut held, &mut taken);
             }
             refs.extend(v.refs);
         }
@@ -2351,48 +2334,14 @@ impl Lower<'_> {
         trailing: Option<&'e Expr>,
         span: Span,
     ) -> Vec<Option<&'e Expr>> {
-        let n = o.params.len();
-        let mut slots: Vec<Option<&Expr>> = vec![None; n];
-        let mut pos = 0;
-        let mut extra = false;
-        for a in args {
-            let idx = if let Some(nm) = &a.name {
-                let Some(i) = o.param_names.iter().position(|p| *p == nm.name) else {
-                    let msg = format!("operation `{}` has no parameter `{}`", o.name, nm.name);
-                    self.err("W0103", msg, nm.span);
-                    continue;
-                };
-                if slots[i].is_some() {
-                    let msg = format!("argument `{}` is given twice", nm.name);
-                    self.err("W0103", msg, nm.span);
-                    continue;
-                }
-                i
-            } else {
-                while pos < n && slots[pos].is_some() {
-                    pos += 1;
-                }
-                pos
-            };
-            match slots.get_mut(idx) {
-                Some(s) => *s = Some(&a.value),
-                None => extra = true,
-            }
-        }
-        if let Some(t) = trailing {
-            match slots.iter().rposition(Option::is_none) {
-                Some(i) => slots[i] = Some(t),
-                None => extra = true,
-            }
-        }
-        if extra || slots.iter().any(Option::is_none) {
-            self.err(
-                "W0103",
-                format!("operation `{}` takes {} arguments", o.name, n),
-                span,
-            );
-        }
-        slots
+        let names = super::args::ParamNames {
+            what: format!("operation `{}`", o.name),
+            noun: "parameter",
+            names: o.param_names.iter().map(String::as_str).collect(),
+            first: 0,
+        };
+        let order = self.order_args(&names, args, trailing, span);
+        super::args::slot_exprs(&order, args, trailing)
     }
 
     // -----------------------------------------------------------------------
@@ -2667,6 +2616,7 @@ impl Lower<'_> {
         if args.len() + usize::from(trailing.is_some()) > 1 {
             self.err("W0103", "`spawn` takes one closure", span);
         }
+        self.no_names("`spawn`", args);
         let v = self.closure_arg(e, None);
         let Some(ret) = self.task_ret(&v, "spawn", e.span) else {
             return Val {
@@ -2825,6 +2775,7 @@ impl Lower<'_> {
         if branches.len() < 2 {
             self.err("W0103", "`fork` needs at least two closures", span);
         }
+        self.no_names("`fork`", args);
         for e in branches {
             let v = self.closure_arg(e, None);
             let Some(ret) = self.task_ret(&v, "fork", e.span) else {
@@ -2885,11 +2836,17 @@ impl Lower<'_> {
                     let msg = format!("argument `{}` is given twice", names[i]);
                     self.err("W0103", msg, a.value.span);
                 }
-                None => self.err(
-                    "W0103",
-                    "`sim.run` takes `seed` and `workers`",
-                    a.value.span,
-                ),
+                None => match &a.name {
+                    Some(n) => {
+                        let msg = format!("`sim.run` has no parameter named `{}`", n.name);
+                        self.err("W0104", msg, n.span);
+                    }
+                    None => self.err(
+                        "W0103",
+                        "`sim.run` takes `seed` and `workers`",
+                        a.value.span,
+                    ),
+                },
             }
         }
         if !given[0] {

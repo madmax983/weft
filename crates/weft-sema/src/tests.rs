@@ -75,6 +75,29 @@ fn dependency_name_cannot_hide_a_name_of_the_root() {
 }
 
 #[test]
+fn dependency_cannot_have_the_name_main() {
+    // The effect identities of the root start with `main` (`main.Note`). A
+    // dependency `main` would give its effects the same identities (QA5).
+    let dep = "effect Note { fn note(x: u64) }\npub fn noisy() / Note { note(1) }";
+    for root in [
+        "effect Note { fn note(x: u64) }\npub fn quiet() {\n handle Note { fn note(x) { resume(()) } } in main.noisy()\n}",
+        "fn main() {}",
+    ] {
+        let a = analyze_units(root, &[("main", dep)]);
+        let got = codes(&a);
+        assert_eq!(got.first(), Some(&(2, "W0107".to_string())), "{got:?}");
+        assert!(
+            a.diags[0].message.contains("`main`"),
+            "{}",
+            a.diags[0].message
+        );
+        // The root does not see the dependency, and its own `main` is not
+        // defined twice.
+        assert!(!got.contains(&(1, "W0107".to_string())), "{got:?}");
+    }
+}
+
+#[test]
 fn item_diagnostics_have_the_unit_of_the_item() {
     // Types are declared in the first pass, functions in the second pass.
     let dup = "struct S { v: u64 }\nstruct S { v: u64 }\neffect E { fn e() }\neffect E { fn e() }";
@@ -1631,4 +1654,33 @@ fn pins_says_a_body_can_start_a_pinned_task() {
     assert!(!sig_of(&a, "runs_param").effects.pins);
     assert!(sig_of(&a, "calls_shares").effects.pins);
     assert!(!sig_of(&a, "plain").effects.pins);
+}
+
+#[test]
+fn arg_order_gives_the_order_of_named_calls_that_the_interpreter_cannot_resolve() {
+    let src = "struct E { hp: i32 }\n\
+        impl E { fn diff(self, a: i32, b: i32) -> i32 { a - b } }\n\
+        fn diff(a: i32, b: i32) -> i32 { a - b }\n\
+        fn named(x: &E) {\n let g = diff\n print(g(b: 1, a: 2))\n print(x.diff(b: 3, a: 4))\n }\n\
+        fn plain(x: &E) {\n let g = diff\n print(g(1, 2))\n print(x.diff(3, 4))\n print(diff(b: 1, a: 2))\n }";
+    let a = analyze_units(src, &[]);
+    assert_eq!(codes(&a), Vec::new());
+    let body = |name: &str| {
+        a.bodies
+            .iter()
+            .find(|b| b.facts.name == name)
+            .expect("the body exists")
+    };
+    let orders: Vec<&Vec<Option<u32>>> = body("named")
+        .facts
+        .arg_order
+        .iter()
+        .map(|(_, o)| o)
+        .collect();
+    assert_eq!(
+        orders,
+        vec![&vec![Some(1), Some(0)], &vec![Some(1), Some(0)]]
+    );
+    // A call with no named argument, and a direct call of an item, need no order.
+    assert!(body("plain").facts.arg_order.is_empty());
 }

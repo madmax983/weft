@@ -131,7 +131,7 @@ impl Lower<'_> {
         let eff = self.summary_to_sig(&bases);
         let fdef = &self.prog.fns[id];
         if fdef.is_pub && !sig.declared && !eff.is_empty() && !fdef.decl.is_extern {
-            let text = Self::effect_text(&eff);
+            let text = self.effect_text(&eff);
             self.err(
                 "W0701",
                 format!(
@@ -167,6 +167,7 @@ impl Lower<'_> {
     }
 
     fn finish(mut self, mut eff: EffectSig) -> Lowered {
+        self.name_effects();
         self.finish_resume_runs();
         self.finish_spared();
         self.check_int_lits();
@@ -278,14 +279,34 @@ impl Lower<'_> {
     }
 
     /// Text form of an effect row.
-    pub(super) fn effect_text(e: &EffectSig) -> String {
+    /// Returns a row as the signature of this body can write it. A user effect
+    /// of another module has its path (`a.Note`, `util.Note`).
+    pub(super) fn effect_text(&self, e: &EffectSig) -> String {
         let mut parts: Vec<String> = Vec::new();
         if !e.muts.is_empty() {
             let ps: Vec<&str> = e.muts.iter().map(|m| m.text.as_str()).collect();
             parts.push(format!("mut({})", ps.join(", ")));
         }
-        parts.extend(e.named.iter().map(|n| effects::in_signature(n)));
+        parts.extend(
+            e.named
+                .iter()
+                .map(|n| effects::written(self.prog, self.module, n).unwrap_or_else(|| n.clone())),
+        );
         parts.join(", ")
+    }
+
+    /// Gives the facts the name that this body can write for each user effect
+    /// (`FnFacts::effect_names`). Diagnostics show these names.
+    fn name_effects(&mut self) {
+        for e in 0..self.prog.effects.len() {
+            if self.prog.effects[e].is_std {
+                continue;
+            }
+            let id = effects::identity(self.prog, e);
+            if let Some(w) = effects::written(self.prog, self.module, &id) {
+                self.facts.effect_names.push((id, w));
+            }
+        }
     }
 
     /// Converts the body summary into a signature row in terms of parameters.

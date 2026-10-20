@@ -312,6 +312,7 @@ pub struct FactMark {
     tasks: usize,
     handlers: usize,
     by_value: usize,
+    arg_order: usize,
     cfg_edge: usize,
     points_into: usize,
     mutates_at: usize,
@@ -377,6 +378,19 @@ pub struct FnFacts {
     /// closure moves. The interpreter moves each of them into a cell of the
     /// closure. This is not a relation of the spec.
     pub by_value: Vec<(Span, VarId)>,
+    /// The order of the arguments of a call with named arguments, for a method
+    /// of a value receiver and for a function item in a local: the span of the
+    /// call and, for each parameter after the receiver, the index of its
+    /// argument. The trailing block has the index after the last written
+    /// argument. `None` is a parameter with no argument. The interpreter does
+    /// not know these callees when it compiles the call, so it uses this order.
+    /// This is not a relation of the spec.
+    pub arg_order: Vec<(Span, Vec<Option<u32>>)>,
+    /// The name that the body can write for each user effect: the identity
+    /// (`main.a.Note`) and the written name (`a.Note`, or `util.Note` for a
+    /// dependency `util`). A private effect of another unit has no written
+    /// name. Diagnostics show these names. This is not a relation of the spec.
+    pub effect_names: Vec<(String, String)>,
     /// The number of local capabilities.
     pub caps: u32,
 
@@ -503,6 +517,7 @@ impl FnFacts {
             places: _,
             vars: _,
             place_index: _,
+            effect_names: _,
             caps,
             has_signature,
             library,
@@ -510,6 +525,7 @@ impl FnFacts {
             tasks,
             handlers,
             by_value,
+            arg_order,
             cfg_edge,
             points_into,
             mutates_at,
@@ -560,6 +576,7 @@ impl FnFacts {
             tasks: tasks.len(),
             handlers: handlers.len(),
             by_value: by_value.len(),
+            arg_order: arg_order.len(),
             cfg_edge: cfg_edge.len(),
             points_into: points_into.len(),
             mutates_at: mutates_at.len(),
@@ -613,6 +630,7 @@ impl FnFacts {
             places: _,
             vars: _,
             place_index: _,
+            effect_names: _,
             caps,
             has_signature,
             library,
@@ -620,6 +638,7 @@ impl FnFacts {
             tasks,
             handlers,
             by_value,
+            arg_order,
             cfg_edge,
             points_into,
             mutates_at,
@@ -669,6 +688,7 @@ impl FnFacts {
         tasks.truncate(mark.tasks);
         handlers.truncate(mark.handlers);
         by_value.truncate(mark.by_value);
+        arg_order.truncate(mark.arg_order);
         cfg_edge.truncate(mark.cfg_edge);
         points_into.truncate(mark.points_into);
         mutates_at.truncate(mark.mutates_at);
@@ -715,6 +735,15 @@ impl FnFacts {
     /// Returns the place record.
     pub fn place(&self, p: PlaceId) -> &PlaceInfo {
         &self.places[p.index()]
+    }
+
+    /// Returns the name that the body can write for user effect `id`
+    /// (see [`FnFacts::effect_names`]), or `None` if it has none.
+    pub fn effect_name(&self, id: &str) -> Option<&str> {
+        self.effect_names
+            .iter()
+            .find(|(e, _)| e == id)
+            .map(|(_, w)| w.as_str())
     }
 
     /// Returns the variable record.

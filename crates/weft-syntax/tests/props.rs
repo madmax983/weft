@@ -9,10 +9,10 @@ use std::path::PathBuf;
 
 use proptest::prelude::*;
 use weft_syntax::ast::{
-    Arg, Arm, AssignOp, BinOp, Block, EffectDecl, EffectItem, EffectRow, EnumDecl, Expr, ExprKind,
-    ExternTypeDecl, FieldDecl, File, FnDecl, HandlerClause, Ident, ImplBlock, Item, ItemKind, Lit,
-    ModDecl, Mode, OpDecl, Param, Pattern, PlaceExpr, PlaceStep, Span, Stmt, StmtKind, StrPart,
-    StructDecl, TestDecl, TypeExpr, TypeExprKind, TypeProp, UnOp, VariantDecl,
+    Arg, Arm, AssignOp, BinOp, Block, EffectDecl, EffectItem, EffectPath, EffectRow, EnumDecl,
+    Expr, ExprKind, ExternTypeDecl, FieldDecl, File, FnDecl, HandlerClause, Ident, ImplBlock, Item,
+    ItemKind, Lit, ModDecl, Mode, OpDecl, Param, Pattern, PlaceExpr, PlaceStep, Span, Stmt,
+    StmtKind, StrPart, StructDecl, TestDecl, TypeExpr, TypeExprKind, TypeProp, UnOp, VariantDecl,
 };
 use weft_syntax::lexer::lex;
 use weft_syntax::parse_file;
@@ -390,7 +390,12 @@ fn place() -> impl Strategy<Value = PlaceExpr> + Clone {
 fn row() -> impl Strategy<Value = EffectRow> + Clone {
     let item = prop_oneof![
         prop::collection::vec(place(), 1..3).prop_map(EffectItem::Mut),
-        any_name().prop_map(EffectItem::Named),
+        prop::collection::vec(any_name(), 1..3).prop_map(|segments| EffectItem::Named(
+            EffectPath {
+                segments,
+                span: sp()
+            }
+        )),
     ];
     prop::collection::vec(item, 1..3).prop_map(|items| EffectRow { items, span: sp() })
 }
@@ -639,8 +644,12 @@ fn expr() -> impl Strategy<Value = Expr> + Clone {
             1 => (inner.clone(), prop::collection::vec(arm, 0..3)).prop_map(|(s, arms)| ex(
                 ExprKind::Match { scrutinee: Box::new(s), arms }
             )),
-            1 => (upper(), prop::collection::vec(clause, 0..2), inner.clone()).prop_map(
-                |(effect, clauses, b)| ex(ExprKind::Handle { effect, clauses, body: Box::new(b) })
+            1 => (prop::collection::vec(upper(), 1..3), prop::collection::vec(clause, 0..2), inner.clone()).prop_map(
+                |(segments, clauses, b)| ex(ExprKind::Handle {
+                    effect: EffectPath { segments, span: sp() },
+                    clauses,
+                    body: Box::new(b),
+                })
             ),
             1 => (lower(), block).prop_map(|(binder, body)| ex(ExprKind::Scope { binder, body })),
             1 => str_parts(inner).prop_map(|p| ex(ExprKind::Lit(Lit::Str(p)))),

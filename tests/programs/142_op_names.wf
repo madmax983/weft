@@ -1,0 +1,37 @@
+// A bare call `name(...)` finds a local, `print` or `fork`, an item, a variant
+// and only then an operation. An operation that a bare call in its module cannot
+// reach is W0107 (RR15). The effect path still reaches it: `Nap.sleep(...)`.
+effect Nap { fn sleep(d: Duration) }   //~ W0107
+effect Out { fn print(x: u64) }   //~ W0107
+effect Split { fn fork() }   //~ W0107
+effect Tick { fn tick() }   //~ W0107
+effect Make { fn Some(x: u64) }   //~ W0107
+effect First { fn go() }
+effect Second { fn go() }   //~ W0107
+fn tick() {}
+mod inner {
+    // An item of a parent module hides the operation too.
+    pub effect Deep { fn tick() }   //~ W0107
+}
+
+// Clean: names that no item, variant or other operation of the module has.
+effect Nap2 { fn nap(d: Duration) }
+fn napper() / Nap2 { nap(1.ms) }
+mod other {
+    // An operation of another module does not hide this one.
+    pub effect Go { fn go() -> u64 }
+    pub fn going() -> u64 / Go { go() }
+}
+
+fn main() / clock {
+    handle Nap2 { fn nap(d) {
+        print("user nap")
+        resume(())
+    } } in napper()
+    let n = handle other.Go { fn go() { resume(5) } } in other.going()
+    print(n)
+    handle Nap { fn sleep(d) {
+        print("by path")
+        resume(())
+    } } in Nap.sleep(1.ms)
+}

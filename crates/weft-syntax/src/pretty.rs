@@ -510,7 +510,7 @@ impl Printer {
                 p.list(places, ", ", Self::place);
                 p.push(")");
             }
-            EffectItem::Named(n) => p.push(&n.name),
+            EffectItem::Named(n) => p.push(&n.text()),
         });
     }
 
@@ -789,7 +789,7 @@ impl Printer {
                 body,
             } => {
                 self.push("handle ");
-                self.push(&effect.name);
+                self.push(&effect.text());
                 if clauses.is_empty() {
                     self.push(" {}");
                 } else if self.inline {

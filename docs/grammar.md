@@ -74,7 +74,8 @@ place       = ( NAME | "self" ) step*
 step        = "." ( NAME | INT ) | "[" "]" | "[" ".." NAME "]" | "[" NAME ".." "]" | ".."
 row         = row_item ( "," row_item )*
 fn_row      = row_item | "(" row ")"
-row_item    = "mut" "(" place ( "," place )* ")" | NAME
+row_item    = "mut" "(" place ( "," place )* ")" | effect_path
+effect_path = NAME ( "." NAME )*
 MODE        = uniq | aliased | portable | nonportable | uncontended | shared | once | many
 ```
 
@@ -92,6 +93,8 @@ Notes:
   reference is at the place or below it through stable steps only.
 - In a function type, a row with more than one item needs parentheses:
   `fn(Request) -> Response / (net, log)`.
+- An effect path names an effect of another module or package: `/ a.Note`,
+  `handle util.Note { ... }`. It resolves like a type path (ADR 0005).
 
 ## Statements
 
@@ -135,7 +138,7 @@ primary     = literal | NAME | "(" expr ")" | "(" expr "," ( expr "," ? )* ")"
             | block
             | "if" expr_ns block ( "else" ( block | if ) )?
             | "match" expr_ns "{" ( pattern "=>" expr sep )* "}"
-            | "handle" NAME "{" ( "fn" NAME "(" params? ")" block )* "}" "in" expr
+            | "handle" effect_path "{" ( "fn" NAME "(" params? ")" block )* "}" "in" expr
             | "scope" "{" NAME "=>" stmts "}"
 args        = arg ( "," arg )* ","?
 arg         = ( NAME ":" )? expr

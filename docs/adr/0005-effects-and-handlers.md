@@ -367,13 +367,37 @@ Status: accepted. Date: 2026-10-18.
 - Each effect has an identity in the facts and the signatures: a standard effect keeps
   its name, and a user effect gets its module path and its name (`main.Log`,
   `json.Log`). So a user effect with the name of a standard effect is a different
-  effect: for W0702, W0803, W0805, W0801, W0314 and the authority check. Diagnostics
-  show the written name (`effects::shown`, `effects::in_signature`). Some diagnostics
-  show the identity when the written name can also name another effect. W0702 does
-  this when another stated effect of the function has that name. W0803 and W0805 do
-  this when the name is the name of a standard effect, or of another effect that leaves
-  the same body. In a module that defines `Log`, `Log` names that effect and the alias
-  `log` names the standard one.
+  effect: for W0702, W0803, W0805, W0801, W0314 and the authority check. In a module
+  that defines `Log`, `Log` names that effect and the alias `log` names the standard
+  one.
+- The identity of a user effect of the root starts with `main` (`main.Note`). So a
+  dependency cannot have the name `main` (W0107, review round 2, QA5): its effects
+  would get the identities of the root, and a handler of the root would handle them.
+  Sema, `weft deps` and the interpreter use the one function `effects::identity`.
+- A bare call `name(...)` finds a local, `print` or `fork`, an item, a variant and only
+  then an operation (`Program::find_op`, also in the interpreter). It searches the
+  modules from the module of the call outward, as a name lookup does. An operation that
+  a bare call in its own module cannot reach is W0107 (review round 2, RR15): for
+  example an operation `sleep` that the prelude function `sleep` hides, or a second
+  operation `go` in one module. The effect path still reaches it: `Nap.sleep(...)`.
+- An effect of another module or package has a path (review round 2, RR11). `handle`
+  and an effect row take a path, and it resolves like a type path: the first name
+  from the module outward, then each next name inside the module before it
+  (`handle a.Note`, `/ util.Note`, `fn() / a.b.Deep`). The interpreter resolves a
+  `handle` in the same way (`effects::resolve`). A path into another unit names only a
+  `pub` effect, as a call names only a `pub` function (W0101). So a caller can state
+  and handle a user effect of a dependency: "a user effect of a dependency needs a
+  handler of the caller" holds for each `pub` effect. A private effect of a dependency
+  that a public function performs cannot be handled outside the package.
+- Diagnostics show the name that the body can write (`effects::written`,
+  `FnFacts::effect_names`): `log` for a standard effect in a hint, `Note` in its own
+  module, `a.Note` from the parent of module `a`, `util.Note` for a dependency. W0101
+  for an unknown name gives the paths of the effects with that name. W0702 and W0805
+  give the path in the hint. A private effect of another package gets a note that says
+  so. Some messages show the identity when the written name can also name another
+  effect. W0702 does this when another stated effect of the function shows the same
+  text. W0803 and W0805 do this when the name is the name of a standard effect, or the
+  text of another effect that leaves the same body.
 
 ## Consequences
 
@@ -460,7 +484,7 @@ Status: accepted. Date: 2026-10-18.
     at the call of the maker.
   - A stored function value that runs inside a handler clause: the operation that runs
     the clause does not get it.
-  - Only functions of a dependency are checked for `pub`, not its types and effects.
+  - Only functions and effects of a dependency are checked for `pub`, not its types.
   - W0402 inside a higher-order function: a callback that gets a place of a `@ shared`
     parameter can mutate it. The caller sees the mutation on its own place only.
   - A reference that a function value gets inside another reference: the value sees

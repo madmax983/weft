@@ -274,20 +274,50 @@ fn w0805_needs_a_handler_for_each_effect_that_is_not_standard() {
         d[0].message,
         "`main` performs `main.Log`, and no handler handles it"
     );
-    // Two user effects with one name: each error shows the identity.
+    // Two user effects with one name: each error shows the name that `main`
+    // can write, a path for the effect of module `a` (ADR 0005).
     let src = "effect Note { fn note(m: u64) }\nmod a {\n    pub effect Note { fn note(m: u64) }\n    pub fn f() / Note { note(2) }\n}\nfn main() {\n    note(1)\n    a.f()\n}\n";
     let d = diags(src, "W0805");
     let messages: Vec<&str> = d.iter().map(|d| d.message.as_str()).collect();
     assert_eq!(
         messages,
         [
-            "`main` performs `main.Note`, and no handler handles it",
-            "`main` performs `main.a.Note`, and no handler handles it"
+            "`main` performs `Note`, and no handler handles it",
+            "`main` performs `a.Note`, and no handler handles it"
         ]
     );
     assert_eq!(
         notes(&d[1]),
-        ["the runtime handles only the standard effects; handle `main.a.Note` in `main`"]
+        ["the runtime handles only the standard effects; handle `a.Note` in `main`"]
+    );
+}
+
+#[test]
+fn w0702_and_w0101_name_an_effect_of_another_module_with_its_path() {
+    let src = "mod a {\n    pub effect Note { fn note(m: u64) }\n    pub fn f() / Note { note(2) }\n    pub mod b {\n        pub effect Deep { fn deep() }\n    }\n}\nfn g() / par { a.f() }\nfn h() / Deep {}\n";
+    let d = diags(src, "W0702");
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(
+        d[0].message,
+        "`f` performs `a.Note`, which the signature does not allow"
+    );
+    assert_eq!(
+        notes(&d[0]),
+        ["add `a.Note` to the effects after `/`, or handle it here"]
+    );
+    let d = diags(src, "W0101");
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(d[0].message, "unknown effect `Deep`");
+    assert_eq!(
+        notes(&d[0]),
+        ["the effect with this name is written `a.b.Deep` here"]
+    );
+    // Inside module `a`, the effect has its bare name.
+    let src = "mod a {\n    pub effect Note { fn note(m: u64) }\n    fn f() / par { note(2) }\n}\n";
+    let d = diags(src, "W0702");
+    assert_eq!(
+        notes(&d[0]),
+        ["add `Note` to the effects after `/`, or handle it here"]
     );
 }
 

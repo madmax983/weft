@@ -19,9 +19,19 @@ Status: accepted. Date: 2026-10-18.
 - A function type with more than one effect needs parentheses: `fn() / (net, log)`.
 - An argument of a call or of an effect operation can name its parameter
   (`put(b: 1, a: v)`). A named argument binds by name, the others fill the free
-  parameters in order, and a trailing block goes to the last free parameter (W0103 for
-  an unknown name, a name given twice, or a wrong count). `s.spawn` takes one closure
-  with no parameters, and `fork` takes at least two (W0102, W0103).
+  parameters in order, and a trailing block goes to the last free parameter. The
+  arguments run in the order of the parameters. W0103 is for a name given twice or a
+  wrong count. `s.spawn` takes one closure with no parameters, and `fork` takes at
+  least two (W0102, W0103).
+- One rule for named arguments holds in sema and in the interpreter (review round 2,
+  RR10 and RR13). A named argument binds by name where the callee has names: a
+  function, a method (also of a value receiver), an operation, a function item in a
+  local, and a struct constructor (`Range(hi: 10, lo: 2)` gives the field `hi`). An
+  unknown name is W0104. A callee with no names takes no named argument (W0104): a
+  closure, a function parameter, a join of function values, a variant, `resume`,
+  `print`, `fork` and `s.spawn`. The interpreter does not know the callee of a method
+  of a value or of an item in a local when it compiles the call, so sema gives it the
+  order of the arguments (`FnFacts::arg_order`).
 - `*T` is a raw pointer for foreign functions. A written `*T` is valid only in an
   `extern fn` signature, in a local and in a closure parameter (W0116). The check looks
   only at written types. A type argument can still hold a raw pointer (`Option<*Stmt>`,

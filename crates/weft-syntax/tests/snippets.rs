@@ -219,7 +219,7 @@ fn s05_handle_body_is_a_call_to_simulate() {
     else {
         panic!("not a handle: {:?}", main[2]);
     };
-    assert_eq!(effect.name, "Log");
+    assert_eq!(effect.text(), "Log");
     assert_eq!(clauses.len(), 1);
     assert_eq!(clauses[0].op.name, "log");
     assert_eq!(clauses[0].params.len(), 1);

@@ -1744,19 +1744,24 @@ impl Lower<'_> {
 
     fn handle(
         &mut self,
-        effect: &ast::Ident,
+        effect: &ast::EffectPath,
         clauses: &[ast::HandlerClause],
         body: &Expr,
         span: Span,
     ) -> Val {
-        let eid = match effects::canonical(self.prog, self.module, &effect.name) {
-            Some(names) if names.len() == 1 => effects::by_identity(self.prog, &names[0]),
-            _ => None,
+        // A path names an effect of another module (`a.Note`, `util.Note`).
+        let eid = match effects::resolve(self.prog, self.module, effect) {
+            Ok(names) if names.len() == 1 => effects::by_identity(self.prog, &names[0]),
+            Ok(_) => None,
+            Err(d) => {
+                self.diags.push(d);
+                return self.expr(body);
+            }
         };
         let Some(eid) = eid else {
             self.err(
                 "W0101",
-                format!("unknown effect `{}`", effect.name),
+                format!("unknown effect `{}`", effect.text()),
                 effect.span,
             );
             return self.expr(body);

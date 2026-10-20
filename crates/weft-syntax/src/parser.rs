@@ -13,10 +13,11 @@
 //! each local its own stack slot, so large functions use much stack per level.
 
 use crate::ast::{
-    Arg, Arm, AssignOp, BinOp, Block, EffectDecl, EffectItem, EffectRow, EnumDecl, Expr, ExprKind,
-    ExternTypeDecl, FieldDecl, File, FnDecl, HandlerClause, Ident, ImplBlock, Item, ItemKind, Lit,
-    ModDecl, Mode, OpDecl, Param, Pattern, PlaceExpr, PlaceStep, Span, Stmt, StmtKind, StrPart,
-    StructDecl, TestDecl, TypeExpr, TypeExprKind, TypeProp, UnOp, VariantDecl, CHAIN_PART_PREFIX,
+    Arg, Arm, AssignOp, BinOp, Block, EffectDecl, EffectItem, EffectPath, EffectRow, EnumDecl,
+    Expr, ExprKind, ExternTypeDecl, FieldDecl, File, FnDecl, HandlerClause, Ident, ImplBlock, Item,
+    ItemKind, Lit, ModDecl, Mode, OpDecl, Param, Pattern, PlaceExpr, PlaceStep, Span, Stmt,
+    StmtKind, StrPart, StructDecl, TestDecl, TypeExpr, TypeExprKind, TypeProp, UnOp, VariantDecl,
+    CHAIN_PART_PREFIX,
 };
 use crate::lexer::{lex_at, StrPiece, Token, TokenKind as T};
 
@@ -1026,9 +1027,38 @@ impl Parser {
             return Ok(EffectItem::Mut(places));
         }
         if self.at_any_name() {
-            return Ok(EffectItem::Named(self.ident()));
+            return Ok(EffectItem::Named(self.effect_path()));
         }
         Err(self.expected("an effect name or `mut(...)`"))
+    }
+
+    /// Parses an effect name or path: `Log`, `a.Note`. The current token is a
+    /// name.
+    fn effect_path(&mut self) -> EffectPath {
+        let first = self.ident();
+        let lo = first.span.lo;
+        let mut segments = vec![first];
+        while self.at(&T::Dot) && matches!(self.kind_at(1), T::Name(_)) {
+            self.bump();
+            segments.push(self.ident());
+        }
+        EffectPath {
+            segments,
+            span: Span::new(lo, self.last_hi),
+        }
+    }
+
+    /// Returns the number of tokens of an effect path that starts `n` tokens
+    /// ahead: `NAME ( "." NAME )*`. Returns 0 if no name is there.
+    fn effect_path_len(&self, n: usize) -> usize {
+        if !matches!(self.kind_at(n), T::Name(_)) {
+            return 0;
+        }
+        let mut len = 1;
+        while self.kind_at(n + len) == &T::Dot && matches!(self.kind_at(n + len + 1), T::Name(_)) {
+            len += 2;
+        }
+        len
     }
 }
 
@@ -1534,9 +1564,10 @@ impl Parser {
     fn name_expr(&mut self) -> PResult<Expr> {
         let (is_handle, is_scope, is_struct) = match self.kind() {
             T::Name(n) => (
-                n == "handle"
-                    && matches!(self.kind_at(1), T::Name(_))
-                    && self.kind_at(2) == &T::LBrace,
+                n == "handle" && {
+                    let len = self.effect_path_len(1);
+                    len > 0 && self.kind_at(1 + len) == &T::LBrace
+                },
                 n == "scope" && self.kind_at(1) == &T::LBrace,
                 is_upper(n) && !self.no_struct && self.struct_lit_ahead(),
             ),
@@ -1754,10 +1785,11 @@ impl Parser {
         })
     }
 
-    /// Parses `handle E { clauses } in expr`. The current tokens are `handle E {`.
+    /// Parses `handle E { clauses } in expr`. The current tokens are `handle E {`,
+    /// and `E` can be a path such as `a.Note`.
     fn handle_expr(&mut self) -> PResult<Expr> {
         let lo = self.bump().lo;
-        let effect = self.ident();
+        let effect = self.effect_path();
         self.bump();
         let mut clauses = Vec::new();
         loop {
