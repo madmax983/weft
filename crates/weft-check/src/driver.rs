@@ -1,7 +1,7 @@
 //! The check pipeline: parse, analyze, check, diagnose.
 
 use weft_sema::{Analysis, Options};
-use weft_syntax::diag::{Diagnostic, Severity};
+use weft_syntax::diag::{Code, Diagnostic, Severity};
 use weft_syntax::SourceFile;
 
 use weft_facts::{FnFacts, Violations};
@@ -29,8 +29,8 @@ impl Checked {
     }
 
     /// Returns the codes of all diagnostics, in order.
-    pub fn codes(&self) -> Vec<String> {
-        self.diags.iter().map(|d| d.code.clone()).collect()
+    pub fn codes(&self) -> Vec<Code> {
+        self.diags.iter().map(|d| d.code).collect()
     }
 }
 
@@ -176,11 +176,11 @@ mod tests {
     #[test]
     fn equal_diagnostics_keep_the_facts_of_both() {
         let span = weft_syntax::ast::Span { lo: 1, hi: 2 };
-        let a =
-            Diagnostic::error("W0301", "m", span).with_facts(["body 0: error(v1, n2)".to_string()]);
-        let b =
-            Diagnostic::error("W0301", "m", span).with_facts(["body 1: error(v1, n2)".to_string()]);
-        let c = Diagnostic::error("W0301", "other", span);
+        let a = Diagnostic::error(Code::W0301, "m", span)
+            .with_facts(["body 0: error(v1, n2)".to_string()]);
+        let b = Diagnostic::error(Code::W0301, "m", span)
+            .with_facts(["body 1: error(v1, n2)".to_string()]);
+        let c = Diagnostic::error(Code::W0301, "other", span);
         let mut diags = vec![a, b, c];
         dedup_diags(&mut diags);
         assert_eq!(diags.len(), 2);

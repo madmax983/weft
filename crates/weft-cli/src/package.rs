@@ -15,6 +15,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use weft_syntax::diag::Code;
 
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
@@ -173,7 +174,7 @@ impl Package {
                 let lo = u32::try_from(at).unwrap_or(u32::MAX);
                 let hi = u32::try_from(at + w.len()).unwrap_or(u32::MAX);
                 let mut d = Diagnostic::warning(
-                    "W0804",
+                    Code::W0804,
                     format!("unknown file marker `{w}`; it has no effect"),
                     weft_syntax::ast::Span::new(lo, hi),
                 )
@@ -204,7 +205,7 @@ fn parse_unit(name: &str, path: &Path) -> Result<(SourceFile, Unit)> {
     let sf = SourceFile::new(path.display().to_string(), text);
     let file = parse_file(&sf.text).map_err(|e| SyntaxError {
         file: sf.clone(),
-        diag: Diagnostic::error("W0001", e.message, e.span),
+        diag: Diagnostic::error(Code::W0001, e.message, e.span),
     })?;
     Ok((
         sf,
@@ -295,7 +296,7 @@ pub fn package_diags(pkg: &Package, a: &Analysis) -> Vec<Diagnostic> {
     if let Some(m) = &pkg.manifest {
         if m.package.gc && m.package.kind == Kind::Lib {
             let mut d = Diagnostic::error(
-                "W0902",
+                Code::W0902,
                 "a library cannot enable the GC tier; only a binary may",
                 weft_syntax::ast::Span::default(),
             )
@@ -307,7 +308,7 @@ pub fn package_diags(pkg: &Package, a: &Analysis) -> Vec<Diagnostic> {
     for dep in &pkg.deps {
         if dep.manifest.as_ref().is_some_and(|m| m.package.gc) {
             let mut d = Diagnostic::error(
-                "W0902",
+                Code::W0902,
                 format!(
                     "dependency `{}` enables the GC tier; libraries may never require it",
                     dep.name
@@ -345,7 +346,7 @@ pub fn package_diags(pkg: &Package, a: &Analysis) -> Vec<Diagnostic> {
             }
             let wanted: Vec<String> = extra.iter().map(|e| effects::in_signature(e)).collect();
             let mut d = Diagnostic::error(
-                "W0901",
+                Code::W0901,
                 format!(
                     "dependency `{}` function `{}` needs `{}`, but the project grants `{}` only [{}]",
                     dep.name,

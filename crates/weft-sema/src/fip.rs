@@ -11,6 +11,7 @@
 //!   `match` on an owned value freed on the same path.
 
 use std::collections::BTreeMap;
+use weft_syntax::diag::Code;
 
 use weft_syntax::ast::{BinOp, Block, Expr, ExprKind, Pattern, StmtKind, StrPart};
 use weft_syntax::diag::Diagnostic;
@@ -30,7 +31,7 @@ pub fn check(prog: &Program, sigs: &[FnSig], f: FnId) -> Vec<Diagnostic> {
     };
     if !sigs[f].effects.is_empty() {
         c.diags.push(Diagnostic::error(
-            "W1004",
+            Code::W1004,
             format!("`fip fn {}` must have no effects", def.name),
             def.decl.name.span,
         ));
@@ -54,7 +55,7 @@ pub fn check(prog: &Program, sigs: &[FnSig], f: FnId) -> Vec<Diagnostic> {
                 format!("{} to {}", show_count(lo), show_count(hi))
             };
             c.diags.push(Diagnostic::error(
-                "W1002",
+                Code::W1002,
                 format!("`fip` needs `{name}` used exactly once on every path (found {found})"),
                 def.decl.name.span,
             ));
@@ -121,7 +122,7 @@ impl Fip<'_> {
         match credits.get_mut(&size) {
             Some(n) if *n > 0 => *n -= 1,
             _ => self.diags.push(Diagnostic::error(
-                "W1001",
+                Code::W1001,
                 format!("`fip` function allocates a cell of size {size} with no cell to reuse"),
                 e.span,
             )),
@@ -148,7 +149,7 @@ impl Fip<'_> {
                     Some(ItemRef::Fn(f)) => {
                         if !self.prog.fns[f].decl.is_fip {
                             self.diags.push(Diagnostic::error(
-                                "W1003",
+                                Code::W1003,
                                 format!("`fip` function calls `{}`, which is not `fip`", id.name),
                                 id.span,
                             ));
@@ -160,7 +161,7 @@ impl Fip<'_> {
                             self.alloc(args.len(), e, credits);
                         } else {
                             self.diags.push(Diagnostic::error(
-                                "W1003",
+                                Code::W1003,
                                 format!("`fip` function calls `{}`, which is not `fip`", id.name),
                                 id.span,
                             ));
@@ -179,7 +180,7 @@ impl Fip<'_> {
                     self.expr(&a.value, credits);
                 }
                 self.diags.push(Diagnostic::error(
-                    "W1003",
+                    Code::W1003,
                     format!(
                         "`fip` function calls method `{}`; only `fip` functions are allowed",
                         method.name
@@ -203,7 +204,7 @@ impl Fip<'_> {
                     self.expr(x, credits);
                 }
                 self.diags.push(Diagnostic::error(
-                    "W1001",
+                    Code::W1001,
                     "`fip` function makes an array; no freed cell can hold an array",
                     e.span,
                 ));
@@ -228,7 +229,7 @@ impl Fip<'_> {
                                     let (lo, hi) = uses_expr(&arm.body, &b.name).all();
                                     if lo != 1 || hi != 1 {
                                         self.diags.push(Diagnostic::error(
-                                            "W1002",
+                                            Code::W1002,
                                             format!(
                                                 "`fip` needs `{}` used exactly once on every path",
                                                 b.name
@@ -266,7 +267,7 @@ impl Fip<'_> {
             }
             ExprKind::Closure { .. } | ExprKind::Handle { .. } | ExprKind::Scope { .. } => {
                 self.diags.push(Diagnostic::error(
-                    "W1003",
+                    Code::W1003,
                     "`fip` function cannot make closures, handlers or scopes",
                     e.span,
                 ));

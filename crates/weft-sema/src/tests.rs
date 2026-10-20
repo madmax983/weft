@@ -32,7 +32,10 @@ fn analyze_units(root: &str, deps: &[(&str, &str)]) -> Analysis {
 }
 
 fn codes(a: &Analysis) -> Vec<(usize, String)> {
-    a.diags.iter().map(|d| (d.unit, d.code.clone())).collect()
+    a.diags
+        .iter()
+        .map(|d| (d.unit, d.code.to_string()))
+        .collect()
 }
 
 #[test]
@@ -454,7 +457,7 @@ fn root_diags(src: &str) -> Vec<(String, String)> {
     let a = analyze(&units, Options::default());
     a.diags
         .iter()
-        .map(|d| (d.code.clone(), d.message.clone()))
+        .map(|d| (d.code.to_string(), d.message.clone()))
         .collect()
 }
 

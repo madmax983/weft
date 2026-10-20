@@ -1,6 +1,7 @@
 //! Calls: functions, methods, constructors, effect operations and built-ins.
 
 use std::collections::BTreeSet;
+use weft_syntax::diag::Code;
 
 use weft_syntax::diag::Diagnostic;
 
@@ -169,7 +170,11 @@ impl Lower<'_> {
                 }
                 return self.perform_op(e, op, args, trailing, span);
             }
-            self.err("W0101", format!("unknown function `{}`", id.name), id.span);
+            self.err(
+                Code::W0101,
+                format!("unknown function `{}`", id.name),
+                id.span,
+            );
             for a in args {
                 let _ = self.expr(&a.value);
             }
@@ -180,7 +185,7 @@ impl Lower<'_> {
         }
         // The callee is still lowered, for the diagnostics inside it.
         let _ = self.expr(callee);
-        self.err("W0105", "this expression cannot be called", callee.span);
+        self.err(Code::W0105, "this expression cannot be called", callee.span);
         Val {
             ty: Ty::Error,
             ..Val::default()
@@ -202,7 +207,7 @@ impl Lower<'_> {
         let msg = format!(
             "the call `{name}(...)` can perform the operation `{name}` of more than one effect"
         );
-        let d = Diagnostic::error("W0107", msg, span)
+        let d = Diagnostic::error(Code::W0107, msg, span)
             .note(format!("write the effect name: {}", paths.join(" or ")));
         self.diags.push(d);
     }
@@ -276,7 +281,7 @@ impl Lower<'_> {
         if !matches!(rty, Ty::Error) {
             let shown = self.show(rty);
             self.err(
-                "W0104",
+                Code::W0104,
                 format!("`{shown}` has no method `{}`", method.name),
                 method.span,
             );
@@ -348,7 +353,7 @@ impl Lower<'_> {
                 Some(ItemRef::Adt(a)) => self.positional_struct(a, args, trailing, span),
                 _ => {
                     self.err(
-                        "W0101",
+                        Code::W0101,
                         format!("no function `{}` in this module", method.name),
                         method.span,
                     );
@@ -367,7 +372,7 @@ impl Lower<'_> {
                 }
                 let n = self.prog.adts[a].name.clone();
                 self.err(
-                    "W0104",
+                    Code::W0104,
                     format!("`{n}` has no function `{}`", method.name),
                     method.span,
                 );
@@ -380,7 +385,7 @@ impl Lower<'_> {
                         "effect `{}` is private: it is not `pub` in its package",
                         effects::identity(self.prog, e)
                     );
-                    self.err("W0101", msg, method.span);
+                    self.err(Code::W0101, msg, method.span);
                 }
                 if let Some(op) = self.prog.effects[e]
                     .ops
@@ -391,7 +396,7 @@ impl Lower<'_> {
                 }
                 let n = self.prog.effects[e].name.clone();
                 self.err(
-                    "W0104",
+                    Code::W0104,
                     format!("effect `{n}` has no operation `{}`", method.name),
                     method.span,
                 );
@@ -410,7 +415,7 @@ impl Lower<'_> {
         );
         if !def.is_pub && !def.is_std && here != there {
             let msg = format!("`{}` is private: it is not `pub` in its package", def.path);
-            self.err("W0101", msg, span);
+            self.err(Code::W0101, msg, span);
         }
     }
 
@@ -504,7 +509,7 @@ impl Lower<'_> {
             .owner
             .map_or_else(String::new, |a| format!("{}.", self.prog.adts[a].name));
         self.err(
-            "W0104",
+            Code::W0104,
             format!("`{name}` has no `self` parameter: call it as `{owner}{name}(...)`"),
             span,
         );
@@ -1780,7 +1785,7 @@ impl Lower<'_> {
         let Ty::Fn(fty) = self.inf.shallow(&loc.ty) else {
             let shown = self.show(&loc.ty);
             self.err(
-                "W0105",
+                Code::W0105,
                 format!("`{}` has type `{shown}` and cannot be called", loc.name),
                 span,
             );
@@ -1805,7 +1810,7 @@ impl Lower<'_> {
         let exprs: Vec<&Expr> = args.iter().map(|a| &a.value).chain(trailing).collect();
         if exprs.len() != fty.params.len() {
             self.err(
-                "W0103",
+                Code::W0103,
                 format!("`{}` takes {} arguments", loc.name, fty.params.len()),
                 span,
             );
@@ -2299,7 +2304,7 @@ impl Lower<'_> {
             };
         };
         if args.len() != 1 {
-            self.err("W0103", "`resume` takes one argument", span);
+            self.err(Code::W0103, "`resume` takes one argument", span);
         }
         self.no_names("`resume`", args);
         if fail {
@@ -2367,7 +2372,7 @@ impl Lower<'_> {
     /// (ADR 0005).
     fn cont_to_body(&mut self, span: Span) {
         let d = weft_syntax::diag::Diagnostic::error(
-            "W0313",
+            Code::W0313,
             "a `resume` gives the handled computation a closure that resumes a continuation",
             span,
         )
@@ -2381,7 +2386,7 @@ impl Lower<'_> {
     /// as an operation whose clause does not resume (ADR 0005).
     pub(super) fn fail_resume(&mut self, span: Span) {
         let d = weft_syntax::diag::Diagnostic::error(
-            "W0504",
+            Code::W0504,
             "a clause of `fail` cannot resume the computation that failed",
             span,
         )
@@ -2426,7 +2431,7 @@ impl Lower<'_> {
     ) -> Val {
         let prog = self.prog;
         let AdtKind::Struct(defs) = &prog.adts[a].kind else {
-            self.err("W0105", "this type has no constructor", span);
+            self.err(Code::W0105, "this type has no constructor", span);
             return Val {
                 ty: Ty::Error,
                 ..Val::default()
@@ -2503,7 +2508,7 @@ impl Lower<'_> {
         let exprs: Vec<&Expr> = args.iter().map(|a| &a.value).chain(trailing).collect();
         if fields.len() != exprs.len() {
             self.err(
-                "W0103",
+                Code::W0103,
                 format!("variant `{}` has {} fields", vs[vi].name, fields.len()),
                 span,
             );
@@ -2958,13 +2963,13 @@ impl Lower<'_> {
                 .any(|c| c.cap().is_some_and(|k| self.cont_caps.contains(&k)))
         {
             self.err(
-                "W0314",
+                Code::W0314,
                 "a task cannot resume a continuation of this task: the rest of the handled body would run on another task",
                 span,
             );
         } else if bad {
             self.err(
-                "W0314",
+                Code::W0314,
                 "a task cannot perform through a handler of this task: the handler runs on another task",
                 span,
             );
@@ -2988,7 +2993,7 @@ impl Lower<'_> {
         if bad {
             let name = self.prog.fns[f].name.clone();
             self.err(
-                "W0314",
+                Code::W0314,
                 format!("a task of `{name}` performs through a handler of this task: the handler runs on another task"),
                 span,
             );
@@ -3035,14 +3040,14 @@ impl Lower<'_> {
 
     fn spawn(&mut self, recv: &Val, args: &[Arg], trailing: Option<&Expr>, span: Span) -> Val {
         let Some(e) = args.first().map(|a| &a.value).or(trailing) else {
-            self.err("W0103", "`spawn` takes a closure", span);
+            self.err(Code::W0103, "`spawn` takes a closure", span);
             return Val {
                 ty: Ty::Error,
                 ..Val::default()
             };
         };
         if args.len() + usize::from(trailing.is_some()) > 1 {
-            self.err("W0103", "`spawn` takes one closure", span);
+            self.err(Code::W0103, "`spawn` takes one closure", span);
         }
         self.no_names("`spawn`", args);
         let v = self.closure_arg(e, None);
@@ -3081,7 +3086,7 @@ impl Lower<'_> {
                 self.sums[si].spawns.insert(t);
             }
         } else {
-            self.err("W0115", "`spawn` needs a `scope`", span);
+            self.err(Code::W0115, "`spawn` needs a `scope`", span);
         }
         let ty = self
             .b
@@ -3102,7 +3107,7 @@ impl Lower<'_> {
             return;
         }
         let what = format!("`{name}`");
-        self.err("W0103", format!("{what} takes no arguments"), span);
+        self.err(Code::W0103, format!("{what} takes no arguments"), span);
         self.no_names(&what, args);
         for e in args.iter().map(|a| &a.value).chain(trailing) {
             let _ = self.expr(e);
@@ -3194,7 +3199,7 @@ impl Lower<'_> {
                     "a closure"
                 };
                 self.err(
-                    "W0102",
+                    Code::W0102,
                     format!("`{what}` takes {noun}, found `{shown}`"),
                     span,
                 );
@@ -3203,7 +3208,7 @@ impl Lower<'_> {
         };
         if !f.params.is_empty() {
             self.err(
-                "W0103",
+                Code::W0103,
                 format!("a closure of `{what}` takes no arguments"),
                 span,
             );
@@ -3216,7 +3221,7 @@ impl Lower<'_> {
         let mut rets = Vec::new();
         let branches: Vec<&Expr> = args.iter().map(|a| &a.value).chain(trailing).collect();
         if branches.len() < 2 {
-            self.err("W0103", "`fork` needs at least two closures", span);
+            self.err(Code::W0103, "`fork` needs at least two closures", span);
         }
         self.no_names("`fork`", args);
         for e in branches {
@@ -3279,15 +3284,15 @@ impl Lower<'_> {
                 Some(i) if !given[i] => given[i] = true,
                 Some(i) => {
                     let msg = format!("argument `{}` is given twice", names[i]);
-                    self.err("W0103", msg, a.value.span);
+                    self.err(Code::W0103, msg, a.value.span);
                 }
                 None => match &a.name {
                     Some(n) => {
                         let msg = format!("`sim.run` has no parameter named `{}`", n.name);
-                        self.err("W0104", msg, n.span);
+                        self.err(Code::W0104, msg, n.span);
                     }
                     None => self.err(
-                        "W0103",
+                        Code::W0103,
                         "`sim.run` takes `seed` and `workers`",
                         a.value.span,
                     ),
@@ -3295,10 +3300,10 @@ impl Lower<'_> {
             }
         }
         if !given[0] {
-            self.err("W0103", "`sim.run` needs a `seed`", span);
+            self.err(Code::W0103, "`sim.run` needs a `seed`", span);
         }
         let Some(body) = trailing else {
-            self.err("W0103", "`sim.run` takes a block", span);
+            self.err(Code::W0103, "`sim.run` takes a block", span);
             return Val::default();
         };
         // Every standard effect of the body is handled here.

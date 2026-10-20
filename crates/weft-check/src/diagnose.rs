@@ -1,6 +1,7 @@
 //! Diagnostics from checker results. Each diagnostic shows its derivation.
 
 use std::collections::{BTreeMap, BTreeSet};
+use weft_syntax::diag::Code;
 
 use weft_facts::{
     ArgSite, FnFacts, NodeId, PlaceId, RefKind, RefSite, VarId, VarKind, Violations, ARG_TASK,
@@ -76,8 +77,12 @@ fn var_keys(relation: &str, var: VarId, nodes: &[NodeId]) -> Vec<String> {
 }
 
 fn once_closure(f: &FnFacts, n: NodeId) -> Diagnostic {
-    Diagnostic::error("W0502", "a `once` closure is called twice", node_span(f, n))
-        .note("the closure moves a captured value, so it can run only once")
+    Diagnostic::error(
+        Code::W0502,
+        "a `once` closure is called twice",
+        node_span(f, n),
+    )
+    .note("the closure moves a captured value, so it can run only once")
 }
 
 /// Groups `(variable, node)` pairs by variable. The nodes of each variable
@@ -331,7 +336,7 @@ fn w0301(f: &FnFacts, r: &Report, out: &mut Vec<Diagnostic>) {
                 (false, None) => format!("the value of this block points into `{path}`"),
             };
             Diagnostic::error(
-                "W0301",
+                Code::W0301,
                 format!(
                     "{head}, but `{}` goes out of scope at the end of the block",
                     f.var(o).name
@@ -342,7 +347,7 @@ fn w0301(f: &FnFacts, r: &Report, out: &mut Vec<Diagnostic>) {
             .note_at(what, at.span)
         } else {
             Diagnostic::error(
-                "W0301",
+                Code::W0301,
                 format!("{name} used after it was invalidated"),
                 used,
             )
@@ -508,7 +513,7 @@ fn use_after_move(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
         let (d, noun) = match info.kind {
             VarKind::Continuation => (
                 Diagnostic::error(
-                    "W0501",
+                    Code::W0501,
                     "a `once` continuation is resumed twice",
                     node_span(f, n),
                 )
@@ -518,7 +523,7 @@ fn use_after_move(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
             _ if info.callable => (once_closure(f, n), ("call", "calls")),
             _ => (
                 Diagnostic::error(
-                    "W0302",
+                    Code::W0302,
                     format!("{} used after it was moved", shown_name(info)),
                     node_span(f, n),
                 )
@@ -549,7 +554,7 @@ fn use_before_set(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
             continue;
         };
         let mut d = Diagnostic::error(
-            "W0304",
+            Code::W0304,
             format!("{} is used before it has a value", shown_name(info)),
             node_span(f, read),
         )
@@ -584,7 +589,7 @@ fn moved_immovable(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
         let info = f.var(var);
         out.push(
             Diagnostic::error(
-                "W0604",
+                Code::W0604,
                 format!("{} has a `!Move` type and cannot move", shown_name(info)),
                 node_span(f, n),
             )
@@ -600,13 +605,13 @@ fn unconsumed(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
         let info = f.var(var);
         let d = if info.kind == VarKind::Task {
             Diagnostic::error(
-                "W0601",
+                Code::W0601,
                 format!("task handle `{}` is not joined or detached", info.name),
                 node_span(f, n),
             )
         } else if info.kind == VarKind::Dropped && !info.callable {
             Diagnostic::error(
-                "W0601",
+                Code::W0601,
                 format!(
                     "`{}` drops a value of the linear type `{}`",
                     info.name, info.ty
@@ -627,14 +632,14 @@ fn unconsumed(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                 format!("closure `{}`", info.name)
             };
             Diagnostic::error(
-                "W0601",
+                Code::W0601,
                 format!("{who} moves a linear value, but it can go out of scope without a call"),
                 node_span(f, n),
             )
             .note("call the closure once on every normal path; a callee that gets it can drop it")
         } else {
             Diagnostic::error(
-                "W0601",
+                Code::W0601,
                 format!(
                     "linear value {} is dropped without being consumed",
                     shown_name(info)
@@ -654,7 +659,7 @@ fn overwritten(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
         let info = f.var(var);
         out.push(
             Diagnostic::error(
-                "W0601",
+                Code::W0601,
                 format!(
                     "linear value {} is overwritten before it is consumed",
                     shown_name(info)
@@ -677,7 +682,7 @@ fn abort_unhandled(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
         let info = f.var(var);
         let at = f.node(first);
         let d = Diagnostic::error(
-            "W0602",
+            Code::W0602,
             format!(
                 "linear value {} is live across `{}`, which can abort",
                 shown_name(info),
@@ -707,7 +712,7 @@ fn live_across_multi(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
         let at = f.node(first);
         let name = shown_name(info);
         let mut d = Diagnostic::error(
-            "W0503",
+            Code::W0503,
             format!(
                 "{name} is not `many`, but it is live across `{}`, which can resume more than once",
                 at.label
@@ -739,7 +744,7 @@ fn unauthorized_mut(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
         let at = f.node(n);
         out.push(
             Diagnostic::error(
-                "W0703",
+                Code::W0703,
                 format!(
                     "`{}` mutates `{}`, which the signature does not allow",
                     at.label,
@@ -775,7 +780,7 @@ fn unauthorized_effect(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
         };
         out.push(
             Diagnostic::error(
-                "W0702",
+                Code::W0702,
                 format!(
                     "`{}` performs {}, which the signature does not allow",
                     at.label,
@@ -795,7 +800,7 @@ fn shared_mutation(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
         let at = f.node(n);
         out.push(
             Diagnostic::error(
-                "W0402",
+                Code::W0402,
                 format!(
                     "`{}` mutates `{}` through a `@ shared` reference",
                     at.label,
@@ -834,7 +839,7 @@ fn alias_conflict(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
             .map(|(n, m, a)| fact_key("alias_conflict", &[n, m, a]));
         out.push(
             Diagnostic::error(
-                "W0312",
+                Code::W0312,
                 format!(
                     "`{}` mutates `{}` while another argument points into `{}`",
                     at.label,
@@ -900,7 +905,7 @@ fn task_conflict(f: &FnFacts, r: &Report, out: &mut Vec<Diagnostic>) {
         };
         out.push(
             Diagnostic::error(
-                "W0405",
+                Code::W0405,
                 format!(
                     "this code {what} while a task {verb} `{}`",
                     f.place(c.task_place).display
@@ -924,7 +929,7 @@ fn nonportable_capture(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
         let info = f.var(var);
         out.push(
             Diagnostic::error(
-                "W0401",
+                Code::W0401,
                 format!(
                     "a `fork` branch captures {}, which is nonportable",
                     shown_name(info)
@@ -943,7 +948,7 @@ fn shared_mut_capture(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
         let info = f.var(var);
         out.push(
             Diagnostic::error(
-                "W0403",
+                Code::W0403,
                 format!(
                     "a `fork` branch mutates through {}, a shared-mutable reference",
                     shown_name(info)
@@ -964,7 +969,7 @@ fn root_handler_in_lib(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
         // when another effect of the body has the same name.
         out.push(
             Diagnostic::error(
-                "W0801",
+                Code::W0801,
                 format!(
                     "a library installs a root handler for {}; only binaries and tests can",
                     effect_text(f, &info.effect, named_effects(f))
@@ -1029,14 +1034,14 @@ fn root_effects(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                     None => unnamed_note(f, e),
                 };
                 Diagnostic::error(
-                    "W0805",
+                    Code::W0805,
                     format!("{who} performs {name}, and no handler handles it"),
                     span,
                 )
                 .note(note)
             } else {
                 Diagnostic::error(
-                    "W0803",
+                    Code::W0803,
                     format!("with no runtime, {who} must handle {name} itself"),
                     span,
                 )
@@ -1059,7 +1064,7 @@ fn arg_outside(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     for &(n, i, a) in &v.arg_outside {
         let key = fact_key("arg_outside", &[&n, &i, &a]);
         let Some(site) = arg_site(f, n, i) else {
-            out.push(no_site("W0203", f, n, key));
+            out.push(no_site(Code::W0203, f, n, key));
             continue;
         };
         let shown = &f.place(a).display;
@@ -1078,7 +1083,7 @@ fn arg_outside(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
         };
         out.push(
             Diagnostic::error(
-                "W0203",
+                Code::W0203,
                 format!(
                     "argument `{}` points into `{shown}`, but `{}` needs `{}`{below}",
                     site.param, site.callee, site.needs
@@ -1093,7 +1098,7 @@ fn arg_outside(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
 /// Returns a diagnostic for a violation whose site the facts do not give
 /// (`ArgSite`, `RefSite`). Sema gives a site with each fact, so this is a
 /// fact of another producer. The violation still is an error.
-fn no_site(code: &str, f: &FnFacts, n: NodeId, key: String) -> Diagnostic {
+fn no_site(code: Code, f: &FnFacts, n: NodeId, key: String) -> Diagnostic {
     Diagnostic::error(
         code,
         format!("`{key}` holds here (the facts give no other details)"),
@@ -1123,9 +1128,9 @@ fn ref_outside(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
             .collect();
         let Some(site) = ref_site(f, n) else {
             let code = if f.node(n).label == "return" {
-                "W0204"
+                Code::W0204
             } else {
-                "W0605"
+                Code::W0605
             };
             out.extend(keys.into_iter().map(|k| no_site(code, f, n, k)));
             continue;
@@ -1150,14 +1155,14 @@ fn ref_outside(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                     } else {
                         format!("returned reference points into `{shown}`, but the signature says `{at}`")
                     };
-                    out.push(Diagnostic::error("W0204", message, span).with_facts([key]));
+                    out.push(Diagnostic::error(Code::W0204, message, span).with_facts([key]));
                 }
             }
             RefKind::Field => {
                 let shown = bad.first().map_or("", |&a| f.place(a).display.as_str());
                 out.push(
                     Diagnostic::error(
-                        "W0605",
+                        Code::W0605,
                         format!("this field can point only into `{at}` of its own struct, but the value points into `{shown}`"),
                         span,
                     )
@@ -1168,7 +1173,7 @@ fn ref_outside(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                 let shown: Vec<&str> = bad.iter().map(|&a| f.place(a).display.as_str()).collect();
                 out.push(
                     Diagnostic::error(
-                        "W0605",
+                        Code::W0605,
                         format!(
                             "`{field}` can point only into `{at}` of its own struct, but this value points into `{}`; give the field its value after the struct has a place",
                             shown.join(" | ")
@@ -1188,7 +1193,7 @@ fn not_uniq(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     for &(n, i) in &v.not_uniq {
         let key = fact_key("not_uniq", &[&n, &i]);
         let Some(site) = arg_site(f, n, i) else {
-            out.push(no_site("W0406", f, n, key));
+            out.push(no_site(Code::W0406, f, n, key));
             continue;
         };
         let head = format!(
@@ -1201,7 +1206,7 @@ fn not_uniq(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
             }
             None => head,
         };
-        out.push(Diagnostic::error("W0406", message, site.span).with_facts([key]));
+        out.push(Diagnostic::error(Code::W0406, message, site.span).with_facts([key]));
     }
 }
 
@@ -1217,13 +1222,13 @@ fn arg_effect_outside(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
             .iter()
             .map(|e| fact_key("arg_effect_outside", &[&n, &i, e]));
         let Some(site) = arg_site(f, n, i) else {
-            out.extend(keys.map(|k| no_site("W0705", f, n, k)));
+            out.extend(keys.map(|k| no_site(Code::W0705, f, n, k)));
             continue;
         };
         let shown: Vec<&str> = extra.iter().map(|e| effects::shown(e)).collect();
         out.push(
             Diagnostic::error(
-                "W0705",
+                Code::W0705,
                 format!(
                     "this function argument performs `{}`, which its parameter type does not allow",
                     shown.join(", ")
@@ -1240,7 +1245,7 @@ fn sim_in_lib(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     for &n in &v.sim_in_lib {
         out.push(
             Diagnostic::error(
-                "W0802",
+                Code::W0802,
                 "only binaries and tests can install root handlers (`sim.run`)",
                 node_span(f, n),
             )

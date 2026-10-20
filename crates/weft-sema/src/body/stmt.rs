@@ -7,6 +7,7 @@ use super::{
 };
 use crate::props::Prop;
 use std::collections::{BTreeMap, BTreeSet};
+use weft_syntax::diag::Code;
 
 use weft_syntax::diag::Diagnostic;
 
@@ -139,7 +140,7 @@ impl Lower<'_> {
         if fdef.is_pub && !sig.declared && to_state && !fdef.decl.is_extern {
             let text = self.effect_text(&eff);
             let mut d = Diagnostic::error(
-                "W0701",
+                Code::W0701,
                 format!(
                     "public function `{}` must state its effects: `/ {text}`",
                     fdef.name
@@ -286,7 +287,7 @@ impl Lower<'_> {
             if value < min || value > max {
                 let shown = if neg { format!("-{n}") } else { n.to_string() };
                 self.err(
-                    "W0102",
+                    Code::W0102,
                     format!("`{shown}` does not fit in `{}`", it.name()),
                     span,
                 );
@@ -588,7 +589,7 @@ impl Lower<'_> {
                 format!("returned reference points into `{shown}`")
             };
             self.err(
-                "W0204",
+                Code::W0204,
                 format!("{head}: {what} of `{fname}` goes out of scope at the return"),
                 span,
             );
@@ -910,7 +911,11 @@ impl Lower<'_> {
                 match self.jumps.last().cloned() {
                     _ if self.cur.is_none() => {}
                     Some(Jump::Fence(what)) => {
-                        self.err("W0315", format!("`return` cannot leave a {what}"), s.span);
+                        self.err(
+                            Code::W0315,
+                            format!("`return` cannot leave a {what}"),
+                            s.span,
+                        );
                     }
                     Some(Jump::Closure { .. }) => self.closure_return(&v, s.span),
                     Some(Jump::Function { exit }) => {
@@ -933,7 +938,7 @@ impl Lower<'_> {
                     "continue"
                 };
                 let Some(lf) = self.loops.last().cloned() else {
-                    self.err("W0111", "`break` or `continue` outside a loop", s.span);
+                    self.err(Code::W0111, "`break` or `continue` outside a loop", s.span);
                     return;
                 };
                 let fence = self.jumps[lf.jumps.min(self.jumps.len())..]
@@ -944,7 +949,11 @@ impl Lower<'_> {
                     });
                 if let Some(what) = fence {
                     if self.cur.is_some() {
-                        self.err("W0315", format!("`{word}` cannot leave a {what}"), s.span);
+                        self.err(
+                            Code::W0315,
+                            format!("`{word}` cannot leave a {what}"),
+                            s.span,
+                        );
                     }
                     self.cur = None;
                     return;
@@ -1115,7 +1124,7 @@ impl Lower<'_> {
             (v, places)
         } else {
             let shown = self.show(&t);
-            self.err("W0102", format!("cannot iterate over `{shown}`"), span);
+            self.err(Code::W0102, format!("cannot iterate over `{shown}`"), span);
             (
                 Val {
                     ty: Ty::Error,
@@ -1159,7 +1168,7 @@ impl Lower<'_> {
         let mark = self.pend_uses.len();
         let Some(lv) = self.place_expr(target) else {
             self.err(
-                "W0112",
+                Code::W0112,
                 "the left side of an assignment must be a place",
                 target.span,
             );
@@ -1411,7 +1420,7 @@ impl Lower<'_> {
         if !ok {
             let shown = self.show(&r);
             self.err(
-                "W0102",
+                Code::W0102,
                 format!("arithmetic needs integers, found `{shown}`"),
                 span,
             );
@@ -1438,7 +1447,7 @@ impl Lower<'_> {
                             ts.into_iter().map(|t| Ty::Ref(Box::new(t))).collect()
                         }
                         _ => {
-                            self.err("W0102", "this value is not a tuple of that size", *span);
+                            self.err(Code::W0102, "this value is not a tuple of that size", *span);
                             return;
                         }
                     },
@@ -1448,7 +1457,7 @@ impl Lower<'_> {
                         ts
                     }
                     _ => {
-                        self.err("W0102", "this value is not a tuple of that size", *span);
+                        self.err(Code::W0102, "this value is not a tuple of that size", *span);
                         return;
                     }
                 };
@@ -1483,12 +1492,12 @@ impl Lower<'_> {
             Pattern::Variant { path, fields, span } => {
                 // `let S(a, b) = s` destructures a struct and consumes it.
                 let Some(adt) = self.adt_by_path(path) else {
-                    self.err("W0113", "a variant pattern needs `match`", *span);
+                    self.err(Code::W0113, "a variant pattern needs `match`", *span);
                     return;
                 };
                 let prog = self.prog;
                 let crate::program::AdtKind::Struct(defs) = &prog.adts[adt].kind else {
-                    self.err("W0113", "a variant pattern needs `match`", *span);
+                    self.err(Code::W0113, "a variant pattern needs `match`", *span);
                     return;
                 };
                 let args: Vec<Ty> = self.prog.adts[adt]
@@ -1499,7 +1508,7 @@ impl Lower<'_> {
                 self.unify(&Ty::Adt(adt, args.clone()), &v.ty, *span);
                 if defs.len() != fields.len() {
                     self.err(
-                        "W0103",
+                        Code::W0103,
                         format!("`{}` has {} fields", self.prog.adts[adt].name, defs.len()),
                         *span,
                     );
@@ -1542,7 +1551,7 @@ impl Lower<'_> {
         for (i, id) in names.iter().enumerate() {
             if names[..i].iter().any(|o| o.name == id.name) {
                 self.err(
-                    "W0107",
+                    Code::W0107,
                     format!("`{}` is bound twice in this pattern", id.name),
                     id.span,
                 );
@@ -1616,7 +1625,7 @@ impl Lower<'_> {
             if lv.through_ref {
                 let shown = self.show(&ty);
                 self.err(
-                    "W0303",
+                    Code::W0303,
                     format!("cannot move a `{shown}` out of a borrowed place; borrow it with `&`"),
                     span,
                 );

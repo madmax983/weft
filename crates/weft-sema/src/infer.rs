@@ -41,6 +41,7 @@
 //! function go back on the worklist.
 
 use std::collections::{BTreeSet, HashMap};
+use weft_syntax::diag::Code;
 
 use weft_facts::{FnFacts, Step, StepKind};
 use weft_syntax::diag::Diagnostic;
@@ -525,7 +526,7 @@ pub(crate) fn infer(
 /// W0706: the row of `f` did not reach a fixpoint.
 fn not_converged(prog: &Program, f: usize) -> Diagnostic {
     let mut d = Diagnostic::error(
-        "W0706",
+        Code::W0706,
         format!(
             "effect inference stopped before a fixpoint; the effects of `{}` can be incomplete",
             prog.fns[f].path
@@ -541,7 +542,7 @@ fn not_converged(prog: &Program, f: usize) -> Diagnostic {
 /// change after `most` changes.
 fn not_stable(prog: &Program, f: usize, most: usize) -> Diagnostic {
     let mut d = Diagnostic::error(
-        "W0704",
+        Code::W0704,
         format!(
             "the effects of `{}` do not become stable after {most} changes in effect inference",
             prog.fns[f].path

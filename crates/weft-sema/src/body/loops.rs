@@ -9,6 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::rc::Rc;
+use weft_syntax::diag::Code;
 
 use weft_facts::{CapId, FactMark, NodeId, PlaceId, StepKind, TaskId, VarId};
 use weft_syntax::diag::Diagnostic;
@@ -230,7 +231,7 @@ impl Lower<'_> {
                 if !stable {
                     self.diags.push(
                         Diagnostic::error(
-                            "W0707",
+                            Code::W0707,
                             format!(
                                 "the analysis of this loop stopped after {passes} passes before its values were stable"
                             ),

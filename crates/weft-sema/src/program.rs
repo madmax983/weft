@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use weft_syntax::diag::Code;
 
 use weft_syntax::ast::{
     self, EffectItem, ExternTypeDecl, File, FnDecl, Item, ItemKind, Mode, PlaceExpr, PlaceStep,
@@ -768,7 +769,7 @@ impl Collector {
         }
         for (m, effect, name, span, hider) in found {
             let d = Diagnostic::error(
-                "W0107",
+                Code::W0107,
                 format!(
                     "operation `{name}` of `{effect}` has the name of {hider}, so no call `{name}(...)` reaches it"
                 ),
@@ -795,7 +796,7 @@ impl Collector {
         for a in bad {
             let def = &self.prog.adts[a];
             let d = Diagnostic::error(
-                "W0117",
+                Code::W0117,
                 format!(
                     "struct `{}` holds itself with no indirection, so it has no finite size",
                     def.name
@@ -819,7 +820,7 @@ impl Collector {
                         continue;
                     }
                     Diagnostic::error(
-                        "W0118",
+                        Code::W0118,
                         format!(
                             "`on abort = {}` needs a function that takes one `{ty}` value",
                             name.name
@@ -829,7 +830,7 @@ impl Collector {
                     .note(format!("declare it as `fn {}(x: {ty})`", name.name))
                 }
                 _ => Diagnostic::error(
-                    "W0101",
+                    Code::W0101,
                     format!("unknown function `{}` after `on abort`", name.name),
                     name.span,
                 ),
@@ -860,7 +861,7 @@ impl Collector {
         } else {
             format!("dependency `{name}` has the name of an item that the root sees already")
         };
-        let mut d = Diagnostic::error("W0107", message, Span::default())
+        let mut d = Diagnostic::error(Code::W0107, message, Span::default())
             .note("give the dependency another name in weft.toml");
         d.unit = unit;
         self.diags.push(d);
@@ -894,7 +895,7 @@ impl Collector {
     fn no_ptr(&mut self, t: &TypeExpr) {
         if let Some(span) = ptr_span(t) {
             self.diags.push(Diagnostic::error(
-                "W0116",
+                Code::W0116,
                 "a raw pointer type is valid only in an `extern fn` signature or a local",
                 span,
             ));
@@ -932,7 +933,7 @@ impl Collector {
     fn insert(&mut self, m: ModId, name: &ast::Ident, r: ItemRef) {
         if self.prog.mods[m].items.contains_key(&name.name) {
             self.diags.push(Diagnostic::error(
-                "W0107",
+                Code::W0107,
                 format!("`{}` is defined twice", name.name),
                 name.span,
             ));
@@ -1020,7 +1021,7 @@ impl Collector {
                 ("on_abort", None) => self.prog.adts[id].has_on_abort = true,
                 ("copy", None) => self.prog.adts[id].copy = true,
                 _ => self.diags.push(Diagnostic::error(
-                    "W0108",
+                    Code::W0108,
                     format!("unknown extern type property `{}`", p.key.name),
                     p.key.span,
                 )),
@@ -1078,7 +1079,7 @@ impl Collector {
                                     fields[i].place = sp;
                                 }
                                 _ => self.diags.push(Diagnostic::error(
-                                    "W0605",
+                                    Code::W0605,
                                     format!(
                                         "field `{}` holds a reference; only a `!Move` struct can hold a reference, and only into `self`",
                                         f.name.name
@@ -1172,7 +1173,7 @@ impl Collector {
                     let self_ty = self.resolve_ty(&imp.self_ty, m, &gens, None);
                     let Ty::Adt(owner, _) = self_ty else {
                         self.diags.push(Diagnostic::error(
-                            "W0109",
+                            Code::W0109,
                             "`impl` needs a named type",
                             imp.self_ty.span,
                         ));
@@ -1188,7 +1189,7 @@ impl Collector {
                                 .is_some()
                             {
                                 self.diags.push(Diagnostic::error(
-                                    "W0107",
+                                    Code::W0107,
                                     format!("method `{}` is defined twice", f.name.name),
                                     f.name.span,
                                 ));
@@ -1267,7 +1268,7 @@ impl Collector {
                 .filter(|g| outer.contains(g.name.as_str()))
             {
                 self.diags.push(Diagnostic::error(
-                    "W0107",
+                    Code::W0107,
                     format!("type parameter `{}` is defined twice", g.name),
                     g.span,
                 ));
@@ -1298,7 +1299,7 @@ impl Collector {
                     }
                     (None, _) => {
                         self.diags.push(Diagnostic::error(
-                            "W0110",
+                            Code::W0110,
                             format!("parameter `{}` needs a type", p.name.name),
                             p.span,
                         ));
@@ -1427,7 +1428,7 @@ impl Collector {
                 format!("the places of `{}` form a cycle", names.join("`, `"))
             };
             self.diags.push(
-                Diagnostic::error("W0201", message, params[cycle[0]].span)
+                Diagnostic::error(Code::W0201, message, params[cycle[0]].span)
                     .note("an `in` place must start at another parameter, `self` or an `rc` type"),
             );
         }
@@ -1449,7 +1450,7 @@ impl Collector {
                         if let SigRoot::Param(i) = sp.root {
                             if !params[i].ty.is_ref() {
                                 self.diags.push(Diagnostic::error(
-                                    "W0204",
+                                    Code::W0204,
                                     format!(
                                         "a returned reference cannot point into the by-value parameter `{}`: it goes out of scope at the return",
                                         params[i].name
@@ -1476,7 +1477,7 @@ impl Collector {
                     }
                 }
                 None => self.diags.push(Diagnostic::error(
-                    "W0204",
+                    Code::W0204,
                     "a returned reference must state its place: `&T in param...`",
                     t.span,
                 )),
@@ -1573,7 +1574,7 @@ impl Collector {
             (SigRoot::Group(a), Ty::Adt(a, vec![Ty::Error; n]))
         } else {
             self.diags.push(Diagnostic::error(
-                "W0201",
+                Code::W0201,
                 format!("place root `{rootname}` is not a parameter, `self` or an `rc` type"),
                 pl.root.span,
             ));
@@ -1590,7 +1591,7 @@ impl Collector {
                 PlaceStep::Field(id) => {
                     let Some((step, next, t)) = field_step(&self.prog, &ty, &id.name) else {
                         self.diags.push(Diagnostic::error(
-                            "W0104",
+                            Code::W0104,
                             format!("no field or variant `{}` in this place", id.name),
                             id.span,
                         ));
@@ -1611,7 +1612,7 @@ impl Collector {
                         ty = next;
                     } else {
                         self.diags.push(Diagnostic::error(
-                            "W0104",
+                            Code::W0104,
                             "this place has no elements",
                             pl.span,
                         ));
@@ -1622,7 +1623,7 @@ impl Collector {
                     let hi = matches!(st, PlaceStep::SegHi(_));
                     let Some(&label) = names.get(&k.name) else {
                         self.diags.push(Diagnostic::error(
-                            "W0201",
+                            Code::W0201,
                             format!("split point `{}` is not a parameter", k.name),
                             k.span,
                         ));
@@ -1630,7 +1631,7 @@ impl Collector {
                     };
                     let Some((step, next)) = elem_step(&self.prog, &ty) else {
                         self.diags.push(Diagnostic::error(
-                            "W0104",
+                            Code::W0104,
                             "this place has no elements",
                             pl.span,
                         ));
@@ -1666,7 +1667,7 @@ fn report_duplicates<'a>(
     for n in names {
         if !seen.insert(n.name.as_str()) {
             diags.push(Diagnostic::error(
-                "W0107",
+                Code::W0107,
                 format!("{what} `{}` is defined twice", n.name),
                 n.span,
             ));
@@ -1919,12 +1920,16 @@ impl TyResolver<'_> {
         let conflict = mode_conflict(&t.modes, &mut steps);
         self.prog.add_steps(steps);
         if let Some(message) = conflict {
-            self.diags.push(Diagnostic::error("W0119", message, t.span));
+            self.diags
+                .push(Diagnostic::error(Code::W0119, message, t.span));
         }
         match &t.kind {
             TypeExprKind::SelfType => self_ty.cloned().unwrap_or_else(|| {
-                self.diags
-                    .push(Diagnostic::error("W0101", "`Self` is not in scope", t.span));
+                self.diags.push(Diagnostic::error(
+                    Code::W0101,
+                    "`Self` is not in scope",
+                    t.span,
+                ));
                 Ty::Error
             }),
             TypeExprKind::Ref { inner, .. } => {
@@ -2006,7 +2011,7 @@ impl TyResolver<'_> {
                             let want = self.prog.adts[a].generics.len();
                             if want != args.len() && !args.is_empty() {
                                 self.diags.push(Diagnostic::error(
-                                    "W0103",
+                                    Code::W0103,
                                     format!("`{}` takes {want} type arguments", seg.name),
                                     t.span,
                                 ));
@@ -2024,7 +2029,7 @@ impl TyResolver<'_> {
                 }
                 let text: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
                 self.diags.push(Diagnostic::error(
-                    "W0101",
+                    Code::W0101,
                     format!("unknown type `{}`", text.join(".")),
                     t.span,
                 ));
@@ -2256,7 +2261,7 @@ pub fn check_on_abort_rows(prog: &Program, sigs: &[FnSig], no_runtime: bool) -> 
             .collect();
         if fails {
             let mut d = Diagnostic::error(
-                "W0118",
+                Code::W0118,
                 format!(
                     "`on abort` function `{}` can fail, and a failure there does not reach the handlers of the code that aborts",
                     fd.name
@@ -2277,7 +2282,7 @@ pub fn check_on_abort_rows(prog: &Program, sigs: &[FnSig], no_runtime: bool) -> 
                 "an `on abort` function can perform only the standard effects other than `fail`"
             };
             let mut d = Diagnostic::error(
-                "W0118",
+                Code::W0118,
                 format!(
                     "`on abort` function `{}` performs {}, but the unwinder runs it with the root handlers only",
                     fd.name,
@@ -2294,7 +2299,7 @@ pub fn check_on_abort_rows(prog: &Program, sigs: &[FnSig], no_runtime: bool) -> 
         // handler of the code that aborts, fail, or change a place outside.
         if e.reaches {
             let mut d = Diagnostic::error(
-                "W0118",
+                Code::W0118,
                 format!(
                     "`on abort` function `{}` calls a function value that it does not know, but the unwinder runs it with the root handlers only",
                     fd.name
@@ -2313,7 +2318,7 @@ pub fn check_on_abort_rows(prog: &Program, sigs: &[FnSig], no_runtime: bool) -> 
             .collect();
         if !outside.is_empty() {
             let mut d = Diagnostic::error(
-                "W0118",
+                Code::W0118,
                 format!(
                     "`on abort` function `{}` changes {}, a place outside the value that it gets",
                     fd.name,

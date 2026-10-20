@@ -87,7 +87,7 @@ fn run(path: &Path) -> Result<(), String> {
         .diags
         .iter()
         .filter(|d| d.severity == Severity::Error)
-        .map(|d| (file.line(d.span), d.code.clone()))
+        .map(|d| (file.line(d.span), d.code.to_string()))
         .collect();
     actual.sort();
     let (want, want_tasks) = expected(&src);

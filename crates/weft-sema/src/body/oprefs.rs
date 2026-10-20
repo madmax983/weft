@@ -13,6 +13,7 @@
 //! function value that the body does not follow.
 
 use super::{CapId, Lower, PlaceId, RootKind, Span};
+use weft_syntax::diag::Code;
 
 impl Lower<'_> {
     /// Returns the places that the result of an operation `op` (`None`: any
@@ -227,7 +228,7 @@ impl Lower<'_> {
                     }
                 };
                 self.err(
-                    "W0204",
+                    Code::W0204,
                     format!(
                         "`{fname}` puts {what_in} {into}: {what} goes out of scope at the return"
                     ),

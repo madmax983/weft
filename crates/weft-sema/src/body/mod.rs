@@ -7,6 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::sync::Arc;
+use weft_syntax::diag::Code;
 
 use weft_facts::{
     CapId, FnFacts, HandlerInfo, NodeId, PlaceId, RootId, RootKind, Span, Step, StepKind, TaskId,
@@ -1522,7 +1523,7 @@ impl<'p> Lower<'p> {
         self
     }
 
-    fn err(&mut self, code: &str, msg: impl Into<String>, span: Span) {
+    fn err(&mut self, code: Code, msg: impl Into<String>, span: Span) {
         self.diags.push(Diagnostic::error(code, msg, span));
     }
 
@@ -1540,7 +1541,7 @@ impl<'p> Lower<'p> {
         if !self.inf.unify(a, b) {
             let (x, y) = (self.show(a), self.show(b));
             self.err(
-                "W0102",
+                Code::W0102,
                 format!("type mismatch: expected `{x}`, found `{y}`"),
                 span,
             );

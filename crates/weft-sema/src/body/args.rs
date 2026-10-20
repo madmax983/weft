@@ -7,6 +7,7 @@
 //! names takes no named argument. The interpreter binds the same way.
 
 use super::{Arg, Expr, Lower, Span};
+use weft_syntax::diag::Code;
 
 /// A callee with parameter names, as the messages of W0103 and W0104 show it.
 pub(super) struct ParamNames<'a> {
@@ -50,14 +51,14 @@ impl Lower<'_> {
                     .map(|(i, _)| i);
                 let Some(i) = found else {
                     let msg = format!("{} has no {} named `{}`", callee.what, callee.noun, nm.name);
-                    self.err("W0104", msg, nm.span);
+                    self.err(Code::W0104, msg, nm.span);
                     named_bad = true;
                     let _ = self.expr(&a.value);
                     continue;
                 };
                 if slots[i].is_some() {
                     let msg = format!("argument `{}` is given twice", nm.name);
-                    self.err("W0103", msg, nm.span);
+                    self.err(Code::W0103, msg, nm.span);
                     named_bad = true;
                     let _ = self.expr(&a.value);
                     continue;
@@ -87,7 +88,7 @@ impl Lower<'_> {
             .count();
         if (extra > 0 || missing > 0) && !named_bad {
             self.err(
-                "W0103",
+                Code::W0103,
                 format!(
                     "{} takes {} arguments, found {}",
                     callee.what,
@@ -110,7 +111,7 @@ impl Lower<'_> {
                     "{what} has no parameter names: give the argument `{}` by position",
                     nm.name
                 );
-                self.err("W0104", msg, nm.span);
+                self.err(Code::W0104, msg, nm.span);
             }
         }
     }

@@ -1,6 +1,7 @@
 //! Effect names: aliases, bundles and implication.
 
 use std::collections::BTreeSet;
+use weft_syntax::diag::Code;
 
 use weft_syntax::ast::EffectPath;
 use weft_syntax::diag::Diagnostic;
@@ -57,7 +58,7 @@ pub fn resolve(prog: &Program, m: ModId, path: &EffectPath) -> Result<Vec<String
             return Ok(vec![identity(prog, e)]);
         }
         return Err(Diagnostic::error(
-            "W0101",
+            Code::W0101,
             format!(
                 "effect `{}` is private: it is not `pub` in its package",
                 path.text()
@@ -66,7 +67,7 @@ pub fn resolve(prog: &Program, m: ModId, path: &EffectPath) -> Result<Vec<String
         ));
     }
     let d = Diagnostic::error(
-        "W0101",
+        Code::W0101,
         format!("unknown effect `{}`", path.text()),
         path.span,
     );

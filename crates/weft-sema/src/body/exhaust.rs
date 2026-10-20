@@ -7,6 +7,7 @@
 //! integer, needs a row that matches anything in that column.
 
 use std::cell::Cell;
+use weft_syntax::diag::Code;
 
 use super::{AdtKind, Diagnostic, Lit, Lower, Pattern, Ty};
 
@@ -33,7 +34,7 @@ impl Lower<'_> {
                 format!("this `match` does not cover every value of `{shown}`")
             };
             self.diags.push(
-                Diagnostic::error("W0120", msg, span)
+                Diagnostic::error(Code::W0120, msg, span)
                     .note("add an arm for each missing value, or an arm `_ => ...`"),
             );
         }

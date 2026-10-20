@@ -13,6 +13,7 @@ pub mod props;
 pub mod types;
 
 use weft_facts::FnFacts;
+use weft_syntax::diag::Code;
 use weft_syntax::diag::Diagnostic;
 use weft_syntax::{parse_file, ParseError};
 
@@ -316,7 +317,7 @@ pub fn analyze_source(src: &str, opts: Options) -> Result<Analysis, Diagnostic> 
 fn parse_and_analyze(src: &str, opts: Options) -> Result<Analysis, Diagnostic> {
     let prelude = prelude_unit().map_err(|e| {
         let mut d = Diagnostic::error(
-            "W0001",
+            Code::W0001,
             format!("std/prelude.wf does not parse: {}", e.message),
             e.span,
         );
@@ -324,7 +325,7 @@ fn parse_and_analyze(src: &str, opts: Options) -> Result<Analysis, Diagnostic> {
         d
     })?;
     let file = parse_file(src).map_err(|e| {
-        let mut d = Diagnostic::error("W0001", e.message, e.span);
+        let mut d = Diagnostic::error(Code::W0001, e.message, e.span);
         d.unit = ROOT_UNIT;
         d
     })?;

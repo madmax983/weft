@@ -198,7 +198,7 @@ fn multi_shot_choose_explores_both_branches() {
 fn once_resume_twice_is_a_runtime_error() {
     let src = program("once_twice");
     let c = check(&src);
-    assert!(c.codes().contains(&"W0501".to_string()));
+    assert!(c.codes().iter().any(|x| *x == "W0501"));
     let e = run_main(&c, &opts(0)).unwrap_err();
     assert_eq!(e.kind, ErrorKind::Fault);
     assert!(e.message.contains("`once` continuation was resumed twice"));

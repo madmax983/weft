@@ -5,6 +5,7 @@
 //! the value goes away. The rule `unconsumed(V, P)` then reports it (W0601).
 
 use std::collections::{BTreeMap, BTreeSet};
+use weft_syntax::diag::Code;
 
 use super::{ast, AdtKind, FnId, Lower, Pattern, Span, Ty, Val, VarId, VarKind};
 
@@ -302,7 +303,7 @@ impl Lower<'_> {
             if self.closure_is_once(s) && self.is_copy(into) {
                 let shown = self.show(into);
                 self.err(
-                    "W0502",
+                    Code::W0502,
                     format!("a `once` closure cannot go into a place of type `{shown}`: a copy of the place could call it again"),
                     span,
                 );

@@ -7,6 +7,7 @@ use super::{
     VarId, VarKind,
 };
 use std::collections::{BTreeMap, BTreeSet};
+use weft_syntax::diag::Code;
 
 use weft_facts::{CapId, HandlerId, Step, StepKind, TaskId};
 
@@ -97,7 +98,7 @@ impl Lower<'_> {
                     self.lit_span = base.span;
                     let _ = self.lit(l);
                     self.err(
-                        "W0104",
+                        Code::W0104,
                         format!("a literal has no field `{}`", name.name),
                         name.span,
                     );
@@ -143,7 +144,7 @@ impl Lower<'_> {
             }
             ExprKind::Binary { op, lhs, rhs } => self.binary(*op, lhs, rhs, e.span),
             ExprKind::Range { .. } => {
-                self.err("W0114", "a range is only valid in `for`", e.span);
+                self.err(Code::W0114, "a range is only valid in `for`", e.span);
                 Val {
                     ty: Ty::Error,
                     ..Val::default()
@@ -230,7 +231,7 @@ impl Lower<'_> {
                 let (caps, refs) = self.elements(es, &elem);
                 if u64::try_from(es.len()).ok() != Some(n) {
                     self.err(
-                        "W0102",
+                        Code::W0102,
                         format!("expected an array of {n} elements, found {}", es.len()),
                         e.span,
                     );
@@ -304,7 +305,7 @@ impl Lower<'_> {
                 }
                 let n = self.prog.adts[a].name.clone();
                 self.err(
-                    "W0104",
+                    Code::W0104,
                     format!("`{n}` has no unit variant `{}`", name.name),
                     name.span,
                 );
@@ -319,7 +320,7 @@ impl Lower<'_> {
                     Some(self.item_value(f, name.span))
                 } else {
                     self.err(
-                        "W0104",
+                        Code::W0104,
                         format!("no item `{}` in this module", name.name),
                         name.span,
                     );
@@ -331,7 +332,7 @@ impl Lower<'_> {
             }
             PathRef::Effect(_) => {
                 self.err(
-                    "W0105",
+                    Code::W0105,
                     "an effect is not a value; call one of its operations",
                     name.span,
                 );
@@ -423,7 +424,7 @@ impl Lower<'_> {
             if let Some(v) = self.unit_variant(&id.name) {
                 return v;
             }
-            self.err("W0101", format!("unknown name `{}`", id.name), span);
+            self.err(Code::W0101, format!("unknown name `{}`", id.name), span);
             Val {
                 ty: Ty::Error,
                 ..Val::default()
@@ -613,7 +614,7 @@ impl Lower<'_> {
                     })
                 } else {
                     let shown = self.show(&rt);
-                    self.err("W0104", format!("`{shown}` has no elements"), e.span);
+                    self.err(Code::W0104, format!("`{shown}` has no elements"), e.span);
                     Some(LVal {
                         ty: Ty::Error,
                         ..lv
@@ -690,7 +691,7 @@ impl Lower<'_> {
             if !matches!(t, Ty::Error) {
                 let shown = self.show(&t);
                 self.err(
-                    "W0104",
+                    Code::W0104,
                     format!("`{shown}` has no field `{}`", name.name),
                     span,
                 );
@@ -875,7 +876,7 @@ impl Lower<'_> {
     ) -> Val {
         let Some(adt) = self.adt_by_path(path) else {
             self.err(
-                "W0101",
+                Code::W0101,
                 format!(
                     "unknown struct `{}`",
                     path.last().map_or("", |p| p.name.as_str())
@@ -889,7 +890,7 @@ impl Lower<'_> {
         };
         let prog = self.prog;
         let AdtKind::Struct(defs) = &prog.adts[adt].kind else {
-            self.err("W0102", "this type is not a struct", span);
+            self.err(Code::W0102, "this type is not a struct", span);
             return Val {
                 ty: Ty::Error,
                 ..Val::default()
@@ -907,7 +908,7 @@ impl Lower<'_> {
         for (i, (name, value)) in fields.iter().enumerate() {
             if given.contains(&name.name.as_str()) {
                 self.err(
-                    "W0107",
+                    Code::W0107,
                     format!("field `{}` is given twice", name.name),
                     name.span,
                 );
@@ -940,7 +941,7 @@ impl Lower<'_> {
                         });
                     }
                 }
-                None => self.err("W0104", format!("no field `{}`", name.name), name.span),
+                None => self.err(Code::W0104, format!("no field `{}`", name.name), name.span),
             }
             self.escape(&v);
             caps.extend(self.val_caps(&v));
@@ -958,7 +959,7 @@ impl Lower<'_> {
         // `Lower::unset_paths`.
         for d in defs {
             if d.place.is_none() && !fields.iter().any(|(n, _)| n.name == d.name) {
-                self.err("W0115", format!("missing field `{}`", d.name), span);
+                self.err(Code::W0115, format!("missing field `{}`", d.name), span);
             }
         }
         Val {
@@ -1237,7 +1238,7 @@ impl Lower<'_> {
             Pattern::Tuple(ps, s) => {
                 let rt = self.inf.deep(&t);
                 let Ty::Tuple(ts) = rt else {
-                    self.err("W0102", "this value is not a tuple", *s);
+                    self.err(Code::W0102, "this value is not a tuple", *s);
                     return;
                 };
                 for (i, (p, pt)) in ps.iter().zip(&ts).enumerate() {
@@ -1272,7 +1273,7 @@ impl Lower<'_> {
                     Ty::Var(_) | Ty::Error => {
                         let Some(&(a, _)) = self.prog.variants.get(name).and_then(|v| v.first())
                         else {
-                            self.err("W0101", format!("unknown variant `{name}`"), *span);
+                            self.err(Code::W0101, format!("unknown variant `{name}`"), *span);
                             return;
                         };
                         let args: Vec<Ty> = self.prog.adts[a]
@@ -1285,7 +1286,7 @@ impl Lower<'_> {
                     }
                     _ => {
                         self.err(
-                            "W0102",
+                            Code::W0102,
                             format!("variant `{name}` does not match this type"),
                             *span,
                         );
@@ -1294,11 +1295,11 @@ impl Lower<'_> {
                 };
                 let prog = self.prog;
                 let AdtKind::Enum(vs) = &prog.adts[adt].kind else {
-                    self.err("W0102", "this value is not an enum", *span);
+                    self.err(Code::W0102, "this value is not an enum", *span);
                     return;
                 };
                 let Some(vi) = vs.iter().position(|v| &v.name == name) else {
-                    self.err("W0101", format!("unknown variant `{name}`"), *span);
+                    self.err(Code::W0101, format!("unknown variant `{name}`"), *span);
                     return;
                 };
                 let ftys: Vec<Ty> = vs[vi]
@@ -1308,7 +1309,7 @@ impl Lower<'_> {
                     .collect();
                 if ftys.len() != fields.len() {
                     self.err(
-                        "W0103",
+                        Code::W0103,
                         format!("variant `{name}` has {} fields", ftys.len()),
                         *span,
                     );
@@ -1394,7 +1395,7 @@ impl Lower<'_> {
         for (i, p) in params.iter().enumerate() {
             if params[..i].iter().any(|q| q.name.name == p.name.name) {
                 self.err(
-                    "W0107",
+                    Code::W0107,
                     format!("parameter `{}` is defined twice", p.name.name),
                     p.name.span,
                 );
@@ -1706,7 +1707,7 @@ impl Lower<'_> {
                         format!("the closure returns a reference into `{shown}`")
                     };
                     self.err(
-                        "W0204",
+                        Code::W0204,
                         format!("{head}: {whose} goes out of scope at the return"),
                         span,
                     );
@@ -1795,7 +1796,7 @@ impl Lower<'_> {
         };
         if eid.is_none() {
             self.err(
-                "W0101",
+                Code::W0101,
                 format!("unknown effect `{}`", effect.text()),
                 effect.span,
             );
@@ -1992,7 +1993,7 @@ impl Lower<'_> {
         let (def, cap) = (around.def, around.cap);
         let Some(op) = def.ops.iter().find(|o| o.name == c.op.name) else {
             self.err(
-                "W0104",
+                Code::W0104,
                 format!("effect `{}` has no operation `{}`", def.name, c.op.name),
                 c.op.span,
             );
@@ -2000,7 +2001,7 @@ impl Lower<'_> {
         };
         if op.params.len() != c.params.len() {
             self.err(
-                "W0103",
+                Code::W0103,
                 format!(
                     "operation `{}` takes {} parameters",
                     op.name,
@@ -2244,7 +2245,7 @@ impl Lower<'_> {
                 if v_refs_result(&self.facts, &results, &v.refs) {
                     let name = self.locals[l].name.clone();
                     self.err(
-                        "W0204",
+                        Code::W0204,
                         format!("the `handle` returns a reference into `{name}`: the local of the clause goes out of scope when the clause ends"),
                         span,
                     );

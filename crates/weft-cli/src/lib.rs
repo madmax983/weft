@@ -4,6 +4,7 @@ pub mod package;
 
 use std::fmt::Write as _;
 use std::path::Path;
+use weft_syntax::diag::Code;
 
 use anyhow::{bail, Context, Result};
 use weft_check::{agreement, bridge, check_analysis, codes, Checked};
@@ -335,7 +336,7 @@ fn diag_json_in(file: Option<&weft_syntax::SourceFile>, d: &Diagnostic) -> Strin
     };
     format!(
         "{{\"code\":{},\"severity\":\"{sev}\",\"message\":{},\"file\":{},\"line\":{line},\"column\":{col},\"notes\":[{}]}}",
-        json_escape(&d.code),
+        json_escape(d.code.as_str()),
         json_escape(&d.message),
         json_escape(&name),
         notes.join(",")
@@ -376,7 +377,7 @@ fn check(f: &Flags) -> Result<Output> {
                         |(d, (line, col))| {
                             format!(
                                 "{{\"code\":{},\"line\":{line},\"column\":{col}}}",
-                                json_escape(&d.code)
+                                json_escape(d.code.as_str())
                             )
                         },
                     );
@@ -544,7 +545,7 @@ fn lint(f: &Flags) -> Result<Output> {
                 .map(|n| n.span)
                 .unwrap_or_default();
             let mut d = Diagnostic::warning(
-                "L0001",
+                Code::L0001,
                 format!("lint `{name}` in `{}`", b.facts.name),
                 span,
             );

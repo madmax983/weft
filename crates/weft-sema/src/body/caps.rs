@@ -6,6 +6,7 @@
 //! that can keep it. A value in a local of the body goes out of scope with it.
 
 use std::collections::BTreeSet;
+use weft_syntax::diag::Code;
 
 use super::{
     effects, CapId, FnId, FnInfo, Lower, NodeId, PlaceId, RootKind, Span, Summary, Ty, Val, VarId,
@@ -832,7 +833,7 @@ impl Lower<'_> {
             .expand_caps(&self.val_caps(v))
             .contains(&Held::Cap(cap))
         {
-            self.err("W0313", head, span);
+            self.err(Code::W0313, head, span);
             return true;
         }
         let mut how = None;
@@ -847,7 +848,7 @@ impl Lower<'_> {
             break;
         }
         if let Some(how) = how {
-            self.err("W0313", format!("{head}: {how}"), span);
+            self.err(Code::W0313, format!("{head}: {how}"), span);
             return true;
         }
         false
@@ -877,7 +878,7 @@ impl Lower<'_> {
         {
             let end = Span::new(body.hi.saturating_sub(1), body.hi);
             self.err(
-                "W0313",
+                Code::W0313,
                 format!("{head}: it is the value of the clause"),
                 end,
             );
@@ -913,7 +914,7 @@ impl Lower<'_> {
                 .map(|l| format!("the local `{}` keeps it", self.locals[l].name))
         };
         if let Some(how) = how {
-            self.err("W0313", format!("{head}: {how}"), span);
+            self.err(Code::W0313, format!("{head}: {how}"), span);
         }
     }
 
@@ -1002,7 +1003,7 @@ impl Lower<'_> {
         if let Some(l) = keeps {
             let name = self.locals[l].name.clone();
             self.err(
-                "W0313",
+                Code::W0313,
                 format!("a closure that performs `{effect}` escapes its handler: the local `{name}` keeps it"),
                 span,
             );
