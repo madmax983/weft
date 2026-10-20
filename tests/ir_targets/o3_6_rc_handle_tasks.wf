@@ -7,10 +7,13 @@
 // Decision (ADR 0003, open item): a reference through a handle depends on
 // `handle.*`. A place through an `Rc` handle also reads the handle place (the
 // variable, or the field that holds the handle), also in the reads of a task.
-// So a free or a new value of the handle conflicts with the task (W0405). The
-// checker does not enforce it yet.
+// So a free or a new value of the handle conflicts with the task (W0405). This
+// is true for a move or a new value of the field that holds the handle, a new
+// value of the struct that holds it, and the end of its scope in a loop body.
+// The checker does not enforce it yet.
 struct Node { v: u64 }
 struct Hold { r: Rc<Node>, n: u64 }
+struct HoldB { r: Box<Node>, n: u64 }
 fn take<T>(x: T) { }
 fn take_rc(x: Rc<Node>) { }
 
@@ -68,6 +71,44 @@ fn bad_field_handle() {
         print(b.join())
     }
 }
+// Bad: the parent moves the field that holds the handle, or gives it a new
+// value.
+fn bad_field_move() {
+    let h = Hold { r: Rc.new(Node { v: 5 }), n: 1 }
+    scope { s =>
+        let b = s.spawn(|| h.r.v + 1)
+        take(h.r)   //~ W0405
+        print(b.join())
+    }
+}
+fn bad_field_new_value() {
+    let h = Hold { r: Rc.new(Node { v: 5 }), n: 1 }
+    scope { s =>
+        let b = s.spawn(|| h.r.v + 1)
+        h.r = Rc.new(Node { v: 6 })   //~ W0405
+        print(b.join())
+    }
+}
+// Bad: the parent gives the struct that holds the handle a new value.
+fn bad_whole_new_value() {
+    let h = Hold { r: Rc.new(Node { v: 5 }), n: 1 }
+    scope { s =>
+        let b = s.spawn(|| h.r.v + 1)
+        h = Hold { r: Rc.new(Node { v: 6 }), n: 2 }   //~ W0405
+        print(b.join())
+    }
+}
+// Bad: the handle goes out of scope at the end of each pass of the loop body
+// while its task still runs.
+fn bad_loop_scope_end() {
+    scope { s =>
+        for i in 0..2 {
+            let shared = Rc.new(Node { v: i })
+            s.spawn(|| { sleep(1.s); print(shared.v) })
+        }   //~ W0405
+        print(0)
+    }
+}
 
 // Control: the checker finds the same code with a `Box` today.
 fn bad_control_boxed() {
@@ -76,6 +117,23 @@ fn bad_control_boxed() {
         let b = s.spawn(|| bx.v + 1)
         take(bx)   //~ W0405
         print(b.join())
+    }
+}
+fn bad_control_box_field() {
+    let h = HoldB { r: Box.new(Node { v: 5 }), n: 1 }
+    scope { s =>
+        let b = s.spawn(|| h.r.v + 1)
+        h.r = Box.new(Node { v: 6 })   //~ W0405
+        print(b.join())
+    }
+}
+fn bad_control_box_loop() {
+    scope { s =>
+        for i in 0..2 {
+            let bx = Box.new(Node { v: i })
+            s.spawn(|| { sleep(1.s); print(bx.v) })
+        }   //~ W0405
+        print(0)
     }
 }
 
@@ -132,6 +190,42 @@ fn ok_field_handle() {
         take(h)
     }
 }
+fn ok_field_move() {
+    let h = Hold { r: Rc.new(Node { v: 5 }), n: 1 }
+    scope { s =>
+        let b = s.spawn(|| h.r.v + 1)
+        print(b.join())
+        take(h.r)
+    }
+}
+fn ok_field_new_value() {
+    let h = Hold { r: Rc.new(Node { v: 5 }), n: 1 }
+    scope { s =>
+        let b = s.spawn(|| h.r.v + 1)
+        print(b.join())
+        h.r = Rc.new(Node { v: 6 })
+        print(h.r.v)
+    }
+}
+fn ok_whole_new_value() {
+    let h = Hold { r: Rc.new(Node { v: 5 }), n: 1 }
+    scope { s =>
+        let b = s.spawn(|| h.r.v + 1)
+        print(b.join())
+        h = Hold { r: Rc.new(Node { v: 6 }), n: 2 }
+        print(h.n)
+    }
+}
+fn ok_loop_scope_end() {
+    scope { s =>
+        for i in 0..2 {
+            let shared = Rc.new(Node { v: i })
+            let b = s.spawn(|| { sleep(1.s); print(shared.v) })
+            b.join()
+        }
+        print(0)
+    }
+}
 
 test "ok_move_generic" { ok_move_generic() }
 test "ok_move_let" { ok_move_let() }
@@ -139,3 +233,7 @@ test "ok_move_typed" { ok_move_typed() }
 test "ok_new_value" { ok_new_value() }
 test "ok_scope_end" { ok_scope_end() }
 test "ok_field_handle" { ok_field_handle() }
+test "ok_field_move" { ok_field_move() }
+test "ok_field_new_value" { ok_field_new_value() }
+test "ok_whole_new_value" { ok_whole_new_value() }
+test "ok_loop_scope_end" { ok_loop_scope_end() }

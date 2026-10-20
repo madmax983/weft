@@ -75,7 +75,7 @@ win over the markers and the manifest.
 | `proofs/` | Verus soundness models: group borrowing and algebraic effects. See `proofs/README.md`. |
 | `std/prelude.wf` | The standard prelude. |
 | `tests/programs` | The design examples and at least one negative program per rule. |
-| `tests/ir_targets` | Acceptance targets of the core IR: programs that the checker accepts today and that fault at run time (`docs/traceability.md`). |
+| `tests/ir_targets` | Acceptance targets of the core IR. Each file has bad cases that the checker accepts today and that fault at run time, controls that the checker finds today, and clean cases in test blocks (`docs/traceability.md`). |
 | `tests/packages` | Packages for the tests of `weft deps`. |
 | `examples/` | A package with dependencies, a library, and a lint rule file. |
 | `docs/` | The design, the plan, ADRs, the grammar, the architecture and the traceability matrix. |

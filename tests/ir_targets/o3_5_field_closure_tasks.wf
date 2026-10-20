@@ -1,17 +1,31 @@
 // Core IR target O3-5 (review round 3). A closure in a field of a local struct
 // runs in a task or a fork branch. The task writes what the closure writes,
 // but W0405 and W0403 do not see it. So the parent reads `v` while the task
-// pushes to it: a data race. The same closure in a `Vec`, a tuple, an `Option`
-// or a generic struct gets W0405 today.
+// pushes to it: a data race. The checker finds the same closure in a `Vec`, a
+// tuple or an `Option` today when the type of the element is the type of the
+// closure. It does not find it when the declared type of the place is `fn()`
+// (a field, or a `Vec<fn()>`), or when a callee of the task reads the closure
+// out of a container behind a reference parameter. A callee that returns a
+// struct, a tuple or a `Vec` that holds a closure loses what the closure
+// writes, also in code with no task (W0301).
 // Decision (ADR 0005 and ADR 0006, open item, the footprint of stored
-// values): a task that reads a function value from a field, or runs a value
-// that can be a closure stored in a field of a local, writes and reads what
-// each closure stored there writes and reads, as for a `Vec` element. The
-// checker does not enforce it yet.
+// values): a run of a function value that can be a closure stored in a place
+// (a field, an element or a part, also behind a reference, in a `Box`, or in a
+// value that a callee returns) writes and reads what each closure stored there
+// writes and reads. A task or a fork branch has this footprint, also when a
+// callee of the task reads the closure from a container behind its reference
+// parameter. The checker does not enforce it yet.
 struct H { f: fn() }
 struct HH { h: H, n: u64 }
+struct HO { f: Option<fn()> }
+struct HV { fs: Vec<fn()> }
 fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
 fn run_h(h: &H) { let g = h.f; g() }
+fn run_vec(h: &Vec<fn()>) { let g = h[0]; g() }
+fn run_tuple(h: &(fn(), u64)) { let g = h.0; g() }
+fn run_d(f: fn()) { f() }
+fn mk_h(v: &Vec<u64>) -> H / mut(v) { H { f: || v.push(2) } }
+fn mk_t(v: &Vec<u64>) -> (fn(), u64) / mut(v) { (|| v.push(2), 1) }
 
 // Bad: the parent reads `v` while the task runs the closure of the field.
 fn bad_local_copy() {
@@ -64,6 +78,97 @@ fn bad_callee() {
         print(v.len())   //~ W0405
     }
 }
+// Bad: the callee of the task reads the closure out of a container behind
+// its reference parameter.
+fn bad_callee_vec() {
+    let v = mk_v()
+    let h = Vec.new()
+    h.push(|| v.push(2))
+    scope { s =>
+        s.spawn(|| run_vec(&h))
+        print(v.len())   //~ W0405
+    }
+}
+fn bad_callee_tuple() {
+    let v = mk_v()
+    let h = (|| v.push(2), 1)
+    scope { s =>
+        s.spawn(|| run_tuple(&h))
+        print(v.len())   //~ W0405
+    }
+}
+// Bad: the closure is in an `Option` field, in a `Vec` field, or in a
+// `Vec<fn()>`.
+fn bad_opt_field() {
+    let v = mk_v()
+    let h = HO { f: Some(|| v.push(2)) }
+    scope { s =>
+        s.spawn(|| match h.f { Some(g) => g(), None => {} })
+        print(v.len())   //~ W0405
+    }
+}
+fn bad_vec_field() {
+    let v = mk_v()
+    let h = HV { fs: Vec.new() }
+    h.fs.push(|| v.push(2))
+    scope { s =>
+        s.spawn(|| { let g = h.fs[0]; g() })
+        print(v.len())   //~ W0405
+    }
+}
+fn bad_typed_vec() {
+    let v = mk_v()
+    let fs: Vec<fn()> = Vec.new()
+    fs.push(|| v.push(2))
+    scope { s =>
+        s.spawn(|| { let g = fs[0]; g() })
+        print(v.len())   //~ W0405
+    }
+}
+// Bad: the struct is in a `Box`, or the task reads it through a reference.
+fn bad_boxed_struct() {
+    let v = mk_v()
+    let h = Box.new(H { f: || v.push(2) })
+    scope { s =>
+        s.spawn(|| { let g = h.f; g() })
+        print(v.len())   //~ W0405
+    }
+}
+fn bad_ref_struct() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    let p = &h
+    scope { s =>
+        s.spawn(|| { let g = p.f; g() })
+        print(v.len())   //~ W0405
+    }
+}
+// Bad: a callee makes the struct, and its closure writes the argument.
+fn bad_returned_struct() {
+    let v = mk_v()
+    let h = mk_h(&v)
+    scope { s =>
+        s.spawn(|| { let g = h.f; g() })
+        print(v.len())   //~ W0405
+    }
+}
+// Bad: the same with no task. The closure can grow `v`, so `r` dangles.
+fn bad_returned_seq() {
+    let v = mk_v()
+    let h = mk_h(&v)
+    let r = &v[0]
+    let g = h.f
+    g()
+    print(r)   //~ W0301
+}
+fn bad_returned_tuple_seq() {
+    let v = mk_v()
+    let t = mk_t(&v)
+    let r = &v[0]
+    let g = t.0
+    g()
+    print(r)   //~ W0301
+}
 // Bad: two tasks run the closure, and each one writes `v`.
 fn bad_two_tasks() {
     let v = mk_v()
@@ -74,14 +179,31 @@ fn bad_two_tasks() {
         s.spawn(|| g())   //~ W0405
     }
 }
+// Bad: one task runs the closure, and a sibling task reads `v`.
+fn bad_sibling() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    scope { s =>
+        s.spawn(|| { let g = h.f; g() })
+        s.spawn(|| print(v.len()))   //~ W0405
+    }
+}
 // Bad: one branch runs the closure, and the other reads `v`.
 fn bad_fork_branch() {
     let v = mk_v()
     let h = H { f: || v.push(2) }
     let _ = fork(|| { let g = h.f; g() }, || print(v.len()))   //~ W0405
 }
+// Bad: each branch runs the closure.
+fn bad_fork_two() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    let _ = fork(|| { let g = h.f; g() }, || { let g = h.f; g() })   //~ W0405
+}
 
-// Control: the checker finds the same closure in a `Vec` today.
+// Control: the checker finds today the same closure in a `Vec` whose element
+// type is the type of the closure, a closure that the task gives directly to a
+// callee, and a closure that a callee returns directly.
 fn bad_control_in_vec() {
     let v = mk_v()
     let fs = Vec.new()
@@ -90,6 +212,22 @@ fn bad_control_in_vec() {
         s.spawn(|| { let g = fs[0]; g() })
         print(v.len())   //~ W0405
     }
+}
+fn bad_control_callee_direct() {
+    let v = mk_v()
+    let h = (|| v.push(2), 1)
+    scope { s =>
+        s.spawn(|| run_d(h.0))
+        print(v.len())   //~ W0405
+    }
+}
+fn mk_c(v: &Vec<u64>) -> fn() / mut(v) { || v.push(2) }
+fn bad_control_returned() {
+    let v = mk_v()
+    let g = mk_c(&v)
+    let r = &v[0]
+    g()
+    print(r)   //~ W0301
 }
 
 // Clean: the parent reads `v` after the join of the task.
@@ -149,6 +287,91 @@ fn ok_callee() {
         print(v.len())
     }
 }
+fn ok_callee_vec() {
+    let v = mk_v()
+    let h = Vec.new()
+    h.push(|| v.push(2))
+    scope { s =>
+        let t = s.spawn(|| run_vec(&h))
+        t.join()
+        print(v.len())
+    }
+}
+fn ok_callee_tuple() {
+    let v = mk_v()
+    let h = (|| v.push(2), 1)
+    scope { s =>
+        let t = s.spawn(|| run_tuple(&h))
+        t.join()
+        print(v.len())
+    }
+}
+fn ok_opt_field() {
+    let v = mk_v()
+    let h = HO { f: Some(|| v.push(2)) }
+    scope { s =>
+        let t = s.spawn(|| match h.f { Some(g) => g(), None => {} })
+        t.join()
+        print(v.len())
+    }
+}
+fn ok_vec_field() {
+    let v = mk_v()
+    let h = HV { fs: Vec.new() }
+    h.fs.push(|| v.push(2))
+    scope { s =>
+        let t = s.spawn(|| { let g = h.fs[0]; g() })
+        t.join()
+        print(v.len())
+    }
+}
+fn ok_typed_vec() {
+    let v = mk_v()
+    let fs: Vec<fn()> = Vec.new()
+    fs.push(|| v.push(2))
+    scope { s =>
+        let t = s.spawn(|| { let g = fs[0]; g() })
+        t.join()
+        print(v.len())
+    }
+}
+fn ok_boxed_struct() {
+    let v = mk_v()
+    let h = Box.new(H { f: || v.push(2) })
+    scope { s =>
+        let t = s.spawn(|| { let g = h.f; g() })
+        t.join()
+        print(v.len())
+    }
+}
+fn ok_ref_struct() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    let p = &h
+    scope { s =>
+        let t = s.spawn(|| { let g = p.f; g() })
+        t.join()
+        print(v.len())
+    }
+}
+fn ok_returned_struct() {
+    let v = mk_v()
+    let h = mk_h(&v)
+    scope { s =>
+        let t = s.spawn(|| { let g = h.f; g() })
+        t.join()
+        print(v.len())
+    }
+}
+// Clean: the reference into `v` comes after the run of the closure.
+fn ok_returned_seq() {
+    let v = mk_v()
+    let h = mk_h(&v)
+    let g = h.f
+    g()
+    let r = &v[0]
+    print(r)
+}
 // Clean: the second task starts after the join of the first.
 fn ok_two_tasks() {
     let v = mk_v()
@@ -171,12 +394,29 @@ fn ok_other_vector() {
         print(w.len())
     }
 }
+// Clean: the sibling task starts after the join of the first.
+fn ok_sibling() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    scope { s =>
+        let t = s.spawn(|| { let g = h.f; g() })
+        t.join()
+        s.spawn(|| print(v.len()))
+    }
+}
 // Clean: the branches touch different vectors.
 fn ok_fork_branch() {
     let v = mk_v()
     let w = mk_v()
     let h = H { f: || v.push(2) }
     let _ = fork(|| { let g = h.f; g() }, || print(w.len()))
+}
+fn ok_fork_two() {
+    let v = mk_v()
+    let w = mk_v()
+    let h = H { f: || v.push(2) }
+    let k = H { f: || w.push(2) }
+    let _ = fork(|| { let g = h.f; g() }, || { let g = k.f; g() })
 }
 
 test "ok_local_copy" { ok_local_copy() }
@@ -185,6 +425,17 @@ test "ok_spawn_field" { ok_spawn_field() }
 test "ok_field_assigned" { ok_field_assigned() }
 test "ok_nested" { ok_nested() }
 test "ok_callee" { ok_callee() }
+test "ok_callee_vec" { ok_callee_vec() }
+test "ok_callee_tuple" { ok_callee_tuple() }
+test "ok_opt_field" { ok_opt_field() }
+test "ok_vec_field" { ok_vec_field() }
+test "ok_typed_vec" { ok_typed_vec() }
+test "ok_boxed_struct" { ok_boxed_struct() }
+test "ok_ref_struct" { ok_ref_struct() }
+test "ok_returned_struct" { ok_returned_struct() }
+test "ok_returned_seq" { ok_returned_seq() }
 test "ok_two_tasks" { ok_two_tasks() }
 test "ok_other_vector" { ok_other_vector() }
+test "ok_sibling" { ok_sibling() }
 test "ok_fork_branch" { ok_fork_branch() }
+test "ok_fork_two" { ok_fork_two() }

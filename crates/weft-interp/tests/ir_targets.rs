@@ -4,11 +4,17 @@
 //! reject it (the test `ir_targets` of `weft-check`). This test shows that each
 //! bad case is a real defect, and that each clean case is clean:
 //!
-//! - Each test block of a file runs a clean case. It must pass with the oracle.
-//! - Each function `bad_NAME()` of a file is a bad case. The test adds
-//!   `test "bad_NAME" { bad_NAME() }` to the source and runs that test with
-//!   the oracle, for the seeds 0 to 20 and for 1, 2 and 4 workers. One of
-//!   these runs must fault.
+//! - Each test block of a file runs a clean case. It must pass with the oracle,
+//!   for the seeds 0 to 20 and for 1, 2 and 4 workers.
+//! - Each top-level function `bad_NAME()` of a file is a bad case. The test
+//!   adds `test "bad_NAME" { bad_NAME() }` to the source and runs that test
+//!   with the oracle, for the same seeds and worker counts. One of these runs
+//!   must fault. A function `bad_NAME` with parameters, with `pub` or in a
+//!   `mod` is an error: the test cannot run it.
+//! - Each `//~` marker must be in a top-level function that a bad case reaches.
+//!   A function reaches each function whose name is in its text. So a marker
+//!   in a helper that no bad case calls is an error: no run shows that it is
+//!   real.
 //!
 //! A fault is a run-time error of the kind `ErrorKind::Fault` that shows a
 //! defect that the checker must reject: an oracle check, a use after a move,
@@ -19,11 +25,14 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, missing_docs)]
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use weft_interp::{run_tests, ErrorKind, RunOptions};
 use weft_sema::Options;
+use weft_syntax::ast::{Item, ItemKind};
+use weft_syntax::{parse_file, SourceFile};
 
 /// The texts of the faults that count, after the kind.
 const FAULTS: [&str; 3] = [
@@ -32,10 +41,10 @@ const FAULTS: [&str; 3] = [
     "so the unwinder cannot finish it",
 ];
 
-/// The seeds of the runs of a bad case.
+/// The seeds of the runs of a bad case and of the clean cases.
 const SEEDS: std::ops::RangeInclusive<u64> = 0..=20;
 
-/// The worker counts of the runs of a bad case.
+/// The worker counts of the runs of a bad case and of the clean cases.
 const WORKERS: [usize; 3] = [1, 2, 4];
 
 fn targets() -> Vec<PathBuf> {
@@ -67,23 +76,122 @@ fn is_fault(message: &str) -> bool {
         .is_some_and(|m| FAULTS.iter().any(|f| m.contains(f)))
 }
 
-/// Returns the name of each bad case: each top-level `fn bad_NAME()`.
-fn bad_cases(src: &str) -> Result<Vec<&str>, String> {
+/// A top-level function of a target.
+struct Func {
+    name: String,
+    /// The first and the last line of the function.
+    lines: (usize, usize),
+    /// The words of its text: the names that it can call or use.
+    words: BTreeSet<String>,
+}
+
+/// Returns the words (identifiers) of a text.
+fn words(text: &str) -> BTreeSet<String> {
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|w| !w.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Adds a reason to `errors` for each function `bad_NAME` of an item that
+/// cannot run as a bad case: a `pub` function, a function with parameters, or
+/// a function in a `mod`.
+fn check_bad_item(item: &Item, top: bool, errors: &mut Vec<String>) {
+    match &item.kind {
+        ItemKind::Fn(f) if f.name.name.starts_with("bad_") => {
+            let name = &f.name.name;
+            if !top {
+                errors.push(format!("`{name}` must be a top-level function"));
+            }
+            if item.is_pub {
+                errors.push(format!("`{name}` must not be `pub`"));
+            }
+            if !f.params.is_empty() {
+                errors.push(format!("`{name}` must take no argument"));
+            }
+        }
+        ItemKind::Mod(m) => {
+            for i in &m.items {
+                check_bad_item(i, false, errors);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Returns the top-level functions of a target, or the reasons that its bad
+/// cases cannot run.
+fn functions(src: &str) -> Result<Vec<Func>, Vec<String>> {
+    let parsed = parse_file(src).map_err(|e| vec![format!("parse error: {e}")])?;
+    let file = SourceFile::new("target", src);
+    let mut errors = Vec::new();
     let mut out = Vec::new();
-    for line in src.lines() {
-        let Some(rest) = line.strip_prefix("fn bad_") else {
+    for item in &parsed.items {
+        check_bad_item(item, true, &mut errors);
+        let ItemKind::Fn(f) = &item.kind else {
             continue;
         };
-        let len = rest
-            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-            .unwrap_or(rest.len());
-        let name = &line[3..3 + "bad_".len() + len];
-        if !rest[len..].starts_with("()") {
-            return Err(format!("`{name}` must take no argument"));
-        }
-        out.push(name);
+        let (lo, hi) = (item.span.lo, item.span.hi.max(item.span.lo + 1) - 1);
+        let text = src.get(lo as usize..=hi as usize).unwrap_or_default();
+        out.push(Func {
+            name: f.name.name.clone(),
+            lines: (file.line_col(lo).0, file.line_col(hi).0),
+            words: words(text),
+        });
     }
-    Ok(out)
+    if errors.is_empty() {
+        Ok(out)
+    } else {
+        Err(errors)
+    }
+}
+
+/// Returns the names of the bad cases: the top-level functions `bad_NAME`.
+fn bad_cases(funcs: &[Func]) -> Vec<&str> {
+    funcs
+        .iter()
+        .map(|f| f.name.as_str())
+        .filter(|n| n.starts_with("bad_"))
+        .collect()
+}
+
+/// Returns the names of the functions that a bad case reaches.
+fn reached(funcs: &[Func]) -> BTreeSet<&str> {
+    let mut seen: BTreeSet<&str> = bad_cases(funcs).into_iter().collect();
+    let mut work: Vec<&str> = seen.iter().copied().collect();
+    while let Some(n) = work.pop() {
+        let Some(f) = funcs.iter().find(|f| f.name == n) else {
+            continue;
+        };
+        for g in funcs.iter().filter(|g| f.words.contains(&g.name)) {
+            if seen.insert(g.name.as_str()) {
+                work.push(g.name.as_str());
+            }
+        }
+    }
+    seen
+}
+
+/// Returns a reason for each `//~` marker that is not in a function that a bad
+/// case reaches.
+fn unreached_markers(src: &str, funcs: &[Func]) -> Vec<String> {
+    let reach = reached(funcs);
+    let mut out = Vec::new();
+    for (i, line) in src.lines().enumerate() {
+        if !line.contains("//~") {
+            continue;
+        }
+        let n = i + 1;
+        match funcs.iter().find(|f| f.lines.0 <= n && n <= f.lines.1) {
+            None => out.push(format!("the marker at line {n} is not in a function")),
+            Some(f) if !reach.contains(f.name.as_str()) => out.push(format!(
+                "the marker at line {n} is in `{}`, which no bad case reaches",
+                f.name
+            )),
+            Some(_) => {}
+        }
+    }
+    out
 }
 
 /// Runs the bad case `bad` until a run faults. Returns the seed, the worker
@@ -104,29 +212,46 @@ fn first_fault(name: &str, src: &str, bad: &str) -> Option<(u64, usize, String)>
     None
 }
 
+/// Runs each test block of a target for each seed and worker count. Returns a
+/// reason for each test that fails, with the first run where it fails.
+fn clean_failures(name: &str, src: &str) -> Vec<String> {
+    let checked = weft_check::check_source(name, src, Options::from_markers(src));
+    let mut failed = BTreeSet::new();
+    let mut out = Vec::new();
+    for seed in SEEDS {
+        for workers in WORKERS {
+            let tests = run_tests(&checked, &options(seed, workers));
+            if tests.is_empty() {
+                return vec![format!("{name}: no test block runs a clean case")];
+            }
+            for t in tests.iter().filter(|t| !t.passed) {
+                if failed.insert(t.name.clone()) {
+                    out.push(format!(
+                        "{name}: the clean case {} fails (seed {seed}, {workers} workers): {:?}",
+                        t.name, t.message
+                    ));
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Checks one target file. Returns the reasons that it fails.
 fn check_target(path: &Path) -> Vec<String> {
     let src = fs::read_to_string(path).unwrap();
     let name = path.file_name().unwrap().to_string_lossy().into_owned();
-    let mut failures = Vec::new();
-    let checked = weft_check::check_source(&name, &src, Options::from_markers(&src));
-    let tests = run_tests(&checked, &options(0, RunOptions::default().workers));
-    if tests.is_empty() {
-        failures.push(format!("{name}: no test block runs a clean case"));
-    }
-    for t in tests.iter().filter(|t| !t.passed) {
-        failures.push(format!(
-            "{name}: the clean case {} fails: {:?}",
-            t.name, t.message
-        ));
-    }
-    let bads = match bad_cases(&src) {
-        Ok(b) => b,
-        Err(e) => {
-            failures.push(format!("{name}: {e}"));
-            return failures;
-        }
+    let funcs = match functions(&src) {
+        Ok(f) => f,
+        Err(errors) => return errors.into_iter().map(|e| format!("{name}: {e}")).collect(),
     };
+    let mut failures = clean_failures(&name, &src);
+    failures.extend(
+        unreached_markers(&src, &funcs)
+            .into_iter()
+            .map(|e| format!("{name}: {e}")),
+    );
+    let bads = bad_cases(&funcs);
     if bads.is_empty() {
         failures.push(format!("{name}: no function `bad_NAME()`"));
     }
@@ -159,8 +284,48 @@ fn faults_are_kind_fault_with_a_known_text() {
 #[test]
 fn bad_cases_are_top_level_functions_with_no_argument() {
     let src = "fn bad_a() { }\nfn bad_b2() / io { }\n  fn bad_c() { }\nfn ok_d() { }\n";
-    assert_eq!(bad_cases(src), Ok(vec!["bad_a", "bad_b2"]));
-    assert!(bad_cases("fn bad_e(x: u64) { }\n").is_err());
+    let funcs = functions(src).unwrap();
+    assert_eq!(bad_cases(&funcs), vec!["bad_a", "bad_b2", "bad_c"]);
+    let errors = |s: &str| functions(s).err().unwrap_or_default();
+    assert_eq!(
+        errors("fn bad_e(x: u64) { }\n"),
+        vec!["`bad_e` must take no argument"]
+    );
+    assert_eq!(
+        errors("pub fn bad_f() { }\n"),
+        vec!["`bad_f` must not be `pub`"]
+    );
+    assert_eq!(
+        errors("mod m { fn bad_g() { } }\n"),
+        vec!["`bad_g` must be a top-level function"]
+    );
+}
+
+#[test]
+fn markers_must_be_in_a_function_that_a_bad_case_reaches() {
+    let src = "\
+fn helper() {
+    print(1)   //~ W0301
+}
+fn lost() {
+    print(2)   //~ W0301
+}
+fn bad_a() { helper() }
+fn ok_b() { lost() }
+test \"ok_b\" { ok_b() }   //~ W0405
+";
+    let funcs = functions(src).unwrap();
+    assert_eq!(
+        reached(&funcs),
+        ["bad_a", "helper"].into_iter().collect::<BTreeSet<_>>()
+    );
+    assert_eq!(
+        unreached_markers(src, &funcs),
+        vec![
+            "the marker at line 5 is in `lost`, which no bad case reaches",
+            "the marker at line 9 is not in a function",
+        ]
+    );
 }
 
 #[test]

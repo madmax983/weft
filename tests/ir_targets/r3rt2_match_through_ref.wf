@@ -3,7 +3,9 @@
 // payload is a reference to the slot (`o.Some`), with the type `&&Entity`. A
 // place below the binding is a place where the stored reference points, not a
 // place of `o`. The facts give the binding the places of the slot only, so a
-// change of `world.entities` does not invalidate it (W0301, W0312).
+// change of `world.entities` does not invalidate it (W0301, W0312). This is
+// true also when the binding leaves the arm, and when the arm changes the
+// places after the binding.
 // Decision (ADR 0003, open item): a by-reference binding whose type holds
 // references gets the held places of the slot, as a field read through a
 // reference does. The checker does not enforce it yet.
@@ -56,6 +58,22 @@ fn write_through(world: &World) / mut(world.entities) {
     match p { Some(e) => { e.hp = 5 }, None => {} }   //~ W0301
 }
 
+// Bad: the binding leaves the arm. The change comes after the `match`.
+fn match_value(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    let p = &o
+    let e = match p { Some(e) => e, None => { return } }
+    world.entities.clear()
+    print(e.hp)   //~ W0301
+}
+// Bad: the arm makes the binding first, and then changes the places of the
+// payload.
+fn bind_then_clear(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    let p = &o
+    match p { Some(e) => { world.entities.clear(); print(e.hp) }, None => {} }   //~ W0301
+}
+
 // Bad: the same binding in a callee. The caller gives places that overlap.
 fn clear_then(o: &Option<&Entity>, w: &World) / mut(w.entities) {
     w.entities.clear()
@@ -80,6 +98,8 @@ fn bad_ref_to_result() { let w = mkw(); ref_to_result(&w) }
 fn bad_element_ref() { let w = mkw(); element_ref(&w) }
 fn bad_ref_to_tuple() { let w = mkw(); ref_to_tuple(&w) }
 fn bad_write_through() { let w = mkw(); write_through(&w) }
+fn bad_match_value() { let w = mkw(); match_value(&w) }
+fn bad_bind_then_clear() { let w = mkw(); bind_then_clear(&w) }
 fn bad_callee_side() { let w = mkw(); callee_side(&w) }
 fn bad_control_field() { let w = mkw(); control_field(&w) }
 
@@ -121,6 +141,18 @@ fn write_through_ok(world: &World) / mut(world.entities) {
     match p { Some(e) => { e.hp = 5 }, None => {} }
     world.entities.clear()
 }
+fn match_value_ok(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    let p = &o
+    let e = match p { Some(e) => e, None => { return } }
+    print(e.hp)
+    world.entities.clear()
+}
+fn bind_then_clear_ok(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    let p = &o
+    match p { Some(e) => { print(e.hp); world.entities.clear() }, None => {} }
+}
 // Clean: the reference in the argument points into another collection.
 fn callee_other(world: &World, other: &World) / mut(world.entities) {
     let o = Some(&other.entities[0])
@@ -133,6 +165,8 @@ fn ok_ref_to_result() { let w = mkw(); ref_to_result_ok(&w) }
 fn ok_element_ref() { let w = mkw(); element_ref_ok(&w) }
 fn ok_ref_to_tuple() { let w = mkw(); ref_to_tuple_ok(&w) }
 fn ok_write_through() { let w = mkw(); write_through_ok(&w) }
+fn ok_match_value() { let w = mkw(); match_value_ok(&w) }
+fn ok_bind_then_clear() { let w = mkw(); bind_then_clear_ok(&w) }
 fn ok_callee_other() { let w = mkw(); let other = mkw(); callee_other(&w, &other) }
 
 test "ok_ref_to_option" { ok_ref_to_option() }
@@ -141,4 +175,6 @@ test "ok_ref_to_result" { ok_ref_to_result() }
 test "ok_element_ref" { ok_element_ref() }
 test "ok_ref_to_tuple" { ok_ref_to_tuple() }
 test "ok_write_through" { ok_write_through() }
+test "ok_match_value" { ok_match_value() }
+test "ok_bind_then_clear" { ok_bind_then_clear() }
 test "ok_callee_other" { ok_callee_other() }

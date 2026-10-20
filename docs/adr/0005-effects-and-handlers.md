@@ -553,11 +553,21 @@ Status: accepted. Date: 2026-10-18.
     goes out of scope at a node right after the call. For a clause, the end of
     `resume` is in the clause, which has no edge to the handled body. So the node
     is after the call in the handled body that can perform the operation, and on
-    the abort path it is the end of the `handle`
-    (`tests/ir_targets/f3_2_callee_local_refs.wf`).
-  - The footprint of stored values (O3-5). The rule: a task or a fork branch that
-    reads a function value from a field, or that runs a value that can be a closure
-    stored in a field of a local, writes and reads what each closure stored there
-    writes and reads, as for a `Vec` element. So a conflict with the parent, a
-    sibling task or the other branch is W0405
-    (`tests/ir_targets/o3_5_field_closure_tasks.wf`, ADR 0006).
+    the abort path it is the end of the `handle`. A clause that stores the place
+    behind a reference parameter, or into an `rc` object, is W0204, as a closure
+    is. The call in the handled body can reach the perform through more than one
+    callee (`tests/ir_targets/f3_2_callee_local_refs.wf`).
+  - The footprint of stored values (O3-5). The rule: a run of a function value that
+    can be a closure stored in a place (a field, an element or a part, also behind
+    a reference, in a `Box`, or in a value that a callee returns) writes and reads
+    what each closure stored there writes and reads. A task or a fork branch has
+    this footprint, also when a callee of the task reads the closure from a
+    container behind its reference parameter. So a conflict with the parent, a
+    sibling task or the other branch is W0405, and a change that a run in code
+    with no task makes invalidates a reference (W0301). Today the checker finds a
+    closure in a `Vec`, a tuple or an `Option` only when the type of the element
+    is the type of the closure, and only when the task itself reads it. It does
+    not find a closure in a place whose declared type is `fn()` (a field, or a
+    `Vec<fn()>`), a closure that a callee of the task reads, or a closure in a
+    value that a callee returns (`tests/ir_targets/o3_5_field_closure_tasks.wf`,
+    ADR 0006).

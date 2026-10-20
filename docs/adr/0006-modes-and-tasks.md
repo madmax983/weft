@@ -319,15 +319,21 @@ Status: accepted. Date: 2026-10-18.
 - What stays open until the core IR replaces the fact generation (review round 3).
   The checker does not enforce these rules yet. Each rule has an acceptance target in
   `tests/ir_targets` (`docs/traceability.md`):
-  - The footprint of stored values (O3-5). The rule: a task that reads a function
-    value from a field, or that runs a value that can be a closure stored in a field
-    of a local, writes and reads what each closure stored there writes and reads, as
-    for a `Vec` element. This is also true for a fork branch. So the parent, a
-    sibling task or the other branch conflicts with it (W0405)
-    (`tests/ir_targets/o3_5_field_closure_tasks.wf`, ADR 0005).
+  - The footprint of stored values (O3-5). The rule: a task or a fork branch that
+    runs a function value that can be a closure stored in a place (a field, an
+    element or a part, also behind a reference, in a `Box`, or in a value that a
+    callee returns) writes and reads what each closure stored there writes and
+    reads. This is also true when a callee of the task reads the closure from a
+    container behind its reference parameter. So the parent, a sibling task or the
+    other branch conflicts with it (W0405). Today the checker finds this only for a
+    container whose element type is the type of the closure, when the task itself
+    reads the closure. ADR 0005 gives the details
+    (`tests/ir_targets/o3_5_field_closure_tasks.wf`).
   - A spawn whose handle is not kept (a spawn in statement position, or `let _ =`)
     gives its handle to the scope. The scope joins the task and drops the result.
     The rule: such a spawn drops `T`, which is W0601 when `T` is linear, as for
-    `detach`. A `fork` that can abort needs `on abort` for each linear type of a
-    branch value (W0602 at the `fork`). ADR 0007 gives the details (F3-6, O3-4,
-    I3-1, `tests/ir_targets/f3_6_task_results.wf`).
+    `detach`. This is true also when the handle goes away as the value of an `if`,
+    a block, a loop body, a closure call or the body of the scope. A `fork` that can
+    abort needs `on abort` for each linear type of a branch value (W0602 at the
+    `fork`), and so does a `join` for a linear `T` (W0602 at the `join`). ADR 0007
+    gives the details (F3-6, O3-4, I3-1, `tests/ir_targets/f3_6_task_results.wf`).

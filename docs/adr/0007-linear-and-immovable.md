@@ -65,7 +65,8 @@ Status: accepted. Date: 2026-10-18.
   has no linear part or `T` has `on abort`: the property passes from `T` through
   `Task` (`props.rs`, review round 3, F3-6). A live handle of a `Task<Tx>` across an
   abort is W0602 if `Tx` has no `on abort`, as a `Tx` is. The unwinder runs the
-  `on abort` of the result of a task that is done (ADR 0010).
+  `on abort` of the result of a task that is done (ADR 0010). A `join` that can
+  abort is not covered yet (see the open items below).
 - A task closure or a fork branch that takes a linear value by value needs `on abort`
   for it: a scope can cancel the task before it runs (W0602 at the spawn or the
   `fork`, ADR 0006, F3-8). The rule asks that the closure of the task captures the
@@ -313,9 +314,16 @@ Status: accepted. Date: 2026-10-18.
   - A spawn whose handle is not kept (a spawn in statement position, or `let _ =`)
     gives its handle to the scope. The scope joins the task and drops the result.
     W0601 does not see it. The rule: such a spawn drops `T`. That is W0601 at the
-    spawn when `T` is linear, as for `detach`. In a generic body, `T` goes into
-    `drops`. The handle that the scope gets is live across the end of the scope,
-    which can abort. So a linear `T` with no `on abort` is also W0602 at the
+    spawn when `T` is linear, as for `detach`. The handle can also go away as the
+    value of an `if`, a block, a loop body, a closure call or the body of the scope,
+    in statement position. Then W0601 is on the line where it is for a plain linear
+    value in the same position. A handle that a `let` binds is linear (ADR 0006).
+    So a block in statement position that binds it and gives it as its value,
+    `{ let h = s.spawn(..); h }`, drops it as `{ h }` does (corpus 150): W0601
+    also when `T` is not linear. The checker does not see the binding inside the
+    block yet. In a generic body, `T` goes into `drops`, so the caller gets W0601
+    at the call. The handle that the scope gets is live across the end of the
+    scope, which can abort. So a linear `T` with no `on abort` is also W0602 at the
     scope, as for a handle that the body keeps and does not use. The checker gives
     both today for a handle that a pattern `_` drops (F3-6, O3-4, I3-1,
     `tests/ir_targets/f3_6_task_results.wf`).
@@ -325,6 +333,16 @@ Status: accepted. Date: 2026-10-18.
     scope fails. The rule: a `fork` that can abort needs `on abort` for each linear
     type of a branch value (W0602 at the `fork`). W0602 does not ask for it yet.
     The unwinder cannot finish such a value, and the run stops with a fault (F3-6,
+    `tests/ir_targets/f3_6_task_results.wf`).
+  - A `join` can abort too. A cancel of the owner, for example when a sibling task
+    of an outer scope fails, can cut the `join` after the task is done. The
+    unwinder then gets the result of the task, and it cannot finish a linear value
+    with no `on abort`. The checker does not see it: the handle ends at the `join`,
+    so `abort_unhandled` skips the node, and the result becomes a value of the
+    body only after the node. The rule: a `join` that can abort needs `on abort`
+    for a linear `T` (W0602 at the `join`). So a `Task<Lk>` for a linear `Lk` with
+    no `on abort` is W0602 at each `join` that can abort; a `Task<Tx>` whose `Tx`
+    has `on abort` is clean (review of R3t, `bad_join_cancel` in
     `tests/ir_targets/f3_6_task_results.wf`).
   - A generic body that holds a handle of a `Task<T>` across a node that can abort
     does not put `T` in `holds`. So a caller that gives `T` a linear type with no

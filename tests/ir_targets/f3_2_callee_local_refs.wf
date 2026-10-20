@@ -11,23 +11,65 @@
 // owns that root. It goes out of scope at a node right after the call, and on
 // the abort path at the end of the `handle`. So a holder outside is invalid
 // after the call (W0301). A store of such a place behind a reference parameter,
-// or into an `rc` object, is W0204. The checker does not enforce it yet.
+// or into an `rc` object, is W0204. This is true also when the callee is a
+// function value, when a callee gives the closure on to another callee, and
+// when a callee of the handled body performs the operation in a callee. The
+// checker does not enforce it yet.
 effect Keep { fn keep(r: &u64) }
+struct Cache { refs: Vec<&u64>, vals: Vec<u64> }
 
 fn apply(f: fn(&u64)) {
     let x = 5
     f(&x)
 }
+fn apply2(f: fn(&u64)) { apply(f) }
+fn apply_elem(f: fn(&u64)) {
+    let v = Vec.new()
+    v.push(5)
+    f(&v[0])
+}
 fn deep() / Keep {
     let x = 5
     keep(&x)
 }
+fn deep2() / Keep { deep() }
+fn mk_cache() -> Rc<Cache> { Rc.new(Cache { refs: Vec.new(), vals: Vec.new() }) }
 
 // Bad: the closure keeps the reference in an outer local.
 fn bad_closure_keeps() {
     let y = 1
     let last = &y
     apply(|r| last = r)
+    print(last)   //~ W0301
+}
+// Bad: the higher-order function is a function value.
+fn bad_fnval_apply() {
+    let y = 1
+    let last = &y
+    let ap = apply
+    ap(|r| last = r)
+    print(last)   //~ W0301
+}
+// Bad: a callee gives the closure on to `apply`.
+fn bad_nested_apply() {
+    let y = 1
+    let last = &y
+    apply2(|r| last = r)
+    print(last)   //~ W0301
+}
+// Bad: the closure is in a local first.
+fn bad_named_closure() {
+    let y = 1
+    let last = &y
+    let g = |r: &u64| last = r
+    apply(g)
+    print(last)   //~ W0301
+}
+// Bad: the callee lends an element of its own vector.
+fn bad_closure_keeps_elem() {
+    let y = 1
+    let last = &y
+    apply_elem(|r| last = r)
     print(last)   //~ W0301
 }
 // Bad: the closure stores the reference in an outer vector.
@@ -49,6 +91,13 @@ fn bad_clause_stores() {
     handle Keep { fn keep(r) { store.push(r); resume(()) } } in deep()
     print(store[0])   //~ W0301
 }
+// Bad: a callee of the handled body performs the operation in a callee.
+fn bad_clause_nested() {
+    let y = 1
+    let last = &y
+    handle Keep { fn keep(r) { last = r; resume(()) } } in deep2()
+    print(last)   //~ W0301
+}
 // Bad: the clause does not resume. The abort unwinds `deep`, and its local
 // `x` ends.
 fn bad_clause_keeps_abort() {
@@ -65,6 +114,31 @@ fn bad_store_behind() {
     store_behind(&out)
     print(out[0])
 }
+// Bad: the clause stores the reference behind a reference parameter.
+fn clause_store_behind(out: &Vec<&u64>) / mut(out) {
+    handle Keep { fn keep(r) { out.push(r); resume(()) } } in deep()   //~ W0204
+}
+fn bad_clause_store_behind() {
+    let out: Vec<&u64> = Vec.new()
+    clause_store_behind(&out)
+    print(out[0])
+}
+// Bad: the closure, or the clause, stores the reference into an `rc` object.
+// The object stays after the return.
+fn store_rc(c: Rc<Cache>) / mut(Cache) { apply(|r| c.refs.push(r)) }   //~ W0204
+fn bad_store_rc() {
+    let c = mk_cache()
+    store_rc(c.clone())
+    print(c.refs[0])
+}
+fn clause_rc(c: Rc<Cache>) / mut(Cache) {
+    handle Keep { fn keep(r) { c.refs.push(r); resume(()) } } in deep()   //~ W0204
+}
+fn bad_clause_rc() {
+    let c = mk_cache()
+    clause_rc(c.clone())
+    print(c.refs[0])
+}
 
 // Control: the checker finds the operation in a closure that the handled body
 // calls today.
@@ -80,13 +154,32 @@ fn bad_control_closure_op() {
 
 // Clean: the callee gives a reference into a vector of the caller.
 fn apply_to(v: &Vec<u64>, f: fn(&u64)) { f(&v[0]) }
+fn apply_to2(v: &Vec<u64>, f: fn(&u64)) { apply_to(v, f) }
 fn deep_in(v: &Vec<u64>) / Keep { keep(&v[0]) }
+fn deep_in2(v: &Vec<u64>) / Keep { deep_in(v) }
 fn ok_closure_keeps() {
     let v = Vec.new()
     v.push(5)
     let y = 1
     let last = &y
     apply_to(&v, |r| last = r)
+    print(last)
+}
+fn ok_fnval_apply() {
+    let v = Vec.new()
+    v.push(5)
+    let y = 1
+    let last = &y
+    let ap = apply_to
+    ap(&v, |r| last = r)
+    print(last)
+}
+fn ok_nested_apply() {
+    let v = Vec.new()
+    v.push(5)
+    let y = 1
+    let last = &y
+    apply_to2(&v, |r| last = r)
     print(last)
 }
 fn ok_closure_stores() {
@@ -104,6 +197,14 @@ fn ok_clause_keeps() {
     handle Keep { fn keep(r) { last = r; resume(()) } } in deep_in(&v)
     print(last)
 }
+fn ok_clause_nested() {
+    let v = Vec.new()
+    v.push(5)
+    let y = 1
+    let last = &y
+    handle Keep { fn keep(r) { last = r; resume(()) } } in deep_in2(&v)
+    print(last)
+}
 fn ok_clause_stores() {
     let v = Vec.new()
     v.push(5)
@@ -111,8 +212,46 @@ fn ok_clause_stores() {
     handle Keep { fn keep(r) { store.push(r); resume(()) } } in deep_in(&v)
     print(store[0])
 }
+// Clean: the callee lends a place of the caller, and the closure or the
+// clause stores it behind a reference parameter.
+fn store_behind_ok(v: &Vec<u64>, out: &Vec<&u64>) / mut(out) { apply_to(v, |r| out.push(r)) }
+fn clause_store_behind_ok(v: &Vec<u64>, out: &Vec<&u64>) / mut(out) {
+    handle Keep { fn keep(r) { out.push(r); resume(()) } } in deep_in(v)
+}
+fn ok_store_behind() {
+    let v = Vec.new()
+    v.push(5)
+    let out: Vec<&u64> = Vec.new()
+    store_behind_ok(&v, &out)
+    print(out[0])
+}
+fn ok_clause_store_behind() {
+    let v = Vec.new()
+    v.push(5)
+    let out: Vec<&u64> = Vec.new()
+    clause_store_behind_ok(&v, &out)
+    print(out[0])
+}
+// Clean: the closure, or the clause, stores a copy of the value into the `rc`
+// object, not the reference.
+fn store_rc_ok(c: Rc<Cache>) / mut(Cache) { apply(|r| c.vals.push(r + 0)) }
+fn clause_rc_ok(c: Rc<Cache>) / mut(Cache) {
+    handle Keep { fn keep(r) { c.vals.push(r + 0); resume(()) } } in deep()
+}
+fn ok_store_rc() {
+    let c = mk_cache()
+    store_rc_ok(c.clone())
+    clause_rc_ok(c.clone())
+    print(c.vals[0] + c.vals[1])
+}
 
 test "ok_closure_keeps" { ok_closure_keeps() }
+test "ok_fnval_apply" { ok_fnval_apply() }
+test "ok_nested_apply" { ok_nested_apply() }
 test "ok_closure_stores" { ok_closure_stores() }
 test "ok_clause_keeps" { ok_clause_keeps() }
+test "ok_clause_nested" { ok_clause_nested() }
 test "ok_clause_stores" { ok_clause_stores() }
+test "ok_store_behind" { ok_store_behind() }
+test "ok_clause_store_behind" { ok_clause_store_behind() }
+test "ok_store_rc" { ok_store_rc() }
