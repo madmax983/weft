@@ -550,6 +550,16 @@ enum ChildMsg {
     End,
 }
 
+/// The coverage profile file of a child, when the parent writes a profile.
+///
+/// The pool kills a child at its time limit. A killed child can leave a part
+/// of a profile, and a coverage run then cannot merge its profiles. So each
+/// child writes its own profile in the temporary directory, away from the
+/// profiles of the coverage run.
+fn child_profile_file(parent_has_profile: bool) -> Option<PathBuf> {
+    parent_has_profile.then(|| std::env::temp_dir().join("weft-gate-child-%p.profraw"))
+}
+
 /// Starts `exe oracle-run` for the configurations from `from`, and a thread
 /// that sends each step of its output to `tx`.
 fn spawn_child(
@@ -579,6 +589,9 @@ fn spawn_child(
         .stderr(Stdio::piped());
     if let Some(n) = settings.max_steps {
         cmd.arg("--max-steps").arg(n.to_string());
+    }
+    if let Some(file) = child_profile_file(std::env::var_os("LLVM_PROFILE_FILE").is_some()) {
+        cmd.env("LLVM_PROFILE_FILE", file);
     }
     let mut child = cmd.spawn()?;
     if let Some(out) = child.stdout.take() {
@@ -1006,4 +1019,19 @@ pub fn interp_hash(repo: &Path) -> Result<String, Error> {
         h.update(&bytes);
     }
     Ok(hex(&h.finalize()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::child_profile_file;
+
+    #[test]
+    fn a_child_profile_goes_to_the_temporary_directory_in_a_coverage_run() {
+        assert_eq!(child_profile_file(false), None);
+        let file = child_profile_file(true).unwrap_or_default();
+        assert!(file.starts_with(std::env::temp_dir()));
+        assert!(file
+            .to_string_lossy()
+            .ends_with("weft-gate-child-%p.profraw"));
+    }
 }
