@@ -803,7 +803,9 @@ fn a_closure_argument_passes_its_captures() {
         "f",
     );
     let n = node(&f, "run");
-    assert!(f.call_arg.contains(&(n, place(&f, "w.es[]"), 800)));
+    assert!(f
+        .call_arg
+        .contains(&(n, place(&f, "w.es[]"), crate::body::roots::fn_arg(0))));
     assert!(f.call_arg.contains(&(n, place(&f, "w"), 1)));
 }
 
@@ -1728,4 +1730,42 @@ fn the_large_stack_is_one_thread() {
         .err()
         .and_then(|p| p.downcast_ref::<&str>().map(|s| (*s).to_string()));
     assert_eq!(message.as_deref(), Some("inside"));
+}
+
+/// Each split of each call has a split id of its own, also when the split
+/// point is a parameter with an index of 64 or more. The old id `64 * call +
+/// index` gave the split of one call to the split of the next call, so a side
+/// of one could be disjoint from a side of the other.
+#[test]
+fn the_splits_of_two_calls_are_apart() {
+    let mut params = String::new();
+    for i in 1..64 {
+        let _ = write!(params, "p{i}: u64, ");
+    }
+    let zeros: String = (1..64).map(|_| "0, ").collect();
+    let src = format!(
+        "extern fn far(v: &Vec<u64>, {params}mid: usize) -> &[u64] in v[..mid]\n\
+         extern fn near(k: usize, v: &Vec<u64>) -> &[u64] in v[k..]\n\
+         fn f(v: &Vec<u64>) {{\n\
+         let a = far(v, {zeros}1)\n\
+         let b = near(1, v)\n let c = near(1, v)\n let d = near(1, v)\n\
+         print(a[0] + b[0] + c[0] + d[0])\n}}\n"
+    );
+    let f = facts(&src, "f");
+    // The split of the place that each local points into.
+    let split_of = |name: &str| -> Vec<u32> {
+        let v = var(&f, name);
+        f.points_into
+            .iter()
+            .filter(|(w, _)| *w == v)
+            .filter_map(|&(_, p)| match f.place(p).steps.last().map(|s| s.kind) {
+                Some(weft_facts::StepKind::Seg { split, .. }) => Some(split),
+                _ => None,
+            })
+            .collect()
+    };
+    let far = split_of("a");
+    let near: Vec<u32> = ["b", "c", "d"].iter().flat_map(|n| split_of(n)).collect();
+    assert_eq!((far.len(), near.len()), (1, 3), "{far:?} {near:?}");
+    assert!(near.iter().all(|s| !far.contains(s)), "{far:?} {near:?}");
 }

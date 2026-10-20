@@ -11,6 +11,7 @@
 
 use std::collections::BTreeSet;
 
+use super::roots;
 use super::{
     Arc, CapId, FnId, FnTy, Lower, NodeId, PlaceId, RootKind, SigRoot, Summary, TaskId, Ty, Val,
     VarId, VarKind,
@@ -712,7 +713,7 @@ impl Lower<'_> {
                 }
                 SigRoot::Group(a) => {
                     for q in self.subst_place(m, &[], split) {
-                        places.push((q, 900 + u32::try_from(a).unwrap_or(0)));
+                        places.push((q, roots::group(a)));
                     }
                 }
             }
@@ -722,11 +723,10 @@ impl Lower<'_> {
             }
         }
         let args = Given::args(given);
+        // `perform_at` marks a `multi` operation, and `abortive` marks the
+        // values of the function.
         for e in &sig.effects.named {
             self.perform_at(n, e, &args);
-            if self.effect_has_multi(e) {
-                self.multi_node(n);
-            }
         }
         if !sig.effects.named.is_empty() || !sig.effects.passthrough.is_empty() {
             self.abortive(n);
@@ -1048,7 +1048,7 @@ impl Lower<'_> {
                 if !is_after(k, r.node) {
                     continue;
                 }
-                self.apply_value(r.node, &st.info, st.row.as_deref(), 800, &r.given);
+                self.apply_value(r.node, &st.info, st.row.as_deref(), roots::STORED, &r.given);
                 self.note_repeat(r.node, &st.info, false);
                 // A node that runs the value more than once starts its tasks
                 // again. It runs the value again right after the first run. A
@@ -1070,7 +1070,7 @@ impl Lower<'_> {
                     self.facts.uses.push((v, r.node));
                 }
                 for &p in &st.refs {
-                    self.facts.call_arg.push((r.node, p, 800));
+                    self.facts.call_arg.push((r.node, p, roots::STORED));
                 }
             }
             let Scope::Closure(id) = r.scope else {
@@ -1199,7 +1199,7 @@ impl Lower<'_> {
             };
             let root = match sp.root {
                 SigRoot::Param(j) => roots.get(j).copied().unwrap_or(0),
-                SigRoot::Group(a) => 900 + u32::try_from(a).unwrap_or(0),
+                SigRoot::Group(a) => roots::group(a),
             };
             for q in self.subst_place(sp, args, split) {
                 out.push(Given {
@@ -1238,7 +1238,7 @@ impl Lower<'_> {
                 Rooted::Outer => out.push(Given {
                     pos,
                     place,
-                    root: 800,
+                    root: roots::STORED,
                 }),
             }
         }
@@ -1418,7 +1418,7 @@ impl Lower<'_> {
             };
             let root = match sp.root {
                 SigRoot::Param(j) => roots.get(j).copied().unwrap_or(0),
-                SigRoot::Group(a) => 900 + u32::try_from(a).unwrap_or(0),
+                SigRoot::Group(a) => roots::group(a),
             };
             for q in self.subst_place(sp, args, split) {
                 out.push(Given {

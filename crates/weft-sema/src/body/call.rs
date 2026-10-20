@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use weft_syntax::diag::Diagnostic;
 
 use super::fnval::{Callee, Given};
+use super::roots;
 use super::{
     ast, effects, AdtKind, Arc, Arg, CapId, ContInfo, Expr, ExprKind, FnId, FnSig, FnTy, ItemRef,
     Lower, NodeId, PathRef, PlaceId, SigRoot, Span, TaskKind, Ty, Val, VarId, VarKind, PRELUDE,
@@ -51,6 +52,34 @@ impl ItemCall<'_> {
     fn root_of(&self, i: usize) -> u32 {
         Lower::sig_root(self.sig, i)
     }
+}
+
+/// A function value argument of a call of a function value: its position,
+/// what it is, its row and the places that it points into.
+type FnArgOf = (usize, super::FnInfo, Option<Vec<String>>, Vec<PlaceId>);
+
+/// The arguments of a call of a function value after their evaluation
+/// (`Lower::eval_value_args`), by position.
+struct ValueArgs {
+    /// The variables that hold the arguments until the call.
+    held: Vec<VarId>,
+    /// The places of the reference arguments.
+    arg_places: Vec<Vec<PlaceId>>,
+    /// The types of the arguments.
+    arg_tys: Vec<Ty>,
+    /// Each function value argument: its position, what it is, its row and
+    /// the places that it points into.
+    fns: Vec<FnArgOf>,
+    /// The capabilities of the function value arguments.
+    fn_caps: BTreeSet<super::caps::Held>,
+    /// Each function value argument, by position.
+    fn_vals: Vec<(usize, Val)>,
+    /// The places that a by-value argument points into.
+    value_refs: Vec<(usize, Vec<PlaceId>)>,
+    /// The variables that hold the moved arguments until the call.
+    taken: Vec<VarId>,
+    /// Each argument that holds a function value in a field or an element.
+    holders: Vec<(usize, Val, Span)>,
 }
 
 /// The arguments of a call of a function item after their evaluation
@@ -149,9 +178,9 @@ impl Lower<'_> {
                 ..Val::default()
             };
         }
-        let v = self.expr(callee);
+        // The callee is still lowered, for the diagnostics inside it.
+        let _ = self.expr(callee);
         self.err("W0105", "this expression cannot be called", callee.span);
-        let _ = v;
         Val {
             ty: Ty::Error,
             ..Val::default()
@@ -412,7 +441,7 @@ impl Lower<'_> {
                 _ => break,
             }
         }
-        u32::try_from(i).unwrap_or(0)
+        roots::param(i)
     }
 
     /// Calls a function item. `inst` is the type of the item as a value, for a call
@@ -718,7 +747,7 @@ impl Lower<'_> {
         for m in &sig.effects.muts {
             let idx = match &m.root {
                 SigRoot::Param(i) => root_of(*i),
-                SigRoot::Group(a) => 900 + u32::try_from(*a).unwrap_or(0),
+                SigRoot::Group(a) => roots::group(*a),
             };
             if let SigRoot::Param(i) = m.root {
                 let by_ref = matches!(self.inf.shallow(&ptys[i]), Ty::Ref(_));
@@ -766,11 +795,11 @@ impl Lower<'_> {
             }
         }
         for (i, ps) in value_refs {
-            // A function value inside the argument runs as a stored value (root 800).
+            // A function value inside the argument runs as a stored value.
             let root = if callback(*i) {
-                800 + u32::try_from(*i).unwrap_or(0)
+                roots::fn_arg(*i)
             } else if self.has_fn(&vals[*i].val.ty) {
-                800
+                roots::STORED
             } else {
                 root_of(*i)
             };
@@ -869,11 +898,10 @@ impl Lower<'_> {
             .zip(roots)
             .flat_map(|(ps, &r)| ps.iter().map(move |&p| (p, r)))
             .collect();
+        // `perform_at` marks a `multi` operation, and `abortive` below marks
+        // the values of the function.
         for e in &sig.effects.named {
             self.perform_at(n, e, &ref_args);
-            if self.effect_has_multi(e) {
-                self.multi_node(n);
-            }
             abort = true;
         }
         if sig.effects.raises {
@@ -936,7 +964,7 @@ impl Lower<'_> {
             if !callback(i) {
                 continue;
             }
-            let root = 800 + u32::try_from(i).unwrap_or(0);
+            let root = roots::fn_arg(i);
             // What the function argument performs: a closure, a function
             // item, or a function value whose type states a row, such as a
             // function parameter.
@@ -1782,12 +1810,113 @@ impl Lower<'_> {
                 span,
             );
         }
-        // Type, hold and move each argument before the next one runs.
+        let a = self.eval_value_args(&fty, &exprs);
+        let ValueArgs {
+            held,
+            arg_places,
+            arg_tys,
+            fn_vals,
+            value_refs,
+            taken,
+            ..
+        } = &a;
+        self.use_local(l);
+        let n = self.emit(span, &loc.name, String::new());
+        let performs_from = self.facts.performs_at.len();
+        for &v in held {
+            self.facts.uses.push((v, n));
+        }
+        self.take_held(taken, n);
+        let roots: Vec<u32> = (0..arg_places.len()).map(roots::param).collect();
+        let mut direct = Vec::new();
+        for (i, ps) in arg_places.iter().enumerate() {
+            for &p in ps {
+                self.facts.reads_at.push((n, p));
+                self.sum().reads.insert(p);
+                self.facts.call_arg.push((n, p, roots[i]));
+                direct.push(Given {
+                    pos: Some(i),
+                    place: p,
+                    root: roots[i],
+                });
+            }
+        }
+        for (i, ps) in value_refs {
+            // A function value inside the argument runs as a stored value.
+            let root = if self.has_fn(&arg_tys[*i]) {
+                roots::STORED
+            } else {
+                roots[*i]
+            };
+            for &p in ps {
+                self.facts.call_arg.push((n, p, root));
+                direct.push(Given {
+                    pos: Some(*i),
+                    place: p,
+                    root,
+                });
+            }
+        }
+        // A closure that moves a capture runs once: the call takes the value. A
+        // closure around this call that captures the value moves it too. So does
+        // a closure that runs a captured function variable that runs once now.
+        if callee.summary.is_some_and(|s| self.closure_once_now(s)) {
+            self.facts.vars[loc.var.index()].once = true;
+            self.move_var(loc.var, n);
+        }
+        // A closure around the node that captures the local runs its value
+        // here: a node that runs that closure runs the value that the local has
+        // there.
+        self.note_cap_run(l, &direct);
+        // The value runs with the arguments.
+        self.apply_value(n, &callee, fty.effects.as_deref(), roots::STORED, &direct);
+        // A value that runs a function value that it holds more than once runs it
+        // again right after.
+        if callee.summary.is_some_and(|s| self.closures[s].repeat_runs) {
+            let held = Val {
+                var: Some(loc.var),
+                ..Val::default()
+            };
+            let again = self.run_again(n, &held);
+            if callee.summary.is_some_and(|s| self.closure_once_now(s)) {
+                self.move_var(loc.var, again);
+            }
+        }
+        // The value can give a function argument to an operation.
+        if let Some(s) = callee.summary {
+            let sum = self.closures[s].clone();
+            for (i, v) in fn_vals {
+                let to: Vec<(Option<CapId>, String)> = sum
+                    .op_fns
+                    .iter()
+                    .filter(|(p, ..)| p == i)
+                    .map(|(_, c, e)| (*c, e.clone()))
+                    .collect();
+                self.give_to_ops(v, &to, true, span);
+                for &f in &sum.items {
+                    let to: Vec<(Option<CapId>, String)> = self.sigs[f]
+                        .effects
+                        .op_fns
+                        .iter()
+                        .filter(|(p, _)| p == i)
+                        .map(|(_, e)| (None, e.clone()))
+                        .collect();
+                    self.give_to_ops(v, &to, false, span);
+                }
+            }
+        }
+        self.value_fn_args(&callee, &a, &exprs, (n, span));
+        self.value_call_result(&callee, &fty, a, n, performs_from)
+    }
+
+    /// Types, holds and moves each argument of a call of a function value of
+    /// type `fty`, before the next one runs.
+    fn eval_value_args(&mut self, fty: &FnTy, exprs: &[&Expr]) -> ValueArgs {
         let mut held = Vec::new();
         let mut arg_places: Vec<Vec<PlaceId>> = Vec::new();
         let mut arg_tys = Vec::new();
         let mut fns = Vec::new();
-        let mut fn_caps = std::collections::BTreeSet::new();
+        let mut fn_caps = BTreeSet::new();
         let mut fn_vals: Vec<(usize, Val)> = Vec::new();
         let mut value_refs: Vec<(usize, Vec<PlaceId>)> = Vec::new();
         let mut taken = Vec::new();
@@ -1841,102 +1970,47 @@ impl Lower<'_> {
                 self.consume(&v, a.span);
             }
         }
-        let arg_refs: Vec<PlaceId> = arg_places.iter().flatten().copied().collect();
-        self.use_local(l);
-        let n = self.emit(span, &loc.name, String::new());
-        let performs_from = self.facts.performs_at.len();
-        for v in held {
-            self.facts.uses.push((v, n));
+        ValueArgs {
+            held,
+            arg_places,
+            arg_tys,
+            fns,
+            fn_caps,
+            fn_vals,
+            value_refs,
+            taken,
+            holders,
         }
-        self.take_held(&taken, n);
-        let roots: Vec<u32> = (0..arg_places.len())
-            .map(|i| u32::try_from(i).unwrap_or(0))
-            .collect();
-        let mut direct = Vec::new();
-        for (i, ps) in arg_places.iter().enumerate() {
-            for &p in ps {
-                self.facts.reads_at.push((n, p));
-                self.sum().reads.insert(p);
-                self.facts.call_arg.push((n, p, roots[i]));
-                direct.push(Given {
-                    pos: Some(i),
-                    place: p,
-                    root: roots[i],
-                });
-            }
-        }
-        for (i, ps) in &value_refs {
-            // A function value inside the argument runs as a stored value (root 800).
-            let root = if self.has_fn(&arg_tys[*i]) {
-                800
-            } else {
-                roots[*i]
-            };
-            for &p in ps {
-                self.facts.call_arg.push((n, p, root));
-                direct.push(Given {
-                    pos: Some(*i),
-                    place: p,
-                    root,
-                });
-            }
-        }
-        // A closure that moves a capture runs once: the call takes the value. A
-        // closure around this call that captures the value moves it too. So does
-        // a closure that runs a captured function variable that runs once now.
-        if callee.summary.is_some_and(|s| self.closure_once_now(s)) {
-            self.facts.vars[loc.var.index()].once = true;
-            self.move_var(loc.var, n);
-        }
-        // A closure around the node that captures the local runs its value
-        // here: a node that runs that closure runs the value that the local has
-        // there.
-        self.note_cap_run(l, &direct);
-        // The value runs with the arguments.
-        self.apply_value(n, &callee, fty.effects.as_deref(), 800, &direct);
-        // A value that runs a function value that it holds more than once runs it
-        // again right after.
-        if callee.summary.is_some_and(|s| self.closures[s].repeat_runs) {
-            let held = Val {
-                var: Some(loc.var),
-                ..Val::default()
-            };
-            let again = self.run_again(n, &held);
-            if callee.summary.is_some_and(|s| self.closure_once_now(s)) {
-                self.move_var(loc.var, again);
-            }
-        }
-        // The value can give a function argument to an operation.
-        if let Some(s) = callee.summary {
-            let sum = self.closures[s].clone();
-            for (i, v) in &fn_vals {
-                let to: Vec<(Option<CapId>, String)> = sum
-                    .op_fns
-                    .iter()
-                    .filter(|(p, ..)| p == i)
-                    .map(|(_, c, e)| (*c, e.clone()))
-                    .collect();
-                self.give_to_ops(v, &to, true, span);
-                for &f in &sum.items {
-                    let to: Vec<(Option<CapId>, String)> = self.sigs[f]
-                        .effects
-                        .op_fns
-                        .iter()
-                        .filter(|(p, _)| p == i)
-                        .map(|(_, e)| (None, e.clone()))
-                        .collect();
-                    self.give_to_ops(v, &to, false, span);
-                }
-            }
-        }
+    }
+
+    /// The function arguments of a call of a function value at node `n`: the
+    /// value can call each one with the places that it lends to it, start a
+    /// task that runs it, or run a stored function value that an argument
+    /// holds.
+    fn value_fn_args(
+        &mut self,
+        callee: &super::FnInfo,
+        a: &ValueArgs,
+        exprs: &[&Expr],
+        (n, span): (NodeId, Span),
+    ) {
+        let ValueArgs {
+            arg_places,
+            arg_tys,
+            fns,
+            fn_vals,
+            holders,
+            ..
+        } = a;
+        let roots: Vec<u32> = (0..arg_places.len()).map(roots::param).collect();
         // The value can call a function argument with the places that it lends to it.
         let value = Callee::Value(callee.clone());
         let fn_pos: Vec<usize> = fns.iter().map(|f| f.0).collect();
-        let runs = self.value_task_runs(&callee, &fn_pos);
+        let runs = self.value_task_runs(callee, &fn_pos);
         let mut arg_runs = Vec::new();
         for (i, info, row, refs) in fns.clone() {
             // A value that the body does not know, or one that stores the argument, keeps it.
-            if self.value_keeps(&callee, i) {
+            if self.value_keeps(callee, i) {
                 let kept = Val {
                     ty: arg_tys[i].clone(),
                     summary: info.summary,
@@ -1969,11 +2043,11 @@ impl Lower<'_> {
                     .unwrap_or_default();
                 self.check_task_value(&info, row.as_deref(), &held, span);
             }
-            let root = 810 + u32::try_from(i).unwrap_or(0);
+            let root = roots::fn_arg(i);
             for p in refs {
                 self.facts.call_arg.push((n, p, root));
             }
-            let given = self.lent_to(&value, i, &arg_places, &roots);
+            let given = self.lent_to(&value, i, arg_places, &roots);
             if let Some(l) = fn_vals
                 .iter()
                 .find(|(j, _)| *j == i)
@@ -2011,7 +2085,7 @@ impl Lower<'_> {
         }
         // A task of the value can run a function argument: the checks of a
         // spawn apply here (ADR 0006).
-        let access = Self::any_access(&runs, &arg_places);
+        let access = Self::any_access(&runs, arg_places);
         self.arg_tasks(&runs, &arg_runs, &access, span);
         // A value that the body does not know can start a task that runs a
         // function value that an argument holds.
@@ -2021,7 +2095,7 @@ impl Lower<'_> {
                 |s| self.closures[s].unknown || !self.closures[s].params.is_empty(),
             );
         if unknown {
-            for (i, v, sp) in &holders {
+            for (i, v, sp) in holders {
                 let held = self.arg_held(v, &arg_places[*i]);
                 self.check_task_value(&super::FnInfo::default(), None, &held, *sp);
             }
@@ -2031,7 +2105,7 @@ impl Lower<'_> {
             .iter()
             .any(|t| !matches!(self.inf.shallow(t), Ty::Fn(_)) && self.has_fn(t))
         {
-            let given = Self::any_arg(&arg_places, &roots);
+            let given = Self::any_arg(arg_places, &roots);
             // A closure passes on the nodes in its body (`apply_stored`). Another
             // value can run a stored value any number of times.
             let again = callee.summary.is_none_or(|s| {
@@ -2040,9 +2114,29 @@ impl Lower<'_> {
             });
             self.reach(n, &given, again);
         }
+    }
+
+    /// The result of a call of a function value of type `fty` at node `n`: its
+    /// type, the places that it points into, and its function values and tasks.
+    fn value_call_result(
+        &mut self,
+        callee: &super::FnInfo,
+        fty: &FnTy,
+        a: ValueArgs,
+        n: NodeId,
+        performs_from: usize,
+    ) -> Val {
+        let ValueArgs {
+            arg_places,
+            arg_tys,
+            fns,
+            fn_caps,
+            ..
+        } = a;
+        let arg_refs: Vec<PlaceId> = arg_places.iter().flatten().copied().collect();
         // The places of the result.
         let fn_refs: Vec<PlaceId> = fns.iter().flat_map(|f| f.3.iter().copied()).collect();
-        let refs = self.value_call_refs(&callee, &fty, &arg_places, &arg_refs, &fn_refs);
+        let refs = self.value_call_refs(callee, fty, &arg_places, &arg_refs, &fn_refs);
         // A function value in the result does what the callee states about it.
         let by_pos: Vec<Option<super::fnval::RowFn>> = (0..arg_places.len())
             .map(|i| {
@@ -2052,7 +2146,7 @@ impl Lower<'_> {
             })
             .collect();
         let mut ty = fty.ret.clone();
-        let summary = self.result_summary(&callee, &fty, &arg_places, &by_pos);
+        let summary = self.result_summary(callee, fty, &arg_places, &by_pos);
         if let (Some(s), Ty::Fn(rty)) = (summary, self.inf.shallow(&fty.ret)) {
             ty = Ty::Fn(Arc::new(FnTy {
                 summary: Some(s),
@@ -2538,7 +2632,7 @@ impl Lower<'_> {
         // The clause gets the reference arguments. It pairs with the footprint of
         // the handler in `call_mut` (W0312), and it can mutate through them.
         for (i, ps) in arg_places.iter().enumerate() {
-            let root = u32::try_from(i).unwrap_or(0);
+            let root = roots::param(i);
             for &p in ps {
                 self.facts.reads_at.push((n, p));
                 self.sum().reads.insert(p);
@@ -2550,7 +2644,7 @@ impl Lower<'_> {
             }
         }
         for (i, ps) in &value_refs {
-            let root = 800 + u32::try_from(*i).unwrap_or(0);
+            let root = roots::fn_arg(*i);
             for &p in ps {
                 self.facts.call_arg.push((n, p, root));
                 // The parameter of the clause points into what the argument holds.
@@ -2561,9 +2655,7 @@ impl Lower<'_> {
         }
         // The clause can call a function argument with any place inside the
         // reference arguments.
-        let roots: Vec<u32> = (0..arg_places.len())
-            .map(|i| u32::try_from(i).unwrap_or(0))
-            .collect();
+        let roots: Vec<u32> = (0..arg_places.len()).map(roots::param).collect();
         let given = Self::any_arg(&arg_places, &roots);
         // A clause of a handler of a caller is code that the body does not know.
         // It can run each function argument as a task: on another thread, two
@@ -2572,7 +2664,7 @@ impl Lower<'_> {
         let mut arg_runs = Vec::new();
         // A clause can call a function argument more than once.
         for (i, info, row) in fns {
-            let root = 800 + u32::try_from(i).unwrap_or(0);
+            let root = roots::fn_arg(i);
             let from = self.place_marks();
             self.apply_value(n, &info, row.as_deref(), root, &given);
             if foreign_clause {
@@ -3235,7 +3327,7 @@ impl Lower<'_> {
         let v = self.closure_arg(body, Some(Ty::Unit));
         let n = self.emit(span, "sim.run", String::new());
         if let Some(s) = v.summary {
-            self.apply_summary(n, s, 800, &[]);
+            self.apply_summary(n, s, roots::STORED, &[]);
         }
         self.handlers.truncate(base);
         let _ = PRELUDE;

@@ -8,9 +8,52 @@ use super::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-use weft_facts::{Step, StepKind, TaskId};
+use weft_facts::{CapId, HandlerId, Step, StepKind, TaskId};
 
+use crate::program::{EffectDef, EffectId};
 use crate::props::Prop;
+
+/// What a `handle` gives to the lowering of its clauses.
+struct AroundClause<'d> {
+    /// The effect of the handler.
+    def: &'d EffectDef,
+    /// The capability of the handler.
+    cap: CapId,
+    /// The `handle` expression.
+    hid: HandlerId,
+    /// The type of the value of the `handle`.
+    ty: Ty,
+    /// The places that the handled body mutates.
+    body_muts: Vec<PlaceId>,
+    /// The places that the handled body frees.
+    body_frees: Vec<PlaceId>,
+    /// The number of locals outside the handled body.
+    outer: usize,
+}
+
+/// What the clauses of a `handle` give.
+#[derive(Default)]
+struct ClausesDone {
+    /// The places outside the clauses that they mutate.
+    footprint: Vec<PlaceId>,
+    /// The places outside the clauses that they lend.
+    lent: Vec<PlaceId>,
+    /// The captures, reads and locals of the clauses.
+    clause_sum: Summary,
+    /// Each clause: its operation, its summary and its resumes.
+    clauses: Vec<(Option<usize>, Summary, Vec<NodeId>)>,
+    /// The value of each clause that returns.
+    vals: Vec<Val>,
+    /// The places of the locals of the clauses that a `resume` gives, with the
+    /// operation.
+    locals: Vec<(Option<usize>, PlaceId)>,
+    /// A clause can end with no `resume`.
+    aborts: bool,
+    /// The first node and the node after the last node of each clause.
+    nodes: Vec<(NodeId, NodeId)>,
+    /// The capabilities of the local handlers inside the clauses.
+    inner_caps: BTreeSet<CapId>,
+}
 
 impl Lower<'_> {
     /// Lowers an expression and returns its value.
@@ -1357,7 +1400,7 @@ impl Lower<'_> {
                 );
             }
             let ty = match (&p.ty, expected.and_then(|f| f.params.get(i))) {
-                (Some(t), _) => self.local_ty_pub(t),
+                (Some(t), _) => self.local_ty(t),
                 (None, Some(t)) => t.clone(),
                 (None, None) => self.inf.fresh(),
             };
@@ -1735,23 +1778,30 @@ impl Lower<'_> {
         out
     }
 
-    pub(super) fn local_ty_pub(&mut self, t: &ast::TypeExpr) -> Ty {
-        let gens: Vec<String> = self
-            .self_fn
-            .map(|f| self.sigs[f].generics.clone())
-            .unwrap_or_default();
-        let module = self.module;
-
-        crate::program::TyResolver {
-            prog: self.prog,
-            diags: &mut self.diags,
-        }
-        .resolve(t, module, &gens, None)
-    }
-
     // -----------------------------------------------------------------------
     // Handlers
     // -----------------------------------------------------------------------
+
+    /// Resolves the effect of a `handle`. Reports an unknown effect.
+    fn handled_effect(&mut self, effect: &ast::EffectPath) -> Option<EffectId> {
+        // A path names an effect of another module (`a.Note`, `util.Note`).
+        let eid = match effects::resolve(self.prog, self.module, effect) {
+            Ok(names) if names.len() == 1 => effects::by_identity(self.prog, &names[0]),
+            Ok(_) => None,
+            Err(d) => {
+                self.diags.push(d);
+                return None;
+            }
+        };
+        if eid.is_none() {
+            self.err(
+                "W0101",
+                format!("unknown effect `{}`", effect.text()),
+                effect.span,
+            );
+        }
+        eid
+    }
 
     fn handle(
         &mut self,
@@ -1760,24 +1810,11 @@ impl Lower<'_> {
         body: &Expr,
         span: Span,
     ) -> Val {
-        // A path names an effect of another module (`a.Note`, `util.Note`).
-        let eid = match effects::resolve(self.prog, self.module, effect) {
-            Ok(names) if names.len() == 1 => effects::by_identity(self.prog, &names[0]),
-            Ok(_) => None,
-            Err(d) => {
-                self.diags.push(d);
-                return self.expr(body);
-            }
-        };
-        let Some(eid) = eid else {
-            self.err(
-                "W0101",
-                format!("unknown effect `{}`", effect.text()),
-                effect.span,
-            );
+        let Some(eid) = self.handled_effect(effect) else {
             return self.expr(body);
         };
-        let def = self.prog.effects[eid].clone();
+        let prog = self.prog;
+        let def = &prog.effects[eid];
         let ident = effects::identity(self.prog, eid);
         let cap = self.facts.add_cap();
         self.cap_effects.insert(cap, ident.clone());
@@ -1823,226 +1860,31 @@ impl Lower<'_> {
         let body_sum = self.sums.pop().unwrap_or_default();
         self.merge_summary(&body_sum);
         self.handlers.pop();
-        let ty = v.ty.clone();
         let saved = self.cur;
-        let mut footprint = Vec::new();
-        // The places that the clauses lend outside them: each node that runs a clause lends them.
-        let mut lent = Vec::new();
-        let mut clause_sum = Summary::default();
-        let mut clauses_done = Vec::new();
-        let mut clause_vals: Vec<Val> = Vec::new();
-        let mut clause_locals: Vec<(Option<usize>, PlaceId)> = Vec::new();
-        let mut aborts = false;
-        let mut clause_nodes = Vec::new();
-        let mut inner_caps = BTreeSet::new();
+        let around = AroundClause {
+            def,
+            cap,
+            hid,
+            ty: v.ty.clone(),
+            body_muts: body_sum.muts.iter().copied().collect(),
+            body_frees,
+            outer: start.locals,
+        };
+        let mut done = ClausesDone::default();
         for c in clauses {
-            let Some(op) = def.ops.iter().find(|o| o.name == c.op.name).cloned() else {
-                self.err(
-                    "W0104",
-                    format!("effect `{}` has no operation `{}`", def.name, c.op.name),
-                    c.op.span,
-                );
-                continue;
-            };
-            if op.params.len() != c.params.len() {
-                self.err(
-                    "W0103",
-                    format!(
-                        "operation `{}` takes {} parameters",
-                        op.name,
-                        op.params.len()
-                    ),
-                    c.span,
-                );
-            }
-            self.sums.push(Summary::default());
-            let si = self.sums.len() - 1;
-            self.push_frame(Some(si));
-            // The locals and the kept values from here are of the clause.
-            let clause_start = self.handle_start();
-            let first_node = NodeId(u32::try_from(self.facts.nodes.len()).unwrap_or(u32::MAX));
-            let entry = self.start(c.span, "handler clause");
-            // The detail names the capability: a diagnostic finds the clause that
-            // a node runs (`clause_read` in `weft-check`).
-            self.facts.nodes[entry.index()].detail = format!("c{}", cap.0);
-            let saved_stmts = std::mem::take(&mut self.stmt_temps);
-            self.open_stmt();
-            // A parameter that holds references points into what the operation gets.
-            let mut param_roots = std::collections::BTreeMap::new();
-            for (i, (p, pt)) in c.params.iter().zip(&op.params).enumerate() {
-                let l = self.new_local(&p.name.name, VarKind::Param, p.span, pt.clone(), false);
-                let refs = if self.holds_refs(pt) {
-                    let r = self.root(&p.name.name, RootKind::Arg);
-                    param_roots.insert(r, i);
-                    let rid = self.facts.place(r).root;
-                    self.param_of_root.insert(rid, (si, i));
-                    vec![r]
-                } else {
-                    Vec::new()
-                };
-                // A function parameter: the operation gives the value, and the
-                // perform runs it. The clause summary records what the clause does with it.
-                let fn_param = matches!(self.inf.shallow(pt), Ty::Fn(_)).then_some((si, i));
-                self.assign_local(
-                    l,
-                    &Val {
-                        ty: pt.clone(),
-                        refs,
-                        fn_param,
-                        ..Val::default()
-                    },
-                    entry,
-                );
-                // The parameter holds the function values that the nodes give to
-                // the operation. The clause can keep them (W0313).
-                let oi = def.ops.iter().position(|o| o.name == op.name);
-                let given: std::collections::BTreeSet<super::caps::Held> = self
-                    .op_fn_args
-                    .iter()
-                    .filter(|a| a.cap == cap && (a.op.is_none() || a.op == oi))
-                    .filter(|a| a.pos.is_none_or(|p| p == i))
-                    .flat_map(|a| a.held.iter().copied())
-                    .collect();
-                self.locals.get_mut(l).caps.extend(given.iter().copied());
-                self.locals.get_mut(l).sticky.extend(given);
-                // A function parameter is one of the function values that the
-                // nodes give to the operation. A task or a fork branch of the
-                // clause runs them (W0401, W0403, W0405).
-                if fn_param.is_some() {
-                    self.note_clause_fn(cap, oi, (si, i));
-                }
-                // A callee can give a value that holds a function value in a field or
-                // an element: the clause cannot follow it.
-                if !matches!(self.inf.shallow(pt), Ty::Fn(_)) && self.has_fn(pt) {
-                    self.locals.get_mut(l).caps.insert(super::caps::UNKNOWN_FN);
-                    self.locals
-                        .get_mut(l)
-                        .sticky
-                        .insert(super::caps::UNKNOWN_FN);
-                }
-                self.mark_modes(l);
-            }
-            let kty = Ty::Cont(Box::new(op.ret.clone()), Box::new(ty.clone()));
-            let k = self.new_local("resume", VarKind::Continuation, c.span, kty, false);
-            self.facts.vars[self.locals[k].var.index()].once = !op.multi;
-            self.locals.get_mut(k).cont = Some(ContInfo {
-                arg: op.ret.clone(),
-                ret: ty.clone(),
-                multi: op.multi,
-                muts: body_sum.muts.iter().copied().collect(),
-                frees: body_frees.clone(),
-                cap,
-                depth: self.handlers.len(),
-                fail: def.is_std && def.name == "Fail",
-            });
-            let kv = self.locals[k].var;
-            self.bind(kv, entry);
-            // The continuation is a capability of the clause: a closure that
-            // resumes it holds the capability, and it cannot leave the clause.
-            let kcap = self.facts.add_cap();
-            self.cont_caps.insert(kcap);
-            self.locals
-                .get_mut(k)
-                .caps
-                .insert(super::caps::Held::Cap(kcap));
-            self.clause_conts.push((kcap, self.handlers.len()));
-            let resumes_before = self.resumes.len();
-            self.jumps.push(Jump::Fence("handler clause"));
-            let cv = self.block(&c.body);
-            self.jumps.pop();
-            self.clause_conts.pop();
-            self.check_cont_escape(
-                kcap,
-                &op.name,
-                (clause_start, start.locals),
-                &cv,
-                (c.span, c.body.span),
-            );
-            let returns = !matches!(self.inf.shallow(&cv.ty), Ty::Never);
-            if returns {
-                self.unify(&ty, &cv.ty, c.body.span);
-                // The value of the clause moves into the value of the `handle`.
-                self.consume(&cv, block_tail(&c.body));
-            }
-            self.flush(block_tail(&c.body));
-            self.end_frame(c.span);
-            // A clause that can end with no `resume` ends the handled body at the
-            // node that runs it.
-            if let Some(end) = self.cur {
-                let stops: Vec<NodeId> = self.resumes[resumes_before..]
-                    .iter()
-                    .filter(|(_, rc)| *rc == cap)
-                    .map(|(n, _)| *n)
-                    .collect();
-                aborts |= self.reaches_without(entry, end, &stops);
-            }
-            self.pop_frame();
-            self.stmt_temps = saved_stmts;
-            self.close_scope(si, super::fnval::Scope::Clause);
-            let _ = self.take_repeats(si);
-            self.clause_fns.retain(|&(d, _), _| d != si);
-            let mut cs = self.sums.pop().unwrap_or_default();
-            let end_node = NodeId(u32::try_from(self.facts.nodes.len()).unwrap_or(u32::MAX));
-            clause_nodes.push((first_node, end_node));
-            inner_caps.extend(cs.own_caps.iter().copied());
-            self.captures_live_at(&cs.captures.to_set(), entry);
-            cs.param_roots = param_roots;
-            // The places that the `resume`s give: the result of the operation
-            // points into them. A local of the clause ends with the `handle`.
-            let oi = def.ops.iter().position(|o| o.name == op.name);
-            let own = cs.own_roots.to_set();
-            let local = self.note_resumed_refs(cap, oi, &cs.param_roots, &own);
-            clause_locals.extend(local.into_iter().map(|p| (oi, p)));
-            // The value of the clause is the value of the `handle`. A reference into
-            // a parameter points into what each node gives to the operation.
-            if returns {
-                let mut cv = cv;
-                let oi = def.ops.iter().position(|o| o.name == op.name);
-                let mut refs = self.clause_refs_onto_args(&cv.refs, &cs.param_roots, cap, oi);
-                refs.extend(
-                    cv.refs
-                        .iter()
-                        .copied()
-                        .filter(|&p| !cs.own_roots.contains(&self.facts.place(p).root)),
-                );
-                cv.refs = refs;
-                clause_vals.push(cv);
-            }
-            // The clause runs in the environment of the `handle`: what it performs
-            // goes to the handlers outside this one.
-            for e in self.clause_effects(&cs) {
-                self.facts.clause_performs.push((hid, e));
-            }
-            for &m in &cs.muts {
-                if !cs.own_roots.contains(&self.facts.place(m).root) {
-                    footprint.push(m);
-                }
-            }
-            for &l in &cs.lends {
-                if !cs.own_roots.contains(&self.facts.place(l).root) {
-                    lent.push(l);
-                }
-            }
-            let oi = def.ops.iter().position(|o| o.name == op.name);
-            let own_resumes: Vec<NodeId> = self.resumes[resumes_before..]
-                .iter()
-                .filter(|(_, c)| *c == cap)
-                .map(|(n, _)| *n)
-                .collect();
-            clauses_done.push((oi, cs.clone(), own_resumes));
-            self.merge_summary(&cs);
-            clause_sum.captures.extend(cs.captures.iter().copied());
-            clause_sum
-                .moved_captures
-                .extend(cs.moved_captures.iter().copied());
-            clause_sum.dropped.extend(cs.dropped.iter().copied());
-            clause_sum.spawns.extend(cs.spawns.iter().copied());
-            for &r in &cs.reads {
-                if !cs.own_roots.contains(&self.facts.place(r).root) {
-                    clause_sum.reads.insert(r);
-                }
-            }
+            self.lower_clause(c, &around, &mut done);
         }
+        let ClausesDone {
+            mut footprint,
+            mut lent,
+            clause_sum,
+            clauses: clauses_done,
+            vals: clause_vals,
+            locals: clause_locals,
+            aborts,
+            nodes: clause_nodes,
+            inner_caps,
+        } = done;
         footprint.sort();
         footprint.dedup();
         for &m in &footprint {
@@ -2131,14 +1973,267 @@ impl Lower<'_> {
             self.consume(&v, expr_tail(body));
         }
         let end = self.emit(span, "end handle", String::new());
-        // A reference that a clause resumes with into its own local is not valid
-        // after the `handle`: the clause has ended. The result of an operation
-        // of that clause, or of a call that reaches the handler, can be one.
+        self.end_clause_locals(&mut h, clause_locals, (end, span), &v);
+        // The abort paths and the check of the locals outside the body come after
+        // the whole body (`finish_aborts`). A stored value can run a clause too.
+        h.end = end;
+        self.handled.push(h);
+        self.join_clause_vals(v, clause_vals)
+    }
+
+    /// Lowers a clause of a `handle` whose handled body is lowered, and adds
+    /// what it does to `done`.
+    fn lower_clause(
+        &mut self,
+        c: &ast::HandlerClause,
+        around: &AroundClause<'_>,
+        done: &mut ClausesDone,
+    ) {
+        let (def, cap) = (around.def, around.cap);
+        let Some(op) = def.ops.iter().find(|o| o.name == c.op.name) else {
+            self.err(
+                "W0104",
+                format!("effect `{}` has no operation `{}`", def.name, c.op.name),
+                c.op.span,
+            );
+            return;
+        };
+        if op.params.len() != c.params.len() {
+            self.err(
+                "W0103",
+                format!(
+                    "operation `{}` takes {} parameters",
+                    op.name,
+                    op.params.len()
+                ),
+                c.span,
+            );
+        }
+        let oi = def.ops.iter().position(|o| o.name == op.name);
+        self.sums.push(Summary::default());
+        let si = self.sums.len() - 1;
+        self.push_frame(Some(si));
+        // The locals and the kept values from here are of the clause.
+        let clause_start = self.handle_start();
+        let first_node = NodeId(u32::try_from(self.facts.nodes.len()).unwrap_or(u32::MAX));
+        let entry = self.start(c.span, "handler clause");
+        // The detail names the capability: a diagnostic finds the clause that
+        // a node runs (`clause_read` in `weft-check`).
+        self.facts.nodes[entry.index()].detail = format!("c{}", cap.0);
+        let saved_stmts = std::mem::take(&mut self.stmt_temps);
+        self.open_stmt();
+        let param_roots = self.bind_clause_params(c, op, (cap, oi), si, entry);
+        let kcap = self.bind_clause_cont(c, op, around, entry);
+        let resumes_before = self.resumes.len();
+        self.jumps.push(Jump::Fence("handler clause"));
+        let cv = self.block(&c.body);
+        self.jumps.pop();
+        self.clause_conts.pop();
+        self.check_cont_escape(
+            kcap,
+            &op.name,
+            (clause_start, around.outer),
+            &cv,
+            (c.span, c.body.span),
+        );
+        let returns = !matches!(self.inf.shallow(&cv.ty), Ty::Never);
+        if returns {
+            self.unify(&around.ty, &cv.ty, c.body.span);
+            // The value of the clause moves into the value of the `handle`.
+            self.consume(&cv, block_tail(&c.body));
+        }
+        self.flush(block_tail(&c.body));
+        self.end_frame(c.span);
+        // The `resume`s of this clause.
+        let own_resumes: Vec<NodeId> = self.resumes[resumes_before..]
+            .iter()
+            .filter(|(_, rc)| *rc == cap)
+            .map(|(n, _)| *n)
+            .collect();
+        // A clause that can end with no `resume` ends the handled body at the
+        // node that runs it.
+        if let Some(end) = self.cur {
+            done.aborts |= self.reaches_without(entry, end, &own_resumes);
+        }
+        self.pop_frame();
+        self.stmt_temps = saved_stmts;
+        self.close_scope(si, super::fnval::Scope::Clause);
+        let _ = self.take_repeats(si);
+        self.clause_fns.retain(|&(d, _), _| d != si);
+        let mut cs = self.sums.pop().unwrap_or_default();
+        let end_node = NodeId(u32::try_from(self.facts.nodes.len()).unwrap_or(u32::MAX));
+        done.nodes.push((first_node, end_node));
+        done.inner_caps.extend(cs.own_caps.iter().copied());
+        self.captures_live_at(&cs.captures.to_set(), entry);
+        cs.param_roots = param_roots;
+        // The places that the `resume`s give: the result of the operation
+        // points into them. A local of the clause ends with the `handle`.
+        let own = cs.own_roots.to_set();
+        let local = self.note_resumed_refs(cap, oi, &cs.param_roots, &own);
+        done.locals.extend(local.into_iter().map(|p| (oi, p)));
+        // The value of the clause is the value of the `handle`. A reference into
+        // a parameter points into what each node gives to the operation.
+        if returns {
+            let mut cv = cv;
+            let mut refs = self.clause_refs_onto_args(&cv.refs, &cs.param_roots, cap, oi);
+            refs.extend(
+                cv.refs
+                    .iter()
+                    .copied()
+                    .filter(|&p| !cs.own_roots.contains(&self.facts.place(p).root)),
+            );
+            cv.refs = refs;
+            done.vals.push(cv);
+        }
+        // The clause runs in the environment of the `handle`: what it performs
+        // goes to the handlers outside this one.
+        for e in self.clause_effects(&cs) {
+            self.facts.clause_performs.push((around.hid, e));
+        }
+        let outside = |me: &Self, p: PlaceId| !cs.own_roots.contains(&me.facts.place(p).root);
+        done.footprint
+            .extend(cs.muts.iter().copied().filter(|&m| outside(self, m)));
+        done.lent
+            .extend(cs.lends.iter().copied().filter(|&l| outside(self, l)));
+        let reads: Vec<PlaceId> = cs
+            .reads
+            .iter()
+            .copied()
+            .filter(|&r| outside(self, r))
+            .collect();
+        done.clauses.push((oi, cs.clone(), own_resumes));
+        self.merge_summary(&cs);
+        let sum = &mut done.clause_sum;
+        sum.captures.extend(cs.captures.iter().copied());
+        sum.moved_captures.extend(cs.moved_captures.iter().copied());
+        sum.dropped.extend(cs.dropped.iter().copied());
+        sum.spawns.extend(cs.spawns.iter().copied());
+        for r in reads {
+            sum.reads.insert(r);
+        }
+    }
+
+    /// Binds the parameters of clause `c` of operation `op` (with index `oi`
+    /// of the effect of the handler `cap`) at node `entry`. Returns the root of
+    /// each parameter that holds references, with the index of the parameter.
+    fn bind_clause_params(
+        &mut self,
+        c: &ast::HandlerClause,
+        op: &crate::program::OpDef,
+        (cap, oi): (CapId, Option<usize>),
+        si: usize,
+        entry: NodeId,
+    ) -> BTreeMap<PlaceId, usize> {
+        // A parameter that holds references points into what the operation gets.
+        let mut param_roots = BTreeMap::new();
+        for (i, (p, pt)) in c.params.iter().zip(&op.params).enumerate() {
+            let l = self.new_local(&p.name.name, VarKind::Param, p.span, pt.clone(), false);
+            let refs = if self.holds_refs(pt) {
+                let r = self.root(&p.name.name, RootKind::Arg);
+                param_roots.insert(r, i);
+                let rid = self.facts.place(r).root;
+                self.param_of_root.insert(rid, (si, i));
+                vec![r]
+            } else {
+                Vec::new()
+            };
+            // A function parameter: the operation gives the value, and the
+            // perform runs it. The clause summary records what the clause does with it.
+            let fn_param = matches!(self.inf.shallow(pt), Ty::Fn(_)).then_some((si, i));
+            self.assign_local(
+                l,
+                &Val {
+                    ty: pt.clone(),
+                    refs,
+                    fn_param,
+                    ..Val::default()
+                },
+                entry,
+            );
+            // The parameter holds the function values that the nodes give to
+            // the operation. The clause can keep them (W0313).
+            let given: BTreeSet<super::caps::Held> = self
+                .op_fn_args
+                .iter()
+                .filter(|a| a.cap == cap && (a.op.is_none() || a.op == oi))
+                .filter(|a| a.pos.is_none_or(|p| p == i))
+                .flat_map(|a| a.held.iter().copied())
+                .collect();
+            self.locals.get_mut(l).caps.extend(given.iter().copied());
+            self.locals.get_mut(l).sticky.extend(given);
+            // A function parameter is one of the function values that the
+            // nodes give to the operation. A task or a fork branch of the
+            // clause runs them (W0401, W0403, W0405).
+            if fn_param.is_some() {
+                self.note_clause_fn(cap, oi, (si, i));
+            }
+            // A callee can give a value that holds a function value in a field or
+            // an element: the clause cannot follow it.
+            if !matches!(self.inf.shallow(pt), Ty::Fn(_)) && self.has_fn(pt) {
+                self.locals.get_mut(l).caps.insert(super::caps::UNKNOWN_FN);
+                self.locals
+                    .get_mut(l)
+                    .sticky
+                    .insert(super::caps::UNKNOWN_FN);
+            }
+            self.mark_modes(l);
+        }
+        param_roots
+    }
+
+    /// Binds the continuation `resume` of clause `c` of operation `op` at node
+    /// `entry`. Returns its capability: a closure that resumes it holds the
+    /// capability, and it cannot leave the clause. The caller pops
+    /// `clause_conts` after the clause.
+    fn bind_clause_cont(
+        &mut self,
+        c: &ast::HandlerClause,
+        op: &crate::program::OpDef,
+        around: &AroundClause<'_>,
+        entry: NodeId,
+    ) -> CapId {
+        let ty = &around.ty;
+        let kty = Ty::Cont(Box::new(op.ret.clone()), Box::new(ty.clone()));
+        let k = self.new_local("resume", VarKind::Continuation, c.span, kty, false);
+        self.facts.vars[self.locals[k].var.index()].once = !op.multi;
+        self.locals.get_mut(k).cont = Some(ContInfo {
+            arg: op.ret.clone(),
+            ret: ty.clone(),
+            multi: op.multi,
+            muts: around.body_muts.clone(),
+            frees: around.body_frees.clone(),
+            cap: around.cap,
+            depth: self.handlers.len(),
+            fail: around.def.is_std && around.def.name == "Fail",
+        });
+        let kv = self.locals[k].var;
+        self.bind(kv, entry);
+        let kcap = self.facts.add_cap();
+        self.cont_caps.insert(kcap);
+        self.locals
+            .get_mut(k)
+            .caps
+            .insert(super::caps::Held::Cap(kcap));
+        self.clause_conts.push((kcap, self.handlers.len()));
+        kcap
+    }
+
+    /// A reference that a clause resumes with into its own local is not valid
+    /// after the `handle` that ends at node `end`: the clause has ended. The
+    /// result of an operation of that clause, or of a call that reaches the
+    /// handler, can be one. `v` is the value of the handled body.
+    fn end_clause_locals(
+        &mut self,
+        h: &mut super::Handled,
+        clause_locals: Vec<(Option<usize>, PlaceId)>,
+        (end, span): (NodeId, Span),
+        v: &Val,
+    ) {
         for (oi, p) in clause_locals {
             let results: Vec<PlaceId> = self
                 .op_results
                 .iter()
-                .filter(|((c, o), _)| *c == cap && (o.is_none() || oi.is_none() || *o == oi))
+                .filter(|((c, o), _)| *c == h.cap && (o.is_none() || oi.is_none() || *o == oi))
                 .map(|(_, &r)| r)
                 .collect();
             let root = self.facts.place(p).root;
@@ -2156,13 +2251,13 @@ impl Lower<'_> {
                 }
             }
         }
-        // The abort paths and the check of the locals outside the body come after
-        // the whole body (`finish_aborts`). A stored value can run a clause too.
-        h.end = end;
-        self.handled.push(h);
-        // The value of the handled body: also a task handle or a function value. A
-        // clause value that holds references or function values joins it. A value
-        // with no linear part needs one from each clause too.
+    }
+
+    /// The value of a `handle`: the value `v` of the handled body, also a task
+    /// handle or a function value. A clause value that holds references or
+    /// function values joins it. A value with no linear part needs one from
+    /// each clause too.
+    fn join_clause_vals(&mut self, v: Val, clause_vals: Vec<Val>) -> Val {
         let mut out = v;
         if !clause_vals.is_empty() {
             out.empty &= clause_vals.iter().all(|cv| cv.empty);
@@ -2227,7 +2322,9 @@ impl Lower<'_> {
         // A call that reaches this handler must not pass places that the handler mutates.
         for &n in calls {
             for &m in h.footprint.iter().chain(&h.lent) {
-                self.facts.call_mut.push((n, m, 1000 + h.cap.0));
+                self.facts
+                    .call_mut
+                    .push((n, m, super::roots::clause(h.cap)));
             }
             for &l in &h.lent {
                 self.facts.lends_mut.push((n, l));

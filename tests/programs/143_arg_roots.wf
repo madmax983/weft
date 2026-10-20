@@ -1,0 +1,44 @@
+// The roots of the argument places of a call (QR17). W0312 compares the
+// places of two different roots, so two kinds of roots must not share one.
+//
+// Each split of each call has a place of its own. The split point of `far` is
+// its parameter 64. The two sides of one split do not overlap. A side of one
+// call and a side of another call can overlap.
+
+extern fn far(v: &Vec<u64>, p1: u64, p2: u64, p3: u64, p4: u64, p5: u64, p6: u64, p7: u64, p8: u64, p9: u64, p10: u64, p11: u64, p12: u64, p13: u64, p14: u64, p15: u64, p16: u64, p17: u64, p18: u64, p19: u64, p20: u64, p21: u64, p22: u64, p23: u64, p24: u64, p25: u64, p26: u64, p27: u64, p28: u64, p29: u64, p30: u64, p31: u64, p32: u64, p33: u64, p34: u64, p35: u64, p36: u64, p37: u64, p38: u64, p39: u64, p40: u64, p41: u64, p42: u64, p43: u64, p44: u64, p45: u64, p46: u64, p47: u64, p48: u64, p49: u64, p50: u64, p51: u64, p52: u64, p53: u64, p54: u64, p55: u64, p56: u64, p57: u64, p58: u64, p59: u64, p60: u64, p61: u64, p62: u64, p63: u64, mid: usize) -> &[u64] in v[..mid]
+extern fn near(k: usize, v: &Vec<u64>) -> &[u64] in v[k..]
+
+fn both(x: &[u64], y: &[u64]) / mut(x) {}
+
+fn two_calls(v: &Vec<u64>) / mut(v[]), blocking {
+    let a = far(v, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)
+    let b = near(1, v)
+    both(a, b)   //~ W0312
+}
+
+fn one_split(v: &Vec<u64>) / mut(v[]) {
+    let (l, r) = v.split_at(1)
+    both(l, r)
+}
+
+// What a callback at parameter 0 gets has a root of its own: it is not the
+// root of a function value inside another argument.
+struct Keep { f: fn() }
+
+fn run_first(g: fn(), k: Keep) { g() }
+fn run_last(k: Keep, g: fn()) { g() }
+
+fn callback_first(v: &Vec<u64>) / mut(v) {
+    let r = &v[0]
+    run_first(|| v.push(1), Keep { f: || print(r) })   //~ W0312
+}
+
+fn callback_last(v: &Vec<u64>) / mut(v) {
+    let r = &v[0]
+    run_last(Keep { f: || print(r) }, || v.push(1))   //~ W0312
+}
+
+fn callback_reads(v: &Vec<u64>) {
+    let r = &v[0]
+    run_first(|| print(v.len()), Keep { f: || print(r) })
+}

@@ -1550,19 +1550,16 @@ impl Lower<'_> {
         }
     }
 
-    /// Resolves a type written in a `let`.
-    fn local_ty(&mut self, t: &ast::TypeExpr) -> Ty {
-        let gens: Vec<String> = self
-            .self_fn
-            .map(|f| self.sigs[f].generics.clone())
-            .unwrap_or_default();
-        let module = self.module;
-
+    /// Resolves a type written in the body, such as the type of a `let` or
+    /// of a closure parameter.
+    pub(super) fn local_ty(&mut self, t: &ast::TypeExpr) -> Ty {
+        let sigs = self.sigs;
+        let gens: &[String] = self.self_fn.map_or(&[], |f| &sigs[f].generics);
         crate::program::TyResolver {
             prog: self.prog,
             diags: &mut self.diags,
         }
-        .resolve(t, module, &gens, None)
+        .resolve(t, self.module, gens, None)
     }
 
     /// Returns the place of an expression, or a fresh temporary root for a value.

@@ -38,6 +38,7 @@ mod late;
 pub mod loops;
 mod oprefs;
 mod repeat;
+pub(crate) mod roots;
 mod stmt;
 mod tasks;
 
@@ -133,11 +134,6 @@ impl<T: Ord + Clone> Grow<T> {
         self.0
             .as_ref()
             .map_or_else(BTreeSet::new, |g| g.set.clone())
-    }
-
-    /// The set, as a value.
-    pub fn into_set(self) -> BTreeSet<T> {
-        self.0.map_or_else(BTreeSet::new, |g| g.set)
     }
 
     /// The elements that `other` does not have.
@@ -1185,6 +1181,9 @@ pub struct Lower<'p> {
     library: bool,
     self_fn: Option<FnId>,
     split: u32,
+    /// The id of each split side of a call: the base of the call and the
+    /// parameter that names the split point (`Lower::seg_split`).
+    seg_splits: BTreeMap<(u32, usize), u32>,
     cap_calls: Vec<(NodeId, CapId)>,
     resumes: Vec<(NodeId, CapId)>,
     match_moves: bool,
@@ -1436,6 +1435,7 @@ impl<'p> Lower<'p> {
             library,
             self_fn: None,
             split: 0,
+            seg_splits: BTreeMap::new(),
             cap_calls: Vec::new(),
             resumes: Vec::new(),
             match_moves: false,
@@ -2201,6 +2201,14 @@ impl<'p> Lower<'p> {
         self.split
     }
 
+    /// Returns the id of the split of a call whose places use `split_base`, at
+    /// the parameter with index `label`. Each pair has an id of its own: the
+    /// two sides of one split are disjoint, and the sides of two splits are not.
+    fn seg_split(&mut self, split_base: u32, label: usize) -> u32 {
+        let next = u32::try_from(self.seg_splits.len()).unwrap_or(u32::MAX);
+        *self.seg_splits.entry((split_base, label)).or_insert(next)
+    }
+
     /// Substitutes a signature place with the places of the arguments.
     fn subst_place(
         &mut self,
@@ -2228,7 +2236,7 @@ impl<'p> Lower<'p> {
                             hi,
                             unstable,
                         } => {
-                            let split = split_base * 64 + u32::try_from(*label).unwrap_or(0);
+                            let split = self.seg_split(split_base, *label);
                             let text = if *hi { "[k..]" } else { "[..k]" };
                             next.push(self.child(
                                 p,

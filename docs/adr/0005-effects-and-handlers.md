@@ -91,6 +91,19 @@ Status: accepted. Date: 2026-10-18.
   into them until the call, as a reference argument does: a closure points into what it
   captures, and a tuple or an `Option` into its references. A perform is a call in the
   same way, and the clause can run a function argument of the operation there.
+- Each place of a call has a root (`call_arg(P, A, I)`, `call_mut(P, M, I)`), and
+  W0312 compares the places of two different roots (`weft_sema::body::roots`). The
+  kinds are: a parameter (or the parameter that names its place with `in`), what
+  function value argument `i` reaches, a value that the call runs and that is not an
+  argument (a stored value, the called value, a function value inside an argument
+  that is not a callback), the `rc` group of a type, and the footprint of the clauses
+  of a handler. Each kind has a range of its own, so two kinds never share a root.
+  The roots were numbers before (`800 + i`, `810 + i`, `900 + a`, `1000 + c`), and a
+  callback at parameter 0 had the root of a stored value: a callback that mutates
+  what a stored value in another argument points into got no W0312. The split sides
+  that a call gives (`[..k]`, `[k..]`) have one split for each call and parameter.
+  The id was `64 * call + parameter` before, so a split point at parameter 64 or
+  more gave one call the split of the next call (`tests/programs/143_arg_roots.wf`).
 - A parameter of a closure or a clause that holds references (a reference, a tuple or an
   `Option` with one) points into what the call gives.
 - W0312 is stronger than the design. The design lets one task mutate through aliases
