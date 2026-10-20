@@ -1,0 +1,971 @@
+{
+ "Edge: implement": {
+  "base_commit": "19f9e12912f46c36c0b7cbbd3dd381ead6f65432",
+  "head_commit": "32e5e3530aa4441f5009a89b49c00bf3e9cf7706",
+  "gates_passed": true,
+  "summary": "Stage \"Edge\" is done in /home/user/wt-edge (branch review/edge) as two commits: 1d840cf (code, tests, corpus) and 32e5e35 (docs). One item is not done: CLAUDE.md is unchanged. All gates pass: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace`. `proofs/verify-all.sh` with Verus gives borrowing 169, effects 48 and weft-verified 64 verified, 0 errors.\n\nWhat changed:\n- **CLI:** `weft run` and `weft test` exist now. They check the program first and refuse it when it has errors, unless `--unchecked` is given.\n- **Dependencies:** `weft check examples/package` sees the dependency modules (RT21).\n- **Markers:** the CLI reads `// weft: library` and `// weft: no-runtime` (RT24).\n- **Syntax:** `*T` raw pointers are added (RT23). A flat binary chain has no length limit, and the nesting limit is a real 96 levels.\n- **Codes:** `weft explain` knows every code that the sources emit (F11).\n- **Effect inference:** the round bound grows with the program, and W0706 reports a result that did not converge (F9).\n- **Corpus:** new programs cover `overwritten`, `stealable` (with new harness marks) and the W0312 workaround (F14).\n- **Docs:** stale claims are corrected (F9 claims, F10/F11, F12).\n\nMy diff does not touch `crates/weft-sema/src/body/`, `spec/weft.dl`, `rules.rs`, `bridge.rs`, `crates/weft-interp` or proof sources.\n\nThings the parent should know:\n1. **CLAUDE.md is not edited.** An agent message cannot authorize CLAUDE.md changes, so I left it. The full rule-change checklist is now in ADR 0002. The user can copy it into CLAUDE.md.\n2. **Some chains have a lower limit now.** Before, the parser accepted chains of about 384 steps. A chain of about 300 `.method()` calls already overflowed sema on a 2 MiB test stack, and 340 `+` terms overflowed `body::Lower::binary`. Prefix operators, postfix steps and `else if` branches now stop at about 150 steps, with a 25% stack margin. A flat chain of binary operators parses at any length: each 32 operators go into a hidden local, so the tree stays shallow. `crates/weft-cli/tests/limits.rs` checks every stage on a 2 MiB thread for the largest program that parses. The limit can go back up when `body/` and `weft-interp` handle these chains without deep recursion.\n3. **Raw pointers are allowed only in `extern fn` signatures and locals.** Other positions get the new code W0116. A raw pointer is also nonportable: a fork that captures one gets W0401.\n4. **For other lanes:**\n   - W0115 has two meanings in `body/`: \"missing field\" and \"spawn needs a scope\". Its `explain` text covers both. The `body/` lane may want to split it.\n   - `crates/weft-interp/src/lib.rs` still says linear values are \"finished exactly once\". I could not edit that crate.\n   - The interpreter does not check `i8` overflow for locals.\n5. **Codes:** I added W0116 (raw pointer outside FFI) and W0706 (inference does not converge). A parallel lane could pick the same numbers.\n\nMain files are in /home/user/wt-edge: `crates/weft-cli/src/lib.rs`, `crates/weft-cli/tests/cli.rs`, `crates/weft-cli/tests/limits.rs`, `crates/weft-sema/src/{lib,program,types,tests}.rs`, `crates/weft-syntax/src/{ast,parser,pretty}.rs`, `crates/weft-check/src/codes.rs`, `crates/weft-check/tests/programs.rs`, and `tests/programs/24_raw_pointers.wf` to `27_alias_in_one_task.wf`.",
+  "findings": [
+   {
+    "id": "CLI-run-test",
+    "status": "fixed",
+    "evidence": "Repro at base: `weft run` and `weft test` gave \"unknown command\". Tests in crates/weft-cli/tests/cli.rs: run_prints_the_output_of_main, run_failure_exits_with_1, run_refuses_a_program_with_errors, run_takes_seed_and_workers, run_without_main_fails, test_runs_the_test_blocks, test_reports_failing_tests, test_refuses_a_program_with_errors, binary_streams_output_and_sets_the_exit_code, explain_and_help (help lists run and test). Docs: README quick start, ADR 0010, architecture.md Commands.",
+    "notes": "Uses weft_interp::{run_main, run_tests} with RunOptions. Options: --seed N, --workers N (at least 1), --unchecked, --lib, --no-runtime. Exit code 0 on success, 1 on errors or failure, 2 on a usage error. Program stdout goes to stdout. Log output, diagnostics and run-time errors go to stderr; for a single file the error also prints FILE:line:col. The binary streams live through run_live. The library `run` keeps the output in Output.text and Output.stderr. A failing test prints `test NAME: FAILED: msg`, and a summary line follows."
+   },
+   {
+    "id": "RT21",
+    "status": "fixed",
+    "evidence": "Repro at base: `weft check examples/package` gave W0101 for `json` and `logger`. Tests: cli.rs::check_sees_package_dependencies (now 1 error, the deliberate W0901); weft-sema src/tests.rs::root_sees_dependency_modules, dependency_does_not_see_the_root, dependency_rc_group_resolves_in_its_module. All three sema tests fail when the program.rs fix is stashed.",
+    "notes": "Collector::collect inserts dependency modules into prog.root. A dependency's parent is now None, so it sees only its own items and the prelude. Before, its parent was the prelude's `http` module. Same bug pattern, also fixed: resolve_sig_place looked up rc group roots in the root module. It now uses the signature's own module."
+   },
+   {
+    "id": "RT24",
+    "status": "fixed",
+    "evidence": "Repro at base: `weft check tests/programs/15_library.wf` and `19b_no_runtime_bad.wf` gave 0 errors. Tests: cli.rs::check_honors_file_markers (W0801, W0802, W0803; `--lib` adds to a marker; `weft run` honors the markers); weft-sema tests.rs::file_markers_set_options. The corpus harness and the bench now share Options::from_markers. Docs: README, grammar.md lexical rules, `weft help`.",
+    "notes": "A marker is a line comment `// weft: WORD ...`. A text like print(\"// weft: library\") is not a marker. A single file takes its options from its markers, a package from weft.toml, and flags add to either. All flags only switch options on, so a flag is never lost."
+   },
+   {
+    "id": "RT23-ptr",
+    "status": "fixed",
+    "evidence": "Repro at base: \"expected a type, found `*`\" for the design's `extern fn sqlite3_step(stmt: *Stmt) -> i32 / blocking`. Tests: parser.rs::types (`*` cases), deep_nesting (`*` x5000 gives an error, not a crash), props.rs::pretty_output_examples and the generated round trip (Ptr is in the generator), snippets s09 (the snippet now uses `*Stmt` as in the design), weft-sema tests raw_pointer_is_a_copy_value_of_its_own_type and raw_pointer_only_in_foreign_signatures_and_locals. Corpus: tests/programs/24_raw_pointers.wf (has the design line; W0104 x2, W0102, W0401, W0116 x4, plus clean cases). Docs: grammar.md, ADR 0009, W0116 in codes.rs.",
+    "notes": "New AST node TypeExprKind::Ptr. The lexer already had `*`. The parser accepts `*T` in type position. The printer wraps the inner type in parentheses for modes or a fn type. In sema, `*T` is Ty::Adt of a hidden extern definition named \"*\" that no module can name. It is copy and nonportable, with no fields, elements or deref. Display shows `*T`. I used an ADT, not a new Ty variant, because `is_copy` in body/ treats an unknown variant as a moved value. Program.ptr holds its id. Sema reports W0116 when `*T` appears in struct fields, enum payloads, effect operations, impl types or non-extern fn signatures. Locals are allowed, because body/ resolves local annotations. I also fixed a printer bug: `&&&T` printed as `&(&(&T))`, which did not parse back at the nesting limit."
+   },
+   {
+    "id": "RT23-limits",
+    "status": "fixed",
+    "evidence": "Repro at base: 48 nested blocks failed while the docs said about 96; 380 flat `1 + 1` terms failed; 340 terms overflowed sema on a 2 MiB thread (gdb showed body::Lower::binary). Tests: crates/weft-cli/tests/limits.rs::every_accepted_program_fits_in_a_test_stack covers 15 constructs. For each, it finds the largest program that parses and runs parse, print, Debug, sema, the checker, the spec and the interpreter on a 2 MiB thread. It also passes on 1.5 MiB. limits.rs::long_flat_chains_have_no_limit runs 20k-term `+`, mixed and `&&`/`||` chains with correct values, operands in source order, and `&&` short-circuit. parser.rs::long_binary_chains_parse checks 100k-term chains and the printer round trip; moderate_nesting_is_fine parses 94 blocks, parens and ifs. Docs: grammar.md rules 10-11, ADR 0009, architecture.md Size limits.",
+    "notes": "Binary chains are parsed by a loop. After every 32 operators, the parser stores the left operand in a hidden local `chain'LO.K` of a block. The value, the order of evaluation and the short-circuit are the same. The printer prints such a block back as the flat chain. Blocks that are part of an expression now cost one nesting level, so blocks, parens, closures, if and match all reach 96 levels. CHAIN_COST went from 2 to 5, which gives about 150 steps for prefix operators, postfix steps and `else if`. Before, about 300 postfix steps overflowed sema on a 2 MiB stack, so the old limit allowed a crash."
+   },
+   {
+    "id": "F11-codes",
+    "status": "fixed",
+    "evidence": "Repro at base: `weft explain W0115` gave \"unknown code\". Test: crates/weft-check/src/codes.rs::every_code_in_the_sources_is_explained scans crates/*/src, spec, std, docs, tests/programs and examples for W or L plus 4 digits. Before the fix it failed on L0001 and W0108-W0115. cli.rs::explain_and_help explains W0108, W0111, W0115, W0116, W0706 and L0001.",
+    "notes": "Added L0001, W0108 to W0115, and the new W0116 and W0706, with short ASD-STE100 texts. W0115 means two things in body/ (missing field, and spawn needs a scope), so its text covers both. The body/ lane may want to split it."
+   },
+   {
+    "id": "F9-fixpoint",
+    "status": "fixed",
+    "evidence": "weft-sema src/tests.rs: effect_inference_reaches_a_fixpoint (4 rounds for a chain of 3 calls), effect_inference_that_does_not_converge_is_an_error (analyze_with_limit(.., 2) gives W0706 on `f0` only; a limit of 4 gives no error), the_round_limit_grows_with_the_program (a chain of 40 calls converges in 41 rounds, above the old bound of 32 with this pattern). Docs: ADR 0005, architecture.md, W0706 in codes.rs.",
+    "notes": "The bound is round_limit(n) = 10*(n+2) rounds for n user functions. If the last round still changed a signature, one more pass finds each non-declared function whose effects would still change and gives it W0706 at its name. analyze_with_limit is public for tests."
+   },
+   {
+    "id": "F9-claims",
+    "status": "fixed",
+    "evidence": "Docs fixed: architecture.md (Verified pieces table: modes and places::concat marked \"not yet used\"; Linear is \"at most once\"), ADR 0004 (what uses the verified core now), ADR 0006, crates/weft-verified/README.md (concat and modes not yet used), ADR 0010 and the lifecycle.rs module doc (\"at most once\", proofs unchanged). Verus run after the doc change: crates/weft-verified 64 verified, 0 errors.",
+    "notes": "crates/weft-interp/src/lib.rs line 11 still says linear values are \"finished exactly once\". I did not edit it, because weft-interp is off-limits. The plan's E3 goal statement also says \"exactly once\"; it is a plan, so I left it."
+   },
+   {
+    "id": "F12",
+    "status": "fixed",
+    "evidence": "Repro: specreview p14_attack.wf gives W0312 for attack(x, y); attack2 with `in` places passes. Docs: ADR 0005 (the stricter rule, the workaround code and the corpus reference) and a Phase 1 note in docs/design.md under \"Modes and threads\". Corpus: tests/programs/27_alias_in_one_task.wf (attack -> W0312; attack_in with `in w.entities[]` is clean).",
+    "notes": ""
+   },
+   {
+    "id": "F14",
+    "status": "fixed",
+    "evidence": "Corpus: tests/programs/25_overwritten.wf (W0601 from `overwritten` in straight-line, branch and loop cases; two clean rebind cases) and tests/programs/26_stealable.wf (plain data, a shared read, a uniq write and fork marked stealable; an rc capture and a shared-mutable write marked pinned). New harness marks in crates/weft-check/tests/programs.rs: `//~ stealable` and `//~ pinned`. A file that uses them must mark every task line, and a wrong mark fails the corpus test (checked). New test corpus_exercises_every_rule: each VIOLATION_RELATION and `stealable` must hold for some corpus body. With 25_overwritten.wf removed it fails with \"no corpus program derives [overwritten]\".",
+    "notes": "Tasks are found from reports[i].violations.stealable and facts.tasks[t].span, as weft_interp::stealable_spans does."
+   },
+   {
+    "id": "F10-F11-docs",
+    "status": "partial",
+    "evidence": "README.md: quick start with run, test, package check, facts and lint (every command was run); layout (examples/, cli, pretty-printer, no traceability.md); file markers; status of the interpreter and the proofs. proofs/README.md: B1-B5 proved (169 verified), effects E1 and E4 proved (48), E2, E3 and E5 not yet proved, B6 not done. ADR 0002: only spec diagnostics have a derivation, plus the full rule-change checklist. proofs/verify-all.sh requires borrowing, effects and weft-verified and exits 1 if one is missing (tested in a scratch tree: \"error: proofs/effects/verify.sh is missing\"). The real run verified all three with 0 errors.",
+    "notes": "CLAUDE.md is unchanged. An agent message cannot authorize CLAUDE.md changes, so the workflow task text was not enough. The full checklist is in ADR 0002, ready for the user to copy into CLAUDE.md. proofs/effects/verify.sh is committed in this branch, so effects is an expected crate. docs/traceability.md was not written, as instructed."
+   }
+  ],
+  "design_decisions": [
+   "Raw pointer `*T` resolves to a hidden extern ADT named \"*\" (copy, nonportable, no fields, elements or deref), declared after all named types so their ids stay the same. A new Ty variant would have needed body/ changes to stay a copy value.",
+   "A raw pointer is allowed only in extern fn signatures and locals. Struct fields, enum payloads, effect operations, impl types and non-extern fn signatures get the new code W0116.",
+   "A long binary chain is split by the parser into hidden-local parts of 32 operators: a block with `let chain'LO.K = part` and the rest of the chain as its tail. This is the only way within my files to make flat chains unlimited, because sema (body::Lower::binary) and the interpreter recurse per operator. The value, the order of evaluation and the short-circuit are the same. The printer prints the block back as the flat chain.",
+   "Nesting: a block inside an expression no longer pays a second nesting cost, so 96 levels holds for blocks, ifs and matches too. Chain steps cost 5 (about 150 steps), measured so that the whole pipeline at the parser's maximum runs on a 1.5 MiB stack (25% margin under 2 MiB).",
+   "Effect inference bound: 10*(n+2) rounds for n user functions. On non-convergence, one more check pass reports W0706 for each function whose effects would still change, not for every function changed in the last round.",
+   "Dependency modules have no parent module: a dependency sees its own items and the prelude, not the root package.",
+   "File markers apply only to a single file. A package uses weft.toml. Flags are OR-ed in, which is enough because every flag only switches an option on.",
+   "`weft run` streams program output live in the binary (run_live). The library `run` and `weft test` keep the output, so each test's output comes before its result line. Checker diagnostics for run and test go to stderr, so stdout carries only program output.",
+   "Corpus task marks are opt-in per file. A file that uses `//~ stealable` or `//~ pinned` must mark every task line. A separate test requires each spec sink relation and `stealable` to hold somewhere in the corpus.",
+   "CLAUDE.md is not edited, because an agent message cannot authorize CLAUDE.md changes. The checklist is in ADR 0002 instead."
+  ]
+ },
+ "Core S1: implement": {
+  "base_commit": "19f9e12912f46c36c0b7cbbd3dd381ead6f65432",
+  "head_commit": "c929fca5eeee042e3db4411b6cceeacac31e035f",
+  "gates_passed": true,
+  "summary": "Stage Core S1 is done in /home/user/wt-core (branch review/core) as 6 commits on top of 19f9e12. I reproduced each finding with its probe first and wrote a failing test before each fix. Every fix has a regression test: 7 new corpus programs (tests/programs/24 to 30), 4 new rule tests in crates/weft-check/src/tests.rs, and 5 new fact tests in crates/weft-sema/src/tests.rs. Spec changes: an input fact owner(Rt, V); a derived root_of(P, Rt); two invalidated_at rules, at moved_at and at scope_end of an owner; accesses(P,A) :- uses(R,P), points_into(R,A); task_reads(T,A) :- captures(T,R), points_into(R,A). rules.rs mirrors all of them. The W0301 evidence now has a Cause (Mutation, Move or ScopeEnd), so the message says \"moved at line N\" or \"goes out of scope at line N\". The random agreement generator also makes owner facts; 10000 cases pass. The gates pass at the head commit: cargo fmt --all --check, cargo clippy --workspace --all-targets -D warnings, and cargo test --workspace (this includes the interpreter corpus). I did not change crates/weft-verified, proofs/ or crates/weft-interp; Verus gives 64 verified, 0 errors. tests/programs/20_rc_graph.wf and all older corpus programs keep their expected results. The docs that changed are ADR 0003, ADR 0006 and docs/architecture.md. One trade-off needs your decision: the literal RT10 rules are coarse (see design_decisions).",
+  "findings": [
+   {
+    "id": "RT1/F1",
+    "status": "fixed",
+    "evidence": "tests/programs/29_owner_drops.wf (21 markers: move into a call, move to a local, move of a struct, a stable part of a moved value, block values, a rebind inside an inner block, a closure that outlives its block, a loop-body local, Rc overwrite/move/block, Box overwrite, W0204 for functions and closures, closure call results, plus clean controls); weft-check tests w0301_a_move_of_the_owner_invalidates_stable_parts and w0301_the_scope_end_of_the_owner_invalidates; weft-sema tests locals_and_by_value_parameters_own_their_roots, a_reference_through_an_rc_handle_points_into_the_handle, a_block_value_into_a_block_local_is_held_across_the_end; agreement_random with owner facts (10000 cases). Probes: a01 lines 8 and 17 W0301; a02 line 6 W0301; a11 lines 9, 17 and 24 W0301; a15 line 2 W0204; p1 lines 13 and 21; p2 line 11; p15 lines 3 and 14 W0204, line 8 W0301. 20_rc_graph.wf is unchanged. weft check --explain shows the root_of/owner/moved_at derivation.",
+    "notes": "Spec: owner(Rt, V), root_of(P, Rt), and invalidated_at at moved_at and scope_end of an owner, with no unstable step needed. Sema emits owner from set_root for owned locals, by-value parameters, closure and clause locals. moved_at and scope_end already existed (move_var, end_frame, return/break, parameters at exit). Rc: a reference through a handle also points into `handle.*`, an unstable Deref under the handle place. So a new value, a move or the end of that handle invalidates the reference, but dropping another clone does not. W0204 now rejects any returned value with places in a Local root (locals, by-value parameters, temporaries); the closure path checks this too. call_value keeps the result places of closures (rebased from closure parameters onto argument places), of fn items (ret_places) and of unknown fn parameters (the reference arguments). A by-value argument is now the base for `in` places, so the misleading W0203 with an empty place is gone."
+   },
+   {
+    "id": "RT10/F2",
+    "status": "fixed",
+    "evidence": "tests/programs/27_ref_reads.wf (print(c), r + 1, show(r), a task that reads a captured reference, a task that holds a reference while the parent writes or frees, fork_dangle W0403+W0405, plus 3 clean controls); weft-check tests w0405_a_use_of_a_reference_accesses_its_places and w0405_a_captured_reference_is_a_task_read; weft-sema test a_reference_used_as_a_value_reads_its_places. Probes: t01 lines 9 and 17; t04 lines 7 and 21; p11 lines 7, 8 and 15; p12 line 6; p17 line 15. All now give W0405.",
+    "notes": "The two spec rules are added with the current relation names (accesses, task_reads, uses, captures, points_into) and mirrored in rules.tasks(). In sema, name() records a read of a reference local's places, and print reads its reference arguments. diagnose shows one W0405 per task and span (several nodes of one expression conflicted)."
+   },
+   {
+    "id": "RT9",
+    "status": "fixed",
+    "evidence": "tests/programs/28_write_through.wf (W0402 @shared, W0701 for pub_bump and calls_param_bump, W0703, W0405, a rebind control, W0102 for `c = 5`); weft-sema test a_compound_assignment_through_a_reference_mutates_its_places. Probe m01: line 5 W0402, line 7 W0701, line 12 W0701 (param_bump now infers mut(c)).",
+    "notes": "I followed the interpreter. CompoundStore follows references, so `c op= v` on a reference local or parameter now goes through the general place path: it uses c and reads and mutates every place c points into, and it does not rebind c. Store does not follow references; it replaces the local. So `c = r` with a reference is still a rebind, and `c = 5` is still W0102 (a type mismatch for a rebind). I did not model it as a write through, because that would differ from the interpreter. ADR 0003 records this."
+   },
+   {
+    "id": "RT2",
+    "status": "fixed",
+    "evidence": "tests/programs/26_eval_order.wf: then_use, arm_use, handled_tail, clause_tail, before_closure, before_closure_task (W0405), closure_tail, loop_tail and and_rhs are now reported on the right line. The else_use and other_arm controls were false positives before and are now clean. Probes: a13 lines 8 and 22 (W0301, W0405); a14 lines 7, 14 and 23.",
+    "notes": "The new Lower::flush writes the queue into a node on the current path. It runs at the end of each if branch, match arm, loop body (while, loop, for), `&&`/`||` right side, handled body, handler clause, closure body, and function or test body. closure() saves the enclosing queue with take_pending and restores it with restore_pending."
+   },
+   {
+    "id": "RT4",
+    "status": "fixed",
+    "evidence": "tests/programs/26_eval_order.wf: temp_arg, temp_tuple, temp_print, temp_closure_call and temp_receiver give W0301; the temp_after and named_arg controls behave as before. Probe a04 lines 10 and 13 now give W0301.",
+    "notes": "call_fn now takes each argument in order (typed, held, then moved) before the next one runs. A by-reference receiver is held while later arguments run. The same Lower::hold applies to call_value, print, tuple parts, variant and positional constructors, effect operations and binary operands. A by-value argument now moves when it is evaluated, as in the interpreter."
+   },
+   {
+    "id": "ProofRule3",
+    "status": "not_reproduced",
+    "evidence": "tests/programs/30_enum_payloads.wf: a payload reference is invalidated through a callee with mut(m.state), through mut(m), by an assignment to m.state and by an assignment to an owned enum local (4 W0301). Clean controls: a primitive field write, a reference to the enum place itself, stable parts after mut(m), a mutation of another field. Both Variant step constructors (body/expr.rs match_pattern and program.rs field_step) set unstable: true.",
+    "notes": "The rule already held, so no code change was needed. I added the regression program."
+   },
+   {
+    "id": "RT20",
+    "status": "fixed",
+    "evidence": "tests/programs/24_int_literals.wf (v[0], a for loop sum, Some(&v[0]) as Option<&u64>, a slice loop, a generic struct field, tuple and variant match, plus a real i32 mismatch that is still W0102). Probes: b01 lines 4 and 17 are gone; f01 line 48 is gone.",
+    "notes": "I added Infer::deep: it expands bound variables but leaves unbound ones open. place_expr Index, field_of, borrow `&x[]`, elem_iter, the match tuple and variant patterns, and the call_fn result tuple now use it instead of resolve. The remaining b01 lines 10 and 11 are a real reference-versus-u64 mismatch (`let x: u64 = r`). They now also give a cascade W0204 on that ill-typed code."
+   },
+   {
+    "id": "RT19",
+    "status": "fixed",
+    "evidence": "tests/programs/25_static_methods.wf: e.new(), e.make(1) and e.make(hp: 1) give W0104; calls through the type path still work. Probes x01 and x02 give W0104 \"`new` has no `self` parameter: call it as `Entity.new(...)`\" instead of a panic.",
+    "notes": "The check is in call_fn, because every receiver goes through it. I found no other place in weft-sema that assumes the receiver is parameter 0; fip.rs does not map receivers."
+   }
+  ],
+  "design_decisions": [
+   "Needs your decision (RT10/F2): I added the two spec rules exactly as specified. They are sound but coarse: any use or capture of a reference counts as an access to everything it points into. The probe SCRATCH/core/probes/disjoint.wf and disjoint_parent.wf are new false positives that were clean before. Examples: two tasks that capture `stats` and touch separate fields, or `print(stats.name)` while a task writes stats.count. This is the holds-based rule that the B4 proof covers, and no corpus program or design example is affected. ADR 0006 documents it, and the corpus has a clean workaround (references to the separate fields). A precise version would need a new input relation for uses of a reference's whole value.",
+   "RT1 Rc: I tracked each handle separately (a `handle.*` dependency place) instead of giving the group root an owner. Moving or dropping any handle would then invalidate every reference into the group, which gives false positives. With per-handle tracking, a new value, a move or the end of the handle the reference came through invalidates it; dropping a clone does not; group mutations still go through the group root. dep_places keeps these places out of mutations and out of the `in` checks of W0203 and W0204.",
+   "RT1 block values: a block or match-arm value that points into the block's own locals is held in a `block value` temporary across the end of the block. The spec's scope_end rule then reports it with its derivation, with the message 'the value of this block points into `v[]`, but `v` goes out of scope at the end of the block'. Function and closure bodies are not held; W0204 reports them instead.",
+   "RT1 W0204: the check covers any returned value with places in a Local root (locals, by-value parameters, temporaries), including closures that capture locals, because the interpreter captures variable cells. I did not add a check on signatures (for example an `extern` signature whose returned place is in a by-value parameter).",
+   "RT4: a by-value argument now moves when it is evaluated, not after all arguments. This matches the interpreter, so `f(v, v.len())` is now a use after move.",
+   "RT9: only compound assignment writes through a reference. Plain `=` stays a rebind, matching the interpreter's Store."
+  ]
+ },
+ "Edge: verify probe": {
+  "issues": [
+   {
+    "severity": "major",
+    "finding": "F9-fixpoint",
+    "description": "The new round bound 10*(n+2) is too small for a monotone inference, so valid programs that converge get a false W0706 error. The doc justification (one round moves an effect one call back, a place has at most 8 steps, so 10 rounds per function are enough) is wrong: place growth and parameter rotation compound around a recursion cycle, so the inference needs about 8*P*(k-1) rounds (k functions in the cycle, P rotating reference params). Measured with analyze_with_limit(.., 100000), all of these converge with 0 W0706: one self-recursive fn with 8 params needs 41 rounds (limit 30); 4 mutually recursive fns with 4 params need 62 (limit 60); 8 fns x 3 params need 107 (limit 100); 16 fns x 4 params need 302 (limit 180). The same text is in lib.rs round_limit, ADR 0005, architecture.md and the W0706 explain text.",
+    "repro": "weft check SCRATCH/verify/review_edge/Edge/f9_false_w0706_single.wf  (struct N { v: u64, a: Vec<N> }; fn walk(x0: &N, ..., x7: &N) { x0.v += 1; walk(x1, ..., x7, &x0.a[0]) }) -> error[W0706] ... in 30 rounds. Also f9_false_w0706.wf (4 fns x 4 params, 60 rounds) and infer/rot_k8_p3.wf and infer/rot_k16_p4.wf in the same dir. Round counts come from the scratch tool SCRATCH/verify/review_edge/Edge/rounds (target/debug/rounds FILE).",
+    "suggested_fix": "Base the bound on the height of the lattice, not on the function count. For example (n+2) * (1 + number of effects + 9 * total reference params), or iterate SCCs in reverse topological order with a worklist and use W0706 only as a far guard. Add f9_false_w0706_single.wf as a sema test that must give no W0706. Correct the claim in round_limit's doc, ADR 0005, architecture.md and codes.rs."
+   },
+   {
+    "severity": "major",
+    "finding": "NEW",
+    "description": "Unsound, but pre-existing (same result at base 19f9e12) and outside Edge's lane (crates/weft-sema/src/body/). When a closure or a handler clause assigns a new value to a captured linear variable, the code does not get W0601 'overwritten'. The old linear value is lost without a sound: at run time only 'rollback 2' prints. The new F14 corpus covers straight-line code, branches and loops, but not closures or handlers. Match arms, nested blocks, for loops and partial-consume-then-overwrite are reported correctly.",
+    "repro": "weft check SCRATCH/verify/review_edge/Edge/f14/overwritten_variants.wf -> W0601 is missing at line 21 (let f = || { tx = begin(2) }) and line 29 (handle Note { fn note(x) { tx = begin(x); resume(()) } } in note(1)). weft run .../f14/ow_closure_run.wf -> 0 errors, prints only 'rollback 2', exit 0.",
+    "suggested_fix": "body/ lane: when a closure or a handler clause assigns to a captured linear local, emit the overwritten fact (or treat the capture as a move). Add both shapes to tests/programs/25_overwritten.wf."
+   },
+   {
+    "severity": "minor",
+    "finding": "RT23-ptr",
+    "description": "A nonportable value goes through a generic function that forks with it, with no W0401, and the task is marked stealable. This applies to the new *T and also to Rc (pre-existing: there is no mode polymorphism, spec review OP3). *T inherits the gap. Direct captures, Wrap<T>, tuples, Option, Vec, arrays and closure values all give W0401 correctly, and spawn pins the task.",
+    "repro": "weft check SCRATCH/verify/review_edge/Edge/ptr/ptr_generic_fork.wf (fn both<T>(x: T) / par { fork(|| x, || 2) }; both(prepare(\"x\"))) -> no W0401. Also ptr/generic_rc_fork.wf with Rc -> 0 errors.",
+    "suggested_fix": "Out of lane, a known gap. Treat a generic T that a fork captures as needing portable at the instantiation, or check portability of type arguments at the call."
+   },
+   {
+    "severity": "minor",
+    "finding": "RT23-limits",
+    "description": "A hidden chain local is named chain'{span.lo}.{k}, so its name holds a source offset. After pretty-printing and parsing again, the tree is not the same (chain'23.0 becomes chain'20.0). This contradicts the pretty.rs module doc and docs/grammar.md: 'parses back to the same tree, spans aside'. Tests compare printed text only, so they do not see it.",
+    "repro": "Scratch program SCRATCH/verify/review_edge/Edge/rt/src/main.rs: src = \"fn f() -> u64 {        1\" + \" + 1\"*40 + \" }\". The original names are [\"chain'23.0\"], and after pretty + parse they are [\"chain'20.0\"].",
+    "suggested_fix": "Name parts with a counter for each file or chain that does not depend on spans, or make the tree equality ignore chain' names, and say so in the doc."
+   },
+   {
+    "severity": "minor",
+    "finding": "CLI-run-test",
+    "description": "--workers has no upper bound, and the scheduler cost grows quadratically with the worker count. A two-line program takes 0.07 s with 1000 workers, 5.8 s with 10000, and more than 60 s with 100000 (it hangs).",
+    "repro": "weft run --workers 100000 SCRATCH/verify/review_edge/Edge/cli_ok.wf  (timeout 60 -> exit 124)",
+    "suggested_fix": "Cap --workers (for example 1024) with a usage error, or make idle workers cost nothing."
+   },
+   {
+    "severity": "minor",
+    "finding": "CLI-run-test",
+    "description": "weft test collects stderr (Log output) for all tests and prints it after the summary line, so log lines are not next to their test's result line. weft test also exits 0 with '0 passed, 0 failed' on a file with no test blocks. With --unchecked, a run that succeeds exits 0 although the program has checker errors, but help says exit 1 'when the program has errors or fails'.",
+    "repro": "weft test .../Edge/cli_tests2.wf -> 'info: hello log' comes after 'cli_tests2.wf: 1 passed, 2 failed'. weft test .../Edge/cli_notests.wf -> exit 0. weft run --unchecked .../Edge/cli_unchecked_ok.wf -> W0601 printed, 'ran', exit 0. (All files are in SCRATCH/verify/review_edge/Edge/.)",
+    "suggested_fix": "Interleave each test's stderr before its result line (write stderr to the same sink in order). Consider a note when no tests are found. Document the --unchecked exit code, or return 1 when errors exist."
+   },
+   {
+    "severity": "minor",
+    "finding": "RT24",
+    "description": "Marker words that the parser does not know are ignored with no message, so a typo checks the file as a binary with no warning: '// weft: lib', '// weft: no_runtime', '// weft: Library'. No flag can turn a marker off (there is no --bin), so 'flags win' only adds options.",
+    "repro": "weft check SCRATCH/verify/review_edge/Edge/m9_unknown_word.wf ('// weft: lib' plus a root Log handler) -> 0 errors; m8_case.wf the same.",
+    "suggested_fix": "Give a warning for an unknown word after '// weft:'. Optionally add --bin/--runtime flags to override a marker."
+   },
+   {
+    "severity": "minor",
+    "finding": "RT24",
+    "description": "Same pattern elsewhere: the interpreter harness crates/weft-interp/tests/programs.rs (lines 46, 51, 163, 168) still reads markers with src.contains(\"// weft: library\"), not Options::from_markers. So '// weft: no-runtime, library' gives library=false there, but true in weft check and in the corpus harness. The crate was off-limits to Edge, so this needs a follow-up.",
+    "repro": "grep -n 'weft: ' /home/user/wt-edge/crates/weft-interp/tests/programs.rs",
+    "suggested_fix": "Use weft_sema::Options::from_markers in the interpreter harness (interp lane)."
+   },
+   {
+    "severity": "minor",
+    "finding": "RT21",
+    "description": "A dependency name silently hides a prelude name in the root. With a dependency named 'log', the call log.info(\"hello\") in the root calls the dependency and not the Log effect, with no diagnostic. A clash with a root item is reported (W0107). The fix inserts dependency modules with a raw items.insert, which skips the duplicate check.",
+    "repro": "weft run SCRATCH/verify/review_edge/Edge/pkg3 -> 0 errors, prints 'dep: hello'.",
+    "suggested_fix": "Report W0107, or a warning, when a dependency name equals a prelude item."
+   },
+   {
+    "severity": "minor",
+    "finding": "F10-F11-docs",
+    "description": "The CLAUDE.md rule-change checklist is still incomplete (spec, rules.rs, corpus only). The implementer was right not to change it: an agent message cannot authorize CLAUDE.md edits. The full checklist is in ADR 0002. Stale 'exactly once' text is still in crates/weft-interp/src/lib.rs:11 (off-limits) and docs/plan/phase1.md:143.",
+    "repro": "git -C /home/user/wt-edge diff 19f9e12..HEAD --stat -- CLAUDE.md (empty); sed -n 14,15p /home/user/wt-edge/CLAUDE.md",
+    "suggested_fix": "Ask the user to approve copying the ADR 0002 checklist into CLAUDE.md. Fix the interp doc comment in the interp lane."
+   },
+   {
+    "severity": "minor",
+    "finding": "F9-fixpoint",
+    "description": "Effect inference takes time quadratic in the length of a call chain whose callers come before their callees (one round per step, and each round lowers every function). 400 functions take 2.8 s and 800 take 10.5 s (debug build). Before, the cap of 32 made this fast but unsound.",
+    "repro": "weft check SCRATCH/verify/review_edge/Edge/infer/chain_800.wf  (t=10.5s)",
+    "suggested_fix": "Use a worklist: lower again only the callers of a function whose signature changed, in SCC order."
+   },
+   {
+    "severity": "minor",
+    "finding": "NEW",
+    "description": "Integration note: the parallel branch review/core adds tests/programs/27_ref_reads.wf, which uses the same '27_' prefix as Edge's 27_alias_in_one_task.wf. Both branches also edit crates/weft-check/src/codes.rs, crates/weft-sema/src/tests.rs, crates/weft-sema/src/types.rs, ADR 0006 and docs/architecture.md, so the merge will have conflicts. No code number collides: review/core does not use W0116 or W0706.",
+    "repro": "git -C /home/user/wt-edge diff --name-only 19f9e12 review/core; compare with git diff --name-only 19f9e12 review/edge",
+    "suggested_fix": "Renumber one of the corpus files at merge time and merge codes.rs by hand."
+   }
+  ],
+  "confirmed_fixed": [
+   "CLI-run-test: 'weft run' and 'weft test' work through run_main/run_tests. Exit 0 on success, 1 on failure (fail(), assertion, division by zero), 2 on usage errors (--workers 0, --seed abc or -1, missing PATH). A program with errors does not run (W0501 and W0803 cases, examples/package W0901) unless --unchecked is given; then the run-time guard reports the error at file:line:col. A failing test prints 'test NAME: FAILED: msg'. --seed changes the fork interleaving. A package runs (pkg1 prints 'info: parsed 3 items'). Help lists run and test.",
+   "RT21: 'weft check examples/package' now gives only the deliberate W0901, not W0101 for json/logger. A dependency cannot see root items, other dependencies or root values (pkg2: 3 x W0101). Nested root modules and dependency types (json.Doc in a signature) resolve. A root item with a dependency's name gets W0107. The old http.json workaround is now rejected, as it should be.",
+   "RT24: the CLI honors '// weft: library' and '// weft: no-runtime' (15_library: W0801 and W0802; 19b: W0803; red-team lib01 and spec p9_lib_root now give W0801). Indented, tab and comma forms work. A marker inside a string or after code is not a marker. Every tests/programs/*.wf checked with 'weft check --json' matches its //~ markers exactly (0 files differ).",
+   "RT23-ptr: the design line 'extern fn sqlite3_step(stmt: *Stmt) -> i32 / blocking' parses and checks. W0116 fires in struct fields, enum payloads, effect ops, impl types and non-extern signatures. Locals, closure params, fn-typed locals and generic extern fns are allowed. A field, element or method on a pointer gives W0104, and a type mismatch gives W0102. The pointer is nonportable: Wrap<T>, a tuple, Option, Vec, an array or a closure capture all give W0401, and a spawn capture is pinned.",
+   "RT23-limits: on a 2 MiB stack (ulimit -s 2048), 94 nested blocks, parens, ifs, matches, patterns, types and modules are accepted, and 95 or more give a parser error. Prefix chains are capped at about 150. Flat chains of 20k terms (+, &&, mixed, inner *) check, agree with the spec and run with correct values, source order and && short-circuit. No probe and no red-team crash probe overflowed the stack. Typed contexts (i32, u8, u32 arguments) and type errors behave the same in short and long chains.",
+   "F11-codes: a scan of every [WL]NNNN word in crates/*/src, spec, std, docs, tests/programs and examples finds only W9999, which is the test's deliberate unknown code. 'weft explain' knows W0108..W0116, W0706 and L0001.",
+   "F9-claims: architecture.md, ADR 0004, ADR 0006, the weft-verified README, ADR 0010 and the lifecycle.rs module doc are correct (modes and places::concat are 'not yet used'; Linear is 'at most once'). The usage claims match the code (rules.rs uses places::invalidates/overlaps/within and propagate; the bridge uses step_alias/step_within; sema uses within). Verus: crates/weft-verified 64 verified, 0 errors.",
+   "F12: ADR 0005 and the design.md note document the stricter W0312 and the 'in' workaround. Spec probe p14 still gives W0312 for attack and passes attack2. The workaround's limits behave: wrong world or field gives W0203, growing the vector in the callee gives W0301, racing forks give W0403/W0405, and a loop over pairs and self-aliasing are clean.",
+   "F14: 25_overwritten.wf and 26_stealable.wf exercise 'overwritten' and 'stealable'. A copy of the harness fails on a flipped mark, a missing mark and an extra 'pinned' word. corpus_exercises_every_rule fails when the corpus lacks a relation.",
+   "F10/F11 docs (partial, CLAUDE.md excepted): every README quick-start command runs as described. proofs/verify-all.sh exits 1 when proofs/effects/verify.sh is missing, when crates/weft-verified is missing, or when borrowing/verify.sh is not executable. The full run gives 169, 48 and 64 verified with 0 errors.",
+   "W0706 detection itself works: a non-converging bound gives an error, not silent unsoundness. A program that converges exactly at the bound gets no W0706 (the extra check pass works).",
+   "Lane constraint respected: no changes in crates/weft-sema/src/body/, spec/weft.dl, rules.rs, bridge.rs or crates/weft-interp. Changes in proofs/ are limited to README.md and verify-all.sh, as the task asked."
+  ],
+  "gates_ok": true,
+  "summary": "I ran the gates at head 32e5e35 in /home/user/wt-edge: cargo fmt --all --check, clippy -D warnings and cargo test --workspace all pass. Verus via proofs/verify-all.sh (on a copy of the committed proofs) gives 169, 48 and 64 verified with 0 errors. Every finding's original probe now gives the expected diagnostic at the right line. CLI check output matches the //~ markers of all 31 corpus files.\n\nOne major issue is in Edge's own work (F9): the new bound 10*(n+2) gives false W0706 errors on valid programs that converge. The worst case is a self-recursive function whose 8 reference parameters rotate and descend: it needs 41 rounds against a limit of 30. The claim in the docs that '10 rounds per function are more than enough' is false.\n\nThe second major issue is unsound but older than Edge (same at base) and in the body/ lane: assigning a new value to a captured linear variable inside a closure or a handler clause is not reported as 'overwritten', and the old value is lost at run time.\n\nThe minor issues:\n- *T can pass through a generic function that forks with it; this is the known mode-polymorphism gap, and Rc has it too.\n- The names of hidden chain locals hold source offsets, so a print and parse round trip gives a different tree.\n- --workers has no cap, and large worker counts hang.\n- weft test prints its stderr after the summary.\n- A run with --unchecked exits 0 although the program has errors.\n- Unknown marker words are ignored with no warning.\n- The interpreter harness still uses src.contains for markers.\n- A dependency name can hide a prelude name.\n- CLAUDE.md is not updated. Declining was correct, because an agent message cannot authorize it, but the change needs user approval.\n- Inference time is quadratic on long call chains.\n- review/core also adds a '27_' corpus file and edits the same files, so the merge will conflict.\n\nAll probes are under SCRATCH/verify/review_edge/Edge/."
+ },
+ "Edge: verify review": {
+  "issues": [
+   {
+    "severity": "major",
+    "finding": "RT21",
+    "description": "The RT21 fix lets the root reach dependency modules, but `pub` is not enforced anywhere: `m.hidden()` on a private function is accepted even inside one file. So the root can now call a private dependency function that performs effects outside the granted authority. W0901 (package_diags) checks only `f.is_pub` functions, so `weft check` and `weft deps` report nothing. Before the fix, `json` did not resolve at all, so this path did not exist.",
+    "repro": "SCRATCH/verify/pkg2 (copy of examples/package: json has `pub fn parse(..) -> u64 { 3 }` and private `fn phone_home(..) / net {}`; main calls `json.phone_home(\"x\")`). `weft check pkg2` gives 0 errors and `weft deps pkg2` gives 0 authority errors, with json granted [].",
+    "suggested_fix": "In crates/weft-cli/src/package.rs package_diags, check every function of the dependency unit (drop the `!f.is_pub` filter), or every function the root can reach. Later, enforce `pub` across units in name resolution. Add a CLI test with a private net function that the root calls."
+   },
+   {
+    "severity": "major",
+    "finding": "RT23-limits",
+    "description": "`weft check --explain` overflows the stack (abort, exit 134) in the recursive derivation printer `weft_check::bridge::render` (bridge.rs:380). Triggers: one flat chain of 10,000 calls, which the parser now accepts because flat chains have no limit, or a function with 10,000 statements (that one already failed before this change). New text in grammar.md rules 10-11, architecture.md 'Size limits' and the limits.rs header says every stage stays inside the stack for every accepted program. limits.rs does not test --explain or --json. bridge.rs belongs to another lane, so this stage could not fix it, but the new docs claim more than holds.",
+    "repro": "SCRATCH/verify/lce_10000.wf (W0301 case with `let x = g() + g() + ... (10000 terms)`) and le_10000.wf (linear overwrite after 10000 `let i = 1` lines): `target/debug/weft check --explain FILE` gives 'thread main has overflowed its stack', exit 134, on the default 8 MiB stack. gdb shows bridge::render recursing.",
+    "suggested_fix": "Bridge lane: make render iterative, or cap the derivation depth and elide the middle of long cfg chains. Add --explain to limits.rs. Until then, limit the docs claim to parse, sema, check, spec and interpreter."
+   },
+   {
+    "severity": "major",
+    "finding": "CLI-run-test",
+    "description": "`--workers` has a lower bound (at least 1) but no upper bound. A large value panics or aborts the CLI in weft_interp::Machine::new, and a moderate value hangs.",
+    "repro": "cd /home/user/wt-edge; ./target/debug/weft run --workers 18446744073709551615 crates/weft-interp/tests/programs/effects_log.wf -> panic 'capacity overflow', exit 101; --workers 100000000000 -> 'memory allocation of 3200000000000 bytes failed', exit 134; --workers 1000000 -> no output after 120 s.",
+    "suggested_fix": "In crates/weft-cli/src/lib.rs flags(), reject --workers above a documented maximum (for example 1024) with a usage error. Add the case to run_takes_seed_and_workers."
+   },
+   {
+    "severity": "minor",
+    "finding": "CLI-run-test",
+    "description": "A syntax error exits with code 2 ('usage error') for check, run and test. The new help text, README and ADR 0010 say the exit code is 1 when the program has errors. The message also doubles the prefix: 'error: FILE:2:11: error[W0001]: ...'.",
+    "repro": "SCRATCH/verify/syntax_err.wf (`let x = ;`): `weft run syntax_err.wf; echo $?` gives 2.",
+    "suggested_fix": "Map parse errors from package::load to an Output with code 1 and the rendered W0001 diagnostic. Keep 2 for bad options and missing paths. Or document that 2 also means 'cannot load'."
+   },
+   {
+    "severity": "minor",
+    "finding": "RT23-limits",
+    "description": "The pretty-printer round trip is broken for long chains, against the pretty.rs doc ('parses back to the same tree, spans aside') and grammar.md. (a) Hidden locals are named `chain'LO.K` from span offsets, so after printing and parsing again every chain of more than 32 operators gets different names. (b) A parenthesized long chain that is the left operand of an operator with the same precedence, `(x + ... 40 terms) + 1`, prints without parentheses, so the reparsed tree has a different block structure (the value is the same). The proptest generator never makes chains of more than 32 operators, and long_binary_chains_parse checks only that printing is idempotent.",
+    "repro": "Scratch crate SCRATCH/verify/rt (cargo run): 32 positions tested. Only `fn f() { (x + ... 40) + 1 }` differs in structure after the names are normalized. Every long chain differs in its hidden names.",
+    "suggested_fix": "Name the hidden locals by part index only (`chain'K`; block scoping keeps nested chains apart). Have the printer parenthesize a chain block that is an operand. Add check_round_trip cases for long chains, including the parenthesized left operand."
+   },
+   {
+    "severity": "minor",
+    "finding": "RT23-ptr",
+    "description": "The W0116 check looks only at the types written in the source. Through generics a raw pointer can still sit in struct fields, enum payloads (`Option<*Stmt>`) and the parameters and results of non-extern functions (`fn id<T>(x: T) -> T` called as `id(stmt)`; `Wrap { x: stmt }`). This is not unsound, because nonportability still reaches the containers (W0401 fires for `Some(stmt)`, `Wrap { x: stmt }` and `Vec<*Stmt>` captures). But ADR 0009, grammar.md and the codes.rs text ('valid only in ... a local that holds the result of an extern fn') claim a stronger rule than the code applies.",
+    "repro": "SCRATCH/verify/ptr1.wf: `through_id` and `ret_wrap` are accepted, and the only errors are the three expected W0401.",
+    "suggested_fix": "Change the docs and the W0116 text to say that the check applies to written types in signatures, fields, payloads and effect operations, and that generic instantiation is not restricted. Or check instantiations too."
+   },
+   {
+    "severity": "minor",
+    "finding": "RT23-limits",
+    "description": "grammar.md rule 10 says nesting deeper than 96 levels is an error and lists what costs a level. Some constructs stop well before 96 because they pay extra: nested calls `g(g(..))` at 57, `Some(Some(..))` at 57, `-(-(..))` at 57, struct literals with a field call at 35, `match a { _ => { .. } }` at 47, handle with a block at 46, string interpolation with blocks at 47. A call argument costs a nesting level plus a chain step. No stack overflow was found: about 30 shapes run through check, agree and run under `ulimit -s 2048`.",
+    "repro": "SCRATCH/verify/deep.py (prints the max n for each shape, then check/agree/run exit codes on a 2 MiB stack)",
+    "suggested_fix": "In grammar.md rule 10, say that a call, an index or a field step around a nested expression also costs one chain step, so nested calls reach about 57 levels."
+   },
+   {
+    "severity": "minor",
+    "finding": "F10-F11-docs",
+    "description": "CLAUDE.md is not updated with the full rule-change checklist. The implementer was right to leave it, because an agent message cannot authorize CLAUDE.md changes. The checklist is in ADR 0002, but the user must make the change. Also, ADR 0002's list of diagnostics that have no derivation leaves out the new W0706 and the sema codes W0303 and W0605.",
+    "repro": "git diff 19f9e12..HEAD -- CLAUDE.md is empty. `grep -oE '\"W[0-9]{4}\"' crates/weft-sema/src -rh | sort -u` includes W0303, W0605 and W0706, and ADR 0002 does not name them.",
+    "suggested_fix": "Ask the user to copy the ADR 0002 checklist into CLAUDE.md. Add W0706, W0116 (or 'raw pointers'), W0303 and W0605 to the ADR 0002 list."
+   },
+   {
+    "severity": "minor",
+    "finding": "F9-fixpoint",
+    "description": "Quality: `analyze_with_limit` is a public API that only tests use. `weft run` and `weft test` silently ignore `--json`, `--explain` and `--rules`. `weft test` on a file with no test blocks prints '0 passed, 0 failed' and exits 0. crates/weft-interp/src/lib.rs:11 still says 'finished exactly once', and the interpreter corpus harness still reads markers with `src.contains` instead of `Options::from_markers` (both in the interpreter lane).",
+    "repro": "`weft test --json tests/programs/01_places.wf` gives exit 0 and '0 passed, 0 failed'. Then `grep -n 'exactly once' crates/weft-interp/src/lib.rs`.",
+    "suggested_fix": "Make `analyze_with_limit` `#[doc(hidden)]` or crate-private (its tests are in the same crate). Reject options that `run` and `test` do not use. Optionally warn when there are no tests. Pass the interpreter items to the interpreter lane."
+   }
+  ],
+  "confirmed_fixed": [
+   "CLI-run-test: `weft run` and `weft test` work. Exit 0 on success, 1 on failure or checker errors. They refuse a program with errors unless --unchecked. --seed and --workers are accepted. Help, README and ADR 0010 are updated. I saw the CLI output and the interpreter .out files match: effects_log, steal, sim tests.",
+   "RT21: `weft check examples/package` now gives only the deliberate W0901 (no W0101). A dependency cannot see the root. The rc group resolves in its own module.",
+   "RT24: the CLI honors file markers. 15_library gives W0801 and W0802, 19b gives W0803, and `--lib` adds to a marker. `print(\"// weft: library\")` is not a marker, and a string cannot hold a marker line.",
+   "RT23-ptr: the design line `extern fn sqlite3_step(stmt: *Stmt) -> i32 / blocking` parses and checks. Corpus 24 gives W0104 x2, W0102, W0401 and W0116 x4. Nonportability reaches Option, struct and Vec wrappers. An expression `*` is a parse error. Pointer types print and parse back.",
+   "RT23-limits: blocks, parentheses, ifs and loops reach 94-95 levels. Flat chains of 2000-20000 terms (+, &&, ||, prefix and postfix operands, mixed precedence) parse, check, agree and run correctly on a 2 MiB stack. Short-circuit and evaluation order are kept, and the diagnostics match those for short chains.",
+   "F11-codes: `weft explain` knows W0108-W0116, W0706 and L0001. The scan test covers every W/L code in the sources (52 codes). No code is built at run time.",
+   "F9-fixpoint: the bound is 10*(n+2) rounds. W0706 is reported exactly when the signatures are not a fixpoint. Cycle and chain probes converge well inside the bound (for example 61 rounds against a limit of 620).",
+   "F9-claims: architecture.md, ADR 0004, ADR 0006, the weft-verified README, ADR 0010 and lifecycle.rs are corrected. Verus on crates/weft-verified gives 64 verified, 0 errors, and there is no assume, admit or external_body.",
+   "F12: ADR 0005 and the design.md note are added. Corpus 27 gives W0312 for attack(x, y), and the `in` workaround is clean.",
+   "F14: corpus 25 derives `overwritten` (3 W0601 with explain derivations) and has clean rebind cases. Corpus 26 has the stealable and pinned marks. corpus_exercises_every_rule passes.",
+   "F10/F11 docs (partial): the README commands all run as shown. proofs/README is accurate: verify-all.sh gives borrowing 169, effects 48 and weft-verified 64 verified, 0 errors. verify-all.sh exits 1 when proofs/effects/verify.sh is missing (tested in a scratch tree)."
+  ],
+  "gates_ok": true,
+  "summary": "Gates pass: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` all exit 0. Verus gives borrowing 169, effects 48 and weft-verified 64 verified, 0 errors. The diff stays out of body/, spec, rules.rs, bridge.rs, weft-interp and the proof sources. It has no unwrap or expect in production code. It changes no spec rule, so no rule checklist applies.\n\nI saw every claimed fix work myself. The open item is CLAUDE.md, which is correctly left for the user.\n\nThree major issues:\n1. **RT21 missed shape (soundness of dependency authority).** The root can now reach dependency modules, but `pub` is never enforced. W0901 checks only pub functions, so the root can call a private dependency function that uses `net` and get no error.\n2. **Crash in `weft check --explain`.** The recursive `bridge::render` overflows the stack on a 10,000-term chain (newly accepted) or on 10,000 statements (already failing before). This contradicts the new docs claim that every stage is stack-safe. bridge.rs belongs to another lane.\n3. **`--workers` has no upper bound.** A huge value panics (capacity overflow) or aborts with OOM, and 1,000,000 hangs.\n\nMinor issues: a syntax error exits with 2, against the documented 1. Long chains do not round-trip through the printer to the same tree (hidden names come from spans; a parenthesized left operand is flattened). The W0116 docs claim more than a written-type check, and generics bypass it. The nesting-limit text does not cover calls and struct literals, which stop at 57 and 35 levels. ADR 0002's list of diagnostics without a derivation is incomplete. Small quality items remain.\n\nProbe files are in SCRATCH/verify/."
+ },
+ "Core S1: verify probe": {
+  "issues": [
+   {
+    "severity": "blocker",
+    "finding": "RT1/F1",
+    "description": "A closure or a handler clause stores a reference to its own local (or to a by-value closure parameter) in a captured outer reference. `scope_end` of that local is emitted only in the closure's own CFG component (e.g. scope_end(v3, n13) in n7..n13), which has no edge to the caller, and the call site applies nothing. The 'closure locals' and 'clause locals' shapes of RT1 are missed. The plain-block form of the same shape is caught (`rebound_inside`).",
+    "repro": "SCRATCH/verify/review_core/Core_S1/rt1/esc_closure_store.wf, e.g. `let q = &keep[0]; let g = || { let v = Vec.new(); v.push(5); q = &v[0]; 0 }; let z = g(); print(q)`, plus `|v: Vec<u64>| { p = &v[0]; 0 }` and `handle Log { fn log(m) { let u = Vec.new(); u.push(7); s = &u[0]; resume(()) } } in log(\"x\")`. Run `Core_S1/weft check FILE`: 0 errors. Run `Core_S1/wrun FILE` (the weft-interp wrun example built at HEAD): prints <dangling> 3 times.",
+    "suggested_fix": "When an assignment inside a closure or clause body targets a captured outer local and the value's refs are in a Local root that the closure or clause owns (own_roots), report it as W0204 does for a returned value (closure_ret_refs). Another option: at each call of the closure, emit invalidated_at for the captured holders that it rebinds into its own roots."
+   },
+   {
+    "severity": "blocker",
+    "finding": "RT1/F1",
+    "description": "A reference into a temporary outlives its statement. Temporary roots (`place_or_temp`, `root(\"temporary\", Local)`) get no owner/scope_end fact, so nothing invalidates them. W0204 already treats temporaries as dying at the return, but no other scope end applies to them. This also covers an Rc temporary handle: `&mk_rc().items`.",
+    "repro": "SCRATCH/verify/review_core/Core_S1/rt1/esc_temp.wf: `let r = &mk()[0]; print(r)`, `let s = &mk_bag().items[0]; print(s)`, `let t = mk_bag().items.get(0); print(t)`. `weft check`: 0 errors. `wrun`: <dangling> x3.",
+    "suggested_fix": "Give each temporary root an owner variable (VarKind::Temp). Emit scope_end at the end of the enclosing statement, as the interpreter drops it, or at the call for an argument temporary, and move_var when it is consumed."
+   },
+   {
+    "severity": "blocker",
+    "finding": "RT1/F1",
+    "description": "Rc: the handle dependency (`handle.*`) is added to a call result only for the receiver (`recv_deps` in call_fn). A callee that returns a group place through a reference argument to the only handle gives the caller a reference without the handle dependency. Replacing or moving that handle then frees the object without invalidating the reference.",
+    "repro": "SCRATCH/verify/review_core/Core_S1/rt1/esc_rc_callee.wf: `fn group_ret(h: &Rc<Cell2>) -> &Vec<u64> in Cell2.items { &h.items }`, then `let r = group_ret(&a); a = Rc.new(..); print(r)`. `weft check`: 0 errors. `wrun`: <dangling>.",
+    "suggested_fix": "When a returned place is in a group root and an argument (not only the receiver) reaches that group through an Rc handle, add the handle's `.*` dependency place of that argument to out.refs. Do the same in call_value for fn items."
+   },
+   {
+    "severity": "blocker",
+    "finding": "RT1/F1",
+    "description": "A handler clause that moves a captured owner frees it at the perform site. That move is never applied at the perform node, so a reference into the owner stays valid in the handled body. The rebind form (`v = Vec.new()` in the clause) is caught through the footprint.",
+    "repro": "SCRATCH/verify/review_core/Core_S1/rt1/clause_move.wf, main: `let r = &v[0]; handle Log { fn log(m) { take(v); resume(()) } } in { log(\"x\"); print(r) }`. `weft check`: no error at line 10. `wrun`: <dangling>.",
+    "suggested_fix": "Emit moved_at for the clause's moved_captures at the handle installation (as closure creation does) or at each perform node that the clause handles."
+   },
+   {
+    "severity": "blocker",
+    "finding": "RT1/F1",
+    "description": "A move of the owner while a task holds a reference into it is not seen. W0405 (task_conflict) uses only mutates_at and task_writes, and the move is not a use in the task's CFG. This applies when the parent moves the owner, when a sibling task's closure moves it, and to fork branches. The `v.clear()` control is reported.",
+    "repro": "In SCRATCH/verify/review_core/Core_S1/rt1/: esc_parent_move.wf (`s.spawn(|| { suspend(); print(r) }); take(v)`), esc_spawn_move.wf (`s.spawn(|| { suspend(); print(r) }); s.spawn(|| take(v))`), esc_fork_move.wf (`fork(|| print(r), || take(v))`). `weft check`: 0 errors for these. `wrun FILE SEED` with seeds 1-3: <dangling>.",
+    "suggested_fix": "In the spec, count a move or scope end of an owner as a write to its root for W0405. For example: frees_at(P,Rt) :- owner(Rt,V), moved_at(V,P). task_conflict(T,P) :- active(T,P), task_reads(T,A), frees_at(P,Rt), root_of(A,Rt). Add the task-side form: the moved captures of a task closure free their roots while the task is active. Mirror the rules in rules.rs and add agreement generator coverage."
+   },
+   {
+    "severity": "blocker",
+    "finding": "RT1/F1",
+    "description": "call_value result for an unknown fn parameter: the result is given the argument's places (`world` itself). The callee can return `&world.entities[0]`, but a later `world.entities.clear()` is not a strict prefix of `world`, so the kept refs can never be invalidated. The listed item 'call_value must not drop the returned refs' is still unsound for this shape.",
+    "repro": "SCRATCH/verify/review_core/Core_S1/rt1/esc_fn_param_ret.wf: `fn via_param(f: fn(&World) -> &Entity, world: &World) / mut(world.entities) { let r = f(world); world.entities.clear(); print(r.hp) }`, with main passing `pick`. `weft check`: 0 errors. `wrun`: runtime error at line 11 'a place does not exist (the value changed shape)'.",
+    "suggested_fix": "Represent 'somewhere within P' as a wildcard place (`P..`, the grammar already has it) or as P plus an unstable child, so that any mutation of P or below invalidates it. The coarse-`in` signature issue below has the same root cause."
+   },
+   {
+    "severity": "major",
+    "finding": "RT1/F1",
+    "description": "New false positive: W0204 now rejects a returned closure that captures a copy value, and W0301 rejects a block-value closure that captures a copy local. The interpreter keeps copy cells readable on purpose (heap.rs end_cell: 'a closure that outlives the scope of a captured integer still sees it') and runs these programs correctly. The base accepted them. The redteam package probe deps/json/src/lib.wf (`pub fn parse(text: String) -> fn() -> u64 { || phone_home(text) }`) now also gives W0204. The message 'returned reference points into `n`' is wrong for a closure. ADR 0003 records no decision on copy captures.",
+    "repro": "SCRATCH/verify/review_core/Core_S1/rt1/fp_ret_closure_copy.wf (`fn adder(n: u64) -> fn(u64) -> u64 { |x| x + n }`, greeter(String), counter_start): head 3x W0204, base 0, wrun prints 5/hi/11. Also rt1/fp_block_closure_copy.wf (`let f = { let n: u64 = 5; || n + 1 }; print(f())`): head W0301, base 0, wrun prints 6.",
+    "suggested_fix": "Do not count a capture of a copy-type variable as a place in the variable's root for W0204 or the block-value hold, to match the interpreter. Or decide otherwise, record it in ADR 0003, and change the interpreter. Fix the W0204 wording for closures."
+   },
+   {
+    "severity": "major",
+    "finding": "RT10/F2",
+    "description": "New false positives from the two coarse spec rules (accesses from uses(R,P), and task_reads from captures). Any task that names `stats.x` captures `stats` and so reads all of stats. Any parent use of `stats` as a place base accesses all of stats. Disjoint-field code that was clean before is now W0405, e.g. a parent `print(stats.name)` while a task writes `stats.count`. Evidence that the rules are not needed: in a scratch copy with only these two rules removed (spec and rules.rs; the sema reads in name()/print/call args kept), all RT10 probes (t01, t04, p11, p12, p17, my 14 variants) and corpus 27_ref_reads.wf give the same W0405 lines, and the disjoint false positives go away. The implementer flagged this for a decision.",
+    "repro": "SCRATCH/core/probes/disjoint.wf and disjoint_parent.wf: head W0405 at 5,11,17 and 5,11; base none. Scratch build without the rules: SCRATCH/verify/review_core/Core_S1/weft_exp (source in verify/review_core/exp). Compare `weft_exp check` and `weft check` on verify/review_core/Core_S1/rt10/uses.wf and tests/programs/27_ref_reads.wf: identical W0405 lines.",
+    "suggested_fix": "Drop the two coarse rules and rely on the sema reads (value uses already emit reads_at, and closure summaries carry them into task_reads). Or keep them only for holders whose places sema cannot see, and update ADR 0006."
+   },
+   {
+    "severity": "major",
+    "finding": "RT9",
+    "description": "Missed shape: compound assignment through a reference stored in a field. The interpreter's CompoundStore follows references on any place, so `f.cur += 1` writes `f.buf[2]`. The checker mutates only `f.cur`, so `/ mut(f.cur)` is accepted while the real write is f.buf[]. A task that reads f.buf races with it undetected. W0402 is reported, but with the wrong place (`f.cur`).",
+    "repro": "SCRATCH/verify/review_core/Core_S1/rt9/esc_field_ref.wf: `struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }`, `fn bump(f: &Frame) / mut(f.cur) { f.cur += 1 }`, and `race`, where a task reads `b = &f.buf` while the parent calls bump(f). `weft check`: 0 errors. `wrun`: prints [1, 2, 4, 4].",
+    "suggested_fix": "In assign(), when op != Assign and the target place's type is a reference (any place, not only a Name local), mutate what it points into (the field's `in` place substituted onto the base), as the interpreter does."
+   },
+   {
+    "severity": "major",
+    "finding": "RT4",
+    "description": "Missed shape: a closure argument is a reference holder (points_into its captures), but it is not held like a reference argument while later arguments run. `apply_n(|| print(first.hp), grow(world))` is accepted, and the callee calls the closure after grow freed the buffer. The base accepted it too (this overlaps RT5).",
+    "repro": "SCRATCH/verify/review_core/Core_S1/rt4/esc_closure_arg.wf. `weft check`: 0 errors. `wrun`: runtime error at line 10 'a place does not exist'.",
+    "suggested_fix": "In call_fn and call_value, hold a closure-valued argument that has refs (via Lower::hold) when later arguments follow, and use it at the call node."
+   },
+   {
+    "severity": "major",
+    "finding": "ProofRule3",
+    "description": "The stage marked rule 3 'not_reproduced', but payload instability is lost through a coarse signature place. `fn running(m: &Machine) -> &Vec<u64> in m.state` returns the payload of `Running(v)`. W0204 accepts it because the place is within m.state. The caller then gets `r in m.state`, and `m.state = Idle` (not a strict prefix) does not invalidate it. The same holds for elements: `-> &Entity in w.entities { &w.entities[0] }`. Pre-existing, same root cause as the call_value issue above.",
+    "repro": "SCRATCH/verify/review_core/Core_S1/rule3/esc_coarse_in_enum.wf and rule3/esc_coarse_in.wf. `weft check`: 0 errors (base too). `wrun`: 'a place does not exist (the value changed shape)' at the use.",
+    "suggested_fix": "In check_returned_refs, require that the body place does not cross an unstable step (element, Variant, Box deref) below the signature place. Or have the caller treat an `in P` result as possibly below an unstable step of P."
+   },
+   {
+    "severity": "major",
+    "finding": "RT1/F1",
+    "description": "Checker and interpreter disagree on moved captures. The checker moves a moved capture into the closure at creation, so the closure owns it and may escape the block. The interpreter captures the cell by reference and drops the local at its scope end, so calling the escaped closure faults. A closure that moves a captured local and outlives that local's block or function is accepted, but it faults at run time. Pre-existing, but it is the 'closure that outlives its block' shape of RT1.",
+    "repro": "SCRATCH/verify/review_core/Core_S1/rt1/esc_moved_capture.wf (`let f = { let b = Bag { items: Vec.new() }; b.items.push(1); || take(b) }; print(f())`). `weft check`: 0 errors. `wrun`: 'a value is used after it was moved' at line 14. rt1/fp_moved_capture.wf shows the same for a returned closure.",
+    "suggested_fix": "Decide the capture semantics in an ADR. Either the interpreter moves moved captures into the closure at creation, or the checker treats an escaping closure with moved captures like one that captures by reference."
+   },
+   {
+    "severity": "major",
+    "finding": "NEW",
+    "description": "Pre-existing and outside S1 (proof rule 1: handlers must be reference holders). A handler clause that reads a captured reference runs at the perform site after the handled body invalidated the reference. Nothing is reported.",
+    "repro": "SCRATCH/verify/review_core/Core_S1/rt2/clause_capture.wf: `let first = &world.entities[0]; handle Log { fn log(m) { print(first.hp); resume(()) } } in { world.entities.clear(); log(\"x\") }`. head and base: 0 errors. `wrun`: runtime error at line 8.",
+    "suggested_fix": "Give the handler points_into for its clause captures and use it at each perform it handles (borrowing proof rule 1)."
+   },
+   {
+    "severity": "minor",
+    "finding": "RT1/F1",
+    "description": "points_into is flow-insensitive, so a reference rebound to an outer place before the inner block ends is still invalidated by the inner local's scope end. This matches the existing mutation rule. Separately, partial moves are coarse: `take(b.other)` marks all of b moved, so W0301 says `b` is moved for `r = &b.items[0]`. This matches W0302's model, but the interpreter runs it fine.",
+    "repro": "SCRATCH/verify/review_core/Core_S1/rt1/clean.wf: rebind_before_end gives W0301 at line 81, partial_other at line 63. rt1/partial.wf runs in wrun and prints 1.",
+    "suggested_fix": "None required now. Document both in ADR 0003 as known imprecision."
+   },
+   {
+    "severity": "minor",
+    "finding": "RT1/F1",
+    "description": "Diagnostic wording. In 29_owner_drops.wf closure_outlives, the message is '`{closure}` used after it was invalidated' with 'used at line 71' but 'invalidated at line 75' (the use line comes before the invalidation line). Rc references print as `in a.*`, and the mutation row reads 'a = : mut(a)'. In b01, an ill-typed `let x: u64 = r` cascades into a W0204 (disclosed). An `extern fn bad(v: Vec<u64>) -> &u64 in v[]` signature is accepted, and the caller's result gets no places (disclosed gap).",
+    "repro": "`Core_S1/weft check /home/user/wt-core/tests/programs/29_owner_drops.wf` (lines 71, 98, 122). SCRATCH/verify/review_core/Core_S1/rt1/extern_sig.wf gives 0 errors.",
+    "suggested_fix": "Report the block-value use at the block end line. Print the group place (and the handle) for Rc references. Reject an `in` place on a by-value parameter in a returned-reference signature."
+   }
+  ],
+  "confirmed_fixed": [
+   "Gates at c929fca: cargo fmt --all --check, cargo clippy --workspace --all-targets -D warnings and cargo test --workspace all pass. Verus on weft-verified: 64 verified, 0 errors; no assume/admit/external_body. weft agree holds on every corpus and probe file. No panics on 744 .wf files. Worktree unchanged by me.",
+   "RT1/F1: original probes a01 (W0301 at 8 and 17), a02 (6), a11 (9, 17, 24), a15 (W0204 at 2), p1 (13, 21), p2 (11), p15 (3, 8, 14). W0301 text says 'moved at line N' or 'goes out of scope at line N'; --explain shows the root_of/owner/moved_at derivation. All 19 move-shape variants are caught (struct, variant, tuple, by-value self, generic, push, field assign, effect op, closure, match, field move, branch, loop, block, closure arg, ref in tuple, ref in closure, ref copy). 14 of 17 scope-end shapes, all 15 W0204 return shapes, 9 of 11 Rc shapes, and handle/scope/arm block values are caught. 20_rc_graph.wf is unchanged.",
+   "RT10/F2: t01 (9, 17), t04 (7, 21), p11 (7, 8, 15), p12 (6), p17 (15) give W0405. All 14 variants are caught (interpolation, comparison, match, generic, local closure, task closure, task tuple, loop condition, task arithmetic, assert, op argument, block value, fork, closure parameter).",
+   "RT9: m01 gives W0402 at 5, W0701 at 7 and 12, and W0102 at 17 for `c = 5`, as in the interpreter. -=, *=, get, for elements, captured references in a closure, HOF and task, block, if and tuple variants are caught. Scalar match and loop bindings are copies, as in the interpreter.",
+   "RT2: a13 (8, 22) and a14 (7, 14, 23) are reported on the right line. All 13 in-scope variants are caught (break, return, trailing closure, tuple closure, handle operand, scope argument, else-if, arm if, interpolation, while condition, for iterator, closure-first argument, && right side), plus continue/break/return after a queued use and a read before join.",
+   "RT4: a04 (10, 13) gives W0301. 14 of 15 variants are caught (nested call, block, callee result, get, effect op, receiver, variant, if, closure call, three args, closure-later, binary, three-part tuple, print). Named arguments are evaluated in slot order, which matches interpreter compile.rs call_fn. By-value move at evaluation matches the interpreter.",
+   "ProofRule3: the corpus 30 shapes and my variants hold (Vec element, tuple element, mut(self.state) method, reference local, handler footprint, loop over enums, struct payload, task); a primitive write inside a payload is clean. The exception is the coarse `in` signature escape.",
+   "RT20: b01 lines 4 and 17 and f01 line 48 are gone. 23 clean variants are accepted (arrays, nested Vec, tuples in Vec, get, match, generic field, slices, closures, while, split_at, field of element, compare, arithmetic), and a real i32/u64 mismatch is still W0102.",
+   "RT19: x01 and x02 give W0104 instead of panicking. 15 variants (generic, trailing closure, enum, Vec/Box/Rc new, chained, named and missing args, nested) give W0104 with no panic. The interpreter gives a clean runtime error."
+  ],
+  "gates_ok": true,
+  "summary": "Gates pass (fmt, clippy, test; Verus 64/0; agreement holds; no panics on 744 files), and every original probe for RT1, RT10, RT9, RT2, RT4, RT20 and RT19 now gives the expected diagnostic on the right line. RT1 is still unsound in six shapes, each confirmed by the HEAD interpreter (<dangling> or a runtime fault) while the checker gives 0 errors: (1) a closure or clause stores a ref to its own local in a captured outer ref; (2) refs into temporaries (no owner/scope_end for temporaries); (3) an Rc group ref returned through a `&handle` argument has no handle dependency; (4) a handler clause moves a captured owner at the perform; (5) a move of the owner while a task or fork branch holds a ref (W0405 ignores moves); (6) call_value keeps unknown fn-param results at a place too coarse to be invalidated. New false positives: W0204/W0301 on closures that capture copy values (adder idiom, which the interpreter supports on purpose), and the coarse RT10 spec rules (a scratch build without them keeps all RT10 detections and removes the disjoint-field false positives). Other missed shapes: RT9 write through a reference field (f.cur += 1), RT4 closure argument then a mutating argument, rule 3 lost through a coarse `in P` signature (pre-existing), and a moved-capture semantics mismatch between checker and interpreter. All probes are in SCRATCH/verify/review_core/Core_S1/ (weft = HEAD checker, weft_base = 19f9e12, wrun = HEAD interpreter, diff.sh = base/head differential)."
+ },
+ "Core S1: verify review": {
+  "issues": [
+   {
+    "severity": "blocker",
+    "finding": "RT1/F1",
+    "description": "A missed shape of RT1: references into temporaries never become invalid. A temporary gets a Local root named \"temporary\", but no owner fact and no scope_end. The interpreter drops a temporary at the end of its statement. So `let r = &mkw().entities[0].hp; print(r)` and `let s = &mkv()[0]; print(s)` give 0 errors, and the interpreter prints `<dangling>`. `let t = &mkv(); print(t.len())` faults with \"a value is used after it was moved\". The checker also accepts the same shape in a block value (`{ &mkv()[0] }`), in a loop body (`r = &mkw().entities[0].hp`), in an if branch, and with an Rc temporary handle (`let r2 = &mk().n`, which also prints `<dangling>`). The new W0204 text says temporaries 'go out of scope at the return', but the body never ends them. This bug was already in the base commit, but its cause is the RT1 cause.",
+    "repro": "SCRATCH/verify/s1diff/p/i05_temp_let.wf, i03_temps.wf, i09_rc.wf (interpreter, through runner_target/debug/wrun FILE) and v08_temps.wf (weft check: 0 errors).",
+    "suggested_fix": "Give each temporary root an owner variable (VarKind::Temp). Emit scope_end for it at the end of the statement that makes it, as the interpreter does. If a let-bound temporary must live to the end of the block, emit it at the block end and document that in ADR 0003. Then hold_out/W0204 do not need a special case."
+   },
+   {
+    "severity": "blocker",
+    "finding": "RT1/F1 + RT4",
+    "description": "Rc receivers lose their handle dependency. When call_fn holds a by-reference receiver while later arguments run, the held temporary gets only `lv.places` (the group root). It does not get `lv.deps` (the `handle.*` place). So a later argument that moves the only handle, or gives it a new value, does not invalidate the receiver. `a.items.push(eat(a))` with `eat(c: Rc<Cell2>)` gives 0 errors, and the interpreter faults with \"a place does not exist (the value changed shape)\". The same bug occurs with `let r = &a.items; r.push(eat(a))` and with `s.h.items.push(reset(s))` where reset assigns `s.h = mk()`. The owned case (`w.items.push(eat_w(w))`) gives W0301.",
+    "repro": "weft check SCRATCH/verify/s1diff/p/v21_recv_deps.wf (only `owned` is reported); interpreter: i11_rc_recv_only.wf, i15_rc_field_recv.wf",
+    "suggested_fix": "In call_fn, put recv_deps into the refs of the held `receiver` borrow, and into the receiver's arg_places with the dep filter that W0203 already uses. Also hold the receiver for a by-reference receiver that is a reference local with deps. Add these shapes to 29_owner_drops.wf."
+   },
+   {
+    "severity": "major",
+    "finding": "RT10/F2",
+    "description": "The new accesses/task_reads rules are coarse, and they apply to every field path through a reference parameter, not only to a use of a reference as a value. `world.entities` and `stats.name` emit uses(world/stats) with points_into to the whole referent. So the checker now rejects separate footprints that the base commit accepted. Examples: `s.spawn(|| print(world.entities.len())); world.score += 1` gives W0405 'task reads `world`'. `s.spawn(|| stats.count += 1); print(stats.name)` in the parent gives W0405. So do two spawns that touch stats.count and stats.name, and `fork(|| stats.count += 1, || print(stats.name))`. The design states 'Tasks ... must have separate footprints', so this field-level separation is reasonable code. The implementer marked this as a decision. The rule is wider than the implementer said: it covers parameters used through fields, not only reference values. sema already records the read of a reference used as a value in name(), so the generic rule adds no soundness for value uses. It only makes the check coarse.",
+    "repro": "weft check SCRATCH/verify/s1diff/p/v09_disjoint.wf and v15_fork_fields.wf (head: 5 x W0405; base: 0)",
+    "suggested_fix": "Limit the rule to whole-value uses with a new input relation, for example uses_value(R, P) emitted by name() when a reference local is the value, and apply it to captures that the task body uses as values. Or drop the generic rule and keep the sema reads. Add a clean corpus control for a parent and a task, or two tasks, that touch separate fields through one reference parameter."
+   },
+   {
+    "severity": "major",
+    "finding": "RT1/F1 (W0204)",
+    "description": "A new false positive: W0204 now rejects any returned closure that captures an owned local or a by-value parameter by cell, also when the capture is a Copy value. `fn adder(n: u64) -> fn(u64) -> u64 { |x| x + n }` gives 'returned reference points into `n`: the by-value parameter `n` ... goes out of scope'. The base commit accepted it, and the interpreter runs it and prints 5. The red-team pkg probe `pub fn parse(text: String) -> fn() -> u64 { || phone_home(text) }` (String is copy) now gets W0204. The semantics are not consistent: a capture of a reference local is treated as a copy of the reference and is accepted. ADR 0003 mentions only returned references, not closure values. The message calls a closure a 'returned reference'.",
+    "repro": "weft check SCRATCH/verify/s1diff/p/v01_ret_closure.wf, v02_ret_moved_closure.wf, SCRATCH/redteam/pkg/deps/json/src/lib.wf; interpreter: i02_adder.wf",
+    "suggested_fix": "Do not count the capture roots of a closure value as returned reference places, at least for Copy captures (capture by copy, like reference captures). If capture by cell is the intended rule, record it in ADR 0003 or ADR 0005, give it its own message ('the returned closure captures local `n`'), and add a corpus case."
+   },
+   {
+    "severity": "major",
+    "finding": "RT1/F1 + RT4",
+    "description": "Partial moves are modeled as moves of the whole variable (consume -> move_var of the owner local). With the new owner rule, this gives new false positives that the base commit accepted and that the interpreter runs correctly. (1) `let r = &p.a.n; take_h(p.b); print(r)` gives W0301; the interpreter prints 1. (2) With the RT4 change (a by-value argument moves when it is evaluated), `consume(s.items, s.n)` now gives W0302; the base accepted it, and the interpreter prints 3. The sequential `take(s.items); print(s.n)` W0302 was already in the base.",
+    "repro": "SCRATCH/verify/s1diff/p/i14_sibling.wf and i12_partial_arg.wf (interpreter OK, head reports W0301/W0302, base 0 errors); v03_rt1_shapes.wf other_field_move",
+    "suggested_fix": "For a move of a place (not of a whole local), emit a place-level fact, for example moved_place(P, M). Add a rule that invalidates references whose path has M as a prefix, with no unstable step needed. Emit moved_at(V) only for a move of the whole value. Or document the conservative choice in an ADR."
+   },
+   {
+    "severity": "minor",
+    "finding": "RT4",
+    "description": "hold() skips a value that is a named variable. call_fn pushes the variable itself, so a later argument that invalidates the variable and then rebinds it hides the error: `show(first, { world.entities.push(..); first = &world.entities[0]; 0 })` is accepted, but the old reference value is passed.",
+    "repro": "weft check SCRATCH/verify/s1diff/p/v12_rt24.wf (rebound_later, line 11: no error)",
+    "suggested_fix": "When a later argument exists, hold a copy of a named reference argument too, or check that no later argument rebinds it."
+   },
+   {
+    "severity": "minor",
+    "finding": "RT2",
+    "description": "scope() has no flush before its 'scope end' node. So the queued tail use of a scope body goes into the scope-end node, and W0301 points at the `scope {` line (51) instead of `first.hp` (53). The path is correct and only the span is wrong.",
+    "repro": "weft check SCRATCH/verify/s1diff/p/v12_rt24.wf (scope_tail)",
+    "suggested_fix": "Call self.flush(block_tail(body)) in scope() before it emits the 'scope end' node."
+   },
+   {
+    "severity": "minor",
+    "finding": "RT1/F1",
+    "description": "Diagnostic text. (a) The W0301 for a closure that outlives its block (29_owner_drops.wf:71) says 'used at line 71' after 'invalidated at line 75', because the use is the let node and hold_out skips values that have a var. (b) The W0204 closure message says 'its local `e`' for a by-value closure parameter. (c) The holder note shows `&i64` for integer-literal elements that are unified to u64 later (var_info still calls resolve). This was already in the base and is left over from RT20. (d) b01 now adds a cascade W0204 on ill-typed code.",
+    "repro": "weft check /home/user/wt-core/tests/programs/29_owner_drops.wf; SCRATCH/verify/s1diff/p/v22_holder_ty.wf",
+    "suggested_fix": "Use the block-value message for closure values too. Say 'by-value parameter' when the closure root is a parameter. Resolve the holder type at diagnose time."
+   },
+   {
+    "severity": "minor",
+    "finding": "RT4/RT10",
+    "description": "Docs and code quality. (1) No ADR records that a by-value argument now moves when it is evaluated, which is a semantic change (`f(v, v.len())` is now W0302). (2) The W0405 text in codes.rs and the task part of docs/architecture.md do not describe the new accesses/task_reads rules. (3) The hold-after-each-argument loop is repeated in print, the tuple, the positional and variant constructors, and effect operations. (4) diagnose.rs finds block values by the string compare `var.name == \"block value\"`. (5) Some new comments use passive voice ('is typed, held and moved').",
+    "repro": "git -C /home/user/wt-core diff 19f9e12..HEAD -- docs crates/weft-check/src/codes.rs crates/weft-sema/src/body/call.rs",
+    "suggested_fix": "Add the evaluation-order rule to ADR 0003. Update the W0405 code text and the architecture diagram. Put the hold loop in one helper. Mark block-value temporaries with a VarKind or a flag."
+   }
+  ],
+  "confirmed_fixed": [
+   "RT1/F1 basic shapes: a01 (lines 8, 17), a02, a11 (9, 17, 24), a15 W0204, p1, p2, p15; also by-value self, a move into a struct, a closure capture, match by value, a conditional move, loop locals, break/continue, a named block value, if/match arms, Rc field/holder/through-ref; the diagnostics say 'moved at line N' / 'goes out of scope at line N'; --explain shows the root_of/owner derivation",
+   "RT1 call_value result places: fn item values, fn params and closures (with rebase onto arguments) keep their places",
+   "RT10/F2 probes t01, t04, p11, p12, p17 give W0405 (soundness side)",
+   "RT9: m01 lines 5, 7, 12; a write through in a task gives W0405; a ref-to-ref; rebind stays a rebind; matches the interpreter CompoundStore and Store",
+   "RT2: a13, a14, plus while condition, for-loop tail, else-if, trailing closure, effect-op argument",
+   "RT4: a04 lines 10 and 13; variant constructor, effect op, closure call, receiver through a reference local (owned roots)",
+   "Proof rule 3: payload invalidated by an element assign, a nested field assign and a whole-struct assign; a primitive write kills nothing",
+   "RT20: b01 and f01 lines gone; tuple let, array index, tuple field, slice, nested Vec, ref tuple all clean",
+   "RT19: x01 and x02 give W0104 and do not panic",
+   "Checklist: spec + rules.rs + FnFacts.owner + normalize + bridge each_fact + random generator (rel 22) + diagnose + codes; no new sink needed; weft agree holds on all 28 verify probes",
+   "Gates: cargo fmt --all --check, clippy -D warnings (pedantic+nursery), cargo test --workspace all pass; Verus 64 verified, 0 errors; no diff in weft-verified, proofs, weft-interp"
+  ],
+  "gates_ok": true,
+  "summary": "I reviewed the diff 19f9e12..c929fca in /home/user/wt-core. I did not edit the worktree. Probes are in SCRATCH/verify/s1diff/p. A base build for comparison is in base_target, and an interpreter runner (wrun) is in runner_target. All gates pass (fmt, clippy -D warnings, test --workspace) and Verus gives 64 verified, 0 errors. The rule-change checklist is complete, and checker == spec on the corpus, on random facts and on my probes. I reproduced every claimed probe result. Two blockers remain. Both are unsound acceptances that the interpreter confirms. (1) References into temporaries never become invalid: `let r = &mkw().entities[0].hp; print(r)` gives 0 errors, and the interpreter prints `<dangling>`. This was already in the base, but it has the RT1 cause. (2) An Rc receiver held across later arguments loses its `handle.*` dependency: `a.items.push(eat(a))` gives 0 errors, and the interpreter faults. Three majors are new false positives against the base and the interpreter. (a) The RT10 rule makes any field access through a reference parameter an access to the whole referent, so field-disjoint task code now gets W0405, for example `s.spawn(|| print(world.entities.len())); world.score += 1`. (b) W0204 rejects returned closures that capture Copy locals or parameters (`fn adder(n) -> fn(u64)->u64 { |x| x + n }`). (c) Partial moves count as whole moves, so a move of a sibling field gives W0301, and `consume(s.items, s.n)` now gives W0302. The minors cover a named argument that a later argument rebinds, the span of a scope-tail use, diagnostic wording, and ADR and codes text."
+ },
+ "Edge: fix+commit": {
+  "head_commit": "6b972776761446c4212339fd06e5507b5e991bee",
+  "resolved": [
+   "F9-fixpoint (major, false W0706): reproduced (f9_false_w0706_single, 4x4, rot_k8_p3, rot_k16_p4 all gave W0706). New crates/weft-sema/src/infer.rs: a worklist in callee-first order (DFS post-order over a name graph from the printed bodies), a join so that a row only grows, and a growth bound per row equal to the height of its lattice (effects + params + roots x paths of up to 8 steps over the steps seen so far). The last lowering also checks the fixpoint and re-runs the worklist if the name graph missed an edge. Tests: effect_inference_converges_when_places_go_around_a_cycle, effect_inference_that_does_not_converge_is_an_error, effect_inference_checks_the_fixpoint_at_the_end, the_growth_limit_is_the_height_of_the_row_lattice, a_row_only_grows. Facts and diagnostics are byte-identical to the base on all 56 corpus, example and interp programs. Docs fixed in ADR 0005, architecture.md and the W0706 text.",
+   "F9-fixpoint (minor, quadratic time): fixed by the worklist. chain_800 went from 10.5 s to 0.06 s. Test effect_inference_time_is_linear_in_a_call_chain (300 functions, 300 lowerings). Analysis.rounds is now Analysis.lowerings.",
+   "F9 quality: analyze_with_limit is #[cfg(test)] pub(crate). The unused Options::or is removed.",
+   "RT21 (major, private dependency functions): reproduced with pkg2. package_diags now checks every function of a dependency, not only pub ones. It also counts escapes_at effects from closures in dependency bodies: a returned `|| net.net_poll()` was another shape of the same gap. Test: cli.rs authority_covers_private_dependency_functions. examples/package now reports 2 W0901 (parse and the private phone_home). The old expectation of 1 was incomplete. The W0901 text is updated.",
+   "RT21 (minor, dependency name hides a prelude name): reproduced with pkg3. Collector::name_dependency reports W0107 when a dependency name is a root item, a prelude item or a std effect alias such as `log`. Same pattern, fixed too: pass-2 unit marking relabelled every pass-1 diagnostic as unit 0, so a duplicate struct was shown in prelude.wf. Tests: dependency_name_cannot_hide_a_name_of_the_root, item_diagnostics_have_the_unit_of_the_item.",
+   "CLI-run-test (major and minor, --workers): --workers must be 1 to 1024 (MAX_WORKERS), otherwise it is a usage error. Test: run_limits_the_workers (1025, 1e11, u64::MAX).",
+   "CLI-run-test (minor, syntax error exit 2 and doubled prefix): package::load now returns a typed SyntaxError (thiserror). Every command turns it into a rendered W0001 with exit code 1; check --json gives the JSON form. A missing file is still exit 2. Test: a_syntax_error_is_an_error_of_the_program.",
+   "CLI-run-test (minor, test output order, no tests, --unchecked): the binary streams `weft test` live, so each test's log comes before its result line (test binary_test_writes_each_log_before_its_result, unix). A file with no test blocks gets `note: PATH has no test blocks` (test_notes_a_file_with_no_tests). The --unchecked exit code is documented in help, README and ADR 0010.",
+   "F9 quality (run/test ignore options): each command now rejects options that it does not take. Test: commands_reject_options_that_they_do_not_take.",
+   "RT24 (minor, unknown marker words): new weft_sema::marker_words and MARKERS. The CLI warns W0804 at the word, with a code text. The corpus harness rejects unknown markers. New --bin and --runtime flags win over markers and the manifest (Profile in package.rs). Tests: check_warns_about_unknown_file_markers, profile_flags_win_over_markers, file_markers_set_options (offsets).",
+   "RT23-limits (minor, round trip): hidden chain locals are now named chain'K by part index, and the printer puts parentheses around a chain block that is the left operand of an operator. Test: props.rs long_chains_round_trip (11 shapes, full tree equality with spans erased). Fails before the fix.",
+   "RT23-limits (major, --explain overflow): reproduced (exit 134 on lce_10000 and le_10000). Mitigated in the CLI lane: main.rs runs each command on a 256 MiB thread, and falls back to the main thread if the thread cannot start. Both repros now finish with exit 1. The claims in grammar.md rule 10, ADR 0009, architecture.md Size limits and the limits.rs header now leave out the derivation printer. The root cause stays open (see not_resolved).",
+   "RT23-limits (minor, nesting docs): grammar.md rule 10 now says that a call, index or field step around a nested expression costs a chain step. Measured: nested calls stop at 57 levels, struct literals with a call at 35, blocks at 94 plus 2.",
+   "RT23-ptr (minor, W0116 claims): ADR 0009, grammar.md and the W0116 text now say that the check looks only at written types (also closure parameters), that type arguments can hold a raw pointer, and that nonportability still reaches containers. The generic-fork gap is documented.",
+   "F10-F11-docs (minor, ADR 0002 list): W0107 (dependency names), W0116, W0303, W0605, W0706 and W0804 are added to the list of diagnostics with no derivation.",
+   "Integration note (corpus prefixes): review/core uses 24_ to 30_. Edge's files are renamed to 31_raw_pointers, 32_overwritten, 33_stealable and 34_alias_in_one_task, and the references in design.md and ADR 0005/0006 are updated."
+  ],
+  "not_resolved": [
+   {
+    "issue": "NEW (major): an overwrite of a captured linear variable in a closure or a handler clause gives no W0601 (reproduced with f14/overwritten_variants.wf: lines 21 and 29 are missing; the other shapes are reported)",
+    "reason": "The fix is in crates/weft-sema/src/body/, which the task keeps out of this lane, and the bug was already at base. The body/ lane needs to emit `overwritten` (or treat the capture as a move) for assignments inside closures and handlers, and to add both shapes to tests/programs/32_overwritten.wf."
+   },
+   {
+    "issue": "RT23-ptr (minor): a generic function that forks with its argument gets no W0401 for *T or Rc (ptr_generic_fork.wf reproduced)",
+    "reason": "This is the known lack of mode polymorphism (spec review OP3). It needs body/ or rules changes, which are out of this lane. It is now documented in ADR 0009."
+   },
+   {
+    "issue": "RT23-limits (major, root cause): weft_check::bridge::render recurses once per derivation step, and its indentation makes the output grow with the square of the depth (10,000 steps give about 300 MB)",
+    "reason": "bridge.rs belongs to another lane. This stage added the large-stack mitigation in main.rs and corrected the docs. The bridge lane should make render iterative or elide long cfg chains, then add --explain to limits.rs."
+   },
+   {
+    "issue": "RT24 (minor): crates/weft-interp/tests/programs.rs still reads markers with src.contains",
+    "reason": "crates/weft-interp is off-limits. It should use weft_sema::Options::from_markers, and can also reject unknown words with weft_sema::marker_words and MARKERS."
+   },
+   {
+    "issue": "F10-F11-docs (minor): the CLAUDE.md rule-change checklist is incomplete",
+    "reason": "An agent message cannot authorize CLAUDE.md edits. The full checklist is in ADR 0002. The user must approve copying it into CLAUDE.md."
+   },
+   {
+    "issue": "F10-F11 / F9 quality (minor): crates/weft-interp/src/lib.rs:11 still says 'finished exactly once'",
+    "reason": "crates/weft-interp is off-limits (interp lane). docs/plan/phase1.md E3 is left unchanged on purpose: it states the goal of a proof that is not done yet, not a claim."
+   },
+   {
+    "issue": "RT21 (follow-up): name resolution does not enforce `pub` across units",
+    "reason": "Enforcing it needs the requester module in the lookups in body/ (call.rs, expr.rs), which is out of lane. The authority check now covers every dependency function and closure, so it does not depend on privacy."
+   }
+  ],
+  "gates_passed": true,
+  "summary": "I reproduced every issue and fixed the four majors that fall in this lane. Only one major stays open: the closure and handler overwrite, which is in crates/weft-sema/src/body/ and is out of lane. The work is one commit, 6b97277, in /home/user/wt-edge on branch review/edge.\n\nGates: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings` and `cargo test --workspace` all pass (373 passed, 0 failed). Facts and diagnostics are byte-identical to the base commit on all 56 corpus, example and interpreter programs.\n\nMain changes:\n- **Effect inference** is a new module, `crates/weft-sema/src/infer.rs`. It is a worklist that lowers callees first and lowers a function again only when a function its body names changes. It joins each new row with the old one, so a row only grows. The W0706 bound is the height of the row lattice. The verifier's false W0706 programs now pass, and the 800-function chain takes 0.06 s instead of 10.5 s.\n- **Dependency authority** (`package_diags`) now checks every function of a dependency, private ones too. It also checks effects performed by closures that the dependency returns. So `examples/package` now reports 2 W0901, not 1; the old count of 1 was incomplete.\n- **Dependency names:** a name that hides a root item, a prelude item or a standard effect such as `log` gets W0107. Same pattern, also fixed: pass-1 diagnostics such as a duplicate struct were shown in `prelude.wf`; they now keep their own unit.\n- **CLI:**\n  - `--workers` must be 1 to 1024.\n  - A syntax error is exit code 1 with a normal W0001 diagnostic.\n  - A command rejects options that it does not take.\n  - New `--bin` and `--runtime` flags win over markers and the manifest. An unknown marker word gets the new warning W0804.\n  - The binary writes each test's log before its result line, and notes a file with no test blocks.\n  - The binary runs each command on a 256 MiB stack.\n- **Parser and printer:** hidden chain locals are named `chain'K`, and a long chain on the left of an operator keeps its parentheses, so long chains round-trip to the same tree.\n- **Docs:** I corrected the claims about size limits, the `--explain` printer, W0116 and nesting costs, the ADR 0002 list, README and ADR 0010.\n- **Corpus:** I renamed Edge's corpus files to 31\u201334, because the parallel branch review/core uses 24\u201330.\n\nNot done, with reasons:\n- **Closure and handler overwrite (the major):** an assignment to a captured linear value inside a closure or a handler clause gives no W0601. This is in `crates/weft-sema/src/body/` and was already at base.\n- **`--explain` printer:** the root cause is in `bridge.rs` (another lane): `render` recurses per derivation step, and its output grows with the square of the depth (about 300 MB for 10,000 steps). The large stack only stops the crash.\n- **Generic fork:** a generic function that forks with its argument gets no W0401 for `*T` or `Rc`. This is the known lack of mode polymorphism. It is now documented in ADR 0009.\n- **Interpreter crate (off-limits):** its test harness still reads markers with `src.contains`, and `crates/weft-interp/src/lib.rs` still says \"exactly once\".\n- **`pub` across units:** name resolution does not enforce `pub` between units. The authority check no longer depends on it.\n- **CLAUDE.md:** not edited, because an agent message cannot authorize it. You would need to approve copying the ADR 0002 checklist into it."
+ },
+ "Core S1: fix+commit": {
+  "head_commit": "9713ccc27f0c4f74491be4842c6427e3f6d77eca",
+  "resolved": [
+   "Blocker RT1 (closure and clause locals stored in captured outer references): reproduced with rt1/esc_closure_store.wf (interpreter prints <dangling> 3 times). Fix: Summary.dropped lists the owners that a closure or clause declares. apply_summary ends them (scope_end) at each node where the closure runs, which includes nested closures. handle() ends clause locals at every operation node the clause handles. Regression test: tests/programs/31_body_locals.wf.",
+   "Blocker RT1 (references into temporaries): reproduced with rt1/esc_temp.wf and s1diff i03/i05/i09/v08. Fix: Lower::temp_root gives each temporary that is not plain data an owner, and the owner goes out of scope at the end of its statement, as in the interpreter's StmtBegin/StmtEnd. This covers let, block values, loop and if bodies, break and return (end_frames_above), while conditions, and Rc temporary handles. Plain-data temporaries stay readable, as the interpreter keeps them. Regression tests: tests/programs/32_temporaries.wf and a sema unit test.",
+   "Blocker RT1 (Rc callee result through a reference argument): reproduced with rt1/esc_rc_callee.wf. Fix: group_arg_deps adds the handle places of the arguments to a call result in a group root. It also adds the Rc handles inside the values that reference arguments point to (a type walk; past the depth limit it uses a wildcard handle). This is done in call_fn and in call_value for fn items. Regression test: tests/programs/33_rc_deps.wf.",
+   "Blocker RT1+RT4 (Rc receivers lose the handle dependency): reproduced with s1diff v21/i11/i15. Fix: the held receiver borrow now keeps recv_deps. Covered in 33_rc_deps.wf: receiver_moved, receiver_ref, receiver_field.",
+   "Blocker RT1 (a clause that moves a captured owner): reproduced with rt1/clause_move.wf. Fix: the clause's moved captures move at each handled operation, and the clause uses its captures there. Covered in 31_body_locals.wf: clause_move and clause_move_twice (W0302).",
+   "Blocker RT1 (a move or end of the owner while a task is active): reproduced with esc_parent_move, esc_spawn_move and esc_fork_move. Fix in the spec: frees_at(P, M) for whole moves, scope ends and part moves, plus task_conflict(T,P) :- active(T,P), task_accesses(T,A), frees_at(P,M), overlaps(M,A). The owner invalidation rules now use frees_at plus prefix. rules.rs mirrors the spec, Conflict.free carries the cause, and the message says 'frees'. scope() now joins its tasks before the body locals go out of scope, as the interpreter's ScopeWait does, so scope locals are not a new false positive. Regression tests: tests/programs/34_task_frees.wf and the rule test w0405_a_free_conflicts_with_a_task.",
+   "Blocker RT1 (unknown fn parameter result): reproduced with rt1/esc_fn_param_ret.wf. Fix: wildcard places. weft_facts::WILD and FnFacts::wildcard add an input fact wildcard(P). The spec adds wild_at, an overlaps extension, and three invalidated_at rules. rules.rs mirrors them, and the bridge and the random generator emit wildcard places. call_value now returns the wildcard place of each reference argument when the result type can hold a reference (Option<&T> too). Regression tests: tests/programs/35_wild_places.wf and two rule tests.",
+   "Major Proof rule 3 (coarse `in` signature place): reproduced with rule3/esc_coarse_in.wf and esc_coarse_in_enum.wf. Fix: `in P` now allows only stable steps below P (sig_allows, applied in W0204 and in the W0203 argument check). `in P..` (SigStep::Wild) allows any place inside P, and callers get a wildcard place for it. mut(P..) still equals mut(P). A returned place in a by-value parameter is now W0204, extern signatures included. Covered in 35_wild_places.wf. ADR 0003 and docs/grammar.md are updated.",
+   "Major RT10/F2 (coarse accesses and task_reads rules): I agreed with both verifiers and dropped the two rules from the spec and rules.rs. Sema records the real reads, and I added the shapes that were missing: a loop reads its elements at each iteration (loop_reads), and a handler clause reads its captures at each operation. All RT10 probes and 27_ref_reads.wf keep their W0405 errors. The disjoint-field false positives (core/probes/disjoint*.wf, v09, v15) are gone. Clean controls: fields_parent and fields_tasks in 34_task_frees.wf, plus the rule test w0405_a_reference_is_not_an_access_by_itself. ADR 0006 and the W0405 text in codes.rs are updated.",
+   "Major RT1 (copy-capture false positives): closures now refer only to captured values that are not plain data (may_free), as the interpreter keeps copy cells readable. adder, greeter, the json pkg parse and the block closure over a copy are clean again. The W0204 message says 'the returned closure captures'. Regression test: tests/programs/36_captures.wf.",
+   "Major RT1 (moved captures disagree with the interpreter): a closure now also points into the roots of the captures it moves. The move is emitted at its own node before the closure node, so it does not invalidate the new closure. Escaping moving closures now get W0204 or W0301, as the interpreter fault shows. Covered in 36_captures.wf. Recorded in ADR 0003.",
+   "Major RT9 (compound assignment through a reference field or part): `p op= v` on a place that holds a reference now mutates the referents. For a !Move field this is its declared place (new helper field_referents); for a part of a local it is what the local points into. Regression tests: tests/programs/28_write_through.wf (field_bump W0703, field_race W0405, tuple_part W0402) and a sema unit test.",
+   "Major RT4 (closure argument not held): closure arguments are now held or used at the call node in call_fn and call_value. call_value also applies the closures that it takes and lends them like call_fn does. Covered in 26_eval_order.wf: closure_arg, closure_arg_first, closure_to_closure.",
+   "Major NEW (a clause reads a captured reference after the body invalidates it): the clause uses its captures at each handled operation, which is proof rule 1 for handlers. Covered in 31_body_locals.wf (clause_capture, plus a clean control).",
+   "Major partial moves, shape (1) (`let r = &p.a.n; take(p.b)`): a new input fact moved_part(M, P). A part move frees only that part (frees_at plus part_moved_at), so references into other parts stay valid. match by-value bindings of a part are part moves too. Regression tests: take_other_part and take_part in 34_task_frees.wf, the rule test w0301_a_partial_move_frees_the_part_only, and a sema test.",
+   "Minor RT4 (hold skips a named variable): new helpers hold_later and hold_operand. When later operands follow, call_fn, call_value, print, tuples, positional and variant constructors, effect operations and binary operands now hold a copy of a named value. Covered in 26_eval_order.wf: rebound_later and print_named. This also puts the hold logic in one place.",
+   "Minor RT2 (scope tail span): scope() flushes before its 'scope end' node; s1diff v12 scope_tail now reports line 53.",
+   "Minor diagnostics: (a) a block value that is a closure is held like any block value, with the message 'the closure that this block returns captures'. The closure_outlives marker in 29_owner_drops.wf moved from line 71 to line 74: the old position was a use that came before the invalidation line, so the old expectation was wrong. (b) A W0204 for a closure says 'its parameter' or 'its temporary value' where that is true. (c) Holder types are resolved at finish(), so `&u64` shows instead of `&i64`. (d) An ill-typed return gets no cascade W0204. Rc references show 'through the `Rc` handle a', an assignment shows 'a : new value', and the closure, clause and temporary scope ends say when they happen. Places below a wildcard show as `p..`. Rendered-text tests were added in weft-check tests.rs.",
+   "Minor docs and code quality: ADR 0003 now records evaluation order and moves at evaluation, temporaries, body locals, capture semantics, wildcard and `in` places, part moves, and the flow-insensitivity of points_into. ADR 0006 records the access-based W0405, frees and the scope join order. docs/architecture.md and the W0405 text in codes.rs are updated. Block values use VarKind::BlockValue instead of a string compare. The flagged comments are now in active voice."
+  ],
+  "not_resolved": [
+   {
+    "issue": "Partial moves, shape (2): `consume(s.items, s.n)` still gives W0302, and so does `take(s.items); print(s.n)`.",
+    "reason": "W0302 is still per variable: a move of a part counts as a move of the whole local. To be precise, the spec needs a place-level use relation, because uses(V,P) also records field reads of the local. I chose the conservative form, as the verifier allowed, and recorded it in ADR 0003. Part moves are now precise for invalidation (shape 1)."
+   },
+   {
+    "issue": "points_into is flow-insensitive: rebind_before_end in rt1/clean.wf still gives W0301 at line 81.",
+    "reason": "This is a known imprecision, the same as for mutations. The verifier asked for documentation only, and ADR 0003 now records it."
+   },
+   {
+    "issue": "The hold loop is still written out at each operand site (print, constructors, effect operations, tuples).",
+    "reason": "Each site does different work for each operand (unify with a field type, consume, collect refs). The hold decision is now in one helper (hold_later and hold_operand), which removes the duplicated logic. Folding the loops themselves into one closure-based helper would not make the code clearer."
+   },
+   {
+    "issue": "Related gaps that I found and did not fix: references that pass through generics, containers and struct literals ([&x], Box.new(&x), id(&x)); `&a.clone().items` (a temporary clone handle) is a conservative false positive; effect operations that return references get no places.",
+    "reason": "The first item is red-team finding RT3, which belongs to another stage. The second is a conservative result of tracking one handle for each reference. The third is outside the S1 findings."
+   }
+  ],
+  "gates_passed": true,
+  "summary": "I reproduced all the verifier issues in /home/user/wt-core (branch review/core). I fixed every blocker and major, plus most minors, in 6 commits on top of c929fca. The head is 9713ccc. Spec changes in spec/weft.dl: input facts moved_part(M,P) and wildcard(P); derived frees_at, part_moved_at and wild_at; wildcard extensions of overlaps and invalidated_at; a task_conflict rule for frees. The coarse RT10 rules and root_of are removed. crates/weft-check/src/rules.rs mirrors all of it (Cause::MovePart, Conflict.free). bridge.rs emits the new facts, and the random generator makes part moves and wildcard steps; 30000 cases agree. Sema changes: statement temporaries, closure and clause locals that end where the body runs, clause moves and captures at each handled operation, Rc dependencies for group results and held receivers, closures that point into captured values that are not plain data, holding of closure and named operands, write-through for reference fields and parts, part moves, loop element reads, tasks that join before scope locals end, wildcard results for unknown functions, and `in P` that allows only stable steps below P (`in P..` allows any place). New corpus programs (no main or test blocks): tests/programs/31_body_locals.wf through 36_captures.wf. Extended: 26_eval_order.wf and 28_write_through.wf. One marker in 29_owner_drops.wf moved, because the old position was before the invalidation line. Every probe in the review packages that the interpreter shows as faulting now gets an error at that point. The verifier's false positives (disjoint fields, copy captures, the json pkg, partial_other, i14) are gone. Docs: ADR 0003, ADR 0006, docs/architecture.md, docs/grammar.md, and the W0405 text in codes.rs. Gates at the head: cargo fmt --all --check, cargo clippy --workspace --all-targets -D warnings, and cargo test --workspace (354 tests, which includes the interpreter corpus) all pass. Verus reports 64 verified, 0 errors. I did not change crates/weft-verified, crates/weft-interp or proofs/."
+ },
+ "Core S2: implement": {
+  "base_commit": "9713ccc27f0c4f74491be4842c6427e3f6d77eca",
+  "head_commit": "53d49ba5cf9de77dc086fb1f9488024bab8e623d",
+  "gates_passed": true,
+  "summary": "Core S2 is done in three commits on review/core in /home/user/wt-core: 4d58e1a (RT24, RT17), 797f6e6 (new spec relation lends_mut and root kind Arg) and 53d49ba (sema function values). All eight findings are fixed and every probe now gives the expected diagnostic. A diff of all ~80 probe files from both reviews, base build against HEAD, shows only the intended new errors. One extra W0702 (`run_cb` performs `Log`, e01:23) is correct: the stored closure runs in that call. The probes were also checked against a base build made from `git archive` in the scratchpad.\n\nRegression tests:\n- New corpus programs: tests/programs/37_fn_values.wf, 38_callbacks.wf, 39_multi_params.wf, 40_library_values.wf and 41_perform_args.wf, each with bad and clean cases. Every //~ marker fires on HEAD, and every bad case is missing on the base build. On 38, base also gave 4 false-positive W0703s, which are now gone.\n- New unit tests: 7 sema tests, 2 checker tests, and a CLI test using the new package tests/packages/hidden.\n- No existing corpus expectation changed.\n- Gates: cargo fmt --check, clippy -D warnings, and cargo test --workspace all pass. Agreement holds on the corpus (`weft agree` on each new file) and on 4000 random fact sets; the random generator now covers lends_mut and the Arg root kind.\n- crates/weft-verified, crates/weft-interp and proofs/ are not touched.\n\nBehaviour changes (written up in ADR 0005, docs/architecture.md and the codes.rs explain texts):\n- `weft deps` now reports every function of a dependency, also private ones, because visibility is not enforced. So examples/package now also reports `phone_home` (2 errors). The existing CLI test still passes.\n- Calls of an unknown function value (for example from a struct field) now count as able to abort.\n- A call of a function parameter now lends its reference arguments. References that the higher-order function holds into those places through an unstable step become invalid.\n\nStill open (listed in ADR 0005):\n- A function value inside a returned tuple or struct.\n- A closure that a callee makes and stores in a place of the caller.\n- A stored function value that runs inside a handler clause.\n- W0402 inside a higher-order function for a callback that gets a `@ shared` place.",
+  "design_decisions": [
+   "F4/HOF-internal soundness: added spec relation lends_mut(P, M) (spec/weft.dl, rules.rs, bridge, diagnose Cause::Lend, Conflict.lends, random generator). A call of a fn parameter, an unknown fn value, or an op of an outer handler lends its reference args: it invalidates references and conflicts with tasks like a mutation, but needs no signature (no W0703/W0402/W0312). Without it, a HOF holding &w.entities[0] across f(w) was unsound.",
+   "New RootKind::Arg for reference parameters of closures and handler clauses (not param_rooted). This removes the W0703 false positives on closure-parameter mutations (p3). The clause parameters get these roots, as F3 asked for 'Param root'; I gave them a kind that needs no declaration.",
+   "F4 precise path: EffectSig.lent (inferred for every body, also declared ones) records which places a body gives to each fn parameter by argument position. A closure argument's parameter mutations are rebased onto those places. Fallback for callees with no inferred body (extern, prelude): every reference argument is mutated. Direct closure calls substitute the arguments.",
+   "Function values: new module crates/weft-sema/src/body/fnval.rs. FnInfo is a closure summary, an item or a param, else unknown. if/match/re-assignment join values into a merged Summary (items, params, unknown, row, members). Function items as values delegate to call_fn (call_fn_as) with the value's types.",
+   "A closure belongs to its maker: inferred rows include escapes and muts of every closure made in the body. Returned fn values get EffectSig.ret (RetFn), so a later call of the result applies the callee's ret summary (resolved at the maker's call site).",
+   "Stored closures (struct field, payload, container, generic by-value arg, callee stores, user extern) are tracked. A post-pass applies them at every reach node: a call of an unknown value, or a non-std call with a fn-holding argument. It is flow-insensitive, so loops are covered, and it propagates through closure application nodes. EffectSig.stores records which fn params a body stores.",
+   "RT13: a call of a fn parameter or unknown value is possibly multi if its row has a multi effect, or if it has no row and any multi op exists in the program (conservative, program-wide).",
+   "F3: perform emits call_arg (pairs with the 1000+cap footprint call_mut), reads_at and holds for ref args. Clause param-rooted mutations/reads are rebased at each OpArg record: perform nodes, closure applications (Summary.op_args) and calls reaching the handler (whole argument).",
+   "Analysis lowers declared functions in the fixpoint loop too, keeping their declared rows but taking the inferred lent/ret/stores parts. BodyFacts gains `effects` (inferred row) for package_diags."
+  ],
+  "findings": [
+   {
+    "id": "F3",
+    "status": "fixed",
+    "evidence": "Probe p13: base no error; HEAD W0312 at 7:9. Corpus tests/programs/41_perform_args.wf: W0312 alias_perform; W0301 through_param, via_callee, via_closure, inside_clause, touches; clean reads_param, touches_elem. All 6 bad cases missing on base. Unit tests weft-sema a_perform_passes_its_reference_arguments_to_the_clause and an_operation_of_an_outer_handler_lends_its_arguments.",
+    "notes": "Clause reference params get a root of the new kind RootKind::Arg, which needs no declaration (the task said Param). Mutations through them become mutations of the operation's arguments at performs, at applications of performing closures, and at calls reaching the handler."
+   },
+   {
+    "id": "RT5",
+    "status": "fixed",
+    "evidence": "Probe a10: base only caller3; HEAD W0312 for caller (10:5) and caller2 (16:5) too. Corpus 38_callbacks.wf: captured, captured_named and mutating_closure W0312; clean captured_other. Unit test a_closure_argument_passes_its_captures (call_arg at root 800).",
+    "notes": "Closure argument refs are call_args with the closure's root index (800+i in call_fn, 810+i in call_value). call_value now also emits call_arg for reference arguments, so a direct call of a closure that mutates its capture while an argument points into it is W0312."
+   },
+   {
+    "id": "F4",
+    "status": "fixed",
+    "evidence": "Probes p3 (base: false W0703 on x.entities; HEAD: W0301 10:5 only) and p3b (base: none; HEAD: W0301 10:5). Corpus 38_callbacks.wf: W0301 hof, hof_inferred, direct, via_outer, via_foreign, holds; clean precise (declares only mut(world.score), no W0703), reads_only, holds_elem. Unit tests a_signature_states_what_the_body_lends_to_its_function_parameters, a_closure_parameter_root_needs_no_declaration, a_call_of_a_function_parameter_lends_its_reference_arguments, and checker test w0301_w0405_a_lent_place_can_change.",
+    "notes": "Rule stated in ADR 0005; the 'a limit' wording is removed and the imprecise parts are listed. Direct calls substitute the arguments. Higher-order calls use the inferred `lent` part, or mutate every reference argument for callees with no inferred body. Inside the higher-order function, lends_mut keeps it sound."
+   },
+   {
+    "id": "RT6",
+    "status": "fixed",
+    "evidence": "Probe a03: base none; HEAD W0301 8:5, W0701 10:8 (/ mut(world.entities)), W0402 16:5. Probe e04: HEAD W0702 Net 7:5 and W0301 17:5. Probe l01 abort_via_item: HEAD W0602 32:5. Corpus 37_fn_values.wf: via_item, undeclared, shared_via_item, abort_via_item, item_arg, if_items, if_item_mut, match_items, reassigned; clean pure_values, same_items, copies.",
+    "notes": "A local holding a single item calls call_fn_as with the value's types, so the call has the item's muts, effects, abort, W0203 and returned places. if/match/re-assignment join fn values into a merged summary; a call of it applies every item in it (apply_item). Item arguments of higher-order calls now apply their muts too."
+   },
+   {
+    "id": "RT7",
+    "status": "fixed",
+    "evidence": "Probe e01: HEAD adds W0702 at mk() 8:13 and f() 9:5. Probe a05: HEAD W0301 closure_in_tuple 9:5 and closure_in_if 16:5. Probe pkg: base 0 authority errors; HEAD W0901 parse needs async, net. Corpus 37_fn_values.wf: closure_in_tuple, closure_in_if, caller_stores, stored, stored_local, stored_in_loop, kept, caller_mk, later, abort_later, wrapped; clean use_pure, stored_harmless. CLI test deps_sees_effects_that_signatures_hide on tests/packages/hidden (returned closure, body beyond its declaration, private fn). Unit test a_signature_states_what_a_returned_closure_does.",
+    "notes": "call_value reads the fn type's summary. assign_local carries fn_param and joins old and new values. summary_to_sig counts closures made by the body, and the signature has a `ret` part for returned fn values. Closures stored in fields or containers run at reaching calls. package_diags checks every function of a dependency with stated plus inferred effects. Still open (ADR 0005): fn values inside returned tuples or structs, closures a callee makes and stores in a caller place, and stored values that run inside handler clauses."
+   },
+   {
+    "id": "RT13",
+    "status": "fixed",
+    "evidence": "Probe e03: base none; HEAD W0503 9:13. Corpus 39_multi_params.wf: run, run_copy, run_closure (closure fn param), pass_on (passes the parameter to a HOF); clean run_log (row without multi), consumed_first. All 4 missing on base.",
+    "notes": "A call of a fn parameter or unknown value is multi when its row has a multi effect, or when it has no row and the program has any multi operation. Passing a fn parameter to a call makes that call possibly multi too."
+   },
+   {
+    "id": "RT17",
+    "status": "fixed",
+    "evidence": "Probe lib01 --lib: HEAD W0802 at 5:17 (let r = sim.run) and 11:15 (apply(sim.run)). Corpus 40_library_values.wf (library marker) with clean case other_value; base misses both. Commit 4d58e1a.",
+    "notes": "item_value() checks is_sim_run, which requires the prelude `sim.run` (is_std). It is used for both name and module-path item values."
+   },
+   {
+    "id": "RT24-diagnostic-text",
+    "status": "fixed",
+    "evidence": "Scratch probe rt24.wf: base 'priv_bump mutates `s`' and '/ mut(c)'; HEAD 'mutates `s.count`' and '/ mut(c.v)'. Checker test inferred_places_keep_their_names. Redteam e05/k01 texts also change to s.count and c.v. Commit 4d58e1a.",
+    "notes": "summary_to_sig builds steps with sig_steps(), which takes each step's text from the place display."
+   }
+  ]
+ },
+ "Core S2: verify review": {
+  "issues": [
+   {
+    "severity": "blocker",
+    "finding": "F4",
+    "description": "lends_mut, the new rule that keeps higher-order functions sound, is not part of Summary. A call of a function parameter, a call of an unknown value, or an operation of an outer handler inside a closure or a handler clause emits lends_mut only at the node inside that body. apply_summary and clause_through_params do not emit it again at the node where the body runs, so wrapping the call in a closure gets past it. Missed: (1) `let g = || f(w); g()` with `first = &w.entities[0]` held across; (2) `let g = |y: &World| f(y); g(w)`; (3) `let g = || touch(w); g()` with Touch an outer effect; (4) an unknown field value called inside a closure; (5) `apply(|x| touch(x), w)`, a closure argument that performs an outer op through its parameter (corpus `touches` is the direct form); (6) the W0405 form `s.spawn(|| print(w.entities.len())); let g = || touch(w); g()`; (7) a clause `fn bump(x) { f(x); resume(()) }` while `r = &v[0]` is held across `bump(v)`. The direct forms (`holds` in 38_callbacks.wf, `touches` in 41_perform_args.wf) give W0301. Every wrapped form gives 0 errors, and the checker agrees with the spec on all of them.",
+    "repro": "SCRATCH/verify/p/v01_lend_in_closure.wf (only line 8 fires; lines 15, 22, 29, 36 are missed), SCRATCH/verify/p/v16_outer_op.wf (via_hof line 14 and task_touch missed), SCRATCH/verify/p/v22_clause_lend.wf (in_clause line 6 missed, the direct control fires). Command: cd /home/user/wt-core && cargo run -q -p weft-cli -- check FILE",
+    "suggested_fix": "Add a lent-places set to Summary (and to Summary::union and merge_summary). Record it in one helper that call_param, call_unknown, perform_at (no local handler) and perform_op (cap None) all use. In apply_summary, rebase it the way muts are rebased: Param goes through `through`, Own is dropped, Outer is kept. Then push lends_mut at n and add it to sum(). In clause_through_params, apply cs lends through the clause parameters at each OpArg node. Add corpus cases for the closure-wrapped forms and the clause form."
+   },
+   {
+    "severity": "major",
+    "finding": "RT6",
+    "description": "Re-assigning a function-value local joins the new value only at the assignment. Calls of the local that come earlier in a loop body keep the old value, so the second iteration runs `grow`, or a mutating closure, unseen. `let g = noop; while .. { let first = &world.entities[0]; g(world); print(first.hp); g = grow }` gives no W0301. The pub form gives no W0701, though the function mutates world.entities without stating it. The closure form `h = || world.entities.clear()` also gives no W0301. The stored-value post-pass covers loops, but local re-assignment does not.",
+    "repro": "SCRATCH/verify/p/v11_loop_reassign.wf (expected W0301 at lines 11 and 22 and W0701 at line 27; HEAD gives 0 errors). cd /home/user/wt-core && cargo run -q -p weft-cli -- check FILE",
+    "suggested_fix": "Join flow-insensitively for each fn-typed local. Pre-scan the function (or each loop body) for assignments to the local and join every assigned value into its FnInfo before lowering calls. Another way: record each call node of the local and, in a post-pass like apply_stored, apply the values joined later at those nodes. Add a corpus case."
+   },
+   {
+    "severity": "major",
+    "finding": "RT7",
+    "description": "A returned function value is still lost in several shapes that ADR 0005 does not list as open. (a) A join of maker items, `let m = if c { mk_grow } else { mk_grow2 }; let f = m(world); let first = ..; f()`, gives no W0301: apply_item and value_call_refs ignore sig.effects.ret, so f is unknown. (b) A maker passed through a function parameter, `fn call_maker(m: fn(&World) -> fn(), w: &World) -> fn() { m(w) }` then `call_maker(mk_grow, world)`: RetFn.unknown says nothing about the item's ret. (c) A maker that returns a maker, `mk2(w) -> fn() -> fn()`: RetFn does not nest. (d) A returned closure that calls a function parameter of its maker, `fn mk_call(g: fn(&World), w: &World) -> fn() { || g(w) }` with `mk_call(|x| x.entities.push(..), world)`: RetFn has no lent part. The closure argument's parameter mutation is applied only at the maker call, never at the later `f()`. All four are unsound.",
+    "repro": "SCRATCH/verify/p/v06_ret_paths.wf (expected W0301 at lines 11, 18, 35 and 50; HEAD gives only lines 27 and 44). cd /home/user/wt-core && cargo run -q -p weft-cli -- check FILE",
+    "suggested_fix": "Build ret_summary for each item in a joined summary (apply_item or value_call_refs) and attach it to the call result. Give RetFn a lent part (the places the returned value gives to the maker's function parameters, by argument), and rebase it onto fns/args in ret_summary. For nested or unknown returns, apply the ret of each item or closure argument of the maker call, or conservatively lend every reference argument of the maker call at a later call of the result. Otherwise list these shapes as open in ADR 0005."
+   },
+   {
+    "severity": "major",
+    "finding": "RT7",
+    "description": "A stored closure that runs at a reach node does not use its captured references there. `let r = &world.entities[0]; let cb = Cb { f: || print(r.hp) }; world.entities.clear(); run_ref(&cb)` is a use-after-free with 0 errors (the same closure in a local gives W0301 on f). In the same family, the RT5 shape through a by-value struct argument, `clear_then_cb(Cb { f: || print(r.hp) }, world)`, gives no W0312, because only a Fn-typed argument gets call_arg for its captures. The Option payload form and `v.push(closure)` behave the same. Part of this is RT3 (struct_lit carries no refs), but apply_summary or apply_stored could emit uses of sum.captures at the reach node, and the stored values' captures could become call_args at the reach call. ADR 0005 does not list it as open.",
+    "repro": "SCRATCH/verify/p/v27_stored_capture.wf (stored_use line 10 missed, control line 17 fires), SCRATCH/verify/p/v02_struct_capture.wf (0 errors; expected W0312 at lines 17, 22 and 38, and W0301 at line 29), SCRATCH/verify/p/v03_tuple_capture.wf (vec_use line 15 missed). cd /home/user/wt-core && cargo run -q -p weft-cli -- check FILE",
+    "suggested_fix": "When a summary runs at a node (apply_summary, the reach path), emit uses(v, n) for its captured reference holders. At a reach call, also emit call_arg for the captures' points_into of each stored value. Otherwise, document it as open and link it to RT3."
+   },
+   {
+    "severity": "major",
+    "finding": "F3",
+    "description": "Here a stored closure performs an operation of a local handler whose clause mutates through its parameter, and the closure runs inside the handled body: `handle Bump { fn bump(x) { x.push(2); resume(()) } } in { let cb = Cb { f: |y| bump(y) }; let r = &v[0]; run_cb(&cb, &v); print(r) }`. HEAD gives no W0301. apply_stored runs after the whole body, so clause_through_params has already run and never sees the OpArgs that the post-pass makes. The footprint form, where the clause mutates a capture, works (W0301), because it goes through performs_at. The ADR open item covers only a stored value that runs inside a clause, not this case.",
+    "repro": "SCRATCH/verify/p/v20_stored_perform.wf (stored_footprint line 13 fires; stored_param line 24 missed), also stored_perform in SCRATCH/verify/p/v12_perform.wf line 50. cd /home/user/wt-core && cargo run -q -p weft-cli -- check FILE",
+    "suggested_fix": "Keep each handler's clause summaries (cap, op, cs) and run clause_through_params again for the OpArgs that apply_stored adds (or run apply_stored for the reaches inside a handled body before the handler finishes). Add a corpus case."
+   },
+   {
+    "severity": "major",
+    "finding": "RT7",
+    "description": "False positive on a common callback-registry pattern. A stored closure that runs at a reach node gets every reference argument with pos None, so a mutation through its parameter becomes a mutation of the whole argument. With `struct Cb { f: fn(&World) }` and `fn run(cb: &Cb, w: &World) { let h = cb.f; h(w) }`, a caller that declares `/ mut(world.entities)` and registers `|x| x.entities.push(..)` gets W0703 'run mutates world'. A caller that registers `|x| x.score += 1` with `/ mut(world.score)` gets W0703 and also a false W0301 on `first = &world.entities[0]`. The direct HOF form (`precise` in 38_callbacks.wf) is precise. ADR 0005 does not state this coarsening for stored values.",
+    "repro": "SCRATCH/verify/p/v18_stored_fp.wf (W0703 at 7:5 and 13:5, W0301 at 14:5; all three are false). cd /home/user/wt-core && cargo run -q -p weft-cli -- check FILE",
+    "suggested_fix": "For a pos-None Given whose place type matches the closure parameter type, also rebase the parameter place onto the argument (the parameter can be the argument itself), and use a wildcard below it for deeper places, instead of collapsing to the argument root. At minimum, state the imprecision in ADR 0005."
+   },
+   {
+    "severity": "minor",
+    "finding": "NEW",
+    "description": "The codes.rs explain texts were not updated for all of the new semantics. W0405 does not say that a node which gives a place to a function value conflicts with a task (the new 4th task_conflict rule). W0503 does not say that a call of a function parameter or of an unknown value counts as multi. W0702 does not say that the effects of a closure count in the function that makes it, also when nothing calls the closure (the reason `let f = mk()` now gives W0702).",
+    "repro": "cd /home/user/wt-core && grep -n 'W0405\\|W0503\\|W0702' crates/weft-check/src/codes.rs",
+    "suggested_fix": "Add one short sentence to each of the three texts."
+   },
+   {
+    "severity": "minor",
+    "finding": "NEW",
+    "description": "The W0405 lend wording reads wrong. It renders as 'this code gives a function value that can mutate `w` while a task reads `w.entities`'. The node gives `w` to a function value. It does not give a function value.",
+    "repro": "SCRATCH/verify/p/v13_diag.wf (task_lend). cd /home/user/wt-core && cargo run -q -p weft-cli -- check FILE",
+    "suggested_fix": "In diagnose.rs, use for example 'this code gives `w` to a function value that can mutate it while a task reads `w.entities`'."
+   },
+   {
+    "severity": "minor",
+    "finding": "NEW",
+    "description": "Quality. The 'pos Some(i)==k \u2192 rebase, Some(_) \u2192 skip, None \u2192 whole place' match is copied four times: fnval::through, the op_args loop in apply_summary, the given mapping in apply_stored, and the closure in clause_through_params. The lent-push loop is the same in call_param and call_unknown. The (place, root) args vector is rebuilt in apply_value, apply_summary, apply_item and call_fn_as. The pub(super) structs Reach and Applied have fields with no doc comments. RetFn.items is BTreeSet<usize>, but the code uses FnId everywhere else.",
+    "repro": "crates/weft-sema/src/body/fnval.rs, crates/weft-sema/src/body/expr.rs (clause_through_params)",
+    "suggested_fix": "Factor the match into one helper, for example `fn give_through(&mut self, p, r, k, given) -> Vec<(PlaceId,u32)>`. Factor the lent push into one helper as well. Add one-line field docs, and use FnId in RetFn."
+   }
+  ],
+  "confirmed_fixed": [
+   "F3: probe p13_perform_alias gives W0312 at 7:9 on HEAD and nothing on base; the 41_perform_args.wf markers all fire on HEAD and none fire on base",
+   "RT5: probe a10 gives W0312 at 10:5 and 16:5 on HEAD; base gave only caller3",
+   "F4: p3 gives W0301 at 10:5 (base gave a false W0703); p3b gives W0301 at 10:5 (base gave nothing); argument positions are precise (v19_pos), and W0703, W0701 and W0402 for lent and clause mutations are correct (v08_decl)",
+   "RT6: a03 gives W0301 8:5, W0701 10:8 and W0402 16:5; e04 gives W0702 Net 7:5 and W0301 17:5; l01 abort_via_item gives W0602 32:5",
+   "RT7: e01 gives W0702 at 8:13 and 9:5 (plus run_cb 23:5); a05 gives W0301 at 9:5 and 16:5; redteam pkg gives W0901 for parse and phone_home (base gave 0)",
+   "RT13: e03 gives W0503 at 9:13",
+   "RT17: lib01 --lib gives W0802 at 5:17 and 11:15",
+   "RT24 diagnostic text: k01 shows 'mutates `s.count`', e05 shows '/ mut(c.v)', other shapes show w.entities[].hp and s.Circle.hp, and the suggested rows check cleanly"
+  ],
+  "gates_ok": true,
+  "summary": "Gates pass on /home/user/wt-core HEAD 53d49ba: cargo fmt --check, clippy --workspace --all-targets -D warnings (workspace lints include pedantic and nursery), cargo test --workspace, random agreement at PROPTEST_CASES=6000, and Verus 64 verified with 0 errors. The rule-change checklist for lends_mut and RootKind::Arg is complete: spec/weft.dl, rules.rs, the FnFacts field, bridge each_fact, diagnose (Cause::Lend and Conflict.lends), the random generator and corpus programs. lends_mut is an input relation, not a sink, so Violations and VIOLATION_RELATIONS need no change. The codes.rs texts for W0405, W0503 and W0702 lag behind the new semantics. Every claimed probe gives the claimed diagnostic. A base-vs-HEAD diff of every redteam and spec-review probe, the old corpus and examples/ shows only the intended changes; on the old corpus only the 13_signatures label improves. All markers in the new corpus files 37 to 41 fire on HEAD and none fire on base. There are no unwrap, expect or unsafe calls in production code. Remaining issues: 1 blocker, 5 major, 3 minor. Blocker: lends_mut is not carried in Summary, so wrapping a function-parameter call, an unknown-value call or an outer-handler operation in a closure or a handler clause gets past the new higher-order soundness rule (v01, v16, v22). Major: (1) re-assigning a function-value local in a loop after the call is missed (v11); (2) returned function values are lost through joined makers, makers passed as parameters, nested makers and returned closures that call a maker's function parameter (v06), and none of these are listed as open; (3) a stored closure does not use its captured references where it runs, which leaves a use-after-free (v27, v02), partly RT3; (4) a stored closure that performs to a local handler whose clause mutates through its parameter is missed because apply_stored runs after clause_through_params (v20); (5) a false W0703/W0301 on a stored-callback registry, from collapsing pos-None places to the whole argument (v18). Probes are in SCRATCH/verify/p/."
+ },
+ "Core S2: verify probe": {
+  "issues": [
+   {
+    "severity": "major",
+    "finding": "RT6",
+    "description": "Re-assigning a function value later in a loop body does not reach a call earlier in the same body. The call is lowered with the value from the first iteration only, so the second iteration's mutation is lost and W0301 is missed. This happens with `while`, with `for`, and when the value goes through a copy (`let k = h; k()`). Closures (RT7) have the same gap. Base misses it too, but the RT6 claim says re-assignment now joins values. apply_stored covers loops for stored values only, not for locals.",
+    "repro": "SCRATCH/verify/review_core/Core_S2/probes/reassign_shapes.wf (set_later line 22, for_reassign line 33, loop_closure_reassign line 56); rt6_variants.wf loop_reassign line 108; rt7_variants.wf loop_closure line 16. Minimal: `fn loop_reassign(world: &World, n: u64) / mut(world.entities) { let first = &world.entities[0]; let g = noop; let i = 0; while i < n { g(world); print(first.hp); g = grow; i += 1 } }`. Run: weft check FILE (no error on HEAD).",
+    "suggested_fix": "At a loop head, join each function-valued local with every value that is assigned to it anywhere in the loop body. You can do this with a pre-scan, or by lowering the body to a fixpoint on the local's FnInfo. The same root cause affects reference locals; see the NEW issue about reference locals in loops."
+   },
+   {
+    "severity": "major",
+    "finding": "RT7",
+    "description": "A closure or item that goes into a generic container is not tracked as stored. Examples: Vec.push, or a user generic `fn keep_g<T>(v: &Vec<T>, x: T) { v.push(x) }`. call_fn calls escape() only when the substituted parameter type is not Fn. When T is bound to a fn type, the value counts as a callback that runs only at that call. So a later `let g = v[0]; g()` runs nothing, and W0301 is missed. For an item, apply_item with any_arg gives the item's mut places to the Vec argument instead of the item's real argument. So `pub fn` gets no W0701 for `v.push(grow); let g = v[0]; g(world)`. W0301 fires there only by chance, through lends_mut. The claim says containers are tracked.",
+    "repro": "SCRATCH/verify/review_core/Core_S2/probes/rt7_variants.wf in_vec line 96; rt7_containers.wf named_in_vec line 13, item_in_vec_pub line 42 (no W0701); generic_store.wf generic_store line 11. Minimal: `let v: Vec<fn()> = Vec.new(); v.push(|| world.entities.clear()); let first = &world.entities[0]; let g = v[0]; g(); print(first.hp)` gives no W0301.",
+    "suggested_fix": "Call escape() when the declared parameter type, before substitution, is a type parameter (or a std/foreign generic), not only when the substituted type is not Fn. Do not apply item muts against any_arg places of a std container call."
+   },
+   {
+    "severity": "major",
+    "finding": "RT7",
+    "description": "A closure that comes back from calling a returned closure (`fn() -> fn()`) loses its summary. RetFn has no nested ret part. So `let g = f()` is an unknown value, and `g()` (no arguments) applies nothing. The maker's row counts the mutation at mk_mk(world), but that is before `first` is taken. Not in the ADR 0005 open list.",
+    "repro": "SCRATCH/verify/review_core/Core_S2/probes/misc_shapes.wf via_mk_mk line 57: `fn mk_mk(w: &World) -> fn() -> fn() / mut(w.entities) { || || w.entities.clear() }` then `let f = mk_mk(world); let g = f(); let first = &world.entities[0]; g(); print(first.hp)` gives no W0301.",
+    "suggested_fix": "Give RetFn an optional nested `ret` (bounded depth). Or make a call of an unknown value that came from a known summary apply the muts that the maker's closures make (rooted outside), as a conservative fallback."
+   },
+   {
+    "severity": "major",
+    "finding": "RT7",
+    "description": "A higher-order function calls a closure argument, then calls the closure that it returned (`fn ap(f: fn() -> fn()) { let g = f(); g() }`). At the caller's call node, only the outer closure's summary is applied. The returned inner closure that mutates is never applied, so W0301 is missed. A local direct call of the same shape is caught (rt7_hof_ret.wf direct, line 21).",
+    "repro": "SCRATCH/verify/review_core/Core_S2/probes/rt7_hof_ret.wf caller line 9: `let first = &world.entities[0]; ap(|| || world.entities.clear()); print(first.hp)` gives no error.",
+    "suggested_fix": "Make a closure's summary include what a call of its returned function values does (closure-level `ret`). Or, when the callee calls the result of a fn parameter (an unknown value inside the callee), apply the returned summaries of the closure argument at the call."
+   },
+   {
+    "severity": "major",
+    "finding": "F3",
+    "description": "A closure stored in a struct performs an operation of a local handler, and a call reaching it runs under that handler. The clause's mutation through its parameter is lost. The facts show performs_at(n15, c0) at the run_cb node but no mutates_at(n15, v). apply_stored runs after the body, so the OpArg records that it adds through give_op come after the clause-parameter rebasing, and nothing rebases them. This is not the ADR's open case (a stored value that runs inside a clause).",
+    "repro": "SCRATCH/verify/review_core/Core_S2/probes/f3_indirect.wf via_stored line 46. `handle Bump { fn bump(x) { x.push(2); resume(()) } } in { let cb = Cb { f: |y| bump(y) }; let r = &v[0]; run_cb(&cb, &v); print(r) }` gives no W0301. Facts: weft facts FILE via_stored.",
+    "suggested_fix": "Run the clause-parameter rebasing of OpArgs after apply_stored. Or run apply_stored before each handler finishes, for the reaches inside it."
+   },
+   {
+    "severity": "major",
+    "finding": "F3",
+    "description": "A perform with a closure argument that captured a reference is not checked like a call. perform_op records only Ty::Ref arguments as call_arg, so the closure's points_into places are not paired with the clause footprint. The clause `v.clear(); f()` then reads freed memory. The same shape through a call (RT5) gives W0312.",
+    "repro": "SCRATCH/verify/review_core/Core_S2/probes/f3_variants.wf closure_arg line 61: `effect Run { fn run(f: fn()) }`, `let r = &v[0]; handle Run { fn run(f) { v.clear(); f(); resume(()) } } in { run(|| print(r)) }` gives no W0312.",
+    "suggested_fix": "In perform_op, emit call_arg for the refs of every Fn-typed argument (as in call_fn, root 800+i), and hold the closure until the perform."
+   },
+   {
+    "severity": "major",
+    "finding": "F3",
+    "description": "A clause holds a reference into its own reference parameter across `resume`, and the handled body then frees the argument. This is accepted. The same program with a captured place gives W0301 (line 12), but the clause's Arg root is never mutated by the continuation. This is a use after free.",
+    "repro": "SCRATCH/verify/review_core/Core_S2/probes/f3_resume.wf param_across_resume line 28 and param_across_resume_callee line 45: `handle Bump { fn bump(x) { let e = &x[0]; resume(()); print(e) } } in { bump(&v); v.clear() }` gives no error (captured_across_resume line 12 gives W0301 on HEAD and base).",
+    "suggested_fix": "Treat `resume` as lending (lends_mut) or mutating each reference-parameter root of the clause. A precise option: rebase the continuation's mutations of the OpArg places onto the Arg root."
+   },
+   {
+    "severity": "major",
+    "finding": "F4",
+    "description": "An Arg-rooted place escapes its closure or clause through an assignment to a captured outer local (`keep = x`). After the call, `keep` points into the Arg root, which no later mutation of the real argument reaches. Shapes: a handler clause, a direct closure call, and a higher-order callback. Base also misses these (the closure parameter used to have a Param root). It is a soundness gap in the new Arg-root model.",
+    "repro": "SCRATCH/verify/review_core/Core_S2/probes/f3_controls.wf closure_escape line 19 (`let keep = &w[0]; let f = |x: &u64| { keep = x }; f(&v[0]); v.clear(); print(keep)`), hof_escape line 28; f3_variants.wf clause_escape line 89. All give no error.",
+    "suggested_fix": "When a closure or clause body binds an outer local to an Arg-rooted place, rebase it at each application, like muts and reads (the local then points into the given places). Or reject it, like W0204."
+   },
+   {
+    "severity": "major",
+    "finding": "RT5",
+    "description": "A closure that captured a reference is accepted when it is wrapped in a struct literal or a tuple argument. call_fn emits call_arg only for the refs of Fn-typed arguments, so `apply_cb(Cb { f: || print(r.hp) }, world)` and `apply_pair((|| print(r.hp), 1), world)` miss W0312, although the callee clears world.entities and then runs the closure.",
+    "repro": "SCRATCH/verify/review_core/Core_S2/probes/rt5_variants.wf in_struct line 22, in_tuple line 28 (no error on HEAD).",
+    "suggested_fix": "For an argument whose type can hold a function (has_fn), emit call_arg for the points_into places of every closure inside it (struct fields, tuple parts)."
+   },
+   {
+    "severity": "major",
+    "finding": "F4",
+    "description": "Places that alias each other, given to one function value, are never checked for W0312. Inside the higher-order function, `f(w, &w.entities[0])` (or `g(|| print(r.hp), world)` with g a fn parameter) only adds lends_mut, which has no alias_conflict rule. At the caller, the closure's parameter mutations are rebased onto the places given, but no call_arg ties the other parameter's place to them. So `give_two(|x, e| { x.entities.clear(); print(e.hp) }, world)` is a use after free and is accepted. A direct closure call with the same arguments gives W0312 (f4_alias.wf line 22).",
+    "repro": "SCRATCH/verify/review_core/Core_S2/probes/f4_alias.wf hof_two line 27; f4_variants.wf lend_two line 71; rt5_variants.wf via_param line 47 (no error on HEAD).",
+    "suggested_fix": "Either add a spec rule that pairs lends_mut with the call_args of the same node (give lends_mut a root index so the same argument does not conflict with itself), or at the caller, when apply_summary rebases a parameter mutation, emit call_arg for the places given to the other reference parameters so alias_conflict fires. Update spec, rules.rs, bridge and the random generator."
+   },
+   {
+    "severity": "major",
+    "finding": "RT13",
+    "description": "A multi operation reached through an unknown function value inside a callee does not make the caller's call node multi. call_field(s) does `let g = s.f; g()`. Only its own node is multi, and the signature has no 'can resume many times' bit. So `wrap` holds a linear Token across call_field(s) with no W0503, while `top` passes `S { f: || choose() }`. A method has the same gap (`s.call()`).",
+    "repro": "SCRATCH/verify/review_core/Core_S2/probes/rt13_callee.wf wrap line 12, wrap_ref line 19; rt13_variants.wf method_pass line 91 (no W0503 on HEAD).",
+    "suggested_fix": "Add a `multi` (or 'calls an unknown value') part to EffectSig, inferred like passthrough, and make callers mark the call node multi (with the same program-wide test for a missing row)."
+   },
+   {
+    "severity": "major",
+    "finding": "NEW",
+    "description": "Pre-existing, the same root cause as the RT6 loop issue: a reference local re-assigned later in a loop body keeps only its first value. So a body that mutates through it misses the second place. This gives an unsound inferred signature (caller misses W0301), a missing W0703, and a missing lent place (F4).",
+    "repro": "SCRATCH/verify/review_core/Core_S2/probes/loop_ref_control.wf direct_loop line 16 and m_loop_pub line 22 (`let cur = a; while i < n { cur.entities.clear(); cur = b; i += 1 }`); f4_lent.wf loop_lent line 24. HEAD and base both accept.",
+    "suggested_fix": "Join the refs of locals that are assigned in a loop body at the loop head (fixpoint), in the same way as the function-value join."
+   },
+   {
+    "severity": "major",
+    "finding": "NEW",
+    "description": "Pre-existing and general (RT3 family). An argument that holds a reference inside a tuple or an Option is not a call_arg for call_fn, call_value or perform. A clause or closure parameter of such a type gets no Arg root. So W0312 is missed for `clear_with((&v[0], 1), &v)`, `opt_fn(Some(&v[0]), &v)` and the same performs. The F3 perform path copies the Ty::Ref-only test.",
+    "repro": "SCRATCH/verify/review_core/Core_S2/probes/holder_args.wf tuple_call line 7, tuple_closure line 13; f3_controls.wf option_call line 6; f3_variants.wf option_arg line 70, tuple_arg line 125 (all accepted).",
+    "suggested_fix": "Use holds_refs instead of matches!(Ty::Ref) when collecting call_arg places, and give reference-holding clause and closure parameters Arg roots."
+   },
+   {
+    "severity": "minor",
+    "finding": "RT7",
+    "description": "New conservative false positive. A stored callback that mutates through its parameter is applied at the reaching call with any_arg (pos None), so the whole reference argument counts as mutated. An event-handler callback that only pushes to `e.tags` invalidates `first = &w.entities[0]` (W0301), and a declared row must say `mut(w)` (W0703 'dispatch mutates `w`'). Base accepted caller_tags. The ADR 0005 imprecision list does not name this coarsening.",
+    "repro": "SCRATCH/verify/review_core/Core_S2/probes/clean_field_cb.wf caller_tags W0301 at line 27; fp_stored_param.wf declared W0703 at line 13.",
+    "suggested_fix": "Record, at the reach node inside the callee, what the callee gives to the unknown value (like `lent`, for stored values), and use it at the caller's reach. At least list this case in ADR 0005."
+   },
+   {
+    "severity": "minor",
+    "finding": "RT13",
+    "description": "Documented imprecision. In any program that has a multi operation, every call of a function parameter with no row is multi. So `fn with_lock(f: fn()) { let l = take(); f(); release(l) }` gets W0503 although no caller passes a multi closure. The task text asked for 'when the caller can pass a multi effect'.",
+    "repro": "SCRATCH/verify/review_core/Core_S2/probes/rt13_programwide.wf W0503 at line 9.",
+    "suggested_fix": "Optional: decide per caller (multi only if some call site passes a value whose summary is multi), through the fixpoint."
+   },
+   {
+    "severity": "minor",
+    "finding": "RT5",
+    "description": "Precision. A closure that captured a whole reference (`world`) and reads only `world.score` gives W0312 when the callee mutates `w.entities`. This is consistent with passing `world` twice (base also flags apply_two(world, world)), but it is new for closures and common in callback code.",
+    "repro": "SCRATCH/verify/review_core/Core_S2/probes/clean_rt5_precision.wf reads_score W0312 at line 8.",
+    "suggested_fix": "Optional: use the closure's read and mutate places (its summary) rather than the whole captured reference as the call_arg places, or state the rule in ADR 0005."
+   },
+   {
+    "severity": "minor",
+    "finding": "F3",
+    "description": "Duplicate W0312 at one node, with a reversed second message ('mutates `v[]` while another argument points into `v`'). It comes from the whole-argument fallback for calls that reach a handler and for foreign higher-order functions.",
+    "repro": "SCRATCH/verify/review_core/Core_S2/probes/f3_reach.wf reach_alias line 11 (two W0312); f4_alias.wf foreign_alias line 17 (two W0312).",
+    "suggested_fix": "Report one W0312 per call node, or skip the pair whose mutated place is the wildcard of the other argument."
+   },
+   {
+    "severity": "minor",
+    "finding": "NEW",
+    "description": "Pre-existing (spec review F9): the effect fixpoint stops silently after 32 rounds. The new lent/ret/stores parts depend on it too. A 33-deep call chain, defined in reverse order, loses the callback mutation (W0301 missed); 31 is fine. Base behaves the same for plain muts.",
+    "repro": "SCRATCH/verify/review_core/Core_S2/probes/stress_chain_rev_33.wf (no W0301) against stress_chain_rev_31.wf (W0301); stress_mut_rev_33.wf likewise on HEAD and base.",
+    "suggested_fix": "Emit an error when the fixpoint does not converge, or iterate until it does (the lattice is finite)."
+   }
+  ],
+  "confirmed_fixed": [
+   "F3: original probe p13 now gives W0312 at 7:9 (base: none). These shapes also work: two clause params, a loop, nested handlers, an outer handler (lends_mut), a closure or item that performs (direct, by value, through a HOF), clause mutation through a callee/closure/HOF, a call reaching the handler with overlapping args. Open shapes are listed in the issues.",
+   "RT5: probe a10 now gives W0312 at 10:5 and 16:5. These also work: a method, a nested closure, argument order, if-joined, a loop, trailing closure, a call of a closure value, and a named stale closure used at the call (W0301). Struct- and tuple-wrapped closures are still open.",
+   "F4: probes p3 (W0301 10:5, false W0703 gone) and p3b (W0301 10:5). 14 of 16 variants work: field lend, copy, nested closure, if, loop, method, generic, struct field, result, named closure, pub W0701, @shared W0402, direct two params, closure-in-closure, closure calls a callee, nested HOF, swapped positions, if-chosen and returned-ref lends. Clean callback idioms (for_each, map, element callbacks, foreign read-only) give no false positives. Open: aliased given places, loop-reassigned refs.",
+   "RT6: probes a03 (W0301 8:5, W0701 10:8 with '/ mut(world.entities)', W0402 16:5), e04 (W0702 Net 7:5, W0301 17:5) and l01 abort_via_item (W0602 32:5) all reproduce. These also work: a module item, tuple, struct field (including pub W0701), returned item (including pub W0701), item/closure join, generic item, joined HOFs, match abort, copy chain, Option, returned refs through items and joins, and W0203 through an item value. Loop re-assignment is still open.",
+   "RT7: probes e01 (W0702 at 8:13 and 9:5), a05 (W0301 9:5, 16:5) and the pkg probe (W0901 for parse and phone_home; base 0) reproduce. These also work: two-level makers, if/early-return makers, a closure making a closure, a returned closure mutating through its param, pub W0701 '/ log', W0702 for returned net, generic id, nested tuples, t.0, match arms, arrays, Option locals, and stored-in-struct/loop. weft deps flags hidden effects in structs, items, Vecs, nested closures and methods. Open: Vec/generic storage, fn()->fn(), a callback returning a closure, a returned struct/Option (documented).",
+   "RT13: probe e03 now gives W0503 at 9:13. These also work: a declared multi row, a struct-field value, a call inside a local closure, a param passed in a struct, an item value, a joined item, a returned closure, a uniq ref, a loop, and W0705 for a mismatched row. Open: an unknown call inside a callee.",
+   "RT17: probe lib01 --lib gives W0802 at 5:17 and 11:15. All variants are caught (if-join, struct field, returned value, inside a closure, tuple, direct, trailing). There are no false positives in binaries or on a local named `sim`.",
+   "RT24 diagnostic text: W0402 and W0701 now show s.count, s.inner.n, s.list[].n, s.list[].v and c.inner.v, also through item values and closures. The suggested rows are accepted when applied (rt24_apply.wf is clean on HEAD; base gave W0703)."
+  ],
+  "gates_ok": true,
+  "summary": "I verified a git-archive snapshot of HEAD 53d49ba against base 9713ccc. Each was built in its own target directory under SCRATCH/verify/review_core/ (head_target, base_target), and the runner is Core_S2/run.sh. I did not edit the worktree.\n\nGates:\n- cargo fmt --check, clippy -D warnings and cargo test --workspace all pass on HEAD.\n- Random agreement also passes with PROPTEST_CASES=20000.\n- weft agree holds on every probe file I wrote.\n- Every tests/programs/*.wf matches its //~ markers through the CLI.\n- In the new corpus files 37 to 41, no bad-case marker fires on base, and the 4 base W0703 false positives in 38 are gone.\n\nRegressions: across all ~100 red-team, spec-review and earlier verify probes, the only diagnostic that base gives and HEAD drops is the intended removal of the W0703 false positive in p3.\n\nEvery original probe now gives the expected diagnostic at the expected line. RT17 and RT24 hold for every variant I tried.\n\nThe other findings each have unsound shapes that still escape. All are reported as major:\n- RT6 and RT7: a function value re-assigned later in a loop body.\n- RT7: a closure or item stored through Vec.push or another generic T parameter.\n- RT7: a returned closure's returned closure (`fn() -> fn()`).\n- RT7: a callback that returns a closure, which the higher-order function then calls.\n- F3 with RT7: a stored closure that performs, run under the handler. apply_stored runs after the clause-parameter rebasing, so the clause's mutation is lost.\n- F3: a perform whose closure argument captured a reference (no call_arg for the closure).\n- F3: a clause-parameter reference held across resume (the captured-place form is caught).\n- F4: an Arg-rooted place that escapes through `keep = x`.\n- RT5: a closure wrapped in a struct or tuple argument.\n- F4 and RT5: aliasing places given to one function value. lends_mut has no W0312 counterpart, so `give_two(|x, e| { x.entities.clear(); print(e.hp) }, world)` is accepted.\n- RT13: a multi operation reached through an unknown value inside a callee is not visible to callers.\n\nTwo pre-existing general gaps share these causes and are reported as NEW:\n- Reference locals re-assigned in loops.\n- Reference-holding tuple and Option arguments are not call_args.\n\nMinor:\n- A stored callback's parameter mutation is coarsened to the whole argument. This adds a new false positive: W0301 and W0703 'mutates `w`' in an event-handler pattern.\n- The program-wide multi test gives W0503 on with_lock.\n- A closure that captured a whole reference gives W0312.\n- Duplicate W0312 messages with a reversed direction.\n- The pre-existing 32-round fixpoint cap now also bounds lent, ret and stores.\n\nThere were no crashes on 12 malformed function-value programs, and a stress program finishes in 0.2 s. The docs, ADR 0005, codes.rs, the spec, bridge, diagnose and the random generator all cover lends_mut and RootKind::Arg. The added code has no unwrap or expect outside the test modules. crates/weft-verified, crates/weft-interp and proofs/ are untouched."
+ },
+ "Core S2: fix+commit": {
+  "head_commit": "0557574a84d4c74e895c44b2c13bcbd15bbbdc8e",
+  "resolved": [
+   "BLOCKER F4 (lends_mut not in Summary): Summary has a `lends` part now, recorded by one helper `lend()` that call_param, call_unknown, perform_at and perform_op all use. apply_summary rebases it (Param through the given places, Own dropped, Outer kept), clause_through_params rebases it at each OpArg node, a node that runs a clause gets the clause's outer lends, and a task that lends can write (task_writes, mut_through). All 7 wrapped shapes now fire (v01, v16 via_hof and task_touch W0405, v22). Corpus: tests/programs/42_lends.wf. Commit 41b1abd.",
+   "F3 resume (clause holds a ref into its parameter across resume): at each resume of a clause, a continuation change of an argument place becomes a change of the clause's Arg root (exact rebase, else the wildcard). This includes changes that other clauses make at OpArg nodes. f3_resume lines 28 and 45 fire. Corpus: 41_perform_args across_resume, across_resume_op and the clean control across_resume_other. Commit 41b1abd.",
+   "Minor W0405 wording: the text is now 'gives `w` to a function value that can mutate it while a task reads ...'.",
+   "Minor codes.rs texts: W0405, W0503 and W0702 now state the new semantics. W0312 and W0704 are updated too.",
+   "RT6/RT7/NEW loops (fn values, closures, copies, reference locals): new lower_loop fixpoint in while, loop and for. If a local from outside the loop gets a new value, the body is lowered again from a snapshot taken at the loop head. Interned places, roots, vars, closures and inference stay. A canonical key compares the carried values so that the passes converge, with at most 8 passes. Fixes v11, reassign_shapes 22/33/56, rt6_variants 108, rt7_variants 16, loop_ref_control 16/22 and f4_lent 24. Corpus: 43_loops.wf (W0301 in item, closure, for, copy and chain shapes, W0701, W0703 on refs). Documented in ADR 0003 and 0005. Commit 301de0d.",
+   "RT7 returned function values (mk_mk, a HOF that calls the closure its argument returns, joined makers, a maker through a fn param, a maker that returns a maker, a returned closure that calls a maker fn param): a closure now has the effects of the value it returns. Summary.rets is new. result_summary gives the result of a call of a function value: the closure rets, each item's ret_summary, or for an unknown callee a value that lends the call's arguments and can run its function arguments. RetFn gets lends and arg_lends. Fixes v06 lines 11/19/36/52, misc_shapes 57 and rt7_hof_ret 9. Corpus: 44_returned_fns.wf. Unit tests: a_signature_states_what_a_returned_closure_lends and a_closure_has_the_effects_of_the_closure_that_it_returns. Commit eed4383.",
+   "RT7 generic containers (Vec.push, keep_g<T>): the declared parameter type decides whether an argument is a callback. A type-parameter argument is stored (escape_all) and never applied as a callback, so item muts no longer go to the Vec. Fixes named_in_vec, item_in_vec_pub W0701, generic_store and rt7_variants in_vec. Commit fd1003a.",
+   "RT7 stored closure captures and RT5 struct/tuple args: each stored value gets a hidden variable that points into its captures. Each reaching node uses it and gets call_arg for the captures (root 800). A node where a stored closure's summary runs uses it too, also when the value comes back from a Vec by its type (commit 27b2dbd). By-value arguments that hold references become call_args, and tuples are escaped part by part. Fixes v27 stored_use, v02 lines 17/22/30/39, v03 vec_use, rt5_variants in_struct/in_tuple and v04 wrap_closure. Corpus: 45_stored.wf.",
+   "F3 stored closure performs a local op (two reports): finished handlers are kept (Handled), and apply_stored runs their clauses (run_handler) for the cap calls and OpArgs that it adds. Fixes v20 stored_param, v12 line 50 and f3_indirect 46. Corpus: 45_stored stored_perform.",
+   "RT7 FP stored callback (major and minor reports): new inferred signature parts `reaches` and `reach_given` record whether a body can run a stored value and what it gives it, by position. A caller now gives those places instead of any_arg, and a callee that cannot run one is not a reach node. The false W0703 and W0301 in v18, clean_field_cb, fp_stored_param and v17_scale (39 errors) are gone. Corpus controls: 45_stored registers, scores and not_run. Unit test a_signature_states_what_a_body_gives_a_stored_value.",
+   "F3 perform with a closure argument: by-value args with refs are call_args at the perform, a closure arg is applied at the perform (the clause can run it), and the closure is held until the perform. f3_variants 62 and 71 fire. Corpus: 46_value_args closure_perform and option_perform.",
+   "NEW tuple/Option holder args (cheap part): call_fn, call_value and perform_op emit call_arg for by-value args that hold refs. Closure and clause parameters that hold refs get Arg roots, and by-value refs are given to them. Fixes holder_args 7/13, f3_controls 6, f3_variants 123 and v05 lines 6/24. Corpus: 46_value_args.wf.",
+   "F4 Arg place escapes through an assignment to an outer local: Summary.binds records (outer local, Arg place). apply_summary and clause_through_params rebind the local to the given place. Fixes f3_controls 19/28 and f3_variants 86. Corpus: 47_arg_escape.wf. Commit 714ede7.",
+   "F4 aliasing places given to one function value: each lent place is also a call_mut with its argument's root, so the existing alias_conflict rule pairs it with the other args. No spec change was needed and agreement holds. A HOF that gives f(w, &w.entities[0]) or g(|| print(r.hp), world) now gets W0312, and so does a closure arg that lends its param while it reads a capture. Fixes f4_alias 25, f4_variants 18 and rt5 via_param 47. Corpus: 48_lend_alias.wf. Checker unit test w0312_a_lent_place_pairs_with_the_other_arguments. Commit 9e8210f.",
+   "Minor duplicate W0312: diagnose now reports one W0312 per call node, with the outermost mutated place (f3_reach 11, f4_alias 17).",
+   "RT13 multi through an unknown value inside a callee: new inferred EffectSig.multi part. A call of a function that calls an unknown multi value is now a multi node. Fixes rt13_callee 12/19 and rt13_variants 91. Corpus: 39_multi_params via_callee, via_method and the clean control via_callee_log. Commit 710fee5.",
+   "Minor fixpoint stopping after 32 rounds: the bound is now 32 + 2*fns, and a signature that is still not stable at the bound gets the new code W0704 (in codes.rs and ADR 0005). Fixes stress_*_rev_33/40. Unit test effect_inference_runs_until_the_signatures_are_stable. Commits f8d8c7f and 4fef873.",
+   "Minor quality: one `through` helper replaces the four copies of the pos/rebase match, note_lent replaces the copied lent-push loop, and Given::args replaces three rebuilt args vectors. Reach and Applied fields have docs, and RetFn.items uses FnId. Commit 3479b3d.",
+   "Minor RT5 precision (whole-reference capture): no behaviour change; ADR 0005 now states the rule (consistent with passing `world` twice) in the imprecise list."
+  ],
+  "not_resolved": [
+   {
+    "issue": "Minor RT13: the program-wide multi test (rt13_programwide W0503 on with_lock)",
+    "reason": "This is the documented imprecision, and the fix was optional. A per-caller decision needs the callers' closures in the callee analysis (a reverse fixpoint). ADR 0005 lists it, and also says that the new `multi` signature part uses the same test."
+   },
+   {
+    "issue": "NEW holder args, remaining RT3 shapes: by-value `match o { Some(x) => ... }` on an Option<&T> (v05 hof_opt and direct_opt), a fn item param of type Option<&World> (v05 item_opt), and a struct field reference Wrap{x: &v[0]} (v04 wrap_ref)",
+    "reason": "These come from RT3 causes outside stage S2. match_pattern derefs the payload type, so the binding becomes an owned value with its own root, and struct_lit and fn item params carry no refs. A trial fix that carried the scrutinee's refs had no effect without the type change, so I reverted it. ADR 0005 lists these shapes as open (RT3 family)."
+   },
+   {
+    "issue": "Loop fixpoint bound",
+    "reason": "A loop whose carried values never become stable (cur = &cur.next[0]) keeps the values of its 8th pass. Widening to wildcards gave a false W0301 on an ordinary list walk, so I did not add it. A deeper reference that a change invalidates is still below one of the 8 places through an unstable step. ADR 0003 states this: the signature check does not see the deeper places."
+   },
+   {
+    "issue": "Process note: commit f8d8c7f has a clippy error, and commit 0557574 has no message body",
+    "reason": "In f8d8c7f my gate command did not stop on the clippy failure, and amending is not allowed. The next commit, 4fef873, fixes it. All gates pass at HEAD. Commit 0557574 (ADR wording only) has a subject and trailers but no body."
+   }
+  ],
+  "gates_passed": true,
+  "summary": "I reproduced every verifier issue with its probe and fixed every real blocker and major issue in 12 commits on review/core (53d49ba..0557574) in /home/user/wt-core. Each fix has a regression test. New corpus programs: tests/programs/42_lends.wf, 43_loops.wf, 44_returned_fns.wf, 45_stored.wf, 46_value_args.wf, 47_arg_escape.wf and 48_lend_alias.wf, plus new cases in 39_multi_params.wf and 41_perform_args.wf. Each has bad and clean cases, and every bad case is missing on a base build (SCRATCH/s2fix/base). New unit tests: 4 in weft-sema and 1 in weft-check. Main design: Summary got lends, rets and binds, and lent places are also call_mut for W0312, so the spec did not change and agreement holds on the corpus, all ~200 probes and the random facts. Loops get a fixpoint with a snapshot and canonical keys. Stored values get a hidden capture variable, a reach/reach_given signature part, and a post-pass that runs handlers again. The signature got inferred multi, reaches and reach_given parts, and RetFn got lends. Effect inference now iterates to a fixpoint and reports the new code W0704 at its bound. A diff of all probes against base shows only intended changes, including removed false positives (v18, v17_scale, clean_field_cb, fp_stored_param, duplicate W0312s). The original red-team and spec-review probe sets are unchanged. ADR 0003, ADR 0005, docs/architecture.md and codes.rs are updated. crates/weft-verified, crates/weft-interp and proofs/ are not touched. The cargo fmt, clippy -D warnings and cargo test --workspace gates pass at HEAD. Commit f8d8c7f does not pass clippy (my gate chain did not stop on the error); 4fef873 fixes it."
+ }
+}

@@ -162,7 +162,12 @@ mod tests {
             };
             for e in entries.flatten() {
                 let sub = e.path();
-                if sub.file_name().is_some_and(|n| n != "target") {
+                // The design inputs are a record of past reviews. They can name
+                // codes that do not exist, for example a test's unknown code.
+                if sub
+                    .file_name()
+                    .is_some_and(|n| n != "target" && n != "core-ir-inputs")
+                {
                     scan(&sub, out);
                 }
             }

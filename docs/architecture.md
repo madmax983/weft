@@ -258,3 +258,9 @@ meaning, and it is not done yet.
 | `modes::{submode, join}` | partial order and least upper bound | checker W0406, W0403, W0401, `pinned`; sema the uniqueness of joined values, branch states and closure captures, and the pins of tasks |
 | `lifecycle::Continuation` | a `once` continuation resumes at most once | interpreter |
 | `lifecycle::Linear` | a linear value is consumed or aborted at most once; a live value with no `on abort` does not unwind | interpreter |
+
+## Core IR (proposed)
+
+A core IR between the typed tree and the facts is planned. Fact generation will read the IR,
+not the AST. See ADR 0012, `docs/ir.md` and `docs/plan/core-ir.md`. Until the plan lands,
+`crates/weft-sema/src/body/` lowers the AST to facts as described above.
