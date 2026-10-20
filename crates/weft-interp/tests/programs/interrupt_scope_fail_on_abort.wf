@@ -1,0 +1,31 @@
+// The owner runs `on abort` for a timeout inside a scope. A child of the
+// scope fails while the `on abort` function sleeps. The unwinding defers the
+// failure: the `on abort` function ends, and then the owner unwinds to the
+// scope (ADR 0010).
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(t: Tx) / clock {
+    let Tx(id) = t
+    print("rollback {id} starts at {Clock.now()}")
+    sleep(5.ms)
+    print("rollback {id} ends at {Clock.now()}")
+}
+fn commit(t: Tx) / io { let Tx(id) = t; print("commit {id}") }
+
+fn main() / io, par {
+    handle Fail { fn fail(m) { print("scope handler: {m} at {Clock.now()}") } } in {
+        scope { s =>
+            s.spawn(|| { sleep(12.ms); fail("child failed") })
+            handle Fail { fn fail(m) { print("inner caught: {m} at {Clock.now()}") } } in {
+                with_timeout(10.ms) {
+                    let t = Tx { id: 1 }
+                    sleep(100.ms)
+                    commit(t)
+                }
+            }
+            sleep(100.ms)
+        }
+    }
+    print("end at {Clock.now()}")
+}

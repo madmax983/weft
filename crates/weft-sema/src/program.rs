@@ -876,14 +876,23 @@ impl Collector {
     }
 
     /// W0101 and W0118: the function after `on abort` must exist and take
-    /// one value of the type.
+    /// one value of the type. The unwinder gives it each instance of the
+    /// type. So the parameter type is the type with the type parameters of
+    /// the function in order, as for a method of `impl<T> G<T>` (review round
+    /// 3, F3-4). For a type with no type parameters, it is the type.
     fn check_on_aborts(&mut self) {
         for (a, name) in std::mem::take(&mut self.on_aborts) {
-            let (module, ty) = (self.prog.adts[a].module, self.prog.adts[a].name.clone());
+            let def = &self.prog.adts[a];
+            let module = def.module;
+            let generics = if def.generics.is_empty() {
+                String::new()
+            } else {
+                format!("<{}>", def.generics.join(", "))
+            };
+            let ty = format!("{}{generics}", def.name);
             let d = match self.prog.lookup(module, &name.name) {
                 Some(ItemRef::Fn(f)) => {
-                    let params = &self.prog.fns[f].sig.params;
-                    if matches!(params.as_slice(), [p] if matches!(p.ty, Ty::Adt(b, _) if b == a)) {
+                    if takes_instance(&self.prog.fns[f].sig, a, def.generics.len()) {
                         continue;
                     }
                     Diagnostic::error(
@@ -894,7 +903,10 @@ impl Collector {
                         ),
                         name.span,
                     )
-                    .note(format!("declare it as `fn {}(x: {ty})`", name.name))
+                    .note(format!(
+                        "declare it as `fn {}{generics}(x: {ty})`: the unwinder gives it each instance of the type",
+                        name.name
+                    ))
                 }
                 _ => Diagnostic::error(
                     Code::W0101,
@@ -2286,6 +2298,25 @@ pub fn in_place_order(params: &[ParamSig]) -> (Vec<usize>, Vec<Vec<usize>>, usiz
     (order, cycles, steps)
 }
 
+/// Returns true if signature `sig` takes one value of each instance of
+/// definition `a`, which has `n` type parameters: its one parameter has the
+/// type `a<T1, ..., Tn>`, with the `n` type parameters of the function in order.
+fn takes_instance(sig: &FnSig, a: AdtId, n: usize) -> bool {
+    let [p] = sig.params.as_slice() else {
+        return false;
+    };
+    let Ty::Adt(b, args) = &p.ty else {
+        return false;
+    };
+    *b == a
+        && sig.generics.len() == n
+        && args.len() == n
+        && args
+            .iter()
+            .enumerate()
+            .all(|(i, t)| matches!(t, Ty::Param(j) if usize::try_from(*j).is_ok_and(|j| j == i)))
+}
+
 /// W0118: the effects of each `on abort` function, from its final signature.
 ///
 /// The unwinder runs the function with the root handlers only (ADR 0007). So its
@@ -2379,10 +2410,19 @@ pub fn check_on_abort_rows(prog: &Program, sigs: &[FnSig], no_runtime: bool) -> 
             d.unit = unit;
             out.push(d);
         }
+        // A by-value parameter that holds references points into a parameter
+        // root (ADR 0003). So a change through such a reference is a change of
+        // `Param(0)` in the row, and the row cannot show it apart from a change
+        // of the value itself. If the type holds a reference, each change of
+        // the parameter counts as outside (review round 3, F3-1).
+        let refs = sig
+            .params
+            .first()
+            .is_some_and(|p| prog.ty_holds_refs(&p.ty));
         let outside: Vec<String> = e
             .muts
             .iter()
-            .filter(|m| m.root != SigRoot::Param(0) || m.steps.contains(&SigStep::Held))
+            .filter(|m| m.root != SigRoot::Param(0) || m.steps.contains(&SigStep::Held) || refs)
             .map(|m| format!("`{}`", m.text))
             .collect();
         if !outside.is_empty() {
@@ -2398,6 +2438,53 @@ pub fn check_on_abort_rows(prog: &Program, sigs: &[FnSig], no_runtime: bool) -> 
             .note(
                 "the unwinder runs it where a node aborts, and that node does not state the change",
             );
+            if refs {
+                d = d.note("the value holds a reference, and a change through it is a change of the place that it points to");
+            }
+            d.unit = unit;
+            out.push(d);
+        }
+        // The unwinder gives the function each instance of the type, also one
+        // with a linear type argument. No call of the facts checks the type
+        // argument there, so the function cannot drop or hold a value of a
+        // type parameter (review round 3, F3-3).
+        let generic: BTreeSet<usize> = e.drops.union(&e.holds).copied().collect();
+        if !generic.is_empty() {
+            let names: Vec<String> = generic
+                .iter()
+                .map(|&j| format!("`{}`", sig.generics.get(j).map_or("?", String::as_str)))
+                .collect();
+            let (what, at) = match (e.drops.is_empty(), e.holds.is_empty()) {
+                (false, true) => ("can drop", ""),
+                (true, false) => ("holds", " across a node that can abort"),
+                _ => ("can drop or hold", ""),
+            };
+            let mut d = Diagnostic::error(
+                Code::W0118,
+                format!(
+                    "`on abort` function `{}` {what} a value of type parameter {}{at}",
+                    fd.name,
+                    names.join(", ")
+                ),
+                span,
+            )
+            .note("the unwinder gives it each instance of the type, also one with a linear type argument, and the value of that type then goes away")
+            .note("take the type parameter only as a marker, or give the type a part of a fixed type");
+            d.unit = unit;
+            out.push(d);
+        }
+        // The unwinder does not keep the result of the function. So a result
+        // that can hold a linear value goes away there.
+        if prog.ty_may_hold_linear(&sig.ret) {
+            let mut d = Diagnostic::error(
+                Code::W0118,
+                format!(
+                    "`on abort` function `{}` returns a value that can be linear, but the unwinder drops the result",
+                    fd.name
+                ),
+                span,
+            )
+            .note("consume the value inside the function, and return a value of plain data or `()`");
             d.unit = unit;
             out.push(d);
         }

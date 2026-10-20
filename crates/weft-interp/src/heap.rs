@@ -401,6 +401,7 @@ impl Heap {
                     Value::Closure(Rc::new(ClosureVal {
                         code: c.code,
                         cells: c.cells.iter().map(m).collect(),
+                        owned: c.owned.iter().map(m).collect(),
                         henv: c.henv.clone(),
                         span: c.span,
                     }))

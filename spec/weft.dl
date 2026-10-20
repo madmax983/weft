@@ -245,6 +245,13 @@ overwritten(V, P)     :- live_linear(V, P), overwrites(V, P).
 abort_unhandled(V, P) :- live_linear(V, P), may_abort(P), !ends_linear(V, P), !has_on_abort(V),
                          !spared_at(V, P).
 
+// A scope can cancel a task, and a `fork` its branches, before the task runs: a
+// sibling fails, or the owner times out or is cancelled. Then the closure of the
+// task goes away with the values that it moved. So a linear value that moves into
+// a task where it starts needs `on abort`, as a value that is live across an abort
+// does. Any scope can be cancelled while a task waits.
+abort_unhandled(V, P) :- spawned_at(_, P), moved_at(V, P), linear(V), !has_on_abort(V).
+
 // ---------------------------------------------------------------------------
 // W0503: values live across a `multi` operation must be `many`
 // ---------------------------------------------------------------------------

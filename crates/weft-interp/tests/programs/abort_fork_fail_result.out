@@ -1,0 +1,3 @@
+rollback 1
+failed: boom
+end

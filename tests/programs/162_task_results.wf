@@ -1,0 +1,58 @@
+// The `on abort` of a task handle cancels the task. A cancel does not finish
+// the result of a task that is done. So `Task<T>` has `on abort` for W0602 only
+// if `T` has no linear part, or `T` has `on abort` (ADR 0007, review round 3,
+// F3-6). The unwinder then runs the `on abort` of the result (ADR 0010).
+effect Stop { fn stop() }
+linear struct Tx { id: u64 }
+linear struct Lock { id: u64 }
+    on abort = unlock_on_abort
+fn unlock_on_abort(l: Lock) { let Lock(i) = l; print("unlock {i}") }
+fn begin() -> Tx { Tx { id: 1 } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn lock(n: u64) -> Lock { Lock { id: n } }
+fn unlock(l: Lock) { let Lock(i) = l; print("unlock {i}") }
+
+// A handle of a task with a linear result is live across an abort.
+fn handle_across_abort() / Stop, async {
+    scope { s =>
+        let t = s.spawn(|| begin())
+        stop()   //~ W0602
+        commit(t.join())
+    }
+}
+
+// The same in an `Option`.
+fn option_across_abort() / Stop, async {
+    scope { s =>
+        let t = Some(s.spawn(|| begin()))
+        stop()   //~ W0602
+        match t {
+            Some(h) => commit(h.join()),
+            None => {},
+        }
+    }
+}
+
+// Clean: the result type has `on abort`.
+fn lock_across_abort() / Stop, async, clock {
+    scope { s =>
+        let t = s.spawn(|| lock(2))
+        sleep(5.ms)
+        stop()
+        unlock(t.join())
+    }
+}
+
+// Clean: the result has no linear part.
+fn plain_across_abort() / Stop, async {
+    scope { s =>
+        let t = s.spawn(|| 3)
+        stop()
+        print(t.join())
+    }
+}
+
+fn main() / async, clock {
+    handle Stop { fn stop() { () } } in lock_across_abort()
+    handle Stop { fn stop() { () } } in plain_across_abort()
+}

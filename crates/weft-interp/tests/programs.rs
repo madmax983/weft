@@ -201,3 +201,36 @@ fn static_corpus_runs() {
     }
     assert!(ran >= 5);
 }
+
+/// The unwinder finishes the linear values of a cancelled task and of the
+/// branches of a failed `fork` on each order of the scheduler: a task can be
+/// cancelled before it starts, while it runs, or after it is done (review
+/// round 3, F3-8, I3-2).
+#[test]
+fn abort_paths_on_every_seed() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/programs");
+    for name in [
+        "abort_cancelled_start.wf",
+        "abort_task_captures.wf",
+        "abort_fork_fail_result.wf",
+        "abort_handle_late.wf",
+    ] {
+        let src = fs::read_to_string(dir.join(name)).unwrap();
+        let checked = weft_check::check_source(name, &src, Options::from_markers(&src));
+        assert!(checked.ok(), "{name}: the checker rejects the program");
+        for seed in 0..=20 {
+            for workers in [1, 2, 4] {
+                let opts = RunOptions {
+                    seed,
+                    workers,
+                    max_steps: Some(5_000_000),
+                    oracle: true,
+                    ..RunOptions::default()
+                };
+                if let Err(e) = run_main(&checked, &opts) {
+                    panic!("{name}, seed {seed}, workers {workers}: {e}");
+                }
+            }
+        }
+    }
+}

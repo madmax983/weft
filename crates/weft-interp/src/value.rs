@@ -81,6 +81,9 @@ pub struct ClosureVal {
     /// capture that the closure moves is a cell of its own: the closure took the
     /// value when it was made.
     pub cells: Vec<CellId>,
+    /// The cells of `cells` that the closure owns: the captures that it moved.
+    /// The unwinder finishes the linear values in them (ADR 0010).
+    pub owned: Vec<CellId>,
     /// The lexical handlers at the creation point.
     pub henv: HEnv,
     /// The closure expression.

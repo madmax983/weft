@@ -40,6 +40,10 @@ pub struct CodeFrame {
     pub slots: Vec<Option<CellId>>,
     /// The captured cells.
     pub caps: Rc<[CellId]>,
+    /// The cells of `caps` that the frame owns: the first frame of a task
+    /// owns the captures that its closure moved. The unwinder finishes the
+    /// linear values in them (ADR 0010).
+    pub owned: Vec<CellId>,
     /// The operand stack.
     pub stack: Vec<Value>,
     /// Temporary cells of the current statements.
@@ -217,15 +221,6 @@ pub enum Wait {
     Accept,
 }
 
-/// A request that a task handles at its next suspension point. A failure of
-/// a child is not an interrupt: it stays in the record of its scope
-/// (`ScopeRec::failure`), and `check_interrupt` finds it there.
-#[derive(Clone, Debug)]
-pub enum Interrupt {
-    /// A `with_timeout` deadline passed.
-    Timeout(u64),
-}
-
 /// A task.
 #[derive(Clone, Debug)]
 pub struct Task {
@@ -249,10 +244,6 @@ pub struct Task {
     pub handle: Linear,
     /// A cancellation was requested.
     pub cancel: bool,
-    /// The task unwinds because of a failure or a cancellation.
-    pub aborting: bool,
-    /// A pending interrupt.
-    pub interrupt: Option<Interrupt>,
     /// The value that the task gets when it wakes.
     pub wake: Option<Value>,
     /// What the task waits for.
@@ -345,10 +336,12 @@ pub struct Machine<'r, 'a> {
     pub(crate) lins: Vec<LinRec>,
     timers: BTreeMap<(u64, u64), Timer>,
     timer_seq: u64,
-    /// The `with_timeout` blocks whose deadline passed while their frame was
-    /// not on the task stack, for example in the continuation of a clause.
-    /// The block times out when a resume puts the frame back
-    /// (`late_timeout`).
+    /// The `with_timeout` blocks whose deadline passed, by the id of the
+    /// timeout. Each id belongs to the task of its block. The block times out
+    /// at the next check of its task while its frame is on the task stack
+    /// (`check_interrupt`): at once, after a resume that puts the frame back,
+    /// or after the unwinding that defers it (ADR 0010). A set, not one slot,
+    /// so two deadlines at one instant both hold.
     expired: BTreeSet<u64>,
     pub(crate) now: u64,
     sched_rng: Rng,
@@ -496,6 +489,7 @@ impl<'r, 'a> Machine<'r, 'a> {
             pc: 0,
             slots,
             caps,
+            owned: Vec::new(),
             stack: Vec::new(),
             temps: Vec::new(),
             marks: Vec::new(),
@@ -531,8 +525,6 @@ impl<'r, 'a> Machine<'r, 'a> {
             // The runtime cancels the task: that is the `on abort` of a handle.
             handle: Linear::new(true),
             cancel: false,
-            aborting: false,
-            interrupt: None,
             wake: None,
             wait: None,
             wait_seq: 0,
@@ -654,7 +646,7 @@ impl<'r, 'a> Machine<'r, 'a> {
         }
         task.cancel = true;
         self.trace.push(TraceEvent::Cancel { task: t });
-        if self.tasks[t].state == TState::Blocked && !self.tasks[t].aborting {
+        if self.tasks[t].state == TState::Blocked && !self.defers(t) {
             self.wake(t, None);
         }
     }
@@ -713,7 +705,7 @@ impl<'r, 'a> Machine<'r, 'a> {
         // its check finds the failure.
         let t = &self.tasks[owner];
         let wake = t.state == TState::Blocked
-            && !t.aborting
+            && !self.defers(owner)
             && !self.scopes[sid].propagated
             && Self::scope_frame(&t.frames, sid).is_some();
         if wake {
@@ -826,18 +818,15 @@ impl<'r, 'a> Machine<'r, 'a> {
                     if self.is_done(task) {
                         continue;
                     }
+                    // The deadline holds at the next check of the task while
+                    // the frame is on its stack. A frame in a continuation
+                    // waits for the resume that puts it back.
+                    self.expired.insert(id);
                     let has = self.tasks[task]
                         .frames
                         .iter()
                         .any(|f| matches!(f, Frame::Timeout { id: x, .. } if *x == id));
-                    // The frame is in a continuation: the deadline holds when a
-                    // resume puts it back (`check_interrupt`).
-                    if !has {
-                        self.expired.insert(id);
-                        continue;
-                    }
-                    self.tasks[task].interrupt = Some(Interrupt::Timeout(id));
-                    if self.tasks[task].state == TState::Blocked && !self.tasks[task].aborting {
+                    if has && self.tasks[task].state == TState::Blocked && !self.defers(task) {
                         self.wake(task, None);
                     }
                 }
@@ -1057,18 +1046,27 @@ impl<'r, 'a> Machine<'r, 'a> {
         self.quantum_used >= self.opts.quantum
     }
 
-    /// Handles a pending cancellation or interrupt at a suspension point.
+    /// Returns true if task `t` defers its interrupts: an unwinding runs on
+    /// its stack, also an `on abort` function above it. The effects proof
+    /// models `on abort` as atomic, so a cancel, a deadline or a failure of a
+    /// child does not cut it. They stay pending: a cancel in `Task::cancel`, a
+    /// deadline in `Machine::expired`, a failure in the record of its scope.
+    /// The task handles them when the unwinding ends (ADR 0010).
+    pub(crate) fn defers(&self, t: TaskId) -> bool {
+        self.tasks
+            .get(t)
+            .is_some_and(|x| x.frames.iter().any(|f| matches!(f, Frame::Unwind(_))))
+    }
+
+    /// Handles a pending cancellation, deadline or failure of a child at a
+    /// suspension point, and at the end of an unwinding.
     pub(crate) fn check_interrupt(&mut self) -> Option<Flow> {
-        let t = self.task();
-        if t.aborting {
-            t.interrupt = None;
+        let cur = self.cur;
+        if self.defers(cur) {
             return None;
         }
-        if t.cancel {
+        if self.tasks[cur].cancel {
             return Some(self.abort_task(TaskResult::Cancelled));
-        }
-        if let Some(Interrupt::Timeout(id)) = t.interrupt.take() {
-            return self.timeout_unwind(id);
         }
         if let Some(f) = self.late_timeout() {
             return Some(f);
@@ -1077,10 +1075,11 @@ impl<'r, 'a> Machine<'r, 'a> {
         self.scope_fail_unwind(sid)
     }
 
-    /// Times out a `with_timeout` block on the stack of the current task whose
-    /// deadline passed while the block was in a continuation.
+    /// Times out the outermost `with_timeout` block on the stack of the
+    /// current task whose deadline passed. Its unwinding ends the blocks inside
+    /// it too, also one with the same deadline.
     pub(crate) fn late_timeout(&mut self) -> Option<Flow> {
-        if self.tasks[self.cur].aborting || self.expired.is_empty() {
+        if self.expired.is_empty() || self.defers(self.cur) {
             return None;
         }
         let id = self.tasks[self.cur].frames.iter().find_map(|f| match f {

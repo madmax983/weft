@@ -1,0 +1,40 @@
+// A clause returns a linear value without a resume. The continuation has a
+// scope with a child, so the abort waits for the cancelled child, whose
+// `on abort` sleeps. An outer deadline passes during the wait. The unwinding
+// defers it, and then the outer block times out: the unwinder runs `on abort`
+// for the value of the clause (Tx 9) too (ADR 0010).
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(t: Tx) / clock {
+    let Tx(id) = t
+    print("rollback {id} starts at {Clock.now()}")
+    sleep(5.ms)
+    print("rollback {id} ends at {Clock.now()}")
+}
+fn commit(t: Tx) / io { let Tx(id) = t; print("commit {id}") }
+
+effect Ask { fn ask() -> u64 }
+
+fn child() / io {
+    let c = Tx { id: 2 }
+    sleep(100.ms)
+    commit(c)
+}
+
+fn main() / io, par {
+    handle Fail { fn fail(m) { print("outer caught: {m} at {Clock.now()}") } } in {
+        with_timeout(12.ms) {
+            let r = handle Ask { fn ask() { sleep(10.ms); Tx { id: 9 } } } in {
+                scope { s =>
+                    s.spawn(|| child())
+                    let x = ask()
+                    print("not reached {x}")
+                }
+                Tx { id: 1 }
+            }
+            commit(r)
+        }
+    }
+    print("end at {Clock.now()}")
+}

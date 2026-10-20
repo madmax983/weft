@@ -1,0 +1,4 @@
+caught: timeout at 21ms
+test advance past a deadline, then a clause outside the block: ok
+caught: timeout at 20ms
+test control: no advance, the clause sleeps past the deadline: ok

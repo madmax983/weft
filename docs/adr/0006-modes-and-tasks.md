@@ -89,6 +89,15 @@ Status: accepted. Date: 2026-10-18.
   stealable at the call, or if the handler is a function item that cannot start a
   pinned task (ADR 0010).
 - A spawn in statement position gives its handle to the scope. A bound handle is linear.
+- A scope can cancel a task, and a `fork` its branches, before the task runs: a
+  sibling fails, or the owner times out or is cancelled. The closure of the task then
+  goes away with the values that it moved. Any scope can be cancelled while a task
+  waits. So a spawn or a `fork` node is W0602 for each linear value with no
+  `on abort` that moves into the task there (review round 3, F3-8):
+  `abort_unhandled(V, P) :- spawned_at(_, P), moved_at(V, P), linear(V), !has_on_abort(V)`.
+  The value is the closure, which is linear if it moves a linear value (ADR 0007).
+  The unwinder of a cancelled task runs `on abort` for the values in the cells of its
+  closure, also when the task did not start (ADR 0010).
 - A task joins at the end of the scope of its receiver (`a.spawn` in an inner scope joins
   at the end of the scope of `a`). A closure or a handler clause that spawns into a scope
   outside it starts the task at each node where it runs: a call of the closure, a call
@@ -289,5 +298,8 @@ Status: accepted. Date: 2026-10-18.
     spawns again. It also starts a closure that the callee does not run.
   - A clause that runs its parameter as a task reports W0314 at the operation and at
     the spawn in the clause.
+  - A task closure or a fork branch that takes a linear value by value needs
+    `on abort` for its type (W0602 at the spawn or the `fork`), also when no scope can
+    cancel the task before it runs (`tests/programs/161_task_captures.wf`).
 - What stays open (not checked): a function value that the body cannot follow can go
   to an operation of a handler of a caller (ADR 0005).

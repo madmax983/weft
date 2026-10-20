@@ -202,6 +202,25 @@ impl Program {
             _ => false,
         }
     }
+
+    /// Returns true if a value of the resolved type `t` can hold a linear
+    /// value. A type parameter counts: a caller can give it a linear type. A
+    /// function value counts too: a closure that moves a linear value is
+    /// linear (ADR 0007).
+    pub fn ty_may_hold_linear(&self, t: &Ty) -> bool {
+        match t {
+            Ty::Param(_) | Ty::Fn(_) => true,
+            Ty::Adt(a, args) => self.props().get(*a, Prop::Linear).is_some_and(|h| {
+                h.always
+                    || h.params
+                        .iter()
+                        .any(|&j| args.get(j).is_some_and(|x| self.ty_may_hold_linear(x)))
+            }),
+            Ty::Tuple(ts) => ts.iter().any(|x| self.ty_may_hold_linear(x)),
+            Ty::Array(x, _) => self.ty_may_hold_linear(x),
+            _ => false,
+        }
+    }
 }
 
 /// Returns the part types of definition `a`, with its type parameters as
@@ -437,8 +456,12 @@ fn eval_adt(prog: &Program, a: usize, table: &[[Holds; 8]]) -> [Holds; 8] {
             }
             Prop::Refs | Prop::Fns => false,
         };
-        // A type with `on abort` finishes its linear parts.
-        if !passes || (p == Prop::NoOnAbort && def.has_on_abort) {
+        // A type with `on abort` finishes its linear parts. The `on abort` of a
+        // task handle only cancels the task, and a cancel does not finish the
+        // result of a task that is done. So `Task<T>` passes it on from `T`
+        // (review round 3, F3-6).
+        if !passes || (p == Prop::NoOnAbort && def.has_on_abort && !is_task_handle(prog, AdtId(a)))
+        {
             continue;
         }
         for t in &parts {
@@ -518,6 +541,12 @@ pub(crate) fn is_rc_handle(prog: &Program, a: AdtId) -> bool {
     def.module == PRELUDE && matches!(def.name.as_str(), "Rc" | "Weak")
 }
 
+/// Returns true if definition `a` is the prelude type `Task<T>`.
+fn is_task_handle(prog: &Program, a: AdtId) -> bool {
+    let def = &prog.adts[a];
+    def.module == PRELUDE && def.name == "Task"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -561,6 +590,7 @@ mod tests {
         assert!(get("Loop", Prop::NoOnAbort).always);
         assert!(get("Task", Prop::Linear).always);
         assert!(!get("Task", Prop::NoOnAbort).always);
+        assert_eq!(get("Task", Prop::NoOnAbort).params, vec![0]);
         assert!(get("Vec", Prop::NotCopy).always);
         assert_eq!(get("Vec", Prop::Immovable).params, vec![0]);
         assert!(get("Box", Prop::Immovable).params.is_empty());

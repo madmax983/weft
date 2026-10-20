@@ -1,0 +1,34 @@
+// sim.clock.advance passes the deadline of a with_timeout while the block
+// runs. Then the block performs an operation whose handler is outside it, and
+// the clause sleeps. The deadline holds when the clause resumes (ADR 0010,
+// review round 3, I3-4).
+effect Ask { fn ask() -> u64 }
+
+test "advance past a deadline, then a clause outside the block" {
+    sim.run(seed: 1) {
+        handle Fail { fn fail(m) { print("caught: {m} at {Clock.now()}") } } in {
+            handle Ask { fn ask() { sleep(1.ms); resume(1) } } in {
+                with_timeout(10.ms) {
+                    sim.clock.advance(20.ms)
+                    let x = ask()
+                    sleep(100.ms)
+                    print("block finished after its deadline at {Clock.now()}, x = {x}")
+                }
+            }
+        }
+    }
+}
+
+test "control: no advance, the clause sleeps past the deadline" {
+    sim.run(seed: 1) {
+        handle Fail { fn fail(m) { print("caught: {m} at {Clock.now()}") } } in {
+            handle Ask { fn ask() { sleep(20.ms); resume(1) } } in {
+                with_timeout(10.ms) {
+                    let x = ask()
+                    sleep(100.ms)
+                    print("block finished after its deadline at {Clock.now()}, x = {x}")
+                }
+            }
+        }
+    }
+}

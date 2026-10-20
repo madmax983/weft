@@ -1,0 +1,3 @@
+caught: abort before the join
+rollback 3
+end

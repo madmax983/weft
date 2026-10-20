@@ -23,6 +23,25 @@ Status: accepted. Date: 2026-10-18.
   (W0118). The effects proof models `on abort` as atomic: it cannot perform or fail.
   This rule mirrors that assumption. A standard effect that a root handler serves
   (`clock`, `log`) does not suspend the unwinder into a handler of the program.
+- The unwinder gives the `on abort` function each instance of the type, and no call
+  of the facts checks it there (review round 3). So W0118 also checks these:
+  - The parameter type is the type with the type parameters of the function in
+    order, as for a method of `impl<T> G<T>`: `fn undo<T>(g: G<T>)` for
+    `linear struct G<T>`. For a type with no type parameters, it is the type, and
+    the function has no type parameters. A fixed type argument (`G<u64>`) is an
+    error: the unwinder can give it a `G<Tx>` (F3-4).
+  - A type parameter in the `drops` or the `holds` part of the function is an
+    error. The unwinder can give it a linear type argument, and the value of that
+    type then goes away (F3-3).
+  - A result that can hold a linear value is an error: a linear type, a type
+    parameter or a function value. The unwinder drops the result.
+  - A change below a reference that the value holds is a change outside the value.
+    A by-value parameter that holds references points into a parameter root (ADR
+    0003). So the row shows a change through such a reference as a change of the
+    parameter, and cannot show it apart from a change of the value itself. If the
+    parameter type holds a reference, each change of the parameter in the row is
+    outside (F3-1). An inferred row has no change of the value itself: a change of
+    an owned by-value parameter is local.
 - `struct S: !Move` keeps its address. Moving a named value is an error (W0604). A
   function can return a struct literal: it is built in place.
 - Only a `!Move` struct may hold a reference field, and only into `self` (W0605).
@@ -41,6 +60,17 @@ Status: accepted. Date: 2026-10-18.
 - A value has `on abort` for W0602 if each linear part has it. A type around the part
   can have it too: that `on abort` finishes its parts. A tuple of a `Tx` with
   `on abort` and a `Lock` without it has none.
+- The `on abort` of a task handle only cancels the task, and a cancel does not finish
+  the result of a task that is done. So `Task<T>` has `on abort` for W0602 only if `T`
+  has no linear part or `T` has `on abort`: the property passes from `T` through
+  `Task` (`props.rs`, review round 3, F3-6). A live handle of a `Task<Tx>` across an
+  abort is W0602 if `Tx` has no `on abort`, as a `Tx` is. The unwinder runs the
+  `on abort` of the result of a task that is done (ADR 0010).
+- A task closure or a fork branch that takes a linear value by value needs `on abort`
+  for it: a scope can cancel the task before it runs (W0602 at the spawn or the
+  `fork`, ADR 0006, F3-8). The unwinder of the task finishes the value (ADR 0010).
+- A `fork` gives no value when a branch fails or the `fork` aborts. The unwinder runs
+  `on abort` for the values of the branches that are done (ADR 0010).
 - A closure that moves a linear value is linear: it must run once on every normal path
   (W0601). A callee that gets it can drop it. So a function argument of this kind is
   W0601, except for `with_timeout`, which runs its block once.
@@ -262,4 +292,23 @@ Status: accepted. Date: 2026-10-18.
     part a new value. A `let` or an assignment that moves a value before the body
     gives its place fields a value is W0304, also if the body gives them a value
     through the new holder later (`tests/programs/154_unset_nested.wf`).
-- What stays open (not checked): no known gap.
+  - An `on abort` function with a type parameter in `drops` or `holds` is W0118,
+    also when no instance of the type has a linear type argument. A result of a
+    type parameter or of a function type is W0118 too, also when it cannot be
+    linear (`tests/programs/160_on_abort_checks.wf`).
+  - An `on abort` function whose parameter type holds a reference cannot state a
+    change of its own value: the row cannot show it apart from a change through
+    the reference (W0118).
+  - A task closure or a fork branch that takes a linear value by value is W0602 if the
+    type of the value has no `on abort`, also when no scope can cancel the task
+    before it runs (`tests/programs/161_task_captures.wf`).
+- What stays open (not checked), until the core IR replaces the fact generation:
+  - A spawn whose handle is not kept (a spawn in statement position, or `let _ =`)
+    drops the result of the task at the end of the scope. W0601 does not see it.
+  - A `fork` that can abort needs `on abort` for each linear type of a branch value.
+    W0602 does not ask for it. The unwinder cannot finish such a value, and the run
+    stops with a fault.
+  - A generic body that holds a handle of a `Task<T>` across a node that can abort
+    does not put `T` in `holds`. So a caller that gives `T` a linear type with no
+    `on abort` gets no W0602, and the unwinder stops with a fault where it finds the
+    result of the task.

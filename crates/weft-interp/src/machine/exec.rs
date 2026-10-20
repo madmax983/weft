@@ -520,6 +520,7 @@ impl super::Machine<'_, '_> {
                 span,
             } => {
                 let mut cells = Vec::new();
+                let mut own = Vec::new();
                 for (i, c) in caps.iter().enumerate() {
                     let cell = self.cell_of(*c)?;
                     if owned.contains(&u32_of(i)) {
@@ -530,7 +531,9 @@ impl super::Machine<'_, '_> {
                             return Err(self.fault("a value is used after it was moved"));
                         }
                         let v = self.heap.take(&p).map_err(|e| self.fault(e))?;
-                        cells.push(self.heap.alloc(SlotKind::Local, v));
+                        let cell = self.heap.alloc(SlotKind::Local, v);
+                        cells.push(cell);
+                        own.push(cell);
                     } else {
                         cells.push(cell);
                     }
@@ -539,6 +542,7 @@ impl super::Machine<'_, '_> {
                 self.push(Value::Closure(Rc::new(ClosureVal {
                     code: *code,
                     cells,
+                    owned: own,
                     henv,
                     span: *span,
                 })))?;
@@ -1206,14 +1210,33 @@ impl super::Machine<'_, '_> {
     }
 
     /// Makes the first frame of a task for a closure or a function item.
+    ///
+    /// The closure moves into the task. So the task takes the captures that
+    /// the closure moved into cells of its own, and the first frame owns them:
+    /// the unwinder of the task finishes their linear values, also when the
+    /// task is cancelled before it starts (ADR 0010). A copy of the closure
+    /// that stays in the parent then holds no value there.
     fn task_frame(&mut self, f: Value) -> R<CodeFrame> {
         match f {
-            Value::Closure(c) => self.code_frame(
-                c.code,
-                Vec::new(),
-                Rc::from(c.cells.as_slice()),
-                c.henv.clone(),
-            ),
+            Value::Closure(c) => {
+                let mut caps = c.cells.clone();
+                let mut owned = Vec::new();
+                for cap in &mut caps {
+                    if !c.owned.contains(cap) {
+                        continue;
+                    }
+                    let v = match self.heap.slot_mut(*cap) {
+                        Ok(s) => crate::heap::take_moved(&mut s.val),
+                        Err(_) => Value::Moved,
+                    };
+                    *cap = self.heap.alloc(SlotKind::Local, v);
+                    owned.push(*cap);
+                }
+                let mut frame =
+                    self.code_frame(c.code, Vec::new(), Rc::from(caps), c.henv.clone())?;
+                frame.owned = owned;
+                Ok(frame)
+            }
             Value::FnItem(f) => {
                 let Some(code) = self.rt.compiled.fn_code.get(f.index()).copied().flatten() else {
                     return Err(self.fault("a task needs a function with a body"));
@@ -1352,12 +1375,9 @@ impl super::Machine<'_, '_> {
             if let Some(s) = self.scopes.get_mut(sid) {
                 s.propagated = true;
             }
-            for t in tasks {
-                if let Some(TaskResult::Ok(v)) = self.tasks[t].result.take() {
-                    self.heap.drop_value(v);
-                }
-            }
-            return self.fail(msg, &henv);
+            // The values of the branches that are done go away: the unwinder
+            // finishes their linear parts before the failure (ADR 0010).
+            return self.fail_after_results(&tasks, msg, henv);
         }
         let mut vals = Vec::new();
         for t in tasks {

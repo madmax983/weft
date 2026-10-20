@@ -716,26 +716,42 @@ fn abort_unhandled(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
         };
         let info = f.var(var);
         let at = f.node(first);
+        // A scope can cancel a task before it runs, and the closure of the
+        // task then goes away with what it moved.
+        let starts =
+            f.spawned_at.iter().any(|&(_, p)| p == first) && f.moved_at.contains(&(var, first));
         // The end of a scope aborts if a task of the scope failed.
-        let how = if at.label == "scope end" {
+        let how = if starts {
+            "a sibling can fail, or the owner can time out or be cancelled, and the closure then goes away with the values that it took; declare `on abort = f` on the type of each linear value that the closure takes, or make the value inside the task"
+        } else if at.label == "scope end" {
             "a task of the scope can fail, and the end of the scope then aborts; declare `on abort = f` on the type, or consume the value before the end of the scope"
         } else {
             "declare `on abort = f` on the type, or consume the value before this call"
         };
-        let d = Diagnostic::error(
-            Code::W0602,
+        let message = if starts {
+            let owner = if at.label == "fork branch" {
+                "the `fork`"
+            } else {
+                "the scope"
+            };
+            format!(
+                "{} moves into the task at `{}`, and {owner} can cancel the task before it runs",
+                linear_subject(info),
+                at.label
+            )
+        } else {
             format!(
                 "{} is live across `{}`, which can abort",
                 linear_subject(info),
                 at.label
-            ),
-            at.span,
-        )
-        .note_at(
-            format!("{} (linear, no `on abort`)", decl_note(info)),
-            info.span,
-        )
-        .note(how);
+            )
+        };
+        let d = Diagnostic::error(Code::W0602, message, at.span)
+            .note_at(
+                format!("{} (linear, no `on abort`)", decl_note(info)),
+                info.span,
+            )
+            .note(how);
         let d = note_more(d, f, rest, ("site that can abort", "sites that can abort"));
         let d = rest_note(f, var, d);
         out.push(d.with_facts(var_keys("abort_unhandled", var, &sites)));
@@ -743,10 +759,16 @@ fn abort_unhandled(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
 }
 
 /// Returns the subject of a diagnostic about linear variable `info`: "linear
-/// value `t`", or "the linear scope body value" for the value of a frame.
+/// value `t`", "the linear scope body value" for the value of a frame, or
+/// "the linear closure" for a value with a name of the lowering.
 fn linear_subject(info: &weft_facts::VarInfo) -> String {
     if info.kind == VarKind::BlockValue {
         format!("the linear {}", info.name)
+    } else if info.name.starts_with('{') {
+        format!(
+            "the linear {}",
+            info.name.trim_matches(|c| c == '{' || c == '}')
+        )
     } else {
         format!("linear value {}", shown_name(info))
     }

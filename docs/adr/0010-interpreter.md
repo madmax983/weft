@@ -32,6 +32,26 @@ Status: accepted. Date: 2026-10-18.
   example while a clause outside the block runs. The block times out when a resume
   puts it back after its deadline, as a wake after the deadline does. Each copy of a
   `multi` resume gets a timeout of its own with the same deadline.
+- The machine keeps a set of the deadlines that passed (`Machine::expired`, by the id
+  of the timeout), not one interrupt slot for each task (review round 3, I3-4). At a
+  check, the task times out the outermost block on its stack whose deadline passed;
+  the unwinding of that block ends the blocks inside it. So two deadlines at one
+  instant both hold: the outer block times out, also when the inner one has a
+  handler for its timeout. A deadline that passes while the task runs, for example
+  at `sim.clock.advance`, stays in the set if the block then goes into a
+  continuation, and holds when a resume puts it back.
+- An interrupt does not cut an unwinding (review round 3, I3-3). While an `Unwind`
+  frame is on the stack of a task, also while an `on abort` function runs above it,
+  the task defers its interrupts (`Machine::defers`). A deadline stays in the set,
+  a cancel stays in `Task::cancel`, and a failure of a child stays in the record of
+  its scope. A cancel and a deadline do not wake the task. When the unwinding ends,
+  the task handles them at once, after it gives the value or performs the failure
+  of the unwinding. The effects proof models `on abort` as atomic (ADR 0007), and
+  the design promises cleanup also on cancellation: so a sleep in an `on abort`
+  function, or a wait of the unwinder for the cancelled children, runs to its end.
+- An unwinding that a task abort takes into its own unwinding has a value to give at
+  its end, such as the value of a clause that did not resume. The outer unwinder
+  runs `on abort` for its linear parts too.
 - A `fork` gives a tuple of the branch values, also when each one is `()`, in the
   checker and in the interpreter. A function that returns `()` can still end with a
   `fork`: the value of its tail goes away. A branch of an `if` and a closure that must
@@ -87,6 +107,31 @@ Status: accepted. Date: 2026-10-18.
 - With the oracle checks on, a display of a moved value, of a freed cell or buffer, or
   of a value through a dangling reference is a fault, as each other read of it is.
   The stock machine shows `<moved>`, `<freed>` or `<dangling>` and goes on.
+- The unwinder finishes each live linear value that an abort path leaves, also
+  outside a code frame (review round 3, I3-2, F3-6, F3-8):
+  - A closure that moves a capture keeps it in a cell of its own, and `ClosureVal`
+    marks these cells (`owned`). A closure is a copy value, so it stays in its local
+    at the end of the scope. The unwinder looks into each closure in a frame that it
+    leaves and runs `on abort` for the linear values in its cells.
+  - A spawn and a `fork` move the closure into the task. The task takes the values
+    of these cells into cells of its own, and its first frame owns them
+    (`CodeFrame::owned`). So a copy of the closure that stays in the parent holds
+    no value, and the unwinder of the task finishes them. This holds also for a
+    task that a cancel stops before it starts: its first frame unwinds.
+  - The `on abort` of a task handle cancels the task. A cancel does nothing for a
+    task that is done, so the unwinder takes the result of the task and runs
+    `on abort` for its linear parts. A task that is not done and whose handle the
+    unwinder finished runs `on abort` for the linear parts of its value when it
+    ends: no `join` can take the value.
+  - The unwind of a `Scope` or a `Fork` frame waits for the children. Then it runs
+    `on abort` for the linear parts of each result that no `join` took: the value
+    of a fork branch, and the result of a task whose handle went to the scope.
+  - A `fork` with a failed branch gives no value. It runs `on abort` for the values
+    of the branches that are done before it raises the failure.
+
+  A linear value of these with no `on abort` stops the run with a fault, as in a
+  code frame. The checker rejects such a value (W0602, ADR 0006, ADR 0007), except
+  in the shapes that ADR 0007 names as open.
 - An abort path ends the scope of each local and temporary of a frame that it unwinds,
   as the normal end of a scope does (F3-9). A reference into such a local is dangling
   for the oracle. A copy value stays in its cell, as at a normal end.
