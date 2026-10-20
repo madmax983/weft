@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use weft_facts::{FnFacts, NodeId, PlaceId, VarId, VarKind};
+use weft_facts::{FnFacts, NodeId, PlaceId, VarId, VarKind, TASK_END};
 use weft_sema::effects;
 use weft_syntax::diag::Diagnostic;
 
@@ -284,6 +284,10 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
             Cause::Mutation(m) | Cause::Lend(m) => {
                 let mutated = &f.place(m).display;
                 let what = match (at.detail.is_empty(), at.label.strip_suffix(" =")) {
+                    // A task that ends here can have changed the place while it ran.
+                    _ if matches!(inv.cause, Cause::Lend(_)) && at.label == TASK_END => {
+                        format!("{TASK_END} : the task could change {mutated} while it ran")
+                    }
                     _ if matches!(inv.cause, Cause::Lend(_)) => format!(
                         "{} : gets {mutated}, and it can mutate through it",
                         at.label
@@ -675,6 +679,9 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         let verb = if c.task_writes { "mutates" } else { "reads" };
         let node_place = &f.place(c.node_place).display;
         let what = match (c.task_writes, c.free, c.lends) {
+            (_, _, true) if at.label == TASK_END => {
+                format!("waits for a task that can change `{node_place}`")
+            }
             (_, _, true) => {
                 format!("gives `{node_place}` to a function value that can mutate it")
             }

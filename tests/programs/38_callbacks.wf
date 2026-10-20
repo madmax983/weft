@@ -36,10 +36,11 @@ fn via_outer(world: &World) / mut(world.entities) {
 }
 
 // A callee with no body can give the closure any place that its arguments reach.
+// It can also run the closure on two threads at one time (W0405, ADR 0006).
 extern fn foreign_apply(f: fn(&World), w: &World)
 fn via_foreign(world: &World) {
     let first = &world.entities[0]
-    foreign_apply(|x| x.entities.push(Entity.new()), world)
+    foreign_apply(|x| x.entities.push(Entity.new()), world)   //~ W0405
     print(first.hp)   //~ W0301
 }
 

@@ -5,7 +5,10 @@ Status: accepted. Date: 2026-10-18.
 ## Decision
 
 - A place is a root and a sequence of steps. Roots are reference parameters, owned
-  locals, and `rc` groups (one group per `rc` type).
+  locals, and `rc` groups (one group per `rc` type). Phase 1 has no globals as place
+  roots: the grammar has no global item. A reference local has a root for its own
+  variable too (`Local::cell`): the memory that holds the reference. It has no owner.
+  Only W0405 uses it (ADR 0006).
 - Step kinds: field (stable), variant payload (unstable), element (stability declared by
   the type), split segment `[..k]`/`[k..]`, and deref (stability declared by the type).
 - Stability is a property that pointer and collection types declare
@@ -176,7 +179,10 @@ Status: accepted. Date: 2026-10-18.
   cells. A captured value of plain data stays readable after its scope ends, so such a
   closure can leave the scope. A closure that captures another value cannot outlive the
   variable (W0204, W0301). A temporary of plain data stays readable too, as a constant
-  does. A reference into a local of plain data is still invalid after the scope.
+  does. A reference into a local of plain data is still invalid after the scope. A
+  closure that captures the scope capability `s` cannot outlive the scope: it points
+  into the variable of `s`, as a closure that captures `&s` does (W0301). Else a call
+  of it after the scope would start a task that no scope joins.
 - A closure refers to the cells of the variables that it captures by reference. So it
   reads each variable when it runs, not when it is made. The lowering of the closure
   body uses the values that the variables have where the closure is made. So each node

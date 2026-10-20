@@ -115,7 +115,7 @@ fn build(s: &Shape) -> FnFacts {
     let nh = s.handlers.len();
     let cap = |x: usize| CapId(u32::try_from(x).unwrap() % caps);
     for &(rel, a, b, c) in &s.rels {
-        match rel % 36 {
+        match rel % 39 {
             0 => f.points_into.push((v(a), p(b))),
             1 => f.mutates_at.push((n(a), p(b))),
             2 => f.reads_at.push((n(a), p(b))),
@@ -167,6 +167,9 @@ fn build(s: &Shape) -> FnFacts {
             33 => f.releases_at.push((n(a), p(b))),
             34 => f.writes_via.push((n(a), v(b))),
             35 => f.spared_at.push((v(a), n(b))),
+            36 if has_tasks => f.kept.push((t(a), p(b))),
+            37 if has_tasks => f.spawns_in.push((t(a), t(b))),
+            38 if has_tasks => f.opaque.push(t(a)),
             _ => {}
         }
     }

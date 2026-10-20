@@ -659,6 +659,46 @@ fn w0401_w0403_fork_captures_and_stealable() {
 }
 
 #[test]
+fn w0405_a_task_keeps_a_captured_copy_variable() {
+    let mut b = B::new();
+    let k = b.var("k");
+    let rk = b.local("k");
+    b.f.owner.push((rk, k));
+    let t = b.f.add_task(TaskKind::Spawn, Span::default());
+    let s = b.start("spawn");
+    b.f.spawned_at.push((t, s));
+    b.f.task_reads.push((t, rk));
+    let e = b.node("end of block");
+    b.f.scope_end.push((k, e));
+    let j = b.node("scope end");
+    b.f.joined_at.push((t, j));
+    // The end of `k` frees what the task reads.
+    assert!(check(&b.f).violations.task_conflict.contains(&(t, e)));
+    // A task that keeps the cell of the copy variable reads it after the end.
+    b.f.kept.push((t, rk));
+    assert!(check(&b.f).violations.task_conflict.is_empty());
+}
+
+#[test]
+fn stealable_follows_opaque_and_spawns_in() {
+    let mut b = B::new();
+    let rc = b.var_with("r", |v| v.nonportable = true);
+    let outer = b.f.add_task(TaskKind::Spawn, Span::default());
+    let inner = b.f.add_task(TaskKind::Spawn, Span::default());
+    let runs_param = b.f.add_task(TaskKind::Spawn, Span::default());
+    let plain = b.f.add_task(TaskKind::Spawn, Span::default());
+    b.f.captures.push((inner, rc));
+    b.f.spawns_in.push((outer, inner));
+    b.f.opaque.push(runs_param);
+    let v = check(&b.f).violations;
+    // A task that starts a pinned task is pinned too.
+    assert!(!v.stealable.contains(&outer));
+    assert!(!v.stealable.contains(&inner));
+    assert!(!v.stealable.contains(&runs_param));
+    assert!(v.stealable.contains(&plain));
+}
+
+#[test]
 fn w0801_root_handler_in_library() {
     let mut b = B::new();
     b.f.library = true;

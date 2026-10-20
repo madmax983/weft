@@ -36,12 +36,13 @@ fn late_mut(world: &World, d: &World) / mut(world.entities, d.entities) {
     print(first.hp)   //~ W0301
 }
 // A task reads the captured reference after the parent clears its new target.
+// The new value of `r` is a write of `r` while the task reads it, too.
 fn late_ref_task(world: &World, d: &Entity) / mut(world.entities), async, clock {
     let r = d
     scope { s =>
         s.spawn(|| { sleep(1.ms)
  print(r.hp) })
-        r = &world.entities[0]
+        r = &world.entities[0]   //~ W0405
         world.entities.clear()   //~ W0405
     }
 }

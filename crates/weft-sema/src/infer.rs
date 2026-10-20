@@ -153,6 +153,8 @@ fn same_parts(a: &EffectSig, b: &EffectSig) -> bool {
         && a.reach_repeats == b.reach_repeats
         && a.multi == b.multi
         && a.tasks == b.tasks
+        && a.task_runs == b.task_runs
+        && a.pins == b.pins
         && a.op_fns == b.op_fns
         && a.op_effects == b.op_effects
         && a.task_effects == b.task_effects
@@ -177,6 +179,8 @@ fn with_parts(row: &EffectSig, body: &EffectSig) -> EffectSig {
         reach_repeats: body.reach_repeats,
         multi: body.multi,
         tasks: body.tasks.clone(),
+        task_runs: body.task_runs.clone(),
+        pins: body.pins,
         op_fns: body.op_fns.clone(),
         op_effects: body.op_effects.clone(),
         task_effects: body.task_effects.clone(),

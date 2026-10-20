@@ -218,14 +218,19 @@ impl super::Machine<'_, '_> {
         let handler = st.handler.clone();
         let server = st.server;
         let worker = self.tasks[server].worker;
+        // The checker runs the handler as a task at the call of `serve`. Only a
+        // closure that it marked stealable there can move to another worker.
+        // Another request task stays on the worker of the server.
+        let stealable = matches!(&handler, Value::Closure(c) if self.rt.is_stealable(c.span));
         let frame = self.task_frame_args(handler, vec![Value::Request(Rc::new(req))], &st.henv)?;
-        let t = self.add_task(frame, worker, true, None);
+        let sim = self.sim_of(server);
+        let t = self.add_task(frame, worker, stealable, None, sim);
         let _ = self.tasks[t].handle.consume();
         self.trace.push(TraceEvent::Spawn {
             task: t,
             parent: server,
             worker,
-            stealable: true,
+            stealable,
         });
         st.in_flight.push((t, stream));
         self.http = Some(st);

@@ -79,3 +79,61 @@ fn http_serve_with_no_requests_returns() {
     };
     assert_eq!(run_main(&c, &opts).unwrap().stdout, "stopped\n");
 }
+
+/// Serves one request with the handler `handler` and returns, for each
+/// request task, true if the scheduler may move it to another worker.
+fn request_tasks_stealable(handler: &str) -> Vec<bool> {
+    let port = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let addr = format!("127.0.0.1:{port}");
+    let src = format!(
+        "fn main(env: Env) / io {{\n    let hits = Rc.new(0)\n    let n = 1\n    http.serve(env.net.listen(\"{addr}\"), {handler})\n}}\n"
+    );
+    let server = std::thread::spawn(move || {
+        let c = weft_check::check_source("http.wf", &src, Options::default());
+        assert!(c.ok(), "{:?}", c.codes());
+        let opts = RunOptions {
+            max_requests: Some(1),
+            workers: 4,
+            ..RunOptions::default()
+        };
+        run_main(&c, &opts).map_err(|e| e.to_string())
+    });
+    let start = Instant::now();
+    let mut stream = loop {
+        match TcpStream::connect(&addr) {
+            Ok(s) => break s,
+            Err(_) if start.elapsed() < Duration::from_secs(20) => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(e) => panic!("cannot connect: {e}"),
+        }
+    };
+    stream.write_all(b"GET / HTTP/1.1\r\n\r\n").unwrap();
+    let mut resp = String::new();
+    stream.read_to_string(&mut resp).unwrap();
+    let outcome = server.join().unwrap().unwrap();
+    outcome
+        .trace
+        .iter()
+        .filter_map(|e| match e {
+            weft_interp::TraceEvent::Spawn { stealable, .. } => Some(*stealable),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn request_task_of_a_nonportable_handler_is_pinned() {
+    // The handler captures an `Rc`: its request task stays on the worker of
+    // the server (ADR 0006).
+    let pinned =
+        request_tasks_stealable("|req| {\n let h = hits.clone()\n Response.text(\"hit\") }");
+    assert_eq!(pinned, vec![false]);
+    // A handler with portable captures can move.
+    let plain = request_tasks_stealable("|req| Response.text(\"n = {n}\")");
+    assert_eq!(plain, vec![true]);
+}

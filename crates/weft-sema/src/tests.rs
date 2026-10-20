@@ -1565,3 +1565,49 @@ fn an_on_abort_function_in_a_dependency_is_checked_there() {
     );
     assert_eq!(codes(&a), vec![(2, "W0118".to_string())]);
 }
+
+#[test]
+fn task_runs_say_how_a_body_runs_its_function_parameters() {
+    let src = "fn par(f: fn(), g: fn()) / par { fork(f, g) }\n\
+        fn bg(f: fn()) / async { scope { s => s.spawn(f)\n s.spawn(f) } }\n\
+        fn bg_and_call(f: fn(), g: fn()) / async { scope { s => s.spawn(f)\n g() } }\n\
+        fn bg_then_call(f: fn(), g: fn()) / async { scope { s => let t = s.spawn(f)\n t.join()\n g() } }\n\
+        fn pass_on(f: fn(), g: fn()) / par { par(f, g) }\n\
+        fn plain(f: fn()) { f() }";
+    let a = analyze_units(src, &[]);
+    assert_eq!(codes(&a), Vec::new());
+    let run = |name: &str, p: usize| sig_of(&a, name).effects.task_runs.get(&p).cloned();
+    let par = run("par", 0).expect("par runs f");
+    assert!(par.thread && !par.twice);
+    assert_eq!(par.with, [1].into());
+    let bg = run("bg", 0).expect("bg runs f");
+    assert!(!bg.thread && bg.twice);
+    assert_eq!(run("bg_and_call", 0).map(|r| r.with), Some([1].into()));
+    assert_eq!(run("bg_and_call", 1), None);
+    // The callee joins the task before it calls `g`.
+    assert_eq!(
+        run("bg_then_call", 0).map(|r| r.with),
+        Some(std::collections::BTreeSet::default())
+    );
+    // A body that gives its parameters to `par` runs them the same way.
+    let pass = run("pass_on", 0).expect("pass_on runs f");
+    assert!(pass.thread);
+    assert_eq!(pass.with, [1].into());
+    assert!(sig_of(&a, "plain").effects.task_runs.is_empty());
+}
+
+#[test]
+fn pins_says_a_body_can_start_a_pinned_task() {
+    let src = "struct E { hp: u64 }\n\
+        fn shares() / async { let r = Rc.new(E { hp: 1 })\n scope { s => s.spawn(|| print(r.hp)) } }\n\
+        fn runs_param(f: fn()) / async { scope { s => s.spawn(f) } }\n\
+        fn calls_shares() / async { shares() }\n\
+        fn plain() / async { scope { s => s.spawn(|| print(1)) } }";
+    let a = analyze_units(src, &[]);
+    assert_eq!(codes(&a), Vec::new());
+    assert!(sig_of(&a, "shares").effects.pins);
+    // The caller checks a function value that the body runs as a task.
+    assert!(!sig_of(&a, "runs_param").effects.pins);
+    assert!(sig_of(&a, "calls_shares").effects.pins);
+    assert!(!sig_of(&a, "plain").effects.pins);
+}

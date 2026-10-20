@@ -218,6 +218,9 @@ pub enum Op {
         /// The indexes in `caps` of the captures that the closure takes by
         /// value: it moves each value into a cell of its own.
         owned: Vec<u32>,
+        /// The closure expression. The checker names the tasks that run the
+        /// closure by it (`stealable`).
+        span: Span,
     },
     /// Pushes a function item as a value.
     FnValue(FnId),

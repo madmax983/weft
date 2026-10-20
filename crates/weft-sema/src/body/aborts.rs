@@ -51,14 +51,25 @@ impl Lower<'_> {
                     self.facts
                         .add_node(at, "abort", String::from("the clause does not resume"));
                 self.facts.cfg_edge.push((n, u));
-                self.facts.cfg_edge.push((u, h.end));
                 for &v in &to.vars {
                     self.facts.unwound_at.push((v, u));
                 }
+                let mut ended = Vec::new();
                 for l in &to.scopes {
                     for &t in tasks.get(l).into_iter().flatten() {
                         self.facts.joined_at.push((t, u));
+                        ended.push(t);
                     }
+                }
+                // The tasks that the abort ends can have changed what they write
+                // (`finish_task_ends`).
+                if ended.is_empty() {
+                    self.facts.cfg_edge.push((u, h.end));
+                } else {
+                    let e = self.facts.add_node(at, weft_facts::TASK_END, String::new());
+                    self.facts.cfg_edge.push((u, e));
+                    self.facts.cfg_edge.push((e, h.end));
+                    self.task_ends.extend(ended.into_iter().map(|t| (t, e)));
                 }
                 // The path leaves the bodies of the handlers inside too, and the
                 // clauses that wait for these bodies.

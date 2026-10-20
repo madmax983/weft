@@ -200,6 +200,21 @@ pub struct RetPlace {
     pub uniq: bool,
 }
 
+/// How a body runs one of its function parameters as a task or a fork branch
+/// (`EffectSig::task_runs`). A caller checks the function value that it gives
+/// there as a task at the call (ADR 0006).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TaskRun {
+    /// The body can run it on another thread: in a fork branch, or in foreign
+    /// code. Then it must be portable (W0401, W0403).
+    pub thread: bool,
+    /// The body can run it two times at one time: in two tasks, in a task that
+    /// starts again while it runs, or in a task and at a node while it runs.
+    pub twice: bool,
+    /// The other function parameters that the body can run while it runs.
+    pub with: BTreeSet<usize>,
+}
+
 /// A place that a function gives to one of its function parameters.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LentPlace {
@@ -291,6 +306,15 @@ pub struct EffectSig {
     /// Function parameters that a task or a fork branch of the body can call. The
     /// body always infers this part.
     pub tasks: BTreeSet<usize>,
+    /// The function parameters that the body runs as a task or a fork branch,
+    /// and how. The body always infers this part.
+    pub task_runs: BTreeMap<usize, TaskRun>,
+    /// The body can start a pinned task for a reason that a caller does not
+    /// see: the task captures a nonportable value, writes through a shared
+    /// reference, runs a function value that the body does not follow, or
+    /// starts such a task. A task that calls the function is pinned too. The
+    /// body always infers this part.
+    pub pins: bool,
     /// Function parameters that the body gives to an operation of a handler of a
     /// caller, with the effect. The clause can call or keep them. The body always
     /// infers this part.

@@ -125,7 +125,8 @@ extern fn sleep(d: Duration) / clock
 
 // The test harness: `sim.run` replaces every root handler with a simulation.
 mod sim {
-    extern fn run(seed: u64, body: fn())
+    // `workers` is the number of simulated workers; a call can leave it out.
+    extern fn run(seed: u64, workers: u64, body: fn())
     mod net {
         extern fn partition(a: Vec<u64>, b: Vec<u64>) / net
         extern fn heal() / net

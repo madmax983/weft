@@ -253,6 +253,11 @@ pub struct NodeInfo {
     pub detail: String,
 }
 
+/// The label of a node right after the end of a task. Semantic analysis gives
+/// it the places that the task writes (`lends_mut`): the task can change them
+/// at any time while it runs.
+pub const TASK_END: &str = "task end";
+
 /// The kind of task.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TaskKind {
@@ -335,6 +340,9 @@ pub struct FactMark {
     task_writes: usize,
     captures: usize,
     mut_through: usize,
+    kept: usize,
+    spawns_in: usize,
+    opaque: usize,
     call_mut: usize,
     call_arg: usize,
     lends_mut: usize,
@@ -449,6 +457,16 @@ pub struct FnFacts {
     pub captures: Vec<(TaskId, VarId)>,
     /// `mut_through(T, V)`.
     pub mut_through: Vec<(TaskId, VarId)>,
+    /// `kept(T, Rt)`: task `T` keeps the variable at root place `Rt`. Its
+    /// closure captures the variable, and the value is a copy value. The end of
+    /// the variable leaves the value readable for `T`.
+    pub kept: Vec<(TaskId, PlaceId)>,
+    /// `spawns_in(T, U)`: task `U` starts inside the code of task `T`.
+    pub spawns_in: Vec<(TaskId, TaskId)>,
+    /// `opaque(T)`: task `T` runs code that the function cannot check for work
+    /// stealing: a function value that it does not follow, or a callee that can
+    /// start a pinned task.
+    pub opaque: Vec<TaskId>,
 
     /// `call_mut(P, M, I)`.
     pub call_mut: Vec<(NodeId, PlaceId, u32)>,
@@ -520,6 +538,9 @@ impl FnFacts {
             task_writes,
             captures,
             mut_through,
+            kept,
+            spawns_in,
+            opaque,
             call_mut,
             call_arg,
             lends_mut,
@@ -567,6 +588,9 @@ impl FnFacts {
             task_writes: task_writes.len(),
             captures: captures.len(),
             mut_through: mut_through.len(),
+            kept: kept.len(),
+            spawns_in: spawns_in.len(),
+            opaque: opaque.len(),
             call_mut: call_mut.len(),
             call_arg: call_arg.len(),
             lends_mut: lends_mut.len(),
@@ -624,6 +648,9 @@ impl FnFacts {
             task_writes,
             captures,
             mut_through,
+            kept,
+            spawns_in,
+            opaque,
             call_mut,
             call_arg,
             lends_mut,
@@ -670,6 +697,9 @@ impl FnFacts {
         task_writes.truncate(mark.task_writes);
         captures.truncate(mark.captures);
         mut_through.truncate(mark.mut_through);
+        kept.truncate(mark.kept);
+        spawns_in.truncate(mark.spawns_in);
+        opaque.truncate(mark.opaque);
         call_mut.truncate(mark.call_mut);
         call_arg.truncate(mark.call_arg);
         lends_mut.truncate(mark.lends_mut);
@@ -869,6 +899,9 @@ impl FnFacts {
         nd(&mut self.task_writes);
         nd(&mut self.captures);
         nd(&mut self.mut_through);
+        nd(&mut self.kept);
+        nd(&mut self.spawns_in);
+        nd(&mut self.opaque);
         nd(&mut self.call_mut);
         nd(&mut self.call_arg);
         nd(&mut self.lends_mut);

@@ -302,7 +302,7 @@ impl super::Machine<'_, '_> {
                 let d = next();
                 let Some(clock) = self.rt.b.clock else {
                     let d = self.dur_arg(d)?;
-                    return self.sleep_for(d);
+                    return Ok(self.sleep_for(d));
                 };
                 let op = self.rt.prog.effects[clock]
                     .ops
@@ -313,27 +313,29 @@ impl super::Machine<'_, '_> {
             }
             Native::SimRun => {
                 let seed = self.int_of(next())?;
+                let workers = self.int_of(next())?;
                 let body = next();
-                let saved = self.enter_sim(u64::try_from(seed).unwrap_or(0));
-                self.task().frames.push(Frame::Sim {
-                    saved: Box::new(saved),
-                });
+                let workers = usize::try_from(workers).unwrap_or(1).clamp(1, 1024);
+                let sim = self.enter_sim(u64::try_from(seed).unwrap_or(0), workers);
+                self.task().frames.push(Frame::Sim { sim });
                 return self.call_closure(body, Vec::new());
             }
+            // Phase 1 does not simulate the network: the partition is only
+            // recorded (ADR 0010).
             Native::SimPartition => {
                 let a = next();
                 let b = next();
                 let (la, lb) = (self.int_list(&a), self.int_list(&b));
                 self.heap.drop_value(a);
                 self.heap.drop_value(b);
-                if let Some(s) = self.sim.as_mut() {
+                if let Some(s) = self.sim_of(self.cur).and_then(|s| self.sims.get_mut(s)) {
                     s.partition = Some((la.clone(), lb.clone()));
                 }
                 self.trace.push(TraceEvent::Partition { a: la, b: lb });
                 Value::Unit
             }
             Native::SimHeal => {
-                if let Some(s) = self.sim.as_mut() {
+                if let Some(s) = self.sim_of(self.cur).and_then(|s| self.sims.get_mut(s)) {
                     s.partition = None;
                 }
                 self.trace.push(TraceEvent::Heal);
@@ -358,7 +360,7 @@ impl super::Machine<'_, '_> {
                 if !blocking {
                     return self.deliver(ret);
                 }
-                return self.blocking_call(f, ret);
+                return Ok(self.blocking_call(f, ret));
             }
             Native::Unknown => {
                 return Err(self.fault(format!(
@@ -371,9 +373,9 @@ impl super::Machine<'_, '_> {
     }
 
     /// Runs a foreign call on the blocking pool. The task waits for the pool.
-    fn blocking_call(&mut self, f: FnId, ret: Value) -> R<Flow> {
-        if let Some(fl) = self.check_interrupt()? {
-            return Ok(fl);
+    fn blocking_call(&mut self, f: FnId, ret: Value) -> Flow {
+        if let Some(fl) = self.check_interrupt() {
+            return fl;
         }
         let thread = self.blocking_calls % POOL_THREADS;
         self.blocking_calls += 1;
@@ -393,7 +395,7 @@ impl super::Machine<'_, '_> {
                 value: ret,
             },
         );
-        Ok(self.block(Wait::Pool, SuspendReason::Blocking))
+        self.block(Wait::Pool, SuspendReason::Blocking)
     }
 
     /// `t.join()` on a finished task.

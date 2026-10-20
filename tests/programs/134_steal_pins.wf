@@ -1,0 +1,88 @@
+// A pinned task stays on the worker of the task that starts it. If that task
+// moved to another worker, the two could share a nonportable value from two
+// workers at one time. So a task that starts a pinned task is pinned too
+// (`spawns_in`). A task that runs a function value that the body does not
+// follow, or calls a function that can start a pinned task, is pinned as well
+// (`opaque`, ADR 0006).
+struct E { hp: u64 }
+
+fn work(n: u64) -> u64 { n + 1 }
+
+// The task runs a function parameter: its captures are not known here.
+fn bg_one(f: fn()) / async {
+    scope { s =>
+        s.spawn(f)   //~ pinned
+    }
+}
+
+fn bg_call(f: fn()) / async {
+    scope { s =>
+        s.spawn(|| f())   //~ pinned
+    }
+}
+
+// The child shares an `Rc` that the task makes.
+fn shares_rc() / async, clock {
+    scope { s =>
+        s.spawn(|| {   //~ pinned
+            let r = Rc.new(0)
+            scope { t =>
+                t.spawn(|| { sleep(5.ms); let y = r.clone() })   //~ pinned
+                sleep(5.ms)
+                let z = r.clone()
+            }
+        })
+    }
+}
+
+// The function can start a pinned task, so a task that calls it is pinned.
+fn helper() / async, clock {
+    let r = Rc.new(0)
+    scope { t =>
+        t.spawn(|| { sleep(5.ms); let y = r.clone() })   //~ pinned
+        sleep(5.ms)
+        let z = r.clone()
+    }
+}
+
+fn calls_helper() / async, clock {
+    scope { s =>
+        s.spawn(|| helper())   //~ pinned
+    }
+}
+
+// A callee runs a closure that captures the `Rc` of the task as a task.
+fn shares_through_callee() / async {
+    scope { s =>
+        s.spawn(|| {   //~ pinned
+            let r = Rc.new(0)
+            bg_one(|| { let y = r.clone() })   //~ pinned
+        })
+    }
+}
+
+// The callee runs the closure as a task, but it captures nothing.
+fn plain_callee() / async {
+    scope { s =>
+        s.spawn(|| bg_one(|| print(1)))   //~ stealable
+    }
+}
+
+// The child of the task is stealable, so the task is too.
+fn plain_child() / async {
+    scope { s =>
+        s.spawn(|| {   //~ stealable
+            scope { t =>
+                t.spawn(|| work(1))   //~ stealable
+            }
+        })
+    }
+}
+
+fn main() / async, clock {
+    shares_rc()
+    calls_helper()
+    shares_through_callee()
+    plain_callee()
+    plain_child()
+}

@@ -1,0 +1,156 @@
+// A use of a whole local as a value reads the variable. A new value of a local
+// writes the variable. A task and its parent must not do both at one time
+// (W0405, ADR 0006). This holds for a reference local too: its variable holds
+// the reference, not the value that it points to.
+struct C { k: u64, j: u64 }
+
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+
+// The parent reads `count` while the task writes it.
+fn parent_reads() / async {
+    let count = 0
+    scope { s =>
+        s.spawn(|| count += 1)
+        print(count)   //~ W0405
+    }
+}
+
+// The parent writes `count` while the task reads it.
+fn task_reads() / async {
+    let count = 0
+    scope { s =>
+        s.spawn(|| print(count))
+        count += 5   //~ W0405
+    }
+}
+
+// The parent gives `count` a new value while the task reads it.
+fn parent_rebinds() / async {
+    let count = 0
+    scope { s =>
+        s.spawn(|| print(count))
+        count = 7   //~ W0405
+    }
+}
+
+// The parent reads the whole `Vec` while the task clears it.
+fn whole_vec() / async {
+    let v = mk_v()
+    scope { s =>
+        s.spawn(|| v.clear())
+        print(v)   //~ W0405
+    }
+}
+
+// The parent gives a reference local a new value while the task reads it.
+fn ref_rebind() / async {
+    let v = mk_v()
+    let r = &v[0]
+    scope { s =>
+        s.spawn(|| print(r))
+        r = &v[1]   //~ W0405
+    }
+}
+
+// The task gives a reference local a new value while the parent reads it.
+fn task_rebinds_ref() / async {
+    let v = mk_v()
+    let r = &v[0]
+    scope { s =>
+        s.spawn(|| r = &v[1])
+        print(r)   //~ W0405
+    }
+}
+
+// The parent reads the whole struct while the task writes one field.
+fn whole_struct() / async {
+    let c = C { k: 0, j: 0 }
+    scope { s =>
+        s.spawn(|| c.k += 1)
+        let d = c   //~ W0405
+    }
+}
+
+// The parent calls `f` while the task gives it a new value.
+fn call_while_set() / async {
+    let f = || print(1)
+    scope { s =>
+        s.spawn(|| f = || print(2))
+        f()   //~ W0405
+    }
+}
+
+// A fork branch reads `n` while the other one writes it.
+fn fork_whole() / par {
+    let n = 0
+    fork(|| print(n), || n += 1)   //~ W0403 W0405
+}
+
+// Clean: both read `count`.
+fn both_read() / async {
+    let count = 0
+    scope { s =>
+        s.spawn(|| print(count))
+        print(count)
+    }
+}
+
+// Clean: the task and the parent touch two fields of one local.
+fn two_fields() / async {
+    let c = C { k: 0, j: 0 }
+    scope { s =>
+        s.spawn(|| c.k += 1)
+        c.j += 1
+    }
+}
+
+// Clean: the task and the parent touch two fields through one reference.
+fn two_fields_ref() / async {
+    let c = C { k: 0, j: 0 }
+    let r = &c
+    scope { s =>
+        s.spawn(|| r.k += 1)
+        r.j += 1
+    }
+}
+
+// Clean: the parent reads `count` after the join.
+fn after_join() / async {
+    let count = 0
+    scope { s =>
+        let t = s.spawn(|| count += 1)
+        t.join()
+        print(count)
+    }
+    count += 1
+}
+
+// Clean: a loop variable gets a new variable on each iteration, so a task of
+// one iteration does not see the next value.
+fn loop_vars() / async {
+    let v = mk_v()
+    scope { s =>
+        for x in v[] {
+            s.spawn(|| print(x))
+        }
+        let i = 0
+        while i < 2 {
+            let k = i
+            s.spawn(|| print(k))
+            i += 1
+        }
+    }
+}
+
+fn main() / async {
+    both_read()
+    two_fields()
+    two_fields_ref()
+    after_join()
+    loop_vars()
+}

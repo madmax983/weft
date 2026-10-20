@@ -13,8 +13,8 @@ use weft_sema::program::EffectId;
 use weft_verified::lifecycle::{ContError, Continuation, LinState};
 
 use super::{
-    After, CodeFrame, ContRec, Flow, Frame, HandleMark, SimSaved, TaskResult, Timer, Unwind, Wait,
-    R,
+    After, CodeFrame, ContRec, Flow, Frame, HandleMark, Interrupt, SimId, TaskResult, Timer,
+    Unwind, Wait, R,
 };
 use crate::error::ErrorKind;
 use crate::heap::SlotKind;
@@ -150,9 +150,8 @@ impl super::Machine<'_, '_> {
                     self.remove_timeout(id);
                 }
                 Frame::Sim { .. } => {
-                    if let Some(Frame::Sim { saved }) = self.tasks[cur].frames.pop() {
-                        self.restore_sim(*saved);
-                    }
+                    self.tasks[cur].frames.pop();
+                    self.trace.push(TraceEvent::SimEnd);
                 }
                 Frame::Clause { cont } => {
                     let k = *cont;
@@ -181,29 +180,19 @@ impl super::Machine<'_, '_> {
         }
     }
 
-    /// Restores the state outside a simulation.
-    pub(crate) fn restore_sim(&mut self, saved: SimSaved) {
-        self.sim = saved.sim;
-        self.sched_rng = saved.sched;
-        self.rand_rng = saved.rand;
-        self.trace.push(TraceEvent::SimEnd);
-    }
-
-    /// Starts a simulation: it replaces the root handlers.
-    pub(crate) fn enter_sim(&mut self, seed: u64) -> SimSaved {
-        let saved = SimSaved {
-            sim: self.sim.take(),
-            sched: self.sched_rng.clone(),
-            rand: self.rand_rng.clone(),
-        };
-        self.sim = Some(super::SimState {
+    /// Starts a simulation with `workers` simulated workers: it replaces the
+    /// root handlers for the code above its `Sim` frame and for the tasks that
+    /// this code spawns.
+    pub(crate) fn enter_sim(&mut self, seed: u64, workers: usize) -> SimId {
+        self.sims.push(super::SimState {
             start: self.now,
             partition: None,
+            sched: crate::rng::Rng::new(seed),
+            rand: crate::rng::Rng::new(seed ^ super::RAND_SALT),
+            queues: (0..workers.max(1)).map(|_| VecDeque::new()).collect(),
         });
-        self.sched_rng = crate::rng::Rng::new(seed);
-        self.rand_rng = crate::rng::Rng::new(seed ^ super::RAND_SALT);
         self.trace.push(TraceEvent::SimStart { seed });
-        saved
+        self.sims.len() - 1
     }
 
     /// Aborts the whole current task: unwinds every frame, then ends the task.
@@ -241,6 +230,46 @@ impl super::Machine<'_, '_> {
                 msg: "timeout".into(),
                 henv,
             },
+            prepass: false,
+            children: Vec::new(),
+        })));
+        Some(Flow::Continue)
+    }
+
+    /// A child of scope `sid` failed. Unwinds the frames of the scope, which
+    /// cancels the other children, and then performs `fail(msg)` with the
+    /// handlers of the scope, as `timeout_unwind` does for a `with_timeout`
+    /// block. Handlers are lexical: a handler that the owner installed inside
+    /// the scope does not get the failure (ADR 0010). If the frame of the scope
+    /// is not on the task stack, for example in the continuation of a clause
+    /// outside the scope, the failure waits until it is, or until the end of
+    /// the scope.
+    pub(crate) fn scope_fail_unwind(
+        &mut self,
+        msg: String,
+        sid: crate::value::ScopeId,
+    ) -> Option<Flow> {
+        let cur = self.cur;
+        let idx = self.tasks[cur].frames.iter().rposition(
+            |f| matches!(f, Frame::Scope { scope } | Frame::Fork { scope, .. } if *scope == sid),
+        );
+        let Some(idx) = idx else {
+            // Also the end of the scope raises the failure, if a later
+            // interrupt takes the place of this one.
+            if let Some(s) = self.scopes.get_mut(sid) {
+                s.propagated = false;
+            }
+            self.tasks[cur].interrupt = Some(Interrupt::Fail { msg, scope: sid });
+            return None;
+        };
+        let s = self.scopes.get_mut(sid)?;
+        s.propagated = true;
+        let henv = s.henv.clone();
+        let frames = self.tasks[cur].frames.split_off(idx);
+        self.tasks[cur].frames.push(Frame::Unwind(Box::new(Unwind {
+            frames,
+            aborts: VecDeque::new(),
+            then: After::Fail { msg, henv },
             prepass: false,
             children: Vec::new(),
         })));
@@ -369,7 +398,7 @@ impl super::Machine<'_, '_> {
                 }
             }
             Frame::Timeout { id, .. } => self.remove_timeout(id),
-            Frame::Sim { saved } => self.restore_sim(*saved),
+            Frame::Sim { .. } => self.trace.push(TraceEvent::SimEnd),
             Frame::Handle(_) => {}
             Frame::Unwind(inner) => {
                 let inner = *inner;
@@ -675,6 +704,15 @@ impl super::Machine<'_, '_> {
                 Frame::Clause { cont } => Frame::Clause {
                     cont: kmap.get(cont).copied().unwrap_or(*cont),
                 },
+                // Each copy of a `with_timeout` block has a timeout of its own.
+                Frame::Timeout { id, henv } => {
+                    let new = self.fresh_id();
+                    self.copy_timeout(*id, new);
+                    Frame::Timeout {
+                        id: new,
+                        henv: henv.clone(),
+                    }
+                }
                 other => other.clone(),
             });
         }
@@ -699,7 +737,8 @@ impl super::Machine<'_, '_> {
         // A failure of a task goes to the task that joins it, also with no runtime.
         let child = self.tasks.get(self.cur).is_some_and(|t| t.scope.is_some());
         let to_joiner = ename == "Fail" && child;
-        if self.opts.no_runtime && self.sim.is_none() && !to_joiner {
+        let sim = self.sim_of(self.cur);
+        if self.opts.no_runtime && sim.is_none() && !to_joiner {
             return Err(self.fault(format!("no runtime: nothing handles `{ename}.{opname}`")));
         }
         let arg = args.into_iter().next();
@@ -719,7 +758,7 @@ impl super::Machine<'_, '_> {
                 }))
             }
             ("Clock", "now") => {
-                let start = self.sim.as_ref().map_or(0, |s| s.start);
+                let start = sim.and_then(|s| self.sims.get(s)).map_or(0, |s| s.start);
                 let now = self.now.saturating_sub(start);
                 self.deliver(Value::Dur(now))
             }
@@ -729,20 +768,24 @@ impl super::Machine<'_, '_> {
                     Some(Value::Int(i)) => u64::try_from(i).unwrap_or(0),
                     _ => 0,
                 };
-                self.sleep_for(d)
+                Ok(self.sleep_for(d))
             }
             ("Rand", _) => {
-                let r = self.rand_rng.next_u64() >> 1;
+                let rng = match sim.and_then(|s| self.sims.get_mut(s)) {
+                    Some(s) => &mut s.rand,
+                    None => &mut self.rand_rng,
+                };
+                let r = rng.next_u64() >> 1;
                 self.deliver(Value::Int(i64::try_from(r).unwrap_or(0)))
             }
-            _ => self.yield_now(),
+            _ => Ok(self.yield_now()),
         }
     }
 
     /// Suspends the current task for `d` milliseconds of virtual time.
-    pub(crate) fn sleep_for(&mut self, d: u64) -> R<Flow> {
-        if let Some(f) = self.check_interrupt()? {
-            return Ok(f);
+    pub(crate) fn sleep_for(&mut self, d: u64) -> Flow {
+        if let Some(f) = self.check_interrupt() {
+            return f;
         }
         let task = self.cur;
         let seq = self.wait_seq();
@@ -755,13 +798,13 @@ impl super::Machine<'_, '_> {
                 value: Value::Unit,
             },
         );
-        Ok(self.block(Wait::Sleep, SuspendReason::Sleep))
+        self.block(Wait::Sleep, SuspendReason::Sleep)
     }
 
     /// Yields at a suspension point. The task stays ready.
-    pub(crate) fn yield_now(&mut self) -> R<Flow> {
-        if let Some(f) = self.check_interrupt()? {
-            return Ok(f);
+    pub(crate) fn yield_now(&mut self) -> Flow {
+        if let Some(f) = self.check_interrupt() {
+            return f;
         }
         let cur = self.cur;
         let t = self.task();
@@ -771,7 +814,7 @@ impl super::Machine<'_, '_> {
             task: cur,
             reason: SuspendReason::Yield,
         });
-        Ok(Flow::Yield)
+        Flow::Yield
     }
 }
 

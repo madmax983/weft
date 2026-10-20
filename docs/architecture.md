@@ -27,6 +27,7 @@ flowchart TD
     call["call f(args)"] --> subst["substitute f's mut(...) with argument places"] --> mut["mutates_at(P, M)"]
     perform["perform op"] --> cap["performs_at(P, Cap)"] --> fp["footprint(Cap, M)"] --> mut
     spawn["s.spawn(closure)"] -- "sema" --> mut
+    tend["end of a task: join, scope end"] -- "the writes of the task" --> lend
     value["call of a closure or an item value"] --> given["substitute its parameter places with the given places"] --> mut
     unknown["call of a function parameter or an unknown value"] --> lend["lends_mut(P, M)"] --> inv
     lend --> tc
@@ -102,7 +103,11 @@ its signature:
 - Whether it can run a stored function value, what it gives to that value, and
   whether it can run one more than once.
 - Whether an unknown function value that it calls can resume more than once.
-- Which parameters a task of the body can call.
+- Which parameters a task of the body can call, and how a task runs a function
+  parameter: on another thread, two times at one time, and with which other
+  parameters (`task_runs`, ADR 0006).
+- Whether the body can start a pinned task for a reason that a caller does not see
+  (`pins`).
 - Which function parameters it gives to an operation of a handler of a caller, and
   what the values that it gives there perform.
 - Which effects its tasks perform through a handler of a caller.

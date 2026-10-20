@@ -316,6 +316,7 @@ impl Heap {
                         code: c.code,
                         cells: c.cells.iter().map(m).collect(),
                         henv: c.henv.clone(),
+                        span: c.span,
                     }))
                 } else {
                     Value::Closure(Rc::clone(c))

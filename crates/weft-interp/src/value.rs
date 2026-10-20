@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use weft_sema::program::EffectId;
 use weft_sema::types::AdtId;
+use weft_syntax::ast::Span;
 
 /// An index into the heap.
 pub type CellId = usize;
@@ -82,6 +83,8 @@ pub struct ClosureVal {
     pub cells: Vec<CellId>,
     /// The lexical handlers at the creation point.
     pub henv: HEnv,
+    /// The closure expression.
+    pub span: Span,
 }
 
 /// A root capability or an opaque runtime handle.

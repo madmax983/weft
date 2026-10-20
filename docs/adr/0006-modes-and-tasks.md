@@ -13,7 +13,10 @@ Status: accepted. Date: 2026-10-18.
   verified lattice keeps its axes independent, so it has an element with `uniq` and
   `shared`. Sema rejects only the written pair.
 - A fork branch must be portable: no nonportable captures (W0401) and no mutation
-  through an aliased reference (W0403). `split_mut` gives `@ uniq` parts.
+  through an aliased reference (W0403). `split_mut` gives `@ uniq` parts. Reads from
+  several threads need no `@ shared`: W0403 and W0405 check the writes, so two fork
+  branches can read through one aliased reference
+  (`tests/programs/136_call_reads.wf`).
 - Separation (W0405): a task is active from its spawn to its join or the scope end. Each
   node that runs while a task is active must not access what the task writes, and must
   not write what the task reads.
@@ -22,6 +25,19 @@ Status: accepted. Date: 2026-10-18.
   reads the elements at each iteration, and a handler clause reads its captures at each
   operation that it handles. A plain use of a reference is not an access by itself, so a
   task and the parent can touch separate fields through one reference.
+- A use of a local as a value reads its variable: the root place of an owned local, or
+  the root place of the variable of a reference local (ADR 0003). A new value of a
+  local (`x = v`, `x += v`) writes its variable. A place through a reference local
+  reads the reference too, but not the places that it can reach. A `let` and a loop
+  variable get a new variable, as in the interpreter, so they write nothing. An index
+  reads the length and the buffer of the indexed place, also for a borrow `&v[i]`, as
+  `v.get(i)` does.
+- A task keeps the cell of a copy variable that it captures (`kept(T, Rt)`): the
+  interpreter keeps a captured copy value readable after its scope ends, as for a
+  closure (ADR 0003). So the end of the variable is not a free for the task. A
+  reference into the variable that the task holds is still invalid after it. A capture
+  that the closure moves is in a cell of the closure, so the task does not share it
+  with the parent.
 - A move or the end of an owner frees its memory (`frees_at`). A free while a task is
   active must not overlap what the task reads or writes. A task closure that moves a
   capture takes it when the closure is made, as each closure does (ADR 0003): the
@@ -33,12 +49,30 @@ Status: accepted. Date: 2026-10-18.
 - The B4 proof covers a stronger rule: no write to a place that the other task *holds*
   (references and captures, at any point). The access-based rule is more permissive.
   The proof does not cover it.
-- A spawn is a mutation at the spawn node. So a reference that a task breaks is invalid
-  after the join.
+- A spawn is a mutation at the spawn node. A task can change what it writes at any
+  time while it runs. So the node right after the end of a task (a `join`, the end of a
+  `fork` or a scope, or an abort of the scope) gives the places that the task writes
+  to a value that can mutate them (`lends_mut`). A reference that the parent makes
+  while the task runs is then invalid after the end, if the task can break it (W0301).
 - A spawned task that captures a nonportable value or a shared-mutable reference is
   pinned. The relation `stealable(T)` tells the scheduler which tasks can move.
   `tests/programs/33_stealable.wf` marks each task closure `//~ stealable` or
   `//~ pinned`, and the corpus test checks the marks.
+- A task that runs a function value that the body does not follow (a function
+  parameter, a value from a field, a value that the body does not know) is pinned:
+  its captures are not known here (`opaque(T)`). A pinned task stays on the worker of
+  the task that starts it. If that task moved to another worker, the two could share
+  a nonportable value from two workers at one time. So a task that starts a pinned
+  task in its code is pinned too (`spawns_in(T, U)`). A function can start a pinned
+  task for a reason that a caller does not see: a task captures a nonportable value,
+  writes through a shared reference, runs a value that the body does not follow,
+  or calls such a function (the `pins` part of the signature). A task that calls
+  such a function is `opaque`. A task that runs a function parameter does not set
+  `pins`: the caller checks the value that it gives there
+  (`tests/programs/134_steal_pins.wf`).
+- `http.serve` runs its handler as a task for each request. The interpreter lets the
+  request task move to another worker only if the checker marks the handler closure
+  stealable at the call (ADR 0010).
 - A spawn in statement position gives its handle to the scope. A bound handle is linear.
 - A task joins at the end of the scope of its receiver (`a.spawn` in an inner scope joins
   at the end of the scope of `a`). A closure or a handler clause that spawns into a scope
@@ -112,6 +146,24 @@ Status: accepted. Date: 2026-10-18.
   operation of a handler of its caller (the `op_effects` part, ADR 0005). It can be a
   parameter of a closure that a callee returns (the `ret` part). A closure that a
   callee returns can run its parameter as a task too.
+- A signature also has a `task_runs` part: for each function parameter that a task
+  or a fork branch of the body runs, whether it can run on another thread (a fork
+  branch, or foreign code), whether it can run two times at one time (two tasks, a
+  task that starts again while it runs, or a task and a run at a node while it
+  runs), and which other function parameters can run while it runs. A parameter that
+  the body gives to a callee that runs it as a task gets the part of the callee. At a
+  call, the caller checks each function argument there as a task: it starts at new
+  nodes after the call node, as a fork task if it can run on another thread (W0401,
+  W0403), a second time if it can run two times at one time, and the nodes while it
+  runs read what each argument that can run at the same time reads or writes (W0405).
+  These tasks only stand for the runs of the callee: the interpreter does not start
+  them (`tests/programs/133_task_params.wf`).
+- A function value that the body does not know, a closure whose task runs its
+  parameter, and foreign code run a function argument in the worst way: on another
+  thread, two times at one time, and at the same time as the other function
+  arguments. `http.serve` runs its handler two times at one time. A callee can run a
+  function value from a field of an argument as a task: each function value that the
+  body stores can be that value.
 - The capabilities of a value carry marks for W0314. There are three marks:
   - An effect that a closure or a function item in the value performs through a
     handler of a caller.
@@ -147,6 +199,21 @@ Status: accepted. Date: 2026-10-18.
 ## Consequences
 
 - What stays imprecise (sound, but it can reject a correct program):
+  - A call reads all of its reference arguments. So a task that gives `&w` to a helper
+    reads all of `w`, and the parent cannot change another part of `w` while the task
+    runs, also when the helper reads or writes only `w.es`
+    (`tests/programs/136_call_reads.wf`). A read part in signatures would fix this.
+  - A task keeps only the copy variables that its closure captures directly or
+    through a captured closure. Another way to reach the cell, for example a closure
+    that a callee returns, does not count, so the end of the variable is a free there.
+  - A closure whose task runs its parameter, a value that the body does not know, and
+    foreign code run a function argument in the worst way: W0403 also when they only
+    spawn, and W0405 also when they run it once at a time. A function value from a
+    field of an argument that a callee runs as a task can be each value that the body
+    stores.
+  - The node after the end of a task changes what the task writes. Another task that
+    is still active there and reads or writes the same places conflicts again (W0405).
+    The first conflict of the two tasks is already an error.
   - A clause that spawns after `resume` starts the task at the operation. So the code
     after the operation counts as running while the task is active, but `resume` runs
     it before the spawn.

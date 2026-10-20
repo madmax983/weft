@@ -589,6 +589,13 @@ impl Lower<'_> {
             self.unknown_multi |= sum.unknown;
         }
         let pt = sum.passthrough.clone();
+        for &p in &pt {
+            self.param_nodes.push((n, p));
+        }
+        // A closure that calls a function that can start a pinned task does it here.
+        if self.runs_pin_call(&sum) {
+            self.pin_calls.push(n);
+        }
         self.sum().passthrough.extend(pt);
         for &f in &sum.items {
             self.apply_item(n, f, given);
@@ -714,6 +721,7 @@ impl Lower<'_> {
     pub(super) fn call_param(&mut self, n: NodeId, (d, p): (usize, usize), given: &[Given]) {
         if d == 0 {
             self.sum().passthrough.insert(p);
+            self.param_nodes.push((n, p));
         }
         self.caller_runs.push(n);
         self.note_param_run((d, p));
@@ -745,6 +753,9 @@ impl Lower<'_> {
         params.sort_unstable();
         params.dedup();
         for dp in params {
+            if let (0, p) = dp {
+                self.param_nodes.push((n, p));
+            }
             for g in given {
                 self.note_lent(dp, g);
             }

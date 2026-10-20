@@ -779,6 +779,7 @@ fn tasks(cx: &Ctx<'_>, r: &mut Report) {
     for &(t, p) in &f.joined_at {
         joined.entry(t).or_default().push(p);
     }
+    let kept: BTreeSet<(TaskId, PlaceId)> = f.kept.iter().copied().collect();
     let empty: Vec<PlaceId> = Vec::new();
     for (&t, sp) in &spawned {
         let gen = cx.mask(sp.iter().copied());
@@ -821,9 +822,13 @@ fn tasks(cx: &Ctx<'_>, r: &mut Report) {
                     }
                 }
             }
-            // A free of what the task reads or writes.
+            // A free of what the task reads or writes. A task keeps the cell of
+            // a copy variable that it captures (`kept`).
             if found.is_none() {
                 for &(m, cause) in &cx.frees[i] {
+                    if kept.contains(&(t, m)) {
+                        continue;
+                    }
                     let hit = tr
                         .iter()
                         .map(|&a| (a, false))
@@ -866,6 +871,21 @@ fn tasks(cx: &Ctx<'_>, r: &mut Report) {
                 r.violations.shared_mut_capture.insert((t, v));
             }
         }
+    }
+    // A task that runs code that the function cannot check is pinned, and so
+    // is a task that starts a pinned task (`spawns_in`).
+    pinned.extend(f.opaque.iter().copied());
+    loop {
+        let more: Vec<TaskId> = f
+            .spawns_in
+            .iter()
+            .filter(|(t, u)| pinned.contains(u) && !pinned.contains(t))
+            .map(|&(t, _)| t)
+            .collect();
+        if more.is_empty() {
+            break;
+        }
+        pinned.extend(more);
     }
     for i in 0..f.tasks.len() {
         let t = TaskId(u32::try_from(i).unwrap_or(u32::MAX));

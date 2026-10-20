@@ -1,0 +1,31 @@
+// `sim.run` has its own scheduler with a fixed number of simulated workers
+// (`workers:`, 4 when the call leaves it out). So the order inside the
+// simulation depends only on its seed: `--seed` and `--workers` of the run do
+// not change it, and a failing seed replays (ADR 0010).
+fn work(id: u64) / clock {
+    let i = 0
+    while i < 3 {
+        print("task {id} step {i}")
+        sleep(1.ms)
+        i += 1
+    }
+}
+
+test "the default number of simulated workers" {
+    sim.run(seed: 7) {
+        scope { s =>
+            s.spawn(|| work(1))
+            s.spawn(|| work(2))
+            s.spawn(|| work(3))
+        }
+    }
+}
+
+test "two simulated workers" {
+    sim.run(seed: 7, workers: 2) {
+        scope { s =>
+            s.spawn(|| work(1))
+            s.spawn(|| work(2))
+        }
+    }
+}

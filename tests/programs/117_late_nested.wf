@@ -39,13 +39,14 @@ fn nested_fn(world: &World) / mut(world.entities) {
     print(first.hp)   //~ W0301
 }
 // A task runs an inner closure whose capture gets a new value.
+// The new value of `r` is a write of `r` while the task reads it, too.
 fn nested_task(world: &World, d: &Entity) / mut(world.entities), async, clock {
     let r = d
     let g = || print(r.hp)
     scope { s =>
         s.spawn(|| { sleep(1.ms)
  g() })
-        r = &world.entities[0]
+        r = &world.entities[0]   //~ W0405
         world.entities.clear()   //~ W0405
     }
 }

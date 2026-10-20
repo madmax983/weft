@@ -713,6 +713,9 @@ impl Lower<'_> {
         if sig.effects.raises {
             self.raise_here();
         }
+        if sig.effects.pins {
+            self.pin_calls.push(n);
+        }
         self.check_callee_tasks(f, span);
         // A task of the callee can run a function value that an argument holds.
         // The value can be in a field or a container, or at a parameter of a type
@@ -730,6 +733,13 @@ impl Lower<'_> {
             }
         }
         self.callee_op_effects(&sig.effects.op_effects, span);
+        // How the callee runs the function arguments as tasks, also the
+        // arguments that hold function values (`arg_tasks`).
+        let fn_pos: Vec<usize> = (0..vals.len())
+            .filter(|&i| callback(i) || self.has_fn(&self.inf.shallow(&vals[i].val.ty)))
+            .collect();
+        let runs = self.callee_task_runs(f, &fn_pos);
+        let mut arg_runs = Vec::new();
         // The callee can call a function argument with the places that it lends to it.
         let mut fns = Vec::new();
         for (i, av) in vals.iter().enumerate() {
@@ -766,7 +776,23 @@ impl Lower<'_> {
             if let Some(l) = av.val.local {
                 self.note_cap_run(l, &given);
             }
+            let from = self.place_marks();
             self.apply_value(n, &info, row.as_deref(), root, &given);
+            // The callee can run the value as a task: what the run here writes
+            // and reads (`arg_tasks`).
+            if runs.contains_key(&i) || runs.values().any(|r| r.with.contains(&i)) {
+                let s = self.value_summary(&info, row.as_deref());
+                let (writes, reads) = self.arg_places(n, s, from);
+                arg_runs.push(super::tasks::ArgRun {
+                    pos: i,
+                    info: info.clone(),
+                    row: row.clone(),
+                    writes,
+                    reads,
+                    span: av.span,
+                    held: BTreeSet::new(),
+                });
+            }
             self.start_ret_spawns(n, &info);
             // The callee can run the value more than once, or the value runs a
             // value that it holds more than once.
@@ -784,8 +810,20 @@ impl Lower<'_> {
         for &j in &sig.effects.passthrough {
             if let Some((0, fp)) = vals.get(j).and_then(|v| v.val.fn_param) {
                 self.sum().passthrough.insert(fp);
+                self.param_nodes.push((n, fp));
             }
         }
+        // A task of the callee can run a function argument, also one that an
+        // argument holds: the checks of a spawn apply here (ADR 0006).
+        for (i, av) in vals.iter().enumerate() {
+            let wanted = runs.contains_key(&i) || runs.values().any(|r| r.with.contains(&i));
+            let ty = self.inf.shallow(&av.val.ty);
+            if wanted && !matches!(ty, Ty::Fn(_)) && self.has_fn(&ty) {
+                let held = self.arg_held(&av.val, &arg_places[i]);
+                arg_runs.push(self.held_run(i, &held, av.span));
+            }
+        }
+        self.arg_tasks(&runs, &arg_runs, span);
         // The callee can store a function argument, and it can run a stored one
         // that an argument holds. A foreign function can do both.
         let def = &self.prog.fns[f];
@@ -1432,6 +1470,10 @@ impl Lower<'_> {
             };
         };
         let callee = self.local_fn_info(l);
+        // The call reads the variable of the function value (W0405).
+        if let Some(c) = self.var_place(l) {
+            self.read_var(c);
+        }
         // A function item: the call is a call of the item, with its effects.
         if let (None, Some(f), None) = (callee.summary, callee.item, callee.param) {
             self.use_local(l);
@@ -1594,6 +1636,9 @@ impl Lower<'_> {
         }
         // The value can call a function argument with the places that it lends to it.
         let value = Callee::Value(callee.clone());
+        let fn_pos: Vec<usize> = fns.iter().map(|f| f.0).collect();
+        let runs = self.value_task_runs(&callee, &fn_pos);
+        let mut arg_runs = Vec::new();
         for (i, info, row, refs) in fns.clone() {
             // A value that the body does not know, or one that stores the argument, keeps it.
             if self.value_keeps(&callee, i) {
@@ -1641,7 +1686,22 @@ impl Lower<'_> {
             {
                 self.note_cap_run(l, &given);
             }
+            let from = self.place_marks();
             self.apply_value(n, &info, row.as_deref(), root, &given);
+            if runs.contains_key(&i) || runs.values().any(|r| r.with.contains(&i)) {
+                let s = self.value_summary(&info, row.as_deref());
+                let (writes, reads) = self.arg_places(n, s, from);
+                let span = exprs.get(i).map_or(span, |e| e.span);
+                arg_runs.push(super::tasks::ArgRun {
+                    pos: i,
+                    info: info.clone(),
+                    row: row.clone(),
+                    writes,
+                    reads,
+                    span,
+                    held: BTreeSet::new(),
+                });
+            }
             self.start_ret_spawns(n, &info);
             let repeats = self.callee_repeats(&value, i) || self.runs_held_again(&info);
             if repeats {
@@ -1654,6 +1714,9 @@ impl Lower<'_> {
                 self.give_fn(n, &v, again, false);
             }
         }
+        // A task of the value can run a function argument: the checks of a
+        // spawn apply here (ADR 0006).
+        self.arg_tasks(&runs, &arg_runs, span);
         // A value that the body does not know can start a task that runs a
         // function value that an argument holds.
         let unknown = callee.param.is_some()
@@ -2330,7 +2393,13 @@ impl Lower<'_> {
         // A function item or parameter runs as a value with no captures.
         let s = self.value_summary(&info, row.as_deref());
         let sum = self.closures[s].clone();
-        let own = |me: &Self, p: PlaceId| sum.own_roots.contains(&me.facts.place(p).root);
+        // A capture that the closure moves is in a cell of the closure, so the
+        // task does not share it with the parent (ADR 0003).
+        let moved = self.moved_capture_roots(s);
+        let own = |me: &Self, p: PlaceId| {
+            let r = me.facts.place(p).root;
+            sum.own_roots.contains(&r) || moved.contains(&r)
+        };
         // A place that the task lends can change as a mutation does.
         let mut writes: Vec<PlaceId> = sum.muts.iter().chain(&sum.lends).copied().collect();
         for &f in &sum.items {
@@ -2346,35 +2415,20 @@ impl Lower<'_> {
                 self.facts.task_reads.push((t, r));
             }
         }
-        for &c in &sum.captures {
-            self.facts.captures.push((t, c));
-            let refs = self.local_of(c).map(|l| &self.locals[l]).map(|l| {
-                let mut r = l.refs.clone();
-                if !l.ty.is_ref() {
-                    r.extend(l.root);
-                }
-                r
-            });
-            let refs = refs.unwrap_or_default();
-            let through = writes.iter().any(|&m| {
-                refs.iter().any(|&r| {
-                    self.facts.place(r).root == self.facts.place(m).root
-                        && weft_verified::places::within(
-                            &self.facts.place(m).steps,
-                            &self.facts.place(r).steps,
-                        )
-                })
-            });
-            if through {
-                self.facts.mut_through.push((t, c));
-            }
-        }
+        self.task_captures(t, &sum, &writes);
         // The task also writes and reads what the new values of its captured
         // variables reach, here and while it runs (`late::finish_task_values`).
         let from = self.place_marks();
         self.apply_summary(n, s, 700, &[]);
-        self.task_places_from(t, n, from);
-        self.note_task_run(t, n, s);
+        self.task_places_from(t, n, s, from);
+        let held_params = Self::task_marks(&self.expand_caps(&held))
+            .into_iter()
+            .filter_map(|m| match m {
+                super::caps::TaskMark::Param(p) => Some(p),
+                _ => None,
+            })
+            .collect();
+        self.note_task_run(t, n, s, held_params);
         // A value can run a function value that it holds more than once. Then
         // the task runs it again. A change of the first run can invalidate what
         // the value captures for the second run (W0301).
@@ -2515,7 +2569,7 @@ impl Lower<'_> {
 
     /// Returns true if function item `f` can run each function argument on another
     /// thread: a foreign function, or `http.serve`.
-    fn item_runs_tasks(&self, f: FnId) -> bool {
+    pub(super) fn item_runs_tasks(&self, f: FnId) -> bool {
         let def = &self.prog.fns[f];
         if def.decl.body.is_some() {
             return false;
@@ -2640,15 +2694,18 @@ impl Lower<'_> {
             }
         }
         if join {
+            let mut ended = Vec::new();
             for t in tasks {
                 if !self.task_held(t) {
                     self.facts.joined_at.push((t, n));
+                    ended.push(t);
                 }
             }
             self.perform_effect(n, "Async");
             self.abortive(n);
             // A `join` of a failed task raises the failure.
             self.raise_here();
+            self.end_tasks(&ended, span);
             return Val {
                 ty: ret,
                 ..Val::default()
@@ -2728,17 +2785,19 @@ impl Lower<'_> {
             tasks.push(t);
         }
         let n = self.emit(span, "fork join", String::new());
-        for t in tasks {
+        for &t in &tasks {
             self.facts.joined_at.push((t, n));
         }
         self.perform_effect(n, "Par");
         self.abortive(n);
         // A failed branch raises its failure at the `fork`.
         self.raise_here();
-        let all_unit = rets.iter().all(|r| matches!(self.inf.resolve(r), Ty::Unit));
-        let ty = if all_unit { Ty::Unit } else { Ty::Tuple(rets) };
+        self.end_tasks(&tasks, span);
+        // A `fork` gives a tuple of the branch values, also when each one is
+        // `()`. A function that returns `()` can still end with a `fork`: the
+        // value of its tail goes away.
         Val {
-            ty,
+            ty: Ty::Tuple(rets),
             ..Val::default()
         }
     }
@@ -2752,10 +2811,38 @@ impl Lower<'_> {
                 span,
             );
         }
+        // `seed` and `workers`, by name or in this order. The number of
+        // simulated workers has a default (ADR 0010).
+        let names = ["seed", "workers"];
+        let mut given = [false; 2];
+        let mut pos = 0;
         for a in args {
             let v = self.expr(&a.value);
             let t = self.deref_ty(&v.ty);
             self.unify(&Ty::Int(super::IntTy::U64), &t, a.value.span);
+            let idx = if let Some(n) = &a.name {
+                names.iter().position(|x| *x == n.name)
+            } else {
+                while pos < names.len() && given[pos] {
+                    pos += 1;
+                }
+                (pos < names.len()).then_some(pos)
+            };
+            match idx {
+                Some(i) if !given[i] => given[i] = true,
+                Some(i) => {
+                    let msg = format!("argument `{}` is given twice", names[i]);
+                    self.err("W0103", msg, a.value.span);
+                }
+                None => self.err(
+                    "W0103",
+                    "`sim.run` takes `seed` and `workers`",
+                    a.value.span,
+                ),
+            }
+        }
+        if !given[0] {
+            self.err("W0103", "`sim.run` needs a `seed`", span);
         }
         let Some(body) = trailing else {
             self.err("W0103", "`sim.run` takes a block", span);

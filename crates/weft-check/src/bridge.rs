@@ -147,6 +147,8 @@ pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
     rel2!("task_writes", f.task_writes);
     rel2!("captures", f.captures);
     rel2!("mut_through", f.mut_through);
+    rel2!("kept", f.kept);
+    rel2!("spawns_in", f.spawns_in);
     rel2!("lends_mut", f.lends_mut);
     rel2!("writes_via", f.writes_via);
     for (p, e) in &f.escapes_at {
@@ -198,6 +200,9 @@ pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
         if t.kind == TaskKind::Fork {
             emit("fork_task", &[id]);
         }
+    }
+    for t in &f.opaque {
+        emit("opaque", &[s(t)]);
     }
     for (p, m, i) in &f.call_mut {
         emit("call_mut", &[s(p), s(m), Arg::Int(i64::from(*i))]);

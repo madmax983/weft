@@ -122,6 +122,8 @@ impl Lower<'_> {
         self.jumps.pop();
         self.finish_values();
         self.finish_aborts();
+        self.finish_task_ends();
+        self.finish_task_marks();
         self.op_refs();
         self.finish_op_env();
         self.check_returns();
@@ -156,6 +158,8 @@ impl Lower<'_> {
         self.flush(block_tail(body));
         self.finish_values();
         self.finish_aborts();
+        self.finish_task_ends();
+        self.finish_task_marks();
         self.op_refs();
         self.finish_op_env();
         let eff = self.summary_to_sig(&[]);
@@ -303,6 +307,8 @@ impl Lower<'_> {
             multi: self.unknown_multi,
             raises: self.raises,
             tasks: sum.tasks.to_set(),
+            task_runs: self.task_runs_sig.clone(),
+            pins: self.pins,
             fn_stores: sum.fn_stores.to_set(),
             op_effects: sum.op_effects.to_set(),
             op_fns: sum
@@ -1060,7 +1066,8 @@ impl Lower<'_> {
                 }
                 self.consume(&v, value.span);
                 let n = self.emit(span, &format!("{} =", id.name), String::new());
-                if let Some(r) = self.locals[l].root {
+                // The new value writes the variable (W0405).
+                if let Some(r) = self.var_place(l) {
                     self.mutate(n, r);
                 }
                 self.note_capture(l);

@@ -37,6 +37,7 @@ pub mod loops;
 mod oprefs;
 mod repeat;
 mod stmt;
+mod tasks;
 
 use fnval::{Applied, FnInfo, Given, OpArg, Reach};
 
@@ -689,6 +690,11 @@ struct Local {
     var: VarId,
     ty: Ty,
     root: Option<PlaceId>,
+    /// The root place of the variable of a reference local: the memory that
+    /// holds the reference, not the memory that it points to. It has no owner.
+    /// A use and a new value of the local access it (W0405). An owned local
+    /// uses `root` for this.
+    cell: Option<PlaceId>,
     refs: Vec<PlaceId>,
     /// The tasks of the task handles that the local can hold.
     tasks: BTreeSet<TaskId>,
@@ -1329,8 +1335,27 @@ pub struct Lower<'p> {
     lowered: bool,
     /// The tasks with their spawn nodes and summaries. At the end of the body,
     /// each task gets the values that its captured variables get while it runs
-    /// (`late::finish_task_values`).
-    task_runs: Vec<(TaskId, NodeId, usize)>,
+    /// (`late::finish_task_values`), and the facts for work stealing
+    /// (`tasks::finish_task_marks`).
+    task_runs: Vec<tasks::TaskRec>,
+    /// The nodes where a function parameter of the function can run: a call of
+    /// it, a node that runs a closure that calls it, or a call that gives it to
+    /// a callee that calls it. `tasks::finish_task_marks` uses them for the
+    /// `task_runs` part of the signature.
+    param_nodes: Vec<(NodeId, usize)>,
+    /// The nodes that call a function that can start a pinned task
+    /// (`EffectSig::pins`), also through a closure that the node runs. A task
+    /// whose code has such a node is pinned (`tasks::finish_task_marks`).
+    pin_calls: Vec<NodeId>,
+    /// A task of the body is pinned for a reason that a caller does not see
+    /// (`EffectSig::pins`). `tasks::finish_task_marks` sets it.
+    pins: bool,
+    /// The `task_runs` part of the signature (`tasks::finish_task_marks`).
+    task_runs_sig: BTreeMap<usize, crate::TaskRun>,
+    /// The nodes right after the joins of the tasks: a `join`, the end of a
+    /// `fork` or a scope, or an abort. At the end of the body, each node gets
+    /// the places that its task writes (`late::finish_task_ends`).
+    task_ends: Vec<(TaskId, NodeId)>,
     /// The work so far. A loop rewind keeps it.
     work: crate::Work,
     /// The most passes of one loop, for a test. `None`: [`loops::loop_pass_bound`].
@@ -1452,6 +1477,11 @@ impl<'p> Lower<'p> {
             lowered: false,
             returned_places: Vec::new(),
             task_runs: Vec::new(),
+            param_nodes: Vec::new(),
+            pin_calls: Vec::new(),
+            pins: false,
+            task_runs_sig: BTreeMap::new(),
+            task_ends: Vec::new(),
             work: crate::Work::default(),
             loop_bound: None,
         }
@@ -1786,9 +1816,15 @@ impl<'p> Lower<'p> {
     }
 
     fn read(&mut self, p: PlaceId) {
+        self.read_var(p);
+        self.touch_unset(&[p]);
+    }
+
+    /// The node reads place `p` for W0405 only: a use of a variable reads its
+    /// place (`Lower::var_place`). It does not use the place fields below `p`.
+    pub(super) fn read_var(&mut self, p: PlaceId) {
         self.pend_reads.push(p);
         self.sum().reads.insert(p);
-        self.touch_unset(&[p]);
     }
 
     /// The node reads or borrows the places `ps`. A place field with no value at
@@ -1806,6 +1842,18 @@ impl<'p> Lower<'p> {
             }
         }
         self.pend_uses.extend(used);
+    }
+
+    /// Returns the place of the variable of local `l`: the root place of an
+    /// owned local, or the cell of a reference local (`Local::cell`). A use of
+    /// the local as a value reads it, and a new value writes it (W0405).
+    pub(super) fn var_place(&self, l: usize) -> Option<PlaceId> {
+        let loc = &self.locals[l];
+        if matches!(self.inf.shallow(&loc.ty), Ty::Ref(_)) {
+            loc.cell
+        } else {
+            loc.root
+        }
     }
 
     fn use_local(&mut self, l: usize) {
@@ -2387,6 +2435,7 @@ impl<'p> Lower<'p> {
                 var,
                 ty,
                 root: None,
+                cell: None,
                 refs: Vec::new(),
                 tasks: BTreeSet::new(),
                 summary: None,
@@ -2496,13 +2545,17 @@ impl<'p> Lower<'p> {
                 self.facts.vars[var.index()].once = true;
             }
         }
-        // An owned value gets a root place.
-        if !matches!(self.inf.shallow(&self.locals[l].ty), Ty::Ref(_))
-            && self.locals[l].root.is_none()
-        {
+        // An owned value gets a root place. A reference gets a root place for its
+        // variable (`Local::cell`).
+        let is_ref = matches!(self.inf.shallow(&self.locals[l].ty), Ty::Ref(_));
+        if !is_ref && self.locals[l].root.is_none() {
             let name = self.locals[l].name.clone();
             let r = self.root(&name, RootKind::Local);
             self.set_root(l, r);
+        } else if is_ref && self.locals[l].cell.is_none() {
+            let name = self.locals[l].name.clone();
+            let r = self.root(&name, RootKind::Local);
+            self.locals.get_mut(l).cell = Some(r);
         }
         // A new value that no place held before is built in place: its place
         // fields have no value yet.
@@ -3083,7 +3136,7 @@ impl<'p> Lower<'p> {
 
     /// Returns true if the end of a variable of type `t` can free memory: the
     /// value is not plain data, or its type is not known yet.
-    fn may_free(&self, t: &Ty) -> bool {
+    pub(super) fn may_free(&self, t: &Ty) -> bool {
         let t = self.inf.shallow(t);
         matches!(t, Ty::Var(_)) || !self.is_copy(&t)
     }

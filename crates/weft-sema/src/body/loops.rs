@@ -140,6 +140,9 @@ struct LoopHead {
     bind_caps: usize,
     via_calls: usize,
     task_runs: usize,
+    param_nodes: usize,
+    pin_calls: usize,
+    task_ends: usize,
     local_performs: usize,
 }
 
@@ -859,6 +862,9 @@ impl Lower<'_> {
             out_suspends: _,
             // Only grows: a node of an old pass that raises raises in the last pass too.
             raises: _,
+            // Set at the end of the body.
+            pins: _,
+            task_runs_sig: _,
             callee_ops: _,
             // A pass starts and ends outside a clause that it lowers.
             clause_conts: _,
@@ -917,6 +923,9 @@ impl Lower<'_> {
             bind_caps,
             via_calls,
             task_runs,
+            param_nodes,
+            pin_calls,
+            task_ends,
             local_performs,
         } = self;
         LoopHead {
@@ -976,6 +985,9 @@ impl Lower<'_> {
             bind_caps: bind_caps.len(),
             via_calls: via_calls.len(),
             task_runs: task_runs.len(),
+            param_nodes: param_nodes.len(),
+            pin_calls: pin_calls.len(),
+            task_ends: task_ends.len(),
             local_performs: local_performs.len(),
         }
     }
@@ -1024,6 +1036,8 @@ impl Lower<'_> {
             cap_effects,
             out_suspends,
             raises: _,
+            pins: _,
+            task_runs_sig: _,
             callee_ops,
             clause_conts: _,
             repeated,
@@ -1081,6 +1095,9 @@ impl Lower<'_> {
             bind_caps,
             via_calls,
             task_runs,
+            param_nodes,
+            pin_calls,
+            task_ends,
             local_performs,
         } = self;
         facts.rewind(&head.facts);
@@ -1150,6 +1167,9 @@ impl Lower<'_> {
         bind_caps.truncate(head.bind_caps);
         via_calls.truncate(head.via_calls);
         task_runs.truncate(head.task_runs);
+        param_nodes.truncate(head.param_nodes);
+        pin_calls.truncate(head.pin_calls);
+        task_ends.truncate(head.task_ends);
         local_performs.truncate(head.local_performs);
     }
 }

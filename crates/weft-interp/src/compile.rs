@@ -833,7 +833,12 @@ impl<'a> Compiler<'a> {
                     .map(|(i, _)| u32_of(i))
                     .collect();
                 let caps = named.into_iter().map(|(_, v)| v).collect();
-                self.emit(Op::MakeClosure { code, caps, owned });
+                self.emit(Op::MakeClosure {
+                    code,
+                    caps,
+                    owned,
+                    span: e.span,
+                });
             }
             ExprKind::Block(b) => self.block(b),
             ExprKind::If { cond, then, else_ } => {
@@ -1314,9 +1319,15 @@ impl<'a> Compiler<'a> {
                 slots[i] = Some(t);
             }
         }
-        for slot in slots.iter().skip(first) {
+        let sim_run = self.is_sim_run(f);
+        for (i, slot) in slots.iter().enumerate().skip(first) {
             match slot {
                 Some(e) => self.fn_arg(e),
+                // `sim.run` has a default number of simulated workers.
+                None if sim_run && params.get(i).is_some_and(|p| p == "workers") => {
+                    let w = i64::try_from(crate::machine::SIM_WORKERS).unwrap_or(4);
+                    self.emit(Op::Int(w));
+                }
                 None => {
                     self.emit(fault("a call misses an argument"));
                 }
@@ -1324,6 +1335,18 @@ impl<'a> Compiler<'a> {
         }
         self.set_span(span);
         self.emit(Op::Call { f, n: u32_of(n) });
+    }
+
+    /// Returns true for `sim.run` of the prelude.
+    fn is_sim_run(&self, f: FnId) -> bool {
+        let def = &self.prog.fns[f];
+        def.is_std
+            && def.path == "run"
+            && self
+                .prog
+                .mods
+                .get(def.module)
+                .is_some_and(|m| m.name == "sim")
     }
 
     fn method_call(&mut self, recv: &Expr, method: &Ident, args: &[Arg], trailing: Option<&Expr>) {

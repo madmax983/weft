@@ -479,7 +479,12 @@ impl super::Machine<'_, '_> {
                 let henv = self.fr()?.henv.clone();
                 return self.perform(*effect, *op, args, &henv);
             }
-            Op::MakeClosure { code, caps, owned } => {
+            Op::MakeClosure {
+                code,
+                caps,
+                owned,
+                span,
+            } => {
                 let mut cells = Vec::new();
                 for (i, c) in caps.iter().enumerate() {
                     let cell = self.cell_of(*c)?;
@@ -501,6 +506,7 @@ impl super::Machine<'_, '_> {
                     code: *code,
                     cells,
                     henv,
+                    span: *span,
                 })))?;
             }
             Op::FnValue(f) => self.push(Value::FnItem(*f))?,
@@ -529,12 +535,12 @@ impl super::Machine<'_, '_> {
                 self.task().frames.push(Frame::Code(f));
             }
             Op::Scope { code, caps } => {
-                let sid = self.new_scope();
+                let henv = self.fr()?.henv.clone();
+                let sid = self.new_scope(henv.clone());
                 let mut cells = Vec::new();
                 for v in caps {
                     cells.push(self.cell_of(*v)?);
                 }
-                let henv = self.fr()?.henv.clone();
                 self.task().frames.push(Frame::Scope { scope: sid });
                 let f = self.code_frame(*code, vec![Value::Scope(sid)], Rc::from(cells), henv)?;
                 self.task().frames.push(Frame::Code(f));
@@ -1006,7 +1012,7 @@ impl super::Machine<'_, '_> {
                         self.push(a)?;
                     }
                     self.retry()?;
-                    if let Some(f) = self.check_interrupt()? {
+                    if let Some(f) = self.check_interrupt() {
                         return Ok(f);
                     }
                     return Ok(self.block(Wait::Join(t), SuspendReason::Join(t)));
@@ -1033,13 +1039,16 @@ impl super::Machine<'_, '_> {
     // Tasks and scopes
     // -----------------------------------------------------------------------
 
-    pub(crate) fn new_scope(&mut self) -> ScopeId {
+    /// Makes a scope whose owner is the current task. `henv` has the handlers
+    /// at the `scope` or the `fork`: a failure of a child goes to them.
+    pub(crate) fn new_scope(&mut self, henv: HEnv) -> ScopeId {
         let owner = self.cur;
         self.scopes.push(ScopeRec {
             owner,
             children: Vec::new(),
             failure: None,
             propagated: false,
+            henv,
         });
         self.scopes.len() - 1
     }
@@ -1074,7 +1083,9 @@ impl super::Machine<'_, '_> {
         let stealable = self.rt.is_stealable(span);
         let worker = self.task().worker;
         let parent = self.cur;
-        let t = self.add_task(frame, worker, stealable, Some(sid));
+        // The task runs in the simulation of its spawn site.
+        let sim = self.sim_of(parent);
+        let t = self.add_task(frame, worker, stealable, Some(sid), sim);
         if let Some(s) = self.scopes.get_mut(sid) {
             s.children.push(t);
         }
@@ -1104,7 +1115,7 @@ impl super::Machine<'_, '_> {
             .is_none_or(|s| s.children.iter().all(|&t| self.is_done(t)));
         if !done {
             self.retry()?;
-            if let Some(f) = self.check_interrupt()? {
+            if let Some(f) = self.check_interrupt() {
                 return Ok(f);
             }
             return Ok(self.block(Wait::Scope(sid), SuspendReason::Scope));
@@ -1124,14 +1135,14 @@ impl super::Machine<'_, '_> {
             return Ok(Flow::Continue);
         };
         s.propagated = true;
-        let henv = self.top_henv();
+        let henv = s.henv.clone();
         self.fail(msg, &henv)
     }
 
     fn fork(&mut self, n: usize, spans: &[Span]) -> R<Flow> {
         let fs = self.pop_n(n)?;
         let henv = self.fr()?.henv.clone();
-        let sid = self.new_scope();
+        let sid = self.new_scope(henv.clone());
         let mut tasks = Vec::new();
         for (i, f) in fs.into_iter().enumerate() {
             let span = spans.get(i).copied().unwrap_or_default();
@@ -1154,7 +1165,7 @@ impl super::Machine<'_, '_> {
         };
         let (sid, tasks) = (*scope, tasks.clone());
         if !tasks.iter().all(|&t| self.is_done(t)) {
-            if let Some(f) = self.check_interrupt()? {
+            if let Some(f) = self.check_interrupt() {
                 return Ok(f);
             }
             return Ok(self.block(Wait::Scope(sid), SuspendReason::Fork));
@@ -1187,11 +1198,8 @@ impl super::Machine<'_, '_> {
                 _ => vals.push(Value::Unit),
             }
         }
-        let v = if vals.iter().all(|v| matches!(v, Value::Unit)) {
-            Value::Unit
-        } else {
-            Value::Tuple(vals)
-        };
-        self.deliver(v)
+        // A `fork` gives a tuple of the branch values, also when each one is
+        // `()`: a generic caller takes the tuple apart (ADR 0010).
+        self.deliver(Value::Tuple(vals))
     }
 }

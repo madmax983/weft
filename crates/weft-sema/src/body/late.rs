@@ -10,6 +10,8 @@
 
 use super::fnval::{FnInfo, Given, RowFn};
 use super::{fn_row, Lower, NodeId, PlaceId, Summary, TaskId, Ty, Val, VarId};
+use std::collections::{BTreeMap, BTreeSet};
+use weft_facts::{RootId, Span};
 
 /// A variable that a closure captures by reference, with its value where the
 /// closure is made.
@@ -499,23 +501,41 @@ impl Lower<'_> {
     }
 
     /// Records task `t` that node `n` spawns with the closures of summary `s`.
-    pub(super) fn note_task_run(&mut self, t: TaskId, n: NodeId, s: usize) {
-        self.task_runs.push((t, n, s));
+    /// The task can run the function values that the function parameters
+    /// `held` hold, for example in a field.
+    pub(super) fn note_task_run(&mut self, t: TaskId, n: NodeId, s: usize, held: BTreeSet<usize>) {
+        self.task_runs.push(super::tasks::TaskRec {
+            task: t,
+            node: n,
+            summary: s,
+            arg: false,
+            held,
+        });
     }
 
     /// The places that node `n` mutates, lends and reads from index `from` of the
-    /// relations on: task `t`, which the node starts, writes and reads them. The
-    /// node gives no place inside the closure of the task (`places_of`).
-    pub(super) fn task_places_from(&mut self, t: TaskId, n: NodeId, from: (usize, usize, usize)) {
+    /// relations on: task `t`, which the node starts with the closures of
+    /// summary `s`, writes and reads them. The node gives no place inside the
+    /// closure of the task (`places_of`). A capture that the closure moves is in
+    /// a cell of the closure, so the task does not share it.
+    pub(super) fn task_places_from(
+        &mut self,
+        t: TaskId,
+        n: NodeId,
+        s: usize,
+        from: (usize, usize, usize),
+    ) {
+        let moved = self.moved_capture_roots(s);
+        let shared = |me: &Self, p: PlaceId| !moved.contains(&me.facts.place(p).root);
         let writes: Vec<PlaceId> = self.facts.mutates_at[from.0..]
             .iter()
             .chain(&self.facts.lends_mut[from.1..])
-            .filter(|(m, _)| *m == n)
+            .filter(|&&(m, p)| m == n && shared(self, p))
             .map(|&(_, p)| p)
             .collect();
         let reads: Vec<PlaceId> = self.facts.reads_at[from.2..]
             .iter()
-            .filter(|(m, _)| *m == n)
+            .filter(|&&(m, p)| m == n && shared(self, p))
             .map(|&(_, p)| p)
             .collect();
         for p in writes {
@@ -524,6 +544,51 @@ impl Lower<'_> {
         for p in reads {
             self.facts.task_reads.push((t, p));
         }
+    }
+
+    /// Tasks `ts` end at the node before a new node: a `join`, the end of a
+    /// `fork` or a scope. A task can change what it writes at any time while it
+    /// runs, so the new node changes it again (`finish_task_ends`). The tasks
+    /// are not active at the new node.
+    pub(super) fn end_tasks(&mut self, ts: &[TaskId], span: Span) {
+        if ts.is_empty() || self.cur.is_none() {
+            return;
+        }
+        let e = self.emit(span, weft_facts::TASK_END, String::new());
+        for &t in ts {
+            self.task_ends.push((t, e));
+        }
+    }
+
+    /// Gives each node after the end of a task the places that the task writes,
+    /// as places that it can change (`lends_mut`). A reference that the body
+    /// makes while the task runs is invalid after the end, if the task changes
+    /// what it points into (W0301). The body is lowered, so each task has all
+    /// of its places.
+    pub(super) fn finish_task_ends(&mut self) {
+        let mut writes: BTreeMap<TaskId, Vec<PlaceId>> = BTreeMap::new();
+        for &(t, m) in &self.facts.task_writes {
+            writes.entry(t).or_default().push(m);
+        }
+        for &(t, e) in &self.task_ends {
+            for &m in writes.get(&t).into_iter().flatten() {
+                self.facts.lends_mut.push((e, m));
+            }
+        }
+    }
+
+    /// Returns the roots of the captures that the closures of summary `s` move:
+    /// the closure takes each of them into a cell of its own when it is made
+    /// (ADR 0003).
+    pub(super) fn moved_capture_roots(&self, s: usize) -> BTreeSet<RootId> {
+        self.closures[s]
+            .moved_captures
+            .iter()
+            .filter(|&&v| !self.is_copy_var(v))
+            .filter_map(|&v| self.local_of(v))
+            .filter_map(|l| self.locals[l].root)
+            .map(|r| self.facts.place(r).root)
+            .collect()
     }
 
     /// The sizes of the relations that `task_places_from` reads.
@@ -539,10 +604,16 @@ impl Lower<'_> {
     /// The body is lowered, so the locals have each of their values: the spawn
     /// node joins them, and the task writes and reads what they reach.
     pub(super) fn finish_task_values(&mut self) {
-        for (t, n, s) in self.task_runs.clone() {
+        for r in self.task_runs.clone() {
+            let (t, n, s) = (r.task, r.node, r.summary);
+            // The call node of a run of a function argument gets the values
+            // (`tasks::arg_tasks`).
+            if r.arg {
+                continue;
+            }
             let from = self.place_marks();
             self.late_join(n, s, 700, &[], false);
-            self.task_places_from(t, n, from);
+            self.task_places_from(t, n, s, from);
         }
     }
 }

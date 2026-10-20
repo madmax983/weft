@@ -1,0 +1,33 @@
+// `sim.run` takes a `seed` and a number of simulated `workers`, by name or in
+// this order. The number of workers has a default, so the order inside the
+// simulation does not depend on `--workers` (ADR 0010).
+fn no_seed() {
+    sim.run(workers: 2) { print(1) }   //~ W0103
+}
+
+fn bad_name() {
+    sim.run(seed: 1, speed: 2) { print(1) }   //~ W0103
+}
+
+fn given_twice() {
+    sim.run(seed: 1, seed: 2) { print(1) }   //~ W0103
+}
+
+fn too_many() {
+    sim.run(1, 2, 3) { print(1) }   //~ W0103
+}
+
+// Clean: by position, by name, and with the default number of workers.
+fn by_position() {
+    sim.run(1, 2) { print(1) }
+}
+
+fn by_name() {
+    sim.run(workers: 3, seed: 4) { print(2) }
+}
+
+test "simulated workers" {
+    by_position()
+    by_name()
+    sim.run(seed: 5) { print(3) }
+}

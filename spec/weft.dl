@@ -68,6 +68,13 @@
 //   task_writes(T, M)        T mutates M.
 //   captures(T, V)           the closure of T captures V.
 //   mut_through(T, V)        T mutates through the reference V.
+//   kept(T, Rt)              T keeps the variable at root place Rt: its closure captures the
+//                            variable, and the value is a copy value. The end of the variable
+//                            leaves the value readable for T (ADR 0006).
+//   spawns_in(T, U)          task U starts inside the code of task T.
+//   opaque(T)                T runs code that the function cannot check for work stealing: a
+//                            function value that it does not follow, or a callee that can
+//                            start a pinned task.
 //   nonportable(V)           V cannot cross threads.
 //   uniq(V)                  V is `@ uniq`.
 //   call_mut(P, M, I)        the call at P mutates M through callee root I.
@@ -271,7 +278,10 @@ task_accesses(T, A)  :- task_writes(T, A).
 
 task_conflict(T, P)  :- active(T, P), task_writes(T, M), accesses(P, A), overlaps(M, A).
 task_conflict(T, P)  :- active(T, P), task_reads(T, A), mutates_at(P, M), overlaps(M, A).
-task_conflict(T, P)  :- active(T, P), task_accesses(T, A), frees_at(P, M), overlaps(M, A).
+// A task keeps the cell of a copy variable that it captures, so the end of the
+// variable is not a free for the task (`kept`).
+task_conflict(T, P)  :- active(T, P), task_accesses(T, A), frees_at(P, M), overlaps(M, A),
+                        !kept(T, M).
 task_conflict(T, P)  :- active(T, P), task_accesses(T, A), lends_mut(P, M), overlaps(M, A).
 
 // ---------------------------------------------------------------------------
@@ -283,6 +293,10 @@ shared_mut_capture(T, V)  :- fork_task(T), captures(T, V), mut_through(T, V), !u
 
 pinned(T)            :- captures(T, V), nonportable(V).
 pinned(T)            :- captures(T, V), mut_through(T, V), !uniq(V).
+// A pinned task stays on the worker of the task that starts it. If that task
+// moved, the two could run on two workers and share a nonportable value.
+pinned(T)            :- opaque(T).
+pinned(T)            :- spawns_in(T, U), pinned(U).
 stealable(T)         :- task(T), !pinned(T).
 
 // ---------------------------------------------------------------------------

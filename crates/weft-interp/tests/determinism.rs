@@ -38,3 +38,27 @@ proptest! {
         prop_assert_eq!(a, b);
     }
 }
+
+/// The order inside `sim.run` depends only on its seed and its number of
+/// simulated workers, not on `--seed` or `--workers` of the run (ADR 0010).
+#[test]
+fn simulation_order_does_not_depend_on_the_run() {
+    let c = weft_check::check_source("sim_workers", &program("sim_workers"), Options::default());
+    let base = run_tests(&c, &RunOptions::default());
+    assert!(base.iter().all(|t| t.passed));
+    for seed in [0, 1, 2, 7] {
+        for workers in [1, 2, 3, 8] {
+            let opts = RunOptions {
+                seed,
+                workers,
+                ..RunOptions::default()
+            };
+            let out: Vec<String> = run_tests(&c, &opts)
+                .into_iter()
+                .map(|t| t.outcome.stdout)
+                .collect();
+            let want: Vec<String> = base.iter().map(|t| t.outcome.stdout.clone()).collect();
+            assert_eq!(out, want, "seed {seed}, workers {workers}");
+        }
+    }
+}

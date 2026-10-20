@@ -331,6 +331,10 @@ impl Lower<'_> {
             }
             self.use_local(l);
             let loc = self.locals[l].clone();
+            // A use of the local as a value reads its variable (W0405).
+            if let Some(c) = self.var_place(l) {
+                self.read_var(c);
+            }
             // A reference used as a value reads the places that it points into.
             if matches!(self.inf.shallow(&loc.ty), Ty::Ref(_)) {
                 for &p in &loc.refs {
@@ -484,6 +488,10 @@ impl Lower<'_> {
                 let loc = self.locals[l].clone();
                 match self.inf.shallow(&loc.ty) {
                     Ty::Ref(inner) => {
+                        // A place through the reference reads the reference.
+                        if let Some(c) = loc.cell {
+                            self.read_var(c);
+                        }
                         let (places, deps) = self.split_deps(&loc.refs);
                         Some(LVal {
                             places,
@@ -536,6 +544,11 @@ impl Lower<'_> {
                     },
                     _ => lv,
                 };
+                // An index reads the length and the buffer of the indexed place,
+                // also for a borrow of the element (W0405).
+                for &p in &lv.places {
+                    self.read_var(p);
+                }
                 if let Some(ix) = index {
                     let v = self.expr(ix);
                     let t = self.deref_ty(&v.ty);
@@ -1368,6 +1381,11 @@ impl Lower<'_> {
                     .sticky
                     .insert(super::caps::UNKNOWN_FN);
             }
+            // A parameter whose type is not known yet can be a function value
+            // that the body runs, for example as a task (`tasks`, ADR 0006).
+            if matches!(self.inf.shallow(&self.locals[l].ty), Ty::Var(_)) {
+                self.locals.get_mut(l).fn_param = Some((si, i));
+            }
         }
         // The body returns its value: W0204 reports a value into its own locals.
         let v = match &body.kind {
@@ -1468,11 +1486,13 @@ impl Lower<'_> {
         self.stmt_temps = saved_stmts;
         // The closure refers to the variables that it captures, as in the
         // interpreter. A captured copy value stays readable after its scope
-        // ends; another value goes away with its variable. A capture that the
-        // closure moves goes into a cell of the closure when the closure is
-        // made. The closure still points into the variable, so it cannot leave
-        // the scope of the variable: its type does not show that it runs only
-        // once, or that it holds a linear value. This is conservative.
+        // ends; another value goes away with its variable. The scope
+        // capability ends with its scope: a closure that spawns into the scope
+        // cannot run after it. A capture that the closure moves goes into a
+        // cell of the closure when the closure is made. The closure still
+        // points into the variable, so it cannot leave the scope of the
+        // variable: its type does not show that it runs only once, or that it
+        // holds a linear value. This is conservative.
         // The closure can read a place field that has no value yet (W0304).
         let reads: Vec<PlaceId> = sum.reads.iter().copied().collect();
         self.touch_unset(&reads);
@@ -1489,7 +1509,8 @@ impl Lower<'_> {
             if let Some(l) = self.local_of(*v) {
                 let loc = self.locals[l].clone();
                 refs.extend(loc.refs.iter().copied());
-                if !loc.ty.is_ref() && self.may_free(&loc.ty) {
+                let scope = matches!(self.inf.shallow(&loc.ty), Ty::Scope);
+                if !loc.ty.is_ref() && (self.may_free(&loc.ty) || scope) {
                     refs.extend(loc.root);
                 }
                 if !moved.contains(v) {
@@ -2749,9 +2770,10 @@ impl Lower<'_> {
         self.flush(tail);
         let (_, tasks) = self.scopes.pop().unwrap_or_default();
         let end = self.emit(span, "scope end", String::new());
-        for t in tasks {
+        for &t in &tasks {
             self.facts.joined_at.push((t, end));
         }
+        self.end_tasks(&tasks, span);
         let held = self.hold_out(&v, tail);
         self.end_frame(body.span);
         self.pop_frame();

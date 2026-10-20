@@ -16,7 +16,7 @@ use weft_facts::FnFacts;
 use weft_syntax::diag::Diagnostic;
 use weft_syntax::{parse_file, ParseError};
 
-pub use program::{FnSig, Program, Unit};
+pub use program::{FnSig, Program, TaskRun, Unit};
 pub use weft_syntax::diag::{PRELUDE_UNIT, ROOT_UNIT};
 
 /// The source of the standard prelude.

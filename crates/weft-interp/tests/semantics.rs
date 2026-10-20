@@ -394,6 +394,28 @@ fn failure_propagates_to_the_scope_owner() {
 }
 
 #[test]
+fn child_failure_goes_to_the_handlers_of_the_scope() {
+    // On each seed and worker count: a handler inside the scope body does not
+    // get the failure of a child, and the scope does not return normally.
+    let src = program("child_fail_lexical");
+    let c = checked_ok(&src);
+    let want = "main handler: child failed\nmain handler: child failed\nouter handler: child failed\nclause done\nscope handler: child failed\nend\n";
+    for seed in 0..6 {
+        for workers in [1, 2, 4] {
+            let o = run_main(
+                &c,
+                &RunOptions {
+                    workers,
+                    ..opts(seed)
+                },
+            )
+            .unwrap();
+            assert_eq!(o.stdout, want, "seed {seed}, workers {workers}");
+        }
+    }
+}
+
+#[test]
 fn handler_abort_cancels_a_running_scope() {
     let o = ok(&program("scope_abort"), 0);
     assert_eq!(o.stdout, "caught abort scope\nend\n");

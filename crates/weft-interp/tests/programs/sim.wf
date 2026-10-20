@@ -1,4 +1,7 @@
-// Deterministic simulation: virtual time, seeded randomness and the network.
+// Deterministic simulation: virtual time, seeded randomness and the scheduler.
+// Phase 1 does not simulate the network: `sim.net.partition` and
+// `sim.net.heal` only record the partition in the trace, and `http.serve`
+// binds a real socket (ADR 0010).
 struct Cluster { nodes: Vec<u64>, leader: u64 }
 
 impl Cluster {
