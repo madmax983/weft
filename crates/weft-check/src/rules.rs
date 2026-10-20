@@ -396,10 +396,13 @@ impl<'a> Ctx<'a> {
                     || self.outer[m.index()].is_some_and(|b| self.strict_prefix(b, p))))
     }
 
-    /// `invalidated_at` by a free of `m`, for a reference into `p`.
-    fn free_kills(&self, m: PlaceId, p: PlaceId) -> bool {
+    /// `invalidated_at` by a free of `m`, for a reference into `p`. A move of
+    /// the part `m` leaves no value in it, so it also invalidates a reference to
+    /// a place above it: each reference that overlaps it.
+    fn free_kills(&self, m: PlaceId, p: PlaceId, cause: Cause) -> bool {
         self.prefix(m, p)
             || (!self.same_one(m, p) && self.outer[p.index()].is_some() && self.overlaps(m, p))
+            || (matches!(cause, Cause::MovePart(_)) && self.overlaps(m, p))
     }
 
     fn within(&self, p: PlaceId, d: PlaceId) -> bool {
@@ -844,7 +847,7 @@ fn witnesses(cx: &Ctx<'_>, ps: &Paths) -> Vec<NodeWitness> {
         let mut other = hit(&cx.lends[node]).map(|(p, m)| (p, Cause::Lend(m)));
         for &(m, cause) in &cx.frees[node] {
             for &p in of_root(m) {
-                if cx.free_kills(m, p) && other.is_none_or(|(_, b)| cause < b) {
+                if cx.free_kills(m, p, cause) && other.is_none_or(|(_, b)| cause < b) {
                     other = Some((p, cause));
                 }
             }
@@ -1066,6 +1069,8 @@ fn linear(
     let unwound = by_var(&f.unwound_at);
     let aborts = cx.mask(f.may_abort.iter().copied());
     let spared: BTreeSet<(VarId, NodeId)> = f.spared_at.iter().copied().collect();
+    // A move of a part that leaves a linear part does not end the value.
+    let rest: BTreeSet<(VarId, NodeId)> = f.rest_linear.iter().copied().collect();
     let vars: BTreeSet<VarId> = rebound.keys().chain(overwrites.keys()).copied().collect();
     for v in vars {
         let binds = rebound.get(&v).map_or(&[][..], Vec::as_slice);
@@ -1083,14 +1088,19 @@ fn linear(
                 .filter(|&b| !empty.contains(&(v, b)))
                 .chain(parts.iter().copied()),
         );
-        let moves = cx.mask(moved.get(&v).cloned().unwrap_or_default());
+        let ends_value: Vec<NodeId> = moved
+            .get(&v)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|&n| !rest.contains(&(v, n)))
+            .collect();
+        let moves = cx.mask(ends_value.iter().copied());
         // On an abort path the unwinder finishes the value.
         let kill = cx.mask(
-            moved
-                .get(&v)
-                .into_iter()
-                .chain(unwound.get(&v))
-                .flatten()
+            ends_value
+                .iter()
+                .chain(unwound.get(&v).into_iter().flatten())
                 .copied(),
         );
         let live = cx.forward(&gen, &kill);

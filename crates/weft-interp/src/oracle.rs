@@ -7,7 +7,10 @@
 //! - an access to a freed cell or buffer (a dangling reference);
 //! - a `Vec` moves its buffer on each `push`, `pop` and `clear`, as a real
 //!   `Vec` can, so a reference into the old buffer dangles;
-//! - a reference into a local whose scope ended is used;
+//! - a reference into a local whose scope ended is used, also after an abort
+//!   path unwound the frame of the local;
+//! - a display (`print`) of a moved value, or of a value through a dangling
+//!   reference;
 //! - a live linear value goes away with no consume and no `on abort`, or is
 //!   still live at the end of the run;
 //! - two tasks access overlapping places, one of them writes, and no join
@@ -19,24 +22,39 @@
 //! An accepted program must not fault with these checks. The interpreter
 //! program tests and the runs of the corpus turn them on.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::value::CellId;
 
-/// The most accesses that the race detector keeps for one cell.
-const LOG_LIMIT: usize = 256;
+/// The accesses of one task to one cell. For each path and each kind (a read
+/// or a write), the log keeps the clock of the task at the last access. An
+/// earlier access of the same task, path and kind has a smaller clock, so it
+/// cannot find a race that the last one does not find. There is no limit on
+/// the number of paths (I3-12).
+#[derive(Clone, Debug, Default)]
+struct TaskLog {
+    /// The largest clock of an access in the log.
+    last: u32,
+    /// The clock of the last read of each path.
+    reads: BTreeMap<Vec<u32>, u32>,
+    /// The clock of the last write of each path.
+    writes: BTreeMap<Vec<u32>, u32>,
+}
 
-/// One access of a task to a place of a cell.
-#[derive(Clone, Debug)]
-struct Access {
-    /// The path in the cell.
-    path: Vec<u32>,
-    /// The task.
-    task: usize,
-    /// The clock of the task at the access.
-    epoch: u32,
-    /// True for a write.
-    write: bool,
+/// Returns a path of `m` that overlaps `path` (one is a prefix of the other)
+/// and whose clock is larger than `known`.
+fn unordered(m: &BTreeMap<Vec<u32>, u32>, path: &[u32], known: u32) -> Option<Vec<u32>> {
+    // The paths above `path`, and `path` itself.
+    for k in 0..=path.len() {
+        if m.get(&path[..k]).is_some_and(|&e| e > known) {
+            return Some(path[..k].to_vec());
+        }
+    }
+    // The paths below `path`: they follow it in the order of the map.
+    m.range(path.to_vec()..)
+        .take_while(|(p, _)| p.starts_with(path))
+        .find(|(_, &e)| e > known)
+        .map(|(p, _)| p.clone())
 }
 
 /// The state of the oracle checks.
@@ -52,8 +70,8 @@ pub struct Oracle {
     cur: usize,
     /// The vector clock of each task.
     clocks: Vec<Vec<u32>>,
-    /// The accesses of each cell.
-    log: HashMap<CellId, Vec<Access>>,
+    /// The accesses of each cell, for each task.
+    log: HashMap<CellId, BTreeMap<usize, TaskLog>>,
 }
 
 impl Oracle {
@@ -123,39 +141,36 @@ impl Oracle {
         let t = self.cur;
         self.ensure(t);
         let epoch = self.at(t, t);
-        let race = self.log.get(&cell).and_then(|recs| {
-            recs.iter().find(|r| {
-                let n = r.path.len().min(path.len());
-                r.task != t
-                    && (write || r.write)
-                    && r.path[..n] == path[..n]
-                    && r.epoch > self.at(t, r.task)
+        let race = self.log.get(&cell).and_then(|logs| {
+            logs.iter().filter(|(&u, _)| u != t).find_map(|(&u, l)| {
+                let known = self.at(t, u);
+                if l.last <= known {
+                    return None;
+                }
+                // A write overlaps each access; a read overlaps a write only.
+                if let Some(p) = unordered(&l.writes, path, known) {
+                    return Some((u, p, true));
+                }
+                let p = if write {
+                    unordered(&l.reads, path, known)
+                } else {
+                    None
+                };
+                p.map(|p| (u, p, false))
             })
         });
-        if let Some(r) = race {
+        if let Some((u, p, wrote)) = race {
             let msg = format!(
-                "oracle: data race: task {t} {} a {what} at {path:?}, and task {} {} it at {:?} with no join between",
+                "oracle: data race: task {t} {} a {what} at {path:?}, and task {u} {} it at {p:?} with no join between",
                 if write { "writes" } else { "reads" },
-                r.task,
-                if r.write { "wrote" } else { "read" },
-                r.path
+                if wrote { "wrote" } else { "read" },
             );
             self.flag(msg);
         }
-        let recs = self.log.entry(cell).or_default();
-        if let Some(r) = recs
-            .iter_mut()
-            .find(|r| r.path == path && r.task == t && r.write == write)
-        {
-            r.epoch = epoch;
-        } else if recs.len() < LOG_LIMIT {
-            recs.push(Access {
-                path: path.to_vec(),
-                task: t,
-                epoch,
-                write,
-            });
-        }
+        let l = self.log.entry(cell).or_default().entry(t).or_default();
+        l.last = l.last.max(epoch);
+        let m = if write { &mut l.writes } else { &mut l.reads };
+        m.insert(path.to_vec(), epoch);
     }
 
     /// Notes a violation. The machine reports the first one.
@@ -219,6 +234,43 @@ mod tests {
         o.set_task(0);
         o.access(7, &[2], true, "local");
         assert!(o.take_violation().is_none());
+    }
+
+    #[test]
+    fn a_race_after_many_accesses_is_found() {
+        // Task 1 writes 300 paths of one cell. Task 2 then writes the last
+        // path with no join between: a race also after more than 256 records
+        // (I3-12).
+        let mut o = Oracle::default();
+        o.set_task(0);
+        o.spawn(0, 1);
+        o.spawn(0, 2);
+        o.set_task(1);
+        for i in 0..300 {
+            o.access(9, &[i, 0], true, "buffer");
+        }
+        assert!(o.take_violation().is_none());
+        o.set_task(2);
+        o.access(9, &[299, 0], true, "buffer");
+        let v = o.take_violation();
+        assert!(
+            v.as_deref().is_some_and(|m| m.contains("[299, 0]")),
+            "{v:?}"
+        );
+        // A read of the whole cell overlaps each path. A read of another
+        // path of the parent after a join does not race.
+        o.access(9, &[], false, "buffer");
+        assert!(o.take_violation().is_some());
+        o.set_task(0);
+        o.join(1);
+        o.join(2);
+        o.access(9, &[5], false, "buffer");
+        o.access(9, &[], true, "buffer");
+        assert!(o.take_violation().is_none());
+        // Each task keeps one record for each path and kind.
+        let logs = &o.log[&9];
+        assert_eq!(logs[&1].writes.len(), 300);
+        assert_eq!(logs[&2].reads.len(), 1);
     }
 
     #[test]

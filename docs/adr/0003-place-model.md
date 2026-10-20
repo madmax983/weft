@@ -94,14 +94,32 @@ Status: accepted. Date: 2026-10-18.
   move of `V` or the end of its scope frees the memory (`frees_at`), so it invalidates
   every reference into the root, also through stable steps. A block value that points
   into a local of the block is held across the end of the block, so this rule sees it.
-- A move of a part (`take(p.a)`) frees that part only (`moved_part`). References into
-  the other parts stay valid. For W0302 the move is still a move of the whole local:
-  a later use of `p`, also of `p.b`, is a use after move. This is conservative.
+- A move of a part (`take(p.a)`) frees that part only (`moved_part`). It leaves no
+  value in the part, so it invalidates each reference that overlaps the part: a
+  reference at or below the part, and a reference to a place above it, such as `&p`
+  (review round 3, F3-5). A reference to the whole value reads the moved part too.
+  References into the other parts stay valid. For W0302 the move is still a move of
+  the whole local: a later use of `p`, also of `p.b`, is a use after move. This is
+  conservative. The other parts are still in the local: a linear part stays live
+  (`rest_linear`, ADR 0007), so the program must destructure the value to consume it.
 - A temporary value that is not plain data has an owner too. It goes out of scope at
   the end of its statement, as in the interpreter. The value of a block is part of the
   enclosing statement, and the condition of `while` is a statement of its own. A
-  handled body runs in a frame of its own, as a closure does in the interpreter: the
-  temporaries of its value go out of scope at its end.
+  handled body, a scope body and a handler clause run in frames of their own, as a
+  closure does in the interpreter: the temporaries of their values go out of scope at
+  their end (review round 3, O3-2, O3-3). The end of a scope body comes after the
+  joins of its tasks.
+- A hidden variable holds the value of such a frame from its tail to the node after
+  the end of the frame (`frame_value_start`, `frame_value_end`). It points where the
+  value points, and it is linear if the value is. So a reference into a temporary or a
+  local of the frame is invalid there (W0301), as a block value that points into a
+  local of the block is. An abort at the end of the frame sees a linear value (W0602,
+  ADR 0006). A value with a variable of its own, such as a closure, goes on in that
+  variable: the node that takes the value uses it. A `with_timeout` block and a `fork`
+  branch are closures: a reference into their temporaries is W0204 at the return of
+  the closure. A clause can also give a reference into a temporary through `resume`.
+  That temporary goes out of scope at the end of the `handle`, as a local of the clause
+  does: the `handle` cannot return it (W0204).
 - A place of a local in statement position, such as `v`, `p.tx` or `v[i]` on its own
   line and not the value of its block, names the place only. It moves nothing and drops
   nothing. Its operands run, for example the index `i`. The interpreter compiles it as
@@ -115,6 +133,18 @@ Status: accepted. Date: 2026-10-18.
   W0302, a reference into the value is invalid (W0301), a linear value is dropped
   (W0601), and a `!Move` value cannot move (W0604). A value that is plain data is
   copied.
+- The tail of a scope body, of a handled body and of a clause moves at the tail, inside
+  the frame, before the end of the frame: before the joins of the tasks of a scope,
+  and before the end of the locals and the temporaries of the frame (review round 3,
+  O3-1). So a task of the scope that reads into the moved place conflicts with the move
+  (W0405). A scope or a `handle` in statement position drops its value at the tail, as
+  a block statement does. A handled body with a `multi` operation runs its tail again
+  after each `resume`, so the tail moves in each run (O3-14, ADR 0005). A sweep puts a
+  tail place in each frame (a block, a `handle`, a `multi` `handle`, a scope,
+  `with_timeout`, a closure, a `fork` branch, the branches of `if` and `match`, a loop
+  body), in statement and in value position, with and without a task that reads into
+  the place. Each run that faults gets an error, and each clean form is accepted
+  (`tests/programs/150_frame_tails.wf`).
 - The locals and temporaries of a closure go out of scope at each node where the
   closure runs: a call of it, a call that takes it, a spawn. A handler clause runs at
   each operation that it handles. There it uses its captures, moves the captures that
@@ -331,6 +361,9 @@ Status: accepted. Date: 2026-10-18.
 
 - Element places are not index-sensitive. A mutation of one element can invalidate a
   reference into the unstable part of another element. This is safe and conservative.
+- A reference to the whole value, or to a place above a moved part, is invalid after
+  the move of the part, also for a read of another part: `r = &p; take(p.a);
+  print(r.b.x)` is W0301 (`tests/programs/152_part_move_refs.wf`).
 - A reference that goes deeper in each loop iteration (`cur = &cur.next[0]`) has the
   place one level below the place before the loop and the wildcard place below it. A
   change that overlaps the base of the wildcard place invalidates it, also through

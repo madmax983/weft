@@ -45,6 +45,7 @@ flowchart TD
 flowchart TD
     bind["rebound_at(V, P)"] --> live["live_linear(V, Q)"]
     moved["moved_at(V, P)"] -. "ends" .-> live
+    rest["rest_linear(V, P)"] -. "a part moves; the rest stays live" .-> live
     unwound["unwound_at(V, P)"] -. "ends on an abort path" .-> live
     empty["empty_at(V, P)"] -. "nothing to consume" .-> live
     over["overwrites(V, P)"] -. "a new part" .-> live
@@ -61,8 +62,9 @@ flowchart TD
     uses["uses(V, P)"] --> ubs
 ```
 
-A linear variable is live from a new value until a move. A new value with no linear
-part, such as `None`, has nothing to consume (`empty_at`). A new value of a part makes
+A linear variable is live from a new value until a move. A move of a part that leaves
+a linear part does not end it (`rest_linear`). A new value with no linear part, such
+as `None`, has nothing to consume (`empty_at`). A new value of a part makes
 the variable live too. It must not be live where it goes out of scope or where it gets
 a new value. A new value of a part drops the old value of the part too (`overwrites`).
 An abort while it is live needs `on abort`. An operation of a local handler aborts only

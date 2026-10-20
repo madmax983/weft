@@ -1,0 +1,64 @@
+// A move of a part (`take(p.a)`) leaves no value in the part. So it
+// invalidates each reference that overlaps the part: a reference at or below
+// the part, and a reference to a place above it, such as a reference to the
+// whole value (ADR 0003). A reference to another part stays valid.
+struct In { x: Vec<u64> }
+struct Out { a: In, b: In }
+fn take(i: In) -> usize { i.x.len() }
+fn peek(o: &Out) -> usize { o.a.x.len() }
+fn mk_in() -> In { let i = In { x: Vec.new() }; i.x.push(4); i }
+
+// A reference to the whole value reads the moved part.
+fn whole_ref() {
+    let p = Out { a: mk_in(), b: mk_in() }
+    let r = &p
+    let n = take(p.a)
+    print(r.a.x.len())   //~ W0301
+}
+fn whole_ref_call() {
+    let p = Out { a: mk_in(), b: mk_in() }
+    let r = &p
+    let n = take(p.a)
+    print(peek(r))   //~ W0301
+}
+fn element_ref() {
+    let a = [mk_in(), mk_in()]
+    let r = &a
+    let n = take(a[0])
+    print(r[0].x.len())   //~ W0301
+}
+// A reference into the part.
+fn part_ref() {
+    let p = Out { a: mk_in(), b: mk_in() }
+    let r = &p.a.x[0]
+    let n = take(p.a)
+    print(r + 1)   //~ W0301
+}
+// The rule is not exact: a reference to the whole value is invalid after the
+// move, also for a read of another part.
+fn whole_ref_other_part() {
+    let p = Out { a: mk_in(), b: mk_in() }
+    let r = &p
+    let n = take(p.a)
+    print(r.b.x.len())   //~ W0301
+}
+
+// Clean: a reference to another part, or into another part.
+fn sibling_ref() {
+    let p = Out { a: mk_in(), b: mk_in() }
+    let r = &p.b
+    let n = take(p.a)
+    print(r.x.len() + n)
+}
+fn tuple_sibling() {
+    let t = (mk_in(), mk_in())
+    let r = &t.1.x[0]
+    let n = take(t.0)
+    print(r + 1)
+    print(n)
+}
+
+fn main() {
+    sibling_ref()
+    tuple_sibling()
+}

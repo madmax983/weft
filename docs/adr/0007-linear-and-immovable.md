@@ -133,6 +133,15 @@ Status: accepted. Date: 2026-10-18.
   `resume`. So the value of a `handle` has no linear part only if the value of the
   body and the value of each clause have none. The value of the body moves into the
   value of the `handle` then, as the value of a branch of an `if` does.
+- A move of a part of a linear value (`rollback(t.0)`, `let x = t.0`, a closure that
+  moves `t.0`) leaves the other parts in the value (review round 3, R3RT1). Sema gives
+  `rest_linear(V, P)` at the move if another part of the value can be linear: a part
+  on another branch of the type, or another element of a `Vec` or an array. Then
+  `live_linear` goes on through the move, and so does `abort_unhandled`: the end of the
+  value is W0601, and an abort after the move is W0602. A later use of the value is
+  still a use after a move (W0302, ADR 0003), so the program must destructure the
+  value to consume each part (`let (a, b) = t`). The diagnostic says so. A part move
+  that leaves no linear part ends the value, as before.
 - On an abort path (ADR 0005) the unwinder finishes each value of the handled body:
   `unwound_at(V, P)` in the spec. `live_linear` stops there, and the owner frees its
   memory. The node that aborts needs `on abort` for each live linear value (W0602).
@@ -170,6 +179,15 @@ Status: accepted. Date: 2026-10-18.
   by-value parameter. Its place fields have no value, also in a part, in an enum
   payload and behind a `Box`. A read or a borrow of such a field, or of the whole
   struct, before the body gives the field a value is W0304.
+  - The search for the place fields of a type walks each full type (a definition
+    with its type arguments) once for a body, and keeps its paths in a table
+    (`Lower::place_paths`, review round 3, Q3-1, Q3-4). Most types have none. A
+    second use of one generic definition with other arguments is another type, so
+    `Wrap<Wrap<Frame>>`, `Box<Hold>` with a `Box<Frame>` in it and an `Option` in an
+    `Option` get their place fields too. A recursive type stops at the second use of
+    the same full type on the way: a value behind it was built by another node, and
+    its fields can have values. The cost grows with the number of types, not with
+    the number of paths through a type that holds no place field.
   - A closure reads the places that its body reads. It reads them where it is made.
   - A local that a `let` declares with no value is the same: a closure, a handler
     clause or a task uses its captures where it is made (W0304). So a local cannot
@@ -210,4 +228,7 @@ Status: accepted. Date: 2026-10-18.
     also when the callee does not keep them.
   - A closure is not plain data. A branch value, a variable and an argument of a type
     parameter move it, also when it moves nothing that it captures.
+  - The length of a `Vec` is not known. A move of an element of a `Vec` of linear
+    values leaves the other elements, also when there are none
+    (`tests/programs/153_partial_linear.wf`).
 - What stays open (not checked): no known gap.

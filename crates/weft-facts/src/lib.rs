@@ -428,6 +428,7 @@ pub struct FactMark {
     unwound_at: usize,
     owner: usize,
     moved_part: usize,
+    rest_linear: usize,
     releases_at: usize,
     may_abort: usize,
     multi_at: usize,
@@ -559,6 +560,9 @@ pub struct FnFacts {
     pub owner: Vec<(PlaceId, VarId)>,
     /// `moved_part(M, P)`: node `P` moves the value at place `M` out of its owner.
     pub moved_part: Vec<(PlaceId, NodeId)>,
+    /// `rest_linear(V, P)`: node `P` moves a part of `V`, and another part of
+    /// `V` can hold a linear value. The rest of `V` is still live.
+    pub rest_linear: Vec<(VarId, NodeId)>,
     /// `releases_at(P, M)`: node `P` can free the memory at place `M`, as a move
     /// out of its owner does. A `resume` does this for what a clause parameter
     /// points into.
@@ -712,6 +716,7 @@ impl FnFacts {
             unwound_at,
             owner,
             moved_part,
+            rest_linear,
             releases_at,
             may_abort,
             multi_at,
@@ -775,6 +780,7 @@ impl FnFacts {
             unwound_at: unwound_at.len(),
             owner: owner.len(),
             moved_part: moved_part.len(),
+            rest_linear: rest_linear.len(),
             releases_at: releases_at.len(),
             may_abort: may_abort.len(),
             multi_at: multi_at.len(),
@@ -853,6 +859,7 @@ impl FnFacts {
             unwound_at,
             owner,
             moved_part,
+            rest_linear,
             releases_at,
             may_abort,
             multi_at,
@@ -915,6 +922,7 @@ impl FnFacts {
         unwound_at.truncate(mark.unwound_at);
         owner.truncate(mark.owner);
         moved_part.truncate(mark.moved_part);
+        rest_linear.truncate(mark.rest_linear);
         releases_at.truncate(mark.releases_at);
         may_abort.truncate(mark.may_abort);
         multi_at.truncate(mark.multi_at);
@@ -1144,6 +1152,7 @@ impl FnFacts {
         nd(&mut self.unwound_at);
         nd(&mut self.owner);
         nd(&mut self.moved_part);
+        nd(&mut self.rest_linear);
         nd(&mut self.releases_at);
         nd(&mut self.may_abort);
         nd(&mut self.multi_at);

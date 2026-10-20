@@ -100,48 +100,58 @@ pub struct TypeProps {
 impl TypeProps {
     /// Computes the table for every definition of `prog`.
     pub fn new(prog: &Program) -> Self {
-        let n = prog.adts.len();
-        let mut table: Vec<[Holds; 8]> = vec![Default::default(); n];
-        // The definitions that name each definition in their parts.
-        let mut users: Vec<Vec<usize>> = vec![Vec::new(); n];
-        for a in 0..n {
-            for t in parts(prog, a) {
-                each_adt(&t, &mut |b| {
-                    if b < n && !users[b].contains(&a) {
-                        users[b].push(a);
-                    }
-                });
-            }
+        Self {
+            table: fixpoint(prog).0,
         }
-        // A type that holds itself has its parts in heap cells, as an enum
-        // payload does: it is not plain data.
-        let recursive = recursive_adts(prog);
-        for (a, &r) in recursive.iter().enumerate() {
-            table[a][Prop::NotCopy.index()].always = r;
-        }
-        let mut work: Vec<usize> = (0..n).rev().collect();
-        let mut queued = vec![true; n];
-        while let Some(a) = work.pop() {
-            queued[a] = false;
-            let mut new = eval_adt(prog, a, &table);
-            new[Prop::NotCopy.index()].always |= recursive[a];
-            if new != table[a] {
-                table[a] = new;
-                for &u in &users[a] {
-                    if !queued[u] {
-                        queued[u] = true;
-                        work.push(u);
-                    }
-                }
-            }
-        }
-        Self { table }
     }
 
     /// Returns when property `p` holds for the instances of definition `a`.
     pub fn get(&self, a: AdtId, p: Prop) -> Option<&Holds> {
         self.table.get(a.index()).map(|h| &h[p.index()])
     }
+}
+
+/// Computes the table for every definition of `prog`, and the number of
+/// evaluations of a definition that the worklist made (the work).
+fn fixpoint(prog: &Program) -> (Vec<[Holds; 8]>, usize) {
+    let n = prog.adts.len();
+    let mut table: Vec<[Holds; 8]> = vec![Default::default(); n];
+    // The definitions that name each definition in their parts.
+    let mut users: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for a in 0..n {
+        for t in parts(prog, a) {
+            each_adt(&t, &mut |b| {
+                if b < n && !users[b].contains(&a) {
+                    users[b].push(a);
+                }
+            });
+        }
+    }
+    // A type that holds itself has its parts in heap cells, as an enum
+    // payload does: it is not plain data.
+    let recursive = recursive_adts(prog);
+    for (a, &r) in recursive.iter().enumerate() {
+        table[a][Prop::NotCopy.index()].always = r;
+    }
+    let mut work: Vec<usize> = (0..n).rev().collect();
+    let mut queued = vec![true; n];
+    let mut evals = 0;
+    while let Some(a) = work.pop() {
+        queued[a] = false;
+        evals += 1;
+        let mut new = eval_adt(prog, a, &table);
+        new[Prop::NotCopy.index()].always |= recursive[a];
+        if new != table[a] {
+            table[a] = new;
+            for &u in &users[a] {
+                if !queued[u] {
+                    queued[u] = true;
+                    work.push(u);
+                }
+            }
+        }
+    }
+    (table, evals)
 }
 
 impl Program {
@@ -530,19 +540,27 @@ mod tests {
 
     #[test]
     fn a_wide_recursive_type_is_fast() {
-        let fields: Vec<String> = (0..64).map(|i| format!("f{i}: A")).collect();
-        let src = format!(
-            "linear struct Tok {{ id: u64 }}\nstruct A {{ {}, t: Tok }}\nfn f(x: A) {{ let y = x }}\n",
-            fields.join(", ")
-        );
-        let start = std::time::Instant::now();
-        let Ok(a) = analyze_source(&src, Options::default()) else {
-            unreachable!("the source parses")
+        // The work of the fixpoint does not grow with the number of fields
+        // of a recursive type: each definition is evaluated again only when a
+        // definition that it names changes.
+        let evals = |width: usize| {
+            let fields: Vec<String> = (0..width).map(|i| format!("f{i}: A")).collect();
+            let src = format!(
+                "linear struct Tok {{ id: u64 }}\nstruct A {{ {}, t: Tok }}\nfn f(x: A) {{ let y = x }}\n",
+                fields.join(", ")
+            );
+            let Ok(a) = analyze_source(&src, Options::default()) else {
+                unreachable!("the source parses")
+            };
+            let p = a.program.props();
+            assert!(p
+                .get(adt(&a.program, "A"), Prop::Linear)
+                .is_some_and(|h| h.always));
+            let n = a.program.adts.len();
+            let (_, evals) = fixpoint(&a.program);
+            assert!(evals <= 3 * n, "{evals} evaluations for {n} definitions");
+            evals
         };
-        let p = a.program.props();
-        assert!(p
-            .get(adt(&a.program, "A"), Prop::Linear)
-            .is_some_and(|h| h.always));
-        assert!(start.elapsed().as_secs() < 10);
+        assert_eq!(evals(64), evals(2));
     }
 }

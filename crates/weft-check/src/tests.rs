@@ -1094,7 +1094,8 @@ fn w0312_a_lent_place_pairs_with_the_other_arguments() {
 }
 
 /// The pairwise step facts are the pairs of one class: a wide struct gives
-/// one `step_alias` and one `step_within` fact per field, quickly.
+/// one `step_alias` and one `step_within` fact per field, and the bridge
+/// compares a number of pairs that is linear in the fields.
 #[test]
 fn step_facts_of_a_wide_struct_are_linear() {
     let mut b = B::new();
@@ -1107,7 +1108,6 @@ fn step_facts_of_a_wide_struct_are_linear() {
     let elem = b.elem(v);
     let lo = b.seg(v, false);
     let hi = b.seg(v, true);
-    let start = std::time::Instant::now();
     let mut alias = Vec::new();
     let mut within = Vec::new();
     bridge::each_fact(&b.f, &mut |rel, args| {
@@ -1118,7 +1118,6 @@ fn step_facts_of_a_wide_struct_are_linear() {
             _ => {}
         }
     });
-    let time = start.elapsed();
     let sym = |p: PlaceId| bridge::Arg::Sym(p.to_string());
     let field0 = PlaceId(1);
     assert!(alias.contains(&format!("{:?}", [sym(field0), sym(field0)])));
@@ -1129,7 +1128,12 @@ fn step_facts_of_a_wide_struct_are_linear() {
     assert!(within.contains(&format!("{:?}", [sym(lo), sym(elem)])));
     assert!(!within.contains(&format!("{:?}", [sym(elem), sym(lo)])));
     assert_eq!(within.len(), n + 5, "{:?}", &within[n..]);
-    assert!(time.as_millis() < 500, "{time:?}");
+    // The work: each group compares each pair of its places.
+    let compared: usize = bridge::step_groups(&b.f)
+        .values()
+        .map(|g| g.len() * g.len())
+        .sum();
+    assert!(compared <= n + 16, "{compared} pairs for {n} fields");
 }
 
 #[test]

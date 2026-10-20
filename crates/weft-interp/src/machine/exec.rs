@@ -156,16 +156,21 @@ impl super::Machine<'_, '_> {
         Err(self.fault("a reference chain is too long"))
     }
 
-    /// Reads through references.
+    /// Reads through references. Each read is a read for the race detector of
+    /// the oracle: an operand and a callee read through a reference here.
     pub(crate) fn deref_value(&self, v: Value) -> R<Value> {
         let mut v = v;
         for _ in 0..256 {
             match v {
                 Value::Ref(p) => {
                     self.heap.check_ref(&p);
+                    self.heap.log_read(&p);
                     v = self.hget(&p)?.clone();
                 }
-                Value::Loc(p, _) => v = self.hget(&p)?.clone(),
+                Value::Loc(p, _) => {
+                    self.heap.log_read(&p);
+                    v = self.hget(&p)?.clone();
+                }
                 other => return Ok(other),
             }
         }

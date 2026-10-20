@@ -394,23 +394,39 @@ fn assert_short(text: &str) {
     assert!(widest.is_some_and(|w| w <= 64), "indent {widest:?}");
 }
 
-#[test]
-fn explain_folds_a_long_derivation() {
-    for (src, relation, fold) in [
+/// The long derivations of [`explain_folds_a_long_derivation`].
+fn long_derivations() -> [(String, &'static str, &'static str); 2] {
+    [
         (long_path(10_000), "error(", "more `invalid` steps ..."),
         (
             long_multi(10_000),
             "live_across_multi(",
             "more `live_in`, `live_out` steps ...",
         ),
-    ] {
-        let start = std::time::Instant::now();
+    ]
+}
+
+#[test]
+fn explain_folds_a_long_derivation() {
+    for (src, relation, fold) in long_derivations() {
         let text = explain_on_small_stack(src);
-        let time = start.elapsed();
         assert!(text.starts_with(relation), "{text}");
         assert!(text.contains(fold), "{text}");
         assert_short(&text);
-        assert!(time.as_secs() < 60, "{time:?}");
+    }
+}
+
+/// A clock is not stable on a loaded machine, so this bound runs only in a
+/// release build (`cargo test --release -p weft-cli --test limits`).
+#[test]
+#[cfg_attr(debug_assertions, ignore = "a time bound needs a release build")]
+fn explain_folds_a_long_derivation_in_time() {
+    for (src, _, _) in long_derivations() {
+        let start = std::time::Instant::now();
+        let text = explain_on_small_stack(src);
+        let time = start.elapsed();
+        assert_short(&text);
+        assert!(time.as_secs() < 20, "{time:?}");
     }
 }
 

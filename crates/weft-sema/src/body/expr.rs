@@ -1861,12 +1861,16 @@ impl Lower<'_> {
         // interpreter. So the temporaries of its value go out of scope at its
         // end, and an abort path finishes them with the body.
         self.stmt_temps.push((self.frames.len() + 1, Vec::new()));
-        let v = if def.has_multi() && !resumes_at_most_once(clauses) {
+        // The tail of the body moves into its value inside the body (ADR 0003).
+        let tail = expr_tail(body);
+        let (v, held) = if def.has_multi() && !resumes_at_most_once(clauses) {
             self.handled_again(body, cap)
         } else {
-            self.expr(body)
+            let v = self.expr(body);
+            self.frame_value_start(v, "handled body value", tail)
         };
-        self.close_stmt(expr_tail(body));
+        self.close_stmt(tail);
+        self.frame_value_end(held, tail);
         let body_frees = self.body_frees(moves_before, start.locals);
         // A clause parameter can point into a local of the body too.
         let mut arg_frees = body_frees.clone();
@@ -2065,13 +2069,25 @@ impl Lower<'_> {
             (c.span, c.body.span),
         );
         let returns = !matches!(self.inf.shallow(&cv.ty), Ty::Never);
-        if returns {
+        let tail = block_tail(&c.body);
+        let (cv, held) = if returns {
             self.unify(&around.ty, &cv.ty, c.body.span);
-            // The value of the clause moves into the value of the `handle`.
-            self.consume(&cv, block_tail(&c.body));
-        }
-        self.flush(block_tail(&c.body));
+            // The value of the clause moves into the value of the `handle`, at
+            // the tail. A hidden variable holds it across the end of the clause
+            // (`frame_value_start`).
+            if cv.place.is_none() {
+                self.consume(&cv, tail);
+            }
+            self.frame_value_start(cv, "clause value", tail)
+        } else {
+            (cv, None)
+        };
+        self.flush(tail);
         self.end_frame(c.span);
+        // The clause runs in a frame of its own, as in the interpreter: its
+        // temporaries go out of scope at its end.
+        self.close_stmt(c.span);
+        self.frame_value_end(held, tail);
         // The `resume`s of this clause.
         let own_resumes: Vec<NodeId> = self.resumes[resumes_before..]
             .iter()
@@ -2262,15 +2278,27 @@ impl Lower<'_> {
                 .map(|(_, &r)| r)
                 .collect();
             let root = self.facts.place(p).root;
-            if let Some(l) = self.root_owner(root) {
-                let var = self.locals[l].var;
+            // A local of the clause, or a temporary of the clause.
+            let owner = if let Some(l) = self.root_owner(root) {
+                Some((
+                    self.locals[l].var,
+                    format!("`{}`: the local", self.locals[l].name),
+                ))
+            } else {
+                let rp = self.root_place(p);
+                self.facts
+                    .owner
+                    .iter()
+                    .find(|&&(r, _)| r == rp)
+                    .map(|&(_, var)| (var, "a temporary: the temporary".to_string()))
+            };
+            if let Some((var, what)) = owner {
                 self.facts.scope_end.push((var, end));
                 h.clause_vars.push(var);
                 if v_refs_result(&self.facts, &results, &v.refs) {
-                    let name = self.locals[l].name.clone();
                     self.err(
                         Code::W0204,
-                        format!("the `handle` returns a reference into `{name}`: the local of the clause goes out of scope when the clause ends"),
+                        format!("the `handle` returns a reference into {what} of the clause goes out of scope when the clause ends"),
                         span,
                     );
                 }
@@ -2515,12 +2543,19 @@ impl Lower<'_> {
     /// outside it are stable. Its end gets a path back to the nodes after each
     /// node that runs a clause of the handler (`cap`), through a node that gives
     /// each local of the body its copy again (`again_node`).
-    fn handled_again(&mut self, body: &Expr, cap: weft_facts::CapId) -> Val {
+    fn handled_again(
+        &mut self,
+        body: &Expr,
+        cap: weft_facts::CapId,
+    ) -> (Val, Option<weft_facts::VarId>) {
         let mut out = None;
+        let tail = expr_tail(body);
         self.lower_loop(body.span, &mut |me: &mut Self| {
             let calls = me.cap_calls.len();
             let outer = me.locals.len();
             let v = me.expr(body);
+            // The tail moves in each run of the body (`frame_value_start`).
+            let (v, held) = me.frame_value_start(v, "handled body value", tail);
             if let Some(end) = me.cur {
                 let again: Vec<NodeId> = me.cap_calls[calls..]
                     .iter()
@@ -2542,12 +2577,17 @@ impl Lower<'_> {
                     for n in next {
                         me.facts.cfg_edge.push((node, n));
                     }
+                    // The `resume` of the run before took its value.
+                    if let Some(h) = held {
+                        me.facts.uses.push((h, node));
+                        me.facts.moved_at.push((h, node));
+                    }
                 }
             }
             // The body is not a loop of the source: no part holder retires at
             // its edges.
             me.last_loop = None;
-            out = Some(v);
+            out = Some((v, held));
         });
         out.unwrap_or_default()
     }
@@ -2911,30 +2951,43 @@ impl Lower<'_> {
         // A scope with a failed child raises the failure at its end.
         self.raise_here();
         self.scopes.push((l, Vec::new()));
+        let binder_uses = self.facts.uses.len();
         // The tasks join before the locals of the body go out of scope.
         self.push_frame(None);
+        // The scope body runs in a frame of its own, as in the interpreter: the
+        // temporaries of its value go out of scope at its end, after the joins.
+        self.stmt_temps.push((self.frames.len(), Vec::new()));
         self.jumps.push(Jump::Fence("scope body"));
         let v = self.block_inner(body);
         self.jumps.pop();
         let v = self.hand_out(v, body.span);
         let tail = block_tail(body);
+        // The tail moves into the value of the scope while the tasks can run.
+        let (v, held) = self.frame_value_start(v, "scope body value", tail);
         self.flush(tail);
         let (_, tasks) = self.scopes.pop().unwrap_or_default();
         let end = self.emit(span, "scope end", String::new());
         for &t in &tasks {
             self.facts.joined_at.push((t, end));
         }
+        // The end of a scope raises the failure of a child (ADR 0006). A child
+        // can exist if the body starts a task or uses the binder: a callee or a
+        // closure that gets it can start one.
+        let binder = self.locals[l].var;
+        let child = !tasks.is_empty()
+            || self.facts.uses[binder_uses..]
+                .iter()
+                .any(|&(v, _)| v == binder);
+        if child {
+            self.abortive(end);
+        }
         self.end_tasks(&tasks, span);
-        let held = self.hold_out(&v, tail);
         self.end_frame(body.span);
+        self.close_stmt(body.span);
         self.pop_frame();
-        let v = if self.use_held(held, tail) {
-            Val { var: None, ..v }
-        } else {
-            v
-        };
         self.end_frame(span);
         self.pop_frame();
+        self.frame_value_end(held, tail);
         v
     }
 }

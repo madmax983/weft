@@ -35,6 +35,8 @@
 //                            finishes V (its `on abort` runs).
 //   owner(Rt, V)             root place Rt holds the value of V. A move or the end of V frees it.
 //   moved_part(M, P)         node P moves the value at place M out of its owner (a partial move).
+//   rest_linear(V, P)        node P moves a part of V, and another part of V can hold a linear
+//                            value: the rest of V is still live.
 //   releases_at(P, M)        node P can free the memory at place M, as a move out of its owner
 //                            does: a resume, after the handled body changed a place above what
 //                            a clause parameter points into.
@@ -175,6 +177,12 @@ frees_at(P, M)       :- releases_at(P, M).
 
 invalidated_at(R, P) :- points_into(R, Path), frees_at(P, M), prefix(M, Path).
 
+// A move of a part leaves no value in the part. A reference to a place above
+// the part, such as the whole value, reads the part too. So the move
+// invalidates each reference that overlaps the part. A reference to another
+// part stays valid.
+invalidated_at(R, P) :- points_into(R, Path), frees_at(P, M), moved_part(M, P), overlaps(M, Path).
+
 // A reference that can point anywhere below B is invalid after any change that
 // overlaps B. A mutation anywhere below B invalidates every reference strictly
 // below B; a reference to B itself survives (rule 4). These rules do not apply
@@ -223,15 +231,18 @@ moved_immovable(V, P) :- moved_at(V, P), immovable(V).
 // A new value with no linear part has nothing to consume. A new value of a part
 // can give the variable a linear value. On an abort path the unwinder finishes
 // the value (`may_abort` needs its `on abort`, W0602). An operation of a local
-// handler aborts only the values of the handled body (`spared_at`).
+// handler aborts only the values of the handled body (`spared_at`). A move ends
+// the value, but a move of a part that leaves a linear part does not
+// (`rest_linear`): the rest is still live, at the move and after it.
+ends_linear(V, P)     :- moved_at(V, P), !rest_linear(V, P).
 live_linear(V, Q)     :- linear(V), rebound_at(V, P), !empty_at(V, P), cfg_edge(P, Q).
 live_linear(V, Q)     :- linear(V), overwrites(V, P), cfg_edge(P, Q).
-live_linear(V, Q)     :- live_linear(V, P), cfg_edge(P, Q), !moved_at(V, P), !unwound_at(V, P).
+live_linear(V, Q)     :- live_linear(V, P), cfg_edge(P, Q), !ends_linear(V, P), !unwound_at(V, P).
 
 unconsumed(V, P)      :- live_linear(V, P), scope_end(V, P).
 overwritten(V, P)     :- live_linear(V, P), rebound_at(V, P).
 overwritten(V, P)     :- live_linear(V, P), overwrites(V, P).
-abort_unhandled(V, P) :- live_linear(V, P), may_abort(P), !moved_at(V, P), !has_on_abort(V),
+abort_unhandled(V, P) :- live_linear(V, P), may_abort(P), !ends_linear(V, P), !has_on_abort(V),
                          !spared_at(V, P).
 
 // ---------------------------------------------------------------------------

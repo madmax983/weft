@@ -322,9 +322,16 @@ impl Heap {
     /// Ends the life of a local or temporary cell. Copy values stay readable, so a
     /// closure that outlives the scope of a captured integer still sees it.
     pub fn end_cell(&mut self, c: CellId) {
-        let Some(s) = self.slots.get(c) else {
-            return;
-        };
+        if let Some(v) = self.end_cell_value(c) {
+            self.drop_value(v);
+        }
+    }
+
+    /// Ends the life of a local or temporary cell, as [`Heap::end_cell`] does,
+    /// and returns its value if it is not a copy value. The unwinder finds the
+    /// linear values in it. A copy value stays in the cell.
+    pub fn end_cell_value(&mut self, c: CellId) -> Option<Value> {
+        let s = self.slots.get(c)?;
         let copy = self.is_copy(&s.val);
         if let Some(o) = &self.oracle {
             // A reference into the cell dangles now, also for a copy value.
@@ -333,10 +340,9 @@ impl Heap {
             }
         }
         if copy {
-            return;
+            return None;
         }
-        let v = take_moved(&mut self.slots[c].val);
-        self.drop_value(v);
+        Some(take_moved(&mut self.slots.get_mut(c)?.val))
     }
 
     /// Returns the number of counted cells that are still alive.

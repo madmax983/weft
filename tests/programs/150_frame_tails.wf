@@ -1,0 +1,166 @@
+// The tail of a frame body is the value of the frame (ADR 0003). A place
+// there moves into the value at the tail, inside the frame: before the tasks
+// of a scope join, and before the locals and the temporaries of the frame go
+// out of scope. In statement position, the value goes away at the end of the
+// statement: a move and a drop, as for a block. A handled body with a `multi`
+// operation runs its tail again after each `resume`, so the tail moves in each
+// run (ADR 0005).
+linear struct Tx { id: u64 }
+    on abort = tx_abort
+fn tx_abort(t: Tx) { let Tx(id) = t; print("abort", id) }
+fn commit(t: Tx) { let Tx(id) = t; print("commit", id) }
+struct Pin: !Move { x: u64 }
+struct Two { a: Vec<u64>, b: Vec<u64> }
+effect Pick { multi fn pick() -> bool }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+
+// A scope in statement position: its tail moves.
+fn scope_use_after_move() {
+    let v = mk_v()
+    scope { s =>
+        v
+    }
+    print(v.len())   //~ W0302
+}
+fn scope_dangling() {
+    let v = mk_v()
+    let r = &v[0]
+    scope { s => v }
+    print(r + 1)   //~ W0301
+}
+fn scope_part() {
+    let p = Two { a: mk_v(), b: mk_v() }
+    let r = &p.a[0]
+    scope { s => p.a }
+    print(r + 1)   //~ W0301
+}
+fn scope_linear() {
+    let t = Tx { id: 1 }
+    scope { s =>
+        t   //~ W0601
+    }
+    commit(t)   //~ W0302
+}
+fn scope_immovable() {
+    let p = Pin { x: 1 }
+    scope { s =>
+        p   //~ W0604
+    }
+    print(p.x)   //~ W0302
+}
+fn scope_nested_block() {
+    let v = mk_v()
+    scope { s =>
+        s.spawn(|| print(1))
+        { v }
+    }
+    v.push(2)   //~ W0302
+}
+
+// The tail moves while a task of the scope still runs: the tasks join after
+// the tail.
+fn scope_tail_with_task() {
+    let t = (mk_v(), 6)
+    let q = &t.1
+    scope { s =>
+        s.spawn(|| { sleep(1.ms); print(q) })
+        { t }   //~ W0405
+    }
+}
+fn scope_value_with_task() {
+    let t = (mk_v(), 6)
+    let q = &t.1
+    let x = scope { s =>
+        s.spawn(|| { sleep(1.ms); print(q) })
+        t   //~ W0405
+    }
+    print(x.1)
+}
+
+// A handled body with a `multi` operation: each `resume` runs the tail again.
+fn multi_tail_place() {
+    let v = mk_v()
+    let w = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        let b = pick()
+        v   //~ W0302
+    }
+    print(w.len())
+}
+fn multi_tail_block() {
+    let v = mk_v()
+    let w = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        let b = pick()
+        { v }   //~ W0302
+    }
+    print(w.len())
+}
+fn multi_statement() {
+    let v = mk_v()
+    handle Pick { fn pick() { resume(true); resume(true) } } in {
+        let b = pick()
+        v   //~ W0302
+    }
+}
+fn multi_clause_keeps_both() {
+    let v = mk_v()
+    let w = handle Pick { fn pick() { let x = resume(true); let y = resume(false); y } } in {
+        let b = pick()
+        v   //~ W0302
+    }
+    print(w.len())
+}
+
+// Clean: the value of the scope goes into a local. A copy value is copied.
+fn scope_value_used() {
+    let v = mk_v()
+    let w = scope { s => v }
+    print(w.len())
+}
+fn scope_copy_tail() {
+    let n = 5
+    scope { s => n }
+    print(n)
+}
+fn scope_linear_value() {
+    let t = Tx { id: 2 }
+    let u = scope { s => t }
+    commit(u)
+}
+// Clean: the task reads one local, and the tail moves another one.
+fn scope_task_other_value() {
+    let t = (mk_v(), 6)
+    let u = mk_v()
+    let q = &t.1
+    let x = scope { s =>
+        s.spawn(|| { sleep(1.ms); print(q) })
+        u
+    }
+    print(x.len())
+    print(t.1)
+}
+// Clean: a copy value, and a local of the handled body, in each run.
+fn multi_tail_copy() {
+    let n = 3
+    let w = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        let b = pick()
+        n
+    }
+    print(w)
+}
+fn multi_tail_local() {
+    let w = handle Pick { fn pick() { resume(true); resume(true) } } in {
+        let b = pick()
+        let v = mk_v()
+        v
+    }
+    print(w.len())
+}
+
+fn main() {
+    scope_value_used()
+    scope_copy_tail()
+    scope_linear_value()
+    scope_task_other_value()
+    multi_tail_copy()
+    multi_tail_local()
+}

@@ -73,6 +73,18 @@ Status: accepted. Date: 2026-10-18.
   `<dangling>` and goes on. The interpreter program tests and the runs
   of the corpus programs turn the checks on: an accepted program must not fault with
   them.
+- The race detector logs each read and each write of a place of a cell (review round
+  3, O3-13): a use of a place, a read through a reference or a `Box` on the way to a
+  place, a read through a reference in an operand or in an argument of a callee
+  (`Machine::deref_value`), a display of a value (`print`, string interpolation), and
+  each write. For each cell it keeps the last access of each task, path and kind (a
+  read or a write), with no limit on the number of records (I3-12).
+- With the oracle checks on, a display of a moved value, of a freed cell or buffer, or
+  of a value through a dangling reference is a fault, as each other read of it is.
+  The stock machine shows `<moved>`, `<freed>` or `<dangling>` and goes on.
+- An abort path ends the scope of each local and temporary of a frame that it unwinds,
+  as the normal end of a scope does (F3-9). A reference into such a local is dangling
+  for the oracle. A copy value stays in its cell, as at a normal end.
 - Phase 1 does not simulate the network. `sim.net.partition` and `sim.net.heal` only
   record the partition in the trace, and `http.serve` binds a real socket also in a
   simulation.

@@ -122,7 +122,7 @@ fn build(s: &Shape) -> FnFacts {
     let cap = |x: usize| CapId(u32::try_from(x).unwrap() % caps);
     for &(rel, a, b, c) in &s.rels {
         let idx = u32::try_from(c % 3).unwrap();
-        match rel % 49 {
+        match rel % 50 {
             0 => f.points_into.push((v(a), p(b))),
             1 => f.mutates_at.push((n(a), p(b))),
             2 => f.reads_at.push((n(a), p(b))),
@@ -137,6 +137,10 @@ fn build(s: &Shape) -> FnFacts {
             7 => {
                 f.moved_at.push((v(a), n(b)));
                 f.uses.push((v(a), n(b)));
+                // A move of a part can leave a linear part.
+                if c % 3 == 0 {
+                    f.rest_linear.push((v(a), n(b)));
+                }
             }
             8 => f.scope_end.push((v(a), n(b))),
             9 => f.may_abort.push(n(a)),
@@ -187,6 +191,7 @@ fn build(s: &Shape) -> FnFacts {
             45 => f.sim_run_at.push(n(a)),
             47 => f.ref_at.push((n(a), p(b))),
             48 => f.ref_in.push((n(a), p(b))),
+            49 => f.rest_linear.push((v(a), n(b))),
             _ => {}
         }
     }

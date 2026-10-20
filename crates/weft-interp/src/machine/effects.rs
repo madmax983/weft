@@ -425,8 +425,11 @@ impl super::Machine<'_, '_> {
         let mut vals: Vec<Value> = cf.stack.into_iter().rev().collect();
         let mut cells: Vec<CellId> = cf.temps.into_iter().rev().collect();
         cells.extend(cf.slots.into_iter().rev().flatten());
+        // The scope of each local and temporary ends here, as at a normal end
+        // (`end_cells`): the oracle sees a later read through a reference
+        // into the cell.
         for c in cells {
-            if let Ok(v) = self.heap.take(&Place::root(c)) {
+            if let Some(v) = self.heap.end_cell_value(c) {
                 vals.push(v);
             }
         }

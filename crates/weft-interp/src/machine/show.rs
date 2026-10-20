@@ -32,7 +32,21 @@ impl super::Machine<'_, '_> {
     fn show_cell(&self, c: usize, out: &mut String, top: bool, depth: usize) {
         match self.heap.slot(c) {
             Ok(s) if s.kind != SlotKind::Free => self.show_into(&s.val, out, top, depth + 1),
-            _ => out.push_str("<freed>"),
+            _ => self.show_fault(
+                out,
+                "<freed>",
+                "a read of a freed cell (a dangling reference)",
+            ),
+        }
+    }
+
+    /// Shows the marker of a value that a read cannot get. With the oracle
+    /// checks on, the read is a fault too: a display reads the value, as
+    /// each other use does.
+    fn show_fault(&self, out: &mut String, marker: &str, what: &str) {
+        out.push_str(marker);
+        if let Some(o) = self.heap.oracle() {
+            o.borrow_mut().flag(format!("oracle: {what}"));
         }
     }
 
@@ -114,7 +128,11 @@ impl super::Machine<'_, '_> {
             }
             Value::Vec(c) => match self.heap.list(*c) {
                 Ok(vs) => self.show_list(vs, out, depth),
-                Err(_) => out.push_str("<freed>"),
+                Err(_) => self.show_fault(
+                    out,
+                    "<freed>",
+                    "a read of a freed buffer (a dangling reference)",
+                ),
             },
             Value::List(vs) => self.show_list(vs, out, depth),
             Value::Slice { buf, lo, hi } => match self.heap.list(*buf) {
@@ -123,7 +141,11 @@ impl super::Machine<'_, '_> {
                     let hi = (*hi as usize).clamp(lo, vs.len());
                     self.show_list(&vs[lo..hi], out, depth);
                 }
-                Err(_) => out.push_str("<freed>"),
+                Err(_) => self.show_fault(
+                    out,
+                    "<freed>",
+                    "a read of a freed buffer (a dangling reference)",
+                ),
             },
             Value::Boxed(c) | Value::Rc(c) => self.show_cell(*c, out, top, depth),
             Value::Weak(_) => out.push_str("Weak"),
@@ -134,7 +156,9 @@ impl super::Machine<'_, '_> {
                 self.heap.log_read(p);
                 match self.heap.get(p) {
                     Ok(x) => self.show_into(x, out, top, depth + 1),
-                    Err(_) => out.push_str("<dangling>"),
+                    Err(_) => {
+                        self.show_fault(out, "<dangling>", "a read through a dangling reference");
+                    }
                 }
             }
             Value::Closure(_) => out.push_str("<closure>"),
@@ -161,7 +185,7 @@ impl super::Machine<'_, '_> {
             }
             Value::Response(r) => out.push_str(&r.body),
             Value::Iter(_) => out.push_str("<iterator>"),
-            Value::Moved => out.push_str("<moved>"),
+            Value::Moved => self.show_fault(out, "<moved>", "a read of a moved value"),
         }
     }
 

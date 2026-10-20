@@ -20,6 +20,12 @@ Status: accepted. Date: 2026-10-18.
 - Separation (W0405): a task is active from its spawn to its join or the scope end. Each
   node that runs while a task is active must not access what the task writes, and must
   not write what the task reads.
+- The end of a scope raises the failure of a child, as a `join` does. So the end node
+  can abort (`may_abort`), as the start node can, when the scope can have a child: the
+  body starts a task, or it uses the binder (a callee or a closure that gets the binder
+  can start one). A linear value that is live at the end, such as the value of the
+  scope body, needs `on abort` (W0602, review round 3, F3-7). The value of the body
+  moves at its tail, before the joins (ADR 0003).
 - The rule is access-based. Sema records the reads: a use of a reference as a value
   reads the places that it points into, a call reads its reference arguments, a loop
   reads the elements at each iteration, and a handler clause reads its captures at each

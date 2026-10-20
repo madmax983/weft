@@ -1,0 +1,86 @@
+// A move of one part of a linear aggregate leaves the other linear parts in the
+// local (`rest_linear`). The local stays live, so its end is W0601 and an
+// abort is W0602. A later use of the local, also of another part, is still a
+// use after a move (W0302), so the program cannot consume the rest that way.
+// Destructure the value to consume each part (ADR 0007).
+linear struct Tx { id: u64 }
+    on abort = rollback
+linear struct Lock { id: u64 }
+fn rollback(tx: Tx) { print(tx.id); let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn unlock(l: Lock) { let Lock(i) = l }
+struct Two { a: Tx, b: Tx }
+struct Mixed { a: Tx, n: u64 }
+effect Stop { fn stop() }
+
+// One element of an array moves. The other element is dropped.
+fn array_element() {
+    let a = [begin(1), begin(2)]
+    rollback(a[0])
+}   //~ W0601
+
+// One part of a tuple moves. The other part is dropped.
+fn tuple_part() {
+    let t = (begin(1), begin(2))
+    rollback(t.0)
+}   //~ W0601
+
+// One field moves. The other field is dropped.
+fn struct_field() {
+    let s = Two { a: begin(1), b: begin(2) }
+    rollback(s.a)
+}   //~ W0601
+
+// A part moves into a new local. The other part is dropped.
+fn part_to_local() {
+    let t = (begin(1), begin(2))
+    let x = t.0
+    rollback(x)
+}   //~ W0601
+
+// A closure moves one part of a captured tuple.
+fn closure_part() {
+    let t = (begin(1), begin(2))
+    let f = || rollback(t.0)   //~ W0601
+    f()
+}
+
+// After a part moves, the `Lock` part is live across an operation that can
+// abort, and `Lock` has no `on abort`.
+fn part_then_abort() / Stop {
+    let t = (begin(1), Lock { id: 2 })
+    rollback(t.0)
+    stop()   //~ W0602
+}   //~ W0601
+
+// The move of the part is a call that can abort. The `Lock` part is live at
+// the call too.
+fn end_or_stop(tx: Tx) / Stop { stop(); rollback(tx) }
+fn part_move_aborts() / Stop {
+    let t = (begin(1), Lock { id: 2 })
+    end_or_stop(t.0)   //~ W0602
+}   //~ W0601
+
+// Clean: destructuring consumes both parts.
+fn destructure() {
+    let t = (begin(1), begin(2))
+    let (x, y) = t
+    rollback(x)
+    rollback(y)
+}
+// Clean: the rest has no linear part.
+fn rest_plain() {
+    let m = Mixed { a: begin(3), n: 4 }
+    rollback(m.a)
+    let t = (begin(5), 6)
+    rollback(t.0)
+}
+// The rule is not exact: the length of a `Vec` is not known, so a move of an
+// element leaves the other elements, also when there are none.
+fn one_element() {
+    let a = [begin(7)]
+    rollback(a[0])
+}   //~ W0601
+
+test "destructure" { destructure() }
+test "rest_plain" { rest_plain() }

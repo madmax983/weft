@@ -684,6 +684,38 @@ fn a_move_of_a_field_moves_a_part() {
 }
 
 #[test]
+fn a_move_of_a_linear_part_leaves_the_rest() {
+    // `rest_linear` holds where a linear part is left: a tuple part, a struct
+    // field, a payload and an element. A part move with no linear rest ends
+    // the value.
+    let src = "linear struct Tx { id: u64 }
+         struct Two { a: Tx, b: Tx }
+         struct One { a: Tx, n: u64 }
+         fn end(t: Tx) { let Tx(i) = t }
+         fn tuple() { let t = (Tx { id: 1 }, Tx { id: 2 }); end(t.0) }
+         fn field() { let s = Two { a: Tx { id: 1 }, b: Tx { id: 2 } }; end(s.b) }
+         fn nested() { let t = ((Tx { id: 1 }, Tx { id: 2 }), 3); end(t.0.1) }
+         fn element() { let v = [Tx { id: 1 }]; end(v[0]) }
+         fn plain_rest() { let s = One { a: Tx { id: 1 }, n: 2 }; end(s.a) }
+         fn whole_part() { let t = ((Tx { id: 1 }, Tx { id: 2 }), 3); let (a, b) = t.0 }";
+    for (name, rest) in [
+        ("tuple", true),
+        ("field", true),
+        ("nested", true),
+        ("element", true),
+        ("plain_rest", false),
+        ("whole_part", false),
+    ] {
+        let f = facts(src, name);
+        assert_eq!(!f.rest_linear.is_empty(), rest, "{name}");
+        for &(v, n) in &f.rest_linear {
+            assert!(f.moved_at.contains(&(v, n)), "{name}");
+            assert!(f.moved_part.iter().any(|&(_, m)| m == n), "{name}");
+        }
+    }
+}
+
+#[test]
 fn a_loop_reads_the_elements_at_each_iteration() {
     let f = facts("fn f(v: &Vec<u64>) { for x in v[] { print(1) } }", "f");
     let elems = place(&f, "v[]");

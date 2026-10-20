@@ -1,7 +1,7 @@
 //! Functions, blocks, statements and patterns.
 
 use super::{
-    ast, block_tail, effects, expr_tail, AssignOp, Block, EffectSig, ExprKind, FnId, Jump, LVal,
+    ast, block_tail, effects, frame_tail, AssignOp, Block, EffectSig, ExprKind, FnId, Jump, LVal,
     LoopFrame, Lower, Lowered, NodeId, Pattern, PlaceId, RootKind, SigPlace, SigRoot, SigStep,
     Span, StepKind, Stmt, StmtKind, Ty, Val, VarId, VarKind,
 };
@@ -265,6 +265,7 @@ impl Lower<'_> {
         let nodes: BTreeSet<NodeId> = copies.iter().map(|&(_, n)| n).collect();
         self.facts.moved_at.retain(|m| !copies.contains(m));
         self.facts.moved_part.retain(|(_, n)| !nodes.contains(n));
+        self.facts.rest_linear.retain(|m| !copies.contains(m));
     }
 
     /// Reports W0102 for an integer literal that does not fit the type that the
@@ -703,8 +704,10 @@ impl Lower<'_> {
     }
 
     /// Moves a block's value out of the block before its locals go out of scope.
+    /// A value that moved out of its local already (`frame_value_start`) does
+    /// not move again.
     pub(super) fn hand_out(&mut self, mut v: Val, span: Span) -> Val {
-        if let Some(l) = v.local {
+        if let (Some(l), Some(_)) = (v.local, v.var) {
             let top = self.frames.len() - 1;
             let local_here = self.local_frame(l) == top;
             if local_here && self.cur.is_some() {
@@ -725,6 +728,79 @@ impl Lower<'_> {
             }
         }
         v
+    }
+
+    /// Starts the way of the value of a frame body out of the frame, at its
+    /// tail (ADR 0003). The frame is a scope body, a handled body or a clause.
+    /// The tail runs inside the frame, as in the interpreter. So a place there
+    /// moves into the value of the frame at the tail, before the end of the
+    /// frame: the joins of its tasks, and the end of its locals and its
+    /// temporaries. The value then stands for no variable and no place. It
+    /// keeps the local that it came from, for what the local held.
+    ///
+    /// A hidden variable holds the value from the tail to the node after the
+    /// end of the frame (`frame_value_end`). It points where the value points,
+    /// so a free at the end of the frame invalidates it (W0301). It is linear
+    /// if the value is, so an abort at the end of the frame sees it (W0602).
+    pub(super) fn frame_value_start(
+        &mut self,
+        mut v: Val,
+        name: &str,
+        span: Span,
+    ) -> (Val, Option<VarId>) {
+        if self.cur.is_none() {
+            return (v, None);
+        }
+        if let Some(lv) = v.place.clone() {
+            let ty = self.inf.resolve(&v.ty);
+            if !self.is_copy(&ty) || self.has_unknown(&ty) {
+                self.consume(&v, span);
+                v.local = v.local.or(lv.owner);
+                v.var = None;
+                v.place = None;
+            }
+        }
+        // A value with a variable of its own, such as a closure, goes on in
+        // that variable: the node that takes the value uses it.
+        if v.var.is_some() && v.local.is_none() {
+            return (v, None);
+        }
+        let ty = self.inf.resolve(&v.ty);
+        let linear = v.var.is_none() && self.may_be_linear(&ty);
+        if v.refs.is_empty() && !linear {
+            return (v, None);
+        }
+        let mut info = self.var_info(name, VarKind::BlockValue, span, &ty, v.uniq);
+        // The move of the value itself is the move that W0604 sees.
+        info.immovable = false;
+        info.linear &= linear;
+        let var = if linear {
+            self.new_var(info, &ty)
+        } else {
+            self.facts.add_var(info)
+        };
+        let n = self.emit(span, name, String::new());
+        self.bind(var, n);
+        for &p in &v.refs {
+            self.facts.points_into.push((var, p));
+        }
+        self.in_flight
+            .push((var, self.jumps.len(), self.loops.len()));
+        (v, Some(var))
+    }
+
+    /// The node after the end of a frame takes the value that
+    /// `frame_value_start` held.
+    pub(super) fn frame_value_end(&mut self, held: Option<VarId>, span: Span) {
+        let Some(var) = held else {
+            return;
+        };
+        if self.cur.is_some() {
+            let n = self.emit(span, "frame value", String::new());
+            self.take_held(&[var], n);
+        } else {
+            self.in_flight.retain(|(v, ..)| *v != var);
+        }
     }
 
     pub(super) fn block_inner(&mut self, b: &Block) -> Val {
@@ -823,19 +899,22 @@ impl Lower<'_> {
     }
 
     /// Discards the value of a block that nothing uses: a block statement, a
-    /// loop body, or the branch of an `if` with no `else`. A tail that names a
-    /// place is a value, as in the interpreter: it moves out of the place, and
-    /// it goes away here (ADR 0003).
+    /// loop body, the branch of an `if` with no `else`, or a scope or a
+    /// `handle` in statement position. A tail that names a place is a value, as
+    /// in the interpreter: it moves out of the place, and it goes away here
+    /// (ADR 0003). The tail of a scope body or of a handled body moved at the
+    /// tail already (`frame_value_start`): the value then keeps only its local.
     pub(super) fn discard_block_value(&mut self, v: &Val, span: Span) {
-        if v.place.is_none() {
+        let t = self.inf.resolve(&v.ty);
+        if v.place.is_some() {
+            if self.is_copy(&t) && !self.has_unknown(&t) {
+                return;
+            }
+            self.consume(v, span);
+        } else if v.var.is_some() || v.local.is_none() || !v.tasks.is_empty() {
             self.drop_value(v, span);
             return;
         }
-        let t = self.inf.resolve(&v.ty);
-        if self.is_copy(&t) && !self.has_unknown(&t) {
-            return;
-        }
-        self.consume(v, span);
         if self.may_be_linear(&t) {
             let name = v
                 .local
@@ -897,9 +976,13 @@ impl Lower<'_> {
                 let v = self.expr(e);
                 // A place of a local in statement position only names the
                 // place. It moves nothing and drops nothing (ADR 0003). The
-                // tail of a block is a value: it moves (`discard_block_value`).
-                if matches!(e.kind, ExprKind::Block(_)) {
-                    self.discard_block_value(&v, expr_tail(e));
+                // tail of a block, of a scope body and of a handled body is a
+                // value: it moves, and it goes away here (`discard_block_value`).
+                if matches!(
+                    e.kind,
+                    ExprKind::Block(_) | ExprKind::Scope { .. } | ExprKind::Handle { .. }
+                ) {
+                    self.discard_block_value(&v, frame_tail(e));
                 } else if !self.local_place(e) {
                     self.drop_value(&v, e.span);
                 }
@@ -1672,14 +1755,24 @@ impl Lower<'_> {
         if let Some(l) = v.var.and_then(|x| self.local_of(x)) {
             self.locals.set_tasks(l, BTreeSet::new());
         }
-        // A move of a part of the owner frees that part only.
+        // A move of a part of the owner frees that part only. The other parts
+        // of a linear value are still live if one of them can be linear.
         if v.var.is_none() {
             if let Some(lv) = &v.place {
-                let root = lv.owner.and_then(|l| self.locals[l].root);
+                let owner = lv.owner.and_then(|l| self.locals[l].root.map(|r| (l, r)));
+                let root = owner.map(|(_, r)| r);
+                let mut rest = false;
                 for &p in &lv.places {
                     if Some(p) != root {
                         self.facts.moved_part.push((p, n));
+                        if let Some((l, _)) = owner {
+                            let ty = self.locals[l].ty.clone();
+                            rest |= self.rest_linear(&ty, &self.facts.place(p).steps.clone());
+                        }
                     }
+                }
+                if rest {
+                    self.facts.rest_linear.push((var, n));
                 }
             }
         }

@@ -142,10 +142,13 @@ fn described(var: &weft_facts::VarInfo) -> bool {
 }
 
 /// Returns the name of variable `var` as a diagnostic shows it. A variable
-/// with a name of the lowering gets a description, with no braces.
+/// with a name of the lowering gets a description, with no braces. The holder
+/// of the value of a frame, such as `scope body value`, gets `the`.
 fn shown_name(var: &weft_facts::VarInfo) -> String {
     if var.kind == VarKind::Iterator {
         "the loop iterator".to_string()
+    } else if var.kind == VarKind::BlockValue {
+        format!("the {}", var.name)
     } else if var.name.starts_with('{') {
         format!("the {}", var.name.trim_matches(|c| c == '{' || c == '}'))
     } else {
@@ -325,20 +328,23 @@ fn w0301(f: &FnFacts, r: &Report, out: &mut Vec<Diagnostic>) {
         let (what, why) = w0301_cause(f, inv);
         let holder = holder_text(f, inv, false);
         let used = node_span(f, inv.used_at);
-        // A block value is held only across the end of its block.
+        // The value of a frame is held only across the end of its frame: a
+        // block, a scope body, a handled body or a clause. The name of the
+        // hidden variable names the frame.
         let block_value = var.kind == VarKind::BlockValue;
         let d = if let (true, Cause::ScopeEnd(o)) = (block_value, inv.cause) {
+            let frame = var.name.strip_suffix(" value").unwrap_or("block");
             let head = match (var.callable, handle) {
-                (true, _) => format!("the closure that this block returns captures `{path}`"),
+                (true, _) => format!("the closure that this {frame} returns captures `{path}`"),
                 (false, Some(h)) => {
-                    format!("the value of this block points into the object behind `{h}`")
+                    format!("the value of this {frame} points into the object behind `{h}`")
                 }
-                (false, None) => format!("the value of this block points into `{path}`"),
+                (false, None) => format!("the value of this {frame} points into `{path}`"),
             };
             Diagnostic::error(
                 Code::W0301,
                 format!(
-                    "{head}, but `{}` goes out of scope at the end of the block",
+                    "{head}, but `{}` goes out of scope at the end of the {frame}",
                     f.var(o).name
                 ),
                 used,
@@ -487,7 +493,19 @@ fn w0301_cause(f: &FnFacts, inv: &Invalidation) -> (String, String) {
         }
         Cause::MovePart(m) => {
             let moved = &f.place(m).display;
-            (format!("{moved} : moved"), inside(moved, "is moved"))
+            // A reference to a place above the moved part reads the part too.
+            let mut above = f.place(m).parent;
+            while let Some(q) = above.filter(|&q| q != inv.path) {
+                above = f.place(q).parent;
+            }
+            let why = if above.is_some() {
+                format!(
+                    "{moved} is a part of {path}, and it is moved at line \u{1}line:{line}\u{1}  →  invalidated at line \u{1}line:{line}\u{1}"
+                )
+            } else {
+                inside(moved, "is moved")
+            };
+            (format!("{moved} : moved"), why)
         }
         Cause::Release(m) => {
             let freed = &f.place(m).display;
@@ -649,6 +667,7 @@ fn unconsumed(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
             .note_at(format!("{} (linear)", decl_note(info)), info.span)
             .note("move it into a call that consumes it on every normal path")
         };
+        let d = rest_note(f, var, d);
         out.push(d.with_facts(var_keys("unconsumed", var, &[n])));
     }
 }
@@ -696,8 +715,24 @@ fn abort_unhandled(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
         )
         .note("declare `on abort = f` on the type, or consume the value before this call");
         let d = note_more(d, f, rest, ("site that can abort", "sites that can abort"));
+        let d = rest_note(f, var, d);
         out.push(d.with_facts(var_keys("abort_unhandled", var, &sites)));
     }
+}
+
+/// Adds a note to a diagnostic of W0601 or W0602 about variable `var` if a
+/// move of a part of it left the other linear parts (`rest_linear`).
+fn rest_note(f: &FnFacts, var: VarId, d: Diagnostic) -> Diagnostic {
+    let Some(&(_, n)) = f.rest_linear.iter().find(|&&(v, _)| v == var) else {
+        return d;
+    };
+    let name = &f.var(var).name;
+    d.note_at(
+        format!(
+            "a move of a part leaves the other linear parts in `{name}`; destructure the value to consume each part, as in `let (x, y) = {name}`"
+        ),
+        node_span(f, n),
+    )
 }
 
 /// W0503: a value that is not `many` and is live across a `multi` operation

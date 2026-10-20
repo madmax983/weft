@@ -92,6 +92,9 @@ pub struct Work {
     pub holder_steps: usize,
     /// The steps of the item checks ([`program::Program::item_steps`]).
     pub item_steps: usize,
+    /// The full types whose place fields the lowering walked: each one once
+    /// for a body (review round 3, Q3-4).
+    pub place_types: usize,
 }
 
 impl Work {
@@ -102,6 +105,7 @@ impl Work {
         self.type_steps += o.type_steps;
         self.holder_steps += o.holder_steps;
         self.item_steps += o.item_steps;
+        self.place_types += o.place_types;
     }
 }
 

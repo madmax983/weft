@@ -299,6 +299,38 @@ fn the_oracle_reports_what_the_stock_machine_lets_pass() {
             "linear struct Tx { id: u64 }\nfn main() { let t = Tx { id: 1 }\n let f = || { let Tx(i) = t } }",
             "still live at the end of the run",
         ),
+        // A read through a reference in an operand, and in a callee, is a
+        // read for the race detector (O3-13).
+        (
+            "fn main() / async { let v = Vec.new()\n v.push(1)\n scope { s =>\n\
+             s.spawn(|| { v[0] = 3 })\n let q = &v[0]\n print(q + 0)\n } }",
+            "data race",
+        ),
+        (
+            "fn show(r: &u64) { print(r + 0) }\n\
+             fn main() / async { let n = 1\n scope { s =>\n s.spawn(|| { n = 5 })\n show(&n)\n } }",
+            "data race",
+        ),
+        // `print` of a moved value, and of a reference into a moved value.
+        (
+            "fn take_v(v: Vec<u64>) -> usize { v.len() }\n\
+             fn main() { let v = Vec.new()\n v.push(1)\n print(take_v(v))\n print(v) }",
+            "a moved value",
+        ),
+        (
+            "struct P { a: u64, v: Vec<u64> }\n\
+             fn main() { let p = P { a: 1, v: Vec.new() }\n let r = &p.a\n let q = p\n print(r)\n print(q.a) }",
+            "a dangling reference",
+        ),
+        // A reference into a local of a frame that an abort path unwound
+        // (F3-9).
+        (
+            "effect Keep { fn keep(r: &u64) }\n\
+             fn deep() / Keep { let x = 5\n keep(&x) }\n\
+             fn main() { let y = 1\n let last = &y\n\
+             handle Keep { fn keep(r) { last = r } } in deep()\n print(last) }",
+            "a local whose scope ended",
+        ),
     ];
     for (src, want) in cases {
         let (strict, stock) = oracle_run(src);
@@ -326,4 +358,22 @@ fn the_oracle_accepts_correct_programs() {
     assert!(stock);
     let out = strict.expect("the oracle accepts the program");
     assert_eq!(out.stdout, "2\n2\n");
+}
+
+#[test]
+fn the_oracle_accepts_reads_after_a_join_and_an_unwound_frame() {
+    // A read through a reference in an operand and in a callee after the
+    // scope joined the task. A clause reads a local of the frame before the
+    // abort path unwinds it. A moved value is printed through its new owner.
+    let src = "effect Keep { fn keep(r: &u64) }\n\
+        fn show(r: &u64) { print(r + 0) }\n\
+        fn deep() / Keep { let x = 5\n keep(&x) }\n\
+        fn main() / async { let v = Vec.new()\n v.push(1)\n\
+        scope { s => s.spawn(|| { v[0] = 3 }) }\n let q = &v[0]\n print(q + 0)\n show(q)\n\
+        handle Keep { fn keep(r) { print(r + 1) } } in deep()\n\
+        let w = v\n print(w) }";
+    let (strict, stock) = oracle_run(src);
+    assert!(stock);
+    let out = strict.expect("the oracle accepts the program");
+    assert_eq!(out.stdout, "3\n3\n6\n[3]\n");
 }

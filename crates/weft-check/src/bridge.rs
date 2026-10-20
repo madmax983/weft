@@ -60,6 +60,23 @@ pub enum Arg {
 /// the depth and the class of the last step.
 type StepGroup = (u32, usize, (u8, u32));
 
+/// Groups the places that have a last step by root, depth and the class of the
+/// last step. Last-step relations hold only between the places of one group:
+/// two last steps of different classes have no relation (`places::step_class`).
+/// So [`each_fact`] compares the places of each group, pair by pair.
+pub(crate) fn step_groups(f: &FnFacts) -> BTreeMap<StepGroup, Vec<(usize, &Step)>> {
+    let mut groups: BTreeMap<StepGroup, Vec<(usize, &Step)>> = BTreeMap::new();
+    for (i, p) in f.places.iter().enumerate() {
+        if let Some(last) = p.steps.last() {
+            groups
+                .entry((p.root.0, p.steps.len(), places::step_class(last)))
+                .or_default()
+                .push((i, last));
+        }
+    }
+    groups
+}
+
 /// Calls `emit` once for each input fact of one function.
 pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
     let s = |x: &dyn std::fmt::Display| Arg::Sym(x.to_string());
@@ -82,18 +99,7 @@ pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
             emit("param_rooted", &[s(&id)]);
         }
     }
-    // Last-step relations between places of the same root and depth. Two last
-    // steps of different classes have no relation (`places::step_class`), so
-    // the loop compares the places of one class.
-    let mut groups: BTreeMap<StepGroup, Vec<(usize, &Step)>> = BTreeMap::new();
-    for (i, p) in f.places.iter().enumerate() {
-        if let Some(last) = p.steps.last() {
-            groups
-                .entry((p.root.0, p.steps.len(), places::step_class(last)))
-                .or_default()
-                .push((i, last));
-        }
-    }
+    let groups = step_groups(f);
     let mut pairs = Vec::new();
     for (&(root, depth, _), group) in &groups {
         for &(i, a) in group {
@@ -142,6 +148,7 @@ pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
     rel2!("unwound_at", f.unwound_at);
     rel2!("owner", f.owner);
     rel2!("moved_part", f.moved_part);
+    rel2!("rest_linear", f.rest_linear);
     rel2!("releases_at", f.releases_at);
     rel2!("spared_at", f.spared_at);
     rel2!("spawned_at", f.spawned_at);

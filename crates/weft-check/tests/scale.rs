@@ -613,3 +613,35 @@ fn sema_and_check_work_grow_linearly() {
         }
     }
 }
+
+/// A program with a place field in one struct and a type `T{d-1}` of depth
+/// `d`, where each level has `f` fields of the level below it. A body makes
+/// `locals` new values of the deepest type (review round 3, Q3-4).
+fn type_dag(d: usize, f: usize, locals: usize) -> String {
+    let mut s = String::from(
+        "struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }\nstruct T0 { x: u64 }\n",
+    );
+    for i in 1..d {
+        let fields: Vec<String> = (0..f).map(|j| format!("f{j}: T{}", i - 1)).collect();
+        let _ = writeln!(s, "struct T{i} {{ {} }}", fields.join(", "));
+    }
+    let _ = writeln!(s, "fn make() -> T{} {{ make() }}", d - 1);
+    s.push_str("fn f() {\n");
+    for i in 0..locals {
+        let _ = writeln!(s, "    let t{i} = make()");
+    }
+    s.push_str("    print(1)\n}\n");
+    s
+}
+
+/// The search for place fields walks each full type once for a body, so its
+/// work grows with the number of types, not with the `f` to the power `d`
+/// paths through them (Q3-4). Before the table of paths, depth 16 with three
+/// fields and five locals took about a minute.
+#[test]
+fn place_fields_of_a_deep_type_are_found_in_linear_work() {
+    let (wa, ..) = work_of(&type_dag(16, 3, 5));
+    let (wb, ..) = work_of(&type_dag(32, 3, 5));
+    assert!(wa.place_types <= 2 * 16 + 16, "{wa:?}");
+    assert!(wb.place_types <= 2 * wa.place_types + 16, "{wa:?} {wb:?}");
+}

@@ -77,7 +77,7 @@ impl IntTy {
 pub use crate::ids::AdtId;
 
 /// A function type: the type of a closure, a function item or a function parameter.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FnTy {
     /// Parameter types.
     pub params: Vec<Ty>,
@@ -92,7 +92,7 @@ pub struct FnTy {
 }
 
 /// A type.
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Ty {
     /// An integer.
     Int(IntTy),

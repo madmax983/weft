@@ -53,7 +53,10 @@ Status: accepted. Date: 2026-10-18.
   operation gives, so no linear value starts there). A local of the body that can
   point into a place of another value keeps its state there. So a reference that the
   first run invalidates is invalid in the second run too, and a value from outside
-  the body that the first run moves is moved there. If each clause names `resume` at
+  the body that the first run moves is moved there. This holds for a place at the
+  tail of the body too: the tail moves into the value of the body in each run (ADR
+  0003, review round 3, O3-14). The node that runs the body again takes the value of
+  the run before, as the `resume` gives it to the clause. If each clause names `resume` at
   most once, and not in a loop, a closure or a clause of another handler, the body
   runs at most once after each operation, and it is lowered once.
 - In Phase 1 a `multi` resume copies the owned values of the handled body: each

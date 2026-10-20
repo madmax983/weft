@@ -7,7 +7,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use weft_syntax::diag::Code;
 
-use super::{ast, AdtKind, FnId, Lower, Pattern, Span, Ty, Val, VarId, VarKind};
+use weft_facts::{Step, StepKind};
+
+use super::{ast, subst, AdtKind, FnId, Lower, Pattern, Span, Ty, Val, VarId, VarKind};
 
 impl Lower<'_> {
     /// A linear value of type `ty` goes away at `span`. `name` names it in the
@@ -308,6 +310,57 @@ impl Lower<'_> {
                     span,
                 );
             }
+        }
+    }
+
+    /// Returns true if a value of type `ty` keeps a part that can be linear
+    /// after a move of its part at `steps` (review round 3, R3RT1): a part on
+    /// another branch of the type, another element of an array or a buffer, or
+    /// a part of a step that the walk does not know.
+    pub(super) fn rest_linear(&self, ty: &Ty, steps: &[Step]) -> bool {
+        let Some((step, rest)) = steps.split_first() else {
+            return false;
+        };
+        let ty = self.inf.shallow(ty);
+        let others = |ts: &[Ty], i: usize| {
+            ts.iter()
+                .enumerate()
+                .any(|(j, t)| j != i && self.may_be_linear(t))
+        };
+        match (&step.kind, &ty) {
+            (StepKind::Field { id }, Ty::Tuple(ts)) => {
+                let i = *id as usize;
+                others(ts, i) || ts.get(i).is_some_and(|t| self.rest_linear(t, rest))
+            }
+            (StepKind::Field { id }, Ty::Adt(a, args)) => match &self.prog.adts[*a].kind {
+                AdtKind::Struct(fields) => {
+                    let ts: Vec<Ty> = fields.iter().map(|f| subst(&f.ty, args)).collect();
+                    let i = *id as usize;
+                    others(&ts, i) || ts.get(i).is_some_and(|t| self.rest_linear(t, rest))
+                }
+                _ => self.may_be_linear(&ty),
+            },
+            // A value of an enum is one variant: its payload is the rest.
+            (StepKind::Variant { id }, Ty::Adt(a, args)) => match &self.prog.adts[*a].kind {
+                AdtKind::Enum(vs) => vs.get(*id as usize).is_some_and(|v| {
+                    let ts: Vec<Ty> = v.fields.iter().map(|t| subst(t, args)).collect();
+                    match ts.as_slice() {
+                        [t] => self.rest_linear(t, rest),
+                        _ => self.rest_linear(&Ty::Tuple(ts), rest),
+                    }
+                }),
+                _ => self.may_be_linear(&ty),
+            },
+            // The other elements stay: an array of one element has none.
+            (StepKind::Elem, Ty::Array(t, n)) => {
+                (*n != 1 && self.may_be_linear(t)) || self.rest_linear(t, rest)
+            }
+            (StepKind::Elem | StepKind::Deref, Ty::Adt(_, args)) => {
+                let inner = args.first().cloned().unwrap_or(Ty::Error);
+                let more = matches!(step.kind, StepKind::Elem) && self.may_be_linear(&inner);
+                more || self.rest_linear(&inner, rest)
+            }
+            _ => self.may_be_linear(&ty),
         }
     }
 

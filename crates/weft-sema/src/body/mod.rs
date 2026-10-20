@@ -1101,6 +1101,16 @@ fn expr_tail(e: &Expr) -> Span {
     }
 }
 
+/// The span of the value of a frame expression: the tail of a block, of a
+/// scope body or of a handled body.
+fn frame_tail(e: &Expr) -> Span {
+    match &e.kind {
+        ExprKind::Block(b) | ExprKind::Scope { body: b, .. } => block_tail(b),
+        ExprKind::Handle { body, .. } => frame_tail(body),
+        _ => e.span,
+    }
+}
+
 /// A path that names something other than a value.
 #[derive(Clone, Copy)]
 enum PathRef {
@@ -1221,6 +1231,9 @@ pub struct Lower<'p> {
     /// The loop keys of places (`Lower::place_key`), by place and the number of
     /// roots before the loop. A place does not change, so a key stays valid.
     keys: std::cell::RefCell<std::collections::HashMap<(PlaceId, usize), Rc<str>>>,
+    /// The paths to the place fields of each full type (`Lower::place_paths`).
+    /// The paths of a type do not change, so an entry stays valid.
+    place_paths: std::collections::HashMap<Ty, Rc<[Vec<String>]>>,
     /// The method calls that can write through a reference local, for
     /// `writes_via` at the end of the body.
     via_calls: Vec<ViaCall>,
@@ -1470,6 +1483,7 @@ impl<'p> Lower<'p> {
             match_deps: Vec::new(),
             dep_places: BTreeSet::new(),
             keys: std::cell::RefCell::default(),
+            place_paths: std::collections::HashMap::new(),
             via_calls: Vec::new(),
             stmt_temps: Vec::new(),
             rets: Vec::new(),
@@ -2639,70 +2653,85 @@ impl<'p> Lower<'p> {
     /// the value, in its parts and behind a `Box`. A struct literal cannot give a
     /// place field a value, and a `!Move` value is built in place. So a value that
     /// no place held before has no value in these fields.
-    fn unset_paths(&self, t: &Ty) -> Vec<Vec<String>> {
-        let mut out = Vec::new();
-        if self.has_place_fields {
-            self.unset_paths_into(t, &mut Vec::new(), &mut out, &mut Vec::new());
+    fn unset_paths(&mut self, t: &Ty) -> Vec<Vec<String>> {
+        if !self.has_place_fields {
+            return Vec::new();
         }
-        out
+        let t = self.inf.deep(t);
+        self.place_paths(&t, &mut Vec::new()).0.to_vec()
     }
 
-    fn unset_paths_into(
-        &self,
-        t: &Ty,
-        path: &mut Vec<String>,
-        out: &mut Vec<Vec<String>>,
-        seen: &mut Vec<AdtId>,
-    ) {
-        match self.inf.deep(t) {
+    /// Returns the paths to the place fields that a value of the full type `t`
+    /// holds (review round 3, Q3-1). The table `place_paths` keeps the paths of
+    /// each full type, so each type is walked once: most types have none. A
+    /// recursive type stops at the second use of the same full type on the way
+    /// (`stack`), not at the second use of its definition: `Wrap<Wrap<Frame>>`
+    /// walks both levels. A result that such a stop cut depends on the types on
+    /// the way, so the table does not keep it. The second value is true then.
+    fn place_paths(&mut self, t: &Ty, stack: &mut Vec<Ty>) -> (Rc<[Vec<String>]>, bool) {
+        if let Some(ps) = self.place_paths.get(t) {
+            return (Rc::clone(ps), false);
+        }
+        if stack.contains(t) {
+            return (Rc::from([]), true);
+        }
+        self.work.place_types += 1;
+        // The parts: the step of each part (none for the target of a `Box`: a
+        // field step goes through it by itself) and its type. A place field
+        // is a path of its own.
+        let mut out: Vec<Vec<String>> = Vec::new();
+        let mut parts: Vec<(Option<String>, Ty)> = Vec::new();
+        match t {
             Ty::Tuple(ts) => {
-                for (i, x) in ts.iter().enumerate() {
-                    path.push(i.to_string());
-                    self.unset_paths_into(x, path, out, seen);
-                    path.pop();
-                }
+                parts.extend(
+                    ts.iter()
+                        .enumerate()
+                        .map(|(i, x)| (Some(i.to_string()), x.clone())),
+                );
             }
-            Ty::Adt(a, args) => {
-                if seen.contains(&a) {
-                    return;
+            Ty::Adt(a, args) => match &self.prog.adts[*a].kind {
+                AdtKind::Struct(fs) => {
+                    for f in fs {
+                        if f.place.is_some() {
+                            out.push(vec![f.name.clone()]);
+                        } else {
+                            parts.push((Some(f.name.clone()), subst(&f.ty, args)));
+                        }
+                    }
                 }
-                seen.push(a);
-                match &self.prog.adts[a].kind {
-                    AdtKind::Struct(fs) => {
-                        for f in fs {
-                            path.push(f.name.clone());
-                            if f.place.is_some() {
-                                out.push(path.clone());
-                            } else {
-                                self.unset_paths_into(&subst(&f.ty, &args), path, out, seen);
-                            }
-                            path.pop();
-                        }
+                AdtKind::Enum(vs) => {
+                    for v in vs {
+                        let payload = match v.fields.len() {
+                            0 => continue,
+                            1 => subst(&v.fields[0], args),
+                            _ => Ty::Tuple(v.fields.iter().map(|f| subst(f, args)).collect()),
+                        };
+                        parts.push((Some(v.name.clone()), payload));
                     }
-                    AdtKind::Enum(vs) => {
-                        for v in vs {
-                            let payload = match v.fields.len() {
-                                0 => continue,
-                                1 => subst(&v.fields[0], &args),
-                                _ => Ty::Tuple(v.fields.iter().map(|f| subst(f, &args)).collect()),
-                            };
-                            path.push(v.name.clone());
-                            self.unset_paths_into(&payload, path, out, seen);
-                            path.pop();
-                        }
-                    }
-                    // A field step goes through a `Box` by itself.
-                    AdtKind::Extern { deref: Some(d), .. } if *d != Deref::Group => {
-                        if let Some(inner) = args.first() {
-                            self.unset_paths_into(inner, path, out, seen);
-                        }
-                    }
-                    AdtKind::Extern { .. } => {}
                 }
-                seen.pop();
-            }
+                AdtKind::Extern { deref: Some(d), .. } if *d != Deref::Group => {
+                    parts.extend(args.first().map(|inner| (None, inner.clone())));
+                }
+                AdtKind::Extern { .. } => {}
+            },
             _ => {}
         }
+        stack.push(t.clone());
+        let mut cut = false;
+        for (name, x) in parts {
+            let x = self.inf.deep(&x);
+            let (ps, c) = self.place_paths(&x, stack);
+            cut |= c;
+            for p in ps.iter() {
+                out.push(name.iter().cloned().chain(p.iter().cloned()).collect());
+            }
+        }
+        stack.pop();
+        let ps: Rc<[Vec<String>]> = out.into();
+        if !cut {
+            self.place_paths.insert(t.clone(), Rc::clone(&ps));
+        }
+        (ps, cut)
     }
 
     /// Returns the state of this path that a branch changes.

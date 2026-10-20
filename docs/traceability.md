@@ -24,8 +24,8 @@ How to read it:
 - **Status** says what is not enforced, with the ADR that records it.
 
 The first version of this file came from section (1) of the fidelity review of round 2.
-Review stage S5b brought it up to date. The last sections list the round 2 changes and
-the S5b changes. The corpus numbers are unique (`corpus_numbers_are_unique`); S5b gave
+Review stage S5b brought it up to date. The last sections list the round 2 changes, the
+S5b and S5c changes and the round 3 changes. The corpus numbers are unique (`corpus_numbers_are_unique`); S5b gave
 new numbers to four files that shared a number (`52_raw_pointers`, `53_overwritten`,
 `54_stealable`, `55_alias_in_one_task`).
 
@@ -38,9 +38,10 @@ new numbers to four files that shared a number (`52_raw_pointers`, `53_overwritt
 | `mut(p)` invalidates strictly inside `p`, through an unstable step | `invalidated_at` (rule 3) | `mutates_at` facts, step stability from the type (`props.rs`, `program.rs`) | oracle: a freed cell, a moved `Vec` buffer | 01, 02, 30, 35, 76 | `places::invalidates` (verified); link L1 `thm_lkills_implies_invalidates`, `thm_invalidates_exact_typed`; borrowing B1, B3 | yes |
 | References to `p` and into stable parts survive | the same rule | the same facts | none | 01, 30 | `lemma_no_self_invalidation`, `lemma_stable_suffix_survives` | yes |
 | The use of an invalidated reference is an error | `error` (W0301) | `uses`, `rebound_at`, `cfg_edge` (`body/`) | oracle: dangling references, dead locals | 02, 05, 05b, 37, 76, 100, 101 | `dataflow::propagate` (verified); link L2 `thm_w0301_no_ub` (hypotheses `facts_ok`, `bound_before_use`) | yes; `ret_ok` is false for the `in` form (`proofs/link/README.md`) |
-| A move or the end of an owner frees what it owns | `frees_at`, `owner`, `moved_part` | `body/drops.rs`, `body/stmt.rs` | `heap.rs` `end_cell`, `drop_value` | 29, 31, 32, 34, 127 | none | yes |
-| A value is not used after a move | `use_after_move` (W0302) | `moved_at` | fault "used after it was moved" | 04, 04b, 110, 127 | none | yes |
-| A place gets a value before a use | `use_before_set` (W0304, one error for each variable) | `unset_at`, `empty_at` | fault "used before it has a value" | 75, 89, 112 | none | yes |
+| A move or the end of an owner frees what it owns | `frees_at`, `owner`, `moved_part`; a move of a part invalidates each reference that overlaps the part (`invalidated_at` with `overlaps`) | `body/drops.rs`, `body/stmt.rs` | `heap.rs` `end_cell`, `drop_value`; an abort path ends the cells of the frames that it unwinds (`end_cell_value`) | 29, 31, 32, 34, 127, 152 | none | yes; a reference to the whole value is invalid after a part move, also for a read of another part (ADR 0003) |
+| The value of a frame leaves it after the end of the frame | the facts of the tail move and of the hidden variable (`error`, `use_after_move`, `task_conflict`, `abort_unhandled`) | `frame_value_start`, `frame_value_end` (`body/stmt.rs`): the tail of a scope body, a handled body and a clause moves inside the frame; the temporaries of these frames end at their end; a `multi` handled body moves its tail in each run (`handled_again`) | a scope body, a handled body and a clause are code frames of their own | 150, 151 | none | yes (round 3, O3-1, O3-14, O3-2, O3-3) |
+| A value is not used after a move | `use_after_move` (W0302) | `moved_at` | fault "used after it was moved"; oracle: a display of a moved value | 04, 04b, 110, 127, 150 | none | yes |
+| A place gets a value before a use | `use_before_set` (W0304, one error for each variable) | `unset_at`, `empty_at`; the place fields of each full type (`Lower::place_paths`) | fault "used before it has a value" | 75, 89, 112, 154 | none | yes |
 | Arguments of one call do not alias a mutated argument | `alias_conflict` (W0312) | `call_mut`, `call_arg` (`body/call.rs`) | none | 12, 38, 41, 55 | `places::overlaps` (verified) | yes; the `in` form allows the alias (ADR 0005) |
 | Places and `mut` are inferred in bodies and stated in public signatures | `unauthorized_mut` | W0701 (`body/stmt.rs`), `infer.rs` | none | 13, 28, 43, 90 | `places::within` (verified) | yes; a row with only pass-through parameters has nothing to state (90) |
 | `mut(w..)` means anywhere inside `w` | `wild_at` | `mut(p..)` is `mut(p)` plus held places (`program.rs`) | none | 35, 102, 103 | `lemma_deeper_mutation_weaker` | yes |
@@ -63,8 +64,8 @@ new numbers to four files that shared a number (`52_raw_pointers`, `53_overwritt
 
 | Rule | Spec | Sema | Interp | Tests | Proof | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| A linear value is consumed on each normal path | `unconsumed`, `overwritten` (W0601) | `rebound_at`, `moved_at`, `empty_at`, `overwrites` | `lifecycle::Linear`; oracle: a linear leak | 04, 04b, 53, 72, 88, 126, 127 | `lifecycle::Linear` (verified); link L3 `consume_linked` | yes; a `Vec` of linear values has no consumer (ADR 0007) |
-| Live across an abort only with `on abort` | `abort_unhandled` (W0602) | `may_abort`, `spared_at`, `unwound_at` | the unwinder (`machine/effects.rs`) | 04, 04b, 37, 63, 124 | effects E3 `lemma_capture_rules`; link L3 `unwind_linked` | yes |
+| A linear value is consumed on each normal path | `unconsumed`, `overwritten` (W0601); a move of a part with a linear rest does not end the value (`rest_linear`, `ends_linear`) | `rebound_at`, `moved_at`, `empty_at`, `overwrites`, `rest_linear` (`body/drops.rs` `rest_linear`) | `lifecycle::Linear`; oracle: a linear leak | 04, 04b, 53, 72, 88, 126, 127, 150, 153 | `lifecycle::Linear` (verified); link L3 `consume_linked` | yes; a `Vec` of linear values has no consumer, and a move of an element leaves the other elements (ADR 0007) |
+| Live across an abort only with `on abort` | `abort_unhandled` (W0602) | `may_abort` (also at the end of a scope that can have a child), `spared_at`, `unwound_at` | the unwinder (`machine/effects.rs`) | 04, 04b, 37, 63, 124, 151, 153 | effects E3 `lemma_capture_rules`; link L3 `unwind_linked` | yes |
 | `on abort` runs only in unwinding, with the root handlers | none | W0118 (`program.rs`) | `run_on_abort` | 120; `abort_on_abort`, `clause_abort` | effects model: `on abort` is atomic | yes (ADR 0007) |
 | No linear value or unique borrow is live across `multi` | `live_across_multi` (W0503) | `multi_at`, `clause_multi`, `body_multi` | a `multi` resume copies the frames | 05, 05b, 39, 124, 125; `multi_choose`, `multi_heap`, `multi_nested_drop` | effects E5 `lemma_capture_rules` | yes |
 | A `!Move` value keeps its address | `moved_immovable` (W0604) | `body/stmt.rs` | a cell never moves (`heap.rs`) | 11, 73 | none | yes |
@@ -100,9 +101,9 @@ new numbers to four files that shared a number (`52_raw_pointers`, `53_overwritt
 | Only binaries and tests install root handlers; an intercept forwards | `root_handler_in_lib` (W0801), `sim_in_lib` (W0802) | `handler`, `clause_performs`, `sim_root`, `sim_run_at` | none | 15, 40, 92 | none | yes |
 | `main` and the tests handle each effect that is not standard | `unhandled_effect` (W0805) | `started()`, `std_effect` (`lib.rs`, `body/stmt.rs`) | fault "no handler" | 51, 93; `root_handlers` | none | yes |
 | The no-runtime profile | `embedded_effect` (W0803) | `no_runtime()` | `RunOptions::no_runtime` | 19, 19b, 93; `no_runtime_marker`, `task_fail_embedded` | none | yes |
-| Scopes are the only way to spawn; children cannot outlive the scope | `joined_at` at the scope end | W0115, `body/tasks.rs` | `scope_wait`, the unwinder cancels children | 07, 14, 61, 132; `scope_join`, `scope_abort` | none | yes |
-| Cancellation runs `on abort` | W0602 at scope ends, joins and calls | `may_abort` | `check_interrupt`, the unwinder | 63, 131; `cancel_sibling`, `timeout` | none | yes |
-| Tasks that can run at one time have separate footprints | `task_conflict` (W0405) | `task_reads`, `task_writes`, `spawned_at`, `joined_at` | oracle: the race detector | 08, 100, 102, 106, 130 | B4 `task_soundness` (reference-based, ADR 0006) | yes |
+| Scopes are the only way to spawn; children cannot outlive the scope | `joined_at` at the scope end | W0115, `body/tasks.rs` | `scope_wait`, the unwinder cancels children | 07, 14, 61, 132, 150; `scope_join`, `scope_abort` | none | yes |
+| Cancellation runs `on abort` | W0602 at scope starts and ends, joins and calls | `may_abort` | `check_interrupt`, the unwinder | 63, 131, 151; `cancel_sibling`, `timeout` | none | yes |
+| Tasks that can run at one time have separate footprints | `task_conflict` (W0405) | `task_reads`, `task_writes`, `spawned_at`, `joined_at` | oracle: the race detector logs each read and write, also a read through a reference in an operand or a callee, with no limit on the records of a cell | 08, 100, 102, 106, 130, 150 | B4 `task_soundness` (reference-based, ADR 0006) | yes |
 | Preemption at back-edges | none | none | `Op::BackEdge` | `preempt` | none | yes |
 | Work stealing follows the modes | `stealable` | the mode marks | `is_stealable` | 54, 134; `steal` | `modes::{submode, join}` (verified) | yes |
 | Foreign calls are `blocking` | the effect rows | the extern default `Blocking` | the blocking pool | 09; `blocking` | none | yes |
@@ -181,3 +182,16 @@ recorded.
 | QR19 | one `local_ty`, one `multi_node` for each effect, no unused method or silenced value; `handle`, `call_value`, `perform_op` and `assign` split into parts | `docs/architecture.md` |
 | QR22 | a proptest mutates corpus programs, also the modes of their functions, and checks them on a 2 MiB thread, with the agreement of the checker and the spec | `crates/weft-check/tests/mutations.rs` |
 | Coverage | each module of `weft-sema` and `weft-check` has 85% or more of its lines covered (`cargo llvm-cov`) | `ids.rs` tests |
+
+## Review round 3 changes (stage R3a)
+
+| Finding | Change | Record |
+| --- | --- | --- |
+| O3-13, F3-9 | the race detector logs a read through a reference in an operand or a callee (`Machine::deref_value`); with the oracle, a display of a moved value or through a dangling reference is a fault; an abort path ends the cells of the frames that it unwinds | ADR 0010; `guards.rs` (`the_oracle_reports_what_the_stock_machine_lets_pass`, `the_oracle_accepts_reads_after_a_join_and_an_unwound_frame`) |
+| I3-12 | the race detector keeps the last access of each task, path and kind, with no limit | ADR 0010; `oracle.rs` (`a_race_after_many_accesses_is_found`) |
+| Q3-5 | the clock asserts of three tests become counts of work or a test that runs only in a release build | `tests.rs` (`step_facts_of_a_wide_struct_are_linear`), `props.rs` (`a_wide_recursive_type_is_fast`), `limits.rs` (`explain_folds_a_long_derivation_in_time`) |
+| O3-1, O3-14 | the tail of a scope body and of a handled body moves at the tail, inside the frame; a scope or a `handle` in statement position drops its value; a `multi` handled body moves its tail in each run | ADRs 0003, 0005; corpus 150 |
+| O3-2, O3-3, F3-7 | a hidden variable holds the value of a scope body, a handled body and a clause across the end of the frame; the temporaries of these frames end at their end; a temporary of a clause that `resume` gives ends at the end of the `handle`; the end of a scope that can have a child can abort | ADRs 0003, 0006; corpus 151 |
+| F3-5 | a move of a part invalidates each reference that overlaps the part | `spec/weft.dl`, ADR 0003; corpus 152 |
+| R3RT1 | `rest_linear(V, P)`: a move of a part that leaves a linear part does not end the value (`ends_linear`), for W0601 and W0602 | `spec/weft.dl`, ADRs 0003, 0007; corpus 153 |
+| Q3-1, Q3-4 | the place fields of each full type, in a table: a second use of a generic definition with other arguments is walked, and each type is walked once for a body | ADR 0007; corpus 154; `scale.rs` (`place_fields_of_a_deep_type_are_found_in_linear_work`) |
