@@ -3,14 +3,16 @@
 //! The interpreter uses these types at run time. The proofs show that a `once`
 //! continuation resumes at most once, and that a linear value is consumed or
 //! aborted at most once. They do not show that each linear value is finished:
-//! the static checker (W0601) and the unwinder of the interpreter must do that.
+//! the static checker (W0601, W0602) and the unwinder of the interpreter must
+//! do that.
 //!
 //! `proofs/link` includes this file (`proofs/link/src/lifecycle_link.rs`). It
 //! proves that each operation is a step of the continuation and resource
 //! records of the effects model, and that each operation fails where the
-//! model step is an error. Two differences are about `multi` continuations:
-//! `drop_now` aborts a fresh `multi` continuation, and a resume after that
-//! abort fails. The model does not abort it, and it allows the resume.
+//! model step is an error. Three differences are about `multi` continuations:
+//! `drop_now` aborts a fresh `multi` continuation, a resume after that abort
+//! fails, and a resume after `end` fails. The model does not abort it, and it
+//! allows the resume.
 //! `proofs/verify-all.sh` runs the link. Run `proofs/link/verify.sh` after a
 //! change to a spec in this file.
 
@@ -49,7 +51,7 @@ pub struct Continuation {
 
 impl Continuation {
     /// Makes a fresh continuation.
-    pub fn new(multi: bool) -> (r: Self)
+    pub const fn new(multi: bool) -> (r: Self)
         ensures
             r.state == ContState::Fresh,
             r.multi == multi,
@@ -58,7 +60,7 @@ impl Continuation {
     }
 
     /// Records a resume. A `once` continuation accepts only one resume.
-    pub fn resume(&mut self) -> (r: Result<(), ContError>)
+    pub const fn resume(&mut self) -> (r: Result<(), ContError>)
         ensures
             final(self).multi == old(self).multi,
             old(self).state == ContState::Dropped ==> r == Err::<(), ContError>(
@@ -82,9 +84,10 @@ impl Continuation {
     }
 
     /// Records a drop. Returns true if the drop aborts the computation: the
-    /// continuation was never resumed.
-    pub fn drop_now(&mut self) -> (aborts: bool)
+    /// continuation was never resumed. The mode does not change.
+    pub const fn drop_now(&mut self) -> (aborts: bool)
         ensures
+            final(self).multi == old(self).multi,
             aborts == (old(self).state == ContState::Fresh),
             aborts ==> final(self).state == ContState::Dropped,
             !aborts ==> *final(self) == *old(self),
@@ -96,6 +99,17 @@ impl Continuation {
             },
             _ => false,
         }
+    }
+
+    /// Records the end of the clause of the continuation. The handler is done
+    /// with it: a later resume fails, also for a `multi` continuation. The
+    /// mode does not change.
+    pub const fn end(&mut self)
+        ensures
+            final(self).multi == old(self).multi,
+            final(self).state == ContState::Dropped,
+    {
+        self.state = ContState::Dropped;
     }
 }
 
@@ -115,6 +129,8 @@ pub enum LinState {
 pub struct Linear {
     /// The current state.
     pub state: LinState,
+    /// True if the type of the value has `on abort`.
+    pub on_abort: bool,
 }
 
 /// Why a linear operation failed.
@@ -122,23 +138,28 @@ pub struct Linear {
 pub enum LinError {
     /// The value is already consumed or aborted.
     NotLive,
+    /// The unwinder found a live value, and its type has no `on abort`. Thus
+    /// the unwinder cannot finish the value.
+    NoOnAbort,
 }
 
 impl Linear {
-    /// Makes a live linear value.
-    pub fn new() -> (r: Self)
+    /// Makes a live linear value. `on_abort` tells if its type has `on abort`.
+    pub const fn new(on_abort: bool) -> (r: Self)
         ensures
             r.state == LinState::Live,
+            r.on_abort == on_abort,
     {
-        Self { state: LinState::Live }
+        Self { state: LinState::Live, on_abort }
     }
 
     /// Consumes the value on the normal path.
-    pub fn consume(&mut self) -> (r: Result<(), LinError>)
+    pub const fn consume(&mut self) -> (r: Result<(), LinError>)
         ensures
+            final(self).on_abort == old(self).on_abort,
             r is Ok <==> old(self).state == LinState::Live,
             r is Ok ==> final(self).state == LinState::Consumed,
-            r is Err ==> *final(self) == *old(self),
+            r is Err ==> r == Err::<(), LinError>(LinError::NotLive) && *final(self) == *old(self),
     {
         match self.state {
             LinState::Live => {
@@ -149,26 +170,34 @@ impl Linear {
         }
     }
 
-    /// Unwinds the value. Returns true if `on abort` must run now.
+    /// Unwinds the value. Returns `Ok(true)` if `on abort` must run now, and
+    /// `Ok(false)` if the value is already finished.
     ///
     /// `on abort` runs at most once, and only for a value that is still live.
-    pub fn unwind(&mut self) -> (run_on_abort: bool)
+    /// A live value with no `on abort` gives [`LinError::NoOnAbort`].
+    pub const fn unwind(&mut self) -> (r: Result<bool, LinError>)
         ensures
-            run_on_abort == (old(self).state == LinState::Live),
-            run_on_abort ==> final(self).state == LinState::Aborted,
-            !run_on_abort ==> *final(self) == *old(self),
+            final(self).on_abort == old(self).on_abort,
+            r == Ok::<bool, LinError>(true) <==> old(self).state == LinState::Live
+                && old(self).on_abort,
+            r == Ok::<bool, LinError>(true) ==> final(self).state == LinState::Aborted,
+            r == Ok::<bool, LinError>(false) <==> old(self).state != LinState::Live,
+            r is Err <==> old(self).state == LinState::Live && !old(self).on_abort,
+            r is Err ==> r == Err::<bool, LinError>(LinError::NoOnAbort),
+            r != Ok::<bool, LinError>(true) ==> *final(self) == *old(self),
     {
         match self.state {
-            LinState::Live => {
+            LinState::Live if self.on_abort => {
                 self.state = LinState::Aborted;
-                true
+                Ok(true)
             },
-            _ => false,
+            LinState::Live => Err(LinError::NoOnAbort),
+            _ => Ok(false),
         }
     }
 
     /// Returns true if the value is finished (consumed or aborted).
-    pub fn is_finished(&self) -> (r: bool)
+    pub const fn is_finished(&self) -> (r: bool)
         ensures
             r == (self.state != LinState::Live),
     {
@@ -187,12 +216,6 @@ pub proof fn lemma_finish_once(l: Linear)
 }
 
 } // verus!
-
-impl Default for Linear {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -214,6 +237,17 @@ mod tests {
     }
 
     #[test]
+    fn ended_multi_continuation_cannot_resume() {
+        let mut k = Continuation::new(true);
+        assert_eq!(k.resume(), Ok(()));
+        assert_eq!(k.resume(), Ok(()));
+        assert!(!k.drop_now());
+        k.end();
+        assert_eq!(k.resume(), Err(ContError::AlreadyDropped));
+        assert!(k.multi);
+    }
+
+    #[test]
     fn dropped_continuation_aborts_once() {
         let mut k = Continuation::new(false);
         assert!(k.drop_now());
@@ -223,14 +257,34 @@ mod tests {
 
     #[test]
     fn linear_value_finishes_once() {
-        let mut l = Linear::new();
+        let mut l = Linear::new(true);
         assert!(!l.is_finished());
         assert_eq!(l.consume(), Ok(()));
-        assert!(!l.unwind());
+        assert_eq!(l.unwind(), Ok(false));
         assert_eq!(l.consume(), Err(LinError::NotLive));
-        let mut a = Linear::default();
-        assert!(a.unwind());
-        assert!(!a.unwind());
+        let mut a = Linear::new(true);
+        assert_eq!(a.unwind(), Ok(true));
+        assert_eq!(a.unwind(), Ok(false));
         assert_eq!(a.state, LinState::Aborted);
+        assert_eq!(a.consume(), Err(LinError::NotLive));
+    }
+
+    #[test]
+    fn linear_value_with_no_on_abort_does_not_unwind() {
+        let mut l = Linear::new(false);
+        assert_eq!(l.unwind(), Err(LinError::NoOnAbort));
+        assert_eq!(l.state, LinState::Live);
+        assert_eq!(l.consume(), Ok(()));
+        assert_eq!(l.unwind(), Ok(false));
+    }
+
+    #[test]
+    fn drop_keeps_the_mode() {
+        for multi in [false, true] {
+            let mut k = Continuation::new(multi);
+            assert!(k.drop_now());
+            assert_eq!(k.multi, multi);
+            assert_eq!(k.state, ContState::Dropped);
+        }
     }
 }

@@ -1,0 +1,19 @@
+// A named argument of an effect operation binds by name, as in a call of a
+// function. A trailing block goes to the last parameter.
+effect Pair { fn put(a: u64, b: String) }
+effect Run { fn run(n: u64, f: fn() -> u64) -> u64 }
+
+fn main() {
+    handle Pair {
+        fn put(a, b) {
+            print(a, b)
+            resume(())
+        }
+    } in {
+        put(b: "x", a: 1)
+        put(2, b: "y")
+        put(3, "z")
+    }
+    let total = handle Run { fn run(n, f) { resume(n + f()) } } in run(1) { 10 }
+    print(total)
+}

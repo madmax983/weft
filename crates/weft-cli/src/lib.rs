@@ -4,6 +4,7 @@ pub mod package;
 
 use std::fmt::Write as _;
 use std::path::Path;
+use weft_syntax::diag::Code;
 
 use anyhow::{bail, Context, Result};
 use weft_check::{agreement, bridge, check_analysis, codes, Checked};
@@ -19,22 +20,26 @@ usage: weft <command> [options] PATH
 
 commands:
   check   [PROFILE] [--json] [--explain] PATH                    check a file or a package
-  run     [PROFILE] [--seed N] [--workers N] [--unchecked] PATH  check, then run `fn main`
-  test    [PROFILE] [--seed N] [--workers N] [--unchecked] PATH  check, then run the test blocks
+  run     [PROFILE] [RUN] PATH                                   check, then run `fn main`
+  test    [PROFILE] [RUN] PATH                                   check, then run the test blocks
   facts   [PROFILE] PATH [FUNCTION]                              print the facts in Datalog syntax
   agree   [PROFILE] PATH                                         compare the checker with spec/weft.dl
   lint    [PROFILE] --rules RULES.dl PATH                        run user lint rules over the facts
   explain CODE                                                   explain a diagnostic code
   deps    PATH                                                   check dependency authority
   spec                                                           print spec/weft.dl
-  help                                                           print this text
+  help    [COMMAND]                                              print this text
 
 PROFILE is --lib or --bin, and --no-runtime or --runtime. A single file sets
 its profile with marker lines: `// weft: library` and `// weft: no-runtime`.
 A package sets it in weft.toml. A flag wins over both.
 
+RUN is [--seed N] [--workers N] [--unchecked] [--oracle].
 `run` and `test` do not run a program that has errors, unless --unchecked is given.
 --seed (default 0) and --workers (1 to 1024, default 4) set the deterministic scheduler.
+--oracle turns on strict run-time checks: a dangling reference, a moved `Vec`
+buffer, a linear leak, a data race and a stealable task that reaches a
+nonportable value are run-time errors.
 
 Exit codes: 0 on success; 1 when the program has errors or fails; 2 on a usage
 error or a file that cannot be read. With --unchecked, the exit code of `run`
@@ -62,6 +67,7 @@ struct Flags {
     json: bool,
     explain: bool,
     unchecked: bool,
+    oracle: bool,
     rules: Option<String>,
     seed: Option<u64>,
     workers: Option<usize>,
@@ -77,13 +83,48 @@ const PROFILE: [&str; 4] = ["--lib", "--bin", "--no-runtime", "--runtime"];
 fn options_of(cmd: &str) -> Option<Vec<&'static str>> {
     let own: &[&str] = match cmd {
         "check" => &["--json", "--explain"],
-        "run" | "test" => &["--seed", "--workers", "--unchecked"],
+        "run" | "test" => &["--seed", "--workers", "--unchecked", "--oracle"],
         "lint" => &["--rules"],
         "facts" | "agree" => &[],
         "explain" | "deps" | "spec" | "help" | "--help" | "-h" => return Some(Vec::new()),
         _ => return None,
     };
     Some(PROFILE.iter().chain(own).copied().collect())
+}
+
+/// Returns the positional arguments of a command: the names of the arguments
+/// that it needs, then the names of the arguments that it can take.
+fn positional_of(cmd: &str) -> (&'static [&'static str], &'static [&'static str]) {
+    match cmd {
+        "check" | "run" | "test" | "agree" | "lint" | "deps" => (&["PATH"], &[]),
+        "facts" => (&["PATH"], &["FUNCTION"]),
+        "explain" => (&["CODE"], &[]),
+        "help" | "--help" | "-h" => (&[], &["COMMAND"]),
+        _ => (&[], &[]),
+    }
+}
+
+/// Checks the number of positional arguments of a command.
+fn check_positional(cmd: &str, given: &[String]) -> Result<()> {
+    let (needs, can) = positional_of(cmd);
+    if let Some(name) = needs.get(given.len()) {
+        bail!("`{cmd}` needs a {name}; see `weft help`");
+    }
+    let max = needs.len() + can.len();
+    if let Some(extra) = given.get(max) {
+        let takes = match (max, can.is_empty()) {
+            (0, _) => "takes no arguments".to_string(),
+            (1, true) => "takes 1 argument".to_string(),
+            (n, true) => format!("takes {n} arguments"),
+            (1, false) => "takes at most 1 argument".to_string(),
+            (n, false) => format!("takes at most {n} arguments"),
+        };
+        bail!(
+            "`{cmd}` {takes}, found {}: `{extra}` is extra; see `weft help`",
+            given.len()
+        );
+    }
+    Ok(())
 }
 
 /// Reads the number after an option.
@@ -106,6 +147,7 @@ fn flags(args: &[String]) -> Result<Flags> {
             "--json" => f.json = true,
             "--explain" => f.explain = true,
             "--unchecked" => f.unchecked = true,
+            "--oracle" => f.oracle = true,
             "--rules" => f.rules = Some(it.next().context("--rules needs a file")?.clone()),
             "--seed" => f.seed = Some(number(&mut it, "--seed")?),
             "--workers" => {
@@ -126,9 +168,10 @@ fn flags(args: &[String]) -> Result<Flags> {
     Ok(f)
 }
 
-/// Runs one command. The output of a Weft program stays in [`Output`].
+/// Runs one command on a thread with a [`weft_sema::STACK`] stack. The output
+/// of a Weft program stays in [`Output`].
 pub fn run(args: &[String]) -> Result<Output> {
-    run_with(args, false)
+    on_large_stack(args, false)
 }
 
 /// Runs one command, and writes the output of a Weft program at once.
@@ -137,7 +180,14 @@ pub fn run(args: &[String]) -> Result<Output> {
 /// standard error while the program runs, so the log of a test comes before
 /// its result line.
 pub fn run_live(args: &[String]) -> Result<Output> {
-    run_with(args, true)
+    on_large_stack(args, true)
+}
+
+/// Runs one command on a thread with a [`weft_sema::STACK`] stack
+/// ([`weft_sema::on_large_stack`]). Sema, the checker and the interpreter use
+/// the same thread.
+fn on_large_stack(args: &[String], live: bool) -> Result<Output> {
+    weft_sema::on_large_stack(|| run_with(args, live))
 }
 
 fn run_with(args: &[String], live: bool) -> Result<Output> {
@@ -155,6 +205,12 @@ fn run_with(args: &[String], live: bool) -> Result<Output> {
     let f = flags(rest)?;
     if let Some(o) = f.given.iter().find(|o| !takes.contains(&o.as_str())) {
         bail!("`{cmd}` does not take {o}; see `weft help`");
+    }
+    check_positional(cmd, &f.positional)?;
+    if let ("help" | "--help" | "-h", Some(c)) = (cmd, f.positional.first()) {
+        if options_of(c).is_none() {
+            bail!("unknown command `{c}`\n{USAGE}");
+        }
     }
     let out = match cmd {
         "check" => check(&f),
@@ -202,11 +258,13 @@ fn syntax_output(cmd: &str, f: &Flags, s: &SyntaxError) -> Output {
     out
 }
 
+/// Returns the first positional argument. [`check_positional`] makes sure
+/// that a command that needs it has it.
 fn path_arg(f: &Flags) -> Result<&str> {
     f.positional
         .first()
         .map(String::as_str)
-        .context("missing PATH")
+        .context("missing PATH; see `weft help`")
 }
 
 /// Loads, analyzes and checks a file or a package. The flags win over the
@@ -215,12 +273,12 @@ pub fn check_path(path: &Path, profile: Profile) -> Result<(Package, Checked)> {
     let pkg = load(path)?;
     let opts = pkg.options(profile);
     let analysis = weft_sema::analyze(&pkg.units, opts);
-    let mut checked = check_analysis(analysis, &pkg.files, opts);
+    let mut checked = check_analysis(analysis, &pkg.files);
     checked.diags.extend(package_diags(&pkg, &checked.analysis));
     checked.diags.extend(pkg.marker_diags());
     checked
         .diags
-        .sort_by_key(|d| (d.unit, d.span.lo, d.code.clone()));
+        .sort_by(|a, b| (a.unit, a.span.lo, &a.code).cmp(&(b.unit, b.span.lo, &b.code)));
     Ok((pkg, checked))
 }
 
@@ -258,7 +316,19 @@ pub fn diag_json(pkg: &Package, d: &Diagnostic) -> String {
 fn diag_json_in(file: Option<&weft_syntax::SourceFile>, d: &Diagnostic) -> String {
     let (line, col) = file.map_or((0, 0), |f| f.line_col(d.span.lo));
     let name = file.map_or_else(String::new, |f| f.name.clone());
-    let notes: Vec<String> = d.notes.iter().map(|n| json_escape(&n.text)).collect();
+    // A note with a location keeps its line, as the text form shows it.
+    let notes: Vec<String> = d
+        .notes
+        .iter()
+        .map(|n| match (n.span, file) {
+            (Some(s), Some(f)) => format!(
+                "{{\"text\":{},\"line\":{}}}",
+                json_escape(&n.text),
+                f.line_col(s.lo).0
+            ),
+            _ => format!("{{\"text\":{}}}", json_escape(&n.text)),
+        })
+        .collect();
     let sev = if d.severity == Severity::Error {
         "error"
     } else {
@@ -266,7 +336,7 @@ fn diag_json_in(file: Option<&weft_syntax::SourceFile>, d: &Diagnostic) -> Strin
     };
     format!(
         "{{\"code\":{},\"severity\":\"{sev}\",\"message\":{},\"file\":{},\"line\":{line},\"column\":{col},\"notes\":[{}]}}",
-        json_escape(&d.code),
+        json_escape(d.code.as_str()),
         json_escape(&d.message),
         json_escape(&name),
         notes.join(",")
@@ -286,24 +356,49 @@ fn check(f: &Flags) -> Result<Output> {
         }
     }
     if f.explain {
-        for b in &c.analysis.bodies {
+        for (i, b) in c.analysis.bodies.iter().enumerate() {
             let Some(file) = pkg.files.get(b.unit) else {
                 continue;
             };
             let line_of = |o: u32| file.line_col(o).0;
             let ex = bridge::explain(&b.facts, &line_of).map_err(|e| anyhow::anyhow!("{e}"))?;
             for e in ex {
+                // The diagnostic that reports the fact of this body
+                // (`Diagnostic::facts`).
+                let key = bridge::body_key(i, &e.key);
+                let diag = c
+                    .diags
+                    .iter()
+                    .find(|d| d.unit == b.unit && d.facts.contains(&key))
+                    .map(|d| (d, file.line_col(d.span.lo)));
                 if f.json {
+                    let link = diag.map_or_else(
+                        || "null".to_string(),
+                        |(d, (line, col))| {
+                            format!(
+                                "{{\"code\":{},\"line\":{line},\"column\":{col}}}",
+                                json_escape(d.code.as_str())
+                            )
+                        },
+                    );
                     let _ = writeln!(
                         text,
-                        "{{\"derivation\":{},\"function\":{}}}",
+                        "{{\"derivation\":{},\"function\":{},\"diagnostic\":{link}}}",
                         e.json,
                         json_escape(&b.facts.name)
                     );
                 } else {
+                    let link = diag.map_or_else(String::new, |(d, (line, _))| {
+                        let sev = if d.severity == Severity::Error {
+                            "error"
+                        } else {
+                            "warning"
+                        };
+                        format!(", for {sev}[{}] at line {line}", d.code)
+                    });
                     let _ = write!(
                         text,
-                        "derivation of {} in `{}`:\n{}",
+                        "derivation of {} in `{}`{link}:\n{}",
                         e.fact, b.facts.name, e.tree
                     );
                 }
@@ -341,6 +436,27 @@ fn facts(f: &Flags) -> Result<Output> {
         }
         text.push_str(&bridge::facts_text(&b.facts));
     }
+    if let (Some(name), true) = (only, text.is_empty()) {
+        let names: Vec<&str> = c
+            .analysis
+            .bodies
+            .iter()
+            .map(|b| b.facts.name.as_str())
+            .collect();
+        let bodies = if names.is_empty() {
+            "it has no functions or tests".to_string()
+        } else {
+            format!("the bodies are `{}`", names.join("`, `"))
+        };
+        return Ok(Output {
+            stderr: format!(
+                "error: no function or test `{name}` in {}; {bodies}\n",
+                path.display()
+            ),
+            code: 1,
+            ..Output::default()
+        });
+    }
     Ok(Output {
         text,
         ..Output::default()
@@ -358,11 +474,18 @@ fn agree(f: &Flags) -> Result<Output> {
         Err(bad) => {
             let mut text = String::new();
             for b in bad {
-                let _ = writeln!(
-                    text,
-                    "disagree in `{}`\n  checker: {:?}\n  spec:    {:?}",
-                    b.function, b.checker, b.spec
-                );
+                let _ = match &b.spec {
+                    Ok(spec) if *spec != b.checker => writeln!(
+                        text,
+                        "disagree in `{}`\n  checker: {:?}\n  spec:    {spec:?}",
+                        b.function, b.checker
+                    ),
+                    Ok(_) => writeln!(text, "disagree in `{}`: the evidence", b.function),
+                    Err(e) => writeln!(text, "disagree in `{}`: {e}", b.function),
+                };
+                for e in &b.evidence {
+                    let _ = writeln!(text, "  evidence: {e}");
+                }
             }
             Ok(Output {
                 text,
@@ -382,6 +505,20 @@ fn lint(f: &Flags) -> Result<Output> {
     if !user.relations_defined().contains("lint") {
         bail!("{rules_path} must define `lint(Name, Node)`");
     }
+    let heads = user
+        .rules()
+        .iter()
+        .map(|r| (r.head.relation.as_str(), r.head.terms.len(), &r.loc));
+    let facts = user
+        .facts()
+        .iter()
+        .map(|f| (f.relation.as_str(), f.values.len(), &f.loc));
+    if let Some((_, n, loc)) = heads
+        .chain(facts)
+        .find(|&(rel, n, _)| rel == "lint" && n != 2)
+    {
+        bail!("{loc}: `lint` must have 2 arguments (Name, Node), found {n}");
+    }
     let mut program = bridge::spec().clone();
     program.extend(user);
     let path = Path::new(path_arg(f)?);
@@ -396,8 +533,11 @@ fn lint(f: &Flags) -> Result<Output> {
         )
         .map_err(|e| anyhow::anyhow!("{e}"))?;
         for t in out.tuples("lint") {
-            let name = out.display_value(t[0]).trim_matches('"').to_string();
-            let node = t.get(1).map(|v| out.display_value(*v)).unwrap_or_default();
+            let [name, node] = t.as_slice() else {
+                continue;
+            };
+            let name = out.display_value(*name).trim_matches('"').to_string();
+            let node = out.display_value(*node);
             let span = node
                 .strip_prefix('n')
                 .and_then(|n| n.parse::<usize>().ok())
@@ -405,7 +545,7 @@ fn lint(f: &Flags) -> Result<Output> {
                 .map(|n| n.span)
                 .unwrap_or_default();
             let mut d = Diagnostic::warning(
-                "L0001",
+                Code::L0001,
                 format!("lint `{name}` in `{}`", b.facts.name),
                 span,
             );
@@ -510,6 +650,7 @@ fn run_options(f: &Flags, pkg: &Package, capture: bool) -> RunOptions {
         workers: f.workers.unwrap_or(defaults.workers),
         capture_output: capture,
         no_runtime: pkg.options(f.profile).no_runtime,
+        oracle: f.oracle,
         ..defaults
     }
 }

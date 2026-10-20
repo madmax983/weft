@@ -1,0 +1,35 @@
+// A named argument binds by name in each call form that has names, as in
+// semantic analysis (ADR 0009): a function, a method of a value, a function
+// item in a local, an operation and a struct constructor. The arguments run in
+// the order of the parameters.
+struct Entity { hp: i32 }
+struct Range { lo: u64, hi: u64 }
+fn diff(a: i32, b: i32) -> i32 { a - b }
+fn show(e: &Entity, n: i32) { print("e.hp = {e.hp}, n = {n}") }
+fn side(x: i32) -> i32 {
+    print("side {x}")
+    x
+}
+impl Entity {
+    fn diff(self, a: i32, b: i32) -> i32 { a - b }
+    fn apply(self, n: i32, f: fn(i32) -> i32) -> i32 { f(n) + self.hp }
+    fn pre(self, f: fn() -> i32, n: i32) -> i32 { f() * 100 + n + self.hp }
+}
+fn span(r: Range) -> u64 { r.hi - r.lo }
+
+fn main() {
+    let x = Entity { hp: 1 }
+    let y = Entity { hp: 2 }
+    print(diff(b: 10, a: 3))
+    print(x.diff(b: 10, a: 3))
+    let g = diff
+    print(g(b: 10, a: 3))
+    let h = show
+    h(n: 5, e: &y)
+    print(x.diff(b: side(10), a: side(3)))
+    print(g(b: side(20), a: side(4)))
+    print(y.apply(f: |v| v * 2, n: 4))
+    print(y.pre(n: 5) { 3 })
+    print(span(Range(hi: 10, lo: 2)))
+    print(span(Range(2, hi: 10)))
+}

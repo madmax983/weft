@@ -1,0 +1,103 @@
+// A clause can run a function argument of its operation as a task (W0314, ADR
+// 0006). The value can come from a callee. It can be a closure that the callee
+// makes and gives to an operation of a handler of its caller. It can be a
+// parameter of a closure that a callee returns. A closure that a callee returns
+// can also run its parameter as a task. The caller checks these values with its
+// own handlers.
+effect Note { fn note(x: u64) }
+effect Run { fn run(f: fn()) }
+
+fn gives() / Run, Note { run(|| note(1)) }
+fn gives_log() / Run, log { run(|| log.info("x")) }
+fn gives_quiet() / Run { run(|| print(1)) }
+fn passes_on() / Run, Note { gives() }
+fn mk() -> fn(fn()) / Run { |g: fn()| run(g) }
+fn mk_spawner() -> fn(fn()) / async { |g: fn()| { scope { s => s.spawn(g) }
+ () } }
+
+// A callee gives its own closure to an operation of a handler here.
+fn callee_gives() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        handle Run {
+            fn run(f) {
+                scope { s => s.spawn(f) }   //~ W0314
+                resume(())
+            }
+        } in gives()   //~ W0314
+    }
+}
+fn callee_gives_through() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        handle Run {
+            fn run(f) {
+                scope { s => s.spawn(f) }   //~ W0314
+                resume(())
+            }
+        } in passes_on()   //~ W0314
+    }
+}
+fn callee_gives_user_effect() / Note, async {
+    handle Run {
+        fn run(f) {
+            scope { s => s.spawn(f) }   //~ W0314
+            resume(())
+        }
+    } in gives()   //~ W0314
+}
+fn callee_gives_local_log() / async {
+    handle log { fn info(m) { resume(()) } fn warn(m) { resume(()) } } in {
+        handle Run {
+            fn run(f) {
+                scope { s => s.spawn(f) }   //~ W0314
+                resume(())
+            }
+        } in gives_log()   //~ W0314
+    }
+}
+// A closure that a callee returns gives its parameter to an operation here.
+fn from_maker() / async {
+    handle Run {
+        fn run(f) {
+            scope { s => s.spawn(f) }   //~ W0314
+            resume(())
+        }
+    } in {
+        let c = mk()
+        handle Note { fn note(x) { resume(()) } } in c(|| note(2))   //~ W0313 W0314
+    }
+}
+// A closure that a callee returns runs its parameter as a task.
+fn from_spawning_maker() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let c = mk_spawner()
+        c(|| note(3))   //~ W0314
+    }
+}
+
+// Controls.
+fn callee_gives_quiet() / async {
+    handle Run {
+        fn run(f) {
+            scope { s => s.spawn(f) }
+            resume(())
+        }
+    } in gives_quiet()
+}
+fn callee_gives_runtime_log() / async, log {
+    handle Run {
+        fn run(f) {
+            scope { s => s.spawn(f) }
+            resume(())
+        }
+    } in gives_log()
+}
+fn clause_calls() {
+    handle Note { fn note(x) { resume(()) } } in {
+        handle Run { fn run(f) { f()
+ resume(()) } } in gives()
+    }
+}
+fn from_spawning_maker_ok() / async {
+    let c = mk_spawner()
+    c(|| print(4))
+}

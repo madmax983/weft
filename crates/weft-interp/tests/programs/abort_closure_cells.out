@@ -1,0 +1,4 @@
+commit 1
+caught: abort before the call
+rollback 2
+end

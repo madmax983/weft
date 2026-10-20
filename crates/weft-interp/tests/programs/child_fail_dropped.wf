@@ -1,0 +1,65 @@
+// A failure of a child waits while the frame of its scope is in a
+// continuation. If the clause does not resume, the abort unwinds the scope,
+// and the failure goes away with it. A failure of another scope still goes
+// to the handlers of that scope (ADR 0010).
+effect Ask { fn ask() -> u64 }
+
+// The clause drops the continuation: the scope of the failed child ends.
+fn dropped() / io {
+    handle Fail { fn fail(m) { print("h1: {m}") } } in {
+        let x = handle Ask { fn ask() { sleep(20.ms); 0 } } in {
+            scope { s =>
+                s.spawn(|| { sleep(5.ms); fail("first") })
+                let y = ask()
+                print("not reached {y}")
+            }
+            1
+        }
+        print("dropped gave {x}")
+    }
+}
+
+// A child of a second scope fails while the owner sleeps.
+fn second() / io {
+    handle Fail { fn fail(m) { print("h2: {m}") } } in {
+        scope { s =>
+            s.spawn(|| { sleep(5.ms); fail("second") })
+            sleep(50.ms)
+            print("second body slept fully")
+        }
+        print("second scope returned normally")
+    }
+}
+
+// The child of scope A fails while the frame of A is in the continuation. The
+// clause has a scope B of its own, and a child of B fails while the clause
+// waits in B. Each failure goes to the handlers of its own scope.
+fn two_scopes() / io {
+    handle Fail { fn fail(m) { print("outer handler: {m}") } } in {
+        handle Ask { fn ask() {
+            handle Fail { fn fail(m) { print("clause handler: {m}") } } in {
+                scope { b =>
+                    b.spawn(|| { sleep(10.ms); fail("child of B failed") })
+                    sleep(20.ms)
+                    print("clause scope goes on")
+                }
+            }
+            resume(1)
+        } } in {
+            scope { a =>
+                a.spawn(|| { sleep(5.ms); fail("child of A failed") })
+                let x = ask()
+                sleep(10.ms)
+                print("scope A body done {x}")
+            }
+            print("scope A returned normally")
+        }
+    }
+}
+
+fn main() / io {
+    dropped()
+    second()
+    two_scopes()
+    print("end")
+}

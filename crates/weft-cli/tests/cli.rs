@@ -22,6 +22,15 @@ fn cmd(args: &[&str]) -> weft_cli::Output {
     run(&args).expect("command runs")
 }
 
+/// Runs a command that must fail with a usage error, and returns the message.
+fn usage_error(args: &[&str]) -> String {
+    let args: Vec<String> = args.iter().map(|a| (*a).to_string()).collect();
+    match run(&args) {
+        Ok(out) => panic!("`{}` runs: {} {}", args.join(" "), out.text, out.stderr),
+        Err(e) => format!("{e:#}"),
+    }
+}
+
 /// Writes `files` into a new directory for one test, and returns its path.
 fn scratch(name: &str, files: &[(&str, &str)]) -> String {
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
@@ -74,6 +83,42 @@ fn explain_prints_the_derivation_tree() {
 }
 
 #[test]
+fn json_notes_keep_their_lines() {
+    let json = cmd(&["check", "--json", "tests/programs/02_bad.wf"]);
+    let line = json.text.lines().next().unwrap_or_default();
+    assert!(
+        line.contains(
+            "\"notes\":[{\"text\":\"first : &Entity in world.entities[]\",\"line\":7},{\"text\":\"push : mut(world.entities)\",\"line\":8},{\"text\":\"world.entities is a strict prefix of world.entities[], through an unstable step  →  invalidated at line 8\"},"
+        ),
+        "{line}"
+    );
+}
+
+#[test]
+fn explain_links_each_derivation_to_its_diagnostic() {
+    let out = cmd(&["check", "--explain", "tests/programs/02_bad.wf"]);
+    assert!(
+        out.text.contains(
+            "derivation of error(`first`, print@line9) in `bad`, for error[W0301] at line 9:\n"
+        ),
+        "{}",
+        out.text
+    );
+    let json = cmd(&["check", "--explain", "--json", "tests/programs/02_bad.wf"]);
+    let derivation = json
+        .text
+        .lines()
+        .find(|l| l.starts_with("{\"derivation\":"))
+        .unwrap_or_default();
+    assert!(
+        derivation.ends_with(
+            ",\"function\":\"bad\",\"diagnostic\":{\"code\":\"W0301\",\"line\":9,\"column\":5}}"
+        ),
+        "{derivation}"
+    );
+}
+
+#[test]
 fn facts_are_datalog() {
     let out = cmd(&["facts", "tests/programs/02_bad.wf", "bad"]);
     assert!(out.text.contains("// facts of `bad`"));
@@ -111,7 +156,7 @@ fn deps_rejects_overreaching_dependency() {
 
 #[test]
 fn authority_covers_private_dependency_functions() {
-    // The root can call a private function of a dependency, so it counts too.
+    // A private function of a dependency counts too: a public one can call it.
     let pkg = scratch(
         "private_authority",
         &[
@@ -121,7 +166,7 @@ fn authority_covers_private_dependency_functions() {
             ),
             (
                 "src/main.wf",
-                "fn main(env: Env) / io, net {\n    json.phone_home(\"x\")\n    print(json.parse(\"[1]\"))\n}\n",
+                "fn main(env: Env) / io, net {\n    print(json.parse(\"[1]\"))\n}\n",
             ),
             (
                 "deps/json/src/lib.wf",
@@ -171,13 +216,135 @@ fn authority_covers_private_dependency_functions() {
         "{}",
         out.text
     );
-    assert!(out.text.contains("1 error(s)"), "{}", out.text);
+    // The closure belongs to `get`, so the public signature of `get` must state
+    // `net` too (ADR 0005).
+    assert!(
+        out.text
+            .contains("error[W0701]: public function `get` must state its effects: `/ net`"),
+        "{}",
+        out.text
+    );
+    assert!(out.text.contains("2 error(s)"), "{}", out.text);
 }
 
 #[test]
 fn library_cannot_enable_gc() {
     let out = cmd(&["check", "examples/gc-lib"]);
-    assert!(out.text.contains("W0902"));
+    assert_eq!(out.code, 1, "{}", out.text);
+    let lines: Vec<&str> = out.text.lines().collect();
+    assert_eq!(
+        lines.first().copied(),
+        Some("error[W0902]: a library cannot enable the GC tier; only a binary may"),
+        "{}",
+        out.text
+    );
+    assert!(
+        lines
+            .get(1)
+            .is_some_and(|l| l.ends_with("examples/gc-lib/src/lib.wf:1:1")),
+        "{}",
+        out.text
+    );
+    assert!(
+        out.text.contains("weft.toml sets `gc = true` in [package]"),
+        "{}",
+        out.text
+    );
+    assert_eq!(out.text.matches("error[").count(), 1, "{}", out.text);
+}
+
+#[test]
+fn manifest_rejects_unknown_keys() {
+    let main = ("src/main.wf", "fn main() {}\n");
+    for (name, manifest, key) in [
+        (
+            "package_key",
+            "[package]\nname = \"app\"\nruntim = \"none\"\n",
+            "runtim",
+        ),
+        (
+            "top_key",
+            "[package]\nname = \"app\"\n[dependency.x]\npath = \"x\"\n",
+            "dependency",
+        ),
+        (
+            "dep_key",
+            "[package]\nname = \"app\"\n[dependencies.x]\npath = \"x\"\nauthorty = []\n",
+            "authorty",
+        ),
+    ] {
+        let dir = scratch(
+            &format!("manifest_{name}"),
+            &[("weft.toml", manifest), main],
+        );
+        let e = usage_error(&["check", &dir]);
+        assert!(
+            e.starts_with(&format!("{dir}/weft.toml is not a valid manifest")),
+            "{name}: {e}"
+        );
+        assert!(e.contains(&format!("unknown field `{key}`")), "{name}: {e}");
+    }
+}
+
+#[test]
+fn a_broken_dependency_manifest_is_an_error() {
+    let dir = scratch(
+        "broken_dep_manifest",
+        &[
+            (
+                "weft.toml",
+                "[package]\nname = \"app\"\n[dependencies.json]\npath = \"deps/json\"\n",
+            ),
+            ("src/main.wf", "fn main() {}\n"),
+            (
+                "deps/json/weft.toml",
+                "[package]\nname = \"json\"\ngc = yes\n",
+            ),
+            ("deps/json/src/lib.wf", "pub fn parse() {}\n"),
+        ],
+    );
+    let e = usage_error(&["check", &dir]);
+    assert!(
+        e.starts_with(&format!(
+            "{dir}/deps/json/weft.toml is not a valid manifest"
+        )),
+        "{e}"
+    );
+    // A dependency with no manifest is a plain library.
+    let dir = scratch(
+        "no_dep_manifest",
+        &[
+            (
+                "weft.toml",
+                "[package]\nname = \"app\"\n[dependencies.json]\npath = \"deps/json\"\n",
+            ),
+            ("src/main.wf", "fn main() {}\n"),
+            ("deps/json/src/lib.wf", "pub fn parse() {}\n"),
+        ],
+    );
+    assert_eq!(cmd(&["check", &dir]).code, 0);
+}
+
+#[test]
+fn a_user_effect_of_a_dependency_needs_no_authority() {
+    // Authority grants standard effects only. The caller must handle a user
+    // effect of the dependency, so the hint cannot name it.
+    let dir = scratch(
+        "user_effect_authority",
+        &[
+            (
+                "weft.toml",
+                "[package]\nname = \"app\"\n[dependencies.dep]\npath = \"deps/dep\"\nauthority = []\n",
+            ),
+            ("src/main.wf", "fn main() {}\n"),
+            (
+                "deps/dep/src/lib.wf",
+                "pub effect Note2 { fn note2() }\npub fn f() / Note2 { note2() }\n",
+            ),
+        ],
+    );
+    let out = cmd(&["check", &dir]);
+    assert!(!out.text.contains("W0901"), "{}", out.text);
 }
 
 #[test]
@@ -191,8 +358,9 @@ fn explain_and_help() {
     let help = cmd(&["help"]);
     assert_eq!(help.code, 0);
     for word in [
-        "run     [PROFILE] [--seed N]",
-        "test    [PROFILE] [--seed N]",
+        "run     [PROFILE] [RUN] PATH",
+        "test    [PROFILE] [RUN] PATH",
+        "RUN is [--seed N] [--workers N] [--unchecked] [--oracle].",
         "--unchecked",
         "--lib or --bin",
         "1 to 1024",
@@ -202,9 +370,130 @@ fn explain_and_help() {
     }
     assert!(cmd(&["spec"]).text.contains("invalidated_at(R, P)"));
     assert_eq!(run(&[]).expect("usage").code, 2);
-    assert!(run(&["nope".to_string()]).is_err());
-    assert!(run(&["explain".to_string(), "W9999".to_string()]).is_err());
-    assert!(run(&["check".to_string(), "--bad".to_string()]).is_err());
+    assert!(usage_error(&["nope"]).starts_with("unknown command `nope`\nusage: weft"));
+    assert_eq!(usage_error(&["explain", "W9999"]), "unknown code `W9999`");
+    assert_eq!(usage_error(&["check", "--bad"]), "unknown option `--bad`");
+}
+
+#[test]
+fn help_takes_a_command() {
+    for args in [["help", "check"], ["--help", "run"], ["-h", "facts"]] {
+        let out = cmd(&args);
+        assert_eq!(out.code, 0, "{}", args.join(" "));
+        assert!(out.text.starts_with("usage: weft"), "{}", out.text);
+    }
+    assert!(usage_error(&["help", "nope"]).starts_with("unknown command `nope`\nusage: weft"));
+    assert_eq!(
+        usage_error(&["help", "check", "x"]),
+        "`help` takes at most 1 argument, found 2: `x` is extra; see `weft help`"
+    );
+}
+
+#[test]
+fn explain_needs_a_code() {
+    let e = usage_error(&["explain"]);
+    assert_eq!(e, "`explain` needs a CODE; see `weft help`");
+}
+
+#[test]
+fn check_says_that_a_file_is_missing() {
+    let dir = scratch("missing", &[("other.wf", "fn main() {}\n")]);
+    let e = usage_error(&["check", &format!("{dir}/missing.wf")]);
+    assert_eq!(
+        e,
+        format!("cannot read {dir}/missing.wf: no such file or directory")
+    );
+    // A directory needs a manifest.
+    let e = usage_error(&["check", &dir]);
+    assert!(
+        e.starts_with(&format!("cannot read {dir}/weft.toml: ")),
+        "{e}"
+    );
+}
+
+#[test]
+fn extra_positional_arguments_are_a_usage_error() {
+    let path = root()
+        .join("tests/programs/01_places.wf")
+        .display()
+        .to_string();
+    for (args, want) in [
+        (
+            vec!["check", &path, "x"],
+            "`check` takes 1 argument, found 2: `x` is extra; see `weft help`",
+        ),
+        (
+            vec!["run", &path, "a", "b"],
+            "`run` takes 1 argument, found 3: `a` is extra; see `weft help`",
+        ),
+        (
+            vec!["facts", &path, "tick", "x"],
+            "`facts` takes at most 2 arguments, found 3: `x` is extra; see `weft help`",
+        ),
+        (
+            vec!["explain", "W0301", "W0302"],
+            "`explain` takes 1 argument, found 2: `W0302` is extra; see `weft help`",
+        ),
+        (
+            vec!["spec", "x"],
+            "`spec` takes no arguments, found 1: `x` is extra; see `weft help`",
+        ),
+    ] {
+        assert_eq!(usage_error(&args), want, "{}", args.join(" "));
+    }
+}
+
+#[test]
+fn facts_of_an_unknown_function_is_an_error() {
+    let path = "tests/programs/02_bad.wf";
+    let out = cmd(&["facts", path, "nosuchfn"]);
+    assert_eq!(out.code, 1);
+    assert_eq!(out.text, "");
+    assert!(
+        out.stderr
+            .starts_with("error: no function or test `nosuchfn` in "),
+        "{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr
+            .ends_with("; the bodies are `Entity.new`, `bad`\n"),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(cmd(&["facts", path, "bad"]).code, 0);
+    let dir = scratch("nobodies", &[("types.wf", "struct S { a: u64 }\n")]);
+    let out = cmd(&["facts", &format!("{dir}/types.wf"), "f"]);
+    assert_eq!(out.code, 1);
+    assert!(
+        out.stderr
+            .ends_with("types.wf; it has no functions or tests\n"),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn lint_rejects_a_lint_relation_of_another_arity() {
+    let path = root()
+        .join("tests/programs/01_places.wf")
+        .display()
+        .to_string();
+    for (name, rule, n) in [
+        ("nullary", "lint() :- has_signature().\n", 0),
+        ("unary", "lint(N) :- cfg_edge(N, _).\n", 1),
+        ("ternary", "lint(\"x\", N, N) :- cfg_edge(N, _).\n", 3),
+        ("fact", "lint(\"x\").\n", 1),
+    ] {
+        let dir = scratch(&format!("lint_{name}"), &[("rules.dl", rule)]);
+        let rules = format!("{dir}/rules.dl");
+        let e = usage_error(&["lint", "--rules", &rules, &path]);
+        assert_eq!(
+            e,
+            format!("{rules}:1: `lint` must have 2 arguments (Name, Node), found {n}"),
+            "{name}"
+        );
+    }
 }
 
 #[test]
@@ -298,9 +587,15 @@ fn run_takes_seed_and_workers() {
         assert_eq!(out.code, 0, "{}", out.stderr);
         assert_eq!(out.text, "24856\n");
     }
-    assert!(run(&["run".into(), "--seed".into(), "x".into(), path.clone()]).is_err());
-    assert!(run(&["run".into(), "--workers".into(), "0".into(), path]).is_err());
-    assert!(run(&["run".into(), "--seed".into()]).is_err());
+    assert_eq!(
+        usage_error(&["run", "--seed", "x", &path]),
+        "--seed needs a number, found `x`"
+    );
+    assert_eq!(
+        usage_error(&["run", "--workers", "0", &path]),
+        "--workers needs a number from 1 to 1024, found `0`"
+    );
+    assert_eq!(usage_error(&["run", "--seed"]), "--seed needs a number");
 }
 
 #[test]
@@ -354,7 +649,10 @@ fn a_syntax_error_is_an_error_of_the_program() {
     let out = cmd(&["run", "--unchecked", &file]);
     assert_eq!(out.code, 1);
     // A file that is not there is still a usage error.
-    assert!(run(&["check".into(), format!("{dir}/none.wf")]).is_err());
+    assert_eq!(
+        usage_error(&["check", &format!("{dir}/none.wf")]),
+        format!("cannot read {dir}/none.wf: no such file or directory")
+    );
 }
 
 #[test]
@@ -369,6 +667,7 @@ fn commands_reject_options_that_they_do_not_take() {
         vec!["run", "--rules", "x.dl", &path],
         vec!["check", "--seed", "1", &path],
         vec!["check", "--unchecked", &path],
+        vec!["check", "--oracle", &path],
         vec!["deps", "--lib", &path],
         vec!["explain", "--json", "W0301"],
     ] {
@@ -505,6 +804,11 @@ fn binary_streams_output_and_sets_the_exit_code() {
     assert_eq!(tests.status.code(), Some(1));
     let usage = run_bin(&["nope"]);
     assert_eq!(usage.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&usage.stderr);
+    assert!(err.starts_with("error: unknown command `nope`"), "{err}");
+    let help = run_bin(&[]);
+    assert_eq!(help.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&help.stdout).starts_with("usage: weft"));
 }
 
 /// The binary writes the log of a test before the result line of the test.
@@ -529,4 +833,57 @@ fn binary_test_writes_each_log_before_its_result() {
     let at = |s: &str| text.find(s).unwrap_or_else(|| panic!("no {s:?} in {text}"));
     assert!(at("info: hello log") < at("test logs: ok"), "{text}");
     assert!(at("test logs: ok") < at("later"), "{text}");
+}
+
+#[test]
+fn deps_sees_effects_that_signatures_hide() {
+    let out = cmd(&["deps", "tests/packages/hidden"]);
+    assert_eq!(out.code, 1, "{}", out.text);
+    // A returned closure has the effects of its maker.
+    assert!(
+        out.text
+            .contains("error[W0901]: dependency `json` function `parse` needs `async, net`"),
+        "{}",
+        out.text
+    );
+    // The body counts, not only the stated effects.
+    assert!(
+        out.text
+            .contains("function `quiet` needs `async, log, net`"),
+        "{}",
+        out.text
+    );
+    // A private function counts: a public function can call it.
+    assert!(out.text.contains("function `helper` needs"), "{}", out.text);
+}
+
+#[test]
+fn oracle_turns_on_the_strict_run_time_checks() {
+    // A reference into a cleared `Vec`: the checker rejects it (W0301). The
+    // stock machine prints `<dangling>`; with --oracle the run fails (ADR 0010).
+    let dir = scratch(
+        "oracle",
+        &[(
+            "dangling.wf",
+            "fn main() {\n    let v = Vec.new()\n    v.push(1)\n    let r = &v[0]\n    v.clear()\n    print(r)\n}\n",
+        )],
+    );
+    let file = format!("{dir}/dangling.wf");
+    let out = cmd(&["run", "--unchecked", &file]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.text, "<dangling>\n");
+    let out = cmd(&["run", "--unchecked", "--oracle", &file]);
+    assert_eq!(out.code, 1, "{}", out.text);
+    assert!(
+        out.stderr.contains("oracle: a read of a freed cell"),
+        "{}",
+        out.stderr
+    );
+    // A correct program runs with the checks too.
+    let path = root()
+        .join("crates/weft-interp/tests/programs/places.wf")
+        .display()
+        .to_string();
+    let out = cmd(&["run", "--oracle", &path]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
 }

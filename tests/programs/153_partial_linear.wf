@@ -1,0 +1,156 @@
+// A move of one part of a linear aggregate leaves the other linear parts in the
+// local (`rest_linear`). The local stays live, so its end is W0601 and an
+// abort is W0602. A later use of the local, also of another part, is still a
+// use after a move (W0302), so the program cannot consume the rest that way.
+// Destructure the value to consume each part (ADR 0007).
+linear struct Tx { id: u64 }
+    on abort = rollback
+linear struct Lock { id: u64 }
+fn rollback(tx: Tx) { print(tx.id); let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn unlock(l: Lock) { let Lock(i) = l }
+struct Two { a: Tx, b: Tx }
+struct Mixed { a: Tx, n: u64 }
+effect Stop { fn stop() }
+effect Note { fn note(x: u64) }
+effect Ask { fn ask() -> u64 }
+linear struct Named { id: u64, name: Vec<u64> }
+struct Plain { name: Vec<u64>, n: u64 }
+linear struct Outer { p: Plain }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn close(n: Named) { let Named(i, v) = n }
+fn first<T>(p: (T, T)) -> T { p.0 }
+fn first_v<T>(v: Vec<T>) -> T { v[0] }
+fn pair_first<T>(p: (T, u64)) -> T { p.0 }
+
+// One element of an array moves. The other element is dropped.
+fn array_element() {
+    let a = [begin(1), begin(2)]
+    rollback(a[0])
+}   //~ W0601
+
+// One part of a tuple moves. The other part is dropped.
+fn tuple_part() {
+    let t = (begin(1), begin(2))
+    rollback(t.0)
+}   //~ W0601
+
+// One field moves. The other field is dropped.
+fn struct_field() {
+    let s = Two { a: begin(1), b: begin(2) }
+    rollback(s.a)
+}   //~ W0601
+
+// A part moves into a new local. The other part is dropped.
+fn part_to_local() {
+    let t = (begin(1), begin(2))
+    let x = t.0
+    rollback(x)
+}   //~ W0601
+
+// A closure moves one part of a captured tuple.
+fn closure_part() {
+    let t = (begin(1), begin(2))
+    let f = || rollback(t.0)   //~ W0601
+    f()
+}
+
+// After a part moves, the `Lock` part is live across an operation that can
+// abort, and `Lock` has no `on abort`.
+fn part_then_abort() / Stop {
+    let t = (begin(1), Lock { id: 2 })
+    rollback(t.0)
+    stop()   //~ W0602
+}   //~ W0601
+
+// The move of the part is a call that can abort. The `Lock` part is live at
+// the call too.
+fn end_or_stop(tx: Tx) / Stop { stop(); rollback(tx) }
+fn part_move_aborts() / Stop {
+    let t = (begin(1), Lock { id: 2 })
+    end_or_stop(t.0)   //~ W0602
+}   //~ W0601
+
+// A `linear` struct stays after a move of a field that is not linear: the
+// shell must be consumed too.
+fn shell_field() {
+    let t = Named { id: 1, name: mk_v() }
+    let n = t.name
+    print(n.len())
+}   //~ W0601
+fn shell_nested() {
+    let o = Outer { p: Plain { name: mk_v(), n: 1 } }
+    let v = o.p.name
+    print(v.len())
+}   //~ W0601
+fn shell_abort() / Stop {
+    let t = Named { id: 1, name: mk_v() }
+    let n = t.name
+    stop()   //~ W0602
+    print(n.len())
+}   //~ W0601
+
+// A handler clause moves one part of a captured tuple. The operation leaves
+// the other part.
+fn clause_part() {
+    let t = (begin(1), begin(2))
+    handle Note { fn note(x) { rollback(t.0); resume(()) } } in { note(1) }
+}   //~ W0601
+fn clause_field() {
+    let s = Two { a: begin(1), b: begin(2) }
+    handle Ask { fn ask() { rollback(s.a); 5 } } in { ask() }
+}   //~ W0601
+
+// A generic body moves one part of a value of a type parameter. A linear
+// argument leaves the other part (W0601 at the call).
+fn generic_part() {
+    rollback(first((begin(1), begin(2))))   //~ W0601
+}
+fn generic_element() {
+    let v = Vec.new()
+    v.push(begin(1))
+    v.push(begin(2))
+    rollback(first_v(v))   //~ W0601
+}
+
+// Clean: destructuring consumes both parts.
+fn destructure() {
+    let t = (begin(1), begin(2))
+    let (x, y) = t
+    rollback(x)
+    rollback(y)
+}
+// Clean: the rest has no linear part.
+fn rest_plain() {
+    let m = Mixed { a: begin(3), n: 4 }
+    rollback(m.a)
+    let t = (begin(5), 6)
+    rollback(t.0)
+}
+// The rule is not exact: the length of a `Vec` is not known, so a move of an
+// element leaves the other elements, also when there are none.
+fn one_element() {
+    let a = [begin(7)]
+    rollback(a[0])
+}   //~ W0601
+
+// Clean: the shell and each part are consumed.
+fn shell_clean() {
+    let t = Named { id: 1, name: mk_v() }
+    close(t)
+}
+fn clause_whole() {
+    let t = (begin(1), begin(2))
+    handle Note { fn note(x) { let (a, b) = t; rollback(a); rollback(b); resume(()) } } in { note(1) }
+}
+// Clean: the rest of the argument is plain data.
+fn generic_plain() {
+    rollback(pair_first((begin(8), 9)))
+    print(first((1, 2)))
+}
+
+test "destructure" { destructure() }
+test "rest_plain" { rest_plain() }
+test "shell_clean" { shell_clean() }
+test "clause_whole" { clause_whole() }
+test "generic_plain" { generic_plain() }

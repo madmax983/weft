@@ -1,0 +1,258 @@
+// Core IR target F3-6 (review round 3; O3-4 and I3-1 are the same finding).
+// The checker loses the linear result of a task or a fork branch.
+// - A spawn whose handle is not kept (a statement, or `let _`) gives its
+//   handle to the scope. The scope joins the task and drops the result.
+//   W0601 does not see it. It sees a handle that a pattern `_` drops. The
+//   handle can also go away as the value of an `if`, a block, a loop body, a
+//   closure call or the body of the scope, all in statement position.
+// - A `fork` can abort while the value of one branch is done: the other
+//   branch fails, or a deadline or a cancel unwinds the owner. The unwinder
+//   cannot finish a value whose type has no `on abort`. W0602 does not ask
+//   for it. A cancel of the owner can cut a `join` in the same way, after the
+//   task is done.
+// Decision (ADR 0006 and ADR 0007, open item): a spawn whose handle is not
+// kept drops `T`. That is W0601 when `T` is linear, as for `detach`. In a
+// generic body, `T` goes into `drops`, so the caller gets W0601. The handle
+// that the scope gets is live across the end of the scope, which can abort.
+// So a linear `T` with no `on abort` is also W0602 at the scope, as for a
+// handle that the body keeps and does not use. A `fork` that can abort needs
+// `on abort` for each linear type of a branch value (W0602 at the `fork`). A
+// `join` that can abort needs `on abort` for a linear `T` (W0602 at the
+// `join`). The checker does not enforce it yet. Where a handle goes away as
+// the value of another node, the marker is on the line where W0601 is for a
+// plain linear value in the same position.
+linear struct Lk { id: u64 }
+linear struct Tx { id: u64 }
+    on abort = tx_abort
+
+fn tx_abort(t: Tx) { let Tx(id) = t; print("abort", id) }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn commit(t: Tx) { let Tx(id) = t; print("commit", id) }
+fn make() -> Lk { Lk { id: 5 } }
+fn mk_tx() -> Tx { Tx { id: 3 } }
+fn mk_n() -> u64 { 3 }
+fn begin() -> Lk { Lk { id: 1 } }
+fn boom() -> u64 / fail { fail("boom"); 2 }
+fn slow() -> u64 / clock { sleep(100.ms); 2 }
+fn slow_lk() -> Lk / clock { sleep(100.ms); Lk { id: 2 } }
+
+// Bad: a spawn in statement position. The scope drops the linear result.
+fn bad_fresh() {
+    scope { s =>   //~ W0602
+        s.spawn(|| Lk { id: 1 })   //~ W0601
+        print(1)
+    }
+}
+fn bad_call() {
+    scope { s =>   //~ W0602
+        s.spawn(|| begin())   //~ W0601
+        print(0)
+    }
+}
+// Bad: the value moves into the task and out as its result. `Tx` has
+// `on abort`, but a drop on the normal path is still W0601.
+fn bad_captured() {
+    let t = Tx { id: 2 }
+    scope { s =>
+        s.spawn(|| t)   //~ W0601
+        print(2)
+    }
+}
+fn bad_item() {
+    scope { s =>   //~ W0602
+        s.spawn(make)   //~ W0601
+        print(3)
+    }
+}
+fn bad_in_vec() {
+    scope { s =>   //~ W0602
+        s.spawn(|| { let v = Vec.new(); v.push(Lk { id: 4 }); v })   //~ W0601
+        print(4)
+    }
+}
+fn bad_let_wild() {
+    scope { s =>
+        let _ = s.spawn(|| Tx { id: 4 })   //~ W0601
+        print("spawned")
+    }
+}
+// Bad: the handle goes away as the value of another node in statement
+// position.
+fn bad_in_if() {
+    let c = true
+    scope { s =>
+        if c { s.spawn(|| Tx { id: 1 }) } else { s.spawn(|| Tx { id: 2 }) }   //~ W0601
+        print(1)
+    }
+}
+fn bad_in_block() {
+    scope { s =>
+        { s.spawn(|| Tx { id: 1 }) }   //~ W0601
+        print(1)
+    }
+}
+fn bad_named_tail() {
+    scope { s =>
+        { let h = s.spawn(|| Tx { id: 1 }); h }   //~ W0601
+        print(1)
+    }
+}
+fn bad_in_loop() {
+    scope { s =>
+        for i in 0..2 { s.spawn(|| Tx { id: i }) }   //~ W0601
+    }
+}
+fn bad_tail_spawn() {
+    scope { s => print(1); s.spawn(|| Tx { id: 1 }) }   //~ W0601
+}
+fn bad_closure_spawn() {
+    scope { s =>
+        let g = || s.spawn(|| Tx { id: 1 })
+        g()   //~ W0601
+        print(1)
+    }
+}
+// Bad: a generic body spawns in statement position, so it drops `T`.
+fn spawn_drop<T>(f: fn() -> T) {
+    scope { s =>
+        s.spawn(f)
+        print(1)
+    }
+}
+fn bad_generic() {
+    spawn_drop(mk_tx)   //~ W0601
+}
+
+// Bad: one branch gives a linear value, and the other fails. The `fork`
+// raises the failure and drops the value of the first branch.
+fn fork_failure() / par, fail {
+    let (a, b) = fork(|| begin(), || boom())   //~ W0602
+    unlock(a)
+}
+fn bad_fork_failure() / par {
+    handle Fail { fn fail(m) { print("failed: {m}") } } in fork_failure()
+}
+// Bad: one branch gives a linear value at once. The other sleeps past the
+// deadline of `with_timeout`, so the owner unwinds the `fork`.
+fn fork_timeout() / par, clock {
+    let (a, b) = fork(|| begin(), || slow())   //~ W0602
+    unlock(a)
+}
+fn bad_fork_timeout() / par, clock {
+    handle Fail { fn fail(m) { print("failed: {m}") } } in {
+        with_timeout(10.ms) { fork_timeout() }
+    }
+}
+// Bad: both branches give a linear value, and a deadline cuts the second one.
+fn bad_fork_both() / par, clock {
+    handle Fail { fn fail(m) { print("caught: {m}") } } in {
+        with_timeout(10.ms) {
+            let (a, b) = fork(|| Lk { id: 1 }, || slow_lk())   //~ W0602
+            unlock(a)
+            unlock(b)
+        }
+    }
+}
+
+// Bad: no branch can fail, but a cancel of the owner can cut the `fork` while
+// one branch is done. Here a sibling task of an outer scope fails.
+fn fork_pure() / par {
+    let (a, b) = fork(|| Lk { id: 9 }, || Lk { id: 10 })   //~ W0602
+    unlock(a)
+    unlock(b)
+}
+fn bad_fork_cancel() / par, async {
+    handle Fail { fn fail(m) { print("failed: {m}") } } in {
+        scope { s =>
+            s.spawn(|| boom())
+            fork_pure()
+        }
+    }
+}
+// Bad: the task is done, and a cancel of the owner cuts the `join`. Here a
+// sibling task of an outer scope fails.
+fn joined_lk() {
+    scope { s =>
+        let h = s.spawn(|| Lk { id: 6 })
+        unlock(h.join())   //~ W0602
+    }
+}
+fn bad_join_cancel() / par, async {
+    handle Fail { fn fail(m) { print("failed: {m}") } } in {
+        scope { s =>
+            s.spawn(|| boom())
+            joined_lk()
+        }
+    }
+}
+
+// Control: the checker finds today a handle that `detach` drops, and a
+// handle that a pattern `_` drops. It finds a generic body that detaches.
+fn bad_control_detach() {
+    scope { s =>   //~ W0602
+        let t = s.spawn(|| begin())
+        t.detach()   //~ W0601
+    }
+}
+fn bad_control_pattern() {
+    scope { s =>   //~ W0602
+        let (_, n) = (s.spawn(|| Lk { id: 7 }), 1)   //~ W0601
+        print(n)
+    }
+}
+fn detach_drop<T>(f: fn() -> T) {
+    scope { s =>
+        let t = s.spawn(f)
+        t.detach()
+    }
+}
+fn bad_control_generic() {
+    detach_drop(mk_tx)   //~ W0601
+}
+
+// Clean: the join gives the value, and `commit` consumes it. The clean cases
+// use `Tx`, which has `on abort`: a cancel of the owner can cut a `join` or a
+// `fork`, and the unwinder then finishes a result that is done.
+fn ok_joined() {
+    scope { s =>
+        let h = s.spawn(|| Tx { id: 6 })
+        commit(h.join())
+    }
+}
+// Clean: a spawn in statement position whose result is not linear.
+fn ok_plain_result() {
+    scope { s =>
+        s.spawn(|| 7)
+        s.spawn(|| print(8))
+    }
+}
+// Clean: the same positions with a result that is not linear. A handle that
+// a `let` binds is linear (ADR 0006), so `{ let h = s.spawn(|| 4); h }` is
+// W0601 also for a result that is not linear, as `{ h }` is (corpus 150).
+fn ok_positions() {
+    let c = true
+    scope { s =>
+        if c { s.spawn(|| 1) } else { s.spawn(|| 2) }
+        { s.spawn(|| 3) }
+        for i in 0..2 { s.spawn(|| i) }
+        let g = || s.spawn(|| 5)
+        g()
+        s.spawn(|| 6)
+    }
+}
+fn ok_generic() {
+    spawn_drop(mk_n)
+}
+// Clean: no branch can fail, the type of each linear result has `on abort`,
+// and the body consumes each result.
+fn ok_fork() / par {
+    let (a, b) = fork(|| Tx { id: 9 }, || Tx { id: 10 })
+    commit(a)
+    commit(b)
+}
+
+test "ok_joined" { ok_joined() }
+test "ok_plain_result" { ok_plain_result() }
+test "ok_positions" { ok_positions() }
+test "ok_generic" { ok_generic() }
+test "ok_fork" { ok_fork() }

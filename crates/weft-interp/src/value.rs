@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use weft_sema::program::EffectId;
 use weft_sema::types::AdtId;
+use weft_syntax::ast::Span;
 
 /// An index into the heap.
 pub type CellId = usize;
@@ -71,15 +72,22 @@ pub struct EnumVal {
     pub fields: Vec<Value>,
 }
 
-/// A closure: code, captured cells (by reference) and the handlers where it was made.
+/// A closure: code, captured cells and the handlers where it was made.
 #[derive(Clone, Debug)]
 pub struct ClosureVal {
     /// The code.
     pub code: CodeId,
-    /// The captured cells.
+    /// The captured cells. A capture by reference is the cell of the variable. A
+    /// capture that the closure moves is a cell of its own: the closure took the
+    /// value when it was made.
     pub cells: Vec<CellId>,
+    /// The cells of `cells` that the closure owns: the captures that it moved.
+    /// The unwinder finishes the linear values in them (ADR 0010).
+    pub owned: Vec<CellId>,
     /// The lexical handlers at the creation point.
     pub henv: HEnv,
+    /// The closure expression.
+    pub span: Span,
 }
 
 /// A root capability or an opaque runtime handle.
@@ -182,7 +190,7 @@ pub enum Value {
     /// A closure.
     Closure(Rc<ClosureVal>),
     /// A function item used as a value.
-    FnItem(usize),
+    FnItem(weft_sema::FnId),
     /// A task handle.
     Task(TaskId),
     /// A captured continuation.
@@ -257,10 +265,14 @@ mod tests {
 
     #[test]
     fn henv_finds_innermost_first() {
-        let e = HEnv::default().with(1, 10).with(2, 20).with(1, 30);
-        assert_eq!(e.handlers_for(1), vec![30, 10]);
-        assert_eq!(e.handlers_for(2), vec![20]);
-        assert!(e.handlers_for(3).is_empty());
+        let id = weft_sema::EffectId;
+        let e = HEnv::default()
+            .with(id(1), 10)
+            .with(id(2), 20)
+            .with(id(1), 30);
+        assert_eq!(e.handlers_for(id(1)), vec![30, 10]);
+        assert_eq!(e.handlers_for(id(2)), vec![20]);
+        assert!(e.handlers_for(id(3)).is_empty());
     }
 
     #[test]

@@ -9,7 +9,7 @@ use weft_sema::types::{AdtId, IntTy, Ty};
 use weft_sema::FnSig;
 use weft_syntax::ast::Span;
 
-use crate::compile::{Compiled, Compiler};
+use crate::compile::{Compiled, Compiler, Exports};
 
 /// A function that the interpreter implements.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -166,8 +166,9 @@ pub struct Runtime<'a> {
     pub move_only: Rc<[bool]>,
     /// Built-in definitions.
     pub b: Builtins,
-    /// Spans of task closures that the checker marked stealable.
-    pub stealable: BTreeSet<(u32, u32)>,
+    /// The tasks that the checker marked stealable: the source unit and the
+    /// span of the function value that each one runs.
+    pub stealable: BTreeSet<(usize, u32, u32)>,
 }
 
 /// Returns the qualified name of a function: `Vec.push`, `sim.net.partition`.
@@ -196,7 +197,7 @@ fn native_of(prog: &Program, sigs: &[FnSig], f: FnId) -> Option<Native> {
     }
     if !def.is_std {
         let blocking = sigs
-            .get(f)
+            .get(f.index())
             .is_some_and(|s| s.effects.named.contains("Blocking"));
         return Some(Native::UserExtern { blocking });
     }
@@ -236,12 +237,17 @@ fn native_of(prog: &Program, sigs: &[FnSig], f: FnId) -> Option<Native> {
 }
 
 impl<'a> Runtime<'a> {
-    /// Compiles a program and builds its tables.
-    pub fn new(prog: &'a Program, sigs: &'a [FnSig], stealable: BTreeSet<(u32, u32)>) -> Self {
-        let compiled = Compiler::compile(prog, sigs);
-        let natives = (0..prog.fns.len())
-            .map(|f| native_of(prog, sigs, f))
-            .collect();
+    /// Compiles a program and builds its tables. `exports` names the captures
+    /// that each closure takes by value and the order of the arguments of some
+    /// calls (see [`Exports`]).
+    pub fn new(
+        prog: &'a Program,
+        sigs: &'a [FnSig],
+        stealable: BTreeSet<(usize, u32, u32)>,
+        exports: &Exports,
+    ) -> Self {
+        let compiled = Compiler::compile(prog, sigs, exports);
+        let natives = prog.fn_ids().map(|f| native_of(prog, sigs, f)).collect();
         let adts: Vec<AdtInfo> = prog
             .adts
             .iter()
@@ -284,11 +290,11 @@ impl<'a> Runtime<'a> {
             })
             .collect();
         let move_only: Rc<[bool]> = prog.adts.iter().map(|a| a.linear || a.immovable).collect();
-        let find = |n: &str| match prog.mods.get(PRELUDE).and_then(|m| m.items.get(n)) {
+        let find = |n: &str| match prog.mods.get(PRELUDE.index()).and_then(|m| m.items.get(n)) {
             Some(ItemRef::Adt(a)) => Some(*a),
             _ => None,
         };
-        let eff = |n: &str| match prog.mods.get(PRELUDE).and_then(|m| m.items.get(n)) {
+        let eff = |n: &str| match prog.mods.get(PRELUDE.index()).and_then(|m| m.items.get(n)) {
             Some(ItemRef::Effect(e)) => Some(*e),
             _ => None,
         };
@@ -323,15 +329,16 @@ impl<'a> Runtime<'a> {
         }
     }
 
-    /// Returns true if the checker marked the task at this span stealable.
-    pub fn is_stealable(&self, span: Span) -> bool {
-        self.stealable.contains(&(span.lo, span.hi))
+    /// Returns true if the checker marked the task at this span of source
+    /// unit `unit` stealable.
+    pub fn is_stealable(&self, unit: usize, span: Span) -> bool {
+        self.stealable.contains(&(unit, span.lo, span.hi))
     }
 
     /// Returns the variant index of a variant name in an enum.
     pub fn variant_index(&self, adt: AdtId, name: &str) -> Option<usize> {
         self.adts
-            .get(adt)?
+            .get(adt.index())?
             .variants
             .iter()
             .position(|(n, _)| &**n == name)
@@ -339,7 +346,13 @@ impl<'a> Runtime<'a> {
 
     /// Finds the `main` function of the root module.
     pub fn main_fn(&self) -> Option<FnId> {
-        match self.prog.mods.get(self.prog.root)?.items.get("main") {
+        match self
+            .prog
+            .mods
+            .get(self.prog.root.index())?
+            .items
+            .get("main")
+        {
             Some(ItemRef::Fn(f)) => Some(*f),
             _ => None,
         }

@@ -3,47 +3,28 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 //!
 //! A line that ends with `//~ CODE ...` expects those error codes on that line.
+//! A code that occurs two times expects two errors with that code: the test
+//! counts the errors.
 //! The words `stealable` and `pinned` after `//~` expect each task closure on
 //! that line to be stealable, or not. A file that uses one of these words must
 //! mark every line with a task closure.
 //! The file markers `// weft: library` and `// weft: no-runtime` set the options,
 //! as in `weft check`. For every body, the production checker must agree with
-//! the Datalog spec. Each violation relation of the spec, and `stealable`, must
-//! hold for some body of the corpus.
+//! the Datalog spec. Each rule of the spec must fire, and each violation
+//! relation of the spec and `stealable` must hold, for some body of the corpus.
+
+mod common;
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
-use weft_check::{agreement, bridge, check_source, Checked};
+use common::{actual, expected, write_disagreements, Marks, TASK_WORDS};
+use weft_check::{bridge, check_source, Checked};
+use weft_datalog::{evaluate, parse_program_named, EvalOptions, Value};
 use weft_sema::Options;
-use weft_syntax::diag::Severity;
 use weft_syntax::SourceFile;
-
-/// The words after `//~` that name a task property, not an error code.
-const TASK_WORDS: [&str; 2] = ["stealable", "pinned"];
-
-/// A set of `(line, word)` pairs.
-type Marks = BTreeSet<(usize, String)>;
-
-/// Returns the expected `(line, word)` pairs: error codes, and task words.
-fn expected(src: &str) -> (Marks, Marks) {
-    let (mut codes, mut tasks) = (BTreeSet::new(), BTreeSet::new());
-    for (i, line) in src.lines().enumerate() {
-        if let Some(pos) = line.find("//~") {
-            for word in line[pos + 3..].split_whitespace() {
-                let set = if TASK_WORDS.contains(&word) {
-                    &mut tasks
-                } else {
-                    &mut codes
-                };
-                set.insert((i + 1, word.to_string()));
-            }
-        }
-    }
-    (codes, tasks)
-}
 
 /// Returns `(line, stealable or pinned)` for each task closure of the root unit.
 fn task_lines(checked: &Checked, file: &SourceFile) -> Marks {
@@ -77,16 +58,11 @@ fn run(path: &Path) -> Result<(), String> {
     let opts = Options::from_markers(&src);
     let checked = check_source(&name, &src, opts);
     let file = SourceFile::new(&name, src.as_str());
-    let actual: BTreeSet<(usize, String)> = checked
-        .diags
-        .iter()
-        .filter(|d| d.severity == Severity::Error)
-        .map(|d| (file.line(d.span), d.code.clone()))
-        .collect();
+    let found = actual(&checked, &file);
     let (want, want_tasks) = expected(&src);
     let mut msg = String::new();
-    if actual != want {
-        let _ = writeln!(msg, "{name}: expected {want:?}\n  found {actual:?}");
+    if found != want {
+        let _ = writeln!(msg, "{name}: expected {want:?}\n  found {found:?}");
         for d in &checked.diags {
             msg.push_str(&d.render(&file));
         }
@@ -100,15 +76,7 @@ fn run(path: &Path) -> Result<(), String> {
             );
         }
     }
-    if let Err(bad) = agreement(&checked) {
-        for b in bad {
-            let _ = writeln!(
-                msg,
-                "{name}: checker and spec disagree in `{}`\n  checker: {:?}\n  spec:    {:?}",
-                b.function, b.checker, b.spec
-            );
-        }
-    }
+    write_disagreements(&name, &checked, &mut msg);
     if msg.is_empty() {
         Ok(())
     } else {
@@ -128,27 +96,99 @@ fn corpus_paths() -> Vec<std::path::PathBuf> {
     paths
 }
 
-/// Each violation relation of the spec, and `stealable`, holds for at least one
-/// body of the corpus. So each rule has a corpus program that exercises it.
+/// Each rule of the spec derives a fact for at least one body of the corpus, and
+/// each violation relation and `stealable` hold for one. One probe rule
+/// `rule_fired(I)` with the body of rule `I` for each rule `I` shows the rules.
+/// So a new rule, also one that derives no sink relation, needs a corpus
+/// program.
 #[test]
 fn corpus_exercises_every_rule() {
+    let spec = bridge::spec();
+    let mut probes = String::new();
+    for (i, rule) in spec.rules().iter().enumerate() {
+        let body: Vec<String> = rule.body.iter().map(ToString::to_string).collect();
+        let _ = writeln!(probes, "rule_fired({i}) :- {}.", body.join(", "));
+    }
+    let mut program = spec.clone();
+    program.extend(parse_program_named("rule probes", &probes).expect("the probes parse"));
     let mut want: BTreeSet<&str> = bridge::VIOLATION_RELATIONS.into_iter().collect();
     want.insert("stealable");
-    let mut seen = BTreeSet::new();
+    let (mut seen, mut fired) = (BTreeSet::new(), BTreeSet::new());
     for path in corpus_paths() {
         let src = fs::read_to_string(&path).expect("the program is readable");
         let checked = check_source("corpus.wf", &src, Options::from_markers(&src));
         for b in &checked.analysis.bodies {
-            let out = bridge::evaluate_spec(&b.facts, false).expect("the spec runs");
+            let opts = EvalOptions { provenance: false };
+            let out = evaluate(&program, bridge::database(&b.facts), opts).expect("the spec runs");
             for rel in &want {
                 if !out.tuples(rel).is_empty() {
                     seen.insert(*rel);
+                }
+            }
+            for t in out.tuples("rule_fired") {
+                if let [Value::Int(i)] = t.as_slice() {
+                    fired.insert(*i);
                 }
             }
         }
     }
     let missing: Vec<&&str> = want.iter().filter(|r| !seen.contains(*r)).collect();
     assert!(missing.is_empty(), "no corpus program derives {missing:?}");
+    let missing: Vec<String> = spec
+        .rules()
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !i64::try_from(*i).is_ok_and(|i| fired.contains(&i)))
+        .map(|(_, r)| format!("{}: {r}", r.loc))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "no corpus program fires these rules:\n{}",
+        missing.join("\n")
+    );
+}
+
+/// Each violation of the spec has one diagnostic that reports it
+/// (`Diagnostic::facts`), and each fact that a diagnostic reports is a
+/// violation of the spec. So `weft check --explain` links each derivation to
+/// one diagnostic.
+#[test]
+fn each_violation_has_one_diagnostic() {
+    let mut bad = Vec::new();
+    for path in corpus_paths() {
+        let src = fs::read_to_string(&path).expect("the program is readable");
+        let name = path
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        let checked = check_source(&name, &src, Options::from_markers(&src));
+        let mut spec_keys = BTreeSet::new();
+        for (i, b) in checked.analysis.bodies.iter().enumerate() {
+            let out = bridge::evaluate_spec(&b.facts, false).expect("the spec runs");
+            for rel in bridge::VIOLATION_RELATIONS {
+                for t in out.tuples(rel) {
+                    let key = bridge::body_key(i, &out.display_tuple(rel, &t));
+                    let n = checked
+                        .diags
+                        .iter()
+                        .filter(|d| d.facts.contains(&key))
+                        .count();
+                    if n != 1 {
+                        bad.push(format!("{name}: `{key}` has {n} diagnostics"));
+                    }
+                    spec_keys.insert(key);
+                }
+            }
+        }
+        for d in &checked.diags {
+            for key in d.facts.iter().filter(|k| !spec_keys.contains(*k)) {
+                bad.push(format!(
+                    "{name}: {} reports `{key}`, which the spec does not derive",
+                    d.code
+                ));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
 
 #[test]
@@ -162,5 +202,35 @@ fn corpus() {
         failures.len(),
         paths.len(),
         failures.join("\n")
+    );
+}
+
+/// Returns each corpus number that more than one file name has, with the
+/// names. The number is the part of the name before the first `_`, so
+/// `19_no_runtime` and `19b_no_runtime_bad` have different numbers.
+fn shared_numbers<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<(String, Vec<&'a str>)> {
+    let mut by_number: std::collections::BTreeMap<String, Vec<&str>> =
+        std::collections::BTreeMap::new();
+    for name in names {
+        let number = name.split('_').next().unwrap_or(name);
+        by_number.entry(number.to_string()).or_default().push(name);
+    }
+    by_number.into_iter().filter(|(_, v)| v.len() > 1).collect()
+}
+
+/// Each corpus program has a number of its own, so that a reference such as
+/// "corpus 33" names one file.
+#[test]
+fn corpus_numbers_are_unique() {
+    let shared = shared_numbers(["31_a.wf", "31_b.wf", "19_c.wf", "19b_c_bad.wf"]);
+    assert_eq!(shared, vec![("31".to_string(), vec!["31_a.wf", "31_b.wf"])]);
+    let names: Vec<String> = corpus_paths()
+        .iter()
+        .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .collect();
+    let shared = shared_numbers(names.iter().map(String::as_str));
+    assert!(
+        shared.is_empty(),
+        "corpus numbers with two files: {shared:?}"
     );
 }

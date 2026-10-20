@@ -1,0 +1,69 @@
+// Checks of the body: a name given twice, an integer literal that does not fit
+// its type, a field of a literal and the named arguments of a call.
+
+struct P { a: u64, b: u64 }
+fn twice_field() -> P {
+    P { a: 1, a: 2, b: 3 }   //~ W0107
+}
+fn each_field_once() -> P {
+    P { a: 1, b: 2 }
+}
+fn twice_param() -> u64 {
+    let f = |a: u64, a: u64| a   //~ W0107
+    f(1, 2)
+}
+fn params_once() -> u64 {
+    let f = |a: u64, b: u64| a + b
+    f(1, 2)
+}
+
+fn too_big() {
+    let x: u8 = 300   //~ W0102
+    let y: i8 = 128   //~ W0102
+    let z: u64 = -1   //~ W0102
+}
+fn fits() {
+    let x: u8 = 255
+    let y: i8 = -128
+    let z: i64 = -9223372036854775808
+    let w: u64 = 18446744073709551615
+}
+fn too_big_later() {
+    let v = Vec.new()
+    v.push(70000)   //~ W0102
+    let x: u16 = v[0]
+}
+
+fn literal_field() {
+    let a = 1.x   //~ W0104
+    let b = 500.sleep   //~ W0104
+    let c = 2.s
+    let d = 3.ms
+}
+
+fn one(x: u64) {}
+fn named_args() {
+    one(y: 1)   //~ W0104
+    one(x: 1, x: 2)   //~ W0103
+    one(x: 1)
+}
+
+fn twice_bound() {
+    let (a, a) = (1, 2)   //~ W0107
+}
+fn twice_in_arm(o: Option<(u64, u64)>) -> u64 {
+    match o {
+        Some((x, x)) => x,   //~ W0107
+        None => 0,
+    }
+}
+fn bound_once() {
+    let (a, b) = (1, 2)
+}
+
+// A chain of negations of a literal is one literal: `--128` is 128.
+fn negated_twice() {
+    let x: i8 = --128   //~ W0102
+    let y: u8 = --1
+    let z: i8 = ---128
+}

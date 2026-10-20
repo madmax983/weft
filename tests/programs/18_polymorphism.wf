@@ -18,7 +18,7 @@ fn async_use(xs: &Vec<u64>) -> Vec<u64> / net {
 }
 
 fn missing(xs: &Vec<u64>) -> Vec<u64> / log {
-    map(xs, |x| api.fetch(x))   //~ W0702
+    map(xs, |x| api.fetch(x))   //~ W0702 W0702
 }
 
 // References survive suspension: no other task can touch a task's places.

@@ -48,6 +48,9 @@ fn guards_on_values() {
     fault("fn main() { print(!5) }", "a boolean is needed");
     fault("fn main() { let v = [1]\n print(v[-1]) }", "out of bounds");
     fault("fn main() { print(1.s - 2.s) }", "duration underflow");
+    // A field of a literal, other than the duration units `s` and `ms`.
+    fault("fn main() / clock { sleep(1.sleep) }", "no field `sleep`");
+    fault("fn main() { print(2.s, 500.x) }", "no field `x`");
     fault(
         "fn main() { print(18446744073709551615) }",
         "integer literal is too large",
@@ -148,17 +151,45 @@ fn unwinding_finds_nested_linear_values_innermost_first() {
     // Values in a frame unwind from the newest local to the oldest; values inside
     // a Vec, a Box, a tuple or a struct field are found too.
     let src = "linear struct Tx { id: u64 }\n on abort = undo\n\
-        linear struct Bare { id: u64 }\n\
         struct Holder { tx: Tx, n: u64 }\n\
         fn undo(t: Tx) { let Tx(id) = t\n print(\"undo {id}\") }\n\
         fn work() / fail {\n let txs = Vec.new()\n txs.push(Tx { id: 1 })\n txs.push(Tx { id: 2 })\n\
          let h = Holder { tx: Tx { id: 3 }, n: 0 }\n let b = Box.new(Tx { id: 4 })\n\
-         let pair = (Tx { id: 5 }, 1)\n let bare = Bare { id: 6 }\n let e = Some(Tx { id: 7 })\n fail(\"stop\")\n }\n\
+         let pair = (Tx { id: 5 }, 1)\n let e = Some(Tx { id: 7 })\n fail(\"stop\")\n }\n\
         fn main() { handle Fail { fn fail(m) { print(\"caught {m}\") } } in work() }";
     let o = run(src).unwrap();
     assert_eq!(
         o.stdout,
         "caught stop\nundo 7\nundo 5\nundo 4\nundo 3\nundo 1\nundo 2\n"
+    );
+}
+
+/// The checker rejects a linear value with no `on abort` across an abort
+/// (W0602). The unwinder cannot finish such a value, so it stops.
+#[test]
+fn unwinding_a_linear_value_with_no_on_abort_is_a_fault() {
+    let src = "linear struct Bare { id: u64 }\n\
+        fn work() / fail {\n let bare = Bare { id: 6 }\n fail(\"stop\")\n }\n\
+        fn main() { handle Fail { fn fail(m) { print(\"caught {m}\") } } in work() }";
+    fault(src, "a linear value of type `Bare` has no `on abort`");
+}
+
+/// Each copy of the frames of a `multi` continuation has the same linear
+/// record. When one copy aborts, `on abort` finishes the value. A later
+/// consume in another copy is a fault.
+#[test]
+fn consuming_an_aborted_linear_value_is_a_fault() {
+    let src = "effect Choice { multi fn choose() -> bool }\n\
+        effect Stop { fn stop() }\n\
+        linear struct Tx { id: u64 }\n on abort = undo\n\
+        fn undo(t: Tx) { let Tx(i) = t\n print(\"undo {i}\") }\n\
+        fn finish(t: Tx) { let Tx(i) = t\n print(\"finish {i}\") }\n\
+        fn work() / Choice, Stop {\n let t = Tx { id: 1 }\n if choose() { stop() }\n finish(t)\n }\n\
+        fn main() {\n handle Choice { fn choose() { resume(true); resume(false) } } in {\n\
+         handle Stop { fn stop() { print(\"stopped\") } } in work()\n }\n }";
+    fault(
+        src,
+        "a linear value was consumed after `on abort` finished it",
     );
 }
 
@@ -184,4 +215,183 @@ fn unchecked_tests_run() {
     let ts = run_analysis_tests(&a, &opts());
     assert!(!ts[0].passed);
     assert!(ts[1].passed);
+}
+
+#[test]
+fn a_closure_takes_a_moved_capture_when_it_is_made() {
+    // The checker reports W0302 at `v.push(2)`: the closure has the value of
+    // `v`, also if it never runs.
+    fault(
+        "fn take(v: Vec<u64>) -> usize { v.len() }\n\
+         fn main() {\n let v = Vec.new()\n v.push(1)\n let f = || print(take(v))\n \
+         v.push(2)\n print(v.len())\n}",
+        "used after it was moved",
+    );
+    // A closure that only reads `v` reads its cell when it runs.
+    let o = run(
+        "fn main() {\n let v = Vec.new()\n let f = || print(v.len())\n \
+         v.push(2)\n f()\n}",
+    )
+    .unwrap();
+    assert_eq!(o.stdout, "1\n");
+}
+
+#[test]
+fn a_multi_continuation_cannot_resume_after_its_clause_ends() {
+    // The clause gives a closure that resumes to the body, which returns it.
+    // The clause has ended when `main` calls it (W0313 in the checker).
+    fault(
+        "effect Ask { multi fn ask() -> fn() -> u64 }
+         fn make() -> (fn() -> u64, u64) {
+             handle Ask {
+                 fn ask() {
+                     let k = || { let (h, s) = resume(|| 7); h() + s }
+                     resume(k)
+                 }
+             } in {
+                 let f = ask()
+                 (f, 1)
+             }
+         }
+         fn main() { let (g, s) = make()\n print(g()) }",
+        "resumed after it was dropped",
+    );
+}
+
+/// Runs `src` with the oracle checks, and with the stock machine.
+fn oracle_run(src: &str) -> (Result<RunOutcome, weft_interp::RuntimeError>, bool) {
+    let a = weft_sema::analyze_source(src, Options::default()).unwrap();
+    let stock = run_analysis_main(&a, &opts()).is_ok();
+    let strict = RunOptions {
+        oracle: true,
+        ..opts()
+    };
+    (run_analysis_main(&a, &strict), stock)
+}
+
+#[test]
+fn the_oracle_reports_what_the_stock_machine_lets_pass() {
+    // Each program is wrong by the design, and the checker rejects it. The
+    // stock machine runs it to the end; the oracle checks stop it (OR11).
+    let cases = [
+        (
+            "fn main() { let v = Vec.new()\n v.push(1)\n let r = &v[0]\n v.clear()\n print(r) }",
+            "a read of a freed cell",
+        ),
+        (
+            "fn main() { let r = &0\n {\n let x = 5\n r = &x\n }\n print(r) }",
+            "a local whose scope ended",
+        ),
+        (
+            "fn main() { let v = Vec.new()\n v.push(1)\n let r = &v[0]\n v.push(2)\n print(r) }",
+            "a read of a freed cell",
+        ),
+        (
+            "linear struct Tx { id: u64 }\nfn main() { let t = Tx { id: 1 } }",
+            "linear leak",
+        ),
+        (
+            "fn main() / async { let n = 0\n scope { s =>\n s.spawn(|| n += 1)\n s.spawn(|| n += 2)\n }\n print(n) }",
+            "data race",
+        ),
+        (
+            // The closure holds the linear value, and nothing runs or drops it.
+            "linear struct Tx { id: u64 }\nfn main() { let t = Tx { id: 1 }\n let f = || { let Tx(i) = t } }",
+            "still live at the end of the run",
+        ),
+        // A read through a reference in an operand, and in a callee, is a
+        // read for the race detector (O3-13).
+        (
+            "fn main() / async { let v = Vec.new()\n v.push(1)\n scope { s =>\n\
+             s.spawn(|| { v[0] = 3 })\n let q = &v[0]\n print(q + 0)\n } }",
+            "data race",
+        ),
+        (
+            "fn show(r: &u64) { print(r + 0) }\n\
+             fn main() / async { let n = 1\n scope { s =>\n s.spawn(|| { n = 5 })\n show(&n)\n } }",
+            "data race",
+        ),
+        // A literal pattern reads the value that it tests, also through a
+        // reference, and a destructure through a reference reads each part
+        // that it copies (review of R3a).
+        (
+            "fn main() / async { let n = 1\n scope { s =>\n s.spawn(|| { n = 5 })\n\
+             match n { 1 => print(0), _ => print(1) }\n } }",
+            "data race",
+        ),
+        (
+            "fn main() / async { let n = 1\n scope { s =>\n s.spawn(|| { n = 5 })\n\
+             let q = &n\n match q { 1 => print(0), _ => print(1) }\n } }",
+            "data race",
+        ),
+        (
+            "fn main() / async { let t = (1, 2)\n scope { s =>\n s.spawn(|| { t.0 = 5 })\n\
+             let q = &t\n let (a, b) = q\n print(0)\n } }",
+            "data race",
+        ),
+        // `print` of a moved value, and of a reference into a moved value.
+        (
+            "fn take_v(v: Vec<u64>) -> usize { v.len() }\n\
+             fn main() { let v = Vec.new()\n v.push(1)\n print(take_v(v))\n print(v) }",
+            "a moved value",
+        ),
+        (
+            "struct P { a: u64, v: Vec<u64> }\n\
+             fn main() { let p = P { a: 1, v: Vec.new() }\n let r = &p.a\n let q = p\n print(r)\n print(q.a) }",
+            "a dangling reference",
+        ),
+        // A reference into a local of a frame that an abort path unwound
+        // (F3-9).
+        (
+            "effect Keep { fn keep(r: &u64) }\n\
+             fn deep() / Keep { let x = 5\n keep(&x) }\n\
+             fn main() { let y = 1\n let last = &y\n\
+             handle Keep { fn keep(r) { last = r } } in deep()\n print(last) }",
+            "a local whose scope ended",
+        ),
+    ];
+    for (src, want) in cases {
+        let (strict, stock) = oracle_run(src);
+        assert!(stock, "the stock machine fails: {src}");
+        match strict {
+            Ok(_) => panic!("expected `{want}`: {src}"),
+            Err(e) => assert!(
+                e.message.contains("oracle") && e.message.contains(want),
+                "expected `{want}`, found `{}`",
+                e.message
+            ),
+        }
+    }
+}
+
+#[test]
+fn the_oracle_accepts_correct_programs() {
+    // A join, the end of a scope and a consume order the accesses and end
+    // the linear value.
+    let src = "linear struct Tx { id: u64 }\nfn done(t: Tx) { let Tx(i) = t }\n\
+        fn main() / async { let n = 0\n let v = Vec.new()\n v.push(1)\n\
+        scope { s => s.spawn(|| n += 1) }\n n += 1\n v.push(2)\n let r = &v[1]\n print(r)\n\
+        let t = Tx { id: n }\n done(t)\n print(n) }";
+    let (strict, stock) = oracle_run(src);
+    assert!(stock);
+    let out = strict.expect("the oracle accepts the program");
+    assert_eq!(out.stdout, "2\n2\n");
+}
+
+#[test]
+fn the_oracle_accepts_reads_after_a_join_and_an_unwound_frame() {
+    // A read through a reference in an operand and in a callee after the
+    // scope joined the task. A clause reads a local of the frame before the
+    // abort path unwinds it. A moved value is printed through its new owner.
+    let src = "effect Keep { fn keep(r: &u64) }\n\
+        fn show(r: &u64) { print(r + 0) }\n\
+        fn deep() / Keep { let x = 5\n keep(&x) }\n\
+        fn main() / async { let v = Vec.new()\n v.push(1)\n\
+        scope { s => s.spawn(|| { v[0] = 3 }) }\n let q = &v[0]\n print(q + 0)\n show(q)\n\
+        handle Keep { fn keep(r) { print(r + 1) } } in deep()\n\
+        let w = v\n print(w) }";
+    let (strict, stock) = oracle_run(src);
+    assert!(stock);
+    let out = strict.expect("the oracle accepts the program");
+    assert_eq!(out.stdout, "3\n3\n6\n[3]\n");
 }

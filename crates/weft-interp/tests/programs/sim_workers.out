@@ -1,0 +1,37 @@
+task 3 step 0
+task 1 step 0
+task 2 step 0
+task 3 step 1
+task 1 step 1
+task 2 step 1
+task 1 step 2
+task 2 step 2
+task 3 step 2
+test the default number of simulated workers: ok
+task 2 step 0
+task 1 step 0
+task 1 step 1
+task 2 step 1
+task 1 step 2
+task 2 step 2
+test two simulated workers: ok
+task 3 step 0
+task 2 step 0
+task 1 step 0
+task 1 step 1
+task 2 step 1
+task 3 step 1
+task 2 step 2
+task 3 step 2
+task 1 step 2
+test a simulation in a spawned task: ok
+task 3 step 0
+task 2 step 0
+task 1 step 0
+task 1 step 1
+task 2 step 1
+task 3 step 1
+task 2 step 2
+task 3 step 2
+task 1 step 2
+test two simulations at one time: ok

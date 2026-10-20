@@ -1,0 +1,16 @@
+// weft: library
+// `sim.run` replaces every root handler, so only binaries and tests can use
+// it (W0802). The rule is in the spec (`sim_in_lib`, review S5b).
+fn run_sim() {
+    sim.run(seed: 1) { print(1) }   //~ W0802
+}
+// A value of `sim.run` can install the root handlers when a caller calls it.
+fn sim_value() {
+    let r = sim.run   //~ W0802
+}
+// Clean: a library function that does not use `sim.run`.
+fn plain() { print(2) }
+
+test "a test may use sim.run" {
+    sim.run(seed: 1) { print(1) }
+}

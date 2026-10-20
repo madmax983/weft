@@ -1,0 +1,42 @@
+// Two bodies can have the same name: functions in two modules, or methods of
+// two types. `weft check --explain` links the derivation of each body to the
+// diagnostic of that body, not to the diagnostic of the other body (review
+// S5b). The key of a fact holds the index of its body.
+mod a {
+    pub fn f(v: &Vec<u64>) / mut(v) {
+        let r = &v[0]
+        v.push(1)
+        print(r)   //~ W0301
+    }
+}
+mod b {
+    pub fn f(v: &Vec<u64>) / mut(v) {
+        let r = &v[0]
+        v.push(1)
+        print(r)   //~ W0301
+    }
+}
+struct A { v: Vec<u64> }
+struct B { v: Vec<u64> }
+impl A {
+    fn g(self: &A) / mut(self.v) {
+        let r = &self.v[0]
+        self.v.push(1)
+        print(r)   //~ W0301
+    }
+}
+impl B {
+    fn g(self: &B) / mut(self.v) {
+        let r = &self.v[0]
+        self.v.push(1)
+        print(r)   //~ W0301
+    }
+}
+// Clean: the same name, and the reference is made again after the change.
+mod c {
+    pub fn f(v: &Vec<u64>) / mut(v) {
+        v.push(1)
+        let r = &v[0]
+        print(r)
+    }
+}

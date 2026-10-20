@@ -5,19 +5,52 @@
 //! A path such as `sim.net.partition` names a module item. `x.op()` performs an
 //! operation when `x` names an effect or an effect alias.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use weft_sema::effects;
 use weft_sema::program::{AdtKind, EffectId, FnId, ItemRef, ModId, Program, PRELUDE};
-use weft_sema::types::AdtId;
+use weft_sema::types::{AdtId, IntTy};
 use weft_sema::FnSig;
 use weft_syntax::ast::{
-    Arg, BinOp, Block, Expr, ExprKind, Ident, Lit, Param, Pattern, Span, Stmt, StmtKind, StrPart,
-    UnOp,
+    Arg, BinOp, Block, EffectPath, Expr, ExprKind, Ident, Lit, Param, Pattern, Span, Stmt,
+    StmtKind, StrPart, UnOp,
 };
 
 use crate::code::{CPat, ClauseSpec, Code, CodeKind, HandleSpec, LitPat, Op, VarRef};
 use crate::value::CodeId;
+
+/// The captures that each closure takes by value when it is made.
+///
+/// The key is the unit and the span of the closure. The value has the names of
+/// the captured variables. Semantic analysis gives them (`FnFacts::by_value`):
+/// they are the captures that the closure moves.
+pub type ByValue = BTreeMap<(usize, u32, u32), BTreeSet<String>>;
+
+/// The order of the arguments of the calls with named arguments whose callee
+/// the compiler does not know: a method of a value receiver and a function item
+/// in a local.
+///
+/// The key is the unit and the span of the call. The value has, for each
+/// parameter after the receiver, the index of its argument; the trailing block
+/// has the index after the last written argument. Semantic analysis gives it
+/// (`FnFacts::arg_order`), so both bind a named argument by name (ADR 0009).
+pub type ArgOrder = BTreeMap<(usize, u32, u32), Vec<Option<u32>>>;
+
+/// The integer type of each arithmetic result, by unit and span (see
+/// `FnFacts::int_ops`). The machine checks that the result fits.
+pub type IntOps = BTreeMap<(usize, u32, u32), IntTy>;
+
+/// What semantic analysis gives the compiler about the program.
+#[derive(Clone, Debug, Default)]
+pub struct Exports {
+    /// The captures that each closure takes by value.
+    pub by_value: ByValue,
+    /// The order of the arguments of some calls with named arguments.
+    pub arg_order: ArgOrder,
+    /// The integer type of each arithmetic result.
+    pub int_ops: IntOps,
+}
 
 /// The compiled program.
 #[derive(Debug)]
@@ -63,6 +96,9 @@ struct Ctx {
 pub struct Compiler<'a> {
     prog: &'a Program,
     sigs: &'a [FnSig],
+    by_value: &'a ByValue,
+    arg_order: &'a ArgOrder,
+    int_ops: &'a IntOps,
     codes: Vec<Option<Code>>,
     ctxs: Vec<Ctx>,
 }
@@ -76,18 +112,22 @@ fn u32_of(n: usize) -> u32 {
 }
 
 impl<'a> Compiler<'a> {
-    /// Compiles every function body and every test of a program.
-    pub fn compile(prog: &'a Program, sigs: &'a [FnSig]) -> Compiled {
+    /// Compiles every function body and every test of a program. A closure
+    /// takes the captures that `exports` names for it by value.
+    pub fn compile(prog: &'a Program, sigs: &'a [FnSig], exports: &'a Exports) -> Compiled {
         let mut c = Self {
             prog,
             sigs,
+            by_value: &exports.by_value,
+            arg_order: &exports.arg_order,
+            int_ops: &exports.int_ops,
             codes: Vec::new(),
             ctxs: Vec::new(),
         };
         let mut fn_code = vec![None; prog.fns.len()];
         for (f, slot) in fn_code.iter_mut().enumerate() {
             if prog.fns[f].decl.body.is_some() {
-                *slot = Some(c.compile_fn(f));
+                *slot = Some(c.compile_fn(FnId(f)));
             }
         }
         let mut tests = Vec::new();
@@ -155,6 +195,11 @@ impl<'a> Compiler<'a> {
             spans: ctx.spans,
             n_slots: ctx.n_slots,
             n_params: ctx.n_params,
+            unit: self
+                .prog
+                .mods
+                .get(ctx.module.index())
+                .map_or(usize::MAX, |m| m.unit),
         });
     }
 
@@ -320,9 +365,7 @@ impl<'a> Compiler<'a> {
                         if names.len() != 1 {
                             return None;
                         }
-                        self.prog
-                            .effect_named(PRELUDE, &names[0])
-                            .map(PathRef::Effect)
+                        effects::by_identity(self.prog, &names[0]).map(PathRef::Effect)
                     }
                 }
             }
@@ -356,27 +399,14 @@ impl<'a> Compiler<'a> {
         None
     }
 
-    /// Finds an effect operation by name: user effects first, then the prelude.
-    fn find_op(&self, name: &str) -> Option<(EffectId, usize)> {
+    /// Finds the effect that a written name or path names, as semantic
+    /// analysis does (`effects::resolve`). It gives an identity: in a module that
+    /// defines `Log`, `log` is still the standard effect, and `a.Note` is the
+    /// effect `Note` of module `a`.
+    fn effect_of(&self, path: &EffectPath) -> Option<EffectId> {
         let m = self.module();
-        let mut found = None;
-        for (ei, e) in self.prog.effects.iter().enumerate() {
-            if let Some(oi) = e.ops.iter().position(|o| o.name == name) {
-                if self.prog.effect_named(m, &e.name) == Some(ei) {
-                    if !e.is_std {
-                        return Some((ei, oi));
-                    }
-                    found = found.or(Some((ei, oi)));
-                }
-            }
-        }
-        found
-    }
-
-    fn effect_of(&self, name: &str) -> Option<EffectId> {
-        let m = self.module();
-        match effects::canonical(self.prog, m, name) {
-            Some(names) if names.len() == 1 => self.prog.effect_named(m, &names[0]),
+        match effects::resolve(self.prog, m, path) {
+            Ok(names) if names.len() == 1 => effects::by_identity(self.prog, &names[0]),
             _ => None,
         }
     }
@@ -441,18 +471,31 @@ impl<'a> Compiler<'a> {
                 None => self.declare_uninit(pat),
             },
             StmtKind::Expr(e) => {
-                self.expr(e);
+                // A place of a local only names the place: it moves nothing
+                // and drops nothing. Its operands run (ADR 0003).
+                if !(self.local_place(e) && self.place(e)) {
+                    self.expr(e);
+                }
                 self.emit(Op::Pop);
             }
             StmtKind::Assign { target, op, value } => {
                 self.expr(value);
+                // Semantic analysis gives the integer type of a compound
+                // assignment at the span of its value.
+                let int = self.int_type(value.span);
                 self.set_span(s.span);
                 if self.place(target) {
                     match op {
                         weft_syntax::ast::AssignOp::Assign => self.emit(Op::Store),
-                        weft_syntax::ast::AssignOp::Add => self.emit(Op::CompoundStore(BinOp::Add)),
-                        weft_syntax::ast::AssignOp::Sub => self.emit(Op::CompoundStore(BinOp::Sub)),
-                        weft_syntax::ast::AssignOp::Mul => self.emit(Op::CompoundStore(BinOp::Mul)),
+                        weft_syntax::ast::AssignOp::Add => {
+                            self.emit(Op::CompoundStore(BinOp::Add, int))
+                        }
+                        weft_syntax::ast::AssignOp::Sub => {
+                            self.emit(Op::CompoundStore(BinOp::Sub, int))
+                        }
+                        weft_syntax::ast::AssignOp::Mul => {
+                            self.emit(Op::CompoundStore(BinOp::Mul, int))
+                        }
                     };
                 } else {
                     self.emit(fault("the left side of an assignment must be a place"));
@@ -722,9 +765,12 @@ impl<'a> Compiler<'a> {
                     Some(PathRef::Effect(_)) => {
                         self.emit(fault("an effect operation needs a call"));
                     }
-                    None => {
-                        self.place(e);
+                    // A literal has no fields, so `place` gives no place.
+                    None if self.place(e) => {
                         self.emit(Op::Read);
+                    }
+                    None => {
+                        self.emit(fault(format!("no field `{}` here", name.name)));
                     }
                 }
             }
@@ -752,6 +798,7 @@ impl<'a> Compiler<'a> {
                 UnOp::Neg => {
                     self.operand(expr);
                     self.emit(Op::Neg);
+                    self.check_int(e.span);
                 }
                 UnOp::Not => {
                     self.operand(expr);
@@ -786,6 +833,7 @@ impl<'a> Compiler<'a> {
                     self.operand(rhs);
                     self.set_span(e.span);
                     self.emit(Op::Bin(*op));
+                    self.check_int(e.span);
                 }
             },
             ExprKind::Range { .. } => {
@@ -805,8 +853,26 @@ impl<'a> Compiler<'a> {
             }
             ExprKind::StructLit { path, fields } => self.struct_lit(path, fields),
             ExprKind::Closure { params, body } => {
-                let (code, caps) = self.closure(params, body, CodeKind::Closure);
-                self.emit(Op::MakeClosure { code, caps });
+                let unit = self
+                    .prog
+                    .mods
+                    .get(self.module().index())
+                    .map_or(0, |m| m.unit);
+                let (code, named) = self.closure_named(params, body, CodeKind::Closure);
+                let set = self.by_value.get(&(unit, e.span.lo, e.span.hi));
+                let owned = named
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (n, _))| set.is_some_and(|s| s.contains(n)))
+                    .map(|(i, _)| u32_of(i))
+                    .collect();
+                let caps = named.into_iter().map(|(_, v)| v).collect();
+                self.emit(Op::MakeClosure {
+                    code,
+                    caps,
+                    owned,
+                    span: e.span,
+                });
             }
             ExprKind::Block(b) => self.block(b),
             ExprKind::If { cond, then, else_ } => {
@@ -856,8 +922,8 @@ impl<'a> Compiler<'a> {
                 clauses,
                 body,
             } => {
-                let Some(eid) = self.effect_of(&effect.name) else {
-                    self.emit(fault(format!("unknown effect `{}`", effect.name)));
+                let Some(eid) = self.effect_of(effect) else {
+                    self.emit(fault(format!("unknown effect `{}`", effect.text())));
                     return;
                 };
                 let def = &self.prog.effects[eid];
@@ -910,6 +976,24 @@ impl<'a> Compiler<'a> {
                 self.finish(id, ctx);
                 self.emit(Op::Scope { code: id, caps });
             }
+        }
+    }
+
+    /// Returns the integer type that semantic analysis gives the arithmetic
+    /// expression at `span`, if any.
+    fn int_type(&self, span: Span) -> Option<IntTy> {
+        let unit = self
+            .prog
+            .mods
+            .get(self.module().index())
+            .map_or(0, |m| m.unit);
+        self.int_ops.get(&(unit, span.lo, span.hi)).copied()
+    }
+
+    /// Checks that the arithmetic result at `span` fits in its integer type.
+    fn check_int(&mut self, span: Span) {
+        if let Some(it) = self.int_type(span) {
+            self.emit(Op::CheckInt(it));
         }
     }
 
@@ -970,6 +1054,20 @@ impl<'a> Compiler<'a> {
             }
         }
         self.emit(fault(format!("unknown name `{}`", id.name)));
+    }
+
+    /// Returns true if `e` is a place below a local: the local, a field or an
+    /// element. Sema checks a statement of this form as a plain use.
+    fn local_place(&self, e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Name(id) => self.is_var(&id.name),
+            ExprKind::Field { base, .. }
+            | ExprKind::Index {
+                base,
+                index: Some(_),
+            } => self.local_place(base),
+            _ => false,
+        }
     }
 
     /// Pushes the place that an expression names. Returns false, and emits
@@ -1060,23 +1158,66 @@ impl<'a> Compiler<'a> {
         });
     }
 
-    fn positional_struct(&mut self, adt: AdtId, args: &[Arg]) {
+    /// Builds a struct from a call of its name. A named argument gives the
+    /// field with its name, the others fill the free fields in order, and a
+    /// trailing block goes to the last free field, as in semantic analysis. The
+    /// arguments run in the order of the fields.
+    fn positional_struct(&mut self, adt: AdtId, args: &[Arg], trailing: Option<&Expr>) {
         let AdtKind::Struct(defs) = &self.prog.adts[adt].kind else {
             self.emit(fault("this type has no constructor"));
             return;
         };
-        let total = u32_of(defs.len());
+        let n = defs.len();
+        let mut slots: Vec<Option<&Expr>> = vec![None; n];
+        let mut pos = 0;
         for a in args {
-            self.expr(&a.value);
+            let idx = if let Some(nm) = &a.name {
+                let Some(i) = defs.iter().position(|d| d.name == nm.name) else {
+                    self.emit(fault(format!("no field `{}`", nm.name)));
+                    return;
+                };
+                i
+            } else {
+                while pos < n && slots[pos].is_some() {
+                    pos += 1;
+                }
+                pos
+            };
+            if let Some(s) = slots.get_mut(idx) {
+                *s = Some(&a.value);
+            }
+        }
+        if let Some(t) = trailing {
+            if let Some(i) = slots.iter().rposition(Option::is_none) {
+                slots[i] = Some(t);
+            }
+        }
+        let mut fields = Vec::new();
+        for (i, slot) in slots.iter().enumerate() {
+            if let Some(e) = slot {
+                self.fn_arg(e);
+                fields.push(u32_of(i));
+            }
         }
         self.emit(Op::MakeStruct {
             adt,
-            fields: (0..u32_of(args.len())).collect(),
-            total,
+            fields,
+            total: u32_of(n),
         });
     }
 
     fn closure(&mut self, params: &[Param], body: &Expr, kind: CodeKind) -> (CodeId, Vec<VarRef>) {
+        let (id, named) = self.closure_named(params, body, kind);
+        (id, named.into_iter().map(|(_, v)| v).collect())
+    }
+
+    /// Compiles a closure body. Returns the code and each capture with its name.
+    fn closure_named(
+        &mut self,
+        params: &[Param],
+        body: &Expr,
+        kind: CodeKind,
+    ) -> (CodeId, Vec<(String, VarRef)>) {
         let id = self.reserve();
         let m = self.module();
         let name = match kind {
@@ -1092,7 +1233,7 @@ impl<'a> Compiler<'a> {
         self.expr(body);
         self.emit(Op::Return);
         let ctx = self.pop_ctx();
-        let caps = ctx.caps.iter().map(|(_, v)| *v).collect();
+        let caps = ctx.caps.clone();
         self.finish(id, ctx);
         (id, caps)
     }
@@ -1105,6 +1246,72 @@ impl<'a> Compiler<'a> {
     // -----------------------------------------------------------------------
     // Calls
     // -----------------------------------------------------------------------
+
+    /// Pushes the arguments of operation `op` of effect `e` in parameter order. A
+    /// named argument goes to the parameter with its name, and a trailing block to
+    /// the last free parameter, as in semantic analysis.
+    fn op_args(&mut self, e: EffectId, op: usize, args: &[Arg], trailing: Option<&Expr>) -> u32 {
+        let names: Vec<String> = self.prog.effects[e]
+            .ops
+            .get(op)
+            .map(|o| o.param_names.clone())
+            .unwrap_or_default();
+        let n = names.len();
+        let mut slots: Vec<Option<&Expr>> = vec![None; n];
+        let mut pos = 0;
+        for a in args {
+            let idx = if let Some(nm) = &a.name {
+                names.iter().position(|p| *p == nm.name)
+            } else {
+                while pos < n && slots[pos].is_some() {
+                    pos += 1;
+                }
+                Some(pos)
+            };
+            if let Some(i) = idx.filter(|&i| i < n) {
+                slots[i] = Some(&a.value);
+            }
+        }
+        if let Some(t) = trailing {
+            if let Some(i) = slots.iter().rposition(Option::is_none) {
+                slots[i] = Some(t);
+            }
+        }
+        for slot in &slots {
+            match slot {
+                Some(x) => self.fn_arg(x),
+                None => {
+                    self.emit(fault("an operation misses an argument"));
+                }
+            }
+        }
+        u32_of(n)
+    }
+
+    /// Pushes the arguments of a call of a method of a value or of a function
+    /// item in a local. Semantic analysis gives the order of a call with named
+    /// arguments (see [`ArgOrder`]): the arguments run in the order of the
+    /// parameters. The other calls give their arguments in written order.
+    fn ordered_args(&mut self, args: &[Arg], trailing: Option<&Expr>, span: Span) -> u32 {
+        let unit = self
+            .prog
+            .mods
+            .get(self.module().index())
+            .map_or(0, |m| m.unit);
+        let Some(order) = self.arg_order.get(&(unit, span.lo, span.hi)) else {
+            return self.args(args, trailing);
+        };
+        let exprs: Vec<&Expr> = args.iter().map(|a| &a.value).chain(trailing).collect();
+        for slot in order {
+            match slot.and_then(|k| exprs.get(k as usize)) {
+                Some(e) => self.fn_arg(e),
+                None => {
+                    self.emit(fault("a call misses an argument"));
+                }
+            }
+        }
+        u32_of(order.len())
+    }
 
     fn args(&mut self, args: &[Arg], trailing: Option<&Expr>) -> u32 {
         for a in args {
@@ -1127,7 +1334,7 @@ impl<'a> Compiler<'a> {
         if let Some(v) = self.lookup(&id.name) {
             self.emit(Op::Var(v));
             self.emit(Op::Read);
-            let n = self.args(args, trailing);
+            let n = self.ordered_args(args, trailing, span);
             self.set_span(span);
             self.emit(Op::CallValue(n));
             return;
@@ -1160,7 +1367,7 @@ impl<'a> Compiler<'a> {
         let m = self.module();
         match self.prog.lookup(m, &id.name) {
             Some(ItemRef::Fn(f)) => return self.call_fn(f, false, args, trailing, span),
-            Some(ItemRef::Adt(a)) => return self.positional_struct(a, args),
+            Some(ItemRef::Adt(a)) => return self.positional_struct(a, args, trailing),
             _ => {}
         }
         if let Some((adt, vi)) = self.variant(&id.name) {
@@ -1172,8 +1379,8 @@ impl<'a> Compiler<'a> {
             });
             return;
         }
-        if let Some((e, op)) = self.find_op(&id.name) {
-            let n = self.args(args, trailing);
+        if let Some((e, op)) = self.prog.find_op(self.module(), &id.name) {
+            let n = self.op_args(e, op, args, trailing);
             self.set_span(span);
             self.emit(Op::Perform { effect: e, op, n });
             return;
@@ -1184,7 +1391,7 @@ impl<'a> Compiler<'a> {
     /// Calls a function item. Named arguments go to their parameter, and a trailing
     /// block goes to the last free parameter, as in semantic analysis.
     fn call_fn(&mut self, f: FnId, recv: bool, args: &[Arg], trailing: Option<&Expr>, span: Span) {
-        let params: Vec<String> = self.sigs.get(f).map_or_else(
+        let params: Vec<String> = self.sigs.get(f.index()).map_or_else(
             || {
                 self.prog.fns[f]
                     .decl
@@ -1221,9 +1428,15 @@ impl<'a> Compiler<'a> {
                 slots[i] = Some(t);
             }
         }
-        for slot in slots.iter().skip(first) {
+        let sim_run = self.is_sim_run(f);
+        for (i, slot) in slots.iter().enumerate().skip(first) {
             match slot {
                 Some(e) => self.fn_arg(e),
+                // `sim.run` has a default number of simulated workers.
+                None if sim_run && params.get(i).is_some_and(|p| p == "workers") => {
+                    let w = i64::try_from(crate::machine::SIM_WORKERS).unwrap_or(4);
+                    self.emit(Op::Int(w));
+                }
                 None => {
                     self.emit(fault("a call misses an argument"));
                 }
@@ -1233,13 +1446,25 @@ impl<'a> Compiler<'a> {
         self.emit(Op::Call { f, n: u32_of(n) });
     }
 
+    /// Returns true for `sim.run` of the prelude.
+    fn is_sim_run(&self, f: FnId) -> bool {
+        let def = &self.prog.fns[f];
+        def.is_std
+            && def.path == "run"
+            && self
+                .prog
+                .mods
+                .get(def.module.index())
+                .is_some_and(|m| m.name == "sim")
+    }
+
     fn method_call(&mut self, recv: &Expr, method: &Ident, args: &[Arg], trailing: Option<&Expr>) {
         let span = self.top().span;
         match self.path_ref(recv) {
             Some(PathRef::Mod(m)) => {
                 match self.prog.lookup_in(m, &method.name) {
                     Some(ItemRef::Fn(f)) => self.call_fn(f, false, args, trailing, span),
-                    Some(ItemRef::Adt(a)) => self.positional_struct(a, args),
+                    Some(ItemRef::Adt(a)) => self.positional_struct(a, args, trailing),
                     _ => {
                         self.emit(fault(format!(
                             "no function `{}` in this module",
@@ -1278,7 +1503,7 @@ impl<'a> Compiler<'a> {
                     .position(|o| o.name == method.name)
                 {
                     Some(op) => {
-                        let n = self.args(args, trailing);
+                        let n = self.op_args(e, op, args, trailing);
                         self.set_span(span);
                         self.emit(Op::Perform { effect: e, op, n });
                     }
@@ -1296,7 +1521,7 @@ impl<'a> Compiler<'a> {
             .map(|a| a.value.span)
             .or_else(|| trailing.map(|t| t.span))
             .unwrap_or(span);
-        let n = self.args(args, trailing);
+        let n = self.ordered_args(args, trailing, span);
         self.set_span(span);
         self.emit(Op::CallMethod {
             name: Rc::from(method.name.as_str()),
@@ -1314,5 +1539,6 @@ fn empty_code() -> Code {
         spans: vec![Span::default(); 2],
         n_slots: 0,
         n_params: 0,
+        unit: usize::MAX,
     }
 }

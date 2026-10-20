@@ -1,0 +1,32 @@
+// A call that gives a wildcard place to a function value lends that place: the
+// value can mutate anywhere below its base. It invalidates each reference
+// strictly below the base (`lends_mut(P, M), wild_at(M, B), strict_prefix(B, Path)`).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity>, score: u64 }
+
+// `e` is the result of an unknown function value: it points to `world..`. The
+// call `g(e)` lends that place.
+fn lend_wild(world: &World, h: fn(&World) -> &Entity, g: fn(&Entity)) {
+    let s = &world.entities[0]
+    let e = h(world)
+    g(e)
+    print(s.hp)   //~ W0301
+}
+
+// The lend spares a reference to the base itself, and a reference into another
+// parameter.
+fn lend_wild_base(world: &World, other: &World, h: fn(&World) -> &Entity, g: fn(&Entity)) {
+    let s = &other.entities[0]
+    let e = h(world)
+    g(e)
+    print(world.score)
+    print(s.hp)
+}
+
+// Only the lend of the wildcard place invalidates `s`: `e` points into
+// `world..` by its signature, and nothing else lends or changes `world`.
+fn lend_param_wild(world: &World, e: &Entity in world.., g: fn(&Entity)) {
+    let s = &world.entities[0]
+    g(e)
+    print(s.hp)   //~ W0301
+}

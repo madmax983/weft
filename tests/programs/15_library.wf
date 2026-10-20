@@ -1,7 +1,22 @@
 // weft: library
-// Libraries may intercept standard effects, but not install root handlers.
+// Libraries may intercept standard effects, but not install root handlers. A
+// handler intercepts if a clause performs the effect again, through the handler
+// outside it (here the caller's). A handler that never forwards is a root handler.
 fn intercept() / net, log {
-    handle Log { fn info(m) { resume(()) } } in log.info("x")
+    handle Log { fn info(m) { log.info("lib {m}"); resume(()) } } in log.info("x")
+}
+fn note(m: String) / log { log.info(m) }
+fn intercept_by_call() / log {
+    handle Log { fn info(m) { note(m); resume(()) } } in log.info("x")
+}
+fn swallow() / net, log {
+    handle Log { fn info(m) { resume(()) } } in log.info("x")   //~ W0801
+}
+// The inner handler forwards to the outer one, which never forwards.
+fn nested() / log {
+    handle Log { fn info(m) { resume(()) } } in {   //~ W0801
+        handle Log { fn info(m) { log.info(m); resume(()) } } in log.info("x")
+    }
 }
 
 fn root() {
@@ -14,4 +29,5 @@ fn sim_in_lib() {
 
 test "tests may install root handlers" {
     sim.run(seed: 1) { print(1) }
+    handle Log { fn info(m) { resume(()) } } in log.info("x")
 }

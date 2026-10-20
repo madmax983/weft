@@ -1,0 +1,105 @@
+// More paths for W0313. A clause runs outside its own handler, so a closure that
+// performs through that handler cannot go to one of its operations. A `resume`
+// gives its value to the handled computation as the result of the operation, so
+// the result carries what the clause resumes with. A callee result can hold its
+// function argument. A box, an `Rc` or a struct of the body holds a closure until
+// the body ends.
+effect Log { fn log(msg: String) }
+effect Reg {
+    fn reg(f: fn())
+    fn ping()
+}
+effect Get { fn get() -> fn() }
+struct Registry { items: Vec<fn()> }
+
+impl Registry {
+    fn add(self: &Registry, f: fn()) / mut(self) { self.items.push(f) }
+}
+
+fn reg_it(g: fn()) / Reg { reg(g) }
+fn get_it() -> (fn()) / Get { get() }
+fn pair(f: fn()) -> (fn(), u64) { (f, 1) }
+fn idg<T>(x: T) -> T { x }
+
+// A closure that performs through `Reg` goes to an operation of `Reg`.
+fn own_operation() {
+    handle Reg {   //~ W0313
+        fn reg(g) { g(); resume(()) }
+        fn ping() { resume(()) }
+    } in reg(|| ping())
+}
+fn own_operation_through_call() {
+    handle Reg {   //~ W0313
+        fn reg(g) { g(); resume(()) }
+        fn ping() { resume(()) }
+    } in reg_it(|| ping())
+}
+fn own_operation_through_closure() {
+    let r = |g: fn()| reg(g)
+    handle Reg {   //~ W0313
+        fn reg(g) { g(); resume(()) }
+        fn ping() { resume(()) }
+    } in r(|| ping())
+}
+
+// A clause resumes with a closure that performs through `Log`.
+fn resumed_value() -> fn() {
+    handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        handle Get { fn get() { resume(|| log("late")) } } in get()
+    }
+}
+fn resumed_to_outer_local() {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        handle Get { fn get() { resume(|| log("late")) } } in {
+            f = get()
+        }
+    }
+    f()
+}
+fn resumed_through_call() -> fn() {
+    handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        handle Get { fn get() { resume(|| log("late")) } } in get_it()
+    }
+}
+
+// A callee gives its function argument back inside a tuple.
+fn in_returned_tuple() -> (fn(), u64) {
+    handle Log { fn log(m) { resume(()) } } in pair(|| log("late"))   //~ W0313
+}
+fn box_out() {
+    let b = handle Log { fn log(m) { resume(()) } } in Box.new(|| log("late"))   //~ W0313
+}
+
+// Controls.
+fn outer_for_operation() {
+    handle Log { fn log(m) { resume(()) } } in {
+        handle Reg {
+            fn reg(g) { g(); resume(()) }
+            fn ping() { resume(()) }
+        } in reg_it(|| log("x"))
+    }
+}
+fn resumed_used_inside() {
+    handle Log { fn log(m) { resume(()) } } in {
+        let f = handle Get { fn get() { resume(|| log("x")) } } in get()
+        f()
+    }
+}
+fn resumed_harmless() -> fn() {
+    handle Log { fn log(m) { resume(()) } } in {
+        handle Get { fn get() { resume(|| print(1)) } } in get()
+    }
+}
+fn owned_by_the_body() {
+    handle Log { fn log(m) { resume(()) } } in {
+        let b = Box.new(|| log("x"))
+        let r = Rc.new(|| log("y"))
+        let g = idg(|| log("z"))
+        g()
+        let (h, n) = pair(|| log("w"))
+        h()
+        let reg = Registry { items: Vec.new() }
+        reg.add(|| log("v"))
+    }
+}

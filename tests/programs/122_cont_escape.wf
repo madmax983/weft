@@ -1,0 +1,146 @@
+// A continuation is a capability of its clause. It lives only while the clause
+// runs: when the clause ends, the handler resumes or drops the computation. So a
+// closure that calls `resume` cannot leave the clause (W0313): not as the value
+// of the clause, not through a local outside the clause, not into a field or an
+// `Option`, and not to code that can keep it. It cannot run as a task or a fork
+// branch either (W0314): the rest of the handled body would run on another task,
+// away from the handlers of this one. A `resume` cannot give it to the handled
+// body (ADR 0005).
+effect Note { fn note(x: u64) }
+effect Ask { fn ask() -> u64 }
+effect Keep { fn keep(f: fn()) }
+struct Wrap<T> { x: T }
+struct C { k: u64 }
+struct Slot { f: fn() }
+fn stash(s: &Slot, f: fn()) / mut(s) { s.f = f }
+fn call_it(f: fn()) { f() }
+
+fn to_outer_local() {
+    let k = || print(0)
+    handle Note { fn note(x) { k = || resume(()) } } in note(1)   //~ W0313
+    k()
+}
+fn to_generic_field() {
+    let w = Wrap { x: || print(0) }
+    handle Note { fn note(x) { w.x = || resume(()) } } in note(1)   //~ W0313
+    let g = w.x
+    g()
+}
+fn to_option() {
+    let o = None
+    handle Note { fn note(x) { o = Some(|| resume(())) } } in note(1)   //~ W0313
+    match o { Some(g) => g(), None => {} }
+}
+fn as_handle_value() {
+    let g = handle Ask {
+        fn ask() { || { let n = resume(5)
+ print(n) } }   //~ W0313
+    } in {
+        let n = ask()
+        || print(n)
+    }
+    g()
+}
+fn to_storing_callee(s: &Slot) / mut(s) {
+    handle Note { fn note(x) { stash(s, || resume(())) } } in note(1)   //~ W0313 W0502
+}
+fn to_outer_operation() / Keep {
+    handle Note { fn note(x) { keep(|| resume(())) } } in note(1)   //~ W0313 W0502
+}
+// A `resume` gives the closure to the handled body, which keeps it.
+effect Get { multi fn get() -> fn() }
+fn through_resume_value() {
+    let k = || print(0)
+    handle Get { fn get() { resume(|| { let _ = resume(|| print(2)) }) } } in {   //~ W0313
+        let f = get()
+        k = f
+    }
+    k()
+}
+// The body could keep the closure in the value of the `handle`, in a stored
+// place or in a task, so a `resume` cannot give it to the body.
+effect Give { multi fn give() -> fn() -> u64 }
+fn hold(v: &Vec<fn() -> u64>, f: fn() -> u64) / mut(v) { v.push(f) }
+fn resume_value_returned() -> (fn() -> u64, u64) {
+    handle Give {
+        fn give() {
+            let k = || { let (h, s) = resume(|| 7); h() + s }
+            resume(k)   //~ W0313
+        }
+    } in {
+        let f = give()
+        (f, 1)
+    }
+}
+fn resume_value_stored(v: &Vec<fn() -> u64>) / mut(v) {
+    handle Give {
+        fn give() {
+            let k = || { resume(|| 7); 0 }
+            resume(k)   //~ W0313
+        }
+    } in {
+        let f = give()
+        hold(v, f)
+    }
+}
+fn resume_value_in_task() / async {
+    let r = handle Give {
+        fn give() {
+            let k = || { let x = resume(|| 7); x }
+            resume(k)   //~ W0313
+        }
+    } in {
+        let f = give()
+        scope { s => s.spawn(|| print(f())); () }
+        5
+    }
+    print(r)
+}
+fn in_a_task() {
+    handle Note { fn note(x) { print(x); resume(()) } } in {
+        handle Ask { fn ask() { scope { s => s.spawn(|| { let _ = resume(1) }); print("clause") } } } in {   //~ W0314
+            let a = ask()
+            note(a)
+        }
+    }
+}
+fn race() {
+    let c = C { k: 0 }
+    handle Ask { fn ask() { scope { s => s.spawn(|| { let _ = resume(1) }); c.k += 1 } } } in {   //~ W0314
+        c.k += ask()
+    }
+    print(c.k)
+}
+fn in_a_fork_branch() / par {
+    handle Ask { fn ask() { let (a, b) = fork(|| resume(1), || 2); a } } in {   //~ W0314
+        ask() + 1
+    }
+}
+
+// A clause can call a closure that resumes, and give it to code that only calls it.
+fn in_place() -> u64 {
+    handle Ask {
+        fn ask() {
+            let k = || resume(5)
+            k()
+        }
+    } in ask() + 1
+}
+fn through_callee() {
+    handle Note { fn note(x) { call_it(|| resume(())) } } in note(1)
+}
+fn in_a_local_of_the_clause() {
+    handle Note {
+        fn note(x) {
+            let w = Wrap { x: || resume(()) }
+            let g = w.x
+            g()
+        }
+    } in note(1)
+}
+
+fn main() {
+    print(in_place())
+    through_callee()
+    in_a_local_of_the_clause()
+}

@@ -1,0 +1,32 @@
+// A closure that moves a captured value takes the value when the closure is
+// made. A closure that only reads a variable reads its cell when it runs.
+fn take(v: Vec<u64>) -> usize { v.len() }
+
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let f = || print("closure", take(v))
+    v = Vec.new()
+    v.push(5)
+    v.push(6)
+    f()
+    print("v", v.len())
+    let w = Vec.new()
+    w.push(1)
+    scope { s =>
+        let t = s.spawn(|| print("task", take(w)))
+        w = Vec.new()
+        t.join()
+    }
+    print("w", w.len())
+    let b = Vec.new()
+    b.push(3)
+    b.push(4)
+    let g = || take(b)
+    b = Vec.new()
+    print("made", g(), b.len())
+    let n = 1
+    let h = || print("n", n)
+    n = 2
+    h()
+}

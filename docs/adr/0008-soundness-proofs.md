@@ -13,6 +13,14 @@ Status: accepted. Date: 2026-10-18.
   multi-shot restriction.
 - Each theorem has vacuity guards: an accepted program, a rejected program with a bad
   execution, a satisfiable-hypothesis witness, and a documented mutation test.
+- Each proof crate has a script for its mutation table: `proofs/borrowing/mutations/`,
+  `proofs/effects/mutations/` and `proofs/link/mutations/` (`run.sh`). A mutation is a
+  patch script that changes a copy of the sources; the test passes if `verify.sh`
+  fails on the copy. So each row of a table can run again from the tree (review round
+  2, FD15). In `borrowing` and `effects`, a mutation passes only if Verus gives a
+  result line with at least one error, and the line is the one of the table (the
+  `# EXPECT:` line of the script). A failure with no result, for example with no
+  `verus` on `PATH` or a patch that breaks the build, does not pass.
 
 ## Consequences
 

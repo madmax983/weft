@@ -11,7 +11,7 @@ mod http;
 mod natives;
 mod show;
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::rc::Rc;
 
 use weft_syntax::ast::Span;
@@ -40,6 +40,10 @@ pub struct CodeFrame {
     pub slots: Vec<Option<CellId>>,
     /// The captured cells.
     pub caps: Rc<[CellId]>,
+    /// The cells of `caps` that the frame owns: the first frame of a task
+    /// owns the captures that its closure moved. The unwinder finishes the
+    /// linear values in them (ADR 0010).
+    pub owned: Vec<CellId>,
     /// The operand stack.
     pub stack: Vec<Value>,
     /// Temporary cells of the current statements.
@@ -130,30 +134,43 @@ pub enum Frame {
         /// The handlers at the call.
         henv: HEnv,
     },
-    /// A `sim.run` body.
+    /// A `sim.run` body. The code above it runs in the simulation.
     Sim {
-        /// The state outside the simulation.
-        saved: Box<SimSaved>,
+        /// The simulation.
+        sim: SimId,
+        /// The simulated worker of the task before it entered the simulation.
+        /// The end of the simulation gives it back.
+        outer: usize,
     },
     /// An unwinding.
     Unwind(Box<Unwind>),
 }
 
-/// The state that `sim.run` replaces.
-#[derive(Clone, Debug)]
-pub struct SimSaved {
-    sim: Option<SimState>,
-    sched: Rng,
-    rand: Rng,
-}
+/// An index into the simulations of a run.
+pub type SimId = usize;
 
-/// The simulation state.
+/// The number of simulated workers of `sim.run` when the call gives none.
+pub const SIM_WORKERS: usize = 4;
+
+/// A simulation: the root handlers that `sim.run` gives its body (ADR 0010).
+///
+/// A task is in the simulation of the nearest `Sim` frame on its stack, else
+/// in the simulation of its spawn site (`Task::sim`). The simulation has its
+/// own scheduler and simulated workers, so its order of tasks does not depend
+/// on `--workers` or on the tasks outside it.
 #[derive(Clone, Debug)]
 pub struct SimState {
     /// The virtual time when the simulation started.
     pub start: u64,
-    /// The current partition.
+    /// The current partition. Phase 1 does not simulate the network: nothing
+    /// reads it.
     pub partition: Option<(Vec<u64>, Vec<u64>)>,
+    /// The scheduler of the simulation.
+    sched: Rng,
+    /// The randomness of the simulation.
+    pub(crate) rand: Rng,
+    /// The run queues of the simulated workers.
+    queues: Vec<VecDeque<TaskId>>,
 }
 
 /// How a task ended.
@@ -204,15 +221,6 @@ pub enum Wait {
     Accept,
 }
 
-/// A request that a task handles at its next suspension point.
-#[derive(Clone, Debug)]
-pub enum Interrupt {
-    /// A `with_timeout` deadline passed.
-    Timeout(u64),
-    /// A child failed: perform `fail(msg)`.
-    Fail(String),
-}
-
 /// A task.
 #[derive(Clone, Debug)]
 pub struct Task {
@@ -220,8 +228,12 @@ pub struct Task {
     pub frames: Vec<Frame>,
     /// The state.
     pub state: TState,
-    /// The worker that owns the task.
+    /// The worker of the machine that owns the task.
     pub worker: usize,
+    /// The simulated worker that owns the task while it runs in a simulation.
+    /// The simulation chooses it, so it does not depend on `worker`
+    /// (ADR 0010).
+    pub sim_worker: usize,
     /// The checker allows other workers to steal the task.
     pub stealable: bool,
     /// The scope of the task.
@@ -232,10 +244,6 @@ pub struct Task {
     pub handle: Linear,
     /// A cancellation was requested.
     pub cancel: bool,
-    /// The task unwinds because of a failure or a cancellation.
-    pub aborting: bool,
-    /// A pending interrupt.
-    pub interrupt: Option<Interrupt>,
     /// The value that the task gets when it wakes.
     pub wake: Option<Value>,
     /// What the task waits for.
@@ -244,6 +252,8 @@ pub struct Task {
     pub wait_seq: u64,
     /// The task stopped at a suspension point and has not run since.
     pub suspended: bool,
+    /// The simulation of the spawn site of the task, if any.
+    pub sim: Option<SimId>,
 }
 
 /// A scope record.
@@ -255,8 +265,11 @@ pub struct ScopeRec {
     pub children: Vec<TaskId>,
     /// The first failure of a child.
     pub failure: Option<String>,
-    /// The failure was raised in the owner.
+    /// The failure was raised in the owner, or a joiner took it.
     pub propagated: bool,
+    /// The handlers at the `scope` or the `fork`. A failure of a child goes to
+    /// them, not to the handlers where the owner is when the child fails.
+    pub henv: HEnv,
 }
 
 /// A captured continuation.
@@ -323,10 +336,18 @@ pub struct Machine<'r, 'a> {
     pub(crate) lins: Vec<LinRec>,
     timers: BTreeMap<(u64, u64), Timer>,
     timer_seq: u64,
+    /// The `with_timeout` blocks whose deadline passed, by the id of the
+    /// timeout. Each id belongs to the task of its block. The block times out
+    /// at the next check of its task while its frame is on the task stack
+    /// (`check_interrupt`): at once, after a resume that puts the frame back,
+    /// or after the unwinding above the frame that defers it (`live_base`,
+    /// ADR 0010). A set, not one slot, so two deadlines at one instant both
+    /// hold.
+    expired: BTreeSet<u64>,
     pub(crate) now: u64,
     sched_rng: Rng,
     pub(crate) rand_rng: Rng,
-    pub(crate) sim: Option<SimState>,
+    pub(crate) sims: Vec<SimState>,
     next_id: u64,
     pub(crate) trace: Vec<TraceEvent>,
     pub(crate) stdout: String,
@@ -345,10 +366,14 @@ impl<'r, 'a> Machine<'r, 'a> {
     /// Makes a machine for one run.
     pub fn new(rt: &'r Runtime<'a>, opts: &RunOptions) -> Self {
         let workers = opts.workers.max(1);
+        let mut heap = Heap::new(Rc::clone(&rt.move_only));
+        if opts.oracle {
+            heap.enable_oracle();
+        }
         Self {
             rt,
             opts: opts.clone(),
-            heap: Heap::new(Rc::clone(&rt.move_only)),
+            heap,
             tasks: Vec::new(),
             queues: (0..workers).map(|_| VecDeque::new()).collect(),
             scopes: Vec::new(),
@@ -356,10 +381,11 @@ impl<'r, 'a> Machine<'r, 'a> {
             lins: Vec::new(),
             timers: BTreeMap::new(),
             timer_seq: 0,
+            expired: BTreeSet::new(),
             now: 0,
             sched_rng: Rng::new(opts.seed),
             rand_rng: Rng::new(opts.seed ^ RAND_SALT),
-            sim: None,
+            sims: Vec::new(),
             next_id: 1,
             trace: Vec::new(),
             stdout: String::new(),
@@ -464,6 +490,7 @@ impl<'r, 'a> Machine<'r, 'a> {
             pc: 0,
             slots,
             caps,
+            owned: Vec::new(),
             stack: Vec::new(),
             temps: Vec::new(),
             marks: Vec::new(),
@@ -473,34 +500,95 @@ impl<'r, 'a> Machine<'r, 'a> {
     }
 
     /// Adds a task with one frame and puts it in a run queue.
+    /// `sim` is the simulation of the spawn site.
     pub(crate) fn add_task(
         &mut self,
         frame: CodeFrame,
-        worker: usize,
+        parent: Option<TaskId>,
         stealable: bool,
         scope: Option<ScopeId>,
+        sim: Option<SimId>,
     ) -> TaskId {
         let id = self.tasks.len();
+        // A task starts on the worker of its parent, in the machine and in the
+        // simulation.
+        let (worker, sim_worker) = parent
+            .and_then(|p| self.tasks.get(p))
+            .map_or((0, 0), |p| (p.worker, p.sim_worker));
         self.tasks.push(Task {
             frames: vec![Frame::Code(frame)],
             state: TState::Ready,
             worker,
+            sim_worker,
             stealable,
             scope,
             result: None,
-            handle: Linear::new(),
+            // The runtime cancels the task: that is the `on abort` of a handle.
+            handle: Linear::new(true),
             cancel: false,
-            aborting: false,
-            interrupt: None,
             wake: None,
             wait: None,
             wait_seq: 0,
             suspended: true,
+            sim,
         });
-        if let Some(q) = self.queues.get_mut(worker) {
-            q.push_back(id);
+        if let (Some(p), Some(o)) = (parent, self.heap.oracle()) {
+            o.borrow_mut().spawn(p, id);
         }
+        self.enqueue(id);
         id
+    }
+
+    /// Returns the simulation that task `t` runs in: the one of the nearest
+    /// `Sim` frame on its stack, also in an unwinding, else the one of its
+    /// spawn site. A clause of a handler outside a `sim.run` runs below the
+    /// `Sim` frame, so it is outside the simulation.
+    pub(crate) fn sim_of(&self, t: TaskId) -> Option<SimId> {
+        fn find(frames: &[Frame]) -> Option<SimId> {
+            frames.iter().rev().find_map(|f| match f {
+                Frame::Sim { sim, .. } => Some(*sim),
+                Frame::Unwind(u) => find(&u.frames),
+                _ => None,
+            })
+        }
+        let task = self.tasks.get(t)?;
+        find(&task.frames).or(task.sim)
+    }
+
+    /// Puts ready task `t` in the run queue of its worker: a queue of the
+    /// machine, or of a simulated worker of its simulation.
+    pub(crate) fn enqueue(&mut self, t: TaskId) {
+        let sim = self.sim_of(t);
+        let task = &self.tasks[t];
+        let (queues, w) = match sim {
+            Some(s) => (&mut self.sims[s].queues, task.sim_worker),
+            None => (&mut self.queues, task.worker),
+        };
+        let n = queues.len().max(1);
+        if let Some(q) = queues.get_mut(w % n) {
+            q.push_back(t);
+        }
+        self.set_worker(t, sim.is_some(), w % n);
+    }
+
+    /// Sets the worker of task `t`: a simulated worker if `in_sim`, else a
+    /// worker of the machine.
+    fn set_worker(&mut self, t: TaskId, in_sim: bool, w: usize) {
+        if in_sim {
+            self.tasks[t].sim_worker = w;
+        } else {
+            self.tasks[t].worker = w;
+        }
+    }
+
+    /// Returns the worker whose queue has task `t`: a simulated worker in a
+    /// simulation, else a worker of the machine.
+    pub(crate) fn queue_worker(&self, t: TaskId) -> usize {
+        match (self.sim_of(t), self.tasks.get(t)) {
+            (Some(_), Some(task)) => task.sim_worker,
+            (None, Some(task)) => task.worker,
+            (_, None) => 0,
+        }
     }
 
     /// Returns the current task.
@@ -528,10 +616,7 @@ impl<'r, 'a> Machine<'r, 'a> {
         if let Some(v) = value {
             task.wake = Some(v);
         }
-        let w = task.worker;
-        if let Some(q) = self.queues.get_mut(w) {
-            q.push_back(t);
-        }
+        self.enqueue(t);
         self.trace.push(TraceEvent::Resume { task: t });
     }
 
@@ -562,7 +647,7 @@ impl<'r, 'a> Machine<'r, 'a> {
         }
         task.cancel = true;
         self.trace.push(TraceEvent::Cancel { task: t });
-        if self.tasks[t].state == TState::Blocked && !self.tasks[t].aborting {
+        if self.tasks[t].state == TState::Blocked && !self.defers(t) {
             self.wake(t, None);
         }
     }
@@ -613,13 +698,45 @@ impl<'r, 'a> Machine<'r, 'a> {
         if self.tasks[owner].state == TState::Done || waits_here {
             return;
         }
-        if self.tasks[owner].interrupt.is_none() {
-            self.scopes[sid].propagated = true;
-            self.tasks[owner].interrupt = Some(Interrupt::Fail(msg.to_string()));
-        }
-        if self.tasks[owner].state == TState::Blocked {
+        // The owner raises the failure at its next suspension point while the
+        // frame of the scope is on its stack (`check_interrupt`). The frame can
+        // be away, in the continuation of a clause outside the scope. Then the
+        // owner goes on, and it raises the failure when the frame is back, or at
+        // the end of the scope (`raise_scope_failure`). Wake the owner only if
+        // its check finds the failure.
+        let t = &self.tasks[owner];
+        let base = self.live_base(owner);
+        let wake = t.state == TState::Blocked
+            && !self.scopes[sid].propagated
+            && Self::scope_frame(&t.frames, sid).is_some_and(|i| i >= base);
+        if wake {
             self.wake(owner, None);
         }
+    }
+
+    /// Returns the index of the frame of scope `sid` (a `scope` or a `fork`) in
+    /// `frames`.
+    pub(crate) fn scope_frame(frames: &[Frame], sid: ScopeId) -> Option<usize> {
+        frames.iter().rposition(
+            |f| matches!(f, Frame::Scope { scope } | Frame::Fork { scope, .. } if *scope == sid),
+        )
+    }
+
+    /// Returns the outermost scope on the stack of the current task, above
+    /// its innermost unwinding (`live_base`), whose child failed, if the owner
+    /// has not raised that failure yet. The unwind to that scope ends the
+    /// scopes inside it too.
+    fn failed_scope(&self) -> Option<ScopeId> {
+        let base = self.live_base(self.cur);
+        let frames = self.tasks[self.cur].frames.get(base..).unwrap_or_default();
+        frames.iter().find_map(|f| match f {
+            Frame::Scope { scope } | Frame::Fork { scope, .. } => self
+                .scopes
+                .get(*scope)
+                .filter(|s| !s.propagated && s.failure.is_some() && s.owner == self.cur)
+                .map(|_| *scope),
+            _ => None,
+        })
     }
 
     /// Wakes every task whose wait condition now holds.
@@ -661,6 +778,22 @@ impl<'r, 'a> Machine<'r, 'a> {
     pub(crate) fn remove_timeout(&mut self, id: u64) {
         self.timers
             .retain(|_, t| !matches!(t, Timer::Timeout { id: x, .. } if *x == id));
+        self.expired.remove(&id);
+    }
+
+    /// Gives a copy of a `with_timeout` block (a `multi` resume) timeout `new`
+    /// with the deadline of timeout `old`. Each copy times out on its own.
+    pub(crate) fn copy_timeout(&mut self, old: u64, new: u64) {
+        let deadline = self.timers.iter().find_map(|(&(at, _), t)| match t {
+            Timer::Timeout { task, id } if *id == old => Some((at, *task)),
+            _ => None,
+        });
+        if let Some((at, task)) = deadline {
+            self.add_timer(at, Timer::Timeout { task, id: new });
+        }
+        if self.expired.contains(&old) {
+            self.expired.insert(new);
+        }
     }
 
     /// Fires every timer that is due.
@@ -689,15 +822,18 @@ impl<'r, 'a> Machine<'r, 'a> {
                     if self.is_done(task) {
                         continue;
                     }
+                    // The deadline holds at the next check of the task while
+                    // the frame is on its stack. A frame in a continuation
+                    // waits for the resume that puts it back, and a frame
+                    // below an unwinding waits for its end (`live_base`).
+                    self.expired.insert(id);
+                    let base = self.live_base(task);
                     let has = self.tasks[task]
                         .frames
                         .iter()
-                        .any(|f| matches!(f, Frame::Timeout { id: x, .. } if *x == id));
-                    if !has {
-                        continue;
-                    }
-                    self.tasks[task].interrupt = Some(Interrupt::Timeout(id));
-                    if self.tasks[task].state == TState::Blocked && !self.tasks[task].aborting {
+                        .rposition(|f| matches!(f, Frame::Timeout { id: x, .. } if *x == id))
+                        .is_some_and(|i| i >= base);
+                    if has && self.tasks[task].state == TState::Blocked {
                         self.wake(task, None);
                     }
                 }
@@ -722,39 +858,58 @@ impl<'r, 'a> Machine<'r, 'a> {
     // The scheduler
     // -----------------------------------------------------------------------
 
-    /// Picks a worker and a task. An idle worker may steal only a stealable task.
-    fn pick(&mut self) -> Option<(usize, TaskId, Option<usize>)> {
-        let n = self.queues.len();
+    /// Returns the choices of a set of run queues: a worker and a task. An
+    /// idle worker may steal only a stealable task.
+    fn candidates(
+        queues: &[VecDeque<TaskId>],
+        tasks: &[Task],
+    ) -> Vec<(usize, TaskId, Option<usize>)> {
+        let n = queues.len();
         let mut cands = Vec::new();
         for w in 0..n {
-            if let Some(&t) = self.queues[w].front() {
+            if let Some(&t) = queues[w].front() {
                 cands.push((w, t, None));
                 continue;
             }
-            for v in 0..n {
+            for (v, q) in queues.iter().enumerate() {
                 if v == w {
                     continue;
                 }
-                if let Some(&t) = self.queues[v]
-                    .iter()
-                    .rev()
-                    .find(|&&t| self.tasks[t].stealable)
-                {
+                if let Some(&t) = q.iter().rev().find(|&&t| tasks[t].stealable) {
                     cands.push((w, t, Some(v)));
                 }
             }
         }
-        if cands.is_empty() {
+        cands
+    }
+
+    /// Picks a worker and a task. A simulation with a ready task is one choice
+    /// of the machine; its own scheduler then picks its task, so that its
+    /// order does not depend on `--workers` (ADR 0010).
+    fn pick(&mut self) -> Option<(Option<SimId>, usize, TaskId, Option<usize>)> {
+        let cands = Self::candidates(&self.queues, &self.tasks);
+        let sims: Vec<SimId> = (0..self.sims.len())
+            .filter(|&s| !Self::candidates(&self.sims[s].queues, &self.tasks).is_empty())
+            .collect();
+        let total = cands.len() + sims.len();
+        if total == 0 {
             return None;
         }
-        let i = self.sched_rng.below(cands.len());
-        Some(cands[i])
+        let i = self.sched_rng.below(total);
+        if let Some(&(w, t, from)) = cands.get(i) {
+            return Some((None, w, t, from));
+        }
+        let s = sims[i - cands.len()];
+        let inner = Self::candidates(&self.sims[s].queues, &self.tasks);
+        let j = self.sims[s].sched.below(inner.len());
+        let (w, t, from) = inner[j];
+        Some((Some(s), w, t, from))
     }
 
     /// Runs tasks until the root task finishes.
     pub fn run_until_done(&mut self, root: TaskId) -> R<()> {
         while !self.is_done(root) {
-            let Some((w, t, from)) = self.pick() else {
+            let Some((sim, w, t, from)) = self.pick() else {
                 if self.advance_to_next_timer() {
                     continue;
                 }
@@ -768,10 +923,14 @@ impl<'r, 'a> Machine<'r, 'a> {
                     None,
                 ));
             };
+            let queues = match sim {
+                Some(s) => &mut self.sims[s].queues,
+                None => &mut self.queues,
+            };
             match from {
                 Some(v) => {
-                    self.queues[v].retain(|&x| x != t);
-                    self.tasks[t].worker = w;
+                    queues[v].retain(|&x| x != t);
+                    self.set_worker(t, sim.is_some(), w);
                     self.trace.push(TraceEvent::Steal {
                         task: t,
                         from: v,
@@ -779,7 +938,7 @@ impl<'r, 'a> Machine<'r, 'a> {
                     });
                 }
                 None => {
-                    self.queues[w].pop_front();
+                    queues[w].pop_front();
                 }
             }
             self.trace.push(TraceEvent::Run { task: t, worker: w });
@@ -790,12 +949,15 @@ impl<'r, 'a> Machine<'r, 'a> {
 
     fn run_quantum(&mut self, t: TaskId) -> R<()> {
         self.cur = t;
+        if let Some(o) = self.heap.oracle() {
+            o.borrow_mut().set_task(t);
+        }
         self.quantum_used = 0;
         self.tasks[t].state = TState::Running;
         let mut flow = Flow::Continue;
         if self.tasks[t].suspended {
             self.tasks[t].suspended = false;
-            if let Some(f) = self.check_interrupt()? {
+            if let Some(f) = self.check_interrupt() {
                 flow = f;
             } else if let Some(v) = self.tasks[t].wake.take() {
                 flow = self.deliver(v)?;
@@ -810,8 +972,7 @@ impl<'r, 'a> Machine<'r, 'a> {
                     }
                     if self.tasks[t].state == TState::Running {
                         self.tasks[t].state = TState::Ready;
-                        let w = self.tasks[t].worker;
-                        self.queues[w].push_back(t);
+                        self.enqueue(t);
                     }
                     return Ok(());
                 }
@@ -828,6 +989,62 @@ impl<'r, 'a> Machine<'r, 'a> {
                 }
             }
             flow = self.step()?;
+            self.oracle_check()?;
+        }
+    }
+
+    /// With the oracle checks on, reports the first violation that a check
+    /// found, and a live linear value that the heap dropped with no consume
+    /// and no `on abort`.
+    pub(crate) fn oracle_check(&self) -> R<()> {
+        let Some(o) = self.heap.oracle() else {
+            return Ok(());
+        };
+        let (violation, lins) = {
+            let mut o = o.borrow_mut();
+            (o.take_violation(), o.take_dropped_lins())
+        };
+        if let Some(v) = violation {
+            return Err(self.fault(v));
+        }
+        let live = |id: usize| {
+            self.lins
+                .get(id)
+                .is_some_and(|l| l.l.state == weft_verified::lifecycle::LinState::Live)
+        };
+        if lins.into_iter().any(live) {
+            return Err(self.fault(
+                "oracle: linear leak: a live linear value goes away with no consume and no `on abort`",
+            ));
+        }
+        Ok(())
+    }
+
+    /// With the oracle checks on, reports a violation at the end of a normal
+    /// run, and a linear value that is still live.
+    pub(crate) fn oracle_end(&self) -> R<()> {
+        if self.heap.oracle().is_none() {
+            return Ok(());
+        }
+        self.oracle_check()?;
+        if self
+            .lins
+            .iter()
+            .any(|l| l.l.state == weft_verified::lifecycle::LinState::Live)
+        {
+            return Err(RuntimeError::new(
+                ErrorKind::Fault,
+                "oracle: linear leak: a linear value is still live at the end of the run",
+                None,
+            ));
+        }
+        Ok(())
+    }
+
+    /// With the oracle checks on, the running task sees that task `u` is done.
+    pub(crate) fn oracle_join(&self, u: TaskId) {
+        if let Some(o) = self.heap.oracle() {
+            o.borrow_mut().join(u);
         }
     }
 
@@ -836,24 +1053,62 @@ impl<'r, 'a> Machine<'r, 'a> {
         self.quantum_used >= self.opts.quantum
     }
 
-    /// Handles a pending cancellation or interrupt at a suspension point.
-    pub(crate) fn check_interrupt(&mut self) -> R<Option<Flow>> {
-        let t = self.task();
-        if t.aborting {
-            t.interrupt = None;
-            return Ok(None);
+    /// Returns true if task `t` defers a cancel: an unwinding runs on its
+    /// stack, also an `on abort` function above it. The effects proof models
+    /// `on abort` as atomic, so a cancel does not cut it. The cancel stays in
+    /// `Task::cancel`, and the task handles it when the unwinding ends (ADR
+    /// 0010).
+    pub(crate) fn defers(&self, t: TaskId) -> bool {
+        self.tasks
+            .get(t)
+            .is_some_and(|x| x.frames.iter().any(|f| matches!(f, Frame::Unwind(_))))
+    }
+
+    /// Returns the index of the first frame of task `t` above its innermost
+    /// unwinding, or 0 if no unwinding runs. A deadline of a `with_timeout`
+    /// block and a failure of a child of a scope hold at once only for a frame
+    /// at this index or above it: a frame of the `on abort` function that runs
+    /// above the unwinding. Their unwinding does not cut that function. For a
+    /// frame below the unwinding they stay pending: a deadline in
+    /// `Machine::expired`, a failure in the record of its scope. The task
+    /// handles them when the unwinding ends (ADR 0010).
+    pub(crate) fn live_base(&self, t: TaskId) -> usize {
+        self.tasks
+            .get(t)
+            .and_then(|x| x.frames.iter().rposition(|f| matches!(f, Frame::Unwind(_))))
+            .map_or(0, |i| i + 1)
+    }
+
+    /// Handles a pending cancellation, deadline or failure of a child at a
+    /// suspension point, and at the end of an unwinding.
+    pub(crate) fn check_interrupt(&mut self) -> Option<Flow> {
+        let cur = self.cur;
+        if self.tasks[cur].cancel && !self.defers(cur) {
+            return Some(self.abort_task(TaskResult::Cancelled));
         }
-        if t.cancel {
-            return Ok(Some(self.abort_task(TaskResult::Cancelled)));
+        if let Some(f) = self.late_timeout() {
+            return Some(f);
         }
-        match t.interrupt.take() {
-            None => Ok(None),
-            Some(Interrupt::Timeout(id)) => Ok(self.timeout_unwind(id)),
-            Some(Interrupt::Fail(msg)) => {
-                let henv = self.top_henv();
-                self.fail(msg, &henv).map(Some)
-            }
+        let sid = self.failed_scope()?;
+        self.scope_fail_unwind(sid)
+    }
+
+    /// Times out the outermost `with_timeout` block on the stack of the
+    /// current task, above its innermost unwinding (`live_base`), whose
+    /// deadline passed. Its unwinding ends the blocks inside it too, also one
+    /// with the same deadline.
+    pub(crate) fn late_timeout(&mut self) -> Option<Flow> {
+        if self.expired.is_empty() {
+            return None;
         }
+        let base = self.live_base(self.cur);
+        let frames = self.tasks[self.cur].frames.get(base..).unwrap_or_default();
+        let id = frames.iter().find_map(|f| match f {
+            Frame::Timeout { id, .. } if self.expired.contains(id) => Some(*id),
+            _ => None,
+        })?;
+        self.expired.remove(&id);
+        self.timeout_unwind(id)
     }
 
     /// Returns the handlers of the innermost code frame.
@@ -872,7 +1127,7 @@ impl<'r, 'a> Machine<'r, 'a> {
     /// Starts a root task for a code unit.
     pub fn start(&mut self, code: CodeId, args: Vec<Value>) -> R<TaskId> {
         let f = self.code_frame(code, args, Rc::from(Vec::new()), HEnv::default())?;
-        Ok(self.add_task(f, 0, false, None))
+        Ok(self.add_task(f, None, false, None, None))
     }
 
     /// Returns the result of a finished task.

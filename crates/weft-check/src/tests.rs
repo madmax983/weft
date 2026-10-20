@@ -7,7 +7,7 @@ use weft_facts::{
     VarId, VarInfo, VarKind,
 };
 
-use crate::{bridge, Report};
+use crate::{bridge, Cause, Report};
 
 /// Runs the production checker and asserts that the Datalog spec agrees.
 fn check(f: &FnFacts) -> Report {
@@ -162,6 +162,58 @@ fn w0301_element_mutation_keeps_element_refs() {
     let n3 = b.node("e.hp");
     b.use_(e, n3);
     assert!(check(&b.f).violations.is_clean());
+}
+
+/// `let v = ..; let r = &v.items; DROP(v); use r`, where DROP is a move or a scope end.
+fn drop_facts(scope_end: bool) -> (B, VarId, VarId, NodeId, NodeId) {
+    let mut b = B::new();
+    let v_root = b.local("v");
+    let items = b.field(v_root, 0, "items");
+    let v = b.var("v");
+    b.f.owner.push((v_root, v));
+    let r = b.var("r");
+    let n0 = b.node("let r");
+    b.bind(r, n0);
+    b.f.points_into.push((r, items));
+    let n1 = b.node("drop v");
+    if scope_end {
+        b.f.scope_end.push((v, n1));
+    } else {
+        b.mv(v, n1);
+    }
+    let n2 = b.node("print(r)");
+    b.use_(r, n2);
+    (b, v, r, n1, n2)
+}
+
+#[test]
+fn w0301_a_move_of_the_owner_invalidates_stable_parts() {
+    // frees_at(P, Rt) :- owner(Rt, V), moved_at(V, P), !part_moved_at(V, P).
+    // invalidated_at(R, P) :- points_into(R, Path), frees_at(P, M), prefix(M, Path).
+    let (b, v, r, n1, n2) = drop_facts(false);
+    let rep = check(&b.f);
+    assert!(rep.violations.error.contains(&(r, n2)));
+    assert_eq!(rep.invalidations[0].at, n1);
+    assert_eq!(rep.invalidations[0].cause, Cause::Move(v));
+}
+
+#[test]
+fn w0301_the_scope_end_of_the_owner_invalidates() {
+    // frees_at(P, Rt) :- owner(Rt, V), scope_end(V, P).
+    let (mut b, v, r, n1, n2) = drop_facts(true);
+    let rep = check(&b.f);
+    assert!(rep.violations.error.contains(&(r, n2)));
+    assert_eq!(rep.invalidations[0].cause, Cause::ScopeEnd(v));
+    // A reference into another root survives, and a rebind revives the reference.
+    b.f.owner.clear();
+    assert!(check(&b.f).violations.error.is_empty());
+    let (mut b, _, r, _, n2) = drop_facts(true);
+    let n3 = b.f.add_node(Span::default(), "r = &..", "");
+    b.f.cfg_edge.retain(|&(p, q)| !(p == n1 && q == n2));
+    b.edge(n1, n3);
+    b.edge(n3, n2);
+    b.bind(r, n3);
+    assert!(check(&b.f).violations.error.is_empty());
 }
 
 #[test]
@@ -475,6 +527,82 @@ fn w0405_join_ends_the_task() {
 }
 
 #[test]
+fn w0301_a_partial_move_frees_the_part_only() {
+    // frees_at(P, M) :- moved_part(M, P).
+    let mut b = B::new();
+    let p_root = b.local("p");
+    let a = b.field(p_root, 0, "a");
+    let other = b.field(p_root, 1, "b");
+    let p = b.var("p");
+    b.f.owner.push((p_root, p));
+    let r = b.var("r");
+    let q = b.var("q");
+    let n0 = b.node("let r, q");
+    b.bind(r, n0);
+    b.bind(q, n0);
+    b.f.points_into.push((r, a));
+    b.f.points_into.push((q, other));
+    let n1 = b.node("take(p.a)");
+    b.mv(p, n1);
+    b.f.moved_part.push((a, n1));
+    let n2 = b.node("print(r, q)");
+    b.use_(r, n2);
+    b.use_(q, n2);
+    let rep = check(&b.f);
+    assert!(rep.violations.error.contains(&(r, n2)));
+    assert!(!rep.violations.error.contains(&(q, n2)));
+    assert_eq!(rep.invalidations[0].cause, Cause::MovePart(a));
+}
+
+#[test]
+fn w0405_a_free_conflicts_with_a_task() {
+    // task_conflict(T, P) :- active(T, P), task_accesses(T, A), frees_at(P, M), overlaps(M, A).
+    let mut b = B::new();
+    let v_root = b.local("v");
+    let elem = b.elem(v_root);
+    let v = b.var("v");
+    b.f.owner.push((v_root, v));
+    let t = b.f.add_task(TaskKind::Spawn, Span::default());
+    let n0 = b.node("spawn");
+    b.f.spawned_at.push((t, n0));
+    b.f.task_reads.push((t, elem));
+    let n1 = b.node("take(v)");
+    b.mv(v, n1);
+    let rep = check(&b.f);
+    assert!(rep.violations.task_conflict.contains(&(t, n1)));
+    assert_eq!(rep.conflicts[0].free, Some(Cause::Move(v)));
+    // A free after the join is not a conflict.
+    b.f.moved_at.clear();
+    let n2 = b.node("join");
+    b.f.joined_at.push((t, n2));
+    let n3 = b.node("end of v");
+    b.f.scope_end.push((v, n3));
+    assert!(check(&b.f).violations.task_conflict.is_empty());
+}
+
+#[test]
+fn w0405_a_reference_is_not_an_access_by_itself() {
+    // A use of a holder is an access only through the reads that sema records.
+    let mut b = B::new();
+    let stats = b.param("stats");
+    let count = b.field(stats, 0, "count");
+    let name = b.field(stats, 1, "name");
+    let r = b.var("r");
+    b.f.points_into.push((r, stats));
+    let t = b.f.add_task(TaskKind::Spawn, Span::default());
+    b.f.captures.push((t, r));
+    let n0 = b.node("spawn");
+    b.f.spawned_at.push((t, n0));
+    b.f.task_writes.push((t, count));
+    let n1 = b.node("print(stats.name)");
+    b.use_(r, n1);
+    b.f.reads_at.push((n1, name));
+    assert!(check(&b.f).violations.task_conflict.is_empty());
+    b.f.reads_at.push((n1, count));
+    assert!(check(&b.f).violations.task_conflict.contains(&(t, n1)));
+}
+
+#[test]
 fn w0405_split_halves_are_disjoint() {
     let mut b = B::new();
     let world = b.param("world");
@@ -531,29 +659,788 @@ fn w0401_w0403_fork_captures_and_stealable() {
 }
 
 #[test]
+fn w0405_a_task_keeps_a_captured_copy_variable() {
+    let mut b = B::new();
+    let k = b.var("k");
+    let rk = b.local("k");
+    b.f.owner.push((rk, k));
+    let t = b.f.add_task(TaskKind::Spawn, Span::default());
+    let s = b.start("spawn");
+    b.f.spawned_at.push((t, s));
+    b.f.task_reads.push((t, rk));
+    let e = b.node("end of block");
+    b.f.scope_end.push((k, e));
+    let j = b.node("scope end");
+    b.f.joined_at.push((t, j));
+    // The end of `k` frees what the task reads.
+    assert!(check(&b.f).violations.task_conflict.contains(&(t, e)));
+    // A task that keeps the cell of the copy variable reads it after the end.
+    b.f.kept.push((t, rk));
+    assert!(check(&b.f).violations.task_conflict.is_empty());
+}
+
+#[test]
+fn stealable_follows_opaque_and_spawns_in() {
+    let mut b = B::new();
+    let rc = b.var_with("r", |v| v.nonportable = true);
+    let outer = b.f.add_task(TaskKind::Spawn, Span::default());
+    let inner = b.f.add_task(TaskKind::Spawn, Span::default());
+    let runs_param = b.f.add_task(TaskKind::Spawn, Span::default());
+    let plain = b.f.add_task(TaskKind::Spawn, Span::default());
+    b.f.captures.push((inner, rc));
+    b.f.spawns_in.push((outer, inner));
+    b.f.opaque.push(runs_param);
+    let v = check(&b.f).violations;
+    // A task that starts a pinned task is pinned too.
+    assert!(!v.stealable.contains(&outer));
+    assert!(!v.stealable.contains(&inner));
+    assert!(!v.stealable.contains(&runs_param));
+    assert!(v.stealable.contains(&plain));
+}
+
+#[test]
 fn w0801_root_handler_in_library() {
     let mut b = B::new();
     b.f.library = true;
+    // `Net` is a standard effect, and `main.Log` is a user effect.
+    b.f.std_effects.push("Net".into());
     b.f.handlers.push(HandlerInfo {
         effect: "Net".into(),
-        is_std: true,
-        forwards: false,
+        sim_root: false,
         span: Span::default(),
     });
     b.f.handlers.push(HandlerInfo {
         effect: "Net".into(),
-        is_std: true,
-        forwards: true,
+        sim_root: true,
         span: Span::default(),
     });
     b.f.handlers.push(HandlerInfo {
-        effect: "Log".into(),
-        is_std: false,
-        forwards: false,
+        effect: "main.Log".into(),
+        sim_root: false,
         span: Span::default(),
     });
     let v = check(&b.f).violations;
     assert_eq!(v.root_handler_in_lib.len(), 1);
+    // The input names a root handler of `sim.run`; the spec derives `forwards`.
+    let text = crate::bridge::facts_text(&b.f);
+    assert!(text.contains("sim_root(h1)."), "{text}");
+    assert!(!text.contains("forwards("), "{text}");
+    let out = crate::bridge::evaluate_spec(&b.f, false).expect("spec evaluates");
+    let derived: Vec<String> = out
+        .tuples("forwards")
+        .iter()
+        .map(|t| out.display_tuple("forwards", t))
+        .collect();
+    assert_eq!(derived, ["forwards(h1)"]);
     b.f.library = false;
     assert!(check(&b.f).violations.root_handler_in_lib.is_empty());
+}
+
+#[test]
+fn w0301_a_wildcard_reference_is_invalid_after_an_overlapping_change() {
+    // invalidated_at(R, P) :- points_into(R, Path), wild_at(Path, B), mutates_at(P, M), overlaps(M, B).
+    let mut b = B::new();
+    let world = b.param("world");
+    let ents = b.field(world, 0, "entities");
+    let score = b.field(world, 1, "score");
+    let other = b.param("other");
+    let any = b.f.wildcard(world);
+    let r = b.var("r");
+    let n0 = b.node("let r = f(world)");
+    b.bind(r, n0);
+    b.f.points_into.push((r, any));
+    let n1 = b.node("other.clear()");
+    b.f.mutates_at.push((n1, other));
+    let n2 = b.node("world.entities.clear()");
+    b.f.mutates_at.push((n2, ents));
+    let n3 = b.node("print(r)");
+    b.use_(r, n3);
+    let rep = check(&b.f);
+    assert!(rep.violations.error.contains(&(r, n3)));
+    assert_eq!(rep.invalidations[0].at, n2);
+    // overlaps(P, Q) :- wild_at(P, B), overlaps(B, Q): a wildcard place overlaps
+    // every place inside its base, and nothing else.
+    let n4 = b.node("call");
+    b.f.call_mut.push((n4, score, 0));
+    b.f.call_mut.push((n4, other, 0));
+    b.f.call_arg.push((n4, any, 1));
+    let rep = check(&b.f);
+    assert!(rep.violations.alias_conflict.contains(&(n4, score, any)));
+    assert!(!rep.violations.alias_conflict.contains(&(n4, other, any)));
+}
+
+#[test]
+fn w0301_a_wildcard_mutation_invalidates_every_reference_below_its_base() {
+    // invalidated_at(R, P) :- points_into(R, Path), mutates_at(P, M), wild_at(M, B), prefix(B, Path).
+    let mut b = B::new();
+    let world = b.param("world");
+    let score = b.field(world, 1, "score");
+    let any = b.f.wildcard(world);
+    let r = b.var("r");
+    let n0 = b.node("let r = &world.score");
+    b.bind(r, n0);
+    b.f.points_into.push((r, score));
+    let n1 = b.node("e.hp += 1");
+    let hp = b.field(any, 0, "hp");
+    b.f.mutates_at.push((n1, hp));
+    let n2 = b.node("print(r)");
+    b.use_(r, n2);
+    assert!(check(&b.f).violations.error.contains(&(r, n2)));
+}
+
+#[test]
+fn w0301_a_wildcard_change_spares_a_reference_to_its_base() {
+    // invalidated_at(R, P) :- points_into(R, Path), mutates_at(P, M), wild_at(M, B),
+    //                         strict_prefix(B, Path), !same_one(M, Path).
+    let mut b = B::new();
+    let boxes = b.param("boxes");
+    let any = b.f.wildcard(boxes);
+    let items = b.field(any, 0, "items");
+    let r = b.var("boxes");
+    let n0 = b.node("entry");
+    b.bind(r, n0);
+    b.f.points_into.push((r, boxes));
+    let s = b.var("s");
+    b.bind(s, n0);
+    let inner = b.elem(boxes);
+    b.f.points_into.push((s, inner));
+    let n1 = b.node("b.items.push(1)");
+    b.f.mutates_at.push((n1, items));
+    let n2 = b.node("print(boxes.len())");
+    b.use_(r, n2);
+    b.use_(s, n2);
+    let v = check(&b.f).violations;
+    assert!(!v.error.contains(&(r, n2)), "{v:?}");
+    assert!(v.error.contains(&(s, n2)), "{v:?}");
+}
+
+#[test]
+fn w0301_a_write_through_a_reference_spares_that_reference() {
+    // invalidated_at(R, P) :- ..., mutates_at(P, M), ..., !writes_via(P, R).
+    // `cur` points anywhere below `head`; a write of `cur.next` through `cur`
+    // keeps `cur` valid. A copy `r` of `cur` is another reference.
+    let mut b = B::new();
+    let head = b.param("head");
+    let any = b.f.wildcard(head);
+    let next = b.field(any, 1, "next");
+    let n0 = b.node("entry");
+    let cur = b.var("cur");
+    let r = b.var("r");
+    for v in [cur, r] {
+        b.bind(v, n0);
+        b.f.points_into.push((v, any));
+    }
+    let n1 = b.node("cur.next = Vec.new()");
+    b.f.mutates_at.push((n1, next));
+    b.f.writes_via.push((n1, cur));
+    let n2 = b.node("print(cur.val)");
+    b.use_(cur, n2);
+    b.use_(r, n2);
+    let v = check(&b.f).violations;
+    assert!(!v.error.contains(&(cur, n2)), "{v:?}");
+    assert!(v.error.contains(&(r, n2)), "{v:?}");
+}
+
+#[test]
+fn w0301_a_release_frees_what_a_clause_parameter_points_to() {
+    // frees_at(P, M) :- releases_at(P, M).
+    // invalidated_at(R, P) :- points_into(R, Path), frees_at(P, M), prefix(M, Path).
+    let mut b = B::new();
+    let x = b.f.add_root("e", RootKind::Arg);
+    let other = b.f.add_root("o", RootKind::Arg);
+    let n0 = b.node("handler clause");
+    let e = b.var("e");
+    let o = b.var("o");
+    b.bind(e, n0);
+    b.bind(o, n0);
+    b.f.points_into.push((e, x));
+    b.f.points_into.push((o, other));
+    let n1 = b.node("resume");
+    b.f.releases_at.push((n1, x));
+    let n2 = b.node("print(e.hp)");
+    b.use_(e, n2);
+    b.use_(o, n2);
+    let r = check(&b.f);
+    assert!(r.violations.error.contains(&(e, n2)), "{:?}", r.violations);
+    assert!(!r.violations.error.contains(&(o, n2)), "{:?}", r.violations);
+    assert_eq!(r.invalidations[0].cause, Cause::Release(x));
+}
+
+#[test]
+fn w0301_a_change_inside_one_call_result_follows_rule_3() {
+    // same_one(M, P): a change and a reference inside one one-place wildcard
+    // place compare by their steps. Another instance uses the wildcard rules.
+    let mut b = B::new();
+    let v = b.param("v");
+    let e = b.f.wildcard_one(v, 1);
+    let other = b.f.wildcard_one(v, 2);
+    let hp = b.field(e, 0, "hp");
+    let kids = b.field(e, 1, "kids");
+    let kid = b.elem(kids);
+    let r = b.var("e");
+    let n0 = b.node("let e = find(v)");
+    b.bind(r, n0);
+    b.f.points_into.push((r, e));
+    let k = b.var("k");
+    let n1 = b.node("let k = &e.kids[0]");
+    b.bind(k, n1);
+    b.f.points_into.push((k, kid));
+    let o = b.var("o");
+    b.bind(o, n1);
+    b.f.points_into.push((o, other));
+    let n2 = b.node("e.hp -= 1");
+    b.f.mutates_at.push((n2, hp));
+    let n3 = b.node("print(e.hp, o.hp)");
+    b.use_(r, n3);
+    b.use_(o, n3);
+    let v1 = check(&b.f).violations;
+    assert!(!v1.error.contains(&(r, n3)), "{v1:?}");
+    assert!(v1.error.contains(&(o, n3)), "{v1:?}");
+    let n4 = b.node("e.kids.push(x)");
+    b.f.mutates_at.push((n4, kids));
+    let n5 = b.node("print(k.hp)");
+    b.use_(k, n5);
+    b.use_(r, n5);
+    let v2 = check(&b.f).violations;
+    assert!(v2.error.contains(&(k, n5)), "{v2:?}");
+    assert!(!v2.error.contains(&(r, n5)), "{v2:?}");
+}
+
+#[test]
+fn nested_wildcard_places_agree_with_the_spec() {
+    // wild_at(P, B) for each wildcard step on the path of P. The checker uses
+    // the outermost base only. Facts can still name nested wildcard places,
+    // because `child` makes them, so the spec must agree on them.
+    let mut b = B::new();
+    let world = b.param("world");
+    let ents = b.field(world, 0, "entities");
+    let score = b.field(world, 1, "score");
+    let other = b.param("other");
+    let mut deep = b.f.wildcard(ents);
+    for i in 0..12 {
+        let x = b.field(deep, i % 2, "x");
+        deep = b.f.child(x, weft_facts::WILD, "..");
+    }
+    assert_eq!(b.f.wildcard(deep), b.f.wildcard(ents), "the normal form");
+    let r = b.var("r");
+    let n0 = b.node("let r = f(world.entities)");
+    b.bind(r, n0);
+    b.f.points_into.push((r, deep));
+    let n1 = b.node("world.score += 1");
+    b.f.mutates_at.push((n1, score));
+    let n2 = b.node("other.clear()");
+    b.f.mutates_at.push((n2, other));
+    let n3 = b.node("print(r)");
+    b.use_(r, n3);
+    let (rep, work) = crate::check_counted(&b.f);
+    assert!(rep.violations.error.is_empty(), "{rep:?}");
+    assert!(work.overlaps < 10, "{work:?}");
+    check(&b.f);
+    let n4 = b.node("world.entities.clear()");
+    b.f.mutates_at.push((n4, ents));
+    let n5 = b.node("print(r)");
+    b.use_(r, n5);
+    let rep = check(&b.f);
+    assert!(rep.violations.error.contains(&(r, n5)));
+    // A mutation of a nested wildcard place: every reference below its
+    // outermost base.
+    let s = b.var("s");
+    let n6 = b.node("let s = &world.entities[0]");
+    b.bind(s, n6);
+    let el = b.elem(ents);
+    b.f.points_into.push((s, el));
+    let n7 = b.node("g(deep)");
+    b.f.mutates_at.push((n7, deep));
+    let n8 = b.node("print(s)");
+    b.use_(s, n8);
+    assert!(check(&b.f).violations.error.contains(&(s, n8)));
+}
+
+/// Returns the rendered diagnostics of a source.
+fn rendered(src: &str) -> String {
+    let checked = crate::check_source("t.wf", src, weft_sema::Options::default());
+    let file = weft_syntax::SourceFile::new("t.wf", src);
+    checked.diags.iter().map(|d| d.render(&file)).collect()
+}
+
+#[test]
+fn w0301_says_why_the_owner_is_gone() {
+    let out = rendered(
+        "fn f() {
+             let keep: Vec<u64> = Vec.new()
+             let q = &keep
+             let g = || { let v: Vec<u64> = Vec.new(); q = &v; 0 }
+             let z = g()
+             print(q)
+         }
+         struct C { items: Vec<u64> }
+         fn h() {
+             let a = Rc.new(C { items: Vec.new() })
+             let r = &a.items
+             a = Rc.new(C { items: Vec.new() })
+             print(r)
+         }",
+    );
+    assert!(
+        out.contains("v : goes out of scope when `g` returns"),
+        "{out}"
+    );
+    assert!(
+        out.contains("r : &Vec<u64> through the `Rc` handle a"),
+        "{out}"
+    );
+    assert!(out.contains("a : new value"), "{out}");
+}
+
+#[test]
+fn an_ill_typed_return_gets_no_place_error() {
+    let out =
+        rendered("fn f() -> u64 { let v: Vec<u64> = Vec.new(); v.push(1); let r = &v[0]; r }");
+    assert!(out.contains("W0102"), "{out}");
+    assert!(!out.contains("W0204"), "{out}");
+}
+
+#[test]
+fn inferred_places_keep_their_names() {
+    let out = rendered(
+        "struct Stats { count: u64, hist: Vec<u64> }
+         struct Cell { v: Vec<u64> }
+         fn priv_bump(s: &Stats) { s.count += 1 }
+         fn shared_caller(s: &Stats @ shared) { priv_bump(s) }
+         fn grow(c: &Cell) { c.v.push(1) }
+         pub fn pub_grow(c: &Cell) { grow(c) }",
+    );
+    assert!(
+        out.contains("`priv_bump` mutates `s.count` through a `@ shared` reference"),
+        "{out}"
+    );
+    assert!(
+        out.contains("must state its effects: `/ mut(c.v)`"),
+        "{out}"
+    );
+}
+
+#[test]
+fn w0301_w0405_a_lent_place_can_change() {
+    // `let first = &w.entities[0]; f(w); print(first)` with `f` a function parameter.
+    let mut b = B::new();
+    let w = b.param("w");
+    let ents = b.field(w, 0, "entities");
+    let elem = b.elem(ents);
+    let first = b.var("first");
+    let n0 = b.node("let first");
+    b.bind(first, n0);
+    b.f.points_into.push((first, elem));
+    let n1 = b.node("f");
+    b.f.lends_mut.push((n1, w));
+    let n2 = b.node("print");
+    b.use_(first, n2);
+    // The signature does not state the mutation: the caller of `f` sees it.
+    b.f.has_signature = true;
+    let r = check(&b.f);
+    assert!(r.violations.error.contains(&(first, n2)));
+    assert_eq!(r.invalidations[0].cause, Cause::Lend(w));
+    assert!(r.violations.unauthorized_mut.is_empty());
+    assert!(r.violations.shared_mutation.is_empty());
+    // A reference into the lent place itself survives.
+    b.f.points_into.clear();
+    b.f.points_into.push((first, w));
+    assert!(check(&b.f).violations.error.is_empty());
+
+    // A task that reads `w.entities` while the parent lends `w`.
+    let mut b = B::new();
+    let w = b.param("w");
+    let ents = b.field(w, 0, "entities");
+    let t = b.f.add_task(TaskKind::Spawn, Span::default());
+    let s = b.node("spawn");
+    b.f.spawned_at.push((t, s));
+    b.f.task_reads.push((t, ents));
+    let n1 = b.node("f");
+    b.f.lends_mut.push((n1, w));
+    let end = b.node("scope end");
+    b.f.joined_at.push((t, end));
+    let r = check(&b.f);
+    assert!(r.violations.task_conflict.contains(&(t, n1)));
+    assert!(r.conflicts[0].lends);
+}
+
+#[test]
+fn w0312_a_lent_place_pairs_with_the_other_arguments() {
+    // `f(w, &w.entities[0])` with `f` a function parameter: both places are lent.
+    let mut b = B::new();
+    let w = b.param("w");
+    let ents = b.field(w, 0, "entities");
+    let elem = b.elem(ents);
+    let n = b.node("f");
+    b.f.lends_mut.push((n, w));
+    b.f.lends_mut.push((n, elem));
+    b.f.call_mut.push((n, w, 0));
+    b.f.call_mut.push((n, elem, 1));
+    b.f.call_arg.push((n, w, 0));
+    b.f.call_arg.push((n, elem, 1));
+    let r = check(&b.f);
+    // Each place pairs with the other one.
+    assert!(r.violations.alias_conflict.contains(&(n, w, elem)));
+    assert!(r.violations.alias_conflict.contains(&(n, elem, w)));
+    // The diagnostics show one error for the call, with the outer place mutated.
+    let ds = crate::diagnose::diagnose_marked(&b.f, &r);
+    let w0312: Vec<_> = ds.iter().filter(|d| d.code == "W0312").collect();
+    assert_eq!(w0312.len(), 1);
+    assert!(
+        w0312[0].message.contains("mutates `w` while"),
+        "{}",
+        w0312[0].message
+    );
+}
+
+/// The pairwise step facts are the pairs of one class: a wide struct gives
+/// one `step_alias` and one `step_within` fact per field, and the bridge
+/// compares a number of pairs that is linear in the fields.
+#[test]
+fn step_facts_of_a_wide_struct_are_linear() {
+    let mut b = B::new();
+    let s = b.param("s");
+    let n = 3200;
+    for i in 0..n {
+        b.field(s, i, &format!("f{i}"));
+    }
+    let v = b.local("v");
+    let elem = b.elem(v);
+    let lo = b.seg(v, false);
+    let hi = b.seg(v, true);
+    let mut alias = Vec::new();
+    let mut within = Vec::new();
+    bridge::each_fact(&b.f, &mut |rel, args| {
+        let pair = || format!("{args:?}");
+        match rel {
+            "step_alias" => alias.push(pair()),
+            "step_within" => within.push(pair()),
+            _ => {}
+        }
+    });
+    let sym = |p: PlaceId| bridge::Arg::Sym(p.to_string());
+    let field0 = PlaceId(1);
+    assert!(alias.contains(&format!("{:?}", [sym(field0), sym(field0)])));
+    // The three element places: each pair aliases, except the two sides.
+    let n = n as usize;
+    assert_eq!(alias.len(), n + 7, "{:?}", &alias[n..]);
+    assert!(!alias.contains(&format!("{:?}", [sym(lo), sym(hi)])));
+    assert!(within.contains(&format!("{:?}", [sym(lo), sym(elem)])));
+    assert!(!within.contains(&format!("{:?}", [sym(elem), sym(lo)])));
+    assert_eq!(within.len(), n + 5, "{:?}", &within[n..]);
+    // The work: each group compares each pair of its places.
+    let compared: usize = bridge::step_groups(&b.f)
+        .values()
+        .map(|g| g.len() * g.len())
+        .sum();
+    assert!(compared <= n + 16, "{compared} pairs for {n} fields");
+}
+
+#[test]
+fn the_spec_parses() {
+    let p = weft_datalog::parse_program_named("spec/weft.dl", bridge::SPEC_SRC);
+    assert!(p.is_ok(), "{p:?}");
+    assert_eq!(p.ok().as_ref(), Some(bridge::spec()));
+    assert!(!bridge::spec().rules().is_empty());
+}
+
+/// The sink relations of the spec, the relations that no rule reads, are the
+/// violation relations and `stealable`. So a new sink needs an entry in
+/// `VIOLATION_RELATIONS` (and so in `explain`), and the agreement tests read it.
+/// Each relation that a rule reads and no rule derives is an input relation:
+/// the bridge emits it (`each_fact`).
+#[test]
+fn the_spec_has_the_sinks_and_inputs_of_the_bridge() {
+    let spec = bridge::spec();
+    let defined = spec.relations_defined();
+    let mut used = std::collections::BTreeSet::new();
+    for rule in spec.rules() {
+        for lit in &rule.body {
+            match lit {
+                weft_datalog::Literal::Pos(a) | weft_datalog::Literal::Neg(a) => {
+                    used.insert(a.relation.as_str());
+                }
+                weft_datalog::Literal::Cmp { .. } => {}
+            }
+        }
+    }
+    let sinks: std::collections::BTreeSet<&str> = defined.difference(&used).copied().collect();
+    let mut want: std::collections::BTreeSet<&str> =
+        bridge::VIOLATION_RELATIONS.into_iter().collect();
+    want.insert("stealable");
+    assert_eq!(sinks, want);
+    let source = include_str!("bridge.rs");
+    let missing: Vec<&&str> = used
+        .iter()
+        .filter(|r| !defined.contains(*r) && !source.contains(&format!("\"{r}\"")))
+        .collect();
+    assert!(missing.is_empty(), "the bridge does not emit {missing:?}");
+}
+
+/// A violation fact with a value that is not an id is an error, so that it
+/// cannot hide a disagreement.
+#[test]
+fn a_violation_that_does_not_parse_is_an_error() {
+    let p = weft_datalog::parse_program_named("t.dl", "error(x, n1).\nstealable(t2).")
+        .expect("the program parses");
+    let options = weft_datalog::EvalOptions { provenance: false };
+    let out = weft_datalog::evaluate(&p, weft_datalog::Database::new(), options)
+        .expect("the program evaluates");
+    assert_eq!(
+        bridge::violations(&out),
+        Err(bridge::SpecError::BadTuple("error(x, n1)".into()))
+    );
+    let p = weft_datalog::parse_program_named("t.dl", "error(v0, n1).\nstealable(t2).")
+        .expect("the program parses");
+    let out = weft_datalog::evaluate(&p, weft_datalog::Database::new(), options)
+        .expect("the program evaluates");
+    let v = bridge::violations(&out).expect("the facts parse");
+    assert!(v.error.contains(&(VarId(0), NodeId(1))));
+    assert!(v.stealable.contains(&TaskId(2)));
+}
+
+proptest::proptest! {
+    /// The search for W0301 evidence finds, for each target, the first gen
+    /// that reaches it alone in the verified propagation.
+    #[test]
+    fn first_reaching_is_the_first_gen_that_reaches_alone(
+        n in 1usize..12,
+        edges in proptest::collection::vec((0usize..12, 0usize..12), 0..30),
+        gens in proptest::collection::vec(0usize..12, 0..6),
+        kills in proptest::collection::vec(proptest::bool::ANY, 12),
+        targets in proptest::collection::vec(0usize..12, 0..6),
+    ) {
+        let mut succ = vec![Vec::new(); n];
+        let mut pred = vec![Vec::new(); n];
+        for (a, b) in edges {
+            succ[a % n].push(b % n);
+            pred[b % n].push(a % n);
+        }
+        let gens: Vec<usize> = gens.into_iter().map(|g| g % n).collect();
+        let targets: Vec<usize> = targets.into_iter().map(|t| t % n).collect();
+        let kill = kills[..n].to_vec();
+        let first = crate::rules::first_reaching(&succ, &pred, &gens, &kill, &targets);
+        for &t in &targets {
+            let naive = gens.iter().position(|&g| {
+                let mut one = vec![false; n];
+                one[g] = true;
+                weft_verified::dataflow::propagate(&succ, &one, &kill)[t]
+            });
+            proptest::prop_assert_eq!(first[t], naive, "target {}", t);
+        }
+    }
+}
+
+proptest::proptest! {
+    /// A propagation in the part of the graph that can reach the targets from
+    /// a gen node gives the result of a propagation in the whole graph at each
+    /// target, and so does the evidence search. This holds with and without
+    /// the floor of the ranks. The work space is clean after the search.
+    #[test]
+    fn a_part_has_the_result_of_the_whole_graph_at_the_targets(
+        n in 1usize..12,
+        edges in proptest::collection::vec((0usize..12, 0usize..12), 0..30),
+        gens in proptest::collection::vec(0usize..12, 0..6),
+        kills in proptest::collection::vec(0usize..12, 0..6),
+        targets in proptest::collection::vec(0usize..12, 0..6),
+    ) {
+        use weft_verified::dataflow::propagate;
+        let mut succ = vec![Vec::new(); n];
+        let mut pred = vec![Vec::new(); n];
+        for (a, b) in edges {
+            succ[a % n].push(b % n);
+            pred[b % n].push(a % n);
+        }
+        let mut gens: Vec<usize> = gens.into_iter().map(|g| g % n).collect();
+        gens.sort_unstable();
+        gens.dedup();
+        let kills: Vec<usize> = kills.into_iter().map(|k| k % n).collect();
+        let targets: Vec<usize> = targets.into_iter().map(|t| t % n).collect();
+        let (mut gen, mut kill) = (vec![false; n], vec![false; n]);
+        for &g in &gens {
+            gen[g] = true;
+        }
+        for &k in &kills {
+            kill[k] = true;
+        }
+        let whole = propagate(&succ, &gen, &kill);
+        let first = crate::rules::first_reaching(&succ, &pred, &gens, &kill, &targets);
+        let rank = crate::rules::ranks(&succ, &pred);
+        let low = gens.iter().map(|&g| rank[g]).min().unwrap_or(0);
+        let mut s = crate::rules::Scratch::new(n);
+        // Two searches with one work space: the second one uses the memory of
+        // the first one again.
+        for floor in [None, Some((rank.as_slice(), low)), None] {
+            crate::rules::part_of(&succ, &pred, &targets, &kills, &gens, floor, &mut s);
+            proptest::prop_assert!(s.local.iter().all(|&l| l == crate::rules::NOT_IN_PART));
+            proptest::prop_assert!(s.killed.iter().all(|&k| !k));
+            let part = &s.part;
+            // Each gen node of the part, once, in the order of the gen nodes.
+            let inside: Vec<usize> = (0..gens.len())
+                .filter(|&k| part.nodes.contains(&gens[k]))
+                .collect();
+            let listed: Vec<usize> = part.gens.iter().map(|&(k, _)| k).collect();
+            proptest::prop_assert_eq!(listed, inside);
+            let mut local_gen = vec![false; part.nodes.len()];
+            let mut order = Vec::new();
+            let mut of = Vec::new();
+            for &(k, i) in &part.gens {
+                proptest::prop_assert_eq!(part.nodes[i], gens[k]);
+                local_gen[i] = true;
+                order.push(i);
+                of.push(k);
+            }
+            let local = propagate(part.succ(), &local_gen, &part.kill);
+            let local_first =
+                crate::rules::first_reaching(part.succ(), part.pred(), &order, &part.kill, &part.targets);
+            for (&t, &i) in targets.iter().zip(&part.targets) {
+                proptest::prop_assert_eq!(part.nodes[i], t);
+                proptest::prop_assert_eq!(local[i], whole[t], "target {}", t);
+                let here = local_first[i].map(|k| gens[of[k]]);
+                let global = first[t].map(|k| gens[k]);
+                proptest::prop_assert_eq!(here, global, "evidence of target {}", t);
+            }
+        }
+    }
+
+    /// Each edge goes to a node of the same rank or a higher one, and two nodes
+    /// have one rank if and only if each reaches the other.
+    #[test]
+    fn the_ranks_order_the_components(
+        n in 1usize..12,
+        edges in proptest::collection::vec((0usize..12, 0usize..12), 0..30),
+    ) {
+        let mut succ = vec![Vec::new(); n];
+        let mut pred = vec![Vec::new(); n];
+        for (a, b) in edges {
+            succ[a % n].push(b % n);
+            pred[b % n].push(a % n);
+        }
+        let rank = crate::rules::ranks(&succ, &pred);
+        for (a, out) in succ.iter().enumerate() {
+            for &b in out {
+                proptest::prop_assert!(rank[a] <= rank[b], "edge {} -> {}", a, b);
+            }
+        }
+        // The nodes that each node reaches with zero or more edges.
+        let reach: Vec<Vec<bool>> = (0..n)
+            .map(|a| {
+                let mut seen = vec![false; n];
+                let mut work = vec![a];
+                seen[a] = true;
+                while let Some(q) = work.pop() {
+                    for &r in &succ[q] {
+                        if !seen[r] {
+                            seen[r] = true;
+                            work.push(r);
+                        }
+                    }
+                }
+                seen
+            })
+            .collect();
+        for a in 0..n {
+            for b in 0..n {
+                let same = reach[a][b] && reach[b][a];
+                proptest::prop_assert_eq!(rank[a] == rank[b], same, "nodes {} and {}", a, b);
+            }
+        }
+    }
+}
+
+/// W0502 or W0302: the `callable` flag of the variable decides, not its type text.
+#[test]
+fn w0502_needs_a_callable_variable() {
+    for (callable, code) in [(true, "W0502"), (false, "W0302")] {
+        let mut b = B::new();
+        let f = b.var_with("f", |v| {
+            v.ty = "fn()".into();
+            v.callable = callable;
+        });
+        let n0 = b.node("let f");
+        b.bind(f, n0);
+        let n1 = b.node("f");
+        b.mv(f, n1);
+        let n2 = b.node("f");
+        b.mv(f, n2);
+        let r = check(&b.f);
+        let d = crate::diagnose::diagnose_marked(&b.f, &r);
+        let codes: Vec<&str> = d.iter().map(|d| d.code.as_str()).collect();
+        assert_eq!(codes, [code], "callable: {callable}");
+    }
+    let closure = VarInfo::plain("c", VarKind::Closure, Span::default(), "T");
+    assert!(closure.callable);
+    // The type text does not decide: sema sets the flag from the resolved type.
+    let param = VarInfo::plain("p", VarKind::Param, Span::default(), "fn() -> u64");
+    assert!(!param.callable);
+    let plain = VarInfo::plain("x", VarKind::Local, Span::default(), "u64");
+    assert!(!plain.callable);
+}
+
+#[test]
+fn w0702_names_the_effect_when_two_effects_have_one_name() {
+    // `a.Note` is not the `Note` that `mixed` states. The message shows the path
+    // that the body can write, so it names the effect (ADR 0005).
+    let src = "effect Note { fn note() }
+effect Log { fn log(m: String) }
+mod a {
+    effect Note { fn note() }
+    pub fn f() / Note { note() }
+}
+fn mixed() / Note {
+    a.f()
+}
+fn other() / async {
+    a.f()
+}
+fn std_log() / Log {
+    log.info(\"x\")
+}
+";
+    let c = crate::check_source("t.wf", src, weft_sema::Options::default());
+    let msgs: Vec<&str> = c
+        .diags
+        .iter()
+        .filter(|d| d.code == "W0702")
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(
+        msgs.iter()
+            .filter(|m| m.contains("`f` performs `a.Note`"))
+            .count(),
+        2,
+        "{msgs:?}"
+    );
+    assert!(
+        msgs.iter()
+            .any(|m| m.contains("performs the standard effect `Log`")),
+        "{msgs:?}"
+    );
+}
+
+/// A violation of a check of an argument or a stated place is an error also
+/// when the facts give no site for its text (`ArgSite`, `RefSite`). The
+/// checker must not drop it, or `weft check` would accept the program.
+#[test]
+fn a_violation_with_no_site_is_still_an_error() {
+    let mut b = B::new();
+    let w = b.param("w");
+    let a = b.field(w, 0, "a");
+    let other = b.field(w, 1, "b");
+    let n = b.node("step");
+    b.f.arg_at.push((n, 0, a));
+    b.f.param_in.push((n, 0, other));
+    b.f.uniq_param.push((n, 1));
+    b.f.arg_aliased.push((n, 1));
+    b.f.fn_arg_effect.push((n, 2, "Clock".to_string()));
+    let ret = b.node("return");
+    b.f.ref_at.push((ret, a));
+    b.f.ref_in.push((ret, other));
+    let r = check(&b.f);
+    let ds = crate::diagnose::diagnose_marked(&b.f, &r);
+    let codes: Vec<&str> = ds.iter().map(|d| d.code.as_str()).collect();
+    for code in ["W0203", "W0406", "W0705", "W0204"] {
+        assert!(codes.contains(&code), "no {code} in {codes:?}");
+    }
+    assert!(ds.iter().all(|d| d.facts.len() == 1), "{ds:?}");
 }

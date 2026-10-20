@@ -1,0 +1,324 @@
+// A loop iteration starts with the values that the iterations before it gave.
+// A chain of locals needs one pass of the lowering for each local, so the
+// lowering iterates until the values are stable (ADR 0003). After some passes
+// it widens what still changes.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Stats { count: u64 }
+struct Node { val: u64, next: Vec<Node> }
+fn grow(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 1 }) }
+fn noop(w: &World) {}
+
+// References. The places of `r9` reach `r0` after ten passes.
+fn ref_chain(world: &World, d: &Vec<i32>) / mut(world.entities) {
+    let r0 = &d[0]
+    let r1 = &d[0]
+    let r2 = &d[0]
+    let r3 = &d[0]
+    let r4 = &d[0]
+    let r5 = &d[0]
+    let r6 = &d[0]
+    let r7 = &d[0]
+    let r8 = &d[0]
+    let r9 = &d[0]
+    let m = 0
+    while m < 12 {
+        r0 = r1
+        r1 = r2
+        r2 = r3
+        r3 = r4
+        r4 = r5
+        r5 = r6
+        r6 = r7
+        r7 = r8
+        r8 = r9
+        r9 = &world.entities[0].hp
+        m += 1
+    }
+    world.entities.clear()
+    print(r0)   //~ W0301
+}
+
+// The same chain with a last value that the mutation does not invalidate.
+fn ref_chain_clean(world: &World, d: &Vec<i32>) / mut(world.entities) {
+    let r0 = &d[0]
+    let r1 = &d[0]
+    let r2 = &d[0]
+    let r3 = &d[0]
+    let r4 = &d[0]
+    let r5 = &d[0]
+    let r6 = &d[0]
+    let r7 = &d[0]
+    let r8 = &d[0]
+    let r9 = &d[0]
+    let m = 0
+    while m < 12 {
+        r0 = r1
+        r1 = r2
+        r2 = r3
+        r3 = r4
+        r4 = r5
+        r5 = r6
+        r6 = r7
+        r7 = r8
+        r8 = r9
+        r9 = &d[1]
+        m += 1
+    }
+    world.entities.clear()
+    print(r0)
+}
+
+// Function values. The closure that pushes reaches `f0` after ten passes.
+fn fn_chain(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let f0 = || print(0)
+    let f1 = || print(0)
+    let f2 = || print(0)
+    let f3 = || print(0)
+    let f4 = || print(0)
+    let f5 = || print(0)
+    let f6 = || print(0)
+    let f7 = || print(0)
+    let f8 = || print(0)
+    let f9 = || print(0)
+    let m = 0
+    while m < 12 {
+        f0()
+        print(first.hp)   //~ W0301
+        f0 = f1
+        f1 = f2
+        f2 = f3
+        f3 = f4
+        f4 = f5
+        f5 = f6
+        f6 = f7
+        f7 = f8
+        f8 = f9
+        f9 = || world.entities.push(Entity { hp: 1 })
+        m += 1
+    }
+}
+
+// The same chain of closures with no closure that changes `world`.
+fn fn_chain_clean(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let f0 = || print(0)
+    let f1 = || print(0)
+    let f2 = || print(0)
+    let f3 = || print(0)
+    let f4 = || print(0)
+    let f5 = || print(0)
+    let f6 = || print(0)
+    let f7 = || print(0)
+    let f8 = || print(0)
+    let f9 = || print(0)
+    let m = 0
+    while m < 12 {
+        f0()
+        print(first.hp)
+        f0 = f1
+        f1 = f2
+        f2 = f3
+        f3 = f4
+        f4 = f5
+        f5 = f6
+        f6 = f7
+        f7 = f8
+        f8 = f9
+        f9 = || print(world.entities.len())
+        m += 1
+    }
+}
+
+// Function items: the 9th iteration calls `grow`.
+fn item_chain(world: &World, n: u64) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g0 = noop
+    let g1 = noop
+    let g2 = noop
+    let g3 = noop
+    let g4 = noop
+    let g5 = noop
+    let g6 = noop
+    let g7 = noop
+    let i = 0
+    while i < n {
+        g0(world)
+        print(first.hp)   //~ W0301
+        g0 = g1
+        g1 = g2
+        g2 = g3
+        g3 = g4
+        g4 = g5
+        g5 = g6
+        g6 = g7
+        g7 = grow
+        i += 1
+    }
+}
+
+// The same chain of items with `noop` only.
+fn item_chain_clean(world: &World, n: u64) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g0 = noop
+    let g1 = noop
+    let g2 = noop
+    let g3 = noop
+    let g4 = noop
+    let g5 = noop
+    let g6 = noop
+    let g7 = noop
+    let i = 0
+    while i < n {
+        g0(world)
+        print(first.hp)
+        g0 = g1
+        g1 = g2
+        g2 = g3
+        g3 = g4
+        g4 = g5
+        g5 = g6
+        g6 = g7
+        g7 = noop
+        i += 1
+    }
+}
+
+// The 9th iteration clears `b.entities`, which the signature does not state.
+pub fn clear_one(a: &World, b: &World, n: u64) / mut(a.entities) {
+    let c0 = a
+    let c1 = a
+    let c2 = a
+    let c3 = a
+    let c4 = a
+    let c5 = a
+    let c6 = a
+    let c7 = a
+    let i = 0
+    while i < n {
+        c0.entities.clear()   //~ W0703
+        c0 = c1
+        c1 = c2
+        c2 = c3
+        c3 = c4
+        c4 = c5
+        c5 = c6
+        c6 = c7
+        c7 = b
+        i += 1
+    }
+}
+
+// The same chain of locals with `a` only: the signature states it.
+pub fn clear_one_clean(a: &World, b: &World, n: u64) / mut(a.entities) {
+    let c0 = a
+    let c1 = a
+    let c2 = a
+    let c3 = a
+    let c4 = a
+    let c5 = a
+    let c6 = a
+    let c7 = a
+    let i = 0
+    while i < n {
+        c0.entities.clear()
+        c0 = c1
+        c1 = c2
+        c2 = c3
+        c3 = c4
+        c4 = c5
+        c5 = c6
+        c6 = c7
+        c7 = a
+        i += 1
+    }
+    print(b.entities.len())
+}
+
+// Task closures: the closure that writes `st.count` reaches `g0` after ten passes.
+fn task_chain(st: &Stats) / mut(st), async {
+    scope { s =>
+        let g0 = || print(0)
+        let g1 = || print(0)
+        let g2 = || print(0)
+        let g3 = || print(0)
+        let g4 = || print(0)
+        let g5 = || print(0)
+        let g6 = || print(0)
+        let g7 = || print(0)
+        let g8 = || print(0)
+        let g9 = || print(0)
+        let m = 0
+        while m < 12 {
+            s.spawn(g0)   //~ W0405
+            print(st.count)   //~ W0405
+            g0 = g1
+            g1 = g2
+            g2 = g3
+            g3 = g4
+            g4 = g5
+            g5 = g6
+            g6 = g7
+            g7 = g8
+            g8 = g9
+            g9 = || st.count += 1
+            m += 1
+        }
+    }
+}
+
+// The same chain of task closures with no closure that writes `st.count`.
+fn task_chain_clean(st: &Stats) / mut(st), async {
+    scope { s =>
+        let g0 = || print(0)
+        let g1 = || print(0)
+        let g2 = || print(0)
+        let g3 = || print(0)
+        let g4 = || print(0)
+        let g5 = || print(0)
+        let g6 = || print(0)
+        let g7 = || print(0)
+        let g8 = || print(0)
+        let g9 = || print(0)
+        let m = 0
+        while m < 12 {
+            s.spawn(g0)
+            print(st.count)
+            g0 = g1
+            g1 = g2
+            g2 = g3
+            g3 = g4
+            g4 = g5
+            g5 = g6
+            g6 = g7
+            g7 = g8
+            g8 = g9
+            g9 = || print(st.count)
+            m += 1
+        }
+    }
+}
+
+// A reference that goes deeper in each iteration. After some passes its
+// deepest place becomes a wildcard place, and the loop stops.
+fn deep_walk(head: &Node, n: u64) / mut(head.next) {
+    let cur = head
+    let i = 0
+    while i < n {
+        cur = &cur.next[0]
+        i += 1
+    }
+    head.next.clear()
+    print(cur.val)   //~ W0301
+}
+
+fn deep_walk_clean(head: &Node, n: u64) -> u64 {
+    let cur = head
+    let i = 0
+    while i < n {
+        cur = &cur.next[0]
+        i += 1
+    }
+    cur.val
+}

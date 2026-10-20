@@ -105,7 +105,7 @@ Weft enforces shared-XOR-mutable only where threads or tasks meet, using OxCaml-
 > `world.entities[]` gets W0312 when `attack` mutates them. To allow the aliasing, the
 > callee states the shared place with `in`:
 > `fn attack(w: &World, a: &Entity in w.entities[], b: &Entity in w.entities[]) / mut(a, b)`.
-> See ADR 0005 and `tests/programs/34_alias_in_one_task.wf`.
+> See ADR 0005 and `tests/programs/55_alias_in_one_task.wf`.
 
 | Mode axis | Values | Meaning |
 | --- | --- | --- |
@@ -118,8 +118,9 @@ Weft enforces shared-XOR-mutable only where threads or tasks meet, using OxCaml-
 
 - A shared-mutable reference is always `nonportable`. It cannot be captured by anything that runs on another thread.
 - Closures passed to `fork` or spawned as stealable tasks must be `portable`.
-- Data visible to several threads must be `shared`, or split into `uniq` parts whose places are proven disjoint.
+- Data that one thread writes while other threads can see it must be `shared`, or split into `uniq` parts whose places are proven disjoint. Reads from several threads need no `shared` (ADR 0006).
 - Immutable plain data crosses modes automatically (mode crossing), so most code writes no modes at all.
+- A type has at most one mode on each axis. Also `uniq` and `shared` contradict: other threads can read a `shared` value, so other references to it exist. Both are errors (W0119).
 
 Modes are inferred in bodies and appear only in public signatures that need them.
 
@@ -158,7 +159,10 @@ fn transfer(db: &Db, from: Id, to: Id, amt: u64) / io, fail {
 
 - A linear value must be moved or consumed on every normal path.
 - It may be live across an operation that can abort only if its type declares `on abort`.
-- `on abort` runs during unwinding (cancellation, `fail`), never on the normal path.
+- `on abort` runs during unwinding (cancellation, `fail`), never on the normal path. It
+  runs with the root handlers only: it can perform the standard effects other than
+  `fail`, it cannot raise a failure of the runtime or call a function value that it
+  does not know, and it changes only the value that it gets (ADR 0007).
 - A linear value may not be live across a `multi` effect operation (see Effects).
 
 This gives the guarantee Rust's proposed `!Forget` trait aims for, and it covers async cleanup with the same rule.
@@ -206,13 +210,13 @@ fn main(env: Env) / io {
 A continuation is a value with a mode and the places it captured.
 
 - Continuations are `once` by default: a handler may resume at most once.
-- An operation declared `multi` may resume several times. Everything live across its perform site must be `@ many`, which rules out linear values and unique borrows there.
+- An operation declared `multi` may resume several times. Everything live across its perform site must be `@ many`, which rules out linear values and unique borrows there. For a handler in the same function, this counts only the values of the handled body: the resume copies only them, and a value outside the body is spared (ADR 0005).
 
 This closes the hole where a handler resumes twice and uses the same moved value twice.
 
 ### Authority
 
-Effects double as capabilities. `main` receives the root capabilities (filesystem, network, clock, randomness) through `env`. The package manager checks each dependency's effect signatures against the authority the project grants it, so a JSON parser that asks for `Net` is rejected at install time.
+Effects double as capabilities. `main` receives the root capabilities (filesystem, network, clock, randomness) through `env`. The package manager checks the effects of each dependency function against the authority that the project grants to the dependency. Each function counts, also a private one, with its signature, the effects that its body infers and the effects of the closures that it makes. Only the standard effects count. A user effect of a dependency needs no authority, because the caller must handle it. So a JSON parser that asks for `Net` is rejected when the project loads it (W0901).
 
 ## Memory without a garbage collector
 
@@ -241,7 +245,8 @@ The standard library defines the concurrency and IO effects and ships one runtim
 The standard effects are `Async`, `Net`, `Fs`, `Clock`, `Rand`, `Log` and `Blocking`. `std.rt` handles all of them with a work-stealing scheduler sized to the machine's cores, on io\_uring, kqueue or IOCP.
 
 - **Only binaries and test harnesses may install a root handler** for a standard effect.
-- Libraries may *intercept* standard effects (retries, tracing, rate limiting, mocks) but can never be the runtime.
+- Libraries may *intercept* standard effects (retries, tracing, rate limiting, mocks) but can never be the runtime. A handler intercepts if a clause performs the effect again, through a handler outside it. A handler that never does, for example a mock that answers each operation itself, is a root handler: only a binary or a test can install it (W0801).
+- The runtime handles only the standard effects. So `main` and each test must handle every other effect that they perform (W0805).
 
 Libraries are written against the effect interfaces and can't name a runtime, so the ecosystem can't split by runtime.
 
@@ -311,7 +316,7 @@ extern fn sqlite3_step(stmt: *Stmt) -> i32 / blocking
 
 ### Deterministic simulation
 
-The test harness can replace every root handler at once: clock, network, randomness and the scheduler.
+The test harness can replace every root handler at once: clock, network, randomness and the scheduler. Phase 1 does not simulate the network: `sim.run` replaces the clock, the randomness and the scheduler, and `sim.net.partition` only records the partition (ADR 0010).
 
 ```weft
 test "election survives a partition" {

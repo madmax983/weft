@@ -206,3 +206,26 @@ fn error_line_is_none_for_database_errors() {
     assert_eq!(err.line(), None);
     assert!(err.to_string().contains("input database"), "{err}");
 }
+
+#[test]
+fn components_group_relations_that_depend_on_each_other() {
+    let p = parse_program(
+        "edge(1, 2).\n\
+         live_in(X) :- edge(X, _).\n\
+         live_in(X) :- live_out(X).\n\
+         live_out(X) :- edge(X, Y), live_in(Y).\n\
+         path(X, Y) :- edge(X, Y).\n\
+         path(X, Z) :- path(X, Y), edge(Y, Z).\n\
+         top(X) :- path(X, _), live_in(X).",
+    )
+    .expect("parses");
+    let comps = p.components().expect("checks");
+    let find = |r: &str| comps.iter().position(|c| c.iter().any(|x| x == r));
+    assert_eq!(find("live_in"), find("live_out"));
+    assert_ne!(find("live_in"), find("path"));
+    assert_ne!(find("edge"), find("path"));
+    // A component comes after the components that it depends on.
+    assert!(find("edge") < find("path") && find("path") < find("top"));
+    assert!(find("live_out") < find("top"));
+    assert_eq!(comps.iter().map(Vec::len).sum::<usize>(), 5);
+}

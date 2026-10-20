@@ -7,10 +7,10 @@
 //! invalid(R, Q) :- invalid(R, P), cfg_edge(P, Q), !rebound_at(R, P).
 //! ```
 //!
-//! For one subject `R`, `invalid` is the least set `S` such that:
-//! the successors of each `gen` node are in `S`, and the successors of each
-//! node in `S` that is not a `kill` node are in `S`.
-//! [`propagate`] computes exactly that least fixpoint. Backward analyses use it
+//! For one subject `R`, `invalid` is the least set `S` with two properties.
+//! The successors of each `gen` node are in `S`. The successors of each node
+//! in `S` that is not a `kill` node are in `S`. [`propagate`] computes
+//! exactly that least fixpoint. Backward analyses use it
 //! on the reversed graph.
 //!
 //! `proofs/link` includes this file (`proofs/link/src/dataflow_link.rs`). On
@@ -64,8 +64,8 @@ pub open spec fn spec_well_formed(succ: Seq<Seq<usize>>, gen: Seq<bool>, kill: S
 }
 
 /// The view of an adjacency list.
-pub open spec fn spec_view(succ: &Vec<Vec<usize>>) -> Seq<Seq<usize>> {
-    Seq::new(succ.len() as nat, |i: int| succ[i]@)
+pub open spec fn spec_view(succ: &[Vec<usize>]) -> Seq<Seq<usize>> {
+    Seq::new(succ@.len() as nat, |i: int| succ@[i]@)
 }
 
 /// The set of marked nodes.
@@ -93,13 +93,14 @@ pub open spec fn spec_count_unmarked(out: Seq<bool>) -> nat
     }
 }
 
-/// The invariant of the worklist loops in [`propagate`]:
+/// The invariant of the worklist loops in [`propagate`]. It has four parts:
 ///
-/// - each marked node is in the least fixpoint (soundness);
-/// - each node in the worklist is marked;
-/// - the successors of each `gen` node below `seeded` are marked;
-/// - the successors of each marked non-`kill` node are marked, unless the node
-///   is in the worklist or is the node `active` that the loop processes now.
+/// - Each marked node is in the least fixpoint (soundness).
+/// - Each node in the worklist is marked.
+/// - The successors of each `gen` node below `seeded` are marked.
+/// - The successors of each marked non-`kill` node are marked. The exceptions
+///   are the nodes in the worklist and the node `active` that the loop
+///   processes now.
 pub open spec fn spec_work_inv(
     succ: Seq<Seq<usize>>,
     gen: Seq<bool>,
@@ -351,7 +352,7 @@ pub proof fn lemma_done(succ: Seq<Seq<usize>>, gen: Seq<bool>, kill: Seq<bool>, 
 ///
 /// `succ[p]` lists the successors of node `p`. The result marks node `i` if and
 /// only if `i` is in the least closed set.
-pub fn propagate(succ: &Vec<Vec<usize>>, gen: &Vec<bool>, kill: &Vec<bool>) -> (out: Vec<bool>)
+pub fn propagate(succ: &[Vec<usize>], gen: &[bool], kill: &[bool]) -> (out: Vec<bool>)
     requires
         spec_well_formed(spec_view(succ), gen@, kill@),
     ensures
@@ -421,7 +422,7 @@ pub fn propagate(succ: &Vec<Vec<usize>>, gen: &Vec<bool>, kill: &Vec<bool>) -> (
         p += 1;
     }
     // Propagate: process the worklist until it is empty.
-    while work.len() > 0
+    while !work.is_empty()
         invariant
             n == succ.len(),
             sv == spec_view(succ),
@@ -521,8 +522,8 @@ mod tests {
         let succ = vec![vec![1], vec![2], vec![3], vec![]];
         let out = propagate(
             &succ,
-            &vec![true, false, false, false],
-            &vec![false, false, true, false],
+            &[true, false, false, false],
+            &[false, false, true, false],
         );
         assert_eq!(out, vec![false, true, true, false]);
     }
@@ -531,7 +532,7 @@ mod tests {
     fn loop_reaches_gen_node_itself() {
         // 0 -> 1 -> 0
         let succ = vec![vec![1], vec![0]];
-        let out = propagate(&succ, &vec![true, false], &vec![false, false]);
+        let out = propagate(&succ, &[true, false], &[false, false]);
         assert_eq!(out, vec![true, true]);
     }
 

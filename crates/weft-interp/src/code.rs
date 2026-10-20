@@ -7,7 +7,7 @@
 use std::rc::Rc;
 
 use weft_sema::program::{EffectId, FnId};
-use weft_sema::types::AdtId;
+use weft_sema::types::{AdtId, IntTy};
 use weft_syntax::ast::{BinOp, Span};
 
 use crate::value::CodeId;
@@ -113,8 +113,9 @@ pub enum Op {
     BorrowAll,
     /// `[value, place]`: stores the value and drops the old one.
     Store,
-    /// `[value, place]`: a compound assignment.
-    CompoundStore(BinOp),
+    /// `[value, place]`: a compound assignment. The new value must fit in the
+    /// integer type, if any (see [`Op::CheckInt`]).
+    CompoundStore(BinOp, Option<IntTy>),
     /// Drops the top value.
     Pop,
     /// Drops the value under the top value.
@@ -123,6 +124,9 @@ pub enum Op {
     Bin(BinOp),
     /// `-x`.
     Neg,
+    /// Faults if the integer on top of the stack does not fit in the integer
+    /// type that semantic analysis gives the expression (`FnFacts::int_ops`).
+    CheckInt(IntTy),
     /// `!x`.
     Not,
     /// Jumps.
@@ -215,6 +219,12 @@ pub enum Op {
         code: CodeId,
         /// The captured variables.
         caps: Vec<VarRef>,
+        /// The indexes in `caps` of the captures that the closure takes by
+        /// value: it moves each value into a cell of its own.
+        owned: Vec<u32>,
+        /// The closure expression. The checker names the tasks that run the
+        /// closure by it (`stealable`).
+        span: Span,
     },
     /// Pushes a function item as a value.
     FnValue(FnId),
@@ -287,4 +297,6 @@ pub struct Code {
     pub n_slots: u32,
     /// The number of parameters: they are slots `0..n_params`.
     pub n_params: u32,
+    /// The source unit of the code. Its spans are byte offsets in that unit.
+    pub unit: usize,
 }

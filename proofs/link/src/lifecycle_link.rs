@@ -23,7 +23,7 @@
 //! step that the model takes. Thus the relations hold along each sequence of
 //! these operations, as long as each exec operation is a model step.
 //!
-//! Two differences are proved, not hidden. Both are about `multi`
+//! Three differences are proved, not hidden. All are about `multi`
 //! continuations:
 //!
 //! * `drop_now` on a fresh `multi` continuation reports an abort. The model
@@ -34,9 +34,14 @@
 //! * After that abort, the exec record is `Dropped`, and an exec resume
 //!   fails. The model record of a `multi` continuation does not change, and
 //!   the model allows a resume (`ex_multi_dropped_resume`). The interpreter
-//!   copies the clause frames of a `multi` continuation with the same record.
-//!   Thus a copy that resumes after another copy returns faults in exec, but
-//!   continues in the model.
+//!   gives each copy of a clause frame in a `multi` continuation a copy of its
+//!   record. So a copy that resumes after another copy returns resumes its own
+//!   record. Only a resume of the one record that the abort dropped fails.
+//! * When the clause of a continuation ends, the interpreter ends the exec
+//!   record (`end_linked`): it is `Dropped`, and an exec resume fails. The
+//!   model record of a `multi` continuation does not change, and the model
+//!   allows a resume. A closure that resumes cannot leave its clause (W0313,
+//!   W0314), so a checked program does not resume there.
 
 use vstd::prelude::*;
 use crate::lifecycle::{Continuation, ContState, ContError, Linear, LinState, LinError};
@@ -59,14 +64,13 @@ verus! {
 /// * `Fresh`: the same mode, not used.
 /// * `Resumed`: the same mode. A `once` record is used. A `multi` record
 ///   stays usable (the model never marks it used).
-/// * `Dropped`: the record cannot resume again in the model, or it is a
-///   `multi` record that the model does not drop. The postcondition of
-///   `drop_now` does not keep the mode after an abort, so this case does not
-///   use `c.multi`.
+/// * `Dropped`: the same mode. The record cannot resume again in the model,
+///   or it is a `multi` record that the model does not drop.
 pub open spec fn kont_rel(c: Continuation, kt: Kont) -> bool {
-    match c.state {
-        ContState::Fresh => kt.multi == c.multi && !kt.used,
-        ContState::Resumed => kt.multi == c.multi && kt.used == !c.multi,
+    &&& kt.multi == c.multi
+    &&& match c.state {
+        ContState::Fresh => !kt.used,
+        ContState::Resumed => kt.used == !c.multi,
         ContState::Dropped => kt.multi || kt.used,
     }
 }
@@ -139,6 +143,23 @@ pub fn return_linked(k: &mut Continuation, Ghost(prog): Ghost<Prog>, Ghost(s): G
     k.drop_now()
 }
 
+/// **End of a clause.** The interpreter ends the exec record after the drop
+/// of a clause return, of an unwind or of a frame that does not run. Then an
+/// exec resume fails. The model has no step here: its record does not change,
+/// and the records stay related. For a `multi` record the model can still
+/// allow a resume, so the exec is stricter (see the module comment).
+pub fn end_linked(k: &mut Continuation, Ghost(kt): Ghost<Kont>)
+    requires
+        old(k).state != ContState::Fresh,
+        kont_rel(*old(k), kt),
+    ensures
+        final(k).state == ContState::Dropped,
+        final(k).multi == old(k).multi,
+        kont_rel(*final(k), kt),
+{
+    k.end()
+}
+
 /// **Unwind of a clause frame.** The exec drop is the model step
 /// `step_unwind_drop`. If the model does not drop, the model record stays
 /// related.
@@ -167,9 +188,11 @@ pub fn unwind_drop_linked(k: &mut Continuation, Ghost(s): Ghost<State>) -> (abor
 // Linear values
 // ---------------------------------------------------------------------------
 
-/// The model resource `r` has the state of the exec record `l`.
+/// The model resource `r` has the state and the `on abort` flag of the exec
+/// record `l`.
 pub open spec fn lin_rel(l: Linear, r: Res) -> bool {
-    match l.state {
+    &&& l.on_abort == r.on_abort
+    &&& match l.state {
         LinState::Live => r.st == RState::Live,
         LinState::Consumed => r.st == RState::Consumed,
         LinState::Aborted => r.st == RState::Aborted,
@@ -178,7 +201,7 @@ pub open spec fn lin_rel(l: Linear, r: Res) -> bool {
 
 /// **Acquire.** `lin_rel` holds between the exec record of `Linear::new` and
 /// the resource that `do_acquire` adds.
-pub fn acquire_linked(Ghost(prog): Ghost<Prog>, Ghost(s): Ghost<State>, Ghost(slot): Ghost<Slot>, Ghost(on_abort): Ghost<bool>) -> (l: Linear)
+pub fn acquire_linked(Ghost(prog): Ghost<Prog>, Ghost(s): Ghost<State>, Ghost(slot): Ghost<Slot>, on_abort: bool) -> (l: Linear)
     requires
         at_instr(prog, s),
         instr_at(prog, tf(s)) == (Instr::Acquire { slot, on_abort }),
@@ -188,7 +211,7 @@ pub fn acquire_linked(Ghost(prog): Ghost<Prog>, Ghost(s): Ghost<State>, Ghost(sl
         do_acquire(s, slot, on_abort).res.contains_key(s.next_res),
         lin_rel(l, do_acquire(s, slot, on_abort).res[s.next_res]),
 {
-    Linear::new()
+    Linear::new(on_abort)
 }
 
 /// **Consume.** A successful exec consume is the model step `step_consume`.
@@ -213,13 +236,13 @@ pub fn consume_linked(l: &mut Linear, Ghost(prog): Ghost<Prog>, Ghost(s): Ghost<
 
 /// **Unwind of a linear value.** The unwinder takes the newest value `sl`
 /// of the top pending frame. The exec record runs `on abort` exactly when
-/// the model resource is live. Then the exec step is the model step
-/// `step_unwind_abort` if the type has `on abort`. Else the model state is
-/// the error `err_no_on_abort`: the exec record has no `on abort` flag, and
-/// the checker rule (E3) must exclude this case. If the exec does not run
-/// `on abort`, the model state is the error `err_unwind_dead`, and the exec
-/// record does not change.
-pub fn unwind_linked(l: &mut Linear, Ghost(s): Ghost<State>, Ghost(sl): Ghost<Slot>) -> (run: bool)
+/// the model resource is live and its type has `on abort`. Then the exec
+/// step is the model step `step_unwind_abort`. For a live value with no
+/// `on abort`, the exec unwind fails, and the model state is the error
+/// `err_no_on_abort`. For a value that is not live, the exec unwind does not
+/// run `on abort`, and the model state is the error `err_unwind_dead`. A
+/// result other than `Ok(true)` does not change the exec record.
+pub fn unwind_linked(l: &mut Linear, Ghost(s): Ghost<State>, Ghost(sl): Ghost<Slot>) -> (r: Result<bool, LinError>)
     requires
         unwinding(s),
         s.pending.last() is Code,
@@ -228,14 +251,16 @@ pub fn unwind_linked(l: &mut Linear, Ghost(s): Ghost<State>, Ghost(sl): Ghost<Sl
         s.res.contains_key(pf(s).slots[sl]),
         lin_rel(*old(l), s.res[pf(s).slots[sl]]),
     ensures
-        run == slot_live(s, pf(s), sl),
-        run && s.res[pf(s).slots[sl]].on_abort ==> step_unwind_abort(s, do_abort(s, sl))
+        r == Ok::<bool, LinError>(true) <==> slot_live(s, pf(s), sl) && s.res[pf(s).slots[sl]].on_abort,
+        r == Ok::<bool, LinError>(true) ==> step_unwind_abort(s, do_abort(s, sl))
             && do_abort(s, sl).res.contains_key(pf(s).slots[sl]) && lin_rel(
             *final(l),
             do_abort(s, sl).res[pf(s).slots[sl]],
         ),
-        run && !s.res[pf(s).slots[sl]].on_abort ==> err_no_on_abort(s),
-        !run ==> err_unwind_dead(s) && *final(l) == *old(l),
+        r is Err <==> slot_live(s, pf(s), sl) && !s.res[pf(s).slots[sl]].on_abort,
+        r is Err ==> err_no_on_abort(s) && *final(l) == *old(l),
+        r == Ok::<bool, LinError>(false) <==> !slot_live(s, pf(s), sl),
+        r == Ok::<bool, LinError>(false) ==> err_unwind_dead(s) && *final(l) == *old(l),
 {
     l.unwind()
 }

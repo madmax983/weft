@@ -2,22 +2,19 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use weft_syntax::diag::Code;
 
 use weft_syntax::ast::{
     self, EffectItem, ExternTypeDecl, File, FnDecl, Item, ItemKind, Mode, PlaceExpr, PlaceStep,
     Span, TypeExpr, TypeExprKind,
 };
-use weft_syntax::diag::Diagnostic;
+use weft_syntax::diag::{Diagnostic, ROOT_UNIT};
 
 use crate::effects;
 use crate::types::{AdtId, FnTy, IntTy, Ty};
 
-/// An index into [`Program::fns`].
-pub type FnId = usize;
-/// An index into [`Program::mods`].
-pub type ModId = usize;
-/// An index into [`Program::effects`].
-pub type EffectId = usize;
+pub use crate::ids::{EffectId, FnId, ModId};
 
 /// How a pointer type dereferences.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,17 +105,23 @@ pub struct OpDef {
     pub ret: Ty,
     /// The operation is `multi`.
     pub multi: bool,
+    /// The location of the operation.
+    pub span: Span,
 }
 
 /// An effect.
 #[derive(Clone, Debug)]
 pub struct EffectDef {
-    /// The canonical name.
+    /// The name as the source writes it. `effects::identity` is the name in the facts.
     pub name: String,
+    /// The module of the definition.
+    pub module: ModId,
     /// The operations.
     pub ops: Vec<OpDef>,
     /// The effect is a standard effect.
     pub is_std: bool,
+    /// The effect is `pub`: another unit can name it.
+    pub is_pub: bool,
 }
 
 impl EffectDef {
@@ -129,7 +132,7 @@ impl EffectDef {
 }
 
 /// The root of a place in a signature.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SigRoot {
     /// A parameter, by index.
     Param(usize),
@@ -138,10 +141,16 @@ pub enum SigRoot {
 }
 
 /// One step of a place in a signature.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SigStep {
     /// A fixed step.
     Step(weft_facts::Step, String),
+    /// The wildcard step `..`: any place at or below.
+    Wild,
+    /// The places that the references at or below the place point into. It
+    /// comes first, after a reference parameter. A caller puts in the places that
+    /// the references in its argument point into (ADR 0003).
+    Held,
     /// A split side at the parameter with this index.
     Seg {
         /// The parameter that names the split point.
@@ -154,7 +163,7 @@ pub enum SigStep {
 }
 
 /// A place written in a signature, resolved against the parameter types.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SigPlace {
     /// The root.
     pub root: SigRoot,
@@ -192,6 +201,86 @@ pub struct RetPlace {
     pub uniq: bool,
 }
 
+/// How a body runs one of its function parameters as a task or a fork branch
+/// (`EffectSig::task_runs`). A caller checks the function value that it gives
+/// there as a task at the call (ADR 0006).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TaskRun {
+    /// The body can run it on another thread: in a fork branch, or in foreign
+    /// code. Then it must be portable (W0401, W0403).
+    pub thread: bool,
+    /// The body can run it two times at one time: in two tasks, in a task that
+    /// starts again while it runs, or in a task and at a node while it runs.
+    pub twice: bool,
+    /// The other function parameters that the body can run while it runs.
+    pub with: BTreeSet<usize>,
+    /// The places of the parameters that the body, or another task of it, can
+    /// write while it runs.
+    pub writes: Vec<SigPlace>,
+    /// The places of the parameters that the body, or another task of it, can
+    /// read while it runs.
+    pub reads: Vec<SigPlace>,
+}
+
+/// A place that a function gives to one of its function parameters.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LentPlace {
+    /// The function parameter.
+    pub param: usize,
+    /// The argument position in the call of the parameter, or `None` for any position.
+    pub arg: Option<usize>,
+    /// The place, or `None` for a place that the caller cannot name: then it can be
+    /// any place that the reference arguments reach.
+    pub place: Option<SigPlace>,
+}
+
+/// A place that the body gives to a function value that it does not know.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GivenPlace {
+    /// The argument position in the call of the value, or `None` for any position.
+    pub arg: Option<usize>,
+    /// The place, or `None` for a place that the caller cannot name: then it can be
+    /// any place that the reference arguments reach.
+    pub place: Option<SigPlace>,
+}
+
+/// What a call of a function value in the result does, in the places of the parameters.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RetFn {
+    /// Places that the call mutates.
+    pub muts: Vec<SigPlace>,
+    /// Places that the call reads.
+    pub reads: Vec<SigPlace>,
+    /// Places that the call mutates through the parameters of the value.
+    /// `SigRoot::Param(i)` is parameter `i` of the value, not of the function.
+    pub arg_muts: Vec<SigPlace>,
+    /// Places that the call gives to code that can mutate through them: a function
+    /// parameter of the function, or a value that the function does not know.
+    pub lends: Vec<SigPlace>,
+    /// The same, through the parameters of the value, as in `arg_muts`.
+    pub arg_lends: Vec<SigPlace>,
+    /// Named effects. The call site of the function resolves them.
+    pub named: BTreeSet<String>,
+    /// Function parameters of the function that the call can call.
+    pub passthrough: BTreeSet<usize>,
+    /// Function items that the call can call.
+    pub items: BTreeSet<FnId>,
+    /// The call can abort.
+    pub abort: bool,
+    /// The call can resume a `multi` continuation more than once.
+    pub multi: bool,
+    /// The call can call a function value that the function does not know.
+    pub unknown: bool,
+    /// Parameters of the value that the call gives to an operation of a handler
+    /// at the call site of the function, with the effect.
+    pub op_fns: BTreeSet<(usize, String)>,
+    /// Parameters of the value that a task of the call can call.
+    pub tasks: BTreeSet<usize>,
+    /// Function parameters of the function that the call can call more than
+    /// once. A caller runs the value two times in a row where it calls it.
+    pub repeats: BTreeSet<usize>,
+}
+
 /// The effect part of a signature.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EffectSig {
@@ -201,6 +290,89 @@ pub struct EffectSig {
     pub named: BTreeSet<String>,
     /// Function parameters whose effects pass through to the caller.
     pub passthrough: BTreeSet<usize>,
+    /// The places that the body gives to its function parameters. A closure
+    /// argument can mutate through them. The body always infers this part.
+    pub lent: Vec<LentPlace>,
+    /// What a call of a returned function value does. The body always infers this part.
+    pub ret: Option<Box<RetFn>>,
+    /// Function parameters that the body stores, for example in a struct field. A
+    /// later call can run them. The body always infers this part.
+    pub stores: BTreeSet<usize>,
+    /// The body can run a function value that the caller stores: it calls a function
+    /// value that it does not know, or a function that can. The body always infers this part.
+    pub reaches: bool,
+    /// The places that the body gives to such a function value. The body always
+    /// infers this part.
+    pub reach_given: Vec<GivenPlace>,
+    /// The body can run such a function value more than once: at two nodes, in a
+    /// loop or in a closure. The body always infers this part.
+    pub reach_repeats: bool,
+    /// The body calls a function value that it does not know, and that call can
+    /// resume a `multi` continuation more than once. The body always infers this part.
+    pub multi: bool,
+    /// Function parameters that a task or a fork branch of the body can call. The
+    /// body always infers this part.
+    pub tasks: BTreeSet<usize>,
+    /// The function parameters that the body runs as a task or a fork branch,
+    /// and how. The body always infers this part.
+    pub task_runs: BTreeMap<usize, TaskRun>,
+    /// The body can start a pinned task for a reason that a caller does not
+    /// see: the task captures a nonportable value, writes through a shared
+    /// reference, runs a function value that the body does not follow, or
+    /// starts such a task. A task that calls the function is pinned too. The
+    /// body always infers this part.
+    pub pins: bool,
+    /// Function parameters that the body gives to an operation of a handler of a
+    /// caller, with the effect. The clause can call or keep them. The body always
+    /// infers this part.
+    pub op_fns: BTreeSet<(usize, String)>,
+    /// The function values that the body gives to an operation of a handler of a
+    /// caller can perform effects through a handler of a caller. Each pair has the
+    /// effect of the operation and the performed effect. A clause can run such a
+    /// value as a task (W0314). The body always infers this part.
+    pub op_effects: BTreeSet<(String, String)>,
+    /// Effects that a task or a fork branch of the body performs through a handler
+    /// of a caller. The body always infers this part.
+    pub task_effects: BTreeSet<String>,
+    /// Function parameters that the body can call more than once. The body always
+    /// infers this part.
+    pub repeats: BTreeSet<usize>,
+    /// Reference parameters whose pointee can get a function value from the body,
+    /// for example a copy out of another argument. The body always infers this part.
+    pub fn_stores: BTreeSet<usize>,
+    /// The places that the function values in the result point into, in the
+    /// places of the parameters: what a returned closure captures. `None` for a
+    /// result that holds no function value, and for a function with no body:
+    /// a caller takes a place anywhere inside each reference argument. The body
+    /// always infers this part.
+    pub ret_refs: Option<Vec<SigPlace>>,
+    /// The parameters whose references the body can put into an `rc` object,
+    /// each with the `rc` type: the parameter and the type definition. The
+    /// object stays after the return, so a caller must not give a reference into
+    /// its own local there (W0204). The body always infers this part.
+    pub group_stores: BTreeSet<(usize, AdtId)>,
+    /// The places that the closures that the body puts behind a reference
+    /// parameter point into, in the places of the parameters. Each has the
+    /// parameter and the place. A caller's argument there points into them too,
+    /// as for a reference that the body puts there. The body always infers this
+    /// part.
+    pub fn_store_refs: Vec<(usize, SigPlace)>,
+    /// Type parameters, by index in `FnSig::generics`, of the values that the
+    /// body can drop. On some path, a value of such a type goes out of scope or
+    /// gets a new value. A caller that gives a linear type there loses a value
+    /// (W0601). The body always infers this part.
+    pub drops: BTreeSet<usize>,
+    /// Type parameters, by index in `FnSig::generics`, of the values that the
+    /// body holds at a node that can abort or resume more than once. A caller
+    /// that gives a linear type there holds a linear value across the call (W0602,
+    /// W0503). The body always infers this part.
+    pub holds: BTreeSet<usize>,
+    /// The body can raise a failure that the runtime makes, with no `fail` in
+    /// the row: a `join` of a failed task, a scope or a `fork` with a failed
+    /// child, or a read of a file. A closure that the body makes and a callee
+    /// count too. An `on abort` function cannot raise one (W0118). The body
+    /// always infers this part.
+    pub raises: bool,
 }
 
 impl EffectSig {
@@ -287,7 +459,8 @@ pub struct ModDef {
     pub items: HashMap<String, ItemRef>,
     /// The module is a standard module.
     pub is_std: bool,
-    /// The source unit: 0 is the prelude, 1 is the root, higher are dependencies.
+    /// The source unit: [`PRELUDE_UNIT`](weft_syntax::diag::PRELUDE_UNIT),
+    /// [`ROOT_UNIT`], or a dependency after them.
     pub unit: usize,
 }
 
@@ -312,10 +485,34 @@ pub struct Program {
     pub root: ModId,
     /// The definition behind raw pointer types `*T`. No module names it.
     pub ptr: Option<AdtId>,
+    /// The type properties of the definitions (`Program::props`).
+    pub props: std::sync::OnceLock<crate::props::TypeProps>,
+    /// The index of each field of each struct and of each variant of each
+    /// enum, by name ([`Program::field_index`], [`Program::variant_index`]).
+    /// Item collection makes it at its end, when the fields are final.
+    member_names: Vec<HashMap<String, usize>>,
+    /// Each effect by its identity (`effects::by_identity`). Item collection
+    /// sets it at its end, when the effects and the names of the modules are
+    /// final.
+    pub(crate) effect_index: Option<HashMap<String, EffectId>>,
+    /// The steps of the item checks: the work list of the size check, the walks
+    /// of the `in` places and the modes of the mode checks ([`Program::item_steps`]).
+    steps: StepCount,
+}
+
+/// A count of steps that a shared reference can add to. It is atomic, so that
+/// a [`Program`] can go to another thread.
+#[derive(Debug, Default)]
+struct StepCount(AtomicUsize);
+
+impl Clone for StepCount {
+    fn clone(&self) -> Self {
+        Self(AtomicUsize::new(self.0.load(Ordering::Relaxed)))
+    }
 }
 
 /// The prelude module.
-pub const PRELUDE: ModId = 0;
+pub const PRELUDE: ModId = ModId(0);
 
 /// The name of the definition behind `*T`. It is not an identifier, so no
 /// program can name it.
@@ -358,9 +555,81 @@ pub struct Builtins {
 }
 
 impl Program {
-    /// Returns the names of all type definitions, for type display.
-    pub fn adt_names(&self) -> Vec<String> {
-        self.adts.iter().map(|a| a.name.clone()).collect()
+    /// The steps of the item checks so far. A test can put a limit on them.
+    pub fn item_steps(&self) -> usize {
+        self.steps.0.load(Ordering::Relaxed)
+    }
+
+    /// Adds `n` steps of an item check. Two threads can add at the same time.
+    /// The count stops at `usize::MAX`.
+    pub(crate) fn add_steps(&self, n: usize) {
+        let _ = self
+            .steps
+            .0
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |old| {
+                Some(old.saturating_add(n))
+            });
+    }
+
+    /// Returns the index of the field `name` of struct `a`. After item
+    /// collection a table gives it, so a struct with many fields costs no more
+    /// than one with few. A duplicate field (W0107) gives the first.
+    pub fn field_index(&self, a: AdtId, name: &str) -> Option<usize> {
+        let AdtKind::Struct(fields) = &self.adts[a].kind else {
+            return None;
+        };
+        match self.member_names.get(a.index()) {
+            Some(table) => table.get(name).copied(),
+            None => fields.iter().position(|f| f.name == name),
+        }
+    }
+
+    /// Returns the index of the variant `name` of enum `a`, as
+    /// [`Program::field_index`] does for a field.
+    pub fn variant_index(&self, a: AdtId, name: &str) -> Option<usize> {
+        let AdtKind::Enum(variants) = &self.adts[a].kind else {
+            return None;
+        };
+        match self.member_names.get(a.index()) {
+            Some(table) => table.get(name).copied(),
+            None => variants.iter().position(|v| v.name == name),
+        }
+    }
+
+    /// Makes the table of [`Program::field_index`] and
+    /// [`Program::variant_index`].
+    fn index_members(&mut self) {
+        self.member_names = self
+            .adts
+            .iter()
+            .map(|a| {
+                let names: Vec<&str> = match &a.kind {
+                    AdtKind::Struct(fields) => fields.iter().map(|f| f.name.as_str()).collect(),
+                    AdtKind::Enum(vs) => vs.iter().map(|v| v.name.as_str()).collect(),
+                    AdtKind::Extern { .. } => Vec::new(),
+                };
+                let mut table = HashMap::new();
+                for (i, n) in names.into_iter().enumerate() {
+                    table.entry(n.to_string()).or_insert(i);
+                }
+                table
+            })
+            .collect();
+    }
+
+    /// Returns the index of each function.
+    pub fn fn_ids(&self) -> impl Iterator<Item = FnId> + use<> {
+        (0..self.fns.len()).map(FnId)
+    }
+
+    /// Returns the index of each effect.
+    pub fn effect_ids(&self) -> impl Iterator<Item = EffectId> + use<> {
+        (0..self.effects.len()).map(EffectId)
+    }
+
+    /// Returns the index of each type definition.
+    pub fn adt_ids(&self) -> impl Iterator<Item = AdtId> + use<> {
+        (0..self.adts.len()).map(AdtId)
     }
 
     /// Looks up a name from a module outward, then in the prelude.
@@ -397,11 +666,49 @@ impl Program {
         }
     }
 
+    /// Finds the effect operation that a bare call `name(...)` in module `m`
+    /// performs. The search goes from `m` outward, as a name lookup does: the
+    /// first module with a user effect that has the operation wins, and in one
+    /// module the first such effect. Then come the effects of the prelude. Only
+    /// the effects that `m` sees by name count. Sema and the interpreter both
+    /// use it.
+    pub fn find_op(&self, m: ModId, name: &str) -> Option<(EffectId, usize)> {
+        self.ops_named(m, name).first().copied()
+    }
+
+    /// Returns each operation `name` of the first module, from `m` outward,
+    /// that has one (see [`Program::find_op`]). More than one makes a bare call
+    /// `name(...)` ambiguous (W0107).
+    pub fn ops_named(&self, m: ModId, name: &str) -> Vec<(EffectId, usize)> {
+        let op_in = |ei: EffectId| -> Option<(EffectId, usize)> {
+            let e = &self.effects[ei];
+            let oi = e.ops.iter().position(|o| o.name == name)?;
+            (self.effect_named(m, &e.name) == Some(ei)).then_some((ei, oi))
+        };
+        let mut at = Some(m);
+        while let Some(id) = at {
+            let found: Vec<(EffectId, usize)> = self
+                .effect_ids()
+                .filter(|&ei| self.effects[ei].module == id && !self.effects[ei].is_std)
+                .filter_map(op_in)
+                .collect();
+            if !found.is_empty() {
+                return found;
+            }
+            at = self.mods[id].parent;
+        }
+        self.effect_ids()
+            .filter(|&ei| self.effects[ei].is_std)
+            .find_map(op_in)
+            .into_iter()
+            .collect()
+    }
+
     /// Finds an effect by canonical name, from a module outward.
     pub fn effect_named(&self, module: ModId, name: &str) -> Option<EffectId> {
         match self.lookup(module, name) {
             Some(ItemRef::Effect(e)) => Some(e),
-            _ => None,
+            _ => effects::by_identity(self, name),
         }
     }
 }
@@ -425,6 +732,8 @@ pub struct Collector {
     pub diags: Vec<Diagnostic>,
     pending_fns: Vec<(FnId, Option<AdtId>, Vec<String>)>,
     marked: usize,
+    /// Each struct with `on abort`, and the written function name.
+    on_aborts: Vec<(AdtId, ast::Ident)>,
 }
 
 impl Collector {
@@ -435,16 +744,17 @@ impl Collector {
             diags: Vec::new(),
             pending_fns: Vec::new(),
             marked: 0,
+            on_aborts: Vec::new(),
         };
         // Pass 1: names.
         let mut unit_mods = Vec::new();
         for (i, u) in units.iter().enumerate() {
             // A dependency sees its own items and the prelude, not the root.
             let m = c.new_mod(&u.name, None, u.is_std, i);
-            if i == 1 {
+            if i == ROOT_UNIT {
                 c.prog.root = m;
             }
-            if i > 1 {
+            if i > ROOT_UNIT {
                 c.name_dependency(&u.name, m, i);
             }
             unit_mods.push(m);
@@ -463,31 +773,175 @@ impl Collector {
             c.define_items(&u.file.items, m);
             c.declare_unit_mark(&mut seen, i);
         }
+        c.check_sizes();
         c.resolve_signatures();
+        c.check_on_aborts();
+        c.check_op_names();
+        // A duplicate definition (W0107) keeps the first effect, as the search does.
+        let mut index = HashMap::new();
+        for e in c.prog.effect_ids() {
+            index.entry(effects::identity(&c.prog, e)).or_insert(e);
+        }
+        c.prog.effect_index = Some(index);
+        c.prog.index_members();
         (c.prog, c.diags)
+    }
+
+    /// W0107: an operation that no bare call `name(...)` can reach, in any
+    /// module (RR15). A bare call finds `print` and `fork`, then an item (the
+    /// prelude last), then a variant, and only then an operation
+    /// (`Program::find_op`). The statement `assert(...)` is an assertion. So the
+    /// operation is hidden everywhere if `print`, `fork`, `assert`, a function or
+    /// a type of the prelude, or a variant of a prelude type has its name. The
+    /// user does not write these names, so the hiding is silent.
+    ///
+    /// A name that the program declares hides an operation only by the scope
+    /// rule: an item of a module hides an operation of an outer module in that
+    /// module. That is not an error: the effect path reaches the operation. Two
+    /// operations of one module with the same name make a bare call ambiguous:
+    /// that is W0107 at the call (`Lower::call`).
+    fn check_op_names(&mut self) {
+        let mut found = Vec::new();
+        for e in &self.prog.effects {
+            if e.is_std {
+                continue;
+            }
+            for o in &e.ops {
+                let n = o.name.as_str();
+                let hider = if matches!(n, "print" | "fork") {
+                    Some(format!("the built-in function `{n}`"))
+                } else if n == "assert" {
+                    Some("the `assert` statement".to_string())
+                } else {
+                    match self.prog.mods[PRELUDE].items.get(n) {
+                        Some(ItemRef::Fn(_)) => Some(format!("the prelude function `{n}`")),
+                        Some(ItemRef::Adt(_)) => Some(format!("the prelude type `{n}`")),
+                        _ => self
+                            .prog
+                            .variants
+                            .get(n)
+                            .into_iter()
+                            .flatten()
+                            .any(|&(a, _)| {
+                                let m = self.prog.adts[a].module;
+                                self.prog.mods[m].unit == weft_syntax::diag::PRELUDE_UNIT
+                            })
+                            .then(|| format!("the prelude variant `{n}`")),
+                    }
+                };
+                if let Some(h) = hider {
+                    found.push((e.module, e.name.clone(), o.name.clone(), o.span, h));
+                }
+            }
+        }
+        for (m, effect, name, span, hider) in found {
+            let d = Diagnostic::error(
+                Code::W0107,
+                format!(
+                    "operation `{name}` of `{effect}` has the name of {hider}, so no call `{name}(...)` reaches it"
+                ),
+                span,
+            )
+            .note(format!(
+                "rename the operation: a bare call `{name}(...)` always finds {hider}"
+            ));
+            self.push_in(m, d);
+        }
+    }
+
+    /// Adds a diagnostic in the unit of module `m`.
+    fn push_in(&mut self, m: ModId, mut d: Diagnostic) {
+        d.unit = self.prog.mods[m].unit;
+        self.diags.push(d);
+    }
+
+    /// W0117: a struct that holds itself with no indirection has no finite
+    /// size.
+    fn check_sizes(&mut self) {
+        let (bad, steps) = size_check(&self.prog);
+        self.prog.add_steps(steps);
+        for a in bad {
+            let def = &self.prog.adts[a];
+            let d = Diagnostic::error(
+                Code::W0117,
+                format!(
+                    "struct `{}` holds itself with no indirection, so it has no finite size",
+                    def.name
+                ),
+                def.span,
+            )
+            .note("put the field behind an indirection: an enum, `Box` or `Vec`");
+            self.push_in(def.module, d);
+        }
+    }
+
+    /// W0101 and W0118: the function after `on abort` must exist and take
+    /// one value of the type. The unwinder gives it each instance of the
+    /// type. So the parameter type is the type with the type parameters of
+    /// the function in order, as for a method of `impl<T> G<T>` (review round
+    /// 3, F3-4). For a type with no type parameters, it is the type.
+    fn check_on_aborts(&mut self) {
+        for (a, name) in std::mem::take(&mut self.on_aborts) {
+            let def = &self.prog.adts[a];
+            let module = def.module;
+            let generics = if def.generics.is_empty() {
+                String::new()
+            } else {
+                format!("<{}>", def.generics.join(", "))
+            };
+            let ty = format!("{}{generics}", def.name);
+            let d = match self.prog.lookup(module, &name.name) {
+                Some(ItemRef::Fn(f)) => {
+                    if takes_instance(&self.prog.fns[f].sig, a, def.generics.len()) {
+                        continue;
+                    }
+                    Diagnostic::error(
+                        Code::W0118,
+                        format!(
+                            "`on abort = {}` needs a function that takes one `{ty}` value",
+                            name.name
+                        ),
+                        name.span,
+                    )
+                    .note(format!(
+                        "declare it as `fn {}{generics}(x: {ty})`: the unwinder gives it each instance of the type",
+                        name.name
+                    ))
+                }
+                _ => Diagnostic::error(
+                    Code::W0101,
+                    format!("unknown function `{}` after `on abort`", name.name),
+                    name.span,
+                ),
+            };
+            self.push_in(module, d);
+        }
     }
 
     /// Gives the root the name of dependency module `m` of unit `unit`. The
     /// prelude declares nested modules first, so the root is not module 1.
     ///
     /// W0107: the name must not hide a name that the root sees already: an item
-    /// of the root, a prelude item or a standard effect alias such as `log`.
+    /// of the root, a prelude item or a standard effect alias such as `log`. It
+    /// must not be `main` either: the effect identities of the root start with
+    /// `main` (`main.Note`), so the effects of a dependency `main` would get the
+    /// identities of the root (`effects::identity`).
     fn name_dependency(&mut self, name: &str, m: ModId, unit: usize) {
         let root = self.prog.root;
-        if self.prog.lookup(root, name).is_none()
+        let message = if name == effects::ROOT_PREFIX {
+            format!("a dependency cannot have the name `{name}`: the effects of the root have `{name}` in their identity")
+        } else if self.prog.lookup(root, name).is_none()
             && effects::canonical(&self.prog, root, name).is_none()
         {
             self.prog.mods[root]
                 .items
                 .insert(name.to_string(), ItemRef::Mod(m));
             return;
-        }
-        let mut d = Diagnostic::error(
-            "W0107",
-            format!("dependency `{name}` has the name of an item that the root sees already"),
-            Span::default(),
-        )
-        .note("give the dependency another name in weft.toml");
+        } else {
+            format!("dependency `{name}` has the name of an item that the root sees already")
+        };
+        let mut d = Diagnostic::error(Code::W0107, message, Span::default())
+            .note("give the dependency another name in weft.toml");
         d.unit = unit;
         self.diags.push(d);
     }
@@ -513,14 +967,14 @@ impl Collector {
             module: PRELUDE,
             span: Span::default(),
         });
-        self.prog.ptr = Some(self.prog.adts.len() - 1);
+        self.prog.ptr = Some(AdtId(self.prog.adts.len() - 1));
     }
 
     /// W0116: a raw pointer type outside an `extern fn` signature or a local.
     fn no_ptr(&mut self, t: &TypeExpr) {
         if let Some(span) = ptr_span(t) {
             self.diags.push(Diagnostic::error(
-                "W0116",
+                Code::W0116,
                 "a raw pointer type is valid only in an `extern fn` signature or a local",
                 span,
             ));
@@ -545,7 +999,7 @@ impl Collector {
             is_std,
             unit,
         });
-        self.prog.mods.len() - 1
+        ModId(self.prog.mods.len() - 1)
     }
 
     fn adt_at(&self, m: ModId, span: Span) -> Option<AdtId> {
@@ -553,12 +1007,13 @@ impl Collector {
             .adts
             .iter()
             .position(|a| a.module == m && a.span == span)
+            .map(AdtId)
     }
 
     fn insert(&mut self, m: ModId, name: &ast::Ident, r: ItemRef) {
         if self.prog.mods[m].items.contains_key(&name.name) {
             self.diags.push(Diagnostic::error(
-                "W0107",
+                Code::W0107,
                 format!("`{}` is defined twice", name.name),
                 name.span,
             ));
@@ -576,6 +1031,9 @@ impl Collector {
                     self.prog.adts[id].immovable = s.is_immovable;
                     self.prog.adts[id].on_abort = s.on_abort.as_ref().map(|i| i.name.clone());
                     self.prog.adts[id].has_on_abort = s.on_abort.is_some();
+                    if let Some(f) = &s.on_abort {
+                        self.on_aborts.push((id, f.clone()));
+                    }
                     self.insert(m, &s.name, ItemRef::Adt(id));
                 }
                 ItemKind::Enum(e) => {
@@ -590,10 +1048,12 @@ impl Collector {
                 ItemKind::Effect(e) => {
                     self.prog.effects.push(EffectDef {
                         name: e.name.name.clone(),
+                        module: m,
                         ops: Vec::new(),
                         is_std,
+                        is_pub: it.is_pub,
                     });
-                    let id = self.prog.effects.len() - 1;
+                    let id = EffectId(self.prog.effects.len() - 1);
                     self.insert(m, &e.name, ItemRef::Effect(id));
                 }
                 ItemKind::Mod(md) => {
@@ -608,6 +1068,7 @@ impl Collector {
     }
 
     fn new_adt(&mut self, name: &str, generics: &[ast::Ident], m: ModId, span: Span) -> AdtId {
+        report_duplicates(&mut self.diags, "type parameter", generics);
         self.prog.adts.push(AdtDef {
             name: name.into(),
             generics: generics.iter().map(|g| g.name.clone()).collect(),
@@ -621,7 +1082,7 @@ impl Collector {
             module: m,
             span,
         });
-        self.prog.adts.len() - 1
+        AdtId(self.prog.adts.len() - 1)
     }
 
     fn apply_props(&mut self, id: AdtId, x: &ExternTypeDecl) {
@@ -640,7 +1101,7 @@ impl Collector {
                 ("on_abort", None) => self.prog.adts[id].has_on_abort = true,
                 ("copy", None) => self.prog.adts[id].copy = true,
                 _ => self.diags.push(Diagnostic::error(
-                    "W0108",
+                    Code::W0108,
                     format!("unknown extern type property `{}`", p.key.name),
                     p.key.span,
                 )),
@@ -668,6 +1129,7 @@ impl Collector {
                             .collect(),
                     );
                     let mut fields = Vec::new();
+                    report_duplicates(&mut self.diags, "field", s.fields.iter().map(|f| &f.name));
                     for f in &s.fields {
                         self.no_ptr(&f.ty);
                         let ty = self.resolve_ty(&f.ty, m, &gens, Some(&self_ty));
@@ -697,7 +1159,7 @@ impl Collector {
                                     fields[i].place = sp;
                                 }
                                 _ => self.diags.push(Diagnostic::error(
-                                    "W0605",
+                                    Code::W0605,
                                     format!(
                                         "field `{}` holds a reference; only a `!Move` struct can hold a reference, and only into `self`",
                                         f.name.name
@@ -715,6 +1177,11 @@ impl Collector {
                     };
                     let gens: Vec<String> = e.generics.iter().map(|g| g.name.clone()).collect();
                     let mut vs = Vec::new();
+                    report_duplicates(
+                        &mut self.diags,
+                        "variant",
+                        e.variants.iter().map(|v| &v.name),
+                    );
                     for (vi, v) in e.variants.iter().enumerate() {
                         for t in &v.fields {
                             self.no_ptr(t);
@@ -742,6 +1209,11 @@ impl Collector {
                     };
                     let mut ops = Vec::new();
                     for o in &e.ops {
+                        report_duplicates(
+                            &mut self.diags,
+                            "parameter",
+                            o.params.iter().map(|p| &p.name),
+                        );
                         for t in o.params.iter().filter_map(|p| p.ty.as_ref()).chain(&o.ret) {
                             self.no_ptr(t);
                         }
@@ -763,6 +1235,7 @@ impl Collector {
                             param_names: o.params.iter().map(|p| p.name.name.clone()).collect(),
                             ret,
                             multi: o.is_multi,
+                            span: o.name.span,
                         });
                     }
                     self.prog.effects[id].ops = ops;
@@ -775,11 +1248,12 @@ impl Collector {
                 }
                 ItemKind::Impl(imp) => {
                     let gens: Vec<String> = imp.generics.iter().map(|g| g.name.clone()).collect();
+                    report_duplicates(&mut self.diags, "type parameter", &imp.generics);
                     self.no_ptr(&imp.self_ty);
                     let self_ty = self.resolve_ty(&imp.self_ty, m, &gens, None);
                     let Ty::Adt(owner, _) = self_ty else {
                         self.diags.push(Diagnostic::error(
-                            "W0109",
+                            Code::W0109,
                             "`impl` needs a named type",
                             imp.self_ty.span,
                         ));
@@ -795,7 +1269,7 @@ impl Collector {
                                 .is_some()
                             {
                                 self.diags.push(Diagnostic::error(
-                                    "W0107",
+                                    Code::W0107,
                                     format!("method `{}` is defined twice", f.name.name),
                                     f.name.span,
                                 ));
@@ -844,7 +1318,7 @@ impl Collector {
             module: m,
             span: it.span,
         });
-        self.prog.fns.len() - 1
+        FnId(self.prog.fns.len() - 1)
     }
 
     fn resolve_signatures(&mut self) {
@@ -866,6 +1340,24 @@ impl Collector {
             let m = self.prog.fns[id].module;
             let mut gens = impl_gens.to_vec();
             gens.extend(f.generics.iter().map(|g| g.name.clone()));
+            report_duplicates(&mut self.diags, "type parameter", &f.generics);
+            let outer: BTreeSet<&str> = impl_gens.iter().map(String::as_str).collect();
+            for g in f
+                .generics
+                .iter()
+                .filter(|g| outer.contains(g.name.as_str()))
+            {
+                self.diags.push(Diagnostic::error(
+                    Code::W0107,
+                    format!("type parameter `{}` is defined twice", g.name),
+                    g.span,
+                ));
+            }
+            report_duplicates(
+                &mut self.diags,
+                "parameter",
+                f.params.iter().map(|p| &p.name),
+            );
             let self_ty = owner.map(|o| {
                 Ty::Adt(
                     o,
@@ -887,7 +1379,7 @@ impl Collector {
                     }
                     (None, _) => {
                         self.diags.push(Diagnostic::error(
-                            "W0110",
+                            Code::W0110,
                             format!("parameter `{}` needs a type", p.name.name),
                             p.span,
                         ));
@@ -922,6 +1414,7 @@ impl Collector {
                     params[i].place = self.resolve_sig_place(pl, &params, &fn_params, m);
                 }
             }
+            self.check_in_cycles(&params);
             let ret = f
                 .ret
                 .as_ref()
@@ -943,25 +1436,48 @@ impl Collector {
                     match item {
                         EffectItem::Mut(ps) => {
                             for pl in ps {
-                                if let Some(sp) = self.resolve_sig_place(pl, &params, &fn_params, m)
+                                if let Some(mut sp) =
+                                    self.resolve_sig_place(pl, &params, &fn_params, m)
                                 {
+                                    // `mut(p..)` is equal to `mut(p)`. It also
+                                    // covers what the references in `p` point into.
+                                    if sp.steps.last() == Some(&SigStep::Wild) {
+                                        sp.steps.pop();
+                                        if let Some(held) = held_place(&self.prog, &sp, &params) {
+                                            effects.muts.push(held);
+                                        }
+                                    }
                                     effects.muts.push(sp);
                                 }
                             }
                         }
-                        EffectItem::Named(n) => match effects::canonical(&self.prog, m, &n.name) {
-                            Some(names) => effects.named.extend(names),
-                            None => self.diags.push(Diagnostic::error(
-                                "W0101",
-                                format!("unknown effect `{}`", n.name),
-                                n.span,
-                            )),
+                        EffectItem::Named(n) => match effects::resolve(&self.prog, m, n) {
+                            Ok(names) => effects.named.extend(names),
+                            Err(d) => self.diags.push(d),
                         },
                     }
                 }
             } else if f.is_extern && !self.prog.mods[m].is_std {
                 // A foreign call can block unless it says otherwise.
                 effects.named.insert("Blocking".into());
+            }
+            // A foreign generic function can drop a value of each type parameter,
+            // and it can hold one while it can abort (ADR 0007).
+            if f.is_extern && !self.prog.mods[m].is_std && !gens.is_empty() {
+                let all: BTreeSet<usize> = (0..gens.len()).collect();
+                if !effects.named.is_empty() {
+                    effects.holds.clone_from(&all);
+                }
+                effects.drops = all;
+            }
+            // A prelude function can drop values of a type parameter too.
+            if self.prog.mods[m].is_std {
+                let owner_name = owner.map(|o| self.prog.adts[o].name.as_str());
+                effects.drops.extend(std_drops(owner_name, &f.name.name));
+                effects.raises = std_raises(owner_name, &f.name.name);
+            } else if f.is_extern {
+                // Foreign code can fail where the runtime runs it.
+                effects.raises = true;
             }
             let declared = f.effects.is_some() || f.is_extern;
             self.prog.fns[id].sig = FnSig {
@@ -972,6 +1488,29 @@ impl Collector {
                 effects,
                 declared,
             };
+        }
+    }
+
+    /// W0201: the `in` place of a parameter cannot start at the parameter
+    /// itself, and the `in` places cannot form a cycle.
+    fn check_in_cycles(&mut self, params: &[ParamSig]) {
+        let (_, cycles, steps) = in_place_order(params);
+        self.prog.add_steps(steps);
+        for mut cycle in cycles {
+            // Report the cycle at its first parameter.
+            if let Some(first) = (0..cycle.len()).min_by_key(|&i| cycle[i]) {
+                cycle.rotate_left(first);
+            }
+            let names: Vec<&str> = cycle.iter().map(|&j| params[j].name.as_str()).collect();
+            let message = if let [one] = names.as_slice() {
+                format!("the place of `{one}` starts at `{one}` itself")
+            } else {
+                format!("the places of `{}` form a cycle", names.join("`, `"))
+            };
+            self.diags.push(
+                Diagnostic::error(Code::W0201, message, params[cycle[0]].span)
+                    .note("an `in` place must start at another parameter, `self` or an `rc` type"),
+            );
         }
     }
 
@@ -988,6 +1527,28 @@ impl Collector {
             TypeExprKind::Ref { place, .. } => match place {
                 Some(pl) => {
                     if let Some(sp) = self.resolve_sig_place(pl, params, names, m) {
+                        if let SigRoot::Param(i) = sp.root {
+                            if !params[i].ty.is_ref() {
+                                self.diags.push(Diagnostic::error(
+                                    Code::W0204,
+                                    format!(
+                                        "a returned reference cannot point into the by-value parameter `{}`: it goes out of scope at the return",
+                                        params[i].name
+                                    ),
+                                    pl.span,
+                                ));
+                            }
+                        }
+                        // `p..` also covers what the references in `p` point into.
+                        if sp.steps.last() == Some(&SigStep::Wild) {
+                            if let Some(held) = held_place(&self.prog, &sp, params) {
+                                out.push(RetPlace {
+                                    path: path.clone(),
+                                    place: held,
+                                    uniq: t.modes.contains(&Mode::Uniq),
+                                });
+                            }
+                        }
                         out.push(RetPlace {
                             path: path.clone(),
                             place: sp,
@@ -996,7 +1557,7 @@ impl Collector {
                     }
                 }
                 None => self.diags.push(Diagnostic::error(
-                    "W0204",
+                    Code::W0204,
                     "a returned reference must state its place: `&T in param...`",
                     t.span,
                 )),
@@ -1007,6 +1568,45 @@ impl Collector {
                     self.collect_ret_places(t, params, names, m, path, out);
                     path.pop();
                 }
+            }
+            // A reference inside another type, such as `Option<&T in p>`, can
+            // state its place. With no place, the caller takes the places of the
+            // arguments.
+            TypeExprKind::Path { args, .. } => {
+                for t in args {
+                    self.collect_nested_places(t, params, names, m, path, out);
+                }
+            }
+            TypeExprKind::Array { elem, .. } => {
+                self.collect_nested_places(elem, params, names, m, path, out);
+            }
+            _ => {}
+        }
+    }
+
+    /// Collects the stated places of the references inside a type argument of a
+    /// returned type. A reference with no place is not an error here.
+    fn collect_nested_places(
+        &mut self,
+        t: &TypeExpr,
+        params: &[ParamSig],
+        names: &BTreeMap<String, usize>,
+        m: ModId,
+        path: &mut Vec<usize>,
+        out: &mut Vec<RetPlace>,
+    ) {
+        match &t.kind {
+            TypeExprKind::Ref { place: None, inner } => {
+                self.collect_nested_places(inner, params, names, m, path, out);
+            }
+            TypeExprKind::Ref { .. } => self.collect_ret_places(t, params, names, m, path, out),
+            TypeExprKind::Tuple(ts) | TypeExprKind::Path { args: ts, .. } => {
+                for x in ts {
+                    self.collect_nested_places(x, params, names, m, path, out);
+                }
+            }
+            TypeExprKind::Array { elem, .. } | TypeExprKind::Slice(elem) => {
+                self.collect_nested_places(elem, params, names, m, path, out);
             }
             _ => {}
         }
@@ -1054,7 +1654,7 @@ impl Collector {
             (SigRoot::Group(a), Ty::Adt(a, vec![Ty::Error; n]))
         } else {
             self.diags.push(Diagnostic::error(
-                "W0201",
+                Code::W0201,
                 format!("place root `{rootname}` is not a parameter, `self` or an `rc` type"),
                 pl.root.span,
             ));
@@ -1066,11 +1666,12 @@ impl Collector {
             match st {
                 PlaceStep::Wildcard => {
                     text.push_str("..");
+                    steps.push(SigStep::Wild);
                 }
                 PlaceStep::Field(id) => {
                     let Some((step, next, t)) = field_step(&self.prog, &ty, &id.name) else {
                         self.diags.push(Diagnostic::error(
-                            "W0104",
+                            Code::W0104,
                             format!("no field or variant `{}` in this place", id.name),
                             id.span,
                         ));
@@ -1091,7 +1692,7 @@ impl Collector {
                         ty = next;
                     } else {
                         self.diags.push(Diagnostic::error(
-                            "W0104",
+                            Code::W0104,
                             "this place has no elements",
                             pl.span,
                         ));
@@ -1102,7 +1703,7 @@ impl Collector {
                     let hi = matches!(st, PlaceStep::SegHi(_));
                     let Some(&label) = names.get(&k.name) else {
                         self.diags.push(Diagnostic::error(
-                            "W0201",
+                            Code::W0201,
                             format!("split point `{}` is not a parameter", k.name),
                             k.span,
                         ));
@@ -1110,7 +1711,7 @@ impl Collector {
                     };
                     let Some((step, next)) = elem_step(&self.prog, &ty) else {
                         self.diags.push(Diagnostic::error(
-                            "W0104",
+                            Code::W0104,
                             "this place has no elements",
                             pl.span,
                         ));
@@ -1135,7 +1736,257 @@ impl Collector {
     }
 }
 
-/// Resolves type expressions against a finished program. It does not copy the program.
+/// W0107: reports each name that repeats an earlier name of the list.
+/// `what` names the kind of name, for example `field`.
+fn report_duplicates<'a>(
+    diags: &mut Vec<Diagnostic>,
+    what: &str,
+    names: impl IntoIterator<Item = &'a ast::Ident>,
+) {
+    let mut seen = BTreeSet::new();
+    for n in names {
+        if !seen.insert(n.name.as_str()) {
+            diags.push(Diagnostic::error(
+                Code::W0107,
+                format!("{what} `{}` is defined twice", n.name),
+                n.span,
+            ));
+        }
+    }
+}
+
+/// Returns why two modes of a list contradict, or `None`.
+///
+/// Two values of one axis contradict, for example `once` and `many`. Also
+/// `uniq` and `shared` contradict: other threads can read a `shared` value,
+/// so other references to it exist.
+fn mode_conflict(modes: &[Mode], steps: &mut usize) -> Option<String> {
+    let axis = |m: Mode| match m {
+        Mode::Uniq | Mode::Aliased => 0,
+        Mode::Portable | Mode::Nonportable => 1,
+        Mode::Uncontended | Mode::Shared => 2,
+        Mode::Once | Mode::Many => 3,
+    };
+    // The first mode on each axis.
+    let mut seen: [Option<Mode>; 4] = [None; 4];
+    for &b in modes {
+        *steps += 1;
+        match seen[axis(b)] {
+            Some(a) if a != b => {
+                return Some(format!(
+                    "modes `{}` and `{}` contradict: a type has one mode on each axis",
+                    a.name(),
+                    b.name()
+                ));
+            }
+            Some(_) => {}
+            None => seen[axis(b)] = Some(b),
+        }
+        let other = match b {
+            Mode::Uniq => Mode::Shared,
+            Mode::Shared => Mode::Uniq,
+            _ => continue,
+        };
+        if seen[axis(other)] == Some(other) {
+            return Some(format!(
+                "modes `{}` and `{}` contradict: other threads can read a `shared` value, so it is not `uniq`",
+                other.name(),
+                b.name()
+            ));
+        }
+    }
+    None
+}
+
+/// Returns the structs that hold themselves with no indirection.
+///
+/// A struct holds its fields inline, also through tuples and arrays with at
+/// least one element. An enum value is a cell of its own, and an extern type
+/// is opaque, so each is an indirection. A generic struct holds the
+/// arguments of the parameters that it holds inline.
+///
+/// The work has two steps, so the time is about linear in the size of the
+/// definitions. First, a worklist finds the parameters that each struct
+/// holds inline. Each set has at most one entry for each parameter. Then a
+/// graph gets an edge from `a` to `b` when `a` holds `b` directly. A struct
+/// holds itself when it is on a cycle of this graph.
+pub fn infinite_structs(prog: &Program) -> Vec<AdtId> {
+    size_check(prog).0
+}
+
+/// Returns [`infinite_structs`], and the number of steps: the structs that the
+/// work list took, and one for each struct in the graph of direct holds.
+fn size_check(prog: &Program) -> (Vec<AdtId>, usize) {
+    /// What a value holds inline: a struct or a type parameter.
+    enum Held {
+        Adt(AdtId),
+        Param(u32),
+    }
+    /// Calls `on` for each struct and parameter that a value of type `t`
+    /// holds directly. `params[b]` holds the parameters that struct `b`
+    /// holds inline.
+    fn walk(t: &Ty, prog: &Program, params: &[BTreeSet<u32>], on: &mut dyn FnMut(Held)) {
+        match t {
+            Ty::Param(i) => on(Held::Param(*i)),
+            Ty::Tuple(ts) => {
+                for t in ts {
+                    walk(t, prog, params, on);
+                }
+            }
+            Ty::Array(t, n) if *n > 0 => walk(t, prog, params, on),
+            Ty::Adt(b, args) if matches!(prog.adts[*b].kind, AdtKind::Struct(_)) => {
+                on(Held::Adt(*b));
+                for &j in &params[b.index()] {
+                    if let Some(arg) = args.get(j as usize) {
+                        walk(arg, prog, params, on);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    /// Adds to `out` each struct that a value of type `t` can hold inline,
+    /// for any parameter sets.
+    fn mentions(t: &Ty, prog: &Program, out: &mut Vec<AdtId>) {
+        match t {
+            Ty::Tuple(ts) => {
+                for t in ts {
+                    mentions(t, prog, out);
+                }
+            }
+            Ty::Array(t, n) if *n > 0 => mentions(t, prog, out),
+            Ty::Adt(b, args) if matches!(prog.adts[*b].kind, AdtKind::Struct(_)) => {
+                out.push(*b);
+                for t in args {
+                    mentions(t, prog, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    // The tables of this function are by the index of the type.
+    let fields = |a: usize| match &prog.adts[a].kind {
+        AdtKind::Struct(fields) => fields.as_slice(),
+        _ => &[],
+    };
+    let n = prog.adts.len();
+    // Step 1: the parameters. When the set of `b` grows, each struct that
+    // mentions `b` goes back on the worklist.
+    let mut users: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for a in 0..n {
+        let mut out = Vec::new();
+        for f in fields(a) {
+            mentions(&f.ty, prog, &mut out);
+        }
+        out.sort_unstable();
+        out.dedup();
+        for b in out {
+            users[b.index()].push(a);
+        }
+    }
+    let mut params: Vec<BTreeSet<u32>> = vec![BTreeSet::new(); n];
+    let mut queued = vec![true; n];
+    let mut work: Vec<usize> = (0..n).rev().collect();
+    let mut steps = n;
+    while let Some(a) = work.pop() {
+        steps += 1;
+        queued[a] = false;
+        let mut found = BTreeSet::new();
+        for f in fields(a) {
+            walk(&f.ty, prog, &params, &mut |h| {
+                if let Held::Param(i) = h {
+                    found.insert(i);
+                }
+            });
+        }
+        if found.len() > params[a].len() {
+            params[a] = found;
+            for &u in &users[a] {
+                if !queued[u] {
+                    queued[u] = true;
+                    work.push(u);
+                }
+            }
+        }
+    }
+    // Step 2: the graph of direct holds, and its cycles.
+    let edges: Vec<Vec<usize>> = (0..n)
+        .map(|a| {
+            let mut out = Vec::new();
+            for f in fields(a) {
+                walk(&f.ty, prog, &params, &mut |h| {
+                    if let Held::Adt(b) = h {
+                        out.push(b.index());
+                    }
+                });
+            }
+            out
+        })
+        .collect();
+    let cyclic = on_cycles(&edges);
+    ((0..n).filter(|&a| cyclic[a]).map(AdtId).collect(), steps)
+}
+
+/// Returns, for each node of a graph, whether a cycle goes through it. The
+/// function uses Tarjan's algorithm for strongly connected components. It
+/// keeps its own stack, so a long chain cannot overflow the thread stack.
+fn on_cycles(edges: &[Vec<usize>]) -> Vec<bool> {
+    const NEW: usize = usize::MAX;
+    let n = edges.len();
+    let (mut index, mut low) = (vec![NEW; n], vec![0; n]);
+    let mut on_stack = vec![false; n];
+    let mut cyclic = vec![false; n];
+    let (mut stack, mut calls) = (Vec::new(), Vec::new());
+    let mut next = 0;
+    for root in 0..n {
+        if index[root] != NEW {
+            continue;
+        }
+        calls.push((root, 0));
+        while let Some(&(v, i)) = calls.last() {
+            if i == 0 {
+                index[v] = next;
+                low[v] = next;
+                next += 1;
+                stack.push(v);
+                on_stack[v] = true;
+            }
+            if let Some(&w) = edges[v].get(i) {
+                if let Some(top) = calls.last_mut() {
+                    top.1 += 1;
+                }
+                if index[w] == NEW {
+                    calls.push((w, 0));
+                } else if on_stack[w] {
+                    low[v] = low[v].min(index[w]);
+                }
+                continue;
+            }
+            calls.pop();
+            if let Some(&(u, _)) = calls.last() {
+                low[u] = low[u].min(low[v]);
+            }
+            if low[v] == index[v] {
+                let mut members = Vec::new();
+                while let Some(w) = stack.pop() {
+                    on_stack[w] = false;
+                    members.push(w);
+                    if w == v {
+                        break;
+                    }
+                }
+                let cycle = members.len() > 1 || edges[v].contains(&v);
+                for w in members {
+                    cyclic[w] = cycle;
+                }
+            }
+        }
+    }
+    cyclic
+}
+
+/// Resolves type expressions against a finished program. It borrows the
+/// program and writes its diagnostics to `diags`.
 pub struct TyResolver<'a> {
     /// The program.
     pub prog: &'a Program,
@@ -1146,10 +1997,20 @@ pub struct TyResolver<'a> {
 impl TyResolver<'_> {
     /// Resolves a type expression. `gens` names the type parameters in scope.
     pub fn resolve(&mut self, t: &TypeExpr, m: ModId, gens: &[String], self_ty: Option<&Ty>) -> Ty {
+        let mut steps = 0;
+        let conflict = mode_conflict(&t.modes, &mut steps);
+        self.prog.add_steps(steps);
+        if let Some(message) = conflict {
+            self.diags
+                .push(Diagnostic::error(Code::W0119, message, t.span));
+        }
         match &t.kind {
             TypeExprKind::SelfType => self_ty.cloned().unwrap_or_else(|| {
-                self.diags
-                    .push(Diagnostic::error("W0101", "`Self` is not in scope", t.span));
+                self.diags.push(Diagnostic::error(
+                    Code::W0101,
+                    "`Self` is not in scope",
+                    t.span,
+                ));
                 Ty::Error
             }),
             TypeExprKind::Ref { inner, .. } => {
@@ -1185,19 +2046,15 @@ impl TyResolver<'_> {
                     let mut names = BTreeSet::new();
                     for item in &row.items {
                         if let EffectItem::Named(n) = item {
-                            match effects::canonical(self.prog, m, &n.name) {
-                                Some(ns) => names.extend(ns),
-                                None => self.diags.push(Diagnostic::error(
-                                    "W0101",
-                                    format!("unknown effect `{}`", n.name),
-                                    n.span,
-                                )),
+                            match effects::resolve(self.prog, m, n) {
+                                Ok(ns) => names.extend(ns),
+                                Err(d) => self.diags.push(d),
                             }
                         }
                     }
                     names.into_iter().collect()
                 });
-                Ty::Fn(std::rc::Rc::new(FnTy {
+                Ty::Fn(std::sync::Arc::new(FnTy {
                     params,
                     ret,
                     effects,
@@ -1235,7 +2092,7 @@ impl TyResolver<'_> {
                             let want = self.prog.adts[a].generics.len();
                             if want != args.len() && !args.is_empty() {
                                 self.diags.push(Diagnostic::error(
-                                    "W0103",
+                                    Code::W0103,
                                     format!("`{}` takes {want} type arguments", seg.name),
                                     t.span,
                                 ));
@@ -1253,7 +2110,7 @@ impl TyResolver<'_> {
                 }
                 let text: Vec<&str> = segments.iter().map(|s| s.name.as_str()).collect();
                 self.diags.push(Diagnostic::error(
-                    "W0101",
+                    Code::W0101,
                     format!("unknown type `{}`", text.join(".")),
                     t.span,
                 ));
@@ -1286,7 +2143,7 @@ pub fn field_step(prog: &Program, ty: &Ty, name: &str) -> Option<FieldStep> {
         }
         Ty::Adt(a, args) => match &prog.adts[*a].kind {
             AdtKind::Struct(fields) => {
-                let i = fields.iter().position(|f| f.name == name)?;
+                let i = prog.field_index(*a, name)?;
                 let t = crate::types::subst(&fields[i].ty, args);
                 let s = Step {
                     kind: StepKind::Field {
@@ -1363,5 +2220,298 @@ pub fn elem_step(prog: &Program, ty: &Ty) -> Option<(Option<weft_facts::Step>, T
             _ => None,
         },
         _ => None,
+    }
+}
+
+/// Returns the place of what the references in a written place `sp` point into:
+/// the step `Held`. Its root must be a reference parameter to a value that can
+/// hold references. In the body it is any place inside what they point into.
+fn held_place(prog: &Program, sp: &SigPlace, params: &[ParamSig]) -> Option<SigPlace> {
+    let SigRoot::Param(i) = sp.root else {
+        return None;
+    };
+    let Some(Ty::Ref(inner)) = params.get(i).map(|p| &p.ty) else {
+        return None;
+    };
+    // The pointee of a slice reference is its elements.
+    let pointee = match &**inner {
+        Ty::Slice(x) => &**x,
+        t => t,
+    };
+    if !prog.ty_holds_refs(pointee) {
+        return None;
+    }
+    Some(SigPlace {
+        root: sp.root.clone(),
+        steps: vec![SigStep::Held],
+        text: sp.text.clone(),
+    })
+}
+
+/// Returns the parameters in the order of their `in` places, and the cycles.
+///
+/// The root parameter of each `in` place comes before the parameter, so that
+/// its places are known when the lowering substitutes the place. The second
+/// part has the cycles of `in` places (W0201), and the third the number of
+/// steps of the walks.
+///
+/// Each parameter has at most one `in` place, so a walk from a parameter has
+/// one way. A walk stops at a parameter that an earlier walk saw, so the time
+/// is linear.
+pub fn in_place_order(params: &[ParamSig]) -> (Vec<usize>, Vec<Vec<usize>>, usize) {
+    let root_of = |i: usize| match params.get(i).and_then(|p| p.place.as_ref()) {
+        Some(SigPlace {
+            root: SigRoot::Param(j),
+            ..
+        }) => Some(*j),
+        _ => None,
+    };
+    // The states: 0 is new, 1 is on this walk, 2 is done.
+    let mut state = vec![0_u8; params.len()];
+    let mut order = Vec::with_capacity(params.len());
+    let mut cycles = Vec::new();
+    let mut steps = 0;
+    for start in 0..params.len() {
+        let mut path = Vec::new();
+        let mut at = Some(start);
+        while let Some(j) = at {
+            steps += 1;
+            if state.get(j) != Some(&0) {
+                break;
+            }
+            state[j] = 1;
+            path.push(j);
+            at = root_of(j);
+        }
+        // A walk that meets itself closes a cycle.
+        if let Some(j) = at.filter(|&j| state.get(j) == Some(&1)) {
+            if let Some(p) = path.iter().position(|&k| k == j) {
+                cycles.push(path[p..].to_vec());
+            }
+        }
+        // The end of the walk is nearest to the root: it comes first.
+        for &k in path.iter().rev() {
+            state[k] = 2;
+            order.push(k);
+        }
+    }
+    (order, cycles, steps)
+}
+
+/// Returns true if signature `sig` takes one value of each instance of
+/// definition `a`, which has `n` type parameters: its one parameter has the
+/// type `a<T1, ..., Tn>`, with the `n` type parameters of the function in order.
+fn takes_instance(sig: &FnSig, a: AdtId, n: usize) -> bool {
+    let [p] = sig.params.as_slice() else {
+        return false;
+    };
+    let Ty::Adt(b, args) = &p.ty else {
+        return false;
+    };
+    *b == a
+        && sig.generics.len() == n
+        && args.len() == n
+        && args
+            .iter()
+            .enumerate()
+            .all(|(i, t)| matches!(t, Ty::Param(j) if usize::try_from(*j).is_ok_and(|j| j == i)))
+}
+
+/// W0118: the effects of each `on abort` function, from its final signature.
+///
+/// The unwinder runs the function with the root handlers only (ADR 0007). So its
+/// row can name only the standard effects that the root handlers serve: not
+/// `fail`, and with no runtime none at all. It can change only the places of
+/// the value that it gets: not an `rc` group, and not a place that a reference in
+/// the value points to. The effects proof models `on abort` as atomic
+/// (`proofs/effects`), and this check mirrors that assumption.
+pub fn check_on_abort_rows(prog: &Program, sigs: &[FnSig], no_runtime: bool) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    for def in &prog.adts {
+        let Some(name) = &def.on_abort else {
+            continue;
+        };
+        let Some(ItemRef::Fn(f)) = prog.lookup(def.module, name) else {
+            continue;
+        };
+        let (Some(sig), Some(fd)) = (sigs.get(f.index()), prog.fns.get(f.index())) else {
+            continue;
+        };
+        if !seen.insert(f) || fd.is_std {
+            continue;
+        }
+        let unit = prog.mods[fd.module].unit;
+        let span = fd.decl.name.span;
+        let e = &sig.effects;
+        // A failure that the runtime raises in the function (a `join`, a scope,
+        // a `fork`, a read) goes where a `fail` goes.
+        let fails = e.named.contains("Fail") || e.raises;
+        let bad: Vec<String> = e
+            .named
+            .iter()
+            .chain(&e.task_effects)
+            .filter(|n| n.as_str() != "Fail" && (no_runtime || !effects::is_std(n)))
+            .map(|n| {
+                let w = effects::written(prog, fd.module, n).unwrap_or_else(|| n.clone());
+                format!("`{w}`")
+            })
+            .collect::<BTreeSet<String>>()
+            .into_iter()
+            .collect();
+        if fails {
+            let mut d = Diagnostic::error(
+                Code::W0118,
+                format!(
+                    "`on abort` function `{}` can fail, and a failure there does not reach the handlers of the code that aborts",
+                    fd.name
+                ),
+                span,
+            )
+            .note("handle the failure inside the function, or do the work after a normal path");
+            if !e.named.contains("Fail") {
+                d = d.note("a `join`, a scope, a `fork` and a read of a file can fail at run time");
+            }
+            d.unit = unit;
+            out.push(d);
+        }
+        if !bad.is_empty() {
+            let note = if no_runtime {
+                "with no runtime, no root handler serves an effect where the unwinder runs it"
+            } else {
+                "an `on abort` function can perform only the standard effects other than `fail`"
+            };
+            let mut d = Diagnostic::error(
+                Code::W0118,
+                format!(
+                    "`on abort` function `{}` performs {}, but the unwinder runs it with the root handlers only",
+                    fd.name,
+                    bad.join(", ")
+                ),
+                span,
+            )
+            .note(note);
+            d.unit = unit;
+            out.push(d);
+        }
+        // A function value that the function does not know, for example from a
+        // field of its value, can do what its maker can: perform through a
+        // handler of the code that aborts, fail, or change a place outside.
+        if e.reaches {
+            let mut d = Diagnostic::error(
+                Code::W0118,
+                format!(
+                    "`on abort` function `{}` calls a function value that it does not know, but the unwinder runs it with the root handlers only",
+                    fd.name
+                ),
+                span,
+            )
+            .note("the value can perform through a handler of the code that aborts, fail, or change a place outside the value; call only known functions there");
+            d.unit = unit;
+            out.push(d);
+        }
+        // A by-value parameter that holds references points into a parameter
+        // root (ADR 0003). So a change through such a reference is a change of
+        // `Param(0)` in the row, and the row cannot show it apart from a change
+        // of the value itself. If the type holds a reference, each change of
+        // the parameter counts as outside (review round 3, F3-1).
+        let refs = sig
+            .params
+            .first()
+            .is_some_and(|p| prog.ty_holds_refs(&p.ty));
+        let outside: Vec<String> = e
+            .muts
+            .iter()
+            .filter(|m| m.root != SigRoot::Param(0) || m.steps.contains(&SigStep::Held) || refs)
+            .map(|m| format!("`{}`", m.text))
+            .collect();
+        if !outside.is_empty() {
+            let mut d = Diagnostic::error(
+                Code::W0118,
+                format!(
+                    "`on abort` function `{}` changes {}, a place outside the value that it gets",
+                    fd.name,
+                    outside.join(", ")
+                ),
+                span,
+            )
+            .note(
+                "the unwinder runs it where a node aborts, and that node does not state the change",
+            );
+            if refs {
+                d = d.note("the value holds a reference, and a change through it is a change of the place that it points to");
+            }
+            d.unit = unit;
+            out.push(d);
+        }
+        // The unwinder gives the function each instance of the type, also one
+        // with a linear type argument. No call of the facts checks the type
+        // argument there, so the function cannot drop or hold a value of a
+        // type parameter (review round 3, F3-3).
+        let generic: BTreeSet<usize> = e.drops.union(&e.holds).copied().collect();
+        if !generic.is_empty() {
+            let names: Vec<String> = generic
+                .iter()
+                .map(|&j| format!("`{}`", sig.generics.get(j).map_or("?", String::as_str)))
+                .collect();
+            let (what, at) = match (e.drops.is_empty(), e.holds.is_empty()) {
+                (false, true) => ("can drop", ""),
+                (true, false) => ("holds", " across a node that can abort"),
+                _ => ("can drop or hold", ""),
+            };
+            let mut d = Diagnostic::error(
+                Code::W0118,
+                format!(
+                    "`on abort` function `{}` {what} a value of type parameter {}{at}",
+                    fd.name,
+                    names.join(", ")
+                ),
+                span,
+            )
+            .note("the unwinder gives it each instance of the type, also one with a linear type argument, and the value of that type then goes away")
+            .note("take the type parameter only as a marker, or give the type a part of a fixed type");
+            d.unit = unit;
+            out.push(d);
+        }
+        // The unwinder does not keep the result of the function. So a result
+        // that can hold a linear value goes away there.
+        if prog.ty_may_hold_linear(&sig.ret) {
+            let mut d = Diagnostic::error(
+                Code::W0118,
+                format!(
+                    "`on abort` function `{}` returns a value that can be linear, but the unwinder drops the result",
+                    fd.name
+                ),
+                span,
+            )
+            .note("consume the value inside the function, and return a value of plain data or `()`");
+            d.unit = unit;
+            out.push(d);
+        }
+    }
+    out
+}
+
+/// Returns true if a prelude function can raise a failure that the runtime
+/// makes (ADR 0007): `FsCap.read` when it cannot read the file, `Task.join` of
+/// a failed task, and `with_timeout` at its deadline. Sema lowers `join`
+/// itself, so its entry is for the signature only.
+fn std_raises(owner: Option<&str>, name: &str) -> bool {
+    matches!(
+        (owner, name),
+        (Some("FsCap"), "read") | (Some("Task"), "join") | (None, "with_timeout")
+    )
+}
+
+/// Returns the type parameters, by index in the signature, of the values that a
+/// prelude function drops (ADR 0007). `Vec.clear` drops each element,
+/// `Task.detach` the result of the task, and `Response.json` its argument. Sema
+/// lowers `detach` itself, so its entry is for the signature only.
+fn std_drops(owner: Option<&str>, name: &str) -> Vec<usize> {
+    match (owner, name) {
+        (Some("Vec"), "clear") | (Some("Task"), "detach") | (Some("Response"), "json") => {
+            vec![0]
+        }
+        _ => Vec::new(),
     }
 }

@@ -20,19 +20,19 @@ The results must be:
 
 ```text
 check-copies: 10 included source files, no shadow copies, 0 verbatim copies identical
-verification results:: 230 verified, 0 errors
+verification results:: 235 verified, 0 errors
 ```
 
 | Module | Verified | What it is |
 | --- | --- | --- |
-| `places`, `dataflow`, `lifecycle` | 25, 16, 14 | Included from `crates/weft-verified/src/` |
+| `places`, `dataflow`, `lifecycle` | 27, 16, 15 | Included from `crates/weft-verified/src/` |
 | `model`, `soundness`, `cfg` | 2, 24, 7 | Included from `proofs/borrowing/src/` (base model and B1) |
 | `layout`, `layout_proof`, `layout_examples` | 5, 34, 25 | Included from `proofs/borrowing/src/` (B3) |
 | `effects_model` | 0 (specs only) | Included from `proofs/effects/src/model.rs` |
 | `places_link` | 29 | L1: rule 3 and the B3 model |
 | `dataflow_link` | 20 | L2: `propagate` and the B1 CFG checker |
-| `lifecycle_link` | 7 | L3: the lifecycle state machines and the effects machine |
-| `examples` | 22 | Vacuity guards and gap witnesses |
+| `lifecycle_link` | 8 | L3: the lifecycle state machines and the effects machine |
+| `examples` | 23 | Vacuity guards and gap witnesses |
 
 The proofs do not use `assume`, `admit`, `external_body`, or new axioms.
 
@@ -146,9 +146,19 @@ in `ann[n].vars`.
 `lemma_grp_invalidates` proves that `grp_invalidates` is the B1 kill rule
 (`strict_child`).
 
+`spec/weft.dl` has more `invalidated_at` rules: a free of an owner
+(`frees_at`), a wildcard place (`wild_at`) and a place that a call lends
+(`lends_mut`). The link definition has only the call rule. So the theorems
+apply to `v` only when these other rules do not fire for `v`. The other rules
+only add nodes to `gen`, so the checker set gets larger and the checker
+rejects more. The link does not prove this step.
+
 ### Hypotheses
 
-The link does not prove these hypotheses. Tests check them.
+The link does not prove these hypotheses. Agreement with the spec does not test
+them: the checker and the spec run on the same facts. Only tests check the facts:
+the sema unit tests, the corpus diagnostics and the B6 lints that
+`crates/weft-check/tests/hypotheses.rs` runs (see `bound_before_use` below).
 
 * `facts_ok`. Sema must give these facts: the CFG is well formed for
   `propagate`, each binding gives the static group that the model gives,
@@ -156,12 +166,22 @@ The link does not prove these hypotheses. Tests check them.
   no closure instructions.
 * `facts_ok` also has `ret_ok`. This is not a sema fact. It is a B1
   acceptance condition: a returned reference comes from an argument that the
-  call does not kill. No rule in `spec/weft.dl` states it directly. W0312
-  (no mutable argument overlaps another argument) probably gives it, but the
-  link does not prove that.
+  call does not kill. No rule in `spec/weft.dl` states it. W0312 does not give
+  it: the `in` form of ADR 0005 lets a mutated argument and the argument of the
+  result overlap. For example, `pick(w: &World, e: &Entity in w.entities[]) ->
+  &Entity in w.entities[] / mut(w.entities)` called as `pick(&w, x)` with
+  `x = &w.entities[0]` is accepted. The call mutates `w.entities` and returns
+  a reference that comes from `x`, so in B1 terms it kills the group of `x`,
+  and `ret_ok` is false. Rule 3 in the body of `pick` makes this program safe,
+  but `thm_w0301_no_ub` does not apply to it.
 * `w0301_ok`: the checker accepts. No node uses a reference in the fixpoint.
 * `bound_before_use`: `unb` covers each node where a reference can be unbound,
-  and no node uses a reference there. Sema gives this through lexical scope.
+  and no node uses a reference there. No proof shows that sema gives this. The
+  lint `lints/unbound_use.dl` finds a use where a reference can be unbound.
+  `crates/weft-check/tests/hypotheses.rs` runs it, and `lints/gen_kill.dl` for
+  `no_gen_kill`, on each corpus function with no expected error, and requires
+  no lint. Functions with an expected error can fail it (`stored_in_loop` in
+  `tests/programs/37_fn_values.wf`).
 
 ### Theorems
 
@@ -205,13 +225,16 @@ continuation and a `Res` record per linear resource.
 
 ### The relations
 
+`kont_rel` requires the same mode (`multi`) in each state:
+
 | Exec state | Model record (`kont_rel`) |
 | --- | --- |
-| `Fresh` | the same mode, `used == false` |
-| `Resumed` | the same mode, `used == !multi` (the model never marks a `multi` record used) |
+| `Fresh` | `used == false` |
+| `Resumed` | `used == !multi` (the model never marks a `multi` record used) |
 | `Dropped` | `multi || used` |
 
-`lin_rel` maps `Live`, `Consumed` and `Aborted` to the same model states.
+`lin_rel` maps `Live`, `Consumed` and `Aborted` to the same model states, and
+requires the same `on abort` flag.
 
 ### Theorems
 
@@ -223,10 +246,11 @@ of that operation. Each model step is the model function itself.
 | `perform_linked` | `Continuation::new` | `do_perform` adds a model record. The new exec record and that record satisfy `kont_rel`. |
 | `resume_linked` | `resume` | A success is the model step `step_resume`, and the records stay related. If the model state is `err_resume_used`, the exec resume fails and does not change the record. Before a drop, the exec succeeds exactly when the model allows the resume. After a drop, the exec resume fails. |
 | `return_linked` | `drop_now` at a clause return | The step is `step_return`, and the records stay related. For a `once` continuation, the exec aborts exactly when the model sends the captured frames to the unwinder. |
+| `end_linked` | `end` after a drop | The model record does not change. The exec record is `Dropped`, and the records stay related. |
 | `unwind_drop_linked` | `drop_now` in the unwinder | If the model drops (`holds_fresh`), the exec aborts and the step is `step_unwind_drop`. Else the records stay related. |
-| `acquire_linked` | `Linear::new` | `do_acquire` adds a model resource. The new exec record and that resource satisfy `lin_rel`. |
+| `acquire_linked` | `Linear::new` | `do_acquire` adds a model resource. The new exec record and that resource satisfy `lin_rel`. The interpreter gives the `on abort` flag of the type. |
 | `consume_linked` | `consume` | A success is the model step `step_consume`. If the model state is `err_consumed_twice`, the exec consume fails and does not change the record. |
-| `unwind_linked` | `unwind` | The exec runs `on abort` exactly when the model resource is live. With `on abort`, the step is `step_unwind_abort`. If the exec does not run it, the model state is `err_unwind_dead`. |
+| `unwind_linked` | `unwind` | The exec runs `on abort` exactly when the model resource is live and has `on abort`. Then the step is `step_unwind_abort`. For a live value with no `on abort`, the exec unwind fails, and the model state is `err_no_on_abort`. For a value that is not live, the exec does not run `on abort`, and the model state is `err_unwind_dead`. |
 
 Each function requires the relation and gives it again after a model step.
 Thus the relations hold along each sequence of these operations, while each
@@ -235,8 +259,8 @@ sequences.
 
 For `once` continuations and for linear values, each exec transition is a
 model transition. The exec API refuses each transition into the model
-errors `err_resume_used`, `err_consumed_twice` and `err_unwind_dead`. For
-`multi` continuations, see the differences below.
+errors `err_resume_used`, `err_consumed_twice`, `err_no_on_abort` and
+`err_unwind_dead`. For `multi` continuations, see the differences below.
 
 ### Differences
 
@@ -250,16 +274,20 @@ The link states these differences in the theorems. It does not hide them.
   consequence.
 * After that abort, the exec record is `Dropped`, and an exec resume fails.
   The model record does not change, and the model allows the resume
-  (`ex_multi_dropped_resume`). The interpreter copies the `Clause` frames of
-  a `multi` continuation with the same record
-  (`crates/weft-interp/src/machine/effects.rs`, `copy_frames`). Thus, if one
-  copy returns without a resume and another copy then resumes, the
-  interpreter faults where the model continues.
-* `Linear` has no `on abort` flag. If the type of a live value has no
-  `on abort`, the exec unwind still succeeds, but the model state is the error
-  `err_no_on_abort`. The checker rule (W0602, E3) must exclude this case.
-* After an abort, the postcondition of `drop_now` does not keep the mode of
-  the record. Thus `kont_rel` does not use the mode of a `Dropped` record.
+  (`ex_multi_dropped_resume`). The interpreter does not get to this state
+  for a copy of a frame. A copy of a `multi` continuation gives each
+  `Clause` frame in it a copy of its continuation record, with copies of its
+  frames (`crates/weft-interp/src/machine/effects.rs`, `copy_frames`). So one
+  copy can return without a resume, and another copy can then resume its own
+  record (`crates/weft-interp/tests/programs/multi_nested_drop.wf`). The
+  exec resume still fails for the one record that the abort dropped.
+* When the clause of a continuation ends (a return, an unwind, or a drop of
+  frames that do not run), the interpreter ends the exec record with `end`
+  (`end_linked`). The record is then `Dropped`, and an exec resume fails. The
+  model has no step there: the model record does not change, and for a
+  `multi` record the model allows a resume. The checker keeps a closure that
+  resumes inside its clause (W0313, W0314), so a checked program does not
+  resume an ended record. The exec fault catches the rest.
 
 ## Examples (`src/examples.rs`)
 
@@ -280,14 +308,15 @@ The link states these differences in the theorems. It does not hide them.
 | `ex_multi_dropped_resume` | Gap witness: an exec resume after the `multi` abort fails, and the model allows it. |
 | `ex_consume_twice` | Vacuity guard for `Linear`: acquire and consume are the model steps. A consume from a duplicated frame fails where the model state is `err_consumed_twice`. |
 | `ex_unwind_once` | The unwinder runs `on abort` once (`step_unwind_abort`). A duplicated pending frame then finds a dead value (`err_unwind_dead`), and the exec unwind does not run `on abort` again. |
+| `ex_unwind_no_on_abort` | Vacuity guard for E3: the unwinder finds a live value with no `on abort` (`err_no_on_abort`). The exec unwind fails and does not change the record. |
 
 ## Mutation tests
 
 `mutations/run.sh` runs the mutation tests. Each mutation changes a copy of
 the sources in a temporary directory. The test passes if `verify.sh` fails on
 the copy. The script does not change the repository. The script needs
-`python3` and `verus`. It takes about ten minutes. All 24 mutations make
-`verify.sh` fail. For 16 of them, `crates/weft-verified` still verifies
+`python3` and `verus`. It takes about ten minutes. All 26 mutations make
+`verify.sh` fail. For 17 of them, `crates/weft-verified` still verifies
 alone.
 
 ```bash
@@ -310,7 +339,7 @@ that postcondition.
 | m3 | `Elem` and `Seg` do not alias (spec and exec). | no | `weft-verified places.rs`, `places_link.rs` |
 | m3b | As m3, and `Seg` is not within `Elem` (spec and exec). | yes | `places_link.rs` |
 | m4 | `Deref` does not alias `Deref` (spec and exec). | no | `weft-verified places.rs`, `places_link.rs` |
-| m5 | Field steps alias without equal ids (spec and exec). | yes | `dataflow_link.rs`, `places_link.rs` |
+| m5 | Field steps alias without equal ids (spec and exec). | no | `weft-verified places.rs` (`lemma_step_class`), `dataflow_link.rs`, `places_link.rs` |
 | m8 | Sides of different splits do not alias (spec and exec). | yes | `examples.rs`, `places_link.rs` |
 | m9 | The same side of one split does not alias itself (spec and exec). | no | `weft-verified places.rs`, `places_link.rs` |
 | m10 | The two sides of one split alias (spec and exec). | no | `weft-verified places.rs`, `examples.rs`, `places_link.rs` |
@@ -327,13 +356,18 @@ that postcondition.
 | l4 | Model: a used `once` continuation can resume. | yes | `lifecycle_link.rs` |
 | l5 | Model: `do_return` does not mark the dropped `once` record used. | yes | `lifecycle_link.rs` |
 | l6 | `unwind` also runs `on abort` for a consumed value (spec and exec). | yes | `lifecycle_link.rs` |
+| l7 | `drop_now` makes an aborted record `once` (spec and exec). | yes | `lifecycle_link.rs` |
+| l8 | `unwind` runs `on abort` for a type with no `on abort` (spec and exec). | yes | `lifecycle_link.rs` |
 
 ## What stays only tested
 
 * The fact generation in sema (`crates/weft-sema/src/body/`): `points_into`,
-  `mutates_at`, `rebound_at`, `uses`, `cfg_edge` and lexical scope. The link
-  takes them as hypotheses (`facts_ok`, `bound_before_use`).
-* The B1 condition `ret_ok` in `facts_ok` (see "Hypotheses").
+  `mutates_at`, `rebound_at`, `uses` and `cfg_edge`. The link takes them as
+  hypotheses (`facts_ok`, `bound_before_use`). The sema unit tests, the corpus
+  diagnostics and the lints of `crates/weft-check/tests/hypotheses.rs` test
+  them.
+* The B1 condition `ret_ok` in `facts_ok`. It is false for some accepted
+  programs (see "Hypotheses").
 * The glue in `crates/weft-check/src/rules.rs` that builds `succ`, `gen` and
   `kill` from the facts, and the evidence search. `invalid_at` and
   `invalidates_in_model` state what the glue must compute.
@@ -350,11 +384,12 @@ that postcondition.
   no model predicate for them.
 * The other analyses that use `propagate`: moves, linear liveness, `multi`.
   The effects model has its own checker. The link does not connect the two.
-* The interpreter glue around the exec records. For example, `consume_lin`
-  (`crates/weft-interp/src/machine/exec.rs`) ignores a failed consume of an
-  `Aborted` value. The model calls that consume `err_consumed_twice`. The
-  link proves that the exec API refuses it, but not that the interpreter
-  stops.
+* The interpreter glue around the exec records. When the exec API refuses
+  an operation, the interpreter stops with a fault: `consume_lin`
+  (`crates/weft-interp/src/machine/exec.rs`) for a consume of a finished
+  value, and `unwind_lin` (`machine/effects.rs`) for a live value with no
+  `on abort`. Tests in `crates/weft-interp/tests/guards.rs` check this. The
+  link does not prove it.
 * `Continuation` and `Linear` derive `Copy`. The link assumes one exec record
   per model record. The interpreter must not copy a record.
 * `modes.rs`.

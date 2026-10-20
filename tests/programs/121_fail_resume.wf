@@ -1,0 +1,67 @@
+// A clause of `Fail.fail` cannot resume. The runtime raises a failure where no
+// value follows: at a `join` of a failed task, at the end of a scope with a
+// failed child, at a `fork`, at a `with_timeout` deadline and at a failed read.
+// A resume there would give `()` in place of a value of another type. The
+// effects proof models `fail` as an operation whose clause does not resume
+// (ADR 0005). So a `resume` in the clause is W0504, also in a closure.
+fn work() -> u64 / fail {
+    fail("boom")
+    5
+}
+
+fn resume_join() -> u64 / io {
+    handle Fail { fn fail(m) { print("caught {m}"); resume(()) } } in {   //~ W0504
+        scope { s =>
+            let t = s.spawn(|| work())
+            t.join() + 1
+        }
+    }
+}
+
+fn resume_timeout() -> u64 / io {
+    handle Fail { fn fail(m) { resume(()) } } in {   //~ W0504
+        let v = with_timeout(10.ms) { sleep(100.ms); 5 }
+        v + 1
+    }
+}
+
+fn resume_in_closure() -> u64 / io {
+    handle Fail {
+        fn fail(m) {
+            let k = || resume(())   //~ W0504
+            k()
+        }
+    } in work()
+}
+
+fn resume_twice_paths(c: bool) -> u64 / io {
+    handle Fail {
+        fn fail(m) {
+            if c { resume(()) } else { 0 }   //~ W0504
+        }
+    } in work()
+}
+
+// A clause of `fail` gives the value of the `handle`.
+fn caught() -> u64 / io {
+    handle Fail { fn fail(m) { print("caught {m}"); 0 } } in {
+        scope { s =>
+            let t = s.spawn(|| work())
+            t.join() + 1
+        }
+    }
+}
+
+// A clause of a user effect can resume.
+effect Retry { fn retry(m: String) }
+fn retried() -> u64 {
+    handle Retry { fn retry(m) { resume(()) } } in {
+        retry("again")
+        3
+    }
+}
+
+fn main() / io {
+    print(caught())
+    print(retried())
+}

@@ -3,8 +3,7 @@
 This crate is the verified core of the Weft checker. Verus proves the code.
 A normal `cargo build` compiles the same code. The `verus!` macro removes the
 specs and the proofs. The production checker and the interpreter call most of
-these functions. `places::concat` and the `modes` functions are verified but not
-yet used.
+these functions. `places::concat` is verified but not yet used.
 
 ## Verify
 
@@ -19,15 +18,15 @@ verus crates/weft-verified/src/lib.rs --crate-type=lib
 The result must be:
 
 ```text
-verification results:: 64 verified, 0 errors
+verification results:: 67 verified, 0 errors
 ```
 
 | Module | Verified |
 | --- | --- |
-| `places` | 25 |
+| `places` | 27 |
 | `dataflow` | 16 |
 | `modes` | 9 |
-| `lifecycle` | 14 |
+| `lifecycle` | 15 |
 
 To verify one module, add `--verify-module <name>`.
 
@@ -50,6 +49,7 @@ the value of its spec function.
 | --- | --- |
 | `step_alias` | `r == spec_step_alias(*a, *b)` |
 | `step_within` | `r == spec_step_within(*a, *b)` |
+| `step_class` | `r == spec_step_class(*s)` |
 | `may_prefix` | `r == spec_may_prefix(m@, p@)` |
 | `crosses_unstable` | `r == spec_crosses_unstable(from as int, p@)` |
 | `invalidates` | `r == spec_invalidates(m@, p@)` (rule 3) |
@@ -60,6 +60,7 @@ the value of its spec function.
 | Lemma | Statement |
 | --- | --- |
 | `lemma_step_alias_symmetric` | Step aliasing is symmetric. |
+| `lemma_step_class` | Steps of different classes do not alias, and neither is within the other. The bridge compares only the steps of one class. |
 | `lemma_no_self_invalidation` | Rule 4: a mutation of `p` does not invalidate a reference to `p`. |
 | `lemma_stable_suffix_survives` | Rule 4: if all steps of `p` after `m` are stable, a mutation of `m` does not invalidate `p`. |
 | `lemma_disjoint_no_invalidation` | A mutation does not invalidate a place that it does not overlap. |
@@ -107,8 +108,14 @@ fixpoint is a subset of the nodes, so it is finite. The theorem is the same.
 
 ## `modes`: the mode lattice
 
-Not yet used: the checker decides the mode rules with flags in the facts
-(`nonportable`, `uniq`, `shared`). A later stage can use these functions.
+The facts have a flag for each axis of a variable (`nonportable`, `uniq`, `once`).
+`weft-facts` makes a `Modes` value from them (`VarInfo::capture_mode`, `uniqueness`).
+The checker decides W0406 (`not_uniq`) and W0403 with `submode` on the axis of
+uniqueness, and W0401 and `pinned` with `join` and `submode` against
+`CROSSES_THREADS`. Sema joins the uniqueness of two values, of the states of
+branches and of the captures of a closure with `join` (`weft_facts::join_uniq`),
+and finds the pinned tasks of a body with `submode`. W0503 and W0402 use flags of
+the facts (`once_var`, `shared_root`).
 
 | Exec function | Ensures |
 | --- | --- |
@@ -132,10 +139,10 @@ The interpreter uses these state machines at run time.
 | --- | --- |
 | `Continuation::new` | The state is `Fresh`. |
 | `Continuation::resume` | The resume succeeds only if the state is `Fresh`, or `Resumed` for a `multi` continuation. A second resume of a `once` continuation fails with `AlreadyResumed`. A resume after a drop fails with `AlreadyDropped`. A failure does not change the state. |
-| `Continuation::drop_now` | The drop aborts only a `Fresh` continuation. Otherwise it does not change the state. |
-| `Linear::new` | The state is `Live`. |
-| `Linear::consume` | The consume succeeds only for a `Live` value. A failure does not change the state. |
-| `Linear::unwind` | `on abort` runs only for a `Live` value. Otherwise the state does not change. |
+| `Continuation::drop_now` | The drop aborts only a `Fresh` continuation. Otherwise it does not change the state. The mode does not change. |
+| `Linear::new` | The state is `Live`. The record keeps the `on abort` flag of the type. |
+| `Linear::consume` | The consume succeeds only for a `Live` value. A failure (`NotLive`) does not change the record. |
+| `Linear::unwind` | `Ok(true)`: `on abort` runs, only for a `Live` value with `on abort`. `Ok(false)`: the value is finished. `Err(NoOnAbort)`: a `Live` value with no `on abort`. Only `Ok(true)` changes the record. |
 | `Linear::is_finished` | `r == (state != Live)` |
 
 | Lemma | Statement |

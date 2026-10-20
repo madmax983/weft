@@ -1,0 +1,30 @@
+// unchecked
+// expect-error: rollback failed
+// An `on abort` function fails (the checker rejects that, W0118). The failure
+// aborts the task while an unwinding waits to give the value of a clause that
+// did not resume. The abort of the task unwinds that unwinding too: the
+// unwinder runs `on abort` for the value of the clause (ADR 0010).
+effect Ask { fn ask() -> u64 }
+linear struct Tx { id: u64 }
+    on abort = rollback
+linear struct Val { id: u64 }
+    on abort = drop_val
+
+fn rollback(t: Tx) / fail {
+    let Tx(id) = t
+    print("rollback {id}")
+    fail("rollback failed")
+}
+fn drop_val(v: Val) { let Val(id) = v; print("drop val {id}") }
+fn take(v: Val) { let Val(id) = v; print("take {id}") }
+fn commit(t: Tx) { let Tx(id) = t }
+
+fn main() / io {
+    let r = handle Ask { fn ask() { Val { id: 9 } } } in {
+        let t = Tx { id: 1 }
+        let x = ask()
+        commit(t)
+        Val { id: x }
+    }
+    take(r)
+}

@@ -1,0 +1,136 @@
+// A task can change a place at any time while it runs. So a reference that the
+// parent makes while the task runs is invalid after the join, the end of the
+// scope or an abort, if the task changes what it points into (W0301). An index
+// reads the length and the buffer of the indexed place, so a borrow through an
+// index is a read of that place (W0405, ADR 0006).
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+
+// The reference comes after the spawn and is used after the join.
+fn use_after_join() / async {
+    let v = mk_v()
+    scope { s =>
+        let t = s.spawn(|| v.clear())
+        let r = &v[1]   //~ W0405
+        t.join()
+        print(r + 1)   //~ W0301
+    }
+}
+
+// The reference gets a new value in the scope and is used after it.
+fn use_after_scope() / async {
+    let v = mk_v()
+    let r = &v[0]
+    scope { s =>
+        s.spawn(|| v.clear())
+        r = &v[1]   //~ W0405
+    }
+    print(r + 1)   //~ W0301
+}
+
+// A fork branch changes `v` while the other one reads its length.
+fn fork_index() / par {
+    let v = mk_v()
+    fork(|| v.clear(), || { let r = &v[0]; () })   //~ W0403 W0405
+}
+
+// An abort of the scope ends the task too.
+fn use_after_abort(c: bool) / async {
+    let v = mk_v()
+    let w = mk_v()
+    let r = &w[0]
+    handle Fail { fn fail(m) { () } } in {
+        scope { s =>
+            s.spawn(|| v.clear())
+            if c {
+                r = &v[1]   //~ W0405
+                fail("stop")
+            }
+        }
+        r = &w[1]
+    }
+    print(r + 1)   //~ W0301
+}
+
+// Clean: the reference into another local stays valid.
+fn other_local() / async {
+    let v = mk_v()
+    let w = mk_v()
+    scope { s =>
+        let t = s.spawn(|| v.clear())
+        let r = &w[1]
+        t.join()
+        print(r + 1)
+    }
+}
+
+// Clean: the reference comes after the join.
+fn after_join() / async {
+    let v = mk_v()
+    scope { s =>
+        let t = s.spawn(|| v.push(3))
+        t.join()
+        let r = &v[2]
+        print(r + 1)
+    }
+}
+
+// Clean: task `a` starts task `b` in the same scope, and `b` writes `v`. The
+// join of `a` does not change `v` again: `b` can still run there, and its own
+// end changes `v`.
+fn nested_join() / async {
+    let v = mk_v()
+    scope { s =>
+        let a = s.spawn(|| {
+            s.spawn(|| v.push(2))
+            ()
+        })
+        a.join()
+        print(1)
+    }
+    print(v.len())
+}
+
+// Task `a` starts task `b` and writes `v` itself, while `b` runs. The parent
+// borrows `v` after the join of `a`, while `b` can still run.
+fn nested_join_writes() / async {
+    let v = mk_v()
+    scope { s =>
+        let a = s.spawn(|| {
+            s.spawn(|| v.push(2))
+            v.push(3)   //~ W0405
+        })
+        a.join()
+        let r = &v[0]   //~ W0405
+        print(r + 1)   //~ W0405
+    }
+}
+
+// Task `a` starts task `b` and joins it. The end of `a` changes what `b`
+// writes, so the reference is invalid after it.
+fn nested_joined() / async {
+    let v = mk_v()
+    let w = mk_v()
+    let r = &w[0]
+    scope { s =>
+        let a = s.spawn(|| {
+            scope { i =>
+                let b = i.spawn(|| v.clear())
+                b.join()
+            }
+        })
+        r = &v[1]   //~ W0405
+        a.join()
+    }
+    print(r + 1)   //~ W0301
+}
+
+fn main() / async {
+    other_local()
+    after_join()
+    nested_join()
+}

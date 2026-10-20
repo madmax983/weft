@@ -1,0 +1,41 @@
+// The value of a clause is the value of its `handle`. A reference into a
+// reference parameter of the clause points into what the operation gets: each
+// place that a perform gives, or any place inside what a call that reaches the
+// handler gives.
+effect Pick { fn pick(a: &Vec<u64>) -> u64 }
+
+fn picks(v: &Vec<u64>) -> u64 / Pick { pick(v) }
+
+fn from_perform(v: &Vec<u64>, w: &Vec<u64>) / mut(v) {
+    let r = handle Pick { fn pick(a) { &a[0] } } in {
+        let n = pick(v)
+        &w[0]
+    }
+    v.clear()
+    print(r)   //~ W0301
+}
+fn from_call(v: &Vec<u64>, w: &Vec<u64>) / mut(v) {
+    let r = handle Pick { fn pick(a) { &a[0] } } in {
+        let n = picks(v)
+        &w[0]
+    }
+    v.clear()
+    print(r)   //~ W0301
+}
+// Controls: the other vector changes, or the reference is used first.
+fn other_changes(v: &Vec<u64>, w: &Vec<u64>) / mut(w) {
+    let r = handle Pick { fn pick(a) { &a[0] } } in {
+        let n = pick(v)
+        &v[1]
+    }
+    w.clear()
+    print(r)
+}
+fn used_first(v: &Vec<u64>, w: &Vec<u64>) / mut(v) {
+    let r = handle Pick { fn pick(a) { &a[0] } } in {
+        let n = pick(v)
+        &w[0]
+    }
+    print(r)
+    v.clear()
+}

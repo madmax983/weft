@@ -1,0 +1,78 @@
+// A scope can cancel a task, and a `fork` its branches, before the task runs:
+// a sibling fails, or the owner times out or is cancelled. The closure of the
+// task then goes away with the values that it moved. So a linear value that a
+// task closure takes by value needs `on abort` (W0602 at the spawn or the
+// `fork`, ADR 0006, ADR 0007, review round 3, F3-8). Any scope can be cancelled
+// while a task waits. The unwinder runs the `on abort` of each value in the
+// closure of a cancelled task (ADR 0010).
+linear struct Tx { id: u64 }
+linear struct Lock { id: u64 }
+    on abort = unlock_on_abort
+fn unlock_on_abort(l: Lock) { let Lock(i) = l; print("unlock {i}") }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn lock(n: u64) -> Lock { Lock { id: n } }
+fn unlock(l: Lock) { let Lock(i) = l; print("unlock {i}") }
+fn boom() / fail { fail("boom") }
+fn boom_n() -> u64 / fail { fail("boom"); 2 }
+
+// The closure takes `tx`, and a sibling can fail before the task runs.
+fn task_owns() / async, fail {
+    scope { s =>
+        s.spawn(|| boom())
+        let tx = begin(1)
+        s.spawn(|| commit(tx))   //~ W0602
+    }
+}
+
+// The same with no sibling: the owner of the scope can be cancelled too.
+fn task_owns_alone() / async {
+    scope { s =>
+        let tx = begin(2)
+        let t = s.spawn(|| commit(tx))   //~ W0602
+        t.join()
+    }
+}
+
+// A closure that a local holds moves at the spawn.
+fn task_owns_local() / async {
+    scope { s =>
+        let tx = begin(3)
+        let f = || commit(tx)
+        s.spawn(f)   //~ W0602
+    }
+}
+
+// A fork branch that takes `tx`.
+fn branch_owns() / par, fail {
+    let tx = begin(4)
+    let (a, b) = fork(|| commit(tx), || boom_n())   //~ W0602
+}
+
+// Clean: the type of the value has `on abort`.
+fn task_owns_lock() / async, fail {
+    scope { s =>
+        s.spawn(|| boom())
+        let l = lock(5)
+        s.spawn(|| unlock(l))
+    }
+}
+
+// Clean: a fork branch that takes a value with `on abort`.
+fn branch_owns_lock() / par, fail {
+    let l = lock(6)
+    let (a, b) = fork(|| unlock(l), || boom_n())
+}
+
+// Clean: the task makes the linear value itself.
+fn task_makes() / async {
+    scope { s =>
+        s.spawn(|| commit(begin(7)))
+    }
+}
+
+fn main() / async, par {
+    handle Fail { fn fail(m) { print("failed: {m}") } } in task_owns_lock()
+    handle Fail { fn fail(m) { print("failed: {m}") } } in branch_owns_lock()
+    task_makes()
+}

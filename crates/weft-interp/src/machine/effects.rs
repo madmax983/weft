@@ -12,9 +12,11 @@ use std::rc::Rc;
 use weft_sema::program::EffectId;
 use weft_verified::lifecycle::{ContError, Continuation, LinState};
 
-use super::{After, CodeFrame, ContRec, Flow, Frame, SimSaved, TaskResult, Timer, Unwind, Wait, R};
+use super::{
+    After, CodeFrame, ContRec, Flow, Frame, HandleMark, SimId, TaskResult, Timer, Unwind, Wait, R,
+};
 use crate::error::ErrorKind;
-use crate::heap::SlotKind;
+use crate::heap::{take_moved, SlotKind};
 use crate::trace::{SuspendReason, TraceEvent};
 use crate::value::{CellId, CodeId, ContId, HEnv, Place, TaskId, Value};
 
@@ -34,7 +36,7 @@ impl super::Machine<'_, '_> {
             .rt
             .prog
             .effects
-            .get(effect)
+            .get(effect.index())
             .and_then(|e| e.ops.get(op))
             .is_some_and(|o| o.multi);
         let frames = self.task().frames.split_off(idx);
@@ -117,7 +119,13 @@ impl super::Machine<'_, '_> {
             std::mem::take(&mut rec.frames)
         };
         self.task().frames.extend(frames);
-        self.deliver(v)
+        let flow = self.deliver(v)?;
+        // A `with_timeout` deadline that passed while the block was in the
+        // continuation holds now: the block times out (ADR 0010).
+        if let Some(f) = self.late_timeout() {
+            return Ok(f);
+        }
+        Ok(flow)
     }
 
     /// Gives a value to the frame on top. Marks pass it down.
@@ -125,8 +133,7 @@ impl super::Machine<'_, '_> {
         let cur = self.cur;
         loop {
             let Some(top) = self.tasks[cur].frames.last_mut() else {
-                self.finish_task(cur, TaskResult::Ok(v));
-                return Ok(Flow::Done);
+                return self.end_task(v);
             };
             match top {
                 Frame::Code(cf) => {
@@ -146,10 +153,11 @@ impl super::Machine<'_, '_> {
                     self.tasks[cur].frames.pop();
                     self.remove_timeout(id);
                 }
-                Frame::Sim { .. } => {
-                    if let Some(Frame::Sim { saved }) = self.tasks[cur].frames.pop() {
-                        self.restore_sim(*saved);
-                    }
+                Frame::Sim { outer, .. } => {
+                    let outer = *outer;
+                    self.tasks[cur].frames.pop();
+                    self.tasks[cur].sim_worker = outer;
+                    self.trace.push(TraceEvent::SimEnd);
                 }
                 Frame::Clause { cont } => {
                     let k = *cont;
@@ -166,6 +174,9 @@ impl super::Machine<'_, '_> {
                         })));
                         return Ok(Flow::Continue);
                     }
+                    // The clause ends: a closure that it gave away cannot
+                    // resume the continuation later.
+                    self.conts[k].k.end();
                     self.drop_frames(frames);
                 }
                 Frame::Fork { .. } => {
@@ -175,36 +186,59 @@ impl super::Machine<'_, '_> {
         }
     }
 
-    /// Restores the state outside a simulation.
-    pub(crate) fn restore_sim(&mut self, saved: SimSaved) {
-        self.sim = saved.sim;
-        self.sched_rng = saved.sched;
-        self.rand_rng = saved.rand;
-        self.trace.push(TraceEvent::SimEnd);
+    /// Ends the current task with the value `v`. If the unwinder already
+    /// finished the handle of the task (its `on abort` cancelled the task),
+    /// no `join` can take the value. Then the task finishes the live linear
+    /// parts of the value itself before it ends (ADR 0010).
+    fn end_task(&mut self, v: Value) -> R<Flow> {
+        let cur = self.cur;
+        if self.tasks[cur].handle.state != LinState::Aborted {
+            self.finish_task(cur, TaskResult::Ok(v));
+            return Ok(Flow::Done);
+        }
+        let mut found = Vec::new();
+        let rest = self.extract_linear(v, &mut found);
+        let mut live = VecDeque::new();
+        for x in found {
+            if self.unwind_lin(&x)? {
+                live.push_back(x);
+            } else {
+                self.heap.drop_value(x);
+            }
+        }
+        if live.is_empty() {
+            self.finish_task(cur, TaskResult::Ok(rest));
+            return Ok(Flow::Done);
+        }
+        self.tasks[cur].frames.push(Frame::Unwind(Box::new(Unwind {
+            frames: Vec::new(),
+            aborts: live,
+            then: After::Finish(TaskResult::Ok(rest)),
+            prepass: true,
+            children: Vec::new(),
+        })));
+        Ok(Flow::Continue)
     }
 
-    /// Starts a simulation: it replaces the root handlers.
-    pub(crate) fn enter_sim(&mut self, seed: u64) -> SimSaved {
-        let saved = SimSaved {
-            sim: self.sim.take(),
-            sched: self.sched_rng.clone(),
-            rand: self.rand_rng.clone(),
-        };
-        self.sim = Some(super::SimState {
+    /// Starts a simulation with `workers` simulated workers: it replaces the
+    /// root handlers for the code above its `Sim` frame and for the tasks that
+    /// this code spawns.
+    pub(crate) fn enter_sim(&mut self, seed: u64, workers: usize) -> SimId {
+        self.sims.push(super::SimState {
             start: self.now,
             partition: None,
+            sched: crate::rng::Rng::new(seed),
+            rand: crate::rng::Rng::new(seed ^ super::RAND_SALT),
+            queues: (0..workers.max(1)).map(|_| VecDeque::new()).collect(),
         });
-        self.sched_rng = crate::rng::Rng::new(seed);
-        self.rand_rng = crate::rng::Rng::new(seed ^ super::RAND_SALT);
         self.trace.push(TraceEvent::SimStart { seed });
-        saved
+        self.sims.len() - 1
     }
 
     /// Aborts the whole current task: unwinds every frame, then ends the task.
     pub(crate) fn abort_task(&mut self, result: TaskResult) -> Flow {
         let cur = self.cur;
         let frames = std::mem::take(&mut self.tasks[cur].frames);
-        self.tasks[cur].aborting = true;
         self.tasks[cur].frames.push(Frame::Unwind(Box::new(Unwind {
             frames,
             aborts: VecDeque::new(),
@@ -235,6 +269,30 @@ impl super::Machine<'_, '_> {
                 msg: "timeout".into(),
                 henv,
             },
+            prepass: false,
+            children: Vec::new(),
+        })));
+        Some(Flow::Continue)
+    }
+
+    /// A child of scope `sid` failed. Unwinds the frames of the scope, which
+    /// cancels the other children, and then performs `fail(msg)` with the
+    /// handlers of the scope, as `timeout_unwind` does for a `with_timeout`
+    /// block. Handlers are lexical: a handler that the owner installed inside
+    /// the scope does not get the failure (ADR 0010). `check_interrupt` calls
+    /// this only while the frame of the scope is on the task stack.
+    pub(crate) fn scope_fail_unwind(&mut self, sid: crate::value::ScopeId) -> Option<Flow> {
+        let cur = self.cur;
+        let idx = Self::scope_frame(&self.tasks[cur].frames, sid)?;
+        let s = self.scopes.get_mut(sid)?;
+        let msg = s.failure.clone()?;
+        s.propagated = true;
+        let henv = s.henv.clone();
+        let frames = self.tasks[cur].frames.split_off(idx);
+        self.tasks[cur].frames.push(Frame::Unwind(Box::new(Unwind {
+            frames,
+            aborts: VecDeque::new(),
+            then: After::Fail { msg, henv },
             prepass: false,
             children: Vec::new(),
         })));
@@ -281,6 +339,11 @@ impl super::Machine<'_, '_> {
             let frames = std::mem::take(&mut u.frames);
             let mut kids = Vec::new();
             self.children_in(&frames, &mut kids);
+            for &k in &kids {
+                if self.is_done(k) {
+                    self.oracle_join(k);
+                }
+            }
             kids.retain(|&t| !self.is_done(t));
             for &t in &kids {
                 self.cancel(t);
@@ -290,9 +353,12 @@ impl super::Machine<'_, '_> {
             u.children = kids;
         }
         let kids = self.unwind_top()?.children.clone();
-        let pending: Vec<TaskId> = kids.into_iter().filter(|&t| !self.is_done(t)).collect();
+        let pending: Vec<TaskId> = kids.iter().copied().filter(|&t| !self.is_done(t)).collect();
         if !pending.is_empty() {
             return Ok(self.block(Wait::Children(pending), SuspendReason::Children));
+        }
+        for k in kids {
+            self.oracle_join(k);
         }
         let u = self.unwind_top()?;
         if let Some(v) = u.aborts.pop_front() {
@@ -305,14 +371,24 @@ impl super::Machine<'_, '_> {
         let Some(Frame::Unwind(u)) = self.tasks[cur].frames.pop() else {
             return Err(self.fault("internal: no unwinding"));
         };
-        match u.then {
-            After::Deliver(v) => self.deliver(v),
+        let flow = match u.then {
+            After::Deliver(v) => self.deliver(v)?,
             After::Finish(r) => {
                 self.finish_task(cur, r);
-                Ok(Flow::Done)
+                return Ok(Flow::Done);
             }
-            After::Fail { msg, henv } => self.fail(msg, &henv),
+            After::Fail { msg, henv } => self.fail(msg, &henv)?,
+        };
+        // The unwinding deferred the interrupts of the task for the frames
+        // below it (`defers`, `live_base`): a cancel, a deadline that passed,
+        // a failure of a child. The task handles them now (ADR 0010).
+        if flow == Flow::Done {
+            return Ok(flow);
         }
+        if let Some(f) = self.check_interrupt() {
+            return Ok(f);
+        }
+        Ok(flow)
     }
 
     /// Unwinds one frame: finds live linear values and drops the rest.
@@ -326,7 +402,7 @@ impl super::Machine<'_, '_> {
                 }
                 let mut live = Vec::new();
                 for v in found {
-                    if self.unwind_lin(&v) {
+                    if self.unwind_lin(&v)? {
                         live.push(v);
                     } else {
                         self.heap.drop_value(v);
@@ -339,18 +415,22 @@ impl super::Machine<'_, '_> {
                 if self.conts[cont].k.drop_now() {
                     self.unwind_top()?.frames.extend(frames);
                 } else {
+                    self.conts[cont].k.end();
                     self.drop_frames(frames);
                 }
             }
             Frame::Scope { scope } | Frame::Fork { scope, .. } => {
-                let kids: Vec<TaskId> = self
+                let all: Vec<TaskId> = self
                     .scopes
                     .get(scope)
                     .map(|s| s.children.clone())
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter(|&t| !self.is_done(t))
-                    .collect();
+                    .unwrap_or_default();
+                for &k in &all {
+                    if self.is_done(k) {
+                        self.oracle_join(k);
+                    }
+                }
+                let kids: Vec<TaskId> = all.iter().copied().filter(|&t| !self.is_done(t)).collect();
                 if !kids.is_empty() {
                     for &t in &kids {
                         self.cancel(t);
@@ -360,32 +440,69 @@ impl super::Machine<'_, '_> {
                     u.children.clone_from(&kids);
                     return Ok(self.block(Wait::Children(kids), SuspendReason::Children));
                 }
+                // The results of the children that are done and that no
+                // `join` can take: the value of a fork branch, and the result
+                // of a task whose handle went to the scope (`done_results`).
+                let live = self.done_results(&all)?;
+                self.unwind_top()?.aborts.extend(live);
             }
             Frame::Timeout { id, .. } => self.remove_timeout(id),
-            Frame::Sim { saved } => self.restore_sim(*saved),
+            Frame::Sim { outer, .. } => {
+                let cur = self.cur;
+                self.tasks[cur].sim_worker = outer;
+                self.trace.push(TraceEvent::SimEnd);
+            }
             Frame::Handle(_) => {}
             Frame::Unwind(inner) => {
                 let inner = *inner;
-                if let After::Deliver(v) = inner.then {
-                    self.heap.drop_value(v);
+                // The value that the inner unwinding gives at its end, such as
+                // the value of a clause that did not resume, goes away: the
+                // unwinder finishes its linear parts.
+                let mut found = Vec::new();
+                match inner.then {
+                    After::Deliver(v) | After::Finish(TaskResult::Ok(v)) => {
+                        let rest = self.extract_linear(v, &mut found);
+                        self.heap.drop_value(rest);
+                    }
+                    After::Finish(_) | After::Fail { .. } => {}
+                }
+                let mut live = Vec::new();
+                for v in found {
+                    if self.unwind_lin(&v)? {
+                        live.push(v);
+                    } else {
+                        self.heap.drop_value(v);
+                    }
                 }
                 let u = self.unwind_top()?;
                 u.frames.extend(inner.frames);
                 u.aborts.extend(inner.aborts);
+                u.aborts.extend(live);
             }
         }
         Ok(Flow::Continue)
     }
 
     /// Returns the values of a code frame, innermost first: the operand stack from
-    /// the top, then temporaries, then slots in reverse order.
+    /// the top, then temporaries, then slots in reverse order, then the captures
+    /// that the frame owns (the first frame of a task).
+    ///
+    /// A closure is a copy value, so it stays in its cell. A closure that owns
+    /// cells is in the result too: the unwinder finishes the linear values in
+    /// its cells (`extract_linear`).
     fn frame_values(&mut self, cf: CodeFrame) -> Vec<Value> {
         let mut vals: Vec<Value> = cf.stack.into_iter().rev().collect();
         let mut cells: Vec<CellId> = cf.temps.into_iter().rev().collect();
         cells.extend(cf.slots.into_iter().rev().flatten());
+        cells.extend(cf.owned.into_iter().rev());
+        // The scope of each local and temporary ends here, as at a normal end
+        // (`end_cells`): the oracle sees a later read through a reference
+        // into the cell.
         for c in cells {
-            if let Ok(v) = self.heap.take(&Place::root(c)) {
+            if let Some(v) = self.heap.end_cell_value(c) {
                 vals.push(v);
+            } else if let Ok(s) = self.heap.slot(c) {
+                owning_closures(&s.val, &mut vals);
             }
         }
         vals
@@ -399,6 +516,7 @@ impl super::Machine<'_, '_> {
                 Frame::Clause { cont } => {
                     let fs = std::mem::take(&mut self.conts[cont].frames);
                     let _ = self.conts[cont].k.drop_now();
+                    self.conts[cont].k.end();
                     self.drop_frames(fs);
                 }
                 Frame::Timeout { id, .. } => self.remove_timeout(id),
@@ -471,31 +589,63 @@ impl super::Machine<'_, '_> {
                 }
                 v
             }
+            // A closure holds the captures that it moved in cells of its own.
+            Value::Closure(c) => {
+                for &cell in &c.owned {
+                    let inner = match self.heap.slot_mut(cell) {
+                        Ok(s) => take_moved(&mut s.val),
+                        Err(_) => continue,
+                    };
+                    let rest = self.extract_linear(inner, out);
+                    if let Ok(s) = self.heap.slot_mut(cell) {
+                        s.val = rest;
+                    }
+                }
+                Value::Closure(c)
+            }
             other => other,
         }
     }
 
     /// Marks a linear value as aborted. Returns true if `on abort` must run.
-    fn unwind_lin(&mut self, v: &Value) -> bool {
-        match v {
+    /// A live value whose type has no `on abort` is a fault: the checker
+    /// rejects it (W0602), and the unwinder cannot finish it.
+    fn unwind_lin(&mut self, v: &Value) -> R<bool> {
+        let r = match v {
             Value::Struct(o) => o
                 .lin
                 .and_then(|id| self.lins.get_mut(id))
-                .is_some_and(|l| l.l.unwind()),
-            Value::Task(t) => self.tasks.get_mut(*t).is_some_and(|x| x.handle.unwind()),
-            _ => false,
-        }
+                .map_or(Ok(false), |l| l.l.unwind()),
+            Value::Task(t) => self
+                .tasks
+                .get_mut(*t)
+                .map_or(Ok(false), |x| x.handle.unwind()),
+            _ => Ok(false),
+        };
+        r.map_err(|_| {
+            let ty = match v {
+                Value::Struct(o) => self.rt.adts.get(o.adt.index()).map_or("?", |a| &*a.name),
+                _ => "Task",
+            };
+            self.fault(format!(
+                "a linear value of type `{ty}` has no `on abort`, so the unwinder cannot finish it"
+            ))
+        })
     }
 
-    /// Runs `on abort` for one linear value.
+    /// Runs `on abort` for one linear value. The record of the value is
+    /// finished (`Aborted`), so the `on abort` function gets the value
+    /// without its record.
     fn run_on_abort(&mut self, v: Value) -> R<Flow> {
         let cur = self.cur;
         match v {
-            Value::Struct(o) => {
-                let info = &self.rt.adts[o.adt];
+            Value::Struct(mut o) => {
+                o.lin = None;
+                let info = &self.rt.adts[o.adt.index()];
                 let ty = info.name.to_string();
                 let f = info.on_abort;
-                let code = f.and_then(|f| self.rt.compiled.fn_code.get(f).copied().flatten());
+                let code =
+                    f.and_then(|f| self.rt.compiled.fn_code.get(f.index()).copied().flatten());
                 let Some(code) = code else {
                     self.heap.drop_value(Value::Struct(o));
                     return Ok(Flow::Continue);
@@ -514,21 +664,116 @@ impl super::Machine<'_, '_> {
                     task: cur,
                     ty: "Task".into(),
                 });
-                self.cancel(t);
+                // A cancel does not finish the result of a task that is done:
+                // the unwinder finishes its linear parts now. A task that is
+                // not done finishes them itself when it ends (`end_task`).
+                if self.is_done(t) {
+                    let live = self.done_results(&[t])?;
+                    self.unwind_top()?.aborts.extend(live);
+                } else {
+                    self.cancel(t);
+                }
             }
             other => self.heap.drop_value(other),
         }
         Ok(Flow::Continue)
     }
 
+    /// Performs `fail(msg)` with the handlers `henv` after the unwinder
+    /// finishes the live linear parts of the results of `tasks` that are done:
+    /// a `fork` with a failed branch does not give the values of the others.
+    pub(crate) fn fail_after_results(
+        &mut self,
+        tasks: &[TaskId],
+        msg: String,
+        henv: HEnv,
+    ) -> R<Flow> {
+        let cur = self.cur;
+        self.tasks[cur].frames.push(Frame::Unwind(Box::new(Unwind {
+            frames: Vec::new(),
+            aborts: VecDeque::new(),
+            then: After::Fail { msg, henv },
+            prepass: true,
+            children: Vec::new(),
+        })));
+        let live = self.done_results(tasks)?;
+        self.unwind_top()?.aborts.extend(live);
+        Ok(Flow::Continue)
+    }
+
+    /// Takes the results of the tasks `tasks` that are done and that no
+    /// `join` took, and returns their live linear parts, each marked as
+    /// aborted (`unwind_lin`). The other parts are dropped. The unwinder runs
+    /// `on abort` for the returned values.
+    ///
+    /// A handle that is live and that a value still holds keeps the result:
+    /// the handle can leave the frames that unwind, for example in the value
+    /// of a clause that does not resume. Its owner takes the result with a
+    /// `join`, or the `on abort` of the handle finishes it (`run_on_abort`).
+    /// So this takes only the result of a task whose handle was dropped, used
+    /// or finished: a branch of a `fork`, a task whose handle went to the
+    /// scope, a detached task, or a task whose handle the unwinder finished.
+    fn done_results(&mut self, tasks: &[TaskId]) -> R<Vec<Value>> {
+        let mut found = Vec::new();
+        for &t in tasks {
+            let ok = matches!(
+                self.tasks.get(t).and_then(|x| x.result.as_ref()),
+                Some(TaskResult::Ok(_))
+            );
+            let held = self
+                .tasks
+                .get(t)
+                .is_some_and(|x| x.handle.state == LinState::Live)
+                && !self.heap.handle_dropped(t);
+            if !ok || held {
+                continue;
+            }
+            if let Some(TaskResult::Ok(v)) = self.tasks[t].result.take() {
+                let rest = self.extract_linear(v, &mut found);
+                self.heap.drop_value(rest);
+            }
+        }
+        let mut live = Vec::new();
+        for v in found {
+            if self.unwind_lin(&v)? {
+                live.push(v);
+            } else {
+                self.heap.drop_value(v);
+            }
+        }
+        Ok(live)
+    }
+
     /// Copies the frames of a `multi` continuation. Cells that the frames own get
-    /// fresh copies, so each resume starts from the captured state.
+    /// fresh copies, so each resume starts from the captured state. A clause
+    /// frame in them gets a copy of its continuation, with a copy of its frames:
+    /// each copy resumes or drops its own continuation. The clauses of a handler
+    /// mark in them capture the copied cells.
     fn copy_frames(&mut self, frames: &[Frame]) -> Vec<Frame> {
+        // The continuations of the clause frames, also inside those continuations.
+        let mut nested: Vec<(ContId, Vec<Frame>)> = Vec::new();
+        let mut work = clause_conts(frames);
+        while let Some(k) = work.pop() {
+            if nested.iter().any(|(j, _)| *j == k) {
+                continue;
+            }
+            let fs = self
+                .conts
+                .get(k)
+                .map(|c| c.frames.clone())
+                .unwrap_or_default();
+            work.extend(clause_conts(&fs));
+            nested.push((k, fs));
+        }
+        let lists: Vec<&[Frame]> = std::iter::once(frames)
+            .chain(nested.iter().map(|(_, fs)| fs.as_slice()))
+            .collect();
         let mut owned: Vec<CellId> = Vec::new();
-        for f in frames {
+        for f in lists.iter().copied().flatten() {
             if let Frame::Code(cf) = f {
                 owned.extend(cf.slots.iter().flatten().copied());
                 owned.extend(cf.temps.iter().copied());
+                owned.extend(cf.owned.iter().copied());
             }
         }
         let mut extra = Vec::new();
@@ -537,7 +782,7 @@ impl super::Machine<'_, '_> {
                 self.heap.owned_cells(&s.val, &mut extra);
             }
         }
-        for f in frames {
+        for f in lists.iter().copied().flatten() {
             if let Frame::Code(cf) = f {
                 for v in &cf.stack {
                     self.heap.owned_cells(v, &mut extra);
@@ -545,6 +790,18 @@ impl super::Machine<'_, '_> {
             }
         }
         owned.extend(extra);
+        // Each nested continuation gets a record of its own, in the same state.
+        let mut kmap: BTreeMap<ContId, ContId> = BTreeMap::new();
+        for (k, _) in &nested {
+            let Some(state) = self.conts.get(*k).map(|c| c.k) else {
+                continue;
+            };
+            kmap.insert(*k, self.conts.len());
+            self.conts.push(ContRec {
+                k: state,
+                frames: Vec::new(),
+            });
+        }
         let mut map: BTreeMap<CellId, CellId> = BTreeMap::new();
         for c in owned {
             if map.contains_key(&c) {
@@ -561,28 +818,71 @@ impl super::Machine<'_, '_> {
                 .slot(old)
                 .map(|s| s.val.clone())
                 .unwrap_or_default();
-            let nv = self.heap.remap(&v, &map);
+            let nv = remap_conts(self.heap.remap(&v, &map), &kmap);
             if let Ok(s) = self.heap.slot_mut(new) {
                 s.val = nv;
             }
         }
+        for (k, fs) in &nested {
+            let copy = self.copy_list(fs, &map, &kmap);
+            if let Some(rec) = kmap.get(k).and_then(|&n| self.conts.get_mut(n)) {
+                rec.frames = copy;
+            }
+        }
+        self.copy_list(frames, &map, &kmap)
+    }
+
+    /// Copies a list of frames with the cell map `map` and the continuation map
+    /// `kmap` of `copy_frames`.
+    fn copy_list(
+        &mut self,
+        frames: &[Frame],
+        map: &BTreeMap<CellId, CellId>,
+        kmap: &BTreeMap<ContId, ContId>,
+    ) -> Vec<Frame> {
         let m = |c: &CellId| map.get(c).copied().unwrap_or(*c);
         let mut out = Vec::new();
         for f in frames {
             out.push(match f {
                 Frame::Code(cf) => {
-                    let stack = cf.stack.iter().map(|v| self.heap.remap(v, &map)).collect();
+                    let stack = cf
+                        .stack
+                        .iter()
+                        .map(|v| remap_conts(self.heap.remap(v, map), kmap))
+                        .collect();
                     Frame::Code(CodeFrame {
                         code: Rc::clone(&cf.code),
                         pc: cf.pc,
                         slots: cf.slots.iter().map(|s| s.as_ref().map(m)).collect(),
                         caps: cf.caps.iter().map(m).collect(),
+                        owned: cf.owned.iter().map(m).collect(),
                         stack,
                         temps: cf.temps.iter().map(m).collect(),
                         marks: cf.marks.clone(),
                         loops: cf.loops.clone(),
                         henv: cf.henv.clone(),
                     })
+                }
+                Frame::Handle(h) => Frame::Handle(HandleMark {
+                    id: h.id,
+                    clauses: h
+                        .clauses
+                        .iter()
+                        .map(|(op, code, cells)| (*op, *code, cells.iter().map(m).collect()))
+                        .collect(),
+                    outer: h.outer.clone(),
+                }),
+                Frame::Clause { cont } => Frame::Clause {
+                    cont: kmap.get(cont).copied().unwrap_or(*cont),
+                },
+                // Each copy of a `with_timeout` block has a timeout of its own.
+                Frame::Timeout { id, henv } => {
+                    let new = self.fresh_id();
+                    self.copy_timeout(*id, new);
+                    Frame::Timeout {
+                        id: new,
+                        henv: henv.clone(),
+                    }
                 }
                 other => other.clone(),
             });
@@ -597,7 +897,7 @@ impl super::Machine<'_, '_> {
     /// Handles an operation that no user handler takes: the `std.rt` root
     /// handlers, or the simulation when `sim.run` is active.
     fn root_op(&mut self, effect: EffectId, op: usize, args: Vec<Value>) -> R<Flow> {
-        let Some(e) = self.rt.prog.effects.get(effect) else {
+        let Some(e) = self.rt.prog.effects.get(effect.index()) else {
             return Err(self.fault("internal: bad effect"));
         };
         let opname = e.ops.get(op).map_or("", |o| o.name.as_str()).to_string();
@@ -605,7 +905,11 @@ impl super::Machine<'_, '_> {
         if !e.is_std {
             return Err(self.fault(format!("no handler for `{ename}.{opname}` on this task")));
         }
-        if self.opts.no_runtime && self.sim.is_none() {
+        // A failure of a task goes to the task that joins it, also with no runtime.
+        let child = self.tasks.get(self.cur).is_some_and(|t| t.scope.is_some());
+        let to_joiner = ename == "Fail" && child;
+        let sim = self.sim_of(self.cur);
+        if self.opts.no_runtime && sim.is_none() && !to_joiner {
             return Err(self.fault(format!("no runtime: nothing handles `{ename}.{opname}`")));
         }
         let arg = args.into_iter().next();
@@ -625,7 +929,7 @@ impl super::Machine<'_, '_> {
                 }))
             }
             ("Clock", "now") => {
-                let start = self.sim.as_ref().map_or(0, |s| s.start);
+                let start = sim.and_then(|s| self.sims.get(s)).map_or(0, |s| s.start);
                 let now = self.now.saturating_sub(start);
                 self.deliver(Value::Dur(now))
             }
@@ -635,20 +939,24 @@ impl super::Machine<'_, '_> {
                     Some(Value::Int(i)) => u64::try_from(i).unwrap_or(0),
                     _ => 0,
                 };
-                self.sleep_for(d)
+                Ok(self.sleep_for(d))
             }
             ("Rand", _) => {
-                let r = self.rand_rng.next_u64() >> 1;
+                let rng = match sim.and_then(|s| self.sims.get_mut(s)) {
+                    Some(s) => &mut s.rand,
+                    None => &mut self.rand_rng,
+                };
+                let r = rng.next_u64() >> 1;
                 self.deliver(Value::Int(i64::try_from(r).unwrap_or(0)))
             }
-            _ => self.yield_now(),
+            _ => Ok(self.yield_now()),
         }
     }
 
     /// Suspends the current task for `d` milliseconds of virtual time.
-    pub(crate) fn sleep_for(&mut self, d: u64) -> R<Flow> {
-        if let Some(f) = self.check_interrupt()? {
-            return Ok(f);
+    pub(crate) fn sleep_for(&mut self, d: u64) -> Flow {
+        if let Some(f) = self.check_interrupt() {
+            return f;
         }
         let task = self.cur;
         let seq = self.wait_seq();
@@ -661,13 +969,13 @@ impl super::Machine<'_, '_> {
                 value: Value::Unit,
             },
         );
-        Ok(self.block(Wait::Sleep, SuspendReason::Sleep))
+        self.block(Wait::Sleep, SuspendReason::Sleep)
     }
 
     /// Yields at a suspension point. The task stays ready.
-    pub(crate) fn yield_now(&mut self) -> R<Flow> {
-        if let Some(f) = self.check_interrupt()? {
-            return Ok(f);
+    pub(crate) fn yield_now(&mut self) -> Flow {
+        if let Some(f) = self.check_interrupt() {
+            return f;
         }
         let cur = self.cur;
         let t = self.task();
@@ -677,6 +985,56 @@ impl super::Machine<'_, '_> {
             task: cur,
             reason: SuspendReason::Yield,
         });
-        Ok(Flow::Yield)
+        Flow::Yield
+    }
+}
+
+/// Returns the continuations of the clause frames in `frames`.
+fn clause_conts(frames: &[Frame]) -> Vec<ContId> {
+    frames
+        .iter()
+        .filter_map(|f| match f {
+            Frame::Clause { cont } => Some(*cont),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Returns `v` with each continuation of `kmap` replaced by its copy.
+fn remap_conts(v: Value, kmap: &BTreeMap<ContId, ContId>) -> Value {
+    if kmap.is_empty() {
+        return v;
+    }
+    match v {
+        Value::Cont(k) => Value::Cont(kmap.get(&k).copied().unwrap_or(k)),
+        Value::Tuple(vs) => Value::Tuple(vs.into_iter().map(|x| remap_conts(x, kmap)).collect()),
+        Value::List(vs) => Value::List(vs.into_iter().map(|x| remap_conts(x, kmap)).collect()),
+        Value::Struct(mut o) => {
+            let fields = std::mem::take(&mut o.fields);
+            o.fields = fields.into_iter().map(|x| remap_conts(x, kmap)).collect();
+            Value::Struct(o)
+        }
+        Value::Enum(mut e) => {
+            let fields = std::mem::take(&mut e.fields);
+            e.fields = fields.into_iter().map(|x| remap_conts(x, kmap)).collect();
+            Value::Enum(e)
+        }
+        other => other,
+    }
+}
+
+/// Puts each closure in the copy value `v` that owns cells into `out`. A
+/// copy value stays in its cell at the end of its scope, so the unwinder
+/// looks into it for these closures.
+fn owning_closures(v: &Value, out: &mut Vec<Value>) {
+    let mut work = vec![v];
+    while let Some(v) = work.pop() {
+        match v {
+            Value::Closure(c) if !c.owned.is_empty() => out.push(Value::Closure(Rc::clone(c))),
+            Value::Tuple(vs) => work.extend(vs.iter()),
+            Value::Struct(o) => work.extend(o.fields.iter()),
+            Value::Enum(e) => work.extend(e.fields.iter()),
+            _ => {}
+        }
     }
 }

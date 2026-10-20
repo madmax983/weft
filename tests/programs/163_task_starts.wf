@@ -1,0 +1,78 @@
+// A node that runs a block or a closure whose code starts a task starts that
+// task too. A linear value that moves there goes into the block, not into the
+// task: W0602 for a task start (ADR 0006, ADR 0007, review round 3, F3-8)
+// holds only if the closure of the task captures a linear value with no
+// `on abort`. So a block or a closure that consumes its value and then starts
+// a task in a scope outside it is clean (review of R3x).
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+effect Give { fn give(t: Tx) }
+
+// The block moves `tx` into a task that it starts: the scope can cancel the
+// task before it runs. The block and the task closure both move `tx`.
+fn block_starts_task() / async, clock, fail {
+    scope { s =>
+        let tx = begin(1)
+        with_timeout(1.s) {   //~ W0602
+            let t = s.spawn(|| commit(tx))   //~ W0602
+            t.join()
+        }
+    }
+}
+
+// A once closure that a local holds starts a task with its capture.
+fn closure_starts_task() / async {
+    scope { s =>
+        let tx = begin(2)
+        let f = || {
+            let t = s.spawn(|| commit(tx))   //~ W0602
+            t.join()
+        }
+        f()   //~ W0602
+    }
+}
+
+// Clean: the block commits `tx`, and then starts a task in the scope around it.
+fn block_then_task() / async, clock, fail {
+    scope { s =>
+        let tx = begin(3)
+        with_timeout(1.s) {
+            commit(tx)
+            s.spawn(|| print("notify"))
+            print("committed")
+        }
+    }
+}
+
+// Clean: a once closure commits its capture, and then starts a task.
+fn closure_then_task() / async {
+    scope { s =>
+        let tx = begin(4)
+        let f = || {
+            commit(tx)
+            s.spawn(|| print("notify"))
+        }
+        f()
+    }
+}
+
+// Clean: a clause commits the value of the operation, and then starts a task.
+fn clause_then_task() / async {
+    scope { s =>
+        let tx = begin(5)
+        handle Give {
+            fn give(t) {
+                commit(t)
+                s.spawn(|| print("notify"))
+                resume(())
+            }
+        } in give(tx)
+    }
+}
+
+fn main() / async, clock {
+    handle Fail { fn fail(m) { print("failed: {m}") } } in block_then_task()
+    closure_then_task()
+    clause_then_task()
+}

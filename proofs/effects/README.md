@@ -258,20 +258,31 @@ Each guard is a verified lemma.
 
 ## Mutation tests
 
-Each mutation weakens one checker rule in `src/checker.rs`. Each was run on a copy of
-`src/`. Each one makes a soundness lemma fail. The `*_rejected` guard of that rule also
-fails, as expected, because the weak checker accepts the bad program.
+Each mutation weakens one checker rule in `src/checker.rs`. Each one makes a soundness
+lemma fail. The `*_rejected` guard of that rule also fails, as expected, because the
+weak checker accepts the bad program. `mutations/run.sh` runs them: each mutation is a
+script `mutations/NAME.py` that changes a copy of the crate in a temporary directory.
+The test passes only if Verus gives a result line with at least one error, and that
+line is the one in the table below (the `# EXPECT:` line of the script). A failure
+with no result, such as no `verus` on `PATH` or a patch that breaks the build, does
+not pass. The script shows the functions that fail. It does not change the repository,
+and it takes about two minutes.
 
-| Mutation | Result | Soundness lemma that fails |
-| --- | --- | --- |
-| (a) drop `cap < env.len()` at `Perform` | 120 verified, 2 errors | `lemma_no_struct_error` (E1) |
-| (b) `Resume` keeps a `once` `k` usable | 119 verified, 3 errors | `lemma_b_resume` (E2: `k_sync`) |
-| (c) drop the abort rule at a `once` perform | 120 verified, 2 errors | `lemma_capture_rules` (E3) |
-| (c) `Return` without the empty-`lin` check | 120 verified, 2 errors | `lemma_no_own_error` (E3: `err_leak`) |
-| (d) allow `rets[j] <= env.len()` at `Handle` | 119 verified, 3 errors | `lemma_a_handle` (`based`: E1, E4), `lemma_up_rule` |
-| drop the multi rule at a `multi` perform | 120 verified, 2 errors | `lemma_capture_rules` (E5) |
-| drop the suspension rule at `Call` | 121 verified, 1 error | `lemma_up_rule` (E3, E5) |
-| drop the suspension rule at `Resume` | 121 verified, 1 error | `lemma_up_rule` (E3, E5) |
+```bash
+mutations/run.sh          # all mutations
+mutations/run.sh call     # one mutation
+```
+
+| Name | Mutation | Result | Soundness lemma that fails |
+| --- | --- | --- | --- |
+| `a` | (a) drop `cap < env.len()` at `Perform` | 120 verified, 2 errors | `lemma_no_struct_error` (E1) |
+| `b` | (b) `Resume` keeps a `once` `k` usable | 119 verified, 3 errors | `lemma_b_resume` (E2: `k_sync`) |
+| `c1` | (c) drop the abort rule at a `once` perform | 120 verified, 2 errors | `lemma_capture_rules` (E3) |
+| `c2` | (c) `Return` without the empty-`lin` check | 120 verified, 2 errors | `lemma_no_own_error` (E3: `err_leak`) |
+| `d` | (d) allow `rets[j] <= env.len()` at `Handle` | 119 verified, 3 errors | `lemma_a_handle` (`based`: E1, E4), `lemma_up_rule` |
+| `multi` | drop the multi rule at a `multi` perform | 120 verified, 2 errors | `lemma_capture_rules` (E5) |
+| `call` | drop the suspension rule at `Call` | 121 verified, 1 error | `lemma_up_rule` (E3, E5) |
+| `resume` | drop the suspension rule at `Resume` | 121 verified, 1 error | `lemma_up_rule` (E3, E5) |
 
 The source in this directory has no mutation. It verifies with 122 verified, 0 errors.
 
@@ -288,6 +299,11 @@ The proof needs these rules. Some are not obvious from the language description.
    (the body and the clauses can use it). A `resume` passes up the clause's
    environment (the resumed frames can perform through it and capture the clause
    frame). The two "suspension rule" mutations show that these checks are necessary.
+   A perform does not capture the frames below its handler frame. So the Weft checker
+   applies the rules at an operation of a local handler to the values of its handled
+   body only (`spared_at`). If a clause of the handler performs through an outer
+   capability, the clause passes the environment up again, and the values outside the
+   body count at the operation too.
 2. **A usable `once` continuation is a `once` value for the multi rule.** A clause that
    holds a fresh `k` must not perform a `multi` operation through an outer capability,
    and must not call code that can. Otherwise a copy of the clause frame resumes `k`
@@ -303,6 +319,15 @@ The proof needs these rules. Some are not obvious from the language description.
    that an inner continuation is older than the one that holds it.
 6. **Clauses run in the handle-site environment.** A clause does not get the new
    capability, and a clause returns no capabilities.
+7. **`fail` does not resume.** The model has no value for the code after a failure.
+   The Weft checker rejects a resume in a clause of `Fail.fail`, also in a closure
+   (W0504, ADR 0005).
+8. **`on abort` is atomic.** The model runs `on abort` in one step. The Weft checker
+   lets an `on abort` function perform only the standard effects that the root
+   handlers serve, not `fail` and not a failure of the runtime, and change only the
+   value that it gets. It cannot call a function value that it does not know (W0118,
+   ADR 0007). A root handler serves the operation on the task itself: it does not capture
+   frames into a handler of the program.
 
 ## Scope and limitations
 
@@ -316,11 +341,15 @@ The proof needs these rules. Some are not obvious from the language description.
   checker states (as in the borrowing proof).
 * **One task.** Cancellation is a nondeterministic abort at any perform, up to the
   handler of that perform. Whole-task cancellation is the case where that handler is
-  the root (scheduler) handler. `fail` is an operation whose clause does not resume.
-* **`on abort` is atomic.** It cannot perform or fail.
+  the root (scheduler) handler. `fail` is an operation whose clause does not resume
+  (rule 7 mirrors it).
+* **`on abort` is atomic.** It cannot perform or fail (rule 8 mirrors it).
 * **Deep handlers only.** A resume puts the handler frame back.
-* **Spec checker.** `check` is a Verus spec. The exec checker in
-  `crates/weft-verified` is not linked to it here.
+* **Spec checker.** `check` is a Verus spec. `crates/weft-verified` has no effects
+  checker. The Weft checker applies the abort rule and the multi rule through the
+  suspension facts of sema (`may_abort`, `multi_at`, `clause_multi`, `body_multi`,
+  `resumes_at` and `spared_at`) and the spec rules of W0602 and W0503
+  (`spec/weft.dl`). That part is not linked to this model.
 * **No interaction with group borrowing.** References are not in this model.
 
 ## Files

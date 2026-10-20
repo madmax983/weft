@@ -251,20 +251,30 @@ route whose labels are exactly the group's path.
 
 ## Mutation tests
 
-Each test weakens one rule and runs `./verify.sh`. The proof fails each time. The tests
-ran on a copy of the sources; no broken code is in the tree.
+Each test weakens one rule and runs `./verify.sh`. The proof fails each time.
+`mutations/run.sh` runs them: each mutation is a script `mutations/NAME.py` that changes
+a copy of the crate in a temporary directory. The test passes only if Verus gives a
+result line with at least one error, and that line is the one in the table below (the
+`# EXPECT:` line of the script). A failure with no result, such as no `verus` on
+`PATH` or a patch that breaks the build, does not pass. The script shows the functions
+that fail. It does not change the repository, and it takes about four minutes.
 
-| Milestone | Mutation | Result |
-| --- | --- | --- |
-| Base | `strict_child` only for grandchild groups (`p.path.len() + 1 < g.path.len()`) | `lemma_ptr_not_below` fails; the base and B2 examples fail |
-| B1 | `cfg_check` checks only forward edges (`succs[j] > n`), so back edges do not join | `lemma_cfg_inv_along` fails; `example_loop_bad_rejected` fails |
-| B2 | `clos_survivors` keeps every closure value (no kill through captures) | `lemma_preserve_call_ptrs` fails (closure part); `example_closure_rejected` fails |
-| B5 | `instr_ok` accepts `Borrow` of any local | `progress` fails (no step, no abort) |
-| B5 | `aborts` has no `Child` case | `progress` fails; `example_progress_abort` fails |
-| B3 | `Variant` steps are stable (`unstable(st) = st is Kid`) | `lemma_kills_variant` fails; the kill facts of the examples fail |
-| B3 | `Read` needs no static type check (only `field_only(path)`) | `lemma_lno_ub` fails; `example_oob_rejected` fails |
-| B4 | `overlap` in one direction only (`a.path.is_prefix_of(b.path)`) | `lemma_shared_overlap` fails (race freedom) |
-| B4 | `task_soundness` without `separated(ss1, p1, ss0, p0)` | `task_soundness` fails |
+```bash
+mutations/run.sh          # all mutations
+mutations/run.sh b1 b4a   # some mutations
+```
+
+| Name | Milestone | Mutation | Result |
+| --- | --- | --- | --- |
+| `base` | Base | `strict_child` only for grandchild groups (`p.path.len() + 1 < g.path.len()`) | 165 verified, 4 errors: `lemma_ptr_not_below` fails; the base, B1 and B2 examples fail (`lemma_damage_states`, `lemma_kill_ring`, `lemma_groups`) |
+| `b1` | B1 | `cfg_check` checks only forward edges (`succs[j] > n`), so back edges do not join | 167 verified, 2 errors: `lemma_cfg_inv_along` fails; `example_loop_bad_rejected` fails (in `lemma_loop_bad_rejected`) |
+| `b2` | B2 | `clos_survivors` keeps every closure value (no kill through captures) | 166 verified, 3 errors: `lemma_preserve_call_ptrs` fails (closure part); `example_closure_rejected` and `cfg_progress` fail |
+| `b5a` | B5 | `instr_ok` accepts `Borrow` of any local | 168 verified, 1 error: `progress` fails (no step, no abort) |
+| `b5b` | B5 | `aborts` has no `Child` case | 166 verified, 3 errors: `progress` fails; `cfg_progress` and `example_progress_abort` fail |
+| `b3a` | B3 | `Variant` steps are stable (`unstable(st) = st is Kid`) | 167 verified, 2 errors: `lemma_kills_variant` fails; the kill facts of the examples fail |
+| `b3b` | B3 | `Read` needs no static type check (only `field_only(path)`) | 167 verified, 2 errors: `lemma_lno_ub` fails; `example_oob_rejected` fails |
+| `b4a` | B4 | `overlap` in one direction only (`a.path.is_prefix_of(b.path)`) | 168 verified, 1 error: `lemma_shared_overlap` fails (race freedom) |
+| `b4b` | B4 | `task_soundness` without `separated(ss1, p1, ss0, p0)` | 168 verified, 1 error: `task_soundness` fails |
 
 ## Scope and limitations
 

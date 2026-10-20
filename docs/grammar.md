@@ -74,7 +74,8 @@ place       = ( NAME | "self" ) step*
 step        = "." ( NAME | INT ) | "[" "]" | "[" ".." NAME "]" | "[" NAME ".." "]" | ".."
 row         = row_item ( "," row_item )*
 fn_row      = row_item | "(" row ")"
-row_item    = "mut" "(" place ( "," place )* ")" | NAME
+row_item    = "mut" "(" place ( "," place )* ")" | effect_path
+effect_path = NAME ( "." NAME )*
 MODE        = uniq | aliased | portable | nonportable | uncontended | shared | once | many
 ```
 
@@ -87,9 +88,13 @@ Notes:
   `Some(stmt)` or `id(stmt)` with `fn id<T>(x: T) -> T`. A raw pointer is an opaque copy
   value with no place: it has no fields, no elements and no deref. It is nonportable,
   and so is each value that holds one.
-- The wildcard step `..` must be the last step: `mut(world..)`.
+- The wildcard step `..` must be the last step: `mut(world..)`. In a reference type,
+  `&T in world..` is a reference to any place inside `world`. Without `..`, the
+  reference is at the place or below it through stable steps only.
 - In a function type, a row with more than one item needs parentheses:
   `fn(Request) -> Response / (net, log)`.
+- An effect path names an effect of another module or package: `/ a.Note`,
+  `handle util.Note { ... }`. It resolves like a type path (ADR 0005).
 
 ## Statements
 
@@ -133,7 +138,7 @@ primary     = literal | NAME | "(" expr ")" | "(" expr "," ( expr "," ? )* ")"
             | block
             | "if" expr_ns block ( "else" ( block | if ) )?
             | "match" expr_ns "{" ( pattern "=>" expr sep )* "}"
-            | "handle" NAME "{" ( "fn" NAME "(" params? ")" block )* "}" "in" expr
+            | "handle" effect_path "{" ( "fn" NAME "(" params? ")" block )* "}" "in" expr
             | "scope" "{" NAME "=>" stmts "}"
 args        = arg ( "," arg )* ","?
 arg         = ( NAME ":" )? expr
@@ -175,9 +180,8 @@ These rules complete the grammar above.
     in a field at about 35. These limits keep the parser, the printer, sema, the
     checker, the spec and the interpreter on a 2 MiB thread stack
     (`crates/weft-cli/tests/limits.rs`). The derivation printer of
-    `weft check --explain` is not in this list: it recurses once for each step of a
-    derivation, and a long path in a body gives a deep derivation. The `weft` binary
-    runs each command on a 256 MiB stack for this reason.
+    `weft check --explain` uses a stack, not recursion, and `limits.rs` tests it on
+    a 2 MiB thread too (`docs/architecture.md`).
 11. A chain of binary operators has no limit. In a chain of more than 32 operators, the
     parser keeps each part of 32 operators in a hidden local of a block, and the rest of
     the chain starts from that local. The value, the order of evaluation and the

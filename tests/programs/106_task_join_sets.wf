@@ -1,0 +1,107 @@
+// A task handle can hold one of several tasks: after an `if`, or in a loop that
+// passes handles along. A handle holds one task at run time. So a join of it
+// ends a task only if no other live handle can hold that task (ADR 0006).
+struct Stats { count: u64 }
+
+// The `if` can swap the handles: `x` can hold the writer or the reader.
+fn swap(st: &Stats, c: bool) / mut(st), async {
+    scope { s =>
+        let a = s.spawn(|| st.count += 1)
+        let b = s.spawn(|| print(1))
+        let (x, y) = if c { (a, b) } else { (b, a) }
+        x.join()
+        print(st.count)   //~ W0405
+        y.join()
+    }
+}
+
+// The loop passes the handle of the writer from `g` to `h`. At the print, `g`
+// holds the writer of the iteration before, also at the next spawn of a writer.
+fn rotate(st: &Stats, n: u64) / mut(st), async {
+    scope { s =>
+        let h = s.spawn(|| print(0))
+        let g = s.spawn(|| st.count += 1)
+        let i = 0
+        while i < n {
+            h.join()
+            print(st.count)   //~ W0405 W0405
+            h = g
+            g = s.spawn(|| st.count += 1)   //~ W0405 W0405
+            i += 1
+        }
+        h.join()
+        g.join()
+    }
+}
+
+// The loop swaps the handles: `t0` can hold the writer.
+fn swaps(st: &Stats, n: u64) / mut(st), async {
+    scope { s =>
+        let t0 = s.spawn(|| print(1))
+        let t1 = s.spawn(|| st.count += 1)
+        let m = 0
+        while m < n {
+            let x = t0
+            t0 = t1
+            t1 = x
+            m += 1
+        }
+        t0.join()
+        print(st.count)   //~ W0405
+        t1.join()
+    }
+}
+
+// A join of both handles joins both tasks.
+fn swaps_clean(st: &Stats, n: u64) / mut(st), async {
+    scope { s =>
+        let t0 = s.spawn(|| print(1))
+        let t1 = s.spawn(|| st.count += 1)
+        let m = 0
+        while m < n {
+            let x = t0
+            t0 = t1
+            t1 = x
+            m += 1
+        }
+        t0.join()
+        t1.join()
+        print(st.count)
+    }
+}
+
+// One handle that the loop gives a new task after its join: only one of the
+// tasks runs at a time.
+fn one_handle(st: &Stats, n: u64) / mut(st), async {
+    scope { s =>
+        let h = s.spawn(|| st.count += 1)
+        let i = 0
+        while i < n {
+            h.join()
+            print(st.count)
+            h = s.spawn(|| st.count += 1)
+            i += 1
+        }
+        h.join()
+        print(st.count)
+    }
+}
+
+// An `if` that spawns in each branch: the handle holds the task of one branch.
+fn either(st: &Stats, c: bool) / mut(st), async {
+    scope { s =>
+        let h = if c { s.spawn(|| st.count += 1) } else { s.spawn(|| st.count += 2) }
+        h.join()
+        print(st.count)
+    }
+}
+
+// A copy of a handle moves it: the old local holds no task after the move.
+fn moved_handle(st: &Stats) / mut(st), async {
+    scope { s =>
+        let h = s.spawn(|| st.count += 1)
+        let g = h
+        g.join()
+        print(st.count)
+    }
+}

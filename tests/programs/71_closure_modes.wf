@@ -1,0 +1,306 @@
+// A closure takes its modes from what it captures:
+// - linear if it moves a linear value;
+// - `once` if it moves a value that is not plain data;
+// - nonportable if it captures a nonportable value;
+// - not `many` if it captures a `@ uniq` reference or a `once` value.
+
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+
+// A closure that moves a linear value must run on every normal path.
+fn never_called() {
+    let tx = begin()
+    let f = || rollback(tx)
+}   //~ W0601
+fn called_once() {
+    let tx = begin()
+    let f = || rollback(tx)
+    f()
+}
+fn literal_dropped() {
+    let tx = begin()
+    || rollback(tx)   //~ W0601
+}
+fn reads_only() {
+    let tx = begin()
+    let f = || print(tx.id)
+    f()
+    f()
+    rollback(tx)
+}
+
+// A closure that moves a linear value must run on each path.
+fn branch_drops(c: bool) {
+    let tx = begin()
+    let f = || rollback(tx)
+    if c { f() }
+}   //~ W0601
+fn branch_calls(c: bool) {
+    let tx = begin()
+    let f = || rollback(tx)
+    if c { f() } else { f() }
+}
+
+// A callee that gets a linear closure can drop it.
+fn ignore(f: fn()) {}
+fn once(f: fn()) { f() }
+fn twice(f: fn()) { f()
+ f() }
+fn given_away() {
+    let tx = begin()
+    ignore(|| rollback(tx))   //~ W0601
+}
+fn given_to_twice() {
+    let tx = begin()
+    twice(|| rollback(tx))   //~ W0601 W0502
+}
+fn timed() / async, fail {
+    let tx = begin()
+    with_timeout(1.s) { rollback(tx) }
+}
+
+// A `once` closure that is not linear: a callee that calls it twice is an error.
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) {}
+fn once_to_twice() {
+    let b = Buf { items: Vec.new() }
+    twice(|| eat(b))   //~ W0502
+}
+fn once_to_once() {
+    let b = Buf { items: Vec.new() }
+    once(|| eat(b))
+}
+fn once_local_twice() {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    once(f)
+    f()   //~ W0502
+}
+
+// A place of plain data cannot hold a `once` closure: a copy of it could call
+// the closure again.
+struct Cb { f: fn() }
+fn once_in_field() {
+    let b = Buf { items: Vec.new() }
+    let c = Cb { f: || eat(b) }   //~ W0502
+}
+fn many_in_field() {
+    let n = 1
+    let c = Cb { f: || print(n) }
+    let g = c.f
+    g()
+    g()
+}
+
+// A closure that calls a `once` closure is `once` too.
+fn nested_once() {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    let g = || f()
+    g()
+    g()   //~ W0502
+}
+fn nested_once_ok() {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    let g = || f()
+    g()
+}
+
+// A closure that resumes a `once` continuation is `once`.
+effect Note { fn note(n: u64) }
+fn resume_twice() {
+    handle Note { fn note(n) { let k = || resume(())
+ k()
+ k() } } in note(1)   //~ W0502
+}
+fn resume_once() {
+    handle Note { fn note(n) { let k = || resume(())
+ k() } } in note(1)
+}
+
+// A closure that captures a nonportable value is nonportable.
+struct Node { v: u64 }
+fn rc_closure() / par {
+    let n = Rc.new(Node { v: 1 })
+    let c = || print(n.v)
+    fork(|| c(), || print(2))   //~ W0401
+}
+fn plain_closure() / par {
+    let n = Node { v: 1 }
+    let c = || print(n.v)
+    fork(|| c(), || print(2))
+}
+
+// A closure that captures a `@ uniq` part is not `many`.
+effect Choice { multi fn choose() -> bool }
+fn needs_uniq(es: &[u64] @ uniq) / mut(es) {}
+fn uniq_across_multi(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let (l, r) = v.split_mut(1)
+    let f = || needs_uniq(l)
+    let b = choose()   //~ W0503
+    f()
+    b
+}
+fn uniq_after_multi(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let b = choose()
+    let (l, r) = v.split_mut(1)
+    let f = || needs_uniq(l)
+    f()
+    f()
+    b
+}
+
+// A closure that goes to a parameter of a type parameter moves there, and it
+// keeps its modes. A `Vec<fn()>` is a place of plain data: an element read
+// copies the closure.
+fn gen_drop<T>(x: T) {}
+fn gen_keep<T>(x: T) -> T { x }
+fn linear_to_generic() {
+    let tx = begin()
+    gen_drop(|| rollback(tx))   //~ W0601
+}
+fn linear_through_generic() {
+    let tx = begin()
+    let f = || rollback(tx)
+    let g = gen_keep(f)
+    g()
+}
+fn linear_in_vec() {
+    let tx = begin()
+    let v: Vec<fn()> = Vec.new()
+    v.push(|| rollback(tx))   //~ W0601
+}
+fn once_in_vec() {
+    let b = Buf { items: Vec.new() }
+    let v: Vec<fn()> = Vec.new()
+    v.push(|| eat(b))   //~ W0502
+}
+fn once_pushed_then_called() {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    let v = Vec.new()
+    v.push(f)
+    f()   //~ W0502
+}
+fn many_in_vec() {
+    let n = 1
+    let v: Vec<fn()> = Vec.new()
+    v.push(|| print(n))
+    let g = v[0]
+    g()
+    g()
+}
+
+// The modes stay with a closure in a field, an element, a tuple or an `Option`.
+fn rc_in_field() / par {
+    let n = Rc.new(Node { v: 1 })
+    let c = Cb { f: || print(n.v) }
+    fork(|| { let g = c.f   //~ W0401
+ g() }, || print(2))
+}
+fn rc_assigned_to_field() / par {
+    let n = Rc.new(Node { v: 1 })
+    let c = Cb { f: || print(1) }
+    c.f = || print(n.v)
+    fork(|| { let g = c.f   //~ W0401
+ g() }, || print(2))
+}
+fn rc_in_vec() / par {
+    let n = Rc.new(Node { v: 1 })
+    let v: Vec<fn()> = Vec.new()
+    v.push(|| print(n.v))
+    fork(|| print(v.len()), || print(2))   //~ W0401
+}
+fn plain_in_field() / par {
+    let n = Node { v: 1 }
+    let c = Cb { f: || print(n.v) }
+    fork(|| { let g = c.f
+ g() }, || print(2))
+}
+fn uniq_in_tuple(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let (l, r) = v.split_mut(1)
+    let t = (|| needs_uniq(l), 1)
+    let b = choose()   //~ W0503
+    let (g, n) = t
+    g()
+    b
+}
+fn uniq_in_option(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let (l, r) = v.split_mut(1)
+    let o = Some(|| needs_uniq(l))
+    let b = choose()   //~ W0503
+    match o { Some(g) => g(), None => {} }
+    b
+}
+fn uniq_in_field(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let (l, r) = v.split_mut(1)
+    let c = Cb { f: || needs_uniq(l) }
+    let b = choose()   //~ W0503
+    let g = c.f
+    g()
+    b
+}
+fn uniq_in_field_after(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let b = choose()
+    let (l, r) = v.split_mut(1)
+    let c = Cb { f: || needs_uniq(l) }
+    let g = c.f
+    g()
+    b
+}
+
+// A reference to a nonportable value is nonportable.
+fn rc_by_ref() / par {
+    let n = Rc.new(Node { v: 1 })
+    let r = &n
+    fork(|| print(r.v), || print(2))   //~ W0401
+}
+fn rc_param_ref(r: &Rc<Node>) / par {
+    fork(|| print(r.v), || print(2))   //~ W0401
+}
+fn plain_by_ref() / par {
+    let n = Node { v: 1 }
+    let r = &n
+    fork(|| print(r.v), || print(2))
+}
+
+// The value of a closure body is its result: a linear value moves there.
+fn returns_linear() {
+    let f = || begin()
+    rollback(f())
+}
+fn returns_linear_local() {
+    let f = || { let t = begin()
+ t }
+    rollback(f())
+}
+fn result_dropped() {
+    let f = || begin()
+    f()   //~ W0601
+}
+
+// A closure that a callee returns can hold what an argument points to.
+fn mk_rc(n: &Rc<Node>) -> fn() { || print(n.v) }
+fn mk_node(n: &Node) -> fn() { || print(n.v) }
+fn mk_uniq(l: &[u64] @ uniq) -> fn() / mut(l) { || needs_uniq(l) }
+fn returned_rc() / par {
+    let n = Rc.new(Node { v: 1 })
+    let c = mk_rc(&n)
+    fork(|| c(), || print(2))   //~ W0401
+}
+fn returned_plain() / par {
+    let n = Node { v: 1 }
+    let c = mk_node(&n)
+    fork(|| c(), || print(2))
+}
+fn returned_uniq(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let (l, r) = v.split_mut(1)
+    let g = mk_uniq(l)
+    let b = choose()   //~ W0503
+    g()
+    b
+}
+

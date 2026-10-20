@@ -1,0 +1,19 @@
+// A `fork` gives a tuple of the branch values, also when each one is `()`.
+// A generic caller takes the tuple apart, and a function that returns `()`
+// can end with a `fork` (ADR 0010).
+fn both<T>(f: fn() -> T, g: fn() -> T) -> (T, T) / par {
+    fork(f, g)
+}
+
+fn heal_both() / par {
+    fork(|| print("heal left"), || print("heal right"))
+}
+
+fn main() / par {
+    let (a, b) = both(|| 1, || 2)
+    print(a + b)
+    let (c, d) = both(|| print("x"), || print("y"))
+    let (e, f) = fork(|| print("left"), || print("right"))
+    heal_both()
+    print("joined")
+}

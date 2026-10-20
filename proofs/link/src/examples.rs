@@ -35,7 +35,7 @@ use crate::layout::linstr_ok;
 use crate::model::{Instr, SState, Group, Var, Ret, DState, post, instr_ok, killed, strict_child, arg_groups, owns, wf, step, kid_at, ptr_to, ub};
 use crate::soundness::inv;
 use crate::cfg::{Cfg, Node, cfg_check, sub_state, is_cfg_trace};
-use crate::lifecycle::{Continuation, ContState, Linear, LinState};
+use crate::lifecycle::{Continuation, ContState, Linear, LinState, LinError};
 use crate::lifecycle_link::*;
 use crate::effects_model as em;
 
@@ -929,7 +929,7 @@ pub fn ex_consume_twice() {
     proof {
         assert(em::at_instr(prog, s0));
     }
-    let mut l = acquire_linked(Ghost(prog), Ghost(s0), Ghost(0nat), Ghost(true));
+    let mut l = acquire_linked(Ghost(prog), Ghost(s0), Ghost(0nat), true);
     assert(em::step_acquire(prog, s0, em::do_acquire(s0, 0, true)));
     let ghost s1 = em::do_acquire(s0, 0, true);
     proof {
@@ -955,12 +955,14 @@ pub fn ex_consume_twice() {
     assert(l.state == LinState::Consumed);
 }
 
-/// A state whose unwinder has one pending frame that holds slot 0.
-pub open spec fn ex_unwind_state(st: em::RState) -> em::State {
+/// A state whose unwinder has one pending frame that holds slot 0. The
+/// resource has the state `st`, and `on_abort` tells if its type has
+/// `on abort`.
+pub open spec fn ex_unwind_state(st: em::RState, on_abort: bool) -> em::State {
     em::State {
         stack: Seq::empty(),
         pending: seq![em::Frame::Code(ex_frame(0, Map::empty().insert(0nat, 0nat)))],
-        res: Map::empty().insert(0nat, em::Res { st, on_abort: true }),
+        res: Map::empty().insert(0nat, em::Res { st, on_abort }),
         konts: Map::empty(),
         hinfo: Map::empty(),
         next_res: 1,
@@ -974,25 +976,41 @@ pub open spec fn ex_unwind_state(st: em::RState) -> em::State {
 /// duplicated pending frame then finds the aborted value: the model state
 /// is `err_unwind_dead`, and the exec unwind does not run `on abort` again.
 pub fn ex_unwind_once() {
-    let ghost s = ex_unwind_state(em::RState::Live);
-    let mut l = Linear::new();
+    let ghost s = ex_unwind_state(em::RState::Live, true);
+    let mut l = Linear::new(true);
     proof {
         assert(em::pf(s) == ex_frame(0, Map::empty().insert(0nat, 0nat)));
         assert(em::max_slot(em::pf(s).slots, 0));
     }
     let run1 = unwind_linked(&mut l, Ghost(s), Ghost(0nat));
-    assert(run1);
+    assert(run1 == Ok::<bool, LinError>(true));
     assert(em::step_unwind_abort(s, em::do_abort(s, 0)));
     assert(l.state == LinState::Aborted);
-    let ghost s2 = ex_unwind_state(em::RState::Aborted);
+    let ghost s2 = ex_unwind_state(em::RState::Aborted, true);
     proof {
         assert(em::pf(s2) == ex_frame(0, Map::empty().insert(0nat, 0nat)));
         assert(em::max_slot(em::pf(s2).slots, 0));
         assert(em::err_unwind_dead(s2));
     }
     let run2 = unwind_linked(&mut l, Ghost(s2), Ghost(0nat));
-    assert(!run2);
+    assert(run2 == Ok::<bool, LinError>(false));
     assert(l.state == LinState::Aborted);
+}
+
+/// **Vacuity guard for E3.** The unwinder finds a live value whose type has
+/// no `on abort`. The model state is `err_no_on_abort`. The exec unwind
+/// fails and does not change the record.
+pub fn ex_unwind_no_on_abort() {
+    let ghost s = ex_unwind_state(em::RState::Live, false);
+    let mut l = Linear::new(false);
+    proof {
+        assert(em::pf(s) == ex_frame(0, Map::empty().insert(0nat, 0nat)));
+        assert(em::max_slot(em::pf(s).slots, 0));
+    }
+    let r = unwind_linked(&mut l, Ghost(s), Ghost(0nat));
+    assert(r is Err);
+    assert(em::err_no_on_abort(s));
+    assert(l.state == LinState::Live);
 }
 
 } // verus!

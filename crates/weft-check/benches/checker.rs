@@ -1,9 +1,7 @@
 //! The production checker against the general Datalog engine on the same facts.
 //!
 //! The design asks for a checker that agrees with the spec and stays fast. This
-//! benchmark measures both on the corpus and on one large generated function.
-
-#![allow(clippy::significant_drop_tightening)]
+//! benchmark measures both on the corpus and on large generated functions.
 
 use std::fmt::Write as _;
 
@@ -26,6 +24,29 @@ fn large_program(n: usize) -> String {
     s
 }
 
+/// `n` times: a reference, a mutation that invalidates it, and a use. Each
+/// `let` makes a new reference with the same name, so the function has `n`
+/// references and `n` errors.
+fn rebind_program(n: usize) -> String {
+    let mut s = String::from("fn big(v: &Vec<u32>) / mut(v) {\n");
+    s.push_str(&"    let r = &v[0]\n    v.push(1)\n    print(r)\n".repeat(n));
+    s.push_str("}\n");
+    s
+}
+
+/// The facts of the first body of a program.
+fn facts_of(src: &str) -> weft_facts::FnFacts {
+    check_source("big.wf", src, Options::default())
+        .analysis
+        .bodies
+        .swap_remove(0)
+        .facts
+}
+
+// A `BenchmarkGroup` holds the `Criterion` value and writes the report when
+// it drops. The lint asks to drop each group earlier, but `finish` already
+// ends it after its last benchmark.
+#[allow(clippy::significant_drop_tightening)]
 fn bench(c: &mut Criterion) {
     let src = large_program(200);
     let facts = check_source("big.wf", &src, Options::default())
@@ -37,6 +58,12 @@ fn bench(c: &mut Criterion) {
     g.sample_size(10);
     g.bench_function("production checker", |b| b.iter(|| check(&facts)));
     g.bench_function("datalog spec", |b| b.iter(|| bridge::check_spec(&facts)));
+    g.finish();
+
+    let rebind = facts_of(&rebind_program(1000));
+    let mut g = c.benchmark_group("rebound references (1000 errors)");
+    g.sample_size(10);
+    g.bench_function("production checker", |b| b.iter(|| check(&rebind)));
     g.finish();
 
     let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/programs");

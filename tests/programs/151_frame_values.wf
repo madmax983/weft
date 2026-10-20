@@ -1,0 +1,133 @@
+// The value of a frame body leaves the frame after the end of the frame: a
+// handled body, a scope body and a clause run in frames of their own, as in
+// the interpreter (ADR 0003). Their temporaries go out of scope at their end.
+// A hidden variable holds the value across the end, so a reference into a
+// temporary of the frame is invalid there (W0301). The end of a scope can
+// raise the failure of a child, so a linear value of the scope body needs
+// `on abort` there (W0602, ADR 0006).
+effect Note { fn note(x: u64) }
+effect Ask { fn ask() -> u64 }
+effect Give { fn give() -> &u64 }
+struct E { hp: u64 }
+struct W { b: Box<E>, ns: Vec<u64> }
+linear struct Tx { id: u64 }
+linear struct Ux { id: u64 }
+    on abort = drop_ux
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v.push(2); v }
+fn mk_w() -> W { W { b: Box.new(E { hp: 1 }), ns: mk_v() } }
+fn first(v: &Vec<u64>) -> &u64 in v[] { &v[0] }
+fn show(r: &u64) { print(r + 1) }
+fn begin() -> Tx { Tx { id: 1 } }
+fn commit(t: Tx) { let Tx(i) = t }
+fn begin_u() -> Ux { Ux { id: 2 } }
+fn drop_ux(u: Ux) { let Ux(i) = u }
+fn boom() / fail { fail("boom") }
+
+// A reference into a temporary of a handled body.
+fn handled_index() {
+    let r = handle Note { fn note(x) { resume(()) } } in { &mk_v()[0] }   //~ W0301
+    print(r + 1)
+}
+fn handled_callee() {
+    let r = handle Note { fn note(x) { resume(()) } } in { first(&mk_v()) }   //~ W0301
+    print(r + 1)
+}
+fn handled_method() {
+    let r = handle Note { fn note(x) { resume(()) } } in { mk_v().get(0) }   //~ W0301
+    print(r + 1)
+}
+fn handled_no_block() {
+    let r = handle Note { fn note(x) { resume(()) } } in &mk_v()[0]   //~ W0301
+    print(r + 1)
+}
+fn handled_box_field() {
+    let r = handle Note { fn note(x) { resume(()) } } in { &mk_w().b.hp }   //~ W0301
+    print(r + 1)
+}
+fn handled_option() {
+    let o = handle Note { fn note(x) { resume(()) } } in { Some(&mk_v()[0]) }   //~ W0301
+    match o {
+        Some(r) => print(r + 1),
+        None => {}
+    }
+}
+fn handled_argument() {
+    show(handle Note { fn note(x) { resume(()) } } in { first(&mk_v()) })   //~ W0301
+}
+fn handled_assigned() {
+    let r = &[5][0]
+    r = handle Ask { fn ask() { resume(1) } } in { let k = ask(); first(&mk_v()) }   //~ W0301
+    print(r + 1)
+}
+
+// A reference into a temporary of a scope body.
+fn scope_argument() {
+    show(scope { s => first(&mk_v()) })   //~ W0301
+}
+
+// A reference into a temporary of a clause: through the value of the clause,
+// and through `resume`.
+fn clause_value() {
+    let u = mk_v()
+    let r = handle Ask { fn ask() { first(&mk_v()) } } in { let k = ask(); &u[0] }   //~ W0301
+    print(r + 1)
+}
+fn resume_value() {
+    let r = handle Give { fn give() { resume(first(&mk_v())) } } in { give() }   //~ W0204
+    print(r + 1)
+}
+
+// The end of the scope raises the failure of the child, and the linear value
+// of the body has no `on abort`.
+fn scope_linear_value() / async, fail {
+    let t = scope { s =>   //~ W0602
+        s.spawn(|| boom())
+        begin()
+    }
+    commit(t)
+}
+
+// Clean: the values point into locals outside the frame.
+fn handled_outer() {
+    let u = mk_v()
+    let r = handle Note { fn note(x) { resume(()) } } in { first(&u) }
+    print(r + 1)
+}
+fn scope_outer() {
+    let u = mk_v()
+    show(scope { s => first(&u) })
+}
+fn clause_outer() {
+    let u = mk_v()
+    let w = mk_v()
+    let r = handle Ask { fn ask() { first(&w) } } in { let k = ask(); &u[0] }
+    print(r + 1)
+}
+// Clean: a value of a temporary that the frame copies, and a temporary that
+// the body uses up.
+fn copied_values() {
+    let n = handle Note { fn note(x) { resume(()) } } in { mk_v()[0] }
+    let m = scope { s => first(&mk_v()) + 0 }
+    print(n + m)
+}
+// Clean: the linear value has `on abort`, or the scope has no child.
+fn scope_linear_on_abort() / async, fail {
+    let u = scope { s =>
+        s.spawn(|| boom())
+        begin_u()
+    }
+    drop_ux(u)
+}
+fn scope_linear_no_child() / async {
+    let t = scope { s => begin() }
+    commit(t)
+}
+
+fn main() / async {
+    handled_outer()
+    scope_outer()
+    clause_outer()
+    copied_values()
+    scope_linear_no_child()
+    handle Fail { fn fail(m) { print("failed: {m}") } } in scope_linear_on_abort()
+}

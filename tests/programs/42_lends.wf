@@ -1,0 +1,96 @@
+// A call of a function parameter, a call of an unknown function value and an
+// operation of an outer handler lend their reference arguments: the code that
+// gets them can mutate through them. A closure or a handler clause that lends a
+// place lends it again at each node where it runs.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Cb { f: fn(&World) }
+effect Touch { fn touch(w: &World) }
+effect Bump { fn bump(v: &Vec<u64>) }
+
+fn apply(f: fn(&World), w: &World) { f(w) }
+
+// The call of the function parameter is inside a closure that captures `w`.
+fn in_closure(f: fn(&World), w: &World) {
+    let first = &w.entities[0]
+    let g = || f(w)
+    g()
+    print(first.hp)   //~ W0301
+}
+
+// The closure gives its own parameter to the function parameter.
+fn in_closure_param(f: fn(&World), w: &World) {
+    let first = &w.entities[0]
+    let g = |y: &World| f(y)
+    g(w)
+    print(first.hp)   //~ W0301
+}
+
+// An operation of an outer handler inside a closure.
+fn touch_in_closure(w: &World) / Touch {
+    let first = &w.entities[0]
+    let g = || touch(w)
+    g()
+    print(first.hp)   //~ W0301
+}
+
+// A function value from a field, called inside a closure.
+fn unknown_in_closure(cb: &Cb, w: &World) {
+    let first = &w.entities[0]
+    let g = || {
+        let h = cb.f
+        h(w)
+    }
+    g()
+    print(first.hp)   //~ W0301
+}
+
+// A closure argument that gives its parameter to an outer operation.
+fn touch_via_hof(w: &World) / Touch {
+    let first = &w.entities[0]
+    apply(|x| touch(x), w)
+    print(first.hp)   //~ W0301
+}
+
+// A node that lends a place while a task reads it.
+fn lend_while_task(w: &World) / Touch, async {
+    scope { s =>
+        s.spawn(|| print(w.entities.len()))
+        let g = || touch(w)
+        g()   //~ W0405
+    }
+}
+
+// A clause that gives its parameter to a function parameter.
+fn in_clause(f: fn(&Vec<u64>), v: &Vec<u64>) {
+    handle Bump {
+        fn bump(x) {
+            f(x)
+            resume(())
+        }
+    } in {
+        let r = &v[0]
+        bump(v)
+        print(r)   //~ W0301
+    }
+}
+
+// Controls: the closure lends another place, and the clause reads its parameter.
+fn lends_other(f: fn(&World), w: &World, o: &World) {
+    let first = &w.entities[0]
+    let g = || f(o)
+    g()
+    print(first.hp)
+}
+fn clause_reads(v: &Vec<u64>) {
+    handle Bump {
+        fn bump(x) {
+            print(x.len())
+            resume(())
+        }
+    } in {
+        let r = &v[0]
+        bump(v)
+        print(r)
+    }
+}

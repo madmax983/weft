@@ -1,0 +1,149 @@
+// More paths for tasks. A callee can call a closure that spawns more than once:
+// the copies of the task run at the same time (W0405). A task handle stays a task
+// handle through a branch and through a closure result. A task cannot reach a
+// handler on the stack of another task (W0314): also when a clause runs an
+// operation argument as a task, when a callee starts the task, or when the task
+// runs a closure from a field. A failure of a task goes to the task that joins it.
+effect Note { fn note(x: u64) }
+effect Run { fn run(f: fn()) }
+struct Stats { count: u64 }
+struct Job { f: fn() }
+
+fn each(v: &Vec<u64>, f: fn(u64)) { for x in v[] { f(x) } }
+fn run_twice(f: fn() -> u64) -> u64 { f() + f() }
+fn once_call(f: fn() -> u64) -> u64 { f() }
+fn run_maker(f: fn() -> fn() -> u64) -> u64 { let g = f(); g() }
+fn logging_worker() / async, log {
+    scope { s => s.spawn(|| log.info("x")) }
+}
+
+// A callee calls the spawning closure more than once.
+fn per_item(v: &Vec<u64>, st: &Stats) / mut(st), async {
+    scope { s =>
+        each(v, |x| { s.spawn(|| st.count += x); () })   //~ W0405
+    }
+}
+fn twice_callee(st: &Stats) / mut(st), async {
+    scope { s =>
+        run_twice(|| { s.spawn(|| st.count += 1); 0 })   //~ W0405
+    }
+}
+fn twice_value(st: &Stats) / mut(st), async {
+    scope { s =>
+        let sp = || { s.spawn(|| st.count += 1); () }
+        let g = |f: fn()| { f(); f() }
+        g(sp)   //~ W0405
+    }
+}
+fn once_callee(st: &Stats) / mut(st), async {
+    scope { s =>
+        once_call(|| { s.spawn(|| st.count += 1); 0 })
+    }
+}
+// A callee calls the closure that a maker returns.
+fn calls_result(st: &Stats) / mut(st), async {
+    scope { s =>
+        run_maker(|| || { s.spawn(|| st.count += 1); 0 })
+        print(st.count)   //~ W0405
+    }
+}
+// The maker and the outer closure do not spawn: only a call of the inner closure does.
+fn maker_not_called(st: &Stats) / mut(st), async {
+    scope { s =>
+        let mk = || || { s.spawn(|| st.count += 1); 0 }
+        let g = mk()
+        print(st.count)
+    }
+}
+fn inner_not_called(st: &Stats) / mut(st), async {
+    scope { s =>
+        let a = || { let b = || { s.spawn(|| st.count += 1); 0 }; 0 }
+        a()
+        print(st.count)
+    }
+}
+// A task handle that a closure returns joins the task.
+fn join_returned(st: &Stats) / mut(st), async {
+    scope { s =>
+        let sp = || s.spawn(|| st.count += 1)
+        let t = sp()
+        t.join()
+        print(st.count)
+    }
+}
+// A scope that ends with a spawn gives its task handle through a branch and a closure.
+fn handle_in_branch(c: bool) / async {
+    if c { scope { s => s.spawn(|| 1) } } else { scope { s => s.spawn(|| 2) } }
+}
+fn handle_in_match(c: bool) / async {
+    match c {
+        true => scope { s => s.spawn(|| 1) },
+        false => scope { s => s.spawn(|| 2) },
+    }
+}
+fn handle_from_closure() / async {
+    let f = || scope { s => s.spawn(|| 1) }
+    f()
+}
+
+// A clause runs its function argument as a task.
+fn clause_task() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        handle Run {
+            fn run(f) {
+                scope { s =>
+                    let t = s.spawn(f)   //~ W0314
+                    t.join()
+                }
+                resume(())
+            }
+        } in run(|| note(1))   //~ W0314
+    }
+}
+fn clause_calls() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        handle Run { fn run(f) { f(); resume(()) } } in run(|| note(1))
+    }
+}
+// A callee starts a task that performs through a local handler of its caller.
+fn caller_handles_log() / async {
+    handle log {
+        fn info(m) { resume(()) }
+        fn warn(m) { resume(()) }
+    } in logging_worker()   //~ W0314
+}
+fn runtime_handles_log() / async, log {
+    logging_worker()
+}
+// A task runs a closure from a field of a local.
+fn from_field() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let j = Job { f: || note(1) }
+        scope { s => s.spawn(j.f) }   //~ W0314
+    }
+}
+fn from_field_ok() / async {
+    let j = Job { f: || print(1) }
+    scope { s => s.spawn(j.f) }
+}
+// `http.serve` runs its handler as a task.
+fn serve_local(env: Env) / io {
+    let l = env.net.listen("127.0.0.1:0")
+    handle Log { fn info(m) { resume(()) } fn warn(m) { resume(()) } } in {
+        http.serve(l, |r| { log.info("req"); Response.text("a") })   //~ W0314
+    }
+}
+fn serve_runtime(env: Env) / io {
+    let l = env.net.listen("127.0.0.1:0")
+    http.serve(l, |r| { log.info("req"); Response.text("a") })
+}
+// A failure of a task goes to the task that joins it, so a local handler of
+// `Fail` gets it.
+fn task_failure() / async {
+    handle Fail { fn fail(msg) { print(msg) } } in {
+        scope { s =>
+            let t = s.spawn(|| fail("boom"))
+            t.join()
+        }
+    }
+}

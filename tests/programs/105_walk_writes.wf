@@ -1,0 +1,126 @@
+// A walk down a list or a tree, then a write through the reference that the
+// walk found. A change through a reference at its own place, or below it, does
+// not invalidate that reference (ADR 0003). Another reference into the same
+// places is still checked.
+struct Node { val: u64, next: Vec<Node> }
+struct T { key: u64, hits: u64, left: Vec<T>, right: Vec<T> }
+struct Tri { val: u64, a: Vec<Tri>, b: Vec<Tri>, c: Vec<Tri> }
+struct Tree { val: u64, next: Vec<Tree>, kids: Vec<Tree> }
+
+fn set_last(head: &Node, x: u64) / mut(head..) {
+    let cur = head
+    while cur.next.len() > 0 {
+        cur = &cur.next[0]
+    }
+    cur.val = x
+    print(cur.val)
+}
+
+fn bump_all(head: &Node) / mut(head..) {
+    let cur = head
+    while cur.next.len() > 0 {
+        cur.val += 1
+        cur = &cur.next[0]
+    }
+    cur.val += 1
+}
+
+fn cut_tail(head: &Node) / mut(head..) {
+    let cur = head
+    while cur.next.len() > 0 {
+        cur = &cur.next[0]
+    }
+    cur.next = Vec.new()
+    print(cur.val)
+}
+
+fn hit(root: &T, k: u64) / mut(root..) {
+    let cur = root
+    let going = true
+    while going {
+        if k < cur.key && cur.left.len() > 0 {
+            cur = &cur.left[0]
+        } else {
+            if k > cur.key && cur.right.len() > 0 {
+                cur = &cur.right[0]
+            } else {
+                going = false
+            }
+        }
+    }
+    cur.hits += 1
+    print(cur.hits)
+}
+
+// A three-way walk and a walk in a walk: the lowering stays small.
+fn three_way(head: &Tri, n: u64) / mut(head..) {
+    let x = head
+    let i = 0
+    while i < n {
+        if i == 3 { x = &x.a[0] } else { if i == 4 { x = &x.b[0] } else { x = &x.c[0] } }
+        i += 1
+    }
+    x.val = 1
+    print(x.val)
+}
+
+fn nested_walk(head: &Tree, n: u64) -> u64 {
+    let a = head
+    let i = 0
+    while i < n {
+        let j = 0
+        while j < n {
+            a = &a.next[0]
+            j += 1
+        }
+        a = &a.kids[0]
+        i += 1
+    }
+    a.val
+}
+
+// A reference below the walk is not valid after a new value of the vector.
+fn below_walk(head: &Node) / mut(head..) {
+    let cur = head
+    while cur.next.len() > 0 {
+        cur = &cur.next[0]
+    }
+    let k = &cur.next
+    cur.next = Vec.new()
+    print(k.len())   //~ W0301
+}
+
+// The write goes through `prev`. `cur` can be below the vector that it replaces.
+fn prev_and_cur(head: &Node) / mut(head..) {
+    let prev = head
+    let cur = head
+    while cur.next.len() > 0 {
+        prev = cur
+        cur = &cur.next[0]
+    }
+    prev.next = Vec.new()
+    print(cur.val)   //~ W0301
+}
+
+// A copy of the walk reference is another reference.
+fn copy_of_walk(head: &Node) / mut(head..) {
+    let cur = head
+    while cur.next.len() > 0 {
+        cur = &cur.next[0]
+    }
+    let r = &cur.next[0]
+    cur.next = Vec.new()
+    print(r.val)   //~ W0301
+}
+
+// A three-way walk with a change above it.
+fn three_way_clear(head: &Tri, n: u64) / mut(head..) {
+    let x = head
+    let i = 0
+    while i < n {
+        if i == 3 { x = &x.a[0] } else { if i == 4 { x = &x.b[0] } else { x = &x.c[0] } }
+        i += 1
+    }
+    head.a.clear()
+    print(x.val)   //~ W0301
+}

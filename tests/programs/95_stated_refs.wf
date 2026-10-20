@@ -1,0 +1,41 @@
+// A returned reference and a new value of a place field point inside the
+// place that the signature or the field states (`ref_outside`, review S5b).
+// This is the check of W0203 (`inside_stated`): below a plain place only
+// stable steps follow, and below a wildcard place any step can follow.
+struct World { a: Vec<u64>, b: Vec<u64> }
+
+// W0204: the returned places.
+fn other(v: &Vec<u64>, w: &Vec<u64>) -> &u64 in v[] { &w[0] }   //~ W0204
+fn below_unstable(w: &World) -> &u64 in w.a { &w.a[0] }   //~ W0204
+fn either(w: &World, first: bool) -> &u64 in w.a[] {
+    if first { &w.a[0] } else { &w.b[0] }   //~ W0204
+}
+// Clean: inside the stated place, also below a wildcard place.
+fn inside(w: &World) -> &u64 in w.a[] { &w.a[0] }
+fn anywhere(w: &World) -> &u64 in w.. { &w.b[0] }
+fn one_of(w: &World, first: bool) -> &u64 in w.. {
+    if first { &w.a[0] } else { &w.b[0] }
+}
+
+// W0204: a handler of a caller can resume with any place of the caller.
+effect Pick { fn pick() -> &u64 }
+fn from_caller(u: &Vec<u64>) -> &u64 in u.. / Pick {
+    pick()   //~ W0204
+}
+
+// W0605: a new value of a place field, and a struct literal.
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+fn cur_outside(v: &Vec<u8>) {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &v[0]   //~ W0605
+    print(f.cur)
+}
+fn cur_literal(v: &Vec<u8>) {
+    let f = Frame { buf: [1, 2, 3, 4], cur: &v[0] }   //~ W0605
+}
+// Clean: the field points into its own struct.
+fn cur_inside() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[1]
+    print(f.cur)
+}

@@ -1,0 +1,716 @@
+{
+ "S3: implement": {
+  "base_commit": "0b1a03d",
+  "head_commit": "9e8081d0b4c061511226e89e5a829b2addbac28a",
+  "gates_passed": true,
+  "summary": "Stage S3 is done on review/s3 in /home/user/wt-core. There are six commits on top of base 0b1a03d: 68e7d43 (from the earlier agent), then f4e602c, fa7c5ec, bd7f476, 0331cd0 and 9e8081d.\n\nI reviewed the earlier agent's uncommitted RT12 work. It was correct, so I kept it, finished it and committed it as f4e602c. I made one change: its new interpreter case was in sim.wf, which made the CLI test `test_reports_failing_tests` fail. I moved that case into a new file, crates/weft-interp/tests/programs/sim_tasks.wf, and put sim.wf back as it was.\n\nGates at HEAD:\n- `cargo fmt --all` passes.\n- `cargo clippy --workspace --all-targets -- -D warnings` passes.\n- `cargo test --workspace` passes, including the corpus, the interpreter corpus and random agreement (also run with 3000 and 4000 cases).\n- The doc gate (`cargo doc` with `-D warnings`) already failed at the base, on parser.rs `CHAIN_PART` and the rules.rs line 4 link. I did not touch those lines, so I left the gate as it was.\n- `verify-all.sh` was not needed: I did not change weft-verified or proofs.\n\nTo check each fix, I built the base commit in partb/base and ran every probe (red-team, spec review, verify and my own) on the base and on HEAD. The script is partb/diff.sh. The only differences are the changes I intended. The base build is deleted.\n\nNew corpus programs: 60 (earlier agent), 61, 62, 63, 64, 65. New interpreter programs: closure_return (earlier agent), sim_tasks, op_named_args. New CLI test file: crates/weft-cli/tests/units.rs.\n\nThings to watch when you merge review/quality:\n- Its W0805 diagnostic (diagnose.rs root_effects) prints the facts' effect string. This is now an identity such as `main.Note`, so the message must use `weft_sema::effects::shown(e)`. Otherwise its test, which expects `Note`, will fail.\n- Its `effects::written_name` does the same job as the new `effects::in_signature`, but takes a bare name. Merge the two.\n- Small local edits that may touch its hunks: rules.rs `multi()` and the W0801 loop, bridge.rs `each_fact` (4 new relations), the `forwards` comment in weft-facts, codes.rs texts (W0101, W0111, W0313, W0315, W0503, W0801), diagnose.rs W0702, package.rs (the authority filter) and cli.rs (two tests no longer call private dependency functions).",
+  "findings": [
+   {
+    "id": "RT11",
+    "status": "fixed",
+    "evidence": "Commit 68e7d43 (earlier agent), reviewed. Probes on HEAD: c01 gives W0111 for a break in a closure, and the closure return no longer gets a false W0102. c02 gives W0315 for a return in a handled body and in a clause, plus the real W0301. c03 gives W0315 for a return in a scope body. a12 break_scope: the false W0405 is now W0315. Tests: tests/programs/60_jumps.wf and crates/weft-interp/tests/programs/closure_return.wf (the interpreter agrees). The rule is recorded in ADR 0009.",
+    "notes": "New code W0315 is in codes.rs."
+   },
+   {
+    "id": "loop-Never",
+    "status": "fixed",
+    "evidence": "Commit 68e7d43. A `loop` that no `break` leaves has the type `!`. Probe partb/probes/j1_loops.wf: the base gave 6 false W0102, HEAD gives none. The only error left is `while c { return 1 }`, which is correct. Cases are in 60_jumps.wf."
+   },
+   {
+    "id": "RT12",
+    "status": "fixed",
+    "evidence": "Commit f4e602c. A closure or a clause that spawns into an outer scope starts the task where it runs: new `Summary.spawns`, applied in apply_summary and run_handler. A task joins at the end of its receiver's scope. W0314 now checks items and fn params at spawn and fork, resolving an item's effects against the handlers at the spawn. New signature part `tasks` (in infer.rs), checked at callers. Probes t06/t05: W0405 is now reported (base: none). t03: W0314 for spawn(noter), fork(noter, noter) and spawn_param_caller (base: none). Corpus: tests/programs/61_task_paths.wf. Commit 9e8081d also makes a call of an unknown fn value or a fn param count as a possible spawner (61 unknown_spawner).",
+    "notes": "Still open, recorded in ADR 0005: a task that runs a function value from a store (a field or a container). A closure that returns its task handle gives the handle to its caller, but the caller cannot join it with `join`, so W0601 is reported when the caller drops it (t05)."
+   },
+   {
+    "id": "sim.run false W0314",
+    "status": "fixed",
+    "evidence": "Commit f4e602c. `root_caps` marks the root handlers of sim.run, and on_this_stack excludes them. A user handler of a standard effect still gives W0314 (61 local_log). The interpreter program crates/weft-interp/tests/programs/sim_tasks.wf has spawns and a fork written directly in a sim.run body. The base gave 4 false W0314; HEAD gives none, and the program runs with the expected output."
+   },
+   {
+    "id": "RT16",
+    "status": "fixed",
+    "evidence": "Commit fa7c5ec, new file body/caps.rs. Values and locals carry the capabilities of the closures inside them. At the end of a handled body, W0313 is reported for the body value (also in a tuple, a struct, a container or a closure), for an outer local, and for values that are stored or given to code that can keep them: a field behind a reference, a storing or foreign callee, an unknown fn value, a closure that stores its parameter, an operation of an outer handler, and a resume argument. Probe h02: 3 new W0313 (base: 1). Corpus 62_cap_escape.wf: 15 bad cases (base: 2 found) and 3 control functions. The local-struct cases in 45_stored, v20 and f3 are not flagged. Effects-proof rule (3) is covered by in_closure and in_container.",
+    "notes": "Gaps and imprecision are in ADR 0005: a callee that copies a fn value out of a reference argument, and a clause that keeps its fn parameter."
+   },
+   {
+    "id": "RT22",
+    "status": "fixed",
+    "evidence": "Commit f4e602c. handle() now returns the body Val, so the task handle stays. Probe t03: the 2 false W0601 are gone. Case 61 handled_task. Commit bd7f476 joins clause values into the handle value only when a value holds refs or fns, so the task handle is kept."
+   },
+   {
+    "id": "effects-proof rules 1/2/6",
+    "status": "fixed",
+    "evidence": "Commit bd7f476. New spec input facts clause_multi(Cap), body_multi(Cap) and resumes_at(P, Cap). New rules: multi_at(P) :- performs_at(P, Cap), clause_multi(Cap); and multi_at(P) :- resumes_at(P, Cap), body_multi(Cap) or clause_multi(Cap). These are mirrored in rules.rs multi(), emitted in bridge each_fact, and generated in agreement_random. Rule 1 at calls (call, closure, local handler) already held. Rule 2 (a fresh once continuation across multi, direct or through a call) already held and is now tested. Rule 6: a clause runs in the handle-site environment and its value joins the handle value, so effects and W0301 apply at a later call of it (63 clause_value). A clause value cannot carry an outer handler's capability out (63 clause_value_escapes), and a resume argument cannot carry a capability of a handler inside the clause (63 resume_escapes). Corpus 63_suspension.wf: the base found 5 of the 13 bad cases, HEAD finds all 13, and the 5 control cases stay clean. `check --explain` shows the derivation through clause_multi. ADR 0005 records the rules."
+   },
+   {
+    "id": "F6",
+    "status": "fixed",
+    "evidence": "Commit bd7f476. Spec: forwards(H) :- handler(H, E), clause_performs(H, E). The new input fact clause_performs(H, E) comes from the clause summaries (outer handlers and escapes). The input `forwards` now marks only the root handlers of sim.run. The checker mirrors this in rules.rs. The old rule ('the function declares or infers the effect') is removed from stmt.rs. Probe p9 fake_runtime: W0801 (base: none). lib01 runtime_like: W0801. tests/programs/15_library.wf now has intercept and intercept_by_call (clean), swallow (W0801) and nested (W0801 on the outer handler)."
+   },
+   {
+    "id": "shadowed std effect names",
+    "status": "fixed",
+    "evidence": "Commit 0331cd0. effects::identity: a standard effect keeps its name, and a user effect gets 'main.Log' or 'json.sub.Log' (EffectDef.module was added). effects::canonical returns identities, effect_named falls back to by_identity, and body/ lookups use by_identity. Display goes through effects::shown and in_signature (W0702, W0701, W0705, node labels). Package authority counts standard effects only. Corpus 64_effect_names.wf: the base found none of the 5 W0702 and gave a false W0104 on `handle log`. The design examples 05_effects and 05_effects_bad keep their results, and the corpus test passes. CLI test units.rs a_user_effect_of_a_dependency_needs_no_authority: the base gave a false W0901 for quiet. W0803 (driver is_std) and W0801 (std_effect) now see the identity.",
+    "notes": "W0805 exists only on review/quality. After the merge it must display `effects::shown(e)`."
+   },
+   {
+    "id": "RT24",
+    "status": "fixed",
+    "evidence": "Commit 0331cd0. s.spawn(5) gives W0102. spawn with two closures, or with a closure that takes parameters, gives W0103. fork() and fork(|| 1) give W0103 'needs at least two closures'. Operation arguments bind by name in sema (op_slots: W0103 for an unknown name, a name given twice, or a wrong count; a trailing block goes to the last free parameter) and in the interpreter (compile.rs op_args). Corpus 65_call_forms.wf: on the base, spawn(5), fork() and fork(|| 1) were accepted, and put(b: 1, a: v) gave false W0102s. HEAD binds put(b: 1, a: v) by name and gives the W0301 through the clause. The interpreter program op_named_args.wf prints '1 x' on HEAD, where the base bound by position ('x 1'). Verify probe f3_variants v4 now gives the expected W0312 instead of W0102s. ADR 0009 records the rule."
+   },
+   {
+    "id": "RT21 follow-up (pub across units)",
+    "status": "fixed",
+    "evidence": "Commit 0331cd0. check_visible reports W0101 '`f` is private: it is not `pub` in its package' for a function or method that is not pub in another unit. It covers module paths, fn values, static methods and value methods. CLI tests in crates/weft-cli/tests/units.rs: the_project_cannot_name_a_private_function_of_a_dependency (3 errors; the base gave none) and the_project_can_name_a_public_function_of_a_dependency (clean). The tests/packages/hidden fixture and cli.rs authority_covers_private_dependency_functions no longer call private functions. `weft deps` still checks private functions. ADR 0005 is updated.",
+    "notes": "Only functions are checked for pub. Types and effects of a dependency are not, because AdtDef has no pub flag. This is recorded as open in ADR 0005."
+   }
+  ],
+  "design_decisions": [
+   "The new interpreter test for spawns written directly in a sim.run body is its own file, sim_tasks.wf, instead of a case in sim.wf. This way the CLI test that counts passed tests in sim.wf does not change.",
+   "W0313 tracks capabilities on values (Val.caps) and locals (Local.caps). A struct or container owned by a local of the handled body can hold the closure without an error. A value that is stored behind a reference, or given to unknown or storing code, counts as an escape (sound side). Passing to an operation or a resume counts only for the capabilities of handlers inside the receiving clause.",
+   "The suspension-point rule is written as spec rules that derive multi_at (input facts clause_multi, body_multi, resumes_at). It is not hidden in fact generation, so --explain shows it. A resume counts as multi if any clause of its handler is multi (conservative).",
+   "F6: forwards(H) is derived from clause_performs(H, E). The input forwards(H) now marks only the root handlers of sim.run, which W0802 covers. HandlerInfo keeps its field name, which keeps the merge with review/quality small.",
+   "Effect identity: canonical() returns identities, and effect_named falls back to an identity lookup. This way the interpreter's effect resolution works without changes. EffectDef.name stays the written name for display.",
+   "A call of a function parameter or an unknown function value can start a task with its function argument, so W0314 checks that argument (sound). Corpus markers record the extra W0314 on to_parameter and unknown_spawner.",
+   "Authority (W0901) counts only standard effects. A user effect of a dependency needs a handler from the caller, not authority.",
+   "Pub enforcement uses W0101 ('is private'), not a new code. It applies only across units, and functions in the prelude are exempt."
+  ]
+ },
+ "S3: verify probe": {
+  "issues": [
+   {
+    "severity": "major",
+    "finding": "RT12 missed shape: a spawning closure that a callee or a function value calls more than once",
+    "description": "apply_summary emits spawned_at(T, n) once, at the call node. Nothing models a callee that calls its fn parameter in a loop or twice. So several copies of the task write the same place at the same time, and no W0405 is reported. When the loop is written in place, W0405 is reported (the task conflicts with itself at its second spawn node). The common for-each shape is unsound: `each(v, |x| { s.spawn(|| st.count += x); () })`.",
+    "repro": "P=SCRATCH/verify/partb/S3/p; $P/../weft check $P/r12e.wf: per_item (line 6, each(...)) and twice_value (line 20, g(sp) where g = |f: fn()| { f(); f() }) give 0 errors. The control per_item_inline gives W0405 at line 12. More cases: $P/r12c.wf loop_callee (line 7) and $P/r12b.wf twice_callee (line 30, run_twice(...)) give 0 errors.",
+    "suggested_fix": "When a summary that has spawns runs through a callee parameter, a passthrough or an unknown value (apply_value, call_param, call_unknown), count each of its tasks as possibly started more than once. For example, make the task active at the call node itself, so that the task conflicts with its own writes there. Add bad and clean corpus cases in 61_task_paths.wf."
+   },
+   {
+    "severity": "major",
+    "finding": "RT22 root cause still open for if, match and closure returns",
+    "description": "The fix only keeps Val.task in handle(). A scope-tail spawn handle that goes through an `if` or `match` join, or out of a closure as its value, is rebuilt without its task. drop_value then reports a false W0601. The interpreter runs these programs correctly. The base had the same errors, but the task asks for every shape of the finding.",
+    "repro": "P=SCRATCH/verify/partb/S3/p; weft check $P/rt22b.wf gives W0601 at line 2 (if), line 5 (match) and line 15 (closure f()). weft check $P/rt22.wf gives W0601 at line 13 (closure that wraps handle+scope) and line 33 (if around a handle). weft run $P/rt22run.wf --unchecked prints 1, 3, 4 with no fault.",
+    "suggested_fix": "Keep `task` (the set of task ids) through join_val for if/match, and through closure tail and return values. Or treat a handle that a scope already joins as not linear. Add the cases to 61_task_paths.wf."
+   },
+   {
+    "severity": "major",
+    "finding": "Effect identity: the interpreter resolves `handle log` to a user effect named Log",
+    "description": "The checker accepts `handle log { fn info(m) {..} }` as a handler of the standard Log in a module that defines a user `Log` (64_effect_names.wf handled_std). The interpreter's compile.rs effect_of works differently: canonical(m, \"log\") gives \"Log\", and effect_named(m, \"Log\") calls lookup first, which finds the user Log. The `info` clause is then skipped, and `log.info` goes to the root handler. So the checker and the interpreter disagree: a standard effect that the checker counts as handled is performed on the root. The report says that the interpreter needed no changes, but this case does need one.",
+    "repro": "P=SCRATCH/verify/partb/S3/p; weft check $P/ids_run.wf gives 0 errors. weft run $P/ids_run.wf --seed 1 prints `info: y` (root) and not `std handler y`. ids_run2.wf prints `user handler x` and then `info: y`.",
+    "suggested_fix": "In weft-interp compile.rs effect_of and path_ref, resolve the identity from effects::canonical with effects::by_identity. Or make Program::effect_named prefer by_identity when the name is an identity of a standard effect. Add an interpreter program with main that handles `log` in a module that shadows Log."
+   },
+   {
+    "severity": "minor",
+    "finding": "RT12 false W0405: a closure that only defines or returns a spawning closure counts as spawning",
+    "description": "spawn() adds the task to every barrier frame between the scope binder and the spawn. So an outer closure that defines an inner spawning closure, and does not call it, starts the task at each of its own calls. A factory closure starts the task twice: once at mk() and once at g().",
+    "repro": "P=SCRATCH/verify/partb/S3/p; weft check $P/r12b.wf: not_called_inner gives W0405 at line 38, but `b` is never called. weft check $P/r12a.wf: returned gives W0405 at line 38 (`g()`).",
+    "suggested_fix": "Add the spawn only to the innermost barrier summary. The outer bodies get it through apply_summary when they call the inner closure."
+   },
+   {
+    "severity": "minor",
+    "finding": "RT12 false W0405 after join of a task handle that a closure returns",
+    "description": "The handle that `sp()` returns has no task id. So `t.join()` does not end the task, and the task stays active to the end of the scope. No ADR records this. The implementer's note names only W0601 on a drop.",
+    "repro": "weft check SCRATCH/verify/partb/S3/p/r12c.wf: join_then_read (`let sp = || s.spawn(|| st.count += 1); let t = sp(); t.join(); print(st.count)`) gives W0405 at line 37.",
+    "suggested_fix": "Carry the task ids in the closure's return value (Summary ret), or record the limit in ADR 0006."
+   },
+   {
+    "severity": "minor",
+    "finding": "W0313 false positives for storage that the handled body owns, through a callee",
+    "description": "`let b = Box.new(|| log(\"x\"))` and `Rc.new(..)` inside a handled body give W0313 'the body stores it'. So does `r.add(|| log(\"x\"))`, where r is a struct local to the body and add pushes into self. A direct `v.push(..)` on a local Vec is accepted, so the results are not consistent. ADR 0005 lists 'a callee that stores it or has no body' as imprecision, so this is documented. Box.new is the clearest case.",
+    "repro": "P=SCRATCH/verify/partb/S3/p; weft check $P/rt16c.wf gives W0313 at line 4 (Box.new) and line 10 (Rc.new). weft check $P/rt16d.wf gives W0313 at line 14 (Registry.add). The base gave none.",
+    "suggested_fix": "Treat a store into the callee's result, or into `self` when the receiver is a local of the body, as a store into that local. At minimum, treat Box.new and Some(..) as a store into the result."
+   },
+   {
+    "severity": "minor",
+    "finding": "Effects-proof rule 2: a closure that holds a fresh once continuation is not a once value",
+    "description": "`let k = || resume(()); let b = choose(); k()` in a clause gives no W0503. `k(); k()` gives no W0501. The root cause is RT8 (S4 lane: the mode of a closure follows its captures, and resume goes through move_var). But S3 says that rule 2 holds, and 63_suspension.wf tests only the direct form.",
+    "repro": "weft check SCRATCH/verify/partb/S3/p/eff2.wf: r2a (line 14) and r2a_twice (line 24) give 0 errors. tok_closure (line 31, a Token captured in a closure) gives W0503.",
+    "suggested_fix": "Fix this with S4 RT8. Then add the closure-held continuation cases to 63_suspension.wf."
+   },
+   {
+    "severity": "minor",
+    "finding": "W0314 does not cover http.serve, which runs its handler as a task",
+    "description": "http.serve is a prelude extern with an empty `tasks` part. A handler closure that performs the standard Log through a local user handler is accepted. In the interpreter, a perform whose handler is not on the current task's frames falls back to root_op. So the local handler is bypassed without an error.",
+    "repro": "weft check SCRATCH/verify/partb/S3/p/serve.wf gives 0 errors.",
+    "suggested_fix": "Give extern task runners (http.serve) a `tasks` part, or count each fn parameter of an extern that is not with_timeout as task-callable. Or record the limit in ADR 0006."
+   },
+   {
+    "severity": "minor",
+    "finding": "Diagnostics are ambiguous when two effects have the same written name",
+    "description": "W0702 says '`f` performs `Note`, which the signature does not allow', but the signature states `/ Note`. The Note that f performs is the one from module a, which is a different effect. The message uses effects::shown only.",
+    "repro": "weft check SCRATCH/verify/partb/S3/p/ids.wf: line 9.",
+    "suggested_fix": "When the written names of two effects in the message are the same, show the identity (a.Note) instead."
+   }
+  ],
+  "confirmed_fixed": [
+   "RT11: probes c01/c02/c03 give W0111/W0315 on the right lines; 12 new variants pass (with_timeout trailing block, nested closures, a linear local left by a closure return, match in a handled body, loop in a clause, fences inside closures, fork/spawn closures with return, a tuple ref to a closure local gives W0204); the interpreter has closure_return.wf",
+   "loop-Never: 11 variants (if/match arms, nested loop with break, continue, closure, scope, a break hidden in a match arm or after an inner for) behave correctly; type errors in dead code are still reported",
+   "RT12 main shapes: t05/t06 W0405; spawn through direct calls, nested closures, tuple, if, struct field, nested task, and clauses (before or after resume, through a closure or a callee); W0314 for items through a local, if, generic id, inferred effects, a local std handler, fork with a trailing block, a fn param through item/closure callees, fork(f, g) params",
+   "sim.run false W0314: gone; W0314 is kept for a user std handler, a user effect, and a closure made outside sim.run; sim inside a user handler and a test block are clean",
+   "RT16: h02 gives 3 new W0313; 25 of my escape variants are caught (outer struct field, Box/Option/Rc/array/nested struct results, match/if values, a capture in a returned closure, nested handle, id_f/generic id, a tuple assigned to an outer local, a closure that assigns an outer local, an Rc alias, a ref to an outer local, a for element behind a ref, a task result, callee returns, destructuring); controls are clean (fn item, inner handler, with_timeout, counter, rec/outer/map/wrap callees)",
+   "RT22: the handle-wrapped tail spawn (direct, nested handle, in a closure body, after a perform) is clean; a bound handle that is not joined still gives W0601",
+   "Effects-proof rules 1/2/6: W0602 at a node that runs a clause, at a resume and at a call in a clause; W0503 through clause_multi/body_multi via a closure, a nested handle, a fn param, a call, nested handlers; the clause handle-site environment (own effect goes outward, effect of an inner body handler gives W0702); --explain shows the clause_multi derivation; agree passes on all probe files",
+   "F6: p9 and lib01 now give W0801; forwards through a closure, another clause, a fn param with a row, an outer closure; W0801 for a non-forwarding clause and for a handler inside a clause",
+   "Effect identity (checker side): 64 cases; a nested module with the same effect name, W0314/W0705 with the user Log, W0801 not given for a user Log in a library, authority filter",
+   "RT24: spawn()/two closures/a closure with params/a fn item with params, fork arity and closure params, named op args (unknown, given twice, count, trailing block, std op msg:) all diagnosed; the interpreter binds by name in slot order, the same as sema",
+   "RT21: W0101 'is private' for a nested-module fn, a fn value argument, a struct literal field, a private static, a second dependency; public functions and a leaked fn value are allowed",
+   "No new false positives in tests/programs, examples/*, tests/packages/hidden, or the 10 docs/design.md weft snippets (base vs HEAD diff); the red-team/spec-review probe diff shows only intended changes"
+  ],
+  "gates_ok": true,
+  "summary": "I checked HEAD 9e8081d in /home/user/wt-core against a scratch build of the base, 0b1a03d. Gates: cargo fmt --check, clippy -D warnings and cargo test --workspace pass. That includes the corpus, the interpreter corpus and random agreement, also at 3000 cases. The doc gate fails at HEAD and at the base. At HEAD the failures are parser CHAIN_PART and the rules.rs:4 redundant link. Neither line is in the S3 diff, so this is not a regression. S3 did not touch weft-verified or proofs. All S3 corpus programs and probe files agree with the spec. Each claimed probe gives the expected diagnostic on the right line. I wrote about 150 new variants under SCRATCH/verify/partb/S3/p. Most of them hold, mainly for RT11, RT16, the effects-proof rules, F6, RT24 and RT21. There are three major gaps. (1) RT12: a spawning closure that a callee or a function value calls more than once (the for-each shape) gives no W0405. It is unsound, and the same loop written in place is caught. (2) RT22: the same root cause remains for if, match and closure returns, which give a false W0601. (3) Effect identity: the interpreter's effect_of resolves `handle log` to a user effect named Log, so the checker and the interpreter disagree. Minor items: false W0405 when a closure only defines or returns a spawning closure, and when a returned task handle is joined; documented W0313 imprecision (Box.new, a local registry method); rule 2 with a continuation held in a closure, which depends on S4 RT8; http.serve not covered by W0314; ambiguous messages when two effects have the same name. The base build target is deleted. The base binary and logs stay in SCRATCH/verify/partb/S3/base."
+ },
+ "S3: verify review": {
+  "issues": [
+   {
+    "severity": "blocker",
+    "finding": "W0313 misses a closure given to an operation of its own handler (rule 6: a clause runs outside its handler)",
+    "description": "perform_op calls keep_for_op(&v, at) with at = index of the operation's handler, and keep_for_op skips handlers up to and including at. So the capability of the receiving handler H counts as live in H's clause. It is not: H's clause runs in the handle-site environment, with H removed (expr.rs pops H before it lowers the clauses). A clause that calls or returns the argument then performs through a dead capability. The checker accepts and the interpreter fails. This is an off-by-one in crates/weft-sema/src/body/call.rs perform_op (the `let at = self.handlers.iter().rposition(..); self.keep_for_op(&v, at)` lines).",
+    "repro": "Probes in SCRATCH/verify/partb/p/: a1_same_handler.wf (`handle Reg { fn reg(g) { g(); resume(()) } fn ping() {..} } in reg(|| ping())`) and a4_get_own.wf (`handle Get { fn get(g) { g } } in get(|| { let x = get(|| print(2)) })`). For both, `weft check` reports 0 errors, and `weft run` gives 'runtime error: no handler for `Reg.ping` / `Get.get` on this task'. The base also accepted them.",
+    "suggested_fix": "Count the receiving handler as inside the clause: pass at.and_then(|i| i.checked_sub(1)) (as resume does with depth-1), or skip(at) for operations. Add a bad case (own operation) and a clean case (inner_operation already covers the outer one) to 62_cap_escape.wf."
+   },
+   {
+    "severity": "blocker",
+    "finding": "W0313 misses a capability that leaves through a resume argument and the operation result",
+    "description": "keep_for_op at resume checks only the handlers inside the clause. But the resumed body gets the value as the result of its operation, and perform_op returns Val { ty: o.ret } with no caps. So a clause of an inner handle can resume with a closure that performs through an outer local handler. The body returns it as the handle value, and the outer handler's check_cap_escape does not see it. This is rule 6, which the stage claimed (63 resume_escapes covers only handlers inside the clause).",
+    "repro": "p/g3_resume_leak.wf: `handle Log {..} in { handle Get { fn get() { resume(|| log(\"late\")) } } in get() }` returned from leak(), then called in main. `weft check` gives 0 errors, and `weft run` gives 'no handler for `Log.log` on this task'.",
+    "suggested_fix": "Give an operation result whose type holds function values the caps of every local handler outside the receiving handler. A resume argument can only carry those caps. Or collect the caps of the resume arguments per capability and join them into the handle value and into the op result. Add bad and clean corpus cases."
+   },
+   {
+    "severity": "blocker",
+    "finding": "Interpreter resolves `handle log` to a user effect named Log (shadowing regression)",
+    "description": "Sema now resolves the canonical identity with effects::by_identity. But the interpreter's compile.rs effect_of still calls prog.effect_named(m, &names[0]), and effect_named does a lookup in module m first. So in a module that defines `effect Log`, the standard identity \"Log\" resolves to the user effect. The interpreter installs the handler for the wrong effect, and log.info goes to the runtime. find_op (compile.rs:365) has the same pattern. The checker and the interpreter now disagree. The base rejected the program (W0104), so this is a regression of the claimed 'interpreter works without changes'. No interpreter test covers shadowing.",
+    "repro": "p/d2b.wf (`// weft: no-runtime`, `effect Log {..}`, `handle log { fn info(m) { resume(()) } } in { log.info(\"y\") }`): base gives W0104, HEAD gives 0 errors, and `weft run` gives 'no runtime: nothing handles `Log.info`'. In p/d1_shadow_interp.wf the clause never runs: the output is 'info: y' and not 'caught y'.",
+    "suggested_fix": "In weft-interp compile.rs effect_of, use weft_sema::effects::by_identity on the canonical identities, as sema does. Check find_op's effect_named(m, &e.name) comparison the same way. Add an interpreter program with a shadowing `effect Log`, `handle log` and `handle Log`."
+   },
+   {
+    "severity": "major",
+    "finding": "W0313 misses a closure that a callee returns inside a tuple",
+    "description": "call_fn tracks a function argument only through `stores` or through a Ty::Fn result (sig.effects.ret). A function-typed argument that comes back inside a tuple (or another non-Fn result that holds functions) gets no caps on `out`. kept_vals covers only non-Fn parameters. A struct result is caught only because the callee 'stores' it.",
+    "repro": "p/a3_pair.wf: `fn pair(f: fn()) -> (fn(), u64) { (f, 1) }`; `handle Log {..} in pair(|| log(\"late\"))` returned and called in main. `weft check` gives 0 errors, and `weft run` gives 'no handler for `Log.log`'. p/a2_escapes.wf via_pair is the same.",
+    "suggested_fix": "In call_fn, if has_fn(ret) and ret is not Ty::Fn, add val_caps of every function-valued argument to out.caps (the same as kept_vals). Add the case to 62_cap_escape.wf."
+   },
+   {
+    "severity": "major",
+    "finding": "W0314 misses a handler clause that runs its function argument as a task",
+    "description": "check_task_value adds a clause parameter to the clause summary's `tasks`, but nothing checks an operation's function arguments against the clause's tasks. A body can give a closure that performs through a local handler to an operation whose clause spawns it.",
+    "repro": "p/c10_clause_task.wf: `handle Note {..} in { handle Run { fn run(f) { scope { s => let t = s.spawn(f); t.join() }; resume(()) } } in run(|| note(1)) }`. `weft check` gives 0 errors, and `weft run` gives 'no handler for `Note.note` on this task'.",
+    "suggested_fix": "When a clause summary has `tasks`, run check_task_value on the matching function arguments at each perform of that capability (op_args/fns in perform_op, or in run_handler). Or treat operation function arguments as given to an unknown spawner."
+   },
+   {
+    "severity": "major",
+    "finding": "W0314 misses the tasks of a callee whose standard effects a caller handles with a local handler",
+    "description": "local_log covers a local handler of a standard effect in the same function. Through a call it is not covered: worker() forks or spawns a branch that performs `log`, and the caller installs `handle log` around the call. The signature has no part for 'effects that tasks of the body perform', so the caller cannot check them with on_this_stack. This is the function-item version of RT12.",
+    "repro": "p/c9_noruntime_task.wf (`// weft: no-runtime`, worker() / par, log { fork(|| log.info(\"x\"), || print(1)) }; main handles Par and log locally around worker()). `weft check` gives 0 errors, and `weft run` gives 'no runtime: nothing handles `Log.info`'. In p/c8_caller_handler.wf the caller's mock never sees the task's log.",
+    "suggested_fix": "Add a signature part (inferred, like `tasks`) with the effects that tasks of the body perform. At a call, report W0314 if one of them goes to a local handler that is not a sim.run root. Record it in ADR 0006."
+   },
+   {
+    "severity": "major",
+    "finding": "W0314 misses a task that runs a closure from a field of a local",
+    "description": "ADR 0005 records this as open. But Val.caps and Local.caps from RT16 already hold the data: s.spawn(j.f) gives a Val whose val_caps contain the local handler's capability. check_task_value looks only at the summary, item and param.",
+    "repro": "p/c2_field_task.wf: `let j = Job { f: || note(1) }; scope { s => let t = s.spawn(j.f); t.join() }` inside `handle Note`. `weft check` gives 0 errors, and `weft run` gives 'no handler for `Note.note` on this task'.",
+    "suggested_fix": "In start_task, also report W0314 if val_caps(v) holds a capability that is not a root_cap and not one of the value's own caps. Then remove the open item from the ADR."
+   },
+   {
+    "severity": "major",
+    "finding": "Clause values that point into clause parameters are not mapped to the perform's argument places (rule 6)",
+    "description": "The handle value now joins the clause values, but cv.refs keeps places rooted at the clause's Arg roots. These roots are not tied to the places that each perform passes. So a handle value can point into an argument place without the checker knowing it.",
+    "repro": "p/g4_clause_ref.wf fn f: `let r = handle Pick { fn pick(a) { &a[0] } } in { let n = pick(v); &w[0] }; v.clear(); print(r)`. f gets no W0301. `weft run --unchecked` prints `<dangling>` for r.",
+    "suggested_fix": "Map refs rooted at the clause's param_roots to the reference arguments of each perform of the capability (as run_handler does for footprints), or make them wildcards over all arguments. Add corpus cases."
+   },
+   {
+    "severity": "major",
+    "finding": "New false W0313 for Box.new / Rc.new and generic callees with no reference argument",
+    "description": "For a generic parameter that holds a function, call_fn pushes the value to kept_vals, and store_into(v, &into) with an empty `into` sets stored = true. So a Box or an Rc in a local of the body, or any generic call such as both(f, || log(..)) whose result is used inside the body, gets 'the body stores it'. ADR 0005 says that a container that a local of the body owns can hold the value. The base gave no error.",
+    "repro": "p/e2_box.wf boxed(): `handle Log {..} in { let b = Box.new(|| log(\"x\")); let r = Rc.new(|| log(\"y\")) }` gives W0313 'the body stores it'. p/e1_fp.wf generic_both gives the same.",
+    "suggested_fix": "With no reference argument, a std or bodied callee can keep the value only in its result, which out.caps already carries. Count it as Stored only for foreign callees (or for callees that state `stores`). Add a clean corpus case."
+   },
+   {
+    "severity": "major",
+    "finding": "Corpus 61 spawn_in_clause marks a false W0405 as expected",
+    "description": "The clause runs `resume(()); s.spawn(..)`. The resumed computation, including the second print(st.count), runs to its end inside resume, before the spawn. So the marked W0405 at the second print is a false positive, and the corpus records it as expected. The task forbids false positives in the corpus.",
+    "repro": "p/h1_clause_order.wf (the same shape with prints): `weft run --unchecked` prints 'second print 0' before 'spawn now'. `weft check` still reports W0405 at that print.",
+    "suggested_fix": "In the bad case, spawn before resume (a real conflict with the resumed body). Keep the spawn-after-resume shape as a documented imprecision in ADR 0006, or model it after the resume node."
+   },
+   {
+    "severity": "minor",
+    "finding": "A maker closure that returns a spawning closure counts as spawning (new false W0405)",
+    "description": "Summary::union_ret clears ret_refs, dropped, rets and tasks, but not spawns. A call of a closure that only returns a spawning closure starts the task. This matches how union_ret treats mutations, but ADR 0006 does not record it.",
+    "repro": "p/c5_maker_fp.wf: `let mk = || || { s.spawn(|| st.count += 1); 0 }; let g = mk(); print(st.count)` gives W0405 although nothing calls g. The base gave no error.",
+    "suggested_fix": "Clear o.spawns in union_ret (the returned closure carries them in `rets`), or record the imprecision in ADR 0006."
+   },
+   {
+    "severity": "minor",
+    "finding": "Local.caps only grows, so a reassigned outer local is a false W0313",
+    "description": "assign_local extends locals[l].caps and never resets them. An outer local that gets a harmless value before the body ends is still reported.",
+    "repro": "p/e1_fp.wf reassigned(): `f = || log(\"x\"); f(); f = || print(1)` inside the handle gives W0313 'the local `f` keeps it'.",
+    "suggested_fix": "Record it in the ADR 0005 imprecision list, or reset caps on a full rebind outside loops."
+   },
+   {
+    "severity": "minor",
+    "finding": "spawn of an untyped closure parameter gives a new W0102 'found `_`'",
+    "description": "task_ret reports W0102 when the type is still an inference variable. Before this change, spawn accepted it.",
+    "repro": "p/i1_spawn_var.wf: `let go = |f| s.spawn(f); let t = go(|| 1)` gives W0102 '`spawn` takes a closure, found `_`'. The base gave no error.",
+    "suggested_fix": "Unify an unresolved variable with a fresh `fn() -> T` before the check, and report only for a resolved non-function type."
+   },
+   {
+    "severity": "minor",
+    "finding": "Docs and texts are not in step with the changes",
+    "description": "ADR 0002's list of sema-only diagnostics does not name W0315. The W0314 title and message still say 'user effect', but W0314 now also covers local handlers of standard effects. design.md line 244 lists 'mocks' as allowed library interception, but after F6 a mock that never forwards is W0801: reconcile design.md and ADR 0005. The architecture.md paragraph was not re-wrapped. Some new ADR sentences are long for ASD-STE100.",
+    "repro": "grep -n W0315 docs/adr/0002-datalog-spec-and-checker.md (no match); weft explain W0314; docs/design.md:244.",
+    "suggested_fix": "Add W0315 to ADR 0002, rename W0314 to 'task reaches a handler on another stack', and add one sentence to design.md about mocks under W0801."
+   },
+   {
+    "severity": "minor",
+    "finding": "closure() can return early and leave the lowering stacks wrong",
+    "description": "In expr.rs closure(), `let Some(Jump::Closure{..}) = self.jumps.pop() else { return Val::default(); }` returns before it restores self.loops and pops frames and sums. This cannot happen today, but it is fragile.",
+    "repro": "Code reading: crates/weft-sema/src/body/expr.rs closure(), after hand_out.",
+    "suggested_fix": "Restore loops, frames and sums on every path, for example with a match that uses defaults instead of an early return."
+   }
+  ],
+  "confirmed_fixed": [
+   "RT11: return in a closure returns from it (c01, 60 closure_*), break/continue in a closure give W0111, W0315 for return/break/continue out of handled body, clause and scope body (c02, c03, a12). The interpreter agrees (closure_return.wf; also my probe b1 for sim.run body, trailing block and fork branches)",
+   "loop with no break has type ! (60 loop_tail*, loop_break_tail still W0102)",
+   "RT12: spawns in closures and clauses reach the caller: W0405 now on t05, t06, and my c3 probes (field, struct callee, vec, nested, returned)",
+   "W0314 for fn items and fn params at spawn/fork, also through item values, local fn items, branches, transitive params and closure params (t03, 61, my c1)",
+   "sim.run root handlers no longer give a false W0314 (61 simulated, interp sim_tasks.wf); local_log still W0314",
+   "RT16 main shapes: result, tuple, struct, Option, Vec pop, match/if, closure, outer local, outer container, field behind a reference, storing callee, id/generic return, outer operation (h02, 62, my a2)",
+   "RT22: a handle around a spawn keeps the task handle (t03 false W0601 gone)",
+   "Effects-proof rules 1 and 2: multi at clause-running nodes, resumes and once continuations (63, my f1 probes); spec rules clause_multi/body_multi/resumes_at are mirrored in rules.rs, bridge and the generator, and the agreement tests pass",
+   "F6: forwards derived from clause_performs (p9 fake_runtime and lib01 runtime_like now W0801; 15_library intercept and intercept_by_call clean, swallow and nested flagged)",
+   "Effect identity in sema and facts: 64_effect_names W0702 cases, W0705/W0702 display uses written names, user effect of a dependency needs no authority (units.rs)",
+   "RT24: s.spawn(5) W0102, spawn with two closures or a closure with parameters W0103, fork()/fork(one) W0103, named operation args bind by name in sema and interpreter (65, op_named_args.wf)",
+   "Pub across units: private dependency functions, fn values and methods give W0101 (units.rs)"
+  ],
+  "gates_ok": true,
+  "summary": "Gates at 9e8081d all pass: `cargo fmt --check`, `clippy -D warnings` (pedantic and nursery are on) and `cargo test --workspace`. The new units.rs tests and the interpreter programs ran. Random agreement passes, and `weft agree` passes on 60\u201365 and on all my probes. The doc gate fails, but the failure was already at base: weft-syntax CHAIN_PART and the rules.rs line 4 link. The other crates document without warnings. weft-verified and proofs did not change, so verify-all.sh was not needed. There is no unwrap/expect in production code.\n\nThe rule-change checklist is complete for the four new input relations (clause_multi, body_multi, resumes_at, clause_performs) and for the derived forwards/multi_at rules. The edits to rules.rs, diagnose.rs and codes.rs are small and local.\n\nAdversarial probes found these problems:\n- Three unsound gaps where the checker accepts a program and the interpreter crashes:\n  - W0313 treats a handler's own capability as live in its own clause. This is an off-by-one in perform_op keep_for_op (a1, a4).\n  - A resume argument can carry an outer local capability out through the operation result (g3).\n  - A regression: in a module that defines a user effect `Log`, the interpreter binds `handle log` to the user effect. Sema is fixed, but compile.rs effect_of still uses effect_named (d1, d2b; base rejected d2b).\n- More missed shapes, all unsound:\n  - W0313 misses a closure that a callee returns inside a tuple (a3).\n  - W0314 misses a clause that spawns its operation argument (c10).\n  - W0314 misses a callee's tasks that reach a caller's local std handler (c9 crashes in no-runtime).\n  - W0314 misses a task that runs a closure from a field (c2). The ADR records this as open, but Val.caps could catch it now.\n  - Clause-value references into clause parameters are not mapped to the argument places (g4: no W0301, the interpreter prints `<dangling>`).\n- New false positives:\n  - W0313 for Box.new, Rc.new and generic callees with no reference argument, used inside the body (e2, e1).\n  - Corpus 61 spawn_in_clause marks a false W0405 as expected: the spawn runs after resume, so after the second print (h1 shows the order).\n- Minor: a maker closure that only returns a spawning closure counts as spawning (c5); a reassigned outer local is still a false W0313; an untyped closure parameter gets W0102 at spawn; some doc texts are out of date (ADR 0002 without W0315, W0314 wording, design.md 'mocks' against F6); closure() has a fragile early return.\n\nAll probes are in SCRATCH/verify/partb/p/. The scratch base build is deleted. The worktree is clean."
+ },
+ "S3: fix+commit": {
+  "head_commit": "353099e",
+  "resolved": [
+   "BLOCKER interpreter resolved `handle log` to the user effect Log: crates/weft-interp/src/compile.rs effect_of and path_ref now look effects up by identity (effects::by_identity). find_op stays as it is, because sema has the same visibility rule and the two agree. Regression test: crates/weft-interp/tests/programs/shadow_log.wf, which prints `caught z / user x / std y`; at S3 head the clause was skipped and the program printed `info: z` and `info: y`.",
+   "BLOCKER W0313 missed a closure given to an operation of its own handler: keep_for_op now takes the number of live handlers. For a perform it is the index of the receiving handler, so that handler counts as dead in its clause. Also covered: the paths through a callee and through a closure that give their fn parameter to an operation (new signature part op_fns, Summary.op_fns, give_to_op and give_to_ops). Corpus 66: own_operation, own_operation_through_call and own_operation_through_closure; outer_for_operation is the clean case. Probes a1 and a4 are now W0313.",
+   "BLOCKER W0313 missed a capability that leaves through a resume argument and the operation result: an operation result whose type holds a function now carries a resumed_cap(H) mark. resume records its argument caps in Lower.resumed, and expand_caps resolves the marks in check_cap_escape and keep_for_op. Call results (call_fn, call_value) carry the marks of the local handlers that their node performs through. Corpus 66: resumed_value, resumed_to_outer_local and resumed_through_call; resumed_used_inside and resumed_harmless are clean. Probe g3 is now W0313.",
+   "MAJOR RT12: a spawning closure that a callee or a function value calls more than once. New signature part `repeats` (body/repeat.rs: note_param_run, take_repeats, callee_repeats). At a call that can repeat (a callee in repeats, a function with no body except with_timeout, an unknown value or param, an operation argument), note_repeat emits a `spawn again` node after the call. That node mutates and reads the task's footprint, so the task conflicts with itself (W0405). Corpus 67: per_item, twice_callee and twice_value are bad; once_callee is clean. Probes r12e (per_item, twice_value), r12c loop_callee and r12b twice_callee are now W0405.",
+   "MAJOR RT22: a task handle now survives if, match and closure results. join_val keeps the task; if_expr and match_expr keep a task of a value that is not a local. The new Summary.ret_tasks gives the call result its task. Corpus 67: handle_in_branch, handle_in_match and handle_from_closure are clean (S3 head gave W0601 for each). The rt22/rt22b/rt22run W0601s are gone. The remaining rt22b line 19 (`let t = scope{..spawn}` that is never joined) is a correct W0601.",
+   "MAJOR W0313 missed a closure that a callee returns inside a tuple: when the result holds functions but is not a function, call_fn and call_value add the caps of the fn arguments. Closures record Summary.ret_caps for their returned values. Corpus 66: in_returned_tuple and box_out; probes a3 and a2 via_pair.",
+   "MAJOR new false W0313 for Box.new, Rc.new, generic callees and Registry.add: a callee with a body that has no reference argument keeps the value only in its result. A storing callee stores into its reference arguments (store_into), and only foreign callees count as Stored. Corpus 66 owned_by_the_body is clean (S3 head: W0313). Probes e2_box, rt16c and rt16d are clean; e2 boxed_out still gives a correct W0313.",
+   "MAJOR W0314 missed a clause that runs its fn argument as a task: clause fn parameters get a fn_param, so cs.tasks is filled. perform_op and callee-op paths record OpFn entries, and check_clause_tasks checks them after the clauses, with the handlers at the handle site. Corpus 67: clause_task is bad, clause_calls is clean. Probe c10 is W0314.",
+   "MAJOR W0314 missed callee tasks that perform a standard effect through the caller's local handler: new signature part task_effects (filled by check_task_value) and check_callee_tasks at call_fn and apply_item. Corpus 67: caller_handles_log is bad, runtime_handles_log is clean. Probes c8 and c9 are W0314.",
+   "MAJOR W0314 missed a task that runs a closure from a field of a local: check_task_value takes the held caps (val_caps, with the marks expanded) of the value. Corpus 67: from_field is bad, from_field_ok is clean. Probes c2 and c1 from_field are W0314.",
+   "MAJOR clause values that point into clause parameters: clause_refs_onto_args moves refs rooted at clause param roots onto the places of each perform (op_args), or onto a wildcard of the argument for a call that reaches the handler. New corpus 68_clause_values.wf: from_perform and from_call are W0301; other_changes and used_first are clean. Probe g4 is W0301.",
+   "MAJOR corpus 61 spawn_in_clause marked a false W0405: the bad case now spawns before resume, which is a real conflict, and the resume line is marked too. The spawn-after-resume imprecision is recorded in ADR 0006.",
+   "MINOR RT12 false W0405 from a closure that only defines a spawning closure: spawn() now records the task only in the innermost barrier. apply_summary and merge_summary pass it outward only when the scope binder is outside the current body (spawns_outside, task_scope). Corpus 67 inner_not_called; probe r12b not_called_inner.",
+   "MINOR maker closure counted as spawning: union_ret moves spawns into the new Summary.ret_spawns. A direct call of the maker does not start the task. A callee that gets the maker does (start_ret_spawns), so soundness for a callee that calls the result stays. Corpus 67: maker_not_called is clean, calls_result is bad. Probes c5, r12a 'returned' and c3/c4 have no false W0405.",
+   "MINOR false W0405 after a join of a handle that a closure returns: fixed through ret_tasks. Corpus 67 join_returned; probe r12c join_then_read.",
+   "MINOR W0314 for http.serve and foreign code: item_runs_tasks marks every fn argument of a foreign function and of http.serve as task-callable. Corpus 67: serve_local is bad, serve_runtime is clean. Probe serve.wf.",
+   "MINOR W0702 ambiguous with two effects of one written name: diagnose.rs effect_text shows the identity (`main.a.Note`) or 'the standard effect `Log`' when a stated effect has the same written name. Unit test w0702_names_the_effect_when_two_effects_have_one_name.",
+   "MINOR spawn of an untyped closure parameter gave W0102 'found `_`': task_ret now unifies an inference variable with a fresh fn() -> T. Corpus 65 spawn_untyped (clean); probe i1.",
+   "MINOR closure() early return: the jump pop now uses a match with defaults, so loops, frames and sums are restored on every path.",
+   "MINOR docs: ADR 0002 lists W0315; the W0314 title and text are now 'task reaches a handler on another stack'; W0313 text names the own-handler operation; design.md says a mock that never forwards is a root handler (W0801); the architecture.md and infer.rs paragraphs on signature parts are re-wrapped and list the new parts; ADR 0005 and ADR 0006 record the new rules, imprecisions and open items.",
+   "Found during this work: a Fail handler in a task got a false W0314. The interpreter delivers a task failure to the joiner (cancel_sibling.wf), so Fail is exempt (cap_effects, on_this_stack). The interpreter also does this in no-runtime mode now (machine/effects.rs root_op). Interpreter test task_fail_embedded.wf (S3 head: 'no runtime: nothing handles Fail.fail'). Corpus 67 task_failure is clean.",
+   "Found during this work: tests in a library got W0801 for a mock handler, which contradicts 'only binaries and tests can'. lower_test now sets facts.library = false. 15_library's existing test block now mocks Log and stays clean."
+  ],
+  "not_resolved": [
+   {
+    "issue": "MINOR effects-proof rule 2: a closure that holds a fresh once continuation is not a once value (eff2 r2a, r2a_twice)",
+    "reason": "Rejected for this stage. The root cause is RT8: a closure's mode follows its captures, and resume goes through move_var. That is the S4 lane, and the verifier also suggests fixing it there. The 63_suspension cases for a continuation held in a closure should be added with the S4 RT8 fix."
+   },
+   {
+    "issue": "MINOR Local.caps only grows, so an outer local that gets a new value is a false W0313 (e1_fp reassigned)",
+    "reason": "Not fixed, recorded instead. If the caps were reset on a rebind, every if/match and loop join of locals would need a union, and getting that wrong is unsound. The imprecision is now in the ADR 0005 list."
+   },
+   {
+    "issue": "MINOR some ADR sentences are long for ASD-STE100",
+    "reason": "Partly done. I re-wrapped the paragraphs that were named and wrote the new ADR 0005 and 0006 text in short sentences. I did not rewrite older ADR text outside the changed bullets."
+   },
+   {
+    "issue": "Known residual gaps (recorded as open in ADR 0006)",
+    "reason": "Two gaps remain. A stored spawning closure that runs at a reach node starts only one copy of its task, because there is no restart node after the body. A clause that runs a parameter of an already-finished closure as a task cannot update that closure's tasks part, because the summary is gone when the clause is lowered."
+   }
+  ],
+  "gates_passed": true,
+  "summary": "I fixed every blocker and major from the verifiers, plus all minors except three. One commit on review/s3 in /home/user/wt-core: 353099e, on top of 9e8081d. I did not push.\n\nGates at HEAD:\n- `cargo fmt --all` passes.\n- `cargo clippy --workspace --all-targets -- -D warnings` is clean.\n- `cargo test --workspace` passes (38 result groups, 0 failed). This includes the corpus, the interpreter corpus and random agreement.\n- The doc gate still fails only where it failed before: parser.rs `CHAIN_PART` and the rules.rs line 4 link. `cargo doc -D warnings` on weft-sema, weft-interp and weft-facts passes.\n- `verify-all.sh` was not needed: I did not touch weft-verified or proofs.\n\nI reproduced every finding with the verifier probes on a build of 9e8081d. Then I diffed all probe sets (red-team, spec review, verify, the verifier probe dirs, the corpus and examples) against HEAD with SCRATCH/partb/s3fix/diff.sh. The only differences are the intended ones. On 9e8081d, the new corpus files show the gap:\n- 66_cap_paths.wf: 9e8081d found 1 of the 8 bad cases and gave 1 false positive.\n- 67_task_starts.wf: 9e8081d found 1 of the 8 bad cases and gave 7 false positives.\n- 68_clause_values.wf: 9e8081d found 0 of the 2 bad cases.\n\nI deleted the scratch build. 15 GB of disk is free.\n\nNew files:\n- crates/weft-sema/src/body/repeat.rs\n- tests/programs/66_cap_paths.wf, 67_task_starts.wf and 68_clause_values.wf\n- crates/weft-interp/tests/programs/shadow_log.wf and task_fail_embedded.wf, each with a .out file\n\nChanged corpus files:\n- 15_library.wf: its existing test block now mocks Log.\n- 61_task_paths.wf: the spawn_in_clause case now spawns before resume, so its W0405 is real.\n- 65_call_forms.wf: new clean case spawn_untyped.\n\nThree new signature parts are in EffectSig (program.rs) and in infer.rs `same_parts`/`with_parts`: `op_fns`, `task_effects` and `repeats`. I made no spec or rule change, so there is no new Datalog relation.\n\nEdits outside body/ are small and local:\n- diagnose.rs: W0702 now uses an `effect_text` helper.\n- codes.rs: new texts for W0313 and W0314.\n- tests.rs (weft-check): one new unit test.\n- compile.rs: `effect_of` and `path_ref` look up effects by identity.\n- machine/effects.rs: a task failure reaches its joiner with no runtime.\n\nFor the merge with review/quality:\n- The W0314 message and title changed. Its message is now 'a task cannot perform through a handler of this task: the handler runs on another task'.\n- diagnose.rs gains the effect_text helper next to the W0702 loop.\n- program.rs EffectSig gains three fields."
+ },
+ "S4: implement": {
+  "base_commit": "353099e4a00857066f2424dc80da7471b0332723",
+  "head_commit": "3b1df446643ece05c92deb4acbed9e672f0bae7b",
+  "findings": [
+   {
+    "id": "RT8 / F5 (closure modes)",
+    "status": "fixed",
+    "evidence": "Reproduced first: base gave nothing for l01 closure_dropped/closure_ignored, l02 once_to_many/once_in_closure, e02 twice_closure, t02 rc_in_closure, e07 uniq_closure, p10 in_closure. Head, base vs head diff: l01 +W0601:13,18; l02 +W0502:26 +W0601:26 +W0502:34; e02 +W0502:4; t02 +W0401:11; e07 +W0503:7; p10 +W0601:14. How: closures get linear, nonportable and not-many from their captures through the new type table (body/mod.rs ty_has, closure_has, closure_not_many, closure_uniq). resume and call_value now call move_var. New give_fn (body/repeat.rs): a once closure moves where a callee gets it, and moves again (W0502) if the callee can call it more than once (call_fn, call_value, perform_op). A linear closure given to a function parameter is W0601, except with_timeout. A once closure cannot go into a place of plain data such as a field of type fn() (W0502). The closure end now has its own node, which fixes a false W0601 for a nested once closure. Regression program: tests/programs/71_closure_modes.wf, with bad and clean cases."
+   },
+   {
+    "id": "F5 (has_on_abort of compound values)",
+    "status": "fixed",
+    "evidence": "specreview p18 tupled: base gave no W0602, head gives W0602:12. NoOnAbort is now a type property: a linear part with no on abort, and no type around it on the way that has one. A tuple is the AND over its linear parts, and an outer `on abort` finishes its inner parts. Corpus 70_type_props.wf: tuple_no_abort, tuple_mixed and bare_vec are bad cases; tuple_with_abort and guarded are clean cases."
+   },
+   {
+    "id": "RT14 (linear values dropped silently)",
+    "status": "fixed",
+    "evidence": "Base gave nothing for these; head reports each one: l02 W0601 at 7 (let _), 11 (tuple _), 16 (print), 20 (match _); l01 W0601 at 24 (p.tx overwrite), 37 (v[0] overwrite) and 13/18 (closures); edge f14 overwritten_variants W0601 at 21 and 29; ow_closure_run W0601 at 8. New spec input relation overwrites(V,P) with overwritten(V,P) :- live_linear(V,P), overwrites(V,P). It goes through the full checklist: rules.rs, bridge each_fact, FnFacts field, random generator. Behind a reference, a new value of a linear place is always a drop. Captured linear values are live at the entry of a closure or clause. More shapes found and fixed: a temporary that a comparison, a borrow, a field read or a method receiver only reads; a linear closure in a field of type fn(); generic callees that drop a T, through a new inferred signature part `drops`, also through another generic callee. An arm that matches a value with no linear part (None) now consumes a local scrutinee, which removes a false W0601. Corpus 72_linear_drops.wf."
+   },
+   {
+    "id": "Linear values in an unannotated Vec (VarInfo flags)",
+    "status": "fixed",
+    "evidence": "verify/quality/bare_vec.wf: base 0 errors, head W0602:5 and W0601:6. multi_vec.wf: base 0 errors, head W0503:12 and W0601:17. Lower::finish (stmt.rs) now sets linear, has_on_abort, immovable, nonportable, once and callable from the inferred type and the joined closure summary, as quality_results.json gives it. Corpus 70_type_props.wf has bare_vec and multi_vec as bad cases and bare_vec_ok and multi_vec_ok as clean cases."
+   },
+   {
+    "id": "RT15 (!Move transitivity, self-reference fields)",
+    "status": "fixed",
+    "evidence": "redteam i01: base gave none of these; head gives W0604 at 8, 13, 14 and 20 (Outer, Vec push, Option), W0605:27 (f.cur = &v[0]), W0301:29 and W0304:34 (unset cur). Immovable is a type property through inline parts. Box and Rc do not pass it on. A !Move temporary given to a type-parameter parameter moves (W0604, as in Vec.push). check_self_ref gives W0605 for an assignment outside self, and a struct literal cannot give a self-reference field. Place fields that the literal does not give get hidden variables with unset_at. A read, a borrow or a method receiver of the field or the struct before it is set is W0304. Corpus 73_immovable.wf."
+   },
+   {
+    "id": "RT3 (references lose their places)",
+    "status": "fixed",
+    "evidence": "These probes gave nothing on base. Head: g01 W0301 at 9, 17, 25, 32 (id, Wrap, Box, block); a06 W0301 at 7, 14, 22 (array, vec push, by-value match); a07 W0301:8 and a07b W0301:7 (Option<&u64> result); a12 W0301:8 (tuple pattern over &tuple); verify v04 W0301 at 7 and 13; v05 W0301 at 12, 18, 31 (hof_opt, direct_opt, item_opt); v15 W0301 at 8 and 16; Core_S1 write_through W0701:19. Values carry their parts' places: struct literals, arrays, positional ctors, destructuring, by-value receivers, and holders of part assignments. A by-value binding of a reference payload keeps its reference type. held_refs reads references out of locals and temporaries. Call results derive places: an unstated ref gives a wildcard of the ref-typed args; type parameters give the exact by-value values; plus held refs. A mutated reference argument stores the other args' places (rs.push(&x), user callees). By-value params that hold refs (Option<&World>) get a Param root, and callers substitute the argument places. collect_ret_places accepts nested `Option<&T in v[]>`, and a local inside such a value is W0204. Corpus 76_ref_flow.wf. Still open and recorded in ADR 0003 and 0005: references stored behind a reference parameter, and operation results that hold references."
+   },
+   {
+    "id": "RT18 / RT24 (uniq iterator, sticky uniq)",
+    "status": "fixed",
+    "evidence": "redteam e09: base none, head W0503:6. m03 sticky: base none, head W0406:10. The for-loop iterator takes uniq from its source (iter_uniq). assign_local sets Local.uniq to the new value. The var uniq flag is the AND over bindings, and once is the OR. Corpus 74_uniq_flow.wf. The W0503 text names 'the loop iterator'."
+   },
+   {
+    "id": "QR7 / QR8 (depth-limited exponential type walks)",
+    "status": "fixed",
+    "evidence": "New crates/weft-sema/src/props.rs computes TypeProps once per program (OnceLock in Program). It is a worklist least fixpoint over the definitions: for each property it keeps whether it always holds and which type parameters pass it on. An instance is one walk over its type term, so there is no cutoff. A Tarjan pass marks recursive types as not plain data, which keeps 23_fip_more W0302. ty_has replaces deep_any, is_copy_d, is_linear, is_nonportable, has_on_abort, is_immovable and has_fn. ty_caps walks type arguments only. inner_handle_deps prunes types with no nonportable part. Repro 07_linear_depth_7: base gives no W0601, head gives W0601:10. Repro 08 (k=12): base release 17.2 s, head debug 0.006 s. k=14: base release 49.5 s, head debug 0.005 s. Unit tests props::tests, including a 64-field recursive struct. Corpus 70 has deep_dropped and deep_kept."
+   },
+   {
+    "id": "QR12 (body parts)",
+    "status": "fixed",
+    "evidence": "Corpus 77_body_checks.wf failed first on base (only 2 diagnostics), then passes: W0107 'field `a` is given twice' at 6, W0107 'parameter `a` is defined twice' at 12, W0102 '`300` does not fit in `u8`', '`128` ... `i8`', '`-1` ... `u64`', '`70000` ... `u16`' (literal ranges checked in finish from the inferred IntTy; a negated literal is one literal), W0103 '`one` has no parameter named `y`' at 46 and 'argument `x` is given twice' at 47 (the second x used to overwrite the first silently). fork() arity was already done by S3, and I checked it: '`fork` needs at least two closures'."
+   },
+   {
+    "id": "QR11 (W0701 hint lowercases user effects)",
+    "status": "not_reproduced",
+    "evidence": "S3 had already fixed this on review/s3: effect_text and the call-node details use effects::in_signature, which lowercases only standard effects. Probe: 'pub fn loud() { log2(\"x\") }' gives '/ Log2' and the W0702 hint 'add `Log2`'. A standard effect still gives '/ log'. I added the regression test crates/weft-check/tests/body_texts.rs a_user_effect_is_named_as_written_in_the_hints."
+   },
+   {
+    "id": "QR19 (VarInfo.callable)",
+    "status": "fixed",
+    "evidence": "New field VarInfo.callable in weft-facts. VarInfo::plain defaults it to kind == Closure, with no 'fn(' text default. Lower::var_info sets it from the type (Ty::Fn or Closure kind), and finish sets it from the inferred type. diagnose.rs reads info.callable in its 3 places and no longer tests the type text. The W0502 corpus cases (14_tasks, 71) pass."
+   },
+   {
+    "id": "Field of a literal (1.sleep, 500.x)",
+    "status": "fixed",
+    "evidence": "Before: accepted, and the interpreter faulted (opstack.wf). Now W0104 'a literal has no field `x`': corpus 77 lines 38 and 39; verify/quality/misc/opstack.wf W0104:2 and fz.wf W0104:25 are new in the base vs head diff. `2.s` and `3.ms` are still durations."
+   },
+   {
+    "id": "RT24 (definite assignment, non-exhaustive match)",
+    "status": "fixed",
+    "evidence": "New spec rule use_before_set(V,P) (W0304) over the new input unset_at(V,P). It goes through the full checklist: spec, rules.rs unset(), Violations.use_before_set, bridge each_fact/violations/VIOLATION_RELATIONS, diagnose, codes.rs, corpus, random generator; agreement passes, also at PROPTEST_CASES=6000. `let x: T` with no init turns its rebound_at facts into unset_at. New sema code W0120 (body/exhaust.rs): a matrix check over enum variants, bool, tuples and wildcards, with a step budget. Corpus 75_definite.wf failed first (0 diagnostics), then passes: 7 W0304 cases and 7 W0120 cases, each with clean controls. Probes: i01 W0304 at 39 and 43, l02 W0120:38, quality hand/h021 W0120:1."
+   }
+  ],
+  "gates_passed": true,
+  "design_decisions": [
+   "Type properties come from one table per definition: Program.props, a OnceLock<TypeProps> in the new crates/weft-sema/src/props.rs. For each definition it holds an always flag and the type parameters that pass the property on, computed as a least fixpoint. Recursive types are not plain data. Pointer types (Box, Rc) do not pass !Move on. Recorded in ADR 0007.",
+   "New spec input relations: overwrites(V,P), a new value of a part drops the old one, and unset_at(V,P), a declaration with no value. New sink use_before_set(V,P), code W0304. The checker mirrors both in rules.rs (linear() and unset()), and the random generator covers them.",
+   "W0120 (non-exhaustive match) is a sema diagnostic, like the other pattern and type checks. ADR 0002 lists it.",
+   "A linear closure given to a function parameter is W0601: the callee can drop it. with_timeout is the exception, because it runs its block once. A once closure moves at the call, and a second move (W0502) follows if the callee can call it more than once, or if an operation gets it. A once closure cannot go into a place of plain data (W0502). Recorded in ADR 0007, and the imprecision is listed.",
+   "New inferred signature part EffectSig.drops: by-value parameters of a type parameter that some path of the body does not move. A caller that gives a linear value there gets W0601. It also follows a T that the body gives on to another dropping callee. infer.rs compares and copies it with the other parts.",
+   "By-value parameters that hold references (Option<&T>, generic structs of refs) get a Param root. Callers substitute the argument places for them. A new value of the parameter itself stays local and is filtered out of the signature (ADR 0003).",
+   "A call result with an unstated reference points anywhere inside the ref-typed arguments (wildcard). Type parameters pass the values of by-value arguments on exactly, and held references flow too. Stated places such as `&T in self[]` stay exact. Top-level and tuple-part references must still state their place (W0204). Nested ones may state it (`Option<&T in v[]>`) or not.",
+   "W0605 stays about written reference fields. Generic instances such as Option<&T>, Vec<&T> and Wrap<&T> can hold references, and the facts follow their places (ADR 0003).",
+   "Open and recorded: references stored behind a reference parameter (ADR 0003); operation results that hold references (ADR 0005); generic callees that abort or are multi while they hold a linear T, and a Vec of linear values has no consumer (ADR 0007).",
+   "To keep the merge with review/quality small, most code is in body/ and in the new files props.rs, drops.rs, exhaust.rs and flow.rs. A merge-tree preview shows only two new conflicts. In bridge.rs violations(), quality rewrote the function, so use_before_set needs one line there. In weft-facts VarInfo::plain, quality's version keeps the fn( default for callable, which this stage drops on purpose. W0120 sorts next to quality's new W0117 to W0119 in codes.rs, inside the file that already conflicted."
+  ],
+  "summary": "Stage S4 is done on review/s3 in /home/user/wt-core, from base 353099e to head 3b1df44, in 7 commits. Four commits change code: 5413f06, 6406f38, 062d67c and f2b7a3e. Three commits change docs only: 163e06e, 160b0fc and 3b1df44.\n\nI reproduced every finding first, on a release build of the base and with the review probes. Each fix has a corpus program with bad and clean cases: tests/programs/70_type_props, 71_closure_modes, 72_linear_drops, 73_immovable, 74_uniq_flow, 75_definite, 76_ref_flow and 77_body_checks. None of them has a main or test block. More tests: weft-sema props::tests, which includes a performance test, and the new crates/weft-check/tests/body_texts.rs (diagnostic texts and hand-written facts for the new rules).\n\nI compared the base and head binaries on about 2600 review probe files. The only differences are new diagnostics, each on a line where a probe expects one.\n\nGates at the last code commit all pass: cargo fmt --all, cargo clippy --workspace --all-targets -D warnings, cargo test --workspace, and random agreement at 6000 cases. RUSTDOCFLAGS='-D warnings' cargo doc did not pass before my change, because of the weft-syntax parser.rs and rules.rs:4 links that quality fixes. The crates I changed, weft-sema and weft-facts, document cleanly. I did not touch weft-verified or proofs/, so I did not run verify-all.sh.\n\nQR11 was already fixed by S3, which uses effects::in_signature. I added a regression test for it. Recorded as open in the ADRs: references stored behind a reference parameter, operation results that hold references, and a linear T held across an abort or a multi operation inside a generic callee.\n\nI deleted the scratch build directories (partb/btarget, partb/base) and the target/release build. 15 GB of disk is free."
+ },
+ "S4: verify probe": {
+  "issues": [
+   {
+    "severity": "blocker",
+    "finding": "RT8/RT14: a closure given to a type-parameter parameter skips every mode check (Vec.push, generic callees)",
+    "description": "In call_fn (crates/weft-sema/src/body/call.rs, about line 474), the guard `if !matches!(self.inf.shallow(&pt), Ty::Fn(_)) || av.val.summary.is_none()` skips keep_modes, the `drops` check and consume when a parameter `x: T` is instantiated to a closure type. `if !callback(i) { continue; }` also skips give_fn, because T is not a function type. So the closure is never moved and never checked. Four results:\n(a) A once closure in an annotated Vec<fn()> can be called twice. The program checks with 0 errors, and the interpreter faults with 'a value is used after it was moved'.\n(b) A linear closure pushed into Vec<fn()> goes away silently: 0 errors and no rollback. ADR 0007 says a Vec<fn()> cannot hold a linear closure.\n(c) `gen_drop(|| rollback(tx))`, with `fn gen_drop<T>(x: T) {}`, gives 0 errors.\n(d) False positive: `let f = || rollback(tx); let g = gen_keep(f); g()` gives W0601 on f, although g runs the closure. Base gave nothing.\nThe same named-closure path lets `v.push(f); f()` call f again after the push.",
+    "repro": "Probes in SCRATCH/verify/partb/S4/:\n- run/vec_fn_run.wf: `let v: Vec<fn()> = Vec.new(); v.push(|| rollback(tx)); let g = v[0]; let h = v[0]; g(); h()`. Check gives 0 errors; `weft run` prints 'rollback 1', then a runtime error at 9:24.\n- run/gen3.wf g2: `v.push(f); f(); let g = v[0]; g()` gives 0 errors, then a runtime fault.\n- run/vec_fn_drop.wf gives 0 errors.\n- p/c2_generic_drop.wf line 15 has no diagnostic.\n- p/c4_generic_clean.wf line 11 gives a false W0601.",
+    "suggested_fix": "Handle a closure value at a parameter that is not a callback like any other by-value argument: move it (move_var), apply `drops`, and run keep_modes against the declared element or parameter type. A once closure must not go into a container of plain data such as Vec<fn()>, where an element read copies it. A linear closure there must be W0601. Add Vec<fn()> and generic T cases to corpus 71 and 72."
+   },
+   {
+    "severity": "major",
+    "finding": "RT14: the generic `drops` part sees only direct non-moves of the parameter; a move into something that is then dropped hides the drop",
+    "description": "param_drops (body/drops.rs) puts a parameter in `drops` only if some path does not move the parameter variable itself. If the body moves T into a local, a struct, an Option, a Vec, a tuple, a closure or a closure parameter, and that holder is dropped, nothing is reported. The body does not know that T is linear, and `drops` sees a move.\nAn overwrite of a T place inside a generic body also drops the old value silently: `self.x = y` in `impl<T> Wrap<T>`, and `w.x = y` through `&Wrap<T>`. This is the generic form of RT14's `p.tx = begin()`.\nADR 0007 does not list either shape as open.",
+    "repro": "Files in SCRATCH/verify/partb/S4/:\n- run/drops3.wf: `fn d9<T>(x: T) { let y = x }` and `fn d5<T>(x: T) { let o = Some(x) }`, called with begin(). Check gives 0 errors. `weft run` prints 'done' with no rollback.\n- run/drops2.wf: c4 (Wrap{x:x}), c5, c6 (v.push(x)), c7, c8 (`let _ = x`), c9, c11 (`match Some(x) { Some(_) => .. }`), c12 (closure) and c15 (closure param) all give 0 errors.\n- run/gen_set.wf: s1 `w.set(mk(2))` and s2 `put(&w, mk(2))` give 0 errors and print only 'rollback 2' twice, so Tx 1 is lost.",
+    "suggested_fix": "Compute `drops` from the facts of the generic body: treat each value whose type mentions a type parameter as linear for this analysis, and report the parameter if any such value reaches a scope_end or an overwrite while live. Or list these shapes as open in ADR 0007."
+   },
+   {
+    "severity": "major",
+    "finding": "New false positive: a generic function that returns T through an if/match tail gets drops={x}",
+    "description": "`fn keep3<T>(x: T, c: bool) -> T { if c { x } else { x } }` puts x in `drops`, so every caller that gives it a linear value gets W0601. The same happens with match tails, and with mutual recursion that ends in `else { x }`. Base gave no error. The cause is the pre-existing bug in the next issue: an arm tail that names a local records no moved_at. param_drops then finds a path on which x does not move.",
+    "repro": "SCRATCH/verify/partb/S4/p/g4_iftail.wf: c3 `rollback(keep3(begin(), true))` gives W0601 at line 6, and c6 (match) at line 12. Base: 0. p/g3_mutual.wf c2 (keep/keep2) gives W0601 at line 10.",
+    "suggested_fix": "Make an if/match arm tail that names a local move that local (see the next issue). Then these cases go away."
+   },
+   {
+    "severity": "major",
+    "finding": "Pre-existing, in RT14/RT15 scope: a local named as an if/match arm tail is not moved (use after move, !Move moves, linear false positives)",
+    "description": "`let x = if c { a } else { b }` records no moved_at for a or b. A block `{ a }` does record it. Three results:\n- `eat(a)` after the if gives no W0302. This is unsound.\n- A !Move a or b moves with no W0604, also inside `keep_o(if c { a } else { b })`.\n- Linear a and b get a false W0601 after `rollback(x)`.\nBase behaves the same. S4 claims !Move transitivity and linear drops in every shape, and the bug now also causes the new `drops` false positive above.",
+    "repro": "Files in SCRATCH/verify/partb/S4/:\n- p/i4_if_move2.wf a(): no W0302 at line 5. b() with a block gives W0302.\n- p/i2_immovable_expr.wf: j01, j03 and j04 have no W0604.\n- p/i3_if_move.wf: a() gives a false W0601 for a and b at line 8. b() reads a.n after the move with no error.",
+    "suggested_fix": "In if_expr and match_expr, consume the arm's tail value when the result is used by value, as the block path does."
+   },
+   {
+    "severity": "major",
+    "finding": "New false positive from the Lower::finish flag recompute: an untyped closure parameter that moves into a local",
+    "description": "While a local's type is still an inference variable, a move of it counts as a copy: ty_has(Var, NotCopy) is false, so no moved_at is recorded. Lower::finish then marks the local linear from its resolved type, and the missing move turns into a false W0601. Untyped closure parameters are a common shape. Base gave 0 errors.",
+    "repro": "SCRATCH/verify/partb/S4/run/late.wf:\n- l1 `let f = |y| { let z = y\n rollback(z) }; f(begin())` gives W0601 'linear value `y` is dropped' at line 7.\n- l5 `|y| { let z = y\n z }` gives W0601 for y and z.\nBase: 0 errors for both.",
+    "suggested_fix": "Treat a Ty::Var operand as a move, not a copy, at the time of the move. Or record a potential move and resolve it in finish together with the flags."
+   },
+   {
+    "severity": "major",
+    "finding": "RT8: nonportable and not-many (uniq) modes are lost through plain-data places and containers",
+    "description": "keep_modes covers linear closures (W0601) and once closures (W0502) that go into a place of type fn(). It does not cover nonportable or uniq captures.\n- A closure that captures an Rc goes into `Cb { f: fn() }`, `cb.f = ..` or an annotated Vec<fn()>, then into a fork: no W0401.\n- A closure that captures a `@ uniq` part goes into a fn() field, a tuple or an Option and stays live across a multi operation: no W0503.\nOnly the bare closure local is caught. Nonportable through a tuple and an Option is caught.",
+    "repro": "Files in SCRATCH/verify/partb/S4/:\n- p/c6_field_launder.wf: vec_fn (line 10), uniq_field (line 16) and assign_field (line 26) give 0 errors.\n- p/c5_nonportable.wf: field_closure (line 36) gives 0 errors.\n- p/u2_closure_uniq.wf: u2 (tuple) and u3 (Option) give no W0503. u1 is caught.",
+    "suggested_fix": "In keep_modes, also reject a nonportable closure in a place whose type is portable. Carry not-many as a type property (or through the value's caps) for tuples, Option and fields, as Linear and Nonportable are carried."
+   },
+   {
+    "severity": "major",
+    "finding": "RT15: W0304 for unset place fields misses closures, nested literals and call results",
+    "description": "The hidden unset variables come only from a struct literal of the !Move type in the same function, and only direct reads and borrows use them. Three kinds of read are accepted:\n- a closure that reads `f.cur` or borrows f;\n- a nested literal `Outer { f: Frame { buf } }`, then `o.f.cur`;\n- a value built by a callee, `fn mk() -> Frame { Frame { buf } }`, then `let f = mk(); print(f.cur)`.\nThe interpreter then reads the field with no value and prints `<moved>`.",
+    "repro": "Files in SCRATCH/verify/partb/S4/:\n- run/unset_closure.wf: s06 `let c = || print(f.cur); c()`, s07 and s08 give 0 errors. `weft run` prints `<moved>`.\n- run/unset_ret.wf: s01 (mk()) and s03 (nested literal) give 0 errors and print `<moved>` twice.\n- p/i5_selfref.wf s06 gives 0 errors.",
+    "suggested_fix": "Count a closure capture of the struct as a use of its unset field variables. Make unset variables for nested literals. For values from callees, treat a place field of a returned !Move value as unset, or require that a literal with a place field is built only where it is bound."
+   },
+   {
+    "severity": "major",
+    "finding": "RT24/W0120: when the step budget runs out, a non-exhaustive match is accepted silently",
+    "description": "exhaust.rs returns true from covers() when the 20 000-step BUDGET runs out, and check_exhaustive then reports nothing. Two things make the budget easy to reach:\n- covers() still splits a column while any row has a constructor in it, also when an earlier row is all wildcards;\n- it tries `true` before `false`.\nSo a 16-column bool tuple with one arm per column, `(..true at i..)`, that misses the all-false case is accepted. The same match with 10 columns is reported. The W0120 text says the interpreter stops if no arm matches, so a checked program can fault at runtime. No ADR records the budget.",
+    "repro": "SCRATCH/verify/partb/S4/p/x_bools16.wf gives 0 errors. p/x_bools10.wf, the same shape with 10 columns, gives W0120.",
+    "suggested_fix": "When the budget runs out, report W0120 (or a 'match too large to check' error) instead of accepting. Return true as soon as a row has only wildcards, so this shape costs linear time. Record the decision in ADR 0002."
+   },
+   {
+    "severity": "major",
+    "finding": "Performance regression: var_has scans all locals for each query, so Lower::finish is quadratic",
+    "description": "Lower::var_has (body/mod.rs:1296) runs `self.locals.iter().filter(|l| l.var == v)` for each query. finish calls local_has for each local, so the cost is O(locals^2).\n- 6000 distinct `let iK = 1` take 5.9 s on head against 0.29 s on base (debug).\n- verify/le_15000.wf takes 35.2 s against 1.7 s. At 3000 statements it is 1.44 s against 0.12 s.\ngdb samples show finish, then local_has, then var_has. A base vs head comparison with a 60 s timeout lost W0601 on the long_explain, le_10000 and le_15000 programs. The quality review counts this kind of hot path as a regression (QR8, QR9, QR14).",
+    "repro": "SCRATCH/verify/partb/S4/p/q8_distinct.wf (6000 lets): `time weft check`. Also SCRATCH/verify/le_15000.wf.",
+    "suggested_fix": "Index the locals by VarId once, for example a Vec<Vec<usize>> built before finish, or cache local_has for each var."
+   },
+   {
+    "severity": "minor",
+    "finding": "Pre-existing false positive: a closure that returns a linear value gets W0601 at its body",
+    "description": "`let f = || begin(); rollback(f())`, `|| { let t = begin()\n t }`, `|| Some(begin())` and `apply(|| begin())`, with `apply(g: fn() -> Tx) -> Tx`, all give W0601 'temporary is dropped' at the closure. Base does the same. It is in RT14's area, and no ADR records it.",
+    "repro": "SCRATCH/verify/partb/S4/p/d3_closure_ret.wf gives W0601 at lines 6, 10, 15 and 20. p/d2_clean.wf c13 gives W0601 at line 40.",
+    "suggested_fix": "Treat the closure tail value as moved to the closure's return, as a function tail is."
+   },
+   {
+    "severity": "minor",
+    "finding": "Overwriting None is 'overwritten', now also for unannotated locals",
+    "description": "`let o = None\n o = Some(begin())`, then a match that consumes o, gives 'o is overwritten before it is consumed'. The annotated form did this in base. The finish recompute extends it to the common inferred form. ADR 0007 lists the None imprecision only for `drops`.",
+    "repro": "SCRATCH/verify/partb/S4/p/v2_none.wf: inferred() gives W0601 at line 9. Base: 0.",
+    "suggested_fix": "Do not report an overwrite of a local whose only value on each path is a constructor with no linear part. Or add this case to the ADR 0007 imprecisions."
+   },
+   {
+    "severity": "minor",
+    "finding": "!Move edge cases: Box.new(Frame{..}) is W0604, and Weak<T> passes !Move on",
+    "description": "Box.new takes `x: T`, so a !Move literal there now gives W0604. No code can then build a Box<Frame>, although corpus 73 uses Box<Frame> and the design says !Move values are built in place. Base accepted it. Weak is an extern type with no deref and no elem, so eval_adt lets it pass Immovable on, although Weak is a pointer.",
+    "repro": "SCRATCH/verify/partb/S4/p/i1_immovable.wf i19 gives W0604 at line 49.",
+    "suggested_fix": "Build a !Move argument of Box.new and Rc.new in place. Mark Weak as a pointer in the prelude, or treat any extern without an elem step as a pointer."
+   },
+   {
+    "severity": "minor",
+    "finding": "Adjacent RT8 shape: a reference to a nonportable value is portable",
+    "description": "ty_has(Ref(x), Nonportable) is false. So `let r = &n` with n: Rc, then `fork(|| r.clone(), || r.clone())`, is accepted: redteam t02 rc_by_ref. A closure that captures r is accepted too. Base does the same.",
+    "repro": "SCRATCH/redteam/t02_fork.wf lines 14-18 and SCRATCH/verify/partb/S4/p/c5_nonportable.wf ref_to_rc both give 0 errors.",
+    "suggested_fix": "Let Nonportable pass through Ty::Ref, or record that this is out of scope in ADR 0006."
+   },
+   {
+    "severity": "minor",
+    "finding": "Smaller gaps and texts",
+    "description": "- A W0304 read inside a handler clause is reported on the `resume` line, not on the line of the read (p/da1.wf a12: line 37 instead of 36).\n- `let (a, a) = (1, 2)` gets no W0107.\n- `--128: i8` is not flagged.\n- `for e in v[] { f(e) }`, with a `@ uniq` v and a function parameter f, is now always W0503. This follows from the RT13 and RT18 rules and is documented, but it rejects a common higher-order shape (verify/review_core/Core_S2/probes/clean_effects2.wf:17).\n- RUSTDOCFLAGS='-D warnings' cargo doc fails on weft-syntax parser.rs:8 and weft-check rules.rs:4 on both base and head. weft-sema and weft-facts document cleanly.",
+    "repro": "Probes in SCRATCH/verify/partb/S4/p/: da1.wf, b1_body.wf and b3_neg.wf."
+   }
+  ],
+  "confirmed_fixed": [
+   "RT8: each listed probe gives the expected diagnostic. l01 gives W0601 at 13 and 18. l02 gives W0502 and W0601 at 26, and W0502 at 34. e02 gives W0502 at 4. t02 gives W0401 at 11. e07 gives W0503 at 7. p10 in_closure gives W0601 at 14. Variants that also pass: a tuple or struct capture never called, a closure in a tuple, a loop call, a closure moved through an alias inside another closure, an early return or break before the call, a closure chosen by `if`, a fn() field, callees that repeat through a loop, recursion, mutual recursion, a nested closure or a handler, call_value through items and closure values, and an operation argument. A linear or once closure to spawn, fork or with_timeout stays clean.",
+   "F5: p18 tupled gives W0602 at 12. Option<Lock>, a closure that moves a Lock, a struct and a nested tuple with a Lock, and an array of Locks give W0602. Parts with `on abort` stay clean, and a closure that captures a Tx unwinds correctly in the interpreter.",
+   "RT14: l02 gives W0601 at 7, 11, 16 and 20. l01 gives W0601 at 24 and 37. 26 more drop shapes give W0601: struct `_`, print of a tuple or struct, comparison, field read, borrow, array, overwrite through a reference, overwrite in a loop, Option overwrite, overwrite in a closure, a nested closure and a handler clause, and a tuple field overwrite. The edge-lane f14 probes pass. 20 clean programs stay clean, and the None-arm consumption stays sound on 8 match shapes.",
+   "Linear values in an unannotated Vec: bare_vec gives W0602 at 5 and W0601 at 6. multi_vec gives W0503 at 12 and W0601 at 17. An inferred Option<Tx> and fill(&v) are linear.",
+   "RT15: i01 gives all expected diagnostics: W0604 at 8, 13, 14 and 20, W0605 at 27, and W0304 at 34. W0604 also fires for a tuple, an array, an enum, a generic struct, a return, a closure capture, a by-value match, a destructure, Vec push, a generic id and fork. W0605 fires through a reference parameter, another struct, `if`, a generic id and an alias.",
+   "RT3: g01, a06, a07, a07b, a05 and a12 give W0301 and W0204 on the expected lines. These also pass: 14 flow variants (id(id()), wrap(), dup(), some(), a push in a loop, a nested tuple, a part assignment, an array element assignment, a closure identity, an if-Option, a struct destructure, nested Option, a Box of a struct, a nested tuple pattern), 7 W0204 variants, the S2 open holders (stored closure, Cb argument, a tuple or Option argument, perform Option<&T>) and 8 method or container shapes.",
+   "RT18/RT24 uniq: e09 gives W0503 at 6 and m03 sticky gives W0406 at 10. Nested loops, a split_mut source, a closure inside the loop, and sticky uniq through `if`, `loop`, a closure and a one-branch assignment give errors. A uniq-to-uniq rebind stays clean.",
+   "QR7/QR8: 07_linear_depth_7 gives W0601 at 10. 08 at k=12 runs in 0.012 s. A 30-wide recursive linear struct, a 500-struct chain, 40 type parameters, polymorphic and mutual generic recursion each run in under 0.05 s and give correct results.",
+   "QR12: every claimed message fires. Untyped duplicate closure params, and literal ranges in call arguments, returns, struct fields, comparisons, Vec push, Option, tuples, match patterns and for ranges are reported. fork() arity is checked.",
+   "QR11: not reproduced. The W0701 and W0702 hints keep `Log2` and `MyNet` as written.",
+   "QR19: VarInfo.callable is set in var_info and finish, and diagnose.rs reads it.",
+   "W0104: `1.x`, `500.sleep`, `\"s\".len` and `true.x` are rejected, and `2.s` and `3.ms` stay durations.",
+   "RT24 definite assignment: 24 variants are correct, with W0304 on the right lines (branches, loops, while, closures, handlers, fork, compound assignment, receiver, borrow, `x = x`, linear `let t: Tx`). The --explain derivation and `weft explain W0304` work.",
+   "RT24 exhaustiveness: 13 missing-case shapes are reported, 6 clean shapes pass, late-inferred scrutinee types are handled, and odd patterns cause no crash.",
+   "Gates: cargo fmt --check, clippy -D warnings and cargo test --workspace pass, also the weft-interp programs. Random agreement at PROPTEST_CASES=5000 passes. `weft agree` agrees on corpus 70-77 and on all my probes. The new corpus files 70-77 fire fewer diagnostics on base and match all markers on head, and none has a main or test block. The old corpus is unchanged. The docs/design.md snippets give the same diagnostics on base and head. In the base vs head comparison of about 2600 probe files, the only removed diagnostics are the m1 false positive and 60 s timeouts."
+  ],
+  "gates_ok": true,
+  "summary": "I verified S4 on review/s3 (353099e..3b1df44) in /home/user/wt-core. I did not edit the worktree, it is clean, and I deleted my base build.\n\n**Gates:** cargo fmt --check, clippy -D warnings, cargo test --workspace (also the weft-interp programs), random agreement at 5000 cases and `weft agree` on all new corpus files and probes all pass. The doc gate fails on weft-syntax and weft-check on both base and head, so the failure is not new.\n\n**Probes:** every listed review probe gives its expected diagnostic on the right line. I wrote about 300 adversarial variants under SCRATCH/verify/partb/S4/p and .../run. Most fixes hold: RT3 reference flow, RT14 drops and overwrites, RT15 !Move transitivity and W0605, RT18/RT24 uniq, F5, definite assignment, exhaustiveness, QR7/QR8 performance and QR12.\n\nRemaining problems: 1 blocker, 8 major, 5 minor.\n\n**Blocker:** a closure given to a type-parameter parameter (Vec.push, generic callees) is never moved and never mode-checked. A once closure in a Vec<fn()> can be called twice: the program checks with 0 errors and the interpreter faults. A linear closure pushed into a Vec<fn()> goes away silently, although ADR 0007 says it cannot. `gen_drop(|| rollback(tx))` is accepted. There is also a new false positive: `let g = gen_keep(f); g()` gives W0601 on f.\n\n**Major:**\n- The generic `drops` part misses `let y = x`, `Some(x)`, a struct, `v.push(x)`, closures, and an overwrite of a T place in a generic body. The interpreter shows linear values lost.\n- New false positive: a generic function that returns T through an if/match tail gets W0601 at each caller. The cause is a pre-existing bug: a local named as an if/match tail is not moved. That bug also misses W0302 and W0604, and gives linear false positives.\n- New false positive from the finish recompute: an untyped closure parameter that moves into a local gets W0601.\n- Nonportable and uniq closure modes are lost through fn() fields, Vec<fn()>, tuples and Option.\n- W0304 for unset place fields misses closures, nested literals and call results. The interpreter reads `<moved>`.\n- When the W0120 step budget runs out, a non-exhaustive match is accepted silently. No ADR records this.\n- Lower::finish is quadratic in the number of locals: 35 s against 1.7 s on 15000 statements."
+ },
+ "S4: verify review": {
+  "issues": [
+   {
+    "severity": "major",
+    "finding": "Generic `drops` only sees params that are never moved; a T moved into a value that is then dropped slips through",
+    "description": "param_drops (body/drops.rs) puts a T param in `drops` only when some path from entry to exit has no moved_at of the param. Inside a generic body T is not linear, so moving x into something that then goes away silently counts as a consume. drop_linear, wild_drops, overwrites and keep_modes all test is_linear(T), which is false. Callers that give a linear value lose it with no W0601. ADR 0007 does not list these shapes as open; it lists only abort and multi inside generic callees. Base misses them too, but this stage adds `drops` and the W0601 text 'A generic function can drop a value of a type parameter'.",
+    "repro": "SCRATCH/verify/partb/S4diff/p/gen1.wf. Each of these gives 0 W0601 at the caller: `fn wrap_drop<T>(x: T) { let o = Some(x) }`, `fn tuple_drop<T>(x: T) { let p = (x, 1) }`, `fn closure_drop<T>(x: T) { let c = || { let y = x } }`, `fn let_wild<T>(x: T) { let _ = x }`, `fn overwrite<T>(x: T, y: T) -> T { let z = x; z = y; z }`, `fn vec_drop<T>(x: T) { let v = Vec.new(); v.push(x) }`, each called with begin(). Only `two<T>(x, y) -> T { x }` is caught.",
+    "suggested_fix": "Compute drops with T treated as 'maybe linear': lower the generic body with is_linear(Ty::Param) true for the drop and overwrite paths (drop_linear, wild_drops, assign overwrites, keep_modes, closure linearity). Then put i in drops if the var of param i, or any hidden var that its value flows into, reaches a scope_end or overwrite node while live. Add bad and clean cases to 72_linear_drops.wf."
+   },
+   {
+    "severity": "major",
+    "finding": "Local.uniq after if/else or match depends on lowering order (RT24 sticky uniq still slips through)",
+    "description": "assign_local sets `self.locals[l].uniq = v.uniq`. This is lowering state, not a join over paths. After `if c { l = &w[] } else { l = r }` the else branch is lowered last, so l counts as @ uniq and needs_uniq(l) is accepted. On the then path an aliased reference goes to an @ uniq parameter. The same happens with match arms. A one-armed if is caught only because the then branch is lowered last.",
+    "repro": "SCRATCH/verify/partb/S4diff/p/uniq1.wf: branch_alias (line 5) and match_alias (line 22) give no W0406. branch_alias2 and loop_alias are caught.",
+    "suggested_fix": "Save Local.uniq before the branches of if, match and handle, and at the join set it to the AND over the incoming branches, as other per-local lowering state does at joins. Or derive uniq at the use from the rebound_at facts that reach it. Add the if/else and match cases to 74_uniq_flow.wf."
+   },
+   {
+    "severity": "major",
+    "finding": "A reference to a nonportable value is portable: `&Rc` crosses fork branches (t02 rc_by_ref still accepted)",
+    "description": "props.rs eval and Lower::ty_has_in return false for Prop::Nonportable on Ty::Ref and Ty::Slice. A local `r = &n` with n: Rc, a tuple `(&n, 1)` and a parameter `r: &Rc<Node>` are all portable. Both fork branches can then clone the same Rc, which is a non-atomic refcount race. This is the rc_by_ref function of redteam t02, a probe the task names for RT8. The implementer reports only t02 line 11. ADR 0007 says 'nonportable ... work so at any depth', but that is not true through references. A side effect: in inner_handle_deps the new early return `if !self.is_nonportable(ty)` makes the `Ty::Ref(_) => handle_deps` arm unreachable.",
+    "repro": "SCRATCH/verify/partb/S4diff/p/np1.wf: only `direct` gives W0401. by_ref (line 9), in_tuple (line 14) and par_ref (line 18) give nothing. Also redteam/t02_fork.wf line 17.",
+    "suggested_fix": "Let Prop::Nonportable pass through Ref and Slice in props::eval and ty_has_in. Then check that inner_handle_deps still reaches its Ref arm, or remove the early return for references. Add bad and clean fork cases to 71_closure_modes.wf, and correct the ADR 0007 sentence."
+   },
+   {
+    "severity": "major",
+    "finding": "Unset place fields are tracked only for a struct literal bound directly to a local; nested and returned literals allow a read of an uninitialized self-reference",
+    "description": "Val.unset is consumed only in assign_local, for the literal's own place fields. A literal used as a field of another literal (Outer { f: Frame {..} }), a literal returned from a function (ADR 0007: 'A function can return a struct literal: it is built in place'), and a literal in a tuple all lose the unset list. `o.f.cur`, `mk().cur` and `t.0.cur` can then be read before any value is set. This reads an uninitialized reference.",
+    "repro": "SCRATCH/verify/partb/S4diff/p/imm1.wf: nested_unset (line 8), returned_unset (line 12), returned_outer_unset (line 16) and tuple_unset (line 24) give no W0304. The direct case `let f = Frame{..}; print(f.cur)` is caught.",
+    "suggested_fix": "Carry the unset fields as paths inside Val: prefix them when a literal becomes a field, tuple part or payload of another value. Put unset place fields in the callee result: a returned type with place fields gives no value for them unless the body sets them, or the signature states it. Otherwise reject a return of a literal with unset place fields. Add the cases to 73_immovable.wf."
+   },
+   {
+    "severity": "major",
+    "finding": "Part holders never retire: quadratic facts and false W0301 after a part or the whole local gets a new value",
+    "description": "assign() adds a hidden holder var for each `w.x = &...`. use_local and held_refs make each later use of w use every holder created so far, and the holders never go away. This has two effects. (1) Facts grow quadratically: 1000 part assignments give 1,003,001 `uses` facts against 3,001 on base, and 2000 assignments take 29.5 s against 0.23 s. (2) Stale holders keep old places: `w.x = &a[0]; w.x = &b[0]; a.clear(); print(w.x)` gives a false W0301, and so does a whole reassign `w = Wrap { x: &b[0] }`. Base gives no error for either. The flow-insensitive points_into imprecision in ADR 0003 covers whole locals, but the new holders could be strong-updated.",
+    "repro": "SCRATCH/verify/partb/S4diff/p/holders1000.wf and holders2000.wf (time, and `weft facts holders1000.wf f | grep -c ^uses`). For the false W0301: SCRATCH/verify/partb/S4diff/p/ref2.wf reassign_part_ok (line 10) and reassign_whole_ok (line 17).",
+    "suggested_fix": "Key part_holders by (local, place). A new value of the same place, or of the whole local (assign_local), replaces or retires the older holders. Uses then add only the live holders. Add a perf regression test like props::tests::a_wide_recursive_type_is_fast, and the two clean cases to 76_ref_flow.wf."
+   },
+   {
+    "severity": "major",
+    "finding": "Quadratic Lower::finish: local_has -> var_has scans every local for every local and property",
+    "description": "finish calls local_has(i, p) 4 times per local. var_has does `self.locals.iter().filter(|l| l.var == v)`, so each call is O(L), and the inference loop runs it again for each lowering. The QR7/QR8 goal was to remove type-walk blow-ups, but this adds an O(L^2) step for long functions. A gdb sample confirms the hot path: finish -> local_has -> var_has. closure_uniq, is_copy_var and held_refs do the same linear scans.",
+    "repro": "Debug builds of base 353099e and head 3b1df44: SCRATCH/verify/partb/S4diff/p/locals5000.wf takes 3.3 s on head and 0.25 s on base. SCRATCH/verify/long_explain.wf (20 000 lines) takes 65.7 s on head and 2.2 s on base. le_10000.wf takes 12.0 s on head and 0.94 s on base.",
+    "suggested_fix": "Keep a VarId -> local index map, or a field var_local: Vec<Option<usize>>, in Lower. Use it in var_has, closure_uniq and is_copy_var. Or compute the flags once per local in finish without the per-var scan. Add a perf test with a few thousand locals."
+   },
+   {
+    "severity": "major",
+    "finding": "A once closure loses its once-ness across a function boundary: returned or passed through, then called twice",
+    "description": "Once-ness lives only in the closure summary of the current body. A closure that a function item returns, or that a callee returns again (identity or pass-through), arrives as a plain fn() with no summary, so it is `many`. Two calls move the captured String twice. This is an RT8 shape ('a closure's mode follows from its captures') that is still open, and the ADRs do not record it.",
+    "repro": "SCRATCH/verify/partb/S4diff/p/ret1.wf twice_returned (line 12): `fn mk() -> fn() { let s = \"abc\"\\n || eat(s) }`, then `let g = mk(); g(); g()` gives no W0502. SCRATCH/verify/partb/S4diff/p/ret2.wf: `fn mk(s: String) -> fn() { || eat(s) }` called twice, and `pass_through(|| eat(s))` called twice, give no error.",
+    "suggested_fix": "Add a `once` result part to the inferred signature (the body knows whether the returned closure is once), as `repeats` and `drops` are inferred. For pass-through callees, treat a fn result whose value can come from a once argument as once. Otherwise record the gap in ADR 0007 under the open items."
+   },
+   {
+    "severity": "major",
+    "finding": "Linear temporaries held while a later argument, part or field aborts are not checked (F5/L2 shape)",
+    "description": "A linear temporary evaluated before a later operand that can abort has no variable with live_linear, so W0602 never fires. If the later operand aborts, the earlier Tok (which has no `on abort`) leaks. Base also misses this. It is the same 'linear values can leak across an abort' family as F5, and S4 changed the related tuple/compound logic.",
+    "repro": "SCRATCH/verify/partb/S4diff/p/abort2.wf: `spend_pair(mint(), risky_tok())` (line 10), `let p = (mint(), risky_tok())` (line 13) and `Two { a: mint(), b: risky_tok() }` (line 20) give no W0602.",
+    "suggested_fix": "When an operand is linear and later operands follow (hold_later already exists for references), bind it to a hidden linear var at its node and move it at the consuming node. live_linear and abort_unhandled then cover the window. Add the shapes to 70_type_props.wf."
+   },
+   {
+    "severity": "minor",
+    "finding": "`drops` gives W0601 for a generic Option<T> consumer that has a None arm",
+    "description": "fn opt_take<T>(o: Option<T>, f: fn(T)) { match o { Some(x) => f(x), None => {} } } has drops = {0}, so `opt_take(Some(begin()), rollback)` is W0601. ADR 0007 records this imprecision, but it is a common shape, and match_drops already consumes a local scrutinee in a None arm for concrete linear types.",
+    "repro": "SCRATCH/verify/partb/S4diff/p/lin2.wf line 30 (new in head; base gives nothing there).",
+    "suggested_fix": "In param_drops, count an arm that matches a constructor whose payload has no T part (pattern_holds_linear with T as maybe-linear) as a consume of the param."
+   },
+   {
+    "severity": "minor",
+    "finding": "W0301 text for a part holder reads 'the w.x used after it was invalidated'",
+    "description": "The hidden holder is VarKind::Temp and is named with the place text, and diagnose.rs formats Temp as `the {name}`.",
+    "repro": "SCRATCH/verify/partb/S4diff/p/ref2.wf line 24 (loop_holder).",
+    "suggested_fix": "Give holders their own kind or a name such as 'the value of `w.x`', or show them as `w.x`."
+   },
+   {
+    "severity": "minor",
+    "finding": "ADR and architecture gaps for the new rules",
+    "description": "(1) ADR 0007 lists 'A Vec of linear values is linear, and nothing consumes it: it is W0601 at its end' under 'What stays open (not checked)'. It is an over-rejection: every local Vec of linear values is W0601 even after all elements are popped (70_type_props multi_vec). It belongs under 'imprecise'. (2) No ADR records the definite-assignment semantics of `let x: T` (W0304): a capture by a closure or a clause counts as a use, also for an assignment inside the closure, and compound assignment reads. (3) The relation diagram in docs/architecture.md does not show overwrites, unset_at or use_before_set.",
+    "repro": "grep -rn W0304 docs/ finds only the place-field lines in ADR 0007.",
+    "suggested_fix": "Move the Vec item to the imprecise list. Add a W0304 bullet to ADR 0002 or 0007. Update the architecture diagram."
+   },
+   {
+    "severity": "minor",
+    "finding": "Lowering-time type decisions still miss values whose type the body resolves later",
+    "description": "finish recomputes the VarInfo flags, but wild_drops, drop_value, keep_modes and match_drops decide during lowering with the type known at that moment. `let v = Vec.new(); let _ = v.pop(); v.push(begin())` drops the popped Option<Tx> with no W0601.",
+    "repro": "SCRATCH/verify/partb/S4diff/p/late1.wf line 15.",
+    "suggested_fix": "Record pending drop sites with their type and the span, and decide linearity in finish from the resolved type, as check_int_lits does for literals."
+   },
+   {
+    "severity": "minor",
+    "finding": "A closure that returns a linear value is flagged inside its body (pre-existing, RT14 area)",
+    "description": "`let f = || begin(); let t = f(); rollback(t)` gives W0601 at the closure body `begin()`. The closure's tail value is treated as a dropped temporary. This is the same on base, but it falls in the RT14 area this stage worked on, and it rejects a correct program.",
+    "repro": "SCRATCH/verify/partb/S4diff/p/lin2.wf lines 8 and 13.",
+    "suggested_fix": "Treat the tail value of a closure body as returned (moved to the closure result), not as a statement temporary."
+   },
+   {
+    "severity": "minor",
+    "finding": "ASD-STE100 and lint hygiene in new comments",
+    "description": "Several new comments have sentences of 26 to 36 words, for example props.rs ty_caps and recursive_adts, drops.rs keep_modes and match_drops, exhaust.rs specialize, repeat.rs give_fn, and stmt.rs finish and assign. `#[allow(clippy::too_many_arguments)]` on call_flows has no comment that gives the reason.",
+    "repro": "git diff 353099e..HEAD -- crates/ | grep '^+.*//'",
+    "suggested_fix": "Split the sentences to 20 to 25 words or fewer. Add a one-line reason to the allow, or pass a small struct."
+   }
+  ],
+  "confirmed_fixed": [
+   "RT8 main shapes: a linear closure that is never called (W0601), a once closure given to a callee that calls it twice, also through a fn value (W0502), a nested once closure, resume inside a closure (e02 W0502), an Rc captured by a closure and then forked (t02 line 11 W0401), a uniq capture across multi (e07)",
+   "F5: compound has_on_abort is the AND over linear parts: tuple, Wrap<T>, Option, Box, closure (W0602); a type with on abort around a part covers it",
+   "RT14 listed shapes: let _, tuple _, print(temp), match _, p.tx overwrite, v[0] overwrite, field/tuple/loop/closure/clause overwrites, temporaries read by a field, a receiver, a borrow or a comparison",
+   "Unannotated Vec flags recomputed in Lower::finish (bare_vec, multi_vec, corpus 70)",
+   "RT15: !Move through a struct field, a tuple, an array, Option and Vec push (W0604); W0605 for a self-reference assigned from another frame, a parameter, a local or a generic result, and for a struct literal; W0304 for a direct local literal with an unset place field",
+   "RT3: id(&v[0]), arrays, Vec push and index, for over Vec<&T>, struct literals, generic ctor, by-value match on Option<&T>, tuple pattern over &tuple, if/block values, closure results and captures; W0204 for a local inside Option, Wrap, tuple and Vec results",
+   "RT18: the for-loop iterator inherits uniq (e09 W0503); RT24 sticky uniq for straight-line code and one-armed if (m03 W0406)",
+   "QR7/QR8: linear at depth 7 is W0601; k=14 wide cyclic and polymorphically recursive types check in about 0.01 s",
+   "QR12: duplicate struct-literal fields and closure params (W0107), integer literal ranges with negated literals (W0102), named-argument messages (W0103); fork arity was already done by S3",
+   "W0104 for a field of a literal; 2.s and 500.ms are still durations",
+   "RT24: W0304 definite assignment through branches, loops, compound assignment, borrows, clauses and shadowing; W0120 exhaustiveness for enums, bool, tuples, nested payloads, references, strings and integers, with no crash on a 19 000-wide tuple (budget)",
+   "QR19: VarInfo.callable set in var_info and finish; diagnose reads the flag",
+   "QR11: not reproducible on review/s3; regression test body_texts.rs added",
+   "Checklist for overwrites/unset_at/use_before_set: spec, rules.rs, Violations field, bridge each_fact, violations and VIOLATION_RELATIONS, diagnose, codes, corpus 72 and 75, random generator; check --explain derivations render; agree passes on all corpus and probe files; random agreement passes at PROPTEST_CASES=4000",
+   "Base vs head on about 3800 scratch probe files: the only lost diagnostics are the intended m1.wf None-arm fix and timeouts from the perf regression"
+  ],
+  "gates_ok": true,
+  "summary": "I reviewed review/s3 in /home/user/wt-core from 353099e to 3b1df44 (7 commits, 36 files) without editing the worktree. It is still clean.\n\nGates at HEAD:\n- cargo fmt --check, clippy --workspace --all-targets -D warnings (pedantic and nursery are on in the workspace lints) and cargo test --workspace all pass.\n- RUSTDOCFLAGS='-D warnings' cargo doc fails, but only on lines this stage did not change: weft-syntax parser.rs:8 (CHAIN_PART) and weft-check rules.rs:4 (redundant link). weft-facts and weft-sema document cleanly.\n- verify-all.sh is not needed: weft-verified and proofs/ are not touched.\n- Random agreement passes at PROPTEST_CASES=4000, and `weft agree` passes on the new corpus and all my probes.\n\nChecklist and hygiene:\n- The checklist is complete for overwrites, unset_at and use_before_set.\n- Edits to rules.rs, diagnose.rs and codes.rs are small and local.\n- Corpus files are numbered 70 to 77 and have no main or test blocks.\n- There is no unwrap or expect in production code.\n\nMost claimed fixes reproduce. I built the base and compared it with head on about 3800 scratch probe files. The only lost diagnostics are the intended None-arm fix and timeouts.\n\nEight majors remain:\n1. Generic `drops` misses a T moved into a value that is then dropped: `let _ = x`, Some(x) dropped, a tuple, a closure, a Vec, an overwrite.\n2. The Local.uniq flag depends on lowering order across if/else and match. An aliased reference reaches an @ uniq parameter.\n3. A reference to an Rc is portable, so `&Rc` crosses fork branches. This is the rc_by_ref function of t02.\n4. Unset place fields are lost for nested, returned and tuple literals, so an uninitialized self-reference can be read.\n5. Part holders never retire. Facts grow quadratically: 1000 assignments give 1M uses, and 2000 take 29.5 s against 0.23 s on base. Stale holders also give a false W0301 after a reassign.\n6. Lower::finish is quadratic in the number of locals: 5000 locals take 3.3 s against 0.25 s on base, and a 20 000-line function takes 65.7 s against 2.2 s.\n7. A once closure loses its once-ness when it is returned or passed through a callee.\n8. Linear temporaries held while a later operand aborts are not checked (W0602).\n\nMinors:\n- A documented false W0601 for Option<T> in `drops`.\n- A diagnostic text glitch for part holders.\n- The ADR lists the Vec-of-linear item under the wrong heading, W0304 semantics are not recorded, and the architecture diagram is not updated.\n- Drop decisions at lowering time use the type known then, so a value whose type the body resolves later can drop silently.\n- A false W0601 for a closure that returns a linear value. This was there before S4.\n- Long sentences in comments, and an allow with no reason.\n\nThe repro files are in SCRATCH/verify/partb/S4diff/p/. The base and head binaries are SCRATCH/verify/partb/S4diff/weft-base and SCRATCH/verify/partb/S4diff/weft-head. I deleted the scratch base build, and 15 GB is free. Another agent was also writing to verify/partb/S4, so I used my own directory, verify/partb/S4diff."
+ },
+ "S4: fix+commit": {
+  "head_commit": "ca3007a",
+  "resolved": [
+   "Blocker (closure at a type-parameter parameter skipped every mode check): call_fn_as now gates on the declared parameter (callback(i)), so the closure is moved, keep_modes runs against the instantiated type, and drops/!Move apply. vec_fn_run/vec_fn_drop W0601:9, gen3 W0502 at 7/17/18, c2 W0601 at 15/20, false W0601 in c4 gen_keep gone. Corpus 71 has bad and clean cases.",
+   "S4-introduced false W0302 (by-value argument that holds references, used at the call after its move, e.g. take(v) with v: Vec<&u64>): a moved operand now gets its own holder (hold_moved). Corpus 76 moved_refs.",
+   "Generic drops through holders, overwrites, closures and nested generic calls (two reports): generic bodies treat a type-parameter value as maybe-linear where values can go away. finish runs the W0601 dataflow over these variables. drops is now a set of type parameters, and callers check the inferred type argument (callee_drops). drops2/drops3/gen1/gen_set are all reported. Corpus 72.",
+   "False W0601 for keep3 if/match tails and mutual recursion: fixed by moving branch values (below). g4_iftail and g3 c2 are clean.",
+   "if/match arm value that names a local is not moved: if_expr and match_expr now consume each branch value, as the interpreter does. i4 W0302:5, i2 W0604 at 7/12/15, i3 W0604/W0302. The W0601 for a and b in i3 a() is correct, not a false positive: the other local is dropped on each path. Corpus 72 and 73.",
+   "Lower::finish false W0601 for an untyped closure parameter: a move of a value whose type is not known yet is tentative, and settle_moves removes it in finish if the type is plain data. late.wf l1 and l5 are clean.",
+   "Nonportable and not-many modes lost through fields, Vec<fn()>, tuples, Option and assignment: NONPORTABLE and NOT_MANY marks go with the capabilities of a value into locals (mark_modes). Call results that can hold a function value take the marks of their arguments, which also covers returned closures that capture &Rc or @uniq. c6, c5 field_closure, u2 u2/u3 and returned_rc are reported. Corpus 71.",
+   "&Rc and &[Rc] are portable (two reports): Nonportable passes through Ref and Slice in ty_has. t02 line 17 and np1 lines 9, 14 and 18 are reported. inner_handle_deps now reaches its Ref arm for references to nonportable values.",
+   "W0304 misses closures, nested literals, call results, tuples, Option and by-value parameters (two reports): unset place fields now come from the type of any fresh value (unset_paths, through parts, payloads and Box). A closure touches its summary reads where it is made. A move is no longer counted as a read, which removes redundant W0304s. print and interpolation read the whole value. Corpus 73.",
+   "W0120 budget silently accepted: a wildcard row covers its part at once, so x_bools16 costs linear time and is reported. An exhausted budget reports W0120 'too large to check'. A unit test uses a test-only budget, and corpus 75 has a wide match with bad and clean cases.",
+   "Quadratic finish and lowering (two reports): var_local and root_local index the locals, local_frame uses frame ids, and lookup_local uses a scope map. locals5000 0.27 s (was 3.3 s), q8 0.35 s (was 5.9 s), le_10000 1.0 s (was 12 s). A sema perf test covers 12 000 lets with 2 000 part assignments.",
+   "Local.uniq depends on lowering order (RT24): uniq and part holders are saved, restored and joined at if/match. lower_loop joins entry, back edges, continue and break states. uniq1 lines 5 and 22, plus a break case. Corpus 74.",
+   "Part holders never retire (quadratic facts, stale false W0301): holders are kept per (local, places). A new value of the part, of a part around it, or of the whole local retires them, and a holder is reused for the same refs. They join at branches and are carried across loop passes. ref2 reassign_part/reassign_whole are clean. holders2000 takes 0.34 s (was 29 s on head). Corpus 76 has branch, loop and break cases.",
+   "Linear temporaries held while a later operand aborts: operands on their way to a call, tuple, struct literal, constructor, array or perform are held in a linear hidden variable that the taking node moves. abort2 W0602 at 10/13/20/26. Corpus 72 has bad cases and an on-abort clean case.",
+   "Minor: a closure that returns a linear value no longer gets W0601. The closure body value is consumed as its result (d3, lin2 8/13).",
+   "Minor: Box.new/Rc.new build their argument in place (i19 clean). Prelude externs with no elements (Weak) do not pass !Move (props test).",
+   "Minor: drops for an Option<T> consumer with a None arm is no longer reported (lin2:30). The None arm consumes the scrutinee in generic mode.",
+   "Minor: let _ = v.pop() before v gets its type is now W0601 (late1:15). Drop sites use may_be_linear, and finish sets the flags of hidden variables from the inferred type.",
+   "Minor: the W0301 text for a part holder now reads 'the value in `w.x` ...'. Added body_texts tests.",
+   "Minor small gaps: `let (a, a)` and duplicate binders in match/for give W0107. A chain of negated literals is one literal, so --128: i8 is W0102 and the old false W0102 on --1 is gone (b3_neg, redteam crash d10).",
+   "Minor docs: ADR 0007 rewritten in STE with the new rules. The Vec item moved to imprecise, and imprecisions for None overwrite, drops naming, argument marks and closure moves are added. ADR 0002 records the W0120 budget and the W0304 rules. ADR 0003 and 0006 record holders, joins and nonportable references. architecture.md has a linear/W0304 relation diagram.",
+   "Minor STE: long sentences split in the new comments of props.rs, caps.rs, drops.rs, exhaust.rs, repeat.rs, stmt.rs and mod.rs. The allow(clippy::too_many_arguments) on call_flows has a reason."
+  ],
+  "not_resolved": [
+   {
+    "issue": "Major: a once closure loses once-ness across a function boundary (ret1/ret2)",
+    "reason": "Rejected: not reproducible. The probes capture a String, which is copy (ADR 0007), so `|| eat(s)` is not once. A returned closure that captures a local or a by-value parameter is W0204. Pass-through and generic identity keep once-ness. ret3 probe and corpus 78 (passed_twice, kept_twice W0502, with clean cases)."
+   },
+   {
+    "issue": "Minor: overwriting `None` (or an empty Vec) of an inferred local is W0601",
+    "reason": "Not changed. It needs a new spec input relation (an empty value at a bind) through the full checklist in rules.rs, which the quality merge also changes. Recorded as an imprecision in ADR 0007."
+   },
+   {
+    "issue": "Minor: a W0304 read inside a handler clause is reported on the resume line",
+    "reason": "Location only: the program is still rejected. The clause is its own CFG component, so the unset state does not reach the read node. Left as is."
+   },
+   {
+    "issue": "Minor: `for e in v[] { f(e) }` with a @uniq v and a function parameter f is always W0503",
+    "reason": "By design: it follows from the RT13/RT18 rules, and ADR 0006 documents it."
+   },
+   {
+    "issue": "Minor: RUSTDOCFLAGS='-D warnings' cargo doc fails",
+    "reason": "Pre-existing, on base and head: weft-syntax parser.rs:8 and weft-check rules.rs:4, which review/quality fixes. weft-sema, weft-facts and the other crates I changed document cleanly."
+   },
+   {
+    "issue": "Open items found while fixing (recorded in ADRs, not verifier findings)",
+    "reason": "ADR 0007: a generic callee that aborts or resumes more than once while it holds a T; a return/break in a later operand that leaves a linear value on its way. ADR 0003: after a join, a stale holder is still used on a path where a later value replaced it (only a continue path shows it)."
+   }
+  ],
+  "gates_passed": true,
+  "summary": "I fixed every real blocker and major from the S4 verification of review/s3 (/home/user/wt-core) and most of the minors, in two commits on top of 3b1df44: 45f4ca9 for code and tests, and ca3007a for docs. Head is ca3007a.\n\nI reproduced each finding first, with the verifier probes and the old head binary.\n\n**How the main fixes work:**\n- **Generic drops:** a generic body now treats a value of a type parameter as possibly linear. `finish` runs the W0601 dataflow over these values, and their type parameters become the `drops` signature part. Callers check the inferred type argument.\n- **Values on their way:** an operand that moves before the node that takes it gets a hidden holder. This fixes a false W0302 that S4 introduced, and gives W0602 when a later operand aborts.\n- **Branch values:** the value of an `if` or `match` branch now moves, as in the interpreter.\n- **Late types:** a move of a value whose type is not known yet is tentative, and `finish` settles it. Flags of hidden variables are set from the inferred type.\n- **Modes in places:** nonportable and not-`many` marks go with a closure into fields, `Vec<fn()>`, tuples and `Option`, and into call results. A reference to a nonportable value is now nonportable.\n- **W0304:** unset place fields come from the type of any freshly built value. A closure counts as reading the fields that its body reads.\n- **Per-branch state:** `@ uniq` and part holders are joined at if/match and at loop exits, including `break` and `continue`. Part holders now retire, so they no longer give stale W0301s or quadratic facts.\n- **W0120:** the check stops early on wildcard rows, and a match too large to check is now reported.\n- **Speed:** locals are found by index (vars, roots, frames, names), so long bodies lower in linear time.\n\n**Tests:** each fix has bad and clean cases in tests/programs 71\u201377 and in a new 78_closure_returns.wf (none has main or test blocks). Other new tests are in crates/weft-check/tests/body_texts.rs and crates/weft-sema/src/tests.rs (match budget, and a performance test with 12 000 lets).\n\n**Comparison with the old head:** I ran both binaries on about 4 400 review probe files plus the verifier probe directories. Outside the corpus, the only differences are expected new diagnostics or removed false positives, and I checked each one.\n\n**Gates:** `cargo fmt --all`, clippy with `-D warnings`, and `cargo test --workspace` (including agreement) all pass. `RUSTDOCFLAGS='-D warnings' cargo doc` fails on weft-syntax and on weft-check rules.rs:4 on both base and head; review/quality fixes those. The crates I touched document cleanly. I did not touch weft-verified or proofs.\n\n**ADRs:** 0002, 0003, 0006 and 0007 and docs/architecture.md now record the semantic decisions and the remaining imprecisions.\n\n**Rejected or left open:**\n- \"Once-ness lost across a function boundary\" is not reproducible: the probes capture a String, which is a copy type. Corpus 78 covers the real shapes.\n- The `None`-overwrite imprecision is recorded in ADR 0007, not fixed, because a fix needs a spec and rules.rs change.\n- The W0304 location inside a handler clause is left as is: the program is still rejected, only the line differs.\n- `for e in v[] { f(e) }` with a `@ uniq` v is W0503 by design.\n- The rustdoc failure is pre-existing.\n\nScratch probes are in SCRATCH/partb/s4f; I deleted the binary copy and the large generated files. 15 GB of disk is free."
+ }
+}

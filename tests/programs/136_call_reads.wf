@@ -1,0 +1,52 @@
+// What a task reads (ADR 0006). A call reads its reference arguments, so a
+// task that gives `&w` to a helper reads all of `w`. This is imprecise: the
+// parent cannot change another part of `w` while the task runs, also when the
+// helper reads or writes only `w.es`. Reads from several threads need no
+// `@ shared`: W0403 and W0405 check the writes.
+struct E { hp: u64 }
+struct W { es: Vec<E>, ns: Vec<u64>, score: u64 }
+
+fn grow_w(w: &W) / mut(w.es) { w.es.push(E { hp: 1 }) }
+
+fn sum_hp(w: &W) -> u64 {
+    let total = 0
+    for e in w.es[] { total += e.hp }
+    total
+}
+
+// The helper writes only `w.es`, but the call reads all of `w` (imprecise:
+// the program runs correctly).
+fn helper_part() / async {
+    let w = W { es: Vec.new(), ns: Vec.new(), score: 0 }
+    scope { s =>
+        let t = s.spawn(|| grow_w(&w))
+        w.score += 1   //~ W0405
+        t.join()
+    }
+    print(w.es.len(), w.score)
+}
+
+// Clean: the task writes only through a field place.
+fn field_part() / async {
+    let w = W { es: Vec.new(), ns: Vec.new(), score: 0 }
+    scope { s =>
+        let t = s.spawn(|| w.es.push(E { hp: 1 }))
+        w.score += 1
+        t.join()
+    }
+    print(w.es.len(), w.score)
+}
+
+// Clean: two fork branches read through one aliased reference that is not
+// `@ shared`.
+fn both(world: &W) -> u64 / par {
+    let (a, b) = fork(|| sum_hp(world), || sum_hp(world))
+    a + b
+}
+
+fn main() / async, par {
+    field_part()
+    let w = W { es: Vec.new(), ns: Vec.new(), score: 0 }
+    w.es.push(E { hp: 2 })
+    print(both(&w))
+}

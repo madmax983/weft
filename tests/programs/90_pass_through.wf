@@ -1,0 +1,28 @@
+// A public function states its effects (W0701). The effects of a function
+// parameter pass through to the caller with no syntax (design: "Effect
+// polymorphism stays silent"). So a public function whose only effects are
+// the effects of its function parameters has nothing to state: no W0701.
+struct Counter { n: u64 }
+
+// Clean: only the effects of `f` pass through.
+pub fn apply(f: fn()) { f() }
+pub fn apply_twice(f: fn(), g: fn()) {
+    f()
+    g()
+}
+
+// Bad: a row with an effect of its own, also next to a pass-through.
+pub fn apply_and_log(f: fn()) {   //~ W0701
+    f()
+    log.info("done")
+}
+pub fn bump_with(f: fn(), c: &Counter) {   //~ W0701
+    f()
+    c.n += 1
+}
+
+// Clean: the stated row, with the pass-through.
+pub fn stated(f: fn()) / log {
+    f()
+    log.info("done")
+}

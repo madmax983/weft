@@ -3,7 +3,7 @@
 use std::rc::Rc;
 
 use weft_sema::program::FnId;
-use weft_sema::types::Ty;
+use weft_sema::types::{IntTy, Ty};
 use weft_syntax::ast::Span;
 use weft_verified::lifecycle::LinState;
 
@@ -69,7 +69,10 @@ impl super::Machine<'_, '_> {
     pub(crate) fn pop_loc(&mut self) -> R<(Place, bool)> {
         match self.pop()? {
             Value::Loc(p, t) => Ok((p, t)),
-            Value::Ref(p) => Ok((p, true)),
+            Value::Ref(p) => {
+                self.heap.check_ref(&p);
+                Ok((p, true))
+            }
             v => {
                 // A value where a place is needed: keep it in a temporary.
                 let c = self.heap.alloc(SlotKind::Temp, v);
@@ -118,11 +121,17 @@ impl super::Machine<'_, '_> {
         for _ in 0..256 {
             match self.hget(&p)? {
                 Value::Ref(q) => {
+                    self.heap.log_read(&p);
+                    self.heap.check_ref(q);
                     p = q.clone();
                     tr = true;
                 }
-                Value::Boxed(c) => p = Place::root(*c),
+                Value::Boxed(c) => {
+                    self.heap.log_read(&p);
+                    p = Place::root(*c);
+                }
                 Value::Rc(c) => {
+                    self.heap.log_read(&p);
                     p = Place::root(*c);
                     tr = true;
                 }
@@ -137,19 +146,31 @@ impl super::Machine<'_, '_> {
         let mut p = p;
         for _ in 0..256 {
             match self.hget(&p)? {
-                Value::Ref(q) => p = q.clone(),
+                Value::Ref(q) => {
+                    self.heap.check_ref(q);
+                    p = q.clone();
+                }
                 _ => return Ok(p),
             }
         }
         Err(self.fault("a reference chain is too long"))
     }
 
-    /// Reads through references.
+    /// Reads through references. Each read is a read for the race detector of
+    /// the oracle: an operand and a callee read through a reference here.
     pub(crate) fn deref_value(&self, v: Value) -> R<Value> {
         let mut v = v;
         for _ in 0..256 {
             match v {
-                Value::Ref(p) | Value::Loc(p, _) => v = self.hget(&p)?.clone(),
+                Value::Ref(p) => {
+                    self.heap.check_ref(&p);
+                    self.heap.log_read(&p);
+                    v = self.hget(&p)?.clone();
+                }
+                Value::Loc(p, _) => {
+                    self.heap.log_read(&p);
+                    v = self.hget(&p)?.clone();
+                }
                 other => return Ok(other),
             }
         }
@@ -158,6 +179,7 @@ impl super::Machine<'_, '_> {
 
     /// Copies a copy value at a place, or moves any other value out of it.
     pub(crate) fn use_place(&mut self, p: &Place) -> R<Value> {
+        self.heap.log_read(p);
         let v = self.hget(p)?;
         if matches!(v, Value::Moved) {
             return Err(self.fault("a value is used after it was moved"));
@@ -241,7 +263,10 @@ impl super::Machine<'_, '_> {
                 let (p, tr) = self.pop_loc()?;
                 let (p, tr) = self.resolve(p, tr)?;
                 let idx = match self.hget(&p)? {
-                    Value::Struct(o) => self.rt.adts[o.adt].fields.iter().position(|f| f == name),
+                    Value::Struct(o) => self.rt.adts[o.adt.index()]
+                        .fields
+                        .iter()
+                        .position(|f| f == name),
                     Value::Tuple(vs) => name.parse::<usize>().ok().filter(|&i| i < vs.len()),
                     Value::Moved => return Err(self.fault("a value is used after it was moved")),
                     _ => None,
@@ -293,13 +318,17 @@ impl super::Machine<'_, '_> {
                 let old = std::mem::replace(self.hget_mut(&p)?, v);
                 self.heap.drop_value(old);
             }
-            Op::CompoundStore(op) => {
+            Op::CompoundStore(op, int) => {
                 let (p, _) = self.pop_loc()?;
                 let v = self.pop()?;
                 let p = self.follow_refs(p)?;
                 let cur = self.hget(&p)?.clone();
                 let new = self.binop(*op, cur, v)?;
+                // The check of a field names the field, so it comes first.
                 self.check_unsigned(&p, &new)?;
+                if let Some(it) = int {
+                    self.check_int(*it, &new)?;
+                }
                 *self.hget_mut(&p)? = new;
             }
             Op::Pop => {
@@ -327,6 +356,11 @@ impl super::Machine<'_, '_> {
                     ),
                     _ => return Err(self.fault("`-` needs an integer")),
                 };
+                self.push(v)?;
+            }
+            Op::CheckInt(it) => {
+                let v = self.pop()?;
+                self.check_int(*it, &v)?;
                 self.push(v)?;
             }
             Op::Not => {
@@ -411,11 +445,14 @@ impl super::Machine<'_, '_> {
                         *slot = v;
                     }
                 }
-                let lin = if self.rt.adts.get(*adt).is_some_and(|a| a.linear) {
-                    self.lins.push(LinRec { l: Linear::new() });
-                    Some(self.lins.len() - 1)
-                } else {
-                    None
+                let lin = match self.rt.adts.get(adt.index()) {
+                    Some(a) if a.linear => {
+                        self.lins.push(LinRec {
+                            l: Linear::new(a.on_abort.is_some()),
+                        });
+                        Some(self.lins.len() - 1)
+                    }
+                    _ => None,
                 };
                 self.push(Value::Struct(Box::new(Obj {
                     adt: *adt,
@@ -476,16 +513,38 @@ impl super::Machine<'_, '_> {
                 let henv = self.fr()?.henv.clone();
                 return self.perform(*effect, *op, args, &henv);
             }
-            Op::MakeClosure { code, caps } => {
+            Op::MakeClosure {
+                code,
+                caps,
+                owned,
+                span,
+            } => {
                 let mut cells = Vec::new();
-                for c in caps {
-                    cells.push(self.cell_of(*c)?);
+                let mut own = Vec::new();
+                for (i, c) in caps.iter().enumerate() {
+                    let cell = self.cell_of(*c)?;
+                    if owned.contains(&u32_of(i)) {
+                        // A capture that the closure moves: the closure takes the
+                        // value now, into a cell of its own.
+                        let p = Place::root(cell);
+                        if matches!(self.hget(&p)?, Value::Moved) {
+                            return Err(self.fault("a value is used after it was moved"));
+                        }
+                        let v = self.heap.take(&p).map_err(|e| self.fault(e))?;
+                        let cell = self.heap.alloc(SlotKind::Local, v);
+                        cells.push(cell);
+                        own.push(cell);
+                    } else {
+                        cells.push(cell);
+                    }
                 }
                 let henv = self.fr()?.henv.clone();
                 self.push(Value::Closure(Rc::new(ClosureVal {
                     code: *code,
                     cells,
+                    owned: own,
                     henv,
+                    span: *span,
                 })))?;
             }
             Op::FnValue(f) => self.push(Value::FnItem(*f))?,
@@ -514,12 +573,12 @@ impl super::Machine<'_, '_> {
                 self.task().frames.push(Frame::Code(f));
             }
             Op::Scope { code, caps } => {
-                let sid = self.new_scope();
+                let henv = self.fr()?.henv.clone();
+                let sid = self.new_scope(henv.clone());
                 let mut cells = Vec::new();
                 for v in caps {
                     cells.push(self.cell_of(*v)?);
                 }
-                let henv = self.fr()?.henv.clone();
                 self.task().frames.push(Frame::Scope { scope: sid });
                 let f = self.code_frame(*code, vec![Value::Scope(sid)], Rc::from(cells), henv)?;
                 self.task().frames.push(Frame::Code(f));
@@ -587,9 +646,18 @@ impl super::Machine<'_, '_> {
                         }
                     }
                     IterState::Elems { buf, next, end } => {
-                        let len = u32_of(self.heap.list(buf).map_or(0, Vec::len));
+                        // The oracle checks report an iteration over a freed
+                        // buffer. The stock machine ends the loop.
+                        let len = match self.heap.list(buf) {
+                            Ok(l) => u32_of(l.len()),
+                            Err(e) if self.heap.oracle().is_some() => {
+                                return Err(self.fault(e));
+                            }
+                            Err(_) => 0,
+                        };
                         if next < end.min(len) {
                             let ep = Place::root(buf).child(next);
+                            self.heap.log_read(&ep);
                             let v = self.hget(&ep)?;
                             let item = if is_scalar(v) {
                                 v.clone()
@@ -628,6 +696,30 @@ impl super::Machine<'_, '_> {
         })
     }
 
+    /// Faults if integer `v` does not fit in type `it`. A `u64` or a `usize`
+    /// holds at most `i64::MAX` here: a larger value faults as an overflow of
+    /// the arithmetic before.
+    fn check_int(&self, it: IntTy, v: &Value) -> R<()> {
+        let Value::Int(i) = v else {
+            return Ok(());
+        };
+        let (min, max) = it.range();
+        let i = i128::from(*i);
+        if i < min {
+            return Err(self.fault(format!(
+                "integer underflow: {i} does not fit in `{}`",
+                it.name()
+            )));
+        }
+        if i > max {
+            return Err(self.fault(format!(
+                "integer overflow: {i} does not fit in `{}`",
+                it.name()
+            )));
+        }
+        Ok(())
+    }
+
     /// An unsigned struct field cannot hold a negative integer.
     fn check_unsigned(&self, p: &Place, v: &Value) -> R<()> {
         let Value::Int(i) = v else {
@@ -644,7 +736,7 @@ impl super::Machine<'_, '_> {
             path: parent.to_vec(),
         };
         if let Ok(Value::Struct(o)) = self.heap.get(&parent) {
-            let info = &self.rt.adts[o.adt];
+            let info = &self.rt.adts[o.adt.index()];
             if info.unsigned.get(last as usize).copied().unwrap_or(false) {
                 let name = info.fields.get(last as usize).map_or("", |n| &**n);
                 return Err(self.fault(format!("unsigned underflow: field `{name}` would be {i}")));
@@ -665,6 +757,7 @@ impl super::Machine<'_, '_> {
 
     /// Returns the buffer and the index range of a `Vec` or a slice at a place.
     fn elems_of(&self, p: &Place, tr: bool) -> R<(CellId, u32, u32, bool)> {
+        self.heap.log_read(p);
         match self.hget(p)? {
             Value::Vec(buf) => {
                 let len = self.heap.list(*buf).map_err(|e| self.fault(e))?.len();
@@ -699,6 +792,7 @@ impl super::Machine<'_, '_> {
                 }
             }
             Value::Ref(p) | Value::Loc(p, _) => {
+                self.heap.check_ref(&p);
                 let (p, _) = self.resolve(p, true)?;
                 let len = match self.hget(&p)? {
                     Value::Tuple(vs) => vs.len(),
@@ -710,8 +804,11 @@ impl super::Machine<'_, '_> {
                 for i in (0..n).rev() {
                     let q = p.child(u32_of(i));
                     let x = self.hget(&q)?;
+                    // A scalar part behind the reference is copied: a read.
                     let item = if is_scalar(x) {
-                        x.clone()
+                        let x = x.clone();
+                        self.heap.log_read(&q);
+                        x
                     } else {
                         Value::Ref(q)
                     };
@@ -735,6 +832,7 @@ impl super::Machine<'_, '_> {
                 }
             }
             Value::Ref(p) | Value::Loc(p, _) => {
+                self.heap.check_ref(&p);
                 let (p, _) = self.resolve(p, true)?;
                 if !matches!(self.hget(&p)?, Value::Struct(o) if o.fields.len() == n) {
                     return Err(self.fault("this value is not a struct of that size"));
@@ -742,8 +840,11 @@ impl super::Machine<'_, '_> {
                 for i in (0..n).rev() {
                     let q = p.child(u32_of(i));
                     let x = self.hget(&q)?;
+                    // A scalar part behind the reference is copied: a read.
                     let item = if is_scalar(x) {
-                        x.clone()
+                        let x = x.clone();
+                        self.heap.log_read(&q);
+                        x
                     } else {
                         Value::Ref(q)
                     };
@@ -756,15 +857,21 @@ impl super::Machine<'_, '_> {
         Ok(())
     }
 
-    /// Consumes a linear value on the normal path.
+    /// Consumes a linear value on the normal path. A value that is already
+    /// finished is a fault: the verified record refuses the consume.
     pub(crate) fn consume_lin(&mut self, id: usize) -> R<()> {
         let Some(rec) = self.lins.get_mut(id) else {
             return Err(self.fault("internal: bad linear record"));
         };
-        if rec.l.consume().is_err() && rec.l.state != LinState::Aborted {
-            return Err(self.fault("a linear value was consumed twice"));
+        if rec.l.consume().is_ok() {
+            return Ok(());
         }
-        Ok(())
+        let aborted = rec.l.state == LinState::Aborted;
+        Err(self.fault(if aborted {
+            "a linear value was consumed after `on abort` finished it"
+        } else {
+            "a linear value was consumed twice"
+        }))
     }
 
     // -----------------------------------------------------------------------
@@ -776,6 +883,7 @@ impl super::Machine<'_, '_> {
             CPat::Wild | CPat::Bind(_) => true,
             CPat::Lit(l) => {
                 let (p, _) = self.resolve(p.clone(), false)?;
+                self.heap.log_read(&p);
                 match (l, self.hget(&p)?) {
                     (LitPat::Int(a), Value::Int(b)) => a == b,
                     (LitPat::Bool(a), Value::Bool(b)) => a == b,
@@ -800,16 +908,17 @@ impl super::Machine<'_, '_> {
             }
             CPat::Variant { name, fields } => {
                 let (p, _) = self.resolve(p.clone(), false)?;
+                self.heap.log_read(&p);
                 let ok = match self.hget(&p)? {
                     Value::Enum(e) => {
-                        self.rt.adts[e.adt]
+                        self.rt.adts[e.adt.index()]
                             .variants
                             .get(e.variant as usize)
                             .is_some_and(|(n, _)| n == name)
                             && e.fields.len() == fields.len()
                     }
                     Value::Struct(o) => {
-                        self.rt.adts[o.adt].name == *name && o.fields.len() == fields.len()
+                        self.rt.adts[o.adt.index()].name == *name && o.fields.len() == fields.len()
                     }
                     _ => false,
                 };
@@ -833,6 +942,8 @@ impl super::Machine<'_, '_> {
                 let v = if tr {
                     let x = self.hget(p)?;
                     if is_scalar(x) {
+                        // A part behind a reference is copied: a read.
+                        self.heap.log_read(p);
                         x.clone()
                     } else {
                         Value::Ref(p.clone())
@@ -865,11 +976,11 @@ impl super::Machine<'_, '_> {
     /// Calls a function item. `henv` holds the caller's handlers.
     pub(crate) fn call_fn(&mut self, f: FnId, args: Vec<Value>, henv: HEnv) -> R<Flow> {
         let mut args = args;
-        if let Some(n) = self.rt.natives.get(f).copied().flatten() {
+        if let Some(n) = self.rt.natives.get(f.index()).copied().flatten() {
             return self.native(n, f, args, henv);
         }
         self.coerce_args(f, &mut args)?;
-        let Some(code) = self.rt.compiled.fn_code.get(f).copied().flatten() else {
+        let Some(code) = self.rt.compiled.fn_code.get(f.index()).copied().flatten() else {
             return Err(self.fault(format!("`{}` has no body", self.rt.prog.fns[f].path)));
         };
         let frame = self.code_frame(code, args, Rc::from(Vec::new()), henv)?;
@@ -880,7 +991,7 @@ impl super::Machine<'_, '_> {
     /// A reference to a copy value, passed to a parameter that is not a
     /// reference, passes the value.
     fn coerce_args(&self, f: FnId, args: &mut [Value]) -> R<()> {
-        let Some(sig) = self.rt.sigs.get(f) else {
+        let Some(sig) = self.rt.sigs.get(f.index()) else {
             return Ok(());
         };
         for (p, a) in sig.params.iter().zip(args.iter_mut()) {
@@ -906,11 +1017,17 @@ impl super::Machine<'_, '_> {
     }
 
     /// Calls a closure, a function item or a continuation.
+    ///
+    /// A closure that moved its captures runs only once (W0502), so the call
+    /// consumes it: the frame takes the captures (`take_captures`). The
+    /// unwinder of the frame finishes their linear values, also when no local
+    /// holds the closure, as for the block of a `with_timeout` (ADR 0010).
     pub(crate) fn call_value(&mut self, callee: Value, args: Vec<Value>) -> R<Flow> {
         match callee {
             Value::Closure(c) => {
-                let f =
-                    self.code_frame(c.code, args, Rc::from(c.cells.as_slice()), c.henv.clone())?;
+                let (caps, owned) = self.take_captures(&c);
+                let mut f = self.code_frame(c.code, args, caps, c.henv.clone())?;
+                f.owned = owned;
                 self.task().frames.push(Frame::Code(f));
                 Ok(Flow::Continue)
             }
@@ -929,7 +1046,7 @@ impl super::Machine<'_, '_> {
     }
 
     /// Returns the type whose methods a value has.
-    fn owner_adt(&self, v: &Value) -> Option<usize> {
+    fn owner_adt(&self, v: &Value) -> Option<weft_sema::AdtId> {
         let b = &self.rt.b;
         match v {
             Value::Struct(o) => Some(o.adt),
@@ -970,13 +1087,16 @@ impl super::Machine<'_, '_> {
                 }
             }
             match v {
-                Value::Ref(q) => p = q.clone(),
+                Value::Ref(q) => {
+                    self.heap.check_ref(q);
+                    p = q.clone();
+                }
                 Value::Boxed(c) | Value::Rc(c) => p = Place::root(*c),
                 Value::Moved => return Err(self.fault("a value is used after it was moved")),
                 _ => return Err(self.fault(format!("this value has no method `{name}`"))),
             }
         };
-        if self.rt.natives.get(found).copied().flatten() == Some(Native::TaskJoin) {
+        if self.rt.natives.get(found.index()).copied().flatten() == Some(Native::TaskJoin) {
             if let Value::Task(t) = self.hget(&p)? {
                 let t = *t;
                 if !self.is_done(t) {
@@ -985,7 +1105,7 @@ impl super::Machine<'_, '_> {
                         self.push(a)?;
                     }
                     self.retry()?;
-                    if let Some(f) = self.check_interrupt()? {
+                    if let Some(f) = self.check_interrupt() {
                         return Ok(f);
                     }
                     return Ok(self.block(Wait::Join(t), SuspendReason::Join(t)));
@@ -995,7 +1115,7 @@ impl super::Machine<'_, '_> {
         let by_ref = self
             .rt
             .sigs
-            .get(found)
+            .get(found.index())
             .and_then(|s| s.params.first())
             .is_some_and(|p| p.ty.is_ref());
         let recv = if by_ref {
@@ -1012,28 +1132,130 @@ impl super::Machine<'_, '_> {
     // Tasks and scopes
     // -----------------------------------------------------------------------
 
-    pub(crate) fn new_scope(&mut self) -> ScopeId {
+    /// Makes a scope whose owner is the current task. `henv` has the handlers
+    /// at the `scope` or the `fork`: a failure of a child goes to them.
+    pub(crate) fn new_scope(&mut self, henv: HEnv) -> ScopeId {
         let owner = self.cur;
         self.scopes.push(ScopeRec {
             owner,
             children: Vec::new(),
             failure: None,
             propagated: false,
+            henv,
         });
         self.scopes.len() - 1
     }
 
+    /// With the oracle checks on, notes a violation if task value `f`, which
+    /// the checker marks stealable, reaches an `Rc`, a `Weak` or a `Scope`.
+    /// Those stay on one thread. A reference reaches only the value at its
+    /// place, not the other fields of its cell: `&w.score` is portable even if
+    /// `w.rc` is an `Rc`. A slice reaches only its elements.
+    fn oracle_portable(&self, f: &Value) {
+        let Some(o) = self.heap.oracle() else {
+            return;
+        };
+        let mut work: Vec<Value> = vec![f.clone()];
+        let mut seen: std::collections::BTreeSet<Place> = std::collections::BTreeSet::new();
+        let found = loop {
+            let Some(v) = work.pop() else {
+                break None;
+            };
+            let places: Vec<Place> = match v {
+                Value::Rc(_) => break Some("Rc"),
+                Value::Weak(_) => break Some("Weak"),
+                Value::Scope(_) => break Some("Scope"),
+                Value::Closure(c) => c.cells.iter().map(|&cell| Place::root(cell)).collect(),
+                Value::Ref(p) | Value::Loc(p, _) => vec![p],
+                Value::Vec(c) | Value::Boxed(c) => vec![Place::root(c)],
+                Value::Slice { buf, lo, hi } => {
+                    (lo..hi).map(|i| Place::root(buf).child(i)).collect()
+                }
+                Value::Tuple(vs) | Value::List(vs) => {
+                    work.extend(vs);
+                    Vec::new()
+                }
+                Value::Struct(o) => {
+                    work.extend(o.fields);
+                    Vec::new()
+                }
+                Value::Enum(e) => {
+                    work.extend(e.fields);
+                    Vec::new()
+                }
+                _ => Vec::new(),
+            };
+            for p in places {
+                if let Some(v) = self.value_at(&p) {
+                    if seen.insert(p) {
+                        work.push(v.clone());
+                    }
+                }
+            }
+        };
+        if let Some(what) = found {
+            o.borrow_mut().flag(format!(
+                "oracle: a stealable task reaches a nonportable value (`{what}`)"
+            ));
+        }
+    }
+
+    /// Returns the value at place `p`, or `None` if it does not exist. This is
+    /// not an access of the program: the oracle does not log it.
+    fn value_at(&self, p: &Place) -> Option<&Value> {
+        let mut v = &self.heap.slot(p.cell).ok()?.val;
+        for &i in &p.path {
+            v = match v {
+                Value::Tuple(vs) | Value::List(vs) => vs.get(i as usize),
+                Value::Struct(o) => o.fields.get(i as usize),
+                Value::Enum(e) => e.fields.get(i as usize),
+                _ => None,
+            }?;
+        }
+        Some(v)
+    }
+
+    /// Returns the captured cells of a frame that runs closure `c`, and the
+    /// cells of them that the frame owns. The frame takes each capture that
+    /// the closure moved into a new cell of its own. A copy of the closure
+    /// that stays in a local then holds no value there, so no unwinder
+    /// finishes a value twice (ADR 0010).
+    fn take_captures(&mut self, c: &ClosureVal) -> (Rc<[CellId]>, Vec<CellId>) {
+        if c.owned.is_empty() {
+            return (Rc::from(c.cells.as_slice()), Vec::new());
+        }
+        let mut caps = c.cells.clone();
+        let mut owned = Vec::new();
+        for cap in &mut caps {
+            if !c.owned.contains(cap) {
+                continue;
+            }
+            let v = match self.heap.slot_mut(*cap) {
+                Ok(s) => crate::heap::take_moved(&mut s.val),
+                Err(_) => Value::Moved,
+            };
+            *cap = self.heap.alloc(SlotKind::Local, v);
+            owned.push(*cap);
+        }
+        (Rc::from(caps), owned)
+    }
+
     /// Makes the first frame of a task for a closure or a function item.
+    ///
+    /// The closure moves into the task. So the first frame takes the captures
+    /// that the closure moved (`take_captures`): the unwinder of the task
+    /// finishes their linear values, also when the task is cancelled before
+    /// it starts (ADR 0010).
     fn task_frame(&mut self, f: Value) -> R<CodeFrame> {
         match f {
-            Value::Closure(c) => self.code_frame(
-                c.code,
-                Vec::new(),
-                Rc::from(c.cells.as_slice()),
-                c.henv.clone(),
-            ),
+            Value::Closure(c) => {
+                let (caps, owned) = self.take_captures(&c);
+                let mut frame = self.code_frame(c.code, Vec::new(), caps, c.henv.clone())?;
+                frame.owned = owned;
+                Ok(frame)
+            }
             Value::FnItem(f) => {
-                let Some(code) = self.rt.compiled.fn_code.get(f).copied().flatten() else {
+                let Some(code) = self.rt.compiled.fn_code.get(f.index()).copied().flatten() else {
                     return Err(self.fault("a task needs a function with a body"));
                 };
                 let henv = self.top_henv();
@@ -1049,14 +1271,21 @@ impl super::Machine<'_, '_> {
 
     /// Spawns a closure as a child of a scope.
     pub(crate) fn spawn_task(&mut self, sid: ScopeId, f: Value, span: Span) -> R<usize> {
+        // The span is in the code that spawns the task.
+        let unit = self.fr().map_or(usize::MAX, |cf| cf.code.unit);
+        let stealable = self.rt.is_stealable(unit, span);
+        if stealable {
+            self.oracle_portable(&f);
+        }
         let frame = self.task_frame(f)?;
-        let stealable = self.rt.is_stealable(span);
-        let worker = self.task().worker;
         let parent = self.cur;
-        let t = self.add_task(frame, worker, stealable, Some(sid));
+        // The task runs in the simulation of its spawn site.
+        let sim = self.sim_of(parent);
+        let t = self.add_task(frame, Some(parent), stealable, Some(sid), sim);
         if let Some(s) = self.scopes.get_mut(sid) {
             s.children.push(t);
         }
+        let worker = self.queue_worker(t);
         self.trace.push(TraceEvent::Spawn {
             task: t,
             parent,
@@ -1083,10 +1312,18 @@ impl super::Machine<'_, '_> {
             .is_none_or(|s| s.children.iter().all(|&t| self.is_done(t)));
         if !done {
             self.retry()?;
-            if let Some(f) = self.check_interrupt()? {
+            if let Some(f) = self.check_interrupt() {
                 return Ok(f);
             }
             return Ok(self.block(Wait::Scope(sid), SuspendReason::Scope));
+        }
+        let kids = self
+            .scopes
+            .get(sid)
+            .map(|s| s.children.clone())
+            .unwrap_or_default();
+        for k in kids {
+            self.oracle_join(k);
         }
         self.raise_scope_failure(sid)
     }
@@ -1103,14 +1340,14 @@ impl super::Machine<'_, '_> {
             return Ok(Flow::Continue);
         };
         s.propagated = true;
-        let henv = self.top_henv();
+        let henv = s.henv.clone();
         self.fail(msg, &henv)
     }
 
     fn fork(&mut self, n: usize, spans: &[Span]) -> R<Flow> {
         let fs = self.pop_n(n)?;
         let henv = self.fr()?.henv.clone();
-        let sid = self.new_scope();
+        let sid = self.new_scope(henv.clone());
         let mut tasks = Vec::new();
         for (i, f) in fs.into_iter().enumerate() {
             let span = spans.get(i).copied().unwrap_or_default();
@@ -1133,7 +1370,7 @@ impl super::Machine<'_, '_> {
         };
         let (sid, tasks) = (*scope, tasks.clone());
         if !tasks.iter().all(|&t| self.is_done(t)) {
-            if let Some(f) = self.check_interrupt()? {
+            if let Some(f) = self.check_interrupt() {
                 return Ok(f);
             }
             return Ok(self.block(Wait::Scope(sid), SuspendReason::Fork));
@@ -1141,6 +1378,9 @@ impl super::Machine<'_, '_> {
         let Some(Frame::Fork { henv, .. }) = self.tasks[cur].frames.pop() else {
             return Err(self.fault("internal: no fork"));
         };
+        for &k in &tasks {
+            self.oracle_join(k);
+        }
         let failed = self.scopes.get(sid).and_then(|s| {
             if s.propagated {
                 None
@@ -1152,12 +1392,9 @@ impl super::Machine<'_, '_> {
             if let Some(s) = self.scopes.get_mut(sid) {
                 s.propagated = true;
             }
-            for t in tasks {
-                if let Some(TaskResult::Ok(v)) = self.tasks[t].result.take() {
-                    self.heap.drop_value(v);
-                }
-            }
-            return self.fail(msg, &henv);
+            // The values of the branches that are done go away: the unwinder
+            // finishes their linear parts before the failure (ADR 0010).
+            return self.fail_after_results(&tasks, msg, henv);
         }
         let mut vals = Vec::new();
         for t in tasks {
@@ -1166,11 +1403,8 @@ impl super::Machine<'_, '_> {
                 _ => vals.push(Value::Unit),
             }
         }
-        let v = if vals.iter().all(|v| matches!(v, Value::Unit)) {
-            Value::Unit
-        } else {
-            Value::Tuple(vals)
-        };
-        self.deliver(v)
+        // A `fork` gives a tuple of the branch values, also when each one is
+        // `()`: a generic caller takes the tuple apart (ADR 0010).
+        self.deliver(Value::Tuple(vals))
     }
 }

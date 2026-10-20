@@ -1,0 +1,20 @@
+// A task closure owns a linear value (a capture by value). A sibling fails, and
+// the scope can cancel the task before it runs. The first frame of the task
+// owns the capture, so the unwinder of the task runs `on abort` for it (ADR
+// 0010). `cancelled_task_captures_on_every_seed` runs it for many seeds.
+linear struct Tx { id: u64 }
+    on abort = undo
+fn undo(t: Tx) { let Tx(i) = t; print("undo {i}") }
+fn begin() -> Tx { Tx { id: 1 } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn boom() / fail { fail("boom") }
+fn work() / async, fail {
+    scope { s =>
+        s.spawn(|| boom())
+        let tx = begin()
+        s.spawn(|| commit(tx))
+    }
+}
+fn main() / async {
+    handle Fail { fn fail(m) { print("failed: {m}") } } in work()
+}

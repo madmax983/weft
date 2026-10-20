@@ -1,0 +1,30 @@
+// An `on abort` function sleeps. While it runs for an inner timeout, the
+// deadline of an outer with_timeout passes. The unwinding defers the outer
+// timeout: the `on abort` function ends, and then the outer block times out
+// (ADR 0010, review round 3, I3-3).
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(t: Tx) / clock {
+    let Tx(id) = t
+    print("rollback {id} starts at {Clock.now()}")
+    sleep(5.ms)
+    print("rollback {id} ends at {Clock.now()}")
+}
+fn commit(t: Tx) / io { let Tx(id) = t; print("commit {id}") }
+
+fn main() / io {
+    handle Fail { fn fail(m) { print("outer caught: {m} at {Clock.now()}") } } in {
+        with_timeout(12.ms) {
+            handle Fail { fn fail(m) { print("inner caught: {m} at {Clock.now()}") } } in {
+                with_timeout(10.ms) {
+                    let t = Tx { id: 1 }
+                    sleep(100.ms)
+                    commit(t)
+                }
+            }
+            sleep(100.ms)
+        }
+    }
+    print("end at {Clock.now()}")
+}

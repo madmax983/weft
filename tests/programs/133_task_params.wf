@@ -1,0 +1,193 @@
+// A callee can run a function parameter as a task or a fork branch. Its
+// signature says how (`task_runs`, ADR 0006): on another thread, two times at
+// one time, and at the same time as which other parameters. The caller checks
+// the function value that it gives there as a task: W0401 and W0403 for a run
+// on another thread, and W0405 for runs at one time.
+struct E { hp: u64 }
+
+fn par(f: fn(), g: fn()) / par { fork(f, g) }
+
+fn bg(f: fn()) / async {
+    scope { s =>
+        s.spawn(f)
+        s.spawn(f)
+    }
+}
+
+fn bg_and_call(f: fn(), g: fn()) / async {
+    scope { s =>
+        s.spawn(f)
+        g()
+    }
+}
+
+fn bg_loop(f: fn(), n: u64) / async {
+    scope { s =>
+        let i = 0
+        while i < n {
+            s.spawn(f)
+            i += 1
+        }
+    }
+}
+
+fn bg_then_call(f: fn(), g: fn()) / async {
+    scope { s =>
+        let t = s.spawn(f)
+        t.join()
+        g()
+    }
+}
+
+// A task of the body calls `f`, and the body calls it too.
+fn task_and_call(f: fn()) / async {
+    scope { s =>
+        s.spawn(|| f())
+        f()
+    }
+}
+
+// The body gives its parameters to a callee that runs them: the same holds
+// for the body.
+fn pass_on(f: fn(), g: fn()) / par { par(f, g) }
+
+// Two threads write `n`.
+fn via_fork() / par {
+    let n = 0
+    par(|| n += 1, || n += 2)   //~ W0403 W0403 W0405 W0405
+}
+
+// Two tasks write `n`.
+fn via_spawn_twice() / async {
+    let n = 0
+    bg(|| n += 1)   //~ W0405
+    print(n)
+}
+
+// The task writes `n` while the callee reads it through `g`.
+fn via_spawn_and_call() / async {
+    let n = 0
+    bg_and_call(|| n += 1, || print(n))   //~ W0405
+}
+
+// A task in a loop starts again while it runs.
+fn via_loop() / async {
+    let n = 0
+    bg_loop(|| n += 1, 3)   //~ W0405
+}
+
+// A task and a call of the same parameter at one time.
+fn via_task_and_call() / async {
+    let n = 0
+    task_and_call(|| n += 1)   //~ W0405
+}
+
+// The parameters of `pass_on` run in a `fork`.
+fn via_pass_on() / par {
+    let n = 0
+    pass_on(|| n += 1, || print(n))   //~ W0403 W0405
+}
+
+// A fork branch of the callee captures a nonportable value.
+fn fork_rc() / par {
+    let a = Rc.new(E { hp: 1 })
+    par(|| print(a.hp), || print(1))   //~ W0401
+}
+
+// The shapes of the callee: a closure, a function value that the body does
+// not know, a function item as a value, a returned closure, and a function
+// value in a field. A closure or a value that the body does not know can run
+// the argument in the worst way, also on another thread (W0403).
+struct Job { f: fn() }
+
+fn apply(h: fn(fn()), f: fn()) { h(f) }
+
+fn maker() -> fn(fn()) / async {
+    |f| {
+        scope { s =>
+            s.spawn(f)
+            s.spawn(f)
+            ()
+        }
+    }
+}
+
+fn bg_job(j: Job) / async {
+    scope { s =>
+        s.spawn(j.f)
+        s.spawn(j.f)
+    }
+}
+
+fn via_closure() / async {
+    let n = 0
+    let g = |f: fn()| {
+        scope { s =>
+            s.spawn(f)
+            s.spawn(f)
+        }
+    }
+    g(|| n += 1)   //~ W0403 W0405
+}
+
+fn via_unknown() / async {
+    let n = 0
+    apply(bg, || n += 1)   //~ W0403 W0405
+}
+
+fn via_item_value() / async {
+    let n = 0
+    let h = bg
+    h(|| n += 1)   //~ W0405
+}
+
+fn via_returned() / async {
+    let n = 0
+    let g = maker()
+    g(|| n += 1)   //~ W0403 W0405
+}
+
+fn via_field() / async {
+    let n = 0
+    bg_job(Job { f: || n += 1 })   //~ W0405
+}
+
+// A body that gives its parameter to such a callee runs it the same way.
+fn pass_job(j: Job) / async { bg_job(j) }
+
+fn via_pass_job() / async {
+    let n = 0
+    pass_job(Job { f: || n += 1 })   //~ W0405
+}
+
+// Foreign code can run a function value in an argument on another thread.
+extern fn foreign_job(j: Job)
+
+fn via_foreign_job() {
+    let n = 0
+    foreign_job(Job { f: || n += 1 })   //~ W0403 W0405
+}
+
+// Clean: two tasks only read `n`.
+fn reads_twice() / async {
+    let n = 1
+    bg(|| print(n))
+}
+
+// Clean: the callee joins the task before it calls `g`.
+fn joined_first() / async {
+    let n = 0
+    bg_then_call(|| n += 1, || print(n))
+}
+
+// Clean: the two fork branches read.
+fn fork_reads() / par {
+    let n = 2
+    par(|| print(n), || print(n + 1))
+}
+
+fn main() / par, async {
+    reads_twice()
+    joined_first()
+    fork_reads()
+}

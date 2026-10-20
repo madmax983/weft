@@ -153,9 +153,15 @@ fn unsigned_underflow_is_an_error() {
         "{e}"
     );
     assert_eq!(e.outcome.stdout, "0\n");
+    // The result of `a - 3` has the type `u64` of the parameter: the check of
+    // the result stops the run before the call (RR14).
     let src = "fn f(x: u64) -> u64 { x }\nfn main() {\n let a = 2\n print(f(a - 3))\n}";
     let e = run(src, &opts(0)).unwrap_err();
-    assert!(e.message.contains("parameter `x` would be -1"), "{e}");
+    assert!(
+        e.message
+            .contains("integer underflow: -1 does not fit in `u64`"),
+        "{e}"
+    );
     let src = "struct S { x: i64 }\nfn main() {\n let s = S { x: 0 }\n s.x = 0 - 5\n print(s.x)\n}";
     assert_eq!(ok(src, 0).stdout, "-5\n");
 }
@@ -192,7 +198,7 @@ fn multi_shot_choose_explores_both_branches() {
 fn once_resume_twice_is_a_runtime_error() {
     let src = program("once_twice");
     let c = check(&src);
-    assert!(c.codes().contains(&"W0501".to_string()));
+    assert!(c.codes().iter().any(|x| *x == "W0501"));
     let e = run_main(&c, &opts(0)).unwrap_err();
     assert_eq!(e.kind, ErrorKind::Fault);
     assert!(e.message.contains("`once` continuation was resumed twice"));
@@ -391,6 +397,28 @@ fn failure_propagates_to_the_scope_owner() {
     assert_eq!(e.kind, ErrorKind::Failed);
     assert_eq!(e.message, "child");
     assert!(e.outcome.stdout.is_empty());
+}
+
+#[test]
+fn child_failure_goes_to_the_handlers_of_the_scope() {
+    // On each seed and worker count: a handler inside the scope body does not
+    // get the failure of a child, and the scope does not return normally.
+    let src = program("child_fail_lexical");
+    let c = checked_ok(&src);
+    let want = "main handler: child failed\nmain handler: child failed\nouter handler: child failed\nclause done\nscope handler: child failed\nend\n";
+    for seed in 0..6 {
+        for workers in [1, 2, 4] {
+            let o = run_main(
+                &c,
+                &RunOptions {
+                    workers,
+                    ..opts(seed)
+                },
+            )
+            .unwrap();
+            assert_eq!(o.stdout, want, "seed {seed}, workers {workers}");
+        }
+    }
 }
 
 #[test]

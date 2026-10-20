@@ -1,0 +1,27 @@
+// A static function is not a method: it has no `self` parameter.
+struct Entity { hp: u64 }
+
+impl Entity {
+    fn new() -> Entity { Entity { hp: 1 } }
+    fn make(hp: u64) -> Entity { Entity { hp: hp } }
+    fn health(self) -> u64 { self.hp }
+}
+
+fn no_args(e: Entity) {
+    let x = e.new()   //~ W0104
+}
+
+fn with_args(e: Entity) {
+    let x = e.make(1)   //~ W0104
+}
+
+fn named(e: Entity) {
+    let x = e.make(hp: 1)   //~ W0104
+}
+
+// Control: the type path calls the static function; a method takes `self`.
+fn ok(e: &Entity) -> u64 {
+    let a = Entity.new()
+    let b = Entity.make(2)
+    e.health() + a.health() + b.health()
+}

@@ -1,0 +1,37 @@
+// An effect of another module has a path in `handle` and in a row, as in
+// semantic analysis (ADR 0005). A bare operation call searches the modules from
+// the module of the call outward.
+mod a {
+    pub effect Note { fn note(x: u64) }
+    pub fn f() / Note { note(1) }
+    pub mod b {
+        pub effect Deep { fn deep() -> u64 }
+        pub fn h() -> u64 / Deep { deep() }
+    }
+}
+mod other {
+    pub effect Go { fn go() -> u64 }
+    pub fn going() -> u64 / Go { go() }
+}
+effect Note { fn note(x: u64) }
+effect First { fn go() -> u64 }
+
+fn both() / Note, a.Note {
+    note(2)
+    a.f()
+}
+
+fn main() {
+    handle a.Note { fn note(x) {
+        print("a.Note {x}")
+        resume(())
+    } } in {
+        handle Note { fn note(x) {
+            print("Note {x}")
+            resume(())
+        } } in both()
+    }
+    print(handle a.b.Deep { fn deep() { resume(7) } } in a.b.h())
+    let n = handle other.Go { fn go() { resume(5) } } in other.going()
+    print(n)
+}

@@ -1,0 +1,16 @@
+// weft: no-runtime
+// With no runtime, `main` handles each effect that it performs (W0803), and
+// the runtime never handles a user effect (W0805). These rules are in the
+// spec (`embedded_effect`, `unhandled_effect`, review S5b).
+effect Note { fn note(m: u64) }
+
+fn noisy() / Note { note(1) }
+
+fn main() / log, Note {
+    // Clean: `main` handles these.
+    handle log { fn info(m) { resume(()) } } in log.info("handled")
+    handle Note { fn note(m) { resume(()) } } in noisy()
+    // Bad: nothing handles these.
+    log.info("x")   //~ W0803
+    noisy()   //~ W0805
+}

@@ -1,0 +1,81 @@
+// A function value that a call returns does what its maker states about it.
+// A call of a closure that returns a function value can do what the returned
+// value does. A value from an unknown maker can mutate what the maker got.
+struct Entity { hp: i32 }
+impl Entity { fn new() -> Entity { Entity { hp: 1 } } }
+struct World { entities: Vec<Entity> }
+fn mk_grow(w: &World) -> fn() / mut(w.entities) { || w.entities.push(Entity.new()) }
+fn mk_grow2(w: &World) -> fn() / mut(w.entities) { || w.entities.push(Entity.new()) }
+
+// A join of two makers.
+fn joined_makers(world: &World, c: bool) / mut(world.entities) {
+    let m = if c { mk_grow } else { mk_grow2 }
+    let f = m(world)
+    let first = &world.entities[0]
+    f()
+    print(first.hp)   //~ W0301
+}
+
+// A maker that a higher-order function calls.
+fn call_maker(m: fn(&World) -> fn(), w: &World) -> fn() { m(w) }
+fn maker_param(world: &World) / mut(world.entities) {
+    let f = call_maker(mk_grow, world)
+    let first = &world.entities[0]
+    f()
+    print(first.hp)   //~ W0301
+}
+
+// A maker that returns a maker, and a closure that returns a closure.
+fn mk2(w: &World) -> fn() -> fn() / mut(w.entities) { || || w.entities.push(Entity.new()) }
+fn nested(world: &World) / mut(world.entities) {
+    let m = mk2(world)
+    let f = m()
+    let first = &world.entities[0]
+    f()
+    print(first.hp)   //~ W0301
+}
+fn closure_maker(world: &World) / mut(world.entities) {
+    let mk = || || world.entities.push(Entity.new())
+    let f = mk()
+    let first = &world.entities[0]
+    f()
+    print(first.hp)   //~ W0301
+}
+
+// The returned closure calls a function parameter of its maker.
+fn mk_call(g: fn(&World), w: &World) -> fn() { || g(w) }
+fn passes_on(world: &World) / mut(world.entities) {
+    let f = mk_call(|x| x.entities.push(Entity.new()), world)
+    let first = &world.entities[0]
+    f()
+    print(first.hp)   //~ W0301
+}
+
+// A higher-order function calls the closure that its argument returns.
+fn ap(f: fn() -> fn()) {
+    let g = f()
+    g()
+}
+fn ret_of_arg(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    ap(|| || world.entities.clear())
+    print(first.hp)   //~ W0301
+}
+pub fn ret_of_arg_pub(world: &World) {   //~ W0701
+    ap(|| || world.entities.clear())
+}
+
+// Controls: the result runs before the reference, and a returned closure that reads.
+fn runs_before(world: &World) / mut(world.entities) {
+    let f = mk_grow(world)
+    f()
+    let first = &world.entities[0]
+    print(first.hp)
+}
+fn mk_read(w: &World) -> fn() { || print(w.entities.len()) }
+fn reads(world: &World) {
+    let f = mk_read(world)
+    let first = &world.entities[0]
+    f()
+    print(first.hp)
+}

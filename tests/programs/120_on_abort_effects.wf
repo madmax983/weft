@@ -1,0 +1,166 @@
+// The unwinder runs an `on abort` function with the root handlers only. So it
+// can perform only standard effects that the root handlers serve. It cannot
+// fail: no handler takes the failure there. It cannot perform a user effect, and
+// it cannot change a place outside its value, such as an `rc` group: no node of
+// the code that aborts states the change. It cannot call a function value that
+// it does not know (ADR 0007). The effects proof models `on abort` as atomic;
+// this rule mirrors it.
+effect Ask { fn ask() -> u64 }
+effect Note { fn note(x: u64) }
+effect Stop { fn stop() }
+struct Node { items: Vec<u64> }
+
+linear struct A { id: u64 }
+    on abort = undo_ask
+fn undo_ask(a: A) / Ask {   //~ W0118
+    let A(i) = a
+    print(ask())
+}
+
+// The row is inferred: `undo_note` performs `Note` through a callee.
+linear struct B { id: u64 }
+    on abort = undo_note
+fn tell(x: u64) / Note { note(x) }
+fn undo_note(b: B) {   //~ W0118
+    let B(i) = b
+    tell(i)
+}
+
+linear struct C { id: u64 }
+    on abort = undo_fail
+fn undo_fail(c: C) / fail {   //~ W0118
+    let C(i) = c
+    fail("in undo")
+}
+
+linear struct D { n: Rc<Node> }
+    on abort = undo_group
+fn undo_group(d: D) / mut(Node) {   //~ W0118
+    let D(n) = d
+    n.items.push(9)
+}
+
+// The inferred row of a `with_timeout` block has `fail`.
+linear struct E { id: u64 }
+    on abort = undo_timeout
+fn undo_timeout(e: E) {   //~ W0118
+    let E(i) = e
+    let x = with_timeout(10.ms) { i }
+}
+
+// A function value from the value can perform through a handler of the code
+// that aborts, fail, or change a place outside the value.
+linear struct I { f: fn() }
+    on abort = undo_field
+fn undo_field(i: I) {   //~ W0118
+    let I(f) = i
+    f()
+}
+
+linear struct J { fs: Vec<fn()> }
+    on abort = undo_elems
+fn undo_elems(j: J) {   //~ W0118
+    let J(fs) = j
+    let f = fs[0]
+    f()
+}
+
+// The runtime raises a failure at a read of a file, a `join` of a failed
+// task, a `fork` with a failed branch and the end of a scope with a failed
+// child. A failure there does not reach the handlers of the code that aborts.
+linear struct K { fs: FsCap }
+    on abort = undo_read
+fn undo_read(k: K) / fs {   //~ W0118
+    let K(fs) = k
+    print(fs.read("undo.txt"))
+}
+
+linear struct L { t: Task<u64> }
+    on abort = undo_join
+fn undo_join(l: L) / async {   //~ W0118
+    let L(t) = l
+    print(t.join())
+}
+
+fn quick() -> u64 { 5 }
+
+linear struct M { id: u64 }
+    on abort = undo_fork
+fn undo_fork(m: M) / par {   //~ W0118
+    let M(i) = m
+    let (a, b) = fork(|| quick(), || quick())
+}
+
+linear struct N { id: u64 }
+    on abort = undo_scope
+fn helper_scope() / async {
+    scope { s => s.spawn(|| quick()) }
+}
+fn undo_scope(n: N) {   //~ W0118
+    let N(i) = n
+    helper_scope()
+}
+
+// Standard effects that the root handlers serve.
+linear struct F { id: u64 }
+    on abort = undo_clock
+fn undo_clock(f: F) / clock {
+    let F(i) = f
+    print("undo {i}")
+    sleep(1.ms)
+}
+
+linear struct G { id: u64 }
+    on abort = undo_log
+fn undo_log(g: G) {
+    let G(i) = g
+    log.info("undo")
+}
+
+// A change of the value itself is local.
+linear struct H { items: Vec<u64> }
+    on abort = undo_local
+fn undo_local(h: H) {
+    let H(items) = h
+    items.push(1)
+}
+
+// A local `Fail` handler gets a failure of the runtime.
+linear struct P { t: Task<u64> }
+    on abort = undo_caught
+fn undo_caught(p: P) / async {
+    let P(t) = p
+    handle Fail { fn fail(m) { print("caught {m}") } } in { print(t.join()) }
+}
+
+// A closure that the function makes is known.
+linear struct Q { id: u64 }
+    on abort = undo_known
+fn undo_known(q: Q) {
+    let Q(i) = q
+    let f = || print("known {i}")
+    f()
+}
+
+// The clean `on abort` functions run when `stop` aborts the body.
+fn clean_aborts() / Stop, async {
+    let f = F { id: 5 }
+    let g = G { id: 6 }
+    let h = H { items: Vec.new() }
+    let q = Q { id: 7 }
+    scope { s =>
+        let p = P { t: s.spawn(|| quick()) }
+        stop()
+        let P(t) = p
+        print(t.join())
+    }
+    let F(x6) = f
+    let G(x7) = g
+    let H(x8) = h
+    let Q(x9) = q
+}
+
+fn main() {
+    handle Stop { fn stop() { () } } in clean_aborts()
+    print("end")
+}

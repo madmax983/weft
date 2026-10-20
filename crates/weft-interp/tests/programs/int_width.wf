@@ -1,0 +1,41 @@
+// The result of each arithmetic expression must fit in the integer type that
+// semantic analysis gives it (RR14). So a local, a result and an operand of
+// `print` are checked too, not only a field or a parameter.
+fn sub(a: u64, b: u64) -> u64 { a - b }
+fn neg(x: i8) -> i8 { -x }
+
+test "an operand of print" {
+    let a: u64 = 2
+    let b: u64 = 10
+    print(a - b)
+}
+
+test "the result of a call" {
+    print(sub(2, 10))
+}
+
+test "an overflow of u8" {
+    let c: u8 = 250
+    print(c + 10)
+}
+
+test "a compound assignment" {
+    let c: u8 = 250
+    c += 10
+    print(c)
+}
+
+test "a negation" {
+    let low: i8 = -128
+    print(neg(low))
+}
+
+test "values that fit" {
+    let c: u8 = 250
+    print(c + 5)
+    print(sub(10, 2))
+    let x: i32 = 0 - 5
+    print(x * 3)
+    c -= 250
+    print(c)
+}

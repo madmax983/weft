@@ -45,10 +45,12 @@ $W help
 
 `run` and `test` check the program first. They do not run a program that has errors,
 unless you give `--unchecked`. `--seed N` and `--workers N` (1 to 1024) set the
-deterministic scheduler of the reference interpreter. The exit code is 0 on success,
-1 when the program has errors (a syntax error too) or fails, and 2 on a usage error or
-a file that cannot be read. With `--unchecked`, the exit code shows only the run. A
-command rejects an option that it does not use.
+deterministic scheduler of the reference interpreter. `--oracle` turns on strict
+run-time checks: a dangling reference, a moved `Vec` buffer, a linear leak, a data
+race and a stealable task that reaches a nonportable value are errors (ADR 0010). The
+exit code is 0 on success, 1 when the program has errors (a syntax error too) or
+fails, and 2 on a usage error or a file that cannot be read. With `--unchecked`, the
+exit code shows only the run. A command rejects an option that it does not use.
 
 A single file sets its options with marker lines. `// weft: library` checks it as a
 library (no root handlers). `// weft: no-runtime` selects the embedded profile (`main`
@@ -73,8 +75,10 @@ win over the markers and the manifest.
 | `proofs/` | Verus soundness models: group borrowing and algebraic effects. See `proofs/README.md`. |
 | `std/prelude.wf` | The standard prelude. |
 | `tests/programs` | The design examples and at least one negative program per rule. |
+| `tests/ir_targets` | Acceptance targets of the core IR. Each file has bad cases that the checker accepts today and that fault at run time, controls that the checker finds today, and clean cases in test blocks (`docs/traceability.md`). |
+| `tests/packages` | Packages for the tests of `weft deps`. |
 | `examples/` | A package with dependencies, a library, and a lint rule file. |
-| `docs/` | The design, the plan, ADRs, the grammar and the architecture. |
+| `docs/` | The design, the plan, ADRs, the grammar, the architecture and the traceability matrix. `docs/ir.md` and `docs/plan/core-ir.md` specify and plan the core IR (ADR 0012, proposed). |
 
 ## Status
 
@@ -82,8 +86,9 @@ win over the markers and the manifest.
   on random fact sets. Agreement is over the facts that sema emits. The fact generator
   is not proved.
 - Phase 1 gate 1a (mechanized soundness): not complete. `proofs/borrowing` proves B1-B5
-  for its model, and `proofs/effects` proves E1 and E4. `proofs/README.md` lists what is
-  proved and what is not.
+  for its model, and `proofs/effects` proves E1-E5 for its model. `proofs/link` proves
+  B6: the exec core agrees with the models. `proofs/link/README.md` gives its gaps.
+  `proofs/README.md` lists what is proved and what is not.
 - The reference interpreter runs `main` and test blocks (`weft run`, `weft test`). It is
   the dynamic semantics, not the Phase 2 runtime.
 - Phase 2 (native compiler, `std.rt` on io_uring/kqueue/IOCP, HTTP/2/3, TLS) and Phase 3

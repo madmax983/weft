@@ -1,8 +1,20 @@
 //! Tests for semantic analysis.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
+use std::fmt::Write as _;
+
+use weft_facts::{FnFacts, PlaceId, RootKind, VarId};
 use weft_syntax::parse_file;
 
-use crate::{analyze, prelude_unit, Analysis, Options, Unit};
+use crate::{
+    analyze, analyze_source, prelude_unit, Analysis, Options, Unit, PRELUDE_UNIT, ROOT_UNIT,
+};
+
+/// The parsed prelude.
+fn prelude() -> Unit {
+    prelude_unit().expect("the prelude parses")
+}
 
 fn unit(name: &str, src: &str) -> Unit {
     Unit {
@@ -14,13 +26,16 @@ fn unit(name: &str, src: &str) -> Unit {
 
 /// Analyzes a root unit and dependency units `(name, source)`.
 fn analyze_units(root: &str, deps: &[(&str, &str)]) -> Analysis {
-    let mut units = vec![prelude_unit(), unit("", root)];
+    let mut units = vec![prelude(), unit("", root)];
     units.extend(deps.iter().map(|(n, s)| unit(n, s)));
     analyze(&units, Options::default())
 }
 
 fn codes(a: &Analysis) -> Vec<(usize, String)> {
-    a.diags.iter().map(|d| (d.unit, d.code.clone())).collect()
+    a.diags
+        .iter()
+        .map(|d| (d.unit, d.code.to_string()))
+        .collect()
 }
 
 #[test]
@@ -60,6 +75,29 @@ fn dependency_name_cannot_hide_a_name_of_the_root() {
     // Two items with one name are reported in their own unit.
     let a = analyze_units("fn main() {}", &[("dep", "fn f() {}\nfn f() {}")]);
     assert_eq!(codes(&a), vec![(2, "W0107".to_string())]);
+}
+
+#[test]
+fn dependency_cannot_have_the_name_main() {
+    // The effect identities of the root start with `main` (`main.Note`). A
+    // dependency `main` would give its effects the same identities (QA5).
+    let dep = "effect Note { fn note(x: u64) }\npub fn noisy() / Note { note(1) }";
+    for root in [
+        "effect Note { fn note(x: u64) }\npub fn quiet() {\n handle Note { fn note(x) { resume(()) } } in main.noisy()\n}",
+        "fn main() {}",
+    ] {
+        let a = analyze_units(root, &[("main", dep)]);
+        let got = codes(&a);
+        assert_eq!(got.first(), Some(&(2, "W0107".to_string())), "{got:?}");
+        assert!(
+            a.diags[0].message.contains("`main`"),
+            "{}",
+            a.diags[0].message
+        );
+        // The root does not see the dependency, and its own `main` is not
+        // defined twice.
+        assert!(!got.contains(&(1, "W0107".to_string())), "{got:?}");
+    }
 }
 
 #[test]
@@ -122,7 +160,6 @@ fn file_markers_set_options() {
 /// Each function calls the next one; only the last one states `log`. The
 /// callers come before their callees in the source.
 fn call_chain(n: usize) -> String {
-    use std::fmt::Write as _;
     let mut src = String::new();
     for i in 0..n {
         let _ = writeln!(src, "fn f{i}() {{ f{}() }}", i + 1);
@@ -135,7 +172,6 @@ fn call_chain(n: usize) -> String {
 /// last one rotates the parameters and goes one level down. So each `mut`
 /// place goes around the cycle once for each parameter and each level.
 fn rotation(k: usize, p: usize) -> String {
-    use std::fmt::Write as _;
     let params: Vec<String> = (0..p).map(|i| format!("x{i}: &N")).collect();
     let same: Vec<String> = (0..p).map(|i| format!("x{i}")).collect();
     let mut rotated: Vec<String> = (1..p).map(|i| format!("x{i}")).collect();
@@ -159,6 +195,32 @@ fn rotation(k: usize, p: usize) -> String {
     src
 }
 
+/// `walk` has `p` reference parameters. It lends `x0` to `f`, and then it calls
+/// itself with the parameters turned by one and a place one level under `x0`.
+/// So each lowering of `walk` adds a little to its `lent` part. `top` calls
+/// `walk`, and `extra` more functions make the program larger.
+fn lend_rotation(p: usize, extra: usize) -> String {
+    let params: Vec<String> = (0..p).map(|i| format!("x{i}: &N")).collect();
+    let mut rotated: Vec<String> = (1..p).map(|i| format!("x{i}")).collect();
+    rotated.push("&x0.a[0]".into());
+    let mut src = String::from("struct N { v: u64, a: Vec<N> }\n");
+    let _ = writeln!(
+        src,
+        "fn walk(f: fn(&N), {}) {{ f(x0)\n walk(f, {}) }}",
+        params.join(", "),
+        rotated.join(", ")
+    );
+    let _ = writeln!(
+        src,
+        "fn top(n: &N) {{ walk(|y| y.v += 2, {}) }}",
+        vec!["n"; p].join(", ")
+    );
+    for i in 0..extra {
+        let _ = writeln!(src, "fn e{i}() {{}}");
+    }
+    src
+}
+
 fn sig_of<'a>(a: &'a Analysis, name: &str) -> &'a crate::FnSig {
     let i = a
         .program
@@ -171,11 +233,12 @@ fn sig_of<'a>(a: &'a Analysis, name: &str) -> &'a crate::FnSig {
 
 #[test]
 fn effect_inference_reaches_a_fixpoint() {
-    let units = vec![prelude_unit(), unit("", &call_chain(3))];
+    let units = vec![prelude(), unit("", &call_chain(3))];
     let a = crate::analyze(&units, Options::default());
     assert_eq!(codes(&a), Vec::new());
-    // Callees come first, so each function is lowered once.
-    assert_eq!(a.lowerings, 3);
+    // Callees come first, so each function is lowered once. `f3` states its
+    // effects, but it still infers the other parts of its signature.
+    assert_eq!(a.lowerings, 4);
     for f in ["f0", "f1", "f2", "f3"] {
         assert!(sig_of(&a, f).effects.named.contains("Log"), "{f}");
     }
@@ -184,10 +247,10 @@ fn effect_inference_reaches_a_fixpoint() {
 #[test]
 fn effect_inference_time_is_linear_in_a_call_chain() {
     let n = 300;
-    let units = vec![prelude_unit(), unit("", &call_chain(n))];
+    let units = vec![prelude(), unit("", &call_chain(n))];
     let a = crate::analyze(&units, Options::default());
     assert_eq!(codes(&a), Vec::new());
-    assert_eq!(a.lowerings, n);
+    assert_eq!(a.lowerings, n + 1);
     assert!(sig_of(&a, "f0").effects.named.contains("Log"));
 }
 
@@ -195,7 +258,7 @@ fn effect_inference_time_is_linear_in_a_call_chain() {
 fn effect_inference_converges_when_places_go_around_a_cycle() {
     // The old bound of 10 rounds for each function stopped these too early.
     for (k, p) in [(1, 8), (4, 4), (8, 3)] {
-        let units = vec![prelude_unit(), unit("", &rotation(k, p))];
+        let units = vec![prelude(), unit("", &rotation(k, p))];
         let a = crate::analyze(&units, Options::default());
         assert_eq!(codes(&a), Vec::new(), "k={k} p={p}");
         // Each parameter gets the deepest place: 3 levels and `v`, or 4 levels.
@@ -212,7 +275,7 @@ fn effect_inference_converges_when_places_go_around_a_cycle() {
 
 #[test]
 fn effect_inference_that_does_not_converge_is_an_error() {
-    let units = vec![prelude_unit(), unit("", &rotation(1, 3))];
+    let units = vec![prelude(), unit("", &rotation(1, 3))];
     // The row of `g1` grows more than twice.
     let a = crate::analyze_with_limit(&units, Options::default(), 2);
     assert_eq!(codes(&a), vec![(1, "W0706".to_string())]);
@@ -229,15 +292,12 @@ fn effect_inference_that_does_not_converge_is_an_error() {
 fn effect_inference_checks_the_fixpoint_at_the_end() {
     // The body of `a` reads the row of `c` but does not name `c`. The name graph
     // does not show the edge, so the last lowering finds the growth.
-    let units = vec![
-        prelude_unit(),
-        unit("", "fn a() {}\nfn c() { log.info(\"x\") }"),
-    ];
+    let units = vec![prelude(), unit("", "fn a() {}\nfn c() { log.info(\"x\") }")];
     let (prog, _) = crate::program::Collector::collect(&units);
     let mut sigs: Vec<crate::FnSig> = prog.fns.iter().map(|f| f.sig.clone()).collect();
-    let id = |name: &str| prog.fns.iter().position(|f| f.name == name).unwrap_or(0);
+    let id = |name: &str| crate::FnId(prog.fns.iter().position(|f| f.name == name).unwrap_or(0));
     let (a, c) = (id("a"), id("c"));
-    let lower = |sigs: &[crate::FnSig], f: usize| {
+    let lower = |sigs: &[crate::FnSig], f: crate::FnId| {
         let mut l =
             crate::body::Lower::new(&prog, sigs, prog.fns[f].module, &prog.fns[f].path, false)
                 .lower_fn(f);
@@ -255,8 +315,93 @@ fn effect_inference_checks_the_fixpoint_at_the_end() {
 }
 
 #[test]
+fn a_function_that_states_its_effects_infers_its_other_parts() {
+    // `apply` states its row, but its body still gives `w` to `f`.
+    let src = "struct W { n: u64 }\nfn apply(f: fn(&W), w: &W) / mut(w) { f(w) }";
+    let units = vec![prelude(), unit("", src)];
+    let a = analyze(&units, Options::default());
+    assert_eq!(codes(&a), Vec::new());
+    let s = sig_of(&a, "apply");
+    assert!(s.declared);
+    assert_eq!(s.effects.muts.len(), 1);
+    let lent = &s.effects.lent;
+    assert_eq!(lent.len(), 1, "{lent:?}");
+    assert_eq!((lent[0].param, lent[0].arg), (0, Some(0)));
+}
+
+#[test]
+fn inferred_parts_that_do_not_become_stable_are_an_error() {
+    // The lowering of `a` changes its `reaches` part each time, so the parts
+    // never become stable. A row cannot do this, because a row only grows.
+    let units = vec![prelude(), unit("", "fn a() {}")];
+    let (prog, _) = crate::program::Collector::collect(&units);
+    let mut sigs: Vec<crate::FnSig> = prog.fns.iter().map(|f| f.sig.clone()).collect();
+    let a = crate::FnId(prog.fns.iter().position(|f| f.name == "a").unwrap_or(0));
+    let lower = |sigs: &[crate::FnSig], f: crate::FnId| {
+        let mut l =
+            crate::body::Lower::new(&prog, sigs, prog.fns[f].module, &prog.fns[f].path, false)
+                .lower_fn(f);
+        l.effects.reaches = !sigs[f].effects.reaches;
+        l
+    };
+    let out = crate::infer::infer(&prog, &mut sigs, &[a], None, &lower);
+    let found: Vec<&str> = out.diags.iter().map(|d| d.code.as_str()).collect();
+    assert_eq!(found, vec!["W0704"]);
+    assert!(
+        out.diags[0].message.contains("`a`"),
+        "{}",
+        out.diags[0].message
+    );
+    // The bound stops the changes. The parts change at most once for each
+    // lowering, and once more for each last lowering.
+    assert!(
+        out.lowerings <= crate::infer::parts_limit(1),
+        "{}",
+        out.lowerings
+    );
+}
+
+#[test]
+fn a_program_can_reach_the_parts_limit() {
+    // In a program with two functions, the parts of `walk` can change 36
+    // times. With 7 parameters, its `lent` part needs exactly 36 changes.
+    assert_eq!(crate::infer::parts_limit(2), 36);
+    let units = vec![prelude(), unit("", &lend_rotation(7, 0))];
+    let a = analyze(&units, Options::default());
+    assert_eq!(codes(&a), Vec::new());
+    assert_eq!(sig_of(&a, "walk").effects.lent.len(), 36);
+    // With 8 parameters, it needs 41 changes. So `walk` gets W0704.
+    let units = vec![prelude(), unit("", &lend_rotation(8, 0))];
+    let a = analyze(&units, Options::default());
+    assert_eq!(codes(&a), vec![(1, "W0704".to_string())]);
+    let m = &a.diags[0].message;
+    assert!(
+        m.contains("`walk`") && m.contains("after 36 changes"),
+        "{m}"
+    );
+    // `walk` keeps the parts of its last change. `top` uses them and becomes
+    // stable, so it does not get W0704. `walk` is lowered once for each
+    // change and once for the change that the bound stops, then `top` once.
+    assert_eq!(sig_of(&a, "walk").effects.lent.len(), 36);
+    assert_eq!(a.lowerings, 37 + 1);
+}
+
+#[test]
+fn the_parts_limit_grows_with_the_program() {
+    // The same `walk` with 8 parameters, in a program with 102 functions. Its
+    // `lent` part changes 41 times, so the bound of 236 changes does not stop it.
+    let units = vec![prelude(), unit("", &lend_rotation(8, 100))];
+    let a = analyze(&units, Options::default());
+    assert_eq!(codes(&a), Vec::new());
+    assert_eq!(sig_of(&a, "walk").effects.lent.len(), 41);
+    // `walk` is lowered once for each change and once more. Each other
+    // function is lowered once.
+    assert_eq!(a.lowerings, 41 + 1 + 101);
+}
+
+#[test]
 fn the_growth_limit_is_the_height_of_the_row_lattice() {
-    let units = vec![prelude_unit(), unit("", &rotation(1, 8))];
+    let units = vec![prelude(), unit("", &rotation(1, 8))];
     let a = crate::analyze(&units, Options::default());
     let sig = sig_of(&a, "g1");
     let small = crate::infer::growth_limit(&a.program, sig, 2);
@@ -308,11 +453,11 @@ fn a_row_only_grows() {
 }
 
 fn root_diags(src: &str) -> Vec<(String, String)> {
-    let units = vec![prelude_unit(), unit("", src)];
+    let units = vec![prelude(), unit("", src)];
     let a = analyze(&units, Options::default());
     a.diags
         .iter()
-        .map(|d| (d.code.clone(), d.message.clone()))
+        .map(|d| (d.code.to_string(), d.message.clone()))
         .collect()
 }
 
@@ -332,9 +477,9 @@ fn raw_pointer_is_a_copy_value_of_its_own_type() {
             "type mismatch: expected `i32`, found `*Stmt`".to_string()
         )]
     );
-    let units = vec![prelude_unit(), unit("", FFI)];
+    let units = vec![prelude(), unit("", FFI)];
     let a = analyze(&units, Options::default());
-    let ptr = a.program.ptr.unwrap_or(usize::MAX);
+    let ptr = a.program.ptr.unwrap_or(crate::AdtId(usize::MAX));
     let def = &a.program.adts[ptr];
     assert!(def.copy && def.nonportable && !def.linear);
     assert!(a
@@ -365,4 +510,1311 @@ fn raw_pointer_only_in_foreign_signatures_and_locals() {
     let local =
         format!("{FFI}fn f() / blocking {{ let v: Vec<*Stmt> = Vec.new()\n v.push(open()) }}");
     assert_eq!(root_diags(&local), Vec::new());
+}
+
+/// Returns the facts of the body of function `name`.
+fn facts(src: &str, name: &str) -> FnFacts {
+    let a = analyze_source(src, Options::default()).expect("the source parses");
+    a.bodies
+        .into_iter()
+        .find(|b| b.facts.name == name)
+        .map(|b| b.facts)
+        .expect("the function exists")
+}
+
+fn var(f: &FnFacts, name: &str) -> VarId {
+    let i = f
+        .vars
+        .iter()
+        .position(|v| v.name == name)
+        .expect("the variable exists");
+    VarId(u32::try_from(i).unwrap())
+}
+
+fn place(f: &FnFacts, display: &str) -> PlaceId {
+    let i = f
+        .places
+        .iter()
+        .position(|p| p.display == display)
+        .expect("the place exists");
+    PlaceId(u32::try_from(i).unwrap())
+}
+
+#[test]
+fn locals_and_by_value_parameters_own_their_roots() {
+    let f = facts(
+        "fn f(v: Vec<u64>, r: &Vec<u64>) { let w = Vec.new(); w.push(1) }",
+        "f",
+    );
+    assert!(f.owner.contains(&(place(&f, "v"), var(&f, "v"))));
+    assert!(f.owner.contains(&(place(&f, "w"), var(&f, "w"))));
+    // The referent of a reference parameter has no owner in the function.
+    let r = place(&f, "r");
+    assert!(!f.owner.iter().any(|&(p, _)| p == r));
+}
+
+#[test]
+fn a_reference_through_an_rc_handle_points_into_the_handle() {
+    let f = facts(
+        "struct C { items: Vec<u64> }
+         fn f(a: Rc<C>) { let r = &a.items[0]; print(r) }",
+        "f",
+    );
+    let r = var(&f, "r");
+    assert!(f.points_into.contains(&(r, place(&f, "C.items[]"))));
+    assert!(f.points_into.contains(&(r, place(&f, "a.*"))));
+}
+
+#[test]
+fn a_block_value_into_a_block_local_is_held_across_the_end() {
+    let f = facts(
+        "fn f() { let r = { let v = Vec.new(); v.push(1); &v[0] }; print(r) }",
+        "f",
+    );
+    let held = var(&f, "block value");
+    let v = var(&f, "v");
+    assert!(f.points_into.contains(&(held, place(&f, "v[]"))));
+    let end = f
+        .scope_end
+        .iter()
+        .find(|&&(x, _)| x == v)
+        .map(|&(_, n)| n)
+        .expect("v goes out of scope");
+    let used = f
+        .uses
+        .iter()
+        .find(|&&(x, _)| x == held)
+        .map(|&(_, n)| n)
+        .expect("the block value is used");
+    assert!(f.cfg_edge.contains(&(end, used)));
+}
+
+#[test]
+fn a_reference_used_as_a_value_reads_its_places() {
+    let f = facts(
+        "struct S { n: u64 } fn f(s: &S) -> u64 { let c = &s.n; c + 1 }",
+        "f",
+    );
+    let n = place(&f, "s.n");
+    assert!(f.reads_at.iter().any(|&(_, p)| p == n));
+}
+
+#[test]
+fn a_compound_assignment_through_a_reference_mutates_its_places() {
+    let f = facts(
+        "struct S { n: u64 } fn f(s: &S) { let c = &s.n; c += 1 }",
+        "f",
+    );
+    let n = place(&f, "s.n");
+    assert!(f.mutates_at.iter().any(|&(_, p)| p == n));
+    // `c` keeps its value: the assignment does not rebind it.
+    let c = var(&f, "c");
+    assert_eq!(f.rebound_at.iter().filter(|&&(v, _)| v == c).count(), 1);
+}
+
+#[test]
+fn a_temporary_goes_out_of_scope_at_the_end_of_its_statement() {
+    let f = facts(
+        "fn mk() -> Vec<u64> { Vec.new() } fn f() { let r = &mk()[0]; print(r) }",
+        "f",
+    );
+    let t = place(&f, "temporary");
+    let (_, owner) = *f
+        .owner
+        .iter()
+        .find(|&&(p, _)| p == t)
+        .expect("the temporary has an owner");
+    let end = f
+        .scope_end
+        .iter()
+        .find(|&&(v, _)| v == owner)
+        .map(|&(_, n)| n)
+        .expect("the temporary goes out of scope");
+    assert_eq!(f.node(end).label, "end of statement");
+    let r = var(&f, "r");
+    let used = f
+        .uses
+        .iter()
+        .filter(|&&(v, _)| v == r)
+        .map(|&(_, n)| n)
+        .max()
+        .expect("r is used");
+    assert!(end < used);
+}
+
+#[test]
+fn a_handler_clause_runs_at_each_operation_it_handles() {
+    let f = facts(
+        "effect Log { fn log(m: String) }
+         fn take(v: Vec<u64>) {}
+         fn f() {
+             let v: Vec<u64> = Vec.new()
+             handle Log { fn log(m) { let u = Vec.new(); take(v); resume(()) } } in log(\"x\")
+         }",
+        "f",
+    );
+    let log = f
+        .nodes
+        .iter()
+        .position(|n| n.label == "log")
+        .map(|i| weft_facts::NodeId(u32::try_from(i).unwrap()))
+        .expect("the operation has a node");
+    assert!(f.moved_at.contains(&(var(&f, "v"), log)));
+    assert!(f.scope_end.contains(&(var(&f, "u"), log)));
+}
+
+#[test]
+fn a_move_of_a_field_moves_a_part() {
+    let f = facts(
+        "struct P { a: Vec<u64>, b: Vec<u64> }
+         fn take(v: Vec<u64>) {}
+         fn f() { let p = P { a: Vec.new(), b: Vec.new() }; take(p.a); take(p) }",
+        "f",
+    );
+    let a = place(&f, "p.a");
+    let p = var(&f, "p");
+    let (_, n) = *f
+        .moved_part
+        .iter()
+        .find(|&&(m, _)| m == a)
+        .expect("p.a moves");
+    assert!(f.moved_at.contains(&(p, n)));
+    // The move of the whole local is not a part move.
+    assert_eq!(f.moved_part.len(), 1);
+}
+
+#[test]
+fn a_move_of_a_linear_part_leaves_the_rest() {
+    // `rest_linear` holds where a linear part is left: a tuple part, a struct
+    // field, a payload and an element. A part move with no linear rest ends
+    // the value.
+    let src = "linear struct Tx { id: u64 }
+         struct Two { a: Tx, b: Tx }
+         struct One { a: Tx, n: u64 }
+         fn end(t: Tx) { let Tx(i) = t }
+         fn tuple() { let t = (Tx { id: 1 }, Tx { id: 2 }); end(t.0) }
+         fn field() { let s = Two { a: Tx { id: 1 }, b: Tx { id: 2 } }; end(s.b) }
+         fn nested() { let t = ((Tx { id: 1 }, Tx { id: 2 }), 3); end(t.0.1) }
+         fn element() { let v = [Tx { id: 1 }]; end(v[0]) }
+         fn plain_rest() { let s = One { a: Tx { id: 1 }, n: 2 }; end(s.a) }
+         fn whole_part() { let t = ((Tx { id: 1 }, Tx { id: 2 }), 3); let (a, b) = t.0 }";
+    for (name, rest) in [
+        ("tuple", true),
+        ("field", true),
+        ("nested", true),
+        ("element", true),
+        ("plain_rest", false),
+        ("whole_part", false),
+    ] {
+        let f = facts(src, name);
+        assert_eq!(!f.rest_linear.is_empty(), rest, "{name}");
+        for &(v, n) in &f.rest_linear {
+            assert!(f.moved_at.contains(&(v, n)), "{name}");
+            assert!(f.moved_part.iter().any(|&(_, m)| m == n), "{name}");
+        }
+    }
+}
+
+#[test]
+fn a_loop_reads_the_elements_at_each_iteration() {
+    let f = facts("fn f(v: &Vec<u64>) { for x in v[] { print(1) } }", "f");
+    let elems = place(&f, "v[]");
+    let header = f
+        .nodes
+        .iter()
+        .position(|n| n.label == "for")
+        .map(|i| weft_facts::NodeId(u32::try_from(i).unwrap()))
+        .expect("the loop has a header");
+    assert!(f.reads_at.contains(&(header, elems)));
+}
+
+#[test]
+fn an_unknown_function_result_points_anywhere_inside_its_argument() {
+    let f = facts(
+        "struct E { hp: i32 } struct W { es: Vec<E> }
+         fn f(g: fn(&W) -> &E, w: &W) { let r = g(w); print(r.hp) }",
+        "f",
+    );
+    let any = place(&f, "w..");
+    assert!(f.place(any).is_wildcard());
+    assert!(f.points_into.contains(&(var(&f, "r"), any)));
+}
+
+#[test]
+fn a_closure_refers_to_captured_values_that_are_not_plain_data() {
+    let f = facts(
+        "fn take(v: Vec<u64>) {}
+         fn f() { let n: u64 = 1; let v: Vec<u64> = Vec.new(); let g = || { print(n); take(v) }; g() }",
+        "f",
+    );
+    let g = var(&f, "{closure}");
+    assert!(f.points_into.contains(&(g, place(&f, "v"))));
+    assert!(!f.points_into.contains(&(g, place(&f, "n"))));
+    // The move of `v` comes before the closure gets its value.
+    let v = var(&f, "v");
+    let (_, moved) = *f.moved_at.iter().find(|&&(x, _)| x == v).expect("v moves");
+    let (_, bound) = *f
+        .rebound_at
+        .iter()
+        .find(|&&(x, _)| x == g)
+        .expect("g is bound");
+    assert!(moved < bound);
+}
+
+#[test]
+fn a_compound_assignment_to_a_reference_field_writes_its_place() {
+    let f = facts(
+        "struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+         fn f(fr: &Frame) / mut(fr.buf) { fr.cur += 1 }",
+        "f",
+    );
+    let buf = place(&f, "fr.buf[]");
+    assert!(f.mutates_at.iter().any(|&(_, p)| p == buf));
+    let cur = place(&f, "fr.cur");
+    assert!(!f.mutates_at.iter().any(|&(_, p)| p == cur));
+}
+
+/// Returns the node with label `label`.
+fn node(f: &FnFacts, label: &str) -> weft_facts::NodeId {
+    f.nodes
+        .iter()
+        .position(|n| n.label == label)
+        .map(|i| weft_facts::NodeId(u32::try_from(i).unwrap()))
+        .expect("the node exists")
+}
+
+/// Returns the signature of function `name`.
+fn sig(src: &str, name: &str) -> crate::FnSig {
+    let a = analyze_source(src, Options::default()).expect("the source parses");
+    let i = a
+        .program
+        .fns
+        .iter()
+        .position(|f| f.name == name)
+        .expect("the function exists");
+    a.sigs[i].clone()
+}
+
+#[test]
+fn a_perform_passes_its_reference_arguments_to_the_clause() {
+    let f = facts(
+        "effect Bump { fn bump(v: &Vec<u64>) }
+         fn f() {
+             let v: Vec<u64> = Vec.new()
+             handle Bump { fn bump(x) { let e = &x[0]; x.push(1); print(e); resume(()) } } in bump(&v)
+         }",
+        "f",
+    );
+    let n = node(&f, "bump");
+    let v = place(&f, "v");
+    assert!(f.call_arg.contains(&(n, v, 0)));
+    // The clause parameter has its own root. A mutation through it is a mutation
+    // of the argument at the operation, and it needs no declaration.
+    let x = place(&f, "x");
+    assert_eq!(f.roots[f.place(x).root.index()].kind, RootKind::Arg);
+    assert!(!f.param_rooted(x));
+    assert!(f.points_into.contains(&(var(&f, "e"), place(&f, "x[]"))));
+    assert!(f.mutates_at.contains(&(n, v)));
+    assert!(f.call_mut.contains(&(n, v, 0)));
+}
+
+#[test]
+fn an_operation_of_an_outer_handler_lends_its_arguments() {
+    let f = facts(
+        "effect Bump { fn bump(v: &Vec<u64>) }
+         fn f(v: &Vec<u64>) / Bump { bump(v) }",
+        "f",
+    );
+    assert!(f.lends_mut.contains(&(node(&f, "bump"), place(&f, "v"))));
+    assert!(f.mutates_at.is_empty());
+}
+
+#[test]
+fn a_closure_argument_passes_its_captures() {
+    let f = facts(
+        "struct E { hp: i32 } struct W { es: Vec<E> }
+         fn run(g: fn(), w: &W) {}
+         fn f(w: &W) { let r = &w.es[0]; run(|| print(r.hp), w) }",
+        "f",
+    );
+    let n = node(&f, "run");
+    assert!(f
+        .call_arg
+        .contains(&(n, place(&f, "w.es[]"), crate::body::roots::fn_arg(0))));
+    assert!(f.call_arg.contains(&(n, place(&f, "w"), 1)));
+}
+
+#[test]
+fn a_call_of_a_function_parameter_lends_its_reference_arguments() {
+    let f = facts("struct W { n: u64 } fn f(g: fn(&W), w: &W) { g(w) }", "f");
+    assert!(f.lends_mut.contains(&(node(&f, "g"), place(&f, "w"))));
+    assert!(f.may_abort.contains(&node(&f, "g")));
+}
+
+#[test]
+fn a_closure_parameter_root_needs_no_declaration() {
+    let f = facts(
+        "struct W { n: u64 } fn f(w: &W) / mut(w.n) { let h = |x: &W| x.n += 1; h(w) }",
+        "f",
+    );
+    let xn = place(&f, "x.n");
+    assert!(!f.param_rooted(xn));
+    // The call mutates the argument instead.
+    assert!(f.mutates_at.contains(&(node(&f, "h"), place(&f, "w.n"))));
+}
+
+#[test]
+fn a_signature_states_what_the_body_lends_to_its_function_parameters() {
+    let s = sig(
+        "struct W { n: u64 } fn apply(f: fn(&W), w: &W) { f(w) }",
+        "apply",
+    );
+    let lp = &s.effects.lent;
+    assert_eq!(lp.len(), 1, "{lp:?}");
+    assert_eq!((lp[0].param, lp[0].arg), (0, Some(0)));
+    let place = lp[0].place.as_ref().expect("the caller can name the place");
+    assert_eq!(place.root, crate::program::SigRoot::Param(1));
+    assert!(place.steps.is_empty());
+}
+
+#[test]
+fn a_signature_states_what_a_returned_closure_does() {
+    let s = sig(
+        "struct W { n: u64 } fn mk(w: &W) -> fn() { || { w.n += 1; log.info(\"x\") } }",
+        "mk",
+    );
+    // The maker has the effects of the closure.
+    assert!(s.effects.named.contains("Log"));
+    assert_eq!(s.effects.muts.len(), 1);
+    let ret = s.effects.ret.expect("the returned closure has a summary");
+    assert!(ret.named.contains("Log"));
+    assert_eq!(ret.muts.len(), 1);
+    assert_eq!(ret.muts[0].text, "w.n");
+    assert!(ret.abort);
+}
+
+#[test]
+fn a_signature_states_what_a_returned_closure_lends() {
+    // The returned closure gives `w` to the function parameter `g`.
+    let s = sig(
+        "struct W { n: u64 } fn mk(g: fn(&W), w: &W) -> fn() { || g(w) }",
+        "mk",
+    );
+    let ret = s.effects.ret.expect("the returned closure has a summary");
+    assert_eq!(ret.lends.len(), 1);
+    assert_eq!(ret.lends[0].text, "w");
+    assert!(ret.passthrough.contains(&0));
+    // The result of a call of a function parameter lends what the call gives.
+    let s = sig(
+        "struct W { n: u64 } fn call(m: fn(&W) -> fn(), w: &W) -> fn() { m(w) }",
+        "call",
+    );
+    let ret = s.effects.ret.expect("the returned value has a summary");
+    assert!(ret.unknown);
+    assert_eq!(ret.lends.len(), 1);
+    assert_eq!(ret.lends[0].text, "w");
+}
+
+#[test]
+fn a_closure_has_the_effects_of_the_closure_that_it_returns() {
+    let f = facts(
+        "struct W { n: Vec<u64> }
+         fn ap(f: fn() -> fn()) { let g = f(); g() }
+         fn caller(w: &W) { ap(|| || w.n.clear()) }",
+        "caller",
+    );
+    // The call of `ap` runs the inner closure.
+    let n = place(&f, "w.n");
+    assert!(f
+        .mutates_at
+        .iter()
+        .any(|&(at, m)| m == n && f.node(at).label == "ap"));
+}
+
+#[test]
+fn a_signature_states_a_failure_of_the_runtime() {
+    let src = "fn quick() -> u64 { 5 }
+         fn opens() / async { scope { s => s.spawn(|| quick()) } }
+         fn calls() { opens() }
+         fn reads(f: FsCap) -> String / fs { f.read(\"x\") }
+         fn forks() / par { let (a, b) = fork(|| quick(), || quick()) }
+         fn makes() { let g = || opens() }
+         fn caught() { handle Fail { fn fail(m) { print(m) } } in { opens() } }
+         fn plain() -> u64 { quick() }";
+    for f in ["opens", "calls", "reads", "forks", "makes"] {
+        assert!(sig(src, f).effects.raises, "{f} raises");
+    }
+    // A local `Fail` handler gets the failure.
+    assert!(!sig(src, "caught").effects.raises);
+    assert!(!sig(src, "plain").effects.raises);
+}
+
+#[test]
+fn a_signature_states_what_a_body_gives_a_stored_value() {
+    let src = "struct W { n: u64 } struct H { f: fn(&W) }
+         fn dispatch(h: &H, w: &W) { let f = h.f; f(w) }
+         fn count(h: &H, w: &W) -> u64 { w.n }";
+    let s = sig(src, "dispatch");
+    assert!(s.effects.reaches);
+    assert_eq!(s.effects.reach_given.len(), 1);
+    assert_eq!(s.effects.reach_given[0].arg, Some(0));
+    let place = s.effects.reach_given[0]
+        .place
+        .as_ref()
+        .expect("a named place");
+    assert_eq!(place.text, "w");
+    // A body that calls no unknown function value cannot run a stored one.
+    assert!(!sig(src, "count").effects.reaches);
+}
+
+#[test]
+fn effect_inference_runs_until_the_signatures_are_stable() {
+    // A chain of 40 functions, each defined before the one that it calls.
+    let mut src = String::from(
+        "struct E { hp: i32 } struct W { es: Vec<E> }
+         fn top(w: &W) { ap40(|x| x.es.clear(), w) }\n",
+    );
+    for i in (1..=40).rev() {
+        let _ = writeln!(src, "fn ap{i}(f: fn(&W), w: &W) {{ ap{}(f, w) }}", i - 1);
+    }
+    src.push_str("fn ap0(f: fn(&W), w: &W) { f(w) }\n");
+    let a = analyze_source(&src, Options::default()).expect("the source parses");
+    // The old loop needed more than 32 rounds for this chain. The worklist puts
+    // callees first, so it lowers each of the 42 functions once.
+    assert_eq!(a.lowerings, 42);
+    assert!(a
+        .diags
+        .iter()
+        .all(|d| d.code != "W0704" && d.code != "W0706"));
+    let f = facts(&src, "top");
+    // The closure mutates what the chain gives it, at the call of `ap40`.
+    let es = place(&f, "w.es");
+    assert!(f
+        .mutates_at
+        .iter()
+        .any(|&(at, m)| m == es && f.node(at).label == "ap40"));
+}
+
+#[test]
+fn fip_use_counts_do_not_overflow_in_nested_loops() {
+    // Each loop repeats the uses of `x`. 64 loops give 2^64 uses, which a
+    // `usize` cannot hold. The count stops at two, so `x` is used more than
+    // once.
+    let mut src = String::from("fip fn g(x: Vec<u32>) -> Vec<u32> { ");
+    src.push_str(&"while true { ".repeat(64));
+    src.push_str("g(x) ");
+    src.push_str(&"} ".repeat(64));
+    src.push_str("\n x }");
+    let a = analyze_source(&src, Options::default()).expect("the source parses");
+    let d = a
+        .diags
+        .iter()
+        .find(|d| d.code == "W1002")
+        .unwrap_or_else(|| panic!("no W1002: {:?}", codes(&a)));
+    assert!(d.message.contains("found 1 to 2 or more"), "{}", d.message);
+}
+
+#[test]
+fn the_prelude_parses_and_has_no_diagnostics() {
+    let p = prelude();
+    assert!(p.is_std);
+    assert!(!p.file.items.is_empty());
+    let a = analyze_units("", &[]);
+    assert_eq!(codes(&a), Vec::new());
+    assert_eq!(a.program.mods[a.program.root].unit, ROOT_UNIT);
+    assert_eq!(a.program.mods[crate::program::PRELUDE].unit, PRELUDE_UNIT);
+}
+
+/// The W1002 messages of a program.
+fn w1002(src: &str) -> Vec<String> {
+    root_diags(src)
+        .into_iter()
+        .filter(|(code, _)| code == "W1002")
+        .map(|(_, message)| message)
+        .collect()
+}
+
+#[test]
+fn fip_use_counts_stop_at_two() {
+    // A use in a loop body counts as two or more. Deep loops do not overflow.
+    for depth in [1, 3, 64] {
+        let src = format!(
+            "fip fn g(x: Vec<u32>) -> Vec<u32> {{ {}let y = x{}\n x }}\n",
+            "while true { ".repeat(depth),
+            " }".repeat(depth)
+        );
+        assert_eq!(
+            w1002(&src),
+            ["`fip` needs `x` used exactly once on every path (found 1 to 2 or more)"],
+            "{depth} loops"
+        );
+    }
+    let src = "fip fn g(x: Vec<u32>) -> Vec<u32> { if true { x } else { Vec.new() } }\n";
+    assert_eq!(
+        w1002(src),
+        ["`fip` needs `x` used exactly once on every path (found 0 to 1)"]
+    );
+    let src = "enum L { C(L), N }\nfip fn g(x: L) -> L { N }\n";
+    assert_eq!(
+        w1002(src),
+        ["`fip` needs `x` used exactly once on every path (found 0)"]
+    );
+}
+
+#[test]
+fn fip_return_ends_a_path() {
+    let src =
+        "enum L { C(L), N }\nfip fn g(x: L, f: bool) -> L {\n    if f { return x }\n    x\n}\n";
+    assert_eq!(w1002(src), Vec::<String>::new());
+    // A use before the return counts on that path.
+    let src = "enum L { C(L), N }\nfip fn g(x: L, f: bool) -> L {\n    if f { let y = x\n return x }\n    x\n}\n";
+    assert_eq!(
+        w1002(src),
+        ["`fip` needs `x` used exactly once on every path (found 1 to 2 or more)"]
+    );
+    // A return in a match arm.
+    let src = "enum L { C(L), N }\nfip fn g(x: L, y: L) -> L {\n    match y {\n        C(t) => { return C(t) }\n        N => {}\n    }\n    x\n}\n";
+    assert_eq!(
+        w1002(src),
+        ["`fip` needs `x` used exactly once on every path (found 0 to 1)"]
+    );
+    // A loop body that returns runs at most once.
+    let src =
+        "enum L { C(L), N }\nfip fn g(x: L, f: bool) -> L {\n    while f { return x }\n    x\n}\n";
+    assert_eq!(w1002(src), Vec::<String>::new());
+}
+
+#[test]
+fn item_checks_report_in_the_unit_of_the_item() {
+    let dep = "struct A { a: A }\nstruct D { x: u64, x: u64 }\nlinear struct L { id: u64 }\n    on abort = gone\nfn modes(x: &u64 @ once many) {}\n";
+    let a = analyze_units("fn main() {}", &[("dep", dep)]);
+    let mut got = codes(&a);
+    got.sort();
+    let want: Vec<(usize, String)> = ["W0101", "W0107", "W0117", "W0119"]
+        .iter()
+        .map(|c| (2, (*c).to_string()))
+        .collect();
+    assert_eq!(got, want);
+}
+
+/// `n` structs in a chain: `A0` holds `A1` inline, and so on. The last one
+/// holds a number. `reverse` declares the last struct first.
+fn struct_chain(n: usize, reverse: bool) -> String {
+    let mut items: Vec<String> = (0..n)
+        .map(|i| format!("struct A{i} {{ a: A{} }}\n", i + 1))
+        .collect();
+    items.push(format!("struct A{n} {{ x: u64 }}\n"));
+    if reverse {
+        items.reverse();
+    }
+    items.concat()
+}
+
+/// `n` generic structs in a chain that hold their parameter inline at the
+/// end, and a struct `Top` that holds itself through the chain.
+fn generic_chain(n: usize) -> String {
+    let mut items = vec!["struct Top { g: G0<Top> }\n".to_string()];
+    items.extend((0..n).map(|i| format!("struct G{i}<T> {{ g: G{}<T> }}\n", i + 1)));
+    items.push(format!("struct G{n}<T> {{ t: T }}\n"));
+    items.concat()
+}
+
+#[test]
+fn the_size_check_is_fast_on_a_long_chain() {
+    // The first check took 150 s for 800 structs. The steps of the item
+    // checks grow linearly with the chain.
+    let n = 3000;
+    for (make, want) in [
+        (
+            (|n| struct_chain(n, false)) as fn(usize) -> String,
+            Vec::new(),
+        ),
+        (|n| struct_chain(n, true), Vec::new()),
+        (generic_chain, vec![(ROOT_UNIT, "W0117".to_string())]),
+    ] {
+        let half = analyze_units(&make(n / 2), &[]);
+        let a = analyze_units(&make(n), &[]);
+        assert_eq!(codes(&a), want);
+        let (h, f) = (half.work.item_steps, a.work.item_steps);
+        assert!(
+            f <= 2 * h + 1000 && f <= 4 * n,
+            "{} structs: {h}, {n}: {f}",
+            n / 2
+        );
+    }
+    let a = analyze_units(&generic_chain(3), &[]);
+    let top = a.program.lookup(a.program.root, "Top");
+    assert!(
+        matches!(top, Some(crate::program::ItemRef::Adt(t)) if crate::program::infinite_structs(&a.program) == [t])
+    );
+}
+
+#[test]
+fn the_in_place_check_is_fast_on_a_long_chain() {
+    let n = 3000;
+    let params: Vec<String> = (0..n)
+        .map(|i| format!("x{i}: &u32 in x{}", i + 1))
+        .collect();
+    let src = format!("fn f({}, x{n}: &u32) {{}}\n", params.join(", "));
+    let a = analyze_units(&src, &[]);
+    assert_eq!(codes(&a), Vec::new());
+    // The walks of the cycle check see each parameter once.
+    assert!(a.work.item_steps <= 3 * n, "{}", a.work.item_steps);
+    // Each parameter points into the root of the last one. The `in` places
+    // are substituted in the order of the chain, not of the parameters.
+    let f = a.bodies.iter().find(|b| b.facts.name == "f").unwrap();
+    let last = f.facts.roots.iter().position(|r| r.name == format!("x{n}"));
+    for i in 0..=n {
+        let name = format!("x{i}");
+        let into: Vec<_> = f
+            .facts
+            .points_into
+            .iter()
+            .filter(|(v, _)| f.facts.var(*v).name == name)
+            .map(|&(_, p)| f.facts.place(p).root.index())
+            .collect();
+        assert_eq!(into, last.into_iter().collect::<Vec<_>>(), "{name}");
+    }
+    // The chain closes into a cycle: one error, at its first parameter.
+    let src = format!("fn f({}, x{n}: &u32 in x0) {{}}\n", params.join(", "));
+    assert_eq!(
+        codes(&analyze_units(&src, &[])),
+        vec![(ROOT_UNIT, "W0201".to_string())]
+    );
+}
+
+#[test]
+fn the_mode_check_is_fast_on_a_long_list() {
+    let n = 100_000;
+    let src = format!("fn f(x: &u32 @{}) {{}}\n", " uniq".repeat(n));
+    let a = analyze_units(&src, &[]);
+    assert_eq!(codes(&a), Vec::new());
+    // Each check of the list looks at each mode once.
+    assert!(a.work.item_steps <= 2 * n, "{}", a.work.item_steps);
+    let src = format!("fn f(x: &u32 @{} shared) {{}}\n", " uniq".repeat(100_000));
+    assert_eq!(
+        root_diags(&src),
+        vec![(
+            "W0119".to_string(),
+            "modes `uniq` and `shared` contradict: other threads can read a `shared` value, so it is not `uniq`".to_string()
+        )]
+    );
+}
+
+#[test]
+fn fip_counts_the_right_operand_of_and_and_or_on_one_path_only() {
+    let h = "fip fn h(xs: Vec<u32>) -> bool { let n = xs\n true }\n";
+    for op in ["&&", "||"] {
+        let src = format!("{h}fip fn g(xs: Vec<u32>, c: bool) -> bool {{ c {op} h(xs) }}\n");
+        assert_eq!(
+            w1002(&src),
+            ["`fip` needs `xs` used exactly once on every path (found 0 to 1)"],
+            "{op}"
+        );
+    }
+    let src = format!("{h}fip fn g(xs: Vec<u32>, c: bool) -> bool {{ h(xs) && c }}\n");
+    assert_eq!(w1002(&src), Vec::<String>::new());
+}
+
+#[test]
+fn fip_loop_paths_leave_only_by_break_or_return() {
+    let ok = [
+        // A `loop` with no `break` does not go on after it.
+        "fip fn g(xs: Vec<u32>) -> Vec<u32> { loop { return xs } }\n",
+        "fip fn g(xs: Vec<u32>, c: bool) -> Vec<u32> { loop { if c { return xs } } }\n",
+        "fip fn g(xs: Vec<u32>, c: bool) -> Vec<u32> { loop { if c { break }\n return xs }\n xs }\n",
+        // A `continue` skips the rest of the body.
+        "fip fn g(xs: Vec<u32>, c: bool) -> Vec<u32> { while c { if c { continue }\n return xs }\n xs }\n",
+    ];
+    for src in ok {
+        assert_eq!(w1002(src), Vec::<String>::new(), "{src}");
+    }
+    let src = "fip fn g(xs: Vec<u32>, c: bool) -> Vec<u32> { loop { let y = xs\n break }\n xs }\n";
+    assert_eq!(
+        w1002(src),
+        ["`fip` needs `xs` used exactly once on every path (found 2 or more)"]
+    );
+    // A `break` in an inner loop leaves only the inner loop.
+    let src = "fip fn g(xs: Vec<u32>) -> Vec<u32> { loop { loop { break }\n return xs } }\n";
+    assert_eq!(w1002(src), Vec::<String>::new());
+}
+
+#[test]
+fn a_match_too_large_to_check_is_an_error() {
+    // Each of the 256 values has its own arm. The check needs more steps than
+    // its budget (500 in a test build). So it cannot show that the arms cover
+    // each value.
+    let n = 8;
+    let cols: Vec<String> = (0..n).map(|i| format!("b{i}: bool")).collect();
+    let args: Vec<String> = (0..n).map(|i| format!("b{i}")).collect();
+    let mut arms = String::new();
+    for k in 0..(1u32 << n) {
+        let pat: Vec<&str> = (0..n)
+            .map(|i| if k >> i & 1 == 1 { "true" } else { "false" })
+            .collect();
+        let _ = writeln!(arms, "        ({}) => {k},", pat.join(", "));
+    }
+    let src = format!(
+        "fn g({}) -> u32 {{\n    match ({}) {{\n{arms}    }}\n}}\n",
+        cols.join(", "),
+        args.join(", ")
+    );
+    let a = analyze_source(&src, Options::default()).unwrap();
+    let w: Vec<&str> = a
+        .diags
+        .iter()
+        .filter(|d| d.code == "W0120")
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(w.len(), 1, "{:?}", a.diags);
+    assert!(w[0].contains("too large to check"), "{}", w[0]);
+}
+
+#[test]
+fn a_small_match_is_checked_in_full() {
+    let src = "fn g(a: bool, b: bool) -> u32 {\n    match (a, b) {\n        (true, _) => 0,\n        (_, true) => 1,\n        (false, false) => 2,\n    }\n}\n";
+    let a = analyze_source(src, Options::default()).unwrap();
+    assert!(a.diags.is_empty(), "{:?}", a.diags);
+}
+
+#[test]
+fn many_locals_and_part_values_are_fast() {
+    // A body with many locals, and many new values of one part of a local. The
+    // lowering looks a local up by its variable, and each new value of the
+    // part replaces the old one, so the cost grows linearly.
+    let mut body = String::from("    let w = Wrap { x: &v[0] }\n");
+    for i in 0..12_000 {
+        let _ = writeln!(body, "    let x{i} = {i}");
+    }
+    for _ in 0..2_000 {
+        body.push_str("    w.x = &v[0]\n    print(w.x)\n");
+    }
+    let src = format!("struct Wrap<T> {{ x: T }}\nfn f(v: &Vec<u64>) {{\n{body}}}\n");
+    let a = analyze_source(&src, Options::default()).unwrap();
+    assert!(a.diags.is_empty(), "{:?}", a.diags);
+    let f = a.bodies.iter().find(|b| b.facts.name == "f").unwrap();
+    let holders = f
+        .facts
+        .vars
+        .iter()
+        .filter(|v| v.name.starts_with("value in"))
+        .count();
+    assert_eq!(holders, 1);
+    // A use and a new value of the part look at one holder each time.
+    assert!(a.work.holder_steps <= 10 * 2_000, "{:?}", a.work);
+}
+
+/// A loop with a chain of `n` reference locals. The last one gets a place in
+/// `w`, and each iteration moves the places one local down the chain.
+fn ref_chain(n: usize) -> String {
+    let mut s = String::from("struct E { hp: i32 }\nfn f(d: &Vec<i32>, w: &Vec<E>) {\n");
+    for i in 0..n {
+        let _ = writeln!(s, "    let r{i} = &d[0]");
+    }
+    s.push_str("    let m = 0\n    while m < 3 {\n");
+    for i in 0..n - 1 {
+        let _ = writeln!(s, "        r{i} = r{}", i + 1);
+    }
+    let _ = writeln!(
+        s,
+        "        r{} = &w[0].hp\n        m += 1\n    }}\n    print(r0)\n}}",
+        n - 1
+    );
+    s
+}
+
+/// Returns the displays of the places that local `name` of `f` points into.
+fn points_of(a: &Analysis, name: &str) -> Vec<String> {
+    let f = a.bodies.iter().find(|b| b.facts.name == "f").unwrap();
+    let mut out: Vec<String> = f
+        .facts
+        .points_into
+        .iter()
+        .filter(|(v, _)| f.facts.var(*v).name == name)
+        .map(|&(_, p)| {
+            let info = f.facts.place(p);
+            let wild = if info.is_wildcard() {
+                " (wildcard)"
+            } else {
+                ""
+            };
+            format!("{}{wild}", info.display)
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+#[test]
+fn a_loop_chain_iterates_until_the_values_are_stable() {
+    // A chain of n locals needs one pass for each local, and one more pass that
+    // shows that the values are stable. The old lowering stopped after 8 passes.
+    for n in [3, 10, 30] {
+        let a = analyze_units(&ref_chain(n), &[]);
+        assert_eq!(codes(&a), Vec::new(), "n={n}");
+        assert_eq!(a.work.loop_passes, n + 1, "n={n}");
+        assert!(
+            points_of(&a, "r0").contains(&"w[].hp".to_string()),
+            "n={n}: {:?}",
+            points_of(&a, "r0")
+        );
+    }
+}
+
+#[test]
+fn a_reference_that_goes_deeper_becomes_a_wildcard_place() {
+    // Each iteration goes one level deeper. The second time the value goes
+    // deeper, the new place becomes the wildcard place of the place that the
+    // loop added, so the loop stops after three passes.
+    let src = "struct Node { val: u64, next: Vec<Node> }
+fn f(head: &Node, n: u64) -> u64 {
+    let cur = head
+    let i = 0
+    while i < n {
+        cur = &cur.next[0]
+        i += 1
+    }
+    cur.val
+}
+";
+    let a = analyze_units(src, &[]);
+    assert_eq!(codes(&a), Vec::new());
+    assert_eq!(a.work.loop_passes, 3);
+    let points = points_of(&a, "cur");
+    assert!(
+        points.contains(&"head.next[].. (wildcard)".to_string()),
+        "{points:?}"
+    );
+    // The body of the last pass goes one level below the head places only.
+    assert!(
+        !points.iter().any(|p| p.contains("next[].next[].next[]")),
+        "{points:?}"
+    );
+}
+
+#[test]
+fn a_walk_in_branches_and_nested_loops_stays_small() {
+    // A walk with k branches, each one level deeper, in two nested loops. Each
+    // pass of the old lowering multiplied the places by k. A branch also sees the
+    // places that the branches before it gave (a value only grows), so the places
+    // of one pass grow with 2^k, up to the limit for one root.
+    for k in [2, 4, 8] {
+        let fields: Vec<String> = (0..k).map(|i| format!("f{i}: Vec<Node>")).collect();
+        let mut branches = String::from("x = &x.f0[0]");
+        for i in 1..k {
+            branches = format!("if i == {i} {{ x = &x.f{i}[0] }} else {{ {branches} }}");
+        }
+        let src = format!(
+            "struct Node {{ val: u64, {} }}
+fn f(head: &Node, n: u64) -> u64 {{
+    let x = head
+    let j = 0
+    while j < n {{
+        let i = 0
+        while i < n {{
+            {branches}
+            i += 1
+        }}
+        j += 1
+    }}
+    x.val
+}}
+",
+            fields.join(", ")
+        );
+        let a = analyze_units(&src, &[]);
+        assert_eq!(codes(&a), Vec::new(), "k={k}");
+        assert!(a.work.loop_passes <= 12, "k={k}: {}", a.work.loop_passes);
+        let points = points_of(&a, "x");
+        assert!(points.len() <= 100, "k={k}: {} places", points.len());
+    }
+}
+
+#[test]
+fn a_call_result_in_a_loop_is_not_one_place() {
+    // The values of an iteration go to the next one, so two values can hold the
+    // results of two iterations. A result in a loop gets the shared wildcard
+    // place; a result outside a loop is one place.
+    let src = "struct Entity { hp: i32, kids: Vec<Entity> }
+fn find(v: &Vec<Entity>) -> Option<&Entity> { Some(&v[0]) }
+fn f(v: &Vec<Entity>, n: u64) {
+    let i = 0
+    while i < n {
+        match find(v) {
+            Some(e) => print(e.hp),
+            None => {}
+        }
+        i += 1
+    }
+}
+fn g(v: &Vec<Entity>) {
+    match find(v) {
+        Some(e) => print(e.hp),
+        None => {}
+    }
+}
+";
+    let a = analyze_units(src, &[]);
+    assert_eq!(codes(&a), Vec::new());
+    let ones = |name: &str| {
+        let f = a.bodies.iter().find(|b| b.facts.name == name).unwrap();
+        f.facts.places.iter().filter(|p| p.is_one_place()).count()
+    };
+    assert_eq!(ones("f"), 0);
+    assert!(ones("g") > 0);
+}
+
+#[test]
+fn a_loop_that_is_not_stable_at_the_bound_is_an_error() {
+    let units = vec![prelude(), unit("", &ref_chain(10))];
+    let a = crate::analyze_with_loop_bound(&units, Options::default(), 4);
+    assert_eq!(codes(&a), vec![(ROOT_UNIT, "W0707".to_string())]);
+    assert!(
+        a.diags[0].message.contains("4 passes"),
+        "{}",
+        a.diags[0].message
+    );
+    let a = crate::analyze_with_loop_bound(&units, Options::default(), 11);
+    assert_eq!(codes(&a), Vec::new());
+}
+
+#[test]
+fn a_join_ends_a_task_only_if_no_other_handle_can_hold_it() {
+    // After the loop each handle can hold each task. A handle holds one task, so
+    // the first `join` ends no task: the other handle can hold either one. The
+    // second `join` ends both, as no other handle holds them then.
+    let src = "fn f() / async {
+    scope { s =>
+        let t0 = s.spawn(|| print(1))
+        let t1 = s.spawn(|| print(2))
+        let m = 0
+        while m < 3 {
+            let x = t0
+            t0 = t1
+            t1 = x
+            m += 1
+        }
+        t0.join()
+        t1.join()
+    }
+}
+";
+    let a = analyze_units(src, &[]);
+    assert_eq!(codes(&a), Vec::new());
+    let f = a.bodies.iter().find(|b| b.facts.name == "f").unwrap();
+    let first = node(&f.facts, "join");
+    let at = |n: weft_facts::NodeId| f.facts.joined_at.iter().filter(|&&(_, m)| m == n).count();
+    assert_eq!(at(first), 0, "{:?}", f.facts.joined_at);
+    let second = f
+        .facts
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, x)| x.label == "join")
+        .map(|(i, _)| weft_facts::NodeId(u32::try_from(i).unwrap()))
+        .next_back()
+        .unwrap();
+    assert_eq!(at(second), 2, "{:?}", f.facts.joined_at);
+}
+
+/// `n` loops one after the other, each with a new local and a counter.
+fn seq_loops(n: usize) -> String {
+    let mut s = String::from("fn f(n: u64) {\n    let s: u64 = 0\n");
+    for i in 0..n {
+        let _ = writeln!(
+            s,
+            "    let i{i}: u64 = 0\n    while i{i} < n {{ s += 1\n        i{i} += 1 }}"
+        );
+    }
+    s.push_str("    print(s)\n}\n");
+    s
+}
+
+#[test]
+fn loops_one_after_the_other_cost_linear_work() {
+    // Each pass copied the whole lowering state, so a function with many loops
+    // was quadratic (QA7: 2000 loops took 5.7 s). A pass now copies the state
+    // of the head only, and a rewind puts back the locals that the pass changed.
+    let small = analyze_units(&seq_loops(500), &[]);
+    let large = analyze_units(&seq_loops(1000), &[]);
+    assert_eq!(codes(&large), Vec::new());
+    assert_eq!(small.work.loop_passes, 500);
+    assert_eq!(large.work.loop_passes, 1000);
+    let (a, b) = (small.work.loop_copies, large.work.loop_copies);
+    assert!(b <= 2 * a + 100, "500 loops: {a}, 1000 loops: {b}");
+    assert!(b <= 20 * 1000, "{b}");
+}
+
+#[test]
+fn a_grow_set_cuts_back_to_a_mark() {
+    let mut g: crate::body::Grow<u32> = [3, 1].into_iter().collect();
+    let mark = g.mark();
+    assert!(g.insert(2));
+    assert!(!g.insert(1));
+    g.extend([5, 4]);
+    assert_eq!(g.iter().copied().collect::<Vec<_>>(), vec![1, 2, 3, 4, 5]);
+    g.cut(mark);
+    assert_eq!(g.iter().copied().collect::<Vec<_>>(), vec![1, 3]);
+    assert!(!g.contains(&2) && g.contains(&3));
+    let empty = crate::body::Grow::<u32>::default();
+    assert!(empty.is_empty() && empty.mark() == 0 && empty == crate::body::Grow::default());
+}
+
+/// One untyped integer local, updated `n` times.
+fn int_updates(n: usize) -> String {
+    format!(
+        "fn f() {{\n    let s = 0\n{}    print(s)\n}}\n",
+        "    s += 1\n".repeat(n)
+    )
+}
+
+#[test]
+fn integer_variables_unify_in_linear_work() {
+    // Each `s += 1` bound the end of the variable chain of `s` to the variable
+    // of the new literal, and each lookup walked the whole chain (QA8: 16000
+    // updates took 10.9 s). Union by rank keeps the chains short.
+    let small = analyze_units(&int_updates(1000), &[]);
+    let large = analyze_units(&int_updates(2000), &[]);
+    assert_eq!(codes(&large), Vec::new());
+    let (a, b) = (small.work.type_steps, large.work.type_steps);
+    assert!(b <= 2 * a + 1000, "1000 updates: {a}, 2000 updates: {b}");
+    assert!(b <= 40 * 2000, "{b}");
+}
+
+#[test]
+fn an_in_place_can_name_a_later_parameter() {
+    // `a` names `b`, which comes after it and has an `in` place of its own.
+    // Both orders give `a` the places of `b`: `v[]` (QA3).
+    for params in [
+        "v: &Vec<E>, a: &E in b, b: &E in v[]",
+        "v: &Vec<E>, b: &E in v[], a: &E in b",
+    ] {
+        let src = format!("struct E {{ hp: i32 }}\nfn f({params}) {{ print(a.hp) }}\n");
+        let a = analyze_units(&src, &[]);
+        assert_eq!(codes(&a), Vec::new());
+        assert_eq!(points_of(&a, "a"), vec!["v[]".to_string()], "{params}");
+        assert_eq!(points_of(&a, "b"), vec!["v[]".to_string()], "{params}");
+    }
+}
+
+#[test]
+fn an_on_abort_function_with_no_runtime_has_no_root_handler() {
+    let src = "linear struct T { id: u64 }\n    on abort = undo\nfn undo(t: T) / clock {\n    let T(i) = t\n    sleep(1.ms)\n}\nfn plain(t: T) { let T(i) = t }\n";
+    let ok = analyze_source(src, Options::default()).expect("parses");
+    assert!(ok.diags.iter().all(|d| d.code != "W0118"), "{:?}", ok.diags);
+    let opts = Options {
+        no_runtime: true,
+        ..Options::default()
+    };
+    let a = analyze_source(src, opts).expect("parses");
+    let w: Vec<_> = a.diags.iter().filter(|d| d.code == "W0118").collect();
+    assert_eq!(w.len(), 1, "{:?}", a.diags);
+    assert!(w[0].message.contains("`clock`"), "{}", w[0].message);
+    assert_eq!(w[0].unit, ROOT_UNIT);
+}
+
+#[test]
+fn an_on_abort_function_in_a_dependency_is_checked_there() {
+    let a = analyze_units(
+        "fn main() { }",
+        &[(
+            "dep",
+            "effect Note { fn note(x: u64) }\nlinear struct T { id: u64 }\n    on abort = undo\nfn undo(t: T) / Note { let T(i) = t\n note(i) }\n",
+        )],
+    );
+    assert_eq!(codes(&a), vec![(2, "W0118".to_string())]);
+}
+
+#[test]
+fn task_runs_say_how_a_body_runs_its_function_parameters() {
+    let src = "fn par(f: fn(), g: fn()) / par { fork(f, g) }\n\
+        fn bg(f: fn()) / async { scope { s => s.spawn(f)\n s.spawn(f) } }\n\
+        fn bg_and_call(f: fn(), g: fn()) / async { scope { s => s.spawn(f)\n g() } }\n\
+        fn bg_then_call(f: fn(), g: fn()) / async { scope { s => let t = s.spawn(f)\n t.join()\n g() } }\n\
+        fn pass_on(f: fn(), g: fn()) / par { par(f, g) }\n\
+        fn plain(f: fn()) { f() }";
+    let a = analyze_units(src, &[]);
+    assert_eq!(codes(&a), Vec::new());
+    let run = |name: &str, p: usize| sig_of(&a, name).effects.task_runs.get(&p).cloned();
+    let par = run("par", 0).expect("par runs f");
+    assert!(par.thread && !par.twice);
+    assert_eq!(par.with, [1].into());
+    let bg = run("bg", 0).expect("bg runs f");
+    assert!(!bg.thread && bg.twice);
+    assert_eq!(run("bg_and_call", 0).map(|r| r.with), Some([1].into()));
+    assert_eq!(run("bg_and_call", 1), None);
+    // The callee joins the task before it calls `g`.
+    assert_eq!(
+        run("bg_then_call", 0).map(|r| r.with),
+        Some(std::collections::BTreeSet::default())
+    );
+    // A body that gives its parameters to `par` runs them the same way.
+    let pass = run("pass_on", 0).expect("pass_on runs f");
+    assert!(pass.thread);
+    assert_eq!(pass.with, [1].into());
+    assert!(sig_of(&a, "plain").effects.task_runs.is_empty());
+}
+
+#[test]
+fn task_runs_name_the_places_that_the_body_accesses_while_a_parameter_runs() {
+    let src = "struct P { a: u64, b: u64 }\n\
+        fn bg_write(f: fn(), p: &P) / mut(p), async { scope { s => s.spawn(f)\n p.a += 1 } }\n\
+        fn bg_first(f: fn(), p: &P) / mut(p), async { p.a += 1\n scope { s => s.spawn(f) } }\n\
+        fn via_vec(f: fn()) / async { let fs = Vec.new()\n fs.push(f)\n scope { s => s.spawn(|| { let g = fs[0]\n g() })\n s.spawn(|| { let g = fs[0]\n g() }) } }";
+    let a = analyze_units(src, &[]);
+    assert_eq!(codes(&a), Vec::new());
+    let run = |name: &str, p: usize| sig_of(&a, name).effects.task_runs.get(&p).cloned();
+    let w = run("bg_write", 0).expect("bg_write runs f");
+    let texts: Vec<&str> = w.writes.iter().map(|sp| sp.text.as_str()).collect();
+    assert_eq!(texts, vec!["p.a"]);
+    // The body changes `p.a` before the task starts.
+    assert!(run("bg_first", 0)
+        .expect("bg_first runs f")
+        .writes
+        .is_empty());
+    // A call of a value from a local container can be the parameter.
+    assert!(run("via_vec", 0).expect("via_vec runs f").twice);
+}
+
+#[test]
+fn pins_says_a_body_can_start_a_pinned_task() {
+    let src = "struct E { hp: u64 }\n\
+        fn shares() / async { let r = Rc.new(E { hp: 1 })\n scope { s => s.spawn(|| print(r.hp)) } }\n\
+        fn runs_param(f: fn()) / async { scope { s => s.spawn(f) } }\n\
+        fn calls_shares() / async { shares() }\n\
+        fn plain() / async { scope { s => s.spawn(|| print(1)) } }";
+    let a = analyze_units(src, &[]);
+    assert_eq!(codes(&a), Vec::new());
+    assert!(sig_of(&a, "shares").effects.pins);
+    // The caller checks a function value that the body runs as a task.
+    assert!(!sig_of(&a, "runs_param").effects.pins);
+    assert!(sig_of(&a, "calls_shares").effects.pins);
+    assert!(!sig_of(&a, "plain").effects.pins);
+}
+
+#[test]
+fn arg_order_gives_the_order_of_named_calls_that_the_interpreter_cannot_resolve() {
+    let src = "struct E { hp: i32 }\n\
+        impl E { fn diff(self, a: i32, b: i32) -> i32 { a - b } }\n\
+        fn diff(a: i32, b: i32) -> i32 { a - b }\n\
+        fn named(x: &E) {\n let g = diff\n print(g(b: 1, a: 2))\n print(x.diff(b: 3, a: 4))\n }\n\
+        fn plain(x: &E) {\n let g = diff\n print(g(1, 2))\n print(x.diff(3, 4))\n print(diff(b: 1, a: 2))\n }";
+    let a = analyze_units(src, &[]);
+    assert_eq!(codes(&a), Vec::new());
+    let body = |name: &str| {
+        a.bodies
+            .iter()
+            .find(|b| b.facts.name == name)
+            .expect("the body exists")
+    };
+    let orders: Vec<&Vec<Option<u32>>> = body("named")
+        .facts
+        .arg_order
+        .iter()
+        .map(|(_, o)| o)
+        .collect();
+    assert_eq!(
+        orders,
+        vec![&vec![Some(1), Some(0)], &vec![Some(1), Some(0)]]
+    );
+    // A call with no named argument, and a direct call of an item, need no order.
+    assert!(body("plain").facts.arg_order.is_empty());
+}
+
+#[test]
+fn a_body_names_only_the_effects_that_its_facts_have() {
+    // Each body gets the written names of the effects that it states, performs
+    // or handles, not of every effect of the program: that cost grew with the
+    // number of bodies times the square of the number of effects.
+    let mut src = String::new();
+    for i in 0..50 {
+        let _ = writeln!(src, "mod m{i} {{ pub effect Note {{ fn note{i}() }} }}");
+    }
+    src.push_str("fn plain(x: u64) -> u64 { x + 1 }\n");
+    src.push_str("fn uses() / m7.Note { m7.Note.note7() }\n");
+    let plain = facts(&src, "plain");
+    assert!(plain.effect_names.is_empty(), "{:?}", plain.effect_names);
+    let uses = facts(&src, "uses");
+    assert_eq!(
+        uses.effect_names,
+        vec![("main.m7.Note".to_string(), "m7.Note".to_string())]
+    );
+}
+
+/// An analysis can go to another thread, and threads can share it. So
+/// [`crate::on_large_stack`] can return it.
+#[test]
+fn an_analysis_is_send_and_sync() {
+    fn send_sync<T: Send + Sync>() {}
+    send_sync::<Analysis>();
+}
+
+/// [`crate::on_large_stack`] starts one thread. A nested call runs on that
+/// thread, and a panic continues in the caller.
+#[test]
+fn the_large_stack_is_one_thread() {
+    let names = crate::on_large_stack(|| {
+        let outer = std::thread::current().name().map(String::from);
+        let inner = crate::on_large_stack(|| std::thread::current().name().map(String::from));
+        (outer, inner)
+    });
+    assert_eq!(names, (Some("weft".to_string()), Some("weft".to_string())));
+    let caught = std::panic::catch_unwind(|| crate::on_large_stack(|| panic!("inside")));
+    let message = caught
+        .err()
+        .and_then(|p| p.downcast_ref::<&str>().map(|s| (*s).to_string()));
+    assert_eq!(message.as_deref(), Some("inside"));
+}
+
+/// [`crate::on_current_stack`] runs each call of [`crate::on_large_stack`] in
+/// it on the current thread, also after a panic of an earlier call. After it,
+/// a call starts its own thread again.
+#[test]
+fn the_current_stack_has_no_new_thread() {
+    let here = std::thread::current().id();
+    let inner = crate::on_current_stack(|| crate::on_large_stack(|| std::thread::current().id()));
+    assert_eq!(inner, here);
+    let caught = std::panic::catch_unwind(|| crate::on_current_stack(|| panic!("inside")));
+    assert!(caught.is_err());
+    let after = crate::on_large_stack(|| std::thread::current().id());
+    assert_ne!(after, here);
+}
+
+/// Each split of each call has a split id of its own, also when the split
+/// point is a parameter with an index of 64 or more. The old id `64 * call +
+/// index` gave the split of one call to the split of the next call, so a side
+/// of one could be disjoint from a side of the other.
+#[test]
+fn the_splits_of_two_calls_are_apart() {
+    let mut params = String::new();
+    for i in 1..64 {
+        let _ = write!(params, "p{i}: u64, ");
+    }
+    let zeros: String = (1..64).map(|_| "0, ").collect();
+    let src = format!(
+        "extern fn far(v: &Vec<u64>, {params}mid: usize) -> &[u64] in v[..mid]\n\
+         extern fn near(k: usize, v: &Vec<u64>) -> &[u64] in v[k..]\n\
+         fn f(v: &Vec<u64>) {{\n\
+         let a = far(v, {zeros}1)\n\
+         let b = near(1, v)\n let c = near(1, v)\n let d = near(1, v)\n\
+         print(a[0] + b[0] + c[0] + d[0])\n}}\n"
+    );
+    let f = facts(&src, "f");
+    // The split of the place that each local points into.
+    let split_of = |name: &str| -> Vec<u32> {
+        let v = var(&f, name);
+        f.points_into
+            .iter()
+            .filter(|(w, _)| *w == v)
+            .filter_map(|&(_, p)| match f.place(p).steps.last().map(|s| s.kind) {
+                Some(weft_facts::StepKind::Seg { split, .. }) => Some(split),
+                _ => None,
+            })
+            .collect()
+    };
+    let far = split_of("a");
+    let near: Vec<u32> = ["b", "c", "d"].iter().flat_map(|n| split_of(n)).collect();
+    assert_eq!((far.len(), near.len()), (1, 3), "{far:?} {near:?}");
+    assert!(near.iter().all(|s| !far.contains(s)), "{far:?} {near:?}");
 }

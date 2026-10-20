@@ -1,0 +1,64 @@
+// The checks of the arguments of a call are rules of the spec (review S5b,
+// ADR 0002): W0203 (`arg_outside`), W0406 (`not_uniq`) and W0705
+// (`arg_effect_outside`). Each has a derivation in `weft check --explain`.
+struct Entity { hp: u64 }
+struct World { a: Vec<Entity>, b: Vec<Entity> }
+
+// W0203: a reference argument points inside the place that `in` states.
+fn step(world: &World, e: &Entity in world.a[]) / mut(e) { e.hp += 1 }
+fn step_any(world: &World, e: &Entity in world..) / mut(e) { e.hp += 1 }
+fn touch(world: &World, e: &Entity in world.a) / mut(e) { e.hp += 1 }
+fn touch_any(world: &World, e: &Entity in world.a..) / mut(e) { e.hp += 1 }
+
+fn inside(world: &World) / mut(world..) {
+    for e in world.a[] { step(world, e) }
+    for e in world.b[] { step_any(world, e) }
+}
+fn outside(world: &World) / mut(world..) {
+    for e in world.b[] { step(world, e) }   //~ W0203
+}
+// Below a plain stated place only stable steps follow. The element step of a
+// `Vec` is not stable. Below a wildcard place any step can follow.
+fn below_unstable(world: &World) / mut(world..) {
+    touch_any(world, &world.a[0])
+    touch(world, &world.a[0])   //~ W0203
+}
+
+// W0406: the mode of the argument is a submode of the mode of the parameter.
+fn needs_uniq(es: &[u64] @ uniq) / mut(es) {}
+fn aliased(v: &Vec<u64>) / mut(v[]) {
+    let (l, r) = v.split_at(1)
+    needs_uniq(l)   //~ W0406
+}
+fn unique(v: &[u64] @ uniq) / mut(v) {
+    needs_uniq(v)
+}
+
+// W0705: a function argument stays inside the row of its parameter type.
+fn with_log(f: fn() / log) { f() }
+fn allowed() / log {
+    with_log(|| log.info("x"))
+}
+fn not_allowed() / clock, log {
+    with_log(|| sleep(1.s))   //~ W0705
+}
+// The row of a function item, and the stated row of a function value, count
+// too.
+fn ticks() / clock { sleep(1.s) }
+fn logs() / log { log.info("y") }
+fn item_not_allowed() / clock, log {
+    with_log(ticks)   //~ W0705
+}
+fn local_item_not_allowed() / clock, log {
+    let g = ticks
+    with_log(g)   //~ W0705
+}
+fn param_not_allowed(h: fn() / clock) / clock, log {
+    with_log(h)   //~ W0705
+}
+fn item_allowed() / log {
+    with_log(logs)
+}
+fn param_allowed(h: fn() / log) / log {
+    with_log(h)
+}

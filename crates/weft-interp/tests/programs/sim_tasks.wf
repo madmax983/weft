@@ -1,0 +1,19 @@
+// The root handlers of a simulation reach a task that the simulation body
+// spawns directly. The checker accepts it (no W0314).
+test "tasks written in the simulation body" {
+    sim.run(seed: 1) {
+        scope { s =>
+            let a = s.spawn(|| { sleep(20.ms); print("late") })
+            let b = s.spawn(|| { sleep(10.ms); print("early") })
+            a.join()
+            b.join()
+        }
+    }
+}
+
+test "fork branches written in the simulation body" {
+    sim.run(seed: 2) {
+        let (x, y) = fork(|| { sleep(5.ms); 1 }, || { sleep(1.ms); 2 })
+        print(x + y)
+    }
+}

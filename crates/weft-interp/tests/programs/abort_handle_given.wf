@@ -1,0 +1,22 @@
+// unchecked
+// A `spawn` in statement position gives the handle of the task to the scope:
+// the handle is dropped, and no `join` can take the result. The task is done
+// when the scope aborts. The unwinding of the scope runs `on abort` for the
+// result (ADR 0010). The checker does not reject the drop of a linear result
+// yet: that is a target of the core IR (ADR 0007), so this program is not
+// checked.
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(t: Tx) { let Tx(id) = t; print("rollback {id}") }
+
+fn main() / io, async {
+    handle Fail { fn fail(m) { print("caught: {m}") } } in {
+        scope { s =>
+            s.spawn(|| Tx { id: 2 })
+            sleep(5.ms)
+            fail("abort after the task is done")
+        }
+    }
+    print("end")
+}

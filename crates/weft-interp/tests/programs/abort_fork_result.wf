@@ -1,0 +1,24 @@
+// Fork branches return linear values whose type has `on abort`. The first
+// branch finishes. A timeout aborts the fork while the second branch sleeps.
+// The unwind of the fork runs `on abort` for the result of the first branch
+// (ADR 0010).
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(t: Tx) { let Tx(id) = t; print("rollback {id}") }
+
+fn commit(t: Tx) -> u64 { let Tx(id) = t; id }
+
+fn slow() -> Tx / clock { sleep(100.ms); Tx { id: 2 } }
+
+fn main() / io, par {
+    handle Fail { fn fail(m) { print("caught: {m}") } } in {
+        with_timeout(10.ms) {
+            let (a, b) = fork(|| Tx { id: 1 }, || slow())
+            let x = commit(a)
+            let y = commit(b)
+            print("committed {x} {y}")
+        }
+    }
+    print("end")
+}

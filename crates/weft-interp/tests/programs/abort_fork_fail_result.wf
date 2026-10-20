@@ -1,0 +1,20 @@
+// One fork branch gives a linear value, the other fails. The `fork` raises
+// the failure and does not give the value of the first branch: the unwinder
+// runs its `on abort` before the failure (ADR 0010).
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(t: Tx) { let Tx(id) = t; print("rollback {id}") }
+fn begin() -> Tx { Tx { id: 1 } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn boom() -> u64 / fail { fail("boom"); 2 }
+
+fn work() / par, fail {
+    let (a, b) = fork(|| begin(), || boom())
+    commit(a)
+}
+
+fn main() / par {
+    handle Fail { fn fail(m) { print("failed: {m}") } } in work()
+    print("end")
+}

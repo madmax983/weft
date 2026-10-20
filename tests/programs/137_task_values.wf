@@ -1,0 +1,232 @@
+// More ways for a callee or a clause to run a function value as a task
+// (ADR 0006). A callee can keep a function parameter in a local container or
+// tuple and run it from there. It can change a reference argument while the
+// task runs. A value that a callee makes can hold a closure in a field. A
+// clause can run a function argument of its operation as a task, and a clause
+// of a handler of a caller is code that the body does not know.
+struct E { hp: u64 }
+struct P { a: u64, b: u64 }
+struct Job { f: fn() }
+
+// The callee runs its parameter from a local `Vec` and from a tuple.
+fn via_vec(f: fn()) / async {
+    let fs = Vec.new()
+    fs.push(f)
+    scope { s =>
+        s.spawn(|| { let g = fs[0]; g() })
+        s.spawn(|| { let g = fs[0]; g() })
+    }
+}
+
+fn via_tuple(f: fn()) / async {
+    let t = (f, 1)
+    scope { s =>
+        s.spawn(|| { let g = t.0; g() })
+        s.spawn(|| { let g = t.0; g() })
+    }
+}
+
+fn via_vec_fork(f: fn()) / par {
+    let fs = Vec.new()
+    fs.push(f)
+    let _ = fork(|| { let g = fs[0]; g() }, || ())
+}
+
+fn race_vec() / async {
+    let n = 0
+    via_vec(|| n += 1)   //~ W0405
+}
+
+fn race_tuple() / async {
+    let n = 0
+    via_tuple(|| n += 1)   //~ W0405
+}
+
+fn rc_fork() / par {
+    let a = Rc.new(E { hp: 1 })
+    via_vec_fork(|| print(a.hp))   //~ W0401
+}
+
+// The callee changes a reference argument while the task runs.
+fn bg_write(f: fn(), x: &u64) / mut(x), async, clock {
+    scope { s =>
+        s.spawn(f)
+        sleep(1.ms)
+        x += 1
+    }
+}
+
+fn bg_two(f: fn(), x: &u64) / mut(x), async {
+    scope { s =>
+        s.spawn(f)
+        s.spawn(|| x += 1)
+    }
+}
+
+fn bg_field(f: fn(), p: &P) / mut(p), async {
+    scope { s =>
+        s.spawn(f)
+        p.a += 1
+    }
+}
+
+fn writer_param() / async, clock {
+    let n = 0
+    bg_write(|| print(n), &n)   //~ W0405
+}
+
+fn writer_task() / async {
+    let n = 0
+    bg_two(|| print(n), &n)   //~ W0405
+}
+
+fn writer_field() / async {
+    let p = P { a: 1, b: 2 }
+    bg_field(|| print(p.a), &p)   //~ W0405
+}
+
+// A callee makes a struct with a closure, and another callee runs the closure
+// as two tasks.
+fn bg_job(j: Job) / async {
+    scope { s =>
+        s.spawn(j.f)
+        s.spawn(j.f)
+    }
+}
+
+fn make_job(n: &u64) -> Job / mut(n) {
+    Job { f: || n += 1 }
+}
+
+fn made_job() / async {
+    let n = 0
+    let j = make_job(&n)
+    let k = j
+    bg_job(k)   //~ W0405
+}
+
+fn made_job_direct() / async {
+    let n = 0
+    bg_job(make_job(&n))   //~ W0405
+}
+
+// A local clause runs the function argument of its operation as two tasks, as
+// two fork branches, or as a task that runs after `resume`.
+effect Run { fn run(f: fn()) }
+effect Run2 { fn run2(f: fn(), g: fn()) }
+
+fn clause_twice() / async {
+    let n = 0
+    handle Run {
+        fn run(f) {
+            scope { s =>
+                s.spawn(f)
+                s.spawn(f)   //~ W0405
+            }
+            resume(())
+        }
+    } in {
+        run(|| n += 1)
+    }
+}
+
+fn clause_fork() / par {
+    let n = 0
+    handle Run2 {
+        fn run2(f, g) {
+            let _ = fork(f, g)   //~ W0403 W0403 W0405
+            resume(())
+        }
+    } in {
+        run2(|| n += 1, || n += 2)
+    }
+}
+
+fn clause_fork_rc() / par {
+    let a = Rc.new(E { hp: 1 })
+    handle Run {
+        fn run(f) {
+            let _ = fork(f, || ())   //~ W0401
+            resume(())
+        }
+    } in {
+        run(|| print(a.hp))
+    }
+}
+
+// The `resume` changes what the handled body changes, also what the closure
+// of the operation changes: an imprecision (ADR 0006).
+fn clause_after_resume() / async {
+    let n = 0
+    scope { s =>
+        handle Run {
+            fn run(f) {
+                s.spawn(f)
+                resume(())   //~ W0405
+            }
+        } in {
+            run(|| n += 1)
+            print(n)   //~ W0405
+        }
+    }
+}
+
+// The handler is in a caller: the clause can run the closure as two tasks.
+fn gives_run(k: u64) / Run {
+    let n = k
+    run(|| n += 1)   //~ W0403 W0405
+    print(n)
+}
+
+// Clean: the callee writes `p.b`, and the task reads `p.a`.
+fn bg_other(f: fn(), p: &P) / mut(p), async {
+    scope { s =>
+        s.spawn(f)
+        p.b += 1
+    }
+}
+
+fn other_field() / async {
+    let p = P { a: 1, b: 2 }
+    bg_other(|| print(p.a), &p)
+}
+
+// Clean: the callee writes before the task starts.
+fn bg_first(f: fn(), x: &u64) / mut(x), async {
+    x += 1
+    scope { s => s.spawn(f) }
+}
+
+fn write_first() / async {
+    let n = 0
+    bg_first(|| print(n), &n)
+}
+
+// Clean: the closure of the struct only reads.
+fn read_job() / async {
+    let n = 0
+    bg_job(Job { f: || print(n) })
+}
+
+// Clean: the clause calls its function argument and joins its task before
+// `resume`.
+fn clause_once() / async {
+    let n = 0
+    handle Run {
+        fn run(f) {
+            f()
+            scope { s => s.spawn(f) }
+            resume(())
+        }
+    } in {
+        run(|| n += 1)
+        print(n)
+    }
+}
+
+fn main() / async, clock {
+    other_field()
+    write_first()
+    read_job()
+    clause_once()
+}

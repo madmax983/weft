@@ -1,0 +1,59 @@
+// A reference into an `Rc` group stays valid only while the handle on the way
+// keeps its value. A callee result and a held receiver keep that dependency.
+struct Cell2 { items: Vec<u64>, n: u64 }
+struct S { h: Rc<Cell2>, k: u64 }
+
+fn mk() -> Rc<Cell2> { Rc.new(Cell2 { items: Vec.new(), n: 4 }) }
+fn eat(c: Rc<Cell2>) -> u64 { 0 }
+fn reset(s: &S) -> u64 / mut(s.h) { s.h = mk(); 0 }
+fn group_ret(h: &Rc<Cell2>) -> &Vec<u64> in Cell2.items { &h.items }
+fn group_ret_s(s: &S) -> &Vec<u64> in Cell2.items { &s.h.items }
+
+// A callee returns a group place through a reference to the only handle.
+fn callee_result() {
+    let a = mk()
+    a.items.push(1)
+    let r = group_ret(&a)
+    a = mk()
+    print(r)   //~ W0301
+}
+
+// The handle is in a field of the argument.
+fn callee_result_field() {
+    let s = S { h: mk(), k: 0 }
+    let r = group_ret_s(&s)
+    s.h = mk()
+    print(r)   //~ W0301
+}
+
+// A later argument drops the only handle of the receiver.
+fn receiver_moved() {
+    let a = mk()
+    a.items.push(eat(a))   //~ W0301
+}
+
+// A reference through the handle as the receiver.
+fn receiver_ref() {
+    let a = mk()
+    let r = &a.items
+    r.push(eat(a))   //~ W0301
+}
+
+// A later argument gives the handle in a field a new value.
+fn receiver_field(s: &S) / mut(s.h, Cell2) {
+    s.h.items.push(reset(s))   //~ W0301
+}
+
+// Controls: the handle keeps its value, and a clone is dropped.
+fn callee_result_kept() {
+    let a = mk()
+    let r = group_ret(&a)
+    let b = a.clone()
+    print(r)
+}
+
+fn receiver_kept() {
+    let a = mk()
+    let b = a.clone()
+    a.items.push(eat(b))
+}

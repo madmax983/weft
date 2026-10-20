@@ -1,0 +1,5 @@
+dropped gave 0
+h2: second
+clause handler: child of B failed
+outer handler: child of A failed
+end

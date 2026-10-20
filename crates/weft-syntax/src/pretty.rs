@@ -7,7 +7,7 @@
 
 use crate::ast::{
     is_chain_part, Arg, BinOp, Block, EffectItem, EffectRow, Expr, ExprKind, File, FnDecl, Item,
-    ItemKind, Lit, Mode, Param, Pattern, PlaceExpr, PlaceStep, Stmt, StmtKind, StrPart, StructDecl,
+    ItemKind, Lit, Param, Pattern, PlaceExpr, PlaceStep, Stmt, StmtKind, StrPart, StructDecl,
     TypeExpr, TypeExprKind, UnOp,
 };
 use crate::lexer::escape_text;
@@ -116,19 +116,6 @@ const fn bin_text(op: BinOp) -> &'static str {
         BinOp::Ge => ">=",
         BinOp::And => "&&",
         BinOp::Or => "||",
-    }
-}
-
-const fn mode_text(m: Mode) -> &'static str {
-    match m {
-        Mode::Uniq => "uniq",
-        Mode::Aliased => "aliased",
-        Mode::Portable => "portable",
-        Mode::Nonportable => "nonportable",
-        Mode::Uncontended => "uncontended",
-        Mode::Shared => "shared",
-        Mode::Once => "once",
-        Mode::Many => "many",
     }
 }
 
@@ -404,7 +391,7 @@ impl Printer {
             self.push(" @");
             for m in &t.modes {
                 self.push(" ");
-                self.push(mode_text(*m));
+                self.push(m.name());
             }
         }
     }
@@ -523,7 +510,7 @@ impl Printer {
                 p.list(places, ", ", Self::place);
                 p.push(")");
             }
-            EffectItem::Named(n) => p.push(&n.name),
+            EffectItem::Named(n) => p.push(&n.text()),
         });
     }
 
@@ -802,7 +789,7 @@ impl Printer {
                 body,
             } => {
                 self.push("handle ");
-                self.push(&effect.name);
+                self.push(&effect.text());
                 if clauses.is_empty() {
                     self.push(" {}");
                 } else if self.inline {

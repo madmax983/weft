@@ -1,0 +1,9 @@
+outside at 12 ms: 12ms
+inside after 5 ms: 5ms
+outside at 20 ms: 20ms
+test clock of a task outside the simulation: ok
+before: 10ms
+body clock: 5ms
+clause clock: 15ms
+after: 15ms v=2
+test a clause outside the simulation: ok

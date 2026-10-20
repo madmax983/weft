@@ -1,0 +1,28 @@
+// The `on abort` of a task handle cancels a task that is not done. The task
+// has no suspension point left, so it ends with its value. No `join` can take
+// the value: the task finishes its linear parts itself (ADR 0010).
+effect Stop { fn stop() }
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(t: Tx) { let Tx(id) = t; print("rollback {id}") }
+fn commit(t: Tx) { let Tx(id) = t; print("commit {id}") }
+
+fn busy(n: u64) -> u64 {
+    let i = 0
+    while i < n { i += 1 }
+    i
+}
+
+fn main() / io, par {
+    scope { s =>
+        handle Stop { fn stop() { print("stopped") } } in {
+            let t = s.spawn(|| { let n = busy(20000); Tx { id: n } })
+            let m = busy(2000)
+            stop()
+            commit(t.join())
+        }
+        print("after the handle")
+    }
+    print("end")
+}

@@ -233,6 +233,13 @@ impl Program {
     pub fn check(&self) -> Result<(), Error> {
         crate::check::analyze(self).map(|_| ())
     }
+
+    /// Checks the program and returns the strongly connected components of
+    /// its dependency graph, in evaluation order. Two relations are in one
+    /// component when each depends on the other.
+    pub fn components(&self) -> Result<Vec<Vec<String>>, Error> {
+        crate::check::analyze(self).map(|a| a.components)
+    }
 }
 
 impl fmt::Display for Program {

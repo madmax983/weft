@@ -1,0 +1,226 @@
+// A clause can hold the argument of its operation across `resume`. The handled
+// body runs before the `resume` returns. A change of a place above the argument
+// can free what the clause parameter points to: the parameter is not valid
+// after the `resume` (ADR 0005). A change below the argument changes the place
+// of the parameter only.
+struct Entity { hp: i32, kids: Vec<Entity> }
+struct World { entities: Vec<Entity>, score: u64 }
+effect Peek { fn peek(e: &Entity) }
+effect PeekV { fn peekv(v: &Vec<u64>) }
+
+fn grow(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 1, kids: Vec.new() }) }
+fn give(w: &World) / Peek { peek(&w.entities[0]) }
+
+fn clear_after(world: &World) / mut(world.entities) {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)   //~ W0301
+        }
+    } in {
+        peek(&world.entities[0])
+        world.entities.clear()
+    }
+}
+
+fn push_after(world: &World) / mut(world.entities) {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)   //~ W0301
+        }
+    } in {
+        peek(&world.entities[0])
+        world.entities.push(Entity { hp: 2, kids: Vec.new() })
+    }
+}
+
+fn callee_after(world: &World) / mut(world.entities) {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)   //~ W0301
+        }
+    } in {
+        peek(&world.entities[0])
+        grow(world)
+    }
+}
+
+fn new_vec_after() {
+    let w = World { entities: Vec.new(), score: 0 }
+    w.entities.push(Entity { hp: 1, kids: Vec.new() })
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)   //~ W0301
+        }
+    } in {
+        peek(&w.entities[0])
+        w.entities = Vec.new()
+    }
+}
+
+fn nested_vec() {
+    let vs = Vec.new()
+    let inner = Vec.new()
+    inner.push(1)
+    vs.push(inner)
+    handle PeekV {
+        fn peekv(v) {
+            resume(())
+            print(v.len())   //~ W0301
+        }
+    } in {
+        peekv(&vs[0])
+        vs.clear()
+    }
+}
+
+// The operation runs in a callee. The clause parameter can be anywhere inside
+// the argument of the callee.
+fn through_callee(world: &World) / mut(world.entities) {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)   //~ W0301
+        }
+    } in {
+        give(world)
+        world.entities.clear()
+    }
+}
+
+// A reference below the parameter: still not valid.
+fn below(world: &World) / mut(world.entities) {
+    handle Peek {
+        fn peek(e) {
+            let k = &e.kids[0]
+            resume(())
+            print(k.hp)   //~ W0301
+        }
+    } in {
+        peek(&world.entities[0])
+        world.entities.clear()
+    }
+}
+
+// A change of a field of the argument does not free it.
+fn field_only(world: &World) / mut(world.entities[].hp) {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)
+        }
+    } in {
+        peek(&world.entities[0])
+        world.entities[0].hp = 3
+    }
+}
+
+// A change of another place does not free it.
+fn other_place(world: &World) / mut(world.score) {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)
+        }
+    } in {
+        peek(&world.entities[0])
+        world.score = 3
+    }
+}
+
+// A change of the vector below the argument frees the elements of the
+// parameter only.
+fn kids_only(world: &World) / mut(world.entities[].kids) {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)
+        }
+    } in {
+        peek(&world.entities[0])
+        world.entities[0].kids.clear()
+    }
+}
+
+// The handled body moves the owner of the argument.
+fn take_w(w: World) {}
+fn moved_owner() {
+    let w = World { entities: Vec.new(), score: 0 }
+    w.entities.push(Entity { hp: 1, kids: Vec.new() })
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)   //~ W0301
+        }
+    } in {
+        peek(&w.entities[0])
+        take_w(w)
+    }
+}
+
+// The clause points into a captured local, and the handled body moves it.
+effect Note { fn note(x: u64) }
+fn captured_move() {
+    let world = World { entities: Vec.new(), score: 0 }
+    world.entities.push(Entity { hp: 1, kids: Vec.new() })
+    handle Note {
+        fn note(x) {
+            let r = &world.entities[0]
+            resume(())
+            print(r.hp)   //~ W0301
+        }
+    } in {
+        note(1)
+        take_w(world)
+    }
+}
+
+// A move of another local does not free the argument.
+fn other_moved() {
+    let w = World { entities: Vec.new(), score: 0 }
+    let u = World { entities: Vec.new(), score: 0 }
+    w.entities.push(Entity { hp: 1, kids: Vec.new() })
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)
+        }
+    } in {
+        peek(&w.entities[0])
+        take_w(u)
+    }
+}
+
+// A `multi` operation runs the rest of the handled body again. A local from
+// outside the body keeps the value of the run before: in the second run `r`
+// points into the vector that the first run cleared.
+effect Pick { multi fn pick() -> bool }
+fn outer_local(w: &World) / mut(w.entities) {
+    let r = &w.entities[0]
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        if pick() { w.entities.clear() } else { print(r.hp) }   //~ W0301
+    }
+}
+
+// A local of the body gets a copy of its value at the operation in each run, so
+// a move in the first run does not count in the second.
+fn take(v: Vec<u64>) -> usize { v.len() }
+fn inner_local() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let v = Vec.new()
+        v.push(1)
+        let r = &v[0]
+        if pick() { print(take(v)) } else { print(r + 1) }
+    }
+}
+
+// A clause that resumes once runs the rest of the body once.
+fn outer_local_once(w: &World) / mut(w.entities) {
+    let r = &w.entities[0]
+    handle Pick { fn pick() { resume(true) } } in {
+        if pick() { w.entities.clear() } else { print(r.hp) }
+    }
+}

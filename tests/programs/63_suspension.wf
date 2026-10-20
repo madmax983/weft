@@ -1,0 +1,276 @@
+// The abort rule (W0602) and the multi rule (W0503) apply at each suspension
+// point, not only at the operation (proofs/effects, rules 1, 2 and 6): at a call
+// that reaches a handler, at a node that runs a clause, and at a `resume`. A
+// fresh `once` continuation is a `once` value. A clause runs in the environment
+// of its `handle`, and its value is the value of the `handle`.
+effect Choice { multi fn choose() -> bool }
+effect Log { fn log(msg: String) }
+effect Ask { fn ask() -> u64 }
+effect Get { fn get() -> fn() }
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+
+// `Token` declares `on abort`, so only the multi rule applies to it.
+linear struct Token { id: u64 }
+    on abort = spend
+fn spend(t: Token) { let Token(i) = t }
+fn mint() -> Token { Token { id: 1 } }
+// `Lock` has no `on abort`: only the abort rule applies to it at a `once` operation.
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { let Lock(i) = l }
+fn lock() -> Lock { Lock { id: 1 } }
+
+fn chooser() -> bool / Choice { choose() }
+fn call_after_choose(f: fn()) / Choice {
+    let b = choose()
+    f()
+}
+fn hold_across<T>(x: T) -> T / Choice {
+    let b = choose()
+    x
+}
+fn take_world(w: World) { print(w.entities.len()) }
+fn asker() -> u64 / Ask { ask() }
+
+// A call: the callee performs through the capability of the caller.
+fn at_call() -> bool / Choice {
+    let t = mint()
+    let b = chooser()   //~ W0503
+    spend(t)
+    b
+}
+fn at_local_call() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        let t = mint()
+        let b = chooser()   //~ W0503
+        spend(t)
+    }
+}
+fn abort_at_local_call() -> u64 {
+    handle Ask { fn ask() { 0 } } in {
+        let l = lock()
+        let n = asker()   //~ W0602
+        unlock(l)
+        n
+    }
+}
+
+// A node that runs a clause: the clause can perform a `multi` operation through
+// a handler outside the `handle`.
+fn at_clause() / Choice {
+    let t = mint()
+    handle Log { fn log(m) { let b = choose() } } in log("x")   //~ W0503
+    spend(t)
+}
+fn at_clause_call() / Choice {
+    let t = mint()
+    handle Log { fn log(m) { let b = chooser() } } in log("x")   //~ W0503
+    spend(t)
+}
+fn at_clause_closure() / Choice {
+    let t = mint()
+    handle Log { fn log(m) { let b = choose() } } in {
+        let f = || log("x")
+        f()   //~ W0503
+    }
+    spend(t)
+}
+
+// A `resume`: the handled computation can perform a `multi` operation.
+fn at_resume() / Choice {
+    handle Log {
+        fn log(m) {
+            let t = mint()
+            resume(())   //~ W0503
+            spend(t)
+        }
+    } in {
+        log("x")
+        let b = choose()
+    }
+}
+// The handled computation runs the clause again, and the clause can.
+fn at_resume_clause() / Choice {
+    handle Log {
+        fn log(m) {
+            let t = mint()
+            resume(())   //~ W0503
+            spend(t)
+            let b = choose()
+        }
+    } in {
+        log("x")
+        log("y")
+    }
+}
+
+// A fresh `once` continuation is live across a `multi` operation.
+fn fresh_continuation() / Choice {
+    handle Log {
+        fn log(m) {
+            let b = choose()   //~ W0503
+            resume(())
+        }
+    } in log("x")
+}
+fn fresh_continuation_call() / Choice {
+    handle Log {
+        fn log(m) {
+            let b = chooser()   //~ W0503
+            resume(())
+        }
+    } in log("x")
+}
+
+// A closure that holds a fresh `once` continuation is a `once` value too: it
+// moves the continuation (rule 2 through closures).
+struct Job { f: fn() }
+fn twice(f: fn()) { f()
+ f() }
+fn fresh_in_closure() / Choice {
+    handle Log {
+        fn log(m) {
+            let k = || resume(())
+            let b = choose()   //~ W0503
+            k()
+        }
+    } in log("x")
+}
+fn fresh_in_closure_twice() {
+    handle Log {
+        fn log(m) {
+            let k = || resume(())
+            k()
+            k()   //~ W0502
+        }
+    } in log("x")
+}
+fn fresh_in_nested_closure() / Choice {
+    handle Log {
+        fn log(m) {
+            let k = || resume(())
+            let k2 = || k()
+            let b = choose()   //~ W0503
+            k2()
+        }
+    } in log("x")
+}
+fn fresh_in_field() / Choice {
+    handle Log {
+        fn log(m) {
+            let j = Job { f: || resume(()) }   //~ W0502
+            let b = chooser()   //~ W0503
+            let g = j.f
+            g()
+        }
+    } in log("x")
+}
+fn fresh_to_callee() {
+    handle Log {
+        fn log(m) {
+            let k = || resume(())
+            twice(k)   //~ W0502
+        }
+    } in log("x")
+}
+// A callee can hold its argument across a node that can resume more than once.
+// Then it calls the argument again, or gives it back again, for each resume.
+fn fresh_to_holding_callee() / Choice {
+    handle Log {
+        fn log(m) {
+            let k = || resume(())
+            call_after_choose(k)   //~ W0502 W0503
+        }
+    } in log("x")
+}
+fn fresh_to_generic_holder() / Choice {
+    handle Log {
+        fn log(m) {
+            let k = || resume(())
+            let k2 = hold_across(k)   //~ W0503
+            k2()
+        }
+    } in log("x")
+}
+fn once_to_holding_callee() / Choice {
+    let w = World { entities: Vec.new() }
+    call_after_choose(|| take_world(w))   //~ W0502 W0503
+}
+fn fresh_in_closure_after() / Choice {
+    handle Log {
+        fn log(m) {
+            let k = || resume(())
+            k()
+            let b = choose()
+        }
+    } in log("x")
+}
+
+// A clause value is the value of the `handle`: a call of it does what it does.
+fn clause_value(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let f = handle Ask { fn ask() { || world.entities.clear() } } in {
+        let n = ask()
+        || print(n)
+    }
+    f()
+    print(first.hp)   //~ W0301
+}
+// A clause value cannot take a capability out of the `handle` around it.
+fn clause_value_escapes() {
+    let g = handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        handle Ask { fn ask() { || log("late") } } in {
+            let n = ask()
+            || print(n)
+        }
+    }
+}
+// A `resume` cannot give the handled computation a capability of the clause.
+fn resume_escapes() {
+    handle Get {
+        fn get() {
+            handle Log { fn log(m) { resume(()) } } in resume(|| log("late"))   //~ W0313
+        }
+    } in {
+        let f = get()
+        f()
+    }
+}
+
+// Controls.
+fn resume_first() / Choice {
+    handle Log {
+        fn log(m) {
+            resume(())
+            let b = choose()
+        }
+    } in log("x")
+}
+fn spent_before() / Choice {
+    let t = mint()
+    spend(t)
+    handle Log { fn log(m) { let b = choose() } } in log("x")
+}
+fn quiet_clause() / Choice {
+    let t = mint()
+    handle Log { fn log(m) { resume(()) } } in log("x")
+    spend(t)
+}
+fn quiet_resume() {
+    handle Log {
+        fn log(m) {
+            let t = mint()
+            resume(())
+            spend(t)
+        }
+    } in log("x")
+}
+fn resume_gives_outer() / Log {
+    handle Get { fn get() { resume(|| log("ok")) } } in {
+        let f = get()
+        f()
+    }
+}
+fn many_to_holding_callee() / Choice {
+    call_after_choose(|| print(1))
+}

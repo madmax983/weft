@@ -1,0 +1,160 @@
+// A place field of a `!Move` struct has no value until the body gives it one
+// (W0304, ADR 0007). The search for place fields follows each part of the
+// type, also a second use of one generic type on the way: `Wrap<Wrap<Frame>>`,
+// a `Wrap<Holder>` where `Holder` holds a `Wrap<Frame>`, and a `Box` in a
+// `Box`. A recursive type has a place field at each depth: the search stops
+// at the second struct or enum of its cycle on the way, and that place stands
+// for each place field below it. A read or a borrow at or below it uses them,
+// until the body gives the place a new value with no place field. A type that
+// grows at each depth, such as `Nest<T>`, stops the search the same way.
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct Wrap<T> { x: T, n: u64 }
+struct Holder { inner: Wrap<Frame> }
+struct HoldBox { b: Box<Frame> }
+struct Node: !Move { fr: Frame, next: Option<Box<Node>> }
+struct Nest<T> { x: T, next: Option<Box<Nest<Box<T>>>> }
+struct Grow<T> { x: T, next: Option<Box<Grow<(T, T)>>> }
+fn peek<T>(x: &T) {}
+
+fn one_level() {
+    let w = Wrap { x: Frame { buf: [1, 2, 3, 4] }, n: 0 }
+    print(w.x.cur)   //~ W0304
+}
+fn two_levels() {
+    let w = Wrap { x: Wrap { x: Frame { buf: [1, 2, 3, 4] }, n: 0 }, n: 0 }
+    print(w.x.x.cur)   //~ W0304
+}
+fn mk() -> Wrap<Wrap<Frame>> { Wrap { x: Wrap { x: Frame { buf: [1, 2, 3, 4] }, n: 0 }, n: 0 } }
+fn from_call() {
+    let w = mk()
+    print(w.x.x.cur)   //~ W0304
+}
+fn other_struct() {
+    let w = Wrap { x: Holder { inner: Wrap { x: Frame { buf: [1, 2, 3, 4] }, n: 0 } }, n: 0 }
+    print(w.x.inner.x.cur)   //~ W0304
+}
+fn two_boxes() {
+    let h = Box.new(HoldBox { b: Box.new(Frame { buf: [1, 2, 3, 4] }) })
+    print(h.b.cur)   //~ W0304
+}
+// A borrow of a value reads its place fields: an `Option` in an `Option`.
+fn option_in_option() {
+    let o = Some(Some(Frame { buf: [1, 2, 3, 4] }))
+    peek(&o)   //~ W0304
+}
+fn mk_node() -> Node { mk_node() }
+fn recursive() {
+    let n = mk_node()
+    print(n.fr.cur)   //~ W0304
+}
+// One literal builds two nodes. The body sets the field of the first node
+// only, so the read of the second node in the callee has no value.
+fn mk_chain() -> Node {
+    Node { fr: Frame { buf: [1, 2, 3, 4] }, next: Some(Box.new(Node { fr: Frame { buf: [5, 6, 7, 8] }, next: None })) }
+}
+fn peek_next(n: &Node) -> u8 {
+    match n.next {
+        Some(b) => b.fr.cur + 0,
+        None => 0,
+    }
+}
+fn second_node() {
+    let n = mk_chain()
+    n.fr.cur = &n.fr.buf[0]
+    print(peek_next(&n))   //~ W0304
+}
+fn second_node_local() {
+    let n = mk_chain()
+    n.fr.cur = &n.fr.buf[0]
+    let r = &n.next   //~ W0304
+    match r {
+        Some(b) => print(b.fr.cur + 0),
+        None => print(0),
+    }
+}
+fn growing() {
+    let g = Nest { x: Frame { buf: [1, 2, 3, 4] }, next: None }
+    print(g.x.cur)   //~ W0304
+}
+// A new value of a place replaces the place fields below it. A new value that
+// no place held before has no value in its own place fields.
+fn new_box() {
+    let w = Wrap { x: Box.new(Frame { buf: [1, 2, 3, 4] }), n: 0 }
+    w.x.cur = &w.x.buf[0]
+    w.x = Box.new(Frame { buf: [5, 6, 7, 8] })
+    print(w.x.cur + 0)   //~ W0304
+}
+fn new_frame() {
+    let w = Wrap { x: Frame { buf: [1, 2, 3, 4] }, n: 0 }
+    w.x.cur = &w.x.buf[0]
+    w.x = Frame { buf: [5, 6, 7, 8] }
+    print(w.x.cur + 0)   //~ W0304
+}
+
+// Clean: the body gives the field a value before the read.
+fn set_first() {
+    let w = Wrap { x: Wrap { x: Frame { buf: [1, 2, 3, 4] }, n: 0 }, n: 0 }
+    w.x.x.cur = &w.x.x.buf[1]
+    print(w.x.x.cur)
+}
+fn set_in_boxes() {
+    let h = Box.new(HoldBox { b: Box.new(Frame { buf: [5, 6, 7, 8] }) })
+    h.b.cur = &h.b.buf[2]
+    print(h.b.cur)
+}
+
+// A `let` or an assignment that moves a value does not follow its place
+// fields: each of them needs a value at the move.
+fn move_unset() {
+    let w = Wrap { x: Box.new(Frame { buf: [1, 2, 3, 4] }), n: 0 }
+    let w2 = w   //~ W0304
+    print(w2.x.cur + 0)
+}
+fn store_unset() {
+    let w = Wrap { x: Box.new(Frame { buf: [1, 2, 3, 4] }), n: 0 }
+    w.x.cur = &w.x.buf[0]
+    let b = Box.new(Frame { buf: [5, 6, 7, 8] })
+    w.x = b   //~ W0304
+    print(w.x.cur + 0)
+}
+
+// `None` has no place field: the body can clear the part below the cycle.
+fn second_node_cleared() {
+    let n = mk_chain()
+    n.fr.cur = &n.fr.buf[0]
+    n.next = None
+    print(peek_next(&n))
+}
+fn new_box_set() {
+    let w = Wrap { x: Box.new(Frame { buf: [1, 2, 3, 4] }), n: 0 }
+    w.x.cur = &w.x.buf[0]
+    w.x = Box.new(Frame { buf: [5, 6, 7, 8] })
+    w.x.cur = &w.x.buf[3]
+    print(w.x.cur + 0)
+}
+fn move_set() {
+    let b = Box.new(Frame { buf: [5, 6, 7, 8] })
+    b.cur = &b.buf[1]
+    let c = b
+    let w = Wrap { x: Box.new(Frame { buf: [1, 2, 3, 4] }), n: 0 }
+    w.x.cur = &w.x.buf[0]
+    w.x = c
+    print(w.x.cur + 0)
+}
+// A type that grows at each depth and holds no place field.
+fn growing_clean() {
+    let g = Nest { x: 1, next: None }
+    let h = Grow { x: 2, next: None }
+    peek(&g)
+    peek(&h)
+    print(g.x + h.x)
+}
+
+fn main() {
+    set_first()
+    set_in_boxes()
+    second_node_cleared()
+    new_box_set()
+    move_set()
+    growing_clean()
+}

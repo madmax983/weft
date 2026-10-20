@@ -1,0 +1,6 @@
+main handler: child failed
+main handler: child failed
+outer handler: child failed
+clause done
+scope handler: child failed
+end

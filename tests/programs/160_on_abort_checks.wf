@@ -1,0 +1,203 @@
+// The checks of an `on abort` function (W0118, ADR 0007, review round 3).
+// - Its parameter type is the type with the type parameters of the function in
+//   order, as for a method of `impl<T> G<T>` (F3-4). The unwinder gives it each
+//   instance of the type, so a fixed type argument is wrong.
+// - A type parameter in its `drops` or `holds` part is an error (F3-3). No call
+//   of the facts checks the type argument where the unwinder runs it.
+// - It cannot change a place below a reference that its value holds (F3-1). A
+//   by-value parameter whose type holds a reference points into a parameter
+//   root, so each change of that root is a change outside the value.
+effect Stop { fn stop() }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn forget<T>(x: T) {}
+
+// A fixed type argument: the unwinder can give `G<Tx>`.
+linear struct G<T> { x: T }
+    on abort = undo_g   //~ W0118
+fn undo_g(g: G<u64>) {
+    let G(x) = g
+    print(x + 1)
+}
+
+// The type parameters in the wrong order.
+linear struct Q<A, B> { n: u64 }
+    on abort = undo_q   //~ W0118
+fn undo_q<A, B>(q: Q<B, A>) {
+    let Q(n) = q
+}
+
+// A type parameter that the parameter type does not name.
+linear struct E<T> { n: u64 }
+    on abort = undo_e   //~ W0118
+fn undo_e<T, U>(e: E<T>) {
+    let E(n) = e
+}
+
+// A generic function with a fixed argument.
+linear struct K<T> { n: u64 }
+    on abort = undo_k   //~ W0118
+fn undo_k<T>(k: K<u64>) {
+    let K(n) = k
+}
+
+// A non-generic type with a generic function.
+linear struct N { n: u64 }
+    on abort = undo_n   //~ W0118
+fn undo_n<T>(v: N) {
+    let N(n) = v
+}
+
+// A generic function that drops a value of its type parameter.
+linear struct D<T> { x: T }
+    on abort = undo_d
+fn undo_d<T>(d: D<T>) {   //~ W0118
+    let D(x) = d
+    print("undo")
+}
+
+// A generic function that gives the value to a generic callee that drops it.
+linear struct F<T> { x: T }
+    on abort = undo_f
+fn undo_f<T>(f: F<T>) {   //~ W0118
+    let F(x) = f
+    forget(x)
+}
+
+// A value of the type parameter in an `Option` goes out of scope.
+linear struct O<T> { x: Option<T>, n: u64 }
+    on abort = undo_o
+fn undo_o<T>(o: O<T>) {   //~ W0118
+    let O(x, n) = o
+    print("undo {n}")
+}
+
+// A generic function that holds a value of its type parameter across a node
+// that can abort, and then drops it.
+linear struct W<T> { x: T }
+    on abort = undo_w
+fn undo_w<T>(w: W<T>) / clock {   //~ W0118
+    let W(x) = w
+    sleep(1.ms)
+    forget(x)
+}
+
+// The unwinder drops the result of the function: a linear result, a value of
+// a type parameter, and a function value that can be linear go away.
+linear struct A { id: u64 }
+    on abort = undo_ret
+fn undo_ret(a: A) -> Tx {   //~ W0118
+    let A(i) = a
+    Tx { id: i }
+}
+
+linear struct B<T> { x: T }
+    on abort = undo_gen_ret
+fn undo_gen_ret<T>(b: B<T>) -> T {   //~ W0118
+    let B(x) = b
+    x
+}
+
+linear struct C { id: u64 }
+    on abort = undo_fn_ret
+fn noop() {}
+fn undo_fn_ret(c: C) -> fn() {   //~ W0118
+    let C(i) = c
+    noop
+}
+
+// A push through a reference in an `Option`.
+linear struct R { o: Option<&Vec<u64>> }
+    on abort = undo_ref
+fn undo_ref(r: R) {   //~ W0118
+    let R(o) = r
+    match o {
+        Some(v) => v.push(7),
+        None => {},
+    }
+}
+
+// A change through a reference in a tuple part.
+linear struct T2 { p: (u64, &Vec<u64>) }
+    on abort = undo_tuple
+fn undo_tuple(t: T2) {   //~ W0118
+    let T2(p) = t
+    p.1.clear()
+}
+
+// A change through a reference in an element.
+linear struct V2 { rs: Vec<&Vec<u64>> }
+    on abort = undo_vec
+fn undo_vec(t: V2) {   //~ W0118
+    let V2(rs) = t
+    let r = rs[0]
+    r.clear()
+}
+
+// A stated change of the value: the type holds a reference, so the row cannot
+// show that the change is not through it.
+linear struct S2 { o: Option<&Vec<u64>>, n: u64 }
+    on abort = undo_stated
+fn undo_stated(s: S2) / mut(s) {   //~ W0118
+    let S2(o, n) = s
+}
+
+// Clean: the type parameters of the function in order, and no value of them.
+linear struct P<A, B> { n: u64 }
+    on abort = undo_p
+fn undo_p<A, B>(p: P<A, B>) {
+    let P(n) = p
+    print("undo p {n}")
+}
+
+// Clean: a change of the value that the function gets. A reference in the
+// value only gives reads.
+linear struct L { o: Option<&Vec<u64>>, log: Vec<u64> }
+    on abort = undo_log
+fn undo_log(l: L) {
+    let L(o, log) = l
+    log.push(1)
+    match o {
+        Some(v) => print("undo log {v.len()} {log.len()}"),
+        None => {},
+    }
+}
+
+// Clean: a stated change of a value whose type holds no reference.
+linear struct M { items: Vec<u64> }
+    on abort = undo_m
+fn undo_m(m: M) / mut(m) {
+    let M(items) = m
+    items.push(2)
+    print("undo m {items.len()}")
+}
+
+// Clean: a result of plain data.
+linear struct U { id: u64 }
+    on abort = undo_u
+fn undo_u(u: U) -> u64 {
+    let U(i) = u
+    print("undo u {i}")
+    i
+}
+
+// The clean `on abort` functions run when `stop` aborts the body.
+fn clean_aborts(v: &Vec<u64>) / Stop {
+    let p: P<Tx, u64> = P { n: 1 }
+    let l = L { o: Some(v), log: Vec.new() }
+    let m = M { items: Vec.new() }
+    let u = U { id: 4 }
+    stop()
+    let P(a) = p
+    let L(o, log) = l
+    let M(items) = m
+    let U(i) = u
+}
+
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let first = &v[0]
+    handle Stop { fn stop() { () } } in clean_aborts(&v)
+    print(first)
+}

@@ -8,7 +8,8 @@
 //! - `// expect-error: TEXT`: `main` must fail with a message that contains TEXT.
 //! - `// seed: N`: the scheduler seed.
 //! - `// leaked: N`, `// blocking: N`: the expected counters.
-//! - `// weft: no-runtime`: the embedded profile.
+//! - `// weft: library`, `// weft: no-runtime`: the file markers, as in
+//!   `weft check` (`weft_sema::Options::from_markers`).
 //!
 //! Set `WEFT_BLESS=1` to write the `.out` files from the current output.
 
@@ -43,15 +44,9 @@ fn programs(dir: &Path) -> Vec<PathBuf> {
 fn run_program(path: &Path) -> Result<String, String> {
     let src = fs::read_to_string(path).unwrap();
     let name = path.file_name().unwrap().to_string_lossy().into_owned();
-    let no_runtime = src.contains("// weft: no-runtime");
-    let checked = weft_check::check_source(
-        &name,
-        &src,
-        Options {
-            library: src.contains("// weft: library"),
-            no_runtime,
-        },
-    );
+    let options = Options::from_markers(&src);
+    let no_runtime = options.no_runtime;
+    let checked = weft_check::check_source(&name, &src, options);
     let file = SourceFile::new(&name, src.as_str());
     if directive(&src, "unchecked").is_none() && !checked.ok() {
         let mut msg = format!("{name}: the checker rejects the program\n");
@@ -60,10 +55,12 @@ fn run_program(path: &Path) -> Result<String, String> {
         }
         return Err(msg);
     }
+    // The oracle checks are on: an accepted program must not fault with them.
     let opts = RunOptions {
         seed: directive(&src, "seed:").map_or(0, |s| s.parse().unwrap()),
         max_steps: Some(5_000_000),
         no_runtime,
+        oracle: true,
         ..RunOptions::default()
     };
     let mut out = String::new();
@@ -160,19 +157,14 @@ fn static_corpus_runs() {
         if !has_main && !has_tests {
             continue;
         }
-        let no_runtime = src.contains("// weft: no-runtime");
-        let checked = weft_check::check_source(
-            "corpus",
-            &src,
-            Options {
-                library: src.contains("// weft: library"),
-                no_runtime,
-            },
-        );
+        let options = Options::from_markers(&src);
+        let no_runtime = options.no_runtime;
+        let checked = weft_check::check_source("corpus", &src, options);
         let opts = RunOptions {
             max_steps: Some(1_000_000),
             max_requests: Some(0),
             no_runtime,
+            oracle: true,
             ..RunOptions::default()
         };
         if has_tests {
@@ -187,10 +179,11 @@ fn static_corpus_runs() {
             }
         }
         if has_main {
-            let main_rejected = checked
-                .diags
-                .iter()
-                .any(|d| d.severity == weft_syntax::diag::Severity::Error && d.code == "W0803");
+            // W0803 and W0805: no handler handles an effect of `main`.
+            let main_rejected = checked.diags.iter().any(|d| {
+                d.severity == weft_syntax::diag::Severity::Error
+                    && (d.code == "W0803" || d.code == "W0805")
+            });
             match run_main(&checked, &opts) {
                 Ok(_) => assert!(
                     !main_rejected,
@@ -207,4 +200,40 @@ fn static_corpus_runs() {
         ran += 1;
     }
     assert!(ran >= 5);
+}
+
+/// The unwinder finishes the linear values of a cancelled task, of the
+/// branches of a failed `fork` and of the cells of a closure that a call
+/// consumes on each order of the scheduler: a task can be cancelled before it
+/// starts, while it runs, or after it is done (review round 3, F3-8, I3-2). It
+/// does not take the result of a task whose handle a value still holds.
+#[test]
+fn abort_paths_on_every_seed() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/programs");
+    for name in [
+        "abort_cancelled_start.wf",
+        "abort_task_captures.wf",
+        "abort_fork_fail_result.wf",
+        "abort_handle_late.wf",
+        "abort_handle_kept.wf",
+        "abort_block_cells.wf",
+    ] {
+        let src = fs::read_to_string(dir.join(name)).unwrap();
+        let checked = weft_check::check_source(name, &src, Options::from_markers(&src));
+        assert!(checked.ok(), "{name}: the checker rejects the program");
+        for seed in 0..=20 {
+            for workers in [1, 2, 4] {
+                let opts = RunOptions {
+                    seed,
+                    workers,
+                    max_steps: Some(5_000_000),
+                    oracle: true,
+                    ..RunOptions::default()
+                };
+                if let Err(e) = run_main(&checked, &opts) {
+                    panic!("{name}, seed {seed}, workers {workers}: {e}");
+                }
+            }
+        }
+    }
 }

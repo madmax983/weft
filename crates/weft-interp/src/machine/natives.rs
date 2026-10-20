@@ -36,7 +36,12 @@ impl super::Machine<'_, '_> {
     /// or a slice).
     fn vec_of(&self, recv: &Value) -> R<(CellId, u32, u32, bool)> {
         let p = match recv {
-            Value::Ref(p) | Value::Loc(p, _) => self.follow_refs(p.clone())?,
+            Value::Ref(p) | Value::Loc(p, _) => {
+                if let Value::Ref(p) = recv {
+                    self.heap.check_ref(p);
+                }
+                self.follow_refs(p.clone())?
+            }
             Value::Vec(buf) => {
                 let len = self.heap.list(*buf).map_err(|e| self.fault(e))?.len();
                 return Ok((*buf, 0, u32::try_from(len).unwrap_or(u32::MAX), true));
@@ -45,6 +50,7 @@ impl super::Machine<'_, '_> {
             _ => return Err(self.fault("a `Vec` is needed here")),
         };
         let (p, _) = self.resolve(p, false)?;
+        self.heap.log_read(&p);
         match self.hget(&p)? {
             Value::Vec(buf) => {
                 let len = self.heap.list(*buf).map_err(|e| self.fault(e))?.len();
@@ -53,6 +59,33 @@ impl super::Machine<'_, '_> {
             Value::Slice { buf, lo, hi } => Ok((*buf, *lo, *hi, false)),
             _ => Err(self.fault("a `Vec` is needed here")),
         }
+    }
+
+    /// With the oracle checks on, a change of the length of a `Vec` moves its
+    /// buffer, as a real `Vec` can when it grows or shrinks. The old buffer is
+    /// freed, so a reference into it dangles.
+    fn oracle_move_buffer(&mut self, recv: &Value) -> R<()> {
+        if self.heap.oracle().is_none() {
+            return Ok(());
+        }
+        let p = match recv {
+            Value::Ref(p) | Value::Loc(p, _) => self.follow_refs(p.clone())?,
+            _ => return Ok(()),
+        };
+        let (p, _) = self.resolve(p, false)?;
+        let Value::Vec(old) = self.hget(&p)?.clone() else {
+            return Ok(());
+        };
+        let list = self
+            .heap
+            .take(&Place::root(old))
+            .map_err(|e| self.fault(e))?;
+        let new = self.heap.alloc(SlotKind::Buf, list);
+        *self.hget_mut(&p)? = Value::Vec(new);
+        if let Ok(s) = self.heap.slot_mut(old) {
+            s.kind = SlotKind::Free;
+        }
+        Ok(())
     }
 
     fn list_mut(&mut self, buf: CellId) -> R<&mut Vec<Value>> {
@@ -114,6 +147,7 @@ impl super::Machine<'_, '_> {
             Native::VecPush => {
                 let recv = next();
                 let x = next();
+                self.oracle_move_buffer(&recv)?;
                 let (buf, _, _, whole) = self.vec_of(&recv)?;
                 if !whole {
                     return Err(self.fault("cannot push to a slice"));
@@ -123,12 +157,14 @@ impl super::Machine<'_, '_> {
             }
             Native::VecPop => {
                 let recv = next();
+                self.oracle_move_buffer(&recv)?;
                 let (buf, _, _, _) = self.vec_of(&recv)?;
                 let x = self.list_mut(buf)?.pop();
                 self.option(x)?
             }
             Native::VecClear => {
                 let recv = next();
+                self.oracle_move_buffer(&recv)?;
                 let (buf, _, _, _) = self.vec_of(&recv)?;
                 let xs = std::mem::take(self.list_mut(buf)?);
                 for x in xs {
@@ -302,7 +338,7 @@ impl super::Machine<'_, '_> {
                 let d = next();
                 let Some(clock) = self.rt.b.clock else {
                     let d = self.dur_arg(d)?;
-                    return self.sleep_for(d);
+                    return Ok(self.sleep_for(d));
                 };
                 let op = self.rt.prog.effects[clock]
                     .ops
@@ -313,27 +349,33 @@ impl super::Machine<'_, '_> {
             }
             Native::SimRun => {
                 let seed = self.int_of(next())?;
+                let workers = self.int_of(next())?;
                 let body = next();
-                let saved = self.enter_sim(u64::try_from(seed).unwrap_or(0));
-                self.task().frames.push(Frame::Sim {
-                    saved: Box::new(saved),
-                });
+                let workers = usize::try_from(workers).unwrap_or(1).clamp(1, 1024);
+                let sim = self.enter_sim(u64::try_from(seed).unwrap_or(0), workers);
+                // The task enters the simulation on its first simulated worker,
+                // whatever worker of the machine runs it (ADR 0010).
+                let t = self.task();
+                let outer = std::mem::replace(&mut t.sim_worker, 0);
+                t.frames.push(Frame::Sim { sim, outer });
                 return self.call_closure(body, Vec::new());
             }
+            // Phase 1 does not simulate the network: the partition is only
+            // recorded (ADR 0010).
             Native::SimPartition => {
                 let a = next();
                 let b = next();
                 let (la, lb) = (self.int_list(&a), self.int_list(&b));
                 self.heap.drop_value(a);
                 self.heap.drop_value(b);
-                if let Some(s) = self.sim.as_mut() {
+                if let Some(s) = self.sim_of(self.cur).and_then(|s| self.sims.get_mut(s)) {
                     s.partition = Some((la.clone(), lb.clone()));
                 }
                 self.trace.push(TraceEvent::Partition { a: la, b: lb });
                 Value::Unit
             }
             Native::SimHeal => {
-                if let Some(s) = self.sim.as_mut() {
+                if let Some(s) = self.sim_of(self.cur).and_then(|s| self.sims.get_mut(s)) {
                     s.partition = None;
                 }
                 self.trace.push(TraceEvent::Heal);
@@ -350,7 +392,7 @@ impl super::Machine<'_, '_> {
                 let ret = self
                     .rt
                     .sigs
-                    .get(f)
+                    .get(f.index())
                     .map_or(Value::Unit, |s| self.default_of(&s.ret));
                 for a in it {
                     self.heap.drop_value(a);
@@ -358,7 +400,7 @@ impl super::Machine<'_, '_> {
                 if !blocking {
                     return self.deliver(ret);
                 }
-                return self.blocking_call(f, ret);
+                return Ok(self.blocking_call(f, ret));
             }
             Native::Unknown => {
                 return Err(self.fault(format!(
@@ -371,9 +413,9 @@ impl super::Machine<'_, '_> {
     }
 
     /// Runs a foreign call on the blocking pool. The task waits for the pool.
-    fn blocking_call(&mut self, f: FnId, ret: Value) -> R<Flow> {
-        if let Some(fl) = self.check_interrupt()? {
-            return Ok(fl);
+    fn blocking_call(&mut self, f: FnId, ret: Value) -> Flow {
+        if let Some(fl) = self.check_interrupt() {
+            return fl;
         }
         let thread = self.blocking_calls % POOL_THREADS;
         self.blocking_calls += 1;
@@ -393,7 +435,7 @@ impl super::Machine<'_, '_> {
                 value: ret,
             },
         );
-        Ok(self.block(Wait::Pool, SuspendReason::Blocking))
+        self.block(Wait::Pool, SuspendReason::Blocking)
     }
 
     /// `t.join()` on a finished task.
@@ -404,6 +446,7 @@ impl super::Machine<'_, '_> {
         if self.tasks[t].handle.consume().is_err() {
             return Err(self.fault("a task handle was used twice"));
         }
+        self.oracle_join(t);
         let scope = self.tasks[t].scope;
         match self.tasks[t].result.take() {
             Some(TaskResult::Ok(v)) => self.deliver(v),

@@ -1,7 +1,8 @@
 //! Types and unification.
 
+use std::cell::{Cell, RefCell};
 use std::fmt;
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// An integer type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -57,13 +58,26 @@ impl IntTy {
             Self::Usize => "usize",
         }
     }
+
+    /// Returns the smallest and the largest value of the type.
+    pub const fn range(self) -> (i128, i128) {
+        match self {
+            Self::I8 => (i8::MIN as i128, i8::MAX as i128),
+            Self::I16 => (i16::MIN as i128, i16::MAX as i128),
+            Self::I32 => (i32::MIN as i128, i32::MAX as i128),
+            Self::I64 => (i64::MIN as i128, i64::MAX as i128),
+            Self::U8 => (0, u8::MAX as i128),
+            Self::U16 => (0, u16::MAX as i128),
+            Self::U32 => (0, u32::MAX as i128),
+            Self::U64 | Self::Usize => (0, u64::MAX as i128),
+        }
+    }
 }
 
-/// An index into the program's type definitions.
-pub type AdtId = usize;
+pub use crate::ids::AdtId;
 
 /// A function type: the type of a closure, a function item or a function parameter.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FnTy {
     /// Parameter types.
     pub params: Vec<Ty>,
@@ -74,11 +88,11 @@ pub struct FnTy {
     /// The closure summary, for closures made in the current function.
     pub summary: Option<usize>,
     /// The function item, for a named function used as a value.
-    pub item: Option<usize>,
+    pub item: Option<crate::ids::FnId>,
 }
 
 /// A type.
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Ty {
     /// An integer.
     Int(IntTy),
@@ -100,7 +114,7 @@ pub enum Ty {
     /// A fixed array.
     Array(Box<Self>, u64),
     /// A function value.
-    Fn(Rc<FnTy>),
+    Fn(Arc<FnTy>),
     /// An inference variable.
     Var(u32),
     /// An inference variable that must become an integer.
@@ -123,51 +137,114 @@ impl Ty {
 }
 
 /// The inference table.
+///
+/// The variables form a union-find structure. A variable that is bound to
+/// another variable is a link. A lookup follows the links to the last
+/// variable, and then points each variable on the way to it (path
+/// compression). A union of two unbound variables of the same kind binds the
+/// one of lower rank, or the newer one, to the other (union by rank). So the
+/// links stay short, also when each `s += 1` makes a new integer variable.
 #[derive(Clone, Debug, Default)]
 pub struct Infer {
-    vars: Vec<Option<Ty>>,
+    /// The binding of each variable. A lookup can shorten the links, so this
+    /// is a `RefCell`: the meaning of the table does not change.
+    vars: RefCell<Vec<Option<Ty>>>,
+    /// The rank of each variable: a bound on the length of the links to it.
+    rank: Vec<u32>,
+    /// The links that the lookups followed, for a test of the work.
+    steps: Cell<usize>,
 }
 
 impl Infer {
     /// Makes a new type variable.
     pub fn fresh(&mut self) -> Ty {
-        self.vars.push(None);
-        Ty::Var(u32::try_from(self.vars.len() - 1).unwrap_or(u32::MAX))
+        Ty::Var(self.push())
     }
 
     /// Makes a new integer variable.
     pub fn fresh_int(&mut self) -> Ty {
-        self.vars.push(None);
-        Ty::IntVar(u32::try_from(self.vars.len() - 1).unwrap_or(u32::MAX))
+        Ty::IntVar(self.push())
+    }
+
+    fn push(&mut self) -> u32 {
+        let vars = self.vars.get_mut();
+        vars.push(None);
+        self.rank.push(0);
+        u32::try_from(vars.len() - 1).unwrap_or(u32::MAX)
+    }
+
+    /// The links between variables that the lookups followed so far.
+    pub fn steps(&self) -> usize {
+        self.steps.get()
+    }
+
+    /// Follows the links from the variable `t` to the last variable, and
+    /// returns that variable as a type (`Ty::Var` or `Ty::IntVar`). Each
+    /// variable on the way then links to it directly.
+    fn find(&self, t: &Ty) -> Ty {
+        let mut vars = self.vars.borrow_mut();
+        let mut last = t.clone();
+        while let Ty::Var(v) | Ty::IntVar(v) = last {
+            match &vars[v as usize] {
+                Some(b @ (Ty::Var(_) | Ty::IntVar(_))) => {
+                    self.steps.set(self.steps.get() + 1);
+                    last = b.clone();
+                }
+                _ => break,
+            }
+        }
+        let mut at = t.clone();
+        while let Ty::Var(v) | Ty::IntVar(v) = at {
+            if at == last {
+                break;
+            }
+            let next = vars[v as usize].replace(last.clone());
+            match next {
+                Some(n) => at = n,
+                None => break,
+            }
+        }
+        last
     }
 
     /// Replaces bound variables, one level deep.
     pub fn shallow(&self, t: &Ty) -> Ty {
-        let mut t = t.clone();
-        loop {
-            match t {
-                Ty::Var(v) | Ty::IntVar(v) => match &self.vars[v as usize] {
-                    Some(b) => t = b.clone(),
-                    None => return t,
-                },
-                _ => return t,
+        match t {
+            Ty::Var(_) | Ty::IntVar(_) => {
+                let last = self.find(t);
+                let (Ty::Var(v) | Ty::IntVar(v)) = last else {
+                    return last;
+                };
+                self.vars.borrow()[v as usize].clone().unwrap_or(last)
             }
+            _ => t.clone(),
         }
     }
 
     /// Replaces all bound variables. Unbound integer variables become `i64`.
     pub fn resolve(&self, t: &Ty) -> Ty {
+        self.expand(t, true)
+    }
+
+    /// Replaces all bound variables. Unbound variables stay, so that a later
+    /// unification can still give an integer literal its type.
+    pub fn deep(&self, t: &Ty) -> Ty {
+        self.expand(t, false)
+    }
+
+    fn expand(&self, t: &Ty, default_int: bool) -> Ty {
+        let e = |t: &Ty| self.expand(t, default_int);
         match self.shallow(t) {
-            Ty::IntVar(_) => Ty::Int(IntTy::I64),
-            Ty::Tuple(ts) => Ty::Tuple(ts.iter().map(|t| self.resolve(t)).collect()),
-            Ty::Adt(id, ts) => Ty::Adt(id, ts.iter().map(|t| self.resolve(t)).collect()),
-            Ty::Ref(t) => Ty::Ref(Box::new(self.resolve(&t))),
-            Ty::Slice(t) => Ty::Slice(Box::new(self.resolve(&t))),
-            Ty::Array(t, n) => Ty::Array(Box::new(self.resolve(&t)), n),
-            Ty::Cont(a, b) => Ty::Cont(Box::new(self.resolve(&a)), Box::new(self.resolve(&b))),
-            Ty::Fn(f) => Ty::Fn(Rc::new(FnTy {
-                params: f.params.iter().map(|t| self.resolve(t)).collect(),
-                ret: self.resolve(&f.ret),
+            Ty::IntVar(_) if default_int => Ty::Int(IntTy::I64),
+            Ty::Tuple(ts) => Ty::Tuple(ts.iter().map(e).collect()),
+            Ty::Adt(id, ts) => Ty::Adt(id, ts.iter().map(e).collect()),
+            Ty::Ref(t) => Ty::Ref(Box::new(e(&t))),
+            Ty::Slice(t) => Ty::Slice(Box::new(e(&t))),
+            Ty::Array(t, n) => Ty::Array(Box::new(e(&t)), n),
+            Ty::Cont(a, b) => Ty::Cont(Box::new(e(&a)), Box::new(e(&b))),
+            Ty::Fn(f) => Ty::Fn(Arc::new(FnTy {
+                params: f.params.iter().map(e).collect(),
+                ret: e(&f.ret),
                 effects: f.effects.clone(),
                 summary: f.summary,
                 item: f.item,
@@ -189,6 +266,10 @@ impl Infer {
 
     /// Makes two types equal. Returns false if they cannot be equal.
     pub fn unify(&mut self, a: &Ty, b: &Ty) -> bool {
+        // An unbound variable links to a bound variable on the other side, not to
+        // a copy of its type: a later change of that type reaches it too
+        // (`rebind_fn`).
+        let (ra, rb) = (self.bound_var(a), self.bound_var(b));
         let a = self.shallow(a);
         let b = self.shallow(b);
         if let (Ty::Var(x), Ty::Var(y)) | (Ty::IntVar(x), Ty::IntVar(y)) = (&a, &b) {
@@ -202,8 +283,15 @@ impl Infer {
             | (Ty::Bool, Ty::Bool)
             | (Ty::Unit, Ty::Unit)
             | (Ty::Scope, Ty::Scope) => true,
-            (Ty::Var(x), _) | (Ty::IntVar(x), Ty::Int(_) | Ty::IntVar(_)) => self.bind(*x, &b),
-            (_, Ty::Var(y)) | (Ty::Int(_), Ty::IntVar(y)) => self.bind(*y, &a),
+            // Two unbound variables of one kind: no cycle can form.
+            (Ty::Var(x), Ty::Var(y)) | (Ty::IntVar(x), Ty::IntVar(y)) => {
+                self.union(*x, &a, *y, &b);
+                true
+            }
+            (Ty::Var(x), _) => self.bind_to(*x, &b, rb),
+            (_, Ty::Var(y)) => self.bind_to(*y, &a, ra),
+            (Ty::IntVar(x), Ty::Int(_)) => self.bind(*x, &b),
+            (Ty::Int(_), Ty::IntVar(y)) => self.bind(*y, &a),
             (Ty::Int(x), Ty::Int(y)) => x == y,
             (Ty::Tuple(xs), Ty::Tuple(ys)) if xs.len() == ys.len() => {
                 xs.iter().zip(ys).all(|(x, y)| self.unify(x, y))
@@ -226,12 +314,84 @@ impl Infer {
         }
     }
 
+    /// Returns the variable that type variable `t` links to last, if it is bound
+    /// to a function type, with that type.
+    pub fn bound_fn(&self, t: &Ty) -> Option<(u32, Arc<FnTy>)> {
+        let Ty::Var(_) = t else {
+            return None;
+        };
+        let Ty::Var(v) = self.find(t) else {
+            return None;
+        };
+        match self.vars.borrow()[v as usize].clone() {
+            Some(Ty::Fn(f)) => Some((v, f)),
+            _ => None,
+        }
+    }
+
+    /// Gives variable `v`, which is bound to a function type, another function
+    /// type of the same shape: one that can be more function values.
+    pub fn rebind_fn(&mut self, v: u32, f: Arc<FnTy>) {
+        if let Some(slot) = self.vars.get_mut().get_mut(v as usize) {
+            if matches!(slot, Some(Ty::Fn(_))) {
+                *slot = Some(Ty::Fn(f));
+            }
+        }
+    }
+
+    /// Returns the last variable of type variable `t` if it is bound to a type.
+    fn bound_var(&self, t: &Ty) -> Option<u32> {
+        let Ty::Var(_) = t else {
+            return None;
+        };
+        let Ty::Var(v) = self.find(t) else {
+            return None;
+        };
+        self.vars.borrow()[v as usize].is_some().then_some(v)
+    }
+
+    /// Binds variable `v` to type `t`. If `t` is the type of the bound variable
+    /// `root`, `v` links to `root`.
+    fn bind_to(&mut self, v: u32, t: &Ty, root: Option<u32>) -> bool {
+        match root {
+            Some(r) if r != v => {
+                if self.occurs(v, t) {
+                    return false;
+                }
+                self.vars.get_mut()[v as usize] = Some(Ty::Var(r));
+                true
+            }
+            _ => self.bind(v, t),
+        }
+    }
+
     fn bind(&mut self, v: u32, t: &Ty) -> bool {
-        if self.occurs(v, t) {
+        // A variable to a variable makes no cycle: `unify` gives two
+        // different unbound variables.
+        if !matches!(t, Ty::Var(_) | Ty::IntVar(_)) && self.occurs(v, t) {
             return false;
         }
-        self.vars[v as usize] = Some(t.clone());
+        self.vars.get_mut()[v as usize] = Some(t.clone());
         true
+    }
+
+    /// Joins the unbound variables `x` (the type `a`) and `y` (the type `b`)
+    /// of one kind. The variable of lower rank links to the other. With equal
+    /// ranks, the newer variable links to the older one, and the older one
+    /// gets a higher rank.
+    fn union(&mut self, x: u32, a: &Ty, y: u32, b: &Ty) {
+        let (rx, ry) = (self.rank[x as usize], self.rank[y as usize]);
+        // `x` links to `y` if its rank is lower, or if the ranks are equal and
+        // `x` is newer.
+        let (from, to, root) = if (rx, y) < (ry, x) {
+            (x, b, y)
+        } else {
+            (y, a, x)
+        };
+        if rx == ry {
+            self.rank[root as usize] += 1;
+        }
+        self.vars.get_mut()[from as usize] = Some(to.clone());
     }
 }
 
@@ -245,7 +405,7 @@ pub fn subst(t: &Ty, args: &[Ty]) -> Ty {
         Ty::Slice(t) => Ty::Slice(Box::new(subst(t, args))),
         Ty::Array(t, n) => Ty::Array(Box::new(subst(t, args)), *n),
         Ty::Cont(a, b) => Ty::Cont(Box::new(subst(a, args)), Box::new(subst(b, args))),
-        Ty::Fn(f) => Ty::Fn(Rc::new(FnTy {
+        Ty::Fn(f) => Ty::Fn(Arc::new(FnTy {
             params: f.params.iter().map(|t| subst(t, args)).collect(),
             ret: subst(&f.ret, args),
             effects: f.effects.clone(),
@@ -256,15 +416,34 @@ pub fn subst(t: &Ty, args: &[Ty]) -> Ty {
     }
 }
 
-/// Shows a type with the names of its definitions.
-pub struct Display<'a> {
+/// The names of the type definitions, by [`AdtId`], for [`Display`].
+pub trait AdtNames {
+    /// Returns the name of definition `id`, if it has one.
+    fn adt_name(&self, id: AdtId) -> Option<&str>;
+}
+
+impl AdtNames for [String] {
+    fn adt_name(&self, id: AdtId) -> Option<&str> {
+        self.get(id.index()).map(String::as_str)
+    }
+}
+
+impl AdtNames for [crate::program::AdtDef] {
+    fn adt_name(&self, id: AdtId) -> Option<&str> {
+        self.get(id.index()).map(|a| a.name.as_str())
+    }
+}
+
+/// Shows a type with the names of its definitions. The names come from a
+/// table, such as the definitions of the program, with no copy.
+pub struct Display<'a, N: AdtNames + ?Sized> {
     /// The type.
     pub ty: &'a Ty,
     /// The definition names, by index.
-    pub names: &'a [String],
+    pub names: &'a N,
 }
 
-impl fmt::Display for Display<'_> {
+impl<N: AdtNames + ?Sized> fmt::Display for Display<'_, N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let names = self.names;
         let d = |t: &'_ Ty| -> String { Display { ty: t, names }.to_string() };
@@ -284,7 +463,7 @@ impl fmt::Display for Display<'_> {
                 f.write_str(")")
             }
             Ty::Adt(id, ts) => {
-                let name = self.names.get(*id).map_or("?", String::as_str);
+                let name = self.names.adt_name(*id).unwrap_or("?");
                 if let ([t], crate::program::PTR_NAME) = (ts.as_slice(), name) {
                     return write!(f, "*{}", d(t));
                 }
@@ -333,9 +512,12 @@ mod tests {
         let mut inf = Infer::default();
         let a = inf.fresh();
         let i = inf.fresh_int();
-        assert!(inf.unify(&a, &Ty::Adt(0, vec![i.clone()])));
+        assert!(inf.unify(&a, &Ty::Adt(AdtId(0), vec![i.clone()])));
         assert!(inf.unify(&i, &Ty::Int(IntTy::U32)));
-        assert_eq!(inf.resolve(&a), Ty::Adt(0, vec![Ty::Int(IntTy::U32)]));
+        assert_eq!(
+            inf.resolve(&a),
+            Ty::Adt(AdtId(0), vec![Ty::Int(IntTy::U32)])
+        );
         assert!(!inf.unify(&Ty::Bool, &Ty::Unit));
         let b = inf.fresh();
         assert!(!inf.unify(&b, &Ty::Ref(Box::new(b.clone()))));
@@ -345,13 +527,81 @@ mod tests {
     }
 
     #[test]
+    fn a_union_of_variables_keeps_the_links_short() {
+        let mut inf = Infer::default();
+        // Each update unifies the type of `s` with a new integer variable.
+        let s = inf.fresh_int();
+        for _ in 0..1000 {
+            let lit = inf.fresh_int();
+            assert!(inf.unify(&s, &lit));
+            assert_eq!(inf.shallow(&lit), inf.shallow(&s));
+        }
+        assert!(inf.steps() < 4000, "{}", inf.steps());
+        // A plain variable links to an integer variable, not the reverse.
+        let v = inf.fresh();
+        assert!(inf.unify(&s, &v));
+        assert!(matches!(inf.shallow(&v), Ty::IntVar(_)));
+        assert!(!inf.unify(&v, &Ty::Bool));
+        assert!(inf.unify(&v, &Ty::Int(IntTy::U8)));
+        assert_eq!(inf.resolve(&s), Ty::Int(IntTy::U8));
+        // Two plain variables, and a cycle through a type.
+        let (a, b) = (inf.fresh(), inf.fresh());
+        assert!(inf.unify(&a, &b));
+        assert!(!inf.unify(&a, &Ty::Ref(Box::new(b.clone()))));
+        assert!(inf.unify(&b, &Ty::Bool));
+        assert_eq!(inf.resolve(&a), Ty::Bool);
+    }
+
+    #[test]
+    fn a_variable_links_to_a_bound_function_type() {
+        let mut inf = Infer::default();
+        let fn_ty = |summary| {
+            Ty::Fn(Arc::new(FnTy {
+                params: Vec::new(),
+                ret: Ty::Unit,
+                effects: None,
+                summary,
+                item: None,
+            }))
+        };
+        // The element of a `Vec` gets a closure, and a second use of the type
+        // links to the element variable, not to a copy of its type.
+        let elem = inf.fresh();
+        assert!(inf.unify(&elem, &fn_ty(Some(1))));
+        let other = inf.fresh();
+        assert!(inf.unify(&other, &elem));
+        let Some((v, f)) = inf.bound_fn(&other) else {
+            panic!("the variable is bound to a function type");
+        };
+        assert_eq!(f.summary, Some(1));
+        // A new function value for the type reaches both variables.
+        inf.rebind_fn(
+            v,
+            Arc::new(FnTy {
+                summary: Some(2),
+                ..(*f).clone()
+            }),
+        );
+        assert_eq!(inf.resolve(&elem), fn_ty(Some(2)));
+        assert_eq!(inf.resolve(&other), fn_ty(Some(2)));
+        // A cycle through a bound variable is still an error.
+        let w = inf.fresh();
+        let list = inf.fresh();
+        assert!(inf.unify(&list, &Ty::Adt(AdtId(0), vec![w.clone()])));
+        assert!(!inf.unify(&w, &list));
+    }
+
+    #[test]
     fn subst_and_display() {
         let names = vec!["Vec".to_string()];
-        let t = subst(&Ty::Adt(0, vec![Ty::Param(0)]), &[Ty::Int(IntTy::U8)]);
+        let t = subst(
+            &Ty::Adt(AdtId(0), vec![Ty::Param(0)]),
+            &[Ty::Int(IntTy::U8)],
+        );
         assert_eq!(
             Display {
                 ty: &Ty::Ref(Box::new(t)),
-                names: &names
+                names: names.as_slice()
             }
             .to_string(),
             "&Vec<u8>"
@@ -360,7 +610,7 @@ mod tests {
         assert_eq!(
             Display {
                 ty: &tup,
-                names: &names
+                names: names.as_slice()
             }
             .to_string(),
             "(bool, ())"

@@ -1,0 +1,20 @@
+// A task closure moves a linear value. A sibling fails while the task sleeps,
+// so the task is cancelled before it uses the value. The unwinder of the task
+// runs `on abort` for the value (ADR 0010).
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(t: Tx) { let Tx(id) = t; print("rollback {id}") }
+fn commit(t: Tx) / io { let Tx(id) = t; print("commit {id}") }
+
+fn main() / io, par {
+    handle Fail { fn fail(m) { print("caught: {m}") } } in {
+        let t = Tx { id: 7 }
+        scope { s =>
+            s.spawn(|| { sleep(50.ms); commit(t) })
+            s.spawn(|| { sleep(5.ms); fail("sibling failed") })
+            print("spawned")
+        }
+    }
+    print("end")
+}

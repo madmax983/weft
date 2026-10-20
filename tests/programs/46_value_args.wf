@@ -1,0 +1,114 @@
+// A by-value argument that holds references points into them until the call, as a
+// reference argument does: a tuple, an `Option` or a closure. A parameter of a
+// closure or a clause that holds references points into what the call gives.
+effect Run { fn run(f: fn()) }
+effect Opt { fn opt(x: Option<&u64>) }
+effect Pair { fn pair(t: (&Vec<u64>, u64)) }
+
+fn clear_with(t: (&u64, u64), v: &Vec<u64>) / mut(v) {
+    v.clear()
+    let (r, n) = t
+    print(r)
+}
+fn opt_fn(x: Option<&u64>, v: &Vec<u64>) / mut(v) {
+    v.clear()
+    match x {
+        Some(r) => print(r),
+        None => print(0),
+    }
+}
+
+fn tuple_call() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    clear_with((&v[0], 1), &v)   //~ W0312
+}
+fn option_call() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    opt_fn(Some(&v[0]), &v)   //~ W0312
+}
+fn tuple_closure() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let f = |t: (&u64, u64)| {
+        v.clear()
+        let (r, n) = t
+        print(r)
+    }
+    f((&v[0], 1))   //~ W0312
+}
+
+// A perform: the clause frees the place, then runs the closure or reads the payload.
+// A clause can run the closure more than once: a run after the change reads a
+// freed place (W0301, ADR 0006).
+fn closure_perform() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Run {
+        fn run(f) {
+            v.clear()
+            f()
+            resume(())
+        }
+    } in {
+        run(|| print(r))   //~ W0312 W0301
+    }
+}
+fn option_perform() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Opt {
+        fn opt(x) {
+            v.clear()
+            print(0)
+            resume(())
+        }
+    } in {
+        opt(Some(&v[0]))   //~ W0312
+    }
+}
+
+// The clause mutates through a reference inside its tuple parameter.
+fn tuple_param() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Pair {
+        fn pair(t) {
+            let (a, n) = t
+            a.clear()
+            resume(())
+        }
+    } in {
+        let r = &v[0]
+        pair((&v, 1))
+        print(r)   //~ W0301
+    }
+}
+
+// Controls: the tuple points into another place, and the clause runs the closure
+// before it frees the place.
+fn tuple_other() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let w: Vec<u64> = Vec.new()
+    w.push(2)
+    clear_with((&w[0], 1), &v)
+}
+fn closure_first() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let w: Vec<u64> = Vec.new()
+    w.push(2)
+    let r = &w[0]
+    handle Run {
+        fn run(f) {
+            f()
+            v.clear()
+            resume(())
+        }
+    } in {
+        run(|| print(r))
+    }
+}

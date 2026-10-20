@@ -1,0 +1,9 @@
+// The B6 hypothesis `bound_before_use` (proofs/link/README.md): no node uses a
+// reference where it can be unbound. The entry is node n0. A reference is
+// unbound at the entry unless n0 binds it, and it stays unbound along each
+// edge from a node that does not bind it.
+// crates/weft-check/tests/hypotheses.rs runs this file on each function of the
+// corpus with no expected error, and it must give no lint.
+unb(R, Q) :- points_into(R, _), cfg_edge(n0, Q), !rebound_at(R, n0).
+unb(R, Q) :- unb(R, P), cfg_edge(P, Q), !rebound_at(R, P).
+lint("use_where_unbound", Q) :- unb(R, Q), uses(R, Q).

@@ -3,10 +3,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use proptest::prelude::*;
-use weft_check::{bridge, check};
+use weft_check::{bridge, check, evidence, Cause};
 use weft_facts::{
-    CapId, FnFacts, HandlerInfo, NodeId, PlaceId, RootKind, Span, Step, StepKind, TaskId, TaskKind,
-    VarId, VarInfo, VarKind,
+    CapId, FnFacts, HandlerId, HandlerInfo, NodeId, PlaceId, RootKind, Span, Step, StepKind,
+    TaskId, TaskKind, VarId, VarInfo, VarKind,
 };
 
 #[derive(Clone, Debug)]
@@ -18,11 +18,18 @@ struct Shape {
     vars: Vec<[bool; 6]>,
     rels: Vec<(u8, usize, usize, usize)>,
     tasks: Vec<bool>,
-    handlers: Vec<(bool, bool, u8)>,
-    flags: (bool, bool),
+    handlers: Vec<(bool, u8)>,
+    flags: (bool, bool, bool, bool),
+    std: (bool, bool),
 }
 
 fn step(kind: u8, id: u8, unstable: bool) -> Step {
+    // Wildcard places, and one-place wildcard places of two instances.
+    match kind % 9 {
+        7 => return weft_facts::WILD,
+        8 => return weft_facts::wild_one(u32::from(id % 2)),
+        _ => {}
+    }
     let id = u32::from(id % 3);
     let kind = match kind % 6 {
         0 => StepKind::Field { id },
@@ -47,10 +54,11 @@ fn build(s: &Shape) -> FnFacts {
         ..FnFacts::default()
     };
     for (i, k) in s.roots.iter().enumerate() {
-        let kind = match k % 3 {
+        let kind = match k % 4 {
             0 => RootKind::Param,
             1 => RootKind::Local,
-            _ => RootKind::Group,
+            2 => RootKind::Group,
+            _ => RootKind::Arg,
         };
         f.add_root(format!("r{i}"), kind);
     }
@@ -84,13 +92,18 @@ fn build(s: &Shape) -> FnFacts {
             Span::default(),
         );
     }
-    for &(is_std, forwards, e) in &s.handlers {
+    for &(sim_root, e) in &s.handlers {
         f.handlers.push(HandlerInfo {
             effect: format!("E{}", e % 2),
-            is_std,
-            forwards,
+            sim_root,
             span: Span::default(),
         });
+    }
+    // `std_effect(E)` for some of the effect names.
+    for (i, std) in [s.std.0, s.std.1].into_iter().enumerate() {
+        if std {
+            f.std_effects.push(format!("E{i}"));
+        }
     }
     let caps = 2u32;
     f.caps = caps;
@@ -105,8 +118,11 @@ fn build(s: &Shape) -> FnFacts {
         f.cfg_edge.push((n(a), n(b)));
     }
     let has_tasks = !s.tasks.is_empty();
+    let nh = s.handlers.len();
+    let cap = |x: usize| CapId(u32::try_from(x).unwrap() % caps);
     for &(rel, a, b, c) in &s.rels {
-        match rel % 22 {
+        let idx = u32::try_from(c % 3).unwrap();
+        match rel % 50 {
             0 => f.points_into.push((v(a), p(b))),
             1 => f.mutates_at.push((n(a), p(b))),
             2 => f.reads_at.push((n(a), p(b))),
@@ -121,12 +137,17 @@ fn build(s: &Shape) -> FnFacts {
             7 => {
                 f.moved_at.push((v(a), n(b)));
                 f.uses.push((v(a), n(b)));
+                // A move of a part can leave a linear part.
+                if c % 3 == 0 {
+                    f.rest_linear.push((v(a), n(b)));
+                }
             }
             8 => f.scope_end.push((v(a), n(b))),
             9 => f.may_abort.push(n(a)),
             10 => f.multi_at.push(n(a)),
             11 => f.declared_mut.push(p(a)),
-            12 => f.escapes_at.push((n(a), format!("E{}", b % 2))),
+            // More `escapes_at` facts for W0805 and W0803.
+            12 | 46 => f.escapes_at.push((n(a), format!("E{}", b % 2))),
             13 => f.declared_effect.push(format!("E{}", a % 2)),
             14 => f.shared_root.push(p(a)),
             15 if has_tasks => f.spawned_at.push((t(a), n(b))),
@@ -141,11 +162,43 @@ fn build(s: &Shape) -> FnFacts {
             }
             20 => f.call_mut.push((n(a), p(b), u32::try_from(c % 3).unwrap())),
             21 => f.call_arg.push((n(a), p(b), u32::try_from(c % 3).unwrap())),
+            22 => f.owner.push((p(a), v(b))),
+            23 => f.moved_part.push((p(a), n(b))),
+            24 => f.lends_mut.push((n(a), p(b))),
+            25 => f.clause_multi.push(cap(a)),
+            26 => f.body_multi.push(cap(a)),
+            27 => f.resumes_at.push((n(a), cap(b))),
+            28 if nh > 0 => f.clause_performs.push((
+                HandlerId(u32::try_from(a % nh).unwrap()),
+                format!("E{}", b % 2),
+            )),
+            29 => f.overwrites.push((v(a), n(b))),
+            30 => f.unset_at.push((v(a), n(b))),
+            31 => f.empty_at.push((v(a), n(b))),
+            32 => f.unwound_at.push((v(a), n(b))),
+            33 => f.releases_at.push((n(a), p(b))),
+            34 => f.writes_via.push((n(a), v(b))),
+            35 => f.spared_at.push((v(a), n(b))),
+            36 if has_tasks => f.kept.push((t(a), p(b))),
+            37 if has_tasks => f.spawns_in.push((t(a), t(b))),
+            38 if has_tasks => f.opaque.push(t(a)),
+            39 => f.arg_at.push((n(a), idx, p(b))),
+            40 => f.param_in.push((n(a), idx, p(b))),
+            41 => f.uniq_param.push((n(a), idx)),
+            42 => f.arg_aliased.push((n(a), idx)),
+            43 => f.fn_arg_effect.push((n(a), idx, format!("E{}", b % 2))),
+            44 => f.param_effect.push((n(a), idx, format!("E{}", b % 2))),
+            45 => f.sim_run_at.push(n(a)),
+            47 => f.ref_at.push((n(a), p(b))),
+            48 => f.ref_in.push((n(a), p(b))),
+            49 => f.rest_linear.push((v(a), n(b))),
             _ => {}
         }
     }
     f.has_signature = s.flags.0;
     f.library = s.flags.1;
+    f.started = s.flags.2;
+    f.no_runtime = s.flags.3;
     f.normalize();
     f
 }
@@ -159,11 +212,12 @@ fn shape() -> impl Strategy<Value = Shape> {
         prop::collection::vec(any::<[bool; 6]>(), 1..5),
         prop::collection::vec((any::<u8>(), 0usize..20, 0usize..20, 0usize..6), 0..40),
         prop::collection::vec(any::<bool>(), 0..3),
-        prop::collection::vec((any::<bool>(), any::<bool>(), any::<u8>()), 0..3),
+        prop::collection::vec((any::<bool>(), any::<u8>()), 0..3),
+        (any::<bool>(), any::<bool>(), any::<bool>(), any::<bool>()),
         (any::<bool>(), any::<bool>()),
     )
         .prop_map(
-            |(nodes, edges, roots, places, vars, rels, tasks, handlers, flags)| Shape {
+            |(nodes, edges, roots, places, vars, rels, tasks, handlers, flags, std)| Shape {
                 nodes,
                 edges,
                 roots,
@@ -173,8 +227,146 @@ fn shape() -> impl Strategy<Value = Shape> {
                 tasks,
                 handlers,
                 flags,
+                std,
             },
         )
+}
+
+/// The relations of W0301, W0302 and W0304, for [`shared_shape`].
+const SHARED_RELS: [u8; 24] = [
+    0, 0, 0, 0, 0, 0, 1, 1, 1, 5, 6, 6, 6, 6, 6, 6, 7, 8, 22, 23, 24, 32, 33, 34,
+];
+
+/// Facts with many references into few places: the references share their
+/// witnesses and their gen nodes, so the checker shares a search of the whole
+/// graph between them (`rules::invalidation`).
+fn shared_shape() -> impl Strategy<Value = Shape> {
+    (
+        2usize..8,
+        prop::collection::vec((0usize..8, 0usize..8), 0..16),
+        prop::collection::vec((0usize..2, any::<u8>(), any::<u8>(), any::<bool>()), 0..3),
+        prop::collection::vec(any::<[bool; 6]>(), 4..12),
+        prop::collection::vec((0usize..SHARED_RELS.len(), 0usize..24, 0usize..24), 20..80),
+    )
+        .prop_map(|(nodes, edges, places, vars, rels)| Shape {
+            nodes,
+            edges,
+            roots: vec![1],
+            places,
+            vars,
+            rels: rels
+                .into_iter()
+                .map(|(k, a, b)| (SHARED_RELS[k], a, b, 0))
+                .collect(),
+            tasks: Vec::new(),
+            handlers: Vec::new(),
+            flags: (false, false, false, false),
+            std: (false, false),
+        })
+}
+
+/// The checker and the spec give the same violations.
+fn agrees(f: &FnFacts) -> Result<(), TestCaseError> {
+    let fast = check(f).violations;
+    let spec = bridge::check_spec(f).expect("spec evaluates");
+    prop_assert_eq!(fast, spec);
+    Ok(())
+}
+
+/// The evidence of W0301 and W0405 is a derivation of the spec, and each
+/// violation has one piece of it (`weft_check::evidence`).
+fn evidence_agrees(f: &FnFacts) -> Result<(), TestCaseError> {
+    let r = check(f);
+    let out = evidence::evaluate_probes(f).expect("spec evaluates");
+    prop_assert_eq!(evidence::differences(f, &r, &out), Vec::<String>::new());
+    Ok(())
+}
+
+/// Each use of a reference that a node of the spec invalidates has one piece
+/// of evidence: the first node that invalidates the reference and reaches the
+/// use alone. The test finds that node from the spec alone. It takes all the
+/// nodes of `invalidated_at(R, P)` of the spec for the reference, in order,
+/// and the first one whose propagation reaches the use. So it checks all gen
+/// nodes, not only the nodes of the evidence, and a use with no such node has
+/// no error and no evidence.
+fn first_evidence(f: &FnFacts) -> Result<(), TestCaseError> {
+    let r = check(f);
+    let out = evidence::evaluate_probes(f).expect("spec evaluates");
+    let id = |v, prefix: char| -> u32 {
+        let text = out.display_value(v);
+        let text = text.trim_matches('"');
+        text.strip_prefix(prefix)
+            .and_then(|x| x.parse().ok())
+            .unwrap_or_else(|| panic!("bad id {text}"))
+    };
+    let mut gens: Vec<(VarId, NodeId)> = out
+        .tuples("invalidated_at")
+        .iter()
+        .map(|t| (VarId(id(t[0], 'v')), NodeId(id(t[1], 'n'))))
+        .collect();
+    gens.sort();
+    gens.dedup();
+    let n = f.nodes.len();
+    let mut succ = vec![Vec::new(); n];
+    for &(a, b) in &f.cfg_edge {
+        succ[a.index()].push(b.index());
+    }
+    let reaches = |v: VarId, at: NodeId, u: NodeId| {
+        let mut kill = vec![false; n];
+        for &(x, q) in &f.rebound_at {
+            if x == v {
+                kill[q.index()] = true;
+            }
+        }
+        let mut one = vec![false; n];
+        one[at.index()] = true;
+        weft_verified::dataflow::propagate(&succ, &one, &kill)[u.index()]
+    };
+    for &(v, u) in &f.uses {
+        let first = gens
+            .iter()
+            .filter(|&&(x, _)| x == v)
+            .map(|&(_, p)| p)
+            .find(|&p| reaches(v, p, u));
+        let evidence: Vec<_> = r
+            .invalidations
+            .iter()
+            .filter(|i| i.var == v && i.used_at == u)
+            .collect();
+        match first {
+            None => {
+                prop_assert!(evidence.is_empty(), "{:?}", evidence);
+                prop_assert!(!r.violations.error.contains(&(v, u)));
+            }
+            Some(p) => {
+                prop_assert_eq!(evidence.len(), 1, "use {:?}", (v, u));
+                prop_assert_eq!(evidence[0].at, p, "{:?}", evidence[0]);
+                prop_assert!(r.violations.error.contains(&(v, u)));
+            }
+        }
+    }
+    // Each piece of evidence is a witness of the spec at its node.
+    let witness = r
+        .invalidations
+        .iter()
+        .filter(|inv| match inv.cause {
+            Cause::Mutation(m) => {
+                f.mutates_at.contains(&(inv.at, m))
+                    || f.performs_at
+                        .iter()
+                        .any(|&(q, c)| q == inv.at && f.footprint.contains(&(c, m)))
+            }
+            Cause::Lend(m) => f.lends_mut.contains(&(inv.at, m)),
+            Cause::Move(o) => f.moved_at.contains(&(o, inv.at)),
+            Cause::ScopeEnd(o) => f.scope_end.contains(&(o, inv.at)),
+            Cause::Unwound(o) => f.unwound_at.contains(&(o, inv.at)),
+            Cause::MovePart(m) => f.moved_part.contains(&(m, inv.at)),
+            Cause::Release(m) => f.releases_at.contains(&(inv.at, m)),
+        })
+        .count();
+    prop_assert_eq!(witness, r.invalidations.len());
+    prop_assert_eq!(r.invalidations.len(), r.violations.error.len());
+    Ok(())
 }
 
 proptest! {
@@ -185,9 +377,25 @@ proptest! {
 
     #[test]
     fn checker_agrees_with_spec(s in shape()) {
+        agrees(&build(&s))?;
+    }
+
+    #[test]
+    fn evidence_agrees_with_spec(s in shape()) {
+        evidence_agrees(&build(&s))?;
+    }
+
+    #[test]
+    fn each_invalid_use_has_the_first_evidence(s in shape()) {
+        first_evidence(&build(&s))?;
+    }
+
+    /// The same, for references that share their witnesses.
+    #[test]
+    fn shared_witnesses_agree_with_spec(s in shared_shape()) {
         let f = build(&s);
-        let fast = check(&f).violations;
-        let spec = bridge::check_spec(&f).expect("spec evaluates");
-        prop_assert_eq!(fast, spec);
+        agrees(&f)?;
+        evidence_agrees(&f)?;
+        first_evidence(&f)?;
     }
 }

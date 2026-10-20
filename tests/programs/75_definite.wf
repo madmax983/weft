@@ -1,0 +1,177 @@
+// A variable needs a value before a use (W0304), and a `match` on an enum
+// needs an arm for each variant (W0120).
+
+fn use_unset() -> u64 {
+    let x: u64
+    x   //~ W0304
+}
+fn set_then_use() -> u64 {
+    let x: u64
+    x = 3
+    x
+}
+fn set_on_one_path(c: bool) -> u64 {
+    let x: u64
+    if c { x = 1 }
+    x   //~ W0304
+}
+fn set_on_both_paths(c: bool) -> u64 {
+    let x: u64
+    if c { x = 1 } else { x = 2 }
+    x
+}
+fn compound_unset() -> u64 {
+    let x: u64
+    x += 1   //~ W0304
+    x
+}
+fn ref_unset() {
+    let r: &u64
+    print(r)   //~ W0304
+}
+fn set_in_loop(n: u64) -> u64 {
+    let x: u64
+    for i in 0..n { x = i }
+    x   //~ W0304
+}
+fn tuple_unset() -> u64 {
+    let (a, b): (u64, u64)
+    a = 1
+    a + b   //~ W0304
+}
+fn captured_unset() {
+    let x: u64
+    let f = || print(x)   //~ W0304
+    x = 1
+    f()
+}
+
+// A `match` on an enum covers every variant, or has an arm that matches anything.
+enum Shape { Circle(u64), Square(u64), Dot }
+fn missing_variant(s: Shape) -> u64 {
+    match s {   //~ W0120
+        Circle(r) => r,
+        Square(a) => a,
+    }
+}
+fn every_variant(s: Shape) -> u64 {
+    match s {
+        Circle(r) => r,
+        Square(a) => a,
+        Dot => 0,
+    }
+}
+fn wildcard_arm(s: Shape) -> u64 {
+    match s {
+        Circle(r) => r,
+        _ => 0,
+    }
+}
+fn binding_arm(s: Shape) -> u64 {
+    match s {
+        Dot => 0,
+        other => 1,
+    }
+}
+fn missing_none(o: Option<u64>) -> u64 {
+    match o {   //~ W0120
+        Some(x) => x,
+    }
+}
+fn nested_missing(o: Option<Option<u64>>) -> u64 {
+    match o {   //~ W0120
+        Some(Some(x)) => x,
+        None => 0,
+    }
+}
+fn nested_covered(o: Option<Option<u64>>) -> u64 {
+    match o {
+        Some(Some(x)) => x,
+        Some(None) => 1,
+        None => 0,
+    }
+}
+fn tuple_of_options(a: Option<u64>, b: Option<u64>) -> u64 {
+    match (a, b) {   //~ W0120
+        (Some(x), _) => x,
+        (None, Some(y)) => y,
+    }
+}
+fn tuple_covered(a: Option<u64>, b: Option<u64>) -> u64 {
+    match (a, b) {
+        (Some(x), _) => x,
+        (_, Some(y)) => y,
+        (None, None) => 0,
+    }
+}
+fn bools(c: bool) -> u64 {
+    match c {   //~ W0120
+        true => 1,
+    }
+}
+fn bools_covered(c: bool) -> u64 {
+    match c {
+        true => 1,
+        false => 0,
+    }
+}
+fn integers(n: u64) -> u64 {
+    match n {   //~ W0120
+        0 => 1,
+        1 => 2,
+    }
+}
+fn integers_covered(n: u64) -> u64 {
+    match n {
+        0 => 1,
+        k => k,
+    }
+}
+fn through_ref(s: &Shape) -> u64 {
+    match s {   //~ W0120
+        Circle(r) => 1,
+    }
+}
+
+// A wide match costs little when an arm matches anything in the other columns.
+fn wide_missing(b0: bool, b1: bool, b2: bool, b3: bool, b4: bool, b5: bool, b6: bool, b7: bool, b8: bool, b9: bool, b10: bool, b11: bool, b12: bool, b13: bool, b14: bool, b15: bool) -> u64 {
+    match (b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15) {   //~ W0120
+        (true, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) => 0,
+        (_, true, _, _, _, _, _, _, _, _, _, _, _, _, _, _) => 1,
+        (_, _, true, _, _, _, _, _, _, _, _, _, _, _, _, _) => 2,
+        (_, _, _, true, _, _, _, _, _, _, _, _, _, _, _, _) => 3,
+        (_, _, _, _, true, _, _, _, _, _, _, _, _, _, _, _) => 4,
+        (_, _, _, _, _, true, _, _, _, _, _, _, _, _, _, _) => 5,
+        (_, _, _, _, _, _, true, _, _, _, _, _, _, _, _, _) => 6,
+        (_, _, _, _, _, _, _, true, _, _, _, _, _, _, _, _) => 7,
+        (_, _, _, _, _, _, _, _, true, _, _, _, _, _, _, _) => 8,
+        (_, _, _, _, _, _, _, _, _, true, _, _, _, _, _, _) => 9,
+        (_, _, _, _, _, _, _, _, _, _, true, _, _, _, _, _) => 10,
+        (_, _, _, _, _, _, _, _, _, _, _, true, _, _, _, _) => 11,
+        (_, _, _, _, _, _, _, _, _, _, _, _, true, _, _, _) => 12,
+        (_, _, _, _, _, _, _, _, _, _, _, _, _, true, _, _) => 13,
+        (_, _, _, _, _, _, _, _, _, _, _, _, _, _, true, _) => 14,
+        (_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, true) => 15,
+    }
+}
+fn wide_covered(b0: bool, b1: bool, b2: bool, b3: bool, b4: bool, b5: bool, b6: bool, b7: bool, b8: bool, b9: bool, b10: bool, b11: bool, b12: bool, b13: bool, b14: bool, b15: bool) -> u64 {
+    match (b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13, b14, b15) {
+        (true, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _) => 0,
+        (_, true, _, _, _, _, _, _, _, _, _, _, _, _, _, _) => 1,
+        (_, _, true, _, _, _, _, _, _, _, _, _, _, _, _, _) => 2,
+        (_, _, _, true, _, _, _, _, _, _, _, _, _, _, _, _) => 3,
+        (_, _, _, _, true, _, _, _, _, _, _, _, _, _, _, _) => 4,
+        (_, _, _, _, _, true, _, _, _, _, _, _, _, _, _, _) => 5,
+        (_, _, _, _, _, _, true, _, _, _, _, _, _, _, _, _) => 6,
+        (_, _, _, _, _, _, _, true, _, _, _, _, _, _, _, _) => 7,
+        (_, _, _, _, _, _, _, _, true, _, _, _, _, _, _, _) => 8,
+        (_, _, _, _, _, _, _, _, _, true, _, _, _, _, _, _) => 9,
+        (_, _, _, _, _, _, _, _, _, _, true, _, _, _, _, _) => 10,
+        (_, _, _, _, _, _, _, _, _, _, _, true, _, _, _, _) => 11,
+        (_, _, _, _, _, _, _, _, _, _, _, _, true, _, _, _) => 12,
+        (_, _, _, _, _, _, _, _, _, _, _, _, _, true, _, _) => 13,
+        (_, _, _, _, _, _, _, _, _, _, _, _, _, _, true, _) => 14,
+        (_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, true) => 15,
+        (false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false) => 99,
+    }
+}

@@ -1,0 +1,106 @@
+// A closure that captures the scope capability `s` points into the variable of
+// `s`, as a closure that captures `&s` does. The end of the scope ends `s`, so
+// the closure is invalid after it (W0301). Else a call of the closure after the
+// scope would start a task that no scope joins (ADR 0006).
+struct Stats { count: u64 }
+struct Job { f: fn() }
+
+fn run_it(f: fn()) { f() }
+
+// The closure goes to a local outside the scope.
+fn escape(st: &Stats) / mut(st), async {
+    let keep = || print(0)
+    scope { s =>
+        keep = || {
+            s.spawn(|| st.count += 1)
+            ()
+        }
+    }
+    keep()   //~ W0301
+}
+
+// The closure is the value of the scope.
+fn as_value(st: &Stats) / mut(st), async {
+    let k = scope { s => || { s.spawn(|| st.count += 1); () } }   //~ W0301
+    k()
+}
+
+// The closure goes to a field of a local outside the scope.
+fn as_field(st: &Stats) / mut(st), async {
+    let j = Job { f: || print(0) }
+    scope { s => j.f = || { s.spawn(|| st.count += 1); () } }
+    let g = j.f   //~ W0301
+    g()   //~ W0301
+}
+
+// The closure captures a tuple that holds the scope capability.
+fn in_tuple(st: &Stats) / mut(st), async {
+    let keep = || print(0)
+    scope { s =>
+        let t = (s, 1)
+        keep = || {
+            let (a, b) = t
+            a.spawn(|| st.count += b)
+            ()
+        }
+    }
+    keep()   //~ W0301
+}
+
+// The closure captures an `Option` that holds the scope capability.
+fn in_option(st: &Stats) / mut(st), async {
+    let keep = || print(0)
+    scope { s =>
+        let o = Some(s)
+        keep = || {
+            match o {
+                Some(a) => {
+                    a.spawn(|| st.count += 1)
+                    ()
+                },
+                None => (),
+            }
+        }
+    }
+    keep()   //~ W0301
+}
+
+// Clean: the closure runs inside the scope.
+fn inside(st: &Stats) / mut(st), async {
+    scope { s =>
+        let f = || { s.spawn(|| st.count += 1); () }
+        run_it(f)
+    }
+}
+
+// Clean: a closure that captures a tuple with the scope runs inside the scope.
+fn tuple_inside(st: &Stats) / mut(st), async {
+    scope { s =>
+        let t = (s, 1)
+        let f = || {
+            let (a, b) = t
+            a.spawn(|| st.count += b)
+            ()
+        }
+        run_it(f)
+    }
+}
+
+// Clean: a new value replaces the closure before the use.
+fn replaced(st: &Stats) / mut(st), async {
+    let keep = || print(0)
+    scope { s =>
+        keep = || { s.spawn(|| st.count += 1); () }
+        keep()
+    }
+    keep = || print(1)
+    keep()
+}
+
+fn main() / async {
+    let st = Stats { count: 0 }
+    inside(&st)
+    tuple_inside(&st)
+    replaced(&st)
+    print(st.count)
+}

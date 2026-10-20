@@ -1,0 +1,6 @@
+// The root calls a public function of the dependency. It cannot call a private
+// one, but a public function of the dependency can.
+fn main(env: Env) / io {
+    let f = json.parse("[1, 2, 3]")
+    let n = f()
+}

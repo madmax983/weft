@@ -6,9 +6,6 @@
 //!
 //! Verify with `verus crates/weft-verified/src/lib.rs --crate-type=lib`.
 
-#![allow(clippy::all, clippy::pedantic, clippy::nursery)]
-#![allow(missing_docs)]
-
 pub mod dataflow;
 pub mod lifecycle;
 pub mod modes;

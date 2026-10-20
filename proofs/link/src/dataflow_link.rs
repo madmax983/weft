@@ -752,9 +752,9 @@ pub proof fn thm_dataflow_exact(cfg: Cfg, ss0: SState, g: Map<Var, Group>, unb: 
 /// fixpoint that the theorems above use. The proof uses only the
 /// postcondition of `propagate`.
 pub fn invalid_at(
-    succ: &Vec<Vec<usize>>,
-    gen: &Vec<bool>,
-    kill: &Vec<bool>,
+    succ: &[Vec<usize>],
+    gen: &[bool],
+    kill: &[bool],
     Ghost(cfg): Ghost<Cfg>,
     Ghost(g): Ghost<Map<Var, Group>>,
     Ghost(v): Ghost<Var>,

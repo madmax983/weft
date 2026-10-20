@@ -1,0 +1,66 @@
+// A failure of a child goes to the handlers of its scope, not to a handler
+// where the owner is when the child fails. Handlers are lexical (ADR 0010).
+// The owner unwinds to the scope, and the scope fails.
+fn child() / fail {
+    fail("child failed")
+}
+
+// The owner is inside a callee with its own `Fail` handler.
+fn quiet_wait() / clock {
+    handle Fail { fn fail(m) { print("callee handler: {m}") } } in {
+        sleep(10.ms)
+    }
+}
+
+fn in_callee(fail_at: Duration) / io {
+    handle Fail { fn fail(m) { print("main handler: {m}") } } in {
+        scope { s =>
+            s.spawn(|| { sleep(fail_at); fail("child failed") })
+            quiet_wait()
+            sleep(20.ms)
+            print("scope body done")
+        }
+        print("scope returned normally")
+    }
+}
+
+// The owner is inside an inner `Fail` handler of the scope body.
+fn in_inner() / io {
+    handle Fail { fn fail(m) { print("outer handler: {m}") } } in {
+        scope { s =>
+            s.spawn(|| child())
+            handle Fail { fn fail(m) { print("inner handler: {m}") } } in {
+                sleep(10.ms)
+                print("inner body done")
+            }
+            print("scope body done")
+        }
+        print("scope returned normally")
+    }
+}
+
+effect Ask { fn ask() -> u64 }
+
+// The owner waits in a clause outside the scope: the frame of the scope is in
+// the continuation. The failure waits until a resume puts the frame back.
+fn in_clause() / io {
+    handle Ask { fn ask() { sleep(20.ms); print("clause done"); resume(1) } } in {
+        handle Fail { fn fail(m) { print("scope handler: {m}") } } in {
+            scope { s =>
+                s.spawn(|| { sleep(5.ms); fail("child failed") })
+                let x = ask()
+                sleep(10.ms)
+                print("scope body done {x}")
+            }
+            print("scope returned normally")
+        }
+    }
+}
+
+fn main() / io {
+    in_callee(5.ms)
+    in_callee(15.ms)
+    in_inner()
+    in_clause()
+    print("end")
+}

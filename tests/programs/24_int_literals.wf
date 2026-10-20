@@ -1,0 +1,58 @@
+// Integer literals keep their type open when a place reads them.
+struct Wrap<T> { x: T }
+
+fn first_elem() -> u64 {
+    let v = Vec.new()
+    v.push(1)
+    v[0]
+}
+
+fn loop_sum() -> u64 {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    let t = 0
+    for x in v[] { t += x }
+    t
+}
+
+fn first_ref() {
+    let v = Vec.new()
+    v.push(1)
+    let o: Option<&u64> = Some(&v[0])
+    print(o)
+}
+
+fn slice_sum() -> u64 {
+    let v = Vec.new()
+    v.push(1)
+    let s = &v[]
+    let t = 0
+    for x in s[] { t += x }
+    t
+}
+
+fn wrapped() -> u64 {
+    let w = Wrap { x: 1 }
+    w.x
+}
+
+fn tuple_match() -> u64 {
+    match (1, 2) {
+        (a, b) => a + b,
+    }
+}
+
+fn variant_match() -> u64 {
+    match Some(1) {
+        Some(x) => x,
+        None => 0,
+    }
+}
+
+// Control: a real mismatch is still an error.
+fn signed() -> u64 {
+    let v: Vec<i32> = Vec.new()
+    v.push(1)
+    v[0]   //~ W0102
+}

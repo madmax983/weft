@@ -1,0 +1,69 @@
+// `@ uniq` follows the value. A local is `@ uniq` only while it holds a `@ uniq`
+// reference. The hidden iterator of a `for` loop is `@ uniq` if its source is.
+
+fn needs_uniq(es: &[u64] @ uniq) / mut(es) {}
+
+fn rebound_to_aliased(v: &Vec<u64>, w: &Vec<u64>) / mut(v[], w[]) {
+    let (l, r) = v.split_mut(1)
+    l = &w[]
+    needs_uniq(l)   //~ W0406
+}
+fn still_uniq(v: &Vec<u64>) / mut(v[]) {
+    let (l, r) = v.split_mut(1)
+    needs_uniq(l)
+    l = r
+    needs_uniq(l)
+}
+
+effect Choice { multi fn choose() -> bool }
+struct Entity { hp: u64 }
+fn walk_uniq(es: &[Entity] @ uniq) / mut(es[]), Choice {
+    for e in es[] {
+        e.hp += 1
+        let b = choose()   //~ W0503
+    }
+}
+fn walk_scalars(xs: &[u64] @ uniq) / Choice {
+    for x in xs[] {
+        let b = choose()   //~ W0503
+    }
+}
+fn walk_aliased(es: &[Entity]) / mut(es[]), Choice {
+    for e in es[] {
+        e.hp += 1
+        let b = choose()
+    }
+}
+fn choose_after(es: &[Entity] @ uniq) / mut(es[]), Choice {
+    for e in es[] {
+        e.hp += 1
+    }
+    let b = choose()
+}
+
+// After an `if` or a `match`, a local is `@ uniq` only if it is at the end of
+// each branch.
+fn branch_aliased(v: &Vec<u64>, w: &Vec<u64>, c: bool) / mut(v[], w[]) {
+    let (l, r) = v.split_mut(1)
+    if c { l = &w[] } else { l = r }
+    needs_uniq(l)   //~ W0406
+}
+fn arm_aliased(v: &Vec<u64>, w: &Vec<u64>, o: Option<u64>) / mut(v[], w[]) {
+    let (l, r) = v.split_mut(1)
+    match o { Some(x) => { l = &w[] }, None => { l = r } }
+    needs_uniq(l)   //~ W0406
+}
+fn branch_uniq(v: &Vec<u64>, c: bool) / mut(v[]) {
+    let (l, r) = v.split_mut(1)
+    if c { l = r }
+    needs_uniq(l)
+}
+fn break_aliased(v: &Vec<u64>, w: &Vec<u64>, c: bool) / mut(v[], w[]) {
+    let (l, r) = v.split_mut(1)
+    loop {
+        if c { l = &w[]
+ break }
+        l = r
+    }
+    needs_uniq(l)   //~ W0406
+}

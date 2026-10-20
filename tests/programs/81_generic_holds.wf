@@ -1,0 +1,103 @@
+// A generic function does not know that a value of a type parameter is linear
+// (ADR 0007). It can hold such a value at a node that can abort, or that can
+// resume a `multi` continuation more than once. Its type parameters are then in
+// the `holds` part of its signature. A caller that gives a linear type there
+// holds the value across the call. That is W0602 if the type has no `on abort`,
+// and W0503 if the call can resume more than once.
+effect Choice { multi fn choose() -> bool }
+
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { let Lock(i) = l }
+fn lock() -> Lock { Lock { id: 1 } }
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { let Tx(i) = t }
+fn begin() -> Tx { Tx { id: 1 } }
+
+fn hold_fail<T>(x: T) -> T / fail { fail("boom")
+ x }
+fn hold_multi<T>(x: T) -> T / Choice { let b = choose()
+ x }
+fn hold_call<T>(x: T, f: fn()) -> T { f()
+ x }
+fn hold_in_pair<T>(x: T) -> (T, u64) / fail { fail("boom")
+ (x, 1) }
+fn hold_nested<T>(x: T) -> T / fail { hold_fail(x) }
+fn drop_it<T>(x: T) { }
+fn apply_lock(x: Lock, f: fn(Lock) -> Lock / fail) -> Lock / fail { f(x) }
+fn apply_gen<T>(x: T, f: fn(T) -> T / fail) -> T / fail { f(x) }
+fn give_lock(k: fn(Lock)) { k(lock()) }
+extern fn hold_ext<T>(x: T) -> T / fail
+fn fail_first<T>(x: T) -> T / fail { x }
+fn give_first<T>(x: T) -> T / fail { let y = x
+ fail("late")
+ y }
+
+fn aborts() / fail {
+    let m = hold_fail(lock())   //~ W0602
+    unlock(m)
+}
+fn multis() / Choice {
+    let m = hold_multi(lock())   //~ W0503 W0602
+    unlock(m)
+}
+fn through_param() / fail {
+    let m = hold_call(lock(), || fail("x"))   //~ W0602
+    unlock(m)
+}
+fn in_pair() / fail {
+    let (m, n) = hold_in_pair(lock())   //~ W0602
+    unlock(m)
+}
+fn nested() / fail {
+    let m = hold_nested(lock())   //~ W0602
+    unlock(m)
+}
+fn renamed() / fail {
+    let m = give_first(lock())   //~ W0602
+    unlock(m)
+}
+
+// Controls.
+// A generic function used as a value: code that the body does not follow calls
+// it, so the value gets the checks of a call.
+fn item_value_holds() / fail {
+    let m = apply_lock(lock(), hold_fail)   //~ W0602
+    unlock(m)
+}
+fn item_value_generic() / fail {
+    let m = apply_gen(lock(), hold_fail)   //~ W0602
+    unlock(m)
+}
+fn item_value_drops() {
+    give_lock(drop_it)   //~ W0601
+}
+// A foreign generic function can hold or drop a value of each type parameter.
+fn foreign_holds() / fail {
+    let m = hold_ext(lock())   //~ W0602 W0601
+    unlock(m)
+}
+fn item_value_guarded() / fail {
+    let t = apply_gen(begin(), hold_fail)
+    rollback(t)
+}
+fn guarded() / fail {
+    let t = hold_fail(begin())
+    rollback(t)
+}
+fn plain() / fail {
+    let n = hold_fail(1)
+    print(n)
+}
+fn quiet_param() {
+    let m = hold_call(lock(), || print(1))
+    unlock(m)
+}
+fn no_abort_while_held() / fail {
+    let m = fail_first(lock())
+    unlock(m)
+}
+fn multi_plain() / Choice {
+    let n = hold_multi(1)
+    print(n)
+}
