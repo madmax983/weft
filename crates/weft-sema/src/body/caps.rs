@@ -9,7 +9,8 @@ use std::collections::BTreeSet;
 use weft_syntax::diag::Code;
 
 use super::{
-    effects, CapId, FnId, FnInfo, Lower, NodeId, PlaceId, RootKind, Span, Summary, Ty, Val, VarId,
+    effects, CapId, EffectId, FnId, FnInfo, Lower, NodeId, PlaceId, RootKind, Span, Summary, Ty,
+    Val, VarId,
 };
 
 /// One element of the capability set of a value (`Val::caps`, the `caps` of a
@@ -37,7 +38,7 @@ pub enum Held {
     Param(usize),
     /// A closure that performs this effect (an index in `Program::effects`)
     /// through a handler outside the function.
-    Escapes(usize),
+    Escapes(EffectId),
     /// A closure that is not `many`. The local that holds it is not `many`
     /// either (W0503).
     NotMany,
@@ -75,7 +76,7 @@ pub(super) const MADE: Held = Held::Made;
 
 /// Returns the mark of a closure that performs effect `e` (an index in
 /// `Program::effects`) through a handler outside the function.
-pub(super) const fn escaped_cap(e: usize) -> Held {
+pub(super) const fn escaped_cap(e: EffectId) -> Held {
     Held::Escapes(e)
 }
 
@@ -87,7 +88,7 @@ pub(super) const fn param_cap(i: usize) -> Held {
 /// What a mark of a task value means for W0314 (`Lower::task_marks`).
 pub(super) enum TaskMark {
     /// A closure performs this effect through a handler outside the function.
-    Escapes(usize),
+    Escapes(EffectId),
     /// A function value of this parameter of the function.
     Param(usize),
     /// A function value that the body cannot follow.

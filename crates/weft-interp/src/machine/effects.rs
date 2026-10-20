@@ -36,7 +36,7 @@ impl super::Machine<'_, '_> {
             .rt
             .prog
             .effects
-            .get(effect)
+            .get(effect.index())
             .and_then(|e| e.ops.get(op))
             .is_some_and(|o| o.multi);
         let frames = self.task().frames.split_off(idx);
@@ -535,7 +535,7 @@ impl super::Machine<'_, '_> {
         };
         r.map_err(|_| {
             let ty = match v {
-                Value::Struct(o) => self.rt.adts.get(o.adt).map_or("?", |a| &*a.name),
+                Value::Struct(o) => self.rt.adts.get(o.adt.index()).map_or("?", |a| &*a.name),
                 _ => "Task",
             };
             self.fault(format!(
@@ -552,10 +552,11 @@ impl super::Machine<'_, '_> {
         match v {
             Value::Struct(mut o) => {
                 o.lin = None;
-                let info = &self.rt.adts[o.adt];
+                let info = &self.rt.adts[o.adt.index()];
                 let ty = info.name.to_string();
                 let f = info.on_abort;
-                let code = f.and_then(|f| self.rt.compiled.fn_code.get(f).copied().flatten());
+                let code =
+                    f.and_then(|f| self.rt.compiled.fn_code.get(f.index()).copied().flatten());
                 let Some(code) = code else {
                     self.heap.drop_value(Value::Struct(o));
                     return Ok(Flow::Continue);
@@ -732,7 +733,7 @@ impl super::Machine<'_, '_> {
     /// Handles an operation that no user handler takes: the `std.rt` root
     /// handlers, or the simulation when `sim.run` is active.
     fn root_op(&mut self, effect: EffectId, op: usize, args: Vec<Value>) -> R<Flow> {
-        let Some(e) = self.rt.prog.effects.get(effect) else {
+        let Some(e) = self.rt.prog.effects.get(effect.index()) else {
             return Err(self.fault("internal: bad effect"));
         };
         let opname = e.ops.get(op).map_or("", |o| o.name.as_str()).to_string();

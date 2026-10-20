@@ -187,7 +187,7 @@ pub enum Value {
     /// A closure.
     Closure(Rc<ClosureVal>),
     /// A function item used as a value.
-    FnItem(usize),
+    FnItem(weft_sema::FnId),
     /// A task handle.
     Task(TaskId),
     /// A captured continuation.
@@ -262,10 +262,14 @@ mod tests {
 
     #[test]
     fn henv_finds_innermost_first() {
-        let e = HEnv::default().with(1, 10).with(2, 20).with(1, 30);
-        assert_eq!(e.handlers_for(1), vec![30, 10]);
-        assert_eq!(e.handlers_for(2), vec![20]);
-        assert!(e.handlers_for(3).is_empty());
+        let id = weft_sema::EffectId;
+        let e = HEnv::default()
+            .with(id(1), 10)
+            .with(id(2), 20)
+            .with(id(1), 30);
+        assert_eq!(e.handlers_for(id(1)), vec![30, 10]);
+        assert_eq!(e.handlers_for(id(2)), vec![20]);
+        assert!(e.handlers_for(id(3)).is_empty());
     }
 
     #[test]

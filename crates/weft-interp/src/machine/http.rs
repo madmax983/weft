@@ -232,7 +232,7 @@ impl super::Machine<'_, '_> {
                     .map_or(usize::MAX, |k| k.unit);
                 self.rt.is_stealable(unit, c.span)
             }
-            Value::FnItem(f) => self.rt.sigs.get(*f).is_some_and(|s| !s.effects.pins),
+            Value::FnItem(f) => self.rt.sigs.get(f.index()).is_some_and(|s| !s.effects.pins),
             _ => false,
         };
         let frame = self.task_frame_args(handler, vec![Value::Request(Rc::new(req))], &st.henv)?;
@@ -263,7 +263,7 @@ impl super::Machine<'_, '_> {
                 self.code_frame(c.code, args, Rc::from(c.cells.as_slice()), c.henv.clone())
             }
             Value::FnItem(f) => {
-                let Some(code) = self.rt.compiled.fn_code.get(f).copied().flatten() else {
+                let Some(code) = self.rt.compiled.fn_code.get(f.index()).copied().flatten() else {
                     return Err(self.fault("a handler needs a function with a body"));
                 };
                 self.code_frame(code, args, Rc::from(Vec::new()), henv.clone())

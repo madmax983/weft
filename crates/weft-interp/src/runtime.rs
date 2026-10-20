@@ -197,7 +197,7 @@ fn native_of(prog: &Program, sigs: &[FnSig], f: FnId) -> Option<Native> {
     }
     if !def.is_std {
         let blocking = sigs
-            .get(f)
+            .get(f.index())
             .is_some_and(|s| s.effects.named.contains("Blocking"));
         return Some(Native::UserExtern { blocking });
     }
@@ -247,9 +247,7 @@ impl<'a> Runtime<'a> {
         exports: &Exports,
     ) -> Self {
         let compiled = Compiler::compile(prog, sigs, exports);
-        let natives = (0..prog.fns.len())
-            .map(|f| native_of(prog, sigs, f))
-            .collect();
+        let natives = prog.fn_ids().map(|f| native_of(prog, sigs, f)).collect();
         let adts: Vec<AdtInfo> = prog
             .adts
             .iter()
@@ -292,11 +290,11 @@ impl<'a> Runtime<'a> {
             })
             .collect();
         let move_only: Rc<[bool]> = prog.adts.iter().map(|a| a.linear || a.immovable).collect();
-        let find = |n: &str| match prog.mods.get(PRELUDE).and_then(|m| m.items.get(n)) {
+        let find = |n: &str| match prog.mods.get(PRELUDE.index()).and_then(|m| m.items.get(n)) {
             Some(ItemRef::Adt(a)) => Some(*a),
             _ => None,
         };
-        let eff = |n: &str| match prog.mods.get(PRELUDE).and_then(|m| m.items.get(n)) {
+        let eff = |n: &str| match prog.mods.get(PRELUDE.index()).and_then(|m| m.items.get(n)) {
             Some(ItemRef::Effect(e)) => Some(*e),
             _ => None,
         };
@@ -340,7 +338,7 @@ impl<'a> Runtime<'a> {
     /// Returns the variant index of a variant name in an enum.
     pub fn variant_index(&self, adt: AdtId, name: &str) -> Option<usize> {
         self.adts
-            .get(adt)?
+            .get(adt.index())?
             .variants
             .iter()
             .position(|(n, _)| &**n == name)
@@ -348,7 +346,13 @@ impl<'a> Runtime<'a> {
 
     /// Finds the `main` function of the root module.
     pub fn main_fn(&self) -> Option<FnId> {
-        match self.prog.mods.get(self.prog.root)?.items.get("main") {
+        match self
+            .prog
+            .mods
+            .get(self.prog.root.index())?
+            .items
+            .get("main")
+        {
             Some(ItemRef::Fn(f)) => Some(*f),
             _ => None,
         }

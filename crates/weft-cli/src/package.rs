@@ -318,7 +318,7 @@ pub fn package_diags(pkg: &Package, a: &Analysis) -> Vec<Diagnostic> {
             d.unit = dep.unit;
             out.push(d);
         }
-        for (i, f) in a.program.fns.iter().enumerate() {
+        for (i, f) in a.program.fn_ids().zip(&a.program.fns) {
             // Each function of the dependency counts, also a private one: a public
             // function or a returned closure can run it. A function needs what it
             // states and what its body does, with the closures that the body makes

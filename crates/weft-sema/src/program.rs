@@ -14,12 +14,7 @@ use weft_syntax::diag::{Diagnostic, ROOT_UNIT};
 use crate::effects;
 use crate::types::{AdtId, FnTy, IntTy, Ty};
 
-/// An index into [`Program::fns`].
-pub type FnId = usize;
-/// An index into [`Program::mods`].
-pub type ModId = usize;
-/// An index into [`Program::effects`].
-pub type EffectId = usize;
+pub use crate::ids::{EffectId, FnId, ModId};
 
 /// How a pointer type dereferences.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -355,7 +350,7 @@ pub struct EffectSig {
     /// each with the `rc` type: the parameter and the type definition. The
     /// object stays after the return, so a caller must not give a reference into
     /// its own local there (W0204). The body always infers this part.
-    pub group_stores: BTreeSet<(usize, usize)>,
+    pub group_stores: BTreeSet<(usize, AdtId)>,
     /// The places that the closures that the body puts behind a reference
     /// parameter point into, in the places of the parameters. Each has the
     /// parameter and the place. A caller's argument there points into them too,
@@ -513,7 +508,7 @@ impl Clone for StepCount {
 }
 
 /// The prelude module.
-pub const PRELUDE: ModId = 0;
+pub const PRELUDE: ModId = ModId(0);
 
 /// The name of the definition behind `*T`. It is not an identifier, so no
 /// program can name it.
@@ -565,6 +560,21 @@ impl Program {
     pub(crate) fn add_steps(&self, n: usize) {
         let old = self.steps.0.load(Ordering::Relaxed);
         self.steps.0.store(old.saturating_add(n), Ordering::Relaxed);
+    }
+
+    /// Returns the index of each function.
+    pub fn fn_ids(&self) -> impl Iterator<Item = FnId> + use<> {
+        (0..self.fns.len()).map(FnId)
+    }
+
+    /// Returns the index of each effect.
+    pub fn effect_ids(&self) -> impl Iterator<Item = EffectId> + use<> {
+        (0..self.effects.len()).map(EffectId)
+    }
+
+    /// Returns the index of each type definition.
+    pub fn adt_ids(&self) -> impl Iterator<Item = AdtId> + use<> {
+        (0..self.adts.len()).map(AdtId)
     }
 
     /// Looks up a name from a module outward, then in the prelude.
@@ -622,7 +632,8 @@ impl Program {
         };
         let mut at = Some(m);
         while let Some(id) = at {
-            let found: Vec<(EffectId, usize)> = (0..self.effects.len())
+            let found: Vec<(EffectId, usize)> = self
+                .effect_ids()
                 .filter(|&ei| self.effects[ei].module == id && !self.effects[ei].is_std)
                 .filter_map(op_in)
                 .collect();
@@ -631,7 +642,7 @@ impl Program {
             }
             at = self.mods[id].parent;
         }
-        (0..self.effects.len())
+        self.effect_ids()
             .filter(|&ei| self.effects[ei].is_std)
             .find_map(op_in)
             .into_iter()
@@ -713,7 +724,7 @@ impl Collector {
         c.check_op_names();
         // A duplicate definition (W0107) keeps the first effect, as the search does.
         let mut index = HashMap::new();
-        for e in 0..c.prog.effects.len() {
+        for e in c.prog.effect_ids() {
             index.entry(effects::identity(&c.prog, e)).or_insert(e);
         }
         c.prog.effect_index = Some(index);
@@ -888,7 +899,7 @@ impl Collector {
             module: PRELUDE,
             span: Span::default(),
         });
-        self.prog.ptr = Some(self.prog.adts.len() - 1);
+        self.prog.ptr = Some(AdtId(self.prog.adts.len() - 1));
     }
 
     /// W0116: a raw pointer type outside an `extern fn` signature or a local.
@@ -920,7 +931,7 @@ impl Collector {
             is_std,
             unit,
         });
-        self.prog.mods.len() - 1
+        ModId(self.prog.mods.len() - 1)
     }
 
     fn adt_at(&self, m: ModId, span: Span) -> Option<AdtId> {
@@ -928,6 +939,7 @@ impl Collector {
             .adts
             .iter()
             .position(|a| a.module == m && a.span == span)
+            .map(AdtId)
     }
 
     fn insert(&mut self, m: ModId, name: &ast::Ident, r: ItemRef) {
@@ -973,7 +985,7 @@ impl Collector {
                         is_std,
                         is_pub: it.is_pub,
                     });
-                    let id = self.prog.effects.len() - 1;
+                    let id = EffectId(self.prog.effects.len() - 1);
                     self.insert(m, &e.name, ItemRef::Effect(id));
                 }
                 ItemKind::Mod(md) => {
@@ -1002,7 +1014,7 @@ impl Collector {
             module: m,
             span,
         });
-        self.prog.adts.len() - 1
+        AdtId(self.prog.adts.len() - 1)
     }
 
     fn apply_props(&mut self, id: AdtId, x: &ExternTypeDecl) {
@@ -1238,7 +1250,7 @@ impl Collector {
             module: m,
             span: it.span,
         });
-        self.prog.fns.len() - 1
+        FnId(self.prog.fns.len() - 1)
     }
 
     fn resolve_signatures(&mut self) {
@@ -1756,7 +1768,7 @@ fn size_check(prog: &Program) -> (Vec<AdtId>, usize) {
             Ty::Array(t, n) if *n > 0 => walk(t, prog, params, on),
             Ty::Adt(b, args) if matches!(prog.adts[*b].kind, AdtKind::Struct(_)) => {
                 on(Held::Adt(*b));
-                for &j in &params[*b] {
+                for &j in &params[b.index()] {
                     if let Some(arg) = args.get(j as usize) {
                         walk(arg, prog, params, on);
                     }
@@ -1784,14 +1796,15 @@ fn size_check(prog: &Program) -> (Vec<AdtId>, usize) {
             _ => {}
         }
     }
-    let fields = |a: AdtId| match &prog.adts[a].kind {
+    // The tables of this function are by the index of the type.
+    let fields = |a: usize| match &prog.adts[a].kind {
         AdtKind::Struct(fields) => fields.as_slice(),
         _ => &[],
     };
     let n = prog.adts.len();
     // Step 1: the parameters. When the set of `b` grows, each struct that
     // mentions `b` goes back on the worklist.
-    let mut users: Vec<Vec<AdtId>> = vec![Vec::new(); n];
+    let mut users: Vec<Vec<usize>> = vec![Vec::new(); n];
     for a in 0..n {
         let mut out = Vec::new();
         for f in fields(a) {
@@ -1800,12 +1813,12 @@ fn size_check(prog: &Program) -> (Vec<AdtId>, usize) {
         out.sort_unstable();
         out.dedup();
         for b in out {
-            users[b].push(a);
+            users[b.index()].push(a);
         }
     }
     let mut params: Vec<BTreeSet<u32>> = vec![BTreeSet::new(); n];
     let mut queued = vec![true; n];
-    let mut work: Vec<AdtId> = (0..n).rev().collect();
+    let mut work: Vec<usize> = (0..n).rev().collect();
     let mut steps = n;
     while let Some(a) = work.pop() {
         steps += 1;
@@ -1829,13 +1842,13 @@ fn size_check(prog: &Program) -> (Vec<AdtId>, usize) {
         }
     }
     // Step 2: the graph of direct holds, and its cycles.
-    let edges: Vec<Vec<AdtId>> = (0..n)
+    let edges: Vec<Vec<usize>> = (0..n)
         .map(|a| {
             let mut out = Vec::new();
             for f in fields(a) {
                 walk(&f.ty, prog, &params, &mut |h| {
                     if let Held::Adt(b) = h {
-                        out.push(b);
+                        out.push(b.index());
                     }
                 });
             }
@@ -1843,7 +1856,7 @@ fn size_check(prog: &Program) -> (Vec<AdtId>, usize) {
         })
         .collect();
     let cyclic = on_cycles(&edges);
-    ((0..n).filter(|&a| cyclic[a]).collect(), steps)
+    ((0..n).filter(|&a| cyclic[a]).map(AdtId).collect(), steps)
 }
 
 /// Returns, for each node of a graph, whether a cycle goes through it. The
@@ -2235,7 +2248,7 @@ pub fn check_on_abort_rows(prog: &Program, sigs: &[FnSig], no_runtime: bool) -> 
         let Some(ItemRef::Fn(f)) = prog.lookup(def.module, name) else {
             continue;
         };
-        let (Some(sig), Some(fd)) = (sigs.get(f), prog.fns.get(f)) else {
+        let (Some(sig), Some(fd)) = (sigs.get(f.index()), prog.fns.get(f.index())) else {
             continue;
         };
         if !seen.insert(f) || fd.is_std {

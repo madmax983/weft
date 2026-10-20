@@ -20,11 +20,11 @@ use weft_syntax::diag::Diagnostic;
 
 use crate::effects;
 use crate::program::{
-    elem_step, field_step, AdtKind, Builtins, Deref, EffectSig, FnId, FnSig, ItemRef, ModId,
-    Program, SigPlace, SigRoot, SigStep, PRELUDE,
+    elem_step, field_step, AdtKind, Builtins, Deref, EffectId, EffectSig, FnId, FnSig, ItemRef,
+    ModId, Program, SigPlace, SigRoot, SigStep, PRELUDE,
 };
 use crate::props::Prop;
-use crate::types::{subst, Display, FnTy, Infer, IntTy, Ty};
+use crate::types::{subst, AdtId, Display, FnTy, Infer, IntTy, Ty};
 
 mod aborts;
 mod args;
@@ -920,7 +920,7 @@ enum Behind {
     /// Behind reference parameter `i` of the function.
     Param(usize),
     /// Into an object of the `rc` type with this definition.
-    Group(usize),
+    Group(AdtId),
 }
 
 /// References that the body puts where a caller keeps them after the return
@@ -1078,8 +1078,8 @@ fn expr_tail(e: &Expr) -> Span {
 #[derive(Clone, Copy)]
 enum PathRef {
     Mod(ModId),
-    Adt(usize),
-    Effect(usize),
+    Adt(AdtId),
+    Effect(EffectId),
 }
 
 /// A handler whose clauses are lowered: what they do at each node that runs them.
@@ -1150,7 +1150,7 @@ pub struct Lower<'p> {
     cur: Option<NodeId>,
     pend_uses: Vec<VarId>,
     pend_reads: Vec<PlaceId>,
-    groups: BTreeMap<usize, PlaceId>,
+    groups: BTreeMap<AdtId, PlaceId>,
     /// The open scopes: the local of the binder, and the tasks that join at the end.
     scopes: Vec<(usize, Vec<TaskId>)>,
     /// The local of the scope binder of each task.
@@ -1328,7 +1328,7 @@ pub struct Lower<'p> {
     held_fns: Vec<(usize, Val)>,
     /// The parameters whose references the body puts into an `rc` object, with
     /// the `rc` type (`EffectSig::group_stores`). `check_stored_behind` finds them.
-    group_stores: BTreeSet<(usize, usize)>,
+    group_stores: BTreeSet<(usize, AdtId)>,
     /// The places that the `resume`s give, while a clause is lowered.
     resume_refs_pending: Vec<(CapId, Vec<PlaceId>)>,
     /// The root places of the parameters of the function.
@@ -2183,7 +2183,7 @@ impl<'p> Lower<'p> {
         }
     }
 
-    fn group_root(&mut self, adt: usize) -> PlaceId {
+    fn group_root(&mut self, adt: AdtId) -> PlaceId {
         if let Some(&p) = self.groups.get(&adt) {
             return p;
         }
@@ -2622,7 +2622,7 @@ impl<'p> Lower<'p> {
         t: &Ty,
         path: &mut Vec<String>,
         out: &mut Vec<Vec<String>>,
-        seen: &mut Vec<usize>,
+        seen: &mut Vec<AdtId>,
     ) {
         match self.inf.deep(t) {
             Ty::Tuple(ts) => {

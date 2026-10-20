@@ -127,7 +127,7 @@ impl<'a> Compiler<'a> {
         let mut fn_code = vec![None; prog.fns.len()];
         for (f, slot) in fn_code.iter_mut().enumerate() {
             if prog.fns[f].decl.body.is_some() {
-                *slot = Some(c.compile_fn(f));
+                *slot = Some(c.compile_fn(FnId(f)));
             }
         }
         let mut tests = Vec::new();
@@ -198,7 +198,7 @@ impl<'a> Compiler<'a> {
             unit: self
                 .prog
                 .mods
-                .get(ctx.module)
+                .get(ctx.module.index())
                 .map_or(usize::MAX, |m| m.unit),
         });
     }
@@ -853,7 +853,11 @@ impl<'a> Compiler<'a> {
             }
             ExprKind::StructLit { path, fields } => self.struct_lit(path, fields),
             ExprKind::Closure { params, body } => {
-                let unit = self.prog.mods.get(self.module()).map_or(0, |m| m.unit);
+                let unit = self
+                    .prog
+                    .mods
+                    .get(self.module().index())
+                    .map_or(0, |m| m.unit);
                 let (code, named) = self.closure_named(params, body, CodeKind::Closure);
                 let set = self.by_value.get(&(unit, e.span.lo, e.span.hi));
                 let owned = named
@@ -978,7 +982,11 @@ impl<'a> Compiler<'a> {
     /// Returns the integer type that semantic analysis gives the arithmetic
     /// expression at `span`, if any.
     fn int_type(&self, span: Span) -> Option<IntTy> {
-        let unit = self.prog.mods.get(self.module()).map_or(0, |m| m.unit);
+        let unit = self
+            .prog
+            .mods
+            .get(self.module().index())
+            .map_or(0, |m| m.unit);
         self.int_ops.get(&(unit, span.lo, span.hi)).copied()
     }
 
@@ -1285,7 +1293,11 @@ impl<'a> Compiler<'a> {
     /// arguments (see [`ArgOrder`]): the arguments run in the order of the
     /// parameters. The other calls give their arguments in written order.
     fn ordered_args(&mut self, args: &[Arg], trailing: Option<&Expr>, span: Span) -> u32 {
-        let unit = self.prog.mods.get(self.module()).map_or(0, |m| m.unit);
+        let unit = self
+            .prog
+            .mods
+            .get(self.module().index())
+            .map_or(0, |m| m.unit);
         let Some(order) = self.arg_order.get(&(unit, span.lo, span.hi)) else {
             return self.args(args, trailing);
         };
@@ -1379,7 +1391,7 @@ impl<'a> Compiler<'a> {
     /// Calls a function item. Named arguments go to their parameter, and a trailing
     /// block goes to the last free parameter, as in semantic analysis.
     fn call_fn(&mut self, f: FnId, recv: bool, args: &[Arg], trailing: Option<&Expr>, span: Span) {
-        let params: Vec<String> = self.sigs.get(f).map_or_else(
+        let params: Vec<String> = self.sigs.get(f.index()).map_or_else(
             || {
                 self.prog.fns[f]
                     .decl
@@ -1442,7 +1454,7 @@ impl<'a> Compiler<'a> {
             && self
                 .prog
                 .mods
-                .get(def.module)
+                .get(def.module.index())
                 .is_some_and(|m| m.name == "sim")
     }
 

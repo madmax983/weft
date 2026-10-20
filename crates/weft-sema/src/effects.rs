@@ -72,7 +72,8 @@ pub fn resolve(prog: &Program, m: ModId, path: &EffectPath) -> Result<Vec<String
         path.span,
     );
     let last = names.last().copied().unwrap_or_default();
-    let found: Vec<String> = (0..prog.effects.len())
+    let found: Vec<String> = prog
+        .effect_ids()
         .filter(|&e| prog.effects[e].name == last && !prog.effects[e].is_std)
         .filter_map(|e| written(prog, m, &identity(prog, e)))
         .map(|w| format!("`{w}`"))
@@ -239,7 +240,7 @@ pub fn by_identity(prog: &Program, id: &str) -> Option<EffectId> {
         return index.get(id).copied();
     }
     let name = shown(id);
-    (0..prog.effects.len())
+    prog.effect_ids()
         .filter(|&e| prog.effects[e].name == name)
         .find(|&e| identity(prog, e) == id)
 }

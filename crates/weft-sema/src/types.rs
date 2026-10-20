@@ -74,8 +74,7 @@ impl IntTy {
     }
 }
 
-/// An index into the program's type definitions.
-pub type AdtId = usize;
+pub use crate::ids::AdtId;
 
 /// A function type: the type of a closure, a function item or a function parameter.
 #[derive(Clone, Debug, PartialEq)]
@@ -89,7 +88,7 @@ pub struct FnTy {
     /// The closure summary, for closures made in the current function.
     pub summary: Option<usize>,
     /// The function item, for a named function used as a value.
-    pub item: Option<usize>,
+    pub item: Option<crate::ids::FnId>,
 }
 
 /// A type.
@@ -425,13 +424,13 @@ pub trait AdtNames {
 
 impl AdtNames for [String] {
     fn adt_name(&self, id: AdtId) -> Option<&str> {
-        self.get(id).map(String::as_str)
+        self.get(id.index()).map(String::as_str)
     }
 }
 
 impl AdtNames for [crate::program::AdtDef] {
     fn adt_name(&self, id: AdtId) -> Option<&str> {
-        self.get(id).map(|a| a.name.as_str())
+        self.get(id.index()).map(|a| a.name.as_str())
     }
 }
 
@@ -513,9 +512,12 @@ mod tests {
         let mut inf = Infer::default();
         let a = inf.fresh();
         let i = inf.fresh_int();
-        assert!(inf.unify(&a, &Ty::Adt(0, vec![i.clone()])));
+        assert!(inf.unify(&a, &Ty::Adt(AdtId(0), vec![i.clone()])));
         assert!(inf.unify(&i, &Ty::Int(IntTy::U32)));
-        assert_eq!(inf.resolve(&a), Ty::Adt(0, vec![Ty::Int(IntTy::U32)]));
+        assert_eq!(
+            inf.resolve(&a),
+            Ty::Adt(AdtId(0), vec![Ty::Int(IntTy::U32)])
+        );
         assert!(!inf.unify(&Ty::Bool, &Ty::Unit));
         let b = inf.fresh();
         assert!(!inf.unify(&b, &Ty::Ref(Box::new(b.clone()))));
@@ -585,14 +587,17 @@ mod tests {
         // A cycle through a bound variable is still an error.
         let w = inf.fresh();
         let list = inf.fresh();
-        assert!(inf.unify(&list, &Ty::Adt(0, vec![w.clone()])));
+        assert!(inf.unify(&list, &Ty::Adt(AdtId(0), vec![w.clone()])));
         assert!(!inf.unify(&w, &list));
     }
 
     #[test]
     fn subst_and_display() {
         let names = vec!["Vec".to_string()];
-        let t = subst(&Ty::Adt(0, vec![Ty::Param(0)]), &[Ty::Int(IntTy::U8)]);
+        let t = subst(
+            &Ty::Adt(AdtId(0), vec![Ty::Param(0)]),
+            &[Ty::Int(IntTy::U8)],
+        );
         assert_eq!(
             Display {
                 ty: &Ty::Ref(Box::new(t)),

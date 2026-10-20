@@ -392,7 +392,7 @@ impl super::Machine<'_, '_> {
                 let ret = self
                     .rt
                     .sigs
-                    .get(f)
+                    .get(f.index())
                     .map_or(Value::Unit, |s| self.default_of(&s.ret));
                 for a in it {
                     self.heap.drop_value(a);

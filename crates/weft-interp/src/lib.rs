@@ -244,7 +244,7 @@ fn env_value(rt: &Runtime<'_>) -> Value {
     let Some(adt) = rt.b.env else {
         return Value::Unit;
     };
-    let fields = rt.adts[adt]
+    let fields = rt.adts[adt.index()]
         .fields
         .iter()
         .map(|f| match &**f {
@@ -300,7 +300,7 @@ fn run_main_with(rt: &Runtime<'_>, opts: &RunOptions) -> Result<RunOutcome, Runt
             None,
         ));
     };
-    let Some(code) = rt.compiled.fn_code.get(f).copied().flatten() else {
+    let Some(code) = rt.compiled.fn_code.get(f.index()).copied().flatten() else {
         return Err(RuntimeError::new(
             ErrorKind::NoMain,
             "`main` has no body",

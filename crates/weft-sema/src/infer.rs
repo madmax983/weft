@@ -47,7 +47,7 @@ use weft_facts::{FnFacts, Step, StepKind};
 use weft_syntax::diag::Diagnostic;
 
 use crate::body::Lowered;
-use crate::program::{EffectSig, FnSig, Program, SigPlace, SigStep};
+use crate::program::{EffectSig, FnId, FnSig, Program, SigPlace, SigStep};
 use crate::{effects, unit_of};
 
 /// The most steps of a `mut` place in an inferred row. Lowering cuts a
@@ -451,10 +451,14 @@ impl NameGraph {
 pub(crate) fn infer(
     prog: &Program,
     sigs: &mut [FnSig],
-    fns: &[usize],
+    fns: &[FnId],
     limit: Option<usize>,
-    lower: &dyn Fn(&[FnSig], usize) -> Lowered,
+    lower: &dyn Fn(&[FnSig], FnId) -> Lowered,
 ) -> Inferred {
+    // The tables of the inference are by the index of the function.
+    let fns: Vec<usize> = fns.iter().map(|f| f.index()).collect();
+    let fns = fns.as_slice();
+    let lower = |sigs: &[FnSig], f: usize| lower(sigs, FnId(f));
     // A function that states its effects still infers its other parts, so each
     // function of `fns` is open.
     let graph = NameGraph::new(prog, fns);

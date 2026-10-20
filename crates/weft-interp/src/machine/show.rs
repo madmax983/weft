@@ -78,7 +78,7 @@ impl super::Machine<'_, '_> {
                 out.push(')');
             }
             Value::Struct(o) => {
-                let info = &self.rt.adts[o.adt];
+                let info = &self.rt.adts[o.adt.index()];
                 out.push_str(&info.name);
                 if o.fields.is_empty() {
                     return;
@@ -97,7 +97,7 @@ impl super::Machine<'_, '_> {
                 out.push_str(" }");
             }
             Value::Enum(e) => {
-                let info = &self.rt.adts[e.adt];
+                let info = &self.rt.adts[e.adt.index()];
                 if let Some((n, _)) = info.variants.get(e.variant as usize) {
                     out.push_str(n);
                 }
@@ -334,7 +334,7 @@ impl super::Machine<'_, '_> {
             Value::Str(s) => json_str(s, out),
             Value::Tuple(vs) => self.json_list(vs, out, depth),
             Value::Struct(o) => {
-                let info = &self.rt.adts[o.adt];
+                let info = &self.rt.adts[o.adt.index()];
                 out.push('{');
                 for (i, f) in o.fields.iter().enumerate() {
                     if i > 0 {
@@ -347,7 +347,7 @@ impl super::Machine<'_, '_> {
                 out.push('}');
             }
             Value::Enum(e) => {
-                let name = self.rt.adts[e.adt]
+                let name = self.rt.adts[e.adt.index()]
                     .variants
                     .get(e.variant as usize)
                     .map_or("", |(n, _)| &**n);

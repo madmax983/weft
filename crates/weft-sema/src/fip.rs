@@ -16,7 +16,7 @@ use weft_syntax::diag::Code;
 use weft_syntax::ast::{BinOp, Block, Expr, ExprKind, Pattern, StmtKind, StrPart};
 use weft_syntax::diag::Diagnostic;
 
-use crate::program::{FnId, FnSig, ItemRef, Program};
+use crate::program::{FnId, FnSig, ItemRef, ModId, Program};
 use crate::types::Ty;
 
 /// Checks one `fip` function.
@@ -70,7 +70,7 @@ const fn is_owned(t: &Ty) -> bool {
 
 struct Fip<'a> {
     prog: &'a Program,
-    module: usize,
+    module: ModId,
     diags: Vec<Diagnostic>,
     owned: Vec<String>,
     pattern_owned: Vec<String>,

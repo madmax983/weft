@@ -7,6 +7,7 @@
 pub mod body;
 pub mod effects;
 pub mod fip;
+pub mod ids;
 pub mod infer;
 pub mod program;
 pub mod props;
@@ -17,6 +18,7 @@ use weft_syntax::diag::Code;
 use weft_syntax::diag::Diagnostic;
 use weft_syntax::{parse_file, ParseError};
 
+pub use ids::{AdtId, EffectId, FnId, ModId};
 pub use program::{FnSig, Program, TaskRun, Unit};
 pub use weft_syntax::diag::{PRELUDE_UNIT, ROOT_UNIT};
 
@@ -233,12 +235,13 @@ fn analyze_bounded(
 ) -> Analysis {
     let (prog, mut diags) = program::Collector::collect(units);
     let mut sigs: Vec<FnSig> = prog.fns.iter().map(|f| f.sig.clone()).collect();
-    let user_fns: Vec<usize> = (0..prog.fns.len())
+    let user_fns: Vec<FnId> = prog
+        .fn_ids()
         .filter(|&i| !prog.fns[i].is_std && prog.fns[i].decl.body.is_some())
         .collect();
     let library_of =
-        |prog: &Program, f: usize| opts.library || unit_of(prog, prog.fns[f].module) > ROOT_UNIT;
-    let lower = |sigs: &[FnSig], f: usize| {
+        |prog: &Program, f: FnId| opts.library || unit_of(prog, prog.fns[f].module) > ROOT_UNIT;
+    let lower = |sigs: &[FnSig], f: FnId| {
         let lib = library_of(&prog, f);
         body::Lower::new(&prog, sigs, prog.fns[f].module, &prog.fns[f].path, lib)
             .with_loop_bound(loop_bound)

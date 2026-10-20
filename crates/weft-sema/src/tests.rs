@@ -295,9 +295,9 @@ fn effect_inference_checks_the_fixpoint_at_the_end() {
     let units = vec![prelude(), unit("", "fn a() {}\nfn c() { log.info(\"x\") }")];
     let (prog, _) = crate::program::Collector::collect(&units);
     let mut sigs: Vec<crate::FnSig> = prog.fns.iter().map(|f| f.sig.clone()).collect();
-    let id = |name: &str| prog.fns.iter().position(|f| f.name == name).unwrap_or(0);
+    let id = |name: &str| crate::FnId(prog.fns.iter().position(|f| f.name == name).unwrap_or(0));
     let (a, c) = (id("a"), id("c"));
-    let lower = |sigs: &[crate::FnSig], f: usize| {
+    let lower = |sigs: &[crate::FnSig], f: crate::FnId| {
         let mut l =
             crate::body::Lower::new(&prog, sigs, prog.fns[f].module, &prog.fns[f].path, false)
                 .lower_fn(f);
@@ -336,8 +336,8 @@ fn inferred_parts_that_do_not_become_stable_are_an_error() {
     let units = vec![prelude(), unit("", "fn a() {}")];
     let (prog, _) = crate::program::Collector::collect(&units);
     let mut sigs: Vec<crate::FnSig> = prog.fns.iter().map(|f| f.sig.clone()).collect();
-    let a = prog.fns.iter().position(|f| f.name == "a").unwrap_or(0);
-    let lower = |sigs: &[crate::FnSig], f: usize| {
+    let a = crate::FnId(prog.fns.iter().position(|f| f.name == "a").unwrap_or(0));
+    let lower = |sigs: &[crate::FnSig], f: crate::FnId| {
         let mut l =
             crate::body::Lower::new(&prog, sigs, prog.fns[f].module, &prog.fns[f].path, false)
                 .lower_fn(f);
@@ -479,7 +479,7 @@ fn raw_pointer_is_a_copy_value_of_its_own_type() {
     );
     let units = vec![prelude(), unit("", FFI)];
     let a = analyze(&units, Options::default());
-    let ptr = a.program.ptr.unwrap_or(usize::MAX);
+    let ptr = a.program.ptr.unwrap_or(crate::AdtId(usize::MAX));
     let def = &a.program.adts[ptr];
     assert!(def.copy && def.nonportable && !def.linear);
     assert!(a

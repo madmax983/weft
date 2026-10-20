@@ -225,7 +225,7 @@ impl Heap {
             Value::Tuple(vs) => vs.iter().all(|v| self.is_copy(v)),
             Value::Struct(o) => {
                 o.lin.is_none()
-                    && !self.move_only.get(o.adt).copied().unwrap_or(false)
+                    && !self.move_only.get(o.adt.index()).copied().unwrap_or(false)
                     && o.fields.iter().all(|v| self.is_copy(v))
             }
             Value::Enum(e) => e.fields.iter().all(|v| self.is_copy(v)),
@@ -500,13 +500,13 @@ mod tests {
         );
         assert_eq!(owned, vec![buf]);
         let lin = Value::Struct(Box::new(Obj {
-            adt: 0,
+            adt: weft_sema::AdtId(0),
             fields: vec![],
             lin: Some(0),
         }));
         assert!(!h.is_copy(&lin));
         let immovable = Value::Struct(Box::new(Obj {
-            adt: 1,
+            adt: weft_sema::AdtId(1),
             fields: vec![],
             lin: None,
         }));

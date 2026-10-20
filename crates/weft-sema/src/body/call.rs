@@ -8,8 +8,9 @@ use weft_syntax::diag::Diagnostic;
 use super::fnval::{Callee, Given};
 use super::roots;
 use super::{
-    ast, effects, AdtKind, Arc, Arg, CapId, ContInfo, Expr, ExprKind, FnId, FnSig, FnTy, ItemRef,
-    Lower, NodeId, PathRef, PlaceId, SigRoot, Span, TaskKind, Ty, Val, VarId, VarKind, PRELUDE,
+    ast, effects, AdtId, AdtKind, Arc, Arg, CapId, ContInfo, EffectId, Expr, ExprKind, FnId, FnSig,
+    FnTy, ItemRef, Lower, NodeId, PathRef, PlaceId, SigRoot, Span, TaskKind, Ty, Val, VarId,
+    VarKind, PRELUDE,
 };
 
 /// One evaluated argument.
@@ -1639,7 +1640,7 @@ impl Lower<'_> {
         ptys: &[Ty],
         span: Span,
     ) {
-        let mut stores: Vec<(usize, usize)> = sig.effects.group_stores.iter().copied().collect();
+        let mut stores: Vec<(usize, AdtId)> = sig.effects.group_stores.iter().copied().collect();
         let def = &self.prog.fns[f];
         if def.decl.body.is_none() && !def.is_std {
             for m in &sig.effects.muts {
@@ -2424,7 +2425,7 @@ impl Lower<'_> {
 
     fn positional_struct(
         &mut self,
-        a: usize,
+        a: AdtId,
         args: &[Arg],
         trailing: Option<&Expr>,
         span: Span,
@@ -2484,7 +2485,7 @@ impl Lower<'_> {
 
     fn variant_ctor(
         &mut self,
-        adt: usize,
+        adt: AdtId,
         vi: usize,
         args: &[Arg],
         trailing: Option<&Expr>,
@@ -2543,7 +2544,7 @@ impl Lower<'_> {
     /// Performs an effect operation.
     fn perform_op(
         &mut self,
-        e: usize,
+        e: EffectId,
         op: usize,
         args: &[Arg],
         trailing: Option<&Expr>,

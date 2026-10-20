@@ -240,7 +240,7 @@ impl Lower<'_> {
 
     /// Returns the `rc` type of the object that the `Rc` handle in the local
     /// with root `root` refers to.
-    fn handle_of(&self, root: weft_facts::RootId) -> Option<usize> {
+    fn handle_of(&self, root: weft_facts::RootId) -> Option<crate::types::AdtId> {
         let l = self.root_owner(root)?;
         let ty = self.inf.deep(&self.locals[l].ty);
         let super::Ty::Adt(rc, args) = ty else {

@@ -258,7 +258,10 @@ impl super::Machine<'_, '_> {
                 let (p, tr) = self.pop_loc()?;
                 let (p, tr) = self.resolve(p, tr)?;
                 let idx = match self.hget(&p)? {
-                    Value::Struct(o) => self.rt.adts[o.adt].fields.iter().position(|f| f == name),
+                    Value::Struct(o) => self.rt.adts[o.adt.index()]
+                        .fields
+                        .iter()
+                        .position(|f| f == name),
                     Value::Tuple(vs) => name.parse::<usize>().ok().filter(|&i| i < vs.len()),
                     Value::Moved => return Err(self.fault("a value is used after it was moved")),
                     _ => None,
@@ -437,7 +440,7 @@ impl super::Machine<'_, '_> {
                         *slot = v;
                     }
                 }
-                let lin = match self.rt.adts.get(*adt) {
+                let lin = match self.rt.adts.get(adt.index()) {
                     Some(a) if a.linear => {
                         self.lins.push(LinRec {
                             l: Linear::new(a.on_abort.is_some()),
@@ -724,7 +727,7 @@ impl super::Machine<'_, '_> {
             path: parent.to_vec(),
         };
         if let Ok(Value::Struct(o)) = self.heap.get(&parent) {
-            let info = &self.rt.adts[o.adt];
+            let info = &self.rt.adts[o.adt.index()];
             if info.unsigned.get(last as usize).copied().unwrap_or(false) {
                 let name = info.fields.get(last as usize).map_or("", |n| &**n);
                 return Err(self.fault(format!("unsigned underflow: field `{name}` would be {i}")));
@@ -892,14 +895,14 @@ impl super::Machine<'_, '_> {
                 self.heap.log_read(&p);
                 let ok = match self.hget(&p)? {
                     Value::Enum(e) => {
-                        self.rt.adts[e.adt]
+                        self.rt.adts[e.adt.index()]
                             .variants
                             .get(e.variant as usize)
                             .is_some_and(|(n, _)| n == name)
                             && e.fields.len() == fields.len()
                     }
                     Value::Struct(o) => {
-                        self.rt.adts[o.adt].name == *name && o.fields.len() == fields.len()
+                        self.rt.adts[o.adt.index()].name == *name && o.fields.len() == fields.len()
                     }
                     _ => false,
                 };
@@ -955,11 +958,11 @@ impl super::Machine<'_, '_> {
     /// Calls a function item. `henv` holds the caller's handlers.
     pub(crate) fn call_fn(&mut self, f: FnId, args: Vec<Value>, henv: HEnv) -> R<Flow> {
         let mut args = args;
-        if let Some(n) = self.rt.natives.get(f).copied().flatten() {
+        if let Some(n) = self.rt.natives.get(f.index()).copied().flatten() {
             return self.native(n, f, args, henv);
         }
         self.coerce_args(f, &mut args)?;
-        let Some(code) = self.rt.compiled.fn_code.get(f).copied().flatten() else {
+        let Some(code) = self.rt.compiled.fn_code.get(f.index()).copied().flatten() else {
             return Err(self.fault(format!("`{}` has no body", self.rt.prog.fns[f].path)));
         };
         let frame = self.code_frame(code, args, Rc::from(Vec::new()), henv)?;
@@ -970,7 +973,7 @@ impl super::Machine<'_, '_> {
     /// A reference to a copy value, passed to a parameter that is not a
     /// reference, passes the value.
     fn coerce_args(&self, f: FnId, args: &mut [Value]) -> R<()> {
-        let Some(sig) = self.rt.sigs.get(f) else {
+        let Some(sig) = self.rt.sigs.get(f.index()) else {
             return Ok(());
         };
         for (p, a) in sig.params.iter().zip(args.iter_mut()) {
@@ -1019,7 +1022,7 @@ impl super::Machine<'_, '_> {
     }
 
     /// Returns the type whose methods a value has.
-    fn owner_adt(&self, v: &Value) -> Option<usize> {
+    fn owner_adt(&self, v: &Value) -> Option<weft_sema::AdtId> {
         let b = &self.rt.b;
         match v {
             Value::Struct(o) => Some(o.adt),
@@ -1069,7 +1072,7 @@ impl super::Machine<'_, '_> {
                 _ => return Err(self.fault(format!("this value has no method `{name}`"))),
             }
         };
-        if self.rt.natives.get(found).copied().flatten() == Some(Native::TaskJoin) {
+        if self.rt.natives.get(found.index()).copied().flatten() == Some(Native::TaskJoin) {
             if let Value::Task(t) = self.hget(&p)? {
                 let t = *t;
                 if !self.is_done(t) {
@@ -1088,7 +1091,7 @@ impl super::Machine<'_, '_> {
         let by_ref = self
             .rt
             .sigs
-            .get(found)
+            .get(found.index())
             .and_then(|s| s.params.first())
             .is_some_and(|p| p.ty.is_ref());
         let recv = if by_ref {
@@ -1198,7 +1201,7 @@ impl super::Machine<'_, '_> {
                 c.henv.clone(),
             ),
             Value::FnItem(f) => {
-                let Some(code) = self.rt.compiled.fn_code.get(f).copied().flatten() else {
+                let Some(code) = self.rt.compiled.fn_code.get(f.index()).copied().flatten() else {
                     return Err(self.fault("a task needs a function with a body"));
                 };
                 let henv = self.top_henv();

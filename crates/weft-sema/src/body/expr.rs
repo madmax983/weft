@@ -970,7 +970,7 @@ impl Lower<'_> {
         }
     }
 
-    pub(super) fn adt_by_path(&self, path: &[ast::Ident]) -> Option<usize> {
+    pub(super) fn adt_by_path(&self, path: &[ast::Ident]) -> Option<crate::types::AdtId> {
         let mut m = self.module;
         for (i, seg) in path.iter().enumerate() {
             let r = if i == 0 {

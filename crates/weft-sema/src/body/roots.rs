@@ -33,7 +33,7 @@ pub fn fn_arg(i: usize) -> u32 {
 
 /// The root of the `rc` group of type `a`.
 pub fn group(a: AdtId) -> u32 {
-    2 * KIND + index(a)
+    2 * KIND + index(a.index())
 }
 
 /// The root of the footprint of the clauses of the handler with capability
@@ -57,7 +57,7 @@ mod tests {
         for i in [0, 1, 10, 100, 800, KIND as usize, usize::MAX] {
             assert_eq!(param(i) / KIND, 0);
             assert_eq!(fn_arg(i) / KIND, 1);
-            assert_eq!(group(i) / KIND, 2);
+            assert_eq!(group(AdtId(i)) / KIND, 2);
         }
         for c in [0, 1, 1000, u32::MAX] {
             assert_eq!(clause(CapId(c)) / KIND, 3);
@@ -67,8 +67,8 @@ mod tests {
         // 1000 + c could be equal for two kinds.
         assert_ne!(fn_arg(0), STORED);
         assert_ne!(param(800), fn_arg(0));
-        assert_ne!(fn_arg(100), group(0));
-        assert_ne!(group(100), clause(CapId(0)));
+        assert_ne!(fn_arg(100), group(AdtId(0)));
+        assert_ne!(group(AdtId(100)), clause(CapId(0)));
         assert_eq!((param(3), fn_arg(3)), (3, KIND + 3));
     }
 }

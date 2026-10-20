@@ -14,7 +14,7 @@
 //! is then one walk over its type term (`Lower::ty_has`).
 
 use crate::program::{AdtKind, Program, PRELUDE};
-use crate::types::Ty;
+use crate::types::{AdtId, Ty};
 
 /// A property of a type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -139,8 +139,8 @@ impl TypeProps {
     }
 
     /// Returns when property `p` holds for the instances of definition `a`.
-    pub fn get(&self, a: usize, p: Prop) -> Option<&Holds> {
-        self.table.get(a).map(|h| &h[p.index()])
+    pub fn get(&self, a: AdtId, p: Prop) -> Option<&Holds> {
+        self.table.get(a.index()).map(|h| &h[p.index()])
     }
 }
 
@@ -185,7 +185,7 @@ fn parts(prog: &Program, a: usize) -> Vec<Ty> {
 fn each_adt(t: &Ty, f: &mut dyn FnMut(usize)) {
     match t {
         Ty::Adt(a, args) => {
-            f(*a);
+            f(a.index());
             for x in args {
                 each_adt(x, f);
             }
@@ -209,7 +209,7 @@ fn each_adt(t: &Ty, f: &mut dyn FnMut(usize)) {
 fn each_inline_adt(t: &Ty, f: &mut dyn FnMut(usize)) {
     match t {
         Ty::Adt(a, args) => {
-            f(*a);
+            f(a.index());
             for x in args {
                 each_inline_adt(x, f);
             }
@@ -338,7 +338,7 @@ fn eval_adt(prog: &Program, a: usize, table: &[[Holds; 8]]) -> [Holds; 8] {
             // An extern type is plain data or not, whatever its arguments are.
             (Prop::NotCopy, Some(_)) => false,
             // The copies of a resume share an `rc` object and what it holds.
-            (Prop::Resource, Some(_)) => !is_rc_handle(prog, a),
+            (Prop::Resource, Some(_)) => !is_rc_handle(prog, AdtId(a)),
             _ => true,
         };
         h.always = match p {
@@ -354,7 +354,10 @@ fn eval_adt(prog: &Program, a: usize, table: &[[Holds; 8]]) -> [Holds; 8] {
             Prop::Resource => {
                 let buffer = def.module == PRELUDE && matches!(def.name.as_str(), "Vec" | "Box");
                 def.immovable
-                    || (ext.is_some() && !extern_copy(prog, a) && !is_rc_handle(prog, a) && !buffer)
+                    || (ext.is_some()
+                        && !extern_copy(prog, a)
+                        && !is_rc_handle(prog, AdtId(a))
+                        && !buffer)
             }
             Prop::Refs | Prop::Fns => false,
         };
@@ -394,7 +397,7 @@ fn eval(prog: &Program, t: &Ty, p: Prop, table: &[[Holds; 8]]) -> Holds {
             always(h.always || !h.params.is_empty())
         }
         Ty::Adt(b, args) => {
-            let Some(row) = table.get(*b) else {
+            let Some(row) = table.get(b.index()) else {
                 return Holds::default();
             };
             let h = &row[p.index()];
@@ -434,7 +437,7 @@ fn eval(prog: &Program, t: &Ty, p: Prop, table: &[[Holds; 8]]) -> Holds {
 
 /// Returns true if definition `a` is the prelude `Rc` or `Weak`: a handle to a
 /// shared `rc` object.
-pub(crate) fn is_rc_handle(prog: &Program, a: usize) -> bool {
+pub(crate) fn is_rc_handle(prog: &Program, a: AdtId) -> bool {
     let def = &prog.adts[a];
     def.module == PRELUDE && matches!(def.name.as_str(), "Rc" | "Weak")
 }
@@ -444,11 +447,13 @@ mod tests {
     use super::*;
     use crate::{analyze_source, Options};
 
-    fn adt(prog: &Program, name: &str) -> usize {
-        prog.adts
-            .iter()
-            .position(|a| a.name == name)
-            .unwrap_or(usize::MAX)
+    fn adt(prog: &Program, name: &str) -> AdtId {
+        AdtId(
+            prog.adts
+                .iter()
+                .position(|a| a.name == name)
+                .unwrap_or(usize::MAX),
+        )
     }
 
     #[test]
