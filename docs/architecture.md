@@ -138,7 +138,14 @@ the result (`value_call_result`). A `handle` has its effect (`handled_effect`), 
 handled body, each clause (`lower_clause`, with `bind_clause_params` and
 `bind_clause_cont`), the locals of the clauses (`end_clause_locals`) and its value
 (`join_clause_vals`). A closure literal binds its parameters (`bind_closure_params`),
-lowers its body, and makes its value from what it captures (`closure_value`).
+lowers its body, and makes its value from what it captures (`closure_value`). A
+perform (`perform_op`) evaluates its arguments (`eval_op_args`), gives their places to
+the clause (`op_arg_places`) and its function values (`op_fn_values`), and then has
+what it suspends (`op_suspends`) and its result (`op_result`). An assignment to a local
+has its own path (`assign_name`). Another assignment drops the uses that the new
+value replaces (`drop_replaced_uses`), finds the places that it mutates
+(`assigned_places`), and keeps the references that a part of a local gets
+(`part_holder`).
 `crates/weft-check/src/diagnose.rs` has one function for each rule.
 
 The capability set of a value holds `caps::Held` elements: the capability of a local
@@ -199,21 +206,42 @@ caller. `limits.rs` runs each of them for the deepest programs on a 256 KiB thre
 
 ## Cost of the checker
 
-The rules W0301, W0302 and W0304 run the searches of one variable in the part of
-the graph that can reach its uses (`weft_check::rules::part_of`): the uses, and each
-node with a path to a use whose inner nodes are not kill nodes. A path of a
-propagation from a gen node to a use has only nodes of this part. So the verified
-propagation in the part gives the same result at each use as in the whole graph, and
-so does the evidence search of W0301. Only a node of the part can invalidate a
-reference that the part can see, and each invalidating node needs a place with the
-root of the reference. So a reference with a small part costs little, also in a
-large function. `crates/weft-check/tests/scale.rs` checks 1000 uses of each cause of
-W0301 in less than 1 s in a debug build.
+The rules W0301, W0302 and W0304 run a search for each variable in a part of the
+graph (`weft_check::rules::part_of`). The part has the uses, and each node with a path
+to a use whose inner nodes are not kill nodes. It also has only the nodes whose
+strongly connected component has a rank that is not less than the rank of the first
+gen node (`rules::ranks`): a gen node reaches only nodes of its own component or of a
+later one. A path of a propagation from a gen node to a use has only nodes of this
+part. So the verified propagation in the part gives the same result at each use as in
+the whole graph, and so does the evidence search of W0301. A proptest compares the two
+on random graphs.
+
+W0301 finds the witnesses of a list of places once, for all the references that point
+into it (`rules::witnesses`). Only a node that changes a root of the list can be a
+witness, so the search for witnesses looks at these nodes only. The references with
+the same witness nodes share one more search: when their parts have cost as much as
+the whole graph, the checker propagates their gen nodes in the whole graph with no kill
+node (`Ctx::whole`). A reference with no kill node in that result has the same result
+as its own search, as no kill node can stop a path from a gen node. So the shared
+search costs at most as much as the parts before it.
+
+Thus the cost is linear for a reference with a small part, for many references that
+live long with no witness or with one invalidating node before their uses, and for
+moved variables that are declared early and moved late. `crates/weft-check/tests/scale.rs`
+counts the nodes of the parts (`Work::part_nodes`) for each cause of W0301 and for
+these shapes: at most three times the nodes of the function. One shape stays
+quadratic: `n` references that each live across most of the function and that `n`
+nodes invalidate one after the other, so each reference has a kill node in the shared
+result and a part of its own as large as the function. Each of these references has an
+error. Its search costs at most as much as one search of the whole graph.
 
 Sema keeps each place that a reference local gets (ADR 0003), and a use of the local
 reads each of them (W0405). So a body where one local gets references into `n`
 different roots, such as `r = &v[0]` for `n` new vectors `v`, has about `n * n / 2`
-`reads_at` facts. The checker cost stays linear in these facts.
+`reads_at` facts. The checker cost stays linear in these facts. A relation that names
+the local at the use, joined with `points_into` of the local, has the same meaning with
+fewer facts. It is a change of the spec (the checklist of ADR 0002), not of the
+meaning, and it is not done yet.
 
 ## Verified pieces
 

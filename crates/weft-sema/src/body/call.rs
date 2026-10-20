@@ -10,7 +10,7 @@ use super::roots;
 use super::{
     ast, effects, AdtId, AdtKind, Arc, Arg, CapId, ContInfo, EffectId, Expr, ExprKind, FnId, FnSig,
     FnTy, ItemRef, Lower, NodeId, PathRef, PlaceId, SigRoot, Span, TaskKind, Ty, Val, VarId,
-    VarKind, PRELUDE,
+    VarKind,
 };
 
 /// One evaluated argument.
@@ -82,6 +82,26 @@ struct ValueArgs {
     taken: Vec<VarId>,
     /// Each argument that holds a function value in a field or an element.
     holders: Vec<(usize, Val, Span)>,
+}
+
+/// The arguments of a perform after their evaluation (`Lower::eval_op_args`),
+/// by parameter.
+#[derive(Default)]
+struct OpArgs {
+    /// The variables that hold the arguments until the perform.
+    held: Vec<VarId>,
+    /// The places of the reference arguments.
+    arg_places: Vec<Vec<PlaceId>>,
+    /// The places that a by-value argument points into.
+    value_refs: Vec<(usize, Vec<PlaceId>)>,
+    /// Each function value argument: its position, what it is and its row.
+    fns: Vec<(usize, super::FnInfo, Option<Vec<String>>)>,
+    /// Each argument that is a function value or holds one.
+    fn_args: Vec<(usize, Val, Span)>,
+    /// Each reference argument that points to a function value.
+    ref_fns: Vec<(usize, Val, Span)>,
+    /// The variables that hold the moved arguments until the perform.
+    taken: Vec<VarId>,
 }
 
 /// The arguments of a call of a function item after their evaluation
@@ -1022,7 +1042,7 @@ impl Lower<'_> {
             let repeats = self.callee_repeats(&Callee::Item(f), i) || self.runs_held_again(&info);
             let again = if repeats {
                 self.note_repeat(n, &info, true);
-                self.repeat_unknown(n, &info, &given);
+                self.repeat_unknown(n, &info, &given, root);
                 Some(self.run_again(n, &av.val))
             } else {
                 None
@@ -1091,7 +1111,7 @@ impl Lower<'_> {
             if let Some(given) = self.reach_of(f, arg_places, roots) {
                 // A foreign callee can run a stored value any number of times.
                 let again = foreign || self.sigs[f].effects.reach_repeats;
-                self.reach(n, &given, again);
+                self.reach(n, &given, again, (BTreeSet::new(), roots::STORED));
             }
         }
         if abort {
@@ -2079,7 +2099,7 @@ impl Lower<'_> {
             let repeats = self.callee_repeats(&value, i) || self.runs_held_again(&info);
             if repeats {
                 self.note_repeat(n, &info, true);
-                self.repeat_unknown(n, &info, &given);
+                self.repeat_unknown(n, &info, &given, root);
             }
             if let Some((_, v)) = fn_vals.iter().find(|(j, _)| *j == i) {
                 let v = v.clone();
@@ -2116,7 +2136,7 @@ impl Lower<'_> {
                 let sum = &self.closures[s];
                 sum.unknown || !sum.params.is_empty()
             });
-            self.reach(n, &given, again);
+            self.reach(n, &given, again, (BTreeSet::new(), roots::STORED));
         }
     }
 
@@ -2548,21 +2568,51 @@ impl Lower<'_> {
         trailing: Option<&Expr>,
         span: Span,
     ) -> Val {
-        let eff = self.prog.effects[e].clone();
+        let prog = self.prog;
+        let o = &prog.effects[e].ops[op];
         let ident = effects::identity(self.prog, e);
-        let o = &eff.ops[op];
         let slots = self.op_slots(o, args, trailing, span);
-        // A perform is a call: each reference argument stays valid until it.
-        let mut held = Vec::new();
-        let mut arg_places = Vec::new();
-        let mut value_refs: Vec<(usize, Vec<PlaceId>)> = Vec::new();
-        let mut fns = Vec::new();
-        let mut fn_args: Vec<(usize, Val, Span)> = Vec::new();
-        let mut ref_fns: Vec<(usize, Val, Span)> = Vec::new();
-        let mut taken = Vec::new();
+        let a = self.eval_op_args(o, &slots, &ident);
+        self.pend_uses.extend(a.held.iter().copied());
+        let n = self.emit(span, &o.name, effects::in_signature(&ident));
+        self.take_held(&a.taken, n);
+        self.perform_effect(n, &ident);
+        let cap = self
+            .handlers
+            .iter()
+            .rev()
+            .find(|h| h.effect == ident)
+            .map(|h| h.cap);
+        if let Some(c) = cap {
+            self.cap_calls.push((n, c));
+            self.note_abort_ctx(n);
+            for (i, v, sp) in a.fn_args.iter().chain(&a.ref_fns) {
+                self.note_op_fn(c, (Some(op), Some(*i)), v, *sp);
+            }
+        } else {
+            for (_, v, sp) in &a.ref_fns {
+                self.give_held_to_op(v, &v.refs, &ident, *sp);
+            }
+        }
+        self.op_arg_places(n, (cap, op), o, &a);
+        self.op_fn_values(n, cap, span, a);
+        self.op_suspends(n, cap, o);
+        self.op_result(cap, op, o)
+    }
+
+    /// Evaluates the arguments of operation `o` in the order of its parameters
+    /// (`slots`). A perform is a call: each reference argument stays valid
+    /// until it.
+    fn eval_op_args(
+        &mut self,
+        o: &crate::program::OpDef,
+        slots: &[Option<&Expr>],
+        ident: &str,
+    ) -> OpArgs {
+        let mut a = OpArgs::default();
         for (i, pt) in o.params.iter().enumerate() {
             let Some(x) = slots[i] else {
-                arg_places.push(Vec::new());
+                a.arg_places.push(Vec::new());
                 continue;
             };
             let later = slots[i + 1..].iter().any(Option::is_some);
@@ -2578,64 +2628,55 @@ impl Lower<'_> {
                 self.consume(&v, x.span);
             }
             if matches!(self.inf.shallow(&v.ty), Ty::Ref(_)) {
-                arg_places.push(v.refs.clone());
-                held.extend(self.hold_operand(&v, later, x.span));
+                a.arg_places.push(v.refs.clone());
+                a.held.extend(self.hold_operand(&v, later, x.span));
                 // The clause can copy a function value out of what the argument
                 // points to: it can keep it or run it as a task.
                 if self.points_to_fn(&v.ty) {
-                    ref_fns.push((i, v.clone(), x.span));
+                    a.ref_fns.push((i, v.clone(), x.span));
                 }
             } else {
-                arg_places.push(Vec::new());
+                a.arg_places.push(Vec::new());
                 // An argument that moves is on its way to the clause.
                 if consumed {
                     if later {
-                        taken.extend(self.hold_moved(&v, "argument", x.span));
+                        a.taken.extend(self.hold_moved(&v, "argument", x.span));
                     }
                 } else if later || !v.refs.is_empty() {
-                    held.extend(self.hold_operand(&v, later, x.span));
+                    a.held.extend(self.hold_operand(&v, later, x.span));
                 }
                 // A by-value argument that holds references, for example a closure,
                 // points into them until the perform.
                 if !v.refs.is_empty() {
-                    value_refs.push((i, v.refs.clone()));
+                    a.value_refs.push((i, v.refs.clone()));
                 }
                 if let Ty::Fn(f) = self.inf.shallow(&v.ty) {
-                    fns.push((i, self.fn_info(&v), f.effects.clone()));
-                    fn_args.push((i, v.clone(), x.span));
+                    a.fns.push((i, self.fn_info(&v), f.effects.clone()));
+                    a.fn_args.push((i, v.clone(), x.span));
                 } else if self.has_fn(&v.ty) {
                     self.escape_all(&v);
-                    fn_args.push((i, v.clone(), x.span));
+                    a.fn_args.push((i, v.clone(), x.span));
                 }
                 // The clause can keep a function value that it gets. It runs outside
                 // its own handler, where only the handlers outside the `handle` live.
-                self.give_to_op(&v, &ident);
+                self.give_to_op(&v, ident);
             }
         }
-        self.pend_uses.extend(held);
-        let n = self.emit(span, &o.name, effects::in_signature(&ident));
-        self.take_held(&taken, n);
-        self.perform_effect(n, &ident);
-        let cap = self
-            .handlers
-            .iter()
-            .rev()
-            .find(|h| h.effect == ident)
-            .map(|h| h.cap);
-        if let Some(c) = cap {
-            self.cap_calls.push((n, c));
-            self.note_abort_ctx(n);
-            for (i, v, sp) in fn_args.iter().chain(&ref_fns) {
-                self.note_op_fn(c, (Some(op), Some(*i)), v, *sp);
-            }
-        } else {
-            for (_, v, sp) in &ref_fns {
-                self.give_held_to_op(v, &v.refs, &ident, *sp);
-            }
-        }
-        // The clause gets the reference arguments. It pairs with the footprint of
-        // the handler in `call_mut` (W0312), and it can mutate through them.
-        for (i, ps) in arg_places.iter().enumerate() {
+        a
+    }
+
+    /// The places of the arguments of the perform at node `n` of operation
+    /// `op` (`o`), where `cap` is the local handler, if one is in scope. The
+    /// clause gets the reference arguments. It pairs with the footprint of
+    /// the handler in `call_mut` (W0312), and it can mutate through them.
+    fn op_arg_places(
+        &mut self,
+        n: NodeId,
+        (cap, op): (Option<CapId>, usize),
+        o: &crate::program::OpDef,
+        a: &OpArgs,
+    ) {
+        for (i, ps) in a.arg_places.iter().enumerate() {
             let root = roots::param(i);
             for &p in ps {
                 self.facts.reads_at.push((n, p));
@@ -2647,7 +2688,7 @@ impl Lower<'_> {
                 }
             }
         }
-        for (i, ps) in &value_refs {
+        for (i, ps) in &a.value_refs {
             let root = roots::fn_arg(*i);
             for &p in ps {
                 self.facts.call_arg.push((n, p, root));
@@ -2657,24 +2698,28 @@ impl Lower<'_> {
                 }
             }
         }
-        // The clause can call a function argument with any place inside the
-        // reference arguments.
-        let roots: Vec<u32> = (0..arg_places.len()).map(roots::param).collect();
-        let given = Self::any_arg(&arg_places, &roots);
+    }
+
+    /// The function value arguments of the perform at node `n`, where `cap` is
+    /// the local handler, if one is in scope. A clause can call each of them
+    /// more than once, with any place inside the reference arguments.
+    fn op_fn_values(&mut self, n: NodeId, cap: Option<CapId>, span: Span, a: OpArgs) {
+        let roots: Vec<u32> = (0..a.arg_places.len()).map(roots::param).collect();
+        let given = Self::any_arg(&a.arg_places, &roots);
         // A clause of a handler of a caller is code that the body does not know.
         // It can run each function argument as a task: on another thread, two
         // times at one time, and at the same time as the others (ADR 0006).
         let foreign_clause = cap.is_none();
         let mut arg_runs = Vec::new();
-        // A clause can call a function argument more than once.
-        for (i, info, row) in fns {
+        for (i, info, row) in a.fns {
             let root = roots::fn_arg(i);
             let from = self.place_marks();
             self.apply_value(n, &info, row.as_deref(), root, &given);
             if foreign_clause {
                 let s = self.value_summary(&info, row.as_deref());
                 let (writes, reads) = self.arg_places(n, s, from);
-                let span = fn_args
+                let span = a
+                    .fn_args
                     .iter()
                     .find(|(j, ..)| *j == i)
                     .map_or(span, |(_, _, sp)| *sp);
@@ -2690,16 +2735,15 @@ impl Lower<'_> {
             }
             self.start_ret_spawns(n, &info);
             self.note_repeat(n, &info, true);
-            self.repeat_unknown(n, &info, &given);
-            if let Some((_, v, _)) = fn_args.iter().find(|(j, ..)| *j == i) {
-                let v = v.clone();
-                let again = self.run_again(n, &v);
-                self.give_fn(n, &v, Some(again), false);
+            self.repeat_unknown(n, &info, &given, root);
+            if let Some((_, v, _)) = a.fn_args.iter().find(|(j, ..)| *j == i) {
+                let again = self.run_again(n, v);
+                self.give_fn(n, v, Some(again), false);
             }
         }
         if foreign_clause {
             // A value that holds function values, for example in a field.
-            for (i, v, sp) in &fn_args {
+            for (i, v, sp) in &a.fn_args {
                 if !matches!(self.inf.shallow(&v.ty), Ty::Fn(_)) {
                     let held = self.val_caps(v);
                     let refs = self.made_refs(v, &[], &held);
@@ -2708,11 +2752,15 @@ impl Lower<'_> {
             }
             let pos: Vec<usize> = arg_runs.iter().map(|a| a.pos).collect();
             let runs = Self::worst_runs(&pos);
-            let access = Self::any_access(&runs, &arg_places);
+            let access = Self::any_access(&runs, &a.arg_places);
             self.arg_tasks(&runs, &arg_runs, &access, span);
         }
-        // An operation of a local handler suspends the handled body only. A
-        // root handler of `sim.run` is the scheduler: it can cancel the task.
+    }
+
+    /// What the perform at node `n` of operation `o` suspends. An operation of
+    /// a local handler (`cap`) suspends the handled body only. A root handler
+    /// of `sim.run` is the scheduler: it can cancel the task.
+    fn op_suspends(&mut self, n: NodeId, cap: Option<CapId>, o: &crate::program::OpDef) {
         let local = cap
             .filter(|c| !self.root_caps.contains(c))
             .and_then(|c| self.handlers.iter().rposition(|h| h.cap == c));
@@ -2730,7 +2778,11 @@ impl Lower<'_> {
             }
             self.abortive(n);
         }
-        // The result is what a clause resumes with.
+    }
+
+    /// The result of a perform of operation `op` (`o`): what a clause of the
+    /// handler `cap` resumes with.
+    fn op_result(&mut self, cap: Option<CapId>, op: usize, o: &crate::program::OpDef) -> Val {
         let mut caps = std::collections::BTreeSet::new();
         if self.has_fn(&o.ret) {
             // A clause of a handler of a caller gives a value that the body cannot
@@ -2845,7 +2897,7 @@ impl Lower<'_> {
         // The task also writes and reads what the new values of its captured
         // variables reach, here and while it runs (`late::finish_task_values`).
         let from = self.place_marks();
-        self.apply_summary(n, s, 700, &[]);
+        self.apply_summary(n, s, roots::TASK, &[]);
         self.task_places_from(t, n, s, from);
         let held_params = Self::task_marks(&self.expand_caps(&held))
             .into_iter()
@@ -3334,7 +3386,6 @@ impl Lower<'_> {
             self.apply_summary(n, s, roots::STORED, &[]);
         }
         self.handlers.truncate(base);
-        let _ = PRELUDE;
         Val::default()
     }
 }

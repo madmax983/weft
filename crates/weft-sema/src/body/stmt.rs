@@ -83,10 +83,7 @@ impl Lower<'_> {
                     .get_mut(l)
                     .caps
                     .insert(super::caps::param_cap(i));
-                self.locals
-                    .get_mut(l)
-                    .sticky
-                    .insert(super::caps::param_cap(i));
+                self.locals.add_sticky(l, [super::caps::param_cap(i)]);
             }
             if p.shared {
                 self.facts.shared_root.extend(bases[i].iter().copied());
@@ -1138,33 +1135,8 @@ impl Lower<'_> {
     }
 
     fn assign(&mut self, target: &ast::Expr, op: AssignOp, value: &ast::Expr, span: Span) {
-        // `x = v` on a local rebinds it. `c += v` on a reference writes through
-        // it, as the interpreter does: the general path below mutates its places.
-        if let ExprKind::Name(id) = &target.kind {
-            let local = self.lookup_local(&id.name).filter(|&l| {
-                op == AssignOp::Assign
-                    || !matches!(self.inf.shallow(&self.locals[l].ty), Ty::Ref(_))
-            });
-            if let Some(l) = local {
-                let v = self.expr(value);
-                let lt = self.locals[l].ty.clone();
-                if op == AssignOp::Assign {
-                    self.unify(&lt, &v.ty, value.span);
-                } else {
-                    self.use_local(l);
-                    self.arith(&lt, &v.ty, value.span);
-                    self.int_ops.push((lt.clone(), value.span));
-                }
-                self.consume(&v, value.span);
-                let n = self.emit(span, &format!("{} =", id.name), String::new());
-                // The new value writes the variable (W0405).
-                if let Some(r) = self.var_place(l) {
-                    self.mutate(n, r);
-                }
-                self.note_capture(l);
-                self.assign_local(l, &v, n);
-                return;
-            }
+        if self.assign_name(target, op, value, span) {
+            return;
         }
         let v = self.expr(value);
         let mark = self.pend_uses.len();
@@ -1182,32 +1154,9 @@ impl Lower<'_> {
         }
         // The target does not read the references that the new value replaces.
         if let (AssignOp::Assign, Some(l), false) = (op, lv.owner, lv.through_ref) {
-            let replaced: Vec<VarId> = self
-                .part_holders
-                .iter()
-                .filter(|h| h.local == l && self.below_any(&h.places, &lv.places))
-                .map(|h| h.var)
-                .collect();
-            let mut i = mark;
-            while i < self.pend_uses.len() {
-                if replaced.contains(&self.pend_uses[i]) {
-                    self.pend_uses.remove(i);
-                } else {
-                    i += 1;
-                }
-            }
+            self.drop_replaced_uses(mark, l, &lv.places);
         }
-        // `p op= v` on a place that holds a reference writes through it, as the
-        // interpreter does: it mutates what the reference points into.
-        let mut places = lv.places.clone();
-        if op != AssignOp::Assign && matches!(self.inf.shallow(&lv.ty), Ty::Ref(_)) {
-            let through = self
-                .field_referents(target)
-                .or_else(|| lv.owner.map(|l| self.locals[l].refs.clone()));
-            if let Some(ps) = through {
-                places = self.split_deps(&ps).0;
-            }
-        }
+        let places = self.assigned_places(target, op, &lv);
         if op == AssignOp::Assign {
             self.unify(&lv.ty, &v.ty, value.span);
             self.keep_modes(&v, &lv.ty, value.span);
@@ -1238,50 +1187,8 @@ impl Lower<'_> {
             self.note_fn_store(&lv.places);
         }
         self.consume(&v, value.span);
-        // A part of a local that gets a reference points where it points from
-        // here on. A hidden variable holds it, and a use of the local uses it.
-        // The new value replaces what the part held before, and what each part
-        // below it held.
         let holder = match (op, lv.owner, lv.through_ref) {
-            (AssignOp::Assign, Some(l), false) => {
-                // A holder of the same part with the same places gets the new value.
-                let same = self
-                    .part_holders
-                    .iter()
-                    .find(|h| h.local == l && h.places == lv.places && h.refs == v.refs)
-                    .map(|h| h.var);
-                self.retire_holders(l, &lv.places);
-                (!v.refs.is_empty()).then(|| {
-                    if let Some(h) = same {
-                        let holder = super::PartHolder {
-                            local: l,
-                            places: lv.places.clone(),
-                            var: h,
-                            refs: v.refs.clone(),
-                        };
-                        self.holder_log.push(holder.clone());
-                        self.part_holders.push(holder);
-                        return h;
-                    }
-                    let name = format!("value in `{}`", self.place_text(&lv.places));
-                    let mut info = self.var_info(&name, VarKind::Temp, target.span, &v.ty, v.uniq);
-                    info.linear = false;
-                    info.has_on_abort = true;
-                    let h = self.facts.add_var(info);
-                    for &p in &v.refs {
-                        self.facts.points_into.push((h, p));
-                    }
-                    let holder = super::PartHolder {
-                        local: l,
-                        places: lv.places.clone(),
-                        var: h,
-                        refs: v.refs.clone(),
-                    };
-                    self.holder_log.push(holder.clone());
-                    self.part_holders.push(holder);
-                    h
-                })
-            }
+            (AssignOp::Assign, Some(l), false) => self.part_holder(l, &lv.places, &v, target.span),
             _ => None,
         };
         // A new value of a linear place drops the old one. Behind a reference the
@@ -1320,6 +1227,120 @@ impl Lower<'_> {
             let var = self.locals[l].var;
             self.facts.writes_via.push((n, var));
         }
+    }
+
+    /// `x = v` on a local rebinds it. `c += v` on a local that is not a
+    /// reference updates it. Returns false for another target: `c += v` on a
+    /// reference writes through it, as the interpreter does, and the general
+    /// path of [`Lower::assign`] mutates its places.
+    fn assign_name(
+        &mut self,
+        target: &ast::Expr,
+        op: AssignOp,
+        value: &ast::Expr,
+        span: Span,
+    ) -> bool {
+        let ExprKind::Name(id) = &target.kind else {
+            return false;
+        };
+        let local = self.lookup_local(&id.name).filter(|&l| {
+            op == AssignOp::Assign || !matches!(self.inf.shallow(&self.locals[l].ty), Ty::Ref(_))
+        });
+        let Some(l) = local else {
+            return false;
+        };
+        let v = self.expr(value);
+        let lt = self.locals[l].ty.clone();
+        if op == AssignOp::Assign {
+            self.unify(&lt, &v.ty, value.span);
+        } else {
+            self.use_local(l);
+            self.arith(&lt, &v.ty, value.span);
+            self.int_ops.push((lt.clone(), value.span));
+        }
+        self.consume(&v, value.span);
+        let n = self.emit(span, &format!("{} =", id.name), String::new());
+        // The new value writes the variable (W0405).
+        if let Some(r) = self.var_place(l) {
+            self.mutate(n, r);
+        }
+        self.note_capture(l);
+        self.assign_local(l, &v, n);
+        true
+    }
+
+    /// Removes from the queued uses after index `mark` each holder of a part of
+    /// local `l` at or below the assigned `places`: the target does not read
+    /// the references that the new value replaces.
+    fn drop_replaced_uses(&mut self, mark: usize, l: usize, places: &[PlaceId]) {
+        let replaced: Vec<VarId> = self
+            .part_holders
+            .iter()
+            .filter(|h| h.local == l && self.below_any(&h.places, places))
+            .map(|h| h.var)
+            .collect();
+        let mut i = mark;
+        while i < self.pend_uses.len() {
+            if replaced.contains(&self.pend_uses[i]) {
+                self.pend_uses.remove(i);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    /// The places that an assignment to `target` (`lv`) mutates. `p op= v` on a
+    /// place that holds a reference writes through it, as the interpreter
+    /// does: it mutates what the reference points into.
+    fn assigned_places(&mut self, target: &ast::Expr, op: AssignOp, lv: &LVal) -> Vec<PlaceId> {
+        if op != AssignOp::Assign && matches!(self.inf.shallow(&lv.ty), Ty::Ref(_)) {
+            let through = self
+                .field_referents(target)
+                .or_else(|| lv.owner.map(|l| self.locals[l].refs.clone()));
+            if let Some(ps) = through {
+                return self.split_deps(&ps).0;
+            }
+        }
+        lv.places.clone()
+    }
+
+    /// A part `places` of local `l` that gets the value `v` points where `v`
+    /// points from here on. A hidden variable holds it, and a use of the local
+    /// uses it. The new value replaces what the part held before, and what each
+    /// part below it held. Returns the hidden variable, if `v` has references.
+    fn part_holder(&mut self, l: usize, places: &[PlaceId], v: &Val, span: Span) -> Option<VarId> {
+        // A holder of the same part with the same places gets the new value.
+        let same = self
+            .part_holders
+            .iter()
+            .find(|h| h.local == l && h.places == places && h.refs == v.refs)
+            .map(|h| h.var);
+        self.retire_holders(l, places);
+        if v.refs.is_empty() {
+            return None;
+        }
+        let h = if let Some(h) = same {
+            h
+        } else {
+            let name = format!("value in `{}`", self.place_text(places));
+            let mut info = self.var_info(&name, VarKind::Temp, span, &v.ty, v.uniq);
+            info.linear = false;
+            info.has_on_abort = true;
+            let h = self.facts.add_var(info);
+            for &p in &v.refs {
+                self.facts.points_into.push((h, p));
+            }
+            h
+        };
+        let holder = super::PartHolder {
+            local: l,
+            places: places.to_vec(),
+            var: h,
+            refs: v.refs.clone(),
+        };
+        self.holder_log.push(holder.clone());
+        self.part_holders.push(holder);
+        Some(h)
     }
 
     /// Returns true if local `l` holds one reference and each place of `places` is

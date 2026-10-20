@@ -42,3 +42,102 @@ fn callback_reads(v: &Vec<u64>) {
     let r = &v[0]
     run_first(|| print(v.len()), Keep { f: || print(r) })
 }
+
+// A function value that comes back from a store can be each stored value.
+// When it is a callback, the stored values that the call runs as this argument
+// have the root of the argument, at each parameter. Thus the places of one
+// closure do not pair with each other.
+struct Stats { count: u64 }
+
+fn twice(g: fn()) {
+    g()
+    g()
+}
+
+fn twice_at1(x: u64, g: fn()) {
+    g()
+    g()
+}
+
+fn twice_keep(g: fn(), k: Keep) {
+    g()
+    g()
+}
+
+fn stored_callback(st: &Stats) / mut(st) {
+    let v = Vec.new()
+    v.push(|| { st.count += 1 })
+    twice(v[0])
+}
+
+fn stored_callback_at1(st: &Stats) / mut(st) {
+    let v = Vec.new()
+    v.push(|| { st.count += 1 })
+    twice_at1(1, v[0])
+}
+
+fn stored_callback_value(xs: &Vec<u64>) / mut(xs) {
+    let v = Vec.new()
+    v.push(|| { xs.push(1) })
+    let h = twice
+    h(v[0])
+}
+
+effect Run { fn run(g: fn()) -> () }
+
+// A clause of a caller can run the argument as a task (ADR 0006).
+fn stored_callback_perform(st: &Stats) / mut(st), Run {
+    let v = Vec.new()
+    v.push(|| { st.count += 1 })
+    run(v[0])   //~ W0403 W0405
+}
+
+// A stored value that the callback can be still pairs with a function value
+// inside another argument.
+fn stored_callback_and_keep(xs: &Vec<u64>) / mut(xs) {
+    let r = &xs[0]
+    let v = Vec.new()
+    v.push(|| { xs.push(1) })
+    twice_keep(v[0], Keep { f: || print(r) })   //~ W0301 W0312
+}
+
+// A callback that runs a stored value that another argument holds: the
+// stored value has the root of a stored value at the call, as the argument
+// that holds it does. One closure does not pair with itself. A stored value
+// that the callback runs pairs with another one that an argument holds.
+struct Job { f: fn() }
+
+fn run_hof(j: &Job, k: fn(&Job)) {
+    k(j)
+}
+
+fn hof_runs_held(st: &Stats) / mut(st) {
+    let j = Job { f: || { st.count += 1 } }
+    run_hof(&j, |jj| {
+        let g = jj.f
+        g()
+    })
+}
+
+fn hof_runs_stored(st: &Stats) / mut(st) {
+    let v = Vec.new()
+    v.push(|| { st.count += 1 })
+    let j = Job { f: v[0] }
+    run_hof(&j, |jj| {
+        let g = jj.f
+        g()
+    })
+}
+
+fn hof_runs_other(xs: &Vec<u64>) / mut(xs) {
+    let r = &xs[0]
+    let w = Vec.new()
+    w.push(|| { xs.push(1) })
+    let j = Job { f: || print(r) }
+    run_hof(&j, |jj| {   //~ W0301 W0312
+        let a = w[0]
+        a()
+        let g = jj.f
+        g()   //~ W0301
+    })
+}

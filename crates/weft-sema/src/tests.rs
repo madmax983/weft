@@ -1735,6 +1735,20 @@ fn the_large_stack_is_one_thread() {
     assert_eq!(message.as_deref(), Some("inside"));
 }
 
+/// [`crate::on_current_stack`] runs each call of [`crate::on_large_stack`] in
+/// it on the current thread, also after a panic of an earlier call. After it,
+/// a call starts its own thread again.
+#[test]
+fn the_current_stack_has_no_new_thread() {
+    let here = std::thread::current().id();
+    let inner = crate::on_current_stack(|| crate::on_large_stack(|| std::thread::current().id()));
+    assert_eq!(inner, here);
+    let caught = std::panic::catch_unwind(|| crate::on_current_stack(|| panic!("inside")));
+    assert!(caught.is_err());
+    let after = crate::on_large_stack(|| std::thread::current().id());
+    assert_ne!(after, here);
+}
+
 /// Each split of each call has a split id of its own, also when the split
 /// point is a parameter with an index of 64 or more. The old id `64 * call +
 /// index` gave the split of one call to the split of the next call, so a side

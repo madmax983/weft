@@ -3,8 +3,11 @@
 //! For each deep or long construct, the test finds the largest program that the
 //! parser accepts. That program must go through every stage on a 2 MiB thread,
 //! the stack of a test thread: parse, print, analyze, check, the spec, the
-//! interpreter and drop. A larger program gets a parser error, never a stack
-//! overflow. A flat chain of binary operators has no limit.
+//! interpreter and drop. The library moves its stages to a thread with a large
+//! stack (`weft_sema::on_large_stack`), so the test keeps them on the 2 MiB
+//! thread with `weft_sema::on_current_stack`. A larger program gets a parser
+//! error, never a stack overflow. A flat chain of binary operators has no
+//! limit.
 //!
 //! The derivation printer of `check --explain` does not recurse. It folds a
 //! long chain of relations that depend on each other, so a long path in a
@@ -24,24 +27,26 @@ fn pipeline(src: String) -> Option<String> {
     std::thread::Builder::new()
         .stack_size(STACK)
         .spawn(move || {
-            let file = weft_syntax::parse_file(&src).expect("the program parses");
-            let text = weft_syntax::pretty::pretty(&file);
-            if let Err(e) = weft_syntax::parse_file(&text) {
-                panic!("the printed program does not parse: {e}\n{text}");
-            }
-            assert!(!format!("{file:?}").is_empty());
-            drop(file);
-            let checked = weft_check::check_source("limit.wf", &src, Options::default());
-            assert!(weft_check::agreement(&checked).is_ok());
-            if !checked.ok() {
-                return None;
-            }
-            let opts = RunOptions {
-                max_steps: Some(10_000_000),
-                ..RunOptions::default()
-            };
-            let out = weft_interp::run_main(&checked, &opts).expect("main runs");
-            Some(out.stdout)
+            weft_sema::on_current_stack(|| {
+                let file = weft_syntax::parse_file(&src).expect("the program parses");
+                let text = weft_syntax::pretty::pretty(&file);
+                if let Err(e) = weft_syntax::parse_file(&text) {
+                    panic!("the printed program does not parse: {e}\n{text}");
+                }
+                assert!(!format!("{file:?}").is_empty());
+                drop(file);
+                let checked = weft_check::check_source("limit.wf", &src, Options::default());
+                assert!(weft_check::agreement(&checked).is_ok());
+                if !checked.ok() {
+                    return None;
+                }
+                let opts = RunOptions {
+                    max_steps: Some(10_000_000),
+                    ..RunOptions::default()
+                };
+                let out = weft_interp::run_main(&checked, &opts).expect("main runs");
+                Some(out.stdout)
+            })
         })
         .expect("the thread starts")
         .join()

@@ -227,6 +227,143 @@ fn shape() -> impl Strategy<Value = Shape> {
         )
 }
 
+/// The relations of W0301, W0302 and W0304, for [`shared_shape`].
+const SHARED_RELS: [u8; 24] = [
+    0, 0, 0, 0, 0, 0, 1, 1, 1, 5, 6, 6, 6, 6, 6, 6, 7, 8, 22, 23, 24, 32, 33, 34,
+];
+
+/// Facts with many references into few places: the references share their
+/// witnesses and their gen nodes, so the checker shares a search of the whole
+/// graph between them (`rules::invalidation`).
+fn shared_shape() -> impl Strategy<Value = Shape> {
+    (
+        2usize..8,
+        prop::collection::vec((0usize..8, 0usize..8), 0..16),
+        prop::collection::vec((0usize..2, any::<u8>(), any::<u8>(), any::<bool>()), 0..3),
+        prop::collection::vec(any::<[bool; 6]>(), 4..12),
+        prop::collection::vec((0usize..SHARED_RELS.len(), 0usize..24, 0usize..24), 20..80),
+    )
+        .prop_map(|(nodes, edges, places, vars, rels)| Shape {
+            nodes,
+            edges,
+            roots: vec![1],
+            places,
+            vars,
+            rels: rels
+                .into_iter()
+                .map(|(k, a, b)| (SHARED_RELS[k], a, b, 0))
+                .collect(),
+            tasks: Vec::new(),
+            handlers: Vec::new(),
+            flags: (false, false, false, false),
+            std: (false, false),
+        })
+}
+
+/// The checker and the spec give the same violations.
+fn agrees(f: &FnFacts) -> Result<(), TestCaseError> {
+    let fast = check(f).violations;
+    let spec = bridge::check_spec(f).expect("spec evaluates");
+    prop_assert_eq!(fast, spec);
+    Ok(())
+}
+
+/// The evidence of W0301 and W0405 is a derivation of the spec, and each
+/// violation has one piece of it (`weft_check::evidence`).
+fn evidence_agrees(f: &FnFacts) -> Result<(), TestCaseError> {
+    let r = check(f);
+    let out = evidence::evaluate_probes(f).expect("spec evaluates");
+    prop_assert_eq!(evidence::differences(f, &r, &out), Vec::<String>::new());
+    Ok(())
+}
+
+/// Each use of a reference that a node of the spec invalidates has one piece
+/// of evidence: the first node that invalidates the reference and reaches the
+/// use alone. The test finds that node from the spec alone. It takes all the
+/// nodes of `invalidated_at(R, P)` of the spec for the reference, in order,
+/// and the first one whose propagation reaches the use. So it checks all gen
+/// nodes, not only the nodes of the evidence, and a use with no such node has
+/// no error and no evidence.
+fn first_evidence(f: &FnFacts) -> Result<(), TestCaseError> {
+    let r = check(f);
+    let out = evidence::evaluate_probes(f).expect("spec evaluates");
+    let id = |v, prefix: char| -> u32 {
+        let text = out.display_value(v);
+        let text = text.trim_matches('"');
+        text.strip_prefix(prefix)
+            .and_then(|x| x.parse().ok())
+            .unwrap_or_else(|| panic!("bad id {text}"))
+    };
+    let mut gens: Vec<(VarId, NodeId)> = out
+        .tuples("invalidated_at")
+        .iter()
+        .map(|t| (VarId(id(t[0], 'v')), NodeId(id(t[1], 'n'))))
+        .collect();
+    gens.sort();
+    gens.dedup();
+    let n = f.nodes.len();
+    let mut succ = vec![Vec::new(); n];
+    for &(a, b) in &f.cfg_edge {
+        succ[a.index()].push(b.index());
+    }
+    let reaches = |v: VarId, at: NodeId, u: NodeId| {
+        let mut kill = vec![false; n];
+        for &(x, q) in &f.rebound_at {
+            if x == v {
+                kill[q.index()] = true;
+            }
+        }
+        let mut one = vec![false; n];
+        one[at.index()] = true;
+        weft_verified::dataflow::propagate(&succ, &one, &kill)[u.index()]
+    };
+    for &(v, u) in &f.uses {
+        let first = gens
+            .iter()
+            .filter(|&&(x, _)| x == v)
+            .map(|&(_, p)| p)
+            .find(|&p| reaches(v, p, u));
+        let evidence: Vec<_> = r
+            .invalidations
+            .iter()
+            .filter(|i| i.var == v && i.used_at == u)
+            .collect();
+        match first {
+            None => {
+                prop_assert!(evidence.is_empty(), "{:?}", evidence);
+                prop_assert!(!r.violations.error.contains(&(v, u)));
+            }
+            Some(p) => {
+                prop_assert_eq!(evidence.len(), 1, "use {:?}", (v, u));
+                prop_assert_eq!(evidence[0].at, p, "{:?}", evidence[0]);
+                prop_assert!(r.violations.error.contains(&(v, u)));
+            }
+        }
+    }
+    // Each piece of evidence is a witness of the spec at its node.
+    let witness = r
+        .invalidations
+        .iter()
+        .filter(|inv| match inv.cause {
+            Cause::Mutation(m) => {
+                f.mutates_at.contains(&(inv.at, m))
+                    || f.performs_at
+                        .iter()
+                        .any(|&(q, c)| q == inv.at && f.footprint.contains(&(c, m)))
+            }
+            Cause::Lend(m) => f.lends_mut.contains(&(inv.at, m)),
+            Cause::Move(o) => f.moved_at.contains(&(o, inv.at)),
+            Cause::ScopeEnd(o) => f.scope_end.contains(&(o, inv.at)),
+            Cause::Unwound(o) => f.unwound_at.contains(&(o, inv.at)),
+            Cause::MovePart(m) => f.moved_part.contains(&(m, inv.at)),
+            Cause::Release(m) => f.releases_at.contains(&(inv.at, m)),
+        })
+        .count();
+    prop_assert_eq!(witness, r.invalidations.len());
+    prop_assert_eq!(r.invalidations.len(), r.violations.error.len());
+    Ok(())
+}
+
 proptest! {
     #![proptest_config(ProptestConfig {
         cases: std::env::var("PROPTEST_CASES").ok().and_then(|v| v.parse().ok()).unwrap_or(512),
@@ -235,107 +372,25 @@ proptest! {
 
     #[test]
     fn checker_agrees_with_spec(s in shape()) {
-        let f = build(&s);
-        let fast = check(&f).violations;
-        let spec = bridge::check_spec(&f).expect("spec evaluates");
-        prop_assert_eq!(fast, spec);
+        agrees(&build(&s))?;
     }
 
-    /// The evidence of W0301 and W0405 is a derivation of the spec, and each
-    /// violation has one piece of it (`weft_check::evidence`).
     #[test]
     fn evidence_agrees_with_spec(s in shape()) {
-        let f = build(&s);
-        let r = check(&f);
-        let out = evidence::evaluate_probes(&f).expect("spec evaluates");
-        prop_assert_eq!(evidence::differences(&f, &r, &out), Vec::<String>::new());
+        evidence_agrees(&build(&s))?;
     }
 
-    /// Each use of a reference that a node of the spec invalidates has one
-    /// piece of evidence: the first node that invalidates the reference and
-    /// reaches the use alone. The test finds that node from the spec alone.
-    /// It takes all the nodes of `invalidated_at(R, P)` of the spec for the
-    /// reference, in order, and the first one whose propagation reaches the
-    /// use. So it checks all gen nodes, not only the nodes of the evidence,
-    /// and a use with no such node has no error and no evidence.
     #[test]
     fn each_invalid_use_has_the_first_evidence(s in shape()) {
+        first_evidence(&build(&s))?;
+    }
+
+    /// The same, for references that share their witnesses.
+    #[test]
+    fn shared_witnesses_agree_with_spec(s in shared_shape()) {
         let f = build(&s);
-        let r = check(&f);
-        let out = evidence::evaluate_probes(&f).expect("spec evaluates");
-        let id = |v, prefix: char| -> u32 {
-            let text = out.display_value(v);
-            let text = text.trim_matches('"');
-            text.strip_prefix(prefix)
-                .and_then(|x| x.parse().ok())
-                .unwrap_or_else(|| panic!("bad id {text}"))
-        };
-        let mut gens: Vec<(VarId, NodeId)> = out
-            .tuples("invalidated_at")
-            .iter()
-            .map(|t| (VarId(id(t[0], 'v')), NodeId(id(t[1], 'n'))))
-            .collect();
-        gens.sort();
-        gens.dedup();
-        let n = f.nodes.len();
-        let mut succ = vec![Vec::new(); n];
-        for &(a, b) in &f.cfg_edge {
-            succ[a.index()].push(b.index());
-        }
-        let reaches = |v: VarId, at: NodeId, u: NodeId| {
-            let mut kill = vec![false; n];
-            for &(x, q) in &f.rebound_at {
-                if x == v {
-                    kill[q.index()] = true;
-                }
-            }
-            let mut one = vec![false; n];
-            one[at.index()] = true;
-            weft_verified::dataflow::propagate(&succ, &one, &kill)[u.index()]
-        };
-        for &(v, u) in &f.uses {
-            let first = gens
-                .iter()
-                .filter(|&&(x, _)| x == v)
-                .map(|&(_, p)| p)
-                .find(|&p| reaches(v, p, u));
-            let evidence: Vec<_> = r
-                .invalidations
-                .iter()
-                .filter(|i| i.var == v && i.used_at == u)
-                .collect();
-            match first {
-                None => {
-                    prop_assert!(evidence.is_empty(), "{:?}", evidence);
-                    prop_assert!(!r.violations.error.contains(&(v, u)));
-                }
-                Some(p) => {
-                    prop_assert_eq!(evidence.len(), 1, "use {:?}", (v, u));
-                    prop_assert_eq!(evidence[0].at, p, "{:?}", evidence[0]);
-                    prop_assert!(r.violations.error.contains(&(v, u)));
-                }
-            }
-        }
-        // Each piece of evidence is a witness of the spec at its node.
-        let witness = r
-            .invalidations
-            .iter()
-            .filter(|inv| match inv.cause {
-                Cause::Mutation(m) => {
-                    f.mutates_at.contains(&(inv.at, m))
-                        || f.performs_at.iter().any(|&(q, c)| {
-                            q == inv.at && f.footprint.contains(&(c, m))
-                        })
-                }
-                Cause::Lend(m) => f.lends_mut.contains(&(inv.at, m)),
-                Cause::Move(o) => f.moved_at.contains(&(o, inv.at)),
-                Cause::ScopeEnd(o) => f.scope_end.contains(&(o, inv.at)),
-                Cause::Unwound(o) => f.unwound_at.contains(&(o, inv.at)),
-                Cause::MovePart(m) => f.moved_part.contains(&(m, inv.at)),
-                Cause::Release(m) => f.releases_at.contains(&(inv.at, m)),
-            })
-            .count();
-        prop_assert_eq!(witness, r.invalidations.len());
-        prop_assert_eq!(r.invalidations.len(), r.violations.error.len());
+        agrees(&f)?;
+        evidence_agrees(&f)?;
+        first_evidence(&f)?;
     }
 }

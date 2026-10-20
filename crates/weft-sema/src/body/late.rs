@@ -670,7 +670,7 @@ impl Lower<'_> {
                 continue;
             }
             let from = self.place_marks();
-            self.late_join(n, s, 700, &[], false);
+            self.late_join(n, s, super::roots::TASK, &[], false);
             self.task_places_from(t, n, s, from);
         }
     }

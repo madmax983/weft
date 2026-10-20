@@ -9,7 +9,7 @@
 //! what the callee lends to its function parameter (the `lent` part of the
 //! signature), or every reference argument when the callee is not known.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::roots;
 use super::{
@@ -97,6 +97,11 @@ pub(super) struct Reach {
     /// The node can run a stored value more than once: a callee that runs it in a
     /// loop, for example.
     pub again: bool,
+    /// The closures that the value can be, from its summary, and the callee
+    /// root index that the node gives to what they do. A stored value that is
+    /// one of them has this root at the node, also when the node runs it in
+    /// another way ([`Lower::apply_stored`]).
+    pub known: (BTreeSet<usize>, u32),
 }
 
 /// A node where a summary runs, with the places that it gives.
@@ -112,6 +117,8 @@ pub(super) struct Applied {
     pub scope: Scope,
     /// The node is in a loop: it can run more than once.
     pub in_loop: bool,
+    /// The callee root index of what the summary does at the node.
+    pub root: u32,
 }
 
 /// A function value with its effect row.
@@ -446,7 +453,7 @@ impl Lower<'_> {
                         self.apply_summary(n, s, root, given);
                     }
                 }
-                None => self.call_unknown(n, given),
+                None => self.call_unknown(n, given, (BTreeSet::new(), root)),
             }
             let args = Given::args(given);
             for e in row.into_iter().flatten() {
@@ -541,6 +548,7 @@ impl Lower<'_> {
             given: given.to_vec(),
             scope,
             in_loop,
+            root,
         });
         // The captured variables can have new values here.
         let at_run = !self.lowered;
@@ -626,7 +634,8 @@ impl Lower<'_> {
             self.call_param(n, (0, p), given);
         }
         if sum.unknown {
-            self.call_unknown(n, given);
+            let known = sum.members.iter().copied().collect();
+            self.call_unknown(n, given, (known, root));
         }
         let args = Given::args(given);
         for e in &sum.row {
@@ -763,8 +772,15 @@ impl Lower<'_> {
     }
 
     /// A call of a function value that the body does not know. It can be any
-    /// function parameter in scope, so each of them can get the places.
-    pub(super) fn call_unknown(&mut self, n: NodeId, given: &[Given]) {
+    /// function parameter in scope, so each of them can get the places. `known`
+    /// has the closures that the value is known to be, with their callee root
+    /// index ([`Reach::known`]).
+    pub(super) fn call_unknown(
+        &mut self,
+        n: NodeId,
+        given: &[Given],
+        known: (BTreeSet<usize>, u32),
+    ) {
         self.caller_runs.push(n);
         let mut params = Vec::new();
         for f in &self.frames {
@@ -787,7 +803,7 @@ impl Lower<'_> {
         }
         // A function value that the body stores can be this value. The call runs
         // it once.
-        self.reach(n, given, false);
+        self.reach(n, given, false, known);
     }
 
     /// Node `n` performs effect `e` and gives the places `args` to the operation.
@@ -943,8 +959,16 @@ impl Lower<'_> {
     /// Node `n` can run a function value that the body stores, with the places
     /// `given`. With `again`, it can run the value more than once. A node in a loop
     /// or in a closure can run more than once too. Then the body can run a stored
-    /// value more than once (`EffectSig::reach_repeats`).
-    pub(super) fn reach(&mut self, n: NodeId, given: &[Given], again: bool) {
+    /// value more than once (`EffectSig::reach_repeats`). `known` has the
+    /// closures that the value is known to be, with their callee root index
+    /// ([`Reach::known`]).
+    pub(super) fn reach(
+        &mut self,
+        n: NodeId,
+        given: &[Given],
+        again: bool,
+        known: (BTreeSet<usize>, u32),
+    ) {
         self.note_abort_ctx(n);
         let scope = self.scope_now();
         let in_loop = !self.loops.is_empty();
@@ -953,6 +977,7 @@ impl Lower<'_> {
             given: given.to_vec(),
             scope,
             again,
+            known,
         });
         // A node in a closure counts at the end of the body (`reach_repeats`).
         self.reach_runs.0 += 1;
@@ -979,6 +1004,36 @@ impl Lower<'_> {
             }
         }
         false
+    }
+
+    /// The closures that a function value at each node of a reach is known to
+    /// be, with their callee root index there ([`Reach::known`]). A node in a
+    /// closure passes them on to each node where the closure runs, with the
+    /// root of that run: they are part of what the closure does there.
+    fn known_at(&self, applied: &[Applied]) -> BTreeMap<NodeId, Vec<(BTreeSet<usize>, u32)>> {
+        let mut out: BTreeMap<NodeId, Vec<(BTreeSet<usize>, u32)>> = BTreeMap::new();
+        let mut work: Vec<(NodeId, Scope, &BTreeSet<usize>, u32)> = self
+            .reaches
+            .iter()
+            .filter(|r| !r.known.0.is_empty())
+            .map(|r| (r.node, r.scope, &r.known.0, r.known.1))
+            .collect();
+        let mut seen: BTreeSet<(NodeId, &BTreeSet<usize>, u32)> = BTreeSet::new();
+        while let Some((node, scope, known, root)) = work.pop() {
+            if !seen.insert((node, known, root)) {
+                continue;
+            }
+            out.entry(node).or_default().push((known.clone(), root));
+            let Scope::Closure(id) = scope else {
+                continue;
+            };
+            for a in applied {
+                if self.closures[a.summary].members.contains(&id) {
+                    work.push((a.node, a.scope, known, a.root));
+                }
+            }
+        }
+        out
     }
 
     /// Runs each stored function value at each node that can reach it. This runs
@@ -1033,6 +1088,7 @@ impl Lower<'_> {
                 }
             }
         }
+        let known_at = self.known_at(&applied);
         let mut work: Vec<Reach> = self.reaches.clone();
         let mut seen: BTreeSet<(NodeId, bool, Vec<GivenKey>)> = BTreeSet::new();
         while let Some(r) = work.pop() {
@@ -1048,7 +1104,20 @@ impl Lower<'_> {
                 if !is_after(k, r.node) {
                     continue;
                 }
-                self.apply_value(r.node, &st.info, st.row.as_deref(), roots::STORED, &r.given);
+                // A stored value that a function value at the node is known to
+                // be has the root of that value there: one closure does not
+                // pair with itself (W0312).
+                let members = st.info.summary.map(|s| &self.closures[s].members);
+                let root = known_at
+                    .get(&r.node)
+                    .into_iter()
+                    .flatten()
+                    .find(|(known, _)| {
+                        members
+                            .is_some_and(|m| !m.is_empty() && m.iter().all(|c| known.contains(c)))
+                    })
+                    .map_or(roots::STORED, |&(_, root)| root);
+                self.apply_value(r.node, &st.info, st.row.as_deref(), root, &r.given);
                 self.note_repeat(r.node, &st.info, false);
                 // A node that runs the value more than once starts its tasks
                 // again. It runs the value again right after the first run. A
@@ -1070,7 +1139,7 @@ impl Lower<'_> {
                     self.facts.uses.push((v, r.node));
                 }
                 for &p in &st.refs {
-                    self.facts.call_arg.push((r.node, p, roots::STORED));
+                    self.facts.call_arg.push((r.node, p, root));
                 }
             }
             let Scope::Closure(id) = r.scope else {
@@ -1104,6 +1173,7 @@ impl Lower<'_> {
                     given,
                     scope: a.scope,
                     again: r.again || self.repeated.contains(&a.node),
+                    known: (r.known.0.clone(), a.root),
                 });
             }
         }

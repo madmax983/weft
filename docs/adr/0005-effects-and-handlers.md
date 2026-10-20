@@ -104,6 +104,18 @@ Status: accepted. Date: 2026-10-18.
   that a call gives (`[..k]`, `[k..]`) have one split for each call and parameter.
   The id was `64 * call + parameter` before, so a split point at parameter 64 or
   more gave one call the split of the next call (`tests/programs/143_arg_roots.wf`).
+- A function value that comes back from a store (`v[0]`) is known to be some closures
+  (the members of its summary), and it can be each other stored value. The call
+  applies the known closures with the root of the argument, `fn_arg(i)` for callback
+  `i`. A stored value that is one of these closures gets the same root at that node
+  each time the node runs it, also through another argument that holds it
+  (`Reach::known`, `Lower::known_at`). A closure that runs such a value passes the
+  closures on to each node where it runs, with the root of that run. Other stored
+  values keep the root of a stored value. Before, a known closure had `fn_arg(i)` and
+  its run as a stored value had the other root, so the places of one closure paired
+  with each other: a closure that mutates `st.count` and captures `st` got W0312 at
+  `twice(v[0])`. A stored value that the callback runs and a different stored value
+  that another argument holds still pair (`tests/programs/143_arg_roots.wf`).
 - A parameter of a closure or a clause that holds references (a reference, a tuple or an
   `Option` with one) points into what the call gives.
 - W0312 is stronger than the design. The design lets one task mutate through aliases

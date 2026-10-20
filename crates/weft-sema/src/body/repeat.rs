@@ -185,14 +185,19 @@ impl Lower<'_> {
 
     /// A callee can call function value `info` more than once at node `n`, with
     /// the places `given`. A value that the body does not know can be a stored
-    /// value: the node can run a stored value more than once.
-    pub(super) fn repeat_unknown(&mut self, n: NodeId, info: &FnInfo, given: &[Given]) {
+    /// value: the node can run a stored value more than once. `root` is the
+    /// callee root index of the value ([`super::fnval::Reach::known`]).
+    pub(super) fn repeat_unknown(&mut self, n: NodeId, info: &FnInfo, given: &[Given], root: u32) {
         let unknown = match info.summary {
             Some(s) => self.closures[s].unknown,
             None => info.item.is_none() && info.param.is_none(),
         };
         if unknown {
-            self.reach(n, given, true);
+            let known = info
+                .summary
+                .map(|s| self.closures[s].members.iter().copied().collect())
+                .unwrap_or_default();
+            self.reach(n, given, true, (known, root));
         }
     }
 

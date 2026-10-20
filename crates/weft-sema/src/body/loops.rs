@@ -279,7 +279,7 @@ impl Lower<'_> {
                 loc.fn_param = c.fn_param;
                 loc.bound = c.bound;
                 loc.caps = c.caps;
-                loc.sticky = c.sticky;
+                self.locals.set_sticky(l, c.sticky);
                 self.locals.set_uniq(l, c.uniq);
             }
         }

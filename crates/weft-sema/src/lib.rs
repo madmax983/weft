@@ -161,9 +161,10 @@ fn unit_of(prog: &Program, m: program::ModId) -> usize {
 ///
 /// Sema, the checker and the interpreter walk the syntax tree with recursion.
 /// The parser limits the depth of the tree, and `crates/weft-cli/tests/limits.rs`
-/// shows that a 2 MiB stack is sufficient for the deepest tree that it accepts.
-/// The large stack is a margin. The system only reserves this memory. It uses
-/// a page when the recursion gets to it.
+/// shows that a 2 MiB stack is sufficient for the deepest tree that it accepts:
+/// it runs each stage there with [`on_current_stack`]. The large stack is a
+/// margin. The system only reserves this memory. It uses a page when the
+/// recursion gets to it.
 pub const STACK: usize = 256 * 1024 * 1024;
 
 std::thread_local! {
@@ -197,6 +198,23 @@ pub fn on_large_stack<T: Send>(f: impl Fn() -> T + Sync) -> T {
             Err(_) => f(),
         }
     })
+}
+
+/// Runs `f` and each call of [`on_large_stack`] in it on the current thread.
+///
+/// It is the path of [`on_large_stack`] when the system cannot start a
+/// thread. A caller that has a large stack can use it, and a test uses it to
+/// show that a small stack is sufficient ([`STACK`]).
+pub fn on_current_stack<T>(f: impl FnOnce() -> T) -> T {
+    /// Puts the mark of the thread back, also when `f` panics.
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            LARGE.with(|l| l.set(self.0));
+        }
+    }
+    let _restore = Restore(LARGE.with(|l| l.replace(true)));
+    f()
 }
 
 /// Analyzes the units. Unit [`PRELUDE_UNIT`] must be the prelude and unit

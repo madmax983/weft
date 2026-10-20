@@ -560,10 +560,15 @@ impl Program {
         self.steps.0.load(Ordering::Relaxed)
     }
 
-    /// Adds `n` steps of an item check.
+    /// Adds `n` steps of an item check. Two threads can add at the same time.
+    /// The count stops at `usize::MAX`.
     pub(crate) fn add_steps(&self, n: usize) {
-        let old = self.steps.0.load(Ordering::Relaxed);
-        self.steps.0.store(old.saturating_add(n), Ordering::Relaxed);
+        let _ = self
+            .steps
+            .0
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |old| {
+                Some(old.saturating_add(n))
+            });
     }
 
     /// Returns the index of the field `name` of struct `a`. After item

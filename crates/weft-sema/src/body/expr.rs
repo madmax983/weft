@@ -953,7 +953,7 @@ impl Lower<'_> {
         // A place field that the literal does not give has no value yet: see
         // `Lower::unset_paths`.
         for d in defs {
-            if d.place.is_none() && !fields.iter().any(|(n, _)| n.name == d.name) {
+            if d.place.is_none() && !given.contains(d.name.as_str()) {
                 self.err(Code::W0115, format!("missing field `{}`", d.name), span);
             }
         }
@@ -1536,10 +1536,7 @@ impl Lower<'_> {
             );
             if mark {
                 self.locals.get_mut(l).caps.insert(super::caps::UNKNOWN_FN);
-                self.locals
-                    .get_mut(l)
-                    .sticky
-                    .insert(super::caps::UNKNOWN_FN);
+                self.locals.add_sticky(l, [super::caps::UNKNOWN_FN]);
             }
             // A parameter whose type is not known yet can be a function value
             // that the body runs, for example as a task (`tasks`, ADR 0006).
@@ -1837,6 +1834,9 @@ impl Lower<'_> {
         let def = &prog.effects[eid];
         let ident = effects::identity(self.prog, eid);
         let cap = self.facts.add_cap();
+        // The records of this capability come after these indexes: the
+        // capability is new.
+        let from = (self.cap_calls.len(), self.op_args.len(), self.resumes.len());
         self.cap_effects.insert(cap, ident.clone());
         let hid = weft_facts::HandlerId(u32::try_from(self.facts.handlers.len()).unwrap_or(0));
         self.facts.handlers.push(HandlerInfo {
@@ -1923,6 +1923,8 @@ impl Lower<'_> {
         // Resumes run the handled computation and the clauses again.
         let resumes: Vec<NodeId> = self
             .resumes
+            .get(from.2..)
+            .unwrap_or_default()
             .iter()
             .filter(|(_, c)| *c == cap)
             .map(|(n, _)| *n)
@@ -1974,12 +1976,16 @@ impl Lower<'_> {
         };
         let calls: Vec<NodeId> = self
             .cap_calls
+            .get(from.0..)
+            .unwrap_or_default()
             .iter()
             .filter(|(_, c)| *c == cap)
             .map(|(n, _)| *n)
             .collect();
         let args: Vec<super::OpArg> = self
             .op_args
+            .get(from.1..)
+            .unwrap_or_default()
             .iter()
             .filter(|a| a.cap == cap)
             .copied()
@@ -2036,6 +2042,8 @@ impl Lower<'_> {
         // The locals and the kept values from here are of the clause.
         let clause_start = self.handle_start();
         let first_node = NodeId(u32::try_from(self.facts.nodes.len()).unwrap_or(u32::MAX));
+        // An edge from a node of the clause comes after this index.
+        let first_edge = self.facts.cfg_edge.len();
         let entry = self.start(c.span, "handler clause");
         // The detail names the capability: a diagnostic finds the clause that
         // a node runs (`clause_read` in `weft-check`).
@@ -2073,7 +2081,7 @@ impl Lower<'_> {
         // A clause that can end with no `resume` ends the handled body at the
         // node that runs it.
         if let Some(end) = self.cur {
-            done.aborts |= self.reaches_without(entry, end, &own_resumes);
+            done.aborts |= self.reaches_without((entry, first_edge), end, &own_resumes);
         }
         self.pop_frame();
         self.stmt_temps = saved_stmts;
@@ -2180,7 +2188,7 @@ impl Lower<'_> {
                 .flat_map(|a| a.held.iter().copied())
                 .collect();
             self.locals.get_mut(l).caps.extend(given.iter().copied());
-            self.locals.get_mut(l).sticky.extend(given);
+            self.locals.add_sticky(l, given);
             // A function parameter is one of the function values that the
             // nodes give to the operation. A task or a fork branch of the
             // clause runs them (W0401, W0403, W0405).
@@ -2191,10 +2199,7 @@ impl Lower<'_> {
             // an element: the clause cannot follow it.
             if !matches!(self.inf.shallow(pt), Ty::Fn(_)) && self.has_fn(pt) {
                 self.locals.get_mut(l).caps.insert(super::caps::UNKNOWN_FN);
-                self.locals
-                    .get_mut(l)
-                    .sticky
-                    .insert(super::caps::UNKNOWN_FN);
+                self.locals.add_sticky(l, [super::caps::UNKNOWN_FN]);
             }
             self.mark_modes(l);
         }
@@ -2958,12 +2963,20 @@ fn v_refs_result(facts: &weft_facts::FnFacts, results: &[PlaceId], refs: &[Place
 
 impl Lower<'_> {
     /// Returns true if a path of edges leads from node `from` to node `to` that does
-    /// not pass through a node of `stops`.
-    fn reaches_without(&self, from: NodeId, to: NodeId, stops: &[NodeId]) -> bool {
+    /// not pass through a node of `stops`. Each edge from `from` or a later
+    /// node has an index of `edges` or more in `cfg_edge`: the lowering adds an
+    /// edge after its source node. Only `insert_after` gives an edge a new
+    /// source, and it runs after the body is lowered (`finish_values`).
+    fn reaches_without(
+        &self,
+        (from, edges): (NodeId, usize),
+        to: NodeId,
+        stops: &[NodeId],
+    ) -> bool {
         // The nodes of the clause come after its entry.
         let mut succ: std::collections::BTreeMap<NodeId, Vec<NodeId>> =
             std::collections::BTreeMap::new();
-        for &(x, y) in &self.facts.cfg_edge {
+        for &(x, y) in self.facts.cfg_edge.get(edges..).unwrap_or_default() {
             if x.index() >= from.index() {
                 succ.entry(x).or_default().push(y);
             }

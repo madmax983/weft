@@ -43,22 +43,27 @@ fn rebound_references_check_quickly() {
     assert_eq!(work.overlaps, 0, "{work:?}");
 }
 
-/// A name, the number of uses `n`, the program and a test for the cause.
-type CauseCase = (&'static str, usize, String, fn(&Cause) -> bool);
+/// A name, the number of uses `n`, the program, a test for the cause, and
+/// true if the node just before each use invalidates it.
+type CauseCase = (&'static str, usize, String, fn(&Cause) -> bool, bool);
 
 /// A program for each other cause of W0301, with `n` uses of an invalid
-/// reference. The node just before each use invalidates it. In the `lend` and
-/// `wildcard` programs, each `let` makes a new reference and each reference has
-/// `n` invalidating nodes. In the `move` and `scope end` programs, one reference
-/// has `n` invalidating nodes. The `move` program is smaller. It has a moved
-/// variable and a temporary reference for each use, and the checker runs one
-/// search for each of them.
+/// reference. In the `lend` and `wildcard` programs, each `let` makes a new
+/// reference and each reference has `n` invalidating nodes. In the `move`,
+/// `scope end` and `unwound` programs, one reference has `n` invalidating
+/// nodes. The `move` program is smaller. It has a moved variable and a
+/// temporary reference for each use, and the checker runs one search for each
+/// of them. In the `unwound` program, the abort path of each handled body
+/// leaves the scope of a local (`unwound_at`), and so does the normal path.
+/// The end of the scope on the normal path comes first, so it is the evidence.
+/// In the `move part` and `release` programs, each reference has one
+/// invalidating node.
 fn causes() -> Vec<CauseCase> {
-    causes_of([500, 500, 300, 1000])
+    causes_of([500, 500, 300, 1000, 300, 300, 300])
 }
 
 /// The programs of [`causes`], with `n[i]` uses for cause `i`.
-fn causes_of(n: [usize; 4]) -> Vec<CauseCase> {
+fn causes_of(n: [usize; 7]) -> Vec<CauseCase> {
     let program = |n: usize, head: &str, prelude: &str, body: &str| {
         format!("{head} {{\n{prelude}{}}}\n", body.repeat(n))
     };
@@ -73,6 +78,7 @@ fn causes_of(n: [usize; 4]) -> Vec<CauseCase> {
                 "    let r = &v[0]\n    f(v)\n    print(r)\n",
             ),
             |c| matches!(c, Cause::Lend(_)),
+            true,
         ),
         (
             "wildcard",
@@ -84,6 +90,7 @@ fn causes_of(n: [usize; 4]) -> Vec<CauseCase> {
                 "    let r = g(v)\n    v.push(1)\n    print(r)\n",
             ),
             |c| matches!(c, Cause::Mutation(_)),
+            true,
         ),
         (
             "move",
@@ -98,6 +105,7 @@ fn causes_of(n: [usize; 4]) -> Vec<CauseCase> {
                 )
             ),
             |c| matches!(c, Cause::Move(_)),
+            true,
         ),
         (
             "scope end",
@@ -112,6 +120,52 @@ fn causes_of(n: [usize; 4]) -> Vec<CauseCase> {
                 )
             ),
             |c| matches!(c, Cause::ScopeEnd(_)),
+            true,
+        ),
+        (
+            "move part",
+            n[4],
+            format!(
+                "struct In {{ x: Vec<u64> }}\nstruct Out {{ a: In, b: In }}\nfn take(i: In) {{}}\n{}",
+                program(
+                    n[4],
+                    "fn big()",
+                    "",
+                    "    let s = Out { a: In { x: Vec.new() }, b: In { x: Vec.new() } }\n    let r = &s.a.x\n    take(s.a)\n    print(r.len())\n",
+                )
+            ),
+            |c| matches!(c, Cause::MovePart(_)),
+            true,
+        ),
+        (
+            "unwound",
+            n[5],
+            format!(
+                "struct Entity {{ hp: i32 }}\n{}",
+                program(
+                    n[5],
+                    "fn big()",
+                    "    let keep = Entity { hp: 1 }\n    let r = &keep.hp\n",
+                    "    handle Fail { fn fail(m) { () } } in {\n        let inner = Entity { hp: 2 }\n        r = &inner.hp\n        fail(\"x\")\n    }\n    print(r)\n",
+                )
+            ),
+            |c| matches!(c, Cause::ScopeEnd(_)),
+            false,
+        ),
+        (
+            "release",
+            n[6],
+            format!(
+                "struct Entity {{ hp: i32 }}\nstruct World {{ entities: Vec<Entity> }}\neffect Peek {{ fn peek(e: &Entity) }}\n{}",
+                program(
+                    n[6],
+                    "fn big(world: &World) / mut(world.entities)",
+                    "",
+                    "    handle Peek {\n        fn peek(e) {\n            resume(())\n            print(e.hp)\n        }\n    } in {\n        peek(&world.entities[0])\n        world.entities.clear()\n    }\n",
+                )
+            ),
+            |c| matches!(c, Cause::Release(_)),
+            true,
         ),
     ]
 }
@@ -120,12 +174,15 @@ fn causes_of(n: [usize; 4]) -> Vec<CauseCase> {
 /// reference. One search for each invalidating node would take much longer.
 #[test]
 fn each_cause_checks_quickly() {
-    for (name, n, src, cause) in causes() {
+    for (name, n, src, cause, next) in causes() {
         let c = check_source("causes.wf", &src, Options::default());
         let Some(body) = c.analysis.bodies.iter().find(|b| b.facts.name == "big") else {
             panic!("{name}: no body");
         };
         let facts = &body.facts;
+        if name == "unwound" {
+            assert!(facts.unwound_at.len() >= n, "{name}");
+        }
         let (r, work) = check_counted(facts);
         assert_eq!(r.violations.error.len(), n, "{name}");
         assert_eq!(r.invalidations.len(), n, "{name}");
@@ -134,11 +191,14 @@ fn each_cause_checks_quickly() {
             assert!(cause(&inv.cause), "{name}: {inv:?}");
             let at = file.line(facts.node(inv.at).span);
             let used = file.line(facts.node(inv.used_at).span);
-            assert_eq!(at + 1, used, "{name}: {inv:?}");
+            assert!(at < used, "{name}: {inv:?}");
+            if next {
+                assert_eq!(at + 1, used, "{name}: {inv:?}");
+            }
         }
-        // At most four searches for each reference and its evidence, not one
-        // for each invalidating node, each in a small part of the graph.
-        assert!(work.searches <= 4 * n as u64 + 50, "{name}: {work:?}");
+        // A few searches for each use, not one for each invalidating node,
+        // each in a small part of the graph.
+        assert!(work.searches <= 6 * n as u64 + 50, "{name}: {work:?}");
         assert!(
             work.part_nodes <= 3 * facts.nodes.len() as u64,
             "{name}: {work:?}"
@@ -147,28 +207,129 @@ fn each_cause_checks_quickly() {
     }
 }
 
-/// The checker takes less than 1 s for each cause of W0301 with 1000 uses
-/// of an invalid reference, also in a debug build, and so do the mutations of
-/// [`rebind`]. Each search is shared by the references that have the same
-/// invalidating nodes, and the invalidating nodes of each place come from one
-/// pass over the nodes.
+/// The work of the checker grows linearly for each cause of W0301 with 1000
+/// uses of an invalid reference, and for the mutations of [`rebind`]. A clock
+/// is not stable on a loaded machine, so the test counts the work.
+///
+/// References that point into the same places share their witnesses. The
+/// search of each reference runs in the part of the graph that can reach its
+/// uses from a witness. A gen node reaches only nodes of its own strongly
+/// connected component or of a later one, so the part has no node of an
+/// earlier component than the first gen node.
 #[test]
-fn each_cause_checks_in_time() {
-    let mut cases = causes_of([1000; 4]);
-    cases.push(("mutation", 1000, rebind(1000), |c| {
-        matches!(c, Cause::Mutation(_))
-    }));
-    for (name, n, src, cause) in cases {
+fn each_cause_checks_in_linear_work() {
+    let mut cases = causes_of([1000; 7]);
+    cases.push((
+        "mutation",
+        1000,
+        rebind(1000),
+        |c| matches!(c, Cause::Mutation(_)),
+        true,
+    ));
+    for (name, n, src, cause, _) in cases {
         let c = check_source("causes.wf", &src, Options::default());
         let Some(body) = c.analysis.bodies.iter().find(|b| b.facts.name == "big") else {
             panic!("{name}: no body");
         };
-        let start = std::time::Instant::now();
-        let r = weft_check::check(&body.facts);
-        let time = start.elapsed();
+        let (r, work) = check_counted(&body.facts);
         assert_eq!(r.violations.error.len(), n, "{name}");
         assert!(r.invalidations.iter().all(|i| cause(&i.cause)), "{name}");
-        assert!(time.as_millis() < 1000, "{name}: {time:?}");
+        let nodes = body.facts.nodes.len() as u64;
+        assert!(work.searches <= 6 * n as u64 + 50, "{name}: {work:?}");
+        assert!(work.part_nodes <= 3 * nodes, "{name}: {work:?}");
+    }
+}
+
+/// A name, a program with `n` references, the expected number of errors, and
+/// the code of the errors.
+type LongCase = (&'static str, String, usize, &'static str);
+
+/// Programs where many references or moved variables live long: each one is
+/// made at the start and used at the end, so the part of the graph between
+/// them is large. `fields` and `refs` have no error, `refs, one push` has an
+/// error for each reference after one mutation, and `refs, push in a loop`
+/// has them in a loop. `moves` declares each vector at the start and moves
+/// each one late (W0302).
+fn long_lived(n: usize) -> Vec<LongCase> {
+    let lets = |f: &dyn Fn(usize) -> String| (0..n).map(f).collect::<String>();
+    let uses = lets(&|i| format!("    print(r{i})\n"));
+    let refs = lets(&|i| format!("    let r{i} = &v[{i}]\n"));
+    vec![
+        (
+            "fields",
+            format!(
+                "struct S {{ a: u64, b: u64 }}\nfn big(s: &S) / mut(s.b) {{\n{}{uses}    s.b = 2\n}}\n",
+                lets(&|i| format!("    let r{i} = &s.a\n"))
+            ),
+            0,
+            "W0301",
+        ),
+        (
+            "refs",
+            format!("fn big(v: &Vec<u32>) / mut(v) {{\n{refs}{uses}    v.push(1)\n}}\n"),
+            0,
+            "W0301",
+        ),
+        (
+            "refs, one push",
+            format!("fn big(v: &Vec<u32>) / mut(v) {{\n{refs}    v.push(1)\n{uses}}}\n"),
+            n,
+            "W0301",
+        ),
+        (
+            "refs, push in a loop",
+            format!(
+                "fn big(v: &Vec<u32>) / mut(v) {{\n{refs}    loop {{\n{uses}        v.push(1)\n    }}\n}}\n"
+            ),
+            n,
+            "W0301",
+        ),
+        (
+            "moves",
+            format!(
+                "fn big() {{\n{}{}}}\n",
+                lets(&|i| format!("    let v{i} = Vec.new()\n")),
+                lets(&|i| if i == 0 {
+                    String::new()
+                } else {
+                    format!("    if v{i}.len() == 0 {{ v{i} = v{} }}\n", i - 1)
+                })
+            ),
+            0,
+            "W0302",
+        ),
+    ]
+}
+
+/// The work of the checker grows linearly when many references or moved
+/// variables live long ([`long_lived`]). The witnesses of the references
+/// into one place are found once. Each part starts at the first gen node of
+/// its search. When the parts of the references with the same witness nodes
+/// have cost as much as the graph, the references share one search of the
+/// whole graph.
+#[test]
+fn long_lived_references_check_in_linear_work() {
+    let n = 1000;
+    for (name, src, errors, code) in long_lived(n) {
+        let c = check_source("long.wf", &src, Options::default());
+        assert!(
+            c.analysis.diags.is_empty(),
+            "{name}: {:?}",
+            c.analysis.diags
+        );
+        let Some(body) = c.analysis.bodies.iter().find(|b| b.facts.name == "big") else {
+            panic!("{name}: no body");
+        };
+        let (r, work) = check_counted(&body.facts);
+        let found = match code {
+            "W0301" => r.violations.error.len(),
+            _ => r.violations.use_after_move.len(),
+        };
+        assert_eq!(found, errors, "{name}");
+        let nodes = body.facts.nodes.len() as u64;
+        assert!(work.searches <= 4 * n as u64, "{name}: {work:?}");
+        assert!(work.part_nodes <= 3 * nodes, "{name}: {work:?}");
+        assert!(work.shared <= 1, "{name}: {work:?}");
     }
 }
 
@@ -245,28 +406,57 @@ fn many_handlers(n: usize) -> String {
     s
 }
 
-/// Sema and the checker take less than 1 s for 1000 blocks with a local and
-/// a reference each, for 1000 types with a local each, for a struct with 3000
-/// fields, for a `match` of 3000 variants and for 500 handlers, also in a
-/// debug build. The first checker searched the whole function for each
-/// variable. Sema copied the names of all types for each local, searched the
-/// fields and the variants by name, compared each `mut` place of a signature
-/// with each other one, gave each variant all the arms of a `match`, and
-/// looked at all the earlier values and calls for each handler.
+/// Sema and the checker take less than 2 s for 4000 blocks with a local and
+/// a reference each, for 3200 types with a local each, for a struct with
+/// 16000 fields, for a `match` of 8000 variants and for 4000 handlers. The
+/// first checker searched the whole function for each variable. Sema copied
+/// the names of all types for each local, searched the fields and the
+/// variants by name, compared each `mut` place of a signature with each other
+/// one, compared each field of a struct literal with each given field, gave
+/// each variant all the arms of a `match`, and looked at all the earlier
+/// values, calls, locals and edges for each handler. Then these shapes took
+/// 2 s to 11 s in a release build.
+///
+/// A clock is not stable on a loaded machine. So the bound is about five to
+/// thirty times the time of a release build, and the test runs only in a
+/// release build: `cargo test --release -p weft-check --test scale`. In a
+/// debug build, [`many_locals_check`] checks the same shapes, smaller, with no
+/// clock.
 #[test]
+#[cfg_attr(debug_assertions, ignore = "a time bound needs a release build")]
 fn many_locals_check_in_time() {
-    for (name, src) in [
-        ("blocks", blocks(1000)),
-        ("types", many_types(1000)),
-        ("fields", many_fields(3000)),
-        ("variants", many_variants(3000)),
-        ("handlers", many_handlers(500)),
-    ] {
+    for (name, src) in many_locals([4000, 3200, 16000, 8000, 4000]) {
         let start = std::time::Instant::now();
         let c = check_source("many.wf", &src, Options::default());
         let time = start.elapsed();
         assert!(c.ok(), "{name}: {:?}", c.diags);
-        assert!(time.as_millis() < 1000, "{name}: {time:?}");
+        assert!(time.as_millis() < 2000, "{name}: {time:?}");
+    }
+}
+
+/// The shapes of [`many_locals_check_in_time`], with the sizes `n`.
+fn many_locals(n: [usize; 5]) -> [(&'static str, String); 5] {
+    [
+        ("blocks", blocks(n[0])),
+        ("types", many_types(n[1])),
+        ("fields", many_fields(n[2])),
+        ("variants", many_variants(n[3])),
+        ("handlers", many_handlers(n[4])),
+    ]
+}
+
+/// The shapes of [`many_locals_check_in_time`] check with no error in a debug
+/// build too, and the work of the checker for the blocks grows linearly.
+#[test]
+fn many_locals_check() {
+    for (name, src) in many_locals([1000, 300, 1000, 1000, 100]) {
+        let c = check_source("many.wf", &src, Options::default());
+        assert!(c.ok(), "{name}: {:?}", c.diags);
+        for b in &c.analysis.bodies {
+            let (_, work) = check_counted(&b.facts);
+            let nodes = b.facts.nodes.len() as u64;
+            assert!(work.part_nodes <= 3 * nodes, "{name}: {work:?}");
+        }
     }
 }
 

@@ -21,7 +21,7 @@ use weft_syntax::diag::Diagnostic;
 use crate::effects;
 use crate::program::{
     elem_step, field_step, AdtKind, Builtins, Deref, EffectId, EffectSig, FnId, FnSig, ItemRef,
-    ModId, Program, SigPlace, SigRoot, SigStep, PRELUDE,
+    ModId, Program, SigPlace, SigRoot, SigStep,
 };
 use crate::props::Prop;
 use crate::types::{subst, AdtId, Display, FnTy, Infer, IntTy, Ty};
@@ -743,6 +743,10 @@ struct Locals {
     uniq: BTreeSet<usize>,
     /// The locals that can hold a task handle now: their task set is not empty.
     tasked: BTreeSet<usize>,
+    /// The locals whose `sticky` set was not empty at some time. Each local
+    /// with a capability in its `sticky` set is here, so a search for one
+    /// looks at these locals only (`check_local_keeps`).
+    sticky: BTreeSet<usize>,
     /// The open loop passes, the innermost last.
     undo: Vec<Undo>,
 }
@@ -819,6 +823,28 @@ impl Locals {
         self.get_mut(l).tasks = tasks;
     }
 
+    /// The locals whose `sticky` set was not empty at some time.
+    const fn sticky_set(&self) -> &BTreeSet<usize> {
+        &self.sticky
+    }
+
+    /// Adds the capabilities `caps` to the `sticky` set of local `l`.
+    fn add_sticky(&mut self, l: usize, caps: impl IntoIterator<Item = caps::Held>) {
+        let mut caps = caps.into_iter().peekable();
+        if caps.peek().is_some() {
+            self.sticky.insert(l);
+            self.get_mut(l).sticky.extend(caps);
+        }
+    }
+
+    /// Sets the `sticky` set of local `l`.
+    fn set_sticky(&mut self, l: usize, caps: BTreeSet<caps::Held>) {
+        if !caps.is_empty() {
+            self.sticky.insert(l);
+        }
+        self.get_mut(l).sticky = caps;
+    }
+
     /// Sets the `@ uniq` mark of local `l`. Each open loop pass keeps the old mark.
     fn set_uniq(&mut self, l: usize, uniq: bool) {
         let was = self.uniq.contains(&l);
@@ -874,6 +900,7 @@ impl Locals {
         self.items.truncate(u.floor);
         let _ = self.uniq.split_off(&u.floor);
         let _ = self.tasked.split_off(&u.floor);
+        let _ = self.sticky.split_off(&u.floor);
     }
 }
 
@@ -2521,7 +2548,7 @@ impl<'p> Lower<'p> {
                 self.bind_caps.push((var, n, caps));
             }
         } else {
-            self.locals.get_mut(l).sticky.extend(caps);
+            self.locals.add_sticky(l, caps);
         }
         self.mark_modes(l);
         for &p in &v.refs {

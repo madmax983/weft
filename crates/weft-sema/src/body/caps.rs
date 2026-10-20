@@ -326,7 +326,6 @@ impl Lower<'_> {
         v.once |= nm;
     }
 
-    /// Returns `caps` with the capabilities that each `resumed_cap` mark in it stands for.
     /// Returns true if `expand_caps(caps)` holds `target`, with no copy of the
     /// set. An empty set holds nothing, so a check of many values with no
     /// capability costs little.
@@ -359,6 +358,7 @@ impl Lower<'_> {
         false
     }
 
+    /// Returns `caps` with the capabilities that each `resumed_cap` mark in it stands for.
     pub(super) fn expand_caps(&self, caps: &BTreeSet<Held>) -> BTreeSet<Held> {
         let mut out = caps.clone();
         let mut work: Vec<Held> = caps.iter().copied().collect();
@@ -499,7 +499,7 @@ impl Lower<'_> {
             match self.place_local(p) {
                 Some(l) => {
                     self.locals.get_mut(l).caps.extend(caps.iter().copied());
-                    self.locals.get_mut(l).sticky.extend(caps.iter().copied());
+                    self.locals.add_sticky(l, caps.iter().copied());
                     self.mark_modes(l);
                 }
                 None => stored = true,
@@ -930,13 +930,20 @@ impl Lower<'_> {
                 .filter(|(_, _, cs)| self.caps_hold(cs, Held::Cap(kcap)))
                 .map(|&(v, _, _)| v)
                 .collect();
-            (0..start.locals)
-                .find(|&l| {
-                    l < outer
-                        && (self.caps_hold(&self.locals[l].sticky, Held::Cap(kcap))
-                            || binds.contains(&self.locals[l].var))
-                })
-                .map(|l| format!("the local `{}` keeps it", self.locals[l].name))
+            let keeps = |l: usize| {
+                l < outer
+                    && (self.caps_hold(&self.locals[l].sticky, Held::Cap(kcap))
+                        || binds.contains(&self.locals[l].var))
+            };
+            // With no new value that holds the capability, only a local with
+            // a `sticky` capability can hold it.
+            let found = if binds.is_empty() {
+                let sticky = self.locals.sticky_set().range(..start.locals);
+                sticky.copied().find(|&l| keeps(l))
+            } else {
+                (0..start.locals).find(|&l| keeps(l))
+            };
+            found.map(|l| format!("the local `{}` keeps it", self.locals[l].name))
         };
         if let Some(how) = how {
             self.err(Code::W0313, format!("{head}: {how}"), span);
@@ -986,8 +993,13 @@ impl Lower<'_> {
         span: Span,
     ) {
         let cap = h.cap;
-        let mut keeps: Option<usize> =
-            (0..h.locals).find(|&l| self.caps_hold(&self.locals[l].sticky, Held::Cap(cap)));
+        // Only a local with a `sticky` capability can hold it.
+        let mut keeps: Option<usize> = self
+            .locals
+            .sticky_set()
+            .range(..h.locals)
+            .copied()
+            .find(|&l| self.caps_hold(&self.locals[l].sticky, Held::Cap(cap)));
         if keeps.is_none() {
             let binds: Vec<(usize, VarId, NodeId)> = self
                 .bind_caps

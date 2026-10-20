@@ -1228,9 +1228,10 @@ proptest::proptest! {
 }
 
 proptest::proptest! {
-    /// A propagation in the part of the graph that can reach the targets gives
-    /// the result of a propagation in the whole graph at each target, and so
-    /// does the evidence search. The work space is clean after the search.
+    /// A propagation in the part of the graph that can reach the targets from
+    /// a gen node gives the result of a propagation in the whole graph at each
+    /// target, and so does the evidence search. This holds with and without
+    /// the floor of the ranks. The work space is clean after the search.
     #[test]
     fn a_part_has_the_result_of_the_whole_graph_at_the_targets(
         n in 1usize..12,
@@ -1260,22 +1261,85 @@ proptest::proptest! {
         }
         let whole = propagate(&succ, &gen, &kill);
         let first = crate::rules::first_reaching(&succ, &pred, &gens, &kill, &targets);
+        let rank = crate::rules::ranks(&succ, &pred);
+        let low = gens.iter().map(|&g| rank[g]).min().unwrap_or(0);
         let mut s = crate::rules::Scratch::new(n);
-        let part = crate::rules::part_of(&succ, &pred, &targets, &kills, &mut s);
-        proptest::prop_assert!(s.local.iter().all(|&l| l == crate::rules::NOT_IN_PART));
-        proptest::prop_assert!(s.killed.iter().all(|&k| !k));
-        let local_gen: Vec<bool> = part.nodes.iter().map(|&q| gen[q]).collect();
-        let local = propagate(&part.succ, &local_gen, &part.kill);
-        let mut order: Vec<usize> = (0..part.nodes.len()).filter(|&i| local_gen[i]).collect();
-        order.sort_by_key(|&i| part.nodes[i]);
-        let local_first =
-            crate::rules::first_reaching(&part.succ, &part.pred, &order, &part.kill, &part.targets);
-        for (&t, &i) in targets.iter().zip(&part.targets) {
-            proptest::prop_assert_eq!(part.nodes[i], t);
-            proptest::prop_assert_eq!(local[i], whole[t], "target {}", t);
-            let global = first[t].map(|k| gens[k]);
-            let here = local_first[i].map(|k| part.nodes[order[k]]);
-            proptest::prop_assert_eq!(here, global, "evidence of target {}", t);
+        // Two searches with one work space: the second one uses the memory of
+        // the first one again.
+        for floor in [None, Some((rank.as_slice(), low)), None] {
+            crate::rules::part_of(&succ, &pred, &targets, &kills, &gens, floor, &mut s);
+            proptest::prop_assert!(s.local.iter().all(|&l| l == crate::rules::NOT_IN_PART));
+            proptest::prop_assert!(s.killed.iter().all(|&k| !k));
+            let part = &s.part;
+            // Each gen node of the part, once, in the order of the gen nodes.
+            let inside: Vec<usize> = (0..gens.len())
+                .filter(|&k| part.nodes.contains(&gens[k]))
+                .collect();
+            let listed: Vec<usize> = part.gens.iter().map(|&(k, _)| k).collect();
+            proptest::prop_assert_eq!(listed, inside);
+            let mut local_gen = vec![false; part.nodes.len()];
+            let mut order = Vec::new();
+            let mut of = Vec::new();
+            for &(k, i) in &part.gens {
+                proptest::prop_assert_eq!(part.nodes[i], gens[k]);
+                local_gen[i] = true;
+                order.push(i);
+                of.push(k);
+            }
+            let local = propagate(part.succ(), &local_gen, &part.kill);
+            let local_first =
+                crate::rules::first_reaching(part.succ(), part.pred(), &order, &part.kill, &part.targets);
+            for (&t, &i) in targets.iter().zip(&part.targets) {
+                proptest::prop_assert_eq!(part.nodes[i], t);
+                proptest::prop_assert_eq!(local[i], whole[t], "target {}", t);
+                let here = local_first[i].map(|k| gens[of[k]]);
+                let global = first[t].map(|k| gens[k]);
+                proptest::prop_assert_eq!(here, global, "evidence of target {}", t);
+            }
+        }
+    }
+
+    /// Each edge goes to a node of the same rank or a higher one, and two nodes
+    /// have one rank if and only if each reaches the other.
+    #[test]
+    fn the_ranks_order_the_components(
+        n in 1usize..12,
+        edges in proptest::collection::vec((0usize..12, 0usize..12), 0..30),
+    ) {
+        let mut succ = vec![Vec::new(); n];
+        let mut pred = vec![Vec::new(); n];
+        for (a, b) in edges {
+            succ[a % n].push(b % n);
+            pred[b % n].push(a % n);
+        }
+        let rank = crate::rules::ranks(&succ, &pred);
+        for (a, out) in succ.iter().enumerate() {
+            for &b in out {
+                proptest::prop_assert!(rank[a] <= rank[b], "edge {} -> {}", a, b);
+            }
+        }
+        // The nodes that each node reaches with zero or more edges.
+        let reach: Vec<Vec<bool>> = (0..n)
+            .map(|a| {
+                let mut seen = vec![false; n];
+                let mut work = vec![a];
+                seen[a] = true;
+                while let Some(q) = work.pop() {
+                    for &r in &succ[q] {
+                        if !seen[r] {
+                            seen[r] = true;
+                            work.push(r);
+                        }
+                    }
+                }
+                seen
+            })
+            .collect();
+        for a in 0..n {
+            for b in 0..n {
+                let same = reach[a][b] && reach[b][a];
+                proptest::prop_assert_eq!(rank[a] == rank[b], same, "nodes {} and {}", a, b);
+            }
         }
     }
 }

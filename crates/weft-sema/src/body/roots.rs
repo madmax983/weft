@@ -9,12 +9,16 @@ use weft_facts::CapId;
 
 use crate::types::AdtId;
 
-/// The size of the range of each kind. No call has as many parameters, and no
-/// program has as many types or handlers: each of them takes more than a byte
-/// of source. A round number keeps the roots easy to read in a derivation.
+/// The size of the range of each kind. A round number keeps the roots easy to
+/// read in a derivation. A real call does not have as many parameters, and a
+/// real program does not have as many types or handlers.
 const KIND: u32 = 1_000_000;
 
-/// The index `i` in the range of a kind.
+/// The index `i` in the range of a kind. An index at or after the end of the
+/// range gets the last root of the range ([`KIND`] - 1). Then two such indexes
+/// of one kind have one root, and W0312 does not compare their places. This
+/// can occur only in a source text of more than some megabytes, with a
+/// million parameters, types or handlers. Two kinds never share a root.
 fn index(i: usize) -> u32 {
     u32::try_from(i).map_or(KIND - 1, |i| i.min(KIND - 1))
 }
@@ -47,6 +51,9 @@ pub fn clause(c: CapId) -> u32 {
 /// an argument that is not a callback.
 pub const STORED: u32 = 4 * KIND;
 
+/// The root of what the closure of a task does at its spawn node.
+pub const TASK: u32 = 5 * KIND;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,6 +70,7 @@ mod tests {
             assert_eq!(clause(CapId(c)) / KIND, 3);
         }
         assert_eq!(STORED / KIND, 4);
+        assert_eq!(TASK / KIND, 5);
         // The first roots: the old numbers 800 + i, 810 + i, 900 + a and
         // 1000 + c could be equal for two kinds.
         assert_ne!(fn_arg(0), STORED);
