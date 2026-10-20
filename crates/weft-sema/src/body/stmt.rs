@@ -6,7 +6,7 @@ use super::{
     Span, StepKind, Stmt, StmtKind, Ty, Val, VarId, VarKind,
 };
 use crate::props::Prop;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use weft_syntax::diag::Code;
 
 use weft_syntax::diag::Diagnostic;
@@ -422,27 +422,29 @@ impl Lower<'_> {
             }));
         }
         let mut muts: Vec<SigPlace> = Vec::new();
+        let mut seen: HashSet<SigPlace> = HashSet::new();
         for m in changed {
             // `mut(p..)` is equal to `mut(p)`: a mutation anywhere below `p` is one of `p`.
             let base = self.facts.wild_base(m).unwrap_or(m);
             let Some(sp) = self.sig_place(base, bases) else {
                 continue;
             };
-            if !muts.contains(&sp) {
+            if seen.insert(sp.clone()) {
                 muts.push(sp);
             }
         }
-        // Keep only places that no other place covers.
-        let covered = |a: &SigPlace, b: &SigPlace| {
-            let held = |p: &SigPlace| p.steps.first() == Some(&SigStep::Held);
-            a.root == b.root
-                && held(a) == held(b)
-                && b.steps.len() < a.steps.len()
-                && a.steps[..b.steps.len()] == b.steps[..]
-        };
+        // Keep only places that no other place covers: no place with the
+        // same root and the same kind of first step is a strict prefix.
+        let held = |p: &SigPlace| p.steps.first() == Some(&SigStep::Held);
+        let all: HashSet<(&SigRoot, bool, &[SigStep])> = muts
+            .iter()
+            .map(|b| (&b.root, held(b), b.steps.as_slice()))
+            .collect();
         let keep: Vec<SigPlace> = muts
             .iter()
-            .filter(|a| !muts.iter().any(|b| covered(a, b)))
+            .filter(|a| {
+                (0..a.steps.len()).all(|k| !all.contains(&(&a.root, held(a), &a.steps[..k])))
+            })
             .cloned()
             .collect();
         out.muts = keep;

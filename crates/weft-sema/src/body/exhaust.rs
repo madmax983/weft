@@ -7,6 +7,7 @@
 //! integer, needs a row that matches anything in that column.
 
 use std::cell::Cell;
+use std::collections::HashMap;
 use weft_syntax::diag::Code;
 
 use super::{AdtKind, Diagnostic, Lit, Lower, Pattern, Ty};
@@ -69,10 +70,22 @@ impl Lower<'_> {
             _ if !named => {}
             Ty::Adt(a, args) => {
                 if let AdtKind::Enum(vs) = &self.prog.adts[*a].kind {
+                    let (own, wild) = rows_by_variant(rows);
                     return vs.iter().all(|v| {
                         let fields: Vec<Ty> =
                             v.fields.iter().map(|f| super::subst(f, args)).collect();
-                        let spec = Self::specialize(rows, fields.len(), |p| match p {
+                        // Only the rows of this variant and the rows that match
+                        // anything give rows for it.
+                        let mut picked: Vec<usize> = own
+                            .get(v.name.as_str())
+                            .map_or(&[][..], Vec::as_slice)
+                            .iter()
+                            .chain(&wild)
+                            .copied()
+                            .collect();
+                        picked.sort_unstable();
+                        let rows: Vec<Row<'_>> = picked.iter().map(|&i| rows[i].clone()).collect();
+                        let spec = Self::specialize(&rows, fields.len(), |p| match p {
                             Pattern::Variant {
                                 path, fields: fs, ..
                             } => path
@@ -150,6 +163,27 @@ impl Lower<'_> {
         }
         out
     }
+}
+
+/// Returns the rows whose first pattern is a variant, by the name of the
+/// variant, and the rows whose first cell matches anything. Each list is in
+/// the order of the rows. So a `match` with an arm for each of many variants
+/// costs time linear in the number of arms.
+fn rows_by_variant<'a>(rows: &[Row<'a>]) -> (HashMap<&'a str, Vec<usize>>, Vec<usize>) {
+    let mut own: HashMap<&'a str, Vec<usize>> = HashMap::new();
+    let mut wild = Vec::new();
+    for (i, r) in rows.iter().enumerate() {
+        match r.first() {
+            Some(p) if is_wild(*p) => wild.push(i),
+            Some(Some(Pattern::Variant { path, .. })) => {
+                if let Some(n) = path.last() {
+                    own.entry(n.name.as_str()).or_default().push(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    (own, wild)
 }
 
 /// Returns true if a cell of the matrix matches anything.

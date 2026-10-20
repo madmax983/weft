@@ -327,6 +327,38 @@ impl Lower<'_> {
     }
 
     /// Returns `caps` with the capabilities that each `resumed_cap` mark in it stands for.
+    /// Returns true if `expand_caps(caps)` holds `target`, with no copy of the
+    /// set. An empty set holds nothing, so a check of many values with no
+    /// capability costs little.
+    pub(super) fn caps_hold(&self, caps: &BTreeSet<Held>, target: Held) -> bool {
+        if caps.contains(&target) {
+            return true;
+        }
+        if !caps.iter().any(|c| matches!(c, Held::Resumed(_))) {
+            return false;
+        }
+        let mut work: Vec<Held> = caps
+            .iter()
+            .copied()
+            .filter(|c| matches!(c, Held::Resumed(_)))
+            .collect();
+        let mut seen: BTreeSet<Held> = work.iter().copied().collect();
+        while let Some(c) = work.pop() {
+            let Held::Resumed(k) = c else {
+                continue;
+            };
+            for &d in self.resumed.get(&k).into_iter().flatten() {
+                if d == target {
+                    return true;
+                }
+                if !caps.contains(&d) && seen.insert(d) {
+                    work.push(d);
+                }
+            }
+        }
+        false
+    }
+
     pub(super) fn expand_caps(&self, caps: &BTreeSet<Held>) -> BTreeSet<Held> {
         let mut out = caps.clone();
         let mut work: Vec<Held> = caps.iter().copied().collect();
@@ -830,16 +862,13 @@ impl Lower<'_> {
         span: Span,
     ) -> bool {
         let head = format!("a closure that performs `{effect}` escapes its handler");
-        if self
-            .expand_caps(&self.val_caps(v))
-            .contains(&Held::Cap(cap))
-        {
+        if self.caps_hold(&self.val_caps(v), Held::Cap(cap)) {
             self.err(Code::W0313, head, span);
             return true;
         }
         let mut how = None;
         for k in &self.kept[start.kept..] {
-            if !self.expand_caps(&k.caps).contains(&Held::Cap(cap)) {
+            if !self.caps_hold(&k.caps, Held::Cap(cap)) {
                 continue;
             }
             how = Some(match k.to {
@@ -873,10 +902,7 @@ impl Lower<'_> {
         (span, body): (Span, Span),
     ) {
         let head = format!("a closure that resumes the continuation of `{op}` escapes its clause");
-        if self
-            .expand_caps(&self.val_caps(v))
-            .contains(&Held::Cap(kcap))
-        {
+        if self.caps_hold(&self.val_caps(v), Held::Cap(kcap)) {
             let end = Span::new(body.hi.saturating_sub(1), body.hi);
             self.err(
                 Code::W0313,
@@ -887,7 +913,7 @@ impl Lower<'_> {
         }
         let how = if let Some(k) = self.kept[start.kept..]
             .iter()
-            .find(|k| self.expand_caps(&k.caps).contains(&Held::Cap(kcap)))
+            .find(|k| self.caps_hold(&k.caps, Held::Cap(kcap)))
         {
             Some(match k.to {
                 KeptTo::Stored => "the clause stores it".to_string(),
@@ -901,15 +927,13 @@ impl Lower<'_> {
             let binds: BTreeSet<VarId> = self
                 .bind_caps
                 .iter()
-                .filter(|(_, _, cs)| self.expand_caps(cs).contains(&Held::Cap(kcap)))
+                .filter(|(_, _, cs)| self.caps_hold(cs, Held::Cap(kcap)))
                 .map(|&(v, _, _)| v)
                 .collect();
             (0..start.locals)
                 .find(|&l| {
                     l < outer
-                        && (self
-                            .expand_caps(&self.locals[l].sticky)
-                            .contains(&Held::Cap(kcap))
+                        && (self.caps_hold(&self.locals[l].sticky, Held::Cap(kcap))
                             || binds.contains(&self.locals[l].var))
                 })
                 .map(|l| format!("the local `{}` keeps it", self.locals[l].name))
@@ -962,19 +986,15 @@ impl Lower<'_> {
         span: Span,
     ) {
         let cap = h.cap;
-        let mut keeps: Option<usize> = (0..h.locals).find(|&l| {
-            self.expand_caps(&self.locals[l].sticky)
-                .contains(&Held::Cap(cap))
-        });
+        let mut keeps: Option<usize> =
+            (0..h.locals).find(|&l| self.caps_hold(&self.locals[l].sticky, Held::Cap(cap)));
         if keeps.is_none() {
             let binds: Vec<(usize, VarId, NodeId)> = self
                 .bind_caps
                 .iter()
                 .filter_map(|(v, n, cs)| {
                     let l = self.local_of(*v).filter(|&l| l < h.locals)?;
-                    self.expand_caps(cs)
-                        .contains(&Held::Cap(cap))
-                        .then_some((l, *v, *n))
+                    self.caps_hold(cs, Held::Cap(cap)).then_some((l, *v, *n))
                 })
                 .collect();
             if !binds.is_empty() {

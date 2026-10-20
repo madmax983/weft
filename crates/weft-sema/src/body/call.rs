@@ -366,10 +366,8 @@ impl Lower<'_> {
                     self.check_visible(f, method.span);
                     return self.call_fn(f, None, args, trailing, span);
                 }
-                if let AdtKind::Enum(vs) = &self.prog.adts[a].kind {
-                    if let Some(vi) = vs.iter().position(|v| v.name == method.name) {
-                        return self.variant_ctor(a, vi, args, trailing, span);
-                    }
+                if let Some(vi) = self.prog.variant_index(a, &method.name) {
+                    return self.variant_ctor(a, vi, args, trailing, span);
                 }
                 let n = self.prog.adts[a].name.clone();
                 self.err(

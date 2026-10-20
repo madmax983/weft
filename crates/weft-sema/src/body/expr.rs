@@ -288,7 +288,7 @@ impl Lower<'_> {
         match self.path_ref(base)? {
             PathRef::Adt(a) => {
                 if let AdtKind::Enum(vs) = &self.prog.adts[a].kind {
-                    if let Some(vi) = vs.iter().position(|v| v.name == name.name) {
+                    if let Some(vi) = self.prog.variant_index(a, &name.name) {
                         if vs[vi].fields.is_empty() {
                             let args: Vec<Ty> = self.prog.adts[a]
                                 .generics
@@ -765,10 +765,8 @@ impl Lower<'_> {
         let AdtKind::Struct(fs) = &self.prog.adts[a].kind else {
             return None;
         };
-        let sp = fs
-            .iter()
-            .find(|f| f.name == name.name)
-            .and_then(|f| f.place.clone())?;
+        let i = self.prog.field_index(a, &name.name)?;
+        let sp = fs[i].place.clone()?;
         Some(self.subst_place(&sp, std::slice::from_ref(&blv.places), 0))
     }
 
@@ -902,25 +900,22 @@ impl Lower<'_> {
             .map(|_| self.inf.fresh())
             .collect();
         let mut caps = std::collections::BTreeSet::new();
-        let mut given: Vec<&str> = Vec::new();
+        let mut given: BTreeSet<&str> = BTreeSet::new();
         let mut refs = Vec::new();
         let (mut held, mut taken) = (Vec::new(), Vec::new());
         for (i, (name, value)) in fields.iter().enumerate() {
-            if given.contains(&name.name.as_str()) {
+            if !given.insert(&name.name) {
                 self.err(
                     Code::W0107,
                     format!("field `{}` is given twice", name.name),
                     name.span,
                 );
             }
-            given.push(&name.name);
-            let expected = defs
-                .iter()
-                .find(|d| d.name == name.name)
-                .map(|d| super::subst(&d.ty, &args));
+            let def = prog.field_index(adt, &name.name).map(|k| &defs[k]);
+            let expected = def.map(|d| super::subst(&d.ty, &args));
             let v = self.expr_with(value, expected.as_ref());
             let v = self.with_fn_refs(v);
-            match defs.iter().find(|d| d.name == name.name) {
+            match def {
                 Some(d) => {
                     let ft = super::subst(&d.ty, &args);
                     self.unify(&ft, &v.ty, value.span);
@@ -1298,7 +1293,7 @@ impl Lower<'_> {
                     self.err(Code::W0102, "this value is not an enum", *span);
                     return;
                 };
-                let Some(vi) = vs.iter().position(|v| &v.name == name) else {
+                let Some(vi) = prog.variant_index(adt, name) else {
                     self.err(Code::W0101, format!("unknown variant `{name}`"), *span);
                     return;
                 };

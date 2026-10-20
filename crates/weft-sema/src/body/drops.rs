@@ -405,10 +405,16 @@ impl Lower<'_> {
             return Vec::new();
         };
         match &self.prog.adts[a].kind {
-            AdtKind::Enum(vs) => vs
-                .iter()
-                .find(|v| v.name == name.name)
-                .map(|v| v.fields.iter().map(|t| super::subst(t, &args)).collect())
+            AdtKind::Enum(vs) => self
+                .prog
+                .variant_index(a, &name.name)
+                .map(|i| {
+                    vs[i]
+                        .fields
+                        .iter()
+                        .map(|t| super::subst(t, &args))
+                        .collect()
+                })
                 .unwrap_or_default(),
             AdtKind::Struct(fs) => fs.iter().map(|f| super::subst(&f.ty, &args)).collect(),
             AdtKind::Extern { .. } => Vec::new(),

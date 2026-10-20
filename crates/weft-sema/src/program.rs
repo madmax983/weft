@@ -132,7 +132,7 @@ impl EffectDef {
 }
 
 /// The root of a place in a signature.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SigRoot {
     /// A parameter, by index.
     Param(usize),
@@ -141,7 +141,7 @@ pub enum SigRoot {
 }
 
 /// One step of a place in a signature.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SigStep {
     /// A fixed step.
     Step(weft_facts::Step, String),
@@ -163,7 +163,7 @@ pub enum SigStep {
 }
 
 /// A place written in a signature, resolved against the parameter types.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SigPlace {
     /// The root.
     pub root: SigRoot,
@@ -487,6 +487,10 @@ pub struct Program {
     pub ptr: Option<AdtId>,
     /// The type properties of the definitions (`Program::props`).
     pub props: std::sync::OnceLock<crate::props::TypeProps>,
+    /// The index of each field of each struct and of each variant of each
+    /// enum, by name ([`Program::field_index`], [`Program::variant_index`]).
+    /// Item collection makes it at its end, when the fields are final.
+    member_names: Vec<HashMap<String, usize>>,
     /// Each effect by its identity (`effects::by_identity`). Item collection
     /// sets it at its end, when the effects and the names of the modules are
     /// final.
@@ -560,6 +564,52 @@ impl Program {
     pub(crate) fn add_steps(&self, n: usize) {
         let old = self.steps.0.load(Ordering::Relaxed);
         self.steps.0.store(old.saturating_add(n), Ordering::Relaxed);
+    }
+
+    /// Returns the index of the field `name` of struct `a`. After item
+    /// collection a table gives it, so a struct with many fields costs no more
+    /// than one with few. A duplicate field (W0107) gives the first.
+    pub fn field_index(&self, a: AdtId, name: &str) -> Option<usize> {
+        let AdtKind::Struct(fields) = &self.adts[a].kind else {
+            return None;
+        };
+        match self.member_names.get(a.index()) {
+            Some(table) => table.get(name).copied(),
+            None => fields.iter().position(|f| f.name == name),
+        }
+    }
+
+    /// Returns the index of the variant `name` of enum `a`, as
+    /// [`Program::field_index`] does for a field.
+    pub fn variant_index(&self, a: AdtId, name: &str) -> Option<usize> {
+        let AdtKind::Enum(variants) = &self.adts[a].kind else {
+            return None;
+        };
+        match self.member_names.get(a.index()) {
+            Some(table) => table.get(name).copied(),
+            None => variants.iter().position(|v| v.name == name),
+        }
+    }
+
+    /// Makes the table of [`Program::field_index`] and
+    /// [`Program::variant_index`].
+    fn index_members(&mut self) {
+        self.member_names = self
+            .adts
+            .iter()
+            .map(|a| {
+                let names: Vec<&str> = match &a.kind {
+                    AdtKind::Struct(fields) => fields.iter().map(|f| f.name.as_str()).collect(),
+                    AdtKind::Enum(vs) => vs.iter().map(|v| v.name.as_str()).collect(),
+                    AdtKind::Extern { .. } => Vec::new(),
+                };
+                let mut table = HashMap::new();
+                for (i, n) in names.into_iter().enumerate() {
+                    table.entry(n.to_string()).or_insert(i);
+                }
+                table
+            })
+            .collect();
     }
 
     /// Returns the index of each function.
@@ -728,6 +778,7 @@ impl Collector {
             index.entry(effects::identity(&c.prog, e)).or_insert(e);
         }
         c.prog.effect_index = Some(index);
+        c.prog.index_members();
         (c.prog, c.diags)
     }
 
@@ -2075,7 +2126,7 @@ pub fn field_step(prog: &Program, ty: &Ty, name: &str) -> Option<FieldStep> {
         }
         Ty::Adt(a, args) => match &prog.adts[*a].kind {
             AdtKind::Struct(fields) => {
-                let i = fields.iter().position(|f| f.name == name)?;
+                let i = prog.field_index(*a, name)?;
                 let t = crate::types::subst(&fields[i].ty, args);
                 let s = Step {
                     kind: StepKind::Field {

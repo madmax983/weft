@@ -98,3 +98,35 @@ index_table!(FnId => FnDef, FnSig);
 index_table!(ModId => ModDef);
 index_table!(EffectId => EffectDef);
 index_table!(AdtId => AdtDef);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::program::Program;
+
+    /// A table takes its own index, as a slice and as a `Vec`, to read and to
+    /// write. An index shows as its number.
+    #[test]
+    fn a_table_takes_its_own_index() {
+        let Ok(unit) = crate::prelude_unit() else {
+            panic!("the prelude parses");
+        };
+        let a = crate::analyze(&[unit], crate::Options::default());
+        let mut prog: Program = a.program;
+        let f = FnId(0);
+        let name = prog.fns[f].name.clone();
+        prog.fns[f].name.push('x');
+        assert_eq!(prog.fns.as_slice()[f].name, format!("{name}x"));
+        prog.fns.as_mut_slice()[f].name.pop();
+        assert_eq!(prog.fns[f].name, name);
+        let mut sigs = a.sigs;
+        sigs.as_mut_slice()[f].generics.push("T".into());
+        assert_eq!(sigs[f].generics.last().map(String::as_str), Some("T"));
+        assert_eq!(f.index(), 0);
+        assert_eq!(AdtId(7).to_string(), "7");
+        assert_eq!(prog.fn_ids().count(), prog.fns.len());
+        assert_eq!(prog.adt_ids().count(), prog.adts.len());
+        assert_eq!(prog.effect_ids().count(), prog.effects.len());
+        assert!(ModId(0) < ModId(1) && EffectId::default() == EffectId(0));
+    }
+}

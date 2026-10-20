@@ -30,13 +30,14 @@ impl Lower<'_> {
         for (&t, &l) in &self.task_scope {
             tasks.entry(l).or_default().push(t);
         }
+        // The nodes that reach each handler, so that each handler looks only
+        // at its own nodes.
+        let mut calls: BTreeMap<CapId, BTreeSet<NodeId>> = BTreeMap::new();
+        for &(n, c) in &self.cap_calls {
+            calls.entry(c).or_default().insert(n);
+        }
         for h in handled.iter().filter(|h| h.aborts) {
-            let sources: BTreeSet<NodeId> = self
-                .cap_calls
-                .iter()
-                .filter(|(_, c)| *c == h.cap)
-                .map(|(n, _)| *n)
-                .collect();
+            let sources = calls.get(&h.cap).cloned().unwrap_or_default();
             for n in sources {
                 let Some(to) = self
                     .abort_ctx

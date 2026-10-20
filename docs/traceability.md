@@ -169,3 +169,15 @@ recorded.
 | F13 | W0301 at a perform, or at a call that performs, shows the footprint of the handler; JSON notes keep their lines; each derivation names the diagnostic of its own body; no W0701 for a row with only pass-through parameters | `docs/architecture.md`, corpus 90, 94 |
 | Diagnostics | W0704 names each inferred part (`infer::PARTS`); one W0304 for each variable, with a note for each later read in a clause; W0801, W0702, W0803 and W0805 name the standard effect when a user effect has its name; W0901 says that only standard effects need authority | ADRs 0002, 0005 |
 | Corpus | unique numbers for each program | `corpus_numbers_are_unique` |
+
+## Review S5c changes
+
+| Finding | Change | Record |
+| --- | --- | --- |
+| QR4 | `weft_sema::on_large_stack` runs analysis, the checker and the interpreter on one thread with a 256 MiB stack; function types use `Arc`, so `Analysis` and `Checked` are `Send` and `Sync` | `docs/architecture.md`, `limits.rs` (`the_library_has_its_own_stack`) |
+| W0301 cost | W0301, W0302 and W0304 search the part of the graph that can reach the uses (`rules::part_of`), with the verified propagation in the part | `docs/architecture.md`, `scale.rs` (`each_cause_checks_in_time`) |
+| QR15, QR16 | types show the names of the definitions with no copy; sema borrows signatures, bodies, effects and type shapes | `scale.rs` (`many_locals_check_in_time`) |
+| QR17 | index types for functions, modules, effects and types (`weft_sema::ids`); an enum for diagnostic codes (`weft_syntax::diag::Code`); the roots of call places (`body::roots`) and the ids of split sides have ranges of their own | ADR 0005, corpus 143 |
+| QR19 | one `local_ty`, one `multi_node` for each effect, no unused method or silenced value; `handle` and `call_value` split into parts | `docs/architecture.md` |
+| QR22 | a proptest mutates corpus programs and checks them on a 2 MiB thread, with the agreement of the checker and the spec | `crates/weft-check/tests/mutations.rs` |
+| Coverage | each module of `weft-sema` and `weft-check` has 85% or more of its lines covered (`cargo llvm-cov`) | `ids.rs` tests |

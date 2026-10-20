@@ -132,7 +132,13 @@ Sema lowers a call of a function item in parts, each a function of its own
 (`crates/weft-sema/src/body/call.rs`, `call_fn_as`): the order of the arguments
 (`body/args.rs`), their evaluation, the call node, the checks of the argument places,
 the effects, the function values that the callee gets, what the callee keeps, and the
-result. `crates/weft-check/src/diagnose.rs` has one function for each rule.
+result. A call of a function value has parts too (`call_value`): the arguments
+(`eval_value_args`), the function values that the callee gets (`value_fn_args`) and
+the result (`value_call_result`). A `handle` has its effect (`handled_effect`), its
+handled body, each clause (`lower_clause`, with `bind_clause_params` and
+`bind_clause_cont`), the locals of the clauses (`end_clause_locals`) and its value
+(`join_clause_vals`). `crates/weft-check/src/diagnose.rs` has one function for each
+rule.
 
 The capability set of a value holds `caps::Held` elements: the capability of a local
 handler (`Held::Cap`) or a mark, such as `Held::Nonportable`, `Held::NotMany` or

@@ -2516,7 +2516,10 @@ impl<'p> Lower<'p> {
         let depth = self.local_frame(l);
         let same = !self.frames[depth + 1..].iter().any(|f| f.barrier.is_some());
         if same {
-            self.bind_caps.push((var, n, caps));
+            // A value with no capability cannot keep one (`check_local_keeps`).
+            if !caps.is_empty() {
+                self.bind_caps.push((var, n, caps));
+            }
         } else {
             self.locals.get_mut(l).sticky.extend(caps);
         }

@@ -201,13 +201,67 @@ fn many_types(n: usize) -> String {
     s
 }
 
+/// A struct with `n` fields, a function that gives each field a new value,
+/// and a function that makes the struct with a literal.
+fn many_fields(n: usize) -> String {
+    let fields: Vec<String> = (0..n).map(|i| format!("f{i}: u64")).collect();
+    let values: Vec<String> = (0..n).map(|i| format!("f{i}: 1")).collect();
+    let mut s = format!(
+        "struct Big {{ {} }}\nfn set(b: &Big) / mut(b) {{\n",
+        fields.join(", ")
+    );
+    for i in 0..n {
+        let _ = writeln!(s, "    b.f{i} = 1");
+    }
+    let _ = write!(
+        s,
+        "}}\nfn make() -> Big {{ Big {{ {} }} }}\n",
+        values.join(", ")
+    );
+    s
+}
+
+/// An enum with `n` variants and a `match` with an arm for each.
+fn many_variants(n: usize) -> String {
+    let variants: Vec<String> = (0..n).map(|i| format!("V{i}(u64)")).collect();
+    let arms: Vec<String> = (0..n).map(|i| format!("V{i}(x) => x")).collect();
+    format!(
+        "enum E {{ {} }}\nfn f(e: E) -> u64 {{ match e {{ {} }} }}\n",
+        variants.join(", "),
+        arms.join(", ")
+    )
+}
+
+/// `n` handlers one after the other, each around one operation.
+fn many_handlers(n: usize) -> String {
+    let mut s = String::from("effect Note { fn note(x: u64) }\nfn f() {\n");
+    for i in 0..n {
+        let _ = writeln!(
+            s,
+            "    handle Note {{ fn note(x) {{ resume(()) }} }} in note({i})"
+        );
+    }
+    s.push_str("}\n");
+    s
+}
+
 /// Sema and the checker take less than 1 s for 1000 blocks with a local and
-/// a reference each, and for 1000 types with a local each, also in a debug
-/// build. The first checker searched the whole function for each variable,
-/// and sema copied the names of all types for each local.
+/// a reference each, for 1000 types with a local each, for a struct with 3000
+/// fields, for a `match` of 3000 variants and for 500 handlers, also in a
+/// debug build. The first checker searched the whole function for each
+/// variable. Sema copied the names of all types for each local, searched the
+/// fields and the variants by name, compared each `mut` place of a signature
+/// with each other one, gave each variant all the arms of a `match`, and
+/// looked at all the earlier values and calls for each handler.
 #[test]
 fn many_locals_check_in_time() {
-    for (name, src) in [("blocks", blocks(1000)), ("types", many_types(1000))] {
+    for (name, src) in [
+        ("blocks", blocks(1000)),
+        ("types", many_types(1000)),
+        ("fields", many_fields(3000)),
+        ("variants", many_variants(3000)),
+        ("handlers", many_handlers(500)),
+    ] {
         let start = std::time::Instant::now();
         let c = check_source("many.wf", &src, Options::default());
         let time = start.elapsed();
