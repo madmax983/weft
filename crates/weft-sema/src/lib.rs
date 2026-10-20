@@ -158,11 +158,9 @@ fn unit_of(prog: &Program, m: program::ModId) -> usize {
 ///
 /// Effect inference ([`infer`]) gives a row to each function that does not
 /// state its effects. Each function, also one that states its effects, also
-/// gets the parts of its signature that its body always infers: what it lends
-/// to its function parameters, what its returned function value does, which
-/// function parameters it stores, whether it can run a stored function value,
-/// what it gives to that value, and whether an unknown function value that it
-/// calls can resume more than once. If these other parts of a function still
+/// gets the parts of its signature that its body always infers
+/// ([`infer::PARTS`]), for example what it lends to its function parameters
+/// and what its returned function value does. If these other parts of a function still
 /// change after [`infer::parts_limit`] changes, the function gets W0704. If a
 /// row grows past the height of its lattice, the inference has a bug: it
 /// stops, and each function whose signature can still change gets W0706.
@@ -206,12 +204,21 @@ fn analyze_bounded(
     diags.extend(program::check_on_abort_rows(&prog, &sigs, opts.no_runtime));
     let mut bodies = Vec::new();
     let mut work = Work::default();
-    for (&f, l) in user_fns.iter().zip(inferred.lowered) {
+    // The runtime starts `main` and the tests of the root (`started()`). With
+    // no runtime, `main` handles every effect itself (`no_runtime()`).
+    let main = match prog.lookup(prog.root, "main") {
+        Some(program::ItemRef::Fn(m)) => Some(m),
+        _ => None,
+    };
+    for (&f, mut l) in user_fns.iter().zip(inferred.lowered) {
         diags.extend(l.diags);
         work.add(l.work);
+        let unit = unit_of(&prog, prog.fns[f].module);
+        l.facts.started = unit == ROOT_UNIT && main == Some(f);
+        l.facts.no_runtime = l.facts.started && opts.no_runtime;
         bodies.push(BodyFacts {
             func: Some(f),
-            unit: unit_of(&prog, prog.fns[f].module),
+            unit,
             facts: l.facts,
             effects: l.effects,
         });
@@ -219,11 +226,12 @@ fn analyze_bounded(
     for t in &prog.tests {
         let name = format!("test \"{}\"", t.name);
         let lib = opts.library || unit_of(&prog, t.module) > ROOT_UNIT;
-        let l = body::Lower::new(&prog, &sigs, t.module, &name, lib)
+        let mut l = body::Lower::new(&prog, &sigs, t.module, &name, lib)
             .with_loop_bound(loop_bound)
             .lower_test(&t.body, t.span);
         diags.extend(l.diags);
         work.add(l.work);
+        l.facts.started = unit_of(&prog, t.module) == ROOT_UNIT;
         bodies.push(BodyFacts {
             func: None,
             unit: unit_of(&prog, t.module),

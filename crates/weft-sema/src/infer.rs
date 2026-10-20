@@ -143,8 +143,63 @@ fn grow(old: &EffectSig, new: &EffectSig) -> Option<EffectSig> {
     }
 }
 
+/// The names of the parts of a signature other than the row: the fields of
+/// [`EffectSig`] that a body always infers. The inference compares each of
+/// them, and the text of W0704 names each of them.
+pub const PARTS: [&str; 21] = [
+    "lent",
+    "ret",
+    "stores",
+    "reaches",
+    "reach_given",
+    "reach_repeats",
+    "multi",
+    "tasks",
+    "task_runs",
+    "pins",
+    "op_fns",
+    "op_effects",
+    "task_effects",
+    "repeats",
+    "fn_stores",
+    "ret_refs",
+    "group_stores",
+    "fn_store_refs",
+    "drops",
+    "holds",
+    "raises",
+];
+
 /// Returns true if the parts other than the row are equal in `a` and `b`.
 fn same_parts(a: &EffectSig, b: &EffectSig) -> bool {
+    // Each field is named, so that a new field gets a decision here and in
+    // [`PARTS`].
+    let EffectSig {
+        muts: _,
+        named: _,
+        passthrough: _,
+        lent: _,
+        ret: _,
+        stores: _,
+        reaches: _,
+        reach_given: _,
+        reach_repeats: _,
+        multi: _,
+        tasks: _,
+        task_runs: _,
+        pins: _,
+        op_fns: _,
+        op_effects: _,
+        task_effects: _,
+        repeats: _,
+        fn_stores: _,
+        ret_refs: _,
+        group_stores: _,
+        fn_store_refs: _,
+        drops: _,
+        holds: _,
+        raises: _,
+    } = a;
     a.lent == b.lent
         && a.ret == b.ret
         && a.stores == b.stores

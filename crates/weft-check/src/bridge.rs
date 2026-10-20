@@ -42,6 +42,9 @@ pub enum SpecError {
     /// A violation fact has a value that is not an id of the facts.
     #[error("the spec derives `{0}`, and a value in it is not an id of the facts")]
     BadTuple(String),
+    /// A rule of the spec has no probe for the evidence (`crate::evidence`).
+    #[error("the evidence probes do not work: {0}")]
+    Probes(String),
 }
 
 /// One argument of an input fact.
@@ -210,19 +213,48 @@ pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
     for (p, a, i) in &f.call_arg {
         emit("call_arg", &[s(p), s(a), Arg::Int(i64::from(*i))]);
     }
+    for (rel, v) in [("arg_at", &f.arg_at), ("param_in", &f.param_in)] {
+        for (p, i, a) in v {
+            emit(rel, &[s(p), Arg::Int(i64::from(*i)), s(a)]);
+        }
+    }
+    for (rel, v) in [
+        ("uniq_param", &f.uniq_param),
+        ("arg_aliased", &f.arg_aliased),
+    ] {
+        for (p, i) in v {
+            emit(rel, &[s(p), Arg::Int(i64::from(*i))]);
+        }
+    }
+    for (rel, v) in [
+        ("fn_arg_effect", &f.fn_arg_effect),
+        ("param_effect", &f.param_effect),
+    ] {
+        for (p, i, e) in v {
+            emit(rel, &[s(p), Arg::Int(i64::from(*i)), s(e)]);
+        }
+    }
+    for n in &f.sim_run_at {
+        emit("sim_run_at", &[s(n)]);
+    }
+    for e in &f.std_effects {
+        emit("std_effect", &[s(e)]);
+    }
     if f.has_signature {
         emit("has_signature", &[]);
     }
-    if f.library {
-        emit("library", &[]);
+    for (flag, name) in [
+        (f.library, "library"),
+        (f.started, "started"),
+        (f.no_runtime, "no_runtime"),
+    ] {
+        if flag {
+            emit(name, &[]);
+        }
     }
     for (i, h) in f.handlers.iter().enumerate() {
         let id = s(&HandlerId(u32::try_from(i).unwrap_or(0)));
-        let e = s(&h.effect);
-        emit("handler", &[id.clone(), e.clone()]);
-        if h.is_std {
-            emit("std_effect", &[e]);
-        }
+        emit("handler", &[id.clone(), s(&h.effect)]);
         if h.sim_root {
             emit("sim_root", &[id]);
         }
@@ -288,6 +320,14 @@ fn parse_id(out: &Output, v: Value, prefix: char) -> Option<u32> {
     text.strip_prefix(prefix)?.parse().ok()
 }
 
+/// Reads an index, such as the parameter index of `arg_outside(P, I, A)`.
+fn parse_index(v: Value) -> Option<u32> {
+    match v {
+        Value::Int(i) => u32::try_from(i).ok(),
+        Value::Sym(_) => None,
+    }
+}
+
 /// Reads one violation relation. Each tuple must parse.
 fn read<T: Ord>(
     out: &Output,
@@ -323,6 +363,10 @@ pub fn violations(out: &Output) -> Result<Violations, SpecError> {
         [a, b] => Some((t(a)?, var(b)?)),
         _ => None,
     };
+    let ne = |tu: &[Value]| match *tu {
+        [a, e] => Some((n(a)?, raw(out, e))),
+        _ => None,
+    };
     Ok(Violations {
         error: read(out, "error", vn)?,
         use_after_move: read(out, "use_after_move", vn)?,
@@ -333,10 +377,7 @@ pub fn violations(out: &Output) -> Result<Violations, SpecError> {
         abort_unhandled: read(out, "abort_unhandled", vn)?,
         live_across_multi: read(out, "live_across_multi", vn)?,
         unauthorized_mut: read(out, "unauthorized_mut", np)?,
-        unauthorized_effect: read(out, "unauthorized_effect", |tu| match *tu {
-            [a, e] => Some((n(a)?, raw(out, e))),
-            _ => None,
-        })?,
+        unauthorized_effect: read(out, "unauthorized_effect", ne)?,
         shared_mutation: read(out, "shared_mutation", np)?,
         alias_conflict: read(out, "alias_conflict", |tu| match *tu {
             [a, m, p] => Some((n(a)?, pl(m)?, pl(p)?)),
@@ -352,6 +393,24 @@ pub fn violations(out: &Output) -> Result<Violations, SpecError> {
             [h] => parse_id(out, h, 'h').map(HandlerId),
             _ => None,
         })?,
+        arg_outside: read(out, "arg_outside", |tu| match *tu {
+            [a, i, p] => Some((n(a)?, parse_index(i)?, pl(p)?)),
+            _ => None,
+        })?,
+        not_uniq: read(out, "not_uniq", |tu| match *tu {
+            [a, i] => Some((n(a)?, parse_index(i)?)),
+            _ => None,
+        })?,
+        arg_effect_outside: read(out, "arg_effect_outside", |tu| match *tu {
+            [a, i, e] => Some((n(a)?, parse_index(i)?, raw(out, e))),
+            _ => None,
+        })?,
+        sim_in_lib: read(out, "sim_in_lib", |tu| match *tu {
+            [a] => n(a),
+            _ => None,
+        })?,
+        unhandled_effect: read(out, "unhandled_effect", ne)?,
+        embedded_effect: read(out, "embedded_effect", ne)?,
         stealable: read(out, "stealable", |tu| match *tu {
             [a] => t(a),
             _ => None,
@@ -604,7 +663,7 @@ fn render(d: &Derivation, f: &FnFacts, line_of: &dyn Fn(u32) -> usize, out: &mut
 }
 
 /// The violation relations of the spec, in report order.
-pub const VIOLATION_RELATIONS: [&str; 16] = [
+pub const VIOLATION_RELATIONS: [&str; 22] = [
     "error",
     "use_after_move",
     "use_before_set",
@@ -621,11 +680,43 @@ pub const VIOLATION_RELATIONS: [&str; 16] = [
     "nonportable_capture",
     "shared_mut_capture",
     "root_handler_in_lib",
+    "arg_outside",
+    "not_uniq",
+    "arg_effect_outside",
+    "sim_in_lib",
+    "unhandled_effect",
+    "embedded_effect",
 ];
+
+/// Returns the key of a fact of the specification in body `f`.
+///
+/// The key is the name of the body and the fact in Datalog syntax, for
+/// example `bad: error(v1, n6)`. A diagnostic holds the keys of the facts that
+/// it reports
+/// (`Diagnostic::facts`), and [`Explained::key`] is the key of the explained
+/// fact. So a derivation and its diagnostic have one key. An argument whose
+/// text is a number is an integer, such as the index of a parameter; each
+/// other argument is a symbol.
+pub fn fact_key(f: &FnFacts, relation: &str, args: &[&dyn std::fmt::Display]) -> String {
+    let args: Vec<String> = args
+        .iter()
+        .map(|a| {
+            let text = a.to_string();
+            match text.parse::<i64>() {
+                Ok(i) => weft_datalog::Const::Int(i).to_string(),
+                Err(_) => weft_datalog::Const::Sym(text).to_string(),
+            }
+        })
+        .collect();
+    format!("{}: {relation}({})", f.name, args.join(", "))
+}
 
 /// One explained violation: the fact and its derivation tree.
 #[derive(Clone, Debug)]
 pub struct Explained {
+    /// The key of the fact ([`fact_key`]). The diagnostic that reports the fact
+    /// has it in `Diagnostic::facts`.
+    pub key: String,
     /// The violation relation.
     pub relation: String,
     /// The derived fact, with source names.
@@ -647,6 +738,7 @@ pub fn explain(
         for t in out.tuples(rel) {
             if let Some(d) = out.explain(rel, &t) {
                 v.push(Explained {
+                    key: format!("{}: {}", f.name, out.display_tuple(rel, &t)),
                     relation: rel.to_string(),
                     fact: rename(&out.display_tuple(rel, &t), f, line_of),
                     tree: render_derivation(&d, f, line_of),

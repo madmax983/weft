@@ -352,7 +352,7 @@ impl Lower<'_> {
                 for (x, y) in pa.iter().zip(pb) {
                     let mut j = self.join_val(x, y);
                     j.refs = x.refs.iter().chain(&y.refs).copied().collect();
-                    j.uniq = x.uniq && y.uniq;
+                    j.uniq = weft_facts::join_uniq(x.uniq, y.uniq);
                     out.push(j);
                 }
                 Some(out)

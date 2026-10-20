@@ -511,9 +511,10 @@ impl Lower<'_> {
         }
         let inside = self.spawned_inside();
         let through: BTreeSet<(TaskId, VarId)> = self.facts.mut_through.iter().copied().collect();
+        // The mode of a capture must cross threads, as the spec's `pinned` says.
         for &(t, v) in &self.facts.captures {
-            let info = self.facts.var(v);
-            if info.nonportable || (through.contains(&(t, v)) && !info.uniq) {
+            let mode = self.facts.var(v).capture_mode(through.contains(&(t, v)));
+            if !weft_verified::modes::submode(&mode, &weft_facts::CROSSES_THREADS) {
                 pinned.insert(t);
             }
         }

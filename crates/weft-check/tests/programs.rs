@@ -187,6 +187,49 @@ fn corpus_exercises_every_rule() {
     );
 }
 
+/// Each violation of the spec has one diagnostic that reports it
+/// (`Diagnostic::facts`), and each fact that a diagnostic reports is a
+/// violation of the spec. So `weft check --explain` links each derivation to
+/// one diagnostic.
+#[test]
+fn each_violation_has_one_diagnostic() {
+    let mut bad = Vec::new();
+    for path in corpus_paths() {
+        let src = fs::read_to_string(&path).expect("the program is readable");
+        let name = path
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        let checked = check_source(&name, &src, Options::from_markers(&src));
+        let mut spec_keys = BTreeSet::new();
+        for b in &checked.analysis.bodies {
+            let out = bridge::evaluate_spec(&b.facts, false).expect("the spec runs");
+            for rel in bridge::VIOLATION_RELATIONS {
+                for t in out.tuples(rel) {
+                    let key = format!("{}: {}", b.facts.name, out.display_tuple(rel, &t));
+                    let n = checked
+                        .diags
+                        .iter()
+                        .filter(|d| d.facts.contains(&key))
+                        .count();
+                    if n != 1 {
+                        bad.push(format!("{name}: `{key}` has {n} diagnostics"));
+                    }
+                    spec_keys.insert(key);
+                }
+            }
+        }
+        for d in &checked.diags {
+            for key in d.facts.iter().filter(|k| !spec_keys.contains(*k)) {
+                bad.push(format!(
+                    "{name}: {} reports `{key}`, which the spec does not derive",
+                    d.code
+                ));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
 #[test]
 fn corpus() {
     let paths = corpus_paths();
@@ -198,5 +241,35 @@ fn corpus() {
         failures.len(),
         paths.len(),
         failures.join("\n")
+    );
+}
+
+/// Returns each corpus number that more than one file name has, with the
+/// names. The number is the part of the name before the first `_`, so
+/// `19_no_runtime` and `19b_no_runtime_bad` have different numbers.
+fn shared_numbers<'a>(names: impl IntoIterator<Item = &'a str>) -> Vec<(String, Vec<&'a str>)> {
+    let mut by_number: std::collections::BTreeMap<String, Vec<&str>> =
+        std::collections::BTreeMap::new();
+    for name in names {
+        let number = name.split('_').next().unwrap_or(name);
+        by_number.entry(number.to_string()).or_default().push(name);
+    }
+    by_number.into_iter().filter(|(_, v)| v.len() > 1).collect()
+}
+
+/// Each corpus program has a number of its own, so that a reference such as
+/// "corpus 33" names one file.
+#[test]
+fn corpus_numbers_are_unique() {
+    let shared = shared_numbers(["31_a.wf", "31_b.wf", "19_c.wf", "19b_c_bad.wf"]);
+    assert_eq!(shared, vec![("31".to_string(), vec!["31_a.wf", "31_b.wf"])]);
+    let names: Vec<String> = corpus_paths()
+        .iter()
+        .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .collect();
+    let shared = shared_numbers(names.iter().map(String::as_str));
+    assert!(
+        shared.is_empty(),
+        "corpus numbers with two files: {shared:?}"
     );
 }

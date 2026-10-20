@@ -5,8 +5,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use weft_facts::{FnFacts, HandlerId, NodeId, PlaceId, TaskId, TaskKind, VarId, Violations};
+use weft_facts::{
+    uniqueness, FnFacts, HandlerId, Modes, NodeId, PlaceId, TaskId, TaskKind, VarId, Violations,
+    CROSSES_THREADS,
+};
 use weft_verified::dataflow::propagate;
+use weft_verified::modes;
 use weft_verified::places;
 
 /// What a node does that invalidates a reference.
@@ -280,6 +284,20 @@ impl<'a> Ctx<'a> {
         self.same_root(p, d) && places::within(&self.f.place(p).steps, &self.f.place(d).steps)
     }
 
+    /// `inside_stated(A, D)`: a reference into `a` is inside the stated place
+    /// `d`. Below a plain place only stable steps follow. Below a wildcard
+    /// place any step can follow.
+    fn inside_stated(&self, a: PlaceId, d: PlaceId) -> bool {
+        let (pa, pd) = (self.f.place(a), self.f.place(d));
+        match (pd.is_wildcard(), pd.parent) {
+            (true, Some(base)) => self.within(a, base),
+            (true, None) => false,
+            (false, _) => {
+                self.within(a, d) && pa.steps.iter().skip(pd.steps.len()).all(|s| !s.unstable)
+            }
+        }
+    }
+
     /// Forward propagation from `gen` nodes, stopped after `kill` nodes.
     fn forward(&self, gen: &[bool], kill: &[bool]) -> Vec<bool> {
         self.searches.set(self.searches.get() + 1);
@@ -390,6 +408,8 @@ pub fn check_counted(f: &FnFacts) -> (Report, Work) {
     linear(&cx, &rebound, &moved, &mut r.violations);
     multi(&cx, &rebound, &uses, &mut r.violations);
     effects(&cx, &mut r.violations);
+    args(&cx, &mut r.violations);
+    root_bodies(&cx, &mut r.violations);
     tasks(&cx, &mut r);
     let work = Work {
         overlaps: cx.overlaps_calls.get(),
@@ -738,13 +758,7 @@ fn effects(cx: &Ctx<'_>, out: &mut Violations) {
         }
     }
     if f.library {
-        // `std_effect(E)` is a property of the effect name.
-        let std_names: BTreeSet<&str> = f
-            .handlers
-            .iter()
-            .filter(|h| h.is_std)
-            .map(|h| h.effect.as_str())
-            .collect();
+        let std_names: BTreeSet<&str> = f.std_effects.iter().map(String::as_str).collect();
         for (i, h) in f.handlers.iter().enumerate() {
             let id = HandlerId(u32::try_from(i).unwrap_or(u32::MAX));
             // A root handler of `sim.run` forwards its effect, and so does a
@@ -755,6 +769,61 @@ fn effects(cx: &Ctx<'_>, out: &mut Violations) {
                     .any(|(g, e)| *g == id && *e == h.effect);
             if std_names.contains(h.effect.as_str()) && !forwards {
                 out.root_handler_in_lib.insert(id);
+            }
+        }
+    }
+}
+
+/// W0203, W0406, W0705: the arguments of calls.
+fn args(cx: &Ctx<'_>, out: &mut Violations) {
+    let f = cx.f;
+    // W0203: `arg_outside(P, I, A)`.
+    let mut stated: BTreeMap<(NodeId, u32), Vec<PlaceId>> = BTreeMap::new();
+    for &(p, i, d) in &f.param_in {
+        stated.entry((p, i)).or_default().push(d);
+    }
+    for &(p, i, a) in &f.arg_at {
+        let ds = stated.get(&(p, i)).map_or(&[][..], Vec::as_slice);
+        if !ds.iter().any(|&d| cx.inside_stated(a, d)) {
+            out.arg_outside.insert((p, i, a));
+        }
+    }
+    // W0406: `not_uniq(P, I)`. The mode of the argument must be a submode of
+    // the mode of the parameter.
+    let aliased: BTreeSet<(NodeId, u32)> = f.arg_aliased.iter().copied().collect();
+    for &(p, i) in &f.uniq_param {
+        let arg = uniqueness(!aliased.contains(&(p, i)));
+        if !modes::submode(&arg, &uniqueness(true)) {
+            out.not_uniq.insert((p, i));
+        }
+    }
+    // W0705: `arg_effect_outside(P, I, E)`.
+    let allowed: BTreeSet<(NodeId, u32, &str)> = f
+        .param_effect
+        .iter()
+        .map(|(p, i, e)| (*p, *i, e.as_str()))
+        .collect();
+    for (p, i, e) in &f.fn_arg_effect {
+        if !allowed.contains(&(*p, *i, e.as_str())) {
+            out.arg_effect_outside.insert((*p, *i, e.clone()));
+        }
+    }
+}
+
+/// W0802, W0805, W0803: `sim.run` in a library, and the effects that leave a
+/// body that the runtime starts.
+fn root_bodies(cx: &Ctx<'_>, out: &mut Violations) {
+    let f = cx.f;
+    if f.library {
+        out.sim_in_lib.extend(f.sim_run_at.iter().copied());
+    }
+    if f.started {
+        let std: BTreeSet<&str> = f.std_effects.iter().map(String::as_str).collect();
+        for (p, e) in &f.escapes_at {
+            if !std.contains(e.as_str()) {
+                out.unhandled_effect.insert((*p, e.clone()));
+            } else if f.no_runtime {
+                out.embedded_effect.insert((*p, e.clone()));
             }
         }
     }
@@ -855,23 +924,35 @@ fn tasks(cx: &Ctx<'_>, r: &mut Report) {
         }
     }
 
-    let mut pinned: BTreeSet<TaskId> = BTreeSet::new();
+    // The mode of a task is the join of the modes of its captures. A task
+    // whose mode does not cross threads is pinned.
+    let mut task_modes: BTreeMap<TaskId, Modes> = BTreeMap::new();
     let mut_through: BTreeSet<(TaskId, VarId)> = f.mut_through.iter().copied().collect();
     for &(t, v) in &f.captures {
         let info = f.var(v);
-        let shared_mut = mut_through.contains(&(t, v)) && !info.uniq;
-        if info.nonportable || shared_mut {
-            pinned.insert(t);
-        }
+        let writes = mut_through.contains(&(t, v));
+        let mode = task_modes.entry(t).or_insert_with(modes::bottom);
+        *mode = modes::join(mode, &info.capture_mode(writes));
         if f.tasks[t.index()].kind == TaskKind::Fork {
-            if info.nonportable {
+            // W0401: the captured value crosses to another thread.
+            let value = Modes {
+                nonportable: info.nonportable,
+                ..modes::bottom()
+            };
+            if !modes::submode(&value, &CROSSES_THREADS) {
                 r.violations.nonportable_capture.insert((t, v));
             }
-            if shared_mut {
+            // W0403: a write through a captured reference needs `uniq`.
+            if writes && !modes::submode(&uniqueness(info.uniq), &uniqueness(true)) {
                 r.violations.shared_mut_capture.insert((t, v));
             }
         }
     }
+    let mut pinned: BTreeSet<TaskId> = task_modes
+        .iter()
+        .filter(|(_, m)| !modes::submode(m, &CROSSES_THREADS))
+        .map(|(&t, _)| t)
+        .collect();
     // A task that runs code that the function cannot check is pinned, and so
     // is a task that starts a pinned task (`spawns_in`).
     pinned.extend(f.opaque.iter().copied());

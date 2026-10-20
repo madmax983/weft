@@ -83,6 +83,42 @@ fn explain_prints_the_derivation_tree() {
 }
 
 #[test]
+fn json_notes_keep_their_lines() {
+    let json = cmd(&["check", "--json", "tests/programs/02_bad.wf"]);
+    let line = json.text.lines().next().unwrap_or_default();
+    assert!(
+        line.contains(
+            "\"notes\":[{\"text\":\"first : &Entity in world.entities[]\",\"line\":7},{\"text\":\"push : mut(world.entities)\",\"line\":8},{\"text\":\"world.entities is a strict prefix of world.entities[], through an unstable step  →  invalidated at line 8\"},"
+        ),
+        "{line}"
+    );
+}
+
+#[test]
+fn explain_links_each_derivation_to_its_diagnostic() {
+    let out = cmd(&["check", "--explain", "tests/programs/02_bad.wf"]);
+    assert!(
+        out.text.contains(
+            "derivation of error(`first`, print@line9) in `bad`, for error[W0301] at line 9:\n"
+        ),
+        "{}",
+        out.text
+    );
+    let json = cmd(&["check", "--explain", "--json", "tests/programs/02_bad.wf"]);
+    let derivation = json
+        .text
+        .lines()
+        .find(|l| l.starts_with("{\"derivation\":"))
+        .unwrap_or_default();
+    assert!(
+        derivation.ends_with(
+            ",\"function\":\"bad\",\"diagnostic\":{\"code\":\"W0301\",\"line\":9,\"column\":5}}"
+        ),
+        "{derivation}"
+    );
+}
+
+#[test]
 fn facts_are_datalog() {
     let out = cmd(&["facts", "tests/programs/02_bad.wf", "bad"]);
     assert!(out.text.contains("// facts of `bad`"));

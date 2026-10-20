@@ -702,21 +702,20 @@ fn stealable_follows_opaque_and_spawns_in() {
 fn w0801_root_handler_in_library() {
     let mut b = B::new();
     b.f.library = true;
+    // `Net` is a standard effect, and `main.Log` is a user effect.
+    b.f.std_effects.push("Net".into());
     b.f.handlers.push(HandlerInfo {
         effect: "Net".into(),
-        is_std: true,
         sim_root: false,
         span: Span::default(),
     });
     b.f.handlers.push(HandlerInfo {
         effect: "Net".into(),
-        is_std: true,
         sim_root: true,
         span: Span::default(),
     });
     b.f.handlers.push(HandlerInfo {
-        effect: "Log".into(),
-        is_std: false,
+        effect: "main.Log".into(),
         sim_root: false,
         span: Span::default(),
     });
@@ -1139,6 +1138,39 @@ fn the_spec_parses() {
     assert!(p.is_ok(), "{p:?}");
     assert_eq!(p.ok().as_ref(), Some(bridge::spec()));
     assert!(!bridge::spec().rules().is_empty());
+}
+
+/// The sink relations of the spec, the relations that no rule reads, are the
+/// violation relations and `stealable`. So a new sink needs an entry in
+/// `VIOLATION_RELATIONS` (and so in `explain`), and the agreement tests read it.
+/// Each relation that a rule reads and no rule derives is an input relation:
+/// the bridge emits it (`each_fact`).
+#[test]
+fn the_spec_has_the_sinks_and_inputs_of_the_bridge() {
+    let spec = bridge::spec();
+    let defined = spec.relations_defined();
+    let mut used = std::collections::BTreeSet::new();
+    for rule in spec.rules() {
+        for lit in &rule.body {
+            match lit {
+                weft_datalog::Literal::Pos(a) | weft_datalog::Literal::Neg(a) => {
+                    used.insert(a.relation.as_str());
+                }
+                weft_datalog::Literal::Cmp { .. } => {}
+            }
+        }
+    }
+    let sinks: std::collections::BTreeSet<&str> = defined.difference(&used).copied().collect();
+    let mut want: std::collections::BTreeSet<&str> =
+        bridge::VIOLATION_RELATIONS.into_iter().collect();
+    want.insert("stealable");
+    assert_eq!(sinks, want);
+    let source = include_str!("bridge.rs");
+    let missing: Vec<&&str> = used
+        .iter()
+        .filter(|r| !defined.contains(*r) && !source.contains(&format!("\"{r}\"")))
+        .collect();
+    assert!(missing.is_empty(), "the bridge does not emit {missing:?}");
 }
 
 /// A violation fact with a value that is not an id is an error, so that it

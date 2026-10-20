@@ -293,7 +293,7 @@ pub fn check_path(path: &Path, profile: Profile) -> Result<(Package, Checked)> {
     let pkg = load(path)?;
     let opts = pkg.options(profile);
     let analysis = weft_sema::analyze(&pkg.units, opts);
-    let mut checked = check_analysis(analysis, &pkg.files, opts);
+    let mut checked = check_analysis(analysis, &pkg.files);
     checked.diags.extend(package_diags(&pkg, &checked.analysis));
     checked.diags.extend(pkg.marker_diags());
     checked
@@ -336,7 +336,19 @@ pub fn diag_json(pkg: &Package, d: &Diagnostic) -> String {
 fn diag_json_in(file: Option<&weft_syntax::SourceFile>, d: &Diagnostic) -> String {
     let (line, col) = file.map_or((0, 0), |f| f.line_col(d.span.lo));
     let name = file.map_or_else(String::new, |f| f.name.clone());
-    let notes: Vec<String> = d.notes.iter().map(|n| json_escape(&n.text)).collect();
+    // A note with a location keeps its line, as the text form shows it.
+    let notes: Vec<String> = d
+        .notes
+        .iter()
+        .map(|n| match (n.span, file) {
+            (Some(s), Some(f)) => format!(
+                "{{\"text\":{},\"line\":{}}}",
+                json_escape(&n.text),
+                f.line_col(s.lo).0
+            ),
+            _ => format!("{{\"text\":{}}}", json_escape(&n.text)),
+        })
+        .collect();
     let sev = if d.severity == Severity::Error {
         "error"
     } else {
@@ -371,17 +383,40 @@ fn check(f: &Flags) -> Result<Output> {
             let line_of = |o: u32| file.line_col(o).0;
             let ex = bridge::explain(&b.facts, &line_of).map_err(|e| anyhow::anyhow!("{e}"))?;
             for e in ex {
+                // The diagnostic that reports the fact (`Diagnostic::facts`).
+                let diag = c
+                    .diags
+                    .iter()
+                    .find(|d| d.unit == b.unit && d.facts.contains(&e.key))
+                    .map(|d| (d, file.line_col(d.span.lo)));
                 if f.json {
+                    let link = diag.map_or_else(
+                        || "null".to_string(),
+                        |(d, (line, col))| {
+                            format!(
+                                "{{\"code\":{},\"line\":{line},\"column\":{col}}}",
+                                json_escape(&d.code)
+                            )
+                        },
+                    );
                     let _ = writeln!(
                         text,
-                        "{{\"derivation\":{},\"function\":{}}}",
+                        "{{\"derivation\":{},\"function\":{},\"diagnostic\":{link}}}",
                         e.json,
                         json_escape(&b.facts.name)
                     );
                 } else {
+                    let link = diag.map_or_else(String::new, |(d, (line, _))| {
+                        let sev = if d.severity == Severity::Error {
+                            "error"
+                        } else {
+                            "warning"
+                        };
+                        format!(", for {sev}[{}] at line {line}", d.code)
+                    });
                     let _ = write!(
                         text,
-                        "derivation of {} in `{}`:\n{}",
+                        "derivation of {} in `{}`{link}:\n{}",
                         e.fact, b.facts.name, e.tree
                     );
                 }
@@ -458,13 +493,17 @@ fn agree(f: &Flags) -> Result<Output> {
             let mut text = String::new();
             for b in bad {
                 let _ = match &b.spec {
-                    Ok(spec) => writeln!(
+                    Ok(spec) if *spec != b.checker => writeln!(
                         text,
                         "disagree in `{}`\n  checker: {:?}\n  spec:    {spec:?}",
                         b.function, b.checker
                     ),
+                    Ok(_) => writeln!(text, "disagree in `{}`: the evidence", b.function),
                     Err(e) => writeln!(text, "disagree in `{}`: {e}", b.function),
                 };
+                for e in &b.evidence {
+                    let _ = writeln!(text, "  evidence: {e}");
+                }
             }
             Ok(Output {
                 text,

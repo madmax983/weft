@@ -12,6 +12,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 
 pub use weft_syntax::ast::Span;
+pub use weft_verified::modes::Modes;
 pub use weft_verified::places::{Step, StepKind};
 
 macro_rules! id_type {
@@ -215,7 +216,46 @@ pub struct VarInfo {
     pub callable: bool,
 }
 
+/// The mode that a value needs to cross threads.
+///
+/// It is `portable`, with any value on the other axes. A task can move to
+/// another worker only if the join of the modes of its captures is a submode
+/// of it (`pinned`, `stealable`).
+pub const CROSSES_THREADS: Modes = Modes {
+    aliased: true,
+    nonportable: false,
+    shared: true,
+    once: true,
+};
+
+/// Returns the mode of a value on the axis of uniqueness: `uniq`, or `aliased`.
+pub const fn uniqueness(uniq: bool) -> Modes {
+    Modes {
+        aliased: !uniq,
+        ..weft_verified::modes::bottom()
+    }
+}
+
+/// Returns true if the join of two values is `@ uniq`: a value that can be
+/// either one is `@ uniq` only if both are. The verified join of the mode
+/// lattice decides it.
+pub const fn join_uniq(a: bool, b: bool) -> bool {
+    !weft_verified::modes::join(&uniqueness(a), &uniqueness(b)).aliased
+}
+
 impl VarInfo {
+    /// Returns the mode of the variable where a task captures it, on the axes
+    /// of uniqueness and portability. A variable that the task writes
+    /// through, with an aliased reference, is shared-mutable, so it is
+    /// nonportable too (ADR 0006).
+    pub const fn capture_mode(&self, writes: bool) -> Modes {
+        Modes {
+            aliased: !self.uniq,
+            nonportable: self.nonportable || (writes && !self.uniq),
+            ..weft_verified::modes::bottom()
+        }
+    }
+
     /// Makes a plain `many`, portable, aliased variable.
     ///
     /// `callable` is true for a closure. A producer that knows the type sets
@@ -287,14 +327,39 @@ pub struct TaskInfo {
 pub struct HandlerInfo {
     /// The handled effect.
     pub effect: String,
-    /// The effect is a standard effect.
-    pub is_std: bool,
     /// The handler is a root handler of `sim.run`, which W0802 checks
     /// (`sim_root(H)`). It forwards its effect whatever its clauses do. Other
     /// handlers forward through their clauses (`clause_performs`).
     pub sim_root: bool,
     /// The source location.
     pub span: Span,
+}
+
+/// The first parameter index of `uniq_param(P, I)` for a call in a closure.
+///
+/// The closure runs at node `P`. The index of such a call is this number plus
+/// its position, so it is not the index of an argument of the call at `P`.
+pub const CLOSURE_ARG: u32 = 1 << 16;
+
+/// An argument of a call that a check of the spec looks at, for diagnostics:
+/// W0203 (`arg_outside`), W0406 (`not_uniq`) and W0705 (`arg_effect_outside`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArgSite {
+    /// The call node.
+    pub node: NodeId,
+    /// The index of the parameter.
+    pub index: u32,
+    /// The argument.
+    pub span: Span,
+    /// The name of the callee.
+    pub callee: String,
+    /// The name of the parameter.
+    pub param: String,
+    /// The places that the parameter states with `in`, as text: `world.a[]`.
+    pub needs: String,
+    /// For a call inside a closure that runs at the node: the local that the
+    /// closure gives to the parameter.
+    pub via: Option<String>,
 }
 
 /// The sizes of the relations of [`FnFacts`] at one point of the lowering.
@@ -354,6 +419,15 @@ pub struct FactMark {
     call_arg: usize,
     lends_mut: usize,
     writes_via: usize,
+    arg_sites: usize,
+    arg_at: usize,
+    param_in: usize,
+    uniq_param: usize,
+    arg_aliased: usize,
+    fn_arg_effect: usize,
+    param_effect: usize,
+    sim_run_at: usize,
+    std_effects: usize,
 }
 
 /// All facts of one function.
@@ -404,6 +478,9 @@ pub struct FnFacts {
     /// The interpreter checks that the result fits in the type. This is not a
     /// relation of the spec.
     pub int_ops: Vec<(Span, String)>,
+    /// The arguments that `arg_at`, `uniq_param` and `fn_arg_effect` name, for
+    /// diagnostics. This is not a relation of the spec.
+    pub arg_sites: Vec<ArgSite>,
     /// The number of local capabilities.
     pub caps: u32,
 
@@ -511,9 +588,38 @@ pub struct FnFacts {
     /// `writes_via(P, R)`: each mutation at node `P` is at or below the place
     /// that the reference `R` points to when `P` runs. `R` holds one reference.
     pub writes_via: Vec<(NodeId, VarId)>,
+    /// `arg_at(P, I, A)`: the call at `P` gives parameter `I` a reference into
+    /// `A`, and the parameter states an `in` place.
+    pub arg_at: Vec<(NodeId, u32, PlaceId)>,
+    /// `param_in(P, I, D)`: parameter `I` of the callee of the call at `P`
+    /// states `in D`, in the places of the caller.
+    pub param_in: Vec<(NodeId, u32, PlaceId)>,
+    /// `uniq_param(P, I)`: parameter `I` of the callee of the call at `P` is a
+    /// `@ uniq` reference. [`CLOSURE_ARG`] and more is a parameter of a call
+    /// inside a closure that runs at `P`.
+    pub uniq_param: Vec<(NodeId, u32)>,
+    /// `arg_aliased(P, I)`: the argument for parameter `I` of the call at `P`
+    /// can be aliased: it is not `@ uniq` there.
+    pub arg_aliased: Vec<(NodeId, u32)>,
+    /// `fn_arg_effect(P, I, E)`: the function argument for parameter `I` of the
+    /// call at `P` performs `E`, and the parameter type states a row.
+    pub fn_arg_effect: Vec<(NodeId, u32, String)>,
+    /// `param_effect(P, I, E)`: the row of the type of parameter `I` of the
+    /// callee of the call at `P` allows `E` (closed under implication).
+    pub param_effect: Vec<(NodeId, u32, String)>,
+    /// `sim_run_at(P)`: node `P` runs `sim.run`, or makes a value that can run it.
+    pub sim_run_at: Vec<NodeId>,
+    /// `std_effect(E)`: `E` is a standard effect. The list holds the standard
+    /// effects that the other relations name.
+    pub std_effects: Vec<String>,
 
     /// `library()`.
     pub library: bool,
+    /// `started()`: the runtime starts the body: `main` or a test of the root.
+    pub started: bool,
+    /// `no_runtime()`: the runtime handles no effect of the body. The program
+    /// has no runtime, and the body is `main`.
+    pub no_runtime: bool,
 
     /// The interning index of places: parent and step to child. `add_root` and
     /// `child` keep it current.
@@ -533,6 +639,8 @@ impl FnFacts {
             effect_names: _,
             hidden_effects: _,
             int_ops: _,
+            started: _,
+            no_runtime: _,
             caps,
             has_signature,
             library,
@@ -582,6 +690,15 @@ impl FnFacts {
             call_arg,
             lends_mut,
             writes_via,
+            arg_sites,
+            arg_at,
+            param_in,
+            uniq_param,
+            arg_aliased,
+            fn_arg_effect,
+            param_effect,
+            sim_run_at,
+            std_effects,
         } = self;
         FactMark {
             caps: *caps,
@@ -633,6 +750,15 @@ impl FnFacts {
             call_arg: call_arg.len(),
             lends_mut: lends_mut.len(),
             writes_via: writes_via.len(),
+            arg_sites: arg_sites.len(),
+            arg_at: arg_at.len(),
+            param_in: param_in.len(),
+            uniq_param: uniq_param.len(),
+            arg_aliased: arg_aliased.len(),
+            fn_arg_effect: fn_arg_effect.len(),
+            param_effect: param_effect.len(),
+            sim_run_at: sim_run_at.len(),
+            std_effects: std_effects.len(),
         }
     }
 
@@ -648,6 +774,8 @@ impl FnFacts {
             effect_names: _,
             hidden_effects: _,
             int_ops: _,
+            started: _,
+            no_runtime: _,
             caps,
             has_signature,
             library,
@@ -697,6 +825,15 @@ impl FnFacts {
             call_arg,
             lends_mut,
             writes_via,
+            arg_sites,
+            arg_at,
+            param_in,
+            uniq_param,
+            arg_aliased,
+            fn_arg_effect,
+            param_effect,
+            sim_run_at,
+            std_effects,
         } = self;
         *caps = mark.caps;
         *has_signature = mark.has_signature;
@@ -747,6 +884,15 @@ impl FnFacts {
         call_arg.truncate(mark.call_arg);
         lends_mut.truncate(mark.lends_mut);
         writes_via.truncate(mark.writes_via);
+        arg_sites.truncate(mark.arg_sites);
+        arg_at.truncate(mark.arg_at);
+        param_in.truncate(mark.param_in);
+        uniq_param.truncate(mark.uniq_param);
+        arg_aliased.truncate(mark.arg_aliased);
+        fn_arg_effect.truncate(mark.fn_arg_effect);
+        param_effect.truncate(mark.param_effect);
+        sim_run_at.truncate(mark.sim_run_at);
+        std_effects.truncate(mark.std_effects);
     }
 
     /// Returns the place record.
@@ -964,6 +1110,14 @@ impl FnFacts {
         nd(&mut self.call_arg);
         nd(&mut self.lends_mut);
         nd(&mut self.writes_via);
+        nd(&mut self.arg_at);
+        nd(&mut self.param_in);
+        nd(&mut self.uniq_param);
+        nd(&mut self.arg_aliased);
+        nd(&mut self.fn_arg_effect);
+        nd(&mut self.param_effect);
+        nd(&mut self.sim_run_at);
+        nd(&mut self.std_effects);
     }
 }
 
@@ -1002,6 +1156,18 @@ pub struct Violations {
     pub shared_mut_capture: BTreeSet<(TaskId, VarId)>,
     /// `root_handler_in_lib(H)`: W0801.
     pub root_handler_in_lib: BTreeSet<HandlerId>,
+    /// `arg_outside(P, I, A)`: W0203.
+    pub arg_outside: BTreeSet<(NodeId, u32, PlaceId)>,
+    /// `not_uniq(P, I)`: W0406.
+    pub not_uniq: BTreeSet<(NodeId, u32)>,
+    /// `arg_effect_outside(P, I, E)`: W0705.
+    pub arg_effect_outside: BTreeSet<(NodeId, u32, String)>,
+    /// `sim_in_lib(P)`: W0802.
+    pub sim_in_lib: BTreeSet<NodeId>,
+    /// `unhandled_effect(P, E)`: W0805.
+    pub unhandled_effect: BTreeSet<(NodeId, String)>,
+    /// `embedded_effect(P, E)`: W0803.
+    pub embedded_effect: BTreeSet<(NodeId, String)>,
     /// `stealable(T)`: information for the scheduler.
     pub stealable: BTreeSet<TaskId>,
 }
@@ -1025,6 +1191,12 @@ impl Violations {
             && self.nonportable_capture.is_empty()
             && self.shared_mut_capture.is_empty()
             && self.root_handler_in_lib.is_empty()
+            && self.arg_outside.is_empty()
+            && self.not_uniq.is_empty()
+            && self.arg_effect_outside.is_empty()
+            && self.sim_in_lib.is_empty()
+            && self.unhandled_effect.is_empty()
+            && self.embedded_effect.is_empty()
     }
 }
 
@@ -1072,6 +1244,24 @@ mod tests {
         // The tables stay, so that the places of the pass before stay valid.
         assert_eq!(f.roots.len(), 2);
         assert_eq!(f.place(l).display, "lines");
+    }
+
+    #[test]
+    fn modes_of_values_and_captures() {
+        // A join is `@ uniq` only if both values are.
+        assert!(join_uniq(true, true));
+        assert!(!join_uniq(true, false));
+        assert!(!join_uniq(false, true));
+        let mut v = VarInfo::plain("r", VarKind::Local, Span::default(), "&T");
+        // A plain value crosses threads; a write through an aliased reference
+        // makes it shared-mutable, so it does not.
+        let crosses = |m: Modes| weft_verified::modes::submode(&m, &CROSSES_THREADS);
+        assert!(crosses(v.capture_mode(false)));
+        assert!(!crosses(v.capture_mode(true)));
+        v.uniq = true;
+        assert!(crosses(v.capture_mode(true)));
+        v.nonportable = true;
+        assert!(!crosses(v.capture_mode(false)));
     }
 
     #[test]

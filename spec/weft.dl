@@ -87,6 +87,22 @@
 //   std_effect(E)            E is a standard effect.
 //   clause_performs(H, E)    a clause of H performs E through a handler outside H.
 //   sim_root(H)              H is a root handler of `sim.run` (W0802 checks it).
+//   sim_run_at(P)            node P runs `sim.run`, or makes a value that can run it.
+//   started()                the runtime starts the body: `main` or a test of the root.
+//   no_runtime()             the runtime handles no effect of the body: the program has
+//                            no runtime, and the body is `main`.
+//   arg_at(P, I, A)          the call at P gives parameter I a reference into A, and the
+//                            parameter states an `in` place.
+//   param_in(P, I, D)        parameter I of the callee at P states `in D`, in the places of
+//                            the caller.
+//   uniq_param(P, I)         parameter I of the callee at P is a `@ uniq` reference. An index
+//                            of CLOSURE_ARG (65536) or more is a parameter of a call inside a
+//                            closure that runs at P.
+//   arg_aliased(P, I)        the argument for parameter I at P can be aliased.
+//   fn_arg_effect(P, I, E)   the function argument for parameter I at P performs E, and the
+//                            parameter type states a row.
+//   param_effect(P, I, E)    the row of the type of parameter I at P allows E (closed under
+//                            implication).
 
 // ---------------------------------------------------------------------------
 // Places
@@ -246,7 +262,7 @@ live_across_multi(V, P) :- multi_at(P), call_arg(P, Path, I), owner(Rt, V), pref
                            immovable(V), !spared_at(V, P).
 
 // ---------------------------------------------------------------------------
-// W0702, W0703, W0402: effects in signatures
+// W0702, W0703, W0402, W0705: effects in signatures
 // ---------------------------------------------------------------------------
 
 needs_decl(P, M)        :- mutates_at(P, M), param_rooted(M).
@@ -256,6 +272,33 @@ unauthorized_mut(P, M)  :- has_signature(), needs_decl(P, M), !covered(M).
 unauthorized_effect(P, E) :- has_signature(), escapes_at(P, E), !declared_effect(E).
 
 shared_mutation(P, M)   :- mutates_at(P, M), shared_root(S), within(M, S).
+
+// W0705: a function argument performs only what the row of its parameter type
+// allows. This is `unauthorized_effect` at a parameter.
+arg_effect_outside(P, I, E) :- fn_arg_effect(P, I, E), !param_effect(P, I, E).
+
+// ---------------------------------------------------------------------------
+// W0203: a reference argument points inside the place that its parameter
+// states (rule 1)
+// ---------------------------------------------------------------------------
+
+// A reference into A is inside the stated place D. Below a plain place only
+// stable steps follow: the caller sees the reference at D, and a change of D
+// must not invalidate it. Below a wildcard place any step can follow.
+inside_stated(A, D)  :- pointwise(A, D), !wildcard(D).
+inside_stated(A, D)  :- parent(A, Q), inside_stated(Q, D), !unstable(A).
+inside_stated(A, D)  :- wildcard(D), parent(D, B), within(A, B).
+
+arg_inside(P, I, A)  :- arg_at(P, I, A), param_in(P, I, D), inside_stated(A, D).
+arg_outside(P, I, A) :- arg_at(P, I, A), !arg_inside(P, I, A).
+
+// ---------------------------------------------------------------------------
+// W0406: a `@ uniq` parameter gets a `@ uniq` argument
+// ---------------------------------------------------------------------------
+
+// The mode of an argument must be a submode of the mode of its parameter. On
+// the axis of uniqueness, an aliased argument is not a submode of `uniq`.
+not_uniq(P, I)       :- uniq_param(P, I), arg_aliased(P, I).
 
 // ---------------------------------------------------------------------------
 // W0312: a call passes overlapping places to a callee that mutates one of them
@@ -291,6 +334,10 @@ task_conflict(T, P)  :- active(T, P), task_accesses(T, A), lends_mut(P, M), over
 nonportable_capture(T, V) :- fork_task(T), captures(T, V), nonportable(V).
 shared_mut_capture(T, V)  :- fork_task(T), captures(T, V), mut_through(T, V), !uniq(V).
 
+// The mode of a task is the join of the modes of its captures. It can move to
+// another worker only if that mode is portable. A shared-mutable reference is
+// nonportable. The checker computes this with the verified lattice
+// (`modes::join`, `modes::submode`).
 pinned(T)            :- captures(T, V), nonportable(V).
 pinned(T)            :- captures(T, V), mut_through(T, V), !uniq(V).
 // A pinned task stays on the worker of the task that starts it. If that task
@@ -310,3 +357,15 @@ stealable(T)         :- task(T), !pinned(T).
 forwards(H)            :- sim_root(H).
 forwards(H)            :- handler(H, E), clause_performs(H, E).
 root_handler_in_lib(H) :- library(), handler(H, E), std_effect(E), !forwards(H).
+
+// W0802: `sim.run` replaces every root handler, so a library cannot use it.
+sim_in_lib(P)          :- library(), sim_run_at(P).
+
+// ---------------------------------------------------------------------------
+// W0805, W0803: the effects that leave the bodies that the runtime starts
+// ---------------------------------------------------------------------------
+
+// The runtime has root handlers for the standard effects only. With no
+// runtime, `main` must handle each standard effect too.
+unhandled_effect(P, E) :- started(), escapes_at(P, E), !std_effect(E).
+embedded_effect(P, E)  :- started(), no_runtime(), escapes_at(P, E), std_effect(E).

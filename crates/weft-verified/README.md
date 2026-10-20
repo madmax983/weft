@@ -109,8 +109,12 @@ fixpoint is a subset of the nodes, so it is finite. The theorem is the same.
 
 ## `modes`: the mode lattice
 
-Not yet used: the checker decides the mode rules with flags in the facts
-(`nonportable`, `uniq`, `shared`). A later stage can use these functions.
+The facts have a flag for each axis of a variable (`nonportable`, `uniq`, `once`).
+`weft-facts` makes a `Modes` value from them (`VarInfo::capture_mode`, `uniqueness`).
+The checker decides W0406 (`not_uniq`) and W0403 with `submode` on the axis of
+uniqueness, and W0401 and `pinned` with `join` and `submode` against
+`CROSSES_THREADS`. Sema joins the uniqueness of two values with `join`
+(`weft_facts::join_uniq`) and finds the pinned tasks of a body with `submode`.
 
 | Exec function | Ensures |
 | --- | --- |

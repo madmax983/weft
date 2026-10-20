@@ -1,11 +1,15 @@
 //! Diagnostics from checker results. Each diagnostic shows its derivation.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use weft_facts::{FnFacts, NodeId, PlaceId, VarId, VarKind, Violations, ARG_TASK, TASK_END};
+use weft_facts::{
+    ArgSite, FnFacts, NodeId, PlaceId, VarId, VarKind, Violations, ARG_TASK, TASK_END,
+};
 use weft_sema::effects;
 use weft_syntax::diag::Diagnostic;
+use weft_verified::places;
 
+use crate::bridge::fact_key;
 use crate::rules::{Cause, Conflict, Invalidation, Report};
 
 /// The most lines that a note about other sites lists.
@@ -59,6 +63,15 @@ fn clause_read(f: &FnFacts, var: VarId, n: NodeId) -> Option<NodeId> {
         .filter(|&&(v, q)| v == var && seen[q.index()])
         .map(|&(_, q)| q)
         .min()
+}
+
+/// Returns the keys of the facts `relation(var, n)` of body `f`, one for each
+/// node `n` of `nodes` ([`fact_key`]).
+fn var_keys(f: &FnFacts, relation: &str, var: VarId, nodes: &[NodeId]) -> Vec<String> {
+    nodes
+        .iter()
+        .map(|n| fact_key(f, relation, &[&var, n]))
+        .collect()
 }
 
 fn once_closure(f: &FnFacts, n: NodeId) -> Diagnostic {
@@ -172,8 +185,9 @@ fn holder_text(f: &FnFacts, inv: &Invalidation, also: bool) -> String {
 /// that have one invalidating node and one use. One use is one use node. A
 /// hidden variable and a variable of the program have one use also if the span
 /// of one use is inside the span of the other. Two variables of one kind with
-/// different use nodes stay apart: a loop node has the span of the whole loop. The first entry of each group names a variable
-/// of the program, if one is in the group, with the earliest use.
+/// different use nodes stay apart: a loop node has the span of the whole loop.
+/// The first entry of each group names a variable of the program, if one is
+/// in the group, with the earliest use.
 fn group_uses<'a>(
     f: &FnFacts,
     entries: Vec<(&'a Invalidation, Vec<NodeId>)>,
@@ -249,16 +263,26 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
     nonportable_capture(f, v, &mut out);
     shared_mut_capture(f, v, &mut out);
     root_handler_in_lib(f, v, &mut out);
+    arg_outside(f, v, &mut out);
+    not_uniq(f, v, &mut out);
+    arg_effect_outside(f, v, &mut out);
+    sim_in_lib(f, v, &mut out);
+    root_effects(f, v, &mut out);
     // A stable sort: the errors at one place keep the order of the rules above.
     out.sort_by(|a, b| (a.span.lo, &a.code).cmp(&(b.span.lo, &b.code)));
     out
 }
 
 /// W0301: the derivation of the design doc (`error`).
+///
+/// The evidence (`Report::invalidations`) has one entry for each use. First
+/// the entries of one reference and one invalidating node become one entry,
+/// at the first use: the other uses go to a note. Then [`group_uses`] joins
+/// the entries of different holders with one invalidating node and one use
+/// into one error. The node can be a mutation, a lend, a move, a part move, a
+/// release or the end of a scope (`Cause`).
 fn w0301(f: &FnFacts, r: &Report, out: &mut Vec<Diagnostic>) {
-    // W0301: the derivation of the design doc. One error for each reference
-    // and invalidating node, at the first use. The node can be a mutation, a
-    // lend, a move, a part move or a scope end (`Cause`).
+    // The key is the reference and the invalidating node.
     let mut invalidations: BTreeMap<(VarId, NodeId), Vec<&Invalidation>> = BTreeMap::new();
     for inv in &r.invalidations {
         invalidations
@@ -330,12 +354,36 @@ fn w0301(f: &FnFacts, r: &Report, out: &mut Vec<Diagnostic>) {
             let text = format!("also {}", holder_text(f, other, true));
             d = d.note_at(text, f.var(other.var).span);
         }
-        out.push(d);
+        // The facts `error(R, P)` of the group: each holder at each of its uses.
+        let keys = group.iter().flat_map(|(e, rest)| {
+            let uses: Vec<NodeId> = std::iter::once(e.used_at)
+                .chain(rest.iter().copied())
+                .collect();
+            var_keys(f, "error", e.var, &uses)
+        });
+        out.push(d.with_facts(keys));
     }
 }
 
-/// W0302, W0501 and W0502: a value, a continuation or a closure that is used
-/// after a move (`use_after_move`). One error for each variable.
+/// Returns the footprint of the handler that node `n` performs through, as a
+/// list of places: the footprint that holds place `m`. Returns `None` if no
+/// such handler is there.
+fn footprint_text(f: &FnFacts, n: NodeId, m: PlaceId) -> Option<String> {
+    let cap = f
+        .performs_at
+        .iter()
+        .filter(|&&(p, _)| p == n)
+        .map(|&(_, c)| c)
+        .find(|&c| f.footprint.contains(&(c, m)))?;
+    let places: Vec<&str> = f
+        .footprint
+        .iter()
+        .filter(|&&(c, _)| c == cap)
+        .map(|&(_, q)| f.place(q).display.as_str())
+        .collect();
+    Some(places.join(", "))
+}
+
 /// Returns the notes of W0301 about the node that invalidates the reference of
 /// `inv`: what the node does, and why that invalidates the reference.
 fn w0301_cause(f: &FnFacts, inv: &Invalidation) -> (String, String) {
@@ -359,6 +407,13 @@ fn w0301_cause(f: &FnFacts, inv: &Invalidation) -> (String, String) {
         Cause::Mutation(m) | Cause::Lend(m) => {
             let mutated = &f.place(m).display;
             let what = match (at.detail.is_empty(), at.label.strip_suffix(" =")) {
+                // A perform is a call with the footprint of the handler.
+                _ if matches!(inv.cause, Cause::Mutation(_)) && !f.mutates_at.contains(&(inv.at, m)) => {
+                    match footprint_text(f, inv.at, m) {
+                        Some(fp) => format!("{} : mut({fp}), the footprint of its handler", at.label),
+                        None => format!("{} : mut({mutated})", at.label),
+                    }
+                }
                 // A task that ends here can have changed the place while it ran.
                 _ if matches!(inv.cause, Cause::Lend(_)) && at.label == TASK_END => {
                     format!("{TASK_END} : the task could change {mutated} while it ran")
@@ -436,6 +491,8 @@ fn w0301_cause(f: &FnFacts, inv: &Invalidation) -> (String, String) {
     }
 }
 
+/// W0302, W0501 and W0502: a value, a continuation or a closure that is used
+/// after a move (`use_after_move`). One error for each variable.
 fn use_after_move(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     for (var, sites) in by_var(f, &v.use_after_move) {
         let Some((&n, rest)) = sites.split_first() else {
@@ -463,30 +520,44 @@ fn use_after_move(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                 ("use after a move", "uses after a move"),
             ),
         };
-        out.push(note_more(d, f, rest, noun));
+        let d = note_more(d, f, rest, noun).with_facts(var_keys(f, "use_after_move", var, &sites));
+        out.push(d);
     }
 }
 
-/// W0304: a use before a value (`use_before_set`).
+/// W0304: a use before a value (`use_before_set`). One error for each
+/// variable, at the first use. A note lists the other uses.
 fn use_before_set(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
-    for &(var, n) in &v.use_before_set {
+    for (var, sites) in by_var(f, &v.use_before_set) {
         let info = f.var(var);
         // A handler clause uses its captures at each node that runs it. The
-        // diagnostic shows the read in the clause, and the node as a note.
-        let read = clause_read(f, var, n);
+        // diagnostic shows the read in the clause, and the node as a note. So
+        // each site shows its read, in source order.
+        let mut shown: Vec<(NodeId, NodeId)> = sites
+            .iter()
+            .map(|&n| (clause_read(f, var, n).unwrap_or(n), n))
+            .collect();
+        shown.sort_by_key(|&(read, n)| (node_span(f, read).lo, node_span(f, n).lo));
+        shown.dedup_by_key(|&mut (read, _)| read);
+        let Some((&(read, n), rest)) = shown.split_first() else {
+            continue;
+        };
         let mut d = Diagnostic::error(
             "W0304",
             format!("{} is used before it has a value", shown_name(info)),
-            node_span(f, read.unwrap_or(n)),
+            node_span(f, read),
         )
         .note_at(decl_note(info), info.span);
-        if read.is_some() {
+        if read != n {
             d = d.note_at(
                 "a handler clause reads it when it runs here",
                 node_span(f, n),
             );
         }
-        out.push(d.note("give it a value on every path before this use"));
+        let d = d.note("give it a value on every path before this use");
+        let rest: Vec<NodeId> = rest.iter().map(|&(read, _)| read).collect();
+        let keys = var_keys(f, "use_before_set", var, &sites);
+        out.push(note_more(d, f, &rest, ("use", "uses")).with_facts(keys));
     }
 }
 
@@ -500,7 +571,8 @@ fn moved_immovable(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                 format!("{} has a `!Move` type and cannot move", shown_name(info)),
                 node_span(f, n),
             )
-            .note("construct it in place and use it through references"),
+            .note("construct it in place and use it through references")
+            .with_facts(var_keys(f, "moved_immovable", var, &[n])),
         );
     }
 }
@@ -555,7 +627,7 @@ fn unconsumed(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
             .note_at(format!("{} (linear)", decl_note(info)), info.span)
             .note("move it into a call that consumes it on every normal path")
         };
-        out.push(d);
+        out.push(d.with_facts(var_keys(f, "unconsumed", var, &[n])));
     }
 }
 
@@ -563,14 +635,17 @@ fn unconsumed(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
 fn overwritten(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     for &(var, n) in &v.overwritten {
         let info = f.var(var);
-        out.push(Diagnostic::error(
-            "W0601",
-            format!(
-                "linear value {} is overwritten before it is consumed",
-                shown_name(info)
-            ),
-            node_span(f, n),
-        ));
+        out.push(
+            Diagnostic::error(
+                "W0601",
+                format!(
+                    "linear value {} is overwritten before it is consumed",
+                    shown_name(info)
+                ),
+                node_span(f, n),
+            )
+            .with_facts(var_keys(f, "overwritten", var, &[n])),
+        );
     }
 }
 
@@ -598,12 +673,8 @@ fn abort_unhandled(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
             info.span,
         )
         .note("declare `on abort = f` on the type, or consume the value before this call");
-        out.push(note_more(
-            d,
-            f,
-            rest,
-            ("site that can abort", "sites that can abort"),
-        ));
+        let d = note_more(d, f, rest, ("site that can abort", "sites that can abort"));
+        out.push(d.with_facts(var_keys(f, "abort_unhandled", var, &sites)));
     }
 }
 
@@ -632,7 +703,7 @@ fn live_across_multi(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                 "a `!Move` value keeps its address, and each resume runs with a copy of the value",
             );
         }
-        out.push(note_more(
+        let d = note_more(
             d,
             f,
             rest,
@@ -640,7 +711,8 @@ fn live_across_multi(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                 "operation that can resume more than once",
                 "operations that can resume more than once",
             ),
-        ));
+        );
+        out.push(d.with_facts(var_keys(f, "live_across_multi", var, &sites)));
     }
 }
 
@@ -661,9 +733,19 @@ fn unauthorized_mut(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
             .note(format!(
                 "add `mut({})` to the effects after `/`",
                 mut_hint(f, p)
-            )),
+            ))
+            .with_facts([fact_key(f, "unauthorized_mut", &[&n, &p])]),
         );
     }
+}
+
+/// Returns the effects that body `f` states or performs. W0702 names an effect by
+/// its identity when another of these shows the same text.
+fn stated_or_performed(f: &FnFacts) -> impl Iterator<Item = &str> {
+    f.declared_effect
+        .iter()
+        .chain(f.escapes_at.iter().map(|(_, e)| e))
+        .map(String::as_str)
 }
 
 /// W0702: an effect that the signature does not state (`unauthorized_effect`).
@@ -680,11 +762,12 @@ fn unauthorized_effect(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                 format!(
                     "`{}` performs {}, which the signature does not allow",
                     at.label,
-                    effect_text(f, e)
+                    effect_text(f, e, stated_or_performed(f))
                 ),
                 at.span,
             )
-            .note(note),
+            .note(note)
+            .with_facts([fact_key(f, "unauthorized_effect", &[n, e])]),
         );
     }
 }
@@ -693,15 +776,18 @@ fn unauthorized_effect(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
 fn shared_mutation(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     for &(n, p) in &v.shared_mutation {
         let at = f.node(n);
-        out.push(Diagnostic::error(
-            "W0402",
-            format!(
-                "`{}` mutates `{}` through a `@ shared` reference",
-                at.label,
-                f.place(p).display
-            ),
-            at.span,
-        ));
+        out.push(
+            Diagnostic::error(
+                "W0402",
+                format!(
+                    "`{}` mutates `{}` through a `@ shared` reference",
+                    at.label,
+                    f.place(p).display
+                ),
+                at.span,
+            )
+            .with_facts([fact_key(f, "shared_mutation", &[&n, &p])]),
+        );
     }
 }
 
@@ -723,6 +809,12 @@ fn alias_conflict(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     pairs.dedup_by_key(|p| p.0);
     for (n, m, a) in pairs {
         let at = f.node(n);
+        // The error reports each pair of the call.
+        let keys = v
+            .alias_conflict
+            .iter()
+            .filter(|t| t.0 == n)
+            .map(|(n, m, a)| fact_key(f, "alias_conflict", &[n, m, a]));
         out.push(
             Diagnostic::error(
                 "W0312",
@@ -734,7 +826,8 @@ fn alias_conflict(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                 ),
                 at.span,
             )
-            .note("the callee sees them as separate places, so it cannot protect the references"),
+            .note("the callee sees them as separate places, so it cannot protect the references")
+            .with_facts(keys),
         );
     }
 }
@@ -755,11 +848,18 @@ fn task_conflict(f: &FnFacts, r: &Report, out: &mut Vec<Diagnostic>) {
         let s = f.node(c.at).span;
         (c.task, s.lo, s.hi, std::cmp::Reverse(depth(c)))
     });
-    conflicts.dedup_by_key(|c| {
-        let s = f.node(c.at).span;
-        (c.task, s.lo, s.hi)
-    });
+    // One error for each task and span. It reports the conflict of each node
+    // with that span.
+    let mut groups: Vec<(&Conflict, Vec<String>)> = Vec::new();
     for c in conflicts {
+        let key = fact_key(f, "task_conflict", &[&c.task, &c.at]);
+        let s = f.node(c.at).span;
+        match groups.last_mut() {
+            Some((g, keys)) if g.task == c.task && f.node(g.at).span == s => keys.push(key),
+            _ => groups.push((c, vec![key])),
+        }
+    }
+    for (c, keys) in groups {
         let at = f.node(c.at);
         let task = &f.tasks[c.task.index()];
         let verb = if c.task_writes { "mutates" } else { "reads" };
@@ -794,7 +894,8 @@ fn task_conflict(f: &FnFacts, r: &Report, out: &mut Vec<Diagnostic>) {
                 format!("task : {verb} {}", f.place(c.task_place).display),
                 task.span,
             )
-            .note("tasks that can run at the same time need separate footprints"),
+            .note("tasks that can run at the same time need separate footprints")
+            .with_facts(keys),
         );
     }
 }
@@ -804,14 +905,17 @@ fn task_conflict(f: &FnFacts, r: &Report, out: &mut Vec<Diagnostic>) {
 fn nonportable_capture(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     for &(t, var) in &v.nonportable_capture {
         let info = f.var(var);
-        out.push(Diagnostic::error(
-            "W0401",
-            format!(
-                "a `fork` branch captures {}, which is nonportable",
-                shown_name(info)
-            ),
-            f.tasks[t.index()].span,
-        ));
+        out.push(
+            Diagnostic::error(
+                "W0401",
+                format!(
+                    "a `fork` branch captures {}, which is nonportable",
+                    shown_name(info)
+                ),
+                f.tasks[t.index()].span,
+            )
+            .with_facts([fact_key(f, "nonportable_capture", &[&t, &var])]),
+        );
     }
 }
 
@@ -829,7 +933,8 @@ fn shared_mut_capture(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                 ),
                 f.tasks[t.index()].span,
             )
-            .note("a shared-mutable reference is nonportable; split it into `@ uniq` parts first"),
+            .note("a shared-mutable reference is nonportable; split it into `@ uniq` parts first")
+            .with_facts([fact_key(f, "shared_mut_capture", &[&t, &var])]),
         );
     }
 }
@@ -838,66 +943,202 @@ fn shared_mut_capture(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
 fn root_handler_in_lib(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     for &h in &v.root_handler_in_lib {
         let info = &f.handlers[h.index()];
-        out.push(Diagnostic::error(
-            "W0801",
-            format!(
-                "a library installs a root handler for `{}`; only binaries and tests can",
-                info.effect
-            ),
-            info.span,
-        ));
+        // The rule of ADR 0005: the name that the body writes, and the identity
+        // when another effect of the body has the same name.
+        out.push(
+            Diagnostic::error(
+                "W0801",
+                format!(
+                    "a library installs a root handler for {}; only binaries and tests can",
+                    effect_text(f, &info.effect, named_effects(f))
+                ),
+                info.span,
+            )
+            .with_facts([fact_key(f, "root_handler_in_lib", &[&h])]),
+        );
     }
 }
 
-/// W0805 and W0803: the effects that leave `main` or a test.
-///
-/// The runtime starts these bodies. `who` names the body. `has_root_handler`
-/// is true for an effect that the runtime handles. With `no_runtime`, the
-/// runtime handles no effect (W0803). Each effect gets one error.
-pub fn root_effects(
+/// Returns the name of a body that the runtime starts, for W0805 and W0803:
+/// `` `main` ``, or the name of a test (`test "x"`). A test name has a space,
+/// and a function name has none.
+fn started_name(f: &FnFacts) -> String {
+    if f.name.starts_with("test ") {
+        f.name.clone()
+    } else {
+        format!("`{}`", f.name)
+    }
+}
+
+/// Groups the facts `relation(P, E)` by effect: the sites of each effect, in
+/// source order.
+fn by_effect<'a>(
     f: &FnFacts,
-    who: &str,
-    no_runtime: bool,
-    has_root_handler: &dyn Fn(&str) -> bool,
-) -> Vec<Diagnostic> {
-    let mut by_effect: BTreeMap<&str, Vec<NodeId>> = BTreeMap::new();
-    for (n, e) in &f.escapes_at {
-        by_effect.entry(e).or_default().push(*n);
+    pairs: impl IntoIterator<Item = &'a (NodeId, String)>,
+) -> BTreeMap<&'a str, Vec<NodeId>> {
+    let mut map: BTreeMap<&str, Vec<NodeId>> = BTreeMap::new();
+    for (n, e) in pairs {
+        map.entry(e.as_str()).or_default().push(*n);
     }
-    let escaping: Vec<&str> = by_effect.keys().copied().collect();
-    let mut out = Vec::new();
-    for (e, mut sites) in by_effect {
+    for sites in map.values_mut() {
         sites.sort_by_key(|&n| node_span(f, n).lo);
-        let Some((&first, rest)) = sites.split_first() else {
-            continue;
-        };
-        let span = node_span(f, first);
-        let name = root_effect_text(f, e, &escaping);
-        let d = if !has_root_handler(e) {
-            let note = match written(f, e) {
-                Some(w) => {
-                    format!("the runtime handles only the standard effects; handle `{w}` in {who}")
-                }
-                None => unnamed_note(f, e),
-            };
-            Diagnostic::error(
-                "W0805",
-                format!("{who} performs `{name}`, and no handler handles it"),
-                span,
-            )
-            .note(note)
-        } else if no_runtime {
-            Diagnostic::error(
-                "W0803",
-                format!("with no runtime, {who} must handle `{name}` itself"),
-                span,
-            )
-        } else {
-            continue;
-        };
-        out.push(note_more(d, f, rest, ("site", "sites")));
     }
-    out
+    map
+}
+
+/// W0805 and W0803: the effects that leave `main` or a test
+/// (`unhandled_effect`, `embedded_effect`). The runtime starts these bodies.
+/// It handles only the standard effects, and with no runtime none. Each effect
+/// gets one error, at its first site.
+fn root_effects(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
+    let who = started_name(f);
+    let escaping: BTreeSet<&str> = f.escapes_at.iter().map(|(_, e)| e.as_str()).collect();
+    let escaping: Vec<&str> = escaping.into_iter().collect();
+    for (relation, pairs) in [
+        ("unhandled_effect", &v.unhandled_effect),
+        ("embedded_effect", &v.embedded_effect),
+    ] {
+        for (e, sites) in by_effect(f, pairs) {
+            let Some((&first, rest)) = sites.split_first() else {
+                continue;
+            };
+            let span = node_span(f, first);
+            let name = root_effect_text(f, e, &escaping);
+            let d = if relation == "unhandled_effect" {
+                let note = match written(f, e) {
+                    Some(w) => format!(
+                        "the runtime handles only the standard effects; handle `{w}` in {who}"
+                    ),
+                    None => unnamed_note(f, e),
+                };
+                Diagnostic::error(
+                    "W0805",
+                    format!("{who} performs `{name}`, and no handler handles it"),
+                    span,
+                )
+                .note(note)
+            } else {
+                Diagnostic::error(
+                    "W0803",
+                    format!("with no runtime, {who} must handle `{name}` itself"),
+                    span,
+                )
+            };
+            let keys = sites.iter().map(|n| fact_key(f, relation, &[n, &e]));
+            out.push(note_more(d, f, rest, ("site", "sites")).with_facts(keys));
+        }
+    }
+}
+
+/// Returns the argument of parameter `index` of the call at node `n`
+/// (`FnFacts::arg_sites`).
+fn arg_site(f: &FnFacts, n: NodeId, index: u32) -> Option<&ArgSite> {
+    f.arg_sites.iter().find(|a| a.node == n && a.index == index)
+}
+
+/// W0203: a reference argument that points outside the place that its
+/// parameter states (`arg_outside`).
+fn arg_outside(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
+    for &(n, i, a) in &v.arg_outside {
+        let Some(site) = arg_site(f, n, i) else {
+            continue;
+        };
+        let shown = &f.place(a).display;
+        // Inside a stated place, but through an unstable step below it.
+        let below = f.param_in.iter().any(|&(p, j, d)| {
+            p == n
+                && j == i
+                && !f.place(d).is_wildcard()
+                && f.place(d).root == f.place(a).root
+                && places::within(&f.place(a).steps, &f.place(d).steps)
+        });
+        let below = if below {
+            format!(", and `{shown}` is below it through an unstable step")
+        } else {
+            String::new()
+        };
+        out.push(
+            Diagnostic::error(
+                "W0203",
+                format!(
+                    "argument `{}` points into `{shown}`, but `{}` needs `{}`{below}",
+                    site.param, site.callee, site.needs
+                ),
+                site.span,
+            )
+            .with_facts([fact_key(f, "arg_outside", &[&n, &i, &a])]),
+        );
+    }
+}
+
+/// W0406: an argument that can be aliased for a `@ uniq` parameter
+/// (`not_uniq`). For a call in a closure, the error is where the closure runs.
+fn not_uniq(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
+    for &(n, i) in &v.not_uniq {
+        let Some(site) = arg_site(f, n, i) else {
+            continue;
+        };
+        let head = format!(
+            "`{}` needs a `@ uniq` reference for `{}`",
+            site.callee, site.param
+        );
+        let message = match &site.via {
+            Some(local) => {
+                format!("{head}: the closure gives it `{local}`, which is not `@ uniq` here")
+            }
+            None => head,
+        };
+        out.push(
+            Diagnostic::error("W0406", message, site.span).with_facts([fact_key(
+                f,
+                "not_uniq",
+                &[&n, &i],
+            )]),
+        );
+    }
+}
+
+/// W0705: a function argument that performs an effect that its parameter type
+/// does not allow (`arg_effect_outside`). One error for each argument.
+fn arg_effect_outside(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
+    let mut by_arg: BTreeMap<(NodeId, u32), Vec<&str>> = BTreeMap::new();
+    for (n, i, e) in &v.arg_effect_outside {
+        by_arg.entry((*n, *i)).or_default().push(e);
+    }
+    for ((n, i), extra) in by_arg {
+        let Some(site) = arg_site(f, n, i) else {
+            continue;
+        };
+        let shown: Vec<&str> = extra.iter().map(|e| effects::shown(e)).collect();
+        let keys = extra
+            .iter()
+            .map(|e| fact_key(f, "arg_effect_outside", &[&n, &i, e]));
+        out.push(
+            Diagnostic::error(
+                "W0705",
+                format!(
+                    "this function argument performs `{}`, which its parameter type does not allow",
+                    shown.join(", ")
+                ),
+                site.span,
+            )
+            .with_facts(keys),
+        );
+    }
+}
+
+/// W0802: a library that uses `sim.run` (`sim_in_lib`).
+fn sim_in_lib(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
+    for &n in &v.sim_in_lib {
+        out.push(
+            Diagnostic::error(
+                "W0802",
+                "only binaries and tests can install root handlers (`sim.run`)",
+                node_span(f, n),
+            )
+            .with_facts([fact_key(f, "sim_in_lib", &[&n])]),
+        );
+    }
 }
 
 /// Returns effect identity `e` as W0805 and W0803 show it.
@@ -1002,17 +1243,28 @@ pub(crate) fn resolve_lines(d: &mut Diagnostic, file: &weft_syntax::SourceFile) 
 }
 
 /// Returns effect identity `e` as a diagnostic of body `f` shows it (see
-/// [`effect_shown`]). When a stated effect of the function shows the same text,
-/// the text names the effect that `e` is.
-fn effect_text(f: &FnFacts, e: &str) -> String {
+/// [`effect_shown`]). When another effect of `others` shows the same text, the
+/// text names the effect that `e` is: the standard effect `Log`, or the
+/// identity of a user effect (`main.Log`).
+fn effect_text<'a>(f: &FnFacts, e: &str, others: impl IntoIterator<Item = &'a str>) -> String {
     let shown = effect_shown(f, e);
-    let clash = f
-        .declared_effect
-        .iter()
+    let clash = others
+        .into_iter()
         .any(|d| d != e && effect_shown(f, d) == shown);
     match (clash, effects::is_std(e)) {
         (false, _) => format!("`{shown}`"),
         (true, true) => format!("the standard effect `{shown}`"),
         (true, false) => format!("`{e}`"),
     }
+}
+
+/// Returns each effect that the facts of body `f` name: the stated, escaping,
+/// handled and clause effects.
+fn named_effects(f: &FnFacts) -> impl Iterator<Item = &str> {
+    f.declared_effect
+        .iter()
+        .chain(f.escapes_at.iter().map(|(_, e)| e))
+        .chain(f.handlers.iter().map(|h| &h.effect))
+        .chain(f.clause_performs.iter().map(|(_, e)| e))
+        .map(String::as_str)
 }

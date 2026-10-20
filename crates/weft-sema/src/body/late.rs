@@ -101,16 +101,42 @@ impl Lower<'_> {
     }
 
     /// Records that the body gives local `l` to a parameter that must be
-    /// `@ uniq`. `text` is the text of W0406 for a node that runs a closure that
-    /// captures `l`, where `l` is not `@ uniq`.
-    pub(super) fn note_cap_uniq(&mut self, l: usize, text: &str) {
+    /// `@ uniq`. A node that runs a closure that captures `l`, where `l` is not
+    /// `@ uniq`, gets W0406 (`not_uniq`).
+    pub(super) fn note_cap_uniq(&mut self, l: usize, need: &super::UniqNeed) {
         let var = self.locals[l].var;
         for si in self.capturing(l) {
-            let need = (var, text.to_string());
+            let need = (var, need.clone());
             if !self.sums[si].uniq_needs.contains(&need) {
                 self.sums[si].uniq_needs.push(need);
             }
         }
+    }
+
+    /// Gives the facts of a call in a closure that runs at node `n`: the call
+    /// gives a captured local to a `@ uniq` parameter, and the local is not
+    /// `@ uniq` at `n` (`uniq_param`, `arg_aliased`, W0406). The index is
+    /// [`weft_facts::CLOSURE_ARG`] and more, one for each such call at `n`.
+    fn closure_uniq_need(&mut self, n: NodeId, need: &super::UniqNeed) {
+        let at_n = self
+            .facts
+            .uniq_param
+            .iter()
+            .filter(|&&(p, i)| p == n && i >= weft_facts::CLOSURE_ARG)
+            .count();
+        let index = weft_facts::CLOSURE_ARG.saturating_add(u32::try_from(at_n).unwrap_or(u32::MAX));
+        self.facts.uniq_param.push((n, index));
+        self.facts.arg_aliased.push((n, index));
+        let span = self.facts.node(n).span;
+        self.facts.arg_sites.push(weft_facts::ArgSite {
+            node: n,
+            index,
+            span,
+            callee: need.callee.clone(),
+            param: need.param.clone(),
+            needs: String::new(),
+            via: Some(need.local.clone()),
+        });
     }
 
     /// The summary indexes of the open closures and clauses that capture local `l`.
@@ -233,10 +259,9 @@ impl Lower<'_> {
                     }
                 }
                 if ch.not_uniq {
-                    let span = self.facts.node(n).span;
-                    for (v, text) in &sum.uniq_needs {
+                    for (v, need) in &sum.uniq_needs {
                         if *v == ch.var {
-                            self.err("W0406", text.clone(), span);
+                            self.closure_uniq_need(n, need);
                         }
                     }
                 }

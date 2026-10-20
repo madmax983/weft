@@ -1,25 +1,25 @@
 // A closure, a handler clause and a task use their captures where they are
 // made (ADR 0007). So a local with no value cannot get its first value in one
-// of them: the capture is W0304, and so is each later use. Rust rejects the
-// closure form too. The program runs and prints 1, 7 and 3, so this is
+// of them: the capture is W0304, and a note lists each later use. Rust rejects
+// the closure form too. The program runs and prints 1, 7 and 3, so this is
 // conservative.
 effect Note { fn note(x: u64) }
 fn closure_sets() {
     let x: u64
     let f = || { x = 1 }   //~ W0304
     f()
-    print(x)   //~ W0304
+    print(x)
 }
 fn clause_sets() {
     let x: u64
     handle Note { fn note(n) { x = n
  resume(()) } } in note(7)   //~ W0304
-    print(x)   //~ W0304
+    print(x)
 }
 fn task_sets() / async {
     let x: u64
     scope { s => s.spawn(|| { x = 3 }) }   //~ W0304
-    print(x)   //~ W0304
+    print(x)
 }
 // Clean: the local has a value before the closure is made.
 fn closure_sets_again() {

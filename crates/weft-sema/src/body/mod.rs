@@ -212,6 +212,17 @@ impl<'a, T: Ord + Clone> IntoIterator for &'a Grow<T> {
     }
 }
 
+/// A call in a closure that gives a captured local to a `@ uniq` parameter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct UniqNeed {
+    /// The name of the callee.
+    pub callee: String,
+    /// The name of the parameter.
+    pub param: String,
+    /// The name of the local.
+    pub local: String,
+}
+
 /// The sizes of a [`Summary`] at a loop head: a rewind cuts it back to them.
 #[derive(Clone, Debug)]
 pub(super) struct SumMark {
@@ -354,9 +365,9 @@ pub struct Summary {
     /// the value that the variable has there (`Lower::late_join`).
     cap_runs: Vec<(VarId, Vec<Given>)>,
     /// Captured variables that the body gives to a parameter that must be
-    /// `@ uniq`, with the text of W0406. A node that runs the closure checks
-    /// that the variable is still `@ uniq` there.
-    uniq_needs: Vec<(VarId, String)>,
+    /// `@ uniq`. A node that runs the closure checks that the variable is
+    /// still `@ uniq` there (W0406, `not_uniq`).
+    uniq_needs: Vec<(VarId, UniqNeed)>,
     /// The function parameters of the function that the body calls. Each has
     /// true if the call can run more than once in one run of the body: in a loop
     /// or in a closure inside the body. Each has true too if the call is in the
@@ -2553,7 +2564,7 @@ impl<'p> Lower<'p> {
         // `@ uniq` only if each of its values is, and not `many` if one is.
         self.locals.set_uniq(l, v.uniq);
         let info = &mut self.facts.vars[var.index()];
-        info.uniq = v.uniq && (first || info.uniq);
+        info.uniq = weft_facts::join_uniq(v.uniq, first || info.uniq);
         info.once |= v.uniq;
         if let Some(s) = v.summary {
             if self.closure_not_many(s) {

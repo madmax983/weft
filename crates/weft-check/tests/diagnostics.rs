@@ -388,3 +388,103 @@ fn w0601_at_a_generic_drop_names_a_local_called_temporary() {
         "linear value `temporary` is dropped without being consumed"
     );
 }
+
+#[test]
+fn w0304_is_reported_once_for_each_variable() {
+    // One error at the first use, and a note for the other uses.
+    let src = "fn f() {\n    let x: u64\n    print(x)\n    print(x)\n    print(x)\n}\nfn g() {\n    let y: u64\n    print(y)\n}\n";
+    let d = diags(src, "W0304");
+    assert_eq!(d.len(), 2, "{d:?}");
+    assert_eq!(d[0].message, "`x` is used before it has a value");
+    assert_eq!(
+        notes(&d[0]),
+        [
+            "x : u64",
+            "give it a value on every path before this use",
+            "and 2 more uses, at lines 4, 5"
+        ]
+    );
+    // One use has no note about other uses.
+    assert_eq!(d[1].message, "`y` is used before it has a value");
+    assert_eq!(
+        notes(&d[1]),
+        ["y : u64", "give it a value on every path before this use"]
+    );
+}
+
+#[test]
+fn w0702_tells_a_user_log_from_the_standard_log_that_the_body_performs() {
+    // Neither effect is stated: the messages name the effect that each one is.
+    let src = "effect Log { fn info(m: String) }\nfn both() / net {\n    Log.info(\"user\")\n    log.info(\"std\")\n}\nfn one() / net {\n    Log.info(\"user\")\n}\n";
+    let d = diags(src, "W0702");
+    let texts: Vec<(&str, Vec<&str>)> = d.iter().map(|d| (d.message.as_str(), notes(d))).collect();
+    assert_eq!(
+        texts,
+        [
+            (
+                "`info` performs `main.Log`, which the signature does not allow",
+                vec!["add `Log` to the effects after `/`, or handle it here"]
+            ),
+            (
+                "`info` performs the standard effect `Log`, which the signature does not allow",
+                vec!["add `log` to the effects after `/`, or handle it here"]
+            ),
+            // With one effect, the text needs no identity.
+            (
+                "`info` performs `Log`, which the signature does not allow",
+                vec!["add `Log` to the effects after `/`, or handle it here"]
+            ),
+        ]
+    );
+}
+
+#[test]
+fn w0801_names_the_effect_as_written_and_the_identity_only_when_a_user_effect_shadows_it() {
+    let opts = Options {
+        library: true,
+        ..Options::default()
+    };
+    let src = "effect Log { fn info(m: String) }\nfn both() / Log {\n    handle log { fn info(m) { resume(()) } } in log.info(\"x\")\n    Log.info(\"y\")\n}\nfn plain() {\n    handle log { fn info(m) { resume(()) } } in log.info(\"x\")\n}\n";
+    let d: Vec<Diagnostic> = check_source("t.wf", src, opts)
+        .diags
+        .into_iter()
+        .filter(|d| d.code == "W0801")
+        .collect();
+    let messages: Vec<&str> = d.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(
+        messages,
+        [
+            "a library installs a root handler for the standard effect `Log`; only binaries and tests can",
+            "a library installs a root handler for `Log`; only binaries and tests can"
+        ]
+    );
+}
+
+#[test]
+fn w0304_lists_the_read_in_a_clause_not_the_node_that_runs_it() {
+    // The node `op()` runs the clause. The note names the read in the clause
+    // (line 7), not the line of `op()` (line 9).
+    let src = "effect Op { fn op() }\nfn f(c: bool) / Op {\n    let x: u64\n    if c { x = 1 }\n    let k = || print(x)\n    handle Op { fn op() {\n        print(x)\n        resume(())\n    } } in op()\n}\n";
+    let d = diags(src, "W0304");
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(
+        notes(&d[0]),
+        [
+            "x : u64",
+            "give it a value on every path before this use",
+            "and 1 more use, at line 7"
+        ]
+    );
+}
+
+#[test]
+fn w0301_at_a_perform_shows_the_footprint_of_the_handler() {
+    // A perform is checked as a call with the footprint of the handler.
+    let src = "effect Log { fn log(msg: String) }\nfn held() {\n    let lines = Vec.new()\n    lines.push(\"start\")\n    handle Log { fn log(msg) { lines.push(msg); resume(()) } } in {\n        let first = &lines[0]\n        log(\"x\")\n        print(first)\n    }\n}\n";
+    let d = diags(src, "W0301");
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(
+        notes(&d[0])[1],
+        "log : mut(lines), the footprint of its handler"
+    );
+}

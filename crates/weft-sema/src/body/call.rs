@@ -792,10 +792,12 @@ impl Lower<'_> {
         }
     }
 
-    /// Checks that the arguments point where the parameters say (W0203), and
-    /// that a `@ uniq` parameter gets a unique reference (W0406).
+    /// Gives the facts that the spec checks for the arguments of a call: the
+    /// places of a reference argument and the places that its parameter states
+    /// with `in` (`arg_at`, `param_in`, W0203), and the mode of the argument of
+    /// a `@ uniq` parameter (`uniq_param`, `arg_aliased`, W0406).
     fn check_arg_places(&mut self, call: &ItemCall<'_>, a: &ItemArgs, node: &ItemNode) {
-        let (sig, name, split) = (&call.sig, call.name.as_str(), node.split);
+        let (sig, name, split, n) = (&call.sig, call.name.as_str(), node.split, node.n);
         let (vals, arg_places) = (&a.vals, &a.arg_places);
         // Arguments must point where the parameters say. A by-value argument is
         // the base of the places inside it.
@@ -808,6 +810,8 @@ impl Lower<'_> {
             })
             .collect();
         for (i, p) in sig.params.iter().enumerate() {
+            let index = u32::try_from(i).unwrap_or(u32::MAX);
+            let mut needs = None;
             if let Some(pl) = &p.place {
                 let allowed = self.subst_place(pl, &bases, split);
                 let named: Vec<PlaceId> = arg_places[i]
@@ -815,43 +819,42 @@ impl Lower<'_> {
                     .copied()
                     .filter(|&r| !self.is_dep(r))
                     .collect();
-                for &r in &named {
-                    if allowed.iter().any(|&a| self.sig_allows(a, r)) {
-                        continue;
-                    }
-                    let (rt, at) = (
-                        self.facts.place(r).display.clone(),
-                        self.place_text(&allowed),
-                    );
-                    let below = if allowed.iter().any(|&a| self.below_unstable(a, r)) {
-                        format!(", and `{rt}` is below it through an unstable step")
-                    } else {
-                        String::new()
-                    };
-                    self.err(
-                        "W0203",
-                        format!(
-                            "argument `{}` points into `{rt}`, but `{name}` needs `{at}`{below}",
-                            p.name
-                        ),
-                        vals[i].span,
-                    );
+                if !named.is_empty() {
+                    self.facts
+                        .param_in
+                        .extend(allowed.iter().map(|&d| (n, index, d)));
+                    self.facts
+                        .arg_at
+                        .extend(named.iter().map(|&r| (n, index, r)));
+                    needs = Some(self.place_text(&allowed));
                 }
             }
-            if p.uniq && !vals[i].val.uniq && p.ty.is_ref() {
-                self.err(
-                    "W0406",
-                    format!("`{name}` needs a `@ uniq` reference for `{}`", p.name),
-                    vals[i].span,
-                );
-            } else if let (true, true, Some(l)) = (p.uniq, p.ty.is_ref(), vals[i].val.local) {
-                // A closure around the call that captures the local needs it to
-                // be `@ uniq` where the closure runs.
-                let text = format!(
-                    "`{name}` needs a `@ uniq` reference for `{}`: the closure gives it `{}`, which is not `@ uniq` here",
-                    p.name, self.locals[l].name
-                );
-                self.note_cap_uniq(l, &text);
+            let uniq = p.uniq && p.ty.is_ref();
+            if uniq {
+                self.facts.uniq_param.push((n, index));
+                if !vals[i].val.uniq {
+                    self.facts.arg_aliased.push((n, index));
+                } else if let Some(l) = vals[i].val.local {
+                    // A closure around the call that captures the local needs
+                    // it to be `@ uniq` where the closure runs.
+                    let need = super::UniqNeed {
+                        callee: name.to_string(),
+                        param: p.name.clone(),
+                        local: self.locals[l].name.clone(),
+                    };
+                    self.note_cap_uniq(l, &need);
+                }
+            }
+            if needs.is_some() || uniq {
+                self.facts.arg_sites.push(weft_facts::ArgSite {
+                    node: n,
+                    index,
+                    span: vals[i].span,
+                    callee: name.to_string(),
+                    param: p.name.clone(),
+                    needs: needs.unwrap_or_default(),
+                    via: None,
+                });
             }
         }
     }
@@ -939,7 +942,7 @@ impl Lower<'_> {
             }
             let root = 800 + u32::try_from(i).unwrap_or(0);
             if let Some(s) = info.summary {
-                self.check_fn_arg_effects(&ptys[i], s, av.span);
+                self.check_fn_arg_effects(&ptys[i], s, n, i, av.span);
             }
             // The callee can give the argument to an operation.
             let to: Vec<(Option<CapId>, String)> = sig
@@ -1697,25 +1700,38 @@ impl Lower<'_> {
         self.unify(pt, &v.ty, span);
     }
 
-    /// A closure passed to a parameter with a declared effect row must stay inside it.
-    fn check_fn_arg_effects(&mut self, pt: &Ty, s: usize, span: Span) {
-        if let Ty::Fn(f) = self.inf.shallow(pt) {
-            if let Some(allowed) = &f.effects {
-                let allowed: std::collections::BTreeSet<String> =
-                    effects::close(&allowed.iter().cloned().collect())
-                        .into_iter()
-                        .collect();
-                let extra: Vec<String> = self.closures[s]
-                    .escapes
-                    .iter()
-                    .filter(|e| !allowed.contains(*e))
-                    .map(|e| effects::shown(e).to_string())
-                    .collect();
-                if !extra.is_empty() {
-                    self.err("W0705", format!("this function argument performs `{}`, which its parameter type does not allow", extra.join(", ")), span);
-                }
-            }
+    /// A closure passed to a parameter with a declared effect row must stay
+    /// inside it (W0705). Gives the facts that the spec checks: what the
+    /// closure performs (`fn_arg_effect`) and what the row allows
+    /// (`param_effect`), for argument `i` of the call at node `n`.
+    fn check_fn_arg_effects(&mut self, pt: &Ty, s: usize, n: NodeId, i: usize, span: Span) {
+        let Ty::Fn(f) = self.inf.shallow(pt) else {
+            return;
+        };
+        let Some(allowed) = &f.effects else {
+            return;
+        };
+        let index = u32::try_from(i).unwrap_or(u32::MAX);
+        let allowed = effects::close(&allowed.iter().cloned().collect());
+        let performed: Vec<String> = self.closures[s].escapes.iter().cloned().collect();
+        if performed.is_empty() {
+            return;
         }
+        self.facts
+            .param_effect
+            .extend(allowed.into_iter().map(|e| (n, index, e)));
+        self.facts
+            .fn_arg_effect
+            .extend(performed.into_iter().map(|e| (n, index, e)));
+        self.facts.arg_sites.push(weft_facts::ArgSite {
+            node: n,
+            index,
+            span,
+            callee: String::new(),
+            param: String::new(),
+            needs: String::new(),
+            via: None,
+        });
     }
 
     /// Calls a function value in a local: a closure, a function item, a function
@@ -3124,15 +3140,17 @@ impl Lower<'_> {
         }
     }
 
+    /// Records that the body can run `sim.run` at `span` (`sim_run_at`). The node
+    /// of the fact has no edges: only W0802 reads it, and it needs no path.
+    pub(super) fn note_sim_run(&mut self, span: Span) {
+        let n = self.facts.add_node(span, "sim.run", String::new());
+        self.facts.sim_run_at.push(n);
+    }
+
     /// `sim.run(seed: N) { body }`: the simulation handles every standard effect.
     fn sim_run(&mut self, _f: FnId, args: &[Arg], trailing: Option<&Expr>, span: Span) -> Val {
-        if self.library && !self.in_test {
-            self.err(
-                "W0802",
-                "only binaries and tests can install root handlers (`sim.run`)",
-                span,
-            );
-        }
+        // A library cannot install the root handlers (W0802, `sim_in_lib`).
+        self.note_sim_run(span);
         // `seed` and `workers`, by name or in this order. The number of
         // simulated workers has a default (ADR 0010).
         let names = ["seed", "workers"];
@@ -3187,7 +3205,6 @@ impl Lower<'_> {
             self.cap_effects.insert(cap, e.clone());
             self.facts.handlers.push(weft_facts::HandlerInfo {
                 effect: e.clone(),
-                is_std: true,
                 sim_root: true,
                 span,
             });

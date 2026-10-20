@@ -106,7 +106,7 @@ Status: accepted. Date: 2026-10-18.
   ```
 
   The caller then passes `attack(world, x, y)`, and the check accepts it.
-  `tests/programs/34_alias_in_one_task.wf` has both forms.
+  `tests/programs/55_alias_in_one_task.wf` has both forms.
 - Effect inference iterates over the call graph to a fixpoint (`weft_sema::infer`).
   A worklist lowers callees before callers. When the signature of a function changes,
   only the functions whose bodies name it are lowered again. A last lowering of every
@@ -414,9 +414,12 @@ Status: accepted. Date: 2026-10-18.
   clause effects), and `effects::by_identity` is a map lookup after item collection,
   so the cost does not grow with the square of the number of effects. Some messages
   show the identity when the written name can also name another
-  effect. W0702 does this when another stated effect of the function shows the same
-  text. W0803 and W0805 do this when the name is the name of a standard effect, or the
-  text of another effect that leaves the same body.
+  effect. W0702 does this when another effect that the function states or performs
+  shows the same text: a body that performs a user `main.Log` and the standard `Log`,
+  with neither one stated, gets `main.Log` and "the standard effect `Log`" (review
+  S5b). W0801 does this when another effect that the body states, performs or
+  handles shows the same text. W0803 and W0805 do this when the name is the name of a
+  standard effect, or the text of another effect that leaves the same body.
 
 ## Consequences
 

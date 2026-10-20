@@ -132,7 +132,10 @@ impl Lower<'_> {
         self.check_stored_behind();
         let eff = self.summary_to_sig(&bases);
         let fdef = &self.prog.fns[id];
-        if fdef.is_pub && !sig.declared && !eff.is_empty() && !fdef.decl.is_extern {
+        // The effects of a function parameter pass through with no syntax. So a
+        // row with only pass-through parameters has nothing to state.
+        let to_state = !eff.muts.is_empty() || !eff.named.is_empty();
+        if fdef.is_pub && !sig.declared && to_state && !fdef.decl.is_extern {
             let text = self.effect_text(&eff);
             let mut d = Diagnostic::error(
                 "W0701",
@@ -322,18 +325,32 @@ impl Lower<'_> {
 
     /// Gives the facts the name that this body can write for each user effect
     /// that its diagnostics can name (`FnFacts::effect_names`): the effects that
-    /// escape, the stated effects, the effects that a clause performs and the
-    /// handled effects. Only these, so the cost does not grow with all the
-    /// effects of the program for each body.
+    /// escape, the stated effects, the effects that a clause performs, the
+    /// handled effects and the effects of function arguments. Only these, so
+    /// the cost does not grow with all the effects of the program for each
+    /// body. It also lists the standard effects among them
+    /// (`FnFacts::std_effects`, the relation `std_effect(E)`).
     fn name_effects(&mut self) {
         let f = &self.facts;
-        let ids: BTreeSet<&str> = f
+        let named: BTreeSet<&str> = f
             .escapes_at
             .iter()
             .map(|(_, e)| e.as_str())
             .chain(f.declared_effect.iter().map(String::as_str))
             .chain(f.clause_performs.iter().map(|(_, e)| e.as_str()))
             .chain(f.handlers.iter().map(|h| h.effect.as_str()))
+            .chain(f.fn_arg_effect.iter().map(|(_, _, e)| e.as_str()))
+            .chain(f.param_effect.iter().map(|(_, _, e)| e.as_str()))
+            .collect();
+        // `std_effect(E)` for each standard effect that the facts name.
+        let std: Vec<String> = named
+            .iter()
+            .filter(|e| effects::is_std(e))
+            .map(|e| (*e).to_string())
+            .collect();
+        let ids: BTreeSet<&str> = named
+            .iter()
+            .copied()
             .filter(|e| !effects::is_std(e))
             .collect();
         let mut names = Vec::new();
@@ -347,6 +364,7 @@ impl Lower<'_> {
         }
         self.facts.effect_names = names;
         self.facts.hidden_effects = hidden;
+        self.facts.std_effects = std;
     }
 
     /// Converts the body summary into a signature row in terms of parameters.

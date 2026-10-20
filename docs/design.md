@@ -105,7 +105,7 @@ Weft enforces shared-XOR-mutable only where threads or tasks meet, using OxCaml-
 > `world.entities[]` gets W0312 when `attack` mutates them. To allow the aliasing, the
 > callee states the shared place with `in`:
 > `fn attack(w: &World, a: &Entity in w.entities[], b: &Entity in w.entities[]) / mut(a, b)`.
-> See ADR 0005 and `tests/programs/34_alias_in_one_task.wf`.
+> See ADR 0005 and `tests/programs/55_alias_in_one_task.wf`.
 
 | Mode axis | Values | Meaning |
 | --- | --- | --- |

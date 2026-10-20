@@ -142,14 +142,23 @@ handler (`Held::Cap`) or a mark, such as `Held::Nonportable`, `Held::NotMany` or
 
 | Command | Stages |
 | --- | --- |
-| `weft check` | load (file or package) → sema → checker and, for a package, dependency authority (W0901, W0902) → diagnostics; `--explain` adds the spec derivations |
+| `weft check` | load (file or package) → sema → checker and, for a package, dependency authority (W0901, W0902) → diagnostics; `--explain` adds the spec derivations, each with the diagnostic that reports its fact |
 | `weft agree` | load → sema → checker and spec → compare the violation sets |
 | `weft run`, `weft test` | load → sema → checker → refuse on errors (unless `--unchecked`) → interpreter |
 | `weft deps` | load → sema → dependency authority (W0901, W0902) |
 
-`weft run` and `weft test` use the same checks as `weft check`, so an authority error of
-a package also stops them. `weft deps` shows only the authority errors and the authority
+Authority names only the standard effects: a user effect of a dependency needs a
+handler of the caller, not authority (ADR 0005). `weft run` and `weft test` use the same
+checks as `weft check`, so an authority error of a package also stops them. `weft deps` shows only the authority errors and the authority
 of each dependency.
+
+`weft check --json` writes one JSON object for each diagnostic: the code, the
+severity, the message, the location and the notes. A note with a location has its
+line (`{"text": ..., "line": N}`). With `--explain`, each derivation is one more object
+with the fact, its tree, the function and the code and location of its diagnostic
+(`"diagnostic"`). A diagnostic holds the keys of the spec facts that it reports
+(`Diagnostic::facts`, for example `bad: error(v1, n6)`), and the corpus test
+`each_violation_has_one_diagnostic` checks that each violation has one diagnostic.
 
 A single file takes its options from marker lines: `// weft: library` and
 `// weft: no-runtime`. A package takes them from `weft.toml`. The flags `--lib` and
@@ -183,11 +192,11 @@ values, so it cannot come back from another thread.
 | Piece | Verified property | Used by |
 | --- | --- | --- |
 | `places::invalidates` | equals rule 3 (strict prefix, unstable step after it) | checker W0301 |
-| `places::within` | inclusion; a cover invalidates at least as much | checker W0703, W0402; sema W0203, W0204 |
+| `places::within` | inclusion; a cover invalidates at least as much | checker W0703, W0402, W0203; sema W0204 |
 | `places::overlaps` | symmetric may-alias; split sides are disjoint | checker W0312, W0405 |
 | `places::{step_alias, step_within, step_class}` | equal their spec functions; steps of different classes are not related | bridge (pairwise step facts) |
 | `places::concat` | concatenation of paths | not yet used (sema substitutes places with its own code) |
 | `dataflow::propagate` | result is exactly the least fixpoint of the gen/kill rules | every dataflow rule |
-| `modes::{submode, join}` | partial order and least upper bound | not yet used (mode rules use flags in the facts) |
+| `modes::{submode, join}` | partial order and least upper bound | checker W0406, W0403, W0401, `pinned`; sema the uniqueness of a join and the pins of tasks |
 | `lifecycle::Continuation` | a `once` continuation resumes at most once | interpreter |
 | `lifecycle::Linear` | a linear value is consumed or aborted at most once; a live value with no `on abort` does not unwind | interpreter |

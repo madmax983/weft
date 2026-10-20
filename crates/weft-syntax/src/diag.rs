@@ -46,6 +46,11 @@ pub struct Diagnostic {
     pub notes: Vec<Note>,
     /// The source unit: [`PRELUDE_UNIT`], [`ROOT_UNIT`], or a dependency.
     pub unit: usize,
+    /// The facts of the specification that the diagnostic reports, each with
+    /// the name of its body, for example `bad: error(v1, n6)`. `weft check
+    /// --explain` links each derivation to its diagnostic with them. A
+    /// diagnostic that no rule of the specification derives has none.
+    pub facts: Vec<String>,
 }
 
 impl Diagnostic {
@@ -58,6 +63,7 @@ impl Diagnostic {
             span,
             notes: Vec::new(),
             unit: ROOT_UNIT,
+            facts: Vec::new(),
         }
     }
 
@@ -86,6 +92,14 @@ impl Diagnostic {
             text: text.into(),
             span: None,
         });
+        self
+    }
+
+    /// Adds the facts of the specification that the diagnostic reports (see
+    /// [`Diagnostic::facts`]).
+    #[must_use]
+    pub fn with_facts(mut self, facts: impl IntoIterator<Item = String>) -> Self {
+        self.facts.extend(facts);
         self
     }
 

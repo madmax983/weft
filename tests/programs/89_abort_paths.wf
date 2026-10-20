@@ -176,13 +176,14 @@ fn clause_reads_unset() / Op {
     } } in op()
 }
 
-// The read in the clause, not the read in another closure.
+// The read in the clause, not the read in another closure. One W0304 for `x`:
+// its note names the read in the clause.
 fn clause_reads_after_closure(c: bool) / Op {
     let x: u64
     if c { x = 1 }
     let k = || print(x)   //~ W0304
     handle Op { fn op() {
-        print(x)   //~ W0304
+        print(x)
         resume(())
     } } in op()
 }

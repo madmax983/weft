@@ -391,12 +391,8 @@ impl Lower<'_> {
     /// A function item used as a value.
     fn item_value(&mut self, f: FnId, span: Span) -> Val {
         // A call through the value can install the root handlers of `sim.run`.
-        if self.is_sim_run(f) && self.library && !self.in_test {
-            self.err(
-                "W0802",
-                "only binaries and tests can install root handlers (`sim.run`)",
-                span,
-            );
+        if self.is_sim_run(f) {
+            self.note_sim_run(span);
         }
         let sig = &self.sigs[f];
         let targs: Vec<Ty> = sig.generics.iter().map(|_| self.inf.fresh()).collect();
@@ -983,7 +979,7 @@ impl Lower<'_> {
         self.cur = if any { Some(join) } else { None };
         let mut refs = a.refs.clone();
         refs.extend(b.refs.iter().copied());
-        let uniq = a.uniq && b.uniq;
+        let uniq = weft_facts::join_uniq(a.uniq, b.uniq);
         // A new task handle, for example of a scope with a spawn at its end.
         let tasks: BTreeSet<TaskId> = [&a, &b]
             .iter()
@@ -1777,7 +1773,6 @@ impl Lower<'_> {
         let hid = weft_facts::HandlerId(u32::try_from(self.facts.handlers.len()).unwrap_or(0));
         self.facts.handlers.push(HandlerInfo {
             effect: ident.clone(),
-            is_std: def.is_std,
             sim_root: false,
             span,
         });

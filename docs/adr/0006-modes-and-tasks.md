@@ -57,8 +57,11 @@ Status: accepted. Date: 2026-10-18.
   to a value that can mutate them (`lends_mut`). A reference that the parent makes
   while the task runs is then invalid after the end, if the task can break it (W0301).
 - A spawned task that captures a nonportable value or a shared-mutable reference is
-  pinned. The relation `stealable(T)` tells the scheduler which tasks can move.
-  `tests/programs/33_stealable.wf` marks each task closure `//~ stealable` or
+  pinned: the join of the modes of its captures is not a submode of the mode that
+  crosses threads (`portable`). The checker and sema compute this with the verified
+  lattice (`VarInfo::capture_mode`, `CROSSES_THREADS`, `modes::{join, submode}`).
+  The relation `stealable(T)` tells the scheduler which tasks can move.
+  `tests/programs/54_stealable.wf` marks each task closure `//~ stealable` or
   `//~ pinned`, and the corpus test checks the marks.
 - A task that runs a function value that the body does not follow (a function
   parameter, a value from a field, a value that the body does not know) is pinned:
@@ -210,7 +213,10 @@ Status: accepted. Date: 2026-10-18.
   captured variable that holds a reference is.
 - A local is `@ uniq` while it holds a `@ uniq` value: a new aliased value ends it
   (W0406). After an `if`, a `match` or a loop, it is `@ uniq` only if it is at the
-  end of each branch. Its variable is `@ uniq` only if each of its values is, and not
+  end of each branch: the value has the join of the modes of the branches
+  (`weft_facts::join_uniq`, with the verified `modes::join`). W0406 is the rule
+  `not_uniq` of the spec: the mode of an argument must be a submode of the mode of
+  its parameter (review S5b). Its variable is `@ uniq` only if each of its values is, and not
   `many` if one is. The hidden iterator of a `for` loop is `@ uniq` if its source is,
   so it is not `many` either.
 - A reference to a nonportable value is nonportable. A closure keeps its modes in a

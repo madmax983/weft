@@ -2,12 +2,15 @@
 //!
 //! [`check`] runs the specialized rules on the facts of one function.
 //! [`bridge::check_spec`] runs `spec/weft.dl` on the same facts with the Datalog
-//! engine. The two results must be equal: [`driver::agreement`] compares them.
+//! engine. The two results must be equal: [`driver::agreement`] compares them,
+//! and it compares the evidence of the checker with the spec too
+//! ([`evidence`]).
 
 pub mod bridge;
 pub mod codes;
 pub mod diagnose;
 pub mod driver;
+pub mod evidence;
 pub mod rules;
 
 pub use driver::{agreement, check_analysis, check_source, Checked};
