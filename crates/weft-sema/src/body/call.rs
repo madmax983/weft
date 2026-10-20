@@ -2,6 +2,8 @@
 
 use std::collections::BTreeSet;
 
+use weft_syntax::diag::Diagnostic;
+
 use super::fnval::{Callee, Given};
 use super::{
     ast, effects, AdtKind, Arg, CapId, ContInfo, Expr, ExprKind, FnId, FnSig, FnTy, ItemRef, Lower,
@@ -131,7 +133,11 @@ impl Lower<'_> {
             if let Some(&(adt, vi)) = self.prog.variants.get(&id.name).and_then(|v| v.first()) {
                 return self.variant_ctor(adt, vi, args, trailing, span);
             }
-            if let Some((e, op)) = self.prog.find_op(self.module, &id.name) {
+            let ops = self.prog.ops_named(self.module, &id.name);
+            if let Some(&(e, op)) = ops.first() {
+                if ops.len() > 1 {
+                    self.ambiguous_op(&id.name, &ops, id.span);
+                }
                 return self.perform_op(e, op, args, trailing, span);
             }
             self.err("W0101", format!("unknown function `{}`", id.name), id.span);
@@ -150,6 +156,26 @@ impl Lower<'_> {
             ty: Ty::Error,
             ..Val::default()
         }
+    }
+
+    /// W0107: a bare call `name(...)` at `span` finds operations `ops` of more
+    /// than one effect of one module. The effect path tells which one it is.
+    fn ambiguous_op(&mut self, name: &str, ops: &[(crate::program::EffectId, usize)], span: Span) {
+        let paths: Vec<String> = ops
+            .iter()
+            .map(|&(e, _)| {
+                let id = effects::identity(self.prog, e);
+                let w = effects::written(self.prog, self.module, &id)
+                    .unwrap_or_else(|| self.prog.effects[e].name.clone());
+                format!("`{w}.{name}(...)`")
+            })
+            .collect();
+        let msg = format!(
+            "the call `{name}(...)` can perform the operation `{name}` of more than one effect"
+        );
+        let d = Diagnostic::error("W0107", msg, span)
+            .note(format!("write the effect name: {}", paths.join(" or ")));
+        self.diags.push(d);
     }
 
     pub(super) fn method_call(
@@ -197,6 +223,7 @@ impl Lower<'_> {
         match (&rty, method.name.as_str()) {
             (Ty::Scope, "spawn") => return self.spawn(&rv, args, trailing, span),
             (Ty::Adt(a, _), "join" | "detach") if Some(*a) == self.b.task => {
+                self.no_task_args(&method.name, args, trailing, span);
                 return self.join(&rv, method.name == "join", span);
             }
             _ => {}
@@ -2941,6 +2968,21 @@ impl Lower<'_> {
             ty,
             tasks: BTreeSet::from([t]),
             ..Val::default()
+        }
+    }
+
+    /// Reports W0103 for an argument of `t.join` or `t.detach` (`name`): they take
+    /// none. A named argument is also W0104 (ADR 0009). The arguments are still
+    /// lowered, so their moves and their effects are in the facts.
+    fn no_task_args(&mut self, name: &str, args: &[Arg], trailing: Option<&Expr>, span: Span) {
+        if args.is_empty() && trailing.is_none() {
+            return;
+        }
+        let what = format!("`{name}`");
+        self.err("W0103", format!("{what} takes no arguments"), span);
+        self.no_names(&what, args);
+        for e in args.iter().map(|a| &a.value).chain(trailing) {
+            let _ = self.expr(e);
         }
     }
 

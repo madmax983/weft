@@ -335,3 +335,59 @@ fn run_tests_with(rt: &Runtime<'_>, opts: &RunOptions) -> Vec<TestOutcome> {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+
+    /// Runs `main` of `src` with each task stealable, as if the checker had
+    /// marked them so (the checker pins a task that reaches an `Rc`).
+    fn run_stealable(src: &str, oracle: bool) -> Result<RunOutcome, RuntimeError> {
+        let a = weft_sema::analyze_source(src, weft_sema::Options::default()).unwrap();
+        let mut all = BTreeSet::new();
+        for b in &a.bodies {
+            for t in &b.facts.tasks {
+                all.insert((b.unit, t.span.lo, t.span.hi));
+            }
+        }
+        assert!(!all.is_empty(), "the program has no task");
+        let rt = Runtime::new(&a.program, &a.sigs, all, &exports(&a));
+        let opts = RunOptions {
+            max_steps: Some(100_000),
+            workers: 4,
+            oracle,
+            ..RunOptions::default()
+        };
+        run_main_with(&rt, &opts)
+    }
+
+    #[test]
+    fn a_stealable_task_that_reaches_an_rc_faults() {
+        let src = "struct W { score: u64, rc: Rc<u64> }\n\
+            fn main() / par, async {\n let w = W { score: 7, rc: Rc.new(1) }\n\
+            scope { s => s.spawn(|| print(w.rc)) }\n}";
+        assert!(run_stealable(src, false).is_ok());
+        let e = run_stealable(src, true).expect_err("the oracle stops the run");
+        assert!(
+            e.message
+                .contains("a stealable task reaches a nonportable value (`Rc`)"),
+            "{}",
+            e.message
+        );
+    }
+
+    #[test]
+    fn a_reference_reaches_only_its_place() {
+        // `&w.score` is portable. The `Rc` in the other field of `w`, and the
+        // other elements of a slice, are not reached.
+        let src = "struct W { score: u64, rc: Rc<u64> }\n\
+            fn show(r: &u64) / par, async { scope { s => s.spawn(|| print(r)) } }\n\
+            fn main() / par, async {\n let w = W { score: 7, rc: Rc.new(1) }\n\
+            let r = &w.score\n scope { s => s.spawn(|| print(r)) }\n show(&w.score)\n\
+            let t = (5, Rc.new(1))\n let q = &t.0\n scope { s => s.spawn(|| print(q)) }\n}";
+        let out = run_stealable(src, true).expect("the oracle accepts the program");
+        assert_eq!(out.stdout, "7\n7\n5\n");
+    }
+}

@@ -1,4 +1,5 @@
 # DESC: drop the suspension rule at `Resume`.
+# EXPECT: 121 verified, 1 error
 import sys; sys.path.insert(0, sys.argv[0].rsplit("/", 1)[0]); from _lib import sub
 d = sys.argv[1]
 f = "src/checker.rs"

@@ -386,11 +386,19 @@ pub struct FnFacts {
     /// not know these callees when it compiles the call, so it uses this order.
     /// This is not a relation of the spec.
     pub arg_order: Vec<(Span, Vec<Option<u32>>)>,
-    /// The name that the body can write for each user effect: the identity
-    /// (`main.a.Note`) and the written name (`a.Note`, or `util.Note` for a
-    /// dependency `util`). A private effect of another unit has no written
-    /// name. Diagnostics show these names. This is not a relation of the spec.
+    /// The name that the body can write for each user effect that its
+    /// diagnostics can name (the effects of `escapes_at`, `declared_effect`,
+    /// `clause_performs` and `handlers`): the identity (`main.a.Note`) and the
+    /// written name (`a.Note`, or `util.Note` for a dependency `util`). An
+    /// effect that the body cannot name has no written name. Diagnostics show
+    /// these names. This is not a relation of the spec.
     pub effect_names: Vec<(String, String)>,
+    /// The user effects of `effect_names` that the body can see but cannot
+    /// write: a nearer name hides the first name of each path to them (a
+    /// module `a` inside the module of the body hides the module `a` of the
+    /// root). Diagnostics tell why they show the identity. This is not a
+    /// relation of the spec.
+    pub hidden_effects: Vec<String>,
     /// The integer type of each arithmetic result: the span of the expression
     /// (the value of a compound assignment) and the name of the type (`u8`).
     /// The interpreter checks that the result fits in the type. This is not a
@@ -523,6 +531,7 @@ impl FnFacts {
             vars: _,
             place_index: _,
             effect_names: _,
+            hidden_effects: _,
             int_ops: _,
             caps,
             has_signature,
@@ -637,6 +646,7 @@ impl FnFacts {
             vars: _,
             place_index: _,
             effect_names: _,
+            hidden_effects: _,
             int_ops: _,
             caps,
             has_signature,
@@ -751,6 +761,12 @@ impl FnFacts {
             .iter()
             .find(|(e, _)| e == id)
             .map(|(_, w)| w.as_str())
+    }
+
+    /// Returns true if the body can see user effect `id` but cannot write a
+    /// name for it (see [`FnFacts::hidden_effects`]).
+    pub fn effect_hidden(&self, id: &str) -> bool {
+        self.hidden_effects.iter().any(|e| e == id)
     }
 
     /// Returns the variable record.

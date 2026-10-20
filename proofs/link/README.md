@@ -156,8 +156,9 @@ rejects more. The link does not prove this step.
 ### Hypotheses
 
 The link does not prove these hypotheses. Agreement with the spec does not test
-them: the checker and the spec run on the same facts. Only the sema unit tests and
-the corpus diagnostics test the facts.
+them: the checker and the spec run on the same facts. Only tests check the facts:
+the sema unit tests, the corpus diagnostics and the B6 lints that
+`crates/weft-check/tests/hypotheses.rs` runs (see `bound_before_use` below).
 
 * `facts_ok`. Sema must give these facts: the CFG is well formed for
   `propagate`, each binding gives the static group that the model gives,

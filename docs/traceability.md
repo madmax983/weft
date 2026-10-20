@@ -74,7 +74,7 @@ The last section lists the round 2 changes.
 | Rows after `/`, inferred in bodies, stated in public signatures | `unauthorized_effect` (W0702) | W0701, `infer.rs`, W0706 | none | 05, 09, 13, 18 | none | yes |
 | An effect of another module has a path (`handle a.Note`, `/ util.Note`) | none | `effects::resolve`, W0101 for an unknown or a private effect | `compile.rs` `effect_of` | 141; `effect_paths`; `crates/weft-cli/tests/units.rs` | none | yes (round 2, RR11) |
 | Each effect has one identity | the identities in the facts | `effects::identity`; W0107 for a dependency `main` | the same identities | 64, 141; `shadow_log`; `units.rs` | none | yes (round 2, QA5) |
-| A bare call reaches its operation | none | `Program::find_op`; W0107 for an operation that a bare call cannot reach | the same `find_op` | 142 | none | yes (round 2, RR15) |
+| A bare call reaches its operation | none | `Program::find_op`; W0107 for an operation that a prelude or built-in name hides, and for an ambiguous bare call | the same `find_op` | 142 | none | yes (round 2, RR15) |
 | Handlers are lexical | none | the handler stack of the lowering | `find_handler` (the topmost frame) | 05, 64; `effects_log`, `shadow_log` | effects E4 | yes |
 | A perform is a call with the footprint of the handler | `mutates_at` from `performs_at` and `footprint`; `call_arg` (W0312) | `body/call.rs` `perform_op` | none | 05, 41, 85, 86 | borrowing B2 (`resume` and `perform` as calls) | yes |
 | Effect polymorphism is silent | none | `infer.rs` | none | 18 | none | yes |
@@ -109,7 +109,7 @@ The last section lists the round 2 changes.
 | Rule | Spec | Sema | Interp | Tests | Proof | Status |
 | --- | --- | --- | --- | --- | --- | --- |
 | A named argument binds by name where the callee has names | none | `body/args.rs` `order_args`; W0104, W0103 | `call_fn`, `positional_struct`, the order of `FnFacts::arg_order` | 65, 77, 135, 140; `named_args`, `op_named_args` | none | yes (round 2, RR10, RR13) |
-| A callee with no names takes no named argument | none | `no_names` (W0104) | none | 140 | none | yes (round 2, RR13) |
+| A callee with no names takes no named argument | none | `no_names` (W0104); `t.join` and `t.detach` take no argument (W0103) | none | 140 | none | yes (round 2, RR13) |
 | Jumps do not leave a handled body, a clause or a scope | none | W0315, W0111 | none | 60, 80 | none | yes |
 | Raw pointers only in foreign signatures, locals and closure parameters | none | W0116 | none | 31 | none | yes |
 | Nesting and chain limits; the tools run on a 2 MiB stack | none | none | none | `crates/weft-cli/tests/limits.rs` | none | yes |
@@ -140,7 +140,7 @@ recorded.
 | OR5, OR7, OR8, RR4, IP2, IP3, IP5, IP6, IP7, IP9, IP10, IP11, OR10, FD11 (R2d) | whole-local accesses for W0405, task runs of function parameters, the scope capability, pinned tasks, lexical child failures, lexical simulation | ADRs 0003, 0006, 0010 |
 | RR10, RR13 (R2e) | named arguments bind by name in sema and in the interpreter; W0104 for an unknown name and for a callee with no names | ADR 0009 |
 | RR11 (R2e) | effect paths in `handle` and in rows, `pub` effects, hints with a name that the user can write | ADR 0005, `docs/grammar.md` |
-| QA5, RR15 (R2e) | W0107 for a dependency `main` and for an operation that a bare call cannot reach; `find_op` searches modules outward | ADR 0005 |
+| QA5, RR15 (R2e) | W0107 for a dependency `main`, for an operation that a prelude or built-in name hides and for an ambiguous bare call; `find_op` searches modules outward | ADR 0005 |
 | RR14 (R2e) | the interpreter checks the integer type of each arithmetic result | ADR 0010 |
 | OR11 (R2e) | the oracle checks in `weft-interp`, behind `RunOptions::oracle` and `--oracle`, on in the interpreter tests and the corpus runs | ADR 0010 |
 | FD5, IP8 (R2e) | the proof READMEs say what tests the facts; `hypotheses.rs` runs the B6 lints on the corpus | `proofs/README.md`, `proofs/link/README.md` |
@@ -148,3 +148,4 @@ recorded.
 | FD15 (R2e) | mutation scripts for `proofs/borrowing` and `proofs/effects` | ADR 0008 |
 | FD12 (R2e) | this file | plan item W10 |
 | QA9 (R2e) | `call_fn_as` and `diagnose` split into parts; a type of its own for the mode marks of a capability set | `docs/architecture.md` |
+| Review of R2e | W0103 and W0104 for an argument of `t.join` and `t.detach`, which sema lowers; the portability oracle follows the place of a reference; W0107 only for an operation that a prelude or built-in name hides, and at an ambiguous bare call; a note for an effect that a nearer item hides; written effect names only for the effects of a body, and a map for `by_identity`; the mutation scripts need a Verus error count | ADRs 0005, 0008, 0009, 0010 |

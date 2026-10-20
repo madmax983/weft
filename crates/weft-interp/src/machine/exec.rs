@@ -1121,51 +1121,47 @@ impl super::Machine<'_, '_> {
 
     /// With the oracle checks on, notes a violation if task value `f`, which
     /// the checker marks stealable, reaches an `Rc`, a `Weak` or a `Scope`.
-    /// Those stay on one thread.
+    /// Those stay on one thread. A reference reaches only the value at its
+    /// place, not the other fields of its cell: `&w.score` is portable even if
+    /// `w.rc` is an `Rc`. A slice reaches only its elements.
     fn oracle_portable(&self, f: &Value) {
         let Some(o) = self.heap.oracle() else {
             return;
         };
         let mut work: Vec<Value> = vec![f.clone()];
-        let mut seen = std::collections::BTreeSet::new();
+        let mut seen: std::collections::BTreeSet<Place> = std::collections::BTreeSet::new();
         let found = loop {
             let Some(v) = work.pop() else {
                 break None;
             };
-            let cell = match v {
+            let places: Vec<Place> = match v {
                 Value::Rc(_) => break Some("Rc"),
                 Value::Weak(_) => break Some("Weak"),
                 Value::Scope(_) => break Some("Scope"),
-                Value::Closure(c) => {
-                    for &cell in &c.cells {
-                        if seen.insert(cell) {
-                            if let Ok(s) = self.heap.slot(cell) {
-                                work.push(s.val.clone());
-                            }
-                        }
-                    }
-                    None
+                Value::Closure(c) => c.cells.iter().map(|&cell| Place::root(cell)).collect(),
+                Value::Ref(p) | Value::Loc(p, _) => vec![p],
+                Value::Vec(c) | Value::Boxed(c) => vec![Place::root(c)],
+                Value::Slice { buf, lo, hi } => {
+                    (lo..hi).map(|i| Place::root(buf).child(i)).collect()
                 }
-                Value::Ref(p) | Value::Loc(p, _) => Some(p.cell),
-                Value::Vec(c) | Value::Boxed(c) | Value::Slice { buf: c, .. } => Some(c),
                 Value::Tuple(vs) | Value::List(vs) => {
                     work.extend(vs);
-                    None
+                    Vec::new()
                 }
                 Value::Struct(o) => {
                     work.extend(o.fields);
-                    None
+                    Vec::new()
                 }
                 Value::Enum(e) => {
                     work.extend(e.fields);
-                    None
+                    Vec::new()
                 }
-                _ => None,
+                _ => Vec::new(),
             };
-            if let Some(c) = cell {
-                if seen.insert(c) {
-                    if let Ok(s) = self.heap.slot(c) {
-                        work.push(s.val.clone());
+            for p in places {
+                if let Some(v) = self.value_at(&p) {
+                    if seen.insert(p) {
+                        work.push(v.clone());
                     }
                 }
             }
@@ -1175,6 +1171,21 @@ impl super::Machine<'_, '_> {
                 "oracle: a stealable task reaches a nonportable value (`{what}`)"
             ));
         }
+    }
+
+    /// Returns the value at place `p`, or `None` if it does not exist. This is
+    /// not an access of the program: the oracle does not log it.
+    fn value_at(&self, p: &Place) -> Option<&Value> {
+        let mut v = &self.heap.slot(p.cell).ok()?.val;
+        for &i in &p.path {
+            v = match v {
+                Value::Tuple(vs) | Value::List(vs) => vs.get(i as usize),
+                Value::Struct(o) => o.fields.get(i as usize),
+                Value::Enum(e) => e.fields.get(i as usize),
+                _ => None,
+            }?;
+        }
+        Some(v)
     }
 
     /// Makes the first frame of a task for a closure or a function item.

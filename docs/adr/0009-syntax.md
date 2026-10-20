@@ -29,9 +29,14 @@ Status: accepted. Date: 2026-10-18.
   local, and a struct constructor (`Range(hi: 10, lo: 2)` gives the field `hi`). An
   unknown name is W0104. A callee with no names takes no named argument (W0104): a
   closure, a function parameter, a join of function values, a variant, `resume`,
-  `print`, `fork` and `s.spawn`. The interpreter does not know the callee of a method
-  of a value or of an item in a local when it compiles the call, so sema gives it the
-  order of the arguments (`FnFacts::arg_order`).
+  `print`, `fork`, `s.spawn`, `t.join` and `t.detach`. `t.join` and `t.detach` take no
+  arguments (W0103); sema still lowers a wrong argument, so its moves and effects are
+  in the facts. The interpreter does not know the callee of a method of a value or of
+  an item in a local when it compiles the call, so sema gives it the order of the
+  arguments (`FnFacts::arg_order`). A local has one type for its whole scope, so a
+  local that gets a second function item (`let g = diff`, then `g = rdiff`) holds a
+  join of the two, and a call of it takes no named argument (W0104). This is sound but
+  not precise: write the arguments by position, or bind a new local with `let`.
 - `*T` is a raw pointer for foreign functions. A written `*T` is valid only in an
   `extern fn` signature, in a local and in a closure parameter (W0116). The check looks
   only at written types. A type argument can still hold a raw pointer (`Option<*Stmt>`,

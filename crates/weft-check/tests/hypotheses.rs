@@ -4,7 +4,9 @@
 //! hypothesis, and `thm_dataflow_exact` takes `no_gen_kill`. No proof shows
 //! that sema gives them. This test runs the lint rules of
 //! `proofs/link/lints/` on each function of the corpus with no expected error.
-//! A lint there is a function that the theorems do not cover.
+//! A lint there is a function that the theorems do not cover. The test also
+//! shows that the lints can fire: on a function with an expected error, and on
+//! a synthetic fact set.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -12,7 +14,8 @@ use std::fs;
 use std::path::Path;
 
 use weft_check::{bridge, check_source};
-use weft_datalog::{evaluate, parse_program_named, EvalOptions};
+use weft_datalog::{evaluate, parse_program_named, Database, EvalOptions, Program};
+use weft_facts::FnFacts;
 use weft_sema::{Analysis, BodyFacts, Options, ROOT_UNIT};
 use weft_syntax::SourceFile;
 
@@ -40,15 +43,38 @@ fn body_lines(a: &Analysis, b: &BodyFacts, file: &SourceFile) -> Option<(usize, 
     Some((file.line(lo), file.line_col(hi.hi).0))
 }
 
-#[test]
-fn the_corpus_functions_meet_the_hypotheses_of_the_link() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+/// Returns the spec with the lint rules of `proofs/link/lints/`.
+fn spec_and_lints(root: &Path) -> Program {
     let mut program = bridge::spec().clone();
     for name in ["unbound_use.dl", "gen_kill.dl"] {
         let path = root.join("proofs/link/lints").join(name);
         let src = fs::read_to_string(&path).expect("the lint file is readable");
         program.extend(parse_program_named(name, &src).expect("the lint file parses"));
     }
+    program
+}
+
+/// Returns each lint of `program` on facts `f`: the name of the lint and its node.
+fn lints(program: &Program, f: &FnFacts) -> Vec<String> {
+    let out = evaluate(
+        program,
+        bridge::database(f),
+        EvalOptions { provenance: false },
+    )
+    .expect("the spec and the lints run");
+    out.tuples("lint")
+        .iter()
+        .map(|t| {
+            let shown: Vec<String> = t.iter().map(|v| out.display_value(*v)).collect();
+            shown.join(" at ")
+        })
+        .collect()
+}
+
+#[test]
+fn the_corpus_functions_meet_the_hypotheses_of_the_link() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let program = spec_and_lints(&root);
     let mut paths: Vec<_> = fs::read_dir(root.join("tests/programs"))
         .expect("tests/programs exists")
         .filter_map(Result::ok)
@@ -56,7 +82,7 @@ fn the_corpus_functions_meet_the_hypotheses_of_the_link() {
         .filter(|p| p.extension().is_some_and(|x| x == "wf"))
         .collect();
     paths.sort();
-    let (mut checked_bodies, mut failures) = (0, Vec::new());
+    let (mut checked_bodies, mut failures, mut marked_lints) = (0, Vec::new(), Vec::new());
     for path in paths {
         let src = fs::read_to_string(&path).expect("the program is readable");
         let name = path
@@ -69,24 +95,16 @@ fn the_corpus_functions_meet_the_hypotheses_of_the_link() {
             let Some((first, last)) = body_lines(&c.analysis, b, &file) else {
                 continue;
             };
+            let found = lints(&program, &b.facts);
+            let shown = found
+                .iter()
+                .map(|l| format!("{name}: `{}`: {l}", b.facts.name));
             if marked.iter().any(|l| (first..=last).contains(l)) {
+                marked_lints.extend(shown);
                 continue;
             }
             checked_bodies += 1;
-            let out = evaluate(
-                &program,
-                bridge::database(&b.facts),
-                EvalOptions { provenance: false },
-            )
-            .expect("the spec and the lints run");
-            for t in out.tuples("lint") {
-                let shown: Vec<String> = t.iter().map(|v| out.display_value(*v)).collect();
-                failures.push(format!(
-                    "{name}: `{}`: {}",
-                    b.facts.name,
-                    shown.join(" at ")
-                ));
-            }
+            failures.extend(shown);
         }
     }
     assert!(checked_bodies > 500, "only {checked_bodies} bodies");
@@ -95,4 +113,37 @@ fn the_corpus_functions_meet_the_hypotheses_of_the_link() {
         "the B6 hypotheses fail:\n{}",
         failures.join("\n")
     );
+    // The lints can fire: a function with an expected error fails one. If a
+    // relation of the lints is renamed or empty, this fails.
+    assert!(
+        marked_lints
+            .iter()
+            .any(|l| l.starts_with("37_fn_values.wf: `stored_in_loop`: use_where_unbound at ")),
+        "no lint in `stored_in_loop`: {marked_lints:?}"
+    );
+}
+
+#[test]
+fn the_gen_kill_lint_finds_a_node_that_invalidates_and_rebinds() {
+    // A synthetic fact set: node `n3` invalidates and rebinds reference `r`,
+    // and node `n2` only invalidates it.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let src = fs::read_to_string(root.join("proofs/link/lints/gen_kill.dl"))
+        .expect("the lint file is readable");
+    let program = parse_program_named("gen_kill.dl", &src).expect("the lint file parses");
+    let mut db = Database::new();
+    let (r, n2, n3) = (db.sym("r"), db.sym("n2"), db.sym("n3"));
+    db.insert("invalidated_at", [r, n2]);
+    db.insert("invalidated_at", [r, n3]);
+    db.insert("rebound_at", [r, n3]);
+    let out = evaluate(&program, db, EvalOptions { provenance: false }).expect("the lint runs");
+    let found: Vec<String> = out
+        .tuples("lint")
+        .iter()
+        .map(|t| {
+            let shown: Vec<String> = t.iter().map(|v| out.display_value(*v)).collect();
+            shown.join(" at ")
+        })
+        .collect();
+    assert_eq!(found, vec!["gen_and_kill at n3".to_string()]);
 }

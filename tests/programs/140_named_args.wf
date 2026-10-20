@@ -2,7 +2,8 @@
 // has parameter names: a function, a method, an operation, a function item in a
 // local and a struct constructor. An unknown name is W0104. A callee with no
 // parameter names takes no named argument (W0104): a closure, a function
-// parameter, a variant, `resume`, `print`, `fork` and `s.spawn`.
+// parameter, a variant, `resume`, `print`, `fork`, `s.spawn`, `t.join` and
+// `t.detach`. `t.join` and `t.detach` take no arguments (W0103).
 struct Range { lo: u64, hi: u64 }
 enum Shape { Dot(u64), Line(u64, u64) }
 struct Entity { hp: i32 }
@@ -52,6 +53,17 @@ fn builtins_have_no_names() / par {
     let (a, b) = fork(l: || 1, r: || 2)   //~ W0104 W0104
     let v = handle Ask { fn ask(q) { resume(v: q) } } in ask(1)   //~ W0104
 }
+fn join_and_detach_take_no_arguments() / par, async {
+    let e = Entity { hp: 1 }
+    scope { s =>
+        let t = s.spawn(|| 5)
+        print(t.join(x: 1))   //~ W0103 W0104
+        let u = s.spawn(|| 6)
+        print(u.join(span(mk(1, 2))))   //~ W0103
+        let w = s.spawn(|| print("child"))
+        w.detach(show(&e, 1))   //~ W0103
+    }
+}
 
 // Clean: names bind by name in each form that has names.
 fn named() {
@@ -69,7 +81,16 @@ fn named() {
     let v = handle Ask { fn ask(q) { resume(q + 1) } } in ask(q: 1)
     print(v)
 }
+fn join_and_detach() / par, async {
+    scope { s =>
+        let t = s.spawn(|| 5)
+        print(t.join())
+        let w = s.spawn(|| print("child"))
+        w.detach()
+    }
+}
 
 test "named arguments" {
     named()
+    join_and_detach()
 }

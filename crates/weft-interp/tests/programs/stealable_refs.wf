@@ -1,0 +1,25 @@
+// A stealable task may hold a reference to a portable part of a value whose
+// other part is not portable (OR11). The oracle checks see only the place of
+// the reference: `&w.score` does not reach `w.rc`.
+struct W { score: u64, rc: Rc<u64> }
+
+fn show(r: &u64) / par, async {
+    scope { s =>
+        s.spawn(|| print(r))
+    }
+}
+
+fn main() / par, async {
+    let w = W { score: 7, rc: Rc.new(1) }
+    let r = &w.score
+    scope { s =>
+        s.spawn(|| print(r))
+    }
+    show(&w.score)
+    let t = (5, Rc.new(1))
+    let q = &t.0
+    scope { s =>
+        s.spawn(|| print(q))
+    }
+    print(w.rc)
+}

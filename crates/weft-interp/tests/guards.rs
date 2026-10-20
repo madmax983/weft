@@ -294,6 +294,11 @@ fn the_oracle_reports_what_the_stock_machine_lets_pass() {
             "fn main() / async { let n = 0\n scope { s =>\n s.spawn(|| n += 1)\n s.spawn(|| n += 2)\n }\n print(n) }",
             "data race",
         ),
+        (
+            // The closure holds the linear value, and nothing runs or drops it.
+            "linear struct Tx { id: u64 }\nfn main() { let t = Tx { id: 1 }\n let f = || { let Tx(i) = t } }",
+            "still live at the end of the run",
+        ),
     ];
     for (src, want) in cases {
         let (strict, stock) = oracle_run(src);

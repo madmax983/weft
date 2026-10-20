@@ -1,4 +1,5 @@
 # DESC: B4: `task_soundness` without `separated(ss1, p1, ss0, p0)`.
+# EXPECT: 168 verified, 1 error
 import sys; sys.path.insert(0, sys.argv[0].rsplit("/", 1)[0]); from _lib import sub
 d = sys.argv[1]
 sub(d, "src/tasks.rs",

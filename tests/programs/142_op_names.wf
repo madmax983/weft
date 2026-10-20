@@ -1,24 +1,41 @@
-// A bare call `name(...)` finds a local, `print` or `fork`, an item, a variant
-// and only then an operation. An operation that a bare call in its module cannot
-// reach is W0107 (RR15). The effect path still reaches it: `Nap.sleep(...)`.
+// A bare call `name(...)` finds a local, `print` or `fork`, an item (the
+// prelude last), a variant and only then an operation. The statement
+// `assert(...)` is an assertion. An operation that no bare call in any module
+// can reach is W0107 at its declaration (RR15): `print`, `fork`, `assert`, or a
+// function, a type or a variant of the prelude has its name. The note tells the
+// user to rename it.
 effect Nap { fn sleep(d: Duration) }   //~ W0107
 effect Out { fn print(x: u64) }   //~ W0107
 effect Split { fn fork() }   //~ W0107
-effect Tick { fn tick() }   //~ W0107
+effect Chk { fn assert(b: bool) }   //~ W0107
 effect Make { fn Some(x: u64) }   //~ W0107
-effect First { fn go() }
-effect Second { fn go() }   //~ W0107
-fn tick() {}
-mod inner {
-    // An item of a parent module hides the operation too.
-    pub effect Deep { fn tick() }   //~ W0107
+effect Kind { fn Vec() }   //~ W0107
+
+// Two operations of one module with the same name make a bare call ambiguous:
+// W0107 at the call. The effect path tells which one it is.
+effect First { fn go() -> u64 }
+effect Second { fn go() -> u64 }
+fn ambiguous() -> u64 / First, Second {
+    go()   //~ W0107
 }
 
-// Clean: names that no item, variant or other operation of the module has.
+// Clean: an operation that the program performs by its path. A name that the
+// program declares hides an operation only by the scope rule: the function
+// `tick` hides `Tick.tick` and `inner.Deep.tick` for a bare call in this
+// module and in `inner`, and the path still reaches them.
+effect Tick { fn tick() -> u64 }
+fn tick() -> u64 { 1 }
+mod inner {
+    pub effect Deep { fn tick() -> u64 }
+    pub fn deep() -> u64 / Deep { Deep.tick() + tick() }
+}
+fn by_paths() -> u64 / First, Second, Tick {
+    First.go() + Second.go() + Tick.tick() + tick()
+}
 effect Nap2 { fn nap(d: Duration) }
 fn napper() / Nap2 { nap(1.ms) }
 mod other {
-    // An operation of another module does not hide this one.
+    // An operation of another module does not make a bare call ambiguous.
     pub effect Go { fn go() -> u64 }
     pub fn going() -> u64 / Go { go() }
 }
@@ -30,6 +47,14 @@ fn main() / clock {
     } } in napper()
     let n = handle other.Go { fn go() { resume(5) } } in other.going()
     print(n)
+    let m = handle First { fn go() { resume(10) } } in {
+        handle Second { fn go() { resume(20) } } in {
+            handle Tick { fn tick() { resume(40) } } in by_paths()
+        }
+    }
+    print(m)
+    let d = handle inner.Deep { fn tick() { resume(100) } } in inner.deep()
+    print(d)
     handle Nap { fn sleep(d) {
         print("by path")
         resume(())

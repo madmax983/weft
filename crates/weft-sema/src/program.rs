@@ -490,6 +490,10 @@ pub struct Program {
     pub ptr: Option<AdtId>,
     /// The type properties of the definitions (`Program::props`).
     pub props: std::sync::OnceLock<crate::props::TypeProps>,
+    /// Each effect by its identity (`effects::by_identity`). Item collection
+    /// sets it at its end, when the effects and the names of the modules are
+    /// final.
+    pub(crate) effect_index: Option<HashMap<String, EffectId>>,
     /// The steps of the item checks: the work list of the size check, the walks
     /// of the `in` places and the modes of the mode checks ([`Program::item_steps`]).
     steps: std::cell::Cell<usize>,
@@ -595,6 +599,13 @@ impl Program {
     /// the effects that `m` sees by name count. Sema and the interpreter both
     /// use it.
     pub fn find_op(&self, m: ModId, name: &str) -> Option<(EffectId, usize)> {
+        self.ops_named(m, name).first().copied()
+    }
+
+    /// Returns each operation `name` of the first module, from `m` outward,
+    /// that has one (see [`Program::find_op`]). More than one makes a bare call
+    /// `name(...)` ambiguous (W0107).
+    pub fn ops_named(&self, m: ModId, name: &str) -> Vec<(EffectId, usize)> {
         let op_in = |ei: EffectId| -> Option<(EffectId, usize)> {
             let e = &self.effects[ei];
             let oi = e.ops.iter().position(|o| o.name == name)?;
@@ -602,10 +613,11 @@ impl Program {
         };
         let mut at = Some(m);
         while let Some(id) = at {
-            let found = (0..self.effects.len())
+            let found: Vec<(EffectId, usize)> = (0..self.effects.len())
                 .filter(|&ei| self.effects[ei].module == id && !self.effects[ei].is_std)
-                .find_map(op_in);
-            if found.is_some() {
+                .filter_map(op_in)
+                .collect();
+            if !found.is_empty() {
                 return found;
             }
             at = self.mods[id].parent;
@@ -613,6 +625,8 @@ impl Program {
         (0..self.effects.len())
             .filter(|&ei| self.effects[ei].is_std)
             .find_map(op_in)
+            .into_iter()
+            .collect()
     }
 
     /// Finds an effect by canonical name, from a module outward.
@@ -688,17 +702,31 @@ impl Collector {
         c.resolve_signatures();
         c.check_on_aborts();
         c.check_op_names();
+        // A duplicate definition (W0107) keeps the first effect, as the search does.
+        let mut index = HashMap::new();
+        for e in 0..c.prog.effects.len() {
+            index.entry(effects::identity(&c.prog, e)).or_insert(e);
+        }
+        c.prog.effect_index = Some(index);
         (c.prog, c.diags)
     }
 
-    /// W0107: a bare call `name(...)` in the module of an operation must reach
-    /// the operation. A call finds `print` and `fork`, then an item, then a
-    /// variant, and only then an operation (`Program::find_op`). So one of these
-    /// with the name of the operation hides it, and so does an earlier operation
-    /// with that name (RR15).
+    /// W0107: an operation that no bare call `name(...)` can reach, in any
+    /// module (RR15). A bare call finds `print` and `fork`, then an item (the
+    /// prelude last), then a variant, and only then an operation
+    /// (`Program::find_op`). The statement `assert(...)` is an assertion. So the
+    /// operation is hidden everywhere if `print`, `fork`, `assert`, a function or
+    /// a type of the prelude, or a variant of a prelude type has its name. The
+    /// user does not write these names, so the hiding is silent.
+    ///
+    /// A name that the program declares hides an operation only by the scope
+    /// rule: an item of a module hides an operation of an outer module in that
+    /// module. That is not an error: the effect path reaches the operation. Two
+    /// operations of one module with the same name make a bare call ambiguous:
+    /// that is W0107 at the call (`Lower::call`).
     fn check_op_names(&mut self) {
         let mut found = Vec::new();
-        for (ei, e) in self.prog.effects.iter().enumerate() {
+        for e in &self.prog.effects {
             if e.is_std {
                 continue;
             }
@@ -706,24 +734,23 @@ impl Collector {
                 let n = o.name.as_str();
                 let hider = if matches!(n, "print" | "fork") {
                     Some(format!("the built-in function `{n}`"))
-                } else if let Some(r) = self.prog.lookup(e.module, n) {
-                    match r {
-                        ItemRef::Fn(f) if self.prog.fns[f].is_std => {
-                            Some(format!("the prelude function `{n}`"))
-                        }
-                        ItemRef::Fn(_) => Some(format!("the function `{n}`")),
-                        ItemRef::Adt(_) => Some(format!("the type `{n}`")),
-                        ItemRef::Mod(_) | ItemRef::Effect(_) => None,
-                    }
-                } else if self.prog.variants.get(n).is_some_and(|v| !v.is_empty()) {
-                    Some(format!("the variant `{n}`"))
+                } else if n == "assert" {
+                    Some("the `assert` statement".to_string())
                 } else {
-                    match self.prog.find_op(e.module, n) {
-                        Some((x, _)) if x != ei => Some(format!(
-                            "the operation `{n}` of `{}`",
-                            self.prog.effects[x].name
-                        )),
-                        _ => None,
+                    match self.prog.mods[PRELUDE].items.get(n) {
+                        Some(ItemRef::Fn(_)) => Some(format!("the prelude function `{n}`")),
+                        Some(ItemRef::Adt(_)) => Some(format!("the prelude type `{n}`")),
+                        _ => self
+                            .prog
+                            .variants
+                            .get(n)
+                            .into_iter()
+                            .flatten()
+                            .any(|&(a, _)| {
+                                let m = self.prog.adts[a].module;
+                                self.prog.mods[m].unit == weft_syntax::diag::PRELUDE_UNIT
+                            })
+                            .then(|| format!("the prelude variant `{n}`")),
                     }
                 };
                 if let Some(h) = hider {
@@ -735,12 +762,12 @@ impl Collector {
             let d = Diagnostic::error(
                 "W0107",
                 format!(
-                    "operation `{name}` of `{effect}` has the name of {hider}, so a call `{name}(...)` does not reach it"
+                    "operation `{name}` of `{effect}` has the name of {hider}, so no call `{name}(...)` reaches it"
                 ),
                 span,
             )
             .note(format!(
-                "rename the operation, or perform it with the effect name: `{effect}.{name}(...)`"
+                "rename the operation: a bare call `{name}(...)` always finds {hider}"
             ));
             self.push_in(m, d);
         }

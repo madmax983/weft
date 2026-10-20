@@ -374,12 +374,23 @@ Status: accepted. Date: 2026-10-18.
   dependency cannot have the name `main` (W0107, review round 2, QA5): its effects
   would get the identities of the root, and a handler of the root would handle them.
   Sema, `weft deps` and the interpreter use the one function `effects::identity`.
-- A bare call `name(...)` finds a local, `print` or `fork`, an item, a variant and only
-  then an operation (`Program::find_op`, also in the interpreter). It searches the
-  modules from the module of the call outward, as a name lookup does. An operation that
-  a bare call in its own module cannot reach is W0107 (review round 2, RR15): for
-  example an operation `sleep` that the prelude function `sleep` hides, or a second
-  operation `go` in one module. The effect path still reaches it: `Nap.sleep(...)`.
+- A bare call `name(...)` finds a local, `print` or `fork`, an item (the prelude last),
+  a variant and only then an operation (`Program::find_op`, also in the interpreter).
+  It searches the modules from the module of the call outward, as a name lookup does.
+  The statement `assert(...)` is an assertion. An operation that no bare call in any
+  module can reach is W0107 at its declaration (review round 2, RR15): `print`, `fork`,
+  `assert`, or a function, a type or a variant of the prelude has its name. The user
+  does not write these names, so the hiding is silent. The fix is to rename the
+  operation; a program that performs it only by its path (`Nap.sleep(...)`) is still
+  rejected, because a bare call of it would silently call the prelude function.
+- A name that the program declares hides an operation only by the scope rule, and that
+  is not an error: a function `tick` hides an operation `tick` of the same or an outer
+  module for a bare call in its module and in the modules inside it. The effect path
+  reaches the operation (`Tick.tick()`). Two effects of one module with an operation
+  of the same name make a bare call ambiguous: W0107 at the bare call, with the paths
+  in the note. A call by the path is correct. (Review of R2e: the first version gave
+  W0107 at the declaration for these shapes too, so programs that performed the
+  operations by their paths were rejected.)
 - An effect of another module or package has a path (review round 2, RR11). `handle`
   and an effect row take a path, and it resolves like a type path: the first name
   from the module outward, then each next name inside the module before it
@@ -394,7 +405,15 @@ Status: accepted. Date: 2026-10-18.
   module, `a.Note` from the parent of module `a`, `util.Note` for a dependency. W0101
   for an unknown name gives the paths of the effects with that name. W0702 and W0805
   give the path in the hint. A private effect of another package gets a note that says
-  so. Some messages show the identity when the written name can also name another
+  so. An effect that a body can see but cannot name gets a different note: a nearer
+  item hides the first name of each path to it (code in module `x` with a child
+  module `a` cannot name the root's `a.Note`). There is no path form that starts at
+  the root, so the user renames the item or states the effect in another module; the
+  message then shows the identity (`main.a.Note`). Sema computes the written names of
+  a body only for the effects that its facts name (the stated, escaping, handled and
+  clause effects), and `effects::by_identity` is a map lookup after item collection,
+  so the cost does not grow with the square of the number of effects. Some messages
+  show the identity when the written name can also name another
   effect. W0702 does this when another stated effect of the function shows the same
   text. W0803 and W0805 do this when the name is the name of a standard effect, or the
   text of another effect that leaves the same body.

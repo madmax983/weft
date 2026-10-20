@@ -253,9 +253,11 @@ route whose labels are exactly the group's path.
 
 Each test weakens one rule and runs `./verify.sh`. The proof fails each time.
 `mutations/run.sh` runs them: each mutation is a script `mutations/NAME.py` that changes
-a copy of the crate in a temporary directory. The test passes if `verify.sh` fails on
-the copy. The script shows the verification results and the functions that fail. It
-does not change the repository, and it takes about four minutes.
+a copy of the crate in a temporary directory. The test passes only if Verus gives a
+result line with at least one error, and that line is the one in the table below (the
+`# EXPECT:` line of the script). A failure with no result, such as no `verus` on
+`PATH` or a patch that breaks the build, does not pass. The script shows the functions
+that fail. It does not change the repository, and it takes about four minutes.
 
 ```bash
 mutations/run.sh          # all mutations
@@ -264,7 +266,7 @@ mutations/run.sh b1 b4a   # some mutations
 
 | Name | Milestone | Mutation | Result |
 | --- | --- | --- | --- |
-| `base` | Base | `strict_child` only for grandchild groups (`p.path.len() + 1 < g.path.len()`) | 165 verified, 4 errors: `lemma_ptr_not_below` fails; the base and B2 examples fail |
+| `base` | Base | `strict_child` only for grandchild groups (`p.path.len() + 1 < g.path.len()`) | 165 verified, 4 errors: `lemma_ptr_not_below` fails; the base, B1 and B2 examples fail (`lemma_damage_states`, `lemma_kill_ring`, `lemma_groups`) |
 | `b1` | B1 | `cfg_check` checks only forward edges (`succs[j] > n`), so back edges do not join | 167 verified, 2 errors: `lemma_cfg_inv_along` fails; `example_loop_bad_rejected` fails (in `lemma_loop_bad_rejected`) |
 | `b2` | B2 | `clos_survivors` keeps every closure value (no kill through captures) | 166 verified, 3 errors: `lemma_preserve_call_ptrs` fails (closure part); `example_closure_rejected` and `cfg_progress` fail |
 | `b5a` | B5 | `instr_ok` accepts `Borrow` of any local | 168 verified, 1 error: `progress` fails (no step, no abort) |

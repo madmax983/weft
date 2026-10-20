@@ -1684,3 +1684,23 @@ fn arg_order_gives_the_order_of_named_calls_that_the_interpreter_cannot_resolve(
     // A call with no named argument, and a direct call of an item, need no order.
     assert!(body("plain").facts.arg_order.is_empty());
 }
+
+#[test]
+fn a_body_names_only_the_effects_that_its_facts_have() {
+    // Each body gets the written names of the effects that it states, performs
+    // or handles, not of every effect of the program: that cost grew with the
+    // number of bodies times the square of the number of effects.
+    let mut src = String::new();
+    for i in 0..50 {
+        let _ = writeln!(src, "mod m{i} {{ pub effect Note {{ fn note{i}() }} }}");
+    }
+    src.push_str("fn plain(x: u64) -> u64 { x + 1 }\n");
+    src.push_str("fn uses() / m7.Note { m7.Note.note7() }\n");
+    let plain = facts(&src, "plain");
+    assert!(plain.effect_names.is_empty(), "{:?}", plain.effect_names);
+    let uses = facts(&src, "uses");
+    assert_eq!(
+        uses.effect_names,
+        vec![("main.m7.Note".to_string(), "m7.Note".to_string())]
+    );
+}

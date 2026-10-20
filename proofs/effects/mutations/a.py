@@ -1,4 +1,5 @@
 # DESC: (a) drop `cap < env.len()` at `Perform`.
+# EXPECT: 120 verified, 2 errors
 import sys; sys.path.insert(0, sys.argv[0].rsplit("/", 1)[0]); from _lib import sub
 d = sys.argv[1]
 f = "src/checker.rs"

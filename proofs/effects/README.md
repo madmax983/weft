@@ -262,9 +262,11 @@ Each mutation weakens one checker rule in `src/checker.rs`. Each one makes a sou
 lemma fail. The `*_rejected` guard of that rule also fails, as expected, because the
 weak checker accepts the bad program. `mutations/run.sh` runs them: each mutation is a
 script `mutations/NAME.py` that changes a copy of the crate in a temporary directory.
-The test passes if `verify.sh` fails on the copy. The script shows the verification
-results and the functions that fail. It does not change the repository, and it takes
-about two minutes.
+The test passes only if Verus gives a result line with at least one error, and that
+line is the one in the table below (the `# EXPECT:` line of the script). A failure
+with no result, such as no `verus` on `PATH` or a patch that breaks the build, does
+not pass. The script shows the functions that fail. It does not change the repository,
+and it takes about two minutes.
 
 ```bash
 mutations/run.sh          # all mutations

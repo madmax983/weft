@@ -188,6 +188,32 @@ fn the_project_cannot_name_a_private_effect_of_a_dependency() {
 }
 
 #[test]
+fn an_effect_whose_paths_a_nearer_module_hides_is_not_private() {
+    // In module `x`, the path `a.Note` names `x.a`, not the module `a` of the
+    // root. The effect is `pub` and in the same package, so the note must not
+    // say that it is private.
+    let dir = scratch(
+        "hidden_effect",
+        &[(
+            "main.wf",
+            "mod a {\n    pub effect Note { fn note(x: u64) }\n    pub fn f() / Note { note(1) }\n}\n\
+             mod x {\n    pub mod a {\n        pub fn z() {}\n    }\n    pub fn kk() { b.call() }\n    pub fn kd() / Clock { b.call() }\n}\n\
+             mod b {\n    pub fn call() / a.Note { a.f() }\n}\nfn main() {}\n",
+        )],
+    );
+    let out = cmd(&["check", &format!("{dir}/main.wf")]);
+    assert_eq!(out.code, 1, "{}", out.text);
+    for want in [
+        "error[W0701]: public function `kk` must state its effects: `/ main.a.Note`",
+        "error[W0702]: `call` performs `main.a.Note`, which the signature does not allow",
+        "`main.a.Note` has no name here: a nearer item hides the first name of each path to it",
+    ] {
+        assert!(out.text.contains(want), "missing `{want}`:\n{}", out.text);
+    }
+    assert!(!out.text.contains("is private"), "{}", out.text);
+}
+
+#[test]
 fn a_dependency_cannot_have_the_name_main() {
     // The effects of the root have `main` in their identity (`main.Note`). The
     // effects of a dependency `main` would get the same identities, so the

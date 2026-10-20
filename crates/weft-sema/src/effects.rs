@@ -112,6 +112,24 @@ pub fn visible(prog: &Program, m: ModId, e: EffectId) -> bool {
     def.is_std || def.is_pub || prog.mods[def.module].unit == prog.mods[m].unit
 }
 
+/// Returns true if code in module `from` can see the user effect with
+/// identity `id` (see [`visible`]), also if no path names it there.
+pub fn seen(prog: &Program, from: ModId, id: &str) -> bool {
+    by_identity(prog, id).is_some_and(|e| visible(prog, from, e))
+}
+
+/// Returns the note for user effect `id` that a body cannot name.
+///
+/// If `hidden`, the body can see the effect, but a nearer name hides the first
+/// name of each path to it. Else the effect is private in another package.
+pub fn unnamed_note(id: &str, hidden: bool) -> String {
+    if hidden {
+        format!("`{id}` has no name here: a nearer item hides the first name of each path to it. Rename that item, or state and handle the effect in a module that can name it")
+    } else {
+        format!("`{id}` is private in its package: code outside the package cannot state or handle it; the package must make it `pub`")
+    }
+}
+
 /// Returns effect identity `id` as code in module `from` can write it.
 ///
 /// A standard effect has its lowercase alias (`log`). A user effect has the
@@ -213,8 +231,12 @@ pub fn identity(prog: &Program, e: EffectId) -> String {
     path.join(".")
 }
 
-/// Finds an effect by its identity.
+/// Finds an effect by its identity. After item collection this is a lookup in
+/// `Program::effect_index`; during item collection it is a search.
 pub fn by_identity(prog: &Program, id: &str) -> Option<EffectId> {
+    if let Some(index) = &prog.effect_index {
+        return index.get(id).copied();
+    }
     let name = shown(id);
     (0..prog.effects.len())
         .filter(|&e| prog.effects[e].name == name)

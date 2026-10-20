@@ -47,10 +47,10 @@ $W help
 unless you give `--unchecked`. `--seed N` and `--workers N` (1 to 1024) set the
 deterministic scheduler of the reference interpreter. `--oracle` turns on strict
 run-time checks: a dangling reference, a moved `Vec` buffer, a linear leak, a data
-race and a stealable task that reaches a nonportable value are errors (ADR 0010). The exit code is 0 on success,
-1 when the program has errors (a syntax error too) or fails, and 2 on a usage error or
-a file that cannot be read. With `--unchecked`, the exit code shows only the run. A
-command rejects an option that it does not use.
+race and a stealable task that reaches a nonportable value are errors (ADR 0010). The
+exit code is 0 on success, 1 when the program has errors (a syntax error too) or
+fails, and 2 on a usage error or a file that cannot be read. With `--unchecked`, the
+exit code shows only the run. A command rejects an option that it does not use.
 
 A single file sets its options with marker lines. `// weft: library` checks it as a
 library (no root handlers). `// weft: no-runtime` selects the embedded profile (`main`

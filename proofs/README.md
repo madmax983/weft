@@ -11,11 +11,12 @@ Verus proofs for Weft Phase 1. The pinned Verus revision is in `VERUS_VERSION`.
 The link (`link/`) covers the exec core. The glue in `rules.rs` is tested by agreement
 with the Datalog spec: the checker and the spec run on the same facts. So agreement
 cannot test the facts that sema emits. These facts are hypotheses of the link
-(`facts_ok`, `bound_before_use`), and only the sema unit tests and the corpus
-diagnostics test them. `ret_ok` (part of `facts_ok`) is false for an accepted program
-that uses the `in` form of ADR 0005. `bound_before_use` holds on each corpus function
-with no expected error (`crates/weft-check/tests/hypotheses.rs`), but no proof shows
-it. See `link/README.md`.
+(`facts_ok`, `bound_before_use`). Only tests check them: the sema unit tests, the
+corpus diagnostics and the B6 lints that `crates/weft-check/tests/hypotheses.rs` runs.
+`ret_ok` (part of `facts_ok`) is false for an accepted program that uses the `in` form
+of ADR 0005. `bound_before_use` and `no_gen_kill` hold on each corpus function with no
+expected error (the lints of `hypotheses.rs`), but no proof shows them. See
+`link/README.md`.
 
 The exec core that the checker runs is in `crates/weft-verified`. It is verified too
 (67 verified). See `crates/weft-verified/README.md` for the parts that the checker and

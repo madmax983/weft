@@ -672,7 +672,7 @@ fn unauthorized_effect(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
         let at = f.node(*n);
         let note = match written(f, e) {
             Some(w) => format!("add `{w}` to the effects after `/`, or handle it here"),
-            None => private_note(e),
+            None => unnamed_note(f, e),
         };
         out.push(
             Diagnostic::error(
@@ -878,7 +878,7 @@ pub fn root_effects(
                 Some(w) => {
                     format!("the runtime handles only the standard effects; handle `{w}` in {who}")
                 }
-                None => private_note(e),
+                None => unnamed_note(f, e),
             };
             Diagnostic::error(
                 "W0805",
@@ -942,10 +942,10 @@ fn written(f: &FnFacts, e: &str) -> Option<String> {
     }
 }
 
-/// Returns the note for a user effect that the body cannot name: a private
-/// effect of another package.
-fn private_note(e: &str) -> String {
-    format!("`{e}` is private in its package: code outside the package cannot state or handle it; the package must make it `pub`")
+/// Returns the note for a user effect that body `f` cannot name: a private
+/// effect of another package, or an effect whose paths a nearer name hides.
+fn unnamed_note(f: &FnFacts, e: &str) -> String {
+    effects::unnamed_note(e, f.effect_hidden(e))
 }
 
 /// Changes the markers of node offsets in the notes of `d` into line numbers

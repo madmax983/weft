@@ -66,8 +66,11 @@ Status: accepted. Date: 2026-10-18.
   local whose scope ended, a live linear value that goes away with no consume and no
   `on abort` or that is live at the end of the run, a data race (a vector clock for
   each task; spawn, join, the end of a scope or a `fork`, and unwinding order the
-  tasks), and a stealable task that reaches an `Rc`, a `Weak` or a `Scope`. The stock
-  machine prints `<dangling>` and goes on. The interpreter program tests and the runs
+  tasks), and a stealable task that reaches an `Rc`, a `Weak` or a `Scope`. A
+  reference reaches only the value at its place, and a slice only its elements: a task
+  that holds `&w.score` does not reach an `Rc` in `w.rc` (review of R2e: the first
+  version walked the whole cell and gave false alarms). The stock machine prints
+  `<dangling>` and goes on. The interpreter program tests and the runs
   of the corpus programs turn the checks on: an accepted program must not fault with
   them.
 - Phase 1 does not simulate the network. `sim.net.partition` and `sim.net.heal` only

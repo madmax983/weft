@@ -8,6 +8,8 @@ use super::{
 use crate::props::Prop;
 use std::collections::{BTreeMap, BTreeSet};
 
+use weft_syntax::diag::Diagnostic;
+
 impl Lower<'_> {
     /// Lowers a function body.
     pub fn lower_fn(mut self, id: FnId) -> Lowered {
@@ -132,7 +134,7 @@ impl Lower<'_> {
         let fdef = &self.prog.fns[id];
         if fdef.is_pub && !sig.declared && !eff.is_empty() && !fdef.decl.is_extern {
             let text = self.effect_text(&eff);
-            self.err(
+            let mut d = Diagnostic::error(
                 "W0701",
                 format!(
                     "public function `{}` must state its effects: `/ {text}`",
@@ -140,6 +142,15 @@ impl Lower<'_> {
                 ),
                 fdef.decl.name.span,
             );
+            // An effect that this module cannot name shows its identity. The
+            // note tells why.
+            for n in &eff.named {
+                if !effects::is_std(n) && effects::written(self.prog, self.module, n).is_none() {
+                    let hidden = effects::seen(self.prog, self.module, n);
+                    d = d.note(effects::unnamed_note(n, hidden));
+                }
+            }
+            self.diags.push(d);
         }
         self.finish(eff)
     }
@@ -167,7 +178,6 @@ impl Lower<'_> {
     }
 
     fn finish(mut self, mut eff: EffectSig) -> Lowered {
-        self.name_effects();
         self.finish_resume_runs();
         self.finish_spared();
         self.check_int_lits();
@@ -222,6 +232,7 @@ impl Lower<'_> {
             eff.drops = self.dropped_params(&maybe);
             eff.holds = self.held_params(&maybe);
         }
+        self.name_effects();
         self.facts.normalize();
         let unit = self.prog.mods[self.module].unit;
         for d in &mut self.diags {
@@ -310,17 +321,32 @@ impl Lower<'_> {
     }
 
     /// Gives the facts the name that this body can write for each user effect
-    /// (`FnFacts::effect_names`). Diagnostics show these names.
+    /// that its diagnostics can name (`FnFacts::effect_names`): the effects that
+    /// escape, the stated effects, the effects that a clause performs and the
+    /// handled effects. Only these, so the cost does not grow with all the
+    /// effects of the program for each body.
     fn name_effects(&mut self) {
-        for e in 0..self.prog.effects.len() {
-            if self.prog.effects[e].is_std {
-                continue;
-            }
-            let id = effects::identity(self.prog, e);
-            if let Some(w) = effects::written(self.prog, self.module, &id) {
-                self.facts.effect_names.push((id, w));
+        let f = &self.facts;
+        let ids: BTreeSet<&str> = f
+            .escapes_at
+            .iter()
+            .map(|(_, e)| e.as_str())
+            .chain(f.declared_effect.iter().map(String::as_str))
+            .chain(f.clause_performs.iter().map(|(_, e)| e.as_str()))
+            .chain(f.handlers.iter().map(|h| h.effect.as_str()))
+            .filter(|e| !effects::is_std(e))
+            .collect();
+        let mut names = Vec::new();
+        let mut hidden = Vec::new();
+        for id in ids {
+            match effects::written(self.prog, self.module, id) {
+                Some(w) => names.push((id.to_string(), w)),
+                None if effects::seen(self.prog, self.module, id) => hidden.push(id.to_string()),
+                None => {}
             }
         }
+        self.facts.effect_names = names;
+        self.facts.hidden_effects = hidden;
     }
 
     /// Converts the body summary into a signature row in terms of parameters.
