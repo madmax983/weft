@@ -528,19 +528,19 @@ fn an_entry_with_codes_covers_only_those_codes() {
 }
 
 #[test]
-fn open_with_no_entry_is_reported_before_the_baseline() {
+fn open_with_no_entry_blocks_from_the_baseline_on() {
     let r = one(pair("a.wf", PROBES, &[], &[], Verdict::Fault), "");
-    assert!(r.passes(), "{:?}", r.blockers);
     assert_eq!(r.rows[0].class, Class::Open);
-    let strict = Policy {
-        open_needs_entry: true,
+    assert!(!r.passes(), "from stage G6 on, open needs an entry");
+    let lax = Policy {
+        open_needs_entry: false,
     };
     let r = Report::build(
         &[pair("a.wf", PROBES, &[], &[], Verdict::Fault)],
         &Ledger::default(),
-        &strict,
+        &lax,
     );
-    assert!(!r.passes(), "from stage G6 on, open needs an entry");
+    assert!(r.passes(), "{:?}", r.blockers);
 }
 
 #[test]

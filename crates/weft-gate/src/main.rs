@@ -13,7 +13,7 @@
 //! weft-gate oracle-run --base DIR --path PATH [--from K] [--limit-ms MS]
 //!                      [--max-steps N] [--max-memory MB]
 //! weft-gate run --tier 1|2 [--groups ABCDEF] [--report FILE] [--workers N]
-//!               [--limit SECONDS] [--repo DIR] [--probes DIR]
+//!               [--limit SECONDS] [--repo DIR] [--probes DIR] [--write-baseline]
 //! ```
 //!
 //! `--repo` is the repository (default: the workspace of this crate). `--probes` is
@@ -55,6 +55,14 @@
 //! `target/gate/report.md`). The exit code is 1 if the gate has a blocker. A
 //! cache with no verdict for a program (a stale key) is an error: run
 //! `oracle` first. Before stage F1 no group can be on (`--groups`).
+//!
+//! `run` also compares the old records with the baseline of the tier
+//! (`weft_gate::baseline`): `tests/gate/baseline-tier1.jsonl` (committed; it
+//! must exist) or `target/gate/baseline-tier2.jsonl` (if it exists). A
+//! difference is a blocker. `--write-baseline` writes the old records to that
+//! file and does not compare them. Write a baseline with a release build: a
+//! debug build can give timeouts. In tier 2 an `open` program with no ledger
+//! entry does not block (`weft_gate::report::Policy::for_tier`).
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
@@ -69,7 +77,7 @@ use weft_gate::ledger::{self, Ledger};
 use weft_gate::manifest::{self, Group, Manifest, Options, Root};
 use weft_gate::oracle::{self, Cache, Engine, Step, Verdict};
 use weft_gate::snapshot::{self, Kind, Pipeline, Settings};
-use weft_gate::{archive, copy, report};
+use weft_gate::{archive, baseline, copy, report};
 
 /// The tier-1 manifest, relative to the repository.
 const TIER1_OUT: &str = "tests/gate/manifest-tier1.tsv";
@@ -91,7 +99,7 @@ const USAGE: &str = "usage:
   weft-gate oracle-run --base DIR --path PATH [--from K] [--limit-ms MS]
                        [--max-steps N] [--max-memory MB]
   weft-gate run --tier 1|2 [--groups ABCDEF] [--report FILE] [--workers N]
-                [--limit SECONDS] [--repo DIR] [--probes DIR]";
+                [--limit SECONDS] [--repo DIR] [--probes DIR] [--write-baseline]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -125,6 +133,7 @@ struct Flags {
     limit_ms: Option<u64>,
     groups: Option<String>,
     report: Option<PathBuf>,
+    write_baseline: bool,
 }
 
 impl Flags {
@@ -159,6 +168,7 @@ fn parse_flags(args: &[String]) -> Result<Flags> {
     let mut limit_ms = None;
     let mut groups = None;
     let mut report = None;
+    let mut write_baseline = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut value = || it.next().with_context(|| format!("{a} needs a value"));
@@ -198,6 +208,7 @@ fn parse_flags(args: &[String]) -> Result<Flags> {
             "--path" => path = Some(value()?.clone()),
             "--groups" => groups = Some(value()?.clone()),
             "--report" => report = Some(PathBuf::from(value()?)),
+            "--write-baseline" => write_baseline = true,
             "--from" => {
                 let v = value()?;
                 match v.parse::<usize>() {
@@ -231,6 +242,7 @@ fn parse_flags(args: &[String]) -> Result<Flags> {
         limit_ms,
         groups,
         report,
+        write_baseline,
     })
 }
 
@@ -345,7 +357,8 @@ fn run_gate(flags: &Flags) -> Result<bool> {
             std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
         }),
         limit: flags.limit.map_or(snapshot::LIMIT, Duration::from_secs),
-        policy: report::Policy::default(),
+        policy: report::Policy::for_tier(tier),
+        baseline: !flags.write_baseline,
     };
     let out = flags
         .report
@@ -376,8 +389,20 @@ fn run_gate(flags: &Flags) -> Result<bool> {
             Some(copy::PROBES_DIR),
         )?;
         r.notes.insert(0, format!("tier 2 ({})", probes.display()));
+        if settings.baseline {
+            match baseline::read(&flags.repo.join(baseline::TIER2))? {
+                Some(base) => r.compare_baseline(Some(base), baseline::TIER2),
+                None => r.notes.push(format!(
+                    "no baseline `{}`: the old records are not compared",
+                    baseline::TIER2
+                )),
+            }
+        }
         r
     };
+    if flags.write_baseline {
+        write_baseline(&flags.repo, tier, &r.records)?;
+    }
     write_text(&out, &r.to_markdown())?;
     let counts: Vec<String> = r
         .class_counts()
@@ -403,6 +428,32 @@ fn run_gate(flags: &Flags) -> Result<bool> {
         r.warnings.len()
     );
     Ok(r.passes())
+}
+
+/// Writes `records` in the committed form to the baseline file of the tier.
+/// Warns if the build is a debug build or a record is a timeout.
+fn write_baseline(repo: &Path, tier: u8, records: &[snapshot::Record]) -> Result<()> {
+    if cfg!(debug_assertions) {
+        eprintln!(
+            "warning: a debug build writes the baseline; a release build gives fewer timeouts"
+        );
+    }
+    let timeouts: Vec<&str> = records
+        .iter()
+        .filter(|r| r.kind == Kind::Timeout)
+        .map(|r| r.path.as_str())
+        .collect();
+    if !timeouts.is_empty() {
+        eprintln!(
+            "warning: the baseline has {} timeout records (the comparison skips them): {}",
+            timeouts.len(),
+            timeouts.join(", ")
+        );
+    }
+    let out = repo.join(baseline::file(tier));
+    write_text(&out, &baseline::to_jsonl(records)?)?;
+    println!("wrote {} records to {}", records.len(), out.display());
+    Ok(())
 }
 
 /// `snapshot`: checks each program of the manifest of the tier and writes the

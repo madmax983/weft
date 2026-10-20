@@ -14,3 +14,251 @@
 # reason = "STATE: the holder of the part rebinds at the new value"
 # signed_by = "review agent, stage F8"   # lost-clean: a reviewer, not the author
 # stage = "F8"
+
+# Stage G6: the `open` programs of tier 1 with the old pipeline. The old
+# pipeline accepts each program, and the `ast` oracle faults on it. Each group
+# has one fault kind and one shape. The finding id comes from the file name,
+# from `docs/ir.md` section 10 or from
+# `docs/plan/core-ir-inputs/root_causes.md`. The ids `sem-N1` to `sem-N4` are
+# the findings N1 to N4 of `docs/plan/core-ir-inputs/semantics.md`; `map-N1`
+# and `map-N2` are N1 and N2 of `docs/plan/core-ir-inputs/map_lowering.md`
+# (`docs/ir.md` section 10.2 has both lists).
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/ir/work/machine/m1_post_resume.wf",
+    "tests/gate/probes/ir/work/mir/postres.wf",
+]
+finding = "M1"
+reason = "dangling read: clause code after `resume` changes a place that the value of the handled body points into"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/ir/work/machine/m6b_resume_result_ref.wf"]
+finding = "M2"
+reason = "dangling read: the result of `resume` does not point where the value of the handled body points"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/ir/work/machine/m8_abort_value_into_body.wf"]
+finding = "M3"
+reason = "dangling read: a clause with no resume returns a reference into a local of the handled body"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/ir/work/machine/m10_abort_value_callee_local.wf"]
+finding = "M4"
+reason = "dangling read: a clause with no resume returns a reference into a local of a callee that performs"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/ir/judge_sound/j1_post_resume_keep.wf"]
+finding = "J1"
+reason = "dangling read: a clause changes a place after `resume`; the body kept a reference in a site local"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/ir/judge_sound/j5_kept_borrow.wf"]
+finding = "J5"
+reason = "dangling reference: a closure borrows a captured plain value after its scope"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/ir/judge_sound/j5d_maker_borrow.wf"]
+finding = "J5d"
+reason = "dangling reference: a closure that a maker returns borrows a captured plain value after its scope"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/ir/work/map/opres.wf"]
+finding = "map-N1"
+reason = "dangling read: the result of an operation of a handler of a caller has no places"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/ir/work/map/fnres2.wf"]
+finding = "map-N2"
+reason = "dangling read: the result of a call of a function parameter has no places of the caller"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/ir/probes/p2_late_operand_ref.wf"]
+finding = "sem-N1"
+reason = "dangling read: a place operand of a binary operator is read later than the facts say"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/ir/probes/p9_print_late.wf"]
+finding = "sem-N2"
+reason = "dangling read: an operand of `print` is read later than the facts say"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/ir/probes/p10_index_late.wf"]
+finding = "sem-N3"
+reason = "dangling read: the base of an index is read after the index expression invalidates it"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/ir/probes/p25_assert_abort.wf",
+    "tests/gate/probes/ir/probes/p27_assert_callee.wf",
+]
+finding = "sem-N4"
+reason = "unwinder fault: `assert` aborts with no abort edge (also through a callee); a linear value with no `on abort` is live across it"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/r2/oracle/probes/c3_task_stored.wf",
+    "tests/gate/probes/r3/oracle/probes/sc1_field_local_task.wf",
+    "tests/gate/probes/r3/oracle/probes/sc2_field_in_task.wf",
+    "tests/gate/probes/r3/oracle/probes/sc3_field_spawn_direct.wf",
+    "tests/gate/probes/r3/oracle/probes/sc10_field_two_tasks.wf",
+    "tests/gate/probes/r3/oracle/probes/sd1_field_assign.wf",
+    "tests/gate/probes/r3/oracle/probes/sd2_nested_struct.wf",
+    "tests/gate/probes/r3/oracle/probes/sd4_callee_runs_field.wf",
+    "tests/gate/probes/r3/oracle/probes/sd6_fork_field.wf",
+]
+finding = "O3-5"
+reason = "data race: a task or a fork branch runs a closure from a struct field; the footprint of the task does not have what the closure writes"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/r3/oracle/probes/rf1_field_rc_rebind.wf",
+    "tests/gate/probes/r3/oracle/probes/rf2_field_rc_move.wf",
+    "tests/gate/probes/r3/oracle/probes/rf3_whole_move.wf",
+    "tests/gate/probes/r3/oracle/probes/rh6_task_rc_scope_end.wf",
+    "tests/gate/probes/r3/oracle/probes/rm1_rc_move_generic.wf",
+    "tests/gate/probes/r3/oracle/probes/rm2_rc_move_let.wf",
+    "tests/gate/probes/r3/oracle/probes/rm3_rc_move_typed.wf",
+    "tests/gate/probes/r3/oracle/probes/rm5_rc_rebind.wf",
+]
+finding = "O3-6"
+reason = "use after move or data race: a task reads through an `Rc` handle; the parent moves the handle, gives it a new value, or ends its scope"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/r3/oracle/repro/O3-4_task_result_linear_leak.wf",
+    "tests/gate/probes/r3/oracle/probes/ta1_task_returns_lin.wf",
+    "tests/gate/probes/r3/oracle/probes/ta3_task_returns_lin_stmt.wf",
+    "tests/gate/probes/r3/oracle/probes/ta7_task_returns_vec_lin.wf",
+    "tests/gate/probes/r3/oracle/probes/ta8_spawn_lin_in_fn.wf",
+    "tests/gate/probes/r3/interp/probe/g16_spawn_stmt_lin.wf",
+    "tests/gate/probes/r3/interp/probe/g16_v.wf",
+]
+finding = "O3-4"
+reason = "linear leak: a spawn in statement position (or as the scope tail) drops a linear task result"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/r3/interp/repro/i3_1_spawn_let_wild_drops_result.wf"]
+finding = "I3-1"
+reason = "linear leak: `let _ = s.spawn(..)` drops a linear task result (I3-1 is a duplicate of O3-4 and F3-6; docs/ir.md 10.4 puts it under F3-6)"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/r3/fidelity/p/fk4.wf",
+    "tests/gate/probes/r3/fidelity/p/tk6.wf",
+    "tests/gate/probes/r3/interp/probe/g14_fork_result_lin.wf",
+    "tests/gate/probes/verify/s5/p/g2_generic_task_hold.wf",
+]
+finding = "F3-6"
+reason = "unwinder fault: the runtime drops a linear task result with no `on abort`: a `fork` that a failure or a timeout ends, or an abort while a `Task<T>` handle is live (g2: through a generic T, see also OL-3a)"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/r3/fidelity/p/cl1.wf",
+    "tests/gate/probes/r3/fidelity/p/cl2.wf",
+    "tests/gate/probes/r3/fidelity/p/st2.wf",
+    "tests/gate/probes/r3/fidelity/p/st3.wf",
+    "tests/gate/probes/r3/fidelity/p/st6.wf",
+    "tests/gate/probes/r3/fidelity/p/st7.wf",
+]
+finding = "F3-2"
+reason = "dangling reference: a closure or a clause keeps its reference parameter in an outer local; a callee gives a reference into its own local"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/r3/redteam/p/i2_refenum.wf",
+    "tests/gate/probes/r3/redteam/p/i4_matchref.wf",
+]
+finding = "R3RT2"
+reason = "dangling read: a `match` through a reference loses the places of a held reference"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/r3/redteam/p/q1_held.wf"]
+finding = "R3RT3"
+reason = "dangling read: a call does not give the places of the references behind a reference argument"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/r3/redteam/p/q6_held_closure.wf"]
+finding = "OL-S5a-store"
+reason = "dangling read: a closure changes a place through a reference that it gets behind its reference parameter; the checker sees the outer place only"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/verify/s5/R2d/p/c2_box_borrow_nouse.wf"]
+finding = "OL-R2d-box"
+reason = "data race: a borrow through a `Box` does not read the `Box` while a task gives it a new value"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/p/stale_mut.wf",
+    "tests/gate/probes/verify/s5/R2e_diff/p/nc7_late_mut.wf",
+]
+finding = "RR7"
+reason = "dangling read: a closure captures a function-value local that gets a mutating function after the closure is made; the call of the closure keeps the old summary"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/p/rr10_eff.wf",
+    "tests/gate/probes/verify/s5/R2e_diff/p/nc6_late_eff.wf",
+]
+finding = "RR7"
+reason = "no handler: a closure captures a function-value local that gets a function with an effect after the closure is made; the call of the closure keeps the old effects"
+stage = "G6"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/r3/interp/probe/h3_div_min.wf",
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/adv/p/c14_big.wf",
+]
+finding = "unclassified"
+reason = "interpreter: the literal 18446744073709551615 (u64 max) is a runtime error (`integer literal is too large`). The checker is correct; no finding names this defect"
+stage = "G6"

@@ -7,12 +7,21 @@
 //! verdict for the current interpreter sources, the test fails and tells you
 //! the command that makes the cache again.
 //!
+//! From stage G6 on, the test also compares the old records with the
+//! committed baseline `tests/gate/baseline-tier1.jsonl` (`weft_gate::baseline`),
+//! and each `open` program must have a ledger entry of class `open-old`. A
+//! debug build is slower than the release build that wrote the baseline, so a
+//! program can time out here. The comparison skips a timeout as unknown and the
+//! test prints its path. A program that finishes on both sides is always
+//! compared.
+//!
 //! Set `WEFT_GATE_SKIP=1` to skip the test in a quick local loop.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use weft_gate::classify::Class;
+use weft_gate::ledger::{self, EntryClass, Ledger};
 use weft_gate::manifest::{Entry, Mode};
 use weft_gate::oracle::{Cache, Engine, Row, Verdict};
 use weft_gate::report::{self, RunSettings};
@@ -59,6 +68,41 @@ fn tier1_has_no_blocker() {
         out.display()
     );
     assert!(r.rows.len() > 3000, "tier 1 has {} programs", r.rows.len());
+    let Some(base) = &r.baseline else {
+        panic!("the gate did not compare the old records with the baseline");
+    };
+    eprintln!(
+        "baseline: {} programs compared, {} differ, {} unknown (a timeout of this build)",
+        base.compared,
+        base.differences.len(),
+        base.unknown.len()
+    );
+    for path in &base.unknown {
+        eprintln!("  unknown: {path}");
+    }
+    assert!(
+        base.passes(),
+        "the old pipeline does not give the committed baseline:\n{}",
+        base.blockers(weft_gate::baseline::TIER1).join("\n")
+    );
+    let ledger = Ledger::read(&repo.join(ledger::LEDGER))
+        .unwrap_or_else(|e| panic!("the ledger cannot be read: {e}"));
+    let no_entry: Vec<&str> = r
+        .rows
+        .iter()
+        .filter(|row| row.class == Class::Open)
+        .filter(|row| {
+            row.entry
+                .and_then(|k| ledger.entries.get(k))
+                .is_none_or(|e| e.class != EntryClass::OpenOld)
+        })
+        .map(|row| row.path.as_str())
+        .collect();
+    assert!(
+        no_entry.is_empty(),
+        "these `open` programs have no ledger entry of class `open-old`:\n{}",
+        no_entry.join("\n")
+    );
     assert!(
         r.passes(),
         "the gate has {} blockers (see {}):\n{}",

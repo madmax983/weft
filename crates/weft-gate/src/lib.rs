@@ -9,11 +9,13 @@
 //! threads. [`classify`] gives the class of each program from its two
 //! records and its verdict. [`ledger`] reads the ledger that accepts groups of
 //! programs. [`report`] runs the gate, applies the rules and writes the
-//! report.
+//! report. [`baseline`] keeps the old records of a tier and compares a run
+//! with them.
 
 use std::path::PathBuf;
 
 pub mod archive;
+pub mod baseline;
 pub mod classify;
 pub mod copy;
 pub mod digest;
@@ -56,6 +58,14 @@ pub enum Error {
     /// A line of an oracle cache is not correct.
     #[error("line {line} of the oracle cache: {message}")]
     Cache {
+        /// The line number, from 1.
+        line: usize,
+        /// What is wrong.
+        message: String,
+    },
+    /// A line of a baseline file is not a record.
+    #[error("line {line} of the baseline: {message}")]
+    Baseline {
         /// The line number, from 1.
         line: usize,
         /// What is wrong.

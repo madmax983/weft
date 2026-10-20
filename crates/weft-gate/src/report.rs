@@ -9,12 +9,17 @@
 //! Before stage F1 the `ir` pipeline does not exist. Then no program is in
 //! scope (§2.6), and the `ir` record of each program is its `old` record: the
 //! snapshot runs once. Each program is `same` or `open`.
+//!
+//! From stage G6 on, the report also compares the old records with the
+//! baseline of the tier ([`Report::compare_baseline`], `crate::baseline`), and
+//! an `open` program needs a ledger entry ([`Policy`]).
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::Path;
 use std::time::Duration;
 
+use crate::baseline::{self, Comparison};
 use crate::classify::{self, Class};
 use crate::ledger::{self, Ledger};
 use crate::manifest::{self, Entry, Manifest, Options};
@@ -33,17 +38,36 @@ pub const GROUPS: [char; 6] = ['A', 'B', 'C', 'D', 'E', 'F'];
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Policy {
     /// True if an `open` program needs a ledger entry (of class `open`, `edge`
-    /// or `open-old`). False until stage G6 writes the `open-old` entries of
-    /// the old pipeline: then an `open` program with no entry is reported, but
-    /// it does not block.
+    /// or `open-old`). True from stage G6 on: stage G6 wrote the `open-old`
+    /// entries of tier 1. If false, an `open` program with no entry is
+    /// reported, but it does not block. Tier 2 uses false: its `open`
+    /// programs have no entries yet (see [`Policy::for_tier`]).
     pub open_needs_entry: bool,
 }
 
 impl Default for Policy {
-    /// The rules of this stage.
+    /// The rules of this stage for tier 1.
     fn default() -> Self {
         Self {
-            open_needs_entry: false,
+            open_needs_entry: true,
+        }
+    }
+}
+
+impl Policy {
+    /// The rules of this stage for the tier `tier`.
+    ///
+    /// Tier 1: [`Policy::default`]. Tier 2: an `open` program with no entry
+    /// does not block. Stage G6 gave entries to the `open` programs of tier 1
+    /// only; the `open` programs of tier 2 are in its baseline
+    /// (`crate::baseline::TIER2`), and the report gives their count.
+    pub fn for_tier(tier: u8) -> Self {
+        if tier == 1 {
+            Self::default()
+        } else {
+            Self {
+                open_needs_entry: false,
+            }
         }
     }
 }
@@ -103,6 +127,16 @@ pub struct Report {
     pub blockers: Vec<String>,
     /// The warnings: the stale ledger entries.
     pub warnings: Vec<String>,
+    /// The `old` record of each program, in the order of the rows.
+    pub records: Vec<Record>,
+    /// The ledger entries, for the ledger section of the report: the class,
+    /// the finding and the files of each entry.
+    pub entries: Vec<(String, String, String)>,
+    /// The comparison of the `old` records with the baseline, or `None` if
+    /// the run did not compare them.
+    pub baseline: Option<Comparison>,
+    /// The baseline file of the comparison.
+    pub baseline_file: String,
 }
 
 /// The diagnostics of a record as a short text.
@@ -137,7 +171,21 @@ impl Report {
     /// Classifies each input and applies the rules of §2.5 with `ledger` and
     /// `policy`.
     pub fn build(inputs: &[Input], ledger: &Ledger, policy: &Policy) -> Self {
-        let mut report = Self::default();
+        let mut report = Self {
+            records: inputs.iter().map(|i| i.old.clone()).collect(),
+            entries: ledger
+                .entries
+                .iter()
+                .map(|e| {
+                    (
+                        e.class.name().to_string(),
+                        e.finding.clone().unwrap_or_default(),
+                        e.files.join(", "),
+                    )
+                })
+                .collect(),
+            ..Self::default()
+        };
         let mut used = vec![false; ledger.entries.len()];
         let mut matched = vec![false; ledger.entries.len()];
         for input in inputs {
@@ -218,6 +266,35 @@ impl Report {
                 "new-fp: {new_fp} programs of the probes are `new-fp`; that is more than 0.1 % of the {accepted} probes that `old` accepts"
             ));
         }
+    }
+
+    /// Compares the `old` records of the report with `baseline`, the records
+    /// of the file `file` (`crate::baseline::compare`). Each difference is a
+    /// blocker. `None` (no file) is a blocker too.
+    pub fn compare_baseline(&mut self, baseline: Option<Vec<Record>>, file: &str) {
+        self.baseline_file = file.to_string();
+        let Some(base) = baseline else {
+            let tier = if file == baseline::TIER1 { 1 } else { 2 };
+            self.blockers.push(format!(
+                "baseline: the file `{file}` does not exist: run `cargo run -p weft-gate --release -- run --tier {tier} --write-baseline`"
+            ));
+            return;
+        };
+        let c = baseline::compare(&base, &self.records);
+        self.blockers.extend(c.blockers(file));
+        self.baseline = Some(c);
+    }
+
+    /// The number of programs that each ledger entry accepts, by the index
+    /// of the entry.
+    pub fn entry_counts(&self) -> Vec<usize> {
+        let mut out = vec![0; self.entries.len()];
+        for r in &self.rows {
+            if let Some(n) = r.entry.and_then(|k| out.get_mut(k)) {
+                *n += 1;
+            }
+        }
+        out
     }
 
     /// True if the gate has no blocker.
@@ -332,6 +409,9 @@ impl Report {
             let _ = writeln!(md, "| {s} | {scope} | {total} | {share:.1} % |");
         }
 
+        self.baseline_markdown(&mut md);
+        self.ledger_markdown(&mut md);
+
         md.push_str("\n## Blockers\n\n");
         if self.blockers.is_empty() {
             md.push_str("None.\n");
@@ -364,6 +444,64 @@ impl Report {
             );
         }
         md
+    }
+}
+
+impl Report {
+    /// The section on the baseline.
+    fn baseline_markdown(&self, md: &mut String) {
+        md.push_str("\n## Baseline\n\n");
+        let Some(c) = &self.baseline else {
+            if self.baseline_file.is_empty() {
+                md.push_str("The run did not compare the old records with a baseline.\n");
+            } else {
+                let _ = writeln!(md, "The baseline `{}` does not exist.", self.baseline_file);
+            }
+            return;
+        };
+        let _ = writeln!(
+            md,
+            "The old records against `{}`: {} programs, {} compared, {} different, {} unknown (a timeout on one side; not compared).",
+            self.baseline_file,
+            c.programs,
+            c.compared,
+            c.differences.len(),
+            c.unknown.len()
+        );
+        for d in &c.differences {
+            let _ = writeln!(md, "- different: `{}`: {}", d.path, d.what.join("; "));
+        }
+        for p in &c.unknown {
+            let _ = writeln!(md, "- unknown: `{p}`");
+        }
+    }
+
+    /// The section on the ledger: the programs that each entry accepts, and
+    /// the `open` programs with no entry.
+    fn ledger_markdown(&self, md: &mut String) {
+        md.push_str("\n## Ledger\n\n");
+        let open_free = self
+            .rows
+            .iter()
+            .filter(|r| r.class == Class::Open && r.entry.is_none())
+            .count();
+        let _ = writeln!(md, "`open` programs with no ledger entry: {open_free}.\n");
+        if self.entries.is_empty() {
+            md.push_str("The ledger has no entry.\n");
+            return;
+        }
+        md.push_str("| entry | class | finding | programs | files |\n|---:|---|---|---:|---|\n");
+        for (k, ((class, finding, files), n)) in
+            self.entries.iter().zip(self.entry_counts()).enumerate()
+        {
+            let _ = writeln!(
+                md,
+                "| {} | {class} | {} | {n} | {} |",
+                k + 1,
+                cell(finding),
+                cell(files)
+            );
+        }
     }
 }
 
@@ -499,15 +637,20 @@ pub struct RunSettings {
     pub limit: Duration,
     /// The rules of this stage.
     pub policy: Policy,
+    /// True if [`run_tier1`] compares the old records with the committed
+    /// baseline. False when the run writes a new baseline.
+    pub baseline: bool,
 }
 
 impl Default for RunSettings {
-    /// One worker for each CPU and the time limit of the snapshot.
+    /// One worker for each CPU, the time limit of the snapshot, the rules of
+    /// tier 1, and a comparison with the baseline.
     fn default() -> Self {
         Self {
             workers: std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get),
             limit: snapshot::LIMIT,
             policy: Policy::default(),
+            baseline: true,
         }
     }
 }
@@ -613,6 +756,9 @@ pub fn run(
 /// tier-1 roots, the committed oracle cache `tests/gate/oracle-ast.tsv`, and
 /// the ledger [`ledger::LEDGER`].
 ///
+/// If `settings.baseline` is true, the function also compares the old records
+/// with the committed baseline [`baseline::TIER1`].
+///
 /// # Errors
 ///
 /// Returns the errors of [`run`], and an error if the manifest, the cache or
@@ -634,5 +780,9 @@ pub fn run_tier1(repo: &Path, settings: &RunSettings) -> Result<Report, Error> {
     let ledger = Ledger::read(&repo.join(ledger::LEDGER))?;
     let mut report = run(repo, m, &cache, &interp, &ledger, settings, None)?;
     report.notes.insert(0, "tier 1".to_string());
+    if settings.baseline {
+        let base = baseline::read(&repo.join(baseline::TIER1))?;
+        report.compare_baseline(base, baseline::TIER1);
+    }
     Ok(report)
 }

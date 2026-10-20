@@ -146,9 +146,17 @@ pub struct Record {
     /// the `old` pipeline.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub problems: Vec<String>,
-    /// The time of the check in milliseconds. Different on each run.
-    #[serde(default)]
+    /// The time of the check in milliseconds. Different on each run. A time
+    /// of 0 is not written: the committed form of a baseline has no time
+    /// (`crate::baseline::committed`).
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub ms: u64,
+}
+
+/// True if `n` is 0.
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde passes a reference.
+const fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 impl Record {

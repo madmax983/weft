@@ -268,6 +268,7 @@ Each stage that changes `ir` diagnostics ends only if, on the programs in scope:
 cargo run -p weft-gate --release -- manifest --tier 1|2           # the manifest
 cargo run -p weft-gate --release -- oracle --engine ast|ir --tier 1|2
 cargo run -p weft-gate --release -- run --tier 1|2 [--groups ABCDEF] --report target/gate/report.md
+cargo run -p weft-gate --release -- run --tier 1|2 --write-baseline  # the old records into the baseline (G6)
 cargo run -p weft-gate --release -- engines --tier 1|2             # ast versus ir interpreter (from I5)
 cargo run -p weft-gate --release -- sweep --n 50000 --seed-base N  # fresh generated programs (C2)
 cargo test -p weft-gate                                             # tier 1, the claims, the ledger syntax
