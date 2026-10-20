@@ -4,6 +4,9 @@
 //! into one reproducible file and unpacks the committed archive. [`copy`] copies the
 //! hand probes into the repository. [`snapshot`] checks each program and makes
 //! one record for each program and pipeline, with the fact digest of [`digest`].
+//! [`oracle`] runs each program in the interpreter oracle and keeps the verdicts
+//! in a cache. [`pool`] runs the work of `snapshot` and `oracle` on worker
+//! threads.
 
 use std::path::PathBuf;
 
@@ -11,6 +14,8 @@ pub mod archive;
 pub mod copy;
 pub mod digest;
 pub mod manifest;
+pub mod oracle;
+pub mod pool;
 pub mod snapshot;
 
 /// An error of the gate tools.
@@ -41,6 +46,14 @@ pub enum Error {
         expected: String,
         /// The hash of the file.
         found: String,
+    },
+    /// A line of an oracle cache is not correct.
+    #[error("line {line} of the oracle cache: {message}")]
+    Cache {
+        /// The line number, from 1.
+        line: usize,
+        /// What is wrong.
+        message: String,
     },
     /// The system cannot start a worker thread.
     #[error("cannot start a worker thread: {0}")]

@@ -6,21 +6,18 @@
 //! digest is in [`Outcome::digest`]; it is too large to commit.
 //!
 //! The snapshot runs in this process, on a pool of worker threads
-//! ([`run_pool`]). Each worker has a [`weft_sema::STACK`] stack, so the deepest
-//! program that the parser accepts does not overflow it. A panic of the pipeline
-//! gives a record of kind [`Kind::Crash`]. A program that takes more than the time
-//! limit gives a record of kind [`Kind::Timeout`]: the pool stops to wait for its
-//! worker and starts a new worker. The old worker continues until its program
-//! ends, and the pool ignores its result.
+//! ([`run_pool`], [`crate::pool`]). Each worker has a [`weft_sema::STACK`] stack,
+//! so the deepest program that the parser accepts does not overflow it. A panic
+//! of the pipeline gives a record of kind [`Kind::Crash`]. A program that takes
+//! more than the time limit gives a record of kind [`Kind::Timeout`]: the pool
+//! stops to wait for its worker and starts a new worker. The old worker continues
+//! until its program ends, and the pool ignores its result.
 //!
 //! The field [`Record::ms`] is the time of the check. It is different on each
 //! run, so a comparison of two snapshots must ignore it.
 
-use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -29,15 +26,17 @@ use weft_cli::package::{Profile, SyntaxError};
 
 use crate::digest;
 use crate::manifest::Entry;
+use crate::pool::{self, Ended};
 use crate::Error;
 
 pub use crate::digest::violation_relations;
+pub use crate::pool::{install_panic_hook, WORKER_PREFIX};
 
 /// The default time limit for one program.
 pub const LIMIT: Duration = Duration::from_secs(60);
 
-/// The name of each worker thread starts with this text.
-pub const WORKER_PREFIX: &str = "weft-gate-worker";
+/// The work of a pool: the outcome of one entry.
+pub type Work = pool::Work<Outcome>;
 
 /// The pipeline that makes the facts (`--facts`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -259,129 +258,9 @@ pub fn check(base: &Path, entry: &Entry, pipeline: Pipeline) -> Outcome {
     }
 }
 
-std::thread_local! {
-    /// The text of the last panic on this worker thread
-    /// ([`install_panic_hook`]).
-    static LAST_PANIC: RefCell<Option<String>> = const { RefCell::new(None) };
-}
-
-/// Installs a panic hook for the `weft-gate` command.
-///
-/// On a worker thread, the hook keeps the text of the panic (the message and
-/// the location) for the crash record, and writes nothing. On another thread,
-/// the earlier hook runs.
-pub fn install_panic_hook() {
-    let earlier = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        let worker = std::thread::current()
-            .name()
-            .is_some_and(|n| n.starts_with(WORKER_PREFIX));
-        if worker {
-            LAST_PANIC.with(|p| *p.borrow_mut() = Some(info.to_string()));
-        } else {
-            earlier(info);
-        }
-    }));
-}
-
-/// The text of a panic payload.
-fn payload_text(payload: &(dyn std::any::Any + Send)) -> String {
-    payload
-        .downcast_ref::<&str>()
-        .map(ToString::to_string)
-        .or_else(|| payload.downcast_ref::<String>().cloned())
-        .unwrap_or_else(|| "a panic with no text".to_string())
-}
-
-/// The work of a pool: the outcome of one entry.
-pub type Work = Arc<dyn Fn(&Entry) -> Outcome + Send + Sync>;
-
-/// A message from a worker to the pool.
-enum Msg {
-    /// The worker starts entry `index`.
-    Start {
-        worker: usize,
-        index: usize,
-        at: Instant,
-    },
-    /// The worker ends entry `index`.
-    Done {
-        worker: usize,
-        index: usize,
-        outcome: Box<Outcome>,
-    },
-}
-
-/// What a worker shares with the pool.
-struct Shared {
-    entries: Arc<Vec<Entry>>,
-    next: Arc<AtomicUsize>,
-    work: Work,
-    pipeline: Pipeline,
-    tx: Sender<Msg>,
-}
-
-/// Starts worker `id`. The worker takes the next entry until no entry is left
-/// or until the pool sets its stop flag.
-fn spawn_worker(id: usize, shared: &Shared) -> Result<Arc<AtomicBool>, Error> {
-    let stop = Arc::new(AtomicBool::new(false));
-    let flag = Arc::clone(&stop);
-    let entries = Arc::clone(&shared.entries);
-    let next = Arc::clone(&shared.next);
-    let work = Arc::clone(&shared.work);
-    let pipeline = shared.pipeline;
-    let tx = shared.tx.clone();
-    std::thread::Builder::new()
-        .name(format!("{WORKER_PREFIX}-{id}"))
-        .stack_size(weft_sema::STACK)
-        .spawn(move || {
-            // The thread has a large stack: sema runs on it with no new thread.
-            weft_sema::on_current_stack(|| {
-                while !flag.load(Ordering::SeqCst) {
-                    let index = next.fetch_add(1, Ordering::SeqCst);
-                    let Some(entry) = entries.get(index) else {
-                        break;
-                    };
-                    let at = Instant::now();
-                    if tx
-                        .send(Msg::Start {
-                            worker: id,
-                            index,
-                            at,
-                        })
-                        .is_err()
-                    {
-                        break;
-                    }
-                    LAST_PANIC.with(|p| p.borrow_mut().take());
-                    let run =
-                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(entry)));
-                    let outcome = run.unwrap_or_else(|payload| {
-                        let text = LAST_PANIC
-                            .with(|p| p.borrow_mut().take())
-                            .unwrap_or_else(|| payload_text(payload.as_ref()));
-                        let mut o = Outcome::empty(entry, pipeline, Kind::Crash, text);
-                        o.record.ms = u64::try_from(at.elapsed().as_millis()).unwrap_or(u64::MAX);
-                        o
-                    });
-                    let done = Msg::Done {
-                        worker: id,
-                        index,
-                        outcome: Box::new(outcome),
-                    };
-                    if tx.send(done).is_err() {
-                        break;
-                    }
-                }
-            });
-        })
-        .map_err(Error::Thread)?;
-    Ok(stop)
-}
-
-/// Runs `work` on each entry, on `settings.workers` worker threads, and calls
-/// `emit` once for each entry with its index and its outcome, in the order in
-/// which the entries end.
+/// Runs `work` on each entry, on `settings.workers` worker threads
+/// ([`pool::run`]), and calls `emit` once for each entry with its index and its
+/// outcome, in the order in which the entries end.
 ///
 /// A panic of `work` gives an outcome of kind [`Kind::Crash`]. An entry that
 /// takes more than `settings.limit` gives an outcome of kind [`Kind::Timeout`].
@@ -395,93 +274,25 @@ pub fn run_pool(
     work: Work,
     mut emit: impl FnMut(usize, Outcome),
 ) -> Result<(), Error> {
-    let n = entries.len();
-    if n == 0 {
-        return Ok(());
-    }
-    let (tx, rx) = mpsc::channel();
-    let shared = Shared {
-        entries: Arc::new(entries),
-        next: Arc::new(AtomicUsize::new(0)),
-        work,
-        pipeline: settings.pipeline,
-        tx,
-    };
-    let mut stops = Vec::new();
-    for id in 0..settings.workers.clamp(1, n) {
-        stops.push(spawn_worker(id, &shared)?);
-    }
-    // The entry and the start time of each busy worker.
-    let mut busy: BTreeMap<usize, (usize, Instant)> = BTreeMap::new();
-    let mut done = vec![false; n];
-    let mut left = n;
-    while left > 0 {
-        let now = Instant::now();
-        let wait = busy
-            .values()
-            .map(|&(_, at)| (at + settings.limit).saturating_duration_since(now))
-            .min();
-        let msg = match wait {
-            Some(w) => rx.recv_timeout(w),
-            None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
+    let pipeline = settings.pipeline;
+    let limit = settings.limit;
+    pool::run(entries, settings.workers, limit, work, |i, entry, ended| {
+        let outcome = match ended {
+            Ended::Done(o) => o,
+            Ended::Panic { text, ms } => {
+                let mut o = Outcome::empty(entry, pipeline, Kind::Crash, text);
+                o.record.ms = ms;
+                o
+            }
+            Ended::Timeout => {
+                let text = format!("the check takes more than {} ms", limit.as_millis());
+                let mut o = Outcome::empty(entry, pipeline, Kind::Timeout, text);
+                o.record.ms = u64::try_from(limit.as_millis()).unwrap_or(0);
+                o
+            }
         };
-        match msg {
-            Ok(Msg::Start { worker, index, at }) => {
-                busy.insert(worker, (index, at));
-            }
-            Ok(Msg::Done {
-                worker,
-                index,
-                outcome,
-            }) => {
-                if busy.get(&worker).is_some_and(|&(i, _)| i == index) {
-                    busy.remove(&worker);
-                }
-                if let Some(d) = done.get_mut(index).filter(|d| !**d) {
-                    *d = true;
-                    left -= 1;
-                    emit(index, *outcome);
-                }
-            }
-            Err(RecvTimeoutError::Timeout) => {
-                let now = Instant::now();
-                let late: Vec<usize> = busy
-                    .iter()
-                    .filter(|(_, &(_, at))| now.duration_since(at) >= settings.limit)
-                    .map(|(&w, _)| w)
-                    .collect();
-                for worker in late {
-                    let Some((index, _)) = busy.remove(&worker) else {
-                        continue;
-                    };
-                    if let Some(stop) = stops.get(worker) {
-                        stop.store(true, Ordering::SeqCst);
-                    }
-                    if let (Some(d), Some(entry)) = (done.get_mut(index), shared.entries.get(index))
-                    {
-                        if !*d {
-                            *d = true;
-                            left -= 1;
-                            let text = format!(
-                                "the check takes more than {} ms",
-                                settings.limit.as_millis()
-                            );
-                            let mut o =
-                                Outcome::empty(entry, settings.pipeline, Kind::Timeout, text);
-                            o.record.ms = u64::try_from(settings.limit.as_millis()).unwrap_or(0);
-                            emit(index, o);
-                        }
-                    }
-                    if shared.next.load(Ordering::SeqCst) < n {
-                        let id = stops.len();
-                        stops.push(spawn_worker(id, &shared)?);
-                    }
-                }
-            }
-            Err(RecvTimeoutError::Disconnected) => break,
-        }
-    }
-    Ok(())
+        emit(i, outcome);
+    })
 }
 
 /// Checks each entry below `base` with [`check`] on a pool ([`run_pool`]).

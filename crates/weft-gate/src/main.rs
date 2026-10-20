@@ -7,6 +7,11 @@
 //! weft-gate copy-probes [--repo DIR] [--probes DIR]
 //! weft-gate snapshot --tier 1|2 [--facts old] [--out FILE.jsonl] [--full-digest DIR]
 //!                    [--workers N] [--limit SECONDS] [--repo DIR] [--probes DIR]
+//! weft-gate oracle --tier 1|2 [--engine ast] [--out FILE] [--workers N]
+//!                  [--limit SECONDS] [--max-steps N] [--max-memory MB]
+//!                  [--repo DIR] [--probes DIR]
+//! weft-gate oracle-run --base DIR --path PATH [--from K] [--limit-ms MS]
+//!                      [--max-steps N] [--max-memory MB]
 //! ```
 //!
 //! `--repo` is the repository (default: the workspace of this crate). `--probes` is
@@ -25,14 +30,34 @@
 //! the canonical fact digest of each program to `DIR/<hash>.<pipeline>.digest`.
 //! The default number of workers is the number of CPUs, and the default time limit
 //! is 60 s for each program.
+//!
+//! `oracle` gives the oracle verdict of each program of the manifest (plan §2.4,
+//! `weft_gate::oracle`). A row of the cache with the same key skips the run. The
+//! cache of tier 1 is `tests/gate/oracle-<engine>.tsv`. The cache of tier 2 is the
+//! same name in `WEFT_GATE_CACHE` (default `target/gate/`); tier 2 also takes
+//! the rows of the tier-1 cache. The command adds each new row to the end of the
+//! file when its run ends, so a stopped command continues at the next start. At
+//! the end it writes the file again with only the rows of the manifest. The time
+//! limit (default 10 s) and the step limit (default 50 000 000) are for each of
+//! the six runs of a program. Each program runs in child processes
+//! (`oracle-run`): the parent stops a child at the time limit, and a child
+//! stops itself when it uses more than the memory limit (default 2048 MB).
+//!
+//! `oracle-run` is the child process of `oracle`: it runs the program `PATH`
+//! below `DIR` in the configurations from index `K` and writes one line for
+//! each run (`weft_gate::oracle::Step`).
 
 use std::collections::BTreeMap;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use weft_gate::manifest::{self, Group, Manifest, Options, Root};
+use weft_gate::oracle::{self, Cache, Engine, Step, Verdict};
 use weft_gate::snapshot::{self, Kind, Pipeline, Settings};
 use weft_gate::{archive, copy};
 
@@ -49,7 +74,12 @@ const USAGE: &str = "usage:
   weft-gate unpack --archive FILE --out DIR [--repo DIR]
   weft-gate copy-probes [--repo DIR] [--probes DIR]
   weft-gate snapshot --tier 1|2 [--facts old] [--out FILE.jsonl] [--full-digest DIR]
-                     [--workers N] [--limit SECONDS] [--repo DIR] [--probes DIR]";
+                     [--workers N] [--limit SECONDS] [--repo DIR] [--probes DIR]
+  weft-gate oracle --tier 1|2 [--engine ast] [--out FILE] [--workers N]
+                   [--limit SECONDS] [--max-steps N] [--max-memory MB]
+                   [--repo DIR] [--probes DIR]
+  weft-gate oracle-run --base DIR --path PATH [--from K] [--limit-ms MS]
+                       [--max-steps N] [--max-memory MB]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -73,6 +103,13 @@ struct Flags {
     full_digest: Option<PathBuf>,
     workers: Option<usize>,
     limit: Option<u64>,
+    engine: Option<String>,
+    max_steps: Option<u64>,
+    max_memory: Option<u64>,
+    base: Option<PathBuf>,
+    path: Option<String>,
+    from: Option<usize>,
+    limit_ms: Option<u64>,
 }
 
 impl Flags {
@@ -98,6 +135,13 @@ fn parse_flags(args: &[String]) -> Result<Flags> {
     let mut full_digest = None;
     let mut workers = None;
     let mut limit = None;
+    let mut engine = None;
+    let mut max_steps = None;
+    let mut max_memory = None;
+    let mut base = None;
+    let mut path = None;
+    let mut from = None;
+    let mut limit_ms = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut value = || it.next().with_context(|| format!("{a} needs a value"));
@@ -129,6 +173,19 @@ fn parse_flags(args: &[String]) -> Result<Flags> {
                     _ => bail!("--limit needs a number of seconds larger than 0, found `{v}`"),
                 }
             }
+            "--engine" => engine = Some(value()?.clone()),
+            "--max-steps" => max_steps = Some(positive(a, value()?)?),
+            "--max-memory" => max_memory = Some(positive(a, value()?)?),
+            "--limit-ms" => limit_ms = Some(positive(a, value()?)?),
+            "--base" => base = Some(PathBuf::from(value()?)),
+            "--path" => path = Some(value()?.clone()),
+            "--from" => {
+                let v = value()?;
+                match v.parse::<usize>() {
+                    Ok(n) if n < oracle::CONFIGS.len() => from = Some(n),
+                    _ => bail!("--from needs an index of a configuration, found `{v}`"),
+                }
+            }
             _ => bail!("unknown flag `{a}`\n{USAGE}"),
         }
     }
@@ -146,7 +203,22 @@ fn parse_flags(args: &[String]) -> Result<Flags> {
         full_digest,
         workers,
         limit,
+        engine,
+        max_steps,
+        max_memory,
+        base,
+        path,
+        from,
+        limit_ms,
     })
+}
+
+/// The value of the flag `flag` as a number larger than 0.
+fn positive(flag: &str, v: &str) -> Result<u64> {
+    match v.parse::<u64>() {
+        Ok(n) if n > 0 => Ok(n),
+        _ => bail!("{flag} needs a number larger than 0, found `{v}`"),
+    }
 }
 
 fn run(args: &[String]) -> Result<()> {
@@ -223,6 +295,8 @@ fn run(args: &[String]) -> Result<()> {
             Ok(())
         }
         "snapshot" => run_snapshot(&flags),
+        "oracle" => run_oracle(&flags),
+        "oracle-run" => run_oracle_child(&flags),
         _ => bail!("unknown command `{cmd}`\n{USAGE}"),
     }
 }
@@ -312,6 +386,211 @@ fn run_snapshot(flags: &Flags) -> Result<()> {
         start.elapsed().as_secs_f64(),
         counts.join(", ")
     );
+    Ok(())
+}
+
+/// Reads the oracle cache `file`. A file that does not exist gives an empty cache.
+fn read_cache(file: &Path) -> Result<Cache> {
+    match std::fs::read_to_string(file) {
+        Ok(text) => Cache::from_tsv(&text).with_context(|| format!("read {}", file.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Cache::default()),
+        Err(e) => Err(e).with_context(|| format!("read {}", file.display())),
+    }
+}
+
+/// Opens the oracle cache `file` to add rows at its end. Writes the header
+/// first if the file does not exist.
+fn open_journal(file: &Path) -> Result<std::fs::File> {
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("make {}", dir.display()))?;
+    }
+    let new = !file.exists();
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(file)
+        .with_context(|| format!("open {}", file.display()))?;
+    if new {
+        writeln!(f, "{}", oracle::HEADER).with_context(|| format!("write {}", file.display()))?;
+    }
+    Ok(f)
+}
+
+/// `oracle`: gives the oracle verdict of each program of the manifest of the
+/// tier, from the cache or from a run, and writes the cache.
+fn run_oracle(flags: &Flags) -> Result<()> {
+    let tier = flags.tier.context("--tier is necessary")?;
+    let name = flags.engine.as_deref().unwrap_or("ast");
+    let engine = match Engine::parse(name) {
+        Some(e) => e,
+        None if name == "ir" => bail!("the `ir` engine does not exist before stage I1"),
+        None => bail!("unknown engine `{name}`: use --engine ast"),
+    };
+    let (m, base) = if tier == 1 {
+        (tier1(flags)?, flags.repo.clone())
+    } else {
+        let probes = flags.probes()?;
+        (tier2(&probes)?, probes)
+    };
+    let tier1_file = flags
+        .repo
+        .join("tests/gate")
+        .join(oracle::cache_name(engine));
+    let out = flags.out.clone().unwrap_or_else(|| {
+        if tier == 1 {
+            tier1_file.clone()
+        } else {
+            let dir = std::env::var_os("WEFT_GATE_CACHE")
+                .map_or_else(|| flags.repo.join("target/gate"), PathBuf::from);
+            dir.join(oracle::cache_name(engine))
+        }
+    });
+    let interp = oracle::interp_hash(&flags.repo)?;
+    let mut cache = read_cache(&out)?;
+    if tier == 2 {
+        cache.extend(read_cache(&tier1_file)?);
+    }
+    let settings = oracle::Settings {
+        workers: flags.workers.unwrap_or_else(|| {
+            std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+        }),
+        limit: flags.limit.map_or(oracle::LIMIT, Duration::from_secs),
+        max_steps: Some(flags.max_steps.unwrap_or(oracle::MAX_STEPS)),
+        max_memory_mb: flags.max_memory.unwrap_or(oracle::MAX_MEMORY_MB),
+        exe: Some(std::env::current_exe().context("find the weft-gate program")?),
+    };
+    let mut journal = open_journal(&out)?;
+    snapshot::install_panic_hook();
+    let total = m.entries.len();
+    println!(
+        "oracle of {total} programs with the `{}` engine on {} workers (interpreter {interp})",
+        engine.name(),
+        settings.workers
+    );
+    let start = Instant::now();
+    let mut rows = Cache::default();
+    let mut failed: Option<String> = None;
+    let mut ended = 0;
+    let summary = oracle::oracle(
+        &base,
+        m.entries,
+        &cache,
+        engine,
+        &interp,
+        &settings,
+        |row, hit| {
+            if !hit && failed.is_none() {
+                let line = row.to_line();
+                if let Err(e) = writeln!(journal, "{line}").and_then(|()| journal.flush()) {
+                    failed = Some(format!("write {}: {e}", out.display()));
+                }
+            }
+            rows.insert(row);
+            ended += 1;
+            if ended % 1000 == 0 {
+                println!(
+                    "{ended} of {total} programs in {:.1} s",
+                    start.elapsed().as_secs_f64()
+                );
+            }
+        },
+    )?;
+    if let Some(e) = failed {
+        bail!("{e}");
+    }
+    write_text(&out, &rows.to_tsv())?;
+    let counts: Vec<String> = Verdict::ALL
+        .iter()
+        .map(|v| {
+            format!(
+                "{} {}",
+                summary.counts.get(v).copied().unwrap_or(0),
+                v.name()
+            )
+        })
+        .collect();
+    println!(
+        "wrote {} rows to {} in {:.1} s ({} from the cache, {} runs): {}",
+        rows.len(),
+        out.display(),
+        start.elapsed().as_secs_f64(),
+        summary.hits,
+        summary.runs,
+        counts.join(", ")
+    );
+    Ok(())
+}
+
+/// Writes one step of `oracle-run` and flushes the output.
+fn write_step(step: &Step) {
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "{}", step.to_line());
+    let _ = out.flush();
+}
+
+/// `oracle-run`: the child process of `oracle`. Runs one program in the
+/// configurations from `--from` and writes one step for each run.
+///
+/// A thread stops the process with the exit code [`oracle::MEMORY_EXIT`] when
+/// it uses more than `--max-memory` MB, after it writes a step
+/// [`Verdict::Timeout`] for the run. It also stops the process after a time
+/// that is longer than the limits of all its runs, so a child does not stay
+/// after its parent stops.
+fn run_oracle_child(flags: &Flags) -> Result<()> {
+    let base = flags.base.clone().context("--base is necessary")?;
+    let path = flags.path.clone().context("--path is necessary")?;
+    let from = flags.from.unwrap_or(0);
+    let limit = Duration::from_millis(flags.limit_ms.unwrap_or(10_000));
+    let max_memory = flags.max_memory.unwrap_or(oracle::MAX_MEMORY_MB);
+    let current = Arc::new(AtomicUsize::new(from));
+    let watched = Arc::clone(&current);
+    let runs = u32::try_from(oracle::CONFIGS.len() + 1).unwrap_or(u32::MAX);
+    let deadline = limit.saturating_mul(runs) + Duration::from_secs(60);
+    let start = Instant::now();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(20));
+        if oracle::resident_bytes().is_some_and(|b| b > max_memory.saturating_mul(1 << 20)) {
+            let config = watched.load(Ordering::SeqCst);
+            write_step(&Step::Run {
+                config,
+                verdict: Verdict::Timeout,
+                detail: format!(
+                    "{}: the run uses more than {max_memory} MB of memory",
+                    oracle::config_text(config)
+                ),
+            });
+            std::process::exit(oracle::MEMORY_EXIT);
+        }
+        if start.elapsed() > deadline {
+            std::process::exit(oracle::MEMORY_EXIT + 1);
+        }
+    });
+    let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        oracle::run_configs(
+            &base,
+            &path,
+            from,
+            flags.max_steps,
+            |k| current.store(k, Ordering::SeqCst),
+            |step| write_step(&step),
+        );
+    }));
+    if let Err(payload) = run {
+        let text = payload
+            .downcast_ref::<&str>()
+            .map(ToString::to_string)
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "a panic with no text".to_string());
+        let config = current.load(Ordering::SeqCst);
+        write_step(&Step::Run {
+            config,
+            verdict: Verdict::Fault,
+            detail: format!(
+                "{}: the interpreter panicked: {text}",
+                oracle::config_text(config)
+            ),
+        });
+    }
     Ok(())
 }
 

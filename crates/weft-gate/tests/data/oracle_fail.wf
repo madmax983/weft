@@ -1,0 +1,4 @@
+// The program fails through `fail`.
+fn main() / fail {
+    fail("stop here")
+}

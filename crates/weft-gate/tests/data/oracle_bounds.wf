@@ -1,0 +1,6 @@
+// An index out of bounds stops the run. It is not a soundness signal.
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    print(v[3])
+}

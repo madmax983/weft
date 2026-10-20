@@ -1,0 +1,10 @@
+// The oracle finds a dangling read: `push` moves the buffer of `v`.
+struct Cell { n: i32 }
+
+fn main() {
+    let v = Vec.new()
+    v.push(Cell { n: 1 })
+    let first = &v[0]
+    v.push(Cell { n: 2 })
+    print(first.n)
+}
