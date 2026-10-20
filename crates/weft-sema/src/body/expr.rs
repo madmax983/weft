@@ -1385,60 +1385,7 @@ impl Lower<'_> {
         let entry = self.start(span, "closure entry");
         let first_node = u32::try_from(entry.index()).unwrap_or(u32::MAX);
         self.open_stmt();
-        let mut ptys = Vec::new();
-        let mut param_roots = std::collections::BTreeMap::new();
-        for (i, p) in params.iter().enumerate() {
-            if params[..i].iter().any(|q| q.name.name == p.name.name) {
-                self.err(
-                    Code::W0107,
-                    format!("parameter `{}` is defined twice", p.name.name),
-                    p.name.span,
-                );
-            }
-            let ty = match (&p.ty, expected.and_then(|f| f.params.get(i))) {
-                (Some(t), _) => self.local_ty(t),
-                (None, Some(t)) => t.clone(),
-                (None, None) => self.inf.fresh(),
-            };
-            ptys.push(ty.clone());
-            let l = self.new_local(&p.name.name, VarKind::Param, p.span, ty.clone(), false);
-            // A parameter that holds references points into what the call gives.
-            let refs = if self.holds_refs(&ty) {
-                let r = self.root(&p.name.name, RootKind::Arg);
-                param_roots.insert(r, i);
-                let rid = self.facts.place(r).root;
-                self.param_of_root.insert(rid, (si, i));
-                vec![r]
-            } else {
-                Vec::new()
-            };
-            let fn_param = matches!(self.inf.shallow(&ty), Ty::Fn(_)).then_some((si, i));
-            // A parameter that holds a function value in a field or an element holds
-            // what each call gives: the body cannot follow it.
-            let mark = !matches!(self.inf.shallow(&ty), Ty::Fn(_)) && self.has_fn(&ty);
-            self.assign_local(
-                l,
-                &Val {
-                    ty,
-                    refs,
-                    fn_param,
-                    ..Val::default()
-                },
-                entry,
-            );
-            if mark {
-                self.locals.get_mut(l).caps.insert(super::caps::UNKNOWN_FN);
-                self.locals
-                    .get_mut(l)
-                    .sticky
-                    .insert(super::caps::UNKNOWN_FN);
-            }
-            // A parameter whose type is not known yet can be a function value
-            // that the body runs, for example as a task (`tasks`, ADR 0006).
-            if matches!(self.inf.shallow(&self.locals[l].ty), Ty::Var(_)) {
-                self.locals.get_mut(l).fn_param = Some((si, i));
-            }
-        }
+        let (ptys, param_roots) = self.bind_closure_params(params, expected, si, entry);
         // The body returns its value: W0204 reports a value into its own locals.
         let v = match &body.kind {
             ExprKind::Block(b) => self.block_with(b, false),
@@ -1521,10 +1468,6 @@ impl Lower<'_> {
             });
             self.facts.scope_end.push((var, e));
         }
-        // Captures of an outer closure are captures of this one too.
-        if let Some(outer) = self.sums.last_mut() {
-            let _ = outer;
-        }
         let id = self.closures.len();
         sum.members.insert(id);
         sum.nodes = (
@@ -1536,6 +1479,87 @@ impl Lower<'_> {
         self.cur = saved;
         self.restore_pending(saved_pending);
         self.stmt_temps = saved_stmts;
+        self.closure_value(id, &sum, (ptys, ret_ty), span)
+    }
+
+    /// Binds the parameters of a closure at node `entry`. `expected` is the
+    /// type that the context gives, and `si` the index of the summary of the
+    /// closure. Returns the parameter types, and the root of each parameter that
+    /// holds references, with the index of the parameter.
+    fn bind_closure_params(
+        &mut self,
+        params: &[ast::Param],
+        expected: Option<&FnTy>,
+        si: usize,
+        entry: NodeId,
+    ) -> (Vec<Ty>, BTreeMap<PlaceId, usize>) {
+        let mut ptys = Vec::new();
+        let mut param_roots = BTreeMap::new();
+        for (i, p) in params.iter().enumerate() {
+            if params[..i].iter().any(|q| q.name.name == p.name.name) {
+                self.err(
+                    Code::W0107,
+                    format!("parameter `{}` is defined twice", p.name.name),
+                    p.name.span,
+                );
+            }
+            let ty = match (&p.ty, expected.and_then(|f| f.params.get(i))) {
+                (Some(t), _) => self.local_ty(t),
+                (None, Some(t)) => t.clone(),
+                (None, None) => self.inf.fresh(),
+            };
+            ptys.push(ty.clone());
+            let l = self.new_local(&p.name.name, VarKind::Param, p.span, ty.clone(), false);
+            // A parameter that holds references points into what the call gives.
+            let refs = if self.holds_refs(&ty) {
+                let r = self.root(&p.name.name, RootKind::Arg);
+                param_roots.insert(r, i);
+                let rid = self.facts.place(r).root;
+                self.param_of_root.insert(rid, (si, i));
+                vec![r]
+            } else {
+                Vec::new()
+            };
+            let fn_param = matches!(self.inf.shallow(&ty), Ty::Fn(_)).then_some((si, i));
+            // A parameter that holds a function value in a field or an element holds
+            // what each call gives: the body cannot follow it.
+            let mark = !matches!(self.inf.shallow(&ty), Ty::Fn(_)) && self.has_fn(&ty);
+            self.assign_local(
+                l,
+                &Val {
+                    ty,
+                    refs,
+                    fn_param,
+                    ..Val::default()
+                },
+                entry,
+            );
+            if mark {
+                self.locals.get_mut(l).caps.insert(super::caps::UNKNOWN_FN);
+                self.locals
+                    .get_mut(l)
+                    .sticky
+                    .insert(super::caps::UNKNOWN_FN);
+            }
+            // A parameter whose type is not known yet can be a function value
+            // that the body runs, for example as a task (`tasks`, ADR 0006).
+            if matches!(self.inf.shallow(&self.locals[l].ty), Ty::Var(_)) {
+                self.locals.get_mut(l).fn_param = Some((si, i));
+            }
+        }
+        (ptys, param_roots)
+    }
+
+    /// The value of the closure with index `id` and summary `sum`, of type
+    /// `(params, ret)`, at the end of its literal: what it captures, the moves of
+    /// the captures that it takes by value, and its variable.
+    fn closure_value(
+        &mut self,
+        id: usize,
+        sum: &Summary,
+        (ptys, ret_ty): (Vec<Ty>, Ty),
+        span: Span,
+    ) -> Val {
         // The closure refers to the variables that it captures, as in the
         // interpreter. A captured copy value stays readable after its scope
         // ends; another value goes away with its variable. The scope

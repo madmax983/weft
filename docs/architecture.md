@@ -137,8 +137,9 @@ result. A call of a function value has parts too (`call_value`): the arguments
 the result (`value_call_result`). A `handle` has its effect (`handled_effect`), its
 handled body, each clause (`lower_clause`, with `bind_clause_params` and
 `bind_clause_cont`), the locals of the clauses (`end_clause_locals`) and its value
-(`join_clause_vals`). `crates/weft-check/src/diagnose.rs` has one function for each
-rule.
+(`join_clause_vals`). A closure literal binds its parameters (`bind_closure_params`),
+lowers its body, and makes its value from what it captures (`closure_value`).
+`crates/weft-check/src/diagnose.rs` has one function for each rule.
 
 The capability set of a value holds `caps::Held` elements: the capability of a local
 handler (`Held::Cap`) or a mark, such as `Held::Nonportable`, `Held::NotMany` or
