@@ -12,6 +12,8 @@
 //!                  [--repo DIR] [--probes DIR]
 //! weft-gate oracle-run --base DIR --path PATH [--from K] [--limit-ms MS]
 //!                      [--max-steps N] [--max-memory MB]
+//! weft-gate run --tier 1|2 [--groups ABCDEF] [--report FILE] [--workers N]
+//!               [--limit SECONDS] [--repo DIR] [--probes DIR]
 //! ```
 //!
 //! `--repo` is the repository (default: the workspace of this crate). `--probes` is
@@ -46,6 +48,13 @@
 //! `oracle-run` is the child process of `oracle`: it runs the program `PATH`
 //! below `DIR` in the configurations from index `K` and writes one line for
 //! each run (`weft_gate::oracle::Step`).
+//!
+//! `run` is the gate (plan §2.5): it checks each program of the tier, reads
+//! the oracle verdicts from the cache, classifies each program with the
+//! ledger `tests/gate/ledger.toml`, and writes the report (default
+//! `target/gate/report.md`). The exit code is 1 if the gate has a blocker. A
+//! cache with no verdict for a program (a stale key) is an error: run
+//! `oracle` first. Before stage F1 no group can be on (`--groups`).
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
@@ -56,10 +65,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
+use weft_gate::ledger::{self, Ledger};
 use weft_gate::manifest::{self, Group, Manifest, Options, Root};
 use weft_gate::oracle::{self, Cache, Engine, Step, Verdict};
 use weft_gate::snapshot::{self, Kind, Pipeline, Settings};
-use weft_gate::{archive, copy};
+use weft_gate::{archive, copy, report};
 
 /// The tier-1 manifest, relative to the repository.
 const TIER1_OUT: &str = "tests/gate/manifest-tier1.tsv";
@@ -79,12 +89,15 @@ const USAGE: &str = "usage:
                    [--limit SECONDS] [--max-steps N] [--max-memory MB]
                    [--repo DIR] [--probes DIR]
   weft-gate oracle-run --base DIR --path PATH [--from K] [--limit-ms MS]
-                       [--max-steps N] [--max-memory MB]";
+                       [--max-steps N] [--max-memory MB]
+  weft-gate run --tier 1|2 [--groups ABCDEF] [--report FILE] [--workers N]
+                [--limit SECONDS] [--repo DIR] [--probes DIR]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match run(&args) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(true) => ExitCode::SUCCESS,
+        Ok(false) => ExitCode::from(1),
         Err(e) => {
             eprintln!("error: {e:#}");
             ExitCode::from(2)
@@ -110,6 +123,8 @@ struct Flags {
     path: Option<String>,
     from: Option<usize>,
     limit_ms: Option<u64>,
+    groups: Option<String>,
+    report: Option<PathBuf>,
 }
 
 impl Flags {
@@ -142,6 +157,8 @@ fn parse_flags(args: &[String]) -> Result<Flags> {
     let mut path = None;
     let mut from = None;
     let mut limit_ms = None;
+    let mut groups = None;
+    let mut report = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut value = || it.next().with_context(|| format!("{a} needs a value"));
@@ -179,6 +196,8 @@ fn parse_flags(args: &[String]) -> Result<Flags> {
             "--limit-ms" => limit_ms = Some(positive(a, value()?)?),
             "--base" => base = Some(PathBuf::from(value()?)),
             "--path" => path = Some(value()?.clone()),
+            "--groups" => groups = Some(value()?.clone()),
+            "--report" => report = Some(PathBuf::from(value()?)),
             "--from" => {
                 let v = value()?;
                 match v.parse::<usize>() {
@@ -210,6 +229,8 @@ fn parse_flags(args: &[String]) -> Result<Flags> {
         path,
         from,
         limit_ms,
+        groups,
+        report,
     })
 }
 
@@ -221,12 +242,21 @@ fn positive(flag: &str, v: &str) -> Result<u64> {
     }
 }
 
-fn run(args: &[String]) -> Result<()> {
+/// Runs the command. Returns false if the gate has a blocker.
+fn run(args: &[String]) -> Result<bool> {
     let Some((cmd, rest)) = args.split_first() else {
         bail!("{USAGE}");
     };
     let flags = parse_flags(rest)?;
-    match cmd.as_str() {
+    if cmd == "run" {
+        return run_gate(&flags);
+    }
+    run_tool(cmd, flags).map(|()| true)
+}
+
+/// Runs a command that is not `run`.
+fn run_tool(cmd: &str, flags: Flags) -> Result<()> {
+    match cmd {
         "manifest" => {
             let tier = flags.tier.context("--tier is necessary")?;
             let (m, out) = if tier == 1 {
@@ -299,6 +329,80 @@ fn run(args: &[String]) -> Result<()> {
         "oracle-run" => run_oracle_child(&flags),
         _ => bail!("unknown command `{cmd}`\n{USAGE}"),
     }
+}
+
+/// `run`: the gate on the programs of the tier. Returns false if the gate has
+/// a blocker.
+fn run_gate(flags: &Flags) -> Result<bool> {
+    let tier = flags.tier.context("--tier is necessary")?;
+    if let Some(g) = flags.groups.as_deref().filter(|g| !g.is_empty()) {
+        bail!(
+            "the `ir` pipeline does not exist before stage F1: no group can be on (`--groups {g}`)"
+        );
+    }
+    let settings = report::RunSettings {
+        workers: flags.workers.unwrap_or_else(|| {
+            std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+        }),
+        limit: flags.limit.map_or(snapshot::LIMIT, Duration::from_secs),
+        policy: report::Policy::default(),
+    };
+    let out = flags
+        .report
+        .clone()
+        .unwrap_or_else(|| flags.repo.join("target/gate/report.md"));
+    let start = Instant::now();
+    let r = if tier == 1 {
+        println!("the gate on tier 1 with {} workers", settings.workers);
+        report::run_tier1(&flags.repo, &settings)?
+    } else {
+        let probes = flags.probes()?;
+        let m = tier2(&probes)?;
+        let name = oracle::cache_name(Engine::Ast);
+        let dir = std::env::var_os("WEFT_GATE_CACHE")
+            .map_or_else(|| flags.repo.join("target/gate"), PathBuf::from);
+        let mut cache = read_cache(&dir.join(&name))?;
+        cache.extend(read_cache(&flags.repo.join("tests/gate").join(&name))?);
+        let interp = oracle::interp_hash(&flags.repo)?;
+        let ledger = Ledger::read(&flags.repo.join(ledger::LEDGER))?;
+        println!("the gate on tier 2 with {} workers", settings.workers);
+        let mut r = report::run(
+            &probes,
+            m,
+            &cache,
+            &interp,
+            &ledger,
+            &settings,
+            Some(copy::PROBES_DIR),
+        )?;
+        r.notes.insert(0, format!("tier 2 ({})", probes.display()));
+        r
+    };
+    write_text(&out, &r.to_markdown())?;
+    let counts: Vec<String> = r
+        .class_counts()
+        .iter()
+        .map(|(c, n)| format!("{n} {}", c.name()))
+        .collect();
+    println!(
+        "{} programs in {:.1} s: {}",
+        r.rows.len(),
+        start.elapsed().as_secs_f64(),
+        counts.join(", ")
+    );
+    for w in &r.warnings {
+        eprintln!("warning: {w}");
+    }
+    for b in r.blockers.iter().take(20) {
+        eprintln!("blocker: {b}");
+    }
+    println!(
+        "wrote {}; {} blockers, {} warnings",
+        out.display(),
+        r.blockers.len(),
+        r.warnings.len()
+    );
+    Ok(r.passes())
 }
 
 /// `snapshot`: checks each program of the manifest of the tier and writes the

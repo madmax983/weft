@@ -139,6 +139,13 @@ pub struct Record {
     /// [`Kind::Ok`].
     #[serde(default)]
     pub digest: String,
+    /// The problems of the `ir` pipeline that are not diagnostics: a broken
+    /// rule of the IR verifier, a failure of the agreement of the checker and
+    /// the spec, and a result of a lint (plan §2.3, items 4 to 6). The class
+    /// of a program with a problem is `crash` (`crate::classify`). Empty for
+    /// the `old` pipeline.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub problems: Vec<String>,
     /// The time of the check in milliseconds. Different on each run.
     #[serde(default)]
     pub ms: u64,
@@ -158,6 +165,7 @@ impl Record {
             violations: Vec::new(),
             counts: BTreeMap::new(),
             digest: String::new(),
+            problems: Vec::new(),
             ms: 0,
         }
     }

@@ -1,0 +1,16 @@
+# The ledger of the diff gate (docs/plan/core-ir.md, section 2.5).
+#
+# Each entry accepts a group of programs of one class. The gate reads this file
+# at each run. An entry that matches no program gives a warning.
+#
+# [[entry]]
+# class = "lost-clean"   # open, edge, open-old, new-fp, lost-clean, moved or changed
+# files = ["tests/gate/probes/r2/oracle/fp/v069_part.wf"]   # paths or globs
+# finding = "V069"       # the finding id (open: a finding whose verdict is "stays")
+# verdict = "stays"      # open only: the verdict of the finding in docs/ir.md section 10
+# issue = 12             # edge: the issue number; new-fp with reason_class "precision"
+# reason_class = "stricter"   # new-fp only: "stricter" (a rule of the ADR) or "precision"
+# codes = ["W0301"]      # moved and changed only: the codes that the entry accepts
+# reason = "STATE: the holder of the part rebinds at the new value"
+# signed_by = "review agent, stage F8"   # lost-clean: a reviewer, not the author
+# stage = "F8"

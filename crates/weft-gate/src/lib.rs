@@ -6,16 +6,22 @@
 //! one record for each program and pipeline, with the fact digest of [`digest`].
 //! [`oracle`] runs each program in the interpreter oracle and keeps the verdicts
 //! in a cache. [`pool`] runs the work of `snapshot` and `oracle` on worker
-//! threads.
+//! threads. [`classify`] gives the class of each program from its two
+//! records and its verdict. [`ledger`] reads the ledger that accepts groups of
+//! programs. [`report`] runs the gate, applies the rules and writes the
+//! report.
 
 use std::path::PathBuf;
 
 pub mod archive;
+pub mod classify;
 pub mod copy;
 pub mod digest;
+pub mod ledger;
 pub mod manifest;
 pub mod oracle;
 pub mod pool;
+pub mod report;
 pub mod snapshot;
 
 /// An error of the gate tools.
@@ -53,6 +59,18 @@ pub enum Error {
         /// The line number, from 1.
         line: usize,
         /// What is wrong.
+        message: String,
+    },
+    /// The ledger is not correct.
+    #[error("the ledger: {0}")]
+    Ledger(String),
+    /// The oracle cache has no verdict for some programs: the interpreter
+    /// sources or the programs changed after the last run of the oracle.
+    #[error("{message}")]
+    Stale {
+        /// The number of programs with no verdict.
+        programs: usize,
+        /// What to do.
         message: String,
     },
     /// The system cannot start a worker thread.
