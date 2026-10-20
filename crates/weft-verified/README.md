@@ -3,8 +3,7 @@
 This crate is the verified core of the Weft checker. Verus proves the code.
 A normal `cargo build` compiles the same code. The `verus!` macro removes the
 specs and the proofs. The production checker and the interpreter call most of
-these functions. `places::concat` and the `modes` functions are verified but not
-yet used.
+these functions. `places::concat` is verified but not yet used.
 
 ## Verify
 
@@ -113,8 +112,10 @@ The facts have a flag for each axis of a variable (`nonportable`, `uniq`, `once`
 `weft-facts` makes a `Modes` value from them (`VarInfo::capture_mode`, `uniqueness`).
 The checker decides W0406 (`not_uniq`) and W0403 with `submode` on the axis of
 uniqueness, and W0401 and `pinned` with `join` and `submode` against
-`CROSSES_THREADS`. Sema joins the uniqueness of two values with `join`
-(`weft_facts::join_uniq`) and finds the pinned tasks of a body with `submode`.
+`CROSSES_THREADS`. Sema joins the uniqueness of two values, of the states of
+branches and of the captures of a closure with `join` (`weft_facts::join_uniq`),
+and finds the pinned tasks of a body with `submode`. W0503 and W0402 use flags of
+the facts (`once_var`, `shared_root`).
 
 | Exec function | Ensures |
 | --- | --- |

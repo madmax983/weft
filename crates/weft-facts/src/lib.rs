@@ -362,6 +362,40 @@ pub struct ArgSite {
     pub via: Option<String>,
 }
 
+/// A place that states where a reference in it can point, for the diagnostics
+/// of `ref_outside` (W0204, W0605). This is not a relation of the spec.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RefSite {
+    /// The node of `ref_at` and `ref_in`. It has no edges: only `ref_outside`
+    /// reads it.
+    pub node: NodeId,
+    /// What gets the reference.
+    pub kind: RefKind,
+    /// The places that the place states, as text: `v[]`.
+    pub needs: String,
+}
+
+/// What gets a reference at a [`RefSite`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RefKind {
+    /// The function returns the reference, and its signature states the
+    /// returned places (W0204). `env` is the root of the references that a
+    /// handler of a caller gives, if the body has them.
+    Return {
+        /// The root of the references that a handler of a caller gives.
+        env: Option<RootId>,
+    },
+    /// An assignment gives a place field of a `!Move` struct a new value
+    /// (W0605).
+    Field,
+    /// A struct literal gives the place field `field` a value (W0605). The
+    /// struct has no place yet, so the field states no place of the body.
+    Literal {
+        /// The name of the field.
+        field: String,
+    },
+}
+
 /// The sizes of the relations of [`FnFacts`] at one point of the lowering.
 ///
 /// [`FnFacts::rewind`] cuts the relations back to these sizes. The lowering of
@@ -420,6 +454,7 @@ pub struct FactMark {
     lends_mut: usize,
     writes_via: usize,
     arg_sites: usize,
+    ref_sites: usize,
     arg_at: usize,
     param_in: usize,
     uniq_param: usize,
@@ -427,6 +462,8 @@ pub struct FactMark {
     fn_arg_effect: usize,
     param_effect: usize,
     sim_run_at: usize,
+    ref_at: usize,
+    ref_in: usize,
     std_effects: usize,
 }
 
@@ -481,6 +518,9 @@ pub struct FnFacts {
     /// The arguments that `arg_at`, `uniq_param` and `fn_arg_effect` name, for
     /// diagnostics. This is not a relation of the spec.
     pub arg_sites: Vec<ArgSite>,
+    /// The places that `ref_at` and `ref_in` name, for diagnostics. This is not
+    /// a relation of the spec.
+    pub ref_sites: Vec<RefSite>,
     /// The number of local capabilities.
     pub caps: u32,
 
@@ -609,6 +649,13 @@ pub struct FnFacts {
     pub param_effect: Vec<(NodeId, u32, String)>,
     /// `sim_run_at(P)`: node `P` runs `sim.run`, or makes a value that can run it.
     pub sim_run_at: Vec<NodeId>,
+    /// `ref_at(P, A)`: node `P` gives a reference into `A` to a place that
+    /// states where it can point: the result of a function that states its
+    /// returned places, or a place field of a `!Move` struct.
+    pub ref_at: Vec<(NodeId, PlaceId)>,
+    /// `ref_in(P, D)`: the place that gets the reference at node `P` states
+    /// `D`, in the places of the body.
+    pub ref_in: Vec<(NodeId, PlaceId)>,
     /// `std_effect(E)`: `E` is a standard effect. The list holds the standard
     /// effects that the other relations name.
     pub std_effects: Vec<String>,
@@ -691,6 +738,7 @@ impl FnFacts {
             lends_mut,
             writes_via,
             arg_sites,
+            ref_sites,
             arg_at,
             param_in,
             uniq_param,
@@ -698,6 +746,8 @@ impl FnFacts {
             fn_arg_effect,
             param_effect,
             sim_run_at,
+            ref_at,
+            ref_in,
             std_effects,
         } = self;
         FactMark {
@@ -751,6 +801,7 @@ impl FnFacts {
             lends_mut: lends_mut.len(),
             writes_via: writes_via.len(),
             arg_sites: arg_sites.len(),
+            ref_sites: ref_sites.len(),
             arg_at: arg_at.len(),
             param_in: param_in.len(),
             uniq_param: uniq_param.len(),
@@ -758,6 +809,8 @@ impl FnFacts {
             fn_arg_effect: fn_arg_effect.len(),
             param_effect: param_effect.len(),
             sim_run_at: sim_run_at.len(),
+            ref_at: ref_at.len(),
+            ref_in: ref_in.len(),
             std_effects: std_effects.len(),
         }
     }
@@ -826,6 +879,7 @@ impl FnFacts {
             lends_mut,
             writes_via,
             arg_sites,
+            ref_sites,
             arg_at,
             param_in,
             uniq_param,
@@ -833,6 +887,8 @@ impl FnFacts {
             fn_arg_effect,
             param_effect,
             sim_run_at,
+            ref_at,
+            ref_in,
             std_effects,
         } = self;
         *caps = mark.caps;
@@ -885,6 +941,7 @@ impl FnFacts {
         lends_mut.truncate(mark.lends_mut);
         writes_via.truncate(mark.writes_via);
         arg_sites.truncate(mark.arg_sites);
+        ref_sites.truncate(mark.ref_sites);
         arg_at.truncate(mark.arg_at);
         param_in.truncate(mark.param_in);
         uniq_param.truncate(mark.uniq_param);
@@ -892,6 +949,8 @@ impl FnFacts {
         fn_arg_effect.truncate(mark.fn_arg_effect);
         param_effect.truncate(mark.param_effect);
         sim_run_at.truncate(mark.sim_run_at);
+        ref_at.truncate(mark.ref_at);
+        ref_in.truncate(mark.ref_in);
         std_effects.truncate(mark.std_effects);
     }
 
@@ -1117,6 +1176,8 @@ impl FnFacts {
         nd(&mut self.fn_arg_effect);
         nd(&mut self.param_effect);
         nd(&mut self.sim_run_at);
+        nd(&mut self.ref_at);
+        nd(&mut self.ref_in);
         nd(&mut self.std_effects);
     }
 }
@@ -1158,6 +1219,8 @@ pub struct Violations {
     pub root_handler_in_lib: BTreeSet<HandlerId>,
     /// `arg_outside(P, I, A)`: W0203.
     pub arg_outside: BTreeSet<(NodeId, u32, PlaceId)>,
+    /// `ref_outside(P, A)`: W0204, W0605.
+    pub ref_outside: BTreeSet<(NodeId, PlaceId)>,
     /// `not_uniq(P, I)`: W0406.
     pub not_uniq: BTreeSet<(NodeId, u32)>,
     /// `arg_effect_outside(P, I, E)`: W0705.
@@ -1192,6 +1255,7 @@ impl Violations {
             && self.shared_mut_capture.is_empty()
             && self.root_handler_in_lib.is_empty()
             && self.arg_outside.is_empty()
+            && self.ref_outside.is_empty()
             && self.not_uniq.is_empty()
             && self.arg_effect_outside.is_empty()
             && self.sim_in_lib.is_empty()

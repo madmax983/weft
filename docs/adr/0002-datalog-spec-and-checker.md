@@ -22,7 +22,9 @@ with it. Polonius showed that a general engine is slow for Rust, but the model i
   one piece of evidence and each `task_conflict(T, P)` one conflict, and each one is a
   derivation of the spec. A probe rule for each rule of `invalidated_at`, `frees_at`
   and `task_conflict` names the places of the derivation; the probes come from the
-  rules of the spec, so a new rule of these relations needs no edit.
+  rules of the spec, so a new rule of these relations needs no edit. The node of the
+  evidence of W0301 must also reach the use as the rules of `invalid(R, Q)` say: on a
+  path of `cfg_edge`, with no new value of the reference after that node.
 
 ## Consequences
 
@@ -30,25 +32,37 @@ with it. Polonius showed that a general engine is slow for Rust, but the model i
   prints it with the diagnostic that it explains. A diagnostic holds the keys of the
   spec facts that it reports (`Diagnostic::facts`), and the corpus test
   `each_violation_has_one_diagnostic` checks that each violation has one diagnostic.
-  Other diagnostics have no derivation.
+  A key holds the index of its body (`bridge::body_key`): two bodies can have the
+  same name (functions of two modules, or two tests), and sema gives equal bodies
+  equal ids. Other diagnostics have no derivation.
 - Each check of places, modes, effects and tasks is a rule of the spec, except the
   checks below. Review S5b (F8) moved these checks from sema and the driver to the
   spec: W0203 (`arg_outside`, with `inside_stated`), W0406 (`not_uniq`), W0705
-  (`arg_effect_outside`), W0802 (`sim_in_lib`), W0803 (`embedded_effect`) and W0805
-  (`unhandled_effect`). Sema gives their input facts (`arg_at`, `param_in`,
+  (`arg_effect_outside`), W0802 (`sim_in_lib`), W0803 (`embedded_effect`), W0805
+  (`unhandled_effect`), and the stated-place forms of W0204 and W0605 (`ref_outside`,
+  with `inside_stated`). Sema gives their input facts (`arg_at`, `param_in`,
   `uniq_param`, `arg_aliased`, `fn_arg_effect`, `param_effect`, `sim_run_at`,
-  `started()`, `no_runtime()`, `std_effect`).
-- Sema reports names (with W0107 for a dependency name that hides another name),
-  types (with W0116 for raw pointers), signatures (W0201), returned places (W0204),
-  moves out of a borrowed place (W0303), reference fields (W0605), contradictory modes
-  (W0119), patterns that miss a value (W0120), W0313, W0314, W0315, W0701, effect
-  inference that does not become stable (W0704) or does not converge (W0706), a loop
-  whose lowering does not become stable (W0707) and the `fip` checks. The CLI reports
-  unknown file markers (W0804), and the package loader reports W0901 and W0902. These
-  checks stay outside the spec for these reasons:
-  - The checks of names, types and signatures (W01xx, W0201, W0303, W0605, W0119,
-    W0120, W0701 and the `fip` checks) look at types, signatures and the syntax tree.
-    They do not use the places, modes or effects of a body.
+  `started()`, `no_runtime()`, `std_effect`, `ref_at`, `ref_in`). For a closure that
+  runs where a captured local must be `@ uniq`, sema gives `uniq_param` at each node
+  that runs the closure, and `arg_aliased` only where the local is not `@ uniq`, so
+  the rule decides W0406 there too. A node of `sim_run_at`, `ref_at` and `ref_in` has
+  no edges: only its rule reads it.
+- These checks stay in sema, or in the CLI and the package loader, for these
+  reasons:
+  - Names, types and signatures: W01xx (with W0107 for a dependency name that hides
+    another name and W0116 for raw pointers), W0201, W0119 (contradictory modes in a
+    type), W0120 (patterns that miss a value), the `fip` checks, and the W0605 of a
+    struct declaration (a reference field of a struct that is not `!Move`, or a field
+    whose place is not in `self`). They look at types, declarations and the syntax
+    tree, not at the places, modes or effects of a body.
+  - W0303 (a move out of a borrowed place) looks at the type of the place: a place
+    behind a reference cannot give its value away. It needs no flow.
+  - W0502 in sema (`keep_modes`): a `once` closure goes into a place of plain data,
+    such as a field of type `fn()`. It compares the mode of a value with the type of
+    its target where sema unifies the two types, as W0102 does. The other form of
+    W0502, a `once` closure that runs twice, is `use_after_move` in the spec.
+  - W0504: a clause of `Fail.fail` resumes or names its continuation. Sema finds it
+    in the syntax tree of the clause, as W0315 does.
   - W0315 looks at the nesting of a `return`, `break` or `continue` in the syntax
     tree: the handled bodies, clauses and scope bodies around it. It uses no fact, as
     W0111 does not.
@@ -59,14 +73,24 @@ with it. Polonius showed that a general engine is slow for Rust, but the model i
     these sets, so a rule of the spec would copy one input fact for each error and
     check nothing. They can move when the facts get relations for the capability
     sets of values.
-  - W0204 compares each value that leaves a body with the places that the signature
-    allows and with the roots that end there: a return, a store behind a reference
-    parameter or into an `rc` object, the value of a closure or of a `handle`. The
-    facts have no relation for a value that leaves the body, and the check has seven
-    forms with their own texts. The form with a stated place is the check of W0203
-    (`inside_stated`), so it can move with a fact for each return.
+  - W0204 has more forms than the stated place. A reference into a root that ends
+    at an exit leaves through that exit: a local, a by-value parameter or a temporary
+    of the function at a return; a local of a closure or of a clause at its return; a
+    store behind a reference parameter or into an `rc` object; the value of a
+    `handle`. And a returned reference must state its place (a signature check).
+    The facts have no relation for the value that leaves at each exit, or for the
+    roots that end there, and sema knows these only after the body (the places of
+    operation results, `op_refs`). These forms can move when the facts get such
+    relations. The stated-place form moved, because it is the check of W0203.
+  - W0701 compares the signature that a public function infers with the signature
+    that it states. The inferred row is in the places of the signature
+    (`summary_to_sig`), and the inference over the call graph gives it. The facts
+    of a body name the places of the body, and the spec has no relation for the
+    signature of a body.
   - W0704, W0706 and W0707 report the state of the inference and of the lowering,
     not a rule of a body.
+  - The CLI reports unknown file markers (W0804), and the package loader reports
+    W0901 and W0902. They look at the files and the manifest.
 - W0120 checks a matrix of the arm patterns, with a budget of 20 000 steps for each
   `match`. A row that matches anything ends the check of its part at once, so a wide
   `match` with `_` in the other columns costs little. A `match` that needs more steps
@@ -95,7 +119,8 @@ with it. Polonius showed that a general engine is slow for Rust, but the model i
      relation.
 - The diagnostic of step 5 names the facts that it reports
   (`Diagnostic::with_facts`, `bridge::fact_key`), so that `weft check --explain` can
-  link each derivation to it.
+  link each derivation to it. A violation whose site the facts do not give
+  (`ArgSite`, `RefSite`) still gets an error, with the fact as its text.
 - Tests find some missed edits: the agreement tests (on the corpus and on random facts,
   also for the evidence), `the_spec_has_the_sinks_and_inputs_of_the_bridge` (each sink
   relation of the spec is in `VIOLATION_RELATIONS`, and the bridge emits each input

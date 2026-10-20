@@ -33,13 +33,13 @@ new numbers to four files that shared a number (`52_raw_pointers`, `53_overwritt
 
 | Rule | Spec | Sema | Interp | Tests | Proof | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| A reference type includes its place | `points_into`; `arg_outside` (W0203, with `inside_stated`) | `arg_at`, `param_in` at a call (`body/call.rs`); W0204 at a return and a store (`body/stmt.rs`, `body/oprefs.rs`, `body/expr.rs`) | references are a cell and a path (`heap.rs`) | 12, 35, 91, 101, 110, 116, 117 | `places::within` (verified) for W0203 | yes; W0204 stays in sema (ADR 0002) |
+| A reference type includes its place | `points_into`; `arg_outside` (W0203) and `ref_outside` (W0204 with a stated place, W0605), with `inside_stated` | `arg_at`, `param_in` at a call (`body/call.rs`); `ref_at`, `ref_in` at a return and a place field (`body/stmt.rs`, `body/expr.rs`); the other forms of W0204 at a return and a store (`body/stmt.rs`, `body/oprefs.rs`, `body/expr.rs`) | references are a cell and a path (`heap.rs`) | 12, 35, 73, 91, 95, 101, 110, 116, 117 | `places::within` (verified) for W0203, W0204 and W0605 | yes; the forms of W0204 with a root that ends stay in sema (ADR 0002) |
 | A function declares the places that it mutates | `unauthorized_mut` (W0703) | the signature rows (`program.rs`), inference (`infer.rs`) | none | 13, 20, 28, 100 | none | yes |
 | `mut(p)` invalidates strictly inside `p`, through an unstable step | `invalidated_at` (rule 3) | `mutates_at` facts, step stability from the type (`props.rs`, `program.rs`) | oracle: a freed cell, a moved `Vec` buffer | 01, 02, 30, 35, 76 | `places::invalidates` (verified); link L1 `thm_lkills_implies_invalidates`, `thm_invalidates_exact_typed`; borrowing B1, B3 | yes |
 | References to `p` and into stable parts survive | the same rule | the same facts | none | 01, 30 | `lemma_no_self_invalidation`, `lemma_stable_suffix_survives` | yes |
-| The use of an invalidated reference is an error | `error` (W0301) | `uses`, `rebound_at`, `cfg_edge` (`body/`) | oracle: dangling references, dead locals | 02, 05, 37, 76, 100, 101 | `dataflow::propagate` (verified); link L2 `thm_w0301_no_ub` (hypotheses `facts_ok`, `bound_before_use`) | yes; `ret_ok` is false for the `in` form (`proofs/link/README.md`) |
+| The use of an invalidated reference is an error | `error` (W0301) | `uses`, `rebound_at`, `cfg_edge` (`body/`) | oracle: dangling references, dead locals | 02, 05, 05b, 37, 76, 100, 101 | `dataflow::propagate` (verified); link L2 `thm_w0301_no_ub` (hypotheses `facts_ok`, `bound_before_use`) | yes; `ret_ok` is false for the `in` form (`proofs/link/README.md`) |
 | A move or the end of an owner frees what it owns | `frees_at`, `owner`, `moved_part` | `body/drops.rs`, `body/stmt.rs` | `heap.rs` `end_cell`, `drop_value` | 29, 31, 32, 34, 127 | none | yes |
-| A value is not used after a move | `use_after_move` (W0302) | `moved_at` | fault "used after it was moved" | 04, 110, 127 | none | yes |
+| A value is not used after a move | `use_after_move` (W0302) | `moved_at` | fault "used after it was moved" | 04, 04b, 110, 127 | none | yes |
 | A place gets a value before a use | `use_before_set` (W0304, one error for each variable) | `unset_at`, `empty_at` | fault "used before it has a value" | 75, 89, 112 | none | yes |
 | Arguments of one call do not alias a mutated argument | `alias_conflict` (W0312) | `call_mut`, `call_arg` (`body/call.rs`) | none | 12, 38, 41, 55 | `places::overlaps` (verified) | yes; the `in` form allows the alias (ADR 0005) |
 | Places and `mut` are inferred in bodies and stated in public signatures | `unauthorized_mut` | W0701 (`body/stmt.rs`), `infer.rs` | none | 13, 28, 43, 90 | `places::within` (verified) | yes; a row with only pass-through parameters has nothing to state (90) |
@@ -51,24 +51,24 @@ new numbers to four files that shared a number (`52_raw_pointers`, `53_overwritt
 
 | Rule | Spec | Sema | Interp | Tests | Proof | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| A shared-mutable reference is nonportable | `shared_mut_capture` (W0403), `pinned` | `body/tasks.rs`, `body/caps.rs`; `VarInfo::capture_mode` | a pinned task stays on its worker | 03, 130, 131, 133 | `modes::{submode, join}` (verified) | yes |
-| `fork` and stealable closures are portable | `nonportable_capture` (W0401), `stealable` | the mode marks of captures (`body/caps.rs`) | `is_stealable`; oracle: a stealable task that reaches an `Rc`, a `Weak` or a `Scope` | 03, 52, 54, 133, 134, 137; `steal` | `modes::{submode, join}` (verified): the join of the capture modes must cross threads | yes |
-| Data that several threads see is `shared` or split `uniq` | W0403, W0405 | `body/tasks.rs` | oracle: the race detector | 03, 08 | B4 `task_soundness` proves a reference-based rule | partial: reads from several threads need no `shared` (ADR 0006) |
+| A shared-mutable reference is nonportable | `shared_mut_capture` (W0403), `pinned` | `body/tasks.rs`, `body/caps.rs`; `VarInfo::capture_mode` | a pinned task stays on its worker | 03, 03b, 130, 131, 133 | `modes::{submode, join}` (verified) | yes |
+| `fork` and stealable closures are portable | `nonportable_capture` (W0401), `stealable` | the mode marks of captures (`body/caps.rs`) | `is_stealable`; oracle: a stealable task that reaches an `Rc`, a `Weak` or a `Scope` | 03, 03b, 52, 54, 133, 134, 137; `steal` | `modes::{submode, join}` (verified): the join of the capture modes must cross threads | yes |
+| Data that several threads see is `shared` or split `uniq` | W0403, W0405 | `body/tasks.rs` | oracle: the race detector | 03, 03b, 08 | B4 `task_soundness` proves a reference-based rule | partial: reads from several threads need no `shared` (ADR 0006) |
 | One mode on each axis; `uniq` and `shared` contradict | none | W0119 (`program.rs`) | none | 50 | none | yes |
-| `@ shared` is read-only | `shared_mutation` (W0402) | `body/` | none | 03, 28, 37, 111 | none | a callback of a higher-order function (ADR 0005) |
+| `@ shared` is read-only | `shared_mutation` (W0402) | `body/` | none | 03, 03b, 28, 37, 111 | none | a callback of a higher-order function (ADR 0005) |
 | A `@ uniq` parameter gets a unique reference | `not_uniq` (W0406) | `uniq_param`, `arg_aliased` (`body/call.rs`, `body/late.rs` for a closure that runs later) | none | 12, 74, 91, 111 | `modes::submode` (verified) | yes |
-| Mode crossing for plain data | the mode flags of the facts | `props.rs`; the uniqueness of a join (`weft_facts::join_uniq`) | none | 03 | `modes::{submode, join}` (verified, used by the checker and sema) | implicit |
+| Mode crossing for plain data | the mode flags of the facts | `props.rs`; the uniqueness of a join (`weft_facts::join_uniq`) | none | 03, 03b | `modes::{submode, join}` (verified, used by the checker and sema) | implicit |
 
 ## Linear and immovable types (design: "Linear and immovable types", ADR 0007)
 
 | Rule | Spec | Sema | Interp | Tests | Proof | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| A linear value is consumed on each normal path | `unconsumed`, `overwritten` (W0601) | `rebound_at`, `moved_at`, `empty_at`, `overwrites` | `lifecycle::Linear`; oracle: a linear leak | 04, 53, 72, 88, 126, 127 | `lifecycle::Linear` (verified); link L3 `consume_linked` | yes; a `Vec` of linear values has no consumer (ADR 0007) |
-| Live across an abort only with `on abort` | `abort_unhandled` (W0602) | `may_abort`, `spared_at`, `unwound_at` | the unwinder (`machine/effects.rs`) | 04, 37, 63, 124 | effects E3 `lemma_capture_rules`; link L3 `unwind_linked` | yes |
+| A linear value is consumed on each normal path | `unconsumed`, `overwritten` (W0601) | `rebound_at`, `moved_at`, `empty_at`, `overwrites` | `lifecycle::Linear`; oracle: a linear leak | 04, 04b, 53, 72, 88, 126, 127 | `lifecycle::Linear` (verified); link L3 `consume_linked` | yes; a `Vec` of linear values has no consumer (ADR 0007) |
+| Live across an abort only with `on abort` | `abort_unhandled` (W0602) | `may_abort`, `spared_at`, `unwound_at` | the unwinder (`machine/effects.rs`) | 04, 04b, 37, 63, 124 | effects E3 `lemma_capture_rules`; link L3 `unwind_linked` | yes |
 | `on abort` runs only in unwinding, with the root handlers | none | W0118 (`program.rs`) | `run_on_abort` | 120; `abort_on_abort`, `clause_abort` | effects model: `on abort` is atomic | yes (ADR 0007) |
-| No linear value or unique borrow is live across `multi` | `live_across_multi` (W0503) | `multi_at`, `clause_multi`, `body_multi` | a `multi` resume copies the frames | 05, 39, 124, 125; `multi_choose`, `multi_heap`, `multi_nested_drop` | effects E5 `lemma_capture_rules` | yes |
+| No linear value or unique borrow is live across `multi` | `live_across_multi` (W0503) | `multi_at`, `clause_multi`, `body_multi` | a `multi` resume copies the frames | 05, 05b, 39, 124, 125; `multi_choose`, `multi_heap`, `multi_nested_drop` | effects E5 `lemma_capture_rules` | yes |
 | A `!Move` value keeps its address | `moved_immovable` (W0604) | `body/stmt.rs` | a cell never moves (`heap.rs`) | 11, 73 | none | yes |
-| Only a `!Move` struct holds a reference, and only into `self` (self-referential structs) | none | W0605 | none | 11, 73 | none | yes |
+| Only a `!Move` struct holds a reference, and only into `self` (self-referential structs) | `ref_outside` (W0605) for a new value of the field and a struct literal | W0605 for the declaration (`program.rs`); `ref_at`, `ref_in` (`body/stmt.rs`, `body/expr.rs`) | none | 11, 73, 95 | `places::within` (verified) | yes |
 | A struct has a finite size | none | W0117 (`program.rs`) | none | 50 | none | yes |
 | Task handles are linear | `unconsumed` | the prelude `Task<T>` | the handle is a `Linear` | 14 | none | yes |
 
@@ -76,15 +76,15 @@ new numbers to four files that shared a number (`52_raw_pointers`, `53_overwritt
 
 | Rule | Spec | Sema | Interp | Tests | Proof | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| Rows after `/`, inferred in bodies, stated in public signatures | `unauthorized_effect` (W0702) | W0701, `infer.rs`, W0704, W0706 | none | 05, 09, 13, 18, 90 | none | yes |
-| A function argument stays inside the row of its parameter type | `arg_effect_outside` (W0705) | `fn_arg_effect`, `param_effect` (`body/call.rs`) | none | 13, 91 | none | yes |
+| Rows after `/`, inferred in bodies, stated in public signatures | `unauthorized_effect` (W0702) | W0701, `infer.rs`, W0704, W0706 | none | 05, 05b, 09, 13, 18, 90 | none | yes |
+| A function argument stays inside the row of its parameter type | `arg_effect_outside` (W0705) | `fn_arg_effect`, `param_effect` (`body/call.rs`): a closure, a function item, or a function value whose type states a row | none | 13, 91 | none | yes |
 | An effect of another module has a path (`handle a.Note`, `/ util.Note`) | none | `effects::resolve`, W0101 for an unknown or a private effect | `compile.rs` `effect_of` | 141; `effect_paths`; `crates/weft-cli/tests/units.rs` | none | yes (round 2, RR11) |
 | Each effect has one identity | the identities in the facts | `effects::identity`; W0107 for a dependency `main` | the same identities | 64, 141; `shadow_log`; `units.rs` | none | yes (round 2, QA5) |
 | A bare call reaches its operation | none | `Program::find_op`; W0107 for an operation that a prelude or built-in name hides, and for an ambiguous bare call | the same `find_op` | 142 | none | yes (round 2, RR15) |
-| Handlers are lexical | none | the handler stack of the lowering | `find_handler` (the topmost frame) | 05, 64; `effects_log`, `shadow_log` | effects E4 | yes |
-| A perform is a call with the footprint of the handler | `mutates_at` from `performs_at` and `footprint`; `call_arg` (W0312) | `body/call.rs` `perform_op`; W0301 shows the footprint | none | 05, 41, 85, 86 | borrowing B2 (`resume` and `perform` as calls) | yes |
+| Handlers are lexical | none | the handler stack of the lowering | `find_handler` (the topmost frame) | 05, 05b, 64; `effects_log`, `shadow_log` | effects E4 | yes |
+| A perform is a call with the footprint of the handler | `mutates_at` from `performs_at` and `footprint`; `call_arg` (W0312) | `body/call.rs` `perform_op`; W0301 shows the footprint | none | 05, 05b, 41, 85, 86 | borrowing B2 (`resume` and `perform` as calls) | yes |
 | Effect polymorphism is silent | none | `infer.rs`; no W0701 for a pass-through row | none | 18, 90 | none | yes |
-| Continuations are `once` by default | `use_after_move` of the continuation (W0501) | `body/call.rs` `resume` | `lifecycle::Continuation` | 05; `once_twice` | `lifecycle::Continuation` (verified); effects E2; link L3 `resume_linked` | yes |
+| Continuations are `once` by default | `use_after_move` of the continuation (W0501) | `body/call.rs` `resume` | `lifecycle::Continuation` | 05, 05b; `once_twice` | `lifecycle::Continuation` (verified); effects E2; link L3 `resume_linked` | yes |
 | A continuation does not leave its clause | none | W0313, W0314 | the record ends with its clause | 62, 122 | effects rule 3 | yes; W0313 and W0314 stay in sema (ADR 0002) |
 | A clause of `fail` cannot resume | none | W0504 | none | 121 | none | yes |
 | Dependency authority | none | none | none | `units.rs`, `tests/packages/hidden`, `w0901_says_that_only_standard_effects_need_authority` | none | `weft-cli` `package.rs` (W0901, W0902); only the standard effects need authority |
@@ -125,9 +125,9 @@ new numbers to four files that shared a number (`52_raw_pointers`, `53_overwritt
 | Guarantee | Where | Tests | Proof | Status |
 | --- | --- | --- | --- | --- |
 | The checker equals the spec on the facts | `rules.rs` and `spec/weft.dl` | `crates/weft-check/tests/programs.rs` (each corpus body), `agreement_random.rs` | none | yes |
-| The evidence of W0301 and W0405 is a derivation of the spec, one for each violation | `crates/weft-check/src/evidence.rs` (probe rules from the spec) | the corpus agreement, `evidence_agrees_with_spec`, `each_invalid_use_has_the_first_evidence` (all gen nodes), the evidence unit tests | none | yes (S5b, F7) |
-| The diagnostic is the derivation (design: "What the checker rejects") | `Diagnostic::facts`, `bridge::fact_key`; `weft check --explain` and `--json` | `each_violation_has_one_diagnostic`, `explain_links_each_derivation_to_its_diagnostic`, `json_notes_keep_their_lines` | none | yes (S5b, F13); the checks of ADR 0002 that stay in sema have no derivation |
-| Each check of places, modes, effects and tasks is a rule of the spec | `spec/weft.dl` | `the_spec_has_the_sinks_and_inputs_of_the_bridge`, `the_rules_of_the_codes_are_the_sinks_of_the_spec` | none | partial: W0204, W0313, W0314 and W0315 stay in sema, with the reasons in ADR 0002 |
+| The evidence of W0301 and W0405 is a derivation of the spec, one for each violation | `crates/weft-check/src/evidence.rs` (probe rules from the spec; the node of W0301 reaches the use as `invalid` says) | the corpus agreement, `evidence_agrees_with_spec`, `each_invalid_use_has_the_first_evidence` (all gen nodes), the evidence unit tests | none | yes (S5b, F7) |
+| The diagnostic is the derivation (design: "What the checker rejects") | `Diagnostic::facts`, `bridge::fact_key`, `bridge::body_key` (the key holds the body); `weft check --explain` and `--json` | `each_violation_has_one_diagnostic` (with corpus 94, two bodies with one name), `the_facts_of_two_bodies_with_one_name_have_two_keys`, `explain_links_each_derivation_to_its_diagnostic`, `json_notes_keep_their_lines`, `a_violation_with_no_site_is_still_an_error` | none | yes (S5b, F13); the checks of ADR 0002 that stay in sema have no derivation |
+| Each check of places, modes, effects and tasks is a rule of the spec | `spec/weft.dl` | `the_spec_has_the_sinks_and_inputs_of_the_bridge`, `the_rules_of_the_codes_are_the_sinks_of_the_spec` | none | partial: the forms of W0204 with a root that ends, W0313, W0314, W0315, W0502 for a place of plain data, W0504 and W0701 stay in sema, with the reasons in ADR 0002 |
 | Each spec rule fires for a corpus body | `spec/weft.dl` | `corpus_exercises_every_rule` | none | yes |
 | The exec core computes the spec functions | `crates/weft-verified` | its unit tests | Verus, 67 verified | yes |
 | The exec core agrees with the models | `proofs/link` | `proofs/link/check-copies.sh` | Verus, 235 verified (B6) | gaps in `proofs/link/README.md` |
@@ -163,9 +163,9 @@ recorded.
 
 | Finding | Change | Record |
 | --- | --- | --- |
-| F8 | W0203, W0406, W0705, W0802, W0803 and W0805 are rules of the spec, with input facts from sema; W0204, W0313, W0314 and W0315 stay in sema | ADR 0002, `spec/weft.dl`, corpus 91, 92, 93 |
-| F9 | the checker and sema use `modes::{submode, join}` for W0401, W0403, W0406, `pinned` and the uniqueness of a join | ADR 0004, `crates/weft-verified/README.md` |
-| F7 | the agreement compares the evidence with the spec; a guard for the sinks and inputs of the bridge | ADR 0002 |
-| F13 | W0301 at a perform shows the footprint of the handler; JSON notes keep their lines; each derivation names its diagnostic; no W0701 for a row with only pass-through parameters | `docs/architecture.md`, corpus 90 |
-| Diagnostics | W0704 names each inferred part (`infer::PARTS`); one W0304 for each variable; W0801 and W0702 name the standard effect when a user effect has its name; W0901 says that only standard effects need authority | ADRs 0002, 0005 |
+| F8 | W0203, W0406, W0705, W0802, W0803, W0805 and the stated-place forms of W0204 and W0605 (`ref_outside`) are rules of the spec, with input facts from sema; the other forms of W0204, W0313, W0314, W0315, W0502 for a place of plain data, W0504 and W0701 stay in sema | ADR 0002, `spec/weft.dl`, corpus 91, 92, 93, 95 |
+| F9 | the checker and sema use `modes::{submode, join}` for W0401, W0403, W0406, `pinned` and the uniqueness of joined values, branch states and closure captures | ADRs 0004, 0006, `crates/weft-verified/README.md` |
+| F7 | the agreement compares the evidence with the spec, also the reach of the node of W0301 to the use; a guard for the sinks and inputs of the bridge | ADR 0002 |
+| F13 | W0301 at a perform, or at a call that performs, shows the footprint of the handler; JSON notes keep their lines; each derivation names the diagnostic of its own body; no W0701 for a row with only pass-through parameters | `docs/architecture.md`, corpus 90, 94 |
+| Diagnostics | W0704 names each inferred part (`infer::PARTS`); one W0304 for each variable, with a note for each later read in a clause; W0801, W0702, W0803 and W0805 name the standard effect when a user effect has its name; W0901 says that only standard effects need authority | ADRs 0002, 0005 |
 | Corpus | unique numbers for each program | `corpus_numbers_are_unique` |

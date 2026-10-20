@@ -47,8 +47,8 @@ pub struct Diagnostic {
     /// The source unit: [`PRELUDE_UNIT`], [`ROOT_UNIT`], or a dependency.
     pub unit: usize,
     /// The facts of the specification that the diagnostic reports, each with
-    /// the name of its body, for example `bad: error(v1, n6)`. `weft check
-    /// --explain` links each derivation to its diagnostic with them. A
+    /// the index of its body, for example `body 3: error(v1, n6)`. `weft
+    /// check --explain` links each derivation to its diagnostic with them. A
     /// diagnostic that no rule of the specification derives has none.
     pub facts: Vec<String>,
 }

@@ -1296,3 +1296,30 @@ fn std_log() / Log {
         "{msgs:?}"
     );
 }
+
+/// A violation of a check of an argument or a stated place is an error also
+/// when the facts give no site for its text (`ArgSite`, `RefSite`). The
+/// checker must not drop it, or `weft check` would accept the program.
+#[test]
+fn a_violation_with_no_site_is_still_an_error() {
+    let mut b = B::new();
+    let w = b.param("w");
+    let a = b.field(w, 0, "a");
+    let other = b.field(w, 1, "b");
+    let n = b.node("step");
+    b.f.arg_at.push((n, 0, a));
+    b.f.param_in.push((n, 0, other));
+    b.f.uniq_param.push((n, 1));
+    b.f.arg_aliased.push((n, 1));
+    b.f.fn_arg_effect.push((n, 2, "Clock".to_string()));
+    let ret = b.node("return");
+    b.f.ref_at.push((ret, a));
+    b.f.ref_in.push((ret, other));
+    let r = check(&b.f);
+    let ds = crate::diagnose::diagnose_marked(&b.f, &r);
+    let codes: Vec<&str> = ds.iter().map(|d| d.code.as_str()).collect();
+    for code in ["W0203", "W0406", "W0705", "W0204"] {
+        assert!(codes.contains(&code), "no {code} in {codes:?}");
+    }
+    assert!(ds.iter().all(|d| d.facts.len() == 1), "{ds:?}");
+}

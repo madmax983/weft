@@ -122,7 +122,7 @@ fn build(s: &Shape) -> FnFacts {
     let cap = |x: usize| CapId(u32::try_from(x).unwrap() % caps);
     for &(rel, a, b, c) in &s.rels {
         let idx = u32::try_from(c % 3).unwrap();
-        match rel % 47 {
+        match rel % 49 {
             0 => f.points_into.push((v(a), p(b))),
             1 => f.mutates_at.push((n(a), p(b))),
             2 => f.reads_at.push((n(a), p(b))),
@@ -185,6 +185,8 @@ fn build(s: &Shape) -> FnFacts {
             43 => f.fn_arg_effect.push((n(a), idx, format!("E{}", b % 2))),
             44 => f.param_effect.push((n(a), idx, format!("E{}", b % 2))),
             45 => f.sim_run_at.push(n(a)),
+            47 => f.ref_at.push((n(a), p(b))),
+            48 => f.ref_in.push((n(a), p(b))),
             _ => {}
         }
     }

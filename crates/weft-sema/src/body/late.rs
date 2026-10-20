@@ -40,8 +40,10 @@ struct Change {
     parts: Vec<VarId>,
     /// The function value that it has now, if it is another one.
     now: Option<FnInfo>,
-    /// The closure needs it to be `@ uniq`, and it is not `@ uniq` now.
-    not_uniq: bool,
+    /// The closure runs here, and it needs the variable to be `@ uniq`.
+    uniq_need: bool,
+    /// The variable is not `@ uniq` now.
+    aliased: bool,
 }
 
 impl Lower<'_> {
@@ -114,10 +116,11 @@ impl Lower<'_> {
     }
 
     /// Gives the facts of a call in a closure that runs at node `n`: the call
-    /// gives a captured local to a `@ uniq` parameter, and the local is not
-    /// `@ uniq` at `n` (`uniq_param`, `arg_aliased`, W0406). The index is
-    /// [`weft_facts::CLOSURE_ARG`] and more, one for each such call at `n`.
-    fn closure_uniq_need(&mut self, n: NodeId, need: &super::UniqNeed) {
+    /// gives a captured local to a `@ uniq` parameter (`uniq_param`), and, if
+    /// `aliased`, the local is not `@ uniq` at `n` (`arg_aliased`). The spec
+    /// decides W0406 (`not_uniq`). The index is [`weft_facts::CLOSURE_ARG`] and
+    /// more, one for each such call at `n`.
+    fn closure_uniq_need(&mut self, n: NodeId, need: &super::UniqNeed, aliased: bool) {
         let at_n = self
             .facts
             .uniq_param
@@ -126,7 +129,9 @@ impl Lower<'_> {
             .count();
         let index = weft_facts::CLOSURE_ARG.saturating_add(u32::try_from(at_n).unwrap_or(u32::MAX));
         self.facts.uniq_param.push((n, index));
-        self.facts.arg_aliased.push((n, index));
+        if aliased {
+            self.facts.arg_aliased.push((n, index));
+        }
         let span = self.facts.node(n).span;
         self.facts.arg_sites.push(weft_facts::ArgSite {
             node: n,
@@ -191,8 +196,9 @@ impl Lower<'_> {
     /// - mutates, reads and lends the places of the closure below the old places,
     ///   moved onto the new places;
     /// - runs the new function value where the closure runs the variable;
-    /// - reports W0406 (with `at_run`) if the closure needs the variable to be
-    ///   `@ uniq` and it is not `@ uniq` here.
+    /// - gives the facts of W0406 (with `at_run`) if the closure needs the
+    ///   variable to be `@ uniq`: the spec reports it if the variable is not
+    ///   `@ uniq` here.
     ///
     /// A captured function variable that the closure runs, and that has the same
     /// value, can run a closure whose own captures have new values. The node joins
@@ -258,10 +264,10 @@ impl Lower<'_> {
                         self.apply_value(n, info, row.as_deref(), root, &mapped);
                     }
                 }
-                if ch.not_uniq {
+                if ch.uniq_need {
                     for (v, need) in &sum.uniq_needs {
                         if *v == ch.var {
-                            self.closure_uniq_need(n, need);
+                            self.closure_uniq_need(n, need, ch.aliased);
                         }
                     }
                 }
@@ -329,7 +335,7 @@ impl Lower<'_> {
 
     /// The captured variables of closure `c` whose values changed since the
     /// closure was made. With `at_run`, also each variable that the closure needs
-    /// to be `@ uniq` and that is not `@ uniq` now.
+    /// to be `@ uniq`.
     fn late_changes(&self, c: usize, at_run: bool) -> Vec<Change> {
         let mut out = Vec::new();
         let needs = &self.closures[c].uniq_needs;
@@ -346,9 +352,9 @@ impl Lower<'_> {
                 Some((old, _)) => Some(self.local_fn_info(l)).filter(|f| f != old),
                 None => None,
             };
-            let not_uniq =
-                at_run && !self.locals.is_uniq(l) && needs.iter().any(|(v, _)| *v == cv.var);
-            if !new.is_empty() || now.is_some() || not_uniq {
+            let uniq_need = at_run && needs.iter().any(|(v, _)| *v == cv.var);
+            let aliased = uniq_need && !self.locals.is_uniq(l);
+            if !new.is_empty() || now.is_some() || uniq_need {
                 out.push(Change {
                     var: cv.var,
                     local: l,
@@ -356,7 +362,8 @@ impl Lower<'_> {
                     new,
                     parts,
                     now,
-                    not_uniq,
+                    uniq_need,
+                    aliased,
                 });
             }
         }

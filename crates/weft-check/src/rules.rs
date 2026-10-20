@@ -774,7 +774,8 @@ fn effects(cx: &Ctx<'_>, out: &mut Violations) {
     }
 }
 
-/// W0203, W0406, W0705: the arguments of calls.
+/// W0203, W0406, W0705: the arguments of calls. W0204, W0605: the references
+/// that a returned value or a place field gets.
 fn args(cx: &Ctx<'_>, out: &mut Violations) {
     let f = cx.f;
     // W0203: `arg_outside(P, I, A)`.
@@ -786,6 +787,17 @@ fn args(cx: &Ctx<'_>, out: &mut Violations) {
         let ds = stated.get(&(p, i)).map_or(&[][..], Vec::as_slice);
         if !ds.iter().any(|&d| cx.inside_stated(a, d)) {
             out.arg_outside.insert((p, i, a));
+        }
+    }
+    // W0204, W0605: `ref_outside(P, A)`.
+    let mut stated: BTreeMap<NodeId, Vec<PlaceId>> = BTreeMap::new();
+    for &(p, d) in &f.ref_in {
+        stated.entry(p).or_default().push(d);
+    }
+    for &(p, a) in &f.ref_at {
+        let ds = stated.get(&p).map_or(&[][..], Vec::as_slice);
+        if !ds.iter().any(|&d| cx.inside_stated(a, d)) {
+            out.ref_outside.insert((p, a));
         }
     }
     // W0406: `not_uniq(P, I)`. The mode of the argument must be a submode of

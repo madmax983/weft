@@ -880,11 +880,20 @@ impl Lower<'_> {
                     let ft = super::subst(&d.ty, &args);
                     self.unify(&ft, &v.ty, value.span);
                     self.keep_modes(&v, &ft, value.span);
-                    // A literal is not in a place yet, so nothing can point into it.
+                    // A literal is not in a place yet, so nothing can point
+                    // into it: the field states no place of the body
+                    // (`ref_at` with no `ref_in`, W0605). The node of the
+                    // facts has no edges: only `ref_outside` reads it.
                     if let (Some(sp), false) = (&d.place, v.refs.is_empty()) {
-                        let at = self.place_text(&v.refs);
-                        let msg = format!("`{}` can point only into `{}` of its own struct, but this value points into `{at}`; give the field its value after the struct has a place", name.name, sp.text);
-                        self.err("W0605", msg, value.span);
+                        let n = self.facts.add_node(value.span, "field", String::new());
+                        self.facts.ref_at.extend(v.refs.iter().map(|&r| (n, r)));
+                        self.facts.ref_sites.push(weft_facts::RefSite {
+                            node: n,
+                            kind: weft_facts::RefKind::Literal {
+                                field: name.name.clone(),
+                            },
+                            needs: sp.text.clone(),
+                        });
                     }
                 }
                 None => self.err("W0104", format!("no field `{}`", name.name), name.span),

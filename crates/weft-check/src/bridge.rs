@@ -237,6 +237,11 @@ pub fn each_fact(f: &FnFacts, emit: &mut dyn FnMut(&str, &[Arg])) {
     for n in &f.sim_run_at {
         emit("sim_run_at", &[s(n)]);
     }
+    for (rel, v) in [("ref_at", &f.ref_at), ("ref_in", &f.ref_in)] {
+        for (p, a) in v {
+            emit(rel, &[s(p), s(a)]);
+        }
+    }
     for e in &f.std_effects {
         emit("std_effect", &[s(e)]);
     }
@@ -397,6 +402,7 @@ pub fn violations(out: &Output) -> Result<Violations, SpecError> {
             [a, i, p] => Some((n(a)?, parse_index(i)?, pl(p)?)),
             _ => None,
         })?,
+        ref_outside: read(out, "ref_outside", np)?,
         not_uniq: read(out, "not_uniq", |tu| match *tu {
             [a, i] => Some((n(a)?, parse_index(i)?)),
             _ => None,
@@ -663,7 +669,7 @@ fn render(d: &Derivation, f: &FnFacts, line_of: &dyn Fn(u32) -> usize, out: &mut
 }
 
 /// The violation relations of the spec, in report order.
-pub const VIOLATION_RELATIONS: [&str; 22] = [
+pub const VIOLATION_RELATIONS: [&str; 23] = [
     "error",
     "use_after_move",
     "use_before_set",
@@ -681,6 +687,7 @@ pub const VIOLATION_RELATIONS: [&str; 22] = [
     "shared_mut_capture",
     "root_handler_in_lib",
     "arg_outside",
+    "ref_outside",
     "not_uniq",
     "arg_effect_outside",
     "sim_in_lib",
@@ -688,16 +695,16 @@ pub const VIOLATION_RELATIONS: [&str; 22] = [
     "embedded_effect",
 ];
 
-/// Returns the key of a fact of the specification in body `f`.
+/// Returns the key of a fact of the specification in its body.
 ///
-/// The key is the name of the body and the fact in Datalog syntax, for
-/// example `bad: error(v1, n6)`. A diagnostic holds the keys of the facts that
-/// it reports
+/// The key is the fact in Datalog syntax, for example `error(v1, n6)`. A
+/// diagnostic holds the keys of the facts that it reports
 /// (`Diagnostic::facts`), and [`Explained::key`] is the key of the explained
-/// fact. So a derivation and its diagnostic have one key. An argument whose
-/// text is a number is an integer, such as the index of a parameter; each
-/// other argument is a symbol.
-pub fn fact_key(f: &FnFacts, relation: &str, args: &[&dyn std::fmt::Display]) -> String {
+/// fact. Two bodies can have the same name and the same ids, so
+/// [`body_key`] adds the body to the key. An argument whose text is a number
+/// is an integer, such as the index of a parameter; each other argument is a
+/// symbol.
+pub fn fact_key(relation: &str, args: &[&dyn std::fmt::Display]) -> String {
     let args: Vec<String> = args
         .iter()
         .map(|a| {
@@ -708,14 +715,26 @@ pub fn fact_key(f: &FnFacts, relation: &str, args: &[&dyn std::fmt::Display]) ->
             }
         })
         .collect();
-    format!("{}: {relation}({})", f.name, args.join(", "))
+    format!("{relation}({})", args.join(", "))
+}
+
+/// Returns the key of fact `key` ([`fact_key`]) of body `body`, the index of
+/// the body in `Analysis::bodies`, for example `body 3: error(v1, n6)`.
+///
+/// Two bodies can have the same name: functions in two modules, or two
+/// tests. Sema gives equal bodies equal ids too. The index of the body makes
+/// the key unique in a program, so `weft check --explain` links each
+/// derivation to the diagnostic of its own body.
+pub fn body_key(body: usize, key: &str) -> String {
+    format!("body {body}: {key}")
 }
 
 /// One explained violation: the fact and its derivation tree.
 #[derive(Clone, Debug)]
 pub struct Explained {
-    /// The key of the fact ([`fact_key`]). The diagnostic that reports the fact
-    /// has it in `Diagnostic::facts`.
+    /// The key of the fact in its body ([`fact_key`]). The diagnostic that
+    /// reports the fact has it, with the body ([`body_key`]), in
+    /// `Diagnostic::facts`.
     pub key: String,
     /// The violation relation.
     pub relation: String,
@@ -738,7 +757,7 @@ pub fn explain(
         for t in out.tuples(rel) {
             if let Some(d) = out.explain(rel, &t) {
                 v.push(Explained {
-                    key: format!("{}: {}", f.name, out.display_tuple(rel, &t)),
+                    key: out.display_tuple(rel, &t),
                     relation: rel.to_string(),
                     fact: rename(&out.display_tuple(rel, &t), f, line_of),
                     tree: render_derivation(&d, f, line_of),

@@ -941,8 +941,16 @@ impl Lower<'_> {
                 continue;
             }
             let root = 800 + u32::try_from(i).unwrap_or(0);
-            if let Some(s) = info.summary {
-                self.check_fn_arg_effects(&ptys[i], s, n, i, av.span);
+            // What the function argument performs: a closure, a function
+            // item, or a function value whose type states a row, such as a
+            // function parameter.
+            let performed: Option<Vec<String>> = match (info.summary, info.item) {
+                (Some(s), _) => Some(self.closures[s].escapes.iter().cloned().collect()),
+                (None, Some(item)) => Some(self.sigs[item].effects.named.iter().cloned().collect()),
+                (None, None) => row.clone(),
+            };
+            if let Some(performed) = performed {
+                self.check_fn_arg_effects(&ptys[i], performed, n, i, av.span);
             }
             // The callee can give the argument to an operation.
             let to: Vec<(Option<CapId>, String)> = sig
@@ -1700,11 +1708,19 @@ impl Lower<'_> {
         self.unify(pt, &v.ty, span);
     }
 
-    /// A closure passed to a parameter with a declared effect row must stay
+    /// A function argument of a parameter with a declared effect row must stay
     /// inside it (W0705). Gives the facts that the spec checks: what the
-    /// closure performs (`fn_arg_effect`) and what the row allows
-    /// (`param_effect`), for argument `i` of the call at node `n`.
-    fn check_fn_arg_effects(&mut self, pt: &Ty, s: usize, n: NodeId, i: usize, span: Span) {
+    /// argument performs (`fn_arg_effect`, the effects `performed`) and what
+    /// the row allows (`param_effect`), for argument `i` of the call at node
+    /// `n`.
+    fn check_fn_arg_effects(
+        &mut self,
+        pt: &Ty,
+        performed: Vec<String>,
+        n: NodeId,
+        i: usize,
+        span: Span,
+    ) {
         let Ty::Fn(f) = self.inf.shallow(pt) else {
             return;
         };
@@ -1713,7 +1729,6 @@ impl Lower<'_> {
         };
         let index = u32::try_from(i).unwrap_or(u32::MAX);
         let allowed = effects::close(&allowed.iter().cloned().collect());
-        let performed: Vec<String> = self.closures[s].escapes.iter().cloned().collect();
         if performed.is_empty() {
             return;
         }

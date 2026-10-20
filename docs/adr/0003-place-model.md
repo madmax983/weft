@@ -22,6 +22,7 @@ Status: accepted. Date: 2026-10-18.
 - `&T in p` names the place of the reference up to stable steps below `p`. The body
   must return (or the caller must pass) a reference at `p` or below it through stable
   steps only (W0204, W0203). So a caller can treat the reference as a reference at `p`.
+  The spec checks both with one rule, `inside_stated` (`arg_outside`, `ref_outside`).
   `&T in p..` names any place inside `p`. An `in` place can name a parameter that comes
   later, also one with an `in` place of its own. The lowering substitutes the `in`
   places in the order of their roots, so each parameter gets the places of its root.

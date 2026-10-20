@@ -3,7 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use weft_facts::{
-    ArgSite, FnFacts, NodeId, PlaceId, VarId, VarKind, Violations, ARG_TASK, TASK_END,
+    ArgSite, FnFacts, NodeId, PlaceId, RefKind, RefSite, VarId, VarKind, Violations, ARG_TASK,
+    TASK_END,
 };
 use weft_sema::effects;
 use weft_syntax::diag::Diagnostic;
@@ -65,12 +66,12 @@ fn clause_read(f: &FnFacts, var: VarId, n: NodeId) -> Option<NodeId> {
         .min()
 }
 
-/// Returns the keys of the facts `relation(var, n)` of body `f`, one for each
-/// node `n` of `nodes` ([`fact_key`]).
-fn var_keys(f: &FnFacts, relation: &str, var: VarId, nodes: &[NodeId]) -> Vec<String> {
+/// Returns the keys of the facts `relation(var, n)`, one for each node `n` of
+/// `nodes` ([`fact_key`]).
+fn var_keys(relation: &str, var: VarId, nodes: &[NodeId]) -> Vec<String> {
     nodes
         .iter()
-        .map(|n| fact_key(f, relation, &[&var, n]))
+        .map(|n| fact_key(relation, &[&var, n]))
         .collect()
 }
 
@@ -264,6 +265,7 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
     shared_mut_capture(f, v, &mut out);
     root_handler_in_lib(f, v, &mut out);
     arg_outside(f, v, &mut out);
+    ref_outside(f, v, &mut out);
     not_uniq(f, v, &mut out);
     arg_effect_outside(f, v, &mut out);
     sim_in_lib(f, v, &mut out);
@@ -359,7 +361,7 @@ fn w0301(f: &FnFacts, r: &Report, out: &mut Vec<Diagnostic>) {
             let uses: Vec<NodeId> = std::iter::once(e.used_at)
                 .chain(rest.iter().copied())
                 .collect();
-            var_keys(f, "error", e.var, &uses)
+            var_keys("error", e.var, &uses)
         });
         out.push(d.with_facts(keys));
     }
@@ -407,10 +409,14 @@ fn w0301_cause(f: &FnFacts, inv: &Invalidation) -> (String, String) {
         Cause::Mutation(m) | Cause::Lend(m) => {
             let mutated = &f.place(m).display;
             let what = match (at.detail.is_empty(), at.label.strip_suffix(" =")) {
-                // A perform is a call with the footprint of the handler.
+                // A perform, or a call that performs, reaches a handler: it is a
+                // call with the footprint of the handler.
                 _ if matches!(inv.cause, Cause::Mutation(_)) && !f.mutates_at.contains(&(inv.at, m)) => {
                     match footprint_text(f, inv.at, m) {
-                        Some(fp) => format!("{} : mut({fp}), the footprint of its handler", at.label),
+                        Some(fp) => format!(
+                            "{} : mut({fp}), the footprint of the handler that it performs through",
+                            at.label
+                        ),
                         None => format!("{} : mut({mutated})", at.label),
                     }
                 }
@@ -520,7 +526,7 @@ fn use_after_move(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                 ("use after a move", "uses after a move"),
             ),
         };
-        let d = note_more(d, f, rest, noun).with_facts(var_keys(f, "use_after_move", var, &sites));
+        let d = note_more(d, f, rest, noun).with_facts(var_keys("use_after_move", var, &sites));
         out.push(d);
     }
 }
@@ -555,9 +561,20 @@ fn use_before_set(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
             );
         }
         let d = d.note("give it a value on every path before this use");
-        let rest: Vec<NodeId> = rest.iter().map(|&(read, _)| read).collect();
-        let keys = var_keys(f, "use_before_set", var, &sites);
-        out.push(note_more(d, f, &rest, ("use", "uses")).with_facts(keys));
+        let reads: Vec<NodeId> = rest.iter().map(|&(read, _)| read).collect();
+        let mut d = note_more(d, f, &reads, ("use", "uses"));
+        // A later read in a clause tells where the clause runs too.
+        for &(read, n) in rest.iter().filter(|&&(read, n)| read != n) {
+            d = d.note_at(
+                format!(
+                    "a handler clause reads it at line \u{1}line:{}\u{1} when it runs here",
+                    node_span(f, read).lo
+                ),
+                node_span(f, n),
+            );
+        }
+        let keys = var_keys("use_before_set", var, &sites);
+        out.push(d.with_facts(keys));
     }
 }
 
@@ -572,7 +589,7 @@ fn moved_immovable(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                 node_span(f, n),
             )
             .note("construct it in place and use it through references")
-            .with_facts(var_keys(f, "moved_immovable", var, &[n])),
+            .with_facts(var_keys("moved_immovable", var, &[n])),
         );
     }
 }
@@ -627,7 +644,7 @@ fn unconsumed(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
             .note_at(format!("{} (linear)", decl_note(info)), info.span)
             .note("move it into a call that consumes it on every normal path")
         };
-        out.push(d.with_facts(var_keys(f, "unconsumed", var, &[n])));
+        out.push(d.with_facts(var_keys("unconsumed", var, &[n])));
     }
 }
 
@@ -644,7 +661,7 @@ fn overwritten(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                 ),
                 node_span(f, n),
             )
-            .with_facts(var_keys(f, "overwritten", var, &[n])),
+            .with_facts(var_keys("overwritten", var, &[n])),
         );
     }
 }
@@ -674,7 +691,7 @@ fn abort_unhandled(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
         )
         .note("declare `on abort = f` on the type, or consume the value before this call");
         let d = note_more(d, f, rest, ("site that can abort", "sites that can abort"));
-        out.push(d.with_facts(var_keys(f, "abort_unhandled", var, &sites)));
+        out.push(d.with_facts(var_keys("abort_unhandled", var, &sites)));
     }
 }
 
@@ -712,7 +729,7 @@ fn live_across_multi(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                 "operations that can resume more than once",
             ),
         );
-        out.push(d.with_facts(var_keys(f, "live_across_multi", var, &sites)));
+        out.push(d.with_facts(var_keys("live_across_multi", var, &sites)));
     }
 }
 
@@ -734,7 +751,7 @@ fn unauthorized_mut(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                 "add `mut({})` to the effects after `/`",
                 mut_hint(f, p)
             ))
-            .with_facts([fact_key(f, "unauthorized_mut", &[&n, &p])]),
+            .with_facts([fact_key("unauthorized_mut", &[&n, &p])]),
         );
     }
 }
@@ -767,7 +784,7 @@ fn unauthorized_effect(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                 at.span,
             )
             .note(note)
-            .with_facts([fact_key(f, "unauthorized_effect", &[n, e])]),
+            .with_facts([fact_key("unauthorized_effect", &[n, e])]),
         );
     }
 }
@@ -786,7 +803,7 @@ fn shared_mutation(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                 ),
                 at.span,
             )
-            .with_facts([fact_key(f, "shared_mutation", &[&n, &p])]),
+            .with_facts([fact_key("shared_mutation", &[&n, &p])]),
         );
     }
 }
@@ -814,7 +831,7 @@ fn alias_conflict(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
             .alias_conflict
             .iter()
             .filter(|t| t.0 == n)
-            .map(|(n, m, a)| fact_key(f, "alias_conflict", &[n, m, a]));
+            .map(|(n, m, a)| fact_key("alias_conflict", &[n, m, a]));
         out.push(
             Diagnostic::error(
                 "W0312",
@@ -852,7 +869,7 @@ fn task_conflict(f: &FnFacts, r: &Report, out: &mut Vec<Diagnostic>) {
     // with that span.
     let mut groups: Vec<(&Conflict, Vec<String>)> = Vec::new();
     for c in conflicts {
-        let key = fact_key(f, "task_conflict", &[&c.task, &c.at]);
+        let key = fact_key("task_conflict", &[&c.task, &c.at]);
         let s = f.node(c.at).span;
         match groups.last_mut() {
             Some((g, keys)) if g.task == c.task && f.node(g.at).span == s => keys.push(key),
@@ -914,7 +931,7 @@ fn nonportable_capture(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                 ),
                 f.tasks[t.index()].span,
             )
-            .with_facts([fact_key(f, "nonportable_capture", &[&t, &var])]),
+            .with_facts([fact_key("nonportable_capture", &[&t, &var])]),
         );
     }
 }
@@ -934,7 +951,7 @@ fn shared_mut_capture(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                 f.tasks[t.index()].span,
             )
             .note("a shared-mutable reference is nonportable; split it into `@ uniq` parts first")
-            .with_facts([fact_key(f, "shared_mut_capture", &[&t, &var])]),
+            .with_facts([fact_key("shared_mut_capture", &[&t, &var])]),
         );
     }
 }
@@ -954,7 +971,7 @@ fn root_handler_in_lib(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                 ),
                 info.span,
             )
-            .with_facts([fact_key(f, "root_handler_in_lib", &[&h])]),
+            .with_facts([fact_key("root_handler_in_lib", &[&h])]),
         );
     }
 }
@@ -1013,18 +1030,18 @@ fn root_effects(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                 };
                 Diagnostic::error(
                     "W0805",
-                    format!("{who} performs `{name}`, and no handler handles it"),
+                    format!("{who} performs {name}, and no handler handles it"),
                     span,
                 )
                 .note(note)
             } else {
                 Diagnostic::error(
                     "W0803",
-                    format!("with no runtime, {who} must handle `{name}` itself"),
+                    format!("with no runtime, {who} must handle {name} itself"),
                     span,
                 )
             };
-            let keys = sites.iter().map(|n| fact_key(f, relation, &[n, &e]));
+            let keys = sites.iter().map(|n| fact_key(relation, &[n, &e]));
             out.push(note_more(d, f, rest, ("site", "sites")).with_facts(keys));
         }
     }
@@ -1040,7 +1057,9 @@ fn arg_site(f: &FnFacts, n: NodeId, index: u32) -> Option<&ArgSite> {
 /// parameter states (`arg_outside`).
 fn arg_outside(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     for &(n, i, a) in &v.arg_outside {
+        let key = fact_key("arg_outside", &[&n, &i, &a]);
         let Some(site) = arg_site(f, n, i) else {
+            out.push(no_site("W0203", f, n, key));
             continue;
         };
         let shown = &f.place(a).display;
@@ -1066,8 +1085,100 @@ fn arg_outside(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                 ),
                 site.span,
             )
-            .with_facts([fact_key(f, "arg_outside", &[&n, &i, &a])]),
+            .with_facts([key]),
         );
+    }
+}
+
+/// Returns a diagnostic for a violation whose site the facts do not give
+/// (`ArgSite`, `RefSite`). Sema gives a site with each fact, so this is a
+/// fact of another producer. The violation still is an error.
+fn no_site(code: &str, f: &FnFacts, n: NodeId, key: String) -> Diagnostic {
+    Diagnostic::error(
+        code,
+        format!("`{key}` holds here (the facts give no other details)"),
+        node_span(f, n),
+    )
+    .with_facts([key])
+}
+
+/// Returns the place that gets a reference at node `n`
+/// (`FnFacts::ref_sites`).
+fn ref_site(f: &FnFacts, n: NodeId) -> Option<&RefSite> {
+    f.ref_sites.iter().find(|s| s.node == n)
+}
+
+/// W0204, W0605: a reference that points outside the place that its function
+/// or its field states (`ref_outside`). A return gets one error for each
+/// place, and a field one error for each value.
+fn ref_outside(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
+    let mut by_node: BTreeMap<NodeId, Vec<PlaceId>> = BTreeMap::new();
+    for &(n, a) in &v.ref_outside {
+        by_node.entry(n).or_default().push(a);
+    }
+    for (n, bad) in by_node {
+        let keys: Vec<String> = bad
+            .iter()
+            .map(|a| fact_key("ref_outside", &[&n, a]))
+            .collect();
+        let Some(site) = ref_site(f, n) else {
+            let code = if f.node(n).label == "return" {
+                "W0204"
+            } else {
+                "W0605"
+            };
+            out.extend(keys.into_iter().map(|k| no_site(code, f, n, k)));
+            continue;
+        };
+        let span = node_span(f, n);
+        let at = &site.needs;
+        match &site.kind {
+            RefKind::Return { env } => {
+                for (&a, key) in bad.iter().zip(keys) {
+                    let shown = &f.place(a).display;
+                    // Inside a stated place, but through an unstable step below it.
+                    let below = f.ref_in.iter().any(|&(p, d)| {
+                        p == n
+                            && !f.place(d).is_wildcard()
+                            && f.place(d).root == f.place(a).root
+                            && places::within(&f.place(a).steps, &f.place(d).steps)
+                    });
+                    let message = if *env == Some(f.place(a).root) {
+                        format!("the returned reference can come from a handler of a caller, which can give a place outside `{at}`")
+                    } else if below {
+                        format!("returned reference points into `{shown}`, which is below `{at}` through an unstable step: state the place, or `{at}..`")
+                    } else {
+                        format!("returned reference points into `{shown}`, but the signature says `{at}`")
+                    };
+                    out.push(Diagnostic::error("W0204", message, span).with_facts([key]));
+                }
+            }
+            RefKind::Field => {
+                let shown = bad.first().map_or("", |&a| f.place(a).display.as_str());
+                out.push(
+                    Diagnostic::error(
+                        "W0605",
+                        format!("this field can point only into `{at}` of its own struct, but the value points into `{shown}`"),
+                        span,
+                    )
+                    .with_facts(keys),
+                );
+            }
+            RefKind::Literal { field } => {
+                let shown: Vec<&str> = bad.iter().map(|&a| f.place(a).display.as_str()).collect();
+                out.push(
+                    Diagnostic::error(
+                        "W0605",
+                        format!(
+                            "`{field}` can point only into `{at}` of its own struct, but this value points into `{}`; give the field its value after the struct has a place",
+                            shown.join(" | ")
+                        ),
+                        span,
+                    )
+                    .with_facts(keys),
+                );
+            }
+        }
     }
 }
 
@@ -1075,7 +1186,9 @@ fn arg_outside(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
 /// (`not_uniq`). For a call in a closure, the error is where the closure runs.
 fn not_uniq(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
     for &(n, i) in &v.not_uniq {
+        let key = fact_key("not_uniq", &[&n, &i]);
         let Some(site) = arg_site(f, n, i) else {
+            out.push(no_site("W0406", f, n, key));
             continue;
         };
         let head = format!(
@@ -1088,13 +1201,7 @@ fn not_uniq(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
             }
             None => head,
         };
-        out.push(
-            Diagnostic::error("W0406", message, site.span).with_facts([fact_key(
-                f,
-                "not_uniq",
-                &[&n, &i],
-            )]),
-        );
+        out.push(Diagnostic::error("W0406", message, site.span).with_facts([key]));
     }
 }
 
@@ -1106,13 +1213,14 @@ fn arg_effect_outside(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
         by_arg.entry((*n, *i)).or_default().push(e);
     }
     for ((n, i), extra) in by_arg {
+        let keys = extra
+            .iter()
+            .map(|e| fact_key("arg_effect_outside", &[&n, &i, e]));
         let Some(site) = arg_site(f, n, i) else {
+            out.extend(keys.map(|k| no_site("W0705", f, n, k)));
             continue;
         };
         let shown: Vec<&str> = extra.iter().map(|e| effects::shown(e)).collect();
-        let keys = extra
-            .iter()
-            .map(|e| fact_key(f, "arg_effect_outside", &[&n, &i, e]));
         out.push(
             Diagnostic::error(
                 "W0705",
@@ -1136,28 +1244,25 @@ fn sim_in_lib(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
                 "only binaries and tests can install root handlers (`sim.run`)",
                 node_span(f, n),
             )
-            .with_facts([fact_key(f, "sim_in_lib", &[&n])]),
+            .with_facts([fact_key("sim_in_lib", &[&n])]),
         );
     }
 }
 
-/// Returns effect identity `e` as W0805 and W0803 show it.
+/// Returns effect identity `e` as W0805 and W0803 show it, with its quotes.
 ///
 /// The facts name a user effect by its identity, such as `main.a.Note`. The
-/// text shows the name that body `f` can write (`a.Note`). The text shows the
-/// identity when that name is also the name of a standard effect (`Log`), or the
-/// text of another effect in `escaping`.
-fn root_effect_text<'a>(f: &'a FnFacts, e: &'a str, escaping: &[&str]) -> &'a str {
+/// text shows the name that body `f` can write (`a.Note`). A user effect shows
+/// its identity when that name is also the name of a standard effect (`Log`).
+/// Else the text follows [`effect_text`]: when another effect in `escaping`
+/// shows the same text, a user effect shows its identity and a standard effect
+/// is "the standard effect `Log`".
+fn root_effect_text(f: &FnFacts, e: &str, escaping: &[&str]) -> String {
     let shown = effect_shown(f, e);
-    let std_name = effects::is_std(shown) && !effects::is_std(e);
-    let clash = escaping
-        .iter()
-        .any(|&d| d != e && effect_shown(f, d) == shown);
-    if std_name || clash {
-        e
-    } else {
-        shown
+    if effects::is_std(shown) && !effects::is_std(e) {
+        return format!("`{e}`");
     }
+    effect_text(f, e, escaping.iter().copied())
 }
 
 /// Returns effect identity `e` as a message of body `f` shows it: a standard

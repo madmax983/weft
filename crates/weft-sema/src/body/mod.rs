@@ -2378,34 +2378,6 @@ impl<'p> Lower<'p> {
         refs.iter().partition(|&&p| !self.is_dep(p))
     }
 
-    /// Returns true if the signature place `a` allows a reference into `r`.
-    /// Below a plain place only stable steps can follow, because a caller sees
-    /// the reference at `a`. Below a wildcard place any step can follow.
-    fn sig_allows(&self, a: PlaceId, r: PlaceId) -> bool {
-        let (pa, pr) = (self.facts.place(a), self.facts.place(r));
-        if pa.root != pr.root {
-            return false;
-        }
-        match (pa.is_wildcard(), pa.parent) {
-            (true, Some(base)) => {
-                weft_verified::places::within(&pr.steps, &self.facts.place(base).steps)
-            }
-            _ => {
-                weft_verified::places::within(&pr.steps, &pa.steps)
-                    && pr.steps[pa.steps.len()..].iter().all(|s| !s.unstable)
-            }
-        }
-    }
-
-    /// Returns true if `r` is inside `a` only through an unstable step below it.
-    fn below_unstable(&self, a: PlaceId, r: PlaceId) -> bool {
-        let (pa, pr) = (self.facts.place(a), self.facts.place(r));
-        pa.root == pr.root
-            && !pa.is_wildcard()
-            && weft_verified::places::within(&pr.steps, &pa.steps)
-            && !self.sig_allows(a, r)
-    }
-
     fn place_text(&self, ps: &[PlaceId]) -> String {
         let v: Vec<&str> = ps
             .iter()
@@ -2746,9 +2718,10 @@ impl<'p> Lower<'p> {
         }
     }
 
-    /// Returns the join of states `ends`. A local is `@ uniq` after the join only
-    /// if it is at the end of each branch. A part can hold the references of each
-    /// branch.
+    /// Returns the join of states `ends`. A local has the join of its modes at
+    /// the ends of the branches (`weft_facts::join_uniq`, with the verified
+    /// `modes::join`): it is `@ uniq` after the join only if it is at the end
+    /// of each branch. A part can hold the references of each branch.
     pub(super) fn joined(ends: &[BranchState]) -> BranchState {
         let len = ends.iter().map(|e| e.len).min().unwrap_or(0);
         let uniq = ends.first().map_or_else(BTreeSet::new, |first| {
@@ -2756,7 +2729,12 @@ impl<'p> Lower<'p> {
                 .uniq
                 .iter()
                 .copied()
-                .filter(|&l| l < len && ends.iter().all(|e| e.uniq.contains(&l)))
+                .filter(|&l| {
+                    l < len
+                        && ends
+                            .iter()
+                            .fold(true, |u, e| weft_facts::join_uniq(u, e.uniq.contains(&l)))
+                })
                 .collect()
         });
         let mut holders: Vec<PartHolder> = Vec::new();
@@ -2953,11 +2931,12 @@ impl<'p> Lower<'p> {
                 .any(|&v| self.facts.var(v).once)
     }
 
-    /// Returns true if each captured variable of the closure with summary `s` that
-    /// holds a reference is `@ uniq`, and there is one. The closure then holds
-    /// only parts that no other value can reach.
+    /// Returns true if the closure with summary `s` captures a variable that
+    /// holds a reference, and the join of the modes of these variables is
+    /// `@ uniq` (`weft_facts::join_uniq`): each one is `@ uniq`. The closure
+    /// then holds only parts that no other value can reach.
     fn closure_uniq(&self, s: usize) -> bool {
-        let mut any = false;
+        let mut joined = None;
         for &v in &self.closures[s].captures {
             let Some(l) = self.local_of(v).map(|l| &self.locals[l]) else {
                 continue;
@@ -2965,12 +2944,10 @@ impl<'p> Lower<'p> {
             if l.refs.is_empty() {
                 continue;
             }
-            if !self.facts.var(v).uniq {
-                return false;
-            }
-            any = true;
+            let uniq = self.facts.var(v).uniq;
+            joined = Some(joined.map_or(uniq, |u| weft_facts::join_uniq(u, uniq)));
         }
-        any
+        joined.unwrap_or(false)
     }
 
     fn is_copy_var(&self, v: VarId) -> bool {

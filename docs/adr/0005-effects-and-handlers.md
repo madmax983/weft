@@ -418,8 +418,10 @@ Status: accepted. Date: 2026-10-18.
   shows the same text: a body that performs a user `main.Log` and the standard `Log`,
   with neither one stated, gets `main.Log` and "the standard effect `Log`" (review
   S5b). W0801 does this when another effect that the body states, performs or
-  handles shows the same text. W0803 and W0805 do this when the name is the name of a
-  standard effect, or the text of another effect that leaves the same body.
+  handles shows the same text. W0803 and W0805 do this when another effect that
+  leaves the same body shows the same text, with the same words: `main.Log` and "the
+  standard effect `Log`". A user effect whose name is the name of a standard effect
+  shows its identity in W0803 and W0805 also with no other effect.
 
 ## Consequences
 

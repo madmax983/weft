@@ -376,18 +376,20 @@ fn check(f: &Flags) -> Result<Output> {
         }
     }
     if f.explain {
-        for b in &c.analysis.bodies {
+        for (i, b) in c.analysis.bodies.iter().enumerate() {
             let Some(file) = pkg.files.get(b.unit) else {
                 continue;
             };
             let line_of = |o: u32| file.line_col(o).0;
             let ex = bridge::explain(&b.facts, &line_of).map_err(|e| anyhow::anyhow!("{e}"))?;
             for e in ex {
-                // The diagnostic that reports the fact (`Diagnostic::facts`).
+                // The diagnostic that reports the fact of this body
+                // (`Diagnostic::facts`).
+                let key = bridge::body_key(i, &e.key);
                 let diag = c
                     .diags
                     .iter()
-                    .find(|d| d.unit == b.unit && d.facts.contains(&e.key))
+                    .find(|d| d.unit == b.unit && d.facts.contains(&key))
                     .map(|d| (d, file.line_col(d.span.lo)));
                 if f.json {
                     let link = diag.map_or_else(

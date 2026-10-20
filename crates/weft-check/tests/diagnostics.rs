@@ -324,7 +324,8 @@ fn w0702_and_w0101_name_an_effect_of_another_module_with_its_path() {
 #[test]
 fn w0803_and_w0805_tell_a_user_log_from_the_standard_log() {
     // With no runtime, `main` must handle the standard `Log` (W0803) and the
-    // user `Log` (W0805). The user effect shows its identity.
+    // user `Log` (W0805). The user effect shows its identity, and the
+    // standard effect says that it is the standard one (ADR 0005).
     let src =
         "effect Log { fn log(m: u64) }\nfn main() / log {\n    log(1)\n    log.info(\"x\")\n}\n";
     let opts = Options {
@@ -347,8 +348,23 @@ fn w0803_and_w0805_tell_a_user_log_from_the_standard_log() {
                 "W0805",
                 "`main` performs `main.Log`, and no handler handles it"
             ),
-            ("W0803", "with no runtime, `main` must handle `Log` itself")
+            (
+                "W0803",
+                "with no runtime, `main` must handle the standard effect `Log` itself"
+            )
         ]
+    );
+    // With no user `Log`, the standard effect has its plain name.
+    let src = "fn main() / log {\n    log.info(\"x\")\n}\n";
+    let d: Vec<Diagnostic> = check_source("t.wf", src, opts)
+        .diags
+        .into_iter()
+        .filter(|d| d.code == "W0803")
+        .collect();
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(
+        d[0].message,
+        "with no runtime, `main` must handle `Log` itself"
     );
 }
 
@@ -404,6 +420,9 @@ fn w0304_is_reported_once_for_each_variable() {
             "and 2 more uses, at lines 4, 5"
         ]
     );
+    // The diagnostic reports each use: the corpus has no marker for the later
+    // uses, so this checks that sema still gives their facts.
+    assert_eq!(d[0].facts.len(), 3, "{:?}", d[0].facts);
     // One use has no note about other uses.
     assert_eq!(d[1].message, "`y` is used before it has a value");
     assert_eq!(
@@ -463,7 +482,8 @@ fn w0801_names_the_effect_as_written_and_the_identity_only_when_a_user_effect_sh
 #[test]
 fn w0304_lists_the_read_in_a_clause_not_the_node_that_runs_it() {
     // The node `op()` runs the clause. The note names the read in the clause
-    // (line 7), not the line of `op()` (line 9).
+    // (line 7), not the line of `op()` (line 9), and a note says where the
+    // clause runs.
     let src = "effect Op { fn op() }\nfn f(c: bool) / Op {\n    let x: u64\n    if c { x = 1 }\n    let k = || print(x)\n    handle Op { fn op() {\n        print(x)\n        resume(())\n    } } in op()\n}\n";
     let d = diags(src, "W0304");
     assert_eq!(d.len(), 1, "{d:?}");
@@ -472,9 +492,13 @@ fn w0304_lists_the_read_in_a_clause_not_the_node_that_runs_it() {
         [
             "x : u64",
             "give it a value on every path before this use",
-            "and 1 more use, at line 7"
+            "and 1 more use, at line 7",
+            "a handler clause reads it at line 7 when it runs here"
         ]
     );
+    let runs = src.rfind("op()").and_then(|i| u32::try_from(i).ok());
+    assert_eq!(d[0].notes[3].span.map(|s| s.lo), runs, "{:?}", d[0].notes);
+    assert_eq!(d[0].facts.len(), 2, "{:?}", d[0].facts);
 }
 
 #[test]
@@ -485,6 +509,84 @@ fn w0301_at_a_perform_shows_the_footprint_of_the_handler() {
     assert_eq!(d.len(), 1, "{d:?}");
     assert_eq!(
         notes(&d[0])[1],
-        "log : mut(lines), the footprint of its handler"
+        "log : mut(lines), the footprint of the handler that it performs through"
     );
+    // A call of a function that performs reaches the handler too. The callee is
+    // not an operation, so the note does not say that it has a handler.
+    let src = "effect Note { fn note(m: u64) }\nfn helper() / Note { note(1) }\nfn held() {\n    let lines: Vec<u64> = Vec.new()\n    lines.push(1)\n    handle Note { fn note(m) { lines.push(m); resume(()) } } in {\n        let first = &lines[0]\n        helper()\n        print(first)\n    }\n}\n";
+    let d = diags(src, "W0301");
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(
+        notes(&d[0])[1],
+        "helper : mut(lines), the footprint of the handler that it performs through"
+    );
+}
+
+#[test]
+fn the_facts_of_two_bodies_with_one_name_have_two_keys() {
+    // Two tests can have one name, and sema gives equal bodies equal ids. The
+    // key of a fact holds its body, so each diagnostic reports the fact of its
+    // own body only.
+    let test = "test \"t\" {\n    let v = Vec.new()\n    v.push(1)\n    let r = &v[0]\n    v.push(2)\n    print(r)\n}\n";
+    let c = check_source("t.wf", &format!("{test}{test}"), Options::default());
+    let d: Vec<&Diagnostic> = c.diags.iter().filter(|d| d.code == "W0301").collect();
+    assert_eq!(d.len(), 2, "{:?}", c.diags);
+    assert_eq!(d[0].facts.len(), 1, "{:?}", d[0].facts);
+    assert_eq!(d[1].facts.len(), 1, "{:?}", d[1].facts);
+    assert_ne!(d[0].facts, d[1].facts);
+    for (i, b) in c.analysis.bodies.iter().enumerate() {
+        let ex = weft_check::bridge::explain(&b.facts, &|_| 0).expect("the spec runs");
+        assert_eq!(ex.len(), 1, "{ex:?}");
+        let key = weft_check::bridge::body_key(i, &ex[0].key);
+        let n = c.diags.iter().filter(|d| d.facts.contains(&key)).count();
+        assert_eq!(n, 1, "`{key}` has {n} diagnostics");
+    }
+}
+
+#[test]
+fn w0204_and_w0605_of_a_stated_place_are_rules_of_the_spec() {
+    // A returned reference, and a new value of a place field, must be inside
+    // the stated place (`ref_outside`). Each diagnostic reports its facts, so
+    // `weft check --explain` shows the derivation.
+    let src = "struct World { a: Vec<u64>, b: Vec<u64> }
+fn other(v: &Vec<u64>, w: &Vec<u64>) -> &u64 in v[] { &w[0] }
+fn coarse(w: &World) -> &u64 in w.a { &w.a[0] }
+fn inside(w: &World) -> &u64 in w.a[] { &w.a[0] }
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+fn cur_outside(v: &Vec<u8>) {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &v[0]
+    print(f.cur)
+}
+fn cur_inside() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[1]
+    print(f.cur)
+}
+fn cur_literal(v: &Vec<u8>) {
+    let f = Frame { buf: [1, 2, 3, 4], cur: &v[0] }
+}
+";
+    let d = diags(src, "W0204");
+    let text: Vec<&str> = d.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(
+        text,
+        [
+            "returned reference points into `w[]`, but the signature says `v[]`",
+            "returned reference points into `w.a[]`, which is below `w.a` through an unstable step: state the place, or `w.a..`",
+        ]
+    );
+    let d2 = diags(src, "W0605");
+    let text: Vec<&str> = d2.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(
+        text,
+        [
+            "this field can point only into `f.buf[]` of its own struct, but the value points into `v[]`",
+            "`cur` can point only into `self.buf[]` of its own struct, but this value points into `v[]`; give the field its value after the struct has a place",
+        ]
+    );
+    for d in d.iter().chain(&d2) {
+        assert_eq!(d.facts.len(), 1, "{d:?}");
+        assert!(d.facts[0].contains(": ref_outside(n"), "{:?}", d.facts);
+    }
 }

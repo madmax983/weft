@@ -37,14 +37,19 @@ impl Checked {
 /// Runs the production checker on every body of an analysis.
 ///
 /// `files[u]` is the source of unit `u`; it resolves line numbers in notes.
+/// Each fact that a diagnostic reports gets the index of its body
+/// ([`bridge::body_key`]), so two bodies with one name keep apart.
 pub fn check_analysis(analysis: Analysis, files: &[SourceFile]) -> Checked {
     let mut diags = analysis.diags.clone();
     let mut reports = Vec::new();
-    for b in &analysis.bodies {
+    for (i, b) in analysis.bodies.iter().enumerate() {
         let r = check(&b.facts);
         let mut ds = diagnose_marked(&b.facts, &r);
         for d in &mut ds {
             d.unit = b.unit;
+            for key in &mut d.facts {
+                *key = bridge::body_key(i, key);
+            }
             if let Some(f) = files.get(b.unit) {
                 resolve_lines(d, f);
             }
@@ -165,13 +170,18 @@ mod tests {
     #[test]
     fn equal_diagnostics_keep_the_facts_of_both() {
         let span = weft_syntax::ast::Span { lo: 1, hi: 2 };
-        let a = Diagnostic::error("W0301", "m", span).with_facts(["f: error(v1, n2)".to_string()]);
-        let b = Diagnostic::error("W0301", "m", span).with_facts(["g: error(v1, n2)".to_string()]);
+        let a =
+            Diagnostic::error("W0301", "m", span).with_facts(["body 0: error(v1, n2)".to_string()]);
+        let b =
+            Diagnostic::error("W0301", "m", span).with_facts(["body 1: error(v1, n2)".to_string()]);
         let c = Diagnostic::error("W0301", "other", span);
         let mut diags = vec![a, b, c];
         dedup_diags(&mut diags);
         assert_eq!(diags.len(), 2);
-        assert_eq!(diags[0].facts, ["f: error(v1, n2)", "g: error(v1, n2)"]);
+        assert_eq!(
+            diags[0].facts,
+            ["body 0: error(v1, n2)", "body 1: error(v1, n2)"]
+        );
         assert!(diags[1].facts.is_empty());
     }
 

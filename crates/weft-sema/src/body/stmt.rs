@@ -538,9 +538,11 @@ impl Lower<'_> {
         }
     }
 
-    /// A returned reference must be inside the place that the signature states. It
-    /// cannot point into a local, a by-value parameter or a temporary of the
-    /// function: they go out of scope at the return.
+    /// A returned reference must be inside the place that the signature states:
+    /// this gives the facts of that check (`ref_at`, `ref_in`, `ref_outside`,
+    /// W0204). It cannot point into a local, a by-value parameter or a temporary
+    /// of the function: they go out of scope at the return, and this reports
+    /// W0204 for them.
     pub(super) fn check_returned_refs(&mut self, refs: &[PlaceId], closure: bool, span: Span) {
         let Some(id) = self.self_fn else { return };
         let sig = self.sigs[id].clone();
@@ -618,26 +620,22 @@ impl Lower<'_> {
         }
         // The handle places of `Rc` handles are not where the reference points.
         rest.retain(|&r| !self.is_dep(r));
-        for &r in &rest {
-            if allowed.iter().any(|&a| self.sig_allows(a, r)) {
-                continue;
-            }
-            let (rt, at) = (
-                self.facts.place(r).display.clone(),
-                self.place_text(&allowed),
-            );
-            let env = self
-                .env_root
-                .is_some_and(|e| self.facts.place(e).root == self.facts.place(r).root);
-            let msg = if env {
-                format!("the returned reference can come from a handler of a caller, which can give a place outside `{at}`")
-            } else if allowed.iter().any(|&a| self.below_unstable(a, r)) {
-                format!("returned reference points into `{rt}`, which is below `{at}` through an unstable step: state the place, or `{at}..`")
-            } else {
-                format!("returned reference points into `{rt}`, but the signature says `{at}`")
-            };
-            self.err("W0204", msg, span);
+        if rest.is_empty() {
+            return;
         }
+        // The spec checks that each reference is inside a stated place
+        // (`ref_outside`). The node of the facts has no edges: only that rule
+        // reads it.
+        let n = self.facts.add_node(span, "return", String::new());
+        let env = self.env_root.map(|e| self.facts.place(e).root);
+        self.facts.ref_in.extend(allowed.iter().map(|&d| (n, d)));
+        self.facts.ref_at.extend(rest.iter().map(|&r| (n, r)));
+        let needs = self.place_text(&allowed);
+        self.facts.ref_sites.push(weft_facts::RefSite {
+            node: n,
+            kind: weft_facts::RefKind::Return { env },
+            needs,
+        });
     }
 
     // -----------------------------------------------------------------------
@@ -1378,28 +1376,27 @@ impl Lower<'_> {
         }
     }
 
-    /// Reports W0605 if `target` is a self-reference field of a `!Move` struct
-    /// and value `v` points outside the place that the field states.
+    /// Gives the facts of W0605 (`ref_at`, `ref_in`, `ref_outside`) if
+    /// `target` is a self-reference field of a `!Move` struct: value `v` must
+    /// point inside the place that the field states.
     fn check_self_ref(&mut self, target: &ast::Expr, v: &Val, span: Span) {
         let Some(allowed) = self.field_referents(target) else {
             return;
         };
         let (named, _) = self.split_deps(&v.refs);
-        for r in named {
-            if allowed.iter().any(|&a| self.sig_allows(a, r)) {
-                continue;
-            }
-            let (rt, at) = (
-                self.facts.place(r).display.clone(),
-                self.place_text(&allowed),
-            );
-            self.err(
-                "W0605",
-                format!("this field can point only into `{at}` of its own struct, but the value points into `{rt}`"),
-                span,
-            );
+        if named.is_empty() {
             return;
         }
+        // The node of the facts has no edges: only `ref_outside` reads it.
+        let n = self.facts.add_node(span, "field", String::new());
+        self.facts.ref_in.extend(allowed.iter().map(|&d| (n, d)));
+        self.facts.ref_at.extend(named.iter().map(|&r| (n, r)));
+        let needs = self.place_text(&allowed);
+        self.facts.ref_sites.push(weft_facts::RefSite {
+            node: n,
+            kind: weft_facts::RefKind::Field,
+            needs,
+        });
     }
 
     pub(super) fn arith(&mut self, a: &Ty, b: &Ty, span: Span) {

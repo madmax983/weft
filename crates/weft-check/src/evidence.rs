@@ -10,13 +10,15 @@
 //!   probe rule for each rule of the spec that derives `invalidated_at`,
 //!   `task_conflict` or `frees_at`. A probe rule has the body of its rule, and
 //!   its head names the places of the derivation (the witness). The evidence
-//!   must be such a witness.
+//!   must be such a witness. The node of the evidence of W0301 must also
+//!   reach the use as the rules of `invalid(R, Q)` say: along `cfg_edge`, and
+//!   with no new value of the reference on the way (`rebound_at`).
 //!
 //! The probes come from the rules of the spec, so a new rule of these
 //! relations gets a probe with no edit here. A new rule of another shape is
 //! an error of [`program`], and a test finds it.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::sync::OnceLock;
 
@@ -247,10 +249,43 @@ fn conflict_ok(f: &FnFacts, out: &Output, c: &Conflict) -> bool {
     task_side && node_side && cause
 }
 
+/// Returns true if the invalidation of `var` at node `at` alone makes `var`
+/// invalid at node `used`, as the rules of `invalid(R, Q)` say: `used` is
+/// after `at` on a path of `cfg_edge`, and no node after `at` and before `used`
+/// gives `var` a new value (`rebound_at`).
+fn reaches(
+    succ: &BTreeMap<NodeId, Vec<NodeId>>,
+    rebound: &BTreeSet<(VarId, NodeId)>,
+    var: VarId,
+    at: NodeId,
+    used: NodeId,
+) -> bool {
+    let next = |n: NodeId| succ.get(&n).map_or(&[][..], Vec::as_slice);
+    let mut seen = BTreeSet::new();
+    let mut stack: Vec<NodeId> = next(at).to_vec();
+    while let Some(q) = stack.pop() {
+        if !seen.insert(q) {
+            continue;
+        }
+        if q == used {
+            return true;
+        }
+        if !rebound.contains(&(var, q)) {
+            stack.extend_from_slice(next(q));
+        }
+    }
+    false
+}
+
 /// Returns each difference between the evidence of the checker and the spec
 /// for one function. `out` is the result of [`evaluate_probes`].
 pub fn differences(f: &FnFacts, r: &Report, out: &Output) -> Vec<String> {
     let mut bad = Vec::new();
+    let mut succ: BTreeMap<NodeId, Vec<NodeId>> = BTreeMap::new();
+    for &(p, q) in &f.cfg_edge {
+        succ.entry(p).or_default().push(q);
+    }
+    let rebound: BTreeSet<(VarId, NodeId)> = f.rebound_at.iter().copied().collect();
     let v = &r.violations;
     // Each violation has one piece of evidence, and each piece of evidence
     // has its violation.
@@ -294,6 +329,12 @@ pub fn differences(f: &FnFacts, r: &Report, out: &Output) -> Vec<String> {
             let mut text = String::new();
             let _ = write!(text, "the spec has no derivation for the evidence {inv:?}");
             bad.push(text);
+        }
+        if !reaches(&succ, &rebound, inv.var, inv.at, inv.used_at) {
+            bad.push(format!(
+                "the invalidation at {} does not reach the use at {}: {inv:?}",
+                inv.at, inv.used_at
+            ));
         }
     }
     for c in &r.conflicts {
@@ -378,6 +419,32 @@ mod tests {
         let d = differences(&f, &wrong, &out);
         assert_eq!(d.len(), 1, "{d:?}");
         assert!(d[0].ends_with("has no evidence"), "{d:?}");
+    }
+
+    const REBOUND: &str = "fn rebound(v: &Vec<u64>) / mut(v) {\n    let r = &v[0]\n    print(r)\n    v.push(1)\n    r = &v[0]\n    v.push(2)\n    print(r)\n}\n";
+
+    /// The evidence of W0301 must reach the use: a node that gives the
+    /// reference a new value between them ends the invalidation (`invalid`).
+    #[test]
+    fn evidence_that_does_not_reach_the_use_is_a_difference() {
+        let (f, r) = body(REBOUND, "rebound");
+        let out = evaluate_probes(&f).expect("the spec runs");
+        assert_eq!(differences(&f, &r, &out), Vec::<String>::new());
+        assert_eq!(r.invalidations.len(), 1, "{:?}", r.invalidations);
+        // The first push also invalidates `r`, but the new value of `r` comes
+        // after it.
+        let first = f
+            .nodes
+            .iter()
+            .position(|n| n.label == "push")
+            .map(|i| NodeId(u32::try_from(i).unwrap_or(0)))
+            .expect("the push exists");
+        assert_ne!(first, r.invalidations[0].at);
+        let mut wrong = r;
+        wrong.invalidations[0].at = first;
+        let d = differences(&f, &wrong, &out);
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert!(d[0].contains("does not reach"), "{d:?}");
     }
 
     const TASK: &str = "struct S { n: u64 }\nfn t(s: &S) / async, mut(s..) {\n    scope { sc =>\n        sc.spawn(|| { s.n += 1 })\n        print(s.n)\n    }\n}\n";

@@ -103,6 +103,11 @@
 //                            parameter type states a row.
 //   param_effect(P, I, E)    the row of the type of parameter I at P allows E (closed under
 //                            implication).
+//   ref_at(P, A)             node P gives a reference into A to a place that states where it
+//                            can point: the result of a function that states its returned
+//                            places, or a place field of a `!Move` struct.
+//   ref_in(P, D)             the place that gets the reference at node P states D, in the
+//                            places of the body.
 
 // ---------------------------------------------------------------------------
 // Places
@@ -278,8 +283,8 @@ shared_mutation(P, M)   :- mutates_at(P, M), shared_root(S), within(M, S).
 arg_effect_outside(P, I, E) :- fn_arg_effect(P, I, E), !param_effect(P, I, E).
 
 // ---------------------------------------------------------------------------
-// W0203: a reference argument points inside the place that its parameter
-// states (rule 1)
+// W0203, W0204, W0605: a reference points inside the place that its
+// parameter, its function or its field states (rule 1)
 // ---------------------------------------------------------------------------
 
 // A reference into A is inside the stated place D. Below a plain place only
@@ -291,6 +296,12 @@ inside_stated(A, D)  :- wildcard(D), parent(D, B), within(A, B).
 
 arg_inside(P, I, A)  :- arg_at(P, I, A), param_in(P, I, D), inside_stated(A, D).
 arg_outside(P, I, A) :- arg_at(P, I, A), !arg_inside(P, I, A).
+
+// W0204, W0605: a returned reference, and a new value of a place field, are
+// inside a stated place too. A struct literal states no place of the body for
+// its field: the struct has no place yet.
+ref_inside(P, A)     :- ref_at(P, A), ref_in(P, D), inside_stated(A, D).
+ref_outside(P, A)    :- ref_at(P, A), !ref_inside(P, A).
 
 // ---------------------------------------------------------------------------
 // W0406: a `@ uniq` parameter gets a `@ uniq` argument

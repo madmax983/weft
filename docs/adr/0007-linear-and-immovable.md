@@ -163,7 +163,9 @@ Status: accepted. Date: 2026-10-18.
   a type parameter can move the value, as `Vec.push` does when its buffer grows
   (W0604).
 - A self-reference field gets only a reference into its own struct (W0605). A struct
-  literal cannot give it one: the struct has no place yet.
+  literal cannot give it one: the struct has no place yet. The spec checks both
+  (`ref_outside`, with `inside_stated`, review S5b): a struct literal states no place
+  of the body for the field.
 - A value that no place held before is built in place: a literal, a call result and a
   by-value parameter. Its place fields have no value, also in a part, in an enum
   payload and behind a `Box`. A read or a borrow of such a field, or of the whole

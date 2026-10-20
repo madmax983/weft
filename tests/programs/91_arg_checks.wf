@@ -42,3 +42,23 @@ fn allowed() / log {
 fn not_allowed() / clock, log {
     with_log(|| sleep(1.s))   //~ W0705
 }
+// The row of a function item, and the stated row of a function value, count
+// too.
+fn ticks() / clock { sleep(1.s) }
+fn logs() / log { log.info("y") }
+fn item_not_allowed() / clock, log {
+    with_log(ticks)   //~ W0705
+}
+fn local_item_not_allowed() / clock, log {
+    let g = ticks
+    with_log(g)   //~ W0705
+}
+fn param_not_allowed(h: fn() / clock) / clock, log {
+    with_log(h)   //~ W0705
+}
+fn item_allowed() / log {
+    with_log(logs)
+}
+fn param_allowed(h: fn() / log) / log {
+    with_log(h)
+}

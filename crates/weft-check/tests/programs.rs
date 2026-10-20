@@ -201,11 +201,11 @@ fn each_violation_has_one_diagnostic() {
             .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
         let checked = check_source(&name, &src, Options::from_markers(&src));
         let mut spec_keys = BTreeSet::new();
-        for b in &checked.analysis.bodies {
+        for (i, b) in checked.analysis.bodies.iter().enumerate() {
             let out = bridge::evaluate_spec(&b.facts, false).expect("the spec runs");
             for rel in bridge::VIOLATION_RELATIONS {
                 for t in out.tuples(rel) {
-                    let key = format!("{}: {}", b.facts.name, out.display_tuple(rel, &t));
+                    let key = bridge::body_key(i, &out.display_tuple(rel, &t));
                     let n = checked
                         .diags
                         .iter()
