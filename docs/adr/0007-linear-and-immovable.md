@@ -311,10 +311,21 @@ Status: accepted. Date: 2026-10-18.
     runs too (ADR 0006, `tests/programs/163_task_starts.wf`).
 - What stays open (not checked), until the core IR replaces the fact generation:
   - A spawn whose handle is not kept (a spawn in statement position, or `let _ =`)
-    drops the result of the task at the end of the scope. W0601 does not see it.
-  - A `fork` that can abort needs `on abort` for each linear type of a branch value.
-    W0602 does not ask for it. The unwinder cannot finish such a value, and the run
-    stops with a fault.
+    gives its handle to the scope. The scope joins the task and drops the result.
+    W0601 does not see it. The rule: such a spawn drops `T`. That is W0601 at the
+    spawn when `T` is linear, as for `detach`. In a generic body, `T` goes into
+    `drops`. The handle that the scope gets is live across the end of the scope,
+    which can abort. So a linear `T` with no `on abort` is also W0602 at the
+    scope, as for a handle that the body keeps and does not use. The checker gives
+    both today for a handle that a pattern `_` drops (F3-6, O3-4, I3-1,
+    `tests/ir_targets/f3_6_task_results.wf`).
+  - A `fork` can abort while the value of one branch is done: the other branch
+    fails, or a deadline or a cancel unwinds the owner. A cancel can cut a `fork`
+    whose branches cannot fail too, for example when a sibling task of an outer
+    scope fails. The rule: a `fork` that can abort needs `on abort` for each linear
+    type of a branch value (W0602 at the `fork`). W0602 does not ask for it yet.
+    The unwinder cannot finish such a value, and the run stops with a fault (F3-6,
+    `tests/ir_targets/f3_6_task_results.wf`).
   - A generic body that holds a handle of a `Task<T>` across a node that can abort
     does not put `T` in `holds`. So a caller that gives `T` a linear type with no
     `on abort` gets no W0602, and the unwinder stops with a fault where it finds the

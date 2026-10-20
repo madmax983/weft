@@ -544,3 +544,20 @@ Status: accepted. Date: 2026-10-18.
   - A function value that the body cannot follow, and that goes to an operation of a
     handler of a caller. The caller does not check it for W0314. Such a value comes
     from a parameter of a closure, or from an operation of a handler of a caller.
+- What stays open until the core IR replaces the fact generation (review round 3).
+  The checker does not enforce these rules yet. Each rule has an acceptance target in
+  `tests/ir_targets` (`docs/traceability.md`):
+  - A closure or a clause that keeps or stores its reference parameter, when a callee
+    gives it a reference into a local of the callee (F3-2). The rule is in ADR 0003:
+    such a place gets a root of its own, and a hidden variable that owns the root
+    goes out of scope at a node right after the call. For a clause, the end of
+    `resume` is in the clause, which has no edge to the handled body. So the node
+    is after the call in the handled body that can perform the operation, and on
+    the abort path it is the end of the `handle`
+    (`tests/ir_targets/f3_2_callee_local_refs.wf`).
+  - The footprint of stored values (O3-5). The rule: a task or a fork branch that
+    reads a function value from a field, or that runs a value that can be a closure
+    stored in a field of a local, writes and reads what each closure stored there
+    writes and reads, as for a `Vec` element. So a conflict with the parent, a
+    sibling task or the other branch is W0405
+    (`tests/ir_targets/o3_5_field_closure_tasks.wf`, ADR 0006).

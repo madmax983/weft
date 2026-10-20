@@ -13,43 +13,18 @@
 //! the Datalog spec. Each rule of the spec must fire, and each violation
 //! relation of the spec and `stealable` must hold, for some body of the corpus.
 
+mod common;
+
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 
-use weft_check::{agreement, bridge, check_source, Checked};
+use common::{actual, expected, write_disagreements, Marks, TASK_WORDS};
+use weft_check::{bridge, check_source, Checked};
 use weft_datalog::{evaluate, parse_program_named, EvalOptions, Value};
 use weft_sema::Options;
-use weft_syntax::diag::Severity;
 use weft_syntax::SourceFile;
-
-/// The words after `//~` that name a task property, not an error code.
-const TASK_WORDS: [&str; 2] = ["stealable", "pinned"];
-
-/// A set of `(line, word)` pairs.
-type Marks = BTreeSet<(usize, String)>;
-
-/// A sorted list of `(line, code)` pairs. A pair can occur more than one time.
-type Codes = Vec<(usize, String)>;
-
-/// Returns the expected `(line, word)` pairs: error codes, and task words.
-fn expected(src: &str) -> (Codes, Marks) {
-    let (mut codes, mut tasks) = (Vec::new(), BTreeSet::new());
-    for (i, line) in src.lines().enumerate() {
-        if let Some(pos) = line.find("//~") {
-            for word in line[pos + 3..].split_whitespace() {
-                if TASK_WORDS.contains(&word) {
-                    tasks.insert((i + 1, word.to_string()));
-                } else {
-                    codes.push((i + 1, word.to_string()));
-                }
-            }
-        }
-    }
-    codes.sort();
-    (codes, tasks)
-}
 
 /// Returns `(line, stealable or pinned)` for each task closure of the root unit.
 fn task_lines(checked: &Checked, file: &SourceFile) -> Marks {
@@ -83,17 +58,11 @@ fn run(path: &Path) -> Result<(), String> {
     let opts = Options::from_markers(&src);
     let checked = check_source(&name, &src, opts);
     let file = SourceFile::new(&name, src.as_str());
-    let mut actual: Codes = checked
-        .diags
-        .iter()
-        .filter(|d| d.severity == Severity::Error)
-        .map(|d| (file.line(d.span), d.code.to_string()))
-        .collect();
-    actual.sort();
+    let found = actual(&checked, &file);
     let (want, want_tasks) = expected(&src);
     let mut msg = String::new();
-    if actual != want {
-        let _ = writeln!(msg, "{name}: expected {want:?}\n  found {actual:?}");
+    if found != want {
+        let _ = writeln!(msg, "{name}: expected {want:?}\n  found {found:?}");
         for d in &checked.diags {
             msg.push_str(&d.render(&file));
         }
@@ -107,15 +76,7 @@ fn run(path: &Path) -> Result<(), String> {
             );
         }
     }
-    if let Err(bad) = agreement(&checked) {
-        for b in bad {
-            let _ = writeln!(
-                msg,
-                "{name}: checker and spec disagree in `{}`\n  checker: {:?}\n  spec:    {:?}",
-                b.function, b.checker, b.spec
-            );
-        }
-    }
+    write_disagreements(&name, &checked, &mut msg);
     if msg.is_empty() {
         Ok(())
     } else {

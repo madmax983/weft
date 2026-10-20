@@ -25,9 +25,11 @@ How to read it:
 
 The first version of this file came from section (1) of the fidelity review of round 2.
 Review stage S5b brought it up to date. The last sections list the round 2 changes, the
-S5b and S5c changes and the round 3 changes. The corpus numbers are unique (`corpus_numbers_are_unique`); S5b gave
-new numbers to four files that shared a number (`52_raw_pointers`, `53_overwritten`,
-`54_stealable`, `55_alias_in_one_task`).
+S5b and S5c changes and the round 3 changes. The section "Core IR acceptance targets"
+lists the rules that stay open until the core IR, with a target file for each one. The
+corpus numbers are unique (`corpus_numbers_are_unique`); S5b gave new numbers to four
+files that shared a number (`52_raw_pointers`, `53_overwritten`, `54_stealable`,
+`55_alias_in_one_task`).
 
 ## Places and mutation (design: "Places and mutation", ADR 0003)
 
@@ -229,3 +231,24 @@ recorded.
 | deferral | an unwinding defers only the interrupts of the frames below it; a deadline of a block and a failure of a child of a scope that an `on abort` function runs hold at once (`Machine::live_base`) | ADR 0010; `interrupt_inside_on_abort` |
 | F3-8 run nodes | W0602 for a task start asks that the closure of the task captures a linear variable with no `on abort`, so a block or a closure that consumes its value and then spawns into an outer scope is clean | `spec/weft.dl`, `rules.rs`, `diagnose.rs`, `codes.rs`, ADRs 0006, 0007; corpus 163 |
 | generic gaps | a generic body whose task closure or fork branch takes a value of a type parameter, and one that holds a `Task<T>` across an abort, stay open until the core IR | ADRs 0006, 0007 |
+
+## Core IR acceptance targets
+
+The core IR replaces the fact generation of `crates/weft-sema/src/body/`. Each row is a
+realistic blocker of review round 3 whose fix is in the fact generation. Its file in
+`tests/ir_targets` has bad cases (`fn bad_NAME()`) that the checker accepts today and
+that fault at run time, controls that the checker finds today, and clean cases that
+its test blocks run. The markers give the correct result. The test `ir_targets` of
+`weft-check` expects each file to miss at least one marker and to have no error with no
+marker. When the checker reports each marker, that test fails, and the file moves to
+`tests/programs`. The test `ir_targets` of `weft-interp` makes sure that each bad case
+faults and that each clean case runs clean with the oracle.
+
+| Rule | Finding | File | Status |
+| --- | --- | --- | --- |
+| A by-reference binding of a `match` whose type holds references gets the held places of the part, as a field read through a reference does (W0301, W0312; ADR 0003) | R3RT2 | `tests/ir_targets/r3rt2_match_through_ref.wf` | open: the checker does not enforce it yet |
+| A caller adds the places that the references behind a reference argument point into to `call_arg`, to the reads of the call node and to the reads of a task that makes the call (W0312, W0405; ADR 0003) | R3RT3 | `tests/ir_targets/r3rt3_held_refs_at_call.wf` | open: the checker does not enforce it yet |
+| A place that a callee lends to a closure or a clause, and that the caller cannot name, gets a root of its own; a hidden variable owns it and goes out of scope right after the call, or at the end of the `handle` on the abort path (W0301, W0204; ADRs 0003, 0005) | F3-2 | `tests/ir_targets/f3_2_callee_local_refs.wf` | open: the checker does not enforce it yet |
+| A spawn whose handle is not kept drops `T` (W0601 at the spawn; W0602 at the scope for a linear `T` with no `on abort`; `T` in `drops` in a generic body); a `fork` that can abort needs `on abort` for each linear type of a branch value (W0602 at the `fork`) (ADRs 0006, 0007) | F3-6 (O3-4, I3-1) | `tests/ir_targets/f3_6_task_results.wf` | open: the checker does not enforce it yet |
+| A task or a fork branch that runs a closure stored in a field of a local writes and reads what the closure writes and reads, as for a `Vec` element (W0405; ADRs 0005, 0006) | O3-5 | `tests/ir_targets/o3_5_field_closure_tasks.wf` | open: the checker does not enforce it yet |
+| A place through an `Rc` handle also reads the handle place, also in the reads of a task, so a move, a new value or the end of the scope of the handle conflicts with the task (W0405; ADR 0003) | O3-6 | `tests/ir_targets/o3_6_rc_handle_tasks.wf` | open: the checker does not enforce it yet |

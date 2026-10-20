@@ -1,0 +1,141 @@
+// Core IR target O3-6 (review round 3). A task reads a field through an `Rc`
+// handle in a local. While the task runs, the parent moves the handle, gives
+// it a new value, or lets it go out of scope. The task reads the group place
+// (`Node.v`), not the handle variable. So W0405 does not see the conflict, and
+// the task reads a moved variable or races with the parent. The same code with
+// a `Box` gets W0405 today.
+// Decision (ADR 0003, open item): a reference through a handle depends on
+// `handle.*`. A place through an `Rc` handle also reads the handle place (the
+// variable, or the field that holds the handle), also in the reads of a task.
+// So a free or a new value of the handle conflicts with the task (W0405). The
+// checker does not enforce it yet.
+struct Node { v: u64 }
+struct Hold { r: Rc<Node>, n: u64 }
+fn take<T>(x: T) { }
+fn take_rc(x: Rc<Node>) { }
+
+// Bad: the parent moves the handle while the task reads through it.
+fn bad_move_generic() {
+    let shared = Rc.new(Node { v: 5 })
+    scope { s =>
+        let b = s.spawn(|| shared.v + 1)
+        take(shared)   //~ W0405
+        print(b.join())
+    }
+}
+fn bad_move_let() {
+    let shared = Rc.new(Node { v: 5 })
+    scope { s =>
+        let b = s.spawn(|| shared.v + 1)
+        let m = shared   //~ W0405
+        print(b.join())
+    }
+}
+fn bad_move_typed() {
+    let shared = Rc.new(Node { v: 5 })
+    scope { s =>
+        let b = s.spawn(|| shared.v + 1)
+        take_rc(shared)   //~ W0405
+        print(b.join())
+    }
+}
+// Bad: the parent gives the handle a new value while the task reads it.
+fn bad_new_value() {
+    let shared = Rc.new(Node { v: 5 })
+    scope { s =>
+        let b = s.spawn(|| shared.v + 1)
+        shared = Rc.new(Node { v: 6 })   //~ W0405
+        print(b.join())
+    }
+}
+// Bad: the handle goes out of scope at the end of the block while the task
+// still runs.
+fn bad_scope_end() {
+    scope { s =>
+        {
+            let shared = Rc.new(Node { v: 5 })
+            s.spawn(|| { sleep(1.s); print(shared.v) })
+        }   //~ W0405
+        print(0)
+    }
+}
+// Bad: the handle is a field, and the parent moves the struct that holds it.
+fn bad_field_handle() {
+    let h = Hold { r: Rc.new(Node { v: 5 }), n: 1 }
+    scope { s =>
+        let b = s.spawn(|| h.r.v + 1)
+        take(h)   //~ W0405
+        print(b.join())
+    }
+}
+
+// Control: the checker finds the same code with a `Box` today.
+fn bad_control_boxed() {
+    let bx = Box.new(Node { v: 5 })
+    scope { s =>
+        let b = s.spawn(|| bx.v + 1)
+        take(bx)   //~ W0405
+        print(b.join())
+    }
+}
+
+// Clean: the same moves after the join of the task.
+fn ok_move_generic() {
+    let shared = Rc.new(Node { v: 5 })
+    scope { s =>
+        let b = s.spawn(|| shared.v + 1)
+        print(b.join())
+        take(shared)
+    }
+}
+fn ok_move_let() {
+    let shared = Rc.new(Node { v: 5 })
+    scope { s =>
+        let b = s.spawn(|| shared.v + 1)
+        print(b.join())
+        let m = shared
+        print(m.v)
+    }
+}
+fn ok_move_typed() {
+    let shared = Rc.new(Node { v: 5 })
+    scope { s =>
+        let b = s.spawn(|| shared.v + 1)
+        print(b.join())
+        take_rc(shared)
+    }
+}
+fn ok_new_value() {
+    let shared = Rc.new(Node { v: 5 })
+    scope { s =>
+        let b = s.spawn(|| shared.v + 1)
+        print(b.join())
+        shared = Rc.new(Node { v: 6 })
+        print(shared.v)
+    }
+}
+fn ok_scope_end() {
+    scope { s =>
+        {
+            let shared = Rc.new(Node { v: 5 })
+            let b = s.spawn(|| { sleep(1.s); print(shared.v) })
+            b.join()
+        }
+        print(0)
+    }
+}
+fn ok_field_handle() {
+    let h = Hold { r: Rc.new(Node { v: 5 }), n: 1 }
+    scope { s =>
+        let b = s.spawn(|| h.r.v + 1)
+        print(b.join())
+        take(h)
+    }
+}
+
+test "ok_move_generic" { ok_move_generic() }
+test "ok_move_let" { ok_move_let() }
+test "ok_move_typed" { ok_move_typed() }
+test "ok_new_value" { ok_new_value() }
+test "ok_scope_end" { ok_scope_end() }
+test "ok_field_handle" { ok_field_handle() }

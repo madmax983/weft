@@ -1,0 +1,95 @@
+// Core IR target R3RT3 (review round 3). A reference argument can point to a
+// value that holds references (`rs: &Vec<&Entity>`, `t: &(&Entity, u64)`). The
+// callee reads them through a root of its own (`*rs`), which it keeps apart
+// from its other parameters. The call gives `call_arg` and the reads of the
+// reference argument only, not the places that the references behind it point
+// into. So W0312 and W0405 do not see the overlap.
+// Decision (ADR 0003, open item): for a reference argument whose pointee holds
+// references, the caller adds the held places to `call_arg`, with the root of
+// the argument, to the reads of the call node, and to the reads of a task that
+// makes the call. The checker does not enforce it yet.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+
+fn read_both(rs: &Vec<&Entity>, w: &World) / mut(w.entities) {
+    let e = rs[0]
+    w.entities.clear()
+    print(e.hp)
+}
+fn read_both_tuple(t: &(&Entity, u64), w: &World) / mut(w.entities) {
+    let e = t.0
+    w.entities.clear()
+    print(e.hp)
+}
+fn show_first(rs: &Vec<&Entity>) / clock { sleep(1.ms); print(rs[0].hp) }
+
+// Bad: the callee frees what the references in the argument point to (W0312).
+fn call_vec(world: &World) / mut(world.entities) {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    read_both(&rs, world)   //~ W0312
+}
+fn call_tuple(world: &World) / mut(world.entities) {
+    let t = (&world.entities[0], 1)
+    read_both_tuple(&t, world)   //~ W0312
+}
+// Bad: the task reads through the references in `rs` while the parent frees
+// them (W0405).
+fn task_reads_held(world: &World) / mut(world.entities), async, clock {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    scope { s =>
+        s.spawn(|| show_first(&rs))
+        world.entities.clear()   //~ W0405
+    }
+}
+
+// Control: the checker finds the same value by value today.
+fn read_val(o: Option<&Entity>, w: &World) / mut(w.entities) {
+    w.entities.clear()
+    match o { Some(e) => print(e.hp), None => {} }
+}
+fn call_by_value(world: &World) / mut(world.entities) {
+    read_val(Some(&world.entities[0]), world)   //~ W0312
+}
+
+fn bad_call_vec() { let w = mkw(); call_vec(&w) }
+fn bad_call_tuple() { let w = mkw(); call_tuple(&w) }
+fn bad_task_reads_held() / async, clock { let w = mkw(); task_reads_held(&w) }
+fn bad_call_by_value() { let w = mkw(); call_by_value(&w) }
+
+// Clean: the references in the argument point into another collection.
+fn call_vec_other(world: &World, other: &World) / mut(world.entities) {
+    let rs = Vec.new()
+    rs.push(&other.entities[0])
+    read_both(&rs, world)
+}
+fn call_tuple_other(world: &World, other: &World) / mut(world.entities) {
+    let t = (&other.entities[0], 1)
+    read_both_tuple(&t, world)
+}
+// Clean: the task reads through `rs`, and the parent does not change
+// `world.entities` while the task runs.
+fn task_reads_held_ok(world: &World) / mut(world.entities), async, clock {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    scope { s =>
+        s.spawn(|| show_first(&rs))
+        print(rs.len())
+    }
+    world.entities.clear()
+}
+
+fn ok_call_vec() { let w = mkw(); let other = mkw(); call_vec_other(&w, &other) }
+fn ok_call_tuple() { let w = mkw(); let other = mkw(); call_tuple_other(&w, &other) }
+fn ok_task_reads_held() / async, clock { let w = mkw(); task_reads_held_ok(&w) }
+
+test "ok_call_vec" { ok_call_vec() }
+test "ok_call_tuple" { ok_call_tuple() }
+test "ok_task_reads_held" { ok_task_reads_held() }

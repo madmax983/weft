@@ -316,3 +316,18 @@ Status: accepted. Date: 2026-10-18.
   to an operation of a handler of a caller (ADR 0005). A generic body whose task
   closure or fork branch takes a value of a type parameter by value gets no W0602 at
   the spawn or the `fork`, and its signature does not tell the caller (ADR 0007).
+- What stays open until the core IR replaces the fact generation (review round 3).
+  The checker does not enforce these rules yet. Each rule has an acceptance target in
+  `tests/ir_targets` (`docs/traceability.md`):
+  - The footprint of stored values (O3-5). The rule: a task that reads a function
+    value from a field, or that runs a value that can be a closure stored in a field
+    of a local, writes and reads what each closure stored there writes and reads, as
+    for a `Vec` element. This is also true for a fork branch. So the parent, a
+    sibling task or the other branch conflicts with it (W0405)
+    (`tests/ir_targets/o3_5_field_closure_tasks.wf`, ADR 0005).
+  - A spawn whose handle is not kept (a spawn in statement position, or `let _ =`)
+    gives its handle to the scope. The scope joins the task and drops the result.
+    The rule: such a spawn drops `T`, which is W0601 when `T` is linear, as for
+    `detach`. A `fork` that can abort needs `on abort` for each linear type of a
+    branch value (W0602 at the `fork`). ADR 0007 gives the details (F3-6, O3-4,
+    I3-1, `tests/ir_targets/f3_6_task_results.wf`).

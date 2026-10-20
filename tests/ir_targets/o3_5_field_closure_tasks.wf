@@ -1,0 +1,190 @@
+// Core IR target O3-5 (review round 3). A closure in a field of a local struct
+// runs in a task or a fork branch. The task writes what the closure writes,
+// but W0405 and W0403 do not see it. So the parent reads `v` while the task
+// pushes to it: a data race. The same closure in a `Vec`, a tuple, an `Option`
+// or a generic struct gets W0405 today.
+// Decision (ADR 0005 and ADR 0006, open item, the footprint of stored
+// values): a task that reads a function value from a field, or runs a value
+// that can be a closure stored in a field of a local, writes and reads what
+// each closure stored there writes and reads, as for a `Vec` element. The
+// checker does not enforce it yet.
+struct H { f: fn() }
+struct HH { h: H, n: u64 }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn run_h(h: &H) { let g = h.f; g() }
+
+// Bad: the parent reads `v` while the task runs the closure of the field.
+fn bad_local_copy() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    scope { s =>
+        let g = h.f
+        s.spawn(|| g())
+        print(v.len())   //~ W0405
+    }
+}
+fn bad_in_task() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    scope { s =>
+        s.spawn(|| { let g = h.f; g() })
+        print(v.len())   //~ W0405
+    }
+}
+fn bad_spawn_field() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    scope { s =>
+        s.spawn(h.f)
+        print(v.len())   //~ W0405
+    }
+}
+fn bad_field_assigned() {
+    let v = mk_v()
+    let h = H { f: || print(0) }
+    h.f = || v.push(2)
+    scope { s =>
+        s.spawn(|| { let g = h.f; g() })
+        print(v.len())   //~ W0405
+    }
+}
+fn bad_nested() {
+    let v = mk_v()
+    let hh = HH { h: H { f: || v.push(2) }, n: 1 }
+    scope { s =>
+        s.spawn(|| { let g = hh.h.f; g() })
+        print(v.len())   //~ W0405
+    }
+}
+fn bad_callee() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    scope { s =>
+        s.spawn(|| run_h(&h))
+        print(v.len())   //~ W0405
+    }
+}
+// Bad: two tasks run the closure, and each one writes `v`.
+fn bad_two_tasks() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    scope { s =>
+        let g = h.f
+        s.spawn(|| g())
+        s.spawn(|| g())   //~ W0405
+    }
+}
+// Bad: one branch runs the closure, and the other reads `v`.
+fn bad_fork_branch() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    let _ = fork(|| { let g = h.f; g() }, || print(v.len()))   //~ W0405
+}
+
+// Control: the checker finds the same closure in a `Vec` today.
+fn bad_control_in_vec() {
+    let v = mk_v()
+    let fs = Vec.new()
+    fs.push(|| v.push(2))
+    scope { s =>
+        s.spawn(|| { let g = fs[0]; g() })
+        print(v.len())   //~ W0405
+    }
+}
+
+// Clean: the parent reads `v` after the join of the task.
+fn ok_local_copy() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    scope { s =>
+        let g = h.f
+        let t = s.spawn(|| g())
+        t.join()
+        print(v.len())
+    }
+}
+fn ok_in_task() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    scope { s =>
+        let t = s.spawn(|| { let g = h.f; g() })
+        t.join()
+        print(v.len())
+    }
+}
+fn ok_spawn_field() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    scope { s =>
+        let t = s.spawn(h.f)
+        t.join()
+        print(v.len())
+    }
+}
+fn ok_field_assigned() {
+    let v = mk_v()
+    let h = H { f: || print(0) }
+    h.f = || v.push(2)
+    scope { s =>
+        let t = s.spawn(|| { let g = h.f; g() })
+        t.join()
+        print(v.len())
+    }
+}
+fn ok_nested() {
+    let v = mk_v()
+    let hh = HH { h: H { f: || v.push(2) }, n: 1 }
+    scope { s =>
+        let t = s.spawn(|| { let g = hh.h.f; g() })
+        t.join()
+        print(v.len())
+    }
+}
+fn ok_callee() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    scope { s =>
+        let t = s.spawn(|| run_h(&h))
+        t.join()
+        print(v.len())
+    }
+}
+// Clean: the second task starts after the join of the first.
+fn ok_two_tasks() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    scope { s =>
+        let g = h.f
+        let t = s.spawn(|| g())
+        t.join()
+        let u = s.spawn(|| g())
+        u.join()
+    }
+}
+// Clean: the parent reads another vector while the task runs.
+fn ok_other_vector() {
+    let v = mk_v()
+    let w = mk_v()
+    let h = H { f: || v.push(2) }
+    scope { s =>
+        s.spawn(|| { let g = h.f; g() })
+        print(w.len())
+    }
+}
+// Clean: the branches touch different vectors.
+fn ok_fork_branch() {
+    let v = mk_v()
+    let w = mk_v()
+    let h = H { f: || v.push(2) }
+    let _ = fork(|| { let g = h.f; g() }, || print(w.len()))
+}
+
+test "ok_local_copy" { ok_local_copy() }
+test "ok_in_task" { ok_in_task() }
+test "ok_spawn_field" { ok_spawn_field() }
+test "ok_field_assigned" { ok_field_assigned() }
+test "ok_nested" { ok_nested() }
+test "ok_callee" { ok_callee() }
+test "ok_two_tasks" { ok_two_tasks() }
+test "ok_other_vector" { ok_other_vector() }
+test "ok_fork_branch" { ok_fork_branch() }

@@ -397,7 +397,8 @@ Status: accepted. Date: 2026-10-18.
   or into an `rc` object. The check covers only the nodes that run it in the body. A
   function value does not state where the references that it gets live. So the check
   does not cover unknown code that runs such a closure. It does not cover a callee
-  that gives it a reference into its own local either.
+  that gives it a reference into its own local either. That case stays open until the
+  core IR (F3-2, see the last item).
 - `points_into` is not flow-sensitive. A reference that got a place inside a block, and
   then a place outside it before the block ends, is still invalid after the end. This
   is the same imprecision as for mutations.
@@ -427,3 +428,38 @@ Status: accepted. Date: 2026-10-18.
 - What stays open (not checked): a reference stored behind a reference parameter of a
   closure or a clause. The value sees the outer place only (ADR 0005). A reference to
   a local of the closure that the closure puts there is not checked either.
+- What stays open until the core IR replaces the fact generation (review round 3).
+  The checker does not enforce these rules yet. Each rule has an acceptance target in
+  `tests/ir_targets` (`docs/traceability.md`):
+  - A `match` that reaches its scrutinee through a reference binds a reference to a
+    part, such as `e` in `match p { Some(e) => .. }` for `p: &Option<&Entity>`. A
+    place below the binding is a place where the stored reference points, not a place
+    of the scrutinee. The rule: a by-reference binding whose type holds references
+    gets the held places of the part, as a field read through a reference does. So a
+    change of these places invalidates the binding (W0301). A callee that does the
+    same `match` on a reference parameter makes its caller put in these places
+    (W0312) (R3RT2, `tests/ir_targets/r3rt2_match_through_ref.wf`).
+  - A reference argument can point to a value that holds references, such as `&rs`
+    for `rs: Vec<&Entity>`. The rule: the caller adds the places that the references
+    behind the argument point into (the held places) to `call_arg`, with the root of
+    the argument. It adds them to the reads of the call node, and to the reads of a
+    task that makes the call. A by-value argument that holds references does this
+    today (R3RT3, `tests/ir_targets/r3rt3_held_refs_at_call.wf`).
+  - A closure or a clause can keep its reference parameter in an outer local, or
+    store it there. A callee that runs the closure, or that performs the operation of
+    the clause, can give it a reference into a local of the callee. The caller cannot
+    name that place. The rule: at each node that runs a closure or a clause through a
+    callee (a call that takes the closure, or a call in the handled body that can
+    perform the operation), each place that the callee lends there and that the
+    caller cannot name gets a root of its own. A hidden variable owns that root. It
+    goes out of scope at a node right after the call, and on the abort path at the
+    end of the `handle`. So a holder outside is invalid after the call (W0301). A
+    store of such a place behind a reference parameter, or into an `rc` object, is
+    W0204. A core IR alone does not give this rule: its fact generator must add it
+    (F3-2, `tests/ir_targets/f3_2_callee_local_refs.wf`, ADR 0005).
+  - A reference through a handle depends on the handle (`handle.*`). The rule: a
+    place through an `Rc` handle also reads the handle place, which is the variable
+    or the field that holds the handle. This is also true for the reads of a task. So
+    a move of the handle, a new value of it, the end of its scope, or a move of a
+    value that holds it conflicts with a task that reads through it (W0405), as for
+    a `Box` (O3-6, `tests/ir_targets/o3_6_rc_handle_tasks.wf`).
