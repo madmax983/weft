@@ -1,0 +1,36 @@
+[package]
+name = "weft-gate"
+description = "The diff gate of the core IR migration: manifests, archives and reports."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "weft-gate"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tar.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+zstd.workspace = true
+weft-syntax.workspace = true
+weft-sema.workspace = true
+weft-check.workspace = true
+weft-interp.workspace = true
+weft-cli.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
