@@ -5,6 +5,8 @@
 //! weft-gate archive --tier 2 [--repo DIR] [--probes DIR] [--out FILE]
 //! weft-gate unpack --archive FILE --out DIR [--repo DIR]
 //! weft-gate copy-probes [--repo DIR] [--probes DIR]
+//! weft-gate snapshot --tier 1|2 [--facts old] [--out FILE.jsonl] [--full-digest DIR]
+//!                    [--workers N] [--limit SECONDS] [--repo DIR] [--probes DIR]
 //! ```
 //!
 //! `--repo` is the repository (default: the workspace of this crate). `--probes` is
@@ -16,12 +18,22 @@
 //! `copy-probes` copies the hand probes (plan §2.2) from the tier-2 root into
 //! `tests/gate/probes`. Run it with `SCRATCH`: the archive does not have the judge
 //! traces (`ir/judge_sound/*.dl`, `run_all.sh`).
+//!
+//! `snapshot` checks each program of the manifest and writes one JSON record for
+//! each program (plan §2.3). The default output is
+//! `target/gate/snapshot-tier<N>-<pipeline>.jsonl`. `--full-digest DIR` also writes
+//! the canonical fact digest of each program to `DIR/<hash>.<pipeline>.digest`.
+//! The default number of workers is the number of CPUs, and the default time limit
+//! is 60 s for each program.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use weft_gate::manifest::{self, Group, Manifest, Options, Root};
+use weft_gate::snapshot::{self, Kind, Pipeline, Settings};
 use weft_gate::{archive, copy};
 
 /// The tier-1 manifest, relative to the repository.
@@ -35,7 +47,9 @@ const USAGE: &str = "usage:
   weft-gate manifest --tier 1|2 [--repo DIR] [--probes DIR] [--out FILE]
   weft-gate archive --tier 2 [--repo DIR] [--probes DIR] [--out FILE]
   weft-gate unpack --archive FILE --out DIR [--repo DIR]
-  weft-gate copy-probes [--repo DIR] [--probes DIR]";
+  weft-gate copy-probes [--repo DIR] [--probes DIR]
+  weft-gate snapshot --tier 1|2 [--facts old] [--out FILE.jsonl] [--full-digest DIR]
+                     [--workers N] [--limit SECONDS] [--repo DIR] [--probes DIR]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -55,6 +69,10 @@ struct Flags {
     repo: PathBuf,
     probes: Option<PathBuf>,
     out: Option<PathBuf>,
+    facts: Option<String>,
+    full_digest: Option<PathBuf>,
+    workers: Option<usize>,
+    limit: Option<u64>,
 }
 
 impl Flags {
@@ -76,6 +94,10 @@ fn parse_flags(args: &[String]) -> Result<Flags> {
     let mut probes = None;
     let mut out = None;
     let mut archive = None;
+    let mut facts = None;
+    let mut full_digest = None;
+    let mut workers = None;
+    let mut limit = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut value = || it.next().with_context(|| format!("{a} needs a value"));
@@ -91,6 +113,22 @@ fn parse_flags(args: &[String]) -> Result<Flags> {
             "--probes" => probes = Some(PathBuf::from(value()?)),
             "--out" => out = Some(PathBuf::from(value()?)),
             "--archive" => archive = Some(PathBuf::from(value()?)),
+            "--facts" => facts = Some(value()?.clone()),
+            "--full-digest" => full_digest = Some(PathBuf::from(value()?)),
+            "--workers" => {
+                let v = value()?;
+                match v.parse::<usize>() {
+                    Ok(n) if n > 0 => workers = Some(n),
+                    _ => bail!("--workers needs a number larger than 0, found `{v}`"),
+                }
+            }
+            "--limit" => {
+                let v = value()?;
+                match v.parse::<u64>() {
+                    Ok(n) if n > 0 => limit = Some(n),
+                    _ => bail!("--limit needs a number of seconds larger than 0, found `{v}`"),
+                }
+            }
             _ => bail!("unknown flag `{a}`\n{USAGE}"),
         }
     }
@@ -104,6 +142,10 @@ fn parse_flags(args: &[String]) -> Result<Flags> {
         repo,
         probes,
         out,
+        facts,
+        full_digest,
+        workers,
+        limit,
     })
 }
 
@@ -180,8 +222,97 @@ fn run(args: &[String]) -> Result<()> {
             );
             Ok(())
         }
+        "snapshot" => run_snapshot(&flags),
         _ => bail!("unknown command `{cmd}`\n{USAGE}"),
     }
+}
+
+/// `snapshot`: checks each program of the manifest of the tier and writes the
+/// records in the order of the manifest.
+fn run_snapshot(flags: &Flags) -> Result<()> {
+    let tier = flags.tier.context("--tier is necessary")?;
+    let name = flags.facts.as_deref().unwrap_or("old");
+    let pipeline = match Pipeline::parse(name) {
+        Some(p) => p,
+        None if name == "ir" => bail!("the `ir` pipeline does not exist before stage F1"),
+        None => bail!("unknown pipeline `{name}`: use --facts old"),
+    };
+    let (m, base) = if tier == 1 {
+        (tier1(flags)?, flags.repo.clone())
+    } else {
+        let probes = flags.probes()?;
+        (tier2(&probes)?, probes)
+    };
+    let settings = Settings {
+        pipeline,
+        workers: flags.workers.unwrap_or_else(|| {
+            std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+        }),
+        limit: flags.limit.map_or(snapshot::LIMIT, Duration::from_secs),
+    };
+    let out = flags.out.clone().unwrap_or_else(|| {
+        flags.repo.join(format!(
+            "target/gate/snapshot-tier{tier}-{}.jsonl",
+            pipeline.name()
+        ))
+    });
+    if let Some(dir) = &flags.full_digest {
+        std::fs::create_dir_all(dir).with_context(|| format!("make {}", dir.display()))?;
+    }
+    snapshot::install_panic_hook();
+    let total = m.entries.len();
+    println!(
+        "snapshot of {total} programs with the `{}` pipeline on {} workers",
+        pipeline.name(),
+        settings.workers
+    );
+    let start = Instant::now();
+    let mut records = vec![None; total];
+    let mut failed = Vec::new();
+    let mut ended = 0;
+    snapshot::snapshot(&base, m.entries, &settings, |i, o| {
+        if let Some(dir) = &flags.full_digest {
+            if o.record.kind == Kind::Ok {
+                let file = dir.join(format!("{}.{}.digest", o.record.hash, pipeline.name()));
+                if let Err(e) = std::fs::write(&file, &o.digest) {
+                    failed.push(format!("write {}: {e}", file.display()));
+                }
+            }
+        }
+        if let Some(slot) = records.get_mut(i) {
+            *slot = Some(o.record);
+        }
+        ended += 1;
+        if ended % 500 == 0 {
+            println!(
+                "{ended} of {total} programs in {:.1} s",
+                start.elapsed().as_secs_f64()
+            );
+        }
+    })?;
+    if let Some(e) = failed.first() {
+        bail!("{e}");
+    }
+    let mut text = String::new();
+    let mut kinds: BTreeMap<Kind, usize> = BTreeMap::new();
+    for r in records.iter().flatten() {
+        text.push_str(&r.to_json()?);
+        text.push('\n');
+        *kinds.entry(r.kind).or_default() += 1;
+    }
+    write_text(&out, &text)?;
+    let counts: Vec<String> = Kind::ALL
+        .iter()
+        .map(|k| format!("{} {}", kinds.get(k).copied().unwrap_or(0), k.name()))
+        .collect();
+    println!(
+        "wrote {} records to {} in {:.1} s: {}",
+        records.iter().flatten().count(),
+        out.display(),
+        start.elapsed().as_secs_f64(),
+        counts.join(", ")
+    );
+    Ok(())
 }
 
 fn tier1(flags: &Flags) -> Result<Manifest> {

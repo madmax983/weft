@@ -28,6 +28,7 @@ weft-sema.workspace = true
 weft-check.workspace = true
 weft-interp.workspace = true
 weft-cli.workspace = true
+weft-facts.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

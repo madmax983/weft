@@ -980,6 +980,7 @@ dependencies = [
  "toml",
  "weft-check",
  "weft-cli",
+ "weft-facts",
  "weft-interp",
  "weft-sema",
  "weft-syntax",

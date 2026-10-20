@@ -1,0 +1,6 @@
+// A dependency with a linear transaction.
+pub linear struct Tx { id: u64 }
+
+pub fn begin() -> Tx { Tx { id: 1 } }
+
+pub fn commit(tx: Tx) { let Tx(i) = tx }

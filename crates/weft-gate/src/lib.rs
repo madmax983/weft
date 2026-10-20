@@ -2,13 +2,16 @@
 //!
 //! [`manifest`] lists the programs of the gate. [`archive`] packs the tier-2 probes
 //! into one reproducible file and unpacks the committed archive. [`copy`] copies the
-//! hand probes into the repository.
+//! hand probes into the repository. [`snapshot`] checks each program and makes
+//! one record for each program and pipeline, with the fact digest of [`digest`].
 
 use std::path::PathBuf;
 
 pub mod archive;
 pub mod copy;
+pub mod digest;
 pub mod manifest;
+pub mod snapshot;
 
 /// An error of the gate tools.
 #[derive(Debug, thiserror::Error)]
@@ -39,6 +42,9 @@ pub enum Error {
         /// The hash of the file.
         found: String,
     },
+    /// The system cannot start a worker thread.
+    #[error("cannot start a worker thread: {0}")]
+    Thread(std::io::Error),
 }
 
 impl Error {

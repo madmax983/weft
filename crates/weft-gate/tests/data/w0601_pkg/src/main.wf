@@ -1,0 +1,11 @@
+// The root makes a linear transaction and does not consume it.
+fn forgets() {
+    let tx = conn.begin()
+}
+
+fn main() {
+    let name = "app"
+    let r = &name
+    print(r)
+    forgets()
+}

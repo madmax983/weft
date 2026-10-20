@@ -1,0 +1,11 @@
+// W0301: a reference into a vector, then a push, then a read through the reference.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+
+fn bad(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    world.entities.push(Entity { hp: 10 })
+    print(first.hp)
+}
+
+fn main() {}

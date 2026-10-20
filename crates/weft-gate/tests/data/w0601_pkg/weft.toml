@@ -1,0 +1,8 @@
+# W0601 in a package: the root does not consume a linear value of a dependency.
+[package]
+name = "app"
+kind = "bin"
+
+[dependencies.conn]
+path = "deps/conn"
+authority = []

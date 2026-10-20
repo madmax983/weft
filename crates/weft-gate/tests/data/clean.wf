@@ -1,0 +1,10 @@
+// A clean program: no diagnostics and no violations.
+struct Point { x: i32 }
+
+fn get(p: &Point) -> i32 { p.x }
+
+fn main() {
+    let p = Point { x: 1 }
+    let r = &p
+    print(get(r))
+}
