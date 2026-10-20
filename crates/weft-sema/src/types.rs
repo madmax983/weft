@@ -2,7 +2,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::fmt;
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// An integer type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -115,7 +115,7 @@ pub enum Ty {
     /// A fixed array.
     Array(Box<Self>, u64),
     /// A function value.
-    Fn(Rc<FnTy>),
+    Fn(Arc<FnTy>),
     /// An inference variable.
     Var(u32),
     /// An inference variable that must become an integer.
@@ -243,7 +243,7 @@ impl Infer {
             Ty::Slice(t) => Ty::Slice(Box::new(e(&t))),
             Ty::Array(t, n) => Ty::Array(Box::new(e(&t)), n),
             Ty::Cont(a, b) => Ty::Cont(Box::new(e(&a)), Box::new(e(&b))),
-            Ty::Fn(f) => Ty::Fn(Rc::new(FnTy {
+            Ty::Fn(f) => Ty::Fn(Arc::new(FnTy {
                 params: f.params.iter().map(e).collect(),
                 ret: e(&f.ret),
                 effects: f.effects.clone(),
@@ -317,7 +317,7 @@ impl Infer {
 
     /// Returns the variable that type variable `t` links to last, if it is bound
     /// to a function type, with that type.
-    pub fn bound_fn(&self, t: &Ty) -> Option<(u32, Rc<FnTy>)> {
+    pub fn bound_fn(&self, t: &Ty) -> Option<(u32, Arc<FnTy>)> {
         let Ty::Var(_) = t else {
             return None;
         };
@@ -332,7 +332,7 @@ impl Infer {
 
     /// Gives variable `v`, which is bound to a function type, another function
     /// type of the same shape: one that can be more function values.
-    pub fn rebind_fn(&mut self, v: u32, f: Rc<FnTy>) {
+    pub fn rebind_fn(&mut self, v: u32, f: Arc<FnTy>) {
         if let Some(slot) = self.vars.get_mut().get_mut(v as usize) {
             if matches!(slot, Some(Ty::Fn(_))) {
                 *slot = Some(Ty::Fn(f));
@@ -406,7 +406,7 @@ pub fn subst(t: &Ty, args: &[Ty]) -> Ty {
         Ty::Slice(t) => Ty::Slice(Box::new(subst(t, args))),
         Ty::Array(t, n) => Ty::Array(Box::new(subst(t, args)), *n),
         Ty::Cont(a, b) => Ty::Cont(Box::new(subst(a, args)), Box::new(subst(b, args))),
-        Ty::Fn(f) => Ty::Fn(Rc::new(FnTy {
+        Ty::Fn(f) => Ty::Fn(Arc::new(FnTy {
             params: f.params.iter().map(|t| subst(t, args)).collect(),
             ret: subst(&f.ret, args),
             effects: f.effects.clone(),
@@ -417,15 +417,34 @@ pub fn subst(t: &Ty, args: &[Ty]) -> Ty {
     }
 }
 
-/// Shows a type with the names of its definitions.
-pub struct Display<'a> {
+/// The names of the type definitions, by [`AdtId`], for [`Display`].
+pub trait AdtNames {
+    /// Returns the name of definition `id`, if it has one.
+    fn adt_name(&self, id: AdtId) -> Option<&str>;
+}
+
+impl AdtNames for [String] {
+    fn adt_name(&self, id: AdtId) -> Option<&str> {
+        self.get(id).map(String::as_str)
+    }
+}
+
+impl AdtNames for [crate::program::AdtDef] {
+    fn adt_name(&self, id: AdtId) -> Option<&str> {
+        self.get(id).map(|a| a.name.as_str())
+    }
+}
+
+/// Shows a type with the names of its definitions. The names come from a
+/// table, such as the definitions of the program, with no copy.
+pub struct Display<'a, N: AdtNames + ?Sized> {
     /// The type.
     pub ty: &'a Ty,
     /// The definition names, by index.
-    pub names: &'a [String],
+    pub names: &'a N,
 }
 
-impl fmt::Display for Display<'_> {
+impl<N: AdtNames + ?Sized> fmt::Display for Display<'_, N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let names = self.names;
         let d = |t: &'_ Ty| -> String { Display { ty: t, names }.to_string() };
@@ -445,7 +464,7 @@ impl fmt::Display for Display<'_> {
                 f.write_str(")")
             }
             Ty::Adt(id, ts) => {
-                let name = self.names.get(*id).map_or("?", String::as_str);
+                let name = self.names.adt_name(*id).unwrap_or("?");
                 if let ([t], crate::program::PTR_NAME) = (ts.as_slice(), name) {
                     return write!(f, "*{}", d(t));
                 }
@@ -535,7 +554,7 @@ mod tests {
     fn a_variable_links_to_a_bound_function_type() {
         let mut inf = Infer::default();
         let fn_ty = |summary| {
-            Ty::Fn(Rc::new(FnTy {
+            Ty::Fn(Arc::new(FnTy {
                 params: Vec::new(),
                 ret: Ty::Unit,
                 effects: None,
@@ -556,7 +575,7 @@ mod tests {
         // A new function value for the type reaches both variables.
         inf.rebind_fn(
             v,
-            Rc::new(FnTy {
+            Arc::new(FnTy {
                 summary: Some(2),
                 ..(*f).clone()
             }),
@@ -577,7 +596,7 @@ mod tests {
         assert_eq!(
             Display {
                 ty: &Ty::Ref(Box::new(t)),
-                names: &names
+                names: names.as_slice()
             }
             .to_string(),
             "&Vec<u8>"
@@ -586,7 +605,7 @@ mod tests {
         assert_eq!(
             Display {
                 ty: &tup,
-                names: &names
+                names: names.as_slice()
             }
             .to_string(),
             "(bool, ())"

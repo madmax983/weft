@@ -34,9 +34,12 @@ fn rebound_references_check_quickly() {
         assert_eq!(at + 1, used, "{inv:?}");
     }
     // The first checker took more than 30 s: it searched from each
-    // invalidating node. Now each reference has one search for its uses and one
-    // for the evidence, and the other rules search once for each variable.
-    assert!(work.searches <= 3 * n as u64, "{work:?}");
+    // invalidating node. Now each reference has three searches in the part of
+    // the graph that can reach its uses: the part, the propagation and the
+    // evidence. A temporary reference has one. The parts are small, so the
+    // sum of their sizes is about linear in the size of the function.
+    assert!(work.searches <= 4 * n as u64 + 1, "{work:?}");
+    assert!(work.part_nodes <= 3 * facts.nodes.len() as u64, "{work:?}");
     assert_eq!(work.overlaps, 0, "{work:?}");
 }
 
@@ -51,15 +54,20 @@ type CauseCase = (&'static str, usize, String, fn(&Cause) -> bool);
 /// variable and a temporary reference for each use, and the checker runs one
 /// search for each of them.
 fn causes() -> Vec<CauseCase> {
+    causes_of([500, 500, 300, 1000])
+}
+
+/// The programs of [`causes`], with `n[i]` uses for cause `i`.
+fn causes_of(n: [usize; 4]) -> Vec<CauseCase> {
     let program = |n: usize, head: &str, prelude: &str, body: &str| {
         format!("{head} {{\n{prelude}{}}}\n", body.repeat(n))
     };
     vec![
         (
             "lend",
-            500,
+            n[0],
             program(
-                500,
+                n[0],
                 "fn big(f: fn(&Vec<u32>), v: &Vec<u32>)",
                 "",
                 "    let r = &v[0]\n    f(v)\n    print(r)\n",
@@ -68,9 +76,9 @@ fn causes() -> Vec<CauseCase> {
         ),
         (
             "wildcard",
-            500,
+            n[1],
             program(
-                500,
+                n[1],
                 "fn big(g: fn(&Vec<u32>) -> &u32, v: &Vec<u32>) / mut(v)",
                 "",
                 "    let r = g(v)\n    v.push(1)\n    print(r)\n",
@@ -79,11 +87,11 @@ fn causes() -> Vec<CauseCase> {
         ),
         (
             "move",
-            300,
+            n[2],
             format!(
                 "fn take(v: Vec<u32>) {{}}\n{}",
                 program(
-                    300,
+                    n[2],
                     "fn big()",
                     "    let keep = Vec.new()\n    keep.push(1)\n    let r = &keep[0]\n",
                     "    let v = Vec.new()\n    v.push(1)\n    r = &v[0]\n    take(v)\n    print(r)\n",
@@ -93,11 +101,11 @@ fn causes() -> Vec<CauseCase> {
         ),
         (
             "scope end",
-            1000,
+            n[3],
             format!(
                 "struct Entity {{ hp: i32 }}\n{}",
                 program(
-                    1000,
+                    n[3],
                     "fn big()",
                     "    let keep = Entity { hp: 1 }\n    let r = &keep.hp\n",
                     "    { let inner = Entity { hp: 2 }; r = &inner.hp }\n    print(r)\n",
@@ -128,10 +136,83 @@ fn each_cause_checks_quickly() {
             let used = file.line(facts.node(inv.used_at).span);
             assert_eq!(at + 1, used, "{name}: {inv:?}");
         }
-        // One search for each reference and its evidence, not one for each
-        // invalidating node.
-        assert!(work.searches <= 3 * n as u64 + 50, "{name}: {work:?}");
+        // At most four searches for each reference and its evidence, not one
+        // for each invalidating node, each in a small part of the graph.
+        assert!(work.searches <= 4 * n as u64 + 50, "{name}: {work:?}");
+        assert!(
+            work.part_nodes <= 3 * facts.nodes.len() as u64,
+            "{name}: {work:?}"
+        );
         assert!(work.overlaps <= 2 * n as u64, "{name}: {work:?}");
+    }
+}
+
+/// The checker takes less than 1 s for each cause of W0301 with 1000 uses
+/// of an invalid reference, also in a debug build, and so do the mutations of
+/// [`rebind`]. Each search is shared by the references that have the same
+/// invalidating nodes, and the invalidating nodes of each place come from one
+/// pass over the nodes.
+#[test]
+fn each_cause_checks_in_time() {
+    let mut cases = causes_of([1000; 4]);
+    cases.push(("mutation", 1000, rebind(1000), |c| {
+        matches!(c, Cause::Mutation(_))
+    }));
+    for (name, n, src, cause) in cases {
+        let c = check_source("causes.wf", &src, Options::default());
+        let Some(body) = c.analysis.bodies.iter().find(|b| b.facts.name == "big") else {
+            panic!("{name}: no body");
+        };
+        let start = std::time::Instant::now();
+        let r = weft_check::check(&body.facts);
+        let time = start.elapsed();
+        assert_eq!(r.violations.error.len(), n, "{name}");
+        assert!(r.invalidations.iter().all(|i| cause(&i.cause)), "{name}");
+        assert!(time.as_millis() < 1000, "{name}: {time:?}");
+    }
+}
+
+/// `n` blocks, each with a local, a reference into it and a use. Each local
+/// and each reference has a search of its own.
+fn blocks(n: usize) -> String {
+    let mut s = String::from("struct E { hp: u64 }\nfn f() {\n");
+    for i in 0..n {
+        let _ = writeln!(
+            s,
+            "    {{ let x{i} = Vec.new()\n      x{i}.push(1)\n      let r = &x{i}[0]\n      print(r) }}"
+        );
+    }
+    s.push_str("}\n");
+    s
+}
+
+/// `n` struct types and a function with a local of each. Each local shows its
+/// type, and the names come from the definitions with no copy (QR15).
+fn many_types(n: usize) -> String {
+    let mut s = String::new();
+    for i in 0..n {
+        let _ = writeln!(s, "struct S{i} {{ x: u64 }}");
+    }
+    s.push_str("fn f() {\n");
+    for i in 0..n {
+        let _ = writeln!(s, "    let a{i} = S{i} {{ x: 1 }}");
+    }
+    s.push_str("}\n");
+    s
+}
+
+/// Sema and the checker take less than 1 s for 1000 blocks with a local and
+/// a reference each, and for 1000 types with a local each, also in a debug
+/// build. The first checker searched the whole function for each variable,
+/// and sema copied the names of all types for each local.
+#[test]
+fn many_locals_check_in_time() {
+    for (name, src) in [("blocks", blocks(1000)), ("types", many_types(1000))] {
+        let start = std::time::Instant::now();
+        let c = check_source("many.wf", &src, Options::default());
+        let time = start.elapsed();
+        assert!(c.ok(), "{name}: {:?}", c.diags);
+        assert!(time.as_millis() < 1000, "{name}: {time:?}");
     }
 }
 

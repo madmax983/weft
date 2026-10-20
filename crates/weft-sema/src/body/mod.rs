@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use weft_facts::{
     CapId, FnFacts, HandlerInfo, NodeId, PlaceId, RootId, RootKind, Span, Step, StepKind, TaskId,
@@ -1526,10 +1527,9 @@ impl<'p> Lower<'p> {
     }
 
     fn show(&self, t: &Ty) -> String {
-        let names = self.prog.adt_names();
         Display {
             ty: &self.inf.resolve(t),
-            names: &names,
+            names: self.prog.adts.as_slice(),
         }
         .to_string()
     }
@@ -1568,7 +1568,7 @@ impl<'p> Lower<'p> {
             let info = self.join_fn(&a, &b);
             self.inf.rebind_fn(
                 v,
-                Rc::new(FnTy {
+                Arc::new(FnTy {
                     summary: info.summary,
                     item: info.item,
                     ..(*old).clone()
@@ -1580,7 +1580,7 @@ impl<'p> Lower<'p> {
     /// Finds the type variables in `a` and `b` that are bound to a function type
     /// where the other type has a function type with another function value.
     /// Each pair has the variable, its function type and the other one.
-    fn fn_joins(&self, a: &Ty, b: &Ty, out: &mut Vec<(u32, Rc<FnTy>, Rc<FnTy>)>, depth: usize) {
+    fn fn_joins(&self, a: &Ty, b: &Ty, out: &mut Vec<(u32, Arc<FnTy>, Arc<FnTy>)>, depth: usize) {
         if depth > 16 {
             return;
         }
@@ -1593,7 +1593,7 @@ impl<'p> Lower<'p> {
                 if let Some((v, bound)) = self.inf.bound_fn(var_side) {
                     let known = bound.summary.is_some() || bound.item.is_some();
                     if known && !self.fn_covers(&bound, other) {
-                        out.push((v, bound, Rc::clone(other)));
+                        out.push((v, bound, Arc::clone(other)));
                     }
                 }
             }

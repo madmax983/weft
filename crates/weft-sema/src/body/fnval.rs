@@ -12,7 +12,7 @@
 use std::collections::BTreeSet;
 
 use super::{
-    CapId, FnId, FnTy, Lower, NodeId, PlaceId, Rc, RootKind, SigRoot, Summary, TaskId, Ty, Val,
+    Arc, CapId, FnId, FnTy, Lower, NodeId, PlaceId, RootKind, SigRoot, Summary, TaskId, Ty, Val,
     VarId, VarKind,
 };
 use crate::program::{EffectDef, GivenPlace, LentPlace, RetFn, SigPlace};
@@ -334,7 +334,7 @@ impl Lower<'_> {
             let ib = (self.fn_info(b), fb.effects.clone());
             let info = self.join_fn(&ia, &ib);
             return Val {
-                ty: Ty::Fn(Rc::new(FnTy {
+                ty: Ty::Fn(Arc::new(FnTy {
                     summary: info.summary,
                     item: info.item,
                     ..(*fa).clone()
@@ -393,7 +393,7 @@ impl Lower<'_> {
                     param: None,
                 };
                 let info = self.join_fn(&(ia, fa.effects.clone()), &(ib, fb.effects.clone()));
-                Ty::Fn(Rc::new(FnTy {
+                Ty::Fn(Arc::new(FnTy {
                     summary: info.summary,
                     item: info.item,
                     ..(*fa).clone()
@@ -680,7 +680,8 @@ impl Lower<'_> {
 
     /// A function item runs at node `n` with the places `given`.
     pub(super) fn apply_item(&mut self, n: NodeId, f: FnId, given: &[Given]) {
-        let sig = self.sigs[f].clone();
+        let sigs = self.sigs;
+        let sig = &sigs[f];
         let split = self.fresh_split();
         for m in &sig.effects.muts {
             let mut places = Vec::new();
@@ -1182,7 +1183,8 @@ impl Lower<'_> {
     }
 
     fn item_lent(&mut self, f: FnId, i: usize, args: &[Vec<PlaceId>], roots: &[u32]) -> Vec<Given> {
-        let sig = self.sigs[f].clone();
+        let sigs = self.sigs;
+        let sig = &sigs[f];
         // Analysis infers what a user body lends. Another function can lend anything.
         let def = &self.prog.fns[f];
         if def.is_std || def.decl.body.is_none() {
@@ -1402,7 +1404,8 @@ impl Lower<'_> {
         if def.decl.body.is_none() {
             return Some(Self::any_arg(args, roots));
         }
-        let sig = self.sigs[f].clone();
+        let sigs = self.sigs;
+        let sig = &sigs[f];
         if !sig.effects.reaches {
             return None;
         }

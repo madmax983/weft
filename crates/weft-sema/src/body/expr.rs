@@ -1,10 +1,10 @@
 //! Expressions, places, closures, handlers and scopes.
 
 use super::{
-    ast, block_tail, effects, elem_step, expr_tail, field_step, AdtKind, BinOp, ContInfo, Deref,
-    Expr, ExprKind, FnId, FnTy, HandlerFrame, HandlerInfo, IntTy, ItemRef, Jump, LVal, Lit, Lower,
-    NodeId, PathRef, Pattern, PlaceId, Rc, RootKind, Span, StrPart, Summary, Ty, UnOp, Val, VarId,
-    VarKind,
+    ast, block_tail, effects, elem_step, expr_tail, field_step, AdtKind, Arc, BinOp, ContInfo,
+    Deref, Expr, ExprKind, FnId, FnTy, HandlerFrame, HandlerInfo, IntTy, ItemRef, Jump, LVal, Lit,
+    Lower, NodeId, PathRef, Pattern, PlaceId, RootKind, Span, StrPart, Summary, Ty, UnOp, Val,
+    VarId, VarKind,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -398,7 +398,7 @@ impl Lower<'_> {
         let targs: Vec<Ty> = sig.generics.iter().map(|_| self.inf.fresh()).collect();
         self.check_item_value(f, &targs, span);
         let sig = &self.sigs[f];
-        let ty = Ty::Fn(Rc::new(FnTy {
+        let ty = Ty::Fn(Arc::new(FnTy {
             params: sig
                 .params
                 .iter()
@@ -844,7 +844,8 @@ impl Lower<'_> {
                 ..Val::default()
             };
         };
-        let AdtKind::Struct(defs) = self.prog.adts[adt].kind.clone() else {
+        let prog = self.prog;
+        let AdtKind::Struct(defs) = &prog.adts[adt].kind else {
             self.err("W0102", "this type is not a struct", span);
             return Val {
                 ty: Ty::Error,
@@ -912,7 +913,7 @@ impl Lower<'_> {
         self.take_held_here(&taken, span);
         // A place field that the literal does not give has no value yet: see
         // `Lower::unset_paths`.
-        for d in &defs {
+        for d in defs {
             if d.place.is_none() && !fields.iter().any(|(n, _)| n.name == d.name) {
                 self.err("W0115", format!("missing field `{}`", d.name), span);
             }
@@ -1248,7 +1249,8 @@ impl Lower<'_> {
                         return;
                     }
                 };
-                let AdtKind::Enum(vs) = self.prog.adts[adt].kind.clone() else {
+                let prog = self.prog;
+                let AdtKind::Enum(vs) = &prog.adts[adt].kind else {
                     self.err("W0102", "this value is not an enum", *span);
                     return;
                 };
@@ -1558,7 +1560,7 @@ impl Lower<'_> {
             summary: Some(id),
             item: None,
         };
-        let ty = Ty::Fn(Rc::new(fty));
+        let ty = Ty::Fn(Arc::new(fty));
         let mut info = self.var_info("{closure}", VarKind::Closure, span, &ty, false);
         info.once |= self.closure_not_many(id);
         info.uniq = self.closure_uniq(id);

@@ -82,8 +82,14 @@ pub fn dedup_diags(diags: &mut Vec<Diagnostic>) {
     });
 }
 
-/// Parses, analyzes and checks one source text.
+/// Parses, analyzes and checks one source text, on a large stack
+/// ([`weft_sema::on_large_stack`]).
 pub fn check_source(name: &str, src: &str, opts: Options) -> Checked {
+    weft_sema::on_large_stack(|| check_source_here(name, src, opts))
+}
+
+/// Parses, analyzes and checks one source text on the current stack.
+fn check_source_here(name: &str, src: &str, opts: Options) -> Checked {
     let files = vec![
         SourceFile::new("prelude.wf", weft_sema::PRELUDE_SRC),
         SourceFile::new(name, src),
@@ -183,6 +189,14 @@ mod tests {
             ["body 0: error(v1, n2)", "body 1: error(v1, n2)"]
         );
         assert!(diags[1].facts.is_empty());
+    }
+
+    /// A checked program can come back from the thread of
+    /// [`weft_sema::on_large_stack`].
+    #[test]
+    fn a_checked_program_is_send_and_sync() {
+        fn send_sync<T: Send + Sync>() {}
+        send_sync::<Checked>();
     }
 
     #[test]

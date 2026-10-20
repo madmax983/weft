@@ -1704,3 +1704,28 @@ fn a_body_names_only_the_effects_that_its_facts_have() {
         vec![("main.m7.Note".to_string(), "m7.Note".to_string())]
     );
 }
+
+/// An analysis can go to another thread, and threads can share it. So
+/// [`crate::on_large_stack`] can return it.
+#[test]
+fn an_analysis_is_send_and_sync() {
+    fn send_sync<T: Send + Sync>() {}
+    send_sync::<Analysis>();
+}
+
+/// [`crate::on_large_stack`] starts one thread. A nested call runs on that
+/// thread, and a panic continues in the caller.
+#[test]
+fn the_large_stack_is_one_thread() {
+    let names = crate::on_large_stack(|| {
+        let outer = std::thread::current().name().map(String::from);
+        let inner = crate::on_large_stack(|| std::thread::current().name().map(String::from));
+        (outer, inner)
+    });
+    assert_eq!(names, (Some("weft".to_string()), Some("weft".to_string())));
+    let caught = std::panic::catch_unwind(|| crate::on_large_stack(|| panic!("inside")));
+    let message = caught
+        .err()
+        .and_then(|p| p.downcast_ref::<&str>().map(|s| (*s).to_string()));
+    assert_eq!(message.as_deref(), Some("inside"));
+}

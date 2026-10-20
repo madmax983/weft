@@ -153,8 +153,52 @@ fn unit_of(prog: &Program, m: program::ModId) -> usize {
     prog.mods[m].unit
 }
 
+/// The stack of the thread that runs analysis, the checker and the
+/// interpreter ([`on_large_stack`]).
+///
+/// Sema, the checker and the interpreter walk the syntax tree with recursion.
+/// The parser limits the depth of the tree, and `crates/weft-cli/tests/limits.rs`
+/// shows that a 2 MiB stack is sufficient for the deepest tree that it accepts.
+/// The large stack is a margin. The system only reserves this memory. It uses
+/// a page when the recursion gets to it.
+pub const STACK: usize = 256 * 1024 * 1024;
+
+std::thread_local! {
+    /// True on a thread that [`on_large_stack`] started.
+    static LARGE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` on a new thread with a [`STACK`] stack, and returns its result.
+///
+/// So a caller on a small stack can analyze, check and run the deepest
+/// program that the parser accepts. On a thread that this function started,
+/// `f` runs at once, with no new thread. If the system cannot start the
+/// thread, `f` runs on the current thread. A panic of `f` continues in the
+/// caller.
+pub fn on_large_stack<T: Send>(f: impl Fn() -> T + Sync) -> T {
+    if LARGE.with(std::cell::Cell::get) {
+        return f();
+    }
+    std::thread::scope(|scope| {
+        let worker = std::thread::Builder::new()
+            .name("weft".into())
+            .stack_size(STACK)
+            .spawn_scoped(scope, || {
+                LARGE.with(|l| l.set(true));
+                f()
+            });
+        match worker {
+            Ok(handle) => handle
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+            Err(_) => f(),
+        }
+    })
+}
+
 /// Analyzes the units. Unit [`PRELUDE_UNIT`] must be the prelude and unit
-/// [`ROOT_UNIT`] the root.
+/// [`ROOT_UNIT`] the root. The analysis runs on a large stack
+/// ([`on_large_stack`]).
 ///
 /// Effect inference ([`infer`]) gives a row to each function that does not
 /// state its effects. Each function, also one that states its effects, also
@@ -165,7 +209,7 @@ fn unit_of(prog: &Program, m: program::ModId) -> usize {
 /// row grows past the height of its lattice, the inference has a bug: it
 /// stops, and each function whose signature can still change gets W0706.
 pub fn analyze(units: &[Unit], opts: Options) -> Analysis {
-    analyze_bounded(units, opts, None, None)
+    on_large_stack(|| analyze_bounded(units, opts, None, None))
 }
 
 /// Analyzes the units. The row of a function may grow at most `limit` times.
@@ -259,12 +303,17 @@ fn analyze_bounded(
     }
 }
 
-/// Parses and analyzes one source text as the root unit.
+/// Parses and analyzes one source text as the root unit, on a large stack
+/// ([`on_large_stack`]).
 ///
 /// # Errors
 ///
 /// Returns W0001 if the source or the prelude does not parse.
 pub fn analyze_source(src: &str, opts: Options) -> Result<Analysis, Diagnostic> {
+    on_large_stack(|| parse_and_analyze(src, opts))
+}
+
+fn parse_and_analyze(src: &str, opts: Options) -> Result<Analysis, Diagnostic> {
     let prelude = prelude_unit().map_err(|e| {
         let mut d = Diagnostic::error(
             "W0001",

@@ -182,52 +182,62 @@ pub fn exports(analysis: &Analysis) -> Exports {
 ///
 /// The interpreter does not refuse a program with diagnostics. Run-time guards
 /// catch some errors that the checker rejects, for example a second resume of a
-/// `once` continuation.
+/// `once` continuation. The run is on a large stack ([`weft_sema::on_large_stack`]).
 pub fn run_main(checked: &Checked, opts: &RunOptions) -> Result<RunOutcome, RuntimeError> {
-    let rt = Runtime::new(
-        &checked.analysis.program,
-        &checked.analysis.sigs,
-        stealable_spans(checked),
-        &exports(&checked.analysis),
-    );
-    run_main_with(&rt, opts)
+    weft_sema::on_large_stack(|| {
+        let rt = Runtime::new(
+            &checked.analysis.program,
+            &checked.analysis.sigs,
+            stealable_spans(checked),
+            &exports(&checked.analysis),
+        );
+        run_main_with(&rt, opts)
+    })
 }
 
 /// Runs `fn main` of an analysis that the checker did not see. No task is
-/// stealable.
+/// stealable. The run is on a large stack ([`weft_sema::on_large_stack`]).
 pub fn run_analysis_main(
     analysis: &Analysis,
     opts: &RunOptions,
 ) -> Result<RunOutcome, RuntimeError> {
-    let rt = Runtime::new(
-        &analysis.program,
-        &analysis.sigs,
-        BTreeSet::new(),
-        &exports(analysis),
-    );
-    run_main_with(&rt, opts)
+    weft_sema::on_large_stack(|| {
+        let rt = Runtime::new(
+            &analysis.program,
+            &analysis.sigs,
+            BTreeSet::new(),
+            &exports(analysis),
+        );
+        run_main_with(&rt, opts)
+    })
 }
 
-/// Runs every test block of a checked program, in source order.
+/// Runs every test block of a checked program, in source order, on a large
+/// stack ([`weft_sema::on_large_stack`]).
 pub fn run_tests(checked: &Checked, opts: &RunOptions) -> Vec<TestOutcome> {
-    let rt = Runtime::new(
-        &checked.analysis.program,
-        &checked.analysis.sigs,
-        stealable_spans(checked),
-        &exports(&checked.analysis),
-    );
-    run_tests_with(&rt, opts)
+    weft_sema::on_large_stack(|| {
+        let rt = Runtime::new(
+            &checked.analysis.program,
+            &checked.analysis.sigs,
+            stealable_spans(checked),
+            &exports(&checked.analysis),
+        );
+        run_tests_with(&rt, opts)
+    })
 }
 
-/// Runs every test block of an analysis that the checker did not see.
+/// Runs every test block of an analysis that the checker did not see, on a
+/// large stack ([`weft_sema::on_large_stack`]).
 pub fn run_analysis_tests(analysis: &Analysis, opts: &RunOptions) -> Vec<TestOutcome> {
-    let rt = Runtime::new(
-        &analysis.program,
-        &analysis.sigs,
-        BTreeSet::new(),
-        &exports(analysis),
-    );
-    run_tests_with(&rt, opts)
+    weft_sema::on_large_stack(|| {
+        let rt = Runtime::new(
+            &analysis.program,
+            &analysis.sigs,
+            BTreeSet::new(),
+            &exports(analysis),
+        );
+        run_tests_with(&rt, opts)
+    })
 }
 
 fn env_value(rt: &Runtime<'_>) -> Value {

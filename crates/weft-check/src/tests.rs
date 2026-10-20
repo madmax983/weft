@@ -1227,6 +1227,59 @@ proptest::proptest! {
     }
 }
 
+proptest::proptest! {
+    /// A propagation in the part of the graph that can reach the targets gives
+    /// the result of a propagation in the whole graph at each target, and so
+    /// does the evidence search. The work space is clean after the search.
+    #[test]
+    fn a_part_has_the_result_of_the_whole_graph_at_the_targets(
+        n in 1usize..12,
+        edges in proptest::collection::vec((0usize..12, 0usize..12), 0..30),
+        gens in proptest::collection::vec(0usize..12, 0..6),
+        kills in proptest::collection::vec(0usize..12, 0..6),
+        targets in proptest::collection::vec(0usize..12, 0..6),
+    ) {
+        use weft_verified::dataflow::propagate;
+        let mut succ = vec![Vec::new(); n];
+        let mut pred = vec![Vec::new(); n];
+        for (a, b) in edges {
+            succ[a % n].push(b % n);
+            pred[b % n].push(a % n);
+        }
+        let mut gens: Vec<usize> = gens.into_iter().map(|g| g % n).collect();
+        gens.sort_unstable();
+        gens.dedup();
+        let kills: Vec<usize> = kills.into_iter().map(|k| k % n).collect();
+        let targets: Vec<usize> = targets.into_iter().map(|t| t % n).collect();
+        let (mut gen, mut kill) = (vec![false; n], vec![false; n]);
+        for &g in &gens {
+            gen[g] = true;
+        }
+        for &k in &kills {
+            kill[k] = true;
+        }
+        let whole = propagate(&succ, &gen, &kill);
+        let first = crate::rules::first_reaching(&succ, &pred, &gens, &kill, &targets);
+        let mut s = crate::rules::Scratch::new(n);
+        let part = crate::rules::part_of(&succ, &pred, &targets, &kills, &mut s);
+        proptest::prop_assert!(s.local.iter().all(|&l| l == crate::rules::NOT_IN_PART));
+        proptest::prop_assert!(s.killed.iter().all(|&k| !k));
+        let local_gen: Vec<bool> = part.nodes.iter().map(|&q| gen[q]).collect();
+        let local = propagate(&part.succ, &local_gen, &part.kill);
+        let mut order: Vec<usize> = (0..part.nodes.len()).filter(|&i| local_gen[i]).collect();
+        order.sort_by_key(|&i| part.nodes[i]);
+        let local_first =
+            crate::rules::first_reaching(&part.succ, &part.pred, &order, &part.kill, &part.targets);
+        for (&t, &i) in targets.iter().zip(&part.targets) {
+            proptest::prop_assert_eq!(part.nodes[i], t);
+            proptest::prop_assert_eq!(local[i], whole[t], "target {}", t);
+            let global = first[t].map(|k| gens[k]);
+            let here = local_first[i].map(|k| part.nodes[order[k]]);
+            proptest::prop_assert_eq!(here, global, "evidence of target {}", t);
+        }
+    }
+}
+
 /// W0502 or W0302: the `callable` flag of the variable decides, not its type text.
 #[test]
 fn w0502_needs_a_callable_variable() {

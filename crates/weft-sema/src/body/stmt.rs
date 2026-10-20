@@ -13,12 +13,13 @@ use weft_syntax::diag::Diagnostic;
 impl Lower<'_> {
     /// Lowers a function body.
     pub fn lower_fn(mut self, id: FnId) -> Lowered {
-        let def = &self.prog.fns[id];
-        let sig = self.sigs[id].clone();
+        let (prog, sigs) = (self.prog, self.sigs);
+        let def = &prog.fns[id];
+        let sig = &sigs[id];
         self.self_fn = Some(id);
         self.generic = !sig.generics.is_empty();
         self.ret_ty = sig.ret.clone();
-        let Some(body) = def.decl.body.clone() else {
+        let Some(body) = def.decl.body.as_ref() else {
             return self.finish(EffectSig::default());
         };
         let entry = self.start(def.span, "entry");
@@ -103,13 +104,13 @@ impl Lower<'_> {
         self.push_frame(None);
         // The temporaries of the value of the body live until the return.
         self.open_stmt();
-        let v = self.block_inner(&body);
+        let v = self.block_inner(body);
         let tail_span = body.stmts.last().map_or(body.span, |s| s.span);
         if self.cur.is_some() {
             self.finish_return(&v, tail_span);
         }
         self.stmt_temps.pop();
-        self.flush(block_tail(&body));
+        self.flush(block_tail(body));
         self.end_frame(body.span);
         if let Some(c) = self.cur {
             self.facts.cfg_edge.push((c, exit));
@@ -545,7 +546,8 @@ impl Lower<'_> {
     /// W0204 for them.
     pub(super) fn check_returned_refs(&mut self, refs: &[PlaceId], closure: bool, span: Span) {
         let Some(id) = self.self_fn else { return };
-        let sig = self.sigs[id].clone();
+        let sigs = self.sigs;
+        let sig = &sigs[id];
         let fname = self.prog.fns[id].name.clone();
         let mut reported = Vec::new();
         let mut rest = Vec::new();
@@ -1484,7 +1486,8 @@ impl Lower<'_> {
                     self.err("W0113", "a variant pattern needs `match`", *span);
                     return;
                 };
-                let crate::program::AdtKind::Struct(defs) = self.prog.adts[adt].kind.clone() else {
+                let prog = self.prog;
+                let crate::program::AdtKind::Struct(defs) = &prog.adts[adt].kind else {
                     self.err("W0113", "a variant pattern needs `match`", *span);
                     return;
                 };
@@ -1502,7 +1505,7 @@ impl Lower<'_> {
                     );
                     return;
                 }
-                for (p, d) in fields.iter().zip(&defs) {
+                for (p, d) in fields.iter().zip(defs) {
                     let ft = super::subst(&d.ty, &args);
                     // A field that holds references points where the struct points.
                     let refs = if self.holds_refs(&ft) {

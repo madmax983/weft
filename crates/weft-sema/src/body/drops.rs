@@ -38,7 +38,8 @@ impl Lower<'_> {
     /// inferred types. The node is in a part of the graph of its own: no other
     /// value is live there.
     pub(super) fn check_item_value(&mut self, f: FnId, targs: &[Ty], span: Span) {
-        let sig = self.sigs[f].clone();
+        let sigs = self.sigs;
+        let sig = &sigs[f];
         if self.cur.is_none() || (sig.effects.holds.is_empty() && sig.effects.drops.is_empty()) {
             return;
         }

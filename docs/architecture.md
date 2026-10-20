@@ -183,10 +183,30 @@ shows the first 3 and the last 3 steps, and one line ``... N more `invalid` step
 So a path of 10 000 statements gives a few kilobytes of text. `limits.rs` tests this on
 a 2 MiB thread for the derivations of W0301 and W0503.
 
-`weft_cli::run` runs each command on a thread with a 256 MiB stack, as a margin. The
-library entry points of sema and the checker (`weft_sema::analyze`,
-`weft_check::check_source`) run on the stack of the caller. Their result holds `Rc`
-values, so it cannot come back from another thread.
+The library entry points run on a thread with a 256 MiB stack, as a margin
+(`weft_sema::on_large_stack`, `weft_sema::STACK`): `weft_sema::analyze`,
+`weft_sema::analyze_source`, `weft_check::check_source`, the `run_*` functions of
+`weft_interp` and `weft_cli::run`. A nested call runs on the same thread. An
+`Analysis` and a `Checked` are `Send` and `Sync`, so the result comes back to the
+caller. `limits.rs` runs each of them for the deepest programs on a 256 KiB thread.
+
+## Cost of the checker
+
+The rules W0301, W0302 and W0304 run the searches of one variable in the part of
+the graph that can reach its uses (`weft_check::rules::part_of`): the uses, and each
+node with a path to a use whose inner nodes are not kill nodes. A path of a
+propagation from a gen node to a use has only nodes of this part. So the verified
+propagation in the part gives the same result at each use as in the whole graph, and
+so does the evidence search of W0301. Only a node of the part can invalidate a
+reference that the part can see, and each invalidating node needs a place with the
+root of the reference. So a reference with a small part costs little, also in a
+large function. `crates/weft-check/tests/scale.rs` checks 1000 uses of each cause of
+W0301 in less than 1 s in a debug build.
+
+Sema keeps each place that a reference local gets (ADR 0003), and a use of the local
+reads each of them (W0405). So a body where one local gets references into `n`
+different roots, such as `r = &v[0]` for `n` new vectors `v`, has about `n * n / 2`
+`reads_at` facts. The checker cost stays linear in these facts.
 
 ## Verified pieces
 

@@ -6,8 +6,8 @@ use weft_syntax::diag::Diagnostic;
 
 use super::fnval::{Callee, Given};
 use super::{
-    ast, effects, AdtKind, Arg, CapId, ContInfo, Expr, ExprKind, FnId, FnSig, FnTy, ItemRef, Lower,
-    NodeId, PathRef, PlaceId, Rc, SigRoot, Span, TaskKind, Ty, Val, VarId, VarKind, PRELUDE,
+    ast, effects, AdtKind, Arc, Arg, CapId, ContInfo, Expr, ExprKind, FnId, FnSig, FnTy, ItemRef,
+    Lower, NodeId, PathRef, PlaceId, SigRoot, Span, TaskKind, Ty, Val, VarId, VarKind, PRELUDE,
 };
 
 /// One evaluated argument.
@@ -21,9 +21,9 @@ struct ItemCall<'a> {
     /// The callee.
     f: FnId,
     /// The signature of the callee.
-    sig: FnSig,
+    sig: &'a FnSig,
     /// The name of the callee.
-    name: String,
+    name: &'a str,
     /// The type of the item as a value, for a call through a local.
     inst: Option<&'a FnTy>,
     /// The type arguments of the call.
@@ -49,7 +49,7 @@ impl ItemCall<'_> {
 
     /// Returns the callee root index of parameter `i` (`Lower::sig_root`).
     fn root_of(&self, i: usize) -> u32 {
-        Lower::sig_root(&self.sig, i)
+        Lower::sig_root(self.sig, i)
     }
 }
 
@@ -433,13 +433,14 @@ impl Lower<'_> {
         trailing: Option<&Expr>,
         span: Span,
     ) -> Val {
-        let sig = self.sigs[f].clone();
-        let name = self.prog.fns[f].name.clone();
+        let (sigs, prog) = (self.sigs, self.prog);
+        let sig = &sigs[f];
+        let name = prog.fns[f].name.as_str();
         // Only a function with `self` as its first parameter takes a receiver.
         if recv.is_some() && sig.params.first().is_none_or(|p| p.name != "self") {
-            return self.no_self(f, &name, args, trailing, span);
+            return self.no_self(f, name, args, trailing, span);
         }
-        let (targs, ptys) = self.item_call_types(&sig, inst);
+        let (targs, ptys) = self.item_call_types(sig, inst);
         let call = ItemCall {
             f,
             first: usize::from(recv.is_some()),
@@ -700,13 +701,8 @@ impl Lower<'_> {
     /// Emits the node of a call: what it mutates, reads and holds. It takes the
     /// variables that hold the arguments until the call.
     fn item_call_node(&mut self, call: &ItemCall<'_>, a: &mut ItemArgs) -> ItemNode {
-        let (sig, name, ptys, first, span) = (
-            &call.sig,
-            call.name.as_str(),
-            &call.ptys,
-            call.first,
-            call.span,
-        );
+        let (sig, name, ptys, first, span) =
+            (&call.sig, call.name, &call.ptys, call.first, call.span);
         let (targs, root_of, callback) = (
             &call.targs,
             |i: usize| call.root_of(i),
@@ -797,7 +793,7 @@ impl Lower<'_> {
     /// with `in` (`arg_at`, `param_in`, W0203), and the mode of the argument of
     /// a `@ uniq` parameter (`uniq_param`, `arg_aliased`, W0406).
     fn check_arg_places(&mut self, call: &ItemCall<'_>, a: &ItemArgs, node: &ItemNode) {
-        let (sig, name, split, n) = (&call.sig, call.name.as_str(), node.split, node.n);
+        let (sig, name, split, n) = (call.sig, call.name, node.split, node.n);
         let (vals, arg_places) = (&a.vals, &a.arg_places);
         // Arguments must point where the parameters say. A by-value argument is
         // the base of the places inside it.
@@ -1111,7 +1107,7 @@ impl Lower<'_> {
         if let (Some(rf), Ty::Fn(fty)) = (&sig.effects.ret, self.inf.shallow(&ret)) {
             let s = self.ret_summary(rf, &fty, &arg_places, fns);
             out.summary = Some(s);
-            out.ty = Ty::Fn(Rc::new(FnTy {
+            out.ty = Ty::Fn(Arc::new(FnTy {
                 summary: Some(s),
                 item: None,
                 ..(*fty).clone()
@@ -2058,7 +2054,7 @@ impl Lower<'_> {
         let mut ty = fty.ret.clone();
         let summary = self.result_summary(&callee, &fty, &arg_places, &by_pos);
         if let (Some(s), Ty::Fn(rty)) = (summary, self.inf.shallow(&fty.ret)) {
-            ty = Ty::Fn(Rc::new(FnTy {
+            ty = Ty::Fn(Arc::new(FnTy {
                 summary: Some(s),
                 item: None,
                 ..(*rty).clone()
@@ -2137,7 +2133,8 @@ impl Lower<'_> {
         let mut wild = unknown;
         let fn_ret = self.has_fn(&fty.ret);
         for f in items {
-            let sig = self.sigs[f].clone();
+            let sigs = self.sigs;
+            let sig = &sigs[f];
             let split = self.fresh_split();
             for rp in &sig.ret_places {
                 refs.extend(self.subst_place(&rp.place, arg_places, split));
@@ -2333,7 +2330,8 @@ impl Lower<'_> {
         trailing: Option<&Expr>,
         span: Span,
     ) -> Val {
-        let AdtKind::Struct(defs) = self.prog.adts[a].kind.clone() else {
+        let prog = self.prog;
+        let AdtKind::Struct(defs) = &prog.adts[a].kind else {
             self.err("W0105", "this type has no constructor", span);
             return Val {
                 ty: Ty::Error,
@@ -2393,7 +2391,8 @@ impl Lower<'_> {
         trailing: Option<&Expr>,
         span: Span,
     ) -> Val {
-        let AdtKind::Enum(vs) = self.prog.adts[adt].kind.clone() else {
+        let prog = self.prog;
+        let AdtKind::Enum(vs) = &prog.adts[adt].kind else {
             return Val {
                 ty: Ty::Error,
                 ..Val::default()
@@ -2772,7 +2771,8 @@ impl Lower<'_> {
     /// The `mut` places of function item `f` below `rc` groups: a call with no
     /// arguments mutates them.
     fn item_group_muts(&mut self, f: FnId) -> Vec<PlaceId> {
-        let sig = self.sigs[f].clone();
+        let sigs = self.sigs;
+        let sig = &sigs[f];
         let split = self.fresh_split();
         let mut out = Vec::new();
         for m in &sig.effects.muts {
@@ -3084,7 +3084,7 @@ impl Lower<'_> {
         // A value whose type is not known yet, for example a closure parameter,
         // is a function with no parameters.
         if matches!(self.inf.shallow(&v.ty), Ty::Var(_)) {
-            let f = Ty::Fn(Rc::new(FnTy {
+            let f = Ty::Fn(Arc::new(FnTy {
                 params: Vec::new(),
                 ret: self.inf.fresh(),
                 effects: None,

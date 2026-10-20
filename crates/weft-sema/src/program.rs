@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use weft_syntax::ast::{
     self, EffectItem, ExternTypeDecl, File, FnDecl, Item, ItemKind, Mode, PlaceExpr, PlaceStep,
@@ -496,7 +497,18 @@ pub struct Program {
     pub(crate) effect_index: Option<HashMap<String, EffectId>>,
     /// The steps of the item checks: the work list of the size check, the walks
     /// of the `in` places and the modes of the mode checks ([`Program::item_steps`]).
-    steps: std::cell::Cell<usize>,
+    steps: StepCount,
+}
+
+/// A count of steps that a shared reference can add to. It is atomic, so that
+/// a [`Program`] can go to another thread.
+#[derive(Debug, Default)]
+struct StepCount(AtomicUsize);
+
+impl Clone for StepCount {
+    fn clone(&self) -> Self {
+        Self(AtomicUsize::new(self.0.load(Ordering::Relaxed)))
+    }
 }
 
 /// The prelude module.
@@ -545,17 +557,13 @@ pub struct Builtins {
 impl Program {
     /// The steps of the item checks so far. A test can put a limit on them.
     pub fn item_steps(&self) -> usize {
-        self.steps.get()
+        self.steps.0.load(Ordering::Relaxed)
     }
 
     /// Adds `n` steps of an item check.
     pub(crate) fn add_steps(&self, n: usize) {
-        self.steps.set(self.steps.get().saturating_add(n));
-    }
-
-    /// Returns the names of all type definitions, for type display.
-    pub fn adt_names(&self) -> Vec<String> {
-        self.adts.iter().map(|a| a.name.clone()).collect()
+        let old = self.steps.0.load(Ordering::Relaxed);
+        self.steps.0.store(old.saturating_add(n), Ordering::Relaxed);
     }
 
     /// Looks up a name from a module outward, then in the prelude.
@@ -1960,7 +1968,7 @@ impl TyResolver<'_> {
                     }
                     names.into_iter().collect()
                 });
-                Ty::Fn(std::rc::Rc::new(FnTy {
+                Ty::Fn(std::sync::Arc::new(FnTy {
                     params,
                     ret,
                     effects,

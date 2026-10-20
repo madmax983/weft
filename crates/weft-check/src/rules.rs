@@ -6,8 +6,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use weft_facts::{
-    uniqueness, FnFacts, HandlerId, Modes, NodeId, PlaceId, TaskId, TaskKind, VarId, Violations,
-    CROSSES_THREADS,
+    uniqueness, FnFacts, HandlerId, Modes, NodeId, PlaceId, RootId, TaskId, TaskKind, VarId,
+    Violations, CROSSES_THREADS,
 };
 use weft_verified::dataflow::propagate;
 use weft_verified::modes;
@@ -77,6 +77,9 @@ pub struct Work {
     /// The searches of the graph: each propagation and each evidence search.
     /// One search costs at most the size of the graph.
     pub searches: u64,
+    /// The nodes in the parts of the graph that the searches of the uses saw
+    /// (`part_of`). The cost of these searches grows with this count.
+    pub part_nodes: u64,
 }
 
 /// The checker result: violations plus the evidence for diagnostics.
@@ -110,10 +113,57 @@ struct Ctx<'a> {
     /// Two places have a `W` in common if and only if their outermost ones are
     /// equal, as both are on the path from the root to the common one.
     one: Vec<Option<PlaceId>>,
+    /// The roots that a node mutates, gives to a function value or frees.
+    changed: BTreeSet<RootId>,
     /// The calls of [`Ctx::overlaps`].
     overlaps_calls: std::cell::Cell<u64>,
     /// The searches of the graph (`Work::searches`).
     searches: std::cell::Cell<u64>,
+    /// The nodes of the parts (`Work::part_nodes`).
+    part_nodes: std::cell::Cell<u64>,
+    /// The work space of [`part_of`].
+    scratch: std::cell::RefCell<Scratch>,
+}
+
+/// The work space of [`part_of`]. Each search puts the arrays back as they
+/// were, so a search costs as much as its part, not as much as the graph.
+pub(crate) struct Scratch {
+    /// The index of each node in the part, or [`NOT_IN_PART`].
+    pub(crate) local: Vec<usize>,
+    /// The kill nodes of the search.
+    pub(crate) killed: Vec<bool>,
+}
+
+impl Scratch {
+    /// The work space for a graph of `n` nodes.
+    pub(crate) fn new(n: usize) -> Self {
+        Self {
+            local: vec![NOT_IN_PART; n],
+            killed: vec![false; n],
+        }
+    }
+}
+
+/// The index of a node that is not in the part.
+pub(crate) const NOT_IN_PART: usize = usize::MAX;
+
+/// The part of the graph that can reach a target: the targets, and each node
+/// with a path to a target whose inner nodes are not kill nodes.
+///
+/// A path of [`propagate`] from a gen node to a target has only such nodes.
+/// So a propagation in the part gives the result of a propagation in the whole
+/// graph at each target. Its cost grows with the size of the part.
+pub(crate) struct Part {
+    /// The node of each index of the part.
+    pub(crate) nodes: Vec<usize>,
+    /// The successors in the part, by index.
+    pub(crate) succ: Vec<Vec<usize>>,
+    /// The predecessors in the part, by index.
+    pub(crate) pred: Vec<Vec<usize>>,
+    /// The kill nodes, by index.
+    pub(crate) kill: Vec<bool>,
+    /// The index of each target, in the order of the targets.
+    pub(crate) targets: Vec<usize>,
 }
 
 impl<'a> Ctx<'a> {
@@ -171,10 +221,16 @@ impl<'a> Ctx<'a> {
             frees: vec![Vec::new(); n],
             outer,
             one,
+            changed: BTreeSet::new(),
             overlaps_calls: std::cell::Cell::new(0),
             searches: std::cell::Cell::new(0),
+            part_nodes: std::cell::Cell::new(0),
+            scratch: std::cell::RefCell::new(Scratch::new(n)),
         };
         cx.frees = cx.frees_at();
+        let changes = cx.muts.iter().chain(&cx.lends).flatten().copied();
+        let freed = cx.frees.iter().flatten().map(|&(m, _)| m);
+        cx.changed = changes.chain(freed).map(|m| f.place(m).root).collect();
         cx
     }
 
@@ -310,6 +366,33 @@ impl<'a> Ctx<'a> {
         propagate(&self.pred, gen, kill)
     }
 
+    /// The part of the graph that can reach `targets`, where `kill` has the
+    /// kill nodes ([`Part`]). It is one backward search.
+    fn part(&self, targets: &[NodeId], kill: &[NodeId]) -> Part {
+        self.searches.set(self.searches.get() + 1);
+        let targets: Vec<usize> = targets.iter().map(|t| t.index()).collect();
+        let kill: Vec<usize> = kill.iter().map(|k| k.index()).collect();
+        let part = part_of(
+            &self.succ,
+            &self.pred,
+            &targets,
+            &kill,
+            &mut self.scratch.borrow_mut(),
+        );
+        let size = u64::try_from(part.nodes.len()).unwrap_or(u64::MAX);
+        self.part_nodes
+            .set(self.part_nodes.get().saturating_add(size));
+        part
+    }
+
+    /// The targets of `part` that a gen node reaches ([`propagate`] in the
+    /// part). `gen` has the gen nodes, by index of the part.
+    fn reached(&self, part: &Part, gen: &[bool]) -> Vec<bool> {
+        self.searches.set(self.searches.get() + 1);
+        let out = propagate(&part.succ, gen, &part.kill);
+        part.targets.iter().map(|&t| out[t]).collect()
+    }
+
     fn mask(&self, nodes: impl IntoIterator<Item = NodeId>) -> Vec<bool> {
         let mut m = vec![false; self.n()];
         for x in nodes {
@@ -317,6 +400,72 @@ impl<'a> Ctx<'a> {
         }
         m
     }
+}
+
+/// The part of the graph `succ`, `pred` that can reach `targets`, where `kill`
+/// has the kill nodes ([`Part`]). It is one backward search. `s` must have
+/// `local` all [`NOT_IN_PART`] and `killed` all false, and it has them again
+/// at the end.
+pub(crate) fn part_of(
+    succ: &[Vec<usize>],
+    pred: &[Vec<usize>],
+    targets: &[usize],
+    kill: &[usize],
+    s: &mut Scratch,
+) -> Part {
+    for &k in kill {
+        s.killed[k] = true;
+    }
+    let mut nodes: Vec<usize> = Vec::new();
+    let mut is_target: Vec<bool> = Vec::new();
+    for &t in targets {
+        if s.local[t] == NOT_IN_PART {
+            s.local[t] = nodes.len();
+            nodes.push(t);
+            is_target.push(true);
+        }
+    }
+    // A target propagates to its predecessors, also when it is a kill node.
+    let mut work: Vec<usize> = (0..nodes.len()).collect();
+    while let Some(i) = work.pop() {
+        let q = nodes[i];
+        if s.killed[q] && !is_target[i] {
+            continue;
+        }
+        for &p in &pred[q] {
+            if s.local[p] == NOT_IN_PART {
+                s.local[p] = nodes.len();
+                work.push(nodes.len());
+                nodes.push(p);
+                is_target.push(false);
+            }
+        }
+    }
+    let mut part_succ = vec![Vec::new(); nodes.len()];
+    let mut part_pred = vec![Vec::new(); nodes.len()];
+    for (i, &q) in nodes.iter().enumerate() {
+        for &r in &succ[q] {
+            let j = s.local[r];
+            if j != NOT_IN_PART {
+                part_succ[i].push(j);
+                part_pred[j].push(i);
+            }
+        }
+    }
+    let part = Part {
+        kill: nodes.iter().map(|&q| s.killed[q]).collect(),
+        targets: targets.iter().map(|&t| s.local[t]).collect(),
+        nodes,
+        succ: part_succ,
+        pred: part_pred,
+    };
+    for &q in &part.nodes {
+        s.local[q] = NOT_IN_PART;
+    }
+    for &k in kill {
+        s.killed[k] = false;
+    }
+    part
 }
 
 /// Finds, for each node in `targets`, the first gen node that reaches it
@@ -414,67 +563,67 @@ pub fn check_counted(f: &FnFacts) -> (Report, Work) {
     let work = Work {
         overlaps: cx.overlaps_calls.get(),
         searches: cx.searches.get(),
+        part_nodes: cx.part_nodes.get(),
     };
     (r, work)
 }
 
-/// `invalidated_at(R, P)` for a reference that points into `ps`: each node
-/// that invalidates it, with witnesses `(node, path, cause)`. A node
-/// invalidates the reference if it mutates a place, gives a place to a function
-/// value (`lends_mut`) or frees a place (`frees_at`). The result has the first
-/// witness of a mutation and of a lend at each node, and each free, in the
-/// order of the nodes. [`first_witnesses`] picks one for each node.
-fn invalidated_at(cx: &Ctx<'_>, ps: &[PlaceId]) -> Vec<(NodeId, PlaceId, Cause)> {
-    let mut gens: Vec<(NodeId, PlaceId, Cause)> = Vec::new();
-    // A mutation, or a place that the node gives to a function value.
-    for (i, (ms, ls)) in cx.muts.iter().zip(&cx.lends).enumerate() {
-        let node = NodeId(u32::try_from(i).unwrap_or(u32::MAX));
-        for (changes, cause) in [
-            (ms, Cause::Mutation as fn(PlaceId) -> Cause),
-            (ls, Cause::Lend as fn(PlaceId) -> Cause),
-        ] {
-            let hit = changes.iter().find_map(|&m| {
-                ps.iter()
-                    .find(|&&p| cx.mutation_kills(m, p))
-                    .map(|&p| (p, m))
-            });
-            if let Some((p, m)) = hit {
-                gens.push((node, p, cause(m)));
-            }
-        }
-    }
-    // A free of `M` with `prefix(M, Path)`.
-    for (i, fs) in cx.frees.iter().enumerate() {
-        let node = NodeId(u32::try_from(i).unwrap_or(u32::MAX));
-        for &(m, cause) in fs {
-            for &p in ps {
-                if cx.free_kills(m, p) {
-                    gens.push((node, p, cause));
-                }
-            }
-        }
-    }
-    gens.sort_by_key(|g| (g.0, g.2));
-    gens
-}
-
-/// The witnesses of `invalidated_at(R, P)` for reference `v`, one for each node:
-/// the one with the least cause. A mutation at a node with `writes_via(P, R)`
-/// does not count (`via` has these nodes).
-fn first_witnesses(
-    gens: &[(NodeId, PlaceId, Cause)],
+/// The witness of `invalidated_at(R, P)` at node `node` for a reference `R`
+/// that points into the places `ps`, grouped by root: the place of `ps` and
+/// the cause. A node invalidates the reference if it mutates a place, gives a
+/// place to a function value (`lends_mut`) or frees a place (`frees_at`). Each
+/// of these needs a place of `ps` with the same root. Of the mutations and of
+/// the lends, the first change that invalidates counts, with the first place
+/// of `ps` that it invalidates. Of all, the least cause is the witness. A
+/// mutation at a node with `writes_via(P, R)` does not count (`via`).
+fn witness(
+    cx: &Ctx<'_>,
+    node: usize,
+    ps: &BTreeMap<RootId, Vec<PlaceId>>,
     via: Option<&BTreeSet<NodeId>>,
-) -> Vec<(NodeId, PlaceId, Cause)> {
-    let mut out: Vec<(NodeId, PlaceId, Cause)> = gens
-        .iter()
-        .copied()
-        .filter(|g| !(matches!(g.2, Cause::Mutation(_)) && via.is_some_and(|ns| ns.contains(&g.0))))
-        .collect();
-    out.dedup_by_key(|g| g.0);
-    out
+) -> Option<(PlaceId, Cause)> {
+    let of_root = |m: PlaceId| ps.get(&cx.f.place(m).root).map_or(&[][..], Vec::as_slice);
+    let mut best: Option<(PlaceId, Cause)> = None;
+    let mut offer = |p: PlaceId, c: Cause| {
+        if best.is_none_or(|(_, b)| c < b) {
+            best = Some((p, c));
+        }
+    };
+    let id = NodeId(u32::try_from(node).unwrap_or(u32::MAX));
+    let via_here = via.is_some_and(|ns| ns.contains(&id));
+    for (changes, cause, counts) in [
+        (
+            &cx.muts[node],
+            Cause::Mutation as fn(PlaceId) -> Cause,
+            !via_here,
+        ),
+        (&cx.lends[node], Cause::Lend as fn(PlaceId) -> Cause, true),
+    ] {
+        let hit = changes.iter().find_map(|&m| {
+            of_root(m)
+                .iter()
+                .find(|&&p| cx.mutation_kills(m, p))
+                .map(|&p| (p, m))
+        });
+        if let Some((p, m)) = hit.filter(|_| counts) {
+            offer(p, cause(m));
+        }
+    }
+    for &(m, cause) in &cx.frees[node] {
+        for &p in of_root(m) {
+            if cx.free_kills(m, p) {
+                offer(p, cause);
+            }
+        }
+    }
+    best
 }
 
 /// W0301: `error(R, P)`.
+///
+/// Each reference has one search in the part of the graph that can reach its
+/// uses ([`Ctx::part`]). Only the nodes of the part can be witnesses, so the
+/// cost of a reference grows with its part, not with the function.
 fn invalidation(
     cx: &Ctx<'_>,
     rebound: &BTreeMap<VarId, Vec<NodeId>>,
@@ -482,45 +631,60 @@ fn invalidation(
     r: &mut Report,
 ) {
     let f = cx.f;
-    let mut paths: BTreeMap<VarId, Vec<PlaceId>> = BTreeMap::new();
+    let mut paths: BTreeMap<VarId, BTreeMap<RootId, Vec<PlaceId>>> = BTreeMap::new();
     for &(v, p) in &f.points_into {
-        paths.entry(v).or_default().push(p);
+        let root = f.place(p).root;
+        paths.entry(v).or_default().entry(root).or_default().push(p);
     }
     let mut via: BTreeMap<VarId, BTreeSet<NodeId>> = BTreeMap::new();
     for &(p, v) in &f.writes_via {
         via.entry(v).or_default().insert(p);
     }
-    // References that point into the same places share their witnesses.
-    let mut gens_of: BTreeMap<&[PlaceId], Vec<(NodeId, PlaceId, Cause)>> = BTreeMap::new();
     for (&v, ps) in &paths {
         let Some(used) = uses.get(&v) else { continue };
-        let all = gens_of
-            .entry(ps.as_slice())
-            .or_insert_with(|| invalidated_at(cx, ps));
-        let gens = first_witnesses(all, via.get(&v));
+        if !ps.keys().any(|rt| cx.changed.contains(rt)) {
+            continue;
+        }
+        let kill = rebound.get(&v).map_or(&[][..], Vec::as_slice);
+        let part = cx.part(used, kill);
+        // The witnesses in the part, in the order of the nodes.
+        let mut gens: Vec<(usize, usize, PlaceId, Cause)> = part
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &q)| witness(cx, q, ps, via.get(&v)).map(|(p, c)| (q, i, p, c)))
+            .collect();
         if gens.is_empty() {
             continue;
         }
-        let kill = cx.mask(rebound.get(&v).cloned().unwrap_or_default());
-        let gen = cx.mask(gens.iter().map(|g| g.0));
-        let invalid = cx.forward(&gen, &kill);
-        let errors: Vec<NodeId> = used
+        gens.sort_unstable_by_key(|g| g.0);
+        let mut gen = vec![false; part.nodes.len()];
+        for g in &gens {
+            gen[g.1] = true;
+        }
+        let invalid = cx.reached(&part, &gen);
+        let errors: Vec<(NodeId, usize)> = used
             .iter()
-            .copied()
-            .filter(|u| invalid[u.index()])
+            .zip(&part.targets)
+            .zip(&invalid)
+            .filter(|(_, &bad)| bad)
+            .map(|((&u, &t), _)| (u, t))
             .collect();
+        if errors.is_empty() {
+            continue;
+        }
         // Evidence: the first invalidation that reaches each use on its own.
-        let gen_nodes: Vec<usize> = gens.iter().map(|g| g.0.index()).collect();
-        let targets: Vec<usize> = errors.iter().map(|u| u.index()).collect();
+        let gen_nodes: Vec<usize> = gens.iter().map(|g| g.1).collect();
+        let targets: Vec<usize> = errors.iter().map(|e| e.1).collect();
         cx.searches.set(cx.searches.get() + 1);
-        let first = first_reaching(&cx.succ, &cx.pred, &gen_nodes, &kill, &targets);
-        for u in errors {
+        let first = first_reaching(&part.succ, &part.pred, &gen_nodes, &part.kill, &targets);
+        for (u, t) in errors {
             r.violations.error.insert((v, u));
-            if let Some(&(at, path, cause)) = first[u.index()].and_then(|k| gens.get(k)) {
+            if let Some(&(at, _, path, cause)) = first[t].and_then(|k| gens.get(k)) {
                 r.invalidations.push(Invalidation {
                     var: v,
                     path,
-                    at,
+                    at: NodeId(u32::try_from(at).unwrap_or(u32::MAX)),
                     cause,
                     used_at: u,
                 });
@@ -544,15 +708,28 @@ fn moves(
             }
         }
         let Some(used) = uses.get(&v) else { continue };
-        let gen = cx.mask(ms.iter().copied());
-        let kill = cx.mask(rebound.get(&v).cloned().unwrap_or_default());
-        let after = cx.forward(&gen, &kill);
-        for &u in used {
-            if after[u.index()] {
-                out.use_after_move.insert((v, u));
-            }
+        let kill = rebound.get(&v).map_or(&[][..], Vec::as_slice);
+        for u in reached_uses(cx, ms, kill, used) {
+            out.use_after_move.insert((v, u));
         }
     }
+}
+
+/// The uses that a gen node reaches, where `kill` has the kill nodes: a
+/// propagation in the part of the graph that can reach the uses ([`Ctx::part`]).
+fn reached_uses(cx: &Ctx<'_>, gens: &[NodeId], kill: &[NodeId], used: &[NodeId]) -> Vec<NodeId> {
+    let gens: BTreeSet<usize> = gens.iter().map(|g| g.index()).collect();
+    let part = cx.part(used, kill);
+    let gen: Vec<bool> = part.nodes.iter().map(|q| gens.contains(q)).collect();
+    if !gen.contains(&true) {
+        return Vec::new();
+    }
+    let after = cx.reached(&part, &gen);
+    used.iter()
+        .zip(after)
+        .filter(|&(_, on)| on)
+        .map(|(&u, _)| u)
+        .collect()
 }
 
 /// W0304: `use_before_set(V, P)`.
@@ -564,13 +741,9 @@ fn unset(
 ) {
     for (v, ds) in by_var(&cx.f.unset_at) {
         let Some(used) = uses.get(&v) else { continue };
-        let gen = cx.mask(ds);
-        let kill = cx.mask(rebound.get(&v).cloned().unwrap_or_default());
-        let after = cx.forward(&gen, &kill);
-        for &u in used {
-            if after[u.index()] {
-                out.use_before_set.insert((v, u));
-            }
+        let kill = rebound.get(&v).map_or(&[][..], Vec::as_slice);
+        for u in reached_uses(cx, &ds, kill, used) {
+            out.use_before_set.insert((v, u));
         }
     }
 }

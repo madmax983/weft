@@ -488,3 +488,38 @@ fn run_has_its_own_stack() {
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert_eq!(out.text, "1\n");
 }
+
+/// A small stack for a caller of the library: 256 KiB.
+const SMALL: usize = 256 * 1024;
+
+/// The library entry points run on their own large stack
+/// (`weft_sema::on_large_stack`). So a caller on a 256 KiB thread can analyze,
+/// check and run the deepest program that the parser accepts.
+#[test]
+fn the_library_has_its_own_stack() {
+    for (name, make, _) in constructs() {
+        let n = largest(&*make, 20_000);
+        let src = make(n);
+        let out = std::thread::Builder::new()
+            .stack_size(SMALL)
+            .spawn(move || {
+                let a = weft_sema::analyze_source(&src, Options::default());
+                assert!(a.is_ok(), "{name}: analysis");
+                let checked = weft_check::check_source("deep.wf", &src, Options::default());
+                let tests = weft_interp::run_tests(&checked, &RunOptions::default());
+                assert!(tests.is_empty(), "{name}: tests");
+                if !checked.ok() {
+                    return Ok(String::new());
+                }
+                let opts = RunOptions {
+                    max_steps: Some(10_000_000),
+                    ..RunOptions::default()
+                };
+                weft_interp::run_main(&checked, &opts).map(|o| o.stdout)
+            })
+            .expect("the thread starts")
+            .join()
+            .expect("the library does not overflow the stack of its caller");
+        assert!(out.is_ok(), "{name}: {out:?}");
+    }
+}

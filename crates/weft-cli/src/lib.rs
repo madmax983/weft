@@ -48,16 +48,6 @@ and `test` shows only the run.
 /// The most virtual workers of `run` and `test`.
 pub const MAX_WORKERS: usize = 1024;
 
-/// The stack of the thread that runs a command.
-///
-/// Sema and the interpreter walk the syntax tree with recursion. The parser
-/// limits the depth of the tree, and `tests/limits.rs` shows that a 2 MiB
-/// stack is sufficient for the deepest tree that it accepts. The large stack
-/// is a margin: each caller of [`run`] and [`run_live`] gets it, also a test
-/// thread. The system only reserves this memory. It uses a page when the
-/// recursion gets to it.
-pub const STACK: usize = 256 * 1024 * 1024;
-
 /// The output of a command.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Output {
@@ -177,8 +167,8 @@ fn flags(args: &[String]) -> Result<Flags> {
     Ok(f)
 }
 
-/// Runs one command on a thread with a [`STACK`] stack. The output of a Weft
-/// program stays in [`Output`].
+/// Runs one command on a thread with a [`weft_sema::STACK`] stack. The output
+/// of a Weft program stays in [`Output`].
 pub fn run(args: &[String]) -> Result<Output> {
     on_large_stack(args, false)
 }
@@ -192,22 +182,11 @@ pub fn run_live(args: &[String]) -> Result<Output> {
     on_large_stack(args, true)
 }
 
-/// Runs one command on a thread with a [`STACK`] stack. If the system cannot
-/// give the stack, the command runs on the current thread. A panic of the
-/// command continues in the caller.
+/// Runs one command on a thread with a [`weft_sema::STACK`] stack
+/// ([`weft_sema::on_large_stack`]). Sema, the checker and the interpreter use
+/// the same thread.
 fn on_large_stack(args: &[String], live: bool) -> Result<Output> {
-    std::thread::scope(|scope| {
-        let worker = std::thread::Builder::new()
-            .name("weft".into())
-            .stack_size(STACK)
-            .spawn_scoped(scope, || run_with(args, live));
-        match worker {
-            Ok(handle) => handle
-                .join()
-                .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-            Err(_) => run_with(args, live),
-        }
-    })
+    weft_sema::on_large_stack(|| run_with(args, live))
 }
 
 fn run_with(args: &[String], live: bool) -> Result<Output> {
