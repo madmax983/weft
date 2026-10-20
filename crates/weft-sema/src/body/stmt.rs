@@ -307,7 +307,7 @@ impl Lower<'_> {
             multi: self.unknown_multi,
             raises: self.raises,
             tasks: sum.tasks.to_set(),
-            task_runs: self.task_runs_sig.clone(),
+            task_runs: self.task_runs_with_places(bases),
             pins: self.pins,
             fn_stores: sum.fn_stores.to_set(),
             op_effects: sum.op_effects.to_set(),

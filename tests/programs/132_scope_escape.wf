@@ -33,10 +33,55 @@ fn as_field(st: &Stats) / mut(st), async {
     g()   //~ W0301
 }
 
+// The closure captures a tuple that holds the scope capability.
+fn in_tuple(st: &Stats) / mut(st), async {
+    let keep = || print(0)
+    scope { s =>
+        let t = (s, 1)
+        keep = || {
+            let (a, b) = t
+            a.spawn(|| st.count += b)
+            ()
+        }
+    }
+    keep()   //~ W0301
+}
+
+// The closure captures an `Option` that holds the scope capability.
+fn in_option(st: &Stats) / mut(st), async {
+    let keep = || print(0)
+    scope { s =>
+        let o = Some(s)
+        keep = || {
+            match o {
+                Some(a) => {
+                    a.spawn(|| st.count += 1)
+                    ()
+                },
+                None => (),
+            }
+        }
+    }
+    keep()   //~ W0301
+}
+
 // Clean: the closure runs inside the scope.
 fn inside(st: &Stats) / mut(st), async {
     scope { s =>
         let f = || { s.spawn(|| st.count += 1); () }
+        run_it(f)
+    }
+}
+
+// Clean: a closure that captures a tuple with the scope runs inside the scope.
+fn tuple_inside(st: &Stats) / mut(st), async {
+    scope { s =>
+        let t = (s, 1)
+        let f = || {
+            let (a, b) = t
+            a.spawn(|| st.count += b)
+            ()
+        }
         run_it(f)
     }
 }
@@ -55,6 +100,7 @@ fn replaced(st: &Stats) / mut(st), async {
 fn main() / async {
     let st = Stats { count: 0 }
     inside(&st)
+    tuple_inside(&st)
     replaced(&st)
     print(st.count)
 }

@@ -10,14 +10,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use weft_facts::{TaskId, TaskKind};
+use weft_facts::{TaskId, TaskKind, ARG_TASK};
 
 use super::fnval::FnInfo;
-use super::{CapId, Lower, NodeId, PlaceId, Span, Summary, Ty, VarId};
+use super::{CapId, Lower, NodeId, PlaceId, RootId, Span, Summary, Ty, Val, VarId};
 use crate::TaskRun;
-
-/// The label of a node where a callee can run a function argument as a task.
-const ARG_TASK: &str = "task of the callee";
 
 /// A task of the body (`Lower::task_runs`).
 #[derive(Clone, Debug)]
@@ -35,6 +32,14 @@ pub(super) struct TaskRec {
     /// can run, for example from a field of the parameter.
     pub held: BTreeSet<usize>,
 }
+
+/// The places that a callee writes and reads while it runs a function argument
+/// as a task (`TaskRun::writes`, `TaskRun::reads`), in the places of the caller.
+pub(super) type Access = (Vec<PlaceId>, Vec<PlaceId>);
+
+/// The places that a body writes and reads while a task runs each function
+/// parameter, by parameter (`Lower::task_run_places`).
+pub(super) type RunPlaces = BTreeMap<usize, (BTreeSet<PlaceId>, BTreeSet<PlaceId>)>;
 
 /// A function argument of a call that the callee can run as a task, with the
 /// places that its run at the call writes and reads.
@@ -95,12 +100,20 @@ impl Lower<'_> {
     /// captured closure. The value is plain data, and no reference that the
     /// task holds points into it. The interpreter keeps a captured copy value
     /// readable after its scope ends (ADR 0003), so the end of the variable is
-    /// not a free for the task.
+    /// not a free for the task. A reference into the variable is still invalid
+    /// after the end, so the task does not keep a variable that it borrows
+    /// (`Lower::borrowed_roots`).
     fn kept_roots(&self, sum: &Summary) -> Vec<PlaceId> {
         let mut seen = BTreeSet::new();
         let mut todo: Vec<VarId> = sum.captures.iter().copied().collect();
         let mut found = Vec::new();
         let mut held = BTreeSet::new();
+        let mut code: Vec<(u32, u32)> = sum
+            .members
+            .iter()
+            .map(|&m| self.closures[m].nodes)
+            .collect();
+        let mut rets: Vec<PlaceId> = sum.ret_refs.clone();
         while let Some(v) = todo.pop() {
             if !seen.insert(v) {
                 continue;
@@ -114,14 +127,56 @@ impl Lower<'_> {
                 held.insert(self.facts.place(p).root);
             }
             if let Some(s) = loc.summary {
-                todo.extend(self.closures[s].captures.iter().copied());
+                let c = &self.closures[s];
+                todo.extend(c.captures.iter().copied());
+                code.extend(c.members.iter().map(|&m| self.closures[m].nodes));
+                rets.extend(c.ret_refs.iter().copied());
             }
             if !matches!(self.inf.shallow(&loc.ty), Ty::Ref(_)) && !self.may_free(&loc.ty) {
                 found.extend(loc.root);
             }
         }
+        held.extend(rets.iter().map(|&p| self.facts.place(p).root));
         found.retain(|&r| !held.contains(&self.facts.place(r).root));
+        let roots: BTreeSet<RootId> = found.iter().map(|&r| self.facts.place(r).root).collect();
+        let borrowed = self.borrowed_roots(&code, &roots);
+        found.retain(|&r| !borrowed.contains(&self.facts.place(r).root));
         found
+    }
+
+    /// Returns the roots of `roots` that the code at the nodes `code` makes a
+    /// reference into. A variable that gets a value there points into the root
+    /// (a `let` of a borrow, a binding by reference, a temporary), or a call
+    /// there gets a reference into the root.
+    fn borrowed_roots(&self, code: &[(u32, u32)], roots: &BTreeSet<RootId>) -> BTreeSet<RootId> {
+        let mut out = BTreeSet::new();
+        if roots.is_empty() || code.is_empty() {
+            return out;
+        }
+        let inside = |n: NodeId| code.iter().any(|&(lo, hi)| n.0 >= lo && n.0 < hi);
+        let root = |p: PlaceId| self.facts.place(p).root;
+        for &(n, p, _) in &self.facts.call_arg {
+            if roots.contains(&root(p)) && inside(n) {
+                out.insert(root(p));
+            }
+        }
+        let mut into: BTreeMap<VarId, BTreeSet<RootId>> = BTreeMap::new();
+        for &(v, p) in &self.facts.points_into {
+            if roots.contains(&root(p)) {
+                into.entry(v).or_default().insert(root(p));
+            }
+        }
+        if into.is_empty() {
+            return out;
+        }
+        for &(v, n) in &self.facts.rebound_at {
+            if let Some(rs) = into.get(&v) {
+                if inside(n) {
+                    out.extend(rs.iter().copied());
+                }
+            }
+        }
+        out
     }
 
     /// The places that node `n` mutates, lends and reads from index `from` of
@@ -149,14 +204,83 @@ impl Lower<'_> {
         (writes, reads)
     }
 
+    /// Returns, for each position of `runs`, the places of the call that the
+    /// callee writes and reads while it runs the argument: the places of its
+    /// parameters in `TaskRun`, with the argument places `args`.
+    pub(super) fn run_access(
+        &mut self,
+        runs: &BTreeMap<usize, TaskRun>,
+        args: &[Vec<PlaceId>],
+        split: u32,
+    ) -> BTreeMap<usize, Access> {
+        let mut out = BTreeMap::new();
+        for (&pos, run) in runs {
+            let mut w = Vec::new();
+            for sp in &run.writes {
+                w.extend(self.subst_place(sp, args, split));
+            }
+            let mut r = Vec::new();
+            for sp in &run.reads {
+                r.extend(self.subst_place(sp, args, split));
+            }
+            out.insert(pos, (w, r));
+        }
+        out
+    }
+
+    /// Returns, for each position of `runs`, each place that the reference
+    /// arguments `args` give as a place that the callee can write while it runs
+    /// the argument: code that the body does not know.
+    pub(super) fn any_access(
+        runs: &BTreeMap<usize, TaskRun>,
+        args: &[Vec<PlaceId>],
+    ) -> BTreeMap<usize, Access> {
+        let all: Vec<PlaceId> = args.iter().flatten().copied().collect();
+        runs.keys()
+            .map(|&p| (p, (all.clone(), Vec::new())))
+            .collect()
+    }
+
+    /// Returns the places that a function value that argument `v` holds can
+    /// reach, if a callee made the value (`caps::MADE`): what the argument
+    /// points into, and what the references at its places `ps` point into.
+    pub(super) fn made_refs(
+        &mut self,
+        v: &Val,
+        ps: &[PlaceId],
+        held: &BTreeSet<CapId>,
+    ) -> Vec<PlaceId> {
+        let made =
+            held.contains(&super::caps::MADE) || self.val_caps(v).contains(&super::caps::MADE);
+        if !made {
+            return Vec::new();
+        }
+        let mut out = v.refs.clone();
+        out.extend(self.held_refs(ps));
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
     /// The run of the function values that argument `pos` can hold, for
     /// example in a field. Each function value that the body stores can be one
     /// of them (`Lower::escaped`). The capabilities `held` of the argument name
-    /// the function parameters whose values it can hold too.
-    pub(super) fn held_run(&mut self, pos: usize, held: &BTreeSet<CapId>, span: Span) -> ArgRun {
+    /// the function parameters whose values it can hold too. A value that a
+    /// callee made can change and read the places `made` (`made_refs`).
+    pub(super) fn held_run(
+        &mut self,
+        pos: usize,
+        held: &BTreeSet<CapId>,
+        made: &[PlaceId],
+        span: Span,
+    ) -> ArgRun {
         let mut m = Summary::default();
         for e in self.escaped.clone() {
             self.add_fn(&mut m, &e.info, e.row.as_deref());
+        }
+        for &p in made {
+            m.lends.insert(p);
+            m.reads.insert(p);
         }
         let own = |me: &Self, p: PlaceId| m.own_roots.contains(&me.facts.place(p).root);
         let writes = m
@@ -232,11 +356,14 @@ impl Lower<'_> {
     /// the call node. A fork branch of the callee is a fork task here (W0401,
     /// W0403). The task starts a second time if the callee can run it two
     /// times at one time. The nodes while it runs read what each argument
-    /// that can run at the same time reads or writes (W0405).
+    /// that can run at the same time reads or writes (W0405). A node while it
+    /// runs also writes and reads what `access` has for its position: the places
+    /// that the callee accesses while the argument runs.
     pub(super) fn arg_tasks(
         &mut self,
         runs: &BTreeMap<usize, TaskRun>,
         args: &[ArgRun],
+        access: &BTreeMap<usize, Access>,
         span: Span,
     ) {
         let at = |pos: usize| args.iter().position(|a| a.pos == pos);
@@ -268,6 +395,22 @@ impl Lower<'_> {
                 };
                 self.facts.spawned_at.push((t, m));
                 self.read_run(m, &args[ai]);
+            }
+            if let Some((w, r)) = access
+                .get(&pos)
+                .filter(|(w, r)| !w.is_empty() || !r.is_empty())
+            {
+                let Some(m) = self.chain(span) else {
+                    return;
+                };
+                // The callee changes the places as a value that can mutate them
+                // does: the call node reports a mutation that needs a declaration.
+                for &q in w {
+                    self.facts.lends_mut.push((m, q));
+                }
+                for &q in r {
+                    self.facts.reads_at.push((m, q));
+                }
             }
             let with: Vec<usize> = run
                 .with
@@ -329,38 +472,44 @@ impl Lower<'_> {
         let runs = self.task_runs.clone();
         let mut params: BTreeMap<TaskId, BTreeSet<usize>> = BTreeMap::new();
         let mut pinned: BTreeSet<TaskId> = BTreeSet::new();
-        let mut inside: Vec<(TaskId, TaskId)> = Vec::new();
         for r in &runs {
             let (t, s) = (r.task, r.summary);
             let sum = &self.closures[s];
-            let ps: BTreeSet<usize> = sum
+            let mut ps: BTreeSet<usize> = sum
                 .params
                 .iter()
                 .chain(&sum.passthrough)
                 .chain(&r.held)
                 .copied()
                 .collect();
+            // The code of the task can call a function value that the body does
+            // not follow, for example one from a local container or tuple. It
+            // can be each function parameter in scope there (`call_unknown`).
+            let code: Vec<(u32, u32)> = sum
+                .members
+                .iter()
+                .map(|&m| self.closures[m].nodes)
+                .collect();
+            let inside = |n: NodeId| code.iter().any(|&(lo, hi)| n.0 >= lo && n.0 < hi);
+            ps.extend(
+                self.param_nodes
+                    .iter()
+                    .filter(|&&(n, _)| inside(n))
+                    .map(|&(_, p)| p),
+            );
+            let foreign = self.caller_runs.iter().any(|&n| inside(n));
             let hidden = sum.unknown
                 || sum.items.iter().any(|&f| self.sigs[f].effects.pins)
                 || self.runs_pin_call(sum);
-            if !ps.is_empty() || hidden {
+            if !ps.is_empty() || hidden || foreign {
                 self.facts.opaque.push(t);
             }
             if hidden {
                 pinned.insert(t);
             }
             params.entry(t).or_default().extend(ps);
-            for &m in &sum.members {
-                let (lo, hi) = self.closures[m].nodes;
-                for &(u, n) in &self.facts.spawned_at {
-                    if u != t && n.0 >= lo && n.0 < hi {
-                        inside.push((t, u));
-                    }
-                }
-            }
         }
-        inside.sort_unstable();
-        inside.dedup();
+        let inside = self.spawned_inside();
         let through: BTreeSet<(TaskId, VarId)> = self.facts.mut_through.iter().copied().collect();
         for &(t, v) in &self.facts.captures {
             let info = self.facts.var(v);
@@ -381,7 +530,58 @@ impl Lower<'_> {
         }
         self.pins = !pinned.is_empty() || !self.pin_calls.is_empty();
         self.facts.spawns_in.extend(inside);
-        self.task_runs_sig = self.task_runs_part(&params);
+        let (runs, places) = self.task_runs_part(&params);
+        self.task_runs_sig = runs;
+        self.task_run_places = places;
+    }
+
+    /// Returns the pairs `(T, U)` where task `U` starts inside the code of task
+    /// `T` (`spawns_in`).
+    pub(super) fn spawned_inside(&self) -> Vec<(TaskId, TaskId)> {
+        let mut inside = Vec::new();
+        for r in &self.task_runs {
+            for &m in &self.closures[r.summary].members {
+                let (lo, hi) = self.closures[m].nodes;
+                for &(u, n) in &self.facts.spawned_at {
+                    if u != r.task && n.0 >= lo && n.0 < hi {
+                        inside.push((r.task, u));
+                    }
+                }
+            }
+        }
+        inside.sort_unstable();
+        inside.dedup();
+        inside
+    }
+
+    /// Returns the nodes where task `t` is active (`active(T, Q)`, as in the
+    /// spec): from the nodes after a spawn node to a join node.
+    pub(super) fn active_nodes(&self, t: TaskId, succ: &[Vec<NodeId>]) -> Vec<bool> {
+        let ends: BTreeSet<usize> = self
+            .facts
+            .joined_at
+            .iter()
+            .filter(|(u, _)| *u == t)
+            .map(|(_, p)| p.index())
+            .collect();
+        let mut on = vec![false; succ.len()];
+        let mut todo: Vec<usize> = self
+            .facts
+            .spawned_at
+            .iter()
+            .filter(|(u, _)| *u == t)
+            .flat_map(|(_, p)| succ[p.index()].iter().map(|q| q.index()))
+            .collect();
+        while let Some(q) = todo.pop() {
+            if on[q] {
+                continue;
+            }
+            on[q] = true;
+            if !ends.contains(&q) {
+                todo.extend(succ[q].iter().map(|r| r.index()));
+            }
+        }
+        on
     }
 
     /// Returns true if a closure of summary `sum` calls a function that can
@@ -396,24 +596,25 @@ impl Lower<'_> {
     /// The `task_runs` part of the signature: how the tasks of the body run the
     /// function parameters. `params` has the parameters that each task runs.
     /// Two runs are at one time if one starts while the other is active.
+    ///
+    /// It also returns the places that the body writes and reads while each
+    /// parameter runs: at the nodes where the task is active, and in the other
+    /// tasks that run at the same time.
     fn task_runs_part(
         &self,
         params: &BTreeMap<TaskId, BTreeSet<usize>>,
-    ) -> BTreeMap<usize, TaskRun> {
+    ) -> (BTreeMap<usize, TaskRun>, RunPlaces) {
         let mut out: BTreeMap<usize, TaskRun> = BTreeMap::new();
+        let mut places = RunPlaces::new();
         let tasks: Vec<TaskId> = params
             .iter()
             .filter(|(_, ps)| !ps.is_empty())
             .map(|(&t, _)| t)
             .collect();
         if tasks.is_empty() {
-            return out;
+            return (out, places);
         }
-        let n = self.facts.nodes.len();
-        let mut succ = vec![Vec::new(); n];
-        for &(p, q) in &self.facts.cfg_edge {
-            succ[p.index()].push(q.index());
-        }
+        let succ = self.successors();
         let starts = |t: TaskId| -> Vec<usize> {
             self.facts
                 .spawned_at
@@ -422,34 +623,19 @@ impl Lower<'_> {
                 .map(|(_, p)| p.index())
                 .collect()
         };
-        // `active(T, Q)`, as in the spec.
-        let active = |t: TaskId| -> Vec<bool> {
-            let ends: BTreeSet<usize> = self
-                .facts
-                .joined_at
-                .iter()
-                .filter(|(u, _)| *u == t)
-                .map(|(_, p)| p.index())
-                .collect();
-            let mut on = vec![false; n];
-            let mut todo: Vec<usize> = starts(t)
-                .into_iter()
-                .flat_map(|p| succ[p].iter().copied())
-                .collect();
-            while let Some(q) = todo.pop() {
-                if on[q] {
-                    continue;
-                }
-                on[q] = true;
-                if !ends.contains(&q) {
-                    todo.extend(succ[q].iter().copied());
-                }
-            }
-            on
-        };
-        let act: BTreeMap<TaskId, Vec<bool>> = tasks.iter().map(|&t| (t, active(t))).collect();
+        let act: BTreeMap<TaskId, Vec<bool>> = tasks
+            .iter()
+            .map(|&t| (t, self.active_nodes(t, &succ)))
+            .collect();
         let st: BTreeMap<TaskId, Vec<usize>> = tasks.iter().map(|&t| (t, starts(t))).collect();
         let empty = BTreeSet::new();
+        // Each task of the body, with its start nodes and active nodes.
+        let all: Vec<(TaskId, Vec<usize>, Vec<bool>)> = (0..self.facts.tasks.len())
+            .map(|i| {
+                let u = TaskId(u32::try_from(i).unwrap_or(u32::MAX));
+                (u, starts(u), self.active_nodes(u, &succ))
+            })
+            .collect();
         for &t in &tasks {
             let a = &act[&t];
             let ps = params.get(&t).unwrap_or(&empty);
@@ -468,7 +654,40 @@ impl Lower<'_> {
                     others.extend(params.get(&u).unwrap_or(&empty).iter().copied());
                 }
             }
+            // What the body and its other tasks access while the task runs.
+            let mut writes: BTreeSet<PlaceId> = BTreeSet::new();
+            let mut reads: BTreeSet<PlaceId> = BTreeSet::new();
+            for &(m, q) in self.facts.mutates_at.iter().chain(&self.facts.lends_mut) {
+                if a[m.index()] {
+                    writes.insert(q);
+                }
+            }
+            for &(m, q) in &self.facts.reads_at {
+                if a[m.index()] {
+                    reads.insert(q);
+                }
+            }
+            for (u, ust, uact) in &all {
+                let overlap =
+                    *u != t && (ust.iter().any(|&p| a[p]) || st[&t].iter().any(|&p| uact[p]));
+                if !overlap {
+                    continue;
+                }
+                for &(x, q) in &self.facts.task_writes {
+                    if x == *u {
+                        writes.insert(q);
+                    }
+                }
+                for &(x, q) in &self.facts.task_reads {
+                    if x == *u {
+                        reads.insert(q);
+                    }
+                }
+            }
             for &p in ps {
+                let e = places.entry(p).or_default();
+                e.0.extend(writes.iter().copied());
+                e.1.extend(reads.iter().copied());
                 let run = out.entry(p).or_default();
                 run.thread |= self.facts.tasks[t.index()].kind == TaskKind::Fork;
                 run.twice |= again;
@@ -481,7 +700,51 @@ impl Lower<'_> {
                 }
             }
         }
+        (out, places)
+    }
+
+    /// The `task_runs` part of the signature, with the places of the parameters
+    /// that the body writes and reads while each one runs. `bases` has the root
+    /// places of the parameters. A place of a local of the body is not part of
+    /// it: a caller does not see it.
+    pub(super) fn task_runs_with_places(&self, bases: &[Vec<PlaceId>]) -> BTreeMap<usize, TaskRun> {
+        let mut out = self.task_runs_sig.clone();
+        for (p, run) in &mut out {
+            let Some((w, r)) = self.task_run_places.get(p) else {
+                continue;
+            };
+            for (from, to) in [(w, &mut run.writes), (r, &mut run.reads)] {
+                for &q in from {
+                    let base = self.facts.wild_base(q).unwrap_or(q);
+                    if let Some(sp) = self.sig_place(base, bases) {
+                        if !to.contains(&sp) {
+                            to.push(sp);
+                        }
+                    }
+                }
+            }
+        }
         out
+    }
+
+    /// Returns the worst way to run the function arguments at the positions
+    /// `fns` as tasks: on another thread, two times at one time, and at the same
+    /// time as the others. Code that the body does not know runs them so.
+    pub(super) fn worst_runs(fns: &[usize]) -> BTreeMap<usize, TaskRun> {
+        fns.iter()
+            .map(|&i| {
+                let with = fns.iter().copied().filter(|&j| j != i).collect();
+                (
+                    i,
+                    TaskRun {
+                        thread: true,
+                        twice: true,
+                        with,
+                        ..TaskRun::default()
+                    },
+                )
+            })
+            .collect()
     }
 
     /// Returns how function value `callee` runs the function arguments at the
@@ -498,6 +761,7 @@ impl Lower<'_> {
             thread: true,
             twice: true,
             with: fns.iter().copied().filter(|&j| j != i).collect(),
+            ..TaskRun::default()
         };
         let mut out: BTreeMap<usize, TaskRun> = BTreeMap::new();
         let (unknown, tasks, items) = match callee.summary {
@@ -554,6 +818,7 @@ impl Lower<'_> {
                         thread: foreign,
                         twice: true,
                         with,
+                        ..TaskRun::default()
                     },
                 )
             })

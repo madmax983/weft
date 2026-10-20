@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use weft_facts::{FnFacts, NodeId, PlaceId, VarId, VarKind, TASK_END};
+use weft_facts::{FnFacts, NodeId, PlaceId, VarId, VarKind, ARG_TASK, TASK_END};
 use weft_sema::effects;
 use weft_syntax::diag::Diagnostic;
 
@@ -681,6 +681,12 @@ pub(crate) fn diagnose_marked(f: &FnFacts, r: &Report) -> Vec<Diagnostic> {
         let what = match (c.task_writes, c.free, c.lends) {
             (_, _, true) if at.label == TASK_END => {
                 format!("waits for a task that can change `{node_place}`")
+            }
+            (_, _, true) if at.label == ARG_TASK => {
+                format!("calls a callee that can change `{node_place}`")
+            }
+            (true, None, false) if at.label == ARG_TASK => {
+                format!("calls a callee that can access `{node_place}`")
             }
             (_, _, true) => {
                 format!("gives `{node_place}` to a function value that can mutate it")

@@ -565,14 +565,40 @@ impl Lower<'_> {
     /// makes while the task runs is invalid after the end, if the task changes
     /// what it points into (W0301). The body is lowered, so each task has all
     /// of its places.
+    ///
+    /// The writes of a task include the writes of a task that it starts in a
+    /// scope outside it. That task can still run at the end node. Then its own
+    /// end changes these places, and each node while it runs must not access
+    /// them, so the end node leaves them out.
     pub(super) fn finish_task_ends(&mut self) {
         let mut writes: BTreeMap<TaskId, Vec<PlaceId>> = BTreeMap::new();
         for &(t, m) in &self.facts.task_writes {
             writes.entry(t).or_default().push(m);
         }
-        for &(t, e) in &self.task_ends {
+        let mut inner: BTreeMap<TaskId, Vec<TaskId>> = BTreeMap::new();
+        for (t, u) in self.spawned_inside() {
+            inner.entry(t).or_default().push(u);
+        }
+        let succ = if inner.is_empty() {
+            Vec::new()
+        } else {
+            self.successors()
+        };
+        let mut active: BTreeMap<TaskId, Vec<bool>> = BTreeMap::new();
+        for &(t, e) in &self.task_ends.clone() {
+            let mut still: BTreeSet<PlaceId> = BTreeSet::new();
+            for &u in inner.get(&t).into_iter().flatten() {
+                let on = active
+                    .entry(u)
+                    .or_insert_with(|| self.active_nodes(u, &succ));
+                if on.get(e.index()).copied().unwrap_or(false) {
+                    still.extend(writes.get(&u).into_iter().flatten().copied());
+                }
+            }
             for &m in writes.get(&t).into_iter().flatten() {
-                self.facts.lends_mut.push((e, m));
+                if !still.contains(&m) {
+                    self.facts.lends_mut.push((e, m));
+                }
             }
         }
     }

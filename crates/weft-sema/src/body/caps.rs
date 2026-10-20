@@ -36,11 +36,17 @@ const PARAM: u32 = 1 << 27;
 /// an operation of a handler of a caller. A task that runs it is W0314.
 pub(super) const UNKNOWN_FN: CapId = CapId(1 << 26);
 
+/// The mark of a value that can hold a function value that a callee makes and
+/// gives back inside its result, for example in a field of a struct. The body
+/// does not follow it. It can reach what the value points into, so a task that
+/// runs it can change and read those places (ADR 0006).
+pub(super) const MADE: CapId = CapId(1 << 25);
+
 /// The bits of the marks: a capability with one of them is not a handler.
-const MARKS: u32 = RESUMED | NONPORTABLE.0 | NOT_MANY.0 | ESCAPES | PARAM | UNKNOWN_FN.0;
+const MARKS: u32 = RESUMED | NONPORTABLE.0 | NOT_MANY.0 | ESCAPES | PARAM | UNKNOWN_FN.0 | MADE.0;
 
 /// The low bits of a mark with an index.
-const INDEX: u32 = (1 << 26) - 1;
+const INDEX: u32 = (1 << 25) - 1;
 
 /// Returns the mark of a closure that performs effect `e` (an index in
 /// `Program::effects`) through a handler outside the function.
@@ -510,6 +516,34 @@ impl Lower<'_> {
             span,
         };
         self.op_fn_args.push(rec);
+    }
+
+    /// Function parameter `dp` (summary index, parameter) of a clause of the
+    /// handler behind `cap` for operation `op` gets the function values that the
+    /// nodes give to the operation (`Lower::clause_fns`). A value of a callee, or
+    /// a parameter of a closure that has ended, is a value that the clause does
+    /// not know.
+    pub(super) fn note_clause_fn(&mut self, cap: CapId, op: Option<usize>, dp: (usize, usize)) {
+        let recs: Vec<OpFn> = self
+            .op_fn_args
+            .iter()
+            .filter(|a| a.cap == cap && (a.op.is_none() || a.op == op))
+            .filter(|a| a.pos.is_none_or(|p| p == dp.1))
+            .cloned()
+            .collect();
+        if recs.is_empty() {
+            return;
+        }
+        let mut m = Summary::default();
+        for a in &recs {
+            let mut info = a.info.clone();
+            if info.param.is_some_and(|(d, _)| d > 0) {
+                info.param = None;
+            }
+            self.add_fn(&mut m, &info, a.row.as_deref());
+        }
+        self.closures.push(m);
+        self.clause_fns.insert(dp, self.closures.len() - 1);
     }
 
     /// Reports W0314 for each function value that a node gives to an operation of

@@ -1079,16 +1079,18 @@ impl super::Machine<'_, '_> {
 
     /// Spawns a closure as a child of a scope.
     pub(crate) fn spawn_task(&mut self, sid: ScopeId, f: Value, span: Span) -> R<usize> {
+        // The span is in the code that spawns the task.
+        let unit = self.fr().map_or(usize::MAX, |cf| cf.code.unit);
         let frame = self.task_frame(f)?;
-        let stealable = self.rt.is_stealable(span);
-        let worker = self.task().worker;
+        let stealable = self.rt.is_stealable(unit, span);
         let parent = self.cur;
         // The task runs in the simulation of its spawn site.
         let sim = self.sim_of(parent);
-        let t = self.add_task(frame, worker, stealable, Some(sid), sim);
+        let t = self.add_task(frame, Some(parent), stealable, Some(sid), sim);
         if let Some(s) = self.scopes.get_mut(sid) {
             s.children.push(t);
         }
+        let worker = self.queue_worker(t);
         self.trace.push(TraceEvent::Spawn {
             task: t,
             parent,

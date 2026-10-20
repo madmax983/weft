@@ -166,8 +166,9 @@ pub struct Runtime<'a> {
     pub move_only: Rc<[bool]>,
     /// Built-in definitions.
     pub b: Builtins,
-    /// Spans of task closures that the checker marked stealable.
-    pub stealable: BTreeSet<(u32, u32)>,
+    /// The tasks that the checker marked stealable: the source unit and the
+    /// span of the function value that each one runs.
+    pub stealable: BTreeSet<(usize, u32, u32)>,
 }
 
 /// Returns the qualified name of a function: `Vec.push`, `sim.net.partition`.
@@ -241,7 +242,7 @@ impl<'a> Runtime<'a> {
     pub fn new(
         prog: &'a Program,
         sigs: &'a [FnSig],
-        stealable: BTreeSet<(u32, u32)>,
+        stealable: BTreeSet<(usize, u32, u32)>,
         by_value: &ByValue,
     ) -> Self {
         let compiled = Compiler::compile(prog, sigs, by_value);
@@ -329,9 +330,10 @@ impl<'a> Runtime<'a> {
         }
     }
 
-    /// Returns true if the checker marked the task at this span stealable.
-    pub fn is_stealable(&self, span: Span) -> bool {
-        self.stealable.contains(&(span.lo, span.hi))
+    /// Returns true if the checker marked the task at this span of source
+    /// unit `unit` stealable.
+    pub fn is_stealable(&self, unit: usize, span: Span) -> bool {
+        self.stealable.contains(&(unit, span.lo, span.hi))
     }
 
     /// Returns the variant index of a variant name in an enum.

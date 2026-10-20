@@ -217,15 +217,29 @@ impl super::Machine<'_, '_> {
         let req = parse_request(&read_request(&mut stream));
         let handler = st.handler.clone();
         let server = st.server;
-        let worker = self.tasks[server].worker;
         // The checker runs the handler as a task at the call of `serve`. Only a
-        // closure that it marked stealable there can move to another worker.
-        // Another request task stays on the worker of the server.
-        let stealable = matches!(&handler, Value::Closure(c) if self.rt.is_stealable(c.span));
+        // closure that it marked stealable there can move to another worker. A
+        // function item captures nothing: it can move unless it can start a
+        // pinned task (`EffectSig::pins`). Another request task stays on the
+        // worker of the server.
+        let stealable = match &handler {
+            Value::Closure(c) => {
+                let unit = self
+                    .rt
+                    .compiled
+                    .codes
+                    .get(c.code)
+                    .map_or(usize::MAX, |k| k.unit);
+                self.rt.is_stealable(unit, c.span)
+            }
+            Value::FnItem(f) => self.rt.sigs.get(*f).is_some_and(|s| !s.effects.pins),
+            _ => false,
+        };
         let frame = self.task_frame_args(handler, vec![Value::Request(Rc::new(req))], &st.henv)?;
         let sim = self.sim_of(server);
-        let t = self.add_task(frame, worker, stealable, None, sim);
+        let t = self.add_task(frame, Some(server), stealable, None, sim);
         let _ = self.tasks[t].handle.consume();
+        let worker = self.queue_worker(t);
         self.trace.push(TraceEvent::Spawn {
             task: t,
             parent: server,

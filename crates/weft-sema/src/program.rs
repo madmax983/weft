@@ -213,6 +213,12 @@ pub struct TaskRun {
     pub twice: bool,
     /// The other function parameters that the body can run while it runs.
     pub with: BTreeSet<usize>,
+    /// The places of the parameters that the body, or another task of it, can
+    /// write while it runs.
+    pub writes: Vec<SigPlace>,
+    /// The places of the parameters that the body, or another task of it, can
+    /// read while it runs.
+    pub reads: Vec<SigPlace>,
 }
 
 /// A place that a function gives to one of its function parameters.

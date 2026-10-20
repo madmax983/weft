@@ -182,7 +182,9 @@ Status: accepted. Date: 2026-10-18.
   does. A reference into a local of plain data is still invalid after the scope. A
   closure that captures the scope capability `s` cannot outlive the scope: it points
   into the variable of `s`, as a closure that captures `&s` does (W0301). Else a call
-  of it after the scope would start a task that no scope joins.
+  of it after the scope would start a task that no scope joins. This holds for each
+  captured value that holds the capability, such as a tuple or an `Option`
+  (`tests/programs/132_scope_escape.wf`).
 - A closure refers to the cells of the variables that it captures by reference. So it
   reads each variable when it runs, not when it is made. The lowering of the closure
   body uses the values that the variables have where the closure is made. So each node

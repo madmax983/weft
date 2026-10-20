@@ -820,10 +820,16 @@ impl Lower<'_> {
             let ty = self.inf.shallow(&av.val.ty);
             if wanted && !matches!(ty, Ty::Fn(_)) && self.has_fn(&ty) {
                 let held = self.arg_held(&av.val, &arg_places[i]);
-                arg_runs.push(self.held_run(i, &held, av.span));
+                let refs = self.made_refs(&av.val, &arg_places[i], &held);
+                arg_runs.push(self.held_run(i, &held, &refs, av.span));
             }
         }
-        self.arg_tasks(&runs, &arg_runs, span);
+        let access = if self.item_runs_tasks(f) {
+            Self::any_access(&runs, &arg_places)
+        } else {
+            self.run_access(&runs, &arg_places, split)
+        };
+        self.arg_tasks(&runs, &arg_runs, &access, span);
         // The callee can store a function argument, and it can run a stored one
         // that an argument holds. A foreign function can do both.
         let def = &self.prog.fns[f];
@@ -1021,6 +1027,13 @@ impl Lower<'_> {
                 let rs = self.op_result_refs(Some(c), None);
                 out.refs.extend(rs);
             }
+        }
+        // A function value inside the result, for example in a field of a
+        // struct, can be one that the callee makes. The body does not follow
+        // it (`caps::MADE`, ADR 0006).
+        let rt = self.inf.shallow(&ret);
+        if !no_body && !matches!(rt, Ty::Fn(_)) && self.has_fn(&rt) {
+            out.caps.insert(super::caps::MADE);
         }
         out
     }
@@ -1716,7 +1729,8 @@ impl Lower<'_> {
         }
         // A task of the value can run a function argument: the checks of a
         // spawn apply here (ADR 0006).
-        self.arg_tasks(&runs, &arg_runs, span);
+        let access = Self::any_access(&runs, &arg_places);
+        self.arg_tasks(&runs, &arg_runs, &access, span);
         // A value that the body does not know can start a task that runs a
         // function value that an argument holds.
         let unknown = callee.param.is_some()
@@ -2238,10 +2252,33 @@ impl Lower<'_> {
             .map(|i| u32::try_from(i).unwrap_or(0))
             .collect();
         let given = Self::any_arg(&arg_places, &roots);
+        // A clause of a handler of a caller is code that the body does not know.
+        // It can run each function argument as a task: on another thread, two
+        // times at one time, and at the same time as the others (ADR 0006).
+        let foreign_clause = cap.is_none();
+        let mut arg_runs = Vec::new();
         // A clause can call a function argument more than once.
         for (i, info, row) in fns {
             let root = 800 + u32::try_from(i).unwrap_or(0);
+            let from = self.place_marks();
             self.apply_value(n, &info, row.as_deref(), root, &given);
+            if foreign_clause {
+                let s = self.value_summary(&info, row.as_deref());
+                let (writes, reads) = self.arg_places(n, s, from);
+                let span = fn_args
+                    .iter()
+                    .find(|(j, ..)| *j == i)
+                    .map_or(span, |(_, _, sp)| *sp);
+                arg_runs.push(super::tasks::ArgRun {
+                    pos: i,
+                    info: info.clone(),
+                    row: row.clone(),
+                    writes,
+                    reads,
+                    span,
+                    held: BTreeSet::new(),
+                });
+            }
             self.start_ret_spawns(n, &info);
             self.note_repeat(n, &info, true);
             self.repeat_unknown(n, &info, &given);
@@ -2250,6 +2287,20 @@ impl Lower<'_> {
                 let again = self.run_again(n, &v);
                 self.give_fn(n, &v, Some(again), false);
             }
+        }
+        if foreign_clause {
+            // A value that holds function values, for example in a field.
+            for (i, v, sp) in &fn_args {
+                if !matches!(self.inf.shallow(&v.ty), Ty::Fn(_)) {
+                    let held = self.val_caps(v);
+                    let refs = self.made_refs(v, &[], &held);
+                    arg_runs.push(self.held_run(*i, &held, &refs, *sp));
+                }
+            }
+            let pos: Vec<usize> = arg_runs.iter().map(|a| a.pos).collect();
+            let runs = Self::worst_runs(&pos);
+            let access = Self::any_access(&runs, &arg_places);
+            self.arg_tasks(&runs, &arg_runs, &access, span);
         }
         // An operation of a local handler suspends the handled body only. A
         // root handler of `sim.run` is the scheduler: it can cancel the task.

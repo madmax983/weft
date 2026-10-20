@@ -1153,6 +1153,11 @@ pub struct Lower<'p> {
     /// The clauses that are being lowered: the capability of the continuation,
     /// and the number of handlers outside the `handle` of the clause.
     clause_conts: Vec<(CapId, usize)>,
+    /// The function parameters of the clauses that are being lowered (summary
+    /// index, parameter), each with the summary of the function values that
+    /// the nodes give to the operation. A local handler lowers its clauses after
+    /// the handled body, so the clause runs these values (ADR 0006).
+    clause_fns: BTreeMap<(usize, usize), usize>,
     /// The nodes that can abort or resume more than once in a way that can
     /// reach each value of the function: not only through an operation of a
     /// local handler (`finish_spared`).
@@ -1352,6 +1357,10 @@ pub struct Lower<'p> {
     pins: bool,
     /// The `task_runs` part of the signature (`tasks::finish_task_marks`).
     task_runs_sig: BTreeMap<usize, crate::TaskRun>,
+    /// The places that the body writes and reads while a task runs each
+    /// function parameter (`tasks::finish_task_marks`). `summary_to_sig` puts
+    /// the places of the parameters into `TaskRun::writes` and `TaskRun::reads`.
+    task_run_places: tasks::RunPlaces,
     /// The nodes right after the joins of the tasks: a `join`, the end of a
     /// `fork` or a scope, or an abort. At the end of the body, each node gets
     /// the places that its task writes (`late::finish_task_ends`).
@@ -1403,6 +1412,7 @@ impl<'p> Lower<'p> {
             root_caps: BTreeSet::new(),
             cont_caps: BTreeSet::new(),
             clause_conts: Vec::new(),
+            clause_fns: BTreeMap::new(),
             out_suspends: BTreeSet::new(),
             local_performs: Vec::new(),
             cap_effects: BTreeMap::new(),
@@ -1481,6 +1491,7 @@ impl<'p> Lower<'p> {
             pin_calls: Vec::new(),
             pins: false,
             task_runs_sig: BTreeMap::new(),
+            task_run_places: BTreeMap::new(),
             task_ends: Vec::new(),
             work: crate::Work::default(),
             loop_bound: None,

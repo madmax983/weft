@@ -258,6 +258,12 @@ pub struct NodeInfo {
 /// at any time while it runs.
 pub const TASK_END: &str = "task end";
 
+/// The label of a node where a callee runs a function argument as a task.
+///
+/// The node comes after the call. Semantic analysis gives it what the run reads
+/// and writes, and what the callee writes and reads while it runs (ADR 0006).
+pub const ARG_TASK: &str = "task of the callee";
+
 /// The kind of task.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TaskKind {

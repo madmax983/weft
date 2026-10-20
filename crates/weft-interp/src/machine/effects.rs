@@ -13,8 +13,7 @@ use weft_sema::program::EffectId;
 use weft_verified::lifecycle::{ContError, Continuation, LinState};
 
 use super::{
-    After, CodeFrame, ContRec, Flow, Frame, HandleMark, Interrupt, SimId, TaskResult, Timer,
-    Unwind, Wait, R,
+    After, CodeFrame, ContRec, Flow, Frame, HandleMark, SimId, TaskResult, Timer, Unwind, Wait, R,
 };
 use crate::error::ErrorKind;
 use crate::heap::SlotKind;
@@ -120,7 +119,13 @@ impl super::Machine<'_, '_> {
             std::mem::take(&mut rec.frames)
         };
         self.task().frames.extend(frames);
-        self.deliver(v)
+        let flow = self.deliver(v)?;
+        // A `with_timeout` deadline that passed while the block was in the
+        // continuation holds now: the block times out (ADR 0010).
+        if let Some(f) = self.late_timeout() {
+            return Ok(f);
+        }
+        Ok(flow)
     }
 
     /// Gives a value to the frame on top. Marks pass it down.
@@ -149,8 +154,10 @@ impl super::Machine<'_, '_> {
                     self.tasks[cur].frames.pop();
                     self.remove_timeout(id);
                 }
-                Frame::Sim { .. } => {
+                Frame::Sim { outer, .. } => {
+                    let outer = *outer;
                     self.tasks[cur].frames.pop();
+                    self.tasks[cur].sim_worker = outer;
                     self.trace.push(TraceEvent::SimEnd);
                 }
                 Frame::Clause { cont } => {
@@ -240,29 +247,13 @@ impl super::Machine<'_, '_> {
     /// cancels the other children, and then performs `fail(msg)` with the
     /// handlers of the scope, as `timeout_unwind` does for a `with_timeout`
     /// block. Handlers are lexical: a handler that the owner installed inside
-    /// the scope does not get the failure (ADR 0010). If the frame of the scope
-    /// is not on the task stack, for example in the continuation of a clause
-    /// outside the scope, the failure waits until it is, or until the end of
-    /// the scope.
-    pub(crate) fn scope_fail_unwind(
-        &mut self,
-        msg: String,
-        sid: crate::value::ScopeId,
-    ) -> Option<Flow> {
+    /// the scope does not get the failure (ADR 0010). `check_interrupt` calls
+    /// this only while the frame of the scope is on the task stack.
+    pub(crate) fn scope_fail_unwind(&mut self, sid: crate::value::ScopeId) -> Option<Flow> {
         let cur = self.cur;
-        let idx = self.tasks[cur].frames.iter().rposition(
-            |f| matches!(f, Frame::Scope { scope } | Frame::Fork { scope, .. } if *scope == sid),
-        );
-        let Some(idx) = idx else {
-            // Also the end of the scope raises the failure, if a later
-            // interrupt takes the place of this one.
-            if let Some(s) = self.scopes.get_mut(sid) {
-                s.propagated = false;
-            }
-            self.tasks[cur].interrupt = Some(Interrupt::Fail { msg, scope: sid });
-            return None;
-        };
+        let idx = Self::scope_frame(&self.tasks[cur].frames, sid)?;
         let s = self.scopes.get_mut(sid)?;
+        let msg = s.failure.clone()?;
         s.propagated = true;
         let henv = s.henv.clone();
         let frames = self.tasks[cur].frames.split_off(idx);
@@ -398,7 +389,11 @@ impl super::Machine<'_, '_> {
                 }
             }
             Frame::Timeout { id, .. } => self.remove_timeout(id),
-            Frame::Sim { .. } => self.trace.push(TraceEvent::SimEnd),
+            Frame::Sim { outer, .. } => {
+                let cur = self.cur;
+                self.tasks[cur].sim_worker = outer;
+                self.trace.push(TraceEvent::SimEnd);
+            }
             Frame::Handle(_) => {}
             Frame::Unwind(inner) => {
                 let inner = *inner;

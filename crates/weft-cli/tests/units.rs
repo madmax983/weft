@@ -104,3 +104,47 @@ pub fn loud() / log { log.info(\"x\") }\n",
     );
     assert!(!out.text.contains("function `quiet` needs"), "{}", out.text);
 }
+
+/// Returns, for each task that `main` of the package at `pkg` spawns, true if
+/// the scheduler may move it to another worker.
+fn spawned_stealable(pkg: &str) -> Vec<bool> {
+    let (_, c) = weft_cli::check_path(
+        std::path::Path::new(pkg),
+        weft_cli::package::Profile::default(),
+    )
+    .unwrap();
+    assert!(c.ok(), "{:?}", c.codes());
+    let opts = weft_interp::RunOptions {
+        workers: 4,
+        ..weft_interp::RunOptions::default()
+    };
+    let out = weft_interp::run_main(&c, &opts).unwrap();
+    out.trace
+        .iter()
+        .filter_map(|e| match e {
+            weft_interp::TraceEvent::Spawn { stealable, .. } => Some(*stealable),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_task_of_a_dependency_keeps_its_own_stealable_mark() {
+    // The closure of the project and the closure of the dependency have the
+    // same byte offsets in their files. The first task is stealable, the
+    // second one captures an `Rc` and is pinned (ADR 0010).
+    let main = "// a comment line!.\nfn main() / async, io {\n    scope { s => s.spawn(|| { let y = 123456789 }) }\n    json.bg()\n}\n";
+    let lib = "pub fn bg() / async {\n    let r = Rc.new(0)\n    scope { s => s.spawn(|| { let y = r.clone() }) }\n}\n";
+    let at = |src: &str, pat: &str| src.find(pat).unwrap();
+    assert_eq!(at(main, "|| {"), at(lib, "|| {"));
+    let manifest = "[package]\nname = \"app\"\n\n[dependencies.json]\npath = \"deps/json\"\nauthority = [\"async\"]\n";
+    let pkg = scratch(
+        "stealable_units",
+        &[
+            ("weft.toml", manifest),
+            ("src/main.wf", main),
+            ("deps/json/src/lib.wf", lib),
+        ],
+    );
+    assert_eq!(spawned_stealable(&pkg), vec![true, false]);
+}

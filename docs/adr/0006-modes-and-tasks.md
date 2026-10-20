@@ -35,9 +35,11 @@ Status: accepted. Date: 2026-10-18.
 - A task keeps the cell of a copy variable that it captures (`kept(T, Rt)`): the
   interpreter keeps a captured copy value readable after its scope ends, as for a
   closure (ADR 0003). So the end of the variable is not a free for the task. A
-  reference into the variable that the task holds is still invalid after it. A capture
-  that the closure moves is in a cell of the closure, so the task does not share it
-  with the parent.
+  reference into the variable is still invalid after the end. So a task does not keep
+  a variable when a captured local holds a reference into it, or when the code of the
+  task makes one: a borrow, a binding by reference, or a reference argument of a call
+  (`tests/programs/130_task_locals.wf`). A capture that the closure moves is in a cell
+  of the closure, so the task does not share it with the parent.
 - A move or the end of an owner frees its memory (`frees_at`). A free while a task is
   active must not overlap what the task reads or writes. A task closure that moves a
   capture takes it when the closure is made, as each closure does (ADR 0003): the
@@ -60,7 +62,10 @@ Status: accepted. Date: 2026-10-18.
   `//~ pinned`, and the corpus test checks the marks.
 - A task that runs a function value that the body does not follow (a function
   parameter, a value from a field, a value that the body does not know) is pinned:
-  its captures are not known here (`opaque(T)`). A pinned task stays on the worker of
+  its captures are not known here (`opaque(T)`). A call in the code of the task of a
+  value that the body does not know, for example one from a local `Vec` or tuple, can
+  be each function parameter in scope there. So the task runs these parameters too
+  (`tests/programs/137_task_values.wf`). A pinned task stays on the worker of
   the task that starts it. If that task moved to another worker, the two could share
   a nonportable value from two workers at one time. So a task that starts a pinned
   task in its code is pinned too (`spawns_in(T, U)`). A function can start a pinned
@@ -72,7 +77,8 @@ Status: accepted. Date: 2026-10-18.
   (`tests/programs/134_steal_pins.wf`).
 - `http.serve` runs its handler as a task for each request. The interpreter lets the
   request task move to another worker only if the checker marks the handler closure
-  stealable at the call (ADR 0010).
+  stealable at the call, or if the handler is a function item that cannot start a
+  pinned task (ADR 0010).
 - A spawn in statement position gives its handle to the scope. A bound handle is linear.
 - A task joins at the end of the scope of its receiver (`a.spawn` in an inner scope joins
   at the end of the scope of `a`). A closure or a handler clause that spawns into a scope
@@ -156,14 +162,29 @@ Status: accepted. Date: 2026-10-18.
   nodes after the call node, as a fork task if it can run on another thread (W0401,
   W0403), a second time if it can run two times at one time, and the nodes while it
   runs read what each argument that can run at the same time reads or writes (W0405).
-  These tasks only stand for the runs of the callee: the interpreter does not start
-  them (`tests/programs/133_task_params.wf`).
+  The part also has the places of the parameters that the body, or another task of
+  it, writes and reads while the parameter runs (`TaskRun::writes`, `reads`). A node
+  while the argument runs at the call changes and reads them, in the places of the
+  arguments. These tasks only stand for the runs of the callee: the interpreter does
+  not start them (`tests/programs/133_task_params.wf`,
+  `tests/programs/137_task_values.wf`).
 - A function value that the body does not know, a closure whose task runs its
   parameter, and foreign code run a function argument in the worst way: on another
   thread, two times at one time, and at the same time as the other function
-  arguments. `http.serve` runs its handler two times at one time. A callee can run a
+  arguments. They can also change each place that the reference arguments give while
+  it runs. `http.serve` runs its handler two times at one time. A callee can run a
   function value from a field of an argument as a task: each function value that the
-  body stores can be that value.
+  body stores can be that value. A value that a callee makes and gives back inside its
+  result, for example a closure in a field of a struct, is one that the body does not
+  follow (`caps::MADE`). It can change and read what the result points into.
+- A clause of a local handler runs after the handled body is lowered. So a function
+  parameter of a clause is the join of the function values that the operations give
+  it (`Lower::clause_fns`). A task or a fork branch of the clause that runs the
+  parameter has their footprints and captures (W0401, W0403, W0405). A value that a
+  callee gives to the operation is a value that the clause does not know. A clause of
+  a handler of a caller is code that the body does not know: each operation that
+  gives it a function argument runs the argument in the worst way, as a call of a
+  value that the body does not know does.
 - The capabilities of a value carry marks for W0314. There are three marks:
   - An effect that a closure or a function item in the value performs through a
     handler of a caller.
@@ -211,9 +232,24 @@ Status: accepted. Date: 2026-10-18.
     spawn, and W0405 also when they run it once at a time. A function value from a
     field of an argument that a callee runs as a task can be each value that the body
     stores.
+  - A `resume` changes what the handled body changes, also what the function values
+    that the body gives to the operation change. So a task that a clause starts
+    from such a value before `resume` conflicts with the `resume`, also when the body
+    does not touch the places after the operation.
+  - A call in a task of a value that the body does not know runs each function
+    parameter in scope, also one that the value cannot be.
+  - Only an index borrow (`&v[i]`) reads the place that it goes through. A borrow
+    through a `Box` (`&b.items`) does not read `b`: a read of the pointer would
+    overlap each place inside the box. A later use of the reference is still checked.
+  - Foreign code can run each callback on another thread, two times at one time.
+    An extern signature cannot state that it runs a callback once at a time
+    (`tests/programs/38_callbacks.wf`).
   - The node after the end of a task changes what the task writes. Another task that
     is still active there and reads or writes the same places conflicts again (W0405).
-    The first conflict of the two tasks is already an error.
+    The first conflict of the two tasks is already an error. A task that the ended
+    task starts in a scope outside it is not another task here: the node leaves out
+    the places that such a task writes while it can still run, because its own end
+    changes them (`nested_join` in `tests/programs/131_task_ends.wf`).
   - A clause that spawns after `resume` starts the task at the operation. So the code
     after the operation counts as running while the task is active, but `resume` runs
     it before the spawn.

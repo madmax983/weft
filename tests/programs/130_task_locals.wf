@@ -91,6 +91,77 @@ fn fork_whole() / par {
     fork(|| print(n), || n += 1)   //~ W0403 W0405
 }
 
+// A task keeps a copy variable that it captures, but not a reference into it
+// (ADR 0006). The task borrows the variable, and the variable ends while the
+// task runs.
+fn task_borrows_kept() / async, clock {
+    scope { s =>
+        {
+            let n = 5
+            s.spawn(|| { let r = &n; sleep(1.ms); print(r) })
+        }   //~ W0405
+        print(1)
+    }
+}
+
+fn show_later(r: &u64) / clock {
+    sleep(1.ms)
+    print(r)
+}
+
+// The task gives a reference into the kept variable to a callee.
+fn task_lends_kept() / async, clock {
+    scope { s =>
+        {
+            let n = 5
+            s.spawn(|| show_later(&n))
+        }   //~ W0405
+        print(1)
+    }
+}
+
+// The task borrows a field of a kept copy struct.
+fn task_borrows_field() / async, clock {
+    scope { s =>
+        {
+            let c = C { k: 1, j: 2 }
+            s.spawn(|| { let r = &c.k; sleep(1.ms); print(r) })
+        }   //~ W0405
+        print(1)
+    }
+}
+
+// The loop variable ends at the end of each iteration.
+fn task_borrows_loop_var() / async, clock {
+    scope { s =>
+        let i = 0
+        while i < 2 {
+            let k = i
+            s.spawn(|| { let r = &k; sleep(1.ms); print(r) })
+            i += 1
+        }   //~ W0405
+    }
+}
+
+// Clean: the task reads the value of the kept variable after its end. A
+// `match` of a copy value binds a copy.
+fn task_reads_kept() / async, clock {
+    scope { s =>
+        {
+            let n = 5
+            let c = C { k: 1, j: 2 }
+            let o = Some(C { k: 3, j: 4 })
+            s.spawn(|| {
+                sleep(1.ms)
+                print(n)
+                print(c.k)
+                match o { Some(x) => print(x.k), None => () }
+            })
+        }
+        print(1)
+    }
+}
+
 // Clean: both read `count`.
 fn both_read() / async {
     let count = 0
@@ -147,7 +218,8 @@ fn loop_vars() / async {
     }
 }
 
-fn main() / async {
+fn main() / async, clock {
+    task_reads_kept()
     both_read()
     two_fields()
     two_fields_ref()

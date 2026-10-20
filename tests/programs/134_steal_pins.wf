@@ -79,6 +79,23 @@ fn plain_child() / async {
     }
 }
 
+// The task runs a function parameter that the callee keeps in a local `Vec`
+// or a tuple: a value that the body does not follow there.
+fn bg_vec(f: fn()) / async {
+    let fs = Vec.new()
+    fs.push(f)
+    scope { s =>
+        s.spawn(|| { let g = fs[0]; g() })   //~ pinned
+    }
+}
+
+fn bg_tuple(f: fn()) / async {
+    let t = (f, 1)
+    scope { s =>
+        s.spawn(|| { let g = t.0; g() })   //~ pinned
+    }
+}
+
 fn main() / async, clock {
     shares_rc()
     calls_helper()

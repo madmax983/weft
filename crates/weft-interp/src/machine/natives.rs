@@ -317,7 +317,11 @@ impl super::Machine<'_, '_> {
                 let body = next();
                 let workers = usize::try_from(workers).unwrap_or(1).clamp(1, 1024);
                 let sim = self.enter_sim(u64::try_from(seed).unwrap_or(0), workers);
-                self.task().frames.push(Frame::Sim { sim });
+                // The task enters the simulation on its first simulated worker,
+                // whatever worker of the machine runs it (ADR 0010).
+                let t = self.task();
+                let outer = std::mem::replace(&mut t.sim_worker, 0);
+                t.frames.push(Frame::Sim { sim, outer });
                 return self.call_closure(body, Vec::new());
             }
             // Phase 1 does not simulate the network: the partition is only

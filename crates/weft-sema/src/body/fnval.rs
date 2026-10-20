@@ -230,8 +230,16 @@ impl Lower<'_> {
                 Some((0, p)) => {
                     m.params.insert(p);
                 }
-                // A parameter of a closure: it is unknown outside the closure.
-                _ => m.unknown = true,
+                // A parameter of a closure: it is unknown outside the closure. A
+                // parameter of a clause is one of the values that the operation
+                // gets too (`Lower::clause_fns`).
+                Some(dp) => {
+                    if let Some(&s) = self.clause_fns.get(&dp) {
+                        m.union(&self.closures[s]);
+                    }
+                    m.unknown = true;
+                }
+                None => m.unknown = true,
             }
             m.may_abort = true;
             m.multi |= self.may_be_multi(row);
@@ -244,6 +252,12 @@ impl Lower<'_> {
     pub(super) fn value_summary(&mut self, x: &FnInfo, row: Option<&[String]>) -> usize {
         if let Some(s) = x.summary {
             return s;
+        }
+        // A parameter of a clause runs the values that the operation gets.
+        if let (None, Some(dp)) = (x.item, x.param) {
+            if let Some(&s) = self.clause_fns.get(&dp) {
+                return s;
+            }
         }
         let mut m = Summary::default();
         self.add_fn(&mut m, x, row);
@@ -423,7 +437,14 @@ impl Lower<'_> {
             self.apply_item(n, f, given);
         } else {
             match info.param {
-                Some(dp) => self.call_param(n, dp, given),
+                Some(dp) => {
+                    self.call_param(n, dp, given);
+                    // A parameter of a clause runs the values that the
+                    // operation gets.
+                    if let Some(&s) = self.clause_fns.get(&dp) {
+                        self.apply_summary(n, s, root, given);
+                    }
+                }
                 None => self.call_unknown(n, given),
             }
             let args = Given::args(given);

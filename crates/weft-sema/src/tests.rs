@@ -1597,6 +1597,27 @@ fn task_runs_say_how_a_body_runs_its_function_parameters() {
 }
 
 #[test]
+fn task_runs_name_the_places_that_the_body_accesses_while_a_parameter_runs() {
+    let src = "struct P { a: u64, b: u64 }\n\
+        fn bg_write(f: fn(), p: &P) / mut(p), async { scope { s => s.spawn(f)\n p.a += 1 } }\n\
+        fn bg_first(f: fn(), p: &P) / mut(p), async { p.a += 1\n scope { s => s.spawn(f) } }\n\
+        fn via_vec(f: fn()) / async { let fs = Vec.new()\n fs.push(f)\n scope { s => s.spawn(|| { let g = fs[0]\n g() })\n s.spawn(|| { let g = fs[0]\n g() }) } }";
+    let a = analyze_units(src, &[]);
+    assert_eq!(codes(&a), Vec::new());
+    let run = |name: &str, p: usize| sig_of(&a, name).effects.task_runs.get(&p).cloned();
+    let w = run("bg_write", 0).expect("bg_write runs f");
+    let texts: Vec<&str> = w.writes.iter().map(|sp| sp.text.as_str()).collect();
+    assert_eq!(texts, vec!["p.a"]);
+    // The body changes `p.a` before the task starts.
+    assert!(run("bg_first", 0)
+        .expect("bg_first runs f")
+        .writes
+        .is_empty());
+    // A call of a value from a local container can be the parameter.
+    assert!(run("via_vec", 0).expect("via_vec runs f").twice);
+}
+
+#[test]
 fn pins_says_a_body_can_start_a_pinned_task() {
     let src = "struct E { hp: u64 }\n\
         fn shares() / async { let r = Rc.new(E { hp: 1 })\n scope { s => s.spawn(|| print(r.hp)) } }\n\

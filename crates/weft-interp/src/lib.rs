@@ -103,16 +103,15 @@ pub struct TestOutcome {
     pub outcome: RunOutcome,
 }
 
-/// Returns the spans of the task closures that the checker marked stealable.
-pub fn stealable_spans(checked: &Checked) -> BTreeSet<(u32, u32)> {
+/// Returns the tasks that the checker marked stealable: the source unit and
+/// the span of each. Two units can have the same byte offsets, so the unit is
+/// part of the key.
+pub fn stealable_spans(checked: &Checked) -> BTreeSet<(usize, u32, u32)> {
     let mut out = BTreeSet::new();
     for (b, r) in checked.analysis.bodies.iter().zip(&checked.reports) {
-        if b.unit != weft_sema::ROOT_UNIT {
-            continue;
-        }
         for t in &r.violations.stealable {
             if let Some(info) = b.facts.tasks.get(t.index()) {
-                out.insert((info.span.lo, info.span.hi));
+                out.insert((b.unit, info.span.lo, info.span.hi));
             }
         }
     }

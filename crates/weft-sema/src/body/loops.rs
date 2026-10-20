@@ -865,9 +865,11 @@ impl Lower<'_> {
             // Set at the end of the body.
             pins: _,
             task_runs_sig: _,
+            task_run_places: _,
             callee_ops: _,
             // A pass starts and ends outside a clause that it lowers.
             clause_conts: _,
+            clause_fns: _,
             repeated: _,
             abort_ctx: _,
             facts,
@@ -1038,8 +1040,10 @@ impl Lower<'_> {
             raises: _,
             pins: _,
             task_runs_sig: _,
+            task_run_places: _,
             callee_ops,
             clause_conts: _,
+            clause_fns: _,
             repeated,
             abort_ctx,
             facts,

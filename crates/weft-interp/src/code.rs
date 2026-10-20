@@ -293,4 +293,6 @@ pub struct Code {
     pub n_slots: u32,
     /// The number of parameters: they are slots `0..n_params`.
     pub n_params: u32,
+    /// The source unit of the code. Its spans are byte offsets in that unit.
+    pub unit: usize,
 }

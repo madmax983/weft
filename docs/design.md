@@ -118,7 +118,7 @@ Weft enforces shared-XOR-mutable only where threads or tasks meet, using OxCaml-
 
 - A shared-mutable reference is always `nonportable`. It cannot be captured by anything that runs on another thread.
 - Closures passed to `fork` or spawned as stealable tasks must be `portable`.
-- Data visible to several threads must be `shared`, or split into `uniq` parts whose places are proven disjoint.
+- Data that one thread writes while other threads can see it must be `shared`, or split into `uniq` parts whose places are proven disjoint. Reads from several threads need no `shared` (ADR 0006).
 - Immutable plain data crosses modes automatically (mode crossing), so most code writes no modes at all.
 - A type has at most one mode on each axis. Also `uniq` and `shared` contradict: other threads can read a `shared` value, so other references to it exist. Both are errors (W0119).
 
@@ -316,7 +316,7 @@ extern fn sqlite3_step(stmt: *Stmt) -> i32 / blocking
 
 ### Deterministic simulation
 
-The test harness can replace every root handler at once: clock, network, randomness and the scheduler.
+The test harness can replace every root handler at once: clock, network, randomness and the scheduler. Phase 1 does not simulate the network: `sim.run` replaces the clock, the randomness and the scheduler, and `sim.net.partition` only records the partition (ADR 0010).
 
 ```weft
 test "election survives a partition" {

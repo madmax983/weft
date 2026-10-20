@@ -79,7 +79,58 @@ fn after_join() / async {
     }
 }
 
+// Clean: task `a` starts task `b` in the same scope, and `b` writes `v`. The
+// join of `a` does not change `v` again: `b` can still run there, and its own
+// end changes `v`.
+fn nested_join() / async {
+    let v = mk_v()
+    scope { s =>
+        let a = s.spawn(|| {
+            s.spawn(|| v.push(2))
+            ()
+        })
+        a.join()
+        print(1)
+    }
+    print(v.len())
+}
+
+// Task `a` starts task `b` and writes `v` itself, while `b` runs. The parent
+// borrows `v` after the join of `a`, while `b` can still run.
+fn nested_join_writes() / async {
+    let v = mk_v()
+    scope { s =>
+        let a = s.spawn(|| {
+            s.spawn(|| v.push(2))
+            v.push(3)   //~ W0405
+        })
+        a.join()
+        let r = &v[0]   //~ W0405
+        print(r + 1)   //~ W0405
+    }
+}
+
+// Task `a` starts task `b` and joins it. The end of `a` changes what `b`
+// writes, so the reference is invalid after it.
+fn nested_joined() / async {
+    let v = mk_v()
+    let w = mk_v()
+    let r = &w[0]
+    scope { s =>
+        let a = s.spawn(|| {
+            scope { i =>
+                let b = i.spawn(|| v.clear())
+                b.join()
+            }
+        })
+        r = &v[1]   //~ W0405
+        a.join()
+    }
+    print(r + 1)   //~ W0301
+}
+
 fn main() / async {
     other_local()
     after_join()
+    nested_join()
 }

@@ -166,6 +166,11 @@ impl<'a> Compiler<'a> {
             spans: ctx.spans,
             n_slots: ctx.n_slots,
             n_params: ctx.n_params,
+            unit: self
+                .prog
+                .mods
+                .get(ctx.module)
+                .map_or(usize::MAX, |m| m.unit),
         });
     }
 
@@ -1430,5 +1435,6 @@ fn empty_code() -> Code {
         spans: vec![Span::default(); 2],
         n_slots: 0,
         n_params: 0,
+        unit: usize::MAX,
     }
 }

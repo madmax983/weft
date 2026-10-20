@@ -10,6 +10,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use weft_facts::{Step, StepKind, TaskId};
 
+use crate::props::Prop;
+
 impl Lower<'_> {
     /// Lowers an expression and returns its value.
     pub(super) fn expr(&mut self, e: &Expr) -> Val {
@@ -1488,7 +1490,9 @@ impl Lower<'_> {
         // interpreter. A captured copy value stays readable after its scope
         // ends; another value goes away with its variable. The scope
         // capability ends with its scope: a closure that spawns into the scope
-        // cannot run after it. A capture that the closure moves goes into a
+        // cannot run after it. This holds for a copy value that holds the
+        // capability too, such as a tuple or an `Option` (a resource part,
+        // `Prop::Resource`). A capture that the closure moves goes into a
         // cell of the closure when the closure is made. The closure still
         // points into the variable, so it cannot leave the scope of the
         // variable: its type does not show that it runs only once, or that it
@@ -1509,7 +1513,7 @@ impl Lower<'_> {
             if let Some(l) = self.local_of(*v) {
                 let loc = self.locals[l].clone();
                 refs.extend(loc.refs.iter().copied());
-                let scope = matches!(self.inf.shallow(&loc.ty), Ty::Scope);
+                let scope = self.ty_has(&loc.ty, Prop::Resource);
                 if !loc.ty.is_ref() && (self.may_free(&loc.ty) || scope) {
                     refs.extend(loc.root);
                 }
@@ -1886,6 +1890,12 @@ impl Lower<'_> {
                     .collect();
                 self.locals.get_mut(l).caps.extend(given.iter().copied());
                 self.locals.get_mut(l).sticky.extend(given);
+                // A function parameter is one of the function values that the
+                // nodes give to the operation. A task or a fork branch of the
+                // clause runs them (W0401, W0403, W0405).
+                if fn_param.is_some() {
+                    self.note_clause_fn(cap, oi, (si, i));
+                }
                 // A callee can give a value that holds a function value in a field or
                 // an element: the clause cannot follow it.
                 if !matches!(self.inf.shallow(pt), Ty::Fn(_)) && self.has_fn(pt) {
@@ -1952,6 +1962,7 @@ impl Lower<'_> {
             self.stmt_temps = saved_stmts;
             self.close_scope(si, super::fnval::Scope::Clause);
             let _ = self.take_repeats(si);
+            self.clause_fns.retain(|&(d, _), _| d != si);
             let mut cs = self.sums.pop().unwrap_or_default();
             let end_node = NodeId(u32::try_from(self.facts.nodes.len()).unwrap_or(u32::MAX));
             clause_nodes.push((first_node, end_node));

@@ -1,6 +1,6 @@
 // A `with_timeout` deadline holds also while its block is in a continuation
-// (ADR 0010). The block times out at its next suspension point after a resume
-// puts it back. Each copy of a `multi` resume has a deadline of its own.
+// (ADR 0010). The block times out when a resume puts it back after its
+// deadline. Each copy of a `multi` resume has a deadline of its own.
 effect Ask { fn ask() -> u64 }
 effect Choice { multi fn choose() -> bool }
 
@@ -12,6 +12,33 @@ fn lost() / io {
                 let x = ask()
                 sleep(100.ms)
                 print("block finished after its deadline")
+                x
+            }
+        }
+        print("v = {v}")
+    }
+}
+
+// The block does not suspend after the resume: it times out at the resume.
+fn no_suspend_after() / io {
+    handle Fail { fn fail(m) { print("caught: {m}") } } in {
+        let v = handle Ask { fn ask() { sleep(50.ms); resume(1) } } in {
+            with_timeout(10.ms) {
+                let x = ask()
+                print("block finished after its deadline")
+                x
+            }
+        }
+        print("v = {v}")
+    }
+}
+
+// The clause resumes before the deadline: no timeout.
+fn in_time() / io {
+    handle Fail { fn fail(m) { print("caught: {m}") } } in {
+        let v = handle Ask { fn ask() { sleep(5.ms); resume(1) } } in {
+            with_timeout(30.ms) {
+                let x = ask()
                 x
             }
         }
@@ -33,6 +60,8 @@ fn copies() / io {
 
 fn main() / io {
     lost()
+    no_suspend_after()
+    in_time()
     copies()
     print("end")
 }

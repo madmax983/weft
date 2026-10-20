@@ -104,8 +104,9 @@ its signature:
   whether it can run one more than once.
 - Whether an unknown function value that it calls can resume more than once.
 - Which parameters a task of the body can call, and how a task runs a function
-  parameter: on another thread, two times at one time, and with which other
-  parameters (`task_runs`, ADR 0006).
+  parameter: on another thread, two times at one time, with which other parameters,
+  and which places of the parameters the body writes and reads while it runs
+  (`task_runs`, ADR 0006).
 - Whether the body can start a pinned task for a reason that a caller does not see
   (`pins`).
 - Which function parameters it gives to an operation of a handler of a caller, and

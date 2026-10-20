@@ -29,3 +29,47 @@ test "two simulated workers" {
         }
     }
 }
+
+// A task that runs outside the simulation and prints nothing.
+fn noise() / clock {
+    let i = 0
+    while i < 5 {
+        sleep(1.ms)
+        i += 1
+    }
+}
+
+// The task that enters the simulation can run on any worker of the machine.
+// The simulation puts it on its own first worker.
+test "a simulation in a spawned task" {
+    scope { o =>
+        o.spawn(|| noise())
+        o.spawn(|| sim.run(seed: 3) {
+            scope { s =>
+                s.spawn(|| work(1))
+                s.spawn(|| work(2))
+                s.spawn(|| work(3))
+            }
+        })
+        o.spawn(|| noise())
+    }
+}
+
+// Two simulations run at one time. Each has its own scheduler.
+test "two simulations at one time" {
+    scope { o =>
+        o.spawn(|| sim.run(seed: 3) {
+            scope { s =>
+                s.spawn(|| noise())
+                s.spawn(|| noise())
+            }
+        })
+        o.spawn(|| sim.run(seed: 3) {
+            scope { s =>
+                s.spawn(|| work(1))
+                s.spawn(|| work(2))
+                s.spawn(|| work(3))
+            }
+        })
+    }
+}

@@ -134,6 +134,9 @@ pub enum Frame {
     Sim {
         /// The simulation.
         sim: SimId,
+        /// The simulated worker of the task before it entered the simulation.
+        /// The end of the simulation gives it back.
+        outer: usize,
     },
     /// An unwinding.
     Unwind(Box<Unwind>),
@@ -214,19 +217,13 @@ pub enum Wait {
     Accept,
 }
 
-/// A request that a task handles at its next suspension point.
+/// A request that a task handles at its next suspension point. A failure of
+/// a child is not an interrupt: it stays in the record of its scope
+/// (`ScopeRec::failure`), and `check_interrupt` finds it there.
 #[derive(Clone, Debug)]
 pub enum Interrupt {
     /// A `with_timeout` deadline passed.
     Timeout(u64),
-    /// A child of a scope failed. The owner unwinds to the scope and performs
-    /// `fail(msg)` with the handlers of the scope.
-    Fail {
-        /// The message.
-        msg: String,
-        /// The scope.
-        scope: ScopeId,
-    },
 }
 
 /// A task.
@@ -236,8 +233,12 @@ pub struct Task {
     pub frames: Vec<Frame>,
     /// The state.
     pub state: TState,
-    /// The worker that owns the task.
+    /// The worker of the machine that owns the task.
     pub worker: usize,
+    /// The simulated worker that owns the task while it runs in a simulation.
+    /// The simulation chooses it, so it does not depend on `worker`
+    /// (ADR 0010).
+    pub sim_worker: usize,
     /// The checker allows other workers to steal the task.
     pub stealable: bool,
     /// The scope of the task.
@@ -273,7 +274,7 @@ pub struct ScopeRec {
     pub children: Vec<TaskId>,
     /// The first failure of a child.
     pub failure: Option<String>,
-    /// The failure was raised in the owner.
+    /// The failure was raised in the owner, or a joiner took it.
     pub propagated: bool,
     /// The handlers at the `scope` or the `fork`. A failure of a child goes to
     /// them, not to the handlers where the owner is when the child fails.
@@ -346,7 +347,8 @@ pub struct Machine<'r, 'a> {
     timer_seq: u64,
     /// The `with_timeout` blocks whose deadline passed while their frame was
     /// not on the task stack, for example in the continuation of a clause.
-    /// The task times out at its next suspension point with the frame back.
+    /// The block times out when a resume puts the frame back
+    /// (`late_timeout`).
     expired: BTreeSet<u64>,
     pub(crate) now: u64,
     sched_rng: Rng,
@@ -503,16 +505,22 @@ impl<'r, 'a> Machine<'r, 'a> {
     pub(crate) fn add_task(
         &mut self,
         frame: CodeFrame,
-        worker: usize,
+        parent: Option<TaskId>,
         stealable: bool,
         scope: Option<ScopeId>,
         sim: Option<SimId>,
     ) -> TaskId {
         let id = self.tasks.len();
+        // A task starts on the worker of its parent, in the machine and in the
+        // simulation.
+        let (worker, sim_worker) = parent
+            .and_then(|p| self.tasks.get(p))
+            .map_or((0, 0), |p| (p.worker, p.sim_worker));
         self.tasks.push(Task {
             frames: vec![Frame::Code(frame)],
             state: TState::Ready,
             worker,
+            sim_worker,
             stealable,
             scope,
             result: None,
@@ -538,7 +546,7 @@ impl<'r, 'a> Machine<'r, 'a> {
     pub(crate) fn sim_of(&self, t: TaskId) -> Option<SimId> {
         fn find(frames: &[Frame]) -> Option<SimId> {
             frames.iter().rev().find_map(|f| match f {
-                Frame::Sim { sim } => Some(*sim),
+                Frame::Sim { sim, .. } => Some(*sim),
                 Frame::Unwind(u) => find(&u.frames),
                 _ => None,
             })
@@ -550,16 +558,37 @@ impl<'r, 'a> Machine<'r, 'a> {
     /// Puts ready task `t` in the run queue of its worker: a queue of the
     /// machine, or of a simulated worker of its simulation.
     pub(crate) fn enqueue(&mut self, t: TaskId) {
-        let w = self.tasks[t].worker;
-        let queues = match self.sim_of(t) {
-            Some(s) => &mut self.sims[s].queues,
-            None => &mut self.queues,
+        let sim = self.sim_of(t);
+        let task = &self.tasks[t];
+        let (queues, w) = match sim {
+            Some(s) => (&mut self.sims[s].queues, task.sim_worker),
+            None => (&mut self.queues, task.worker),
         };
         let n = queues.len().max(1);
         if let Some(q) = queues.get_mut(w % n) {
             q.push_back(t);
         }
-        self.tasks[t].worker = w % n;
+        self.set_worker(t, sim.is_some(), w % n);
+    }
+
+    /// Sets the worker of task `t`: a simulated worker if `in_sim`, else a
+    /// worker of the machine.
+    fn set_worker(&mut self, t: TaskId, in_sim: bool, w: usize) {
+        if in_sim {
+            self.tasks[t].sim_worker = w;
+        } else {
+            self.tasks[t].worker = w;
+        }
+    }
+
+    /// Returns the worker whose queue has task `t`: a simulated worker in a
+    /// simulation, else a worker of the machine.
+    pub(crate) fn queue_worker(&self, t: TaskId) -> usize {
+        match (self.sim_of(t), self.tasks.get(t)) {
+            (Some(_), Some(task)) => task.sim_worker,
+            (None, Some(task)) => task.worker,
+            (_, None) => 0,
+        }
     }
 
     /// Returns the current task.
@@ -669,23 +698,42 @@ impl<'r, 'a> Machine<'r, 'a> {
         if self.tasks[owner].state == TState::Done || waits_here {
             return;
         }
-        // The frame of the scope can be away from the stack of the owner, in the
-        // continuation of a clause outside the scope. Then the owner goes on,
-        // and it raises the failure when the frame is back, or at the end of
-        // the scope (`raise_scope_failure`).
-        let on_stack = self.tasks[owner].frames.iter().any(
-            |f| matches!(f, Frame::Scope { scope } | Frame::Fork { scope, .. } if *scope == sid),
-        );
-        if self.tasks[owner].interrupt.is_none() {
-            self.scopes[sid].propagated = on_stack;
-            self.tasks[owner].interrupt = Some(Interrupt::Fail {
-                msg: msg.to_string(),
-                scope: sid,
-            });
-        }
-        if on_stack && self.tasks[owner].state == TState::Blocked {
+        // The owner raises the failure at its next suspension point while the
+        // frame of the scope is on its stack (`check_interrupt`). The frame can
+        // be away, in the continuation of a clause outside the scope. Then the
+        // owner goes on, and it raises the failure when the frame is back, or at
+        // the end of the scope (`raise_scope_failure`). Wake the owner only if
+        // its check finds the failure.
+        let t = &self.tasks[owner];
+        let wake = t.state == TState::Blocked
+            && !t.aborting
+            && !self.scopes[sid].propagated
+            && Self::scope_frame(&t.frames, sid).is_some();
+        if wake {
             self.wake(owner, None);
         }
+    }
+
+    /// Returns the index of the frame of scope `sid` (a `scope` or a `fork`) in
+    /// `frames`.
+    pub(crate) fn scope_frame(frames: &[Frame], sid: ScopeId) -> Option<usize> {
+        frames.iter().rposition(
+            |f| matches!(f, Frame::Scope { scope } | Frame::Fork { scope, .. } if *scope == sid),
+        )
+    }
+
+    /// Returns the outermost scope on the stack of the current task whose
+    /// child failed, if the owner has not raised that failure yet. The unwind
+    /// to that scope ends the scopes inside it too.
+    fn failed_scope(&self) -> Option<ScopeId> {
+        self.tasks[self.cur].frames.iter().find_map(|f| match f {
+            Frame::Scope { scope } | Frame::Fork { scope, .. } => self
+                .scopes
+                .get(*scope)
+                .filter(|s| !s.propagated && s.failure.is_some() && s.owner == self.cur)
+                .map(|_| *scope),
+            _ => None,
+        })
     }
 
     /// Wakes every task whose wait condition now holds.
@@ -879,7 +927,7 @@ impl<'r, 'a> Machine<'r, 'a> {
             match from {
                 Some(v) => {
                     queues[v].retain(|&x| x != t);
-                    self.tasks[t].worker = w;
+                    self.set_worker(t, sim.is_some(), w);
                     self.trace.push(TraceEvent::Steal {
                         task: t,
                         from: v,
@@ -953,20 +1001,28 @@ impl<'r, 'a> Machine<'r, 'a> {
         if t.cancel {
             return Some(self.abort_task(TaskResult::Cancelled));
         }
-        match t.interrupt.take() {
-            None => {
-                // A deadline that passed while its block was in a continuation.
-                let late = self.tasks[self.cur].frames.iter().find_map(|f| match f {
-                    Frame::Timeout { id, .. } if self.expired.contains(id) => Some(*id),
-                    _ => None,
-                });
-                let id = late?;
-                self.expired.remove(&id);
-                self.timeout_unwind(id)
-            }
-            Some(Interrupt::Timeout(id)) => self.timeout_unwind(id),
-            Some(Interrupt::Fail { msg, scope }) => self.scope_fail_unwind(msg, scope),
+        if let Some(Interrupt::Timeout(id)) = t.interrupt.take() {
+            return self.timeout_unwind(id);
         }
+        if let Some(f) = self.late_timeout() {
+            return Some(f);
+        }
+        let sid = self.failed_scope()?;
+        self.scope_fail_unwind(sid)
+    }
+
+    /// Times out a `with_timeout` block on the stack of the current task whose
+    /// deadline passed while the block was in a continuation.
+    pub(crate) fn late_timeout(&mut self) -> Option<Flow> {
+        if self.tasks[self.cur].aborting || self.expired.is_empty() {
+            return None;
+        }
+        let id = self.tasks[self.cur].frames.iter().find_map(|f| match f {
+            Frame::Timeout { id, .. } if self.expired.contains(id) => Some(*id),
+            _ => None,
+        })?;
+        self.expired.remove(&id);
+        self.timeout_unwind(id)
     }
 
     /// Returns the handlers of the innermost code frame.
@@ -985,7 +1041,7 @@ impl<'r, 'a> Machine<'r, 'a> {
     /// Starts a root task for a code unit.
     pub fn start(&mut self, code: CodeId, args: Vec<Value>) -> R<TaskId> {
         let f = self.code_frame(code, args, Rc::from(Vec::new()), HEnv::default())?;
-        Ok(self.add_task(f, 0, false, None, None))
+        Ok(self.add_task(f, None, false, None, None))
     }
 
     /// Returns the result of a finished task.
