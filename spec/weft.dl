@@ -249,8 +249,13 @@ abort_unhandled(V, P) :- live_linear(V, P), may_abort(P), !ends_linear(V, P), !h
 // sibling fails, or the owner times out or is cancelled. Then the closure of the
 // task goes away with the values that it moved. So a linear value that moves into
 // a task where it starts needs `on abort`, as a value that is live across an abort
-// does. Any scope can be cancelled while a task waits.
-abort_unhandled(V, P) :- spawned_at(_, P), moved_at(V, P), linear(V), !has_on_abort(V).
+// does. Any scope can be cancelled while a task waits. The closure of the task
+// captures a linear variable with no `on abort` (`captures`). A node that runs a
+// block or a closure whose code starts a task starts that task too, but the
+// value that moves there goes into the block, not into the task: the closure of
+// that task does not capture the linear variables of the block.
+abort_unhandled(V, P) :- spawned_at(T, P), moved_at(V, P), linear(V), !has_on_abort(V),
+                         captures(T, X), linear(X), !has_on_abort(X).
 
 // ---------------------------------------------------------------------------
 // W0503: values live across a `multi` operation must be `many`

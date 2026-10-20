@@ -379,9 +379,9 @@ impl super::Machine<'_, '_> {
             }
             After::Fail { msg, henv } => self.fail(msg, &henv)?,
         };
-        // The unwinding deferred the interrupts of the task (`defers`): a
-        // cancel, a deadline that passed, a failure of a child. The task
-        // handles them now (ADR 0010).
+        // The unwinding deferred the interrupts of the task for the frames
+        // below it (`defers`, `live_base`): a cancel, a deadline that passed,
+        // a failure of a child. The task handles them now (ADR 0010).
         if flow == Flow::Done {
             return Ok(flow);
         }
@@ -441,8 +441,8 @@ impl super::Machine<'_, '_> {
                     return Ok(self.block(Wait::Children(kids), SuspendReason::Children));
                 }
                 // The results of the children that are done and that no
-                // `join` took: the value of a fork branch, and the result of
-                // a task whose handle went to the scope.
+                // `join` can take: the value of a fork branch, and the result
+                // of a task whose handle went to the scope (`done_results`).
                 let live = self.done_results(&all)?;
                 self.unwind_top()?.aborts.extend(live);
             }
@@ -705,6 +705,14 @@ impl super::Machine<'_, '_> {
     /// `join` took, and returns their live linear parts, each marked as
     /// aborted (`unwind_lin`). The other parts are dropped. The unwinder runs
     /// `on abort` for the returned values.
+    ///
+    /// A handle that is live and that a value still holds keeps the result:
+    /// the handle can leave the frames that unwind, for example in the value
+    /// of a clause that does not resume. Its owner takes the result with a
+    /// `join`, or the `on abort` of the handle finishes it (`run_on_abort`).
+    /// So this takes only the result of a task whose handle was dropped, used
+    /// or finished: a branch of a `fork`, a task whose handle went to the
+    /// scope, a detached task, or a task whose handle the unwinder finished.
     fn done_results(&mut self, tasks: &[TaskId]) -> R<Vec<Value>> {
         let mut found = Vec::new();
         for &t in tasks {
@@ -712,7 +720,12 @@ impl super::Machine<'_, '_> {
                 self.tasks.get(t).and_then(|x| x.result.as_ref()),
                 Some(TaskResult::Ok(_))
             );
-            if !ok {
+            let held = self
+                .tasks
+                .get(t)
+                .is_some_and(|x| x.handle.state == LinState::Live)
+                && !self.heap.handle_dropped(t);
+            if !ok || held {
                 continue;
             }
             if let Some(TaskResult::Ok(v)) = self.tasks[t].result.take() {

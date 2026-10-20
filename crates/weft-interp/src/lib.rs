@@ -12,14 +12,16 @@
 //! do not make sure that each linear value finishes. The checker (W0601,
 //! W0602) and the unwinder do that. On an abort path the unwinder finishes the
 //! linear values of the frames that it leaves: their locals, temporaries and
-//! operands, the cells of a closure that took a value by move, the captures of
+//! operands, the cells of a closure that took a value by move (also a block
+//! that a call consumes, such as the block of `with_timeout`), the captures of
 //! a task that a cancel stops (also before it starts), and the results of tasks
-//! and fork branches that are done and that no `join` took (ADR 0010). Some
+//! and fork branches that are done and that no `join` can take (ADR 0010). Some
 //! shapes stay open until the core IR (ADR 0007): a spawn whose handle is not
 //! kept drops the result of the task; a `fork` that can abort needs `on abort`
 //! for each linear type of a branch value, which the checker does not ask for
-//! yet; and a generic body that holds a `Task<T>` handle across an abort does
-//! not tell its caller.
+//! yet; and a generic body that holds a `Task<T>` handle across an abort, or
+//! whose task closure takes a value of a type parameter, does not tell its
+//! caller.
 //!
 //! The scheduler is deterministic: one OS thread, `N` virtual workers and a
 //! seeded random choice among ready tasks. An idle worker steals only a task that

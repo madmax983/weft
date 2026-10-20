@@ -1126,7 +1126,21 @@ fn linear(
     // A scope can cancel a task, and a `fork` its branches, before the task
     // runs. Then the closure goes away with the values that it moved. So a
     // linear value that moves into a task where it starts needs `on abort`.
-    let starts: BTreeSet<NodeId> = f.spawned_at.iter().map(|&(_, p)| p).collect();
+    // The closure of the task captures a linear variable with no `on abort`:
+    // a node that runs a block whose code starts a task moves the block, not
+    // the closure of the task.
+    let lin_tasks: BTreeSet<TaskId> = f
+        .captures
+        .iter()
+        .filter(|&&(_, x)| f.var(x).linear && !f.var(x).has_on_abort)
+        .map(|&(t, _)| t)
+        .collect();
+    let starts: BTreeSet<NodeId> = f
+        .spawned_at
+        .iter()
+        .filter(|(t, _)| lin_tasks.contains(t))
+        .map(|&(_, p)| p)
+        .collect();
     for &(v, p) in &f.moved_at {
         let info = f.var(v);
         if starts.contains(&p) && info.linear && !info.has_on_abort {

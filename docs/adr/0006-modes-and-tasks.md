@@ -93,9 +93,14 @@ Status: accepted. Date: 2026-10-18.
   sibling fails, or the owner times out or is cancelled. The closure of the task then
   goes away with the values that it moved. Any scope can be cancelled while a task
   waits. So a spawn or a `fork` node is W0602 for each linear value with no
-  `on abort` that moves into the task there (review round 3, F3-8):
-  `abort_unhandled(V, P) :- spawned_at(_, P), moved_at(V, P), linear(V), !has_on_abort(V)`.
-  The value is the closure, which is linear if it moves a linear value (ADR 0007).
+  `on abort` that moves into the task there (review round 3, F3-8). The value is the
+  closure, which is linear if it moves a linear value (ADR 0007). A node that runs a
+  block or a closure whose code starts a task starts that task too (`spawned_at`), for
+  example a `with_timeout` block or a once closure that spawns into a scope outside
+  it. A value that moves there goes into the block, not into the task. So the rule
+  asks that the closure of the task captures a linear variable with no `on abort`
+  (`captures`, review of R3x):
+  `abort_unhandled(V, P) :- spawned_at(T, P), moved_at(V, P), linear(V), !has_on_abort(V), captures(T, X), linear(X), !has_on_abort(X)`.
   The unwinder of a cancelled task runs `on abort` for the values in the cells of its
   closure, also when the task did not start (ADR 0010).
 - A task joins at the end of the scope of its receiver (`a.spawn` in an inner scope joins
@@ -301,5 +306,13 @@ Status: accepted. Date: 2026-10-18.
   - A task closure or a fork branch that takes a linear value by value needs
     `on abort` for its type (W0602 at the spawn or the `fork`), also when no scope can
     cancel the task before it runs (`tests/programs/161_task_captures.wf`).
+  - A block or a closure that moves a linear value into a task that its code starts
+    gets W0602 at the spawn and also where it runs. A block that takes a linear value
+    with no `on abort` and starts a task that reads another linear value with no
+    `on abort` through a reference gets W0602 where it runs, also when the task does
+    not take the first value. That second value is then live across the run, which
+    is W0602 too (`tests/programs/163_task_starts.wf`).
 - What stays open (not checked): a function value that the body cannot follow can go
-  to an operation of a handler of a caller (ADR 0005).
+  to an operation of a handler of a caller (ADR 0005). A generic body whose task
+  closure or fork branch takes a value of a type parameter by value gets no W0602 at
+  the spawn or the `fork`, and its signature does not tell the caller (ADR 0007).

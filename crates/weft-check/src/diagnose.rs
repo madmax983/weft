@@ -717,9 +717,15 @@ fn abort_unhandled(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
         let info = f.var(var);
         let at = f.node(first);
         // A scope can cancel a task before it runs, and the closure of the
-        // task then goes away with what it moved.
-        let starts =
-            f.spawned_at.iter().any(|&(_, p)| p == first) && f.moved_at.contains(&(var, first));
+        // task then goes away with what it moved. The closure of the task
+        // captures a linear variable with no `on abort` (`rules::linear`).
+        let starts = f.moved_at.contains(&(var, first))
+            && f.spawned_at.iter().any(|&(t, p)| {
+                p == first
+                    && f.captures
+                        .iter()
+                        .any(|&(u, x)| u == t && f.var(x).linear && !f.var(x).has_on_abort)
+            });
         // The end of a scope aborts if a task of the scope failed.
         let how = if starts {
             "a sibling can fail, or the owner can time out or be cancelled, and the closure then goes away with the values that it took; declare `on abort = f` on the type of each linear value that the closure takes, or make the value inside the task"
@@ -734,11 +740,22 @@ fn abort_unhandled(f: &FnFacts, v: &Violations, out: &mut Vec<Diagnostic>) {
             } else {
                 "the scope"
             };
-            format!(
-                "{} moves into the task at `{}`, and {owner} can cancel the task before it runs",
-                linear_subject(info),
-                at.label
-            )
+            // A call or a block can start the task with the value: a callee
+            // that runs a function argument as a task, or a block whose code
+            // spawns.
+            if matches!(at.label.as_str(), "spawn" | "fork branch") {
+                format!(
+                    "{} moves into the task at `{}`, and {owner} can cancel the task before it runs",
+                    linear_subject(info),
+                    at.label
+                )
+            } else {
+                format!(
+                    "{} moves at `{}`, and a task that starts there takes its linear value; {owner} can cancel the task before it runs",
+                    linear_subject(info),
+                    at.label
+                )
+            }
         } else {
             format!(
                 "{} is live across `{}`, which can abort",

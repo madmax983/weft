@@ -68,7 +68,10 @@ Status: accepted. Date: 2026-10-18.
   `on abort` of the result of a task that is done (ADR 0010).
 - A task closure or a fork branch that takes a linear value by value needs `on abort`
   for it: a scope can cancel the task before it runs (W0602 at the spawn or the
-  `fork`, ADR 0006, F3-8). The unwinder of the task finishes the value (ADR 0010).
+  `fork`, ADR 0006, F3-8). The rule asks that the closure of the task captures the
+  linear variable. So a block or a closure that consumes a linear value and then
+  starts a task in a scope outside it is clean (review of R3x). The unwinder of the
+  task finishes the value (ADR 0010).
 - A `fork` gives no value when a branch fails or the `fork` aborts. The unwinder runs
   `on abort` for the values of the branches that are done (ADR 0010).
 - A closure that moves a linear value is linear: it must run once on every normal path
@@ -302,6 +305,10 @@ Status: accepted. Date: 2026-10-18.
   - A task closure or a fork branch that takes a linear value by value is W0602 if the
     type of the value has no `on abort`, also when no scope can cancel the task
     before it runs (`tests/programs/161_task_captures.wf`).
+  - A block or a closure that moves a linear value into a task that its code starts
+    gets W0602 also where it runs. A block that takes a linear value and starts a
+    task that reads another linear value through a reference gets W0602 where it
+    runs too (ADR 0006, `tests/programs/163_task_starts.wf`).
 - What stays open (not checked), until the core IR replaces the fact generation:
   - A spawn whose handle is not kept (a spawn in statement position, or `let _ =`)
     drops the result of the task at the end of the scope. W0601 does not see it.
@@ -311,4 +318,21 @@ Status: accepted. Date: 2026-10-18.
   - A generic body that holds a handle of a `Task<T>` across a node that can abort
     does not put `T` in `holds`. So a caller that gives `T` a linear type with no
     `on abort` gets no W0602, and the unwinder stops with a fault where it finds the
-    result of the task.
+    result of the task. Example: `fn run_bg<T>(mk: fn() -> T, k: fn(T))` spawns `mk`,
+    performs an operation whose clause does not resume, and then joins; the caller
+    `run_bg(begin, commit)` needs W0602.
+  - A generic body whose task closure or fork branch takes a value of a type
+    parameter by value does not put the type parameter in `holds`, and the spawn or
+    the `fork` gets no W0602: the value is not `linear` in the body (review of R3x).
+    So a caller that gives the type parameter a linear type with no `on abort` gets
+    no W0602. If a sibling fails before the task runs, the unwinder stops with a
+    fault. Examples: `fn relay<T>(make: fn() -> T, sink: fn(T))` with
+    `let y = make(); s.spawn(|| sink(y))` next to a failing sibling, and
+    `fn relay<T>(x: T, sink: fn(T))` with `fork(|| sink(x), || boom())`. Their
+    callers with `Tx` for `T` need W0602. The core IR puts the type parameters of the
+    values that move into a task at a spawn or a `fork` into `holds`.
+  - The `fork` shape of this list (a branch value of a linear type with no
+    `on abort`) stops the stock interpreter with a fault too, not only the oracle:
+    the unwinder finishes the values of the branches that are done, and a value with
+    no `on abort` is a fault (ADR 0010). Before review round 3 these programs ran to
+    the end and leaked the value.

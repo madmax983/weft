@@ -340,8 +340,9 @@ pub struct Machine<'r, 'a> {
     /// timeout. Each id belongs to the task of its block. The block times out
     /// at the next check of its task while its frame is on the task stack
     /// (`check_interrupt`): at once, after a resume that puts the frame back,
-    /// or after the unwinding that defers it (ADR 0010). A set, not one slot,
-    /// so two deadlines at one instant both hold.
+    /// or after the unwinding above the frame that defers it (`live_base`,
+    /// ADR 0010). A set, not one slot, so two deadlines at one instant both
+    /// hold.
     expired: BTreeSet<u64>,
     pub(crate) now: u64,
     sched_rng: Rng,
@@ -704,10 +705,10 @@ impl<'r, 'a> Machine<'r, 'a> {
         // the end of the scope (`raise_scope_failure`). Wake the owner only if
         // its check finds the failure.
         let t = &self.tasks[owner];
+        let base = self.live_base(owner);
         let wake = t.state == TState::Blocked
-            && !self.defers(owner)
             && !self.scopes[sid].propagated
-            && Self::scope_frame(&t.frames, sid).is_some();
+            && Self::scope_frame(&t.frames, sid).is_some_and(|i| i >= base);
         if wake {
             self.wake(owner, None);
         }
@@ -721,11 +722,14 @@ impl<'r, 'a> Machine<'r, 'a> {
         )
     }
 
-    /// Returns the outermost scope on the stack of the current task whose
-    /// child failed, if the owner has not raised that failure yet. The unwind
-    /// to that scope ends the scopes inside it too.
+    /// Returns the outermost scope on the stack of the current task, above
+    /// its innermost unwinding (`live_base`), whose child failed, if the owner
+    /// has not raised that failure yet. The unwind to that scope ends the
+    /// scopes inside it too.
     fn failed_scope(&self) -> Option<ScopeId> {
-        self.tasks[self.cur].frames.iter().find_map(|f| match f {
+        let base = self.live_base(self.cur);
+        let frames = self.tasks[self.cur].frames.get(base..).unwrap_or_default();
+        frames.iter().find_map(|f| match f {
             Frame::Scope { scope } | Frame::Fork { scope, .. } => self
                 .scopes
                 .get(*scope)
@@ -820,13 +824,16 @@ impl<'r, 'a> Machine<'r, 'a> {
                     }
                     // The deadline holds at the next check of the task while
                     // the frame is on its stack. A frame in a continuation
-                    // waits for the resume that puts it back.
+                    // waits for the resume that puts it back, and a frame
+                    // below an unwinding waits for its end (`live_base`).
                     self.expired.insert(id);
+                    let base = self.live_base(task);
                     let has = self.tasks[task]
                         .frames
                         .iter()
-                        .any(|f| matches!(f, Frame::Timeout { id: x, .. } if *x == id));
-                    if has && self.tasks[task].state == TState::Blocked && !self.defers(task) {
+                        .rposition(|f| matches!(f, Frame::Timeout { id: x, .. } if *x == id))
+                        .is_some_and(|i| i >= base);
+                    if has && self.tasks[task].state == TState::Blocked {
                         self.wake(task, None);
                     }
                 }
@@ -1046,26 +1053,37 @@ impl<'r, 'a> Machine<'r, 'a> {
         self.quantum_used >= self.opts.quantum
     }
 
-    /// Returns true if task `t` defers its interrupts: an unwinding runs on
-    /// its stack, also an `on abort` function above it. The effects proof
-    /// models `on abort` as atomic, so a cancel, a deadline or a failure of a
-    /// child does not cut it. They stay pending: a cancel in `Task::cancel`, a
-    /// deadline in `Machine::expired`, a failure in the record of its scope.
-    /// The task handles them when the unwinding ends (ADR 0010).
+    /// Returns true if task `t` defers a cancel: an unwinding runs on its
+    /// stack, also an `on abort` function above it. The effects proof models
+    /// `on abort` as atomic, so a cancel does not cut it. The cancel stays in
+    /// `Task::cancel`, and the task handles it when the unwinding ends (ADR
+    /// 0010).
     pub(crate) fn defers(&self, t: TaskId) -> bool {
         self.tasks
             .get(t)
             .is_some_and(|x| x.frames.iter().any(|f| matches!(f, Frame::Unwind(_))))
     }
 
+    /// Returns the index of the first frame of task `t` above its innermost
+    /// unwinding, or 0 if no unwinding runs. A deadline of a `with_timeout`
+    /// block and a failure of a child of a scope hold at once only for a frame
+    /// at this index or above it: a frame of the `on abort` function that runs
+    /// above the unwinding. Their unwinding does not cut that function. For a
+    /// frame below the unwinding they stay pending: a deadline in
+    /// `Machine::expired`, a failure in the record of its scope. The task
+    /// handles them when the unwinding ends (ADR 0010).
+    pub(crate) fn live_base(&self, t: TaskId) -> usize {
+        self.tasks
+            .get(t)
+            .and_then(|x| x.frames.iter().rposition(|f| matches!(f, Frame::Unwind(_))))
+            .map_or(0, |i| i + 1)
+    }
+
     /// Handles a pending cancellation, deadline or failure of a child at a
     /// suspension point, and at the end of an unwinding.
     pub(crate) fn check_interrupt(&mut self) -> Option<Flow> {
         let cur = self.cur;
-        if self.defers(cur) {
-            return None;
-        }
-        if self.tasks[cur].cancel {
+        if self.tasks[cur].cancel && !self.defers(cur) {
             return Some(self.abort_task(TaskResult::Cancelled));
         }
         if let Some(f) = self.late_timeout() {
@@ -1076,13 +1094,16 @@ impl<'r, 'a> Machine<'r, 'a> {
     }
 
     /// Times out the outermost `with_timeout` block on the stack of the
-    /// current task whose deadline passed. Its unwinding ends the blocks inside
-    /// it too, also one with the same deadline.
+    /// current task, above its innermost unwinding (`live_base`), whose
+    /// deadline passed. Its unwinding ends the blocks inside it too, also one
+    /// with the same deadline.
     pub(crate) fn late_timeout(&mut self) -> Option<Flow> {
-        if self.expired.is_empty() || self.defers(self.cur) {
+        if self.expired.is_empty() {
             return None;
         }
-        let id = self.tasks[self.cur].frames.iter().find_map(|f| match f {
+        let base = self.live_base(self.cur);
+        let frames = self.tasks[self.cur].frames.get(base..).unwrap_or_default();
+        let id = frames.iter().find_map(|f| match f {
             Frame::Timeout { id, .. } if self.expired.contains(id) => Some(*id),
             _ => None,
         })?;

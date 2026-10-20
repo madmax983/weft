@@ -42,13 +42,21 @@ Status: accepted. Date: 2026-10-18.
   continuation, and holds when a resume puts it back.
 - An interrupt does not cut an unwinding (review round 3, I3-3). While an `Unwind`
   frame is on the stack of a task, also while an `on abort` function runs above it,
-  the task defers its interrupts (`Machine::defers`). A deadline stays in the set,
-  a cancel stays in `Task::cancel`, and a failure of a child stays in the record of
-  its scope. A cancel and a deadline do not wake the task. When the unwinding ends,
-  the task handles them at once, after it gives the value or performs the failure
-  of the unwinding. The effects proof models `on abort` as atomic (ADR 0007), and
-  the design promises cleanup also on cancellation: so a sleep in an `on abort`
-  function, or a wait of the unwinder for the cancelled children, runs to its end.
+  the task defers the interrupts that would unwind a frame below the innermost
+  `Unwind` frame. A cancel always unwinds the whole task, so it waits
+  (`Machine::defers`), in `Task::cancel`. A deadline of a `with_timeout` block below
+  the unwinding stays in the set, and a failure of a child of a scope below it stays
+  in the record of its scope (`Machine::live_base`). These interrupts do not wake the
+  task. When the unwinding ends, the task handles them at once, after it gives the
+  value or performs the failure of the unwinding. The effects proof models
+  `on abort` as atomic (ADR 0007), and the design promises cleanup also on
+  cancellation: so a sleep in an `on abort` function, or a wait of the unwinder for
+  the cancelled children, runs to its end.
+- A deadline of a `with_timeout` block that the `on abort` function runs, and a
+  failure of a child of a scope that it opens, hold at once (review of R3x). Their
+  frames are above the unwinding, and their unwinding ends at a handler of the
+  `on abort` function (W0118 asks it to handle `fail`), so they do not cut it. So a
+  rollback can bound its own wait with `with_timeout`.
 - An unwinding that a task abort takes into its own unwinding has a value to give at
   its end, such as the value of a clause that did not resume. The outer unwinder
   runs `on abort` for its linear parts too.
@@ -113,19 +121,28 @@ Status: accepted. Date: 2026-10-18.
     marks these cells (`owned`). A closure is a copy value, so it stays in its local
     at the end of the scope. The unwinder looks into each closure in a frame that it
     leaves and runs `on abort` for the linear values in its cells.
-  - A spawn and a `fork` move the closure into the task. The task takes the values
-    of these cells into cells of its own, and its first frame owns them
-    (`CodeFrame::owned`). So a copy of the closure that stays in the parent holds
-    no value, and the unwinder of the task finishes them. This holds also for a
-    task that a cancel stops before it starts: its first frame unwinds.
+  - A closure that moves a capture runs only once (W0502), so a call consumes it. The
+    frame of the call takes the values of these cells into cells of its own, and
+    owns them (`CodeFrame::owned`). So the unwinder of the frame finishes them, also
+    when no local holds the closure, as for the block of a `with_timeout` (review of
+    R3x). A copy of the closure that stays in a local then holds no value.
+  - A spawn and a `fork` move the closure into the task. The first frame of the task
+    takes the values of these cells in the same way, and the unwinder of the task
+    finishes them. This holds also for a task that a cancel stops before it starts:
+    its first frame unwinds.
   - The `on abort` of a task handle cancels the task. A cancel does nothing for a
     task that is done, so the unwinder takes the result of the task and runs
     `on abort` for its linear parts. A task that is not done and whose handle the
     unwinder finished runs `on abort` for the linear parts of its value when it
     ends: no `join` can take the value.
   - The unwind of a `Scope` or a `Fork` frame waits for the children. Then it runs
-    `on abort` for the linear parts of each result that no `join` took: the value
-    of a fork branch, and the result of a task whose handle went to the scope.
+    `on abort` for the linear parts of each result that no `join` can take: the
+    value of a fork branch, and the result of a task whose handle went to the scope
+    (the machine notes each dropped handle). It does not take the result of a task
+    whose handle is live: the handle can leave the frames that unwind, for example
+    in the value of a clause that does not resume, and its owner joins it later
+    (review of R3x). The `on abort` of the handle takes the result if the handle
+    goes away on an abort path.
   - A `fork` with a failed branch gives no value. It runs `on abort` for the values
     of the branches that are done before it raises the failure.
 

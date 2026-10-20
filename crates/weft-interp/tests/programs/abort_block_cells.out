@@ -1,0 +1,12 @@
+rollback 1
+caught: timeout
+caught: inner failure
+rollback 2
+stopped
+rollback 3
+rollback 4
+task caught: timeout
+stopped
+rollback 5
+after the handler
+end

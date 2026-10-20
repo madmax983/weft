@@ -4,11 +4,11 @@
 //! field of a `!Move` struct keeps its address while the struct stays in its cell.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use crate::oracle::Oracle;
-use crate::value::{CellId, ClosureVal, Place, Value};
+use crate::value::{CellId, ClosureVal, Place, TaskId, Value};
 
 /// What a cell holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,6 +49,10 @@ pub struct Heap {
     move_only: Rc<[bool]>,
     /// The state of the oracle checks, if they are on (see [`crate::oracle`]).
     oracle: Option<RefCell<Oracle>>,
+    /// The tasks whose handle was dropped, for example by a `spawn` in
+    /// statement position: the scope keeps the task, and no `join` takes its
+    /// result.
+    dropped_tasks: BTreeSet<TaskId>,
 }
 
 impl Heap {
@@ -58,7 +62,13 @@ impl Heap {
             slots: Vec::new(),
             move_only,
             oracle: None,
+            dropped_tasks: BTreeSet::new(),
         }
+    }
+
+    /// Returns true if the handle of task `t` was dropped: no value holds it.
+    pub fn handle_dropped(&self, t: TaskId) -> bool {
+        self.dropped_tasks.contains(&t)
     }
 
     /// Turns the oracle checks on.
@@ -282,6 +292,9 @@ impl Heap {
                     work.extend(o.fields);
                 }
                 Value::Enum(e) => work.extend(e.fields),
+                Value::Task(t) => {
+                    self.dropped_tasks.insert(t);
+                }
                 Value::Vec(c) | Value::Boxed(c) => {
                     if let Some(s) = self.slots.get_mut(c) {
                         if matches!(s.kind, SlotKind::Buf | SlotKind::Boxed) {

@@ -1,0 +1,50 @@
+// An `on abort` function bounds a wait that does not end with its own
+// `with_timeout` block, and runs a scope whose child fails. These interrupts
+// belong to frames of the `on abort` function, above the unwinding, so they
+// hold at once: they do not cut the function, and its own handlers catch
+// them. The deadline of the outer block is below the unwinding: it waits for
+// the end of the unwinding (ADR 0010, review of R3x).
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn forever() / clock {
+    sleep(1.ms)
+    forever()
+}
+fn step_fails() / clock, fail {
+    sleep(1.ms)
+    fail("step failed")
+}
+
+fn rollback(t: Tx) / async, clock {
+    let Tx(id) = t
+    print("rollback {id} starts at {Clock.now()}")
+    handle Fail { fn fail(m) { print("rollback {id} gave up: {m} at {Clock.now()}") } } in {
+        with_timeout(5.ms) { forever() }
+    }
+    handle Fail { fn fail(m) { print("rollback {id} caught: {m} at {Clock.now()}") } } in {
+        scope { s =>
+            s.spawn(|| step_fails())
+            sleep(1000.ms)
+            print("rollback {id} scope body goes on at {Clock.now()}")
+        }
+    }
+    print("rollback {id} ends at {Clock.now()}")
+}
+fn commit(t: Tx) / io { let Tx(id) = t; print("commit {id}") }
+
+fn main() / io, async {
+    handle Fail { fn fail(m) { print("outer caught: {m} at {Clock.now()}") } } in {
+        with_timeout(12.ms) {
+            handle Fail { fn fail(m) { print("inner caught: {m} at {Clock.now()}") } } in {
+                with_timeout(10.ms) {
+                    let t = Tx { id: 1 }
+                    sleep(100.ms)
+                    commit(t)
+                }
+            }
+            sleep(100.ms)
+        }
+    }
+    print("end at {Clock.now()}")
+}

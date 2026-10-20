@@ -1,0 +1,30 @@
+// A task handle leaves its scope in the value of a clause that does not
+// resume. The task is done. The unwinding of the scope does not take the
+// result of the task: the handle is still live, and the program joins it
+// later (ADR 0010, review of R3x).
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(t: Tx) { let Tx(id) = t; print("rollback {id}") }
+fn commit(t: Tx) { let Tx(id) = t; print("commit {id}") }
+effect Give { fn give(t: Task<Tx>) }
+
+fn kept() / io, async {
+    let r = handle Give { fn give(t) { Some(t) } } in {
+        scope { s =>
+            let t = s.spawn(|| Tx { id: 1 })
+            sleep(5.ms)
+            give(t)
+            None
+        }
+    }
+    match r {
+        Some(t) => commit(t.join()),
+        None => print("none"),
+    }
+}
+
+fn main() / io, async {
+    kept()
+    print("end")
+}

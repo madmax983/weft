@@ -1017,11 +1017,17 @@ impl super::Machine<'_, '_> {
     }
 
     /// Calls a closure, a function item or a continuation.
+    ///
+    /// A closure that moved its captures runs only once (W0502), so the call
+    /// consumes it: the frame takes the captures (`take_captures`). The
+    /// unwinder of the frame finishes their linear values, also when no local
+    /// holds the closure, as for the block of a `with_timeout` (ADR 0010).
     pub(crate) fn call_value(&mut self, callee: Value, args: Vec<Value>) -> R<Flow> {
         match callee {
             Value::Closure(c) => {
-                let f =
-                    self.code_frame(c.code, args, Rc::from(c.cells.as_slice()), c.henv.clone())?;
+                let (caps, owned) = self.take_captures(&c);
+                let mut f = self.code_frame(c.code, args, caps, c.henv.clone())?;
+                f.owned = owned;
                 self.task().frames.push(Frame::Code(f));
                 Ok(Flow::Continue)
             }
@@ -1209,31 +1215,42 @@ impl super::Machine<'_, '_> {
         Some(v)
     }
 
+    /// Returns the captured cells of a frame that runs closure `c`, and the
+    /// cells of them that the frame owns. The frame takes each capture that
+    /// the closure moved into a new cell of its own. A copy of the closure
+    /// that stays in a local then holds no value there, so no unwinder
+    /// finishes a value twice (ADR 0010).
+    fn take_captures(&mut self, c: &ClosureVal) -> (Rc<[CellId]>, Vec<CellId>) {
+        if c.owned.is_empty() {
+            return (Rc::from(c.cells.as_slice()), Vec::new());
+        }
+        let mut caps = c.cells.clone();
+        let mut owned = Vec::new();
+        for cap in &mut caps {
+            if !c.owned.contains(cap) {
+                continue;
+            }
+            let v = match self.heap.slot_mut(*cap) {
+                Ok(s) => crate::heap::take_moved(&mut s.val),
+                Err(_) => Value::Moved,
+            };
+            *cap = self.heap.alloc(SlotKind::Local, v);
+            owned.push(*cap);
+        }
+        (Rc::from(caps), owned)
+    }
+
     /// Makes the first frame of a task for a closure or a function item.
     ///
-    /// The closure moves into the task. So the task takes the captures that
-    /// the closure moved into cells of its own, and the first frame owns them:
-    /// the unwinder of the task finishes their linear values, also when the
-    /// task is cancelled before it starts (ADR 0010). A copy of the closure
-    /// that stays in the parent then holds no value there.
+    /// The closure moves into the task. So the first frame takes the captures
+    /// that the closure moved (`take_captures`): the unwinder of the task
+    /// finishes their linear values, also when the task is cancelled before
+    /// it starts (ADR 0010).
     fn task_frame(&mut self, f: Value) -> R<CodeFrame> {
         match f {
             Value::Closure(c) => {
-                let mut caps = c.cells.clone();
-                let mut owned = Vec::new();
-                for cap in &mut caps {
-                    if !c.owned.contains(cap) {
-                        continue;
-                    }
-                    let v = match self.heap.slot_mut(*cap) {
-                        Ok(s) => crate::heap::take_moved(&mut s.val),
-                        Err(_) => Value::Moved,
-                    };
-                    *cap = self.heap.alloc(SlotKind::Local, v);
-                    owned.push(*cap);
-                }
-                let mut frame =
-                    self.code_frame(c.code, Vec::new(), Rc::from(caps), c.henv.clone())?;
+                let (caps, owned) = self.take_captures(&c);
+                let mut frame = self.code_frame(c.code, Vec::new(), caps, c.henv.clone())?;
                 frame.owned = owned;
                 Ok(frame)
             }

@@ -1,0 +1,74 @@
+// A `with_timeout` block takes a linear value by move. The call of the block
+// consumes the closure, so no local holds it. The block aborts: by its
+// deadline, by a failure inside it, and by a clause that does not resume. A
+// closure in a local aborts under a local handler, and the code after the
+// handler goes on. In each case the unwinder runs `on abort` for the value in
+// the cell of the closure (ADR 0010, review of R3x).
+linear struct Lock { id: u64 }
+    on abort = unlock_on_abort
+
+fn unlock_on_abort(l: Lock) { let Lock(i) = l; print("rollback {i}") }
+fn unlock(l: Lock) { let Lock(i) = l; print("unlock {i}") }
+effect Stop { fn stop() }
+
+fn by_deadline() / clock, fail {
+    let l = Lock { id: 1 }
+    with_timeout(5.ms) {
+        sleep(10.ms)
+        unlock(l)
+    }
+}
+
+fn by_failure() / clock, fail {
+    let l = Lock { id: 2 }
+    with_timeout(50.ms) {
+        sleep(1.ms)
+        fail("inner failure")
+        unlock(l)
+    }
+}
+
+fn by_clause() / clock, Stop, fail {
+    let l = Lock { id: 3 }
+    with_timeout(50.ms) {
+        sleep(1.ms)
+        stop()
+        unlock(l)
+    }
+}
+
+fn in_task() / async, clock {
+    scope { s =>
+        let l = Lock { id: 4 }
+        let t = s.spawn(|| {
+            handle Fail { fn fail(m) { print("task caught: {m}") } } in with_timeout(5.ms) {
+                sleep(10.ms)
+                unlock(l)
+            }
+        })
+        t.join()
+    }
+}
+
+fn local_handler() / io {
+    let l = Lock { id: 5 }
+    handle Stop { fn stop() { print("stopped") } } in {
+        let f = || {
+            stop()
+            unlock(l)
+        }
+        f()
+    }
+    print("after the handler")
+}
+
+fn main() / io {
+    handle Fail { fn fail(m) { print("caught: {m}") } } in by_deadline()
+    handle Fail { fn fail(m) { print("caught: {m}") } } in by_failure()
+    handle Stop { fn stop() { print("stopped") } } in {
+        handle Fail { fn fail(m) { print("caught: {m}") } } in by_clause()
+    }
+    in_task()
+    local_handler()
+    print("end")
+}
