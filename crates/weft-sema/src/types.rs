@@ -207,6 +207,21 @@ impl Infer {
         last
     }
 
+    /// Replaces bound variables, one level deep, as [`Infer::shallow`] does,
+    /// but it does not change the links and does not count the steps. The
+    /// recorder of the THIR uses it, so that it changes no work count.
+    pub fn peek(&self, t: &Ty) -> Ty {
+        let vars = self.vars.borrow();
+        let mut at = t.clone();
+        while let Ty::Var(v) | Ty::IntVar(v) = at {
+            match vars.get(v as usize) {
+                Some(Some(b)) => at = b.clone(),
+                _ => break,
+            }
+        }
+        at
+    }
+
     /// Replaces bound variables, one level deep.
     pub fn shallow(&self, t: &Ty) -> Ty {
         match t {
@@ -561,7 +576,7 @@ fn ir_index(i: usize) -> u32 {
 }
 
 /// Returns the final type of the resolved type `t`.
-fn final_ty(
+pub(crate) fn final_ty(
     prog: &crate::Program,
     table: &mut weft_ir::TyTable,
     t: &Ty,

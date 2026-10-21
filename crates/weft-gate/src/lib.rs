@@ -11,7 +11,8 @@
 //! programs. [`report`] runs the gate, applies the rules and writes the
 //! report. [`baseline`] keeps the old records of a tier and compares a run
 //! with them. [`claims`] reads the claims file and checks each claim that is on
-//! with the `ir` pipeline.
+//! with the `ir` pipeline. [`thir`] runs test D0 on the THIR tables of each
+//! program.
 
 use std::path::PathBuf;
 
@@ -27,6 +28,7 @@ pub mod oracle;
 pub mod pool;
 pub mod report;
 pub mod snapshot;
+pub mod thir;
 
 /// An error of the gate tools.
 #[derive(Debug, thiserror::Error)]

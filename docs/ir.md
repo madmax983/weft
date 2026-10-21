@@ -173,6 +173,21 @@ A function type in the THIR has its parameter types, its result type and its sta
 row. It has no closure summary and no item (today `FnTy::summary`, `fn_joins`). Value
 flow is a result of the analysis, not of the types.
 
+The types of the tables are in `crates/weft-sema/src/thir/mod.rs` (plan stage T3). The
+tables there also have:
+
+| Table | Content |
+| --- | --- |
+| `bindings: BindingId → Binding` | the binder (a parameter, a name pattern, a closure or clause parameter, a `resume`, a scope binder), the name and the type of the local |
+| `pat_adjust: PatId → Vec<DerefKind>` | the implicit dereferences of the value at a pattern, before its test |
+| `conflicts` | the keys whose visits gave two values (test D0 fails on them) |
+| `error`, `free` | the body has an error type; the expressions whose type had a free type variable |
+
+`FieldIdx` is a field of a struct or a tuple, or the payload of a variant (`o.Some`).
+`adjust` is keyed by the expression whose value the lowering dereferences: the base of a
+field or an index, a receiver, the place of a borrow or a compound store, an operand, a
+condition and a call argument.
+
 ### 2.2 Two phases of `typeck`
 
 The type inference is mixed with value flow in `body/` (191 call sites of `unify` and

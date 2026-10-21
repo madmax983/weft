@@ -11,6 +11,7 @@ pub mod ids;
 pub mod infer;
 pub mod program;
 pub mod props;
+pub mod thir;
 pub mod types;
 
 use weft_facts::FnFacts;
@@ -138,6 +139,15 @@ pub struct Analysis {
     pub lowerings: usize,
     /// The work of the last lowering of each body.
     pub work: Work,
+    /// The THIR tables of each body, in the order of [`Analysis::bodies`]
+    /// (`docs/ir.md` 2.1). The last lowering of each body records them.
+    pub thir: Vec<thir::Tables>,
+    /// The final types of the THIR tables, with the declarations of the
+    /// program (`types::ir_ty_table`).
+    pub thir_tys: weft_ir::TyTable,
+    /// Why the declarations of the program have no final types. The type
+    /// table then has no declarations.
+    pub thir_decl_error: Option<types::IrTyError>,
 }
 
 /// Parses the prelude.
@@ -274,6 +284,11 @@ fn analyze_bounded(
     diags.extend(program::check_on_abort_rows(&prog, &sigs, opts.no_runtime));
     let mut bodies = Vec::new();
     let mut work = Work::default();
+    let (mut thir_tys, thir_decl_error) = match types::ir_ty_table(&prog) {
+        Ok(t) => (t, None),
+        Err(e) => (weft_ir::TyTable::new(), Some(e)),
+    };
+    let mut thir = Vec::new();
     // The runtime starts `main` and the tests of the root (`started()`). With
     // no runtime, `main` handles every effect itself (`no_runtime()`).
     let main = match prog.lookup(prog.root, "main") {
@@ -283,6 +298,7 @@ fn analyze_bounded(
     for (&f, mut l) in user_fns.iter().zip(inferred.lowered) {
         diags.extend(l.diags);
         work.add(l.work);
+        thir.push(thir::record::build(&prog, &mut thir_tys, *l.thir));
         let unit = unit_of(&prog, prog.fns[f].module);
         l.facts.started = unit == ROOT_UNIT && main == Some(f);
         l.facts.no_runtime = l.facts.started && opts.no_runtime;
@@ -301,6 +317,7 @@ fn analyze_bounded(
             .lower_test(&t.body, t.span);
         diags.extend(l.diags);
         work.add(l.work);
+        thir.push(thir::record::build(&prog, &mut thir_tys, *l.thir));
         l.facts.started = unit_of(&prog, t.module) == ROOT_UNIT;
         bodies.push(BodyFacts {
             func: None,
@@ -326,6 +343,9 @@ fn analyze_bounded(
         diags,
         lowerings: inferred.lowerings,
         work,
+        thir,
+        thir_tys,
+        thir_decl_error,
     }
 }
 

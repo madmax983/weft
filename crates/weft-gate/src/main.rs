@@ -14,6 +14,8 @@
 //!                      [--max-steps N] [--max-memory MB]
 //! weft-gate run --tier 1|2 [--groups ABCDEF] [--report FILE] [--workers N]
 //!               [--limit SECONDS] [--repo DIR] [--probes DIR] [--write-baseline]
+//! weft-gate thir --tier 1|2 [--report FILE] [--workers N] [--limit SECONDS]
+//!                [--repo DIR] [--probes DIR]
 //! ```
 //!
 //! `--repo` is the repository (default: the workspace of this crate). `--probes` is
@@ -63,6 +65,12 @@
 //! file and does not compare them. Write a baseline with a release build: a
 //! debug build can give timeouts. In tier 2 an `open` program with no ledger
 //! entry does not block (`weft_gate::report::Policy::for_tier`).
+//!
+//! `thir` runs test D0 (plan stage T3, `weft_gate::thir`) on each program of
+//! the tier: the THIR tables that the old lowering records, against the syntax
+//! tree, the facts and the final types. It writes the summary (default
+//! `target/gate/thir-tier<N>.md`). The exit code is 1 if D0 fails on a program.
+//! Run it with a release build.
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
@@ -99,7 +107,9 @@ const USAGE: &str = "usage:
   weft-gate oracle-run --base DIR --path PATH [--from K] [--limit-ms MS]
                        [--max-steps N] [--max-memory MB]
   weft-gate run --tier 1|2 [--groups ABCDEF] [--report FILE] [--workers N]
-                [--limit SECONDS] [--repo DIR] [--probes DIR] [--write-baseline]";
+                [--limit SECONDS] [--repo DIR] [--probes DIR] [--write-baseline]
+  weft-gate thir --tier 1|2 [--report FILE] [--workers N] [--limit SECONDS]
+                 [--repo DIR] [--probes DIR]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -262,6 +272,9 @@ fn run(args: &[String]) -> Result<bool> {
     let flags = parse_flags(rest)?;
     if cmd == "run" {
         return run_gate(&flags);
+    }
+    if cmd == "thir" {
+        return run_thir(&flags);
     }
     run_tool(cmd, flags).map(|()| true)
 }
@@ -428,6 +441,47 @@ fn run_gate(flags: &Flags) -> Result<bool> {
         r.warnings.len()
     );
     Ok(r.passes())
+}
+
+/// `thir`: test D0 on the programs of the tier. Returns false if D0 fails.
+fn run_thir(flags: &Flags) -> Result<bool> {
+    let tier = flags.tier.context("--tier is necessary")?;
+    let (m, base) = if tier == 1 {
+        (tier1(flags)?, flags.repo.clone())
+    } else {
+        let probes = flags.probes()?;
+        (tier2(&probes)?, probes)
+    };
+    let workers = flags.workers.unwrap_or_else(|| {
+        std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+    });
+    let limit = flags.limit.map_or(snapshot::LIMIT, Duration::from_secs);
+    let out = flags
+        .report
+        .clone()
+        .unwrap_or_else(|| flags.repo.join(format!("target/gate/thir-tier{tier}.md")));
+    snapshot::install_panic_hook();
+    let total = m.entries.len();
+    println!("D0 on {total} programs of tier {tier} with {workers} workers");
+    let start = Instant::now();
+    let sum = weft_gate::thir::run(&base, m.entries, workers, limit, |ended| {
+        if ended % 2000 == 0 {
+            println!(
+                "{ended} of {total} programs in {:.1} s",
+                start.elapsed().as_secs_f64()
+            );
+        }
+    })?;
+    let text = sum.to_markdown(&format!("tier {tier}"));
+    write_text(&out, &text)?;
+    print!("{text}");
+    println!(
+        "{} programs in {:.1} s; wrote {}",
+        sum.programs,
+        start.elapsed().as_secs_f64(),
+        out.display()
+    );
+    Ok(sum.holds())
 }
 
 /// Writes `records` in the committed form to the baseline file of the tier.

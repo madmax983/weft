@@ -838,6 +838,8 @@ impl Lower<'_> {
             held_roots: _,
             held_of: _,
             work: _,
+            // The recorder keeps each visit of each pass (`crate::thir::record`).
+            rec: _,
             // The values of the captures of each closure, by closure index.
             cap_values: _,
             // Only grows: an old holder adds places, as an old value of a local does.
@@ -1030,6 +1032,7 @@ impl Lower<'_> {
             held_roots: _,
             held_of: _,
             work: _,
+            rec: _,
             cap_values: _,
             holder_log: _,
             late_stores: _,
