@@ -91,7 +91,7 @@ pub struct Capture {
 
 /// How an environment holds a capture. One function (`capture_mode`) decides it; the
 /// builder and the interpreter read the decision from the IR.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CaptureMode {
     /// A reference to the cell of the variable. In the closure body the capture is
     /// `(*env.k)`. The end of the variable ends the cell.

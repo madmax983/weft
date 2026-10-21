@@ -34,6 +34,7 @@ pub mod print;
 pub mod stmt;
 pub mod term;
 pub mod ty;
+pub mod verify;
 
 pub use body::{Body, BodyKind, LocalDecl, LocalKind, TempKind};
 pub use decl::{
