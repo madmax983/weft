@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use crate::baseline::{self, Comparison};
 use crate::classify::{self, Class};
-use crate::ledger::{self, Ledger};
+use crate::ledger::{self, EntryClass, Ledger};
 use crate::manifest::{self, Entry, Manifest, Options};
 use crate::oracle::{self, Cache, Engine, Verdict};
 use crate::snapshot::{self, Kind, Pipeline, Record, Settings};
@@ -30,6 +30,10 @@ use crate::Error;
 /// The sets of tier 1 in which a `new-fp` program blocks, also with a ledger
 /// entry: the corpus, the interpreter programs, the examples and the packages.
 pub const STRICT_SETS: [&str; 4] = ["corpus", "interp", "examples", "packages"];
+
+/// The engine whose oracle verdicts classify the programs: the engine of the
+/// `ir` pipeline. From stage I5 on it is the IR engine (`tests/gate/oracle-ir.tsv`).
+pub const ORACLE_ENGINE: Engine = Engine::Ir;
 
 /// The construct groups of §2.6.
 pub const GROUPS: [char; 6] = ['A', 'B', 'C', 'D', 'E', 'F'];
@@ -205,7 +209,7 @@ impl Report {
                 .entries
                 .iter()
                 .enumerate()
-                .filter(|(_, e)| e.matches(&input.paths))
+                .filter(|(_, e)| e.class != EntryClass::Engine && e.matches(&input.paths))
                 .map(|(k, _)| k)
                 .collect();
             for &k in &candidates {
@@ -230,6 +234,10 @@ impl Report {
         }
         report.new_fp_share();
         for (k, e) in ledger.entries.iter().enumerate() {
+            let Some(program_class) = e.class.program_class() else {
+                // An `engine` entry: the engine differential checks it.
+                continue;
+            };
             let label = format!("ledger entry {} ({})", k + 1, e.label());
             if !matched.get(k).copied().unwrap_or(false) {
                 report
@@ -238,7 +246,7 @@ impl Report {
             } else if !used.get(k).copied().unwrap_or(false) {
                 report.warnings.push(format!(
                     "{label} matches programs, but it accepts none of them (no program of class `{}` or the entry does not cover its codes)",
-                    e.class.program_class().name()
+                    program_class.name()
                 ));
             }
         }
@@ -545,7 +553,7 @@ fn rule(
                 .copied()
                 .filter(|&k| {
                     ledger.entries.get(k).is_some_and(|e| {
-                        e.class.program_class() == class && e.accepts_codes(&codes)
+                        e.class.program_class() == Some(class) && e.accepts_codes(&codes)
                     })
                 })
                 .collect();
@@ -657,8 +665,8 @@ impl Default for RunSettings {
 
 /// Runs the gate on the programs of `manifest` below `base`.
 ///
-/// Reads the verdicts of the `ast` engine for the interpreter `interp` from
-/// `cache` first, so a stale cache stops the run before the snapshot. Then
+/// Reads the verdicts of the engine [`ORACLE_ENGINE`] for the interpreter
+/// `interp` from `cache` first, so a stale cache stops the run before the snapshot. Then
 /// checks each program with the `old` pipeline. Before stage F1 no program is
 /// in scope, so the `ir` record is the `old` record. `alias` is a directory
 /// such as `tests/gate/probes`: a ledger entry can also name a program by its
@@ -677,7 +685,7 @@ pub fn run(
     settings: &RunSettings,
     alias: Option<&str>,
 ) -> Result<Report, Error> {
-    let verdicts = verdicts(&manifest.entries, cache, Engine::Ast, interp)?;
+    let verdicts = verdicts(&manifest.entries, cache, ORACLE_ENGINE, interp)?;
     let paths: Vec<Vec<String>> = manifest
         .entries
         .iter()
@@ -724,7 +732,8 @@ pub fn run(
     }
     let mut report = Report::build(&inputs, ledger, &settings.policy);
     report.notes.push(format!(
-        "oracle: the `ast` engine, interpreter hash {interp}"
+        "oracle: the `{}` engine, interpreter hash {interp}",
+        ORACLE_ENGINE.name()
     ));
     report.notes.push(
         "the `ir` pipeline does not exist before stage F1: no program is in scope, and the `ir` record of each program is its `old` record".to_string(),
@@ -753,7 +762,8 @@ pub fn run(
 }
 
 /// Runs the gate on tier 1 of the repository `repo`: the manifest of the
-/// tier-1 roots, the committed oracle cache `tests/gate/oracle-ast.tsv`, and
+/// tier-1 roots, the committed oracle cache of [`ORACLE_ENGINE`]
+/// (`tests/gate/oracle-ir.tsv`), and
 /// the ledger [`ledger::LEDGER`].
 ///
 /// If `settings.baseline` is true, the function also compares the old records
@@ -773,7 +783,7 @@ pub fn run_tier1(repo: &Path, settings: &RunSettings) -> Result<Report, Error> {
     )?;
     let file = repo
         .join("tests/gate")
-        .join(oracle::cache_name(Engine::Ast));
+        .join(oracle::cache_name(ORACLE_ENGINE));
     let text = std::fs::read_to_string(&file).map_err(|e| Error::io(&file, e))?;
     let cache = Cache::from_tsv(&text)?;
     let interp = oracle::interp_hash(repo)?;

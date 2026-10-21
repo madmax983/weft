@@ -13,6 +13,8 @@
 //! with them. [`claims`] reads the claims file and checks each claim that is on
 //! with the `ir` pipeline. [`thir`] runs test D0 on the THIR tables of each
 //! program. [`ir_build`] builds and verifies the IR of each program.
+//! [`engines`] runs each program with the two engines of the interpreter
+//! and compares the runs (the engine differential).
 
 use std::path::PathBuf;
 
@@ -22,6 +24,7 @@ pub mod claims;
 pub mod classify;
 pub mod copy;
 pub mod digest;
+pub mod engines;
 pub mod ir_build;
 pub mod ledger;
 pub mod manifest;

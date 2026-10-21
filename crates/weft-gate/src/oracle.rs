@@ -16,9 +16,11 @@
 //!
 //! The key of a verdict is the hash of the program text (the hash of the
 //! manifest entry), the engine ([`Engine`]) and the hash of the interpreter
-//! sources ([`interp_hash`]). The cache is a TSV file ([`Cache`]): for tier 1
-//! `tests/gate/oracle-ast.tsv` (committed), for tier 2 the same name in
-//! `$WEFT_GATE_CACHE` (default `target/gate/`).
+//! sources ([`interp_hash`]). The cache is a TSV file ([`Cache`]) for each
+//! engine: for tier 1 `tests/gate/oracle-ast.tsv` and `tests/gate/oracle-ir.tsv`
+//! (committed), for tier 2 the same names in `$WEFT_GATE_CACHE` (default
+//! `target/gate/`). From stage I5 the gate classifies the programs with the
+//! verdicts of the IR engine.
 //!
 //! Each program runs in child processes (`weft-gate oracle-run`,
 //! [`run_isolated`]), because a run that does not end, or that uses too much
@@ -30,6 +32,7 @@
 //! stack overflow, gives [`Verdict::Fault`] (the harness calls it a panic).
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::io::{BufRead as _, BufReader, Read as _};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -89,25 +92,39 @@ pub const MAX_DETAIL: usize = 300;
 pub const FAULT_MARKERS: [&str; 3] = ["<moved>", "<freed>", "<dangling>"];
 
 /// The interpreter that runs the program.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Engine {
     /// The interpreter that compiles the AST (`--engine=ast`).
+    #[default]
     Ast,
+    /// The interpreter that compiles the core IR (`--engine=ir`). A program
+    /// with a body that has no IR runs on the AST compiler
+    /// ([`Observation::fallback`]).
+    Ir,
 }
 
 impl Engine {
+    /// The engines, in the order of the engine differential.
+    pub const ALL: [Self; 2] = [Self::Ast, Self::Ir];
+
     /// Returns the engine with the name `name`, or `None`.
     pub fn parse(name: &str) -> Option<Self> {
-        match name {
-            "ast" => Some(Self::Ast),
-            _ => None,
-        }
+        Self::ALL.into_iter().find(|e| e.name() == name)
     }
 
     /// The name, as `--engine` takes it.
     pub const fn name(self) -> &'static str {
         match self {
             Self::Ast => "ast",
+            Self::Ir => "ir",
+        }
+    }
+
+    /// The engine of the interpreter.
+    pub const fn interp(self) -> weft_interp::Engine {
+        match self {
+            Self::Ast => weft_interp::Engine::Ast,
+            Self::Ir => weft_interp::Engine::Ir,
         }
     }
 }
@@ -120,7 +137,10 @@ pub fn cache_name(engine: Engine) -> String {
 /// The verdict of the oracle. The order of the variants is the order of
 /// precedence: the verdict of a program is the first that one of its runs
 /// gives.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "kebab-case")]
 pub enum Verdict {
     /// An oracle fault, another run-time error that is not [`BENIGN`], a fault
     /// marker in the output, or a panic of the interpreter.
@@ -203,6 +223,8 @@ pub struct Settings {
     /// this process, and a relative path that a program reads starts at the
     /// working directory of this process. Use it only for tests.
     pub exe: Option<PathBuf>,
+    /// The engine that runs the programs.
+    pub engine: Engine,
 }
 
 impl Default for Settings {
@@ -213,6 +235,7 @@ impl Default for Settings {
             max_steps: Some(MAX_STEPS),
             max_memory_mb: MAX_MEMORY_MB,
             exe: None,
+            engine: Engine::Ast,
         }
     }
 }
@@ -272,6 +295,14 @@ fn location(pkg: &Package, base: &Path, e: &RuntimeError) -> String {
             format!(" at {name}:{line}:{col}")
         }
         _ => String::new(),
+    }
+}
+
+/// The line of a run-time error, for a program of one file.
+fn error_line(pkg: &Package, e: &RuntimeError) -> Option<usize> {
+    match (e.span, pkg.files.as_slice()) {
+        (Some(span), [_, file]) => Some(file.line_col(span.lo).0),
+        _ => None,
     }
 }
 
@@ -417,6 +448,175 @@ impl Step {
     }
 }
 
+/// The most bytes of the output that an [`Observation`] keeps. The hash of
+/// the output covers all of it.
+pub const MAX_OUTPUT: usize = 4000;
+
+/// Each line of an observation in the output of `weft-gate oracle-run
+/// --observe` starts with this text.
+pub const OBSERVE_PREFIX: &str = "@observe";
+
+/// What one run of a program shows: the engine differential
+/// (`crate::engines`) compares the observations of the two engines.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Observation {
+    /// The index of the configuration ([`CONFIGS`]).
+    pub config: usize,
+    /// The verdict of the run.
+    pub verdict: Verdict,
+    /// How the run ends: `ok`, the kind of the run-time error (`fault`,
+    /// `failed`, `assertion`, `step-limit`, `deadlock`, `no-main`), or, from
+    /// the parent process, `timeout` (the time or the memory limit) and
+    /// `stopped` (the interpreter stops with no result). A program that does
+    /// not load, or that has no `main` and no test block, is `not-runnable`.
+    /// For test blocks: the kind of the first test that fails, else `ok`.
+    pub status: String,
+    /// The message of the run-time error. For test blocks: the result of each
+    /// test, one per line.
+    pub message: String,
+    /// The line of the run-time error (a program of one file).
+    pub line: Option<usize>,
+    /// The start of the output: the standard output, then the `Log` output
+    /// after a line `[stderr]`. For test blocks: the output of each test after
+    /// a line with its name. At most [`MAX_OUTPUT`] bytes.
+    pub output: String,
+    /// The SHA-256 of all the output.
+    pub output_hash: String,
+    /// Why the AST compiler ran the program when the IR engine was asked
+    /// (`RunOutcome::fallback`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+}
+
+impl Observation {
+    /// An observation with no output.
+    pub fn bare(config: usize, verdict: Verdict, status: &str, message: impl Into<String>) -> Self {
+        Self::with_output(config, verdict, status, message, String::new())
+    }
+
+    /// An observation with the output `output` (all of it).
+    fn with_output(
+        config: usize,
+        verdict: Verdict,
+        status: &str,
+        message: impl Into<String>,
+        output: String,
+    ) -> Self {
+        let output_hash = hex(&Sha256::digest(output.as_bytes()));
+        let mut keep = output;
+        if keep.len() > MAX_OUTPUT {
+            let mut end = MAX_OUTPUT;
+            while !keep.is_char_boundary(end) {
+                end -= 1;
+            }
+            keep.truncate(end);
+        }
+        Self {
+            config,
+            verdict,
+            status: status.to_string(),
+            message: message.into(),
+            line: None,
+            output: keep,
+            output_hash,
+            fallback: None,
+        }
+    }
+
+    /// The observation as one line of the output of `oracle-run --observe`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of `serde_json`.
+    pub fn to_line(&self) -> Result<String, serde_json::Error> {
+        Ok(format!(
+            "{OBSERVE_PREFIX}\t{}",
+            serde_json::to_string(self)?
+        ))
+    }
+
+    /// Reads a line of [`Observation::to_line`]. Another line gives `None`.
+    pub fn parse_line(line: &str) -> Option<Self> {
+        let json = line.strip_prefix(OBSERVE_PREFIX)?.strip_prefix('\t')?;
+        serde_json::from_str(json).ok()
+    }
+
+    /// True if the run does not end: the time, the memory or the step limit.
+    /// The output of such a run depends on the limit, not on the program.
+    pub fn is_timeout(&self) -> bool {
+        matches!(self.status.as_str(), "timeout" | "step-limit")
+    }
+}
+
+/// The name of an error kind in [`Observation::status`].
+const fn status_name(kind: ErrorKind) -> &'static str {
+    match kind {
+        ErrorKind::Failed => "failed",
+        ErrorKind::Assertion => "assertion",
+        ErrorKind::Fault => "fault",
+        ErrorKind::StepLimit => "step-limit",
+        ErrorKind::Deadlock => "deadlock",
+        ErrorKind::NoMain => "no-main",
+    }
+}
+
+/// The output of a run: the standard output, then the `Log` output.
+fn output_text(out: &RunOutcome) -> String {
+    if out.stderr.is_empty() {
+        out.stdout.clone()
+    } else {
+        format!("{}\n[stderr]\n{}", out.stdout, out.stderr)
+    }
+}
+
+/// The observation of one run of `main`.
+fn main_observation(
+    pkg: &Package,
+    config: usize,
+    verdict: Verdict,
+    run: &Result<RunOutcome, RuntimeError>,
+) -> Observation {
+    match run {
+        Ok(out) => {
+            let mut o = Observation::with_output(config, verdict, "ok", "", output_text(out));
+            o.fallback.clone_from(&out.fallback);
+            o
+        }
+        Err(e) => {
+            let mut o = Observation::with_output(
+                config,
+                verdict,
+                status_name(e.kind),
+                e.message.clone(),
+                output_text(&e.outcome),
+            );
+            o.line = error_line(pkg, e);
+            o.fallback.clone_from(&e.outcome.fallback);
+            o
+        }
+    }
+}
+
+/// The observation of one run of the test blocks.
+fn tests_observation(config: usize, verdict: Verdict, tests: &[TestOutcome]) -> Observation {
+    let mut status = "ok";
+    let mut message = String::new();
+    let mut output = String::new();
+    for t in tests {
+        let result = t.message.as_deref().unwrap_or("ok");
+        if status == "ok" {
+            if let Some(m) = &t.message {
+                status = test_error_kind(m).map_or("fault", |(k, _)| status_name(k));
+            }
+        }
+        let _ = writeln!(message, "test `{}`: {result}", t.name);
+        let _ = writeln!(output, "[test `{}`]\n{}", t.name, output_text(&t.outcome));
+    }
+    let mut o = Observation::with_output(config, verdict, status, message, output);
+    o.fallback = tests.iter().find_map(|t| t.outcome.fallback.clone());
+    o
+}
+
 /// The text of configuration `config` for a detail.
 pub fn config_text(config: usize) -> String {
     CONFIGS.get(config).map_or_else(
@@ -425,12 +625,13 @@ pub fn config_text(config: usize) -> String {
     )
 }
 
-/// Runs the program at `path` below `base` in the configurations of
-/// [`CONFIGS`] from index `from`, on this thread.
+/// Runs the program at `path` below `base` with `engine` in the
+/// configurations of [`CONFIGS`] from index `from`, on this thread.
 ///
 /// Calls `start` with the index of each configuration before its run, and
-/// `emit` with each step. The runs stop after a run that faults, because no
-/// other verdict comes before `fault`.
+/// `emit` with each step and the observation of its run (`None` for a
+/// program that does not load). The runs stop after a run that faults,
+/// because no other verdict comes before `fault`.
 ///
 /// A panic of the interpreter continues in the caller.
 pub fn run_configs(
@@ -438,15 +639,16 @@ pub fn run_configs(
     path: &str,
     from: usize,
     max_steps: Option<u64>,
+    engine: Engine,
     mut start: impl FnMut(usize),
-    mut emit: impl FnMut(Step),
+    mut emit: impl FnMut(Step, Option<Observation>),
 ) {
     let pkg = match package::load(&base.join(path)) {
         Ok(pkg) => pkg,
         Err(e) => {
             let dir = format!("{}/", base.display());
             let text = format!("the program does not load: {e:#}").replace(&dir, "");
-            emit(Step::NotRunnable(text));
+            emit(Step::NotRunnable(text), None);
             return;
         }
     };
@@ -461,33 +663,45 @@ pub fn run_configs(
             capture_output: true,
             no_runtime: opts.no_runtime,
             oracle: true,
+            engine: engine.interp(),
             ..RunOptions::default()
         };
         let mut best: Option<(Verdict, String)> = None;
         let run = weft_interp::run_analysis_main(&analysis, &run_opts);
-        if matches!(&run, Err(e) if e.kind == ErrorKind::NoMain) {
+        let observed = if matches!(&run, Err(e) if e.kind == ErrorKind::NoMain) {
             let tests = weft_interp::run_analysis_tests(&analysis, &run_opts);
             if tests.is_empty() {
-                emit(Step::NotRunnable("no `main` and no test block".to_string()));
+                let text = "no `main` and no test block";
+                let o = Observation::bare(config, Verdict::NotRunnable, "not-runnable", text);
+                emit(Step::NotRunnable(text.to_string()), Some(o));
                 return;
             }
             for t in &tests {
                 keep_first(&mut best, test_verdict(t));
             }
+            Err(tests)
         } else {
             keep_first(&mut best, main_verdict(&pkg, base, &run));
-        }
+            Ok(run)
+        };
         let (verdict, text) = best.unwrap_or((Verdict::Clean, String::new()));
         let detail = if verdict == Verdict::Clean {
             String::new()
         } else {
             format!("{}: {text}", config_text(config))
         };
-        emit(Step::Run {
-            config,
-            verdict,
-            detail,
-        });
+        let o = match &observed {
+            Ok(run) => main_observation(&pkg, config, verdict, run),
+            Err(tests) => tests_observation(config, verdict, tests),
+        };
+        emit(
+            Step::Run {
+                config,
+                verdict,
+                detail,
+            },
+            Some(o),
+        );
         if verdict == Verdict::Fault {
             return;
         }
@@ -530,22 +744,41 @@ impl Combine {
 ///
 /// A panic of the interpreter continues in the caller.
 pub fn run_entry(base: &Path, entry: &Entry, settings: &Settings) -> Outcome {
+    run_entry_observed(base, entry, settings).0
+}
+
+/// Runs the program `entry` below `base` as [`run_entry`] does, and also gives
+/// the observation of each run, in the order of the configurations.
+///
+/// A panic of the interpreter continues in the caller.
+pub fn run_entry_observed(
+    base: &Path,
+    entry: &Entry,
+    settings: &Settings,
+) -> (Outcome, Vec<Observation>) {
     let mut c = Combine::default();
+    let mut seen = Vec::new();
     run_configs(
         base,
         &entry.path,
         0,
         settings.max_steps,
+        settings.engine,
         |_| {},
-        |s| c.add(s),
+        |s, o| {
+            c.add(s);
+            seen.extend(o);
+        },
     );
-    c.outcome()
+    (c.outcome(), seen)
 }
 
 /// What a reader thread of a child process sends.
 enum ChildMsg {
     /// A step.
     Step(Step),
+    /// An observation of a run.
+    Observe(Box<Observation>),
     /// The child closed its standard output.
     End,
 }
@@ -568,6 +801,7 @@ fn spawn_child(
     entry: &Entry,
     from: usize,
     settings: &Settings,
+    observe: bool,
     tx: mpsc::Sender<ChildMsg>,
 ) -> std::io::Result<(Child, std::thread::JoinHandle<String>)> {
     let base = std::path::absolute(base).unwrap_or_else(|_| base.to_path_buf());
@@ -584,11 +818,16 @@ fn spawn_child(
         .arg(settings.limit.as_millis().to_string())
         .arg("--max-memory")
         .arg(settings.max_memory_mb.to_string())
+        .arg("--engine")
+        .arg(settings.engine.name())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if let Some(n) = settings.max_steps {
         cmd.arg("--max-steps").arg(n.to_string());
+    }
+    if observe {
+        cmd.arg("--observe");
     }
     if let Some(file) = child_profile_file(std::env::var_os("LLVM_PROFILE_FILE").is_some()) {
         cmd.env("LLVM_PROFILE_FILE", file);
@@ -598,8 +837,11 @@ fn spawn_child(
         std::thread::spawn(move || {
             for line in BufReader::new(out).lines() {
                 let Ok(line) = line else { break };
-                if let Some(step) = Step::parse_line(&line) {
-                    if tx.send(ChildMsg::Step(step)).is_err() {
+                let msg = Step::parse_line(&line).map(ChildMsg::Step).or_else(|| {
+                    Observation::parse_line(&line).map(|o| ChildMsg::Observe(Box::new(o)))
+                });
+                if let Some(msg) = msg {
+                    if tx.send(msg).is_err() {
                         return;
                     }
                 }
@@ -641,26 +883,86 @@ fn stop_child(child: &mut Child) {
 /// for its run (for example, a stack overflow of the interpreter) gives
 /// [`Verdict::Fault`].
 pub fn run_isolated(exe: &Path, base: &Path, entry: &Entry, settings: &Settings) -> Outcome {
+    isolated(exe, base, entry, settings, false).0
+}
+
+/// Runs the program `entry` below `base` as [`run_isolated`] does, and also
+/// gives the observation of each run.
+///
+/// The observations are in the order of the configurations. A run that the
+/// parent stops at the time limit has the status `timeout`; a child that stops
+/// with no result gives the status `stopped`.
+pub fn run_isolated_observed(
+    exe: &Path,
+    base: &Path,
+    entry: &Entry,
+    settings: &Settings,
+) -> (Outcome, Vec<Observation>) {
+    isolated(exe, base, entry, settings, true)
+}
+
+/// Adds the observation of a run that has no observation from the child.
+fn observe_step(seen: &mut Vec<Observation>, step: &Step, status: &str) {
+    match step {
+        Step::Run {
+            config,
+            verdict,
+            detail,
+        } if !seen.iter().any(|o| o.config == *config) => {
+            seen.push(Observation::bare(*config, *verdict, status, detail.clone()));
+        }
+        Step::NotRunnable(detail) if seen.is_empty() => {
+            seen.push(Observation::bare(
+                0,
+                Verdict::NotRunnable,
+                "not-runnable",
+                detail.clone(),
+            ));
+        }
+        _ => {}
+    }
+}
+
+/// The runs of [`run_isolated`]; with `observe`, also the observations.
+fn isolated(
+    exe: &Path,
+    base: &Path,
+    entry: &Entry,
+    settings: &Settings,
+    observe: bool,
+) -> (Outcome, Vec<Observation>) {
     let mut c = Combine::default();
+    let mut seen: Vec<Observation> = Vec::new();
     let mut next = 0;
     while next < CONFIGS.len() && !c.is_final() {
         let (tx, rx) = mpsc::channel();
-        let (mut child, errors) = match spawn_child(exe, base, entry, next, settings, tx) {
+        let (mut child, errors) = match spawn_child(exe, base, entry, next, settings, observe, tx) {
             Ok(x) => x,
             Err(e) => {
-                return Outcome::new(
-                    Verdict::NotRunnable,
-                    format!("cannot start {}: {e}", exe.display()),
-                );
+                let text = format!("cannot start {}: {e}", exe.display());
+                if observe {
+                    seen.push(Observation::bare(
+                        next,
+                        Verdict::NotRunnable,
+                        "not-runnable",
+                        text.clone(),
+                    ));
+                }
+                return (Outcome::new(Verdict::NotRunnable, text), seen);
             }
         };
         let mut at = Instant::now();
         loop {
             let wait = settings.limit.saturating_sub(at.elapsed());
             match rx.recv_timeout(wait) {
+                Ok(ChildMsg::Observe(o)) => seen.push(*o),
                 Ok(ChildMsg::Step(step)) => {
                     if let Step::Run { config, .. } = step {
                         next = config + 1;
+                    }
+                    if observe {
+                        // A step with no observation: the memory limit.
+                        observe_step(&mut seen, &step, "timeout");
                     }
                     c.add(step);
                     at = Instant::now();
@@ -675,7 +977,7 @@ pub fn run_isolated(exe: &Path, base: &Path, entry: &Entry, settings: &Settings)
                     if next < CONFIGS.len() && !memory && !c.is_final() {
                         let how = status.map_or_else(|e| e.to_string(), |s| s.to_string());
                         let text = errors.join().unwrap_or_default();
-                        c.add(Step::Run {
+                        let step = Step::Run {
                             config: next,
                             verdict: Verdict::Fault,
                             detail: format!(
@@ -683,13 +985,17 @@ pub fn run_isolated(exe: &Path, base: &Path, entry: &Entry, settings: &Settings)
                                 config_text(next),
                                 text.trim()
                             ),
-                        });
+                        };
+                        if observe {
+                            observe_step(&mut seen, &step, "stopped");
+                        }
+                        c.add(step);
                     }
                     break;
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     stop_child(&mut child);
-                    c.add(Step::Run {
+                    let step = Step::Run {
                         config: next,
                         verdict: Verdict::Timeout,
                         detail: format!(
@@ -697,14 +1003,19 @@ pub fn run_isolated(exe: &Path, base: &Path, entry: &Entry, settings: &Settings)
                             config_text(next),
                             settings.limit.as_millis()
                         ),
-                    });
+                    };
+                    if observe {
+                        observe_step(&mut seen, &step, "timeout");
+                    }
+                    c.add(step);
                     next += 1;
                     break;
                 }
             }
         }
     }
-    c.outcome()
+    seen.sort_by_key(|o| o.config);
+    (c.outcome(), seen)
 }
 
 /// The exit code of `weft-gate oracle-run` when it stops itself at the memory
@@ -955,7 +1266,11 @@ pub fn oracle(
         .iter()
         .map(|e| (e.hash.clone(), e.path.clone()))
         .collect();
-    run_all(base, todo, settings, |i, o| {
+    let settings = Settings {
+        engine,
+        ..settings.clone()
+    };
+    run_all(base, todo, &settings, |i, o| {
         let Some((hash, path)) = keys.get(i) else {
             return;
         };

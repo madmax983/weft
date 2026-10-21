@@ -2624,6 +2624,7 @@ is left in its cells (it also finds the closure cells of I3-2).
 | --- | --- | --- |
 | an operand is read where it is written (choice A, 5.1.1) | the interpreter reads a place operand of a binary operator, of `print` and the base of an index at the operand | `x + { x = 5; 1 }` gives 2, not 6 (p1); a program that read through a dangling reference late (p2, p9, p10) reads before the change |
 | the tail temporaries of a loop body end at each iteration (5.1.2) | earlier frees | `Weak.upgrade` of a tail temporary of a loop body (p24) |
+| the temporaries of a branch of `if` or `match` end before the join (5.12) | earlier frees | `show(if c { first(&mk_v()) } else { &u })` reads a freed temporary: the oracle of the IR engine faults where the AST engine runs; the old checker accepts these programs (stage I5: 24 programs of tier 2, `r3/oracle/sweep1/*__tmp_*__arg.wf`, `R3a_diff/sweep/*ref_temp*`), so the `ir` pipeline must reject them |
 | unwind order in a frame: `_0`, then temporaries newest first, then slots from the highest (5.1.6) | none: today the operand stack (the value of the frame and the operands on their way) unwinds first, then the temporary cells, then the slots. Before stage I6 the IR engine unwinds `_0` with the slots, after the locals: the engine differential ledgers this for the shapes of F3-7 (class `unwind-order`), and I6 removes the difference | the effects model changes `max_slot` |
 | a clause unwinds its fresh continuation first (5.1.6) | the interpreter changes when it runs landing pads | p20: `rollback 1` (the continuation) prints before `rollback 2` (the clause frame) |
 | rule CAPTURE (5.1.7) | a borrowed plain capture is `ByRef`: its cell ends with the variable | the oracle sees a dangling cell where today's kept cell stayed readable; the checker rejects these programs (J5, J5d) |
@@ -2652,6 +2653,39 @@ Each one has a unit test in `crates/weft-interp/tests/semantics.rs`.
 | fact oracle (B6 hypotheses on runs) | F9 on | the machine maps each cell to a fact root (a slot to the root of its local; a slot of a frame that the component does not hold to `F(n)`, `K(h)`, `R(n)` or the caller root; a heap cell to the place on its ownership path; an `Rc` object to its group root). At each step: each free of a cell has `frees_at` at the node for a covering place (C4); each pointer that a used variable holds is inside a place of `points_into` of the variable (C1); each read and write of a cell has `reads_at` or `mutates_at`, `lends_mut` or a footprint at the node (C5, F4); each move has `moved_at` or `moved_part` (D1); each suspension with a live linear value in a frame that the abort can unwind has `may_abort` (D4) |
 | summary oracle (A3) | F13 on | at each call of a body, the machine records the cells that the body changes, frees and reads, and the pointers in its result; a checker maps them through σ of the run node and tests that each one is inside the applied summary |
 | agreement and lints | each F stage | `weft agree` on the IR facts; `proofs/link/lints/gen_kill.dl` and `unbound_use.dl` on each component (V4 makes the second one hold for closure and clause components too) |
+
+**As built (I5).** D1 is `crates/weft-sema/tests/exports_parity.rs`, on each file of
+tier 1. The `ByMove` captures of the IR, and a `Kont` capture of a `once` continuation
+(operand `move`), equal `by_value`. One more difference is expected (class
+`closure-copy`): the old analysis moves a capture that holds a function value when the
+closure body reads the function value (a read of a function value is a move there:
+`let g = fs[0]; let h = fs[0]` is W0302), and the IR copies it (B12b: a function value
+is plain data in the IR). The test lists the 13 programs of tier 1 with such a capture;
+all of them are programs that the checker rejects. `arg_order` is the order of the
+parameters: the IR evaluates the arguments of each call in the order of the parameters,
+and binds the arguments that `arg_order` names. The type of each `Binary` and `Unary` of
+the IR is the type of `int_ops`; the key of a compound assignment is the span of its
+value. D1 found no bug in the builder or in the exports.
+
+The engine differential is `weft-gate engines --tier N` (`crates/weft-gate/src/engines.rs`).
+It runs each program with `main` or test blocks in child processes (`oracle-run
+--engine ast|ir --observe`), with the oracle and the six configurations, and stops the
+runs of an engine after a fault, as the oracle cache does. It compares the runs
+configuration by configuration: the output (standard output and `Log` output), the
+status (how the run ends), the message and the line of a run-time error; the output of a
+run that does not end is not compared. A program with a time limit on one side runs
+again, alone. The checker results come from the baseline of the tier. Each difference
+needs a ledger entry of class `engine` (`tests/gate/ledger.toml`): the entry names a
+difference class, and the shape of the class must hold for the difference. A rule with
+`checker = "rejects"` accepts a class on each program that the checker rejects; a
+difference on a program that the checker accepts needs an entry that names the program.
+The classes are those of 8.3 (`choice-a`, `loop-temps`, `branch-temps`, `unwind-order`,
+`capture`) and the
+ones that stages I1 to I5 found: `w0315`, `receiver`, `leak-at-dead`, `static-type-read`,
+`race-before-dangling`, `race-read-first`, `schedule`, `dangling-moved`, `read-order`,
+`mention`, `moved-read`, `moved-closure`, `closure-copy`, `fault-text` and `timeout`.
+From stage I5 the gate classifies the programs with the oracle of the `ir` engine
+(`tests/gate/oracle-ir.tsv`).
 
 The fact oracle and the summary oracle run with `weft run --fact-oracle` on each accepted
 program of the gate. A failure is a defect of the fact generator with a concrete program

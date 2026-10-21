@@ -1,7 +1,8 @@
 //! The diff gate on tier 1 (plan `docs/plan/core-ir.md`, §1 rule 3 and stage G5).
 //!
 //! The test checks each program of tier 1, reads the oracle verdicts from the
-//! committed cache `tests/gate/oracle-ast.tsv`, classifies each program and
+//! committed cache of the IR engine `tests/gate/oracle-ir.tsv` (from stage I5;
+//! before it `tests/gate/oracle-ast.tsv`), classifies each program and
 //! writes the report to `target/gate/report-tier1.md`. A blocker of §2.5 makes
 //! the test fail. The test does not run the interpreter: if the cache has no
 //! verdict for the current interpreter sources, the test fails and tells you

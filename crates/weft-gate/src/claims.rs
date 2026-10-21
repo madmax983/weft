@@ -458,9 +458,46 @@ impl IrPipeline for NoIrPipeline {
         Err(NO_IR_PIPELINE.to_string())
     }
 
-    fn engine_verdict(&self, _repo: &Path, _repro: &str) -> Result<OracleVerdict, String> {
-        Err("no IR engine before stage I1 and no IR oracle cache before stage I5".to_string())
+    fn engine_verdict(&self, repo: &Path, repro: &str) -> Result<OracleVerdict, String> {
+        ir_oracle_verdict(repo, repro)
     }
+}
+
+/// The verdict of the oracle of the IR engine for the program `repro` of the
+/// repository `repo`.
+///
+/// The verdict comes from the committed tier-1 cache `tests/gate/oracle-ir.tsv`
+/// (stage I5), with the hash of the interpreter sources of today.
+///
+/// # Errors
+///
+/// Returns a message if the cache or the program cannot be read, or if the
+/// cache has no verdict for the program.
+pub fn ir_oracle_verdict(repo: &Path, repro: &str) -> Result<OracleVerdict, String> {
+    use sha2::{Digest as _, Sha256};
+    let engine = crate::oracle::Engine::Ir;
+    let file = repo
+        .join("tests/gate")
+        .join(crate::oracle::cache_name(engine));
+    let text = std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let cache = crate::oracle::Cache::from_tsv(&text).map_err(|e| e.to_string())?;
+    let interp = crate::oracle::interp_hash(repo).map_err(|e| e.to_string())?;
+    let path = repo.join(repro);
+    let hash = if path.is_dir() {
+        crate::manifest::package_hash(&path).map_err(|e| e.to_string())?
+    } else {
+        let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        crate::manifest::hex(&Sha256::digest(&bytes))
+    };
+    cache
+        .get(&hash, engine, &interp)
+        .map(|r| r.verdict)
+        .ok_or_else(|| {
+            format!(
+                "`{}` has no verdict for {repro} with the interpreter hash {interp}: run `cargo run -p weft-gate --release -- oracle --engine ir --tier 1`",
+                file.display()
+            )
+        })
 }
 
 /// The `ir` pipeline of the claims test. Before stage F1: [`NoIrPipeline`].

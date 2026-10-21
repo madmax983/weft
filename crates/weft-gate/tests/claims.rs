@@ -387,6 +387,17 @@ fn committed() -> ClaimsFile {
 }
 
 #[test]
+fn an_interp_claim_reads_the_committed_cache_of_the_ir_oracle() {
+    let repo = repo();
+    let repro = "tests/gate/probes/r2/fidelity/repro/FD2_multi_nested_drop.wf";
+    assert_eq!(claims::ir_oracle_verdict(&repo, repro), Ok(Verdict::Clean));
+    let pipe = claims::pipeline();
+    assert_eq!(pipe.engine_verdict(&repo, repro), Ok(Verdict::Clean));
+    let missing = claims::ir_oracle_verdict(&repo, "tests/gate/no_such_program.wf");
+    assert!(missing.is_err());
+}
+
+#[test]
 fn the_committed_claims_hold() {
     let repo = repo();
     let file = committed();
