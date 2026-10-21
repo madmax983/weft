@@ -1,0 +1,368 @@
+fn f0 shared_bump(&Stats) -> (): b0
+fn f1 pub_bump(&Stats) -> (): b1
+fn f2 param_bump(&u64) -> (): b2
+fn f3 calls_param_bump(&Stats) -> (): b3
+fn f4 undeclared(&Stats) -> () / (): b4
+fn f5 declared(&Stats) -> () / (): b5
+fn f6 task_race(&Stats) -> () / Async: b6
+fn f7 rebind(&Stats, &Stats) -> (): b9
+fn f8 store_value(&Stats) -> (): extern
+fn f9 owned() -> u64: b10
+fn f10 field_bump(&Frame) -> () / (): b11
+fn f11 field_bump_declared(&Frame) -> () / (): b12
+fn f12 field_race(&Frame) -> () / Async: b13
+fn f13 tuple_part(&Stats) -> (): b16
+closure c0: body b8, maker b7, cap_env e0, captures [Kept _4]
+closure c1: body b15, maker b14, cap_env e0, captures [Kept _4]
+scope s0: body b7, site b6
+scope s1: body b14, site b13
+spawn sp0: scope s0
+spawn sp1: scope s1
+cap_env e0
+
+body b0: fn shared_bump; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &Stats (Param(0) `s`)
+  _2: &u64 (User `c`)
+  _3: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = &(*_1).0
+    Live(_3)
+    _3 = Add<u64>(copy (*_2), const 1u64)
+    (*_2) = move _3
+    Dead(_3)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn pub_bump; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &Stats (Param(0) `s`)
+  _2: &u64 (User `c`)
+  _3: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = &(*_1).0
+    Live(_3)
+    _3 = Add<u64>(copy (*_2), const 1u64)
+    (*_2) = move _3
+    Dead(_3)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn param_bump; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &u64 (Param(0) `c`)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Add<u64>(copy (*_1), const 1u64)
+    (*_1) = move _2
+    Dead(_2)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn calls_param_bump; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: &Stats (Param(0) `s`)
+  _2: &u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = &(*_1).0
+    _0 = call param_bump(move _2) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b4: fn undeclared; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &Stats (Param(0) `s`)
+  _2: &u64 (User `c`)
+  _3: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = &(*_1).0
+    Live(_3)
+    _3 = Sub<u64>(copy (*_2), const 1u64)
+    (*_2) = move _3
+    Dead(_3)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b5: fn declared; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &Stats (Param(0) `s`)
+  _2: &u64 (User `c`)
+  _3: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = &(*_1).0
+    Live(_3)
+    _3 = Mul<u64>(copy (*_2), const 2u64)
+    (*_2) = move _3
+    Dead(_3)
+    Print(copy _2)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b6: fn task_race; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: &Stats (Param(0) `s`)
+  _2: &u64 (User `c`)
+  bb0:
+    Live(_2)
+    _2 = &(*_1).0
+    _0 = scope s0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b7: scope s0; parent b6; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: Scope (ScopeCap `sc`)
+  _2: () (TaskResult(sp0))
+  _3: fn() -> () (Temp(Operand))
+  _4: &Stats (Upvar(_1) `s`)
+  _5: &u64 (Upvar(_2) `c`)
+  _6: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c0(copy _4)
+    spawn sp0(copy _1, move _3) -> [bb1]
+  bb1:
+    Dead(_3)
+    Live(_6)
+    _6 = Add<u64>(copy (*_5), const 1u64)
+    (*_5) = move _6
+    Dead(_6)
+    _0 = const ()
+    scope_wait _1, orphans [_2] -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b8: closure c0; parent b7; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    Print(copy (*_1.0).0)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b9: fn rebind; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &Stats (Param(0) `s`)
+  _2: &Stats (Param(1) `t`)
+  _3: &u64 (User `c`)
+  _4: &u64 (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = &(*_1).0
+    Live(_4)
+    _4 = &(*_2).0
+    _3 = move _4
+    Dead(_4)
+    Print(copy _3)
+    _0 = const ()
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b10: fn owned; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: u64 (User `n`)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = const 1u64
+    Live(_2)
+    _2 = Add<u64>(copy _1, const 1u64)
+    _1 = move _2
+    Dead(_2)
+    _0 = copy _1
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b11: fn field_bump; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &Frame (Param(0) `f`)
+  _2: u8 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Add<u8>(copy (*(*_1).1), const 1u8)
+    (*(*_1).1) = move _2
+    Dead(_2)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b12: fn field_bump_declared; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &Frame (Param(0) `f`)
+  _2: u8 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Add<u8>(copy (*(*_1).1), const 1u8)
+    (*(*_1).1) = move _2
+    Dead(_2)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b13: fn field_race; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: &Frame (Param(0) `f`)
+  _2: &[u8; 4] (User `b`)
+  bb0:
+    Live(_2)
+    _2 = &(*_1).0
+    _0 = scope s1 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b14: scope s1; parent b13; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: () (TaskResult(sp1))
+  _3: fn() -> () (Temp(Operand))
+  _4: &[u8; 4] (Upvar(_2) `b`)
+  _5: &Frame (Upvar(_1) `f`)
+  _6: u8 (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c1(copy _4)
+    spawn sp1(copy _1, move _3) -> [bb1]
+  bb1:
+    Dead(_3)
+    Live(_6)
+    _6 = Add<u8>(copy (*(*_5).1), const 1u8)
+    (*(*_5).1) = move _6
+    Dead(_6)
+    _0 = const ()
+    scope_wait _1, orphans [_2] -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b15: closure c1; parent b14; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    Print(copy _1.0)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b16: fn tuple_part; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &Stats (Param(0) `s`)
+  _2: (&u64, i64) (User `t`)
+  _3: &u64 (Temp(Operand))
+  _4: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = &(*_1).0
+    _2 = (move _3, const 1i64)
+    Dead(_3)
+    Live(_4)
+    _4 = Add<u64>(copy (*_2.0), const 1u64)
+    (*_2.0) = move _4
+    Dead(_4)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+// store_value: no IR: a type error

@@ -1,0 +1,213 @@
+fn f0 rollback(Tx) -> (): b0
+fn f1 Db.begin(&Db) -> Tx / Async, Blocking, Clock, Fs, Log, Net, Rand: b1
+fn f2 Tx.debit(&Tx, Id, u64) -> () / Async, Blocking, Clock, Fail, Fs, Log, Net, Rand: b2
+fn f3 Tx.credit(&Tx, Id, u64) -> () / Async, Blocking, Clock, Fail, Fs, Log, Net, Rand: b3
+fn f4 Tx.commit(Tx) -> () / Async, Blocking, Clock, Fs, Log, Net, Rand: b4
+fn f5 transfer(&Db, Id, Id, u64) -> () / Async, Blocking, Clock, Fail, Fs, Log, Net, Rand: b5
+cap_env e0
+
+body b0: fn rollback; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Tx (Param(0) `tx`)
+  _2: Conn (User `conn`)
+  _3: bool (User `open`)
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Live(_3)
+    _3 = copy _1.1
+    Consume(_1)
+    _0 = const ()
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn Db.begin; cap_env e0; unwind_exit bb1
+  _0: Tx (Return)
+  _1: &Db (Param(0) `self`)
+  _2: Conn (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Conn { const 1u64 }
+    _0 = Tx { move _2, const true }
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn Tx.debit; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: &Tx (Param(0) `self`)
+  _2: Id (Param(1) `who`)
+  _3: u64 (Param(2) `amt`)
+  _4: bool (Temp(Operand))
+  _5: () (Temp(Discarded))
+  bb0:
+    Live(_4)
+    _4 = Gt(copy _3, const 100u64)
+    switch move _4 -> [1: bb1, otherwise: bb7]
+  bb1:
+    Live(_5)
+    _5 = perform Row(Fail).fail(const "too much") -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_5)
+    _0 = const ()
+    Goto(bb8)
+  bb3 (cleanup):
+    Dead(_5)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_4)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+  bb7:
+    _0 = const ()
+    Goto(bb8)
+  bb8:
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+
+body b3: fn Tx.credit; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &Tx (Param(0) `self`)
+  _2: Id (Param(1) `who`)
+  _3: u64 (Param(2) `amt`)
+  bb0:
+    _0 = const ()
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: fn Tx.commit; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Tx (Param(0) `self`)
+  _2: Conn (User `conn`)
+  _3: bool (User `open`)
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Live(_3)
+    _3 = copy _1.1
+    Consume(_1)
+    _0 = const ()
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b5: fn transfer; cap_env e0; unwind_exit bb16
+  _0: () (Return)
+  _1: &Db (Param(0) `db`)
+  _2: Id (Param(1) `from`)
+  _3: Id (Param(2) `to`)
+  _4: u64 (Param(3) `amt`)
+  _5: Tx (User `tx`)
+  _6: &Db (Temp(Receiver))
+  _7: () (Temp(Discarded))
+  _8: Id (Temp(Operand))
+  _9: u64 (Temp(Operand))
+  _10: &Tx (Temp(Receiver))
+  _11: () (Temp(Discarded))
+  _12: Id (Temp(Operand))
+  _13: u64 (Temp(Operand))
+  _14: &Tx (Temp(Receiver))
+  bb0:
+    Live(_5)
+    Live(_6)
+    _6 = &(*_1)
+    _5 = call Db.begin(move _6) / e0 -> [bb1, unwind: bb13]
+  bb1:
+    Dead(_6)
+    Live(_7)
+    Live(_8)
+    _8 = copy _2
+    Live(_9)
+    _9 = copy _4
+    Live(_10)
+    _10 = &_5
+    _7 = call Tx.debit(move _10, move _8, move _9) / e0 -> [bb2, unwind: bb9]
+  bb2:
+    Dead(_10)
+    Dead(_9)
+    Dead(_8)
+    Dead(_7)
+    Live(_11)
+    Live(_12)
+    _12 = copy _3
+    Live(_13)
+    _13 = copy _4
+    Live(_14)
+    _14 = &_5
+    _11 = call Tx.credit(move _14, move _12, move _13) / e0 -> [bb3, unwind: bb5]
+  bb3:
+    Dead(_14)
+    Dead(_13)
+    Dead(_12)
+    Dead(_11)
+    _0 = call Tx.commit(move _5) / e0 -> [bb4, unwind: bb14]
+  bb4:
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    Dead(_14)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_13)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_12)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_11)
+    Goto(bb14)
+  bb9 (cleanup):
+    Dead(_10)
+    Goto(bb10)
+  bb10 (cleanup):
+    Dead(_9)
+    Goto(bb11)
+  bb11 (cleanup):
+    Dead(_8)
+    Goto(bb12)
+  bb12 (cleanup):
+    Dead(_7)
+    Goto(bb14)
+  bb13 (cleanup):
+    Dead(_6)
+    Goto(bb14)
+  bb14 (cleanup):
+    UnwindValue(_5, OnAbort(rollback))
+    Dead(_5)
+    Goto(bb15)
+  bb15 (cleanup):
+    Dead(_0)
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb16)
+  bb16 (cleanup):
+    UnwindExit

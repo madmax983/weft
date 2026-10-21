@@ -498,7 +498,7 @@ impl Builder<'_> {
                 return unsupported(Construct::NoThir, e.span);
             };
             let (bty, name) = (binding.ty, binding.name.clone());
-            let props = self.props(bty);
+            let props = self.binding_props_of(b, bty);
             let l = self.add_local(LocalDecl {
                 ty: bty,
                 kind: LocalKind::Param(id_of(i)),

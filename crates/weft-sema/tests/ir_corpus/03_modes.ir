@@ -1,0 +1,301 @@
+fn f0 sum_hp(&[Entity]) -> u64: b0
+fn f1 heal(&[Entity]) -> () / (): b1
+fn f2 total_hp(&World) -> u64 / Par: b2
+fn f3 heal_all(&World) -> () / Par: b5
+fn f4 Vec.split_at<T0>(&Vec<T0>, usize) -> (&[T0], &[T0]) / (): extern
+fn f5 Vec.len<T0>(&Vec<T0>) -> usize / (): extern
+fn f6 Vec.split_mut<T0>(&Vec<T0>, usize) -> (&[T0], &[T0]) / (): extern
+closure c0: body b3, maker b2, cap_env e0, captures [Kept _7]
+closure c1: body b4, maker b2, cap_env e0, captures [Kept _8]
+closure c2: body b6, maker b5, cap_env e0, captures [Kept _8]
+closure c3: body b7, maker b5, cap_env e0, captures [Kept _9]
+spawn sp0: fork
+spawn sp1: fork
+spawn sp2: fork
+spawn sp3: fork
+cap_env e0
+
+body b0: fn sum_hp; cap_env e0; unwind_exit bb5
+  _0: u64 (Return)
+  _1: &[Entity] (Param(0) `es`)
+  _2: u64 (User `total`)
+  _3: Iter<&Entity> (Iterator)
+  _4: &Entity (Temp(Scrutinee))
+  _5: &Entity (User `e`)
+  _6: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0u64
+    Live(_3)
+    _3 = Iter(elems (*_1)[])
+    Goto(bb1)
+  bb1:
+    Live(_4)
+    _4 = next _3 -> [bb2, done: bb3]
+  bb2:
+    Live(_5)
+    _5 = copy _4
+    Live(_6)
+    _6 = Add<u64>(copy _2, copy (*_5).0)
+    _2 = move _6
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Goto(bb1)
+  bb3:
+    Dead(_4)
+    Goto(bb4)
+  bb4:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    UnwindExit
+
+body b1: fn heal; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: &[Entity] (Param(0) `es`)
+  _2: Iter<&Entity> (Iterator)
+  _3: &Entity (Temp(Scrutinee))
+  _4: &Entity (User `e`)
+  _5: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Iter(elems (*_1)[])
+    Goto(bb1)
+  bb1:
+    Live(_3)
+    _3 = next _2 -> [bb2, done: bb3]
+  bb2:
+    Live(_4)
+    _4 = copy _3
+    Live(_5)
+    _5 = Add<u64>(copy (*_4).0, const 1u64)
+    (*_4).0 = move _5
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Goto(bb1)
+  bb3:
+    Dead(_3)
+    Goto(bb4)
+  bb4:
+    Dead(_2)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    UnwindExit
+
+body b2: fn total_hp; cap_env e0; unwind_exit bb10
+  _0: u64 (Return)
+  _1: &World (Param(0) `world`)
+  _2: (&[Entity], &[Entity]) (Temp(Scrutinee))
+  _3: usize (Temp(Operand))
+  _4: usize (Temp(Operand))
+  _5: &Vec<Entity> (Temp(Receiver))
+  _6: &Vec<Entity> (Temp(Receiver))
+  _7: &[Entity] (User `l`)
+  _8: &[Entity] (User `r`)
+  _9: (u64, u64) (Temp(Scrutinee))
+  _10: fn() -> u64 (Temp(Operand))
+  _11: fn() -> u64 (Temp(Operand))
+  _12: u64 (User `a`)
+  _13: u64 (User `b`)
+  bb0:
+    Live(_2)
+    Live(_3)
+    Live(_4)
+    Live(_5)
+    _5 = &(*_1).0
+    _4 = call Vec.len<Entity>(move _5) / e0 -> [bb1]
+  bb1:
+    _3 = Div<usize>(move _4, const 2usize)
+    Live(_6)
+    _6 = &(*_1).0
+    _2 = call Vec.split_at<Entity>(move _6, move _3) / e0 -> [bb2]
+  bb2:
+    Live(_7)
+    _7 = copy _2.0
+    Live(_8)
+    _8 = copy _2.1
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Live(_9)
+    Live(_10)
+    _10 = closure c0(copy _7)
+    Live(_11)
+    _11 = closure c1(copy _8)
+    _9 = fork [sp0: move _10, sp1: move _11] -> [bb3, unwind: bb4]
+  bb3:
+    Live(_12)
+    _12 = copy _9.0
+    Live(_13)
+    _13 = copy _9.1
+    Dead(_11)
+    Dead(_10)
+    Dead(_9)
+    _0 = Add<u64>(copy _12, copy _13)
+    Dead(_13)
+    Dead(_12)
+    Dead(_8)
+    Dead(_7)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_11)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_10)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_9)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_8)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_7)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb10)
+  bb10 (cleanup):
+    UnwindExit
+
+body b3: closure c0; parent b2; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = call sum_hp(copy _1.0) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b4: closure c1; parent b2; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = call sum_hp(copy _1.0) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b5: fn heal_all; cap_env e0; unwind_exit bb11
+  _0: () (Return)
+  _1: &World (Param(0) `world`)
+  _2: usize (User `mid`)
+  _3: usize (Temp(Operand))
+  _4: &Vec<Entity> (Temp(Receiver))
+  _5: (&[Entity], &[Entity]) (Temp(Scrutinee))
+  _6: usize (Temp(Operand))
+  _7: &Vec<Entity> (Temp(Receiver))
+  _8: &[Entity] (User `l`)
+  _9: &[Entity] (User `r`)
+  _10: ((), ()) (Temp(Discarded))
+  _11: fn() -> () (Temp(Operand))
+  _12: fn() -> () (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    Live(_4)
+    _4 = &(*_1).0
+    _3 = call Vec.len<Entity>(move _4) / e0 -> [bb1]
+  bb1:
+    _2 = Div<usize>(move _3, const 2usize)
+    Dead(_4)
+    Dead(_3)
+    Live(_5)
+    Live(_6)
+    _6 = copy _2
+    Live(_7)
+    _7 = &(*_1).0
+    _5 = call Vec.split_mut<Entity>(move _7, move _6) / e0 -> [bb2]
+  bb2:
+    Live(_8)
+    _8 = copy _5.0
+    Live(_9)
+    _9 = copy _5.1
+    Dead(_7)
+    Dead(_6)
+    Dead(_5)
+    Live(_10)
+    Live(_11)
+    _11 = closure c2(copy _8)
+    Live(_12)
+    _12 = closure c3(copy _9)
+    _10 = fork [sp2: move _11, sp3: move _12] -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_12)
+    Dead(_11)
+    Dead(_10)
+    _0 = const ()
+    Dead(_9)
+    Dead(_8)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_12)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_11)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_10)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_9)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_8)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_2)
+    Goto(bb10)
+  bb10 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb11)
+  bb11 (cleanup):
+    UnwindExit
+
+body b6: closure c2; parent b5; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    _0 = call heal(copy _1.0) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b7: closure c3; parent b5; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    _0 = call heal(copy _1.0) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit

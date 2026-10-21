@@ -1,0 +1,201 @@
+fn f0 Cluster.start(u64) -> Cluster / Net: b0
+fn f1 Cluster.leaders(&Cluster) -> Vec<u64>: b1
+fn f2 Vec.new<T0>() -> Vec<T0> / (): extern
+fn f3 Vec.push<T0>(&Vec<T0>, T0) -> () / (): extern
+fn f4 partition(Vec<u64>, Vec<u64>) -> () / Net: extern
+fn f5 advance(Duration) -> () / Clock: extern
+fn f6 Vec.len<T0>(&Vec<T0>) -> usize / (): extern
+fn f7 run(u64, u64, fn() -> ()) -> () / () [sim.run]: extern
+test t0 "election survives a partition": b2
+closure c0: body b3, maker b2, cap_env e0, captures []
+cap_env e0
+
+body b0: fn Cluster.start; cap_env e0; unwind_exit bb7
+  _0: Cluster (Return)
+  _1: u64 (Param(0) `n`)
+  _2: Vec<u64> (User `nodes`)
+  _3: u64 (User `i`)
+  _4: bool (Temp(Operand))
+  _5: () (Temp(Discarded))
+  _6: u64 (Temp(Operand))
+  _7: &Vec<u64> (Temp(Receiver))
+  _8: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Live(_3)
+    _3 = const 0u64
+    Goto(bb2)
+  bb2:
+    Live(_4)
+    _4 = Lt(copy _3, copy _1)
+    switch move _4 -> [1: bb3, otherwise: bb5]
+  bb3:
+    Dead(_4)
+    Live(_5)
+    Live(_6)
+    _6 = copy _3
+    Live(_7)
+    _7 = &_2
+    _5 = call Vec.push<u64>(move _7, move _6) / e0 -> [bb4]
+  bb4:
+    Dead(_7)
+    Dead(_6)
+    Dead(_5)
+    Live(_8)
+    _8 = Add<u64>(copy _3, const 1u64)
+    _3 = move _8
+    Dead(_8)
+    Goto(bb2)
+  bb5:
+    Dead(_4)
+    Goto(bb6)
+  bb6:
+    _0 = Cluster { move _2, const 2u64 }
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb7 (cleanup):
+    UnwindExit
+
+body b1: fn Cluster.leaders; cap_env e0; unwind_exit bb3
+  _0: Vec<u64> (Return)
+  _1: &Cluster (Param(0) `self`)
+  _2: Vec<u64> (User `out`)
+  _3: () (Temp(Discarded))
+  _4: u64 (Temp(Operand))
+  _5: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    _2 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Live(_3)
+    Live(_4)
+    _4 = copy (*_1).1
+    Live(_5)
+    _5 = &_2
+    _3 = call Vec.push<u64>(move _5, move _4) / e0 -> [bb2]
+  bb2:
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    _0 = move _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    UnwindExit
+
+body b2: test "election survives a partition"; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: fn() -> () (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = closure c0()
+    _0 = call run(const 42u64, const 4u64, move _1) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b3: closure c0; parent b2; cap_env e0; unwind_exit bb18
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: Cluster (User `cluster`)
+  _3: () (Temp(Discarded))
+  _4: Vec<u64> (Temp(Operand))
+  _5: Vec<u64> (Temp(Operand))
+  _6: () (Temp(Discarded))
+  _7: bool (Temp(Operand))
+  _8: usize (Temp(Operand))
+  _9: Vec<u64> (Temp(Receiver))
+  _10: &Cluster (Temp(Receiver))
+  _11: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    _2 = call Cluster.start(const 5u64) / e0 -> [bb1, unwind: bb16]
+  bb1:
+    Live(_3)
+    Live(_4)
+    _4 = vec[const 0u64, const 1u64]
+    Live(_5)
+    _5 = vec[const 2u64, const 3u64, const 4u64]
+    _3 = call partition(move _4, move _5) / e0 -> [bb2, unwind: bb13]
+  bb2:
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Live(_6)
+    _6 = call advance(const 30000ms) / e0 -> [bb3, unwind: bb12]
+  bb3:
+    Dead(_6)
+    Live(_7)
+    Live(_8)
+    Live(_9)
+    Live(_10)
+    _10 = &_2
+    _9 = call Cluster.leaders(move _10) / e0 -> [bb4, unwind: bb8]
+  bb4:
+    Live(_11)
+    _11 = &_9
+    _8 = call Vec.len<u64>(move _11) / e0 -> [bb5]
+  bb5:
+    _7 = Eq(move _8, const 1usize)
+    assert move _7 -> [bb6, unwind: bb7]
+  bb6:
+    Dead(_11)
+    Dead(_10)
+    Dead(_9)
+    Dead(_8)
+    Dead(_7)
+    _0 = const ()
+    Dead(_2)
+    Return
+  bb7 (cleanup):
+    Dead(_11)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_10)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindValue(_9, Drop)
+    Dead(_9)
+    Goto(bb10)
+  bb10 (cleanup):
+    Dead(_8)
+    Goto(bb11)
+  bb11 (cleanup):
+    Dead(_7)
+    Goto(bb16)
+  bb12 (cleanup):
+    Dead(_6)
+    Goto(bb16)
+  bb13 (cleanup):
+    UnwindValue(_5, Drop)
+    Dead(_5)
+    Goto(bb14)
+  bb14 (cleanup):
+    UnwindValue(_4, Drop)
+    Dead(_4)
+    Goto(bb15)
+  bb15 (cleanup):
+    Dead(_3)
+    Goto(bb16)
+  bb16 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb17)
+  bb17 (cleanup):
+    Dead(_0)
+    Goto(bb18)
+  bb18 (cleanup):
+    UnwindExit

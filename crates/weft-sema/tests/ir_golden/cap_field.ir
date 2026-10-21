@@ -11,16 +11,16 @@ body b0: fn main; cap_env e0; unwind_exit bb4
   bb0:
     Live(_1)
     _1 = const 2i64
-    _0 = handle h0 -> [bb3, unwind: bb2]
-  bb1 (cleanup):
-    Dead(_0)
-    Goto(bb4)
-  bb2 (cleanup):
-    Dead(_1)
-    Goto(bb1)
-  bb3:
+    _0 = handle h0 -> [bb1, unwind: bb2]
+  bb1:
     Dead(_1)
     Return
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
   bb4 (cleanup):
     UnwindExit
 
@@ -34,24 +34,24 @@ body b1: handled h0; parent b0; cap_env e1; unwind_exit bb5
     Live(_2)
     _2 = closure c0(copy _1)
     Live(_3)
-    _3 = call (copy _2)(const "one") / e1 -> [bb4, unwind: bb3]
-  bb1 (cleanup):
-    Dead(_0)
-    Dead(_1)
-    Goto(bb5)
-  bb2 (cleanup):
-    Dead(_2)
-    Goto(bb1)
-  bb3 (cleanup):
-    Dead(_3)
-    Goto(bb2)
-  bb4:
+    _3 = call (copy _2)(const "one") / e1 -> [bb1, unwind: bb2]
+  bb1:
     Dead(_3)
     Print(copy _4)
     _0 = const ()
     Dead(_2)
     Dead(_1)
     Return
+  bb2 (cleanup):
+    Dead(_3)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb5)
   bb5 (cleanup):
     UnwindExit
 
@@ -65,19 +65,19 @@ body b2: clause h0 say; parent b0; cap_env e0; unwind_exit bb4
     Print(copy _1)
     _3 = const ()
     Dead(_3)
-    _0 = resume _2(const ()) -> [bb3, unwind: bb2]
-  bb1 (cleanup):
-    Dead(_0)
-    Dead(_1)
-    Goto(bb4)
-  bb2 (cleanup):
-    UnwindKont(_2)
-    Dead(_2)
-    Goto(bb1)
-  bb3:
+    _0 = resume _2(const ()) -> [bb1, unwind: bb2]
+  bb1:
     Dead(_2)
     Dead(_1)
     Return
+  bb2 (cleanup):
+    UnwindKont(_2)
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
   bb4 (cleanup):
     UnwindExit
 
@@ -86,13 +86,13 @@ body b3: closure c0; parent b1; cap_env e2; unwind_exit bb3
   _1: fn(String) -> () (Env)
   _2: String (Param(0) `m`)
   bb0:
-    _0 = perform Local(_1.0).say(copy _2) -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = perform Local(_1.0).say(copy _2) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Return
+  bb2 (cleanup):
     Dead(_0)
     Dead(_2)
     Goto(bb3)
-  bb2:
-    Dead(_2)
-    Return
   bb3 (cleanup):
     UnwindExit

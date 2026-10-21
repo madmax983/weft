@@ -322,6 +322,12 @@ fn build_all(a: &Analysis) -> Built {
             outcome,
         });
     }
+    // The blocks in reverse post-order (`docs/ir.md` 5.1.9): the text reads
+    // from top to bottom, and each later pass sees a block after the blocks
+    // that go to it.
+    for body in &mut out.program.bodies {
+        weft_ir::order::renumber(body);
+    }
     out.broken = verify_program(&out.program, &out.tys);
     out
 }
@@ -802,6 +808,35 @@ impl<'a> Builder<'a> {
         crate::props::ir_props(self.tys, t)
     }
 
+    /// Returns the properties of the local of binding `b` of type `t`: the
+    /// properties of the type, and for a type with a function part also the
+    /// modes that the analysis infers for the values of the binding
+    /// (`docs/ir.md` 2.3, 5.22). A function type does not show that a value
+    /// is a linear, nonportable or `once` closure: `let g = f`, a parameter or
+    /// a pattern binding can hold one.
+    ///
+    /// `copy` does not change: it says how a read of the local runs (a copy
+    /// or a move), and so the mode of a capture of it. The analysis joins the
+    /// values of a variable over the whole body, also values that come later:
+    /// a closure that captures `c` before `c = || eat(b)` shares the cell of
+    /// `c` and calls the new value (late capture), so the read must stay a
+    /// copy. A local that holds a `once` value can so have `copy` and `once`:
+    /// the facts take a call of it as a move from `once`, not from `copy`.
+    fn binding_props_of(&self, b: BindingId, t: TyId) -> Props {
+        let mut p = self.props(t);
+        if !self.tys.mentions_fn(t) {
+            return p;
+        }
+        let Some(v) = self.t.binding_of(b).map(|x| x.value) else {
+            return p;
+        };
+        p.linear |= v.linear;
+        p.on_abort &= !v.no_on_abort;
+        p.nonportable |= v.nonportable;
+        p.once |= v.once;
+        p
+    }
+
     /// Returns the type of local `l`.
     fn local_ty(&self, l: LocalId) -> TyId {
         self.locals
@@ -942,7 +977,7 @@ impl<'a> Builder<'a> {
         };
         let (ty, name) = (binding.ty, binding.name.clone());
         let origin = self.origin(span, None);
-        let props = self.props(ty);
+        let props = self.binding_props_of(b, ty);
         let l = self.add_local(LocalDecl {
             ty,
             kind: LocalKind::User,

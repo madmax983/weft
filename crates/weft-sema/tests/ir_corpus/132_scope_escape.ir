@@ -1,0 +1,980 @@
+fn f0 run_it(fn() -> ()) -> (): b0
+fn f1 escape(&Stats) -> () / Async: b1
+fn f2 as_value(&Stats) -> () / Async: b6
+fn f3 as_field(&Stats) -> () / Async: b10
+fn f4 in_tuple(&Stats) -> () / Async: b15
+fn f5 in_option(&Stats) -> () / Async: b20
+fn f6 inside(&Stats) -> () / Async: b25
+fn f7 tuple_inside(&Stats) -> () / Async: b29
+fn f8 replaced(&Stats) -> () / Async: b33
+fn f9 main() -> () / Async: b39
+closure c0: body b2, maker b1, cap_env e0, captures []
+closure c1: body b4, maker b3, cap_env e0, captures [Kept _1, Kept _4]
+closure c2: body b5, maker b4, cap_env e0, captures [Kept _1.1]
+closure c3: body b8, maker b7, cap_env e0, captures [Kept _1, Kept _3]
+closure c4: body b9, maker b8, cap_env e0, captures [Kept _1.1]
+closure c5: body b11, maker b10, cap_env e0, captures []
+closure c6: body b13, maker b12, cap_env e0, captures [Kept _1, Kept _4]
+closure c7: body b14, maker b13, cap_env e0, captures [Kept _1.1]
+closure c8: body b16, maker b15, cap_env e0, captures []
+closure c9: body b18, maker b17, cap_env e0, captures [Kept _2, Kept _4]
+closure c10: body b19, maker b18, cap_env e0, captures [Kept _4, Kept _1.1]
+closure c11: body b21, maker b20, cap_env e0, captures []
+closure c12: body b23, maker b22, cap_env e0, captures [Kept _2, Kept _4]
+closure c13: body b24, maker b23, cap_env e0, captures [Kept _1.1]
+closure c14: body b27, maker b26, cap_env e0, captures [Kept _1, Kept _4]
+closure c15: body b28, maker b27, cap_env e0, captures [Kept _1.1]
+closure c16: body b31, maker b30, cap_env e0, captures [Kept _2, Kept _4]
+closure c17: body b32, maker b31, cap_env e0, captures [Kept _4, Kept _1.1]
+closure c18: body b34, maker b33, cap_env e0, captures []
+closure c19: body b36, maker b35, cap_env e0, captures [Kept _1, Kept _4]
+closure c20: body b37, maker b36, cap_env e0, captures [Kept _1.1]
+closure c21: body b38, maker b33, cap_env e0, captures []
+scope s0: body b3, site b1
+scope s1: body b7, site b6
+scope s2: body b12, site b10
+scope s3: body b17, site b15
+scope s4: body b22, site b20
+scope s5: body b26, site b25
+scope s6: body b30, site b29
+scope s7: body b35, site b33
+spawn sp0: scope s0
+spawn sp1: scope s1
+spawn sp2: scope s2
+spawn sp3
+spawn sp4
+spawn sp5: scope s5
+spawn sp6
+spawn sp7: scope s7
+cap_env e0
+
+body b0: fn run_it; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: fn() -> () (Param(0) `f`)
+  bb0:
+    _0 = call (copy _1)() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b1: fn escape; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: &Stats (Param(0) `st`)
+  _2: fn() -> () (User `keep`)
+  _3: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    _2 = closure c0()
+    Live(_3)
+    _3 = scope s0 -> [bb1, unwind: bb3]
+  bb1:
+    Dead(_3)
+    _0 = call (copy _2)() / e0 -> [bb2, unwind: bb4]
+  bb2:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_3)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b2: closure c0; parent b1; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    Print(const 0i64)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: scope s0; parent b1; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: () (TaskResult(sp0))
+  _3: fn() -> () (Temp(Operand))
+  _4: &Stats (Upvar(_1) `st`)
+  _5: fn() -> () (Upvar(_2) `keep`)
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c1(copy _1, copy _4)
+    _5 = move _3
+    Dead(_3)
+    _0 = const ()
+    scope_wait _1, orphans [_2] -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b4: closure c1; parent b3; cap_env e0; unwind_exit bb2
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: fn() -> () (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = closure c2(copy _1.1)
+    spawn sp0(copy _1.0, move _2) -> [bb1]
+  bb1:
+    Dead(_2)
+    _0 = const ()
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b5: closure c2; parent b4; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Add<u64>(copy (*_1.0).0, const 1u64)
+    (*_1.0).0 = move _2
+    Dead(_2)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b6: fn as_value; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: &Stats (Param(0) `st`)
+  _2: fn() -> () (User `k`)
+  bb0:
+    Live(_2)
+    _2 = scope s1 -> [bb1, unwind: bb3]
+  bb1:
+    _0 = call (copy _2)() / e0 -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b7: scope s1; parent b6; cap_env e0; unwind_exit bb5
+  _0: fn() -> () (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: () (TaskResult(sp1))
+  _3: &Stats (Upvar(_1) `st`)
+  bb0:
+    Live(_2)
+    _0 = closure c3(copy _1, copy _3)
+    scope_wait _1, orphans [_2] -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b8: closure c3; parent b7; cap_env e0; unwind_exit bb2
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: fn() -> () (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = closure c4(copy _1.1)
+    spawn sp1(copy _1.0, move _2) -> [bb1]
+  bb1:
+    Dead(_2)
+    _0 = const ()
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b9: closure c4; parent b8; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Add<u64>(copy (*_1.0).0, const 1u64)
+    (*_1.0).0 = move _2
+    Dead(_2)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b10: fn as_field; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: &Stats (Param(0) `st`)
+  _2: Job (User `j`)
+  _3: fn() -> () (Temp(Operand))
+  _4: () (Temp(Discarded))
+  _5: fn() -> () (User `g`)
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c5()
+    _2 = Job { move _3 }
+    Dead(_3)
+    Live(_4)
+    _4 = scope s2 -> [bb1, unwind: bb4]
+  bb1:
+    Dead(_4)
+    Live(_5)
+    _5 = copy _2.0
+    _0 = call (copy _5)() / e0 -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_5)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_5)
+    Goto(bb5)
+  bb4 (cleanup):
+    Dead(_4)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b11: closure c5; parent b10; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    Print(const 0i64)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b12: scope s2; parent b10; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: () (TaskResult(sp2))
+  _3: fn() -> () (Temp(Operand))
+  _4: &Stats (Upvar(_1) `st`)
+  _5: Job (Upvar(_2) `j`)
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c6(copy _1, copy _4)
+    _5.0 = move _3
+    Dead(_3)
+    _0 = const ()
+    scope_wait _1, orphans [_2] -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b13: closure c6; parent b12; cap_env e0; unwind_exit bb2
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: fn() -> () (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = closure c7(copy _1.1)
+    spawn sp2(copy _1.0, move _2) -> [bb1]
+  bb1:
+    Dead(_2)
+    _0 = const ()
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b14: closure c7; parent b13; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Add<u64>(copy (*_1.0).0, const 1u64)
+    (*_1.0).0 = move _2
+    Dead(_2)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b15: fn in_tuple; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: &Stats (Param(0) `st`)
+  _2: fn() -> () (User `keep`)
+  _3: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    _2 = closure c8()
+    Live(_3)
+    _3 = scope s3 -> [bb1, unwind: bb3]
+  bb1:
+    Dead(_3)
+    _0 = call (copy _2)() / e0 -> [bb2, unwind: bb4]
+  bb2:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_3)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b16: closure c8; parent b15; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    Print(const 0i64)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b17: scope s3; parent b15; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: (Scope, u64) (User `t`)
+  _3: fn() -> () (Temp(Operand))
+  _4: &Stats (Upvar(_1) `st`)
+  _5: fn() -> () (Upvar(_2) `keep`)
+  bb0:
+    Live(_2)
+    _2 = (copy _1, const 1u64)
+    Live(_3)
+    _3 = closure c9(copy _2, copy _4)
+    _5 = move _3
+    Dead(_3)
+    _0 = const ()
+    scope_wait _1 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b18: closure c9; parent b17; cap_env e0; unwind_exit bb2
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: (Scope, u64) (Temp(Scrutinee))
+  _3: Scope (User `a`)
+  _4: u64 (User `b`)
+  _5: fn() -> () (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Live(_3)
+    _3 = copy _2.0
+    Live(_4)
+    _4 = copy _2.1
+    Dead(_2)
+    Live(_5)
+    _5 = closure c10(copy _4, copy _1.1)
+    spawn sp3(copy _3, move _5) -> [bb1]
+  bb1:
+    Dead(_5)
+    _0 = const ()
+    Dead(_4)
+    Dead(_3)
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b19: closure c10; parent b18; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Add<u64>(copy (*_1.1).0, copy _1.0)
+    (*_1.1).0 = move _2
+    Dead(_2)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b20: fn in_option; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: &Stats (Param(0) `st`)
+  _2: fn() -> () (User `keep`)
+  _3: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    _2 = closure c11()
+    Live(_3)
+    _3 = scope s4 -> [bb1, unwind: bb3]
+  bb1:
+    Dead(_3)
+    _0 = call (copy _2)() / e0 -> [bb2, unwind: bb4]
+  bb2:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_3)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b21: closure c11; parent b20; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    Print(const 0i64)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b22: scope s4; parent b20; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: Option<Scope> (User `o`)
+  _3: fn() -> () (Temp(Operand))
+  _4: &Stats (Upvar(_1) `st`)
+  _5: fn() -> () (Upvar(_2) `keep`)
+  bb0:
+    Live(_2)
+    _2 = Option<Scope>::Some(copy _1)
+    Live(_3)
+    _3 = closure c12(copy _2, copy _4)
+    _5 = move _3
+    Dead(_3)
+    _0 = const ()
+    scope_wait _1 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b23: closure c12; parent b22; cap_env e0; unwind_exit bb9
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: usize (Temp(Scrutinee))
+  _3: Scope (User `a`)
+  _4: fn() -> () (Temp(Operand))
+  _5: usize (Temp(Scrutinee))
+  bb0:
+    Live(_2)
+    _2 = Discriminant(_1.0)
+    switch move _2 -> [0: bb1, otherwise: bb3]
+  bb1:
+    Dead(_2)
+    Live(_3)
+    _3 = copy (_1.0 as #0).0
+    Live(_4)
+    _4 = closure c13(copy _1.1)
+    spawn sp4(copy _3, move _4) -> [bb2]
+  bb2:
+    Dead(_4)
+    _0 = const ()
+    Dead(_3)
+    Goto(bb6)
+  bb3:
+    Dead(_2)
+    Goto(bb4)
+  bb4:
+    Live(_5)
+    _5 = Discriminant(_1.0)
+    switch move _5 -> [1: bb5, otherwise: bb7]
+  bb5:
+    Dead(_5)
+    _0 = const ()
+    Goto(bb6)
+  bb6:
+    Return
+  bb7:
+    Dead(_5)
+    Goto(bb8)
+  bb8:
+    Unreachable
+  bb9 (cleanup):
+    UnwindExit
+
+body b24: closure c13; parent b23; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Add<u64>(copy (*_1.0).0, const 1u64)
+    (*_1.0).0 = move _2
+    Dead(_2)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b25: fn inside; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: &Stats (Param(0) `st`)
+  bb0:
+    _0 = scope s5 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b26: scope s5; parent b25; cap_env e0; unwind_exit bb10
+  _0: () (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: () (TaskResult(sp5))
+  _3: fn() -> () (User `f`)
+  _4: &Stats (Upvar(_1) `st`)
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c14(copy _1, copy _4)
+    _0 = call run_it(copy _3) / e0 -> [bb1, unwind: bb7]
+  bb1:
+    scope_wait _1, orphans [_2] -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_3)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb10)
+  bb7 (cleanup):
+    Dead(_3)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_2)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb10)
+  bb10 (cleanup):
+    UnwindExit
+
+body b27: closure c14; parent b26; cap_env e0; unwind_exit bb2
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: fn() -> () (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = closure c15(copy _1.1)
+    spawn sp5(copy _1.0, move _2) -> [bb1]
+  bb1:
+    Dead(_2)
+    _0 = const ()
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b28: closure c15; parent b27; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Add<u64>(copy (*_1.0).0, const 1u64)
+    (*_1.0).0 = move _2
+    Dead(_2)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b29: fn tuple_inside; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: &Stats (Param(0) `st`)
+  bb0:
+    _0 = scope s6 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b30: scope s6; parent b29; cap_env e0; unwind_exit bb10
+  _0: () (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: (Scope, u64) (User `t`)
+  _3: fn() -> () (User `f`)
+  _4: &Stats (Upvar(_1) `st`)
+  bb0:
+    Live(_2)
+    _2 = (copy _1, const 1u64)
+    Live(_3)
+    _3 = closure c16(copy _2, copy _4)
+    _0 = call run_it(copy _3) / e0 -> [bb1, unwind: bb7]
+  bb1:
+    scope_wait _1 -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_3)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb10)
+  bb7 (cleanup):
+    Dead(_3)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_2)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb10)
+  bb10 (cleanup):
+    UnwindExit
+
+body b31: closure c16; parent b30; cap_env e0; unwind_exit bb2
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: (Scope, u64) (Temp(Scrutinee))
+  _3: Scope (User `a`)
+  _4: u64 (User `b`)
+  _5: fn() -> () (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Live(_3)
+    _3 = copy _2.0
+    Live(_4)
+    _4 = copy _2.1
+    Dead(_2)
+    Live(_5)
+    _5 = closure c17(copy _4, copy _1.1)
+    spawn sp6(copy _3, move _5) -> [bb1]
+  bb1:
+    Dead(_5)
+    _0 = const ()
+    Dead(_4)
+    Dead(_3)
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b32: closure c17; parent b31; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Add<u64>(copy (*_1.1).0, copy _1.0)
+    (*_1.1).0 = move _2
+    Dead(_2)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b33: fn replaced; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: &Stats (Param(0) `st`)
+  _2: fn() -> () (User `keep`)
+  _3: () (Temp(Discarded))
+  _4: fn() -> () (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = closure c18()
+    Live(_3)
+    _3 = scope s7 -> [bb1, unwind: bb3]
+  bb1:
+    Dead(_3)
+    Live(_4)
+    _4 = closure c21()
+    _2 = move _4
+    Dead(_4)
+    _0 = call (copy _2)() / e0 -> [bb2, unwind: bb4]
+  bb2:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_3)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b34: closure c18; parent b33; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    Print(const 0i64)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b35: scope s7; parent b33; cap_env e0; unwind_exit bb8
+  _0: () (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: () (TaskResult(sp7))
+  _3: fn() -> () (Temp(Operand))
+  _4: &Stats (Upvar(_1) `st`)
+  _5: fn() -> () (Upvar(_2) `keep`)
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c19(copy _1, copy _4)
+    _5 = move _3
+    Dead(_3)
+    _0 = call (copy _5)() / e0 -> [bb1, unwind: bb6]
+  bb1:
+    scope_wait _1, orphans [_2] -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb8)
+  bb6 (cleanup):
+    Dead(_2)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+
+body b36: closure c19; parent b35; cap_env e0; unwind_exit bb2
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: fn() -> () (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = closure c20(copy _1.1)
+    spawn sp7(copy _1.0, move _2) -> [bb1]
+  bb1:
+    Dead(_2)
+    _0 = const ()
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b37: closure c20; parent b36; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Add<u64>(copy (*_1.0).0, const 1u64)
+    (*_1.0).0 = move _2
+    Dead(_2)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b38: closure c21; parent b33; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    Print(const 1i64)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b39: fn main; cap_env e0; unwind_exit bb12
+  _0: () (Return)
+  _1: Stats (User `st`)
+  _2: () (Temp(Discarded))
+  _3: &Stats (Temp(Operand))
+  _4: () (Temp(Discarded))
+  _5: &Stats (Temp(Operand))
+  _6: () (Temp(Discarded))
+  _7: &Stats (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = Stats { const 0u64 }
+    Live(_2)
+    Live(_3)
+    _3 = &_1
+    _2 = call inside(move _3) / e0 -> [bb1, unwind: bb8]
+  bb1:
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    Live(_5)
+    _5 = &_1
+    _4 = call tuple_inside(move _5) / e0 -> [bb2, unwind: bb6]
+  bb2:
+    Dead(_5)
+    Dead(_4)
+    Live(_6)
+    Live(_7)
+    _7 = &_1
+    _6 = call replaced(move _7) / e0 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_7)
+    Dead(_6)
+    Print(copy _1.0)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_7)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_6)
+    Goto(bb10)
+  bb6 (cleanup):
+    Dead(_5)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_4)
+    Goto(bb10)
+  bb8 (cleanup):
+    Dead(_3)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_2)
+    Goto(bb10)
+  bb10 (cleanup):
+    Dead(_1)
+    Goto(bb11)
+  bb11 (cleanup):
+    Dead(_0)
+    Goto(bb12)
+  bb12 (cleanup):
+    UnwindExit

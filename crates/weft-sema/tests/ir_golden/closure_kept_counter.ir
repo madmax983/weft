@@ -45,44 +45,23 @@ body b2: fn main; cap_env e0; unwind_exit bb12
     Live(_2)
     _2 = closure c1(copy _1)
     Live(_3)
-    _3 = call (copy _2)() / e0 -> [bb5, unwind: bb4]
-  bb1 (cleanup):
-    Dead(_0)
-    Goto(bb12)
-  bb2 (cleanup):
-    Dead(_1)
-    Goto(bb1)
-  bb3 (cleanup):
-    Dead(_2)
-    Goto(bb2)
-  bb4 (cleanup):
-    Dead(_3)
-    Goto(bb3)
-  bb5:
+    _3 = call (copy _2)() / e0 -> [bb1, unwind: bb8]
+  bb1:
     Dead(_3)
     Live(_4)
-    _4 = call (copy _2)() / e0 -> [bb7, unwind: bb6]
-  bb6 (cleanup):
-    Dead(_4)
-    Goto(bb3)
-  bb7:
+    _4 = call (copy _2)() / e0 -> [bb2, unwind: bb7]
+  bb2:
     Dead(_4)
     Live(_5)
     Print(copy _1)
     _5 = const ()
     Dead(_5)
     Live(_6)
-    _6 = call counter() / e0 -> [bb9, unwind: bb8]
-  bb8 (cleanup):
-    Dead(_6)
-    Goto(bb3)
-  bb9:
+    _6 = call counter() / e0 -> [bb3, unwind: bb6]
+  bb3:
     Live(_7)
-    _7 = call (copy _6)() / e0 -> [bb11, unwind: bb10]
-  bb10 (cleanup):
-    Dead(_7)
-    Goto(bb8)
-  bb11:
+    _7 = call (copy _6)() / e0 -> [bb4, unwind: bb5]
+  bb4:
     Print(copy _7)
     _0 = const ()
     Dead(_6)
@@ -90,6 +69,27 @@ body b2: fn main; cap_env e0; unwind_exit bb12
     Dead(_1)
     Dead(_7)
     Return
+  bb5 (cleanup):
+    Dead(_7)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_6)
+    Goto(bb9)
+  bb7 (cleanup):
+    Dead(_4)
+    Goto(bb9)
+  bb8 (cleanup):
+    Dead(_3)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_2)
+    Goto(bb10)
+  bb10 (cleanup):
+    Dead(_1)
+    Goto(bb11)
+  bb11 (cleanup):
+    Dead(_0)
+    Goto(bb12)
   bb12 (cleanup):
     UnwindExit
 

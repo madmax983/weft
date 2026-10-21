@@ -235,9 +235,11 @@ value that the program makes fixes the type of the variable that holds it, so no
 of a free type variable can exist at run time. A body with `Ty::Error` gets no IR (5).
 
 `Props` (section 3) comes from one function, `crates/weft-sema/src/props.rs`, applied to
-the final type. The builder stores it in each `LocalDecl`. The facts read the flags of
-a variable from the props of its move path, joined with the modes of the closures that
-the analysis says it can hold (V061).
+the final type. The builder stores it in each `LocalDecl`. For a binding whose type has
+a function part, the builder joins the modes that the analysis infers for its values
+(`thir::Binding::value`, 5.22). The facts read the flags of a variable from the props of
+its move path, joined with the modes of the closures that the analysis says it can hold
+(V061).
 
 ### 2.4 Checks that stay in `typeck`
 
@@ -925,6 +927,27 @@ linear on such chains. `crates/weft-cli/tests/limits.rs` and
 `crates/weft-check/tests/scale.rs` run with the IR pipeline in each stage of the plan
 that changes the builder or the analysis.
 
+As built (plan stage B12):
+
+- At the end of the build, `weft_ir::order::renumber` gives the blocks of each body new
+  numbers in reverse post-order. The walk visits the successors of a block from the
+  last one, so the first successor comes right after its block: the next block of a
+  call before its cleanup block, the first arm of a `Switch` before the others, the
+  body of a loop before its exit. The blocks that the entry does not reach come last.
+  So the text reads from top to bottom, and each edge that is not a back edge goes to a
+  larger number. The verifier does not need this order: it computes its own.
+- The verifier has no pass that is quadratic in the blocks. The dominators come from
+  the algorithm of Lengauer and Tarjan (a wide `match` has one block with an edge in
+  from each failed test). The storage rules V4 to V6 keep one bit set of cells only for
+  the entry and for each block with more than one edge in; a walk from such a block
+  goes on into each block with one edge in, and a worklist takes these blocks in
+  reverse post-order. So the memory is the join blocks times the locals / 64 words.
+- The size of the IR itself is not linear in the source in one case: each abort point
+  lists each live temporary in its cleanup chain, and a temporary of an outer statement
+  (the value of an `if` statement) lives across all of its inner statements. So nested
+  `if` statements with calls give about depth times calls cleanup blocks (80 levels with
+  100 calls each: 330 000 blocks). The nesting limit of the parser bounds the factor.
+
 ### 5.2 Function body, parameters, exit [2.1]
 
 ```text
@@ -1363,6 +1386,14 @@ body c (Closure):  params _1 = env, _2 = p; _0
   `once` (also for a field that is `@ uniq`), and `copy` only if the closure is not
   `once`. So the chains finish it (5.1.6), and a read of it moves it (5.21). The analysis
   joins the modes of the closures that a value can hold for each other place (2.3).
+- Each other local of a binding whose type has a function part (`let g = f`, a
+  parameter of a function, of a closure or of a clause, a pattern binding) gets the
+  modes that the analysis infers for the values of the binding (`Binding::value` of the
+  THIR, from the `VarInfo` flags of its variables): linear, no `on abort`, nonportable,
+  `once`, and `copy` only if it is not `once` (plan stage B12). A function parameter
+  holds a value that the body does not know, so the analysis gives it no closure modes.
+  A field of a function type has the props of its type: the facts take the modes of the
+  closures that it can hold from the analysis (2.3).
 - **Goes away:** `{closure}` hidden variables, `note_capture`, `moved_captures`,
   `captures_live_at`, the `closure end` node, `late_join` and its functions (RR7, V103,
   V104, O3-11, F3-11), `union_ret`, the `by_value` export (OR2, V017).

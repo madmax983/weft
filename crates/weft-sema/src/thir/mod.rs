@@ -63,6 +63,26 @@ pub struct Binding {
     /// The type of the local. A pattern that binds by reference has a
     /// reference type here: [`Tables::pat_ty`] has the type of the value.
     pub ty: TyId,
+    /// What the analysis infers about the values of the local, over each
+    /// variable of the analysis that the binding makes.
+    pub value: ValueProps,
+}
+
+/// The properties of the values of a binding as the analysis infers them.
+///
+/// They come from `weft_facts::VarInfo`. For a function value they come from
+/// the closures that the value can be (`docs/ir.md` 2.3, 5.22): its type does
+/// not show them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ValueProps {
+    /// A value is linear.
+    pub linear: bool,
+    /// A linear part of a value has no `on abort`.
+    pub no_on_abort: bool,
+    /// A value is not `many`: a call of a `once` closure takes it.
+    pub once: bool,
+    /// A value cannot cross threads.
+    pub nonportable: bool,
 }
 
 /// A built-in callee or name.

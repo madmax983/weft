@@ -29,6 +29,7 @@
 
 pub mod body;
 pub mod decl;
+pub mod order;
 pub mod place;
 pub mod print;
 pub mod stmt;

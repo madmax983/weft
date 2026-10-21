@@ -195,7 +195,7 @@ impl Builder<'_> {
             let Some((b, pty, name)) = self.binder(Binder::ClauseParam(e.id, ci, k)) else {
                 return unsupported(Construct::NoThir, c.span);
             };
-            let props = self.props(pty);
+            let props = self.binding_props_of(b, pty);
             let l = self.add_local(LocalDecl {
                 ty: pty,
                 kind: LocalKind::Param(k),

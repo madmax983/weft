@@ -24,19 +24,8 @@ body b0: fn main; cap_env e0; unwind_exit bb7
     Dead(_3)
     Dead(_2)
     Live(_4)
-    _4 = handle h0 -> [bb6, unwind: bb5]
-  bb3 (cleanup):
-    Dead(_0)
-    Goto(bb7)
-  bb4 (cleanup):
-    UnwindValue(_1, Drop)
-    Dead(_1)
-    Goto(bb3)
-  bb5 (cleanup):
-    UnwindValue(_4, Drop)
-    Dead(_4)
-    Goto(bb4)
-  bb6:
+    _4 = handle h0 -> [bb3, unwind: bb4]
+  bb3:
     Live(_5)
     _5 = const 0usize
     Bounds(_4, copy _5)
@@ -46,6 +35,17 @@ body b0: fn main; cap_env e0; unwind_exit bb7
     Dead(_1)
     Dead(_5)
     Return
+  bb4 (cleanup):
+    UnwindValue(_4, Drop)
+    Dead(_4)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Goto(bb7)
   bb7 (cleanup):
     UnwindExit
 
@@ -56,19 +56,19 @@ body b1: handled h0; parent b0; cap_env e1; unwind_exit bb4
   _3: Vec<i64> (Upvar(_1) `u`)
   bb0:
     Live(_2)
-    _2 = perform Local(_1).choose() -> [bb3, unwind: bb2]
-  bb1 (cleanup):
-    Dead(_0)
-    Dead(_1)
-    Goto(bb4)
-  bb2 (cleanup):
-    Dead(_2)
-    Goto(bb1)
-  bb3:
+    _2 = perform Local(_1).choose() -> [bb1, unwind: bb2]
+  bb1:
     _0 = move _3
     Dead(_2)
     Dead(_1)
     Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
   bb4 (cleanup):
     UnwindExit
 
@@ -78,27 +78,27 @@ body b2: clause h0 choose; parent b0; cap_env e0; unwind_exit bb7
   _2: Vec<i64> (Temp(Discarded))
   bb0:
     Live(_2)
-    _2 = resume _1(const true) -> [bb4, unwind: bb3]
-  bb1 (cleanup):
-    Dead(_0)
-    Goto(bb7)
-  bb2 (cleanup):
-    UnwindValue(_2, Drop)
+    _2 = resume _1(const true) -> [bb1, unwind: bb4]
+  bb1:
     Dead(_2)
-    Goto(bb1)
+    _0 = resume _1(const false) -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_1)
+    Return
   bb3 (cleanup):
     UnwindKont(_1)
     Dead(_1)
-    Goto(bb2)
-  bb4:
-    Dead(_2)
-    _0 = resume _1(const false) -> [bb6, unwind: bb5]
-  bb5 (cleanup):
+    Goto(bb6)
+  bb4 (cleanup):
     UnwindKont(_1)
     Dead(_1)
-    Goto(bb1)
-  bb6:
-    Dead(_1)
-    Return
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Goto(bb7)
   bb7 (cleanup):
     UnwindExit

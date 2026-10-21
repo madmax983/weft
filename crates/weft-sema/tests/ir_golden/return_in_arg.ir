@@ -117,14 +117,8 @@ body b2: fn in_loop; cap_env e0; unwind_exit bb8
     Goto(bb1)
   bb1:
     Live(_4)
-    _4 = next _3 -> [bb3, done: bb4]
+    _4 = next _3 -> [bb2, done: bb6]
   bb2:
-    Dead(_3)
-    _0 = copy _2
-    Dead(_2)
-    Dead(_1)
-    Return
-  bb3:
     Live(_5)
     _5 = copy _4
     Live(_6)
@@ -137,11 +131,8 @@ body b2: fn in_loop; cap_env e0; unwind_exit bb8
     Live(_11)
     Live(_12)
     _12 = Gt(copy _5, const 5u64)
-    switch move _12 -> [1: bb5, otherwise: bb6]
-  bb4:
-    Dead(_4)
-    Goto(bb2)
-  bb5:
+    switch move _12 -> [1: bb3, otherwise: bb4]
+  bb3:
     _0 = copy _2
     Dead(_12)
     Dead(_11)
@@ -156,10 +147,10 @@ body b2: fn in_loop; cap_env e0; unwind_exit bb8
     Dead(_2)
     Dead(_1)
     Return
-  bb6:
+  bb4:
     _11 = const ()
-    Goto(bb7)
-  bb7:
+    Goto(bb5)
+  bb5:
     Dead(_12)
     Dead(_11)
     _10 = const 1u64
@@ -174,6 +165,15 @@ body b2: fn in_loop; cap_env e0; unwind_exit bb8
     Dead(_5)
     Dead(_4)
     Goto(bb1)
+  bb6:
+    Dead(_4)
+    Goto(bb7)
+  bb7:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
   bb8 (cleanup):
     UnwindExit
 
@@ -206,21 +206,14 @@ body b5: fn call; cap_env e0; unwind_exit bb9
   _5: bool (Temp(Operand))
   bb0:
     Live(_2)
-    _2 = call two() / e0 -> [bb3, unwind: bb2]
-  bb1 (cleanup):
-    Dead(_0)
-    Dead(_1)
-    Goto(bb9)
-  bb2 (cleanup):
-    Dead(_2)
-    Goto(bb1)
-  bb3:
+    _2 = call two() / e0 -> [bb1, unwind: bb7]
+  bb1:
     Live(_3)
     Live(_4)
     Live(_5)
     _5 = Gt(copy _1, const 3u64)
-    switch move _5 -> [1: bb4, otherwise: bb5]
-  bb4:
+    switch move _5 -> [1: bb2, otherwise: bb3]
+  bb2:
     _0 = const 0u64
     Dead(_5)
     Dead(_4)
@@ -228,21 +221,28 @@ body b5: fn call; cap_env e0; unwind_exit bb9
     Dead(_2)
     Dead(_1)
     Return
-  bb5:
+  bb3:
     _4 = const ()
-    Goto(bb6)
-  bb6:
+    Goto(bb4)
+  bb4:
     Dead(_5)
     Dead(_4)
     _3 = copy _1
-    _0 = call add2(move _2, move _3) / e0 -> [bb8, unwind: bb7]
-  bb7 (cleanup):
-    Dead(_3)
-    Goto(bb2)
-  bb8:
+    _0 = call add2(move _2, move _3) / e0 -> [bb5, unwind: bb6]
+  bb5:
     Dead(_3)
     Dead(_2)
     Dead(_1)
     Return
+  bb6 (cleanup):
+    Dead(_3)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_2)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb9)
   bb9 (cleanup):
     UnwindExit

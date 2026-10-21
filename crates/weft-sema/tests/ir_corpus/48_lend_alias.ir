@@ -1,0 +1,304 @@
+fn f0 apply(fn(&World) -> (), &World) -> (): b0
+fn f1 give_two(fn(&World, &Entity) -> (), &World) -> (): b1
+fn f2 give_closure(fn(fn() -> (), &World) -> (), &World) -> (): b2
+fn f3 lend_and_read(fn(&World) -> (), &World) -> (): b4
+fn f4 give_other(fn(&World, &Entity) -> (), &World, &World) -> (): b6
+fn f5 lend_other(fn(&World) -> (), &World, &World) -> (): b7
+closure c0: body b3, maker b2, cap_env e0, captures [Kept _3]
+closure c1: body b5, maker b4, cap_env e0, captures [Kept _1, Kept _3]
+closure c2: body b8, maker b7, cap_env e0, captures [Kept _1, Kept _4]
+cap_env e0
+
+body b0: fn apply; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: fn(&World) -> () (Param(0) `f`)
+  _2: &World (Param(1) `w`)
+  bb0:
+    _0 = call (copy _1)(copy _2) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b1: fn give_two; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: fn(&World, &Entity) -> () (Param(0) `f`)
+  _2: &World (Param(1) `w`)
+  _3: fn(&World, &Entity) -> () (Temp(Callee))
+  _4: &World (Temp(Operand))
+  _5: &Entity (Temp(Operand))
+  _6: usize (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = copy _1
+    Live(_4)
+    _4 = copy _2
+    Live(_5)
+    Live(_6)
+    _6 = const 0usize
+    Bounds((*_2).0, copy _6)
+    _5 = &(*_2).0[_6]
+    _0 = call (copy _3)(move _4, move _5) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_6)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_5)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_4)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_3)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b2: fn give_closure; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: fn(fn() -> (), &World) -> () (Param(0) `g`)
+  _2: &World (Param(1) `world`)
+  _3: &Entity (User `r`)
+  _4: usize (Temp(Operand))
+  _5: fn(fn() -> (), &World) -> () (Temp(Callee))
+  _6: fn() -> () (Temp(Operand))
+  bb0:
+    Live(_3)
+    Live(_4)
+    _4 = const 0usize
+    Bounds((*_2).0, copy _4)
+    _3 = &(*_2).0[_4]
+    Dead(_4)
+    Live(_5)
+    _5 = copy _1
+    Live(_6)
+    _6 = closure c0(copy _3)
+    _0 = call (copy _5)(move _6, copy _2) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_3)
+    Dead(_6)
+    Dead(_5)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_6)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_5)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_3)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b3: closure c0; parent b2; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    Print(copy (*_1.0).0)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: fn lend_and_read; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: fn(&World) -> () (Param(0) `f`)
+  _2: &World (Param(1) `w`)
+  _3: &Entity (User `r`)
+  _4: usize (Temp(Operand))
+  _5: fn(&World) -> () (Temp(Operand))
+  bb0:
+    Live(_3)
+    Live(_4)
+    _4 = const 0usize
+    Bounds((*_2).0, copy _4)
+    _3 = &(*_2).0[_4]
+    Dead(_4)
+    Live(_5)
+    _5 = closure c1(copy _1, copy _3)
+    _0 = call apply(move _5, copy _2) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_3)
+    Dead(_5)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_5)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_3)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b5: closure c1; parent b4; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: fn(&World) -> () (Env)
+  _2: &World (Param(0) `x`)
+  _3: () (Temp(Discarded))
+  bb0:
+    Live(_3)
+    _3 = call (copy _1.0)(copy _2) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_3)
+    Print(copy (*_1.1).0)
+    _0 = const ()
+    Dead(_2)
+    Return
+  bb2 (cleanup):
+    Dead(_3)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b6: fn give_other; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: fn(&World, &Entity) -> () (Param(0) `f`)
+  _2: &World (Param(1) `w`)
+  _3: &World (Param(2) `o`)
+  _4: fn(&World, &Entity) -> () (Temp(Callee))
+  _5: &World (Temp(Operand))
+  _6: &Entity (Temp(Operand))
+  _7: usize (Temp(Operand))
+  bb0:
+    Live(_4)
+    _4 = copy _1
+    Live(_5)
+    _5 = copy _2
+    Live(_6)
+    Live(_7)
+    _7 = const 0usize
+    Bounds((*_3).0, copy _7)
+    _6 = &(*_3).0[_7]
+    _0 = call (copy _4)(move _5, move _6) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_7)
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_7)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_6)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_5)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_4)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b7: fn lend_other; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: fn(&World) -> () (Param(0) `f`)
+  _2: &World (Param(1) `w`)
+  _3: &World (Param(2) `o`)
+  _4: &Entity (User `r`)
+  _5: usize (Temp(Operand))
+  _6: fn(&World) -> () (Temp(Operand))
+  bb0:
+    Live(_4)
+    Live(_5)
+    _5 = const 0usize
+    Bounds((*_3).0, copy _5)
+    _4 = &(*_3).0[_5]
+    Dead(_5)
+    Live(_6)
+    _6 = closure c2(copy _1, copy _4)
+    _0 = call apply(move _6, copy _2) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_4)
+    Dead(_6)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_6)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_4)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b8: closure c2; parent b7; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: fn(&World) -> () (Env)
+  _2: &World (Param(0) `x`)
+  _3: () (Temp(Discarded))
+  bb0:
+    Live(_3)
+    _3 = call (copy _1.0)(copy _2) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_3)
+    Print(copy (*_1.1).0)
+    _0 = const ()
+    Dead(_2)
+    Return
+  bb2 (cleanup):
+    Dead(_3)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit

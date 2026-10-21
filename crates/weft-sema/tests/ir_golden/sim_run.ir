@@ -21,16 +21,16 @@ body b1: test "default workers"; cap_env e0; unwind_exit bb4
   bb0:
     Live(_1)
     _1 = closure c0()
-    _0 = call run(const 7u64, const 4u64, move _1) / e0 -> [bb3, unwind: bb2]
-  bb1 (cleanup):
-    Dead(_0)
-    Goto(bb4)
-  bb2 (cleanup):
-    Dead(_1)
-    Goto(bb1)
-  bb3:
+    _0 = call run(const 7u64, const 4u64, move _1) / e0 -> [bb1, unwind: bb2]
+  bb1:
     Dead(_1)
     Return
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
   bb4 (cleanup):
     UnwindExit
 
@@ -38,12 +38,12 @@ body b2: closure c0; parent b1; cap_env e0; unwind_exit bb3
   _0: () (Return)
   _1: fn() -> () (Env)
   bb0:
-    _0 = call work() / e0 -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = call work() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
     Dead(_0)
     Goto(bb3)
-  bb2:
-    Return
   bb3 (cleanup):
     UnwindExit
 
@@ -53,16 +53,16 @@ body b3: test "two workers"; cap_env e0; unwind_exit bb4
   bb0:
     Live(_1)
     _1 = closure c1()
-    _0 = call run(const 7u64, const 2u64, move _1) / e0 -> [bb3, unwind: bb2]
-  bb1 (cleanup):
-    Dead(_0)
-    Goto(bb4)
-  bb2 (cleanup):
-    Dead(_1)
-    Goto(bb1)
-  bb3:
+    _0 = call run(const 7u64, const 2u64, move _1) / e0 -> [bb1, unwind: bb2]
+  bb1:
     Dead(_1)
     Return
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
   bb4 (cleanup):
     UnwindExit
 
@@ -70,11 +70,11 @@ body b4: closure c1; parent b3; cap_env e0; unwind_exit bb3
   _0: () (Return)
   _1: fn() -> () (Env)
   bb0:
-    _0 = call work() / e0 -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = call work() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
     Dead(_0)
     Goto(bb3)
-  bb2:
-    Return
   bb3 (cleanup):
     UnwindExit

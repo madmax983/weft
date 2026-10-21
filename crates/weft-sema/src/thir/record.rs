@@ -15,7 +15,7 @@ use weft_facts::VarId;
 
 use super::{
     Binder, Binding, BindingId, Builtin, CallInfo, Callee, ClosureInfo, Conflict, DerefKind,
-    ExprId, FieldIdx, HandleInfo, Key, PatId, Recv, Res, Tables,
+    ExprId, FieldIdx, HandleInfo, Key, PatId, Recv, Res, Tables, ValueProps,
 };
 use crate::ids::{FnId, ModId};
 use crate::types::{Infer, IrTyError, Ty};
@@ -412,8 +412,15 @@ fn idx(i: usize) -> u32 {
 }
 
 /// Makes the tables of a body from its settled records ([`Recorder::settle`]).
-/// The final types go into `table`.
-pub fn build(prog: &crate::Program, table: &mut weft_ir::TyTable, rec: Recorder) -> Tables {
+/// The final types go into `table`. `vars` are the variables of the facts of
+/// the body: each binding gets the properties of its variables
+/// ([`Binding::value`]).
+pub fn build(
+    prog: &crate::Program,
+    table: &mut weft_ir::TyTable,
+    rec: Recorder,
+    vars: &[weft_facts::VarInfo],
+) -> Tables {
     let mut b = Build {
         prog,
         table,
@@ -422,6 +429,18 @@ pub fn build(prog: &crate::Program, table: &mut weft_ir::TyTable, rec: Recorder)
     // The bindings, in the order of their binders.
     let binders: BTreeMap<Binder, (String, Vec<Ty>)> = rec.binders.into_iter().collect();
     let mut ids: BTreeMap<Binder, BindingId> = BTreeMap::new();
+    // The properties of the variables of each binder, as the analysis ends.
+    let mut values: HashMap<Binder, ValueProps> = HashMap::new();
+    for (v, binder) in &rec.var_binder {
+        let Some(info) = vars.get(v.index()) else {
+            continue;
+        };
+        let x = values.entry(*binder).or_default();
+        x.linear |= info.linear;
+        x.no_on_abort |= info.linear && !info.has_on_abort;
+        x.once |= info.once;
+        x.nonportable |= info.nonportable;
+    }
     for (binder, (name, ts)) in binders {
         let key = match binder {
             Binder::Pat(p) => Key::Pat(p),
@@ -435,7 +454,13 @@ pub fn build(prog: &crate::Program, table: &mut weft_ir::TyTable, rec: Recorder)
             .one_ty("binding", key, &ts)
             .unwrap_or_else(|| b.table.unit());
         let id = BindingId(idx(b.out.bindings.len()));
-        b.out.bindings.push(Binding { binder, name, ty });
+        let value = values.get(&binder).copied().unwrap_or_default();
+        b.out.bindings.push(Binding {
+            binder,
+            name,
+            ty,
+            value,
+        });
         ids.insert(binder, id);
         if let Binder::Pat(p) = binder {
             b.out.binding.insert(p, id);

@@ -515,6 +515,30 @@ impl TyTable {
         }
     }
 
+    /// Returns true if type `id` has a function type as a part: the type itself,
+    /// or a part of a tuple, an array, a slice, a reference or a type argument. A
+    /// value of such a type can hold a closure, whose properties come from the
+    /// analysis and not from the type.
+    pub fn mentions_fn(&self, id: TyId) -> bool {
+        let Some(t) = self.try_get(id) else {
+            return false;
+        };
+        let m = |x: &TyId| self.mentions_fn(*x);
+        match t {
+            Ty::Fn(_) => true,
+            Ty::Tuple(ts) | Ty::Adt(_, ts) => ts.iter().any(m),
+            Ty::Array(x, _) | Ty::Slice(x) | Ty::Ref(x) | Ty::Iter(x) => m(x),
+            Ty::Cont(..)
+            | Ty::Param(_)
+            | Ty::Unit
+            | Ty::Bool
+            | Ty::Never
+            | Ty::Int(_)
+            | Ty::Scope
+            | Ty::Cap(_) => false,
+        }
+    }
+
     /// Returns true if a value of type `id` is not plain data: it moves, it is not
     /// copied. This is the one source of the copy property: the verifier (rule V9)
     /// and `weft_sema::props::ir_props` both use it. A function type is plain data

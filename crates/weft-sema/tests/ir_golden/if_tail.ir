@@ -92,24 +92,24 @@ body b3: fn chain; cap_env e0; unwind_exit bb7
     switch move _2 -> [1: bb1, otherwise: bb2]
   bb1:
     _0 = const 10u64
-    Goto(bb3)
+    Goto(bb6)
   bb2:
     Live(_3)
     _3 = Eq(copy _1, const 1u64)
-    switch move _3 -> [1: bb4, otherwise: bb5]
+    switch move _3 -> [1: bb3, otherwise: bb4]
   bb3:
+    _0 = const 20u64
+    Goto(bb5)
+  bb4:
+    _0 = const 30u64
+    Goto(bb5)
+  bb5:
+    Dead(_3)
+    Goto(bb6)
+  bb6:
     Dead(_2)
     Dead(_1)
     Return
-  bb4:
-    _0 = const 20u64
-    Goto(bb6)
-  bb5:
-    _0 = const 30u64
-    Goto(bb6)
-  bb6:
-    Dead(_3)
-    Goto(bb3)
   bb7 (cleanup):
     UnwindExit
 

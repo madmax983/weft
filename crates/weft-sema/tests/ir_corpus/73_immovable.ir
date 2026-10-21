@@ -1,0 +1,925 @@
+fn f0 keep(Outer) -> (): b0
+fn f1 moves_outer() -> (): b1
+fn f2 outer_in_place() -> (): b2
+fn f3 take_opt(Option<Frame>) -> (): b3
+fn f4 in_option() -> (): b4
+fn f5 in_tuple() -> (): b5
+fn f6 in_vec() -> (): b6
+fn f7 boxed(Box<Frame>) -> Box<Frame>: b7
+fn f8 cur_outside() -> (): b8
+fn f9 cur_inside() -> (): b9
+fn f10 cur_literal_outside(&Vec<u8>) -> (): b10
+fn f11 cur_unset() -> (): b11
+fn f12 cur_unset_borrow() -> (): b12
+fn f13 cur_set_on_one_path(bool) -> (): b13
+fn f14 buf_only() -> (): b14
+fn f15 cur_set_then_borrow() -> (): b15
+fn f16 Frame.peek(&Frame) -> u8: b16
+fn f17 method_before_set() -> (): b17
+fn f18 method_after_set() -> (): b18
+fn f19 mk() -> Frame: b19
+fn f20 from_call() -> (): b20
+fn f21 from_call_set() -> (): b21
+fn f22 nested_literal() -> (): b22
+fn f23 tuple_literal() -> (): b23
+fn f24 param_frame(Frame) -> (): b24
+fn f25 param_frame_set(Frame) -> (): b25
+fn f26 closure_reads_unset() -> (): b26
+fn f27 closure_reads_set() -> (): b28
+fn f28 closure_reads_buf() -> (): b30
+fn f29 branch_moves(bool) -> (): b32
+fn f30 boxed_in_place() -> (): b33
+fn f31 Vec.new<T0>() -> Vec<T0> / (): extern
+fn f32 Vec.push<T0>(&Vec<T0>, T0) -> () / (): extern
+fn f33 Box.new<T0>(T0) -> Box<T0> / (): extern
+closure c0: body b27, maker b26, cap_env e0, captures [ByRef _1]
+closure c1: body b29, maker b28, cap_env e0, captures [ByRef _1]
+closure c2: body b31, maker b30, cap_env e0, captures [ByRef _1]
+cap_env e0
+
+body b0: fn keep; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Outer (Param(0) `o`)
+  bb0:
+    Uninit(_1.0.1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn moves_outer; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: Outer (User `o`)
+  _2: Frame (Temp(Operand), in place)
+  _3: [u8; 4] (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    Live(_3)
+    _3 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _2 = Frame { move _3, const () }
+    Uninit(_2.1)
+    _1 = Outer { move _2, const 1u64 }
+    Dead(_3)
+    Dead(_2)
+    _0 = call keep(move _1) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b2: fn outer_in_place; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Outer (User `o`)
+  _2: Frame (Temp(Operand), in place)
+  _3: [u8; 4] (Temp(Operand))
+  _4: &u8 (Temp(Operand))
+  _5: usize (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    Live(_3)
+    _3 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _2 = Frame { move _3, const () }
+    Uninit(_2.1)
+    _1 = Outer { move _2, const 1u64 }
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    Live(_5)
+    _5 = const 0usize
+    Bounds(_1.0.0, copy _5)
+    _4 = &_1.0.0[_5]
+    _1.0.1 = move _4
+    Dead(_5)
+    Dead(_4)
+    Print(copy _1.0.1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn take_opt; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Option<Frame> (Param(0) `o`)
+  bb0:
+    Uninit((_1 as #0).0.1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: fn in_option; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: Option<Frame> (User `o`)
+  _2: Frame (Temp(Operand), in place)
+  _3: [u8; 4] (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    Live(_3)
+    _3 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _2 = Frame { move _3, const () }
+    Uninit(_2.1)
+    _1 = Option<Frame>::Some(move _2)
+    Dead(_3)
+    Dead(_2)
+    _0 = call take_opt(move _1) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b5: fn in_tuple; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: (Frame, i64) (User `t`)
+  _2: Frame (Temp(Operand), in place)
+  _3: [u8; 4] (Temp(Operand))
+  _4: (Frame, i64) (User `u`)
+  bb0:
+    Live(_1)
+    Live(_2)
+    Live(_3)
+    _3 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _2 = Frame { move _3, const () }
+    Uninit(_2.1)
+    _1 = (move _2, const 1i64)
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    _4 = move _1
+    _0 = const ()
+    Dead(_4)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b6: fn in_vec; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: Vec<Frame> (User `v`)
+  _2: Frame (Temp(Operand))
+  _3: [u8; 4] (Temp(Operand))
+  _4: &Vec<Frame> (Temp(Receiver))
+  bb0:
+    Live(_1)
+    _1 = call Vec.new<Frame>() / e0 -> [bb1]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _2 = Frame { move _3, const () }
+    Uninit(_2.1)
+    Live(_4)
+    _4 = &_1
+    _0 = call Vec.push<Frame>(move _4, move _2) / e0 -> [bb2]
+  bb2:
+    Dead(_1)
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Return
+  bb3 (cleanup):
+    UnwindExit
+
+body b7: fn boxed; cap_env e0; unwind_exit bb1
+  _0: Box<Frame> (Return)
+  _1: Box<Frame> (Param(0) `b`)
+  bb0:
+    Uninit((*_1).1)
+    _0 = move _1
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b8: fn cur_outside; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: Frame (User `f`)
+  _2: [u8; 4] (Temp(Operand))
+  _3: Vec<u8> (User `v`)
+  _4: () (Temp(Discarded))
+  _5: &Vec<u8> (Temp(Receiver))
+  _6: &u8 (Temp(Operand))
+  _7: usize (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _1 = Frame { move _2, const () }
+    Uninit(_1.1)
+    Dead(_2)
+    Live(_3)
+    _3 = call Vec.new<u8>() / e0 -> [bb1]
+  bb1:
+    Live(_4)
+    Live(_5)
+    _5 = &_3
+    _4 = call Vec.push<u8>(move _5, const 1u8) / e0 -> [bb2]
+  bb2:
+    Dead(_5)
+    Dead(_4)
+    Live(_6)
+    Live(_7)
+    _7 = const 0usize
+    Bounds(_3, copy _7)
+    _6 = &_3[_7]
+    _1.1 = move _6
+    Dead(_7)
+    Dead(_6)
+    Print(copy _1.1)
+    _0 = const ()
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    UnwindExit
+
+body b9: fn cur_inside; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Frame (User `f`)
+  _2: [u8; 4] (Temp(Operand))
+  _3: &u8 (Temp(Operand))
+  _4: usize (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _1 = Frame { move _2, const () }
+    Uninit(_1.1)
+    Dead(_2)
+    Live(_3)
+    Live(_4)
+    _4 = const 1usize
+    Bounds(_1.0, copy _4)
+    _3 = &_1.0[_4]
+    _1.1 = move _3
+    Dead(_4)
+    Dead(_3)
+    Print(copy _1.1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b10: fn cur_literal_outside; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &Vec<u8> (Param(0) `v`)
+  _2: Frame (User `f`)
+  _3: [u8; 4] (Temp(Operand))
+  _4: &u8 (Temp(Operand))
+  _5: usize (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    Live(_4)
+    Live(_5)
+    _5 = const 0usize
+    Bounds((*_1), copy _5)
+    _4 = &(*_1)[_5]
+    _2 = Frame { move _3, move _4 }
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b11: fn cur_unset; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Frame (User `f`)
+  _2: [u8; 4] (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _1 = Frame { move _2, const () }
+    Uninit(_1.1)
+    Dead(_2)
+    Print(copy _1.1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b12: fn cur_unset_borrow; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Frame (User `f`)
+  _2: [u8; 4] (Temp(Operand))
+  _3: &Frame (User `r`)
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _1 = Frame { move _2, const () }
+    Uninit(_1.1)
+    Dead(_2)
+    Live(_3)
+    _3 = &_1
+    _0 = const ()
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b13: fn cur_set_on_one_path; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: bool (Param(0) `c`)
+  _2: Frame (User `f`)
+  _3: [u8; 4] (Temp(Operand))
+  _4: () (Temp(Discarded))
+  _5: &u8 (Temp(Operand))
+  _6: usize (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _2 = Frame { move _3, const () }
+    Uninit(_2.1)
+    Dead(_3)
+    Live(_4)
+    switch copy _1 -> [1: bb1, otherwise: bb2]
+  bb1:
+    Live(_5)
+    Live(_6)
+    _6 = const 0usize
+    Bounds(_2.0, copy _6)
+    _5 = &_2.0[_6]
+    _2.1 = move _5
+    Dead(_6)
+    Dead(_5)
+    _4 = const ()
+    Goto(bb3)
+  bb2:
+    _4 = const ()
+    Goto(bb3)
+  bb3:
+    Dead(_4)
+    Print(copy _2.1)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b14: fn buf_only; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Frame (User `f`)
+  _2: [u8; 4] (Temp(Operand))
+  _3: u8 (Temp(Operand))
+  _4: usize (Temp(Operand))
+  _5: usize (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _1 = Frame { move _2, const () }
+    Uninit(_1.1)
+    Dead(_2)
+    Live(_3)
+    _3 = const 9u8
+    Live(_4)
+    _4 = const 0usize
+    Bounds(_1.0, copy _4)
+    _1.0[_4] = move _3
+    Dead(_4)
+    Dead(_3)
+    Live(_5)
+    _5 = const 1usize
+    Bounds(_1.0, copy _5)
+    Print(copy _1.0[_5])
+    _0 = const ()
+    Dead(_1)
+    Dead(_5)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b15: fn cur_set_then_borrow; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Frame (User `f`)
+  _2: [u8; 4] (Temp(Operand))
+  _3: &u8 (Temp(Operand))
+  _4: usize (Temp(Operand))
+  _5: &Frame (User `r`)
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _1 = Frame { move _2, const () }
+    Uninit(_1.1)
+    Dead(_2)
+    Live(_3)
+    Live(_4)
+    _4 = const 3usize
+    Bounds(_1.0, copy _4)
+    _3 = &_1.0[_4]
+    _1.1 = move _3
+    Dead(_4)
+    Dead(_3)
+    Live(_5)
+    _5 = &_1
+    Print(copy (*_5).1)
+    _0 = const ()
+    Dead(_5)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b16: fn Frame.peek; cap_env e0; unwind_exit bb1
+  _0: u8 (Return)
+  _1: &Frame (Param(0) `self`)
+  _2: usize (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0usize
+    Bounds((*_1).0, copy _2)
+    _0 = copy (*_1).0[_2]
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b17: fn method_before_set; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: Frame (User `f`)
+  _2: [u8; 4] (Temp(Operand))
+  _3: u8 (User `x`)
+  _4: &Frame (Temp(Receiver))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _1 = Frame { move _2, const () }
+    Uninit(_1.1)
+    Dead(_2)
+    Live(_3)
+    Live(_4)
+    _4 = &_1
+    _3 = call Frame.peek(move _4) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_4)
+    _0 = const ()
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_4)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_3)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b18: fn method_after_set; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: Frame (User `f`)
+  _2: [u8; 4] (Temp(Operand))
+  _3: &u8 (Temp(Operand))
+  _4: usize (Temp(Operand))
+  _5: u8 (User `x`)
+  _6: &Frame (Temp(Receiver))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _1 = Frame { move _2, const () }
+    Uninit(_1.1)
+    Dead(_2)
+    Live(_3)
+    Live(_4)
+    _4 = const 0usize
+    Bounds(_1.0, copy _4)
+    _3 = &_1.0[_4]
+    _1.1 = move _3
+    Dead(_4)
+    Dead(_3)
+    Live(_5)
+    Live(_6)
+    _6 = &_1
+    _5 = call Frame.peek(move _6) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_6)
+    _0 = const ()
+    Dead(_5)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_6)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_5)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b19: fn mk; cap_env e0; unwind_exit bb1
+  _0: Frame (Return)
+  _1: [u8; 4] (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _0 = Frame { move _1, const () }
+    Uninit(_0.1)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b20: fn from_call; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: Frame (User `f`)
+  bb0:
+    Live(_1)
+    _1 = call mk() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Uninit(_1.1)
+    Print(copy _1.1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b21: fn from_call_set; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: Frame (User `f`)
+  _2: &u8 (Temp(Operand))
+  _3: usize (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call mk() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Uninit(_1.1)
+    Live(_2)
+    Live(_3)
+    _3 = const 0usize
+    Bounds(_1.0, copy _3)
+    _2 = &_1.0[_3]
+    _1.1 = move _2
+    Dead(_3)
+    Dead(_2)
+    Print(copy _1.1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b22: fn nested_literal; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Outer (User `o`)
+  _2: Frame (Temp(Operand), in place)
+  _3: [u8; 4] (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    Live(_3)
+    _3 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _2 = Frame { move _3, const () }
+    Uninit(_2.1)
+    _1 = Outer { move _2, const 1u64 }
+    Dead(_3)
+    Dead(_2)
+    Print(copy _1.0.1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b23: fn tuple_literal; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: (Frame, i64) (User `t`)
+  _2: Frame (Temp(Operand), in place)
+  _3: [u8; 4] (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    Live(_3)
+    _3 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _2 = Frame { move _3, const () }
+    Uninit(_2.1)
+    _1 = (move _2, const 1i64)
+    Dead(_3)
+    Dead(_2)
+    Print(copy _1.0.1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b24: fn param_frame; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Frame (Param(0) `f`)
+  bb0:
+    Uninit(_1.1)
+    Print(copy _1.1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b25: fn param_frame_set; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Frame (Param(0) `f`)
+  _2: &u8 (Temp(Operand))
+  _3: usize (Temp(Operand))
+  bb0:
+    Uninit(_1.1)
+    Live(_2)
+    Live(_3)
+    _3 = const 1usize
+    Bounds(_1.0, copy _3)
+    _2 = &_1.0[_3]
+    _1.1 = move _2
+    Dead(_3)
+    Dead(_2)
+    Print(copy _1.1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b26: fn closure_reads_unset; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: Frame (User `f`)
+  _2: [u8; 4] (Temp(Operand))
+  _3: fn() -> () (User `c`)
+  _4: &Frame (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _1 = Frame { move _2, const () }
+    Uninit(_1.1)
+    Dead(_2)
+    Live(_3)
+    Live(_4)
+    _4 = &_1
+    _3 = closure c0(move _4)
+    Dead(_4)
+    _0 = call (copy _3)() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_3)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b27: closure c0; parent b26; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    Print(copy (*_1.0).1)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b28: fn closure_reads_set; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: Frame (User `f`)
+  _2: [u8; 4] (Temp(Operand))
+  _3: &u8 (Temp(Operand))
+  _4: usize (Temp(Operand))
+  _5: fn() -> () (User `c`)
+  _6: &Frame (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _1 = Frame { move _2, const () }
+    Uninit(_1.1)
+    Dead(_2)
+    Live(_3)
+    Live(_4)
+    _4 = const 0usize
+    Bounds(_1.0, copy _4)
+    _3 = &_1.0[_4]
+    _1.1 = move _3
+    Dead(_4)
+    Dead(_3)
+    Live(_5)
+    Live(_6)
+    _6 = &_1
+    _5 = closure c1(move _6)
+    Dead(_6)
+    _0 = call (copy _5)() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_5)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_5)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b29: closure c1; parent b28; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    Print(copy (*_1.0).1)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b30: fn closure_reads_buf; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: Frame (User `f`)
+  _2: [u8; 4] (Temp(Operand))
+  _3: fn() -> () (User `c`)
+  _4: &Frame (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _1 = Frame { move _2, const () }
+    Uninit(_1.1)
+    Dead(_2)
+    Live(_3)
+    Live(_4)
+    _4 = &_1
+    _3 = closure c2(move _4)
+    Dead(_4)
+    _0 = call (copy _3)() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_3)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b31: closure c2; parent b30; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: usize (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0usize
+    Bounds((*_1.0).0, copy _2)
+    Print(copy (*_1.0).0[_2])
+    _0 = const ()
+    Dead(_2)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b32: fn branch_moves; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: bool (Param(0) `c`)
+  _2: Frame (User `a`)
+  _3: [u8; 4] (Temp(Operand))
+  _4: Frame (User `x`)
+  _5: [u8; 4] (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _2 = Frame { move _3, const () }
+    Uninit(_2.1)
+    Dead(_3)
+    Live(_4)
+    switch copy _1 -> [1: bb1, otherwise: bb2]
+  bb1:
+    _4 = move _2
+    Goto(bb3)
+  bb2:
+    Live(_5)
+    _5 = [const 5u8, const 6u8, const 7u8, const 8u8]
+    _4 = Frame { move _5, const () }
+    Uninit(_4.1)
+    Dead(_5)
+    Goto(bb3)
+  bb3:
+    _0 = const ()
+    Dead(_4)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b33: fn boxed_in_place; cap_env e0; unwind_exit bb2
+  _0: () (Return)
+  _1: Box<Frame> (User `b`)
+  _2: Frame (Temp(Operand), in place)
+  _3: [u8; 4] (Temp(Operand))
+  _4: &u8 (Temp(Operand))
+  _5: usize (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    Live(_3)
+    _3 = [const 1u8, const 2u8, const 3u8, const 4u8]
+    _2 = Frame { move _3, const () }
+    Uninit(_2.1)
+    _1 = call Box.new<Frame>(move _2) / e0 -> [bb1]
+  bb1:
+    Uninit((*_1).1)
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    Live(_5)
+    _5 = const 0usize
+    Bounds((*_1).0, copy _5)
+    _4 = &(*_1).0[_5]
+    (*_1).1 = move _4
+    Dead(_5)
+    Dead(_4)
+    Print(copy (*_1).1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindExit

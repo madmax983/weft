@@ -20,19 +20,19 @@ body b1: fn pair; cap_env e0; unwind_exit bb4
   _2: u64 (Temp(Operand))
   bb0:
     Live(_2)
-    _2 = call one() / e0 -> [bb3, unwind: bb2]
-  bb1 (cleanup):
-    Dead(_0)
-    Dead(_1)
-    Goto(bb4)
-  bb2 (cleanup):
-    Dead(_2)
-    Goto(bb1)
-  bb3:
+    _2 = call one() / e0 -> [bb1, unwind: bb2]
+  bb1:
     _0 = Pair { move _2, copy _1 }
     Dead(_2)
     Dead(_1)
     Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
   bb4 (cleanup):
     UnwindExit
 
@@ -45,23 +45,23 @@ body b2: fn named; cap_env e0; unwind_exit bb5
     Live(_2)
     _2 = copy _1
     Live(_3)
-    _3 = call one() / e0 -> [bb4, unwind: bb3]
-  bb1 (cleanup):
-    Dead(_0)
-    Dead(_1)
-    Goto(bb5)
-  bb2 (cleanup):
-    Dead(_2)
-    Goto(bb1)
-  bb3 (cleanup):
-    Dead(_3)
-    Goto(bb2)
-  bb4:
+    _3 = call one() / e0 -> [bb1, unwind: bb2]
+  bb1:
     _0 = Pair { move _2, move _3 }
     Dead(_3)
     Dead(_2)
     Dead(_1)
     Return
+  bb2 (cleanup):
+    Dead(_3)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb5)
   bb5 (cleanup):
     UnwindExit
 
@@ -89,18 +89,18 @@ body b5: fn tuple; cap_env e0; unwind_exit bb4
   _2: u64 (Temp(Operand))
   bb0:
     Live(_2)
-    _2 = call one() / e0 -> [bb3, unwind: bb2]
-  bb1 (cleanup):
-    Dead(_0)
-    Dead(_1)
-    Goto(bb4)
-  bb2 (cleanup):
-    Dead(_2)
-    Goto(bb1)
-  bb3:
+    _2 = call one() / e0 -> [bb1, unwind: bb2]
+  bb1:
     _0 = (move _2, copy _1)
     Dead(_2)
     Dead(_1)
     Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
   bb4 (cleanup):
     UnwindExit

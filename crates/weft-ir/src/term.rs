@@ -267,6 +267,49 @@ impl TermKind {
         }
     }
 
+    /// Applies `f` to each block that the terminator names: the normal
+    /// successors, then the cleanup block.
+    pub fn for_each_block_mut(&mut self, f: &mut impl FnMut(&mut BlockId)) {
+        match self {
+            Self::Goto(b) => f(b),
+            Self::Switch {
+                arms, otherwise, ..
+            } => {
+                for (_, b) in arms.iter_mut() {
+                    f(b);
+                }
+                f(otherwise);
+            }
+            Self::Return | Self::UnwindExit | Self::Unreachable => {}
+            Self::Call { next, unwind, .. } => {
+                if let Some(b) = next {
+                    f(b);
+                }
+                if let Some(u) = unwind {
+                    f(u);
+                }
+            }
+            Self::Perform { next, unwind, .. }
+            | Self::Resume { next, unwind, .. }
+            | Self::Handle { next, unwind, .. }
+            | Self::Scope { next, unwind, .. }
+            | Self::ScopeWait { next, unwind, .. }
+            | Self::Join { next, unwind, .. }
+            | Self::Fork { next, unwind, .. }
+            | Self::Assert { next, unwind, .. } => {
+                f(next);
+                if let Some(u) = unwind {
+                    f(u);
+                }
+            }
+            Self::Spawn { next, .. } | Self::Detach { next, .. } => f(next),
+            Self::IterNext { next, done, .. } => {
+                f(next);
+                f(done);
+            }
+        }
+    }
+
     /// Returns all successors: the normal successors, then the cleanup block.
     pub fn successors(&self) -> Vec<BlockId> {
         let mut v = self.normal_successors();

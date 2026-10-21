@@ -1,0 +1,445 @@
+fn f0 ambiguous() -> u64 / main.First, main.Second: extern
+fn f1 tick() -> u64: b0
+fn f2 deep() -> u64 / main.inner.Deep: b1
+fn f3 by_paths() -> u64 / main.First, main.Second, main.Tick: b2
+fn f4 napper() -> () / main.Nap2: b3
+fn f5 going() -> u64 / main.other.Go: b4
+fn f6 main() -> () / Clock: b5
+handler h0 main.Nap2: handled b6, site b5, clauses [nap: b7]
+handler h1 main.other.Go: handled b8, site b5, clauses [go: b9]
+handler h2 main.First: handled b10, site b5, clauses [go: b11]
+handler h3 main.Second: handled b12, site b10, clauses [go: b13]
+handler h4 main.Tick: handled b14, site b12, clauses [tick: b15]
+handler h5 main.inner.Deep: handled b16, site b5, clauses [tick: b17]
+handler h6 main.Nap: handled b18, site b5, clauses [sleep: b19]
+cap_env e0
+cap_env e1: parent e0, main.Nap2 _1
+cap_env e2: parent e0, main.other.Go _1
+cap_env e3: parent e0, main.First _1
+cap_env e4: parent e3, main.Second _1
+cap_env e5: parent e4, main.Tick _1
+cap_env e6: parent e0, main.inner.Deep _1
+cap_env e7: parent e0, main.Nap _1
+
+body b0: fn tick; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  bb0:
+    _0 = const 1u64
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn deep; cap_env e0; unwind_exit bb6
+  _0: u64 (Return)
+  _1: u64 (Temp(Operand))
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = perform Row(main.inner.Deep).tick() -> [bb1, unwind: bb4]
+  bb1:
+    Live(_2)
+    _2 = call tick() / e0 -> [bb2, unwind: bb3]
+  bb2:
+    _0 = Add<u64>(move _1, move _2)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b2: fn by_paths; cap_env e0; unwind_exit bb12
+  _0: u64 (Return)
+  _1: u64 (Temp(Operand))
+  _2: u64 (Temp(Operand))
+  _3: u64 (Temp(Operand))
+  _4: u64 (Temp(Operand))
+  _5: u64 (Temp(Operand))
+  _6: u64 (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    Live(_3)
+    _3 = perform Row(main.First).go() -> [bb1, unwind: bb8]
+  bb1:
+    Live(_4)
+    _4 = perform Row(main.Second).go() -> [bb2, unwind: bb7]
+  bb2:
+    _2 = Add<u64>(move _3, move _4)
+    Live(_5)
+    _5 = perform Row(main.Tick).tick() -> [bb3, unwind: bb6]
+  bb3:
+    _1 = Add<u64>(move _2, move _5)
+    Live(_6)
+    _6 = call tick() / e0 -> [bb4, unwind: bb5]
+  bb4:
+    _0 = Add<u64>(move _1, move _6)
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    Dead(_6)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_5)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_4)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_3)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_2)
+    Goto(bb10)
+  bb10 (cleanup):
+    Dead(_1)
+    Goto(bb11)
+  bb11 (cleanup):
+    Dead(_0)
+    Goto(bb12)
+  bb12 (cleanup):
+    UnwindExit
+
+body b3: fn napper; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  bb0:
+    _0 = perform Row(main.Nap2).nap(const 1ms) -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b4: fn going; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  bb0:
+    _0 = perform Row(main.other.Go).go() -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b5: fn main; cap_env e0; unwind_exit bb11
+  _0: () (Return)
+  _1: () (Temp(Discarded))
+  _2: u64 (User `n`)
+  _3: () (Temp(Discarded))
+  _4: u64 (User `m`)
+  _5: () (Temp(Discarded))
+  _6: u64 (User `d`)
+  _7: () (Temp(Discarded))
+  bb0:
+    Live(_1)
+    _1 = handle h0 -> [bb1, unwind: bb9]
+  bb1:
+    Dead(_1)
+    Live(_2)
+    _2 = handle h1 -> [bb2, unwind: bb8]
+  bb2:
+    Live(_3)
+    Print(copy _2)
+    _3 = const ()
+    Dead(_3)
+    Live(_4)
+    _4 = handle h2 -> [bb3, unwind: bb7]
+  bb3:
+    Live(_5)
+    Print(copy _4)
+    _5 = const ()
+    Dead(_5)
+    Live(_6)
+    _6 = handle h5 -> [bb4, unwind: bb6]
+  bb4:
+    Live(_7)
+    Print(copy _6)
+    _7 = const ()
+    Dead(_7)
+    _0 = handle h6 -> [bb5, unwind: bb6]
+  bb5:
+    Dead(_6)
+    Dead(_4)
+    Dead(_2)
+    Return
+  bb6 (cleanup):
+    Dead(_6)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_4)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_2)
+    Goto(bb10)
+  bb9 (cleanup):
+    Dead(_1)
+    Goto(bb10)
+  bb10 (cleanup):
+    Dead(_0)
+    Goto(bb11)
+  bb11 (cleanup):
+    UnwindExit
+
+body b6: handled h0; parent b5; cap_env e1; unwind_exit bb3
+  _0: () (Return)
+  _1: Cap<main.Nap2> (Cap(main.Nap2) `Nap2`)
+  bb0:
+    _0 = call napper() / e1 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b7: clause h0 nap; parent b5; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: Duration (Param(0) `d`)
+  _2: resume(()) -> () (Kont(once) `resume`)
+  _3: () (Temp(Discarded))
+  bb0:
+    Live(_3)
+    Print(const "user nap")
+    _3 = const ()
+    Dead(_3)
+    _0 = resume _2(const ()) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindKont(_2)
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b8: handled h1; parent b5; cap_env e2; unwind_exit bb3
+  _0: u64 (Return)
+  _1: Cap<main.other.Go> (Cap(main.other.Go) `Go`)
+  bb0:
+    _0 = call going() / e2 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b9: clause h1 go; parent b5; cap_env e0; unwind_exit bb4
+  _0: u64 (Return)
+  _1: resume(u64) -> u64 (Kont(once) `resume`)
+  bb0:
+    _0 = resume _1(const 5u64) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindKont(_1)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b10: handled h2; parent b5; cap_env e3; unwind_exit bb3
+  _0: u64 (Return)
+  _1: Cap<main.First> (Cap(main.First) `First`)
+  bb0:
+    _0 = handle h3 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b11: clause h2 go; parent b5; cap_env e0; unwind_exit bb4
+  _0: u64 (Return)
+  _1: resume(u64) -> u64 (Kont(once) `resume`)
+  bb0:
+    _0 = resume _1(const 10u64) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindKont(_1)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b12: handled h3; parent b10; cap_env e4; unwind_exit bb3
+  _0: u64 (Return)
+  _1: Cap<main.Second> (Cap(main.Second) `Second`)
+  bb0:
+    _0 = handle h4 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b13: clause h3 go; parent b10; cap_env e3; unwind_exit bb4
+  _0: u64 (Return)
+  _1: resume(u64) -> u64 (Kont(once) `resume`)
+  bb0:
+    _0 = resume _1(const 20u64) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindKont(_1)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b14: handled h4; parent b12; cap_env e5; unwind_exit bb3
+  _0: u64 (Return)
+  _1: Cap<main.Tick> (Cap(main.Tick) `Tick`)
+  bb0:
+    _0 = call by_paths() / e5 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b15: clause h4 tick; parent b12; cap_env e4; unwind_exit bb4
+  _0: u64 (Return)
+  _1: resume(u64) -> u64 (Kont(once) `resume`)
+  bb0:
+    _0 = resume _1(const 40u64) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindKont(_1)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b16: handled h5; parent b5; cap_env e6; unwind_exit bb3
+  _0: u64 (Return)
+  _1: Cap<main.inner.Deep> (Cap(main.inner.Deep) `Deep`)
+  bb0:
+    _0 = call deep() / e6 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b17: clause h5 tick; parent b5; cap_env e0; unwind_exit bb4
+  _0: u64 (Return)
+  _1: resume(u64) -> u64 (Kont(once) `resume`)
+  bb0:
+    _0 = resume _1(const 100u64) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindKont(_1)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b18: handled h6; parent b5; cap_env e7; unwind_exit bb3
+  _0: () (Return)
+  _1: Cap<main.Nap> (Cap(main.Nap) `Nap`)
+  bb0:
+    _0 = perform Local(_1).sleep(const 1ms) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b19: clause h6 sleep; parent b5; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: Duration (Param(0) `d`)
+  _2: resume(()) -> () (Kont(once) `resume`)
+  _3: () (Temp(Discarded))
+  bb0:
+    Live(_3)
+    Print(const "by path")
+    _3 = const ()
+    Dead(_3)
+    _0 = resume _2(const ()) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindKont(_2)
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+// ambiguous: no IR: a type error

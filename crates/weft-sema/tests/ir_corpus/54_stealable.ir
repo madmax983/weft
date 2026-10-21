@@ -1,0 +1,456 @@
+fn f0 work(u64) -> u64: b0
+fn f1 plain_data() -> u64 / Async: b1
+fn f2 reads_shared(&Stats) -> u64 / Async: b4
+fn f3 writes_uniq(&Stats) -> () / Async: b7
+fn f4 captures_rc() -> u64 / Async: b10
+fn f5 writes_shared(&Stats) -> () / Async: b13
+fn f6 forks(&Stats) -> (u64, u64) / Par: b16
+fn f7 Rc.new<T0>(T0) -> Rc<T0> / (): extern
+closure c0: body b3, maker b2, cap_env e0, captures [Kept _4]
+closure c1: body b6, maker b5, cap_env e0, captures [Kept _4]
+closure c2: body b9, maker b8, cap_env e0, captures [Kept _4]
+closure c3: body b12, maker b11, cap_env e0, captures [ByRef _4]
+closure c4: body b15, maker b14, cap_env e0, captures [Kept _4]
+closure c5: body b17, maker b16, cap_env e0, captures []
+closure c6: body b18, maker b16, cap_env e0, captures [Kept _1]
+scope s0: body b2, site b1
+scope s1: body b5, site b4
+scope s2: body b8, site b7
+scope s3: body b11, site b10
+scope s4: body b14, site b13
+spawn sp0: scope s0
+spawn sp1: scope s1
+spawn sp2: scope s2
+spawn sp3: scope s3
+spawn sp4: scope s4
+spawn sp5: fork
+spawn sp6: fork
+cap_env e0
+
+body b0: fn work; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: u64 (Param(0) `n`)
+  bb0:
+    _0 = Add<u64>(copy _1, const 1u64)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn plain_data; cap_env e0; unwind_exit bb4
+  _0: u64 (Return)
+  _1: u64 (User `n`)
+  bb0:
+    Live(_1)
+    _1 = const 2u64
+    _0 = scope s0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b2: scope s0; parent b1; cap_env e0; unwind_exit bb9
+  _0: u64 (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: Task<u64> (User `a`)
+  _3: fn() -> u64 (Temp(Operand))
+  _4: u64 (Upvar(_1) `n`)
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c0(copy _4)
+    _2 = spawn sp0(copy _1, move _3) -> [bb1]
+  bb1:
+    Dead(_3)
+    _0 = join move _2 -> [bb2, unwind: bb7]
+  bb2:
+    scope_wait _1 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb9)
+  bb7 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindExit
+
+body b3: closure c0; parent b2; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = call work(copy _1.0) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b4: fn reads_shared; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: &Stats (Param(0) `st`)
+  bb0:
+    _0 = scope s1 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b5: scope s1; parent b4; cap_env e0; unwind_exit bb9
+  _0: u64 (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: Task<u64> (User `a`)
+  _3: fn() -> u64 (Temp(Operand))
+  _4: &Stats (Upvar(_1) `st`)
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c1(copy _4)
+    _2 = spawn sp1(copy _1, move _3) -> [bb1]
+  bb1:
+    Dead(_3)
+    _0 = join move _2 -> [bb2, unwind: bb7]
+  bb2:
+    scope_wait _1 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb9)
+  bb7 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindExit
+
+body b6: closure c1; parent b5; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = Add<u64>(copy (*_1.0).0, const 1u64)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b7: fn writes_uniq; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: &Stats (Param(0) `st`)
+  bb0:
+    _0 = scope s2 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b8: scope s2; parent b7; cap_env e0; unwind_exit bb9
+  _0: () (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: Task<()> (User `a`)
+  _3: fn() -> () (Temp(Operand))
+  _4: &Stats (Upvar(_1) `st`)
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c2(copy _4)
+    _2 = spawn sp2(copy _1, move _3) -> [bb1]
+  bb1:
+    Dead(_3)
+    _0 = join move _2 -> [bb2, unwind: bb7]
+  bb2:
+    scope_wait _1 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb9)
+  bb7 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindExit
+
+body b9: closure c2; parent b8; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Add<u64>(copy (*_1.0).0, const 1u64)
+    (*_1.0).0 = move _2
+    Dead(_2)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b10: fn captures_rc; cap_env e0; unwind_exit bb5
+  _0: u64 (Return)
+  _1: Rc<Node> (User `n`)
+  _2: Node (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = Node { const 1u64 }
+    _1 = call Rc.new<Node>(move _2) / e0 -> [bb1]
+  bb1:
+    Dead(_2)
+    _0 = scope s3 -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b11: scope s3; parent b10; cap_env e0; unwind_exit bb9
+  _0: u64 (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: Task<u64> (User `a`)
+  _3: fn() -> u64 (Temp(Operand))
+  _4: Rc<Node> (Upvar(_1) `n`)
+  _5: &Rc<Node> (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    Live(_5)
+    _5 = &_4
+    _3 = closure c3(move _5)
+    _2 = spawn sp3(copy _1, move _3) -> [bb1]
+  bb1:
+    Dead(_5)
+    Dead(_3)
+    _0 = join move _2 -> [bb2, unwind: bb7]
+  bb2:
+    scope_wait _1 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb9)
+  bb7 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindExit
+
+body b12: closure c3; parent b11; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = Add<u64>(copy (*(*_1.0)).0, const 1u64)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b13: fn writes_shared; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: &Stats (Param(0) `st`)
+  bb0:
+    _0 = scope s4 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b14: scope s4; parent b13; cap_env e0; unwind_exit bb9
+  _0: () (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: Task<()> (User `a`)
+  _3: fn() -> () (Temp(Operand))
+  _4: &Stats (Upvar(_1) `st`)
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c4(copy _4)
+    _2 = spawn sp4(copy _1, move _3) -> [bb1]
+  bb1:
+    Dead(_3)
+    _0 = join move _2 -> [bb2, unwind: bb7]
+  bb2:
+    scope_wait _1 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb9)
+  bb7 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindExit
+
+body b15: closure c4; parent b14; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Add<u64>(copy (*_1.0).0, const 1u64)
+    (*_1.0).0 = move _2
+    Dead(_2)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b16: fn forks; cap_env e0; unwind_exit bb5
+  _0: (u64, u64) (Return)
+  _1: &Stats (Param(0) `st`)
+  _2: fn() -> u64 (Temp(Operand))
+  _3: fn() -> u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = closure c5()
+    Live(_3)
+    _3 = closure c6(copy _1)
+    _0 = fork [sp5: move _2, sp6: move _3] -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_3)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b17: closure c5; parent b16; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = call work(const 1u64) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b18: closure c6; parent b16; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = copy (*_1.0).0
+    Return
+  bb1 (cleanup):
+    UnwindExit

@@ -21,22 +21,8 @@ body b1: fn arr; cap_env e0; unwind_exit bb6
     Live(_3)
     _3 = copy _1
     Live(_4)
-    _4 = call one() / e0 -> [bb5, unwind: bb4]
-  bb1 (cleanup):
-    Dead(_0)
-    Dead(_1)
-    Goto(bb6)
-  bb2 (cleanup):
-    UnwindValue(_2, Drop)
-    Dead(_2)
-    Goto(bb1)
-  bb3 (cleanup):
-    Dead(_3)
-    Goto(bb2)
-  bb4 (cleanup):
-    Dead(_4)
-    Goto(bb3)
-  bb5:
+    _4 = call one() / e0 -> [bb1, unwind: bb2]
+  bb1:
     _2 = [move _3, move _4]
     _0 = B { move _2 }
     Dead(_4)
@@ -44,5 +30,19 @@ body b1: fn arr; cap_env e0; unwind_exit bb6
     Dead(_2)
     Dead(_1)
     Return
+  bb2 (cleanup):
+    Dead(_4)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_3)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb6)
   bb6 (cleanup):
     UnwindExit

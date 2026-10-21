@@ -18,12 +18,12 @@ body b0: fn work; cap_env e0; unwind_exit bb1
 body b1: fn main; cap_env e0; unwind_exit bb3
   _0: () (Return)
   bb0:
-    _0 = scope s0 -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = scope s0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
     Dead(_0)
     Goto(bb3)
-  bb2:
-    Return
   bb3 (cleanup):
     UnwindExit
 
@@ -55,31 +55,31 @@ body b2: scope s0; parent b1; cap_env e0; unwind_exit bb11
     detach move _5 -> [bb4]
   bb4:
     _0 = const ()
-    scope_wait _1 -> [bb10, unwind: bb9]
-  bb5 (cleanup):
-    UnwindValue(_1, Drop)
-    Dead(_1)
-    Goto(bb11)
-  bb6 (cleanup):
-    UnwindValue(_2, Drop)
-    Dead(_2)
-    Goto(bb5)
-  bb7 (cleanup):
-    UnwindValue(_5, Drop)
-    Dead(_5)
-    Goto(bb6)
-  bb8 (cleanup):
-    Dead(_6)
-    Goto(bb7)
-  bb9 (cleanup):
-    Dead(_0)
-    Goto(bb8)
-  bb10:
+    scope_wait _1 -> [bb5, unwind: bb6]
+  bb5:
     Dead(_2)
     Dead(_6)
     Dead(_5)
     Dead(_1)
     Return
+  bb6 (cleanup):
+    Dead(_0)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_6)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindValue(_5, Drop)
+    Dead(_5)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb10)
+  bb10 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb11)
   bb11 (cleanup):
     UnwindExit
 
@@ -87,12 +87,12 @@ body b3: closure c0; parent b2; cap_env e0; unwind_exit bb3
   _0: u64 (Return)
   _1: fn() -> u64 (Env)
   bb0:
-    _0 = call work() / e0 -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = call work() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
     Dead(_0)
     Goto(bb3)
-  bb2:
-    Return
   bb3 (cleanup):
     UnwindExit
 
@@ -100,11 +100,11 @@ body b4: closure c1; parent b2; cap_env e0; unwind_exit bb3
   _0: u64 (Return)
   _1: fn() -> u64 (Env)
   bb0:
-    _0 = call work() / e0 -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = call work() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
     Dead(_0)
     Goto(bb3)
-  bb2:
-    Return
   bb3 (cleanup):
     UnwindExit

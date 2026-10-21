@@ -34,26 +34,26 @@ body b2: fn on_place; cap_env e0; unwind_exit bb6
   _3: &Acc (Temp(Receiver))
   bb0:
     Live(_2)
-    _2 = call one() / e0 -> [bb3, unwind: bb2]
-  bb1 (cleanup):
-    Dead(_0)
-    Dead(_1)
-    Goto(bb6)
-  bb2 (cleanup):
-    Dead(_2)
-    Goto(bb1)
-  bb3:
+    _2 = call one() / e0 -> [bb1, unwind: bb4]
+  bb1:
     Live(_3)
     _3 = &_1
-    _0 = call Acc.plus(move _3, move _2) / e0 -> [bb5, unwind: bb4]
-  bb4 (cleanup):
-    Dead(_3)
-    Goto(bb2)
-  bb5:
+    _0 = call Acc.plus(move _3, move _2) / e0 -> [bb2, unwind: bb3]
+  bb2:
     Dead(_3)
     Dead(_2)
     Dead(_1)
     Return
+  bb3 (cleanup):
+    Dead(_3)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb6)
   bb6 (cleanup):
     UnwindExit
 
@@ -64,18 +64,18 @@ body b3: fn on_ref; cap_env e0; unwind_exit bb4
   bb0:
     Live(_2)
     _2 = &(*_1)
-    _0 = call Acc.plus(move _2, const 2u64) / e0 -> [bb3, unwind: bb2]
-  bb1 (cleanup):
-    Dead(_0)
-    Dead(_1)
-    Goto(bb4)
-  bb2 (cleanup):
-    Dead(_2)
-    Goto(bb1)
-  bb3:
+    _0 = call Acc.plus(move _2, const 2u64) / e0 -> [bb1, unwind: bb2]
+  bb1:
     Dead(_2)
     Dead(_1)
     Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
   bb4 (cleanup):
     UnwindExit
 

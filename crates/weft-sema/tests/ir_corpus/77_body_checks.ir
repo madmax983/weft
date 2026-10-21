@@ -1,0 +1,119 @@
+fn f0 twice_field() -> P: extern
+fn f1 each_field_once() -> P: b0
+fn f2 twice_param() -> u64: extern
+fn f3 params_once() -> u64: b1
+fn f4 too_big() -> (): extern
+fn f5 fits() -> (): b3
+fn f6 too_big_later() -> (): extern
+fn f7 literal_field() -> (): extern
+fn f8 one(u64) -> (): b4
+fn f9 named_args() -> (): extern
+fn f10 twice_bound() -> (): extern
+fn f11 twice_in_arm(Option<(u64, u64)>) -> u64: extern
+fn f12 bound_once() -> (): b5
+fn f13 negated_twice() -> (): extern
+closure c0: body b2, maker b1, cap_env e0, captures []
+cap_env e0
+
+body b0: fn each_field_once; cap_env e0; unwind_exit bb1
+  _0: P (Return)
+  bb0:
+    _0 = P { const 1u64, const 2u64 }
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn params_once; cap_env e0; unwind_exit bb4
+  _0: u64 (Return)
+  _1: fn(u64, u64) -> u64 (User `f`)
+  bb0:
+    Live(_1)
+    _1 = closure c0()
+    _0 = call (copy _1)(const 1u64, const 2u64) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b2: closure c0; parent b1; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: fn(u64, u64) -> u64 (Env)
+  _2: u64 (Param(0) `a`)
+  _3: u64 (Param(1) `b`)
+  bb0:
+    _0 = Add<u64>(copy _2, copy _3)
+    Dead(_3)
+    Dead(_2)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn fits; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: u8 (User `x`)
+  _2: i8 (User `y`)
+  _3: i64 (User `z`)
+  _4: u64 (User `w`)
+  bb0:
+    Live(_1)
+    _1 = const 255u8
+    Live(_2)
+    _2 = const -128i8
+    Live(_3)
+    _3 = const -9223372036854775808i64
+    Live(_4)
+    _4 = const 18446744073709551615u64
+    _0 = const ()
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: fn one; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: u64 (Param(0) `x`)
+  bb0:
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b5: fn bound_once; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: (i64, i64) (Temp(Scrutinee))
+  _2: i64 (User `a`)
+  _3: i64 (User `b`)
+  bb0:
+    Live(_1)
+    _1 = (const 1i64, const 2i64)
+    Live(_2)
+    _2 = copy _1.0
+    Live(_3)
+    _3 = copy _1.1
+    Dead(_1)
+    _0 = const ()
+    Dead(_3)
+    Dead(_2)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+// twice_field: no IR: a type error
+// twice_param: no IR: a type error
+// too_big: no IR: a type error
+// too_big_later: no IR: a type error
+// literal_field: no IR: a type error
+// named_args: no IR: a type error
+// twice_bound: no IR: a type error
+// twice_in_arm: no IR: a type error
+// negated_twice: no IR: a type error

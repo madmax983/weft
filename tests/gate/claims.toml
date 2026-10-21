@@ -3045,6 +3045,35 @@ repro = [
 note = "Sema ignores the arguments of `join` and `detach`; the interpreter runs them"
 
 # ----------------------------------------------------------------------
+# Stage B12: the closure modes of a local of a function type. The builder gives
+# such a local the modes that the analysis infers (linear, nonportable,
+# `once`), but its `copy` property stays the copy property of its type: the
+# analysis joins the values of a variable over the whole body, and a capture
+# of a variable that gets a `once` closure later must still share its cell.
+# So F11 and F12 must not read `LocalDecl.props.copy` of a function value as
+# "it can run twice": a call of a function value moves it if `props.once`.
+
+[[claim]]
+finding = "B12-fn-once"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/fixes/b12/fn_alias_once.wf"]
+code = "W0502"
+line = 15
+note = "`let g = f` of a once closure: `g` is `once` and `copy`; the second call of `g` is W0502 (the facts read `once`, not `copy`)"
+
+[[claim]]
+finding = "B12-late-once"
+kind = "sound"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/fixes/b12/late_once_capture.wf"]
+note = "A closure captures `c` before `c` gets a once closure: the capture is `Kept` (one cell), the call runs the new value once; a correct program, the ir pipeline must accept it"
+
+# ----------------------------------------------------------------------
 # Findings with no claim, and notes on repros with no claim. One line each.
 #
 # RT3c: verdict stays (TYPE, outside the lowering)

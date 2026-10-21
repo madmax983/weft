@@ -59,16 +59,16 @@ body b3: fn fields; cap_env e0; unwind_exit bb3
   _0: u64 (Return)
   _1: Mixed (Param(0) `m`)
   bb0:
-    _0 = call step() / e0 -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = call step() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
     Dead(_0)
     UnwindValue(_1.0, OnAbort(rollback))
     UnwindValue(_1.2, Fault)
     Dead(_1)
     Goto(bb3)
-  bb2:
-    Dead(_1)
-    Return
   bb3 (cleanup):
     UnwindExit
 
@@ -76,16 +76,16 @@ body b4: fn tuple; cap_env e0; unwind_exit bb3
   _0: u64 (Return)
   _1: (Tx, Lock) (Param(0) `t`)
   bb0:
-    _0 = call step() / e0 -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = call step() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
     Dead(_0)
     UnwindValue(_1.0, OnAbort(rollback))
     UnwindValue(_1.1, Fault)
     Dead(_1)
     Goto(bb3)
-  bb2:
-    Dead(_1)
-    Return
   bb3 (cleanup):
     UnwindExit
 
@@ -93,15 +93,15 @@ body b5: fn guard; cap_env e0; unwind_exit bb3
   _0: u64 (Return)
   _1: Guard (Param(0) `g`)
   bb0:
-    _0 = call step() / e0 -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = call step() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
     Dead(_0)
     UnwindValue(_1, OnAbort(release))
     Dead(_1)
     Goto(bb3)
-  bb2:
-    Dead(_1)
-    Return
   bb3 (cleanup):
     UnwindExit
 
@@ -109,15 +109,15 @@ body b6: fn lock; cap_env e0; unwind_exit bb3
   _0: u64 (Return)
   _1: Lock (Param(0) `l`)
   bb0:
-    _0 = call step() / e0 -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = call step() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
     Dead(_0)
     UnwindValue(_1, Fault)
     Dead(_1)
     Goto(bb3)
-  bb2:
-    Dead(_1)
-    Return
   bb3 (cleanup):
     UnwindExit
 
@@ -125,15 +125,15 @@ body b7: fn option; cap_env e0; unwind_exit bb3
   _0: u64 (Return)
   _1: Option<Tx> (Param(0) `o`)
   bb0:
-    _0 = call step() / e0 -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = call step() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
     Dead(_0)
     UnwindValue((_1 as #0).0, OnAbort(rollback))
     Dead(_1)
     Goto(bb3)
-  bb2:
-    Dead(_1)
-    Return
   bb3 (cleanup):
     UnwindExit
 
@@ -141,15 +141,15 @@ body b8: fn boxed; cap_env e0; unwind_exit bb3
   _0: u64 (Return)
   _1: Box<Tx> (Param(0) `b`)
   bb0:
-    _0 = call step() / e0 -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = call step() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
     Dead(_0)
     UnwindValue((*_1), OnAbort(rollback))
     Dead(_1)
     Goto(bb3)
-  bb2:
-    Dead(_1)
-    Return
   bb3 (cleanup):
     UnwindExit
 
@@ -157,15 +157,15 @@ body b9: fn array; cap_env e0; unwind_exit bb3
   _0: u64 (Return)
   _1: [Tx; 2] (Param(0) `a`)
   bb0:
-    _0 = call step() / e0 -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = call step() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
     Dead(_0)
     UnwindValue(_1[], OnAbort(rollback))
     Dead(_1)
     Goto(bb3)
-  bb2:
-    Dead(_1)
-    Return
   bb3 (cleanup):
     UnwindExit
 
@@ -173,15 +173,15 @@ body b10: fn vector; cap_env e0; unwind_exit bb3
   _0: u64 (Return)
   _1: Vec<Lock> (Param(0) `v`)
   bb0:
-    _0 = call step() / e0 -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = call step() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
     Dead(_0)
     UnwindValue(_1[], Fault)
     Dead(_1)
     Goto(bb3)
-  bb2:
-    Dead(_1)
-    Return
   bb3 (cleanup):
     UnwindExit
 
@@ -189,14 +189,14 @@ body b11: fn generic; cap_env e0; unwind_exit bb3
   _0: u64 (Return)
   _1: T0 (Param(0) `x`)
   bb0:
-    _0 = call step() / e0 -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = call step() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
     Dead(_0)
     UnwindValue(_1, Drop)
     Dead(_1)
     Goto(bb3)
-  bb2:
-    Dead(_1)
-    Return
   bb3 (cleanup):
     UnwindExit

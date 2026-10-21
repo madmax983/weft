@@ -37,16 +37,16 @@ body b1: fn main; cap_env e0; unwind_exit bb4
     _1 = closure c0(move _3)
     Dead(_2)
     Dead(_3)
-    _0 = call (copy _1)() / e0 -> [bb3, unwind: bb2]
-  bb1 (cleanup):
-    Dead(_0)
-    Goto(bb4)
-  bb2 (cleanup):
-    Dead(_1)
-    Goto(bb1)
-  bb3:
+    _0 = call (copy _1)() / e0 -> [bb1, unwind: bb2]
+  bb1:
     Dead(_1)
     Return
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
   bb4 (cleanup):
     UnwindExit
 
@@ -85,15 +85,15 @@ body b4: closure c1; parent b3; cap_env e0; unwind_exit bb4
   bb0:
     Live(_2)
     _2 = &(*_1.0)
-    _0 = call norm(move _2) / e0 -> [bb3, unwind: bb2]
-  bb1 (cleanup):
-    Dead(_0)
-    Goto(bb4)
-  bb2 (cleanup):
-    Dead(_2)
-    Goto(bb1)
-  bb3:
+    _0 = call norm(move _2) / e0 -> [bb1, unwind: bb2]
+  bb1:
     Dead(_2)
     Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
   bb4 (cleanup):
     UnwindExit

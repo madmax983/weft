@@ -1,0 +1,165 @@
+fn f0 rev(List, List) -> List: b0
+fn f1 dup(List) -> List: b1
+fn f2 drop_it(List) -> List: b2
+fn f3 noisy(List) -> List / Log: b3
+cap_env e0
+
+body b0: fn rev; cap_env e0; unwind_exit bb8
+  _0: List (Return)
+  _1: List (Param(0) `xs`)
+  _2: List (Param(1) `acc`)
+  _3: usize (Temp(Scrutinee))
+  _4: u64 (User `x`)
+  _5: List (User `rest`)
+  _6: List (Temp(Operand))
+  _7: List (Temp(Operand))
+  _8: usize (Temp(Scrutinee))
+  bb0:
+    Live(_3)
+    _3 = Discriminant(_1)
+    switch move _3 -> [0: bb1, otherwise: bb9]
+  bb1:
+    Dead(_3)
+    Live(_4)
+    _4 = copy (_1 as #0).0
+    Live(_5)
+    _5 = move (_1 as #0).1
+    Live(_6)
+    _6 = move _5
+    Live(_7)
+    _7 = List::Cons(copy _4, move _2)
+    _0 = call rev(move _6, move _7) / e0 -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_7)
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Goto(bb12)
+  bb3 (cleanup):
+    UnwindValue(_7, Drop)
+    Dead(_7)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindValue(_6, Drop)
+    Dead(_6)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_5, Drop)
+    Dead(_5)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_4)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+  bb9:
+    Dead(_3)
+    Goto(bb10)
+  bb10:
+    Live(_8)
+    _8 = Discriminant(_1)
+    switch move _8 -> [1: bb11, otherwise: bb13]
+  bb11:
+    Dead(_8)
+    _0 = move _2
+    Goto(bb12)
+  bb12:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb13:
+    Dead(_8)
+    Goto(bb14)
+  bb14:
+    Unreachable
+
+body b1: fn dup; cap_env e0; unwind_exit bb8
+  _0: List (Return)
+  _1: List (Param(0) `xs`)
+  _2: usize (Temp(Scrutinee))
+  _3: u64 (User `x`)
+  _4: List (User `rest`)
+  _5: u64 (Temp(Operand))
+  _6: List (Temp(Operand))
+  _7: usize (Temp(Scrutinee))
+  bb0:
+    Live(_2)
+    _2 = Discriminant(_1)
+    switch move _2 -> [0: bb1, otherwise: bb2]
+  bb1:
+    Dead(_2)
+    Live(_3)
+    _3 = copy (_1 as #0).0
+    Live(_4)
+    _4 = move (_1 as #0).1
+    Live(_5)
+    _5 = copy _3
+    Live(_6)
+    _6 = List::Cons(copy _3, move _4)
+    _0 = List::Cons(move _5, move _6)
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Goto(bb5)
+  bb2:
+    Dead(_2)
+    Goto(bb3)
+  bb3:
+    Live(_7)
+    _7 = Discriminant(_1)
+    switch move _7 -> [1: bb4, otherwise: bb6]
+  bb4:
+    Dead(_7)
+    _0 = List::Nil()
+    Goto(bb5)
+  bb5:
+    Dead(_1)
+    Return
+  bb6:
+    Dead(_7)
+    Goto(bb7)
+  bb7:
+    Unreachable
+  bb8 (cleanup):
+    UnwindExit
+
+body b2: fn drop_it; cap_env e0; unwind_exit bb1
+  _0: List (Return)
+  _1: List (Param(0) `xs`)
+  bb0:
+    _0 = List::Nil()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn noisy; cap_env e0; unwind_exit bb4
+  _0: List (Return)
+  _1: List (Param(0) `xs`)
+  _2: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    _2 = perform Row(Log).info(const "x") -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    _0 = move _1
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit

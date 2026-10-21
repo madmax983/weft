@@ -165,38 +165,40 @@ impl Builder<'_> {
                 let Some(Ty::Adt(a, args)) = self.tys.try_get(t).cloned() else {
                     return unsupported(Construct::NoThir, span);
                 };
-                let kind = self.tys.adts().get(a.index()).map(|d| d.kind.clone());
                 let name = path.last().map_or("", |p| p.name.as_str());
-                match kind {
-                    Some(AdtKind::Enum(vs)) => {
-                        let Some((v, vd)) = vs.iter().enumerate().find(|(_, v)| v.name == name)
-                        else {
-                            return unsupported(Construct::NoThir, span);
-                        };
-                        if vd.fields.len() != fields.len() {
-                            return unsupported(Construct::NoThir, span);
-                        }
-                        let v = super::id_of(v);
-                        plan.tests.push((span, Test::Variant(q.clone(), v)));
-                        for (k, (p, &ft)) in fields.iter().zip(&vd.fields).enumerate() {
-                            let ft = super::unset::subst(self.tys, ft, &args);
-                            let mut qk = with(&q, Proj::Variant(VariantIdx(v)));
-                            qk.proj.push(Proj::Field(FieldIdx(super::id_of(k))));
-                            self.plan_into(p, qk, ft, plan)?;
-                        }
-                        if fields.is_empty() {
-                            plan.acts.push(Act::Finish(span, q, t));
-                        }
+                // Only the shape that the pattern needs: a copy of all the
+                // variants for each arm makes a wide `match` quadratic.
+                let shape = match self.tys.adts().get(a.index()).map(|d| &d.kind) {
+                    Some(AdtKind::Enum(vs)) => vs
+                        .iter()
+                        .enumerate()
+                        .find(|(_, v)| v.name == name)
+                        .map(|(v, vd)| (Some(super::id_of(v)), vd.fields.clone())),
+                    Some(AdtKind::Struct(fs)) => {
+                        Some((None, fs.iter().map(|f| f.ty).collect::<Vec<TyId>>()))
                     }
-                    Some(AdtKind::Struct(fs)) if fs.len() == fields.len() => {
-                        for (k, (p, f)) in fields.iter().zip(&fs).enumerate() {
-                            let ft = super::unset::subst(self.tys, f.ty, &args);
-                            let qk = with(&q, Proj::Field(FieldIdx(super::id_of(k))));
-                            self.plan_into(p, qk, ft, plan)?;
-                        }
-                        plan.acts.push(Act::Finish(span, q, t));
+                    _ => None,
+                };
+                let Some((variant, fts)) = shape else {
+                    return unsupported(Construct::NoThir, span);
+                };
+                if fts.len() != fields.len() {
+                    return unsupported(Construct::NoThir, span);
+                }
+                if let Some(v) = variant {
+                    plan.tests.push((span, Test::Variant(q.clone(), v)));
+                }
+                for (k, (p, &ft)) in fields.iter().zip(&fts).enumerate() {
+                    let ft = super::unset::subst(self.tys, ft, &args);
+                    let mut qk = q.clone();
+                    if let Some(v) = variant {
+                        qk.proj.push(Proj::Variant(VariantIdx(v)));
                     }
-                    _ => return unsupported(Construct::NoThir, span),
+                    qk.proj.push(Proj::Field(FieldIdx(super::id_of(k))));
+                    self.plan_into(p, qk, ft, plan)?;
+                }
+                if variant.is_none() || fields.is_empty() {
+                    plan.acts.push(Act::Finish(span, q, t));
                 }
             }
             PatternKind::Lit(lit, _) => {

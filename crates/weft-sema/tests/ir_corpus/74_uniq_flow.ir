@@ -1,0 +1,611 @@
+fn f0 needs_uniq(&[u64]) -> () / (): b0
+fn f1 rebound_to_aliased(&Vec<u64>, &Vec<u64>) -> () / (): b1
+fn f2 still_uniq(&Vec<u64>) -> () / (): b2
+fn f3 walk_uniq(&[Entity]) -> () / main.Choice: b3
+fn f4 walk_scalars(&[u64]) -> () / main.Choice: b4
+fn f5 walk_aliased(&[Entity]) -> () / main.Choice: b5
+fn f6 choose_after(&[Entity]) -> () / main.Choice: b6
+fn f7 branch_aliased(&Vec<u64>, &Vec<u64>, bool) -> () / (): b7
+fn f8 arm_aliased(&Vec<u64>, &Vec<u64>, Option<u64>) -> () / (): b8
+fn f9 branch_uniq(&Vec<u64>, bool) -> () / (): b9
+fn f10 break_aliased(&Vec<u64>, &Vec<u64>, bool) -> () / (): b10
+fn f11 Vec.split_mut<T0>(&Vec<T0>, usize) -> (&[T0], &[T0]) / (): extern
+cap_env e0
+
+body b0: fn needs_uniq; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &[u64] (Param(0) `es`)
+  bb0:
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn rebound_to_aliased; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: &Vec<u64> (Param(0) `v`)
+  _2: &Vec<u64> (Param(1) `w`)
+  _3: (&[u64], &[u64]) (Temp(Scrutinee))
+  _4: &Vec<u64> (Temp(Receiver))
+  _5: &[u64] (User `l`)
+  _6: &[u64] (User `r`)
+  _7: &[u64] (Temp(Operand))
+  bb0:
+    Live(_3)
+    Live(_4)
+    _4 = &(*_1)
+    _3 = call Vec.split_mut<u64>(move _4, const 1usize) / e0 -> [bb1]
+  bb1:
+    Live(_5)
+    _5 = copy _3.0
+    Live(_6)
+    _6 = copy _3.1
+    Dead(_4)
+    Dead(_3)
+    Live(_7)
+    _7 = &(*_2)[]
+    _5 = move _7
+    Dead(_7)
+    _0 = call needs_uniq(copy _5) / e0 -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_6)
+    Dead(_5)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_6)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_5)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b2: fn still_uniq; cap_env e0; unwind_exit bb8
+  _0: () (Return)
+  _1: &Vec<u64> (Param(0) `v`)
+  _2: (&[u64], &[u64]) (Temp(Scrutinee))
+  _3: &Vec<u64> (Temp(Receiver))
+  _4: &[u64] (User `l`)
+  _5: &[u64] (User `r`)
+  _6: () (Temp(Discarded))
+  _7: &[u64] (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = &(*_1)
+    _2 = call Vec.split_mut<u64>(move _3, const 1usize) / e0 -> [bb1]
+  bb1:
+    Live(_4)
+    _4 = copy _2.0
+    Live(_5)
+    _5 = copy _2.1
+    Dead(_3)
+    Dead(_2)
+    Live(_6)
+    _6 = call needs_uniq(copy _4) / e0 -> [bb2, unwind: bb4]
+  bb2:
+    Dead(_6)
+    Live(_7)
+    _7 = copy _5
+    _4 = move _7
+    Dead(_7)
+    _0 = call needs_uniq(copy _4) / e0 -> [bb3, unwind: bb5]
+  bb3:
+    Dead(_5)
+    Dead(_4)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_6)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_5)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_4)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+
+body b3: fn walk_uniq; cap_env e0; unwind_exit bb9
+  _0: () (Return)
+  _1: &[Entity] (Param(0) `es`)
+  _2: Iter<&Entity> (Iterator)
+  _3: &Entity (Temp(Scrutinee))
+  _4: &Entity (User `e`)
+  _5: u64 (Temp(Operand))
+  _6: bool (User `b`)
+  bb0:
+    Live(_2)
+    _2 = Iter(elems (*_1)[])
+    Goto(bb1)
+  bb1:
+    Live(_3)
+    _3 = next _2 -> [bb2, done: bb10]
+  bb2:
+    Live(_4)
+    _4 = copy _3
+    Live(_5)
+    _5 = Add<u64>(copy (*_4).0, const 1u64)
+    (*_4).0 = move _5
+    Dead(_5)
+    Live(_6)
+    _6 = perform Row(main.Choice).choose() -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_6)
+    Dead(_4)
+    Dead(_3)
+    Goto(bb1)
+  bb4 (cleanup):
+    Dead(_3)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_6)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_4)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindExit
+  bb10:
+    Dead(_3)
+    Goto(bb11)
+  bb11:
+    Dead(_2)
+    _0 = const ()
+    Dead(_1)
+    Return
+
+body b4: fn walk_scalars; cap_env e0; unwind_exit bb9
+  _0: () (Return)
+  _1: &[u64] (Param(0) `xs`)
+  _2: Iter<u64> (Iterator)
+  _3: u64 (Temp(Scrutinee))
+  _4: u64 (User `x`)
+  _5: bool (User `b`)
+  bb0:
+    Live(_2)
+    _2 = Iter(elems (*_1)[])
+    Goto(bb1)
+  bb1:
+    Live(_3)
+    _3 = next _2 -> [bb2, done: bb10]
+  bb2:
+    Live(_4)
+    _4 = copy _3
+    Live(_5)
+    _5 = perform Row(main.Choice).choose() -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Goto(bb1)
+  bb4 (cleanup):
+    Dead(_3)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_5)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_4)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindExit
+  bb10:
+    Dead(_3)
+    Goto(bb11)
+  bb11:
+    Dead(_2)
+    _0 = const ()
+    Dead(_1)
+    Return
+
+body b5: fn walk_aliased; cap_env e0; unwind_exit bb9
+  _0: () (Return)
+  _1: &[Entity] (Param(0) `es`)
+  _2: Iter<&Entity> (Iterator)
+  _3: &Entity (Temp(Scrutinee))
+  _4: &Entity (User `e`)
+  _5: u64 (Temp(Operand))
+  _6: bool (User `b`)
+  bb0:
+    Live(_2)
+    _2 = Iter(elems (*_1)[])
+    Goto(bb1)
+  bb1:
+    Live(_3)
+    _3 = next _2 -> [bb2, done: bb10]
+  bb2:
+    Live(_4)
+    _4 = copy _3
+    Live(_5)
+    _5 = Add<u64>(copy (*_4).0, const 1u64)
+    (*_4).0 = move _5
+    Dead(_5)
+    Live(_6)
+    _6 = perform Row(main.Choice).choose() -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_6)
+    Dead(_4)
+    Dead(_3)
+    Goto(bb1)
+  bb4 (cleanup):
+    Dead(_3)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_6)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_4)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindExit
+  bb10:
+    Dead(_3)
+    Goto(bb11)
+  bb11:
+    Dead(_2)
+    _0 = const ()
+    Dead(_1)
+    Return
+
+body b6: fn choose_after; cap_env e0; unwind_exit bb8
+  _0: () (Return)
+  _1: &[Entity] (Param(0) `es`)
+  _2: Iter<&Entity> (Iterator)
+  _3: &Entity (Temp(Scrutinee))
+  _4: &Entity (User `e`)
+  _5: u64 (Temp(Operand))
+  _6: bool (User `b`)
+  bb0:
+    Live(_2)
+    _2 = Iter(elems (*_1)[])
+    Goto(bb1)
+  bb1:
+    Live(_3)
+    _3 = next _2 -> [bb2, done: bb3]
+  bb2:
+    Live(_4)
+    _4 = copy _3
+    Live(_5)
+    _5 = Add<u64>(copy (*_4).0, const 1u64)
+    (*_4).0 = move _5
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Goto(bb1)
+  bb3:
+    Dead(_3)
+    Goto(bb4)
+  bb4:
+    Dead(_2)
+    Live(_6)
+    _6 = perform Row(main.Choice).choose() -> [bb5, unwind: bb6]
+  bb5:
+    _0 = const ()
+    Dead(_6)
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    Dead(_6)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+
+body b7: fn branch_aliased; cap_env e0; unwind_exit bb9
+  _0: () (Return)
+  _1: &Vec<u64> (Param(0) `v`)
+  _2: &Vec<u64> (Param(1) `w`)
+  _3: bool (Param(2) `c`)
+  _4: (&[u64], &[u64]) (Temp(Scrutinee))
+  _5: &Vec<u64> (Temp(Receiver))
+  _6: &[u64] (User `l`)
+  _7: &[u64] (User `r`)
+  _8: () (Temp(Discarded))
+  _9: &[u64] (Temp(Operand))
+  _10: &[u64] (Temp(Operand))
+  bb0:
+    Live(_4)
+    Live(_5)
+    _5 = &(*_1)
+    _4 = call Vec.split_mut<u64>(move _5, const 1usize) / e0 -> [bb1]
+  bb1:
+    Live(_6)
+    _6 = copy _4.0
+    Live(_7)
+    _7 = copy _4.1
+    Dead(_5)
+    Dead(_4)
+    Live(_8)
+    switch copy _3 -> [1: bb2, otherwise: bb3]
+  bb2:
+    Live(_9)
+    _9 = &(*_2)[]
+    _6 = move _9
+    Dead(_9)
+    _8 = const ()
+    Goto(bb4)
+  bb3:
+    Live(_10)
+    _10 = copy _7
+    _6 = move _10
+    Dead(_10)
+    _8 = const ()
+    Goto(bb4)
+  bb4:
+    Dead(_8)
+    _0 = call needs_uniq(copy _6) / e0 -> [bb5, unwind: bb6]
+  bb5:
+    Dead(_7)
+    Dead(_6)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    Dead(_7)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_6)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_0)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindExit
+
+body b8: fn arm_aliased; cap_env e0; unwind_exit bb11
+  _0: () (Return)
+  _1: &Vec<u64> (Param(0) `v`)
+  _2: &Vec<u64> (Param(1) `w`)
+  _3: Option<u64> (Param(2) `o`)
+  _4: (&[u64], &[u64]) (Temp(Scrutinee))
+  _5: &Vec<u64> (Temp(Receiver))
+  _6: &[u64] (User `l`)
+  _7: &[u64] (User `r`)
+  _8: () (Temp(Discarded))
+  _9: usize (Temp(Scrutinee))
+  _10: u64 (User `x`)
+  _11: &[u64] (Temp(Operand))
+  _12: usize (Temp(Scrutinee))
+  _13: &[u64] (Temp(Operand))
+  bb0:
+    Live(_4)
+    Live(_5)
+    _5 = &(*_1)
+    _4 = call Vec.split_mut<u64>(move _5, const 1usize) / e0 -> [bb1]
+  bb1:
+    Live(_6)
+    _6 = copy _4.0
+    Live(_7)
+    _7 = copy _4.1
+    Dead(_5)
+    Dead(_4)
+    Live(_8)
+    Live(_9)
+    _9 = Discriminant(_3)
+    switch move _9 -> [0: bb2, otherwise: bb3]
+  bb2:
+    Dead(_9)
+    Live(_10)
+    _10 = copy (_3 as #0).0
+    Live(_11)
+    _11 = &(*_2)[]
+    _6 = move _11
+    Dead(_11)
+    _8 = const ()
+    Dead(_10)
+    Goto(bb6)
+  bb3:
+    Dead(_9)
+    Goto(bb4)
+  bb4:
+    Live(_12)
+    _12 = Discriminant(_3)
+    switch move _12 -> [1: bb5, otherwise: bb12]
+  bb5:
+    Dead(_12)
+    Live(_13)
+    _13 = copy _7
+    _6 = move _13
+    Dead(_13)
+    _8 = const ()
+    Goto(bb6)
+  bb6:
+    Dead(_8)
+    _0 = call needs_uniq(copy _6) / e0 -> [bb7, unwind: bb8]
+  bb7:
+    Dead(_7)
+    Dead(_6)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb8 (cleanup):
+    Dead(_7)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_6)
+    Goto(bb10)
+  bb10 (cleanup):
+    Dead(_0)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb11)
+  bb11 (cleanup):
+    UnwindExit
+  bb12:
+    Dead(_12)
+    Goto(bb13)
+  bb13:
+    Unreachable
+
+body b9: fn branch_uniq; cap_env e0; unwind_exit bb9
+  _0: () (Return)
+  _1: &Vec<u64> (Param(0) `v`)
+  _2: bool (Param(1) `c`)
+  _3: (&[u64], &[u64]) (Temp(Scrutinee))
+  _4: &Vec<u64> (Temp(Receiver))
+  _5: &[u64] (User `l`)
+  _6: &[u64] (User `r`)
+  _7: () (Temp(Discarded))
+  _8: &[u64] (Temp(Operand))
+  bb0:
+    Live(_3)
+    Live(_4)
+    _4 = &(*_1)
+    _3 = call Vec.split_mut<u64>(move _4, const 1usize) / e0 -> [bb1]
+  bb1:
+    Live(_5)
+    _5 = copy _3.0
+    Live(_6)
+    _6 = copy _3.1
+    Dead(_4)
+    Dead(_3)
+    Live(_7)
+    switch copy _2 -> [1: bb2, otherwise: bb3]
+  bb2:
+    Live(_8)
+    _8 = copy _6
+    _5 = move _8
+    Dead(_8)
+    _7 = const ()
+    Goto(bb4)
+  bb3:
+    _7 = const ()
+    Goto(bb4)
+  bb4:
+    Dead(_7)
+    _0 = call needs_uniq(copy _5) / e0 -> [bb5, unwind: bb6]
+  bb5:
+    Dead(_6)
+    Dead(_5)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    Dead(_6)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_5)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_0)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindExit
+
+body b10: fn break_aliased; cap_env e0; unwind_exit bb9
+  _0: () (Return)
+  _1: &Vec<u64> (Param(0) `v`)
+  _2: &Vec<u64> (Param(1) `w`)
+  _3: bool (Param(2) `c`)
+  _4: (&[u64], &[u64]) (Temp(Scrutinee))
+  _5: &Vec<u64> (Temp(Receiver))
+  _6: &[u64] (User `l`)
+  _7: &[u64] (User `r`)
+  _8: () (Temp(Discarded))
+  _9: &[u64] (Temp(Operand))
+  _10: &[u64] (Temp(Operand))
+  bb0:
+    Live(_4)
+    Live(_5)
+    _5 = &(*_1)
+    _4 = call Vec.split_mut<u64>(move _5, const 1usize) / e0 -> [bb1]
+  bb1:
+    Live(_6)
+    _6 = copy _4.0
+    Live(_7)
+    _7 = copy _4.1
+    Dead(_5)
+    Dead(_4)
+    Goto(bb2)
+  bb2:
+    Live(_8)
+    switch copy _3 -> [1: bb3, otherwise: bb10]
+  bb3:
+    Live(_9)
+    _9 = &(*_2)[]
+    _6 = move _9
+    Dead(_9)
+    Dead(_8)
+    Goto(bb4)
+  bb4:
+    _0 = call needs_uniq(copy _6) / e0 -> [bb5, unwind: bb6]
+  bb5:
+    Dead(_7)
+    Dead(_6)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    Dead(_7)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_6)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_0)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindExit
+  bb10:
+    _8 = const ()
+    Goto(bb11)
+  bb11:
+    Dead(_8)
+    Live(_10)
+    _10 = copy _7
+    _6 = move _10
+    Dead(_10)
+    Goto(bb2)

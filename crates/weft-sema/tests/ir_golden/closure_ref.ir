@@ -30,27 +30,27 @@ body b0: fn main; cap_env e0; unwind_exit bb9
     _4 = closure c0(move _5)
     Dead(_5)
     Live(_6)
-    _6 = call (copy _4)() / e0 -> [bb7, unwind: bb6]
-  bb3 (cleanup):
-    Dead(_0)
-    Goto(bb9)
-  bb4 (cleanup):
-    UnwindValue(_1, Drop)
-    Dead(_1)
-    Goto(bb3)
-  bb5 (cleanup):
-    Dead(_4)
-    Goto(bb4)
-  bb6 (cleanup):
+    _6 = call (copy _4)() / e0 -> [bb3, unwind: bb5]
+  bb3:
     Dead(_6)
-    Goto(bb5)
-  bb7:
-    Dead(_6)
-    _0 = call (copy _4)() / e0 -> [bb8, unwind: bb5]
-  bb8:
+    _0 = call (copy _4)() / e0 -> [bb4, unwind: bb6]
+  bb4:
     Dead(_4)
     Dead(_1)
     Return
+  bb5 (cleanup):
+    Dead(_6)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_4)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_0)
+    Goto(bb9)
   bb9 (cleanup):
     UnwindExit
 

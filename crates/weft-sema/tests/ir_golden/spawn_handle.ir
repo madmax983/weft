@@ -23,22 +23,22 @@ body b1: fn main; cap_env e0; unwind_exit bb5
     Live(_1)
     _1 = const 1u64
     Live(_2)
-    _2 = scope s0 -> [bb4, unwind: bb3]
-  bb1 (cleanup):
-    Dead(_0)
-    Goto(bb5)
-  bb2 (cleanup):
-    Dead(_1)
-    Goto(bb1)
-  bb3 (cleanup):
-    Dead(_2)
-    Goto(bb2)
-  bb4:
+    _2 = scope s0 -> [bb1, unwind: bb2]
+  bb1:
     Print(copy _2)
     _0 = const ()
     Dead(_2)
     Dead(_1)
     Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
   bb5 (cleanup):
     UnwindExit
 
@@ -55,33 +55,33 @@ body b2: scope s0; parent b1; cap_env e0; unwind_exit bb9
     _2 = spawn sp0(copy _1, move _3) -> [bb1]
   bb1:
     Dead(_3)
-    _0 = join move _2 -> [bb4, unwind: bb3]
-  bb2 (cleanup):
-    Dead(_0)
-    UnwindValue(_1, Drop)
-    Dead(_1)
-    Goto(bb9)
-  bb3 (cleanup):
-    UnwindValue(_2, Drop)
-    Dead(_2)
-    Goto(bb2)
-  bb4:
-    scope_wait _1 -> [bb8, unwind: bb7]
-  bb5 (cleanup):
-    UnwindValue(_1, Drop)
-    Dead(_1)
-    Goto(bb9)
-  bb6 (cleanup):
-    UnwindValue(_2, Drop)
-    Dead(_2)
-    Goto(bb5)
-  bb7 (cleanup):
-    Dead(_0)
-    Goto(bb6)
-  bb8:
+    _0 = join move _2 -> [bb2, unwind: bb7]
+  bb2:
+    scope_wait _1 -> [bb3, unwind: bb4]
+  bb3:
     Dead(_2)
     Dead(_1)
     Return
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb9)
+  bb7 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb9)
   bb9 (cleanup):
     UnwindExit
 
@@ -89,11 +89,11 @@ body b3: closure c0; parent b2; cap_env e0; unwind_exit bb3
   _0: u64 (Return)
   _1: fn() -> u64 (Env)
   bb0:
-    _0 = call work(copy _1.0) / e0 -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = call work(copy _1.0) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
     Dead(_0)
     Goto(bb3)
-  bb2:
-    Return
   bb3 (cleanup):
     UnwindExit

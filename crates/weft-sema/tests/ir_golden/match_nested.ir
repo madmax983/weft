@@ -14,57 +14,57 @@ body b0: fn nested; cap_env e0; unwind_exit bb15
   bb0:
     Live(_2)
     _2 = Discriminant(_1.0)
-    switch move _2 -> [0: bb3, otherwise: bb4]
+    switch move _2 -> [0: bb1, otherwise: bb6]
   bb1:
-    Dead(_1)
-    Return
+    switch copy (_1.0 as #0).0 -> [1: bb2, otherwise: bb5]
   bb2:
-    Live(_3)
-    _3 = Discriminant(_1.0)
-    switch move _3 -> [0: bb10, otherwise: bb11]
+    switch copy _1.1 -> [1: bb3, otherwise: bb4]
   bb3:
-    switch copy (_1.0 as #0).0 -> [1: bb5, otherwise: bb6]
-  bb4:
-    Dead(_2)
-    Goto(bb2)
-  bb5:
-    switch copy _1.1 -> [1: bb7, otherwise: bb8]
-  bb6:
-    Dead(_2)
-    Goto(bb2)
-  bb7:
     Dead(_2)
     _0 = const 1u64
-    Goto(bb1)
-  bb8:
+    Goto(bb12)
+  bb4:
     Dead(_2)
-    Goto(bb2)
-  bb9:
-    Live(_5)
-    _5 = Discriminant(_1.0)
-    switch move _5 -> [1: bb13, otherwise: bb14]
-  bb10:
+    Goto(bb7)
+  bb5:
+    Dead(_2)
+    Goto(bb7)
+  bb6:
+    Dead(_2)
+    Goto(bb7)
+  bb7:
+    Live(_3)
+    _3 = Discriminant(_1.0)
+    switch move _3 -> [0: bb8, otherwise: bb9]
+  bb8:
     Dead(_3)
     Live(_4)
     _4 = copy (_1.0 as #0).0
     _0 = copy _4
     Dead(_4)
-    Goto(bb1)
-  bb11:
+    Goto(bb12)
+  bb9:
     Dead(_3)
-    Goto(bb9)
-  bb12:
-    Unreachable
-  bb13:
+    Goto(bb10)
+  bb10:
+    Live(_5)
+    _5 = Discriminant(_1.0)
+    switch move _5 -> [1: bb11, otherwise: bb13]
+  bb11:
     Dead(_5)
     Live(_6)
     _6 = copy _1.1
     _0 = const 0u64
     Dead(_6)
-    Goto(bb1)
-  bb14:
-    Dead(_5)
     Goto(bb12)
+  bb12:
+    Dead(_1)
+    Return
+  bb13:
+    Dead(_5)
+    Goto(bb14)
+  bb14:
+    Unreachable
   bb15 (cleanup):
     UnwindExit
 
@@ -81,63 +81,63 @@ body b1: fn deep; cap_env e0; unwind_exit bb15
   bb0:
     Live(_3)
     _3 = Discriminant(_1)
-    switch move _3 -> [0: bb3, otherwise: bb4]
+    switch move _3 -> [0: bb1, otherwise: bb4]
   bb1:
-    Dead(_2)
-    Dead(_1)
-    Return
-  bb2:
-    Live(_6)
-    _6 = Discriminant(_1)
-    switch move _6 -> [0: bb8, otherwise: bb9]
-  bb3:
     Live(_4)
     _4 = Discriminant((_1 as #0).0)
-    switch move _4 -> [0: bb5, otherwise: bb6]
-  bb4:
-    Dead(_3)
-    Goto(bb2)
-  bb5:
+    switch move _4 -> [0: bb2, otherwise: bb3]
+  bb2:
     Dead(_4)
     Dead(_3)
     Live(_5)
     _5 = move ((_1 as #0).0 as #0).0
     _0 = move _5
     Dead(_5)
-    Goto(bb1)
-  bb6:
+    Goto(bb12)
+  bb3:
     Dead(_4)
     Dead(_3)
-    Goto(bb2)
-  bb7:
-    Live(_8)
-    _8 = Discriminant(_1)
-    switch move _8 -> [1: bb13, otherwise: bb14]
-  bb8:
+    Goto(bb5)
+  bb4:
+    Dead(_3)
+    Goto(bb5)
+  bb5:
+    Live(_6)
+    _6 = Discriminant(_1)
+    switch move _6 -> [0: bb6, otherwise: bb9]
+  bb6:
     Live(_7)
     _7 = Discriminant((_1 as #0).0)
-    switch move _7 -> [1: bb10, otherwise: bb11]
+    switch move _7 -> [1: bb7, otherwise: bb8]
+  bb7:
+    Dead(_7)
+    Dead(_6)
+    _0 = move _2
+    Goto(bb12)
+  bb8:
+    Dead(_7)
+    Dead(_6)
+    Goto(bb10)
   bb9:
     Dead(_6)
-    Goto(bb7)
+    Goto(bb10)
   bb10:
-    Dead(_7)
-    Dead(_6)
-    _0 = move _2
-    Goto(bb1)
+    Live(_8)
+    _8 = Discriminant(_1)
+    switch move _8 -> [1: bb11, otherwise: bb13]
   bb11:
-    Dead(_7)
-    Dead(_6)
-    Goto(bb7)
+    Dead(_8)
+    _0 = move _2
+    Goto(bb12)
   bb12:
-    Unreachable
+    Dead(_2)
+    Dead(_1)
+    Return
   bb13:
     Dead(_8)
-    _0 = move _2
-    Goto(bb1)
+    Goto(bb14)
   bb14:
-    Dead(_8)
-    Goto(bb12)
+    Unreachable
   bb15 (cleanup):
     UnwindExit
 
@@ -149,27 +149,27 @@ body b2: fn bind_then_test; cap_env e0; unwind_exit bb7
   bb0:
     Live(_2)
     _2 = Discriminant(_1.1)
-    switch move _2 -> [0: bb3, otherwise: bb4]
+    switch move _2 -> [0: bb1, otherwise: bb4]
   bb1:
-    Dead(_1)
-    Return
+    switch copy (_1.1 as #0).0 -> [2: bb2, otherwise: bb3]
   bb2:
-    _0 = const 0u64
-    Goto(bb1)
-  bb3:
-    switch copy (_1.1 as #0).0 -> [2: bb5, otherwise: bb6]
-  bb4:
-    Dead(_2)
-    Goto(bb2)
-  bb5:
     Dead(_2)
     Live(_3)
     _3 = copy _1.0
     _0 = copy _3
     Dead(_3)
-    Goto(bb1)
-  bb6:
+    Goto(bb6)
+  bb3:
     Dead(_2)
-    Goto(bb2)
+    Goto(bb5)
+  bb4:
+    Dead(_2)
+    Goto(bb5)
+  bb5:
+    _0 = const 0u64
+    Goto(bb6)
+  bb6:
+    Dead(_1)
+    Return
   bb7 (cleanup):
     UnwindExit

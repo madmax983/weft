@@ -1,0 +1,265 @@
+fn f0 first_elem() -> u64: b0
+fn f1 loop_sum() -> u64: b1
+fn f2 first_ref() -> (): b2
+fn f3 slice_sum() -> u64: b3
+fn f4 wrapped() -> u64: b4
+fn f5 tuple_match() -> u64: b5
+fn f6 variant_match() -> u64: b6
+fn f7 signed() -> u64: extern
+fn f8 Vec.new<T0>() -> Vec<T0> / (): extern
+fn f9 Vec.push<T0>(&Vec<T0>, T0) -> () / (): extern
+cap_env e0
+
+body b0: fn first_elem; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: Vec<u64> (User `v`)
+  _2: () (Temp(Discarded))
+  _3: &Vec<u64> (Temp(Receiver))
+  _4: usize (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = &_1
+    _2 = call Vec.push<u64>(move _3, const 1u64) / e0 -> [bb2]
+  bb2:
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    _4 = const 0usize
+    Bounds(_1, copy _4)
+    _0 = copy _1[_4]
+    Dead(_1)
+    Dead(_4)
+    Return
+  bb3 (cleanup):
+    UnwindExit
+
+body b1: fn loop_sum; cap_env e0; unwind_exit bb8
+  _0: u64 (Return)
+  _1: Vec<u64> (User `v`)
+  _2: () (Temp(Discarded))
+  _3: &Vec<u64> (Temp(Receiver))
+  _4: () (Temp(Discarded))
+  _5: &Vec<u64> (Temp(Receiver))
+  _6: u64 (User `t`)
+  _7: Iter<u64> (Iterator)
+  _8: u64 (Temp(Scrutinee))
+  _9: u64 (User `x`)
+  _10: u64 (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = &_1
+    _2 = call Vec.push<u64>(move _3, const 1u64) / e0 -> [bb2]
+  bb2:
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    Live(_5)
+    _5 = &_1
+    _4 = call Vec.push<u64>(move _5, const 2u64) / e0 -> [bb3]
+  bb3:
+    Dead(_5)
+    Dead(_4)
+    Live(_6)
+    _6 = const 0u64
+    Live(_7)
+    _7 = Iter(elems _1[])
+    Goto(bb4)
+  bb4:
+    Live(_8)
+    _8 = next _7 -> [bb5, done: bb6]
+  bb5:
+    Live(_9)
+    _9 = copy _8
+    Live(_10)
+    _10 = Add<u64>(copy _6, copy _9)
+    _6 = move _10
+    Dead(_10)
+    Dead(_9)
+    Dead(_8)
+    Goto(bb4)
+  bb6:
+    Dead(_8)
+    Goto(bb7)
+  bb7:
+    Dead(_7)
+    _0 = copy _6
+    Dead(_6)
+    Dead(_1)
+    Return
+  bb8 (cleanup):
+    UnwindExit
+
+body b2: fn first_ref; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: Vec<u64> (User `v`)
+  _2: () (Temp(Discarded))
+  _3: &Vec<u64> (Temp(Receiver))
+  _4: Option<&u64> (User `o`)
+  _5: &u64 (Temp(Operand))
+  _6: usize (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = &_1
+    _2 = call Vec.push<u64>(move _3, const 1u64) / e0 -> [bb2]
+  bb2:
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    Live(_5)
+    Live(_6)
+    _6 = const 0usize
+    Bounds(_1, copy _6)
+    _5 = &_1[_6]
+    _4 = Option<&u64>::Some(move _5)
+    Dead(_6)
+    Dead(_5)
+    Print(copy _4)
+    _0 = const ()
+    Dead(_4)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    UnwindExit
+
+body b3: fn slice_sum; cap_env e0; unwind_exit bb7
+  _0: u64 (Return)
+  _1: Vec<u64> (User `v`)
+  _2: () (Temp(Discarded))
+  _3: &Vec<u64> (Temp(Receiver))
+  _4: &[u64] (User `s`)
+  _5: u64 (User `t`)
+  _6: Iter<u64> (Iterator)
+  _7: u64 (Temp(Scrutinee))
+  _8: u64 (User `x`)
+  _9: u64 (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = &_1
+    _2 = call Vec.push<u64>(move _3, const 1u64) / e0 -> [bb2]
+  bb2:
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    _4 = &_1[]
+    Live(_5)
+    _5 = const 0u64
+    Live(_6)
+    _6 = Iter(elems (*_4)[])
+    Goto(bb3)
+  bb3:
+    Live(_7)
+    _7 = next _6 -> [bb4, done: bb5]
+  bb4:
+    Live(_8)
+    _8 = copy _7
+    Live(_9)
+    _9 = Add<u64>(copy _5, copy _8)
+    _5 = move _9
+    Dead(_9)
+    Dead(_8)
+    Dead(_7)
+    Goto(bb3)
+  bb5:
+    Dead(_7)
+    Goto(bb6)
+  bb6:
+    Dead(_6)
+    _0 = copy _5
+    Dead(_5)
+    Dead(_4)
+    Dead(_1)
+    Return
+  bb7 (cleanup):
+    UnwindExit
+
+body b4: fn wrapped; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: Wrap<u64> (User `w`)
+  bb0:
+    Live(_1)
+    _1 = Wrap<u64> { const 1u64 }
+    _0 = copy _1.0
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b5: fn tuple_match; cap_env e0; unwind_exit bb2
+  _0: u64 (Return)
+  _1: (u64, u64) (Temp(Scrutinee))
+  _2: u64 (User `a`)
+  _3: u64 (User `b`)
+  bb0:
+    Live(_1)
+    _1 = (const 1u64, const 2u64)
+    Live(_2)
+    _2 = copy _1.0
+    Live(_3)
+    _3 = copy _1.1
+    _0 = Add<u64>(copy _2, copy _3)
+    Dead(_3)
+    Dead(_2)
+    Goto(bb1)
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b6: fn variant_match; cap_env e0; unwind_exit bb8
+  _0: u64 (Return)
+  _1: Option<u64> (Temp(Scrutinee))
+  _2: usize (Temp(Scrutinee))
+  _3: u64 (User `x`)
+  _4: usize (Temp(Scrutinee))
+  bb0:
+    Live(_1)
+    _1 = Option<u64>::Some(const 1u64)
+    Live(_2)
+    _2 = Discriminant(_1)
+    switch move _2 -> [0: bb1, otherwise: bb2]
+  bb1:
+    Dead(_2)
+    Live(_3)
+    _3 = copy (_1 as #0).0
+    _0 = copy _3
+    Dead(_3)
+    Goto(bb5)
+  bb2:
+    Dead(_2)
+    Goto(bb3)
+  bb3:
+    Live(_4)
+    _4 = Discriminant(_1)
+    switch move _4 -> [1: bb4, otherwise: bb6]
+  bb4:
+    Dead(_4)
+    _0 = const 0u64
+    Goto(bb5)
+  bb5:
+    Dead(_1)
+    Return
+  bb6:
+    Dead(_4)
+    Goto(bb7)
+  bb7:
+    Unreachable
+  bb8 (cleanup):
+    UnwindExit
+// signed: no IR: a type error

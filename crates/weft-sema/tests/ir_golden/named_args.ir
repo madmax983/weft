@@ -39,25 +39,25 @@ body b3: fn named; cap_env e0; unwind_exit bb7
   _2: u64 (Temp(Operand))
   bb0:
     Live(_1)
-    _1 = call two() / e0 -> [bb3, unwind: bb2]
-  bb1 (cleanup):
-    Dead(_0)
-    Goto(bb7)
-  bb2 (cleanup):
-    Dead(_1)
-    Goto(bb1)
-  bb3:
+    _1 = call two() / e0 -> [bb1, unwind: bb5]
+  bb1:
     Live(_2)
-    _2 = call one() / e0 -> [bb5, unwind: bb4]
-  bb4 (cleanup):
-    Dead(_2)
-    Goto(bb2)
-  bb5:
-    _0 = call sub(move _1, move _2) / e0 -> [bb6, unwind: bb4]
-  bb6:
+    _2 = call one() / e0 -> [bb2, unwind: bb4]
+  bb2:
+    _0 = call sub(move _1, move _2) / e0 -> [bb3, unwind: bb4]
+  bb3:
     Dead(_2)
     Dead(_1)
     Return
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Goto(bb7)
   bb7 (cleanup):
     UnwindExit
 
@@ -67,19 +67,19 @@ body b4: fn mixed; cap_env e0; unwind_exit bb5
   _2: u64 (Temp(Operand))
   bb0:
     Live(_2)
-    _2 = call one() / e0 -> [bb3, unwind: bb2]
-  bb1 (cleanup):
-    Dead(_0)
-    Dead(_1)
-    Goto(bb5)
-  bb2 (cleanup):
-    Dead(_2)
-    Goto(bb1)
-  bb3:
-    _0 = call sub(move _2, copy _1) / e0 -> [bb4, unwind: bb2]
-  bb4:
+    _2 = call one() / e0 -> [bb1, unwind: bb3]
+  bb1:
+    _0 = call sub(move _2, copy _1) / e0 -> [bb2, unwind: bb3]
+  bb2:
     Dead(_2)
     Dead(_1)
     Return
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb5)
   bb5 (cleanup):
     UnwindExit

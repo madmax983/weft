@@ -1,0 +1,561 @@
+fn f0 spend(Token) -> (): b0
+fn f1 mint() -> Token: b1
+fn f2 run(fn() -> bool) -> bool: b2
+fn f3 caller() -> bool / main.Choice: b3
+fn f4 run_copy(fn() -> bool) -> bool: b5
+fn f5 run_closure() -> bool / main.Choice: b6
+fn f6 twice(fn() -> bool) -> bool: b9
+fn f7 pass_on(fn() -> bool) -> bool: b10
+fn f8 call_field(&S) -> bool: b11
+fn f9 via_callee(&S) -> bool: b12
+fn f10 S.call(&S) -> bool: b13
+fn f11 via_method(&S) -> bool: b14
+fn f12 run_log(fn() -> bool / Log) -> bool / Log: b15
+fn f13 consumed_first(fn() -> bool) -> bool: b16
+fn f14 call_log(&L) -> bool / Log: b17
+fn f15 via_callee_log(&L) -> bool / Log: b18
+closure c0: body b4, maker b3, cap_env e0, captures []
+closure c1: body b7, maker b6, cap_env e0, captures []
+closure c2: body b8, maker b6, cap_env e0, captures []
+cap_env e0
+
+body b0: fn spend; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Token (Param(0) `t`)
+  _2: u64 (User `i`)
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Consume(_1)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn mint; cap_env e0; unwind_exit bb1
+  _0: Token (Return)
+  bb0:
+    _0 = Token { const 1u64 }
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn run; cap_env e0; unwind_exit bb8
+  _0: bool (Return)
+  _1: fn() -> bool (Param(0) `f`)
+  _2: Token (User `t`)
+  _3: bool (User `b`)
+  _4: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    _2 = call mint() / e0 -> [bb1, unwind: bb6]
+  bb1:
+    Live(_3)
+    _3 = call (copy _1)() / e0 -> [bb2, unwind: bb5]
+  bb2:
+    Live(_4)
+    _4 = call spend(move _2) / e0 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_4)
+    _0 = copy _3
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_4)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_3)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_2, OnAbort(spend))
+    Dead(_2)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+
+body b3: fn caller; cap_env e0; unwind_exit bb4
+  _0: bool (Return)
+  _1: fn() -> bool (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = closure c0()
+    _0 = call run(move _1) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b4: closure c0; parent b3; cap_env e0; unwind_exit bb3
+  _0: bool (Return)
+  _1: fn() -> bool (Env)
+  bb0:
+    _0 = perform Row(main.Choice).choose() -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b5: fn run_copy; cap_env e0; unwind_exit bb9
+  _0: bool (Return)
+  _1: fn() -> bool (Param(0) `f`)
+  _2: Token (User `t`)
+  _3: fn() -> bool (User `g`)
+  _4: bool (User `b`)
+  _5: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    _2 = call mint() / e0 -> [bb1, unwind: bb7]
+  bb1:
+    Live(_3)
+    _3 = copy _1
+    Live(_4)
+    _4 = call (copy _3)() / e0 -> [bb2, unwind: bb5]
+  bb2:
+    Live(_5)
+    _5 = call spend(move _2) / e0 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_5)
+    _0 = copy _4
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_5)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_4)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_3)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindValue(_2, OnAbort(spend))
+    Dead(_2)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindExit
+
+body b6: fn run_closure; cap_env e0; unwind_exit bb6
+  _0: bool (Return)
+  _1: fn(fn() -> bool) -> bool (User `go`)
+  _2: fn(fn() -> bool) -> bool (Temp(Callee))
+  _3: fn() -> bool (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = closure c1()
+    Live(_2)
+    _2 = copy _1
+    Live(_3)
+    _3 = closure c2()
+    _0 = call (copy _2)(move _3) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Dead(_3)
+    Dead(_2)
+    Return
+  bb2 (cleanup):
+    Dead(_3)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b7: closure c1; parent b6; cap_env e0; unwind_exit bb8
+  _0: bool (Return)
+  _1: fn(fn() -> bool) -> bool (Env)
+  _2: fn() -> bool (Param(0) `f`)
+  _3: Token (User `t`)
+  _4: bool (User `b`)
+  _5: () (Temp(Discarded))
+  bb0:
+    Live(_3)
+    _3 = call mint() / e0 -> [bb1, unwind: bb6]
+  bb1:
+    Live(_4)
+    _4 = call (copy _2)() / e0 -> [bb2, unwind: bb5]
+  bb2:
+    Live(_5)
+    _5 = call spend(move _3) / e0 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_5)
+    _0 = copy _4
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Return
+  bb4 (cleanup):
+    Dead(_5)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_4)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_3, OnAbort(spend))
+    Dead(_3)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Dead(_2)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+
+body b8: closure c2; parent b6; cap_env e0; unwind_exit bb3
+  _0: bool (Return)
+  _1: fn() -> bool (Env)
+  bb0:
+    _0 = perform Row(main.Choice).choose() -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b9: fn twice; cap_env e0; unwind_exit bb3
+  _0: bool (Return)
+  _1: fn() -> bool (Param(0) `f`)
+  bb0:
+    _0 = call (copy _1)() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b10: fn pass_on; cap_env e0; unwind_exit bb8
+  _0: bool (Return)
+  _1: fn() -> bool (Param(0) `f`)
+  _2: Token (User `t`)
+  _3: bool (User `b`)
+  _4: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    _2 = call mint() / e0 -> [bb1, unwind: bb6]
+  bb1:
+    Live(_3)
+    _3 = call twice(copy _1) / e0 -> [bb2, unwind: bb5]
+  bb2:
+    Live(_4)
+    _4 = call spend(move _2) / e0 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_4)
+    _0 = copy _3
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_4)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_3)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_2, OnAbort(spend))
+    Dead(_2)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+
+body b11: fn call_field; cap_env e0; unwind_exit bb4
+  _0: bool (Return)
+  _1: &S (Param(0) `s`)
+  _2: fn() -> bool (User `g`)
+  bb0:
+    Live(_2)
+    _2 = copy (*_1).0
+    _0 = call (copy _2)() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b12: fn via_callee; cap_env e0; unwind_exit bb8
+  _0: bool (Return)
+  _1: &S (Param(0) `s`)
+  _2: Token (User `t`)
+  _3: bool (User `b`)
+  _4: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    _2 = call mint() / e0 -> [bb1, unwind: bb6]
+  bb1:
+    Live(_3)
+    _3 = call call_field(copy _1) / e0 -> [bb2, unwind: bb5]
+  bb2:
+    Live(_4)
+    _4 = call spend(move _2) / e0 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_4)
+    _0 = copy _3
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_4)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_3)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_2, OnAbort(spend))
+    Dead(_2)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+
+body b13: fn S.call; cap_env e0; unwind_exit bb4
+  _0: bool (Return)
+  _1: &S (Param(0) `self`)
+  _2: fn() -> bool (User `g`)
+  bb0:
+    Live(_2)
+    _2 = copy (*_1).0
+    _0 = call (copy _2)() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b14: fn via_method; cap_env e0; unwind_exit bb9
+  _0: bool (Return)
+  _1: &S (Param(0) `s`)
+  _2: Token (User `t`)
+  _3: bool (User `b`)
+  _4: &S (Temp(Receiver))
+  _5: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    _2 = call mint() / e0 -> [bb1, unwind: bb7]
+  bb1:
+    Live(_3)
+    Live(_4)
+    _4 = &(*_1)
+    _3 = call S.call(move _4) / e0 -> [bb2, unwind: bb5]
+  bb2:
+    Dead(_4)
+    Live(_5)
+    _5 = call spend(move _2) / e0 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_5)
+    _0 = copy _3
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_5)
+    Goto(bb6)
+  bb5 (cleanup):
+    Dead(_4)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_3)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindValue(_2, OnAbort(spend))
+    Dead(_2)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindExit
+
+body b15: fn run_log; cap_env e0; unwind_exit bb8
+  _0: bool (Return)
+  _1: fn() -> bool / Log (Param(0) `f`)
+  _2: Token (User `t`)
+  _3: bool (User `b`)
+  _4: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    _2 = call mint() / e0 -> [bb1, unwind: bb6]
+  bb1:
+    Live(_3)
+    _3 = call (copy _1)() / e0 -> [bb2, unwind: bb5]
+  bb2:
+    Live(_4)
+    _4 = call spend(move _2) / e0 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_4)
+    _0 = copy _3
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_4)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_3)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_2, OnAbort(spend))
+    Dead(_2)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+
+body b16: fn consumed_first; cap_env e0; unwind_exit bb7
+  _0: bool (Return)
+  _1: fn() -> bool (Param(0) `f`)
+  _2: Token (User `t`)
+  _3: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    _2 = call mint() / e0 -> [bb1, unwind: bb5]
+  bb1:
+    Live(_3)
+    _3 = call spend(move _2) / e0 -> [bb2, unwind: bb4]
+  bb2:
+    Dead(_3)
+    _0 = call (copy _1)() / e0 -> [bb3, unwind: bb5]
+  bb3:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_3)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_2, OnAbort(spend))
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b17: fn call_log; cap_env e0; unwind_exit bb4
+  _0: bool (Return)
+  _1: &L (Param(0) `s`)
+  _2: fn() -> bool / Log (User `g`)
+  bb0:
+    Live(_2)
+    _2 = copy (*_1).0
+    _0 = call (copy _2)() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b18: fn via_callee_log; cap_env e0; unwind_exit bb8
+  _0: bool (Return)
+  _1: &L (Param(0) `s`)
+  _2: Token (User `t`)
+  _3: bool (User `b`)
+  _4: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    _2 = call mint() / e0 -> [bb1, unwind: bb6]
+  bb1:
+    Live(_3)
+    _3 = call call_log(copy _1) / e0 -> [bb2, unwind: bb5]
+  bb2:
+    Live(_4)
+    _4 = call spend(move _2) / e0 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_4)
+    _0 = copy _3
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_4)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_3)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_2, OnAbort(spend))
+    Dead(_2)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit

@@ -29,16 +29,16 @@ body b2: fn run; cap_env e0; unwind_exit bb3
   _1: fn(u64) -> u64 (Param(0) `f`)
   _2: u64 (Param(1) `x`)
   bb0:
-    _0 = call (copy _1)(copy _2) / e0 -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = call (copy _1)(copy _2) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
     Dead(_0)
     Dead(_2)
     Dead(_1)
     Goto(bb3)
-  bb2:
-    Dead(_2)
-    Dead(_1)
-    Return
   bb3 (cleanup):
     UnwindExit
 
@@ -57,20 +57,8 @@ body b3: fn main; cap_env e0; unwind_exit bb13
     _1 = const double
     Live(_2)
     Live(_3)
-    _3 = call (copy _1)(const 2u64) / e0 -> [bb5, unwind: bb4]
-  bb1 (cleanup):
-    Dead(_0)
-    Goto(bb13)
-  bb2 (cleanup):
-    Dead(_1)
-    Goto(bb1)
-  bb3 (cleanup):
-    Dead(_2)
-    Goto(bb2)
-  bb4 (cleanup):
-    Dead(_3)
-    Goto(bb3)
-  bb5:
+    _3 = call (copy _1)(const 2u64) / e0 -> [bb1, unwind: bb9]
+  bb1:
     Print(copy _3)
     _2 = const ()
     Dead(_3)
@@ -79,17 +67,8 @@ body b3: fn main; cap_env e0; unwind_exit bb13
     Live(_5)
     Live(_6)
     _6 = const double
-    _5 = call run(move _6, const 3u64) / e0 -> [bb9, unwind: bb8]
-  bb6 (cleanup):
-    Dead(_4)
-    Goto(bb2)
-  bb7 (cleanup):
-    Dead(_5)
-    Goto(bb6)
-  bb8 (cleanup):
-    Dead(_6)
-    Goto(bb7)
-  bb9:
+    _5 = call run(move _6, const 3u64) / e0 -> [bb2, unwind: bb6]
+  bb2:
     Print(copy _5)
     _4 = const ()
     Dead(_6)
@@ -98,19 +77,40 @@ body b3: fn main; cap_env e0; unwind_exit bb13
     Live(_7)
     Live(_8)
     _8 = const id<u64>
-    _7 = call run(move _8, const 4u64) / e0 -> [bb12, unwind: bb11]
-  bb10 (cleanup):
-    Dead(_7)
-    Goto(bb2)
-  bb11 (cleanup):
-    Dead(_8)
-    Goto(bb10)
-  bb12:
+    _7 = call run(move _8, const 4u64) / e0 -> [bb3, unwind: bb4]
+  bb3:
     Print(copy _7)
     _0 = const ()
     Dead(_1)
     Dead(_8)
     Dead(_7)
     Return
+  bb4 (cleanup):
+    Dead(_8)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_7)
+    Goto(bb11)
+  bb6 (cleanup):
+    Dead(_6)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_5)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_4)
+    Goto(bb11)
+  bb9 (cleanup):
+    Dead(_3)
+    Goto(bb10)
+  bb10 (cleanup):
+    Dead(_2)
+    Goto(bb11)
+  bb11 (cleanup):
+    Dead(_1)
+    Goto(bb12)
+  bb12 (cleanup):
+    Dead(_0)
+    Goto(bb13)
   bb13 (cleanup):
     UnwindExit

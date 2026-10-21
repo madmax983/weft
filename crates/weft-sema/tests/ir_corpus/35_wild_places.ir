@@ -1,0 +1,499 @@
+fn f0 via_param(fn(&World) -> &Entity, &World) -> () / (): b0
+fn f1 via_param_option(fn(&World) -> Option<&Entity>, &World) -> () / (): b1
+fn f2 coarse(&World) -> &Entity: b2
+fn f3 coarse_payload(&Machine) -> &Vec<u64>: b3
+fn f4 any_entity(&World) -> &Entity: b4
+fn f5 any_payload(&Machine) -> &Vec<u64>: b5
+fn f6 uses_any(&World) -> () / (): b6
+fn f7 uses_any_payload(&Machine) -> () / (): b7
+fn f8 takes_items(&World, &Vec<u64>) -> (): b8
+fn f9 takes_any(&World, &u64) -> (): b9
+fn f10 passes_deep(&World) -> (): b10
+fn f11 exact(&World) -> &Entity: b11
+fn f12 stable_below(&World) -> &Vec<u64>: b12
+fn f13 other_field(fn(&World) -> &Entity, &World, &World) -> () / (): b13
+fn f14 any_other_field(&World) -> () / (): b14
+fn f15 Vec.clear<T0>(&Vec<T0>) -> () / (): extern
+fn f16 Vec.len<T0>(&Vec<T0>) -> usize / (): extern
+cap_env e0
+
+body b0: fn via_param; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: fn(&World) -> &Entity (Param(0) `f`)
+  _2: &World (Param(1) `world`)
+  _3: &Entity (User `r`)
+  _4: () (Temp(Discarded))
+  _5: &Vec<Entity> (Temp(Receiver))
+  bb0:
+    Live(_3)
+    _3 = call (copy _1)(copy _2) / e0 -> [bb1, unwind: bb3]
+  bb1:
+    Live(_4)
+    Live(_5)
+    _5 = &(*_2).0
+    _4 = call Vec.clear<Entity>(move _5) / e0 -> [bb2]
+  bb2:
+    Dead(_5)
+    Dead(_4)
+    Print(copy (*_3).0)
+    _0 = const ()
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_3)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b1: fn via_param_option; cap_env e0; unwind_exit bb12
+  _0: () (Return)
+  _1: fn(&World) -> Option<&Entity> (Param(0) `f`)
+  _2: &World (Param(1) `world`)
+  _3: Option<&Entity> (User `o`)
+  _4: () (Temp(Discarded))
+  _5: &Vec<Entity> (Temp(Receiver))
+  _6: usize (Temp(Scrutinee))
+  _7: &Entity (User `e`)
+  _8: usize (Temp(Scrutinee))
+  bb0:
+    Live(_3)
+    _3 = call (copy _1)(copy _2) / e0 -> [bb1, unwind: bb10]
+  bb1:
+    Live(_4)
+    Live(_5)
+    _5 = &(*_2).0
+    _4 = call Vec.clear<Entity>(move _5) / e0 -> [bb2]
+  bb2:
+    Dead(_5)
+    Dead(_4)
+    Live(_6)
+    _6 = Discriminant(_3)
+    switch move _6 -> [0: bb3, otherwise: bb4]
+  bb3:
+    Dead(_6)
+    Live(_7)
+    _7 = copy (_3 as #0).0
+    Print(copy (*_7).0)
+    _0 = const ()
+    Dead(_7)
+    Goto(bb7)
+  bb4:
+    Dead(_6)
+    Goto(bb5)
+  bb5:
+    Live(_8)
+    _8 = Discriminant(_3)
+    switch move _8 -> [1: bb6, otherwise: bb8]
+  bb6:
+    Dead(_8)
+    _0 = const ()
+    Goto(bb7)
+  bb7:
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb8:
+    Dead(_8)
+    Goto(bb9)
+  bb9:
+    Unreachable
+  bb10 (cleanup):
+    Dead(_3)
+    Goto(bb11)
+  bb11 (cleanup):
+    Dead(_0)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb12)
+  bb12 (cleanup):
+    UnwindExit
+
+body b2: fn coarse; cap_env e0; unwind_exit bb1
+  _0: &Entity (Return)
+  _1: &World (Param(0) `w`)
+  _2: usize (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0usize
+    Bounds((*_1).0, copy _2)
+    _0 = &(*_1).0[_2]
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn coarse_payload; cap_env e0; unwind_exit bb8
+  _0: &Vec<u64> (Return)
+  _1: &Machine (Param(0) `m`)
+  _2: usize (Temp(Scrutinee))
+  _3: &Vec<u64> (User `v`)
+  _4: usize (Temp(Scrutinee))
+  bb0:
+    Live(_2)
+    _2 = Discriminant((*_1).0)
+    switch move _2 -> [1: bb1, otherwise: bb2]
+  bb1:
+    Dead(_2)
+    Live(_3)
+    _3 = &((*_1).0 as #1).0
+    _0 = copy _3
+    Dead(_3)
+    Goto(bb6)
+  bb2:
+    Dead(_2)
+    Goto(bb3)
+  bb3:
+    Live(_4)
+    _4 = Discriminant((*_1).0)
+    switch move _4 -> [0: bb4, otherwise: bb9]
+  bb4:
+    Dead(_4)
+    _0 = call coarse_payload(copy _1) / e0 -> [bb5, unwind: bb7]
+  bb5:
+    Goto(bb6)
+  bb6:
+    Dead(_1)
+    Return
+  bb7 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+  bb9:
+    Dead(_4)
+    Goto(bb10)
+  bb10:
+    Unreachable
+
+body b4: fn any_entity; cap_env e0; unwind_exit bb1
+  _0: &Entity (Return)
+  _1: &World (Param(0) `w`)
+  _2: usize (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0usize
+    Bounds((*_1).0, copy _2)
+    _0 = &(*_1).0[_2]
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b5: fn any_payload; cap_env e0; unwind_exit bb8
+  _0: &Vec<u64> (Return)
+  _1: &Machine (Param(0) `m`)
+  _2: usize (Temp(Scrutinee))
+  _3: &Vec<u64> (User `v`)
+  _4: usize (Temp(Scrutinee))
+  bb0:
+    Live(_2)
+    _2 = Discriminant((*_1).0)
+    switch move _2 -> [1: bb1, otherwise: bb2]
+  bb1:
+    Dead(_2)
+    Live(_3)
+    _3 = &((*_1).0 as #1).0
+    _0 = copy _3
+    Dead(_3)
+    Goto(bb6)
+  bb2:
+    Dead(_2)
+    Goto(bb3)
+  bb3:
+    Live(_4)
+    _4 = Discriminant((*_1).0)
+    switch move _4 -> [0: bb4, otherwise: bb9]
+  bb4:
+    Dead(_4)
+    _0 = call any_payload(copy _1) / e0 -> [bb5, unwind: bb7]
+  bb5:
+    Goto(bb6)
+  bb6:
+    Dead(_1)
+    Return
+  bb7 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+  bb9:
+    Dead(_4)
+    Goto(bb10)
+  bb10:
+    Unreachable
+
+body b6: fn uses_any; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: &World (Param(0) `w`)
+  _2: &Entity (User `r`)
+  _3: () (Temp(Discarded))
+  _4: &Vec<Entity> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    _2 = call any_entity(copy _1) / e0 -> [bb1, unwind: bb3]
+  bb1:
+    Live(_3)
+    Live(_4)
+    _4 = &(*_1).0
+    _3 = call Vec.clear<Entity>(move _4) / e0 -> [bb2]
+  bb2:
+    Dead(_4)
+    Dead(_3)
+    Print(copy (*_2).0)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b7: fn uses_any_payload; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: &Machine (Param(0) `m`)
+  _2: &Vec<u64> (User `r`)
+  _3: State (Temp(Operand))
+  _4: usize (Temp(Operand))
+  _5: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    _2 = call any_payload(copy _1) / e0 -> [bb1, unwind: bb3]
+  bb1:
+    Live(_3)
+    _3 = State::Idle()
+    (*_1).0 = move _3
+    Dead(_3)
+    Live(_4)
+    Live(_5)
+    _5 = &(*_2)
+    _4 = call Vec.len<u64>(move _5) / e0 -> [bb2]
+  bb2:
+    Print(copy _4)
+    _0 = const ()
+    Dead(_2)
+    Dead(_5)
+    Dead(_4)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b8: fn takes_items; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &World (Param(0) `w`)
+  _2: &Vec<u64> (Param(1) `x`)
+  bb0:
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b9: fn takes_any; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &World (Param(0) `w`)
+  _2: &u64 (Param(1) `x`)
+  bb0:
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b10: fn passes_deep; cap_env e0; unwind_exit bb12
+  _0: () (Return)
+  _1: &World (Param(0) `w`)
+  _2: () (Temp(Discarded))
+  _3: &World (Temp(Operand))
+  _4: &Vec<u64> (Temp(Operand))
+  _5: usize (Temp(Operand))
+  _6: &World (Temp(Operand))
+  _7: &u64 (Temp(Operand))
+  _8: usize (Temp(Operand))
+  _9: usize (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = copy _1
+    Live(_4)
+    Live(_5)
+    _5 = const 0usize
+    Bounds((*_1).0, copy _5)
+    _4 = &(*_1).0[_5].1
+    _2 = call takes_items(move _3, move _4) / e0 -> [bb1, unwind: bb7]
+  bb1:
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Live(_6)
+    _6 = copy _1
+    Live(_7)
+    Live(_8)
+    _8 = const 0usize
+    Bounds((*_1).0, copy _8)
+    Live(_9)
+    _9 = const 0usize
+    Bounds((*_1).0[_8].1, copy _9)
+    _7 = &(*_1).0[_8].1[_9]
+    _0 = call takes_any(move _6, move _7) / e0 -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_9)
+    Dead(_8)
+    Dead(_7)
+    Dead(_6)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_9)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_8)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_7)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_6)
+    Goto(bb11)
+  bb7 (cleanup):
+    Dead(_5)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_4)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_3)
+    Goto(bb10)
+  bb10 (cleanup):
+    Dead(_2)
+    Goto(bb11)
+  bb11 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb12)
+  bb12 (cleanup):
+    UnwindExit
+
+body b11: fn exact; cap_env e0; unwind_exit bb1
+  _0: &Entity (Return)
+  _1: &World (Param(0) `w`)
+  _2: usize (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0usize
+    Bounds((*_1).0, copy _2)
+    _0 = &(*_1).0[_2]
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b12: fn stable_below; cap_env e0; unwind_exit bb1
+  _0: &Vec<u64> (Return)
+  _1: &World (Param(0) `w`)
+  _2: usize (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0usize
+    Bounds((*_1).0, copy _2)
+    _0 = &(*_1).0[_2].1
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b13: fn other_field; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: fn(&World) -> &Entity (Param(0) `f`)
+  _2: &World (Param(1) `world`)
+  _3: &World (Param(2) `other`)
+  _4: &Entity (User `r`)
+  _5: () (Temp(Discarded))
+  _6: &Vec<Entity> (Temp(Receiver))
+  bb0:
+    Live(_4)
+    _4 = call (copy _1)(copy _2) / e0 -> [bb1, unwind: bb3]
+  bb1:
+    Live(_5)
+    Live(_6)
+    _6 = &(*_3).0
+    _5 = call Vec.clear<Entity>(move _6) / e0 -> [bb2]
+  bb2:
+    Dead(_6)
+    Dead(_5)
+    Print(copy (*_4).0)
+    _0 = const ()
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_4)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b14: fn any_other_field; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: &World (Param(0) `w`)
+  _2: &Entity (User `r`)
+  _3: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = call any_entity(copy _1) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Live(_3)
+    _3 = Add<u64>(copy (*_1).1, const 1u64)
+    (*_1).1 = move _3
+    Dead(_3)
+    Print(copy (*_2).0)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit

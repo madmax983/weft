@@ -19,23 +19,23 @@ body b0: fn wait; cap_env e0; unwind_exit bb1
 body b1: fn waits; cap_env e0; unwind_exit bb3
   _0: Duration (Return)
   bb0:
-    _0 = call wait(const 2000ms, const 500ms) / e0 -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = call wait(const 2000ms, const 500ms) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
     Dead(_0)
     Goto(bb3)
-  bb2:
-    Return
   bb3 (cleanup):
     UnwindExit
 
 body b2: fn sleeps; cap_env e0; unwind_exit bb3
   _0: () (Return)
   bb0:
-    _0 = call sleep(const 1000ms) / e0 -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = call sleep(const 1000ms) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
     Dead(_0)
     Goto(bb3)
-  bb2:
-    Return
   bb3 (cleanup):
     UnwindExit

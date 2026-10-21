@@ -73,7 +73,7 @@ impl Builder<'_> {
             return unsupported(Construct::NoThir, span);
         };
         let (ty, name) = (binding.ty, binding.name.clone());
-        let mut props = self.props(ty);
+        let mut props = self.binding_props_of(b, ty);
         props.uniq = uniq;
         let l = self.add_local(LocalDecl {
             ty,

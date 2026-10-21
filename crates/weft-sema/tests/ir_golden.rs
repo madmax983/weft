@@ -2029,6 +2029,90 @@ fn a_once_closure_is_moved_at_its_call() {
     assert_eq!(value_callees(n), [&Operand::Move(Place::local(gl))]);
 }
 
+/// The local of each binding of `body` whose name is `name`.
+fn named_all(body: &Body, name: &str) -> Vec<LocalId> {
+    body.local_ids()
+        .filter(|&l| body.locals[l.index()].name.as_deref() == Some(name))
+        .collect()
+}
+
+#[test]
+fn a_function_value_local_gets_the_closure_modes_from_the_analysis() {
+    // The modes of a local of a function type come from the analysis, not only
+    // from a closure literal: `let g = f` holds the same `once` closure as `f`;
+    // a parameter or a `match` binding of a function type holds what the
+    // analysis says it can hold (ORCHESTRATOR note after B9). `copy` stays the
+    // copy property of the type: it says how a read runs (late capture).
+    let src = "linear struct Tx { open: bool }\nfn close(t: Tx) { let Tx(open) = t }\nstruct Buf { items: Vec<u64> }\nfn eat(b: Buf) {}\nfn alias() {\n    let b = Buf { items: Vec.new() }\n    let f = || eat(b)\n    let g = f\n    g()\n}\nfn linear_alias() {\n    let t = Tx { open: true }\n    let f = || close(t)\n    let g = f\n    g()\n}\nfn plain(h: fn() -> u64) -> u64 {\n    let k = h\n    k() + h()\n}\n";
+    let (_, b) = build(src);
+    assert!(b.broken.is_empty(), "{}", rules(&b));
+    let alias = body(&b, "alias");
+    let f = named(alias, "f");
+    let g = named(alias, "g");
+    let d = &alias.locals[g.index()];
+    assert!(
+        d.props.once && d.props.copy,
+        "`g` holds a once closure: {:?}",
+        d.props
+    );
+    assert!(
+        !alias.locals[f.index()].props.copy,
+        "the literal local moves"
+    );
+    assert_eq!(value_callees(alias), [&Operand::Copy(Place::local(g))]);
+    let lin = body(&b, "linear_alias");
+    let g = named(lin, "g");
+    let d = &lin.locals[g.index()];
+    assert!(
+        d.props.linear && d.props.once,
+        "`g` holds a linear closure: {:?}",
+        d.props
+    );
+    // The cleanup chain finishes the linear closure that `g` can hold.
+    assert!(
+        stmts(lin)
+            .iter()
+            .any(|s| matches!(s, StmtKind::UnwindValue(p, _) if *p == Place::local(g))),
+        "no UnwindValue of `g`"
+    );
+    // A function value that the analysis does not follow keeps the props of
+    // its type: plain data, read with `copy`.
+    let plain = body(&b, "plain");
+    for name in ["h", "k"] {
+        for l in named_all(plain, name) {
+            let d = &plain.locals[l.index()];
+            assert!(
+                d.props.copy && !d.props.once && !d.props.linear,
+                "{name}: {:?}",
+                d.props
+            );
+        }
+    }
+}
+
+#[test]
+fn a_closure_that_captures_a_later_once_value_shares_the_cell() {
+    // `c` holds a plain closure when `k` is made, and a `once` closure later.
+    // The analysis gives `c` the mode `once` (over the whole body), but `k`
+    // shares the cell of `c` (`Kept`): `k()` calls the value that `c` has at
+    // the call, as the `ast` engine does (it prints 7). A copy of `c` into `k`
+    // at the literal would make `k()` print 0.
+    let src = "struct Buf { items: Vec<u64> }\nfn eat(b: Buf) { print(7) }\nfn main() {\n    let b = Buf { items: Vec.new() }\n    let c = || print(0)\n    let k = || c()\n    c = || eat(b)\n    k()\n}\n";
+    let (_, b) = build(src);
+    assert!(b.broken.is_empty(), "{}", rules(&b));
+    let main = body(&b, "main");
+    let c = named(main, "c");
+    assert!(
+        main.locals[c.index()].props.once,
+        "the analysis says `c` can hold a once closure"
+    );
+    let made = made_by(&b, body_id(&b, "main"));
+    assert_eq!(
+        captures(&b, made[1]),
+        [("c".to_string(), CaptureMode::Kept)]
+    );
+}
+
 #[test]
 fn a_function_value_call_reads_the_callee_first_and_can_abort() {
     let b = golden_built("fn_value_call");

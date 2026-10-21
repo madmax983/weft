@@ -299,7 +299,12 @@ fn analyze_bounded(
     for (&f, mut l) in user_fns.iter().zip(inferred.lowered) {
         diags.extend(l.diags);
         work.add(l.work);
-        thir.push(thir::record::build(&prog, &mut thir_tys, *l.thir));
+        thir.push(thir::record::build(
+            &prog,
+            &mut thir_tys,
+            *l.thir,
+            &l.facts.vars,
+        ));
         let unit = unit_of(&prog, prog.fns[f].module);
         l.facts.started = unit == ROOT_UNIT && main == Some(f);
         l.facts.no_runtime = l.facts.started && opts.no_runtime;
@@ -318,7 +323,12 @@ fn analyze_bounded(
             .lower_test(&t.body, t.span);
         diags.extend(l.diags);
         work.add(l.work);
-        thir.push(thir::record::build(&prog, &mut thir_tys, *l.thir));
+        thir.push(thir::record::build(
+            &prog,
+            &mut thir_tys,
+            *l.thir,
+            &l.facts.vars,
+        ));
         l.facts.started = unit_of(&prog, t.module) == ROOT_UNIT;
         bodies.push(BodyFacts {
             func: None,

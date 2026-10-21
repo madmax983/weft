@@ -8,12 +8,12 @@ cap_env e1: parent e0, main.Stop _1
 body b0: fn run; cap_env e0; unwind_exit bb3
   _0: u64 (Return)
   bb0:
-    _0 = handle h0 -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = handle h0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
     Dead(_0)
     Goto(bb3)
-  bb2:
-    Return
   bb3 (cleanup):
     UnwindExit
 
@@ -34,19 +34,19 @@ body b1: handled h0; parent b0; cap_env e1; unwind_exit bb6
   bb2:
     Dead(_4)
     Dead(_3)
-    _0 = perform Local(_1).stop(const 7u64) -> [bb5, unwind: bb4]
-  bb3 (cleanup):
-    Dead(_0)
-    Dead(_1)
-    Goto(bb6)
-  bb4 (cleanup):
-    UnwindValue(_2, Drop)
-    Dead(_2)
-    Goto(bb3)
-  bb5:
+    _0 = perform Local(_1).stop(const 7u64) -> [bb3, unwind: bb4]
+  bb3:
     Dead(_2)
     Dead(_1)
     Return
+  bb4 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb6)
   bb6 (cleanup):
     UnwindExit
 

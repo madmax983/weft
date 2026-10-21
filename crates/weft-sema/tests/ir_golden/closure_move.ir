@@ -43,26 +43,26 @@ body b1: fn main; cap_env e0; unwind_exit bb8
     _4 = const 2usize
     Live(_5)
     _5 = closure c0(move _1, copy _4)
-    _0 = call (move _5)() / e0 -> [bb7, unwind: bb6]
-  bb3 (cleanup):
-    Dead(_0)
-    Goto(bb8)
-  bb4 (cleanup):
-    UnwindValue(_1, Drop)
-    Dead(_1)
-    Goto(bb3)
-  bb5 (cleanup):
-    Dead(_4)
-    Goto(bb4)
-  bb6 (cleanup):
-    UnwindValue(_5, Drop)
-    Dead(_5)
-    Goto(bb5)
-  bb7:
+    _0 = call (move _5)() / e0 -> [bb3, unwind: bb4]
+  bb3:
     Dead(_5)
     Dead(_4)
     Dead(_1)
     Return
+  bb4 (cleanup):
+    UnwindValue(_5, Drop)
+    Dead(_5)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_4)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Goto(bb8)
   bb8 (cleanup):
     UnwindExit
 
@@ -74,22 +74,22 @@ body b2: closure c0; parent b1; cap_env e0; unwind_exit bb5
   bb0:
     Live(_2)
     Live(_3)
-    _3 = call take(move _1.0) / e0 -> [bb4, unwind: bb3]
-  bb1 (cleanup):
-    Dead(_0)
-    Goto(bb5)
-  bb2 (cleanup):
-    Dead(_2)
-    Goto(bb1)
-  bb3 (cleanup):
-    Dead(_3)
-    Goto(bb2)
-  bb4:
+    _3 = call take(move _1.0) / e0 -> [bb1, unwind: bb2]
+  bb1:
     _2 = Add<usize>(move _3, copy _1.1)
     Print(copy _2)
     _0 = const ()
     Dead(_3)
     Dead(_2)
     Return
+  bb2 (cleanup):
+    Dead(_3)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
   bb5 (cleanup):
     UnwindExit

@@ -30,7 +30,8 @@
 //! - V16: the verifier takes "newest first" for temporaries as "highest index
 //!   first", because the builder makes each temporary when it needs it.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashSet};
 use std::fmt;
 
 use crate::ty::{AdtKind, ExternDeref, FnTy, Lang, Ty};
@@ -233,10 +234,12 @@ pub fn verify_program(p: &Program, tys: &TyTable) -> Vec<Broken> {
     }
     once_run(p, &mut out);
     let views = env_views(p);
+    let made = closure_sites(p);
     for (ci, c) in p.closures.iter().enumerate() {
         let id = ClosureId(id_of(ci));
         let v = views.get(&id).map_or(&[][..], Vec::as_slice);
-        kept(p, tys, id, c, v, &mut out);
+        let m = made.get(&id).map_or(&[][..], Vec::as_slice);
+        kept(p, tys, c, m, v, &mut out);
     }
     let mut seen = HashSet::new();
     out.retain(|b| seen.insert(b.clone()));
@@ -269,7 +272,7 @@ pub fn verify_body(p: &Program, tys: &TyTable, id: BodyId) -> Vec<Broken> {
     cx.upvars();
     cx.chains(&g);
     cx.drops();
-    cx.returns();
+    cx.returns(&g);
     cx.out
 }
 
@@ -295,10 +298,16 @@ fn lid(i: usize) -> LocalId {
 /// The edges of one body (normal and abort edges), the blocks that the entry
 /// reaches, and the immediate dominators.
 struct Graph {
+    /// The successors of each block, one for each edge, in the order of
+    /// [`TermKind::successors`].
+    succs: Vec<Vec<usize>>,
     /// The predecessors of each block, one for each edge.
     preds: Vec<Vec<usize>>,
     /// The blocks that the entry reaches, in reverse post-order.
     rpo: Vec<usize>,
+    /// The index of each block in [`Graph::rpo`], or `usize::MAX` for a block
+    /// that the entry does not reach.
+    pos: Vec<usize>,
     /// The immediate dominator of each block that the entry reaches. The entry is
     /// its own dominator.
     idom: Vec<Option<usize>>,
@@ -350,8 +359,18 @@ impl Graph {
             }
         }
         let rpo: Vec<usize> = post.into_iter().rev().collect();
-        let idom = dominators(&rpo, &preds, n);
-        Self { preds, rpo, idom }
+        let mut pos = vec![usize::MAX; n];
+        for (i, &b) in rpo.iter().enumerate() {
+            pos[b] = i;
+        }
+        let idom = dominators(entry, &succs, &preds);
+        Self {
+            succs,
+            preds,
+            rpo,
+            pos,
+            idom,
+        }
     }
 
     /// Returns true if the entry reaches block `b`.
@@ -360,53 +379,110 @@ impl Graph {
     }
 }
 
-/// Returns the immediate dominator of each block (Cooper, Harvey and Kennedy, "A
-/// simple, fast dominance algorithm").
-fn dominators(rpo: &[usize], preds: &[Vec<usize>], n: usize) -> Vec<Option<usize>> {
-    let mut order = vec![usize::MAX; n];
-    for (i, &b) in rpo.iter().enumerate() {
-        order[b] = i;
-    }
+/// No vertex: the ancestor of a root of the forest of [`dominators`].
+const NONE: usize = usize::MAX;
+
+/// Returns the immediate dominator of each block that `entry` reaches
+/// (Lengauer and Tarjan, "A fast algorithm for finding dominators in a
+/// flowgraph", the simple version with path compression).
+///
+/// The cost is close to linear in the edges. The iterative algorithm of Cooper,
+/// Harvey and Kennedy is quadratic on a block with many edges in from deep
+/// blocks: the failed tests of a wide `match` all go to the next arm.
+fn dominators(entry: usize, succs: &[Vec<usize>], preds: &[Vec<usize>]) -> Vec<Option<usize>> {
+    let n = succs.len();
     let mut idom: Vec<Option<usize>> = vec![None; n];
-    let Some(&entry) = rpo.first() else {
+    if entry >= n {
         return idom;
-    };
-    idom[entry] = Some(entry);
-    let intersect = |idom: &[Option<usize>], mut a: usize, mut b: usize| {
-        while a != b {
-            while order[a] > order[b] {
-                match idom[a] {
-                    Some(x) => a = x,
-                    None => return b,
-                }
-            }
-            while order[b] > order[a] {
-                match idom[b] {
-                    Some(x) => b = x,
-                    None => return a,
-                }
-            }
+    }
+    // A depth-first spanning tree: the pre-order number of each block, the
+    // block of each number, and the parent of each number.
+    let mut pre = vec![NONE; n];
+    let mut vertex: Vec<usize> = Vec::new();
+    let mut parent: Vec<usize> = Vec::new();
+    let mut stack = vec![(entry, NONE)];
+    while let Some((b, par)) = stack.pop() {
+        if pre[b] != NONE {
+            continue;
         }
-        a
-    };
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for &b in rpo.iter().skip(1) {
-            let mut new: Option<usize> = None;
-            for &pr in &preds[b] {
-                if idom[pr].is_none() {
-                    continue;
-                }
-                new = Some(new.map_or(pr, |x| intersect(&idom, pr, x)));
-            }
-            if new.is_some() && idom[b] != new {
-                idom[b] = new;
-                changed = true;
+        pre[b] = vertex.len();
+        vertex.push(b);
+        parent.push(par);
+        for &s in succs[b].iter().rev() {
+            if pre[s] == NONE {
+                stack.push((s, pre[b]));
             }
         }
     }
+    let k = vertex.len();
+    let mut semi: Vec<usize> = (0..k).collect();
+    let mut dom: Vec<usize> = vec![0; k];
+    let mut forest = Forest {
+        ancestor: vec![NONE; k],
+        label: (0..k).collect(),
+    };
+    let mut bucket: Vec<Vec<usize>> = vec![Vec::new(); k];
+    for w in (1..k).rev() {
+        for &pb in &preds[vertex[w]] {
+            let v = pre[pb];
+            if v == NONE {
+                continue;
+            }
+            let u = forest.eval(v, &semi);
+            if semi[u] < semi[w] {
+                semi[w] = semi[u];
+            }
+        }
+        bucket[semi[w]].push(w);
+        let p = parent[w];
+        forest.ancestor[w] = p;
+        for v in std::mem::take(&mut bucket[p]) {
+            let u = forest.eval(v, &semi);
+            dom[v] = if semi[u] < semi[v] { u } else { p };
+        }
+    }
+    for w in 1..k {
+        if dom[w] != semi[w] {
+            dom[w] = dom[dom[w]];
+        }
+    }
+    for w in 1..k {
+        idom[vertex[w]] = Some(vertex[dom[w]]);
+    }
+    idom[entry] = Some(entry);
     idom
+}
+
+/// The forest of [`dominators`]: the ancestor of each vertex (after path
+/// compression) and the vertex with the least semidominator on its path.
+struct Forest {
+    ancestor: Vec<usize>,
+    label: Vec<usize>,
+}
+
+impl Forest {
+    /// Returns the vertex with the least semidominator on the path from `v` to
+    /// the root of its tree, the root not included.
+    fn eval(&mut self, v: usize, semi: &[usize]) -> usize {
+        if self.ancestor[v] == NONE {
+            return v;
+        }
+        // Path compression with an explicit stack: the path can be long.
+        let mut path = Vec::new();
+        let mut x = v;
+        while self.ancestor[x] != NONE && self.ancestor[self.ancestor[x]] != NONE {
+            path.push(x);
+            x = self.ancestor[x];
+        }
+        for &y in path.iter().rev() {
+            let a = self.ancestor[y];
+            if semi[self.label[a]] < semi[self.label[y]] {
+                self.label[y] = self.label[a];
+            }
+            self.ancestor[y] = self.ancestor[a];
+        }
+        self.label[v]
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -610,8 +686,68 @@ struct Cx<'a> {
     out: Vec<Broken>,
 }
 
-/// The cells of the locals at a point: one flag for each local.
-type Cells = Vec<bool>;
+/// The cells of the locals at a point: one bit for each local.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Cells {
+    /// The number of locals.
+    len: usize,
+    /// The bits, 64 locals in each word.
+    words: Vec<u64>,
+}
+
+impl Cells {
+    /// No local has a cell.
+    fn new(len: usize) -> Self {
+        Self {
+            len,
+            words: vec![0; len.div_ceil(64)],
+        }
+    }
+
+    /// Returns true if local `i` has a cell.
+    fn has(&self, i: usize) -> bool {
+        self.words
+            .get(i / 64)
+            .is_some_and(|w| (w >> (i % 64)) & 1 == 1)
+    }
+
+    /// Gives local `i` a cell, or ends its cell.
+    fn set(&mut self, i: usize, on: bool) {
+        if i >= self.len {
+            return;
+        }
+        if let Some(w) = self.words.get_mut(i / 64) {
+            let bit = 1u64 << (i % 64);
+            if on {
+                *w |= bit;
+            } else {
+                *w &= !bit;
+            }
+        }
+    }
+
+    /// Keeps only the cells that `other` has too. Returns true if a cell ends.
+    fn meet(&mut self, other: &Self) -> bool {
+        let mut changed = false;
+        for (a, b) in self.words.iter_mut().zip(&other.words) {
+            let x = *a & *b;
+            if x != *a {
+                *a = x;
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Returns the locals that have a cell, in order.
+    fn ones(&self) -> impl Iterator<Item = usize> + '_ {
+        self.words.iter().enumerate().flat_map(|(k, &w)| {
+            (0..64)
+                .filter(move |b| (w >> b) & 1 == 1)
+                .map(move |b| k * 64 + b)
+        })
+    }
+}
 
 /// The writes of `_0` that reach a point. A write is a statement (block, index) or
 /// a terminator (block, `usize::MAX`).
@@ -688,96 +824,132 @@ impl<'a> Cx<'a> {
     /// Applies the storage effect of statement `k` to `cells`.
     fn step_cells(&self, k: &StmtKind, cells: &mut Cells) {
         match k {
-            StmtKind::Live(l) => {
-                if let Some(x) = cells.get_mut(l.index()) {
-                    *x = true;
-                }
-            }
-            StmtKind::Dead(l) if !self.foreign(*l) => {
-                if let Some(x) = cells.get_mut(l.index()) {
-                    *x = false;
-                }
-            }
+            StmtKind::Live(l) => cells.set(l.index(), true),
+            StmtKind::Dead(l) if !self.foreign(*l) => cells.set(l.index(), false),
             _ => {}
         }
     }
 
     /// V4, V5, V6: a must analysis of the cells. A use needs a cell on each path from
     /// the entry. This rule is the source of `bound_before_use` for each component.
+    ///
+    /// Only a root keeps its state: the entry and each block with more than one
+    /// edge in. Any other block gets the state at the end of its one
+    /// predecessor, so a walk from a root goes on into it. A worklist takes the
+    /// roots in reverse post-order. So on a graph with no loop each root runs
+    /// once, after each block that goes to it, and the cost is the blocks times
+    /// the words of a state at a branch, not the blocks times the locals.
     fn storage(&mut self, g: &Graph) {
         let n = self.body.locals.len();
-        let mut entry: Cells = vec![false; n];
+        let mut entry = Cells::new(n);
         for l in self.body.entry_locals() {
-            if let Some(x) = entry.get_mut(l.index()) {
-                *x = true;
-            }
+            entry.set(l.index(), true);
         }
-        let mut at: Vec<Option<Cells>> = vec![None; self.body.blocks.len()];
         let e = self.body.entry.index();
-        at[e] = Some(entry);
-        let mut work = vec![e];
-        while let Some(b) = work.pop() {
-            let Some(mut cells) = at[b].clone() else {
+        let root = |b: usize| b == e || g.preds.get(b).is_none_or(|p| p.len() != 1);
+        let mut at: Vec<Option<Cells>> = vec![None; self.body.blocks.len()];
+        let mut queued = vec![false; self.body.blocks.len()];
+        let mut work: BinaryHeap<Reverse<(usize, usize)>> = BinaryHeap::new();
+        if e < at.len() {
+            at[e] = Some(entry);
+            queued[e] = true;
+            work.push(Reverse((g.pos[e], e)));
+        }
+        while let Some(Reverse((_, r))) = work.pop() {
+            queued[r] = false;
+            let Some(start) = at[r].clone() else {
                 continue;
             };
-            let blk = &self.body.blocks[b];
-            for s in &blk.stmts {
-                self.step_cells(&s.kind, &mut cells);
-            }
-            for s in blk.term.kind.successors() {
-                let s = s.index();
-                match &mut at[s] {
-                    slot @ None => {
-                        *slot = Some(cells.clone());
-                        work.push(s);
+            let mut walk = vec![(r, start)];
+            while let Some((b, mut cells)) = walk.pop() {
+                for s in &self.body.blocks[b].stmts {
+                    self.step_cells(&s.kind, &mut cells);
+                }
+                let mut inner: Vec<usize> = Vec::new();
+                for &s in &g.succs[b] {
+                    if !root(s) {
+                        inner.push(s);
+                        continue;
                     }
-                    Some(old) => {
-                        let mut changed = false;
-                        for (a, c) in old.iter_mut().zip(&cells) {
-                            if *a && !*c {
-                                *a = false;
-                                changed = true;
-                            }
+                    let changed = match &mut at[s] {
+                        slot @ None => {
+                            *slot = Some(cells.clone());
+                            true
                         }
-                        if changed {
-                            work.push(s);
-                        }
+                        Some(old) => old.meet(&cells),
+                    };
+                    if changed && !queued[s] {
+                        queued[s] = true;
+                        work.push(Reverse((g.pos[s], s)));
                     }
+                }
+                if let Some(last) = inner.pop() {
+                    for s in inner {
+                        walk.push((s, cells.clone()));
+                    }
+                    walk.push((last, cells));
                 }
             }
         }
-        for &b in &g.rpo {
-            let Some(mut cells) = at[b].clone() else {
+        // The checks, with the final states: a walk from each root that the
+        // entry reaches, in reverse post-order.
+        for &r in &g.rpo {
+            if !root(r) {
+                continue;
+            }
+            let Some(start) = at[r].clone() else {
                 continue;
             };
-            let id = bid(b);
-            let blk = &self.body.blocks[b];
-            for s in &blk.stmts {
-                self.check_cells(&s.kind, &cells, id);
-                self.step_cells(&s.kind, &mut cells);
-            }
-            let mut uses = Vec::new();
-            term_uses(&blk.term.kind, &mut |u| uses.push(u));
-            for u in uses {
-                self.need_use(u, &cells, id);
-            }
-            let normal = match blk.term.kind {
-                TermKind::Return => true,
-                TermKind::UnwindExit => false,
-                _ => continue,
-            };
-            for (i, has) in cells.iter().enumerate() {
-                let l = lid(i);
-                if *has && !self.foreign(l) && !(normal && l == self.body.ret) {
-                    self.push(Rule::LeakedCell, Some(id), Some(l));
+            let mut walk = vec![(r, start)];
+            while let Some((b, mut cells)) = walk.pop() {
+                self.check_block(b, &mut cells);
+                let mut inner: Vec<usize> =
+                    g.succs[b].iter().copied().filter(|&s| !root(s)).collect();
+                if let Some(last) = inner.pop() {
+                    for s in inner {
+                        walk.push((s, cells.clone()));
+                    }
+                    walk.push((last, cells));
                 }
+            }
+        }
+    }
+
+    /// V4, V5, V6 in block `b` with the cells at its start. At the end `cells`
+    /// holds the cells at the end of the block.
+    fn check_block(&mut self, b: usize, cells: &mut Cells) {
+        let body = self.body;
+        let id = bid(b);
+        let blk = &body.blocks[b];
+        for s in &blk.stmts {
+            self.check_cells(&s.kind, cells, id);
+            self.step_cells(&s.kind, cells);
+        }
+        let mut uses = Vec::new();
+        term_uses(&blk.term.kind, &mut |u| uses.push(u));
+        for u in uses {
+            self.need_use(u, cells, id);
+        }
+        let normal = match blk.term.kind {
+            TermKind::Return => true,
+            TermKind::UnwindExit => false,
+            _ => return,
+        };
+        let leaked: Vec<usize> = cells.ones().collect();
+        for i in leaked {
+            let l = lid(i);
+            // An upvar local and the environment keep their cells; `_0` keeps
+            // its cell at a `Return`.
+            let kept = self.foreign(l) || (normal && l == body.ret);
+            if !kept {
+                self.push(Rule::LeakedCell, Some(id), Some(l));
             }
         }
     }
 
     /// Records V4 if local `l` has no cell.
     fn need(&mut self, l: LocalId, cells: &Cells, b: BlockId) {
-        if !cells.get(l.index()).copied().unwrap_or(false) {
+        if !cells.has(l.index()) {
             self.push(Rule::NotLive, Some(b), Some(l));
         }
     }
@@ -800,7 +972,7 @@ impl<'a> Cx<'a> {
     fn check_cells(&mut self, k: &StmtKind, cells: &Cells, b: BlockId) {
         match k {
             StmtKind::Live(l) => {
-                if cells.get(l.index()).copied().unwrap_or(false) {
+                if cells.has(l.index()) {
                     self.push(Rule::LiveTwice, Some(b), Some(*l));
                 }
             }
@@ -1575,7 +1747,7 @@ impl<'a> Cx<'a> {
 
     /// V18: each write of `_0` that reaches a `Return` is inside the origin of the
     /// `Return`: the origin is the expression whose value the frame gives back.
-    fn returns(&mut self) {
+    fn returns(&mut self, g: &Graph) {
         let ret = self.body.ret;
         let n = self.body.blocks.len();
         let step = |set: &mut Writes, w: (usize, usize), p: &Place| {
@@ -1586,10 +1758,19 @@ impl<'a> Cx<'a> {
         };
         let mut at: Vec<Option<Writes>> = vec![None; n];
         let e = self.body.entry.index();
-        at[e] = Some(Writes::new());
-        let mut work = vec![e];
+        // A worklist in reverse post-order: a join block runs after each block
+        // that goes to it (except on a back edge), so it runs once on a graph
+        // with no loop. A LIFO worklist runs it again for each edge in.
+        let mut queued = vec![false; n];
+        let mut work: BinaryHeap<Reverse<(usize, usize)>> = BinaryHeap::new();
+        if e < n {
+            at[e] = Some(Writes::new());
+            queued[e] = true;
+            work.push(Reverse((g.pos[e], e)));
+        }
         let mut ends: Vec<(usize, Writes)> = Vec::new();
-        while let Some(b) = work.pop() {
+        while let Some(Reverse((_, b))) = work.pop() {
+            queued[b] = false;
             let Some(mut set) = at[b].clone() else {
                 continue;
             };
@@ -1619,8 +1800,9 @@ impl<'a> Cx<'a> {
                         old.len() != before
                     }
                 };
-                if changed {
-                    work.push(s);
+                if changed && !queued[s] {
+                    queued[s] = true;
+                    work.push(Reverse((g.pos[s], s)));
                 }
             }
         }
@@ -1928,44 +2110,60 @@ fn capture_rule(
     })
 }
 
-/// V13 for closure `ci`: a `Kept` capture is never borrowed, its aggregate operand
+/// One aggregate that makes a closure: the body, the block and the operands.
+type Made<'a> = (BodyId, BlockId, &'a [Operand]);
+
+/// Returns the aggregates that make each closure, in the order of the bodies
+/// and the blocks. One pass over the program: a search of the maker for each
+/// closure is quadratic in a body that makes many closures.
+fn closure_sites(p: &Program) -> BTreeMap<ClosureId, Vec<Made<'_>>> {
+    let mut out: BTreeMap<ClosureId, Vec<Made<'_>>> = BTreeMap::new();
+    for (i, body) in p.bodies.iter().enumerate() {
+        for (bi, blk) in body.blocks.iter().enumerate() {
+            for s in &blk.stmts {
+                if let StmtKind::Assign(_, Rvalue::Aggregate(AggKind::Closure(cid), ops)) = &s.kind
+                {
+                    out.entry(*cid)
+                        .or_default()
+                        .push((BodyId(id_of(i)), bid(bi), ops.as_slice()));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// V13 for closure `c`: a `Kept` capture is never borrowed, its aggregate operand
 /// is a copy of its source cell, and each stated mode is the mode of rule CAPTURE.
-/// `views` are the views of the environment of the closure (`docs/ir.md` 5.1.7).
+/// `made` are the aggregates that make the closure ([`closure_sites`]); `views` are
+/// the views of the environment of the closure (`docs/ir.md` 5.1.7).
 fn kept(
     p: &Program,
     tys: &TyTable,
-    ci: ClosureId,
     c: &crate::ClosureDecl,
+    made: &[Made<'_>],
     views: &[(BodyId, LocalId)],
     out: &mut Vec<Broken>,
 ) {
     let mut first_agg: Option<BlockId> = None;
-    if let Some(maker) = p.body(c.maker) {
-        for (bi, blk) in maker.blocks.iter().enumerate() {
-            for s in &blk.stmts {
-                let StmtKind::Assign(_, Rvalue::Aggregate(AggKind::Closure(cid), ops)) = &s.kind
-                else {
-                    continue;
-                };
-                if *cid != ci {
-                    continue;
-                }
-                first_agg.get_or_insert_with(|| bid(bi));
-                for (k, cap) in c.captures.iter().enumerate() {
-                    if cap.mode != CaptureMode::Kept {
-                        continue;
-                    }
-                    let cell_copy = kept_cell(p, c.maker, &cap.source)
-                        && matches!(ops.get(k), Some(Operand::Copy(pl)) if *pl == cap.source);
-                    if !cell_copy {
-                        out.push(Broken {
-                            rule: Rule::KeptBorrowed,
-                            body: c.maker,
-                            block: Some(bid(bi)),
-                            local: Some(cap.source.local),
-                        });
-                    }
-                }
+    for &(body, bi, ops) in made {
+        if body != c.maker {
+            continue;
+        }
+        first_agg.get_or_insert(bi);
+        for (k, cap) in c.captures.iter().enumerate() {
+            if cap.mode != CaptureMode::Kept {
+                continue;
+            }
+            let cell_copy = kept_cell(p, c.maker, &cap.source)
+                && matches!(ops.get(k), Some(Operand::Copy(pl)) if *pl == cap.source);
+            if !cell_copy {
+                out.push(Broken {
+                    rule: Rule::KeptBorrowed,
+                    body: c.maker,
+                    block: Some(bi),
+                    local: Some(cap.source.local),
+                });
             }
         }
     }
@@ -2009,6 +2207,115 @@ fn kept(
                 block: first_agg,
                 local: Some(cap.source.local),
             });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dominators;
+
+    /// The dominators of each block by the definition: a block `d` dominates
+    /// `b` if each path from the entry to `b` goes through `d`. A data-flow
+    /// fixpoint over sets of blocks; slow, but simple.
+    fn by_definition(entry: usize, succs: &[Vec<usize>]) -> Vec<Option<Vec<bool>>> {
+        let n = succs.len();
+        let mut reach = vec![false; n];
+        let mut stack = vec![entry];
+        reach[entry] = true;
+        while let Some(b) = stack.pop() {
+            for &s in &succs[b] {
+                if !reach[s] {
+                    reach[s] = true;
+                    stack.push(s);
+                }
+            }
+        }
+        let mut preds = vec![Vec::new(); n];
+        for (b, ss) in succs.iter().enumerate() {
+            for &s in ss {
+                preds[s].push(b);
+            }
+        }
+        let mut dom: Vec<Vec<bool>> = (0..n)
+            .map(|b| (0..n).map(|d| b != entry || d == entry).collect())
+            .collect();
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for b in 0..n {
+                if b == entry || !reach[b] {
+                    continue;
+                }
+                let mut new = vec![true; n];
+                for &p in preds[b].iter().filter(|&&p| reach[p]) {
+                    for d in 0..n {
+                        new[d] &= dom[p][d];
+                    }
+                }
+                new[b] = true;
+                if new != dom[b] {
+                    dom[b] = new;
+                    changed = true;
+                }
+            }
+        }
+        (0..n).map(|b| reach[b].then(|| dom[b].clone())).collect()
+    }
+
+    #[test]
+    fn the_dominators_agree_with_the_definition_on_random_graphs() {
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = |m: usize| {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            usize::try_from(seed >> 33).unwrap_or(0) % m
+        };
+        for round in 0..400 {
+            let n = 1 + next(14);
+            let succs: Vec<Vec<usize>> = (0..n)
+                .map(|_| (0..next(4)).map(|_| next(n)).collect())
+                .collect();
+            let mut preds = vec![Vec::new(); n];
+            for (b, ss) in succs.iter().enumerate() {
+                for &s in ss {
+                    preds[s].push(b);
+                }
+            }
+            let idom = dominators(0, &succs, &preds);
+            let want = by_definition(0, &succs);
+            for b in 0..n {
+                match (&want[b], idom[b]) {
+                    (None, None) => {}
+                    (Some(doms), Some(i)) => {
+                        // The immediate dominator dominates `b`, and each other
+                        // strict dominator of `b` dominates it.
+                        assert!(doms[i], "round {round}: {succs:?}, block {b}");
+                        if b != 0 {
+                            assert_ne!(i, b, "round {round}: {succs:?}");
+                            let mut chain = vec![false; n];
+                            let mut cur = i;
+                            loop {
+                                chain[cur] = true;
+                                match idom[cur] {
+                                    Some(d) if d != cur => cur = d,
+                                    _ => break,
+                                }
+                            }
+                            for d in 0..n {
+                                if d != b {
+                                    assert_eq!(
+                                        doms[d], chain[d],
+                                        "round {round}: {succs:?}, block {b}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    other => panic!("round {round}: {succs:?}, block {b}: {other:?}"),
+                }
+            }
         }
     }
 }

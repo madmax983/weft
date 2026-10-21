@@ -1,0 +1,202 @@
+fn f0 user(Id) -> User / Net: b0
+fn f1 posts(Id) -> Vec<Post> / Net: b1
+fn f2 profile_page(Id) -> Page / Net: b2
+fn f3 timed(Id) -> Page / Fail, Net: b6
+fn f4 Vec.new<T0>() -> Vec<T0> / (): extern
+fn f5 with_timeout<T0>(Duration, fn() -> T0) -> T0 / Async, Fail [with_timeout]: extern
+closure c0: body b4, maker b3, cap_env e0, captures [Kept _4]
+closure c1: body b5, maker b3, cap_env e0, captures [Kept _4]
+closure c2: body b7, maker b6, cap_env e0, captures [Kept _1]
+scope s0: body b3, site b2
+spawn sp0: scope s0
+spawn sp1: scope s0
+cap_env e0
+
+body b0: fn user; cap_env e0; unwind_exit bb1
+  _0: User (Return)
+  _1: Id (Param(0) `id`)
+  bb0:
+    _0 = User { const "ann" }
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn posts; cap_env e0; unwind_exit bb2
+  _0: Vec<Post> (Return)
+  _1: Id (Param(0) `id`)
+  bb0:
+    _0 = call Vec.new<Post>() / e0 -> [bb1]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b2: fn profile_page; cap_env e0; unwind_exit bb3
+  _0: Page (Return)
+  _1: Id (Param(0) `id`)
+  bb0:
+    _0 = scope s0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b3: scope s0; parent b2; cap_env e0; unwind_exit bb17
+  _0: Page (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: Task<User> (User `user`)
+  _3: fn() -> User (Temp(Operand))
+  _4: Id (Upvar(_1) `id`)
+  _5: Task<Vec<Post>> (User `posts`)
+  _6: fn() -> Vec<Post> (Temp(Operand))
+  _7: User (Temp(Operand))
+  _8: Vec<Post> (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c0(copy _4)
+    _2 = spawn sp0(copy _1, move _3) -> [bb1]
+  bb1:
+    Dead(_3)
+    Live(_5)
+    Live(_6)
+    _6 = closure c1(copy _4)
+    _5 = spawn sp1(copy _1, move _6) -> [bb2]
+  bb2:
+    Dead(_6)
+    Live(_7)
+    _7 = join move _2 -> [bb3, unwind: bb13]
+  bb3:
+    Live(_8)
+    _8 = join move _5 -> [bb4, unwind: bb12]
+  bb4:
+    _0 = Page { move _7, move _8 }
+    scope_wait _1 -> [bb5, unwind: bb6]
+  bb5:
+    Dead(_5)
+    Dead(_2)
+    Dead(_8)
+    Dead(_7)
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    UnwindValue(_0, Drop)
+    Dead(_0)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindValue(_8, Drop)
+    Dead(_8)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_7)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindValue(_5, Drop)
+    Dead(_5)
+    Goto(bb10)
+  bb10 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb11)
+  bb11 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb17)
+  bb12 (cleanup):
+    UnwindValue(_8, Drop)
+    Dead(_8)
+    Goto(bb13)
+  bb13 (cleanup):
+    Dead(_7)
+    Goto(bb14)
+  bb14 (cleanup):
+    UnwindValue(_5, Drop)
+    Dead(_5)
+    Goto(bb15)
+  bb15 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb16)
+  bb16 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb17)
+  bb17 (cleanup):
+    UnwindExit
+
+body b4: closure c0; parent b3; cap_env e0; unwind_exit bb3
+  _0: User (Return)
+  _1: fn() -> User (Env)
+  bb0:
+    _0 = call user(copy _1.0) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b5: closure c1; parent b3; cap_env e0; unwind_exit bb3
+  _0: Vec<Post> (Return)
+  _1: fn() -> Vec<Post> (Env)
+  bb0:
+    _0 = call posts(copy _1.0) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b6: fn timed; cap_env e0; unwind_exit bb5
+  _0: Page (Return)
+  _1: Id (Param(0) `id`)
+  _2: Page (User `page`)
+  _3: fn() -> Page (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c2(copy _1)
+    _2 = call with_timeout<Page>(const 2000ms, move _3) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_3)
+    _0 = move _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_3)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b7: closure c2; parent b6; cap_env e0; unwind_exit bb3
+  _0: Page (Return)
+  _1: fn() -> Page (Env)
+  bb0:
+    _0 = call profile_page(copy _1.0) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit

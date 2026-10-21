@@ -43,17 +43,17 @@ body b1: fn main; cap_env e0; unwind_exit bb6
   bb2:
     Dead(_3)
     Dead(_2)
-    _0 = handle h0 -> [bb5, unwind: bb4]
-  bb3 (cleanup):
-    Dead(_0)
-    Goto(bb6)
+    _0 = handle h0 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_1)
+    Return
   bb4 (cleanup):
     UnwindValue(_1, Drop)
     Dead(_1)
-    Goto(bb3)
-  bb5:
-    Dead(_1)
-    Return
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Goto(bb6)
   bb6 (cleanup):
     UnwindExit
 
@@ -71,24 +71,24 @@ body b2: handled h0; parent b1; cap_env e1; unwind_exit bb5
     _2 = closure c0(move _4, copy _1)
     Dead(_4)
     Live(_5)
-    _5 = call (copy _2)() / e1 -> [bb4, unwind: bb3]
-  bb1 (cleanup):
-    Dead(_0)
-    Dead(_1)
-    Goto(bb5)
-  bb2 (cleanup):
-    Dead(_2)
-    Goto(bb1)
-  bb3 (cleanup):
-    Dead(_5)
-    Goto(bb2)
-  bb4:
+    _5 = call (copy _2)() / e1 -> [bb1, unwind: bb2]
+  bb1:
     Print(copy _5)
     _0 = const ()
     Dead(_2)
     Dead(_5)
     Dead(_1)
     Return
+  bb2 (cleanup):
+    Dead(_5)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb5)
   bb5 (cleanup):
     UnwindExit
 
@@ -102,19 +102,19 @@ body b3: clause h0 say; parent b1; cap_env e0; unwind_exit bb4
     Print(copy _1)
     _3 = const ()
     Dead(_3)
-    _0 = resume _2(const ()) -> [bb3, unwind: bb2]
-  bb1 (cleanup):
-    Dead(_0)
-    Dead(_1)
-    Goto(bb4)
-  bb2 (cleanup):
-    UnwindKont(_2)
-    Dead(_2)
-    Goto(bb1)
-  bb3:
+    _0 = resume _2(const ()) -> [bb1, unwind: bb2]
+  bb1:
     Dead(_2)
     Dead(_1)
     Return
+  bb2 (cleanup):
+    UnwindKont(_2)
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
   bb4 (cleanup):
     UnwindExit
 
@@ -122,12 +122,12 @@ body b4: closure c0; parent b2; cap_env e2; unwind_exit bb3
   _0: u64 (Return)
   _1: fn() -> u64 (Env)
   bb0:
-    _0 = handle h1 -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = handle h1 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
     Dead(_0)
     Goto(bb3)
-  bb2:
-    Return
   bb3 (cleanup):
     UnwindExit
 
@@ -138,20 +138,20 @@ body b5: handled h1; parent b4; cap_env e3; unwind_exit bb5
   _3: fn() -> u64 (Upvar(_1))
   bb0:
     Live(_2)
-    _2 = perform Local(_3.1).say(const "in") -> [bb3, unwind: bb2]
-  bb1 (cleanup):
+    _2 = perform Local(_3.1).say(const "in") -> [bb1, unwind: bb3]
+  bb1:
+    Dead(_2)
+    _0 = scope s0 -> [bb2, unwind: bb4]
+  bb2:
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
     Dead(_0)
     Dead(_1)
     Goto(bb5)
-  bb2 (cleanup):
-    Dead(_2)
-    Goto(bb1)
-  bb3:
-    Dead(_2)
-    _0 = scope s0 -> [bb4, unwind: bb1]
-  bb4:
-    Dead(_1)
-    Return
   bb5 (cleanup):
     UnwindExit
 
@@ -159,17 +159,17 @@ body b6: clause h1 ask; parent b4; cap_env e2; unwind_exit bb4
   _0: u64 (Return)
   _1: resume(u64) -> u64 (Kont(once) `resume`)
   bb0:
-    _0 = resume _1(const 2u64) -> [bb3, unwind: bb2]
-  bb1 (cleanup):
-    Dead(_0)
-    Goto(bb4)
+    _0 = resume _1(const 2u64) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
   bb2 (cleanup):
     UnwindKont(_1)
     Dead(_1)
-    Goto(bb1)
-  bb3:
-    Dead(_1)
-    Return
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
   bb4 (cleanup):
     UnwindExit
 
@@ -183,45 +183,45 @@ body b7: scope s0; parent b5; cap_env e3; unwind_exit bb11
   _6: &Vec<u64> (Temp(Operand))
   bb0:
     Live(_2)
-    _2 = perform Local(_3).ask() -> [bb3, unwind: bb2]
-  bb1 (cleanup):
-    Dead(_0)
-    UnwindValue(_1, Drop)
-    Dead(_1)
-    Goto(bb11)
-  bb2 (cleanup):
-    Dead(_2)
-    Goto(bb1)
-  bb3:
+    _2 = perform Local(_3).ask() -> [bb1, unwind: bb9]
+  bb1:
     Live(_4)
     Live(_6)
     _6 = &(*_5.0)
     _4 = closure c1(move _6, copy _2)
     Dead(_6)
-    _0 = call (copy _4)() / e3 -> [bb5, unwind: bb4]
-  bb4 (cleanup):
-    Dead(_4)
-    Goto(bb2)
-  bb5:
-    scope_wait _1 -> [bb10, unwind: bb9]
-  bb6 (cleanup):
-    UnwindValue(_1, Drop)
-    Dead(_1)
-    Goto(bb11)
-  bb7 (cleanup):
-    Dead(_2)
-    Goto(bb6)
-  bb8 (cleanup):
-    Dead(_4)
-    Goto(bb7)
-  bb9 (cleanup):
-    Dead(_0)
-    Goto(bb8)
-  bb10:
+    _0 = call (copy _4)() / e3 -> [bb2, unwind: bb8]
+  bb2:
+    scope_wait _1 -> [bb3, unwind: bb4]
+  bb3:
     Dead(_4)
     Dead(_2)
     Dead(_1)
     Return
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_4)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_2)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb11)
+  bb8 (cleanup):
+    Dead(_4)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_2)
+    Goto(bb10)
+  bb10 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb11)
   bb11 (cleanup):
     UnwindExit
 
@@ -234,20 +234,20 @@ body b8: closure c1; parent b7; cap_env e3; unwind_exit bb5
     Live(_2)
     Live(_3)
     _3 = &(*_1.0)
-    _2 = call total(move _3) / e3 -> [bb4, unwind: bb3]
-  bb1 (cleanup):
-    Dead(_0)
-    Goto(bb5)
-  bb2 (cleanup):
-    Dead(_2)
-    Goto(bb1)
-  bb3 (cleanup):
-    Dead(_3)
-    Goto(bb2)
-  bb4:
+    _2 = call total(move _3) / e3 -> [bb1, unwind: bb2]
+  bb1:
     _0 = Add<u64>(move _2, copy _1.1)
     Dead(_3)
     Dead(_2)
     Return
+  bb2 (cleanup):
+    Dead(_3)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
   bb5 (cleanup):
     UnwindExit

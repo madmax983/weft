@@ -6,12 +6,12 @@ cap_env e1: parent e0, main.Say _1
 body b0: fn run; cap_env e0; unwind_exit bb3
   _0: u64 (Return)
   bb0:
-    _0 = handle h0 -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = handle h0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
     Dead(_0)
     Goto(bb3)
-  bb2:
-    Return
   bb3 (cleanup):
     UnwindExit
 
@@ -21,19 +21,19 @@ body b1: handled h0; parent b0; cap_env e1; unwind_exit bb4
   _2: () (Temp(Discarded))
   bb0:
     Live(_2)
-    _2 = perform Local(_1).say(const "one") -> [bb3, unwind: bb2]
-  bb1 (cleanup):
-    Dead(_0)
-    Dead(_1)
-    Goto(bb4)
-  bb2 (cleanup):
-    Dead(_2)
-    Goto(bb1)
-  bb3:
+    _2 = perform Local(_1).say(const "one") -> [bb1, unwind: bb2]
+  bb1:
     Dead(_2)
     _0 = const 41u64
     Dead(_1)
     Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
   bb4 (cleanup):
     UnwindExit
 
@@ -49,23 +49,23 @@ body b2: clause h0 say; parent b0; cap_env e0; unwind_exit bb5
     _3 = const ()
     Dead(_3)
     Live(_4)
-    _4 = resume _2(const ()) -> [bb4, unwind: bb3]
-  bb1 (cleanup):
-    Dead(_0)
-    Dead(_1)
-    Goto(bb5)
-  bb2 (cleanup):
-    Dead(_4)
-    Goto(bb1)
-  bb3 (cleanup):
-    UnwindKont(_2)
-    Dead(_2)
-    Goto(bb2)
-  bb4:
+    _4 = resume _2(const ()) -> [bb1, unwind: bb2]
+  bb1:
     _0 = Add<u64>(copy _4, const 1u64)
     Dead(_4)
     Dead(_2)
     Dead(_1)
     Return
+  bb2 (cleanup):
+    UnwindKont(_2)
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_4)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb5)
   bb5 (cleanup):
     UnwindExit

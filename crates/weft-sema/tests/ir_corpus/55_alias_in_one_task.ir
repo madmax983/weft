@@ -1,0 +1,141 @@
+fn f0 attack(&Entity, &Entity) -> () / (): b0
+fn f1 fight(&World, usize, usize) -> () / (): b1
+fn f2 attack_in(&World, &Entity, &Entity) -> () / (): b2
+fn f3 fight_in(&World, usize, usize) -> () / (): b3
+cap_env e0
+
+body b0: fn attack; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &Entity (Param(0) `a`)
+  _2: &Entity (Param(1) `b`)
+  _3: i32 (Temp(Operand))
+  _4: i32 (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = Sub<i32>(copy (*_1).0, const 1i32)
+    (*_1).0 = move _3
+    Dead(_3)
+    Live(_4)
+    _4 = Sub<i32>(copy (*_2).0, const 1i32)
+    (*_2).0 = move _4
+    Dead(_4)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn fight; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: &World (Param(0) `world`)
+  _2: usize (Param(1) `i`)
+  _3: usize (Param(2) `j`)
+  _4: &Entity (User `x`)
+  _5: usize (Temp(Operand))
+  _6: &Entity (User `y`)
+  _7: usize (Temp(Operand))
+  bb0:
+    Live(_4)
+    Live(_5)
+    _5 = copy _2
+    Bounds((*_1).0, copy _5)
+    _4 = &(*_1).0[_5]
+    Dead(_5)
+    Live(_6)
+    Live(_7)
+    _7 = copy _3
+    Bounds((*_1).0, copy _7)
+    _6 = &(*_1).0[_7]
+    Dead(_7)
+    _0 = call attack(copy _4, copy _6) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_6)
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_6)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_4)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b2: fn attack_in; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &World (Param(0) `w`)
+  _2: &Entity (Param(1) `a`)
+  _3: &Entity (Param(2) `b`)
+  _4: i32 (Temp(Operand))
+  _5: i32 (Temp(Operand))
+  bb0:
+    Live(_4)
+    _4 = Sub<i32>(copy (*_2).0, const 1i32)
+    (*_2).0 = move _4
+    Dead(_4)
+    Live(_5)
+    _5 = Sub<i32>(copy (*_3).0, const 1i32)
+    (*_3).0 = move _5
+    Dead(_5)
+    _0 = const ()
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn fight_in; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: &World (Param(0) `world`)
+  _2: usize (Param(1) `i`)
+  _3: usize (Param(2) `j`)
+  _4: &Entity (User `x`)
+  _5: usize (Temp(Operand))
+  _6: &Entity (User `y`)
+  _7: usize (Temp(Operand))
+  bb0:
+    Live(_4)
+    Live(_5)
+    _5 = copy _2
+    Bounds((*_1).0, copy _5)
+    _4 = &(*_1).0[_5]
+    Dead(_5)
+    Live(_6)
+    Live(_7)
+    _7 = copy _3
+    Bounds((*_1).0, copy _7)
+    _6 = &(*_1).0[_7]
+    Dead(_7)
+    _0 = call attack_in(copy _1, copy _4, copy _6) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_6)
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_6)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_4)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit

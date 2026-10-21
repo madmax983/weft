@@ -1,0 +1,152 @@
+fn f0 f(&Vec<u64>) -> () / (): b0
+fn f1 f(&Vec<u64>) -> () / (): b1
+fn f2 A.g(&A) -> () / (): b2
+fn f3 B.g(&B) -> () / (): b3
+fn f4 f(&Vec<u64>) -> () / (): b4
+fn f5 Vec.push<T0>(&Vec<T0>, T0) -> () / (): extern
+cap_env e0
+
+body b0: fn f; cap_env e0; unwind_exit bb2
+  _0: () (Return)
+  _1: &Vec<u64> (Param(0) `v`)
+  _2: &u64 (User `r`)
+  _3: usize (Temp(Operand))
+  _4: () (Temp(Discarded))
+  _5: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = const 0usize
+    Bounds((*_1), copy _3)
+    _2 = &(*_1)[_3]
+    Dead(_3)
+    Live(_4)
+    Live(_5)
+    _5 = &(*_1)
+    _4 = call Vec.push<u64>(move _5, const 1u64) / e0 -> [bb1]
+  bb1:
+    Dead(_5)
+    Dead(_4)
+    Print(copy _2)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b1: fn f; cap_env e0; unwind_exit bb2
+  _0: () (Return)
+  _1: &Vec<u64> (Param(0) `v`)
+  _2: &u64 (User `r`)
+  _3: usize (Temp(Operand))
+  _4: () (Temp(Discarded))
+  _5: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = const 0usize
+    Bounds((*_1), copy _3)
+    _2 = &(*_1)[_3]
+    Dead(_3)
+    Live(_4)
+    Live(_5)
+    _5 = &(*_1)
+    _4 = call Vec.push<u64>(move _5, const 1u64) / e0 -> [bb1]
+  bb1:
+    Dead(_5)
+    Dead(_4)
+    Print(copy _2)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b2: fn A.g; cap_env e0; unwind_exit bb2
+  _0: () (Return)
+  _1: &A (Param(0) `self`)
+  _2: &u64 (User `r`)
+  _3: usize (Temp(Operand))
+  _4: () (Temp(Discarded))
+  _5: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = const 0usize
+    Bounds((*_1).0, copy _3)
+    _2 = &(*_1).0[_3]
+    Dead(_3)
+    Live(_4)
+    Live(_5)
+    _5 = &(*_1).0
+    _4 = call Vec.push<u64>(move _5, const 1u64) / e0 -> [bb1]
+  bb1:
+    Dead(_5)
+    Dead(_4)
+    Print(copy _2)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b3: fn B.g; cap_env e0; unwind_exit bb2
+  _0: () (Return)
+  _1: &B (Param(0) `self`)
+  _2: &u64 (User `r`)
+  _3: usize (Temp(Operand))
+  _4: () (Temp(Discarded))
+  _5: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = const 0usize
+    Bounds((*_1).0, copy _3)
+    _2 = &(*_1).0[_3]
+    Dead(_3)
+    Live(_4)
+    Live(_5)
+    _5 = &(*_1).0
+    _4 = call Vec.push<u64>(move _5, const 1u64) / e0 -> [bb1]
+  bb1:
+    Dead(_5)
+    Dead(_4)
+    Print(copy _2)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b4: fn f; cap_env e0; unwind_exit bb2
+  _0: () (Return)
+  _1: &Vec<u64> (Param(0) `v`)
+  _2: () (Temp(Discarded))
+  _3: &Vec<u64> (Temp(Receiver))
+  _4: &u64 (User `r`)
+  _5: usize (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = &(*_1)
+    _2 = call Vec.push<u64>(move _3, const 1u64) / e0 -> [bb1]
+  bb1:
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    Live(_5)
+    _5 = const 0usize
+    Bounds((*_1), copy _5)
+    _4 = &(*_1)[_5]
+    Dead(_5)
+    Print(copy _4)
+    _0 = const ()
+    Dead(_4)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindExit

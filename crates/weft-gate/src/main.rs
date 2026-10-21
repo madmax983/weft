@@ -16,6 +16,8 @@
 //!               [--limit SECONDS] [--repo DIR] [--probes DIR] [--write-baseline]
 //! weft-gate thir --tier 1|2 [--report FILE] [--workers N] [--limit SECONDS]
 //!                [--repo DIR] [--probes DIR]
+//! weft-gate ir-build --tier 1|2 [--report FILE] [--workers N] [--limit SECONDS]
+//!                    [--repo DIR] [--probes DIR]
 //! ```
 //!
 //! `--repo` is the repository (default: the workspace of this crate). `--probes` is
@@ -71,6 +73,14 @@
 //! tree, the facts and the final types. It writes the summary (default
 //! `target/gate/thir-tier<N>.md`). The exit code is 1 if D0 fails on a program.
 //! Run it with a release build.
+//!
+//! `ir-build` builds and verifies the IR of each program of the tier (plan
+//! stage B12, `weft_gate::ir_build`). It counts the bodies that the builder
+//! lowers, the bodies with no IR for each reason, the unsupported bodies, the
+//! broken rules, the panics and the timeouts, and lists the slowest builds. It
+//! writes the summary (default `target/gate/ir-build-tier<N>.md`). The exit
+//! code is 1 if a program panics, breaks a rule or has an unsupported body. A
+//! timeout does not fail; the summary lists it. Run it with a release build.
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
@@ -109,7 +119,9 @@ const USAGE: &str = "usage:
   weft-gate run --tier 1|2 [--groups ABCDEF] [--report FILE] [--workers N]
                 [--limit SECONDS] [--repo DIR] [--probes DIR] [--write-baseline]
   weft-gate thir --tier 1|2 [--report FILE] [--workers N] [--limit SECONDS]
-                 [--repo DIR] [--probes DIR]";
+                 [--repo DIR] [--probes DIR]
+  weft-gate ir-build --tier 1|2 [--report FILE] [--workers N] [--limit SECONDS]
+                     [--repo DIR] [--probes DIR]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -275,6 +287,9 @@ fn run(args: &[String]) -> Result<bool> {
     }
     if cmd == "thir" {
         return run_thir(&flags);
+    }
+    if cmd == "ir-build" {
+        return run_ir_build(&flags);
     }
     run_tool(cmd, flags).map(|()| true)
 }
@@ -465,6 +480,49 @@ fn run_thir(flags: &Flags) -> Result<bool> {
     println!("D0 on {total} programs of tier {tier} with {workers} workers");
     let start = Instant::now();
     let sum = weft_gate::thir::run(&base, m.entries, workers, limit, |ended| {
+        if ended % 2000 == 0 {
+            println!(
+                "{ended} of {total} programs in {:.1} s",
+                start.elapsed().as_secs_f64()
+            );
+        }
+    })?;
+    let text = sum.to_markdown(&format!("tier {tier}"));
+    write_text(&out, &text)?;
+    print!("{text}");
+    println!(
+        "{} programs in {:.1} s; wrote {}",
+        sum.programs,
+        start.elapsed().as_secs_f64(),
+        out.display()
+    );
+    Ok(sum.holds())
+}
+
+/// `ir-build`: builds and verifies the IR of the programs of the tier. Returns
+/// false if a program panics, breaks a rule or has an unsupported body.
+fn run_ir_build(flags: &Flags) -> Result<bool> {
+    let tier = flags.tier.context("--tier is necessary")?;
+    let (m, base) = if tier == 1 {
+        (tier1(flags)?, flags.repo.clone())
+    } else {
+        let probes = flags.probes()?;
+        (tier2(&probes)?, probes)
+    };
+    let workers = flags.workers.unwrap_or_else(|| {
+        std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+    });
+    let limit = flags.limit.map_or(snapshot::LIMIT, Duration::from_secs);
+    let out = flags.report.clone().unwrap_or_else(|| {
+        flags
+            .repo
+            .join(format!("target/gate/ir-build-tier{tier}.md"))
+    });
+    snapshot::install_panic_hook();
+    let total = m.entries.len();
+    println!("ir-build on {total} programs of tier {tier} with {workers} workers");
+    let start = Instant::now();
+    let sum = weft_gate::ir_build::run(&base, m.entries, workers, limit, |ended| {
         if ended % 2000 == 0 {
             println!(
                 "{ended} of {total} programs in {:.1} s",

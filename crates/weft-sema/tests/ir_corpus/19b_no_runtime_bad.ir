@@ -1,0 +1,15 @@
+fn f0 main() -> () / Clock: b0
+fn f1 sleep(Duration) -> () / Clock: extern
+cap_env e0
+
+body b0: fn main; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  bb0:
+    _0 = call sleep(const 1000ms) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit

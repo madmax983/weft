@@ -87,7 +87,7 @@ impl IrCounts {
 }
 
 /// Builds the IR of `analysis` and counts the outcomes.
-fn ir_counts(analysis: &weft_sema::Analysis) -> IrCounts {
+pub fn ir_counts(analysis: &weft_sema::Analysis) -> IrCounts {
     let b = weft_sema::irbuild::build(analysis);
     let (built, no_ir, unsupported) = b.counts();
     IrCounts {

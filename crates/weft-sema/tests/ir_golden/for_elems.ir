@@ -22,14 +22,8 @@ body b0: fn sum; cap_env e0; unwind_exit bb5
     Goto(bb1)
   bb1:
     Live(_4)
-    _4 = next _3 -> [bb3, done: bb4]
+    _4 = next _3 -> [bb2, done: bb3]
   bb2:
-    Dead(_3)
-    _0 = copy _2
-    Dead(_2)
-    Dead(_1)
-    Return
-  bb3:
     Live(_5)
     _5 = copy _4
     Live(_6)
@@ -39,9 +33,15 @@ body b0: fn sum; cap_env e0; unwind_exit bb5
     Dead(_5)
     Dead(_4)
     Goto(bb1)
-  bb4:
+  bb3:
     Dead(_4)
-    Goto(bb2)
+    Goto(bb4)
+  bb4:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
   bb5 (cleanup):
     UnwindExit
 
@@ -61,14 +61,8 @@ body b1: fn sum_ref; cap_env e0; unwind_exit bb5
     Goto(bb1)
   bb1:
     Live(_4)
-    _4 = next _3 -> [bb3, done: bb4]
+    _4 = next _3 -> [bb2, done: bb3]
   bb2:
-    Dead(_3)
-    _0 = copy _2
-    Dead(_2)
-    Dead(_1)
-    Return
-  bb3:
     Live(_5)
     _5 = copy _4
     Live(_6)
@@ -78,9 +72,15 @@ body b1: fn sum_ref; cap_env e0; unwind_exit bb5
     Dead(_5)
     Dead(_4)
     Goto(bb1)
-  bb4:
+  bb3:
     Dead(_4)
-    Goto(bb2)
+    Goto(bb4)
+  bb4:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
   bb5 (cleanup):
     UnwindExit
 
@@ -101,14 +101,8 @@ body b2: fn firsts; cap_env e0; unwind_exit bb5
     Goto(bb1)
   bb1:
     Live(_4)
-    _4 = next _3 -> [bb3, done: bb4]
+    _4 = next _3 -> [bb2, done: bb3]
   bb2:
-    Dead(_3)
-    _0 = copy _2
-    Dead(_2)
-    Dead(_1)
-    Return
-  bb3:
     Live(_5)
     _5 = copy _4
     Live(_6)
@@ -122,9 +116,15 @@ body b2: fn firsts; cap_env e0; unwind_exit bb5
     Dead(_5)
     Dead(_4)
     Goto(bb1)
-  bb4:
+  bb3:
     Dead(_4)
-    Goto(bb2)
+    Goto(bb4)
+  bb4:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
   bb5 (cleanup):
     UnwindExit
 
@@ -146,14 +146,8 @@ body b3: fn pairs; cap_env e0; unwind_exit bb5
     Goto(bb1)
   bb1:
     Live(_4)
-    _4 = next _3 -> [bb3, done: bb4]
+    _4 = next _3 -> [bb2, done: bb3]
   bb2:
-    Dead(_3)
-    _0 = copy _2
-    Dead(_2)
-    Dead(_1)
-    Return
-  bb3:
     Live(_5)
     _5 = &(*_4).0
     Live(_6)
@@ -169,9 +163,15 @@ body b3: fn pairs; cap_env e0; unwind_exit bb5
     Dead(_5)
     Dead(_4)
     Goto(bb1)
-  bb4:
+  bb3:
     Dead(_4)
-    Goto(bb2)
+    Goto(bb4)
+  bb4:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
   bb5 (cleanup):
     UnwindExit
 
@@ -190,23 +190,23 @@ body b4: fn count; cap_env e0; unwind_exit bb5
     Goto(bb1)
   bb1:
     Live(_4)
-    _4 = next _3 -> [bb3, done: bb4]
+    _4 = next _3 -> [bb2, done: bb3]
   bb2:
-    Dead(_3)
-    _0 = copy _2
-    Dead(_2)
-    Dead(_1)
-    Return
-  bb3:
     Live(_5)
     _5 = Add<u64>(copy _2, const 1u64)
     _2 = move _5
     Dead(_5)
     Dead(_4)
     Goto(bb1)
-  bb4:
+  bb3:
     Dead(_4)
-    Goto(bb2)
+    Goto(bb4)
+  bb4:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
   bb5 (cleanup):
     UnwindExit
 
@@ -226,14 +226,8 @@ body b5: fn arr; cap_env e0; unwind_exit bb5
     Goto(bb1)
   bb1:
     Live(_4)
-    _4 = next _3 -> [bb3, done: bb4]
+    _4 = next _3 -> [bb2, done: bb3]
   bb2:
-    Dead(_3)
-    _0 = copy _2
-    Dead(_2)
-    Dead(_1)
-    Return
-  bb3:
     Live(_5)
     _5 = copy _4
     Live(_6)
@@ -243,8 +237,14 @@ body b5: fn arr; cap_env e0; unwind_exit bb5
     Dead(_5)
     Dead(_4)
     Goto(bb1)
-  bb4:
+  bb3:
     Dead(_4)
-    Goto(bb2)
+    Goto(bb4)
+  bb4:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
   bb5 (cleanup):
     UnwindExit

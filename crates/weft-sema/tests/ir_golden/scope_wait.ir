@@ -17,14 +17,14 @@ body b1: fn scoped; cap_env e0; unwind_exit bb3
   _0: Vec<u64> (Return)
   _1: u64 (Param(0) `n`)
   bb0:
-    _0 = scope s0 -> [bb2, unwind: bb1]
-  bb1 (cleanup):
+    _0 = scope s0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
     Dead(_0)
     Dead(_1)
     Goto(bb3)
-  bb2:
-    Dead(_1)
-    Return
   bb3 (cleanup):
     UnwindExit
 
@@ -36,40 +36,40 @@ body b2: scope s0; parent b1; cap_env e0; unwind_exit bb9
   _4: u64 (Upvar(_1) `n`)
   bb0:
     Live(_2)
-    _2 = call mk() / e0 -> [bb3, unwind: bb2]
-  bb1 (cleanup):
-    Dead(_0)
-    UnwindValue(_1, Drop)
-    Dead(_1)
-    Goto(bb9)
-  bb2 (cleanup):
-    UnwindValue(_2, Drop)
-    Dead(_2)
-    Goto(bb1)
-  bb3:
+    _2 = call mk() / e0 -> [bb1, unwind: bb7]
+  bb1:
     Live(_3)
     _3 = copy _4
     _0 = move _2
-    scope_wait _1 -> [bb8, unwind: bb7]
-  bb4 (cleanup):
-    UnwindValue(_1, Drop)
-    Dead(_1)
-    Goto(bb9)
-  bb5 (cleanup):
-    UnwindValue(_2, Drop)
-    Dead(_2)
-    Goto(bb4)
-  bb6 (cleanup):
-    Dead(_3)
-    Goto(bb5)
-  bb7 (cleanup):
-    UnwindValue(_0, Drop)
-    Dead(_0)
-    Goto(bb6)
-  bb8:
+    scope_wait _1 -> [bb2, unwind: bb3]
+  bb2:
     Dead(_3)
     Dead(_2)
     Dead(_1)
     Return
+  bb3 (cleanup):
+    UnwindValue(_0, Drop)
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_3)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb9)
+  bb7 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb9)
   bb9 (cleanup):
     UnwindExit

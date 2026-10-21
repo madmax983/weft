@@ -10,18 +10,18 @@ body b0: fn main; cap_env e0; unwind_exit bb4
   _1: &u64 (User `r`)
   bb0:
     Live(_1)
-    _1 = handle h0 -> [bb3, unwind: bb2]
-  bb1 (cleanup):
-    Dead(_0)
-    Goto(bb4)
-  bb2 (cleanup):
-    Dead(_1)
-    Goto(bb1)
-  bb3:
+    _1 = handle h0 -> [bb1, unwind: bb2]
+  bb1:
     Print(copy _1)
     _0 = const ()
     Dead(_1)
     Return
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
   bb4 (cleanup):
     UnwindExit
 
@@ -45,23 +45,23 @@ body b1: handled h0; parent b0; cap_env e1; unwind_exit bb7
     Dead(_3)
     Live(_5)
     _5 = &_2
-    _0 = perform Local(_1).pick(move _5) -> [bb6, unwind: bb5]
-  bb3 (cleanup):
-    Dead(_0)
-    Dead(_1)
-    Goto(bb7)
-  bb4 (cleanup):
-    UnwindValue(_2, Drop)
-    Dead(_2)
-    Goto(bb3)
-  bb5 (cleanup):
-    Dead(_5)
-    Goto(bb4)
-  bb6:
+    _0 = perform Local(_1).pick(move _5) -> [bb3, unwind: bb4]
+  bb3:
     Dead(_2)
     Dead(_5)
     Dead(_1)
     Return
+  bb4 (cleanup):
+    Dead(_5)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb7)
   bb7 (cleanup):
     UnwindExit
 

@@ -39,6 +39,16 @@ fn pipeline(src: String) -> Option<String> {
                 assert!(weft_check::agreement(&checked).is_ok());
                 let ir = weft_sema::irbuild::build(&checked.analysis);
                 assert!(ir.broken.is_empty(), "the IR breaks rules: {:?}", ir.broken);
+                // The builder is total: each body is built or has a reason for
+                // no IR (a type error of the program).
+                for e in &ir.entries {
+                    assert!(
+                        !matches!(e.outcome, weft_sema::irbuild::Outcome::Unsupported(_)),
+                        "{}: {:?}",
+                        e.name,
+                        e.outcome
+                    );
+                }
                 if !checked.ok() {
                     return None;
                 }

@@ -20,14 +20,8 @@ body b0: fn upto; cap_env e0; unwind_exit bb5
     Goto(bb1)
   bb1:
     Live(_4)
-    _4 = next _3 -> [bb3, done: bb4]
+    _4 = next _3 -> [bb2, done: bb3]
   bb2:
-    Dead(_3)
-    _0 = copy _2
-    Dead(_2)
-    Dead(_1)
-    Return
-  bb3:
     Live(_5)
     _5 = copy _4
     Live(_6)
@@ -37,9 +31,15 @@ body b0: fn upto; cap_env e0; unwind_exit bb5
     Dead(_5)
     Dead(_4)
     Goto(bb1)
-  bb4:
+  bb3:
     Dead(_4)
-    Goto(bb2)
+    Goto(bb4)
+  bb4:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
   bb5 (cleanup):
     UnwindExit
 
@@ -66,17 +66,8 @@ body b1: fn computed; cap_env e0; unwind_exit bb5
     Goto(bb1)
   bb1:
     Live(_7)
-    _7 = next _6 -> [bb3, done: bb4]
+    _7 = next _6 -> [bb2, done: bb3]
   bb2:
-    Dead(_6)
-    Dead(_5)
-    Dead(_4)
-    _0 = copy _3
-    Dead(_3)
-    Dead(_2)
-    Dead(_1)
-    Return
-  bb3:
     Live(_8)
     _8 = copy _7
     Live(_9)
@@ -86,9 +77,18 @@ body b1: fn computed; cap_env e0; unwind_exit bb5
     Dead(_8)
     Dead(_7)
     Goto(bb1)
-  bb4:
+  bb3:
     Dead(_7)
-    Goto(bb2)
+    Goto(bb4)
+  bb4:
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    _0 = copy _3
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
   bb5 (cleanup):
     UnwindExit
 
@@ -107,23 +107,23 @@ body b2: fn times; cap_env e0; unwind_exit bb5
     Goto(bb1)
   bb1:
     Live(_4)
-    _4 = next _3 -> [bb3, done: bb4]
+    _4 = next _3 -> [bb2, done: bb3]
   bb2:
-    Dead(_3)
-    _0 = copy _2
-    Dead(_2)
-    Dead(_1)
-    Return
-  bb3:
     Live(_5)
     _5 = Add<u64>(copy _2, const 1u64)
     _2 = move _5
     Dead(_5)
     Dead(_4)
     Goto(bb1)
-  bb4:
+  bb3:
     Dead(_4)
-    Goto(bb2)
+    Goto(bb4)
+  bb4:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
   bb5 (cleanup):
     UnwindExit
 
@@ -146,31 +146,17 @@ body b3: fn triangle; cap_env e0; unwind_exit bb9
     Goto(bb1)
   bb1:
     Live(_4)
-    _4 = next _3 -> [bb3, done: bb4]
+    _4 = next _3 -> [bb2, done: bb7]
   bb2:
-    Dead(_3)
-    _0 = copy _2
-    Dead(_2)
-    Dead(_1)
-    Return
-  bb3:
     Live(_5)
     _5 = copy _4
     Live(_6)
     _6 = Iter(const 0u64..copy _5)
-    Goto(bb5)
-  bb4:
-    Dead(_4)
-    Goto(bb2)
-  bb5:
+    Goto(bb3)
+  bb3:
     Live(_7)
-    _7 = next _6 -> [bb7, done: bb8]
-  bb6:
-    Dead(_6)
-    Dead(_5)
-    Dead(_4)
-    Goto(bb1)
-  bb7:
+    _7 = next _6 -> [bb4, done: bb5]
+  bb4:
     Live(_8)
     _8 = copy _7
     Live(_9)
@@ -179,9 +165,23 @@ body b3: fn triangle; cap_env e0; unwind_exit bb9
     Dead(_9)
     Dead(_8)
     Dead(_7)
-    Goto(bb5)
-  bb8:
+    Goto(bb3)
+  bb5:
     Dead(_7)
     Goto(bb6)
+  bb6:
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Goto(bb1)
+  bb7:
+    Dead(_4)
+    Goto(bb8)
+  bb8:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
   bb9 (cleanup):
     UnwindExit

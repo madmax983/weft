@@ -211,7 +211,10 @@ impl Builder<'_> {
             out.push(StmtKind::UnwindValue(Place::local(l), UnwindAction::Drop));
             return;
         }
-        if d.props.copy {
+        // A plain-data value needs no `UnwindValue`. A local of a function
+        // type that can hold a linear closure gets one (its `copy` comes from
+        // its type, its `linear` from the analysis: `irbuild/mod.rs`).
+        if d.props.copy && !d.props.linear {
             return;
         }
         let (ty, props) = (d.ty, d.props);
