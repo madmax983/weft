@@ -2189,6 +2189,22 @@ known so far, so it also only grows, and each step is sound; summary places are 
 (`SIG_PLACE_STEPS`). So the iteration is monotone and ends. The emit pass runs after all
 summaries are final.
 
+As built (plan stage F3, `crates/weft-sema/src/analysis/`): the state maps the key of each
+local (the site local for an upvar) to a tree of its move paths (`Tree`: the `top` of a node
+is the part of the value that no child names), and holds the move paths that can and must
+hold a value. A local with no entry has no value: `AbsVal::none` (no places, `empty`,
+`uniq`) is the identity of the join. A read of a place that is not a move path (through a
+pointer, an element) gives the places that the references at α of the place point into,
+and a linear part from its type. A reference stored in a place of the pointee of a
+parameter points into the wildcard place of the `Held` root `*p` of that parameter (the
+`Param` root of a reference parameter has the text of the parameter, as the old lowering).
+A store through a pointer or into an element is a weak update of the move path that names
+the place (or a move path above it), with no structure. `Live`, `Dead`, `Consume`,
+`Uninit` and a `move` operand leave no value. A cleanup block gets the state before the
+terminator that aborts. `uniq` holds for a copy of a `@ uniq` value only: a constant, a
+borrow and an aggregate are not `@ uniq`. There is no widening yet (stage F10): a block
+that the driver visits more than 64 times is an error.
+
 **The post-passes of today**, and where each one goes:
 
 | Today | In this design |

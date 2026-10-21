@@ -1,0 +1,636 @@
+//! Unit tests of the analysis (plan stage F3, `docs/ir.md` 6.6) on
+//! hand-built IR: the domain, the transfer functions of the statements, and
+//! the joins of the driver.
+
+use std::collections::BTreeSet;
+
+use weft_facts::{FnFacts, PlaceId};
+use weft_ir::ty::{AdtDecl, AdtKind, FieldDecl, VariantDecl};
+use weft_ir::{
+    AggKind, Block, BlockId, Body, BodyId, BodyKind, CapEnvId, Const, DerefKind, FieldIdx, FnDecl,
+    FnId, IntTy, LocalDecl, LocalId, LocalKind, Operand, Origin, Place, Program, Proj, Props,
+    Rvalue, Span, Stmt, StmtKind, Term, TermKind, Ty, TyId, TyTable, VariantIdx,
+};
+use weft_sema::analysis::{self, AbsVal, Cx, PathStep, State, Tree};
+use weft_sema::factgen::alpha::Roots;
+
+/// The types of the tests.
+struct Tys {
+    table: TyTable,
+    unit: TyId,
+    u64: TyId,
+    ref_u64: TyId,
+    pair: TyId,
+    s: TyId,
+    tx: TyId,
+    opt: TyId,
+    ref_ref: TyId,
+}
+
+/// A definition with no flags.
+fn adt(name: &str, kind: AdtKind, linear: bool) -> AdtDecl {
+    AdtDecl {
+        name: name.to_string(),
+        generics: 0,
+        kind,
+        lang: None,
+        linear,
+        on_abort: None,
+        has_on_abort: false,
+        immovable: false,
+        copy: false,
+        nonportable: false,
+        props: Default::default(),
+    }
+}
+
+/// `u64`, `&u64`, `(&u64, &u64)`, `struct S { a: &u64, b: u64 }`,
+/// `linear struct Tx { id: u64 }`, `enum Opt { None, Some(Tx) }`, `&&u64`.
+fn tys() -> Tys {
+    let mut t = TyTable::new();
+    let unit = t.unit();
+    let u64 = t.intern(Ty::Int(IntTy::U64));
+    let ref_u64 = t.intern(Ty::Ref(u64));
+    let pair = t.intern(Ty::Tuple(vec![ref_u64, ref_u64]));
+    let field = |name: &str, ty| FieldDecl {
+        name: name.to_string(),
+        ty,
+        place: false,
+    };
+    let s = t.push_adt(adt(
+        "S",
+        AdtKind::Struct(vec![field("a", ref_u64), field("b", u64)]),
+        false,
+    ));
+    let s = t.intern(Ty::Adt(s, vec![]));
+    let tx = t.push_adt(adt("Tx", AdtKind::Struct(vec![field("id", u64)]), true));
+    let tx = t.intern(Ty::Adt(tx, vec![]));
+    let opt = t.push_adt(adt(
+        "Opt",
+        AdtKind::Enum(vec![
+            VariantDecl {
+                name: "None".to_string(),
+                fields: vec![],
+            },
+            VariantDecl {
+                name: "Some".to_string(),
+                fields: vec![tx],
+            },
+        ]),
+        false,
+    ));
+    let opt = t.intern(Ty::Adt(opt, vec![]));
+    let ref_ref = t.intern(Ty::Ref(ref_u64));
+    Tys {
+        table: t,
+        unit,
+        u64,
+        ref_u64,
+        pair,
+        s,
+        tx,
+        opt,
+        ref_ref,
+    }
+}
+
+/// The origin of a hand-built statement.
+const fn origin() -> Origin {
+    Origin {
+        span: Span {
+            unit: 0,
+            lo: 0,
+            hi: 0,
+        },
+        expr: None,
+    }
+}
+
+/// A body under construction.
+struct Hand {
+    locals: Vec<LocalDecl>,
+    blocks: Vec<Block>,
+    params: Vec<LocalId>,
+}
+
+impl Hand {
+    /// A body with `_0: ()`.
+    fn new(t: &Tys) -> Self {
+        let mut h = Self {
+            locals: Vec::new(),
+            blocks: Vec::new(),
+            params: Vec::new(),
+        };
+        h.local(t.unit, LocalKind::Return, None, Props::default());
+        h
+    }
+
+    /// Adds a local.
+    fn local(&mut self, ty: TyId, kind: LocalKind, name: Option<&str>, props: Props) -> LocalId {
+        let id = LocalId(u32::try_from(self.locals.len()).unwrap_or(u32::MAX));
+        self.locals.push(LocalDecl {
+            ty,
+            kind,
+            name: name.map(str::to_string),
+            props,
+            in_place: false,
+            origin: origin(),
+        });
+        if matches!(kind, LocalKind::Param(_)) {
+            self.params.push(id);
+        }
+        id
+    }
+
+    /// A user local.
+    fn user(&mut self, ty: TyId, name: &str) -> LocalId {
+        self.local(ty, LocalKind::User, Some(name), Props::default())
+    }
+
+    /// Adds a block.
+    fn block(&mut self, stmts: Vec<StmtKind>, term: TermKind) -> BlockId {
+        let id = BlockId(u32::try_from(self.blocks.len()).unwrap_or(u32::MAX));
+        self.blocks.push(Block {
+            stmts: stmts
+                .into_iter()
+                .map(|kind| Stmt {
+                    kind,
+                    origin: origin(),
+                })
+                .collect(),
+            term: Term {
+                kind: term,
+                origin: origin(),
+            },
+            cleanup: false,
+        });
+        id
+    }
+
+    /// The program with this body as its one function `f`.
+    fn program(self, t: &Tys) -> Program {
+        let body = Body {
+            kind: BodyKind::Fn(FnId(0)),
+            parent: None,
+            locals: self.locals,
+            ret: LocalId(0),
+            params: self.params,
+            caps: Vec::new(),
+            kont: None,
+            blocks: self.blocks,
+            entry: BlockId(0),
+            unwind_exit: BlockId(0),
+            cap_env: CapEnvId(0),
+            origin: origin(),
+        };
+        Program {
+            bodies: vec![body],
+            fns: vec![FnDecl {
+                name: "f".to_string(),
+                body: Some(BodyId(0)),
+                params: Vec::new(),
+                ret: t.unit,
+                generics: 0,
+                stated_row: Some(Vec::new()),
+                intrinsic: None,
+            }],
+            ..Program::default()
+        }
+    }
+}
+
+const B: BodyId = BodyId(0);
+
+/// A place with no projection.
+const fn at(l: LocalId) -> Place {
+    Place::local(l)
+}
+
+/// A place with projections.
+const fn proj(l: LocalId, proj: Vec<Proj>) -> Place {
+    Place { local: l, proj }
+}
+
+/// `p = rv`.
+const fn assign(p: Place, rv: Rvalue) -> StmtKind {
+    StmtKind::Assign(p, rv)
+}
+
+/// `const 1u64`.
+const fn one() -> Operand {
+    Operand::Const(Const::Int(1, IntTy::U64))
+}
+
+/// The result of an analysis: the state at the entry of each block, and the
+/// facts with the places.
+struct Run {
+    states: analysis::States,
+    facts: FnFacts,
+    roots: Roots,
+    p: Program,
+    tys: TyTable,
+}
+
+impl Run {
+    /// The state at the entry of block `b`.
+    fn at(&self, b: BlockId) -> &State {
+        self.states
+            .at(b)
+            .unwrap_or_else(|| panic!("no state at bb{}", b.0))
+    }
+
+    /// The display texts of a set of places.
+    fn texts(&self, ps: &BTreeSet<PlaceId>) -> Vec<String> {
+        let mut v: Vec<String> = ps
+            .iter()
+            .map(|p| self.facts.place(*p).display.clone())
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// The places that the value of local `l` at path `path` points into, at
+    /// the entry of block `b`.
+    fn refs(&self, b: BlockId, l: LocalId, path: &[PathStep]) -> Vec<String> {
+        self.texts(&self.at(b).value((B, l), path).flat().refs)
+    }
+}
+
+/// Runs the analysis of body 0 of `p` from `init`.
+fn run_with(p: Program, t: &Tys, init: State) -> Run {
+    let mut facts = FnFacts::default();
+    let mut roots = Roots::default();
+    let mut tys = t.table.clone();
+    let states = {
+        let mut cx = Cx {
+            p: &p,
+            tys: &mut tys,
+            facts: &mut facts,
+            roots: &mut roots,
+        };
+        analysis::run(&mut cx, B, init).unwrap_or_else(|e| panic!("the analysis: {e:?}"))
+    };
+    Run {
+        states,
+        facts,
+        roots,
+        p,
+        tys,
+    }
+}
+
+/// Runs the analysis of body 0 of `p` from the empty state.
+fn run(p: Program, t: &Tys) -> Run {
+    run_with(p, t, State::new())
+}
+
+#[test]
+fn a_borrow_gives_the_places_of_alpha() {
+    let t = tys();
+    let mut h = Hand::new(&t);
+    let x = h.user(t.u64, "x");
+    let r = h.user(t.ref_u64, "r");
+    let s = h.user(t.s, "s");
+    let bb1 = BlockId(1);
+    h.block(
+        vec![
+            assign(at(x), Rvalue::Use(one())),
+            assign(
+                at(s),
+                Rvalue::Aggregate(AggKind::Struct(t.s), vec![Operand::Copy(at(r)), one()]),
+            ),
+            assign(at(r), Rvalue::Ref(at(x))),
+        ],
+        TermKind::Goto(bb1),
+    );
+    h.block(
+        vec![assign(
+            at(r),
+            Rvalue::Ref(proj(s, vec![Proj::Field(FieldIdx(1))])),
+        )],
+        TermKind::Goto(BlockId(2)),
+    );
+    h.block(vec![], TermKind::Return);
+    let out = run(h.program(&t), &t);
+    assert_eq!(out.refs(bb1, r, &[]), vec!["x"]);
+    // A new value of `r` replaces its places.
+    assert_eq!(out.refs(BlockId(2), r, &[]), vec!["s.b"]);
+    // A reference is not `@ uniq`.
+    assert!(!out.at(bb1).value((B, r), &[]).flat().uniq);
+}
+
+#[test]
+fn a_copy_of_a_reference_copies_its_places() {
+    let t = tys();
+    let mut h = Hand::new(&t);
+    let x = h.user(t.u64, "x");
+    let r = h.user(t.ref_u64, "r");
+    let q = h.user(t.ref_u64, "q");
+    h.block(
+        vec![
+            assign(at(x), Rvalue::Use(one())),
+            assign(at(r), Rvalue::Ref(at(x))),
+            assign(at(q), Rvalue::Use(Operand::Copy(at(r)))),
+        ],
+        TermKind::Goto(BlockId(1)),
+    );
+    h.block(vec![], TermKind::Return);
+    let out = run(h.program(&t), &t);
+    assert_eq!(out.refs(BlockId(1), q, &[]), vec!["x"]);
+    // A copy leaves the value where it is.
+    assert_eq!(out.refs(BlockId(1), r, &[]), vec!["x"]);
+}
+
+#[test]
+fn an_aggregate_keeps_the_structure_of_the_move_paths() {
+    let t = tys();
+    let mut h = Hand::new(&t);
+    let x = h.user(t.u64, "x");
+    let y = h.user(t.u64, "y");
+    let r = h.user(t.ref_u64, "r");
+    let pair = h.user(t.pair, "pair");
+    let s = h.user(t.s, "s");
+    let bb1 = BlockId(1);
+    h.block(
+        vec![
+            assign(at(x), Rvalue::Use(one())),
+            assign(at(y), Rvalue::Use(one())),
+            assign(at(r), Rvalue::Ref(at(x))),
+            // A tuple of two references.
+            assign(
+                at(pair),
+                Rvalue::Aggregate(
+                    AggKind::Tuple,
+                    vec![Operand::Copy(at(r)), Operand::Copy(at(r))],
+                ),
+            ),
+            assign(
+                proj(pair, vec![Proj::Field(FieldIdx(1))]),
+                Rvalue::Ref(at(y)),
+            ),
+            // A struct with a reference field.
+            assign(
+                at(s),
+                Rvalue::Aggregate(AggKind::Struct(t.s), vec![Operand::Copy(at(r)), one()]),
+            ),
+        ],
+        TermKind::Goto(bb1),
+    );
+    h.block(vec![], TermKind::Return);
+    let out = run(h.program(&t), &t);
+    let f = |i| PathStep::Field(i);
+    assert_eq!(out.refs(bb1, pair, &[f(0)]), vec!["x"]);
+    // A new value of a part replaces the places of that part only.
+    assert_eq!(out.refs(bb1, pair, &[f(1)]), vec!["y"]);
+    assert_eq!(out.refs(bb1, pair, &[]), vec!["x", "y"]);
+    assert_eq!(out.refs(bb1, s, &[f(0)]), vec!["x"]);
+    assert!(out.refs(bb1, s, &[f(1)]).is_empty());
+}
+
+#[test]
+fn a_join_is_a_union_of_the_may_parts_and_an_intersection_of_the_must_parts() {
+    let t = tys();
+    let mut h = Hand::new(&t);
+    let x = h.user(t.u64, "x");
+    let y = h.user(t.u64, "y");
+    let c = h.user(t.u64, "c");
+    let r = h.user(t.ref_u64, "r");
+    let once = h.user(t.u64, "once");
+    let (then, other, join) = (BlockId(1), BlockId(2), BlockId(3));
+    h.block(
+        vec![
+            assign(at(x), Rvalue::Use(one())),
+            assign(at(y), Rvalue::Use(one())),
+            assign(at(c), Rvalue::Use(one())),
+        ],
+        TermKind::Switch {
+            on: Operand::Copy(at(c)),
+            arms: vec![(1, then)],
+            otherwise: other,
+        },
+    );
+    h.block(
+        vec![
+            assign(at(r), Rvalue::Ref(at(x))),
+            assign(at(once), Rvalue::Use(one())),
+        ],
+        TermKind::Goto(join),
+    );
+    h.block(
+        vec![assign(at(r), Rvalue::Ref(at(y)))],
+        TermKind::Goto(join),
+    );
+    h.block(vec![], TermKind::Return);
+    let out = run(h.program(&t), &t);
+    let st = out.at(join);
+    assert_eq!(out.refs(join, r, &[]), vec!["x", "y"]);
+    // Both paths give `r` a value; only one gives `once` a value.
+    assert!(st.must_hold((B, r), &[]));
+    assert!(st.may_hold((B, once)));
+    assert!(!st.must_hold((B, once), &[]));
+    // The must part of the values: `empty` holds on both paths.
+    assert!(st.value((B, r), &[]).flat().empty);
+
+    // The join of the domain itself.
+    let mut a = AbsVal::refs([PlaceId(1)]);
+    a.linear = false;
+    a.empty = true;
+    a.uniq = true;
+    let mut b = AbsVal::refs([PlaceId(2)]);
+    b.linear = true;
+    b.empty = false;
+    b.uniq = true;
+    let j = a.clone().joined(&b);
+    assert_eq!(j.refs, [PlaceId(1), PlaceId(2)].into_iter().collect());
+    assert!(j.linear, "linear is a may part");
+    assert!(!j.empty, "empty is a must part");
+    assert!(j.uniq);
+    // `none` is the identity of the join.
+    assert_eq!(a.clone().joined(&AbsVal::none()), a);
+}
+
+#[test]
+fn uniq_is_the_meet() {
+    let t = tys();
+    let mut h = Hand::new(&t);
+    let p = h.local(
+        t.ref_u64,
+        LocalKind::Param(0),
+        Some("p"),
+        Props {
+            uniq: true,
+            ..Props::default()
+        },
+    );
+    let x = h.user(t.u64, "x");
+    let c = h.user(t.u64, "c");
+    let both = h.user(t.ref_u64, "both");
+    let one_of = h.user(t.ref_u64, "one_of");
+    let (then, other, join) = (BlockId(1), BlockId(2), BlockId(3));
+    h.block(
+        vec![
+            assign(at(x), Rvalue::Use(one())),
+            assign(at(c), Rvalue::Use(one())),
+        ],
+        TermKind::Switch {
+            on: Operand::Copy(at(c)),
+            arms: vec![(1, then)],
+            otherwise: other,
+        },
+    );
+    h.block(
+        vec![
+            assign(at(both), Rvalue::Use(Operand::Copy(at(p)))),
+            assign(at(one_of), Rvalue::Use(Operand::Copy(at(p)))),
+        ],
+        TermKind::Goto(join),
+    );
+    h.block(
+        vec![
+            assign(at(both), Rvalue::Use(Operand::Copy(at(p)))),
+            assign(at(one_of), Rvalue::Ref(at(x))),
+        ],
+        TermKind::Goto(join),
+    );
+    h.block(vec![], TermKind::Return);
+    let prog = h.program(&t);
+    // The parameter is `@ uniq` at the entry.
+    let mut init = State::new();
+    let mut v = AbsVal::refs([]);
+    v.uniq = true;
+    init.write((B, p), &[], Tree::leaf(v));
+    let out = run_with(prog, &t, init);
+    let st = out.at(join);
+    assert!(st.value((B, both), &[]).flat().uniq);
+    assert!(!st.value((B, one_of), &[]).flat().uniq);
+}
+
+#[test]
+fn a_value_with_no_linear_part_is_empty() {
+    let t = tys();
+    let mut h = Hand::new(&t);
+    let tx = h.user(t.tx, "tx");
+    let none = h.user(t.opt, "none");
+    let some = h.user(t.opt, "some");
+    let bb1 = BlockId(1);
+    h.block(
+        vec![
+            assign(
+                at(tx),
+                Rvalue::Aggregate(AggKind::Struct(t.tx), vec![one()]),
+            ),
+            assign(
+                at(none),
+                Rvalue::Aggregate(AggKind::Variant(t.opt, VariantIdx(0)), vec![]),
+            ),
+            assign(
+                at(some),
+                Rvalue::Aggregate(
+                    AggKind::Variant(t.opt, VariantIdx(1)),
+                    vec![Operand::Move(at(tx))],
+                ),
+            ),
+        ],
+        TermKind::Goto(bb1),
+    );
+    h.block(vec![], TermKind::Return);
+    let out = run(h.program(&t), &t);
+    let st = out.at(bb1);
+    let n = st.value((B, none), &[]).flat();
+    assert!(n.empty && !n.linear, "`None` holds nothing linear");
+    let s = st.value((B, some), &[]).flat();
+    assert!(s.linear && !s.empty, "`Some(tx)` holds a linear value");
+    // The payload is a move path below the variant.
+    let payload = st.value((B, some), &[PathStep::Variant(1), PathStep::Field(0)]);
+    assert!(payload.flat().linear);
+    // The move left no value in `tx`.
+    assert!(!st.may_hold((B, tx)));
+    assert!(st.value((B, tx), &[]).flat().empty);
+}
+
+#[test]
+fn alpha_of_a_dereference_reads_the_state() {
+    let t = tys();
+    let mut h = Hand::new(&t);
+    let x = h.user(t.u64, "x");
+    let y = h.user(t.u64, "y");
+    let r = h.user(t.ref_u64, "r");
+    let rr = h.user(t.ref_ref, "rr");
+    let pair = h.user(t.pair, "pair");
+    let a = h.user(t.ref_u64, "a");
+    let b = h.user(t.ref_u64, "b");
+    let c = h.user(t.ref_u64, "c");
+    let bb1 = BlockId(1);
+    let deref = |l: LocalId, mut more: Vec<Proj>| {
+        more.push(Proj::Deref(DerefKind::Ref));
+        proj(l, more)
+    };
+    h.block(
+        vec![
+            assign(at(x), Rvalue::Use(one())),
+            assign(at(y), Rvalue::Use(one())),
+            assign(at(r), Rvalue::Ref(at(x))),
+            assign(at(rr), Rvalue::Ref(at(r))),
+            assign(
+                at(pair),
+                Rvalue::Aggregate(AggKind::Tuple, vec![Operand::Copy(at(r)), one()]),
+            ),
+            assign(
+                proj(pair, vec![Proj::Field(FieldIdx(1))]),
+                Rvalue::Ref(at(y)),
+            ),
+            // `&*r`: the places of `r`.
+            assign(at(a), Rvalue::Ref(deref(r, vec![]))),
+            // `&**rr`: through the value of `rr`, then the value of `r`.
+            assign(
+                at(b),
+                Rvalue::Ref(proj(
+                    rr,
+                    vec![Proj::Deref(DerefKind::Ref), Proj::Deref(DerefKind::Ref)],
+                )),
+            ),
+            // `&*pair.1`: the value of the part.
+            assign(
+                at(c),
+                Rvalue::Ref(deref(pair, vec![Proj::Field(FieldIdx(1))])),
+            ),
+        ],
+        TermKind::Goto(bb1),
+    );
+    h.block(vec![], TermKind::Return);
+    let mut out = run(h.program(&t), &t);
+    assert_eq!(out.refs(bb1, a, &[]), vec!["x"]);
+    assert_eq!(out.refs(bb1, b, &[]), vec!["x"]);
+    assert_eq!(out.refs(bb1, c, &[]), vec!["y"]);
+    // α with the state of the entry of bb1: `(*r)` is `x`.
+    let st = out.at(bb1).clone();
+    let mut cx = Cx {
+        p: &out.p,
+        tys: &mut out.tys,
+        facts: &mut out.facts,
+        roots: &mut out.roots,
+    };
+    let al = analysis::transfer::alpha(&mut cx, B, &st, &deref(r, vec![]))
+        .unwrap_or_else(|e| panic!("α: {e:?}"));
+    let texts: Vec<String> = al
+        .places
+        .iter()
+        .map(|p| out.facts.place(*p).display.clone())
+        .collect();
+    assert_eq!(texts, vec!["x"]);
+    // The pointer place is the root of `r`: an access reads it.
+    let ptrs: Vec<String> = al
+        .ptrs
+        .iter()
+        .map(|p| out.facts.place(*p).display.clone())
+        .collect();
+    assert_eq!(ptrs, vec!["r"]);
+}
+
+#[test]
+fn an_empty_state_gives_no_value() {
+    let st = State::new();
+    let v = st.value((B, LocalId(1)), &[PathStep::Field(0)]).flat();
+    assert_eq!(v, AbsVal::none());
+    assert!(!st.may_hold((B, LocalId(1))));
+}

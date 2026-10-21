@@ -4,6 +4,7 @@
 //! functions that do not state them, and lowers every body to [`FnFacts`].
 //! The checker in `weft-check` runs the rules on these facts.
 
+pub mod analysis;
 pub mod body;
 pub mod effects;
 pub mod factgen;
