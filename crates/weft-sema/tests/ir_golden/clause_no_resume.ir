@@ -1,0 +1,63 @@
+fn f0 run() -> u64: b0
+fn f1 Vec.new<T0>() -> Vec<T0> / (): extern
+fn f2 Vec.push<T0>(&Vec<T0>, T0) -> () / (): extern
+handler h0 main.Stop: handled b1, site b0, clauses [stop: b2]
+cap_env e0
+cap_env e1: parent e0, main.Stop _1
+
+body b0: fn run; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  bb0:
+    _0 = handle h0 -> [bb2, unwind: bb1]
+  bb1 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb2:
+    Return
+  bb3 (cleanup):
+    UnwindExit
+
+body b1: handled h0; parent b0; cap_env e1; unwind_exit bb6
+  _0: u64 (Return)
+  _1: Cap<main.Stop> (Cap(main.Stop) `Stop`)
+  _2: Vec<i64> (User `v`)
+  _3: () (Temp(Discarded))
+  _4: &Vec<i64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    _2 = call Vec.new<i64>() / e1 -> [bb1]
+  bb1:
+    Live(_3)
+    Live(_4)
+    _4 = &_2
+    _3 = call Vec.push<i64>(move _4, const 1i64) / e1 -> [bb2]
+  bb2:
+    Dead(_4)
+    Dead(_3)
+    _0 = perform Local(_1).stop(const 7u64) -> [bb5, unwind: bb4]
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb6)
+  bb4 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb3)
+  bb5:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    UnwindExit
+
+body b2: clause h0 stop; parent b0; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: u64 (Param(0) `code`)
+  _2: resume(u64) -> u64 (Kont(once) `resume`)
+  bb0:
+    _0 = copy _1
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit

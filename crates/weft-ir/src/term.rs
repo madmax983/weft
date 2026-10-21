@@ -90,8 +90,8 @@ pub enum TermKind {
     },
     /// A `resume`: a call of the continuation. It runs the rest of the handled body.
     Resume {
-        /// The continuation: the `Kont` local of a clause, or a `Kont` field of a
-        /// closure environment.
+        /// The continuation: the `Kont` local of a clause, an upvar local of one in a
+        /// body inside the clause, or a `Kont` field of a closure environment.
         kont: Place,
         /// The value for the perform.
         arg: Operand,

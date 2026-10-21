@@ -29,20 +29,22 @@ mod cleanup;
 mod closure;
 mod expr;
 mod frame;
+mod handle;
 mod looping;
 mod pattern;
 mod place;
 mod stmt;
 mod unset;
+mod upvar;
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
 
 use weft_ir::verify::{verify_program, Broken};
 use weft_ir::{
-    Block, BlockId, Body, BodyId, BodyKind, CapEnv, CapEnvId, ClosureId, ExprId, FnDecl, Intrinsic,
-    LocalDecl, LocalId, LocalKind, Origin, Place, Program, Props, Rvalue, Stmt, StmtKind, TempKind,
-    Term, TermKind, TestDecl, TestId, TyId, TyTable,
+    Block, BlockId, Body, BodyId, BodyKind, CapEnv, CapEnvId, ClosureId, EffectId, ExprId, FnDecl,
+    Intrinsic, LocalDecl, LocalId, LocalKind, Origin, Place, Program, Props, Rvalue, Stmt,
+    StmtKind, TempKind, Term, TermKind, TestDecl, TestId, TyId, TyTable,
 };
 use weft_syntax::ast::{self, Span};
 use weft_syntax::diag::Diagnostic;
@@ -64,7 +66,9 @@ pub enum Construct {
     VariantField,
     /// A constructor of a struct or of a variant with a payload as a value.
     ItemName,
-    /// `handle`.
+    /// A `handle` in a closure body whose handled body or clauses name a
+    /// capture or a capability field of the closure: an upvar local cannot
+    /// name a field of the environment.
     Handle,
     /// `scope`.
     Scope,
@@ -84,7 +88,7 @@ impl Construct {
             Self::MoveThroughRef => "move through a reference",
             Self::VariantField => "variant field",
             Self::ItemName => "constructor as a value",
-            Self::Handle => "handle",
+            Self::Handle => "handle in a closure that names a capture",
             Self::Scope => "scope",
             Self::Task => "task",
             Self::Intrinsic => "intrinsic call",
@@ -95,8 +99,11 @@ impl Construct {
     /// Returns the plan stage that lowers the construct.
     pub const fn stage(self) -> &'static str {
         match self {
-            Self::AssignPlace | Self::MoveThroughRef | Self::VariantField | Self::ItemName => "B12",
-            Self::Handle => "B10",
+            Self::AssignPlace
+            | Self::MoveThroughRef
+            | Self::VariantField
+            | Self::ItemName
+            | Self::Handle => "B12",
             Self::Scope | Self::Task | Self::Intrinsic => "B11",
             Self::NoThir => "T3",
         }
@@ -372,13 +379,18 @@ fn body_outcome(
     let unit_id = id_of(unit);
     // A body that the builder does not finish declares no function.
     let fns_before = out.program.fns.len();
+    let envs_before = out.program.cap_envs.len();
     let id = BodyId(id_of(out.program.bodies.len()));
-    let mut pending = closure::Pending::new(id.0, id_of(out.program.closures.len()));
+    let mut pending = closure::Pending::new(
+        id.0,
+        id_of(out.program.closures.len()),
+        id_of(out.program.handlers.len()),
+    );
     let d = Decls {
         a,
         fns: &mut out.fns,
         items: &mut out.program.fns,
-        cap_envs: &out.program.cap_envs,
+        cap_envs: &mut out.program.cap_envs,
         pending: &mut pending,
     };
     let mut b = Builder::new(t, &mut out.tys, fields, d, unit_id, ret, src.span);
@@ -388,11 +400,11 @@ fn body_outcome(
         (b.finish(src.kind, src.span), diags)
     });
     let done = result.and_then(|(body, diags)| match closure::take_pending(pending) {
-        Some((bodies, closures)) => Ok((body, diags, bodies, closures)),
+        Some(made) => Ok((body, diags, made)),
         None => unsupported(Construct::NoThir, src.span),
     });
     match done {
-        Ok((body, diags, bodies, closures)) => {
+        Ok((body, diags, (bodies, closures, handlers))) => {
             out.diags.extend(diags.into_iter().map(|mut d| {
                 d.unit = unit;
                 d
@@ -400,6 +412,7 @@ fn body_outcome(
             out.program.bodies.push(body);
             out.program.bodies.extend(bodies);
             out.program.closures.extend(closures);
+            out.program.handlers.extend(handlers);
             if let BodyKind::Fn(f) = src.kind {
                 if let Some(d) = out.program.fns.get_mut(f.index()) {
                     d.body = Some(id);
@@ -408,6 +421,7 @@ fn body_outcome(
             Outcome::Built(id)
         }
         Err(u) => {
+            out.program.cap_envs.truncate(envs_before);
             if out.program.fns.len() > fns_before {
                 out.program.fns.truncate(fns_before);
                 out.fns.retain(|_, v| v.index() < fns_before);
@@ -448,22 +462,10 @@ fn fn_decl(a: &Analysis, tys: &mut TyTable, f: crate::FnId) -> (FnDecl, bool) {
     };
     let params = sig.params.iter().map(|p| ty(&p.ty)).collect();
     let ret = ty(&sig.ret);
-    let stated_row: Option<Vec<weft_ir::EffectId>> = sig.declared.then(|| {
-        sig.effects
-            .named
-            .iter()
-            .filter_map(|n| crate::effects::by_identity(&a.program, n))
-            .map(|e| weft_ir::EffectId(id_of(e.index())))
-            .collect()
-    });
+    let stated_row = sig.declared.then(|| stated_effects(a, sig));
     let raises = def.decl.body.is_none() && sig.effects.raises;
     let stated_row = stated_row.filter(|r| !(raises && r.is_empty()));
-    let intrinsic = match (def.is_std, def.decl.body.is_none(), def.path.as_str()) {
-        (true, true, "with_timeout") => Some(Intrinsic::WithTimeout),
-        // The path of `sim.run` is `run` in the module `sim`.
-        (true, true, "run") if is_sim(a, def.module) => Some(Intrinsic::SimRun),
-        _ => None,
-    };
+    let intrinsic = intrinsic(a, def);
     (
         FnDecl {
             name: def.path.clone(),
@@ -476,6 +478,37 @@ fn fn_decl(a: &Analysis, tys: &mut TyTable, f: crate::FnId) -> (FnDecl, bool) {
         },
         ok,
     )
+}
+
+/// Returns the effects that signature `sig` states.
+fn stated_effects(a: &Analysis, sig: &crate::program::FnSig) -> Vec<EffectId> {
+    sig.effects
+        .named
+        .iter()
+        .filter_map(|n| crate::effects::by_identity(&a.program, n))
+        .map(|e| EffectId(id_of(e.index())))
+        .collect()
+}
+
+/// Returns the run-time meaning of function `def`, if it has one.
+fn intrinsic(a: &Analysis, def: &crate::program::FnDef) -> Option<Intrinsic> {
+    match (def.is_std, def.decl.body.is_none(), def.path.as_str()) {
+        (true, true, "with_timeout") => Some(Intrinsic::WithTimeout),
+        // The path of `sim.run` is `run` in the module `sim`.
+        (true, true, "run") if is_sim(a, def.module) => Some(Intrinsic::SimRun),
+        _ => None,
+    }
+}
+
+/// Returns the declarations of `d` for a builder of a nested body.
+const fn reborrow<'b>(d: &'b mut Decls<'_>) -> Decls<'b> {
+    Decls {
+        a: d.a,
+        fns: &mut *d.fns,
+        items: &mut *d.items,
+        cap_envs: &mut *d.cap_envs,
+        pending: &mut *d.pending,
+    }
 }
 
 /// Returns true if module `m` is the standard module `sim`.
@@ -512,10 +545,6 @@ enum ScopeKind {
     Loop(Targets),
     /// A handled body, a clause or a scope body: no jump can cross it
     /// (W0315).
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "plan stages B10 and B11 open fences")
-    )]
     Fence(Fence),
 }
 
@@ -528,12 +557,8 @@ struct Targets {
     head: usize,
 }
 
-/// A body that a jump cannot leave (`docs/ir.md` 5.1.5). Plan stages B10 and
-/// B11 open these scopes.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "plan stages B10 and B11 open fences")
-)]
+/// A body that a jump cannot leave (`docs/ir.md` 5.1.5). A handled body and
+/// a clause open one (`handle.rs`); plan stage B11 opens the scope body.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Fence {
     /// The handled body of a `handle`.
@@ -541,6 +566,10 @@ enum Fence {
     /// A handler clause.
     Clause,
     /// The body of a `scope`.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "plan stage B11 opens the scope body")
+    )]
     ScopeBody,
 }
 
@@ -610,9 +639,11 @@ struct Decls<'a> {
     fns: &'a mut BTreeMap<crate::FnId, weft_ir::FnId>,
     /// The functions of the program.
     items: &'a mut Vec<FnDecl>,
-    /// The capability environments of the program.
-    cap_envs: &'a [CapEnv],
-    /// The closure bodies and closures that the function makes (`closure.rs`).
+    /// The capability environments of the program. A handled body and a
+    /// closure with capability fields add one.
+    cap_envs: &'a mut Vec<CapEnv>,
+    /// The bodies, the closures and the handlers that the function makes
+    /// (`closure.rs`, `handle.rs`).
     pending: &'a mut closure::Pending,
 }
 
@@ -660,8 +691,22 @@ struct Builder<'a> {
     /// first in a cleanup chain.
     ret_value: bool,
     /// The continuation of a clause body: first in each cleanup chain
-    /// (`docs/ir.md` 5.1.6). Plan stage B10 sets it.
+    /// (`docs/ir.md` 5.1.6).
     kont: Option<LocalId>,
+    /// The continuation is `multi`.
+    kont_multi: bool,
+    /// The capability parameters: the capability local of a handled body.
+    cap_params: Vec<(EffectId, LocalId)>,
+    /// The capabilities that this body binds, with their places here: the
+    /// capability local of a handled body, the capability fields of a
+    /// closure environment, and the upvar locals of the capabilities of the
+    /// site that the body uses (`caps.rs`).
+    caps: Vec<(EffectId, Place)>,
+    /// The locals and the capabilities of the site that a clause or a
+    /// handled body can name (`upvar.rs`); `None` for another body.
+    site: Option<Box<upvar::Site>>,
+    /// The lexical parent: the body that makes this body.
+    parent: Option<BodyId>,
     /// The unwind actions of the types of the body (`cleanup.rs`).
     unwinds: cleanup::UnwindTable,
     /// The id of this body in the program.
@@ -707,6 +752,11 @@ impl<'a> Builder<'a> {
             chain_base: [None; 2],
             ret_value: false,
             kont: None,
+            kont_multi: false,
+            cap_params: Vec::new(),
+            caps: Vec::new(),
+            site: None,
+            parent: None,
             unwinds: HashMap::new(),
             body_id: BodyId(0),
             closure: None,
@@ -937,16 +987,16 @@ impl<'a> Builder<'a> {
         });
         Body {
             kind,
-            parent: None,
+            parent: self.parent,
             locals: self.locals,
             ret: RET,
             params: self.params,
-            caps: Vec::new(),
-            kont: None,
+            caps: self.cap_params,
+            kont: self.kont.map(|k| (k, self.kont_multi)),
             blocks,
             entry: BlockId(0),
             unwind_exit,
-            cap_env: CapEnvId(0),
+            cap_env: self.cap_env,
             origin,
         }
     }

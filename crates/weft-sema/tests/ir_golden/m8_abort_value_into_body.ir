@@ -1,0 +1,83 @@
+fn f0 main() -> (): b0
+fn f1 Vec.new<T0>() -> Vec<T0> / (): extern
+fn f2 Vec.push<T0>(&Vec<T0>, T0) -> () / (): extern
+handler h0 main.Pick: handled b1, site b0, clauses [pick: b2]
+cap_env e0
+cap_env e1: parent e0, main.Pick _1
+
+body b0: fn main; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: &u64 (User `r`)
+  bb0:
+    Live(_1)
+    _1 = handle h0 -> [bb3, unwind: bb2]
+  bb1 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb1)
+  bb3:
+    Print(copy _1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b1: handled h0; parent b0; cap_env e1; unwind_exit bb7
+  _0: &u64 (Return)
+  _1: Cap<main.Pick> (Cap(main.Pick) `Pick`)
+  _2: Vec<u64> (User `w`)
+  _3: () (Temp(Discarded))
+  _4: &Vec<u64> (Temp(Receiver))
+  _5: &Vec<u64> (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = call Vec.new<u64>() / e1 -> [bb1]
+  bb1:
+    Live(_3)
+    Live(_4)
+    _4 = &_2
+    _3 = call Vec.push<u64>(move _4, const 3u64) / e1 -> [bb2]
+  bb2:
+    Dead(_4)
+    Dead(_3)
+    Live(_5)
+    _5 = &_2
+    _0 = perform Local(_1).pick(move _5) -> [bb6, unwind: bb5]
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb7)
+  bb4 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb3)
+  bb5 (cleanup):
+    Dead(_5)
+    Goto(bb4)
+  bb6:
+    Dead(_2)
+    Dead(_5)
+    Dead(_1)
+    Return
+  bb7 (cleanup):
+    UnwindExit
+
+body b2: clause h0 pick; parent b0; cap_env e0; unwind_exit bb1
+  _0: &u64 (Return)
+  _1: &Vec<u64> (Param(0) `v`)
+  _2: resume(&u64) -> &u64 (Kont(once) `resume`)
+  _3: usize (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = const 0usize
+    Bounds((*_1), copy _3)
+    _0 = &(*_1)[_3]
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit

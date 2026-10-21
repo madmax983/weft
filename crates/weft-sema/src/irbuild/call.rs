@@ -77,7 +77,7 @@ impl Builder<'_> {
             thir::Callee::Builtin(Builtin::Print) => self.print_into(e, &slots, dest),
             thir::Callee::Builtin(_) => unsupported(Construct::Task, e.span),
             thir::Callee::Value(_) => self.value_call(e, &slots, &dest),
-            thir::Callee::Resume(_) => unsupported(Construct::Handle, e.span),
+            thir::Callee::Resume(b) => self.resume_into(e, *b, &slots, dest),
         }
     }
 
@@ -349,9 +349,10 @@ impl Builder<'_> {
         let origin = self.origin(e.span, Some(e.id));
         let unwind = Some(self.cleanup(origin));
         let next = self.new_block();
+        let cap = self.cap_of(effect);
         self.terminate(
             TermKind::Perform {
-                cap: self.cap_of(effect),
+                cap,
                 op: OpIdx(op),
                 args: ops,
                 dest,

@@ -189,7 +189,7 @@ impl Builder<'_> {
     /// Returns the place of the local that name `e` names: a local of the
     /// body, or the field of the environment that captures it (`env.k`, see
     /// `closure.rs`).
-    fn local_place(&self, e: &Expr) -> R<Place> {
+    fn local_place(&mut self, e: &Expr) -> R<Place> {
         match self.t.res.get(&e.id) {
             Some(Res::Local(b)) => match self.binding_place(*b) {
                 Some(p) => Ok(p),

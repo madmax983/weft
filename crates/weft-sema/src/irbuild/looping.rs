@@ -258,8 +258,8 @@ impl Builder<'_> {
 #[cfg(test)]
 mod tests {
     //! The fence logic of the jumps (`docs/ir.md` 5.1.5): a jump cannot leave
-    //! a handled body, a clause or a scope body (W0315). Plan stage B10 adds
-    //! the tests with real handled bodies.
+    //! a handled body, a clause or a scope body (W0315). The tests with real
+    //! handled bodies and clauses are in `tests/ir_golden.rs`.
 
     use weft_ir::{TermKind, TyTable};
     use weft_syntax::ast::Span;
@@ -287,7 +287,7 @@ mod tests {
             a: &a,
             fns: &mut fns,
             items: &mut decls,
-            cap_envs: &[],
+            cap_envs: &mut Vec::new(),
             pending: &mut pending,
         };
         let unit = tys.unit();

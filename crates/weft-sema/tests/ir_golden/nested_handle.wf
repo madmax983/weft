@@ -1,0 +1,19 @@
+// A handle inside a handled body. The inner bodies name the locals of the
+// function through the upvar locals of the outer handled body, and the inner
+// clause performs through the capability of the outer handle.
+effect Outer { fn outer() -> u64 }
+effect Inner { fn inner() -> u64 }
+
+fn main() {
+    let base = 10
+    let r = handle Outer {
+        fn outer() { resume(base) }
+    } in {
+        handle Inner {
+            fn inner() { resume(outer() + base) }
+        } in {
+            inner() + outer()
+        }
+    }
+    print(r)
+}

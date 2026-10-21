@@ -1,0 +1,14 @@
+// A closure made in a handled body performs through a `Cap` field of its
+// environment: the aggregate copies the capability into the field.
+effect Say { fn say(msg: String) }
+
+fn main() {
+    let n = 2
+    handle Say {
+        fn say(msg) { print(msg); resume(()) }
+    } in {
+        let f = |m: String| say(m)
+        f("one")
+        print(n)
+    }
+}

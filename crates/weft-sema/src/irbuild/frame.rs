@@ -90,7 +90,7 @@ impl Builder<'_> {
     /// Writes `Uninit` for each place field of each by-value parameter
     /// (ADR 0007): a by-value parameter is built in place, so its place
     /// fields have no value at the entry (`irbuild/unset.rs`).
-    fn unset_params(&mut self, span: Span) {
+    pub(super) fn unset_params(&mut self, span: Span) {
         let origin = self.origin(span, None);
         for i in 0..self.params.len() {
             let Some(&l) = self.params.get(i) else {
@@ -110,7 +110,7 @@ impl Builder<'_> {
     /// Returns true if the tail `e` of the frame body does not give the value
     /// of the frame: `_0` is `()` and the tail has another type. The body
     /// then drops the value of the tail, as an expression statement.
-    fn discards(&self, e: &ast::Expr) -> bool {
+    pub(super) fn discards(&self, e: &ast::Expr) -> bool {
         let unit = self.tys.unit();
         let tail = self.t.expr_ty.get(&e.id).copied();
         self.local_ty(RET) == unit

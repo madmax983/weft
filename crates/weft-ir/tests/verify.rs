@@ -343,6 +343,33 @@ fn v11_a_resume_of_a_local_that_is_not_a_continuation() {
 }
 
 #[test]
+fn v11_a_resume_through_an_upvar_local_of_a_continuation() {
+    let (mut p, t) = m3();
+    // A body inside a clause names the continuation through an upvar local:
+    // `_0 = resume _6(move _5)` in the handled body, with `_6` an upvar local of
+    // a continuation.
+    let h = &mut p.bodies[1];
+    h.locals.push(example::local(
+        LocalKind::Upvar(LocalId(1)),
+        Some("resume"),
+        t.kont,
+        false,
+    ));
+    h.blocks[2].term.kind = TermKind::Resume {
+        kont: pl(6),
+        arg: Operand::Move(pl(5)),
+        dest: pl(0),
+        next: BlockId(3),
+        unwind: Some(BlockId(4)),
+    };
+    let broken = verify_program(&p, &t.table);
+    assert!(broken.is_empty(), "{broken:#?}");
+    // An upvar local of another type is not a continuation.
+    p.bodies[1].locals[6].ty = t.ref_u64;
+    only(&p, &t.table, br(Rule::BadKont, 1, Some(2), Some(6)));
+}
+
+#[test]
 fn v12_a_temporary_with_two_lives() {
     let (mut p, t) = m3();
     let b = stmts(&mut p, 1, 2);

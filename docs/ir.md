@@ -550,9 +550,9 @@ to V17; the others need the type table.
 | V6 | At `Return` only `_0` (and the upvar locals and the environment) has a cell. At `UnwindExit` only the upvar locals and the environment have a cell. | D3 (each normal end has `scope_end`), C4 (each free has a node), W0204 of parameters |
 | V7 | `UnwindExit` is the only terminator of `Body::unwind_exit`, and only there. | one frame boundary for the unwinder |
 | V8 | Each projection fits the type: `Deref` only on a reference, a `Box` or an `Rc`; `Field` in range; `Variant` only in a block that a `Switch` on the discriminant of the same place dominates (not in an `Uninit`: it names a path and reads nothing, 5.2; not in an `UnwindValue`: the unwinder finishes the payload only if the value has the variant, 5.1.6); `Index` with a `usize` local; `Split` only on a slice. | B2 typed stability, B3 variant steps |
-| V9 | `Copy` only for a type with `Props::copy`; `Move` only for other types; no `Move` through `Deref(Ref)` (W0303 is a builder diagnostic). A `Move` of an upvar local is valid. | D1 (each move is a `moved_at`), C4 |
+| V9 | `Copy` only for a type with `Props::copy`; `Move` only for other types; no `Move` through `Deref(Ref)` (W0303 is a builder diagnostic). A `Move` of an upvar local is valid. A part of a function or continuation type is not checked: the props of a closure come from the analysis, and a `multi` continuation is plain data while a `once` one is not. | D1 (each move is a `moved_at`), C4 |
 | V10 | Each terminator with `can_abort()` has an `unwind` block, except a `Call` of an extern function whose stated row is empty and that has no `assert`. | A1 for abort paths, D4 |
-| V11 | `CapOperand::Local` names a `Cap` local, an upvar local of one, or a `Cap` field of the environment. `Row(E)` appears only where the capability environment of the body does not bind `E`. `Resume` names a `Kont` local of the clause or a `Kont` field of an environment. | capabilities and continuations are values of one frame |
+| V11 | `CapOperand::Local` names a `Cap` local, an upvar local of one, or a `Cap` field of the environment. `Row(E)` appears only where the capability environment of the body does not bind `E`. `Resume` names a `Kont` local of the clause, an upvar local of one (a body inside the clause), or a `Kont` field of an environment. | capabilities and continuations are values of one frame |
 | V12 | A temporary has one `Live`, and a `Dead` on each path from it to an exit. A temporary of the tail of a frame body ends after `_0` gets the value. | C2 holder cover, the frame-end order |
 | V13 | A `Kept` capture is never borrowed: its aggregate operand is `copy` of its source, the source is a cell (a whole local, or a capture `env.j` or `(*env.j)` of a maker closure), and no `Ref` in the closure body (or an inner body) names a place at or below `env.k` that is not behind a further reference. The verifier also recomputes `capture_mode` and compares. | F5 `kept`; the kept cell is outside the reference fragment of B1 |
 | V14 | Upvar locals exist only in clause, handled and scope bodies; each names a local of the parent body; none has `Live` or `Dead`. The environment local exists only in a closure body and has no `Live` or `Dead`; a `Move` of a place below it is valid only in a `once` closure. | splices share the cells of the site; the closure value outlives each run |
@@ -834,6 +834,21 @@ local. A read, a write, a borrow or a move of it is a read, a write, a borrow or
 of the site local. The interpreter gives the frame the captured cells of its upvar
 locals (`Var(Cap(k))`).
 
+How the builder makes upvar locals (`irbuild/upvar.rs`, plan stage B10):
+
+- Before it builds the bodies of a `handle`, the site finds each name of the handled
+  body and of the clauses (and of the bodies inside them) that it resolves, and each
+  capability that they can use (5.1.8). A name of an outer body gets an upvar local in
+  the site too, so the chain of upvar locals reaches the function.
+- A nested body makes the upvar local of a site local at its first use. It has the type,
+  the name and the props of the site local, no `Live`, no `Dead`, and it is not in a
+  cleanup chain.
+- An upvar local names a whole local of the site. A capture of a closure body (`env.k`)
+  is not one: a `handle` in a closure body whose bodies name a capture or a `Cap` field
+  of the closure is `Unsupported` until plan stage B12 (2 bodies on tier 1). B12 can
+  give the nested body an upvar local of the environment (`uv.k`) and make rule CAPTURE
+  and V13 read the bodies inside the closure.
+
 #### 5.1.8 Capabilities
 
 Handlers are lexical, so the builder resolves each effect at each point from the static
@@ -851,6 +866,29 @@ A clause runs in the capability environment of its site, without the capability 
 own handler (rule 6 of the effects proof). A call passes `CapArgs::Lexical(env)`: the
 callee takes the capability of each effect of its row from `env`. An `on abort` call
 passes `CapArgs::Root`.
+
+How the builder applies this (`irbuild/caps.rs`, plan stage B10):
+
+- Each body keeps the capabilities that it binds, with their places in the body: the
+  `Cap` local of a handled body, the `Cap` fields of a closure, and the upvar locals of
+  the capabilities of the site (made at the first perform). A perform takes the first of
+  these for its effect, else `Row(E)`.
+- A handled body gets a new environment: its parent is the environment of the site, and
+  it adds `(E, _1)`. A clause has the environment of its site. The place of an `adds`
+  entry is a place of the body that opens the environment; a nested body names it
+  through an upvar local.
+- A closure gets one `Cap` field, after its variables, for each effect that its maker
+  binds and that its body (or a body inside it) can use: an effect that it performs, an
+  effect of the stated row of a call in it, and each effect if a call in it has a row
+  that the builder does not know (a function with no stated row, a function value with
+  no stated row, a task builtin). An effect that the code does not use gets no field,
+  so a closure that only computes holds no capability (no W0313 for it). A closure with
+  `Cap` fields has its own environment: its parent is the environment of the maker, and
+  it adds `(E, env.k)` for each field. `ClosureDecl::cap_env` stays the environment of
+  the maker.
+- The site of a `handle` finds the capabilities of the handled body and the clauses by
+  the same rule, with only the calls inside closures counted: a call outside a closure
+  passes the lexical environment and needs no place.
 
 #### 5.1.9 Builder limits
 
@@ -1329,8 +1367,22 @@ body K_i (Clause h, op_i):  params = the operation arguments; kont = resume; upv
 
 - The `Handle` makes the capability, runs the handled body, and gives `dest` the value
   of the body or of a clause. Its `unwind` is for an abort that goes past the handler.
+  The value comes from a frame, as a call result: `dest` gets the `Uninit` of its place
+  fields after the `Handle` (5.17).
 - The clauses run in the capability environment of the site, without the new
   capability.
+- As built (`irbuild/handle.rs`, plan stage B10): the ids of the handler, the handled
+  body and the clauses are reserved at the `handle`, in that order, so the site has a
+  lower id than its bodies. The handled body has the `Cap` local `_1` (in `Body::caps`,
+  not a parameter), then its upvar locals and its own locals; `_1` ends with the
+  parameters, after the locals and the temporaries of the tail, and is last in each
+  cleanup chain. A clause has its parameters, then the `Kont` local `resume` (its
+  binding, or the type `resume(ret) -> T` of the operation), with `props.copy` for a
+  `multi` operation; the continuation ends after the locals and before the parameters,
+  and is first in each cleanup chain. The body of each one has a fence scope (5.1.5): a
+  `return`, `break` or `continue` that leaves it is W0315. The value of the handled body
+  is an expression into `_0` (as a closure body, 5.22); the value of a clause is its
+  block into `_0` (as a function body, 5.2). Both have the parent and the site.
 - **Goes away:** the inline lowering of the handled body (map 4.3), its own statement
   record (R2c), `body_frees`, `inner_frees`, `merge_summary`, `run_handler`,
   `run_clause_caps`, `end_clause_locals`, `join_clause_vals`, `clause_refs_onto_args`,
@@ -1367,7 +1419,9 @@ resume(v)  =>  tv := <v>; t = resume(kont, move tv) -> [next, unwind: C]
 
 In a clause body `kont` is the `Kont` local. In a closure inside the clause it is a
 `Kont` field of the environment (the closure copies a `multi` continuation and moves a
-`once` one; then the closure is `once`). **Goes away:** `ContInfo::muts`,
+`once` one; then the closure is `once`). In a handled body or a clause inside the clause
+it is an upvar local of the `Kont` local. The argument is an operand: a constant or a
+place with no later code is the operand itself, as for a perform (5.1.1). **Goes away:** `ContInfo::muts`,
 `ContInfo::frees`, `resume_through_params`, `onto_param`, `finish_resume_runs`.
 
 ### 5.28 `on abort` [2.31]

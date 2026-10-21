@@ -1,0 +1,20 @@
+// A perform in a handled body names the capability local of the body. A clause
+// runs without the capability of its own handler, so a perform there of an effect
+// that the caller gives is `Row(E)`.
+effect Say { fn say(msg: String) }
+effect Note { fn note(n: u64) }
+
+fn work() / Note {
+    handle Say {
+        fn say(msg) { note(1); resume(()) }
+    } in {
+        say("a")
+        note(2)
+    }
+}
+
+fn again() / Say {
+    handle Say {
+        fn say(msg) { say(msg); resume(()) }
+    } in say("b")
+}

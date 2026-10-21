@@ -131,6 +131,17 @@ fn constructs() -> Vec<(&'static str, Box<dyn Fn(usize) -> String>, usize)> {
             94,
         ),
         (
+            "handles",
+            Box::new(|n| {
+                format!(
+                    "effect E {{ fn op(x: u64) -> u64 }}\nfn f() -> u64 {{ let a = 1\n {}op(a){} }}\nfn main() {{ print(f()) }}\n",
+                    rep("handle E { fn op(x) { resume(x + a) } } in { ", n),
+                    rep(" }", n)
+                )
+            }),
+            46,
+        ),
+        (
             "if",
             Box::new(|n| {
                 main_prints(&format!(

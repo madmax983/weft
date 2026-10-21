@@ -539,11 +539,13 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Returns the effect of a capability place, from the kind or the type of its
-    /// local, if the place is a whole local.
+    /// Returns the effect of a capability place: from the kind or the type of its
+    /// local if the place is a whole local, else from the capability environment of
+    /// the body (a `Cap` field of a closure environment).
     fn cap_effect(&self, b: &Body, p: &Place) -> Option<EffectId> {
         if !p.is_local() {
-            return None;
+            let env = self.p.cap_envs.get(b.cap_env.index())?;
+            return env.adds.iter().find(|(_, q)| q == p).map(|(e, _)| *e);
         }
         let d = b.local(p.local)?;
         if let LocalKind::Cap(e) = d.kind {

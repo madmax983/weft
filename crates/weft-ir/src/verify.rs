@@ -19,7 +19,8 @@
 //!   the property from the type table ([`TyTable::not_copy`], which
 //!   `weft_sema::props::ir_props` uses too). A part of a function type can be a closure, whose
 //!   properties come from the analysis and not from the type, so the verifier does
-//!   not check `Copy` or `Move` of such a part.
+//!   not check `Copy` or `Move` of such a part. The same holds for a part of a
+//!   continuation type: a `multi` continuation is plain data, a `once` one is not.
 //! - V10: an extern function with an empty stated row and no intrinsic meaning
 //!   cannot abort. The IR does not record an `assert` in an extern function.
 //! - V12: the verifier checks that each temporary has one `Live`, and that at a
@@ -92,8 +93,8 @@ pub enum Rule {
     /// V11: a capability operand is not a capability value, or a `Row` operand names
     /// an effect that the capability environment of the body binds.
     BadCap,
-    /// V11: a `Resume` names a place that is not a continuation of the clause or a
-    /// `Kont` field of an environment.
+    /// V11: a `Resume` names a place that is not a continuation of the clause, an
+    /// upvar local of one, or a `Kont` field of an environment.
     BadKont,
     /// V12: a temporary does not have exactly one `Live`.
     TempLive,
@@ -1078,7 +1079,9 @@ impl<'a> Cx<'a> {
     }
 
     /// Returns whether place `p` holds plain data, or `None` if the verifier cannot
-    /// tell (a part of a function type, or an unknown type).
+    /// tell (a part of a function type or of a continuation type, or an unknown
+    /// type). A continuation is plain data if its operation is `multi`, and its
+    /// type does not show that.
     fn place_copy(&self, p: &Place) -> Option<bool> {
         if p.is_local() {
             return self.body.local(p.local).map(|d| d.props.copy);
@@ -1088,7 +1091,7 @@ impl<'a> Cx<'a> {
             Pt::Env(_) | Pt::Unknown => return None,
         };
         match self.tys.try_get(t)? {
-            Ty::Fn(_) => None,
+            Ty::Fn(_) | Ty::Cont(..) => None,
             _ => Some(!self.tys.not_copy(t)),
         }
     }
@@ -1220,8 +1223,19 @@ impl<'a> Cx<'a> {
                 }
                 TermKind::Resume { kont, .. } => {
                     let ok = if kont.is_local() {
-                        matches!(self.body.kind, BodyKind::Clause(..))
-                            && matches!(self.kind(kont.local), Some(LocalKind::Kont(_)))
+                        let d = self.body.local(kont.local);
+                        let cont_ty = d
+                            .and_then(|d| self.tys.try_get(d.ty))
+                            .is_some_and(|t| matches!(t, Ty::Cont(..)));
+                        match d.map(|d| d.kind) {
+                            Some(LocalKind::Kont(_)) => {
+                                matches!(self.body.kind, BodyKind::Clause(..))
+                            }
+                            // A body inside a clause names the continuation
+                            // through an upvar local.
+                            Some(LocalKind::Upvar(_)) => cont_ty,
+                            _ => false,
+                        }
                     } else {
                         self.env_field(kont) == Some(CaptureMode::Kont)
                     };

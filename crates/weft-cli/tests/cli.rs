@@ -165,9 +165,21 @@ fn ir_prints_the_core_ir() {
         "the closure bodies of `main` follow it: {}",
         closures.text
     );
-    let later = cmd(&["ir", "tests/programs/05_effects.wf", "main"]);
+    let handles = cmd(&["ir", "tests/programs/05_effects.wf", "main"]);
+    assert_eq!(handles.code, 0, "{}", handles.stderr);
+    assert!(
+        handles.text.contains(" = handle h0 -> ["),
+        "{}",
+        handles.text
+    );
+    assert!(
+        handles.text.contains(": handled h0; parent ") && handles.text.contains(": clause h0 log;"),
+        "the handled body and the clause of `main` follow it: {}",
+        handles.text
+    );
+    let later = cmd(&["ir", "tests/programs/07_scopes.wf", "profile_page"]);
     assert_eq!(later.code, 1);
-    assert!(later.stderr.contains("(stage B10)"), "{}", later.stderr);
+    assert!(later.stderr.contains("(stage B11)"), "{}", later.stderr);
     let missing = cmd(&["ir", file, "nope"]);
     assert_eq!(missing.code, 1);
     assert!(

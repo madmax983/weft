@@ -440,9 +440,7 @@ fn a_returned_reference_to_a_local_ends_the_local_first() {
 
 #[test]
 fn a_construct_of_a_later_stage_is_unsupported() {
-    let (_, b) = build(
-        "effect Note { fn note(n: u64) }\nfn f() -> u64 {\n    handle Note { fn note(n) { resume(()) } } in note(1)\n    1\n}\n",
-    );
+    let (_, b) = build("fn f() -> u64 {\n    scope { s => 1 }\n}\n");
     let e = b
         .entries
         .iter()
@@ -450,10 +448,10 @@ fn a_construct_of_a_later_stage_is_unsupported() {
         .unwrap_or_else(|| panic!("no `f`"));
     match &e.outcome {
         Outcome::Unsupported(u) => {
-            assert_eq!(u.construct.name(), "handle");
-            assert_eq!(u.construct.stage(), "B10");
+            assert_eq!(u.construct.name(), "scope");
+            assert_eq!(u.construct.stage(), "B11");
         }
-        other => panic!("a `handle` is for stage B10: {other:?}"),
+        other => panic!("a `scope` is for stage B11: {other:?}"),
     }
 }
 
@@ -1745,9 +1743,12 @@ fn unfinished(body: &Body) -> Vec<String> {
             if l == body.ret || body.locals[l.index()].props.copy {
                 continue;
             }
-            let before = blk.stmts[..j]
-                .iter()
-                .any(|x| matches!(&x.kind, StmtKind::UnwindValue(p, _) if p.local == l));
+            // `UnwindKont` finishes the continuation of a clause.
+            let before = blk.stmts[..j].iter().any(|x| match &x.kind {
+                StmtKind::UnwindValue(p, _) => p.local == l,
+                StmtKind::UnwindKont(k) => *k == l,
+                _ => false,
+            });
             if !before {
                 v.push(format!("bb{i}: Dead(_{})", l.0));
             }
@@ -2087,4 +2088,566 @@ fn a_function_item_as_a_value_is_a_constant() {
         })
         .collect();
     assert_eq!(consts, ["double<>", "double<>", "id<u64>"]);
+}
+
+// ---------------------------------------------------------------------------
+// Plan stage B10: `handle`, clauses, `resume`, upvars (`docs/ir.md` 5.24 to
+// 5.27, 5.1.7, 5.1.8).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn golden_m8_abort_value_into_body() {
+    golden("m8_abort_value_into_body");
+}
+
+#[test]
+fn golden_handle_value() {
+    golden("handle_value");
+}
+
+#[test]
+fn golden_clause_resume() {
+    golden("clause_resume");
+}
+
+#[test]
+fn golden_clause_no_resume() {
+    golden("clause_no_resume");
+}
+
+#[test]
+fn golden_multi_tail_upvar() {
+    golden("multi_tail_upvar");
+}
+
+#[test]
+fn golden_perform_local() {
+    golden("perform_local");
+}
+
+#[test]
+fn golden_resume_closure() {
+    golden("resume_closure");
+}
+
+#[test]
+fn golden_cont_field() {
+    golden("cont_field");
+}
+
+#[test]
+fn golden_cap_field() {
+    golden("cap_field");
+}
+
+#[test]
+fn golden_nested_handle() {
+    golden("nested_handle");
+}
+
+/// Returns `body` with the blocks that the entry does not reach left out, each
+/// `Goto` to a block of the same kind with one edge in merged into its
+/// predecessor, and the blocks in breadth-first order from the entry (the
+/// normal successors first, the unwind exit last). Two bodies that have the
+/// same paths give the same text.
+fn normalized(body: &Body) -> Body {
+    let n = body.blocks.len();
+    let exit = body.unwind_exit.index();
+    let mut preds = vec![0_usize; n];
+    let mut reached = vec![false; n];
+    let mut work = vec![body.entry.index()];
+    reached[body.entry.index()] = true;
+    while let Some(i) = work.pop() {
+        for s in body.blocks[i].term.kind.successors() {
+            preds[s.index()] += 1;
+            if !reached[s.index()] {
+                reached[s.index()] = true;
+                work.push(s.index());
+            }
+        }
+    }
+    let mut blocks: Vec<Option<weft_ir::Block>> = body
+        .blocks
+        .iter()
+        .enumerate()
+        .map(|(i, b)| (reached[i] || i == exit).then(|| b.clone()))
+        .collect();
+    for i in 0..n {
+        while let Some(b) = blocks[i].as_ref() {
+            let TermKind::Goto(t) = b.term.kind else {
+                break;
+            };
+            let t = t.index();
+            let cleanup = b.cleanup;
+            if t == i || t == exit || preds[t] != 1 {
+                break;
+            }
+            if blocks[t].as_ref().is_none_or(|x| x.cleanup != cleanup) {
+                break;
+            }
+            let Some(next) = blocks[t].take() else { break };
+            if let Some(b) = blocks[i].as_mut() {
+                b.stmts.extend(next.stmts);
+                b.term = next.term;
+            }
+        }
+    }
+    let mut order = Vec::new();
+    let mut seen = vec![false; n];
+    let mut queue = std::collections::VecDeque::from([body.entry.index()]);
+    seen[body.entry.index()] = true;
+    while let Some(i) = queue.pop_front() {
+        if i != exit {
+            order.push(i);
+        }
+        if let Some(b) = blocks[i].as_ref() {
+            for s in b.term.kind.successors() {
+                if !seen[s.index()] {
+                    seen[s.index()] = true;
+                    queue.push_back(s.index());
+                }
+            }
+        }
+    }
+    order.push(exit);
+    let mut new_id = vec![weft_ir::BlockId(0); n];
+    for (k, &i) in order.iter().enumerate() {
+        new_id[i] = weft_ir::BlockId(u32::try_from(k).unwrap_or(u32::MAX));
+    }
+    let mut out = body.clone();
+    out.blocks = order
+        .iter()
+        .map(|&i| {
+            let mut b = blocks[i].clone().unwrap_or_else(|| panic!("no block {i}"));
+            renumber(&mut b.term.kind, &new_id);
+            b
+        })
+        .collect();
+    out.entry = new_id[body.entry.index()];
+    out.unwind_exit = new_id[exit];
+    out
+}
+
+/// Renames each block of terminator `k` by `new_id`.
+fn renumber(k: &mut TermKind, new_id: &[weft_ir::BlockId]) {
+    let f = |b: &mut weft_ir::BlockId| *b = new_id[b.index()];
+    match k {
+        TermKind::Goto(b) => f(b),
+        TermKind::Switch {
+            arms, otherwise, ..
+        } => {
+            for (_, b) in arms {
+                f(b);
+            }
+            f(otherwise);
+        }
+        TermKind::Call { next, unwind, .. } => {
+            if let Some(b) = next {
+                f(b);
+            }
+            if let Some(b) = unwind {
+                f(b);
+            }
+        }
+        TermKind::Perform { next, unwind, .. }
+        | TermKind::Resume { next, unwind, .. }
+        | TermKind::Handle { next, unwind, .. } => {
+            f(next);
+            if let Some(b) = unwind {
+                f(b);
+            }
+        }
+        TermKind::Return | TermKind::UnwindExit | TermKind::Unreachable => {}
+        other => panic!("not in M3: {other:?}"),
+    }
+}
+
+#[test]
+fn the_m3_program_gives_the_ir_of_section_5_37() {
+    let mut b = golden_built("m8_abort_value_into_body");
+    b.program.bodies = b.program.bodies.iter().map(normalized).collect();
+    // The type table of the example names the effect by its source name; the
+    // analysis gives its identity.
+    let got = weft_ir::print::print_program(&b.program, &b.tys).replace("main.Pick", "Pick");
+    // Two differences from the example of `docs/ir.md` 5.37, both of
+    // earlier stages:
+    // - The clause of the example has a cleanup chain that no edge enters: no
+    //   terminator of the clause can abort. The builder makes a chain only
+    //   for a terminator that can abort (B7, B8).
+    // - The temporary of an expression statement gets its `Live` before the
+    //   temporaries of its value (B7): `_3` is the `Discarded` temporary of
+    //   `w.push(3)`, `_4` its receiver.
+    let want = include_str!("../../weft-ir/tests/data/m3.ir")
+        .replace(
+            "  _3: &Vec<u64> (Temp(Receiver))\n  _4: () (Temp(Discarded))\n",
+            "  _3: () (Temp(Discarded))\n  _4: &Vec<u64> (Temp(Receiver))\n",
+        )
+        .replace(
+            "    Live(_3)\n    _3 = &_2\n    Live(_4)\n    _4 = call Vec.push<u64>(move _3, const 3u64)",
+            "    Live(_3)\n    Live(_4)\n    _4 = &_2\n    _3 = call Vec.push<u64>(move _4, const 3u64)",
+        )
+        .replace(
+            "body b2: clause h0 pick; parent b0; cap_env e0; unwind_exit bb2",
+            "body b2: clause h0 pick; parent b0; cap_env e0; unwind_exit bb1",
+        )
+        .replace(
+            "  bb1 (cleanup):\n    UnwindKont(_2)\n    Dead(_2)\n    Dead(_0)\n    Dead(_1)\n    Goto(bb2)\n  bb2 (cleanup):\n    UnwindExit\n",
+            "  bb1 (cleanup):\n    UnwindExit\n",
+        );
+    assert!(
+        got == want,
+        "the IR of M3 differs from docs/ir.md 5.37:\n--- want\n{want}\n--- got\n{got}"
+    );
+}
+
+/// Returns the handlers whose `handle` is in body `site`.
+fn handlers_of(b: &Built, site: BodyId) -> Vec<&weft_ir::HandlerDecl> {
+    b.program
+        .handlers
+        .iter()
+        .filter(|h| h.site == site)
+        .collect()
+}
+
+/// Returns the one handler of function `name`.
+fn one_handler<'b>(b: &'b Built, name: &str) -> &'b weft_ir::HandlerDecl {
+    let v = handlers_of(b, body_id(b, name));
+    assert_eq!(v.len(), 1, "`{name}` has one `handle`");
+    v[0]
+}
+
+/// Returns body `id` of `b`.
+fn body_at(b: &Built, id: BodyId) -> &Body {
+    b.program
+        .body(id)
+        .unwrap_or_else(|| panic!("no body {id:?}"))
+}
+
+/// Returns the capability operand of each perform of `body`, in block order.
+fn perform_caps(body: &Body) -> Vec<&CapOperand> {
+    terms(body)
+        .into_iter()
+        .filter_map(|k| match k {
+            TermKind::Perform { cap, .. } => Some(cap),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Returns the locals of `body` that are upvar locals.
+fn upvars(body: &Body) -> Vec<LocalId> {
+    body.local_ids()
+        .filter(|&l| matches!(body.local_kind(l), Some(LocalKind::Upvar(_))))
+        .collect()
+}
+
+#[test]
+fn a_handle_is_a_terminator_with_a_handled_body_and_clause_bodies() {
+    let b = golden_built("handle_value");
+    let main = body(&b, "main");
+    let h = one_handler(&b, "main");
+    let handles: Vec<&TermKind> = terms(main)
+        .into_iter()
+        .filter(|k| matches!(k, TermKind::Handle { .. }))
+        .collect();
+    assert_eq!(handles.len(), 1);
+    let TermKind::Handle { dest, unwind, .. } = handles[0] else {
+        unreachable!()
+    };
+    assert_eq!(*dest, Place::local(named(main, "r")));
+    assert!(unwind.is_some(), "an abort can go past the handler");
+    let handled = body_at(&b, h.handled);
+    assert!(matches!(handled.kind, weft_ir::BodyKind::Handled(_)));
+    assert_eq!(handled.parent, Some(body_id(&b, "main")));
+    assert_eq!(
+        handled.caps.len(),
+        1,
+        "the handled body gets the capability"
+    );
+    assert!(handled.params.is_empty());
+    let (_, clause) = h.clauses[0];
+    let clause = body_at(&b, clause);
+    assert_eq!(clause.parent, Some(body_id(&b, "main")));
+    assert!(clause.kont.is_some(), "a clause has its continuation");
+    // The clause runs in the capability environment of the site.
+    assert_eq!(clause.cap_env, main.cap_env);
+    assert_eq!(
+        b.program.cap_envs[handled.cap_env.index()].parent,
+        Some(main.cap_env)
+    );
+}
+
+#[test]
+fn an_upvar_local_has_no_live_or_dead() {
+    for name in ["multi_tail_upvar", "nested_handle", "resume_closure"] {
+        let b = golden_built(name);
+        let mut seen = 0;
+        for body in &b.program.bodies {
+            let ups = upvars(body);
+            seen += ups.len();
+            for s in stmts(body) {
+                if let StmtKind::Live(l) | StmtKind::Dead(l) = s {
+                    assert!(!ups.contains(l), "{name}: Live or Dead of upvar {l:?}");
+                }
+            }
+        }
+        assert!(seen > 0, "{name} has upvar locals");
+    }
+}
+
+#[test]
+fn the_tail_of_a_multi_handled_body_moves_its_upvar_local() {
+    let b = golden_built("multi_tail_upvar");
+    let h = one_handler(&b, "main");
+    assert!(h.multi);
+    let handled = body_at(&b, h.handled);
+    let main = body(&b, "main");
+    let u = named(main, "u");
+    let up = upvars(handled);
+    assert_eq!(up.len(), 1);
+    assert_eq!(handled.local_kind(up[0]), Some(LocalKind::Upvar(u)));
+    assert_eq!(
+        assigned(handled, LocalId(0)),
+        Some(&Rvalue::Use(Operand::Move(Place::local(up[0]))))
+    );
+}
+
+#[test]
+fn a_clause_chain_starts_with_unwind_kont() {
+    let b = golden_built("clause_resume");
+    let h = one_handler(&b, "run");
+    let clause = body_at(&b, h.clauses[0].1);
+    let (k, multi) = clause.kont.unwrap_or_else(|| panic!("no continuation"));
+    assert!(!multi);
+    assert_eq!(clause.local_kind(k), Some(LocalKind::Kont(false)));
+    let us = unwinds(clause);
+    assert!(!us.is_empty(), "the resume can abort");
+    for u in us {
+        let c = chain(clause, u);
+        assert_eq!(c.first(), Some(&StmtKind::UnwindKont(k)), "{c:?}");
+    }
+    let resumes = terms(clause)
+        .into_iter()
+        .filter(|t| matches!(t, TermKind::Resume { kont, .. } if *kont == Place::local(k)))
+        .count();
+    assert_eq!(resumes, 1);
+}
+
+#[test]
+fn a_perform_in_a_handled_body_names_its_capability_and_a_clause_uses_the_row() {
+    let b = golden_built("perform_local");
+    let effect = |b: &Built, name: &str| {
+        let i = b
+            .tys
+            .effects()
+            .iter()
+            .position(|e| e.name == name)
+            .unwrap_or_else(|| panic!("no effect {name}"));
+        weft_ir::EffectId(u32::try_from(i).unwrap_or(u32::MAX))
+    };
+    let note = |b: &Built| effect(b, "Note");
+    let say = |b: &Built| effect(b, "Say");
+    let h = one_handler(&b, "work");
+    let handled = body_at(&b, h.handled);
+    let cap = handled.caps[0].1;
+    assert_eq!(
+        perform_caps(handled),
+        [
+            &CapOperand::Local(Place::local(cap)),
+            &CapOperand::Row(note(&b))
+        ]
+    );
+    // The clause runs in the environment of the site: `Note` comes from the
+    // caller of `work`.
+    let clause = body_at(&b, h.clauses[0].1);
+    assert_eq!(perform_caps(clause), [&CapOperand::Row(note(&b))]);
+    // A clause runs without the capability of its own handler (rule 6 of the
+    // effects proof): `say` in the clause of `Say` is the `Say` of the caller.
+    let h = one_handler(&b, "again");
+    let clause = body_at(&b, h.clauses[0].1);
+    assert_eq!(perform_caps(clause), [&CapOperand::Row(say(&b))]);
+}
+
+#[test]
+fn a_perform_in_a_closure_in_a_handled_body_names_a_cap_field() {
+    let b = golden_built("cap_field");
+    let h = one_handler(&b, "main");
+    let handled = body_at(&b, h.handled);
+    let cap = handled.caps[0].1;
+    let made = made_by(&b, h.handled);
+    assert_eq!(made.len(), 1);
+    let c = made[0];
+    let k = c
+        .captures
+        .iter()
+        .position(|x| x.mode == CaptureMode::Cap)
+        .unwrap_or_else(|| panic!("no Cap field"));
+    assert_eq!(c.captures[k].source, Place::local(cap));
+    let cb = body_at(&b, c.body);
+    let field = Place {
+        local: cb.params[0],
+        proj: vec![Proj::Field(weft_ir::FieldIdx(
+            u32::try_from(k).unwrap_or(u32::MAX),
+        ))],
+    };
+    assert_eq!(perform_caps(cb), [&CapOperand::Local(field.clone())]);
+    // The environment of the closure body binds the effect to the field.
+    let env = &b.program.cap_envs[cb.cap_env.index()];
+    assert_eq!(env.adds, [(h.effect, field)]);
+    // The aggregate copies the capability.
+    let ops = stmts(handled)
+        .into_iter()
+        .find_map(|s| match s {
+            StmtKind::Assign(_, Rvalue::Aggregate(AggKind::Closure(_), ops)) => Some(ops.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no closure aggregate"));
+    assert_eq!(ops[k], Operand::Copy(Place::local(cap)));
+}
+
+#[test]
+fn a_closure_in_a_clause_resumes_through_a_kont_field() {
+    // A `once` continuation moves into the field: the closure is `once`.
+    let b = golden_built("resume_closure");
+    let h = one_handler(&b, "main");
+    let clause = body_at(&b, h.clauses[0].1);
+    let (k, _) = clause.kont.unwrap_or_else(|| panic!("no continuation"));
+    let made = made_by(&b, h.clauses[0].1);
+    assert_eq!(made.len(), 1);
+    let c = made[0];
+    assert_eq!(c.captures.len(), 1);
+    assert_eq!(c.captures[0].mode, CaptureMode::Kont);
+    assert_eq!(c.captures[0].source, Place::local(k));
+    assert!(c.once, "a closure that holds a once continuation is once");
+    let ops = stmts(clause)
+        .into_iter()
+        .find_map(|s| match s {
+            StmtKind::Assign(_, Rvalue::Aggregate(AggKind::Closure(_), ops)) => Some(ops.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no closure aggregate"));
+    assert_eq!(ops, [Operand::Move(Place::local(k))]);
+    let cb = body_at(&b, c.body);
+    let field = Place {
+        local: cb.params[0],
+        proj: vec![Proj::Field(weft_ir::FieldIdx(0))],
+    };
+    assert!(terms(cb)
+        .into_iter()
+        .any(|t| matches!(t, TermKind::Resume { kont, .. } if *kont == field)));
+    // A `multi` continuation is copied: the closure can run more than once.
+    let b = golden_built("cont_field");
+    let h = one_handler(&b, "count");
+    let made = made_by(&b, h.clauses[0].1);
+    assert_eq!(made.len(), 1);
+    assert_eq!(made[0].captures[0].mode, CaptureMode::Kont);
+    assert!(!made[0].once);
+}
+
+#[test]
+fn a_nested_body_names_the_locals_of_the_function_through_upvar_locals() {
+    let b = golden_built("nested_handle");
+    let main = body(&b, "main");
+    let outer = one_handler(&b, "main");
+    let ob = body_at(&b, outer.handled);
+    let inner = handlers_of(&b, outer.handled);
+    assert_eq!(inner.len(), 1);
+    let inner = inner[0];
+    let clause = body_at(&b, inner.clauses[0].1);
+    assert_eq!(clause.parent, Some(outer.handled));
+    // `base` in the inner clause: an upvar of an upvar of `base`.
+    let base = named(main, "base");
+    let in_outer = upvars(ob)
+        .into_iter()
+        .find(|&l| ob.local_kind(l) == Some(LocalKind::Upvar(base)))
+        .unwrap_or_else(|| panic!("no upvar of `base` in the outer handled body"));
+    assert!(upvars(clause)
+        .into_iter()
+        .any(|l| clause.local_kind(l) == Some(LocalKind::Upvar(in_outer))));
+    // `outer()` in the inner clause performs through an upvar local of the
+    // capability of the outer handled body.
+    let cap = ob.caps[0].1;
+    let caps = perform_caps(clause);
+    assert_eq!(caps.len(), 1);
+    let CapOperand::Local(p) = caps[0] else {
+        panic!("not a local capability: {:?}", caps[0])
+    };
+    assert_eq!(clause.local_kind(p.local), Some(LocalKind::Upvar(cap)));
+}
+
+#[test]
+fn a_jump_out_of_a_handled_body_or_a_clause_is_w0315() {
+    let (_, b) = build(
+        "effect Note { fn note(n: u64) }\nfn f() -> u64 {\n    handle Note { fn note(n) { resume(()) } } in { return 3 }\n}\nfn g() {\n    loop {\n        handle Note { fn note(n) { break } } in note(1)\n    }\n}\n",
+    );
+    let f = body(&b, "f");
+    assert!(b.broken.is_empty(), "{}", rules(&b));
+    let msgs: Vec<String> = b
+        .diags
+        .iter()
+        .map(|d| format!("{} {}", d.code.as_str(), d.message))
+        .collect();
+    assert_eq!(
+        msgs,
+        [
+            "W0315 `return` cannot leave a handled body",
+            "W0315 `break` cannot leave a handler clause"
+        ]
+    );
+    let h = one_handler(&b, "f");
+    let handled = body_at(&b, h.handled);
+    assert!(terms(handled)
+        .into_iter()
+        .any(|t| matches!(t, TermKind::Unreachable)));
+    assert!(matches!(f.kind, weft_ir::BodyKind::Fn(_)));
+}
+
+#[test]
+fn a_closure_inside_a_closure_takes_the_continuation_field_of_its_maker() {
+    let (_, b) = build(
+        "effect Choose { multi fn choose() -> bool }\neffect Pick { fn pick() -> u64 }\nfn count() -> u64 {\n    handle Choose {\n        fn choose() {\n            let a = || { let b = |x: bool| resume(x); b(true) }\n            a()\n        }\n    } in { if choose() { 1 } else { 2 } }\n}\nfn once_nested() -> u64 {\n    handle Pick {\n        fn pick() {\n            let a = || { let b = || resume(3); b() }\n            a()\n        }\n    } in { pick() }\n}\n",
+    );
+    assert!(b.broken.is_empty(), "{}", rules(&b));
+    for (name, once) in [("count", false), ("once_nested", true)] {
+        let h = one_handler(&b, name);
+        let outer = made_by(&b, h.clauses[0].1);
+        assert_eq!(outer.len(), 1);
+        let inner = made_by(&b, outer[0].body);
+        assert_eq!(inner.len(), 1);
+        for c in [outer[0], inner[0]] {
+            assert_eq!(c.captures.len(), 1);
+            assert_eq!(c.captures[0].mode, CaptureMode::Kont);
+            assert_eq!(c.once, once, "{name}");
+        }
+        assert_eq!(
+            inner[0].captures[0].source,
+            Place {
+                local: LocalId(1),
+                proj: vec![Proj::Field(weft_ir::FieldIdx(0))]
+            }
+        );
+    }
+}
+
+#[test]
+fn a_closure_that_uses_no_effect_holds_no_capability() {
+    let (_, b) = build(
+        "effect Say { fn say(msg: String) }\nfn f(n: u64) -> u64 {\n    handle Say { fn say(m) { resume(()) } } in {\n        let add = |x: u64| x + n\n        let g = || say(\"x\")\n        let h = || print(n)\n        g()\n        h()\n        add(1)\n    }\n}\n",
+    );
+    assert!(b.broken.is_empty(), "{}", rules(&b));
+    let h = one_handler(&b, "f");
+    let made = made_by(&b, h.handled);
+    assert_eq!(made.len(), 3);
+    let modes: Vec<Vec<CaptureMode>> = made
+        .iter()
+        .map(|c| c.captures.iter().map(|x| x.mode).collect())
+        .collect();
+    assert_eq!(
+        modes,
+        [
+            vec![CaptureMode::Kept],
+            vec![CaptureMode::Cap],
+            vec![CaptureMode::Kept]
+        ]
+    );
 }

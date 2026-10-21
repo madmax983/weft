@@ -79,7 +79,9 @@ impl Builder<'_> {
                     }
                     let of = match self.locals.get(l.index()).map(|d| d.kind) {
                         Some(LocalKind::Temp(_)) => 1,
-                        Some(LocalKind::Param(_)) => continue,
+                        // The capability of a handled body ends with the
+                        // parameters.
+                        Some(LocalKind::Param(_) | LocalKind::Cap(_)) => continue,
                         _ => 0,
                     };
                     if of == class {
@@ -138,7 +140,8 @@ impl Builder<'_> {
     }
 
     /// Returns the last block of each cleanup chain: `Dead(_0)` if `_0` has
-    /// no value (`valued` is false), then the parameters, from the last.
+    /// no value (`valued` is false), then the capability of a handled body
+    /// and the parameters, from the last.
     /// With no terminator it goes to the unwind exit.
     fn chain_base(&mut self, valued: bool, origin: Origin) -> usize {
         let i = usize::from(valued);
@@ -149,7 +152,13 @@ impl Builder<'_> {
         if !valued {
             stmts.push(StmtKind::Dead(RET));
         }
-        let params: Vec<LocalId> = self.params.iter().rev().copied().collect();
+        let params: Vec<LocalId> = self
+            .params
+            .iter()
+            .copied()
+            .chain(self.cap_params.iter().map(|(_, l)| *l))
+            .rev()
+            .collect();
         for p in params {
             // The environment of a closure outlives the run: it does not end.
             let env = self.locals.get(p.index()).map(|d| d.kind) == Some(LocalKind::Env);
@@ -441,7 +450,7 @@ mod tests {
             a: &a,
             fns: &mut fns,
             items: &mut decls,
-            cap_envs: &[],
+            cap_envs: &mut Vec::new(),
             pending: &mut pending,
         };
         let span = Span { lo: 0, hi: 1 };

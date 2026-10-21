@@ -1,0 +1,15 @@
+// A `multi` handled body whose tail moves an upvar local (ir 5.25, O3-14): the
+// second run of the body sees the move.
+effect Choose { multi fn choose() -> bool }
+
+fn main() {
+    let u = Vec.new()
+    u.push(1)
+    let r = handle Choose {
+        fn choose() { resume(true); resume(false) }
+    } in {
+        let b = choose()
+        u
+    }
+    print(r[0])
+}

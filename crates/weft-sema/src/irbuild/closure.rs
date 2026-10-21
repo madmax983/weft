@@ -27,40 +27,80 @@
 use std::collections::{HashMap, HashSet};
 
 use weft_ir::{
-    AggKind, Body, BodyId, BodyKind, Callee, CapOperand, Capture, CaptureMode, ClosureDecl,
-    ClosureId, DerefKind, FieldIdx, IterSource, LocalDecl, LocalId, LocalKind, Operand, Place,
-    Proj, Props, Rvalue, StmtKind, TempKind, TermKind, Ty, TyId,
+    AggKind, Body, BodyId, BodyKind, Callee, CapEnv, CapOperand, Capture, CaptureMode, ClosureDecl,
+    ClosureId, DerefKind, FieldIdx, HandlerDecl, IterSource, LocalDecl, LocalId, LocalKind,
+    Operand, Place, Proj, Props, Rvalue, StmtKind, TempKind, TermKind, Ty, TyId,
 };
 use weft_syntax::ast::{self, Expr, ExprKind, Lit, StrPart};
 
 use super::frame::closing;
-use super::{id_of, unsupported, Builder, Construct, Decls, ScopeKind, R, RET};
-use crate::thir::{BindingId, Res};
+use super::{id_of, unsupported, Builder, Construct, ScopeKind, R, RET};
+use crate::thir::{Binder, BindingId, Res};
 
-/// The bodies and the closures that the builder makes inside one function or
-/// test, before the body of the function gets its id. The ids are reserved in
-/// the order of the closure literals (pre-order), so the maker of a closure
-/// has a lower id than the closure body.
+/// The bodies, the closures and the handlers that the builder makes inside one
+/// function or test, before the body of the function gets its id. The ids are
+/// reserved in the order of the closure literals and the `handle` expressions
+/// (pre-order), so the maker of a closure has a lower id than the closure
+/// body, and the site of a `handle` has a lower id than its bodies.
 #[derive(Debug, Default)]
 pub(super) struct Pending {
     /// The id of the body of the function or test.
     pub(super) base_body: u32,
     /// The id of the first closure.
     pub(super) base_closure: u32,
-    /// The closure bodies, by id after `base_body`.
+    /// The id of the first handler.
+    pub(super) base_handler: u32,
+    /// The closure bodies, the handled bodies and the clauses, by id after
+    /// `base_body`.
     pub(super) bodies: Vec<Option<Body>>,
     /// The closure declarations, by id from `base_closure`.
     pub(super) closures: Vec<Option<ClosureDecl>>,
+    /// The handler declarations, by id from `base_handler`.
+    pub(super) handlers: Vec<Option<HandlerDecl>>,
+    /// The binding of each clause parameter and continuation, made at the
+    /// first `handle`.
+    binders: Option<HashMap<Binder, BindingId>>,
 }
 
 impl Pending {
     /// Makes an empty set for the function body with id `base_body`.
-    pub(super) const fn new(base_body: u32, base_closure: u32) -> Self {
+    pub(super) const fn new(base_body: u32, base_closure: u32, base_handler: u32) -> Self {
         Self {
             base_body,
             base_closure,
+            base_handler,
             bodies: Vec::new(),
             closures: Vec::new(),
+            handlers: Vec::new(),
+            binders: None,
+        }
+    }
+
+    /// Returns the binding of each clause parameter and continuation of the
+    /// tables `t` of the function.
+    pub(super) fn binders(&mut self, t: &crate::thir::Tables) -> &HashMap<Binder, BindingId> {
+        self.binders.get_or_insert_with(|| {
+            t.bindings
+                .iter()
+                .enumerate()
+                .filter(|(_, b)| matches!(b.binder, Binder::ClauseParam(..) | Binder::Resume(..)))
+                .map(|(i, b)| (b.binder, BindingId(id_of(i))))
+                .collect()
+        })
+    }
+
+    /// Reserves the id of the next body and returns it with its slot.
+    pub(super) fn reserve_body(&mut self) -> (BodyId, usize) {
+        let i = self.bodies.len();
+        self.bodies.push(None);
+        let id = self.base_body.saturating_add(1).saturating_add(id_of(i));
+        (BodyId(id), i)
+    }
+
+    /// Puts body `b` into slot `i`.
+    pub(super) fn put_body(&mut self, i: usize, b: Body) {
+        if let Some(slot) = self.bodies.get_mut(i) {
+            *slot = Some(b);
         }
     }
 
@@ -71,7 +111,7 @@ impl Pending {
     }
 }
 
-/// One captured variable of a closure body.
+/// One captured variable or capability of a closure body.
 #[derive(Clone, Debug)]
 pub(super) struct Cap {
     /// The place of the variable in the maker, before the maker knows its own
@@ -113,7 +153,7 @@ impl Captures {
     }
 
     /// Returns the field `k` if place `p` is at or below `env.k`.
-    fn field_of(&self, p: &Place) -> Option<usize> {
+    pub(super) fn field_of(&self, p: &Place) -> Option<usize> {
         match p.proj.first() {
             Some(Proj::Field(k)) if p.local == self.env => Some(k.index()),
             _ => None,
@@ -153,25 +193,32 @@ fn borrows_cell(p: &Place) -> bool {
 }
 
 impl Builder<'_> {
-    /// Returns the place of binding `b` in this body: its local, or the field
-    /// of the environment that captures it.
-    pub(super) fn binding_place(&self, b: BindingId) -> Option<Place> {
+    /// Returns the place of binding `b` in this body: its local, the field
+    /// of the environment that captures it, or the upvar local of the local
+    /// of the site (`upvar.rs`; the builder makes the upvar local at the
+    /// first use).
+    pub(super) fn binding_place(&mut self, b: BindingId) -> Option<Place> {
         if let Some(&l) = self.vars.get(&b) {
             return Some(Place::local(l));
         }
-        self.closure.as_ref().and_then(|c| c.place(b))
+        if let Some(p) = self.closure.as_ref().and_then(|c| c.place(b)) {
+            return Some(p);
+        }
+        self.site_var(b).map(Place::local)
     }
 
-    /// Returns the type and the properties of binding `b` in this body.
-    fn binding_props(&self, b: BindingId) -> Option<(Place, TyId, Props)> {
-        if let Some(&l) = self.vars.get(&b) {
-            let d = self.locals.get(l.index())?;
-            return Some((Place::local(l), d.ty, d.props));
+    /// Returns the place, the type and the properties of binding `b` in this
+    /// body.
+    pub(super) fn binding_props(&mut self, b: BindingId) -> Option<(Place, TyId, Props)> {
+        let p = self.binding_place(b)?;
+        if p.is_local() {
+            let d = self.locals.get(p.local.index())?;
+            return Some((p, d.ty, d.props));
         }
         let c = self.closure.as_ref()?;
         let k = *c.index.get(&b)?;
         let cap = c.caps.get(k)?;
-        Some((c.place(b)?, cap.ty, cap.props))
+        Some((p, cap.ty, cap.props))
     }
 
     /// Returns true if a read of place `p` of type `ty` copies it: the type is
@@ -227,40 +274,50 @@ impl Builder<'_> {
         let mut index = HashMap::new();
         for b in free_bindings(t, body) {
             if let Some((source, ty, props)) = self.binding_props(b) {
-                // Capabilities, continuations and scopes in closures come
-                // with their constructs (plan stages B10, B11).
-                match self.tys.try_get(ty) {
-                    Some(Ty::Cap(_) | Ty::Cont(..)) => {
-                        return unsupported(Construct::Handle, e.span)
-                    }
-                    Some(Ty::Scope) => return unsupported(Construct::Scope, e.span),
-                    _ => {}
+                // Scopes in closures come with their construct (plan stage
+                // B11).
+                if matches!(self.tys.try_get(ty), Some(Ty::Scope)) {
+                    return unsupported(Construct::Scope, e.span);
                 }
                 index.insert(b, caps.len());
                 caps.push(Cap { source, ty, props });
             }
         }
+        // The capabilities (`docs/ir.md` 5.1.8): one `Cap` field for each
+        // effect that this point binds and that the body can use, after the
+        // variables.
+        let mut env_adds = Vec::new();
+        for (effect, source) in self.caps_for(body, true) {
+            let ty = self.tys.intern(Ty::Cap(effect));
+            let props = self.props(ty);
+            env_adds.push((
+                effect,
+                Place {
+                    local: LocalId(1),
+                    proj: vec![Proj::Field(FieldIdx(id_of(caps.len())))],
+                },
+            ));
+            caps.push(Cap { source, ty, props });
+        }
         // Reserve the ids: the closure body after the bodies that the
         // function makes so far.
+        let (body_id, bi) = self.d.pending.reserve_body();
         let pending = &mut *self.d.pending;
-        let (bi, ci) = (pending.bodies.len(), pending.closures.len());
-        let body_id = BodyId(
-            pending
-                .base_body
-                .saturating_add(1)
-                .saturating_add(id_of(bi)),
-        );
+        let ci = pending.closures.len();
         let cid = ClosureId(pending.base_closure.saturating_add(id_of(ci)));
-        pending.bodies.push(None);
         pending.closures.push(None);
+        // The environment of the body binds each captured capability to its
+        // field (the environment local is `_1`).
+        let env_id = if env_adds.is_empty() {
+            self.cap_env
+        } else {
+            self.new_cap_env(CapEnv {
+                parent: Some(self.cap_env),
+                adds: env_adds.clone(),
+            })
+        };
         let (built, modes) = {
-            let d = Decls {
-                a: self.d.a,
-                fns: &mut *self.d.fns,
-                items: &mut *self.d.items,
-                cap_envs: self.d.cap_envs,
-                pending: &mut *self.d.pending,
-            };
+            let d = super::reborrow(&mut self.d);
             let mut sub = Box::new(Builder::new(
                 t,
                 &mut *self.tys,
@@ -271,20 +328,31 @@ impl Builder<'_> {
                 e.span,
             ));
             sub.body_id = body_id;
-            sub.cap_env = self.cap_env;
+            sub.parent = Some(self.body_id);
+            sub.cap_env = env_id;
+            sub.caps = env_adds;
             sub.closure_body(e, ty, &info.params, body, caps.clone(), index)?;
-            let modes = sub.capture_modes();
+            let mut modes = sub.capture_modes();
+            // A capability and a continuation have modes of their own
+            // (`docs/ir.md` 5.1.7, rule 4).
+            for (k, m) in modes.iter_mut().enumerate() {
+                let c = caps.get(k).map(|c| c.ty);
+                match c.and_then(|t| sub.tys.try_get(t)) {
+                    Some(Ty::Cap(_)) => *m = CaptureMode::Cap,
+                    Some(Ty::Cont(..)) => *m = CaptureMode::Kont,
+                    _ => {}
+                }
+            }
             sub.rewrite_captures(&modes);
             self.diags.append(&mut sub.diags);
-            let mut built = sub.finish(BodyKind::Closure(cid), e.span);
-            built.parent = Some(self.body_id);
-            built.cap_env = self.cap_env;
-            (built, modes)
+            (sub.finish(BodyKind::Closure(cid), e.span), modes)
         };
+        // A closure that moves a capture that is not plain data, or that
+        // holds a `once` continuation, is `once`.
         let once = caps
             .iter()
             .zip(&modes)
-            .any(|(c, m)| *m == CaptureMode::ByMove && !c.props.copy);
+            .any(|(c, m)| matches!(m, CaptureMode::ByMove | CaptureMode::Kont) && !c.props.copy);
         let decl = ClosureDecl {
             body: body_id,
             maker: self.body_id,
@@ -300,9 +368,7 @@ impl Builder<'_> {
             cap_env: self.cap_env,
         };
         let pending = &mut *self.d.pending;
-        if let Some(slot) = pending.bodies.get_mut(bi) {
-            *slot = Some(built);
-        }
+        pending.put_body(bi, built);
         if let Some(slot) = pending.closures.get_mut(ci) {
             *slot = Some(decl);
         }
@@ -319,6 +385,9 @@ impl Builder<'_> {
                     Operand::Move(Place::local(tr))
                 }
                 CaptureMode::ByMove => Operand::Move(c.source.clone()),
+                // A `once` continuation moves into the field; a `multi` one
+                // is copied (`docs/ir.md` 5.27).
+                CaptureMode::Kont if !c.props.copy => Operand::Move(c.source.clone()),
                 CaptureMode::Kept | CaptureMode::Cap | CaptureMode::Kont => {
                     Operand::Copy(c.source.clone())
                 }
@@ -363,7 +432,7 @@ impl Builder<'_> {
             p.nonportable |= f.nonportable;
             p.holds_refs |= f.holds_refs;
             p.generic |= f.generic;
-            p.once |= f.uniq || (mode == CaptureMode::ByMove && f.once);
+            p.once |= f.uniq || (matches!(mode, CaptureMode::ByMove | CaptureMode::Kont) && f.once);
         }
         p.once |= once;
         p.copy = !once;
@@ -435,6 +504,19 @@ impl Builder<'_> {
                 self.push(StmtKind::Uninit(place), origin);
             }
         }
+        self.value_frame(body, origin, end)
+    }
+
+    /// Writes the value of expression `body` into `_0`, closes each scope of
+    /// the frame and ends it with `Return` (`docs/ir.md` 5.2, 5.22, 5.24). A
+    /// body whose frame returns `()` but whose value has another type is an
+    /// expression statement, then `_0 = ()`, and `Return` has `origin`.
+    pub(super) fn value_frame(
+        &mut self,
+        body: &Expr,
+        origin: weft_ir::Origin,
+        end: ast::Span,
+    ) -> R<()> {
         let ret = Place::local(RET);
         let unit = self.tys.unit();
         let bty = self.ty(body)?;
@@ -450,13 +532,15 @@ impl Builder<'_> {
         }
         self.ret_value = true;
         // The origin of `Return` is the expression whose value leaves the
-        // frame (V18): the body, or the closure if the body has no value.
+        // frame (V18): the body, or `origin` if the body has no value.
         let ret_origin = if discard {
             origin
         } else {
             self.origin(body.span, Some(body.id))
         };
-        self.close();
+        while !self.scopes.is_empty() {
+            self.close();
+        }
         if self.live {
             self.terminate(TermKind::Return, ret_origin);
         } else if self.cur.is_some() {
@@ -602,29 +686,44 @@ const fn join(a: Props, b: Props) -> Props {
 /// Returns the bindings that the names of expression `e` resolve to, in the
 /// order of their first use. The bindings that `e` itself makes are in the
 /// list too: the maker cannot resolve them, so they are not captures.
-fn free_bindings(t: &crate::thir::Tables, e: &Expr) -> Vec<BindingId> {
+pub(super) fn free_bindings(t: &crate::thir::Tables, e: &Expr) -> Vec<BindingId> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
-    let mut stack: Vec<Node<'_>> = vec![Node::Expr(e)];
-    while let Some(n) = stack.pop() {
+    walk_exprs(e, false, &mut |x, _| {
+        if let (ExprKind::Name(_), Some(Res::Local(b))) = (&x.kind, t.res.get(&x.id)) {
+            if seen.insert(*b) {
+                out.push(*b);
+            }
+        }
+    });
+    out
+}
+
+/// Calls `f` on each expression of `e` (`e` too), in pre-order, with true for
+/// an expression inside the body of a closure literal of `e`. `inner`: `e`
+/// itself is inside a closure body. The walk keeps its stack on the heap.
+pub(super) fn walk_exprs<'e>(e: &'e Expr, inner: bool, f: &mut impl FnMut(&'e Expr, bool)) {
+    let mut stack: Vec<(Node<'e>, bool)> = vec![(Node::Expr(e), inner)];
+    let mut parts: Vec<Node<'e>> = Vec::new();
+    while let Some((n, inner)) = stack.pop() {
         match n {
             Node::Expr(x) => {
-                if let (ExprKind::Name(_), Some(Res::Local(b))) = (&x.kind, t.res.get(&x.id)) {
-                    if seen.insert(*b) {
-                        out.push(*b);
-                    }
-                }
-                push_children(x, &mut stack);
+                f(x, inner);
+                let below = inner || matches!(x.kind, ExprKind::Closure { .. });
+                push_children(x, &mut parts);
+                stack.extend(std::mem::take(&mut parts).into_iter().map(|p| (p, below)));
             }
             Node::Block(b) => {
                 for s in b.stmts.iter().rev() {
-                    stack.push(Node::Stmt(s));
+                    stack.push((Node::Stmt(s), inner));
                 }
             }
-            Node::Stmt(s) => push_stmt(s, &mut stack),
+            Node::Stmt(s) => {
+                push_stmt(s, &mut parts);
+                stack.extend(std::mem::take(&mut parts).into_iter().map(|p| (p, inner)));
+            }
         }
     }
-    out
 }
 
 /// A node of the walk of [`free_bindings`].
@@ -900,13 +999,17 @@ fn each_place_term(k: &mut TermKind, f: &mut impl FnMut(&mut Place)) {
     }
 }
 
-/// Returns the blocks of `pending` in body order after the body of the
-/// function, or `None` if a reserved body or closure has no value (a bug of
-/// the builder).
-pub(super) fn take_pending(pending: Pending) -> Option<(Vec<Body>, Vec<ClosureDecl>)> {
+/// The bodies, the closures and the handlers that a function makes.
+pub(super) type Made = (Vec<Body>, Vec<ClosureDecl>, Vec<HandlerDecl>);
+
+/// Returns the bodies of `pending` in body order after the body of the
+/// function, its closures and its handlers, or `None` if a reserved id has
+/// no value (a bug of the builder).
+pub(super) fn take_pending(pending: Pending) -> Option<Made> {
     let bodies: Option<Vec<Body>> = pending.bodies.into_iter().collect();
     let closures: Option<Vec<ClosureDecl>> = pending.closures.into_iter().collect();
-    Some((bodies?, closures?))
+    let handlers: Option<Vec<HandlerDecl>> = pending.handlers.into_iter().collect();
+    Some((bodies?, closures?, handlers?))
 }
 
 #[cfg(test)]
