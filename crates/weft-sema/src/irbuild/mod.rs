@@ -25,6 +25,7 @@ mod aggregate;
 mod branch;
 mod call;
 mod caps;
+mod cleanup;
 mod expr;
 mod frame;
 mod looping;
@@ -559,12 +560,12 @@ struct Scope {
     end: Span,
     /// The part of the cleanup chain that the locals of the scope add, for
     /// the locals that are not temporaries and for the temporaries
-    /// (`call.rs`).
+    /// (`cleanup.rs`).
     chain: [ChainPart; 2],
 }
 
 /// The part of a cleanup chain that the locals of one class of one scope
-/// add (`call.rs`). The locals of a scope only grow, so the next chain
+/// add (`cleanup.rs`). The locals of a scope only grow, so the next chain
 /// from the same block below adds only the new locals.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct ChainPart {
@@ -639,11 +640,22 @@ struct Builder<'a> {
     d: Decls<'a>,
     /// The capability environment of the current point.
     cap_env: CapEnvId,
-    /// The cleanup blocks: the block that ends a local and then goes to a
-    /// block, by the local and that block (`call.rs`).
+    /// The cleanup blocks: the block that finishes a local and then goes to
+    /// a block, by the local and that block (`cleanup.rs`).
     chains: HashMap<(LocalId, usize), usize>,
-    /// The last cleanup block: `Dead(_0)` and the parameters.
-    chain_base: Option<usize>,
+    /// The last block of each cleanup chain: the parameters, after
+    /// `Dead(_0)` (index 0) or with no `Dead(_0)` (index 1: `_0` has a
+    /// value and is first in the chain).
+    chain_base: [Option<usize>; 2],
+    /// `_0` has its value at the current point: the frame end and a
+    /// `return` write it last (`docs/ir.md` 5.1.4, 5.1.6). Then `_0` is
+    /// first in a cleanup chain.
+    ret_value: bool,
+    /// The continuation of a clause body: first in each cleanup chain
+    /// (`docs/ir.md` 5.1.6). Plan stage B10 sets it.
+    kont: Option<LocalId>,
+    /// The unwind actions of the types of the body (`cleanup.rs`).
+    unwinds: cleanup::UnwindTable,
 }
 
 impl<'a> Builder<'a> {
@@ -678,7 +690,10 @@ impl<'a> Builder<'a> {
             d,
             cap_env: CapEnvId(0),
             chains: HashMap::new(),
-            chain_base: None,
+            chain_base: [None; 2],
+            ret_value: false,
+            kont: None,
+            unwinds: HashMap::new(),
         };
         let props = b.props(ret);
         b.locals.push(LocalDecl {

@@ -1,0 +1,167 @@
+fn f0 g(u64) -> u64: b0
+fn f1 mk() -> Vec<u64>: b1
+fn f2 take(Vec<u64>, u64) -> u64: b2
+fn f3 order(Vec<u64>, u64) -> u64: b3
+fn f4 share(u64) -> u64: b4
+fn f5 check(Vec<u64>, u64) -> (): b5
+fn f6 Vec.new<T0>() -> Vec<T0> / (): extern
+cap_env e0
+
+body b0: fn g; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: u64 (Param(0) `x`)
+  bb0:
+    _0 = copy _1
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn mk; cap_env e0; unwind_exit bb2
+  _0: Vec<u64> (Return)
+  bb0:
+    _0 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b2: fn take; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: Vec<u64> (Param(0) `v`)
+  _2: u64 (Param(1) `n`)
+  bb0:
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn order; cap_env e0; unwind_exit bb11
+  _0: u64 (Return)
+  _1: Vec<u64> (Param(0) `p`)
+  _2: u64 (Param(1) `n`)
+  _3: Vec<u64> (User `a`)
+  _4: u64 (User `b`)
+  _5: Vec<u64> (Temp(Operand))
+  _6: u64 (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = call mk() / e0 -> [bb3, unwind: bb2]
+  bb1 (cleanup):
+    Dead(_0)
+    Dead(_2)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb11)
+  bb2 (cleanup):
+    UnwindValue(_3, Drop)
+    Dead(_3)
+    Goto(bb1)
+  bb3:
+    Live(_4)
+    _4 = call g(copy _2) / e0 -> [bb5, unwind: bb4]
+  bb4 (cleanup):
+    Dead(_4)
+    Goto(bb2)
+  bb5:
+    Live(_5)
+    _5 = call mk() / e0 -> [bb7, unwind: bb6]
+  bb6 (cleanup):
+    UnwindValue(_5, Drop)
+    Dead(_5)
+    Goto(bb4)
+  bb7:
+    Live(_6)
+    _6 = call g(copy _4) / e0 -> [bb9, unwind: bb8]
+  bb8 (cleanup):
+    Dead(_6)
+    Goto(bb6)
+  bb9:
+    _0 = call take(move _5, move _6) / e0 -> [bb10, unwind: bb8]
+  bb10:
+    Dead(_4)
+    Dead(_3)
+    Dead(_6)
+    Dead(_5)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb11 (cleanup):
+    UnwindExit
+
+body b4: fn share; cap_env e0; unwind_exit bb8
+  _0: u64 (Return)
+  _1: u64 (Param(0) `x`)
+  _2: Vec<u64> (User `v`)
+  _3: u64 (User `a`)
+  _4: u64 (User `b`)
+  bb0:
+    Live(_2)
+    _2 = call mk() / e0 -> [bb3, unwind: bb2]
+  bb1 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb8)
+  bb2 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb1)
+  bb3:
+    Live(_3)
+    _3 = call g(copy _1) / e0 -> [bb5, unwind: bb4]
+  bb4 (cleanup):
+    Dead(_3)
+    Goto(bb2)
+  bb5:
+    Live(_4)
+    _4 = call g(copy _3) / e0 -> [bb7, unwind: bb6]
+  bb6 (cleanup):
+    Dead(_4)
+    Goto(bb4)
+  bb7:
+    _0 = Add<u64>(copy _3, copy _4)
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb8 (cleanup):
+    UnwindExit
+
+body b5: fn check; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: Vec<u64> (Param(0) `v`)
+  _2: u64 (Param(1) `n`)
+  _3: Vec<u64> (User `w`)
+  _4: bool (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = call mk() / e0 -> [bb3, unwind: bb2]
+  bb1 (cleanup):
+    Dead(_0)
+    Dead(_2)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb6)
+  bb2 (cleanup):
+    UnwindValue(_3, Drop)
+    Dead(_3)
+    Goto(bb1)
+  bb3:
+    Live(_4)
+    _4 = Gt(copy _2, const 0u64)
+    assert move _4 -> [bb5, unwind: bb4]
+  bb4 (cleanup):
+    Dead(_4)
+    Goto(bb2)
+  bb5:
+    Dead(_4)
+    _0 = const ()
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    UnwindExit

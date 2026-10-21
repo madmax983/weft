@@ -1,6 +1,6 @@
 //! Calls, method calls, performs, `print` and `assert` (`docs/ir.md` 5.18,
-//! 5.19, 5.20, 5.26, 5.33, 5.34), and the cleanup block of a terminator that
-//! can abort (5.1.6).
+//! 5.19, 5.20, 5.26, 5.33, 5.34). Each one that can abort gets the cleanup
+//! chain of its point (`cleanup.rs`).
 //!
 //! The arguments run in the order of the parameters: the THIR gives the
 //! argument of each parameter (`CallInfo::args`, ADR 0009). So named
@@ -10,12 +10,11 @@
 //! capability environment (`CapArgs::Lexical`, 5.1.8).
 
 use weft_ir::{
-    BlockId, Callee, LocalId, LocalKind, OpIdx, Operand, Origin, Place, Rvalue, StmtKind, TempKind,
-    TermKind, Ty, TyId,
+    BlockId, Callee, OpIdx, Operand, Origin, Place, Rvalue, StmtKind, TempKind, TermKind, Ty, TyId,
 };
 use weft_syntax::ast::{Arg, Expr, ExprKind, Span};
 
-use super::{id_of, unsupported, Builder, Construct, Draft, R, RET};
+use super::{id_of, unsupported, Builder, Construct, R};
 use crate::thir::{self, Builtin, CallInfo, Recv, RecvMode};
 
 /// The parts of a call expression: the receiver of a method call, the
@@ -211,7 +210,7 @@ impl Builder<'_> {
     /// Returns the function of the program for function `f` of the analysis.
     /// A function with no body of its own (an extern function of the
     /// prelude) gets its declaration at its first call.
-    fn fn_id(&mut self, f: crate::FnId, span: Span) -> R<weft_ir::FnId> {
+    pub(super) fn fn_id(&mut self, f: crate::FnId, span: Span) -> R<weft_ir::FnId> {
         if let Some(&id) = self.d.fns.get(&f) {
             return Ok(id);
         }
@@ -333,111 +332,6 @@ impl Builder<'_> {
         );
         self.enter(next);
         Ok(())
-    }
-
-    /// Returns the cleanup block of an abort at the current point (`docs/ir.md`
-    /// 5.1.6): the `Dead` of each local that has a cell, in the order of V16
-    /// (the temporaries from the newest, the other locals from the highest
-    /// index, `_0`, the parameters), then the unwind exit.
-    ///
-    /// Two chains with the same suffix share the blocks of the suffix: the
-    /// block that ends local `l` and goes on to block `b` is one block. So
-    /// the blocks grow with the number of locals, not with the number of
-    /// terminators. Plan stage B8 adds the values (`UnwindValue`) and the
-    /// value of `_0`.
-    ///
-    /// The locals of each class are a stack over the scopes: a scope gets
-    /// new locals of a class only while no scope inside it holds that class,
-    /// so the locals of an inner scope are newer. So the chain of a class is
-    /// the locals of each scope, from the outermost, in order. Each scope
-    /// keeps its part of the chain ([`super::ChainPart`]), and a later chain
-    /// adds only the new locals: the cost of a chain is the number of scopes
-    /// and the new locals, not the number of locals.
-    pub(super) fn cleanup(&mut self, origin: Origin) -> BlockId {
-        let mut next = self.chain_base(origin);
-        for class in [0, 1] {
-            for si in 0..self.scopes.len() {
-                let Some(s) = self.scopes.get_mut(si) else {
-                    continue;
-                };
-                let mut part = std::mem::take(&mut s.chain[class]);
-                // The new locals of the scope that are of the class.
-                for &l in s.locals.get(part.seen..).unwrap_or_default() {
-                    let of = match self.locals.get(l.index()).map(|d| d.kind) {
-                        Some(LocalKind::Temp(_)) => 1,
-                        Some(LocalKind::Param(_)) => continue,
-                        _ => 0,
-                    };
-                    if of == class {
-                        part.members.push(l);
-                    }
-                }
-                part.seen = s.locals.len();
-                let (start, mut head) = match part.built {
-                    Some((below, n)) if below == next => (n, part.head),
-                    _ => (0, next),
-                };
-                for &l in part.members.get(start..).unwrap_or_default() {
-                    head = self.chain_node(l, head, origin);
-                }
-                part.built = Some((next, part.members.len()));
-                part.head = head;
-                next = head;
-                if let Some(s) = self.scopes.get_mut(si) {
-                    s.chain[class] = part;
-                }
-            }
-        }
-        BlockId(id_of(next))
-    }
-
-    /// Returns the cleanup block that ends local `l` and goes to block
-    /// `next`.
-    fn chain_node(&mut self, l: LocalId, next: usize, origin: Origin) -> usize {
-        if let Some(&b) = self.chains.get(&(l, next)) {
-            return b;
-        }
-        let b = self.cleanup_block(&[l], origin);
-        if let Some(d) = self.blocks.get_mut(b) {
-            d.term = Some(weft_ir::Term {
-                kind: TermKind::Goto(BlockId(id_of(next))),
-                origin,
-            });
-        }
-        self.chains.insert((l, next), b);
-        b
-    }
-
-    /// Returns the last block of each cleanup chain: `Dead(_0)` and the
-    /// parameters, then the unwind exit.
-    fn chain_base(&mut self, origin: Origin) -> usize {
-        if let Some(b) = self.chain_base {
-            return b;
-        }
-        let mut ends = vec![RET];
-        ends.extend(self.params.iter().rev().copied());
-        let b = self.cleanup_block(&ends, origin);
-        self.chain_base = Some(b);
-        b
-    }
-
-    /// Adds a cleanup block with `Dead` of each of `ends`. With no
-    /// terminator it goes to the unwind exit (`Builder::finish`).
-    fn cleanup_block(&mut self, ends: &[LocalId], origin: Origin) -> usize {
-        let b = self.blocks.len();
-        self.blocks.push(Draft {
-            stmts: ends
-                .iter()
-                .map(|&l| weft_ir::Stmt {
-                    kind: StmtKind::Dead(l),
-                    origin,
-                })
-                .collect(),
-            term: None,
-            live: false,
-            cleanup: true,
-        });
-        b
     }
 
     /// Writes `Uninit` of each place field of the value of type `ty` at

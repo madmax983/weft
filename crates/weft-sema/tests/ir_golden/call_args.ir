@@ -97,6 +97,7 @@ body b5: fn moves; cap_env e0; unwind_exit bb3
     _0 = call size(move _1) / e0 -> [bb2, unwind: bb1]
   bb1 (cleanup):
     Dead(_0)
+    UnwindValue(_1, Drop)
     Dead(_1)
     Goto(bb3)
   bb2:

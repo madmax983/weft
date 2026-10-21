@@ -1436,3 +1436,324 @@ fn sim_run_and_with_timeout_are_for_stage_b11() {
         }
     }
 }
+
+#[test]
+fn golden_abort_chain() {
+    golden("abort_chain");
+}
+
+#[test]
+fn golden_on_abort_value() {
+    golden("on_abort_value");
+}
+
+#[test]
+fn golden_linear_parts() {
+    golden("linear_parts");
+}
+
+#[test]
+fn golden_scope_value_chain() {
+    golden("scope_value_chain");
+}
+
+#[test]
+fn golden_temps_in_chain() {
+    golden("temps_in_chain");
+}
+
+/// Returns the statements of the cleanup chain that starts at block `from`
+/// of `body`, to the unwind exit.
+fn chain(body: &Body, from: weft_ir::BlockId) -> Vec<StmtKind> {
+    let mut v = Vec::new();
+    let mut cur = from.index();
+    let mut seen = std::collections::BTreeSet::new();
+    while seen.insert(cur) {
+        let blk = &body.blocks[cur];
+        assert!(blk.cleanup, "block bb{cur} of a chain is a cleanup block");
+        v.extend(blk.stmts.iter().map(|s| s.kind.clone()));
+        match blk.term.kind {
+            TermKind::Goto(t) => cur = t.index(),
+            TermKind::UnwindExit => return v,
+            ref k => panic!("a chain ends with {k:?}"),
+        }
+    }
+    panic!("the chain from {from:?} has a cycle")
+}
+
+/// Returns the unwind block of each terminator of `body` that has one, in
+/// block order.
+fn unwinds(body: &Body) -> Vec<weft_ir::BlockId> {
+    terms(body)
+        .into_iter()
+        .filter_map(TermKind::unwind)
+        .collect()
+}
+
+/// Returns the locals that the `Dead` statements of `stmts` end, in order.
+fn deads(stmts: &[StmtKind]) -> Vec<LocalId> {
+    stmts
+        .iter()
+        .filter_map(|s| match s {
+            StmtKind::Dead(l) => Some(*l),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Returns the place and the action of each `UnwindValue` of `stmts`, as
+/// text: `_3.0 OnAbort(rollback)`.
+fn unwound(b: &Built, stmts: &[StmtKind]) -> Vec<String> {
+    stmts
+        .iter()
+        .filter_map(|s| match s {
+            StmtKind::UnwindValue(p, a) => {
+                let a = match a {
+                    weft_ir::UnwindAction::OnAbort(f) => {
+                        format!("OnAbort({})", b.program.fns[f.index()].name)
+                    }
+                    other => format!("{other:?}"),
+                };
+                Some(format!("{p:?} {a}"))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Returns the chain of the call of `name` in `body` (the last one, if
+/// there are more).
+fn chain_of_call(b: &Built, body: &Body, name: &str) -> Vec<StmtKind> {
+    let i = terms(body)
+        .into_iter()
+        .rposition(|k| matches!(k, TermKind::Call { callee: Callee::Fn(f, _), .. } if b.program.fns[f.index()].name == name))
+        .unwrap_or_else(|| panic!("no call of `{name}`"));
+    let u = body.blocks[i]
+        .term
+        .kind
+        .unwind()
+        .unwrap_or_else(|| panic!("the call of `{name}` has no unwind block"));
+    chain(body, u)
+}
+
+#[test]
+fn a_chain_ends_temporaries_newest_first_then_locals_then_the_parameters() {
+    let b = golden_built("abort_chain");
+    let f = body(&b, "order");
+    let c = chain_of_call(&b, f, "g");
+    let (p, n, a, bb) = (named(f, "p"), named(f, "n"), named(f, "a"), named(f, "b"));
+    let temps = temps_of(f, TempKind::Operand);
+    let mut want_temps: Vec<LocalId> = temps
+        .iter()
+        .copied()
+        .filter(|t| deads(&c).contains(t))
+        .collect();
+    want_temps.sort();
+    want_temps.reverse();
+    assert_eq!(
+        want_temps.len(),
+        2,
+        "the chain of `g(b)` has two temporaries"
+    );
+    let mut want = want_temps.clone();
+    want.extend([bb, a, LocalId(0), n, p]);
+    assert_eq!(deads(&c), want);
+    // A value that is not plain data is finished before its `Dead`; plain
+    // data has only its `Dead`.
+    let vec_temp = want_temps[1];
+    let drops: Vec<LocalId> = c
+        .iter()
+        .filter_map(|s| match s {
+            StmtKind::UnwindValue(q, weft_ir::UnwindAction::Drop) => Some(q.local),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(drops, [vec_temp, a, p]);
+    for (i, s) in c.iter().enumerate() {
+        if let StmtKind::UnwindValue(q, _) = s {
+            assert_eq!(c.get(i + 1), Some(&StmtKind::Dead(q.local)));
+        }
+    }
+}
+
+#[test]
+fn two_chains_with_one_suffix_share_its_blocks() {
+    let b = golden_built("abort_chain");
+    let f = body(&b, "share");
+    let u: Vec<weft_ir::BlockId> = terms(f)
+        .into_iter()
+        .filter(|k| matches!(k, TermKind::Call { callee: Callee::Fn(g, _), .. } if b.program.fns[g.index()].name == "g"))
+        .filter_map(TermKind::unwind)
+        .collect();
+    assert_eq!(u.len(), 2, "two calls of `g`");
+    // The chain of `g(a)` ends `b`, then goes on to the chain of `g(x)`.
+    assert_eq!(f.blocks[u[1].index()].term.kind, TermKind::Goto(u[0]));
+    assert_eq!(
+        deads(
+            &f.blocks[u[1].index()]
+                .stmts
+                .iter()
+                .map(|s| s.kind.clone())
+                .collect::<Vec<_>>()
+        ),
+        [named(f, "b")]
+    );
+    // Each cleanup block of the body is in a chain of a call: no block is
+    // made twice.
+    let mut blocks = std::collections::BTreeSet::new();
+    for h in unwinds(f) {
+        let mut cur = h.index();
+        loop {
+            blocks.insert(cur);
+            match f.blocks[cur].term.kind {
+                TermKind::Goto(t) => cur = t.index(),
+                _ => break,
+            }
+        }
+    }
+    let cleanup = f.blocks.iter().filter(|x| x.cleanup).count();
+    assert_eq!(blocks.len(), cleanup);
+}
+
+#[test]
+fn a_type_with_on_abort_gets_on_abort() {
+    let b = golden_built("on_abort_value");
+    let f = body(&b, "local");
+    let tx = named(f, "tx");
+    assert_eq!(
+        unwound(&b, &chain_of_call(&b, f, "step")),
+        [format!("{:?} OnAbort(rollback)", Place::local(tx))]
+    );
+    let f = body(&b, "param");
+    let tx = named(f, "tx");
+    assert_eq!(
+        unwound(&b, &chain_of_call(&b, f, "step")),
+        [format!("{:?} OnAbort(rollback)", Place::local(tx))]
+    );
+    let f = body(&b, "temp");
+    let c = chain_of_call(&b, f, "step");
+    let got = unwound(&b, &c);
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert!(got[0].ends_with("OnAbort(rollback)"), "{got:?}");
+}
+
+#[test]
+fn a_linear_part_with_no_on_abort_is_a_fault() {
+    let b = golden_built("linear_parts");
+    let field = |l: LocalId, k: u32| Place {
+        local: l,
+        proj: vec![Proj::Field(weft_ir::FieldIdx(k))],
+    };
+    let f = body(&b, "fields");
+    let m = named(f, "m");
+    assert_eq!(
+        unwound(&b, &chain_of_call(&b, f, "step")),
+        [
+            format!("{:?} OnAbort(rollback)", field(m, 0)),
+            format!("{:?} Fault", field(m, 2)),
+        ]
+    );
+    let f = body(&b, "tuple");
+    let t = named(f, "t");
+    assert_eq!(
+        unwound(&b, &chain_of_call(&b, f, "step")),
+        [
+            format!("{:?} OnAbort(rollback)", field(t, 0)),
+            format!("{:?} Fault", field(t, 1)),
+        ]
+    );
+    let f = body(&b, "guard");
+    assert_eq!(
+        unwound(&b, &chain_of_call(&b, f, "step")),
+        [format!(
+            "{:?} OnAbort(release)",
+            Place::local(named(f, "g"))
+        )]
+    );
+    let f = body(&b, "lock");
+    assert_eq!(
+        unwound(&b, &chain_of_call(&b, f, "step")),
+        [format!("{:?} Fault", Place::local(named(f, "l")))]
+    );
+    let f = body(&b, "generic");
+    assert_eq!(
+        unwound(&b, &chain_of_call(&b, f, "step")),
+        [format!("{:?} Drop", Place::local(named(f, "x")))]
+    );
+}
+
+#[test]
+fn the_value_of_a_frame_is_in_a_chain_only_after_it_gets_one() {
+    let b = golden_built("scope_value_chain");
+    let f = body(&b, "early");
+    let c = chain_of_call(&b, f, "g");
+    assert_eq!(
+        deads(&c),
+        [named(f, "v"), LocalId(0), named(f, "c")],
+        "`Dead(_0)` comes after the locals"
+    );
+    assert!(unwound(&b, &c).iter().all(|u| !u.starts_with("_0")));
+}
+
+#[test]
+fn a_chain_in_a_loop_has_the_iterator_the_element_and_the_iteration_locals() {
+    let b = golden_built("temps_in_chain");
+    let f = body(&b, "each");
+    let c = chain_of_call(&b, f, "g");
+    let it = f
+        .locals
+        .iter()
+        .position(|d| d.kind == LocalKind::Iterator)
+        .map_or_else(
+            || panic!("no iterator"),
+            |i| LocalId(u32::try_from(i).unwrap_or(u32::MAX)),
+        );
+    let x = temps_of(f, TempKind::Scrutinee)[0];
+    let d = deads(&c);
+    for l in [named(f, "w"), named(f, "r"), x, it, named(f, "s")] {
+        assert!(d.contains(&l), "{l:?} is in the chain {d:?}");
+    }
+    assert!(unwound(&b, &c).contains(&format!("{:?} Drop", Place::local(it))));
+}
+
+/// Returns a text for each `Dead` of a value that is not plain data on a
+/// cleanup path of `body` with no `UnwindValue` of the value before it in
+/// its block (`docs/ir.md` 5.1.6).
+fn unfinished(body: &Body) -> Vec<String> {
+    let mut v = Vec::new();
+    for (i, blk) in body.blocks.iter().enumerate() {
+        if !blk.cleanup {
+            continue;
+        }
+        for (j, s) in blk.stmts.iter().enumerate() {
+            let StmtKind::Dead(l) = s.kind else { continue };
+            // `Dead(_0)` with no value finishes nothing.
+            if l == body.ret || body.locals[l.index()].props.copy {
+                continue;
+            }
+            let before = blk.stmts[..j]
+                .iter()
+                .any(|x| matches!(&x.kind, StmtKind::UnwindValue(p, _) if p.local == l));
+            if !before {
+                v.push(format!("bb{i}: Dead(_{})", l.0));
+            }
+        }
+    }
+    v
+}
+
+#[test]
+fn each_value_that_is_not_plain_data_is_finished_in_a_chain() {
+    for p in corpus() {
+        let src =
+            std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
+        let Ok(a) = analyze_source(&src, Options::from_markers(&src)) else {
+            continue;
+        };
+        let b = irbuild::build(&a);
+        for body in &b.program.bodies {
+            let bad = unfinished(body);
+            assert!(bad.is_empty(), "{}: {bad:?}", p.display());
+        }
+    }
+}

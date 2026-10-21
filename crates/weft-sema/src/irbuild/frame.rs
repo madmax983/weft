@@ -38,6 +38,9 @@ impl Builder<'_> {
         let ret = Place::local(RET);
         let discard = tail.is_some_and(|e| self.discards(e));
         self.block_into(src.block, ret, discard)?;
+        // `_0` has its value: a later abort of the frame end finishes it
+        // first (`docs/ir.md` 5.1.6).
+        self.ret_value = true;
         // The origin of `Return` is the expression whose value leaves the
         // frame: the tail, or the block if it has no tail (V18).
         let origin = match tail {
@@ -223,8 +226,11 @@ impl Builder<'_> {
             self.assign(ret, Rvalue::Use(super::expr::unit()), origin);
             origin
         };
+        // `_0` has its value only on this path, up to its `Return`.
+        self.ret_value = true;
         self.exit_to(depth, self.origin(span, None));
         self.terminate(TermKind::Return, origin);
+        self.ret_value = false;
         Ok(())
     }
 }

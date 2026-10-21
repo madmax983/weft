@@ -1,0 +1,39 @@
+// A value with linear parts in a cleanup chain (`docs/ir.md` 5.1.6). A type
+// that declares `on abort` finishes its whole value. Else each linear part
+// gets its own action, in field order: `OnAbort(f)` for a part whose type
+// declares `on abort = f`, `Fault` for a linear part with no `on abort`
+// (W0602 rejects each program that can reach it). The other parts drop at
+// the `Dead` of the value.
+
+linear struct Tx { id: u64 }
+    on abort = rollback
+linear struct Lock { id: u64 }
+linear struct Guard { lock: Lock }
+    on abort = release
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn release(g: Guard) { let Guard(l) = g; let Lock(i) = l }
+struct Mixed { a: Tx, n: u64, b: Lock }
+fn step() -> u64 { 1 }
+
+// Struct fields: `OnAbort` for `a`, nothing for `n`, `Fault` for `b`.
+fn fields(m: Mixed) -> u64 { step() }
+
+// The parts of a tuple.
+fn tuple(t: (Tx, Lock)) -> u64 { step() }
+
+// `on abort` of `Guard` covers its `Lock`.
+fn guard(g: Guard) -> u64 { step() }
+
+// A linear type with no `on abort`.
+fn lock(l: Lock) -> u64 { step() }
+
+// The payload of a variant, the target of a box, the elements of an array
+// and of a vector.
+fn option(o: Option<Tx>) -> u64 { step() }
+fn boxed(b: Box<Tx>) -> u64 { step() }
+fn array(a: [Tx; 2]) -> u64 { step() }
+fn vector(v: Vec<Lock>) -> u64 { step() }
+
+// A value of a type parameter: the type does not tell the action, so the
+// chain drops it.
+fn generic<T>(x: T) -> u64 { step() }

@@ -54,6 +54,7 @@ body b3: fn consume; cap_env e0; unwind_exit bb5
     _2 = call one() / e0 -> [bb3, unwind: bb2]
   bb1 (cleanup):
     Dead(_0)
+    UnwindValue(_1, Drop)
     Dead(_1)
     Goto(bb5)
   bb2 (cleanup):
@@ -78,6 +79,7 @@ body b4: fn made; cap_env e0; unwind_exit bb5
     Dead(_0)
     Goto(bb5)
   bb2 (cleanup):
+    UnwindValue(_1, Drop)
     Dead(_1)
     Goto(bb1)
   bb3:

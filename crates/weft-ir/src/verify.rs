@@ -818,8 +818,10 @@ impl<'a> Cx<'a> {
             for s in &blk.stmts {
                 // An `Uninit` names the path of a place field of a value built
                 // in place, also below a variant that no test chose: it reads
-                // nothing (`docs/ir.md` 5.2, 5.17).
-                if let StmtKind::Uninit(p) = &s.kind {
+                // nothing (`docs/ir.md` 5.2, 5.17). An `UnwindValue` names a
+                // linear part, also the payload of a variant: the unwinder
+                // finishes it only if the value has the variant (5.1.6).
+                if let StmtKind::Uninit(p) | StmtKind::UnwindValue(p, _) = &s.kind {
                     if let Err(i) = self.place_ty(p) {
                         self.push(Rule::BadProj(i), Some(id), Some(p.local));
                     }

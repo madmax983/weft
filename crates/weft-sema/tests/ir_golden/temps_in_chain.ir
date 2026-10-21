@@ -1,0 +1,261 @@
+fn f0 g(u64) -> u64: b0
+fn f1 mk() -> Vec<u64>: b1
+fn f2 size(Vec<u64>, Vec<u64>) -> u64: b2
+fn f3 nested() -> u64: b3
+fn f4 tail() -> u64: b4
+fn f5 ended() -> u64: b5
+fn f6 each(Vec<Vec<u64>>) -> u64: b6
+fn f7 Vec.new<T0>() -> Vec<T0> / (): extern
+cap_env e0
+
+body b0: fn g; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: u64 (Param(0) `x`)
+  bb0:
+    _0 = copy _1
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn mk; cap_env e0; unwind_exit bb2
+  _0: Vec<u64> (Return)
+  bb0:
+    _0 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b2: fn size; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: Vec<u64> (Param(0) `a`)
+  _2: Vec<u64> (Param(1) `b`)
+  bb0:
+    _0 = const 0u64
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn nested; cap_env e0; unwind_exit bb7
+  _0: u64 (Return)
+  _1: Vec<u64> (Temp(Operand))
+  _2: Vec<u64> (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call mk() / e0 -> [bb3, unwind: bb2]
+  bb1 (cleanup):
+    Dead(_0)
+    Goto(bb7)
+  bb2 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb1)
+  bb3:
+    Live(_2)
+    _2 = call mk() / e0 -> [bb5, unwind: bb4]
+  bb4 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb2)
+  bb5:
+    _0 = call size(move _1, move _2) / e0 -> [bb6, unwind: bb4]
+  bb6:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb7 (cleanup):
+    UnwindExit
+
+body b4: fn tail; cap_env e0; unwind_exit bb15
+  _0: u64 (Return)
+  _1: u64 (User `n`)
+  _2: u64 (Temp(Operand))
+  _3: Vec<u64> (User `a`)
+  _4: Vec<u64> (Temp(Operand))
+  _5: Vec<u64> (Temp(Operand))
+  _6: u64 (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    Live(_3)
+    _3 = call mk() / e0 -> [bb5, unwind: bb4]
+  bb1 (cleanup):
+    Dead(_0)
+    Goto(bb15)
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb1)
+  bb3 (cleanup):
+    UnwindValue(_3, Drop)
+    Dead(_3)
+    Goto(bb2)
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb5:
+    Live(_4)
+    _4 = move _3
+    Live(_5)
+    _5 = call mk() / e0 -> [bb8, unwind: bb7]
+  bb6 (cleanup):
+    UnwindValue(_4, Drop)
+    Dead(_4)
+    Goto(bb4)
+  bb7 (cleanup):
+    UnwindValue(_5, Drop)
+    Dead(_5)
+    Goto(bb6)
+  bb8:
+    _2 = call size(move _4, move _5) / e0 -> [bb9, unwind: bb7]
+  bb9:
+    Dead(_3)
+    Live(_6)
+    _6 = call g(const 1u64) / e0 -> [bb14, unwind: bb13]
+  bb10 (cleanup):
+    Dead(_2)
+    Goto(bb2)
+  bb11 (cleanup):
+    UnwindValue(_4, Drop)
+    Dead(_4)
+    Goto(bb10)
+  bb12 (cleanup):
+    UnwindValue(_5, Drop)
+    Dead(_5)
+    Goto(bb11)
+  bb13 (cleanup):
+    Dead(_6)
+    Goto(bb12)
+  bb14:
+    _1 = Add<u64>(move _2, move _6)
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Dead(_2)
+    _0 = copy _1
+    Dead(_1)
+    Return
+  bb15 (cleanup):
+    UnwindExit
+
+body b5: fn ended; cap_env e0; unwind_exit bb9
+  _0: u64 (Return)
+  _1: u64 (Temp(Discarded))
+  _2: Vec<u64> (Temp(Operand))
+  _3: Vec<u64> (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = call mk() / e0 -> [bb4, unwind: bb3]
+  bb1 (cleanup):
+    Dead(_0)
+    Goto(bb9)
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb1)
+  bb3 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb2)
+  bb4:
+    Live(_3)
+    _3 = call mk() / e0 -> [bb6, unwind: bb5]
+  bb5 (cleanup):
+    UnwindValue(_3, Drop)
+    Dead(_3)
+    Goto(bb3)
+  bb6:
+    _1 = call size(move _2, move _3) / e0 -> [bb7, unwind: bb5]
+  bb7:
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    _0 = call g(const 2u64) / e0 -> [bb8, unwind: bb1]
+  bb8:
+    Return
+  bb9 (cleanup):
+    UnwindExit
+
+body b6: fn each; cap_env e0; unwind_exit bb15
+  _0: u64 (Return)
+  _1: Vec<Vec<u64>> (Param(0) `m`)
+  _2: u64 (User `s`)
+  _3: Iter<&Vec<u64>> (Iterator)
+  _4: &Vec<u64> (Temp(Scrutinee))
+  _5: &Vec<u64> (User `r`)
+  _6: Vec<u64> (User `w`)
+  _7: u64 (Temp(Operand))
+  _8: usize (Temp(Operand))
+  _9: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0u64
+    Live(_3)
+    _3 = Iter(elems _1[])
+    Goto(bb1)
+  bb1:
+    Live(_4)
+    _4 = next _3 -> [bb3, done: bb4]
+  bb2:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3:
+    Live(_5)
+    _5 = copy _4
+    Live(_6)
+    _6 = call mk() / e0 -> [bb11, unwind: bb10]
+  bb4:
+    Dead(_4)
+    Goto(bb2)
+  bb5 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb15)
+  bb6 (cleanup):
+    Dead(_2)
+    Goto(bb5)
+  bb7 (cleanup):
+    UnwindValue(_3, Drop)
+    Dead(_3)
+    Goto(bb6)
+  bb8 (cleanup):
+    Dead(_5)
+    Goto(bb7)
+  bb9 (cleanup):
+    UnwindValue(_6, Drop)
+    Dead(_6)
+    Goto(bb8)
+  bb10 (cleanup):
+    Dead(_4)
+    Goto(bb9)
+  bb11:
+    Live(_7)
+    Live(_8)
+    _8 = const 0usize
+    Bounds((*_5), copy _8)
+    _7 = call g(copy (*_5)[_8]) / e0 -> [bb14, unwind: bb13]
+  bb12 (cleanup):
+    Dead(_7)
+    Goto(bb10)
+  bb13 (cleanup):
+    Dead(_8)
+    Goto(bb12)
+  bb14:
+    Live(_9)
+    _9 = Add<u64>(copy _2, move _7)
+    _2 = move _9
+    Dead(_9)
+    Dead(_8)
+    Dead(_7)
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Goto(bb1)
+  bb15 (cleanup):
+    UnwindExit

@@ -548,7 +548,7 @@ to V17; the others need the type table.
 | V5 | No `Live` of a local that has a cell. | one binding for each cell |
 | V6 | At `Return` only `_0` (and the upvar locals and the environment) has a cell. At `UnwindExit` only the upvar locals and the environment have a cell. | D3 (each normal end has `scope_end`), C4 (each free has a node), W0204 of parameters |
 | V7 | `UnwindExit` is the only terminator of `Body::unwind_exit`, and only there. | one frame boundary for the unwinder |
-| V8 | Each projection fits the type: `Deref` only on a reference, a `Box` or an `Rc`; `Field` in range; `Variant` only in a block that a `Switch` on the discriminant of the same place dominates (not in an `Uninit`: it names a path and reads nothing, 5.2); `Index` with a `usize` local; `Split` only on a slice. | B2 typed stability, B3 variant steps |
+| V8 | Each projection fits the type: `Deref` only on a reference, a `Box` or an `Rc`; `Field` in range; `Variant` only in a block that a `Switch` on the discriminant of the same place dominates (not in an `Uninit`: it names a path and reads nothing, 5.2; not in an `UnwindValue`: the unwinder finishes the payload only if the value has the variant, 5.1.6); `Index` with a `usize` local; `Split` only on a slice. | B2 typed stability, B3 variant steps |
 | V9 | `Copy` only for a type with `Props::copy`; `Move` only for other types; no `Move` through `Deref(Ref)` (W0303 is a builder diagnostic). A `Move` of an upvar local is valid. | D1 (each move is a `moved_at`), C4 |
 | V10 | Each terminator with `can_abort()` has an `unwind` block, except a `Call` of an extern function whose stated row is empty and that has no `assert`. | A1 for abort paths, D4 |
 | V11 | `CapOperand::Local` names a `Cap` local, an upvar local of one, or a `Cap` field of the environment. `Row(E)` appears only where the capability environment of the body does not bind `E`. `Resume` names a `Kont` local of the clause or a `Kont` field of an environment. | capabilities and continuations are values of one frame |
@@ -739,6 +739,32 @@ unwind_exit: UnwindExit
 | linear, and the type declares `on abort = f` | `OnAbort(f)` |
 | linear, no `on abort` on the type, each linear part has one | one `UnwindValue` for each linear part, in field order (`extract_linear`, `machine/effects.rs:458`) |
 | a linear part with no `on abort` | `Fault`: W0602 rejects each program that can reach it |
+
+How the builder applies the table (`irbuild/cleanup.rs`, plan stage B8):
+
+- The walk follows the fields of a struct, the parts of a tuple, the payload of each
+  variant of an enum (`(p as V).k`) and the target of a `Box` (`(*p)`), in that order.
+  A `Variant` step in an `UnwindValue` needs no test (V8): the unwinder finishes the
+  payload only if the value has the variant. The elements of an array or of a `Vec`
+  get one `UnwindValue(p[], a)` if the element type has one action for the whole
+  value; else the buffer gets one action as a whole.
+- A part that the walk does not follow (a recursive type on the way, an `Rc`, more
+  than 16 steps deep, or more than 64 parts) gets one action for the whole part:
+  `Fault` if a linear part in it has no `on abort`, else `Drop`.
+- A linear extern type whose runtime gives `on abort` (a `Task` handle: a cancel) gets
+  `Drop`, or `Fault` if a type argument has a linear part with no `on abort`.
+- A value of a type parameter gets `Drop`: the instance decides at run time, and the
+  summary of the function gives the obligation to its callers (W0602 of a generic
+  callee, section 6.7).
+- A value whose type has no linear part, but whose local properties say linear (a
+  closure: plan stage B9), gets `Fault` if its properties have no `on abort`, else
+  `Drop`.
+- A parameter that is not plain data gets its `UnwindValue` too, before its `Dead`.
+- `_0` has a value from the write of the frame value (the frame end) or of a `return`
+  value, to the `Return`. Plan stage B11 adds `ScopeWait` there. `Dead(_0)` with no
+  value has no `UnwindValue`.
+- An `UnwindValue` of a local with a cell but with no value (a `let` local before its
+  value, a moved value) finishes nothing at run time; the facts see the move first.
 
 #### 5.1.7 Captures and upvars
 
@@ -1152,9 +1178,9 @@ f(x, y)  =>  tx := <operand x>; ty := <operand y>;           (parameter order)
 - An extern function of the prelude gets its `FnDecl` at its first call in a body that
   the builder finishes (`Built::fns`). `sim.run` (the function `run` of the standard
   module `sim`) and `with_timeout` have their `Intrinsic`.
-- Until plan stage B8, the cleanup chain of a terminator has only the `Dead` of each
-  local with a cell, in the order of V16 (no `UnwindValue`), and chains share their
-  suffixes: one block for each local and the block after it.
+- The cleanup chain of a call is the chain of 5.1.6 (plan stage B8,
+  `irbuild/cleanup.rs`). Chains share their suffixes: one block for each local and the
+  block after it.
 - **Goes away:** `item_arg_slots`, `eval_item_args`, the `arg_order` export (RR10),
   `hold_operand`, `hold_generic`, `release_generic`, `callee_drops`, `item_fn_args`,
   `arg_tasks`, the "call again" nodes (a `Many` run applies a second time at `Ret`).

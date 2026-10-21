@@ -1,0 +1,30 @@
+// A linear value whose type declares `on abort = f` gets
+// `UnwindValue(_, OnAbort(f))` in each cleanup chain (`docs/ir.md` 5.1.6,
+// 5.28): a local, a parameter and a temporary.
+
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(tx: Tx) { let Tx(i) = tx }
+fn step() -> u64 { 1 }
+fn pair(a: Tx, n: u64) { commit(a) }
+
+// A local.
+fn local() {
+    let tx = begin(1)
+    let n = step()
+    commit(tx)
+}
+
+// A parameter.
+fn param(tx: Tx) {
+    let n = step()
+    commit(tx)
+}
+
+// A temporary: the first argument is in a temporary while the second
+// argument runs.
+fn temp() {
+    pair(begin(1), step())
+}

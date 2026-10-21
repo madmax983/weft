@@ -1,0 +1,54 @@
+fn f0 g(u64) -> u64: b0
+fn f1 early(bool) -> u64: b1
+fn f2 scoped() -> u64 / Async: extern
+fn f3 Vec.new<T0>() -> Vec<T0> / (): extern
+cap_env e0
+
+body b0: fn g; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: u64 (Param(0) `x`)
+  bb0:
+    _0 = copy _1
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn early; cap_env e0; unwind_exit bb8
+  _0: u64 (Return)
+  _1: bool (Param(0) `c`)
+  _2: Vec<u64> (User `v`)
+  _3: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    _2 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Live(_3)
+    switch copy _1 -> [1: bb2, otherwise: bb3]
+  bb2:
+    _0 = const 1u64
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3:
+    _3 = const ()
+    Goto(bb4)
+  bb4:
+    Dead(_3)
+    _0 = call g(const 2u64) / e0 -> [bb7, unwind: bb6]
+  bb5 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb8)
+  bb6 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb5)
+  bb7:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb8 (cleanup):
+    UnwindExit
+// scoped: unsupported: scope at 18:5 (stage B11)

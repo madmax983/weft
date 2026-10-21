@@ -95,9 +95,11 @@ body b4: fn kept; cap_env e0; unwind_exit bb5
     Dead(_0)
     Goto(bb5)
   bb2 (cleanup):
+    UnwindValue(_1, Drop)
     Dead(_1)
     Goto(bb1)
   bb3 (cleanup):
+    UnwindValue(_2, Drop)
     Dead(_2)
     Goto(bb2)
   bb4:
@@ -132,9 +134,11 @@ body b6: fn held; cap_env e0; unwind_exit bb5
     Dead(_0)
     Goto(bb5)
   bb2 (cleanup):
+    UnwindValue(_1, Drop)
     Dead(_1)
     Goto(bb1)
   bb3 (cleanup):
+    UnwindValue(_2, Drop)
     Dead(_2)
     Goto(bb2)
   bb4:

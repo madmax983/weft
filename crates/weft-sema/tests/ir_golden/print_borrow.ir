@@ -31,6 +31,7 @@ body b1: fn show; cap_env e0; unwind_exit bb7
   bb1 (cleanup):
     Dead(_0)
     Dead(_2)
+    UnwindValue(_1, Drop)
     Dead(_1)
     Goto(bb7)
   bb2 (cleanup):

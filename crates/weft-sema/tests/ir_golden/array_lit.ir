@@ -27,6 +27,7 @@ body b1: fn arr; cap_env e0; unwind_exit bb6
     Dead(_1)
     Goto(bb6)
   bb2 (cleanup):
+    UnwindValue(_2, Drop)
     Dead(_2)
     Goto(bb1)
   bb3 (cleanup):
