@@ -246,7 +246,7 @@ impl Builder<'_> {
         let (mut q, mut t) = (q, t);
         for i in 0..=steps.len() {
             if bty == t {
-                if !self.tys.not_copy(t) {
+                if self.copies(&q, t) {
                     return Ok((b, How::Copy, q));
                 }
                 if through_ref(&q) {

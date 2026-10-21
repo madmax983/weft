@@ -12,8 +12,8 @@
 use std::path::{Path, PathBuf};
 
 use weft_ir::{
-    AggKind, Body, Callee, CapArgs, CapOperand, DerefKind, LocalId, LocalKind, Operand, Place,
-    Proj, Rvalue, StmtKind, TempKind, TermKind,
+    AggKind, Body, BodyId, Callee, CapArgs, CapOperand, CaptureMode, ClosureDecl, Const, DerefKind,
+    LocalId, LocalKind, Operand, Place, Proj, Rvalue, StmtKind, TempKind, TermKind,
 };
 use weft_sema::irbuild::{self, Built, Outcome};
 use weft_sema::{analyze_source, Analysis, Options};
@@ -440,7 +440,9 @@ fn a_returned_reference_to_a_local_ends_the_local_first() {
 
 #[test]
 fn a_construct_of_a_later_stage_is_unsupported() {
-    let (_, b) = build("fn f() -> u64 {\n    let g = || 1\n    1\n}\n");
+    let (_, b) = build(
+        "effect Note { fn note(n: u64) }\nfn f() -> u64 {\n    handle Note { fn note(n) { resume(()) } } in note(1)\n    1\n}\n",
+    );
     let e = b
         .entries
         .iter()
@@ -448,10 +450,10 @@ fn a_construct_of_a_later_stage_is_unsupported() {
         .unwrap_or_else(|| panic!("no `f`"));
     match &e.outcome {
         Outcome::Unsupported(u) => {
-            assert_eq!(u.construct.name(), "closure");
-            assert_eq!(u.construct.stage(), "B9");
+            assert_eq!(u.construct.name(), "handle");
+            assert_eq!(u.construct.stage(), "B10");
         }
-        other => panic!("a closure is for stage B9: {other:?}"),
+        other => panic!("a `handle` is for stage B10: {other:?}"),
     }
 }
 
@@ -1279,18 +1281,30 @@ fn an_array_literal_is_a_vec_or_an_array_aggregate() {
 
 #[test]
 fn a_trailing_block_is_a_closure_argument() {
-    // The closure literal is for plan stage B9: until then the body stops
-    // there, at the trailing block.
+    // `twice(1) { x }` is `twice(1, || { x })`: the last argument is a
+    // closure aggregate with no parameters.
     let b = golden_built("trailing_block");
-    let e = b
-        .entries
-        .iter()
-        .find(|e| e.name == "block")
-        .unwrap_or_else(|| panic!("no `block`"));
-    match &e.outcome {
-        Outcome::Unsupported(u) => assert_eq!(u.construct.name(), "closure"),
-        other => panic!("a trailing block is a closure: {other:?}"),
-    }
+    let f = body(&b, "block");
+    let (args, _) = call_of(&b, f, "twice");
+    let last = args
+        .last()
+        .and_then(Operand::place)
+        .unwrap_or_else(|| panic!("no last argument"));
+    let Some(Rvalue::Aggregate(AggKind::Closure(c), ops)) = assigned(f, last.local) else {
+        panic!("the trailing block is not a closure aggregate");
+    };
+    let decl = &b.program.closures[c.index()];
+    let clo = b
+        .program
+        .body(decl.body)
+        .unwrap_or_else(|| panic!("no closure body"));
+    assert_eq!(
+        clo.params.len(),
+        1,
+        "a trailing block has only its environment"
+    );
+    assert_eq!(ops.len(), 1, "it captures `x`");
+    assert_eq!(decl.captures[0].mode, CaptureMode::Kept);
 }
 
 #[test]
@@ -1756,4 +1770,321 @@ fn each_value_that_is_not_plain_data_is_finished_in_a_chain() {
             assert!(bad.is_empty(), "{}: {bad:?}", p.display());
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Plan stage B9: closures, function values, items as values (rule CAPTURE).
+
+#[test]
+fn golden_closure_ref() {
+    golden("closure_ref");
+}
+
+#[test]
+fn golden_closure_move() {
+    golden("closure_move");
+}
+
+#[test]
+fn golden_closure_kept_counter() {
+    golden("closure_kept_counter");
+}
+
+#[test]
+fn golden_closure_borrow_plain() {
+    golden("closure_borrow_plain");
+}
+
+#[test]
+fn golden_closure_nested_move() {
+    golden("closure_nested_move");
+}
+
+#[test]
+fn golden_fn_value_call() {
+    golden("fn_value_call");
+}
+
+#[test]
+fn golden_item_value() {
+    golden("item_value");
+}
+
+#[test]
+fn golden_once_closure() {
+    golden("once_closure");
+}
+
+#[test]
+fn golden_j5d_maker_borrow() {
+    golden("j5d_maker_borrow");
+}
+
+#[test]
+fn golden_j5b_kept_write() {
+    golden("j5b_kept_write");
+}
+
+/// Returns the id of the built body of the function or test `name`.
+fn body_id(b: &Built, name: &str) -> BodyId {
+    let e = b
+        .entries
+        .iter()
+        .find(|e| e.name == name)
+        .unwrap_or_else(|| panic!("no body `{name}`"));
+    match &e.outcome {
+        Outcome::Built(id) => *id,
+        other => panic!("`{name}` has no IR: {other:?}"),
+    }
+}
+
+/// Returns the closures that body `maker` makes, in the order of their ids.
+fn made_by(b: &Built, maker: BodyId) -> Vec<&ClosureDecl> {
+    b.program
+        .closures
+        .iter()
+        .filter(|c| c.maker == maker)
+        .collect()
+}
+
+/// Returns the name of the source local of each capture of closure `c`, and
+/// its mode. A capture of a capture of the maker has the name `env.k`.
+fn captures(b: &Built, c: &ClosureDecl) -> Vec<(String, CaptureMode)> {
+    let maker = b
+        .program
+        .body(c.maker)
+        .unwrap_or_else(|| panic!("no maker"));
+    c.captures
+        .iter()
+        .map(|k| {
+            let name = match maker
+                .local(k.source.local)
+                .map(|d| (d.kind, d.name.clone()))
+            {
+                Some((LocalKind::Env, _)) => format!("env{:?}", k.source.proj),
+                Some((_, Some(n))) => n,
+                _ => format!("_{}", k.source.local.0),
+            };
+            (name, k.mode)
+        })
+        .collect()
+}
+
+/// Returns the one closure that function `name` makes.
+fn one_closure<'b>(b: &'b Built, name: &str) -> &'b ClosureDecl {
+    let v = made_by(b, body_id(b, name));
+    assert_eq!(v.len(), 1, "`{name}` makes one closure");
+    v[0]
+}
+
+#[test]
+fn rule_capture_keeps_a_written_plain_value() {
+    // `|| count += 1` writes `count` and does not borrow it: `Kept`.
+    let b = golden_built("closure_kept_counter");
+    let c = one_closure(&b, "main");
+    assert_eq!(captures(&b, c), [("count".to_string(), CaptureMode::Kept)]);
+    assert!(!c.once);
+    let c = one_closure(&b, "counter");
+    assert_eq!(captures(&b, c), [("n".to_string(), CaptureMode::Kept)]);
+    let b = golden_built("j5b_kept_write");
+    let c = one_closure(&b, "main");
+    assert_eq!(captures(&b, c), [("n".to_string(), CaptureMode::Kept)]);
+}
+
+#[test]
+fn rule_capture_borrows_a_borrowed_plain_value() {
+    // `|| print(norm(&p))`: the closure borrows `p`, so it holds a reference
+    // to the cell of `p` (J5d), and the aggregate operand is `&p`.
+    let b = golden_built("j5d_maker_borrow");
+    let make = body(&b, "make");
+    let c = one_closure(&b, "make");
+    assert_eq!(captures(&b, c), [("p".to_string(), CaptureMode::ByRef)]);
+    let p = named(make, "p");
+    assert!(
+        stmts(make)
+            .iter()
+            .any(|s| matches!(s, StmtKind::Assign(_, Rvalue::Ref(q)) if *q == Place::local(p))),
+        "the maker borrows `p` for the environment"
+    );
+    // In the closure body the capture is `(*env.0)`.
+    let clo = b.program.body(c.body).unwrap_or_else(|| panic!("no body"));
+    let env = clo.params[0];
+    assert_eq!(clo.local_kind(env), Some(LocalKind::Env));
+    assert!(
+        stmts(clo).iter().any(|s| matches!(s, StmtKind::Assign(_, Rvalue::Ref(q))
+            if q.local == env && q.proj == [Proj::Field(weft_ir::FieldIdx(0)), Proj::Deref(DerefKind::Ref)])),
+        "the closure body borrows `(*env.0)`"
+    );
+    // J5: a borrow of a plain value inside the closure body.
+    let b = golden_built("closure_borrow_plain");
+    let c = one_closure(&b, "main");
+    assert_eq!(captures(&b, c), [("n".to_string(), CaptureMode::ByRef)]);
+    // A borrow through a captured reference does not borrow its cell.
+    let c = one_closure(&b, "through");
+    assert_eq!(captures(&b, c), [("p".to_string(), CaptureMode::Kept)]);
+}
+
+#[test]
+fn rule_capture_reads_a_value_that_is_not_plain_data_by_reference() {
+    let b = golden_built("closure_ref");
+    let c = one_closure(&b, "main");
+    assert_eq!(captures(&b, c), [("v".to_string(), CaptureMode::ByRef)]);
+    assert!(!c.once);
+}
+
+#[test]
+fn rule_capture_moves_a_moved_value() {
+    let b = golden_built("closure_move");
+    let main = body(&b, "main");
+    let c = one_closure(&b, "main");
+    assert_eq!(
+        captures(&b, c),
+        [
+            ("v".to_string(), CaptureMode::ByMove),
+            ("n".to_string(), CaptureMode::Kept)
+        ]
+    );
+    assert!(c.once, "a closure that moves a capture is once");
+    let v = named(main, "v");
+    let n = named(main, "n");
+    assert!(
+        stmts(main).iter().any(|s| matches!(s,
+            StmtKind::Assign(_, Rvalue::Aggregate(AggKind::Closure(_), ops))
+                if *ops == [Operand::Move(Place::local(v)), Operand::Copy(Place::local(n))])),
+        "the aggregate moves `v` and copies the cell of `n`"
+    );
+}
+
+#[test]
+fn an_inner_move_makes_the_outer_closure_move() {
+    let b = golden_built("closure_nested_move");
+    let outer = one_closure(&b, "nested");
+    assert_eq!(
+        captures(&b, outer),
+        [("v".to_string(), CaptureMode::ByMove)]
+    );
+    assert!(outer.once);
+    let inner = made_by(&b, outer.body);
+    assert_eq!(inner.len(), 1);
+    assert_eq!(
+        captures(&b, inner[0]),
+        [("env[Field(FieldIdx(0))]".to_string(), CaptureMode::ByMove)]
+    );
+    // An inner borrow makes the outer closure borrow.
+    let outer = one_closure(&b, "nested_ref");
+    assert_eq!(captures(&b, outer), [("w".to_string(), CaptureMode::ByRef)]);
+    let inner = made_by(&b, outer.body);
+    assert_eq!(
+        captures(&b, inner[0]),
+        [(
+            "env[Field(FieldIdx(0)), Deref(Ref)]".to_string(),
+            CaptureMode::ByRef
+        )]
+    );
+}
+
+/// Returns the callee operand of each call of a function value in `body`.
+fn value_callees(body: &Body) -> Vec<&Operand> {
+    terms(body)
+        .into_iter()
+        .filter_map(|k| match k {
+            TermKind::Call {
+                callee: Callee::Value(o),
+                ..
+            } => Some(o),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_once_closure_is_moved_at_its_call() {
+    let b = golden_built("once_closure");
+    let main = body(&b, "main");
+    let c = one_closure(&b, "main");
+    assert!(c.once);
+    let f = named(main, "f");
+    assert!(
+        !main.locals[f.index()].props.copy,
+        "`f` holds a once closure"
+    );
+    assert_eq!(value_callees(main), [&Operand::Move(Place::local(f))]);
+    // A closure that calls a once closure moves it, so it is once too.
+    let n = body(&b, "nested_once");
+    let made = made_by(&b, body_id(&b, "nested_once"));
+    assert_eq!(made.len(), 2);
+    let g = made[1];
+    assert_eq!(captures(&b, g), [("f".to_string(), CaptureMode::ByMove)]);
+    assert!(g.once);
+    let gl = named(n, "g");
+    assert_eq!(value_callees(n), [&Operand::Move(Place::local(gl))]);
+}
+
+#[test]
+fn a_function_value_call_reads_the_callee_first_and_can_abort() {
+    let b = golden_built("fn_value_call");
+    // `f(x + 1, { x })`: the callee is read into a temporary before the
+    // arguments, because a later argument can run code.
+    let later = body(&b, "later");
+    let callee = temps_of(later, TempKind::Callee);
+    assert_eq!(callee.len(), 1, "one callee temporary");
+    let f = named(later, "f");
+    assert_eq!(
+        assigned(later, callee[0]),
+        Some(&Rvalue::Use(Operand::Copy(Place::local(f))))
+    );
+    for k in terms(later) {
+        if let TermKind::Call { unwind, .. } = k {
+            assert!(unwind.is_some(), "a call of a function value can abort");
+        }
+    }
+    // `f(x)`: no later argument runs code, so the callee is the place itself.
+    let apply = body(&b, "apply");
+    assert_eq!(
+        value_callees(apply),
+        [&Operand::Copy(Place::local(named(apply, "f")))]
+    );
+    // Named arguments of a function value bind by the parameter names of the
+    // item in the local (`add(a, b)`): `g(b: 1, a: 2)` passes `2, 1`.
+    let n = body(&b, "named");
+    let args = terms(n)
+        .into_iter()
+        .find_map(|k| match k {
+            TermKind::Call {
+                callee: Callee::Value(_),
+                args,
+                ..
+            } => Some(args.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no value call"));
+    let ints: Vec<i128> = args
+        .iter()
+        .map(|o| match o {
+            Operand::Const(Const::Int(v, _)) => *v,
+            other => panic!("not a constant: {other:?}"),
+        })
+        .collect();
+    assert_eq!(ints, [2, 1]);
+}
+
+#[test]
+fn a_function_item_as_a_value_is_a_constant() {
+    let b = golden_built("item_value");
+    let main = body(&b, "main");
+    let consts: Vec<String> = stmts(main)
+        .into_iter()
+        .filter_map(|s| match s {
+            StmtKind::Assign(_, Rvalue::Use(Operand::Const(Const::Fn(f, tys)))) => Some(format!(
+                "{}<{}>",
+                b.program.fns[f.index()].name,
+                tys.iter()
+                    .map(|t| b.tys.show(*t))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(consts, ["double<>", "double<>", "id<u64>"]);
 }

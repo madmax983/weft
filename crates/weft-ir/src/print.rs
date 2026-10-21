@@ -92,7 +92,7 @@ impl<'a> Printer<'a> {
             let caps: Vec<String> = c
                 .captures
                 .iter()
-                .map(|k| format!("{} _{}", capture_mode(k.mode), k.source.0))
+                .map(|k| format!("{} {}", capture_mode(k.mode), place(&k.source)))
                 .collect();
             let _ = write!(
                 out,

@@ -1,0 +1,20 @@
+// A closure that moves a capture that is not plain data is `once`: a local
+// that holds it gets the modes of the closure, and its call moves it
+// (`docs/ir.md` 5.21, 5.22; W0502). A closure that calls a `once` closure is
+// `once` too.
+
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) {}
+
+fn main() {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    f()
+}
+
+fn nested_once() {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    let g = || f()
+    g()
+}

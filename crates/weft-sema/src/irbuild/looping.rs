@@ -282,11 +282,13 @@ mod tests {
         let mut tys = TyTable::new();
         let mut fields = PlaceFields::new(&tys);
         let (mut fns, mut decls) = (BTreeMap::new(), Vec::new());
+        let mut pending = super::super::closure::Pending::default();
         let d = Decls {
             a: &a,
             fns: &mut fns,
             items: &mut decls,
             cap_envs: &[],
+            pending: &mut pending,
         };
         let unit = tys.unit();
         let span = Span { lo: 0, hi: 1 };

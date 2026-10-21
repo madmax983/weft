@@ -149,6 +149,22 @@ fn ir_prints_the_core_ir() {
     let calls = cmd(&["ir", "tests/programs/01_places.wf", "tick"]);
     assert_eq!(calls.code, 0, "{}", calls.stderr);
     assert!(calls.text.contains("call step("), "{}", calls.text);
+    let closures = cmd(&[
+        "ir",
+        "crates/weft-sema/tests/ir_golden/closure_move.wf",
+        "main",
+    ]);
+    assert_eq!(closures.code, 0, "{}", closures.stderr);
+    assert!(
+        closures.text.starts_with("body b1: fn main"),
+        "{}",
+        closures.text
+    );
+    assert!(
+        closures.text.contains("\nbody b2: closure c0; parent b1;"),
+        "the closure bodies of `main` follow it: {}",
+        closures.text
+    );
     let later = cmd(&["ir", "tests/programs/05_effects.wf", "main"]);
     assert_eq!(later.code, 1);
     assert!(later.stderr.contains("(stage B10)"), "{}", later.stderr);

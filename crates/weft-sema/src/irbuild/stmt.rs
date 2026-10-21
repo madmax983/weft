@@ -180,7 +180,10 @@ impl Builder<'_> {
             return unsupported(Construct::AssignPlace, target.span);
         };
         let origin = self.origin(s.span, None);
-        if place.has_deref() && self.maybe_linear(self.value_ty(target)?) {
+        // A capture of a closure body can become `(*env.k)`: its `Drop` stays
+        // only then (`closure.rs`).
+        let behind = place.has_deref() || self.below_capture(&place);
+        if behind && self.maybe_linear(self.value_ty(target)?) {
             self.push(StmtKind::Drop(place.clone()), origin);
         }
         self.assign(place, Rvalue::Use(Operand::Move(Place::local(t))), origin);

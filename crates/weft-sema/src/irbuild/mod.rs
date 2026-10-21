@@ -26,6 +26,7 @@ mod branch;
 mod call;
 mod caps;
 mod cleanup;
+mod closure;
 mod expr;
 mod frame;
 mod looping;
@@ -39,9 +40,9 @@ use std::fmt::Write as _;
 
 use weft_ir::verify::{verify_program, Broken};
 use weft_ir::{
-    Block, BlockId, Body, BodyId, BodyKind, CapEnv, CapEnvId, ExprId, FnDecl, Intrinsic, LocalDecl,
-    LocalId, LocalKind, Origin, Place, Program, Props, Rvalue, Stmt, StmtKind, TempKind, Term,
-    TermKind, TestDecl, TestId, TyId, TyTable,
+    Block, BlockId, Body, BodyId, BodyKind, CapEnv, CapEnvId, ClosureId, ExprId, FnDecl, Intrinsic,
+    LocalDecl, LocalId, LocalKind, Origin, Place, Program, Props, Rvalue, Stmt, StmtKind, TempKind,
+    Term, TermKind, TestDecl, TestId, TyId, TyTable,
 };
 use weft_syntax::ast::{self, Span};
 use weft_syntax::diag::Diagnostic;
@@ -61,12 +62,8 @@ pub enum Construct {
     MoveThroughRef,
     /// The payload of a variant with more than one field as a place: `o.A`.
     VariantField,
-    /// A function item as a value.
+    /// A constructor of a struct or of a variant with a payload as a value.
     ItemName,
-    /// A call of a function value.
-    FnValueCall,
-    /// A closure.
-    Closure,
     /// `handle`.
     Handle,
     /// `scope`.
@@ -86,9 +83,7 @@ impl Construct {
             Self::AssignPlace => "assignment to a value",
             Self::MoveThroughRef => "move through a reference",
             Self::VariantField => "variant field",
-            Self::ItemName => "item name",
-            Self::FnValueCall => "call of a function value",
-            Self::Closure => "closure",
+            Self::ItemName => "constructor as a value",
             Self::Handle => "handle",
             Self::Scope => "scope",
             Self::Task => "task",
@@ -100,8 +95,7 @@ impl Construct {
     /// Returns the plan stage that lowers the construct.
     pub const fn stage(self) -> &'static str {
         match self {
-            Self::AssignPlace | Self::MoveThroughRef | Self::VariantField => "B12",
-            Self::ItemName | Self::FnValueCall | Self::Closure => "B9",
+            Self::AssignPlace | Self::MoveThroughRef | Self::VariantField | Self::ItemName => "B12",
             Self::Handle => "B10",
             Self::Scope | Self::Task | Self::Intrinsic => "B11",
             Self::NoThir => "T3",
@@ -378,22 +372,34 @@ fn body_outcome(
     let unit_id = id_of(unit);
     // A body that the builder does not finish declares no function.
     let fns_before = out.program.fns.len();
+    let id = BodyId(id_of(out.program.bodies.len()));
+    let mut pending = closure::Pending::new(id.0, id_of(out.program.closures.len()));
     let d = Decls {
         a,
         fns: &mut out.fns,
         items: &mut out.program.fns,
         cap_envs: &out.program.cap_envs,
+        pending: &mut pending,
     };
     let mut b = Builder::new(t, &mut out.tys, fields, d, unit_id, ret, src.span);
-    match b.body(src) {
-        Ok(()) => {
-            let id = BodyId(id_of(out.program.bodies.len()));
-            out.diags.extend(b.diags.drain(..).map(|mut d| {
+    b.body_id = id;
+    let result = b.body(src).map(|()| {
+        let diags: Vec<Diagnostic> = b.diags.drain(..).collect();
+        (b.finish(src.kind, src.span), diags)
+    });
+    let done = result.and_then(|(body, diags)| match closure::take_pending(pending) {
+        Some((bodies, closures)) => Ok((body, diags, bodies, closures)),
+        None => unsupported(Construct::NoThir, src.span),
+    });
+    match done {
+        Ok((body, diags, bodies, closures)) => {
+            out.diags.extend(diags.into_iter().map(|mut d| {
                 d.unit = unit;
                 d
             }));
-            let body = b.finish(src.kind, src.span);
             out.program.bodies.push(body);
+            out.program.bodies.extend(bodies);
+            out.program.closures.extend(closures);
             if let BodyKind::Fn(f) = src.kind {
                 if let Some(d) = out.program.fns.get_mut(f.index()) {
                     d.body = Some(id);
@@ -606,6 +612,8 @@ struct Decls<'a> {
     items: &'a mut Vec<FnDecl>,
     /// The capability environments of the program.
     cap_envs: &'a [CapEnv],
+    /// The closure bodies and closures that the function makes (`closure.rs`).
+    pending: &'a mut closure::Pending,
 }
 
 /// The builder of one body. The state is here, not in the frames of the
@@ -656,6 +664,12 @@ struct Builder<'a> {
     kont: Option<LocalId>,
     /// The unwind actions of the types of the body (`cleanup.rs`).
     unwinds: cleanup::UnwindTable,
+    /// The id of this body in the program.
+    body_id: BodyId,
+    /// The captures of a closure body (`closure.rs`); `None` for another body.
+    closure: Option<Box<closure::Captures>>,
+    /// The closures that this body makes.
+    made: Vec<ClosureId>,
 }
 
 impl<'a> Builder<'a> {
@@ -694,6 +708,9 @@ impl<'a> Builder<'a> {
             ret_value: false,
             kont: None,
             unwinds: HashMap::new(),
+            body_id: BodyId(0),
+            closure: None,
+            made: Vec::new(),
         };
         let props = b.props(ret);
         b.locals.push(LocalDecl {

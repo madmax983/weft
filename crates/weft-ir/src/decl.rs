@@ -1,9 +1,7 @@
 //! The program and its declarations: functions, closures, handlers, scopes, spawn
 //! sites, capability environments and tests (`docs/ir.md` 3.2).
 
-use crate::{
-    Body, BodyId, CapEnvId, ClosureId, EffectId, LocalId, OpIdx, Origin, Place, ScopeId, TyId,
-};
+use crate::{Body, BodyId, CapEnvId, ClosureId, EffectId, OpIdx, Origin, Place, ScopeId, TyId};
 
 /// A whole program: each body of each unit, and the declarations.
 #[derive(Clone, Debug, Default)]
@@ -83,8 +81,10 @@ pub struct ClosureDecl {
 /// One capture: one field of an environment.
 #[derive(Clone, Debug)]
 pub struct Capture {
-    /// The captured place, in the maker body: a local or an upvar local.
-    pub source: LocalId,
+    /// The captured place, in the maker body: a local, an upvar local, or a
+    /// capture of the maker when the maker is a closure body (`env.j` for a
+    /// `ByMove` or a `Kept` capture, `(*env.j)` for a `ByRef` capture).
+    pub source: Place,
     /// How the environment holds it.
     pub mode: CaptureMode,
 }

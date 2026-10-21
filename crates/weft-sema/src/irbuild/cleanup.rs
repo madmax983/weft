@@ -151,7 +151,9 @@ impl Builder<'_> {
         }
         let params: Vec<LocalId> = self.params.iter().rev().copied().collect();
         for p in params {
-            if Some(p) == self.kont {
+            // The environment of a closure outlives the run: it does not end.
+            let env = self.locals.get(p.index()).map(|d| d.kind) == Some(LocalKind::Env);
+            if Some(p) == self.kont || env {
                 continue;
             }
             self.finish_value(p, &mut stmts);
@@ -434,11 +436,13 @@ mod tests {
         let ret = tys.intern(Ty::Array(u64, 2));
         let mut fields = PlaceFields::new(&tys);
         let (mut fns, mut decls) = (BTreeMap::new(), Vec::new());
+        let mut pending = super::super::closure::Pending::default();
         let d = Decls {
             a: &a,
             fns: &mut fns,
             items: &mut decls,
             cap_envs: &[],
+            pending: &mut pending,
         };
         let span = Span { lo: 0, hi: 1 };
         let mut b = Builder::new(&t, &mut tys, &mut fields, d, 0, ret, span);

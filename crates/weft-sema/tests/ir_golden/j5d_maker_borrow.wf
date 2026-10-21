@@ -1,0 +1,12 @@
+// J5 in a maker function: the returned closure passes a reference to a
+// captured plain struct to a helper. The struct is a local of `make`.
+struct Point { x: u64, y: u64 }
+fn norm(p: &Point) -> u64 { p.x * p.x + p.y * p.y }
+fn make(a: u64) -> fn() {
+    let p = Point { x: a, y: 2 }
+    || print(norm(&p))
+}
+fn main() {
+    let f = make(3)
+    f()
+}

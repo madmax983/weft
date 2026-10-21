@@ -1,0 +1,99 @@
+fn f0 norm(&Point) -> u64: b0
+fn f1 main() -> (): b1
+fn f2 through(&Point) -> fn() -> u64: b3
+closure c0: body b2, maker b1, cap_env e0, captures [ByRef _2]
+closure c1: body b4, maker b3, cap_env e0, captures [Kept _1]
+cap_env e0
+
+body b0: fn norm; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: &Point (Param(0) `p`)
+  _2: u64 (Temp(Operand))
+  _3: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Mul<u64>(copy (*_1).0, copy (*_1).0)
+    Live(_3)
+    _3 = Mul<u64>(copy (*_1).1, copy (*_1).1)
+    _0 = Add<u64>(move _2, move _3)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn main; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: fn() -> () (User `g`)
+  _2: i64 (User `n`)
+  _3: &i64 (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = const 5i64
+    Live(_3)
+    _3 = &_2
+    _1 = closure c0(move _3)
+    Dead(_2)
+    Dead(_3)
+    _0 = call (copy _1)() / e0 -> [bb3, unwind: bb2]
+  bb1 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb1)
+  bb3:
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b2: closure c0; parent b1; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: &i64 (User `r`)
+  _3: i64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = &(*_1.0)
+    Live(_3)
+    _3 = Add<i64>(copy (*_2), const 1i64)
+    Print(copy _3)
+    _0 = const ()
+    Dead(_2)
+    Dead(_3)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn through; cap_env e0; unwind_exit bb1
+  _0: fn() -> u64 (Return)
+  _1: &Point (Param(0) `p`)
+  bb0:
+    _0 = closure c1(copy _1)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: closure c1; parent b3; cap_env e0; unwind_exit bb4
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  _2: &Point (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = &(*_1.0)
+    _0 = call norm(move _2) / e0 -> [bb3, unwind: bb2]
+  bb1 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb1)
+  bb3:
+    Dead(_2)
+    Return
+  bb4 (cleanup):
+    UnwindExit

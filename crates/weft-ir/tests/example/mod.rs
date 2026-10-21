@@ -690,7 +690,7 @@ pub fn j5d_program(t: &J5dTys, kept: bool) -> Program {
             body: BodyId(1),
             maker: BodyId(0),
             captures: vec![Capture {
-                source: LocalId(2),
+                source: pl(2),
                 mode,
             }],
             once: false,
@@ -800,7 +800,7 @@ pub fn by_move_program(t: &J5dTys, once: bool) -> Program {
             body: BodyId(1),
             maker: BodyId(0),
             captures: vec![Capture {
-                source: LocalId(2),
+                source: pl(2),
                 mode: CaptureMode::ByMove,
             }],
             once,

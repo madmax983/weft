@@ -469,6 +469,22 @@ fn facts(f: &Flags) -> Result<Output> {
 /// (`docs/ir.md` 3.3). A body that the builder does not lower yet, or that has
 /// a type error, gets a comment line. A broken rule of the verifier is a bug
 /// of the builder: the command writes it to standard error and exits with 1.
+/// Returns true if body `b` of `p` is body `top` or a body inside it: a
+/// parent of a parent of `b` is `top`.
+fn inside(p: &weft_ir::Program, b: weft_ir::BodyId, top: weft_ir::BodyId) -> bool {
+    let mut cur = Some(b);
+    // A parent has a lower id, so the walk ends; the bound is for a program
+    // that is not well formed.
+    for _ in 0..=p.bodies.len() {
+        match cur {
+            Some(x) if x == top => return true,
+            Some(x) => cur = p.body(x).and_then(|d| d.parent),
+            None => return false,
+        }
+    }
+    false
+}
+
 fn ir(f: &Flags) -> Result<Output> {
     let path = Path::new(path_arg(f)?);
     let only = f.positional.get(1);
@@ -504,7 +520,16 @@ fn ir(f: &Flags) -> Result<Output> {
             };
             match &e.outcome {
                 weft_sema::irbuild::Outcome::Built(id) => {
-                    out.text = weft_ir::print::print_body(&built.program, &built.tys, *id);
+                    // The body, then the bodies inside it (its closures).
+                    for b in 0..built.program.bodies.len() {
+                        let b = weft_ir::BodyId(u32::try_from(b).unwrap_or(u32::MAX));
+                        if inside(&built.program, b, *id) {
+                            if !out.text.is_empty() {
+                                out.text.push('\n');
+                            }
+                            out.text += &weft_ir::print::print_body(&built.program, &built.tys, b);
+                        }
+                    }
                 }
                 weft_sema::irbuild::Outcome::Unsupported(u) => {
                     out.stderr = format!(

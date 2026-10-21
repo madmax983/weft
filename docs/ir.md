@@ -339,7 +339,7 @@ pub struct ClosureDecl {
     pub cap_env: CapEnvId,      // where it is made: it performs through it
 }
 pub struct Capture {
-    pub source: LocalId, // a local or an upvar local of the maker
+    pub source: Place, // a local or an upvar local of the maker, or a capture of a maker closure: env.j, (*env.j)
     pub mode: CaptureMode,
 }
 /// One function (`capture_mode`, rule CAPTURE) decides the mode.
@@ -525,7 +525,8 @@ Changes from the machine sketch, each with its source:
 
 ### 3.3 Text form
 
-`weft ir FILE [FUNCTION]` prints the IR. Each local is `_n` with its kind and name. A
+`weft ir FILE [FUNCTION]` prints the IR (with `FUNCTION`: its body and the bodies inside
+it, such as its closures). Each local is `_n` with its kind and name. A
 block is `bbN`, and `(cleanup)` marks a cleanup block. Each terminator shows its normal
 successors and its cleanup block. The printer is the format of the golden files
 (`crates/weft-sema/tests/ir_golden/*.ir`). Section 5.37 has an example.
@@ -553,7 +554,7 @@ to V17; the others need the type table.
 | V10 | Each terminator with `can_abort()` has an `unwind` block, except a `Call` of an extern function whose stated row is empty and that has no `assert`. | A1 for abort paths, D4 |
 | V11 | `CapOperand::Local` names a `Cap` local, an upvar local of one, or a `Cap` field of the environment. `Row(E)` appears only where the capability environment of the body does not bind `E`. `Resume` names a `Kont` local of the clause or a `Kont` field of an environment. | capabilities and continuations are values of one frame |
 | V12 | A temporary has one `Live`, and a `Dead` on each path from it to an exit. A temporary of the tail of a frame body ends after `_0` gets the value. | C2 holder cover, the frame-end order |
-| V13 | A `Kept` capture is never borrowed: its aggregate operand is `copy` of a whole local, and no `Ref` in the closure body (or an inner body) names a place at or below `env.k`. The verifier also recomputes `capture_mode` and compares. | F5 `kept`; the kept cell is outside the reference fragment of B1 |
+| V13 | A `Kept` capture is never borrowed: its aggregate operand is `copy` of its source, the source is a cell (a whole local, or a capture `env.j` or `(*env.j)` of a maker closure), and no `Ref` in the closure body (or an inner body) names a place at or below `env.k` that is not behind a further reference. The verifier also recomputes `capture_mode` and compares. | F5 `kept`; the kept cell is outside the reference fragment of B1 |
 | V14 | Upvar locals exist only in clause, handled and scope bodies; each names a local of the parent body; none has `Live` or `Dead`. The environment local exists only in a closure body and has no `Live` or `Dead`; a `Move` of a place below it is valid only in a `once` closure. | splices share the cells of the site; the closure value outlives each run |
 | V15 | Each handled body and each scope body is named by exactly one terminator; each clause by exactly one handler; each closure body by one aggregate kind. | the splice assumes a once-run frame (machine risk R10) |
 | V16 | The cleanup chain of a clause starts with `UnwindKont` of its continuation. A cleanup chain lists `_0` if it has a value, then the live temporaries newest first, then the live locals from the highest index, then the parameters. (`Dead(_0)` with no value comes before the parameters.) | one unwind order for the interpreter, the facts and the effects model |
@@ -758,7 +759,10 @@ How the builder applies the table (`irbuild/cleanup.rs`, plan stage B8):
   callee, section 6.7).
 - A value whose type has no linear part, but whose local properties say linear (a
   closure: plan stage B9), gets `Fault` if its properties have no `on abort`, else
-  `Drop`.
+  `Drop`. The `Drop` of a closure finishes the linear values that it owns in its
+  `ByMove` fields, each with its `on abort` (`extract_linear` goes into the cells of a
+  closure). A field of an environment is not a place of the IR, so the action is one
+  for the whole closure.
 - A parameter that is not plain data gets its `UnwindValue` too, before its `Dead`.
 - `_0` has a value from the write of the frame value (the frame end) or of a `return`
   value, to the `Return`. Plan stage B11 adds `ScopeWait` there. `Dead(_0)` with no
@@ -773,14 +777,36 @@ holds each local of an outer body that its body (or a body inside it) names. The
 interpreter reads the decision from the IR (no `by_value` side table).
 
 1. `ByMove` if the body (or an inner closure of it) moves the variable or a place below
-   it: a `Move` operand, a by-value pattern, or an inner closure with a `ByMove` field
-   for it. An inner closure that moves a capture makes each closure around it move it
-   (ADR 0003, OR2).
+   it: a `Move` operand, a by-value pattern (a `Consume` too), or an inner closure with
+   a `ByMove` field for it. An inner closure that moves a capture makes each closure
+   around it move it (ADR 0003, OR2).
 2. Else `Kept` if the type is plain data and no statement of the body, or of a body
    inside it, borrows a place at or below the variable: no `Rvalue::Ref`, no binding by
-   reference, no by-reference receiver or argument.
+   reference, no by-reference receiver or argument, no iterator over its elements. A
+   borrow through a reference that the variable holds (`&(*r).f` with `r: &T`) points
+   into the target, not into the cell of `r`: it does not count.
 3. Else `ByRef`.
 4. `Cap` and `Kont` for capability and continuation values.
+
+How the builder applies the rule (`irbuild/closure.rs`, plan stage B9):
+
+- The captures of a closure literal are the names of its body (and of the bodies inside
+  it) that the maker resolves: a local, an upvar local, or a capture of the maker when
+  the maker is a closure body. They are the fields of the environment, in the order of
+  their first use. So an inner closure that names a variable of the function makes each
+  closure around it capture the variable too, and `Capture::source` of the inner
+  closure is the field of the maker (`env.j`, or `(*env.j)` for a `ByRef` capture).
+- The builder builds the closure body with each capture as `env.k`. Then it reads the
+  body: a `Move` or a `Consume` at or below `env.k` gives `ByMove`; else a borrow at or
+  below `env.k` with no `Deref(Ref)` after `env.k` gives `ByRef`, and so does a variable
+  that is not plain data; else `Kept`. The aggregate of an inner closure is in the
+  body, so its operand (`&env.k`, `move env.k`, `copy env.k`) counts. Then each place of
+  a `ByRef` capture gets its `Deref` (`(*env.k)`), also the sources of the inner
+  closures. A store into a capture gets its `Drop` (5.1.3) only if the capture is
+  `ByRef`.
+- A `Kept` capture of a `ByRef` capture of the maker shares the cell that `(*env.j)`
+  names: the cell of the variable, not a copy of its value. The mode of an inner
+  closure depends only on its own body and the bodies inside it.
 
 So `|| count += 1` is `Kept` (it writes, it does not borrow): the counter closure that
 leaves its function stays legal (`125_multi_values.wf` `shared_closure`,
@@ -1223,9 +1249,16 @@ the template.
 v(a)  =>  tv := copy v; ta := <a>; t = call (copy tv)(move ta) caps Lexical(env) -> [bb, C]
 ```
 
-The callee is an operand, read before the arguments. The analysis gives the set of
-values the callee can be (section 6.6). A `once` closure moves at the call: the callee
-operand is `move v` (W0502).
+The callee is an operand, read before the arguments. As each place operand (5.1.1),
+it skips its temporary (`TempKind::Callee`) if no argument can run code: then the call
+reads `v` itself. The analysis gives the set of values the callee can be (section 6.6).
+A `once` closure moves at the call: the callee operand is `move v` (W0502). The builder
+knows this for a local that a closure literal goes into: the local gets the properties
+of the closure (5.22), and a read of a local or of a capture whose properties are not
+plain data is a `move`. For another value (a parameter, a field, a local that gets a
+closure through a copy) the call copies the value, and the fact generator adds
+`moved_at` of the callee from the analysis (6.4). A call of a function value always has
+an `unwind` block (V10).
 
 Named arguments of a function value bind by the parameter names of the function item
 that the local holds (ADR 0009), so the THIR order of the arguments comes from the
@@ -1250,6 +1283,21 @@ body c (Closure):  params _1 = env, _2 = p; _0
 - The modes of the closure are the props of its fields: linear if a field is linear,
   `once` if a `ByMove` field is not plain data or a field is `once`, nonportable if a
   field is (RT8, OL-5, V061).
+- One `ClosureDecl` and one body for each literal. A trailing block is a literal with
+  no parameters (5.19). The ids of the closures and of their bodies follow the order of
+  the literals in the function (pre-order), after the body of the function: a maker has
+  a lower id than its closures. `_1` is the environment (`LocalKind::Env`, the type of
+  the closure; no `Live`, no `Dead`, not in a cleanup chain); the parameters follow, with
+  the `Uninit` of their place fields at the entry (5.2). The body writes its value into
+  `_0`; a body whose closure type returns `()` but whose value has another type is an
+  expression statement, then `_0 = ()`. The `Return` has the origin of the body (or of
+  the literal, if the body gives no value).
+- The type of a function value is plain data (`TyTable::not_copy`). A whole local that
+  a closure literal goes into (a `let` local, an operand temporary, `_0`) gets the props
+  of the closure joined into its own: linear, `on_abort`, nonportable, `holds_refs`,
+  `once` (also for a field that is `@ uniq`), and `copy` only if the closure is not
+  `once`. So the chains finish it (5.1.6), and a read of it moves it (5.21). The analysis
+  joins the modes of the closures that a value can hold for each other place (2.3).
 - **Goes away:** `{closure}` hidden variables, `note_capture`, `moved_captures`,
   `captures_live_at`, the `closure end` node, `late_join` and its functions (RR7, V103,
   V104, O3-11, F3-11), `union_ret`, the `by_value` export (OR2, V017).
@@ -1262,7 +1310,9 @@ a store into a field      =>  (*r).f = move tclosure
 ```
 
 A function value is a value. It flows through locals, fields, elements and tuples as
-other values do. The analysis keeps the set of closures and items that each place can
+other values do. A struct constructor or a variant with a payload as a value (`map(xs,
+Some)`) has no IR form yet: no program of tier 1 has one, and plan stage B12 decides it
+(a closure with no captures whose body builds the aggregate is one choice). The analysis keeps the set of closures and items that each place can
 hold, also in the abstract heap behind references (heap slots). **Goes away:**
 `FnTy::summary`, `fn_joins` (RR2, V107), `join_val`, `escape`, `escape_all`, `keep`,
 `store_into`, `apply_stored`, `insert_after`, `reach`, `known_at` (V027, V028, V089,

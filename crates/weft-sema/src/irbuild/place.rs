@@ -186,11 +186,13 @@ impl Builder<'_> {
         Ok(p)
     }
 
-    /// Returns the place of the local that name `e` names.
+    /// Returns the place of the local that name `e` names: a local of the
+    /// body, or the field of the environment that captures it (`env.k`, see
+    /// `closure.rs`).
     fn local_place(&self, e: &Expr) -> R<Place> {
         match self.t.res.get(&e.id) {
-            Some(Res::Local(b)) => match self.vars.get(b) {
-                Some(&l) => Ok(Place::local(l)),
+            Some(Res::Local(b)) => match self.binding_place(*b) {
+                Some(p) => Ok(p),
                 None => unsupported(Construct::NoThir, e.span),
             },
             _ => unsupported(Construct::NoThir, e.span),
@@ -223,10 +225,12 @@ impl Builder<'_> {
     }
 
     /// Returns the operand that reads place `p` of type `ty` (the type of
-    /// `e`): a copy of plain data, else a move. A move through a reference is
-    /// W0303 (`docs/ir.md` 5.36): the builder does not lower it yet.
+    /// `e`): a copy of plain data, else a move. A local that holds a `once`
+    /// closure is not plain data (`docs/ir.md` 5.21). A move through a
+    /// reference is W0303 (`docs/ir.md` 5.36): the builder does not lower it
+    /// yet.
     pub(super) fn read_place(&self, p: Place, ty: TyId, e: &Expr) -> R<Operand> {
-        if !self.tys.not_copy(ty) {
+        if self.copies(&p, ty) {
             return Ok(Operand::Copy(p));
         }
         if p.proj.contains(&Proj::Deref(weft_ir::DerefKind::Ref)) {

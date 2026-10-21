@@ -101,7 +101,8 @@ pub enum Rule {
     /// capability or the continuation comes after the end of one of them.
     FrameEndOrder,
     /// V13: a `Kept` capture is borrowed in the closure body, or its operand in the
-    /// closure aggregate is not a copy of a whole local.
+    /// closure aggregate is not a copy of its source cell (a whole local, or a capture
+    /// of the maker closure).
     KeptBorrowed,
     /// V13: the stated capture mode is not the mode of rule CAPTURE.
     CaptureMode {
@@ -970,16 +971,12 @@ impl<'a> Cx<'a> {
         }
     }
 
-    /// Returns the type of field `k` of the environment of closure `c`.
+    /// Returns the type of field `k` of the environment of closure `c`: the type
+    /// of its source place in the maker, or a reference to it for `ByRef`.
     fn env_field_ty(&self, c: ClosureId, k: usize) -> Option<Pt> {
         let decl = self.p.closures.get(c.index())?;
         let cap = decl.captures.get(k)?;
-        let Some(src) = self
-            .p
-            .body(decl.maker)
-            .and_then(|m| m.local(cap.source))
-            .map(|d| d.ty)
-        else {
+        let Some(src) = source_ty(self.p, self.tys, decl, &cap.source) else {
             return Some(Pt::Unknown);
         };
         Some(match cap.mode {
@@ -1713,6 +1710,90 @@ fn below_field(p: &Place, env: LocalId, k: usize) -> bool {
     p.local == env && matches!(p.proj.first(), Some(Proj::Field(f)) if f.index() == k)
 }
 
+/// Returns true if a borrow of place `p` of the closure body borrows the captured
+/// variable `k` (rule CAPTURE): `p` is at or below the variable (`env.k`, or
+/// `(*env.k)` for a `ByRef` capture) and no `Deref(Ref)` follows it. A borrow
+/// through a captured reference points into the target of the reference, not into
+/// the cell of the variable.
+fn borrows_var(p: &Place, env: LocalId, k: usize, mode: CaptureMode) -> bool {
+    if !below_field(p, env, k) {
+        return false;
+    }
+    let skip = if mode == CaptureMode::ByRef {
+        if p.proj.get(1) != Some(&Proj::Deref(crate::DerefKind::Ref)) {
+            return false;
+        }
+        2
+    } else {
+        1
+    };
+    !p.proj
+        .iter()
+        .skip(skip)
+        .any(|x| *x == Proj::Deref(crate::DerefKind::Ref))
+}
+
+/// Returns the type of place `src` of the maker of closure `c`, if the verifier
+/// can find it. The maker of a closure has a lower id than the closure body, so
+/// the walk through the makers ends.
+fn source_ty(p: &Program, tys: &TyTable, c: &crate::ClosureDecl, src: &Place) -> Option<TyId> {
+    if c.maker.index() >= c.body.index() {
+        return None;
+    }
+    let maker = p.body(c.maker)?;
+    let cx = Cx {
+        p,
+        tys,
+        id: c.maker,
+        body: maker,
+        out: Vec::new(),
+    };
+    match cx.place_ty(src).ok()? {
+        Pt::Ty(t) => Some(t),
+        Pt::Variant(..) | Pt::Env(_) | Pt::Unknown => None,
+    }
+}
+
+/// Returns true if the source of capture `k` of closure `c` holds plain data: the
+/// properties of a whole local, or of the capture of the maker that the source
+/// names, or else the type.
+fn source_copy(p: &Program, tys: &TyTable, c: &crate::ClosureDecl, k: usize) -> Option<bool> {
+    let cap = c.captures.get(k)?;
+    let maker = p.body(c.maker)?;
+    let d = maker.local(cap.source.local)?;
+    if cap.source.is_local() {
+        return Some(d.props.copy);
+    }
+    let t = source_ty(p, tys, c, &cap.source)?;
+    if !matches!(tys.try_get(t), Some(Ty::Fn(_))) {
+        return Some(!tys.not_copy(t));
+    }
+    // A function value of a capture of the maker: the properties of its source.
+    let (BodyKind::Closure(mc), LocalKind::Env, Some(Proj::Field(j))) =
+        (maker.kind, d.kind, cap.source.proj.first())
+    else {
+        return None;
+    };
+    let outer = p.closures.get(mc.index())?;
+    if outer.body.index() >= c.body.index() {
+        return None;
+    }
+    source_copy(p, tys, outer, j.index())
+}
+
+/// Returns true if `src` is a cell that a `Kept` capture can share: a whole local
+/// of the maker, or a capture `env.j` (or `(*env.j)`) of the maker closure.
+fn kept_cell(maker: &Body, src: &Place) -> bool {
+    if src.is_local() {
+        return true;
+    }
+    maker.local_kind(src.local) == Some(LocalKind::Env)
+        && matches!(
+            src.proj.as_slice(),
+            [Proj::Field(_)] | [Proj::Field(_), Proj::Deref(crate::DerefKind::Ref)]
+        )
+}
+
 /// Returns the mode that rule CAPTURE (`docs/ir.md` 5.1.7) gives capture `k` of
 /// closure `c`, from the closure body and the source local.
 fn capture_rule(
@@ -1722,10 +1803,16 @@ fn capture_rule(
     k: usize,
 ) -> Option<CaptureMode> {
     let cap = c.captures.get(k)?;
-    let src = p.body(c.maker)?.local(cap.source)?;
-    match (src.kind, tys.try_get(src.ty)) {
-        (LocalKind::Cap(_), _) | (_, Some(Ty::Cap(_))) => return Some(CaptureMode::Cap),
-        (LocalKind::Kont(_), _) | (_, Some(Ty::Cont(..))) => return Some(CaptureMode::Kont),
+    let src = p.body(c.maker)?.local(cap.source.local)?;
+    let src_ty = if cap.source.is_local() {
+        Some(src.ty)
+    } else {
+        source_ty(p, tys, c, &cap.source)
+    };
+    let kind = cap.source.is_local().then_some(src.kind);
+    match (kind, src_ty.and_then(|t| tys.try_get(t))) {
+        (Some(LocalKind::Cap(_)), _) | (_, Some(Ty::Cap(_))) => return Some(CaptureMode::Cap),
+        (Some(LocalKind::Kont(_)), _) | (_, Some(Ty::Cont(..))) => return Some(CaptureMode::Kont),
         _ => {}
     }
     let body = p.body(c.body)?;
@@ -1735,21 +1822,28 @@ fn capture_rule(
         .copied()
         .filter(|&e| body.local_kind(e) == Some(LocalKind::Env))?;
     let mut moved = false;
+    let mut consumed = false;
     let mut borrowed = false;
     for blk in &body.blocks {
         let mut f = |u: Use<'_>| match u {
             Use::Op(Operand::Move(q)) if below_field(q, env, k) => moved = true,
-            Use::Borrow(q) if below_field(q, env, k) => borrowed = true,
+            Use::Borrow(q) if borrows_var(q, env, k, cap.mode) => borrowed = true,
             _ => {}
         };
         for s in &blk.stmts {
+            // A by-value pattern that consumes a linear value takes it, as a move.
+            if let StmtKind::Consume(q) = &s.kind {
+                consumed |= below_field(q, env, k);
+            }
             stmt_uses(&s.kind, &mut f);
         }
         term_uses(&blk.term.kind, &mut f);
     }
+    moved |= consumed;
+    let copy = source_copy(p, tys, c, k)?;
     Some(if moved {
         CaptureMode::ByMove
-    } else if src.props.copy && !borrowed {
+    } else if copy && !borrowed {
         CaptureMode::Kept
     } else {
         CaptureMode::ByRef
@@ -1757,7 +1851,7 @@ fn capture_rule(
 }
 
 /// V13 for closure `ci`: a `Kept` capture is never borrowed, its aggregate operand
-/// is a copy of a whole local, and each stated mode is the mode of rule CAPTURE.
+/// is a copy of its source cell, and each stated mode is the mode of rule CAPTURE.
 fn kept(p: &Program, tys: &TyTable, ci: ClosureId, c: &crate::ClosureDecl, out: &mut Vec<Broken>) {
     let mut first_agg: Option<BlockId> = None;
     if let Some(maker) = p.body(c.maker) {
@@ -1775,13 +1869,14 @@ fn kept(p: &Program, tys: &TyTable, ci: ClosureId, c: &crate::ClosureDecl, out: 
                     if cap.mode != CaptureMode::Kept {
                         continue;
                     }
-                    let whole_copy = matches!(ops.get(k), Some(Operand::Copy(pl)) if pl.is_local());
-                    if !whole_copy {
+                    let cell_copy = kept_cell(maker, &cap.source)
+                        && matches!(ops.get(k), Some(Operand::Copy(pl)) if *pl == cap.source);
+                    if !cell_copy {
                         out.push(Broken {
                             rule: Rule::KeptBorrowed,
                             body: c.maker,
                             block: Some(bid(bi)),
-                            local: Some(cap.source),
+                            local: Some(cap.source.local),
                         });
                     }
                 }
@@ -1795,7 +1890,8 @@ fn kept(p: &Program, tys: &TyTable, ci: ClosureId, c: &crate::ClosureDecl, out: 
                 let mut f = |u: Use<'_>| {
                     if let Use::Borrow(q) = u {
                         hit |= c.captures.iter().enumerate().any(|(k, cap)| {
-                            cap.mode == CaptureMode::Kept && below_field(q, env, k)
+                            cap.mode == CaptureMode::Kept
+                                && borrows_var(q, env, k, CaptureMode::Kept)
                         });
                     }
                 };
@@ -1825,7 +1921,7 @@ fn kept(p: &Program, tys: &TyTable, ci: ClosureId, c: &crate::ClosureDecl, out: 
                 },
                 body: c.maker,
                 block: first_agg,
-                local: Some(cap.source),
+                local: Some(cap.source.local),
             });
         }
     }

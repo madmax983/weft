@@ -1,0 +1,131 @@
+fn f0 eat(Buf) -> (): b0
+fn f1 main() -> (): b1
+fn f2 nested_once() -> (): b3
+fn f3 Vec.new<T0>() -> Vec<T0> / (): extern
+closure c0: body b2, maker b1, cap_env e0, captures [ByMove _1], once
+closure c1: body b4, maker b3, cap_env e0, captures [ByMove _1], once
+closure c2: body b5, maker b3, cap_env e0, captures [ByMove _3], once
+cap_env e0
+
+body b0: fn eat; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Buf (Param(0) `b`)
+  bb0:
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn main; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: Buf (User `b`)
+  _2: Vec<u64> (Temp(Operand))
+  _3: fn() -> () (User `f`)
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    _1 = Buf { move _2 }
+    Dead(_2)
+    Live(_3)
+    _3 = closure c0(move _1)
+    _0 = call (move _3)() / e0 -> [bb5, unwind: bb4]
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb6)
+  bb3 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb2)
+  bb4 (cleanup):
+    UnwindValue(_3, Drop)
+    Dead(_3)
+    Goto(bb3)
+  bb5:
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    UnwindExit
+
+body b2: closure c0; parent b1; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    _0 = call eat(move _1.0) / e0 -> [bb2, unwind: bb1]
+  bb1 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb2:
+    Return
+  bb3 (cleanup):
+    UnwindExit
+
+body b3: fn nested_once; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: Buf (User `b`)
+  _2: Vec<u64> (Temp(Operand))
+  _3: fn() -> () (User `f`)
+  _4: fn() -> () (User `g`)
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    _1 = Buf { move _2 }
+    Dead(_2)
+    Live(_3)
+    _3 = closure c1(move _1)
+    Live(_4)
+    _4 = closure c2(move _3)
+    _0 = call (move _4)() / e0 -> [bb6, unwind: bb5]
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb7)
+  bb3 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb2)
+  bb4 (cleanup):
+    UnwindValue(_3, Drop)
+    Dead(_3)
+    Goto(bb3)
+  bb5 (cleanup):
+    UnwindValue(_4, Drop)
+    Dead(_4)
+    Goto(bb4)
+  bb6:
+    Dead(_4)
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb7 (cleanup):
+    UnwindExit
+
+body b4: closure c1; parent b3; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    _0 = call eat(move _1.0) / e0 -> [bb2, unwind: bb1]
+  bb1 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb2:
+    Return
+  bb3 (cleanup):
+    UnwindExit
+
+body b5: closure c2; parent b3; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    _0 = call (move _1.0)() / e0 -> [bb2, unwind: bb1]
+  bb1 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb2:
+    Return
+  bb3 (cleanup):
+    UnwindExit

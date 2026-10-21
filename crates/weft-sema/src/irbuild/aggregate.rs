@@ -135,7 +135,9 @@ impl Builder<'_> {
 
     /// Writes the value of a name that is not a local into `dest`: a variant
     /// with no payload is an aggregate with no operand (`None`). A function
-    /// item as a value is for plan stage B9.
+    /// item as a value is a constant with its type arguments (`docs/ir.md`
+    /// 5.23): `dest = Use(Const::Fn(f, tys))`. A constructor as a value is
+    /// for plan stage B12.
     pub(super) fn item_into(&mut self, e: &Expr, dest: Place) -> R<()> {
         let t = self.t;
         match t.res.get(&e.id) {
@@ -146,7 +148,14 @@ impl Builder<'_> {
                 }
                 self.aggregate_into(e, AggKind::Variant(ty, VariantIdx(*variant)), &[], dest)
             }
-            Some(Res::Fn { .. } | Res::Struct(_)) => unsupported(Construct::ItemName, e.span),
+            Some(Res::Fn { item, targs }) => {
+                let id = self.fn_id(*item, e.span)?;
+                let origin = self.origin(e.span, Some(e.id));
+                let c = Const::Fn(id, targs.clone());
+                self.assign(dest, Rvalue::Use(Operand::Const(c)), origin);
+                Ok(())
+            }
+            Some(Res::Struct(_)) => unsupported(Construct::ItemName, e.span),
             _ => unsupported(Construct::NoThir, e.span),
         }
     }

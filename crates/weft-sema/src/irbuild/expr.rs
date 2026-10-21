@@ -38,7 +38,6 @@ const fn bin_op(op: ast::BinOp) -> Option<(BinOp, bool)> {
 /// lower yet.
 const fn later(e: &ExprKind) -> Construct {
     match e {
-        ExprKind::Closure { .. } => Construct::Closure,
         ExprKind::Handle { .. } => Construct::Handle,
         ExprKind::Scope { .. } => Construct::Scope,
         // The builder lowers these kinds before it asks for a right side. A
@@ -57,7 +56,8 @@ const fn later(e: &ExprKind) -> Construct {
         | ExprKind::MethodCall { .. }
         | ExprKind::Tuple(_)
         | ExprKind::Array(_)
-        | ExprKind::StructLit { .. } => Construct::NoThir,
+        | ExprKind::StructLit { .. }
+        | ExprKind::Closure { .. } => Construct::NoThir,
     }
 }
 
@@ -176,6 +176,7 @@ impl Builder<'_> {
             ExprKind::Name(_) | ExprKind::Field { .. } if self.t.res.contains_key(&e.id) => {
                 return self.item_into(e, dest)
             }
+            ExprKind::Closure { params, body } => return self.closure_into(e, params, body, &dest),
             _ => {}
         }
         let rv = self.rvalue(e)?;

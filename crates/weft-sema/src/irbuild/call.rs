@@ -76,7 +76,7 @@ impl Builder<'_> {
             thir::Callee::Variant { variant, .. } => self.variant_into(e, *variant, &slots, dest),
             thir::Callee::Builtin(Builtin::Print) => self.print_into(e, &slots, dest),
             thir::Callee::Builtin(_) => unsupported(Construct::Task, e.span),
-            thir::Callee::Value(_) => unsupported(Construct::FnValueCall, e.span),
+            thir::Callee::Value(_) => self.value_call(e, &slots, &dest),
             thir::Callee::Resume(_) => unsupported(Construct::Handle, e.span),
         }
     }
@@ -156,6 +156,78 @@ impl Builder<'_> {
         self.enter(next);
         // A call result is built in place: its place fields have no value
         // (`docs/ir.md` 5.17, ADR 0007).
+        let ty = self.ty(e)?;
+        self.unset_fields(dest, ty, &[], origin);
+        Ok(())
+    }
+
+    /// Lowers a call of a function value (`docs/ir.md` 5.21):
+    ///
+    /// ```text
+    /// v(a)  =>  tv := copy v; ta := <a>; dest = call (copy tv)(move ta) -> [next, unwind: C]
+    /// ```
+    ///
+    /// The callee is an operand, read before the arguments. It skips its
+    /// temporary if no argument can run code (5.1.1). A local that holds a
+    /// `once` closure moves at the call (W0502). The arguments run in the
+    /// order of the parameters (the THIR order, from the function item that
+    /// the local holds for named arguments). A call of a function value can
+    /// abort.
+    fn value_call(&mut self, e: &Expr, slots: &[&Expr], dest: &Place) -> R<()> {
+        let ExprKind::Call { callee, .. } = &e.kind else {
+            return unsupported(Construct::NoThir, e.span);
+        };
+        let fty = self.value_ty(callee)?;
+        let params: Vec<TyId> = match self.tys.try_get(fty) {
+            Some(Ty::Fn(f)) => f.params.clone(),
+            _ => return unsupported(Construct::NoThir, callee.span),
+        };
+        let Some(place) = self.as_place(callee)? else {
+            return unsupported(Construct::NoThir, callee.span);
+        };
+        let read = self.read_place(place, fty, callee)?;
+        let skip = slots.iter().all(|a| self.inert(a));
+        let op = if skip {
+            read
+        } else {
+            let origin = self.origin(callee.span, Some(callee.id));
+            let tv = self.temp(fty, TempKind::Callee, origin);
+            let moves = matches!(read, Operand::Move(_));
+            if moves {
+                // The temporary holds a `once` closure: a read of it moves.
+                if let Some(d) = self.locals.get_mut(tv.index()) {
+                    d.props.copy = false;
+                    d.props.once = true;
+                }
+            }
+            self.assign(Place::local(tv), Rvalue::Use(read), origin);
+            if moves {
+                Operand::Move(Place::local(tv))
+            } else {
+                Operand::Copy(Place::local(tv))
+            }
+        };
+        let skips = self.skips(slots);
+        let mut ops = Vec::with_capacity(slots.len());
+        for (i, (a, skip)) in slots.iter().zip(skips).enumerate() {
+            let own = params.get(i).is_some_and(|&p| self.props(p).immovable);
+            ops.push(self.operand_in(a, skip, own)?);
+        }
+        let origin = self.origin(e.span, Some(e.id));
+        let unwind = Some(self.cleanup(origin));
+        let next = self.new_block();
+        self.terminate(
+            TermKind::Call {
+                callee: Callee::Value(op),
+                args: ops,
+                dest: dest.clone(),
+                caps: self.cap_args(),
+                next: Some(BlockId(id_of(next))),
+                unwind,
+            },
+            origin,
+        );
+        self.enter(next);
         let ty = self.ty(e)?;
         self.unset_fields(dest, ty, &[], origin);
         Ok(())

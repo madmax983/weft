@@ -1,0 +1,13 @@
+// A function item as a value is a constant (`docs/ir.md` 5.23):
+// `t := Use(Const::Fn(f, tys))`. A generic item has its type arguments.
+
+fn double(x: u64) -> u64 { x * 2 }
+fn id<T>(x: T) -> T { x }
+fn run(f: fn(u64) -> u64, x: u64) -> u64 { f(x) }
+
+fn main() {
+    let g = double
+    print(g(2))
+    print(run(double, 3))
+    print(run(id, 4))
+}

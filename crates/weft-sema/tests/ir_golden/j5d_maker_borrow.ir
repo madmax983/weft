@@ -1,0 +1,89 @@
+fn f0 norm(&Point) -> u64: b0
+fn f1 make(u64) -> fn() -> (): b1
+fn f2 main() -> (): b3
+closure c0: body b2, maker b1, cap_env e0, captures [ByRef _2]
+cap_env e0
+
+body b0: fn norm; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: &Point (Param(0) `p`)
+  _2: u64 (Temp(Operand))
+  _3: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Mul<u64>(copy (*_1).0, copy (*_1).0)
+    Live(_3)
+    _3 = Mul<u64>(copy (*_1).1, copy (*_1).1)
+    _0 = Add<u64>(move _2, move _3)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn make; cap_env e0; unwind_exit bb1
+  _0: fn() -> () (Return)
+  _1: u64 (Param(0) `a`)
+  _2: Point (User `p`)
+  _3: &Point (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Point { copy _1, const 2u64 }
+    Live(_3)
+    _3 = &_2
+    _0 = closure c0(move _3)
+    Dead(_2)
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: closure c0; parent b1; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  _2: u64 (Temp(Operand))
+  _3: &Point (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = &(*_1.0)
+    _2 = call norm(move _3) / e0 -> [bb4, unwind: bb3]
+  bb1 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb1)
+  bb3 (cleanup):
+    Dead(_3)
+    Goto(bb2)
+  bb4:
+    Print(copy _2)
+    _0 = const ()
+    Dead(_3)
+    Dead(_2)
+    Return
+  bb5 (cleanup):
+    UnwindExit
+
+body b3: fn main; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: fn() -> () (User `f`)
+  bb0:
+    Live(_1)
+    _1 = call make(const 3u64) / e0 -> [bb3, unwind: bb2]
+  bb1 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb1)
+  bb3:
+    _0 = call (copy _1)() / e0 -> [bb4, unwind: bb2]
+  bb4:
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    UnwindExit
