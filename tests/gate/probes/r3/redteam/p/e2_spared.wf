@@ -1,0 +1,59 @@
+linear struct Lock { id: u64 }
+fn release(l: Lock) { let Lock(i) = l }
+effect Run { fn run(f: fn()) }
+effect Ask { fn ask() -> u64 }
+effect Choice { multi fn choose() -> bool }
+
+// The clause runs a function argument that fails through the caller's handler.
+fn clause_runs_arg() / fail {
+    let l = Lock { id: 1 }
+    handle Run { fn run(f) { f(); resume(()) } } in {
+        run(|| fail("x"))   //~ W0602
+    }
+    release(l)
+}
+// The clause calls a stored closure that fails.
+fn clause_calls_outer_closure() / fail {
+    let l = Lock { id: 1 }
+    let g = || fail("x")
+    handle Ask { fn ask() { g(); resume(1) } } in {
+        let n = ask()   //~ W0602
+    }
+    release(l)
+}
+// The clause aborts through a nested handle of the outer effect.
+fn clause_nested_handle() / fail {
+    let l = Lock { id: 1 }
+    handle Ask { fn ask() {
+        handle Run { fn run(f) { fail("y") } } in run(|| print(1))
+        resume(1)
+    } } in {
+        let n = ask()   //~ W0602
+    }
+    release(l)
+}
+// The clause performs a multi operation of an outer handler.
+fn clause_multi_outer() / Choice {
+    let l = Lock { id: 1 }
+    handle Ask { fn ask() { let b = choose(); resume(1) } } in {
+        let n = ask()   //~ W0503
+    }
+    release(l)
+}
+// A resume value: the clause gives a closure that fails to the body.
+fn resume_value_fails() / fail {
+    let l = Lock { id: 1 }
+    handle Ask { fn ask() { resume(1) } } in {
+        let n = ask()
+    }
+    release(l)
+}
+test "clause_runs_arg" {
+    handle Fail { fn fail(m) { print(m) } } in clause_runs_arg()
+}
+test "clause_calls_outer_closure" {
+    handle Fail { fn fail(m) { print(m) } } in clause_calls_outer_closure()
+}
+test "clause_nested_handle" {
+    handle Fail { fn fail(m) { print(m) } } in clause_nested_handle()
+}

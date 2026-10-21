@@ -1,0 +1,15 @@
+linear struct Guard { id: u64 }
+
+
+fn slow() -> u64 / clock {
+    let g = Guard { id: 1 }
+    let Guard(id) = g
+    42
+}
+
+fn main() / io {
+    {
+        let r = with_timeout(1.s) { slow() }
+    }
+}
+

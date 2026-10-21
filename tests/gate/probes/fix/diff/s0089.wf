@@ -1,0 +1,2 @@
+struct S0<T0, T1> { f0: u64, f1: bool }
+fn main() {}

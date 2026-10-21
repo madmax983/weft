@@ -1,0 +1,7 @@
+pub struct E { hp: i64 }
+impl E {
+    pub fn diff(self, a: i64, b: i64) -> i64 { a - b + self.hp }
+}
+pub fn mk() -> E { E { hp: 100 } }
+pub fn sub(a: i64, b: i64) -> i64 { a - b }
+pub fn inner(x: E) -> i64 { x.diff(b: 1, a: 50) }

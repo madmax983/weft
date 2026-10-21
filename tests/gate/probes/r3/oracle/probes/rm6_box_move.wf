@@ -1,0 +1,12 @@
+struct Node { v: u64 }
+fn take<T>(x: T) { }
+fn take_rc(x: Rc<Node>) { }
+fn take_n(x: Node) { }
+fn main() {
+    let bx = Box.new(Node { v: 5 })
+    scope { s =>
+        let b = s.spawn(|| bx.v + 1)
+        take(bx)
+        print(b.join())
+    }
+}

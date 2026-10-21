@@ -1,0 +1,29 @@
+effect Choice { multi fn choose() -> bool }
+fn needs_uniq(es: &[u64] @ uniq) / mut(es) {}
+// A closure that captured a unique borrow is live across a multi operation.
+fn uniq_closure(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let (l, r) = v.split_mut(1)
+    let f = || needs_uniq(l)
+    let b = choose()
+    f()
+    b
+}
+// Control: the unique borrow itself.
+fn uniq_direct(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let (l, r) = v.split_mut(1)
+    let b = choose()
+    needs_uniq(l)
+    b
+}
+linear struct Token { id: u64 }
+    on abort = spend
+fn spend(t: Token) { let Token(i) = t }
+fn mint() -> Token { Token { id: 1 } }
+// A linear value inside a tuple temp, live across multi via a once closure capture.
+fn tuple_linear() -> bool / Choice {
+    let p = (mint(), 1)
+    let b = choose()
+    let (t, n) = p
+    spend(t)
+    b
+}

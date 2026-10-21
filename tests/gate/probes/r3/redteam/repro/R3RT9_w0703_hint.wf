@@ -1,0 +1,15 @@
+// R3RT9 (minor, regression): the W0703 hint for a write through a call result
+// with no stated place names the one-place instance `(w..).hp`. The hint
+// `mut((w..).hp)` does not parse (W0001: a place cannot start with `(`, and
+// `..` must be the last step). Commit 328a39b gave `mut(w..)`, which parses.
+// The message also names the callee `assign` for an assignment.
+struct Entity { id: u64, hp: i32 }
+struct World { entities: Vec<Entity> }
+fn find(w: &World, id: u64) -> Option<&Entity> {
+    for e in w.entities[] { if e.id == id { return Some(e) } }
+    None
+}
+fn damage(w: &World, id: u64) / mut(w.entities[].hp) {
+    match find(w, id) { Some(e) => { e.hp -= 1 }, None => {} }   //~ W0703
+}
+fn main() {}

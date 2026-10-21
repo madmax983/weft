@@ -1,0 +1,28 @@
+// A callee runs its function parameter as tasks. The caller gives a closure
+// that mutates a local. The direct forms in `direct_fork` and `direct_spawn`
+// get W0403 and W0405. The forms through a callee are accepted.
+fn par(f: fn(), g: fn()) / par { fork(f, g) }
+
+fn bg(f: fn()) {
+    scope { s =>
+        s.spawn(f)
+        s.spawn(f)
+    }
+}
+
+fn via_fork() / par {
+    let n = 0
+    par(|| n += 1, || n += 2)
+    print(n)
+}
+
+fn via_spawn() {
+    let n = 0
+    bg(|| n += 1)
+    print(n)
+}
+
+fn main() / par, async {
+    via_fork()
+    via_spawn()
+}

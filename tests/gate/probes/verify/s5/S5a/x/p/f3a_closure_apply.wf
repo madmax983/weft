@@ -1,0 +1,15 @@
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { print("unlocked")
+ let Lock(i) = l }
+fn lock() -> Lock { print("locked")
+ Lock { id: 1 } }
+fn hold_fail<T>(x: T) -> T / fail { fail("boom")
+ x }
+fn apply_lock(x: Lock, f: fn(Lock) -> Lock / fail) -> Lock / fail { f(x) }
+fn g_closure() / fail {
+    let m = apply_lock(lock(), |y: Lock| hold_fail(y))
+    unlock(m)
+}
+fn main() {
+    handle Fail { fn fail(m) { print(m) } } in g_closure()
+}

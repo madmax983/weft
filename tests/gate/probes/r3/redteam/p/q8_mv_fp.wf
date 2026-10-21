@@ -1,0 +1,17 @@
+struct Entity { hp: i32 }
+fn mv(a: &Vec<&Entity>, b: &Vec<&Entity>) / mut(a, b) {
+    match a.pop() { Some(e) => b.push(e), None => {} }
+}
+fn caller(d: &Entity, e: &Entity) {
+    let a = Vec.new()
+    a.push(e)
+    let b = Vec.new()
+    b.push(d)
+    mv(&a, &b)
+    print(b.len())
+}
+fn main() {
+    let d = Entity { hp: 1 }
+    let e = Entity { hp: 2 }
+    caller(&d, &e)
+}

@@ -1,0 +1,35 @@
+struct Node { v: u64 }
+struct Cb { f: fn() }
+effect Choice { multi fn choose() -> bool }
+fn needs_uniq(es: &[u64] @ uniq) / mut(es) {}
+// nonportable closure in a Vec<fn()>
+fn vec_fn() / par {
+    let n = Rc.new(Node { v: 1 })
+    let v: Vec<fn()> = Vec.new()
+    v.push(|| print(n.v))
+    fork(|| print(v.len()), || print(2))
+}
+// uniq closure in a fn() field, live across multi
+fn uniq_field(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let (l, r) = v.split_mut(1)
+    let cb = Cb { f: || needs_uniq(l) }
+    let b = choose()
+    let g = cb.f
+    g()
+    b
+}
+// nonportable closure stored by assignment into a field
+fn assign_field() / par {
+    let n = Rc.new(Node { v: 1 })
+    let cb = Cb { f: || print(1) }
+    cb.f = || print(n.v)
+    fork(|| { let g = cb.f
+ g() }, || print(2))
+}
+// nonportable closure returned from a function as fn()
+fn mk(n: Rc<Node>) -> fn() { || print(n.v) }
+fn returned() / par {
+    let n = Rc.new(Node { v: 1 })
+    let c = mk(n)
+    fork(|| c(), || print(2))
+}

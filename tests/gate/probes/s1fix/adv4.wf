@@ -1,0 +1,10 @@
+fn show(x: &u64, n: u64) { print(x) }
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(3); v }
+fn main() {
+    show(&mkv()[0], 1)
+    print(9)
+    for x in mkv()[] { if x > 1 { break } }
+    print(8)
+    let n = { let t = mkv(); t.len() }
+    print(n)
+}

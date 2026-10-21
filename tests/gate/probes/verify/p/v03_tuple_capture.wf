@@ -1,0 +1,23 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn tuple_use(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    let t = (|| print(r.hp), 1)
+    world.entities.clear()
+    let (h, n) = t
+    h()
+}
+fn vec_use(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    let v = Vec.new()
+    v.push(|| print(r.hp))
+    world.entities.clear()
+    let h = v[0]
+    h()
+}
+fn if_use(world: &World, c: bool) / mut(world.entities) {
+    let r = &world.entities[0]
+    let h = if c { || print(r.hp) } else { || print(1) }
+    world.entities.clear()
+    h()
+}

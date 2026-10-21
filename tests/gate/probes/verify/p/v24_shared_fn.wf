@@ -1,0 +1,10 @@
+fn hof(f: fn(&Vec<u64> @ shared), v: &Vec<u64>) { f(v) }
+fn caller(v: &Vec<u64>) {
+    hof(|x| x.push(2), v)
+}
+effect Peek { fn peek(v: &Vec<u64> @ shared) }
+fn clause() {
+    let v: Vec<u64> = Vec.new()
+    handle Peek { fn peek(x) { x.push(2); resume(()) } } in peek(&v)
+}
+fn direct(v: &Vec<u64> @ shared) { v.push(2) }

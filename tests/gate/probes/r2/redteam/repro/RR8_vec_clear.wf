@@ -1,0 +1,25 @@
+// RR8: `Vec.clear` drops each element. On a `Vec` of linear values it drops
+// linear values, and no rule sees it: the prelude `clear(self) / mut(self)` has
+// no parameter of the element type, so the `drops` rules (ADR 0007) do not
+// apply. A generic callee that clears a `Vec<T>` has the same hole.
+// Expected: W0601 at each marked line. Actual: no error. The instrumented
+// interpreter faults: "a live linear value was dropped with no consume".
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+extern fn archive(v: Vec<Tx>) / blocking
+
+fn reset(v: &Vec<Tx>) / mut(v) {
+    v.clear()   //~ W0601
+}
+fn clear_any<T>(v: &Vec<T>) / mut(v) { v.clear() }
+fn reset_generic(v: &Vec<Tx>) / mut(v) {
+    clear_any(v)   //~ W0601
+}
+fn main() / blocking {
+    let v = Vec.new()
+    v.push(begin())
+    reset(&v)
+    archive(v)
+}

@@ -1,0 +1,25 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn det<T>(t: Task<T>) { t.detach() }
+
+fn generic_detach() / async {
+    scope { s =>
+        let t = s.spawn(|| begin())
+        det(t)   //~ W0601
+    }
+}
+fn ufcs_clear(v: &Vec<Tx>) / mut(v) {
+    Vec.clear(v)   //~ W0601
+}
+fn apply(v: &Vec<Tx>, f: fn(&Vec<Tx>)) / mut(v) { f(v) }
+fn clear_value(v: &Vec<Tx>) / mut(v) {
+    apply(v, Vec.clear)   //~ W0601
+}
+fn json_value() {
+    let f = Response.json
+    let r = f(begin())   //~ W0601
+}
+fn main() {
+}

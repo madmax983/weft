@@ -1,0 +1,11 @@
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+fn mk() -> Frame { Frame { buf: [1, 2, 3, 4] } }
+fn s01() { let f = mk()
+ print(f.cur) }
+struct Outer { f: Frame, n: u64 }
+fn s02() { let o = Outer { f: mk(), n: 1 }
+ print(o.f.cur) }
+fn s03() { let o = Outer { f: Frame { buf: [1, 2, 3, 4] }, n: 1 }
+ print(o.f.cur) }
+fn main() { s01()
+ s03() }

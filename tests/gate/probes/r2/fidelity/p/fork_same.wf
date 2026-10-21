@@ -1,0 +1,29 @@
+struct Entity { hp: u64 }
+struct World { entities: Vec<Entity> }
+
+fn heal(es: &[Entity]) / mut(es[]) {
+    for e in es[] { e.hp += 1 }
+}
+
+// Both branches mutate the same `@ uniq` half on two threads: a data race.
+fn same_half(world: &World) / mut(world.entities[]), par {
+    let mid = world.entities.len() / 2
+    let (l, r) = world.entities.split_mut(mid)
+    fork(|| heal(l), || heal(l))
+}
+
+// The two branches capture one `@ uniq` part each, but the parts overlap.
+fn overlap(world: &World) / mut(world.entities[]), par {
+    let mid = world.entities.len() / 2
+    let (l, r) = world.entities.split_mut(mid)
+    let (l2, r2) = world.entities.split_mut(mid)
+    fork(|| heal(l), || heal(l2))
+}
+
+fn main() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w.entities.push(Entity { hp: 1 })
+    same_half(&w)
+    overlap(&w)
+}

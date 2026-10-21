@@ -1,0 +1,11 @@
+struct Node { v: u64 }
+struct Hold { r: Rc<Node>, n: u64 }
+fn take<T>(x: T) { }
+fn main() {
+    let h = Hold { r: Rc.new(Node { v: 5 }), n: 1 }
+    scope { s =>
+        let b = s.spawn(|| h.r.v + 1)
+        h.r = Rc.new(Node { v: 6 })
+        print(b.join())
+    }
+}

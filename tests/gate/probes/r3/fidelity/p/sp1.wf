@@ -1,0 +1,43 @@
+// Nested local handlers: an operation of the inner handler whose clause
+// performs through the outer local handler, and the outer clause drops the
+// continuation. A value inside the outer body, outside the inner body, unwinds.
+effect Quit { fn quit() }
+effect Ask { fn ask() -> u64 }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+
+fn nested() {
+    handle Quit { fn quit() { print("quit") } } in {
+        let l = Lk { id: 1 }
+        let n = handle Ask { fn ask() { quit(); resume(1) } } in { ask() + 1 }   // expected W0602
+        print(n)
+        unlock(l)
+    }
+}
+
+// The inner clause calls a local closure that performs through the outer handler.
+fn nested_closure() {
+    handle Quit { fn quit() { print("quit") } } in {
+        let l = Lk { id: 2 }
+        let q = || quit()
+        let n = handle Ask { fn ask() { q(); resume(1) } } in { ask() + 1 }   // expected W0602
+        print(n)
+        unlock(l)
+    }
+}
+
+// The inner clause calls a function that performs through a handler of the caller:
+fn helper() / Quit { quit() }
+fn nested_fn() {
+    handle Quit { fn quit() { print("quit") } } in {
+        let l = Lk { id: 3 }
+        let n = handle Ask { fn ask() { helper(); resume(1) } } in { ask() + 1 }   // expected W0602
+        print(n)
+        unlock(l)
+    }
+}
+fn main() {
+    nested()
+    nested_closure()
+    nested_fn()
+}

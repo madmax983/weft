@@ -1,0 +1,33 @@
+effect Choice { multi fn choose() -> bool }
+linear struct Token { id: u64 }
+    on abort = spend
+fn spend(t: Token) { let Token(i) = t }
+fn mint() -> Token { Token { id: 1 } }
+fn apply(f: fn() -> bool) -> bool { f() }
+struct Box2 { f: fn() -> bool / Choice }
+
+// The caller holds `t` across a call that passes the `Choice` capability on
+// to a closure. The multi rule applies at the call (effects rule 1).
+fn via_apply() -> bool / Choice {
+    let t = mint()
+    let b = apply(|| choose())   //~ W0503
+    spend(t)
+    b
+}
+// The same with a function item value.
+fn chooser() -> bool / Choice { choose() }
+fn via_item() -> bool / Choice {
+    let t = mint()
+    let g = chooser
+    let b = apply(g)   //~ W0503
+    spend(t)
+    b
+}
+// A stored function value.
+fn via_store(bx: &Box2) -> bool / Choice {
+    let t = mint()
+    let g = bx.f
+    let b = g()   //~ W0503
+    spend(t)
+    b
+}

@@ -1,0 +1,82 @@
+// O3-2 (blocker, regression of round 2). The value of a handled body points
+// into a temporary of the body. The interpreter runs the handled body in a
+// frame of its own and frees its temporaries at its end (ADR 0003). The facts
+// free the temporary before the local gets the value (`scope_end` of the
+// temporary, then `rebound_at` of the local), so the free does not reach the
+// local. Commit 328a39b and f211d13 (end of R2b) reject the `let` and the
+// assignment forms with W0301; acd05a8 (end of R2c) and b073ea7 accept them.
+// The argument forms (`argument`, `scope_argument`) are accepted also in
+// 328a39b: there the checker kept the temporaries to the end of the outer
+// statement, but the interpreter frees them at the end of the handled body or
+// the scope body. A `scope` body has the same defect (its temporaries die at
+// the end of the scope in the interpreter).
+effect Note { fn note(x: u64) }
+effect Ask { fn ask() -> u64 }
+struct E { hp: u64 }
+struct W { b: Box<E>, ns: Vec<u64> }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v.push(2); v }
+fn mk_w() -> W { W { b: Box.new(E { hp: 1 }), ns: mk_v() } }
+fn first(v: &Vec<u64>) -> &u64 in v[] { &v[0] }
+fn show(r: &u64) { print(r + 1) }
+
+fn plain() {
+    let r = handle Note { fn note(x) { resume(()) } } in { &mk_v()[0] }
+    print(r + 1)          // oracle: a read of a freed cell
+}
+
+fn callee() {
+    let r = handle Note { fn note(x) { resume(()) } } in { first(&mk_v()) }
+    print(r + 1)          // oracle: a read of a freed cell
+}
+
+fn method() {
+    let r = handle Note { fn note(x) { resume(()) } } in { mk_v().get(0) }
+    print(r + 1)          // oracle: a read of a freed cell
+}
+
+fn no_block() {
+    let r = handle Note { fn note(x) { resume(()) } } in &mk_v()[0]
+    print(r + 1)          // oracle: a read of a freed cell
+}
+
+fn box_field() {
+    let r = handle Note { fn note(x) { resume(()) } } in { &mk_w().b.hp }
+    print(r + 1)          // oracle: a read of a freed cell
+}
+
+fn option() {
+    let o = handle Note { fn note(x) { resume(()) } } in { Some(&mk_v()[0]) }
+    match o {
+        Some(r) => print(r + 1),   // oracle: a read of a freed cell
+        None => {}
+    }
+}
+
+fn argument() {
+    show(handle Note { fn note(x) { resume(()) } } in { first(&mk_v()) })   // oracle
+}
+
+fn scope_argument() {
+    show(scope { s => first(&mk_v()) })   // oracle: a read of a freed cell
+}
+
+fn assigned() {
+    let r = &[5][0]
+    r = handle Ask { fn ask() { resume(1) } } in { let k = ask(); first(&mk_v()) }
+    print(r + 1)          // oracle: a read of a freed cell
+}
+
+fn from_fn() -> u64 {
+    let r = handle Note { fn note(x) { resume(()) } } in { &mk_v()[0] }
+    r + 0                 // stock: a place does not exist
+}
+
+fn with_local() {
+    // The same value from a local of the body: W0301 (correct).
+    let r = handle Note { fn note(x) { resume(()) } } in { let t = mk_v(); &t[0] }
+    print(r + 1)
+}
+
+fn main() {
+    plain()
+}

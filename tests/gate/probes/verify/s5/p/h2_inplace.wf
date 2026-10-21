@@ -1,0 +1,29 @@
+effect Stop { fn stop() }
+linear struct L { o: Option<&Vec<u64>>, log: Vec<u64> }
+    on abort = undo_l
+fn undo_l(l: L) {
+    l.log.push(1)
+    helper(&l.log)
+    let L(o, log) = l
+    print("undo l {log.len()}")
+}
+fn helper(v: &Vec<u64>) { v.push(2) }
+
+// Through a reference held by value: a change outside.
+linear struct M { o: &Vec<u64>, n: u64 }
+    on abort = undo_m
+fn undo_m(m: M) {
+    helper(m.o)
+    let M(o, n) = m
+}
+
+fn work(v: &Vec<u64>) / Stop {
+    let l = L { o: Some(v), log: Vec.new() }
+    stop()
+    let L(a, b) = l
+}
+
+fn main() {
+    let v = Vec.new()
+    handle Stop { fn stop() { () } } in work(&v)
+}

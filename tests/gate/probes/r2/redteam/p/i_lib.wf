@@ -1,0 +1,52 @@
+// weft: library
+effect Log { fn log(msg: String) }
+fn fwd(m: String) / log { log.info(m) }
+fn work() / log { log.info("w") }
+fn ticks() / clock { sleep(1.ms) }
+
+// The clause performs another standard effect, not the one it handles.
+pub fn other_std() / clock {
+    handle log {   //~ W0801
+        fn info(m) { sleep(1.ms)
+ resume(()) }
+        fn warn(m) { sleep(1.ms)
+ resume(()) }
+    } in work()
+}
+// The clause performs the user `Log`, not the standard one.
+pub fn user_shadow() / Log {
+    handle log {   //~ W0801
+        fn info(m) { log(m)
+ resume(()) }
+        fn warn(m) { log(m)
+ resume(()) }
+    } in work()
+}
+// Forwarding through a callee is fine.
+pub fn via_callee() / log {
+    handle log {
+        fn info(m) { fwd(m)
+ resume(()) }
+        fn warn(m) { fwd(m)
+ resume(()) }
+    } in work()
+}
+// A forwarding clause that only makes a closure and never calls it.
+pub fn dead_closure() / log {
+    handle log {   //~ W0801
+        fn info(m) { let f = || log.info(m)
+ resume(()) }
+        fn warn(m) { let f = || log.warn(m)
+ resume(()) }
+    } in work()
+}
+// The implied effect `Async`.
+pub fn async_root() / clock {
+    handle Async { fn suspend() { resume(()) } } in ticks()   //~ W0801
+}
+// A sim.run through a generic.
+fn gen_keep<T>(x: T) -> T { x }
+pub fn sim_gen() {
+    let r = gen_keep(sim.run)   //~ W0802
+    r(1, || print(1))
+}

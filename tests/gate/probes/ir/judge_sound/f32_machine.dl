@@ -1,0 +1,9 @@
+// F3-2 (closure form) in the machine design: Main, Ret (binds), FrameEnd (frees).
+place(py). place(pfc).
+owner(pfc, frc).
+cfg_edge(d0, cc). rebound_at(last, d0). points_into(last, py).
+rebound_at(frc, cc).
+cfg_edge(cc, rr). rebound_at(last, rr). points_into(last, pfc).
+cfg_edge(rr, fe). scope_end(frc, fe).
+cfg_edge(fe, pr). uses(last, pr).
+lint("machine F3-2: W0301 at print(last)", pr) :- error(last, pr).

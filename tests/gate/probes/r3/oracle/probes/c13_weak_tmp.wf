@@ -1,0 +1,11 @@
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v.push(2); v }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+effect Note { fn note(x: u64) }
+struct R { items: Vec<u64>, n: u64 }
+
+fn main() {
+    let r = Rc.new(R { items: mk_v(), n: 0 })
+    let w = r.downgrade()
+    let e = match w.upgrade() { Some(q) => &q.items[0], None => &r.items[1] }
+    print(e)
+}

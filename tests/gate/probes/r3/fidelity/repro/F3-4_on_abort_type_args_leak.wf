@@ -1,0 +1,19 @@
+// The `on abort` function takes the generic type at one argument type only.
+effect Stop { fn stop() }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+linear struct G<T> { x: T }
+    on abort = undo_g
+fn undo_g(g: G<u64>) {
+    let G(x) = g
+    print("undo {x}")
+}
+fn body() / Stop {
+    let g = G { x: Tx { id: 1 } }
+    stop()
+    let G(t) = g
+    commit(t)
+}
+fn main() {
+    handle Stop { fn stop() { () } } in body()
+}

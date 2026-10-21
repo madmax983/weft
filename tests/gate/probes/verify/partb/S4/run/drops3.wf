@@ -1,0 +1,10 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx
+ print("rollback {i}") }
+fn begin() -> Tx { Tx { id: 1 } }
+fn d9<T>(x: T) { let y = x }
+fn d5<T>(x: T) { let o = Some(x) }
+fn main() { d9(begin())
+ d5(begin())
+ print("done") }

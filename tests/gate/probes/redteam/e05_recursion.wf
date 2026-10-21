@@ -1,0 +1,12 @@
+fn a(n: u64) { if n > 0 { b(n - 1) } }
+fn b(n: u64) { log.info("x"); a(n) }
+fn top() / clock { a(1) }
+struct C { v: Vec<u64> }
+fn ma(c: &C, n: u64) { if n > 0 { mb(c, n - 1) } }
+fn mb(c: &C, n: u64) { c.v.clear(); ma(c, n) }
+fn top2(c: &C) / mut(c.v) {
+    let r = &c.v[0]
+    ma(c, 1)
+    print(r)
+}
+pub fn top3(c: &C) { ma(c, 1) }

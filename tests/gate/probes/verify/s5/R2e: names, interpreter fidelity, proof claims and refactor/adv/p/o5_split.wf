@@ -1,0 +1,13 @@
+struct E { hp: u64 }
+fn heal(es: &[E]) / mut(es[]) {
+    for e in es[] { e.hp += 1 }
+}
+fn main() / par, async {
+    let v = [E { hp: 1 }, E { hp: 2 }, E { hp: 3 }, E { hp: 4 }]
+    let (l, r) = v.split_mut(2)
+    scope { s =>
+        s.spawn(|| heal(l))
+        s.spawn(|| heal(r))
+    }
+    print(v[0].hp)
+}

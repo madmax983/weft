@@ -1,0 +1,21 @@
+linear struct Lk { id: u64 }
+effect Ask { fn ask() -> u64 }
+effect Note { fn note(x: u64) }
+
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+
+fn main() {
+    let lk1 = Lk { id: 1 }
+    let lk2 = Lk { id: 2 }
+    unlock(lk2)
+    unlock(lk1)
+    handle Ask { fn ask() { print("no resume") } } in {
+        let _ = ask()
+        handle Note { fn note(x) { resume(()) } } in {
+            scope { s9 =>
+                let t10 = s9.spawn(|| print(ask()))
+                t10.join()
+            }
+        }
+    }
+}

@@ -1,0 +1,22 @@
+struct Point { x: u64, y: u64 }
+enum Shape { Dot(Point), Empty }
+
+fn a(p: Point) -> u64 {
+    match p { Point(x, y) => x + y }
+}
+
+fn b(s: Shape) -> u64 {
+    match s { Shape.Dot(Point(x, _)) => x, Shape.Empty => 0 }
+}
+
+fn c(o: Option<(bool, bool)>) -> u64 {
+    match o { Some((true, _)) => 1, Some((false, true)) => 2, Some((false, false)) => 3, None => 0 }
+}
+
+fn d(o: Option<(bool, bool)>) -> u64 {
+    match o { Some((true, _)) => 1, Some((false, true)) => 2, None => 0 } //~ W0120
+}
+
+fn e(r: &Option<u64>) -> u64 {
+    match r { Some(x) => 1, None => 0 }
+}

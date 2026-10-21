@@ -1,0 +1,19 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+struct Wrap<T> { x: T }
+fn set_none<T>(w: &Wrap<Option<T>>) / mut(w) { w.x = None }
+fn set_none_tx(w: &Wrap<Option<Tx>>) / mut(w) { w.x = None }   //~ W0601
+fn swap_vec<T>(w: &Wrap<Vec<T>>) / mut(w) { w.x = Vec.new() }
+fn none_through_ref() {
+    let w = Wrap { x: Some(begin()) }
+    set_none(&w)   //~ W0601
+    match w.x { Some(t) => rollback(t), None => {} }
+}
+fn vec_through_ref() {
+    let w = Wrap { x: Vec.new() }
+    w.x.push(begin())
+    swap_vec(&w)   //~ W0601
+}
+fn main() {}

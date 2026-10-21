@@ -1,0 +1,18 @@
+effect Run { fn run(n: u64, f: fn() -> u64) -> u64 }
+fn inc(x: u64) -> u64 { x + 1 }
+fn one() -> u64 { 1 }
+fn a1() / async { scope { s => s.spawn() } }                   // W0103
+fn a2() / async { scope { s => s.spawn() { 1 } } }               // ok
+fn a3() / async { scope { s => s.spawn(|| 1) { 2 } } }         // W0103
+fn a4() / async { scope { s => s.spawn(inc) } }                // error
+fn a5() / par { let (x, y) = fork(inc, one) }                  // error
+fn a6() / par { let (x, y) = fork(|x: u64| x, || 2) }          // error
+fn a7() / par { let (x, y) = fork(|| 1) { 2 } }                // ok
+fn a8() / async { scope { s => let f = |x: u64| x; s.spawn(f) } }   // error
+fn a9() / par { let t = fork(|| 1, || 2, || 3) }               // ok
+fn b1() / Run { let k = run(f: || 10, 1) }                     // ok
+fn b2() / Run { let k = run(n: 1) { 10 } }                     // ok
+fn b3() / Run { let k = run(1, || 2) { 3 } }                   // W0103
+fn b4() / log { log.info(msg: "x") }                           // ok
+fn b5() / log { log.info(m: "x") }                             // W0103
+fn b6() / Run { let k = run(1, n: 2) }                         // W0103 given twice? (1 -> n, then n: 2)

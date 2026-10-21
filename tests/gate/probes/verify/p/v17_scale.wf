@@ -1,0 +1,165 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Cb { f: fn(&World) }
+fn g0(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 0 }) }
+fn g1(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 1 }) }
+fn g2(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 2 }) }
+fn g3(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 3 }) }
+fn g4(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 4 }) }
+fn g5(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 5 }) }
+fn g6(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 6 }) }
+fn g7(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 7 }) }
+fn g8(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 8 }) }
+fn g9(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 9 }) }
+fn g10(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 10 }) }
+fn g11(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 11 }) }
+fn g12(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 12 }) }
+fn g13(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 13 }) }
+fn g14(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 14 }) }
+fn g15(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 15 }) }
+fn g16(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 16 }) }
+fn g17(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 17 }) }
+fn g18(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 18 }) }
+fn g19(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 19 }) }
+fn g20(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 20 }) }
+fn g21(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 21 }) }
+fn g22(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 22 }) }
+fn g23(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 23 }) }
+fn g24(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 24 }) }
+fn g25(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 25 }) }
+fn g26(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 26 }) }
+fn g27(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 27 }) }
+fn g28(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 28 }) }
+fn g29(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 29 }) }
+fn g30(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 30 }) }
+fn g31(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 31 }) }
+fn g32(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 32 }) }
+fn g33(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 33 }) }
+fn g34(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 34 }) }
+fn g35(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 35 }) }
+fn g36(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 36 }) }
+fn g37(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 37 }) }
+fn g38(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 38 }) }
+fn g39(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 39 }) }
+fn run(cb: &Cb, w: &World) { let h = cb.f; h(w) }
+fn big(world: &World, c: u64) / mut(world.entities) {
+    let g = g0
+    if c == 1 { g = g1 }
+    let cb1 = Cb { f: |x| { g(x); g1(x) } }
+    run(&cb1, world)
+    if c == 2 { g = g2 }
+    let cb2 = Cb { f: |x| { g(x); g2(x) } }
+    run(&cb2, world)
+    if c == 3 { g = g3 }
+    let cb3 = Cb { f: |x| { g(x); g3(x) } }
+    run(&cb3, world)
+    if c == 4 { g = g4 }
+    let cb4 = Cb { f: |x| { g(x); g4(x) } }
+    run(&cb4, world)
+    if c == 5 { g = g5 }
+    let cb5 = Cb { f: |x| { g(x); g5(x) } }
+    run(&cb5, world)
+    if c == 6 { g = g6 }
+    let cb6 = Cb { f: |x| { g(x); g6(x) } }
+    run(&cb6, world)
+    if c == 7 { g = g7 }
+    let cb7 = Cb { f: |x| { g(x); g7(x) } }
+    run(&cb7, world)
+    if c == 8 { g = g8 }
+    let cb8 = Cb { f: |x| { g(x); g8(x) } }
+    run(&cb8, world)
+    if c == 9 { g = g9 }
+    let cb9 = Cb { f: |x| { g(x); g9(x) } }
+    run(&cb9, world)
+    if c == 10 { g = g10 }
+    let cb10 = Cb { f: |x| { g(x); g10(x) } }
+    run(&cb10, world)
+    if c == 11 { g = g11 }
+    let cb11 = Cb { f: |x| { g(x); g11(x) } }
+    run(&cb11, world)
+    if c == 12 { g = g12 }
+    let cb12 = Cb { f: |x| { g(x); g12(x) } }
+    run(&cb12, world)
+    if c == 13 { g = g13 }
+    let cb13 = Cb { f: |x| { g(x); g13(x) } }
+    run(&cb13, world)
+    if c == 14 { g = g14 }
+    let cb14 = Cb { f: |x| { g(x); g14(x) } }
+    run(&cb14, world)
+    if c == 15 { g = g15 }
+    let cb15 = Cb { f: |x| { g(x); g15(x) } }
+    run(&cb15, world)
+    if c == 16 { g = g16 }
+    let cb16 = Cb { f: |x| { g(x); g16(x) } }
+    run(&cb16, world)
+    if c == 17 { g = g17 }
+    let cb17 = Cb { f: |x| { g(x); g17(x) } }
+    run(&cb17, world)
+    if c == 18 { g = g18 }
+    let cb18 = Cb { f: |x| { g(x); g18(x) } }
+    run(&cb18, world)
+    if c == 19 { g = g19 }
+    let cb19 = Cb { f: |x| { g(x); g19(x) } }
+    run(&cb19, world)
+    if c == 20 { g = g20 }
+    let cb20 = Cb { f: |x| { g(x); g20(x) } }
+    run(&cb20, world)
+    if c == 21 { g = g21 }
+    let cb21 = Cb { f: |x| { g(x); g21(x) } }
+    run(&cb21, world)
+    if c == 22 { g = g22 }
+    let cb22 = Cb { f: |x| { g(x); g22(x) } }
+    run(&cb22, world)
+    if c == 23 { g = g23 }
+    let cb23 = Cb { f: |x| { g(x); g23(x) } }
+    run(&cb23, world)
+    if c == 24 { g = g24 }
+    let cb24 = Cb { f: |x| { g(x); g24(x) } }
+    run(&cb24, world)
+    if c == 25 { g = g25 }
+    let cb25 = Cb { f: |x| { g(x); g25(x) } }
+    run(&cb25, world)
+    if c == 26 { g = g26 }
+    let cb26 = Cb { f: |x| { g(x); g26(x) } }
+    run(&cb26, world)
+    if c == 27 { g = g27 }
+    let cb27 = Cb { f: |x| { g(x); g27(x) } }
+    run(&cb27, world)
+    if c == 28 { g = g28 }
+    let cb28 = Cb { f: |x| { g(x); g28(x) } }
+    run(&cb28, world)
+    if c == 29 { g = g29 }
+    let cb29 = Cb { f: |x| { g(x); g29(x) } }
+    run(&cb29, world)
+    if c == 30 { g = g30 }
+    let cb30 = Cb { f: |x| { g(x); g30(x) } }
+    run(&cb30, world)
+    if c == 31 { g = g31 }
+    let cb31 = Cb { f: |x| { g(x); g31(x) } }
+    run(&cb31, world)
+    if c == 32 { g = g32 }
+    let cb32 = Cb { f: |x| { g(x); g32(x) } }
+    run(&cb32, world)
+    if c == 33 { g = g33 }
+    let cb33 = Cb { f: |x| { g(x); g33(x) } }
+    run(&cb33, world)
+    if c == 34 { g = g34 }
+    let cb34 = Cb { f: |x| { g(x); g34(x) } }
+    run(&cb34, world)
+    if c == 35 { g = g35 }
+    let cb35 = Cb { f: |x| { g(x); g35(x) } }
+    run(&cb35, world)
+    if c == 36 { g = g36 }
+    let cb36 = Cb { f: |x| { g(x); g36(x) } }
+    run(&cb36, world)
+    if c == 37 { g = g37 }
+    let cb37 = Cb { f: |x| { g(x); g37(x) } }
+    run(&cb37, world)
+    if c == 38 { g = g38 }
+    let cb38 = Cb { f: |x| { g(x); g38(x) } }
+    run(&cb38, world)
+    if c == 39 { g = g39 }
+    let cb39 = Cb { f: |x| { g(x); g39(x) } }
+    run(&cb39, world)
+    g(world)
+}

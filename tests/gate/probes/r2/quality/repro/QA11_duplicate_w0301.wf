@@ -1,0 +1,14 @@
+// QA11: one invalid use gives two W0301 errors. The second error names a
+// hidden variable of sema ("the value in `w.x`"). In 45_stored.wf:47 the
+// hidden name is `{stored closure}`, with braces, in the user text.
+//   weft check QA11_duplicate_w0301.wf  ->  2 errors at line 13
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Wrap<T> { x: T }
+fn f(b: &World) / mut(b.entities) {
+    let w = Wrap { x: &b.entities[0] }
+    let e = &b.entities[0]
+    w.x = e
+    b.entities.clear()
+    print(w.x.hp)
+}

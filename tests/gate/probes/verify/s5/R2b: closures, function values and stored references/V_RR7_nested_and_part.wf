@@ -1,0 +1,73 @@
+// RR7 shapes that still slip: a capture reached through an inner closure, and a
+// new value of a part of a captured local. 0 errors at head; each test faults
+// (stock: 'a place does not exist'; oracle: dangling; once: used after moved).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print("eat") }
+fn run(f: fn()) { f() }
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+// expected W0301 at f()
+fn nested_late(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let g = || print(r.hp)
+    let f = || g()
+    r = &world.entities[0]
+    world.entities.clear()
+    f()
+}
+// expected W0301 at print(first.hp)
+fn nested_fn_late(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g = || print(0)
+    let h = || g()
+    let f = || h()
+    g = || world.entities.clear()
+    f()
+    print(first.hp)
+}
+// expected W0405 at world.entities.clear()
+fn nested_task(world: &World, d: &Entity) / mut(world.entities), async, clock {
+    let r = d
+    let g = || print(r.hp)
+    scope { s =>
+        s.spawn(|| { sleep(1.ms)
+ g() })
+        r = &world.entities[0]
+        world.entities.clear()
+    }
+}
+// expected W0502 at the second j()
+fn nested_once() {
+    let b = Buf { items: Vec.new() }
+    let c = || print(0)
+    let k = || c()
+    let j = || k()
+    c = || eat(b)
+    j()
+    j()
+}
+// expected W0301 at f() / run(f)
+fn tuple_part_late(world: &World, d: &Entity) / mut(world.entities) {
+    let t = (d, 1)
+    let f = || print(t.0.hp)
+    t.0 = &world.entities[0]
+    world.entities.clear()
+    f()
+}
+test "nested_late" { let w = mkw()
+ let e = Entity { hp: 5 }
+ nested_late(&w, &e) }
+test "nested_fn_late" { let w = mkw()
+ nested_fn_late(&w) }
+test "nested_task" { let w = mkw()
+ let e = Entity { hp: 5 }
+ nested_task(&w, &e) }
+test "nested_once" { nested_once() }
+test "tuple_part_late" { let w = mkw()
+ let e = Entity { hp: 5 }
+ tuple_part_late(&w, &e) }

@@ -1,0 +1,10 @@
+struct H { f: fn() }
+fn call(h: &H) { let g = h.f; g() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let h = H { f: || { print(r + 1); v.clear() } }
+    call(&h)
+    call(&h)
+}

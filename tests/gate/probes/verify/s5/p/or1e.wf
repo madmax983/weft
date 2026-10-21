@@ -1,0 +1,69 @@
+fn first(v: &Vec<u64>) -> &u64 { &v[0] }
+// The closure captures what a callee returns.
+fn mk_call(v: &Vec<u64>) -> fn() {
+    let r = first(v)
+    || print(r + 0)
+}
+fn via_call() {
+    let v = Vec.new()
+    v.push(1)
+    let f = mk_call(&v)
+    v.clear()
+    f()
+}
+// The closure captures what an unknown function value returns.
+fn mk_unknown(v: &Vec<u64>, get: fn(&Vec<u64>) -> &u64) -> fn() {
+    let r = get(v)
+    || print(r + 0)
+}
+fn via_unknown() {
+    let v = Vec.new()
+    v.push(1)
+    let f = mk_unknown(&v, first)
+    v.clear()
+    f()
+}
+// The closure captures an element through a loop.
+fn mk_loop(v: &Vec<u64>) -> fn() {
+    let r = &v[0]
+    let i = 0
+    while i < v.len() { r = &v[i]
+ i = i + 1 }
+    || print(r + 0)
+}
+fn via_loop() {
+    let v = Vec.new()
+    v.push(1)
+    let f = mk_loop(&v)
+    v.clear()
+    f()
+}
+// The closure captures a reference that is in a struct argument.
+struct P { r: &u64 }
+fn mk_field(p: &P) -> fn() {
+    let r = p.r
+    || print(r + 0)
+}
+fn via_field() {
+    let v = Vec.new()
+    v.push(1)
+    let p = P { r: &v[0] }
+    let f = mk_field(&p)
+    v.clear()
+    f()
+}
+// By-value struct argument that holds a reference.
+fn mk_val(p: P) -> fn() {
+    let r = p.r
+    || print(r + 0)
+}
+fn via_val() {
+    let v = Vec.new()
+    v.push(1)
+    let f = mk_val(P { r: &v[0] })
+    v.clear()
+    f()
+}
+fn main() {
+    via_call()
+}

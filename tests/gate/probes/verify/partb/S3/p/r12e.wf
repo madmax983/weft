@@ -1,0 +1,22 @@
+struct Stats { count: u64 }
+fn each(v: &Vec<u64>, f: fn(u64)) { for x in v[] { f(x) } }
+// one task per element: the tasks all write st.count at the same time
+fn per_item(v: &Vec<u64>, st: &Stats) / mut(st), async {
+    scope { s =>
+        each(v, |x| { s.spawn(|| st.count += x); () })
+    }
+}
+// control: the same loop written in place
+fn per_item_inline(v: &Vec<u64>, st: &Stats) / mut(st), async {
+    scope { s =>
+        for x in v[] { s.spawn(|| st.count += x) }
+    }
+}
+// a fn value parameter that the body calls twice
+fn twice_value(k: fn(), st: &Stats) / mut(st), async {
+    scope { s =>
+        let sp = || { s.spawn(|| st.count += 1); () }
+        let g = |f: fn()| { f(); f() }
+        g(sp)
+    }
+}

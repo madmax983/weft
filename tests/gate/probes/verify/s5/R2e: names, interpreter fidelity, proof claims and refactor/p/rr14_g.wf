@@ -1,0 +1,7 @@
+struct W<T> { v: T }
+fn main() {
+    let z: u8 = 250
+    let w = W { v: z }
+    w.v += 10
+    print(w.v)
+}

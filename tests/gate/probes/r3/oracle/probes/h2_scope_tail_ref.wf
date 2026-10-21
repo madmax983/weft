@@ -1,0 +1,9 @@
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    scope { s =>
+        v
+    }
+    print(r + 1)
+}

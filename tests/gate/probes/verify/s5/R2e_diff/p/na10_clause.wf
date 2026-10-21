@@ -1,0 +1,14 @@
+struct Entity { hp: i32 }
+impl Entity {
+    fn diff(self, a: i32, b: i32) -> i32 { a - b }
+}
+effect Ask { fn ask(q: i32) -> i32 }
+fn d2(b: i32, a: i32) -> i32 { a - b }
+fn main() {
+    let v = handle Ask { fn ask(q) {
+        let x = Entity { hp: 1 }
+        let g = d2
+        resume(x.diff(b: q, a: 3) + g(b: 10, a: 3) * 100)
+    } } in ask(10)
+    print(v)
+}

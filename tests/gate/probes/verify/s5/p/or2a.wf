@@ -1,0 +1,56 @@
+fn take(v: Vec<u64>) -> usize { v.len() }
+
+// The closure moves v and then gives v a new value in its own cell.
+fn assign_in_closure() {
+    let v = Vec.new()
+    v.push(1)
+    let f = || { print(take(v)); v = Vec.new() }
+    f()
+    print(v.len())
+}
+
+// A by-reference closure made before a by-value closure.
+fn ref_then_value() {
+    let v = Vec.new()
+    v.push(1)
+    let g = || print(v.len())
+    let f = || print(take(v))
+    g()
+    f()
+}
+
+struct P { a: Vec<u64>, b: Vec<u64> }
+
+// The closure moves one field only.
+fn field_move() {
+    let w = P { a: Vec.new(), b: Vec.new() }
+    let f = || print(take(w.a))
+    print(w.b.len())
+    f()
+}
+
+// The closure moves in a loop.
+fn loop_make() {
+    let v = Vec.new()
+    let i = 0
+    while i < 2 {
+        let f = || print(take(v))
+        f()
+        i = i + 1
+    }
+}
+
+// Assign then by-value closure; read in closure 1 after.
+fn reinit_inside_by_ref() {
+    let v = Vec.new()
+    v.push(1)
+    let f = || print(take(v))
+    let g = || { v = Vec.new() }
+    g()
+    print(v.len())
+    f()
+}
+
+fn main() {
+    assign_in_closure()
+}

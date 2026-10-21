@@ -1,0 +1,12 @@
+struct Node { v: u64 }
+fn take<T>(x: T) { }
+fn take_rc(x: Rc<Node>) { }
+fn take_n(x: Node) { }
+fn main() {
+    let shared = Rc.new(Node { v: 5 })
+    scope { s =>
+        let b = s.spawn(|| shared.v + 1)
+        take_rc(shared)
+        print(b.join())
+    }
+}

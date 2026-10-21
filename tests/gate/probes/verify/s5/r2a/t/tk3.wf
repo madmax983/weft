@@ -1,0 +1,25 @@
+struct Stats { count: u64 }
+
+// After an even number of swaps t0 holds the task that prints, so the task
+// that writes st.count still runs at the print.
+fn swaps(st: &Stats, n: u64) / mut(st), async {
+    scope { s =>
+        let t0 = s.spawn(|| print(1))
+        let t1 = s.spawn(|| st.count += 1)
+        let m = 0
+        while m < n {
+            let x = t0
+            t0 = t1
+            t1 = x
+            m += 1
+        }
+        t0.join()
+        print(st.count)
+        t1.join()
+    }
+}
+
+fn main() / async {
+    let st = Stats { count: 0 }
+    swaps(&st, 2)
+}

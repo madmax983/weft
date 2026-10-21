@@ -1,0 +1,11 @@
+mod a {
+    pub fn diff(a: i32, b: i32) -> i32 { a - b }
+}
+struct E { hp: i32 }
+impl E {
+    fn diff(self, b: i32, a: i32) -> i32 { a - b }
+}
+fn main() {
+    let a = E { hp: 1 }
+    print(a.diff(b: 10, a: 3))
+}

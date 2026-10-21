@@ -1,0 +1,56 @@
+struct E { hp: u64 }
+struct Job { f: fn() }
+
+fn via_vec(f: fn()) / async {
+    let fs = Vec.new()
+    fs.push(f)
+    scope { s =>
+        s.spawn(|| { let g = fs[0]; g() })
+    }
+}
+
+fn via_local(f: fn()) / async {
+    let g = f
+    scope { s =>
+        s.spawn(g)
+    }
+}
+
+fn via_option(o: Option<fn()>) / async {
+    match o {
+        Some(f) => {
+            scope { s =>
+                s.spawn(f)
+            }
+            ()
+        },
+        None => (),
+    }
+}
+
+fn via_struct_local(f: fn()) / async {
+    let j = Job { f: f }
+    scope { s =>
+        s.spawn(j.f)
+    }
+}
+
+fn via_returned(f: fn()) / async {
+    let mk = || f
+    scope { s =>
+        s.spawn(mk())
+    }
+}
+
+fn caller() / async {
+    let a = Rc.new(E { hp: 1 })
+    via_vec(|| print(a.hp))
+    via_local(|| print(a.hp))
+    via_option(Some(|| print(a.hp)))
+    via_struct_local(|| print(a.hp))
+    via_returned(|| print(a.hp))
+}
+
+fn main() / async {
+    caller()
+}

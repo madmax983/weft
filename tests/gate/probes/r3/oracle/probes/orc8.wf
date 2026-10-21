@@ -1,0 +1,9 @@
+fn show(r: &u64) { print(r + 0) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        s.spawn(|| { v[0] = 3 })
+        show(&v[0])
+    }
+}

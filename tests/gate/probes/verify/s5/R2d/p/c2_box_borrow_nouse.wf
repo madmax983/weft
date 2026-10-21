@@ -1,0 +1,25 @@
+struct Cell2 { items: Vec<u64> }
+
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v
+}
+
+fn takes(r: &Vec<u64>) {}
+
+// A borrow through a Box while the task gives the Box a new value. The
+// reference goes to a function that does not read it.
+fn box_borrow() / async, clock {
+    let b = Box.new(Cell2 { items: mk_v() })
+    scope { s =>
+        s.spawn(|| { sleep(1.ms); b = Box.new(Cell2 { items: Vec.new() }) })
+        sleep(1.ms)
+        let r = &b.items
+        print("borrowed")
+    }
+}
+
+fn main() / async, clock {
+    box_borrow()
+}

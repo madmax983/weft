@@ -1,0 +1,16 @@
+// weft: no-runtime
+// A callee starts a task that logs. With no runtime, `main` handles `log`
+// itself, but the handler is on the stack of the parent task.
+fn worker() / par, log {
+    fork(|| log.info("x"), || print(1))
+}
+
+fn main() {
+    handle Par { fn par_poll() { resume(()) } } in {
+        handle log {
+            fn info(m) { print("caught", m); resume(()) }
+            fn warn(m) { resume(()) }
+        } in worker()
+    }
+    print("done")
+}

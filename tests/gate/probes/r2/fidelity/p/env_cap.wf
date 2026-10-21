@@ -1,0 +1,8 @@
+// The design: "`main` receives the root capabilities (filesystem, network,
+// clock, randomness) through `env`." Here `main` takes no `env`. It reads the
+// clock and the randomness, and a dependency-free helper does too.
+fn roll() -> u64 { random() }
+fn main() {
+    sleep(1.s)
+    print(roll())
+}

@@ -1,0 +1,4 @@
+fn main(env: Env) / io, net {
+    let f = json.get()
+    f()
+}

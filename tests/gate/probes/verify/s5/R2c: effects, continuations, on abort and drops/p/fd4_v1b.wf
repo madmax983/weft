@@ -1,0 +1,14 @@
+effect Choice { multi fn choose() -> bool }
+fn main() {
+    let r = handle Choice { fn choose() { let a = resume(true); print("clause a={a}"); let c = resume(false); print("clause c={c}"); a + c } } in {
+        let x = scope { s =>
+            s.spawn(|| print("task"))
+            let b = choose()
+            print("after choose {b}")
+            if b { 1 } else { 2 }
+        }
+        print("after scope {x}")
+        x
+    }
+    print("end {r}")
+}

@@ -1,0 +1,18 @@
+effect Two { fn pick_local() -> &u64
+ fn pick_param() -> &u64 }
+fn two_ops() {
+    let v = Vec.new()
+    v.push(1)
+    let r = handle Two {
+        fn pick_local() { let w = Vec.new()
+ w.push(2)
+ resume(&w[0]) }
+        fn pick_param() { resume(&v[0]) }
+    } in {
+        let a = pick_local()
+        print(a)
+        pick_param()
+    }
+    print(r)
+}
+fn main() { two_ops() }

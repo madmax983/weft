@@ -1,0 +1,8 @@
+mod a {
+    pub fn d2(b: i32, a: i32) -> i32 { a - b }
+}
+fn main() {
+    let g = a.d2
+    print(g(b: 10, a: 3))
+    print(a.d2(b: 10, a: 3))
+}

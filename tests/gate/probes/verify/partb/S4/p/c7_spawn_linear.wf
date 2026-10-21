@@ -1,0 +1,49 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) {}
+fn k01() / async {
+    let tx = begin()
+    scope { s => s.spawn(|| rollback(tx)).join() }
+}
+fn k02() / par {
+    let a = begin()
+    let b = begin()
+    fork(|| rollback(a), || rollback(b))
+}
+fn k03() / async {
+    let b = Buf { items: Vec.new() }
+    scope { s => s.spawn(|| eat(b)).join() }
+}
+fn k04() / par {
+    let b = Buf { items: Vec.new() }
+    let c = Buf { items: Vec.new() }
+    fork(|| eat(b), || eat(c))
+}
+fn k05() / async {
+    let tx = begin()
+    let f = || rollback(tx)
+    scope { s => s.spawn(f).join() }
+}
+fn k06() / async, fail {
+    let tx = begin()
+    let r = with_timeout(1.s) { rollback(tx)
+ 1 }
+}
+fn k07() / par {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    fork(f, f)
+}
+fn k08() / async {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    scope { s =>
+        let t1 = s.spawn(f)
+        let t2 = s.spawn(f)
+        t1.join()
+        t2.join()
+    }
+}

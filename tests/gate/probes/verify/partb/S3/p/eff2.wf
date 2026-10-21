@@ -1,0 +1,41 @@
+effect Choice { multi fn choose() -> bool }
+effect Log { fn log(msg: String) }
+effect Ask { fn ask() -> u64 }
+effect B { fn b() }
+linear struct Token { id: u64 }
+    on abort = spend
+fn spend(t: Token) { let Token(i) = t }
+fn mint() -> Token { Token { id: 1 } }
+
+fn r2a() / Choice {
+    handle Log {
+        fn log(m) {
+            let k = || resume(())
+            let b = choose()    // W0503
+            k()
+        }
+    } in log("x")
+}
+fn r2a_twice() {
+    handle Log {
+        fn log(m) {
+            let k = || resume(())
+            k()
+            k()    // W0501/W0502
+        }
+    } in log("x")
+}
+fn tok_closure() / Choice {
+    let t = mint()
+    let f = || spend(t)
+    let b = choose()    // W0503
+    f()
+}
+fn r6a() / clock {
+    handle Log { fn log(m) { log("again"); resume(()) } } in log("x")    // W0702 Log
+}
+fn r6b() / clock {
+    handle Ask { fn ask() { b(); resume(1) } } in {     // W0702 B
+        handle B { fn b() { resume(()) } } in { let n = ask() }
+    }
+}

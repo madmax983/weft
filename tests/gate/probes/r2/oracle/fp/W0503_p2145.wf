@@ -1,0 +1,18 @@
+linear struct Tx { id: u64 }
+    on abort = tx_abort
+effect Pick { multi fn pick() -> bool }
+
+fn tx_abort(t: Tx) { let Tx(id) = t; print("abort", id) }
+fn commit(t: Tx) { let Tx(id) = t; print("commit", id) }
+fn apply(f: fn()) { f() }
+
+fn main() {
+    let tx1 = Tx { id: 1 }
+    let g3 = || {
+        handle Pick { fn pick() { print("no") } } in {
+            if pick() { print(1) } else { print(2) }
+        }
+    }
+    apply(g3)
+    commit(tx1)
+}

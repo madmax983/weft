@@ -1,0 +1,21 @@
+struct Node { v: u64 }
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print("eat") }
+// A fork branch calls a captured variable that later holds an Rc closure.
+fn late_rc() / par {
+    let n = Rc.new(Node { v: 1 })
+    let c = || print(0)
+    let br = || c()
+    c = || print(n.v)
+    fork(br, || print(2))   //~ W0401
+}
+// A closure calls a captured variable that later holds a `once` closure.
+fn late_once() {
+    let b = Buf { items: Vec.new() }
+    let c = || print(0)
+    let k = || c()
+    c = || eat(b)
+    k()
+    k()   //~ W0502
+}
+test "late_once" { late_once() }

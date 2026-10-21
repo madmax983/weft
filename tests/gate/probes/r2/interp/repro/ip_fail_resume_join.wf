@@ -1,0 +1,15 @@
+// A Fail handler that resumes. Task.join is typed `-> T`.
+fn work() -> u64 / fail {
+    fail("boom")
+    5
+}
+
+fn main() / io {
+    let r = handle Fail { fn fail(m) { print("caught {m}"); resume(()) } } in {
+        scope { s =>
+            let t = s.spawn(|| work())
+            t.join() + 1
+        }
+    }
+    print("r = {r}")
+}

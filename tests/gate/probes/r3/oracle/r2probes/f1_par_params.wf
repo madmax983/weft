@@ -1,0 +1,12 @@
+fn par(f: fn(), g: fn()) {
+    scope { s =>
+        s.spawn(f)
+        s.spawn(g)
+    }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    par(|| v.push(2), || print(v[0] + 1))
+    print(v.len())
+}

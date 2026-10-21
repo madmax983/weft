@@ -1,0 +1,31 @@
+effect Pick { fn pick() -> &u64 }
+fn ret_local(v: &Vec<u64>) -> &u64 in v[] {
+    let w = Vec.new()
+    w.push(1)
+    handle Pick { fn pick() { resume(&w[0]) } } in pick()
+}
+fn ret_local2(v: &Vec<u64>) -> &u64 in v[] {
+    let w = Vec.new()
+    w.push(1)
+    handle Pick { fn pick() { resume(&w[0]) } } in {
+        let r = pick()
+        r
+    }
+}
+fn ret_other(v: &Vec<u64>, u: &Vec<u64>) -> &u64 in v[] {
+    handle Pick { fn pick() { resume(&u[0]) } } in pick()
+}
+fn ret_inferred(u: &Vec<u64>) -> &u64 {
+    handle Pick { fn pick() { resume(&u[0]) } } in pick()
+}
+fn main() {
+    let v = Vec.new()
+    v.push(5)
+    let r = ret_local(&v)
+    print(r)
+    let u = Vec.new()
+    u.push(6)
+    let q = ret_inferred(&u)
+    u.clear()
+    print(q)
+}

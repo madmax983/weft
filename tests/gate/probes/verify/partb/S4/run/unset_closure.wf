@@ -1,0 +1,14 @@
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+fn s06() { let f = Frame { buf: [1, 2, 3, 4] }
+ let c = || print(f.cur)
+ c() }
+fn s07() { let f = Frame { buf: [1, 2, 3, 4] }
+ let c = || { let r = &f
+ print(r.cur) }
+ c() }
+fn peek(fr: &Frame) -> u8 { let r = fr.cur
+ 1 }
+fn s08() { let f = Frame { buf: [1, 2, 3, 4] }
+ let c = || peek(&f)
+ c() }
+fn main() { s06() }

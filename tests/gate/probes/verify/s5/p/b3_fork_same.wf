@@ -1,0 +1,6 @@
+fn main() / par {
+    let n = 5
+    let f = || n + 1
+    let (a, b) = fork(f, f)
+    print("{a} {b}")
+}

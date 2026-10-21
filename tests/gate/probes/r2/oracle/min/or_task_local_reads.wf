@@ -1,0 +1,49 @@
+// A task and its parent touch a whole local variable. A use of the variable
+// is not a read for W0405, so each function below is accepted. The design
+// rejects them: tasks that can run at the same time need separate footprints.
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+
+fn parent_reads() {
+    let count = 0
+    scope { s =>
+        s.spawn(|| count += 1)
+        print(count)
+    }
+}
+
+fn task_reads() {
+    let count = 0
+    scope { s =>
+        s.spawn(|| print(count))
+        count += 5
+    }
+}
+
+fn whole_vec() {
+    let v = mk_v()
+    scope { s =>
+        s.spawn(|| v.clear())
+        print(v)
+    }
+}
+
+fn ref_rebind() {
+    let v = mk_v()
+    let r = &v[0]
+    scope { s =>
+        s.spawn(|| print(r))
+        r = &v[1]
+    }
+}
+
+fn main() {
+    parent_reads()
+    task_reads()
+    whole_vec()
+    ref_rebind()
+}

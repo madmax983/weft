@@ -1,0 +1,17 @@
+// weft: library
+effect Log { fn note(m: String) }
+fn work() / log { log.info("w") }
+pub fn a() / Log {
+    handle log { fn info(m) { resume(()) } fn warn(m) { resume(()) } } in work()
+}
+pub fn b() {
+    handle log { fn info(m) { resume(()) } fn warn(m) { resume(()) } } in work()
+}
+pub fn c() {
+    handle Log { fn note(m) { resume(()) } } in note("x")
+    handle log { fn info(m) { resume(()) } fn warn(m) { resume(()) } } in work()
+}
+pub fn d() / Log {
+    let f = || note("x")
+    handle log { fn info(m) { resume(()) } fn warn(m) { resume(()) } } in work()
+}

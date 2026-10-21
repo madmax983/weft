@@ -1,0 +1,24 @@
+effect Pair { fn put(a: u64, b: u64) }
+effect Z { fn z() }
+fn odd() / Pair, Z, async, par {
+    put(b: 1, b: 2, a: 3, 4)
+    put() { 5 }
+    put(1, 2) { 3 }
+    put(c: 1) { 2 }
+    z(1)
+    z() { 1 }
+    fork()
+    fork() { 1 }
+    scope { s => s.spawn() }
+    scope { s => s.spawn(|| 1) { 2 } }
+    let f = || { return; return }
+    let g = || { break; continue }
+    loop { let h = || { loop { break }; return 1 }; break }
+    handle Z { fn z() { let k = || { return resume(()) }; k() } } in z()
+    handle Z { fn z() { loop { break }; resume(()) } } in { loop { z(); break } }
+    while true { handle Z { fn z() { resume(()) } } in { let q = || { break } } }
+}
+fn ret_in_test_like() -> u64 {
+    let f = |x: u64| { return x }
+    loop { loop { return 1 } }
+}

@@ -1,0 +1,19 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity>, score: u64 }
+// The signature states no `mut`, but the body mutates through the reference
+// inside a by-value parameter. W0703 expected.
+pub fn f(o: Option<&World>) / log {
+    match o {
+        Some(w) => w.entities.clear(),
+        None => {}
+    }
+}
+pub fn g(t: (&World, u64)) / log {
+    let (w, n) = t
+    w.score += n
+}
+fn caller(world: &World) / mut(world) {
+    let first = &world.entities[0]
+    f(Some(world))
+    print(first.hp)   //~ W0301
+}

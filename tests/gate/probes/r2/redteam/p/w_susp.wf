@@ -1,0 +1,90 @@
+effect Choice { multi fn choose() -> bool }
+effect Log { fn log(msg: String) }
+linear struct Token { id: u64 }
+    on abort = spend
+fn spend(t: Token) { let Token(i) = t }
+fn mint() -> Token { Token { id: 1 } }
+struct Cb { f: fn() -> bool }
+fn chooser() -> bool / Choice { choose() }
+fn run(f: fn() -> bool) -> bool { f() }
+
+// The handled body reaches `choose` through an item value.
+fn body_item() / Choice {
+    handle Log {
+        fn log(m) {
+            let t = mint()
+            resume(())   //~ W0503
+            spend(t)
+        }
+    } in {
+        log("x")
+        let g = chooser
+        let b = g()
+    }
+}
+// The handled body reaches `choose` through a callee that calls a closure.
+fn body_hof() / Choice {
+    handle Log {
+        fn log(m) {
+            let t = mint()
+            resume(())   //~ W0503
+            spend(t)
+        }
+    } in {
+        log("x")
+        let b = run(|| choose())
+    }
+}
+// The handled body reaches `choose` through a field closure.
+fn body_field() / Choice {
+    let c = Cb { f: || choose() }
+    handle Log {
+        fn log(m) {
+            let t = mint()
+            resume(())   //~ W0503
+            spend(t)
+        }
+    } in {
+        log("x")
+        let g = c.f
+        let b = g()
+    }
+}
+// A clause resumes in a loop: a `once` continuation resumed more than once.
+fn clause_loop() {
+    handle Log {
+        fn log(m) {
+            let i = 0
+            while i < 2 {
+                resume(())   //~ W0501
+                i += 1
+            }
+        }
+    } in log("x")
+}
+// The clause reaches `choose` through a closure; the node that runs it is multi.
+fn clause_closure() / Choice {
+    let t = mint()
+    handle Log { fn log(m) { let f = || choose()
+ let b = f() } } in log("x")   //~ W0503
+    spend(t)
+}
+// The clause reaches `choose` through a callee given a closure.
+fn clause_hof() / Choice {
+    let t = mint()
+    handle Log { fn log(m) { let b = run(|| choose()) } } in log("x")   //~ W0503
+    spend(t)
+}
+// A `multi` resume inside the body of a nested `handle`.
+fn nested_resume() / Choice {
+    handle Log {
+        fn log(m) {
+            let t = mint()
+            handle Choice { fn choose() { resume(true) } } in resume(())   //~ W0503
+            spend(t)
+        }
+    } in {
+        log("x")
+        let b = choose()
+    }
+}

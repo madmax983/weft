@@ -1,0 +1,15 @@
+struct Cache { refs: Vec<&u64> }
+fn stash(c: &Cache, x: &u64) / mut(c) {
+    c.refs.push(x)
+}
+fn fill(c: &Cache) / mut(c) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    stash(c, &v[0])
+}
+fn main() {
+    let c = Cache { refs: Vec.new() }
+    fill(&c)
+    let r = c.refs[0]
+    print(r + 0)
+}

@@ -1,0 +1,23 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+impl Tx {
+    fn commit(self: Tx) { let Tx(i) = self }
+}
+// Consuming a linear value through a reference.
+fn steal(r: &Tx) { r.commit() }
+fn double() {
+    let tx = begin()
+    steal(&tx)
+    tx.commit()
+}
+// Consuming every element of a borrowed Vec.
+fn drain(txs: &Vec<Tx>) {
+    for t in txs[] { t.commit() }
+}
+// Control: a direct move out of a borrowed place.
+fn direct(r: &Tx) { rollback(r) }
+struct Holder { name: Vec<u64> }
+impl Holder { fn into_name(self: Holder) -> Vec<u64> { let Holder(n) = self; n } }
+fn steal_holder(h: &Holder) -> Vec<u64> { h.into_name() }

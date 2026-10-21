@@ -1,0 +1,22 @@
+effect Note { fn note(x: u64) }
+effect Reg { fn reg(f: fn()) }
+fn clause_wraps() -> fn() {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        handle Reg { fn reg(f) { || f() } } in {
+            reg(|| note(4))
+            || print(0)
+        }
+    }
+}
+fn clause_pair() -> (fn(), u64) {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        handle Reg { fn reg(f) { (f, 1) } } in {
+            reg(|| note(5))
+            (|| print(0), 0)
+        }
+    }
+}
+fn main() { let g = clause_wraps()
+ g() }

@@ -1,0 +1,127 @@
+struct P { a: u64, b: u64 }
+
+fn use_val(x: u64) { print(x) }
+fn use_p(p: P) { print(p.a) }
+
+// Interpolation reads the local.
+fn interp_read() / async, clock {
+    let count = 0
+    scope { s =>
+        s.spawn(|| { sleep(1.ms); count += 1 })
+        print("count {count}")
+        sleep(2.ms)
+    }
+}
+
+// A match reads the local.
+fn match_read() / async, clock {
+    let count = 0
+    scope { s =>
+        s.spawn(|| { sleep(1.ms); count += 1 })
+        match count {
+            0 => print("zero"),
+            _ => print("more"),
+        }
+        sleep(2.ms)
+    }
+}
+
+// A call by value reads the local.
+fn call_read() / async, clock {
+    let count = 0
+    scope { s =>
+        s.spawn(|| { sleep(1.ms); count += 1 })
+        use_val(count)
+        sleep(2.ms)
+    }
+}
+
+// A tuple let reads the local.
+fn tuple_read() / async, clock {
+    let t = (1, 2)
+    scope { s =>
+        s.spawn(|| { sleep(1.ms); t = (3, 4) })
+        let (a, b) = t
+        print(a + b)
+        sleep(2.ms)
+    }
+}
+
+// A struct passed by value while the task writes a field.
+fn struct_read() / async, clock {
+    let p = P { a: 1, b: 2 }
+    scope { s =>
+        s.spawn(|| { sleep(1.ms); p.a += 1 })
+        use_p(p)
+        sleep(2.ms)
+    }
+}
+
+// The scope tail reads the local.
+fn tail_read() / async, clock {
+    let count = 0
+    let x = scope { s =>
+        s.spawn(|| { sleep(1.ms); count += 1 })
+        count
+    }
+    print(x)
+}
+
+// A while condition in the task reads the local.
+fn while_read() / async, clock {
+    let count = 0
+    scope { s =>
+        s.spawn(|| { while count < 3 { sleep(1.ms) } })
+        sleep(1.ms)
+        count = 5
+    }
+}
+
+// A closure of the parent reads the local.
+fn closure_read() / async, clock {
+    let count = 0
+    let g = || print(count)
+    scope { s =>
+        s.spawn(|| { sleep(1.ms); count += 1 })
+        g()
+        sleep(2.ms)
+    }
+}
+
+// A nested closure in the task writes the local.
+fn nested_write() / async, clock {
+    let count = 0
+    scope { s =>
+        s.spawn(|| { let h = || count += 1
+ sleep(1.ms)
+ h() })
+        print(count)
+        sleep(2.ms)
+    }
+}
+
+// The parent reads through a reference local while the task writes the place.
+fn ref_read() / async, clock {
+    let count = 0
+    let r = &count
+    scope { s =>
+        s.spawn(|| { sleep(1.ms); count += 1 })
+        print(r)
+        sleep(2.ms)
+    }
+}
+
+// The task writes through a captured reference while the parent reads the local.
+fn ref_write() / async, clock {
+    let count = 0
+    let r = &count
+    scope { s =>
+        s.spawn(|| { sleep(1.ms); r += 1 })
+        print(count)
+        sleep(2.ms)
+    }
+}
+
+fn main() / async, clock {
+    interp_read()
+}

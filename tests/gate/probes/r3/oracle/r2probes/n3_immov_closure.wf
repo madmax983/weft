@@ -1,0 +1,7 @@
+struct Fr: !Move { buf: [u64; 2], cur: &u64 in self.buf[] }
+fn main() {
+    let f = Fr { buf: [1, 2] }
+    f.cur = &f.buf[1]
+    let h = || { let g = f; print(g.cur) }
+    h()
+}

@@ -1,0 +1,10 @@
+struct Big { xs: Vec<i32> }
+struct E { hp: i32 }
+impl E {
+    fn take(a: Big, b: i32) -> i32 { b }
+}
+fn size(x: &Big) -> i32 { 1 }
+fn main() {
+    let v = Big { xs: [1, 2] }
+    print(E.take(b: size(&v), a: v))
+}

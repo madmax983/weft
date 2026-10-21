@@ -1,0 +1,18 @@
+linear struct Lease { id: u64 }
+
+
+fn run() / io, fail {
+    scope { s =>
+        let a = s.spawn(|| {
+            let l = Lease { id: 7 }
+            let Lease(id) = l
+        })
+        let b = s.spawn(|| {
+        })
+        a.join()
+        b.join()
+        print(b)
+    }
+}
+
+

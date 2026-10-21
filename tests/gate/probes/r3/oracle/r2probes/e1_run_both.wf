@@ -1,0 +1,9 @@
+fn run_both(f: fn(), g: fn()) { f(); g() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let f = || v.clear()
+    let g = || print(r + 1)
+    run_both(f, g)
+}

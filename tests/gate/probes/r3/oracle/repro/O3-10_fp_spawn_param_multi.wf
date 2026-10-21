@@ -1,0 +1,29 @@
+// O3-10 (minor, false positive, regression of round 2). A function spawns two
+// function parameters into one scope. When the program declares any `multi`
+// operation, even one that nothing performs, the first spawn counts as a node
+// that can resume more than once, and the scope capability `s` is live across
+// it: W0503. A spawn does not run the parameter in this task, and a task
+// cannot perform through a handler of another task (W0314), so no resume of
+// this task happens there. Remove the `effect Pick` line and the file is
+// accepted. Commit 328a39b and f211d13 (end of R2b) accept it; acd05a8 (end
+// of R2c) gives W0503.
+effect Pick { multi fn pick() -> bool }
+
+fn both(f: fn(), g: fn()) {
+    scope { s =>
+        s.spawn(f)        // W0503: `s` is not `many`, but it is live across `spawn`
+        s.spawn(g)
+    }
+}
+
+fn both_closures(f: fn(), g: fn()) {
+    scope { s =>
+        s.spawn(|| f())   // W0503 too
+        s.spawn(|| g())
+    }
+}
+
+fn main() {
+    both(|| print(1), || print(2))
+    both_closures(|| print(3), || print(4))
+}

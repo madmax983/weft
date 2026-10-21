@@ -1,0 +1,8 @@
+struct Big { xs: Vec<u64> }
+fn take(b: Big) -> u64 { 1 }
+effect Ask { fn ask() -> u64 }
+fn main() {
+    let v = Big { xs: [1] }
+    let r = handle Ask { fn ask() { resume(1, take(v)) } } in ask()
+    print(v.xs.len())
+}

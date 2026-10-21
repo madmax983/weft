@@ -1,0 +1,9 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn grow(w: &World) -> u64 / mut(w.entities) { w.entities.clear(); 0 }
+fn show(e: &Entity, n: u64) { print(e.hp) }
+fn main() {
+    let world = World { entities: Vec.new() }
+    world.entities.push(Entity { hp: 5 })
+    show(&world.entities[0], grow(&world))
+}

@@ -1,0 +1,23 @@
+mod a {
+    pub effect Note { fn note(x: u64) }
+    pub fn f() / Note { note(1) }
+    pub mod b {
+        pub effect Deep { fn deep() -> u64 }
+        pub fn g() / Deep, a.Note { note(deep()) }
+    }
+}
+effect Note { fn note(x: u64) }
+fn h() / a.Note, Note {
+    a.f()
+    note(5)
+}
+fn run(f: fn() / a.Note) / a.Note { f() }
+fn main() {
+    handle a.Note { fn note(x) { print("a {x}")
+ resume(()) } } in {
+        handle Note { fn note(x) { print("root {x}")
+ resume(()) } } in h()
+        run(a.f)
+        handle a.b.Deep { fn deep() { resume(7) } } in a.b.g()
+    }
+}

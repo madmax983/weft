@@ -1,0 +1,29 @@
+effect Note { fn note(x: u64) }
+struct Job { f: fn() }
+fn each(v: &Vec<Job>, k: fn(&Job)) { for j in v { k(j) } }
+fn apply(j: &Job, k: fn(&Job)) { k(j) }
+
+fn user() {
+    handle Note { fn note(x) { resume(()) } } in {
+        let v = Vec.new()
+        v.push(Job { f: || note(1) })
+        each(&v, |j| { let g = j.f
+ g() })
+    }
+}
+fn user2() {
+    handle Note { fn note(x) { resume(()) } } in {
+        let j = Job { f: || note(1) }
+        apply(&j, |jj| { let g = jj.f
+ g() })
+    }
+}
+fn user3() {
+    handle Note { fn note(x) { resume(()) } } in {
+        let j = Job { f: || note(1) }
+        let k = |jj: &Job| { let g = jj.f
+ g() }
+        k(&j)
+    }
+}
+fn main() { user(); user2(); user3() }

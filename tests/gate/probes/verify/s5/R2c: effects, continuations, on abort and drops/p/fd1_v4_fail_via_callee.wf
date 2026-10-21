@@ -1,0 +1,20 @@
+// on abort fails through an index or a callee with an inferred fail.
+effect Stop { fn stop() }
+linear struct T { id: u64 }
+    on abort = undo
+fn may_fail(i: u64) { if i == 1 { fail("x") } }
+fn undo(t: T) {
+    let T(i) = t
+    may_fail(i)
+}
+fn done(t: T) { let T(i) = t }
+fn main() {
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        handle Stop { fn stop() { () } } in {
+            let t = T { id: 1 }
+            stop()
+            done(t)
+        }
+    }
+    print("end")
+}

@@ -1,0 +1,31 @@
+struct Stats { count: u64, hist: Vec<u64> }
+struct Entity { hp: u64 }
+fn bump(s: &Stats) / mut(s.count) { s.count += 1 }
+// Shared reference copied into a local.
+fn shared_copy(s: &Stats @ shared) {
+    let t = s
+    t.count += 1
+}
+// Shared reference passed to a mutating callee.
+fn shared_callee(s: &Stats @ shared) {
+    bump(s)
+}
+// Shared reference mutated in a closure.
+fn shared_closure(s: &Stats @ shared) {
+    let f = || s.hist.push(1)
+    f()
+}
+// Shared reference: element reference via a method.
+fn shared_get(v: &Vec<Entity> @ shared) {
+    let e = v.get(0)
+    e.hp += 1
+}
+// Shared reference: loop element.
+fn shared_loop(v: &Vec<Entity> @ shared) {
+    for e in v[] { e.hp += 1 }
+}
+// Split parts of a shared vec.
+fn shared_split(v: &Vec<Entity> @ shared) {
+    let (l, r) = v.split_mut(1)
+    for e in l[] { e.hp += 1 }
+}

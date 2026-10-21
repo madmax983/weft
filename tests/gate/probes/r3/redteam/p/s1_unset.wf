@@ -1,0 +1,56 @@
+struct Pair { a: u64, b: u64 }
+fn loop_break_after_set() -> u64 {
+    let x: u64
+    loop { x = 1; break }
+    x
+}
+fn loop_break_before_set(c: bool) -> u64 {
+    let x: u64
+    loop { if c { break }
+ x = 1; break }
+    x   //~ W0304
+}
+fn partial_struct() -> u64 {
+    let p: Pair
+    p.a = 1
+    p.b   //~ W0304
+}
+fn partial_struct_full() -> u64 {
+    let p: Pair
+    p.a = 1
+    p.b = 2
+    p.a + p.b
+}
+fn match_partial(o: Option<u64>) -> u64 {
+    let x: u64
+    match o { Some(v) => { x = v }, None => {} }
+    x   //~ W0304
+}
+fn match_all(o: Option<u64>) -> u64 {
+    let x: u64
+    match o { Some(v) => { x = v }, None => { x = 0 } }
+    x
+}
+fn return_path(c: bool) -> u64 {
+    let x: u64
+    if c { return 0 }
+    x = 3
+    x
+}
+fn ref_to_unset() -> u64 {
+    let x: u64
+    let r = &x   //~ W0304
+    x = 1
+    r + 0
+}
+fn while_cond_set() -> u64 {
+    let x: u64
+    while { x = 2; false } { }
+    x
+}
+fn tuple_destr_unset() -> u64 {
+    let t: (u64, u64)
+    let (a, b) = t   //~ W0304
+    a
+}
+fn main() { print(loop_break_after_set()) }

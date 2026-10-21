@@ -1,0 +1,10 @@
+fn f(c: bool) {
+    let x: u64
+    let y: u64
+    if c { x = 1 }
+    print(x)
+    print(x)
+    print(y)
+    if c { y = 2 }
+    print(y)
+}

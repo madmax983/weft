@@ -1,0 +1,75 @@
+struct P { a: u64, b: u64 }
+linear struct Tx { id: u64 }
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+
+fn capture_before_set() {
+    let x: u64
+    let f = || print(x)   //~ W0304
+    x = 1
+    f()
+}
+fn compound() {
+    let x: u64
+    x += 1   //~ W0304
+}
+fn self_ref() {
+    let x: u64
+    x = x + 1   //~ W0304
+}
+fn partial() {
+    let p: P
+    p.a = 1   //~ W0304
+    print(p.a)
+}
+fn borrow() {
+    let x: u64
+    let r = &x   //~ W0304
+}
+fn loop_first() {
+    let x: u64
+    for i in 0..3 {
+        print(x)   //~ W0304
+        x = i
+    }
+}
+fn linear_unset_ok(c: bool) {
+    let t: Tx
+    if c { t = begin()
+ rollback(t) }
+}
+fn linear_unset_ok2() {
+    let t: Tx
+    t = begin()
+    rollback(t)
+}
+fn match_ok(o: Option<u64>) -> u64 {
+    let x: u64
+    match o { Some(v) => { x = v }, None => { return 0 } }
+    x
+}
+fn in_clause() {
+    let x: u64
+    handle Note { fn note(n) { print(x)   //~ W0304
+ resume(()) } } in note(1)
+}
+effect Note { fn note(n: u64) }
+fn tuple_decl() {
+    let (a, b): (u64, u64)
+    print(a)   //~ W0304
+}
+fn returned() -> u64 {
+    let x: u64
+    return x   //~ W0304
+}
+fn in_closure_set() {
+    let x: u64
+    let f = || { x = 1 }
+    f()
+    print(x)
+}
+fn shadow() {
+    let x: u64 = 1
+    let x: u64
+    print(x)   //~ W0304
+}

@@ -1,0 +1,73 @@
+effect Lg { fn lg(msg: String) }
+struct Job { f: fn() }
+fn run_once(j: &Job) { let g = j.f
+ g() }
+fn do_log() / Lg { lg("z") }
+
+fn n_stored_abort() {
+    let f = || print(0)
+    handle Lg { fn lg(m) { print(m) } } in {
+        let h = Job { f: || lg("y") }
+        f = || lg("x")
+        run_once(&h)
+        f = || print(1)
+    }
+    f()
+}
+fn n_nested_fail() / fail {
+    let f = || print(0)
+    handle Fail { fn fail(m) { print(m) } } in {
+        handle Lg { fn lg(m) { fail("inner") } } in {
+            f = || lg("x")
+            lg("y")
+            f = || print(1)
+        }
+    }
+    f()
+}
+fn n_zero_loop(n: u64) {
+    let f = || print(0)
+    handle Lg { fn lg(m) { resume(()) } } in {
+        f = || lg("x")
+        for i in 0..n { f = || print(1) }
+    }
+    f()
+}
+fn n_copy_out() {
+    let f = || print(0)
+    let g = || print(0)
+    handle Lg { fn lg(m) { resume(()) } } in {
+        f = || lg("x")
+        g = f
+        f = || print(1)
+    }
+    g()
+}
+fn n_callee_abort() {
+    let f = || print(0)
+    handle Lg { fn lg(m) { print(m) } } in {
+        f = || lg("x")
+        do_log()
+        f = || print(1)
+    }
+    f()
+}
+fn n_closure_call_abort() {
+    let f = || print(0)
+    handle Lg { fn lg(m) { print(m) } } in {
+        f = || lg("x")
+        f()
+        f = || print(1)
+    }
+    f()
+}
+fn n_cond_resume(c: bool) {
+    let f = || print(0)
+    handle Lg { fn lg(m) { if c { resume(()) } } } in {
+        f = || lg("x")
+        lg("y")
+        f = || print(1)
+    }
+    f()
+}
+fn main() { n_stored_abort() }

@@ -1,0 +1,12 @@
+// A long list of an inline recursive enum. The interpreter builds it and drops it.
+enum List { Cons(u64, List), Nil }
+
+fn main() / io {
+    let l = Nil
+    let i = 0
+    while i < 200000 {
+        l = Cons(i, l)
+        i += 1
+    }
+    print("built")
+}

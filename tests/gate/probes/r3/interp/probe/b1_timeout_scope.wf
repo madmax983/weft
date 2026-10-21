@@ -1,0 +1,29 @@
+// A with_timeout around a scope: at the deadline the children are cancelled,
+// their linear values get `on abort`, and then the handler gets the timeout.
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(t: Tx) { let Tx(id) = t; print("rollback {id} at {Clock.now()}") }
+fn commit(t: Tx) / io { let Tx(id) = t; print("commit {id}") }
+
+fn child(n: u64) / io {
+    let t = Tx { id: n }
+    sleep(100.ms)
+    commit(t)
+}
+
+fn main() / io, par {
+    handle Fail { fn fail(m) { print("caught: {m} at {Clock.now()}") } } in {
+        with_timeout(10.ms) {
+            scope { s =>
+                s.spawn(|| child(1))
+                s.spawn(|| child(2))
+                let t = Tx { id: 3 }
+                sleep(200.ms)
+                commit(t)
+            }
+        }
+        print("not reached")
+    }
+    print("end at {Clock.now()}")
+}

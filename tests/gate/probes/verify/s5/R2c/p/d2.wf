@@ -1,0 +1,15 @@
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(id) = t; print("commit {id}") }
+fn rc_drop() {
+    let r = Rc.new(Tx { id: 1 })
+}
+fn rc_weak() {
+    let r = Rc.new(Tx { id: 2 })
+    let w = r.downgrade()
+    commit_rc(r)
+}
+fn commit_rc(r: Rc<Tx>) {}
+fn main() {
+    rc_drop()
+    rc_weak()
+}

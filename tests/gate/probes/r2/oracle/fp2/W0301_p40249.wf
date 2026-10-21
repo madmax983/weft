@@ -1,0 +1,21 @@
+
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(2)
+    v.push(3)
+    v
+}
+fn id<T>(x: T) -> T { x }
+
+
+
+fn main() {
+    let c5 = 0
+    while c5 < 2 {
+        c5 += 1
+        let r6 = {
+            let v7 = mk_v()
+            id(&v7[1])
+        }
+    }
+}

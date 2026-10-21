@@ -1,0 +1,6 @@
+fn take(v: Vec<&u64>) {}
+fn a() {
+    let x = 1
+    let v = [&x]
+    take(v)
+}

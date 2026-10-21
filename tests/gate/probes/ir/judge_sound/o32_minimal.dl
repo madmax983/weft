@@ -1,0 +1,14 @@
+// O3-2 (callee form) in the minimal design: the handled body is inline; the tail
+// call writes `r` (the destination) directly; then the ends of the tail
+// temporaries; then the "handle value" node uses `r` before it binds it again.
+place(pt1). place(pt1_e). parent(pt1_e, pt1). unstable(pt1_e).
+owner(pt1, t1).
+cfg_edge(hs, c1). rebound_at(t1, c1).
+cfg_edge(c1, b2). rebound_at(t2, b2). points_into(t2, pt1).
+cfg_edge(b2, cf). uses(t2, cf). call_arg(cf, pt1, 0).
+cfg_edge(cf, bf). rebound_at(r, bf). points_into(r, pt1_e).
+cfg_edge(bf, d2). scope_end(t2, d2).
+cfg_edge(d2, d1). scope_end(t1, d1).
+cfg_edge(d1, hend). cfg_edge(hend, hv). uses(r, hv). rebound_at(r, hv).
+cfg_edge(hv, pr). uses(r, pr).
+lint("minimal O3-2: W0301 at the handle value node", hv) :- error(r, hv).

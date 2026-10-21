@@ -137,7 +137,9 @@ sections of the specification.
 
 - The lowering-mechanics classes of `docs/plan/core-ir-inputs/root_causes.md` go by construction (TEMP, TAIL,
   DROP, ORDER, ACCESS, DEREF, CALLS, ENV, INNER, SUSP, LOOP, VAL, POST, TYPES, TWO,
-  MULTI, two PART findings): 87 of 180 unsound findings. The value-flow classes go to one
+  MULTI, two PART findings): 87 of 180 unsound findings. (`root_causes.md` counts 83 by
+  construction. It puts MULTI and the two PART findings in "partly"; the grafts of this
+  decision close them.) The value-flow classes go to one
   rule each (FNVAL, SUM, STORE, GEN, STATE, CAP): 64 findings. 29 stay (spec, types,
   inference bounds, names, `rc` identity). The new findings M1 to M4, J1 to J6, map N1 and
   N2, and semantics N1 to N4 close.

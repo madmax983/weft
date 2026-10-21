@@ -1,0 +1,90 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Cb { f: fn() }
+struct Holder { cb: fn() }
+fn grow(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 1 }) }
+fn apply(f: fn(&World), w: &World) { f(w) }
+fn store_it(h: &Holder, f: fn()) / mut(h) { h.cb = f }
+fn id<T>(x: T) -> T { x }
+
+fn via_field(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let c = Cb { f: || world.entities.clear() }
+    let g = c.f
+    g()
+    print(first.hp)   //~ W0301
+}
+fn via_vec_pop(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let v: Vec<fn()> = Vec.new()
+    v.push(|| world.entities.clear())
+    match v.pop() { Some(g) => g(), None => {} }
+    print(first.hp)   //~ W0301
+}
+fn via_option(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let o = Some(grow)
+    match o { Some(g) => g(world), None => {} }
+    print(first.hp)   //~ W0301
+}
+fn via_apply_item(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    apply(grow, world)
+    print(first.hp)   //~ W0301
+}
+fn via_store(world: &World, h: &Holder) / mut(world.entities, h) {
+    let first = &world.entities[0]
+    store_it(h, || world.entities.clear())
+    let g = h.cb
+    g()
+    print(first.hp)   //~ W0301
+}
+fn via_generic(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g = id(|| world.entities.clear())
+    g()
+    print(first.hp)   //~ W0301
+}
+fn via_tuple_ret(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let mk = || (|| world.entities.clear(), 1)
+    let (g, n) = mk()
+    g()
+    print(first.hp)   //~ W0301
+}
+fn via_rc(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let r = Rc.new(Cb { f: || world.entities.clear() })
+    let g = r.f
+    g()
+    print(first.hp)   //~ W0301
+}
+fn via_box(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let b = Box.new(|| world.entities.clear())
+    let g = b
+    g()
+    print(first.hp)   //~ W0301
+}
+fn self_call(world: &World, n: u64) / mut(world.entities) {
+    let first = &world.entities[0]
+    if n > 0 { self_call(world, n - 1) } else { grow(world) }
+    print(first.hp)   //~ W0301
+}
+// A closure that holds another closure in a field.
+fn nested_field(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let c = Cb { f: || world.entities.clear() }
+    let outer = || { let g = c.f
+ g() }
+    outer()
+    print(first.hp)   //~ W0301
+}
+// A function value array literal.
+fn array_lit(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let a = [|| print(1), || world.entities.clear()]
+    let g = a[1]
+    g()
+    print(first.hp)   //~ W0301
+}

@@ -1,0 +1,34 @@
+struct W { v: Vec<i32> }
+fn keep(w: &W) {}
+fn clr(w: &W) / mut(w) { w.v.clear() }
+fn item_to_item() {
+    let w = W { v: Vec.new() }
+    w.v.push(1)
+    let g = keep
+    let c = || g(&w)
+    g = clr
+    let first = &w.v[0]
+    c()
+    print(first)
+}
+fn closure_to_item() {
+    let w = W { v: Vec.new() }
+    w.v.push(1)
+    let g = |x: &W| print(0)
+    let c = || g(&w)
+    g = clr
+    let first = &w.v[0]
+    c()
+    print(first)
+}
+fn item_to_closure() {
+    let w = W { v: Vec.new() }
+    w.v.push(1)
+    let g = keep
+    let c = || g(&w)
+    g = |x: &W| x.v.clear()
+    let first = &w.v[0]
+    c()
+    print(first)
+}
+fn main() { item_to_item() }

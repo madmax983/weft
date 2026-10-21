@@ -1,0 +1,58 @@
+// R3RT4: the result of an operation points where the values that its clauses
+// `resume` with point (ADR 0005). When the clause resumes inside a closure with
+// a parameter of that closure, the result loses the places that the node that
+// runs the closure gives to the parameter. A change of them, or the end of the
+// clause local, does not invalidate the result.
+// Expected: each `//~` code. Found: 0 errors.
+// Run: weft test --unchecked --oracle R3RT4_resume_closure_param.wf
+effect Pick { fn pick() -> &u64 }
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn call_with(f: fn(&u64), x: &u64) { f(x) }
+
+// The closure gets `&v[0]` as its parameter and resumes with it.
+fn closure_param() {
+    let v = mkv()
+    handle Pick { fn pick() { let k = |x: &u64| resume(x); k(&v[0]) } } in {
+        let r = pick()
+        v.clear()
+        print(r)   //~ W0301
+    }
+}
+// A higher-order callee gives the parameter.
+fn hof_param() {
+    let v = mkv()
+    handle Pick { fn pick() { call_with(|x: &u64| resume(x), &v[0]) } } in {
+        let r = pick()
+        v.clear()
+        print(r)   //~ W0301
+    }
+}
+// The parameter points into a local of the clause; the body keeps the result.
+fn clause_local() {
+    let keep = &0
+    handle Pick { fn pick() { let w = mkv(); let k = |x: &u64| resume(x); k(&w[0]) } } in {
+        keep = pick()
+    }
+    print(keep)   //~ W0301
+}
+
+// Controls that the checker finds: a captured reference and a direct resume.
+fn control_capture() {
+    let v = mkv()
+    handle Pick { fn pick() { let x = &v[0]; let k = || resume(x); k() } } in {
+        let r = pick()
+        v.clear()
+        print(r)   //~ W0301
+    }
+}
+fn control_direct() {
+    let v = mkv()
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r = pick()
+        v.clear()
+        print(r)   //~ W0301
+    }
+}
+test "closure_param" { closure_param() }
+test "hof_param" { hof_param() }
+test "clause_local" { clause_local() }

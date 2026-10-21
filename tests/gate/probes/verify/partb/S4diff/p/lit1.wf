@@ -1,0 +1,14 @@
+fn a() -> u64 { "abc".len() }
+fn b() { let s = "abc".to_string() }
+fn c() { let d = 2.s
+ let e = 500.ms }
+fn d() { let x = 1.x }   //~ W0104
+fn e(a: u64, a: u64) {}
+fn f() { let (a, a) = (1, 2) }
+fn g() { let x: i64 = -9223372036854775808
+ let y: u64 = 18446744073709551615
+ let z: i8 = -128
+ let w: u8 = 255 }
+fn h() { let x: u8 = -0 }
+fn i() { let x: usize = 18446744073709551615 }
+fn j(x: u8) -> bool { x == 256 }  //~ W0102

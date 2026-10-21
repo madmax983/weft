@@ -1,0 +1,91 @@
+// RR2: a function type carries one closure summary (`FnTy.summary` in
+// crates/weft-sema/src/types.rs). When two closures meet in one type (the
+// elements of an array or a `Vec`, a new value of an `Option` local or of a
+// generic field, an element assignment), only the first closure is followed. A
+// call of a later closure does not show its mutation (W0301), its task writes
+// (W0405) or its `once` mode (W0502).
+// Expected: the marked codes. Actual: no error. Each test faults.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Stats { count: u64 }
+struct Wrap<T> { x: T }
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print("eat {b.items.len()}") }
+
+fn array_second(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let a = [|| print(1), || world.entities.clear()]
+    let g = a[1]
+    g()
+    print(first.hp)   //~ W0301
+}
+fn vec_second(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let v = Vec.new()
+    v.push(|| print(1))
+    v.push(|| world.entities.clear())
+    let g = v[1]
+    g()
+    print(first.hp)   //~ W0301
+}
+fn element_assign(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let a = [|| print(1)]
+    a[0] = || world.entities.clear()
+    let g = a[0]
+    g()
+    print(first.hp)   //~ W0301
+}
+fn option_new_value(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let o = Some(|| print(1))
+    o = Some(|| world.entities.clear())
+    match o { Some(g) => g(), None => {} }
+    print(first.hp)   //~ W0301
+}
+fn generic_field(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let w = Wrap { x: || print(1) }
+    w.x = || world.entities.clear()
+    let g = w.x
+    g()
+    print(first.hp)   //~ W0301
+}
+fn task_second(st: &Stats) / mut(st), async {
+    let v = Vec.new()
+    v.push(|| print(1))
+    v.push(|| st.count += 1)
+    let g = v[1]
+    scope { s =>
+        s.spawn(g)
+        print(st.count)   //~ W0405
+    }
+}
+fn once_second() {
+    let b = Buf { items: Vec.new() }
+    let v = Vec.new()
+    v.push(|| print(1))
+    v.push(|| eat(b))   //~ W0502
+    let g = v[1]
+    g()
+    g()
+}
+
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+test "array_second" { let w = mkw()
+ array_second(&w) }
+test "vec_second" { let w = mkw()
+ vec_second(&w) }
+test "element_assign" { let w = mkw()
+ element_assign(&w) }
+test "option_new_value" { let w = mkw()
+ option_new_value(&w) }
+test "generic_field" { let w = mkw()
+ generic_field(&w) }
+test "task_second" { let st = Stats { count: 0 }
+ task_second(&st) }
+test "once_second" { once_second() }

@@ -1,0 +1,4 @@
+struct S0 {  }
+struct S1 { f0: Option<Box<S0>>, f1: S0 }
+struct S2 { f0: S1, f1: (S1) }
+fn main() {}

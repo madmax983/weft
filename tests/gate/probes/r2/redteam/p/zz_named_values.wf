@@ -1,0 +1,16 @@
+struct Entity { hp: i32 }
+fn diff(a: i32, b: i32) -> i32 { a - b }
+fn show(e: &Entity, n: i32) { print("e.hp = {e.hp}") }
+effect Op { fn op(a: i32, b: i32) -> i32 }
+fn main() {
+    print(diff(b: 10, a: 3))
+    let g = diff
+    print(g(b: 10, a: 3))
+    let h = show
+    let y = Entity { hp: 2 }
+    h(n: 5, e: &y)
+    let r = handle Op { fn op(a, b) { resume(a - b) } } in op(b: 10, a: 3)
+    print(r)
+    let t = Task.join
+    print(1)
+}

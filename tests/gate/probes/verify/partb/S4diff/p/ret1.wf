@@ -1,0 +1,26 @@
+linear struct Tx { id: u64 }
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn eat(s: String) {}
+fn mk() -> fn() {
+    let s = "abc"
+    || eat(s)
+}
+fn twice_returned() {
+    let g = mk()
+    g()
+    g()   //~ W0502
+}
+fn mk_lin() -> fn() {
+    let t = begin()
+    || rollback(t)
+}
+fn lin_returned_dropped() {
+    let g = mk_lin()
+}   //~ W0601
+fn local_ret() {
+    let g = {
+        let t = begin()
+        || rollback(t)
+    }
+}   //~ W0601

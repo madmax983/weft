@@ -1,0 +1,60 @@
+// QA1: the loop fixpoint in sema stops after MAX_LOOP_PASSES = 8 passes with no
+// diagnostic (crates/weft-sema/src/body/stmt.rs:806-835). A chain of 8 locals
+// in one loop needs 9 passes. The last values never reach the head, so the
+// checker misses W0301 and W0703.
+//   weft check QA1_loop_pass_cap.wf   ->  0 errors (expected 2)
+// Delete `g7` (or `c7`) to make a chain of 7: the checker then reports
+// W0301 (line 31) and W0703 (line 48).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn grow(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 1 }) }
+fn noop(w: &World) {}
+
+// The 9th iteration calls `grow`, which invalidates `first`. Expected W0301.
+fn chain(world: &World, n: u64) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g0 = noop
+    let g1 = noop
+    let g2 = noop
+    let g3 = noop
+    let g4 = noop
+    let g5 = noop
+    let g6 = noop
+    let i = 0
+    while i < n {
+        g0(world)
+        print(first.hp)
+        g0 = g1
+        g1 = g2
+        g2 = g3
+        g3 = g4
+        g4 = g5
+        g5 = g6
+        g6 = grow
+        i += 1
+    }
+}
+
+// The 9th iteration clears `b.entities`, which the signature does not state.
+// Expected W0703. A caller keeps references into `b.entities[]` across the call.
+pub fn clear_one(a: &World, b: &World, n: u64) / mut(a.entities) {
+    let c0 = a
+    let c1 = a
+    let c2 = a
+    let c3 = a
+    let c4 = a
+    let c5 = a
+    let c6 = a
+    let i = 0
+    while i < n {
+        c0.entities.clear()
+        c0 = c1
+        c1 = c2
+        c2 = c3
+        c3 = c4
+        c4 = c5
+        c5 = c6
+        c6 = b
+        i += 1
+    }
+}

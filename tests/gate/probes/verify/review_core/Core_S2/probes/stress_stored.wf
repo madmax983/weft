@@ -1,0 +1,231 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Cb { f: fn() }
+fn run_ref(cb: &Cb) { let g = cb.f; g() }
+fn big(world: &World, n: u64) / mut(world.entities) {
+    let cb0 = Cb { f: || world.entities.push(Entity { hp: 0 }) }
+    let cb1 = Cb { f: || world.entities.push(Entity { hp: 1 }) }
+    let cb2 = Cb { f: || world.entities.push(Entity { hp: 2 }) }
+    let cb3 = Cb { f: || world.entities.push(Entity { hp: 3 }) }
+    let cb4 = Cb { f: || world.entities.push(Entity { hp: 4 }) }
+    let cb5 = Cb { f: || world.entities.push(Entity { hp: 5 }) }
+    let cb6 = Cb { f: || world.entities.push(Entity { hp: 6 }) }
+    let cb7 = Cb { f: || world.entities.push(Entity { hp: 7 }) }
+    let cb8 = Cb { f: || world.entities.push(Entity { hp: 8 }) }
+    let cb9 = Cb { f: || world.entities.push(Entity { hp: 9 }) }
+    let cb10 = Cb { f: || world.entities.push(Entity { hp: 10 }) }
+    let cb11 = Cb { f: || world.entities.push(Entity { hp: 11 }) }
+    let cb12 = Cb { f: || world.entities.push(Entity { hp: 12 }) }
+    let cb13 = Cb { f: || world.entities.push(Entity { hp: 13 }) }
+    let cb14 = Cb { f: || world.entities.push(Entity { hp: 14 }) }
+    let cb15 = Cb { f: || world.entities.push(Entity { hp: 15 }) }
+    let cb16 = Cb { f: || world.entities.push(Entity { hp: 16 }) }
+    let cb17 = Cb { f: || world.entities.push(Entity { hp: 17 }) }
+    let cb18 = Cb { f: || world.entities.push(Entity { hp: 18 }) }
+    let cb19 = Cb { f: || world.entities.push(Entity { hp: 19 }) }
+    let cb20 = Cb { f: || world.entities.push(Entity { hp: 20 }) }
+    let cb21 = Cb { f: || world.entities.push(Entity { hp: 21 }) }
+    let cb22 = Cb { f: || world.entities.push(Entity { hp: 22 }) }
+    let cb23 = Cb { f: || world.entities.push(Entity { hp: 23 }) }
+    let cb24 = Cb { f: || world.entities.push(Entity { hp: 24 }) }
+    let cb25 = Cb { f: || world.entities.push(Entity { hp: 25 }) }
+    let cb26 = Cb { f: || world.entities.push(Entity { hp: 26 }) }
+    let cb27 = Cb { f: || world.entities.push(Entity { hp: 27 }) }
+    let cb28 = Cb { f: || world.entities.push(Entity { hp: 28 }) }
+    let cb29 = Cb { f: || world.entities.push(Entity { hp: 29 }) }
+    let cb30 = Cb { f: || world.entities.push(Entity { hp: 30 }) }
+    let cb31 = Cb { f: || world.entities.push(Entity { hp: 31 }) }
+    let cb32 = Cb { f: || world.entities.push(Entity { hp: 32 }) }
+    let cb33 = Cb { f: || world.entities.push(Entity { hp: 33 }) }
+    let cb34 = Cb { f: || world.entities.push(Entity { hp: 34 }) }
+    let cb35 = Cb { f: || world.entities.push(Entity { hp: 35 }) }
+    let cb36 = Cb { f: || world.entities.push(Entity { hp: 36 }) }
+    let cb37 = Cb { f: || world.entities.push(Entity { hp: 37 }) }
+    let cb38 = Cb { f: || world.entities.push(Entity { hp: 38 }) }
+    let cb39 = Cb { f: || world.entities.push(Entity { hp: 39 }) }
+    let cb40 = Cb { f: || world.entities.push(Entity { hp: 40 }) }
+    let cb41 = Cb { f: || world.entities.push(Entity { hp: 41 }) }
+    let cb42 = Cb { f: || world.entities.push(Entity { hp: 42 }) }
+    let cb43 = Cb { f: || world.entities.push(Entity { hp: 43 }) }
+    let cb44 = Cb { f: || world.entities.push(Entity { hp: 44 }) }
+    let cb45 = Cb { f: || world.entities.push(Entity { hp: 45 }) }
+    let cb46 = Cb { f: || world.entities.push(Entity { hp: 46 }) }
+    let cb47 = Cb { f: || world.entities.push(Entity { hp: 47 }) }
+    let cb48 = Cb { f: || world.entities.push(Entity { hp: 48 }) }
+    let cb49 = Cb { f: || world.entities.push(Entity { hp: 49 }) }
+    let cb50 = Cb { f: || world.entities.push(Entity { hp: 50 }) }
+    let cb51 = Cb { f: || world.entities.push(Entity { hp: 51 }) }
+    let cb52 = Cb { f: || world.entities.push(Entity { hp: 52 }) }
+    let cb53 = Cb { f: || world.entities.push(Entity { hp: 53 }) }
+    let cb54 = Cb { f: || world.entities.push(Entity { hp: 54 }) }
+    let cb55 = Cb { f: || world.entities.push(Entity { hp: 55 }) }
+    let cb56 = Cb { f: || world.entities.push(Entity { hp: 56 }) }
+    let cb57 = Cb { f: || world.entities.push(Entity { hp: 57 }) }
+    let cb58 = Cb { f: || world.entities.push(Entity { hp: 58 }) }
+    let cb59 = Cb { f: || world.entities.push(Entity { hp: 59 }) }
+    let i = 0
+    while i < n {
+        let h0 = || run_ref(&cb0)
+        h0()
+        let h1 = || run_ref(&cb1)
+        h1()
+        let h2 = || run_ref(&cb2)
+        h2()
+        let h3 = || run_ref(&cb3)
+        h3()
+        let h4 = || run_ref(&cb4)
+        h4()
+        let h5 = || run_ref(&cb5)
+        h5()
+        let h6 = || run_ref(&cb6)
+        h6()
+        let h7 = || run_ref(&cb7)
+        h7()
+        let h8 = || run_ref(&cb8)
+        h8()
+        let h9 = || run_ref(&cb9)
+        h9()
+        let h10 = || run_ref(&cb10)
+        h10()
+        let h11 = || run_ref(&cb11)
+        h11()
+        let h12 = || run_ref(&cb12)
+        h12()
+        let h13 = || run_ref(&cb13)
+        h13()
+        let h14 = || run_ref(&cb14)
+        h14()
+        let h15 = || run_ref(&cb15)
+        h15()
+        let h16 = || run_ref(&cb16)
+        h16()
+        let h17 = || run_ref(&cb17)
+        h17()
+        let h18 = || run_ref(&cb18)
+        h18()
+        let h19 = || run_ref(&cb19)
+        h19()
+        let h20 = || run_ref(&cb20)
+        h20()
+        let h21 = || run_ref(&cb21)
+        h21()
+        let h22 = || run_ref(&cb22)
+        h22()
+        let h23 = || run_ref(&cb23)
+        h23()
+        let h24 = || run_ref(&cb24)
+        h24()
+        let h25 = || run_ref(&cb25)
+        h25()
+        let h26 = || run_ref(&cb26)
+        h26()
+        let h27 = || run_ref(&cb27)
+        h27()
+        let h28 = || run_ref(&cb28)
+        h28()
+        let h29 = || run_ref(&cb29)
+        h29()
+        let h30 = || run_ref(&cb30)
+        h30()
+        let h31 = || run_ref(&cb31)
+        h31()
+        let h32 = || run_ref(&cb32)
+        h32()
+        let h33 = || run_ref(&cb33)
+        h33()
+        let h34 = || run_ref(&cb34)
+        h34()
+        let h35 = || run_ref(&cb35)
+        h35()
+        let h36 = || run_ref(&cb36)
+        h36()
+        let h37 = || run_ref(&cb37)
+        h37()
+        let h38 = || run_ref(&cb38)
+        h38()
+        let h39 = || run_ref(&cb39)
+        h39()
+        let h40 = || run_ref(&cb40)
+        h40()
+        let h41 = || run_ref(&cb41)
+        h41()
+        let h42 = || run_ref(&cb42)
+        h42()
+        let h43 = || run_ref(&cb43)
+        h43()
+        let h44 = || run_ref(&cb44)
+        h44()
+        let h45 = || run_ref(&cb45)
+        h45()
+        let h46 = || run_ref(&cb46)
+        h46()
+        let h47 = || run_ref(&cb47)
+        h47()
+        let h48 = || run_ref(&cb48)
+        h48()
+        let h49 = || run_ref(&cb49)
+        h49()
+        let h50 = || run_ref(&cb50)
+        h50()
+        let h51 = || run_ref(&cb51)
+        h51()
+        let h52 = || run_ref(&cb52)
+        h52()
+        let h53 = || run_ref(&cb53)
+        h53()
+        let h54 = || run_ref(&cb54)
+        h54()
+        let h55 = || run_ref(&cb55)
+        h55()
+        let h56 = || run_ref(&cb56)
+        h56()
+        let h57 = || run_ref(&cb57)
+        h57()
+        let h58 = || run_ref(&cb58)
+        h58()
+        let h59 = || run_ref(&cb59)
+        h59()
+        i += 1
+    }
+}
+fn ap0(f: fn(&World), w: &World) { f(w) }
+fn ap1(f: fn(&World), w: &World) { ap0(f, w) }
+fn ap2(f: fn(&World), w: &World) { ap1(f, w) }
+fn ap3(f: fn(&World), w: &World) { ap2(f, w) }
+fn ap4(f: fn(&World), w: &World) { ap3(f, w) }
+fn ap5(f: fn(&World), w: &World) { ap4(f, w) }
+fn ap6(f: fn(&World), w: &World) { ap5(f, w) }
+fn ap7(f: fn(&World), w: &World) { ap6(f, w) }
+fn ap8(f: fn(&World), w: &World) { ap7(f, w) }
+fn ap9(f: fn(&World), w: &World) { ap8(f, w) }
+fn ap10(f: fn(&World), w: &World) { ap9(f, w) }
+fn ap11(f: fn(&World), w: &World) { ap10(f, w) }
+fn ap12(f: fn(&World), w: &World) { ap11(f, w) }
+fn ap13(f: fn(&World), w: &World) { ap12(f, w) }
+fn ap14(f: fn(&World), w: &World) { ap13(f, w) }
+fn ap15(f: fn(&World), w: &World) { ap14(f, w) }
+fn ap16(f: fn(&World), w: &World) { ap15(f, w) }
+fn ap17(f: fn(&World), w: &World) { ap16(f, w) }
+fn ap18(f: fn(&World), w: &World) { ap17(f, w) }
+fn ap19(f: fn(&World), w: &World) { ap18(f, w) }
+fn ap20(f: fn(&World), w: &World) { ap19(f, w) }
+fn ap21(f: fn(&World), w: &World) { ap20(f, w) }
+fn ap22(f: fn(&World), w: &World) { ap21(f, w) }
+fn ap23(f: fn(&World), w: &World) { ap22(f, w) }
+fn ap24(f: fn(&World), w: &World) { ap23(f, w) }
+fn ap25(f: fn(&World), w: &World) { ap24(f, w) }
+fn ap26(f: fn(&World), w: &World) { ap25(f, w) }
+fn ap27(f: fn(&World), w: &World) { ap26(f, w) }
+fn ap28(f: fn(&World), w: &World) { ap27(f, w) }
+fn ap29(f: fn(&World), w: &World) { ap28(f, w) }
+fn ap30(f: fn(&World), w: &World) { ap29(f, w) }
+fn ap31(f: fn(&World), w: &World) { ap30(f, w) }
+fn ap32(f: fn(&World), w: &World) { ap31(f, w) }
+fn ap33(f: fn(&World), w: &World) { ap32(f, w) }
+fn ap34(f: fn(&World), w: &World) { ap33(f, w) }
+fn ap35(f: fn(&World), w: &World) { ap34(f, w) }
+fn ap36(f: fn(&World), w: &World) { ap35(f, w) }
+fn ap37(f: fn(&World), w: &World) { ap36(f, w) }
+fn ap38(f: fn(&World), w: &World) { ap37(f, w) }
+fn ap39(f: fn(&World), w: &World) { ap38(f, w) }
+fn top(world: &World) { let first = &world.entities[0]; ap39(|x| x.entities.clear(), world); print(first.hp) }

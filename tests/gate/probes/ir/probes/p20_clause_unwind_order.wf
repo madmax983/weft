@@ -1,0 +1,24 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { let Tx(i) = t; print("rollback", i) }
+fn commit(t: Tx) { let Tx(i) = t; print("commit", i) }
+effect Ask { fn ask() -> u64 }
+fn body() -> u64 / Ask {
+    let b = Tx { id: 1 }
+    let x = ask()
+    commit(b)
+    x
+}
+fn main() / fail {
+    handle Fail { fn fail(m) { print("caught", m) } } in {
+        let r = handle Ask {
+            fn ask() {
+                let c = Tx { id: 2 }
+                fail("x")
+                commit(c)
+                resume(1)
+            }
+        } in { body() }
+        print(r)
+    }
+}

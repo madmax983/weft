@@ -1,0 +1,57 @@
+effect Ask { fn ask() -> u64 }
+effect Pick { multi fn pick() -> bool }
+fn call_it(f: fn() -> u64) -> u64 { f() }
+fn call_twice(f: fn(bool) -> u64) -> u64 { f(true) + f(false) }
+
+fn in_place() -> u64 {
+    handle Ask { fn ask() { let k = || resume(1); let r = k(); r } } in { ask() + 1 }
+}
+fn to_callee() -> u64 {
+    handle Ask { fn ask() { call_it(|| resume(1)) } } in { ask() + 1 }
+}
+fn timeout_block() -> u64 / clock, fail {
+    handle Ask { fn ask() { with_timeout(10.ms) { resume(1) } } } in { ask() + 1 }
+}
+fn multi_in_place() -> u64 {
+    handle Pick { fn pick() { let k = |b: bool| resume(b); k(true) + k(false) } } in { if pick() { 1 } else { 2 } }
+}
+fn multi_to_callee() -> u64 {
+    handle Pick { fn pick() { call_twice(|b: bool| resume(b)) } } in { if pick() { 1 } else { 2 } }
+}
+fn multi_loop() -> u64 {
+    handle Pick {
+        fn pick() {
+            let k = |b: bool| resume(b)
+            let s = 0
+            for i in 0..2 { s += k(i == 0) }
+            s
+        }
+    } in { if pick() { 1 } else { 2 } }
+}
+// Overwritten before the clause ends.
+fn overwritten() -> u64 {
+    let k = || 0
+    let r = handle Ask { fn ask() { k = || resume(1); let x = k(); k = || 0; x } } in { ask() + 1 }
+    r + k()
+}
+// A clause-local Vec of resuming closures.
+fn clause_vec() -> u64 {
+    handle Pick {
+        fn pick() {
+            let v: Vec<fn(bool) -> u64> = Vec.new()
+            v.push(|b: bool| resume(b))
+            let f = v[0]
+            f(true) + f(false)
+        }
+    } in { if pick() { 1 } else { 2 } }
+}
+fn main() / clock, fail {
+    print(in_place())
+    print(to_callee())
+    print(timeout_block())
+    print(multi_in_place())
+    print(multi_to_callee())
+    print(multi_loop())
+    print(overwritten())
+    print(clause_vec())
+}

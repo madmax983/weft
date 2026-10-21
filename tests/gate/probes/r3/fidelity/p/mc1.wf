@@ -1,0 +1,18 @@
+effect Choice { multi fn choose() -> bool }
+fn owned_closure() -> u64 / Choice {
+    let count = 0
+    let hooks: Vec<fn()> = Vec.new()
+    hooks.push(|| count += 1)
+    let b = choose()
+    let g = hooks[0]
+    g()
+    g()
+    print("count {count} b {b}")
+    count
+}
+fn main() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        let k = owned_closure()
+        print(k)
+    }
+}

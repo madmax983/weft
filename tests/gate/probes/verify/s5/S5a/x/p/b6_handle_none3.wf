@@ -1,0 +1,25 @@
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { print("unlocked") 
+ let Lock(i) = l }
+fn lock() -> Lock { print("locked") 
+ Lock { id: 1 } }
+effect Op { fn op() }
+
+fn resumes_then_replaces() {
+    let o = handle Op { fn op() { let r = resume(())
+ Some(lock()) } } in {
+        op()
+        None
+    }
+    print("end")
+}
+fn in_block() {
+    let o = { let x = 1
+ None }
+    o = Some(lock())
+    match o { Some(l) => unlock(l), None => {} }
+}
+fn main() {
+    resumes_then_replaces()
+    in_block()
+}

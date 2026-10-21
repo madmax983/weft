@@ -1,0 +1,13 @@
+// The server runs in a task that makes the Rc.
+fn main(env: Env) / io {
+    let l = env.net.listen("127.0.0.1:18446")
+    scope { s =>
+        s.spawn(|| {
+            let hits = Rc.new(0)
+            http.serve(l, |req| {
+                let h = hits.clone()
+                Response.text("hit")
+            })
+        })
+    }
+}

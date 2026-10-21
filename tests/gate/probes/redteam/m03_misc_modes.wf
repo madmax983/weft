@@ -1,0 +1,17 @@
+struct Stats { count: u64 }
+struct Entity { hp: u64 }
+fn needs_uniq(es: &[u64] @ uniq) / mut(es) {}
+fn bump(s: &Stats) / mut(s.count) { s.count += 1 }
+// A local stays `uniq` after it is rebound to an aliased reference.
+fn sticky(v: &Vec<u64>, w: &Vec<u64>) / mut(v[], w[]) {
+    let (l, r) = v.split_mut(1)
+    l = &w[]
+    let a = &w[0]
+    needs_uniq(l)
+    print(a)
+}
+// A fork branch reads through a reference variable while the other writes.
+fn fork_ref_read(stats: &Stats) / mut(stats.count), par {
+    let c = &stats.count
+    fork(|| print(c), || print(1))
+}

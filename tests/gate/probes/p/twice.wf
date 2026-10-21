@@ -1,0 +1,5 @@
+effect Note { fn note(msg: String) }
+fn main() {
+    handle Note { fn note(msg) { resume(()); resume(()) } } in note("a")
+    print("unreachable")
+}

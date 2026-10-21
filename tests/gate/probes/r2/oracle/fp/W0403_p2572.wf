@@ -1,0 +1,21 @@
+struct E { hp: u64, tag: u64 }
+struct W { es: Vec<E>, ns: Vec<u64>, score: u64, b: Box<E> }
+effect Pick { multi fn pick() -> bool }
+
+fn mk_w() -> W {
+    let w = W { es: Vec.new(), ns: Vec.new(), score: 0, b: Box.new(E { hp: 1, tag: 0 }) }
+    w.es.push(E { hp: 6, tag: 2 })
+    w
+}
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v
+}
+
+fn main() {
+    let v1 = mk_v()
+    handle Pick { fn pick() { resume(true) } } in {
+        let w2 = mk_w()
+        fork(|| v1.clear(), || print(w2.es[0].hp))
+    }
+}

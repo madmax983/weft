@@ -1,0 +1,49 @@
+fn seq(f: fn()) / async {
+    scope { s =>
+        let t = s.spawn(f)
+        t.join()
+        let u = s.spawn(f)
+        u.join()
+    }
+}
+
+fn seq_loop(f: fn(), k: u64) / async {
+    scope { s =>
+        let i = 0
+        while i < k {
+            let t = s.spawn(f)
+            t.join()
+            i += 1
+        }
+    }
+}
+
+fn par_map(v: &Vec<u64>, f: fn(u64) -> u64) -> u64 / par {
+    let (a, b) = fork(|| f(v[0]), || f(v[1]))
+    a + b
+}
+
+fn spawn_then_call_other(f: fn(), g: fn()) / async {
+    scope { s =>
+        let t = s.spawn(f)
+        t.join()
+    }
+    g()
+}
+
+fn uses() / async, par {
+    let n = 0
+    seq(|| n += 1)
+    seq_loop(|| n += 1, 3)
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    let k = 5
+    print(par_map(&v, |x| x + k))
+    spawn_then_call_other(|| n += 1, || print(n))
+    print(n)
+}
+
+fn main() / async, par {
+    uses()
+}

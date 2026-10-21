@@ -1,0 +1,11 @@
+effect Nap { fn nap() }
+fn user() / Nap {
+    let nap = || print("closure")
+    nap()
+}
+fn main() {
+    handle Nap { fn nap() {
+        print("clause ran")
+        resume(())
+    } } in user()
+}

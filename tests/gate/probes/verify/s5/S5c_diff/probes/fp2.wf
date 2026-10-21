@@ -1,0 +1,30 @@
+struct Stats { count: u64 }
+fn twice(g: fn()) { g()
+ g() }
+fn twice_at1(x: u64, g: fn()) { g()
+ g() }
+fn from_vec0(st: &Stats) / mut(st) {
+    let v = Vec.new()
+    v.push(|| { st.count += 1 })
+    twice(v[0])
+}
+fn from_vec1(st: &Stats) / mut(st) {
+    let v = Vec.new()
+    v.push(|| { st.count += 1 })
+    twice_at1(1, v[0])
+}
+fn direct0(st: &Stats) / mut(st) {
+    twice(|| { st.count += 1 })
+}
+fn local0(st: &Stats) / mut(st) {
+    let g = || { st.count += 1 }
+    twice(g)
+}
+fn main() {
+    let st = Stats { count: 0 }
+    from_vec0(&st)
+    from_vec1(&st)
+    direct0(&st)
+    local0(&st)
+    print(st.count)
+}

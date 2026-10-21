@@ -1,0 +1,15 @@
+
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v
+}
+
+fn main() {
+    let v2 = mk_v()
+    let g4 = || {
+        if v2.len() > 2 {
+            let f5 = || { let m = v2; print(m.len()) }
+            print(v2)
+        }
+    }
+}

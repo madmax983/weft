@@ -1,0 +1,92 @@
+struct Job { f: fn() }
+struct P { k: u64 }
+
+fn helper() / async, clock {
+    let r = Rc.new(0)
+    scope { t =>
+        t.spawn(|| { sleep(5.ms); let y = r.clone() })
+        sleep(5.ms)
+        let z = r.clone()
+    }
+}
+fn two_level() / async, clock { helper() }
+fn call_it(f: fn() / (async, clock)) / async, clock { f() }
+impl P {
+    fn m(self) / async, clock { helper() }
+}
+
+// A task calls a captured closure that calls helper.
+fn via_captured_closure() / async, clock {
+    let g = || helper()
+    scope { s =>
+        s.spawn(|| g())
+    }
+}
+
+// A task calls a function that calls helper.
+fn via_two_level() / async, clock {
+    scope { s =>
+        s.spawn(|| two_level())
+    }
+}
+
+// A task calls a method that calls helper.
+fn via_method() / async, clock {
+    let p = P { k: 1 }
+    scope { s =>
+        s.spawn(|| p.m())
+    }
+}
+
+// A task gives a closure that calls helper to call_it.
+fn via_call_it() / async, clock {
+    scope { s =>
+        s.spawn(|| call_it(|| helper()))
+    }
+}
+
+// A task runs a closure from a field.
+fn via_field() / async, clock {
+    let j = Job { f: || helper() }
+    scope { s =>
+        s.spawn(|| { let f = j.f; f() })
+    }
+}
+
+// The inner child is spawned by a closure that the task calls.
+fn via_inner_closure() / async, clock {
+    scope { s =>
+        s.spawn(|| {
+            let r = Rc.new(0)
+            let k = || {
+                scope { t =>
+                    t.spawn(|| { sleep(5.ms); let y = r.clone() })
+                    sleep(5.ms)
+                    let z = r.clone()
+                }
+            }
+            k()
+        })
+    }
+}
+
+// A task spawned in a loop by another task.
+fn via_loop() / async, clock {
+    scope { s =>
+        s.spawn(|| {
+            let r = Rc.new(0)
+            scope { t =>
+                let i = 0
+                while i < 2 {
+                    t.spawn(|| { sleep(5.ms); let y = r.clone() })
+                    i += 1
+                }
+                sleep(5.ms)
+                let z = r.clone()
+            }
+        })
+    }
+}
+
+fn main() / async, clock {
+}

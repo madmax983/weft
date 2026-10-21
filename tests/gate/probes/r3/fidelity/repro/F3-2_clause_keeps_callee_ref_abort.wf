@@ -1,0 +1,13 @@
+// The same as st6, but the clause does not resume: the abort unwinds `deep`,
+// and its local `x` ends.
+effect Keep { fn keep(r: &u64) }
+fn deep() / Keep {
+    let x = 5
+    keep(&x)
+}
+fn main() {
+    let y = 1
+    let last = &y
+    handle Keep { fn keep(r) { last = r } } in deep()
+    print(last)   // expected W0301; the checker accepts
+}

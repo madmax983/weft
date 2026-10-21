@@ -1,0 +1,12 @@
+fn main() {
+    let a = Vec.new()
+    a.push(1)
+    let b = Vec.new()
+    b.push(2)
+    let r = &a[0]
+    for i in 0..3 {
+        print(r + 1)
+        if i == 1 { b.clear() }
+        r = &b[0]
+    }
+}

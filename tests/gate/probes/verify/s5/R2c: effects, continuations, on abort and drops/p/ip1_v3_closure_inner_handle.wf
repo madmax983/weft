@@ -1,0 +1,15 @@
+// A closure in a clause of fail that installs a handler and resumes its own clause.
+effect Op { fn op() -> u64 }
+fn work() -> u64 / fail {
+    fail("boom")
+    5
+}
+fn main() {
+    let r = handle Fail {
+        fn fail(m) {
+            let g = || handle Op { fn op() { resume(7) } } in { op() + 1 }
+            g()
+        }
+    } in work()
+    print(r)
+}

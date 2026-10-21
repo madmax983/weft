@@ -1,0 +1,33 @@
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct Wrap<T> { x: T, n: u64 }
+struct Pair<A, B> { a: A, b: B }
+enum Two<T> { One(T), Other(T, u64) }
+
+fn tuple_tuple() -> u8 {
+    let t = ((Frame { buf: [1, 2, 3, 4] }, 1), 2)
+    let c = t.0.0.cur
+    c + 1
+}
+fn pair_same() -> u8 {
+    let p = Pair { a: Wrap { x: 1, n: 2 }, b: Wrap { x: Frame { buf: [1, 2, 3, 4] }, n: 0 } }
+    let c = p.b.x.cur
+    c + 1
+}
+fn pair_wrap_wrap() -> u8 {
+    let p = Pair { a: Wrap { x: Wrap { x: 1, n: 1 }, n: 2 }, b: Wrap { x: Wrap { x: Frame { buf: [1, 2, 3, 4] }, n: 0 }, n: 0 } }
+    let c = p.b.x.x.cur
+    c + 1
+}
+fn box_box_box() -> u8 {
+    let b = Box.new(Box.new(Box.new(Frame { buf: [1, 2, 3, 4] })))
+    let c = b.cur
+    c + 1
+}
+fn wrap3() -> u8 {
+    let w = Wrap { x: Wrap { x: Wrap { x: Frame { buf: [1, 2, 3, 4] }, n: 0 }, n: 0 }, n: 0 }
+    let c = w.x.x.x.cur
+    c + 1
+}
+fn main() {
+    print(tuple_tuple())
+}

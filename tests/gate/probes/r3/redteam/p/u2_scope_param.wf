@@ -1,0 +1,9 @@
+fn submit(s: Scope) { print(1) }
+fn take_ref(s: &Scope) { print(1) }
+fn caller() / async {
+    scope { s =>
+        take_ref(&s)
+        submit(s)
+    }
+}
+fn main() / async { caller() }

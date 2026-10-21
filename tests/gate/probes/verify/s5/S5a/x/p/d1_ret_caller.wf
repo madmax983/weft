@@ -1,0 +1,19 @@
+effect Pick { fn pick() -> &u64 }
+fn ret_caller(u: &Vec<u64>) -> &u64 in u.. / Pick {
+    pick()
+}
+fn ret_caller_inferred(u: &Vec<u64>) / Pick {
+    let r = pick()
+    print(r)
+}
+fn main() {
+    let u = Vec.new()
+    u.push(6)
+    let w = Vec.new()
+    w.push(7)
+    handle Pick { fn pick() { resume(&w[0]) } } in {
+        let q = ret_caller(&u)
+        w.clear()
+        print(q)
+    }
+}

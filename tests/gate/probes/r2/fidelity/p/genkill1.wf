@@ -1,0 +1,16 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn grow(w: &World) -> &Entity in w.entities[] / mut(w.entities) {
+    w.entities.push(Entity { hp: 1 })
+    &w.entities[0]
+}
+fn f(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    r = grow(world)
+    print(r.hp)
+    let s = &world.entities[0]
+    for i in 0..3 {
+        s = grow(world)
+    }
+    print(s.hp)
+}

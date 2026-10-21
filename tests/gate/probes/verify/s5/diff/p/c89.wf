@@ -1,0 +1,102 @@
+// A clause that does not resume ends the handled body at the node that runs it.
+// Control goes from that node to the end of the `handle` (ADR 0005). So the code
+// after the node in the body does not run on that path: a reference keeps its
+// old value, and a linear value outside the body stays live. A local outside the
+// body keeps the function value that it has there. On other paths a new value of
+// the local replaces the old one (W0313 follows the new values).
+//
+// A read inside a handler clause of a variable with no value is W0304 at the
+// read. The clause runs at each operation that it handles, so the diagnostic
+// also names that node.
+effect Op { fn op() }
+effect Log { fn log(msg: String) }
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { let Tx(i) = t }
+fn commit(t: Tx) { let Tx(i) = t }
+fn begin() -> Tx { Tx { id: 1 } }
+
+fn abort_keeps_reference(v: &Vec<u64>, w: &Vec<u64>) / mut(v) {
+    let r = &v[0]
+    handle Fail { fn fail(m) { v.clear() } } in {
+        fail("x")
+        r = &w[0]
+    }
+    print(r)   //~ W0301
+}
+fn abort_keeps_linear() {
+    let t = begin()
+    handle Fail { fn fail(m) { print(m) } } in {
+        fail("x")
+        commit(t)
+    }
+}   //~ W0601
+fn abort_keeps_closure() {
+    let f = || print(0)
+    handle Log { fn log(m) { print(m) } } in {   //~ W0313
+        f = || log("x")
+        log("y")
+        f = || print(1)
+    }
+    f()
+}
+fn branch_keeps_closure(c: bool) {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        f = || log("x")
+        if c { f = || print(1) }
+    }
+    f()
+}
+fn clause_reads_unset() / Op {
+    let x: u64
+    handle Op { fn op() {
+        print(x)   //~ W0304
+        resume(())
+    } } in op()
+}
+
+// Controls.
+fn resumed_keeps_reference(v: &Vec<u64>, w: &Vec<u64>) / mut(v) {
+    let r = &v[0]
+    handle Fail { fn fail(m) { resume(()) } } in {
+        fail("x")
+        r = &w[0]
+    }
+    print(r)
+}
+fn resumed_consumes() {
+    let t = begin()
+    handle Fail { fn fail(m) { resume(()) } } in {
+        fail("x")
+        commit(t)
+    }
+}
+fn reassigned() {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {
+        f = || log("x")
+        f()
+        f = || print(1)
+    }
+    f()
+}
+fn reassigned_in_loop(n: u64) {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {
+        for i in 0..n {
+            f = || log("x")
+            f()
+        }
+        f = || print(2)
+    }
+    f()
+}
+fn clause_reads_set() / Op {
+    let x: u64
+    x = 1
+    handle Op { fn op() {
+        print(x)
+        resume(())
+    } } in op()
+}

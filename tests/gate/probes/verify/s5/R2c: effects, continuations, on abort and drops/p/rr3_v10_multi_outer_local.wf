@@ -1,0 +1,22 @@
+// A multi clause gives a resuming closure to the body, and the body puts it in
+// an outer local. The local keeps it after the handle.
+effect Ask { multi fn ask() -> fn() }
+fn make() -> fn() {
+    let c: Vec<u64> = Vec.new()
+    let out = || print(0)
+    handle Ask {
+        fn ask() {
+            let k = || { resume(|| print(1)); () }
+            resume(k)
+        }
+    } in {
+        out = ask()
+        c.push(2)
+        print(c.len())
+    }
+    out
+}
+fn main() {
+    let g = make()
+    g()
+}

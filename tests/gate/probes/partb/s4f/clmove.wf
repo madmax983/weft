@@ -1,0 +1,12 @@
+fn a() {
+    let f = || print(0)
+    let g = f
+    f()
+}
+fn b(c: bool) {
+    let f = || print(0)
+    let h = { f }
+    h()
+    f()
+}
+fn main() { a() }

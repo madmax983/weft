@@ -1,0 +1,38 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn first_of(w: &World) -> &Entity in w.entities[] { &w.entities[0] }
+// 1. A fn item through a local.
+fn item_local(world: &World) / mut(world.entities) {
+    let g = first_of
+    let r = g(world)
+    world.entities.push(Entity { hp: 1 })
+    print(r.hp)   // ERR
+}
+// 2. An unknown fn parameter returns a reference into its argument.
+fn via_param(f: fn(&World) -> &Entity, world: &World) / mut(world.entities) {
+    let r = f(world)
+    world.entities.push(Entity { hp: 1 })
+    print(r.hp)   // ERR
+}
+// 3. A closure that returns a reference into a captured place, called twice.
+fn closure_twice(world: &World) / mut(world.entities) {
+    let f = || &world.entities[0]
+    let a = f()
+    let b = f()
+    world.entities.push(Entity { hp: 1 })
+    print(b.hp)   // ERR
+}
+// 4. A closure returning its param, the arg is a block value.
+fn closure_param_block(world: &World) / mut(world.entities) {
+    let f = |e: &Entity| e
+    let r = f({ &world.entities[0] })
+    world.entities.push(Entity { hp: 1 })
+    print(r.hp)   // ERR
+}
+// 5. A closure with two reference params returns the second.
+fn closure_second(world: &World, other: &World) / mut(world.entities) {
+    let f = |a: &Entity, b: &Entity| b
+    let r = f(&other.entities[0], &world.entities[0])
+    world.entities.push(Entity { hp: 1 })
+    print(r.hp)   // ERR
+}

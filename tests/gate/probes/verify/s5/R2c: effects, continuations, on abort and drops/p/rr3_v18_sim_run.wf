@@ -1,0 +1,17 @@
+// A clause resumes the continuation inside sim.run.
+effect Ask { fn ask() -> u64 }
+effect Note { fn note(x: u64) }
+fn main() {
+    handle Note { fn note(x) { print(x); resume(()) } } in {
+        let r = handle Ask {
+            fn ask() {
+                sim.run(seed: 1) { resume(1) }
+            }
+        } in {
+            let a = ask()
+            note(a)
+            a + 1
+        }
+        print(r)
+    }
+}

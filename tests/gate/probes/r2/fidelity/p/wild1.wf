@@ -1,0 +1,14 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity>, score: u64 }
+fn bump_w(w: &World) / mut(w..) { w.score += 1 }
+fn bump_p(w: &World) / mut(w) { w.score += 1 }
+fn a(world: &World) / mut(world) {
+    let s = &world.score
+    bump_w(world)
+    print(s)
+}
+fn b(world: &World) / mut(world) {
+    let s = &world.score
+    bump_p(world)
+    print(s)
+}

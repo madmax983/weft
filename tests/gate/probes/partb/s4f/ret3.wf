@@ -1,0 +1,23 @@
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) {}
+fn pass_through(f: fn()) -> fn() { f }
+fn twice_passed() {
+    let b = Buf { items: Vec.new() }
+    let g = pass_through(|| eat(b))
+    g()
+    g()
+}
+fn id<T>(x: T) -> T { x }
+fn twice_id() {
+    let b = Buf { items: Vec.new() }
+    let g = id(|| eat(b))
+    g()
+    g()
+}
+fn mk() -> fn() {
+    let b = Buf { items: Vec.new() }
+    || eat(b)
+}
+fn mk2(b: Buf) -> fn() {
+    || eat(b)
+}

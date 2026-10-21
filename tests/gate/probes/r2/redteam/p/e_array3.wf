@@ -1,0 +1,43 @@
+effect Note { fn note(x: u64) }
+struct Stats { count: u64 }
+fn second_task() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let v = Vec.new()
+        v.push(|| print(1))
+        v.push(|| note(1))
+        let g = v[1]
+        scope { s => s.spawn(g) }   //~ W0314
+    }
+}
+fn second_escape() {
+    let out = || print(0)
+    handle Note { fn note(x) { resume(()) } } in {   //~ W0313
+        let v = Vec.new()
+        v.push(|| print(1))
+        v.push(|| note(1))
+        out = v[1]
+    }
+    out()
+}
+fn second_task_conflict(st: &Stats) / mut(st), async {
+    let v = Vec.new()
+    v.push(|| print(1))
+    v.push(|| st.count += 1)
+    let g = v[1]
+    scope { s =>
+        s.spawn(g)
+        print(st.count)   //~ W0405
+    }
+}
+fn array_task_conflict(st: &Stats) / mut(st), async {
+    let a = [|| print(1), || st.count += 1]
+    scope { s =>
+        s.spawn(a[1])
+        print(st.count)   //~ W0405
+    }
+}
+test "escape" { second_escape() }
+test "conflict" { let st = Stats { count: 0 }
+ second_task_conflict(&st) }
+test "array_conflict" { let st = Stats { count: 0 }
+ array_task_conflict(&st) }

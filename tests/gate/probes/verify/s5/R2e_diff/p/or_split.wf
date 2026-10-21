@@ -1,0 +1,12 @@
+fn bump(xs: &[u64] @ uniq) / mut(xs) { xs[0] += 1 }
+fn main() / async {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    v.push(2)
+    let (l, r) = v.split_mut(1)
+    scope { s =>
+        s.spawn(|| bump(l))
+        s.spawn(|| bump(r))
+    }
+    print(v[0] + v[1])
+}

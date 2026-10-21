@@ -1,0 +1,2 @@
+fn id<T>(x: T) -> T { x }
+fn f() { let g = id; let a = g(1); let b = g(true) }

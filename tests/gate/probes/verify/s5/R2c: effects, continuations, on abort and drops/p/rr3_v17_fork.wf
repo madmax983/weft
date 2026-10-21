@@ -1,0 +1,14 @@
+// A fork branch resumes the continuation.
+effect Ask { fn ask() -> u64 }
+fn main() {
+    let r = handle Ask {
+        fn ask() {
+            let (a, b) = fork(|| resume(1), || 2)
+            a + b
+        }
+    } in {
+        let a = ask()
+        a + 1
+    }
+    print(r)
+}

@@ -1,0 +1,60 @@
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print(b.items.len()) }
+fn wrap(f: fn()) -> fn() { || {
+ f()
+ f() } }
+fn once_returned() {
+    let b = Buf { items: Vec.new() }
+    let g = wrap(|| eat(b))
+    g()
+}
+// A returned closure runs the argument in a loop.
+fn wrap_loop(f: fn()) -> fn() { || { let i = 0
+ while i < 2 { f()
+ i = i + 1 } } }
+fn loop_returned() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let g = wrap_loop(|| { print(r + 1)
+ v.clear() })
+    g()
+}
+// A returned closure that a callee runs.
+fn run(f: fn()) { f() }
+fn returned_given() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let g = wrap(|| { print(r + 1)
+ v.clear() })
+    run(g)
+}
+// A returned closure that is stored and run.
+struct H { f: fn() }
+fn run_h(h: &H) {
+    let f = h.f
+    f()
+}
+fn returned_stored() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let h = H { f: wrap(|| { print(r + 1)
+ v.clear() }) }
+    run_h(&h)
+}
+// A returned closure spawned as a task.
+fn returned_task() / async {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let g = wrap(|| { print(r + 1)
+ v.clear() })
+    scope { s =>
+        s.spawn(g)
+    }
+}
+fn main() / async {
+    once_returned()
+}

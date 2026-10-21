@@ -1,0 +1,19 @@
+struct Stats { count: u64, name: u64 }
+fn disjoint(stats: &Stats) / mut(stats.count), async {
+    scope { s =>
+        s.spawn(|| print(stats.name))
+        s.spawn(|| stats.count += 1)
+    }
+}
+fn disjoint2(stats: &Stats) / mut(stats.count), async {
+    scope { s =>
+        s.spawn(|| stats.count += 1)
+        s.spawn(|| print(stats.name))
+    }
+}
+fn parent_disjoint(stats: &Stats) / mut(stats.count), async {
+    scope { s =>
+        s.spawn(|| print(stats.name))
+        stats.count += 1
+    }
+}

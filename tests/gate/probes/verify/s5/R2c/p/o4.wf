@@ -1,0 +1,52 @@
+effect Ask { fn ask() -> u64 }
+effect Note { fn note(x: u64) }
+effect Pick { multi fn pick() -> bool }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn call(f: fn() -> u64) -> u64 { f() }
+
+// A clause of an inner handler moves the outer value after an operation of the
+// outer local handler.
+fn clause_capture() {
+    let l = Lk { id: 1 }
+    let n = handle Ask { fn ask() { 0 } } in {
+        handle Note { fn note(x) { let y = ask(); unlock(l); resume(()) } } in note(1)
+        5
+    }
+    print(n)
+}
+
+// A closure that moves the outer value goes to a callee that calls it.
+fn closure_to_callee() {
+    let l = Lk { id: 2 }
+    let n = handle Ask { fn ask() { 0 } } in {
+        call(|| { let x = ask(); unlock(l); x })
+    }
+    print(n)
+}
+
+// A nested closure moves the outer value.
+fn nested_closure() {
+    let l = Lk { id: 3 }
+    let n = handle Ask { fn ask() { 0 } } in {
+        let g = || { let h = || { let x = ask(); unlock(l); x }; h() }
+        g()
+    }
+    print(n)
+}
+
+// The closure is made outside the body but performs inside? (it cannot reach
+// the handler). A closure made in the body that only reads the outer value.
+fn closure_reads() {
+    let l = Lk { id: 4 }
+    let n = handle Ask { fn ask() { 0 } } in {
+        let g = || { let x = ask(); print(l.id); x }
+        g()
+    }
+    print(n)
+    unlock(l)
+}
+
+fn main() {
+    clause_capture()
+}

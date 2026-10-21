@@ -1,0 +1,15 @@
+struct Node { v: u64 }
+struct S { rc: Rc<Node>, n: u64 }
+fn clones(st: &S) -> u64 / async {
+    scope { s =>
+        let a = s.spawn(|| { let c = st.rc.clone()
+ c.v })
+        let b = s.spawn(|| { let c = st.rc.clone()
+ c.v })
+        a.join() + b.join()
+    }
+}
+fn main() / async {
+    let s = S { rc: Rc.new(Node { v: 1 }), n: 2 }
+    print(clones(&s))
+}

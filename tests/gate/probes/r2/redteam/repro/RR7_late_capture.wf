@@ -1,0 +1,89 @@
+// RR7: a closure refers to the variables that it captures (ADR 0003), but the
+// lowering takes the places, the summary and the modes of a captured variable
+// where the closure is made. A new value of the variable after that point
+// does not reach the closure. (OR2 is the same cause for moves.)
+// Expected: the marked codes. Actual: no error. Each test faults.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print("eat") }
+fn run(f: fn()) { f() }
+
+// A captured reference variable gets a new value.
+fn late_ref(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let f = || print(r.hp)
+    r = &world.entities[0]
+    world.entities.clear()
+    f()   //~ W0301
+}
+// The same through a higher-order callee.
+fn late_ref_hof(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let f = || print(r.hp)
+    r = &world.entities[0]
+    world.entities.clear()
+    run(f)   //~ W0301
+}
+// A task reads the captured reference after the parent frees its new target.
+fn late_ref_task(world: &World, d: &Entity) / mut(world.entities), async, clock {
+    let r = d
+    scope { s =>
+        s.spawn(|| { sleep(1.ms)
+ print(r.hp) })
+        r = &world.entities[0]
+        world.entities.clear()   //~ W0405
+    }
+}
+// A captured function variable gets a closure that mutates.
+fn late_fn(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g = || print(0)
+    let f = || g()
+    g = || world.entities.clear()
+    f()
+    print(first.hp)   //~ W0301
+}
+// A captured function variable gets a `once` closure.
+fn late_once() {
+    let b = Buf { items: Vec.new() }
+    let c = || print(0)
+    let k = || c()
+    c = || eat(b)
+    k()
+    k()   //~ W0502
+}
+// A captured reference variable gets a `@ shared` place: the closure writes it.
+struct Stats { count: u64 }
+fn late_shared(st: &Stats @ shared, d: &Stats) / mut(d) {
+    let r = d
+    let f = || r.count += 1
+    r = st
+    f()   //~ W0402
+}
+// A captured `@ uniq` variable gets an aliased value.
+fn needs_uniq(es: &[u64] @ uniq) / mut(es) {}
+fn late_alias(v: &Vec<u64>, w: &Vec<u64>) / mut(v, w) {
+    let (l, r) = v.split_mut(1)
+    let f = || needs_uniq(l)
+    let (a, b) = w.split_at(1)
+    l = a
+    f()   //~ W0406
+}
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+test "late_ref" { let w = mkw()
+ let e = Entity { hp: 5 }
+ late_ref(&w, &e) }
+test "late_ref_hof" { let w = mkw()
+ let e = Entity { hp: 5 }
+ late_ref_hof(&w, &e) }
+test "late_ref_task" { let w = mkw()
+ let e = Entity { hp: 5 }
+ late_ref_task(&w, &e) }
+test "late_fn" { let w = mkw()
+ late_fn(&w) }
+test "late_once" { late_once() }

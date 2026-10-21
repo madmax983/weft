@@ -1,0 +1,21 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn a() {
+    let f = || begin()
+    rollback(f())
+}
+fn b() {
+    let f = || { let t = begin()
+ t }
+    rollback(f())
+}
+fn c() {
+    let f = || Some(begin())
+    match f() { Some(t) => rollback(t), None => {} }
+}
+fn apply(g: fn() -> Tx) -> Tx { g() }
+fn d() {
+    rollback(apply(|| begin()))
+}

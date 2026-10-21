@@ -1,0 +1,26 @@
+effect Choice { multi fn choose() -> bool }
+struct Entity { hp: u64 }
+fn needs_uniq(es: &[u64] @ uniq) / mut(es) {}
+fn u1(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let (l, r) = v.split_mut(1)
+    let f = || needs_uniq(l)
+    let g = || f()
+    let b = choose()
+    g()
+    b
+}
+fn u2(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let (l, r) = v.split_mut(1)
+    let t = (|| needs_uniq(l), 1)
+    let b = choose()
+    let (g, n) = t
+    g()
+    b
+}
+fn u3(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let (l, r) = v.split_mut(1)
+    let o = Some(|| needs_uniq(l))
+    let b = choose()
+    match o { Some(g) => g(), None => {} }
+    b
+}

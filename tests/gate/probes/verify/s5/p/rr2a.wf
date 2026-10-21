@@ -1,0 +1,88 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Buf { items: Vec<u64> }
+struct Wrap<T> { x: T }
+fn eat(b: Buf) { print("eat {b.items.len()}") }
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+fn pick<T>(a: T, b: T, c: bool) -> T { if c { a } else { b } }
+
+// A tuple part gets a second closure.
+fn tuple_second() {
+    let world = mkw()
+    let first = &world.entities[0]
+    let t = (|| print(1), 1)
+    t.0 = || world.entities.clear()
+    let g = t.0
+    g()
+    print(first.hp)
+}
+
+// Two closures meet in a generic parameter.
+fn generic_pick() {
+    let world = mkw()
+    let first = &world.entities[0]
+    let g = pick(|| print(1), || world.entities.clear(), false)
+    g()
+    print(first.hp)
+}
+
+// A once closure copied out of a Vec twice.
+fn once_two_copies() {
+    let b = Buf { items: Vec.new() }
+    let v = Vec.new()
+    v.push(|| print(1))
+    v.push(|| eat(b))
+    let g = v[1]
+    g()
+    let h = v[1]
+    h()
+}
+
+// A Vec of Vecs.
+fn nested_vec() {
+    let world = mkw()
+    let first = &world.entities[0]
+    let vv = Vec.new()
+    let v1 = Vec.new()
+    v1.push(|| print(1))
+    vv.push(v1)
+    let v2 = Vec.new()
+    v2.push(|| world.entities.clear())
+    vv.push(v2)
+    let g = vv[1][0]
+    g()
+    print(first.hp)
+}
+
+// A generic field through a function that sets it.
+fn set_x<T>(w: &Wrap<T>, x: T) { w.x = x }
+fn generic_set() {
+    let world = mkw()
+    let first = &world.entities[0]
+    let w = Wrap { x: || print(1) }
+    set_x(&w, || world.entities.clear())
+    let g = w.x
+    g()
+    print(first.hp)
+}
+
+// The second closure is a function item.
+fn noop() { print(0) }
+fn item_first() {
+    let world = mkw()
+    let first = &world.entities[0]
+    let v = Vec.new()
+    v.push(noop)
+    v.push(|| world.entities.clear())
+    let g = v[1]
+    g()
+    print(first.hp)
+}
+
+fn main() {
+    tuple_second()
+}

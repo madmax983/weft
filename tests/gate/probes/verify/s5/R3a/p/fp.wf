@@ -1,0 +1,57 @@
+effect Give { fn give() -> &u64 }
+effect Note { fn note(x: u64) }
+effect Pick { multi fn pick() -> bool }
+linear struct Ux { id: u64 }
+    on abort = drop_ux
+fn drop_ux(u: Ux) { let Ux(i) = u }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v.push(2); v }
+fn first(v: &Vec<u64>) -> &u64 in v[] { &v[0] }
+
+fn give_outer() {
+    let w = mk_v()
+    let r = handle Give { fn give() { resume(&w[0]) } } in { give() }
+    print(r + 1)
+}
+fn scope_ref_outer() / async {
+    let u = mk_v()
+    let r = scope { s => s.spawn(|| print(1)); &u[0] }
+    print(r + 1)
+}
+fn handled_struct_ref_outer() {
+    let u = mk_v()
+    let t = handle Note { fn note(x) { resume(()) } } in { note(1); (first(&u), mk_v()) }
+    print(t.0 + 1)
+}
+fn multi_ref_outer() {
+    let u = mk_v()
+    let r = handle Pick { fn pick() { resume(true); resume(false) } } in { let b = pick(); first(&u) }
+    print(r + 1)
+}
+fn scope_linear_on_abort_child() / async, fail {
+    let u = scope { s => s.spawn(|| print(1)); Ux { id: 1 } }
+    drop_ux(u)
+}
+fn handle_value_then_temp() {
+    let r = handle Note { fn note(x) { resume(()) } } in { let k = mk_v().len(); k }
+    print(r)
+}
+fn nested_frames_outer_ref() / async {
+    let u = mk_v()
+    let r = handle Note { fn note(x) { resume(()) } } in { scope { s => { first(&u) } } }
+    print(r + 1)
+}
+fn clause_value_outer_ref() {
+    let u = mk_v()
+    let w = mk_v()
+    let r = handle Give { fn give() { first(&w) } } in { give(); &u[1] }
+    print(r + 1)
+}
+fn main() / async {
+    give_outer()
+    scope_ref_outer()
+    handled_struct_ref_outer()
+    multi_ref_outer()
+    handle_value_then_temp()
+    nested_frames_outer_ref()
+    clause_value_outer_ref()
+}

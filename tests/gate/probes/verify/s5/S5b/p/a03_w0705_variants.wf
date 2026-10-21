@@ -1,0 +1,13 @@
+effect Note { fn note(m: u64) }
+fn with_log(f: fn() / log) { f() }
+fn with_io(f: fn() / io) { f() }
+fn with_note(f: fn() / Note) { f() }
+fn two(f: fn() / log, g: fn() / clock) { f(); g() }
+fn h1() / clock, log { with_log(|| { sleep(1.s); log.info("x") }) }
+fn h2() / io { with_io(|| { log.info("x"); sleep(1.s) }) }
+fn h3() / Note, log { with_note(|| { log.info("x"); note(1) }) }
+fn h4() / clock, log { two(|| sleep(1.s), || log.info("x")) }
+fn h5() / Note { with_log(|| note(1)) }
+fn h6() / clock { with_log(|| { sleep(1.s); sleep(2.s) }) }
+fn named() / clock { sleep(1.s) }
+fn h7() / clock { with_log(named) }

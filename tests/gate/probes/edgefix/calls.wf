@@ -1,0 +1,2 @@
+fn g(x: u64) -> u64 { x }
+fn f() -> u64 { g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(g(1)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))) }

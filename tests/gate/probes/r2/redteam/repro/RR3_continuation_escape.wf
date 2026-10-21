@@ -1,0 +1,41 @@
+// RR3: a closure that resumes a continuation can leave its clause: through a
+// local outside the `handle`, a field of a generic struct, an `Option`, or as
+// the value of the `handle`. A call of it after the `handle` ends resumes a
+// continuation that the handler dropped. W0313 checks capabilities only, and
+// W0501/W0502 count calls only, so nothing rejects these programs.
+// Expected: an error (for example W0313) at each marked line. Actual: no error.
+// Each test faults: "a continuation was resumed after it was dropped".
+effect Note { fn note(x: u64) }
+effect Ask { fn ask() -> u64 }
+struct Wrap<T> { x: T }
+
+fn to_outer_local() {
+    let k = || print(0)
+    handle Note { fn note(x) { k = || resume(()) } } in note(1)   //~ W0313
+    k()
+}
+fn to_generic_field() {
+    let w = Wrap { x: || print(0) }
+    handle Note { fn note(x) { w.x = || resume(()) } } in note(1)   //~ W0313
+    let g = w.x
+    g()
+}
+fn to_option() {
+    let o = None
+    handle Note { fn note(x) { o = Some(|| resume(())) } } in note(1)   //~ W0313
+    match o { Some(g) => g(), None => {} }
+}
+fn as_handle_value() {
+    let g = handle Ask {
+        fn ask() { || { let n = resume(5)
+ print(n) } }   //~ W0313
+    } in {
+        let n = ask()
+        || print(n)
+    }
+    g()
+}
+test "to_outer_local" { to_outer_local() }
+test "to_generic_field" { to_generic_field() }
+test "to_option" { to_option() }
+test "as_handle_value" { as_handle_value() }

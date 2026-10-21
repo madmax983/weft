@@ -1,0 +1,54 @@
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v.push(2); v }
+fn take(n: u64) {}
+fn arg_read() {
+    let n = 2
+    scope { s =>
+        s.spawn(|| n += 1)
+        take(n)
+    }
+}
+fn cond_read() {
+    let n = 2
+    scope { s =>
+        s.spawn(|| n += 1)
+        if n > 1 { print(0) }
+    }
+}
+fn task_reads_parent_writes() {
+    let n = 2
+    scope { s =>
+        s.spawn(|| print(n))
+        n = 5
+    }
+}
+fn task_reads_parent_adds() {
+    let n = 2
+    scope { s =>
+        s.spawn(|| print(n))
+        n += 5
+    }
+}
+fn ref_rebind() {
+    let v = mk_v()
+    let r = &v[0]
+    scope { s =>
+        s.spawn(|| print(r))
+        r = &v[1]
+    }
+}
+fn ref_rebind_two_tasks() {
+    let v = mk_v()
+    let r = &v[0]
+    scope { s =>
+        s.spawn(|| r = &v[1])
+        s.spawn(|| r = &v[0])
+    }
+}
+fn struct_field() {
+    let c = (1, 2)
+    scope { s =>
+        s.spawn(|| c.0 += 1)
+        print(c.0)
+    }
+}
+fn main() { struct_field() }

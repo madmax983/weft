@@ -1,0 +1,18 @@
+effect Keep { fn keep(r: &u64) }
+fn f() / Keep {
+    let x = 5
+    keep(&x)
+}
+fn g() / Keep {
+    let x = 7
+    keep(&x)
+    print(x)
+}
+fn main() {
+    let store: Vec<&u64> = Vec.new()
+    handle Keep { fn keep(r) { store.push(r); resume(()) } } in f()
+    print(store[0])   // expected W0301
+    let one = &store[0]
+    handle Keep { fn keep(r) { store.push(r); resume(()) } } in g()
+    print(store.len())
+}

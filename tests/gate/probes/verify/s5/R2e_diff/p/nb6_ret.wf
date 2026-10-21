@@ -1,0 +1,7 @@
+fn d1(a: i32, b: i32) -> i32 { a - b }
+fn d2(b: i32, a: i32) -> i32 { a - b }
+fn get(c: bool) -> fn(i32, i32) -> i32 { if c { d2 } else { d1 } }
+fn main() {
+    let g = get(true)
+    print(g(b: 10, a: 3))
+}

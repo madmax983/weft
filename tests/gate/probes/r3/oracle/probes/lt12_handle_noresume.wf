@@ -1,0 +1,9 @@
+effect Note { fn note(x: u64) }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn make() -> Lk { Lk { id: 5 } }
+fn apply_r(f: fn() -> Lk) -> Lk { f() }
+fn main() {
+    let l = handle Note { fn note(x) { make() } } in { let k = Lk { id: 1 }; note(1); k }
+    unlock(l)
+}

@@ -1,0 +1,16 @@
+// Reporting rules shared by every trace. A trace names its use nodes.
+lint("gen_and_kill (B6 no_gen_kill broken)", P) :- invalidated_at(R, P), rebound_at(R, P).
+// M3 as the minimal design lowers it: one abort node A with unwound_at and the
+// bind of dest, then the end of h, then the "handle value" node (uses dest first).
+place(pw). place(pw_e). parent(pw_e, pw). unstable(pw_e).
+owner(pw, sw).
+cfg_edge(s0, r1). cfg_edge(r1, b1). cfg_edge(b1, pp).
+rebound_at(sw, r1).
+rebound_at(t6, b1). points_into(t6, pw).
+uses(t6, pp). call_arg(pp, pw, 0). may_abort(pp).
+cfg_edge(pp, aa). unwound_at(sw, aa). unwound_at(t6, aa).
+rebound_at(rd, aa). points_into(rd, pw_e).
+cfg_edge(aa, hend). cfg_edge(hend, hv). uses(rd, hv). rebound_at(rd, hv).
+cfg_edge(hv, pr). uses(rd, pr).
+lint("minimal M3: W0301 at the handle value node", hv) :- error(rd, hv).
+lint("minimal M3: W0301 at print(r)", pr) :- error(rd, pr).

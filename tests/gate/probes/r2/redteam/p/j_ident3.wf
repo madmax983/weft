@@ -1,0 +1,6 @@
+// A user effect with the name and the operation of a standard one.
+effect Log { fn info(msg: String) }
+fn main() / Log {   //~ W0805
+    log.info("std")
+    info("user")
+}

@@ -1,0 +1,8 @@
+fn reader(v: &Vec<u64>) -> fn() { || print(v[0] + 1) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let f = reader(&v)
+    v.clear()
+    f()
+}

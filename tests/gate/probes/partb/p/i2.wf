@@ -1,0 +1,4 @@
+fn main() {
+    let x: u64
+    print(x)
+}

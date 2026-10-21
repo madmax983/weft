@@ -1,0 +1,15 @@
+fn closure_sets() {
+    let x: u64
+    let f = || { x = 1 }
+    f()
+    print(x)   //~ W0304
+}
+fn compound() {
+    let y: u64
+    y += 1   //~ W0304
+}
+fn branches(c: bool) {
+    let z: u64
+    if c { z = 1 }
+    print(z)   //~ W0304
+}

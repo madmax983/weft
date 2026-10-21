@@ -1,0 +1,46 @@
+// OR11 (minor). Faults that the stock interpreter does not report.
+// Each function is wrong by the design. Each one runs to the end with
+// `weft run --unchecked`. The instrumented interpreter reports each one.
+linear struct Tx { id: u64 }
+
+fn print_dangling() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    v.clear()
+    print(r)                  // prints "<dangling>", no fault
+}
+
+fn ended_local() {
+    let r = &0
+    {
+        let x = 5
+        r = &x
+    }
+    print(r)                  // prints 5 from a dead local
+}
+
+fn push_keeps_buffer() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    v.push(2)
+    print(r)                  // a real Vec can move its buffer here
+}
+
+fn linear_drop() {
+    let t = Tx { id: 1 }
+}                             // the live linear value goes away silently
+
+fn race() {
+    let n = 0
+    scope { s =>
+        s.spawn(|| n += 1)
+        s.spawn(|| n += 2)
+    }
+    print(n)
+}
+
+fn main() / async {
+    ended_local()
+}

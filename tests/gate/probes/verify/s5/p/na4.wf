@@ -1,0 +1,15 @@
+struct Entity { hp: i32 }
+impl Entity {
+    fn diff(self, a: i32, b: i32) -> i32 { a - b }
+}
+fn apply(f: fn(Entity) -> i32) -> i32 { f(Entity { hp: 1 }) }
+fn main() {
+    let x = Entity { hp: 1 }
+    print(apply(|e| e.diff(b: 10, a: 3)))
+    let v = Vec.new()
+    v.push(Entity { hp: 2 })
+    match v.pop() {
+        Some(e) => print(e.diff(b: 10, a: 3)),
+        None => {}
+    }
+}

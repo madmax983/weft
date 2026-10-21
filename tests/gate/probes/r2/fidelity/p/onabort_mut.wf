@@ -1,0 +1,28 @@
+// The `on abort` function of `T` mutates the `rc` group `Node` (it pushes).
+// The caller holds `r` into `Node.items[]` across a `handle` whose body
+// aborts, so the unwinder runs `undo` and the push can move the buffer.
+// No node of the caller mutates `Node`, so W0301 is missing.
+effect Stop { fn stop() }
+struct Node { items: Vec<u64> }
+linear struct T { n: Rc<Node> }
+    on abort = undo
+fn undo(t: T) / mut(Node) {
+    let T(n) = t
+    n.items.push(9)
+    n.items.push(9)
+    n.items.push(9)
+}
+fn done(t: T) { let T(n) = t }
+fn inner(h: Rc<Node>) / Stop {
+    let t = T { n: h }
+    stop()
+    done(t)
+}
+fn main() {
+    let a = Rc.new(Node { items: Vec.new() })
+    a.items.push(1)
+    let r = &a.items[0]
+    handle Stop { fn stop() { () } } in inner(a.clone())
+    print(r)   // expected W0301: `undo` pushed to `a.items` during the abort
+    print(a.items.len())
+}

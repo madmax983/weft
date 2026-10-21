@@ -1,0 +1,1 @@
+fn f() / par { fork(5) }

@@ -1,0 +1,6 @@
+fn f(p: Vec<u64>, q: usize) -> usize { q }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    print(f(q: v.len(), p: v))
+}

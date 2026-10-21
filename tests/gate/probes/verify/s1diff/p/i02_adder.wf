@@ -1,0 +1,5 @@
+fn adder(n: u64) -> fn(u64) -> u64 { |x| x + n }
+fn main() {
+    let f = adder(2)
+    print(f(3))
+}

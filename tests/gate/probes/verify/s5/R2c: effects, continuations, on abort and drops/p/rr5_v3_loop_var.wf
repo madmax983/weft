@@ -1,0 +1,17 @@
+// The operation gets a reference to a loop local; the loop goes on.
+struct Entity { hp: i32 }
+effect Peek { fn peek(e: &Entity) }
+fn loop_local() {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)
+        }
+    } in {
+        for i in 0..2 {
+            let local = Entity { hp: 1 }
+            peek(&local)
+        }
+    }
+}
+fn main() { loop_local() }

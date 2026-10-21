@@ -1,0 +1,10 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn once_in_closure() {
+    let t = begin()
+    let f = || rollback(t)
+    let g = || f()
+    g()
+}

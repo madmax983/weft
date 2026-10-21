@@ -1,0 +1,7 @@
+struct C { n: u64 }
+pub fn a(f: fn() / log) { f() }
+pub fn b(f: fn()) { a2(f) }
+fn a2(f: fn()) { f() }
+pub fn c(f: fn(&C), x: &C) { f(x) }
+pub fn d(x: &C) { let g = |y: &C| y.n += 1
+    g(x) }

@@ -1,0 +1,14 @@
+// A detached task returns a linear value. Nobody joins the task, so nobody
+// consumes the value.
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(t: Tx) { let Tx(id) = t; print("rollback {id}") }
+
+fn main() / io, par {
+    scope { s =>
+        let t = s.spawn(|| Tx { id: 9 })
+        t.detach()
+    }
+    print("end")
+}

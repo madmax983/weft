@@ -1,0 +1,56 @@
+struct C { k: u64 }
+impl C {
+    fn bump_task(self) / async {
+        scope { s =>
+            s.spawn(|| self.k += 1)
+            print(self)
+        }
+    }
+}
+
+fn ref_param(r: &u64, o: &u64) / async {
+    scope { s =>
+        s.spawn(|| print(r))
+        r = o
+    }
+}
+
+fn val_param(n: u64) / async {
+    scope { s =>
+        s.spawn(|| n += 1)
+        print(n)
+    }
+}
+
+fn match_bind(o: Option<u64>) / async {
+    match o {
+        Some(x) => scope { s =>
+            s.spawn(|| x += 1)
+            print(x)
+        },
+        None => (),
+    }
+}
+
+fn closure_param() / async {
+    let g = |n: u64| {
+        scope { s =>
+            s.spawn(|| n += 1)
+            print(n)
+        }
+    }
+    g(1)
+}
+
+fn ref_param_c() / async {
+    let a = 1
+    let b = 2
+    ref_param(&a, &b)
+    val_param(3)
+    match_bind(Some(4))
+    let c = C { k: 0 }
+    c.bump_task()
+}
+
+fn main() / async {
+}

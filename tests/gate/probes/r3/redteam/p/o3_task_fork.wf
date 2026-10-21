@@ -1,0 +1,9 @@
+struct Stats { count: u64 }
+fn task_in_fork(st: &Stats) / mut(st), par, async {
+    scope { s =>
+        let t = s.spawn(|| { st.count += 1; 1 })
+        let (a, b) = fork(|| t.join(), || 2)
+        print(a + b)
+    }
+}
+fn main() / par, async { let st = Stats { count: 0 }; task_in_fork(&st); print(st.count) }

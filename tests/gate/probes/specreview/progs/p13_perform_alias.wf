@@ -1,0 +1,10 @@
+effect Peek { fn peek(x: &i64) }
+fn alias_perform() {
+    let v = Vec.new()
+    v.push(1)
+    handle Peek { fn peek(x) { v.clear(); print(x); resume(()) } } in {
+        let r = &v[0]
+        peek(r)
+    }
+}
+fn take_ref(x: &u64) / mut(Vec) {}

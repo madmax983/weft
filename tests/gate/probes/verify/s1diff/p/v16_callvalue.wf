@@ -1,0 +1,37 @@
+struct Entity { hp: u64 }
+struct World { entities: Vec<Entity> }
+fn first_of(w: &World) -> &Entity in w.entities[] { &w.entities[0] }
+fn ident(e: &Entity) -> &Entity in e { e }
+// A fn item value keeps its result places. Expect W0301.
+fn item_value(world: &World) / mut(world.entities) {
+    let g = first_of
+    let r = g(world)
+    world.entities.push(Entity { hp: 1 })
+    print(r.hp)
+}
+// A fn parameter returns into its reference argument. Expect W0301.
+fn param_value(f: fn(&Entity) -> &Entity, w: &World) / mut(w.entities) {
+    let r = f(&w.entities[0])
+    w.entities.push(Entity { hp: 1 })
+    print(r.hp)
+}
+// A closure that returns a field of its reference parameter. Expect W0301.
+fn closure_field(world: &World) / mut(world.entities) {
+    let f = |w: &World| &w.entities[0]
+    let r = f(world)
+    world.entities.push(Entity { hp: 1 })
+    print(r.hp)
+}
+// A closure with two reference parameters returns the second. Expect W0301 on b only.
+fn closure_second(world: &World, other: &World) / mut(world.entities) {
+    let f = |a: &Entity, b: &Entity| b
+    let r = f(&other.entities[0], &world.entities[0])
+    world.entities.push(Entity { hp: 1 })
+    print(r.hp)
+}
+fn closure_first(world: &World, other: &World) / mut(world.entities) {
+    let f = |a: &Entity, b: &Entity| a
+    let r = f(&other.entities[0], &world.entities[0])
+    world.entities.push(Entity { hp: 1 })
+    print(r.hp)
+}

@@ -1,0 +1,3 @@
+struct S0<T0, T1> { f0: S1<Box<S0<u64, u64>>, S1<S0<u64, u64>, Box<T1>>>, f1: S0<S1<Option<u64>, S1<u64, T0>>, S0<(bool, u64, u64), Vec<u64>>>, f2: Option<S1<u64, Box<u64>>> }
+struct S1<T0, T1> {  }
+fn main() {}

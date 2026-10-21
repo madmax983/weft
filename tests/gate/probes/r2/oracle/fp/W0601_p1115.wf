@@ -1,0 +1,17 @@
+linear struct Lk { id: u64 }
+
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v.push(3)
+    v
+}
+
+fn main() {
+    let v1 = mk_v()
+    if v1.len() > 2 {
+    } else {
+        let lk3 = Lk { id: 3 }
+    }
+}

@@ -1,0 +1,22 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn grow(w: &World) -> i32 / mut(w.entities) {
+    print("grow")
+    w.entities.push(Entity { hp: 1 })
+    w.entities.push(Entity { hp: 1 })
+    w.entities.push(Entity { hp: 1 })
+    w.entities.push(Entity { hp: 1 })
+    0
+}
+fn show2(n: i32, e: &Entity) { print(e.hp) }
+fn tag(s: String) -> i32 { print(s); 0 }
+fn order(a: i32, b: i32) {}
+fn named_order(world: &World) / mut(world.entities) {
+    show2(e: &world.entities[0], n: grow(world))
+}
+fn main() {
+    order(b: tag("b"), a: tag("a"))
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    named_order(&w)
+}

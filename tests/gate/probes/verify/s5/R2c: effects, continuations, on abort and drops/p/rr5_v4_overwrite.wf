@@ -1,0 +1,22 @@
+// The handled body gives a new value to the local that the parameter points into.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Peek { fn peek(e: &Entity) }
+fn mk() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+fn overwrite() {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)
+        }
+    } in {
+        let w = mk()
+        peek(&w.entities[0])
+        w = World { entities: Vec.new() }
+    }
+}
+fn main() { overwrite() }

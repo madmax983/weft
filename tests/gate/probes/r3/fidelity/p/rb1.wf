@@ -1,0 +1,21 @@
+struct W { items: Vec<u64> }
+fn grow(w: &W) -> &u64 in w.items[] / mut(w.items) { w.items.push(1); &w.items[0] }
+// The closure gives the captured reference a new value after the change.
+fn refresh(w: &W) / mut(w.items) {
+    let r = &w.items[0]
+    let h = || { r = grow(w) }
+    h()
+    print(r)   // reported W0301; at run time `r` points into the new buffer
+}
+// The same code with no closure is accepted.
+fn refresh_inline(w: &W) / mut(w.items) {
+    let r = &w.items[0]
+    r = grow(w)
+    print(r)
+}
+fn main() {
+    let w = W { items: Vec.new() }
+    w.items.push(5)
+    refresh(&w)
+    refresh_inline(&w)
+}

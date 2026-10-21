@@ -1,0 +1,13 @@
+struct Cell2 { items: Vec<u64>, n: u64 }
+struct R { h: &Rc<Cell2> }
+fn mk() -> Rc<Cell2> { Rc.new(Cell2 { items: Vec.new(), n: 4 }) }
+fn group_ret_t(t: &(&Rc<Cell2>, u64)) -> &Vec<u64> in Cell2.items { &t.0.items }
+
+fn tuple_ref_handle() {
+    let a = mk()
+    a.items.push(1)
+    let t = (&a, 1)
+    let r = group_ret_t(&t)
+    a = mk()
+    print(r)   //~ W0301
+}

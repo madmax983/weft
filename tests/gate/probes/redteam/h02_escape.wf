@@ -1,0 +1,27 @@
+effect Log { fn log(msg: String) }
+// Escape by assignment to an outer local.
+fn escape_assign() {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {
+        f = || log("late")
+    }
+    f()
+}
+// Escape inside a tuple result.
+fn escape_tuple() {
+    let p = handle Log { fn log(m) { resume(()) } } in (|| log("late"), 1)
+    let (g, n) = p
+    g()
+}
+// Escape through a Vec.
+fn escape_vec() {
+    let v = Vec.new()
+    handle Log { fn log(m) { resume(()) } } in {
+        v.push(|| log("late"))
+    }
+    print(v.len())
+}
+// Control: the corpus case.
+fn escape() {
+    let f = handle Log { fn log(msg) { resume(()) } } in || log("late")
+}

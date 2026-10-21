@@ -1,0 +1,18 @@
+// Moving the owner while a reference into it is live.
+fn take(v: Vec<u64>) {}
+fn moved_owner() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    take(v)
+    print(r)
+}
+fn moved_to_local() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let w = v
+    w.push(2)
+    w.push(3)
+    print(r)
+}

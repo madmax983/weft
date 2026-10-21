@@ -1,0 +1,10 @@
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct Grow<T> { x: T, next: Option<Box<Grow<(T, T)>>> }
+
+fn grow() {
+    let g = Grow { x: 1, next: None }
+    print(g.x)
+}
+fn main() {
+    grow()
+}

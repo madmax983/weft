@@ -1,0 +1,17 @@
+
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v
+}
+
+
+fn main() {
+    if true {
+        let g13 = || {
+            let f16 = {
+                let v15 = mk_v()
+                || v15.push(1)
+            }
+        }
+    }
+}

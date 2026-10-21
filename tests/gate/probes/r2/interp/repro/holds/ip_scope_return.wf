@@ -1,0 +1,15 @@
+// `return` inside a scope body. The child must not outlive the scope.
+fn f() -> u64 / clock {
+    scope { s =>
+        s.spawn(|| { sleep(50.ms); print("child done") })
+        return 1
+    }
+    2
+}
+
+fn main() / io {
+    let r = f()
+    print("f returned {r}")
+    sleep(100.ms)
+    print("end")
+}

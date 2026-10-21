@@ -1,0 +1,84 @@
+// O3-6 (blocker, also in 328a39b). A task reads a field through an `Rc`
+// handle in a local. While the task runs, the parent moves the handle or
+// gives it a new value. The task then reads a moved variable (stock: "a value
+// is used after it was moved"), or the two tasks race on the variable
+// (oracle). W0405 does not see it: the task reads the group place
+// (`Node.v`) but not the variable `shared` itself. The same code with a `Box`
+// gets W0405 (correct), and so does a task that clones the handle.
+struct Node { v: u64 }
+struct Hold { r: Rc<Node>, n: u64 }
+fn take<T>(x: T) { }
+fn take_rc(x: Rc<Node>) { }
+
+fn move_generic() {
+    let shared = Rc.new(Node { v: 5 })
+    scope { s =>
+        let b = s.spawn(|| shared.v + 1)
+        take(shared)              // no W0405
+        print(b.join())           // stock: a value is used after it was moved (in the task)
+    }
+}
+
+fn move_let() {
+    let shared = Rc.new(Node { v: 5 })
+    scope { s =>
+        let b = s.spawn(|| shared.v + 1)
+        let m = shared            // no W0405
+        print(b.join())
+    }
+}
+
+fn move_typed() {
+    let shared = Rc.new(Node { v: 5 })
+    scope { s =>
+        let b = s.spawn(|| shared.v + 1)
+        take_rc(shared)           // no W0405
+        print(b.join())
+    }
+}
+
+fn new_value() {
+    let shared = Rc.new(Node { v: 5 })
+    scope { s =>
+        let b = s.spawn(|| shared.v + 1)
+        shared = Rc.new(Node { v: 6 })   // no W0405; oracle: data race
+        print(b.join())
+    }
+}
+
+fn scope_end() {
+    // The handle goes out of scope at the end of the block while the task
+    // still runs (no W0405). A `Vec` in its place gets W0405.
+    scope { s =>
+        {
+            let shared = Rc.new(Node { v: 5 })
+            s.spawn(|| { sleep(1.s); print(shared.v) })
+        }
+        print(0)              // stock: a value is used after it was moved (in the task)
+    }
+}
+
+fn field_handle() {
+    // The handle is a field. A move of the field or of the whole struct, or
+    // a new value of the field, is not seen either.
+    let h = Hold { r: Rc.new(Node { v: 5 }), n: 1 }
+    scope { s =>
+        let b = s.spawn(|| h.r.v + 1)
+        take(h)                   // no W0405
+        print(b.join())           // stock: a value is used after it was moved (in the task)
+    }
+}
+
+fn boxed() {
+    // Correct: W0405.
+    let bx = Box.new(Node { v: 5 })
+    scope { s =>
+        let b = s.spawn(|| bx.v + 1)
+        take(bx)
+        print(b.join())
+    }
+}
+
+fn main() {
+    move_generic()
+}

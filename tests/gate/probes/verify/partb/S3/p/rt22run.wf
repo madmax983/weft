@@ -1,0 +1,12 @@
+effect Note { fn note(x: u64) }
+fn pick(c: bool) / async {
+    if c { scope { s => s.spawn(|| print(1)) } } else { scope { s => s.spawn(|| print(2)) } }
+}
+fn wrapped() / async {
+    handle Note { fn note(x) { resume(()) } } in scope { s => s.spawn(|| print(3)) }
+}
+fn main() / async {
+    pick(true)
+    wrapped()
+    print(4)
+}

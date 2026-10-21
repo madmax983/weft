@@ -1,0 +1,24 @@
+// The loop of the sema test `task_handles_that_a_loop_swaps_join_each_task`,
+// with an access between the two joins.
+struct Stats { count: u64 }
+
+fn swap_loop(st: &Stats) / mut(st), async {
+    scope { s =>
+        let t0 = s.spawn(|| st.count += 1)
+        let t1 = s.spawn(|| print(2))
+        let m = 0
+        while m < 3 {
+            let x = t0
+            t0 = t1
+            t1 = x
+            m += 1
+        }
+        t0.join()
+        print(st.count)
+        t1.join()
+    }
+}
+test "swap_loop" {
+    let st = Stats { count: 0 }
+    swap_loop(&st)
+}

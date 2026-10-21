@@ -1,0 +1,17 @@
+mod m {
+    pub struct Range { lo: u64, hi: u64 }
+}
+struct Pair<T> { a: T, b: T }
+enum E { V(u64, u64) }
+fn main() {
+    let r = m.Range(hi: 10, lo: 2)
+    print(r.hi - r.lo)
+    let p = Pair(b: 1, a: 2)
+    print(p.a)
+    let o = Some(x: 1)
+    let e = E.V(a: 1, b: 2)
+    let v: Vec<u64> = []
+    v.push(item: 1)
+    v.push(x: 2)
+    print(v.len())
+}

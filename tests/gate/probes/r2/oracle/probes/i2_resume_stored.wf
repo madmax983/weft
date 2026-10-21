@@ -1,0 +1,6 @@
+effect Ask { fn ask() -> u64 }
+struct H { f: fn() }
+fn call(h: &H) { let g = h.f; g() }
+fn main() {
+    handle Ask { fn ask() { let h = H { f: || resume(1) }; call(&h); call(&h) } } in print(ask())
+}

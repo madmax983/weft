@@ -1,0 +1,15 @@
+effect Note { fn note(m: u64) }
+struct C { n: u64 }
+pub fn apply(f: fn()) { f() }
+pub fn apply_store(f: fn(), c: &C) { f() }
+pub fn apply_ref(f: fn(&C), c: &C) { f(c) }
+fn main() {
+    apply(|| note(1))
+    let c = C { n: 1 }
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    apply(|| v.push(2))
+    print(r)
+    apply_ref(|x| { x.n += 1 }, &c)
+}

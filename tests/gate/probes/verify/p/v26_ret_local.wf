@@ -1,0 +1,8 @@
+fn mk() -> fn() {
+    let v: Vec<u64> = Vec.new()
+    || v.push(1)
+}
+fn user() {
+    let f = mk()
+    f()
+}

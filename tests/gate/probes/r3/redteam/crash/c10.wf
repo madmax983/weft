@@ -1,0 +1,5 @@
+effect E { multi fn op() -> u64 }
+fn main() {
+    let r = handle E { fn op() { resume(1) + resume(2) } } in { op() + op() }
+    print(r)
+}

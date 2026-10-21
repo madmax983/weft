@@ -1,0 +1,166 @@
+effect Lg { fn lg(m: String) }
+fn nested() {
+    let f = || print(0)
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(0)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(1)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(2)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(3)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(4)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(5)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(6)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(7)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(8)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(9)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(10)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(11)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(12)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(13)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(14)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(15)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(16)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(17)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(18)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(19)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(20)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(21)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(22)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(23)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(24)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(25)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(26)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(27)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(28)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(29)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(30)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(31)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(32)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(33)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(34)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(35)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(36)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(37)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(38)
+    lg("y")
+handle Lg { fn lg(m) { print(m) } } in {
+    f = || print(39)
+    lg("y")
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    }
+    f()
+}
+fn main() { nested() }

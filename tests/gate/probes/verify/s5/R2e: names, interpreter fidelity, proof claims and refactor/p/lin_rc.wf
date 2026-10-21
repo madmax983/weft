@@ -1,0 +1,14 @@
+linear struct Tx { id: u64 }
+fn done(t: Tx) { let Tx(i) = t }
+fn a() {
+    let r = Rc.new(Tx { id: 1 })
+    print(1)
+}
+fn b() {
+    let v: Vec<Tx> = []
+    v.push(Tx { id: 1 })
+    match v.pop() { Some(t) => done(t), None => {} }
+}
+fn main() {
+    a()
+}

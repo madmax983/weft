@@ -1,0 +1,37 @@
+effect Go { fn go() }
+fn take(v: Vec<u64>) -> usize { v.len() }
+
+// A clause that moves a capture. The body gives the variable a new value.
+fn clause_move() {
+    let v = Vec.new()
+    v.push(1)
+    handle Go { fn go() { print(take(v)); resume(()) } } in {
+        v = Vec.new()
+        go()
+        print(v.len())
+    }
+}
+
+// A clause that moves a capture, and the body never performs.
+fn clause_never() {
+    let v = Vec.new()
+    v.push(1)
+    handle Go { fn go() { print(take(v)); resume(()) } } in {
+        print(v.len())
+    }
+}
+
+// A closure inside the body moves the clause capture.
+fn clause_after() {
+    let v = Vec.new()
+    v.push(1)
+    handle Go { fn go() { print(take(v)); resume(()) } } in {
+        go()
+    }
+    v = Vec.new()
+    print(v.len())
+}
+
+fn main() {
+    clause_move()
+}

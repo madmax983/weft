@@ -1,0 +1,9 @@
+fn show(x: &u64, n: u64) { print(x) }
+fn show1(x: &u64) { print(x) }
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(3); v }
+fn main() {
+    show(&mkv()[0], 1)
+    show1(&mkv()[0])
+    print(&mkv()[0])
+    let s = &mkv()[0]
+}

@@ -1,0 +1,52 @@
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+
+// The callee clears v while the task of f runs.
+fn spawn_with(f: fn(), v: &Vec<u64>) / async, mut(v) {
+    scope { s =>
+        s.spawn(f)
+        v.clear()
+    }
+}
+
+// The callee's task writes v while the callee calls f.
+fn call_with(f: fn(), v: &Vec<u64>) / async, mut(v) {
+    scope { s =>
+        s.spawn(|| v.clear())
+        f()
+    }
+}
+
+// The callee returns a closure that spawns f twice.
+fn later(f: fn()) -> fn() / async {
+    || {
+        scope { s =>
+            s.spawn(f)
+            s.spawn(f)
+            ()
+        }
+    }
+}
+
+fn arg_vs_ref_write() / async {
+    let w = mk_v()
+    spawn_with(|| print(w[0]), &w)
+}
+
+fn arg_vs_task_write() / async {
+    let w = mk_v()
+    call_with(|| print(w[0]), &w)
+}
+
+fn returned_runs_twice() / async {
+    let n = 0
+    let g = later(|| n += 1)
+    g()
+}
+
+fn main() / async {
+}

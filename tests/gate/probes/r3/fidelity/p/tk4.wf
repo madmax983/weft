@@ -1,0 +1,8 @@
+// fork with a linear branch value that the caller drops.
+linear struct Tx { id: u64 }
+fn begin() -> Tx { Tx { id: 1 } }
+fn commit(t: Tx) { let Tx(i) = t }
+fn main() / par {
+    let (a, b) = fork(|| begin(), || 2)
+    commit(a)
+}

@@ -1,0 +1,41 @@
+effect Pick { fn pick() -> &u64 }
+effect PickV { fn pick_v() -> &Vec<u64> }
+
+fn ret_pick(v: &Vec<u64>) -> &u64 in v {
+    handle Pick { fn pick() { resume(&v[0]) } } in pick()
+}
+fn ret_pick2(v: &Vec<u64>) -> &u64 in v {
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let r = pick()
+        r
+    }
+}
+fn use_ret() {
+    let v = Vec.new()
+    v.push(1)
+    let r = ret_pick(&v)
+    v.clear()
+    print(r)
+}
+fn lent_direct(v: &Vec<u64>, k: fn(&Vec<u64>)) { k(v) }
+fn lent_param(v: &Vec<u64>, k: fn(&Vec<u64>)) {
+    handle PickV { fn pick_v() { resume(v) } } in {
+        let r = pick_v()
+        k(r)
+    }
+}
+fn use_direct() {
+    let v = Vec.new()
+    v.push(1)
+    let first = &v[0]
+    lent_direct(&v, |x| x.clear())
+    print(first)
+}
+fn use_lent() {
+    let v = Vec.new()
+    v.push(1)
+    let first = &v[0]
+    lent_param(&v, |x| x.clear())
+    print(first)
+}
+fn main() { use_ret(); use_lent() }

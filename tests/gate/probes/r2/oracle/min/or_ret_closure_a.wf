@@ -1,0 +1,23 @@
+fn make_reader(v: &Vec<u64>) -> fn() { || print(v.len()) }
+fn take(v: Vec<u64>) {}
+
+fn scope_end() {
+    let f = {
+        let v = Vec.new()
+        v.push(1)
+        make_reader(&v)
+    }
+    f()
+}
+
+fn moved() {
+    let v = Vec.new()
+    v.push(1)
+    let f = make_reader(&v)
+    take(v)
+    f()
+}
+
+fn main() {
+    moved()
+}

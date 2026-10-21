@@ -1,0 +1,7 @@
+fn b02() { let f = |a, a| 1 }
+fn b02b() -> u64 { let f = |a, a| a
+ f(1, 2) }
+fn b02c() -> u64 { let f = |a, b, a| a
+ f(1, 2, 3) }
+fn app(g: fn(u64, u64) -> u64) -> u64 { g(1, 2) }
+fn b02d() -> u64 { app(|a, a| a) }

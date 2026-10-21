@@ -1,0 +1,18 @@
+struct E { hp: u64, tag: u64 }
+struct W { es: Vec<E>, ns: Vec<u64>, score: u64, b: Box<E> }
+
+fn mk_w() -> W {
+    let w = W { es: Vec.new(), ns: Vec.new(), score: 0, b: Box.new(E { hp: 1, tag: 0 }) }
+    w.es.push(E { hp: 6, tag: 2 })
+    w
+}
+
+fn main() {
+    loop {
+        let w8 = mk_w()
+        if true {
+            fork(|| print(w8.es[0].hp), || w8.score += 1)
+        }
+        break
+    }
+}

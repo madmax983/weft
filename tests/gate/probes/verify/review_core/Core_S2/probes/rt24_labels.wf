@@ -1,0 +1,21 @@
+struct Inner { v: Vec<u64>, n: u64 }
+struct Stats { count: u64, inner: Inner, list: Vec<Inner> }
+fn priv_bump(s: &Stats) { s.count += 1 }
+fn deep(s: &Stats) { s.inner.n += 1 }
+fn elems(s: &Stats) { s.list[0].n += 1 }
+fn all_elems(s: &Stats) { for e in s.list[] { e.v.push(1) } }
+fn closure_bump(s: &Stats) { let f = || s.inner.v.push(2); f() }
+
+// W0402 texts.
+fn shared1(s: &Stats @ shared) { priv_bump(s) }   // expect `s.count`
+fn shared2(s: &Stats @ shared) { deep(s) }   // expect `s.inner.n`
+fn shared3(s: &Stats @ shared) { elems(s) }   // expect `s.list[..].n` or similar
+fn shared4(s: &Stats @ shared) { all_elems(s) }   // expect `s.list[].v`
+fn shared5(s: &Stats @ shared) { closure_bump(s) }   // expect `s.inner.v`
+
+// W0701 texts.
+pub fn pub1(c: &Stats) { priv_bump(c) }   // expect `/ mut(c.count)`
+pub fn pub2(c: &Stats) { deep(c) }   // expect `/ mut(c.inner.n)`
+pub fn pub3(c: &Stats) { all_elems(c) }   // expect `/ mut(c.list[].v)`
+pub fn pub4(c: &Stats) { let g = deep; g(c) }   // expect `/ mut(c.inner.n)`
+pub fn pub5(c: &Stats) { let f = |x: &Stats| x.inner.v.clear(); f(c) }   // expect `/ mut(c.inner.v)`

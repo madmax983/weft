@@ -1,0 +1,13 @@
+fn match_bind(o: &Option<u64>) {
+    match o {
+        Some(x) => { let y: bool = x },
+        None => {}
+    }
+}
+struct E { hp: u64 }
+fn match_bind2(o: &Option<E> @ shared) {
+    match o {
+        Some(x) => { x.hp += 1 },
+        None => {}
+    }
+}

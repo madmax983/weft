@@ -1,0 +1,15 @@
+
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v
+}
+
+
+fn h1(p0: fn(), p1: Vec<u64>, p2: &Vec<u64>) -> u64 {
+    1
+}
+
+fn main() {
+    let v2 = mk_v()
+    let n3 = h1(|| v2.clear(), mk_v(), &v2)
+}

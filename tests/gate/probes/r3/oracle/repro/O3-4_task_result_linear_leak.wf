@@ -1,0 +1,53 @@
+// O3-4 (blocker, also in 328a39b). A task whose result is a linear value,
+// spawned in statement position. The scope joins the task and the result goes
+// away: nothing consumes the linear value and nothing runs its `on abort`.
+// ADR 0006: "A spawn in statement position gives its handle to the scope."
+// The checker accepts it. The oracle reports a linear leak at the end of the
+// run. A bound handle that is detached gets W0601 (correct).
+linear struct Lk { id: u64 }
+linear struct Tx { id: u64 }
+    on abort = tx_abort
+fn tx_abort(t: Tx) { let Tx(id) = t; print("abort", id) }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn make() -> Lk { Lk { id: 5 } }
+
+fn fresh() {
+    scope { s =>
+        s.spawn(|| Lk { id: 1 })
+        print(1)
+    }
+}
+
+fn captured() {
+    let t = Tx { id: 2 }
+    scope { s =>
+        s.spawn(|| t)       // the value moves into the task and out as its result
+        print(2)
+    }
+}
+
+fn item() {
+    scope { s =>
+        s.spawn(make)
+        print(3)
+    }
+}
+
+fn in_vec() {
+    scope { s =>
+        s.spawn(|| { let v = Vec.new(); v.push(Lk { id: 4 }); v })
+        print(4)
+    }
+}
+
+fn joined() {
+    // Correct: the join gives the value, and `unlock` consumes it.
+    scope { s =>
+        let h = s.spawn(|| Lk { id: 6 })
+        unlock(h.join())
+    }
+}
+
+fn main() {
+    fresh()
+}

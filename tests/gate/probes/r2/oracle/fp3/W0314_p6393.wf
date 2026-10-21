@@ -1,0 +1,11 @@
+effect Log { fn log(msg: String) }
+
+fn both() {
+    handle Log { fn log(m) { print("user", m); resume(()) } } in {
+        handle log { fn info(m) { print("std", m); resume(()) } } in {
+            fork(|| { log.info("y") }, || print(0))
+        }
+    }
+}
+
+

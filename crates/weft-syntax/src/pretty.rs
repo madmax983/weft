@@ -1,14 +1,14 @@
 //! Pretty printer: turns an AST back into Weft source.
 //!
-//! The output parses back to the same tree, spans aside. The printer adds
-//! parentheses only where precedence or the grammar needs them. It prints the
-//! block that the parser makes for a long chain of binary operators as the
-//! chain.
+//! The output parses back to the same tree, spans and ids aside. The printer
+//! does not print ids. It adds parentheses only where precedence or the
+//! grammar needs them. It prints the block that the parser makes for a long
+//! chain of binary operators as the chain.
 
 use crate::ast::{
     is_chain_part, Arg, BinOp, Block, EffectItem, EffectRow, Expr, ExprKind, File, FnDecl, Item,
-    ItemKind, Lit, Param, Pattern, PlaceExpr, PlaceStep, Stmt, StmtKind, StrPart, StructDecl,
-    TypeExpr, TypeExprKind, UnOp,
+    ItemKind, Lit, Param, Pattern, PatternKind, PlaceExpr, PlaceStep, Stmt, StmtKind, StrPart,
+    StructDecl, TypeExpr, TypeExprKind, UnOp,
 };
 use crate::lexer::escape_text;
 
@@ -57,7 +57,11 @@ fn chain_parts(e: &Expr) -> Option<(Vec<&Expr>, &Expr)> {
     lets.iter()
         .map(|s| match &s.kind {
             StmtKind::Let {
-                pat: Pattern::Bind(id),
+                pat:
+                    Pattern {
+                        kind: PatternKind::Bind(id),
+                        ..
+                    },
                 ty: None,
                 init: Some(init),
             } if is_chain_part(&id.name) => Some(init),
@@ -615,10 +619,10 @@ impl Printer {
     }
 
     fn pattern(&mut self, p: &Pattern) {
-        match p {
-            Pattern::Bind(id) => self.push(&id.name),
-            Pattern::Wild(_) => self.push("_"),
-            Pattern::Tuple(ps, _) => {
+        match &p.kind {
+            PatternKind::Bind(id) => self.push(&id.name),
+            PatternKind::Wild(_) => self.push("_"),
+            PatternKind::Tuple(ps, _) => {
                 self.push("(");
                 self.list(ps, ", ", Self::pattern);
                 if ps.len() == 1 {
@@ -626,7 +630,7 @@ impl Printer {
                 }
                 self.push(")");
             }
-            Pattern::Variant { path, fields, .. } => {
+            PatternKind::Variant { path, fields, .. } => {
                 self.list(path, ".", |p, s| p.push(&s.name));
                 if !fields.is_empty() {
                     self.push("(");
@@ -634,7 +638,7 @@ impl Printer {
                     self.push(")");
                 }
             }
-            Pattern::Lit(l, _) => self.lit(l),
+            PatternKind::Lit(l, _) => self.lit(l),
         }
     }
 

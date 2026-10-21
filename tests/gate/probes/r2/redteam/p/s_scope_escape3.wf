@@ -1,0 +1,16 @@
+struct Stats { count: u64 }
+// The closure that captures `s` is the value of the scope.
+fn as_value(st: &Stats) / mut(st), async {
+    let k = scope { s => || { s.spawn(|| { st.count += 1
+ print("late task {st.count}") })
+ () } }
+    k()
+}
+fn caller() / async {
+    let st = Stats { count: 0 }
+    as_value(&st)
+}
+fn main() / async, clock {
+    caller()
+    sleep(1.ms)
+}

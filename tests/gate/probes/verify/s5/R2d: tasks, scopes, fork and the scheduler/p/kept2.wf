@@ -1,0 +1,77 @@
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+
+fn loop_let_write() / io {
+    scope { s =>
+        let i = 0
+        while i < 3 {
+            let k = i
+            s.spawn(|| { sleep(1.ms); k += 10; print(k) })
+            i += 1
+        }
+    }
+}
+
+fn for_write() / io {
+    let v = mk_v()
+    scope { s =>
+        for x in v[] {
+            s.spawn(|| { sleep(1.ms); x += 10; print(x) })
+        }
+    }
+}
+
+// the loop variable is shadowed but a task keeps writing the outer one.
+fn loop_let_read_parent() / io {
+    scope { s =>
+        let i = 0
+        while i < 3 {
+            let k = i
+            s.spawn(|| { k += 10 })
+            print(k)
+            i += 1
+        }
+    }
+}
+
+// the copy captured by the task; the parent writes it after the task starts via a ref
+fn copy_ref_write() / io {
+    scope { s =>
+        let n = 5
+        let r = &n
+        s.spawn(|| { sleep(1.ms); print(n) })
+        r += 1
+    }
+}
+
+// the task captures a ref to a body copy local; the copy local ends at the block end.
+fn block_copy_ref() / io {
+    scope { s =>
+        {
+            let n = 5
+            let r = &n
+            s.spawn(|| { sleep(1.ms); print(r) })
+        }
+        print(1)
+    }
+}
+
+// n is kept by task 1 but task 2 holds a ref to it
+fn kept_and_ref() / io {
+    scope { s =>
+        {
+            let n = 5
+            s.spawn(|| { sleep(1.ms); print(n) })
+            let r = &n
+            s.spawn(|| { sleep(1.ms); print(r) })
+        }
+        print(1)
+    }
+}
+
+fn main() / io {
+}

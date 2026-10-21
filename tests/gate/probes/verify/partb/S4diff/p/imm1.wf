@@ -1,0 +1,70 @@
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct Outer { f: Frame, n: u64 }
+fn mk() -> Frame { Frame { buf: [1, 2, 3, 4] } }
+fn mk_outer() -> Outer { Outer { f: Frame { buf: [1, 2, 3, 4] }, n: 1 } }
+
+fn nested_unset() {
+    let o = Outer { f: Frame { buf: [1, 2, 3, 4] }, n: 1 }
+    print(o.f.cur)   //~ W0304
+}
+fn returned_unset() {
+    let f = mk()
+    print(f.cur)   //~ W0304
+}
+fn returned_outer_unset() {
+    let o = mk_outer()
+    print(o.f.cur)   //~ W0304
+}
+fn option_unset() {
+    let o = Some(Frame { buf: [1, 2, 3, 4] })
+    match o { Some(f) => print(f.cur), None => {} }   //~ W0304
+}
+fn tuple_unset() {
+    let t = (Frame { buf: [1, 2, 3, 4] }, 1)
+    print(t.0.cur)   //~ W0304
+}
+fn other_frame() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    let g = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &g.buf[0]   //~ W0605
+    g.cur = &g.buf[0]
+    print(f.cur)
+}
+fn in_array() {
+    let a = [Frame { buf: [1, 2, 3, 4] }]
+    let b = a   //~ W0604
+}
+fn box_frame() {
+    let b = Box.new(Frame { buf: [1, 2, 3, 4] })
+    b.cur = &b.buf[0]
+    print(b.cur)
+}
+fn moved_by_return() -> Frame {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f   //~ W0604
+}
+fn moved_into_closure() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[0]
+    let c = || { let g = f }   //~ W0604
+}
+fn moved_into_struct() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    let o = Outer { f: f, n: 1 }   //~ W0604
+}
+fn moved_into_tuple() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    let t = (f, 1)   //~ W0604
+}
+fn moved_into_some() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    let t = Some(f)   //~ W0604
+}
+fn swap_frames() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    let g = Frame { buf: [1, 2, 3, 4] }
+    f = g   //~ W0604
+}
+fn cur_via_ref(f: &Frame, v: &Vec<u8>) / mut(f.cur) {
+    f.cur = &v[0]   //~ W0605
+}

@@ -1,0 +1,5 @@
+enum Lookup { Found(u64), None }
+fn find(k: u64) -> Lookup {
+    if k == 0 { return Lookup.None }
+    Lookup.Found(k)
+}

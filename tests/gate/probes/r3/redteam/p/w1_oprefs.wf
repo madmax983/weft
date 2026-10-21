@@ -1,0 +1,72 @@
+effect Pick { fn pick() -> &u64 }
+effect PickT { fn pick_t() -> (&u64, u64) }
+effect PickW { fn pick_w() -> Wrap<&u64> }
+struct Wrap<T> { x: T }
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+
+// The body keeps the result in an outer local; the clause local ends.
+fn clause_local_kept() {
+    let keep = &0
+    handle Pick { fn pick() { let v = mkv(); resume(&v[0]) } } in {
+        keep = pick()
+    }
+    print(keep)   //~ W0301
+}
+// The result is a tuple part.
+fn tuple_result() {
+    let v = mkv()
+    handle PickT { fn pick_t() { resume((&v[0], 1)) } } in {
+        let t = pick_t()
+        v.clear()
+        let (r, n) = t
+        print(r)   //~ W0301
+    }
+}
+// The result is in a generic wrapper.
+fn wrap_result() {
+    let v = mkv()
+    handle PickW { fn pick_w() { resume(Wrap { x: &v[0] }) } } in {
+        let w = pick_w()
+        v.clear()
+        print(w.x)   //~ W0301
+    }
+}
+// The clause resumes with a reference into a value that the body later frees.
+effect PickB { fn pick_b(b: &Vec<u64>) -> &u64 }
+fn body_frees() {
+    handle PickB { fn pick_b(b) { resume(&b[0]) } } in {
+        let mine = mkv()
+        let r = pick_b(&mine)
+        let moved = mine
+        print(r)   //~ W0301
+    }
+}
+// Two operations of one handler; the second clause clears what the first gave.
+effect Two { fn get() -> &u64
+    fn wipe() }
+fn two_ops() {
+    let v = mkv()
+    handle Two {
+        fn get() { resume(&v[0]) }
+        fn wipe() { v.clear(); resume(()) }
+    } in {
+        let r = get()
+        wipe()
+        print(r)   //~ W0301
+    }
+}
+// The resume value from a closure in the clause.
+fn closure_resume() {
+    let v = mkv()
+    handle Pick { fn pick() { let k = |x: &u64| resume(x); k(&v[0]) } } in {
+        let r = pick()
+        v.clear()
+        print(r)   //~ W0301
+    }
+}
+test "clause_local_kept" { clause_local_kept() }
+test "tuple_result" { tuple_result() }
+test "wrap_result" { wrap_result() }
+test "body_frees" { body_frees() }
+test "two_ops" { two_ops() }
+test "closure_resume" { closure_resume() }

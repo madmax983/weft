@@ -1,0 +1,62 @@
+effect Note { fn note(x: u64) }
+struct Job { f: fn() }
+
+fn copy_gen<T>(src: &Vec<T>, dst: &Vec<T>) / mut(dst) { dst.push(src[0]) }
+fn take_gen<T>(src: &Vec<T>) -> T { src[0] }
+fn copy(src: &Job, dst: &Job) / mut(dst) { dst.f = src.f }
+fn copy_through(src: &Job, dst: &Job) / mut(dst) { copy(src, dst) }
+fn take_opt(src: &Job) -> Option<fn()> { Some(src.f) }
+fn take_job(src: &Job) -> Job { Job { f: src.f } }
+
+fn p_gen() {
+    let keep = Vec.new()
+    keep.push(|| print(0))
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let v = Vec.new()
+        v.push(|| note(1))
+        copy_gen(&v, &keep)
+    }
+    let g = keep[1]
+    g()
+}
+fn p_take_gen() {
+    let g = || print(0)
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let v = Vec.new()
+        v.push(|| note(2))
+        g = take_gen(&v)
+    }
+    g()
+}
+fn p_through() {
+    let keep = Job { f: || print(0) }
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let j = Job { f: || note(3) }
+        copy_through(&j, &keep)
+    }
+    let g = keep.f
+    g()
+}
+fn p_opt() {
+    let o = None
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let j = Job { f: || note(4) }
+        o = take_opt(&j)
+    }
+    match o { Some(g) => g(), None => {} }
+}
+fn p_job() {
+    let k = Job { f: || print(0) }
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let j = Job { f: || note(5) }
+        k = take_job(&j)
+    }
+    let g = k.f
+    g()
+}
+fn main() { p_through() }

@@ -1,0 +1,12 @@
+// A closure keeps its reference parameter in a local outside it. The callee
+// calls the closure with a reference into its own local.
+fn apply(f: fn(&u64)) {
+    let x = 5
+    f(&x)
+}
+fn main() {
+    let y = 1
+    let last = &y
+    apply(|r| last = r)
+    print(last)   // expected W0301
+}

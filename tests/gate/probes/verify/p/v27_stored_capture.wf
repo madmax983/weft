@@ -1,0 +1,18 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Cb { f: fn() }
+fn run_ref(cb: &Cb) { let g = cb.f; g() }
+// The stored closure runs at run_ref, after the clear: `r` dangles there.
+fn stored_use(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    let cb = Cb { f: || print(r.hp) }
+    world.entities.clear()
+    run_ref(&cb)
+}
+// Control: the same closure in a local is W0301 on `f`.
+fn local_use(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    let f = || print(r.hp)
+    world.entities.clear()
+    f()
+}

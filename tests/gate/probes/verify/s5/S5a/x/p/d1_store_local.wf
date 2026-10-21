@@ -1,0 +1,19 @@
+effect Pick { fn pick() -> &u64 }
+fn put_local_direct(rs: &Vec<&u64>) / mut(rs) {
+    let w = Vec.new()
+    w.push(3)
+    rs.push(&w[0])
+}
+fn put_local_op(rs: &Vec<&u64>) / mut(rs) {
+    let w = Vec.new()
+    w.push(3)
+    handle Pick { fn pick() { resume(&w[0]) } } in rs.push(pick())
+}
+fn main() {
+    let rs = Vec.new()
+    put_local_direct(&rs)
+    print(rs[0])
+    let rs2 = Vec.new()
+    put_local_op(&rs2)
+    print(rs2[0])
+}

@@ -1,0 +1,38 @@
+effect Note { fn note(x: u64) }
+struct Job { f: fn() }
+fn set(d: &Job, g: fn()) / mut(d) { d.f = g }
+
+fn p_ref() {
+    let keep = Job { f: || print(0) }
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let r = &keep
+        r.f = || note(1)
+    }
+    let g = keep.f
+    g()
+}
+fn p_vec_ref() {
+    let keep = Job { f: || print(0) }
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let ds = Vec.new()
+        ds.push(&keep)
+        let d = ds[0]
+        d.f = || note(2)
+    }
+    let g = keep.f
+    g()
+}
+fn p_vec_ref_set() {
+    let keep = Job { f: || print(0) }
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let ds = Vec.new()
+        ds.push(&keep)
+        set(ds[0], || note(3))
+    }
+    let g = keep.f
+    g()
+}
+fn main() { p_ref() }

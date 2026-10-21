@@ -1,0 +1,27 @@
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn boom() / fail { fail("boom") }
+
+fn par(f: fn(), g: fn()) / par { fork(f, g) }
+fn bg1(f: fn()) / async, fail {
+    scope { s =>
+        s.spawn(|| boom())
+        s.spawn(f)
+    }
+}
+
+fn via_fork() / par, fail {
+    let tx = begin(1)
+    par(|| commit(tx), || boom())
+}
+
+fn via_bg() / async, fail {
+    let tx = begin(2)
+    bg1(|| commit(tx))
+}
+
+fn main() / async, par {
+    handle Fail { fn fail(m) { print("failed: {m}") } } in via_fork()
+    handle Fail { fn fail(m) { print("failed: {m}") } } in via_bg()
+}

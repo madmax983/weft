@@ -1,0 +1,44 @@
+effect Ask { fn ask() -> u64 }
+struct Wrap<T> { x: T }
+fn ident<T>(x: T) -> T { x }
+fn wrapf(f: fn()) -> fn() { f }
+
+fn value_through_call() {
+    let g = handle Ask {
+        fn ask() { wrapf(|| { let n = resume(5) }) }   //~ W0313
+    } in {
+        let n = ask()
+        || print(n)
+    }
+    g()
+}
+fn value_through_ident() {
+    let g = handle Ask {
+        fn ask() { ident(|| { let n = resume(5) }) }   //~ W0313
+    } in {
+        let n = ask()
+        || print(n)
+    }
+    g()
+}
+fn value_through_if(c: bool) {
+    let g = handle Ask {
+        fn ask() { if c { || { let n = resume(5) } } else { || print(1) } }   //~ W0313
+    } in {
+        let n = ask()
+        || print(n)
+    }
+    g()
+}
+fn value_in_struct() {
+    let w = handle Ask {
+        fn ask() { Wrap { x: || { let n = resume(5) } } }   //~ W0313
+    } in {
+        let n = ask()
+        Wrap { x: || print(n) }
+    }
+    let g = w.x
+    g()
+}
+fn main() {
+}

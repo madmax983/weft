@@ -1,0 +1,19 @@
+// No handler of `Ask` exists anywhere. The `on abort` function performs it.
+// No W0805, no W0702: the effects of `on abort` are not part of any row.
+effect Ask { fn ask() -> u64 }
+effect Stop { fn stop() }
+linear struct T { id: u64 }
+    on abort = undo
+fn undo(t: T) / Ask {
+    let T(i) = t
+    print(ask())
+}
+fn done(t: T) { let T(i) = t }
+pub fn lib_fn() / Stop {
+    let t = T { id: 1 }
+    stop()
+    done(t)
+}
+fn main() {
+    handle Stop { fn stop() { () } } in lib_fn()
+}

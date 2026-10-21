@@ -1,0 +1,53 @@
+// A copy variable of an inner block ends while the task runs.
+fn held_ref() / async, clock {
+    scope { s =>
+        {
+            let x = 1
+            let r = &x
+            s.spawn(|| { sleep(2.ms); print(r) })
+            print("block ends")
+        }
+        sleep(5.ms)
+    }
+}
+
+// The task captures the variable and holds a reference into it.
+fn kept_and_ref() / async, clock {
+    scope { s =>
+        {
+            let x = 1
+            let r = &x
+            s.spawn(|| { sleep(2.ms); print(x); print(r) })
+            print("block ends")
+        }
+        sleep(5.ms)
+    }
+}
+
+// The task captures only the variable (kept, clean).
+fn kept_only() / async, clock {
+    scope { s =>
+        {
+            let x = 1
+            s.spawn(|| { sleep(2.ms); print(x) })
+            print("block ends")
+        }
+        sleep(5.ms)
+    }
+}
+
+// The task makes a reference into the kept variable after its end.
+fn kept_then_ref() / async, clock {
+    scope { s =>
+        {
+            let x = 1
+            s.spawn(|| { sleep(2.ms); let r = &x; print(r) })
+            print("block ends")
+        }
+        sleep(5.ms)
+    }
+}
+
+fn main() / async, clock {
+    held_ref()
+}

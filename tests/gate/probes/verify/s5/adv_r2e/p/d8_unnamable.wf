@@ -1,0 +1,13 @@
+mod a {
+    pub effect Note { fn note(x: u64) }
+    pub fn f() / Note { note(1) }
+}
+mod x {
+    pub mod a {
+        pub fn z() {}
+    }
+    pub fn g() { a.z() }
+    fn k() / Note { root_f() }
+    fn root_f() {}
+}
+fn main() {}

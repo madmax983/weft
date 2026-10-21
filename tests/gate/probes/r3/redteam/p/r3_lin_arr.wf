@@ -1,0 +1,24 @@
+linear struct Tx { id: u64 }
+fn rollback(tx: Tx) { print(tx.id); let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn arr_index_move() {
+    let a = [begin(1), begin(2)]
+    rollback(a[0])
+}
+fn arr_index_move_twice() {
+    let a = [begin(1), begin(2)]
+    rollback(a[0])
+    rollback(a[0])
+}
+fn arr_destr() {
+    let a = [begin(1), begin(2)]
+    let i = 0
+    while i < 2 { rollback(a[i]); i += 1 }
+}
+fn tuple_part_move_twice() {
+    let t = (begin(1), begin(2))
+    rollback(t.0)
+    rollback(t.0)
+}
+fn main() { arr_index_move_twice() }
+test "tuple" { tuple_part_move_twice() }

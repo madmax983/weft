@@ -1,0 +1,14 @@
+
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v
+}
+fn twice(f: fn()) { f(); f() }
+
+fn main() {
+    let v1 = mk_v()
+    let g7 = || {
+        let f8 = || { let m = v1; print(m.len()) }
+    }
+    twice(g7)
+}

@@ -1,0 +1,36 @@
+effect Bump { fn bump(v: &Vec<u64>) }
+effect Peek { fn peek(x: &u64) }
+fn bumps2(v: &Vec<u64>, e: &u64) / Bump { bump(v); print(e) }
+fn peeks2(v: &Vec<u64>, e: &u64) / Peek { peek(e); print(v.len()) }
+
+// h1: a call that reaches the handler, with an argument into the other.
+fn reach_alias() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Bump { fn bump(x) { x.clear(); resume(()) } } in {
+        bumps2(&v, &v[0])   // expect W0312
+    }
+}
+// h2 (clean): the clause only reads.
+fn reach_clean() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Peek { fn peek(y) { print(y); resume(()) } } in {
+        peeks2(&v, &v[0])
+        let r = &v[0]
+        peek(r)
+        print(r)
+    }
+}
+// h3 (clean): the clause mutates another place; a reference into the argument survives.
+fn other_place() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let w: Vec<u64> = Vec.new()
+    w.push(1)
+    handle Peek { fn peek(y) { w.push(2); print(y); resume(()) } } in {
+        let r = &v[0]
+        peek(r)
+        print(r)
+    }
+}

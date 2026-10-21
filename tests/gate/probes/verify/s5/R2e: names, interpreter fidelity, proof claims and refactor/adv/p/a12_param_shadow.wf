@@ -1,0 +1,8 @@
+fn diff(a: i32, b: i32) -> i32 { a - b }
+fn rdiff(b: i32, a: i32) -> i32 { b * 100 + a }
+fn use_it(diff: fn(i32, i32) -> i32) -> i32 {
+    diff(b: 10, a: 3)
+}
+fn main() {
+    print(use_it(rdiff))
+}

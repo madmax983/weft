@@ -1,0 +1,17 @@
+effect Note { fn note(x: u64) }
+mod a {
+    pub effect Note { fn note(x: u64) }
+    pub fn f() / Note { note(1) }
+}
+fn rootf() / Note { note(10) }
+fn both() / Note, a.Note {
+    rootf()
+    a.f()
+    a.Note.note(3)
+    Note.note(20)
+}
+fn main() {
+    handle Note { fn note(x) { print("root {x}")
+ resume(()) } } in handle a.Note { fn note(x) { print("a {x}")
+ resume(()) } } in both()
+}

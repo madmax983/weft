@@ -1,0 +1,29 @@
+// Unwinding runs `on abort` innermost first: 3, 2, then 1.
+linear struct Res { id: u64 }
+    on abort = rel
+
+fn rel(r: Res) {
+    let Res(id) = r
+    print("abort {id}")
+}
+
+effect Stop { fn stop() }
+
+fn inner() / Stop {
+    let b = Res { id: 2 }
+    let c = Res { id: 3 }
+    stop()
+    let Res(x) = c
+    let Res(y) = b
+}
+
+fn outer() / Stop {
+    let a = Res { id: 1 }
+    inner()
+    let Res(z) = a
+}
+
+fn main() {
+    handle Stop { fn stop() { print("stopping") } } in outer()
+    print("done")
+}

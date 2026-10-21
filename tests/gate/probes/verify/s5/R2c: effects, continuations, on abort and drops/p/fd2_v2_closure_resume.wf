@@ -1,0 +1,18 @@
+// The nested clause resumes through a closure that captures its continuation.
+effect Choice { multi fn choose() -> bool }
+effect Pick { multi fn pick() -> u64 }
+fn body() -> u64 / Pick { pick() + 1 }
+fn run() -> u64 / Choice {
+    handle Pick {
+        fn pick() {
+            let k = |x: u64| resume(x)
+            let b = choose()
+            if b { 0 } else { k(10) + k(20) }
+        }
+    } in body()
+}
+fn main() {
+    let out: Vec<u64> = Vec.new()
+    handle Choice { fn choose() { resume(true); resume(false); resume(false) } } in out.push(run())
+    print(out)
+}

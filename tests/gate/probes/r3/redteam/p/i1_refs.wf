@@ -1,0 +1,74 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Wrap<T> { x: T }
+fn put<T>(dst: &Wrap<T>, x: T) / mut(dst) { dst.x = x }
+fn put_ref(dst: &Wrap<&Entity>, x: &Entity) / mut(dst) { dst.x = x }
+fn swap_in(dst: &Vec<&Entity>, x: &Entity) / mut(dst) { dst.push(x) }
+fn first<T>(v: &Vec<T>) -> &T in v[] { &v[0] }
+
+fn callee_puts(world: &World, d: &Entity) / mut(world.entities) {
+    let w = Wrap { x: d }
+    put(&w, &world.entities[0])
+    world.entities.clear()
+    print(w.x.hp)   //~ W0301
+}
+fn callee_puts_ref(world: &World, d: &Entity) / mut(world.entities) {
+    let w = Wrap { x: d }
+    put_ref(&w, &world.entities[0])
+    world.entities.clear()
+    print(w.x.hp)   //~ W0301
+}
+fn callee_pushes(world: &World) / mut(world.entities) {
+    let rs = Vec.new()
+    swap_in(&rs, &world.entities[0])
+    world.entities.clear()
+    print(rs[0].hp)   //~ W0301
+}
+fn for_over_refs(world: &World) / mut(world.entities) {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    world.entities.clear()
+    for r in rs[] {
+        print(r.hp)   //~ W0301
+    }
+}
+fn match_ref_enum(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    let p = &o
+    world.entities.clear()
+    match p { Some(e) => print(e.hp), None => {} }   //~ W0301
+}
+fn closure_param_ret(world: &World) / mut(world.entities) {
+    let f = |x: &Entity| x
+    let r = f(&world.entities[0])
+    world.entities.clear()
+    print(r.hp)   //~ W0301
+}
+fn generic_first(world: &World) / mut(world.entities) {
+    let r = first(&world.entities)
+    world.entities.clear()
+    print(r.hp)   //~ W0301
+}
+fn nested_generic(world: &World) / mut(world.entities) {
+    let o = Some(Wrap { x: (1, &world.entities[0]) })
+    world.entities.clear()
+    match o { Some(w) => { let (a, e) = w.x; print(e.hp) }, None => {} }   //~ W0301
+}
+fn result_err(world: &World) / mut(world.entities) {
+    let r: Result<u64, &Entity> = Err(&world.entities[0])
+    world.entities.clear()
+    match r { Ok(n) => print(n), Err(e) => print(e.hp) }   //~ W0301
+}
+fn interp(world: &World) / mut(world.entities) {
+    let e = &world.entities[0]
+    world.entities.clear()
+    print("{e.hp}")   //~ W0301
+}
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+test "callee_puts" { let w = mkw(); let e = Entity { hp: 5 }; callee_puts(&w, &e) }
+test "callee_puts_ref" { let w = mkw(); let e = Entity { hp: 5 }; callee_puts_ref(&w, &e) }
+test "callee_pushes" { let w = mkw(); callee_pushes(&w) }

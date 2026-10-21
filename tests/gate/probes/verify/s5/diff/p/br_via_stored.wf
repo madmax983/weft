@@ -1,0 +1,42 @@
+effect Op { fn op() }
+effect Log { fn log(m: String) }
+linear struct Raw { id: u64 }
+fn finish(t: Raw) { let Raw(i) = t; print("finish") }
+fn g() / Op { op() }
+struct Job { f: fn() }
+fn run_it(j: &Job) { let g = j.f
+ g() }
+
+fn via_callee() {
+    handle Op { fn op() { print(9) } } in {
+        let t = Raw { id: 2 }
+        g()
+        finish(t)
+    }
+}
+fn via_closure() {
+    handle Op { fn op() { print(9) } } in {
+        let t = Raw { id: 2 }
+        let k = || op()
+        k()
+        finish(t)
+    }
+}
+fn via_cic() {
+    handle Op { fn op() { print(9) } } in {
+        handle Log { fn log(m) { op(); resume(()) } } in {
+            let t = Raw { id: 2 }
+            log("x")
+            finish(t)
+        }
+    }
+}
+fn via_stored() {
+    handle Op { fn op() { print(9) } } in {
+        let j = Job { f: || op() }
+        let t = Raw { id: 2 }
+        run_it(&j)
+        finish(t)
+    }
+}
+fn main() { via_stored() }

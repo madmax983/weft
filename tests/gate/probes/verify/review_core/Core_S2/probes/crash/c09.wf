@@ -1,0 +1,6 @@
+effect E { fn e(f: fn(&u64)) }
+fn h() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle E { fn e(f) { f(&v[0]); v.clear(); resume(()) } } in e(|x| print(x))
+}

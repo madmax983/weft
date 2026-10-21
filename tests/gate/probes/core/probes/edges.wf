@@ -1,0 +1,56 @@
+struct Cell2 { items: Vec<u64> }
+struct H { c: Rc<Cell2>, n: u64 }
+struct Node { value: u64, next: Option<Rc<Node>> }
+fn take(v: Vec<u64>) {}
+
+fn group_ret(h: &Rc<Cell2>) -> &Vec<u64> in Cell2.items { &h.items }
+
+fn shadow() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let v = Vec.new()
+    print(r)
+}
+
+fn loop_move() {
+    let v = Vec.new()
+    v.push(1)
+    for x in v[] {
+        take(v)   // ERR: the iterator is used at the next iteration
+    }
+}
+
+fn handle_in_struct() {
+    let h = H { c: Rc.new(Cell2 { items: Vec.new() }), n: 1 }
+    let r = &h.c.items
+    h.n = 2
+    print(r.len())
+    h.c = Rc.new(Cell2 { items: Vec.new() })
+    print(r.len())   // ERR
+}
+
+fn through_option(a: Rc<Node>) {
+    match a.next {
+        Some(n) => {
+            let r = &n.value
+            print(r)
+            a.next = None   // ERR at the use below (mut needs decl too)
+            print(r)
+        }
+        None => {}
+    }
+}
+
+fn clone_then_move(a: Rc<Cell2>) {
+    let r = &a.items
+    let b = a.clone()
+    take_rc(b)
+    print(r.len())
+}
+fn take_rc(c: Rc<Cell2>) {}
+
+fn ret_handle_ref() -> &u64 {
+    let a = Rc.new(Cell2 { items: Vec.new() })
+    &a.items[0]   // ERR W0204
+}

@@ -1,0 +1,14 @@
+// A resume of an inner clause inside a clause of fail: not the fail continuation.
+effect Op { fn op() -> u64 }
+fn work() -> u64 / fail {
+    fail("boom")
+    5
+}
+fn main() {
+    let r = handle Fail {
+        fn fail(m) {
+            handle Op { fn op() { resume(7) } } in { op() + 1 }
+        }
+    } in work()
+    print(r)
+}

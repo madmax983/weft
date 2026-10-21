@@ -1,0 +1,62 @@
+struct Stats { count: u64 }
+struct H { f: fn() -> u64 }
+fn run(f: fn() -> u64) -> u64 { f() }
+fn run_box(h: H) -> u64 { let g = h.f; g() }
+
+// The spawning closure goes through a struct field of a local.
+fn via_field(st: &Stats) / mut(st), async {
+    scope { s =>
+        let sp = || {
+            s.spawn(|| st.count += 1)
+            0
+        }
+        let h = H { f: sp }
+        let g = h.f
+        g()
+        print(st.count)
+    }
+}
+// The spawning closure goes in a struct to a callee.
+fn via_struct_callee(st: &Stats) / mut(st), async {
+    scope { s =>
+        let h = H { f: || { s.spawn(|| st.count += 1); 0 } }
+        run_box(h)
+        print(st.count)
+    }
+}
+// The spawning closure goes through a Vec.
+fn via_vec(st: &Stats) / mut(st), async {
+    scope { s =>
+        let v = Vec.new()
+        v.push(|| { s.spawn(|| st.count += 1); 0 })
+        let g = v[0]
+        g()
+        print(st.count)
+    }
+}
+// Nested closures.
+fn nested(st: &Stats) / mut(st), async {
+    scope { s =>
+        let outer = || {
+            let inner = || { s.spawn(|| st.count += 1); 0 }
+            inner()
+        }
+        outer()
+        print(st.count)
+    }
+}
+// Returned from a closure and then called.
+fn returned(st: &Stats) / mut(st), async {
+    scope { s =>
+        let mk = || || { s.spawn(|| st.count += 1); 0 }
+        let g = mk()
+        g()
+        print(st.count)
+    }
+}
+// A fork inside a closure: joined inside, so no conflict after.
+fn fork_in_closure(st: &Stats) / mut(st), par {
+    let f = || fork(|| st.count += 1, || print(1))
+    f()
+    print(st.count)
+}

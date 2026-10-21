@@ -1,0 +1,13 @@
+// Named args where a ref param and a value param swap.
+struct E { hp: i32 }
+fn hit(e: &E, d: i32) / mut(e) { e.hp -= d }
+fn main() {
+    let x = E { hp: 10 }
+    let g = hit
+    g(d: 3, e: &x)
+    print(x.hp)
+    x.hp = 1
+    let c = || g(d: 4, e: &x)
+    c()
+    print(x.hp)
+}

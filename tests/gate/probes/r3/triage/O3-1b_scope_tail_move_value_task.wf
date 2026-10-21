@@ -1,0 +1,33 @@
+// New shape of O3-1, found in the round-3 triage. A place as the tail of a
+// `scope` body in value position moves at the tail, inside the scope, while a
+// task of the scope still runs. The checker moves the place only where the
+// `let` takes the value, after the scope end (the tasks have joined there), so
+// it gives no W0405. The oracle prints <dangling>: the task reads `t.1` after
+// the move. Expected: W0405 at the tail in each function.
+fn with_task_let() {
+    let v = Vec.new()
+    v.push(1)
+    let t = (v, 6)
+    let q = &t.1
+    let x = scope { s =>
+        s.spawn(|| { sleep(1.ms); print(q) })
+        t
+    }
+    print(x.1)
+}
+
+fn with_task_block_let() {
+    let v = Vec.new()
+    v.push(1)
+    let t = (v, 6)
+    let q = &t.1
+    let x = scope { s =>
+        s.spawn(|| { sleep(1.ms); print(q) })
+        { t }
+    }
+    print(x.1)
+}
+
+fn main() {
+    with_task_let()
+}

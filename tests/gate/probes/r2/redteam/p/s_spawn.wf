@@ -1,0 +1,40 @@
+struct Stats { count: u64 }
+struct Job { f: fn() }
+fn sp(s: Scope, st: &Stats) / mut(st) { s.spawn(|| st.count += 1) }
+
+// The scope capability leaves the scope in a closure.
+fn scope_escape(st: &Stats) / mut(st), async {
+    let keep = || print(0)
+    scope { s =>
+        keep = || { s.spawn(|| st.count += 1)
+ () }
+    }
+    keep()   //~ W0301
+    print(st.count)
+}
+// A spawning closure in a field.
+fn field_spawner(st: &Stats) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| st.count += 1)
+ () } }
+        let g = j.f
+        g()
+        print(st.count)   //~ W0405
+    }
+}
+// A task handle in an outer local.
+fn handle_escape(st: &Stats) / mut(st), async {
+    let h = scope { s => s.spawn(|| 1) }
+    let n = h.join()
+}
+fn handle_outer(st: &Stats) / mut(st), async {
+    scope { s =>
+        let h = s.spawn(|| st.count += 1)
+        h.detach()
+        print(st.count)   //~ W0405
+    }
+}
+test "escape" { let st = Stats { count: 0 }
+ scope_escape(&st) }
+test "handle_escape" { let st = Stats { count: 0 }
+ handle_escape(&st) }

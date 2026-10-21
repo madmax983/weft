@@ -1,0 +1,9 @@
+struct C { n: u64 }
+pub fn rowparam(f: fn() / log) { f() }
+pub fn local(f: fn()) { handle log { fn info(m) { resume(()) } fn warn(m) { resume(()) } } in { f(); log.info("x") } }
+pub fn made(f: fn()) { let g = || log.info("x"); f() }
+pub fn stored(f: fn(), c: &C) { let h = f; h() }
+pub fn spawned(f: fn()) / async { scope { s => s.spawn(f) } }
+pub fn lent(f: fn(&C), c: &C) { f(c); f(c) }
+pub fn twice(f: fn()) { f(); f() }
+pub fn nothing() { }

@@ -1,0 +1,37 @@
+effect Lg { fn lg(msg: String) }
+effect Get { fn get() -> fn() }
+fn mk() -> fn() / Lg { || lg("q") }
+fn r_returned() {
+    let f = || print(0)
+    handle Lg { fn lg(m) { print(m) } } in {
+        f = || lg("x")
+        let g = mk()
+        g()
+        f = || print(1)
+    }
+    f()
+}
+fn r_op_result() {
+    let f = || print(0)
+    handle Lg { fn lg(m) { print(m) } } in {
+        handle Get { fn get() { resume(|| lg("q")) } } in {
+            f = || lg("x")
+            let g = get()
+            g()
+            f = || print(1)
+        }
+    }
+    f()
+}
+fn r_tuple() {
+    let f = || print(0)
+    handle Lg { fn lg(m) { print(m) } } in {
+        let p = (|| lg("q"), 1)
+        f = || lg("x")
+        let (g, n) = p
+        g()
+        f = || print(1)
+    }
+    f()
+}
+fn main() { r_tuple() }

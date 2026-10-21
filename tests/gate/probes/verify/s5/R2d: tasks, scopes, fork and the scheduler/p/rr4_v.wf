@@ -1,0 +1,91 @@
+struct Stats { count: u64 }
+struct Job { f: fn() }
+
+fn id(f: fn()) -> fn() { f }
+fn store(dst: &Job, f: fn()) / mut(dst) { dst.f = f }
+
+// nested closure captures s
+fn nested(st: &Stats) / mut(st), async {
+    let keep = || print(0)
+    scope { s =>
+        keep = || {
+            let h = || { s.spawn(|| st.count += 1); () }
+            h()
+        }
+    }
+    keep()
+}
+
+// vec of closures
+fn in_vec(st: &Stats) / mut(st), async {
+    let fs = Vec.new()
+    scope { s =>
+        fs.push(|| { s.spawn(|| st.count += 1); () })
+    }
+    let f = fs[0]
+    f()
+}
+
+// through id
+fn through_id(st: &Stats) / mut(st), async {
+    let keep = || print(0)
+    scope { s =>
+        keep = id(|| { s.spawn(|| st.count += 1); () })
+    }
+    keep()
+}
+
+// through store into a ref param of a callee
+fn through_store(st: &Stats) / mut(st), async {
+    let j = Job { f: || print(0) }
+    scope { s =>
+        store(&j, || { s.spawn(|| st.count += 1); () })
+    }
+    let g = j.f
+    g()
+}
+
+// tuple
+fn in_tuple(st: &Stats) / mut(st), async {
+    let t = (|| print(0), 1)
+    scope { s =>
+        t = (|| { s.spawn(|| st.count += 1); () }, 2)
+    }
+    let g = t.0
+    g()
+}
+
+// option
+fn in_option(st: &Stats) / mut(st), async {
+    let o = None
+    scope { s =>
+        o = Some(|| { s.spawn(|| st.count += 1); () })
+    }
+    match o { Some(g) => g(), None => () }
+}
+
+// into a ref param field directly
+fn into_param(dst: &Job, st: &Stats) / mut(dst, st), async {
+    scope { s =>
+        dst.f = || { s.spawn(|| st.count += 1); () }
+    }
+}
+
+// return from the function via scope value
+fn returned(st: &Stats) -> fn() {
+    scope { s => || { s.spawn(|| st.count += 1); () } }
+}
+
+// a task in an outer scope calls a closure that captures the inner scope
+fn outer_task(st: &Stats) / mut(st), io {
+    scope { a =>
+        scope { b =>
+            let k = || { b.spawn(|| st.count += 1); () }
+            a.spawn(|| { sleep(1.ms); k() })
+        }
+    }
+}
+
+fn caller_escape() / async { let st = Stats { count: 0 }; nested(&st) }
+fn main() / io {
+}

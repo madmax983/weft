@@ -1,0 +1,22 @@
+struct Entity { hp: i32 }
+impl Entity { fn new() -> Entity { Entity { hp: 10 } } }
+struct World { entities: Vec<Entity> }
+
+fn take(w: World) { }
+
+fn moved_owner() {
+    let v = World { entities: Vec.new() }
+    v.entities.push(Entity.new())
+    let r = &v.entities[0]
+    let w = v
+    w.entities.clear()
+    print(r.hp)
+}
+
+fn dropped_owner() {
+    let v = World { entities: Vec.new() }
+    v.entities.push(Entity.new())
+    let r = &v.entities[0]
+    take(v)
+    print(r.hp)
+}

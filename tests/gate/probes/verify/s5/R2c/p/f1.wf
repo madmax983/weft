@@ -1,0 +1,29 @@
+effect Ask { fn ask() -> u64 }
+fn work() -> u64 / fail { fail("boom"); 5 }
+fn asks() -> u64 / Ask { ask() + 1 }
+
+// A clause of `fail` installs a handler whose clause resumes: that `resume`
+// is the continuation of `ask`, not of `fail`.
+fn inner_handler() -> u64 {
+    handle Fail {
+        fn fail(m) {
+            handle Ask { fn ask() { resume(7) } } in asks()
+        }
+    } in work()
+}
+
+// A closure in a clause of `fail` installs a handler that resumes.
+fn inner_closure() -> u64 {
+    handle Fail {
+        fn fail(m) {
+            let g = || handle Ask { fn ask() { resume(7) } } in asks()
+            g()
+        }
+    } in work()
+}
+
+// A user effect named like a standard one is not `Fail`.
+fn main() {
+    print(inner_handler())
+    print(inner_closure())
+}

@@ -1,0 +1,70 @@
+effect Ask { fn ask() -> u64 }
+
+// The block does no suspension after the resume.
+fn no_suspend_after() / io {
+    handle Fail { fn fail(m) { print("caught: {m}") } } in {
+        let v = handle Ask { fn ask() { sleep(50.ms); resume(1) } } in {
+            with_timeout(10.ms) {
+                let x = ask()
+                print("block finished after its deadline")
+                x
+            }
+        }
+        print("v = {v}")
+    }
+}
+
+// Nested timeouts: the inner one expires in the continuation.
+fn nested() / io {
+    handle Fail { fn fail(m) { print("caught: {m}") } } in {
+        let v = handle Ask { fn ask() { sleep(50.ms); resume(1) } } in {
+            with_timeout(500.ms) {
+                let a = with_timeout(10.ms) {
+                    let x = ask()
+                    sleep(1.ms)
+                    print("inner finished after its deadline")
+                    x
+                }
+                a + 1
+            }
+        }
+        print("v = {v}")
+    }
+}
+
+// The clause never resumes: the deadline passes; nothing should happen later.
+fn never_resumed() / io {
+    handle Fail { fn fail(m) { print("caught: {m}") } } in {
+        let v = handle Ask { fn ask() { sleep(50.ms); 5 } } in {
+            with_timeout(10.ms) {
+                let x = ask()
+                sleep(1.ms)
+                x
+            }
+        }
+        sleep(100.ms)
+        print("v = {v}")
+    }
+}
+
+// The clause resumes before the deadline: no timeout.
+fn resumed_in_time() / io {
+    handle Fail { fn fail(m) { print("caught: {m}") } } in {
+        let v = handle Ask { fn ask() { sleep(5.ms); resume(1) } } in {
+            with_timeout(30.ms) {
+                let x = ask()
+                sleep(1.ms)
+                x
+            }
+        }
+        print("v = {v}")
+    }
+}
+
+fn main() / io {
+    no_suspend_after()
+    nested()
+    never_resumed()
+    resumed_in_time()
+    print("end")
+}

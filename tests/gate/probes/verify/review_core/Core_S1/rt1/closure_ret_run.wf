@@ -1,0 +1,17 @@
+struct Entity { hp: i32 }
+fn main() {
+    let f = || { let e = Entity { hp: 1 }; &e.hp }
+    let r = f()
+    print(r)
+    let keep = Entity { hp: 1 }
+    let q = &keep.hp
+    let g = || { let e = Entity { hp: 2 }; q = &e.hp; 0 }
+    let z = g()
+    print(q)
+    let w = &keep.hp
+    {
+        let e4 = Entity { hp: 4 }
+        w = &e4.hp
+    }
+    print(w)
+}

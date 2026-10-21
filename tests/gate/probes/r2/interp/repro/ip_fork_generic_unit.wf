@@ -1,0 +1,11 @@
+// fork in a generic function. T = () at the call.
+fn both<T>(f: fn() -> T, g: fn() -> T) -> (T, T) / par {
+    fork(f, g)
+}
+
+fn main() / par {
+    let (a, b) = both(|| 1, || 2)
+    print(a + b)
+    let (c, d) = both(|| print("x"), || print("y"))
+    print("units")
+}

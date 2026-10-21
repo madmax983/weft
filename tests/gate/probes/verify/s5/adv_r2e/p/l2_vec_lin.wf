@@ -1,0 +1,20 @@
+linear struct Tx { id: u64 }
+fn commit(tx: Tx) {
+    let Tx(id) = tx
+    print(id)
+}
+fn main() {
+    let v: Vec<Tx> = Vec.new()
+    v.push(Tx { id: 1 })
+    v.push(Tx { id: 2 })
+    let a = v.pop()
+    match a {
+        Some(t) => commit(t)
+        None => {}
+    }
+    let b = v.pop()
+    match b {
+        Some(t) => commit(t)
+        None => {}
+    }
+}

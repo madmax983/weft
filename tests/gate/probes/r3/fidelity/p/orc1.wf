@@ -1,0 +1,20 @@
+// The oracle sees a read through a reference into a local after a normal end
+// of its scope, but not after an abort path unwinds the frame of the local.
+effect Keep { fn keep(r: &u64) }
+fn deep() / Keep {
+    let x = 5
+    keep(&x)
+}
+fn normal(out: &Vec<&u64>) {
+    let x = 6
+    out.push(&x)   // W0204, so this needs --unchecked
+}
+fn main() {
+    let y = 1
+    let last = &y
+    handle Keep { fn keep(r) { last = r } } in deep()
+    print(last)    // prints <moved>; no oracle fault
+    let v: Vec<&u64> = Vec.new()
+    normal(&v)
+    print(v[0])    // the oracle faults here
+}

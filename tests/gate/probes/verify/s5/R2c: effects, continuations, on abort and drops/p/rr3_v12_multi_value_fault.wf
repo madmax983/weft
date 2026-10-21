@@ -1,0 +1,19 @@
+// A multi clause gives a resuming closure to the handled body as the result of
+// `ask`. The body gives it back in the value of the `handle`. A call after the
+// `handle` resumes a continuation that the handler dropped.
+effect Ask { multi fn ask() -> fn() -> u64 }
+fn make() -> (fn() -> u64, String) {
+    handle Ask {
+        fn ask() {
+            let k = || { let (h, s) = resume(|| 7); h() + 1 }
+            resume(k)
+        }
+    } in {
+        let f = ask()
+        (f, "x")
+    }
+}
+fn main() {
+    let (g, s) = make()
+    print(g())
+}

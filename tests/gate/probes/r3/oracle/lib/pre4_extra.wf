@@ -1,0 +1,19 @@
+struct N { hp: u64, kids: Vec<u64>, b: Box<E> }
+struct G { ns: Vec<N>, tot: u64 }
+fn mk_n(k: u64) -> N {
+    let n = N { hp: k, kids: Vec.new(), b: Box.new(mk_e(k)) }
+    n.kids.push(k)
+    n.kids.push(k + 1)
+    n
+}
+fn mk_g() -> G {
+    let g = G { ns: Vec.new(), tot: 0 }
+    g.ns.push(mk_n(1))
+    g.ns.push(mk_n(2))
+    g
+}
+fn find_n(g: &G, i: u64) -> Option<&N> { if i == 0 { Some(&g.ns[0]) } else { Some(&g.ns[1]) } }
+fn kid_of(n: &N) -> Option<&u64> { Some(&n.kids[0]) }
+fn first_n(g: &G) -> &N in g.ns[] { &g.ns[0] }
+fn grow_kids(n: &N) { n.kids.push(7) }
+fn hp_of(n: &N) -> u64 { n.hp }

@@ -1,0 +1,3 @@
+fn main(env: Env) / io {
+    let n = json.count()
+}

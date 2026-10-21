@@ -1,0 +1,8 @@
+fn diff(a: i32, b: i32) -> i32 { a - b }
+fn main() {
+    let t = (diff, 1)
+    let (g, _) = t
+    print(g(b: 10, a: 3))
+    let h = t.0
+    print(h(b: 10, a: 3))
+}

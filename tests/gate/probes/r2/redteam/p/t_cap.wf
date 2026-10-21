@@ -1,0 +1,75 @@
+effect Log { fn log(msg: String) }
+struct Holder { cb: fn() }
+struct Wrap<T> { x: T }
+
+// Through an Rc clone that the body owns.
+fn rc_clone() {
+    let outer = Rc.new(Holder { cb: || print(0) })
+    handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        let inner = outer.clone()
+        inner.cb = || log("late")
+    }
+    let g = outer.cb
+    g()
+}
+// Through a Weak upgrade.
+fn weak_upgrade() {
+    let outer = Rc.new(Holder { cb: || print(0) })
+    let w = outer.downgrade()
+    handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        match w.upgrade() { Some(r) => { r.cb = || log("late") }, None => {} }
+    }
+    let g = outer.cb
+    g()
+}
+// Through a generic wrapper of an outer local.
+fn generic_outer() {
+    let w = Wrap { x: || print(0) }
+    handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        w.x = || log("late")
+    }
+    let g = w.x
+    g()
+}
+// Through an Option of an outer local.
+fn option_outer() {
+    let o = None
+    handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        o = Some(|| log("late"))
+    }
+    match o { Some(g) => g(), None => {} }
+}
+// Through a clause of an inner handler that writes an outer local.
+effect Reg { fn reg(f: fn()) }
+fn inner_clause_keeps() {
+    let out = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        handle Reg { fn reg(f) { out = f
+ resume(()) } } in reg(|| log("late"))
+    }
+    out()
+}
+// Through a task result.
+fn task_result() / async {
+    let out = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        scope { s =>
+            let t = s.spawn(|| 1)
+            let n = t.join()
+            out = || log("late")
+        }
+    }
+    out()
+}
+// Through a Box in an outer local.
+fn box_outer() {
+    let b = Box.new(Holder { cb: || print(0) })
+    handle Log { fn log(m) { resume(()) } } in {   //~ W0313
+        b.cb = || log("late")
+    }
+    let g = b.cb
+    g()
+}
+test "rc_clone" { rc_clone() }
+test "weak" { weak_upgrade() }
+test "inner_clause" { inner_clause_keeps() }

@@ -1,0 +1,9 @@
+// A dependency that installs a root handler for `Log`: a mock that answers
+// each operation itself. Only binaries and tests can do this (W0801).
+pub fn silent(f: fn() / log) {
+    handle Log { fn info(m) { resume(()) } fn warn(m) { resume(()) } } in f()
+}
+// A dependency that runs `sim.run`: W0802.
+pub fn simulate(f: fn()) {
+    sim.run(seed: 1) { f() }
+}

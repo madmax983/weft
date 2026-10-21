@@ -1,0 +1,22 @@
+effect Log { fn info(m: String) }
+mod a {
+    pub effect Log { fn info(m: String) }
+    pub fn f() / Log { info("a") }
+    pub fn g() / log { info("std") }
+    pub fn h() / Log { Log.info("a2") }
+    mod b {
+        pub fn k() / a.Log { info("ab") }
+    }
+}
+fn root_info() / Log { info("root") }
+fn main() / log {
+    handle a.Log { fn info(m) { print("a.Log " + m); resume(()) } } in {
+        a.f()
+        a.h()
+        a.b.k()
+    }
+    handle Log { fn info(m) { print("main.Log " + m); resume(()) } } in {
+        root_info()
+        a.g()
+    }
+}

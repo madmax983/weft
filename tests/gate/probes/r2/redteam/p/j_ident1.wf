@@ -1,0 +1,4 @@
+effect Clock { fn now() -> u64 }
+fn main() {
+    handle Clock { fn now() { resume(5) } } in print(now())
+}

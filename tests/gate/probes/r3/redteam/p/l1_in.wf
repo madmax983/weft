@@ -1,0 +1,39 @@
+struct Entity { hp: i32, kids: Vec<Entity> }
+struct World { entities: Vec<Entity>, other: Vec<Entity> }
+fn attack(w: &World, a: &Entity in w.entities[], b: &Entity in w.entities[]) / mut(a, b) {
+    a.hp -= 1
+    b.hp -= 1
+}
+fn hit(a: &Entity in w.entities[], w: &World) / mut(a) { a.hp -= 1 }
+effect Hit { fn hit_op(w: &World, a: &Entity in w.entities[]) }
+
+fn named_swapped(world: &World, x: &Entity) / mut(world.entities[]) {
+    attack(b: x, a: &world.entities[0], w: world)   //~ W0203
+}
+fn named_ok(world: &World) / mut(world.entities[]) {
+    attack(b: &world.entities[1], a: &world.entities[0], w: world)
+}
+fn later_root(world: &World) / mut(world.entities[]) {
+    hit(&world.other[0], world)   //~ W0203
+}
+fn later_root_named(world: &World) / mut(world.entities[]) {
+    hit(w: world, a: &world.other[0])   //~ W0203
+}
+fn via_value(world: &World) / mut(world.entities[]) {
+    let g = hit
+    g(&world.other[0], world)   //~ W0203
+}
+fn via_closure(world: &World) / mut(world.entities[]) {
+    let c = |e: &Entity| hit(e, world)
+    c(&world.other[0])   //~ W0203
+}
+fn via_op(world: &World) / Hit {
+    hit_op(world, &world.other[0])   //~ W0203
+}
+fn via_op_named(world: &World) / Hit {
+    hit_op(a: &world.other[0], w: world)   //~ W0203
+}
+fn deeper_unstable(world: &World) / mut(world.entities[]) {
+    hit(&world.entities[0].kids[0], world)   //~ W0203
+}
+fn main() {}

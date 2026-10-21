@@ -1,0 +1,10 @@
+struct Big { xs: Vec<i32> }
+struct E { hp: i32 }
+impl E {
+    fn run(self, a: Big, f: fn() -> i32) -> i32 { f() }
+}
+fn main() {
+    let e = E { hp: 1 }
+    let v = Big { xs: [1, 2] }
+    print(e.run(v) { v.xs.len() })
+}

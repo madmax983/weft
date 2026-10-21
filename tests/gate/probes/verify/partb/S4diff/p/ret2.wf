@@ -1,0 +1,16 @@
+fn eat(s: String) {}
+fn mk(s: String) -> fn() {
+    || eat(s)
+}
+fn twice_returned() {
+    let g = mk("a")
+    g()
+    g()   //~ W0502
+}
+fn pass_through(f: fn()) -> fn() { f }
+fn twice_passed() {
+    let s = "a"
+    let g = pass_through(|| eat(s))
+    g()
+    g()   //~ W0502
+}

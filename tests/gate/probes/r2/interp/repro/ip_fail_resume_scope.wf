@@ -1,0 +1,15 @@
+// A Fail handler that resumes. A scope gives the value of its body.
+fn work() / fail {
+    fail("boom")
+}
+
+fn main() / io {
+    let r = handle Fail { fn fail(m) { print("caught {m}"); resume(()) } } in {
+        let v = scope { s =>
+            s.spawn(|| work())
+            41
+        }
+        v + 1
+    }
+    print("r = {r}")
+}

@@ -1,0 +1,32 @@
+fn spin(id: u64) {
+    let i = 0
+    let acc = 0
+    while i < 4000 {
+        acc += i
+        if i % 1000 == 0 { print("task {id} at {i}") }
+        i += 1
+    }
+}
+fn work(id: u64) / clock {
+    let i = 0
+    while i < 3 {
+        print("task {id} step {i}")
+        sleep(1.ms)
+        i += 1
+    }
+}
+
+test "outside task runs at the same time" {
+    scope { o =>
+        o.spawn(|| { let j = 0
+            while j < 5 { sleep(1.ms); j += 1 } })
+        o.spawn(|| spin(9))
+        sim.run(seed: 7) {
+            scope { s =>
+                s.spawn(|| work(1))
+                s.spawn(|| work(2))
+                s.spawn(|| spin(3))
+            }
+        }
+    }
+}

@@ -1,0 +1,65 @@
+// The callee returns a closure that runs its parameter as two tasks.
+fn mk(f: fn()) -> fn() / async {
+    || {
+        scope { s =>
+            s.spawn(f)
+            s.spawn(f)
+        }
+    }
+}
+
+fn via_returned_runner() / async, clock {
+    let n = 0
+    let k = mk(|| { sleep(1.ms); n += 1 })
+    k()
+}
+
+// The callee runs f as a task and gives g to a callee that calls it.
+fn call_it(g: fn()) { g() }
+fn spawn_and_pass(f: fn(), g: fn()) / async {
+    scope { s =>
+        s.spawn(f)
+        call_it(g)
+    }
+}
+
+fn via_pass() / async, clock {
+    let n = 0
+    spawn_and_pass(|| { sleep(1.ms); n += 1 }, || print(n))
+}
+
+// Recursion: the callee runs f as a task and then calls itself.
+fn rec(f: fn(), k: u64) / async {
+    if k > 0 {
+        scope { s =>
+            s.spawn(f)
+            rec(f, k - 1)
+        }
+    }
+}
+
+fn via_rec() / async, clock {
+    let n = 0
+    rec(|| { sleep(1.ms); n += 1 }, 2)
+}
+
+// The callee spawns a task that spawns f twice.
+fn nested_spawn(f: fn()) / async {
+    scope { s =>
+        s.spawn(|| {
+            scope { t =>
+                t.spawn(f)
+                t.spawn(f)
+            }
+        })
+    }
+}
+
+fn via_nested() / async, clock {
+    let n = 0
+    nested_spawn(|| { sleep(1.ms); n += 1 })
+}
+
+fn main() / async, clock {
+    via_returned_runner()
+}

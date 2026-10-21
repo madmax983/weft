@@ -1,0 +1,3607 @@
+struct E { hp: u64 }
+fn show(e: &E, n: u64) { print(e.hp) }
+fn f(v: &Vec<E>) / mut(v) {
+    let r0 = &v[0]
+    show(&v[0], 0)
+    v.push(E { hp: 0 })
+    print(r0.hp)
+    let r1 = &v[0]
+    show(&v[0], 1)
+    v.push(E { hp: 1 })
+    print(r1.hp)
+    let r2 = &v[0]
+    show(&v[0], 2)
+    v.push(E { hp: 2 })
+    print(r2.hp)
+    let r3 = &v[0]
+    show(&v[0], 3)
+    v.push(E { hp: 3 })
+    print(r3.hp)
+    let r4 = &v[0]
+    show(&v[0], 4)
+    v.push(E { hp: 4 })
+    print(r4.hp)
+    let r5 = &v[0]
+    show(&v[0], 5)
+    v.push(E { hp: 5 })
+    print(r5.hp)
+    let r6 = &v[0]
+    show(&v[0], 6)
+    v.push(E { hp: 6 })
+    print(r6.hp)
+    let r7 = &v[0]
+    show(&v[0], 7)
+    v.push(E { hp: 7 })
+    print(r7.hp)
+    let r8 = &v[0]
+    show(&v[0], 8)
+    v.push(E { hp: 8 })
+    print(r8.hp)
+    let r9 = &v[0]
+    show(&v[0], 9)
+    v.push(E { hp: 9 })
+    print(r9.hp)
+    let r10 = &v[0]
+    show(&v[0], 10)
+    v.push(E { hp: 10 })
+    print(r10.hp)
+    let r11 = &v[0]
+    show(&v[0], 11)
+    v.push(E { hp: 11 })
+    print(r11.hp)
+    let r12 = &v[0]
+    show(&v[0], 12)
+    v.push(E { hp: 12 })
+    print(r12.hp)
+    let r13 = &v[0]
+    show(&v[0], 13)
+    v.push(E { hp: 13 })
+    print(r13.hp)
+    let r14 = &v[0]
+    show(&v[0], 14)
+    v.push(E { hp: 14 })
+    print(r14.hp)
+    let r15 = &v[0]
+    show(&v[0], 15)
+    v.push(E { hp: 15 })
+    print(r15.hp)
+    let r16 = &v[0]
+    show(&v[0], 16)
+    v.push(E { hp: 16 })
+    print(r16.hp)
+    let r17 = &v[0]
+    show(&v[0], 17)
+    v.push(E { hp: 17 })
+    print(r17.hp)
+    let r18 = &v[0]
+    show(&v[0], 18)
+    v.push(E { hp: 18 })
+    print(r18.hp)
+    let r19 = &v[0]
+    show(&v[0], 19)
+    v.push(E { hp: 19 })
+    print(r19.hp)
+    let r20 = &v[0]
+    show(&v[0], 20)
+    v.push(E { hp: 20 })
+    print(r20.hp)
+    let r21 = &v[0]
+    show(&v[0], 21)
+    v.push(E { hp: 21 })
+    print(r21.hp)
+    let r22 = &v[0]
+    show(&v[0], 22)
+    v.push(E { hp: 22 })
+    print(r22.hp)
+    let r23 = &v[0]
+    show(&v[0], 23)
+    v.push(E { hp: 23 })
+    print(r23.hp)
+    let r24 = &v[0]
+    show(&v[0], 24)
+    v.push(E { hp: 24 })
+    print(r24.hp)
+    let r25 = &v[0]
+    show(&v[0], 25)
+    v.push(E { hp: 25 })
+    print(r25.hp)
+    let r26 = &v[0]
+    show(&v[0], 26)
+    v.push(E { hp: 26 })
+    print(r26.hp)
+    let r27 = &v[0]
+    show(&v[0], 27)
+    v.push(E { hp: 27 })
+    print(r27.hp)
+    let r28 = &v[0]
+    show(&v[0], 28)
+    v.push(E { hp: 28 })
+    print(r28.hp)
+    let r29 = &v[0]
+    show(&v[0], 29)
+    v.push(E { hp: 29 })
+    print(r29.hp)
+    let r30 = &v[0]
+    show(&v[0], 30)
+    v.push(E { hp: 30 })
+    print(r30.hp)
+    let r31 = &v[0]
+    show(&v[0], 31)
+    v.push(E { hp: 31 })
+    print(r31.hp)
+    let r32 = &v[0]
+    show(&v[0], 32)
+    v.push(E { hp: 32 })
+    print(r32.hp)
+    let r33 = &v[0]
+    show(&v[0], 33)
+    v.push(E { hp: 33 })
+    print(r33.hp)
+    let r34 = &v[0]
+    show(&v[0], 34)
+    v.push(E { hp: 34 })
+    print(r34.hp)
+    let r35 = &v[0]
+    show(&v[0], 35)
+    v.push(E { hp: 35 })
+    print(r35.hp)
+    let r36 = &v[0]
+    show(&v[0], 36)
+    v.push(E { hp: 36 })
+    print(r36.hp)
+    let r37 = &v[0]
+    show(&v[0], 37)
+    v.push(E { hp: 37 })
+    print(r37.hp)
+    let r38 = &v[0]
+    show(&v[0], 38)
+    v.push(E { hp: 38 })
+    print(r38.hp)
+    let r39 = &v[0]
+    show(&v[0], 39)
+    v.push(E { hp: 39 })
+    print(r39.hp)
+    let r40 = &v[0]
+    show(&v[0], 40)
+    v.push(E { hp: 40 })
+    print(r40.hp)
+    let r41 = &v[0]
+    show(&v[0], 41)
+    v.push(E { hp: 41 })
+    print(r41.hp)
+    let r42 = &v[0]
+    show(&v[0], 42)
+    v.push(E { hp: 42 })
+    print(r42.hp)
+    let r43 = &v[0]
+    show(&v[0], 43)
+    v.push(E { hp: 43 })
+    print(r43.hp)
+    let r44 = &v[0]
+    show(&v[0], 44)
+    v.push(E { hp: 44 })
+    print(r44.hp)
+    let r45 = &v[0]
+    show(&v[0], 45)
+    v.push(E { hp: 45 })
+    print(r45.hp)
+    let r46 = &v[0]
+    show(&v[0], 46)
+    v.push(E { hp: 46 })
+    print(r46.hp)
+    let r47 = &v[0]
+    show(&v[0], 47)
+    v.push(E { hp: 47 })
+    print(r47.hp)
+    let r48 = &v[0]
+    show(&v[0], 48)
+    v.push(E { hp: 48 })
+    print(r48.hp)
+    let r49 = &v[0]
+    show(&v[0], 49)
+    v.push(E { hp: 49 })
+    print(r49.hp)
+    let r50 = &v[0]
+    show(&v[0], 50)
+    v.push(E { hp: 50 })
+    print(r50.hp)
+    let r51 = &v[0]
+    show(&v[0], 51)
+    v.push(E { hp: 51 })
+    print(r51.hp)
+    let r52 = &v[0]
+    show(&v[0], 52)
+    v.push(E { hp: 52 })
+    print(r52.hp)
+    let r53 = &v[0]
+    show(&v[0], 53)
+    v.push(E { hp: 53 })
+    print(r53.hp)
+    let r54 = &v[0]
+    show(&v[0], 54)
+    v.push(E { hp: 54 })
+    print(r54.hp)
+    let r55 = &v[0]
+    show(&v[0], 55)
+    v.push(E { hp: 55 })
+    print(r55.hp)
+    let r56 = &v[0]
+    show(&v[0], 56)
+    v.push(E { hp: 56 })
+    print(r56.hp)
+    let r57 = &v[0]
+    show(&v[0], 57)
+    v.push(E { hp: 57 })
+    print(r57.hp)
+    let r58 = &v[0]
+    show(&v[0], 58)
+    v.push(E { hp: 58 })
+    print(r58.hp)
+    let r59 = &v[0]
+    show(&v[0], 59)
+    v.push(E { hp: 59 })
+    print(r59.hp)
+    let r60 = &v[0]
+    show(&v[0], 60)
+    v.push(E { hp: 60 })
+    print(r60.hp)
+    let r61 = &v[0]
+    show(&v[0], 61)
+    v.push(E { hp: 61 })
+    print(r61.hp)
+    let r62 = &v[0]
+    show(&v[0], 62)
+    v.push(E { hp: 62 })
+    print(r62.hp)
+    let r63 = &v[0]
+    show(&v[0], 63)
+    v.push(E { hp: 63 })
+    print(r63.hp)
+    let r64 = &v[0]
+    show(&v[0], 64)
+    v.push(E { hp: 64 })
+    print(r64.hp)
+    let r65 = &v[0]
+    show(&v[0], 65)
+    v.push(E { hp: 65 })
+    print(r65.hp)
+    let r66 = &v[0]
+    show(&v[0], 66)
+    v.push(E { hp: 66 })
+    print(r66.hp)
+    let r67 = &v[0]
+    show(&v[0], 67)
+    v.push(E { hp: 67 })
+    print(r67.hp)
+    let r68 = &v[0]
+    show(&v[0], 68)
+    v.push(E { hp: 68 })
+    print(r68.hp)
+    let r69 = &v[0]
+    show(&v[0], 69)
+    v.push(E { hp: 69 })
+    print(r69.hp)
+    let r70 = &v[0]
+    show(&v[0], 70)
+    v.push(E { hp: 70 })
+    print(r70.hp)
+    let r71 = &v[0]
+    show(&v[0], 71)
+    v.push(E { hp: 71 })
+    print(r71.hp)
+    let r72 = &v[0]
+    show(&v[0], 72)
+    v.push(E { hp: 72 })
+    print(r72.hp)
+    let r73 = &v[0]
+    show(&v[0], 73)
+    v.push(E { hp: 73 })
+    print(r73.hp)
+    let r74 = &v[0]
+    show(&v[0], 74)
+    v.push(E { hp: 74 })
+    print(r74.hp)
+    let r75 = &v[0]
+    show(&v[0], 75)
+    v.push(E { hp: 75 })
+    print(r75.hp)
+    let r76 = &v[0]
+    show(&v[0], 76)
+    v.push(E { hp: 76 })
+    print(r76.hp)
+    let r77 = &v[0]
+    show(&v[0], 77)
+    v.push(E { hp: 77 })
+    print(r77.hp)
+    let r78 = &v[0]
+    show(&v[0], 78)
+    v.push(E { hp: 78 })
+    print(r78.hp)
+    let r79 = &v[0]
+    show(&v[0], 79)
+    v.push(E { hp: 79 })
+    print(r79.hp)
+    let r80 = &v[0]
+    show(&v[0], 80)
+    v.push(E { hp: 80 })
+    print(r80.hp)
+    let r81 = &v[0]
+    show(&v[0], 81)
+    v.push(E { hp: 81 })
+    print(r81.hp)
+    let r82 = &v[0]
+    show(&v[0], 82)
+    v.push(E { hp: 82 })
+    print(r82.hp)
+    let r83 = &v[0]
+    show(&v[0], 83)
+    v.push(E { hp: 83 })
+    print(r83.hp)
+    let r84 = &v[0]
+    show(&v[0], 84)
+    v.push(E { hp: 84 })
+    print(r84.hp)
+    let r85 = &v[0]
+    show(&v[0], 85)
+    v.push(E { hp: 85 })
+    print(r85.hp)
+    let r86 = &v[0]
+    show(&v[0], 86)
+    v.push(E { hp: 86 })
+    print(r86.hp)
+    let r87 = &v[0]
+    show(&v[0], 87)
+    v.push(E { hp: 87 })
+    print(r87.hp)
+    let r88 = &v[0]
+    show(&v[0], 88)
+    v.push(E { hp: 88 })
+    print(r88.hp)
+    let r89 = &v[0]
+    show(&v[0], 89)
+    v.push(E { hp: 89 })
+    print(r89.hp)
+    let r90 = &v[0]
+    show(&v[0], 90)
+    v.push(E { hp: 90 })
+    print(r90.hp)
+    let r91 = &v[0]
+    show(&v[0], 91)
+    v.push(E { hp: 91 })
+    print(r91.hp)
+    let r92 = &v[0]
+    show(&v[0], 92)
+    v.push(E { hp: 92 })
+    print(r92.hp)
+    let r93 = &v[0]
+    show(&v[0], 93)
+    v.push(E { hp: 93 })
+    print(r93.hp)
+    let r94 = &v[0]
+    show(&v[0], 94)
+    v.push(E { hp: 94 })
+    print(r94.hp)
+    let r95 = &v[0]
+    show(&v[0], 95)
+    v.push(E { hp: 95 })
+    print(r95.hp)
+    let r96 = &v[0]
+    show(&v[0], 96)
+    v.push(E { hp: 96 })
+    print(r96.hp)
+    let r97 = &v[0]
+    show(&v[0], 97)
+    v.push(E { hp: 97 })
+    print(r97.hp)
+    let r98 = &v[0]
+    show(&v[0], 98)
+    v.push(E { hp: 98 })
+    print(r98.hp)
+    let r99 = &v[0]
+    show(&v[0], 99)
+    v.push(E { hp: 99 })
+    print(r99.hp)
+    let r100 = &v[0]
+    show(&v[0], 100)
+    v.push(E { hp: 100 })
+    print(r100.hp)
+    let r101 = &v[0]
+    show(&v[0], 101)
+    v.push(E { hp: 101 })
+    print(r101.hp)
+    let r102 = &v[0]
+    show(&v[0], 102)
+    v.push(E { hp: 102 })
+    print(r102.hp)
+    let r103 = &v[0]
+    show(&v[0], 103)
+    v.push(E { hp: 103 })
+    print(r103.hp)
+    let r104 = &v[0]
+    show(&v[0], 104)
+    v.push(E { hp: 104 })
+    print(r104.hp)
+    let r105 = &v[0]
+    show(&v[0], 105)
+    v.push(E { hp: 105 })
+    print(r105.hp)
+    let r106 = &v[0]
+    show(&v[0], 106)
+    v.push(E { hp: 106 })
+    print(r106.hp)
+    let r107 = &v[0]
+    show(&v[0], 107)
+    v.push(E { hp: 107 })
+    print(r107.hp)
+    let r108 = &v[0]
+    show(&v[0], 108)
+    v.push(E { hp: 108 })
+    print(r108.hp)
+    let r109 = &v[0]
+    show(&v[0], 109)
+    v.push(E { hp: 109 })
+    print(r109.hp)
+    let r110 = &v[0]
+    show(&v[0], 110)
+    v.push(E { hp: 110 })
+    print(r110.hp)
+    let r111 = &v[0]
+    show(&v[0], 111)
+    v.push(E { hp: 111 })
+    print(r111.hp)
+    let r112 = &v[0]
+    show(&v[0], 112)
+    v.push(E { hp: 112 })
+    print(r112.hp)
+    let r113 = &v[0]
+    show(&v[0], 113)
+    v.push(E { hp: 113 })
+    print(r113.hp)
+    let r114 = &v[0]
+    show(&v[0], 114)
+    v.push(E { hp: 114 })
+    print(r114.hp)
+    let r115 = &v[0]
+    show(&v[0], 115)
+    v.push(E { hp: 115 })
+    print(r115.hp)
+    let r116 = &v[0]
+    show(&v[0], 116)
+    v.push(E { hp: 116 })
+    print(r116.hp)
+    let r117 = &v[0]
+    show(&v[0], 117)
+    v.push(E { hp: 117 })
+    print(r117.hp)
+    let r118 = &v[0]
+    show(&v[0], 118)
+    v.push(E { hp: 118 })
+    print(r118.hp)
+    let r119 = &v[0]
+    show(&v[0], 119)
+    v.push(E { hp: 119 })
+    print(r119.hp)
+    let r120 = &v[0]
+    show(&v[0], 120)
+    v.push(E { hp: 120 })
+    print(r120.hp)
+    let r121 = &v[0]
+    show(&v[0], 121)
+    v.push(E { hp: 121 })
+    print(r121.hp)
+    let r122 = &v[0]
+    show(&v[0], 122)
+    v.push(E { hp: 122 })
+    print(r122.hp)
+    let r123 = &v[0]
+    show(&v[0], 123)
+    v.push(E { hp: 123 })
+    print(r123.hp)
+    let r124 = &v[0]
+    show(&v[0], 124)
+    v.push(E { hp: 124 })
+    print(r124.hp)
+    let r125 = &v[0]
+    show(&v[0], 125)
+    v.push(E { hp: 125 })
+    print(r125.hp)
+    let r126 = &v[0]
+    show(&v[0], 126)
+    v.push(E { hp: 126 })
+    print(r126.hp)
+    let r127 = &v[0]
+    show(&v[0], 127)
+    v.push(E { hp: 127 })
+    print(r127.hp)
+    let r128 = &v[0]
+    show(&v[0], 128)
+    v.push(E { hp: 128 })
+    print(r128.hp)
+    let r129 = &v[0]
+    show(&v[0], 129)
+    v.push(E { hp: 129 })
+    print(r129.hp)
+    let r130 = &v[0]
+    show(&v[0], 130)
+    v.push(E { hp: 130 })
+    print(r130.hp)
+    let r131 = &v[0]
+    show(&v[0], 131)
+    v.push(E { hp: 131 })
+    print(r131.hp)
+    let r132 = &v[0]
+    show(&v[0], 132)
+    v.push(E { hp: 132 })
+    print(r132.hp)
+    let r133 = &v[0]
+    show(&v[0], 133)
+    v.push(E { hp: 133 })
+    print(r133.hp)
+    let r134 = &v[0]
+    show(&v[0], 134)
+    v.push(E { hp: 134 })
+    print(r134.hp)
+    let r135 = &v[0]
+    show(&v[0], 135)
+    v.push(E { hp: 135 })
+    print(r135.hp)
+    let r136 = &v[0]
+    show(&v[0], 136)
+    v.push(E { hp: 136 })
+    print(r136.hp)
+    let r137 = &v[0]
+    show(&v[0], 137)
+    v.push(E { hp: 137 })
+    print(r137.hp)
+    let r138 = &v[0]
+    show(&v[0], 138)
+    v.push(E { hp: 138 })
+    print(r138.hp)
+    let r139 = &v[0]
+    show(&v[0], 139)
+    v.push(E { hp: 139 })
+    print(r139.hp)
+    let r140 = &v[0]
+    show(&v[0], 140)
+    v.push(E { hp: 140 })
+    print(r140.hp)
+    let r141 = &v[0]
+    show(&v[0], 141)
+    v.push(E { hp: 141 })
+    print(r141.hp)
+    let r142 = &v[0]
+    show(&v[0], 142)
+    v.push(E { hp: 142 })
+    print(r142.hp)
+    let r143 = &v[0]
+    show(&v[0], 143)
+    v.push(E { hp: 143 })
+    print(r143.hp)
+    let r144 = &v[0]
+    show(&v[0], 144)
+    v.push(E { hp: 144 })
+    print(r144.hp)
+    let r145 = &v[0]
+    show(&v[0], 145)
+    v.push(E { hp: 145 })
+    print(r145.hp)
+    let r146 = &v[0]
+    show(&v[0], 146)
+    v.push(E { hp: 146 })
+    print(r146.hp)
+    let r147 = &v[0]
+    show(&v[0], 147)
+    v.push(E { hp: 147 })
+    print(r147.hp)
+    let r148 = &v[0]
+    show(&v[0], 148)
+    v.push(E { hp: 148 })
+    print(r148.hp)
+    let r149 = &v[0]
+    show(&v[0], 149)
+    v.push(E { hp: 149 })
+    print(r149.hp)
+    let r150 = &v[0]
+    show(&v[0], 150)
+    v.push(E { hp: 150 })
+    print(r150.hp)
+    let r151 = &v[0]
+    show(&v[0], 151)
+    v.push(E { hp: 151 })
+    print(r151.hp)
+    let r152 = &v[0]
+    show(&v[0], 152)
+    v.push(E { hp: 152 })
+    print(r152.hp)
+    let r153 = &v[0]
+    show(&v[0], 153)
+    v.push(E { hp: 153 })
+    print(r153.hp)
+    let r154 = &v[0]
+    show(&v[0], 154)
+    v.push(E { hp: 154 })
+    print(r154.hp)
+    let r155 = &v[0]
+    show(&v[0], 155)
+    v.push(E { hp: 155 })
+    print(r155.hp)
+    let r156 = &v[0]
+    show(&v[0], 156)
+    v.push(E { hp: 156 })
+    print(r156.hp)
+    let r157 = &v[0]
+    show(&v[0], 157)
+    v.push(E { hp: 157 })
+    print(r157.hp)
+    let r158 = &v[0]
+    show(&v[0], 158)
+    v.push(E { hp: 158 })
+    print(r158.hp)
+    let r159 = &v[0]
+    show(&v[0], 159)
+    v.push(E { hp: 159 })
+    print(r159.hp)
+    let r160 = &v[0]
+    show(&v[0], 160)
+    v.push(E { hp: 160 })
+    print(r160.hp)
+    let r161 = &v[0]
+    show(&v[0], 161)
+    v.push(E { hp: 161 })
+    print(r161.hp)
+    let r162 = &v[0]
+    show(&v[0], 162)
+    v.push(E { hp: 162 })
+    print(r162.hp)
+    let r163 = &v[0]
+    show(&v[0], 163)
+    v.push(E { hp: 163 })
+    print(r163.hp)
+    let r164 = &v[0]
+    show(&v[0], 164)
+    v.push(E { hp: 164 })
+    print(r164.hp)
+    let r165 = &v[0]
+    show(&v[0], 165)
+    v.push(E { hp: 165 })
+    print(r165.hp)
+    let r166 = &v[0]
+    show(&v[0], 166)
+    v.push(E { hp: 166 })
+    print(r166.hp)
+    let r167 = &v[0]
+    show(&v[0], 167)
+    v.push(E { hp: 167 })
+    print(r167.hp)
+    let r168 = &v[0]
+    show(&v[0], 168)
+    v.push(E { hp: 168 })
+    print(r168.hp)
+    let r169 = &v[0]
+    show(&v[0], 169)
+    v.push(E { hp: 169 })
+    print(r169.hp)
+    let r170 = &v[0]
+    show(&v[0], 170)
+    v.push(E { hp: 170 })
+    print(r170.hp)
+    let r171 = &v[0]
+    show(&v[0], 171)
+    v.push(E { hp: 171 })
+    print(r171.hp)
+    let r172 = &v[0]
+    show(&v[0], 172)
+    v.push(E { hp: 172 })
+    print(r172.hp)
+    let r173 = &v[0]
+    show(&v[0], 173)
+    v.push(E { hp: 173 })
+    print(r173.hp)
+    let r174 = &v[0]
+    show(&v[0], 174)
+    v.push(E { hp: 174 })
+    print(r174.hp)
+    let r175 = &v[0]
+    show(&v[0], 175)
+    v.push(E { hp: 175 })
+    print(r175.hp)
+    let r176 = &v[0]
+    show(&v[0], 176)
+    v.push(E { hp: 176 })
+    print(r176.hp)
+    let r177 = &v[0]
+    show(&v[0], 177)
+    v.push(E { hp: 177 })
+    print(r177.hp)
+    let r178 = &v[0]
+    show(&v[0], 178)
+    v.push(E { hp: 178 })
+    print(r178.hp)
+    let r179 = &v[0]
+    show(&v[0], 179)
+    v.push(E { hp: 179 })
+    print(r179.hp)
+    let r180 = &v[0]
+    show(&v[0], 180)
+    v.push(E { hp: 180 })
+    print(r180.hp)
+    let r181 = &v[0]
+    show(&v[0], 181)
+    v.push(E { hp: 181 })
+    print(r181.hp)
+    let r182 = &v[0]
+    show(&v[0], 182)
+    v.push(E { hp: 182 })
+    print(r182.hp)
+    let r183 = &v[0]
+    show(&v[0], 183)
+    v.push(E { hp: 183 })
+    print(r183.hp)
+    let r184 = &v[0]
+    show(&v[0], 184)
+    v.push(E { hp: 184 })
+    print(r184.hp)
+    let r185 = &v[0]
+    show(&v[0], 185)
+    v.push(E { hp: 185 })
+    print(r185.hp)
+    let r186 = &v[0]
+    show(&v[0], 186)
+    v.push(E { hp: 186 })
+    print(r186.hp)
+    let r187 = &v[0]
+    show(&v[0], 187)
+    v.push(E { hp: 187 })
+    print(r187.hp)
+    let r188 = &v[0]
+    show(&v[0], 188)
+    v.push(E { hp: 188 })
+    print(r188.hp)
+    let r189 = &v[0]
+    show(&v[0], 189)
+    v.push(E { hp: 189 })
+    print(r189.hp)
+    let r190 = &v[0]
+    show(&v[0], 190)
+    v.push(E { hp: 190 })
+    print(r190.hp)
+    let r191 = &v[0]
+    show(&v[0], 191)
+    v.push(E { hp: 191 })
+    print(r191.hp)
+    let r192 = &v[0]
+    show(&v[0], 192)
+    v.push(E { hp: 192 })
+    print(r192.hp)
+    let r193 = &v[0]
+    show(&v[0], 193)
+    v.push(E { hp: 193 })
+    print(r193.hp)
+    let r194 = &v[0]
+    show(&v[0], 194)
+    v.push(E { hp: 194 })
+    print(r194.hp)
+    let r195 = &v[0]
+    show(&v[0], 195)
+    v.push(E { hp: 195 })
+    print(r195.hp)
+    let r196 = &v[0]
+    show(&v[0], 196)
+    v.push(E { hp: 196 })
+    print(r196.hp)
+    let r197 = &v[0]
+    show(&v[0], 197)
+    v.push(E { hp: 197 })
+    print(r197.hp)
+    let r198 = &v[0]
+    show(&v[0], 198)
+    v.push(E { hp: 198 })
+    print(r198.hp)
+    let r199 = &v[0]
+    show(&v[0], 199)
+    v.push(E { hp: 199 })
+    print(r199.hp)
+    let r200 = &v[0]
+    show(&v[0], 200)
+    v.push(E { hp: 200 })
+    print(r200.hp)
+    let r201 = &v[0]
+    show(&v[0], 201)
+    v.push(E { hp: 201 })
+    print(r201.hp)
+    let r202 = &v[0]
+    show(&v[0], 202)
+    v.push(E { hp: 202 })
+    print(r202.hp)
+    let r203 = &v[0]
+    show(&v[0], 203)
+    v.push(E { hp: 203 })
+    print(r203.hp)
+    let r204 = &v[0]
+    show(&v[0], 204)
+    v.push(E { hp: 204 })
+    print(r204.hp)
+    let r205 = &v[0]
+    show(&v[0], 205)
+    v.push(E { hp: 205 })
+    print(r205.hp)
+    let r206 = &v[0]
+    show(&v[0], 206)
+    v.push(E { hp: 206 })
+    print(r206.hp)
+    let r207 = &v[0]
+    show(&v[0], 207)
+    v.push(E { hp: 207 })
+    print(r207.hp)
+    let r208 = &v[0]
+    show(&v[0], 208)
+    v.push(E { hp: 208 })
+    print(r208.hp)
+    let r209 = &v[0]
+    show(&v[0], 209)
+    v.push(E { hp: 209 })
+    print(r209.hp)
+    let r210 = &v[0]
+    show(&v[0], 210)
+    v.push(E { hp: 210 })
+    print(r210.hp)
+    let r211 = &v[0]
+    show(&v[0], 211)
+    v.push(E { hp: 211 })
+    print(r211.hp)
+    let r212 = &v[0]
+    show(&v[0], 212)
+    v.push(E { hp: 212 })
+    print(r212.hp)
+    let r213 = &v[0]
+    show(&v[0], 213)
+    v.push(E { hp: 213 })
+    print(r213.hp)
+    let r214 = &v[0]
+    show(&v[0], 214)
+    v.push(E { hp: 214 })
+    print(r214.hp)
+    let r215 = &v[0]
+    show(&v[0], 215)
+    v.push(E { hp: 215 })
+    print(r215.hp)
+    let r216 = &v[0]
+    show(&v[0], 216)
+    v.push(E { hp: 216 })
+    print(r216.hp)
+    let r217 = &v[0]
+    show(&v[0], 217)
+    v.push(E { hp: 217 })
+    print(r217.hp)
+    let r218 = &v[0]
+    show(&v[0], 218)
+    v.push(E { hp: 218 })
+    print(r218.hp)
+    let r219 = &v[0]
+    show(&v[0], 219)
+    v.push(E { hp: 219 })
+    print(r219.hp)
+    let r220 = &v[0]
+    show(&v[0], 220)
+    v.push(E { hp: 220 })
+    print(r220.hp)
+    let r221 = &v[0]
+    show(&v[0], 221)
+    v.push(E { hp: 221 })
+    print(r221.hp)
+    let r222 = &v[0]
+    show(&v[0], 222)
+    v.push(E { hp: 222 })
+    print(r222.hp)
+    let r223 = &v[0]
+    show(&v[0], 223)
+    v.push(E { hp: 223 })
+    print(r223.hp)
+    let r224 = &v[0]
+    show(&v[0], 224)
+    v.push(E { hp: 224 })
+    print(r224.hp)
+    let r225 = &v[0]
+    show(&v[0], 225)
+    v.push(E { hp: 225 })
+    print(r225.hp)
+    let r226 = &v[0]
+    show(&v[0], 226)
+    v.push(E { hp: 226 })
+    print(r226.hp)
+    let r227 = &v[0]
+    show(&v[0], 227)
+    v.push(E { hp: 227 })
+    print(r227.hp)
+    let r228 = &v[0]
+    show(&v[0], 228)
+    v.push(E { hp: 228 })
+    print(r228.hp)
+    let r229 = &v[0]
+    show(&v[0], 229)
+    v.push(E { hp: 229 })
+    print(r229.hp)
+    let r230 = &v[0]
+    show(&v[0], 230)
+    v.push(E { hp: 230 })
+    print(r230.hp)
+    let r231 = &v[0]
+    show(&v[0], 231)
+    v.push(E { hp: 231 })
+    print(r231.hp)
+    let r232 = &v[0]
+    show(&v[0], 232)
+    v.push(E { hp: 232 })
+    print(r232.hp)
+    let r233 = &v[0]
+    show(&v[0], 233)
+    v.push(E { hp: 233 })
+    print(r233.hp)
+    let r234 = &v[0]
+    show(&v[0], 234)
+    v.push(E { hp: 234 })
+    print(r234.hp)
+    let r235 = &v[0]
+    show(&v[0], 235)
+    v.push(E { hp: 235 })
+    print(r235.hp)
+    let r236 = &v[0]
+    show(&v[0], 236)
+    v.push(E { hp: 236 })
+    print(r236.hp)
+    let r237 = &v[0]
+    show(&v[0], 237)
+    v.push(E { hp: 237 })
+    print(r237.hp)
+    let r238 = &v[0]
+    show(&v[0], 238)
+    v.push(E { hp: 238 })
+    print(r238.hp)
+    let r239 = &v[0]
+    show(&v[0], 239)
+    v.push(E { hp: 239 })
+    print(r239.hp)
+    let r240 = &v[0]
+    show(&v[0], 240)
+    v.push(E { hp: 240 })
+    print(r240.hp)
+    let r241 = &v[0]
+    show(&v[0], 241)
+    v.push(E { hp: 241 })
+    print(r241.hp)
+    let r242 = &v[0]
+    show(&v[0], 242)
+    v.push(E { hp: 242 })
+    print(r242.hp)
+    let r243 = &v[0]
+    show(&v[0], 243)
+    v.push(E { hp: 243 })
+    print(r243.hp)
+    let r244 = &v[0]
+    show(&v[0], 244)
+    v.push(E { hp: 244 })
+    print(r244.hp)
+    let r245 = &v[0]
+    show(&v[0], 245)
+    v.push(E { hp: 245 })
+    print(r245.hp)
+    let r246 = &v[0]
+    show(&v[0], 246)
+    v.push(E { hp: 246 })
+    print(r246.hp)
+    let r247 = &v[0]
+    show(&v[0], 247)
+    v.push(E { hp: 247 })
+    print(r247.hp)
+    let r248 = &v[0]
+    show(&v[0], 248)
+    v.push(E { hp: 248 })
+    print(r248.hp)
+    let r249 = &v[0]
+    show(&v[0], 249)
+    v.push(E { hp: 249 })
+    print(r249.hp)
+    let r250 = &v[0]
+    show(&v[0], 250)
+    v.push(E { hp: 250 })
+    print(r250.hp)
+    let r251 = &v[0]
+    show(&v[0], 251)
+    v.push(E { hp: 251 })
+    print(r251.hp)
+    let r252 = &v[0]
+    show(&v[0], 252)
+    v.push(E { hp: 252 })
+    print(r252.hp)
+    let r253 = &v[0]
+    show(&v[0], 253)
+    v.push(E { hp: 253 })
+    print(r253.hp)
+    let r254 = &v[0]
+    show(&v[0], 254)
+    v.push(E { hp: 254 })
+    print(r254.hp)
+    let r255 = &v[0]
+    show(&v[0], 255)
+    v.push(E { hp: 255 })
+    print(r255.hp)
+    let r256 = &v[0]
+    show(&v[0], 256)
+    v.push(E { hp: 256 })
+    print(r256.hp)
+    let r257 = &v[0]
+    show(&v[0], 257)
+    v.push(E { hp: 257 })
+    print(r257.hp)
+    let r258 = &v[0]
+    show(&v[0], 258)
+    v.push(E { hp: 258 })
+    print(r258.hp)
+    let r259 = &v[0]
+    show(&v[0], 259)
+    v.push(E { hp: 259 })
+    print(r259.hp)
+    let r260 = &v[0]
+    show(&v[0], 260)
+    v.push(E { hp: 260 })
+    print(r260.hp)
+    let r261 = &v[0]
+    show(&v[0], 261)
+    v.push(E { hp: 261 })
+    print(r261.hp)
+    let r262 = &v[0]
+    show(&v[0], 262)
+    v.push(E { hp: 262 })
+    print(r262.hp)
+    let r263 = &v[0]
+    show(&v[0], 263)
+    v.push(E { hp: 263 })
+    print(r263.hp)
+    let r264 = &v[0]
+    show(&v[0], 264)
+    v.push(E { hp: 264 })
+    print(r264.hp)
+    let r265 = &v[0]
+    show(&v[0], 265)
+    v.push(E { hp: 265 })
+    print(r265.hp)
+    let r266 = &v[0]
+    show(&v[0], 266)
+    v.push(E { hp: 266 })
+    print(r266.hp)
+    let r267 = &v[0]
+    show(&v[0], 267)
+    v.push(E { hp: 267 })
+    print(r267.hp)
+    let r268 = &v[0]
+    show(&v[0], 268)
+    v.push(E { hp: 268 })
+    print(r268.hp)
+    let r269 = &v[0]
+    show(&v[0], 269)
+    v.push(E { hp: 269 })
+    print(r269.hp)
+    let r270 = &v[0]
+    show(&v[0], 270)
+    v.push(E { hp: 270 })
+    print(r270.hp)
+    let r271 = &v[0]
+    show(&v[0], 271)
+    v.push(E { hp: 271 })
+    print(r271.hp)
+    let r272 = &v[0]
+    show(&v[0], 272)
+    v.push(E { hp: 272 })
+    print(r272.hp)
+    let r273 = &v[0]
+    show(&v[0], 273)
+    v.push(E { hp: 273 })
+    print(r273.hp)
+    let r274 = &v[0]
+    show(&v[0], 274)
+    v.push(E { hp: 274 })
+    print(r274.hp)
+    let r275 = &v[0]
+    show(&v[0], 275)
+    v.push(E { hp: 275 })
+    print(r275.hp)
+    let r276 = &v[0]
+    show(&v[0], 276)
+    v.push(E { hp: 276 })
+    print(r276.hp)
+    let r277 = &v[0]
+    show(&v[0], 277)
+    v.push(E { hp: 277 })
+    print(r277.hp)
+    let r278 = &v[0]
+    show(&v[0], 278)
+    v.push(E { hp: 278 })
+    print(r278.hp)
+    let r279 = &v[0]
+    show(&v[0], 279)
+    v.push(E { hp: 279 })
+    print(r279.hp)
+    let r280 = &v[0]
+    show(&v[0], 280)
+    v.push(E { hp: 280 })
+    print(r280.hp)
+    let r281 = &v[0]
+    show(&v[0], 281)
+    v.push(E { hp: 281 })
+    print(r281.hp)
+    let r282 = &v[0]
+    show(&v[0], 282)
+    v.push(E { hp: 282 })
+    print(r282.hp)
+    let r283 = &v[0]
+    show(&v[0], 283)
+    v.push(E { hp: 283 })
+    print(r283.hp)
+    let r284 = &v[0]
+    show(&v[0], 284)
+    v.push(E { hp: 284 })
+    print(r284.hp)
+    let r285 = &v[0]
+    show(&v[0], 285)
+    v.push(E { hp: 285 })
+    print(r285.hp)
+    let r286 = &v[0]
+    show(&v[0], 286)
+    v.push(E { hp: 286 })
+    print(r286.hp)
+    let r287 = &v[0]
+    show(&v[0], 287)
+    v.push(E { hp: 287 })
+    print(r287.hp)
+    let r288 = &v[0]
+    show(&v[0], 288)
+    v.push(E { hp: 288 })
+    print(r288.hp)
+    let r289 = &v[0]
+    show(&v[0], 289)
+    v.push(E { hp: 289 })
+    print(r289.hp)
+    let r290 = &v[0]
+    show(&v[0], 290)
+    v.push(E { hp: 290 })
+    print(r290.hp)
+    let r291 = &v[0]
+    show(&v[0], 291)
+    v.push(E { hp: 291 })
+    print(r291.hp)
+    let r292 = &v[0]
+    show(&v[0], 292)
+    v.push(E { hp: 292 })
+    print(r292.hp)
+    let r293 = &v[0]
+    show(&v[0], 293)
+    v.push(E { hp: 293 })
+    print(r293.hp)
+    let r294 = &v[0]
+    show(&v[0], 294)
+    v.push(E { hp: 294 })
+    print(r294.hp)
+    let r295 = &v[0]
+    show(&v[0], 295)
+    v.push(E { hp: 295 })
+    print(r295.hp)
+    let r296 = &v[0]
+    show(&v[0], 296)
+    v.push(E { hp: 296 })
+    print(r296.hp)
+    let r297 = &v[0]
+    show(&v[0], 297)
+    v.push(E { hp: 297 })
+    print(r297.hp)
+    let r298 = &v[0]
+    show(&v[0], 298)
+    v.push(E { hp: 298 })
+    print(r298.hp)
+    let r299 = &v[0]
+    show(&v[0], 299)
+    v.push(E { hp: 299 })
+    print(r299.hp)
+    let r300 = &v[0]
+    show(&v[0], 300)
+    v.push(E { hp: 300 })
+    print(r300.hp)
+    let r301 = &v[0]
+    show(&v[0], 301)
+    v.push(E { hp: 301 })
+    print(r301.hp)
+    let r302 = &v[0]
+    show(&v[0], 302)
+    v.push(E { hp: 302 })
+    print(r302.hp)
+    let r303 = &v[0]
+    show(&v[0], 303)
+    v.push(E { hp: 303 })
+    print(r303.hp)
+    let r304 = &v[0]
+    show(&v[0], 304)
+    v.push(E { hp: 304 })
+    print(r304.hp)
+    let r305 = &v[0]
+    show(&v[0], 305)
+    v.push(E { hp: 305 })
+    print(r305.hp)
+    let r306 = &v[0]
+    show(&v[0], 306)
+    v.push(E { hp: 306 })
+    print(r306.hp)
+    let r307 = &v[0]
+    show(&v[0], 307)
+    v.push(E { hp: 307 })
+    print(r307.hp)
+    let r308 = &v[0]
+    show(&v[0], 308)
+    v.push(E { hp: 308 })
+    print(r308.hp)
+    let r309 = &v[0]
+    show(&v[0], 309)
+    v.push(E { hp: 309 })
+    print(r309.hp)
+    let r310 = &v[0]
+    show(&v[0], 310)
+    v.push(E { hp: 310 })
+    print(r310.hp)
+    let r311 = &v[0]
+    show(&v[0], 311)
+    v.push(E { hp: 311 })
+    print(r311.hp)
+    let r312 = &v[0]
+    show(&v[0], 312)
+    v.push(E { hp: 312 })
+    print(r312.hp)
+    let r313 = &v[0]
+    show(&v[0], 313)
+    v.push(E { hp: 313 })
+    print(r313.hp)
+    let r314 = &v[0]
+    show(&v[0], 314)
+    v.push(E { hp: 314 })
+    print(r314.hp)
+    let r315 = &v[0]
+    show(&v[0], 315)
+    v.push(E { hp: 315 })
+    print(r315.hp)
+    let r316 = &v[0]
+    show(&v[0], 316)
+    v.push(E { hp: 316 })
+    print(r316.hp)
+    let r317 = &v[0]
+    show(&v[0], 317)
+    v.push(E { hp: 317 })
+    print(r317.hp)
+    let r318 = &v[0]
+    show(&v[0], 318)
+    v.push(E { hp: 318 })
+    print(r318.hp)
+    let r319 = &v[0]
+    show(&v[0], 319)
+    v.push(E { hp: 319 })
+    print(r319.hp)
+    let r320 = &v[0]
+    show(&v[0], 320)
+    v.push(E { hp: 320 })
+    print(r320.hp)
+    let r321 = &v[0]
+    show(&v[0], 321)
+    v.push(E { hp: 321 })
+    print(r321.hp)
+    let r322 = &v[0]
+    show(&v[0], 322)
+    v.push(E { hp: 322 })
+    print(r322.hp)
+    let r323 = &v[0]
+    show(&v[0], 323)
+    v.push(E { hp: 323 })
+    print(r323.hp)
+    let r324 = &v[0]
+    show(&v[0], 324)
+    v.push(E { hp: 324 })
+    print(r324.hp)
+    let r325 = &v[0]
+    show(&v[0], 325)
+    v.push(E { hp: 325 })
+    print(r325.hp)
+    let r326 = &v[0]
+    show(&v[0], 326)
+    v.push(E { hp: 326 })
+    print(r326.hp)
+    let r327 = &v[0]
+    show(&v[0], 327)
+    v.push(E { hp: 327 })
+    print(r327.hp)
+    let r328 = &v[0]
+    show(&v[0], 328)
+    v.push(E { hp: 328 })
+    print(r328.hp)
+    let r329 = &v[0]
+    show(&v[0], 329)
+    v.push(E { hp: 329 })
+    print(r329.hp)
+    let r330 = &v[0]
+    show(&v[0], 330)
+    v.push(E { hp: 330 })
+    print(r330.hp)
+    let r331 = &v[0]
+    show(&v[0], 331)
+    v.push(E { hp: 331 })
+    print(r331.hp)
+    let r332 = &v[0]
+    show(&v[0], 332)
+    v.push(E { hp: 332 })
+    print(r332.hp)
+    let r333 = &v[0]
+    show(&v[0], 333)
+    v.push(E { hp: 333 })
+    print(r333.hp)
+    let r334 = &v[0]
+    show(&v[0], 334)
+    v.push(E { hp: 334 })
+    print(r334.hp)
+    let r335 = &v[0]
+    show(&v[0], 335)
+    v.push(E { hp: 335 })
+    print(r335.hp)
+    let r336 = &v[0]
+    show(&v[0], 336)
+    v.push(E { hp: 336 })
+    print(r336.hp)
+    let r337 = &v[0]
+    show(&v[0], 337)
+    v.push(E { hp: 337 })
+    print(r337.hp)
+    let r338 = &v[0]
+    show(&v[0], 338)
+    v.push(E { hp: 338 })
+    print(r338.hp)
+    let r339 = &v[0]
+    show(&v[0], 339)
+    v.push(E { hp: 339 })
+    print(r339.hp)
+    let r340 = &v[0]
+    show(&v[0], 340)
+    v.push(E { hp: 340 })
+    print(r340.hp)
+    let r341 = &v[0]
+    show(&v[0], 341)
+    v.push(E { hp: 341 })
+    print(r341.hp)
+    let r342 = &v[0]
+    show(&v[0], 342)
+    v.push(E { hp: 342 })
+    print(r342.hp)
+    let r343 = &v[0]
+    show(&v[0], 343)
+    v.push(E { hp: 343 })
+    print(r343.hp)
+    let r344 = &v[0]
+    show(&v[0], 344)
+    v.push(E { hp: 344 })
+    print(r344.hp)
+    let r345 = &v[0]
+    show(&v[0], 345)
+    v.push(E { hp: 345 })
+    print(r345.hp)
+    let r346 = &v[0]
+    show(&v[0], 346)
+    v.push(E { hp: 346 })
+    print(r346.hp)
+    let r347 = &v[0]
+    show(&v[0], 347)
+    v.push(E { hp: 347 })
+    print(r347.hp)
+    let r348 = &v[0]
+    show(&v[0], 348)
+    v.push(E { hp: 348 })
+    print(r348.hp)
+    let r349 = &v[0]
+    show(&v[0], 349)
+    v.push(E { hp: 349 })
+    print(r349.hp)
+    let r350 = &v[0]
+    show(&v[0], 350)
+    v.push(E { hp: 350 })
+    print(r350.hp)
+    let r351 = &v[0]
+    show(&v[0], 351)
+    v.push(E { hp: 351 })
+    print(r351.hp)
+    let r352 = &v[0]
+    show(&v[0], 352)
+    v.push(E { hp: 352 })
+    print(r352.hp)
+    let r353 = &v[0]
+    show(&v[0], 353)
+    v.push(E { hp: 353 })
+    print(r353.hp)
+    let r354 = &v[0]
+    show(&v[0], 354)
+    v.push(E { hp: 354 })
+    print(r354.hp)
+    let r355 = &v[0]
+    show(&v[0], 355)
+    v.push(E { hp: 355 })
+    print(r355.hp)
+    let r356 = &v[0]
+    show(&v[0], 356)
+    v.push(E { hp: 356 })
+    print(r356.hp)
+    let r357 = &v[0]
+    show(&v[0], 357)
+    v.push(E { hp: 357 })
+    print(r357.hp)
+    let r358 = &v[0]
+    show(&v[0], 358)
+    v.push(E { hp: 358 })
+    print(r358.hp)
+    let r359 = &v[0]
+    show(&v[0], 359)
+    v.push(E { hp: 359 })
+    print(r359.hp)
+    let r360 = &v[0]
+    show(&v[0], 360)
+    v.push(E { hp: 360 })
+    print(r360.hp)
+    let r361 = &v[0]
+    show(&v[0], 361)
+    v.push(E { hp: 361 })
+    print(r361.hp)
+    let r362 = &v[0]
+    show(&v[0], 362)
+    v.push(E { hp: 362 })
+    print(r362.hp)
+    let r363 = &v[0]
+    show(&v[0], 363)
+    v.push(E { hp: 363 })
+    print(r363.hp)
+    let r364 = &v[0]
+    show(&v[0], 364)
+    v.push(E { hp: 364 })
+    print(r364.hp)
+    let r365 = &v[0]
+    show(&v[0], 365)
+    v.push(E { hp: 365 })
+    print(r365.hp)
+    let r366 = &v[0]
+    show(&v[0], 366)
+    v.push(E { hp: 366 })
+    print(r366.hp)
+    let r367 = &v[0]
+    show(&v[0], 367)
+    v.push(E { hp: 367 })
+    print(r367.hp)
+    let r368 = &v[0]
+    show(&v[0], 368)
+    v.push(E { hp: 368 })
+    print(r368.hp)
+    let r369 = &v[0]
+    show(&v[0], 369)
+    v.push(E { hp: 369 })
+    print(r369.hp)
+    let r370 = &v[0]
+    show(&v[0], 370)
+    v.push(E { hp: 370 })
+    print(r370.hp)
+    let r371 = &v[0]
+    show(&v[0], 371)
+    v.push(E { hp: 371 })
+    print(r371.hp)
+    let r372 = &v[0]
+    show(&v[0], 372)
+    v.push(E { hp: 372 })
+    print(r372.hp)
+    let r373 = &v[0]
+    show(&v[0], 373)
+    v.push(E { hp: 373 })
+    print(r373.hp)
+    let r374 = &v[0]
+    show(&v[0], 374)
+    v.push(E { hp: 374 })
+    print(r374.hp)
+    let r375 = &v[0]
+    show(&v[0], 375)
+    v.push(E { hp: 375 })
+    print(r375.hp)
+    let r376 = &v[0]
+    show(&v[0], 376)
+    v.push(E { hp: 376 })
+    print(r376.hp)
+    let r377 = &v[0]
+    show(&v[0], 377)
+    v.push(E { hp: 377 })
+    print(r377.hp)
+    let r378 = &v[0]
+    show(&v[0], 378)
+    v.push(E { hp: 378 })
+    print(r378.hp)
+    let r379 = &v[0]
+    show(&v[0], 379)
+    v.push(E { hp: 379 })
+    print(r379.hp)
+    let r380 = &v[0]
+    show(&v[0], 380)
+    v.push(E { hp: 380 })
+    print(r380.hp)
+    let r381 = &v[0]
+    show(&v[0], 381)
+    v.push(E { hp: 381 })
+    print(r381.hp)
+    let r382 = &v[0]
+    show(&v[0], 382)
+    v.push(E { hp: 382 })
+    print(r382.hp)
+    let r383 = &v[0]
+    show(&v[0], 383)
+    v.push(E { hp: 383 })
+    print(r383.hp)
+    let r384 = &v[0]
+    show(&v[0], 384)
+    v.push(E { hp: 384 })
+    print(r384.hp)
+    let r385 = &v[0]
+    show(&v[0], 385)
+    v.push(E { hp: 385 })
+    print(r385.hp)
+    let r386 = &v[0]
+    show(&v[0], 386)
+    v.push(E { hp: 386 })
+    print(r386.hp)
+    let r387 = &v[0]
+    show(&v[0], 387)
+    v.push(E { hp: 387 })
+    print(r387.hp)
+    let r388 = &v[0]
+    show(&v[0], 388)
+    v.push(E { hp: 388 })
+    print(r388.hp)
+    let r389 = &v[0]
+    show(&v[0], 389)
+    v.push(E { hp: 389 })
+    print(r389.hp)
+    let r390 = &v[0]
+    show(&v[0], 390)
+    v.push(E { hp: 390 })
+    print(r390.hp)
+    let r391 = &v[0]
+    show(&v[0], 391)
+    v.push(E { hp: 391 })
+    print(r391.hp)
+    let r392 = &v[0]
+    show(&v[0], 392)
+    v.push(E { hp: 392 })
+    print(r392.hp)
+    let r393 = &v[0]
+    show(&v[0], 393)
+    v.push(E { hp: 393 })
+    print(r393.hp)
+    let r394 = &v[0]
+    show(&v[0], 394)
+    v.push(E { hp: 394 })
+    print(r394.hp)
+    let r395 = &v[0]
+    show(&v[0], 395)
+    v.push(E { hp: 395 })
+    print(r395.hp)
+    let r396 = &v[0]
+    show(&v[0], 396)
+    v.push(E { hp: 396 })
+    print(r396.hp)
+    let r397 = &v[0]
+    show(&v[0], 397)
+    v.push(E { hp: 397 })
+    print(r397.hp)
+    let r398 = &v[0]
+    show(&v[0], 398)
+    v.push(E { hp: 398 })
+    print(r398.hp)
+    let r399 = &v[0]
+    show(&v[0], 399)
+    v.push(E { hp: 399 })
+    print(r399.hp)
+    let r400 = &v[0]
+    show(&v[0], 400)
+    v.push(E { hp: 400 })
+    print(r400.hp)
+    let r401 = &v[0]
+    show(&v[0], 401)
+    v.push(E { hp: 401 })
+    print(r401.hp)
+    let r402 = &v[0]
+    show(&v[0], 402)
+    v.push(E { hp: 402 })
+    print(r402.hp)
+    let r403 = &v[0]
+    show(&v[0], 403)
+    v.push(E { hp: 403 })
+    print(r403.hp)
+    let r404 = &v[0]
+    show(&v[0], 404)
+    v.push(E { hp: 404 })
+    print(r404.hp)
+    let r405 = &v[0]
+    show(&v[0], 405)
+    v.push(E { hp: 405 })
+    print(r405.hp)
+    let r406 = &v[0]
+    show(&v[0], 406)
+    v.push(E { hp: 406 })
+    print(r406.hp)
+    let r407 = &v[0]
+    show(&v[0], 407)
+    v.push(E { hp: 407 })
+    print(r407.hp)
+    let r408 = &v[0]
+    show(&v[0], 408)
+    v.push(E { hp: 408 })
+    print(r408.hp)
+    let r409 = &v[0]
+    show(&v[0], 409)
+    v.push(E { hp: 409 })
+    print(r409.hp)
+    let r410 = &v[0]
+    show(&v[0], 410)
+    v.push(E { hp: 410 })
+    print(r410.hp)
+    let r411 = &v[0]
+    show(&v[0], 411)
+    v.push(E { hp: 411 })
+    print(r411.hp)
+    let r412 = &v[0]
+    show(&v[0], 412)
+    v.push(E { hp: 412 })
+    print(r412.hp)
+    let r413 = &v[0]
+    show(&v[0], 413)
+    v.push(E { hp: 413 })
+    print(r413.hp)
+    let r414 = &v[0]
+    show(&v[0], 414)
+    v.push(E { hp: 414 })
+    print(r414.hp)
+    let r415 = &v[0]
+    show(&v[0], 415)
+    v.push(E { hp: 415 })
+    print(r415.hp)
+    let r416 = &v[0]
+    show(&v[0], 416)
+    v.push(E { hp: 416 })
+    print(r416.hp)
+    let r417 = &v[0]
+    show(&v[0], 417)
+    v.push(E { hp: 417 })
+    print(r417.hp)
+    let r418 = &v[0]
+    show(&v[0], 418)
+    v.push(E { hp: 418 })
+    print(r418.hp)
+    let r419 = &v[0]
+    show(&v[0], 419)
+    v.push(E { hp: 419 })
+    print(r419.hp)
+    let r420 = &v[0]
+    show(&v[0], 420)
+    v.push(E { hp: 420 })
+    print(r420.hp)
+    let r421 = &v[0]
+    show(&v[0], 421)
+    v.push(E { hp: 421 })
+    print(r421.hp)
+    let r422 = &v[0]
+    show(&v[0], 422)
+    v.push(E { hp: 422 })
+    print(r422.hp)
+    let r423 = &v[0]
+    show(&v[0], 423)
+    v.push(E { hp: 423 })
+    print(r423.hp)
+    let r424 = &v[0]
+    show(&v[0], 424)
+    v.push(E { hp: 424 })
+    print(r424.hp)
+    let r425 = &v[0]
+    show(&v[0], 425)
+    v.push(E { hp: 425 })
+    print(r425.hp)
+    let r426 = &v[0]
+    show(&v[0], 426)
+    v.push(E { hp: 426 })
+    print(r426.hp)
+    let r427 = &v[0]
+    show(&v[0], 427)
+    v.push(E { hp: 427 })
+    print(r427.hp)
+    let r428 = &v[0]
+    show(&v[0], 428)
+    v.push(E { hp: 428 })
+    print(r428.hp)
+    let r429 = &v[0]
+    show(&v[0], 429)
+    v.push(E { hp: 429 })
+    print(r429.hp)
+    let r430 = &v[0]
+    show(&v[0], 430)
+    v.push(E { hp: 430 })
+    print(r430.hp)
+    let r431 = &v[0]
+    show(&v[0], 431)
+    v.push(E { hp: 431 })
+    print(r431.hp)
+    let r432 = &v[0]
+    show(&v[0], 432)
+    v.push(E { hp: 432 })
+    print(r432.hp)
+    let r433 = &v[0]
+    show(&v[0], 433)
+    v.push(E { hp: 433 })
+    print(r433.hp)
+    let r434 = &v[0]
+    show(&v[0], 434)
+    v.push(E { hp: 434 })
+    print(r434.hp)
+    let r435 = &v[0]
+    show(&v[0], 435)
+    v.push(E { hp: 435 })
+    print(r435.hp)
+    let r436 = &v[0]
+    show(&v[0], 436)
+    v.push(E { hp: 436 })
+    print(r436.hp)
+    let r437 = &v[0]
+    show(&v[0], 437)
+    v.push(E { hp: 437 })
+    print(r437.hp)
+    let r438 = &v[0]
+    show(&v[0], 438)
+    v.push(E { hp: 438 })
+    print(r438.hp)
+    let r439 = &v[0]
+    show(&v[0], 439)
+    v.push(E { hp: 439 })
+    print(r439.hp)
+    let r440 = &v[0]
+    show(&v[0], 440)
+    v.push(E { hp: 440 })
+    print(r440.hp)
+    let r441 = &v[0]
+    show(&v[0], 441)
+    v.push(E { hp: 441 })
+    print(r441.hp)
+    let r442 = &v[0]
+    show(&v[0], 442)
+    v.push(E { hp: 442 })
+    print(r442.hp)
+    let r443 = &v[0]
+    show(&v[0], 443)
+    v.push(E { hp: 443 })
+    print(r443.hp)
+    let r444 = &v[0]
+    show(&v[0], 444)
+    v.push(E { hp: 444 })
+    print(r444.hp)
+    let r445 = &v[0]
+    show(&v[0], 445)
+    v.push(E { hp: 445 })
+    print(r445.hp)
+    let r446 = &v[0]
+    show(&v[0], 446)
+    v.push(E { hp: 446 })
+    print(r446.hp)
+    let r447 = &v[0]
+    show(&v[0], 447)
+    v.push(E { hp: 447 })
+    print(r447.hp)
+    let r448 = &v[0]
+    show(&v[0], 448)
+    v.push(E { hp: 448 })
+    print(r448.hp)
+    let r449 = &v[0]
+    show(&v[0], 449)
+    v.push(E { hp: 449 })
+    print(r449.hp)
+    let r450 = &v[0]
+    show(&v[0], 450)
+    v.push(E { hp: 450 })
+    print(r450.hp)
+    let r451 = &v[0]
+    show(&v[0], 451)
+    v.push(E { hp: 451 })
+    print(r451.hp)
+    let r452 = &v[0]
+    show(&v[0], 452)
+    v.push(E { hp: 452 })
+    print(r452.hp)
+    let r453 = &v[0]
+    show(&v[0], 453)
+    v.push(E { hp: 453 })
+    print(r453.hp)
+    let r454 = &v[0]
+    show(&v[0], 454)
+    v.push(E { hp: 454 })
+    print(r454.hp)
+    let r455 = &v[0]
+    show(&v[0], 455)
+    v.push(E { hp: 455 })
+    print(r455.hp)
+    let r456 = &v[0]
+    show(&v[0], 456)
+    v.push(E { hp: 456 })
+    print(r456.hp)
+    let r457 = &v[0]
+    show(&v[0], 457)
+    v.push(E { hp: 457 })
+    print(r457.hp)
+    let r458 = &v[0]
+    show(&v[0], 458)
+    v.push(E { hp: 458 })
+    print(r458.hp)
+    let r459 = &v[0]
+    show(&v[0], 459)
+    v.push(E { hp: 459 })
+    print(r459.hp)
+    let r460 = &v[0]
+    show(&v[0], 460)
+    v.push(E { hp: 460 })
+    print(r460.hp)
+    let r461 = &v[0]
+    show(&v[0], 461)
+    v.push(E { hp: 461 })
+    print(r461.hp)
+    let r462 = &v[0]
+    show(&v[0], 462)
+    v.push(E { hp: 462 })
+    print(r462.hp)
+    let r463 = &v[0]
+    show(&v[0], 463)
+    v.push(E { hp: 463 })
+    print(r463.hp)
+    let r464 = &v[0]
+    show(&v[0], 464)
+    v.push(E { hp: 464 })
+    print(r464.hp)
+    let r465 = &v[0]
+    show(&v[0], 465)
+    v.push(E { hp: 465 })
+    print(r465.hp)
+    let r466 = &v[0]
+    show(&v[0], 466)
+    v.push(E { hp: 466 })
+    print(r466.hp)
+    let r467 = &v[0]
+    show(&v[0], 467)
+    v.push(E { hp: 467 })
+    print(r467.hp)
+    let r468 = &v[0]
+    show(&v[0], 468)
+    v.push(E { hp: 468 })
+    print(r468.hp)
+    let r469 = &v[0]
+    show(&v[0], 469)
+    v.push(E { hp: 469 })
+    print(r469.hp)
+    let r470 = &v[0]
+    show(&v[0], 470)
+    v.push(E { hp: 470 })
+    print(r470.hp)
+    let r471 = &v[0]
+    show(&v[0], 471)
+    v.push(E { hp: 471 })
+    print(r471.hp)
+    let r472 = &v[0]
+    show(&v[0], 472)
+    v.push(E { hp: 472 })
+    print(r472.hp)
+    let r473 = &v[0]
+    show(&v[0], 473)
+    v.push(E { hp: 473 })
+    print(r473.hp)
+    let r474 = &v[0]
+    show(&v[0], 474)
+    v.push(E { hp: 474 })
+    print(r474.hp)
+    let r475 = &v[0]
+    show(&v[0], 475)
+    v.push(E { hp: 475 })
+    print(r475.hp)
+    let r476 = &v[0]
+    show(&v[0], 476)
+    v.push(E { hp: 476 })
+    print(r476.hp)
+    let r477 = &v[0]
+    show(&v[0], 477)
+    v.push(E { hp: 477 })
+    print(r477.hp)
+    let r478 = &v[0]
+    show(&v[0], 478)
+    v.push(E { hp: 478 })
+    print(r478.hp)
+    let r479 = &v[0]
+    show(&v[0], 479)
+    v.push(E { hp: 479 })
+    print(r479.hp)
+    let r480 = &v[0]
+    show(&v[0], 480)
+    v.push(E { hp: 480 })
+    print(r480.hp)
+    let r481 = &v[0]
+    show(&v[0], 481)
+    v.push(E { hp: 481 })
+    print(r481.hp)
+    let r482 = &v[0]
+    show(&v[0], 482)
+    v.push(E { hp: 482 })
+    print(r482.hp)
+    let r483 = &v[0]
+    show(&v[0], 483)
+    v.push(E { hp: 483 })
+    print(r483.hp)
+    let r484 = &v[0]
+    show(&v[0], 484)
+    v.push(E { hp: 484 })
+    print(r484.hp)
+    let r485 = &v[0]
+    show(&v[0], 485)
+    v.push(E { hp: 485 })
+    print(r485.hp)
+    let r486 = &v[0]
+    show(&v[0], 486)
+    v.push(E { hp: 486 })
+    print(r486.hp)
+    let r487 = &v[0]
+    show(&v[0], 487)
+    v.push(E { hp: 487 })
+    print(r487.hp)
+    let r488 = &v[0]
+    show(&v[0], 488)
+    v.push(E { hp: 488 })
+    print(r488.hp)
+    let r489 = &v[0]
+    show(&v[0], 489)
+    v.push(E { hp: 489 })
+    print(r489.hp)
+    let r490 = &v[0]
+    show(&v[0], 490)
+    v.push(E { hp: 490 })
+    print(r490.hp)
+    let r491 = &v[0]
+    show(&v[0], 491)
+    v.push(E { hp: 491 })
+    print(r491.hp)
+    let r492 = &v[0]
+    show(&v[0], 492)
+    v.push(E { hp: 492 })
+    print(r492.hp)
+    let r493 = &v[0]
+    show(&v[0], 493)
+    v.push(E { hp: 493 })
+    print(r493.hp)
+    let r494 = &v[0]
+    show(&v[0], 494)
+    v.push(E { hp: 494 })
+    print(r494.hp)
+    let r495 = &v[0]
+    show(&v[0], 495)
+    v.push(E { hp: 495 })
+    print(r495.hp)
+    let r496 = &v[0]
+    show(&v[0], 496)
+    v.push(E { hp: 496 })
+    print(r496.hp)
+    let r497 = &v[0]
+    show(&v[0], 497)
+    v.push(E { hp: 497 })
+    print(r497.hp)
+    let r498 = &v[0]
+    show(&v[0], 498)
+    v.push(E { hp: 498 })
+    print(r498.hp)
+    let r499 = &v[0]
+    show(&v[0], 499)
+    v.push(E { hp: 499 })
+    print(r499.hp)
+    let r500 = &v[0]
+    show(&v[0], 500)
+    v.push(E { hp: 500 })
+    print(r500.hp)
+    let r501 = &v[0]
+    show(&v[0], 501)
+    v.push(E { hp: 501 })
+    print(r501.hp)
+    let r502 = &v[0]
+    show(&v[0], 502)
+    v.push(E { hp: 502 })
+    print(r502.hp)
+    let r503 = &v[0]
+    show(&v[0], 503)
+    v.push(E { hp: 503 })
+    print(r503.hp)
+    let r504 = &v[0]
+    show(&v[0], 504)
+    v.push(E { hp: 504 })
+    print(r504.hp)
+    let r505 = &v[0]
+    show(&v[0], 505)
+    v.push(E { hp: 505 })
+    print(r505.hp)
+    let r506 = &v[0]
+    show(&v[0], 506)
+    v.push(E { hp: 506 })
+    print(r506.hp)
+    let r507 = &v[0]
+    show(&v[0], 507)
+    v.push(E { hp: 507 })
+    print(r507.hp)
+    let r508 = &v[0]
+    show(&v[0], 508)
+    v.push(E { hp: 508 })
+    print(r508.hp)
+    let r509 = &v[0]
+    show(&v[0], 509)
+    v.push(E { hp: 509 })
+    print(r509.hp)
+    let r510 = &v[0]
+    show(&v[0], 510)
+    v.push(E { hp: 510 })
+    print(r510.hp)
+    let r511 = &v[0]
+    show(&v[0], 511)
+    v.push(E { hp: 511 })
+    print(r511.hp)
+    let r512 = &v[0]
+    show(&v[0], 512)
+    v.push(E { hp: 512 })
+    print(r512.hp)
+    let r513 = &v[0]
+    show(&v[0], 513)
+    v.push(E { hp: 513 })
+    print(r513.hp)
+    let r514 = &v[0]
+    show(&v[0], 514)
+    v.push(E { hp: 514 })
+    print(r514.hp)
+    let r515 = &v[0]
+    show(&v[0], 515)
+    v.push(E { hp: 515 })
+    print(r515.hp)
+    let r516 = &v[0]
+    show(&v[0], 516)
+    v.push(E { hp: 516 })
+    print(r516.hp)
+    let r517 = &v[0]
+    show(&v[0], 517)
+    v.push(E { hp: 517 })
+    print(r517.hp)
+    let r518 = &v[0]
+    show(&v[0], 518)
+    v.push(E { hp: 518 })
+    print(r518.hp)
+    let r519 = &v[0]
+    show(&v[0], 519)
+    v.push(E { hp: 519 })
+    print(r519.hp)
+    let r520 = &v[0]
+    show(&v[0], 520)
+    v.push(E { hp: 520 })
+    print(r520.hp)
+    let r521 = &v[0]
+    show(&v[0], 521)
+    v.push(E { hp: 521 })
+    print(r521.hp)
+    let r522 = &v[0]
+    show(&v[0], 522)
+    v.push(E { hp: 522 })
+    print(r522.hp)
+    let r523 = &v[0]
+    show(&v[0], 523)
+    v.push(E { hp: 523 })
+    print(r523.hp)
+    let r524 = &v[0]
+    show(&v[0], 524)
+    v.push(E { hp: 524 })
+    print(r524.hp)
+    let r525 = &v[0]
+    show(&v[0], 525)
+    v.push(E { hp: 525 })
+    print(r525.hp)
+    let r526 = &v[0]
+    show(&v[0], 526)
+    v.push(E { hp: 526 })
+    print(r526.hp)
+    let r527 = &v[0]
+    show(&v[0], 527)
+    v.push(E { hp: 527 })
+    print(r527.hp)
+    let r528 = &v[0]
+    show(&v[0], 528)
+    v.push(E { hp: 528 })
+    print(r528.hp)
+    let r529 = &v[0]
+    show(&v[0], 529)
+    v.push(E { hp: 529 })
+    print(r529.hp)
+    let r530 = &v[0]
+    show(&v[0], 530)
+    v.push(E { hp: 530 })
+    print(r530.hp)
+    let r531 = &v[0]
+    show(&v[0], 531)
+    v.push(E { hp: 531 })
+    print(r531.hp)
+    let r532 = &v[0]
+    show(&v[0], 532)
+    v.push(E { hp: 532 })
+    print(r532.hp)
+    let r533 = &v[0]
+    show(&v[0], 533)
+    v.push(E { hp: 533 })
+    print(r533.hp)
+    let r534 = &v[0]
+    show(&v[0], 534)
+    v.push(E { hp: 534 })
+    print(r534.hp)
+    let r535 = &v[0]
+    show(&v[0], 535)
+    v.push(E { hp: 535 })
+    print(r535.hp)
+    let r536 = &v[0]
+    show(&v[0], 536)
+    v.push(E { hp: 536 })
+    print(r536.hp)
+    let r537 = &v[0]
+    show(&v[0], 537)
+    v.push(E { hp: 537 })
+    print(r537.hp)
+    let r538 = &v[0]
+    show(&v[0], 538)
+    v.push(E { hp: 538 })
+    print(r538.hp)
+    let r539 = &v[0]
+    show(&v[0], 539)
+    v.push(E { hp: 539 })
+    print(r539.hp)
+    let r540 = &v[0]
+    show(&v[0], 540)
+    v.push(E { hp: 540 })
+    print(r540.hp)
+    let r541 = &v[0]
+    show(&v[0], 541)
+    v.push(E { hp: 541 })
+    print(r541.hp)
+    let r542 = &v[0]
+    show(&v[0], 542)
+    v.push(E { hp: 542 })
+    print(r542.hp)
+    let r543 = &v[0]
+    show(&v[0], 543)
+    v.push(E { hp: 543 })
+    print(r543.hp)
+    let r544 = &v[0]
+    show(&v[0], 544)
+    v.push(E { hp: 544 })
+    print(r544.hp)
+    let r545 = &v[0]
+    show(&v[0], 545)
+    v.push(E { hp: 545 })
+    print(r545.hp)
+    let r546 = &v[0]
+    show(&v[0], 546)
+    v.push(E { hp: 546 })
+    print(r546.hp)
+    let r547 = &v[0]
+    show(&v[0], 547)
+    v.push(E { hp: 547 })
+    print(r547.hp)
+    let r548 = &v[0]
+    show(&v[0], 548)
+    v.push(E { hp: 548 })
+    print(r548.hp)
+    let r549 = &v[0]
+    show(&v[0], 549)
+    v.push(E { hp: 549 })
+    print(r549.hp)
+    let r550 = &v[0]
+    show(&v[0], 550)
+    v.push(E { hp: 550 })
+    print(r550.hp)
+    let r551 = &v[0]
+    show(&v[0], 551)
+    v.push(E { hp: 551 })
+    print(r551.hp)
+    let r552 = &v[0]
+    show(&v[0], 552)
+    v.push(E { hp: 552 })
+    print(r552.hp)
+    let r553 = &v[0]
+    show(&v[0], 553)
+    v.push(E { hp: 553 })
+    print(r553.hp)
+    let r554 = &v[0]
+    show(&v[0], 554)
+    v.push(E { hp: 554 })
+    print(r554.hp)
+    let r555 = &v[0]
+    show(&v[0], 555)
+    v.push(E { hp: 555 })
+    print(r555.hp)
+    let r556 = &v[0]
+    show(&v[0], 556)
+    v.push(E { hp: 556 })
+    print(r556.hp)
+    let r557 = &v[0]
+    show(&v[0], 557)
+    v.push(E { hp: 557 })
+    print(r557.hp)
+    let r558 = &v[0]
+    show(&v[0], 558)
+    v.push(E { hp: 558 })
+    print(r558.hp)
+    let r559 = &v[0]
+    show(&v[0], 559)
+    v.push(E { hp: 559 })
+    print(r559.hp)
+    let r560 = &v[0]
+    show(&v[0], 560)
+    v.push(E { hp: 560 })
+    print(r560.hp)
+    let r561 = &v[0]
+    show(&v[0], 561)
+    v.push(E { hp: 561 })
+    print(r561.hp)
+    let r562 = &v[0]
+    show(&v[0], 562)
+    v.push(E { hp: 562 })
+    print(r562.hp)
+    let r563 = &v[0]
+    show(&v[0], 563)
+    v.push(E { hp: 563 })
+    print(r563.hp)
+    let r564 = &v[0]
+    show(&v[0], 564)
+    v.push(E { hp: 564 })
+    print(r564.hp)
+    let r565 = &v[0]
+    show(&v[0], 565)
+    v.push(E { hp: 565 })
+    print(r565.hp)
+    let r566 = &v[0]
+    show(&v[0], 566)
+    v.push(E { hp: 566 })
+    print(r566.hp)
+    let r567 = &v[0]
+    show(&v[0], 567)
+    v.push(E { hp: 567 })
+    print(r567.hp)
+    let r568 = &v[0]
+    show(&v[0], 568)
+    v.push(E { hp: 568 })
+    print(r568.hp)
+    let r569 = &v[0]
+    show(&v[0], 569)
+    v.push(E { hp: 569 })
+    print(r569.hp)
+    let r570 = &v[0]
+    show(&v[0], 570)
+    v.push(E { hp: 570 })
+    print(r570.hp)
+    let r571 = &v[0]
+    show(&v[0], 571)
+    v.push(E { hp: 571 })
+    print(r571.hp)
+    let r572 = &v[0]
+    show(&v[0], 572)
+    v.push(E { hp: 572 })
+    print(r572.hp)
+    let r573 = &v[0]
+    show(&v[0], 573)
+    v.push(E { hp: 573 })
+    print(r573.hp)
+    let r574 = &v[0]
+    show(&v[0], 574)
+    v.push(E { hp: 574 })
+    print(r574.hp)
+    let r575 = &v[0]
+    show(&v[0], 575)
+    v.push(E { hp: 575 })
+    print(r575.hp)
+    let r576 = &v[0]
+    show(&v[0], 576)
+    v.push(E { hp: 576 })
+    print(r576.hp)
+    let r577 = &v[0]
+    show(&v[0], 577)
+    v.push(E { hp: 577 })
+    print(r577.hp)
+    let r578 = &v[0]
+    show(&v[0], 578)
+    v.push(E { hp: 578 })
+    print(r578.hp)
+    let r579 = &v[0]
+    show(&v[0], 579)
+    v.push(E { hp: 579 })
+    print(r579.hp)
+    let r580 = &v[0]
+    show(&v[0], 580)
+    v.push(E { hp: 580 })
+    print(r580.hp)
+    let r581 = &v[0]
+    show(&v[0], 581)
+    v.push(E { hp: 581 })
+    print(r581.hp)
+    let r582 = &v[0]
+    show(&v[0], 582)
+    v.push(E { hp: 582 })
+    print(r582.hp)
+    let r583 = &v[0]
+    show(&v[0], 583)
+    v.push(E { hp: 583 })
+    print(r583.hp)
+    let r584 = &v[0]
+    show(&v[0], 584)
+    v.push(E { hp: 584 })
+    print(r584.hp)
+    let r585 = &v[0]
+    show(&v[0], 585)
+    v.push(E { hp: 585 })
+    print(r585.hp)
+    let r586 = &v[0]
+    show(&v[0], 586)
+    v.push(E { hp: 586 })
+    print(r586.hp)
+    let r587 = &v[0]
+    show(&v[0], 587)
+    v.push(E { hp: 587 })
+    print(r587.hp)
+    let r588 = &v[0]
+    show(&v[0], 588)
+    v.push(E { hp: 588 })
+    print(r588.hp)
+    let r589 = &v[0]
+    show(&v[0], 589)
+    v.push(E { hp: 589 })
+    print(r589.hp)
+    let r590 = &v[0]
+    show(&v[0], 590)
+    v.push(E { hp: 590 })
+    print(r590.hp)
+    let r591 = &v[0]
+    show(&v[0], 591)
+    v.push(E { hp: 591 })
+    print(r591.hp)
+    let r592 = &v[0]
+    show(&v[0], 592)
+    v.push(E { hp: 592 })
+    print(r592.hp)
+    let r593 = &v[0]
+    show(&v[0], 593)
+    v.push(E { hp: 593 })
+    print(r593.hp)
+    let r594 = &v[0]
+    show(&v[0], 594)
+    v.push(E { hp: 594 })
+    print(r594.hp)
+    let r595 = &v[0]
+    show(&v[0], 595)
+    v.push(E { hp: 595 })
+    print(r595.hp)
+    let r596 = &v[0]
+    show(&v[0], 596)
+    v.push(E { hp: 596 })
+    print(r596.hp)
+    let r597 = &v[0]
+    show(&v[0], 597)
+    v.push(E { hp: 597 })
+    print(r597.hp)
+    let r598 = &v[0]
+    show(&v[0], 598)
+    v.push(E { hp: 598 })
+    print(r598.hp)
+    let r599 = &v[0]
+    show(&v[0], 599)
+    v.push(E { hp: 599 })
+    print(r599.hp)
+}
+fn g() {
+    let x0 = E { hp: 0 }
+    let q0 = &x0.hp
+    let x1 = E { hp: 1 }
+    let q1 = &x1.hp
+    let x2 = E { hp: 2 }
+    let q2 = &x2.hp
+    let x3 = E { hp: 3 }
+    let q3 = &x3.hp
+    let x4 = E { hp: 4 }
+    let q4 = &x4.hp
+    let x5 = E { hp: 5 }
+    let q5 = &x5.hp
+    let x6 = E { hp: 6 }
+    let q6 = &x6.hp
+    let x7 = E { hp: 7 }
+    let q7 = &x7.hp
+    let x8 = E { hp: 8 }
+    let q8 = &x8.hp
+    let x9 = E { hp: 9 }
+    let q9 = &x9.hp
+    let x10 = E { hp: 10 }
+    let q10 = &x10.hp
+    let x11 = E { hp: 11 }
+    let q11 = &x11.hp
+    let x12 = E { hp: 12 }
+    let q12 = &x12.hp
+    let x13 = E { hp: 13 }
+    let q13 = &x13.hp
+    let x14 = E { hp: 14 }
+    let q14 = &x14.hp
+    let x15 = E { hp: 15 }
+    let q15 = &x15.hp
+    let x16 = E { hp: 16 }
+    let q16 = &x16.hp
+    let x17 = E { hp: 17 }
+    let q17 = &x17.hp
+    let x18 = E { hp: 18 }
+    let q18 = &x18.hp
+    let x19 = E { hp: 19 }
+    let q19 = &x19.hp
+    let x20 = E { hp: 20 }
+    let q20 = &x20.hp
+    let x21 = E { hp: 21 }
+    let q21 = &x21.hp
+    let x22 = E { hp: 22 }
+    let q22 = &x22.hp
+    let x23 = E { hp: 23 }
+    let q23 = &x23.hp
+    let x24 = E { hp: 24 }
+    let q24 = &x24.hp
+    let x25 = E { hp: 25 }
+    let q25 = &x25.hp
+    let x26 = E { hp: 26 }
+    let q26 = &x26.hp
+    let x27 = E { hp: 27 }
+    let q27 = &x27.hp
+    let x28 = E { hp: 28 }
+    let q28 = &x28.hp
+    let x29 = E { hp: 29 }
+    let q29 = &x29.hp
+    let x30 = E { hp: 30 }
+    let q30 = &x30.hp
+    let x31 = E { hp: 31 }
+    let q31 = &x31.hp
+    let x32 = E { hp: 32 }
+    let q32 = &x32.hp
+    let x33 = E { hp: 33 }
+    let q33 = &x33.hp
+    let x34 = E { hp: 34 }
+    let q34 = &x34.hp
+    let x35 = E { hp: 35 }
+    let q35 = &x35.hp
+    let x36 = E { hp: 36 }
+    let q36 = &x36.hp
+    let x37 = E { hp: 37 }
+    let q37 = &x37.hp
+    let x38 = E { hp: 38 }
+    let q38 = &x38.hp
+    let x39 = E { hp: 39 }
+    let q39 = &x39.hp
+    let x40 = E { hp: 40 }
+    let q40 = &x40.hp
+    let x41 = E { hp: 41 }
+    let q41 = &x41.hp
+    let x42 = E { hp: 42 }
+    let q42 = &x42.hp
+    let x43 = E { hp: 43 }
+    let q43 = &x43.hp
+    let x44 = E { hp: 44 }
+    let q44 = &x44.hp
+    let x45 = E { hp: 45 }
+    let q45 = &x45.hp
+    let x46 = E { hp: 46 }
+    let q46 = &x46.hp
+    let x47 = E { hp: 47 }
+    let q47 = &x47.hp
+    let x48 = E { hp: 48 }
+    let q48 = &x48.hp
+    let x49 = E { hp: 49 }
+    let q49 = &x49.hp
+    let x50 = E { hp: 50 }
+    let q50 = &x50.hp
+    let x51 = E { hp: 51 }
+    let q51 = &x51.hp
+    let x52 = E { hp: 52 }
+    let q52 = &x52.hp
+    let x53 = E { hp: 53 }
+    let q53 = &x53.hp
+    let x54 = E { hp: 54 }
+    let q54 = &x54.hp
+    let x55 = E { hp: 55 }
+    let q55 = &x55.hp
+    let x56 = E { hp: 56 }
+    let q56 = &x56.hp
+    let x57 = E { hp: 57 }
+    let q57 = &x57.hp
+    let x58 = E { hp: 58 }
+    let q58 = &x58.hp
+    let x59 = E { hp: 59 }
+    let q59 = &x59.hp
+    let x60 = E { hp: 60 }
+    let q60 = &x60.hp
+    let x61 = E { hp: 61 }
+    let q61 = &x61.hp
+    let x62 = E { hp: 62 }
+    let q62 = &x62.hp
+    let x63 = E { hp: 63 }
+    let q63 = &x63.hp
+    let x64 = E { hp: 64 }
+    let q64 = &x64.hp
+    let x65 = E { hp: 65 }
+    let q65 = &x65.hp
+    let x66 = E { hp: 66 }
+    let q66 = &x66.hp
+    let x67 = E { hp: 67 }
+    let q67 = &x67.hp
+    let x68 = E { hp: 68 }
+    let q68 = &x68.hp
+    let x69 = E { hp: 69 }
+    let q69 = &x69.hp
+    let x70 = E { hp: 70 }
+    let q70 = &x70.hp
+    let x71 = E { hp: 71 }
+    let q71 = &x71.hp
+    let x72 = E { hp: 72 }
+    let q72 = &x72.hp
+    let x73 = E { hp: 73 }
+    let q73 = &x73.hp
+    let x74 = E { hp: 74 }
+    let q74 = &x74.hp
+    let x75 = E { hp: 75 }
+    let q75 = &x75.hp
+    let x76 = E { hp: 76 }
+    let q76 = &x76.hp
+    let x77 = E { hp: 77 }
+    let q77 = &x77.hp
+    let x78 = E { hp: 78 }
+    let q78 = &x78.hp
+    let x79 = E { hp: 79 }
+    let q79 = &x79.hp
+    let x80 = E { hp: 80 }
+    let q80 = &x80.hp
+    let x81 = E { hp: 81 }
+    let q81 = &x81.hp
+    let x82 = E { hp: 82 }
+    let q82 = &x82.hp
+    let x83 = E { hp: 83 }
+    let q83 = &x83.hp
+    let x84 = E { hp: 84 }
+    let q84 = &x84.hp
+    let x85 = E { hp: 85 }
+    let q85 = &x85.hp
+    let x86 = E { hp: 86 }
+    let q86 = &x86.hp
+    let x87 = E { hp: 87 }
+    let q87 = &x87.hp
+    let x88 = E { hp: 88 }
+    let q88 = &x88.hp
+    let x89 = E { hp: 89 }
+    let q89 = &x89.hp
+    let x90 = E { hp: 90 }
+    let q90 = &x90.hp
+    let x91 = E { hp: 91 }
+    let q91 = &x91.hp
+    let x92 = E { hp: 92 }
+    let q92 = &x92.hp
+    let x93 = E { hp: 93 }
+    let q93 = &x93.hp
+    let x94 = E { hp: 94 }
+    let q94 = &x94.hp
+    let x95 = E { hp: 95 }
+    let q95 = &x95.hp
+    let x96 = E { hp: 96 }
+    let q96 = &x96.hp
+    let x97 = E { hp: 97 }
+    let q97 = &x97.hp
+    let x98 = E { hp: 98 }
+    let q98 = &x98.hp
+    let x99 = E { hp: 99 }
+    let q99 = &x99.hp
+    let x100 = E { hp: 100 }
+    let q100 = &x100.hp
+    let x101 = E { hp: 101 }
+    let q101 = &x101.hp
+    let x102 = E { hp: 102 }
+    let q102 = &x102.hp
+    let x103 = E { hp: 103 }
+    let q103 = &x103.hp
+    let x104 = E { hp: 104 }
+    let q104 = &x104.hp
+    let x105 = E { hp: 105 }
+    let q105 = &x105.hp
+    let x106 = E { hp: 106 }
+    let q106 = &x106.hp
+    let x107 = E { hp: 107 }
+    let q107 = &x107.hp
+    let x108 = E { hp: 108 }
+    let q108 = &x108.hp
+    let x109 = E { hp: 109 }
+    let q109 = &x109.hp
+    let x110 = E { hp: 110 }
+    let q110 = &x110.hp
+    let x111 = E { hp: 111 }
+    let q111 = &x111.hp
+    let x112 = E { hp: 112 }
+    let q112 = &x112.hp
+    let x113 = E { hp: 113 }
+    let q113 = &x113.hp
+    let x114 = E { hp: 114 }
+    let q114 = &x114.hp
+    let x115 = E { hp: 115 }
+    let q115 = &x115.hp
+    let x116 = E { hp: 116 }
+    let q116 = &x116.hp
+    let x117 = E { hp: 117 }
+    let q117 = &x117.hp
+    let x118 = E { hp: 118 }
+    let q118 = &x118.hp
+    let x119 = E { hp: 119 }
+    let q119 = &x119.hp
+    let x120 = E { hp: 120 }
+    let q120 = &x120.hp
+    let x121 = E { hp: 121 }
+    let q121 = &x121.hp
+    let x122 = E { hp: 122 }
+    let q122 = &x122.hp
+    let x123 = E { hp: 123 }
+    let q123 = &x123.hp
+    let x124 = E { hp: 124 }
+    let q124 = &x124.hp
+    let x125 = E { hp: 125 }
+    let q125 = &x125.hp
+    let x126 = E { hp: 126 }
+    let q126 = &x126.hp
+    let x127 = E { hp: 127 }
+    let q127 = &x127.hp
+    let x128 = E { hp: 128 }
+    let q128 = &x128.hp
+    let x129 = E { hp: 129 }
+    let q129 = &x129.hp
+    let x130 = E { hp: 130 }
+    let q130 = &x130.hp
+    let x131 = E { hp: 131 }
+    let q131 = &x131.hp
+    let x132 = E { hp: 132 }
+    let q132 = &x132.hp
+    let x133 = E { hp: 133 }
+    let q133 = &x133.hp
+    let x134 = E { hp: 134 }
+    let q134 = &x134.hp
+    let x135 = E { hp: 135 }
+    let q135 = &x135.hp
+    let x136 = E { hp: 136 }
+    let q136 = &x136.hp
+    let x137 = E { hp: 137 }
+    let q137 = &x137.hp
+    let x138 = E { hp: 138 }
+    let q138 = &x138.hp
+    let x139 = E { hp: 139 }
+    let q139 = &x139.hp
+    let x140 = E { hp: 140 }
+    let q140 = &x140.hp
+    let x141 = E { hp: 141 }
+    let q141 = &x141.hp
+    let x142 = E { hp: 142 }
+    let q142 = &x142.hp
+    let x143 = E { hp: 143 }
+    let q143 = &x143.hp
+    let x144 = E { hp: 144 }
+    let q144 = &x144.hp
+    let x145 = E { hp: 145 }
+    let q145 = &x145.hp
+    let x146 = E { hp: 146 }
+    let q146 = &x146.hp
+    let x147 = E { hp: 147 }
+    let q147 = &x147.hp
+    let x148 = E { hp: 148 }
+    let q148 = &x148.hp
+    let x149 = E { hp: 149 }
+    let q149 = &x149.hp
+    let x150 = E { hp: 150 }
+    let q150 = &x150.hp
+    let x151 = E { hp: 151 }
+    let q151 = &x151.hp
+    let x152 = E { hp: 152 }
+    let q152 = &x152.hp
+    let x153 = E { hp: 153 }
+    let q153 = &x153.hp
+    let x154 = E { hp: 154 }
+    let q154 = &x154.hp
+    let x155 = E { hp: 155 }
+    let q155 = &x155.hp
+    let x156 = E { hp: 156 }
+    let q156 = &x156.hp
+    let x157 = E { hp: 157 }
+    let q157 = &x157.hp
+    let x158 = E { hp: 158 }
+    let q158 = &x158.hp
+    let x159 = E { hp: 159 }
+    let q159 = &x159.hp
+    let x160 = E { hp: 160 }
+    let q160 = &x160.hp
+    let x161 = E { hp: 161 }
+    let q161 = &x161.hp
+    let x162 = E { hp: 162 }
+    let q162 = &x162.hp
+    let x163 = E { hp: 163 }
+    let q163 = &x163.hp
+    let x164 = E { hp: 164 }
+    let q164 = &x164.hp
+    let x165 = E { hp: 165 }
+    let q165 = &x165.hp
+    let x166 = E { hp: 166 }
+    let q166 = &x166.hp
+    let x167 = E { hp: 167 }
+    let q167 = &x167.hp
+    let x168 = E { hp: 168 }
+    let q168 = &x168.hp
+    let x169 = E { hp: 169 }
+    let q169 = &x169.hp
+    let x170 = E { hp: 170 }
+    let q170 = &x170.hp
+    let x171 = E { hp: 171 }
+    let q171 = &x171.hp
+    let x172 = E { hp: 172 }
+    let q172 = &x172.hp
+    let x173 = E { hp: 173 }
+    let q173 = &x173.hp
+    let x174 = E { hp: 174 }
+    let q174 = &x174.hp
+    let x175 = E { hp: 175 }
+    let q175 = &x175.hp
+    let x176 = E { hp: 176 }
+    let q176 = &x176.hp
+    let x177 = E { hp: 177 }
+    let q177 = &x177.hp
+    let x178 = E { hp: 178 }
+    let q178 = &x178.hp
+    let x179 = E { hp: 179 }
+    let q179 = &x179.hp
+    let x180 = E { hp: 180 }
+    let q180 = &x180.hp
+    let x181 = E { hp: 181 }
+    let q181 = &x181.hp
+    let x182 = E { hp: 182 }
+    let q182 = &x182.hp
+    let x183 = E { hp: 183 }
+    let q183 = &x183.hp
+    let x184 = E { hp: 184 }
+    let q184 = &x184.hp
+    let x185 = E { hp: 185 }
+    let q185 = &x185.hp
+    let x186 = E { hp: 186 }
+    let q186 = &x186.hp
+    let x187 = E { hp: 187 }
+    let q187 = &x187.hp
+    let x188 = E { hp: 188 }
+    let q188 = &x188.hp
+    let x189 = E { hp: 189 }
+    let q189 = &x189.hp
+    let x190 = E { hp: 190 }
+    let q190 = &x190.hp
+    let x191 = E { hp: 191 }
+    let q191 = &x191.hp
+    let x192 = E { hp: 192 }
+    let q192 = &x192.hp
+    let x193 = E { hp: 193 }
+    let q193 = &x193.hp
+    let x194 = E { hp: 194 }
+    let q194 = &x194.hp
+    let x195 = E { hp: 195 }
+    let q195 = &x195.hp
+    let x196 = E { hp: 196 }
+    let q196 = &x196.hp
+    let x197 = E { hp: 197 }
+    let q197 = &x197.hp
+    let x198 = E { hp: 198 }
+    let q198 = &x198.hp
+    let x199 = E { hp: 199 }
+    let q199 = &x199.hp
+    let x200 = E { hp: 200 }
+    let q200 = &x200.hp
+    let x201 = E { hp: 201 }
+    let q201 = &x201.hp
+    let x202 = E { hp: 202 }
+    let q202 = &x202.hp
+    let x203 = E { hp: 203 }
+    let q203 = &x203.hp
+    let x204 = E { hp: 204 }
+    let q204 = &x204.hp
+    let x205 = E { hp: 205 }
+    let q205 = &x205.hp
+    let x206 = E { hp: 206 }
+    let q206 = &x206.hp
+    let x207 = E { hp: 207 }
+    let q207 = &x207.hp
+    let x208 = E { hp: 208 }
+    let q208 = &x208.hp
+    let x209 = E { hp: 209 }
+    let q209 = &x209.hp
+    let x210 = E { hp: 210 }
+    let q210 = &x210.hp
+    let x211 = E { hp: 211 }
+    let q211 = &x211.hp
+    let x212 = E { hp: 212 }
+    let q212 = &x212.hp
+    let x213 = E { hp: 213 }
+    let q213 = &x213.hp
+    let x214 = E { hp: 214 }
+    let q214 = &x214.hp
+    let x215 = E { hp: 215 }
+    let q215 = &x215.hp
+    let x216 = E { hp: 216 }
+    let q216 = &x216.hp
+    let x217 = E { hp: 217 }
+    let q217 = &x217.hp
+    let x218 = E { hp: 218 }
+    let q218 = &x218.hp
+    let x219 = E { hp: 219 }
+    let q219 = &x219.hp
+    let x220 = E { hp: 220 }
+    let q220 = &x220.hp
+    let x221 = E { hp: 221 }
+    let q221 = &x221.hp
+    let x222 = E { hp: 222 }
+    let q222 = &x222.hp
+    let x223 = E { hp: 223 }
+    let q223 = &x223.hp
+    let x224 = E { hp: 224 }
+    let q224 = &x224.hp
+    let x225 = E { hp: 225 }
+    let q225 = &x225.hp
+    let x226 = E { hp: 226 }
+    let q226 = &x226.hp
+    let x227 = E { hp: 227 }
+    let q227 = &x227.hp
+    let x228 = E { hp: 228 }
+    let q228 = &x228.hp
+    let x229 = E { hp: 229 }
+    let q229 = &x229.hp
+    let x230 = E { hp: 230 }
+    let q230 = &x230.hp
+    let x231 = E { hp: 231 }
+    let q231 = &x231.hp
+    let x232 = E { hp: 232 }
+    let q232 = &x232.hp
+    let x233 = E { hp: 233 }
+    let q233 = &x233.hp
+    let x234 = E { hp: 234 }
+    let q234 = &x234.hp
+    let x235 = E { hp: 235 }
+    let q235 = &x235.hp
+    let x236 = E { hp: 236 }
+    let q236 = &x236.hp
+    let x237 = E { hp: 237 }
+    let q237 = &x237.hp
+    let x238 = E { hp: 238 }
+    let q238 = &x238.hp
+    let x239 = E { hp: 239 }
+    let q239 = &x239.hp
+    let x240 = E { hp: 240 }
+    let q240 = &x240.hp
+    let x241 = E { hp: 241 }
+    let q241 = &x241.hp
+    let x242 = E { hp: 242 }
+    let q242 = &x242.hp
+    let x243 = E { hp: 243 }
+    let q243 = &x243.hp
+    let x244 = E { hp: 244 }
+    let q244 = &x244.hp
+    let x245 = E { hp: 245 }
+    let q245 = &x245.hp
+    let x246 = E { hp: 246 }
+    let q246 = &x246.hp
+    let x247 = E { hp: 247 }
+    let q247 = &x247.hp
+    let x248 = E { hp: 248 }
+    let q248 = &x248.hp
+    let x249 = E { hp: 249 }
+    let q249 = &x249.hp
+    let x250 = E { hp: 250 }
+    let q250 = &x250.hp
+    let x251 = E { hp: 251 }
+    let q251 = &x251.hp
+    let x252 = E { hp: 252 }
+    let q252 = &x252.hp
+    let x253 = E { hp: 253 }
+    let q253 = &x253.hp
+    let x254 = E { hp: 254 }
+    let q254 = &x254.hp
+    let x255 = E { hp: 255 }
+    let q255 = &x255.hp
+    let x256 = E { hp: 256 }
+    let q256 = &x256.hp
+    let x257 = E { hp: 257 }
+    let q257 = &x257.hp
+    let x258 = E { hp: 258 }
+    let q258 = &x258.hp
+    let x259 = E { hp: 259 }
+    let q259 = &x259.hp
+    let x260 = E { hp: 260 }
+    let q260 = &x260.hp
+    let x261 = E { hp: 261 }
+    let q261 = &x261.hp
+    let x262 = E { hp: 262 }
+    let q262 = &x262.hp
+    let x263 = E { hp: 263 }
+    let q263 = &x263.hp
+    let x264 = E { hp: 264 }
+    let q264 = &x264.hp
+    let x265 = E { hp: 265 }
+    let q265 = &x265.hp
+    let x266 = E { hp: 266 }
+    let q266 = &x266.hp
+    let x267 = E { hp: 267 }
+    let q267 = &x267.hp
+    let x268 = E { hp: 268 }
+    let q268 = &x268.hp
+    let x269 = E { hp: 269 }
+    let q269 = &x269.hp
+    let x270 = E { hp: 270 }
+    let q270 = &x270.hp
+    let x271 = E { hp: 271 }
+    let q271 = &x271.hp
+    let x272 = E { hp: 272 }
+    let q272 = &x272.hp
+    let x273 = E { hp: 273 }
+    let q273 = &x273.hp
+    let x274 = E { hp: 274 }
+    let q274 = &x274.hp
+    let x275 = E { hp: 275 }
+    let q275 = &x275.hp
+    let x276 = E { hp: 276 }
+    let q276 = &x276.hp
+    let x277 = E { hp: 277 }
+    let q277 = &x277.hp
+    let x278 = E { hp: 278 }
+    let q278 = &x278.hp
+    let x279 = E { hp: 279 }
+    let q279 = &x279.hp
+    let x280 = E { hp: 280 }
+    let q280 = &x280.hp
+    let x281 = E { hp: 281 }
+    let q281 = &x281.hp
+    let x282 = E { hp: 282 }
+    let q282 = &x282.hp
+    let x283 = E { hp: 283 }
+    let q283 = &x283.hp
+    let x284 = E { hp: 284 }
+    let q284 = &x284.hp
+    let x285 = E { hp: 285 }
+    let q285 = &x285.hp
+    let x286 = E { hp: 286 }
+    let q286 = &x286.hp
+    let x287 = E { hp: 287 }
+    let q287 = &x287.hp
+    let x288 = E { hp: 288 }
+    let q288 = &x288.hp
+    let x289 = E { hp: 289 }
+    let q289 = &x289.hp
+    let x290 = E { hp: 290 }
+    let q290 = &x290.hp
+    let x291 = E { hp: 291 }
+    let q291 = &x291.hp
+    let x292 = E { hp: 292 }
+    let q292 = &x292.hp
+    let x293 = E { hp: 293 }
+    let q293 = &x293.hp
+    let x294 = E { hp: 294 }
+    let q294 = &x294.hp
+    let x295 = E { hp: 295 }
+    let q295 = &x295.hp
+    let x296 = E { hp: 296 }
+    let q296 = &x296.hp
+    let x297 = E { hp: 297 }
+    let q297 = &x297.hp
+    let x298 = E { hp: 298 }
+    let q298 = &x298.hp
+    let x299 = E { hp: 299 }
+    let q299 = &x299.hp
+    let x300 = E { hp: 300 }
+    let q300 = &x300.hp
+    let x301 = E { hp: 301 }
+    let q301 = &x301.hp
+    let x302 = E { hp: 302 }
+    let q302 = &x302.hp
+    let x303 = E { hp: 303 }
+    let q303 = &x303.hp
+    let x304 = E { hp: 304 }
+    let q304 = &x304.hp
+    let x305 = E { hp: 305 }
+    let q305 = &x305.hp
+    let x306 = E { hp: 306 }
+    let q306 = &x306.hp
+    let x307 = E { hp: 307 }
+    let q307 = &x307.hp
+    let x308 = E { hp: 308 }
+    let q308 = &x308.hp
+    let x309 = E { hp: 309 }
+    let q309 = &x309.hp
+    let x310 = E { hp: 310 }
+    let q310 = &x310.hp
+    let x311 = E { hp: 311 }
+    let q311 = &x311.hp
+    let x312 = E { hp: 312 }
+    let q312 = &x312.hp
+    let x313 = E { hp: 313 }
+    let q313 = &x313.hp
+    let x314 = E { hp: 314 }
+    let q314 = &x314.hp
+    let x315 = E { hp: 315 }
+    let q315 = &x315.hp
+    let x316 = E { hp: 316 }
+    let q316 = &x316.hp
+    let x317 = E { hp: 317 }
+    let q317 = &x317.hp
+    let x318 = E { hp: 318 }
+    let q318 = &x318.hp
+    let x319 = E { hp: 319 }
+    let q319 = &x319.hp
+    let x320 = E { hp: 320 }
+    let q320 = &x320.hp
+    let x321 = E { hp: 321 }
+    let q321 = &x321.hp
+    let x322 = E { hp: 322 }
+    let q322 = &x322.hp
+    let x323 = E { hp: 323 }
+    let q323 = &x323.hp
+    let x324 = E { hp: 324 }
+    let q324 = &x324.hp
+    let x325 = E { hp: 325 }
+    let q325 = &x325.hp
+    let x326 = E { hp: 326 }
+    let q326 = &x326.hp
+    let x327 = E { hp: 327 }
+    let q327 = &x327.hp
+    let x328 = E { hp: 328 }
+    let q328 = &x328.hp
+    let x329 = E { hp: 329 }
+    let q329 = &x329.hp
+    let x330 = E { hp: 330 }
+    let q330 = &x330.hp
+    let x331 = E { hp: 331 }
+    let q331 = &x331.hp
+    let x332 = E { hp: 332 }
+    let q332 = &x332.hp
+    let x333 = E { hp: 333 }
+    let q333 = &x333.hp
+    let x334 = E { hp: 334 }
+    let q334 = &x334.hp
+    let x335 = E { hp: 335 }
+    let q335 = &x335.hp
+    let x336 = E { hp: 336 }
+    let q336 = &x336.hp
+    let x337 = E { hp: 337 }
+    let q337 = &x337.hp
+    let x338 = E { hp: 338 }
+    let q338 = &x338.hp
+    let x339 = E { hp: 339 }
+    let q339 = &x339.hp
+    let x340 = E { hp: 340 }
+    let q340 = &x340.hp
+    let x341 = E { hp: 341 }
+    let q341 = &x341.hp
+    let x342 = E { hp: 342 }
+    let q342 = &x342.hp
+    let x343 = E { hp: 343 }
+    let q343 = &x343.hp
+    let x344 = E { hp: 344 }
+    let q344 = &x344.hp
+    let x345 = E { hp: 345 }
+    let q345 = &x345.hp
+    let x346 = E { hp: 346 }
+    let q346 = &x346.hp
+    let x347 = E { hp: 347 }
+    let q347 = &x347.hp
+    let x348 = E { hp: 348 }
+    let q348 = &x348.hp
+    let x349 = E { hp: 349 }
+    let q349 = &x349.hp
+    let x350 = E { hp: 350 }
+    let q350 = &x350.hp
+    let x351 = E { hp: 351 }
+    let q351 = &x351.hp
+    let x352 = E { hp: 352 }
+    let q352 = &x352.hp
+    let x353 = E { hp: 353 }
+    let q353 = &x353.hp
+    let x354 = E { hp: 354 }
+    let q354 = &x354.hp
+    let x355 = E { hp: 355 }
+    let q355 = &x355.hp
+    let x356 = E { hp: 356 }
+    let q356 = &x356.hp
+    let x357 = E { hp: 357 }
+    let q357 = &x357.hp
+    let x358 = E { hp: 358 }
+    let q358 = &x358.hp
+    let x359 = E { hp: 359 }
+    let q359 = &x359.hp
+    let x360 = E { hp: 360 }
+    let q360 = &x360.hp
+    let x361 = E { hp: 361 }
+    let q361 = &x361.hp
+    let x362 = E { hp: 362 }
+    let q362 = &x362.hp
+    let x363 = E { hp: 363 }
+    let q363 = &x363.hp
+    let x364 = E { hp: 364 }
+    let q364 = &x364.hp
+    let x365 = E { hp: 365 }
+    let q365 = &x365.hp
+    let x366 = E { hp: 366 }
+    let q366 = &x366.hp
+    let x367 = E { hp: 367 }
+    let q367 = &x367.hp
+    let x368 = E { hp: 368 }
+    let q368 = &x368.hp
+    let x369 = E { hp: 369 }
+    let q369 = &x369.hp
+    let x370 = E { hp: 370 }
+    let q370 = &x370.hp
+    let x371 = E { hp: 371 }
+    let q371 = &x371.hp
+    let x372 = E { hp: 372 }
+    let q372 = &x372.hp
+    let x373 = E { hp: 373 }
+    let q373 = &x373.hp
+    let x374 = E { hp: 374 }
+    let q374 = &x374.hp
+    let x375 = E { hp: 375 }
+    let q375 = &x375.hp
+    let x376 = E { hp: 376 }
+    let q376 = &x376.hp
+    let x377 = E { hp: 377 }
+    let q377 = &x377.hp
+    let x378 = E { hp: 378 }
+    let q378 = &x378.hp
+    let x379 = E { hp: 379 }
+    let q379 = &x379.hp
+    let x380 = E { hp: 380 }
+    let q380 = &x380.hp
+    let x381 = E { hp: 381 }
+    let q381 = &x381.hp
+    let x382 = E { hp: 382 }
+    let q382 = &x382.hp
+    let x383 = E { hp: 383 }
+    let q383 = &x383.hp
+    let x384 = E { hp: 384 }
+    let q384 = &x384.hp
+    let x385 = E { hp: 385 }
+    let q385 = &x385.hp
+    let x386 = E { hp: 386 }
+    let q386 = &x386.hp
+    let x387 = E { hp: 387 }
+    let q387 = &x387.hp
+    let x388 = E { hp: 388 }
+    let q388 = &x388.hp
+    let x389 = E { hp: 389 }
+    let q389 = &x389.hp
+    let x390 = E { hp: 390 }
+    let q390 = &x390.hp
+    let x391 = E { hp: 391 }
+    let q391 = &x391.hp
+    let x392 = E { hp: 392 }
+    let q392 = &x392.hp
+    let x393 = E { hp: 393 }
+    let q393 = &x393.hp
+    let x394 = E { hp: 394 }
+    let q394 = &x394.hp
+    let x395 = E { hp: 395 }
+    let q395 = &x395.hp
+    let x396 = E { hp: 396 }
+    let q396 = &x396.hp
+    let x397 = E { hp: 397 }
+    let q397 = &x397.hp
+    let x398 = E { hp: 398 }
+    let q398 = &x398.hp
+    let x399 = E { hp: 399 }
+    let q399 = &x399.hp
+    let x400 = E { hp: 400 }
+    let q400 = &x400.hp
+    let x401 = E { hp: 401 }
+    let q401 = &x401.hp
+    let x402 = E { hp: 402 }
+    let q402 = &x402.hp
+    let x403 = E { hp: 403 }
+    let q403 = &x403.hp
+    let x404 = E { hp: 404 }
+    let q404 = &x404.hp
+    let x405 = E { hp: 405 }
+    let q405 = &x405.hp
+    let x406 = E { hp: 406 }
+    let q406 = &x406.hp
+    let x407 = E { hp: 407 }
+    let q407 = &x407.hp
+    let x408 = E { hp: 408 }
+    let q408 = &x408.hp
+    let x409 = E { hp: 409 }
+    let q409 = &x409.hp
+    let x410 = E { hp: 410 }
+    let q410 = &x410.hp
+    let x411 = E { hp: 411 }
+    let q411 = &x411.hp
+    let x412 = E { hp: 412 }
+    let q412 = &x412.hp
+    let x413 = E { hp: 413 }
+    let q413 = &x413.hp
+    let x414 = E { hp: 414 }
+    let q414 = &x414.hp
+    let x415 = E { hp: 415 }
+    let q415 = &x415.hp
+    let x416 = E { hp: 416 }
+    let q416 = &x416.hp
+    let x417 = E { hp: 417 }
+    let q417 = &x417.hp
+    let x418 = E { hp: 418 }
+    let q418 = &x418.hp
+    let x419 = E { hp: 419 }
+    let q419 = &x419.hp
+    let x420 = E { hp: 420 }
+    let q420 = &x420.hp
+    let x421 = E { hp: 421 }
+    let q421 = &x421.hp
+    let x422 = E { hp: 422 }
+    let q422 = &x422.hp
+    let x423 = E { hp: 423 }
+    let q423 = &x423.hp
+    let x424 = E { hp: 424 }
+    let q424 = &x424.hp
+    let x425 = E { hp: 425 }
+    let q425 = &x425.hp
+    let x426 = E { hp: 426 }
+    let q426 = &x426.hp
+    let x427 = E { hp: 427 }
+    let q427 = &x427.hp
+    let x428 = E { hp: 428 }
+    let q428 = &x428.hp
+    let x429 = E { hp: 429 }
+    let q429 = &x429.hp
+    let x430 = E { hp: 430 }
+    let q430 = &x430.hp
+    let x431 = E { hp: 431 }
+    let q431 = &x431.hp
+    let x432 = E { hp: 432 }
+    let q432 = &x432.hp
+    let x433 = E { hp: 433 }
+    let q433 = &x433.hp
+    let x434 = E { hp: 434 }
+    let q434 = &x434.hp
+    let x435 = E { hp: 435 }
+    let q435 = &x435.hp
+    let x436 = E { hp: 436 }
+    let q436 = &x436.hp
+    let x437 = E { hp: 437 }
+    let q437 = &x437.hp
+    let x438 = E { hp: 438 }
+    let q438 = &x438.hp
+    let x439 = E { hp: 439 }
+    let q439 = &x439.hp
+    let x440 = E { hp: 440 }
+    let q440 = &x440.hp
+    let x441 = E { hp: 441 }
+    let q441 = &x441.hp
+    let x442 = E { hp: 442 }
+    let q442 = &x442.hp
+    let x443 = E { hp: 443 }
+    let q443 = &x443.hp
+    let x444 = E { hp: 444 }
+    let q444 = &x444.hp
+    let x445 = E { hp: 445 }
+    let q445 = &x445.hp
+    let x446 = E { hp: 446 }
+    let q446 = &x446.hp
+    let x447 = E { hp: 447 }
+    let q447 = &x447.hp
+    let x448 = E { hp: 448 }
+    let q448 = &x448.hp
+    let x449 = E { hp: 449 }
+    let q449 = &x449.hp
+    let x450 = E { hp: 450 }
+    let q450 = &x450.hp
+    let x451 = E { hp: 451 }
+    let q451 = &x451.hp
+    let x452 = E { hp: 452 }
+    let q452 = &x452.hp
+    let x453 = E { hp: 453 }
+    let q453 = &x453.hp
+    let x454 = E { hp: 454 }
+    let q454 = &x454.hp
+    let x455 = E { hp: 455 }
+    let q455 = &x455.hp
+    let x456 = E { hp: 456 }
+    let q456 = &x456.hp
+    let x457 = E { hp: 457 }
+    let q457 = &x457.hp
+    let x458 = E { hp: 458 }
+    let q458 = &x458.hp
+    let x459 = E { hp: 459 }
+    let q459 = &x459.hp
+    let x460 = E { hp: 460 }
+    let q460 = &x460.hp
+    let x461 = E { hp: 461 }
+    let q461 = &x461.hp
+    let x462 = E { hp: 462 }
+    let q462 = &x462.hp
+    let x463 = E { hp: 463 }
+    let q463 = &x463.hp
+    let x464 = E { hp: 464 }
+    let q464 = &x464.hp
+    let x465 = E { hp: 465 }
+    let q465 = &x465.hp
+    let x466 = E { hp: 466 }
+    let q466 = &x466.hp
+    let x467 = E { hp: 467 }
+    let q467 = &x467.hp
+    let x468 = E { hp: 468 }
+    let q468 = &x468.hp
+    let x469 = E { hp: 469 }
+    let q469 = &x469.hp
+    let x470 = E { hp: 470 }
+    let q470 = &x470.hp
+    let x471 = E { hp: 471 }
+    let q471 = &x471.hp
+    let x472 = E { hp: 472 }
+    let q472 = &x472.hp
+    let x473 = E { hp: 473 }
+    let q473 = &x473.hp
+    let x474 = E { hp: 474 }
+    let q474 = &x474.hp
+    let x475 = E { hp: 475 }
+    let q475 = &x475.hp
+    let x476 = E { hp: 476 }
+    let q476 = &x476.hp
+    let x477 = E { hp: 477 }
+    let q477 = &x477.hp
+    let x478 = E { hp: 478 }
+    let q478 = &x478.hp
+    let x479 = E { hp: 479 }
+    let q479 = &x479.hp
+    let x480 = E { hp: 480 }
+    let q480 = &x480.hp
+    let x481 = E { hp: 481 }
+    let q481 = &x481.hp
+    let x482 = E { hp: 482 }
+    let q482 = &x482.hp
+    let x483 = E { hp: 483 }
+    let q483 = &x483.hp
+    let x484 = E { hp: 484 }
+    let q484 = &x484.hp
+    let x485 = E { hp: 485 }
+    let q485 = &x485.hp
+    let x486 = E { hp: 486 }
+    let q486 = &x486.hp
+    let x487 = E { hp: 487 }
+    let q487 = &x487.hp
+    let x488 = E { hp: 488 }
+    let q488 = &x488.hp
+    let x489 = E { hp: 489 }
+    let q489 = &x489.hp
+    let x490 = E { hp: 490 }
+    let q490 = &x490.hp
+    let x491 = E { hp: 491 }
+    let q491 = &x491.hp
+    let x492 = E { hp: 492 }
+    let q492 = &x492.hp
+    let x493 = E { hp: 493 }
+    let q493 = &x493.hp
+    let x494 = E { hp: 494 }
+    let q494 = &x494.hp
+    let x495 = E { hp: 495 }
+    let q495 = &x495.hp
+    let x496 = E { hp: 496 }
+    let q496 = &x496.hp
+    let x497 = E { hp: 497 }
+    let q497 = &x497.hp
+    let x498 = E { hp: 498 }
+    let q498 = &x498.hp
+    let x499 = E { hp: 499 }
+    let q499 = &x499.hp
+    let x500 = E { hp: 500 }
+    let q500 = &x500.hp
+    let x501 = E { hp: 501 }
+    let q501 = &x501.hp
+    let x502 = E { hp: 502 }
+    let q502 = &x502.hp
+    let x503 = E { hp: 503 }
+    let q503 = &x503.hp
+    let x504 = E { hp: 504 }
+    let q504 = &x504.hp
+    let x505 = E { hp: 505 }
+    let q505 = &x505.hp
+    let x506 = E { hp: 506 }
+    let q506 = &x506.hp
+    let x507 = E { hp: 507 }
+    let q507 = &x507.hp
+    let x508 = E { hp: 508 }
+    let q508 = &x508.hp
+    let x509 = E { hp: 509 }
+    let q509 = &x509.hp
+    let x510 = E { hp: 510 }
+    let q510 = &x510.hp
+    let x511 = E { hp: 511 }
+    let q511 = &x511.hp
+    let x512 = E { hp: 512 }
+    let q512 = &x512.hp
+    let x513 = E { hp: 513 }
+    let q513 = &x513.hp
+    let x514 = E { hp: 514 }
+    let q514 = &x514.hp
+    let x515 = E { hp: 515 }
+    let q515 = &x515.hp
+    let x516 = E { hp: 516 }
+    let q516 = &x516.hp
+    let x517 = E { hp: 517 }
+    let q517 = &x517.hp
+    let x518 = E { hp: 518 }
+    let q518 = &x518.hp
+    let x519 = E { hp: 519 }
+    let q519 = &x519.hp
+    let x520 = E { hp: 520 }
+    let q520 = &x520.hp
+    let x521 = E { hp: 521 }
+    let q521 = &x521.hp
+    let x522 = E { hp: 522 }
+    let q522 = &x522.hp
+    let x523 = E { hp: 523 }
+    let q523 = &x523.hp
+    let x524 = E { hp: 524 }
+    let q524 = &x524.hp
+    let x525 = E { hp: 525 }
+    let q525 = &x525.hp
+    let x526 = E { hp: 526 }
+    let q526 = &x526.hp
+    let x527 = E { hp: 527 }
+    let q527 = &x527.hp
+    let x528 = E { hp: 528 }
+    let q528 = &x528.hp
+    let x529 = E { hp: 529 }
+    let q529 = &x529.hp
+    let x530 = E { hp: 530 }
+    let q530 = &x530.hp
+    let x531 = E { hp: 531 }
+    let q531 = &x531.hp
+    let x532 = E { hp: 532 }
+    let q532 = &x532.hp
+    let x533 = E { hp: 533 }
+    let q533 = &x533.hp
+    let x534 = E { hp: 534 }
+    let q534 = &x534.hp
+    let x535 = E { hp: 535 }
+    let q535 = &x535.hp
+    let x536 = E { hp: 536 }
+    let q536 = &x536.hp
+    let x537 = E { hp: 537 }
+    let q537 = &x537.hp
+    let x538 = E { hp: 538 }
+    let q538 = &x538.hp
+    let x539 = E { hp: 539 }
+    let q539 = &x539.hp
+    let x540 = E { hp: 540 }
+    let q540 = &x540.hp
+    let x541 = E { hp: 541 }
+    let q541 = &x541.hp
+    let x542 = E { hp: 542 }
+    let q542 = &x542.hp
+    let x543 = E { hp: 543 }
+    let q543 = &x543.hp
+    let x544 = E { hp: 544 }
+    let q544 = &x544.hp
+    let x545 = E { hp: 545 }
+    let q545 = &x545.hp
+    let x546 = E { hp: 546 }
+    let q546 = &x546.hp
+    let x547 = E { hp: 547 }
+    let q547 = &x547.hp
+    let x548 = E { hp: 548 }
+    let q548 = &x548.hp
+    let x549 = E { hp: 549 }
+    let q549 = &x549.hp
+    let x550 = E { hp: 550 }
+    let q550 = &x550.hp
+    let x551 = E { hp: 551 }
+    let q551 = &x551.hp
+    let x552 = E { hp: 552 }
+    let q552 = &x552.hp
+    let x553 = E { hp: 553 }
+    let q553 = &x553.hp
+    let x554 = E { hp: 554 }
+    let q554 = &x554.hp
+    let x555 = E { hp: 555 }
+    let q555 = &x555.hp
+    let x556 = E { hp: 556 }
+    let q556 = &x556.hp
+    let x557 = E { hp: 557 }
+    let q557 = &x557.hp
+    let x558 = E { hp: 558 }
+    let q558 = &x558.hp
+    let x559 = E { hp: 559 }
+    let q559 = &x559.hp
+    let x560 = E { hp: 560 }
+    let q560 = &x560.hp
+    let x561 = E { hp: 561 }
+    let q561 = &x561.hp
+    let x562 = E { hp: 562 }
+    let q562 = &x562.hp
+    let x563 = E { hp: 563 }
+    let q563 = &x563.hp
+    let x564 = E { hp: 564 }
+    let q564 = &x564.hp
+    let x565 = E { hp: 565 }
+    let q565 = &x565.hp
+    let x566 = E { hp: 566 }
+    let q566 = &x566.hp
+    let x567 = E { hp: 567 }
+    let q567 = &x567.hp
+    let x568 = E { hp: 568 }
+    let q568 = &x568.hp
+    let x569 = E { hp: 569 }
+    let q569 = &x569.hp
+    let x570 = E { hp: 570 }
+    let q570 = &x570.hp
+    let x571 = E { hp: 571 }
+    let q571 = &x571.hp
+    let x572 = E { hp: 572 }
+    let q572 = &x572.hp
+    let x573 = E { hp: 573 }
+    let q573 = &x573.hp
+    let x574 = E { hp: 574 }
+    let q574 = &x574.hp
+    let x575 = E { hp: 575 }
+    let q575 = &x575.hp
+    let x576 = E { hp: 576 }
+    let q576 = &x576.hp
+    let x577 = E { hp: 577 }
+    let q577 = &x577.hp
+    let x578 = E { hp: 578 }
+    let q578 = &x578.hp
+    let x579 = E { hp: 579 }
+    let q579 = &x579.hp
+    let x580 = E { hp: 580 }
+    let q580 = &x580.hp
+    let x581 = E { hp: 581 }
+    let q581 = &x581.hp
+    let x582 = E { hp: 582 }
+    let q582 = &x582.hp
+    let x583 = E { hp: 583 }
+    let q583 = &x583.hp
+    let x584 = E { hp: 584 }
+    let q584 = &x584.hp
+    let x585 = E { hp: 585 }
+    let q585 = &x585.hp
+    let x586 = E { hp: 586 }
+    let q586 = &x586.hp
+    let x587 = E { hp: 587 }
+    let q587 = &x587.hp
+    let x588 = E { hp: 588 }
+    let q588 = &x588.hp
+    let x589 = E { hp: 589 }
+    let q589 = &x589.hp
+    let x590 = E { hp: 590 }
+    let q590 = &x590.hp
+    let x591 = E { hp: 591 }
+    let q591 = &x591.hp
+    let x592 = E { hp: 592 }
+    let q592 = &x592.hp
+    let x593 = E { hp: 593 }
+    let q593 = &x593.hp
+    let x594 = E { hp: 594 }
+    let q594 = &x594.hp
+    let x595 = E { hp: 595 }
+    let q595 = &x595.hp
+    let x596 = E { hp: 596 }
+    let q596 = &x596.hp
+    let x597 = E { hp: 597 }
+    let q597 = &x597.hp
+    let x598 = E { hp: 598 }
+    let q598 = &x598.hp
+    let x599 = E { hp: 599 }
+    let q599 = &x599.hp
+    print(q0)
+}

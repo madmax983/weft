@@ -1,0 +1,12 @@
+// J4 in MIR: Recopy gives each reference path of the copied locals a new version
+// with the places of the suspension point (rebound_at at the Recopy node).
+place(po). place(po_e). parent(po_e, po). unstable(po_e).
+cfg_edge(hs, d0). rebound_at(r0, d0). points_into(r0, po_e).
+cfg_edge(d0, pk). uses(r0, pk). multi_at(pk).
+cfg_edge(pk, pret). cfg_edge(rc, pret).
+rebound_at(rrc, rc). points_into(rrc, po_e). rebound_at(r0, rc).   // the Recopy definition kills the old version (4.2)
+cfg_edge(pret, pr). uses(r0, pr). uses(rrc, pr).
+cfg_edge(pr, cl). mutates_at(cl, po).
+cfg_edge(cl, hret). cfg_edge(hret, aft). cfg_edge(aft, rc). cfg_edge(aft, rn).
+lint("MIR J4: W0301 at print(r)", pr) :- error(rrc, pr).
+lint("MIR J4: W0301 at print(r) (first version)", pr) :- error(r0, pr).

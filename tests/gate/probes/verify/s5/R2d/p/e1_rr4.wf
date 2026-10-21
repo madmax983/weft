@@ -1,0 +1,60 @@
+struct Stats { count: u64 }
+
+// The scope value itself leaves the scope.
+fn scope_value(st: &Stats) / mut(st), async {
+    let k = scope { s => s }
+    k.spawn(|| st.count += 1)
+}
+
+// A copy of s in an outer local.
+fn outer_copy(st: &Stats) / mut(st), async {
+    let k = || print(0)
+    scope { s =>
+        let s2 = s
+        k = || { s2.spawn(|| st.count += 1)
+ () }
+    }
+    k()
+}
+
+// A closure that captures a closure that captures s.
+fn nested(st: &Stats) / mut(st), async {
+    let k = || print(0)
+    scope { s =>
+        let inner = || { s.spawn(|| st.count += 1)
+ () }
+        k = || inner()
+    }
+    k()
+}
+
+// s in a tuple.
+fn in_tuple(st: &Stats) / mut(st), async {
+    let k = || print(0)
+    scope { s =>
+        let t = (s, 1)
+        k = || { let (a, b) = t
+ a.spawn(|| st.count += 1)
+ () }
+    }
+    k()
+}
+
+// A closure returned from a helper that takes the scope.
+fn mk(s: Scope, st: &Stats) -> fn() / mut(st) {
+    || { s.spawn(|| st.count += 1)
+ () }
+}
+
+fn via_helper(st: &Stats) / mut(st), async {
+    let k = || print(0)
+    scope { s =>
+        k = mk(s, st)
+    }
+    k()
+}
+
+fn main() / async {
+    let st = Stats { count: 0 }
+    nested(&st)
+}

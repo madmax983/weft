@@ -1,0 +1,8 @@
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let o = Some(|| print(r + 1))
+    v.clear()
+    match o { Some(f) => f(), None => print(0) }
+}

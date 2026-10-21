@@ -1,0 +1,46 @@
+effect Choice { multi fn choose() -> bool }
+extern type Sock { nonportable }
+extern fn open() -> Sock / blocking
+extern fn close(s: Sock) / blocking
+struct Holder { s: Sock }
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+
+fn param(s: Sock) / Choice, blocking {
+    let b = choose()   //~ W0503
+    close(s)
+}
+fn in_struct() / Choice, blocking {
+    let h = Holder { s: open() }
+    let b = choose()   //~ W0503
+    let Holder(s) = h
+    close(s)
+}
+fn in_vec() / Choice, blocking {
+    let v: Vec<Sock> = Vec.new()
+    v.push(open())
+    let b = choose()   //~ W0503
+    print(v.len())
+}
+fn in_option() / Choice, blocking {
+    let o = Some(open())
+    let b = choose()   //~ W0503
+    match o { Some(s) => close(s), None => {} }
+}
+fn listener(env: Env) / Choice, net {
+    let l = env.net.listen("x")
+    let b = choose()   //~ W0503
+    let m = l
+}
+fn immovable_param(f: &Frame) / Choice {
+    let b = choose()
+    print(f.buf[0])
+}
+fn generic_resource<T>(x: T) / Choice {
+    let b = choose()
+    let y = x
+}
+fn call_generic() / Choice, blocking {
+    generic_resource(open())   //~ W0503
+}
+fn main() {
+}

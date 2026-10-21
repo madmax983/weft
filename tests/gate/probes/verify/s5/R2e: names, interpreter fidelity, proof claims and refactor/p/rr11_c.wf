@@ -1,0 +1,20 @@
+// Nested paths and inner modules naming outer effects.
+mod a {
+    pub effect Note { fn note(x: u64) }
+    mod b {
+        pub effect Deep { fn deep() -> u64 }
+        pub fn d() -> u64 / Deep { deep() }
+        pub fn n() / Note { note(5) }
+    }
+    pub fn f() -> u64 / b.Deep { b.d() }
+}
+mod c {
+    pub fn k() -> u64 / a.b.Deep { a.b.d() }
+    pub fn m() / a.Note { a.b.n() }
+}
+fn main() {
+    print(handle a.b.Deep { fn deep() { resume(7) } } in a.f())
+    print(handle a.b.Deep { fn deep() { resume(8) } } in c.k())
+    handle a.Note { fn note(x) { print(x)
+ resume(()) } } in c.m()
+}

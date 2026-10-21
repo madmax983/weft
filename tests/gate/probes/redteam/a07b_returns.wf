@@ -1,0 +1,17 @@
+fn find(v: &Vec<u64>) -> Option<&u64> { Some(&v[0]) }
+fn use_find() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let o = find(&v)
+    v.push(2)
+    match o {
+        Some(r) => print(r),
+        None => {}
+    }
+}
+fn local_ref() -> Option<&u64> {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    Some(&v[0])
+}
+fn noplace_tuple(v: &Vec<u64>) -> (&u64, u64) { (&v[0], 1) }

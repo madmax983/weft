@@ -1,0 +1,27 @@
+// The clause does not resume. Its value, a reference into its argument, is the
+// value of the `handle`. The argument is `v`, so `r` can point into `v`.
+effect Pick { fn pick(a: &Vec<u64>) -> u64 }
+
+fn f(v: &Vec<u64>, w: &Vec<u64>) / mut(v) {
+    let r = handle Pick { fn pick(a) { &a[0] } } in {
+        let n = pick(v)
+        &w[0]
+    }
+    v.clear()
+    print(r)
+}
+fn g_unused(v: &Vec<u64>, w: &Vec<u64>) / mut(v) {
+    let r = handle Pick { fn pick(a) { &a[0] } } in {
+        let n = pick(v)
+        &v[0]
+    }
+    v.clear()
+    print(r)
+}
+fn main() {
+    let v = Vec.new()
+    v.push(7)
+    let w = Vec.new()
+    w.push(9)
+    f(&v, &w)
+}

@@ -1,0 +1,14 @@
+struct H { f: fn() }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn run_h(h: &H) { let g = h.f; g() }
+fn main() {
+    let v = mk_v()
+    let h = H { f: || print(take_v(v)) }
+    scope { s =>
+        s.spawn(|| { let g = h.f; g() })
+        s.spawn(|| { let g = h.f; g() })
+    }
+}

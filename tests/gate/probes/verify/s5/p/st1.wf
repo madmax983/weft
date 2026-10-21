@@ -1,0 +1,8 @@
+fn main() / async {
+    let r = Rc.new(1)
+    let v = Vec.new()
+    v.push(r)
+    scope { s =>
+        s.spawn(|| print(v.len()))
+    }
+}

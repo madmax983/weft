@@ -1,0 +1,81 @@
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) {}
+effect Run { fn run(f: fn()) }
+fn o01() / Run {
+    let b = Buf { items: Vec.new() }
+    run(|| eat(b))
+}
+fn o02() {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    loop { f()
+ break }
+}
+fn o03(n: u32) {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    for i in 0..n { f() }
+}
+fn twice(f: fn()) { f()
+ f() }
+fn pass(f: fn()) { twice(f) }
+fn o04() {
+    let b = Buf { items: Vec.new() }
+    pass(|| eat(b))
+}
+fn store(f: fn()) -> fn() { f }
+fn o05() {
+    let b = Buf { items: Vec.new() }
+    let g = store(|| eat(b))
+    g()
+    g()
+}
+struct Holder { f: fn() }
+fn o06() {
+    let b = Buf { items: Vec.new() }
+    let h = Holder { f: || print(1) }
+    h.f = || eat(b)
+    let g = h.f
+    g()
+    g()
+}
+fn o07() {
+    let b = Buf { items: Vec.new() }
+    let v: Vec<fn()> = Vec.new()
+    v.push(|| eat(b))
+    for g in v[] { }
+}
+fn o08() {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    let t = (f, 1)
+    let (g, n) = t
+    g()
+    f()
+}
+fn o09() {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    let g = || { f()
+ f() }
+}
+fn apply(f: fn()) { f() }
+fn o10() {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    apply(f)
+    apply(f)
+}
+fn twice_item(f: fn()) { let g = f
+ g()
+ g() }
+fn o11() {
+    let b = Buf { items: Vec.new() }
+    twice_item(|| eat(b))
+}
+fn o12() {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    let k = twice
+    k(f)
+}

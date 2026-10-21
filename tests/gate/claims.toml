@@ -1,0 +1,3140 @@
+# The claims file of the diff gate (docs/plan/core-ir.md, section 2.5, stage G7).
+#
+# Each claim says what the `ir` pipeline must do with the repro of a finding of
+# `docs/ir.md` section 10. `crates/weft-gate/tests/claims.rs` checks the
+# claims (`cargo test -p weft-gate --test claims`). A claim is on when its
+# `stage` is in `done` and each group of its `group` set is on in the `ir`
+# pipeline (`Options::ir_groups`). An `interp` claim needs only its stage.
+# Before stage F1 no group is on, so each claim is off; the test then checks
+# that each repro exists. From stage F1 on, the test also checks that `group`
+# is the union of the groups that `irbuild/scope.rs` computes for the repros.
+# A failure changes the code or the verdict (docs/ir.md section 10).
+#
+# [[claim]]
+# finding = "M3"          # the finding id, as the ledger writes it
+# kind = "unsound"        # unsound: the ir pipeline must reject each repro
+#                         # fp: a false positive; the ir pipeline must accept each repro
+#                         # sound: a correct program (a control, or a repro that a fix
+#                         #   made correct); the ir pipeline must accept it
+#                         # interp: the oracle of the IR engine must not fault (from
+#                         #   the IR oracle cache)
+#                         # speed: the ir pipeline must check each repro in `limit_ms`
+#                         #   (a release build; a debug build gets 20 times the limit)
+# verdict = "construction"  # construction, one-rule, stays, partly or none (docs/ir.md 10)
+# group = "AD"            # the construct groups that the repros use (group A included)
+# stage = "F15"           # the stage that turns the claim on (docs/ir.md 10.4, the
+#                         # plan text of the stage, or the stage of the last group)
+# repro = ["tests/gate/probes/ir/work/machine/m8_abort_value_into_body.wf"]
+# code = "W0301"          # optional. unsound: the rejection must have this code.
+#                         # fp and sound with a line: no error with this code there
+# line = 11               # optional. unsound: an error at this line. fp and sound:
+#                         # no error at this line (other lines can have errors)
+# exact = ["W0601"]       # optional, unsound only: exactly these error codes
+# limit_ms = 1000         # speed only
+# note = "..."            # the shape, or why the claim has its kind
+#
+# How stage G7 made the claims. One claim for each row of docs/ir.md 10.4 and
+# for each finding of 10.2 (and its controls). Then one claim for each finding
+# of `docs/plan/core-ir-inputs/findings.py` with the verdict "construction" or
+# "one rule" that has a repro among the hand probes: the repro paths of the
+# round reports, of the stage results (V001 to V138, numbered as in
+# root_causes.md Appendix B) and of the file names, and the `open-old` entries
+# of the ledger. A repro of an unsound finding is in a claim if the old pipeline
+# rejects it or the `ast` oracle faults on it (stage G6 baseline and oracle
+# cache). A repro of a false positive is in a claim if the old pipeline accepts
+# it and the oracle does not fault, or with the `line` of the false positive.
+# A finding with no claim has a comment line `# ID: reason` at the end of the
+# file. The `group` sets come from a syntactic preview of the scope rules of
+# plan section 2.6; stage F1 checks them against `irbuild/scope.rs`. Claims of
+# one finding with different group sets are separate claims.
+#
+# A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
+# follow-up stage `F8.1` is a stage id too).
+
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7"]
+
+
+# ----------------------------------------------------------------------
+# docs/ir.md 10.4: the blockers of rounds 2 and 3 and the items of r3/issues.md
+
+
+[[claim]]
+finding = "FD1"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F7"
+repro = [
+    "tests/gate/probes/r2/fidelity/repro/FD1_onabort_mutates_group.wf",
+    "tests/gate/probes/r2/fidelity/repro/FD1_onabort_perform_no_handler.wf",
+    "tests/gate/probes/r2/fidelity/repro/FD1_onabort_perform_outer_handler.wf",
+]
+note = "The effects of an `on abort` function are not checked (the unwinder call is not a call)"
+
+[[claim]]
+finding = "QA2"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F7"
+repro = ["tests/gate/probes/r2/quality/repro/QA2_on_abort_effects.wf"]
+note = "The effects of an `on abort` function do not count"
+
+[[claim]]
+finding = "FD2"
+kind = "interp"
+verdict = "none"
+group = "AD"
+stage = "I3"
+repro = ["tests/gate/probes/r2/fidelity/repro/FD2_multi_nested_drop.wf"]
+note = "Nested multi continuations share one exec record"
+
+[[claim]]
+finding = "FD3"
+kind = "unsound"
+verdict = "one-rule"
+group = "A"
+stage = "F13"
+repro = ["tests/gate/probes/r2/fidelity/repro/FD3_rc_backchannel.wf"]
+code = "W0204"
+note = "A reference stored into an rc object outlives its owner"
+
+[[claim]]
+finding = "IP1"
+kind = "unsound"
+verdict = "stays"
+group = "ACDE"
+stage = "F19"
+repro = [
+    "tests/gate/probes/r2/interp/repro/ip_fail_resume_fork.wf",
+    "tests/gate/probes/r2/interp/repro/ip_fail_resume_join.wf",
+    "tests/gate/probes/r2/interp/repro/ip_fail_resume_scope.wf",
+    "tests/gate/probes/r2/interp/repro/ip_fail_resume_timeout.wf",
+]
+note = "A Fail clause can resume a failure that the runtime raises"
+
+[[claim]]
+finding = "IP3"
+kind = "sound"
+verdict = "stays"
+group = "ACE"
+stage = "F19"
+repro = ["tests/gate/probes/r2/interp/repro/ip_steal_shares_rc.wf"]
+note = "A stealable task shares an Rc with a pinned child; the old pipeline accepts it today and the oracle is clean; the ir pipeline keeps the result"
+
+[[claim]]
+finding = "IP6"
+kind = "sound"
+verdict = "construction"
+group = "ACE"
+stage = "F20"
+repro = ["tests/gate/probes/r2/interp/repro/ip_fork_unit.wf"]
+note = "`fork` gives () when each branch is (): a generic caller faults; a correct program since the round-2 fix (sema and the interpreter agree); the ir pipeline must accept it"
+
+[[claim]]
+finding = "IP6"
+kind = "sound"
+verdict = "construction"
+group = "ACEF"
+stage = "F20"
+repro = ["tests/gate/probes/r2/interp/repro/ip_fork_generic_unit.wf"]
+note = "`fork` gives () when each branch is (): a generic caller faults; a correct program since the round-2 fix (sema and the interpreter agree); the ir pipeline must accept it"
+
+[[claim]]
+finding = "OR1"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F12"
+repro = ["tests/gate/probes/r2/oracle/repro/OR1_returned_closure.wf"]
+note = "A returned closure that captures a reference parameter does not point into the argument"
+
+[[claim]]
+finding = "OR2"
+kind = "sound"
+verdict = "construction"
+group = "ACE"
+stage = "F11"
+repro = ["tests/gate/probes/r2/oracle/repro/OR2_closure_move_timing.wf"]
+note = "Moves of captures: the checker at creation, the interpreter at run (and a false W0302); a correct program since the round-2 fix (sema and the interpreter agree); the ir pipeline must accept it"
+
+[[claim]]
+finding = "OR3"
+kind = "unsound"
+verdict = "one-rule"
+group = "ABC"
+stage = "F12"
+repro = ["tests/gate/probes/r2/oracle/repro/OR3_repeated_callback.wf"]
+code = "W0301"
+note = "A callee that calls a callback twice is not checked for W0301"
+
+[[claim]]
+finding = "OR5"
+kind = "unsound"
+verdict = "stays"
+group = "ACE"
+stage = "F18"
+repro = ["tests/gate/probes/r2/oracle/repro/OR5_borrow_during_task.wf"]
+note = "A reference made while a task runs stays valid after the join; `&v[i]` is not a read"
+
+[[claim]]
+finding = "OR6"
+kind = "sound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/r2/oracle/repro/OR6_expr_statement_move.wf"]
+note = "A variable as an expression statement: the interpreter moves and drops it, sema sees nothing; a correct program since the round-2 fix (sema and the interpreter agree); the ir pipeline must accept it"
+
+[[claim]]
+finding = "OR7"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACE"
+stage = "F19"
+repro = ["tests/gate/probes/r2/oracle/repro/OR7_tasks_of_fn_params.wf"]
+note = "Function parameters that run as tasks or fork branches: no W0405, W0401, W0403, pinning"
+
+[[claim]]
+finding = "OR8"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F18"
+repro = ["tests/gate/probes/r2/oracle/repro/OR8_task_whole_local.wf"]
+note = "A use or a new value of a whole local is not an access for W0405"
+
+[[claim]]
+finding = "OR9"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDE"
+stage = "F19"
+repro = ["tests/gate/probes/r2/oracle/repro/OR9_resume_in_task.wf"]
+note = "A `resume` inside a spawned task runs the handled body on another task"
+
+[[claim]]
+finding = "QA1"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F10"
+repro = ["tests/gate/probes/r2/quality/repro/QA1_loop_pass_cap.wf"]
+note = "Loop fixpoint stops after 8 passes"
+
+[[claim]]
+finding = "QA3"
+kind = "unsound"
+verdict = "stays"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/r2/quality/repro/QA3_param_place_order.wf"]
+note = "An `in` place that names a later parameter gets no places (substitution order)"
+
+[[claim]]
+finding = "RR1"
+kind = "unsound"
+verdict = "construction"
+group = "ABCE"
+stage = "F10"
+repro = ["tests/gate/probes/r2/redteam/repro/RR1_loop_chain.wf"]
+note = "The loop lowering stops after 8 passes: a chain of locals loses places, fn values, tasks"
+
+[[claim]]
+finding = "RR2"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACE"
+stage = "F12"
+repro = ["tests/gate/probes/r2/redteam/repro/RR2_one_summary.wf"]
+note = "A function type carries one closure summary: later closures in an array or Vec are lost"
+
+[[claim]]
+finding = "RR3"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/r2/redteam/repro/RR3_continuation_escape.wf"]
+note = "A closure that resumes a continuation leaves its clause"
+
+[[claim]]
+finding = "RR4"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F19"
+repro = ["tests/gate/probes/r2/redteam/repro/RR4_scope_escape.wf"]
+note = "A closure that captures the scope capability `s` leaves the scope"
+
+[[claim]]
+finding = "RR5"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F16"
+repro = ["tests/gate/probes/r2/redteam/repro/RR5_resume_free.wf"]
+note = "`resume` carries the mutations of the handled body, not its frees"
+
+[[claim]]
+finding = "RR6"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/r2/redteam/repro/RR6_resume_fn_value.wf"]
+note = "A function value that `resume` gives has no summary in the handled body"
+
+[[claim]]
+finding = "RR7"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F11"
+repro = ["tests/gate/probes/r2/redteam/repro/RR7_late_capture.wf"]
+code = "W0301"
+note = "A closure keeps the creation-time places, summary and modes of a captured variable"
+
+[[claim]]
+finding = "RR8"
+kind = "unsound"
+verdict = "stays"
+group = "AF"
+stage = "F8"
+repro = ["tests/gate/probes/r2/redteam/repro/RR8_vec_clear.wf"]
+note = "`Vec.clear` drops linear elements (prelude signature has no `drops`)"
+
+[[claim]]
+finding = "RR9"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACF"
+stage = "F20"
+repro = ["tests/gate/probes/r2/redteam/repro/RR9_generic_item_drops.wf"]
+note = "A generic item given as a function value drops a linear value"
+
+[[claim]]
+finding = "RR10"
+kind = "sound"
+verdict = "construction"
+group = "AC"
+stage = "F8"
+repro = ["tests/gate/probes/r2/redteam/repro/RR10_named_args.wf"]
+note = "Named arguments: sema binds by name, the interpreter by position; a correct program since the round-2 fix (sema and the interpreter agree); the ir pipeline must accept it"
+
+[[claim]]
+finding = "F3-1"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F7"
+repro = [
+    "tests/gate/probes/r3/fidelity/repro/F3-1_on_abort_ref_in_value.wf",
+    "tests/gate/probes/r3/fidelity/repro/F3-1_on_abort_ref_in_value_more.wf",
+]
+note = "W0118 misses an `on abort` change through a reference in the value"
+
+[[claim]]
+finding = "F3-2"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F15"
+repro = [
+    "tests/gate/probes/r3/fidelity/repro/F3-2_closure_keeps_callee_ref.wf",
+    "tests/gate/probes/r3/fidelity/repro/F3-2_closure_stores_callee_ref.wf",
+]
+note = "A closure or clause keeps its reference parameter in an outer local; a callee gives its own local"
+
+[[claim]]
+finding = "F3-2"
+kind = "unsound"
+verdict = "one-rule"
+group = "AD"
+stage = "F15"
+repro = [
+    "tests/gate/probes/r3/fidelity/repro/F3-2_clause_keeps_callee_ref.wf",
+    "tests/gate/probes/r3/fidelity/repro/F3-2_clause_keeps_callee_ref_abort.wf",
+    "tests/gate/probes/r3/fidelity/repro/F3-2_clause_stores_callee_ref.wf",
+]
+note = "A closure or clause keeps its reference parameter in an outer local; a callee gives its own local"
+
+[[claim]]
+finding = "F3-3"
+kind = "unsound"
+verdict = "construction"
+group = "ADF"
+stage = "F20"
+repro = [
+    "tests/gate/probes/r3/fidelity/repro/F3-3_generic_on_abort_drops.wf",
+    "tests/gate/probes/r3/fidelity/repro/F3-3_generic_on_abort_forget.wf",
+]
+note = "A generic `on abort` function drops a value of its type parameter"
+
+[[claim]]
+finding = "F3-4"
+kind = "unsound"
+verdict = "stays"
+group = "AD"
+stage = "F20"
+repro = [
+    "tests/gate/probes/r3/fidelity/repro/F3-4_on_abort_type_args.wf",
+    "tests/gate/probes/r3/fidelity/repro/F3-4_on_abort_type_args_leak.wf",
+]
+note = "The `on abort` parameter check ignores type arguments"
+
+[[claim]]
+finding = "F3-5"
+kind = "unsound"
+verdict = "stays"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/r3/fidelity/repro/F3-5_ref_above_moved_part.wf",
+    "tests/gate/probes/r3/fidelity/repro/F3-5_ref_above_moved_part_call.wf",
+]
+note = "A move of a part does not invalidate a reference to the whole value"
+
+[[claim]]
+finding = "F3-6"
+kind = "unsound"
+verdict = "stays"
+group = "ACDE"
+stage = "F18"
+repro = [
+    "tests/gate/probes/r3/fidelity/repro/F3-6_task_handle_abort.wf",
+    "tests/gate/probes/r3/fidelity/repro/F3-6_task_handle_timeout.wf",
+]
+note = "The runtime drops a linear task result (abort with a live handle, spawn statement, fork)"
+
+[[claim]]
+finding = "F3-6"
+kind = "unsound"
+verdict = "stays"
+group = "ACE"
+stage = "F18"
+repro = [
+    "tests/gate/probes/r3/fidelity/repro/F3-6_control_detach.wf",
+    "tests/gate/probes/r3/fidelity/repro/F3-6_statement_spawn.wf",
+]
+note = "The runtime drops a linear task result (abort with a live handle, spawn statement, fork)"
+
+[[claim]]
+finding = "I3-1"
+kind = "unsound"
+verdict = "stays"
+group = "ACDE"
+stage = "F18"
+repro = ["tests/gate/probes/r3/interp/repro/i3_1_task_result_no_on_abort.wf"]
+note = "The checker loses the linear result of a task"
+
+[[claim]]
+finding = "I3-1"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F18"
+repro = [
+    "tests/gate/probes/r3/interp/repro/i3_1_spawn_let_wild_drops_result.wf",
+    "tests/gate/probes/r3/interp/repro/i3_1_spawn_stmt_drops_result.wf",
+]
+code = "W0601"
+note = "The checker loses the linear result of a task; the shape of O3-4 (a spawn statement drops a linear task result): the TaskResult local of the spawn (5.1.3, 5.29)"
+
+[[claim]]
+finding = "F3-7"
+kind = "unsound"
+verdict = "construction"
+group = "ACDE"
+stage = "F18"
+repro = ["tests/gate/probes/r3/fidelity/repro/F3-7_scope_value_across_end.wf"]
+code = "W0602"
+note = "The value of a scope body is not held across the scope end; the end can abort"
+
+[[claim]]
+finding = "F3-8"
+kind = "unsound"
+verdict = "stays"
+group = "ACDE"
+stage = "F19"
+repro = [
+    "tests/gate/probes/r3/fidelity/repro/F3-8_cancelled_fork_branch_owns_linear.wf",
+    "tests/gate/probes/r3/fidelity/repro/F3-8_cancelled_task_owns_linear.wf",
+]
+note = "A cancelled task that never ran drops its linear by-value capture"
+
+[[claim]]
+finding = "F3-8"
+kind = "sound"
+verdict = "stays"
+group = "ACDE"
+stage = "F19"
+repro = ["tests/gate/probes/r3/fidelity/repro/F3-8_cancelled_task_on_abort.wf"]
+note = "A cancelled task that never ran drops its linear by-value capture; the old pipeline accepts it today and the oracle is clean; the ir pipeline keeps the result"
+
+[[claim]]
+finding = "O3-1"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F18"
+repro = ["tests/gate/probes/r3/oracle/repro/O3-1_scope_tail_move.wf"]
+note = "A place as the tail of a `scope` body moves in the interpreter, not in the checker"
+
+[[claim]]
+finding = "O3-1"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F18"
+repro = ["tests/gate/probes/r3/triage/O3-1b_scope_tail_move_value_task.wf"]
+note = "A place as the tail of a `scope` body moves in the interpreter, not in the checker"
+
+[[claim]]
+finding = "O3-2"
+kind = "unsound"
+verdict = "construction"
+group = "ADE"
+stage = "F14"
+repro = ["tests/gate/probes/r3/oracle/repro/O3-2_handled_body_temporary.wf"]
+code = "W0301"
+note = "A reference into a temporary of a handled or scope body leaves the body"
+
+[[claim]]
+finding = "O3-3"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F15"
+repro = ["tests/gate/probes/r3/oracle/repro/O3-3_clause_temporary.wf"]
+note = "A reference into a temporary of a clause leaves through the clause value or `resume`"
+
+[[claim]]
+finding = "O3-4"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F18"
+repro = ["tests/gate/probes/r3/oracle/repro/O3-4_task_result_linear_leak.wf"]
+code = "W0601"
+note = "A spawn in statement position drops a linear task result"
+
+[[claim]]
+finding = "O3-5"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACE"
+stage = "F19"
+repro = ["tests/gate/probes/r3/oracle/repro/O3-5_task_runs_field_closure.wf"]
+note = "A task or fork branch runs a closure from a struct field: no W0405, W0403"
+
+[[claim]]
+finding = "O3-6"
+kind = "unsound"
+verdict = "construction"
+group = "ACEF"
+stage = "F19"
+repro = ["tests/gate/probes/r3/oracle/repro/O3-6_task_rc_handle_move.wf"]
+code = "W0405"
+note = "A task reads through an Rc handle; the parent moves the handle"
+
+[[claim]]
+finding = "O3-14"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F16"
+repro = ["tests/gate/probes/r3/oracle/repro/O3-14_multi_tail_place.wf"]
+code = "W0302"
+note = "A tail place of a multi handled body moves once per resume; the checker counts one"
+
+[[claim]]
+finding = "Q3-1"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F20"
+repro = [
+    "tests/gate/probes/r3/quality/repro/Q3_unset_place_field_nested_generic.wf",
+    "tests/gate/probes/r3/quality/repro/Q3_unset_place_field_run.wf",
+    "tests/gate/probes/r3/quality/repro/Q3_unset_place_field_run_control.wf",
+]
+note = "A place field below a second use of one generic type gets no 'unset' variable"
+
+[[claim]]
+finding = "R3RT1"
+kind = "unsound"
+verdict = "stays"
+group = "ACD"
+stage = "F8"
+repro = ["tests/gate/probes/r3/redteam/repro/R3RT1_partial_linear_move.wf"]
+note = "A move of one part of a linear aggregate ends `live_linear` for the whole local"
+
+[[claim]]
+finding = "R3RT2"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/r3/redteam/repro/R3RT2_match_through_ref.wf"]
+note = "A `match` through a reference loses the places of a held reference"
+
+[[claim]]
+finding = "R3RT3"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F8"
+repro = ["tests/gate/probes/r3/redteam/repro/R3RT3_held_refs_at_call.wf"]
+note = "A call misses the references behind a reference argument (W0312, W0405)"
+
+[[claim]]
+finding = "R3RT4"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = ["tests/gate/probes/r3/redteam/repro/R3RT4_resume_closure_param.wf"]
+code = "W0301"
+note = "A `resume` with a closure parameter gives the operation result no places"
+
+[[claim]]
+finding = "I3-8"
+kind = "unsound"
+verdict = "construction"
+group = "ACDE"
+stage = "F19"
+repro = ["tests/gate/probes/r3/interp/repro/i3_8_multi_scope_fail.wf"]
+code = "W0503"
+note = "the oracle does not see it; the TaskResult local is a once value (W0503)"
+
+[[claim]]
+finding = "R3RT5"
+kind = "fp"
+verdict = "construction"
+group = "ABC"
+stage = "F11"
+repro = ["tests/gate/probes/r3/redteam/repro/R3RT5_byvalue_capture_scope.wf"]
+note = "A by-value capture is still tied to the variable (W0204, W0301)"
+
+[[claim]]
+finding = "R3RT6"
+kind = "fp"
+verdict = "partly"
+group = "AB"
+stage = "P1"
+repro = ["tests/gate/probes/r3/redteam/repro/R3RT6_ref_arg_flow_fp.wf"]
+note = "Reference arguments flow into each other against their types; points_into is flow-insensitive"
+
+[[claim]]
+finding = "O3-7"
+kind = "fp"
+verdict = "one-rule"
+group = "ACD"
+stage = "F14"
+repro = ["tests/gate/probes/r3/oracle/repro/O3-7_fp_op_closure_w0312.wf"]
+note = "W0312 on an operation whose closure argument conflicts with itself"
+
+[[claim]]
+finding = "O3-8"
+kind = "fp"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = ["tests/gate/probes/r3/oracle/repro/O3-8_fp_closure_inner_multi.wf"]
+note = "A closure with its own multi handler is a multi and abort point"
+
+[[claim]]
+finding = "O3-9"
+kind = "fp"
+verdict = "one-rule"
+group = "ACEF"
+stage = "F18"
+repro = ["tests/gate/probes/r3/oracle/repro/O3-9_fp_join_not_seen.wf"]
+note = "A join through a callee, tuple, Option, `id` or closure does not end the task"
+
+[[claim]]
+finding = "O3-10"
+kind = "fp"
+verdict = "construction"
+group = "ACE"
+stage = "F19"
+repro = ["tests/gate/probes/r3/oracle/repro/O3-10_fp_spawn_param_multi.wf"]
+note = "Two spawns of function parameters get W0503 when the program has a multi op"
+
+[[claim]]
+finding = "O3-11"
+kind = "fp"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/r3/oracle/repro/O3-11_fp_move_then_refill.wf"]
+note = "A move and then a new value of a captured variable invalidates the closure"
+
+[[claim]]
+finding = "O3-12"
+kind = "fp"
+verdict = "one-rule"
+group = "ACDE"
+stage = "F19"
+repro = ["tests/gate/probes/r3/oracle/repro/O3-12_fp_clause_spawn_self.wf"]
+note = "A clause conflicts with the task that it spawns"
+
+[[claim]]
+finding = "F3-11"
+kind = "fp"
+verdict = "one-rule"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/r3/fidelity/repro/F3-11_closure_rebind.wf"]
+note = "A closure that rebinds a captured reference does not rebind it where it runs"
+
+[[claim]]
+finding = "R3RT7"
+kind = "fp"
+verdict = "construction"
+group = "AD"
+stage = "F14"
+repro = ["tests/gate/probes/r3/redteam/repro/R3RT7_op_in_param.wf"]
+code = "W0312"
+line = 20
+note = "An `in` place on an operation parameter has no effect; an aliased `in` argument of an operation is not W0312"
+
+[[claim]]
+finding = "R3RT7"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F14"
+repro = ["tests/gate/probes/r3/redteam/repro/R3RT7_op_in_param.wf"]
+code = "W0203"
+line = 29
+note = "An `in` place on an operation parameter has no effect; an argument outside the `in` place of an operation is W0203, not W0312"
+
+[[claim]]
+finding = "R3RT10"
+kind = "fp"
+verdict = "one-rule"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/r3/redteam/repro/R3RT10_part_refresh_fp.wf"]
+note = "A new value of a part that holds a stale reference is W0301"
+
+[[claim]]
+finding = "Q3-2"
+kind = "speed"
+verdict = "construction"
+group = "AC"
+stage = "F12"
+repro = [
+    "tests/gate/probes/r3/quality/repro/Q3_closure_chain_22.wf",
+    "tests/gate/probes/r3/quality/repro/Q3_closure_dag_16.wf",
+    "tests/gate/probes/r3/quality/repro/Q3_closure_dag_18.wf",
+    "tests/gate/probes/r3/quality/repro/Q3_closure_helpers_16.wf",
+]
+limit_ms = 1000
+
+[[claim]]
+finding = "issues-N1"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F18"
+repro = ["tests/gate/probes/r3/fidelity/repro/F3-6_control_detach.wf"]
+exact = ["W0601"]
+note = "one W0601 and no W0602 for the drop pair of `detach`"
+
+# ----------------------------------------------------------------------
+# docs/ir.md 10.2: the new findings of the IR design, and the controls
+
+
+[[claim]]
+finding = "M1"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F14"
+repro = [
+    "tests/gate/probes/ir/work/machine/m1_post_resume.wf",
+    "tests/gate/probes/ir/work/mir/postres.wf",
+]
+code = "W0301"
+note = "clause code after `resume` changes a place that the value of the handled body points into"
+
+[[claim]]
+finding = "M2"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F16"
+repro = ["tests/gate/probes/ir/work/machine/m6b_resume_result_ref.wf"]
+code = "W0301"
+note = "the result of `resume` does not point where the value of the handled body points"
+
+[[claim]]
+finding = "M3"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F15"
+repro = ["tests/gate/probes/ir/work/machine/m8_abort_value_into_body.wf"]
+code = "W0301"
+note = "a clause with no resume returns a reference into a local of the handled body"
+
+[[claim]]
+finding = "M4"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F15"
+repro = ["tests/gate/probes/ir/work/machine/m10_abort_value_callee_local.wf"]
+code = "W0301"
+note = "a clause with no resume returns a reference into a local of a callee that performs"
+
+[[claim]]
+finding = "J1"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F14"
+repro = ["tests/gate/probes/ir/judge_sound/j1_post_resume_keep.wf"]
+code = "W0301"
+note = "a clause changes a place after `resume`; the body kept a reference in a site local"
+
+[[claim]]
+finding = "J2"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F14"
+repro = ["tests/gate/probes/ir/judge_sound/j2_post_resume_closure.wf"]
+code = "W0301"
+note = "a clause changes a place after a resume through a closure"
+
+[[claim]]
+finding = "J3"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F14"
+repro = ["tests/gate/probes/ir/judge_sound/j3_resuming_clause_value.wf"]
+code = "W0301"
+note = "a resuming clause returns another reference"
+
+[[claim]]
+finding = "J4"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F16"
+repro = ["tests/gate/probes/ir/judge_sound/j4_multi_outer_ref.wf"]
+note = "rejected today; must stay rejected"
+
+[[claim]]
+finding = "J5"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/ir/judge_sound/j5_kept_borrow.wf"]
+note = "a closure borrows a captured plain value after its scope"
+
+[[claim]]
+finding = "J5d"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/ir/judge_sound/j5d_maker_borrow.wf"]
+code = "W0204"
+note = "a closure that a maker returns borrows a captured plain value after its scope"
+
+[[claim]]
+finding = "J6"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F15"
+repro = ["tests/gate/probes/ir/judge_sound/j6_resume_temp_keep.wf"]
+note = "R3a rejects it; must stay rejected"
+
+[[claim]]
+finding = "map-N1"
+kind = "unsound"
+verdict = "one-rule"
+group = "AD"
+stage = "F8"
+repro = ["tests/gate/probes/ir/work/map/opres.wf"]
+note = "the result of an operation of a handler of a caller has no places"
+
+[[claim]]
+finding = "map-N2"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F12"
+repro = ["tests/gate/probes/ir/work/map/fnres2.wf"]
+note = "the result of a call of a function parameter has no places of the caller"
+
+[[claim]]
+finding = "sem-N1"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/ir/probes/p2_late_operand_ref.wf"]
+note = "a place operand is read later than the facts say"
+
+[[claim]]
+finding = "sem-N2"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/ir/probes/p9_print_late.wf"]
+note = "an operand of `print` is read later than the facts say"
+
+[[claim]]
+finding = "sem-N3"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/ir/probes/p10_index_late.wf"]
+note = "the base of an index is read later than the facts say"
+
+[[claim]]
+finding = "sem-N4"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F7"
+repro = [
+    "tests/gate/probes/ir/probes/p25_assert_abort.wf",
+    "tests/gate/probes/ir/probes/p27_assert_callee.wf",
+]
+code = "W0602"
+note = "`assert` aborts with no abort edge"
+
+[[claim]]
+finding = "J5"
+kind = "sound"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/ir/judge_sound/j5b_kept_write.wf"]
+note = "control: a closure writes a kept integer and leaves its scope"
+
+[[claim]]
+finding = "J5"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F11"
+repro = ["tests/gate/probes/ir/judge_sound/j5c_kept_borrow_task.wf"]
+note = "control: W0405 today; must stay rejected"
+
+[[claim]]
+finding = "J5"
+kind = "sound"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/ir/work/judge/p/d5_count.wf"]
+note = "control: a returned counter closure"
+
+[[claim]]
+finding = "M2"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F16"
+repro = ["tests/gate/probes/ir/work/machine/m6_resume_result_body_local.wf"]
+note = "control: a correct program"
+
+[[claim]]
+finding = "M1"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F14"
+repro = ["tests/gate/probes/ir/work/machine/m9_resume_twice_tail.wf"]
+note = "control: a correct program"
+
+# ----------------------------------------------------------------------
+# The `open-old` entries of the ledger (stage G6) that the claims above do not have
+
+
+[[claim]]
+finding = "O3-5"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACE"
+stage = "F19"
+repro = [
+    "tests/gate/probes/r2/oracle/probes/c3_task_stored.wf",
+    "tests/gate/probes/r3/oracle/probes/sc1_field_local_task.wf",
+    "tests/gate/probes/r3/oracle/probes/sc2_field_in_task.wf",
+    "tests/gate/probes/r3/oracle/probes/sc3_field_spawn_direct.wf",
+    "tests/gate/probes/r3/oracle/probes/sc10_field_two_tasks.wf",
+    "tests/gate/probes/r3/oracle/probes/sd1_field_assign.wf",
+    "tests/gate/probes/r3/oracle/probes/sd2_nested_struct.wf",
+    "tests/gate/probes/r3/oracle/probes/sd4_callee_runs_field.wf",
+    "tests/gate/probes/r3/oracle/probes/sd6_fork_field.wf",
+]
+note = "A task or fork branch runs a closure from a struct field: no W0405, W0403; open-old (stage G6): the old pipeline accepts it and the oracle faults"
+
+[[claim]]
+finding = "O3-6"
+kind = "unsound"
+verdict = "construction"
+group = "ACEF"
+stage = "F19"
+repro = [
+    "tests/gate/probes/r3/oracle/probes/rf1_field_rc_rebind.wf",
+    "tests/gate/probes/r3/oracle/probes/rf2_field_rc_move.wf",
+    "tests/gate/probes/r3/oracle/probes/rf3_whole_move.wf",
+    "tests/gate/probes/r3/oracle/probes/rh6_task_rc_scope_end.wf",
+    "tests/gate/probes/r3/oracle/probes/rm1_rc_move_generic.wf",
+    "tests/gate/probes/r3/oracle/probes/rm2_rc_move_let.wf",
+    "tests/gate/probes/r3/oracle/probes/rm3_rc_move_typed.wf",
+    "tests/gate/probes/r3/oracle/probes/rm5_rc_rebind.wf",
+]
+note = "A task reads through an Rc handle; the parent moves the handle; open-old (stage G6): the old pipeline accepts it and the oracle faults"
+
+[[claim]]
+finding = "O3-4"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F18"
+repro = [
+    "tests/gate/probes/r3/interp/probe/g16_spawn_stmt_lin.wf",
+    "tests/gate/probes/r3/interp/probe/g16_v.wf",
+]
+note = "A spawn in statement position drops a linear task result; open-old (stage G6): the old pipeline accepts it and the oracle faults"
+
+[[claim]]
+finding = "O3-4"
+kind = "unsound"
+verdict = "construction"
+group = "ACEF"
+stage = "F18"
+repro = [
+    "tests/gate/probes/r3/oracle/probes/ta1_task_returns_lin.wf",
+    "tests/gate/probes/r3/oracle/probes/ta3_task_returns_lin_stmt.wf",
+    "tests/gate/probes/r3/oracle/probes/ta7_task_returns_vec_lin.wf",
+    "tests/gate/probes/r3/oracle/probes/ta8_spawn_lin_in_fn.wf",
+]
+note = "A spawn in statement position drops a linear task result; open-old (stage G6): the old pipeline accepts it and the oracle faults"
+
+[[claim]]
+finding = "F3-2"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F15"
+repro = [
+    "tests/gate/probes/r3/fidelity/p/cl1.wf",
+    "tests/gate/probes/r3/fidelity/p/cl2.wf",
+]
+note = "A closure or clause keeps its reference parameter in an outer local; a callee gives its own local; open-old (stage G6): the old pipeline accepts it and the oracle faults"
+
+[[claim]]
+finding = "F3-2"
+kind = "unsound"
+verdict = "one-rule"
+group = "AD"
+stage = "F15"
+repro = [
+    "tests/gate/probes/r3/fidelity/p/st2.wf",
+    "tests/gate/probes/r3/fidelity/p/st3.wf",
+    "tests/gate/probes/r3/fidelity/p/st6.wf",
+    "tests/gate/probes/r3/fidelity/p/st7.wf",
+]
+note = "A closure or clause keeps its reference parameter in an outer local; a callee gives its own local; open-old (stage G6): the old pipeline accepts it and the oracle faults"
+
+[[claim]]
+finding = "R3RT2"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/r3/redteam/p/i2_refenum.wf",
+    "tests/gate/probes/r3/redteam/p/i4_matchref.wf",
+]
+note = "A `match` through a reference loses the places of a held reference; open-old (stage G6): the old pipeline accepts it and the oracle faults"
+
+[[claim]]
+finding = "R3RT3"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/r3/redteam/p/q1_held.wf"]
+note = "A call misses the references behind a reference argument (W0312, W0405); open-old (stage G6): the old pipeline accepts it and the oracle faults"
+
+[[claim]]
+finding = "OL-S5a-store"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/r3/redteam/p/q6_held_closure.wf"]
+note = "A reference stored behind a closure or clause parameter is seen as the outer place; open-old (stage G6): the old pipeline accepts it and the oracle faults"
+
+[[claim]]
+finding = "OL-R2d-box"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F19"
+repro = ["tests/gate/probes/verify/s5/R2d/p/c2_box_borrow_nouse.wf"]
+note = "A borrow through a Box deref does not read the Box (W0405); open-old (stage G6): the old pipeline accepts it and the oracle faults"
+
+[[claim]]
+finding = "RR7"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = [
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/p/stale_mut.wf",
+    "tests/gate/probes/verify/s5/R2e_diff/p/nc7_late_mut.wf",
+]
+note = "A closure keeps the creation-time places, summary and modes of a captured variable; open-old (stage G6): the old pipeline accepts it and the oracle faults"
+
+[[claim]]
+finding = "RR7"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = [
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/p/rr10_eff.wf",
+    "tests/gate/probes/verify/s5/R2e_diff/p/nc6_late_eff.wf",
+]
+note = "A closure keeps the creation-time places, summary and modes of a captured variable; open-old (stage G6): the old pipeline accepts it and the oracle faults"
+
+# ----------------------------------------------------------------------
+# The findings of findings.py with the verdict "construction" or "one rule"
+
+
+[[claim]]
+finding = "RT1"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/redteam/a01_move_owner.wf",
+    "tests/gate/probes/redteam/a02_scope_dangle.wf",
+    "tests/gate/probes/redteam/a11_rc_drop.wf",
+    "tests/gate/probes/redteam/a15_byvalue_ret.wf",
+]
+note = "A move or the scope end of an owner does not invalidate references into it"
+
+[[claim]]
+finding = "RT2"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F19"
+repro = ["tests/gate/probes/redteam/a13_pending.wf"]
+note = "Queued uses and reads go into the next node, which can be another component or branch"
+
+[[claim]]
+finding = "RT2"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = ["tests/gate/probes/redteam/a14_pending_branch.wf"]
+note = "Queued uses and reads go into the next node, which can be another component or branch"
+
+[[claim]]
+finding = "RT3a"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/redteam/a07b_returns.wf"]
+note = "References lose their places through struct and array literals, value-call results and by-value match bindings"
+
+[[claim]]
+finding = "RT3a"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/redteam/a05_closure_tuple.wf"]
+note = "References lose their places through struct and array literals, value-call results and by-value match bindings"
+
+[[claim]]
+finding = "RT3b"
+kind = "unsound"
+verdict = "one-rule"
+group = "AB"
+stage = "F10"
+repro = ["tests/gate/probes/redteam/a06_containers.wf"]
+note = "References lose their places through generic callees and containers (`id(&x)`, `Box.new(&x)`, `push`)"
+
+[[claim]]
+finding = "RT3b"
+kind = "unsound"
+verdict = "one-rule"
+group = "AF"
+stage = "F20"
+repro = ["tests/gate/probes/redteam/g01_generic.wf"]
+note = "References lose their places through generic callees and containers (`id(&x)`, `Box.new(&x)`, `push`)"
+
+[[claim]]
+finding = "RT4"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/redteam/a04_arg_order.wf"]
+note = "An argument reference is held only from after the later arguments run"
+
+[[claim]]
+finding = "RT5"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/redteam/a10_callee_closure.wf"]
+note = "A closure argument that captured a reference is not a call argument (W0312)"
+
+[[claim]]
+finding = "RT6"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F12"
+repro = [
+    "tests/gate/probes/redteam/a03_fn_item_value.wf",
+    "tests/gate/probes/redteam/e04_if_item.wf",
+]
+note = "A call through a fn-item value ignores its mut places and aborts; `if` keeps one item"
+
+[[claim]]
+finding = "RT7"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F12"
+repro = [
+    "tests/gate/probes/redteam/e01_effects_hidden.wf",
+    "tests/gate/probes/redteam/a05_closure_tuple.wf",
+]
+note = "Closure summaries are lost through returns, tuples, `if` and fields"
+
+[[claim]]
+finding = "RT8"
+kind = "unsound"
+verdict = "construction"
+group = "ABCE"
+stage = "F19"
+repro = ["tests/gate/probes/redteam/t02_fork.wf"]
+note = "The mode of a closure (linear, once, nonportable, uniq) does not follow its captures"
+
+[[claim]]
+finding = "RT8"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/redteam/l02_linear_more.wf",
+    "tests/gate/probes/redteam/e07_multi_uniq.wf",
+]
+note = "The mode of a closure (linear, once, nonportable, uniq) does not follow its captures"
+
+[[claim]]
+finding = "RT8"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/redteam/e02_resume_closure.wf"]
+note = "The mode of a closure (linear, once, nonportable, uniq) does not follow its captures"
+
+[[claim]]
+finding = "RT9"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/redteam/m01_write_through.wf"]
+note = "`c += 1` on a reference local is a rebind, not a write through it"
+
+[[claim]]
+finding = "RT10"
+kind = "unsound"
+verdict = "construction"
+group = "ABCE"
+stage = "F19"
+repro = ["tests/gate/probes/redteam/t01_tasks.wf"]
+note = "A use of a reference variable as a value is not a read (W0405)"
+
+[[claim]]
+finding = "RT10"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F19"
+repro = ["tests/gate/probes/redteam/t04_task_dangle.wf"]
+note = "A use of a reference variable as a value is not a read (W0405)"
+
+[[claim]]
+finding = "RT11"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = ["tests/gate/probes/redteam/c01_closure_return.wf"]
+note = "`return`/`break` in closure, handled and scope bodies go to the wrong target"
+
+[[claim]]
+finding = "RT11"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/redteam/c02_return_handle.wf"]
+note = "`return`/`break` in closure, handled and scope bodies go to the wrong target"
+
+[[claim]]
+finding = "RT11"
+kind = "unsound"
+verdict = "construction"
+group = "AE"
+stage = "F19"
+repro = ["tests/gate/probes/redteam/c03_return_scope.wf"]
+note = "`return`/`break` in closure, handled and scope bodies go to the wrong target"
+
+[[claim]]
+finding = "RT12"
+kind = "unsound"
+verdict = "construction"
+group = "ACDE"
+stage = "F19"
+repro = ["tests/gate/probes/redteam/t03_items.wf"]
+note = "A spawn in a closure is invisible at its call; W0314 misses items and parameters"
+
+[[claim]]
+finding = "RT12"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F19"
+repro = ["tests/gate/probes/redteam/t06_spawn_closure.wf"]
+note = "A spawn in a closure is invisible at its call; W0314 misses items and parameters"
+
+[[claim]]
+finding = "RT13"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/redteam/e03_multi_passthrough.wf"]
+note = "A multi operation that a function parameter reaches is not a multi point"
+
+[[claim]]
+finding = "RT14"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/redteam/l01_linear.wf",
+    "tests/gate/probes/redteam/l02_linear_more.wf",
+]
+note = "Linear values go away silently: `let _`, wildcard part, `print`, `match _`, overwrite"
+
+[[claim]]
+finding = "RT16"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/redteam/h02_escape.wf"]
+note = "A closure escapes its handler through a local, a tuple or a container (W0313)"
+
+[[claim]]
+finding = "RT17"
+kind = "unsound"
+verdict = "construction"
+group = "ACDE"
+stage = "F19"
+repro = ["tests/gate/probes/redteam/lib01.wf"]
+note = "`sim.run` as a value bypasses W0802"
+
+[[claim]]
+finding = "RT18"
+kind = "unsound"
+verdict = "construction"
+group = "AB"
+stage = "F10"
+repro = ["tests/gate/probes/redteam/e09_multi_iter2.wf"]
+note = "The hidden `for` iterator does not get `uniq`, so W0503 is missed"
+
+[[claim]]
+finding = "RT22"
+kind = "fp"
+verdict = "construction"
+group = "ACDE"
+stage = "F19"
+repro = ["tests/gate/probes/redteam/t03_items.wf"]
+code = "W0601"
+line = 6
+note = "A tail spawn handle wrapped in `handle` loses its task (false W0601)"
+
+[[claim]]
+finding = "RT22"
+kind = "fp"
+verdict = "construction"
+group = "ACDE"
+stage = "F19"
+repro = ["tests/gate/probes/redteam/t03_items.wf"]
+code = "W0601"
+line = 12
+note = "A tail spawn handle wrapped in `handle` loses its task (false W0601)"
+
+[[claim]]
+finding = "RT24b"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACE"
+stage = "F19"
+repro = ["tests/gate/probes/redteam/m03_misc_modes.wf"]
+note = "`uniq` of a local stays after a rebind (sticky), W0406 missed"
+
+[[claim]]
+finding = "F1"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/specreview/progs/p1_move_owner.wf",
+    "tests/gate/probes/specreview/progs/p2_scope.wf",
+]
+note = "Dangling references after a move or a scope end (spec has no owner rule); duplicate of RT1"
+
+[[claim]]
+finding = "F1"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/specreview/progs/p15_ret_local.wf"]
+note = "Dangling references after a move or a scope end (spec has no owner rule); duplicate of RT1"
+
+[[claim]]
+finding = "F2"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F19"
+repro = [
+    "tests/gate/probes/specreview/progs/p11_task_ref_read.wf",
+    "tests/gate/probes/specreview/progs/p12_task_captured_ref.wf",
+    "tests/gate/probes/specreview/progs/p17_task_uaf.wf",
+]
+note = "A read through a held reference is not a fact; duplicate of RT10"
+
+[[claim]]
+finding = "F3"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F14"
+repro = ["tests/gate/probes/specreview/progs/p13_perform_alias.wf"]
+note = "A perform is not checked like a call; clause reference parameters have no root"
+
+[[claim]]
+finding = "F4"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/specreview/progs/p3b_closure_param.wf",
+    "tests/gate/probes/specreview/progs/p3_closure_param.wf",
+]
+note = "Mutations of a closure through its own reference parameters are lost (own_roots)"
+
+[[claim]]
+finding = "V002"
+kind = "unsound"
+verdict = "construction"
+group = "ABCD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/review_edge/Edge/f14/overwritten_variants.wf"]
+note = "An overwrite of a captured linear variable in a closure or clause is not W0601"
+
+[[claim]]
+finding = "V002"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/verify/review_edge/Edge/f14/ow_closure_run.wf"]
+note = "An overwrite of a captured linear variable in a closure or clause is not W0601"
+
+[[claim]]
+finding = "V006"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/review_core/Core_S1/rt1/esc_closure_store.wf"]
+note = "A closure or clause stores a reference to its own local in a captured reference"
+
+[[claim]]
+finding = "V007"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/verify/review_core/Core_S1/rt1/esc_temp.wf"]
+note = "A temporary root has no owner and no end: a reference into it never dies"
+
+[[claim]]
+finding = "V008"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/verify/review_core/Core_S1/rt1/esc_rc_callee.wf"]
+note = "An Rc result through an argument handle gets no handle dependency"
+
+[[claim]]
+finding = "V009"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/review_core/Core_S1/rt1/clause_move.wf"]
+note = "A clause that moves a captured owner: the move is not applied at the perform"
+
+[[claim]]
+finding = "V011"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/verify/review_core/Core_S1/rt1/esc_fn_param_ret.wf"]
+note = "The result of an unknown function value gets the argument places, not a wildcard"
+
+[[claim]]
+finding = "V012"
+kind = "fp"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/verify/review_core/Core_S1/rt1/fp_ret_closure_copy.wf"]
+note = "W0204/W0301 for a closure that captures a copy value"
+
+[[claim]]
+finding = "V014"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F19"
+repro = ["tests/gate/probes/verify/review_core/Core_S1/rt9/esc_field_ref.wf"]
+note = "A compound assignment through a reference in a field writes the field, not the target"
+
+[[claim]]
+finding = "V015"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/verify/review_core/Core_S1/rt4/esc_closure_arg.wf"]
+note = "A closure argument is not held while later arguments run"
+
+[[claim]]
+finding = "V017"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/verify/review_core/Core_S1/rt1/esc_moved_capture.wf",
+    "tests/gate/probes/verify/review_core/Core_S1/rt1/fp_moved_capture.wf",
+]
+note = "Checker and interpreter disagree on moved captures (closure outlives the local)"
+
+[[claim]]
+finding = "V018"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/review_core/Core_S1/rt2/clause_capture.wf"]
+note = "A clause reads a captured reference at the perform after the body invalidated it"
+
+[[claim]]
+finding = "V019"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/verify/s1diff/p/i05_temp_let.wf",
+    "tests/gate/probes/verify/s1diff/p/i09_rc.wf",
+]
+note = "References into temporaries never become invalid; duplicate of V007"
+
+[[claim]]
+finding = "V019"
+kind = "unsound"
+verdict = "construction"
+group = "AB"
+stage = "F10"
+repro = [
+    "tests/gate/probes/verify/s1diff/p/i03_temps.wf",
+    "tests/gate/probes/verify/s1diff/p/v08_temps.wf",
+]
+note = "References into temporaries never become invalid; duplicate of V007"
+
+[[claim]]
+finding = "V020"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/verify/s1diff/p/v21_recv_deps.wf",
+    "tests/gate/probes/verify/s1diff/p/i11_rc_recv_only.wf",
+    "tests/gate/probes/verify/s1diff/p/i15_rc_field_recv.wf",
+]
+note = "A held Rc receiver loses its handle dependency while later arguments run"
+
+[[claim]]
+finding = "V022"
+kind = "fp"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/verify/s1diff/p/v01_ret_closure.wf",
+    "tests/gate/probes/verify/s1diff/p/v02_ret_moved_closure.wf",
+    "tests/gate/probes/verify/s1diff/p/i02_adder.wf",
+]
+note = "W0204 for a returned closure that captures a copy value (second verifier); duplicate of V012"
+
+[[claim]]
+finding = "V024"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/verify/p/v01_lend_in_closure.wf"]
+note = "`lends_mut` is not part of Summary: a call in a closure loses it at the run node"
+
+[[claim]]
+finding = "V024"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/p/v22_clause_lend.wf"]
+note = "`lends_mut` is not part of Summary: a call in a closure loses it at the run node"
+
+[[claim]]
+finding = "V024"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F19"
+repro = ["tests/gate/probes/verify/p/v16_outer_op.wf"]
+note = "`lends_mut` is not part of Summary: a call in a closure loses it at the run node"
+
+[[claim]]
+finding = "V025"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F10"
+repro = ["tests/gate/probes/verify/p/v11_loop_reassign.wf"]
+note = "A function-value local that a loop body reassigns later: earlier calls keep the old value"
+
+[[claim]]
+finding = "V026"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/verify/p/v06_ret_paths.wf"]
+note = "Returned function values are lost: joined makers, makers through parameters, nested makers"
+
+[[claim]]
+finding = "V027"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/verify/p/v27_stored_capture.wf",
+    "tests/gate/probes/verify/p/v02_struct_capture.wf",
+    "tests/gate/probes/verify/p/v03_tuple_capture.wf",
+]
+note = "A stored closure that runs at a reach node does not use its captured references"
+
+[[claim]]
+finding = "V028"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/verify/p/v20_stored_perform.wf",
+    "tests/gate/probes/verify/p/v12_perform.wf",
+]
+note = "A stored closure performs a local operation: apply_stored runs after clause rebasing"
+
+[[claim]]
+finding = "V029"
+kind = "fp"
+verdict = "one-rule"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/verify/p/v18_stored_fp.wf"]
+note = "A stored closure: a mutation through its parameter counts for the whole argument"
+
+[[claim]]
+finding = "V030"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = ["tests/gate/probes/verify/review_core/Core_S2/probes/reassign_shapes.wf"]
+note = "Reassigned function value later in a loop body (second verifier); duplicate of V025"
+
+[[claim]]
+finding = "V030"
+kind = "unsound"
+verdict = "construction"
+group = "ABCF"
+stage = "F20"
+repro = [
+    "tests/gate/probes/verify/review_core/Core_S2/probes/rt6_variants.wf",
+    "tests/gate/probes/verify/review_core/Core_S2/probes/rt7_variants.wf",
+]
+note = "Reassigned function value later in a loop body (second verifier); duplicate of V025"
+
+[[claim]]
+finding = "V031"
+kind = "unsound"
+verdict = "one-rule"
+group = "ABC"
+stage = "F20"
+repro = ["tests/gate/probes/verify/review_core/Core_S2/probes/rt7_containers.wf"]
+note = "A closure that goes into a generic container is not tracked as stored"
+
+[[claim]]
+finding = "V031"
+kind = "unsound"
+verdict = "one-rule"
+group = "ABCF"
+stage = "F20"
+repro = ["tests/gate/probes/verify/review_core/Core_S2/probes/rt7_variants.wf"]
+note = "A closure that goes into a generic container is not tracked as stored"
+
+[[claim]]
+finding = "V031"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACF"
+stage = "F20"
+repro = ["tests/gate/probes/verify/review_core/Core_S2/probes/generic_store.wf"]
+note = "A closure that goes into a generic container is not tracked as stored"
+
+[[claim]]
+finding = "V032"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACE"
+stage = "F19"
+repro = ["tests/gate/probes/verify/review_core/Core_S2/probes/misc_shapes.wf"]
+note = "A closure that comes back from a returned closure loses its summary (RetFn does not nest)"
+
+[[claim]]
+finding = "V033"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/verify/review_core/Core_S2/probes/rt7_hof_ret.wf"]
+note = "A callee calls a closure argument and then the closure that it returned"
+
+[[claim]]
+finding = "V034"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/review_core/Core_S2/probes/f3_indirect.wf"]
+note = "Stored closure under a local handler: clause mutation lost (second verifier); duplicate of V028"
+
+[[claim]]
+finding = "V035"
+kind = "unsound"
+verdict = "construction"
+group = "ABCD"
+stage = "F14"
+repro = ["tests/gate/probes/verify/review_core/Core_S2/probes/f3_variants.wf"]
+note = "A perform with a closure argument: only `&T` arguments are call arguments"
+
+[[claim]]
+finding = "V036"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/review_core/Core_S2/probes/f3_resume.wf"]
+note = "A clause holds a reference into its parameter across `resume`; the body frees the argument"
+
+[[claim]]
+finding = "V037"
+kind = "unsound"
+verdict = "one-rule"
+group = "ABCD"
+stage = "F13"
+repro = ["tests/gate/probes/verify/review_core/Core_S2/probes/f3_variants.wf"]
+note = "An Arg-rooted place escapes a closure or clause through a captured outer local (`keep = x`)"
+
+[[claim]]
+finding = "V037"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/verify/review_core/Core_S2/probes/f3_controls.wf"]
+note = "An Arg-rooted place escapes a closure or clause through a captured outer local (`keep = x`)"
+
+[[claim]]
+finding = "V038"
+kind = "unsound"
+verdict = "construction"
+group = "ABCF"
+stage = "F20"
+repro = ["tests/gate/probes/verify/review_core/Core_S2/probes/rt5_variants.wf"]
+note = "A closure in a struct or tuple argument is not a call argument (second verifier); duplicate of V027"
+
+[[claim]]
+finding = "V039"
+kind = "unsound"
+verdict = "construction"
+group = "ABCF"
+stage = "F20"
+repro = [
+    "tests/gate/probes/verify/review_core/Core_S2/probes/f4_variants.wf",
+    "tests/gate/probes/verify/review_core/Core_S2/probes/rt5_variants.wf",
+]
+note = "Aliasing places given to one function value are never checked (W0312)"
+
+[[claim]]
+finding = "V039"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/verify/review_core/Core_S2/probes/f4_alias.wf"]
+note = "Aliasing places given to one function value are never checked (W0312)"
+
+[[claim]]
+finding = "V040"
+kind = "unsound"
+verdict = "one-rule"
+group = "ABC"
+stage = "F13"
+repro = ["tests/gate/probes/verify/review_core/Core_S2/probes/rt13_variants.wf"]
+note = "A multi operation through an unknown value in a callee does not make the call multi"
+
+[[claim]]
+finding = "V040"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/review_core/Core_S2/probes/rt13_callee.wf"]
+note = "A multi operation through an unknown value in a callee does not make the call multi"
+
+[[claim]]
+finding = "V041"
+kind = "unsound"
+verdict = "construction"
+group = "AB"
+stage = "F10"
+repro = ["tests/gate/probes/verify/review_core/Core_S2/probes/loop_ref_control.wf"]
+note = "A reference local that a loop body reassigns later keeps only its first value"
+
+[[claim]]
+finding = "V041"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F10"
+repro = ["tests/gate/probes/verify/review_core/Core_S2/probes/f4_lent.wf"]
+note = "A reference local that a loop body reassigns later keeps only its first value"
+
+[[claim]]
+finding = "V042"
+kind = "unsound"
+verdict = "construction"
+group = "ABCD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/review_core/Core_S2/probes/f3_variants.wf"]
+note = "An argument that holds a reference in a tuple or Option is not a call argument (three call paths)"
+
+[[claim]]
+finding = "V042"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/verify/review_core/Core_S2/probes/holder_args.wf",
+    "tests/gate/probes/verify/review_core/Core_S2/probes/f3_controls.wf",
+]
+note = "An argument that holds a reference in a tuple or Option is not a call argument (three call paths)"
+
+[[claim]]
+finding = "V043"
+kind = "unsound"
+verdict = "one-rule"
+group = "ABCE"
+stage = "F19"
+repro = [
+    "tests/gate/probes/verify/partb/S3/p/r12e.wf",
+    "tests/gate/probes/verify/partb/S3/p/r12c.wf",
+    "tests/gate/probes/verify/partb/S3/p/r12b.wf",
+]
+note = "A spawning closure that a callee calls more than once starts one task"
+
+[[claim]]
+finding = "V044"
+kind = "fp"
+verdict = "construction"
+group = "ACDE"
+stage = "F19"
+repro = ["tests/gate/probes/verify/partb/S3/p/rt22run.wf"]
+note = "A task handle through `if`, `match` or a closure result loses its task (false W0601)"
+
+[[claim]]
+finding = "V045"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/verify/partb/S3/p/ids_run.wf",
+    "tests/gate/probes/verify/partb/S3/p/ids_run2.wf",
+]
+note = "The interpreter resolves `handle log` to a user effect `Log`; sema does not; a correct program since the fix (sema and the interpreter agree); the ir pipeline must accept it"
+
+[[claim]]
+finding = "V046"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/verify/partb/p/a1_same_handler.wf",
+    "tests/gate/probes/verify/partb/p/a4_get_own.wf",
+]
+note = "W0313 off by one: a closure given to an operation of its own handler"
+
+[[claim]]
+finding = "V047"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/partb/p/g3_resume_leak.wf"]
+note = "A capability leaves through a `resume` argument and the operation result"
+
+[[claim]]
+finding = "V048"
+kind = "sound"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/verify/partb/p/d2b.wf",
+    "tests/gate/probes/verify/partb/p/d1_shadow_interp.wf",
+]
+note = "Interpreter effect resolution (second verifier); a correct program since the fix (sema and the interpreter agree); the ir pipeline must accept it"
+
+[[claim]]
+finding = "V049"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/partb/p/a3_pair.wf"]
+note = "W0313 misses a closure that a callee returns inside a tuple"
+
+[[claim]]
+finding = "V049"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDF"
+stage = "F20"
+repro = ["tests/gate/probes/verify/partb/p/a2_escapes.wf"]
+note = "W0313 misses a closure that a callee returns inside a tuple"
+
+[[claim]]
+finding = "V050"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDE"
+stage = "F19"
+repro = ["tests/gate/probes/verify/partb/p/c10_clause_task.wf"]
+note = "W0314 misses a clause that runs its function argument as a task"
+
+[[claim]]
+finding = "V051"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDE"
+stage = "F19"
+repro = [
+    "tests/gate/probes/verify/partb/p/c9_noruntime_task.wf",
+    "tests/gate/probes/verify/partb/p/c8_caller_handler.wf",
+]
+note = "W0314 misses callee tasks that perform effects which a caller handles locally"
+
+[[claim]]
+finding = "V052"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDE"
+stage = "F19"
+repro = ["tests/gate/probes/verify/partb/p/c2_field_task.wf"]
+note = "W0314 misses a task that runs a closure from a field of a local"
+
+[[claim]]
+finding = "V053"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/partb/p/g4_clause_ref.wf"]
+note = "Clause values that point into clause parameters are not mapped to the perform arguments"
+
+[[claim]]
+finding = "V054"
+kind = "fp"
+verdict = "one-rule"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/partb/p/e2_box.wf"]
+code = "W0313"
+line = 5
+note = "False W0313 for Box.new, Rc.new and generic callees"
+
+[[claim]]
+finding = "V054"
+kind = "fp"
+verdict = "one-rule"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/partb/p/e2_box.wf"]
+code = "W0313"
+line = 6
+note = "False W0313 for Box.new, Rc.new and generic callees"
+
+[[claim]]
+finding = "V055"
+kind = "fp"
+verdict = "construction"
+group = "ACDE"
+stage = "F19"
+repro = ["tests/gate/probes/verify/partb/p/h1_clause_order.wf"]
+note = "Corpus expects W0405 after `resume(); s.spawn(..)`, but resume runs the body first"
+
+[[claim]]
+finding = "V056"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F20"
+repro = [
+    "tests/gate/probes/verify/partb/S4/run/vec_fn_run.wf",
+    "tests/gate/probes/verify/partb/S4/run/vec_fn_drop.wf",
+]
+note = "A closure given to a type-parameter parameter skips every mode check"
+
+[[claim]]
+finding = "V056"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACF"
+stage = "F20"
+repro = ["tests/gate/probes/verify/partb/S4/p/c2_generic_drop.wf"]
+note = "A closure given to a type-parameter parameter skips every mode check"
+
+[[claim]]
+finding = "V057"
+kind = "unsound"
+verdict = "construction"
+group = "ACF"
+stage = "F20"
+repro = ["tests/gate/probes/verify/partb/S4/run/drops2.wf"]
+note = "Generic `drops` misses a T moved into a holder that is then dropped"
+
+[[claim]]
+finding = "V057"
+kind = "unsound"
+verdict = "construction"
+group = "AF"
+stage = "F20"
+repro = ["tests/gate/probes/verify/partb/S4/run/drops3.wf"]
+note = "Generic `drops` misses a T moved into a holder that is then dropped"
+
+[[claim]]
+finding = "V058"
+kind = "fp"
+verdict = "construction"
+group = "AF"
+stage = "F20"
+repro = ["tests/gate/probes/verify/partb/S4/p/g4_iftail.wf"]
+note = "A generic function that returns T through an if/match tail gets T in `drops`"
+
+[[claim]]
+finding = "V059"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/verify/partb/S4/p/i2_immovable_expr.wf"]
+note = "A local named as an if/match arm tail is not moved"
+
+[[claim]]
+finding = "V059"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/verify/partb/S4/p/i4_if_move2.wf",
+    "tests/gate/probes/verify/partb/S4/p/i3_if_move.wf",
+]
+note = "A local named as an if/match arm tail is not moved"
+
+[[claim]]
+finding = "V061"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/verify/partb/S4/p/u2_closure_uniq.wf"]
+note = "nonportable and uniq modes are lost through fn() places and containers"
+
+[[claim]]
+finding = "V061"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACE"
+stage = "F19"
+repro = [
+    "tests/gate/probes/verify/partb/S4/p/c6_field_launder.wf",
+    "tests/gate/probes/verify/partb/S4/p/c5_nonportable.wf",
+]
+note = "nonportable and uniq modes are lost through fn() places and containers"
+
+[[claim]]
+finding = "V062"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/verify/partb/S4/run/unset_ret.wf"]
+note = "Unset place fields: closures, nested literals and call results are not tracked"
+
+[[claim]]
+finding = "V062"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/verify/partb/S4/run/unset_closure.wf"]
+note = "Unset place fields: closures, nested literals and call results are not tracked"
+
+[[claim]]
+finding = "V062"
+kind = "unsound"
+verdict = "construction"
+group = "ACF"
+stage = "F20"
+repro = ["tests/gate/probes/verify/partb/S4/p/i5_selfref.wf"]
+note = "Unset place fields: closures, nested literals and call results are not tracked"
+
+[[claim]]
+finding = "V065"
+kind = "unsound"
+verdict = "construction"
+group = "ACF"
+stage = "F20"
+repro = ["tests/gate/probes/verify/partb/S4diff/p/gen1.wf"]
+note = "Generic `drops` (second verifier); duplicate of V057"
+
+[[claim]]
+finding = "V066"
+kind = "unsound"
+verdict = "one-rule"
+group = "AB"
+stage = "F10"
+repro = ["tests/gate/probes/verify/partb/S4diff/p/uniq1.wf"]
+note = "`uniq` of a local after if/else depends on the lowering order"
+
+[[claim]]
+finding = "V068"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/verify/partb/S4diff/p/imm1.wf"]
+note = "Unset place fields (second verifier); duplicate of V062"
+
+[[claim]]
+finding = "V069"
+kind = "fp"
+verdict = "one-rule"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/verify/partb/S4diff/p/holders1000.wf",
+    "tests/gate/probes/verify/partb/S4diff/p/holders2000.wf",
+]
+note = "Part holders never retire: stale places give false W0301 (and quadratic facts)"
+
+[[claim]]
+finding = "V072"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/verify/partb/S4diff/p/abort2.wf"]
+note = "A linear temporary held while a later operand aborts is not checked (W0602)"
+
+[[claim]]
+finding = "OL-5"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/partb/S3/p/eff2.wf"]
+note = "A closure that holds a fresh once continuation is not a once value"
+
+[[claim]]
+finding = "OL-NR-ptrfork"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACEF"
+stage = "F20"
+repro = ["tests/gate/probes/verify/review_edge/Edge/ptr/ptr_generic_fork.wf"]
+code = "W0401"
+note = "A generic function that forks with its argument gets no W0401 for *T or Rc"
+
+[[claim]]
+finding = "OR4"
+kind = "fp"
+verdict = "construction"
+group = "AD"
+stage = "F15"
+repro = [
+    "tests/gate/probes/r2/oracle/repro/OR4_fp_outside_handle.wf",
+    "tests/gate/probes/r3/oracle/r2probes/OR4_fp_outside_handle.wf",
+]
+note = "W0602/W0503 for a linear value outside the `handle`"
+
+[[claim]]
+finding = "OR10"
+kind = "fp"
+verdict = "one-rule"
+group = "ACE"
+stage = "F19"
+repro = ["tests/gate/probes/r2/oracle/repro/OR10_fp_call_reads_all.wf"]
+note = "A call reads all of its reference arguments (W0405)"
+
+[[claim]]
+finding = "RR12"
+kind = "fp"
+verdict = "construction"
+group = "ACDE"
+stage = "F19"
+repro = ["tests/gate/probes/r2/redteam/repro/RR12_unset_closure.wf"]
+note = "W0304 for a local that a closure, a clause or a task sets"
+
+[[claim]]
+finding = "V073"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/verify/s5/S5a/x/p/b6_handle_none2.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b6_handle_none.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b6_handle_none3.wf",
+]
+note = "`handle` takes `empty` from its body value: a linear clause value leaks"
+
+[[claim]]
+finding = "V074"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/verify/s5/S5a/x/p/l6a_stored_abort.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/l6a_stored_abort_vec.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/l6a_more2.wf",
+]
+note = "W0313 relies on abort paths, which several node kinds do not get"
+
+[[claim]]
+finding = "V074"
+kind = "unsound"
+verdict = "construction"
+group = "ACDE"
+stage = "F19"
+repro = ["tests/gate/probes/verify/s5/S5a/x/p/l6a_more.wf"]
+note = "W0313 relies on abort paths, which several node kinds do not get"
+
+[[claim]]
+finding = "V075"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDE"
+stage = "F19"
+repro = [
+    "tests/gate/probes/verify/s5/S5a/x/p/a1_refs.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/a1_get.wf",
+]
+note = "A task runs fn values through a generic T, references behind references, a copied result"
+
+[[claim]]
+finding = "V075"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDEF"
+stage = "F20"
+repro = [
+    "tests/gate/probes/verify/s5/S5a/x/p/a1_gen.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/a1_gen_byval.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/a1_gen_fn.wf",
+]
+note = "A task runs fn values through a generic T, references behind references, a copied result"
+
+[[claim]]
+finding = "V076"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/verify/s5/S5a/x/p/b1_into.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1_from_held.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1h_copy.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/b1_from_held_local.wf",
+]
+note = "fn_stores ignores references stored behind references"
+
+[[claim]]
+finding = "V077"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/s5/S5a/x/p/c1_ref_param.wf"]
+note = "A clause keeps a fn value that it reads through a reference parameter"
+
+[[claim]]
+finding = "V078"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/s5/S5a/x/p/d1_same_op.wf"]
+note = "The result of a caller's handler operation can point outside the parameters"
+
+[[claim]]
+finding = "V078"
+kind = "unsound"
+verdict = "one-rule"
+group = "AD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/verify/s5/S5a/x/p/d1_cross_op.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/d1_same_op3.wf",
+]
+note = "The result of a caller's handler operation can point outside the parameters"
+
+[[claim]]
+finding = "V079"
+kind = "fp"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/s5/S5a/x/p/d1_return_ok.wf"]
+code = "W0204"
+line = 4
+note = "W0204 runs before op_refs moves the facts of an operation result"
+
+[[claim]]
+finding = "V079"
+kind = "fp"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/s5/S5a/x/p/d1_return_ok.wf"]
+code = "W0204"
+line = 7
+note = "W0204 runs before op_refs moves the facts of an operation result"
+
+[[claim]]
+finding = "V079"
+kind = "fp"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/s5/S5a/x/p/d1_return_ok.wf"]
+code = "W0204"
+line = 10
+note = "W0204 runs before op_refs moves the facts of an operation result"
+
+[[claim]]
+finding = "V080"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACE"
+stage = "F19"
+repro = [
+    "tests/gate/probes/verify/s5/S5a/x/p/e2a_direct.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/e2a_field2.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/e2a_cb.wf",
+]
+note = "A stored spawning closure given by value to a callee that calls it twice"
+
+[[claim]]
+finding = "V081"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDF"
+stage = "F20"
+repro = [
+    "tests/gate/probes/verify/s5/S5a/x/p/f3a_fnval.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/f3a_fnval_lock.wf",
+]
+note = "A generic function in `holds` given as a function value: no W0602"
+
+[[claim]]
+finding = "V082"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/s5/S5a/x/p/k5_affine_closure.wf"]
+note = "A once closure with a fresh continuation goes to a callee that holds it across multi"
+
+[[claim]]
+finding = "V082"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDF"
+stage = "F20"
+repro = [
+    "tests/gate/probes/verify/s5/S5a/x/p/k5_variants.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/k5_generic.wf",
+]
+note = "A once closure with a fresh continuation goes to a callee that holds it across multi"
+
+[[claim]]
+finding = "V083"
+kind = "fp"
+verdict = "construction"
+group = "ABD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/s5/S5a/x/p/l6a_loop_fp.wf"]
+note = "An abort edge does not end linear body owners: false W0601 in a retry loop"
+
+[[claim]]
+finding = "V084"
+kind = "fp"
+verdict = "construction"
+group = "ACDE"
+stage = "F18"
+repro = ["tests/gate/probes/verify/s5/S5a/x/p/l6a_scope_fp.wf"]
+note = "An abort edge skips the scope end: false W0405 after the handle"
+
+[[claim]]
+finding = "V085"
+kind = "fp"
+verdict = "construction"
+group = "AF"
+stage = "F20"
+repro = [
+    "tests/gate/probes/verify/s5/S5a/x/p/held_fp3.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/held_fp.wf",
+]
+note = "A bogus `*v..` Held root through a generic identity: false W0703"
+
+[[claim]]
+finding = "V086"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/verify/s5/S5a/x/p/l6a_lin.wf",
+    "tests/gate/probes/verify/s5/S5a/x/p/l6a_unset.wf",
+]
+note = "Abort paths miss a clause inside a clause and a local stored call"
+
+[[claim]]
+finding = "V087"
+kind = "unsound"
+verdict = "one-rule"
+group = "AD"
+stage = "F13"
+repro = ["tests/gate/probes/verify/s5/S5a/x/p/d1_store_local.wf"]
+code = "W0204"
+note = "A callee stores a reference to its own local behind a reference parameter"
+
+[[claim]]
+finding = "V088"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/s5/diff/p/nest_abort.wf"]
+note = "W0313 checks only paths to the inner handle end; an abort can leave to an outer end"
+
+[[claim]]
+finding = "V089"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/verify/s5/diff/p/stored_abort.wf",
+    "tests/gate/probes/verify/s5/diff/p/cic_clo.wf",
+    "tests/gate/probes/verify/s5/diff/p/body_raw2.wf",
+]
+note = "Abort nodes that only the stored-value pass finds get no abort edge"
+
+[[claim]]
+finding = "V090"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/verify/s5/diff/p/cic_lin.wf",
+    "tests/gate/probes/verify/s5/diff/p/cic_ref.wf",
+]
+note = "Abort paths miss a clause inside a clause (second verifier); duplicate of V086"
+
+[[claim]]
+finding = "V091"
+kind = "fp"
+verdict = "construction"
+group = "ACDE"
+stage = "F19"
+repro = ["tests/gate/probes/verify/s5/diff/p/scope_abort.wf"]
+note = "Abort edge skips the scope end (second verifier); duplicate of V084"
+
+[[claim]]
+finding = "V092"
+kind = "fp"
+verdict = "construction"
+group = "AD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/s5/diff/p/v1d3.wf"]
+note = "W0204 before op_refs (second verifier); duplicate of V079"
+
+[[claim]]
+finding = "V093"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/s5/diff/p/v1d2.wf"]
+note = "op_refs does not rebase Summary.lent and op_args"
+
+[[claim]]
+finding = "V094"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDF"
+stage = "F20"
+repro = ["tests/gate/probes/verify/s5/diff/p/gen_hof.wf"]
+note = "Generic item value in `holds` (second verifier); duplicate of V081"
+
+[[claim]]
+finding = "V094"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACF"
+stage = "F20"
+repro = ["tests/gate/probes/verify/s5/diff/p/gen_hof_drop.wf"]
+note = "Generic item value in `holds` (second verifier); duplicate of V081"
+
+[[claim]]
+finding = "V096"
+kind = "unsound"
+verdict = "one-rule"
+group = "ABCE"
+stage = "F18"
+repro = [
+    "tests/gate/probes/verify/s5/r2a/t/tk1.wf",
+    "tests/gate/probes/verify/s5/r2a/t/tk3.wf",
+]
+note = "A join of a handle with a may-set of tasks ends every task in the set"
+
+[[claim]]
+finding = "V097"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F16"
+repro = [
+    "tests/gate/probes/verify/s5/r2a/t/mu1.wf",
+    "tests/gate/probes/verify/s5/r2a/t/mu3.wf",
+]
+note = "One-place instances assume one lowering is one run; a multi resume re-runs code"
+
+[[claim]]
+finding = "V098"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/verify/s5/r2a/t/x5.wf"]
+note = "A write through a tuple part reference counts as a write of the local"
+
+[[claim]]
+finding = "V098"
+kind = "unsound"
+verdict = "construction"
+group = "AB"
+stage = "F10"
+repro = ["tests/gate/probes/verify/s5/r2a/t/x3.wf"]
+note = "A write through a tuple part reference counts as a write of the local"
+
+[[claim]]
+finding = "V098"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F19"
+repro = ["tests/gate/probes/verify/s5/r2a/t/tk2.wf"]
+note = "A write through a tuple part reference counts as a write of the local"
+
+[[claim]]
+finding = "V100"
+kind = "unsound"
+verdict = "one-rule"
+group = "ABCE"
+stage = "F19"
+repro = [
+    "tests/gate/probes/verify/s5/R2a: loops, places and wildcard rules (foundation, speed, test harness)/T4_loop_swap_access.wf",
+    "tests/gate/probes/verify/s5/R2a: loops, places and wildcard rules (foundation, speed, test harness)/T3_loop_handles.wf",
+]
+note = "Task may-sets and join (second verifier); duplicate of V096"
+
+[[claim]]
+finding = "V100"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACE"
+stage = "F19"
+repro = ["tests/gate/probes/verify/s5/R2a: loops, places and wildcard rules (foundation, speed, test harness)/T2_join_swap.wf"]
+note = "Task may-sets and join (second verifier); duplicate of V096"
+
+[[claim]]
+finding = "V101"
+kind = "fp"
+verdict = "construction"
+group = "AB"
+stage = "F10"
+repro = [
+    "tests/gate/probes/verify/s5/R2a: loops, places and wildcard rules (foundation, speed, test harness)/R1_walk_then_write.wf",
+    "tests/gate/probes/verify/s5/R2a: loops, places and wildcard rules (foundation, speed, test harness)/R2_bst.wf",
+]
+note = "Widening gives false W0301 for walk-then-write code"
+
+[[claim]]
+finding = "V103"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F11"
+repro = [
+    "tests/gate/probes/verify/s5/R2b: closures, function values and stored references/V_RR7_nested_and_part.wf",
+    "tests/gate/probes/verify/s5/R2b: closures, function values and stored references/rr7_nested.wf",
+]
+code = "W0301"
+note = "The late join misses a captured closure chain and part holders (RR7 shapes)"
+
+[[claim]]
+finding = "V104"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/verify/s5/R2b: closures, function values and stored references/V_OR1_more.wf",
+    "tests/gate/probes/verify/s5/R2b: closures, function values and stored references/rr7_ret2.wf",
+]
+note = "A returned closure keeps creation-time places of a captured reference"
+
+[[claim]]
+finding = "V105"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/verify/s5/R2b: closures, function values and stored references/V_OR1_more.wf"]
+note = "A result with function values in a Vec gets no places"
+
+[[claim]]
+finding = "V106"
+kind = "unsound"
+verdict = "one-rule"
+group = "ABC"
+stage = "F13"
+repro = ["tests/gate/probes/verify/s5/R2b: closures, function values and stored references/or3_variants.wf"]
+note = "A callee that gets a callback inside a container and calls it twice"
+
+[[claim]]
+finding = "V106"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/verify/s5/R2b: closures, function values and stored references/V_OR3_container_args.wf",
+    "tests/gate/probes/verify/s5/R2b: closures, function values and stored references/or3_ret.wf",
+]
+note = "A callee that gets a callback inside a container and calls it twice"
+
+[[claim]]
+finding = "V107"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F12"
+repro = [
+    "tests/gate/probes/verify/s5/R2b: closures, function values and stored references/V_RR2_tuple_elems.wf",
+    "tests/gate/probes/verify/s5/R2b: closures, function values and stored references/rr2_tuple.wf",
+]
+note = "Two closures that meet in a tuple type do not join"
+
+[[claim]]
+finding = "V108"
+kind = "unsound"
+verdict = "one-rule"
+group = "A"
+stage = "F13"
+repro = ["tests/gate/probes/verify/s5/R2b: closures, function values and stored references/fd3_localrc2.wf"]
+code = "W0204"
+note = "The rc escape check misses closure, clause and closure-parameter stores"
+
+[[claim]]
+finding = "V108"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F13"
+repro = [
+    "tests/gate/probes/verify/s5/R2b: closures, function values and stored references/V_FD3_more.wf",
+    "tests/gate/probes/verify/s5/R2b: closures, function values and stored references/fd3_fn.wf",
+]
+code = "W0204"
+note = "The rc escape check misses closure, clause and closure-parameter stores"
+
+[[claim]]
+finding = "V109"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/verify/s5/repro/V1_rr7_nested.wf",
+    "tests/gate/probes/verify/s5/p/rr7j.wf",
+]
+note = "Late join through an inner closure (second verifier); duplicate of V103"
+
+[[claim]]
+finding = "V109"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F19"
+repro = ["tests/gate/probes/verify/s5/p/rr7e.wf"]
+note = "Late join through an inner closure (second verifier); duplicate of V103"
+
+[[claim]]
+finding = "V110"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = ["tests/gate/probes/verify/s5/p/rr7a.wf"]
+note = "A closure that leaves keeps creation-time places (second verifier); duplicate of V104"
+
+[[claim]]
+finding = "V110"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/verify/s5/repro/V2_rr7_return_store.wf"]
+note = "A closure that leaves keeps creation-time places (second verifier); duplicate of V104"
+
+[[claim]]
+finding = "V111"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/verify/s5/repro/V3_or1_containers.wf"]
+note = "A closure in a returned container adds no places to `ret_refs`"
+
+[[claim]]
+finding = "V112"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/verify/s5/p/or3a.wf",
+    "tests/gate/probes/verify/s5/p/or3b.wf",
+]
+note = "Callbacks inside containers called twice (second verifier); duplicate of V106"
+
+[[claim]]
+finding = "V112"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACE"
+stage = "F19"
+repro = ["tests/gate/probes/verify/s5/repro/V4_or3_containers.wf"]
+note = "Callbacks inside containers called twice (second verifier); duplicate of V106"
+
+[[claim]]
+finding = "V113"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/verify/s5/repro/V5_rr2_tuples.wf"]
+note = "Closures in tuples do not join (second verifier); duplicate of V107"
+
+[[claim]]
+finding = "V114"
+kind = "unsound"
+verdict = "one-rule"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/verify/s5/repro/V6_fd3_closures.wf",
+    "tests/gate/probes/verify/s5/p/fd3c.wf",
+]
+note = "rc store of closures (second verifier); duplicate of V108"
+
+[[claim]]
+finding = "V115"
+kind = "fp"
+verdict = "one-rule"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/verify/s5/repro/V7_or3_fp.wf"]
+note = "`repeats` ignores the 'again' flag: a callback run once counts twice"
+
+[[claim]]
+finding = "V116"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F17"
+repro = ["tests/gate/probes/verify/s5/R2c/repro/V1_spared_by_value_capture.wf"]
+note = "An outer linear value that a closure or clause took by value is 'spared'"
+
+[[claim]]
+finding = "V118"
+kind = "unsound"
+verdict = "construction"
+group = "AB"
+stage = "F10"
+repro = ["tests/gate/probes/verify/s5/R2c/repro/V3_tail_place_statement.wf"]
+note = "A place as the tail of a discarded block moves at run time; sema sees no move"
+
+[[claim]]
+finding = "V119"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/fd1_v14_fnfield_user_inner.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/fd1_v9_vecfn_inner.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/fd1_v13_fnfield_fail_inner.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/fd1_v15_closure_field_mut.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/fd1_v16_closure_field_local.wf",
+]
+note = "An `on abort` function calls a closure held in its value"
+
+[[claim]]
+finding = "V120"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACD"
+stage = "F17"
+repro = [
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_v12_multi_value_fault.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_v13_multi_body_storing_callee.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr3_v11_dbg.wf",
+]
+note = "A multi clause gives a resuming closure to the body through the resume value"
+
+[[claim]]
+finding = "V120"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDE"
+stage = "F17"
+repro = ["tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/or9_v2_multi_body_task.wf"]
+note = "A multi clause gives a resuming closure to the body through the resume value"
+
+[[claim]]
+finding = "V121"
+kind = "unsound"
+verdict = "construction"
+group = "ACD"
+stage = "F16"
+repro = [
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr5_v8_resume_in_closure.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr5_v9_closure_resume_frees.wf",
+]
+note = "Frees in a callee of the handled body; a resume through a closure or a callee"
+
+[[claim]]
+finding = "V121"
+kind = "unsound"
+verdict = "construction"
+group = "AD"
+stage = "F16"
+repro = [
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr5_v1_callee_local.wf",
+    "tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/rr5_v7_callee_moves.wf",
+]
+note = "Frees in a callee of the handled body; a resume through a closure or a callee"
+
+[[claim]]
+finding = "V122"
+kind = "unsound"
+verdict = "construction"
+group = "AB"
+stage = "F10"
+repro = ["tests/gate/probes/verify/s5/R2c: effects, continuations, on abort and drops/p/or6_v2_block_tails.wf"]
+note = "Discarded block tail place (second verifier); duplicate of V118"
+
+[[claim]]
+finding = "V125"
+kind = "unsound"
+verdict = "construction"
+group = "ABCE"
+stage = "F19"
+repro = ["tests/gate/probes/verify/s5/R2d: tasks, scopes, fork and the scheduler/p/kept4.wf"]
+note = "kept(T, Rt): a reference that the task makes into a kept copy variable"
+
+[[claim]]
+finding = "V125"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F19"
+repro = ["tests/gate/probes/verify/s5/R2d: tasks, scopes, fork and the scheduler/p/kept3.wf"]
+note = "kept(T, Rt): a reference that the task makes into a kept copy variable"
+
+[[claim]]
+finding = "V126"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACE"
+stage = "F19"
+repro = ["tests/gate/probes/verify/s5/R2d: tasks, scopes, fork and the scheduler/p/or7_race_vec.wf"]
+note = "A callee keeps a fn parameter in a local container and runs it as a task"
+
+[[claim]]
+finding = "V127"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACDE"
+stage = "F19"
+repro = [
+    "tests/gate/probes/verify/s5/R2d: tasks, scopes, fork and the scheduler/p/or7_v3.wf",
+    "tests/gate/probes/verify/s5/R2d: tasks, scopes, fork and the scheduler/p/or7_clause.wf",
+]
+note = "A clause runs an operation's function argument as a task: no W0405/W0403"
+
+[[claim]]
+finding = "V131"
+kind = "unsound"
+verdict = "construction"
+group = "ABCE"
+stage = "F19"
+repro = ["tests/gate/probes/verify/s5/R2d/p/d4_kept_ref_in_task.wf"]
+note = "kept(T, Rt) regression (second verifier); duplicate of V125"
+
+[[claim]]
+finding = "V132"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACE"
+stage = "F19"
+repro = [
+    "tests/gate/probes/verify/s5/R2d/p/a1_callee_writes_ref.wf",
+    "tests/gate/probes/verify/s5/R2d/p/a2_variants.wf",
+]
+note = "A callee writes a non-function argument while it runs a function parameter as a task"
+
+[[claim]]
+finding = "V133"
+kind = "unsound"
+verdict = "one-rule"
+group = "ACE"
+stage = "F19"
+repro = [
+    "tests/gate/probes/verify/s5/R2d/p/h3_held_returned.wf",
+    "tests/gate/probes/verify/s5/R2d/p/h4_held_variants.wf",
+]
+note = "A function value in a struct that a callee returns is not in held_run"
+
+[[claim]]
+finding = "V134"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F19"
+repro = ["tests/gate/probes/verify/s5/R2d/p/e3_rr4_tuple_option.wf"]
+note = "The scope capability in a tuple or an Option leaves the scope"
+
+[[claim]]
+finding = "V136"
+kind = "unsound"
+verdict = "construction"
+group = "ACE"
+stage = "F19"
+repro = [
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/adv/p/g1_join_args.wf",
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/adv/p/g2_join_pos.wf",
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/adv/p/g3_detach.wf",
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/adv/p/g4_join_effect.wf",
+]
+note = "Sema ignores the arguments of `join` and `detach`; the interpreter runs them"
+
+# ----------------------------------------------------------------------
+# Findings with no claim, and notes on repros with no claim. One line each.
+#
+# RT3c: verdict stays (TYPE, outside the lowering)
+# RT15: verdict stays (TYPE, outside the lowering)
+# RT20: verdict stays (TYPE, outside the lowering)
+# RT24a: no repro among the hand probes
+# RT24c: verdict stays (SPEC, outside the lowering)
+# RT24d: verdict stays (TYPE, outside the lowering)
+# F5: verdict stays (TYPE, outside the lowering)
+# F6: verdict stays (SPEC, outside the lowering)
+# QR5: verdict stays (TYPE, outside the lowering)
+# QR6: verdict stays (INF, outside the lowering)
+# QR7: verdict stays (TYPE, outside the lowering)
+# R1-SIM: no repro among the hand probes
+# V001: verdict stays (INF, outside the lowering)
+# V003: verdict stays (NAMES, outside the lowering)
+# V010: verdict stays (SPEC, outside the lowering)
+# V013: verdict stays (SPEC, outside the lowering)
+# V016: verdict stays (SPEC, outside the lowering)
+# V021: verdict stays (SPEC, outside the lowering); duplicate of V013
+# V023: verdict stays (PART, outside the lowering)
+# V060: no claim: the probes `verify/partb/S4/run/late.wf` do not show it today (an unsound repro that the old pipeline accepts with no fault, or a false-positive repro that it rejects for other reasons)
+# V063: verdict stays (TYPE, outside the lowering)
+# V067: verdict stays (TYPE, outside the lowering)
+# V071: not reproduced
+# V004: not a soundness finding
+# V005: not a soundness finding
+# V064: not a soundness finding
+# V070: not a soundness finding
+# OL-1a: no repro among the hand probes
+# OL-1b: no repro among the hand probes
+# OL-1c: no repro among the hand probes
+# OL-1d: no repro among the hand probes
+# OL-2a: no repro among the hand probes
+# OL-2b: no repro among the hand probes
+# OL-3a: no repro among the hand probes
+# OL-3b: verdict stays (TYPE, outside the lowering)
+# OL-3c: no repro among the hand probes
+# OL-4a: no repro among the hand probes
+# OL-4b: no repro among the hand probes
+# OL-6a: no repro among the hand probes
+# OL-6b: no repro among the hand probes
+# OL-R2a: no repro among the hand probes
+# OL-R2b-res: no repro among the hand probes
+# OL-R2b-prec: verdict stays (STORE, outside the lowering)
+# OL-R2b-holds: verdict partly: reference versions (track P), no claim before P1
+# OL-S5a-w0314: no repro among the hand probes
+# OL-R2c-1: no repro among the hand probes
+# OL-R2c-2: no repro among the hand probes
+# OL-R2c-3: no repro among the hand probes
+# OL-R2d-clause: no repro among the hand probes
+# OL-R2d-struct: no repro among the hand probes
+# OL-R2e-reassign: verdict stays (TYPE, outside the lowering)
+# OL-S5c-pair: no repro among the hand probes
+# OL-S5c-w0312: no repro among the hand probes
+# OL-NR-flow: verdict partly: reference versions (track P), no claim before P1
+# OL-NR-multi: verdict stays (MULTI, outside the lowering)
+# OR11: an interpreter defect (class I): the engine differential and the interpreter tests cover it, not a claim
+# RR11: not a soundness finding
+# RR13: not a soundness finding
+# RR14: an interpreter defect (class I): the engine differential and the interpreter tests cover it, not a claim
+# RR15: not a soundness finding
+# FD4: verdict stays (SPEC, outside the lowering)
+# QA6: verdict stays (SPEC, outside the lowering)
+# QA7: not a soundness finding
+# IP8: a false hypothesis of the proof link, not an accepted program
+# IP2: an interpreter defect (class I): the engine differential and the interpreter tests cover it, not a claim
+# IP4: an interpreter defect (class I): the engine differential and the interpreter tests cover it, not a claim
+# IP5: an interpreter defect (class I): the engine differential and the interpreter tests cover it, not a claim
+# IP7: an interpreter defect (class I): the engine differential and the interpreter tests cover it, not a claim
+# V095: verdict stays (SPEC, outside the lowering)
+# V099: verdict stays (SPEC, outside the lowering); duplicate of V095
+# V117: verdict stays (SPEC, outside the lowering)
+# V124: verdict stays (SPEC, outside the lowering)
+# V130: verdict stays (SPEC, outside the lowering)
+# V138: verdict stays (NAMES, outside the lowering)
+# V102: not a soundness finding
+# V123: an interpreter defect (class I): the engine differential and the interpreter tests cover it, not a claim
+# V128: an interpreter defect (class I): the engine differential and the interpreter tests cover it, not a claim
+# V129: an interpreter defect (class I): the engine differential and the interpreter tests cover it, not a claim
+# V135: an interpreter defect (class I): the engine differential and the interpreter tests cover it, not a claim
+# V137: an interpreter defect (class I): the engine differential and the interpreter tests cover it, not a claim
+# O3-13: an interpreter defect (class I): the engine differential and the interpreter tests cover it, not a claim
+# R3RT11: verdict stays (TYPE, outside the lowering)
+# R3RT8: not a soundness finding
+# R3RT9: not a soundness finding
+# F3-6 (open): verdict stays: the old pipeline accepts `r3/fidelity/repro/F3-6_fork_failure.wf`, `r3/fidelity/repro/F3-6_fork_timeout.wf` and the oracle faults; ledger class open-old, no claim
+# F3-9: an interpreter defect (class I): the engine differential and the interpreter tests cover it, not a claim
+# I3-1 (open): verdict stays: the old pipeline accepts `r3/interp/repro/i3_1_fork_result_no_on_abort.wf` and the oracle faults; ledger class open-old, no claim
+# I3-2: an interpreter defect (class I): the engine differential and the interpreter tests cover it, not a claim
+# I3-3: an interpreter defect (class I): the engine differential and the interpreter tests cover it, not a claim
+# I3-4: an interpreter defect (class I): the engine differential and the interpreter tests cover it, not a claim
+# Q3-3: verdict stays (NAMES, outside the lowering)

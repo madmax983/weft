@@ -1,0 +1,24 @@
+// A cancelled task runs `on abort`, and `on abort` sleeps: a suspension point.
+linear struct A { id: u64 }
+    on abort = undo_sleep
+fn undo_sleep(a: A) / clock {
+    let A(i) = a
+    print("undo start {i}")
+    sleep(5.ms)
+    print("undo end {i}")
+}
+fn worker() / clock {
+    let a = A { id: 1 }
+    sleep(100.ms)
+    let A(i) = a
+}
+fn boom() / clock, fail {
+    sleep(1.ms)
+    fail("boom")
+}
+fn main() / clock, fail {
+    scope { s =>
+        s.spawn(|| worker())
+        s.spawn(|| boom())
+    }
+}

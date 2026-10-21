@@ -1,0 +1,73 @@
+effect Choice { multi fn choose() -> bool }
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print(b.items.len()) }
+fn pick() -> bool / Choice { choose() }
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+
+// The handled body moves an outer value after the operation.
+fn moves_outer() {
+    let b = Buf { items: Vec.new() }
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        let x = choose()
+        eat(b)   //~ W0302
+    }
+}
+// Through a closure.
+fn moves_outer_closure() {
+    let b = Buf { items: Vec.new() }
+    let f = || choose()
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        let x = f()
+        eat(b)   //~ W0302
+    }
+}
+// Through a callee.
+fn moves_outer_callee() {
+    let b = Buf { items: Vec.new() }
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        let x = pick()
+        eat(b)   //~ W0302
+    }
+}
+// The clause resumes in a loop.
+fn moves_outer_loop() {
+    let b = Buf { items: Vec.new() }
+    handle Choice { fn choose() { let i = 0
+        while i < 2 { resume(true); i += 1 } } } in {
+        let x = choose()
+        eat(b)   //~ W0302
+    }
+}
+// The clause resumes in a closure that it calls twice.
+fn moves_outer_closure_clause() {
+    let b = Buf { items: Vec.new() }
+    handle Choice { fn choose() { let k = || resume(true); k(); k() } } in {   //~ W0502
+        let x = choose()
+        eat(b)
+    }
+}
+// The clause gives the resume closure to a callee that calls it twice.
+fn twice(f: fn()) { f(); f() }
+fn moves_outer_twice() {
+    let b = Buf { items: Vec.new() }
+    handle Choice { fn choose() { twice(|| resume(true)) } } in {   //~ W0502
+        let x = choose()
+        eat(b)
+    }
+}
+// A reference of the outer scope that the second run invalidates.
+fn ref_second_run(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        let x = choose()
+        print(r.hp)   //~ W0301
+        world.entities.clear()
+    }
+}
+test "moves_outer" { moves_outer() }
+test "moves_outer_closure" { moves_outer_closure() }
+test "moves_outer_callee" { moves_outer_callee() }
+test "moves_outer_loop" { moves_outer_loop() }
+test "moves_outer_closure_clause" { moves_outer_closure_clause() }
+test "moves_outer_twice" { moves_outer_twice() }

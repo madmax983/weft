@@ -1,0 +1,15 @@
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { let Lock(i) = l }
+fn lock() -> Lock { Lock { id: 1 } }
+fn vec_for() {
+    let v = Vec.new()
+    v.push(lock())
+    for l in v { unlock(l) }
+}
+fn give(v: Vec<Lock>) { for l in v { unlock(l) } }
+fn vec_give() {
+    let v = Vec.new()
+    v.push(lock())
+    give(v)
+}
+fn main() { vec_for() }

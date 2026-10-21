@@ -1,0 +1,8 @@
+struct W { score: u64, rc: Rc<u64> }
+fn main() / par, async {
+    let w = W { score: 0, rc: Rc.new(1) }
+    scope { s =>
+        s.spawn(|| print(w.score))
+    }
+    print(w.score)
+}

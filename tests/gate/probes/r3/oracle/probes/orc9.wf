@@ -1,0 +1,8 @@
+fn main() {
+    let n = 1
+    scope { s =>
+        s.spawn(|| { n = 3 })
+        let q = &n
+        print(q + 0)
+    }
+}

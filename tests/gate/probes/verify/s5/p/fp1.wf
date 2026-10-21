@@ -1,0 +1,29 @@
+struct H { f: fn() }
+fn noop() { print(0) }
+fn reg(h: &H, f: fn()) { h.f = f }
+fn run_h(h: &H) {
+    let f = h.f
+    f()
+    f()
+}
+fn via_stored_clean() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let h = H { f: noop }
+    reg(&h, || print(r + 1))
+    run_h(&h)
+}
+fn via_stored_clean2() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let h = H { f: noop }
+    reg(&h, || print(r + 1))
+    run_h(&h)
+    v.push(2)
+}
+fn main() {
+    via_stored_clean()
+    via_stored_clean2()
+}

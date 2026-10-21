@@ -1,0 +1,8 @@
+// Trailing block and named args to a struct ctor and fn.
+struct S { f: fn() -> u64, n: u64 }
+fn mk(f: fn() -> u64, n: u64) -> u64 { f() + n }
+fn main() {
+    let s = S(n: 5) { 1 }
+    print((s.f)())
+    print(mk(n: 5) { 2 })
+}

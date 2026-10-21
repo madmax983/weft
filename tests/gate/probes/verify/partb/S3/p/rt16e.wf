@@ -1,0 +1,49 @@
+effect Log { fn log(msg: String) }
+struct Cb { f: fn() }
+fn id_cb(c: Cb) -> Cb { c }
+fn get_f(c: Cb) -> fn() { c.f }
+fn first(v: Vec<fn()>) -> fn() { let f = v.pop(); match f { Some(g) => g, None => || print(0) } }
+fn e1() {
+    let out = Cb { f: || print(0) }
+    handle Log { fn log(m) { resume(()) } } in {
+        let cb = Cb { f: || log("x") }
+        out = id_cb(cb)     // W0313
+    }
+}
+fn e2() {
+    let out = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {
+        let cb = Cb { f: || log("x") }
+        out = get_f(cb)     // W0313
+    }
+}
+fn e3() {
+    let out = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {
+        let o = Some(|| log("x"))
+        out = match o { Some(f) => f, None => || print(0) }    // W0313
+    }
+}
+fn e4() {
+    let out = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {
+        let v = Vec.new()
+        v.push(|| log("x"))
+        out = first(v)     // W0313
+    }
+}
+fn e5() {
+    let f = handle Log { fn log(m) { resume(()) } } in {
+        let v = Vec.new()
+        v.push(|| log("x"))
+        first(v)     // W0313 (result)
+    }
+}
+fn e6() {
+    let out = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {
+        let t = (|| log("x"), 1)
+        let (a, b) = t
+        out = a      // W0313
+    }
+}

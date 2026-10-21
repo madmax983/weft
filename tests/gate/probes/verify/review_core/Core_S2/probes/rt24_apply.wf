@@ -1,0 +1,12 @@
+struct Inner { v: Vec<u64>, n: u64 }
+struct Stats { count: u64, inner: Inner, list: Vec<Inner> }
+fn priv_bump(s: &Stats) { s.count += 1 }
+fn deep(s: &Stats) { s.inner.n += 1 }
+fn all_elems(s: &Stats) { for e in s.list[] { e.v.push(1) } }
+fn elems(s: &Stats) { s.list[0].n += 1 }
+pub fn pub1(c: &Stats) / mut(c.count) { priv_bump(c) }
+pub fn pub2(c: &Stats) / mut(c.inner.n) { deep(c) }
+pub fn pub3(c: &Stats) / mut(c.list[].v) { all_elems(c) }
+pub fn pub4(c: &Stats) / mut(c.inner.n) { let g = deep; g(c) }
+pub fn pub5(c: &Stats) / mut(c.inner.v) { let f = |x: &Stats| x.inner.v.clear(); f(c) }
+pub fn pub6(c: &Stats) / mut(c.list[].n) { elems(c) }

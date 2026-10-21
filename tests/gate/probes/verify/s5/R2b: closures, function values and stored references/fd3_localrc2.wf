@@ -1,0 +1,23 @@
+struct Cache { refs: Vec<&u64>, data: Vec<u64> }
+fn newc() -> Rc<Cache> { Rc.new(Cache { refs: Vec.new(), data: Vec.new() }) }
+fn behind_ref(rs: &Vec<&u64>) / mut(rs, Cache) {
+    let d = newc()
+    d.data.push(1)
+    rs.push(&d.data[0])
+}
+fn stash(c: Rc<Cache>, x: &u64) / mut(Cache) { c.refs.push(x) }
+fn local_rc_callee(c: Rc<Cache>) / mut(Cache) {
+    let d = newc()
+    d.data.push(1)
+    stash(c, &d.data[0])
+}
+fn t_behind_ref() / mut(Cache) { let rs = Vec.new()
+ behind_ref(&rs)
+ let r = rs[0]
+ print(r + 0) }
+fn t_local_rc_callee() / mut(Cache) { let c = newc()
+ local_rc_callee(c.clone())
+ let r = c.refs[0]
+ print(r + 0) }
+fn main() / mut(Cache) {
+}

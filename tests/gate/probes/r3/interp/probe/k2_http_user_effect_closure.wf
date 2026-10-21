@@ -1,0 +1,7 @@
+effect Ask { fn ask() -> u64 }
+
+fn main(env: Env) / io {
+    handle Ask { fn ask() { resume(5) } } in {
+        http.serve(env.net.listen(":18442"), |req| Response.text("v={ask()}"))
+    }
+}

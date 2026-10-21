@@ -1,0 +1,9 @@
+struct Entity { hp: i32 }
+impl Entity {
+    fn diff(self, a: i32, b: i32) -> i32 { a - b + self.hp }
+}
+fn main() {
+    let m = Entity.diff
+    let x = Entity { hp: 100 }
+    print(m(x, b: 10, a: 3))
+}

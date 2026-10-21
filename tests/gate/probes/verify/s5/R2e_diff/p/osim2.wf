@@ -1,0 +1,13 @@
+fn main() / clock, async {
+    let n = 1
+    n = 5
+    sim.run(seed: 1, workers: 4) {
+        scope { s =>
+            let t = s.spawn(|| n + 1)
+            let u = s.spawn(|| n + 2)
+            print(t.join() + u.join())
+        }
+    }
+    n = 9
+    print(n)
+}

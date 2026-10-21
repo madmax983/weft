@@ -1,0 +1,12 @@
+effect Note { fn note(x: u64) }
+fn helper() / Note { note(1) }
+fn main() / async {
+    scope { s =>
+        s.spawn(|| note(5))      // expected W0805 or W0314: no handler handles Note
+        s.spawn(|| helper())
+    }
+    let (a, b) = fork(|| note(6), || 1)   // expected W0805 or W0314
+}
+test "t" {
+    scope { s => s.spawn(|| note(7)) }    // expected W0805 or W0314
+}

@@ -1,0 +1,13 @@
+effect Pick { fn pick(v: &Vec<u64>) -> &u64 }
+
+fn body() / Pick {
+    let v = Vec.new()
+    v.push(1)
+    let r = pick(&v)
+    v.clear()
+    print(r)
+}
+
+fn main() {
+    handle Pick { fn pick(v) { resume(&v[0]) } } in body()
+}

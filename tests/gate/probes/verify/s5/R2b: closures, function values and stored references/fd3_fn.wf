@@ -1,0 +1,58 @@
+struct Cache { refs: Vec<&u64>, fs: Vec<fn()> }
+effect Put { fn put(x: &u64) }
+fn apply(f: fn(&u64), x: &u64) { f(x) }
+fn newc() -> Rc<Cache> { Rc.new(Cache { refs: Vec.new(), fs: Vec.new() }) }
+fn read(c: Rc<Cache>) {
+    let n = c.refs.len()
+    if n > 0 { let r = c.refs[0]
+ print(r + 0) }
+}
+fn runf(c: Rc<Cache>) / mut(Cache) {
+    let n = c.fs.len()
+    if n > 0 { let g = c.fs[0]
+ g() }
+}
+fn runo(o: &Vec<fn()>) {
+    let n = o.len()
+    if n > 0 { let g = o[0]
+ g() }
+}
+// a closure that captures a local, stored into an rc object
+fn fn_store_rc(c: Rc<Cache>) / mut(Cache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    c.fs.push(|| print(v.len()))
+}
+// the same, behind a reference parameter
+fn fn_store_ref(o: &Vec<fn()>) / mut(o) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    o.push(|| print(v.len()))
+}
+// a clause stores its parameter into an rc object
+fn clause_store(c: Rc<Cache>) / mut(Cache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    handle Put { fn put(x) { c.refs.push(x)
+ resume(()) } } in put(&v[0])
+}
+// a closure stores its reference parameter into an rc object
+fn fnparam_store(c: Rc<Cache>) / mut(Cache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    apply(|r: &u64| c.refs.push(r), &v[0])
+}
+fn t_fn_store_rc() / mut(Cache) { let c = newc()
+ fn_store_rc(c.clone())
+ runf(c) }
+fn t_fn_store_ref() { let o = Vec.new()
+ fn_store_ref(&o)
+ runo(&o) }
+fn t_clause_store() / mut(Cache) { let c = newc()
+ clause_store(c.clone())
+ read(c) }
+fn t_fnparam_store() / mut(Cache) { let c = newc()
+ fnparam_store(c.clone())
+ read(c) }
+fn main() / mut(Cache) {
+}

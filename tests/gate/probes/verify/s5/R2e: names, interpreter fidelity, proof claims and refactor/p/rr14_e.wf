@@ -1,0 +1,11 @@
+struct W { v: u8 }
+fn a() { let v: Vec<u8> = [250]; v[0] += 10; print(v[0]) }
+fn b() { let w = W { v: 250 }; w.v += 10; print(w.v) }
+fn c() { let w = W { v: 250 }; let r = &w; bump(r); print(w.v) }
+fn bump(r: &W) / mut(r) { r.v += 10 }
+fn d() { let t: (u8, u8) = (250, 1); t.0 += 10; print(t.0) }
+fn e() { let o: Option<u8> = Some(250); match o { Some(x) => print(x + 10), None => {} } }
+fn f() { let c: u8 = 250; let k = || { c += 10 }; k(); print(c) }
+fn main() {
+    a()
+}

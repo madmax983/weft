@@ -1,0 +1,50 @@
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct Plain: !Move { n: u64 }
+struct Outer { f: Plain, n: u64 }
+struct Wrap<T> { x: T }
+enum E { A(Plain), B }
+fn take_t(t: (Plain, u64)) {}
+fn i01() { let t = (Plain { n: 1 }, 1)
+ take_t(t) }
+fn take_a(a: [Plain; 1]) {}
+fn i02() { let a = [Plain { n: 1 }]
+ take_a(a) }
+fn take_e(e: E) {}
+fn i03() { let e = E.A(Plain { n: 1 })
+ take_e(e) }
+fn take_w(w: Wrap<Plain>) {}
+fn i04() { let w = Wrap { x: Plain { n: 1 } }
+ take_w(w) }
+fn i05() -> Plain { let p = Plain { n: 1 }
+ p }
+fn keep_p(p: Plain) {}
+fn i06() { let p = Plain { n: 1 }
+ let c = || keep_p(p)
+ c() }
+fn i07() { let o = Some(Plain { n: 1 })
+ match o { Some(p) => keep_p(p), None => {} } }
+fn i08() { let o = Outer { f: Plain { n: 1 }, n: 1 }
+ let Outer(p, n) = o }
+fn i09() { let v = Vec.new()
+ v.push(Outer { f: Plain { n: 1 }, n: 1 }) }
+fn gen_keep<T>(x: T) -> T { x }
+fn i10() { let p = Plain { n: 1 }
+ let q = gen_keep(p) }
+fn i11() { let p = gen_keep(Plain { n: 1 }) }
+fn i12() { let o = Outer { f: Plain { n: 1 }, n: 1 }
+ let q = o.f }
+fn i13() { let w = Wrap { x: (1, Plain { n: 1 }) }
+ let z = w }
+fn i14() / par { let p = Plain { n: 1 }
+ fork(|| keep_p(p), || print(1)) }
+fn i15(c: bool) { let a = Plain { n: 1 }
+ let b = Plain { n: 2 }
+ let x = if c { a } else { b } }
+fn i16() { let p = Plain { n: 1 }
+ let o = Some(p) }
+fn i17() { let p = Plain { n: 1 }
+ let t = (p, 1) }
+fn i18() { let p = Plain { n: 1 }
+ let w = Outer { f: p, n: 1 } }
+fn i19() { let b = Box.new(Plain { n: 1 })
+ let c = b }

@@ -1,0 +1,13 @@
+struct Node { v: u64 }
+fn first(v: &Vec<u64>) -> u64 / async {
+    scope { s =>
+        let a = s.spawn(|| v[0] + 1)
+        a.join()
+    }
+}
+struct Holder { nums: Vec<u64>, keep: Rc<Node> }
+fn main() / async {
+    let h = Holder { nums: Vec.new(), keep: Rc.new(Node { v: 1 }) }
+    h.nums.push(5)
+    print(first(&h.nums))
+}

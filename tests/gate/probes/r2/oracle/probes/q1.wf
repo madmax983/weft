@@ -1,0 +1,8 @@
+fn work(c: bool) {
+    if c {
+        scope { s =>
+            s.spawn(|| print(1))
+        }
+    }
+}
+fn main() { work(true) }

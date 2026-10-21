@@ -1,0 +1,10 @@
+// A fork whose tuple is dropped with `let _`.
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(t: Tx) { let Tx(id) = t; print("rollback {id}") }
+
+fn main() / io, par {
+    let _ = fork(|| Tx { id: 5 }, || Tx { id: 6 })
+    print("end")
+}

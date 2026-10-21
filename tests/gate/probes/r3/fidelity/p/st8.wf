@@ -1,0 +1,11 @@
+// The operation runs in a closure that the handled body calls.
+effect Keep { fn keep(r: &u64) }
+fn main() {
+    let y = 1
+    let last = &y
+    handle Keep { fn keep(r) { last = r; resume(()) } } in {
+        let g = || { let x = 5; keep(&x) }
+        g()
+    }
+    print(last)   // expected W0301
+}

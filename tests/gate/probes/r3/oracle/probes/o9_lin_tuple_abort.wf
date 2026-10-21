@@ -1,0 +1,91 @@
+struct E { hp: u64, tag: u64 }
+struct W { es: Vec<E>, ns: Vec<u64>, score: u64, b: Box<E> }
+struct R { items: Vec<u64>, n: u64 }
+struct H { f: fn() }
+struct Calls { fs: Vec<fn()> }
+struct Two { a: Vec<u64>, b: Vec<u64> }
+linear struct Tx { id: u64 }
+    on abort = tx_abort
+linear struct Lk { id: u64 }
+effect Ask { fn ask() -> u64 }
+effect Note { fn note(x: u64) }
+effect Grab { fn grab(r: &u64) -> u64 }
+effect Run { fn run(f: fn()) }
+
+fn tx_abort(t: Tx) { let Tx(id) = t; print("abort", id) }
+fn commit(t: Tx) { let Tx(id) = t; print("commit", id) }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn mk_e(n: u64) -> E { E { hp: n, tag: n } }
+fn mk_w() -> W {
+    let w = W { es: Vec.new(), ns: Vec.new(), score: 0, b: Box.new(E { hp: 1, tag: 0 }) }
+    w.es.push(E { hp: 5, tag: 1 })
+    w.es.push(E { hp: 6, tag: 2 })
+    w.ns.push(1)
+    w.ns.push(2)
+    w
+}
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v.push(3)
+    v
+}
+fn mk_r() -> Rc<R> { Rc.new(R { items: mk_v(), n: 0 }) }
+fn grow(v: &Vec<u64>) { v.push(9) }
+fn grow_n(v: &Vec<u64>, n: u64) { v.push(n) }
+fn clear_v(v: &Vec<u64>) { v.clear() }
+fn grow_w(w: &W) { w.es.push(E { hp: 1, tag: 9 }) }
+fn bump(e: &E) { e.hp += 1 }
+fn bump_n(r: &u64) { r += 1 }
+fn first(v: &Vec<u64>) -> &u64 in v[] { &v[0] }
+fn first_e(w: &W) -> &E in w.es[] { &w.es[0] }
+fn id<T>(x: T) -> T { x }
+fn apply(f: fn()) { f() }
+fn twice(f: fn()) { f(); f() }
+fn apply_r(f: fn(&u64), r: &u64) { f(r) }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn take_w(w: W) -> u64 { w.score }
+fn show(r: &u64) { print(r) }
+fn show_v(v: &Vec<u64>) { print(v.len()) }
+fn sum(v: &Vec<u64>) -> u64 {
+    let t = 0
+    for x in v[] { t += x }
+    t
+}
+fn pick_opt(v: &Vec<u64>, b: bool) -> Option<&u64> { if b { Some(&v[0]) } else { Some(&v[1]) } }
+fn get_e(w: &W, b: bool) -> Option<&E> { if b { Some(&w.es[0]) } else { Some(&w.es[1]) } }
+fn make_pusher(v: &Vec<u64>) -> fn() { || v.push(1) }
+fn make_reader(v: &Vec<u64>) -> fn() { || print(v.len()) }
+fn make_ref_reader(r: &u64) -> fn() { || print(r) }
+fn store_f(fs: &Vec<fn()>, f: fn()) { fs.push(f) }
+fn call_all(fs: &Vec<fn()>) { for i in 0..fs.len() { let g = fs[i]; g() } }
+fn call_h(h: &H) { let g = h.f; g() }
+fn spawn_it(f: fn()) { scope { s => s.spawn(f) } }
+fn spawn_join(f: fn()) { scope { s => let t = s.spawn(f); t.join() } }
+fn spawn_two(f: fn(), g: fn()) { scope { s => s.spawn(f); scope { s2 => s2.spawn(g) } } }
+fn fork_it(f: fn(), g: fn()) / par { let _ = fork(f, g) }
+fn join_it(t: Task<()>) { t.join() }
+fn each(v: &Vec<u64>, f: fn(&u64)) { for i in 0..v.len() { f(&v[i]) } }
+fn with_first(v: &Vec<u64>, f: fn(&u64)) { f(&v[0]) }
+fn keep(rs: &Vec<&u64>, r: &u64) { rs.push(r) }
+fn run_get(f: fn() -> u64) -> u64 { f() }
+fn ask_twice() -> u64 { ask() + ask() }
+fn note_all(v: &Vec<u64>) { for x in v[] { note(x) } }
+fn maybe_fail(n: u64) { if n > 100 { fail("big") } }
+fn opt_commit(o: Option<Tx>) { match o { Some(t) => commit(t), None => {} } }
+fn pass_ref(r: &u64) -> &u64 in r { r }
+fn pair_of(v: &Vec<u64>) -> (&u64 in v[], u64) { (&v[0], 1) }
+impl W {
+    fn top(self) -> &E in self.es[] { &self.es[0] }
+    fn add(self, n: u64) { self.ns.push(n) }
+    fn total(self) -> u64 { let t = 0; for x in self.ns[] { t += x }; t }
+}
+fn main() {
+    handle Fail { fn fail(m) { print(m) } } in {
+        let p = (Lk { id: 1 }, 1)
+        maybe_fail(500)
+        let (l, n) = p
+        unlock(l)
+    }
+}

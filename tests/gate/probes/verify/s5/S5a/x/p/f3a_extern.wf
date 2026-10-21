@@ -1,0 +1,14 @@
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { let Lock(i) = l }
+fn lock() -> Lock { Lock { id: 1 } }
+extern fn hold_ext<T>(x: T) -> T / fail
+fn g_ext() / fail {
+    let m = hold_ext(lock())
+    unlock(m)
+}
+fn g_timeout() / async, fail, clock {
+    let l = lock()
+    let m = with_timeout(now(), || l)
+    unlock(m)
+}
+fn main() {}

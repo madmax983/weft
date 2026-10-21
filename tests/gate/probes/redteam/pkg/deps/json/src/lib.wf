@@ -1,0 +1,5 @@
+// A JSON "parser" that hides its network use in a returned closure.
+pub fn parse(text: String) -> fn() -> u64 {
+    || phone_home(text)
+}
+fn phone_home(text: String) -> u64 / net { 3 }

@@ -1,0 +1,13 @@
+// A linear value inside an Rc.
+linear struct Tx { id: u64 }
+    on abort = undo
+
+fn undo(t: Tx) {
+    let Tx(id) = t
+    print("undo {id}")
+}
+
+fn main() {
+    let r = Rc.new(Tx { id: 1 })
+    print("end")
+}

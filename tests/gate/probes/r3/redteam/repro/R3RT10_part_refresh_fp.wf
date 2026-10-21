@@ -1,0 +1,31 @@
+// R3RT10 (minor, false positive): a new value of a part that holds a stale
+// reference is a use of the whole local. So the program cannot refresh the
+// stale part: `t.1 = &c[0]` after `b.clear()` is W0301, although the
+// assignment reads nothing and each later read is valid. The workaround
+// rebuilds the whole tuple from fresh parts.
+// Expected: no error. Found: W0301 at the two part assignments.
+// Run: weft run --unchecked --oracle R3RT10_part_refresh_fp.wf   prints 1 three times.
+struct Wrap<T> { x: T, y: T }
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn refresh_tuple_part() {
+    let a = mkv()
+    let b = mkv()
+    let c = mkv()
+    let t = (&a[0], &b[0])
+    b.clear()
+    t.1 = &c[0]
+    print(t.0)
+    print(t.1)
+}
+fn refresh_field() {
+    let a = mkv()
+    let b = mkv()
+    let w = Wrap { x: &a[0], y: &b[0] }
+    b.clear()
+    w.y = &a[0]
+    print(w.x)
+}
+fn main() {
+    refresh_tuple_part()
+    refresh_field()
+}

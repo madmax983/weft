@@ -1,0 +1,34 @@
+effect Note { fn note(x: u64) }
+struct Wrap<T> { x: T }
+
+// Into an Rc object of a generic struct.
+fn to_rc_generic() {
+    let h = Rc.new(Wrap { x: || print(0) })
+    handle Note { fn note(x) { h.x = || resume(()) } } in note(1)   //~ W0313
+    let g = h.x
+    g()
+}
+// Into a Box of a generic struct.
+fn to_box_generic() {
+    let b = Box.new(Wrap { x: || print(0) })
+    handle Note { fn note(x) { b.x = || resume(()) } } in note(1)   //~ W0313
+    let g = b.x
+    g()
+}
+// Into an Rc clone made in the clause.
+fn to_rc_clone() {
+    let h = Rc.new(Wrap { x: || print(0) })
+    handle Note { fn note(x) { let h2 = h.clone(); h2.x = || resume(()) } } in note(1)   //~ W0313
+    let g = h.x
+    g()
+}
+// Wrapped in a closure that captures it by value.
+fn wrapped_by_value() {
+    let k = || print(0)
+    handle Note { fn note(x) { let r = || resume(()); k = || { let q = r; q() } } } in note(1)   //~ W0313
+    k()
+}
+test "to_rc_generic" { to_rc_generic() }
+test "to_box_generic" { to_box_generic() }
+test "to_rc_clone" { to_rc_clone() }
+test "wrapped_by_value" { wrapped_by_value() }

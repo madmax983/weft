@@ -1,0 +1,15 @@
+// R3RT8 (minor): the type of the scope binder `s` is not the prelude type
+// `Scope` that a user can write. A parameter of type `Scope` or `&Scope` gets
+// "type mismatch: expected `Scope`, found `Scope`", and `&Scope` has no
+// `spawn`. The message names the same type on both sides, and no ADR says
+// that a scope cannot go to a helper function.
+fn submit(s: Scope) { print(1) }
+fn take_ref(s: &Scope) { print(1) }
+fn spawn_into(s: &Scope, f: fn()) { s.spawn(f) }
+fn caller() / async {
+    scope { s =>
+        take_ref(&s)
+        submit(s)
+    }
+}
+fn main() / async { caller() }

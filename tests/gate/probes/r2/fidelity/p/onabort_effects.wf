@@ -1,0 +1,19 @@
+// The effects proof models `on abort` as atomic: it cannot perform or fail
+// (proofs/effects/README.md, "Scope and limitations"). Here the `on abort`
+// function of `Tx` performs `Ask` and fails. The checker accepts the type.
+effect Ask { fn ask() -> u64 }
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) / fail {
+    let Tx(i) = t
+    fail("rollback failed")
+}
+fn commit(t: Tx) { let Tx(i) = t }
+fn work() / fail {
+    let t = Tx { id: 1 }
+    fail("abort the scope")
+    commit(t)
+}
+fn main() / fail {
+    work()
+}

@@ -1,0 +1,2 @@
+// Reporting rules shared by every trace. A trace names its use nodes.
+lint("gen_and_kill (B6 no_gen_kill broken)", P) :- invalidated_at(R, P), rebound_at(R, P).

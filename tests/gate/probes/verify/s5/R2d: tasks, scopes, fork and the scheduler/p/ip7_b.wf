@@ -1,0 +1,10 @@
+// g is plain first, then gets an Rc closure.
+fn main(env: Env) / io {
+    let hits = Rc.new(0)
+    let g = || print(1)
+    g = || { let h = hits.clone() }
+    http.serve(env.net.listen("127.0.0.1:18442"), |req| {
+        g()
+        Response.text("hit")
+    })
+}

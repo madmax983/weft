@@ -1,0 +1,12 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn a(c: bool) { let a = begin()
+ let b = begin()
+ let x = if c { a } else { b }
+ rollback(x) }
+struct Plain: !Move { n: u64 }
+fn b(c: bool) { let a = Plain { n: 1 }
+ let x = if c { a } else { Plain { n: 2 } }
+ print(a.n) }

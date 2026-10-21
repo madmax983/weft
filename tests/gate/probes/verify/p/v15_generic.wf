@@ -1,0 +1,42 @@
+fn id<T>(x: T) -> T { x }
+fn first_of(v: &Vec<u64>) -> &u64 in v[] { &v[0] }
+fn direct() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = id(&v[0])
+    v.clear()
+    print(r)
+}
+fn via_value() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let i = id
+    let r = i(&v[0])
+    v.clear()
+    print(r)
+}
+fn ret_place_value() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let g = first_of
+    let r = g(&v)
+    v.clear()
+    print(r)
+}
+fn ret_place_join(c: bool) {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let g = if c { first_of } else { first_of }
+    let r = g(&v)
+    v.clear()
+    print(r)
+}
+fn first_of2(v: &Vec<u64>) -> &u64 in v[] { &v[0] }
+fn ret_place_join2(c: bool) {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let g = if c { first_of } else { first_of2 }
+    let r = g(&v)
+    v.clear()
+    print(r)
+}

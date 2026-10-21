@@ -1,0 +1,75 @@
+enum Shape { Circle(u64), Square(u64), Dot }
+enum Two { A, B }
+struct P { x: u64, y: Two }
+fn ref_scrut(s: &Shape) -> u64 {
+    match s {   //~ W0120
+        Circle(r) => 1,
+        Square(a) => 2,
+    }
+}
+fn nested_lit(o: Option<u64>) -> u64 {
+    match o {   //~ W0120
+        Some(0) => 1,
+        None => 0,
+    }
+}
+fn nested_bool(o: Option<bool>) -> u64 {
+    match o {   //~ W0120
+        Some(true) => 1,
+        None => 0,
+    }
+}
+fn tuple_lit(a: u64, b: Two) -> u64 {
+    match (a, b) {   //~ W0120
+        (0, A) => 1,
+        (x, B) => 2,
+    }
+}
+fn struct_pat(p: P) -> u64 {
+    match p {   //~ W0120
+        P(0, A) => 1,
+        P(x, B) => 2,
+    }
+}
+fn string_lit(s: String) -> u64 {
+    match s {   //~ W0120
+        "a" => 1,
+    }
+}
+fn unit_val(u: ()) -> u64 {
+    match u {
+        () => 1,
+    }
+}
+fn result_nested(r: Result<Option<Two>, u64>) -> u64 {
+    match r {   //~ W0120
+        Ok(Some(A)) => 1,
+        Ok(None) => 2,
+        Err(e) => 3,
+    }
+}
+fn qualified(s: Shape) -> u64 {
+    match s {   //~ W0120
+        Shape.Circle(r) => 1,
+        Shape.Dot => 2,
+    }
+}
+fn let_refutable(o: Option<u64>) -> u64 {
+    let Some(x) = o   //~ W0120
+    x
+}
+fn let_refutable_tuple(o: (Option<u64>, u64)) -> u64 {
+    let (Some(x), y) = o   //~ W0120
+    x
+}
+fn for_refutable(v: Vec<Option<u64>>) {
+    for Some(x) in v[] {   //~ W0120
+        print(x)
+    }
+}
+fn main() {
+    print(let_refutable(None))
+}
+test "for" { let v = Vec.new(); v.push(None); for_refutable(v) }
+test "tuple" { print(let_refutable_tuple((None, 1))) }
+test "struct" { print(struct_pat(P { x: 1, y: A })) }

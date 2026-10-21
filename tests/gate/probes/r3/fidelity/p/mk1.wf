@@ -1,0 +1,2 @@
+// weft: libary
+fn main() { print(1) }

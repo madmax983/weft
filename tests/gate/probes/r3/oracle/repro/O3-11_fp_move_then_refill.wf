@@ -1,0 +1,28 @@
+// O3-11 (minor, false positive, also in 328a39b). A closure captures `v` by
+// reference (it reads the cell of `v` when it runs, ADR 0003). A new value of
+// `v` before the call is fine (`refill_only` is accepted). A move of `v` and
+// then a new value of `v` before the call gets W0301: the move frees the root
+// of `v`, and the new value does not make the closure valid again. At run time
+// the closure reads the new value.
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+
+fn refill_only() {
+    let v = mk_v()
+    let show = || print(v.len())
+    v = mk_v()
+    show()                // accepted
+}
+
+fn move_then_refill() {
+    let v = mk_v()
+    let show = || print(v.len())
+    print(take_v(v))
+    v = mk_v()
+    show()                // W0301
+}
+
+fn main() {
+    refill_only()
+    move_then_refill()
+}

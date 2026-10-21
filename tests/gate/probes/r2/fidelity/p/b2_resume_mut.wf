@@ -1,0 +1,23 @@
+effect Log { fn log(msg: String) }
+
+// The clause holds `r` into `v[]` across `resume`. The handled computation
+// pushes to `v` after the operation, so the buffer can move.
+fn resume_mut() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    handle Log {
+        fn log(m) {
+            let r = &v[0]
+            resume(())
+            print(r)
+        }
+    } in {
+        log("x")
+        v.push(2)
+        v.push(3)
+    }
+}
+
+fn main() {
+    resume_mut()
+}

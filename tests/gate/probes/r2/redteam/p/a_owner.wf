@@ -1,0 +1,134 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Pair { a: Vec<u64>, b: Vec<u64> }
+fn take(v: Vec<u64>) {}
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+
+// A reference into a temporary of the statement.
+fn temp_ref() {
+    let r = &mkv()[0]
+    print(r)   //~ W0301
+}
+// A reference into a loop-body local survives into the next iteration.
+fn loop_local() {
+    let d = mkv()
+    let r = &d[0]
+    for i in 0..3 {
+        let v = mkv()
+        print(r)   //~ W0301
+        r = &v[0]
+    }
+}
+// A reference to a by-value match binding outlives the arm.
+fn arm_binding(o: Option<Vec<u64>>) {
+    let d = mkv()
+    let r = &d[0]
+    match o {
+        Some(x) => { r = &x[0] },
+        None => {}
+    }
+    print(r)   //~ W0301
+}
+// A whole-local move by assignment.
+fn move_by_assign() {
+    let v = mkv()
+    let r = &v[0]
+    let w = mkv()
+    w = v
+    w.clear()
+    print(r)   //~ W0301
+}
+// A partial move by a destructuring let.
+fn destructure() {
+    let p = Pair { a: mkv(), b: mkv() }
+    let r = &p.a[0]
+    let Pair(x, y) = p
+    x.clear()
+    print(r)   //~ W0301
+}
+// A move into a tuple.
+fn into_tuple() {
+    let v = mkv()
+    let r = &v[0]
+    let t = (v, 1)
+    let (w, n) = t
+    w.clear()
+    print(r)   //~ W0301
+}
+// A move into an Option and out again.
+fn into_option() {
+    let v = mkv()
+    let r = &v[0]
+    let o = Some(v)
+    match o { Some(w) => w.clear(), None => {} }
+    print(r)   //~ W0301
+}
+// A move into a Box.
+fn into_box() {
+    let v = mkv()
+    let r = &v[0]
+    let b = Box.new(v)
+    print(r)   //~ W0301
+}
+// The value of a block that is a local of the block, via a struct field.
+fn block_field() {
+    let r = {
+        let p = Pair { a: mkv(), b: mkv() }
+        &p.a
+    }
+    print(r.len())   //~ W0301
+}
+// A reference into a scope body local.
+fn scope_local() / async {
+    let r = scope { s =>
+        let v = mkv()
+        &v[0]
+    }
+    print(r)   //~ W0301
+}
+// A reference into a clause local through the value of the handle.
+effect Ask { fn ask() -> u64 }
+fn clause_local() {
+    let r = handle Ask { fn ask() { let v = mkv()
+ &v[0] } } in { let n = ask()
+ &n }
+    print(r)   //~ W0301
+}
+// A reference into a handled-body local.
+fn handled_local() {
+    let r = handle Ask { fn ask() { resume(1) } } in {
+        let v = mkv()
+        &v[0]
+    }
+    print(r)   //~ W0301
+}
+// A moved-into-closure local; closure runs after.
+fn closure_moves() {
+    let v = mkv()
+    let r = &v[0]
+    let f = || take(v)
+    f()
+    print(r)   //~ W0301
+}
+// Moved into a task.
+fn task_moves() / async {
+    let v = mkv()
+    let r = &v[0]
+    scope { s => s.spawn(|| take(v)) }
+    print(r)   //~ W0301
+}
+// A while-condition temporary.
+fn while_temp() {
+    let d = mkv()
+    let r = &d[0]
+    let i = 0
+    while { r = &mkv()[0]; i < 1 } { i += 1 }
+    print(r)   //~ W0301
+}
+fn main() {
+    temp_ref()
+    loop_local()
+    move_by_assign()
+}

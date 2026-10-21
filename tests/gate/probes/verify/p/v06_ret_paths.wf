@@ -1,0 +1,53 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mk_grow(w: &World) -> fn() / mut(w.entities) { || w.entities.push(Entity { hp: 1 }) }
+fn mk_grow2(w: &World) -> fn() / mut(w.entities) { || w.entities.push(Entity { hp: 2 }) }
+// A join of two makers: the result of the call is a closure that mutates.
+fn joined_makers(world: &World, c: bool) / mut(world.entities) {
+    let m = if c { mk_grow } else { mk_grow2 }
+    let f = m(world)
+    let first = &world.entities[0]
+    f()
+    print(first.hp)
+}
+// A maker passed as an argument, called inside a closure.
+fn call_maker(m: fn(&World) -> fn(), w: &World) -> fn() { m(w) }
+fn via_hof(world: &World) / mut(world.entities) {
+    let f = call_maker(mk_grow, world)
+    let first = &world.entities[0]
+    f()
+    print(first.hp)
+}
+// A closure that returns a closure.
+fn closure_maker(world: &World) / mut(world.entities) {
+    let mk = || || world.entities.push(Entity { hp: 1 })
+    let f = mk()
+    let first = &world.entities[0]
+    f()
+    print(first.hp)
+}
+// A maker that returns a maker.
+fn mk2(w: &World) -> fn() -> fn() / mut(w.entities) { || || w.entities.push(Entity { hp: 1 }) }
+fn nested(world: &World) / mut(world.entities) {
+    let m = mk2(world)
+    let f = m()
+    let first = &world.entities[0]
+    f()
+    print(first.hp)
+}
+// A returned closure with its own reference parameter.
+fn mk_param() -> fn(&World) { |x: &World| x.entities.push(Entity { hp: 1 }) }
+fn ret_param(world: &World) {
+    let f = mk_param()
+    let first = &world.entities[0]
+    f(world)
+    print(first.hp)
+}
+// A returned closure that calls a fn param of the maker.
+fn mk_call(g: fn(&World), w: &World) -> fn() { || g(w) }
+fn ret_passthrough(world: &World) {
+    let f = mk_call(|x| x.entities.push(Entity { hp: 1 }), world)
+    let first = &world.entities[0]
+    f()
+    print(first.hp)
+}

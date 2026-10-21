@@ -1,0 +1,14 @@
+// weft: library
+effect Log { fn info(m: u64) }
+
+fn both() {
+    info(1)
+    log.info("x")
+}
+fn lib_handler() {
+    handle log { fn info(m) { resume(()) } } in print(1)
+}
+fn lib_handler2() {
+    handle log { fn info(m) { resume(()) } } in print(1)
+    handle Log { fn info(m) { resume(()) } } in info(2)
+}

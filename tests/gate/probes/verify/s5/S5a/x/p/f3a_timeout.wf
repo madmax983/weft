@@ -1,0 +1,13 @@
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { print("unlocked")
+ let Lock(i) = l }
+fn lock() -> Lock { Lock { id: 1 } }
+fn g_timeout() / async, fail, clock {
+    let l = lock()
+    let m = with_timeout(1.s) { sleep(2.s)
+ l }
+    unlock(m)
+}
+fn main() / async, clock {
+    handle Fail { fn fail(m) { print(m) } } in g_timeout()
+}

@@ -1,0 +1,35 @@
+fn both<T>(f: fn() -> T, g: fn() -> T) -> (T, T) / par { fork(f, g) }
+fn first<T>(f: fn() -> T, g: fn() -> T) -> T / par { let (a, b) = fork(f, g); a }
+
+
+fn unit_pair() / par {
+    let (a, b) = fork(|| (), || ())
+    print("units")
+}
+
+fn generic_unit() / par {
+    let (a, b) = both(|| (), || ())
+    let c = first(|| (), || ())
+    print("generic units")
+}
+
+fn unit_tail() / par {
+    fork(|| print("x"), || print("y"))
+}
+
+fn in_if(c: bool) / par {
+    if c { let _ = fork(|| print("a"), || print("b")) } else { () }
+}
+
+fn three() / par {
+    let (a, b, c) = fork(|| 1, || "s", || ())
+    print("{a} {b}")
+}
+
+fn main() / par {
+    unit_pair()
+    generic_unit()
+    unit_tail()
+    in_if(true)
+    three()
+}

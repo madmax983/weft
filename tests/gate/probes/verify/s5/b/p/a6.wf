@@ -1,0 +1,12 @@
+effect Log { fn info(m: u64) }
+
+fn both() / clock {
+    info(1)
+    log.info("x")
+}
+fn one() / clock {
+    info(1)
+}
+fn stated_std() / log {
+    info(1)
+}

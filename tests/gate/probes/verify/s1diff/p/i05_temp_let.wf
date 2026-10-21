@@ -1,0 +1,20 @@
+struct Entity { hp: u64 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 7 })
+    w
+}
+fn mkv() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(5)
+    v
+}
+fn main() {
+    let r = &mkw().entities[0].hp
+    print(r)
+    let s = &mkv()[0]
+    print(s)
+    let t = &mkv()
+    print(t.len())
+}

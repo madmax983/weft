@@ -1,0 +1,59 @@
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v
+}
+
+// Task a starts task b in the same scope; b writes v. The parent joins a and
+// never touches v in the scope.
+fn nested_join() / async {
+    let v = mk_v()
+    scope { s =>
+        let a = s.spawn(|| { s.spawn(|| v.push(2)); () })
+        a.join()
+        print(1)
+    }
+    print(v.len())
+}
+
+// Two tasks write disjoint fields; one is joined while the other runs.
+struct P { x: Vec<u64>, y: Vec<u64> }
+fn disjoint_join() / async {
+    let p = P { x: mk_v(), y: mk_v() }
+    scope { s =>
+        let a = s.spawn(|| p.x.push(2))
+        let b = s.spawn(|| p.y.push(3))
+        a.join()
+        b.join()
+    }
+    print(p.x.len())
+}
+
+// A task that only reads v, joined while another task reads v.
+fn readers_join() / async {
+    let v = mk_v()
+    scope { s =>
+        let a = s.spawn(|| print(v.len()))
+        let b = s.spawn(|| print(v.len()))
+        a.join()
+        b.join()
+    }
+}
+
+// A task writes a local of its own body only.
+fn own_local_join() / async {
+    let v = mk_v()
+    scope { s =>
+        let a = s.spawn(|| { let w = mk_v(); w.push(1) })
+        let b = s.spawn(|| print(v.len()))
+        a.join()
+        b.join()
+    }
+}
+
+fn main() / async {
+    nested_join()
+    disjoint_join()
+    readers_join()
+    own_local_join()
+}

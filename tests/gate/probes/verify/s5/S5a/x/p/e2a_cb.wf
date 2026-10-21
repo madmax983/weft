@@ -1,0 +1,32 @@
+struct Stats { count: u64 }
+struct Job { f: fn() }
+
+fn run_cb(j: &Job, k: fn(fn())) { k(j.f) }
+fn twice(g: fn()) { g()
+ g() }
+
+fn s_cb(st: &Stats) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| { st.count += 1; print(st.count) }); () } }
+        run_cb(&j, |g: fn()| { g()
+ g() })
+    }
+}
+fn s_cb_item(st: &Stats) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| { st.count += 1; print(st.count) }); () } }
+        run_cb(&j, twice)
+    }
+}
+fn s_direct(st: &Stats) / mut(st), async {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| { st.count += 1; print(st.count) }); () } }
+        twice(j.f)
+    }
+}
+fn main() / async {
+    let st = Stats { count: 0 }
+    s_cb(&st)
+    s_cb_item(&st)
+    s_direct(&st)
+}

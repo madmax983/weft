@@ -1,0 +1,8 @@
+struct Stats { count: u64 }
+struct Job { f: fn() }
+fn run_hof(j: &Job, k: fn(&Job)) { k(j) }
+fn hof_clean(st: &Stats) / mut(st) {
+    let j = Job { f: || { st.count += 1 } }
+    run_hof(&j, |jj| { let g = jj.f
+        g() })
+}

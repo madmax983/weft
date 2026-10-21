@@ -1,0 +1,78 @@
+struct P { x: u64, v: Vec<u64> }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn race_match_ref() {
+    let n = 1
+    scope { s =>
+        s.spawn(|| { n = 5 })
+        let q = &n
+        match q { 1 => print(0), _ => print(1) }
+    }
+}
+fn race_match_direct() {
+    let n = 1
+    scope { s =>
+        s.spawn(|| { n = 5 })
+        match n { 1 => print(0), _ => print(1) }
+    }
+}
+fn race_match_vec() {
+    let v = mk_v()
+    scope { s =>
+        s.spawn(|| { v[0] = 5 })
+        let q = &v[0]
+        match q { 1 => print(0), _ => print(1) }
+    }
+}
+fn race_if_let() {
+    let o = Some(1)
+    scope { s =>
+        s.spawn(|| { o = None })
+        let q = &o
+        match q { Some(x) => print(0), None => print(1) }
+    }
+}
+fn race_let_destructure() {
+    let t = (1, 2)
+    scope { s =>
+        s.spawn(|| { t.0 = 5 })
+        let q = &t
+        let (a, b) = q
+        print(0)
+    }
+}
+fn race_for_ref() {
+    let v = mk_v()
+    scope { s =>
+        s.spawn(|| { v[0] = 5 })
+        let q = &v
+        for x in q { print(0) }
+    }
+}
+fn race_while_ref() {
+    let n = 1
+    scope { s =>
+        s.spawn(|| { n = 5 })
+        let q = &n
+        while q == 7 { print(0) }
+    }
+}
+fn race_arith_assign() {
+    let n = 1
+    let m = 0
+    scope { s =>
+        s.spawn(|| { n = 5 })
+        let q = &n
+        m += q
+    }
+}
+fn race_return_deref() -> u64 {
+    let n = 1
+    scope { s =>
+        s.spawn(|| { n = 5 })
+        let q = &n
+        q + 0
+    }
+}
+fn main() {
+    race_match_ref()
+}

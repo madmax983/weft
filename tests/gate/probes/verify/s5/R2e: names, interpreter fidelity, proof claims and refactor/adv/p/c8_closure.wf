@@ -1,0 +1,4 @@
+fn main() {
+    let f = |a: u8, b: u8| a + b
+    print(f(250, 10))
+}

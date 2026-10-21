@@ -1,0 +1,8 @@
+struct Big { xs: Vec<i32> }
+struct Pair { a: Big, b: i32 }
+fn size(x: &Big) -> i32 { 1 }
+fn main() {
+    let v = Big { xs: [1, 2] }
+    let p = Pair(b: size(&v), a: v)
+    print(p.b)
+}

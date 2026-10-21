@@ -1,0 +1,11 @@
+effect Log { fn log(msg: String) }
+// A box or an rc of the body holds the closure. It goes out of scope with the body.
+fn boxed() {
+    handle Log { fn log(m) { resume(()) } } in {
+        let b = Box.new(|| log("x"))
+        let r = Rc.new(|| log("y"))
+    }
+}
+fn boxed_out() {
+    let b = handle Log { fn log(m) { resume(()) } } in Box.new(|| log("x"))
+}

@@ -1,0 +1,21 @@
+effect Stop { fn stop() }
+linear struct Tx { id: u64 }
+fn begin() -> Tx { Tx { id: 1 } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+
+fn run_bg<T>(mk: fn() -> T) -> T / async, Stop {
+    scope { s =>
+        let t = s.spawn(mk)
+        stop()
+        t.join()
+    }
+}
+
+fn caller() / async, Stop {
+    commit(run_bg(begin))
+}
+
+fn main() / async {
+    handle Stop { fn stop() { print("stopped") } } in caller()
+    print("end")
+}

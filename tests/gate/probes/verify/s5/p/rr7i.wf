@@ -1,0 +1,39 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw(n: i32) -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: n })
+    w
+}
+// The task reads a middle value of the captured variable.
+fn task_mid() / async, clock {
+    let a = mkw(1)
+    let b = mkw(2)
+    let r = &a.entities[0]
+    scope { s =>
+        s.spawn(|| { sleep(1.ms)
+ print(r.hp) })
+        r = &b.entities[0]
+        b.entities.clear()
+        r = &a.entities[0]
+    }
+}
+// The same with a stored closure run by a callee at the middle value.
+fn run_all(fs: &Vec<fn()>) { let i = 0
+ while i < fs.len() { let f = fs[i]
+ f()
+ i = i + 1 } }
+fn stored_mid() {
+    let a = mkw(1)
+    let b = mkw(2)
+    let r = &a.entities[0]
+    let fs: Vec<fn()> = Vec.new()
+    fs.push(|| print(r.hp))
+    r = &b.entities[0]
+    b.entities.clear()
+    run_all(&fs)
+    r = &a.entities[0]
+}
+fn main() / async, clock {
+    task_mid()
+}

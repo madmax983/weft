@@ -9,7 +9,9 @@ use weft_syntax::diag::Code;
 
 use weft_facts::{Step, StepKind};
 
-use super::{ast, subst, AdtKind, FnId, Lower, Pattern, Span, Ty, Val, VarId, VarKind};
+use super::{
+    ast, subst, AdtKind, FnId, Lower, Pattern, PatternKind, Span, Ty, Val, VarId, VarKind,
+};
 
 impl Lower<'_> {
     /// A linear value of type `ty` goes away at `span`. `name` names it in the
@@ -412,21 +414,21 @@ impl Lower<'_> {
     }
 
     fn wild_drops_into(&self, pat: &Pattern, ty: &Ty, out: &mut Vec<(Span, Ty)>) {
-        match pat {
-            Pattern::Wild(span) => {
+        match &pat.kind {
+            PatternKind::Wild(span) => {
                 if self.may_be_linear(ty) {
                     out.push((*span, ty.clone()));
                 }
             }
-            Pattern::Bind(_) | Pattern::Lit(..) => {}
-            Pattern::Tuple(ps, _) => {
+            PatternKind::Bind(_) | PatternKind::Lit(..) => {}
+            PatternKind::Tuple(ps, _) => {
                 if let Ty::Tuple(ts) = self.inf.deep(ty) {
                     for (p, t) in ps.iter().zip(&ts) {
                         self.wild_drops_into(p, t, out);
                     }
                 }
             }
-            Pattern::Variant { path, fields, .. } => {
+            PatternKind::Variant { path, fields, .. } => {
                 for (p, t) in fields.iter().zip(self.payload_tys(path, ty)) {
                     self.wild_drops_into(p, &t, out);
                 }
@@ -437,17 +439,17 @@ impl Lower<'_> {
     /// Returns true if a value that pattern `pat` matches, of type `ty`, can hold a
     /// linear part. `None` in place of `Some(t)` holds nothing.
     pub(super) fn pattern_holds_linear(&self, pat: &Pattern, ty: &Ty) -> bool {
-        match pat {
-            Pattern::Wild(_) | Pattern::Bind(_) => self.is_linear(ty),
-            Pattern::Lit(..) => false,
-            Pattern::Tuple(ps, _) => match self.inf.deep(ty) {
+        match &pat.kind {
+            PatternKind::Wild(_) | PatternKind::Bind(_) => self.is_linear(ty),
+            PatternKind::Lit(..) => false,
+            PatternKind::Tuple(ps, _) => match self.inf.deep(ty) {
                 Ty::Tuple(ts) => ps
                     .iter()
                     .zip(&ts)
                     .any(|(p, t)| self.pattern_holds_linear(p, t)),
                 _ => self.is_linear(ty),
             },
-            Pattern::Variant { path, fields, .. } => {
+            PatternKind::Variant { path, fields, .. } => {
                 let tys = self.payload_tys(path, ty);
                 if tys.len() != fields.len() {
                     return self.is_linear(ty);

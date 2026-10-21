@@ -1,0 +1,7 @@
+[package]
+name = "app"
+kind = "lib"
+
+[dependencies.main]
+path = "deps/main"
+authority = []

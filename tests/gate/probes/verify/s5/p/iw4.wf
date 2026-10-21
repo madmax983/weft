@@ -1,0 +1,5 @@
+fn main() {
+    let c: u8 = 250
+    c += 10
+    print(c)
+}

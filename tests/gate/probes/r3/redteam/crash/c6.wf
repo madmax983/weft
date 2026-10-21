@@ -1,0 +1,3 @@
+fn g<T>(x: T) -> fn() -> T { || x }
+fn h<T>(x: T, n: u64) -> u64 { if n == 0 { 0 } else { h(g(x), n - 1) } }
+fn main() { print(h(1, 2)) }

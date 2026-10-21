@@ -1,0 +1,43 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+// A local closure that goes into a Vec with a mutating closure.
+fn local_after_push() {
+    let world = mkw()
+    let fs = Vec.new()
+    let f = || print(1)
+    fs.push(f)
+    fs.push(|| world.entities.clear())
+    let r = &world.entities[0]
+    f()
+    print(r.hp)
+}
+// A local closure given to a generic function with another closure.
+fn pick<T>(a: T, b: T, c: bool) -> T { if c { a } else { b } }
+fn local_after_pick() {
+    let world = mkw()
+    let f = || print(1)
+    let g = pick(f, || world.entities.clear(), true)
+    let r = &world.entities[0]
+    f()
+    print(r.hp)
+}
+// An Option.
+fn local_after_option() {
+    let world = mkw()
+    let f = || print(1)
+    let o = Some(f)
+    o = Some(|| world.entities.clear())
+    let r = &world.entities[0]
+    f()
+    print(r.hp)
+}
+fn main() {
+    local_after_push()
+    local_after_pick()
+    local_after_option()
+}

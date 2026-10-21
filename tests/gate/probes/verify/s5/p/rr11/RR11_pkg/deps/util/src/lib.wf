@@ -1,0 +1,4 @@
+// A library with its own effect. ADR 0005: "A user effect of a dependency needs
+// a handler of the caller, not authority."
+pub effect Note { fn note(x: u64) }
+pub fn noting() / Note { note(1) }

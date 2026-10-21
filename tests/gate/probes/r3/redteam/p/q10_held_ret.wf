@@ -1,0 +1,8 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn get_wrong(rs: &Vec<&Entity>, w: &World) -> &Entity in w.. { rs[0] }   //~ W0204
+fn get_wrong_rs(rs: &Vec<&Entity>) -> &Entity in rs { rs[0] }   //~ W0204
+fn get_opt(o: &Option<&Entity>, w: &World) -> &Entity in w.. {
+    match o { Some(e) => e, None => &w.entities[0] }   //~ W0204
+}
+fn main() {}

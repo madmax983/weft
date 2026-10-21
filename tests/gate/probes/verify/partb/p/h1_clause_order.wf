@@ -1,0 +1,24 @@
+// The clause resumes first and spawns after. The resumed computation runs to
+// its end inside `resume`, so the second print runs before the spawn.
+effect Note { fn note(x: u64) }
+struct Stats { count: u64 }
+fn spawn_in_clause(st: &Stats) / mut(st), async {
+    scope { s =>
+        handle Note {
+            fn note(x) {
+                resume(())
+                print("spawn now")
+                s.spawn(|| st.count += 1)
+                print(0)
+            }
+        } in {
+            print(st.count)
+            note(1)
+            print("second print", st.count)
+        }
+    }
+}
+fn main() / async {
+    let st = Stats { count: 0 }
+    spawn_in_clause(&st)
+}

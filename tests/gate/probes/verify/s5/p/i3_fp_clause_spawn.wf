@@ -1,0 +1,25 @@
+linear struct Tx { id: u64 }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+effect Give { fn give(t: Tx) }
+
+// The clause commits the value and starts a task in the outer scope.
+fn clause_spawns() / async {
+    scope { s =>
+        handle Give { fn give(t) { commit(t); s.spawn(|| print("bg")); resume(()) } } in {
+            give(begin(1))
+        }
+    }
+}
+
+// A function that takes a linear value and starts a task for a function
+// parameter (a task run of the callee).
+fn bg(f: fn(), t: Tx) / async { commit(t); scope { s => s.spawn(f) } }
+fn callee_runs() / async {
+    bg(|| print("bg2"), begin(2))
+}
+
+fn main() / async {
+    clause_spawns()
+    callee_runs()
+}

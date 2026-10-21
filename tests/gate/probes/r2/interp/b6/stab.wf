@@ -1,0 +1,7 @@
+struct S { arr: [u64; 4], v: Vec<u64>, b: Box<u64>, o: Option<u64> }
+fn f(s: &S) / mut(s) {
+    let a = &s.arr[0]
+    let e = &s.v[0]
+    let x = &s.b
+    print(a, e, x)
+}

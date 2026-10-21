@@ -1,0 +1,15 @@
+effect E { fn op() -> u64 }
+
+fn get() -> u64 / E { op() }
+
+fn call_it(f: fn() -> u64 / E) -> u64 {
+    handle E { fn op() { resume(2) } } in f()
+}
+
+fn main() {
+    handle E { fn op() { resume(1) } } in {
+        let c = || op()
+        print("closure: {call_it(c)}")
+        print("item: {call_it(get)}")
+    }
+}

@@ -1,0 +1,32 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn holds_opt(f: fn(Option<&World>), w: &World) {
+    let first = &w.entities[0]
+    f(Some(w))
+    print(first.hp)
+}
+fn apply_opt(f: fn(Option<&World>), w: &World) { f(Some(w)) }
+fn hof_opt(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    apply_opt(|o| match o { Some(x) => x.entities.push(Entity { hp: 1 }), None => {} }, world)
+    print(first.hp)
+}
+fn direct_opt(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let f = |o: Option<&World>| match o { Some(x) => x.entities.push(Entity { hp: 1 }), None => {} }
+    f(Some(world))
+    print(first.hp)
+}
+fn direct_tuple(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let f = |t: (&World, u64)| { let (x, n) = t; x.entities.push(Entity { hp: 1 }) }
+    f((world, 1))
+    print(first.hp)
+}
+// Base behaviour: a plain fn item with Option<&World>.
+fn grow_opt(o: Option<&World>) { match o { Some(x) => x.entities.push(Entity { hp: 1 }), None => {} } }
+fn item_opt(world: &World) {
+    let first = &world.entities[0]
+    grow_opt(Some(world))
+    print(first.hp)
+}

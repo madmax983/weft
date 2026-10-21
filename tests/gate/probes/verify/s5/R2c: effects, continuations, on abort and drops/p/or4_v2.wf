@@ -1,0 +1,45 @@
+effect Ask { fn ask() -> u64 }
+effect Pick { multi fn pick() -> u64 }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn pair(l: Lk, x: u64) -> u64 { unlock(l); x }
+
+// A linear temporary in flight inside the handled body: an abort drops it.
+fn temp_in_body_expr() -> u64 {
+    handle Ask { fn ask() { 0 } } in pair(Lk { id: 1 }, ask())
+}
+fn temp_in_body_block() -> u64 {
+    handle Ask { fn ask() { 0 } } in { pair(Lk { id: 2 }, ask()) }
+}
+fn temp_in_body_multi() -> u64 {
+    handle Pick { fn pick() { resume(1) + resume(2) } } in { pair(Lk { id: 3 }, pick()) }
+}
+// A linear temporary in flight outside the handle: spared.
+fn temp_outside() -> u64 {
+    pair(Lk { id: 4 }, handle Ask { fn ask() { 0 } } in { ask() + 1 })
+}
+// A local of the body declared in a nested block.
+fn nested_block() -> u64 {
+    handle Ask { fn ask() { 0 } } in {
+        let l = Lk { id: 5 }
+        let x = { let y = ask(); y + 1 }
+        unlock(l)
+        x
+    }
+}
+// A struct literal in flight inside the body.
+struct Two { l: Lk, x: u64 }
+fn lit_in_body() -> u64 {
+    let t = handle Ask { fn ask() { Two { l: Lk { id: 9 }, x: 0 } } } in { Two { l: Lk { id: 6 }, x: ask() } }
+    let Two(l, x) = t
+    unlock(l)
+    x
+}
+fn main() {
+    print(temp_in_body_expr())
+    print(temp_in_body_block())
+    print(temp_in_body_multi())
+    print(temp_outside())
+    print(nested_block())
+    print(lit_in_body())
+}

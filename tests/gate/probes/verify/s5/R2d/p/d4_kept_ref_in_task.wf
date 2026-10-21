@@ -1,0 +1,56 @@
+// RR: `kept(T, Rt)` lets a copy variable end while a task that captures it
+// runs. A reference that the task makes into the variable is still invalid
+// after the end (ADR 0003), but the checker accepts it.
+struct P { a: u64, b: u64 }
+
+fn show(x: &u64) { print(x) }
+
+// The task borrows the kept variable after its end.
+fn ref_after_end() / async, clock {
+    scope { s =>
+        {
+            let x = 1
+            s.spawn(|| { sleep(2.ms); let r = &x; print(r) })
+        }
+        sleep(5.ms)
+    }
+}
+
+// The task gives a reference into the kept variable to a callee.
+fn ref_to_callee() / async, clock {
+    scope { s =>
+        {
+            let x = 1
+            s.spawn(|| { sleep(2.ms); show(&x) })
+        }
+        sleep(5.ms)
+    }
+}
+
+// The task borrows a field before the end and uses it after.
+fn ref_across_end() / async, clock {
+    scope { s =>
+        {
+            let p = P { a: 1, b: 2 }
+            s.spawn(|| { let r = &p.a; sleep(2.ms); print(r) })
+        }
+        sleep(5.ms)
+    }
+}
+
+// The same in a loop body.
+fn ref_in_loop() / async, clock {
+    scope { s =>
+        let i = 0
+        while i < 2 {
+            let x = i
+            s.spawn(|| { sleep(2.ms); show(&x) })
+            i += 1
+        }
+        sleep(5.ms)
+    }
+}
+
+fn main() / async, clock {
+    ref_after_end()
+}

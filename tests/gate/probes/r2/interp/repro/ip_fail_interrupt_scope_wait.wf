@@ -1,0 +1,15 @@
+// A child of the outer scope fails while the owner waits at the end of an
+// inner scope. The Fail handler around both resumes.
+fn main() / io {
+    handle Fail { fn fail(m) { print("caught {m}"); resume(()) } } in {
+        scope { s =>
+            s.spawn(|| { sleep(5.ms); fail("outer child failed") })
+            let v = scope { t =>
+                t.spawn(|| sleep(10.ms))
+                41
+            }
+            print("v = {v + 1}")
+        }
+    }
+    print("end")
+}

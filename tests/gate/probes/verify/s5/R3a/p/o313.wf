@@ -1,0 +1,87 @@
+struct P { x: u64, v: Vec<u64> }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+
+fn race_method() {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        s.spawn(|| { v.push(3) })
+        let q = &v
+        let n = q.len()
+    }
+}
+fn race_index() {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        s.spawn(|| { v[0] = 3 })
+        let q = &v
+        let n = q[0]
+    }
+}
+fn race_field() {
+    let p = P { x: 1, v: mk_v() }
+    scope { s =>
+        s.spawn(|| { p.x = 3 })
+        let q = &p
+        let n = q.x + 0
+    }
+}
+fn race_compare() {
+    let n = 1
+    scope { s =>
+        s.spawn(|| { n = 5 })
+        let q = &n
+        if q == 1 { print(0) }
+    }
+}
+fn race_match() {
+    let n = 1
+    scope { s =>
+        s.spawn(|| { n = 5 })
+        let q = &n
+        match q { 1 => print(0), _ => print(1) }
+    }
+}
+fn race_copy_let() {
+    let n = 1
+    scope { s =>
+        s.spawn(|| { n = 5 })
+        let q = &n
+        let m = q
+    }
+}
+fn race_interp() {
+    let n = 1
+    scope { s =>
+        s.spawn(|| { n = 5 })
+        let q = &n
+        let t = "{q}"
+    }
+}
+fn race_direct() {
+    let n = 1
+    scope { s =>
+        s.spawn(|| { n = 5 })
+        let m = n + 0
+    }
+}
+fn moved_interp() {
+    let v = mk_v()
+    print(take_v(v))
+    print("{v}")
+}
+fn moved_in_tuple() {
+    let t = (mk_v(), 1)
+    print(take_v(t.0))
+    print(t)
+}
+fn moved_to_string() {
+    let v = mk_v()
+    print(take_v(v))
+    let s = "{v}"
+}
+fn main() {
+    race_method()
+}

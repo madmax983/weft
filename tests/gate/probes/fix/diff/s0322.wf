@@ -1,0 +1,7 @@
+struct S0<T0> { f0: S5<S4<S1>> }
+struct S1 { f0: Box<S1> }
+struct S2 { f0: Option<S2>, f1: Option<S3>, f2: S4<Vec<Vec<u64>>> }
+struct S3 {  }
+struct S4<T0> {  }
+struct S5<T0> { f0: Option<[Box<T0>; 1]> }
+fn main() {}

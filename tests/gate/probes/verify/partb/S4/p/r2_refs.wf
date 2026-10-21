@@ -1,0 +1,48 @@
+struct Wrap<T> { x: T }
+fn id<T>(x: T) -> T { x }
+fn w01() -> Wrap<&u64> { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ Wrap { x: &v[0] } }
+fn w02() -> (u64, Option<&u64>) { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ (1, Some(&v[0])) }
+fn w03() -> Vec<&u64> { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let rs = Vec.new()
+ rs.push(&v[0])
+ rs }
+fn w04() -> Option<&u64> { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ id(Some(&v[0])) }
+fn w05() -> Option<&u64> { let x = 5
+ Some(&x) }
+fn w06(c: bool) -> Option<&u64> { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ if c { return Some(&v[0]) }
+ None }
+fn w07() -> Option<Option<&u64>> { let x = 5
+ Some(Some(&x)) }
+fn add<T>(rs: &Vec<T>, x: T) / mut(rs) { rs.push(x) }
+fn w08() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let rs = Vec.new()
+ add(&rs, &v[0])
+ v.clear()
+ for r in rs[] { print(r) } }
+fn first(o: Option<&u64>) -> u64 { match o { Some(r) => 1, None => 0 } }
+fn w09() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let g = first
+ let o = Some(&v[0])
+ v.clear()
+ print(g(o)) }
+fn keep_opt(o: Option<&u64>, v: &Vec<u64>) -> u64 / mut(v) { v.clear()
+ match o { Some(r) => r, None => 0 } }
+fn w10() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ print(keep_opt(Some(&v[0]), &v)) }
+fn w11() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let w = Wrap { x: Some(&v[0]) }
+ v.clear()
+ match w.x { Some(r) => print(r), None => {} } }

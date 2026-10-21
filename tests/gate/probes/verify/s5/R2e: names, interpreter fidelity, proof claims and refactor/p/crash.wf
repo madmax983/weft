@@ -1,0 +1,2 @@
+effect Note { fn note() }
+fn f() / main.Note { note() }

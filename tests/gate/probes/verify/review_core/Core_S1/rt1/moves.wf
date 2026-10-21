@@ -1,0 +1,178 @@
+// RT1 variants: the owner moves in other shapes. Each `ERR` line should be W0301.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Bag { items: Vec<u64> }
+impl Bag { fn eat(self: Bag) {} }
+fn take(v: Vec<u64>) {}
+fn id<T>(x: T) -> T { x }
+effect Sink { fn put(v: Vec<u64>) }
+
+// 1. A move into a struct literal.
+fn into_struct() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let b = Bag { items: v }
+    b.items.push(2)
+    print(r)   // ERR
+}
+// 2. A move into a variant constructor.
+fn into_variant() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let o = Some(v)
+    print(r)   // ERR
+}
+// 3. A move into a tuple.
+fn into_tuple() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let t = (v, 1)
+    print(r)   // ERR
+}
+// 4. A by-value self receiver.
+fn by_value_self() {
+    let b = Bag { items: Vec.new() }
+    b.items.push(1)
+    let r = &b.items[0]
+    b.eat()
+    print(r)   // ERR
+}
+// 5. A generic identity call.
+fn through_generic() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let w = id(v)
+    w.clear()
+    print(r)   // ERR
+}
+// 6. A push into another vector.
+fn into_vec() {
+    let vs: Vec<Vec<u64>> = Vec.new()
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    vs.push(v)
+    print(r)   // ERR
+}
+// 7. An assignment into a field.
+fn into_field() {
+    let b = Bag { items: Vec.new() }
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    b.items = v
+    print(r)   // ERR
+}
+// 8. An effect operation argument.
+fn into_op() / Sink {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    put(v)
+    print(r)   // ERR
+}
+// 9. A closure that moves its capture.
+fn into_closure() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let f = || take(v)
+    f()
+    print(r)   // ERR
+}
+// 10. A by-value match on the owner.
+fn by_value_match() {
+    let o: Option<Vec<u64>> = Some(Vec.new())
+    let r = &o
+    match o {
+        Some(v) => take(v),
+        None => {}
+    }
+    print(r)   // ERR
+}
+// 11. A move of a field out of an owned struct.
+fn field_out() {
+    let b = Bag { items: Vec.new() }
+    b.items.push(1)
+    let r = &b.items[0]
+    let w = b.items
+    w.clear()
+    print(r)   // ERR
+}
+// 12. A move of a field into a call.
+fn field_into_call() {
+    let b = Bag { items: Vec.new() }
+    b.items.push(1)
+    let r = &b.items[0]
+    take(b.items)
+    print(r)   // ERR
+}
+// 13. A move in one branch only.
+fn move_in_branch(c: bool) {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    if c { take(v) } else { print(0) }
+    print(r)   // ERR
+}
+// 14. A move in a loop, then break.
+fn move_in_loop() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    loop {
+        take(v)
+        break
+    }
+    print(r)   // ERR
+}
+// 15. A move through a return value of a block.
+fn block_move() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let w = { v }
+    w.clear()
+    print(r)   // ERR
+}
+// 16. A move into a closure call argument.
+fn into_closure_arg() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let f = |x: Vec<u64>| take(x)
+    f(v)
+    print(r)   // ERR
+}
+// 17. A move via a positional struct constructor? (if supported)
+// 18. The reference is in a tuple.
+fn ref_in_tuple() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let t = (&v[0], 1)
+    take(v)
+    let (a, n) = t
+    print(a)   // ERR (or at the line above)
+}
+// 19. The reference is captured by a closure.
+fn ref_in_closure() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let f = || print(r)
+    take(v)
+    f()   // ERR
+}
+// 20. A copy of the reference.
+fn ref_copied() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let s = r
+    take(v)
+    print(s)   // ERR
+}

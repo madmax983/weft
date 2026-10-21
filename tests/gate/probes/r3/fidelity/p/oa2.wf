@@ -1,0 +1,38 @@
+effect Stop { fn stop() }
+linear struct T2 { p: (u64, &Vec<u64>) }
+    on abort = undo_tuple
+fn undo_tuple(t: T2) {
+    let T2(p) = t
+    p.1.clear()
+}
+linear struct V2 { rs: Vec<&Vec<u64>> }
+    on abort = undo_vec
+fn undo_vec(t: V2) {
+    let V2(rs) = t
+    let r = rs[0]
+    r.clear()
+}
+fn body1(v: &Vec<u64>) / Stop {
+    let t = T2 { p: (1, v) }
+    stop()
+    let T2(p) = t
+}
+fn body2(v: &Vec<u64>) / Stop {
+    let rs = Vec.new()
+    rs.push(v)
+    let t = V2 { rs: rs }
+    stop()
+    let V2(x) = t
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let first = &v[0]
+    handle Stop { fn stop() { () } } in body1(&v)
+    print(first)
+    let w = Vec.new()
+    w.push(2)
+    let second = &w[0]
+    handle Stop { fn stop() { () } } in body2(&w)
+    print(second)
+}

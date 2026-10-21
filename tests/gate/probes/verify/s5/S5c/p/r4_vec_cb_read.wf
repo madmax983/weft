@@ -1,0 +1,12 @@
+struct Stats { count: u64 }
+fn twice(g: fn()) { g()
+ g() }
+fn f(st: &Stats) {
+    let v = Vec.new()
+    v.push(|| { print(st.count) })
+    twice(v[0])
+}
+fn main() {
+    let st = Stats { count: 0 }
+    f(&st)
+}

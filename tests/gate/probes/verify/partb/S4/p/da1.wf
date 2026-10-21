@@ -1,0 +1,69 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+effect Op { fn op() }
+fn a01(c: bool) { let x: u64
+ if c { x = 1 }
+ print(x) }
+fn a02(c: bool) { let x: u64
+ if c { x = 1 } else { x = 2 }
+ print(x) }
+fn a03(n: u32) { let x: u64
+ for i in 0..n { x = 1 }
+ print(x) }
+fn a04() { let x: u64
+ loop { x = 1
+ break }
+ print(x) }
+fn a05() { let x: u64
+ let f = || print(x)
+ x = 1
+ f() }
+fn a06() { let x: u64
+ x += 1 }
+fn a07() { let x: Vec<u64>
+ x.push(1) }
+fn a08() { let x: u64
+ let r = &x }
+fn a09() { let t: Tx }
+fn a10() { let t: Tx
+ t = begin()
+ rollback(t) }
+fn a11(c: bool) { let t: Tx
+ if c { t = begin() } }
+fn a12() / Op { let x: u64
+ handle Op { fn op() { print(x)
+ resume(()) } } in op() }
+fn a13() / par { let x: u64
+ fork(|| print(x), || print(1)) }
+fn a14(c: bool) -> u64 { let x: u64
+ if c { x = 1 } else { return 0 }
+ x }
+fn a15() -> u64 { let x: u64
+ let y = x + 1
+ y }
+fn a16() { let x: (u64, u64)
+ let (a, b) = x }
+fn a17(c: bool) { let x: u64
+ match c { true => { x = 1 }, false => { x = 2 } }
+ print(x) }
+fn a18() { let x: u64
+ let f = || { x = 1 }
+ f()
+ print(x) }
+fn a19() { let x: u64
+ x = x }
+fn a20(n: u32) { let x: u64
+ for i in 0..n { print(x)
+ x = 1 } }
+fn a21() { let x: Tx
+ rollback(x) }
+fn a22() -> Tx { let x: Tx
+ x }
+fn a23() { let x: u64
+ let y = x
+ x = 2 }
+fn a24(c: bool) { let x: u64
+ while c { x = 1 }
+ print(x) }

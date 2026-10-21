@@ -1,0 +1,7 @@
+// An endless recursion: each call makes a frame, so the run uses more and
+// more memory.
+fn down(n: u64) -> u64 { down(n + 1) + 1 }
+
+fn main() {
+    print(down(0))
+}

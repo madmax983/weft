@@ -1,0 +1,48 @@
+effect Note { fn note(x: u64) }
+struct Stats { count: u64 }
+fn before_resume(st: &Stats) / mut(st), async {
+    scope { s =>
+        handle Note {
+            fn note(x) {
+                s.spawn(|| st.count += 1)
+                resume(())
+            }
+        } in {
+            note(1)
+            print(st.count)    // W0405
+        }
+    }
+}
+fn in_clause_read(st: &Stats) / mut(st), async {
+    scope { s =>
+        handle Note {
+            fn note(x) {
+                s.spawn(|| st.count += 1)
+                print(st.count)     // W0405
+                resume(())
+            }
+        } in note(1)
+    }
+}
+fn clause_via_closure(st: &Stats) / mut(st), async {
+    scope { s =>
+        handle Note {
+            fn note(x) { s.spawn(|| st.count += 1); resume(()) }
+        } in {
+            let f = || note(1)
+            f()
+            print(st.count)    // W0405
+        }
+    }
+}
+fn clause_via_callee(st: &Stats) / mut(st), async {
+    scope { s =>
+        handle Note {
+            fn note(x) { s.spawn(|| st.count += 1); resume(()) }
+        } in {
+            noter()
+            print(st.count)    // W0405
+        }
+    }
+}
+fn noter() / Note { note(1) }

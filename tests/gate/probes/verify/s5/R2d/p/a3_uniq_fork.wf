@@ -1,0 +1,13 @@
+// The callee forks f with its own write through a `@ uniq` x.
+fn par_write(f: fn(), x: &u64 @ uniq) / mut(x), par {
+    let _ = fork(f, || x += 1)
+}
+
+fn fork_write() / par {
+    let n = 0
+    par_write(|| print(n), &n)
+}
+
+fn main() / par {
+    fork_write()
+}

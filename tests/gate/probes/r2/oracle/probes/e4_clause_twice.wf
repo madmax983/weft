@@ -1,0 +1,10 @@
+effect Note { fn note(x: u64) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Note { fn note(x) { print(r + x); v.clear(); resume(()) } } in {
+        note(1)
+        note(2)
+    }
+}

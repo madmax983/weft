@@ -1,0 +1,8 @@
+effect Note { fn note(x: u64) }
+fn apply_fn(f: fn(), k: fn(fn())) { k(f) }
+fn user() {
+    handle Note { fn note(x) { resume(()) } } in {
+        apply_fn(|| note(1), |g| g())
+    }
+}
+fn main() { user() }

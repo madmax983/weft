@@ -1,0 +1,8 @@
+struct Entity { hp: i32 }
+impl Entity { fn new() -> Entity { Entity { hp: 10 } } }
+struct Holder { b: Box<Entity> }
+fn reassign(h: &Holder) / mut(h.b) {
+    let r = &h.b.hp
+    h.b = Box.new(Entity.new())
+    print(r)
+}

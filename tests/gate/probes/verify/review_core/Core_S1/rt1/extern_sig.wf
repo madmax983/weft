@@ -1,0 +1,7 @@
+extern fn bad(v: Vec<u64>) -> &u64 in v[]
+fn f() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = bad(v)
+    print(r)
+}

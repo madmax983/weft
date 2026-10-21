@@ -1,0 +1,14 @@
+effect Bump { fn bump(v: &Vec<u64>) }
+fn in_clause(f: fn(&Vec<u64>), v: &Vec<u64>) {
+    handle Bump { fn bump(x) { f(x); resume(()) } } in {
+        let r = &v[0]
+        bump(v)
+        print(r)
+    }
+}
+// Control: the fn parameter called directly.
+fn direct(f: fn(&Vec<u64>), v: &Vec<u64>) {
+    let r = &v[0]
+    f(v)
+    print(r)
+}

@@ -1,0 +1,50 @@
+effect Note { fn note(x: u64) }
+effect Reg { fn reg(f: fn()) }
+effect Reg2 { fn reg2(n: u64, f: fn()) }
+struct Job { f: fn() }
+fn push_it(v: &Vec<fn()>, g: fn()) / mut(v) { v.push(g) }
+
+fn clause_via_callee() {
+    let keep = Vec.new()
+    handle Note { fn note(x) { resume(()) } } in {
+        handle Reg { fn reg(f) { push_it(&keep, f)
+ resume(()) } } in reg(|| note(1))
+    }
+    let g = keep[0]
+    g()
+}
+fn clause_in_closure() {
+    let keep = || print(0)
+    handle Note { fn note(x) { resume(()) } } in {
+        handle Reg { fn reg(f) { let c = || { keep = f }
+ c()
+ resume(()) } } in reg(|| note(2))
+    }
+    keep()
+}
+fn clause_second_arg() {
+    let keep = || print(0)
+    handle Note { fn note(x) { resume(()) } } in {
+        handle Reg2 { fn reg2(n, f) { keep = f
+ resume(()) } } in reg2(1, || note(3))
+    }
+    keep()
+}
+fn clause_via_callee_perform() {
+    let keep = || print(0)
+    handle Note { fn note(x) { resume(()) } } in {
+        handle Reg { fn reg(f) { keep = f
+ resume(()) } } in doreg(|| note(4))
+    }
+    keep()
+}
+fn doreg(g: fn()) / Reg { reg(g) }
+fn clause_after_resume() {
+    let keep = || print(0)
+    handle Note { fn note(x) { resume(()) } } in {
+        handle Reg { fn reg(f) { resume(())
+ keep = f } } in reg(|| note(5))
+    }
+    keep()
+}
+fn main() { clause_second_arg() }

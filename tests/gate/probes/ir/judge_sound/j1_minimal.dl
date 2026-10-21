@@ -1,0 +1,9 @@
+// J1 in the minimal design: the whole clause runs at the perform (RunClause).
+place(pu). place(pu_e). parent(pu_e, pu). unstable(pu_e).
+place(pv). place(pv_e). parent(pv_e, pv). unstable(pv_e).
+cfg_edge(k0, hs). rebound_at(keep, k0). points_into(keep, pu_e).
+cfg_edge(hs, pt). performs_at(pt, c0). mutates_at(pt, pv).
+cfg_edge(pt, pret). cfg_edge(pret, k1). rebound_at(keep, k1). points_into(keep, pv_e).
+cfg_edge(k1, hend). cfg_edge(hend, hv). cfg_edge(hv, pr). uses(keep, pr).
+lint("minimal J1: W0301 at print(keep)", pr) :- error(keep, pr).
+lint("minimal J1: any error", P) :- error(R, P).

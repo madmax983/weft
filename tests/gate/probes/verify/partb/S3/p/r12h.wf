@@ -1,0 +1,14 @@
+effect Note { fn note(x: u64) }
+fn run(f: fn()) { f() }
+fn known_closure() {
+    let w = |h: fn()| h()
+    handle Note { fn note(x) { resume(()) } } in w(|| note(1))
+}
+fn known_item_value() {
+    let w = run
+    handle Note { fn note(x) { resume(()) } } in w(|| note(1))
+}
+fn chosen(c: bool) {
+    let w = if c { run } else { |h: fn()| h() }
+    handle Note { fn note(x) { resume(()) } } in w(|| note(1))
+}

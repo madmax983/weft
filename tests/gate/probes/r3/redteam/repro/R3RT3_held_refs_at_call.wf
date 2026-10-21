@@ -1,0 +1,61 @@
+// R3RT3: a reference argument can point to a value that holds references
+// (`rs: &Vec<&Entity>`, `t: &(&Entity, u64)`). The callee reads them through
+// its own root (`*rs`, ADR 0003) and treats that root as separate from its
+// other parameters. The caller must then check the places that the held
+// references point into. It does not: the call gives `call_arg` and the reads
+// of the reference argument only, not the places of the references behind it.
+// So W0312 and W0405 miss the overlap.
+// Expected: each `//~` code. Found: 0 errors.
+// Run: weft test --unchecked --oracle R3RT3_held_refs_at_call.wf
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+
+fn read_both(rs: &Vec<&Entity>, w: &World) / mut(w.entities) {
+    let e = rs[0]
+    w.entities.clear()
+    print(e.hp)
+}
+fn read_both_tuple(t: &(&Entity, u64), w: &World) / mut(w.entities) {
+    let e = t.0
+    w.entities.clear()
+    print(e.hp)
+}
+fn show_first(rs: &Vec<&Entity>) / clock { sleep(1.ms); print(rs[0].hp) }
+
+// W0312: the callee frees what the references in `rs` point to.
+fn call_vec(world: &World) / mut(world.entities) {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    read_both(&rs, world)   //~ W0312
+}
+fn call_tuple(world: &World) / mut(world.entities) {
+    let t = (&world.entities[0], 1)
+    read_both_tuple(&t, world)   //~ W0312
+}
+// W0405: the task reads through the references in `rs` while the parent frees them.
+fn task_reads_held(world: &World) / mut(world.entities), async, clock {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    scope { s =>
+        s.spawn(|| show_first(&rs))
+        world.entities.clear()   //~ W0405
+    }
+}
+
+// Control that the checker finds: the same value by value.
+fn read_val(o: Option<&Entity>, w: &World) / mut(w.entities) {
+    w.entities.clear()
+    match o { Some(e) => print(e.hp), None => {} }
+}
+fn call_by_value(world: &World) / mut(world.entities) {
+    read_val(Some(&world.entities[0]), world)   //~ W0312
+}
+
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+test "call_vec" { let w = mkw(); call_vec(&w) }
+test "call_tuple" { let w = mkw(); call_tuple(&w) }
+test "task_reads_held" { let w = mkw(); task_reads_held(&w) }

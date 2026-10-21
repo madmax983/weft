@@ -1,0 +1,8 @@
+linear struct Tx { id: u64 }
+fn begin() -> Tx { Tx { id: 1 } }
+fn main() / async {
+    scope { s =>
+        let t = s.spawn(|| begin())
+        t.detach()   // W0601: detach drops the linear result (ADR 0007)
+    }
+}

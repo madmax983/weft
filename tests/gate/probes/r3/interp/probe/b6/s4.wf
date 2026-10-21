@@ -1,0 +1,32 @@
+struct W { v: Vec<u64>, x: u64 }
+
+fn grow(w: &W) -> &u64 in w.v[] / mut(w.v) {
+    w.v.push(1)
+    &w.v[0]
+}
+
+fn assign(w: &W) / mut(w.v) {
+    let r = &w.v[0]
+    print(r)
+    r = grow(w)
+    print(r)
+    let q = grow(w)
+    print(q)
+}
+
+effect Ask { fn ask() -> u64 }
+
+fn op_assign(w: &W) / mut(w.v), Ask {
+    let r = &w.v[0]
+    print(r)
+    w.x = ask()
+    r = &w.v[0]
+    print(r)
+}
+
+fn main() / io {
+    let w = W { v: Vec.new(), x: 0 }
+    w.v.push(5)
+    assign(&w)
+    handle Ask { fn ask() { resume(1) } } in op_assign(&w)
+}

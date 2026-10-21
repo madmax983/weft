@@ -1,0 +1,81 @@
+// R3RT2: a `match` whose scrutinee is reached through a reference binds a
+// reference to the payload slot. When the payload is itself a reference, the
+// facts give the binding the places of the slot (`o.Some`), not the places that
+// the stored reference points into. A change of those places does not
+// invalidate the binding.
+// Expected: each `//~` code. Found: 0 errors.
+// Run: weft test --unchecked --oracle R3RT2_match_through_ref.wf
+//      each test fails with "a read of a freed cell (a dangling reference)".
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Wrap<T> { x: T }
+
+fn ref_to_option(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    let p = &o
+    world.entities.clear()
+    match p { Some(e) => print(e.hp), None => {} }   //~ W0301
+}
+fn field_of_ref(world: &World) / mut(world.entities) {
+    let w = Wrap { x: Some(&world.entities[0]) }
+    let p = &w
+    world.entities.clear()
+    match p.x { Some(e) => print(e.hp), None => {} }   //~ W0301
+}
+fn ref_to_result(world: &World) / mut(world.entities) {
+    let r: Result<&Entity, u64> = Ok(&world.entities[0])
+    let p = &r
+    world.entities.clear()
+    match p { Ok(e) => print(e.hp), Err(n) => {} }   //~ W0301
+}
+fn element_ref(world: &World) / mut(world.entities) {
+    let v = Vec.new()
+    v.push(Some(&world.entities[0]))
+    let p = &v[0]
+    world.entities.clear()
+    match p { Some(e) => print(e.hp), None => {} }   //~ W0301
+}
+fn ref_to_tuple(world: &World) / mut(world.entities) {
+    let t = (1, &world.entities[0])
+    let p = &t
+    world.entities.clear()
+    match p { (n, e) => print(e.hp) }   //~ W0301
+}
+fn write_through(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    let p = &o
+    world.entities.clear()
+    match p { Some(e) => { e.hp = 5 }, None => {} }   //~ W0301
+}
+
+// The same binding inside a callee: the caller passes overlapping places and
+// gets no W0312 (see also R3RT3).
+fn clear_then(o: &Option<&Entity>, w: &World) / mut(w.entities) {
+    w.entities.clear()
+    match o { Some(e) => print(e.hp), None => {} }
+}
+fn callee_side(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    clear_then(&o, world)   //~ W0312
+}
+
+// Controls that the checker finds: a field read and a destructuring `let`.
+fn control_field(world: &World) / mut(world.entities) {
+    let w = Wrap { x: &world.entities[0] }
+    let p = &w
+    world.entities.clear()
+    print(p.x.hp)   //~ W0301
+}
+
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+test "ref_to_option" { let w = mkw(); ref_to_option(&w) }
+test "field_of_ref" { let w = mkw(); field_of_ref(&w) }
+test "ref_to_result" { let w = mkw(); ref_to_result(&w) }
+test "element_ref" { let w = mkw(); element_ref(&w) }
+test "ref_to_tuple" { let w = mkw(); ref_to_tuple(&w) }
+test "write_through" { let w = mkw(); write_through(&w) }
+test "callee_side" { let w = mkw(); callee_side(&w) }

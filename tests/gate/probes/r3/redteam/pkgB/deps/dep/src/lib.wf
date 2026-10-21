@@ -1,0 +1,13 @@
+mod inner {
+    pub fn f() -> u64 { 1 }
+    pub effect Note { fn note(x: u64) }
+    pub fn g() / Note { note(1) }
+}
+effect Priv { fn ping() }
+pub fn uses_priv() / Priv { ping() }
+pub struct S { x: u64 }
+pub fn mk() -> S { S { x: 1 } }
+impl S {
+    fn hidden(self) -> u64 { self.x }
+    pub fn shown(self) -> u64 { self.x }
+}

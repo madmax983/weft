@@ -1,0 +1,12 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity>, score: u64 }
+struct Stats { count: u64 }
+fn bump_elem(w: &World) { w.entities[0].hp += 1 }
+pub fn top(w: &World) { bump_elem(w) }
+fn bump_all(w: &World) { for e in w.entities[] { e.hp += 1 } }
+pub fn top2(w: &World) { bump_all(w) }
+fn priv_bump(s: &Stats) { s.count += 1 }
+fn sh(s: &Stats @ shared) { priv_bump(s) }
+enum Shape { Circle(Entity), Square(u64) }
+fn bump_shape(s: &Shape) { match s { Circle(e) => { e.hp += 1 }, Square(n) => {} } }
+pub fn top3(s: &Shape) { bump_shape(s) }

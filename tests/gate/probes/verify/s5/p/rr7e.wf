@@ -1,0 +1,50 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw(n: i32) -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: n })
+    w
+}
+fn run(f: fn()) { f() }
+
+// A reference capture of an inner closure gets a new value.
+fn two_levels_ref() {
+    let a = mkw(1)
+    let b = mkw(2)
+    let r = &a.entities[0]
+    let f = || print(r.hp)
+    let h = || f()
+    r = &b.entities[0]
+    b.entities.clear()
+    h()
+}
+
+// The same through a callee.
+fn two_levels_hof() {
+    let a = mkw(1)
+    let b = mkw(2)
+    let r = &a.entities[0]
+    let f = || print(r.hp)
+    let h = || run(f)
+    r = &b.entities[0]
+    b.entities.clear()
+    run(h)
+}
+
+// A task that runs an inner closure.
+fn two_levels_task() / async, clock {
+    let a = mkw(1)
+    let b = mkw(2)
+    let r = &a.entities[0]
+    let f = || print(r.hp)
+    scope { s =>
+        s.spawn(|| { sleep(1.ms)
+ f() })
+        r = &b.entities[0]
+        b.entities.clear()
+    }
+}
+
+fn main() {
+    two_levels_ref()
+}

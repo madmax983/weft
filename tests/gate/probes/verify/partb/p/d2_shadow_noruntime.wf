@@ -1,0 +1,9 @@
+// weft: no-runtime
+
+
+fn main() {
+    handle log { fn info(m) { resume(()) } } in {
+        log.info("y")
+    }
+    print("done")
+}

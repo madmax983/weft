@@ -1,0 +1,84 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Wrap<T> { x: T }
+fn grow(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 1 }) }
+fn dup<T>(x: T) -> (T, T) { (x, x) }
+fn first_of(v: &Vec<Entity>) -> Option<&Entity in v[]> { Some(&v[0]) }
+fn keep(rs: &Vec<&Entity>, e: &Entity) / mut(rs) { rs.push(e) }
+fn pick<T>(a: T, b: T, c: bool) -> T { if c { a } else { b } }
+fn wrap_it<T>(x: T) -> Wrap<T> { Wrap { x: x } }
+
+fn dup_ref(world: &World) / mut(world.entities) {
+    let (a, b) = dup(&world.entities[0])
+    grow(world)
+    print(b.hp)   //~ W0301
+}
+fn opt_stated(world: &World) / mut(world.entities) {
+    let o = first_of(&world.entities)
+    grow(world)
+    match o { Some(e) => print(e.hp), None => {} }   //~ W0301
+}
+fn user_keep(world: &World) / mut(world.entities) {
+    let rs = Vec.new()
+    keep(&rs, &world.entities[0])
+    grow(world)
+    print(rs[0].hp)   //~ W0301
+}
+fn picked(world: &World, d: &Entity, c: bool) / mut(world.entities) {
+    let r = pick(d, &world.entities[0], c)
+    grow(world)
+    print(r.hp)   //~ W0301
+}
+fn wrapped(world: &World) / mut(world.entities) {
+    let w = wrap_it(&world.entities[0])
+    grow(world)
+    print(w.x.hp)   //~ W0301
+}
+fn nested_opt(world: &World) / mut(world.entities) {
+    let o = Some(Some(&world.entities[0]))
+    grow(world)
+    match o { Some(Some(e)) => print(e.hp), _ => {} }   //~ W0301
+}
+fn vec_of_opt(world: &World) / mut(world.entities) {
+    let v = Vec.new()
+    v.push(Some(&world.entities[0]))
+    grow(world)
+    match v.pop() { Some(Some(e)) => print(e.hp), _ => {} }   //~ W0301
+}
+fn result_ref(world: &World) / mut(world.entities) {
+    let r: Result<&Entity, u64> = Ok(&world.entities[0])
+    grow(world)
+    match r { Ok(e) => print(e.hp), Err(n) => {} }   //~ W0301
+}
+fn box_ref(world: &World) / mut(world.entities) {
+    let b = Box.new(&world.entities[0])
+    grow(world)
+    let w = Wrap { x: b }
+    print(w.x.hp)   //~ W0301
+}
+fn rc_ref(world: &World) / mut(world.entities) {
+    let r = Rc.new(Wrap { x: &world.entities[0] })
+    let r2 = r.clone()
+    grow(world)
+    print(r2.x.hp)   //~ W0301
+}
+fn closure_param_opt(world: &World) / mut(world.entities) {
+    let f = |o: Option<&Entity>| {
+        world.entities.clear()
+        match o { Some(e) => print(e.hp), None => {} }
+    }
+    f(Some(&world.entities[0]))   //~ W0312
+}
+fn iter_refs(world: &World) / mut(world.entities) {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    grow(world)
+    for r in rs[] { print(r.hp) }   //~ W0301
+}
+fn tuple_in_vec(world: &World) / mut(world.entities) {
+    let v = Vec.new()
+    v.push((1, &world.entities[0]))
+    grow(world)
+    let (n, e) = v[0]
+    print(e.hp)   //~ W0301
+}

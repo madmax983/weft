@@ -1,0 +1,13 @@
+struct Entity { hp: i32 }
+impl Entity {
+    fn diff(self: &Entity, a: i32, b: i32) -> i32 { a - b + self.hp }
+}
+fn mk() -> Entity { Entity { hp: 100 } }
+fn main() {
+    let x = Entity { hp: 100 }
+    let r = &x
+    print(r.diff(b: 10, a: 3))
+    print(mk().diff(b: 10, a: 3))
+    let b = Box.new(Entity { hp: 100 })
+    print(b.diff(b: 10, a: 3))
+}

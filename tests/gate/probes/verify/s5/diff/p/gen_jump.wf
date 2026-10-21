@@ -1,0 +1,27 @@
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { let Lock(i) = l; print("unlock") }
+fn lock() -> Lock { Lock { id: 1 } }
+fn keep<T>(x: T, n: u64) -> T { x }
+fn g<T>(x: T, c: bool) -> Option<T> {
+    let y = keep(x, if c { return None } else { 2 })
+    Some(y)
+}
+fn user(c: bool) {
+    let o = g(lock(), c)
+    match o { Some(l) => unlock(l), None => {} }
+}
+fn mono(c: bool) -> Option<Lock> {
+    let x = lock()
+    let y = keep(x, if c { return None } else { 2 })
+    Some(y)
+}
+fn arr(c: bool) -> u64 {
+    let a = [lock(), if c { return 1 } else { lock() }]
+    0
+}
+fn meth(c: bool) -> u64 {
+    let v = Vec.new()
+    v.push(if c { return 1 } else { lock() })
+    0
+}
+fn main() { user(true); mono(true) }

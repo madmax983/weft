@@ -1,0 +1,11 @@
+fn a() { let x: u64 = 5; print(-x) }
+fn b() { let x: u64 = -1; print(x) }
+fn c() { let v: Vec<u64> = []; print(v.len() - 1) }
+fn d() { let x: u8 = 200; let y: u8 = 100; print((x + y) - 100) }
+fn e() { let x: u64 = 2; let y = x - 3 + 4; print(y) }
+fn f() -> u64 { let x: u64 = 9223372036854775807; x + x }
+fn g() { let x: u64 = 9223372036854775807; print(x) }
+fn h() { let x: u8 = 255; let y: u16 = 65535; let z: u32 = 4294967295; print(x); print(y); print(z) }
+fn main() {
+    a()
+}

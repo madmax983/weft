@@ -1,0 +1,38 @@
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct Node: !Move { fr: Frame, next: Option<Box<Node>> }
+struct Wrap<T> { x: T, n: u64 }
+enum List<T> { Cons(T, Box<List<T>>), Nil }
+
+fn mk_node() -> Node {
+    Node { fr: Frame { buf: [1, 2, 3, 4] }, next: Some(Box.new(Node { fr: Frame { buf: [5, 6, 7, 8] }, next: None })) }
+}
+fn deep_read() {
+    let n = mk_node()
+    n.fr.cur = &n.fr.buf[0]
+    match n.next {
+        Some(b) => print(b.fr.cur + 0),
+        None => print(0),
+    }
+}
+fn literal_read() {
+    let n = Node { fr: Frame { buf: [1, 2, 3, 4] }, next: Some(Box.new(Node { fr: Frame { buf: [5, 6, 7, 8] }, next: None })) }
+    n.fr.cur = &n.fr.buf[0]
+    match n.next {
+        Some(b) => print(b.fr.cur + 0),
+        None => print(0),
+    }
+}
+fn mk_list() -> List<Frame> { List.Cons(Frame { buf: [1, 2, 3, 4] }, Box.new(List.Cons(Frame { buf: [5, 6, 7, 8] }, Box.new(List.Nil)))) }
+fn list_read() {
+    let l = mk_list()
+    match l {
+        List.Cons(f, rest) => match rest {
+            List.Cons(g, r2) => print(g.cur + 0),
+            List.Nil => print(0),
+        },
+        List.Nil => print(0),
+    }
+}
+fn main() {
+    deep_read()
+}

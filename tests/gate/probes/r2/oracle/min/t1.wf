@@ -1,0 +1,32 @@
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v.push(2); v }
+fn plain() {
+    let v = mk_v()
+    scope { s =>
+        let t = s.spawn(|| v.clear())
+        let r = &v[1]
+        t.join()
+    }
+}
+effect Pick { multi fn pick() -> bool }
+fn in_handle() {
+    handle Pick { fn pick() { resume(true) } } in {
+        let v = mk_v()
+        scope { s =>
+            let t = s.spawn(|| v.clear())
+            let r = &v[1]
+            t.join()
+        }
+    }
+}
+effect Ask { fn ask() -> u64 }
+fn in_ask() {
+    handle Ask { fn ask() { resume(1) } } in {
+        let v = mk_v()
+        scope { s =>
+            let t = s.spawn(|| v.clear())
+            let r = &v[1]
+            t.join()
+        }
+    }
+}
+fn main() { in_handle() }

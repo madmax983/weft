@@ -1,0 +1,39 @@
+struct Entity { hp: i32, id: u64, kids: Vec<Entity> }
+
+fn s1(v: &Vec<Entity>, w: &Vec<Entity>) / mut(v.., w..) {
+    let t = (&w[0], &w[0])
+    t.0 = &v[0]
+    let r = &t.0.kids[0]
+    t.0.kids.push(Entity { hp: 7, id: 9, kids: Vec.new() })
+    print(r.hp)
+}
+
+fn s2(v: &Vec<Entity>) / mut(v..) {
+    let t = (&v[0], &v[0].kids[0])
+    let r = &t.1.hp
+    t.0.kids.push(Entity { hp: 7, id: 9, kids: Vec.new() })
+    print(r)
+}
+
+fn s3(v: &Vec<Entity>, w: &Vec<Entity>) / mut(v.., w..) {
+    let t = (&w[0], &w[0])
+    t.0 = &v[0]
+    t.1 = &v[0].kids[0]
+    let r = &t.1.hp
+    t.0.kids.push(Entity { hp: 7, id: 9, kids: Vec.new() })
+    print(r)
+}
+
+fn mk() -> Vec<Entity> {
+    let inner = Vec.new()
+    inner.push(Entity { hp: 5, id: 3, kids: Vec.new() })
+    let v = Vec.new()
+    v.push(Entity { hp: 1, id: 1, kids: inner })
+    v
+}
+
+fn main() {
+    let v = mk()
+    let w = mk()
+    s3(&v, &w)
+}

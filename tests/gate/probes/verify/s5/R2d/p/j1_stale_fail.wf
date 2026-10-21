@@ -1,0 +1,26 @@
+// A child fails while the frame of its scope is in a continuation. The clause
+// does not resume, so the scope goes away. A child of a second scope then fails.
+effect Ask { fn ask() -> u64 }
+
+fn main() / io {
+    handle Fail { fn fail(m) { print("outer handler: {m}") } } in {
+        handle Ask { fn ask() { sleep(20.ms); print("clause does not resume"); 0 } } in {
+            scope { s =>
+                s.spawn(|| { sleep(5.ms); fail("child1 failed") })
+                let x = ask()
+                print("never {x}")
+            }
+            0
+        }
+        print("between scopes")
+        scope { s2 =>
+            s2.spawn(|| { sleep(5.ms); fail("child2 failed") })
+            sleep(10.ms)
+            print("second scope body goes on after its child failed")
+            sleep(10.ms)
+            print("second scope body done")
+        }
+        print("second scope returned normally")
+    }
+    print("end")
+}

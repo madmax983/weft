@@ -1,0 +1,13 @@
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { let Lock(i) = l; print("unlock") }
+fn lock() -> Lock { Lock { id: 1 } }
+fn hold_fail<T>(x: T) -> T / fail { fail("boom")
+ x }
+fn via_hof(k: fn(Lock) -> Lock / fail) / fail {
+    let m = k(lock())
+    unlock(m)
+}
+fn caller_hof() / fail { via_hof(hold_fail) }
+fn main() {
+    handle Fail { fn fail(m) { print(m) } } in caller_hof()
+}

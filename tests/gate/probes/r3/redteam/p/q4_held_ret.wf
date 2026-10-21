@@ -1,0 +1,25 @@
+struct Entity { hp: i32, kids: Vec<Entity> }
+struct World { entities: Vec<Entity> }
+fn get(rs: &Vec<&Entity>) -> &Entity in rs.. { rs[0] }
+fn get_opt(rs: &Vec<&Entity>) -> Option<&Entity> { Some(rs[0]) }
+fn caller_get(world: &World) / mut(world.entities) {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    let e = get(&rs)
+    world.entities.clear()
+    print(e.hp)   //~ W0301
+}
+fn caller_get_opt(world: &World) / mut(world.entities) {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    let o = get_opt(&rs)
+    world.entities.clear()
+    match o { Some(e) => print(e.hp), None => {} }   //~ W0301
+}
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1, kids: Vec.new() })
+    w
+}
+test "caller_get" { let w = mkw(); caller_get(&w) }
+test "caller_get_opt" { let w = mkw(); caller_get_opt(&w) }

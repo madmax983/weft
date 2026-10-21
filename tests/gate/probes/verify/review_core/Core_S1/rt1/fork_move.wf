@@ -1,0 +1,16 @@
+fn take(v: Vec<u64>) {}
+fn fork_move() / par {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    fork(|| take(v), || print(r))   // ERR: one branch frees v while the other reads r
+}
+fn spawn_move() / async {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    scope { s =>
+        s.spawn(|| print(r))
+        s.spawn(|| take(v))   // ERR
+    }
+}

@@ -1,0 +1,18 @@
+effect Note { fn note(x: u64) }
+effect Reg { fn reg(f: fn()) }
+struct Job { f: fn() }
+fn run_it(j: &Job) { let g = j.f
+ g() }
+
+fn stored_reg() {
+    let keep = || print(0)
+    handle Note { fn note(x) { resume(()) } } in {
+        handle Reg { fn reg(f) { keep = f
+ resume(()) } } in {
+            let j = Job { f: || reg(|| note(1)) }
+            run_it(&j)
+        }
+    }
+    keep()
+}
+fn main() { stored_reg() }

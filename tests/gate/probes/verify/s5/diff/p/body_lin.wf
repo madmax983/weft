@@ -1,0 +1,32 @@
+effect Op { fn op() }
+linear struct Tx { id: u64 }
+    on abort = rollback
+linear struct Raw { id: u64 }
+fn rollback(t: Tx) { let Tx(i) = t; print("rollback") }
+fn commit(t: Tx) { let Tx(i) = t; print("commit") }
+fn finish(t: Raw) { let Raw(i) = t; print("finish") }
+fn begin() -> Tx { Tx { id: 1 } }
+
+fn body_raw() {
+    handle Op { fn op() { print(9) } } in {
+        let t = Raw { id: 2 }
+        op()
+        finish(t)
+    }
+}
+fn body_tx() {
+    handle Op { fn op() { print(9) } } in {
+        let t = begin()
+        op()
+        commit(t)
+    }
+}
+fn inflight() {
+    let t = Raw { id: 3 }
+    handle Op { fn op() { print(9) } } in {
+        let x = (t, op())
+        let (a, b) = x
+        finish(a)
+    }
+}
+fn main() { body_tx(); body_raw() }

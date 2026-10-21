@@ -1,0 +1,49 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Wrap<T> { x: T }
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+
+// A tuple local gets a new whole value.
+fn tuple_whole() {
+    let world = mkw()
+    let first = &world.entities[0]
+    let t = (|| print(1), 1)
+    t = (|| world.entities.clear(), 2)
+    let g = t.0
+    g()
+    print(first.hp)
+}
+
+// A tuple in a Vec.
+fn tuple_in_vec() {
+    let world = mkw()
+    let first = &world.entities[0]
+    let v = Vec.new()
+    v.push((|| print(1), 1))
+    v.push((|| world.entities.clear(), 2))
+    let g = v[1].0
+    g()
+    print(first.hp)
+}
+
+// A tuple part of a Wrap.
+fn wrap_tuple_part() {
+    let world = mkw()
+    let first = &world.entities[0]
+    let w = Wrap { x: (|| print(1), 1) }
+    w.x.0 = || world.entities.clear()
+    let g = w.x.0
+    g()
+    print(first.hp)
+}
+
+// A tuple part through a reference.
+fn set0(t: &(fn(), u64), f: fn()) { t.0 = f }
+
+fn main() {
+    tuple_whole()
+}

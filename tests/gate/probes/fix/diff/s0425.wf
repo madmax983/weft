@@ -1,0 +1,5 @@
+struct S0 { f0: (Vec<(u64, u64)>, u64, S3) }
+struct S1 {  }
+struct S2<T0> {  }
+struct S3 {  }
+fn main() {}

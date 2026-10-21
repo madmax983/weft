@@ -1,0 +1,11 @@
+struct H { f: fn() }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn main() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    scope { s =>
+        let g = h.f
+        s.spawn(|| g())
+        print(v.len())
+    }
+}

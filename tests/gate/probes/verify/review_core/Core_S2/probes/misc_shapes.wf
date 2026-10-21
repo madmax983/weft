@@ -1,0 +1,58 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity>, score: u64 }
+fn grow(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 1 }) }
+
+// m1: a recursive higher-order function.
+fn rec(f: fn(&World), w: &World, n: u64) {
+    if n > 0 { rec(f, w, n - 1) } else { f(w) }
+}
+fn via_rec(world: &World) {
+    let first = &world.entities[0]
+    rec(|x| x.entities.clear(), world, 3)
+    print(first.hp)   // expect W0301
+}
+// m2: mutual recursion that returns closures.
+fn mk_a(w: &World, n: u64) -> fn() / mut(w.entities) {
+    if n == 0 { || w.entities.clear() } else { mk_b(w, n - 1) }
+}
+fn mk_b(w: &World, n: u64) -> fn() / mut(w.entities) {
+    if n == 0 { || print(1) } else { mk_a(w, n - 1) }
+}
+fn via_mutual(world: &World) / mut(world.entities) {
+    let f = mk_b(world, 3)
+    let first = &world.entities[0]
+    f()
+    print(first.hp)   // expect W0301
+}
+// m3: a task reads a place while a call of a function parameter gets it.
+fn task_lend(f: fn(&World), w: &World) / async {
+    scope { s =>
+        s.spawn(|| print(w.entities[0].hp))
+        f(w)   // expect W0405
+    }
+}
+// m4: a task reads a place while an item value mutates it.
+fn task_item(w: &World) / mut(w.entities), async {
+    let g = grow
+    scope { s =>
+        s.spawn(|| print(w.entities[0].hp))
+        g(w)   // expect W0405
+    }
+}
+// m5: a task runs a closure that mutates through its parameter while the parent reads.
+fn task_closure_param(w: &World) / mut(w.entities), async {
+    let f = |x: &World| x.entities.clear()
+    scope { s =>
+        s.spawn(|| f(w))
+        print(w.entities[0].hp)   // expect W0405
+    }
+}
+// m6: a returned function value of a returned function value.
+fn mk_mk(w: &World) -> fn() -> fn() / mut(w.entities) { || || w.entities.clear() }
+fn via_mk_mk(world: &World) / mut(world.entities) {
+    let f = mk_mk(world)
+    let g = f()
+    let first = &world.entities[0]
+    g()
+    print(first.hp)   // expect W0301
+}

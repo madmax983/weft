@@ -1,0 +1,12 @@
+struct World { entities: Vec<u64> }
+fn reader(w: &World) {}
+fn writer(w: &World) / mut(w.entities) { w.entities.push(1) }
+fn main() {
+    let w = World { entities: [1] }
+    let g = reader
+    let k = || g(&w)
+    let r = &w.entities[0]
+    g = writer
+    k()
+    print(r)
+}

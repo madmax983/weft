@@ -1,0 +1,9 @@
+mod a {
+    pub effect Note { fn note(x: u64) }
+    pub fn f() / Note { note(1) }
+}
+mod y {
+    pub fn k() { a.f() }
+}
+pub fn q() { y.k() }
+fn main() {}

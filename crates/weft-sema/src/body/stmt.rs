@@ -2,8 +2,8 @@
 
 use super::{
     ast, block_tail, effects, frame_tail, AssignOp, Block, EffectSig, ExprKind, FnId, Jump, LVal,
-    LoopFrame, Lower, Lowered, NodeId, Pattern, PlaceId, RootKind, SigPlace, SigRoot, SigStep,
-    Span, StepKind, Stmt, StmtKind, Ty, Val, VarId, VarKind,
+    LoopFrame, Lower, Lowered, NodeId, Pattern, PatternKind, PlaceId, RootKind, SigPlace, SigRoot,
+    SigStep, Span, StepKind, Stmt, StmtKind, Ty, Val, VarId, VarKind,
 };
 use crate::props::Prop;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -961,8 +961,8 @@ impl Lower<'_> {
                 }
                 // A `_` drops its part of the value. A new task handle goes to its scope.
                 let fresh_task = !v.tasks.is_empty() && v.local.is_none();
-                if init.is_some() && !(fresh_task && matches!(pat, Pattern::Wild(_))) {
-                    let whole = matches!(pat, Pattern::Wild(_));
+                if init.is_some() && !(fresh_task && matches!(pat.kind, PatternKind::Wild(_))) {
+                    let whole = matches!(pat.kind, PatternKind::Wild(_));
                     for (span, ty) in self.wild_drops(pat, &v.ty) {
                         let name = if whole {
                             self.val_name(&v)
@@ -1555,13 +1555,13 @@ impl Lower<'_> {
     // -----------------------------------------------------------------------
 
     pub(super) fn bind_pattern(&mut self, pat: &Pattern, v: &Val, n: NodeId) {
-        match pat {
-            Pattern::Bind(id) => {
+        match &pat.kind {
+            PatternKind::Bind(id) => {
                 let l = self.new_local(&id.name, VarKind::Local, id.span, v.ty.clone(), v.uniq);
                 self.assign_local(l, v, n);
             }
-            Pattern::Wild(_) | Pattern::Lit(..) => {}
-            Pattern::Tuple(ps, span) => {
+            PatternKind::Wild(_) | PatternKind::Lit(..) => {}
+            PatternKind::Tuple(ps, span) => {
                 let t = self.inf.shallow(&v.ty);
                 let tys: Vec<Ty> = match t.clone() {
                     Ty::Tuple(ts) if ts.len() == ps.len() => ts,
@@ -1612,7 +1612,7 @@ impl Lower<'_> {
                     self.bind_pattern(p, &part, n);
                 }
             }
-            Pattern::Variant { path, fields, span } => {
+            PatternKind::Variant { path, fields, span } => {
                 // `let S(a, b) = s` destructures a struct and consumes it.
                 let Some(adt) = self.adt_by_path(path) else {
                     self.err(Code::W0113, "a variant pattern needs `match`", *span);
@@ -1662,11 +1662,11 @@ impl Lower<'_> {
     /// Reports W0107 for a name that pattern `pat` binds twice.
     pub(super) fn check_binders(&mut self, pat: &Pattern) {
         fn walk<'a>(p: &'a Pattern, out: &mut Vec<&'a ast::Ident>) {
-            match p {
-                Pattern::Bind(id) => out.push(id),
-                Pattern::Tuple(ps, _) => ps.iter().for_each(|q| walk(q, out)),
-                Pattern::Variant { fields, .. } => fields.iter().for_each(|q| walk(q, out)),
-                Pattern::Wild(_) | Pattern::Lit(..) => {}
+            match &p.kind {
+                PatternKind::Bind(id) => out.push(id),
+                PatternKind::Tuple(ps, _) => ps.iter().for_each(|q| walk(q, out)),
+                PatternKind::Variant { fields, .. } => fields.iter().for_each(|q| walk(q, out)),
+                PatternKind::Wild(_) | PatternKind::Lit(..) => {}
             }
         }
         let mut names = Vec::new();

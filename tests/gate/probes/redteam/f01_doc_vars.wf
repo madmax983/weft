@@ -1,0 +1,49 @@
+struct Entity { id: u32, hp: i32 }
+enum Event { Died(u32) }
+struct World { entities: Vec<Entity>, events: Vec<Event>, score: u32 }
+// Rule 4: references to p survive a mutation of p.
+fn ref_to_p(world: &World) / mut(world.entities) {
+    let es = &world.entities
+    world.entities.push(Entity { id: 1, hp: 1 })
+    print(es.len())
+}
+// Rule 4: stable parts survive.
+fn stable_part(world: &World) / mut(world.score) {
+    let s = &world.score
+    world.score += 1
+    print(s)
+}
+// The wildcard covers everything inside.
+fn wild(world: &World) / mut(world..) {
+    world.entities.push(Entity { id: 1, hp: 1 })
+    world.score += 1
+    world.events.clear()
+}
+// The design's tick, with the events push before step.
+fn step(world: &World, e: &Entity in world.entities[]) / mut(e) { e.hp -= 1 }
+fn tick2(world: &World) / mut(world.entities[], world.events, world.score) {
+    for e in world.entities[] {
+        if e.hp <= 0 {
+            world.events.push(Died(e.id))
+            world.score += 10
+        }
+        step(world, e)
+    }
+}
+// Reading an element's field while mutating another field of the same element.
+fn heal_one(world: &World) / mut(world.entities[]) {
+    for e in world.entities[] {
+        let id = e.id
+        e.hp += 1
+        print(id)
+    }
+}
+// Index sum with literals.
+fn sum_lit() -> u64 {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    let t = 0
+    for x in v[] { t += x }
+    t
+}

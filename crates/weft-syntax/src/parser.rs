@@ -9,15 +9,20 @@
 //! [`crate::ast::CHAIN_PART_PREFIX`]). The value and the order of evaluation do
 //! not change, and the tree stays shallow.
 //!
+//! The parser gives each expression and each pattern of a unit an id: the
+//! expressions get `0..n` and the patterns get `0..m`, each id one time
+//! ([`crate::ast::ExprId`], [`crate::ast::PatId`]). The hidden locals of a long
+//! chain and the expressions of an interpolation get ids too.
+//!
 //! The functions on the recursive path are small on purpose. Debug builds give
 //! each local its own stack slot, so large functions use much stack per level.
 
 use crate::ast::{
     Arg, Arm, AssignOp, BinOp, Block, EffectDecl, EffectItem, EffectPath, EffectRow, EnumDecl,
-    Expr, ExprKind, ExternTypeDecl, FieldDecl, File, FnDecl, HandlerClause, Ident, ImplBlock, Item,
-    ItemKind, Lit, ModDecl, Mode, OpDecl, Param, Pattern, PlaceExpr, PlaceStep, Span, Stmt,
-    StmtKind, StrPart, StructDecl, TestDecl, TypeExpr, TypeExprKind, TypeProp, UnOp, VariantDecl,
-    CHAIN_PART_PREFIX,
+    Expr, ExprId, ExprKind, ExternTypeDecl, FieldDecl, File, FnDecl, HandlerClause, Ident,
+    ImplBlock, Item, ItemKind, Lit, ModDecl, Mode, OpDecl, Param, PatId, Pattern, PatternKind,
+    PlaceExpr, PlaceStep, Span, Stmt, StmtKind, StrPart, StructDecl, TestDecl, TypeExpr,
+    TypeExprKind, TypeProp, UnOp, VariantDecl, CHAIN_PART_PREFIX,
 };
 use crate::lexer::{lex_at, StrPiece, Token, TokenKind as T};
 
@@ -93,6 +98,7 @@ pub fn parse_expr(src: &str) -> Result<Expr, ParseError> {
     if !p.at(&T::Eof) {
         return Err(p.expected("end of input after the expression"));
     }
+    p.check_ids()?;
     Ok(e)
 }
 
@@ -106,6 +112,20 @@ struct Parser {
     depth: u32,
     /// The end of the last token that is not a `Newline`.
     last_hi: u32,
+    /// The next free ids of the unit.
+    ids: Ids,
+}
+
+/// The counters that give the ids of one unit. A parser of an interpolation
+/// takes them from the parser of its string and gives them back after.
+#[derive(Clone, Copy, Default)]
+struct Ids {
+    /// The next expression id.
+    expr: u32,
+    /// The next pattern id.
+    pat: u32,
+    /// True if a counter has no more ids. The parse then fails.
+    full: bool,
 }
 
 // ------------------------------------------------------------------ helpers
@@ -119,7 +139,39 @@ impl Parser {
             no_struct: false,
             depth,
             last_hi,
+            ids: Ids::default(),
         }
+    }
+
+    /// Returns the next expression id of the unit.
+    const fn expr_id(&mut self) -> ExprId {
+        let id = ExprId(self.ids.expr);
+        match self.ids.expr.checked_add(1) {
+            Some(n) => self.ids.expr = n,
+            None => self.ids.full = true,
+        }
+        id
+    }
+
+    /// Makes a pattern with the next pattern id of the unit.
+    const fn pat(&mut self, kind: PatternKind) -> Pattern {
+        let id = PatId(self.ids.pat);
+        match self.ids.pat.checked_add(1) {
+            Some(n) => self.ids.pat = n,
+            None => self.ids.full = true,
+        }
+        Pattern::new(id, kind)
+    }
+
+    /// Fails if the unit has more expressions or patterns than ids.
+    fn check_ids(&self) -> PResult<()> {
+        if self.ids.full {
+            return Err(ParseError::new(
+                "the file has too many expressions or patterns",
+                self.peek().span,
+            ));
+        }
+        Ok(())
     }
 
     fn tok(&self, n: usize) -> &Token {
@@ -381,6 +433,7 @@ impl Parser {
         loop {
             self.skip_ends();
             if self.at(&T::Eof) {
+                self.check_ids()?;
                 return Ok(File { items });
             }
             items.push(self.item()?);
@@ -1206,18 +1259,32 @@ impl Parser {
     fn pattern_inner(&mut self) -> PResult<Pattern> {
         let lo = self.lo();
         match self.kind() {
-            T::Name(n) if n == "_" => Ok(Pattern::Wild(self.bump())),
+            T::Name(n) if n == "_" => {
+                let span = self.bump();
+                Ok(self.pat(PatternKind::Wild(span)))
+            }
             T::Name(n) if is_upper(n) => self.variant_pattern(),
-            T::Name(_) => Ok(Pattern::Bind(self.ident())),
+            T::Name(_) => {
+                let name = self.ident();
+                Ok(self.pat(PatternKind::Bind(name)))
+            }
             T::Int(v) => {
                 let lit = Lit::Int(*v);
-                Ok(Pattern::Lit(lit, self.bump()))
+                let span = self.bump();
+                Ok(self.pat(PatternKind::Lit(lit, span)))
             }
-            T::True => Ok(Pattern::Lit(Lit::Bool(true), self.bump())),
-            T::False => Ok(Pattern::Lit(Lit::Bool(false), self.bump())),
+            T::True => {
+                let span = self.bump();
+                Ok(self.pat(PatternKind::Lit(Lit::Bool(true), span)))
+            }
+            T::False => {
+                let span = self.bump();
+                Ok(self.pat(PatternKind::Lit(Lit::Bool(false), span)))
+            }
             T::Str(_) => {
                 let lit = self.str_lit()?;
-                Ok(Pattern::Lit(lit, Span::new(lo, self.last_hi)))
+                let span = Span::new(lo, self.last_hi);
+                Ok(self.pat(PatternKind::Lit(lit, span)))
             }
             T::LParen => self.paren_pattern(),
             _ => Err(self.expected("a pattern")),
@@ -1237,11 +1304,8 @@ impl Parser {
         } else {
             Vec::new()
         };
-        Ok(Pattern::Variant {
-            path,
-            fields,
-            span: Span::new(lo, self.last_hi),
-        })
+        let span = Span::new(lo, self.last_hi);
+        Ok(self.pat(PatternKind::Variant { path, fields, span }))
     }
 
     /// Parses `()`, `(p)` or a tuple pattern. The current token is `(`.
@@ -1251,14 +1315,14 @@ impl Parser {
             self.comma_list(&T::RParen, "`,` or `)` after a pattern", Self::pattern)?;
         let span = Span::new(lo, self.last_hi);
         if items.is_empty() {
-            return Ok(Pattern::Lit(Lit::Unit, span));
+            return Ok(self.pat(PatternKind::Lit(Lit::Unit, span)));
         }
         if items.len() == 1 && !trailing {
             if let Some(only) = items.pop() {
                 return Ok(only);
             }
         }
-        Ok(Pattern::Tuple(items, span))
+        Ok(self.pat(PatternKind::Tuple(items, span)))
     }
 }
 
@@ -1303,6 +1367,7 @@ impl Parser {
         }
         let span = lo.span.to(hi.span);
         Ok(Expr {
+            id: self.expr_id(),
             span,
             kind: ExprKind::Range {
                 lo: Box::new(lo),
@@ -1334,18 +1399,18 @@ impl Parser {
             }
             after_cmp = prec == CMP_PREC;
             if folds == CHAIN_PART {
-                lhs = chain_part(&mut parts, lhs);
+                lhs = self.chain_part(&mut parts, lhs);
                 folds = 0;
                 self.depth = saved;
             }
             self.chain_step()?;
             self.bump();
             let rhs = self.binary(prec + 1)?;
-            lhs = binary(op, lhs, rhs);
+            lhs = self.fold_binary(op, lhs, rhs);
             folds += 1;
         }
         self.depth = saved;
-        Ok(chain_block(parts, lhs))
+        Ok(self.chain_block(parts, lhs))
     }
 
     fn unary(&mut self) -> PResult<Expr> {
@@ -1371,6 +1436,7 @@ impl Parser {
         for (op, lo) in ops.into_iter().rev() {
             let span = Span::new(lo, e.span.hi);
             e = Expr {
+                id: self.expr_id(),
                 span,
                 kind: ExprKind::Unary {
                     op,
@@ -1416,6 +1482,7 @@ impl Parser {
         if !self.at(&T::LParen) {
             let span = Span::new(lo, name.span.hi);
             return Ok(Expr {
+                id: self.expr_id(),
                 kind: ExprKind::Field {
                     base: Box::new(e),
                     name,
@@ -1432,6 +1499,7 @@ impl Parser {
             trailing,
         };
         Ok(Expr {
+            id: self.expr_id(),
             kind,
             span: Span::new(lo, self.last_hi),
         })
@@ -1448,6 +1516,7 @@ impl Parser {
             trailing,
         };
         Ok(Expr {
+            id: self.expr_id(),
             kind,
             span: Span::new(lo, self.last_hi),
         })
@@ -1465,6 +1534,7 @@ impl Parser {
             Some(Box::new(i))
         };
         Ok(Expr {
+            id: self.expr_id(),
             kind: ExprKind::Index {
                 base: Box::new(e),
                 index,
@@ -1505,10 +1575,12 @@ impl Parser {
         let block = self.expr_block("`{`")?;
         let span = block.span;
         let body = Box::new(Expr {
+            id: self.expr_id(),
             kind: ExprKind::Block(block),
             span,
         });
         Ok(Some(Box::new(Expr {
+            id: self.expr_id(),
             kind: ExprKind::Closure {
                 params: Vec::new(),
                 body,
@@ -1525,6 +1597,7 @@ impl Parser {
             T::LBrace => {
                 let b = self.expr_block("`{`")?;
                 Ok(Expr {
+                    id: self.expr_id(),
                     span: b.span,
                     kind: ExprKind::Block(b),
                 })
@@ -1536,6 +1609,7 @@ impl Parser {
                 let lo = self.lo();
                 let lit = self.str_lit()?;
                 Ok(Expr {
+                    id: self.expr_id(),
                     kind: ExprKind::Lit(lit),
                     span: Span::new(lo, self.last_hi),
                 })
@@ -1555,6 +1629,7 @@ impl Parser {
             _ => return Err(self.expected("an expression")),
         };
         Ok(Expr {
+            id: self.expr_id(),
             kind,
             span: self.bump(),
         })
@@ -1584,6 +1659,7 @@ impl Parser {
         }
         let id = self.ident();
         Ok(Expr {
+            id: self.expr_id(),
             span: id.span,
             kind: ExprKind::Name(id),
         })
@@ -1615,6 +1691,7 @@ impl Parser {
         self.no_struct = old;
         let fields = r?;
         Ok(Expr {
+            id: self.expr_id(),
             kind: ExprKind::StructLit { path, fields },
             span: Span::new(lo, self.last_hi),
         })
@@ -1641,6 +1718,7 @@ impl Parser {
         let span = Span::new(lo, self.last_hi);
         if items.is_empty() {
             return Ok(Expr {
+                id: self.expr_id(),
                 kind: ExprKind::Lit(Lit::Unit),
                 span,
             });
@@ -1652,6 +1730,7 @@ impl Parser {
             }
         }
         Ok(Expr {
+            id: self.expr_id(),
             kind: ExprKind::Tuple(items),
             span,
         })
@@ -1662,6 +1741,7 @@ impl Parser {
         let lo = self.bump().lo;
         let (items, _) = self.expr_list(&T::RBracket, "`,` or `]`")?;
         Ok(Expr {
+            id: self.expr_id(),
             kind: ExprKind::Array(items),
             span: Span::new(lo, self.last_hi),
         })
@@ -1679,6 +1759,7 @@ impl Parser {
         let body = self.closure_body()?;
         let span = Span::new(lo, body.span.hi);
         Ok(Expr {
+            id: self.expr_id(),
             span,
             kind: ExprKind::Closure {
                 params,
@@ -1702,6 +1783,7 @@ impl Parser {
             span,
         };
         Ok(Expr {
+            id: self.expr_id(),
             kind: ExprKind::Block(Block {
                 stmts: vec![stmt],
                 span,
@@ -1733,6 +1815,7 @@ impl Parser {
             }
             let b = self.expr_block("`{`")?;
             last_else = Some(Box::new(Expr {
+                id: self.expr_id(),
                 span: b.span,
                 kind: ExprKind::Block(b),
             }));
@@ -1749,6 +1832,7 @@ impl Parser {
                 else_,
             };
             result = Some(Expr {
+                id: self.expr_id(),
                 kind,
                 span: Span::new(lo, hi),
             });
@@ -1769,6 +1853,7 @@ impl Parser {
             arms: r?,
         };
         Ok(Expr {
+            id: self.expr_id(),
             kind,
             span: Span::new(lo, self.last_hi),
         })
@@ -1809,6 +1894,7 @@ impl Parser {
         let body = self.expr()?;
         let span = Span::new(lo, body.span.hi);
         Ok(Expr {
+            id: self.expr_id(),
             kind: ExprKind::Handle {
                 effect,
                 clauses,
@@ -1841,6 +1927,7 @@ impl Parser {
         self.expect(&T::FatArrow, "`=>` after the scope name")?;
         let body = self.block_rest(brace)?;
         Ok(Expr {
+            id: self.expr_id(),
             kind: ExprKind::Scope { binder, body },
             span: Span::new(lo, self.last_hi),
         })
@@ -1865,7 +1952,7 @@ impl Parser {
     }
 
     /// Parses the source of one interpolation. Spans stay absolute.
-    fn interp(&self, src: &str, offset: u32) -> PResult<Expr> {
+    fn interp(&mut self, src: &str, offset: u32) -> PResult<Expr> {
         if src.trim().is_empty() {
             let len = u32::try_from(src.len()).unwrap_or(u32::MAX);
             let hi = offset.saturating_add(len).saturating_add(1);
@@ -1875,7 +1962,9 @@ impl Parser {
             ));
         }
         let mut sub = Self::new(lex_at(src, offset)?, self.depth);
+        sub.ids = self.ids;
         let e = sub.expr()?;
+        self.ids = sub.ids;
         if !sub.at(&T::Eof) {
             return Err(sub.expected("`}` to end the interpolation"));
         }
@@ -1942,52 +2031,57 @@ const fn bin_op(k: &T) -> Option<(BinOp, u8)> {
     })
 }
 
-/// Moves a finished part of a long chain into a hidden local. Returns the name
-/// of the local, which is the left operand of the rest of the chain. The name
-/// holds only the index of the part: the block of the chain keeps the locals
-/// of other chains apart, and the name stays the same after a round trip.
-fn chain_part(parts: &mut Vec<Stmt>, lhs: Expr) -> Expr {
-    let span = lhs.span;
-    let name = format!("{CHAIN_PART_PREFIX}{}", parts.len());
-    parts.push(Stmt {
-        kind: StmtKind::Let {
-            pat: Pattern::Bind(Ident::new(name.clone(), span)),
-            ty: None,
-            init: Some(lhs),
-        },
-        span,
-    });
-    Expr {
-        kind: ExprKind::Name(Ident::new(name, span)),
-        span,
+impl Parser {
+    /// Moves a finished part of a long chain into a hidden local. Returns the name
+    /// of the local, which is the left operand of the rest of the chain. The name
+    /// holds only the index of the part: the block of the chain keeps the locals
+    /// of other chains apart, and the name stays the same after a round trip.
+    fn chain_part(&mut self, parts: &mut Vec<Stmt>, lhs: Expr) -> Expr {
+        let span = lhs.span;
+        let name = format!("{CHAIN_PART_PREFIX}{}", parts.len());
+        parts.push(Stmt {
+            kind: StmtKind::Let {
+                pat: self.pat(PatternKind::Bind(Ident::new(name.clone(), span))),
+                ty: None,
+                init: Some(lhs),
+            },
+            span,
+        });
+        Expr {
+            id: self.expr_id(),
+            kind: ExprKind::Name(Ident::new(name, span)),
+            span,
+        }
     }
-}
 
-/// Puts the hidden locals of a long chain and the rest of the chain in a block.
-fn chain_block(parts: Vec<Stmt>, rest: Expr) -> Expr {
-    if parts.is_empty() {
-        return rest;
+    /// Puts the hidden locals of a long chain and the rest of the chain in a block.
+    fn chain_block(&mut self, parts: Vec<Stmt>, rest: Expr) -> Expr {
+        if parts.is_empty() {
+            return rest;
+        }
+        let span = rest.span;
+        let mut stmts = parts;
+        stmts.push(Stmt {
+            kind: StmtKind::Expr(rest),
+            span,
+        });
+        Expr {
+            id: self.expr_id(),
+            kind: ExprKind::Block(Block { stmts, span }),
+            span,
+        }
     }
-    let span = rest.span;
-    let mut stmts = parts;
-    stmts.push(Stmt {
-        kind: StmtKind::Expr(rest),
-        span,
-    });
-    Expr {
-        kind: ExprKind::Block(Block { stmts, span }),
-        span,
-    }
-}
 
-fn binary(op: BinOp, lhs: Expr, rhs: Expr) -> Expr {
-    let span = lhs.span.to(rhs.span);
-    Expr {
-        span,
-        kind: ExprKind::Binary {
-            op,
-            lhs: Box::new(lhs),
-            rhs: Box::new(rhs),
-        },
+    fn fold_binary(&mut self, op: BinOp, lhs: Expr, rhs: Expr) -> Expr {
+        let span = lhs.span.to(rhs.span);
+        Expr {
+            id: self.expr_id(),
+            span,
+            kind: ExprKind::Binary {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            },
+        }
     }
 }

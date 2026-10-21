@@ -1,0 +1,15 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+impl World {
+    fn with(self: &World, f: fn(&World)) { f(self) }
+}
+fn bad(world: &World) {
+    let first = &world.entities[0]
+    world.with(|x| x.entities.push(Entity { hp: 1 }))
+    print(first.hp)
+}
+fn good(world: &World) {
+    let first = &world.entities[0]
+    world.with(|x| print(x.entities.len()))
+    print(first.hp)
+}

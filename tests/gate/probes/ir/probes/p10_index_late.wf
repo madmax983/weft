@@ -1,0 +1,8 @@
+fn main() {
+    let vs = Vec.new()
+    let a = Vec.new()
+    a.push(1)
+    vs.push(a)
+    let r = &vs[0]
+    print(r[{ vs.push(Vec.new()); 0 }])
+}

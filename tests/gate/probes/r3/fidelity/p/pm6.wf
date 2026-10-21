@@ -1,0 +1,17 @@
+// The clause holds its parameter (a reference to all of `p`) across `resume`.
+// The handled body moves the part `p.a`. After `resume`, the clause reads `p.a`.
+struct In { x: Vec<u64> }
+struct Out { a: In, b: In }
+fn take(i: In) -> usize { i.x.len() }
+effect Peek { fn peek(o: &Out) }
+fn main() {
+    let p = Out { a: In { x: Vec.new() }, b: In { x: Vec.new() } }
+    p.a.x.push(1)
+    handle Peek { fn peek(o) {
+        resume(())
+        print(o.a.x.len())   // expected W0301
+    } } in {
+        peek(&p)
+        let n = take(p.a)
+    }
+}

@@ -1,0 +1,13 @@
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let w = Vec.new()
+    w.push(5)
+    let r = &w[0]
+    for i in 0..3 {
+        if i == 0 { r = &v[0]; continue }
+        print(r + 1)
+        v.clear()
+        v.push(3)
+    }
+}

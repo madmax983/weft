@@ -1,0 +1,5 @@
+// weft: library
+pub fn greet() / log { log.info("hi") }
+test "greets" {
+    handle log { fn info(m) { print("mock", m); resume(()) } fn warn(m) { resume(()) } } in greet()
+}

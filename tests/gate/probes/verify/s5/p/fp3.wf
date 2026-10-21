@@ -1,0 +1,45 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+// A copy out of the Vec before the second closure goes in.
+fn copy_before_push() {
+    let world = mkw()
+    let v = Vec.new()
+    v.push(|| print(1))
+    let g = v[0]
+    v.push(|| world.entities.clear())
+    let r = &world.entities[0]
+    g()
+    print(r.hp)
+}
+// Two separate Vecs whose elements never meet.
+fn two_vecs() {
+    let world = mkw()
+    let a = Vec.new()
+    a.push(|| print(1))
+    let b = Vec.new()
+    b.push(|| world.entities.clear())
+    let r = &world.entities[0]
+    let g = a[0]
+    g()
+    print(r.hp)
+}
+// An Option that gets the second closure after the copy.
+fn option_copy_first() {
+    let world = mkw()
+    let o = Some(|| print(1))
+    let g = match o { Some(h) => h, None => || print(2) }
+    o = Some(|| world.entities.clear())
+    let r = &world.entities[0]
+    g()
+    print(r.hp)
+}
+fn main() {
+    copy_before_push()
+    two_vecs()
+    option_copy_first()
+}

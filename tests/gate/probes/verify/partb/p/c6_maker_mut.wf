@@ -1,0 +1,8 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn maker(w: &World) / mut(w.entities) {
+    let first = &w.entities[0]
+    let mk = || || w.entities.clear()
+    let g = mk()
+    print(first.hp)
+}

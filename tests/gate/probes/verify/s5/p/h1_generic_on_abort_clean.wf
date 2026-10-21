@@ -1,0 +1,39 @@
+// Clean forms of a generic `on abort` function.
+effect Stop { fn stop() }
+linear struct P<A> { n: u64 }
+    on abort = undo_p
+fn undo_p<A>(p: P<A>) / clock {
+    sleep(1.ms)
+    let P(n) = p
+    print("undo p {n}")
+}
+
+linear struct Q<A> { n: u64, items: Vec<u64> }
+    on abort = undo_q
+fn undo_q<A>(q: Q<A>) {
+    let Q(n, items) = q
+    print("undo q {n} {items.len()}")
+}
+
+// A generic type whose parts are references to a T: no T value is dropped.
+linear struct R<T> { r: Option<&T>, n: u64 }
+    on abort = undo_r
+fn undo_r<T>(r: R<T>) {
+    let R(o, n) = r
+    print("undo r {n}")
+}
+
+fn work(v: &u64) / Stop {
+    let p: P<u64> = P { n: 1 }
+    let q: Q<u64> = Q { n: 2, items: Vec.new() }
+    let r: R<u64> = R { r: Some(v), n: 3 }
+    stop()
+    let P(a) = p
+    let Q(b, c) = q
+    let R(d, e) = r
+}
+
+fn main() / clock {
+    let x = 5
+    handle Stop { fn stop() { () } } in work(&x)
+}

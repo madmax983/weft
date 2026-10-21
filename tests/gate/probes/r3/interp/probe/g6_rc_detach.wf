@@ -1,0 +1,11 @@
+// The result of a detached task is an Rc. Nobody joins the task, so the
+// runtime must drop its result.
+fn make() -> Rc<u64> { Rc.new(7) }
+
+fn main() / io, par {
+    scope { s =>
+        let t = s.spawn(|| make())
+        t.detach()
+    }
+    print("end")
+}

@@ -1,0 +1,63 @@
+effect Note { fn note(x: u64) }
+effect Echo { fn echo(f: fn()) -> fn() }
+effect Reg { fn reg(f: fn()) }
+effect RegV { fn regv(v: Vec<fn()>) }
+effect RegR { fn regr(j: &Job) }
+struct Job { f: fn() }
+fn store(d: &Job, g: fn()) / mut(d) { d.f = g }
+
+fn p_echo() {
+    let keep = || print(0)
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        handle Echo { fn echo(f) { resume(f) } } in {
+            keep = echo(|| note(1))
+        }
+    }
+    keep()
+}
+fn p_store_callee() {
+    let keep = Job { f: || print(0) }
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        handle Reg { fn reg(f) { store(&keep, f)
+ resume(()) } } in reg(|| note(2))
+    }
+    let g = keep.f
+    g()
+}
+fn p_wrap() {
+    let keep = || print(0)
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        handle Reg { fn reg(f) { keep = || f()
+ resume(()) } } in reg(|| note(3))
+    }
+    keep()
+}
+fn p_vec_param() {
+    let keep = || print(0)
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        handle RegV { fn regv(v) { keep = v[0]
+ resume(()) } } in {
+            let v = Vec.new()
+            v.push(|| note(4))
+            regv(v)
+        }
+    }
+    keep()
+}
+fn p_ref_param() {
+    let keep = || print(0)
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        handle RegR { fn regr(j) { keep = j.f
+ resume(()) } } in {
+            let j = Job { f: || note(5) }
+            regr(&j)
+        }
+    }
+    keep()
+}
+fn main() { p_echo() }

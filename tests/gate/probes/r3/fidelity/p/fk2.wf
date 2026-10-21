@@ -1,0 +1,11 @@
+linear struct Tx { id: u64 }
+fn begin() -> Tx { Tx { id: 1 } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn boom() -> u64 / fail { fail("boom"); 2 }
+fn work() / par, fail, clock {
+    let tx = begin()
+    let (a, b) = fork(|| commit(tx), || boom())
+}
+fn main() / par, clock {
+    handle Fail { fn fail(m) { print("failed: {m}") } } in work()
+}

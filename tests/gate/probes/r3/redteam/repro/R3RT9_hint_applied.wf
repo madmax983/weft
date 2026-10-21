@@ -1,0 +1,11 @@
+// The hint of R3RT9 applied as written: W0001.
+struct Entity { id: u64, hp: i32 }
+struct World { entities: Vec<Entity> }
+fn find(w: &World, id: u64) -> Option<&Entity> {
+    for e in w.entities[] { if e.id == id { return Some(e) } }
+    None
+}
+fn damage(w: &World, id: u64) / mut((w..).hp) {
+    match find(w, id) { Some(e) => { e.hp -= 1 }, None => {} }
+}
+fn main() {}

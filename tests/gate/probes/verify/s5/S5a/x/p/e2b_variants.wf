@@ -1,0 +1,48 @@
+effect Note { fn note(x: u64) }
+effect Run { fn run(f: fn()) }
+effect RunJ { fn run_j(j: Job) }
+struct Job { f: fn() }
+struct Mk { c: fn(fn()) }
+
+fn mk_cap(h: fn()) -> fn() / Run { || run(h) }
+fn mk_struct() -> Mk / Run { Mk { c: |g: fn()| run(g) } }
+fn gives_job() / RunJ, Note { run_j(Job { f: || note(1) }) }
+fn mk_job() -> fn(fn()) / RunJ { |g: fn()| run_j(Job { f: g }) }
+
+fn e_cap() / async {
+    handle Run { fn run(f) { scope { s => s.spawn(f) }
+ resume(()) } } in {
+        handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+            let c = mk_cap(|| note(2))
+            c()
+        }
+    }
+}
+fn e_struct() / async {
+    handle Run { fn run(f) { scope { s => s.spawn(f) }
+ resume(()) } } in {
+        let m = mk_struct()
+        handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+            let c = m.c
+            c(|| note(3))
+        }
+    }
+}
+fn e_job() / async {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        handle RunJ { fn run_j(j) { scope { s => s.spawn(j.f) }
+ resume(()) } } in gives_job()
+    }
+}
+fn e_mk_job() / async {
+    handle RunJ { fn run_j(j) { scope { s => s.spawn(j.f) }
+ resume(()) } } in {
+        let c = mk_job()
+        handle Note { fn note(x) { print(x)
+ resume(()) } } in c(|| note(4))
+    }
+}
+fn main() / async { e_cap() }

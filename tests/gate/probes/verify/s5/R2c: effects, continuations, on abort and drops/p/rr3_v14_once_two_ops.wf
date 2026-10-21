@@ -1,0 +1,13 @@
+// A once clause gives a resuming closure to an operation of a handler inside the
+// handled body? No: give it to the body through an outer multi handler's operation.
+effect Ask { fn ask() -> u64 }
+effect Pass { fn pass(f: fn()) }
+fn main() {
+    let keep = || print(0)
+    handle Pass { fn pass(f) { resume(()) } } in {
+        handle Ask { fn ask() { pass(|| { let n = resume(5); print(n) }); 0 } } in {
+            let n = ask()
+            print(n)
+        }
+    }
+}

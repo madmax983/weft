@@ -1,0 +1,10 @@
+fn boom() -> u64 / fail { fail("x"); 5 }
+fn a() -> u64 {
+    handle fail { fn fail(m) { resume(()) } } in { boom() }   // expected W0504
+}
+fn b() -> u64 {
+    handle Fail { fn fail(m) { let k = || resume(()); k() } } in { boom() }   // expected W0504
+}
+fn main() {
+    print(a())
+}

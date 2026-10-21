@@ -1,0 +1,10 @@
+effect Ask { fn ask() -> u64 }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Ask { fn ask() { print(r + 1); resume(1) } } in {
+        v.clear()
+        print(ask())
+    }
+}

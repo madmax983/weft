@@ -1,0 +1,111 @@
+effect Log { fn log(msg: String) }
+effect Reg { fn reg(f: fn()) }
+struct Box1 { f: fn() }
+struct Holder { cb: fn() }
+fn store_it(h: &Holder, f: fn()) / mut(h) { h.cb = f }
+fn run_it(f: fn()) { f() }
+fn assign_out() {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {
+        f = || log("late")
+    }
+    f()
+}
+fn tuple_out() {
+    let p = handle Log { fn log(m) { resume(()) } } in (|| log("late"), 1)
+}
+fn struct_out() {
+    let b = handle Log { fn log(m) { resume(()) } } in Box1 { f: || log("late") }
+}
+fn vec_out() {
+    let v = Vec.new()
+    handle Log { fn log(m) { resume(()) } } in {
+        v.push(|| log("late"))
+    }
+}
+fn field_out(h: &Holder) / mut(h) {
+    handle Log { fn log(m) { resume(()) } } in {
+        h.cb = || log("late")
+    }
+}
+fn callee_out(h: &Holder) / mut(h) {
+    handle Log { fn log(m) { resume(()) } } in store_it(h, || log("late"))
+}
+fn nested_out() {
+    let g = handle Log { fn log(m) { resume(()) } } in {
+        let f = || log("late")
+        || f()
+    }
+}
+fn param_out(k: fn(fn())) {
+    handle Log { fn log(m) { resume(()) } } in k(|| log("late"))
+}
+fn op_out() / Reg {
+    handle Log { fn log(m) { resume(()) } } in reg(|| log("late"))
+}
+fn closure_store() {
+    let v = Vec.new()
+    let keep = |g: fn()| v.push(g)
+    handle Log { fn log(m) { resume(()) } } in keep(|| log("late"))
+}
+// Clean: the closure stays inside.
+fn inside() {
+    handle Log { fn log(m) { resume(()) } } in {
+        let f = || log("x")
+        f()
+        run_it(|| log("y"))
+    }
+}
+fn outer_cap() / Log {
+    let f = || print(0)
+    handle Reg { fn reg(g: fn()) { resume(()) } } in {
+        f = || log("ok")
+    }
+    f()
+}
+// Clean: a struct or a container of the body keeps the closure.
+struct VecCb { f: fn() }
+fn local_struct() {
+    handle Log { fn log(m) { resume(()) } } in {
+        let cb = VecCb { f: || log("x") }
+        let g = cb.f
+        g()
+        let v = Vec.new()
+        v.push(|| log("y"))
+        let w = [|| log("z")]
+    }
+}
+// Bad: the local struct or container leaves the body.
+fn struct_leaves() {
+    let out = VecCb { f: || print(0) }
+    handle Log { fn log(m) { resume(()) } } in {
+        let cb = VecCb { f: || log("x") }
+        out = cb
+    }
+}
+fn vec_leaves() {
+    let v = handle Log { fn log(m) { resume(()) } } in {
+        let w = Vec.new()
+        w.push(|| log("x"))
+        w
+    }
+}
+fn capture_leaves() {
+    let out = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {
+        let cb = VecCb { f: || log("x") }
+        out = || { let g = cb.f; g() }
+    }
+}
+fn loop_leaves(n: u64) {
+    let out = VecCb { f: || print(0) }
+    handle Log { fn log(m) { resume(()) } } in {
+        let cb = VecCb { f: || print(1) }
+        let i = 0
+        while i < n {
+            out = cb
+            cb = VecCb { f: || log("x") }
+            i += 1
+        }
+    }
+}

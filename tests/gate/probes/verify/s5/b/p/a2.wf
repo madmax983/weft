@@ -1,0 +1,13 @@
+effect Log { fn info(m: u64) }
+
+fn helper() / Log { info(1) }
+
+fn main() / log, Log {
+    log.info("std")
+    helper()
+}
+
+test "t1" {
+    helper()
+    log.info("x")
+}

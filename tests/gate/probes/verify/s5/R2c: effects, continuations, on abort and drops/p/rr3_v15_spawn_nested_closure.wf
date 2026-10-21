@@ -1,0 +1,14 @@
+// A task runs a closure that calls a closure that resumes.
+effect Ask { fn ask() -> u64 }
+fn main() {
+    let r = handle Ask {
+        fn ask() {
+            let k = || resume(1)
+            scope { s => s.spawn(|| { let x = k(); print(x) }); 0 }
+        }
+    } in {
+        let a = ask()
+        a + 1
+    }
+    print(r)
+}

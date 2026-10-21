@@ -1,0 +1,9 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn reassign_local(a: &World, b: &World) / mut(a.entities) {
+    let r = &b.entities[0]
+    r = &a.entities[0]
+    r = &b.entities[0]
+    a.entities.clear()
+    print(r.hp)
+}

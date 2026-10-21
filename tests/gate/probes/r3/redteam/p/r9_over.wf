@@ -1,0 +1,36 @@
+linear struct Tx { id: u64 }
+fn commit(tx: Tx) { print(tx.id); let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+struct Holder { tx: Tx, n: u64 }
+struct Wrap<T> { x: T }
+effect Note { fn note() }
+fn box_field() {
+    let b = Box.new(Holder { tx: begin(1), n: 0 })
+    b.tx = begin(2)   //~ W0601
+}
+fn rc_field() {
+    let h = Rc.new(Wrap { x: begin(1) })
+    h.x = begin(2)   //~ W0601
+}
+fn loop_over() {
+    let t = begin(1)
+    let i = 0
+    while i < 2 { t = begin(2); i += 1 }   //~ W0601
+    commit(t)
+}
+fn clause_over() {
+    let t = begin(1)
+    handle Note { fn note() { t = begin(5); resume(()) } } in note()   //~ W0601
+    commit(t)
+}
+fn task_over() / async {
+    let t = begin(1)
+    scope { s => s.spawn(|| { t = begin(6) }); () }   //~ W0601
+    commit(t)
+}
+fn array_over() {
+    let a = [begin(1), begin(2)]
+    a[0] = begin(3)   //~ W0601
+    print(1)
+}
+fn main() {}

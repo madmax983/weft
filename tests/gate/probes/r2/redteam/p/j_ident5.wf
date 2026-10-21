@@ -1,0 +1,9 @@
+mod a { pub effect Log { fn log(msg: String) } pub fn f() / Log { log("a") } }
+mod b { pub effect Log { fn log(msg: String) } pub fn g() / Log { log("b") } }
+fn main() {
+    handle a.Log { fn log(m) { print("handled a {m}")
+ resume(()) } } in {
+        a.f()
+        b.g()   //~ W0805
+    }
+}

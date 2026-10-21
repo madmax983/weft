@@ -1,0 +1,9 @@
+struct S { count: u64 }
+fn main() {
+    let s = S { count: 0 }
+    scope { sc =>
+        sc.spawn(|| s.count += 1)
+        sc.spawn(|| print(s.count))
+    }
+    print(s.count)
+}

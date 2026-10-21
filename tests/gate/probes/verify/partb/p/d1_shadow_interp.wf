@@ -1,0 +1,14 @@
+// A user effect `Log` shadows the name of the standard effect. `log` still
+// names the standard effect.
+effect Log { fn log(msg: String) }
+
+fn handled_std() {
+    handle log { fn info(m) { print("caught", m); resume(()) } } in {
+        log.info("y")
+    }
+}
+
+fn main() {
+    handled_std()
+    print("done")
+}

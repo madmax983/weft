@@ -1,0 +1,5 @@
+// A plain handler: stealable.
+fn main(env: Env) / io {
+    let n = 1
+    http.serve(env.net.listen("127.0.0.1:18444"), |req| Response.text("n = {n}"))
+}

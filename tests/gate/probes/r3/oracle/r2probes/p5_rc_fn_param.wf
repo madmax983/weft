@@ -1,0 +1,6 @@
+struct E { hp: u64 }
+fn bg(f: fn()) { scope { s => s.spawn(f) } }
+fn main() {
+    let a = Rc.new(E { hp: 1 })
+    bg(|| print(a.hp))
+}

@@ -1,0 +1,11 @@
+fn work(n: u64) -> u64 { n + 1 }
+fn main() / async {
+    let total = scope { s =>
+        let a = s.spawn(|| {
+            let b = s.spawn(|| work(2))
+            b.join() + 1
+        })
+        a.join()
+    }
+    print(total)
+}

@@ -1,0 +1,6 @@
+// weft: library
+fn s1() { let r = sim.run; let q = sim.run }
+fn s2() { sim.run(seed: 1) { print(1) }; sim.run(seed: 2) { print(2) } }
+fn s3() { let g = || sim.run(seed: 1) { print(1) } }
+fn s4() { for i in 0..2 { sim.run(seed: 1) { print(i) } } }
+test "t" { let g = || sim.run(seed: 1) { print(1) }; g() }

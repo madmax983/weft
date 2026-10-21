@@ -1,0 +1,22 @@
+struct T { n: u64 }
+fn f(xs: T) -> T { loop { return xs } }
+fn g(c: bool) -> u64 {
+    loop {
+        if c { return 1 }
+    }
+}
+fn h(c: bool) -> u64 {
+    while c { return 1 }
+}
+fn k() -> u64 {
+    let f = |x: u64| { loop { return x } }
+    f(1)
+}
+fn m(c: bool) -> u64 {
+    if c { loop { return 2 } } else { 3 }
+}
+fn lab(c: bool) -> u64 {
+    loop {
+        loop { return 1 }
+    }
+}

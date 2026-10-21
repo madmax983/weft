@@ -1,0 +1,13 @@
+effect Ask { fn ask() -> u64 }
+
+
+fn main() {
+    handle Ask { fn ask() { print("no resume") } } in {
+        let g11 = || {
+            scope { s14 =>
+                let t15 = s14.spawn(|| print(ask()))
+                t15.join()
+            }
+        }
+    }
+}

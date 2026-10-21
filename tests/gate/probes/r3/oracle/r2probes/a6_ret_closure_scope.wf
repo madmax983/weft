@@ -1,0 +1,8 @@
+fn reader(r: &u64) -> fn() { || print(r + 1) }
+fn main() {
+    let f = {
+        let x = 5
+        reader(&x)
+    }
+    f()
+}

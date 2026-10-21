@@ -1,0 +1,20 @@
+// A child fails while the scope owner sleeps inside an unrelated Fail handler.
+// The failure belongs to the scope (its join), not to the inner handler.
+fn child() / fail {
+    fail("child failed")
+}
+
+fn main() / io {
+    handle Fail { fn fail(m) { print("outer handler: {m}") } } in {
+        scope { s =>
+            s.spawn(|| child())
+            handle Fail { fn fail(m) { print("inner handler: {m}"); resume(()) } } in {
+                sleep(10.ms)
+                print("inner body done")
+            }
+            print("scope body done")
+        }
+        print("scope returned normally")
+    }
+    print("end")
+}

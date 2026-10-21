@@ -1,0 +1,55 @@
+// OR1 missed shape: a call result of a type that can hold a function value
+// (Vec<fn()>, a struct with a fn field set after it is made, Wrap<fn()>).
+// Expected: W0301 at the call of g in each. HEAD: 0 errors, each faults.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct H { f: fn() }
+struct Wrap<T> { x: T }
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+fn noop() { print(0) }
+fn mk_v(w: &World) -> Vec<fn()> {
+    let r = &w.entities[0]
+    let v = Vec.new()
+    v.push(|| print(r.hp))
+    v
+}
+fn in_vec() {
+    let w = mkw()
+    let v = mk_v(&w)
+    w.entities.clear()
+    let g = v[0]
+    g()
+}
+fn mk_h(w: &World) -> H {
+    let r = &w.entities[0]
+    let h = H { f: noop }
+    h.f = || print(r.hp)
+    h
+}
+fn field_set() {
+    let w = mkw()
+    let h = mk_h(&w)
+    w.entities.clear()
+    let g = h.f
+    g()
+}
+fn mk_wrap(w: &World) -> Wrap<fn()> {
+    let r = &w.entities[0]
+    let h = Wrap { x: || print(0) }
+    h.x = || print(r.hp)
+    h
+}
+fn wrap_set() {
+    let w = mkw()
+    let h = mk_wrap(&w)
+    w.entities.clear()
+    let g = h.x
+    g()
+}
+fn main() {
+    in_vec()
+}

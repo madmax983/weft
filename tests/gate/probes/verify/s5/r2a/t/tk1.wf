@@ -1,0 +1,26 @@
+struct Stats { count: u64 }
+
+// g holds a running task at the print in each iteration: t3 in the first,
+// the task of the iteration before in the others. h.join() joins only the
+// task that h holds.
+fn rotate(st: &Stats, n: u64) / mut(st), async {
+    scope { s =>
+        let h = s.spawn(|| print(0))
+        let g = s.spawn(|| st.count += 1)
+        let i = 0
+        while i < n {
+            h.join()
+            print(st.count)
+            h = g
+            g = s.spawn(|| st.count += 1)
+            i += 1
+        }
+        h.join()
+        g.join()
+    }
+}
+
+fn main() / async {
+    let st = Stats { count: 0 }
+    rotate(&st, 3)
+}

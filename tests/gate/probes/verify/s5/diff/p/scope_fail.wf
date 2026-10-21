@@ -1,0 +1,22 @@
+struct Stats { count: u64 }
+fn work(st: &Stats) / mut(st), async, fail {
+    scope { s =>
+        let t = s.spawn(|| st.count += 1)
+        if st.count > 5 { fail("too many") }
+        t.join()
+    }
+}
+fn guarded(st: &Stats) / mut(st), async {
+    handle Fail { fn fail(m) { print(m) } } in {
+        scope { s =>
+            s.spawn(|| st.count += 1)
+            fail("stop")
+        }
+    }
+    st.count += 1
+    print(st.count)
+}
+fn main() / async {
+    let st = Stats { count: 0 }
+    guarded(&st)
+}

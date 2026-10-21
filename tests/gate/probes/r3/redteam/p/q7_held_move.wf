@@ -1,0 +1,40 @@
+struct Entity { hp: i32, kids: Vec<Entity> }
+struct World { entities: Vec<Entity> }
+struct Wrap<T> { x: T }
+fn mv(a: &Vec<&Entity>, b: &Vec<&Entity>) / mut(a, b) {
+    match a.pop() { Some(e) => b.push(e), None => {} }
+}
+fn mv_wrap(a: &Wrap<&Entity>, b: &Wrap<&Entity>) / mut(b) { b.x = a.x }
+fn mv_tuple(a: &(&Entity, u64), b: &Vec<&Entity>) / mut(b) { b.push(a.0) }
+fn caller_mv(world: &World, d: &Entity) / mut(world.entities) {
+    let a = Vec.new()
+    a.push(&world.entities[0])
+    let b = Vec.new()
+    b.push(d)
+    mv(&a, &b)
+    world.entities.clear()
+    print(b[0].hp)   //~ W0301
+}
+fn caller_mv_wrap(world: &World, d: &Entity) / mut(world.entities) {
+    let a = Wrap { x: &world.entities[0] }
+    let b = Wrap { x: d }
+    mv_wrap(&a, &b)
+    world.entities.clear()
+    print(b.x.hp)   //~ W0301
+}
+fn caller_mv_tuple(world: &World, d: &Entity) / mut(world.entities) {
+    let a = (&world.entities[0], 1)
+    let b = Vec.new()
+    b.push(d)
+    mv_tuple(&a, &b)
+    world.entities.clear()
+    print(b[1].hp)   //~ W0301
+}
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1, kids: Vec.new() })
+    w
+}
+test "caller_mv" { let w = mkw(); let d = Entity { hp: 4, kids: Vec.new() }; caller_mv(&w, &d) }
+test "caller_mv_wrap" { let w = mkw(); let d = Entity { hp: 4, kids: Vec.new() }; caller_mv_wrap(&w, &d) }
+test "caller_mv_tuple" { let w = mkw(); let d = Entity { hp: 4, kids: Vec.new() }; caller_mv_tuple(&w, &d) }

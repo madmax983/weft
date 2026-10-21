@@ -1,0 +1,58 @@
+effect Choice { multi fn choose() -> bool }
+struct Entity { hp: u64 }
+fn needs_uniq(es: &[u64] @ uniq) / mut(es) {}
+fn u01(es: &[Entity] @ uniq, n: u32) / mut(es[]), Choice {
+    for i in 0..n {
+        for e in es[] {
+            e.hp += 1
+            let b = choose()
+        }
+    }
+}
+fn u02(v: &Vec<Entity>) / mut(v[]), Choice {
+    let (l, r) = v.split_mut(1)
+    for e in l[] {
+        e.hp += 1
+        let b = choose()
+    }
+}
+fn u03(es: &[Entity] @ uniq) / mut(es[]), Choice {
+    for e in es[] {
+        let f = || choose()
+        let b = f()
+    }
+}
+fn u04(v: &Vec<u64>, w: &Vec<u64>, c: bool) / mut(v[], w[]) {
+    let (l, r) = v.split_mut(1)
+    l = if c { &w[] } else { l }
+    let a = &w[0]
+    needs_uniq(l)
+    print(a)
+}
+fn u05(v: &Vec<u64>, w: &Vec<u64>) / mut(v[], w[]) {
+    let (l, r) = v.split_mut(1)
+    loop { l = &w[]
+ break }
+    let a = &w[0]
+    needs_uniq(l)
+    print(a)
+}
+fn u06(v: &Vec<u64>, w: &Vec<u64>) / mut(v[], w[]) {
+    let (l, r) = v.split_mut(1)
+    let f = || { l = &w[] }
+    f()
+    let a = &w[0]
+    needs_uniq(l)
+    print(a)
+}
+fn u07(v: &Vec<u64>, w: &Vec<u64>) / mut(v[], w[]) {
+    let (l, r) = v.split_mut(1)
+    let (l2, r2) = w.split_mut(1)
+    l = l2
+    needs_uniq(l)
+}
+fn u08(v: &Vec<u64>, w: &Vec<u64>, c: bool) / mut(v[], w[]) {
+    let (l, r) = v.split_mut(1)
+    if c { l = &w[] }
+    needs_uniq(l)
+}

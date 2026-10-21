@@ -1,0 +1,12 @@
+fn twice(g: fn()) { g()
+ g() }
+fn f(xs: &Vec<u64>) / mut(xs) {
+    let v = Vec.new()
+    v.push(|| { xs.push(1) })
+    twice(v[0])
+}
+fn main() {
+    let xs = Vec.new()
+    f(&xs)
+    print(xs.len())
+}

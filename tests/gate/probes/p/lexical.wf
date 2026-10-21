@@ -1,0 +1,18 @@
+effect Note { fn note(x: u64) }
+
+fn emit() / Note { note(3) }
+
+fn run(f: fn() / Note) / Note {
+    handle Note { fn note(x) { print("inner {x}"); resume(()) } } in {
+        f()
+        note(2)
+        emit()
+    }
+}
+
+fn main() {
+    handle Note { fn note(x) { print("outer {x}"); resume(()) } } in {
+        let f = || note(1)
+        run(f)
+    }
+}

@@ -1,0 +1,10 @@
+effect Note { fn note(m: u64) }
+effect Log { fn info(m: String) }
+fn noisy() / Note { note(1) }
+fn main() / Note, main.Log, log {
+    noisy()
+    noisy()
+    info("a")
+    log.info("b")
+}
+test "t" { noisy() }

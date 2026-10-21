@@ -1,0 +1,36 @@
+// RR6: a function value that a clause gives with `resume` reaches the handled
+// computation as the result of the operation. A call of it there does not show
+// what the closure does: the clauses are lowered after the handled body. ADR 0005
+// records this for a reference in the result, and claims W0313 for the
+// capabilities. The mutation of the closure is lost too, also inside a tuple.
+// Expected: W0301 at each marked line. Actual: no error. Each test faults.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Get { fn get() -> fn() }
+effect GetT { fn gett() -> (fn(), u64) }
+
+fn direct(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    handle Get { fn get() { resume(|| world.entities.clear()) } } in {
+        let f = get()
+        f()
+        print(first.hp)   //~ W0301
+    }
+}
+fn in_tuple(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    handle GetT { fn gett() { resume((|| world.entities.clear(), 1)) } } in {
+        let (f, n) = gett()
+        f()
+        print(first.hp)   //~ W0301
+    }
+}
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+test "direct" { let w = mkw()
+ direct(&w) }
+test "in_tuple" { let w = mkw()
+ in_tuple(&w) }

@@ -1,0 +1,6 @@
+fn pick<T>(a: T, b: T) -> T { a }
+fn main() {
+    let p = pick
+    print(p(b: 1, a: 2))
+    print(pick(b: 1, a: 2))
+}

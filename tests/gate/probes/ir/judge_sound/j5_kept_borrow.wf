@@ -1,0 +1,11 @@
+// Judge probe J5 (V125 family through a closure, not a task). The closure
+// captures a copy variable and borrows it inside. It runs after the variable
+// ended. The machine design gives such a capture the mode KeptCell (plain data,
+// not moved) and gives the closure no place in the variable.
+fn main() {
+    let g = {
+        let n = 5
+        || { let r = &n; print(r + 1) }
+    }
+    g()
+}

@@ -1,0 +1,17 @@
+// ESCAPE (RT4 shape): a closure argument captures a reference; a later argument
+// invalidates it before the callee calls the closure. The closure value is not
+// held like a reference argument.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn grow(w: &World) -> u64 / mut(w.entities) { w.entities.clear(); 0 }
+fn apply_n(f: fn(), n: u64) { f() }
+fn apply_r(n: u64, f: fn()) { f() }
+fn closure_then_mut(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    apply_n(|| print(first.hp), grow(world))   // expected W0301
+}
+fn main() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    closure_then_mut(&w)
+}

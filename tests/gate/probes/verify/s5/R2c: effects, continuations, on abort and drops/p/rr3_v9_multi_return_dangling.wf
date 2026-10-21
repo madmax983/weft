@@ -1,0 +1,24 @@
+// A multi clause gives a resuming closure to the body as the operation result.
+// The body gives it back as the value of the handle, and the function returns it.
+// A later call resumes the body, which uses a local of the returned function.
+effect Ask { multi fn ask() -> fn() }
+fn make() -> fn() {
+    let c: Vec<u64> = Vec.new()
+    c.push(1)
+    handle Ask {
+        fn ask() {
+            let k = || { resume(|| print(1)); () }
+            resume(k)
+        }
+    } in {
+        let f = ask()
+        c.push(2)
+        print(c.len())
+        f
+    }
+}
+fn main() {
+    let g = make()
+    g()
+    g()
+}

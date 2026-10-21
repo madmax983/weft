@@ -1,0 +1,35 @@
+effect Note { fn note(x: u64) }
+struct Wrap<T> { x: T }
+
+// Through a generic field of an outer local.
+fn via_wrap() {
+    let w = Wrap { x: || print(0) }
+    handle Note { fn note(x) { w.x = || resume(()) } } in note(1)
+    let g = w.x
+    g()
+}
+// Through an Option in an outer local.
+fn via_option() {
+    let o = None
+    handle Note { fn note(x) { o = Some(|| resume(())) } } in note(1)
+    match o { Some(g) => g(), None => {} }
+}
+// Stored and the clause also resumes: the stored closure resumes a second time.
+fn store_and_resume() {
+    let k = || print(0)
+    handle Note { fn note(x) { k = || resume(())
+ resume(()) } } in note(1)
+    k()
+}
+// The clause calls a callee that keeps the closure.
+fn keep(w: &Wrap<fn()>, f: fn()) / mut(w) { w.x = f }
+fn via_callee() {
+    let w = Wrap { x: || print(0) }
+    handle Note { fn note(x) { keep(&w, || resume(())) } } in note(1)
+    let g = w.x
+    g()
+}
+test "wrap" { via_wrap() }
+test "option" { via_option() }
+test "store_and_resume" { store_and_resume() }
+test "callee" { via_callee() }

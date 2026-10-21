@@ -1,0 +1,7 @@
+struct S0 { f0: Box<S1<(u64), S2>>, f1: Option<Vec<Option<u64>>> }
+struct S1<T0, T1> { f0: Option<Box<u64>> }
+struct S2 {  }
+struct S3<T0, T1> { f0: u64, f1: S3<S2, (Option<u64>, S4, (bool))>, f2: T1 }
+struct S4 {  }
+struct S5<T0> { f0: Box<(S4, S3<u64, u64>, S3<u64, bool>)>, f1: S2, f2: Vec<S2> }
+fn main() {}

@@ -1,0 +1,17 @@
+struct Stats { count: u64 }
+fn second(st: &Stats @ shared) {
+    let v = Vec.new()
+    v.push(|| print(1))
+    v.push(|| st.count += 1)   //~ W0402
+    let g = v[1]
+    g()
+}
+fn late(st: &Stats @ shared, d: &Stats) / mut(d) {
+    let r = d
+    let f = || r.count += 1
+    r = st
+    f()   //~ W0402
+}
+fn param_cb(st: &Stats @ shared, f: fn(&Stats)) {
+    f(st)   //~ W0402
+}

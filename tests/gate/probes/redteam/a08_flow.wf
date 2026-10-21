@@ -1,0 +1,58 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn get_first(w: &World) -> &Entity in w.entities[] { &w.entities[0] }
+// Mutation on a later iteration.
+fn later_iter(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    let i = 0
+    while i < 3 {
+        print(r.hp)
+        world.entities.push(Entity { hp: 1 })
+        i += 1
+    }
+}
+// Mutation then break, use after the loop.
+fn after_break(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    loop {
+        world.entities.push(Entity { hp: 1 })
+        break
+    }
+    print(r.hp)
+}
+// Mutation then continue.
+fn after_continue(world: &World, n: u64) / mut(world.entities) {
+    let r = &world.entities[0]
+    for i in 0..n {
+        if i == 1 { print(r.hp) }
+        world.entities.push(Entity { hp: 1 })
+        continue
+    }
+}
+// Ref from a place-returning function, then a method chain.
+fn chain(world: &World) / mut(world.entities) {
+    let r = get_first(world)
+    world.entities.clear()
+    print(r.hp)
+}
+fn chain2(world: &World) / mut(world.entities) {
+    let r = world.entities.get(0)
+    world.entities.pop()
+    print(r.hp)
+}
+// Ref from a match-arm result.
+fn match_result(world: &World, c: bool) / mut(world.entities) {
+    let r = match c {
+        true => &world.entities[0],
+        false => &world.entities[1],
+    }
+    world.entities.push(Entity { hp: 1 })
+    print(r.hp)
+}
+// Rebinding in only one branch.
+fn one_branch(world: &World, c: bool) / mut(world.entities) {
+    let r = &world.entities[0]
+    world.entities.push(Entity { hp: 1 })
+    if c { r = &world.entities[0] }
+    print(r.hp)
+}

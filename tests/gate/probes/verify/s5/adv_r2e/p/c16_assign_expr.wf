@@ -1,0 +1,6 @@
+fn main() {
+    let x: u8 = 5
+    let y: u8 = 255
+    x = y + 1
+    print(x)
+}

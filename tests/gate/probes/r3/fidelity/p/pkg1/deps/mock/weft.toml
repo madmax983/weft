@@ -1,0 +1,3 @@
+[package]
+name = "mock"
+kind = "lib"

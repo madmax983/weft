@@ -1,0 +1,7 @@
+extern type Stmt
+struct Holder { p: *Stmt }   //~ W0116
+extern fn step(s: *Stmt) -> i32
+fn one() / par {
+    let a = fork(|| 1)   //~ W0103
+}
+fn f(x: u64) -> u64 { loop { return x } }

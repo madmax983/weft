@@ -1,0 +1,7 @@
+fn add<T>(a: T, b: T) -> T { a + b }
+fn main() {
+    let x: u8 = 200
+    let y: i64 = 300
+    print(add(y, y))
+    print(add(x, x))
+}

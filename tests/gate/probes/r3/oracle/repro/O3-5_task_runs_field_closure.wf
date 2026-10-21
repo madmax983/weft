@@ -1,0 +1,98 @@
+// O3-5 (blocker, also in 328a39b). A closure in a field of a local struct,
+// run by a task or a fork branch. The task writes what the closure writes,
+// but W0405 does not see it, so the parent reads `v` while the task pushes
+// to it: a data race (oracle). Two tasks that run the closure race with each
+// other. The same closure in a `Vec`, a tuple, an `Option` or a generic struct
+// gets W0405 (correct). A call of the field value outside a task gets W0301
+// (correct), so the body knows what the closure does.
+struct H { f: fn() }
+struct HH { h: H, n: u64 }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn run_h(h: &H) { let g = h.f; g() }
+
+fn local_copy() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    scope { s =>
+        let g = h.f
+        s.spawn(|| g())
+        print(v.len())        // oracle: data race
+    }
+}
+
+fn in_task() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    scope { s =>
+        s.spawn(|| { let g = h.f; g() })
+        print(v.len())        // oracle: data race
+    }
+}
+
+fn spawn_field() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    scope { s =>
+        s.spawn(h.f)
+        print(v.len())        // oracle: data race
+    }
+}
+
+fn field_assigned() {
+    let v = mk_v()
+    let h = H { f: || print(0) }
+    h.f = || v.push(2)
+    scope { s =>
+        s.spawn(|| { let g = h.f; g() })
+        print(v.len())        // oracle: data race
+    }
+}
+
+fn nested() {
+    let v = mk_v()
+    let hh = HH { h: H { f: || v.push(2) }, n: 1 }
+    scope { s =>
+        s.spawn(|| { let g = hh.h.f; g() })
+        print(v.len())        // oracle: data race
+    }
+}
+
+fn callee() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    scope { s =>
+        s.spawn(|| run_h(&h))
+        print(v.len())        // oracle: data race
+    }
+}
+
+fn two_tasks() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    scope { s =>
+        let g = h.f
+        s.spawn(|| g())
+        s.spawn(|| g())       // oracle: data race between the tasks
+    }
+}
+
+fn fork_branch() {
+    let v = mk_v()
+    let h = H { f: || v.push(2) }
+    let _ = fork(|| { let g = h.f; g() }, || print(v.len()))   // oracle: data race; no W0403
+}
+
+fn in_vec() {
+    // Correct: W0405.
+    let v = mk_v()
+    let fs = Vec.new()
+    fs.push(|| v.push(2))
+    scope { s =>
+        s.spawn(|| { let g = fs[0]; g() })
+        print(v.len())
+    }
+}
+
+fn main() {
+    local_copy()
+}

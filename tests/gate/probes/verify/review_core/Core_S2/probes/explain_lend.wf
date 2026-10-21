@@ -1,0 +1,7 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn holds(f: fn(&World), w: &World) {
+    let first = &w.entities[0]
+    f(w)
+    print(first.hp)
+}

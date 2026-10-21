@@ -1,0 +1,61 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Wrap<T> { x: T }
+fn show(e: &Entity) { print(e.hp) }
+fn show_opt(o: &Option<&Entity>) { match o { Some(e) => print(e.hp), None => {} } }
+fn get_x<T>(w: &Wrap<T>) -> &T in w.x { &w.x }
+
+fn ref_to_option(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    let p = &o
+    world.entities.clear()
+    match p { Some(e) => print(e.hp), None => {} }   //~ W0301
+}
+fn ref_to_tuple(world: &World) / mut(world.entities) {
+    let t = (&world.entities[0], 1)
+    let p = &t
+    world.entities.clear()
+    print(p.0.hp)   //~ W0301
+}
+fn ref_to_vec(world: &World) / mut(world.entities) {
+    let v = Vec.new()
+    v.push(&world.entities[0])
+    let p = &v
+    world.entities.clear()
+    print(p[0].hp)   //~ W0301
+}
+fn ref_to_wrap(world: &World) / mut(world.entities) {
+    let w = Wrap { x: &world.entities[0] }
+    let p = &w
+    world.entities.clear()
+    show(p.x)   //~ W0301
+}
+fn ref_to_option_callee(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    world.entities.clear()
+    show_opt(&o)   //~ W0301
+}
+fn ref_to_wrap_getter(world: &World) / mut(world.entities) {
+    let w = Wrap { x: &world.entities[0] }
+    let r = get_x(&w)
+    world.entities.clear()
+    show(r)   //~ W0301
+}
+fn ref_to_ref(world: &World) / mut(world.entities) {
+    let e = &world.entities[0]
+    let p = &e
+    world.entities.clear()
+    print(p.hp)   //~ W0301
+}
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+test "ref_to_option" { let w = mkw(); ref_to_option(&w) }
+test "ref_to_tuple" { let w = mkw(); ref_to_tuple(&w) }
+test "ref_to_vec" { let w = mkw(); ref_to_vec(&w) }
+test "ref_to_wrap" { let w = mkw(); ref_to_wrap(&w) }
+test "ref_to_option_callee" { let w = mkw(); ref_to_option_callee(&w) }
+test "ref_to_wrap_getter" { let w = mkw(); ref_to_wrap_getter(&w) }
+test "ref_to_ref" { let w = mkw(); ref_to_ref(&w) }

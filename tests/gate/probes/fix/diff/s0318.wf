@@ -1,0 +1,7 @@
+struct S0<T0, T1> { f0: S5, f1: (Vec<S3<u64>>, [S5; 1]) }
+struct S1 { f0: u64, f1: S0<S5, S1>, f2: u64 }
+struct S2<T0> { f0: [S5; 0] }
+struct S3<T0> {  }
+struct S4<T0> {  }
+struct S5 { f0: S2<u64> }
+fn main() {}

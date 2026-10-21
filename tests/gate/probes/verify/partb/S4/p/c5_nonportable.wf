@@ -1,0 +1,56 @@
+struct Node { v: u64 }
+// closure capturing a closure capturing a closure capturing Rc
+fn nested3() / par {
+    let n = Rc.new(Node { v: 1 })
+    let c = || print(n.v)
+    let d = || c()
+    fork(|| d(), || print(2))
+}
+// closure capturing a reference to an Rc
+fn ref_to_rc() / par {
+    let n = Rc.new(Node { v: 1 })
+    let r = &n
+    let c = || print(r.v)
+    fork(|| c(), || print(2))
+}
+// closure capturing an inferred Vec of Rc
+fn vec_of_rc() / par {
+    let v = Vec.new()
+    v.push(Rc.new(Node { v: 1 }))
+    let c = || print(v.len())
+    fork(|| c(), || print(2))
+}
+// closure capturing a tuple holding a Weak
+fn tuple_weak() / par {
+    let n = Rc.new(Node { v: 1 })
+    let w = (n.downgrade(), 1)
+    let c = || print(1)
+    fork(|| { let (a, b) = w }, || print(2))
+}
+// closure in a struct field capturing Rc
+struct Cb { f: fn() }
+fn field_closure() / par {
+    let n = Rc.new(Node { v: 1 })
+    let cb = Cb { f: || print(n.v) }
+    fork(|| { let g = cb.f
+ g() }, || print(2))
+}
+// closure through an Option
+fn opt_closure() / par {
+    let n = Rc.new(Node { v: 1 })
+    let o = Some(|| print(n.v))
+    fork(|| { match o { Some(g) => g(), None => {} } }, || print(2))
+}
+// spawned
+fn spawned() / async {
+    let n = Rc.new(Node { v: 1 })
+    let c = || print(n.v)
+    scope { s => s.spawn(|| c()).join() }
+}
+// clean: closure capturing plain data in fork
+fn clean() / par {
+    let n = Node { v: 1 }
+    let c = || print(n.v)
+    let d = || c()
+    fork(|| d(), || print(2))
+}

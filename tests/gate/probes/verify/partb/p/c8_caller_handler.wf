@@ -1,0 +1,13 @@
+// A callee starts a task that logs. The caller handles `log` with a local
+// handler, so the task reaches a handler on the stack of the parent task.
+fn worker() / async, log {
+    scope { s => s.spawn(|| log.info("x")) }
+}
+
+fn main() / async {
+    handle log {
+        fn info(m) { print("caught", m); resume(()) }
+        fn warn(m) { resume(()) }
+    } in worker()
+    print("done")
+}

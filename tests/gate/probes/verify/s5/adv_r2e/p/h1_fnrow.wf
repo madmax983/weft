@@ -1,0 +1,11 @@
+mod a {
+    pub effect Note { fn note(x: u64) }
+    pub fn f() / Note { note(1) }
+}
+fn run(g: fn() / (a.Note, log)) / a.Note, log { g() }
+fn main() {
+    handle a.Note { fn note(v) {
+        print(v)
+        resume(())
+    } } in run(a.f)
+}

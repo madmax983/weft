@@ -1,0 +1,32 @@
+struct Entity { hp: u64, id: u64, kids: Vec<Entity> }
+fn mk(n: u64) -> Entity { Entity { hp: n, id: n, kids: Vec.new() } }
+fn pick(v: &Vec<Entity>, b: bool) -> Option<&Entity> {
+    if b { Some(&v[0].kids[0]) } else { Some(&v[0]) }
+}
+fn walk(v: &Vec<Entity>, w: &Vec<Entity>) / mut(v..) {
+    let last = &w[0]
+    let i = 0
+    while {
+        match pick(v, i == 0) {
+            Some(e) => {
+                e.kids.clear()
+                print(last.hp)
+                last = e
+            }
+            None => {}
+        }
+        i += 1
+        i < 3
+    } {
+        print(i)
+    }
+}
+fn main() {
+    let v = Vec.new()
+    let top = mk(1)
+    top.kids.push(mk(2))
+    v.push(top)
+    let w = Vec.new()
+    w.push(mk(5))
+    walk(&v, &w)
+}

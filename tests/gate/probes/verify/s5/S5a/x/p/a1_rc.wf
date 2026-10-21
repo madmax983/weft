@@ -1,0 +1,23 @@
+effect Note { fn note(x: u64) }
+struct Job { f: fn() }
+fn start_rc(r: Rc<Job>) / async {
+    scope { s => s.spawn(|| { let g = r.f
+ g() }) }
+}
+fn start_opt(o: Option<Job>) / async {
+    scope { s => s.spawn(|| { match o { Some(j) => { let g = j.f
+ g() }, None => {} } }) }
+}
+fn p_rc() / async {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        start_rc(Rc.new(Job { f: || note(1) }))
+    }
+}
+fn p_opt() / async {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        start_opt(Some(Job { f: || note(2) }))
+    }
+}
+fn main() / async { p_rc() }

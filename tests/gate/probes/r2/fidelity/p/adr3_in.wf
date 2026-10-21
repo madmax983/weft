@@ -1,0 +1,18 @@
+struct Entity { hp: i32, kids: Vec<Entity> }
+struct World { entities: Vec<Entity>, score: u64 }
+fn step(world: &World, e: &Entity in world.entities[]) / mut(e) { e.hp -= 1 }
+// The caller must pass a reference at the stated place or below it through
+// stable steps only (W0203).
+fn deeper(world: &World) / mut(world.entities[]) {
+    let k = &world.entities[0].kids[0]
+    step(world, k)   //~ W0203
+}
+fn outside(world: &World, other: &World) / mut(world.entities[], other.entities[]) {
+    let k = &other.entities[0]
+    step(world, k)   //~ W0203
+}
+// A body must return a reference at the stated place, through stable steps.
+fn first(world: &World) -> &Entity in world.entities[] { &world.entities[0] }
+fn first_kid(world: &World) -> &Entity in world.entities[] {
+    &world.entities[0].kids[0]   //~ W0204
+}

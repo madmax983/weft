@@ -1,0 +1,24 @@
+// A rollback that bounds its own I/O with a with_timeout. The unwind runs it.
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(t: Tx) / clock {
+    let Tx(id) = t
+    print("rollback {id} starts at {Clock.now()}")
+    handle Fail { fn fail(m) { print("rollback gave up: {m} at {Clock.now()}") } } in {
+        with_timeout(5.ms) { sleep(1000.ms) }
+    }
+    print("rollback {id} ends at {Clock.now()}")
+}
+fn commit(t: Tx) / io { let Tx(id) = t; print("commit {id}") }
+
+fn main() / io {
+    handle Fail { fn fail(m) { print("caught: {m} at {Clock.now()}") } } in {
+        with_timeout(10.ms) {
+            let t = Tx { id: 1 }
+            sleep(100.ms)
+            commit(t)
+        }
+    }
+    print("end at {Clock.now()}")
+}

@@ -1,0 +1,26 @@
+effect Ask { fn ask() -> u64 }
+struct Wrap<T> { x: T }
+fn run_it(f: fn() -> u64) -> u64 { f() }
+
+fn task_wrap() / async {
+    handle Ask { fn ask() { let w = Wrap { x: || resume(1) }; scope { s => s.spawn(|| { let g = w.x; let _ = g() }); 0 } } } in {   //~ W0314
+        ask() + 1
+    }
+}
+fn task_callee() / async {
+    handle Ask { fn ask() { let k = || resume(1); scope { s => s.spawn(|| { let _ = run_it(k) }); 0 } } } in {   //~ W0314
+        ask() + 1
+    }
+}
+fn task_named() / async {
+    handle Ask { fn ask() { let k = || resume(1); scope { s => s.spawn(k); 0 } } } in {   //~ W0314
+        ask() + 1
+    }
+}
+fn fork_named() / par {
+    handle Ask { fn ask() { let k = || resume(1); let (a, b) = fork(k, || 2); a } } in {   //~ W0314
+        ask() + 1
+    }
+}
+fn main() {
+}

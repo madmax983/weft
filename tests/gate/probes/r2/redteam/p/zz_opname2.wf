@@ -1,0 +1,6 @@
+effect Nap { fn sleep(d: Duration) }
+fn napper() / Nap { sleep(1.ms) }
+fn main() {
+    handle Nap { fn sleep(d) { print("user nap")
+ resume(()) } } in napper()
+}

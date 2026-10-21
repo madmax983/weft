@@ -1,0 +1,8 @@
+fn bump(r: &u64) { r += 1 }
+fn main() {
+    let n = 1
+    scope { s =>
+        s.spawn(|| bump(&n))
+        print(n)
+    }
+}

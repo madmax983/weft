@@ -1,0 +1,15 @@
+fn main() / par, async {
+    let n = Rc.new(0)
+    let c = 0
+    scope { s =>
+        s.spawn(|| {
+            let k = n.clone()
+            c += 1
+        })
+        s.spawn(|| {
+            let k = n.clone()
+            c += 2
+        })
+    }
+    print(c)
+}

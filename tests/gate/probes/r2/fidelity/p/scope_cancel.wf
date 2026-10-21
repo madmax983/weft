@@ -1,0 +1,21 @@
+// The end of a `scope` waits for its tasks. A cancellation of the task that
+// waits aborts it there (the interpreter checks for cancellation at the wait).
+// `Lock` has no `on abort`, and it is live across the wait.
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { let Lock(i) = l }
+fn lock() -> Lock { Lock { id: 1 } }
+
+fn worker() / async {
+    let l = lock()
+    scope { s =>
+        s.spawn(|| { let i = 0; while i < 100000 { i += 1 } })
+    }
+    unlock(l)
+}
+
+fn main() / async {
+    scope { s =>
+        s.spawn(|| worker())
+        s.spawn(|| { sleep(1.ms); fail("stop") })
+    }
+}

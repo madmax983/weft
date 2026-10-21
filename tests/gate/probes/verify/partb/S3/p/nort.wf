@@ -1,0 +1,7 @@
+// weft: no-runtime
+effect Log { fn log(msg: String) }
+fn user() / Log { log("x") }
+fn std_one() / log { log.info("x") }
+fn main() {
+    handle Log { fn log(m) { resume(()) } } in user()
+}

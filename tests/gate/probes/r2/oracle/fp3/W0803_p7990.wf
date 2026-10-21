@@ -1,0 +1,10 @@
+// weft: no-runtime
+fn work() / async, fail {
+}
+
+fn main() {
+    {
+        handle Fail { fn fail(msg) { print("caught:", msg) } } in work()
+    }
+}
+

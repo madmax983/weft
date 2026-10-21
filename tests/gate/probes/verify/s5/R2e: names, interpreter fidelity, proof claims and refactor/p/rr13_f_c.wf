@@ -1,0 +1,29 @@
+// Extra arguments to detach, spawn and resume.
+effect E { fn e() -> u64 }
+fn work() -> u64 { 1 }
+fn side(v: Vec<u64>) -> u64 { 2 }
+fn go() -> u64 / E { e() }
+fn a() / async {
+    let v: Vec<u64> = [1]
+    scope { s =>
+        let t = s.spawn(|| work())
+        t.detach(side(v))
+    }
+    print(v.len())
+}
+fn b() / async {
+    let v: Vec<u64> = [1]
+    scope { s =>
+        let t = s.spawn(|| work(), side(v))
+        print(t.join())
+    }
+    print(v.len())
+}
+fn c() {
+    let v: Vec<u64> = [1]
+    print(handle E { fn e() { resume(1, side(v)) } } in go())
+    print(v.len())
+}
+fn main() / async {
+    c()
+}

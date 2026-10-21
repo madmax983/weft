@@ -1,0 +1,7 @@
+fn run(f: fn()) { f() }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    run(|| v.push(5))
+    print(v.len())
+}

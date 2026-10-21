@@ -1,0 +1,9 @@
+fn d1(a: i32, b: i32) -> i32 { a - b }
+fn d2(b: i32, a: i32) -> i32 { a - b }
+fn main() {
+    let v = Vec.new()
+    v.push(d1)
+    v.push(d2)
+    let g = v[1]
+    print(g(b: 10, a: 3))
+}

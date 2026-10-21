@@ -1,0 +1,44 @@
+effect Ask { fn ask() -> u64 }
+effect Pick { multi fn pick() -> bool }
+effect Op { fn op() -> u64 }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+
+// An outer once closure runs in the body after a multi operation.
+fn once_closure() {
+    let l = Lk { id: 1 }
+    let f = || unlock(l)
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let b = pick()
+        f()
+    }
+}
+
+// The continuation of an outer clause is resumed in the body after a multi
+// operation.
+fn outer_resume() -> u64 {
+    handle Op {
+        fn op() {
+            handle Pick { fn pick() { resume(true); resume(false) } } in {
+                let b = pick()
+                resume(1)
+            }
+            0
+        }
+    } in { op() + 1 }
+}
+
+// Outer uniq reference used after a multi operation (fine).
+fn uniq_ref() {
+    let v: Vec<u64> = Vec.new()
+    let r = &v
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let b = pick()
+        r.push(1)
+    }
+    print(v.len())
+}
+
+fn main() {
+    once_closure()
+}

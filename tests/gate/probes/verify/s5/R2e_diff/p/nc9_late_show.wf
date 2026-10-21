@@ -1,0 +1,10 @@
+struct Entity { hp: i32 }
+fn show(e: &Entity, n: i32) { print("e.hp = {e.hp}, n = {n}") }
+fn show2(n: &Entity, e: i32) { print("n.hp = {n.hp}, e = {e}") }
+fn main() {
+    let y = Entity { hp: 2 }
+    let h = show
+    let c = || h(n: 5, e: &y)
+    h = show2
+    c()
+}

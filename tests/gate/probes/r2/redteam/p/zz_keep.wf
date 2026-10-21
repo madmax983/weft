@@ -1,0 +1,62 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Note { fn note(x: u64) }
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn run(f: fn()) { f() }
+
+fn closure_local(d: &Vec<u64>) {
+    let keep = &d[0]
+    let f = || {
+        let v = mkv()
+        keep = &v[0]
+    }
+    f()
+    print(keep)   //~ W0301
+}
+fn closure_local_hof(d: &Vec<u64>) {
+    let keep = &d[0]
+    run(|| {
+        let v = mkv()
+        keep = &v[0]
+    })
+    print(keep)   //~ W0301
+}
+fn clause_local(d: &Vec<u64>) {
+    let keep = &d[0]
+    handle Note { fn note(x) { let v = mkv()
+ keep = &v[0]
+ resume(()) } } in note(1)
+    print(keep)   //~ W0301
+}
+fn task_local(d: &Vec<u64>) / async {
+    let keep = &d[0]
+    scope { s => s.spawn(|| { let v = mkv()
+ keep = &v[0] }) }
+    print(keep)   //~ W0301
+}
+fn closure_outer(world: &World, d: &Entity) / mut(world.entities) {
+    let keep = d
+    let f = || { keep = &world.entities[0] }
+    f()
+    world.entities.clear()
+    print(keep.hp)   //~ W0301
+}
+fn closure_outer_hof(world: &World, d: &Entity) / mut(world.entities) {
+    let keep = d
+    run(|| { keep = &world.entities[0] })
+    world.entities.clear()
+    print(keep.hp)   //~ W0301
+}
+fn mkw() -> World { let w = World { entities: Vec.new() }
+ w.entities.push(Entity { hp: 1 })
+ w }
+test "a" { let d = mkv()
+ closure_local(&d) }
+test "b" { let d = mkv()
+ closure_local_hof(&d) }
+test "c" { let d = mkv()
+ clause_local(&d) }
+test "d" { let d = mkv()
+ task_local(&d) }

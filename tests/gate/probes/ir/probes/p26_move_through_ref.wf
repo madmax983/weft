@@ -1,0 +1,10 @@
+struct S { items: Vec<u64> }
+fn take(r: &S) -> Vec<u64> {
+    let v = r.items
+    v
+}
+fn main() {
+    let s = S { items: Vec.new() }
+    let v = take(&s)
+    print(v.len())
+}

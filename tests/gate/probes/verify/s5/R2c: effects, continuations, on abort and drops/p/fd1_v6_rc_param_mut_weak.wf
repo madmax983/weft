@@ -1,0 +1,23 @@
+// on abort changes an rc group through a Weak in the value.
+effect Stop { fn stop() }
+struct Node { items: Vec<u64> }
+linear struct T { n: Weak<Node> }
+    on abort = undo
+fn undo(t: T) {
+    let T(w) = t
+    match w.upgrade() { Some(n) => { n.items.push(9); n.items.push(9); n.items.push(9) }, None => {} }
+}
+fn done(t: T) { let T(n) = t }
+fn inner(h: Weak<Node>) / Stop {
+    let t = T { n: h }
+    stop()
+    done(t)
+}
+fn main() {
+    let a = Rc.new(Node { items: Vec.new() })
+    a.items.push(1)
+    let r = &a.items[0]
+    handle Stop { fn stop() { () } } in inner(a.downgrade())
+    print(r)
+    print(a.items.len())
+}

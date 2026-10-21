@@ -1,0 +1,67 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+struct Wrap<T> { x: T }
+
+// A linear Vec behind a reference: clear and pop drop elements.
+fn clear_linear(v: &Vec<Tx>) / mut(v) {
+    v.clear()   //~ W0601
+}
+fn pop_stmt(v: &Vec<Tx>) / mut(v) {
+    v.pop()   //~ W0601
+}
+fn clear_generic<T>(v: &Vec<T>) / mut(v) { v.clear() }
+fn pop_generic<T>(v: &Vec<T>) / mut(v) { v.pop() }
+fn use_clear_generic(v: &Vec<Tx>) / mut(v) {
+    clear_generic(v)   //~ W0601
+}
+fn use_pop_generic(v: &Vec<Tx>) / mut(v) {
+    pop_generic(v)   //~ W0601
+}
+// A generic body that drops on one branch.
+fn maybe<T>(x: T, c: bool) -> Option<T> { if c { Some(x) } else { None } }
+fn use_maybe() {
+    match maybe(begin(), false) { Some(t) => rollback(t), None => {} }   //~ W0601
+}
+// A generic body that returns early.
+fn early<T>(x: T, c: bool) -> Option<T> {
+    if c { return None }
+    Some(x)
+}
+fn use_early() {
+    match early(begin(), true) { Some(t) => rollback(t), None => {} }   //~ W0601
+}
+// A generic body that loops and drops.
+fn loop_drop<T>(x: T, n: u64) -> Option<T> {
+    let o = Some(x)
+    let i = 0
+    while i < n { o = None
+ i += 1 }
+    o
+}
+fn use_loop_drop() {
+    match loop_drop(begin(), 2) { Some(t) => rollback(t), None => {} }   //~ W0601
+}
+// A generic method of a generic type.
+impl<T> Wrap<T> {
+    fn reset(self, y: T) / mut(self) { self.x = y }
+}
+fn use_reset() {
+    let w = Wrap { x: begin() }
+    w.reset(begin())   //~ W0601
+    let Wrap(t) = w
+    rollback(t)
+}
+// A generic stores into a Vec behind a reference and then clears.
+fn swap_in<T>(v: &Vec<T>, x: T) / mut(v) { v.clear()
+ v.push(x) }
+fn use_swap_in(v: &Vec<Tx>) / mut(v) {
+    swap_in(v, begin())   //~ W0601
+}
+// Drop through a function parameter that is a generic sink.
+fn feed<T>(x: T, f: fn(T)) { f(x) }
+fn sink<T>(x: T) {}
+fn use_feed() {
+    feed(begin(), sink)   //~ W0601
+}

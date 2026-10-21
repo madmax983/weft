@@ -1,0 +1,2 @@
+enum E { A(u64) }
+fn f(e: &E) { match e { E.A(x) => print(x) } }

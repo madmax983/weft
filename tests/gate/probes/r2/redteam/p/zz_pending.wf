@@ -1,0 +1,47 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Note { fn note(x: u64) }
+fn grow(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 1 }) }
+fn apply2(n: i32, f: fn()) { f() }
+
+fn scope_tail(world: &World) -> i32 / mut(world.entities), async {
+    let first = &world.entities[0]
+    grow(world)
+    scope { s => first.hp }   //~ W0301
+}
+fn assert_read(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    grow(world)
+    assert first.hp > 0   //~ W0301
+}
+fn interp_closure(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    grow(world)
+    apply2(1, || print("{first.hp}"))   //~ W0301
+}
+fn clause_tail(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    grow(world)
+    let n = handle Note { fn note(x) { first.hp } } in { note(1)
+ 0 }   //~ W0301
+}
+fn arg_then_closure(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    grow(world)
+    apply2(first.hp, || { grow(world) })   //~ W0301
+}
+fn if_cond_closure(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    grow(world)
+    if first.hp > { let f = || 1
+ f() } { print(1) }   //~ W0301
+}
+fn match_arm_tail(world: &World, n: u64) -> i32 / mut(world.entities) {
+    let first = &world.entities[0]
+    match n {
+        0 => { grow(world)
+ first.hp },   //~ W0301
+        _ => { print(0)
+ 1 },
+    }
+}

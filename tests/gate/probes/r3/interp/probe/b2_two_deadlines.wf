@@ -1,0 +1,14 @@
+// Two with_timeout blocks with the same deadline. The inner block has a
+// handler that catches its timeout. The outer deadline must still hold.
+fn main() / io {
+    handle Fail { fn fail(m) { print("outer caught: {m} at {Clock.now()}") } } in {
+        with_timeout(10.ms) {
+            handle Fail { fn fail(m) { print("inner caught: {m} at {Clock.now()}") } } in {
+                with_timeout(10.ms) { sleep(100.ms) }
+            }
+            sleep(100.ms)
+            print("outer block goes on after its deadline, at {Clock.now()}")
+        }
+    }
+    print("end at {Clock.now()}")
+}

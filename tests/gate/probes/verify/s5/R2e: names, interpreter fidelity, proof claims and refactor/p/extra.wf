@@ -1,0 +1,22 @@
+fn side(v: Vec<u64>) -> u64 { 2 }
+fn work() -> u64 { 1 }
+fn a() { let v: Vec<u64> = [1]; let w: Vec<u64> = []; print(w.len(side(v))); print(v.len()) }
+fn b() / async {
+    let v: Vec<u64> = [1]
+    scope { s =>
+        let t = s.spawn(|| work())
+        print(t.join(1, 2, side(v)))
+    }
+}
+fn c() / async {
+    let v: Vec<u64> = [1]
+    let r = &v[0]
+    scope { s =>
+        let t = s.spawn(|| work())
+        print(t.join(v.push(5)))
+    }
+    print(r)
+}
+fn main() / async {
+    c()
+}

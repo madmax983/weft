@@ -1,0 +1,29 @@
+// OR2. A closure that moves a captured variable. The facts put the move at
+// the node that makes the closure. The interpreter (and ADR 0003) move the
+// value when the closure runs. A new value of the variable between the two
+// points is moved by the call, and the next use reads a moved value.
+fn take(v: Vec<u64>) -> usize { v.len() }
+
+fn closure_form() {
+    let v = Vec.new()
+    v.push(1)
+    let f = || print(take(v))
+    v = Vec.new()             // the checker: `v` has a value again
+    f()                       // the closure moves the new value
+    print(v.len())            // stock: "a value is used after it was moved"
+}
+
+fn task_form() {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let t = s.spawn(|| print(take(v)))
+        v = Vec.new()
+        t.join()
+    }
+    print(v.len())            // stock: "a value is used after it was moved"
+}
+
+fn main() {
+    closure_form()
+}

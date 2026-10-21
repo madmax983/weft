@@ -1,0 +1,10 @@
+// Control: the same `on abort` function with a concrete part type.
+effect Stop { fn stop() }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+linear struct H { x: Tx }
+    on abort = undo_h
+fn undo_h(h: H) {
+    let H(x) = h
+    print("undo")
+}   // W0601: x is not consumed

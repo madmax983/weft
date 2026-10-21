@@ -1,0 +1,12 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Log { fn log(m: String) }
+fn main() {
+    let world = World { entities: Vec.new() }
+    world.entities.push(Entity { hp: 5 })
+    let first = &world.entities[0]
+    handle Log { fn log(m) { print(first.hp); resume(()) } } in {
+        world.entities.clear()
+        log("x")
+    }
+}

@@ -1,0 +1,33 @@
+// QA6: a reference that a call returns with no stated place points into
+// `v..`. A write through the reference itself, also to a scalar field through
+// a stable step, invalidates the reference (spec rule: `wild_at(Path, B),
+// mutates_at(P, M), overlaps(M, B)`). So a second write is W0301.
+//   weft check QA6_wildcard_self_write.wf  ->  3 errors; expected 0
+// With `-> Option<&Entity in v[]>` the same body has no error.
+struct Entity { hp: i32, id: u64 }
+struct Inbox { items: Vec<u32>, n: u64 }
+fn find(v: &Vec<Entity>, id: u64) -> Option<&Entity> {
+    for e in v[] { if e.id == id { return Some(e) } }
+    None
+}
+fn hit(v: &Vec<Entity>, id: u64) / mut(v..) {
+    match find(v, id) {
+        Some(e) => {
+            e.hp -= 1
+            e.hp -= 1      // W0301 (false)
+        }
+        None => {}
+    }
+}
+fn bump(choose: fn(&Vec<Inbox>) -> &Inbox, boxes: &Vec<Inbox>) / mut(boxes..) {
+    let b = choose(boxes)
+    b.n += 1
+    b.n += 1           // W0301 (false)
+}
+// A write below the base also invalidates the base reference itself
+// (`wild_at(M, B), prefix(B, Path)`: `prefix`, not `strict_prefix`).
+fn count(choose: fn(&Vec<Inbox>) -> &Inbox, boxes: &Vec<Inbox>) / mut(boxes..) {
+    let b = choose(boxes)
+    b.items.push(1)
+    print(boxes.len())  // W0301 (false)
+}

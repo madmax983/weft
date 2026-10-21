@@ -1,0 +1,68 @@
+effect Note { fn note(x: u64) }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+
+fn block_part_tail_clean() {
+    let t = (mk_v(), mk_v())
+    let r = &t.1[0]
+    let x = { t.0 }
+    print(r + 1)
+    print(x.len())
+}
+fn block_part_tail_bad() {
+    let t = (mk_v(), mk_v())
+    let r = &t.0[0]
+    let x = { t.0 }
+    print(r + 1)
+}
+fn block_part_tail_reuse() {
+    let t = (mk_v(), mk_v())
+    let x = { t.0 }
+    print(t.0.len())
+}
+fn block_local_part_tail() {
+    let x = { let t = (mk_v(), mk_v()); t.0 }
+    print(x.len())
+}
+fn scope_local_part_tail() / async {
+    let x = scope { s => let t = (mk_v(), mk_v()); t.0 }
+    print(x.len())
+}
+fn handle_local_part_tail() {
+    let x = handle Note { fn note(k) { resume(()) } } in { let t = (mk_v(), mk_v()); t.0 }
+    print(x.len())
+}
+fn handle_part_tail_reuse() {
+    let t = (mk_v(), mk_v())
+    let x = handle Note { fn note(k) { resume(()) } } in { t.0 }
+    print(t.0.len())
+}
+fn handle_part_tail_sibling_clean() {
+    let t = (mk_v(), mk_v())
+    let r = &t.1[0]
+    let x = handle Note { fn note(k) { resume(()) } } in { t.0 }
+    print(r + 1)
+    print(x.len())
+}
+fn nested_block_scope_tail() / async {
+    let t = (mk_v(), mk_v())
+    let x = { scope { s => t } }
+    print(x.0.len())
+}
+fn nested_block_scope_tail_reuse() / async {
+    let t = (mk_v(), mk_v())
+    let x = { scope { s => t } }
+    print(t.0.len())
+}
+fn block_in_scope_outer_local() / async {
+    let t = (mk_v(), mk_v())
+    let x = scope { s => { t } }
+    print(t.0.len())
+}
+fn main() / async {
+    block_part_tail_clean()
+    block_local_part_tail()
+    scope_local_part_tail()
+    handle_local_part_tail()
+    handle_part_tail_sibling_clean()
+    nested_block_scope_tail()
+}

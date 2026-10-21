@@ -1,0 +1,18 @@
+effect Note { fn note(n: u64) }
+fn clause_before_set() {
+    let x: u64
+    handle Note { fn note(n) { print(x)   //~ W0304
+ resume(()) } } in { note(1)
+ x = 1 }
+}
+fn closure_called_before_set() {
+    let x: u64
+    x = 1
+    let f = || print(x)
+    f()
+}
+fn param_fn(g: fn()) {
+    let x: u64
+    g()
+    print(x)   //~ W0304
+}

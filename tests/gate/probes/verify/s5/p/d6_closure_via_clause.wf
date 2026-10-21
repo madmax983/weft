@@ -1,0 +1,19 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { let Tx(id) = t; print("rollback {id}") }
+fn commit(t: Tx) { let Tx(id) = t; print("commit {id}") }
+effect Give { fn give(f: fn()) }
+
+fn main() / io {
+    let r = handle Give { fn give(f) { Some(f) } } in {
+        let tx = Tx { id: 1 }
+        let f = || commit(tx)
+        give(f)
+        None
+    }
+    match r {
+        Some(f) => f(),
+        None => print("none"),
+    }
+    print("end")
+}

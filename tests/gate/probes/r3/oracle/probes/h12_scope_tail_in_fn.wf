@@ -1,0 +1,11 @@
+fn f(v: Vec<u64>) {
+    scope { s =>
+        v
+    }
+    print(v.len())
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    f(v)
+}

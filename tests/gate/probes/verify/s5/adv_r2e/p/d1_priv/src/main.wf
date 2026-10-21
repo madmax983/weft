@@ -1,0 +1,10 @@
+fn main() {
+    handle util.Hidden { fn hid(x) {
+        print(x)
+        resume(())
+    } } in util.noting()
+    handle util.Note { fn note(x) {
+        print(x)
+        resume(())
+    } } in util.Note.note(5)
+}

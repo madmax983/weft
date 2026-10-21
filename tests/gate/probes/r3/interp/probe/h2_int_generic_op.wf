@@ -1,0 +1,15 @@
+fn add<T>(a: T, b: T) -> T { a + b }
+fn sum(xs: &Vec<u8>) -> u8 {
+    let t: u8 = 0
+    for x in xs[] { t += x }
+    t
+}
+fn main() / io {
+    let a: u8 = 200
+    let b: u8 = 100
+    print(add(a, b))
+    let v = Vec.new()
+    v.push(a)
+    v.push(b)
+    print(sum(&v))
+}

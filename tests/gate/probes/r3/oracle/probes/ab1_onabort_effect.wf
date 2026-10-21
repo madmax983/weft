@@ -1,0 +1,14 @@
+effect Note { fn note(x: u64) }
+linear struct Tx { id: u64 }
+    on abort = tx_abort
+fn tx_abort(t: Tx) { let Tx(id) = t; note(id) }
+fn commit(t: Tx) { let Tx(id) = t; print("commit", id) }
+fn main() {
+    handle Note { fn note(x) { print(x); resume(()) } } in {
+        handle Fail { fn fail(m) { print(m) } } in {
+            let t = Tx { id: 1 }
+            fail("x")
+            commit(t)
+        }
+    }
+}

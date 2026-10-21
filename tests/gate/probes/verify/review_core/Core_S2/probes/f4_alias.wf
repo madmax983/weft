@@ -1,0 +1,28 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn grow(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 1 }) }
+fn apply_e(f: fn(&World), w: &World, e: &Entity) { f(w); print(e.hp) }
+extern fn foreign_e(f: fn(&World), w: &World, e: &Entity)
+
+// a1: an item argument mutates what another argument points into.
+fn item_alias(world: &World) / mut(world.entities) {
+    apply_e(grow, world, &world.entities[0])   // expect W0312
+}
+// a2: a closure argument does the same through its parameter.
+fn closure_alias(world: &World) {
+    apply_e(|x| x.entities.clear(), world, &world.entities[0])   // expect W0312
+}
+// a3: a foreign higher-order function.
+fn foreign_alias(world: &World) {
+    foreign_e(|x| x.entities.clear(), world, &world.entities[0])   // expect W0312
+}
+// a4: a direct call of a closure with two overlapping arguments.
+fn direct_two(world: &World) {
+    let f = |x: &World, e: &Entity| { x.entities.clear(); print(e.hp) }
+    f(world, &world.entities[0])   // expect W0312
+}
+// a5: a higher-order function gives two overlapping places to its parameter.
+fn give_two(f: fn(&World, &Entity), w: &World) { f(w, &w.entities[0]) }
+fn hof_two(world: &World) {
+    give_two(|x, e| { x.entities.clear(); print(e.hp) }, world)   // expect an error somewhere
+}

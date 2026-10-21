@@ -1,0 +1,15 @@
+mod a {
+    pub effect Note { fn note(x: u64) }
+    pub fn f() / Note { note(1) }
+}
+mod x {
+    pub mod a {
+        pub fn z() {}
+    }
+    pub fn kk() / main.a.Note { b.call() }
+    pub fn kd() / Clock { b.call() }
+}
+mod b {
+    pub fn call() / a.Note { a.f() }
+}
+fn main() {}

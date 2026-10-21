@@ -1,0 +1,2 @@
+struct S0<T0, T1> { f0: u64, f1: S0<S0<S0<T1, u64>, (u64, u64)>, Box<[T1; 1]>>, f2: u64 }
+fn main() {}

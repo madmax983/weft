@@ -1,0 +1,21 @@
+mod a {
+    pub effect Note { fn note(x: u64) }
+    pub fn f() / Note { note(1) }
+}
+mod x {
+    pub mod a {
+        pub fn z() {}
+    }
+    pub fn g() { a.z() }
+    pub fn h() { super_call() }
+    fn super_call() {}
+}
+mod y {
+    pub fn k() { a.f() }
+}
+fn main() {
+    handle a.Note { fn note(v) {
+        print(v)
+        resume(())
+    } } in y.k()
+}

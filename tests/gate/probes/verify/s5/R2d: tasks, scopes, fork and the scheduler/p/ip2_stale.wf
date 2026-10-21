@@ -1,0 +1,34 @@
+// A child fails while the frame of its scope is in a continuation, and the
+// clause drops the continuation. Then a child of a second scope fails.
+effect Ask { fn ask() -> u64 }
+
+fn first() / io {
+    handle Fail { fn fail(m) { print("h1: {m}") } } in {
+        let x = handle Ask { fn ask() { sleep(20.ms); 0 } } in {
+            scope { s =>
+                s.spawn(|| { sleep(5.ms); fail("first") })
+                let y = ask()
+                print("not reached {y}")
+            }
+            1
+        }
+        print("first gave {x}")
+    }
+}
+
+fn second() / io {
+    handle Fail { fn fail(m) { print("h2: {m}") } } in {
+        scope { s =>
+            s.spawn(|| { sleep(5.ms); fail("second") })
+            sleep(50.ms)
+            print("second body slept fully")
+        }
+        print("second scope returned normally")
+    }
+}
+
+fn main() / io {
+    first()
+    second()
+    print("end")
+}

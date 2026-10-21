@@ -1,0 +1,32 @@
+effect Choice { multi fn choose() -> bool }
+linear struct Token { id: u64 }
+    on abort = spend
+fn spend(t: Token) { let Token(i) = t }
+fn mint() -> Token { Token { id: 1 } }
+struct S { f: fn() -> bool }
+
+// A callee calls a function value from a field of its argument.
+fn call_field(s: S) -> bool { let g = s.f; g() }
+fn wrap(s: S) -> bool {
+    let t = mint()
+    let b = call_field(s)   // expect W0503
+    spend(t)
+    b
+}
+fn call_ref(s: &S) -> bool { let g = s.f; g() }
+fn wrap_ref(s: &S) -> bool {
+    let t = mint()
+    let b = call_ref(s)   // expect W0503
+    spend(t)
+    b
+}
+// The top: a caller gives a closure that performs the multi operation.
+fn top() -> bool / Choice {
+    let s = S { f: || choose() }
+    wrap_ref(&s)
+}
+fn all() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        let r = top()
+    }
+}

@@ -1,0 +1,6 @@
+linear struct Lock { id: u64 }
+fn lock() -> Lock { Lock { id: 1 } }
+fn main() {
+    lock()
+    print(1)
+}

@@ -1,0 +1,11 @@
+// J5 with a task: the task borrows a captured copy variable (V125 shape), for
+// comparison with the round-2 fix.
+fn main() / async {
+    scope { s =>
+        {
+            let n = 5
+            s.spawn(|| { let r = &n; print(r + 1) })
+        }
+        print(0)
+    }
+}

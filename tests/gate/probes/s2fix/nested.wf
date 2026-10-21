@@ -1,0 +1,28 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn nested(world: &World, n: u64) / mut(world.entities) {
+    let h = || print(1)
+    let a = 0
+    while a < n {
+        let b = 0
+        while b < n {
+            let c = 0
+            while c < n {
+                let d = 0
+                while d < n {
+                    let first = &world.entities[0]
+                    h()
+                    print(first.hp)
+                    h = || world.entities.clear()
+                    d += 1
+                }
+                h = || print(2)
+                c += 1
+            }
+            h = || print(3)
+            b += 1
+        }
+        h = || print(4)
+        a += 1
+    }
+}

@@ -1,0 +1,31 @@
+effect Log { fn log(msg: String) }
+effect Note { fn note() }
+mod a {
+    effect Note { fn note() }
+    pub fn f() / Note { note() }
+    pub fn g() / Log { log.info("in a") }
+}
+fn mixed() / Note {
+    a.f()    // W0702: a.Note is not main.Note
+}
+fn mixed_ok() / Note {
+    note()
+}
+fn a_log() / log {
+    a.g()    // clean? in module a, Log is the std one
+}
+fn task_user() / async {
+    handle Log { fn log(m) { resume(()) } } in {
+        scope { s => s.spawn(|| log("x")) }    // W0314
+    }
+}
+fn task_std() / async, log {
+    scope { s => s.spawn(|| log.info("x")) }
+}
+fn apply(f: fn() / Log) / Log { f() }
+fn pass_std() / Log, log {
+    apply(|| log.info("x"))    // W0705
+}
+fn pass_user() / Log {
+    apply(|| log("x"))
+}

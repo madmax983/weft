@@ -1,0 +1,6 @@
+effect Log { fn log(m: u64) }
+fn f() -> u64 {
+    handle Log { fn log(m) { log(m); resume(()) } } in { log(1) }
+    1
+}
+fn main() { print(f()) }

@@ -1,0 +1,14 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx
+ print("rollback {i}") }
+fn begin() -> Tx { Tx { id: 1 } }
+fn main() {
+    let tx = begin()
+    let v: Vec<fn()> = Vec.new()
+    v.push(|| rollback(tx))
+    let g = v[0]
+    let h = v[0]
+    g()
+    h()
+}

@@ -1,0 +1,7 @@
+// An endless loop.
+fn main() {
+    let n = 0
+    while true {
+        n = n + 0
+    }
+}

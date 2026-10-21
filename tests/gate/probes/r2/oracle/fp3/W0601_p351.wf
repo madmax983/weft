@@ -1,0 +1,6 @@
+fn main() / io {
+    let total = scope { s =>
+        let c = s.spawn(|| { print("c"); 3 })
+    }
+}
+

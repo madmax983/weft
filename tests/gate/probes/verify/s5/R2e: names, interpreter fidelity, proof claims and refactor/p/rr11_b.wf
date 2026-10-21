@@ -1,0 +1,17 @@
+// Shadowing: module b has its own module a.
+mod a {
+    pub effect Note { fn note(x: u64) }
+    pub fn f() / Note { note(1) }
+}
+fn rootf() / a.Note { a.f() }
+mod b {
+    mod a {
+        pub effect Note { fn note(x: u64) }
+    }
+    pub fn g() { rootf() }
+    pub fn h() / a.Note { rootf() }
+    pub fn k() { handle a.Note { fn note(x) { resume(()) } } in rootf() }
+}
+fn main() {
+    b.g()
+}

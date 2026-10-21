@@ -1,0 +1,9 @@
+// A user effect named Fail: the runtime failure of with_timeout must not reach it.
+effect Fail { fn fail(m: String) }
+fn main() / io, fail {
+    let r = handle Fail { fn fail(m) { print("caught {m}"); resume(()) } } in {
+        let v = with_timeout(10.ms) { sleep(100.ms); 5 }
+        v + 1
+    }
+    print("r = {r}")
+}

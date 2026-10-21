@@ -1,0 +1,30 @@
+struct Stats { count: u64 }
+struct Job { f: fn() }
+fn run_hof(j: &Job, k: fn(&Job)) { k(j) }
+fn hof_clean(st: &Stats) / mut(st) {
+    let j = Job { f: || { st.count += 1 } }
+    run_hof(&j, |jj| { let g = jj.f
+        g() })
+}
+fn hof_stored(st: &Stats) / mut(st) {
+    let v = Vec.new()
+    v.push(|| { st.count += 1 })
+    let j = Job { f: v[0] }
+    run_hof(&j, |jj| { let g = jj.f
+        g() })
+}
+fn hof_bad(xs: &Vec<u64>) / mut(xs) {
+    let r = &xs[0]
+    let w = Vec.new()
+    w.push(|| { xs.push(1) })
+    let j = Job { f: || print(r) }
+    run_hof(&j, |jj| { let a = w[0]
+        a()
+        let g = jj.f
+        g() })
+}
+fn main() {
+    let st = Stats { count: 0 }
+    hof_clean(&st)
+    print(st.count)
+}

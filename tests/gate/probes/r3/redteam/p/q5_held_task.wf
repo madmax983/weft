@@ -1,0 +1,27 @@
+struct Entity { hp: i32, kids: Vec<Entity> }
+struct World { entities: Vec<Entity> }
+fn show_first(rs: &Vec<&Entity>) / clock { sleep(1.ms); print(rs[0].hp) }
+fn hit_first(rs: &Vec<&Entity>) / mut(rs..), clock { sleep(1.ms); rs[0].hp += 1 }
+fn task_reads_held(world: &World) / mut(world.entities), async, clock {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    scope { s =>
+        s.spawn(|| show_first(&rs))
+        world.entities.clear()   //~ W0405
+    }
+}
+fn task_writes_held(world: &World) / mut(world.entities..), async, clock {
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    scope { s =>
+        s.spawn(|| hit_first(&rs))
+        print(world.entities[0].hp)   //~ W0405
+    }
+}
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1, kids: Vec.new() })
+    w
+}
+test "task_reads_held" { let w = mkw(); task_reads_held(&w) }
+test "task_writes_held" { let w = mkw(); task_writes_held(&w) }

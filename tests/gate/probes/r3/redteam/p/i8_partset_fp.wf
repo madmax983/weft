@@ -1,0 +1,12 @@
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn tuple_part_set_ok() {
+    let a = mkv()
+    let b = mkv()
+    let c = mkv()
+    let t = (&a[0], &b[0])
+    b.clear()
+    t.1 = &c[0]
+    print(t.0)
+    print(t.1)
+}
+fn main() { tuple_part_set_ok() }

@@ -1,0 +1,9 @@
+fn main() / par, async {
+    let a = 0
+    let b = 0
+    let (x, y) = fork(|| { a += 1
+        a }, || { b += 1
+        b })
+    a += x
+    print(a + y)
+}

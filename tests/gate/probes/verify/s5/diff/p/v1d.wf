@@ -1,0 +1,58 @@
+effect Pick { fn pick() -> &u64 }
+effect PickV { fn pick_v() -> &Vec<u64> }
+
+fn ret_pick(v: &Vec<u64>) -> &u64 {
+    handle Pick { fn pick() { resume(&v[0]) } } in pick()
+}
+fn use_ret() {
+    let v = Vec.new()
+    v.push(1)
+    let r = ret_pick(&v)
+    v.clear()
+    print(r)
+}
+fn outer_local() {
+    let w0 = Vec.new()
+    w0.push(0)
+    let r = &w0[0]
+    handle Pick { fn pick() {
+        let w = Vec.new()
+        w.push(4)
+        resume(&w[0])
+    } } in {
+        r = pick()
+    }
+    print(r)
+}
+fn in_closure() {
+    let v = Vec.new()
+    v.push(1)
+    handle Pick { fn pick() { resume(&v[0]) } } in {
+        let c = || pick()
+        let r = c()
+        v.clear()
+        print(r)
+    }
+}
+fn give_k(k: fn(&Vec<u64>)) {
+    let v = Vec.new()
+    v.push(1)
+    handle PickV { fn pick_v() { resume(&v) } } in {
+        let r = pick_v()
+        k(r)
+    }
+}
+fn lent_param(v: &Vec<u64>, k: fn(&Vec<u64>)) {
+    handle PickV { fn pick_v() { resume(v) } } in {
+        let r = pick_v()
+        k(r)
+    }
+}
+fn use_lent() {
+    let v = Vec.new()
+    v.push(1)
+    let first = &v[0]
+    lent_param(&v, |x| x.clear())
+    print(first)
+}
+fn main() { use_ret(); outer_local(); in_closure(); use_lent() }

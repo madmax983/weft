@@ -1,0 +1,33 @@
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print(b.items.len()) }
+// The callee runs the callback once, through a closure.
+fn with_cb(f: fn()) {
+    let g = || f()
+    g()
+}
+fn once_through_closure() {
+    let b = Buf { items: Vec.new() }
+    with_cb(|| eat(b))
+}
+// The callee runs the callback once, in a closure that a callee runs once.
+fn run(f: fn()) { f() }
+fn with_cb2(f: fn()) {
+    run(|| f())
+}
+fn once_through_run() {
+    let b = Buf { items: Vec.new() }
+    with_cb2(|| eat(b))
+}
+// A callback that clears, then the reference is not used again.
+fn clear_through_closure() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    with_cb(|| { print(r + 1)
+ v.clear() })
+}
+fn main() {
+    once_through_closure()
+    once_through_run()
+    clear_through_closure()
+}

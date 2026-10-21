@@ -1,0 +1,21 @@
+struct E { hp: u64, tag: u64 }
+struct W { es: Vec<E>, ns: Vec<u64>, score: u64, b: Box<E> }
+
+fn mk_e(n: u64) -> E { E { hp: n, tag: n } }
+fn mk_w() -> W {
+    let w = W { es: Vec.new(), ns: Vec.new(), score: 0, b: Box.new(E { hp: 1, tag: 0 }) }
+    w
+}
+impl W {
+    fn top(self) -> &E in self.es[] { &self.es[0] }
+}
+
+
+
+fn main() {
+    if false {
+        let w6 = mk_w()
+        let e7 = w6.top(); w6.es.push(mk_e(1)); print(e7.hp)
+    } else {
+    }
+}

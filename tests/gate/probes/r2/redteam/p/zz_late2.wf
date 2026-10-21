@@ -1,0 +1,32 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn run(f: fn()) { f() }
+
+// A task closure reads a captured reference variable that gets a new value
+// after the spawn. The parent then clears the new target.
+fn late_task_ref(world: &World, d: &Entity) / mut(world.entities), async, clock {
+    let r = d
+    scope { s =>
+        s.spawn(|| { sleep(1.ms)
+ print(r.hp) })
+        r = &world.entities[0]
+        world.entities.clear()   //~ W0405
+    }
+}
+// A higher-order callee calls the closure after the rebind.
+fn late_hof(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let f = || print(r.hp)
+    r = &world.entities[0]
+    world.entities.clear()
+    run(f)   //~ W0301
+}
+fn mkw() -> World { let w = World { entities: Vec.new() }
+ w.entities.push(Entity { hp: 1 })
+ w }
+test "task" { let w = mkw()
+ let e = Entity { hp: 5 }
+ late_task_ref(&w, &e) }
+test "hof" { let w = mkw()
+ let e = Entity { hp: 5 }
+ late_hof(&w, &e) }

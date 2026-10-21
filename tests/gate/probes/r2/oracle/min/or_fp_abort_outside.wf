@@ -1,0 +1,28 @@
+// `l` lives outside the `handle`. The clause drops the continuation, so the
+// abort unwinds only the handled body. `l` stays live and is consumed after.
+effect Ask { fn ask() -> u64 }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+
+fn guarded() -> u64 {
+    handle Ask { fn ask() { 0 } } in { ask() + 1 }
+}
+
+fn inline_form() {
+    let l = Lk { id: 1 }
+    let n = handle Ask { fn ask() { 0 } } in { ask() + 1 }
+    print(n)
+    unlock(l)
+}
+
+fn call_form() {
+    let l = Lk { id: 2 }
+    let n = guarded()
+    print(n)
+    unlock(l)
+}
+
+fn main() {
+    inline_form()
+    call_form()
+}

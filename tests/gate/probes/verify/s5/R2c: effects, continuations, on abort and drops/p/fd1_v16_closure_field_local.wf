@@ -1,0 +1,20 @@
+// on abort calls a closure in its value; the closure changes a local by reference.
+effect Stop { fn stop() }
+linear struct T { f: fn() }
+    on abort = undo
+fn undo(t: T) {
+    let T(f) = t
+    f()
+}
+fn done(t: T) { let T(f) = t }
+fn main() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    handle Stop { fn stop() { () } } in {
+        let t = T { f: || { v.clear(); v.push(5); v.push(6); v.push(7) } }
+        stop()
+        done(t)
+    }
+    print(r)
+}

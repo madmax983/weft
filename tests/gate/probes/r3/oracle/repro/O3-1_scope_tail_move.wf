@@ -1,0 +1,81 @@
+// O3-1 (blocker, also in 328a39b). A place as the tail of a `scope` body in statement position.
+// The interpreter moves the value into the value of the scope and drops it.
+// The checker sees no move: the same body in a value position (`let x = scope
+// { s => v }`) gets W0302, and `{ v }` as a statement gets W0302 too.
+linear struct Tx { id: u64 }
+    on abort = tx_abort
+fn tx_abort(t: Tx) { let Tx(id) = t; print("abort", id) }
+fn commit(t: Tx) { let Tx(id) = t; print("commit", id) }
+struct Pin: !Move { x: u64 }
+struct Two { a: Vec<u64>, b: Vec<u64> }
+
+fn use_after_move() {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        v
+    }
+    print(v.len())        // stock: a value is used after it was moved
+}
+
+fn dangling() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    scope { s =>
+        v
+    }
+    print(r + 1)          // oracle: a read of a freed cell
+}
+
+fn part() {
+    let p = Two { a: Vec.new(), b: Vec.new() }
+    p.a.push(1)
+    let r = &p.a[0]
+    scope { s =>
+        p.a
+    }
+    print(r + 1)          // oracle: a read of a freed cell
+}
+
+fn linear_twice() {
+    let t = Tx { id: 1 }
+    scope { s =>
+        t                 // the value of the scope drops `t` (oracle: linear leak)
+    }
+    commit(t)             // stock: a value is used after it was moved
+}
+
+fn immovable() {
+    let p = Pin { x: 1 }
+    scope { s =>
+        p                 // a `!Move` value moves (no W0604)
+    }
+    print(p.x)            // stock: a value is used after it was moved
+}
+
+fn nested_block() {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        s.spawn(|| print(1))
+        { v }
+    }
+    v.push(2)             // stock: a value is used after it was moved
+}
+
+fn with_task() {
+    // The move frees `t` while a task reads `t.1` (no W0405).
+    let v = Vec.new()
+    v.push(1)
+    let t = (v, 6)
+    let q = &t.1
+    scope { s =>
+        s.spawn(|| print(q))
+        { t }
+    }
+}
+
+fn main() {
+    use_after_move()
+}

@@ -1,0 +1,22 @@
+// weft: library
+// A clause "forwards" only through an inner mock handler: no clause performs
+// the effect through a handler outside the handler. So it is a root handler.
+pub fn quiet(f: fn() / log) {
+    handle Log {
+        fn info(m) {
+            handle Log { fn info(x) { resume(()) } fn warn(x) { resume(()) } } in { log.info(m) }
+            resume(())
+        }
+        fn warn(m) { resume(()) }
+    } in f()   // expected W0801
+}
+// The clause performs the effect only inside a closure that it never calls.
+pub fn quiet2(f: fn() / log) {
+    handle Log {
+        fn info(m) {
+            let g = || log.info(m)
+            resume(())
+        }
+        fn warn(m) { resume(()) }
+    } in f()   // expected W0801? (the closure is made but not called)
+}

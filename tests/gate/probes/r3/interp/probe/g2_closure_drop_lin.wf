@@ -1,0 +1,12 @@
+// A closure that moves a linear capture is dropped without a call.
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(t: Tx) { let Tx(id) = t; print("rollback {id}") }
+fn commit(t: Tx) / io { let Tx(id) = t; print("commit {id}") }
+
+fn main() / io {
+    let t = Tx { id: 1 }
+    let f = || commit(t)
+    print("not called")
+}

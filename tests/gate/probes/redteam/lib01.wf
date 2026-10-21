@@ -1,0 +1,21 @@
+// weft: library
+fn body() { print(1) }
+// sim.run through a function value.
+fn sim_value() {
+    let r = sim.run
+    r(1, body)
+}
+// sim.run passed to a higher-order function.
+fn apply(f: fn(u64, fn())) { f(1, body) }
+fn sim_passed() {
+    apply(sim.run)
+}
+// Root handler inside a closure.
+fn root_in_closure() {
+    let f = || handle Log { fn info(m) { resume(()) } fn warn(m) { resume(()) } } in log.info("x")
+    f()
+}
+// Root handler for Async in a function that declares net.
+fn runtime_like() / net {
+    handle Async { fn suspend() { resume(()) } } in print(1)
+}

@@ -1,0 +1,48 @@
+struct Cell2 { items: Vec<u64> }
+struct W { b: Box<Cell2>, o: Option<Vec<u64>> }
+
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+
+// A borrow through a Box while the task gives the Box a new value.
+fn box_borrow() / async, clock {
+    let b = Box.new(Cell2 { items: mk_v() })
+    scope { s =>
+        let t = s.spawn(|| { sleep(1.ms); b = Box.new(Cell2 { items: Vec.new() }) })
+        let r = &b.items
+        t.join()
+        print(r.len())
+    }
+}
+
+// A borrow of a field through a Box in a struct.
+fn field_box_borrow() / async, clock {
+    let w = W { b: Box.new(Cell2 { items: mk_v() }), o: None }
+    scope { s =>
+        let t = s.spawn(|| { sleep(1.ms); w.b = Box.new(Cell2 { items: Vec.new() }) })
+        let r = &w.b.items
+        t.join()
+        print(r.len())
+    }
+}
+
+// The reference is made in the task's lifetime but used after the scope.
+fn ref_in_holder() / async, clock {
+    let v = mk_v()
+    let w = mk_v()
+    let r = &w[0]
+    scope { s =>
+        s.spawn(|| { sleep(1.ms); v.clear() })
+        sleep(2.ms)
+        r = v.first_ref()
+    }
+    print(r + 1)
+}
+
+fn main() / async, clock {
+    box_borrow()
+}

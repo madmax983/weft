@@ -1,0 +1,12 @@
+struct Stats { count: u64 }
+fn main() / async {
+    let st = Stats { count: 3 }
+    let t = 0
+    scope { s =>
+        let a = s.spawn(|| st.count + 1)
+        let b = s.spawn(|| st.count + 2)
+        t = a.join() + b.join()
+    }
+    st.count = 10
+    print(t + st.count)
+}

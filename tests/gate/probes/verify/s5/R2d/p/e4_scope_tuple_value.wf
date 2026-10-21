@@ -1,0 +1,17 @@
+struct Stats { count: u64 }
+
+fn tuple_value(st: &Stats) / mut(st), async, clock {
+    let t = scope { s => (s, 1) }
+    let (a, b) = t
+    a.spawn(|| { sleep(1.ms); st.count += 1; print("task runs {st.count}") })
+}
+
+fn caller() / async, clock {
+    let st = Stats { count: 0 }
+    tuple_value(&st)
+}
+
+fn main() / async, clock {
+    caller()
+    sleep(5.ms)
+}

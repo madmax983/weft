@@ -1,0 +1,22 @@
+struct Entity { hp: u64 }
+// The task holds a reference; the parent frees its target.
+fn task_dangle(v: &Vec<u64>) / mut(v), async {
+    let r = &v[0]
+    scope { s =>
+        s.spawn(|| print(r))
+        v.clear()
+    }
+}
+// Control: a field read through the reference.
+fn task_field(v: &Vec<Entity>) / mut(v), async {
+    let r = &v[0]
+    scope { s =>
+        s.spawn(|| print(r.hp))
+        v.clear()
+    }
+}
+// Fork: one branch holds the reference, the other frees.
+fn fork_dangle(v: &Vec<u64>) / mut(v), par {
+    let r = &v[0]
+    fork(|| print(r), || v.clear())
+}

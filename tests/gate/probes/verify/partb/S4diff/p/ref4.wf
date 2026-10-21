@@ -1,0 +1,39 @@
+struct Entity { hp: i32 }
+struct World { a: Vec<Entity>, b: Vec<Entity>, n: u64 }
+struct Wrap<T> { x: T }
+fn first(v: &Vec<Entity>) -> Option<&Entity> { Some(&v[0]) }
+fn pick(w: &World) -> Option<&Entity> { Some(&w.a[0]) }
+fn ok1(world: &World) / mut(world.b) {
+    let w = Wrap { x: &world.a[0] }
+    world.b.push(Entity { hp: 1 })
+    print(w.x.hp)
+}
+fn ok2(world: &World) / mut(world.b) {
+    let rs = Vec.new()
+    rs.push(&world.a[0])
+    world.b.push(Entity { hp: 1 })
+    print(rs[0].hp)
+}
+fn ok3(world: &World) / mut(world.b) {
+    let o = first(&world.a)
+    world.b.push(Entity { hp: 1 })
+    match o { Some(r) => print(r.hp), None => {} }
+}
+fn ok4(world: &World) / mut(world.n) {
+    let o = pick(world)
+    world.n = 3
+    match o { Some(r) => print(r.hp), None => {} }
+}
+fn ok5(world: &World) / mut(world.a[]) {
+    let o = first(&world.a)
+    match o { Some(r) => print(r.hp), None => {} }
+    world.a[0].hp = 3
+}
+fn ok6(world: &World) / mut(world.b) {
+    let n = 1
+    let rs = Vec.new()
+    rs.push(&world.a[0])
+    let k = rs.len()
+    world.b.push(Entity { hp: 1 })
+    print(k)
+}

@@ -1,0 +1,8 @@
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+effect Note { fn note(x: u64) }
+struct P { a: Vec<u64> }
+fn main() {
+    let p = P { a: mk_v() }
+    scope { s => p.a }
+    print(p.a.len())
+}

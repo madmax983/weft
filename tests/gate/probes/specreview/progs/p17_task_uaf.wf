@@ -1,0 +1,17 @@
+struct Entity { hp: i32 }
+impl Entity { fn new() -> Entity { Entity { hp: 10 } } }
+struct World { entities: Vec<Entity> }
+fn uaf(world: &World) / mut(world.entities), async {
+    let r = &world.entities[0]
+    scope { s =>
+        s.spawn(|| print(r.hp))
+        world.entities.clear()
+    }
+}
+fn uaf2(world: &World) / mut(world.entities), async {
+    let r = &world.entities[0]
+    scope { s =>
+        s.spawn(|| print(r))
+        world.entities.clear()
+    }
+}

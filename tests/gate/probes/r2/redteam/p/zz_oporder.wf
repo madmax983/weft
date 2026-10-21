@@ -1,0 +1,29 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Show { fn show(e: &Entity, n: i32) }
+fn grow(w: &World) -> i32 / mut(w.entities) { w.entities.push(Entity { hp: 1 })
+ 0 }
+impl Entity {
+    fn show2(self, e: &Entity, n: i32) { print(e.hp) }
+}
+fn op_named(world: &World) / mut(world.entities) {
+    handle Show { fn show(e, n) { print(e.hp)
+ resume(()) } } in show(n: grow(world), e: &world.entities[0])   //~ W0301
+}
+fn method_named(world: &World, x: &Entity) / mut(world.entities) {
+    x.show2(n: grow(world), e: &world.entities[0])   //~ W0301
+}
+fn closure_named(world: &World) / mut(world.entities) {
+    let f = |e: &Entity, n: i32| print(e.hp)
+    f(n: grow(world), e: &world.entities[0])   //~ W0301
+}
+fn mkw() -> World { let w = World { entities: Vec.new() }
+ w.entities.push(Entity { hp: 1 })
+ w }
+test "op" { let w = mkw()
+ op_named(&w) }
+test "method" { let w = mkw()
+ let x = Entity { hp: 2 }
+ method_named(&w, &x) }
+test "closure" { let w = mkw()
+ closure_named(&w) }

@@ -1,0 +1,99 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Holder { items: Vec<u64>, n: u64 }
+struct Pair { a: Holder, b: Holder }
+impl World { fn eat(self) {} }
+fn eat_s(t: String) -> u64 { 0 }
+fn take(v: Vec<u64>) {}
+fn take_h(h: Holder) {}
+
+// 1. A closure that moves a block local: the closure owns it. Expect clean.
+fn move_closure_block() -> u64 {
+    let f = {
+        let t = "x"
+        || eat_s(t)
+    }
+    f()
+}
+
+// 2. A move of a field of the owner. Expect W0301.
+fn move_field() {
+    let h = Holder { items: Vec.new(), n: 1 }
+    h.items.push(1)
+    let r = &h.items[0]
+    take(h.items)
+    print(r)
+}
+
+// 3. A field moved into a local, then the local grows. Expect W0301.
+fn move_field_local() {
+    let h = Holder { items: Vec.new(), n: 1 }
+    h.items.push(1)
+    let r = &h.items[0]
+    let w = h.items
+    w.push(2)
+    print(r)
+}
+
+// 4. A by-value self call. Expect W0301.
+fn self_move() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    let r = &w.entities[0]
+    w.eat()
+    print(r.hp)
+}
+
+// 5. A move into a struct literal. Expect W0301.
+fn move_into_struct() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let h = Holder { items: v, n: 1 }
+    take_h(h)
+    print(r)
+}
+
+// 6. A move into a closure capture. Expect W0301.
+fn move_into_closure() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let f = || take(v)
+    f()
+    print(r)
+}
+
+// 7. A conditional move. Expect W0301.
+fn cond_move(c: bool) {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    if c { take(v) }
+    print(r)
+}
+
+// 8. A move in a match by value. Expect W0301.
+fn match_move() {
+    let h = Holder { items: Vec.new(), n: 1 }
+    h.items.push(1)
+    let r = &h.items[0]
+    match h { x => take_h(x) }
+    print(r)
+}
+
+// 9. A nested field moved. Expect W0301.
+fn nested_field_move() {
+    let p = Pair { a: Holder { items: Vec.new(), n: 1 }, b: Holder { items: Vec.new(), n: 2 } }
+    let r = &p.a.n
+    take_h(p.a)
+    print(r)
+}
+
+// 10. A move of another field: r stays valid. Expect clean.
+fn other_field_move() {
+    let p = Pair { a: Holder { items: Vec.new(), n: 1 }, b: Holder { items: Vec.new(), n: 2 } }
+    let r = &p.a.n
+    take_h(p.b)
+    print(r)
+}

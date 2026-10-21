@@ -1,0 +1,51 @@
+// O3-13 (minor). Two gaps of `--oracle` (OR11). The checker rejects each
+// function here; run them with `weft run --unchecked --oracle`.
+// 1. The race detector does not log a read through a reference when the value
+//    is an operand (`q + 0`) or goes to a callee: `Machine::deref_value` in
+//    crates/weft-interp/src/machine/exec.rs calls `hget` with no `log_read`.
+//    `print(q)` logs the read (show.rs), so only that form is found.
+// 2. `print` of a moved value prints `<moved>` and goes on; `v.len()` faults.
+//    `print` of a reference into a moved value prints `<dangling>` and goes
+//    on (see `with_task` in O3-1). So these uses are not faults, also with
+//    the oracle (show.rs catches the error of the read).
+fn show(r: &u64) { print(r + 0) }
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+
+fn race_operand() {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        s.spawn(|| { v[0] = 3 })
+        let q = &v[0]
+        print(q + 0)          // W0405; the oracle reports nothing
+    }
+}
+
+fn race_callee() {
+    let n = 1
+    scope { s =>
+        s.spawn(|| { n = 5 })
+        show(&n)              // W0405; the oracle reports nothing
+    }
+}
+
+fn race_print() {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        s.spawn(|| { v[0] = 3 })
+        let q = &v[0]
+        print(q)              // W0405; the oracle reports the race
+    }
+}
+
+fn print_moved() {
+    let v = Vec.new()
+    v.push(1)
+    print(take_v(v))
+    print(v)                  // W0302; prints `<moved>`, no fault
+}
+
+fn main() {
+    race_operand()
+}

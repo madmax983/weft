@@ -1,0 +1,78 @@
+struct Conn { id: u64 }
+linear struct Tx { conn: Conn }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(c) = tx }
+fn begin(id: u64) -> Tx { Tx { conn: Conn { id: id } } }
+effect Note { fn note(x: u64) }
+
+// Overwrite in a match arm.
+fn in_match(k: u64) {
+    let tx = begin(1)
+    match k {
+        0 => { tx = begin(2) },   //~ W0601
+        _ => {},
+    }
+    rollback(tx)
+}
+
+// Overwrite in a closure that captures the variable.
+fn in_closure() {
+    let tx = begin(1)
+    let f = || { tx = begin(2) }   //~ W0601
+    f()
+    rollback(tx)
+}
+
+// Overwrite in a handler clause.
+fn in_handler() / Note {
+    let tx = begin(1)
+    handle Note { fn note(x) { tx = begin(x); resume(()) } } in note(1)   //~ W0601
+    rollback(tx)
+}
+
+// Overwrite in a nested block.
+fn in_block() {
+    let tx = begin(1)
+    {
+        {
+            tx = begin(2)   //~ W0601
+        }
+    }
+    rollback(tx)
+}
+
+// Overwrite after a branch that consumes on one side only.
+fn after_partial(c: bool) {
+    let tx = begin(1)
+    if c { rollback(tx) }
+    tx = begin(2)   //~ W0601
+    rollback(tx)
+}
+
+// Overwrite in a for loop.
+fn in_for(n: u64) {
+    let tx = begin(0)
+    for i in 0..n {
+        tx = begin(i)   //~ W0601
+    }
+    rollback(tx)
+}
+
+// Overwrite with a value from a call that takes the old one: clean.
+fn pass_through(tx: Tx) -> Tx { tx }
+fn rethread() {
+    let tx = begin(1)
+    tx = pass_through(tx)
+    rollback(tx)
+}
+
+// Overwrite after a loop that consumes and breaks: clean.
+fn after_loop() {
+    let tx = begin(1)
+    loop {
+        rollback(tx)
+        break
+    }
+    tx = begin(2)
+    rollback(tx)
+}

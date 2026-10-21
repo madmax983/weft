@@ -1,0 +1,34 @@
+struct Batch { items: Vec<u64> }
+struct Stats { count: u64 }
+impl Batch { fn len(self) -> u64 { 3 } }
+// The parent reads through a reference variable while a task writes.
+fn parent_reads_ref(stats: &Stats) / mut(stats), async {
+    let c = &stats.count
+    scope { s =>
+        s.spawn(|| stats.count += 1)
+        print(c)
+    }
+}
+// A task reads through a reference variable while another writes.
+fn task_reads_ref(batch: &Batch, stats: &Stats) / mut(stats), async {
+    let c = &stats.count
+    scope { s =>
+        s.spawn(|| stats.count += batch.len())
+        s.spawn(|| print(c))
+    }
+}
+// Control: the doc example.
+fn doc(batch: &Batch, stats: &Stats) / mut(stats), async {
+    scope { s =>
+        s.spawn(|| stats.count += batch.len())
+        s.spawn(|| print(stats.count))
+    }
+}
+// Spawned in a loop: two instances of one task write the same place.
+fn loop_spawn(stats: &Stats) / mut(stats), async {
+    scope { s =>
+        for i in 0..3 {
+            s.spawn(|| stats.count += 1)
+        }
+    }
+}

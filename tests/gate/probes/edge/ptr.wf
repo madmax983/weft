@@ -1,0 +1,2 @@
+extern type Stmt
+extern fn sqlite3_step(stmt: *Stmt) -> i32 / blocking

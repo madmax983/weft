@@ -1,0 +1,30 @@
+effect Note { fn note() }
+fn maybe(c: bool, g: fn()) { if c { g() } }
+
+fn cond_reset(c: bool) {
+    let f = || print(0)
+    handle Note { fn note() { resume(()) } } in {
+        f = || note()
+        let reset = || { if c { f = || print(1) } }
+        reset()
+    }
+    f()
+}
+fn cond_reset2(c: bool) {
+    let f = || print(0)
+    handle Note { fn note() { resume(()) } } in {
+        f = || note()
+        maybe(c, || { f = || print(1) })
+    }
+    f()
+}
+fn cond_reset3(c: bool) {
+    let f = || print(0)
+    handle Note { fn note() { resume(()) } } in {
+        f = || note()
+        let reset = || { f = || print(1) }
+        if c { reset() }
+    }
+    f()
+}
+fn main() { cond_reset(false); cond_reset2(false); cond_reset3(false) }

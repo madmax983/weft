@@ -1,0 +1,27 @@
+extern type Stmt
+extern fn prepare(sql: String) -> *Stmt / blocking
+extern fn step(stmt: *Stmt) -> i32 / blocking
+
+fn both<T>(x: T) / par {
+    fork(|| x, || 2)
+}
+
+// The pointer crosses into a generic function that forks with it.
+fn through_generic() / blocking, par {
+    let p = prepare("x")
+    both(p)
+}
+
+// The same with a nonportable extern type that is not a pointer, for comparison.
+extern type Local { nonportable }
+extern fn local() -> Local
+fn through_generic_local() / par {
+    both(local())
+}
+
+fn spawned() / blocking, async {
+    let p = prepare("x")
+    scope { s =>
+        s.spawn(|| step(p))
+    }
+}

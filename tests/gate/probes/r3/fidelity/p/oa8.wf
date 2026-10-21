@@ -1,0 +1,20 @@
+// The generic `on abort` function gives the part to a generic callee that drops it.
+effect Stop { fn stop() }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn forget<T>(x: T) {}
+linear struct G<T> { x: T }
+    on abort = undo_g
+fn undo_g<T>(g: G<T>) {
+    let G(x) = g
+    forget(x)
+}
+fn body() / Stop {
+    let g = G { x: Tx { id: 1 } }
+    stop()
+    let G(t) = g
+    commit(t)
+}
+fn main() {
+    handle Stop { fn stop() { () } } in body()
+}

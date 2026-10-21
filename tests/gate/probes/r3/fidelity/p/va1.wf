@@ -1,0 +1,16 @@
+effect Stop { fn stop() }
+linear struct Tx { id: u64 }
+    on abort = undo
+fn undo(t: Tx) { let Tx(i) = t; print("undo {i}") }
+fn body() / Stop {
+    let v = Vec.new()
+    v.push(Tx { id: 1 })
+    v.push(Tx { id: 2 })
+    let b = Box.new(Tx { id: 3 })
+    let o = Some(Tx { id: 4 })
+    stop()
+    print(v.len())
+}
+fn main() {
+    handle Stop { fn stop() { () } } in body()
+}

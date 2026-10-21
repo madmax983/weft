@@ -1,0 +1,30 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn for_opt(world: &World) / mut(world.entities) {
+    let v = Vec.new()
+    v.push(Some(&world.entities[0]))
+    world.entities.clear()
+    for o in v[] {   //~ W0301
+        match o { Some(e) => print(e.hp), None => {} }
+    }
+}
+fn for_tuple(world: &World) / mut(world.entities) {
+    let v = Vec.new()
+    v.push((1, &world.entities[0]))
+    let p = &v
+    world.entities.clear()
+    for t in p[] {
+        let (n, e) = t
+        print(e.hp)   //~ W0301
+    }
+}
+fn param_side(o: &Option<&Entity>) -> i32 {
+    match o { Some(e) => e.hp, None => 0 }
+}
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+test "for_opt" { let w = mkw(); for_opt(&w) }
+test "for_tuple" { let w = mkw(); for_tuple(&w) }

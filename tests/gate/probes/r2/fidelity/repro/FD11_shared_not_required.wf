@@ -1,0 +1,20 @@
+// The design: "Data visible to several threads must be `shared`, or split into
+// `uniq` parts whose places are proven disjoint." Here two fork branches read
+// `world` through one aliased reference that is not `@ shared`. The checker
+// accepts it (no rule asks for `@ shared`; only W0403 and W0405 apply).
+struct Entity { hp: u64 }
+struct World { entities: Vec<Entity> }
+
+fn sum_hp(w: &World) -> u64 {
+    let total = 0
+    for e in w.entities[] { total += e.hp }
+    total
+}
+
+fn both(world: &World) -> u64 / par {
+    let (a, b) = fork(|| sum_hp(world), || sum_hp(world))
+    a + b
+}
+
+// The design also lists a global as a place root. The grammar has no global
+// item (docs/grammar.md, `item`), and ADR 0003 lists the roots without it.

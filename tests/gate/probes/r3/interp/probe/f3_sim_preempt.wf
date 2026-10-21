@@ -1,0 +1,32 @@
+// Determinism of sim.run: tasks that the scheduler preempts at back-edges,
+// randomness, and busy tasks outside the simulation.
+fn busy(id: u64, n: u64) / io {
+    let i = 0
+    let acc = 0
+    while i < n {
+        acc += i
+        i += 1
+    }
+    print("task {id} done {Rand.random() % 1000}")
+}
+
+fn noise(n: u64) {
+    let i = 0
+    let acc = 0
+    while i < n { acc += i; i += 1 }
+}
+
+test "busy tasks in a simulation" {
+    scope { o =>
+        o.spawn(|| noise(3000))
+        o.spawn(|| sim.run(seed: 5) {
+            scope { s =>
+                s.spawn(|| busy(1, 2500))
+                s.spawn(|| busy(2, 1200))
+                s.spawn(|| busy(3, 3700))
+                s.spawn(|| busy(4, 600))
+            }
+        })
+        o.spawn(|| noise(5000))
+    }
+}

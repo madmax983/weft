@@ -1,0 +1,14 @@
+// A `multi` operation inside a scope body: the continuation holds the frame
+// of the scope. Each resume copies it.
+effect Choice { multi fn choose() -> bool }
+fn work() / Choice, async {
+    scope { s =>
+        s.spawn(|| print("child"))
+        let b = choose()
+        print("b {b}")
+    }
+    print("after scope")
+}
+fn main() / async {
+    handle Choice { fn choose() { resume(true); resume(false) } } in work()
+}

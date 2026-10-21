@@ -1,0 +1,38 @@
+// Controls for f3_variants: the same shapes through calls and closures.
+fn opt_fn(x: Option<&u64>, v: &Vec<u64>) / mut(v) { v.clear(); match x { Some(r) => print(r), None => print(0) } }
+fn option_call() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    opt_fn(Some(&v[0]), &v)   // expect W0312
+}
+
+// A closure that keeps its parameter in an outer local.
+fn closure_escape() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let w: Vec<u64> = Vec.new()
+    w.push(5)
+    let keep = &w[0]
+    let f = |x: &u64| { keep = x }
+    f(&v[0])
+    v.clear()
+    print(keep)   // expect W0301
+}
+
+// A higher-order callee keeps the parameter.
+fn give(f: fn(&u64), v: &Vec<u64>) { f(&v[0]) }
+fn hof_escape(v: &Vec<u64>, w: &Vec<u64>) / mut(v) {
+    let keep = &w[0]
+    give(|x| { keep = x }, v)
+    v.clear()
+    print(keep)   // expect W0301
+}
+
+// A closure argument to a closure that clears the place first.
+fn closure_value_arg() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let run = |f: fn()| { v.clear(); f() }
+    run(|| print(r))   // expect W0312
+}

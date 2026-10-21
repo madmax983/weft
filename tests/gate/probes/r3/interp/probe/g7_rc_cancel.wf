@@ -1,0 +1,10 @@
+fn make() -> Rc<u64> { Rc.new(7) }
+fn main() / io, par {
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        scope { s =>
+            s.spawn(|| { let q = make(); sleep(10.ms); print("not reached {q}") })
+            s.spawn(|| { sleep(1.ms); fail("stop") })
+            print("spawned")
+        }
+    }
+}

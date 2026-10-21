@@ -1,0 +1,15 @@
+struct Stats { count: u64, hist: Vec<u64> }
+fn priv_bump(s: &Stats) { s.count += 1 }
+// The callee only writes a stable field; `h` should survive.
+fn caller(s: &Stats) / mut(s.count) {
+    let h = &s.hist[0]
+    priv_bump(s)
+    print(h)
+}
+// Control: the same with a declared callee.
+fn pub_bump(s: &Stats) / mut(s.count) { s.count += 1 }
+fn caller2(s: &Stats) / mut(s.count) {
+    let h = &s.hist[0]
+    pub_bump(s)
+    print(h)
+}

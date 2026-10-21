@@ -1,0 +1,18 @@
+linear struct Lk { id: u64 }
+effect Grab { fn grab(r: &u64) -> u64 }
+
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(3)
+    v
+}
+
+fn main() {
+    let lk2 = Lk { id: 2 }
+    handle Grab { fn grab(r) { let k = r + 0; resume(k) } } in {
+        let v3 = mk_v()
+        print(grab(v3.get(0)))
+    }
+    unlock(lk2)
+}

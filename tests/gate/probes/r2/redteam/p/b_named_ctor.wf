@@ -1,0 +1,10 @@
+struct P { a: u64, b: String }
+enum E { V(u64, String) }
+fn main() {
+    let p = P(b: "x", a: 1)
+    print(p.a + 1)
+    let P(x, y) = p
+    print(y)
+    let e = E.V(b: "y", a: 2)
+    match e { E.V(n, s) => print(n + 1) }
+}

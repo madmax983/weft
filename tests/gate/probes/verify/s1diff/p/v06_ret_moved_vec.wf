@@ -1,0 +1,14 @@
+fn take(v: Vec<u64>) {}
+fn parse(v: Vec<u64>) -> fn() { || take(v) }
+fn blockc() {
+    let f = {
+        let v: Vec<u64> = Vec.new()
+        || take(v)
+    }
+    f()
+}
+fn eat_s(t: String) -> u64 { 0 }
+fn strmove(t: String) {
+    eat_s(t)
+    eat_s(t)
+}

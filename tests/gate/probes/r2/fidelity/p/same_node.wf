@@ -1,0 +1,28 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn grow(w: &World) -> i32 / mut(w.entities) { w.entities.push(Entity { hp: 1 }); 0 }
+fn show2(n: i32, e: &Entity) { print(e.hp) }
+// An earlier operand invalidates `first`; a later operand of the same
+// expression reads it.
+fn binop(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let x = grow(world) + first.hp   //~ W0301
+    print(x)
+}
+fn args(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    show2(grow(world), first)   //~ W0301
+}
+fn tuple(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let t = (grow(world), first.hp)   //~ W0301
+}
+fn cond(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    if grow(world) == 0 && first.hp > 0 { print(1) }   //~ W0301
+}
+fn main() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    binop(&w)
+}

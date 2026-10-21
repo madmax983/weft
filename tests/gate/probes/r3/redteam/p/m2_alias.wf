@@ -1,0 +1,11 @@
+// weft: library
+effect Log { fn info(m: String) }
+pub fn mock_std(f: fn() / log) {
+    handle log { fn info(m) { resume(()) } fn warn(m) { resume(()) } } in f()
+}
+pub fn mock_user(f: fn() / Log) {
+    handle Log { fn info(m) { resume(()) } } in f()
+}
+pub fn mock_std_upper(f: fn() / log) {
+    handle Clock { fn now() { resume(5.ms) } fn sleep(d) { resume(()) } } in f()
+}

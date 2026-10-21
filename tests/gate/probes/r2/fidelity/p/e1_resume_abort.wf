@@ -1,0 +1,27 @@
+effect Log { fn log(msg: String) }
+effect Ask { fn ask() -> u64 }
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { let Lock(i) = l }
+fn lock() -> Lock { Lock { id: 1 } }
+
+// The clause holds `l` across `resume`. The handled computation performs `ask`
+// through an outer handler whose clause drops the continuation. That drop
+// unwinds the clause frame too, and `Lock` has no `on abort`.
+fn resume_abort() -> u64 {
+    handle Ask { fn ask() { 7 } } in {
+        handle Log {
+            fn log(m) {
+                let l = lock()
+                resume(())
+                unlock(l)
+            }
+        } in {
+            log("x")
+            ask()
+        }
+    }
+}
+
+fn main() {
+    print(resume_abort())
+}

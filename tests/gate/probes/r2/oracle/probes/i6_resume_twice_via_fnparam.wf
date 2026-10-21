@@ -1,0 +1,5 @@
+effect Ask { fn ask() -> u64 }
+fn run(f: fn() -> u64) -> u64 { f() + f() }
+fn main() {
+    handle Ask { fn ask() { let k = run(|| resume(1)); print(k) } } in print(ask())
+}

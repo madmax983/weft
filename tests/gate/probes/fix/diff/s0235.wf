@@ -1,0 +1,4 @@
+struct S0<T0, T1> { f0: bool }
+struct S1<T0, T1> {  }
+struct S2 {  }
+fn main() {}

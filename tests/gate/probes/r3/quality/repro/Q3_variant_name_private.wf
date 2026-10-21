@@ -1,0 +1,9 @@
+// The root module has no `Circle`. The bare name takes the variant of the
+// private enum of module `c`, with no error.
+mod c {
+    enum Hidden { Circle(u64) }
+}
+fn root_uses_private() -> u64 {
+    let x = Circle(1)   // expected W0101 (unknown name), the checker gives nothing
+    1
+}

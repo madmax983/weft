@@ -1,0 +1,46 @@
+struct CbCache { cbs: Vec<fn()> }
+struct H { f: fn() }
+// A closure that captures a local reference goes into an rc object.
+fn fill_cb(c: Rc<CbCache>) / mut(CbCache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    let r = &v[0]
+    c.cbs.push(|| print(r + 0))
+}
+// A closure that captures a local goes into an rc object.
+fn fill_cb_owned(c: Rc<CbCache>) / mut(CbCache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    c.cbs.push(|| print(v.len()))
+}
+// The same behind a reference parameter.
+fn fill_h(h: &H) / mut(h.f) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    let r = &v[0]
+    h.f = || print(r + 0)
+}
+fn readcb(c: Rc<CbCache>) {
+    let f = c.cbs[0]
+    f()
+}
+fn t_cb() {
+    let c = Rc.new(CbCache { cbs: Vec.new() })
+    fill_cb(c.clone())
+    readcb(c.clone())
+}
+fn t_cb_owned() {
+    let c = Rc.new(CbCache { cbs: Vec.new() })
+    fill_cb_owned(c.clone())
+    readcb(c.clone())
+}
+fn noop() { print(0) }
+fn t_h() {
+    let h = H { f: noop }
+    fill_h(&h)
+    let g = h.f
+    g()
+}
+fn main() {
+    t_cb()
+}

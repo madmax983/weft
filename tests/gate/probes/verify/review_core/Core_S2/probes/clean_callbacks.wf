@@ -1,0 +1,79 @@
+// Clean programs: a correct checker must accept every function here.
+struct Item { n: u64 }
+struct Entity { hp: i32, items: Vec<Item> }
+struct World { entities: Vec<Entity>, score: u64, name: String }
+
+// c1: a for-each that calls the callback with each element.
+fn for_each(v: &Vec<Entity>, f: fn(&Entity)) {
+    for e in v[] {
+        f(e)
+    }
+}
+// c2: the same with an index loop.
+fn for_each_i(v: &Vec<Entity>, f: fn(&Entity)) {
+    let i = 0
+    while i < v.len() {
+        f(&v[i])
+        i += 1
+    }
+}
+// c3: a caller of for_each that reads and bumps a stable field.
+fn use_for_each(world: &World) / mut(world.entities[].hp) {
+    let first = &world.entities[0]
+    for_each(&world.entities, |e| e.hp += 1)
+    print(first.hp)
+}
+// c4: a reference into another field survives a callback on the parameter.
+fn keeps_name(f: fn(&World), w: &World) {
+    let s = &w.score
+    f(w)
+    print(s)
+}
+// c5: a callback that gets an element; the element keeps its own items.
+fn each_item(e: &Entity, f: fn(&Item)) {
+    for it in e.items[] {
+        f(it)
+    }
+}
+// c6: map-like: a callback that returns a value.
+fn sum_by(v: &Vec<Entity>, f: fn(&Entity) -> usize) -> usize {
+    let t = 0
+    for e in v[] {
+        t += f(e)
+    }
+    t
+}
+fn total(world: &World) -> usize {
+    let first = &world.entities[0]
+    let s = sum_by(&world.entities, |e| e.items.len())
+    print(first.hp)
+    s
+}
+// c7: a callback with a capture that reads.
+fn report(world: &World, other: &World) {
+    let r = &other.entities[0]
+    for_each(&world.entities, |e| print(r.hp + e.hp))
+}
+// c8: a closure stored in a local and called twice.
+fn twice_local(world: &World) {
+    let first = &world.entities[0]
+    let f = || print(world.score)
+    f()
+    f()
+    print(first.hp)
+}
+// c9: a function item value passed to for_each.
+fn show(e: &Entity) { print(e.hp) }
+fn items_by_item(world: &World) {
+    let first = &world.entities[0]
+    for_each(&world.entities, show)
+    print(first.hp)
+}
+// c10: a fn parameter called inside a loop over a different place.
+fn apply_all(f: fn(&Entity), w: &World, other: &World) {
+    let o = &other.entities[0]
+    for e in w.entities[] {
+        f(e)
+    }
+    print(o.hp)
+}

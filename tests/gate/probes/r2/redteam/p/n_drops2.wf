@@ -1,0 +1,30 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn sink<T>(x: T) {}
+fn feed<T>(x: T, f: fn(T)) { f(x) }
+
+fn clear_linear(v: &Vec<Tx>) / mut(v) {
+    v.clear()   //~ W0601
+}
+fn item_value() {
+    let g = sink
+    g(begin())   //~ W0601
+}
+fn use_feed() {
+    feed(begin(), sink)   //~ W0601
+}
+fn drain(v: Vec<Tx>) {
+    let w = v
+    match w.pop() { Some(t) => rollback(t), None => {} }
+    w.clear()
+}
+test "clear" {
+    let v = Vec.new()
+    v.push(begin())
+    clear_linear(&v)
+    match v.pop() { Some(t) => rollback(t), None => {} }
+}
+test "item_value" { item_value() }
+test "feed" { use_feed() }

@@ -1,0 +1,15 @@
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { let Lock(i) = l }
+fn lock() -> Lock { Lock { id: 1 } }
+effect Op { fn op() }
+fn none_or_after_resume() {
+    let o = handle Op { fn op() {
+        let r = resume(())
+        match r { Some(l) => unlock(l), None => {} }
+        Some(lock())
+    } } in {
+        op()
+        None
+    }
+    match o { Some(l) => unlock(l), None => {} }
+}

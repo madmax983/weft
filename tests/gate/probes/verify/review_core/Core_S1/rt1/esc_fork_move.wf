@@ -1,0 +1,9 @@
+// ESCAPE (RT1 x fork): one branch reads through `r`, the other moves and frees `v`.
+fn take(v: Vec<u64>) {}
+fn fork_move() / par {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    fork(|| print(r), || take(v))   // expected W0405 or W0301
+}
+fn main() / par { fork_move() }

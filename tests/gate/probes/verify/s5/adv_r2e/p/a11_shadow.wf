@@ -1,0 +1,18 @@
+fn diff(a: i32, b: i32) -> i32 { a - b }
+fn rdiff(b: i32, a: i32) -> i32 { b * 100 + a }
+fn main() {
+    let g = diff
+    {
+        let g = rdiff
+        print(g(b: 10, a: 3))
+    }
+    print(g(b: 10, a: 3))
+    let g = rdiff
+    print(g(b: 10, a: 3))
+    let h = g
+    print(h(b: 10, a: 3))
+    let (p, q) = (diff, rdiff)
+    print(q(b: 10, a: 3))
+    let k = match 1 { _ => p }
+    print(k(b: 10, a: 3))
+}

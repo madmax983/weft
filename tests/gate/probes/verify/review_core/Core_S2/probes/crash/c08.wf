@@ -1,0 +1,3 @@
+struct S { f: fn(&S) }
+fn run(s: &S) { let g = s.f; g(s) }
+fn mk() { let s = S { f: run }; run(&s) }

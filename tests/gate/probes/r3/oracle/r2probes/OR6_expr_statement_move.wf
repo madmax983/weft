@@ -1,0 +1,30 @@
+// OR6. A variable as an expression statement. The interpreter reads the
+// value out of the variable and drops it: a move, a free, and for a linear
+// value a silent drop. The checker sees no move.
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(id) = t }
+
+fn use_after_drop() {
+    let v = Vec.new()
+    v.push(1)
+    v
+    print(v.len())            // stock: "a value is used after it was moved"
+}
+
+fn dangling() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    v
+    print(r + 1)              // stock: "a place does not exist"
+}
+
+fn linear_dropped() {
+    let t = Tx { id: 1 }
+    t                         // the linear value is dropped here (no W0601)
+    commit(t)                 // stock: "a value is used after it was moved"
+}
+
+fn main() {
+    use_after_drop()
+}

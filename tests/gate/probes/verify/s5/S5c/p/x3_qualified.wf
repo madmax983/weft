@@ -1,0 +1,7 @@
+enum E { X, Y(u64) }
+enum F { X, Z }
+fn f(e: E) -> u64 { match e { E.X => 1, E.Y(n) => n } }
+fn g(e: E) -> u64 { match e { F.X => 1, Y(n) => n } }
+fn h(e: F) -> u64 { match e { X => 1 } }
+fn k(e: E) -> u64 { match e { X => 1, F.Y(n) => n } }
+fn main() { print(1) }

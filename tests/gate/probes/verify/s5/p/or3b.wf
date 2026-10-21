@@ -1,0 +1,26 @@
+struct H { f: fn() }
+fn once_t(t: (fn(), u64)) {
+    let f = t.0
+    f()
+}
+fn via_tuple_once() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    once_t((|| v.clear(), 1))
+    print(r + 1)
+}
+fn once_h(h: H) {
+    let f = h.f
+    f()
+}
+fn via_struct_once() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    once_h(H { f: || v.clear() })
+    print(r + 1)
+}
+fn main() {
+    via_tuple_once()
+}

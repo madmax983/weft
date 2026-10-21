@@ -1,0 +1,12 @@
+fn take(v: Vec<u64>) -> usize { v.len() }
+
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        let t = s.spawn(|| print(take(v)))
+        v = Vec.new()
+        t.join()
+    }
+    print(v.len())
+}

@@ -1,0 +1,11 @@
+struct Big { xs: Vec<u64> }
+fn take(b: Big) -> u64 { 1 }
+fn main() / par, async {
+    let v = Big { xs: [1] }
+    scope { s =>
+        let t = s.spawn(|| 5)
+        let r = t.join(take(v))
+        print(r)
+    }
+    print(v.xs.len())
+}

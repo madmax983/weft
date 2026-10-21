@@ -1,0 +1,6 @@
+effect Log { fn log(msg: String) }
+fn main() / Log {
+    handle log { fn info(m) { print("std handler", m); resume(()) } } in {
+        log.info("y")
+    }
+}

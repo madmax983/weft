@@ -1,0 +1,11 @@
+// A deep value of an inline recursive enum, built by recursion.
+enum List { Cons(u64, List), Nil }
+
+fn build(n: u64) -> List {
+    if n == 0 { Nil } else { Cons(n, build(n - 1)) }
+}
+
+fn main() / io {
+    let l = build(1000000)
+    print("built")
+}

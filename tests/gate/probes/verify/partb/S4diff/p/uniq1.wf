@@ -1,0 +1,23 @@
+fn needs_uniq(es: &[u64] @ uniq) / mut(es) {}
+fn branch_alias(v: &Vec<u64>, w: &Vec<u64>, c: bool) / mut(v[], w[]) {
+    let (l, r) = v.split_mut(1)
+    if c { l = &w[] } else { l = r }
+    needs_uniq(l)   //~ W0406
+}
+fn branch_alias2(v: &Vec<u64>, w: &Vec<u64>, c: bool) / mut(v[], w[]) {
+    let (l, r) = v.split_mut(1)
+    if c { l = &w[] }
+    needs_uniq(l)   //~ W0406
+}
+fn loop_alias(v: &Vec<u64>, w: &Vec<u64>, c: bool) / mut(v[], w[]) {
+    let (l, r) = v.split_mut(1)
+    for i in 0..2 {
+        needs_uniq(l)   //~ W0406
+        l = &w[]
+    }
+}
+fn match_alias(v: &Vec<u64>, w: &Vec<u64>, o: Option<u64>) / mut(v[], w[]) {
+    let (l, r) = v.split_mut(1)
+    match o { Some(x) => { l = &w[] }, None => { l = r } }
+    needs_uniq(l)   //~ W0406
+}

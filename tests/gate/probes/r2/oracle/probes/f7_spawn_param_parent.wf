@@ -1,0 +1,11 @@
+fn bg(f: fn(), v: &Vec<u64>) {
+    scope { s =>
+        s.spawn(f)
+        v.push(3)
+    }
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    bg(|| print(v.len()), &v)
+}

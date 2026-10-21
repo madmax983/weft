@@ -1,0 +1,10 @@
+struct W { score: u64, rc: Rc<u64> }
+fn show(r: &u64) / par, async {
+    scope { s =>
+        s.spawn(|| print(r))
+    }
+}
+fn main() / par, async {
+    let w = W { score: 7, rc: Rc.new(1) }
+    show(&w.score)
+}

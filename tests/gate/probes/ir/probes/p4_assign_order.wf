@@ -1,0 +1,8 @@
+fn i() -> usize { print("index"); 0 }
+fn j() -> u64 { print("value"); 7 }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    v[i()] = j()
+    print(v[0])
+}

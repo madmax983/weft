@@ -1,0 +1,35 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn grow(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 1 }) }
+fn noop(w: &World) {}
+fn loop_item(world: &World, n: u64) / mut(world.entities) {
+    let g = noop
+    let i = 0
+    while i < n {
+        let first = &world.entities[0]
+        g(world)
+        print(first.hp)
+        g = grow
+        i += 1
+    }
+}
+fn loop_closure(world: &World, n: u64) / mut(world.entities) {
+    let h = || print(1)
+    let i = 0
+    while i < n {
+        let first = &world.entities[0]
+        h()
+        print(first.hp)
+        h = || world.entities.clear()
+        i += 1
+    }
+}
+pub fn loop_pub(world: &World, n: u64) {
+    let g = noop
+    let i = 0
+    while i < n {
+        g(world)
+        g = grow
+        i += 1
+    }
+}

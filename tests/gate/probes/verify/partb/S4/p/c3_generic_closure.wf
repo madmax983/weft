@@ -1,0 +1,52 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) {}
+fn gen_keep<T>(x: T) -> T { x }
+fn gen_drop<T>(x: T) {}
+// a once closure through a generic identity, then called twice
+fn twice_via_id() {
+    let tx = begin()
+    let g = gen_keep(|| rollback(tx))
+    g()
+    g()
+}
+fn twice_via_id_named() {
+    let tx = begin()
+    let f = || rollback(tx)
+    let g = gen_keep(f)
+    g()
+    g()
+}
+fn once_affine_twice_via_id() {
+    let b = Buf { items: Vec.new() }
+    let g = gen_keep(|| eat(b))
+    g()
+    g()
+}
+fn linear_dropped_via_id() {
+    let tx = begin()
+    let g = gen_keep(|| rollback(tx))
+}
+// stored in an Option and called twice
+fn via_some() {
+    let tx = begin()
+    let o = Some(|| rollback(tx))
+    match o { Some(g) => { g()
+ g() }, None => {} }
+}
+// in a tuple and called twice
+fn via_tuple() {
+    let tx = begin()
+    let t = (|| rollback(tx), 1)
+    let (g, n) = t
+    g()
+    g()
+}
+// in a Box
+fn via_box() {
+    let b = Buf { items: Vec.new() }
+    let bx = Box.new(|| eat(b))
+}

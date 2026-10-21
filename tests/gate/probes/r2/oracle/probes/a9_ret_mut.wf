@@ -1,0 +1,9 @@
+fn adder(v: &Vec<u64>) -> fn() { || v.push(1) }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let f = adder(&v)
+    f()
+    print(r + 1)
+}

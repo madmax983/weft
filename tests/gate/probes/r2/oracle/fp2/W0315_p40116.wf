@@ -1,0 +1,16 @@
+effect Ask { fn ask() -> u64 }
+
+
+
+
+fn main() {
+    loop {
+        handle Ask { fn ask() { resume(5) } } in {
+            if true {
+                return
+            } else {
+            }
+        }
+        break
+    }
+}

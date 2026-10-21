@@ -7,13 +7,158 @@
 mod common;
 
 use common::{
-    err_msg, find_fn, parse, parse_err, stmts, sx, sx_body, sx_expr, sx_place, sx_row, sx_ty,
+    assert_dense, err_msg, find_fn, parse, parse_err, stmts, sx, sx_body, sx_expr, sx_place,
+    sx_row, sx_ty, Ids,
 };
 use weft_syntax::ast::{
-    EffectItem, ExprKind, ItemKind, Lit, Mode, Pattern, PlaceStep, Span, StmtKind, StrPart,
-    TypeExprKind,
+    is_chain_part, EffectItem, ExprId, ExprKind, ItemKind, Lit, Mode, PatId, Pattern, PatternKind,
+    PlaceStep, Span, StmtKind, StrPart, TypeExprKind,
 };
 use weft_syntax::parser::parse_expr;
+
+// ---------------------------------------------------------------- ids
+
+/// A program with each kind of expression and pattern, interpolations in
+/// strings and in patterns, trailing blocks and an `else if` chain.
+const ID_PROGRAM: &str = r#"
+effect Log { fn log(msg: String) }
+
+impl Point {
+    fn norm(self) -> u32 { self.x * self.x + self.y * self.y }
+}
+
+mod m {
+    fn inner(p: Point) -> u32 { p.norm() }
+}
+
+fn all(v: &Vec<u32>, o: Opt) -> u32 / Log {
+    let (a, (b, _)) = (1, (2, 3))
+    let p = Point { x: a, y: b }
+    let xs = [1, 2, 3]
+    let f = |x: u32, y| x + y
+    let r = &mut_free(v[0], v[], -a, !true)
+    let s = "a {a + 1} and {"nested {b}"}"
+    match o {
+        Opt.Some(Pair(1, x)) => x,
+        Some((y, _)) => y,
+        "s{a}" => 0,
+        None => 0,
+        _ => 0,
+    }
+    for i in 0..10 { print(i) }
+    while a < 3 && b > 1 || false { a += 1 }
+    loop { break }
+    let h = handle Log { fn log(msg) { resume(()) } } in run(seed: 1) { log("x") }
+    let t = if a == 1 { 1 } else if a == 2 { 2 } else { 3 }
+    scope { sc => sc.spawn(|| 1) }
+    assert a != 0
+    xs.len().max(p.norm())
+}
+
+test "ids" { let z = 1
+ assert z == 1 }
+"#;
+
+#[test]
+fn ids_of_a_unit_are_unique_and_dense() {
+    let file = parse(ID_PROGRAM);
+    let ids = Ids::of_file(&file);
+    assert!(ids.exprs.len() > 100, "{}", ids.exprs.len());
+    assert!(ids.pats.len() > 15, "{}", ids.pats.len());
+    assert_dense("expression", &ids.exprs);
+    assert_dense("pattern", &ids.pats);
+}
+
+#[test]
+fn ids_of_each_snippet_are_unique_and_dense() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snippets");
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        let Ok(file) = weft_syntax::parse_file(&std::fs::read_to_string(&path).unwrap()) else {
+            continue;
+        };
+        let ids = Ids::of_file(&file);
+        assert_dense(&format!("expression ({})", path.display()), &ids.exprs);
+        assert_dense(&format!("pattern ({})", path.display()), &ids.pats);
+    }
+}
+
+#[test]
+fn ids_start_again_in_each_unit() {
+    let one = Ids::of_file(&parse("fn f() { let x = 1\n x }"));
+    let two = Ids::of_file(&parse("fn g() { let (a, b) = (2, 3) }"));
+    assert_dense("expression", &one.exprs);
+    assert_dense("expression", &two.exprs);
+    assert_dense("pattern", &two.pats);
+    assert!(one.exprs.contains(&0) && two.exprs.contains(&0));
+    assert!(one.pats.contains(&0) && two.pats.contains(&0));
+}
+
+#[test]
+fn ids_of_one_expression_are_dense() {
+    let e = parse_expr("f(a, \"{b + 1}\") { match c { Some(x) => x, _ => 0 } }").unwrap();
+    let ids = Ids::of_expr(&e);
+    assert_dense("expression", &ids.exprs);
+    assert_dense("pattern", &ids.pats);
+    assert_eq!(ids.pats.len(), 3);
+}
+
+#[test]
+fn hidden_locals_of_long_chains_get_ids() {
+    let chain = format!("x{}", " + x".repeat(100));
+    let f = parse(&format!("fn f() {{ let y = {chain}\n y }}"));
+    let ids = Ids::of_file(&f);
+    assert_dense("expression", &ids.exprs);
+    assert_dense("pattern", &ids.pats);
+    let body = &find_fn(&f, "f").body.as_ref().unwrap().stmts;
+    let StmtKind::Let {
+        init: Some(init), ..
+    } = &body[0].kind
+    else {
+        panic!()
+    };
+    let ExprKind::Block(b) = &init.kind else {
+        panic!("{}", sx(init))
+    };
+    let mut hidden = Vec::new();
+    for s in &b.stmts {
+        if let StmtKind::Let {
+            pat:
+                Pattern {
+                    id,
+                    kind: PatternKind::Bind(name),
+                },
+            ..
+        } = &s.kind
+        {
+            assert!(is_chain_part(&name.name));
+            hidden.push(*id);
+        }
+    }
+    assert!(hidden.len() >= 3, "{}", hidden.len());
+    // The `let y` pattern and the hidden locals: each has its own id.
+    assert_eq!(ids.pats.len(), hidden.len() + 1);
+    // Each hidden local is read by a name with its own id.
+    let reads = Ids::of_expr(init);
+    let names = 101 + hidden.len();
+    let ops = 100;
+    assert_eq!(reads.exprs.len(), names + ops + 1);
+}
+
+#[test]
+fn equality_ignores_ids() {
+    let e = parse_expr("a + b").unwrap();
+    let mut other = e.clone();
+    other.id = ExprId(e.id.0 + 7);
+    assert_eq!(e, other);
+    let s = stmts("let (a, b) = t");
+    let StmtKind::Let { pat, .. } = &s[0].kind else {
+        panic!()
+    };
+    let mut q = pat.clone();
+    q.id = PatId(q.id.0 + 7);
+    assert_eq!(*pat, q);
+}
 
 // ---------------------------------------------------------------- statement ends
 
@@ -528,7 +673,10 @@ fn patterns() {
     assert_eq!(sx_body("let x"), "(let x)");
     let s = stmts("let (a, _) = t");
     let StmtKind::Let {
-        pat: Pattern::Tuple(ps, span),
+        pat: Pattern {
+            kind: PatternKind::Tuple(ps, span),
+            ..
+        },
         ..
     } = &s[0].kind
     else {
@@ -536,7 +684,7 @@ fn patterns() {
     };
     assert_eq!(ps.len(), 2);
     assert_eq!(*span, Span::new(13, 19));
-    assert!(matches!(ps[1], Pattern::Wild(_)));
+    assert!(matches!(ps[1].kind, PatternKind::Wild(_)));
     let s = stmts("let Some(x) = o");
     let StmtKind::Let { pat, .. } = &s[0].kind else {
         panic!()
@@ -1261,7 +1409,10 @@ fn long_binary_chains_parse() {
     };
     assert_eq!(b.stmts.len(), 2);
     let StmtKind::Let {
-        pat: Pattern::Bind(id),
+        pat: Pattern {
+            kind: PatternKind::Bind(id),
+            ..
+        },
         init: Some(part),
         ..
     } = &b.stmts[0].kind

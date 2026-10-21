@@ -1,0 +1,6 @@
+// R3RT11 (minor, false positive): a `match` with no arm on a value of an enum
+// with no variant covers each value (there is none), but it gets W0120.
+// Expected: no error. Found: W0120.
+enum Never {}
+fn absurd(n: Never) -> u64 { match n {} }
+fn main() {}

@@ -1,0 +1,17 @@
+// M3 (m8_abort_value_into_body.wf) as the MIR design lowers it.
+// The clause of `pick` returns &v[0] with no resume; v -> &w, a local of the
+// handled body. MIR: cleanup chain (Unwind) first, then the abort node, then the
+// return node of the Handle binds a new version of dest with clause_values.
+place(pw). place(pw_e). parent(pw_e, pw). unstable(pw_e).
+owner(pw, sw).
+cfg_edge(s0, r1). cfg_edge(r1, b1). cfg_edge(b1, pp).
+rebound_at(sw, r1).
+rebound_at(t6, b1). points_into(t6, pw).
+uses(t6, pp). call_arg(pp, pw, 0). may_abort(pp).
+cfg_edge(pp, u1). unwound_at(t6, u1).
+cfg_edge(u1, u2). unwound_at(sw, u2).
+cfg_edge(u2, ux). cfg_edge(ux, ab). cfg_edge(ab, rn).
+rebound_at(rd, rn). points_into(rd, pw_e).
+cfg_edge(rn, pr). uses(rd, pr).
+lint("MIR M3: W0301 at print(r)", pr) :- error(rd, pr).
+lint("MIR M3: any error", P) :- error(R, P).

@@ -1,0 +1,2 @@
+fn apply(f: fn(fn(u64) -> u64) -> u64) -> u64 { f(|x| x) }
+fn g() -> u64 { apply(|h| h(h(1))) }

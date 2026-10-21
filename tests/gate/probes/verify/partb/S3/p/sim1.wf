@@ -1,0 +1,52 @@
+effect Note { fn note(x: u64) }
+fn sleeper() / clock { sleep(1.ms) }
+fn user_std_handler_in_sim() {
+    sim.run(seed: 1) {
+        handle Log { fn info(m) { resume(()) } } in {
+            scope { s => s.spawn(|| log.info("x")) }   // W0314
+        }
+    }
+}
+fn user_effect_in_sim() {
+    sim.run(seed: 1) {
+        handle Note { fn note(x) { resume(()) } } in {
+            scope { s => s.spawn(|| note(1)) }   // W0314
+        }
+    }
+}
+fn sim_inside_user_handler() {
+    handle Log { fn info(m) { resume(()) } } in {
+        sim.run(seed: 1) {
+            scope { s => s.spawn(|| log.info("x")) }   // clean
+        }
+    }
+}
+fn closure_from_outside() {
+    handle Log { fn info(m) { resume(()) } } in {
+        let f = || log.info("x")
+        sim.run(seed: 1) {
+            scope { s => s.spawn(f) }   // W0314
+        }
+    }
+}
+fn nested_closure_in_sim() {
+    sim.run(seed: 1) {
+        let mk = || { scope { s => s.spawn(|| sleep(1.ms)); s.spawn(sleeper) } }
+        mk()
+        fork(|| { sleep(1.ms); 1 }, || { log.info("y"); 2 })
+    }
+}
+fn param_in_sim(f: fn()) {
+    sim.run(seed: 1) {
+        scope { s => s.spawn(f) }
+    }
+}
+fn param_in_sim_caller() / log {
+    handle Log { fn info(m) { resume(()) } } in param_in_sim(|| log.info("x"))   // W0314
+    param_in_sim(|| sleep(1.ms))   // clean
+}
+test "sim in test" {
+    sim.run(seed: 2) {
+        scope { s => s.spawn(|| sleep(1.ms)) }
+    }
+}

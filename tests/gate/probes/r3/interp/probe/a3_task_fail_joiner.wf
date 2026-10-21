@@ -1,0 +1,13 @@
+// A task fails; its failure goes to the joiner, not to the lexical handler
+// of the task closure.
+fn main() / io, par {
+    let r = handle Fail { fn fail(m) { print("caught: {m}"); 0 } } in {
+        scope { s =>
+            let t = s.spawn(|| { sleep(5.ms); fail("task failed"); 1 })
+            let v = t.join()
+            print("joined {v}")
+            v
+        }
+    }
+    print("r = {r}")
+}

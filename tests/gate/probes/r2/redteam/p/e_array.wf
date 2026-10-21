@@ -1,0 +1,32 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+
+fn array_index(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let a = [|| world.entities.clear()]
+    let g = a[0]
+    g()
+    print(first.hp)   //~ W0301
+}
+fn array_loop(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let a = [|| world.entities.clear()]
+    for g in a[] { g() }
+    print(first.hp)   //~ W0301
+}
+fn array_direct(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let a = [|| world.entities.clear()]
+    a[0]()
+    print(first.hp)   //~ W0301
+}
+pub fn array_effect() {
+    let a = [|| log.info("x")]
+    let g = a[0]
+    g()
+}
+fn main() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    array_index(&w)
+}

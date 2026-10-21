@@ -1,0 +1,25 @@
+// 16 helper closures. Each helper calls the two helpers before it.
+// `weft check` takes about 4 s. With 18 helpers it takes about 30 s, and with
+// 20 helpers about 250 s (release build). The time grows by about 2.8 for each
+// helper. Callgrind puts 99% of the time in `Lower::closure_has`,
+// `Lower::var_has` and `Lower::ty_has_in` (crates/weft-sema/src/body/mod.rs).
+struct Out { v: Vec<u64> }
+fn render(out: &Out) / mut(out.v) {
+    let h0 = || out.v.push(0)
+    let h1 = || out.v.push(1)
+    let h2 = || { h1(); h0() }
+    let h3 = || { h2(); h1() }
+    let h4 = || { h3(); h2() }
+    let h5 = || { h4(); h3() }
+    let h6 = || { h5(); h4() }
+    let h7 = || { h6(); h5() }
+    let h8 = || { h7(); h6() }
+    let h9 = || { h8(); h7() }
+    let h10 = || { h9(); h8() }
+    let h11 = || { h10(); h9() }
+    let h12 = || { h11(); h10() }
+    let h13 = || { h12(); h11() }
+    let h14 = || { h13(); h12() }
+    let h15 = || { h14(); h13() }
+    h15()
+}

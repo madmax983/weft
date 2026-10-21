@@ -1,0 +1,61 @@
+struct D { v: Vec<u64>, k: u64 }
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+
+// A ref to the vec header made before the spawn; used after the join.
+fn header_ref() / io {
+    let d = D { v: mk_v(), k: 0 }
+    let r = &d.v
+    scope { s =>
+        let t = s.spawn(|| d.v.push(3))
+        t.join()
+    }
+    print(r.len())
+}
+
+// A ref to a field that the task writes, made before the spawn.
+fn field_before() / io {
+    let d = D { v: mk_v(), k: 0 }
+    let r = &d.k
+    scope { s =>
+        let t = s.spawn(|| d.k += 1)
+        t.join()
+    }
+    print(r + 1)
+}
+
+// A ref made while the task runs to a disjoint field.
+fn disjoint_field() / io {
+    let d = D { v: mk_v(), k: 0 }
+    let r = &d.k
+    scope { s =>
+        let t = s.spawn(|| d.v.push(3))
+        r = &d.k
+        t.join()
+    }
+    print(r + 1)
+}
+
+// Two tasks: the first ends while the second still runs; disjoint.
+fn two_tasks() / io {
+    let d = D { v: mk_v(), k: 0 }
+    let w = mk_v()
+    scope { s =>
+        let t = s.spawn(|| d.v.push(3))
+        let u = s.spawn(|| w.push(1))
+        t.join()
+        u.join()
+    }
+    print(d.k)
+}
+
+fn main() / io {
+    header_ref()
+    field_before()
+    disjoint_field()
+    two_tasks()
+}

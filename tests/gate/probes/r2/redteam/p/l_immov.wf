@@ -1,0 +1,81 @@
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct Wrap<T> { x: T }
+enum E { A(Frame), B }
+fn take_f(f: Frame) {}
+fn take_w(w: Wrap<Frame>) {}
+fn gen_keep<T>(x: T) -> T { x }
+fn mk() -> Frame { Frame { buf: [1, 2, 3, 4] } }
+
+// Return a named local.
+fn ret_named() -> Frame {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[0]
+    f   //~ W0604
+}
+// Box.new of a named value.
+fn box_named() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[0]
+    let b = Box.new(f)   //~ W0604
+    print(b.cur)
+}
+// Some of a named value.
+fn some_named() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    let o = Some(f)   //~ W0604
+}
+// A generic struct field.
+fn wrap_named() {
+    let w = Wrap { x: Frame { buf: [1, 2, 3, 4] } }
+    take_w(w)   //~ W0604
+}
+// An array of frames.
+fn array_frames() {
+    let a = [Frame { buf: [1, 2, 3, 4] }, Frame { buf: [5, 6, 7, 8] }]
+    let b = a   //~ W0604
+}
+// An enum payload moved out by match.
+fn enum_payload() {
+    let e = E.A(Frame { buf: [1, 2, 3, 4] })
+    match e { E.A(f) => take_f(f), E.B => {} }   //~ W0604
+}
+// Into a closure that moves it.
+fn closure_moves() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    let c = || take_f(f)   //~ W0604
+    c()
+}
+// Through a generic identity.
+fn generic_id() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    let g = gen_keep(f)   //~ W0604
+}
+// A call result pushed into a Vec.
+fn push_result() {
+    let v = Vec.new()
+    v.push(mk())   //~ W0604
+}
+// A tuple destructure moves the part.
+fn tuple_destructure() {
+    let t = (Frame { buf: [1, 2, 3, 4] }, 1)
+    let (f, n) = t   //~ W0604
+}
+// A field read of a !Move part moves it.
+struct Outer { f: Frame, n: u64 }
+fn field_move() {
+    let o = Outer { f: Frame { buf: [1, 2, 3, 4] }, n: 1 }
+    let f = o.f   //~ W0604
+}
+// Element assignment into an array.
+fn elem_assign() {
+    let a = [Frame { buf: [1, 2, 3, 4] }]
+    let f = Frame { buf: [5, 6, 7, 8] }
+    a[0] = f   //~ W0604
+}
+// A value as an expression statement.
+fn expr_stmt() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[0]
+    f
+    print(1)
+}

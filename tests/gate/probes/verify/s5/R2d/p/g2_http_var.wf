@@ -1,0 +1,5 @@
+// A handler in a local: a plain handler.
+fn main(env: Env) / io {
+    let h = |req| Response.text("hit")
+    http.serve(env.net.listen("127.0.0.1:18438"), h)
+}

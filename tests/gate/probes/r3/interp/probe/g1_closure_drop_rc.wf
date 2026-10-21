@@ -1,0 +1,8 @@
+// A closure that moves an Rc capture is dropped without a call.
+fn take(r: Rc<u64>) / io { print("took {r}") }
+
+fn main() / io {
+    let r = Rc.new(5)
+    let f = || take(r)
+    print("not called")
+}

@@ -1,0 +1,15 @@
+// `t` lives outside the `handle`. A `multi` continuation of `pick` ends at
+// the handler, so a second resume does not copy `t`.
+effect Pick { multi fn pick() -> bool }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(id) = t }
+
+fn main() {
+    let t = Tx { id: 1 }
+    let out = 0
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        if pick() { out += 1 } else { out += 2 }
+    }
+    print(out)
+    commit(t)
+}

@@ -1,0 +1,10 @@
+mod a {
+    pub effect Note { fn note(x: u64) }
+}
+fn p() / a.Note { a.Note.note(3) }
+fn main() {
+    handle a.Note { fn note(v) {
+        print(v)
+        resume(())
+    } } in p()
+}

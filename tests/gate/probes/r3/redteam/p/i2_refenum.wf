@@ -1,0 +1,13 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn match_ref_enum(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    let p = &o
+    world.entities.clear()
+    match p { Some(e) => print(e.hp), None => {} }
+}
+fn main() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    match_ref_enum(&w)
+}

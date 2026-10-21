@@ -1,0 +1,17 @@
+// QA3: a parameter whose `in` place names a later parameter that has an `in`
+// place itself gets no places. `lower_fn` substitutes the `in` places in
+// parameter order (crates/weft-sema/src/body/stmt.rs:48-52). When it does `a`,
+// `bases[2]` (for `b`) is still empty. So `a` points nowhere, and no mutation
+// can invalidate it.
+//   weft check QA3_param_place_order.wf  ->  1 error (h2 only); expected 2
+//   weft facts QA3_param_place_order.wf h  ->  no points_into for `a`
+// `h` and `h2` have the same meaning. Only the order of the parameters differs.
+struct E { hp: i32 }
+fn h(v: &Vec<E>, a: &E in b, b: &E in v[]) / mut(v) {
+    v.push(E { hp: 1 })
+    print(a.hp)
+}
+fn h2(v: &Vec<E>, b: &E in v[], a: &E in b) / mut(v) {
+    v.push(E { hp: 1 })
+    print(a.hp)
+}

@@ -1,0 +1,12 @@
+linear struct Tx { id: u64 }
+fn commit(tx: Tx) {
+    let Tx(id) = tx
+    print(id)
+}
+fn main() / par, async {
+    let tx = Tx { id: 4 }
+    scope { s =>
+        let t = s.spawn(|| commit(tx))
+        t.join()
+    }
+}

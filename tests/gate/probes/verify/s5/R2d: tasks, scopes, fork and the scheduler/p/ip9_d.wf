@@ -1,0 +1,22 @@
+// One simulation, entered from a spawned task.
+fn work(id: u64) / clock {
+    let i = 0
+    while i < 3 {
+        print("sim {id} step {i}")
+        sleep(1.ms)
+        i += 1
+    }
+}
+
+test "a simulation in a task" {
+    scope { o =>
+        o.spawn(|| sim.run(seed: 3) {
+            scope { s =>
+                s.spawn(|| work(1))
+                s.spawn(|| work(2))
+                s.spawn(|| work(3))
+            }
+        })
+        o.spawn(|| print("other"))
+    }
+}

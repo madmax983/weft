@@ -1,0 +1,42 @@
+struct Entity { hp: i32 }
+impl Entity {
+    fn new() -> Entity { Entity { hp: 10 } }
+    fn bump(self: &Entity) / mut(self.hp) { self.hp += 1 }
+}
+struct World { entities: Vec<Entity> }
+fn grow(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 1 }) }
+fn id<T>(x: T) -> T { x }
+fn body() { print(1) }
+fn arity() {
+    let g = grow
+    g()
+}
+fn arity2(world: &World) {
+    let g = grow
+    g(world, world)
+}
+fn method_value() {
+    let g = Entity.new
+    let e = g()
+}
+fn generic_value() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let i = id
+    let r = i(&v[0])
+    v.clear()
+    print(r)
+}
+fn sim_bin() {
+    let r = sim.run
+    r(1, body)
+}
+fn join_mismatch(c: bool) {
+    let g = if c { grow } else { body }
+}
+fn recursive_value(n: u64) -> u64 {
+    let f = recursive_value
+    if n == 0 { 0 } else { f(n - 1) }
+}
+fn self_ret() -> fn() -> u64 { self_ret2 }
+fn self_ret2() -> u64 { let f = self_ret(); 1 }

@@ -1,0 +1,11 @@
+fn consume(v: Vec<u64>) { print("consume {v.len()}") }
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    let f = || consume(v)
+    scope { s =>
+        s.spawn(f)
+        s.spawn(f)
+    }
+    print("end")
+}

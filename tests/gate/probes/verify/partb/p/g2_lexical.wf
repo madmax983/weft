@@ -1,0 +1,22 @@
+// A closure made in a clause of H performs an operation of H's own effect.
+// Lexically it goes to the outer handler: the clause runs outside H. The body
+// calls the closure while H is installed.
+effect GN {
+    fn get() -> fn()
+    fn note(x: u64)
+}
+
+fn main() {
+    handle GN {
+        fn get() { resume(|| print(0)) }
+        fn note(x) { print("outer", x); resume(()) }
+    } in {
+        handle GN {
+            fn get() { resume(|| note(1)) }
+            fn note(x) { print("inner", x); resume(()) }
+        } in {
+            let f = get()
+            f()
+        }
+    }
+}

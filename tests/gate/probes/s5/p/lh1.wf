@@ -1,0 +1,18 @@
+struct Stats { count: u64 }
+effect Run { fn run(g: fn()) -> () }
+fn stored(st: &Stats) / mut(st) {
+    let v = Vec.new()
+    v.push(|| { st.count += 1 })
+    handle Run { fn run(g) { g()
+        resume(()) } } in { run(v[0]) }
+}
+fn direct(st: &Stats) / mut(st) {
+    handle Run { fn run(g) { g()
+        resume(()) } } in { run(|| { st.count += 1 }) }
+}
+fn main() {
+    let st = Stats { count: 0 }
+    stored(&st)
+    direct(&st)
+    print(st.count)
+}

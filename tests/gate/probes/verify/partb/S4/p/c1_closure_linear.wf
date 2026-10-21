@@ -1,0 +1,90 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+struct Wrap { t: Tx }
+// tuple capture, never called
+fn tuple_cap() {
+    let p = (begin(), 1)
+    let f = || { let (t, n) = p
+ rollback(t) }
+}   //~ W0601
+// struct capture, never called
+fn struct_cap() {
+    let w = Wrap { t: begin() }
+    let f = || { let Wrap(t) = w
+ rollback(t) }
+}   //~ W0601
+// closure in a tuple, dropped
+fn closure_in_tuple() {
+    let tx = begin()
+    let t = (|| rollback(tx), 1)
+}   //~ W0601
+// closure returned as fn()
+fn mk() -> fn() {
+    let tx = begin()
+    || rollback(tx)
+}
+fn caller_drops() {
+    let f = mk()
+}
+// closure pushed into a Vec
+fn in_vec() {
+    let tx = begin()
+    let v = Vec.new()
+    v.push(|| rollback(tx))
+}
+// called in a loop
+fn in_loop(n: u32) {
+    let tx = begin()
+    let f = || rollback(tx)
+    for i in 0..n { f() }
+}
+// closure moved through a let alias inside another closure
+fn alias_in_closure() {
+    let tx = begin()
+    let f = || rollback(tx)
+    let g = || { let h = f
+ h() }
+    g()
+    g()
+}
+// given to a generic function that drops it
+fn gen_drop<T>(x: T) {}
+fn generic_drop() {
+    let tx = begin()
+    gen_drop(|| rollback(tx))
+}
+// method on self by value
+impl Tx { fn commit(self: Tx) { let Tx(i) = self } }
+fn method_cap() {
+    let tx = begin()
+    let f = || tx.commit()
+}
+// fork twice the same once closure
+fn eat(w: Wrap) { let Wrap(t) = w
+ rollback(t) }
+// chosen by if, never called
+fn by_if(c: bool) {
+    let tx = begin()
+    let f = if c { || rollback(tx) } else { || print(1) }
+}
+// stored in a struct field of type fn()
+struct Cb { f: fn() }
+fn in_field() {
+    let tx = begin()
+    let c = Cb { f: || rollback(tx) }
+}
+// early return before the call
+fn early(c: bool) {
+    let tx = begin()
+    let f = || rollback(tx)
+    if c { return }
+    f()
+}
+// break out of a loop before the call
+fn brk() {
+    let tx = begin()
+    let f = || rollback(tx)
+    loop { break }
+}

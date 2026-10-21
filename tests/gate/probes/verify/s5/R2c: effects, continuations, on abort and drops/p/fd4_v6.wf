@@ -1,0 +1,27 @@
+effect Choice { multi fn choose() -> bool }
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+// A reference to a !Move local is live across the operation; the local is not used after.
+fn ref_immovable() -> u8 / Choice {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[2]
+    let r = &f
+    let b = choose()
+    let c = r.cur
+    c + 0
+}
+// The !Move value is used only through a reference stored before.
+fn ref_part() -> u8 / Choice {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[2]
+    let r = &f.buf[1]
+    let b = choose()
+    r + 0
+}
+fn main() {
+    let out: Vec<u8> = Vec.new()
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        out.push(ref_immovable())
+        out.push(ref_part())
+    }
+    print(out)
+}

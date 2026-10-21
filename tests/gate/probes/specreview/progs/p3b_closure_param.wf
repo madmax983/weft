@@ -1,0 +1,11 @@
+struct Entity { hp: i32 }
+impl Entity { fn new() -> Entity { Entity { hp: 10 } } }
+struct World { entities: Vec<Entity> }
+
+fn apply(f: fn(&World), w: &World) { f(w) }
+
+fn hof(world: &World) {
+    let first = &world.entities[0]
+    apply(|x| x.entities.push(Entity.new()), world)
+    print(first.hp)
+}

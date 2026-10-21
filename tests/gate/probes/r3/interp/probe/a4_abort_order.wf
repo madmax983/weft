@@ -1,0 +1,29 @@
+// On abort order when a child failure unwinds the owner: innermost frame
+// first, newest value first; then the handler of the scope gets the failure.
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn rollback(t: Tx) { let Tx(id) = t; print("rollback {id}") }
+fn commit(t: Tx) / io { let Tx(id) = t; print("commit {id}") }
+
+fn inner(n: u64) / io {
+    let a = Tx { id: n }
+    let b = Tx { id: n + 1 }
+    sleep(100.ms)
+    commit(a)
+    commit(b)
+}
+
+fn main() / io, par {
+    handle Fail { fn fail(m) { print("caught: {m}") } } in {
+        let c = Tx { id: 1 }
+        scope { s =>
+            s.spawn(|| { sleep(5.ms); fail("child failed") })
+            let d = Tx { id: 2 }
+            inner(10)
+            commit(d)
+        }
+        commit(c)
+    }
+    print("end")
+}

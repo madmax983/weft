@@ -1,0 +1,11 @@
+struct Conn { id: u64 }
+linear struct Tx { conn: Conn }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(c) = tx; print("rollback {c.id}") }
+fn begin(id: u64) -> Tx { Tx { conn: Conn { id: id } } }
+fn main() {
+    let tx = begin(1)
+    let f = || { tx = begin(2) }
+    f()
+    rollback(tx)
+}

@@ -1,0 +1,13 @@
+// The repro written with the path.
+mod a {
+    pub effect Note { fn note(x: u64) }
+    pub fn f() / Note { note(1) }
+}
+fn main() {
+    handle a.Note { fn note(x) { print(x)
+ resume(()) } } in a.f()
+    g2()
+}
+fn g() / a.Note { a.f() }
+fn g2() { handle a.Note { fn note(x) { print(x + 10)
+ resume(()) } } in g() }

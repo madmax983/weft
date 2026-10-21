@@ -1,0 +1,8 @@
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    scope { s =>
+        v
+    }
+    print(v.len())
+}

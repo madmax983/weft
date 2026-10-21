@@ -1,0 +1,11 @@
+fn untyped() / async {
+    scope { s =>
+        let go = |f| s.spawn(f)
+        let t = go(|| 1)
+        t.join()
+    }
+}
+fn untyped_fork() / par {
+    let both = |f, g| fork(f, g)
+    let r = both(|| 1, || 2)
+}

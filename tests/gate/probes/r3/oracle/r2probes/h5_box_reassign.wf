@@ -1,0 +1,7 @@
+struct E { hp: u64 }
+fn main() {
+    let b = Box.new(E { hp: 1 })
+    let r = &b.hp
+    b = Box.new(E { hp: 2 })
+    print(r + 1)
+}

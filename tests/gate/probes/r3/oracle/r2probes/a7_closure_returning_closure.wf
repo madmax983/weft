@@ -1,0 +1,8 @@
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let mk = |r: &u64| || print(r + 1)
+    let f = mk(&v[0])
+    v.clear()
+    f()
+}

@@ -1,0 +1,18 @@
+effect Log { fn log(msg: String) }
+effect Op { fn op() }
+effect Note { fn note() }
+
+fn cic() {
+    let f = || print(0)
+    handle Op { fn op() { print(9) } } in {
+        handle Note { fn note() { resume(()) } } in {
+        handle Log { fn log(m) { op(); resume(()) } } in {
+            f = || note()
+            log("x")
+            f = || print(1)
+        }
+        }
+    }
+    f()
+}
+fn main() { cic() }

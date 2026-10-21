@@ -1,0 +1,7 @@
+effect Pair { multi fn put(a: u64, b: String) }
+effect Run { fn run(n: u64, f: fn() -> u64) -> u64 }
+
+fn main() {
+    let total = handle Run { fn run(n, f) { resume(n + f()) } } in run(1) { 10 }
+}
+

@@ -1,0 +1,8 @@
+struct Fr: !Move { buf: [u64; 2], cur: &u64 in self.buf[] }
+effect Ask { fn ask() -> u64 }
+fn main() {
+    let f = Fr { buf: [1, 2] }
+    f.cur = &f.buf[1]
+    let g = handle Ask { fn ask() { resume(1) } } in f
+    print(g.cur)
+}

@@ -1,0 +1,15 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Wrap<T> { x: T }
+fn wrap_ref(world: &World) / mut(world.entities) {
+    let h = Wrap { x: &world.entities[0] }
+    world.entities.clear()
+    print(h.x.hp)
+}
+fn wrap_closure(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    let h = Wrap { x: || print(r.hp) }
+    world.entities.clear()
+    let g = h.x
+    g()
+}

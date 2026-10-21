@@ -1,0 +1,36 @@
+// Walk to the last node of a list, then change a field of it. Each function
+// is clean.
+struct Node { val: u64, next: Vec<Node> }
+
+fn set_last(head: &Node, x: u64) / mut(head..) {
+    let cur = head
+    while cur.next.len() > 0 {
+        cur = &cur.next[0]
+    }
+    cur.val = x
+    print(cur.val)
+}
+fn bump_all(head: &Node) / mut(head..) {
+    let cur = head
+    while cur.next.len() > 0 {
+        cur.val += 1
+        cur = &cur.next[0]
+    }
+    cur.val += 1
+}
+fn append(head: &Node, x: u64) / mut(head..) {
+    let cur = head
+    while cur.next.len() > 0 {
+        cur = &cur.next[0]
+    }
+    cur.next.push(Node { val: x, next: Vec.new() })
+    print(cur.val)
+}
+fn main() {
+    let n = Node { val: 1, next: Vec.new() }
+    n.next.push(Node { val: 2, next: Vec.new() })
+    n.next[0].next.push(Node { val: 3, next: Vec.new() })
+    set_last(&n, 9)
+    bump_all(&n)
+    append(&n, 4)
+}

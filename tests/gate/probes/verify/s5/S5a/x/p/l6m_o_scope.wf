@@ -1,0 +1,47 @@
+effect Lg { fn lg(msg: String) }
+effect Other { fn other() }
+fn apply(g: fn()) { g() }
+struct Job { f: fn() }
+
+fn o_clause_in_clause() {
+    let f = || print(0)
+    handle Lg { fn lg(m) { print(m) } } in {
+        f = || lg("x")
+        handle Other { fn other() { lg("q")
+ resume(()) } } in {
+            other()
+        }
+        f = || print(1)
+    }
+    f()
+}
+fn o_apply() {
+    let f = || print(0)
+    handle Lg { fn lg(m) { print(m) } } in {
+        f = || lg("x")
+        apply(|| lg("q"))
+        f = || print(1)
+    }
+    f()
+}
+fn o_local_stored() {
+    let f = || print(0)
+    handle Lg { fn lg(m) { print(m) } } in {
+        let j = Job { f: || lg("q") }
+        f = || lg("x")
+        let g = j.f
+        g()
+        f = || print(1)
+    }
+    f()
+}
+fn o_scope() / async {
+    let f = || print(0)
+    handle Lg { fn lg(m) { print(m) } } in {
+        f = || lg("x")
+        scope { s => lg("q") }
+        f = || print(1)
+    }
+    f()
+}
+fn main() / async { o_scope() }

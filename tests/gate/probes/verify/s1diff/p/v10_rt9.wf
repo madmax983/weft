@@ -1,0 +1,33 @@
+struct Stats { count: u64, name: u64 }
+// A task writes through a captured reference; the parent reads. Expect W0405.
+fn task_writes_ref(stats: &Stats) / mut(stats.count), async {
+    let c = &stats.count
+    scope { s =>
+        s.spawn(|| c += 1)
+        print(stats.count)
+    }
+}
+// A match binding by reference written through. Expect W0402.
+fn match_bind(o: &Option<u64> @ shared) {
+    match o {
+        Some(x) => { x += 1 },
+        None => {}
+    }
+}
+// A reference to a reference. Expect W0402.
+fn ref_ref(s: &Stats @ shared) {
+    let c = &s.count
+    let cc = &c
+    cc += 1
+}
+// A rebind of a reference local: not a write. Expect clean.
+fn rebind(s: &Stats @ shared) {
+    let c = &s.count
+    c = &s.name
+    print(c)
+}
+// A write through in a loop of a public fn: W0701.
+pub fn loop_bump(s: &Stats) {
+    let c = &s.count
+    for i in 0..3 { c *= 2 }
+}

@@ -1,0 +1,37 @@
+struct Job { f: fn() }
+fn get(j: &Job) -> fn() { j.f }
+fn copy_out() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let j = Job { f: || print(r + 1) }
+    let f = get(&j)
+    v.clear()
+    f()
+}
+// A Vec of closures behind a reference argument.
+fn first(fs: &Vec<fn()>) -> fn() { fs[0] }
+fn copy_out_vec() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let fs: Vec<fn()> = Vec.new()
+    fs.push(|| print(r + 1))
+    let f = first(&fs)
+    v.clear()
+    f()
+}
+// An inferred Vec of closures behind a reference argument.
+fn copy_out_vec2() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let fs = Vec.new()
+    fs.push(|| print(r + 1))
+    let f = first(&fs)
+    v.clear()
+    f()
+}
+fn main() {
+    copy_out()
+}

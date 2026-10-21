@@ -1,0 +1,25 @@
+// A binary search tree: walk down, then change the node that the walk found.
+struct T { key: u64, hits: u64, left: Vec<T>, right: Vec<T> }
+
+fn hit(root: &T, k: u64) / mut(root..) {
+    let cur = root
+    let going = true
+    while going {
+        if k < cur.key && cur.left.len() > 0 {
+            cur = &cur.left[0]
+        } else {
+            if k > cur.key && cur.right.len() > 0 {
+                cur = &cur.right[0]
+            } else {
+                going = false
+            }
+        }
+    }
+    cur.hits += 1
+    print(cur.hits)
+}
+fn main() {
+    let t = T { key: 5, hits: 0, left: Vec.new(), right: Vec.new() }
+    t.left.push(T { key: 2, hits: 0, left: Vec.new(), right: Vec.new() })
+    hit(&t, 2)
+}

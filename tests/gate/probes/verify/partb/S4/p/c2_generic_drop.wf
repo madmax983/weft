@@ -1,0 +1,57 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn gen_drop<T>(x: T) {}
+fn direct() {
+    gen_drop(begin())
+}
+fn named() {
+    let tx = begin()
+    gen_drop(tx)
+}
+fn closure_arg() {
+    let tx = begin()
+    gen_drop(|| rollback(tx))
+}
+fn closure_named() {
+    let tx = begin()
+    let f = || rollback(tx)
+    gen_drop(f)
+}
+fn tuple_arg() {
+    gen_drop((begin(), 1))
+}
+fn gen_keep<T>(x: T) -> T { x }
+fn kept() {
+    let t = gen_keep(begin())
+    rollback(t)
+}
+fn kept_dropped() {
+    let t = gen_keep(begin())
+}
+fn gen_pair<T>(x: T, y: T) -> T { x }
+fn pair_drops() {
+    let t = gen_pair(begin(), begin())
+    rollback(t)
+}
+fn gen_opt<T>(o: Option<T>) {}
+fn opt_drops() {
+    gen_opt(Some(begin()))
+}
+fn gen_branch<T>(x: T, c: bool) -> Option<T> { if c { Some(x) } else { None } }
+fn branch_drops() {
+    let o = gen_branch(begin(), true)
+    match o { Some(t) => rollback(t), None => {} }
+}
+struct Box2<T> { v: T }
+fn gen_struct<T>(b: Box2<T>) {}
+fn struct_drops() {
+    gen_struct(Box2 { v: begin() })
+}
+fn gen_vec<T>(v: Vec<T>) {}
+fn vec_drops() {
+    let v = Vec.new()
+    v.push(begin())
+    gen_vec(v)
+}

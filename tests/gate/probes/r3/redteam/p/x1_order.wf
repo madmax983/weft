@@ -1,0 +1,27 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Wrap<T> { x: T, n: i32 }
+struct Pair { a: u64, b: u64 }
+fn grow(w: &World) -> i32 / mut(w.entities) {
+    w.entities.push(Entity { hp: 1 })
+    w.entities.push(Entity { hp: 1 })
+    w.entities.push(Entity { hp: 1 })
+    0
+}
+fn tag(s: String, n: u64) -> u64 { print(s); n }
+fn lit_order_named(world: &World) / mut(world.entities) {
+    let w = Wrap { n: grow(world), x: &world.entities[0] }
+    print(w.x.hp)
+}
+fn ctor_named(world: &World) / mut(world.entities) {
+    let w = Wrap(n: grow(world), x: &world.entities[0])
+    print(w.x.hp)
+}
+fn main() {
+    let p = Pair { b: tag("b", 2), a: tag("a", 1) }
+    let q = Pair(b: tag("b2", 2), a: tag("a2", 1))
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    lit_order_named(&w)
+    ctor_named(&w)
+}

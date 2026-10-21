@@ -1,0 +1,11 @@
+// The written order is the parameter order reversed the other way: the first
+// written argument borrows, the second pushes.
+fn pick(b: u64, a: &u64) -> u64 { a + b }
+
+fn push_zero(v: &Vec<u64>) -> u64 / mut(v) { v.push(2); 0 }
+
+fn main() / io {
+    let v = Vec.new()
+    v.push(1)
+    print(pick(a: &v[0], b: push_zero(&v)))
+}

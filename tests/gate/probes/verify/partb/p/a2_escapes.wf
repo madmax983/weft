@@ -1,0 +1,62 @@
+effect Log { fn log(msg: String) }
+effect Get { fn get(f: fn()) -> fn() }
+struct Cb { f: fn() }
+
+fn id(f: fn()) -> fn() { f }
+fn idg<T>(x: T) -> T { x }
+fn wrap(f: fn()) -> Cb { Cb { f: f } }
+fn pair(f: fn()) -> (fn(), u64) { (f, 1) }
+
+fn via_id() {
+    let f = handle Log { fn log(m) { resume(()) } } in id(|| log("late"))
+}
+fn via_generic() {
+    let f = handle Log { fn log(m) { resume(()) } } in idg(|| log("late"))
+}
+fn via_wrap() {
+    let f = handle Log { fn log(m) { resume(()) } } in wrap(|| log("late"))
+}
+fn via_pair() {
+    let f = handle Log { fn log(m) { resume(()) } } in pair(|| log("late"))
+}
+fn via_option() {
+    let f = handle Log { fn log(m) { resume(()) } } in Some(|| log("late"))
+}
+fn via_pop() {
+    let f = handle Log { fn log(m) { resume(()) } } in {
+        let w = Vec.new()
+        w.push(|| log("late"))
+        w.pop()
+    }
+}
+fn via_match(b: bool) {
+    let f = handle Log { fn log(m) { resume(()) } } in match b {
+        true => || log("late"),
+        false => || print(1),
+    }
+}
+fn via_if(b: bool) {
+    let f = handle Log { fn log(m) { resume(()) } } in {
+        if b { || log("late") } else { || print(1) }
+    }
+}
+fn via_clause_value() {
+    let f = handle Get { fn get(g) { g } } in {
+        let h = get(|| print(1))
+        h
+    }
+}
+fn via_same_handler_clause() {
+    // The clause of Get gives back the closure that performs through Log... Log is outside here.
+    handle Log { fn log(m) { resume(()) } } in {
+        let f = handle Get { fn get(g) { g } } in get(|| log("in"))
+        f()
+    }
+}
+fn via_get_own() {
+    // The clause of Get gets a closure that performs through Get itself and returns it.
+    effect_get_own()
+}
+fn effect_get_own() {
+    let f = handle Get { fn get(g) { g } } in get(|| { let x = get(|| print(2)) })
+}

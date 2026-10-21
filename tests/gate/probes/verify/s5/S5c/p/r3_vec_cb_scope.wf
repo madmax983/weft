@@ -1,0 +1,15 @@
+struct Stats { count: u64 }
+fn twice(g: fn()) { g()
+ g() }
+fn s_vec(st: &Stats) / mut(st), async {
+    scope { s =>
+        let v = Vec.new()
+        v.push(|| { s.spawn(|| { st.count += 1 }); () })
+        twice(v[0])
+    }
+}
+fn main() / async {
+    let st = Stats { count: 0 }
+    s_vec(&st)
+    print(st.count)
+}

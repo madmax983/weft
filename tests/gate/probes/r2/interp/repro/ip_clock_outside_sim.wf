@@ -1,0 +1,15 @@
+// A task outside the simulation reads the clock while sim.run runs in its sibling.
+test "clock of a task outside the simulation" {
+    scope { s =>
+        s.spawn(|| {
+            sleep(12.ms)
+            print("outside at 12 ms: {Clock.now()}")
+            sleep(8.ms)
+            print("outside at 20 ms: {Clock.now()}")
+        })
+        s.spawn(|| {
+            sleep(13.ms)
+            sim.run(seed: 1) { sleep(30.ms) }
+        })
+    }
+}

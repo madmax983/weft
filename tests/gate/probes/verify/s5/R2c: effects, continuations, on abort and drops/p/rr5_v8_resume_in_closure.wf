@@ -1,0 +1,28 @@
+// The clause resumes through a closure; the body's local ends before it returns.
+struct Entity { hp: i32 }
+effect Peek { fn peek(e: &Entity) }
+fn via_closure() {
+    handle Peek {
+        fn peek(e) {
+            let k = || resume(())
+            k()
+            print(e.hp)
+        }
+    } in {
+        let local = Entity { hp: 1 }
+        peek(&local)
+    }
+}
+fn via_callee() {
+    handle Peek {
+        fn peek(e) {
+            call_it(|| resume(()))
+            print(e.hp)
+        }
+    } in {
+        let local = Entity { hp: 1 }
+        peek(&local)
+    }
+}
+fn call_it(f: fn()) { f() }
+fn main() { via_closure() }

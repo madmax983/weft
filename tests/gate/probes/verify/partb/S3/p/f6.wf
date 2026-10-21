@@ -1,0 +1,28 @@
+// weft: library
+fn v1_closure() / log {
+    handle Log { fn info(m) { let f = || log.info(m); f(); resume(()) } } in log.info("x")
+}
+fn v3_other_effect() / log, clock {
+    handle Log { fn info(m) { sleep(1.ms); resume(()) } } in log.info("x")   // W0801
+}
+fn v5_other_clause() / log {
+    handle Log { fn info(m) { resume(()) } fn warn(m) { log.warn(m); resume(()) } } in log.info("x")
+}
+fn v8_param(f: fn(String) / log) / log {
+    handle Log { fn info(m) { f(m); resume(()) } } in log.info("x")
+}
+fn v10_inner_in_clause() / log {
+    handle Log {    // W0801
+        fn info(m) {
+            handle Log { fn info(x) { resume(()) } } in log.info(m)     // W0801
+            resume(())
+        }
+    } in log.info("x")
+}
+fn v11_outer_closure() / log {
+    let f = |m: String| log.info(m)
+    handle Log { fn info(m) { f(m); resume(()) } } in log.info("x")
+}
+fn v12_unknown(k: fn()) {
+    handle Log { fn info(m) { k(); resume(()) } } in log.info("x")    // W0801? k has no row
+}

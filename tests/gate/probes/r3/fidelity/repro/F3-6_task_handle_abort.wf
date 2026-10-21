@@ -1,0 +1,17 @@
+// A task handle has `on abort` (the prelude). Its result is a linear `Tx`
+// with no `on abort`. An abort while the handle is live drops the result.
+effect Stop { fn stop() }
+linear struct Tx { id: u64 }
+fn begin() -> Tx { Tx { id: 1 } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn body() / Stop, async, clock {
+    scope { s =>
+        let t = s.spawn(|| begin())
+        sleep(5.ms)
+        stop()
+        commit(t.join())
+    }
+}
+fn main() / async, clock {
+    handle Stop { fn stop() { () } } in body()
+}

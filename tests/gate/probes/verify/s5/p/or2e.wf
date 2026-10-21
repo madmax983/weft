@@ -1,0 +1,47 @@
+fn take(v: Vec<u64>) -> usize { v.len() }
+// The outer closure reads the outer `v`; an inner closure moves a local `v` of
+// the outer closure.
+fn shadow_inner() {
+    let v = Vec.new()
+    v.push(1)
+    let f = || {
+        print(v.len())
+        let v = Vec.new()
+        let g = || print(take(v))
+        g()
+    }
+    f()
+    print(v.len())
+    f()
+}
+// The same with a clause in the outer closure.
+effect Go { fn go() }
+fn shadow_clause() {
+    let v = Vec.new()
+    v.push(1)
+    let f = || {
+        print(v.len())
+        let v = Vec.new()
+        handle Go { fn go() { print(take(v))
+ resume(()) } } in go()
+    }
+    f()
+    print(v.len())
+}
+// The inner closure moves the outer `v` after a shadow in a block.
+fn shadow_block() {
+    let v = Vec.new()
+    v.push(1)
+    let f = || {
+        {
+            let v = Vec.new()
+            print(v.len())
+        }
+        let g = || print(take(v))
+        g()
+    }
+    f()
+}
+fn main() {
+    shadow_inner()
+}

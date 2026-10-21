@@ -1,0 +1,6 @@
+fn apply<T>(x: T, f: fn(T) -> T) -> T { f(x) }
+fn main() {
+    let inc = |v| v + 200
+    let a: u8 = 100
+    print(apply(a, inc))
+}

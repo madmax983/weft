@@ -1,0 +1,18 @@
+struct Entity { hp: i32, kids: Vec<Entity> }
+struct World { entities: Vec<Entity>, other: Vec<Entity> }
+effect Hit { fn hit_op(w: &World, a: &Entity in w.entities[]) }
+fn attack(w: &World, a: &Entity in w.entities[]) / mut(a) { a.hp -= 1; print(w.other.len()) }
+fn local_op_ok(world: &World) / mut(world.entities[]) {
+    handle Hit { fn hit_op(w, a) { a.hp -= 1; print(w.other.len()); resume(()) } } in {
+        hit_op(world, &world.entities[0])
+    }
+}
+fn fn_ok(world: &World) / mut(world.entities[]) {
+    attack(world, &world.entities[0])
+}
+fn main() {
+    let w = World { entities: Vec.new(), other: Vec.new() }
+    w.entities.push(Entity { hp: 1, kids: Vec.new() })
+    local_op_ok(&w)
+    fn_ok(&w)
+}

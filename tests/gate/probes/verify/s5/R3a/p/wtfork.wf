@@ -1,0 +1,24 @@
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn first(v: &Vec<u64>) -> &u64 in v[] { &v[0] }
+fn apply<T>(f: fn() -> T) -> T { f() }
+
+fn timeout_temp() / async, clock, fail {
+    let r = with_timeout(1.s) { first(&mk_v()) }
+    print(r + 1)
+}
+fn fork_temp() / async, par {
+    let (a, b) = fork(|| first(&mk_v()), || 1)
+    print(a + 1)
+}
+fn closure_temp() {
+    let r = apply(|| first(&mk_v()))
+    print(r + 1)
+}
+fn timeout_tail_move() / async, clock, fail {
+    let v = mk_v()
+    with_timeout(1.s) { v }
+    print(v.len())
+}
+fn main() / async, clock {
+    handle Fail { fn fail(m) { print(m) } } in timeout_temp()
+}

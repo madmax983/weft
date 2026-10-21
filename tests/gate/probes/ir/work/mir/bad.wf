@@ -1,0 +1,8 @@
+struct Entity { hp: u64 }
+struct World { entities: Vec<Entity> }
+fn bad(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    world.entities.push(Entity { hp: 1 })
+    print(first.hp)
+}
+fn main() {}

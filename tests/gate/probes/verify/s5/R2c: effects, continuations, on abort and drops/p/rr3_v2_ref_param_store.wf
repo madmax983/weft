@@ -1,0 +1,9 @@
+// The clause stores a resuming closure through a reference parameter of the operation.
+struct H { f: fn() }
+effect Reg { fn reg(h: &H) }
+fn main() {
+    let h = H { f: || print(0) }
+    handle Reg { fn reg(h) { h.f = || resume(()) } } in reg(&h)
+    let g = h.f
+    g()
+}

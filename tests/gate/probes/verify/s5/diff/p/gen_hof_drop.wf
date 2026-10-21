@@ -1,0 +1,6 @@
+linear struct Lock { id: u64 }
+fn lock() -> Lock { Lock { id: 1 } }
+fn drop_it<T>(x: T) { }
+fn via_hof(k: fn(Lock)) { k(lock()) }
+fn caller_hof() { via_hof(drop_it) }
+fn main() { caller_hof() }

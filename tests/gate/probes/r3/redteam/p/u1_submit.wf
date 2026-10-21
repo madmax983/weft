@@ -1,0 +1,17 @@
+struct Stats { count: u64 }
+fn submit(s: &Scope, f: fn()) { s.spawn(f) }
+fn submit_inc(s: &Scope, st: &Stats) / mut(st) { s.spawn(|| st.count += 1) }
+fn caller_fn_arg(st: &Stats) / mut(st), async, clock {
+    scope { s =>
+        submit(&s, || { sleep(1.ms); st.count += 1 })
+        print(st.count)   //~ W0405
+    }
+}
+fn caller_ref_arg(st: &Stats) / mut(st), async, clock {
+    scope { s =>
+        submit_inc(&s, st)
+        print(st.count)   //~ W0405
+    }
+}
+test "caller_fn_arg" { let st = Stats { count: 0 }; caller_fn_arg(&st) }
+test "caller_ref_arg" { let st = Stats { count: 0 }; caller_ref_arg(&st) }

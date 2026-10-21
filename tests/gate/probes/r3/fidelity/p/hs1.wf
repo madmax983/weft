@@ -1,0 +1,5 @@
+fn main(env: Env) / io {
+    let count = 0
+    http.serve(env.net.listen(":8080"), |req| { count += 1; Response.text("ok") })   // expected W0405 or W0403
+    print(count)
+}

@@ -1,0 +1,9 @@
+struct E { hp: u64 }
+fn drop_rc(r: Rc<E>) {}
+fn main() {
+    let a = Rc.new(E { hp: 1 })
+    let b = a.clone()
+    let r = &b.hp
+    drop_rc(b)
+    print(r + 1)
+}

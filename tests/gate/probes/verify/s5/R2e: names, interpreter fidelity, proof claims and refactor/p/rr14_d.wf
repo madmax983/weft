@@ -1,0 +1,9 @@
+fn a() { let x = 5; let y = x - 10; print(y) }
+fn b() { let x = 5; let y = x - 10; let z: u64 = 3; print(y); let w = x + z; print(w) }
+fn c() { let v = [1, 2, 3]; let i = 0; let j = i - 1; print(j) }
+fn d() { let x = 200; let y: u8 = 100; print(x + 100); let z: u8 = x; print(z + y) }
+fn e() -> u8 { let x = 250; let y = x + 10; let z: u16 = y; 1 }
+fn main() {
+    a()
+    b()
+}

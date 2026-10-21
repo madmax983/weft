@@ -1,0 +1,27 @@
+effect Stop { fn stop() }
+effect Ask { fn ask() -> u64 }
+linear struct I { f: fn() }
+    on abort = undo_field
+fn run(g: fn()) { g() }
+fn undo_field(i: I) {   // expected W0118: calls a function value that it does not know
+    let I(f) = i
+    run(f)
+}
+linear struct J { o: Option<fn()> }
+    on abort = undo_opt
+fn undo_opt(j: J) {   // expected W0118
+    let J(o) = j
+    match o { Some(f) => f(), None => {} }
+}
+fn body() / Stop, Ask {
+    let i = I { f: || print(ask()) }
+    let j = J { o: Some(|| print(ask())) }
+    stop()
+    let I(f) = i
+    let J(o) = j
+}
+fn main() {
+    handle Ask { fn ask() { resume(5) } } in {
+        handle Stop { fn stop() { () } } in body()
+    }
+}

@@ -1,0 +1,18 @@
+effect Ask { fn ask() -> u64 }
+
+fn main() / io {
+    handle Fail { fn fail(m) { print("handler: {m}") } } in {
+        handle Ask { fn ask() { sleep(20.ms); 0 } } in {
+            scope { s =>
+                s.spawn(|| { sleep(5.ms); fail("child1 failed") })
+                ask()
+            }
+        }
+        scope { s2 =>
+            s2.spawn(|| { sleep(5.ms); fail("child2 failed") })
+            sleep(10.ms)
+            print("goes on")
+        }
+    }
+    print("end")
+}

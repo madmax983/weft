@@ -1,0 +1,2 @@
+fn a(x: u64) -> u64 { x }
+fn f() { let g = a; let h = if true { g } else { |x: u64| x }; let k = match 1 { 0 => h, _ => a }; k(1) }

@@ -1,0 +1,7 @@
+linear struct Tx { id: u64 }
+fn begin() -> Tx { Tx { id: 1 } }
+fn main() / async {
+    scope { s =>
+        s.spawn(|| begin())   // expected W0601: the scope drops the linear result
+    }
+}

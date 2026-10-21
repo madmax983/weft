@@ -1,0 +1,12 @@
+struct W { v: Vec<i32> }
+fn keep(w: &W) {}
+fn clr(w: &W) / mut(w) { w.v.clear() }
+fn main() {
+    let w = W { v: Vec.new() }
+    w.v.push(1)
+    let g = keep
+    g = clr
+    let first = &w.v[0]
+    g(&w)
+    print(first)
+}

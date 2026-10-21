@@ -1,0 +1,119 @@
+struct Entity { hp: i32 }
+impl Entity { fn new() -> Entity { Entity { hp: 10 } } }
+struct World { entities: Vec<Entity>, score: u64 }
+struct CbW { f: fn(&World) }
+impl World {
+    fn run_with(self: &World, f: fn(&World)) { f(self) }
+}
+
+fn apply(f: fn(&World), w: &World) { f(w) }
+fn apply_vec(f: fn(&Vec<Entity>), w: &World) { f(&w.entities) }
+fn apply_copy(f: fn(&World), w: &World) { let g = f; g(w) }
+fn apply_nested(f: fn(&World), w: &World) { let h = || f(w); h() }
+fn apply_if(f: fn(&World), w: &World, c: bool) { if c { f(w) } }
+fn apply_loop(f: fn(&World), w: &World, n: u64) { let i = 0; while i < n { f(w); i += 1 } }
+fn apply_method(f: fn(&World), w: &World) { w.run_with(f) }
+fn apply_gen<T>(f: fn(&T), x: &T) { f(x) }
+fn apply_cb(cb: CbW, w: &World) { let g = cb.f; g(w) }
+fn apply_two(f: fn(&World, &Entity), w: &World) { f(w, &w.entities[0]) }
+fn apply_ret(f: fn(&World) -> u64, w: &World) -> u64 { f(w) }
+
+// v1: the callee lends a field of its parameter.
+fn lend_field(world: &World) {
+    let first = &world.entities[0]
+    apply_vec(|v| v.clear(), world)
+    print(first.hp)   // expect W0301
+}
+// v2: the callee copies the parameter into a local.
+fn lend_copy(world: &World) {
+    let first = &world.entities[0]
+    apply_copy(|x| x.entities.clear(), world)
+    print(first.hp)   // expect W0301
+}
+// v3: the callee calls the parameter inside its own closure.
+fn lend_nested(world: &World) {
+    let first = &world.entities[0]
+    apply_nested(|x| x.entities.clear(), world)
+    print(first.hp)   // expect W0301
+}
+// v4: under `if` and in a loop.
+fn lend_if(world: &World, c: bool) {
+    let first = &world.entities[0]
+    apply_if(|x| x.entities.clear(), world, c)
+    print(first.hp)   // expect W0301
+}
+fn lend_loop(world: &World) {
+    let first = &world.entities[0]
+    apply_loop(|x| x.entities.clear(), world, 2)
+    print(first.hp)   // expect W0301
+}
+// v5: through a method that the callee calls.
+fn lend_method(world: &World) {
+    let first = &world.entities[0]
+    apply_method(|x| x.entities.clear(), world)
+    print(first.hp)   // expect W0301
+}
+// v6: a generic higher-order function.
+fn lend_gen(world: &World) {
+    let first = &world.entities[0]
+    apply_gen(|x: &World| x.entities.clear(), world)
+    print(first.hp)   // expect W0301
+}
+// v7: the closure in a struct field.
+fn lend_struct(world: &World) {
+    let first = &world.entities[0]
+    apply_cb(CbW { f: |x| x.entities.clear() }, world)
+    print(first.hp)   // expect W0301
+}
+// v8: the callee gives two overlapping places to the closure.
+fn lend_two(world: &World) {
+    apply_two(|x, e| { x.entities.clear(); print(e.hp) }, world)   // expect an error (use after free in the closure)
+}
+// v9: a closure with a result.
+fn lend_ret(world: &World) -> u64 {
+    let first = &world.entities[0]
+    let n = apply_ret(|x| { x.entities.clear(); 1 }, world)
+    print(first.hp)   // expect W0301
+    n
+}
+// v10: a named closure passed later.
+fn lend_named(world: &World) {
+    let first = &world.entities[0]
+    let f = |x: &World| x.entities.clear()
+    apply(f, world)
+    print(first.hp)   // expect W0301
+}
+// v11: a public function must state the mutation.
+pub fn lend_pub(world: &World) {   // expect W0701
+    apply(|x| x.entities.clear(), world)
+}
+// v12: through @ shared.
+fn lend_shared(world: &World @ shared) {
+    apply(|x| x.entities.clear(), world)   // expect W0402
+}
+// v13: the direct call of a closure with two parameters.
+fn direct_two(world: &World, other: &World) {
+    let first = &world.entities[0]
+    let f = |a: &World, b: &World| b.entities.clear()
+    f(other, world)
+    print(first.hp)   // expect W0301
+}
+// v14: a nested closure that mutates through the parameter of the outer closure.
+fn closure_in_closure(world: &World) {
+    let first = &world.entities[0]
+    apply(|x| { let g = || x.entities.clear(); g() }, world)
+    print(first.hp)   // expect W0301
+}
+// v15: the closure passes its parameter to a callee that mutates it.
+fn clears(w: &World) / mut(w.entities) { w.entities.clear() }
+fn closure_calls(world: &World) {
+    let first = &world.entities[0]
+    apply(|x| clears(x), world)
+    print(first.hp)   // expect W0301
+}
+// v16: the closure passes its parameter on to another higher-order call.
+fn closure_hof(world: &World) {
+    let first = &world.entities[0]
+    apply(|x| apply(|y| y.entities.clear(), x), world)
+    print(first.hp)   // expect W0301
+}

@@ -1,0 +1,42 @@
+struct Stats { count: u64 }
+struct Job { f: fn() }
+struct Wrap<T> { x: T }
+fn run_job(j: &Job) { let g = j.f; g() }
+fn run_wrap(w: Wrap<fn()>) { let g = w.x; g() }
+fn run_vec(v: &Vec<fn()>) { let g = v[0]; g() }
+effect Go { fn go() }
+fn stored_field(st: &Stats) / mut(st), async, clock {
+    scope { s =>
+        let j = Job { f: || { s.spawn(|| { sleep(1.ms); st.count += 1 }); () } }
+        run_job(&j)
+        print(st.count)   //~ W0405
+    }
+}
+fn stored_generic(st: &Stats) / mut(st), async, clock {
+    scope { s =>
+        let w = Wrap { x: || { s.spawn(|| { sleep(1.ms); st.count += 1 }); () } }
+        run_wrap(w)
+        print(st.count)   //~ W0405
+    }
+}
+fn stored_vec(st: &Stats) / mut(st), async, clock {
+    scope { s =>
+        let v = Vec.new()
+        v.push(|| { s.spawn(|| { sleep(1.ms); st.count += 1 }); () })
+        run_vec(&v)
+        print(st.count)   //~ W0405
+    }
+}
+fn via_clause(st: &Stats) / mut(st), async, clock {
+    scope { s =>
+        handle Go { fn go() { s.spawn(|| { sleep(1.ms); st.count += 1 }); resume(()) } } in {
+            go()
+            print(st.count)   //~ W0405
+        }
+    }
+}
+fn mk() -> Stats { Stats { count: 0 } }
+test "stored_field" { let st = mk(); stored_field(&st) }
+test "stored_generic" { let st = mk(); stored_generic(&st) }
+test "stored_vec" { let st = mk(); stored_vec(&st) }
+test "via_clause" { let st = mk(); via_clause(&st) }

@@ -1,0 +1,25 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+// The closure gives `r` a new value only when `c` is true. A call of the
+// closure must not count as a new value of `r` on every path.
+fn f(world: &World, other: &World, c: bool) / mut(world.entities) {
+    let r = &world.entities[0]
+    let set = || { if c { r = &other.entities[0] } }
+    world.entities.push(Entity { hp: 1 })
+    set()
+    print(r.hp)   //~ W0301
+}
+fn g(world: &World, other: &World, c: bool) / mut(world.entities) {
+    let r = &world.entities[0]
+    world.entities.push(Entity { hp: 1 })
+    handle Log2 { fn note(n) { if c { r = &other.entities[0] }; resume(()) } } in note(1)
+    print(r.hp)   //~ W0301
+}
+effect Log2 { fn note(n: u64) }
+fn main() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    let o = World { entities: Vec.new() }
+    o.entities.push(Entity { hp: 2 })
+    f(&w, &o, false)
+}

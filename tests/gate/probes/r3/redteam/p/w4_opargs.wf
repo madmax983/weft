@@ -1,0 +1,29 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Put { fn put(o: Option<&Entity>) }
+effect PutT { fn put_t(t: (&Entity, u64)) }
+effect PutV { fn put_v(v: &Vec<&Entity>) }
+fn keep_opt(world: &World) / mut(world.entities) {
+    let keep = None
+    handle Put { fn put(o) { keep = o; resume(()) } } in put(Some(&world.entities[0]))
+    world.entities.clear()
+    match keep { Some(e) => print(e.hp), None => {} }   //~ W0301
+}
+fn keep_tuple(world: &World, d: &Entity) / mut(world.entities) {
+    let keep = d
+    handle PutT { fn put_t(t) { let (e, n) = t; keep = e; resume(()) } } in put_t((&world.entities[0], 1))
+    world.entities.clear()
+    print(keep.hp)   //~ W0301
+}
+fn keep_held(world: &World, d: &Entity) / mut(world.entities) {
+    let keep = d
+    let rs = Vec.new()
+    rs.push(&world.entities[0])
+    handle PutV { fn put_v(v) { keep = v[0]; resume(()) } } in put_v(&rs)
+    world.entities.clear()
+    print(keep.hp)   //~ W0301
+}
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+test "keep_opt" { let w = mkw(); keep_opt(&w) }
+test "keep_tuple" { let w = mkw(); let d = Entity { hp: 2 }; keep_tuple(&w, &d) }
+test "keep_held" { let w = mkw(); let d = Entity { hp: 2 }; keep_held(&w, &d) }

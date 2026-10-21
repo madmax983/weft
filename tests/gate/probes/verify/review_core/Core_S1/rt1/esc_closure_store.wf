@@ -1,0 +1,20 @@
+// ESCAPE (RT1): a closure stores a reference into its own local in a captured
+// outer reference. The local goes out of scope when the closure returns.
+effect Log { fn log(m: String) }
+fn main() {
+    let keep: Vec<u64> = Vec.new()
+    keep.push(1)
+    let q = &keep[0]
+    let g = || { let v = Vec.new(); v.push(5); q = &v[0]; 0 }
+    let z = g()
+    print(q)      // expected W0301: v went out of scope at the end of g
+    let p = &keep[0]
+    let h = |v: Vec<u64>| { p = &v[0]; 0 }
+    let w: Vec<u64> = Vec.new()
+    w.push(6)
+    let y = h(w)
+    print(p)      // expected W0301: the by-value parameter v of h went out of scope
+    let s = &keep[0]
+    handle Log { fn log(m) { let u = Vec.new(); u.push(7); s = &u[0]; resume(()) } } in log("x")
+    print(s)      // expected W0301: u went out of scope at the end of the clause
+}

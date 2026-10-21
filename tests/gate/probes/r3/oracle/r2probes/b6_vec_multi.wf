@@ -1,0 +1,10 @@
+effect Pick { multi fn pick() -> bool }
+fn take(v: Vec<u64>) -> usize { v.len() }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let v = Vec.new()
+        v.push(1)
+        let r = &v[0]
+        if pick() { print(take(v)) } else { print(r + 1) }
+    }
+}

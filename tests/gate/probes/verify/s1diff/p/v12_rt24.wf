@@ -1,0 +1,55 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Peek { fn peek(e: &Entity, n: u64) }
+enum Two { A(&Entity, u64) }
+fn grow(w: &World) -> u64 / mut(w.entities) { w.entities.push(Entity { hp: 1 }); 0 }
+fn show(e: &Entity, n: u64) { print(e.hp) }
+
+// 1. A named reference rebound by a later argument. The old value is passed.
+fn rebound_later(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    show(first, { world.entities.push(Entity { hp: 1 }); first = &world.entities[0]; 0 })
+}
+// 2. An effect operation argument.
+fn op_arg(world: &World) / mut(world.entities), Peek {
+    peek(&world.entities[0], grow(world))
+}
+// 3. A variant constructor.
+fn variant_arg(world: &World) / mut(world.entities) {
+    let t = Two.A(&world.entities[0], grow(world))
+    match t { Two.A(e, n) => print(e.hp) }
+}
+// 4. Interpolation: a later part mutates after an earlier part reads through a temp.
+fn interp(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    world.entities.push(Entity { hp: 1 })
+    print("{first.hp}")
+}
+// 5. A use in a while condition after a body mutation.
+fn while_cond(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    while first.hp > 0 {
+        world.entities.push(Entity { hp: 1 })
+    }
+}
+// 6. A use in a for loop body tail.
+fn for_tail(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    for i in 0..3 {
+        world.entities.push(Entity { hp: 1 })
+        first.hp
+    }
+}
+// 7. else-if chain tail.
+fn else_if(world: &World, a: bool, b: bool) -> i32 / mut(world.entities) {
+    let first = &world.entities[0]
+    if a { 1 } else if b { world.entities.push(Entity { hp: 1 }); first.hp } else { 2 }
+}
+// 8. A scope body tail.
+fn scope_tail(world: &World) -> i32 / mut(world.entities), async {
+    let first = &world.entities[0]
+    scope { s =>
+        world.entities.push(Entity { hp: 1 })
+        first.hp
+    }
+}

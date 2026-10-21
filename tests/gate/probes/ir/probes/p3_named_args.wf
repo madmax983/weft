@@ -1,0 +1,6 @@
+fn a() -> u64 { print("a"); 1 }
+fn b() -> u64 { print("b"); 2 }
+fn f(p: u64, q: u64) -> u64 { p + q }
+fn main() {
+    print(f(q: b(), p: a()))
+}

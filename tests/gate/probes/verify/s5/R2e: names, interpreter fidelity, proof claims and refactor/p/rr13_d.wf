@@ -1,0 +1,6 @@
+fn body() {}
+fn main() {
+    sim.run(seed: 1, workers: 2, body: body)
+    sim.run(seed: 1, nope: 2) { print(1) }
+    sim.run(workers: 2, seed: 3) { print(2) }
+}

@@ -1,0 +1,16 @@
+effect Lg { fn lg(msg: String) }
+fn run_all(v: &Vec<fn()>) { let g = v[0]
+ g() }
+
+fn stored_abort_vec() {
+    let f = || print(0)
+    handle Lg { fn lg(m) { print(m) } } in {
+        let v = Vec.new()
+        v.push(|| lg("y"))
+        f = || lg("x")
+        run_all(&v)
+        f = || print(1)
+    }
+    f()
+}
+fn main() { stored_abort_vec() }

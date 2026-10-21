@@ -1,0 +1,74 @@
+struct C { k: u64, j: u64 }
+
+fn show_later(r: &u64) / io { sleep(1.ms); print(r) }
+
+// The task borrows the kept copy variable and uses the reference after the variable ends.
+fn task_ref() / io {
+    scope { s =>
+        {
+            let n = 5
+            s.spawn(|| { let r = &n; sleep(1.ms); print(r) })
+        }
+        print(1)
+    }
+}
+
+// Through a captured closure.
+fn via_closure() / io {
+    scope { s =>
+        {
+            let n = 5
+            let g = || { let r = &n; sleep(1.ms); print(r) }
+            s.spawn(|| g())
+        }
+        print(1)
+    }
+}
+
+// Through a callee that holds the reference over a suspension.
+fn via_callee() / io {
+    scope { s =>
+        {
+            let n = 5
+            s.spawn(|| show_later(&n))
+        }
+        print(1)
+    }
+}
+
+// A copy struct: the task borrows a field.
+fn struct_field() / io {
+    scope { s =>
+        {
+            let c = C { k: 1, j: 2 }
+            s.spawn(|| { let r = &c.k; sleep(1.ms); print(r) })
+        }
+        print(1)
+    }
+}
+
+// The loop variable: the task borrows it.
+fn loop_ref() / io {
+    scope { s =>
+        let i = 0
+        while i < 2 {
+            let k = i
+            s.spawn(|| { let r = &k; sleep(1.ms); print(r) })
+            i += 1
+        }
+    }
+}
+
+// Clean control: the task reads the kept value only.
+fn task_value() / io {
+    scope { s =>
+        {
+            let n = 5
+            s.spawn(|| { sleep(1.ms); print(n) })
+        }
+        print(1)
+    }
+}
+
+fn main() / io {
+}

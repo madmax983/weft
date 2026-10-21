@@ -1,0 +1,49 @@
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(id) = t; print("commit {id}") }
+struct Fr: !Move { buf: [u64; 2], cur: &u64 in self.buf[] }
+
+fn tail_vec() {
+    let v: Vec<u64> = Vec.new()
+    v
+}
+fn tail_vec_typed() -> u64 {
+    let v: Vec<u64> = Vec.new()
+    v
+}
+// A tail place in a block in statement position.
+fn block_tail() {
+    let t = Tx { id: 1 }
+    {
+        t
+    }
+    commit(t)
+}
+// An `if` whose branch tails are places, in statement position.
+fn if_tail(c: bool) {
+    let t = Tx { id: 1 }
+    if c { t } else { t }
+    commit(t)
+}
+// A tail place of a loop body.
+fn loop_tail() {
+    let t = Tx { id: 1 }
+    for i in 0..2 {
+        t
+    }
+    commit(t)
+}
+// A tail place of an immovable value in a nested block.
+fn immov_block_tail() {
+    let f = Fr { buf: [1, 2] }
+    f.cur = &f.buf[1]
+    {
+        f
+    }
+    print(f.cur)
+}
+fn main() {
+    block_tail()
+    if_tail(true)
+    loop_tail()
+    immov_block_tail()
+}

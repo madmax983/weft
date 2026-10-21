@@ -1,0 +1,24 @@
+fn consume<T>(x: T) -> u64 { 1 }
+fn gen<T>(x: T) {
+    let f = || print(consume(x))
+    f()
+    print(consume(x))
+}
+fn gen_new<T>(x: T, y: T) {
+    let f = || print(consume(x))
+    x = y
+    f()
+    print(consume(x))
+}
+fn t_gen() {
+    let v: Vec<u64> = Vec.new()
+    gen(v)
+}
+fn t_gen_new() {
+    let v: Vec<u64> = Vec.new()
+    let w: Vec<u64> = Vec.new()
+    gen_new(v, w)
+}
+fn main() {
+    t_gen()
+}

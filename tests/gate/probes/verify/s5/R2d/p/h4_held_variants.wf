@@ -1,0 +1,41 @@
+struct Job { f: fn() }
+
+fn bg_job(j: Job) / async {
+    scope { s =>
+        s.spawn(j.f)
+        s.spawn(j.f)
+    }
+}
+
+fn make_fn(n: &u64) -> fn() / mut(n) {
+    || n += 1
+}
+
+fn make_job(n: &u64) -> Job / mut(n) {
+    Job { f: || n += 1 }
+}
+
+// The struct is made here from a returned closure.
+fn wrap_returned() / async {
+    let n = 0
+    let f = make_fn(&n)
+    bg_job(Job { f: f })
+}
+
+// The struct comes from a callee and goes through a local.
+fn job_local() / async {
+    let n = 0
+    let j = make_job(&n)
+    let k = j
+    bg_job(k)
+}
+
+// The struct comes from a callee, given straight to the task callee.
+fn job_direct() / async {
+    let n = 0
+    bg_job(make_job(&n))
+}
+
+fn main() / async {
+    wrap_returned()
+}

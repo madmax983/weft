@@ -1,0 +1,10 @@
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct Nest<T> { x: T, next: Option<Box<Nest<Box<T>>>> }
+
+fn nest() {
+    let g = Nest { x: 1, next: None }
+    print(g.x)
+}
+fn main() {
+    nest()
+}

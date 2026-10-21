@@ -1,0 +1,7 @@
+fn d1(a: i32, b: i32) -> i32 { a - b }
+fn d2(b: i32, a: i32) -> i32 { a - b }
+fn main() {
+    let g = d1
+    let r = &g
+    print(r(b: 10, a: 3))
+}

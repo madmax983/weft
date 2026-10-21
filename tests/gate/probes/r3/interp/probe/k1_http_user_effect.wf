@@ -1,0 +1,9 @@
+// The handler of http.serve performs a user effect that a handler around the
+// call of serve handles. Each request runs as a task.
+effect Ask { fn ask() -> u64 }
+
+fn h(req: Request) -> Response / Ask { Response.text("v={ask()}") }
+
+fn main(env: Env) / io {
+    handle Ask { fn ask() { resume(5) } } in http.serve(env.net.listen(":18441"), h)
+}

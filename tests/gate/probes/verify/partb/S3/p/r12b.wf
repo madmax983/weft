@@ -1,0 +1,59 @@
+struct Stats { count: u64 }
+struct Holder { f: fn() -> u64 }
+fn each(f: fn()) { let i = 0; while i < 3 { i += 1; f() } }
+fn run_twice(f: fn() -> u64) -> u64 { f() + f() }
+
+// A. direct spawn in a loop
+fn loop_direct(st: &Stats) / mut(st), async {
+    scope { s =>
+        let i = 0
+        while i < 3 { i += 1; s.spawn(|| st.count += 1) }
+    }
+}
+// B. closure that spawns called in a loop
+fn loop_closure(st: &Stats) / mut(st), async {
+    scope { s =>
+        let sp = || { s.spawn(|| st.count += 1) }
+        let i = 0
+        while i < 3 { i += 1; sp() }
+    }
+}
+// C. callee that calls its param in a loop
+fn loop_callee(st: &Stats) / mut(st), async {
+    scope { s =>
+        each(|| { s.spawn(|| st.count += 1) })
+    }
+}
+// C2. callee that calls its param twice
+fn twice_callee(st: &Stats) / mut(st), async {
+    scope { s =>
+        run_twice(|| { s.spawn(|| st.count += 1); 0 })
+    }
+}
+// D. outer closure defines but does not call the spawning closure: should be clean
+fn not_called_inner(st: &Stats) / mut(st), async {
+    scope { s =>
+        let a = || { let b = || { s.spawn(|| st.count += 1); 0 }; 0 }
+        a()
+        print(st.count)
+    }
+}
+// E. field via local
+fn in_field(st: &Stats) / mut(st), async {
+    scope { s =>
+        let h = Holder { f: || { s.spawn(|| st.count += 1); 0 } }
+        let f = h.f
+        let k = f()
+        print(st.count)   // W0405
+    }
+}
+// F. vec via get
+fn in_vec(st: &Stats) / mut(st), async {
+    scope { s =>
+        let v: Vec<fn() -> u64> = Vec.new()
+        v.push(|| { s.spawn(|| st.count += 1); 0 })
+        let f = v.get(0)
+        let k = f()
+        print(st.count)   // W0405
+    }
+}

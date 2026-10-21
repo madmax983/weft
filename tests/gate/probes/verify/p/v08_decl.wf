@@ -1,0 +1,29 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity>, score: u64 }
+fn each(f: fn(&Entity), w: &World) {
+    for e in w.entities[] { f(e) }
+}
+fn use_each2(world: &World) / mut(world.score) {
+    each(|e| e.hp += 1, world)
+}
+pub fn use_each3(world: &World) {
+    each(|e| e.hp += 1, world)
+}
+fn shared_each(world: &World @ shared) {
+    each(|e| e.hp += 1, world)
+}
+effect Bump { fn bump(v: &Vec<u64>) }
+pub fn clause_mut(v: &Vec<u64>) {
+    handle Bump { fn bump(x) { x.push(2); resume(()) } } in bump(v)
+}
+fn clause_shared(v: &Vec<u64> @ shared) {
+    handle Bump { fn bump(x) { x.push(2); resume(()) } } in bump(v)
+}
+pub fn direct_pub(world: &World) {
+    let f = |x: &World| x.entities.push(Entity { hp: 1 })
+    f(world)
+}
+fn direct_shared(world: &World @ shared) {
+    let f = |x: &World| x.entities.push(Entity { hp: 1 })
+    f(world)
+}

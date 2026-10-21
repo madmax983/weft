@@ -1,0 +1,2 @@
+struct W<T> { x: T }
+fn f() { let w = W { x: W { x: W { x: 1 } } }; print(w.x.x.x) }

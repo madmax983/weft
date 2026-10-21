@@ -1,0 +1,50 @@
+effect Log { fn log(msg: String) }
+effect Note { fn note(x: u64) }
+// The handler clause mutates via a callee.
+fn add(v: &Vec<String>, m: String) / mut(v) { v.push(m) }
+fn clause_callee() {
+    let lines = Vec.new()
+    lines.push("a")
+    handle Log { fn log(msg) { add(&lines, msg); resume(()) } } in {
+        let first = &lines[0]
+        log("x")
+        print(first)
+    }
+}
+// The handler clause mutates via a closure.
+fn clause_closure() {
+    let lines = Vec.new()
+    lines.push("a")
+    let f = || lines.clear()
+    handle Log { fn log(msg) { f(); resume(()) } } in {
+        let first = &lines[0]
+        log("x")
+        print(first)
+    }
+}
+// The perform is reached through a function that holds a ref (W0312).
+fn walk(v: &Vec<String>) / Log {
+    for x in v[] { log("x") }
+}
+fn reach() {
+    let lines = Vec.new()
+    lines.push("a")
+    handle Log { fn log(msg) { lines.clear(); resume(()) } } in walk(&lines)
+}
+// The same, but `walk` is reached through a closure.
+fn reach_closure() {
+    let lines = Vec.new()
+    lines.push("a")
+    let w = || walk(&lines)
+    handle Log { fn log(msg) { lines.clear(); resume(()) } } in w()
+}
+// The handled body mutates; the clause holds a ref across resume.
+fn clause_holds() {
+    let v = Vec.new()
+    v.push(1)
+    handle Note { fn note(x) { let r = &v[0]; resume(()); print(r) } } in {
+        v.push(2)
+        note(1)
+        v.clear()
+    }
+}

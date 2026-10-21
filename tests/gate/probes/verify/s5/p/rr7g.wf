@@ -1,0 +1,20 @@
+struct Node { v: u64 }
+// A captured function variable gets a nonportable closure.
+fn late_np() / par {
+    let n = Rc.new(Node { v: 1 })
+    let c = || print(2)
+    let k = || c()
+    c = || print(n.v)
+    fork(|| k(), || print(2))
+}
+// The same, the captured variable is used directly by the branch.
+fn late_np_direct() / par {
+    let n = Rc.new(Node { v: 1 })
+    let c = || print(2)
+    let k = || c()
+    c = || print(n.v)
+    fork(k, || print(2))
+}
+fn main() / par {
+    late_np()
+}

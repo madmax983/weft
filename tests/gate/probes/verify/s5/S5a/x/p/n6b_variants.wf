@@ -1,0 +1,42 @@
+linear struct Lock { id: u64 }
+fn unlock(l: Lock) { print("unlocked")
+ let Lock(i) = l }
+fn lock() -> Lock { print("locked")
+ Lock { id: 1 } }
+struct Holder { o: Option<Lock> }
+enum State { Empty, Full(Lock) }
+fn none_of<T>() -> Option<T> { None }
+
+fn q_part_none() {
+    let h = Holder { o: Some(lock()) }
+    h.o = None
+    let Holder(o) = h
+    match o { Some(l) => unlock(l), None => {} }
+}
+fn q_state() {
+    let s = State.Empty
+    s = State.Full(lock())
+}
+fn q_join_none(c: bool) {
+    let o = Some(lock())
+    if c { match o { Some(l) => unlock(l), None => {} }
+ o = None }
+    o = Some(lock())
+    match o { Some(l) => unlock(l), None => {} }
+}
+fn q_loop_none(n: u64) {
+    let o = None
+    for i in 0..n {
+        o = Some(lock())
+    }
+    o = None
+}
+fn q_scope_none() / async {
+    let o = scope { s => None }
+    o = Some(lock())
+}
+fn q_block_none() {
+    let o = { let x = Some(lock())
+ None }
+}
+fn main() { q_part_none() }

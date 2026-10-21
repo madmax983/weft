@@ -1,0 +1,18 @@
+struct E { hp: u64 }
+extern fn ext(f: fn())
+extern fn ext_ref(f: fn(), x: &u64)
+
+fn rc_to_foreign() {
+    let a = Rc.new(E { hp: 1 })
+    ext(|| print(a.hp))
+}
+
+fn write_to_foreign() {
+    let n = 0
+    ext(|| n += 1)
+    print(n)
+}
+
+fn main() {
+    rc_to_foreign()
+}

@@ -1,0 +1,15 @@
+linear struct Tx { id: u64 }
+effect Ask { fn ask() -> u64 }
+
+
+fn main() {
+    let o1 = None
+    handle Ask { fn ask() { resume(5); print("after") } } in {
+        match o1 {
+            Some(x2) => {
+                let tx3 = Tx { id: 3 }
+            }
+            None => print(0),
+        }
+    }
+}

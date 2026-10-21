@@ -1,0 +1,4 @@
+fn main() {
+    let a: i32 = 100000
+    print(a * a)
+}

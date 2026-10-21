@@ -1,0 +1,22 @@
+fn needs_uniq(es: &[u64] @ uniq) / mut(es) {}
+fn needs_two(a: &[u64] @ uniq, b: &[u64] @ uniq) / mut(a, b) {}
+fn late_alias2(v: &Vec<u64>, w: &Vec<u64>) / mut(v, w) {
+    let (l, r) = v.split_mut(1)
+    let f = || {
+        needs_uniq(l)
+        needs_two(l, r)
+    }
+    let (a, b) = w.split_at(1)
+    l = a
+    r = b
+    f()
+}
+fn in_loop(v: &Vec<u64>, w: &Vec<u64>) / mut(v, w) {
+    let (l, r) = v.split_mut(1)
+    let f = || needs_uniq(l)
+    let (a, b) = w.split_at(1)
+    for i in 0..3 {
+        f()
+        l = a
+    }
+}

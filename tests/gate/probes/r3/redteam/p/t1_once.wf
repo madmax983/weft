@@ -1,0 +1,65 @@
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print(b.items.len()) }
+struct Wrap<T> { x: T }
+fn mkbuf() -> Buf { Buf { items: Vec.new() } }
+fn pick<T>(a: T, b: T, c: bool) -> T { if c { a } else { b } }
+
+fn branch_join(c: bool) {
+    let b = mkbuf()
+    let f = if c { || eat(b) } else { || print(1) }
+    f()
+    f()   //~ W0502
+}
+fn generic_pick(c: bool) {
+    let b = mkbuf()
+    let f = pick(|| print(1), || eat(b), c)
+    f()
+    f()   //~ W0502
+}
+fn wrap_field(c: bool) {
+    let b = mkbuf()
+    let w = Wrap { x: || print(1) }
+    if c { w.x = || eat(b) }
+    let g = w.x
+    g()
+    g()   //~ W0502
+}
+fn rc_wrap() {
+    let b = mkbuf()
+    let w = Rc.new(Wrap { x: || print(1) })
+    let w2 = w.clone()
+    let h = Wrap { x: || eat(b) }
+    let g = h.x
+    g()
+    g()   //~ W0502
+}
+fn tuple_swap() {
+    let b = mkbuf()
+    let t = (|| print(1), || eat(b))
+    let (p, q) = t
+    let u = (q, p)
+    let g = u.0
+    g()
+    g()   //~ W0502
+}
+fn option_map() {
+    let b = mkbuf()
+    let o = Some(|| print(1))
+    o = Some(|| eat(b))
+    match o { Some(g) => { g(); g() }, None => {} }   //~ W0502
+}
+fn vec_pop_twice() {
+    let b = mkbuf()
+    let v = Vec.new()
+    v.push(|| eat(b))
+    v.push(|| print(1))
+    let x = v.pop()
+    let y = v.pop()
+    match y { Some(g) => { g(); g() }, None => {} }   //~ W0502
+}
+test "branch_join" { branch_join(true) }
+test "generic_pick" { generic_pick(false) }
+test "wrap_field" { wrap_field(true) }
+test "tuple_swap" { tuple_swap() }
+test "option_map" { option_map() }
+test "vec_pop_twice" { vec_pop_twice() }

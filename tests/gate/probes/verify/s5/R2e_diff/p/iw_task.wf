@@ -1,0 +1,11 @@
+effect Ask { fn ask(q: u64) -> u64 }
+struct S { x: u8 }
+fn sub(a: u64, b: u64) -> u64 { a - b }
+fn main() / async {
+    let r = scope { s =>
+        let t = s.spawn(|| { let a: u64 = 1
+ a - 2 })
+        t.join()
+    }
+    print(r)
+}

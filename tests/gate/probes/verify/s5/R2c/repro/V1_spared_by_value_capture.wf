@@ -1,0 +1,39 @@
+// R2c regression (OR4 spared_at). A closure or a handler clause in the handled
+// body takes the outer linear value by value. The operation of the local
+// handler runs inside it. `outside_vars` names the outer local, so sema adds
+// spared_at(l, ask) and W0602 goes away. But the value now lives in the closure
+// cell or the clause cells, inside the handled body: the abort unwinds it.
+// Base f211d13: W0602 at each marked line. HEAD 3af6118: 0 errors.
+// Oracle: "ORACLE linear leak" for each function.
+effect Ask { fn ask() -> u64 }
+effect Note { fn note(x: u64) }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+
+fn closure_captures() {
+    let l = Lk { id: 1 }
+    let n = handle Ask { fn ask() { 0 } } in {
+        let g = || { let x = ask(); unlock(l); x }   //~ W0602
+        g()
+    }
+    print(n)
+}
+fn nested_closure() {
+    let l = Lk { id: 2 }
+    let n = handle Ask { fn ask() { 0 } } in {
+        let g = || { let h = || { let x = ask(); unlock(l); x }; h() }   //~ W0602
+        g()
+    }
+    print(n)
+}
+fn clause_capture() {
+    let l = Lk { id: 3 }
+    let n = handle Ask { fn ask() { 0 } } in {
+        handle Note { fn note(x) { let y = ask(); unlock(l); resume(()) } } in note(1)   //~ W0602
+        5
+    }
+    print(n)
+}
+fn main() {
+    closure_captures()
+}

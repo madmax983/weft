@@ -1,0 +1,44 @@
+struct Entity { hp: u64, inner: Inner }
+struct Inner { v: Vec<u64>, k: u64 }
+struct World { a: Vec<Entity>, b: Vec<Entity>, one: Entity }
+
+fn step(world: &World, e: &Entity in world.a[]) / mut(e) { e.hp += 1 }
+fn field(world: &World, e: &Inner in world.one) / mut(e) { e.k += 1 }
+fn deep(world: &World, x: &u64 in world.a[]) / mut(x) { x += 1 }
+fn anyw(world: &World, x: &u64 in world.a..) / mut(x) { x += 1 }
+
+// field below element: stable step after the stated place
+fn f1(world: &World) / mut(world..) { deep(world, &world.a[0].hp) }
+// element of a vec below the stated element: unstable step -> W0203
+fn f2(world: &World) / mut(world..) { deep(world, &world.a[0].inner.v[0]) }
+// wildcard allows unstable below
+fn f3(world: &World) / mut(world..) { anyw(world, &world.a[0].inner.v[0]) }
+// union of places
+// via a local reference
+fn f5(world: &World) / mut(world..) {
+    let e = &world.b[0]
+    step(world, e)
+}
+fn f6(world: &World, c: bool) / mut(world..) {
+    let e = &world.a[0]
+    if c { e = &world.b[0] }
+    step(world, e)
+}
+// inside a closure
+fn f7(world: &World) / mut(world..) {
+    let g = || step(world, &world.b[0])
+    g()
+}
+// in a loop
+fn f8(world: &World) / mut(world..) {
+    for e in world.b[] { step(world, e) }
+}
+// field place exact
+fn f9(world: &World) / mut(world..) { field(world, &world.one.inner) }
+// field place: unstable below
+fn f10(world: &World) / mut(world..) { field(world, &world.a[0].inner) }
+// two calls same line
+fn f11(world: &World) / mut(world..) { step(world, &world.a[0]); step(world, &world.b[0]) }
+// nested call as argument
+fn pick(world: &World) -> &Entity in world.b[] { &world.b[0] }
+fn f12(world: &World) / mut(world..) { step(world, pick(world)) }

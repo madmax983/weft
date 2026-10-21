@@ -1,0 +1,16 @@
+// The server runs in a spawned task. Its handler captures an Rc that the task
+// makes. The request tasks are pinned to the worker of the server task, so the
+// server task must be pinned too.
+fn main(env: Env) / io, par {
+    let l = env.net.listen("127.0.0.1:18444")
+    scope { s =>
+        s.spawn(|| {
+            let hits = Rc.new(0)
+            http.serve(l, |req| {
+                let h = hits.clone()
+                Response.text("hit")
+            })
+        })
+        print("spawned")
+    }
+}

@@ -1,0 +1,21 @@
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print(b.items.len()) }
+fn mk() -> Buf { Buf { items: Vec.new() } }
+fn task_takes(n: u64) / async, clock {
+    let b = mk()
+    scope { s =>
+        s.spawn(|| { sleep(1.ms); eat(b) })
+        b = mk()
+        b.items.push(n)
+        print(b.items.len())
+    }
+}
+fn closure_takes_then_rebind() {
+    let b = mk()
+    let f = || eat(b)
+    b = mk()
+    b.items.push(1)
+    f()
+    print(b.items.len())
+}
+fn main() / async { task_takes(3); closure_takes_then_rebind() }

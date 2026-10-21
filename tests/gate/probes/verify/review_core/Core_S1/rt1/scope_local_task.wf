@@ -1,0 +1,8 @@
+fn main() / async {
+    scope { s =>
+        let v: Vec<u64> = Vec.new()
+        v.push(1)
+        let r = &v[0]
+        s.spawn(|| { suspend(); print(r) })
+    }
+}

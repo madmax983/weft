@@ -1,0 +1,65 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn grow(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 1 }) }
+
+// c1: a named closure pushed into a Vec, then called through an element.
+fn named_in_vec(world: &World) / mut(world.entities) {
+    let c = || world.entities.clear()
+    let v: Vec<fn()> = Vec.new()
+    v.push(c)
+    let first = &world.entities[0]
+    let g = v[0]
+    g()
+    print(first.hp)   // expect W0301
+}
+// c2: an array literal of closures.
+fn in_array(world: &World) / mut(world.entities) {
+    let a = [|| world.entities.clear()]
+    let first = &world.entities[0]
+    let g = a[0]
+    g()
+    print(first.hp)   // expect W0301
+}
+// c3: an Option local.
+fn in_option(world: &World) / mut(world.entities) {
+    let o = Some(|| world.entities.clear())
+    let first = &world.entities[0]
+    match o {
+        Some(g) => g(),
+        None => {}
+    }
+    print(first.hp)   // expect W0301
+}
+// c4: an item pushed into a Vec.
+fn item_in_vec(world: &World) / mut(world.entities) {
+    let v: Vec<fn(&World)> = Vec.new()
+    v.push(grow)
+    let first = &world.entities[0]
+    let g = v[0]
+    g(world)
+    print(first.hp)   // expect W0301
+}
+pub fn item_in_vec_pub(world: &World) {   // expect W0701
+    let v: Vec<fn(&World)> = Vec.new()
+    v.push(grow)
+    let g = v[0]
+    g(world)
+}
+// c5: a returned closure that mutates through its typed parameter.
+fn mk_clear() -> fn(&World) { |x: &World| x.entities.clear() }
+fn via_mk_clear(world: &World) {
+    let f = mk_clear()
+    let first = &world.entities[0]
+    f(world)
+    print(first.hp)   // expect W0301
+}
+// c6: a Vec element called in a for loop.
+fn for_vec(world: &World) / mut(world.entities) {
+    let v: Vec<fn()> = Vec.new()
+    v.push(|| world.entities.clear())
+    let first = &world.entities[0]
+    for g in v[] {
+        g()
+    }
+    print(first.hp)   // expect W0301
+}

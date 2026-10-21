@@ -1,0 +1,15 @@
+// RR14: the interpreter checks the range of an unsigned value only where a field
+// or a parameter gets it. A local, a result and a `print` operand keep any
+// value: `2 - 10` on `u64` gives -8, and `250 + 10` on `u8` gives 260. So
+// `weft run` does not show an overflow that the types forbid, and it is a weak
+// oracle for integer code.
+// Expected: a run-time error at line 11. Actual: the program prints -8, -8, 260.
+fn sub(a: u64, b: u64) -> u64 { a - b }
+fn main() {
+    let a: u64 = 2
+    let b: u64 = 10
+    print(a - b)
+    print(sub(2, 10))
+    let c: u8 = 250
+    print(c + 10)
+}

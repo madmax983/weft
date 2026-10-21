@@ -1,0 +1,23 @@
+struct Stats { count: u64 }
+
+fn in_vec(st: &Stats) / mut(st), async, clock {
+    let fs = Vec.new()
+    scope { s =>
+        fs.push(|| { s.spawn(|| { sleep(1.ms); st.count += 1; print("task runs {st.count}") })
+ () })
+    }
+    match fs.pop() {
+        Some(f) => f(),
+        None => (),
+    }
+}
+
+fn caller() / async, clock {
+    let st = Stats { count: 0 }
+    in_vec(&st)
+}
+
+fn main() / async, clock {
+    caller()
+    sleep(5.ms)
+}

@@ -1,0 +1,27 @@
+fn make_reader(v: &Vec<u64>) -> fn() { || print(v.len()) }
+fn id<T>(x: T) -> T { x }
+fn take(v: Vec<u64>) {}
+fn direct() {
+    let v = Vec.new()
+    v.push(1)
+    let f = || print(v.len())
+    take(v)
+    f()
+}
+fn via_id() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v
+    let f = id(|| print(r.len()))
+    take(v)
+    f()
+}
+fn ref_tuple() {
+    let v = Vec.new()
+    v.push(1)
+    let f = make_reader(&v)
+    let g = f
+    take(v)
+    g()
+}
+fn main() { via_id() }

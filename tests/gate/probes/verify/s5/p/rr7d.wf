@@ -1,0 +1,81 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print("eat") }
+fn twice(f: fn()) {
+    f()
+    f()
+}
+fn run(f: fn()) { f() }
+
+// A captured function variable gets a `once` value; a callee runs it twice.
+fn late_once_twice() {
+    let b = Buf { items: Vec.new() }
+    let c = || print(0)
+    let k = || c()
+    c = || eat(b)
+    twice(k)
+}
+
+// A captured function variable gets a mutating value; the closure is returned.
+fn mk_fn(w: &World) -> fn() {
+    let g = || print(0)
+    let f = || g()
+    g = || w.entities.clear()
+    f
+}
+fn returned_fn() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    let first = &w.entities[0]
+    let f = mk_fn(&w)
+    f()
+    print(first.hp)
+}
+
+// A captured function variable gets a mutating value after the closure is
+// stored in a Vec.
+fn run_all(fs: &Vec<fn()>) { let i = 0
+ while i < fs.len() { let f = fs[i]
+ f()
+ i = i + 1 } }
+fn vec_fn() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    let first = &w.entities[0]
+    let g = || print(0)
+    let fs: Vec<fn()> = Vec.new()
+    fs.push(|| g())
+    g = || w.entities.clear()
+    run_all(&fs)
+    print(first.hp)
+}
+
+// A late function value through two closures.
+fn two_levels() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    let first = &w.entities[0]
+    let g = || print(0)
+    let f = || g()
+    let h = || f()
+    g = || w.entities.clear()
+    h()
+    print(first.hp)
+}
+
+// A late function value in a closure parameter run.
+fn late_param() {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    let first = &w.entities[0]
+    let g = || print(0)
+    let f = || run(g)
+    g = || w.entities.clear()
+    f()
+    print(first.hp)
+}
+
+fn main() {
+    late_once_twice()
+}

@@ -1,0 +1,11 @@
+// Task join and detach take no arguments.
+fn work() -> u64 { 1 }
+fn side(v: Vec<u64>) -> u64 { 2 }
+fn main() / async {
+    let v: Vec<u64> = [1]
+    scope { s =>
+        let t = s.spawn(|| work())
+        print(t.join(nope: side(v)))
+    }
+    print(v.len())
+}

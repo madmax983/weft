@@ -1,0 +1,50 @@
+struct Entity { hp: u64 }
+// The block value is a named reference into a block local. Expect W0301.
+fn named_tail() {
+    let x = {
+        let e = Entity { hp: 1 }
+        let r = &e.hp
+        r
+    }
+    print(x)
+}
+// The same through an if branch.
+fn named_if(c: bool) {
+    let keep = Entity { hp: 2 }
+    let x = if c {
+        let e = Entity { hp: 1 }
+        let r = &e.hp
+        r
+    } else {
+        &keep.hp
+    }
+    print(x)
+}
+// The same through a match arm.
+fn named_arm(c: bool) {
+    let keep = Entity { hp: 2 }
+    let x = match c {
+        true => {
+            let e = Entity { hp: 1 }
+            let r = &e.hp
+            r
+        }
+        false => &keep.hp,
+    }
+    print(x)
+}
+// A closure returns a named reference into its local. Expect W0204.
+fn closure_named() {
+    let f = || {
+        let e = Entity { hp: 1 }
+        let r = &e.hp
+        r
+    }
+    print(f())
+}
+// A function returns a named reference into its local. Expect W0204.
+fn fn_named(k: &Entity) -> &u64 in k.hp {
+    let e = Entity { hp: 1 }
+    let r = &e.hp
+    r
+}

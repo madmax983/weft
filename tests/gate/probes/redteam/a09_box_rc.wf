@@ -1,0 +1,40 @@
+struct Big { items: Vec<u64> }
+struct Holder { b: Box<Big> }
+// Reassign the box target.
+fn box_reassign(h: &Holder) / mut(h.b) {
+    let r = &h.b.items[0]
+    h.b = Box.new(Big { items: Vec.new() })
+    print(r)
+}
+// A box local reassigned.
+fn box_local() {
+    let b = Box.new(Big { items: Vec.new() })
+    b.items.push(1)
+    let r = &b.items[0]
+    b = Box.new(Big { items: Vec.new() })
+    print(r)
+}
+// Rc: mutation through a clone stored in a struct.
+struct Cell2 { items: Vec<u64> }
+struct Two { a: Rc<Cell2>, b: Rc<Cell2> }
+fn rc_struct(t: &Two) {
+    let r = &t.a.items[0]
+    t.b.items.clear()
+    print(r)
+}
+// Rc: mutation via a callee that takes the rc.
+fn clear_it(c: Rc<Cell2>) { c.items.clear() }
+fn rc_callee() {
+    let a = Rc.new(Cell2 { items: Vec.new() })
+    a.items.push(1)
+    let r = &a.items[0]
+    clear_it(a.clone())
+    print(r)
+}
+// Rc of a generic type: Vec<u64> itself.
+fn rc_generic() {
+    let a = Rc.new(Vec.new())
+    let b = a.clone()
+    let r = &a.items
+    print(1)
+}

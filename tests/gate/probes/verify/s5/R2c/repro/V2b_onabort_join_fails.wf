@@ -1,0 +1,38 @@
+effect Stop { fn stop() }
+fn work() -> u64 / fail { fail("child failed"); 1 }
+fn quick() -> u64 { 5 }
+linear struct J { t: Task<u64> }
+    on abort = undo_join
+fn undo_join(j: J) / async {
+    let J(t) = j
+    print("undo")
+    print(t.join())
+    print("after join")
+}
+fn done(j: J) { let J(t) = j; print(t.join()) }
+
+// The `on abort` function opens a fork whose branch fails.
+linear struct K { id: u64 }
+    on abort = undo_fork
+fn undo_fork(k: K) / async, par {
+    let K(i) = k
+    print("undo fork")
+    let (a, b) = fork(|| quick(), || quick())
+    print(a + b)
+}
+fn done_k(k: K) { let K(i) = k }
+
+fn main() / fail, async, clock {
+    handle Fail { fn fail(m) { print("caught {m}") } } in {
+        handle Stop { fn stop() { () } } in {
+            scope { s =>
+                let j = J { t: s.spawn(|| work()) }
+                sleep(1.ms)
+                stop()
+                done(j)
+            }
+        }
+        print("after inner")
+    }
+    print("end")
+}

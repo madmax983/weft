@@ -1,0 +1,4004 @@
+struct Wrap<T> { x: T }
+fn f(v: &Vec<u64>) {
+    let w = Wrap { x: &v[0] }
+    w.x = &v[0]
+    print(w.x)
+    w.x = &v[1]
+    print(w.x)
+    w.x = &v[2]
+    print(w.x)
+    w.x = &v[3]
+    print(w.x)
+    w.x = &v[4]
+    print(w.x)
+    w.x = &v[5]
+    print(w.x)
+    w.x = &v[6]
+    print(w.x)
+    w.x = &v[7]
+    print(w.x)
+    w.x = &v[8]
+    print(w.x)
+    w.x = &v[9]
+    print(w.x)
+    w.x = &v[10]
+    print(w.x)
+    w.x = &v[11]
+    print(w.x)
+    w.x = &v[12]
+    print(w.x)
+    w.x = &v[13]
+    print(w.x)
+    w.x = &v[14]
+    print(w.x)
+    w.x = &v[15]
+    print(w.x)
+    w.x = &v[16]
+    print(w.x)
+    w.x = &v[17]
+    print(w.x)
+    w.x = &v[18]
+    print(w.x)
+    w.x = &v[19]
+    print(w.x)
+    w.x = &v[20]
+    print(w.x)
+    w.x = &v[21]
+    print(w.x)
+    w.x = &v[22]
+    print(w.x)
+    w.x = &v[23]
+    print(w.x)
+    w.x = &v[24]
+    print(w.x)
+    w.x = &v[25]
+    print(w.x)
+    w.x = &v[26]
+    print(w.x)
+    w.x = &v[27]
+    print(w.x)
+    w.x = &v[28]
+    print(w.x)
+    w.x = &v[29]
+    print(w.x)
+    w.x = &v[30]
+    print(w.x)
+    w.x = &v[31]
+    print(w.x)
+    w.x = &v[32]
+    print(w.x)
+    w.x = &v[33]
+    print(w.x)
+    w.x = &v[34]
+    print(w.x)
+    w.x = &v[35]
+    print(w.x)
+    w.x = &v[36]
+    print(w.x)
+    w.x = &v[37]
+    print(w.x)
+    w.x = &v[38]
+    print(w.x)
+    w.x = &v[39]
+    print(w.x)
+    w.x = &v[40]
+    print(w.x)
+    w.x = &v[41]
+    print(w.x)
+    w.x = &v[42]
+    print(w.x)
+    w.x = &v[43]
+    print(w.x)
+    w.x = &v[44]
+    print(w.x)
+    w.x = &v[45]
+    print(w.x)
+    w.x = &v[46]
+    print(w.x)
+    w.x = &v[47]
+    print(w.x)
+    w.x = &v[48]
+    print(w.x)
+    w.x = &v[49]
+    print(w.x)
+    w.x = &v[50]
+    print(w.x)
+    w.x = &v[51]
+    print(w.x)
+    w.x = &v[52]
+    print(w.x)
+    w.x = &v[53]
+    print(w.x)
+    w.x = &v[54]
+    print(w.x)
+    w.x = &v[55]
+    print(w.x)
+    w.x = &v[56]
+    print(w.x)
+    w.x = &v[57]
+    print(w.x)
+    w.x = &v[58]
+    print(w.x)
+    w.x = &v[59]
+    print(w.x)
+    w.x = &v[60]
+    print(w.x)
+    w.x = &v[61]
+    print(w.x)
+    w.x = &v[62]
+    print(w.x)
+    w.x = &v[63]
+    print(w.x)
+    w.x = &v[64]
+    print(w.x)
+    w.x = &v[65]
+    print(w.x)
+    w.x = &v[66]
+    print(w.x)
+    w.x = &v[67]
+    print(w.x)
+    w.x = &v[68]
+    print(w.x)
+    w.x = &v[69]
+    print(w.x)
+    w.x = &v[70]
+    print(w.x)
+    w.x = &v[71]
+    print(w.x)
+    w.x = &v[72]
+    print(w.x)
+    w.x = &v[73]
+    print(w.x)
+    w.x = &v[74]
+    print(w.x)
+    w.x = &v[75]
+    print(w.x)
+    w.x = &v[76]
+    print(w.x)
+    w.x = &v[77]
+    print(w.x)
+    w.x = &v[78]
+    print(w.x)
+    w.x = &v[79]
+    print(w.x)
+    w.x = &v[80]
+    print(w.x)
+    w.x = &v[81]
+    print(w.x)
+    w.x = &v[82]
+    print(w.x)
+    w.x = &v[83]
+    print(w.x)
+    w.x = &v[84]
+    print(w.x)
+    w.x = &v[85]
+    print(w.x)
+    w.x = &v[86]
+    print(w.x)
+    w.x = &v[87]
+    print(w.x)
+    w.x = &v[88]
+    print(w.x)
+    w.x = &v[89]
+    print(w.x)
+    w.x = &v[90]
+    print(w.x)
+    w.x = &v[91]
+    print(w.x)
+    w.x = &v[92]
+    print(w.x)
+    w.x = &v[93]
+    print(w.x)
+    w.x = &v[94]
+    print(w.x)
+    w.x = &v[95]
+    print(w.x)
+    w.x = &v[96]
+    print(w.x)
+    w.x = &v[97]
+    print(w.x)
+    w.x = &v[98]
+    print(w.x)
+    w.x = &v[99]
+    print(w.x)
+    w.x = &v[100]
+    print(w.x)
+    w.x = &v[101]
+    print(w.x)
+    w.x = &v[102]
+    print(w.x)
+    w.x = &v[103]
+    print(w.x)
+    w.x = &v[104]
+    print(w.x)
+    w.x = &v[105]
+    print(w.x)
+    w.x = &v[106]
+    print(w.x)
+    w.x = &v[107]
+    print(w.x)
+    w.x = &v[108]
+    print(w.x)
+    w.x = &v[109]
+    print(w.x)
+    w.x = &v[110]
+    print(w.x)
+    w.x = &v[111]
+    print(w.x)
+    w.x = &v[112]
+    print(w.x)
+    w.x = &v[113]
+    print(w.x)
+    w.x = &v[114]
+    print(w.x)
+    w.x = &v[115]
+    print(w.x)
+    w.x = &v[116]
+    print(w.x)
+    w.x = &v[117]
+    print(w.x)
+    w.x = &v[118]
+    print(w.x)
+    w.x = &v[119]
+    print(w.x)
+    w.x = &v[120]
+    print(w.x)
+    w.x = &v[121]
+    print(w.x)
+    w.x = &v[122]
+    print(w.x)
+    w.x = &v[123]
+    print(w.x)
+    w.x = &v[124]
+    print(w.x)
+    w.x = &v[125]
+    print(w.x)
+    w.x = &v[126]
+    print(w.x)
+    w.x = &v[127]
+    print(w.x)
+    w.x = &v[128]
+    print(w.x)
+    w.x = &v[129]
+    print(w.x)
+    w.x = &v[130]
+    print(w.x)
+    w.x = &v[131]
+    print(w.x)
+    w.x = &v[132]
+    print(w.x)
+    w.x = &v[133]
+    print(w.x)
+    w.x = &v[134]
+    print(w.x)
+    w.x = &v[135]
+    print(w.x)
+    w.x = &v[136]
+    print(w.x)
+    w.x = &v[137]
+    print(w.x)
+    w.x = &v[138]
+    print(w.x)
+    w.x = &v[139]
+    print(w.x)
+    w.x = &v[140]
+    print(w.x)
+    w.x = &v[141]
+    print(w.x)
+    w.x = &v[142]
+    print(w.x)
+    w.x = &v[143]
+    print(w.x)
+    w.x = &v[144]
+    print(w.x)
+    w.x = &v[145]
+    print(w.x)
+    w.x = &v[146]
+    print(w.x)
+    w.x = &v[147]
+    print(w.x)
+    w.x = &v[148]
+    print(w.x)
+    w.x = &v[149]
+    print(w.x)
+    w.x = &v[150]
+    print(w.x)
+    w.x = &v[151]
+    print(w.x)
+    w.x = &v[152]
+    print(w.x)
+    w.x = &v[153]
+    print(w.x)
+    w.x = &v[154]
+    print(w.x)
+    w.x = &v[155]
+    print(w.x)
+    w.x = &v[156]
+    print(w.x)
+    w.x = &v[157]
+    print(w.x)
+    w.x = &v[158]
+    print(w.x)
+    w.x = &v[159]
+    print(w.x)
+    w.x = &v[160]
+    print(w.x)
+    w.x = &v[161]
+    print(w.x)
+    w.x = &v[162]
+    print(w.x)
+    w.x = &v[163]
+    print(w.x)
+    w.x = &v[164]
+    print(w.x)
+    w.x = &v[165]
+    print(w.x)
+    w.x = &v[166]
+    print(w.x)
+    w.x = &v[167]
+    print(w.x)
+    w.x = &v[168]
+    print(w.x)
+    w.x = &v[169]
+    print(w.x)
+    w.x = &v[170]
+    print(w.x)
+    w.x = &v[171]
+    print(w.x)
+    w.x = &v[172]
+    print(w.x)
+    w.x = &v[173]
+    print(w.x)
+    w.x = &v[174]
+    print(w.x)
+    w.x = &v[175]
+    print(w.x)
+    w.x = &v[176]
+    print(w.x)
+    w.x = &v[177]
+    print(w.x)
+    w.x = &v[178]
+    print(w.x)
+    w.x = &v[179]
+    print(w.x)
+    w.x = &v[180]
+    print(w.x)
+    w.x = &v[181]
+    print(w.x)
+    w.x = &v[182]
+    print(w.x)
+    w.x = &v[183]
+    print(w.x)
+    w.x = &v[184]
+    print(w.x)
+    w.x = &v[185]
+    print(w.x)
+    w.x = &v[186]
+    print(w.x)
+    w.x = &v[187]
+    print(w.x)
+    w.x = &v[188]
+    print(w.x)
+    w.x = &v[189]
+    print(w.x)
+    w.x = &v[190]
+    print(w.x)
+    w.x = &v[191]
+    print(w.x)
+    w.x = &v[192]
+    print(w.x)
+    w.x = &v[193]
+    print(w.x)
+    w.x = &v[194]
+    print(w.x)
+    w.x = &v[195]
+    print(w.x)
+    w.x = &v[196]
+    print(w.x)
+    w.x = &v[197]
+    print(w.x)
+    w.x = &v[198]
+    print(w.x)
+    w.x = &v[199]
+    print(w.x)
+    w.x = &v[200]
+    print(w.x)
+    w.x = &v[201]
+    print(w.x)
+    w.x = &v[202]
+    print(w.x)
+    w.x = &v[203]
+    print(w.x)
+    w.x = &v[204]
+    print(w.x)
+    w.x = &v[205]
+    print(w.x)
+    w.x = &v[206]
+    print(w.x)
+    w.x = &v[207]
+    print(w.x)
+    w.x = &v[208]
+    print(w.x)
+    w.x = &v[209]
+    print(w.x)
+    w.x = &v[210]
+    print(w.x)
+    w.x = &v[211]
+    print(w.x)
+    w.x = &v[212]
+    print(w.x)
+    w.x = &v[213]
+    print(w.x)
+    w.x = &v[214]
+    print(w.x)
+    w.x = &v[215]
+    print(w.x)
+    w.x = &v[216]
+    print(w.x)
+    w.x = &v[217]
+    print(w.x)
+    w.x = &v[218]
+    print(w.x)
+    w.x = &v[219]
+    print(w.x)
+    w.x = &v[220]
+    print(w.x)
+    w.x = &v[221]
+    print(w.x)
+    w.x = &v[222]
+    print(w.x)
+    w.x = &v[223]
+    print(w.x)
+    w.x = &v[224]
+    print(w.x)
+    w.x = &v[225]
+    print(w.x)
+    w.x = &v[226]
+    print(w.x)
+    w.x = &v[227]
+    print(w.x)
+    w.x = &v[228]
+    print(w.x)
+    w.x = &v[229]
+    print(w.x)
+    w.x = &v[230]
+    print(w.x)
+    w.x = &v[231]
+    print(w.x)
+    w.x = &v[232]
+    print(w.x)
+    w.x = &v[233]
+    print(w.x)
+    w.x = &v[234]
+    print(w.x)
+    w.x = &v[235]
+    print(w.x)
+    w.x = &v[236]
+    print(w.x)
+    w.x = &v[237]
+    print(w.x)
+    w.x = &v[238]
+    print(w.x)
+    w.x = &v[239]
+    print(w.x)
+    w.x = &v[240]
+    print(w.x)
+    w.x = &v[241]
+    print(w.x)
+    w.x = &v[242]
+    print(w.x)
+    w.x = &v[243]
+    print(w.x)
+    w.x = &v[244]
+    print(w.x)
+    w.x = &v[245]
+    print(w.x)
+    w.x = &v[246]
+    print(w.x)
+    w.x = &v[247]
+    print(w.x)
+    w.x = &v[248]
+    print(w.x)
+    w.x = &v[249]
+    print(w.x)
+    w.x = &v[250]
+    print(w.x)
+    w.x = &v[251]
+    print(w.x)
+    w.x = &v[252]
+    print(w.x)
+    w.x = &v[253]
+    print(w.x)
+    w.x = &v[254]
+    print(w.x)
+    w.x = &v[255]
+    print(w.x)
+    w.x = &v[256]
+    print(w.x)
+    w.x = &v[257]
+    print(w.x)
+    w.x = &v[258]
+    print(w.x)
+    w.x = &v[259]
+    print(w.x)
+    w.x = &v[260]
+    print(w.x)
+    w.x = &v[261]
+    print(w.x)
+    w.x = &v[262]
+    print(w.x)
+    w.x = &v[263]
+    print(w.x)
+    w.x = &v[264]
+    print(w.x)
+    w.x = &v[265]
+    print(w.x)
+    w.x = &v[266]
+    print(w.x)
+    w.x = &v[267]
+    print(w.x)
+    w.x = &v[268]
+    print(w.x)
+    w.x = &v[269]
+    print(w.x)
+    w.x = &v[270]
+    print(w.x)
+    w.x = &v[271]
+    print(w.x)
+    w.x = &v[272]
+    print(w.x)
+    w.x = &v[273]
+    print(w.x)
+    w.x = &v[274]
+    print(w.x)
+    w.x = &v[275]
+    print(w.x)
+    w.x = &v[276]
+    print(w.x)
+    w.x = &v[277]
+    print(w.x)
+    w.x = &v[278]
+    print(w.x)
+    w.x = &v[279]
+    print(w.x)
+    w.x = &v[280]
+    print(w.x)
+    w.x = &v[281]
+    print(w.x)
+    w.x = &v[282]
+    print(w.x)
+    w.x = &v[283]
+    print(w.x)
+    w.x = &v[284]
+    print(w.x)
+    w.x = &v[285]
+    print(w.x)
+    w.x = &v[286]
+    print(w.x)
+    w.x = &v[287]
+    print(w.x)
+    w.x = &v[288]
+    print(w.x)
+    w.x = &v[289]
+    print(w.x)
+    w.x = &v[290]
+    print(w.x)
+    w.x = &v[291]
+    print(w.x)
+    w.x = &v[292]
+    print(w.x)
+    w.x = &v[293]
+    print(w.x)
+    w.x = &v[294]
+    print(w.x)
+    w.x = &v[295]
+    print(w.x)
+    w.x = &v[296]
+    print(w.x)
+    w.x = &v[297]
+    print(w.x)
+    w.x = &v[298]
+    print(w.x)
+    w.x = &v[299]
+    print(w.x)
+    w.x = &v[300]
+    print(w.x)
+    w.x = &v[301]
+    print(w.x)
+    w.x = &v[302]
+    print(w.x)
+    w.x = &v[303]
+    print(w.x)
+    w.x = &v[304]
+    print(w.x)
+    w.x = &v[305]
+    print(w.x)
+    w.x = &v[306]
+    print(w.x)
+    w.x = &v[307]
+    print(w.x)
+    w.x = &v[308]
+    print(w.x)
+    w.x = &v[309]
+    print(w.x)
+    w.x = &v[310]
+    print(w.x)
+    w.x = &v[311]
+    print(w.x)
+    w.x = &v[312]
+    print(w.x)
+    w.x = &v[313]
+    print(w.x)
+    w.x = &v[314]
+    print(w.x)
+    w.x = &v[315]
+    print(w.x)
+    w.x = &v[316]
+    print(w.x)
+    w.x = &v[317]
+    print(w.x)
+    w.x = &v[318]
+    print(w.x)
+    w.x = &v[319]
+    print(w.x)
+    w.x = &v[320]
+    print(w.x)
+    w.x = &v[321]
+    print(w.x)
+    w.x = &v[322]
+    print(w.x)
+    w.x = &v[323]
+    print(w.x)
+    w.x = &v[324]
+    print(w.x)
+    w.x = &v[325]
+    print(w.x)
+    w.x = &v[326]
+    print(w.x)
+    w.x = &v[327]
+    print(w.x)
+    w.x = &v[328]
+    print(w.x)
+    w.x = &v[329]
+    print(w.x)
+    w.x = &v[330]
+    print(w.x)
+    w.x = &v[331]
+    print(w.x)
+    w.x = &v[332]
+    print(w.x)
+    w.x = &v[333]
+    print(w.x)
+    w.x = &v[334]
+    print(w.x)
+    w.x = &v[335]
+    print(w.x)
+    w.x = &v[336]
+    print(w.x)
+    w.x = &v[337]
+    print(w.x)
+    w.x = &v[338]
+    print(w.x)
+    w.x = &v[339]
+    print(w.x)
+    w.x = &v[340]
+    print(w.x)
+    w.x = &v[341]
+    print(w.x)
+    w.x = &v[342]
+    print(w.x)
+    w.x = &v[343]
+    print(w.x)
+    w.x = &v[344]
+    print(w.x)
+    w.x = &v[345]
+    print(w.x)
+    w.x = &v[346]
+    print(w.x)
+    w.x = &v[347]
+    print(w.x)
+    w.x = &v[348]
+    print(w.x)
+    w.x = &v[349]
+    print(w.x)
+    w.x = &v[350]
+    print(w.x)
+    w.x = &v[351]
+    print(w.x)
+    w.x = &v[352]
+    print(w.x)
+    w.x = &v[353]
+    print(w.x)
+    w.x = &v[354]
+    print(w.x)
+    w.x = &v[355]
+    print(w.x)
+    w.x = &v[356]
+    print(w.x)
+    w.x = &v[357]
+    print(w.x)
+    w.x = &v[358]
+    print(w.x)
+    w.x = &v[359]
+    print(w.x)
+    w.x = &v[360]
+    print(w.x)
+    w.x = &v[361]
+    print(w.x)
+    w.x = &v[362]
+    print(w.x)
+    w.x = &v[363]
+    print(w.x)
+    w.x = &v[364]
+    print(w.x)
+    w.x = &v[365]
+    print(w.x)
+    w.x = &v[366]
+    print(w.x)
+    w.x = &v[367]
+    print(w.x)
+    w.x = &v[368]
+    print(w.x)
+    w.x = &v[369]
+    print(w.x)
+    w.x = &v[370]
+    print(w.x)
+    w.x = &v[371]
+    print(w.x)
+    w.x = &v[372]
+    print(w.x)
+    w.x = &v[373]
+    print(w.x)
+    w.x = &v[374]
+    print(w.x)
+    w.x = &v[375]
+    print(w.x)
+    w.x = &v[376]
+    print(w.x)
+    w.x = &v[377]
+    print(w.x)
+    w.x = &v[378]
+    print(w.x)
+    w.x = &v[379]
+    print(w.x)
+    w.x = &v[380]
+    print(w.x)
+    w.x = &v[381]
+    print(w.x)
+    w.x = &v[382]
+    print(w.x)
+    w.x = &v[383]
+    print(w.x)
+    w.x = &v[384]
+    print(w.x)
+    w.x = &v[385]
+    print(w.x)
+    w.x = &v[386]
+    print(w.x)
+    w.x = &v[387]
+    print(w.x)
+    w.x = &v[388]
+    print(w.x)
+    w.x = &v[389]
+    print(w.x)
+    w.x = &v[390]
+    print(w.x)
+    w.x = &v[391]
+    print(w.x)
+    w.x = &v[392]
+    print(w.x)
+    w.x = &v[393]
+    print(w.x)
+    w.x = &v[394]
+    print(w.x)
+    w.x = &v[395]
+    print(w.x)
+    w.x = &v[396]
+    print(w.x)
+    w.x = &v[397]
+    print(w.x)
+    w.x = &v[398]
+    print(w.x)
+    w.x = &v[399]
+    print(w.x)
+    w.x = &v[400]
+    print(w.x)
+    w.x = &v[401]
+    print(w.x)
+    w.x = &v[402]
+    print(w.x)
+    w.x = &v[403]
+    print(w.x)
+    w.x = &v[404]
+    print(w.x)
+    w.x = &v[405]
+    print(w.x)
+    w.x = &v[406]
+    print(w.x)
+    w.x = &v[407]
+    print(w.x)
+    w.x = &v[408]
+    print(w.x)
+    w.x = &v[409]
+    print(w.x)
+    w.x = &v[410]
+    print(w.x)
+    w.x = &v[411]
+    print(w.x)
+    w.x = &v[412]
+    print(w.x)
+    w.x = &v[413]
+    print(w.x)
+    w.x = &v[414]
+    print(w.x)
+    w.x = &v[415]
+    print(w.x)
+    w.x = &v[416]
+    print(w.x)
+    w.x = &v[417]
+    print(w.x)
+    w.x = &v[418]
+    print(w.x)
+    w.x = &v[419]
+    print(w.x)
+    w.x = &v[420]
+    print(w.x)
+    w.x = &v[421]
+    print(w.x)
+    w.x = &v[422]
+    print(w.x)
+    w.x = &v[423]
+    print(w.x)
+    w.x = &v[424]
+    print(w.x)
+    w.x = &v[425]
+    print(w.x)
+    w.x = &v[426]
+    print(w.x)
+    w.x = &v[427]
+    print(w.x)
+    w.x = &v[428]
+    print(w.x)
+    w.x = &v[429]
+    print(w.x)
+    w.x = &v[430]
+    print(w.x)
+    w.x = &v[431]
+    print(w.x)
+    w.x = &v[432]
+    print(w.x)
+    w.x = &v[433]
+    print(w.x)
+    w.x = &v[434]
+    print(w.x)
+    w.x = &v[435]
+    print(w.x)
+    w.x = &v[436]
+    print(w.x)
+    w.x = &v[437]
+    print(w.x)
+    w.x = &v[438]
+    print(w.x)
+    w.x = &v[439]
+    print(w.x)
+    w.x = &v[440]
+    print(w.x)
+    w.x = &v[441]
+    print(w.x)
+    w.x = &v[442]
+    print(w.x)
+    w.x = &v[443]
+    print(w.x)
+    w.x = &v[444]
+    print(w.x)
+    w.x = &v[445]
+    print(w.x)
+    w.x = &v[446]
+    print(w.x)
+    w.x = &v[447]
+    print(w.x)
+    w.x = &v[448]
+    print(w.x)
+    w.x = &v[449]
+    print(w.x)
+    w.x = &v[450]
+    print(w.x)
+    w.x = &v[451]
+    print(w.x)
+    w.x = &v[452]
+    print(w.x)
+    w.x = &v[453]
+    print(w.x)
+    w.x = &v[454]
+    print(w.x)
+    w.x = &v[455]
+    print(w.x)
+    w.x = &v[456]
+    print(w.x)
+    w.x = &v[457]
+    print(w.x)
+    w.x = &v[458]
+    print(w.x)
+    w.x = &v[459]
+    print(w.x)
+    w.x = &v[460]
+    print(w.x)
+    w.x = &v[461]
+    print(w.x)
+    w.x = &v[462]
+    print(w.x)
+    w.x = &v[463]
+    print(w.x)
+    w.x = &v[464]
+    print(w.x)
+    w.x = &v[465]
+    print(w.x)
+    w.x = &v[466]
+    print(w.x)
+    w.x = &v[467]
+    print(w.x)
+    w.x = &v[468]
+    print(w.x)
+    w.x = &v[469]
+    print(w.x)
+    w.x = &v[470]
+    print(w.x)
+    w.x = &v[471]
+    print(w.x)
+    w.x = &v[472]
+    print(w.x)
+    w.x = &v[473]
+    print(w.x)
+    w.x = &v[474]
+    print(w.x)
+    w.x = &v[475]
+    print(w.x)
+    w.x = &v[476]
+    print(w.x)
+    w.x = &v[477]
+    print(w.x)
+    w.x = &v[478]
+    print(w.x)
+    w.x = &v[479]
+    print(w.x)
+    w.x = &v[480]
+    print(w.x)
+    w.x = &v[481]
+    print(w.x)
+    w.x = &v[482]
+    print(w.x)
+    w.x = &v[483]
+    print(w.x)
+    w.x = &v[484]
+    print(w.x)
+    w.x = &v[485]
+    print(w.x)
+    w.x = &v[486]
+    print(w.x)
+    w.x = &v[487]
+    print(w.x)
+    w.x = &v[488]
+    print(w.x)
+    w.x = &v[489]
+    print(w.x)
+    w.x = &v[490]
+    print(w.x)
+    w.x = &v[491]
+    print(w.x)
+    w.x = &v[492]
+    print(w.x)
+    w.x = &v[493]
+    print(w.x)
+    w.x = &v[494]
+    print(w.x)
+    w.x = &v[495]
+    print(w.x)
+    w.x = &v[496]
+    print(w.x)
+    w.x = &v[497]
+    print(w.x)
+    w.x = &v[498]
+    print(w.x)
+    w.x = &v[499]
+    print(w.x)
+    w.x = &v[500]
+    print(w.x)
+    w.x = &v[501]
+    print(w.x)
+    w.x = &v[502]
+    print(w.x)
+    w.x = &v[503]
+    print(w.x)
+    w.x = &v[504]
+    print(w.x)
+    w.x = &v[505]
+    print(w.x)
+    w.x = &v[506]
+    print(w.x)
+    w.x = &v[507]
+    print(w.x)
+    w.x = &v[508]
+    print(w.x)
+    w.x = &v[509]
+    print(w.x)
+    w.x = &v[510]
+    print(w.x)
+    w.x = &v[511]
+    print(w.x)
+    w.x = &v[512]
+    print(w.x)
+    w.x = &v[513]
+    print(w.x)
+    w.x = &v[514]
+    print(w.x)
+    w.x = &v[515]
+    print(w.x)
+    w.x = &v[516]
+    print(w.x)
+    w.x = &v[517]
+    print(w.x)
+    w.x = &v[518]
+    print(w.x)
+    w.x = &v[519]
+    print(w.x)
+    w.x = &v[520]
+    print(w.x)
+    w.x = &v[521]
+    print(w.x)
+    w.x = &v[522]
+    print(w.x)
+    w.x = &v[523]
+    print(w.x)
+    w.x = &v[524]
+    print(w.x)
+    w.x = &v[525]
+    print(w.x)
+    w.x = &v[526]
+    print(w.x)
+    w.x = &v[527]
+    print(w.x)
+    w.x = &v[528]
+    print(w.x)
+    w.x = &v[529]
+    print(w.x)
+    w.x = &v[530]
+    print(w.x)
+    w.x = &v[531]
+    print(w.x)
+    w.x = &v[532]
+    print(w.x)
+    w.x = &v[533]
+    print(w.x)
+    w.x = &v[534]
+    print(w.x)
+    w.x = &v[535]
+    print(w.x)
+    w.x = &v[536]
+    print(w.x)
+    w.x = &v[537]
+    print(w.x)
+    w.x = &v[538]
+    print(w.x)
+    w.x = &v[539]
+    print(w.x)
+    w.x = &v[540]
+    print(w.x)
+    w.x = &v[541]
+    print(w.x)
+    w.x = &v[542]
+    print(w.x)
+    w.x = &v[543]
+    print(w.x)
+    w.x = &v[544]
+    print(w.x)
+    w.x = &v[545]
+    print(w.x)
+    w.x = &v[546]
+    print(w.x)
+    w.x = &v[547]
+    print(w.x)
+    w.x = &v[548]
+    print(w.x)
+    w.x = &v[549]
+    print(w.x)
+    w.x = &v[550]
+    print(w.x)
+    w.x = &v[551]
+    print(w.x)
+    w.x = &v[552]
+    print(w.x)
+    w.x = &v[553]
+    print(w.x)
+    w.x = &v[554]
+    print(w.x)
+    w.x = &v[555]
+    print(w.x)
+    w.x = &v[556]
+    print(w.x)
+    w.x = &v[557]
+    print(w.x)
+    w.x = &v[558]
+    print(w.x)
+    w.x = &v[559]
+    print(w.x)
+    w.x = &v[560]
+    print(w.x)
+    w.x = &v[561]
+    print(w.x)
+    w.x = &v[562]
+    print(w.x)
+    w.x = &v[563]
+    print(w.x)
+    w.x = &v[564]
+    print(w.x)
+    w.x = &v[565]
+    print(w.x)
+    w.x = &v[566]
+    print(w.x)
+    w.x = &v[567]
+    print(w.x)
+    w.x = &v[568]
+    print(w.x)
+    w.x = &v[569]
+    print(w.x)
+    w.x = &v[570]
+    print(w.x)
+    w.x = &v[571]
+    print(w.x)
+    w.x = &v[572]
+    print(w.x)
+    w.x = &v[573]
+    print(w.x)
+    w.x = &v[574]
+    print(w.x)
+    w.x = &v[575]
+    print(w.x)
+    w.x = &v[576]
+    print(w.x)
+    w.x = &v[577]
+    print(w.x)
+    w.x = &v[578]
+    print(w.x)
+    w.x = &v[579]
+    print(w.x)
+    w.x = &v[580]
+    print(w.x)
+    w.x = &v[581]
+    print(w.x)
+    w.x = &v[582]
+    print(w.x)
+    w.x = &v[583]
+    print(w.x)
+    w.x = &v[584]
+    print(w.x)
+    w.x = &v[585]
+    print(w.x)
+    w.x = &v[586]
+    print(w.x)
+    w.x = &v[587]
+    print(w.x)
+    w.x = &v[588]
+    print(w.x)
+    w.x = &v[589]
+    print(w.x)
+    w.x = &v[590]
+    print(w.x)
+    w.x = &v[591]
+    print(w.x)
+    w.x = &v[592]
+    print(w.x)
+    w.x = &v[593]
+    print(w.x)
+    w.x = &v[594]
+    print(w.x)
+    w.x = &v[595]
+    print(w.x)
+    w.x = &v[596]
+    print(w.x)
+    w.x = &v[597]
+    print(w.x)
+    w.x = &v[598]
+    print(w.x)
+    w.x = &v[599]
+    print(w.x)
+    w.x = &v[600]
+    print(w.x)
+    w.x = &v[601]
+    print(w.x)
+    w.x = &v[602]
+    print(w.x)
+    w.x = &v[603]
+    print(w.x)
+    w.x = &v[604]
+    print(w.x)
+    w.x = &v[605]
+    print(w.x)
+    w.x = &v[606]
+    print(w.x)
+    w.x = &v[607]
+    print(w.x)
+    w.x = &v[608]
+    print(w.x)
+    w.x = &v[609]
+    print(w.x)
+    w.x = &v[610]
+    print(w.x)
+    w.x = &v[611]
+    print(w.x)
+    w.x = &v[612]
+    print(w.x)
+    w.x = &v[613]
+    print(w.x)
+    w.x = &v[614]
+    print(w.x)
+    w.x = &v[615]
+    print(w.x)
+    w.x = &v[616]
+    print(w.x)
+    w.x = &v[617]
+    print(w.x)
+    w.x = &v[618]
+    print(w.x)
+    w.x = &v[619]
+    print(w.x)
+    w.x = &v[620]
+    print(w.x)
+    w.x = &v[621]
+    print(w.x)
+    w.x = &v[622]
+    print(w.x)
+    w.x = &v[623]
+    print(w.x)
+    w.x = &v[624]
+    print(w.x)
+    w.x = &v[625]
+    print(w.x)
+    w.x = &v[626]
+    print(w.x)
+    w.x = &v[627]
+    print(w.x)
+    w.x = &v[628]
+    print(w.x)
+    w.x = &v[629]
+    print(w.x)
+    w.x = &v[630]
+    print(w.x)
+    w.x = &v[631]
+    print(w.x)
+    w.x = &v[632]
+    print(w.x)
+    w.x = &v[633]
+    print(w.x)
+    w.x = &v[634]
+    print(w.x)
+    w.x = &v[635]
+    print(w.x)
+    w.x = &v[636]
+    print(w.x)
+    w.x = &v[637]
+    print(w.x)
+    w.x = &v[638]
+    print(w.x)
+    w.x = &v[639]
+    print(w.x)
+    w.x = &v[640]
+    print(w.x)
+    w.x = &v[641]
+    print(w.x)
+    w.x = &v[642]
+    print(w.x)
+    w.x = &v[643]
+    print(w.x)
+    w.x = &v[644]
+    print(w.x)
+    w.x = &v[645]
+    print(w.x)
+    w.x = &v[646]
+    print(w.x)
+    w.x = &v[647]
+    print(w.x)
+    w.x = &v[648]
+    print(w.x)
+    w.x = &v[649]
+    print(w.x)
+    w.x = &v[650]
+    print(w.x)
+    w.x = &v[651]
+    print(w.x)
+    w.x = &v[652]
+    print(w.x)
+    w.x = &v[653]
+    print(w.x)
+    w.x = &v[654]
+    print(w.x)
+    w.x = &v[655]
+    print(w.x)
+    w.x = &v[656]
+    print(w.x)
+    w.x = &v[657]
+    print(w.x)
+    w.x = &v[658]
+    print(w.x)
+    w.x = &v[659]
+    print(w.x)
+    w.x = &v[660]
+    print(w.x)
+    w.x = &v[661]
+    print(w.x)
+    w.x = &v[662]
+    print(w.x)
+    w.x = &v[663]
+    print(w.x)
+    w.x = &v[664]
+    print(w.x)
+    w.x = &v[665]
+    print(w.x)
+    w.x = &v[666]
+    print(w.x)
+    w.x = &v[667]
+    print(w.x)
+    w.x = &v[668]
+    print(w.x)
+    w.x = &v[669]
+    print(w.x)
+    w.x = &v[670]
+    print(w.x)
+    w.x = &v[671]
+    print(w.x)
+    w.x = &v[672]
+    print(w.x)
+    w.x = &v[673]
+    print(w.x)
+    w.x = &v[674]
+    print(w.x)
+    w.x = &v[675]
+    print(w.x)
+    w.x = &v[676]
+    print(w.x)
+    w.x = &v[677]
+    print(w.x)
+    w.x = &v[678]
+    print(w.x)
+    w.x = &v[679]
+    print(w.x)
+    w.x = &v[680]
+    print(w.x)
+    w.x = &v[681]
+    print(w.x)
+    w.x = &v[682]
+    print(w.x)
+    w.x = &v[683]
+    print(w.x)
+    w.x = &v[684]
+    print(w.x)
+    w.x = &v[685]
+    print(w.x)
+    w.x = &v[686]
+    print(w.x)
+    w.x = &v[687]
+    print(w.x)
+    w.x = &v[688]
+    print(w.x)
+    w.x = &v[689]
+    print(w.x)
+    w.x = &v[690]
+    print(w.x)
+    w.x = &v[691]
+    print(w.x)
+    w.x = &v[692]
+    print(w.x)
+    w.x = &v[693]
+    print(w.x)
+    w.x = &v[694]
+    print(w.x)
+    w.x = &v[695]
+    print(w.x)
+    w.x = &v[696]
+    print(w.x)
+    w.x = &v[697]
+    print(w.x)
+    w.x = &v[698]
+    print(w.x)
+    w.x = &v[699]
+    print(w.x)
+    w.x = &v[700]
+    print(w.x)
+    w.x = &v[701]
+    print(w.x)
+    w.x = &v[702]
+    print(w.x)
+    w.x = &v[703]
+    print(w.x)
+    w.x = &v[704]
+    print(w.x)
+    w.x = &v[705]
+    print(w.x)
+    w.x = &v[706]
+    print(w.x)
+    w.x = &v[707]
+    print(w.x)
+    w.x = &v[708]
+    print(w.x)
+    w.x = &v[709]
+    print(w.x)
+    w.x = &v[710]
+    print(w.x)
+    w.x = &v[711]
+    print(w.x)
+    w.x = &v[712]
+    print(w.x)
+    w.x = &v[713]
+    print(w.x)
+    w.x = &v[714]
+    print(w.x)
+    w.x = &v[715]
+    print(w.x)
+    w.x = &v[716]
+    print(w.x)
+    w.x = &v[717]
+    print(w.x)
+    w.x = &v[718]
+    print(w.x)
+    w.x = &v[719]
+    print(w.x)
+    w.x = &v[720]
+    print(w.x)
+    w.x = &v[721]
+    print(w.x)
+    w.x = &v[722]
+    print(w.x)
+    w.x = &v[723]
+    print(w.x)
+    w.x = &v[724]
+    print(w.x)
+    w.x = &v[725]
+    print(w.x)
+    w.x = &v[726]
+    print(w.x)
+    w.x = &v[727]
+    print(w.x)
+    w.x = &v[728]
+    print(w.x)
+    w.x = &v[729]
+    print(w.x)
+    w.x = &v[730]
+    print(w.x)
+    w.x = &v[731]
+    print(w.x)
+    w.x = &v[732]
+    print(w.x)
+    w.x = &v[733]
+    print(w.x)
+    w.x = &v[734]
+    print(w.x)
+    w.x = &v[735]
+    print(w.x)
+    w.x = &v[736]
+    print(w.x)
+    w.x = &v[737]
+    print(w.x)
+    w.x = &v[738]
+    print(w.x)
+    w.x = &v[739]
+    print(w.x)
+    w.x = &v[740]
+    print(w.x)
+    w.x = &v[741]
+    print(w.x)
+    w.x = &v[742]
+    print(w.x)
+    w.x = &v[743]
+    print(w.x)
+    w.x = &v[744]
+    print(w.x)
+    w.x = &v[745]
+    print(w.x)
+    w.x = &v[746]
+    print(w.x)
+    w.x = &v[747]
+    print(w.x)
+    w.x = &v[748]
+    print(w.x)
+    w.x = &v[749]
+    print(w.x)
+    w.x = &v[750]
+    print(w.x)
+    w.x = &v[751]
+    print(w.x)
+    w.x = &v[752]
+    print(w.x)
+    w.x = &v[753]
+    print(w.x)
+    w.x = &v[754]
+    print(w.x)
+    w.x = &v[755]
+    print(w.x)
+    w.x = &v[756]
+    print(w.x)
+    w.x = &v[757]
+    print(w.x)
+    w.x = &v[758]
+    print(w.x)
+    w.x = &v[759]
+    print(w.x)
+    w.x = &v[760]
+    print(w.x)
+    w.x = &v[761]
+    print(w.x)
+    w.x = &v[762]
+    print(w.x)
+    w.x = &v[763]
+    print(w.x)
+    w.x = &v[764]
+    print(w.x)
+    w.x = &v[765]
+    print(w.x)
+    w.x = &v[766]
+    print(w.x)
+    w.x = &v[767]
+    print(w.x)
+    w.x = &v[768]
+    print(w.x)
+    w.x = &v[769]
+    print(w.x)
+    w.x = &v[770]
+    print(w.x)
+    w.x = &v[771]
+    print(w.x)
+    w.x = &v[772]
+    print(w.x)
+    w.x = &v[773]
+    print(w.x)
+    w.x = &v[774]
+    print(w.x)
+    w.x = &v[775]
+    print(w.x)
+    w.x = &v[776]
+    print(w.x)
+    w.x = &v[777]
+    print(w.x)
+    w.x = &v[778]
+    print(w.x)
+    w.x = &v[779]
+    print(w.x)
+    w.x = &v[780]
+    print(w.x)
+    w.x = &v[781]
+    print(w.x)
+    w.x = &v[782]
+    print(w.x)
+    w.x = &v[783]
+    print(w.x)
+    w.x = &v[784]
+    print(w.x)
+    w.x = &v[785]
+    print(w.x)
+    w.x = &v[786]
+    print(w.x)
+    w.x = &v[787]
+    print(w.x)
+    w.x = &v[788]
+    print(w.x)
+    w.x = &v[789]
+    print(w.x)
+    w.x = &v[790]
+    print(w.x)
+    w.x = &v[791]
+    print(w.x)
+    w.x = &v[792]
+    print(w.x)
+    w.x = &v[793]
+    print(w.x)
+    w.x = &v[794]
+    print(w.x)
+    w.x = &v[795]
+    print(w.x)
+    w.x = &v[796]
+    print(w.x)
+    w.x = &v[797]
+    print(w.x)
+    w.x = &v[798]
+    print(w.x)
+    w.x = &v[799]
+    print(w.x)
+    w.x = &v[800]
+    print(w.x)
+    w.x = &v[801]
+    print(w.x)
+    w.x = &v[802]
+    print(w.x)
+    w.x = &v[803]
+    print(w.x)
+    w.x = &v[804]
+    print(w.x)
+    w.x = &v[805]
+    print(w.x)
+    w.x = &v[806]
+    print(w.x)
+    w.x = &v[807]
+    print(w.x)
+    w.x = &v[808]
+    print(w.x)
+    w.x = &v[809]
+    print(w.x)
+    w.x = &v[810]
+    print(w.x)
+    w.x = &v[811]
+    print(w.x)
+    w.x = &v[812]
+    print(w.x)
+    w.x = &v[813]
+    print(w.x)
+    w.x = &v[814]
+    print(w.x)
+    w.x = &v[815]
+    print(w.x)
+    w.x = &v[816]
+    print(w.x)
+    w.x = &v[817]
+    print(w.x)
+    w.x = &v[818]
+    print(w.x)
+    w.x = &v[819]
+    print(w.x)
+    w.x = &v[820]
+    print(w.x)
+    w.x = &v[821]
+    print(w.x)
+    w.x = &v[822]
+    print(w.x)
+    w.x = &v[823]
+    print(w.x)
+    w.x = &v[824]
+    print(w.x)
+    w.x = &v[825]
+    print(w.x)
+    w.x = &v[826]
+    print(w.x)
+    w.x = &v[827]
+    print(w.x)
+    w.x = &v[828]
+    print(w.x)
+    w.x = &v[829]
+    print(w.x)
+    w.x = &v[830]
+    print(w.x)
+    w.x = &v[831]
+    print(w.x)
+    w.x = &v[832]
+    print(w.x)
+    w.x = &v[833]
+    print(w.x)
+    w.x = &v[834]
+    print(w.x)
+    w.x = &v[835]
+    print(w.x)
+    w.x = &v[836]
+    print(w.x)
+    w.x = &v[837]
+    print(w.x)
+    w.x = &v[838]
+    print(w.x)
+    w.x = &v[839]
+    print(w.x)
+    w.x = &v[840]
+    print(w.x)
+    w.x = &v[841]
+    print(w.x)
+    w.x = &v[842]
+    print(w.x)
+    w.x = &v[843]
+    print(w.x)
+    w.x = &v[844]
+    print(w.x)
+    w.x = &v[845]
+    print(w.x)
+    w.x = &v[846]
+    print(w.x)
+    w.x = &v[847]
+    print(w.x)
+    w.x = &v[848]
+    print(w.x)
+    w.x = &v[849]
+    print(w.x)
+    w.x = &v[850]
+    print(w.x)
+    w.x = &v[851]
+    print(w.x)
+    w.x = &v[852]
+    print(w.x)
+    w.x = &v[853]
+    print(w.x)
+    w.x = &v[854]
+    print(w.x)
+    w.x = &v[855]
+    print(w.x)
+    w.x = &v[856]
+    print(w.x)
+    w.x = &v[857]
+    print(w.x)
+    w.x = &v[858]
+    print(w.x)
+    w.x = &v[859]
+    print(w.x)
+    w.x = &v[860]
+    print(w.x)
+    w.x = &v[861]
+    print(w.x)
+    w.x = &v[862]
+    print(w.x)
+    w.x = &v[863]
+    print(w.x)
+    w.x = &v[864]
+    print(w.x)
+    w.x = &v[865]
+    print(w.x)
+    w.x = &v[866]
+    print(w.x)
+    w.x = &v[867]
+    print(w.x)
+    w.x = &v[868]
+    print(w.x)
+    w.x = &v[869]
+    print(w.x)
+    w.x = &v[870]
+    print(w.x)
+    w.x = &v[871]
+    print(w.x)
+    w.x = &v[872]
+    print(w.x)
+    w.x = &v[873]
+    print(w.x)
+    w.x = &v[874]
+    print(w.x)
+    w.x = &v[875]
+    print(w.x)
+    w.x = &v[876]
+    print(w.x)
+    w.x = &v[877]
+    print(w.x)
+    w.x = &v[878]
+    print(w.x)
+    w.x = &v[879]
+    print(w.x)
+    w.x = &v[880]
+    print(w.x)
+    w.x = &v[881]
+    print(w.x)
+    w.x = &v[882]
+    print(w.x)
+    w.x = &v[883]
+    print(w.x)
+    w.x = &v[884]
+    print(w.x)
+    w.x = &v[885]
+    print(w.x)
+    w.x = &v[886]
+    print(w.x)
+    w.x = &v[887]
+    print(w.x)
+    w.x = &v[888]
+    print(w.x)
+    w.x = &v[889]
+    print(w.x)
+    w.x = &v[890]
+    print(w.x)
+    w.x = &v[891]
+    print(w.x)
+    w.x = &v[892]
+    print(w.x)
+    w.x = &v[893]
+    print(w.x)
+    w.x = &v[894]
+    print(w.x)
+    w.x = &v[895]
+    print(w.x)
+    w.x = &v[896]
+    print(w.x)
+    w.x = &v[897]
+    print(w.x)
+    w.x = &v[898]
+    print(w.x)
+    w.x = &v[899]
+    print(w.x)
+    w.x = &v[900]
+    print(w.x)
+    w.x = &v[901]
+    print(w.x)
+    w.x = &v[902]
+    print(w.x)
+    w.x = &v[903]
+    print(w.x)
+    w.x = &v[904]
+    print(w.x)
+    w.x = &v[905]
+    print(w.x)
+    w.x = &v[906]
+    print(w.x)
+    w.x = &v[907]
+    print(w.x)
+    w.x = &v[908]
+    print(w.x)
+    w.x = &v[909]
+    print(w.x)
+    w.x = &v[910]
+    print(w.x)
+    w.x = &v[911]
+    print(w.x)
+    w.x = &v[912]
+    print(w.x)
+    w.x = &v[913]
+    print(w.x)
+    w.x = &v[914]
+    print(w.x)
+    w.x = &v[915]
+    print(w.x)
+    w.x = &v[916]
+    print(w.x)
+    w.x = &v[917]
+    print(w.x)
+    w.x = &v[918]
+    print(w.x)
+    w.x = &v[919]
+    print(w.x)
+    w.x = &v[920]
+    print(w.x)
+    w.x = &v[921]
+    print(w.x)
+    w.x = &v[922]
+    print(w.x)
+    w.x = &v[923]
+    print(w.x)
+    w.x = &v[924]
+    print(w.x)
+    w.x = &v[925]
+    print(w.x)
+    w.x = &v[926]
+    print(w.x)
+    w.x = &v[927]
+    print(w.x)
+    w.x = &v[928]
+    print(w.x)
+    w.x = &v[929]
+    print(w.x)
+    w.x = &v[930]
+    print(w.x)
+    w.x = &v[931]
+    print(w.x)
+    w.x = &v[932]
+    print(w.x)
+    w.x = &v[933]
+    print(w.x)
+    w.x = &v[934]
+    print(w.x)
+    w.x = &v[935]
+    print(w.x)
+    w.x = &v[936]
+    print(w.x)
+    w.x = &v[937]
+    print(w.x)
+    w.x = &v[938]
+    print(w.x)
+    w.x = &v[939]
+    print(w.x)
+    w.x = &v[940]
+    print(w.x)
+    w.x = &v[941]
+    print(w.x)
+    w.x = &v[942]
+    print(w.x)
+    w.x = &v[943]
+    print(w.x)
+    w.x = &v[944]
+    print(w.x)
+    w.x = &v[945]
+    print(w.x)
+    w.x = &v[946]
+    print(w.x)
+    w.x = &v[947]
+    print(w.x)
+    w.x = &v[948]
+    print(w.x)
+    w.x = &v[949]
+    print(w.x)
+    w.x = &v[950]
+    print(w.x)
+    w.x = &v[951]
+    print(w.x)
+    w.x = &v[952]
+    print(w.x)
+    w.x = &v[953]
+    print(w.x)
+    w.x = &v[954]
+    print(w.x)
+    w.x = &v[955]
+    print(w.x)
+    w.x = &v[956]
+    print(w.x)
+    w.x = &v[957]
+    print(w.x)
+    w.x = &v[958]
+    print(w.x)
+    w.x = &v[959]
+    print(w.x)
+    w.x = &v[960]
+    print(w.x)
+    w.x = &v[961]
+    print(w.x)
+    w.x = &v[962]
+    print(w.x)
+    w.x = &v[963]
+    print(w.x)
+    w.x = &v[964]
+    print(w.x)
+    w.x = &v[965]
+    print(w.x)
+    w.x = &v[966]
+    print(w.x)
+    w.x = &v[967]
+    print(w.x)
+    w.x = &v[968]
+    print(w.x)
+    w.x = &v[969]
+    print(w.x)
+    w.x = &v[970]
+    print(w.x)
+    w.x = &v[971]
+    print(w.x)
+    w.x = &v[972]
+    print(w.x)
+    w.x = &v[973]
+    print(w.x)
+    w.x = &v[974]
+    print(w.x)
+    w.x = &v[975]
+    print(w.x)
+    w.x = &v[976]
+    print(w.x)
+    w.x = &v[977]
+    print(w.x)
+    w.x = &v[978]
+    print(w.x)
+    w.x = &v[979]
+    print(w.x)
+    w.x = &v[980]
+    print(w.x)
+    w.x = &v[981]
+    print(w.x)
+    w.x = &v[982]
+    print(w.x)
+    w.x = &v[983]
+    print(w.x)
+    w.x = &v[984]
+    print(w.x)
+    w.x = &v[985]
+    print(w.x)
+    w.x = &v[986]
+    print(w.x)
+    w.x = &v[987]
+    print(w.x)
+    w.x = &v[988]
+    print(w.x)
+    w.x = &v[989]
+    print(w.x)
+    w.x = &v[990]
+    print(w.x)
+    w.x = &v[991]
+    print(w.x)
+    w.x = &v[992]
+    print(w.x)
+    w.x = &v[993]
+    print(w.x)
+    w.x = &v[994]
+    print(w.x)
+    w.x = &v[995]
+    print(w.x)
+    w.x = &v[996]
+    print(w.x)
+    w.x = &v[997]
+    print(w.x)
+    w.x = &v[998]
+    print(w.x)
+    w.x = &v[999]
+    print(w.x)
+    w.x = &v[1000]
+    print(w.x)
+    w.x = &v[1001]
+    print(w.x)
+    w.x = &v[1002]
+    print(w.x)
+    w.x = &v[1003]
+    print(w.x)
+    w.x = &v[1004]
+    print(w.x)
+    w.x = &v[1005]
+    print(w.x)
+    w.x = &v[1006]
+    print(w.x)
+    w.x = &v[1007]
+    print(w.x)
+    w.x = &v[1008]
+    print(w.x)
+    w.x = &v[1009]
+    print(w.x)
+    w.x = &v[1010]
+    print(w.x)
+    w.x = &v[1011]
+    print(w.x)
+    w.x = &v[1012]
+    print(w.x)
+    w.x = &v[1013]
+    print(w.x)
+    w.x = &v[1014]
+    print(w.x)
+    w.x = &v[1015]
+    print(w.x)
+    w.x = &v[1016]
+    print(w.x)
+    w.x = &v[1017]
+    print(w.x)
+    w.x = &v[1018]
+    print(w.x)
+    w.x = &v[1019]
+    print(w.x)
+    w.x = &v[1020]
+    print(w.x)
+    w.x = &v[1021]
+    print(w.x)
+    w.x = &v[1022]
+    print(w.x)
+    w.x = &v[1023]
+    print(w.x)
+    w.x = &v[1024]
+    print(w.x)
+    w.x = &v[1025]
+    print(w.x)
+    w.x = &v[1026]
+    print(w.x)
+    w.x = &v[1027]
+    print(w.x)
+    w.x = &v[1028]
+    print(w.x)
+    w.x = &v[1029]
+    print(w.x)
+    w.x = &v[1030]
+    print(w.x)
+    w.x = &v[1031]
+    print(w.x)
+    w.x = &v[1032]
+    print(w.x)
+    w.x = &v[1033]
+    print(w.x)
+    w.x = &v[1034]
+    print(w.x)
+    w.x = &v[1035]
+    print(w.x)
+    w.x = &v[1036]
+    print(w.x)
+    w.x = &v[1037]
+    print(w.x)
+    w.x = &v[1038]
+    print(w.x)
+    w.x = &v[1039]
+    print(w.x)
+    w.x = &v[1040]
+    print(w.x)
+    w.x = &v[1041]
+    print(w.x)
+    w.x = &v[1042]
+    print(w.x)
+    w.x = &v[1043]
+    print(w.x)
+    w.x = &v[1044]
+    print(w.x)
+    w.x = &v[1045]
+    print(w.x)
+    w.x = &v[1046]
+    print(w.x)
+    w.x = &v[1047]
+    print(w.x)
+    w.x = &v[1048]
+    print(w.x)
+    w.x = &v[1049]
+    print(w.x)
+    w.x = &v[1050]
+    print(w.x)
+    w.x = &v[1051]
+    print(w.x)
+    w.x = &v[1052]
+    print(w.x)
+    w.x = &v[1053]
+    print(w.x)
+    w.x = &v[1054]
+    print(w.x)
+    w.x = &v[1055]
+    print(w.x)
+    w.x = &v[1056]
+    print(w.x)
+    w.x = &v[1057]
+    print(w.x)
+    w.x = &v[1058]
+    print(w.x)
+    w.x = &v[1059]
+    print(w.x)
+    w.x = &v[1060]
+    print(w.x)
+    w.x = &v[1061]
+    print(w.x)
+    w.x = &v[1062]
+    print(w.x)
+    w.x = &v[1063]
+    print(w.x)
+    w.x = &v[1064]
+    print(w.x)
+    w.x = &v[1065]
+    print(w.x)
+    w.x = &v[1066]
+    print(w.x)
+    w.x = &v[1067]
+    print(w.x)
+    w.x = &v[1068]
+    print(w.x)
+    w.x = &v[1069]
+    print(w.x)
+    w.x = &v[1070]
+    print(w.x)
+    w.x = &v[1071]
+    print(w.x)
+    w.x = &v[1072]
+    print(w.x)
+    w.x = &v[1073]
+    print(w.x)
+    w.x = &v[1074]
+    print(w.x)
+    w.x = &v[1075]
+    print(w.x)
+    w.x = &v[1076]
+    print(w.x)
+    w.x = &v[1077]
+    print(w.x)
+    w.x = &v[1078]
+    print(w.x)
+    w.x = &v[1079]
+    print(w.x)
+    w.x = &v[1080]
+    print(w.x)
+    w.x = &v[1081]
+    print(w.x)
+    w.x = &v[1082]
+    print(w.x)
+    w.x = &v[1083]
+    print(w.x)
+    w.x = &v[1084]
+    print(w.x)
+    w.x = &v[1085]
+    print(w.x)
+    w.x = &v[1086]
+    print(w.x)
+    w.x = &v[1087]
+    print(w.x)
+    w.x = &v[1088]
+    print(w.x)
+    w.x = &v[1089]
+    print(w.x)
+    w.x = &v[1090]
+    print(w.x)
+    w.x = &v[1091]
+    print(w.x)
+    w.x = &v[1092]
+    print(w.x)
+    w.x = &v[1093]
+    print(w.x)
+    w.x = &v[1094]
+    print(w.x)
+    w.x = &v[1095]
+    print(w.x)
+    w.x = &v[1096]
+    print(w.x)
+    w.x = &v[1097]
+    print(w.x)
+    w.x = &v[1098]
+    print(w.x)
+    w.x = &v[1099]
+    print(w.x)
+    w.x = &v[1100]
+    print(w.x)
+    w.x = &v[1101]
+    print(w.x)
+    w.x = &v[1102]
+    print(w.x)
+    w.x = &v[1103]
+    print(w.x)
+    w.x = &v[1104]
+    print(w.x)
+    w.x = &v[1105]
+    print(w.x)
+    w.x = &v[1106]
+    print(w.x)
+    w.x = &v[1107]
+    print(w.x)
+    w.x = &v[1108]
+    print(w.x)
+    w.x = &v[1109]
+    print(w.x)
+    w.x = &v[1110]
+    print(w.x)
+    w.x = &v[1111]
+    print(w.x)
+    w.x = &v[1112]
+    print(w.x)
+    w.x = &v[1113]
+    print(w.x)
+    w.x = &v[1114]
+    print(w.x)
+    w.x = &v[1115]
+    print(w.x)
+    w.x = &v[1116]
+    print(w.x)
+    w.x = &v[1117]
+    print(w.x)
+    w.x = &v[1118]
+    print(w.x)
+    w.x = &v[1119]
+    print(w.x)
+    w.x = &v[1120]
+    print(w.x)
+    w.x = &v[1121]
+    print(w.x)
+    w.x = &v[1122]
+    print(w.x)
+    w.x = &v[1123]
+    print(w.x)
+    w.x = &v[1124]
+    print(w.x)
+    w.x = &v[1125]
+    print(w.x)
+    w.x = &v[1126]
+    print(w.x)
+    w.x = &v[1127]
+    print(w.x)
+    w.x = &v[1128]
+    print(w.x)
+    w.x = &v[1129]
+    print(w.x)
+    w.x = &v[1130]
+    print(w.x)
+    w.x = &v[1131]
+    print(w.x)
+    w.x = &v[1132]
+    print(w.x)
+    w.x = &v[1133]
+    print(w.x)
+    w.x = &v[1134]
+    print(w.x)
+    w.x = &v[1135]
+    print(w.x)
+    w.x = &v[1136]
+    print(w.x)
+    w.x = &v[1137]
+    print(w.x)
+    w.x = &v[1138]
+    print(w.x)
+    w.x = &v[1139]
+    print(w.x)
+    w.x = &v[1140]
+    print(w.x)
+    w.x = &v[1141]
+    print(w.x)
+    w.x = &v[1142]
+    print(w.x)
+    w.x = &v[1143]
+    print(w.x)
+    w.x = &v[1144]
+    print(w.x)
+    w.x = &v[1145]
+    print(w.x)
+    w.x = &v[1146]
+    print(w.x)
+    w.x = &v[1147]
+    print(w.x)
+    w.x = &v[1148]
+    print(w.x)
+    w.x = &v[1149]
+    print(w.x)
+    w.x = &v[1150]
+    print(w.x)
+    w.x = &v[1151]
+    print(w.x)
+    w.x = &v[1152]
+    print(w.x)
+    w.x = &v[1153]
+    print(w.x)
+    w.x = &v[1154]
+    print(w.x)
+    w.x = &v[1155]
+    print(w.x)
+    w.x = &v[1156]
+    print(w.x)
+    w.x = &v[1157]
+    print(w.x)
+    w.x = &v[1158]
+    print(w.x)
+    w.x = &v[1159]
+    print(w.x)
+    w.x = &v[1160]
+    print(w.x)
+    w.x = &v[1161]
+    print(w.x)
+    w.x = &v[1162]
+    print(w.x)
+    w.x = &v[1163]
+    print(w.x)
+    w.x = &v[1164]
+    print(w.x)
+    w.x = &v[1165]
+    print(w.x)
+    w.x = &v[1166]
+    print(w.x)
+    w.x = &v[1167]
+    print(w.x)
+    w.x = &v[1168]
+    print(w.x)
+    w.x = &v[1169]
+    print(w.x)
+    w.x = &v[1170]
+    print(w.x)
+    w.x = &v[1171]
+    print(w.x)
+    w.x = &v[1172]
+    print(w.x)
+    w.x = &v[1173]
+    print(w.x)
+    w.x = &v[1174]
+    print(w.x)
+    w.x = &v[1175]
+    print(w.x)
+    w.x = &v[1176]
+    print(w.x)
+    w.x = &v[1177]
+    print(w.x)
+    w.x = &v[1178]
+    print(w.x)
+    w.x = &v[1179]
+    print(w.x)
+    w.x = &v[1180]
+    print(w.x)
+    w.x = &v[1181]
+    print(w.x)
+    w.x = &v[1182]
+    print(w.x)
+    w.x = &v[1183]
+    print(w.x)
+    w.x = &v[1184]
+    print(w.x)
+    w.x = &v[1185]
+    print(w.x)
+    w.x = &v[1186]
+    print(w.x)
+    w.x = &v[1187]
+    print(w.x)
+    w.x = &v[1188]
+    print(w.x)
+    w.x = &v[1189]
+    print(w.x)
+    w.x = &v[1190]
+    print(w.x)
+    w.x = &v[1191]
+    print(w.x)
+    w.x = &v[1192]
+    print(w.x)
+    w.x = &v[1193]
+    print(w.x)
+    w.x = &v[1194]
+    print(w.x)
+    w.x = &v[1195]
+    print(w.x)
+    w.x = &v[1196]
+    print(w.x)
+    w.x = &v[1197]
+    print(w.x)
+    w.x = &v[1198]
+    print(w.x)
+    w.x = &v[1199]
+    print(w.x)
+    w.x = &v[1200]
+    print(w.x)
+    w.x = &v[1201]
+    print(w.x)
+    w.x = &v[1202]
+    print(w.x)
+    w.x = &v[1203]
+    print(w.x)
+    w.x = &v[1204]
+    print(w.x)
+    w.x = &v[1205]
+    print(w.x)
+    w.x = &v[1206]
+    print(w.x)
+    w.x = &v[1207]
+    print(w.x)
+    w.x = &v[1208]
+    print(w.x)
+    w.x = &v[1209]
+    print(w.x)
+    w.x = &v[1210]
+    print(w.x)
+    w.x = &v[1211]
+    print(w.x)
+    w.x = &v[1212]
+    print(w.x)
+    w.x = &v[1213]
+    print(w.x)
+    w.x = &v[1214]
+    print(w.x)
+    w.x = &v[1215]
+    print(w.x)
+    w.x = &v[1216]
+    print(w.x)
+    w.x = &v[1217]
+    print(w.x)
+    w.x = &v[1218]
+    print(w.x)
+    w.x = &v[1219]
+    print(w.x)
+    w.x = &v[1220]
+    print(w.x)
+    w.x = &v[1221]
+    print(w.x)
+    w.x = &v[1222]
+    print(w.x)
+    w.x = &v[1223]
+    print(w.x)
+    w.x = &v[1224]
+    print(w.x)
+    w.x = &v[1225]
+    print(w.x)
+    w.x = &v[1226]
+    print(w.x)
+    w.x = &v[1227]
+    print(w.x)
+    w.x = &v[1228]
+    print(w.x)
+    w.x = &v[1229]
+    print(w.x)
+    w.x = &v[1230]
+    print(w.x)
+    w.x = &v[1231]
+    print(w.x)
+    w.x = &v[1232]
+    print(w.x)
+    w.x = &v[1233]
+    print(w.x)
+    w.x = &v[1234]
+    print(w.x)
+    w.x = &v[1235]
+    print(w.x)
+    w.x = &v[1236]
+    print(w.x)
+    w.x = &v[1237]
+    print(w.x)
+    w.x = &v[1238]
+    print(w.x)
+    w.x = &v[1239]
+    print(w.x)
+    w.x = &v[1240]
+    print(w.x)
+    w.x = &v[1241]
+    print(w.x)
+    w.x = &v[1242]
+    print(w.x)
+    w.x = &v[1243]
+    print(w.x)
+    w.x = &v[1244]
+    print(w.x)
+    w.x = &v[1245]
+    print(w.x)
+    w.x = &v[1246]
+    print(w.x)
+    w.x = &v[1247]
+    print(w.x)
+    w.x = &v[1248]
+    print(w.x)
+    w.x = &v[1249]
+    print(w.x)
+    w.x = &v[1250]
+    print(w.x)
+    w.x = &v[1251]
+    print(w.x)
+    w.x = &v[1252]
+    print(w.x)
+    w.x = &v[1253]
+    print(w.x)
+    w.x = &v[1254]
+    print(w.x)
+    w.x = &v[1255]
+    print(w.x)
+    w.x = &v[1256]
+    print(w.x)
+    w.x = &v[1257]
+    print(w.x)
+    w.x = &v[1258]
+    print(w.x)
+    w.x = &v[1259]
+    print(w.x)
+    w.x = &v[1260]
+    print(w.x)
+    w.x = &v[1261]
+    print(w.x)
+    w.x = &v[1262]
+    print(w.x)
+    w.x = &v[1263]
+    print(w.x)
+    w.x = &v[1264]
+    print(w.x)
+    w.x = &v[1265]
+    print(w.x)
+    w.x = &v[1266]
+    print(w.x)
+    w.x = &v[1267]
+    print(w.x)
+    w.x = &v[1268]
+    print(w.x)
+    w.x = &v[1269]
+    print(w.x)
+    w.x = &v[1270]
+    print(w.x)
+    w.x = &v[1271]
+    print(w.x)
+    w.x = &v[1272]
+    print(w.x)
+    w.x = &v[1273]
+    print(w.x)
+    w.x = &v[1274]
+    print(w.x)
+    w.x = &v[1275]
+    print(w.x)
+    w.x = &v[1276]
+    print(w.x)
+    w.x = &v[1277]
+    print(w.x)
+    w.x = &v[1278]
+    print(w.x)
+    w.x = &v[1279]
+    print(w.x)
+    w.x = &v[1280]
+    print(w.x)
+    w.x = &v[1281]
+    print(w.x)
+    w.x = &v[1282]
+    print(w.x)
+    w.x = &v[1283]
+    print(w.x)
+    w.x = &v[1284]
+    print(w.x)
+    w.x = &v[1285]
+    print(w.x)
+    w.x = &v[1286]
+    print(w.x)
+    w.x = &v[1287]
+    print(w.x)
+    w.x = &v[1288]
+    print(w.x)
+    w.x = &v[1289]
+    print(w.x)
+    w.x = &v[1290]
+    print(w.x)
+    w.x = &v[1291]
+    print(w.x)
+    w.x = &v[1292]
+    print(w.x)
+    w.x = &v[1293]
+    print(w.x)
+    w.x = &v[1294]
+    print(w.x)
+    w.x = &v[1295]
+    print(w.x)
+    w.x = &v[1296]
+    print(w.x)
+    w.x = &v[1297]
+    print(w.x)
+    w.x = &v[1298]
+    print(w.x)
+    w.x = &v[1299]
+    print(w.x)
+    w.x = &v[1300]
+    print(w.x)
+    w.x = &v[1301]
+    print(w.x)
+    w.x = &v[1302]
+    print(w.x)
+    w.x = &v[1303]
+    print(w.x)
+    w.x = &v[1304]
+    print(w.x)
+    w.x = &v[1305]
+    print(w.x)
+    w.x = &v[1306]
+    print(w.x)
+    w.x = &v[1307]
+    print(w.x)
+    w.x = &v[1308]
+    print(w.x)
+    w.x = &v[1309]
+    print(w.x)
+    w.x = &v[1310]
+    print(w.x)
+    w.x = &v[1311]
+    print(w.x)
+    w.x = &v[1312]
+    print(w.x)
+    w.x = &v[1313]
+    print(w.x)
+    w.x = &v[1314]
+    print(w.x)
+    w.x = &v[1315]
+    print(w.x)
+    w.x = &v[1316]
+    print(w.x)
+    w.x = &v[1317]
+    print(w.x)
+    w.x = &v[1318]
+    print(w.x)
+    w.x = &v[1319]
+    print(w.x)
+    w.x = &v[1320]
+    print(w.x)
+    w.x = &v[1321]
+    print(w.x)
+    w.x = &v[1322]
+    print(w.x)
+    w.x = &v[1323]
+    print(w.x)
+    w.x = &v[1324]
+    print(w.x)
+    w.x = &v[1325]
+    print(w.x)
+    w.x = &v[1326]
+    print(w.x)
+    w.x = &v[1327]
+    print(w.x)
+    w.x = &v[1328]
+    print(w.x)
+    w.x = &v[1329]
+    print(w.x)
+    w.x = &v[1330]
+    print(w.x)
+    w.x = &v[1331]
+    print(w.x)
+    w.x = &v[1332]
+    print(w.x)
+    w.x = &v[1333]
+    print(w.x)
+    w.x = &v[1334]
+    print(w.x)
+    w.x = &v[1335]
+    print(w.x)
+    w.x = &v[1336]
+    print(w.x)
+    w.x = &v[1337]
+    print(w.x)
+    w.x = &v[1338]
+    print(w.x)
+    w.x = &v[1339]
+    print(w.x)
+    w.x = &v[1340]
+    print(w.x)
+    w.x = &v[1341]
+    print(w.x)
+    w.x = &v[1342]
+    print(w.x)
+    w.x = &v[1343]
+    print(w.x)
+    w.x = &v[1344]
+    print(w.x)
+    w.x = &v[1345]
+    print(w.x)
+    w.x = &v[1346]
+    print(w.x)
+    w.x = &v[1347]
+    print(w.x)
+    w.x = &v[1348]
+    print(w.x)
+    w.x = &v[1349]
+    print(w.x)
+    w.x = &v[1350]
+    print(w.x)
+    w.x = &v[1351]
+    print(w.x)
+    w.x = &v[1352]
+    print(w.x)
+    w.x = &v[1353]
+    print(w.x)
+    w.x = &v[1354]
+    print(w.x)
+    w.x = &v[1355]
+    print(w.x)
+    w.x = &v[1356]
+    print(w.x)
+    w.x = &v[1357]
+    print(w.x)
+    w.x = &v[1358]
+    print(w.x)
+    w.x = &v[1359]
+    print(w.x)
+    w.x = &v[1360]
+    print(w.x)
+    w.x = &v[1361]
+    print(w.x)
+    w.x = &v[1362]
+    print(w.x)
+    w.x = &v[1363]
+    print(w.x)
+    w.x = &v[1364]
+    print(w.x)
+    w.x = &v[1365]
+    print(w.x)
+    w.x = &v[1366]
+    print(w.x)
+    w.x = &v[1367]
+    print(w.x)
+    w.x = &v[1368]
+    print(w.x)
+    w.x = &v[1369]
+    print(w.x)
+    w.x = &v[1370]
+    print(w.x)
+    w.x = &v[1371]
+    print(w.x)
+    w.x = &v[1372]
+    print(w.x)
+    w.x = &v[1373]
+    print(w.x)
+    w.x = &v[1374]
+    print(w.x)
+    w.x = &v[1375]
+    print(w.x)
+    w.x = &v[1376]
+    print(w.x)
+    w.x = &v[1377]
+    print(w.x)
+    w.x = &v[1378]
+    print(w.x)
+    w.x = &v[1379]
+    print(w.x)
+    w.x = &v[1380]
+    print(w.x)
+    w.x = &v[1381]
+    print(w.x)
+    w.x = &v[1382]
+    print(w.x)
+    w.x = &v[1383]
+    print(w.x)
+    w.x = &v[1384]
+    print(w.x)
+    w.x = &v[1385]
+    print(w.x)
+    w.x = &v[1386]
+    print(w.x)
+    w.x = &v[1387]
+    print(w.x)
+    w.x = &v[1388]
+    print(w.x)
+    w.x = &v[1389]
+    print(w.x)
+    w.x = &v[1390]
+    print(w.x)
+    w.x = &v[1391]
+    print(w.x)
+    w.x = &v[1392]
+    print(w.x)
+    w.x = &v[1393]
+    print(w.x)
+    w.x = &v[1394]
+    print(w.x)
+    w.x = &v[1395]
+    print(w.x)
+    w.x = &v[1396]
+    print(w.x)
+    w.x = &v[1397]
+    print(w.x)
+    w.x = &v[1398]
+    print(w.x)
+    w.x = &v[1399]
+    print(w.x)
+    w.x = &v[1400]
+    print(w.x)
+    w.x = &v[1401]
+    print(w.x)
+    w.x = &v[1402]
+    print(w.x)
+    w.x = &v[1403]
+    print(w.x)
+    w.x = &v[1404]
+    print(w.x)
+    w.x = &v[1405]
+    print(w.x)
+    w.x = &v[1406]
+    print(w.x)
+    w.x = &v[1407]
+    print(w.x)
+    w.x = &v[1408]
+    print(w.x)
+    w.x = &v[1409]
+    print(w.x)
+    w.x = &v[1410]
+    print(w.x)
+    w.x = &v[1411]
+    print(w.x)
+    w.x = &v[1412]
+    print(w.x)
+    w.x = &v[1413]
+    print(w.x)
+    w.x = &v[1414]
+    print(w.x)
+    w.x = &v[1415]
+    print(w.x)
+    w.x = &v[1416]
+    print(w.x)
+    w.x = &v[1417]
+    print(w.x)
+    w.x = &v[1418]
+    print(w.x)
+    w.x = &v[1419]
+    print(w.x)
+    w.x = &v[1420]
+    print(w.x)
+    w.x = &v[1421]
+    print(w.x)
+    w.x = &v[1422]
+    print(w.x)
+    w.x = &v[1423]
+    print(w.x)
+    w.x = &v[1424]
+    print(w.x)
+    w.x = &v[1425]
+    print(w.x)
+    w.x = &v[1426]
+    print(w.x)
+    w.x = &v[1427]
+    print(w.x)
+    w.x = &v[1428]
+    print(w.x)
+    w.x = &v[1429]
+    print(w.x)
+    w.x = &v[1430]
+    print(w.x)
+    w.x = &v[1431]
+    print(w.x)
+    w.x = &v[1432]
+    print(w.x)
+    w.x = &v[1433]
+    print(w.x)
+    w.x = &v[1434]
+    print(w.x)
+    w.x = &v[1435]
+    print(w.x)
+    w.x = &v[1436]
+    print(w.x)
+    w.x = &v[1437]
+    print(w.x)
+    w.x = &v[1438]
+    print(w.x)
+    w.x = &v[1439]
+    print(w.x)
+    w.x = &v[1440]
+    print(w.x)
+    w.x = &v[1441]
+    print(w.x)
+    w.x = &v[1442]
+    print(w.x)
+    w.x = &v[1443]
+    print(w.x)
+    w.x = &v[1444]
+    print(w.x)
+    w.x = &v[1445]
+    print(w.x)
+    w.x = &v[1446]
+    print(w.x)
+    w.x = &v[1447]
+    print(w.x)
+    w.x = &v[1448]
+    print(w.x)
+    w.x = &v[1449]
+    print(w.x)
+    w.x = &v[1450]
+    print(w.x)
+    w.x = &v[1451]
+    print(w.x)
+    w.x = &v[1452]
+    print(w.x)
+    w.x = &v[1453]
+    print(w.x)
+    w.x = &v[1454]
+    print(w.x)
+    w.x = &v[1455]
+    print(w.x)
+    w.x = &v[1456]
+    print(w.x)
+    w.x = &v[1457]
+    print(w.x)
+    w.x = &v[1458]
+    print(w.x)
+    w.x = &v[1459]
+    print(w.x)
+    w.x = &v[1460]
+    print(w.x)
+    w.x = &v[1461]
+    print(w.x)
+    w.x = &v[1462]
+    print(w.x)
+    w.x = &v[1463]
+    print(w.x)
+    w.x = &v[1464]
+    print(w.x)
+    w.x = &v[1465]
+    print(w.x)
+    w.x = &v[1466]
+    print(w.x)
+    w.x = &v[1467]
+    print(w.x)
+    w.x = &v[1468]
+    print(w.x)
+    w.x = &v[1469]
+    print(w.x)
+    w.x = &v[1470]
+    print(w.x)
+    w.x = &v[1471]
+    print(w.x)
+    w.x = &v[1472]
+    print(w.x)
+    w.x = &v[1473]
+    print(w.x)
+    w.x = &v[1474]
+    print(w.x)
+    w.x = &v[1475]
+    print(w.x)
+    w.x = &v[1476]
+    print(w.x)
+    w.x = &v[1477]
+    print(w.x)
+    w.x = &v[1478]
+    print(w.x)
+    w.x = &v[1479]
+    print(w.x)
+    w.x = &v[1480]
+    print(w.x)
+    w.x = &v[1481]
+    print(w.x)
+    w.x = &v[1482]
+    print(w.x)
+    w.x = &v[1483]
+    print(w.x)
+    w.x = &v[1484]
+    print(w.x)
+    w.x = &v[1485]
+    print(w.x)
+    w.x = &v[1486]
+    print(w.x)
+    w.x = &v[1487]
+    print(w.x)
+    w.x = &v[1488]
+    print(w.x)
+    w.x = &v[1489]
+    print(w.x)
+    w.x = &v[1490]
+    print(w.x)
+    w.x = &v[1491]
+    print(w.x)
+    w.x = &v[1492]
+    print(w.x)
+    w.x = &v[1493]
+    print(w.x)
+    w.x = &v[1494]
+    print(w.x)
+    w.x = &v[1495]
+    print(w.x)
+    w.x = &v[1496]
+    print(w.x)
+    w.x = &v[1497]
+    print(w.x)
+    w.x = &v[1498]
+    print(w.x)
+    w.x = &v[1499]
+    print(w.x)
+    w.x = &v[1500]
+    print(w.x)
+    w.x = &v[1501]
+    print(w.x)
+    w.x = &v[1502]
+    print(w.x)
+    w.x = &v[1503]
+    print(w.x)
+    w.x = &v[1504]
+    print(w.x)
+    w.x = &v[1505]
+    print(w.x)
+    w.x = &v[1506]
+    print(w.x)
+    w.x = &v[1507]
+    print(w.x)
+    w.x = &v[1508]
+    print(w.x)
+    w.x = &v[1509]
+    print(w.x)
+    w.x = &v[1510]
+    print(w.x)
+    w.x = &v[1511]
+    print(w.x)
+    w.x = &v[1512]
+    print(w.x)
+    w.x = &v[1513]
+    print(w.x)
+    w.x = &v[1514]
+    print(w.x)
+    w.x = &v[1515]
+    print(w.x)
+    w.x = &v[1516]
+    print(w.x)
+    w.x = &v[1517]
+    print(w.x)
+    w.x = &v[1518]
+    print(w.x)
+    w.x = &v[1519]
+    print(w.x)
+    w.x = &v[1520]
+    print(w.x)
+    w.x = &v[1521]
+    print(w.x)
+    w.x = &v[1522]
+    print(w.x)
+    w.x = &v[1523]
+    print(w.x)
+    w.x = &v[1524]
+    print(w.x)
+    w.x = &v[1525]
+    print(w.x)
+    w.x = &v[1526]
+    print(w.x)
+    w.x = &v[1527]
+    print(w.x)
+    w.x = &v[1528]
+    print(w.x)
+    w.x = &v[1529]
+    print(w.x)
+    w.x = &v[1530]
+    print(w.x)
+    w.x = &v[1531]
+    print(w.x)
+    w.x = &v[1532]
+    print(w.x)
+    w.x = &v[1533]
+    print(w.x)
+    w.x = &v[1534]
+    print(w.x)
+    w.x = &v[1535]
+    print(w.x)
+    w.x = &v[1536]
+    print(w.x)
+    w.x = &v[1537]
+    print(w.x)
+    w.x = &v[1538]
+    print(w.x)
+    w.x = &v[1539]
+    print(w.x)
+    w.x = &v[1540]
+    print(w.x)
+    w.x = &v[1541]
+    print(w.x)
+    w.x = &v[1542]
+    print(w.x)
+    w.x = &v[1543]
+    print(w.x)
+    w.x = &v[1544]
+    print(w.x)
+    w.x = &v[1545]
+    print(w.x)
+    w.x = &v[1546]
+    print(w.x)
+    w.x = &v[1547]
+    print(w.x)
+    w.x = &v[1548]
+    print(w.x)
+    w.x = &v[1549]
+    print(w.x)
+    w.x = &v[1550]
+    print(w.x)
+    w.x = &v[1551]
+    print(w.x)
+    w.x = &v[1552]
+    print(w.x)
+    w.x = &v[1553]
+    print(w.x)
+    w.x = &v[1554]
+    print(w.x)
+    w.x = &v[1555]
+    print(w.x)
+    w.x = &v[1556]
+    print(w.x)
+    w.x = &v[1557]
+    print(w.x)
+    w.x = &v[1558]
+    print(w.x)
+    w.x = &v[1559]
+    print(w.x)
+    w.x = &v[1560]
+    print(w.x)
+    w.x = &v[1561]
+    print(w.x)
+    w.x = &v[1562]
+    print(w.x)
+    w.x = &v[1563]
+    print(w.x)
+    w.x = &v[1564]
+    print(w.x)
+    w.x = &v[1565]
+    print(w.x)
+    w.x = &v[1566]
+    print(w.x)
+    w.x = &v[1567]
+    print(w.x)
+    w.x = &v[1568]
+    print(w.x)
+    w.x = &v[1569]
+    print(w.x)
+    w.x = &v[1570]
+    print(w.x)
+    w.x = &v[1571]
+    print(w.x)
+    w.x = &v[1572]
+    print(w.x)
+    w.x = &v[1573]
+    print(w.x)
+    w.x = &v[1574]
+    print(w.x)
+    w.x = &v[1575]
+    print(w.x)
+    w.x = &v[1576]
+    print(w.x)
+    w.x = &v[1577]
+    print(w.x)
+    w.x = &v[1578]
+    print(w.x)
+    w.x = &v[1579]
+    print(w.x)
+    w.x = &v[1580]
+    print(w.x)
+    w.x = &v[1581]
+    print(w.x)
+    w.x = &v[1582]
+    print(w.x)
+    w.x = &v[1583]
+    print(w.x)
+    w.x = &v[1584]
+    print(w.x)
+    w.x = &v[1585]
+    print(w.x)
+    w.x = &v[1586]
+    print(w.x)
+    w.x = &v[1587]
+    print(w.x)
+    w.x = &v[1588]
+    print(w.x)
+    w.x = &v[1589]
+    print(w.x)
+    w.x = &v[1590]
+    print(w.x)
+    w.x = &v[1591]
+    print(w.x)
+    w.x = &v[1592]
+    print(w.x)
+    w.x = &v[1593]
+    print(w.x)
+    w.x = &v[1594]
+    print(w.x)
+    w.x = &v[1595]
+    print(w.x)
+    w.x = &v[1596]
+    print(w.x)
+    w.x = &v[1597]
+    print(w.x)
+    w.x = &v[1598]
+    print(w.x)
+    w.x = &v[1599]
+    print(w.x)
+    w.x = &v[1600]
+    print(w.x)
+    w.x = &v[1601]
+    print(w.x)
+    w.x = &v[1602]
+    print(w.x)
+    w.x = &v[1603]
+    print(w.x)
+    w.x = &v[1604]
+    print(w.x)
+    w.x = &v[1605]
+    print(w.x)
+    w.x = &v[1606]
+    print(w.x)
+    w.x = &v[1607]
+    print(w.x)
+    w.x = &v[1608]
+    print(w.x)
+    w.x = &v[1609]
+    print(w.x)
+    w.x = &v[1610]
+    print(w.x)
+    w.x = &v[1611]
+    print(w.x)
+    w.x = &v[1612]
+    print(w.x)
+    w.x = &v[1613]
+    print(w.x)
+    w.x = &v[1614]
+    print(w.x)
+    w.x = &v[1615]
+    print(w.x)
+    w.x = &v[1616]
+    print(w.x)
+    w.x = &v[1617]
+    print(w.x)
+    w.x = &v[1618]
+    print(w.x)
+    w.x = &v[1619]
+    print(w.x)
+    w.x = &v[1620]
+    print(w.x)
+    w.x = &v[1621]
+    print(w.x)
+    w.x = &v[1622]
+    print(w.x)
+    w.x = &v[1623]
+    print(w.x)
+    w.x = &v[1624]
+    print(w.x)
+    w.x = &v[1625]
+    print(w.x)
+    w.x = &v[1626]
+    print(w.x)
+    w.x = &v[1627]
+    print(w.x)
+    w.x = &v[1628]
+    print(w.x)
+    w.x = &v[1629]
+    print(w.x)
+    w.x = &v[1630]
+    print(w.x)
+    w.x = &v[1631]
+    print(w.x)
+    w.x = &v[1632]
+    print(w.x)
+    w.x = &v[1633]
+    print(w.x)
+    w.x = &v[1634]
+    print(w.x)
+    w.x = &v[1635]
+    print(w.x)
+    w.x = &v[1636]
+    print(w.x)
+    w.x = &v[1637]
+    print(w.x)
+    w.x = &v[1638]
+    print(w.x)
+    w.x = &v[1639]
+    print(w.x)
+    w.x = &v[1640]
+    print(w.x)
+    w.x = &v[1641]
+    print(w.x)
+    w.x = &v[1642]
+    print(w.x)
+    w.x = &v[1643]
+    print(w.x)
+    w.x = &v[1644]
+    print(w.x)
+    w.x = &v[1645]
+    print(w.x)
+    w.x = &v[1646]
+    print(w.x)
+    w.x = &v[1647]
+    print(w.x)
+    w.x = &v[1648]
+    print(w.x)
+    w.x = &v[1649]
+    print(w.x)
+    w.x = &v[1650]
+    print(w.x)
+    w.x = &v[1651]
+    print(w.x)
+    w.x = &v[1652]
+    print(w.x)
+    w.x = &v[1653]
+    print(w.x)
+    w.x = &v[1654]
+    print(w.x)
+    w.x = &v[1655]
+    print(w.x)
+    w.x = &v[1656]
+    print(w.x)
+    w.x = &v[1657]
+    print(w.x)
+    w.x = &v[1658]
+    print(w.x)
+    w.x = &v[1659]
+    print(w.x)
+    w.x = &v[1660]
+    print(w.x)
+    w.x = &v[1661]
+    print(w.x)
+    w.x = &v[1662]
+    print(w.x)
+    w.x = &v[1663]
+    print(w.x)
+    w.x = &v[1664]
+    print(w.x)
+    w.x = &v[1665]
+    print(w.x)
+    w.x = &v[1666]
+    print(w.x)
+    w.x = &v[1667]
+    print(w.x)
+    w.x = &v[1668]
+    print(w.x)
+    w.x = &v[1669]
+    print(w.x)
+    w.x = &v[1670]
+    print(w.x)
+    w.x = &v[1671]
+    print(w.x)
+    w.x = &v[1672]
+    print(w.x)
+    w.x = &v[1673]
+    print(w.x)
+    w.x = &v[1674]
+    print(w.x)
+    w.x = &v[1675]
+    print(w.x)
+    w.x = &v[1676]
+    print(w.x)
+    w.x = &v[1677]
+    print(w.x)
+    w.x = &v[1678]
+    print(w.x)
+    w.x = &v[1679]
+    print(w.x)
+    w.x = &v[1680]
+    print(w.x)
+    w.x = &v[1681]
+    print(w.x)
+    w.x = &v[1682]
+    print(w.x)
+    w.x = &v[1683]
+    print(w.x)
+    w.x = &v[1684]
+    print(w.x)
+    w.x = &v[1685]
+    print(w.x)
+    w.x = &v[1686]
+    print(w.x)
+    w.x = &v[1687]
+    print(w.x)
+    w.x = &v[1688]
+    print(w.x)
+    w.x = &v[1689]
+    print(w.x)
+    w.x = &v[1690]
+    print(w.x)
+    w.x = &v[1691]
+    print(w.x)
+    w.x = &v[1692]
+    print(w.x)
+    w.x = &v[1693]
+    print(w.x)
+    w.x = &v[1694]
+    print(w.x)
+    w.x = &v[1695]
+    print(w.x)
+    w.x = &v[1696]
+    print(w.x)
+    w.x = &v[1697]
+    print(w.x)
+    w.x = &v[1698]
+    print(w.x)
+    w.x = &v[1699]
+    print(w.x)
+    w.x = &v[1700]
+    print(w.x)
+    w.x = &v[1701]
+    print(w.x)
+    w.x = &v[1702]
+    print(w.x)
+    w.x = &v[1703]
+    print(w.x)
+    w.x = &v[1704]
+    print(w.x)
+    w.x = &v[1705]
+    print(w.x)
+    w.x = &v[1706]
+    print(w.x)
+    w.x = &v[1707]
+    print(w.x)
+    w.x = &v[1708]
+    print(w.x)
+    w.x = &v[1709]
+    print(w.x)
+    w.x = &v[1710]
+    print(w.x)
+    w.x = &v[1711]
+    print(w.x)
+    w.x = &v[1712]
+    print(w.x)
+    w.x = &v[1713]
+    print(w.x)
+    w.x = &v[1714]
+    print(w.x)
+    w.x = &v[1715]
+    print(w.x)
+    w.x = &v[1716]
+    print(w.x)
+    w.x = &v[1717]
+    print(w.x)
+    w.x = &v[1718]
+    print(w.x)
+    w.x = &v[1719]
+    print(w.x)
+    w.x = &v[1720]
+    print(w.x)
+    w.x = &v[1721]
+    print(w.x)
+    w.x = &v[1722]
+    print(w.x)
+    w.x = &v[1723]
+    print(w.x)
+    w.x = &v[1724]
+    print(w.x)
+    w.x = &v[1725]
+    print(w.x)
+    w.x = &v[1726]
+    print(w.x)
+    w.x = &v[1727]
+    print(w.x)
+    w.x = &v[1728]
+    print(w.x)
+    w.x = &v[1729]
+    print(w.x)
+    w.x = &v[1730]
+    print(w.x)
+    w.x = &v[1731]
+    print(w.x)
+    w.x = &v[1732]
+    print(w.x)
+    w.x = &v[1733]
+    print(w.x)
+    w.x = &v[1734]
+    print(w.x)
+    w.x = &v[1735]
+    print(w.x)
+    w.x = &v[1736]
+    print(w.x)
+    w.x = &v[1737]
+    print(w.x)
+    w.x = &v[1738]
+    print(w.x)
+    w.x = &v[1739]
+    print(w.x)
+    w.x = &v[1740]
+    print(w.x)
+    w.x = &v[1741]
+    print(w.x)
+    w.x = &v[1742]
+    print(w.x)
+    w.x = &v[1743]
+    print(w.x)
+    w.x = &v[1744]
+    print(w.x)
+    w.x = &v[1745]
+    print(w.x)
+    w.x = &v[1746]
+    print(w.x)
+    w.x = &v[1747]
+    print(w.x)
+    w.x = &v[1748]
+    print(w.x)
+    w.x = &v[1749]
+    print(w.x)
+    w.x = &v[1750]
+    print(w.x)
+    w.x = &v[1751]
+    print(w.x)
+    w.x = &v[1752]
+    print(w.x)
+    w.x = &v[1753]
+    print(w.x)
+    w.x = &v[1754]
+    print(w.x)
+    w.x = &v[1755]
+    print(w.x)
+    w.x = &v[1756]
+    print(w.x)
+    w.x = &v[1757]
+    print(w.x)
+    w.x = &v[1758]
+    print(w.x)
+    w.x = &v[1759]
+    print(w.x)
+    w.x = &v[1760]
+    print(w.x)
+    w.x = &v[1761]
+    print(w.x)
+    w.x = &v[1762]
+    print(w.x)
+    w.x = &v[1763]
+    print(w.x)
+    w.x = &v[1764]
+    print(w.x)
+    w.x = &v[1765]
+    print(w.x)
+    w.x = &v[1766]
+    print(w.x)
+    w.x = &v[1767]
+    print(w.x)
+    w.x = &v[1768]
+    print(w.x)
+    w.x = &v[1769]
+    print(w.x)
+    w.x = &v[1770]
+    print(w.x)
+    w.x = &v[1771]
+    print(w.x)
+    w.x = &v[1772]
+    print(w.x)
+    w.x = &v[1773]
+    print(w.x)
+    w.x = &v[1774]
+    print(w.x)
+    w.x = &v[1775]
+    print(w.x)
+    w.x = &v[1776]
+    print(w.x)
+    w.x = &v[1777]
+    print(w.x)
+    w.x = &v[1778]
+    print(w.x)
+    w.x = &v[1779]
+    print(w.x)
+    w.x = &v[1780]
+    print(w.x)
+    w.x = &v[1781]
+    print(w.x)
+    w.x = &v[1782]
+    print(w.x)
+    w.x = &v[1783]
+    print(w.x)
+    w.x = &v[1784]
+    print(w.x)
+    w.x = &v[1785]
+    print(w.x)
+    w.x = &v[1786]
+    print(w.x)
+    w.x = &v[1787]
+    print(w.x)
+    w.x = &v[1788]
+    print(w.x)
+    w.x = &v[1789]
+    print(w.x)
+    w.x = &v[1790]
+    print(w.x)
+    w.x = &v[1791]
+    print(w.x)
+    w.x = &v[1792]
+    print(w.x)
+    w.x = &v[1793]
+    print(w.x)
+    w.x = &v[1794]
+    print(w.x)
+    w.x = &v[1795]
+    print(w.x)
+    w.x = &v[1796]
+    print(w.x)
+    w.x = &v[1797]
+    print(w.x)
+    w.x = &v[1798]
+    print(w.x)
+    w.x = &v[1799]
+    print(w.x)
+    w.x = &v[1800]
+    print(w.x)
+    w.x = &v[1801]
+    print(w.x)
+    w.x = &v[1802]
+    print(w.x)
+    w.x = &v[1803]
+    print(w.x)
+    w.x = &v[1804]
+    print(w.x)
+    w.x = &v[1805]
+    print(w.x)
+    w.x = &v[1806]
+    print(w.x)
+    w.x = &v[1807]
+    print(w.x)
+    w.x = &v[1808]
+    print(w.x)
+    w.x = &v[1809]
+    print(w.x)
+    w.x = &v[1810]
+    print(w.x)
+    w.x = &v[1811]
+    print(w.x)
+    w.x = &v[1812]
+    print(w.x)
+    w.x = &v[1813]
+    print(w.x)
+    w.x = &v[1814]
+    print(w.x)
+    w.x = &v[1815]
+    print(w.x)
+    w.x = &v[1816]
+    print(w.x)
+    w.x = &v[1817]
+    print(w.x)
+    w.x = &v[1818]
+    print(w.x)
+    w.x = &v[1819]
+    print(w.x)
+    w.x = &v[1820]
+    print(w.x)
+    w.x = &v[1821]
+    print(w.x)
+    w.x = &v[1822]
+    print(w.x)
+    w.x = &v[1823]
+    print(w.x)
+    w.x = &v[1824]
+    print(w.x)
+    w.x = &v[1825]
+    print(w.x)
+    w.x = &v[1826]
+    print(w.x)
+    w.x = &v[1827]
+    print(w.x)
+    w.x = &v[1828]
+    print(w.x)
+    w.x = &v[1829]
+    print(w.x)
+    w.x = &v[1830]
+    print(w.x)
+    w.x = &v[1831]
+    print(w.x)
+    w.x = &v[1832]
+    print(w.x)
+    w.x = &v[1833]
+    print(w.x)
+    w.x = &v[1834]
+    print(w.x)
+    w.x = &v[1835]
+    print(w.x)
+    w.x = &v[1836]
+    print(w.x)
+    w.x = &v[1837]
+    print(w.x)
+    w.x = &v[1838]
+    print(w.x)
+    w.x = &v[1839]
+    print(w.x)
+    w.x = &v[1840]
+    print(w.x)
+    w.x = &v[1841]
+    print(w.x)
+    w.x = &v[1842]
+    print(w.x)
+    w.x = &v[1843]
+    print(w.x)
+    w.x = &v[1844]
+    print(w.x)
+    w.x = &v[1845]
+    print(w.x)
+    w.x = &v[1846]
+    print(w.x)
+    w.x = &v[1847]
+    print(w.x)
+    w.x = &v[1848]
+    print(w.x)
+    w.x = &v[1849]
+    print(w.x)
+    w.x = &v[1850]
+    print(w.x)
+    w.x = &v[1851]
+    print(w.x)
+    w.x = &v[1852]
+    print(w.x)
+    w.x = &v[1853]
+    print(w.x)
+    w.x = &v[1854]
+    print(w.x)
+    w.x = &v[1855]
+    print(w.x)
+    w.x = &v[1856]
+    print(w.x)
+    w.x = &v[1857]
+    print(w.x)
+    w.x = &v[1858]
+    print(w.x)
+    w.x = &v[1859]
+    print(w.x)
+    w.x = &v[1860]
+    print(w.x)
+    w.x = &v[1861]
+    print(w.x)
+    w.x = &v[1862]
+    print(w.x)
+    w.x = &v[1863]
+    print(w.x)
+    w.x = &v[1864]
+    print(w.x)
+    w.x = &v[1865]
+    print(w.x)
+    w.x = &v[1866]
+    print(w.x)
+    w.x = &v[1867]
+    print(w.x)
+    w.x = &v[1868]
+    print(w.x)
+    w.x = &v[1869]
+    print(w.x)
+    w.x = &v[1870]
+    print(w.x)
+    w.x = &v[1871]
+    print(w.x)
+    w.x = &v[1872]
+    print(w.x)
+    w.x = &v[1873]
+    print(w.x)
+    w.x = &v[1874]
+    print(w.x)
+    w.x = &v[1875]
+    print(w.x)
+    w.x = &v[1876]
+    print(w.x)
+    w.x = &v[1877]
+    print(w.x)
+    w.x = &v[1878]
+    print(w.x)
+    w.x = &v[1879]
+    print(w.x)
+    w.x = &v[1880]
+    print(w.x)
+    w.x = &v[1881]
+    print(w.x)
+    w.x = &v[1882]
+    print(w.x)
+    w.x = &v[1883]
+    print(w.x)
+    w.x = &v[1884]
+    print(w.x)
+    w.x = &v[1885]
+    print(w.x)
+    w.x = &v[1886]
+    print(w.x)
+    w.x = &v[1887]
+    print(w.x)
+    w.x = &v[1888]
+    print(w.x)
+    w.x = &v[1889]
+    print(w.x)
+    w.x = &v[1890]
+    print(w.x)
+    w.x = &v[1891]
+    print(w.x)
+    w.x = &v[1892]
+    print(w.x)
+    w.x = &v[1893]
+    print(w.x)
+    w.x = &v[1894]
+    print(w.x)
+    w.x = &v[1895]
+    print(w.x)
+    w.x = &v[1896]
+    print(w.x)
+    w.x = &v[1897]
+    print(w.x)
+    w.x = &v[1898]
+    print(w.x)
+    w.x = &v[1899]
+    print(w.x)
+    w.x = &v[1900]
+    print(w.x)
+    w.x = &v[1901]
+    print(w.x)
+    w.x = &v[1902]
+    print(w.x)
+    w.x = &v[1903]
+    print(w.x)
+    w.x = &v[1904]
+    print(w.x)
+    w.x = &v[1905]
+    print(w.x)
+    w.x = &v[1906]
+    print(w.x)
+    w.x = &v[1907]
+    print(w.x)
+    w.x = &v[1908]
+    print(w.x)
+    w.x = &v[1909]
+    print(w.x)
+    w.x = &v[1910]
+    print(w.x)
+    w.x = &v[1911]
+    print(w.x)
+    w.x = &v[1912]
+    print(w.x)
+    w.x = &v[1913]
+    print(w.x)
+    w.x = &v[1914]
+    print(w.x)
+    w.x = &v[1915]
+    print(w.x)
+    w.x = &v[1916]
+    print(w.x)
+    w.x = &v[1917]
+    print(w.x)
+    w.x = &v[1918]
+    print(w.x)
+    w.x = &v[1919]
+    print(w.x)
+    w.x = &v[1920]
+    print(w.x)
+    w.x = &v[1921]
+    print(w.x)
+    w.x = &v[1922]
+    print(w.x)
+    w.x = &v[1923]
+    print(w.x)
+    w.x = &v[1924]
+    print(w.x)
+    w.x = &v[1925]
+    print(w.x)
+    w.x = &v[1926]
+    print(w.x)
+    w.x = &v[1927]
+    print(w.x)
+    w.x = &v[1928]
+    print(w.x)
+    w.x = &v[1929]
+    print(w.x)
+    w.x = &v[1930]
+    print(w.x)
+    w.x = &v[1931]
+    print(w.x)
+    w.x = &v[1932]
+    print(w.x)
+    w.x = &v[1933]
+    print(w.x)
+    w.x = &v[1934]
+    print(w.x)
+    w.x = &v[1935]
+    print(w.x)
+    w.x = &v[1936]
+    print(w.x)
+    w.x = &v[1937]
+    print(w.x)
+    w.x = &v[1938]
+    print(w.x)
+    w.x = &v[1939]
+    print(w.x)
+    w.x = &v[1940]
+    print(w.x)
+    w.x = &v[1941]
+    print(w.x)
+    w.x = &v[1942]
+    print(w.x)
+    w.x = &v[1943]
+    print(w.x)
+    w.x = &v[1944]
+    print(w.x)
+    w.x = &v[1945]
+    print(w.x)
+    w.x = &v[1946]
+    print(w.x)
+    w.x = &v[1947]
+    print(w.x)
+    w.x = &v[1948]
+    print(w.x)
+    w.x = &v[1949]
+    print(w.x)
+    w.x = &v[1950]
+    print(w.x)
+    w.x = &v[1951]
+    print(w.x)
+    w.x = &v[1952]
+    print(w.x)
+    w.x = &v[1953]
+    print(w.x)
+    w.x = &v[1954]
+    print(w.x)
+    w.x = &v[1955]
+    print(w.x)
+    w.x = &v[1956]
+    print(w.x)
+    w.x = &v[1957]
+    print(w.x)
+    w.x = &v[1958]
+    print(w.x)
+    w.x = &v[1959]
+    print(w.x)
+    w.x = &v[1960]
+    print(w.x)
+    w.x = &v[1961]
+    print(w.x)
+    w.x = &v[1962]
+    print(w.x)
+    w.x = &v[1963]
+    print(w.x)
+    w.x = &v[1964]
+    print(w.x)
+    w.x = &v[1965]
+    print(w.x)
+    w.x = &v[1966]
+    print(w.x)
+    w.x = &v[1967]
+    print(w.x)
+    w.x = &v[1968]
+    print(w.x)
+    w.x = &v[1969]
+    print(w.x)
+    w.x = &v[1970]
+    print(w.x)
+    w.x = &v[1971]
+    print(w.x)
+    w.x = &v[1972]
+    print(w.x)
+    w.x = &v[1973]
+    print(w.x)
+    w.x = &v[1974]
+    print(w.x)
+    w.x = &v[1975]
+    print(w.x)
+    w.x = &v[1976]
+    print(w.x)
+    w.x = &v[1977]
+    print(w.x)
+    w.x = &v[1978]
+    print(w.x)
+    w.x = &v[1979]
+    print(w.x)
+    w.x = &v[1980]
+    print(w.x)
+    w.x = &v[1981]
+    print(w.x)
+    w.x = &v[1982]
+    print(w.x)
+    w.x = &v[1983]
+    print(w.x)
+    w.x = &v[1984]
+    print(w.x)
+    w.x = &v[1985]
+    print(w.x)
+    w.x = &v[1986]
+    print(w.x)
+    w.x = &v[1987]
+    print(w.x)
+    w.x = &v[1988]
+    print(w.x)
+    w.x = &v[1989]
+    print(w.x)
+    w.x = &v[1990]
+    print(w.x)
+    w.x = &v[1991]
+    print(w.x)
+    w.x = &v[1992]
+    print(w.x)
+    w.x = &v[1993]
+    print(w.x)
+    w.x = &v[1994]
+    print(w.x)
+    w.x = &v[1995]
+    print(w.x)
+    w.x = &v[1996]
+    print(w.x)
+    w.x = &v[1997]
+    print(w.x)
+    w.x = &v[1998]
+    print(w.x)
+    w.x = &v[1999]
+    print(w.x)
+}

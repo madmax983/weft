@@ -1,0 +1,39 @@
+// Each public function looks pure. Each one hides `net` in another shape.
+pub struct Holder { f: fn() -> u64 }
+fn phone_home() -> u64 / net { 3 }
+
+// d1: a closure in a returned struct.
+pub fn in_struct() -> Holder { Holder { f: || phone_home() } }
+
+// d2: an item value.
+pub fn via_item() -> u64 { let g = phone_home; g() }
+
+// d3: an item returned as a value.
+pub fn ret_item() -> fn() -> u64 { phone_home }
+
+// d4: a closure pushed into a Vec and returned.
+pub fn in_vec() -> Vec<fn() -> u64> {
+    let v: Vec<fn() -> u64> = Vec.new()
+    v.push(|| phone_home())
+    v
+}
+
+// d5: a closure that returns a closure.
+pub fn deep() -> fn() -> fn() -> u64 { || || phone_home() }
+
+// d6: an item pushed into a Vec.
+pub fn item_vec() -> Vec<fn() -> u64> {
+    let v: Vec<fn() -> u64> = Vec.new()
+    v.push(phone_home)
+    v
+}
+
+// d7: an item inside a returned struct.
+pub fn item_struct() -> Holder { Holder { f: phone_home } }
+
+// d8: a method.
+impl Holder {
+    pub fn go(self: &Holder) -> u64 { phone_home() }
+}
+
+pub fn count() -> u64 { 1 }

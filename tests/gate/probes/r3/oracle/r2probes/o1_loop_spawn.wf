@@ -1,0 +1,8 @@
+struct C { k: u64 }
+fn main() {
+    let c = C { k: 0 }
+    scope { s =>
+        for i in 0..2 { s.spawn(|| c.k += 1) }
+    }
+    print(c.k)
+}

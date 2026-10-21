@@ -1,0 +1,11 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { let Tx(i) = t; print("rollback", i) }
+fn commit(t: Tx) { let Tx(i) = t; print("commit", i) }
+fn main() {
+    let t = Tx { id: 1 }
+    let v = Vec.new()
+    v.push(1)
+    print(v[5])
+    commit(t)
+}

@@ -1,0 +1,22 @@
+struct E { hp: u64, tag: u64 }
+struct W { es: Vec<E>, ns: Vec<u64>, score: u64, b: Box<E> }
+
+fn mk_w() -> W {
+    let w = W { es: Vec.new(), ns: Vec.new(), score: 0, b: Box.new(E { hp: 1, tag: 0 }) }
+    w
+}
+fn take_w(w: W) -> u64 { w.score }
+
+fn main() {
+    let w1 = mk_w()
+    let w2 = w1
+    let g3 = || {
+        w2 = mk_w()
+        if true {
+            print(take_w(w2))
+        } else {
+        }
+    }
+    g3()
+    g3()
+}

@@ -1,0 +1,5 @@
+test "under" {
+    let v: Vec<u64> = Vec.new()
+    let n = v.len() - 1
+    print(n)
+}

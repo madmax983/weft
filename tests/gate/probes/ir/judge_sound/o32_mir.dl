@@ -1,0 +1,11 @@
+// O3-2 (callee form) in MIR (appendix A.2 of design_mir.md).
+place(pt1). place(pt1_e). parent(pt1_e, pt1). unstable(pt1_e).
+owner(pt1, t1).
+cfg_edge(n1, n3). rebound_at(t1, n3).
+cfg_edge(n3, n4). rebound_at(t3, n4). points_into(t3, pt1).
+cfg_edge(n4, n5). uses(t3, n5). call_arg(n5, pt1, 0).
+cfg_edge(n5, n6). rebound_at(oh, n6). points_into(oh, pt1_e).
+cfg_edge(n6, n7). scope_end(t1, n7).
+cfg_edge(n7, n8). uses(oh, n8).
+cfg_edge(n8, n9). cfg_edge(n9, n10). uses(oh, n10). rebound_at(r, n10). points_into(r, pt1_e).
+lint("MIR O3-2: W0301 at the exit of the handled body", n8) :- error(oh, n8).

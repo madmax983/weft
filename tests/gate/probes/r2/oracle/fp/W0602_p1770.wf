@@ -1,0 +1,21 @@
+linear struct Tx { id: u64 }
+linear struct Lk { id: u64 }
+
+fn commit(t: Tx) { let Tx(id) = t; print("commit", id) }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v
+}
+
+fn main() {
+    let tx1 = Tx { id: 1 }
+    let v2 = mk_v()
+    let lk3 = Lk { id: 3 }
+    scope { s6 =>
+        let t7 = s6.spawn(|| v2.push(4))
+        t7.join()
+    }
+    commit(tx1)
+    unlock(lk3)
+}

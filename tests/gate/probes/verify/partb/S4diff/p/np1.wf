@@ -1,0 +1,19 @@
+struct Node { v: u64 }
+fn direct() / par {
+    let n = Rc.new(Node { v: 1 })
+    fork(|| { let a = n.clone() }, || print(2))   //~ W0401
+}
+fn by_ref() / par {
+    let n = Rc.new(Node { v: 1 })
+    let r = &n
+    fork(|| { let a = r.clone() }, || { let b = r.clone() })   //~ W0401
+}
+fn in_tuple() / par {
+    let n = Rc.new(Node { v: 1 })
+    let t = (&n, 1)
+    fork(|| { let (r, k) = t
+ let a = r.clone() }, || print(1))   //~ W0401
+}
+fn par_ref(r: &Rc<Node>) / par {
+    fork(|| { let a = r.clone() }, || { let b = r.clone() })   //~ W0401
+}

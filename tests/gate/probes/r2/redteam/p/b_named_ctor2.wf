@@ -1,0 +1,11 @@
+struct Range { lo: u64, hi: u64 }
+fn span(r: Range) -> u64 { r.hi - r.lo }
+fn mk(lo: u64, hi: u64) -> Range { Range { lo: lo, hi: hi } }
+fn main() {
+    // Named arguments to a function bind by name.
+    print(span(mk(hi: 10, lo: 2)))
+    // Named arguments to a positional constructor bind by position.
+    print(span(Range(hi: 10, lo: 2)))
+    // An unknown name is accepted too.
+    print(span(Range(nope: 2, other: 10)))
+}

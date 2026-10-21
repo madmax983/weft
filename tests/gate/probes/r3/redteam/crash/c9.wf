@@ -1,0 +1,2 @@
+fn rec(f: fn(fn(fn(u64) -> u64) -> u64) -> u64) -> u64 { f(|g| g(1)) }
+fn main() { print(rec(|k| k(|x| x + 1))) }

@@ -1,0 +1,63 @@
+effect Note { fn note(x: u64) }
+fn noter() / Note { note(1) }
+fn pure() { print(1) }
+
+fn par2(f: fn(), g: fn()) / par { let (a, b) = fork(f, g) }
+fn run_task(f: fn()) / async { scope { s => s.spawn(f) } }
+
+// A local that holds a fn item.
+fn item_local() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let f = noter
+        scope { s => s.spawn(f) }
+    }
+}
+// A branch of fn items.
+fn item_branch(c: bool) / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        scope { s => s.spawn(if c { noter } else { pure }) }
+    }
+}
+// par2 through a value.
+fn item_value() / par {
+    handle Note { fn note(x) { resume(()) } } in {
+        let p = par2
+        p(|| note(1), || print(2))
+    }
+}
+// run_task through a value.
+fn item_value2() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let r = run_task
+        r(|| note(1))
+    }
+}
+// Transitive: a function that gives its parameter to par2.
+fn outer(f: fn()) / par { par2(f, f) }
+fn transitive() / par {
+    handle Note { fn note(x) { resume(()) } } in outer(|| note(1))
+}
+// A closure that gives its parameter to a task.
+fn closure_param() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        scope { s =>
+            let go = |f: fn()| s.spawn(f)
+            go(|| note(1))
+        }
+    }
+}
+// Stored in a struct field and run as a task.
+struct Job { f: fn() }
+fn from_field() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        let j = Job { f: || note(1) }
+        scope { s => s.spawn(j.f) }
+    }
+}
+// A method item.
+impl Job { fn go() / Note { note(3) } }
+fn method_item() / async {
+    handle Note { fn note(x) { resume(()) } } in {
+        scope { s => s.spawn(Job.go) }
+    }
+}

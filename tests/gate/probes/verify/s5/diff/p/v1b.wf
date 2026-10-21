@@ -1,0 +1,69 @@
+effect Note { fn note(x: u64) }
+struct Job { f: fn() }
+struct Wrap<T> { x: T }
+
+fn gcopy<T>(src: &Wrap<T>, dst: &Wrap<T>) / mut(dst) { dst.x = src.x }
+fn gtake<T>(src: &Wrap<T>) -> T { src.x }
+fn swap(a: &Job, b: &Job) / mut(a, b) { let t = a.f
+ a.f = b.f
+ b.f = t }
+fn copy_self(j: &Job, k: &Vec<Job>) / mut(j) { j.f = k[0].f }
+fn via(src: &Job, dst: &Job) / mut(dst) { inner(src, dst) }
+fn inner(src: &Job, dst: &Job) / mut(dst) { dst.f = src.f }
+fn hof(src: &Job, dst: &Job, k: fn(&Job, &Job)) { k(src, dst) }
+
+fn generic_copy() {
+    let keep = Wrap { x: || print(0) }
+    handle Note { fn note(x) { resume(()) } } in {
+        let j = Wrap { x: || note(1) }
+        gcopy(&j, &keep)
+    }
+    let g = keep.x
+    g()
+}
+fn generic_take() {
+    let g = || print(0)
+    handle Note { fn note(x) { resume(()) } } in {
+        let j = Wrap { x: || note(2) }
+        g = gtake(&j)
+    }
+    g()
+}
+fn swapped() {
+    let keep = Job { f: || print(0) }
+    handle Note { fn note(x) { resume(()) } } in {
+        let j = Job { f: || note(3) }
+        swap(&j, &keep)
+    }
+    let g = keep.f
+    g()
+}
+fn self_copy() {
+    let keep = Job { f: || print(0) }
+    handle Note { fn note(x) { resume(()) } } in {
+        let v = Vec.new()
+        v.push(Job { f: || note(4) })
+        copy_self(&keep, &v)
+    }
+    let g = keep.f
+    g()
+}
+fn via_callee() {
+    let keep = Job { f: || print(0) }
+    handle Note { fn note(x) { resume(()) } } in {
+        let j = Job { f: || note(5) }
+        via(&j, &keep)
+    }
+    let g = keep.f
+    g()
+}
+fn via_hof() {
+    let keep = Job { f: || print(0) }
+    handle Note { fn note(x) { resume(()) } } in {
+        let j = Job { f: || note(6) }
+        hof(&j, &keep, inner)
+    }
+    let g = keep.f
+    g()
+}
+fn main() { via_hof() }

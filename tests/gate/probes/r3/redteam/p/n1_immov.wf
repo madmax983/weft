@@ -1,0 +1,61 @@
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+effect Put { fn put(f: Frame) }
+effect Get { fn get() -> Frame }
+fn eat(f: Frame) {}
+fn set(f: &Frame) / mut(f) { f.cur = &f.buf[1] }
+
+fn as_op_arg() / Put {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[0]
+    put(f)   //~ W0604
+}
+fn via_resume() {
+    handle Get { fn get() {
+        let f = Frame { buf: [1, 2, 3, 4] }
+        f.cur = &f.buf[0]
+        resume(f)   //~ W0604
+    } } in {
+        let g = get()
+        print(g.cur)
+    }
+}
+fn block_value() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[0]
+    let g = { f }   //~ W0604
+}
+fn handle_value() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[0]
+    let g = handle Put { fn put(x) { resume(()) } } in f   //~ W0604
+}
+fn closure_moves() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[0]
+    let c = || eat(f)   //~ W0604
+    c()
+}
+fn task_result() / async {
+    let f = scope { s =>
+        let t = s.spawn(|| { let x = Frame { buf: [1, 2, 3, 4] }
+            x.cur = &x.buf[0]
+            x })   //~ W0604
+        t.join()
+    }
+}
+fn ref_param_then_move() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    set(&f)
+    eat(f)   //~ W0604
+}
+fn if_value(c: bool) {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[0]
+    let g = if c { f } else { Frame { buf: [1, 2, 3, 4] } }   //~ W0604
+}
+fn with_timeout_value() / async, fail {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[0]
+    let g = with_timeout(1.s) { f }   //~ W0604
+}
+fn main() {}

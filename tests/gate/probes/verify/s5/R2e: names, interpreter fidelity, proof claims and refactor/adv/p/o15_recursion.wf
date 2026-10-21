@@ -1,0 +1,10 @@
+fn depth(n: u64, acc: &u64) -> u64 {
+    if n == 0 { return acc + 0 }
+    let mine = n
+    let r = &mine
+    depth(n - 1, r) + acc
+}
+fn main() {
+    let a = 0
+    print(depth(5, &a))
+}

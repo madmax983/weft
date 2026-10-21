@@ -1,0 +1,13 @@
+// The clause of Get returns the closure that it gets. The closure performs
+// through Get itself, so it leaves the handled body.
+effect Get { fn get(f: fn()) -> fn() }
+
+fn leak() -> fn() {
+    handle Get { fn get(g) { g } } in get(|| { let x = get(|| print(2)) })
+}
+
+fn main() {
+    let f = leak()
+    f()
+    print("done")
+}

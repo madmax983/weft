@@ -1,0 +1,10 @@
+effect Choice { multi fn choose() -> bool }
+fn needs_uniq(es: &[u64] @ uniq) / mut(es) {}
+fn u4(v: &Vec<u64>) -> bool / mut(v), Choice {
+    let (l, r) = v.split_mut(1)
+    let t = (l, 1)
+    let b = choose()
+    let (a, n) = t
+    needs_uniq(a)
+    b
+}

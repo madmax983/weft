@@ -1,0 +1,45 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw(n: i32) -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: n })
+    w
+}
+// A named closure spawned after the new value.
+fn spawn_named() / async {
+    let a = mkw(1)
+    let b = mkw(2)
+    let r = &a.entities[0]
+    let f = || print(r.hp)
+    r = &b.entities[0]
+    b.entities.clear()
+    scope { s =>
+        s.spawn(f)
+    }
+}
+// A named closure spawned, then the new value while it runs.
+fn spawn_named_after() / async, clock {
+    let a = mkw(1)
+    let b = mkw(2)
+    let r = &a.entities[0]
+    let f = || { sleep(1.ms)
+ print(r.hp) }
+    scope { s =>
+        s.spawn(f)
+        r = &b.entities[0]
+        b.entities.clear()
+    }
+}
+// fork branches.
+fn fork_late() / par {
+    let a = mkw(1)
+    let b = mkw(2)
+    let r = &a.entities[0]
+    let f = || print(r.hp)
+    r = &b.entities[0]
+    b.entities.clear()
+    fork(f, || print(2))
+}
+fn main() / async, clock, par {
+    spawn_named()
+}

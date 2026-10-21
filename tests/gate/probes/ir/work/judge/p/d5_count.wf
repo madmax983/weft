@@ -1,0 +1,25 @@
+struct Hook { f: fn() }
+fn shared_count() -> u64 {
+    let count = 0
+    let h = Rc.new(Hook { f: || count += 1 })
+    let g = h.f
+    g()
+    count
+}
+fn shared_vec() -> usize {
+    let v: Vec<u64> = Vec.new()
+    let h = Rc.new(Hook { f: || v.push(1) })
+    let g = h.f
+    g()
+    v.len()
+}
+fn counter() -> fn() {
+    let n = 0
+    || { n += 1 }
+}
+fn main() {
+    print(shared_count())
+    print(shared_vec())
+    let c = counter()
+    c()
+}

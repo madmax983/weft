@@ -1,0 +1,28 @@
+effect Ask { multi fn ask() -> fn() }
+fn make() -> fn() {
+    let c: Vec<u64> = Vec.new()
+    c.push(1)
+    let r = handle Ask {
+        fn ask() {
+            let k = || { print("k called"); resume(|| print(1)); print("k after resume") }
+            print("clause")
+            let x = resume(k)
+            print("clause after resume")
+            x
+        }
+    } in {
+        let f = ask()
+        print("body")
+        c.push(2)
+        print(c.len())
+        f
+    }
+    print("handle done")
+    r
+}
+fn main() {
+    let g = make()
+    print("got g")
+    g()
+    print("after g")
+}

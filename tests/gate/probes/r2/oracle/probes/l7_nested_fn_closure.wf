@@ -1,0 +1,9 @@
+fn keep<T>(x: T) -> T { x }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let f = keep(|| print(r + 1))
+    v.clear()
+    f()
+}

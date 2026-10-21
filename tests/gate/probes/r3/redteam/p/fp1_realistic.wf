@@ -1,0 +1,57 @@
+struct Entity { id: u64, hp: i32, tags: Vec<String> }
+struct World { entities: Vec<Entity>, events: Vec<String>, score: u64 }
+effect Log { fn log(msg: String) }
+
+fn find(w: &World, id: u64) -> Option<&Entity> {
+    for e in w.entities[] { if e.id == id { return Some(e) } }
+    None
+}
+fn damage(w: &World, id: u64, n: i32) / mut(w.entities[].hp, w.events) {
+    match find(w, id) {
+        Some(e) => {
+            e.hp -= n
+            if e.hp <= 0 { w.events.push("died {e.id}") }
+        }
+        None => w.events.push("missing {id}"),
+    }
+}
+fn tag_all(w: &World, t: String) / mut(w.entities[].tags) {
+    for e in w.entities[] { e.tags.push(t) }
+}
+fn total(w: &World) -> i64 {
+    let s: i64 = 0
+    for e in w.entities[] { s += 1 }
+    s
+}
+fn simulate(w: &World) / mut(w.entities[].hp, w.events), Log {
+    for e in w.entities[] {
+        e.hp -= 1
+        log("tick {e.id}")
+    }
+}
+fn heal_halves(w: &World) / mut(w.entities[].hp), async {
+    let mid = w.entities.len() / 2
+    let (l, r) = w.entities.split_mut(mid)
+    scope { s =>
+        s.spawn(|| { for e in l[] { e.hp += 1 } })
+        s.spawn(|| { for e in r[] { e.hp += 1 } })
+    }
+}
+fn counter(w: &World) -> fn() -> u64 {
+    || w.score + 1
+}
+fn main() / async {
+    let w = World { entities: Vec.new(), events: Vec.new(), score: 0 }
+    w.entities.push(Entity { id: 1, hp: 3, tags: Vec.new() })
+    w.entities.push(Entity { id: 2, hp: 1, tags: Vec.new() })
+    damage(&w, 2, 5)
+    tag_all(&w, "x")
+    let lines = Vec.new()
+    handle Log { fn log(m) { lines.push(m); resume(()) } } in simulate(&w)
+    heal_halves(&w)
+    let c = counter(&w)
+    print(c())
+    print(lines.len())
+    print(w.events.len())
+    print(total(&w))
+}

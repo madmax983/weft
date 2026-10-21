@@ -1,0 +1,28 @@
+// Clean: callbacks from struct fields called with elements in a loop.
+struct Entity { hp: i32, tags: Vec<u64> }
+struct World { entities: Vec<Entity>, score: u64 }
+struct Handler { on_hit: fn(&Entity) }
+fn dispatch(h: &Handler, w: &World) {
+    for e in w.entities[] {
+        let g = h.on_hit
+        g(e)
+    }
+}
+fn dispatch_score(h: &Handler, w: &World) {
+    let s = &w.score
+    let g = h.on_hit
+    g(&w.entities[0])
+    print(s)
+}
+fn caller(w: &World) {
+    let h = Handler { on_hit: |e| print(e.hp) }
+    let first = &w.entities[0]
+    dispatch(&h, w)
+    print(first.hp)
+}
+fn caller_tags(w: &World) {
+    let h = Handler { on_hit: |e| e.tags.push(1) }
+    let first = &w.entities[0]
+    dispatch(&h, w)
+    print(first.hp)
+}

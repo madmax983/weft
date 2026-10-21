@@ -1,0 +1,10 @@
+// No `main`: the oracle runs the test blocks. The second test fails.
+fn double(x: u64) -> u64 { x * 2 }
+
+test "double" {
+    assert(double(2) == 4)
+}
+
+test "stops" {
+    fail("the test stops here")
+}

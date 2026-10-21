@@ -1,0 +1,9 @@
+// A local item value that a closure reassigns.
+fn diff(a: i32, b: i32) -> i32 { a - b }
+fn rdiff(b: i32, a: i32) -> i32 { a - b }
+fn main() {
+    let g = diff
+    let set = || { g = rdiff }
+    set()
+    print(g(b: 10, a: 3))
+}

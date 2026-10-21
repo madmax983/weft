@@ -1,0 +1,25 @@
+effect Note { fn note(x: u64) }
+struct Job { f: fn() }
+
+fn start_gen<T>(x: T, run: fn(T)) / async {
+    scope { s =>
+        let t = s.spawn(|| run(x))
+        t.join()
+    }
+}
+fn run_job(j: Job) { let g = j.f
+ g() }
+fn p_gen() / async {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        start_gen(Job { f: || note(6) }, run_job)
+    }
+}
+fn p_gen_fn() / async {
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        start_gen(|| note(7), |g: fn()| g())
+    }
+}
+fn main() / async { p_gen() 
+ p_gen_fn() }

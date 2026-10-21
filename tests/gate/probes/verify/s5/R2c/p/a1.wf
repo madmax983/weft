@@ -1,0 +1,62 @@
+effect Ask { fn ask() -> u64 }
+effect Stop { fn stop() }
+struct Node { items: Vec<u64> }
+fn work() -> u64 / fail { fail("child failed"); 1 }
+
+// The value holds a task; the `on abort` function joins it. A failed task
+// raises a failure at the join.
+linear struct J { t: Task<u64> }
+    on abort = undo_join
+fn undo_join(j: J) / async {
+    let J(t) = j
+    print(t.join())
+}
+
+// The `on abort` function opens a scope with a child that fails.
+linear struct S { id: u64 }
+    on abort = undo_scope
+fn undo_scope(x: S) / async {
+    let S(i) = x
+    scope { s =>
+        let t = s.spawn(|| work())
+        t.detach()
+    }
+}
+
+// The `on abort` function reads a file through a capability in the value.
+linear struct R { fs: FsCap }
+    on abort = undo_read
+fn undo_read(r: R) / fs {
+    let R(fs) = r
+    print(fs.read("missing.txt"))
+}
+
+// The `on abort` function mutates an rc group through a callee.
+fn bump(n: Rc<Node>) / mut(Node) { n.items.push(1) }
+linear struct G { n: Rc<Node> }
+    on abort = undo_callee
+fn undo_callee(g: G) {
+    let G(n) = g
+    bump(n)
+}
+
+// The `on abort` function mutates an rc group through a clone stored in the
+// value: no row names `Node`?
+linear struct G2 { n: Rc<Node> }
+    on abort = undo_clone
+fn undo_clone(g: G2) {
+    let G2(n) = g
+    let m = n.clone()
+    m.items.push(1)
+}
+
+// The `on abort` function calls a function value from its value.
+linear struct F { f: fn() -> u64 / Ask }
+    on abort = undo_fn
+fn undo_fn(x: F) {
+    let F(f) = x
+    print(f())
+}
+
+fn main() {
+}

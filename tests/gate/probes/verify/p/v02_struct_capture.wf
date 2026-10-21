@@ -1,0 +1,40 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Cb { f: fn() }
+fn clear_then_cb(cb: Cb, w: &World) / mut(w.entities) {
+    w.entities.clear()
+    let g = cb.f
+    g()
+}
+fn clear_then_ref(cb: &Cb, w: &World) / mut(w.entities) {
+    w.entities.clear()
+    let g = cb.f
+    g()
+}
+// RT5 through a struct: the callee frees, then runs the closure that reads r.
+fn captured_cb(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    clear_then_cb(Cb { f: || print(r.hp) }, world)
+}
+fn captured_cb_ref(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    let cb = Cb { f: || print(r.hp) }
+    clear_then_ref(&cb, world)
+}
+// The caller frees, then a callee runs the stored closure.
+fn run_ref(cb: &Cb) { let g = cb.f; g() }
+fn stored_use(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    let cb = Cb { f: || print(r.hp) }
+    world.entities.clear()
+    run_ref(&cb)
+}
+// An Option payload.
+fn clear_then_opt(o: Option<fn()>, w: &World) / mut(w.entities) {
+    w.entities.clear()
+    match o { Some(g) => g(), None => {} }
+}
+fn captured_opt(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    clear_then_opt(Some(|| print(r.hp)), world)
+}

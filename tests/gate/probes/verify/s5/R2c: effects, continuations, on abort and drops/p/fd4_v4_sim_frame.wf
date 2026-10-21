@@ -1,0 +1,11 @@
+// A multi operation inside sim.run.
+effect Choice { multi fn choose() -> bool }
+fn main() {
+    handle Choice { fn choose() { resume(true); resume(false) } } in {
+        sim.run(seed: 1) {
+            let b = choose()
+            print(b)
+        }
+    }
+    print("end")
+}

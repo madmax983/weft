@@ -1,0 +1,10 @@
+effect Chk { fn assert(b: bool) }
+fn checker() / Chk {
+    assert(false)
+}
+fn main() {
+    handle Chk { fn assert(b) {
+        print("clause ran")
+        resume(())
+    } } in checker()
+}

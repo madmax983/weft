@@ -1,0 +1,13 @@
+// One fork branch gives a linear value, the other fails. The fork raises the
+// failure and drops the value of the first branch.
+linear struct Tx { id: u64 }
+fn begin() -> Tx { Tx { id: 1 } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn boom() -> u64 / fail { fail("boom"); 2 }
+fn work() / par, fail {
+    let (a, b) = fork(|| begin(), || boom())
+    commit(a)
+}
+fn main() / par {
+    handle Fail { fn fail(m) { print("failed: {m}") } } in work()
+}

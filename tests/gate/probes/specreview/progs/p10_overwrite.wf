@@ -1,0 +1,28 @@
+struct Conn { id: u64 }
+linear struct Tx { conn: Conn }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(c) = tx }
+fn begin() -> Tx { Tx { conn: Conn { id: 1 } } }
+fn over() {
+    let tx = begin()
+    tx = begin()
+    rollback(tx)
+}
+fn in_closure() {
+    let tx = begin()
+    let f = || rollback(tx)
+}
+fn closure_twice() {
+    let tx = begin()
+    let f = || rollback(tx)
+    f()
+    f()
+}
+fn branch(c: bool) {
+    let tx = begin()
+    if c { rollback(tx) }
+}
+fn loop_move(n: u32) {
+    let tx = begin()
+    for i in 0..n { rollback(tx) }
+}

@@ -1,0 +1,33 @@
+effect Note { fn note(x: u64) }
+effect Ask { fn ask() -> u64 }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn first(v: &Vec<u64>) -> &u64 in v[] { &v[0] }
+
+fn scope_closure_local() / async {
+    let f = scope { s => let v = mk_v(); || print(v.len()) }
+    f()
+}
+fn handled_closure_local() {
+    let f = handle Note { fn note(x) { resume(()) } } in { let v = mk_v(); || print(v.len()) }
+    f()
+}
+fn clause_closure_local() {
+    let u = mk_v()
+    let f = handle Ask { fn ask() { let v = mk_v(); || print(v.len()) } } in { let k = ask(); || print(u.len()) }
+    f()
+}
+fn handled_closure_temp_ref() {
+    let f = handle Note { fn note(x) { resume(()) } } in { let r = first(&mk_v()); || print(r + 1) }
+    f()
+}
+fn scope_tuple_ref_local() / async {
+    let t = scope { s => let v = mk_v(); (first(&v), 1) }
+    print(t.0 + 1)
+}
+fn handled_vec_of_refs_temp() {
+    let w = handle Note { fn note(x) { resume(()) } } in { let out = Vec.new(); out.push(first(&mk_v())); out }
+    print(w[0] + 1)
+}
+fn main() {
+    handled_closure_local()
+}

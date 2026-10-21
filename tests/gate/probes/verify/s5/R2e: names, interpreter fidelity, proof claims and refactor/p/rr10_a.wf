@@ -1,0 +1,12 @@
+// Reassigned local: an item with other parameter names.
+fn diff(a: i32, b: i32) -> i32 { a - b }
+fn rdiff(b: i32, a: i32) -> i32 { a - b }
+fn pick(c: bool) -> i32 {
+    let g = diff
+    if c { g = rdiff }
+    g(b: 10, a: 3)
+}
+fn main() {
+    print(pick(false))
+    print(pick(true))
+}

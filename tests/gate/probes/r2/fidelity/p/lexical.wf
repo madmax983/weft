@@ -1,0 +1,16 @@
+effect Note { fn note(n: u64) }
+// The closure is written outside the inner `handle`, so its `note` goes to the
+// outer handler, not the inner one (lexical handlers).
+fn main() {
+    let seen: Vec<u64> = Vec.new()
+    handle Note { fn note(n) { seen.push(n); resume(()) } } in {
+        let f = || note(1)
+        let inner: Vec<u64> = Vec.new()
+        handle Note { fn note(n) { inner.push(n); resume(()) } } in {
+            f()
+            note(2)
+        }
+        print(inner.len())
+    }
+    print(seen.len())
+}

@@ -1,0 +1,30 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity>, other: Vec<Entity> }
+fn hit(a: &Entity, b: &World) / mut(b.entities) { b.entities.clear(); print(a.hp) }
+fn hit2(b: &Entity, a: &World) / mut(a.entities) { a.entities.clear(); print(b.hp) }
+fn via_array(w: &World, i: u64) / mut(w.entities) {
+    let fs = [hit, hit2]
+    let g = fs[i]
+    g(b: w, a: &w.other[0])
+}
+fn via_option(w: &World) / mut(w.entities) {
+    let o = Some(hit2)
+    match o {
+        Some(g) => g(b: &w.other[0], a: w),
+        None => {}
+    }
+}
+fn via_if(w: &World, c: bool) / mut(w.entities) {
+    let g = if c { hit } else { hit2 }
+    g(b: w, a: &w.other[0])
+}
+fn via_tuple(w: &World) / mut(w.entities) {
+    let t = (hit, hit2)
+    let g = t.1
+    g(b: &w.other[0], a: w)
+}
+fn main() {
+    let w = World { entities: Vec.new(), other: Vec.new() }
+    w.other.push(Entity { hp: 3 })
+    via_array(&w, 1)
+}

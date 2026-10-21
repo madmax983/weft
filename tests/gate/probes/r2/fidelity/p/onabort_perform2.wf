@@ -1,0 +1,19 @@
+// The `Ask` handler is outside; the `Stop` clause drops the continuation.
+effect Ask { fn ask() -> u64 }
+effect Stop { fn stop() }
+linear struct T { id: u64 }
+    on abort = undo
+fn undo(t: T) / Ask {
+    let T(i) = t
+    print(ask())
+}
+fn done(t: T) { let T(i) = t }
+fn main() {
+    handle Ask { fn ask() { resume(5) } } in {
+        handle Stop { fn stop() { () } } in {
+            let t = T { id: 1 }
+            stop()
+            done(t)
+        }
+    }
+}

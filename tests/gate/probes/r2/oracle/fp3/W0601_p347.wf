@@ -1,0 +1,6 @@
+fn main() / io {
+    scope { s =>
+        let b = s.spawn(|| print("second ran"))
+    }
+}
+

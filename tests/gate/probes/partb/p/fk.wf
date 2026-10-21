@@ -1,0 +1,2 @@
+fn f() / par { fork() }
+fn g() / par { fork(|| print(1)) }

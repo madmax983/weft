@@ -1,0 +1,50 @@
+// OR4 (false positive). A linear value lives outside a `handle`. An abort or
+// a multi resume of an operation inside the handled body stops at the
+// handler, so it never drops or copies the value. The inline forms get W0602
+// and W0503. The same code behind a call (`guarded`, `solve`) is accepted.
+effect Ask { fn ask() -> u64 }
+effect Pick { multi fn pick() -> bool }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+
+fn guarded() -> u64 {
+    handle Ask { fn ask() { 0 } } in { ask() + 1 }
+}
+
+fn solve() -> u64 {
+    let out = 0
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        if pick() { out += 1 } else { out += 2 }
+    }
+    out
+}
+
+fn inline_abort() {
+    let l = Lk { id: 1 }
+    let n = handle Ask { fn ask() { 0 } } in { ask() + 1 }    // W0602
+    print(n)
+    unlock(l)
+}
+
+fn inline_multi() {
+    let l = Lk { id: 2 }
+    let out = 0
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        if pick() { out += 1 } else { out += 2 }               // W0503 and W0602
+    }
+    print(out)
+    unlock(l)
+}
+
+fn call_forms() {
+    let l = Lk { id: 3 }
+    print(guarded())
+    print(solve())
+    unlock(l)
+}
+
+fn main() {
+    inline_abort()
+    inline_multi()
+    call_forms()
+}

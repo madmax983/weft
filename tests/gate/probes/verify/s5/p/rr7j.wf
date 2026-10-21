@@ -1,0 +1,33 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw(n: i32) -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: n })
+    w
+}
+// A captured Vec of references gets a reference after the closure is made.
+fn push_late() {
+    let a = mkw(1)
+    let b = mkw(2)
+    let rs: Vec<&Entity> = Vec.new()
+    rs.push(&a.entities[0])
+    let f = || print(rs[rs.len() - 1].hp)
+    rs.push(&b.entities[0])
+    b.entities.clear()
+    f()
+}
+// Two levels.
+fn push_late2() {
+    let a = mkw(1)
+    let b = mkw(2)
+    let rs: Vec<&Entity> = Vec.new()
+    rs.push(&a.entities[0])
+    let f = || print(rs[rs.len() - 1].hp)
+    let g = || f()
+    rs.push(&b.entities[0])
+    b.entities.clear()
+    g()
+}
+fn main() {
+    push_late()
+}

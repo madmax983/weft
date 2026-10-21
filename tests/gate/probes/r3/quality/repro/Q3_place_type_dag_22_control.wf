@@ -1,0 +1,27 @@
+struct T0 { x: u64 }
+struct T1 { f0: T0, f1: T0 }
+struct T2 { f0: T1, f1: T1 }
+struct T3 { f0: T2, f1: T2 }
+struct T4 { f0: T3, f1: T3 }
+struct T5 { f0: T4, f1: T4 }
+struct T6 { f0: T5, f1: T5 }
+struct T7 { f0: T6, f1: T6 }
+struct T8 { f0: T7, f1: T7 }
+struct T9 { f0: T8, f1: T8 }
+struct T10 { f0: T9, f1: T9 }
+struct T11 { f0: T10, f1: T10 }
+struct T12 { f0: T11, f1: T11 }
+struct T13 { f0: T12, f1: T12 }
+struct T14 { f0: T13, f1: T13 }
+struct T15 { f0: T14, f1: T14 }
+struct T16 { f0: T15, f1: T15 }
+struct T17 { f0: T16, f1: T16 }
+struct T18 { f0: T17, f1: T17 }
+struct T19 { f0: T18, f1: T18 }
+struct T20 { f0: T19, f1: T19 }
+struct T21 { f0: T20, f1: T20 }
+fn make() -> T21 { make() }
+fn f() {
+    let t = make()
+    print(1)
+}

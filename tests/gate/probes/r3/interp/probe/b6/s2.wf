@@ -1,0 +1,71 @@
+struct P { x: u64, y: u64 }
+struct W { v: Vec<u64>, p: P, o: Option<u64> }
+
+fn grow(w: &W) -> &u64 in w.p / mut(w.v) {
+    w.v.push(1)
+    &w.p.x
+}
+
+fn first(w: &W, e: &u64 in w.v[]) -> &u64 in w.v[] / mut(w.p) {
+    w.p.x += 1
+    e
+}
+
+fn assign_call(w: &W) / mut(w.v) {
+    let r = &w.p.y
+    print(r)
+    r = grow(w)
+    print(r)
+}
+
+fn match_call(w: &W) / mut(w.v) {
+    match grow(w) {
+        x => print(x),
+    }
+}
+
+fn destructure(w: &W) / mut(w.v) {
+    let (a, b) = (&w.p.x, &w.p.y)
+    w.v.push(1)
+    print(a)
+    print(b)
+}
+
+fn if_let(w: &W) {
+    match &w.o { Some(x) => print(x), None => () }
+}
+
+fn pass_through(w: &W) / mut(w.p) {
+    w.v.push(9)
+    let e = &w.v[0]
+    e = first(w, e)
+    print(e)
+}
+
+fn nested_loop(w: &W) / mut(w.v) {
+    let r = &w.p.x
+    let i = 0
+    loop {
+        let j = 0
+        while j < 2 {
+            print(r)
+            j += 1
+        }
+        if i > 2 { break }
+        r = &w.p.y
+        w.v.push(i)
+        i += 1
+    }
+    print(r)
+}
+
+fn main() / io {
+    let w = W { v: Vec.new(), p: P { x: 1, y: 2 }, o: Some(4) }
+    w.v.push(5)
+    assign_call(&w)
+    match_call(&w)
+    destructure(&w)
+    if_let(&w)
+    pass_through(&w)
+    nested_loop(&w)
+}

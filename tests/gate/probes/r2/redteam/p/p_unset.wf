@@ -1,0 +1,108 @@
+effect Note { fn note(x: u64) }
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn twice(f: fn()) { f()
+ f() }
+fn never(f: fn()) {}
+
+fn loop_break_ok(c: bool) {
+    let x: u64
+    loop { x = 1
+ break }
+    print(x)
+}
+fn if_return_ok(c: bool) {
+    let x: u64
+    if c { x = 1 } else { return }
+    print(x)
+}
+fn while_maybe(c: bool) {
+    let x: u64
+    while c { x = 1 }
+    print(x)   //~ W0304
+}
+fn for_maybe(n: u64) {
+    let x: u64
+    for i in 0..n { x = i }
+    print(x)   //~ W0304
+}
+fn closure_sets_ok() {
+    let x: u64
+    let f = || { x = 1 }
+    f()
+    print(x)
+}
+fn closure_never_called() {
+    let x: u64
+    let f = || { x = 1 }
+    print(x)   //~ W0304
+}
+fn closure_given_to_never() {
+    let x: u64
+    never(|| { x = 1 })
+    print(x)   //~ W0304
+}
+fn closure_reads_later() {
+    let x: u64
+    let f = || print(x)
+    f()   //~ W0304
+    x = 1
+}
+fn closure_reads_after_set_ok() {
+    let x: u64
+    let f = || print(x)
+    x = 1
+    f()
+}
+fn clause_sets_not_run() {
+    let x: u64
+    handle Note { fn note(n) { x = n
+ resume(()) } } in print(0)
+    print(x)   //~ W0304
+}
+fn clause_sets_ok() {
+    let x: u64
+    handle Note { fn note(n) { x = n
+ resume(()) } } in note(1)
+    print(x)
+}
+fn match_all_ok(n: u64) {
+    let x: u64
+    match n { 0 => { x = 1 }, _ => { x = 2 } }
+    print(x)
+}
+fn linear_unset_ok() {
+    let t: Tx
+}
+fn linear_maybe(c: bool) {
+    let t: Tx
+    if c { t = begin() }
+    rollback(t)   //~ W0304
+}
+fn task_sets() / async {
+    let x: u64
+    scope { s => s.spawn(|| { x = 1 }) }
+    print(x)
+}
+fn task_not_joined_reads() / async {
+    let x: u64
+    scope { s =>
+        s.spawn(|| { x = 1 })
+        print(x)   //~ W0304 W0405
+    }
+}
+fn tuple_unset() {
+    let p: (u64, u64)
+    print(p.0)   //~ W0304
+}
+fn ref_unset() {
+    let r: &u64
+    let y = r   //~ W0304
+}
+fn shadow_unset() {
+    let x: u64 = 1
+    let x: u64
+    print(x)   //~ W0304
+}

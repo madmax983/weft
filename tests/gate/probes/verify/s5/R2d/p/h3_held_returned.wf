@@ -1,0 +1,40 @@
+struct Job { f: fn() }
+
+fn bg_job(j: Job) / async {
+    scope { s =>
+        s.spawn(j.f)
+        s.spawn(j.f)
+    }
+}
+
+fn make_job(n: &u64) -> Job / mut(n) {
+    Job { f: || n += 1 }
+}
+
+fn via_made_job() / async {
+    let n = 0
+    let j = make_job(&n)
+    bg_job(j)
+}
+
+fn bg_fn(f: fn()) / async {
+    scope { s =>
+        s.spawn(f)
+        s.spawn(f)
+    }
+}
+
+fn make_fn(n: &u64) -> fn() / mut(n) {
+    || n += 1
+}
+
+fn via_made_fn() / async {
+    let n = 0
+    let f = make_fn(&n)
+    bg_fn(f)
+}
+
+fn main() / async {
+    via_made_job()
+    via_made_fn()
+}

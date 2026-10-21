@@ -1,0 +1,12 @@
+effect Note { fn note(x: u64) }
+fn two_tasks() -> u64 / async {
+    scope { s =>
+        let t = handle Note { fn note(x) { s.spawn(|| 2) } } in { note(1); s.spawn(|| 1) }
+        t.join()
+    }
+}
+fn two_tasks_dropped() / async {
+    scope { s =>
+        let t = handle Note { fn note(x) { s.spawn(|| 2) } } in { note(1); s.spawn(|| 1) }
+    }   // W0601
+}

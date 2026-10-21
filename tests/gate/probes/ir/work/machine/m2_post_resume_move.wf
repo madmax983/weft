@@ -1,0 +1,19 @@
+effect Tick { fn tick() }
+
+fn eat(v: Vec<u64>) {}
+
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = handle Tick {
+        fn tick() {
+            let x = resume(())
+            eat(v)
+            x
+        }
+    } in {
+        tick()
+        &v[0]
+    }
+    print(r)
+}

@@ -1,0 +1,8 @@
+linear struct Tx { id: u64 }
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn run(f: fn()) { f() }
+fn a() { run(|| begin()) }
+fn b() { run(|| { begin() }) }
+fn c() { let f: fn() = || begin()
+ f() }

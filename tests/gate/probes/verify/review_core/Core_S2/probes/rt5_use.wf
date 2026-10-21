@@ -1,0 +1,27 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct CbW { f: fn(&World) }
+fn run_noop(f: fn()) { f() }
+fn run_cbw(cb: &CbW, w: &World) { let g = cb.f; g(w) }
+
+// u1: a named closure whose capture is invalid, given to a call.
+fn stale_closure(world: &World) / mut(world.entities) {
+    let r = &world.entities[0]
+    let c = || print(r.hp)
+    world.entities.push(Entity { hp: 1 })
+    run_noop(c)   // expect W0301
+}
+// u2: the same through a call of a function value.
+fn stale_closure_value(world: &World, k: fn(fn())) / mut(world.entities) {
+    let r = &world.entities[0]
+    let c = || print(r.hp)
+    world.entities.push(Entity { hp: 1 })
+    k(c)   // expect W0301
+}
+// u3: a stored closure that mutates through its parameter.
+fn stored_param(world: &World) {
+    let cb = CbW { f: |x| x.entities.clear() }
+    let first = &world.entities[0]
+    run_cbw(&cb, world)
+    print(first.hp)   // expect W0301
+}

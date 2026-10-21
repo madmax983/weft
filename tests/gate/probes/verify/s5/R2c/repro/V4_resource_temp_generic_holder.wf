@@ -1,0 +1,22 @@
+effect Choice { multi fn choose() -> bool }
+extern type Sock { nonportable }
+extern fn open() -> Sock / blocking
+extern fn close(s: Sock) / blocking
+fn generic_resource<T>(x: T) / Choice {
+    let b = choose()
+    let y = x
+}
+fn named() / Choice, blocking {
+    let s = open()
+    generic_resource(s)   //~ W0503
+}
+fn temp() / Choice, blocking {
+    generic_resource(open())   //~ W0503
+}
+fn in_vec() / Choice, blocking {
+    let v: Vec<Sock> = Vec.new()
+    v.push(open())
+    generic_resource(v)   //~ W0503
+}
+fn main() {
+}

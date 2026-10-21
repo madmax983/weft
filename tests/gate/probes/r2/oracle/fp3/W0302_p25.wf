@@ -1,0 +1,9 @@
+fn work() / async, fail {
+    scope { s =>
+        let t = s.spawn(|| fail("boom"))
+        t.join()
+        t.join()
+    }
+}
+
+

@@ -1,0 +1,8 @@
+struct E { hp: u64 }
+fn main() {
+    let v = Vec.new()
+    v.push(E { hp: 1 })
+    let (l, r) = v.split_mut(1)
+    fork(|| l[0].hp += 1, || l[0].hp += 2)
+    print(v[0].hp)
+}

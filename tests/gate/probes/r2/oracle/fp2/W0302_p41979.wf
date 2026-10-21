@@ -1,0 +1,24 @@
+linear struct Tx { id: u64 }
+
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(3)
+    v
+}
+fn take_v(v: Vec<u64>) -> usize { v.len() }
+
+
+
+
+fn main() {
+    let v7 = mk_v()
+    {
+        if true {
+        } else {
+            print(take_v(v7))
+        }
+    }
+    v7.push(v7[0])
+    let tx15 = Tx { id: 15 }
+    let Tx(i15) = tx15
+}

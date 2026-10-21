@@ -1,0 +1,12 @@
+struct Node { v: u64, xs: Vec<u64> }
+fn take<T>(x: T) { }
+fn mk() -> Rc<Node> { let n = Node { v: 5, xs: Vec.new() }; n.xs.push(1); Rc.new(n) }
+fn main() {
+    scope { s =>
+        {
+            let shared = mk()
+            s.spawn(|| { sleep(1.s); print(shared.v) })
+        }
+        print(0)
+    }
+}

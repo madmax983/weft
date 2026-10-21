@@ -1,0 +1,11 @@
+struct H { f: fn() }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn run_twice(h: &H) { let g = h.f; g(); g() }
+fn run_h(h: &H) { let g = h.f; g() }
+fn twice(f: fn()) { f(); f() }
+fn main() {
+    let v = mk_v()
+    let r = &v[0]
+    let h = H { f: || { print(r + 0); v.clear(); v.push(1) } }
+    twice(h.f)
+}

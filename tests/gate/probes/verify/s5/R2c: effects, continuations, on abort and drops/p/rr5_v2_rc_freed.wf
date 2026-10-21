@@ -1,0 +1,21 @@
+// The handled body holds the last Rc of an object; it ends in the body.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Peek { fn peek(e: &Entity) }
+fn mk() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+fn rc_ends() {
+    handle Peek {
+        fn peek(e) {
+            resume(())
+            print(e.hp)
+        }
+    } in {
+        let w = Rc.new(mk())
+        peek(&w.entities[0])
+    }
+}
+fn main() { rc_ends() }

@@ -1,0 +1,9 @@
+effect Reader { fn get() -> u64 }
+effect State { fn get() -> u64 }
+fn both() -> u64 / Reader, State { Reader.get() + State.get() }
+fn main() {
+    let v = handle Reader { fn get() { resume(1) } } in {
+        handle State { fn get() { resume(10) } } in both()
+    }
+    print(v)
+}

@@ -1,0 +1,7 @@
+// Control: a spawn whose handle is not kept, and the task returns ().
+fn main() / io, par {
+    scope { s =>
+        s.spawn(|| print("child"))
+        print("spawned")
+    }
+}

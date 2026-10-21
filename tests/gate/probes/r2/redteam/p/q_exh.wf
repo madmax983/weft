@@ -1,0 +1,93 @@
+enum Color { Red, Green, Blue }
+struct S { a: bool, b: u64 }
+fn tuple_bools(a: bool, b: bool) {
+    match (a, b) {   //~ W0120
+        (true, _) => print(1),
+        (_, true) => print(2),
+    }
+}
+fn nested_option(o: Option<Option<u64>>) {
+    match o {   //~ W0120
+        Some(Some(x)) => print(x),
+        None => print(0),
+    }
+}
+fn ints(n: u64) {
+    match n {   //~ W0120
+        0 => print(0),
+        1 => print(1),
+    }
+}
+fn strings(s: String) {
+    match s {   //~ W0120
+        "a" => print(0),
+    }
+}
+fn struct_pat(s: S) {
+    match s {   //~ W0120
+        S(true, _) => print(1),
+        S(false, 0) => print(2),
+    }
+}
+fn mixed(n: u64, c: bool) {
+    match (n, c) {   //~ W0120
+        (0, true) => print(0),
+        (_, false) => print(1),
+    }
+}
+fn result_nested(r: Result<Option<bool>, u64>) {
+    match r {   //~ W0120
+        Ok(Some(true)) => print(0),
+        Ok(None) => print(1),
+        Err(_) => print(2),
+    }
+}
+fn colors(c: Color) {
+    match c {   //~ W0120
+        Color.Red => print(0),
+        Color.Green => print(1),
+    }
+}
+fn ok_tuple(a: bool, b: bool) {
+    match (a, b) {
+        (true, true) => print(0),
+        (true, false) => print(1),
+        (false, _) => print(2),
+    }
+}
+fn ok_nested(o: Option<Option<u64>>) {
+    match o {
+        Some(Some(x)) => print(x),
+        Some(None) => print(1),
+        None => print(0),
+    }
+}
+fn ok_colors(c: Color) {
+    match c {
+        Color.Red => print(0),
+        Color.Green => print(1),
+        Color.Blue => print(2),
+    }
+}
+fn ok_ref(o: &Option<u64>) {
+    match o {
+        Some(x) => print(x),
+        None => print(0),
+    }
+}
+fn ref_missing(o: &Option<u64>) {
+    match o {   //~ W0120
+        Some(x) => print(x),
+    }
+}
+fn ok_unit(u: ()) {
+    match u { () => print(0) }
+}
+fn ok_bool_lit_tuple(p: (bool, Color)) {
+    match p {
+        (true, _) => print(0),
+        (false, Color.Red) => print(1),
+        (false, Color.Green) => print(2),
+        (false, Color.Blue) => print(3),
+    }
+}

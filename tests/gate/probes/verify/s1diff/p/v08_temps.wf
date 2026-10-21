@@ -1,0 +1,35 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World { World { entities: Vec.new() } }
+fn mkv() -> Vec<u64> { Vec.new() }
+
+// A reference into a temporary of a block outlives the block.
+fn temp_block() {
+    let r = { &mkv()[0] }
+    print(r)
+}
+fn temp_block2() {
+    let r = {
+        let n = 1
+        &mkw().entities
+    }
+    print(r.len())
+}
+// A reference into a temporary of a loop body.
+fn temp_loop(n: u64) {
+    let keep = Entity { hp: 1 }
+    let r = &keep.hp
+    let i = 0
+    while i < n {
+        r = &mkw().entities[0].hp
+        i += 1
+    }
+    print(r)
+}
+// A reference into a temporary of an if branch.
+fn temp_if(c: bool) {
+    let keep = mkv()
+    let r = &keep
+    if c { r = &mkv() }
+    print(r.len())
+}

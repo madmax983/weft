@@ -1,0 +1,50 @@
+linear struct Named { id: u64, name: Vec<u64> }
+linear struct Boxed { b: Box<u64>, n: u64 }
+struct Plain { name: Vec<u64>, n: u64 }
+linear struct Outer { p: Plain }
+effect Stop { fn stop() }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn close(n: Named) { let Named(i, v) = n }
+
+fn shell_let() {
+    let t = Named { id: 1, name: mk_v() }
+    let n = t.name
+    print(n.len())
+}
+fn shell_call() {
+    let t = Named { id: 1, name: mk_v() }
+    print(n_len(t.name))
+}
+fn n_len(v: Vec<u64>) -> usize { v.len() }
+fn shell_box() {
+    let t = Boxed { b: Box.new(3), n: 1 }
+    let b = t.b
+    print(b)
+}
+fn shell_nested() {
+    let o = Outer { p: Plain { name: mk_v(), n: 1 } }
+    let v = o.p.name
+    print(v.len())
+}
+fn shell_closure() {
+    let t = Named { id: 1, name: mk_v() }
+    let f = || n_len(t.name)
+    print(f())
+}
+fn shell_abort() / Stop {
+    let t = Named { id: 1, name: mk_v() }
+    let n = t.name
+    stop()
+    print(n.len())
+}
+fn shell_clean() {
+    let t = Named { id: 1, name: mk_v() }
+    close(t)
+}
+test "shell_let" { shell_let() }
+test "shell_call" { shell_call() }
+test "shell_box" { shell_box() }
+test "shell_nested" { shell_nested() }
+test "shell_closure" { shell_closure() }
+test "shell_abort" { handle Stop { fn stop() { print("stopped") } } in shell_abort() }
+test "shell_clean" { shell_clean() }

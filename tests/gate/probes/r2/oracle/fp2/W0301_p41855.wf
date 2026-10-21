@@ -1,0 +1,18 @@
+linear struct Tx { id: u64 }
+
+fn commit(t: Tx) { let Tx(id) = t; print("commit", id) }
+fn find(v: &Vec<u64>) -> Option<&u64 in v[]> { if v.len() > 0 { Some(&v[0]) } else { None } }
+
+
+fn main() {
+    if true {
+    } else {
+        let c4 = 0
+        while c4 < 2 {
+            let v7 = [1, 2, 3]
+            let o8 = find(&v7); v7.clear(); match o8 { Some(x9) => print(x9), None => print(0) }
+        }
+    }
+    let tx13 = Tx { id: 13 }
+    commit(tx13)
+}

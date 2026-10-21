@@ -1,0 +1,10 @@
+effect Pick { multi fn pick() -> bool }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn main() {
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        let l = Lk { id: 1 }
+        let b = pick()      // W0503; at run time each resume copies `l`
+        unlock(l)           // unlock 1 is printed two times
+    }
+}

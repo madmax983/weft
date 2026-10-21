@@ -1,0 +1,32 @@
+effect Ask { fn ask() -> u64 }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(id) = t; print("commit {id}") }
+fn make_tx(i: u64) -> Tx { Tx { id: i } }
+struct W { v: Vec<u64>, n: u64 }
+fn mk() -> W { let w = W { v: Vec.new(), n: 4 }; w.v.push(3); w }
+
+fn linear_tail() {
+    let t = handle Ask { fn ask() { resume(0) } } in make_tx(ask())
+    commit(t)
+}
+fn linear_tail_block() {
+    let t = handle Ask { fn ask() { resume(0) } } in { let x = ask(); make_tx(x) }
+    commit(t)
+}
+fn field_of_temp() -> u64 {
+    handle Ask { fn ask() { resume(0) } } in mk().n + ask()
+}
+fn vec_of_temp() -> usize {
+    handle Ask { fn ask() { resume(0) } } in mk().v.len()
+}
+fn tuple_tail() {
+    let (a, b) = handle Ask { fn ask() { resume(0) } } in (make_tx(1), ask())
+    commit(a)
+}
+fn main() {
+    linear_tail()
+    linear_tail_block()
+    print(field_of_temp())
+    print(vec_of_temp())
+    tuple_tail()
+}

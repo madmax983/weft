@@ -1,0 +1,18 @@
+linear struct Tx { id: u64 }
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+fn give(v: &Vec<Tx>) / mut(v) { v.push(begin()) }
+fn late_type() {
+    let v = Vec.new()
+    let o = v.pop()
+    match o { Some(_) => {}, None => {} }   //~ W0601
+    give(&v)
+    match v.pop() { Some(t) => rollback(t), None => {} }
+    let _ = v
+}
+fn late_wild() {
+    let v = Vec.new()
+    let _ = v.pop()   //~ W0601
+    v.push(begin())
+    let _ = v
+}

@@ -1,0 +1,12 @@
+effect Log { fn log(msg: String) }
+fn simulate(xs: &Vec<i32>) / Log {
+    log("x")
+}
+fn main2() {
+    let lines = Vec.new()
+    lines.push(1)
+    let first = &lines[0]
+    handle Log { fn log(msg) { lines.push(2); resume(()) } }
+    in simulate(&lines)
+    print(first)
+}

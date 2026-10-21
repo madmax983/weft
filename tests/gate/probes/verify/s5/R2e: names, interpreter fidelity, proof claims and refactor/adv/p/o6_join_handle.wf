@@ -1,0 +1,9 @@
+fn main() / par, async {
+    let n = 0
+    scope { s =>
+        let t = s.spawn(|| n += 1)
+        t.join()
+        n += 1
+    }
+    print(n)
+}

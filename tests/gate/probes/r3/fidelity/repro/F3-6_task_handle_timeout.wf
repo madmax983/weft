@@ -1,0 +1,16 @@
+// The same with a with_timeout deadline in place of the local handler.
+linear struct Tx { id: u64 }
+fn begin() -> Tx { Tx { id: 1 } }
+fn commit(t: Tx) { let Tx(i) = t; print("commit {i}") }
+fn body() / async, clock {
+    scope { s =>
+        let t = s.spawn(|| begin())
+        sleep(50.ms)
+        commit(t.join())
+    }
+}
+fn main() / async, clock, fail {
+    handle Fail { fn fail(m) { print("timed out: {m}") } } in {
+        with_timeout(10.ms) { body() }
+    }
+}

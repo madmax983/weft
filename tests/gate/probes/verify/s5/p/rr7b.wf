@@ -1,0 +1,55 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+
+fn mk(a: &World, b: &World) -> fn() {
+    let r = &a.entities[0]
+    let f = || print(r.hp)
+    r = &b.entities[0]
+    f
+}
+// Control: the first target is cleared.
+fn returned_first() {
+    let a = World { entities: Vec.new() }
+    a.entities.push(Entity { hp: 1 })
+    let b = World { entities: Vec.new() }
+    b.entities.push(Entity { hp: 2 })
+    let f = mk(&a, &b)
+    a.entities.clear()
+    f()
+}
+// The closure is made after the new value.
+fn mk3(a: &World, b: &World) -> fn() {
+    let r = &a.entities[0]
+    r = &b.entities[0]
+    let f = || print(r.hp)
+    f
+}
+fn returned_after() {
+    let a = World { entities: Vec.new() }
+    a.entities.push(Entity { hp: 1 })
+    let b = World { entities: Vec.new() }
+    b.entities.push(Entity { hp: 2 })
+    let f = mk3(&a, &b)
+    b.entities.clear()
+    f()
+}
+// Directly returned as the tail with the new value in a nested closure.
+fn mk4(a: &World, b: &World) -> fn() {
+    let r = &a.entities[0]
+    let f = || print(r.hp)
+    let g = || f()
+    r = &b.entities[0]
+    g
+}
+fn returned_nested() {
+    let a = World { entities: Vec.new() }
+    a.entities.push(Entity { hp: 1 })
+    let b = World { entities: Vec.new() }
+    b.entities.push(Entity { hp: 2 })
+    let f = mk4(&a, &b)
+    b.entities.clear()
+    f()
+}
+fn main() {
+    returned_first()
+}

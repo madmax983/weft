@@ -1,0 +1,43 @@
+// RR7 missed shape: the new value reaches a closure that another closure runs.
+// Expected: W0301 at h() / run(h); W0405 in the task form. HEAD: 0 errors, each faults.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw(n: i32) -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: n })
+    w
+}
+fn run(f: fn()) { f() }
+fn two_levels_ref() {
+    let a = mkw(1)
+    let b = mkw(2)
+    let r = &a.entities[0]
+    let f = || print(r.hp)
+    let h = || f()
+    r = &b.entities[0]
+    b.entities.clear()
+    h()
+}
+fn two_levels_hof() {
+    let a = mkw(1)
+    let b = mkw(2)
+    let r = &a.entities[0]
+    let f = || print(r.hp)
+    let h = || run(f)
+    r = &b.entities[0]
+    b.entities.clear()
+    run(h)
+}
+fn two_levels_fn() {
+    let w = mkw(1)
+    let first = &w.entities[0]
+    let g = || print(0)
+    let f = || g()
+    let h = || f()
+    g = || w.entities.clear()
+    h()
+    print(first.hp)
+}
+fn main() {
+    two_levels_ref()
+}

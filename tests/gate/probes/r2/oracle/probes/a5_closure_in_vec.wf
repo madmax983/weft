@@ -1,0 +1,9 @@
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let fs = Vec.new()
+    fs.push(|| print(r + 1))
+    v.clear()
+    for f in fs[] { f() }
+}

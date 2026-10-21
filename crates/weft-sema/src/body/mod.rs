@@ -14,7 +14,8 @@ use weft_facts::{
     TaskKind, VarId, VarInfo, VarKind,
 };
 use weft_syntax::ast::{
-    self, Arg, AssignOp, BinOp, Block, Expr, ExprKind, Lit, Pattern, Stmt, StmtKind, StrPart, UnOp,
+    self, Arg, AssignOp, BinOp, Block, Expr, ExprKind, Lit, Pattern, PatternKind, Stmt, StmtKind,
+    StrPart, UnOp,
 };
 use weft_syntax::diag::Diagnostic;
 

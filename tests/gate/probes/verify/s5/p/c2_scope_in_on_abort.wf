@@ -1,0 +1,30 @@
+// A rollback runs two steps in a scope. One step fails at once. The owner of
+// the scope should see the failure at its next suspension point.
+linear struct Tx { id: u64 }
+    on abort = rollback
+
+fn step_fails() / fail, clock { sleep(1.ms); fail("step failed") }
+fn rollback(t: Tx) / clock, async {
+    let Tx(id) = t
+    print("rollback {id} starts at {Clock.now()}")
+    handle Fail { fn fail(m) { print("rollback caught: {m} at {Clock.now()}") } } in {
+        scope { s =>
+            s.spawn(|| step_fails())
+            sleep(1000.ms)
+            print("rollback scope body goes on at {Clock.now()}")
+        }
+    }
+    print("rollback {id} ends at {Clock.now()}")
+}
+fn commit(t: Tx) / io { let Tx(id) = t; print("commit {id}") }
+
+fn main() / io, async {
+    handle Fail { fn fail(m) { print("caught: {m} at {Clock.now()}") } } in {
+        with_timeout(10.ms) {
+            let t = Tx { id: 1 }
+            sleep(100.ms)
+            commit(t)
+        }
+    }
+    print("end at {Clock.now()}")
+}

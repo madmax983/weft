@@ -1,0 +1,15 @@
+struct Entity { hp: i32 }
+fn big() {
+    let keep = Entity { hp: 1 }
+    let r = &keep.hp
+    handle Fail { fn fail(m) { print(r) } } in {
+        let inner = Entity { hp: 2 }
+        r = &inner.hp
+        fail("x")
+    }
+    handle Fail { fn fail(m) { print(r) } } in {
+        let inner = Entity { hp: 2 }
+        r = &inner.hp
+        fail("x")
+    }
+}

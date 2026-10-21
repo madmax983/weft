@@ -1,0 +1,29 @@
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct Node: !Move { fr: Frame, next: Option<Box<Node>> }
+
+fn mk_node() -> Node {
+    Node { fr: Frame { buf: [1, 2, 3, 4] }, next: Some(Box.new(Node { fr: Frame { buf: [5, 6, 7, 8] }, next: None })) }
+}
+fn peek_next(n: &Node) -> u8 {
+    match n.next {
+        Some(b) => b.fr.cur + 0,
+        None => 0,
+    }
+}
+fn deep_read() {
+    let n = mk_node()
+    n.fr.cur = &n.fr.buf[0]
+    print(peek_next(&n))
+}
+fn deep_read_local() {
+    let n = mk_node()
+    n.fr.cur = &n.fr.buf[0]
+    let r = &n.next
+    match r {
+        Some(b) => print(b.fr.cur + 0),
+        None => print(0),
+    }
+}
+fn main() {
+    deep_read()
+}

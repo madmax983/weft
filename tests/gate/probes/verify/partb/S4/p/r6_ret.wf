@@ -1,0 +1,21 @@
+fn refs(v: &Vec<u64>) -> Vec<&u64> { let rs = Vec.new()
+ rs.push(&v[0])
+ rs }
+fn q1() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let rs = refs(&v)
+ v.clear()
+ for r in rs[] { print(r) } }
+fn q2() { let v: Vec<u64> = Vec.new()
+ v.push(1)
+ let rs = refs(&v)
+ for r in rs[] { print(r) }
+ v.clear() }
+fn q3() { let f = || { let x = 5
+ Some(&x) }
+ let o = f() }
+fn q4() -> Option<&u64> { let f = || { let x = 5
+ Some(&x) }
+ f() }
+fn q5(v: &Vec<u64>) -> (u64, (Option<&u64>, u64)) { let x = 1
+ (1, (Some(&x), 2)) }

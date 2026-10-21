@@ -1,0 +1,25 @@
+effect Give { fn give() -> &u64 }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v.push(2); v }
+fn first(v: &Vec<u64>) -> &u64 in v[] { &v[0] }
+
+fn resume_back_to_clause() {
+    let n = handle Give { fn give() { let k = resume(first(&mk_v())); k + 1 } } in { give() }
+    print(n)
+}
+fn resume_back_then_stmt() {
+    let n = handle Give { fn give() { let k = resume(first(&mk_v())); let m = 0; k + m } } in { give() }
+    print(n)
+}
+fn resume_outer_var() {
+    let w = mk_v()
+    let out = &w[0]
+    let n = handle Give { fn give() { resume(first(&mk_v())); out + 1 } } in { out = give(); 0 }
+    print(n)
+}
+fn resume_local_back() {
+    let n = handle Give { fn give() { let t = mk_v(); let k = resume(first(&t)); k + 1 } } in { give() }
+    print(n)
+}
+fn main() {
+    resume_back_to_clause()
+}

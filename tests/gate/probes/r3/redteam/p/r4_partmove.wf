@@ -1,0 +1,24 @@
+linear struct Tx { id: u64 }
+fn rollback(tx: Tx) { print(tx.id); let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+struct Two { a: Tx, b: Tx }
+// One element of an array of linear values moves; the other is dropped.
+fn arr_part() {
+    let a = [begin(1), begin(2)]
+    rollback(a[0])
+}   //~ W0601
+// One part of a tuple moves; the other is dropped.
+fn tuple_part() {
+    let t = (begin(1), begin(2))
+    rollback(t.0)
+}   //~ W0601
+// One field moves; the other is dropped.
+fn field_part() {
+    let s = Two { a: begin(1), b: begin(2) }
+    rollback(s.a)
+}   //~ W0601
+fn main() {
+    arr_part()
+    tuple_part()
+    field_part()
+}

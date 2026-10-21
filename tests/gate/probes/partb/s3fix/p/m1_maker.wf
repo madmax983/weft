@@ -1,0 +1,25 @@
+struct Stats { count: u64 }
+fn run_maker(f: fn() -> fn() -> u64) -> u64 { let g = f(); g() }
+fn once_call(f: fn() -> u64) -> u64 { f() }
+fn calls_result(st: &Stats) / mut(st), async {
+    scope { s =>
+        run_maker(|| || { s.spawn(|| st.count += 1); 0 })
+        print(st.count)
+    }
+}
+fn once_ok(st: &Stats) / mut(st), async {
+    scope { s =>
+        once_call(|| { s.spawn(|| st.count += 1); 0 })
+    }
+}
+fn branches(st: &Stats, c: bool) -> u64 / mut(st), async {
+    scope { s =>
+        let f = || { s.spawn(|| st.count += 1); 0 }
+        if c { once_call(f) } else { once_call(f) }
+    }
+}
+fn nested_scope_in_closure(st: &Stats) / mut(st), async {
+    let a = || scope { s => s.spawn(|| st.count += 1); () }
+    a()
+    print(st.count)
+}

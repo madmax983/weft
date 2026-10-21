@@ -1,0 +1,6 @@
+effect Note { fn note(m: u64) }
+fn with_log(f: fn() / log) / log { f() }
+fn named() / Note { note(1) }
+fn main() / log {
+    with_log(named)
+}

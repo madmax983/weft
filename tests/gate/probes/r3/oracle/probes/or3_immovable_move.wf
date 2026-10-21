@@ -1,0 +1,7 @@
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+fn main() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[2]
+    let b = Box.new(f)      // W0604
+    print(b.cur)
+}

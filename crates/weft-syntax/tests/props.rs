@@ -10,9 +10,10 @@ use std::path::PathBuf;
 use proptest::prelude::*;
 use weft_syntax::ast::{
     Arg, Arm, AssignOp, BinOp, Block, EffectDecl, EffectItem, EffectPath, EffectRow, EnumDecl,
-    Expr, ExprKind, ExternTypeDecl, FieldDecl, File, FnDecl, HandlerClause, Ident, ImplBlock, Item,
-    ItemKind, Lit, ModDecl, Mode, OpDecl, Param, Pattern, PlaceExpr, PlaceStep, Span, Stmt,
-    StmtKind, StrPart, StructDecl, TestDecl, TypeExpr, TypeExprKind, TypeProp, UnOp, VariantDecl,
+    Expr, ExprId, ExprKind, ExternTypeDecl, FieldDecl, File, FnDecl, HandlerClause, Ident,
+    ImplBlock, Item, ItemKind, Lit, ModDecl, Mode, OpDecl, Param, PatId, Pattern, PatternKind,
+    PlaceExpr, PlaceStep, Span, Stmt, StmtKind, StrPart, StructDecl, TestDecl, TypeExpr,
+    TypeExprKind, TypeProp, UnOp, VariantDecl,
 };
 use weft_syntax::lexer::lex;
 use weft_syntax::parse_file;
@@ -21,9 +22,31 @@ use weft_syntax::pretty::{pretty, pretty_expr};
 
 // ---------------------------------------------------------------- helpers
 
-/// Returns the `Debug` text with every span (`lo..hi`) replaced by `_`.
+/// Returns the `Debug` text with every span (`lo..hi`) and every id
+/// (`ExprId(n)`, `PatId(n)`) replaced by `_`.
 fn erase<T: Debug>(x: &T) -> String {
-    let s = format!("{x:?}");
+    erase_ids(&erase_spans(&format!("{x:?}")))
+}
+
+/// Replaces the number of each `ExprId(n)` and `PatId(n)` with `_`.
+fn erase_ids(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(at) = ["ExprId(", "PatId("]
+        .iter()
+        .filter_map(|k| rest.find(k).map(|i| i + k.len()))
+        .min()
+    {
+        out.push_str(&rest[..at]);
+        rest = rest[at..].trim_start_matches(|c: char| c.is_ascii_digit());
+        out.push('_');
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Replaces each span (`lo..hi`) with `_`.
+fn erase_spans(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = String::with_capacity(s.len());
     let (mut i, mut copied) = (0, 0);
@@ -108,6 +131,17 @@ fn erase_replaces_spans_only() {
     assert_eq!(
         erase(&(Span::new(1, 2), "é", Span::new(30, 40))),
         "(_, \"é\", _)"
+    );
+}
+
+#[test]
+fn erase_replaces_ids() {
+    assert_eq!(erase(&ExprId(12)), "ExprId(_)");
+    assert_eq!(erase(&(PatId(0), 5, ExprId(7))), "(PatId(_), 5, ExprId(_))");
+    let e = Expr::new(ExprId(3), ExprKind::Lit(Lit::Unit), Span::new(1, 2));
+    assert_eq!(
+        erase(&e),
+        erase(&Expr::new(ExprId(9), ExprKind::Lit(Lit::Unit), sp()))
     );
 }
 
@@ -325,7 +359,7 @@ fn id(name: &str) -> Ident {
 }
 
 fn ex(kind: ExprKind) -> Expr {
-    Expr { kind, span: sp() }
+    Expr::new(ExprId::default(), kind, sp())
 }
 
 fn lower() -> impl Strategy<Value = Ident> + Clone {
@@ -450,32 +484,38 @@ fn ty() -> impl Strategy<Value = TypeExpr> + Clone {
     })
 }
 
+/// Makes a pattern with the id 0. The round trip ignores ids.
+fn pk(kind: PatternKind) -> Pattern {
+    Pattern::new(PatId::default(), kind)
+}
+
 fn pattern() -> impl Strategy<Value = Pattern> + Clone {
     let leaf = prop_oneof![
-        lower().prop_map(Pattern::Bind),
-        Just(Pattern::Wild(sp())),
-        any::<u64>().prop_map(|v| Pattern::Lit(Lit::Int(v), sp())),
-        any::<bool>().prop_map(|v| Pattern::Lit(Lit::Bool(v), sp())),
-        Just(Pattern::Lit(Lit::Unit, sp())),
-        text().prop_map(|t| Pattern::Lit(Lit::Str(vec![StrPart::Text(t)]), sp())),
-        prop::collection::vec(upper(), 1..3).prop_map(|path| Pattern::Variant {
+        lower().prop_map(|n| pk(PatternKind::Bind(n))),
+        Just(pk(PatternKind::Wild(sp()))),
+        any::<u64>().prop_map(|v| pk(PatternKind::Lit(Lit::Int(v), sp()))),
+        any::<bool>().prop_map(|v| pk(PatternKind::Lit(Lit::Bool(v), sp()))),
+        Just(pk(PatternKind::Lit(Lit::Unit, sp()))),
+        text().prop_map(|t| pk(PatternKind::Lit(Lit::Str(vec![StrPart::Text(t)]), sp()))),
+        prop::collection::vec(upper(), 1..3).prop_map(|path| pk(PatternKind::Variant {
             path,
             fields: Vec::new(),
             span: sp()
-        }),
+        })),
     ];
     leaf.prop_recursive(3, 12, 3, |inner| {
         prop_oneof![
-            prop::collection::vec(inner.clone(), 1..3).prop_map(|ps| Pattern::Tuple(ps, sp())),
+            prop::collection::vec(inner.clone(), 1..3)
+                .prop_map(|ps| pk(PatternKind::Tuple(ps, sp()))),
             (
                 prop::collection::vec(upper(), 1..3),
                 prop::collection::vec(inner, 1..3)
             )
-                .prop_map(|(path, fields)| Pattern::Variant {
+                .prop_map(|(path, fields)| pk(PatternKind::Variant {
                     path,
                     fields,
                     span: sp()
-                }),
+                })),
         ]
     })
 }

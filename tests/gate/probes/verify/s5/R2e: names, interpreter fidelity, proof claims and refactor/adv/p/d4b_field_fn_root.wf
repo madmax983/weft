@@ -1,0 +1,13 @@
+effect Note { fn note(x: u64) }
+fn f() / Note { note(4) }
+struct S { f: fn() / Note }
+fn run(s: S) / Note {
+    let g = s.f
+    g()
+}
+fn main() {
+    handle Note { fn note(v) {
+        print(v)
+        resume(())
+    } } in run(S { f: f })
+}

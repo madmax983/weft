@@ -1,0 +1,53 @@
+effect Note { fn note(x: u64) }
+fn closure_break() {
+    let i = 0
+    while i < 3 {
+        let f = || { break }   //~ W0111
+        f()
+        i += 1
+    }
+}
+fn timeout_break() / async, fail {
+    let i = 0
+    while i < 3 {
+        with_timeout(1.s) { break }   //~ W0111
+        i += 1
+    }
+}
+fn handled_continue() {
+    let i = 0
+    while i < 3 {
+        i += 1
+        handle Note { fn note(x) { resume(()) } } in {
+            match i { 1 => { continue }, _ => note(1) }   //~ W0315
+        }
+    }
+}
+fn clause_return() -> u64 {
+    handle Note { fn note(x) { return 5 } } in note(1)   //~ W0315
+    0
+}
+fn scope_return() -> u64 / async {
+    scope { s => if true { return 1 }; s.spawn(|| 2); () }   //~ W0315
+    0
+}
+fn nested_closure_return() -> u64 {
+    let f = || { handle Note { fn note(x) { resume(()) } } in { return 3 } }   //~ W0315
+    f()
+    0
+}
+fn interp_break() {
+    let i = 0
+    while i < 3 {
+        print("{ { break; 1 } }")
+        i += 1
+    }
+}
+fn arg_break(v: Vec<u64>) {
+    let i = 0
+    while i < 3 {
+        let x = v.get({ break; 0 })
+        i += 1
+    }
+}
+fn main() {}

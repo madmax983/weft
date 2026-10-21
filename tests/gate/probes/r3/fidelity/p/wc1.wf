@@ -1,0 +1,9 @@
+struct W { items: Vec<u64>, n: u64 }
+fn f(w: &W) / mut(w..) {
+    w.items.push(1)
+    w.n = 3
+}
+fn g(ws: &Vec<W>) / mut(ws[]..) {
+    ws[0].items.push(1)
+    ws.push(W { items: Vec.new(), n: 1 })   // expected W0703: ws itself
+}

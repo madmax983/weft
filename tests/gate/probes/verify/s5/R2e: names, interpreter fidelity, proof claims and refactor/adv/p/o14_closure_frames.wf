@@ -1,0 +1,13 @@
+fn apply(f: fn(u64) -> u64, x: u64) -> u64 { f(x) }
+fn main() {
+    let base = 10
+    let r = &base
+    let g = |x: u64| {
+        let local = x + 1
+        let lr = &local
+        lr + r
+    }
+    print(apply(g, 1))
+    print(apply(g, 2))
+    print(g(3))
+}

@@ -1,0 +1,11 @@
+fn body(f: fn() -> &u64, g: fn()) {
+    let r = f()
+    g()
+    print(r)
+}
+
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    body(|| &v[0], || v.clear())
+}

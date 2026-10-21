@@ -1,0 +1,4 @@
+fn main() {
+    handle util.inner.N { fn n(x) { print(x)
+ resume(()) } } in util.inner.f()
+}

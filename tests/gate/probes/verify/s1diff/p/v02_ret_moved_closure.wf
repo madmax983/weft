@@ -1,0 +1,7 @@
+fn eat(t: String) -> u64 { 0 }
+// The closure moves its capture, so it owns it.
+fn parse(t: String) -> fn() -> u64 { || eat(t) }
+fn local_closure() -> fn() -> u64 {
+    let t = "x"
+    || eat(t)
+}

@@ -1,0 +1,18 @@
+extern type Stmt
+extern fn open_stmt() -> *Stmt / blocking
+extern fn use_stmt(s: *Stmt) -> u64 / blocking
+fn raw_in_fork() / par, blocking {
+    let p = open_stmt()
+    fork(|| use_stmt(p), || 2)   //~ W0401
+}
+fn raw_in_option_fork() / par, blocking {
+    let o = Some(open_stmt())
+    fork(|| match o { Some(p) => use_stmt(p), None => 0 }, || 2)   //~ W0401
+}
+fn task_in_fork() / par, async {
+    scope { s =>
+        let t = s.spawn(|| 1)
+        let (a, b) = fork(|| t.join(), || 2)   //~ W0401
+    }
+}
+fn main() {}

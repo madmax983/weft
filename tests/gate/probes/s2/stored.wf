@@ -1,0 +1,49 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Cb { f: fn() }
+fn run_cb(cb: &Cb) {
+    let g = cb.f
+    g()
+}
+// A closure stored in a field runs at a later call that gets the field.
+fn stored(world: &World) / mut(world.entities) {
+    let cb = Cb { f: || world.entities.clear() }
+    let first = &world.entities[0]
+    run_cb(&cb)
+    print(first.hp)   // W0301
+}
+// A local captured by a stored closure.
+fn stored_local() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let cb = Cb { f: || v.clear() }
+    let r = &v[0]
+    run_cb(&cb)
+    print(r)   // W0301
+}
+// In a loop: the store comes after the call.
+fn in_loop(world: &World, cb: &Cb) / mut(world.entities, cb.f) {
+    let i = 0
+    while i < 2 {
+        let first = &world.entities[0]
+        run_cb(cb)
+        print(first.hp)   // W0301
+        cb.f = || world.entities.clear()
+        i += 1
+    }
+}
+// A callee stores the closure; a later call runs it.
+fn keep(f: fn(), cb: &Cb) / mut(cb.f) { cb.f = f }
+fn kept(world: &World, cb: &Cb) / mut(world.entities, cb.f) {
+    keep(|| world.entities.clear(), cb)
+    let first = &world.entities[0]
+    run_cb(cb)
+    print(first.hp)   // W0301
+}
+// Control: a stored closure that does not mutate.
+fn harmless(world: &World) {
+    let cb = Cb { f: || print(1) }
+    let first = &world.entities[0]
+    run_cb(&cb)
+    print(first.hp)
+}

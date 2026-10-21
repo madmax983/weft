@@ -1,0 +1,10 @@
+struct Two { a: Vec<u64>, b: Vec<u64> }
+fn main() {
+    let p = Two { a: Vec.new(), b: Vec.new() }
+    p.a.push(1)
+    let r = &p.a[0]
+    scope { s =>
+        p.a
+    }
+    print(r + 1)
+}

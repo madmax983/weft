@@ -1,0 +1,31 @@
+effect Ask { fn ask() -> u64 }
+effect Note { fn note(x: u64) }
+struct H { f: fn() }
+fn run_field(h: H) / async { scope { s => s.spawn(h.f); () } }
+fn run_vec(v: Vec<fn()>) / async { scope { s => let f = v[0]; s.spawn(f); () } }
+fn field_task() / async {
+    handle Note { fn note(x) { print(x); resume(()) } } in {
+        handle Ask { fn ask() { run_field(H { f: || { let _ = resume(1); () } }); 0 } } in {
+            let a = ask()
+            note(a)
+        }
+    }
+}
+fn vec_task() / async {
+    handle Note { fn note(x) { print(x); resume(()) } } in {
+        handle Ask {
+            fn ask() {
+                let v: Vec<fn()> = Vec.new()
+                v.push(|| { let _ = resume(1); () })
+                run_vec(v)
+                0
+            }
+        } in {
+            let a = ask()
+            note(a)
+        }
+    }
+}
+fn main() / async {
+    field_task()
+}

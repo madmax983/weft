@@ -1,0 +1,19 @@
+// A multi operation that a local handler handles inside `solve`.
+// The continuation ends at that handler, so it never copies `t`.
+effect Pick { multi fn pick() -> bool }
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(id) = t }
+
+fn solve() -> u64 {
+    let out = 0
+    handle Pick { fn pick() { resume(true); resume(false) } } in {
+        if pick() { out += 1 } else { out += 2 }
+    }
+    out
+}
+
+fn main() {
+    let t = Tx { id: 1 }
+    print(solve())
+    commit(t)
+}

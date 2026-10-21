@@ -1,0 +1,9 @@
+struct E { hp: u64 }
+fn main() {
+    let e = E { hp: 1 }
+    let r = &e
+    scope { s =>
+        s.spawn(|| { e.hp = 5 })
+        print(r.hp + 0)
+    }
+}

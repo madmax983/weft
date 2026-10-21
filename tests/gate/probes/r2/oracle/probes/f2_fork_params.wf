@@ -1,0 +1,6 @@
+fn par(f: fn(), g: fn()) / par { fork(f, g) }
+fn main() / par {
+    let n = 0
+    par(|| n += 1, || n += 2)
+    print(n)
+}

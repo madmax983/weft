@@ -1,0 +1,100 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct H { f: fn() }
+struct Wrap<T> { x: T }
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+
+// The closure is in a struct with a written fn field.
+fn mk_h(w: &World) -> H { H { f: { let r = &w.entities[0]
+ || print(r.hp) } } }
+fn in_struct() {
+    let w = mkw()
+    let h = mk_h(&w)
+    w.entities.clear()
+    let g = h.f
+    g()
+}
+
+// The closure is in an Option.
+fn mk_opt(w: &World) -> Option<fn()> { Some({ let r = &w.entities[0]
+ || print(r.hp) }) }
+fn in_option() {
+    let w = mkw()
+    let o = mk_opt(&w)
+    w.entities.clear()
+    match o { Some(g) => g(), None => {} }
+}
+
+// The closure is in a generic struct.
+fn mk_wrap(w: &World) -> Wrap<fn()> { Wrap { x: { let r = &w.entities[0]
+ || print(r.hp) } } }
+fn in_wrap() {
+    let w = mkw()
+    let h = mk_wrap(&w)
+    w.entities.clear()
+    let g = h.x
+    g()
+}
+
+// A maker given as a function value.
+fn mk(w: &World) -> fn() { { let r = &w.entities[0]
+ || print(r.hp) } }
+fn apply_mk(m: fn(&World) -> fn(), w: &World) -> fn() { m(w) }
+fn via_param() {
+    let w = mkw()
+    let f = apply_mk(mk, &w)
+    w.entities.clear()
+    f()
+}
+
+// A maker in a local.
+fn via_local() {
+    let w = mkw()
+    let m = mk
+    let f = m(&w)
+    w.entities.clear()
+    f()
+}
+
+// The closure in a tuple.
+fn mk_t(w: &World) -> (fn(), u64) { ({ let r = &w.entities[0]
+ || print(r.hp) }, 1) }
+fn in_tuple() {
+    let w = mkw()
+    let t = mk_t(&w)
+    w.entities.clear()
+    let g = t.0
+    g()
+}
+
+// The closure in a Vec.
+fn mk_v(w: &World) -> Vec<fn()> {
+    let v = Vec.new()
+    v.push({ let r = &w.entities[0]
+ || print(r.hp) })
+    v
+}
+fn in_vec() {
+    let w = mkw()
+    let v = mk_v(&w)
+    w.entities.clear()
+    let g = v[0]
+    g()
+}
+
+// The closure is returned through two functions.
+fn mk2(w: &World) -> fn() { mk(w) }
+fn two_calls() {
+    let w = mkw()
+    let f = mk2(&w)
+    w.entities.clear()
+    f()
+}
+
+fn main() {
+    in_struct()
+}

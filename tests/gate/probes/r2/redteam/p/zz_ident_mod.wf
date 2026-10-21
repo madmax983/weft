@@ -1,0 +1,10 @@
+effect Log { fn log(msg: String) }
+mod a {
+    pub effect Log { fn log(msg: String) }
+    pub fn mk() -> fn() { || log("from a") }
+}
+fn main() {
+    let f = a.mk()
+    handle Log { fn log(m) { print("root handler got {m}")
+ resume(()) } } in f()
+}

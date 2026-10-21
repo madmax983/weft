@@ -1,0 +1,5 @@
+fn main() {
+    let x: u64 = 5
+    x -= 10
+    print(x)
+}

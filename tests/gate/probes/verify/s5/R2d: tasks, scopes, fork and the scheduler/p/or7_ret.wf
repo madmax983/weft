@@ -1,0 +1,38 @@
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(1)
+    v.push(2)
+    v
+}
+
+// The callee borrows v while the task of f runs, and returns the reference.
+fn spawn_get(f: fn() / clock, v: &Vec<u64>) -> &u64 in v[] / async, clock {
+    scope { s =>
+        s.spawn(f)
+        let r = &v[1]
+        sleep(5.ms)
+        r
+    }
+}
+
+fn caller() / io {
+    let w = mk_v()
+    let r = spawn_get(|| { sleep(1.ms); w.clear() }, &w)
+    print(r + 1)
+}
+
+// The same with a plain call of f in the callee.
+fn call_get(f: fn(), v: &Vec<u64>) -> &u64 in v[] {
+    let r = &v[1]
+    f()
+    r
+}
+
+fn caller2() / io {
+    let w = mk_v()
+    let r = call_get(|| w.clear(), &w)
+    print(r + 1)
+}
+
+fn main() / io {
+}

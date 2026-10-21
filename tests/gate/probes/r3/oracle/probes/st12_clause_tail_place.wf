@@ -1,0 +1,7 @@
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+effect Note { fn note(x: u64) }
+fn main() {
+    let v = mk_v()
+    handle Note { fn note(x) { resume(()); v; } } in { note(1) }
+    print(v.len())
+}

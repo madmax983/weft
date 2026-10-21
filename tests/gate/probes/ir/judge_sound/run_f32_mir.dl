@@ -1,0 +1,13 @@
+// Reporting rules shared by every trace. A trace names its use nodes.
+lint("gen_and_kill (B6 no_gen_kill broken)", P) :- invalidated_at(R, P), rebound_at(R, P).
+// F3-2 (closure form) in MIR: apply(|r| last = r); the callee gives &x (its own
+// local) to the closure. The apply of the closure's `assigns` part is a weak
+// definition of `last` at the return node R; the frame root of the call ends at R.
+place(py). place(pfc).
+owner(pfc, frc).
+cfg_edge(d0, cc). rebound_at(last0, d0). points_into(last0, py).
+rebound_at(frc, cc).
+cfg_edge(cc, rr). rebound_at(last1, rr). points_into(last1, py). points_into(last1, pfc).
+rebound_at(last0, rr). scope_end(frc, rr).
+cfg_edge(rr, pr). uses(last1, pr).
+lint("MIR F3-2: W0301 at print(last)", pr) :- error(last1, pr).

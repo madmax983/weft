@@ -1,0 +1,28 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+effect Touch { fn touch(w: &World) }
+fn touch_it(w: &World) / Touch { touch(w) }
+fn via_callee(w: &World) / Touch {
+    let first = &w.entities[0]
+    touch_it(w)
+    print(first.hp)
+}
+fn apply(f: fn(&World), w: &World) { f(w) }
+fn via_hof(w: &World) / Touch {
+    let first = &w.entities[0]
+    apply(|x| touch(x), w)
+    print(first.hp)
+}
+fn via_item_value(w: &World) / Touch {
+    let first = &w.entities[0]
+    let g = touch_it
+    g(w)
+    print(first.hp)
+}
+fn task_touch(w: &World) / Touch, async {
+    scope { s =>
+        s.spawn(|| print(w.entities.len()))
+        let g = || touch(w)
+        g()
+    }
+}

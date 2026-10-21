@@ -1,0 +1,13 @@
+linear struct Lk { id: u64 }
+effect Ask { fn ask() -> u64 }
+struct H { f: fn() }
+fn unlock(l: Lk) { let Lk(id) = l }
+fn run(h: &H) { let g = h.f; g() }
+fn main() {
+    handle Ask { fn ask() { print("abort") } } in {
+        let h = H { f: || print(ask()) }
+        let l = Lk { id: 1 }
+        run(&h)
+        unlock(l)
+    }
+}

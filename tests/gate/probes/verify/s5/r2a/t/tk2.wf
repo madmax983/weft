@@ -1,0 +1,27 @@
+struct Stats { count: u64 }
+
+fn swap(st: &Stats, c: bool) / mut(st), async {
+    scope { s =>
+        let h1 = s.spawn(|| st.count += 1)
+        let h2 = s.spawn(|| print(0))
+        let (a, b) = if c { (h1, h2) } else { (h2, h1) }
+        a.join()
+        print(st.count)
+        b.join()
+    }
+}
+
+fn pick(st: &Stats, c: bool) / mut(st), async {
+    scope { s =>
+        let h1 = s.spawn(|| st.count += 1)
+        let h2 = s.spawn(|| print(0))
+        let a = if c { h2 } else { h1 }
+        a.join()
+        print(st.count)
+    }
+}
+
+fn main() / async {
+    let st = Stats { count: 0 }
+    swap(&st, false)
+}

@@ -1,0 +1,24 @@
+struct Keep { f: fn() }
+
+fn run_both(a: Keep, b: Keep) {
+    let g = a.f
+    let h = b.f
+    g()
+    h()
+}
+
+fn two_stored(v: &Vec<u64>) / mut(v) {
+    let r = &v[0]
+    run_both(Keep { f: || v.push(1) }, Keep { f: || print(r) })
+}
+
+fn two_stored_ok(v: &Vec<u64>) {
+    let r = &v[0]
+    run_both(Keep { f: || print(v.len()) }, Keep { f: || print(r) })
+}
+
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    two_stored(&v)
+}

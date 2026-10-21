@@ -1,0 +1,10 @@
+struct P { a: Vec<u64>, n: u64 }
+fn main() {
+    let p = P { a: Vec.new(), n: 0 }
+    p.a.push(1)
+    scope { s =>
+        s.spawn(|| { p.a[0] = 3 })
+        let q = &p.a[0]
+        print(q + 0)
+    }
+}

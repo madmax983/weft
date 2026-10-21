@@ -1,0 +1,18 @@
+// FALSE POSITIVE (new): a returned closure that captures a copy value. The
+// interpreter keeps copy cells readable after their scope on purpose
+// (heap.rs end_cell: "a closure that outlives the scope of a captured integer
+// still sees it"), and runs this program correctly.
+fn adder(n: u64) -> fn(u64) -> u64 { |x| x + n }
+fn greeter(name: String) -> fn() -> String { || name }
+fn counter_start() -> fn() -> u64 {
+    let start: u64 = 10
+    || start + 1
+}
+fn main() {
+    let add2 = adder(2)
+    print(add2(3))
+    let g = greeter("hi")
+    print(g())
+    let c = counter_start()
+    print(c())
+}

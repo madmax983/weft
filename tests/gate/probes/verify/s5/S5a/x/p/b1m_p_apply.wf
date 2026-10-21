@@ -1,0 +1,52 @@
+effect Note { fn note(x: u64) }
+struct Job { f: fn() }
+
+fn copy_into(src: &Job, dsts: &Vec<&Job>) / mut(dsts..) { let d = dsts[0]
+ d.f = src.f }
+fn copy(src: &Job, dst: &Job) / mut(dst) { dst.f = src.f }
+fn apply(k: fn(&Job, &Job), a: &Job, b: &Job) { k(a, b) }
+fn to_cb(src: &Job, k: fn(fn())) { k(src.f) }
+
+fn p_into() {
+    let keep = Job { f: || print(0) }
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let j = Job { f: || note(1) }
+        let ds = Vec.new()
+        ds.push(&keep)
+        copy_into(&j, &ds)
+    }
+    let g = keep.f
+    g()
+}
+fn p_apply() {
+    let keep = Job { f: || print(0) }
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let j = Job { f: || note(2) }
+        apply(copy, &j, &keep)
+    }
+    let g = keep.f
+    g()
+}
+fn p_cb() {
+    let keep = || print(0)
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let j = Job { f: || note(3) }
+        to_cb(&j, |g: fn()| { keep = g })
+    }
+    keep()
+}
+fn p_local_closure_copy() {
+    let keep = Job { f: || print(0) }
+    handle Note { fn note(x) { print(x)
+ resume(()) } } in {
+        let j = Job { f: || note(4) }
+        let cp = || { keep.f = j.f }
+        cp()
+    }
+    let g = keep.f
+    g()
+}
+fn main() { p_apply() }

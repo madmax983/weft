@@ -1,0 +1,28 @@
+fn both(r: &u64, v: Vec<u64>) { print(r) }
+fn both2(v: Vec<u64>, r: &u64) { print(r) }
+fn mkv() -> Vec<u64> { let v = Vec.new()
+ v.push(1)
+ v }
+fn ref_then_move() {
+    let v = mkv()
+    both(&v[0], v)   //~ W0301
+}
+fn move_then_ref() {
+    let v = mkv()
+    both2(v, &v[0])   //~ W0302
+}
+struct Pair { a: Vec<u64>, b: Vec<u64> }
+fn both3(r: &u64, p: Vec<u64>) { print(r) }
+fn part_move() {
+    let p = Pair { a: mkv(), b: mkv() }
+    both3(&p.a[0], p.a)   //~ W0301
+}
+fn method_recv() {
+    let v = mkv()
+    let r = &v[0]
+    v.push(r)   //~ W0301
+}
+fn main() {
+    ref_then_move()
+    part_move()
+}

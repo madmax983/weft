@@ -1,0 +1,30 @@
+struct C { items: Vec<u64> }
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn first_item(v: &Vec<Rc<C>>) -> &Vec<u64> in C.items { &v[0].items }
+fn vec_of_handles() {
+    let hs: Vec<Rc<C>> = Vec.new()
+    hs.push(Rc.new(C { items: Vec.new() }))
+    let r = first_item(&hs)
+    hs.clear()
+    print(r)   // ERR
+}
+fn wild_task(f: fn(&World) -> &Entity, world: &World) / mut(world.entities), async {
+    let r = f(world)
+    scope { s =>
+        s.spawn(|| print(r.hp))
+        world.entities.clear()   // ERR W0405
+    }
+}
+fn show(x: &u64, n: u64) { print(x) }
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(3); v }
+fn temp_arg_ok() {
+    show(&mkv()[0], 1)
+    for x in mkv()[] { if x > 1 { break } }
+    let n = { let t = mkv(); t.len() }
+    print(n)
+}
+fn pick(w: &World) -> &Entity in w.entities[] { &w.entities[0] }
+fn main() {
+    vec_of_handles()
+}

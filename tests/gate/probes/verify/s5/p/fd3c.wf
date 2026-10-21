@@ -1,0 +1,16 @@
+struct HV { cbs: Vec<fn()> }
+fn fill_hv(h: &HV) / mut(h.cbs) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    let r = &v[0]
+    h.cbs.push(|| print(r + 0))
+}
+fn t_hv() {
+    let h = HV { cbs: Vec.new() }
+    fill_hv(&h)
+    let g = h.cbs[0]
+    g()
+}
+fn main() {
+    t_hv()
+}

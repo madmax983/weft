@@ -1,0 +1,25 @@
+linear struct Lk { id: u64 }
+
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn mk_v() -> Vec<u64> {
+    let v = Vec.new()
+    v.push(2)
+    v.push(3)
+    v
+}
+fn pass_ref(r: &u64) -> &u64 in r { r }
+
+fn h0(p0: &Vec<u64>, p1: &u64, p2: u64) -> &u64 in p0[] {
+    let lk1 = Lk { id: 1 }
+    unlock(lk1)
+    &p0[0]
+}
+
+fn main() {
+    let v5 = mk_v()
+    let r6 = h0(&v5, pass_ref(&v5[0]), 2)
+    scope { s7 =>
+        s7.spawn(|| r6 = &v5[1])
+        s7.spawn(|| r6 = &v5[1])
+    }
+}

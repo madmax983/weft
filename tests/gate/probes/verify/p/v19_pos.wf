@@ -1,0 +1,20 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn swap_apply(f: fn(&World, &World), a: &World, b: &World) { f(b, a) }
+fn bad(a: &World, b: &World) {
+    let first = &a.entities[0]
+    swap_apply(|x, y| y.entities.push(Entity { hp: 1 }), a, b)
+    print(first.hp)
+}
+fn good(a: &World, b: &World) {
+    let first = &b.entities[0]
+    swap_apply(|x, y| y.entities.push(Entity { hp: 1 }), a, b)
+    print(first.hp)
+}
+// A HOF that calls the callback twice with different places.
+fn both(f: fn(&World), a: &World, b: &World) { f(a); f(b) }
+fn bad2(a: &World, b: &World) {
+    let first = &b.entities[0]
+    both(|x| x.entities.push(Entity { hp: 1 }), a, b)
+    print(first.hp)
+}

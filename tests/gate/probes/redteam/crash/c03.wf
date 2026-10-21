@@ -1,0 +1,2 @@
+effect E { fn op(a: u64, b: u64) }
+fn f() / E { op(b: 1, a: 2) }

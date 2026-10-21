@@ -1,0 +1,10 @@
+// The place names a by-value parameter, which the callee drops at return.
+fn bad(v: Vec<u64>) -> &u64 in v[] { &v[0] }
+fn use_bad() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = bad(v)
+    print(r)
+}
+// A reference parameter whose place is a by-value parameter.
+fn bad2(v: Vec<u64>, r: &u64 in v[]) -> u64 { 0 }

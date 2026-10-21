@@ -1,0 +1,14 @@
+// A callee that returns its function argument inside a tuple.
+effect Log { fn log(msg: String) }
+
+fn pair(f: fn()) -> (fn(), u64) { (f, 1) }
+
+fn leak() -> (fn(), u64) {
+    handle Log { fn log(m) { resume(()) } } in pair(|| log("late"))
+}
+
+fn main() {
+    let (g, n) = leak()
+    g()
+    print("done")
+}

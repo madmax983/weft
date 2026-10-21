@@ -1,0 +1,61 @@
+effect Log { fn log(msg: String) }
+fn both<T>(a: T, b: T) -> T { a }
+fn run_it(f: fn()) { f() }
+
+// The body only joins an outer closure with an inner one in a branch.
+fn pick(c: bool) {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {
+        let g = || log("x")
+        let h = if c { g } else { f }
+        h()
+    }
+    f()
+}
+// The body gives both to a generic function and calls the result.
+fn generic_both() {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {
+        let h = both(f, || log("x"))
+        h()
+    }
+    f()
+}
+// The outer local gets a new value before the body ends.
+fn reassigned() {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {
+        f = || log("x")
+        f()
+        f = || print(1)
+    }
+    f()
+}
+// A local inside the body shadows an outer local of the same name.
+fn shadowed() {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {
+        let f = || log("x")
+        f()
+    }
+    f()
+}
+// An outer vector of closures; the body pushes nothing.
+fn outer_vec() {
+    let v = Vec.new()
+    v.push(|| print(0))
+    handle Log { fn log(m) { resume(()) } } in {
+        let w = Vec.new()
+        w.push(|| log("x"))
+        let g = v[0]
+        g()
+    }
+}
+// The body passes the outer closure to a callee that calls it.
+fn outer_to_callee() {
+    let f = || print(0)
+    handle Log { fn log(m) { resume(()) } } in {
+        run_it(f)
+        run_it(|| log("x"))
+    }
+}

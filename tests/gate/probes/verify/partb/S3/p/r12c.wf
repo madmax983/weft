@@ -1,0 +1,39 @@
+struct Stats { count: u64 }
+fn each(f: fn()) { let i = 0; while i < 3 { i += 1; f() } }
+fn once_call(f: fn()) { f() }
+
+fn loop_callee(st: &Stats) / mut(st), async {
+    scope { s =>
+        each(|| { s.spawn(|| st.count += 1); () })
+    }
+}
+fn once_callee_ok(st: &Stats) / mut(st), async {
+    scope { s =>
+        once_call(|| { s.spawn(|| st.count += 1); () })
+    }
+}
+// join of a task handle returned by a closure
+fn join_returned() -> u64 / async {
+    scope { s =>
+        let sp = || s.spawn(|| 1)
+        let t = sp()
+        t.join()
+    }
+}
+// detach of a task handle returned by a closure
+fn detach_returned() / async {
+    scope { s =>
+        let sp = || s.spawn(|| 1)
+        let t = sp()
+        t.detach()
+    }
+}
+// returned task joined in the same scope, then st read: clean
+fn join_then_read(st: &Stats) / mut(st), async {
+    scope { s =>
+        let sp = || s.spawn(|| st.count += 1)
+        let t = sp()
+        t.join()
+        print(st.count)
+    }
+}

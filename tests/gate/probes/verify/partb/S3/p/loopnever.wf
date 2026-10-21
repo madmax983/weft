@@ -1,0 +1,59 @@
+effect Log { fn log(msg: String) }
+// clean
+fn a(c: bool) -> u64 { if c { loop { return 1 } } else { 2 } }
+fn b(c: bool) -> u64 {
+    match c {
+        true => { loop { return 1 } },
+        false => 2,
+    }
+}
+fn c2(xs: Vec<u64>) -> Vec<u64> {
+    loop {
+        loop { break }
+        return xs
+    }
+}
+fn d(n: u64) -> u64 {
+    let i = 0
+    loop {
+        while i < n { i += 1; if i == 3 { break } }
+        if i > 10 { return i }
+        i += 1
+        continue
+    }
+}
+fn e() -> u64 {
+    loop {
+        let f = || { 1 }
+        return f()
+    }
+}
+fn h() -> u64 / async {
+    loop {
+        scope { s => let t = s.spawn(|| 1); let v = t.join() }
+        return 2
+    }
+}
+// bad: a break hidden in a match arm
+fn bad1(c: bool) -> u64 {
+    loop {
+        match c { true => { break }, false => { return 1 } }
+    }
+}
+// bad: break after a nested loop
+fn bad2(c: bool) -> u64 {
+    loop {
+        for x in [1, 2][] { if x > 1 { break } }
+        if c { break }
+        return 1
+    }
+}
+// value of let with a loop block
+fn g() -> u64 {
+    let x: u64 = { loop { return 4 } }
+    x
+}
+// no break, but loop in a handled body tail
+fn hb() -> u64 {
+    handle Log { fn log(m) { resume(()) } } in { loop { log("x") } }
+}

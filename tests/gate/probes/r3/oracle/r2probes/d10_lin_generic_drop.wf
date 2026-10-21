@@ -1,0 +1,7 @@
+linear struct Tx { id: u64 }
+fn commit(t: Tx) { let Tx(id) = t }
+fn first<A, B>(p: (A, B)) -> A { let (a, b) = p; a }
+fn main() {
+    let x = first((1, Tx { id: 1 }))
+    print(x)
+}

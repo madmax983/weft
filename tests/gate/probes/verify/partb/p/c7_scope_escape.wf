@@ -1,0 +1,11 @@
+// A closure that spawns into a scope leaves the scope.
+struct Stats { count: u64 }
+fn leak(st: &Stats) / mut(st), async {
+    let g = scope { s => || { s.spawn(|| st.count += 1); 0 } }
+    g()
+    print(st.count)
+}
+fn main() / async {
+    let st = Stats { count: 0 }
+    leak(&st)
+}

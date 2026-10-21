@@ -1,0 +1,12 @@
+struct In { x: Vec<u64> }
+struct Out { a: In, b: In }
+fn take(i: In) -> usize { i.x.len() }
+fn take_all(o: Out) -> usize { 1 }
+fn main() {
+    let p = Out { a: In { x: Vec.new() }, b: In { x: Vec.new() } }
+    p.b.x.push(4)
+    let r = &p.b.x[0]
+    let f = || { let n = take(p.a); take_all(p) }   // the closure takes all of p
+    print(r)   // expected W0301
+    print(f())
+}

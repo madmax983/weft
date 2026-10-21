@@ -1,0 +1,14 @@
+// ESCAPE (RT1 x tasks): one task reads through `r` while a sibling task moves
+// and frees the owner `v`. A move is not a mutation, so W0405 does not see it,
+// and the parent never uses `r` after the move, so W0301 does not see it.
+fn take(v: Vec<u64>) {}
+fn spawn_move() / async {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    scope { s =>
+        s.spawn(|| { suspend(); print(r) })
+        s.spawn(|| take(v))   // expected W0405 or W0301
+    }
+}
+fn main() / async { spawn_move() }

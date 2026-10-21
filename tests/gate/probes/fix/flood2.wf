@@ -1,0 +1,19 @@
+fn bad(v: &Vec<u32>) / mut(v) {
+    let r = &v[0]
+    v.push(1)
+    print(r)
+    print(r)
+    print(r)
+}
+linear struct Lock { id: u64 }
+fn release(l: Lock) { let Lock(i) = l }
+fn early(a: bool, b: bool) {
+    let l = Lock { id: 1 }
+    if a { return }
+    if b { return }
+    release(l)
+}
+fn resume_many() {
+    effect_free()
+}
+fn effect_free() {}

@@ -1,0 +1,1 @@
+struct S: !Move { a: [u8; 2], r: &u8 in self.zz[] }

@@ -1,0 +1,40 @@
+fn via_vec2(f: fn()) / async {
+    let fs = Vec.new()
+    fs.push(f)
+    scope { s =>
+        s.spawn(|| { let g = fs[0]; g() })
+        s.spawn(|| { let g = fs[0]; g() })
+    }
+}
+
+fn via_tuple2(f: fn()) / async {
+    let t = (f, 1)
+    scope { s =>
+        s.spawn(|| { let g = t.0; g() })
+        s.spawn(|| { let g = t.0; g() })
+    }
+}
+
+fn via_vec_fork(f: fn()) / par {
+    let fs = Vec.new()
+    fs.push(f)
+    fork(|| { let g = fs[0]; g() }, || ())
+}
+
+fn race_vec() / async, par {
+    let n = 0
+    via_vec2(|| n += 1)
+}
+
+fn race_tuple() / async, par {
+    let n = 0
+    via_tuple2(|| n += 1)
+}
+
+fn rc_fork() / async, par {
+    let a = Rc.new(0)
+    via_vec_fork(|| { let y = a.clone() })
+}
+
+fn main() / async, par {
+}

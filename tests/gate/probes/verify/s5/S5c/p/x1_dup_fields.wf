@@ -1,0 +1,10 @@
+struct S { a: u64, a: bool, b: u64 }
+enum E { A, B(u64), A(bool) }
+fn f(s: &S, e: E) -> u64 / mut(s.a) {
+    s.a = 1
+    match e { A => 0, B(x) => x }
+}
+fn g(e: E) -> u64 {
+    match e { B(x) => x, A(y) => 2 }
+}
+fn main() { print(1) }
