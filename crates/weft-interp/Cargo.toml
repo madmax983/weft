@@ -10,6 +10,7 @@ rust-version.workspace = true
 thiserror.workspace = true
 weft-syntax.workspace = true
 weft-sema.workspace = true
+weft-ir.workspace = true
 weft-check.workspace = true
 weft-verified.workspace = true
 

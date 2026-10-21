@@ -414,6 +414,7 @@ impl<'r, 'a> Machine<'r, 'a> {
             trace: self.trace.clone(),
             leaked_rc: self.heap.leaked_rc(),
             blocking_calls: self.blocking_calls,
+            fallback: None,
         }
     }
 

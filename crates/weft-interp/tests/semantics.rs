@@ -639,3 +639,284 @@ fn rc_without_cycle_frees_everything() {
     let src = "struct Node { v: u64 }\nfn main() {\n let a = Rc.new(Node { v: 1 })\n let b = a.clone()\n print(b.v)\n}";
     assert_eq!(ok(src, 0).leaked_rc, 0);
 }
+
+// ---------------------------------------------------------------------------
+// 10. The ops of the IR compiler (`docs/ir.md` 8.4)
+// ---------------------------------------------------------------------------
+
+mod ir_ops {
+    use std::collections::BTreeSet;
+    use std::rc::Rc;
+
+    use weft_interp::code::{Code, CodeKind, Op, VarRef};
+    use weft_interp::compile::{Compiler, Exports};
+    use weft_interp::runtime::Runtime;
+    use weft_interp::{run_runtime_main, RunOptions, RunOutcome, RuntimeError};
+    use weft_sema::program::ItemRef;
+    use weft_sema::{AdtId, Options};
+    use weft_syntax::ast::Span;
+
+    const SRC: &str = "enum E { A, B(u64) }\nlinear struct T { x: u64 }\nfn main() {}";
+
+    /// Runs `main` with hand-made code: `ops`, with `slots` slots, of which
+    /// the last `temps` hold temporary cells.
+    fn run_ops(ops: Vec<Op>, slots: u32, temps: u32) -> Result<RunOutcome, RuntimeError> {
+        let a = weft_sema::analyze_source(SRC, Options::default()).unwrap();
+        let mut compiled = Compiler::compile(&a.program, &a.sigs, &Exports::default());
+        let Some(ItemRef::Fn(f)) = a.program.mods[a.program.root].items.get("main").copied() else {
+            panic!("no main");
+        };
+        let id = compiled.fn_code[f.index()].unwrap();
+        let n = ops.len();
+        compiled.codes[id] = Rc::new(Code {
+            name: "main".into(),
+            kind: CodeKind::Fn(f),
+            ops,
+            spans: vec![Span::default(); n],
+            n_slots: slots,
+            n_params: 0,
+            unit: 0,
+            temp_slots: temps,
+            locs: Vec::new(),
+        });
+        let rt = Runtime::with_code(&a.program, &a.sigs, BTreeSet::new(), compiled);
+        let opts = RunOptions {
+            max_steps: Some(10_000),
+            oracle: true,
+            ..RunOptions::default()
+        };
+        run_runtime_main(&rt, &opts)
+    }
+
+    fn adt(name: &str) -> AdtId {
+        let a = weft_sema::analyze_source(SRC, Options::default()).unwrap();
+        AdtId(a.program.adts.iter().position(|d| d.name == name).unwrap())
+    }
+
+    const fn var(s: u32) -> Op {
+        Op::Var(VarRef::Local(s))
+    }
+
+    /// The ops that print the value of the place on top, then return `()`.
+    fn print_end() -> Vec<Op> {
+        vec![Op::Read, Op::Print(1), Op::Pop, Op::Unit, Op::Return]
+    }
+
+    fn out(ops: Vec<Op>, slots: u32, temps: u32) -> String {
+        match run_ops(ops, slots, temps) {
+            Ok(o) => o.stdout,
+            Err(e) => panic!("run failed: {e}"),
+        }
+    }
+
+    fn fault(ops: Vec<Op>, slots: u32, temps: u32) -> String {
+        run_ops(ops, slots, temps).unwrap_err().message
+    }
+
+    #[test]
+    fn part_names_a_part_of_a_value() {
+        let mut ops = vec![
+            Op::Int(1),
+            Op::Int(2),
+            Op::Tuple(2),
+            Op::Bind(0),
+            var(0),
+            Op::Part(1),
+        ];
+        ops.extend(print_end());
+        assert_eq!(out(ops, 1, 0), "2\n");
+        let ops = vec![Op::Int(1), Op::Tuple(1), Op::Bind(0), var(0), Op::Part(3)];
+        assert!(fault(ops, 1, 0).contains("no part 3"));
+    }
+
+    #[test]
+    fn deref_follows_a_reference_and_keeps_a_slice() {
+        let mut ops = vec![Op::Int(7), Op::Bind(0), var(0), Op::Borrow, Op::Bind(1)];
+        ops.extend([var(1), Op::Deref]);
+        ops.extend(print_end());
+        assert_eq!(out(ops, 2, 0), "7\n");
+        // `(*s)` of a slice `s` is the slice: `Len` reads its range there.
+        let mut ops = vec![
+            Op::Int(1),
+            Op::Int(2),
+            Op::Int(3),
+            Op::MakeVec(3),
+            Op::Bind(0),
+        ];
+        ops.extend([
+            var(0),
+            Op::BorrowAll,
+            Op::Bind(1),
+            var(1),
+            Op::Deref,
+            Op::Len,
+        ]);
+        ops.extend([Op::Print(1), Op::Pop, Op::Unit, Op::Return]);
+        assert_eq!(out(ops, 2, 0), "3\n");
+        let ops = vec![Op::Int(7), Op::Bind(0), var(0), Op::Deref];
+        assert!(fault(ops, 1, 0).contains("a pointer is needed"));
+    }
+
+    #[test]
+    fn len_counts_the_elements() {
+        let mut ops = vec![
+            Op::Int(1),
+            Op::Int(2),
+            Op::MakeVec(2),
+            Op::Bind(0),
+            var(0),
+            Op::Len,
+        ];
+        ops.extend([Op::Print(1), Op::Pop, Op::Unit, Op::Return]);
+        assert_eq!(out(ops, 1, 0), "2\n");
+    }
+
+    #[test]
+    fn tag_reads_the_variant() {
+        let e = adt("E");
+        let mut ops = vec![
+            Op::Int(5),
+            Op::MakeEnum {
+                adt: e,
+                variant: 1,
+                n: 1,
+            },
+            Op::Bind(0),
+            var(0),
+            Op::Tag,
+        ];
+        ops.extend([Op::Print(1), Op::Pop, Op::Unit, Op::Return]);
+        assert_eq!(out(ops, 1, 0), "1\n");
+    }
+
+    #[test]
+    fn jump_table_jumps_to_the_arm_of_the_value() {
+        for (v, want) in [
+            (Op::Int(2), "two\n"),
+            (Op::Int(9), "other\n"),
+            (Op::Bool(true), "one\n"),
+        ] {
+            let ops = vec![
+                v,
+                Op::JumpTable {
+                    arms: vec![(1, 2), (2, 6)],
+                    otherwise: 10,
+                },
+                Op::Str("one".into()),
+                Op::Print(1),
+                Op::Pop,
+                Op::Jump(13),
+                Op::Str("two".into()),
+                Op::Print(1),
+                Op::Pop,
+                Op::Jump(13),
+                Op::Str("other".into()),
+                Op::Print(1),
+                Op::Pop,
+                Op::Unit,
+                Op::Return,
+            ];
+            assert_eq!(out(ops, 0, 0), want);
+        }
+    }
+
+    #[test]
+    fn bounds_faults_at_an_index_past_the_end() {
+        let base = vec![Op::Int(4), Op::MakeVec(1), Op::Bind(0)];
+        let mut ops = base.clone();
+        ops.extend([var(0), Op::Int(0), Op::Bounds, Op::Unit, Op::Return]);
+        assert_eq!(out(ops, 1, 0), "");
+        let mut ops = base;
+        ops.extend([var(0), Op::Int(1), Op::Bounds, Op::Unit, Op::Return]);
+        assert!(fault(ops, 1, 0).contains("index 1 is out of bounds (length 1)"));
+    }
+
+    #[test]
+    fn take_moves_the_value_out_also_a_copy_value() {
+        // `Read` copies a copy value; `Take` (a `move` of the IR) leaves no
+        // value.
+        let mut ops = vec![
+            Op::Int(4),
+            Op::Bind(0),
+            var(0),
+            Op::Take,
+            Op::Print(1),
+            Op::Pop,
+        ];
+        ops.push(var(0));
+        ops.extend(print_end());
+        let e = run_ops(ops, 1, 0).unwrap_err();
+        assert_eq!(e.outcome.stdout, "4\n");
+        assert!(
+            e.message.contains("used after it was moved"),
+            "{}",
+            e.message
+        );
+    }
+
+    #[test]
+    fn drop_place_drops_the_value_and_leaves_no_value() {
+        let mut ops = vec![
+            Op::Int(4),
+            Op::MakeVec(1),
+            Op::Bind(0),
+            var(0),
+            Op::DropPlace,
+        ];
+        ops.push(var(0));
+        ops.extend(print_end());
+        assert!(fault(ops, 1, 0).contains("used after it was moved"));
+    }
+
+    #[test]
+    fn consume_finishes_the_linear_record() {
+        let t = adt("T");
+        let base = vec![
+            Op::Int(1),
+            Op::MakeStruct {
+                adt: t,
+                fields: vec![0],
+                total: 1,
+            },
+            Op::Bind(0),
+            var(0),
+            Op::Consume,
+        ];
+        let mut ops = base.clone();
+        ops.extend([Op::Unit, Op::Return]);
+        // The oracle finds no live linear value at the end.
+        assert_eq!(out(ops, 1, 0), "");
+        let mut ops = base;
+        ops.extend([var(0), Op::Consume, Op::Unit, Op::Return]);
+        assert!(fault(ops, 1, 0).contains("consumed twice"));
+    }
+
+    #[test]
+    fn end_temp_ends_the_temporary_cell() {
+        // Slot 1 is a temporary cell: `Live`, a value, a borrow into it,
+        // then `Dead`. A read through the reference after it dangles.
+        let mut ops = vec![
+            Op::LiveTemp(1),
+            Op::Int(4),
+            Op::MakeVec(1),
+            var(1),
+            Op::Store,
+        ];
+        ops.extend([var(1), Op::Borrow, Op::Bind(0), var(0), Op::Deref, Op::Len]);
+        ops.extend([
+            Op::Print(1),
+            Op::Pop,
+            Op::EndTemp(1),
+            var(0),
+            Op::Deref,
+            Op::Len,
+        ]);
+        ops.extend([Op::Print(1), Op::Pop, Op::Unit, Op::Return]);
+        let e = run_ops(ops, 2, 1).unwrap_err();
+        assert_eq!(e.outcome.stdout, "1\n");
+        assert!(e.message.contains("dangling"), "{}", e.message);
+        // After `Dead` the slot has no cell.
+        let ops = vec![Op::LiveTemp(0), Op::EndTemp(0), var(0), Op::Read];
+        assert!(fault(ops, 1, 1).contains("before it has a value"));
+    }
+}

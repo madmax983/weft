@@ -9,7 +9,7 @@ use weft_syntax::diag::Code;
 use anyhow::{bail, Context, Result};
 use weft_check::{agreement, bridge, check_analysis, codes, Checked};
 use weft_datalog::{evaluate, parse_program_named, EvalOptions};
-use weft_interp::{RunOptions, RuntimeError};
+use weft_interp::{Engine, RunOptions, RuntimeError};
 use weft_syntax::diag::{Diagnostic, Severity};
 
 use crate::package::{load, package_diags, Package, Profile, SyntaxError};
@@ -35,12 +35,15 @@ PROFILE is --lib or --bin, and --no-runtime or --runtime. A single file sets
 its profile with marker lines: `// weft: library` and `// weft: no-runtime`.
 A package sets it in weft.toml. A flag wins over both.
 
-RUN is [--seed N] [--workers N] [--unchecked] [--oracle].
+RUN is [--seed N] [--workers N] [--unchecked] [--oracle] [--engine=ast|ir].
 `run` and `test` do not run a program that has errors, unless --unchecked is given.
 --seed (default 0) and --workers (1 to 1024, default 4) set the deterministic scheduler.
 --oracle turns on strict run-time checks: a dangling reference, a moved `Vec`
 buffer, a linear leak, a data race and a stealable task that reaches a
 nonportable value are run-time errors.
+--engine=ir runs the core IR (docs/ir.md 8.1). For a program with a construct
+that the IR compiler does not compile yet, the AST compiler runs it, and a note
+tells why. --engine=ast (the default) runs the AST compiler.
 
 Exit codes: 0 on success; 1 when the program has errors or fails; 2 on a usage
 error or a file that cannot be read. With --unchecked, the exit code of `run`
@@ -72,6 +75,7 @@ struct Flags {
     rules: Option<String>,
     seed: Option<u64>,
     workers: Option<usize>,
+    engine: Engine,
     positional: Vec<String>,
     /// The options as given, for the check that the command takes them.
     given: Vec<String>,
@@ -84,7 +88,7 @@ const PROFILE: [&str; 4] = ["--lib", "--bin", "--no-runtime", "--runtime"];
 fn options_of(cmd: &str) -> Option<Vec<&'static str>> {
     let own: &[&str] = match cmd {
         "check" => &["--json", "--explain"],
-        "run" | "test" => &["--seed", "--workers", "--unchecked", "--oracle"],
+        "run" | "test" => &["--seed", "--workers", "--unchecked", "--oracle", "--engine"],
         "lint" => &["--rules"],
         "facts" | "agree" | "ir" => &[],
         "explain" | "deps" | "spec" | "help" | "--help" | "-h" => return Some(Vec::new()),
@@ -136,6 +140,16 @@ fn number<T: std::str::FromStr>(it: &mut std::slice::Iter<'_, String>, opt: &str
         .with_context(|| format!("{opt} needs a number, found `{v}`"))
 }
 
+/// Reads the value of `--engine`.
+fn engine(v: Option<&str>) -> Result<Engine> {
+    match v {
+        Some("ast") => Ok(Engine::Ast),
+        Some("ir") => Ok(Engine::Ir),
+        Some(v) => bail!("--engine needs `ast` or `ir`, found `{v}`"),
+        None => bail!("--engine needs `ast` or `ir`"),
+    }
+}
+
 fn flags(args: &[String]) -> Result<Flags> {
     let mut f = Flags::default();
     let mut it = args.iter();
@@ -151,6 +165,12 @@ fn flags(args: &[String]) -> Result<Flags> {
             "--oracle" => f.oracle = true,
             "--rules" => f.rules = Some(it.next().context("--rules needs a file")?.clone()),
             "--seed" => f.seed = Some(number(&mut it, "--seed")?),
+            "--engine" => f.engine = engine(it.next().map(String::as_str))?,
+            s if s.starts_with("--engine=") => {
+                f.engine = engine(s.strip_prefix("--engine="))?;
+                f.given.push("--engine".into());
+                continue;
+            }
             "--workers" => {
                 let v = it.next().context("--workers needs a number")?;
                 match v.parse::<usize>() {
@@ -742,8 +762,14 @@ fn run_options(f: &Flags, pkg: &Package, capture: bool) -> RunOptions {
         capture_output: capture,
         no_runtime: pkg.options(f.profile).no_runtime,
         oracle: f.oracle,
+        engine: f.engine,
         ..defaults
     }
+}
+
+/// The note of `--engine=ir` when the AST compiler runs the program.
+fn fallback_note(why: &str) -> String {
+    format!("note: --engine=ir: the AST compiler runs the program: {why}\n")
 }
 
 /// Shows a run-time error, with its location when the program is one file.
@@ -770,6 +796,9 @@ fn run_main(f: &Flags, live: bool) -> Result<Output> {
         Ok(o) => (o, None),
         Err(e) => (*e.outcome.clone(), Some(e)),
     };
+    if let Some(why) = &outcome.fallback {
+        sink.stderr(&fallback_note(why));
+    }
     if !live {
         sink.stdout(&outcome.stdout);
         sink.stderr(&outcome.stderr);
@@ -797,6 +826,9 @@ fn run_tests(f: &Flags, live: bool) -> Result<Output> {
     let results = weft_interp::run_tests(&c, &opts);
     if results.is_empty() {
         sink.stderr(&format!("note: {path} has no test blocks\n"));
+    }
+    if let Some(why) = results.first().and_then(|t| t.outcome.fallback.as_ref()) {
+        sink.stderr(&fallback_note(why));
     }
     for t in results {
         sink.stdout(&t.outcome.stdout);

@@ -263,6 +263,56 @@ pub enum Op {
     },
     /// A compile-time error that becomes a run-time error here.
     Fault(Rc<str>),
+    /// Place to place: part `i` of a struct, a tuple or the payload of a
+    /// variant. It follows no pointer: the IR writes each `Deref`
+    /// (`docs/ir.md` 8.1).
+    Part(u32),
+    /// Place to place: follows the pointer at the place (a reference, a
+    /// `Box` or an `Rc`). A slice stays at its place: `Index`, `Bounds`,
+    /// `Len` and `ElemIter` read its range there.
+    Deref,
+    /// Place to value: the number of elements of a `Vec` or a slice.
+    Len,
+    /// Place to value: the index of the variant of an enum value.
+    Tag,
+    /// Pops an integer or a boolean, and jumps to the target of its value
+    /// (`false` is 0, `true` is 1), else to `otherwise`.
+    JumpTable {
+        /// The value and the target of each arm.
+        arms: Vec<(u128, usize)>,
+        /// The target for each other value.
+        otherwise: usize,
+    },
+    /// `[place, index]`: faults if the index is not below the number of
+    /// elements at the place. It pushes nothing.
+    Bounds,
+    /// Place to value: moves the value out of the place and leaves `Moved`
+    /// there, also for a copy value (a `move` of the IR).
+    Take,
+    /// Pops a place, drops its value and leaves `Moved` there.
+    DropPlace,
+    /// Pops a place and finishes the linear record of the struct there, if
+    /// it has one.
+    Consume,
+    /// Gives a slot a new temporary cell with no value (`Live` of an IR
+    /// temporary). The cell goes on the temporary list of the frame.
+    LiveTemp(u32),
+    /// Ends the temporary cell of a slot (`Dead` of an IR temporary): drops
+    /// its value and takes it off the temporary list of the frame.
+    EndTemp(u32),
+}
+
+/// The IR location of an op (`docs/ir.md` 8.1): the body, the block and the
+/// index of the statement in the block. The terminator has the index after
+/// the last statement.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct IrLoc {
+    /// The body.
+    pub body: u32,
+    /// The block.
+    pub block: u32,
+    /// The statement, or the number of statements for the terminator.
+    pub stmt: u32,
 }
 
 /// What a code unit is.
@@ -299,4 +349,19 @@ pub struct Code {
     pub n_params: u32,
     /// The source unit of the code. Its spans are byte offsets in that unit.
     pub unit: usize,
+    /// The number of slots at the end of the slots that hold temporary
+    /// cells. A temporary cell is also on the temporary list of the frame,
+    /// so the unwinder finds it there and not with the slots. The AST
+    /// compiler gives 0.
+    pub temp_slots: u32,
+    /// The IR location of each instruction. Empty for code of the AST
+    /// compiler.
+    pub locs: Vec<IrLoc>,
+}
+
+impl Code {
+    /// Returns the number of slots that are not temporary cells.
+    pub const fn local_slots(&self) -> usize {
+        self.n_slots.saturating_sub(self.temp_slots) as usize
+    }
 }

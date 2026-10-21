@@ -436,7 +436,7 @@ fn explain_and_help() {
     for word in [
         "run     [PROFILE] [RUN] PATH",
         "test    [PROFILE] [RUN] PATH",
-        "RUN is [--seed N] [--workers N] [--unchecked] [--oracle].",
+        "RUN is [--seed N] [--workers N] [--unchecked] [--oracle] [--engine=ast|ir].",
         "--unchecked",
         "--lib or --bin",
         "1 to 1024",
@@ -672,6 +672,51 @@ fn run_takes_seed_and_workers() {
         "--workers needs a number from 1 to 1024, found `0`"
     );
     assert_eq!(usage_error(&["run", "--seed"]), "--seed needs a number");
+}
+
+#[test]
+fn run_and_test_take_an_engine() {
+    // `root_handlers.wf` uses only the construct groups A and B: the IR
+    // engine runs it.
+    let path = format!("{INTERP}/root_handlers.wf");
+    for engine in ["--engine=ir", "--engine=ast"] {
+        let out = cmd(&["run", engine, &path]);
+        assert_eq!(out.code, 1, "{engine}");
+        assert_eq!(out.text, "rollback 3\n", "{engine}");
+        assert!(!out.stderr.contains("note: --engine"), "{}", out.stderr);
+    }
+    let out = cmd(&["run", "--engine", "ir", &path]);
+    assert_eq!(out.text, "rollback 3\n");
+    // A program with a closure falls back to the AST compiler, and says so.
+    let out = cmd(&["run", "--engine=ir", &format!("{INTERP}/effects_log.wf")]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.text, "stepped 1 hp=9\nstepped 2 hp=19\n");
+    assert!(
+        out.stderr
+            .starts_with("note: --engine=ir: the AST compiler runs the program: `"),
+        "{}",
+        out.stderr
+    );
+    let out = cmd(&["test", "--engine=ir", &format!("{INTERP}/int_width.wf")]);
+    assert_eq!(out.code, 1);
+    assert!(
+        out.text.contains("test values that fit: ok"),
+        "{}",
+        out.text
+    );
+    assert!(!out.stderr.contains("note: --engine"), "{}", out.stderr);
+    assert_eq!(
+        usage_error(&["run", "--engine=jit", &path]),
+        "--engine needs `ast` or `ir`, found `jit`"
+    );
+    assert_eq!(
+        usage_error(&["run", "--engine"]),
+        "--engine needs `ast` or `ir`"
+    );
+    assert_eq!(
+        usage_error(&["check", "--engine=ir", &path]),
+        "`check` does not take --engine; see `weft help`"
+    );
 }
 
 #[test]

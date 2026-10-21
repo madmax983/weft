@@ -493,7 +493,9 @@ impl super::Machine<'_, '_> {
     fn frame_values(&mut self, cf: CodeFrame) -> Vec<Value> {
         let mut vals: Vec<Value> = cf.stack.into_iter().rev().collect();
         let mut cells: Vec<CellId> = cf.temps.into_iter().rev().collect();
-        cells.extend(cf.slots.into_iter().rev().flatten());
+        // A slot of a temporary cell is on the temporary list too.
+        let n = cf.code.local_slots();
+        cells.extend(cf.slots.into_iter().take(n).rev().flatten());
         cells.extend(cf.owned.into_iter().rev());
         // The scope of each local and temporary ends here, as at a normal end
         // (`end_cells`): the oracle sees a later read through a reference

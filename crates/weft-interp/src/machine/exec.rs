@@ -198,13 +198,15 @@ impl super::Machine<'_, '_> {
         }
     }
 
-    /// Drops everything that a finished code frame holds.
+    /// Drops everything that a finished code frame holds. A slot of a
+    /// temporary cell is on the temporary list too, so it ends there.
     pub(crate) fn cleanup_frame(&mut self, cf: CodeFrame) {
         for v in cf.stack {
             self.heap.drop_value(v);
         }
         self.end_cells(cf.temps);
-        let slots: Vec<CellId> = cf.slots.into_iter().flatten().collect();
+        let n = cf.code.local_slots();
+        let slots: Vec<CellId> = cf.slots.into_iter().take(n).flatten().collect();
         self.end_cells(slots);
     }
 
@@ -684,8 +686,134 @@ impl super::Machine<'_, '_> {
                 }
             }
             Op::Fault(msg) => return Err(self.fault(msg.to_string())),
+            Op::Part(i) => self.part(*i)?,
+            Op::Deref => self.deref_place()?,
+            Op::Len => {
+                let (p, tr) = self.pop_loc()?;
+                let (p, tr) = self.resolve(p, tr)?;
+                let (_, lo, hi, _) = self.elems_of(&p, tr)?;
+                self.push(Value::Int(i64::from(hi - lo)))?;
+            }
+            Op::Tag => {
+                let (p, _) = self.pop_loc()?;
+                self.heap.log_read(&p);
+                let tag = match self.hget(&p)? {
+                    Value::Enum(e) => e.variant,
+                    Value::Moved => return Err(self.fault("a value is used after it was moved")),
+                    _ => return Err(self.fault("internal: a variant is needed here")),
+                };
+                self.push(Value::Int(i64::from(tag)))?;
+            }
+            Op::JumpTable { arms, otherwise } => {
+                let v = self.pop()?;
+                let key = match self.deref_value(v)? {
+                    Value::Bool(b) => u128::from(b),
+                    Value::Int(i) => u128::try_from(i).unwrap_or(u128::MAX),
+                    _ => return Err(self.fault("internal: a jump table needs an integer")),
+                };
+                let to = arms
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map_or(*otherwise, |(_, t)| *t);
+                self.set_pc(to)?;
+            }
+            Op::Bounds => {
+                let i = self.pop()?;
+                let i = self.int_of(i)?;
+                let (p, tr) = self.pop_loc()?;
+                let (p, tr) = self.resolve(p, tr)?;
+                let (_, lo, hi, _) = self.elems_of(&p, tr)?;
+                if u32::try_from(i).map_or(true, |i| lo.saturating_add(i) >= hi) {
+                    return Err(
+                        self.fault(format!("index {i} is out of bounds (length {})", hi - lo))
+                    );
+                }
+            }
+            Op::Take => {
+                let (p, _) = self.pop_loc()?;
+                self.heap.log_read(&p);
+                if matches!(self.hget(&p)?, Value::Moved) {
+                    return Err(self.fault("a value is used after it was moved"));
+                }
+                let v = self.heap.take(&p).map_err(|e| self.fault(e))?;
+                self.push(v)?;
+            }
+            Op::DropPlace => {
+                let (p, _) = self.pop_loc()?;
+                let old = self.heap.take(&p).map_err(|e| self.fault(e))?;
+                self.heap.drop_value(old);
+            }
+            Op::Consume => {
+                let (p, _) = self.pop_loc()?;
+                if let Value::Struct(o) = self.hget(&p)? {
+                    if let Some(id) = o.lin {
+                        self.consume_lin(id)?;
+                    }
+                }
+            }
+            Op::LiveTemp(s) => {
+                self.end_temp(*s)?;
+                let c = self.heap.alloc(SlotKind::Temp, Value::Moved);
+                let fr = self.fr()?;
+                fr.temps.push(c);
+                if let Some(x) = fr.slots.get_mut(*s as usize) {
+                    *x = Some(c);
+                }
+            }
+            Op::EndTemp(s) => self.end_temp(*s)?,
         }
         Ok(Flow::Continue)
+    }
+
+    /// Pops a place and pushes the place of part `i` of its value: a field
+    /// of a struct, a part of a tuple or a payload value of a variant.
+    fn part(&mut self, i: u32) -> R<()> {
+        let (p, tr) = self.pop_loc()?;
+        let n = match self.hget(&p)? {
+            Value::Struct(o) => o.fields.len(),
+            Value::Tuple(vs) => vs.len(),
+            Value::Enum(e) => e.fields.len(),
+            Value::Moved => return Err(self.fault("a value is used after it was moved")),
+            _ => 0,
+        };
+        if i as usize >= n {
+            return Err(self.fault(format!("this value has no part {i}")));
+        }
+        self.push(Value::Loc(p.child(i), tr))
+    }
+
+    /// Pops a place and pushes the place that the pointer there points to.
+    /// A slice stays at its place: the ops that read elements take its range
+    /// there.
+    fn deref_place(&mut self) -> R<()> {
+        let (p, tr) = self.pop_loc()?;
+        self.heap.log_read(&p);
+        let to = match self.hget(&p)? {
+            Value::Ref(q) => {
+                self.heap.check_ref(q);
+                (q.clone(), true)
+            }
+            Value::Boxed(c) => (Place::root(*c), tr),
+            Value::Rc(c) => (Place::root(*c), true),
+            Value::Slice { .. } => (p, true),
+            Value::Moved => return Err(self.fault("a value is used after it was moved")),
+            _ => return Err(self.fault("internal: a pointer is needed here")),
+        };
+        self.push(Value::Loc(to.0, to.1))
+    }
+
+    /// Ends the temporary cell of slot `s`, if it has one, and takes it off
+    /// the temporary list of the frame.
+    fn end_temp(&mut self, s: u32) -> R<()> {
+        let fr = self.fr()?;
+        let Some(c) = fr.slots.get_mut(s as usize).and_then(Option::take) else {
+            return Ok(());
+        };
+        if let Some(i) = fr.temps.iter().rposition(|&t| t == c) {
+            fr.temps.remove(i);
+        }
+        self.heap.end_cell(c);
+        Ok(())
     }
 
     pub(crate) fn span_now(&self) -> Option<Span> {

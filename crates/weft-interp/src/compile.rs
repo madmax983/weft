@@ -200,6 +200,8 @@ impl<'a> Compiler<'a> {
                 .mods
                 .get(ctx.module.index())
                 .map_or(usize::MAX, |m| m.unit),
+            temp_slots: 0,
+            locs: Vec::new(),
         });
     }
 
@@ -1540,5 +1542,7 @@ fn empty_code() -> Code {
         n_slots: 0,
         n_params: 0,
         unit: usize::MAX,
+        temp_slots: 0,
+        locs: Vec::new(),
     }
 }

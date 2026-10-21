@@ -2462,6 +2462,40 @@ What goes away at the end: the span-keyed exports `FnFacts::by_value`, `arg_orde
 Each compiled op carries its IR location (`BodyId`, `BlockId`, statement index) for the
 trace conformance and the fact oracle.
 
+As built (plan stage I1, `compile_ir.rs`):
+
+- The parameters get the first slots (the frame puts the arguments there), then `_0`
+  (`BindEmpty` at the entry), then the variables and the iterators, then the
+  temporaries. A slot of a temporary holds a temporary cell: `Live(t)` is `LiveTemp`,
+  which also puts the cell on the temporary list of the frame, and `Dead(t)` is
+  `EndTemp`. `Code::temp_slots` tells the unwinder and the frame end to find these
+  cells on the temporary list and not with the slots. So before I6 the unwinder sees
+  the temporaries newest first, then the variables from the highest slot, then `_0`,
+  then the parameters.
+- A `Field` or `Variant` step of a place is the new op `Part` (the index of the part
+  of a struct, a tuple or a payload): `Field` of the AST compiler finds a field by name
+  and follows pointers, and a payload has no name. A `Variant` step adds no op: the
+  `Switch` before it tested the tag. The `Unreachable` of a failed test of a payload
+  place (`o.Some`, 5.8) faults with "this value is another variant"; each other
+  `Unreachable` faults with the message of a `match` with no arm.
+- `move p` is the new op `Take`: it moves the value out also when the value is a copy
+  value at run time (`Read` copies it). `Return` takes `_0`. So a `move` of a large
+  plain value (a deep enum of integers) does not copy it.
+- `Uninit` adds no op. The fields that a struct literal does not give (the `Uninit`
+  statements after its aggregate) get no value in `MakeStruct`, as with the AST
+  compiler.
+- A `Switch` on a `bool` local with one arm for 0 or 1 is `JumpIfFalse` or
+  `JumpIfTrue`; each other `Switch` is a `JumpTable` (a `bool` value is 0 or 1). An
+  edge to a block at or before its own block in the reverse post-order is a back
+  edge: `BackEdge`, then `Jump`.
+- The cleanup blocks are not compiled before I6. A call (`Call` with the function of
+  the analysis), a perform through the row (`Perform`), `IterNext` and `Assert` store
+  their result into the place of their destination with `Store`.
+- A program whose IR has a closure, a function item as a value, a call of a function
+  value, a handler or a task, or a body with no IR, falls back to the AST compiler;
+  `RunOutcome::fallback` (and the note of `weft run --engine=ir`) names the construct
+  and the plan stage (I2 to I4).
+
 ### 8.2 Landing pads
 
 Today the unwinder finds the values of a frame at run time (`frame_values`,
@@ -2489,8 +2523,9 @@ order (plan stage C3). ADR 0010 states that the interpreter runs the IR (plan st
 ### 8.4 New machine ops
 
 `Deref`, `Len`, `Tag`, `JumpTable`, `Bounds`, `DropPlace`, `Consume`, `EndTemp`, and the
-unwind-mode ops `UnwindValue`, `UnwindKont`, `UnwindExit`. Each one has a unit test in
-`crates/weft-interp/tests/semantics.rs`.
+unwind-mode ops `UnwindValue`, `UnwindKont`, `UnwindExit`. Stage I1 adds three more
+(8.1): `Part` (a part of a value by index), `Take` (`move p`) and `LiveTemp` (`Live` of
+a temporary). Each one has a unit test in `crates/weft-interp/tests/semantics.rs`.
 
 ### 8.5 Differential tests and oracles
 
