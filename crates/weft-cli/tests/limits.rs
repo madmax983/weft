@@ -142,6 +142,17 @@ fn constructs() -> Vec<(&'static str, Box<dyn Fn(usize) -> String>, usize)> {
             46,
         ),
         (
+            "scopes",
+            Box::new(|n| {
+                format!(
+                    "fn f() -> u64 / async {{ let a = 1\n {}s.spawn(|| a).join(){} }}\nfn main() / async {{ print(f()) }}\n",
+                    rep("scope { s => ", n),
+                    rep(" }", n)
+                )
+            }),
+            91,
+        ),
+        (
             "if",
             Box::new(|n| {
                 main_prints(&format!(

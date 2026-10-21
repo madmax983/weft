@@ -1,7 +1,7 @@
 //! Upvar locals (`docs/ir.md` 5.1.7, "Upvars").
 //!
-//! A handled body and a clause do not capture into an environment. They run
-//! while the frame of their site runs, so they name each local of the site
+//! A handled body, a clause and a scope body do not capture into an
+//! environment. They run while the frame of their site runs, so they name each local of the site
 //! that they use as an upvar local (`LocalKind::Upvar(site_local)`). An upvar
 //! local has the cell of the site local: it has no `Live` and no `Dead`
 //! (V14), and it is not in a cleanup chain.
@@ -14,8 +14,8 @@
 //! upvar local of a site local at the first use.
 //!
 //! An upvar local names a whole local of the site. A capture of a closure
-//! body (`env.k`) is not a whole local: a `handle` in a closure body that
-//! names a capture or a capability field of the closure is
+//! body (`env.k`) is not a whole local: a `handle` or a `scope` in a closure
+//! body that names a capture or a capability field of the closure is
 //! [`Construct::Handle`] (plan stage B12).
 
 use std::collections::HashMap;
@@ -91,9 +91,9 @@ impl Builder<'_> {
         l
     }
 
-    /// Returns the site of the bodies of `handle` expression `e`: the local
-    /// of this body of each binding that the bodies name, and of each
-    /// capability that they can use. A binding or a capability that comes
+    /// Returns the site of the bodies of `handle` or `scope` expression `e`:
+    /// the local of this body of each binding that the bodies name, and of
+    /// each capability that they can use. A binding or a capability that comes
     /// from the site of this body gets its upvar local here now.
     pub(super) fn site_for(&mut self, e: &Expr) -> R<Site> {
         let mut site = Site::default();

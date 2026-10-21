@@ -19,10 +19,10 @@ use crate::thir::{self, Builtin, CallInfo, Recv, RecvMode};
 
 /// The parts of a call expression: the receiver of a method call, the
 /// arguments and the trailing block.
-type Parts<'e> = (Option<&'e Expr>, &'e [Arg], Option<&'e Expr>);
+pub(super) type Parts<'e> = (Option<&'e Expr>, &'e [Arg], Option<&'e Expr>);
 
 /// Returns the receiver, the arguments and the trailing block of call `e`.
-fn parts(e: &Expr) -> Option<Parts<'_>> {
+pub(super) fn parts(e: &Expr) -> Option<Parts<'_>> {
     match &e.kind {
         ExprKind::Call { args, trailing, .. } => Some((None, args, trailing.as_deref())),
         ExprKind::MethodCall {
@@ -42,40 +42,35 @@ impl Builder<'_> {
     pub(super) fn call_into(&mut self, e: &Expr, dest: Place) -> R<()> {
         let t = self.t;
         if self.sim_run(e) {
-            // The THIR has no call entry for `sim.run`: plan stage B11.
-            return unsupported(Construct::Intrinsic, e.span);
+            return self.sim_run_into(e, &dest);
         }
         let (Some((receiver, args, trailing)), Some(info)) = (parts(e), t.call.get(&e.id)) else {
             return unsupported(Construct::NoThir, e.span);
         };
-        if let thir::Callee::Item { item, .. } = &info.callee {
-            // `sim.run` and `with_timeout` are for plan stage B11: a call of
-            // `sim.run` can leave out an argument.
-            let id = self.fn_id(*item, e.span)?;
-            if self
-                .d
-                .items
-                .get(id.index())
-                .is_some_and(|d| d.intrinsic.is_some())
-            {
-                return unsupported(Construct::Intrinsic, e.span);
-            }
-        }
         let slots = slots(info, args, trailing, e.span)?;
+        // A method of a task builtin needs its receiver.
+        let recv = match (info.recv, receiver) {
+            (Some(r), Some(x)) => Some((r, x)),
+            (None, _) => None,
+            (Some(_), None) => return unsupported(Construct::NoThir, e.span),
+        };
         match &info.callee {
             thir::Callee::Item { item, targs } => {
-                let recv = match (info.recv, receiver) {
-                    (Some(r), Some(x)) => Some((r, x)),
-                    (None, _) => None,
-                    (Some(_), None) => return unsupported(Construct::NoThir, e.span),
-                };
                 self.item_call(e, *item, targs, recv, &slots, &dest)
             }
             thir::Callee::Op { effect, op } => self.perform_into(e, *effect, *op, &slots, dest),
             thir::Callee::Struct { .. } => self.positional_into(e, &slots, dest),
             thir::Callee::Variant { variant, .. } => self.variant_into(e, *variant, &slots, dest),
             thir::Callee::Builtin(Builtin::Print) => self.print_into(e, &slots, dest),
-            thir::Callee::Builtin(_) => unsupported(Construct::Task, e.span),
+            thir::Callee::Builtin(Builtin::Fork) => self.fork_into(e, &slots, &dest),
+            thir::Callee::Builtin(b) => match recv {
+                Some((r, x)) => match b {
+                    Builtin::Spawn => self.spawn_into(e, (r, x), &slots, Some(dest)),
+                    Builtin::Join => self.join_into(e, (r, x), &slots, &dest),
+                    _ => self.detach_into(e, (r, x), &slots, dest),
+                },
+                None => unsupported(Construct::NoThir, e.span),
+            },
             thir::Callee::Value(_) => self.value_call(e, &slots, &dest),
             thir::Callee::Resume(b) => self.resume_into(e, *b, &slots, dest),
         }
@@ -83,7 +78,7 @@ impl Builder<'_> {
 
     /// Returns true if `e` is a call `sim.run(..)`: a method `run` on the
     /// standard module `sim`.
-    fn sim_run(&self, e: &Expr) -> bool {
+    pub(super) fn sim_run(&self, e: &Expr) -> bool {
         let ExprKind::MethodCall {
             receiver, method, ..
         } = &e.kind
@@ -108,7 +103,7 @@ impl Builder<'_> {
     /// argument of a method call skips its temporary. A `!Move` value built
     /// for a parameter of its own type, or for `Box.new` and `Rc.new`, is
     /// built in place (5.36).
-    fn item_call(
+    pub(super) fn item_call(
         &mut self,
         e: &Expr,
         f: crate::FnId,
@@ -250,7 +245,7 @@ impl Builder<'_> {
 
     /// Evaluates the receiver `x` of a method call to a place (`docs/ir.md`
     /// 5.19): its own place, or a `Receiver` temporary for a value.
-    fn receiver_place(&mut self, x: &Expr) -> R<Place> {
+    pub(super) fn receiver_place(&mut self, x: &Expr) -> R<Place> {
         if let Some(p) = self.as_place(x)? {
             return Ok(p);
         }
@@ -265,7 +260,7 @@ impl Builder<'_> {
     /// the arguments (`docs/ir.md` 5.19). `self` by reference borrows the
     /// place (`tr := &p`), or passes a reference as it is. `self` by value
     /// copies plain data and moves another value.
-    fn read_receiver(&mut self, mode: RecvMode, p: Place, x: &Expr) -> R<Operand> {
+    pub(super) fn read_receiver(&mut self, mode: RecvMode, p: Place, x: &Expr) -> R<Operand> {
         let ty = self.value_ty(x)?;
         match mode {
             RecvMode::Borrow => {
@@ -299,7 +294,7 @@ impl Builder<'_> {
     /// Returns true if a call of function `f` (`id` in the program) can abort
     /// by its kind (`docs/ir.md` 5.18, V10): each function but an extern
     /// function with an empty stated row and no run-time meaning.
-    fn call_can_abort(&self, f: crate::FnId, id: weft_ir::FnId) -> bool {
+    pub(super) fn call_can_abort(&self, f: crate::FnId, id: weft_ir::FnId) -> bool {
         let external = self
             .d
             .a
@@ -427,7 +422,7 @@ impl Builder<'_> {
 /// Returns the argument expression of each parameter of call `info`, in the
 /// order of the parameters (ADR 0009): an argument, or the trailing block.
 /// A parameter with no argument is an error of `typeck` (W0103).
-fn slots<'e>(
+pub(super) fn slots<'e>(
     info: &CallInfo,
     args: &'e [Arg],
     trailing: Option<&'e Expr>,

@@ -1,0 +1,18 @@
+// A spawn in statement position gives its result to the scope (`docs/ir.md`
+// 5.29, O3-4, I3-1): a `TaskResult` local of the scope body. It has a cell
+// from the entry of the scope body; `ScopeWait` gives it its value, and the
+// frame end ends it. One local for each spawn site, also in a loop.
+
+fn work(x: u64) -> Vec<u64> { Vec.new() }
+
+fn main(c: bool) / async {
+    scope { s =>
+        s.spawn(|| work(1))
+        for i in 0..3 {
+            s.spawn(|| work(i))
+        }
+        if c {
+            s.spawn(|| work(2))
+        }
+    }
+}

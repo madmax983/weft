@@ -137,7 +137,9 @@ pub struct ScopeDecl {
 /// A spawn site.
 #[derive(Clone, Debug)]
 pub struct SpawnDecl {
-    /// The scope that joins the task. `None` for a `fork` branch.
+    /// The scope that joins the task. `None` for a `fork` branch, and for a
+    /// spawn on a scope capability that does not name a scope binder (a
+    /// parameter).
     pub scope: Option<ScopeId>,
     /// The task is a branch of a `fork`: it runs on another thread.
     pub fork: bool,

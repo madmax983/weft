@@ -28,8 +28,9 @@ use std::collections::{HashMap, HashSet};
 
 use weft_ir::{
     AggKind, Body, BodyId, BodyKind, Callee, CapEnv, CapOperand, Capture, CaptureMode, ClosureDecl,
-    ClosureId, DerefKind, FieldIdx, HandlerDecl, IterSource, LocalDecl, LocalId, LocalKind,
-    Operand, Place, Proj, Props, Rvalue, StmtKind, TempKind, TermKind, Ty, TyId,
+    ClosureId, DerefKind, ExprId, FieldIdx, HandlerDecl, IterSource, LocalDecl, LocalId, LocalKind,
+    Operand, Place, Proj, Props, Rvalue, ScopeDecl, ScopeId, SpawnDecl, SpawnId, StmtKind,
+    TempKind, TermKind, Ty, TyId,
 };
 use weft_syntax::ast::{self, Expr, ExprKind, Lit, StrPart};
 
@@ -37,11 +38,12 @@ use super::frame::closing;
 use super::{id_of, unsupported, Builder, Construct, ScopeKind, R, RET};
 use crate::thir::{Binder, BindingId, Res};
 
-/// The bodies, the closures and the handlers that the builder makes inside one
-/// function or test, before the body of the function gets its id. The ids are
-/// reserved in the order of the closure literals and the `handle` expressions
-/// (pre-order), so the maker of a closure has a lower id than the closure
-/// body, and the site of a `handle` has a lower id than its bodies.
+/// The bodies, the closures, the handlers, the scopes and the spawn sites
+/// that the builder makes inside one function or test, before the body of the
+/// function gets its id. The ids are reserved in the order of the closure
+/// literals, the `handle` expressions and the `scope` expressions (pre-order),
+/// so the maker of a closure has a lower id than the closure body, and the
+/// site of a `handle` or a `scope` has a lower id than its bodies.
 #[derive(Debug, Default)]
 pub(super) struct Pending {
     /// The id of the body of the function or test.
@@ -50,40 +52,65 @@ pub(super) struct Pending {
     pub(super) base_closure: u32,
     /// The id of the first handler.
     pub(super) base_handler: u32,
-    /// The closure bodies, the handled bodies and the clauses, by id after
-    /// `base_body`.
+    /// The id of the first scope.
+    pub(super) base_scope: u32,
+    /// The id of the first spawn site.
+    pub(super) base_spawn: u32,
+    /// The closure bodies, the handled bodies, the clauses and the scope
+    /// bodies, by id after `base_body`.
     pub(super) bodies: Vec<Option<Body>>,
     /// The closure declarations, by id from `base_closure`.
     pub(super) closures: Vec<Option<ClosureDecl>>,
     /// The handler declarations, by id from `base_handler`.
     pub(super) handlers: Vec<Option<HandlerDecl>>,
-    /// The binding of each clause parameter and continuation, made at the
-    /// first `handle`.
+    /// The scope declarations, by id from `base_scope`.
+    pub(super) scopes: Vec<Option<ScopeDecl>>,
+    /// The spawn sites, by id from `base_spawn`.
+    pub(super) spawns: Vec<SpawnDecl>,
+    /// The scope of each `scope` expression.
+    pub(super) scope_ids: HashMap<ExprId, ScopeId>,
+    /// The spawn site of each spawn in statement position whose result is a
+    /// `TaskResult` local of a scope body (`task.rs`).
+    pub(super) results: HashMap<ExprId, SpawnId>,
+    /// The binding of each clause parameter, continuation and scope
+    /// capability, made at the first use.
     binders: Option<HashMap<Binder, BindingId>>,
 }
 
 impl Pending {
-    /// Makes an empty set for the function body with id `base_body`.
-    pub(super) const fn new(base_body: u32, base_closure: u32, base_handler: u32) -> Self {
+    /// Makes an empty set for the function body with id `base_body`. The
+    /// other ids start after the declarations of `p`.
+    pub(super) fn new(base_body: u32, p: &weft_ir::Program) -> Self {
         Self {
             base_body,
-            base_closure,
-            base_handler,
-            bodies: Vec::new(),
-            closures: Vec::new(),
-            handlers: Vec::new(),
-            binders: None,
+            base_closure: id_of(p.closures.len()),
+            base_handler: id_of(p.handlers.len()),
+            base_scope: id_of(p.scopes.len()),
+            base_spawn: id_of(p.spawns.len()),
+            ..Self::default()
         }
     }
 
-    /// Returns the binding of each clause parameter and continuation of the
-    /// tables `t` of the function.
+    /// Adds spawn site `d` and returns its id.
+    pub(super) fn add_spawn(&mut self, d: SpawnDecl) -> SpawnId {
+        let id = SpawnId(self.base_spawn.saturating_add(id_of(self.spawns.len())));
+        self.spawns.push(d);
+        id
+    }
+
+    /// Returns the binding of each clause parameter, continuation and scope
+    /// capability of the tables `t` of the function.
     pub(super) fn binders(&mut self, t: &crate::thir::Tables) -> &HashMap<Binder, BindingId> {
         self.binders.get_or_insert_with(|| {
             t.bindings
                 .iter()
                 .enumerate()
-                .filter(|(_, b)| matches!(b.binder, Binder::ClauseParam(..) | Binder::Resume(..)))
+                .filter(|(_, b)| {
+                    matches!(
+                        b.binder,
+                        Binder::ClauseParam(..) | Binder::Resume(..) | Binder::Scope(_)
+                    )
+                })
                 .map(|(i, b)| (b.binder, BindingId(id_of(i))))
                 .collect()
         })
@@ -274,11 +301,6 @@ impl Builder<'_> {
         let mut index = HashMap::new();
         for b in free_bindings(t, body) {
             if let Some((source, ty, props)) = self.binding_props(b) {
-                // Scopes in closures come with their construct (plan stage
-                // B11).
-                if matches!(self.tys.try_get(ty), Some(Ty::Scope)) {
-                    return unsupported(Construct::Scope, e.span);
-                }
                 index.insert(b, caps.len());
                 caps.push(Cap { source, ty, props });
             }
@@ -728,7 +750,7 @@ pub(super) fn walk_exprs<'e>(e: &'e Expr, inner: bool, f: &mut impl FnMut(&'e Ex
 
 /// A node of the walk of [`free_bindings`].
 #[derive(Clone, Copy)]
-enum Node<'e> {
+pub(super) enum Node<'e> {
     /// An expression.
     Expr(&'e Expr),
     /// A block.
@@ -738,7 +760,7 @@ enum Node<'e> {
 }
 
 /// Pushes the parts of statement `s` onto `stack`, the last first.
-fn push_stmt<'e>(s: &'e ast::Stmt, stack: &mut Vec<Node<'e>>) {
+pub(super) fn push_stmt<'e>(s: &'e ast::Stmt, stack: &mut Vec<Node<'e>>) {
     use ast::StmtKind as S;
     match &s.kind {
         S::Let { init, .. } => {
@@ -770,7 +792,7 @@ fn push_stmt<'e>(s: &'e ast::Stmt, stack: &mut Vec<Node<'e>>) {
 }
 
 /// Pushes the parts of expression `e` onto `stack`, the last first.
-fn push_children<'e>(e: &'e Expr, stack: &mut Vec<Node<'e>>) {
+pub(super) fn push_children<'e>(e: &'e Expr, stack: &mut Vec<Node<'e>>) {
     let mut v: Vec<Node<'e>> = Vec::new();
     match &e.kind {
         ExprKind::Lit(Lit::Str(parts)) => {
@@ -999,17 +1021,31 @@ fn each_place_term(k: &mut TermKind, f: &mut impl FnMut(&mut Place)) {
     }
 }
 
-/// The bodies, the closures and the handlers that a function makes.
-pub(super) type Made = (Vec<Body>, Vec<ClosureDecl>, Vec<HandlerDecl>);
+/// The bodies and the declarations that a function makes.
+#[derive(Debug, Default)]
+pub(super) struct Made {
+    /// The bodies, in id order after the body of the function.
+    pub(super) bodies: Vec<Body>,
+    /// The closures.
+    pub(super) closures: Vec<ClosureDecl>,
+    /// The handlers.
+    pub(super) handlers: Vec<HandlerDecl>,
+    /// The scopes.
+    pub(super) scopes: Vec<ScopeDecl>,
+    /// The spawn sites.
+    pub(super) spawns: Vec<SpawnDecl>,
+}
 
-/// Returns the bodies of `pending` in body order after the body of the
-/// function, its closures and its handlers, or `None` if a reserved id has
-/// no value (a bug of the builder).
+/// Returns the bodies and the declarations of `pending` in id order, or
+/// `None` if a reserved id has no value (a bug of the builder).
 pub(super) fn take_pending(pending: Pending) -> Option<Made> {
-    let bodies: Option<Vec<Body>> = pending.bodies.into_iter().collect();
-    let closures: Option<Vec<ClosureDecl>> = pending.closures.into_iter().collect();
-    let handlers: Option<Vec<HandlerDecl>> = pending.handlers.into_iter().collect();
-    Some((bodies?, closures?, handlers?))
+    Some(Made {
+        bodies: pending.bodies.into_iter().collect::<Option<_>>()?,
+        closures: pending.closures.into_iter().collect::<Option<_>>()?,
+        handlers: pending.handlers.into_iter().collect::<Option<_>>()?,
+        scopes: pending.scopes.into_iter().collect::<Option<_>>()?,
+        spawns: pending.spawns,
+    })
 }
 
 #[cfg(test)]

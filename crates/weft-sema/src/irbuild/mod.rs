@@ -12,9 +12,9 @@
 //! expression (`docs/ir.md` 5.1.1): `into` writes the value into a place,
 //! `operand` gives an operand, and `place` gives a place.
 //!
-//! The builder grows one construct group at a time (plan stages B3 to B11). A
-//! construct that a later stage lowers gives [`Outcome::Unsupported`] with the
-//! construct, never a panic. A body with a `typeck` error gets no IR
+//! The builder grows one construct group at a time (plan stages B3 to B12). A
+//! construct that the builder does not lower yet gives
+//! [`Outcome::Unsupported`] with the construct, never a panic. A body with a `typeck` error gets no IR
 //! ([`Outcome::NoIr`]).
 //!
 //! The builder runs the verifier ([`weft_ir::verify::verify_program`]) on the
@@ -34,6 +34,7 @@ mod looping;
 mod pattern;
 mod place;
 mod stmt;
+mod task;
 mod unset;
 mod upvar;
 
@@ -66,16 +67,10 @@ pub enum Construct {
     VariantField,
     /// A constructor of a struct or of a variant with a payload as a value.
     ItemName,
-    /// A `handle` in a closure body whose handled body or clauses name a
+    /// A `handle` or a `scope` in a closure body whose nested bodies name a
     /// capture or a capability field of the closure: an upvar local cannot
     /// name a field of the environment.
     Handle,
-    /// `scope`.
-    Scope,
-    /// A task: `spawn`, `join`, `detach`, `fork`.
-    Task,
-    /// A call of `sim.run` or `with_timeout`.
-    Intrinsic,
     /// The THIR has no type or no binding for a part of the body.
     NoThir,
 }
@@ -88,10 +83,7 @@ impl Construct {
             Self::MoveThroughRef => "move through a reference",
             Self::VariantField => "variant field",
             Self::ItemName => "constructor as a value",
-            Self::Handle => "handle in a closure that names a capture",
-            Self::Scope => "scope",
-            Self::Task => "task",
-            Self::Intrinsic => "intrinsic call",
+            Self::Handle => "handle or scope in a closure that names a capture",
             Self::NoThir => "no THIR entry",
         }
     }
@@ -104,7 +96,6 @@ impl Construct {
             | Self::VariantField
             | Self::ItemName
             | Self::Handle => "B12",
-            Self::Scope | Self::Task | Self::Intrinsic => "B11",
             Self::NoThir => "T3",
         }
     }
@@ -381,11 +372,7 @@ fn body_outcome(
     let fns_before = out.program.fns.len();
     let envs_before = out.program.cap_envs.len();
     let id = BodyId(id_of(out.program.bodies.len()));
-    let mut pending = closure::Pending::new(
-        id.0,
-        id_of(out.program.closures.len()),
-        id_of(out.program.handlers.len()),
-    );
+    let mut pending = closure::Pending::new(id.0, &out.program);
     let d = Decls {
         a,
         fns: &mut out.fns,
@@ -404,15 +391,17 @@ fn body_outcome(
         None => unsupported(Construct::NoThir, src.span),
     });
     match done {
-        Ok((body, diags, (bodies, closures, handlers))) => {
+        Ok((body, diags, made)) => {
             out.diags.extend(diags.into_iter().map(|mut d| {
                 d.unit = unit;
                 d
             }));
             out.program.bodies.push(body);
-            out.program.bodies.extend(bodies);
-            out.program.closures.extend(closures);
-            out.program.handlers.extend(handlers);
+            out.program.bodies.extend(made.bodies);
+            out.program.closures.extend(made.closures);
+            out.program.handlers.extend(made.handlers);
+            out.program.scopes.extend(made.scopes);
+            out.program.spawns.extend(made.spawns);
             if let BodyKind::Fn(f) = src.kind {
                 if let Some(d) = out.program.fns.get_mut(f.index()) {
                     d.body = Some(id);
@@ -558,7 +547,7 @@ struct Targets {
 }
 
 /// A body that a jump cannot leave (`docs/ir.md` 5.1.5). A handled body and
-/// a clause open one (`handle.rs`); plan stage B11 opens the scope body.
+/// a clause open one (`handle.rs`), and so does a scope body (`task.rs`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Fence {
     /// The handled body of a `handle`.
@@ -566,10 +555,6 @@ enum Fence {
     /// A handler clause.
     Clause,
     /// The body of a `scope`.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "plan stage B11 opens the scope body")
-    )]
     ScopeBody,
 }
 

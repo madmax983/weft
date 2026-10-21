@@ -17,6 +17,16 @@ impl Builder<'_> {
     /// the tail is an expression statement and `dest` gets `()`.
     pub(super) fn block_into(&mut self, b: &ast::Block, dest: Place, discard: bool) -> R<()> {
         self.open(ScopeKind::Block, closing(b.span));
+        self.block_stmts(b, dest, discard)?;
+        self.close();
+        Ok(())
+    }
+
+    /// Lowers the statements and the tail of block `b` into `dest` in the
+    /// block scope that the caller opened, and does not close it: the body
+    /// of a scope waits for its tasks after the tail and before the block
+    /// locals end (`task.rs`).
+    pub(super) fn block_stmts(&mut self, b: &ast::Block, dest: Place, discard: bool) -> R<()> {
         let n = b.stmts.len();
         let mut tail = None;
         for (i, s) in b.stmts.iter().enumerate() {
@@ -35,7 +45,6 @@ impl Builder<'_> {
             }
             None => {}
         }
-        self.close();
         Ok(())
     }
 
@@ -136,10 +145,16 @@ impl Builder<'_> {
     /// ```text
     /// e;  (a value)            =>  t := <e>; Dead(t)
     /// p;  (a place of a local) =>  Mention(p)
+    /// s.spawn(f);              =>  tf := <f>; spawn site(copy s, move tf) -> None
     /// ```
     ///
     /// The statement scope ends the temporary.
     pub(super) fn expr_stmt(&mut self, e: &Expr) -> R<()> {
+        // A spawn in statement position gives its result to the scope
+        // (`docs/ir.md` 5.29).
+        if self.is_spawn(e) {
+            return self.spawn_stmt(e);
+        }
         if let Some(p) = self.as_place(e)? {
             let origin = self.origin(e.span, Some(e.id));
             self.push(StmtKind::Mention(p), origin);

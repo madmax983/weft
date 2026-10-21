@@ -1,0 +1,99 @@
+fn f0 work(u64) -> u64: b0
+fn f1 main() -> () / Async: b1
+closure c0: body b3, maker b2, cap_env e0, captures [Kept _4]
+scope s0: body b2, site b1
+spawn sp0: scope s0
+cap_env e0
+
+body b0: fn work; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: u64 (Param(0) `x`)
+  bb0:
+    _0 = Add<u64>(copy _1, const 1u64)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn main; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: u64 (User `x`)
+  _2: u64 (User `r`)
+  bb0:
+    Live(_1)
+    _1 = const 1u64
+    Live(_2)
+    _2 = scope s0 -> [bb4, unwind: bb3]
+  bb1 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb1)
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb2)
+  bb4:
+    Print(copy _2)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    UnwindExit
+
+body b2: scope s0; parent b1; cap_env e0; unwind_exit bb9
+  _0: u64 (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: Task<u64> (User `h`)
+  _3: fn() -> u64 (Temp(Operand))
+  _4: u64 (Upvar(_1) `x`)
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c0(copy _4)
+    _2 = spawn sp0(copy _1, move _3) -> [bb1]
+  bb1:
+    Dead(_3)
+    _0 = join move _2 -> [bb4, unwind: bb3]
+  bb2 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb9)
+  bb3 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb2)
+  bb4:
+    scope_wait _1 -> [bb8, unwind: bb7]
+  bb5 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb9)
+  bb6 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb5)
+  bb7 (cleanup):
+    Dead(_0)
+    Goto(bb6)
+  bb8:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb9 (cleanup):
+    UnwindExit
+
+body b3: closure c0; parent b2; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = call work(copy _1.0) / e0 -> [bb2, unwind: bb1]
+  bb1 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb2:
+    Return
+  bb3 (cleanup):
+    UnwindExit

@@ -359,7 +359,7 @@ pub struct HandlerDecl {
     pub multi: bool,
 }
 pub struct ScopeDecl { pub body: BodyId, pub site: BodyId }
-pub struct SpawnDecl { pub scope: Option<ScopeId>, pub fork: bool, pub origin: Origin }
+pub struct SpawnDecl { pub scope: Option<ScopeId>, pub fork: bool, pub origin: Origin } // scope: None for a fork branch, or a capability that is not a scope binder
 /// A static capability environment: handlers are lexical.
 pub struct CapEnv {
     pub parent: Option<CapEnvId>,      // None at the entry of a function or a test
@@ -765,8 +765,11 @@ How the builder applies the table (`irbuild/cleanup.rs`, plan stage B8):
   for the whole closure.
 - A parameter that is not plain data gets its `UnwindValue` too, before its `Dead`.
 - `_0` has a value from the write of the frame value (the frame end) or of a `return`
-  value, to the `Return`. Plan stage B11 adds `ScopeWait` there. `Dead(_0)` with no
-  value has no `UnwindValue`.
+  value, to the `Return`. In a scope body `ScopeWait` comes between (5.29), so its chain
+  starts with `_0`. `Dead(_0)` with no value has no `UnwindValue`.
+- The `ScopeCap` local of a scope body is plain data, but it gets `UnwindValue(s, Drop)`
+  before its `Dead` in each chain: the unwinder cancels the tasks of the scope and waits
+  for them.
 - An `UnwindValue` of a local with a cell but with no value (a `let` local before its
   value, a moved value) finishes nothing at run time; the facts see the move first.
 
@@ -1227,7 +1230,8 @@ f(x, y)  =>  tx := <operand x>; ty := <operand y>;           (parameter order)
 - The THIR `CallInfo::args` gives the argument of each parameter (ADR 0009): an index
   into the written arguments, or the trailing block. The builder evaluates the
   arguments in that order. A parameter with no argument is W0103 of `typeck`, so the
-  body has no IR. `sim.run` can leave out `workers`: it is plan stage B11 (5.30).
+  body has no IR. `sim.run` can leave out `workers`: then the argument is the constant
+  `4u64` (5.30).
 - A place argument skips its temporary only if no later argument can run code (5.1.1),
   and only in a call with no receiver: the read of a receiver comes after the
   arguments (5.19).
@@ -1452,14 +1456,56 @@ I3-1). Its `TaskResult` local is a once value of the scope body from the `Spawn`
 `Spawn` gives it `rebound_at` and `empty_at` (no linear value yet), and `ScopeWait`
 gives it the result. So a `multi` node of the scope body between the spawn and
 `ScopeWait` is W0503: a `multi` resume cannot copy a scope that has children (I3-8). A
-task handle `h` is a once value too (`once_var`). **Goes away:** `start_task`, `task_captures`, `task_ret`, `end_tasks`,
+task handle `h` is a once value too (`once_var`).
+
+As built (`irbuild/task.rs`, plan stage B11):
+
+- The ids of the scope and of the scope body are reserved at the `scope`, so the site
+  has a lower id than its body. The scope body has the `ScopeCap` local `_1` (its only
+  parameter), then the `TaskResult` locals, then its own locals and its upvar locals
+  (made at the first use, as in a handled body, 5.24). It runs in the capability
+  environment of the site. A fence scope stops each jump (W0315).
+- The scopes of the scope body, from the outermost: the frame (`_1`, the temporaries of
+  the tail), the fence, a block with the `TaskResult` locals, the block of the body. So
+  the frame end is: the value into `_0`; `ScopeWait`; `Dead` of the block locals, of
+  the `TaskResult` locals, of the tail temporaries, of `_1`; `Return` (5.1.4). A body
+  whose end cannot run has no `ScopeWait`.
+- A spawn is in statement position if `Builder::expr_stmt` lowers it: a statement of a
+  block that is not its tail, the tail of a loop body, or the tail of the block of an
+  `if` with no `else` (5.4, 5.12, 5.14). Before it lowers the block, the scope body
+  finds each such spawn whose receiver names its own `s`, also in the closures and the
+  bodies inside it. Each gets its `SpawnDecl` and a `TaskResult` local now, with `Live`
+  at the entry (in source order). So each chain of the scope body has the local, and a
+  spawn in a loop has one cell (each run of the spawn rebinds it). `ScopeWait` lists
+  these locals as `orphans`. The props of a `TaskResult` local are those of the result
+  type, with `once`.
+- A spawn in statement position that the search does not find (a receiver that is not
+  a scope binder, such as a parameter `s: Scope`; the tail of a closure or a clause
+  whose value goes away; a `return` out of the fence) is a `Spawn` with no `dest` and
+  no `TaskResult` local: the scope at run time keeps its result, and the facts do not
+  see it. A spawn whose value is used (a `let`, a tail, `let _ = s.spawn(f)`) has its
+  `dest`.
+- `SpawnDecl::scope` is the scope of the receiver if the receiver names the scope
+  binder `s` (also through a capture or an upvar of a nested body: the THIR binding
+  names the `scope`); else `None`.
+- `spawn`, `join` and `detach` are method calls: the receiver is a place first, then the
+  arguments, then the read of the receiver (5.19). The spawn reads `s` as plain data
+  (`copy s`). `join` and `detach` move the handle (a move through a reference is
+  W0303, 5.36). `detach` writes `dest = ()` after it.
+- The value of `scope`, `join` and `fork` comes from another frame, as a call result:
+  the destination gets the `Uninit` of its place fields after the terminator (5.17).
+- `fork` evaluates its branches as operands in written order (a trailing block is the
+  last branch); each branch gets a `SpawnDecl` with `fork: true` and no scope. **Goes away:** `start_task`, `task_captures`, `task_ret`, `end_tasks`,
 `finish_task_values`, `finish_task_ends`, `finish_task_marks`, "task end" nodes,
 `restart_after`.
 
 ### 5.30 `sim.run` [2.29]
 
 `sim.run(seed, workers) { body } => t = call sim.run(seed, workers, move tclosure)`.
-`workers = 4` when the call leaves it out is a constant argument. The fact generator
+`workers = 4` when the call leaves it out is a constant argument (`4u64`). The THIR
+`CallInfo` of `sim.run` gives the argument of each parameter, with no argument for a
+`workers` that the call leaves out. The function has `Intrinsic::SimRun`, so the call
+has an `unwind` block (V10). The fact generator
 emits `sim_run_at`, the `handler` and `sim_root` facts of the root handlers of the
 simulation, and applies the summary of the closure with those handlers as its
 capabilities.
@@ -1483,7 +1529,10 @@ assert(c)    =>  tc := <c>; Assert(move tc) -> [next, unwind: C]
 ```
 
 `print` reads its operands where they are written (N2). A value that is not plain data
-is borrowed, not moved. So each operand of `Print` is plain data or a reference, and
+is borrowed, not moved. A local or a capture that holds a `once` closure (its
+`props.copy` is false, 5.22) is not plain data here either: a read of it would move it,
+so `print(f)` and an interpolation `"{f}"` borrow it (plan stage B11; a tier-2 program
+broke V9 before). So each operand of `Print` is plain data or a reference, and
 `Print` copies it. A condition of `assert` that is a place or a constant is the
 operand itself, as the condition of `if`. `assert` can abort the task: its cleanup
 edge and `may_abort` come from the terminator, and the summary of a body with an

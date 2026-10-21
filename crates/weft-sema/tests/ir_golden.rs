@@ -440,7 +440,7 @@ fn a_returned_reference_to_a_local_ends_the_local_first() {
 
 #[test]
 fn a_construct_of_a_later_stage_is_unsupported() {
-    let (_, b) = build("fn f() -> u64 {\n    scope { s => 1 }\n}\n");
+    let (_, b) = build("struct S { v: Vec<u64> }\nfn f(r: &S) -> Vec<u64> {\n    r.v\n}\n");
     let e = b
         .entries
         .iter()
@@ -448,10 +448,10 @@ fn a_construct_of_a_later_stage_is_unsupported() {
         .unwrap_or_else(|| panic!("no `f`"));
     match &e.outcome {
         Outcome::Unsupported(u) => {
-            assert_eq!(u.construct.name(), "scope");
-            assert_eq!(u.construct.stage(), "B11");
+            assert_eq!(u.construct.name(), "move through a reference");
+            assert_eq!(u.construct.stage(), "B12");
         }
-        other => panic!("a `scope` is for stage B11: {other:?}"),
+        other => panic!("a move through a reference is for stage B12: {other:?}"),
     }
 }
 
@@ -1427,26 +1427,6 @@ fn a_return_in_a_later_argument_ends_the_earlier_argument_temporaries() {
             .any(|s| s.kind == StmtKind::Dead(two.local)),
         "the `return` path does not end the result of `two()`"
     );
-}
-
-#[test]
-fn sim_run_and_with_timeout_are_for_stage_b11() {
-    let src = "fn f() -> u64 / async, fail {\n    with_timeout(1.s, g)\n}\nfn g() -> u64 { 1 }\ntest \"t\" {\n    sim.run(seed: 1) {\n        print(1)\n    }\n}\n";
-    let (_, b) = build(src);
-    for name in ["f", "test \"t\""] {
-        let e = b
-            .entries
-            .iter()
-            .find(|e| e.name == name)
-            .unwrap_or_else(|| panic!("no `{name}`"));
-        match &e.outcome {
-            Outcome::Unsupported(u) => {
-                assert_eq!(u.construct.name(), "intrinsic call", "{name}");
-                assert_eq!(u.construct.stage(), "B11");
-            }
-            other => panic!("{name}: an intrinsic call is for stage B11: {other:?}"),
-        }
-    }
 }
 
 #[test]
@@ -2650,4 +2630,353 @@ fn a_closure_that_uses_no_effect_holds_no_capability() {
             vec![CaptureMode::Kept]
         ]
     );
+}
+
+// ---------------------------------------------------------------------------
+// Plan stage B11: tasks, `sim.run`, `with_timeout` (`docs/ir.md` 5.29 to 5.31).
+
+#[test]
+fn golden_scope_wait() {
+    golden("scope_wait");
+}
+
+#[test]
+fn golden_spawn_handle() {
+    golden("spawn_handle");
+}
+
+#[test]
+fn golden_spawn_stmt_result() {
+    golden("spawn_stmt_result");
+}
+
+#[test]
+fn golden_join() {
+    golden("join");
+}
+
+#[test]
+fn golden_detach() {
+    golden("detach");
+}
+
+#[test]
+fn golden_fork() {
+    golden("fork");
+}
+
+#[test]
+fn golden_sim_run() {
+    golden("sim_run");
+}
+
+#[test]
+fn golden_with_timeout() {
+    golden("with_timeout");
+}
+
+/// Returns the one scope body of `b`.
+fn one_scope_body(b: &Built) -> &Body {
+    let v: Vec<&Body> = b
+        .program
+        .bodies
+        .iter()
+        .filter(|x| matches!(x.kind, weft_ir::BodyKind::Scope(_)))
+        .collect();
+    assert_eq!(v.len(), 1, "the program has one scope body");
+    v[0]
+}
+
+/// Returns the `ScopeWait` terminator of `body`: its orphans and its unwind
+/// block.
+fn scope_wait(body: &Body) -> (Vec<LocalId>, weft_ir::BlockId) {
+    let found: Vec<_> = terms(body)
+        .into_iter()
+        .filter_map(|k| match k {
+            TermKind::ScopeWait {
+                orphans, unwind, ..
+            } => Some((orphans.clone(), *unwind)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(found.len(), 1, "the scope body has one `ScopeWait`");
+    let (orphans, unwind) = found[0].clone();
+    (
+        orphans,
+        unwind.unwrap_or_else(|| panic!("`ScopeWait` has no unwind block")),
+    )
+}
+
+#[test]
+fn a_spawn_in_statement_position_gives_a_task_result_that_scope_wait_fills() {
+    let b = golden_built("spawn_stmt_result");
+    let s = one_scope_body(&b);
+    let mut sites: Vec<weft_ir::SpawnId> = terms(s)
+        .into_iter()
+        .filter_map(|k| match k {
+            TermKind::Spawn {
+                site, dest: None, ..
+            } => Some(*site),
+            _ => None,
+        })
+        .collect();
+    sites.sort();
+    assert_eq!(sites.len(), 3, "three spawns in statement position");
+    let results: Vec<(LocalId, weft_ir::SpawnId)> = s
+        .locals
+        .iter()
+        .enumerate()
+        .filter_map(|(i, d)| match d.kind {
+            LocalKind::TaskResult(site) => Some((LocalId(u32::try_from(i).unwrap_or(0)), site)),
+            _ => None,
+        })
+        .collect();
+    let mut of: Vec<weft_ir::SpawnId> = results.iter().map(|r| r.1).collect();
+    of.sort();
+    assert_eq!(of, sites, "one `TaskResult` local for each spawn site");
+    let (mut orphans, _) = scope_wait(s);
+    orphans.sort();
+    let mut locals: Vec<LocalId> = results.iter().map(|r| r.0).collect();
+    locals.sort();
+    assert_eq!(orphans, locals, "`ScopeWait` gives each result its value");
+    // Each result has a cell from the entry: one `Live` in the entry block.
+    for (l, _) in &results {
+        let lives: Vec<usize> = s
+            .blocks
+            .iter()
+            .enumerate()
+            .flat_map(|(i, blk)| {
+                blk.stmts
+                    .iter()
+                    .filter(|x| x.kind == StmtKind::Live(*l))
+                    .map(move |_| i)
+            })
+            .collect();
+        assert_eq!(lives, vec![s.entry.index()], "`Live` of {l:?}");
+    }
+}
+
+#[test]
+fn the_value_of_a_scope_body_is_first_in_the_chain_of_scope_wait() {
+    let b = golden_built("scope_wait");
+    let s = one_scope_body(&b);
+    let (_, unwind) = scope_wait(s);
+    let c = chain(s, unwind);
+    assert_eq!(
+        c.first(),
+        Some(&StmtKind::UnwindValue(
+            Place::local(LocalId(0)),
+            weft_ir::UnwindAction::Drop
+        )),
+        "{c:?}"
+    );
+    assert_eq!(c.get(1), Some(&StmtKind::Dead(LocalId(0))), "{c:?}");
+}
+
+#[test]
+fn the_scope_capability_is_finished_on_each_chain() {
+    for name in ["scope_wait", "spawn_handle", "join"] {
+        let b = golden_built(name);
+        let s = one_scope_body(&b);
+        let cap = s.params[0];
+        assert_eq!(s.locals[cap.index()].kind, LocalKind::ScopeCap, "{name}");
+        let us = unwinds(s);
+        assert!(!us.is_empty(), "{name}: the scope body has chains");
+        for u in us {
+            let c = chain(s, u);
+            let at = c
+                .iter()
+                .position(|x| *x == StmtKind::Dead(cap))
+                .unwrap_or_else(|| panic!("{name}: the chain does not end `s`: {c:?}"));
+            assert!(
+                at > 0
+                    && c[at - 1]
+                        == StmtKind::UnwindValue(Place::local(cap), weft_ir::UnwindAction::Drop),
+                "{name}: the chain cancels and joins the tasks at `s`: {c:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn spawn_sites_name_their_scope_and_fork_branches_have_none() {
+    let b = golden_built("spawn_handle");
+    assert_eq!(b.program.scopes.len(), 1);
+    assert_eq!(b.program.spawns.len(), 1);
+    assert_eq!(b.program.spawns[0].scope, Some(weft_ir::ScopeId(0)));
+    assert!(!b.program.spawns[0].fork);
+    let b = golden_built("fork");
+    let forks: Vec<Vec<weft_ir::SpawnId>> = b
+        .program
+        .bodies
+        .iter()
+        .flat_map(terms)
+        .filter_map(|k| match k {
+            TermKind::Fork { sites, .. } => Some(sites.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(forks.len(), 2);
+    assert_eq!(forks[0].len(), 2);
+    assert_eq!(forks[1].len(), 2);
+    for d in &b.program.spawns {
+        assert!(d.fork && d.scope.is_none());
+    }
+    assert_eq!(b.program.spawns.len(), 4);
+}
+
+#[test]
+fn sim_run_has_four_workers_by_default() {
+    let b = golden_built("sim_run");
+    for (name, workers) in [("test \"default workers\"", 4), ("test \"two workers\"", 2)] {
+        let t = body(&b, name);
+        let (args, _) = call_of(&b, t, "run");
+        assert_eq!(
+            args.get(1),
+            Some(&Operand::Const(Const::Int(workers, weft_ir::IntTy::U64))),
+            "{name}: {args:?}"
+        );
+        let f = b
+            .program
+            .fns
+            .iter()
+            .find(|d| d.name == "run")
+            .unwrap_or_else(|| panic!("no `sim.run`"));
+        assert_eq!(f.intrinsic, Some(weft_ir::Intrinsic::SimRun));
+    }
+}
+
+#[test]
+fn with_timeout_is_a_call_that_can_abort() {
+    let b = golden_built("with_timeout");
+    let f = body(&b, "timed");
+    let c = chain_of_call(&b, f, "with_timeout");
+    assert!(!c.is_empty());
+}
+
+#[test]
+fn a_spawn_statement_in_a_nested_body_gives_its_result_to_the_scope_of_s() {
+    let src = "effect Ask { fn ask() -> u64 }\nfn main() / async {\n    let r = scope { s =>\n        let f = || {\n            s.spawn(|| 1)\n            2\n        }\n        f()\n        handle Ask {\n            fn ask() { resume(1) }\n        } in {\n            s.spawn(|| 3)\n            ask()\n        }\n    }\n    print(r)\n}\n";
+    let (_, b) = build(src);
+    assert!(b.broken.is_empty(), "{}", rules(&b));
+    let s = one_scope_body(&b);
+    let mut results: Vec<weft_ir::SpawnId> = s
+        .locals
+        .iter()
+        .filter_map(|d| match d.kind {
+            LocalKind::TaskResult(site) => Some(site),
+            _ => None,
+        })
+        .collect();
+    results.sort();
+    assert_eq!(results.len(), 2, "two results: {results:?}");
+    let (orphans, _) = scope_wait(s);
+    assert_eq!(orphans.len(), 2);
+    // The spawns are in the closure body and in the handled body.
+    let mut sites: Vec<weft_ir::SpawnId> = b
+        .program
+        .bodies
+        .iter()
+        .filter(|x| {
+            matches!(
+                x.kind,
+                weft_ir::BodyKind::Closure(_) | weft_ir::BodyKind::Handled(_)
+            )
+        })
+        .flat_map(terms)
+        .filter_map(|k| match k {
+            TermKind::Spawn {
+                site, dest: None, ..
+            } => Some(*site),
+            _ => None,
+        })
+        .collect();
+    sites.sort();
+    assert_eq!(sites, results);
+    for site in sites {
+        assert_eq!(
+            b.program.spawns[site.index()].scope,
+            Some(weft_ir::ScopeId(0))
+        );
+    }
+}
+
+#[test]
+fn a_jump_out_of_a_scope_body_is_w0315() {
+    let (a, b) = build(
+        "fn f() -> u64 / async {\n    scope { s =>\n        return 3\n    }\n}\nfn g() / async {\n    loop {\n        scope { s => break }\n    }\n}\n",
+    );
+    assert!(b.broken.is_empty(), "{}", rules(&b));
+    let msgs: Vec<String> = b
+        .diags
+        .iter()
+        .map(|d| format!("{} {}", d.code.as_str(), d.message))
+        .collect();
+    assert_eq!(
+        msgs,
+        [
+            "W0315 `return` cannot leave a scope body",
+            "W0315 `break` cannot leave a scope body"
+        ]
+    );
+    // The old pipeline gives the same diagnostics.
+    let old: Vec<String> = a
+        .diags
+        .iter()
+        .filter(|d| d.code.as_str() == "W0315")
+        .map(|d| format!("{} {}", d.code.as_str(), d.message))
+        .collect();
+    assert_eq!(old, msgs);
+}
+
+#[test]
+fn each_task_result_has_one_spawn_in_statement_position() {
+    for p in corpus() {
+        let src =
+            std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
+        let Ok(a) = analyze_source(&src, Options::from_markers(&src)) else {
+            continue;
+        };
+        let b = irbuild::build(&a);
+        let mut spawns = std::collections::BTreeMap::new();
+        for body in &b.program.bodies {
+            for k in terms(body) {
+                if let TermKind::Spawn { site, dest, .. } = k {
+                    let n = spawns.entry(*site).or_insert((0, 0));
+                    n.0 += 1;
+                    n.1 += u32::from(dest.is_none());
+                }
+            }
+        }
+        for body in &b.program.bodies {
+            for d in &body.locals {
+                if let LocalKind::TaskResult(site) = d.kind {
+                    assert_eq!(
+                        spawns.get(&site),
+                        Some(&(1, 1)),
+                        "{}: {site:?}",
+                        p.display()
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn print_borrows_a_local_that_holds_a_once_closure() {
+    let (_, b) = build(
+        "fn take(v: Vec<u64>) -> usize { v.len() }\nfn main() {\n    let v = Vec.new()\n    v.push(1)\n    let f = || take(v)\n    print(f)\n    print(\"{f}\")\n    print(f())\n}\n",
+    );
+    assert!(b.broken.is_empty(), "{}", rules(&b));
+    let m = body(&b, "main");
+    let f = named(m, "f");
+    assert!(!m.locals[f.index()].props.copy, "`f` is a once closure");
+    // `print(f)` and the interpolation read `f` through a borrow; only the
+    // call moves it.
+    let borrows = stmts(m)
+        .into_iter()
+        .filter(|s| matches!(s, StmtKind::Assign(_, Rvalue::Ref(p)) if *p == Place::local(f)))
+        .count();
+    assert_eq!(borrows, 2);
 }

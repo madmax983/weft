@@ -15,7 +15,9 @@
 //! ```
 //!
 //! A value that is not plain data gets `UnwindValue` before its `Dead`.
-//! Plain data gets only its `Dead`. The action comes from the type
+//! Plain data gets only its `Dead`, but for the scope capability of a scope
+//! body: its `UnwindValue(s, Drop)` cancels and joins the tasks of the
+//! scope. The action comes from the type
 //! ([`Builder::unwind_parts`]).
 //!
 //! Two chains with the same suffix share the blocks of the suffix: the
@@ -79,9 +81,11 @@ impl Builder<'_> {
                     }
                     let of = match self.locals.get(l.index()).map(|d| d.kind) {
                         Some(LocalKind::Temp(_)) => 1,
-                        // The capability of a handled body ends with the
-                        // parameters.
-                        Some(LocalKind::Param(_) | LocalKind::Cap(_)) => continue,
+                        // The capability of a handled body and the scope
+                        // capability end with the parameters.
+                        Some(LocalKind::Param(_) | LocalKind::Cap(_) | LocalKind::ScopeCap) => {
+                            continue
+                        }
                         _ => 0,
                     };
                     if of == class {
@@ -201,6 +205,12 @@ impl Builder<'_> {
         let Some(d) = self.locals.get(l.index()) else {
             return;
         };
+        // The scope capability is plain data, but its `UnwindValue` cancels
+        // the tasks of the scope and waits for them (5.1.6).
+        if d.kind == LocalKind::ScopeCap {
+            out.push(StmtKind::UnwindValue(Place::local(l), UnwindAction::Drop));
+            return;
+        }
         if d.props.copy {
             return;
         }

@@ -1,0 +1,57 @@
+fn f0 page(u64) -> u64 / Async: b0
+fn f1 timed(u64) -> u64 / Async, Fail: b1
+fn f2 with_timeout<T0>(Duration, fn() -> T0) -> T0 / Async, Fail [with_timeout]: extern
+closure c0: body b2, maker b1, cap_env e0, captures [Kept _1]
+cap_env e0
+
+body b0: fn page; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: u64 (Param(0) `n`)
+  bb0:
+    _0 = copy _1
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn timed; cap_env e0; unwind_exit bb5
+  _0: u64 (Return)
+  _1: u64 (Param(0) `n`)
+  _2: u64 (User `v`)
+  _3: fn() -> u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c0(copy _1)
+    _2 = call with_timeout<u64>(const 2000ms, move _3) / e0 -> [bb4, unwind: bb3]
+  bb1 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb5)
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb1)
+  bb3 (cleanup):
+    Dead(_3)
+    Goto(bb2)
+  bb4:
+    Dead(_3)
+    _0 = Add<u64>(copy _2, const 1u64)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    UnwindExit
+
+body b2: closure c0; parent b1; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = call page(copy _1.0) / e0 -> [bb2, unwind: bb1]
+  bb1 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb2:
+    Return
+  bb3 (cleanup):
+    UnwindExit

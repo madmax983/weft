@@ -177,9 +177,17 @@ fn ir_prints_the_core_ir() {
         "the handled body and the clause of `main` follow it: {}",
         handles.text
     );
-    let later = cmd(&["ir", "tests/programs/07_scopes.wf", "profile_page"]);
+    let scopes = cmd(&["ir", "tests/programs/07_scopes.wf", "profile_page"]);
+    assert_eq!(scopes.code, 0, "{}", scopes.stderr);
+    assert!(
+        scopes.text.contains(" = scope s0 -> [") && scopes.text.contains(": scope s0; parent "),
+        "the scope body of `profile_page` follows it: {}",
+        scopes.text
+    );
+    assert!(scopes.text.contains("scope_wait _1"), "{}", scopes.text);
+    let later = cmd(&["ir", "tests/programs/12_aliasing.wf", "steal"]);
     assert_eq!(later.code, 1);
-    assert!(later.stderr.contains("(stage B11)"), "{}", later.stderr);
+    assert!(later.stderr.contains("(stage B12)"), "{}", later.stderr);
     let missing = cmd(&["ir", file, "nope"]);
     assert_eq!(missing.code, 1);
     assert!(

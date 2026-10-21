@@ -1,0 +1,80 @@
+fn f0 work() -> () / Async: b0
+fn f1 run(u64, u64, fn() -> ()) -> () / () [sim.run]: extern
+test t0 "default workers": b1
+test t1 "two workers": b3
+closure c0: body b2, maker b1, cap_env e0, captures []
+closure c1: body b4, maker b3, cap_env e0, captures []
+cap_env e0
+
+body b0: fn work; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  bb0:
+    Print(const 1i64)
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: test "default workers"; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: fn() -> () (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = closure c0()
+    _0 = call run(const 7u64, const 4u64, move _1) / e0 -> [bb3, unwind: bb2]
+  bb1 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb1)
+  bb3:
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b2: closure c0; parent b1; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    _0 = call work() / e0 -> [bb2, unwind: bb1]
+  bb1 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb2:
+    Return
+  bb3 (cleanup):
+    UnwindExit
+
+body b3: test "two workers"; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: fn() -> () (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = closure c1()
+    _0 = call run(const 7u64, const 2u64, move _1) / e0 -> [bb3, unwind: bb2]
+  bb1 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb1)
+  bb3:
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b4: closure c1; parent b3; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    _0 = call work() / e0 -> [bb2, unwind: bb1]
+  bb1 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb2:
+    Return
+  bb3 (cleanup):
+    UnwindExit

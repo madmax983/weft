@@ -120,7 +120,7 @@ impl Builder<'_> {
                 _ => return,
             };
             let Some(info) = self.t.call.get(&x.id) else {
-                // `sim.run` has no call entry.
+                // A call with no call entry: its row is not known.
                 need.all |= in_closure;
                 return;
             };

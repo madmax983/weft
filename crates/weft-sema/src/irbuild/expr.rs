@@ -34,14 +34,13 @@ const fn bin_op(op: ast::BinOp) -> Option<(BinOp, bool)> {
     })
 }
 
-/// Returns the construct of an expression kind that the builder does not
-/// lower yet.
+/// Returns the construct of an expression kind that has no right side.
 const fn later(e: &ExprKind) -> Construct {
     match e {
-        ExprKind::Scope { .. } => Construct::Scope,
         // The builder lowers these kinds before it asks for a right side. A
         // range is valid only in a `for` (W0114).
-        ExprKind::Range { .. }
+        ExprKind::Scope { .. }
+        | ExprKind::Range { .. }
         | ExprKind::If { .. }
         | ExprKind::Match { .. }
         | ExprKind::Binary { .. }
@@ -180,6 +179,7 @@ impl Builder<'_> {
             ExprKind::Handle { clauses, body, .. } => {
                 return self.handle_into(e, clauses, body, &dest)
             }
+            ExprKind::Scope { body, .. } => return self.scope_into(e, body, &dest),
             _ => {}
         }
         let rv = self.rvalue(e)?;
@@ -264,13 +264,7 @@ impl Builder<'_> {
         let origin = self.origin(e.span, Some(e.id));
         if let Some(p) = self.as_place(e)? {
             let ty = self.value_ty(e)?;
-            let op = self.read_place(p, ty, e)?;
-            if skip {
-                return Ok(op);
-            }
-            let t = self.temp(ty, TempKind::Operand, origin);
-            self.assign(Place::local(t), Rvalue::Use(op), origin);
-            return Ok(Operand::Move(Place::local(t)));
+            return self.place_operand(p, ty, e, skip);
         }
         let ty = self.ty(e)?;
         let t = self.temp(ty, TempKind::Operand, origin);
@@ -283,6 +277,19 @@ impl Builder<'_> {
         Ok(Operand::Move(Place::local(t)))
     }
 
+    /// Reads place `p` of type `ty` (the place of `e`) as an operand: the
+    /// place itself with `skip`, else a temporary (`docs/ir.md` 5.1.1).
+    fn place_operand(&mut self, p: Place, ty: weft_ir::TyId, e: &Expr, skip: bool) -> R<Operand> {
+        let op = self.read_place(p, ty, e)?;
+        if skip {
+            return Ok(op);
+        }
+        let origin = self.origin(e.span, Some(e.id));
+        let t = self.temp(ty, TempKind::Operand, origin);
+        self.assign(Place::local(t), Rvalue::Use(op), origin);
+        Ok(Operand::Move(Place::local(t)))
+    }
+
     /// Evaluates `e` now and gives an operand in a read position: a
     /// comparison, an interpolation or `print` (`docs/ir.md` 5.1.1, 5.16,
     /// 5.33). Plain data is an operand as in [`Builder::operand`]. Another
@@ -290,10 +297,24 @@ impl Builder<'_> {
     /// &tv` for a value.
     pub(super) fn read_operand(&mut self, e: &Expr, skip: bool) -> R<Operand> {
         let ty = self.value_ty(e)?;
-        if !self.tys.not_copy(ty) {
-            return self.operand(e, skip);
-        }
         let origin = self.origin(e.span, Some(e.id));
+        if !self.tys.not_copy(ty) {
+            if self.constant(e)?.is_some() || !self.plain_path(e) {
+                return self.operand(e, skip);
+            }
+            let Some(p) = self.as_place(e)? else {
+                return self.operand(e, skip);
+            };
+            // A local or a capture that holds a `once` closure is not plain
+            // data: a read of it would move it, so it is borrowed.
+            if self.copies(&p, ty) {
+                return self.place_operand(p, ty, e, skip);
+            }
+            let rty = self.tys.intern(Ty::Ref(ty));
+            let t = self.temp(rty, TempKind::Operand, origin);
+            self.assign(Place::local(t), Rvalue::Ref(p), origin);
+            return Ok(Operand::Move(Place::local(t)));
+        }
         let place = if let Some(p) = self.as_place(e)? {
             p
         } else {

@@ -1,0 +1,17 @@
+// `x = h.join()` waits for the task and takes its result (`docs/ir.md` 5.29).
+// It moves the handle and can abort: a failed task raises its failure. The
+// result comes from the frame of the task: its place fields have no value
+// yet, as a call result (5.17).
+
+struct Frame { n: u64 }
+struct Pair { f: Box<Frame>, k: u64 }
+
+fn mk() -> Pair { Pair { f: Box.new(Frame { n: 1 }), k: 2 } }
+
+fn main() / async {
+    scope { s =>
+        let h = s.spawn(|| mk())
+        let p = h.join()
+        print(p.k)
+    }
+}
