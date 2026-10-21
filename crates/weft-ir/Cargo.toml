@@ -1,0 +1,13 @@
+[package]
+name = "weft-ir"
+description = "The core IR of Weft: the final types, the bodies, the printer and the verifier."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+weft-syntax.workspace = true
+
+[lints]
+workspace = true

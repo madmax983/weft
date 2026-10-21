@@ -202,6 +202,12 @@ parameters, `Task<T>`, the scope capability, capabilities, continuations, iterat
 `AdtDecl` table gives the fields and variants with their types, the place fields,
 `on abort`, linear and `!Move`.
 
+In `ty.rs` (plan stage T2), the prelude types `String`, `Duration`, `Box`, `Rc`, `Weak`,
+`Vec`, `Task`, the extern type `Scope` and raw pointers are ADTs: `AdtDecl::lang` names
+them, so the builder finds a `Box` or an `Rc` without a search by name. Each `AdtDecl`
+also holds the property rows of its definition (`Program::props`), so `Props` comes from
+the table alone. `Props` is in `ty.rs` too.
+
 A reference type has no place. The `in` place and the modes (`@ uniq`, `@ shared`,
 `@ once`, `@ portable`, ...) of a parameter, a field or a declared local are in the
 declaration tables (`FnDecl` parameters, `AdtDecl` fields, `LocalDecl`), as in

@@ -1000,10 +1000,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "weft-ir"
+version = "0.1.0"
+dependencies = [
+ "weft-syntax",
+]
+
+[[package]]
 name = "weft-sema"
 version = "0.1.0"
 dependencies = [
  "weft-facts",
+ "weft-ir",
  "weft-syntax",
  "weft-verified",
 ]
