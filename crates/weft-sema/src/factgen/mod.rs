@@ -19,7 +19,11 @@
 //! Stage F1 has a stub [`emit`]: it supports no group, so each program is out
 //! of scope. A test can give another emit ([`crate::analyze_with_emit`]).
 
+pub mod alpha;
 mod exports;
+pub mod nodes;
+pub mod rels;
+pub mod vars;
 
 use std::fmt;
 
@@ -186,6 +190,27 @@ pub(crate) fn run(
     let mut diags = kept;
     diags.extend(built.diags.iter().cloned());
     (s, Some(IrFacts { bodies, diags }))
+}
+
+/// The bodies of the component of the function or test body `entry`.
+///
+/// They are in the order of their ids (`docs/ir.md` 6.1): the body and each
+/// body inside it (closures, clauses, handled bodies, scope bodies). They share
+/// the tables of one `FnFacts`.
+pub fn component(built: &Built, entry: weft_ir::BodyId) -> Vec<weft_ir::BodyId> {
+    let Some(e) = built
+        .entries
+        .iter()
+        .position(|x| x.outcome == Outcome::Built(entry))
+    else {
+        return Vec::new();
+    };
+    scope::body_entries(built)
+        .into_iter()
+        .enumerate()
+        .filter(|(_, x)| *x == Some(e))
+        .map(|(i, _)| weft_ir::BodyId(u32::try_from(i).unwrap_or(u32::MAX)))
+        .collect()
 }
 
 /// The facts of the declarations of a body, from the facts of the old

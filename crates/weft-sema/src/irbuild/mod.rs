@@ -53,6 +53,7 @@ use weft_syntax::ast::{self, Span};
 use weft_syntax::diag::Diagnostic;
 
 pub(crate) use closure::walk_block;
+pub(crate) use unset::subst;
 
 use crate::thir::{BindingId, Tables};
 use crate::Analysis;

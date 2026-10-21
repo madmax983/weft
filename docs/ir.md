@@ -1846,6 +1846,21 @@ parts of `l` that have no `H` variable. A use of a place `p` uses `v(p)`: `S(l)`
 | `task(T)`, `fork_task(T)` | one task for each `SpawnDecl`, each branch of a `Fork`, and each `runs` entry that a run node applies as a task; `fork_task` for a `Fork` branch and for a run as a thread |
 | `library()`, `std_effect(E)`, `started()`, `no_runtime()` | the unit and the driver, as today: the file marker or `weft.toml`, the effects of the prelude, `main` or a test of the root, the no-runtime profile |
 
+As built (plan stage F2, `crates/weft-sema/src/factgen/`): `rels.rs` holds `RELS` with
+the parts of 6.7 (`rebound_at` in `rebinds`, `joined_at` in `tasks`); `nodes.rs` makes the
+nodes of one body for a list of abort destinations (F2 knows one: past the function), with
+`Main` of a `handle` or a `scope` linked to its `Exit` until the splices (F14, F18), and no
+`Landing` or `Copy` node yet (F15, F16). In `alpha.rs` the payload of a variant with one
+field is the variant step itself (as the old lowering), a slice names its elements
+(`Index` or `Elems` of a slice adds no step), a split step has the stability of the
+element step before it, a `Box` step has the text of the old lowering (none), and
+`Deref(Ref)` gives an error until F3, an environment field until F11. In `vars.rs` the `H`
+variables are the parts (fields and variants only) that a statement or a terminator
+writes and whose type can hold a reference, a function value, a capability or a task (a
+type parameter can); `U` comes from each `Uninit` of a projected place; `C` from each
+`ByRef` capture of a whole local (at the site local of an upvar); `has_on_abort` needs
+`linear`; `uniq` is the property of the local until the analysis (F3).
+
 ### 6.4 Templates
 
 Each instruction has one template: the input relations of `spec/weft.dl` that it can emit
