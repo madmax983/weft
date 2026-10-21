@@ -3,8 +3,8 @@
 use super::{
     ast, block_tail, effects, elem_step, expr_tail, field_step, AdtKind, Arc, BinOp, ContInfo,
     Deref, Expr, ExprKind, FnId, FnTy, HandlerFrame, HandlerInfo, IntTy, ItemRef, Jump, LVal, Lit,
-    Lower, NodeId, PathRef, Pattern, PlaceId, RootKind, Span, StrPart, Summary, Ty, UnOp, Val,
-    VarId, VarKind,
+    Lower, NodeId, PathRef, Pattern, PatternKind, PlaceId, RootKind, Span, StrPart, Summary, Ty,
+    UnOp, Val, VarId, VarKind,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use weft_syntax::diag::Code;
@@ -1194,14 +1194,14 @@ impl Lower<'_> {
         n: NodeId,
     ) {
         let t = self.deref_ty(ty);
-        match pat {
-            Pattern::Wild(_) => {}
-            Pattern::Lit(l, s) => {
+        match &pat.kind {
+            PatternKind::Wild(_) => {}
+            PatternKind::Lit(l, s) => {
                 self.lit_span = *s;
                 let v = self.lit(l);
                 self.unify(&t, &v.ty, *s);
             }
-            Pattern::Bind(id) => {
+            PatternKind::Bind(id) => {
                 // A copy payload binds by value: the arm reads the place.
                 let by_ref = by_ref && !self.is_scalar(&t);
                 if !by_ref {
@@ -1230,7 +1230,7 @@ impl Lower<'_> {
                 let l = self.new_local(&id.name, VarKind::Local, id.span, v.ty.clone(), false);
                 self.assign_local(l, &v, n);
             }
-            Pattern::Tuple(ps, s) => {
+            PatternKind::Tuple(ps, s) => {
                 let rt = self.inf.deep(&t);
                 let Ty::Tuple(ts) = rt else {
                     self.err(Code::W0102, "this value is not a tuple", *s);
@@ -1260,7 +1260,7 @@ impl Lower<'_> {
                     );
                 }
             }
-            Pattern::Variant { path, fields, span } => {
+            PatternKind::Variant { path, fields, span } => {
                 let name = &path[path.len() - 1].name;
                 let rt = self.inf.deep(&t);
                 let (adt, args) = match rt {

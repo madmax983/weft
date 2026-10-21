@@ -6,8 +6,8 @@ use std::fmt::Write as _;
 
 use weft_syntax::ast::{
     Arg, AssignOp, BinOp, Block, EffectItem, EffectRow, Expr, ExprKind, File, FnDecl, Item,
-    ItemKind, Lit, Mode, Param, Pattern, PlaceExpr, PlaceStep, Stmt, StmtKind, StrPart, TypeExpr,
-    TypeExprKind, UnOp,
+    ItemKind, Lit, Mode, Param, Pattern, PatternKind, PlaceExpr, PlaceStep, Stmt, StmtKind,
+    StrPart, TypeExpr, TypeExprKind, UnOp,
 };
 use weft_syntax::{parse_file, ParseError};
 
@@ -299,13 +299,13 @@ pub fn sx_stmt(s: &Stmt) -> String {
 
 /// S-expression of a pattern.
 pub fn sx_pat(p: &Pattern) -> String {
-    match p {
-        Pattern::Bind(id) => id.name.clone(),
-        Pattern::Wild(_) => "_".into(),
-        Pattern::Tuple(ps, _) => {
+    match &p.kind {
+        PatternKind::Bind(id) => id.name.clone(),
+        PatternKind::Wild(_) => "_".into(),
+        PatternKind::Tuple(ps, _) => {
             format!("({})", ps.iter().map(sx_pat).collect::<Vec<_>>().join(", "))
         }
-        Pattern::Variant { path, fields, .. } => {
+        PatternKind::Variant { path, fields, .. } => {
             let p = path_s(path.iter().map(|i| i.name.as_str()));
             if fields.is_empty() {
                 p
@@ -316,7 +316,7 @@ pub fn sx_pat(p: &Pattern) -> String {
                 )
             }
         }
-        Pattern::Lit(l, _) => sx_lit(l),
+        PatternKind::Lit(l, _) => sx_lit(l),
     }
 }
 
@@ -434,4 +434,191 @@ pub fn sx_row(r: &EffectRow) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// The ids that one walk of a tree finds.
+#[derive(Default)]
+pub struct Ids {
+    /// The expression ids, in the order of the walk.
+    pub exprs: Vec<u32>,
+    /// The pattern ids, in the order of the walk.
+    pub pats: Vec<u32>,
+}
+
+impl Ids {
+    /// Returns the ids of every expression and every pattern of a file.
+    pub fn of_file(file: &File) -> Self {
+        let mut ids = Self::default();
+        ids.items(&file.items);
+        ids
+    }
+
+    /// Returns the ids of every expression and every pattern of an expression.
+    pub fn of_expr(e: &Expr) -> Self {
+        let mut ids = Self::default();
+        ids.expr(e);
+        ids
+    }
+
+    fn items(&mut self, items: &[Item]) {
+        for item in items {
+            match &item.kind {
+                ItemKind::Fn(f) => {
+                    if let Some(b) = &f.body {
+                        self.block(b);
+                    }
+                }
+                ItemKind::Impl(b) => self.items(&b.items),
+                ItemKind::Mod(m) => self.items(&m.items),
+                ItemKind::Test(t) => self.block(&t.body),
+                ItemKind::Struct(_)
+                | ItemKind::Enum(_)
+                | ItemKind::Effect(_)
+                | ItemKind::ExternType(_) => {}
+            }
+        }
+    }
+
+    fn block(&mut self, b: &Block) {
+        for s in &b.stmts {
+            self.stmt(s);
+        }
+    }
+
+    fn stmt(&mut self, s: &Stmt) {
+        match &s.kind {
+            StmtKind::Let { pat, init, .. } => {
+                self.pat(pat);
+                if let Some(e) = init {
+                    self.expr(e);
+                }
+            }
+            StmtKind::Expr(e) | StmtKind::Assert(e) | StmtKind::Return(Some(e)) => self.expr(e),
+            StmtKind::Assign { target, value, .. } => {
+                self.expr(target);
+                self.expr(value);
+            }
+            StmtKind::Return(None) | StmtKind::Break | StmtKind::Continue => {}
+            StmtKind::While { cond, body } => {
+                self.expr(cond);
+                self.block(body);
+            }
+            StmtKind::For { pat, iter, body } => {
+                self.pat(pat);
+                self.expr(iter);
+                self.block(body);
+            }
+            StmtKind::Loop(b) => self.block(b),
+        }
+    }
+
+    fn pat(&mut self, p: &Pattern) {
+        self.pats.push(p.id.0);
+        match &p.kind {
+            PatternKind::Tuple(ps, _) | PatternKind::Variant { fields: ps, .. } => {
+                for q in ps {
+                    self.pat(q);
+                }
+            }
+            PatternKind::Lit(l, _) => self.lit(l),
+            PatternKind::Bind(_) | PatternKind::Wild(_) => {}
+        }
+    }
+
+    fn lit(&mut self, l: &Lit) {
+        if let Lit::Str(parts) = l {
+            for p in parts {
+                if let StrPart::Interp(e) = p {
+                    self.expr(e);
+                }
+            }
+        }
+    }
+
+    fn opt(&mut self, e: Option<&Expr>) {
+        if let Some(e) = e {
+            self.expr(e);
+        }
+    }
+
+    fn args(&mut self, args: &[Arg]) {
+        for a in args {
+            self.expr(&a.value);
+        }
+    }
+
+    fn expr(&mut self, e: &Expr) {
+        self.exprs.push(e.id.0);
+        match &e.kind {
+            ExprKind::Lit(l) => self.lit(l),
+            ExprKind::Name(_) => {}
+            ExprKind::Field { base, .. } => self.expr(base),
+            ExprKind::Index { base, index } => {
+                self.expr(base);
+                self.opt(index.as_deref());
+            }
+            ExprKind::Call {
+                callee,
+                args,
+                trailing,
+            } => {
+                self.expr(callee);
+                self.args(args);
+                self.opt(trailing.as_deref());
+            }
+            ExprKind::MethodCall {
+                receiver,
+                args,
+                trailing,
+                ..
+            } => {
+                self.expr(receiver);
+                self.args(args);
+                self.opt(trailing.as_deref());
+            }
+            ExprKind::Unary { expr, .. } => self.expr(expr),
+            ExprKind::Binary { lhs, rhs, .. } | ExprKind::Range { lo: lhs, hi: rhs } => {
+                self.expr(lhs);
+                self.expr(rhs);
+            }
+            ExprKind::Tuple(es) | ExprKind::Array(es) => {
+                for x in es {
+                    self.expr(x);
+                }
+            }
+            ExprKind::StructLit { fields, .. } => {
+                for (_, x) in fields {
+                    self.expr(x);
+                }
+            }
+            ExprKind::Closure { body, .. } => self.expr(body),
+            ExprKind::Block(b) | ExprKind::Scope { body: b, .. } => self.block(b),
+            ExprKind::If { cond, then, else_ } => {
+                self.expr(cond);
+                self.block(then);
+                self.opt(else_.as_deref());
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.expr(scrutinee);
+                for a in arms {
+                    self.pat(&a.pat);
+                    self.expr(&a.body);
+                }
+            }
+            ExprKind::Handle { clauses, body, .. } => {
+                for c in clauses {
+                    self.block(&c.body);
+                }
+                self.expr(body);
+            }
+        }
+    }
+}
+
+/// Fails unless `ids`, in some order, are `0..ids.len()`, each one time.
+pub fn assert_dense(what: &str, ids: &[u32]) {
+    let mut sorted = ids.to_vec();
+    sorted.sort_unstable();
+    let want: Vec<u32> = (0..).take(sorted.len()).collect();
+    assert_eq!(sorted, want, "the {what} ids are not unique and dense");
 }

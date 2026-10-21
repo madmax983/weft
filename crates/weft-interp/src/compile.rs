@@ -13,8 +13,8 @@ use weft_sema::program::{AdtKind, EffectId, FnId, ItemRef, ModId, Program, PRELU
 use weft_sema::types::{AdtId, IntTy};
 use weft_sema::FnSig;
 use weft_syntax::ast::{
-    Arg, BinOp, Block, EffectPath, Expr, ExprKind, Ident, Lit, Param, Pattern, Span, Stmt,
-    StmtKind, StrPart, UnOp,
+    Arg, BinOp, Block, EffectPath, Expr, ExprKind, Ident, Lit, Param, Pattern, PatternKind, Span,
+    Stmt, StmtKind, StrPart, UnOp,
 };
 
 use crate::code::{CPat, ClauseSpec, Code, CodeKind, HandleSpec, LitPat, Op, VarRef};
@@ -639,21 +639,21 @@ impl<'a> Compiler<'a> {
 
     /// Binds the value on top of the stack to a `let` pattern.
     fn bind_pat(&mut self, pat: &Pattern) {
-        match pat {
-            Pattern::Bind(id) => {
+        match &pat.kind {
+            PatternKind::Bind(id) => {
                 let s = self.declare(&id.name);
                 self.emit(Op::Bind(s));
             }
-            Pattern::Wild(_) | Pattern::Lit(..) => {
+            PatternKind::Wild(_) | PatternKind::Lit(..) => {
                 self.emit(Op::Pop);
             }
-            Pattern::Tuple(ps, _) => {
+            PatternKind::Tuple(ps, _) => {
                 self.emit(Op::Untuple(u32_of(ps.len())));
                 for p in ps {
                     self.bind_pat(p);
                 }
             }
-            Pattern::Variant { path, fields, .. } => {
+            PatternKind::Variant { path, fields, .. } => {
                 let is_struct = self
                     .adt_by_path(path)
                     .is_some_and(|a| matches!(self.prog.adts[a].kind, AdtKind::Struct(_)));
@@ -670,12 +670,12 @@ impl<'a> Compiler<'a> {
     }
 
     fn declare_uninit(&mut self, pat: &Pattern) {
-        match pat {
-            Pattern::Bind(id) => {
+        match &pat.kind {
+            PatternKind::Bind(id) => {
                 let s = self.declare(&id.name);
                 self.emit(Op::BindEmpty(s));
             }
-            Pattern::Tuple(ps, _) => {
+            PatternKind::Tuple(ps, _) => {
                 for p in ps {
                     self.declare_uninit(p);
                 }
@@ -685,10 +685,10 @@ impl<'a> Compiler<'a> {
     }
 
     fn cpat(&mut self, pat: &Pattern) -> CPat {
-        match pat {
-            Pattern::Wild(_) => CPat::Wild,
-            Pattern::Bind(id) => CPat::Bind(self.declare(&id.name)),
-            Pattern::Lit(l, _) => CPat::Lit(match l {
+        match &pat.kind {
+            PatternKind::Wild(_) => CPat::Wild,
+            PatternKind::Bind(id) => CPat::Bind(self.declare(&id.name)),
+            PatternKind::Lit(l, _) => CPat::Lit(match l {
                 Lit::Int(v) => LitPat::Int(i64::try_from(*v).unwrap_or(i64::MAX)),
                 Lit::Bool(b) => LitPat::Bool(*b),
                 Lit::Unit => LitPat::Unit,
@@ -702,8 +702,8 @@ impl<'a> Compiler<'a> {
                     LitPat::Str(Rc::from(s.as_str()))
                 }
             }),
-            Pattern::Tuple(ps, _) => CPat::Tuple(ps.iter().map(|p| self.cpat(p)).collect()),
-            Pattern::Variant { path, fields, .. } => CPat::Variant {
+            PatternKind::Tuple(ps, _) => CPat::Tuple(ps.iter().map(|p| self.cpat(p)).collect()),
+            PatternKind::Variant { path, fields, .. } => CPat::Variant {
                 name: Rc::from(path.last().map_or("", |p| p.name.as_str())),
                 fields: fields.iter().map(|p| self.cpat(p)).collect(),
             },

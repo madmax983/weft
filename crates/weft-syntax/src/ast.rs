@@ -42,6 +42,35 @@ impl fmt::Debug for Span {
     }
 }
 
+/// The id of an expression in its unit (one source file).
+///
+/// The parser gives the expressions of one unit the ids `0..n`, each id one
+/// time. An id has no meaning in a different unit. The tables of the typed tree
+/// use the id as a key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
+pub struct ExprId(pub u32);
+
+impl ExprId {
+    /// Returns the index into a table of the unit.
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// The id of a pattern in its unit (one source file).
+///
+/// The parser gives the patterns of one unit the ids `0..n`, each id one time.
+/// An id has no meaning in a different unit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
+pub struct PatId(pub u32);
+
+impl PatId {
+    /// Returns the index into a table of the unit.
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
 /// A name with its location.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Ident {
@@ -529,20 +558,50 @@ pub enum StmtKind {
 }
 
 /// A pattern.
+///
+/// `PartialEq` compares the kinds only. It ignores the id, so two trees that
+/// differ only in their ids are equal.
+#[derive(Clone, Debug)]
+pub struct Pattern {
+    /// The id of the pattern in its unit.
+    pub id: PatId,
+    /// The kind of pattern.
+    pub kind: PatternKind,
+}
+
+impl PartialEq for Pattern {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+    }
+}
+
+impl Pattern {
+    /// Makes a pattern.
+    pub const fn new(id: PatId, kind: PatternKind) -> Self {
+        Self { id, kind }
+    }
+
+    /// Returns the location of the pattern.
+    pub const fn span(&self) -> Span {
+        self.kind.span()
+    }
+}
+
+/// The kinds of pattern.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Pattern {
+pub enum PatternKind {
     /// A binding: `x`.
     Bind(Ident),
     /// `_`.
     Wild(Span),
     /// `(a, b)`.
-    Tuple(Vec<Self>, Span),
+    Tuple(Vec<Pattern>, Span),
     /// `Some(x)`, `Died(id)`, `None`, `Event.Died(id)`.
     Variant {
         /// The variant path: one or two segments.
         path: Vec<Ident>,
         /// The payload patterns.
-        fields: Vec<Self>,
+        fields: Vec<Pattern>,
         /// The location.
         span: Span,
     },
@@ -550,7 +609,7 @@ pub enum Pattern {
     Lit(Lit, Span),
 }
 
-impl Pattern {
+impl PatternKind {
     /// Returns the location of the pattern.
     pub const fn span(&self) -> Span {
         match self {
@@ -584,12 +643,30 @@ pub enum StrPart {
 }
 
 /// An expression.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// `PartialEq` compares the kinds and the locations only. It ignores the id, so
+/// two trees that differ only in their ids are equal.
+#[derive(Clone, Debug)]
 pub struct Expr {
+    /// The id of the expression in its unit.
+    pub id: ExprId,
     /// The kind of expression.
     pub kind: ExprKind,
     /// The location.
     pub span: Span,
+}
+
+impl PartialEq for Expr {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind && self.span == other.span
+    }
+}
+
+impl Expr {
+    /// Makes an expression.
+    pub const fn new(id: ExprId, kind: ExprKind, span: Span) -> Self {
+        Self { id, kind, span }
+    }
 }
 
 /// Unary operators.

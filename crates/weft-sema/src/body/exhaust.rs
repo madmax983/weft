@@ -10,7 +10,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use weft_syntax::diag::Code;
 
-use super::{AdtKind, Diagnostic, Lit, Lower, Pattern, Ty};
+use super::{AdtKind, Diagnostic, Lit, Lower, Pattern, PatternKind, Ty};
 
 /// The most matrix steps that one `match` can take. A larger check stops, so
 /// that a large match cannot take a long time. It then reports W0120 too: the
@@ -61,9 +61,12 @@ impl Lower<'_> {
         let named = rows.iter().any(|r| {
             matches!(
                 r.first(),
-                Some(Some(
-                    Pattern::Variant { .. } | Pattern::Tuple(..) | Pattern::Lit(..)
-                ))
+                Some(Some(Pattern {
+                    kind: PatternKind::Variant { .. }
+                        | PatternKind::Tuple(..)
+                        | PatternKind::Lit(..),
+                    ..
+                }))
             )
         });
         match &t {
@@ -85,8 +88,8 @@ impl Lower<'_> {
                             .collect();
                         picked.sort_unstable();
                         let rows: Vec<Row<'_>> = picked.iter().map(|&i| rows[i].clone()).collect();
-                        let spec = Self::specialize(&rows, fields.len(), |p| match p {
-                            Pattern::Variant {
+                        let spec = Self::specialize(&rows, fields.len(), |p| match &p.kind {
+                            PatternKind::Variant {
                                 path, fields: fs, ..
                             } => path
                                 .last()
@@ -102,16 +105,16 @@ impl Lower<'_> {
             }
             Ty::Bool => {
                 return [true, false].iter().all(|&b| {
-                    let spec = Self::specialize(rows, 0, |p| match p {
-                        Pattern::Lit(Lit::Bool(x), _) if *x == b => Some(Vec::new()),
+                    let spec = Self::specialize(rows, 0, |p| match &p.kind {
+                        PatternKind::Lit(Lit::Bool(x), _) if *x == b => Some(Vec::new()),
                         _ => None,
                     });
                     self.covers(&spec, rest, budget)
                 });
             }
             Ty::Tuple(ts) => {
-                let spec = Self::specialize(rows, ts.len(), |p| match p {
-                    Pattern::Tuple(ps, _) if ps.len() == ts.len() => {
+                let spec = Self::specialize(rows, ts.len(), |p| match &p.kind {
+                    PatternKind::Tuple(ps, _) if ps.len() == ts.len() => {
                         Some(ps.iter().map(Some).collect())
                     }
                     _ => None,
@@ -131,7 +134,10 @@ impl Lower<'_> {
             .iter()
             .filter(|r| match r.first() {
                 Some(p) if is_wild(*p) => true,
-                Some(Some(Pattern::Lit(Lit::Unit, _))) => unit,
+                Some(Some(Pattern {
+                    kind: PatternKind::Lit(Lit::Unit, _),
+                    ..
+                })) => unit,
                 _ => false,
             })
             .map(|r| r[1..].to_vec())
@@ -175,7 +181,10 @@ fn rows_by_variant<'a>(rows: &[Row<'a>]) -> (HashMap<&'a str, Vec<usize>>, Vec<u
     for (i, r) in rows.iter().enumerate() {
         match r.first() {
             Some(p) if is_wild(*p) => wild.push(i),
-            Some(Some(Pattern::Variant { path, .. })) => {
+            Some(Some(Pattern {
+                kind: PatternKind::Variant { path, .. },
+                ..
+            })) => {
                 if let Some(n) = path.last() {
                     own.entry(n.name.as_str()).or_default().push(i);
                 }
@@ -188,5 +197,11 @@ fn rows_by_variant<'a>(rows: &[Row<'a>]) -> (HashMap<&'a str, Vec<usize>>, Vec<u
 
 /// Returns true if a cell of the matrix matches anything.
 const fn is_wild(p: Option<&Pattern>) -> bool {
-    matches!(p, None | Some(Pattern::Wild(_) | Pattern::Bind(_)))
+    matches!(
+        p,
+        None | Some(Pattern {
+            kind: PatternKind::Wild(_) | PatternKind::Bind(_),
+            ..
+        })
+    )
 }

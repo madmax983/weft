@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 use weft_syntax::diag::Code;
 
-use weft_syntax::ast::{BinOp, Block, Expr, ExprKind, Pattern, StmtKind, StrPart};
+use weft_syntax::ast::{BinOp, Block, Expr, ExprKind, PatternKind, StmtKind, StrPart};
 use weft_syntax::diag::Diagnostic;
 
 use crate::program::{FnId, FnSig, ItemRef, ModId, Program};
@@ -216,12 +216,12 @@ impl Fip<'_> {
                 for arm in arms {
                     let mut c = credits.clone();
                     if owned_scrut {
-                        if let Pattern::Variant { fields, path, .. } = &arm.pat {
+                        if let PatternKind::Variant { fields, path, .. } = &arm.pat.kind {
                             *c.entry(fields.len()).or_insert(0) += 1;
                             let name = path.last().map_or("", |p| p.name.as_str());
                             let ftys = self.payload_types(name);
                             for (fi, f) in fields.iter().enumerate() {
-                                if let Pattern::Bind(b) = f {
+                                if let PatternKind::Bind(b) = &f.kind {
                                     if !ftys.get(fi).is_some_and(is_owned) {
                                         continue;
                                     }
