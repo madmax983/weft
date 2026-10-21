@@ -1,0 +1,57 @@
+struct J { f: fn() }
+fn wrap(f: fn()) -> fn() { || { f()
+ f() } }
+fn wrap2(f: fn()) -> fn() { wrap(f) }
+fn wrapj(f: fn()) -> J { J { f: || { f()
+ f() } } }
+fn wrap_inner(f: fn()) -> fn() { let h = || f()
+ || { h()
+ h() } }
+fn wrap_via_twice(f: fn()) -> fn() { || twice(f) }
+fn twice(f: fn()) { f()
+ f() }
+fn ret_two_levels() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let g = wrap2(|| { print(r + 1)
+ v.clear() })
+    g()
+}
+fn ret_struct() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let j = wrapj(|| { print(r + 1)
+ v.clear() })
+    let g = j.f
+    g()
+}
+fn ret_inner() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let g = wrap_inner(|| { print(r + 1)
+ v.clear() })
+    g()
+}
+fn ret_via_twice() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let g = wrap_via_twice(|| { print(r + 1)
+ v.clear() })
+    g()
+}
+fn closure_maker() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let mk = |f: fn()| || { f()
+ f() }
+    let g = mk(|| { print(r + 1)
+ v.clear() })
+    g()
+}
+fn main() {
+}

@@ -10,12 +10,14 @@
 //! records and its verdict. [`ledger`] reads the ledger that accepts groups of
 //! programs. [`report`] runs the gate, applies the rules and writes the
 //! report. [`baseline`] keeps the old records of a tier and compares a run
-//! with them.
+//! with them. [`claims`] reads the claims file and checks each claim that is on
+//! with the `ir` pipeline.
 
 use std::path::PathBuf;
 
 pub mod archive;
 pub mod baseline;
+pub mod claims;
 pub mod classify;
 pub mod copy;
 pub mod digest;
@@ -74,6 +76,9 @@ pub enum Error {
     /// The ledger is not correct.
     #[error("the ledger: {0}")]
     Ledger(String),
+    /// The claims file is not correct.
+    #[error("the claims file: {0}")]
+    Claims(String),
     /// The oracle cache has no verdict for some programs: the interpreter
     /// sources or the programs changed after the last run of the oracle.
     #[error("{message}")]

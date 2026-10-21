@@ -1,0 +1,61 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct GW<T> { x: T }
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+fn tuple_elems(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let v = Vec.new()
+    v.push((1, || print(1)))
+    v.push((2, || world.entities.clear()))
+    let (n, g) = v[1]
+    g()
+    print(first.hp)
+}
+fn tuple_elems_field(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let v = Vec.new()
+    v.push((1, || print(1)))
+    v.push((2, || world.entities.clear()))
+    let g = v[1].1
+    g()
+    print(first.hp)
+}
+fn tuple_array(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let a = [(1, || print(1)), (2, || world.entities.clear())]
+    let (n, g) = a[1]
+    g()
+    print(first.hp)
+}
+fn tuple_reassign(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let t = (1, || print(1))
+    t = (2, || world.entities.clear())
+    let (n, g) = t
+    g()
+    print(first.hp)
+}
+fn gw_vec(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let v = Vec.new()
+    v.push(GW { x: || print(1) })
+    v.push(GW { x: || world.entities.clear() })
+    let g = v[1].x
+    g()
+    print(first.hp)
+}
+fn tuple_first_mut(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    let v = Vec.new()
+    v.push((1, || world.entities.clear()))
+    v.push((2, || print(1)))
+    let (n, g) = v[0]
+    g()
+    print(first.hp)
+}
+fn main() {
+}

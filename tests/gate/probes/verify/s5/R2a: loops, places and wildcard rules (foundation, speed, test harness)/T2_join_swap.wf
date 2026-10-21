@@ -1,0 +1,31 @@
+// Two handles that an `if` can swap. A join of one of them joins only one task.
+struct Stats { count: u64 }
+
+fn swap_a(st: &Stats, c: bool) / mut(st), async {
+    scope { s =>
+        let a = s.spawn(|| st.count += 1)
+        let b = s.spawn(|| print(1))
+        let (x, y) = if c { (a, b) } else { (b, a) }
+        x.join()
+        print(st.count)
+        y.join()
+    }
+}
+fn swap_b(st: &Stats, c: bool) / mut(st), async {
+    scope { s =>
+        let a = s.spawn(|| st.count += 1)
+        let b = s.spawn(|| print(1))
+        let (x, y) = if c { (b, a) } else { (a, b) }
+        x.join()
+        print(st.count)
+        y.join()
+    }
+}
+test "swap_a" {
+    let st = Stats { count: 0 }
+    swap_a(&st, false)
+}
+test "swap_b" {
+    let st = Stats { count: 0 }
+    swap_b(&st, true)
+}

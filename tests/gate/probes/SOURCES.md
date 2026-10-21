@@ -115,3 +115,48 @@ Totals: 78 directories, 3498 files, 23 packages.
 - `s5/vc_untyped_chain.wf`
 - `verify/partb/S4diff/p/wide2.wf`
 - `verify/s5/diff/p/stress_if8.wf`
+
+## Claim repros (stage G7)
+
+Stage G7 copied these files from the tier-2 archive (`tests/gate/probes-tier2.tar.zst`),
+because a claim of `tests/gate/claims.toml` names them and the copy rules of
+plan §2.2 do not take their directories. They keep their paths. `copy-probes`
+does not copy them, and it writes this file again without this section: add the
+section again after a run of `copy-probes`.
+
+- `verify/partb/S4/run/drops2.wf`
+- `verify/partb/S4/run/drops3.wf`
+- `verify/partb/S4/run/unset_closure.wf`
+- `verify/partb/S4/run/unset_ret.wf`
+- `verify/partb/S4/run/vec_fn_drop.wf`
+- `verify/partb/S4/run/vec_fn_run.wf`
+- `verify/review_core/Core_S1/rt2/clause_capture.wf`
+- `verify/review_core/Core_S1/rt4/esc_closure_arg.wf`
+- `verify/review_core/Core_S1/rt9/esc_field_ref.wf`
+- `verify/review_edge/Edge/f14/overwritten_variants.wf`
+- `verify/review_edge/Edge/f14/ow_closure_run.wf`
+- `verify/review_edge/Edge/ptr/ptr_generic_fork.wf`
+- `verify/s5/R2a: loops, places and wildcard rules (foundation, speed, test harness)/R1_walk_then_write.wf`
+- `verify/s5/R2a: loops, places and wildcard rules (foundation, speed, test harness)/R2_bst.wf`
+- `verify/s5/R2a: loops, places and wildcard rules (foundation, speed, test harness)/T2_join_swap.wf`
+- `verify/s5/R2a: loops, places and wildcard rules (foundation, speed, test harness)/T3_loop_handles.wf`
+- `verify/s5/R2a: loops, places and wildcard rules (foundation, speed, test harness)/T4_loop_swap_access.wf`
+- `verify/s5/R2b: closures, function values and stored references/V_FD3_more.wf`
+- `verify/s5/R2b: closures, function values and stored references/V_OR1_more.wf`
+- `verify/s5/R2b: closures, function values and stored references/V_OR3_container_args.wf`
+- `verify/s5/R2b: closures, function values and stored references/V_RR2_tuple_elems.wf`
+- `verify/s5/R2b: closures, function values and stored references/V_RR7_nested_and_part.wf`
+- `verify/s5/R2b: closures, function values and stored references/fd3_fn.wf`
+- `verify/s5/R2b: closures, function values and stored references/fd3_localrc2.wf`
+- `verify/s5/R2b: closures, function values and stored references/or3_ret.wf`
+- `verify/s5/R2b: closures, function values and stored references/or3_variants.wf`
+- `verify/s5/R2b: closures, function values and stored references/rr2_tuple.wf`
+- `verify/s5/R2b: closures, function values and stored references/rr7_nested.wf`
+- `verify/s5/R2b: closures, function values and stored references/rr7_ret2.wf`
+- `verify/s5/r2a/t/mu1.wf`
+- `verify/s5/r2a/t/mu3.wf`
+- `verify/s5/r2a/t/tk1.wf`
+- `verify/s5/r2a/t/tk2.wf`
+- `verify/s5/r2a/t/tk3.wf`
+- `verify/s5/r2a/t/x3.wf`
+- `verify/s5/r2a/t/x5.wf`

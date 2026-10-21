@@ -1,0 +1,47 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+fn mk_early(world: &World, d: &Entity) -> fn() / mut(world.entities) {
+    let r = &world.entities[0]
+    let f = || print(r.hp)
+    f
+}
+fn ret_early() {
+    let w = mkw()
+    let e = Entity { hp: 5 }
+    let f = mk_early(&w, &e)
+    w.entities.clear()
+    f()
+}
+fn mk_late(world: &World, d: &Entity) -> fn() / mut(world.entities) {
+    let r = d
+    let f = || print(r.hp)
+    r = &world.entities[0]
+    f
+}
+fn ret_late() {
+    let w = mkw()
+    let e = Entity { hp: 5 }
+    let f = mk_late(&w, &e)
+    w.entities.clear()
+    f()
+}
+fn mk_fn_late(world: &World) -> fn() / mut(world.entities) {
+    let g = || print(0)
+    let f = || g()
+    g = || world.entities.clear()
+    f
+}
+fn ret_fn_late() {
+    let w = mkw()
+    let first = &w.entities[0]
+    let f = mk_fn_late(&w)
+    f()
+    print(first.hp)
+}
+fn main() {
+}

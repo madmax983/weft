@@ -1,0 +1,72 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print("eat") }
+fn run(f: fn()) { f() }
+
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+fn nested_hof(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let g = || print(r.hp)
+    let f = || run(g)
+    r = &world.entities[0]
+    world.entities.clear()
+    run(f)
+}
+fn nested_fn_late(world: &World, d: &Entity) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g = || print(0)
+    let h = || g()
+    let f = || h()
+    g = || world.entities.clear()
+    f()
+    print(first.hp)
+}
+fn nested_task(world: &World, d: &Entity) / mut(world.entities), async, clock {
+    let r = d
+    let g = || print(r.hp)
+    scope { s =>
+        s.spawn(|| { sleep(1.ms)
+ g() })
+        r = &world.entities[0]
+        world.entities.clear()
+    }
+}
+fn nested_option(world: &World, d: &Entity) / mut(world.entities) {
+    let o = Some(d)
+    let f = || match o { Some(q) => print(q.hp), None => {} }
+    o = Some(&world.entities[0])
+    world.entities.clear()
+    f()
+}
+fn nested_three(world: &World, d: &Entity) / mut(world.entities) {
+    let r = d
+    let g = || print(r.hp)
+    let h = || g()
+    let f = || h()
+    r = &world.entities[0]
+    world.entities.clear()
+    f()
+}
+fn tuple_part_hof(world: &World, d: &Entity) / mut(world.entities) {
+    let t = (d, 1)
+    let f = || print(t.0.hp)
+    t.0 = &world.entities[0]
+    world.entities.clear()
+    run(f)
+}
+fn nested_once() {
+    let b = Buf { items: Vec.new() }
+    let c = || print(0)
+    let k = || c()
+    let j = || k()
+    c = || eat(b)
+    j()
+    j()
+}
+fn main() {
+}

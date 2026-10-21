@@ -1,0 +1,47 @@
+// FD3 shapes that still slip: 0 errors at head; each test faults.
+struct Cache { refs: Vec<&u64>, fs: Vec<fn()> }
+effect Put { fn put(x: &u64) }
+fn apply(f: fn(&u64), x: &u64) { f(x) }
+fn newc() -> Rc<Cache> { Rc.new(Cache { refs: Vec.new(), fs: Vec.new() }) }
+fn read(c: Rc<Cache>) { let r = c.refs[0]
+ print(r + 0) }
+fn runf(c: Rc<Cache>) / mut(Cache) { let g = c.fs[0]
+ g() }
+// A closure that captures a local goes into an rc object.
+fn fn_store_rc(c: Rc<Cache>) / mut(Cache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    c.fs.push(|| print(v.len()))      // expected W0204
+}
+// A handler clause puts its parameter (a reference into a local) into an rc object.
+fn clause_store(c: Rc<Cache>) / mut(Cache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    handle Put { fn put(x) { c.refs.push(x)
+ resume(()) } } in put(&v[0])           // expected W0204
+}
+// A closure puts its reference parameter into an rc object; the caller gives it a local.
+fn fnparam_store(c: Rc<Cache>) / mut(Cache) {
+    let v: Vec<u64> = Vec.new()
+    v.push(7)
+    apply(|r: &u64| c.refs.push(r), &v[0])   // expected W0204
+}
+// A reference into a local rc object goes into another rc object.
+struct Data { xs: Vec<u64> }
+fn local_rc(c: Rc<Cache>) / mut(Cache, Data) {
+    let d = Rc.new(Data { xs: Vec.new() })
+    d.xs.push(1)
+    c.refs.push(&d.xs[0])                 // expected W0204: `d` frees the object at the return
+}
+test "fn_store_rc" { let c = newc()
+ fn_store_rc(c.clone())
+ runf(c) }
+test "clause_store" { let c = newc()
+ clause_store(c.clone())
+ read(c) }
+test "fnparam_store" { let c = newc()
+ fnparam_store(c.clone())
+ read(c) }
+test "local_rc" { let c = newc()
+ local_rc(c.clone())
+ read(c) }

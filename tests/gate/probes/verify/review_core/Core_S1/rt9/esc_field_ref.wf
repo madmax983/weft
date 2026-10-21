@@ -1,0 +1,20 @@
+// ESCAPE (RT9 shape): `f.cur += 1` on a reference field writes through it (the
+// interpreter's CompoundStore follows references on any place), but the
+// checker records a mutation of `f.cur` only.
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+fn bump(f: &Frame) / mut(f.cur) {
+    f.cur += 1                 // accepted: the real write is to f.buf[]
+}
+fn race(f: &Frame) / mut(f.cur), async {
+    let b = &f.buf
+    scope { s =>
+        s.spawn(|| print(b))   // a task reads f.buf
+        bump(f)                // expected W0405: writes f.buf[] through f.cur
+    }
+}
+fn main() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[2]
+    bump(&f)
+    print(f.buf)
+}

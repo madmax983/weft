@@ -1,0 +1,24 @@
+// A loop passes a handle along a chain of two locals. The join of `h0` joins
+// the task of the iteration before, not the writer that `h1` holds.
+struct Stats { count: u64 }
+
+fn handles(st: &Stats) / mut(st), async {
+    scope { s =>
+        let h0 = s.spawn(|| print(0))
+        let h1 = s.spawn(|| print(0))
+        let i = 0
+        while i < 3 {
+            h0.join()
+            print(st.count)
+            h0 = h1
+            h1 = s.spawn(|| st.count += 1)
+            i += 1
+        }
+        h0.join()
+        h1.join()
+    }
+}
+test "handles" {
+    let st = Stats { count: 0 }
+    handles(&st)
+}

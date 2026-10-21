@@ -1,0 +1,42 @@
+struct Entity { hp: i32, id: u64, kids: Vec<Entity> }
+effect Choice { multi fn choose() -> bool }
+
+fn pick(v: &Vec<Entity>, b: bool) -> Option<&Entity> {
+    if b { Some(&v[0].kids[0]) } else { Some(&v[0]) }
+}
+
+// The handled body runs two times. The second run sees `last` of the first.
+fn twice(v: &Vec<Entity>, w: &Vec<Entity>) / mut(v.., w..) {
+    let last = &w[0]
+    handle Choice {
+        fn choose() {
+            resume(true)
+            resume(false)
+        }
+    } in {
+        let b = choose()
+        match pick(v, b) {
+            Some(e) => {
+                let k = &last.hp
+                e.kids.push(Entity { hp: 7, id: 9, kids: Vec.new() })
+                print(k)
+                last = e
+            }
+            None => {}
+        }
+    }
+}
+
+fn mk() -> Vec<Entity> {
+    let inner = Vec.new()
+    inner.push(Entity { hp: 5, id: 3, kids: Vec.new() })
+    let v = Vec.new()
+    v.push(Entity { hp: 1, id: 1, kids: inner })
+    v
+}
+
+fn main() {
+    let v = mk()
+    let w = mk()
+    twice(&v, &w)
+}

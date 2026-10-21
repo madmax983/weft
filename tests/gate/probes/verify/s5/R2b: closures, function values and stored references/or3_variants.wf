@@ -1,0 +1,101 @@
+struct Wrap { f: fn() }
+fn st(f: fn()) { let w = Wrap { f: f }
+ let g = w.f
+ g()
+ g() }
+fn wh(f: fn()) { let i = 0
+ while i < 2 { f()
+ i += 1 } }
+fn rec(n: u64, f: fn()) { if n > 0 { f()
+ rec(n - 1, f) } }
+fn inner_closure(f: fn()) { let h = || f()
+ h()
+ h() }
+fn twice(f: fn()) { f()
+ f() }
+fn hof(k: fn(fn()), f: fn()) { k(f) }
+fn fg(f: fn(), g: fn()) { f()
+ g()
+ f() }
+fn gf(f: fn(), g: fn()) { g()
+ f() }
+fn wrap_loop(f: fn()) -> fn() { || { for i in 0..2 { f() } } }
+fn opt_twice(o: Option<fn()>) { match o { Some(f) => { f()
+ f() }, None => {} } }
+fn vec_twice(fs: Vec<fn()>) { let f = fs[0]
+ f()
+ f() }
+
+fn via_struct_callee() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    st(|| { print(r + 1)
+ v.clear() })
+}
+fn via_while() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    wh(|| { print(r + 1)
+ v.clear() })
+}
+fn via_rec() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    rec(2, || { print(r + 1)
+ v.clear() })
+}
+fn via_inner_closure() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    inner_closure(|| { print(r + 1)
+ v.clear() })
+}
+fn via_hof_unknown() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    hof(twice, || { print(r + 1)
+ v.clear() })
+}
+fn via_two_args() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    fg(|| print(r + 1), || v.clear())
+}
+fn via_two_args_once() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    gf(|| print(r + 1), || v.clear())
+}
+fn via_wrap_loop() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let g = wrap_loop(|| { print(r + 1)
+ v.clear() })
+    g()
+}
+fn via_opt() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    opt_twice(Some(|| { print(r + 1)
+ v.clear() }))
+}
+fn via_vec_arg() {
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let fs = Vec.new()
+    fs.push(|| { print(r + 1)
+ v.clear() })
+    vec_twice(fs)
+}
+fn main() {
+}

@@ -1,0 +1,37 @@
+struct Entity { hp: i32, id: u64, kids: Vec<Entity> }
+
+fn pick(v: &Vec<Entity>, i: u64) -> Option<&Entity> {
+    if i == 1 { Some(&v[0].kids[0]) } else { Some(&v[0]) }
+}
+
+// t.0 and t.1 are the results of two iterations. In iteration 3, t.1 is
+// inside t.0.kids, so the push moves t.1.
+fn cross(v: &Vec<Entity>, w: &Vec<Entity>, n: u64) / mut(v.., w..) {
+    let t = (&w[0], &w[0])
+    let i = 0
+    while i < n {
+        let r = &t.1.hp
+        t.0.kids.push(Entity { hp: 7, id: 9, kids: Vec.new() })
+        print(r)
+        t.1 = t.0
+        match pick(v, i) {
+            Some(e) => { t.0 = e }
+            None => {}
+        }
+        i += 1
+    }
+}
+
+fn mk() -> Vec<Entity> {
+    let inner = Vec.new()
+    inner.push(Entity { hp: 5, id: 3, kids: Vec.new() })
+    let v = Vec.new()
+    v.push(Entity { hp: 1, id: 1, kids: inner })
+    v
+}
+
+fn main() {
+    let v = mk()
+    let w = mk()
+    cross(&v, &w, 4)
+}

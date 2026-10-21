@@ -1,0 +1,26 @@
+// OR3 shapes that still slip: the callee calls a callback two times, but it
+// gets the callback inside an Option or a Vec. 0 errors at head; each test
+// faults (stock: 'a place does not exist'; oracle: dangling).
+fn opt_twice(o: Option<fn()>) { match o { Some(f) => { f()
+ f() }, None => {} } }
+fn vec_twice(fs: Vec<fn()>) { let f = fs[0]
+ f()
+ f() }
+fn via_opt() {             // expected W0301 at opt_twice(...)
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    opt_twice(Some(|| { print(r + 1)
+ v.clear() }))
+}
+fn via_vec_arg() {         // expected W0301 at vec_twice(fs)
+    let v = Vec.new()
+    v.push(1)
+    let r = &v[0]
+    let fs = Vec.new()
+    fs.push(|| { print(r + 1)
+ v.clear() })
+    vec_twice(fs)
+}
+test "via_opt" { via_opt() }
+test "via_vec_arg" { via_vec_arg() }

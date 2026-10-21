@@ -1,0 +1,43 @@
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx
+ print("rollback {i}") }
+fn begin() -> Tx { Tx { id: 1 } }
+struct Wrap<T> { x: T }
+fn d2<T>(x: T) {}
+fn d1<T>(x: T) { d2(x) }
+fn d3<T>(x: T) { let f = || d2(x)
+ f() }
+fn d4<T>(x: T) { let w = Wrap { x: x } }
+fn d5<T>(x: T) { let o = Some(x) }
+fn d6<T>(x: T) { let v = Vec.new()
+ v.push(x) }
+fn d7<T>(x: T) -> u64 { let t = (x, 1)
+ let (a, n) = t
+ n }
+fn d8<T>(x: T) { let _ = x }
+fn d9<T>(x: T) { let y = x }
+fn d10<T>(x: T, c: bool) -> Option<T> { if c { return None }
+ Some(x) }
+fn d11<T>(x: T) { match Some(x) { Some(_) => {}, None => {} } }
+fn d12<T>(x: T) { let f = || { let y = x }
+ f() }
+fn d13<T>(x: T, g: fn(T)) { g(x) }
+fn d14<T>(xs: Vec<T>) {}
+fn d15<T>(x: T) { let f = |y: T| {}
+ f(x) }
+fn c1() { d1(begin()) }
+fn c3() { d3(begin()) }
+fn c4() { d4(begin()) }
+fn c5() { d5(begin()) }
+fn c6() { d6(begin()) }
+fn c7() { let n = d7(begin()) }
+fn c8() { d8(begin()) }
+fn c9() { d9(begin()) }
+fn c10() { let o = d10(begin(), true)
+ match o { Some(t) => rollback(t), None => {} } }
+fn c11() { d11(begin()) }
+fn c12() { d12(begin()) }
+fn c13() { d13(begin(), |t: Tx| {}) }
+fn c15() { d15(begin()) }
+fn main() { c15() }

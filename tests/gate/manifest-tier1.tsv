@@ -2364,6 +2364,12 @@ a77b4814a41051aa1830480ff73ccfefb56fad3aec14f8cead6ad458cff14d56	tests/gate/prob
 3235c7b15f161acf230710410b691af18669dd9175d9d7b872eb7dafb6148d61	tests/gate/probes/verify/partb/S4/p/x_bools16.wf	probes	file	0	0	
 21fc47535775302a2389a12d18a483e6c9b84360a61e13e18900771d9d071be2	tests/gate/probes/verify/partb/S4/p/x_crash.wf	probes	file	0	0	
 c6c9d17ab01de820c873c7dc1d70e079ccd4592e671f3f56584442e9c505adc1	tests/gate/probes/verify/partb/S4/p/x_enum3.wf	probes	file	0	0	
+0797210452d7be0cd2488592d8c6ede7113a607f63f96d8468379d3263e64deb	tests/gate/probes/verify/partb/S4/run/drops2.wf	probes	file	1	0	
+6c3432574a3f386a4365a8e7b01dc8e5da28ca276d84b23af56cfa912ea54f49	tests/gate/probes/verify/partb/S4/run/drops3.wf	probes	file	1	0	
+b1e6c5a30864a3980e0e778b9a26ba3ba881137de058bb3fdf574841fffa5932	tests/gate/probes/verify/partb/S4/run/unset_closure.wf	probes	file	1	0	
+4da1dcebb1735777cd1993b37d32f83a7be055792d294caf8462d83cd377b6eb	tests/gate/probes/verify/partb/S4/run/unset_ret.wf	probes	file	1	0	
+a598144c6bfdd42e26c67721da50e3ed1383e7df8eb11625adc5e97f18ee1627	tests/gate/probes/verify/partb/S4/run/vec_fn_drop.wf	probes	file	1	0	
+a301c99767efafd4e5c03d2c275e464039709b9a90618b91dd71f5c9ae6c97ab	tests/gate/probes/verify/partb/S4/run/vec_fn_run.wf	probes	file	1	0	
 d1e1ba4adb39877b1d2ad968edd054d48bb4b806b76352ae5f57cab635562de0	tests/gate/probes/verify/partb/S4diff/p/abort1.wf	probes	file	0	0	
 7dc38992bf717fecd6a6c352f2a71932e54c6bf0473ad627b84d34e7825b4b9c	tests/gate/probes/verify/partb/S4diff/p/abort2.wf	probes	file	0	0	
 03209f83a252cf2fb0ccccba83da6167e0eedd6a5c9c8acceeafa1f6f9135be4	tests/gate/probes/verify/partb/S4diff/p/clo1.wf	probes	file	0	0	
@@ -2457,6 +2463,9 @@ ce78ef1a2dba9f7af382f32b3fbfb056cb08af8ab5da011e1b4cb4a49329bdc6	tests/gate/prob
 7cdb20b46a1d6e393a32760987e67bc7f9365027c5138583bc9ebdc857cf14a2	tests/gate/probes/verify/review_core/Core_S1/rt1/returns.wf	probes	file	0	0	
 7707f4e7a83b86f5a492a8b093817dfcd681c12cc25f3441243b1e957d00539b	tests/gate/probes/verify/review_core/Core_S1/rt1/scope_local_task.wf	probes	file	1	0	
 755e6331863620dd4ac7d7ef85e08b4bf2a767a0b0d0eca57994c69dbe2937aa	tests/gate/probes/verify/review_core/Core_S1/rt1/scopes.wf	probes	file	0	0	
+94a22f8087a603021b910a4d7c3ec0aa3c28e7bd66fd193b34dfe545b06ae4b0	tests/gate/probes/verify/review_core/Core_S1/rt2/clause_capture.wf	probes	file	1	0	
+70ac56d8bca75c123115c455e896159b0c0a7c04529063718d2014334669d20f	tests/gate/probes/verify/review_core/Core_S1/rt4/esc_closure_arg.wf	probes	file	1	0	
+6844f4c1c7f3ec4dbda3c7a1cd0d382d9a92303745a3436d58e3015b114ad5cb	tests/gate/probes/verify/review_core/Core_S1/rt9/esc_field_ref.wf	probes	file	1	0	
 87e0a2ff8217b4836cfdf9392db5379fb282669c28d2714544c18a55a81c9a0a	tests/gate/probes/verify/review_core/Core_S2/probes/clean_callbacks.wf	probes	file	0	0	
 2d67a347dde5783d36cbe3a900d332fc15cd440259a7ef5c616956bf22c0d0b0	tests/gate/probes/verify/review_core/Core_S2/probes/clean_effects.wf	probes	file	0	0	
 2f31691c2e9192b772c84b4c06420e5864d57063872883cd7e965760c07164e3	tests/gate/probes/verify/review_core/Core_S2/probes/clean_effects2.wf	probes	file	0	0	
@@ -2512,6 +2521,9 @@ f8ccbaf938ff387c5814a9fd1fe466776b9d1d1cc90a1baab9f5de8b49499ede	tests/gate/prob
 c729cc087e01e62f2be0c56ace004c7683d60aa952c09626e92e883911381ebd	tests/gate/probes/verify/review_core/Core_S2/probes/stress_mut_rev_33.wf	probes	file	0	0	
 b64ef845905d36db2aeea19b44c78c69916b60e158c86edc508b4b214ee741b3	tests/gate/probes/verify/review_core/Core_S2/probes/stress_mut_rev_40.wf	probes	file	0	0	
 e8c6b1fa3fd62e16dc1f4081db606924569219bba8f5aeb88c9b9b6928009383	tests/gate/probes/verify/review_core/Core_S2/probes/stress_stored.wf	probes	file	0	0	
+9e23ff1b74023f1098562b2f57f9c3f437754c73335419592c2464ac7d0e762f	tests/gate/probes/verify/review_edge/Edge/f14/overwritten_variants.wf	probes	file	0	0	
+690803a8156833184ec3a0a1fc971de89d1febf6f2af4c50e5e886acd84dbb44	tests/gate/probes/verify/review_edge/Edge/f14/ow_closure_run.wf	probes	file	1	0	
+bde69640737b4a43c135509917ee1f2e0fd45202f93138c81c14fca4261fa6cd	tests/gate/probes/verify/review_edge/Edge/ptr/ptr_generic_fork.wf	probes	file	0	0	
 56e1af2738aaa527ddd4b6bba88fb646053bfe23f123899dbb12232f11d8a2f9	tests/gate/probes/verify/s1diff/p/i01_argmove.wf	probes	file	1	0	
 102f979633308eac96d71de8eb58b093425b88f23baceb478aa06c77b7fc1a0d	tests/gate/probes/verify/s1diff/p/i02_adder.wf	probes	file	1	0	
 e2a3a21b633cc1e1c5ea4319ad12464444c5f9caf3cba31627839e26563c748e	tests/gate/probes/verify/s1diff/p/i03_temps.wf	probes	file	1	0	
@@ -2550,6 +2562,23 @@ da76dec7925876d980207e6938c2a0679afe1fb3796cb35e2c4e1ba13054aec1	tests/gate/prob
 ba0c70e74dbdc923c5f3b6d54d230cd00e337146541e481d5daf56f7cdef9e58	tests/gate/probes/verify/s1diff/p/v20_shadow.wf	probes	file	0	0	
 aba00c4de0be10d0c9cd15c270096e1da1b545a98fb74e05895c20337f292ce3	tests/gate/probes/verify/s1diff/p/v21_recv_deps.wf	probes	file	0	0	
 6bcacb3f68276df6fe1795c37e056a80b90fb09955afa905797e597298c92b2a	tests/gate/probes/verify/s1diff/p/v22_holder_ty.wf	probes	file	0	0	
+b14890de054cb0c4e5aec65be0b36af58b90bca11d116ea41a289a59ddd9b893	tests/gate/probes/verify/s5/R2a: loops, places and wildcard rules (foundation, speed, test harness)/R1_walk_then_write.wf	probes	file	1	0	
+6c0387d5c3ba62267b72fd1ed9b4adeab1044f1c77ab0f851485a4faca761fe2	tests/gate/probes/verify/s5/R2a: loops, places and wildcard rules (foundation, speed, test harness)/R2_bst.wf	probes	file	1	0	
+3cff3c4b6e4ff5c9b8b09d5b489725402b4008bdf9bc760c4a1baee8a0e9ec4d	tests/gate/probes/verify/s5/R2a: loops, places and wildcard rules (foundation, speed, test harness)/T2_join_swap.wf	probes	file	0	1	
+c94746aa2adbab6a4144e4c292262221b7fdca1bf2c41f1550dd53be16b2855e	tests/gate/probes/verify/s5/R2a: loops, places and wildcard rules (foundation, speed, test harness)/T3_loop_handles.wf	probes	file	0	1	
+c55af4f76dc8ad31dc33156fc01589956a84f8908ec2bcd83aa71dfe5c0f74a3	tests/gate/probes/verify/s5/R2a: loops, places and wildcard rules (foundation, speed, test harness)/T4_loop_swap_access.wf	probes	file	0	1	
+d9c81424a3f42d1028b92e35e07b769af31d85a30051de18a535f483c0cb76c1	tests/gate/probes/verify/s5/R2b: closures, function values and stored references/V_FD3_more.wf	probes	file	0	1	
+2030e0cf1976254bc38ed302b093de471884364f5ae3d5bf625ff6d158219dbf	tests/gate/probes/verify/s5/R2b: closures, function values and stored references/V_OR1_more.wf	probes	file	0	1	
+739d6ab12895870df9feb48eef359d8321b9054179bcc85a035344b3df2765ab	tests/gate/probes/verify/s5/R2b: closures, function values and stored references/V_OR3_container_args.wf	probes	file	0	1	
+f18f1201acfa8e1d23a0f79c39d50b6951737473153b75b06ab36e192ac797f7	tests/gate/probes/verify/s5/R2b: closures, function values and stored references/V_RR2_tuple_elems.wf	probes	file	0	1	
+4308120118cd6c9d620fee3f8b73c8f45223f9dc1e241278ecd7bd36dd717fb9	tests/gate/probes/verify/s5/R2b: closures, function values and stored references/V_RR7_nested_and_part.wf	probes	file	0	1	
+e52dea0fa777f71ec20a82bdbee7698859af4138f85ff28c8a157bc965ee8143	tests/gate/probes/verify/s5/R2b: closures, function values and stored references/fd3_fn.wf	probes	file	1	0	
+21c0aa3aae1981f60255875703cec17b34447f430a01f58fa0f42838146146f4	tests/gate/probes/verify/s5/R2b: closures, function values and stored references/fd3_localrc2.wf	probes	file	1	0	
+35190d086ca7e0b29b48b9b5c7eef6a4603b2c502b1e2b02571ecd025f4bfd79	tests/gate/probes/verify/s5/R2b: closures, function values and stored references/or3_ret.wf	probes	file	1	0	
+89bccba81a6764e8c38bafecefab27049cbc364c0d61a3581bc68cbe27fa993c	tests/gate/probes/verify/s5/R2b: closures, function values and stored references/or3_variants.wf	probes	file	1	0	
+a6f908c6ffa987068a2eaa25c94a42cbbce0350e66f24bc96184134198f26e32	tests/gate/probes/verify/s5/R2b: closures, function values and stored references/rr2_tuple.wf	probes	file	1	0	
+65cf22f2232150c136eb63b8a66846c69bbd8a8d68137743bf91f49ccf4c6777	tests/gate/probes/verify/s5/R2b: closures, function values and stored references/rr7_nested.wf	probes	file	1	0	
+a9a4e0b69be79f7ebf1e1ec17b27941379325d0fa93e9bf4efcd887e45ad073b	tests/gate/probes/verify/s5/R2b: closures, function values and stored references/rr7_ret2.wf	probes	file	1	0	
 4da6f41b62b0650e289b6f8da7ba7b6e3432625238ae16c3cc9caffa4cb5eda7	tests/gate/probes/verify/s5/R2c/p/a1.wf	probes	file	1	0	
 cc0b32b22b99186704174629274d2aa9f8482022886aff8620205137174a7d77	tests/gate/probes/verify/s5/R2c/p/a2.wf	probes	file	1	0	tests/gate/probes/verify/s5/R2c/repro/V2a_onabort_fs_read_fails.wf
 5e16c7da56e9e6227d6b324071980e265b20da70fc76e3c25b0e704e1b094cab	tests/gate/probes/verify/s5/R2c/p/a3.wf	probes	file	1	0	tests/gate/probes/verify/s5/R2c/repro/V2b_onabort_join_fails.wf
@@ -3312,6 +3341,13 @@ b7b3d4778d8b9fed32793ea7ecb8e908c8017de19a533b9856025412ac951b0f	tests/gate/prob
 57d50b2eb2e8683d464c949f1588a257ee8763cf0af110a344a5125d407b42f3	tests/gate/probes/verify/s5/p/rr7j.wf	probes	file	1	0	
 5cb4eb63ce317d5a71459864571d214887b4415668f873261a498b11942d0316	tests/gate/probes/verify/s5/p/st1.wf	probes	file	1	0	
 91d16075d2a4f9b444d524aa9c96d3a2c40cd2916f365dd54bd2b3224a75eec5	tests/gate/probes/verify/s5/p/st2.wf	probes	file	1	0	
+05a0994bd19f0ffb42f46e82b8e7cc10b36c562f194b1acd9637cfaa9e4366b7	tests/gate/probes/verify/s5/r2a/t/mu1.wf	probes	file	1	0	
+590fef44da41074bb610dfbf881b72f49d9a86d9c3f99754bf828d2fcf9f7f16	tests/gate/probes/verify/s5/r2a/t/mu3.wf	probes	file	1	0	
+ae9838fc3acfbb86534c7ef0e7d2a4e686bfa6a1ef587c8744b7a2164efd8a59	tests/gate/probes/verify/s5/r2a/t/tk1.wf	probes	file	1	0	
+ea11142352e7f59a2040e825a39fa02fd1a1278653043f8b1c8212083973a80d	tests/gate/probes/verify/s5/r2a/t/tk2.wf	probes	file	1	0	
+a032feed0b44ccec89c60e90eb38d52295afb315dcb6e5a8218e90ff99ed9120	tests/gate/probes/verify/s5/r2a/t/tk3.wf	probes	file	1	0	
+85e271dc905eb064641583ae0c416dbfb6ba3cd4a795c085ca7a95153422f1b4	tests/gate/probes/verify/s5/r2a/t/x3.wf	probes	file	1	0	
+b68e4e92b205f4a8c0b52be1eb3d86ad863f2df4eacb887401b2cb751aac70aa	tests/gate/probes/verify/s5/r2a/t/x5.wf	probes	file	1	0	
 0b80e399b496c851eac05c2a0e1740eda9174a4c810cc28e312ecebe9ab9adbb	tests/gate/probes/verify/s5/repro/V1_rr7_nested.wf	probes	file	1	0	
 134649628259eb10f6a928a608d4e599123bc2067a47bf0db71c63881cbf591d	tests/gate/probes/verify/s5/repro/V2_rr7_return_store.wf	probes	file	1	0	
 ba0e0c4b69139d13ed5ee706ce21fd276e9bc56339a7ddffa44b53573c0545b7	tests/gate/probes/verify/s5/repro/V3_or1_containers.wf	probes	file	1	0	

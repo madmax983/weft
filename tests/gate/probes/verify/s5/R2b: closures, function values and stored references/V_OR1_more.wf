@@ -1,0 +1,64 @@
+// OR1 shapes that still slip (0 errors at head; each test faults with the
+// stock and the oracle interpreter).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn take(v: Vec<u64>) {}
+fn mkw() -> World {
+    let w = World { entities: Vec.new() }
+    w.entities.push(Entity { hp: 1 })
+    w
+}
+// A result of type Vec<fn()> that holds a closure that captures `v`.
+fn vecf(v: &Vec<u64>) -> Vec<fn()> { let o = Vec.new()
+ o.push(|| print(v.len()))
+ o }
+fn tupvec(v: &Vec<u64>) -> (Vec<fn()>, u64) { let o = Vec.new()
+ o.push(|| print(v.len()))
+ (o, 1) }
+// A returned closure whose captured reference variable gets a new value before
+// the return (RR7 x OR1).
+fn mk_late(world: &World, d: &Entity) -> fn() / mut(world.entities) {
+    let r = d
+    let f = || print(r.hp)
+    r = &world.entities[0]
+    f
+}
+// A closure that captures a reference argument, put behind a reference parameter.
+fn out(v: &Vec<u64>, o: &Vec<fn()>) / mut(o) { o.push(|| print(v.len())) }
+
+fn via_vec() {             // expected W0301 at f() (or at fs[0])
+    let v = Vec.new()
+    v.push(1)
+    let fs = vecf(&v)
+    take(v)
+    let f = fs[0]
+    f()
+}
+fn via_tupvec() {          // expected W0301 at f()
+    let v = Vec.new()
+    v.push(1)
+    let (fs, n) = tupvec(&v)
+    take(v)
+    let f = fs[0]
+    f()
+}
+fn ret_late() {            // expected W0301 at f()
+    let w = mkw()
+    let e = Entity { hp: 5 }
+    let f = mk_late(&w, &e)
+    w.entities.clear()
+    f()
+}
+fn via_out_param() {       // expected W0301 at f()
+    let v = Vec.new()
+    v.push(1)
+    let fs = Vec.new()
+    out(&v, &fs)
+    take(v)
+    let f = fs[0]
+    f()
+}
+test "via_vec" { via_vec() }
+test "via_tupvec" { via_tupvec() }
+test "ret_late" { ret_late() }
+test "via_out_param" { via_out_param() }
