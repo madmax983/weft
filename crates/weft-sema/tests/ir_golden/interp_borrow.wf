@@ -1,0 +1,10 @@
+// An interpolation `{v}` (`docs/ir.md` 5.16) is a read position: a value
+// that is not plain data is borrowed where it is written.
+
+fn text(v: Vec<u64>, n: u64) -> String {
+    "{v} and {n}"
+}
+
+fn printed(v: Vec<u64>) {
+    print("v = {v}")
+}

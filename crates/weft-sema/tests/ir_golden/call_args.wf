@@ -1,0 +1,30 @@
+// Calls of function items (`docs/ir.md` 5.18): the arguments run in the
+// order of the parameters, each one into an operand where it is written. A
+// place argument skips its temporary only if no later argument can run
+// code. A by-value argument moves. A call writes into its destination.
+
+fn add(a: u64, b: u64) -> u64 { a + b }
+fn two() -> u64 { 2 }
+fn size(v: Vec<u64>) -> u64 { 0 }
+
+// A later argument runs code: the place `x` is read into a temporary first.
+fn first_place(x: u64) -> u64 {
+    add(x, two())
+}
+
+// The last argument is a place: it is the operand itself.
+fn last_place(x: u64) -> u64 {
+    add(two(), x)
+}
+
+// A `Vec` argument moves.
+fn moves(v: Vec<u64>) -> u64 {
+    size(v)
+}
+
+// A call in statement position writes a discarded temporary; a call as a
+// `let` value writes the local.
+fn statements(x: u64) {
+    add(x, 1)
+    let y = add(1, 2)
+}

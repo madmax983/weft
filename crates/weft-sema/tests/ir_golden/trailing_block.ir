@@ -1,0 +1,5 @@
+fn f0 twice(u64, fn() -> u64) -> u64: extern
+fn f1 block(u64) -> u64: extern
+cap_env e0
+// twice: unsupported: call of a function value at 5:43 (stage B9)
+// block: unsupported: closure at 8:14 (stage B9)

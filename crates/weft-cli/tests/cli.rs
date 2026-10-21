@@ -146,9 +146,12 @@ fn ir_prints_the_core_ir() {
     let none = cmd(&["ir", file, "typo"]);
     assert_eq!(none.code, 1);
     assert!(none.stderr.contains("has no IR"), "{}", none.stderr);
-    let later = cmd(&["ir", "tests/programs/01_places.wf", "tick"]);
+    let calls = cmd(&["ir", "tests/programs/01_places.wf", "tick"]);
+    assert_eq!(calls.code, 0, "{}", calls.stderr);
+    assert!(calls.text.contains("call step("), "{}", calls.text);
+    let later = cmd(&["ir", "tests/programs/05_effects.wf", "main"]);
     assert_eq!(later.code, 1);
-    assert!(later.stderr.contains("(stage B7)"), "{}", later.stderr);
+    assert!(later.stderr.contains("(stage B10)"), "{}", later.stderr);
     let missing = cmd(&["ir", file, "nope"]);
     assert_eq!(missing.code, 1);
     assert!(

@@ -1,0 +1,9 @@
+// A trailing block is a closure argument with no parameters (`docs/ir.md`
+// 5.19): `f(a) { b }` is `f(a, || { b })`. Closures come at plan stage B9,
+// so this body is unsupported until then.
+
+fn twice(n: u64, f: fn() -> u64) -> u64 { f() + n }
+
+fn block(x: u64) -> u64 {
+    twice(1) { x }
+}

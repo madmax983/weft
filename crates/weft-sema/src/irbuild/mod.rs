@@ -21,7 +21,10 @@
 //! program that it makes, and keeps each broken rule in [`Built::broken`]. A
 //! broken rule is a bug of the builder.
 
+mod aggregate;
 mod branch;
+mod call;
+mod caps;
 mod expr;
 mod frame;
 mod looping;
@@ -30,7 +33,7 @@ mod place;
 mod stmt;
 mod unset;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
 
 use weft_ir::verify::{verify_program, Broken};
@@ -57,26 +60,20 @@ pub enum Construct {
     MoveThroughRef,
     /// The payload of a variant with more than one field as a place: `o.A`.
     VariantField,
-    /// A call.
-    Call,
-    /// A method call.
-    MethodCall,
-    /// A tuple.
-    Tuple,
-    /// An array or a `Vec` literal.
-    Array,
-    /// A struct literal.
-    StructLit,
-    /// `assert`.
-    Assert,
-    /// A name that is not a local: a function item, a variant, a path.
+    /// A function item as a value.
     ItemName,
+    /// A call of a function value.
+    FnValueCall,
     /// A closure.
     Closure,
     /// `handle`.
     Handle,
     /// `scope`.
     Scope,
+    /// A task: `spawn`, `join`, `detach`, `fork`.
+    Task,
+    /// A call of `sim.run` or `with_timeout`.
+    Intrinsic,
     /// The THIR has no type or no binding for a part of the body.
     NoThir,
 }
@@ -88,16 +85,13 @@ impl Construct {
             Self::AssignPlace => "assignment to a value",
             Self::MoveThroughRef => "move through a reference",
             Self::VariantField => "variant field",
-            Self::Call => "call",
-            Self::MethodCall => "method call",
-            Self::Tuple => "tuple",
-            Self::Array => "array",
-            Self::StructLit => "struct literal",
-            Self::Assert => "assert",
             Self::ItemName => "item name",
+            Self::FnValueCall => "call of a function value",
             Self::Closure => "closure",
             Self::Handle => "handle",
             Self::Scope => "scope",
+            Self::Task => "task",
+            Self::Intrinsic => "intrinsic call",
             Self::NoThir => "no THIR entry",
         }
     }
@@ -106,16 +100,9 @@ impl Construct {
     pub const fn stage(self) -> &'static str {
         match self {
             Self::AssignPlace | Self::MoveThroughRef | Self::VariantField => "B12",
-            Self::Call
-            | Self::MethodCall
-            | Self::Tuple
-            | Self::Array
-            | Self::StructLit
-            | Self::Assert
-            | Self::ItemName => "B7",
-            Self::Closure => "B9",
+            Self::ItemName | Self::FnValueCall | Self::Closure => "B9",
             Self::Handle => "B10",
-            Self::Scope => "B11",
+            Self::Scope | Self::Task | Self::Intrinsic => "B11",
             Self::NoThir => "T3",
         }
     }
@@ -388,7 +375,15 @@ fn body_outcome(
         return Outcome::NoIr(NoIr::TypeError);
     };
     let unit_id = id_of(unit);
-    let mut b = Builder::new(t, &mut out.tys, fields, unit_id, ret, src.span);
+    // A body that the builder does not finish declares no function.
+    let fns_before = out.program.fns.len();
+    let d = Decls {
+        a,
+        fns: &mut out.fns,
+        items: &mut out.program.fns,
+        cap_envs: &out.program.cap_envs,
+    };
+    let mut b = Builder::new(t, &mut out.tys, fields, d, unit_id, ret, src.span);
     match b.body(src) {
         Ok(()) => {
             let id = BodyId(id_of(out.program.bodies.len()));
@@ -405,12 +400,23 @@ fn body_outcome(
             }
             Outcome::Built(id)
         }
-        Err(u) => Outcome::Unsupported(u),
+        Err(u) => {
+            if out.program.fns.len() > fns_before {
+                out.program.fns.truncate(fns_before);
+                out.fns.retain(|_, v| v.index() < fns_before);
+            }
+            Outcome::Unsupported(u)
+        }
     }
 }
 
 /// Returns the declaration of function `f`, and false if a type of its
 /// signature has no final type (the declaration then has `()` there).
+///
+/// The stated row of an extern function is its full row: it has no body to
+/// infer more. An extern function that the runtime can make fail (`raises`)
+/// with an empty row gets no stated row, so its calls get an `unwind` block
+/// (V10).
 fn fn_decl(a: &Analysis, tys: &mut TyTable, f: crate::FnId) -> (FnDecl, bool) {
     let mut ok = true;
     let (Some(def), Some(sig)) = (a.program.fns.get(f.index()), a.sigs.get(f.index())) else {
@@ -435,7 +441,7 @@ fn fn_decl(a: &Analysis, tys: &mut TyTable, f: crate::FnId) -> (FnDecl, bool) {
     };
     let params = sig.params.iter().map(|p| ty(&p.ty)).collect();
     let ret = ty(&sig.ret);
-    let stated_row = sig.declared.then(|| {
+    let stated_row: Option<Vec<weft_ir::EffectId>> = sig.declared.then(|| {
         sig.effects
             .named
             .iter()
@@ -443,9 +449,12 @@ fn fn_decl(a: &Analysis, tys: &mut TyTable, f: crate::FnId) -> (FnDecl, bool) {
             .map(|e| weft_ir::EffectId(id_of(e.index())))
             .collect()
     });
+    let raises = def.decl.body.is_none() && sig.effects.raises;
+    let stated_row = stated_row.filter(|r| !(raises && r.is_empty()));
     let intrinsic = match (def.is_std, def.decl.body.is_none(), def.path.as_str()) {
         (true, true, "with_timeout") => Some(Intrinsic::WithTimeout),
-        (true, true, "sim.run") => Some(Intrinsic::SimRun),
+        // The path of `sim.run` is `run` in the module `sim`.
+        (true, true, "run") if is_sim(a, def.module) => Some(Intrinsic::SimRun),
         _ => None,
     };
     (
@@ -460,6 +469,14 @@ fn fn_decl(a: &Analysis, tys: &mut TyTable, f: crate::FnId) -> (FnDecl, bool) {
         },
         ok,
     )
+}
+
+/// Returns true if module `m` is the standard module `sim`.
+fn is_sim(a: &Analysis, m: crate::ids::ModId) -> bool {
+    a.program
+        .mods
+        .get(m.index())
+        .is_some_and(|d| d.is_std && d.name == "sim")
 }
 
 /// The return slot `_0`.
@@ -540,6 +557,26 @@ struct Scope {
     locals: Vec<LocalId>,
     /// The location of the end of the scope: the `Dead` statements get it.
     end: Span,
+    /// The part of the cleanup chain that the locals of the scope add, for
+    /// the locals that are not temporaries and for the temporaries
+    /// (`call.rs`).
+    chain: [ChainPart; 2],
+}
+
+/// The part of a cleanup chain that the locals of one class of one scope
+/// add (`call.rs`). The locals of a scope only grow, so the next chain
+/// from the same block below adds only the new locals.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ChainPart {
+    /// The count of locals of the scope that the part has seen.
+    seen: usize,
+    /// The locals of the class, in order.
+    members: Vec<LocalId>,
+    /// The block of the chain below the part, and the count of members
+    /// in the part; `None` before the first chain.
+    built: Option<(usize, usize)>,
+    /// The first block of the part.
+    head: usize,
 }
 
 /// A block that the builder fills.
@@ -547,10 +584,27 @@ struct Scope {
 struct Draft {
     /// The statements.
     stmts: Vec<Stmt>,
-    /// The terminator, when the block is complete.
+    /// The terminator, when the block is complete. A cleanup block with no
+    /// terminator goes to the unwind exit.
     term: Option<Term>,
     /// An edge from a point that can run enters the block.
     live: bool,
+    /// The block is on a cleanup path.
+    cleanup: bool,
+}
+
+/// The declarations that the bodies share (`docs/ir.md` 3.2): the functions
+/// and the capability environments of the program.
+struct Decls<'a> {
+    /// The analysis.
+    a: &'a Analysis,
+    /// The function of the program for each function of the analysis that
+    /// has one.
+    fns: &'a mut BTreeMap<crate::FnId, weft_ir::FnId>,
+    /// The functions of the program.
+    items: &'a mut Vec<FnDecl>,
+    /// The capability environments of the program.
+    cap_envs: &'a [CapEnv],
 }
 
 /// The builder of one body. The state is here, not in the frames of the
@@ -581,6 +635,15 @@ struct Builder<'a> {
     vars: BTreeMap<BindingId, LocalId>,
     /// The diagnostics of the builder (W0315).
     diags: Vec<Diagnostic>,
+    /// The declarations that the bodies share.
+    d: Decls<'a>,
+    /// The capability environment of the current point.
+    cap_env: CapEnvId,
+    /// The cleanup blocks: the block that ends a local and then goes to a
+    /// block, by the local and that block (`call.rs`).
+    chains: HashMap<(LocalId, usize), usize>,
+    /// The last cleanup block: `Dead(_0)` and the parameters.
+    chain_base: Option<usize>,
 }
 
 impl<'a> Builder<'a> {
@@ -589,6 +652,7 @@ impl<'a> Builder<'a> {
         t: &'a Tables,
         tys: &'a mut TyTable,
         fields: &'a mut unset::PlaceFields,
+        d: Decls<'a>,
         unit: u32,
         ret: TyId,
         span: Span,
@@ -604,12 +668,17 @@ impl<'a> Builder<'a> {
                 stmts: Vec::new(),
                 term: None,
                 live: true,
+                cleanup: false,
             }],
             cur: Some(0),
             live: true,
             scopes: Vec::new(),
             vars: BTreeMap::new(),
             diags: Vec::new(),
+            d,
+            cap_env: CapEnvId(0),
+            chains: HashMap::new(),
+            chain_base: None,
         };
         let props = b.props(ret);
         b.locals.push(LocalDecl {
@@ -672,6 +741,7 @@ impl<'a> Builder<'a> {
             stmts: Vec::new(),
             term: None,
             live: false,
+            cleanup: false,
         });
         c
     }
@@ -733,6 +803,7 @@ impl<'a> Builder<'a> {
             kind,
             locals: Vec::new(),
             end,
+            chain: [ChainPart::default(), ChainPart::default()],
         });
     }
 
@@ -803,21 +874,27 @@ impl<'a> Builder<'a> {
     /// Makes the body of kind `kind` from the blocks.
     fn finish(self, kind: BodyKind, span: Span) -> Body {
         let origin = self.origin(span, None);
+        let unwind_exit = BlockId(id_of(self.blocks.len()));
         let mut blocks: Vec<Block> = self
             .blocks
             .into_iter()
             .map(|d| Block {
                 stmts: d.stmts,
-                // Each block gets its terminator before the end; a block with
-                // none would be a bug, and `Unreachable` keeps the IR valid.
+                // Each normal block gets its terminator before the end; a
+                // block with none would be a bug, and `Unreachable` keeps the
+                // IR valid. The last block of a cleanup chain goes to the
+                // unwind exit.
                 term: d.term.unwrap_or(Term {
-                    kind: TermKind::Unreachable,
+                    kind: if d.cleanup {
+                        TermKind::Goto(unwind_exit)
+                    } else {
+                        TermKind::Unreachable
+                    },
                     origin,
                 }),
-                cleanup: false,
+                cleanup: d.cleanup,
             })
             .collect();
-        let unwind_exit = BlockId(id_of(blocks.len()));
         blocks.push(Block {
             stmts: Vec::new(),
             term: Term {

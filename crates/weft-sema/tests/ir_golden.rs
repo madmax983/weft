@@ -12,7 +12,8 @@
 use std::path::{Path, PathBuf};
 
 use weft_ir::{
-    Body, DerefKind, LocalId, LocalKind, Operand, Place, Proj, Rvalue, StmtKind, TempKind, TermKind,
+    AggKind, Body, Callee, CapArgs, CapOperand, DerefKind, LocalId, LocalKind, Operand, Place,
+    Proj, Rvalue, StmtKind, TempKind, TermKind,
 };
 use weft_sema::irbuild::{self, Built, Outcome};
 use weft_sema::{analyze_source, Analysis, Options};
@@ -225,6 +226,86 @@ fn golden_break_in_closure() {
     golden("break_in_closure");
 }
 
+#[test]
+fn golden_call_args() {
+    golden("call_args");
+}
+
+#[test]
+fn golden_named_args() {
+    golden("named_args");
+}
+
+#[test]
+fn golden_method_ref() {
+    golden("method_ref");
+}
+
+#[test]
+fn golden_method_value() {
+    golden("method_value");
+}
+
+#[test]
+fn golden_struct_lit() {
+    golden("struct_lit");
+}
+
+#[test]
+fn golden_positional() {
+    golden("positional");
+}
+
+#[test]
+fn golden_vec_lit() {
+    golden("vec_lit");
+}
+
+#[test]
+fn golden_array_lit() {
+    golden("array_lit");
+}
+
+#[test]
+fn golden_print_borrow() {
+    golden("print_borrow");
+}
+
+#[test]
+fn golden_interp_borrow() {
+    golden("interp_borrow");
+}
+
+#[test]
+fn golden_duration_lit() {
+    golden("duration_lit");
+}
+
+#[test]
+fn golden_trailing_block() {
+    golden("trailing_block");
+}
+
+#[test]
+fn golden_perform_path() {
+    golden("perform_path");
+}
+
+#[test]
+fn golden_assert() {
+    golden("assert");
+}
+
+#[test]
+fn golden_perform_row() {
+    golden("perform_row");
+}
+
+#[test]
+fn golden_generic_extern() {
+    golden("generic_extern");
+}
+
 /// Returns the built body of the function or test `name`.
 fn body<'b>(b: &'b Built, name: &str) -> &'b Body {
     let e = b
@@ -359,15 +440,18 @@ fn a_returned_reference_to_a_local_ends_the_local_first() {
 
 #[test]
 fn a_construct_of_a_later_stage_is_unsupported() {
-    let (_, b) = build("fn g() -> u64 { 1 }\nfn f() -> u64 {\n    g()\n}\n");
+    let (_, b) = build("fn f() -> u64 {\n    let g = || 1\n    1\n}\n");
     let e = b
         .entries
         .iter()
         .find(|e| e.name == "f")
         .unwrap_or_else(|| panic!("no `f`"));
     match &e.outcome {
-        Outcome::Unsupported(u) => assert_eq!(u.construct.name(), "call"),
-        other => panic!("a call is for stage B7: {other:?}"),
+        Outcome::Unsupported(u) => {
+            assert_eq!(u.construct.name(), "closure");
+            assert_eq!(u.construct.stage(), "B9");
+        }
+        other => panic!("a closure is for stage B9: {other:?}"),
     }
 }
 
@@ -970,5 +1054,385 @@ fn the_tail_temporaries_of_a_loop_body_end_at_each_iteration() {
     }
     if dead == live {
         assert!(pos(&StmtKind::Live(t)) < pos(&StmtKind::Dead(t)));
+    }
+}
+
+/// Returns the terminators of `body` in block order.
+fn terms(body: &Body) -> Vec<&TermKind> {
+    body.blocks.iter().map(|b| &b.term.kind).collect()
+}
+
+/// Returns the name of the function of each call of `body`, in block order.
+fn callees(b: &Built, body: &Body) -> Vec<String> {
+    terms(body)
+        .into_iter()
+        .filter_map(|k| match k {
+            TermKind::Call {
+                callee: Callee::Fn(f, _),
+                ..
+            } => Some(b.program.fns[f.index()].name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Returns the arguments and the destination of the call of function
+/// `name` in `body`.
+fn call_of<'a>(b: &Built, body: &'a Body, name: &str) -> (&'a [Operand], &'a Place) {
+    terms(body)
+        .into_iter()
+        .find_map(|k| match k {
+            TermKind::Call {
+                callee: Callee::Fn(f, _),
+                args,
+                dest,
+                ..
+            } if b.program.fns[f.index()].name == name => Some((args.as_slice(), dest)),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no call of `{name}`"))
+}
+
+/// Returns the index of the block whose terminator is the call of `name`.
+fn call_block(b: &Built, body: &Body, name: &str) -> usize {
+    terms(body)
+        .into_iter()
+        .position(|k| matches!(k, TermKind::Call { callee: Callee::Fn(f, _), .. } if b.program.fns[f.index()].name == name))
+        .unwrap_or_else(|| panic!("no call of `{name}`"))
+}
+
+/// Returns the right side that `body` assigns to the whole local `l`.
+fn assigned(body: &Body, l: LocalId) -> Option<&Rvalue> {
+    body.blocks
+        .iter()
+        .flat_map(|b| &b.stmts)
+        .find_map(|s| match &s.kind {
+            StmtKind::Assign(p, rv) if *p == Place::local(l) => Some(rv),
+            _ => None,
+        })
+}
+
+#[test]
+fn named_arguments_run_in_the_order_of_the_parameters() {
+    // `sub(b: one(), a: two())`: `two` (for `a`) runs first.
+    let b = golden_built("named_args");
+    let f = body(&b, "named");
+    assert_eq!(callees(&b, f), ["two", "one", "sub"]);
+    let (args, _) = call_of(&b, f, "sub");
+    let (_, two) = call_of(&b, f, "two");
+    let (_, one) = call_of(&b, f, "one");
+    assert_eq!(
+        args,
+        [Operand::Move(two.clone()), Operand::Move(one.clone())],
+        "the arguments of `sub` are in the order of its parameters"
+    );
+}
+
+#[test]
+fn a_method_receiver_is_read_after_the_arguments() {
+    // `a.plus(one())`: the borrow of `a` comes after the call of `one`.
+    let b = golden_built("method_ref");
+    let f = body(&b, "on_place");
+    let a = named(f, "a");
+    let one = call_block(&b, f, "one");
+    let borrow = f
+        .blocks
+        .iter()
+        .position(|blk| {
+            blk.stmts.iter().any(
+                |s| matches!(&s.kind, StmtKind::Assign(_, Rvalue::Ref(p)) if *p == Place::local(a)),
+            )
+        })
+        .unwrap_or_else(|| panic!("no borrow of `a`"));
+    assert!(one < borrow, "the receiver is borrowed after the argument");
+    let (args, _) = call_of(&b, f, "Acc.plus");
+    assert!(
+        matches!(&args[0], Operand::Move(p) if f.locals[p.local.index()].kind == LocalKind::Temp(TempKind::Receiver)),
+        "the receiver is a `Receiver` temporary: {args:?}"
+    );
+    // `v.push(v.len())`: `&v` for `push` comes after the call of `len`.
+    let f = body(&b, "prelude");
+    let v = named(f, "v");
+    let len = call_block(&b, f, "Vec.len");
+    let (args, _) = call_of(&b, f, "Vec.push");
+    let Operand::Move(r) = &args[0] else {
+        panic!("the receiver of `push` is not a temporary: {args:?}");
+    };
+    assert_eq!(assigned(f, r.local), Some(&Rvalue::Ref(Place::local(v))));
+    let at = f
+        .blocks
+        .iter()
+        .position(|blk| blk.stmts.iter().any(|s| s.kind == StmtKind::Live(r.local)))
+        .unwrap_or_else(|| panic!("no Live of the receiver"));
+    assert!(len < at, "`&v` for `push` comes after `len`");
+    // A value receiver moves at the call, after the arguments.
+    let b = golden_built("method_value");
+    let f = body(&b, "consume");
+    let t = named(f, "t");
+    let (args, _) = call_of(&b, f, "Tok.into_id");
+    assert_eq!(args[0], Operand::Move(Place::local(t)));
+}
+
+#[test]
+fn a_struct_literal_runs_in_written_order_and_builds_in_field_order() {
+    // `P { b: two(), a: one() }`: `two` runs first; the aggregate is `(a, b)`.
+    let b = golden_built("struct_lit");
+    let f = body(&b, "written");
+    assert_eq!(callees(&b, f), ["two", "one"]);
+    let (_, two) = call_of(&b, f, "two");
+    let (_, one) = call_of(&b, f, "one");
+    let agg = assigned(f, f.ret);
+    assert!(
+        matches!(agg, Some(Rvalue::Aggregate(AggKind::Struct(_), ops))
+            if *ops == [Operand::Move(one.clone()), Operand::Move(two.clone())]),
+        "{agg:?}"
+    );
+    // A place field that the literal does not give: `Uninit` after it.
+    let f = body(&b, "frame");
+    assert!(
+        stmts(f).iter().any(|s| matches!(s, StmtKind::Uninit(p)
+            if p.local == f.ret && p.proj == [Proj::Field(weft_ir::FieldIdx(1))])),
+        "no `Uninit(_0.1)`"
+    );
+    // A call result: its place field has no value either.
+    let f = body(&b, "result");
+    let x = named(f, "f");
+    assert!(
+        stmts(f).iter().any(|s| matches!(s, StmtKind::Uninit(p)
+            if p.local == x && p.proj == [Proj::Field(weft_ir::FieldIdx(1))])),
+        "no `Uninit(f.1)`"
+    );
+}
+
+#[test]
+fn print_and_an_interpolation_borrow_a_value_that_is_not_plain_data() {
+    let b = golden_built("print_borrow");
+    let f = body(&b, "show");
+    let v = named(f, "v");
+    let x = named(f, "x");
+    let prints: Vec<&Vec<Operand>> = stmts(f)
+        .into_iter()
+        .filter_map(|s| match s {
+            StmtKind::Print(ops) => Some(ops),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(prints.len(), 2);
+    let Operand::Copy(r) = &prints[0][0] else {
+        panic!("`print` reads a borrow: {:?}", prints[0]);
+    };
+    assert_eq!(assigned(f, r.local), Some(&Rvalue::Ref(Place::local(v))));
+    // The plain value `x` is copied where it is written.
+    let Operand::Copy(cx) = &prints[0][1] else {
+        panic!("`x` is a copy: {:?}", prints[0]);
+    };
+    assert_eq!(
+        assigned(f, cx.local),
+        Some(&Rvalue::Use(Operand::Copy(Place::local(x))))
+    );
+    assert!(!stmts(f).iter().any(|s| matches!(s, StmtKind::Assign(_, Rvalue::Use(Operand::Move(p))) if *p == Place::local(v))), "`v` does not move");
+    let b = golden_built("interp_borrow");
+    let f = body(&b, "text");
+    let v = named(f, "v");
+    let concat = stmts(f).into_iter().find_map(|s| match s {
+        StmtKind::Assign(_, Rvalue::Concat(ops)) => Some(ops),
+        _ => None,
+    });
+    let Some(Operand::Move(r)) = concat.and_then(|ops| ops.first()) else {
+        panic!("no borrow in the interpolation: {concat:?}");
+    };
+    assert_eq!(assigned(f, r.local), Some(&Rvalue::Ref(Place::local(v))));
+}
+
+#[test]
+fn a_duration_literal_is_a_constant_argument() {
+    let b = golden_built("duration_lit");
+    let f = body(&b, "waits");
+    let (args, _) = call_of(&b, f, "wait");
+    assert_eq!(
+        args,
+        [
+            Operand::Const(weft_ir::Const::Duration(2000)),
+            Operand::Const(weft_ir::Const::Duration(500))
+        ]
+    );
+}
+
+#[test]
+fn an_array_literal_is_a_vec_or_an_array_aggregate() {
+    let b = golden_built("vec_lit");
+    let f = body(&b, "nums");
+    assert!(
+        matches!(assigned(f, f.ret), Some(Rvalue::Aggregate(AggKind::Vec, ops)) if ops.len() == 2),
+        "{:?}",
+        assigned(f, f.ret)
+    );
+    let b = golden_built("array_lit");
+    let f = body(&b, "arr");
+    assert!(
+        stmts(f)
+            .iter()
+            .any(|s| matches!(s, StmtKind::Assign(_, Rvalue::Aggregate(AggKind::Array, ops)) if ops.len() == 2)),
+        "no `Array` aggregate"
+    );
+}
+
+#[test]
+fn a_trailing_block_is_a_closure_argument() {
+    // The closure literal is for plan stage B9: until then the body stops
+    // there, at the trailing block.
+    let b = golden_built("trailing_block");
+    let e = b
+        .entries
+        .iter()
+        .find(|e| e.name == "block")
+        .unwrap_or_else(|| panic!("no `block`"));
+    match &e.outcome {
+        Outcome::Unsupported(u) => assert_eq!(u.construct.name(), "closure"),
+        other => panic!("a trailing block is a closure: {other:?}"),
+    }
+}
+
+#[test]
+fn log_info_is_a_perform_through_the_row() {
+    let b = golden_built("perform_path");
+    let f = body(&b, "tell");
+    let performs: Vec<&TermKind> = terms(f)
+        .into_iter()
+        .filter(|k| matches!(k, TermKind::Perform { .. }))
+        .collect();
+    assert_eq!(performs.len(), 2);
+    for k in performs {
+        let TermKind::Perform { cap, unwind, .. } = k else {
+            continue;
+        };
+        let CapOperand::Row(e) = cap else {
+            panic!("the capability is the row: {cap:?}");
+        };
+        assert_eq!(b.tys.effects()[e.index()].name, "Log");
+        assert!(unwind.is_some(), "a perform can abort");
+    }
+}
+
+#[test]
+fn assert_has_an_unwind_block() {
+    let b = golden_built("assert");
+    let f = body(&b, "check");
+    let asserts: Vec<Option<weft_ir::BlockId>> = terms(f)
+        .into_iter()
+        .filter_map(|k| match k {
+            TermKind::Assert { unwind, .. } => Some(*unwind),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asserts.len(), 2);
+    for u in asserts {
+        let u = u.unwrap_or_else(|| panic!("`assert` has no unwind block"));
+        assert!(
+            f.blocks[u.index()].cleanup,
+            "the unwind block is a cleanup block"
+        );
+    }
+}
+
+#[test]
+fn box_new_and_a_parameter_of_its_own_type_build_in_place() {
+    let b = golden_built("generic_extern");
+    for (name, callee, in_place) in [
+        ("boxes", "Box.new", true),
+        ("kept", "keep", true),
+        ("held", "hold", false),
+    ] {
+        let f = body(&b, name);
+        let (args, _) = call_of(&b, f, callee);
+        let Operand::Move(p) = &args[0] else {
+            panic!("{name}: the argument is not a temporary: {args:?}");
+        };
+        assert_eq!(
+            f.locals[p.local.index()].in_place,
+            in_place,
+            "{name}: `in_place` of the argument of `{callee}`"
+        );
+    }
+}
+
+#[test]
+fn an_extern_function_with_an_empty_row_has_no_unwind_block() {
+    let b = golden_built("generic_extern");
+    let f = body(&b, "vecs");
+    for k in terms(f) {
+        if let TermKind::Call { unwind, .. } = k {
+            assert_eq!(*unwind, None, "{k:?}");
+        }
+    }
+    // A function with a body can abort: its call has an unwind block.
+    let b = golden_built("call_args");
+    let f = body(&b, "first_place");
+    for k in terms(f) {
+        if let TermKind::Call { unwind, .. } = k {
+            assert!(unwind.is_some(), "{k:?}");
+        }
+    }
+}
+
+#[test]
+fn each_call_passes_the_lexical_capability_environment() {
+    for name in ["call_args", "perform_row", "method_ref", "generic_extern"] {
+        let b = golden_built(name);
+        for body in &b.program.bodies {
+            for k in terms(body) {
+                if let TermKind::Call { caps, .. } = k {
+                    assert_eq!(*caps, CapArgs::Lexical(body.cap_env), "{name}: {k:?}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_return_in_a_later_argument_ends_the_earlier_argument_temporaries() {
+    // OL-3c with a call: `add2(two(), { if n > 3 { return 0 }; n })`. The
+    // result of `two()` is in a temporary; the `return` path ends it.
+    let b = golden_built("return_in_arg");
+    let f = body(&b, "call");
+    let (_, two) = call_of(&b, f, "two");
+    let early: Vec<&weft_ir::Block> = f
+        .blocks
+        .iter()
+        .filter(|blk| {
+            blk.term.kind == TermKind::Return
+                && blk.stmts.iter().any(|s| {
+                    matches!(&s.kind, StmtKind::Assign(p, Rvalue::Use(Operand::Const(_)))
+                        if *p == Place::local(LocalId(0)))
+                })
+        })
+        .collect();
+    assert_eq!(early.len(), 1, "one `return 0` path");
+    assert!(
+        early[0]
+            .stmts
+            .iter()
+            .any(|s| s.kind == StmtKind::Dead(two.local)),
+        "the `return` path does not end the result of `two()`"
+    );
+}
+
+#[test]
+fn sim_run_and_with_timeout_are_for_stage_b11() {
+    let src = "fn f() -> u64 / async, fail {\n    with_timeout(1.s, g)\n}\nfn g() -> u64 { 1 }\ntest \"t\" {\n    sim.run(seed: 1) {\n        print(1)\n    }\n}\n";
+    let (_, b) = build(src);
+    for name in ["f", "test \"t\""] {
+        let e = b
+            .entries
+            .iter()
+            .find(|e| e.name == name)
+            .unwrap_or_else(|| panic!("no `{name}`"));
+        match &e.outcome {
+            Outcome::Unsupported(u) => {
+                assert_eq!(u.construct.name(), "intrinsic call", "{name}");
+                assert_eq!(u.construct.stage(), "B11");
+            }
+            other => panic!("{name}: an intrinsic call is for stage B11: {other:?}"),
+        }
     }
 }

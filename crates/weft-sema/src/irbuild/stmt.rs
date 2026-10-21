@@ -52,7 +52,7 @@ impl Builder<'_> {
             S::While { cond, body } => self.while_loop(cond, body, s.span)?,
             S::For { pat, iter, body } => self.for_loop(pat, iter, body, s.span)?,
             S::Loop(body) => self.loop_loop(body, s.span)?,
-            S::Assert(_) => return unsupported(Construct::Assert, s.span),
+            S::Assert(c) => self.assert_stmt(c, s.span)?,
         }
         self.close();
         Ok(())

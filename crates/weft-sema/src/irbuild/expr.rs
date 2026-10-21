@@ -38,15 +38,9 @@ const fn bin_op(op: ast::BinOp) -> Option<(BinOp, bool)> {
 /// lower yet.
 const fn later(e: &ExprKind) -> Construct {
     match e {
-        ExprKind::Call { .. } => Construct::Call,
-        ExprKind::MethodCall { .. } => Construct::MethodCall,
-        ExprKind::Tuple(_) => Construct::Tuple,
-        ExprKind::Array(_) => Construct::Array,
-        ExprKind::StructLit { .. } => Construct::StructLit,
         ExprKind::Closure { .. } => Construct::Closure,
         ExprKind::Handle { .. } => Construct::Handle,
         ExprKind::Scope { .. } => Construct::Scope,
-        ExprKind::Name(_) => Construct::ItemName,
         // The builder lowers these kinds before it asks for a right side. A
         // range is valid only in a `for` (W0114).
         ExprKind::Range { .. }
@@ -57,7 +51,13 @@ const fn later(e: &ExprKind) -> Construct {
         | ExprKind::Index { .. }
         | ExprKind::Unary { .. }
         | ExprKind::Lit(_)
-        | ExprKind::Block(_) => Construct::NoThir,
+        | ExprKind::Block(_)
+        | ExprKind::Name(_)
+        | ExprKind::Call { .. }
+        | ExprKind::MethodCall { .. }
+        | ExprKind::Tuple(_)
+        | ExprKind::Array(_)
+        | ExprKind::StructLit { .. } => Construct::NoThir,
     }
 }
 
@@ -148,8 +148,8 @@ impl Builder<'_> {
     }
 
     /// Writes the value of `e` into `dest`, with no implicit dereference: a
-    /// constant, a block, a branch, or a right side. The place of a place
-    /// expression is for [`Builder::into`].
+    /// constant, a block, a branch, a call, an aggregate, or a right side.
+    /// The place of a place expression is for [`Builder::into`].
     pub(super) fn value_into(&mut self, e: &Expr, dest: Place) -> R<()> {
         let origin = self.origin(e.span, Some(e.id));
         if let Some(c) = self.constant(e)? {
@@ -169,6 +169,13 @@ impl Builder<'_> {
                 lhs,
                 rhs,
             } => return self.and_or_into(*op == ast::BinOp::And, lhs, rhs, e, dest),
+            ExprKind::Call { .. } | ExprKind::MethodCall { .. } => return self.call_into(e, dest),
+            ExprKind::StructLit { fields, .. } => return self.struct_lit_into(e, fields, &dest),
+            ExprKind::Tuple(xs) => return self.tuple_into(e, xs, dest),
+            ExprKind::Array(xs) => return self.array_into(e, xs, dest),
+            ExprKind::Name(_) | ExprKind::Field { .. } if self.t.res.contains_key(&e.id) => {
+                return self.item_into(e, dest)
+            }
             _ => {}
         }
         let rv = self.rvalue(e)?;
@@ -206,15 +213,20 @@ impl Builder<'_> {
                 }
             }
             ExprKind::Lit(Lit::Str(parts)) => {
+                let interps: Vec<&Expr> = parts
+                    .iter()
+                    .filter_map(|p| match p {
+                        StrPart::Interp(x) => Some(x),
+                        StrPart::Text(_) => None,
+                    })
+                    .collect();
+                let mut skips = self.skips(&interps).into_iter();
                 let mut ops = Vec::with_capacity(parts.len());
-                for (i, p) in parts.iter().enumerate() {
+                for p in parts {
                     match p {
                         StrPart::Text(t) => ops.push(Operand::Const(Const::Str(t.clone()))),
                         StrPart::Interp(x) => {
-                            let skip = parts.iter().skip(i + 1).all(|q| match q {
-                                StrPart::Text(_) => true,
-                                StrPart::Interp(y) => self.inert(y),
-                            });
+                            let skip = skips.next().unwrap_or(false);
                             ops.push(self.read_operand(x, skip)?);
                         }
                     }
@@ -235,6 +247,13 @@ impl Builder<'_> {
     /// `t := move p`; with `skip`, no later operand can run code, and the place
     /// itself is the operand. A value gives a temporary.
     pub(super) fn operand(&mut self, e: &Expr, skip: bool) -> R<Operand> {
+        self.operand_in(e, skip, false)
+    }
+
+    /// [`Builder::operand`]; with `in_place`, a `!Move` value that `e` builds
+    /// (not a place) is built in place for its use: its temporary is
+    /// `in_place` (`docs/ir.md` 5.18, 5.36).
+    pub(super) fn operand_in(&mut self, e: &Expr, skip: bool, in_place: bool) -> R<Operand> {
         if let Some(c) = self.constant(e)? {
             return Ok(Operand::Const(c));
         }
@@ -251,15 +270,21 @@ impl Builder<'_> {
         }
         let ty = self.ty(e)?;
         let t = self.temp(ty, TempKind::Operand, origin);
+        if in_place && self.props(ty).immovable {
+            if let Some(d) = self.locals.get_mut(t.index()) {
+                d.in_place = true;
+            }
+        }
         self.value_into(e, Place::local(t))?;
         Ok(Operand::Move(Place::local(t)))
     }
 
-    /// Evaluates `e` now and gives an operand in a read position: a comparison
-    /// or an interpolation (`docs/ir.md` 5.1.1, 5.16). Plain data is an operand
-    /// as in [`Builder::operand`]. Another value is borrowed where it is
-    /// written: `t := &p`, or `tv := <e>; t := &tv` for a value.
-    fn read_operand(&mut self, e: &Expr, skip: bool) -> R<Operand> {
+    /// Evaluates `e` now and gives an operand in a read position: a
+    /// comparison, an interpolation or `print` (`docs/ir.md` 5.1.1, 5.16,
+    /// 5.33). Plain data is an operand as in [`Builder::operand`]. Another
+    /// value is borrowed where it is written: `t := &p`, or `tv := <e>; t :=
+    /// &tv` for a value.
+    pub(super) fn read_operand(&mut self, e: &Expr, skip: bool) -> R<Operand> {
         let ty = self.value_ty(e)?;
         if !self.tys.not_copy(ty) {
             return self.operand(e, skip);

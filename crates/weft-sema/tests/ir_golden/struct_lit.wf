@@ -1,0 +1,25 @@
+// A struct literal (`docs/ir.md` 5.17): the fields run in the written order,
+// and the aggregate has its operands in the order of the fields. A place
+// field that the literal does not give has no value: `Uninit` after the
+// aggregate. A call result is built in place too.
+
+struct P { a: u64, b: u64 }
+struct Frame: !Move { buf: [u8; 2], cur: &u8 in self.buf[] }
+
+fn one() -> u64 { 1 }
+fn two() -> u64 { 2 }
+
+// `two()` for `b` runs first; the aggregate is `(a, b)`.
+fn written() -> P {
+    P { b: two(), a: one() }
+}
+
+// `cur` has no value after the literal.
+fn frame() -> Frame {
+    Frame { buf: [1, 2] }
+}
+
+// The result of a call has its place fields with no value.
+fn result() {
+    let f = frame()
+}

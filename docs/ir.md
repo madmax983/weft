@@ -1111,7 +1111,19 @@ Some(a)          =>  ta := <a>; t := Variant(Option, Some)(move ta)
 - A struct with a place field that the literal does not give: `Uninit(t.f)` after the
   aggregate, for each place field at each depth of the full type. The walk is keyed by
   the full type with a visited set, so a recursive or polymorphic type ends (Q3-1, V062,
-  the R3a review item on `place_paths`).
+  the R3a review item on `place_paths`). The aggregate has one operand for each field;
+  the operand of a field that the literal does not give is `const ()`, and the `Uninit`
+  after the aggregate tells that the field has no value.
+- A call result is built in place too (ADR 0007): `Uninit(dest.q)` after the call, on
+  its normal edge, for each place field path `q` of the result type. The result of a
+  perform is the value of a `resume`, which a place of the clause held: no `Uninit`.
+- A `!Move` part that the aggregate builds (a literal or a call result, not a place) is
+  built in place: its temporary has `in_place: true`, as the old lowering, which reports
+  W0604 only for an argument of a call.
+- `[a, b]` is an `Array` aggregate if the THIR type of the literal is an array (the type
+  of a field or a parameter gives it), else a `Vec` aggregate.
+- A variant with no payload as a value (`None`, `Color.Red`) is a `Variant` aggregate
+  with no operand. A variant or a function item as a function value is section 5.23.
 - A struct literal that gives a place field a reference: `ref_at` with no `ref_in`.
 
 ### 5.18 Calls of function items [2.17]
@@ -1122,10 +1134,27 @@ f(x, y)  =>  tx := <operand x>; ty := <operand y>;           (parameter order)
 ```
 
 - One terminator for each call form. A by-value argument moves where it is evaluated.
-- A `!Move` value built for a parameter of its own type, or for `Box.new` and `Rc.new`,
-  has `in_place: true` (W0604 skips it).
-- `unwind` is present if the callee can abort by its kind (V10). The fact generator
-  keeps the abort edge only when the summary says the call can abort.
+- The THIR `CallInfo::args` gives the argument of each parameter (ADR 0009): an index
+  into the written arguments, or the trailing block. The builder evaluates the
+  arguments in that order. A parameter with no argument is W0103 of `typeck`, so the
+  body has no IR. `sim.run` can leave out `workers`: it is plan stage B11 (5.30).
+- A place argument skips its temporary only if no later argument can run code (5.1.1),
+  and only in a call with no receiver: the read of a receiver comes after the
+  arguments (5.19).
+- A `!Move` value built for a parameter of its own type (the declared type, not a type
+  parameter), or for `Box.new` and `Rc.new`, has `in_place: true` (W0604 skips it).
+- `unwind` is present if the callee can abort by its kind (V10): each callee but an
+  extern function whose stated row is empty and that has no run-time meaning. The
+  stated row of an extern function is its full row. An extern function that the
+  runtime can make fail with an empty row (`raises`, as `FsCap.read`) gets no stated
+  row, so its calls get an `unwind` block. The fact generator keeps the abort edge only
+  when the summary says the call can abort.
+- An extern function of the prelude gets its `FnDecl` at its first call in a body that
+  the builder finishes (`Built::fns`). `sim.run` (the function `run` of the standard
+  module `sim`) and `with_timeout` have their `Intrinsic`.
+- Until plan stage B8, the cleanup chain of a terminator has only the `Dead` of each
+  local with a cell, in the order of V16 (no `UnwindValue`), and chains share their
+  suffixes: one block for each local and the block after it.
 - **Goes away:** `item_arg_slots`, `eval_item_args`, the `arg_order` export (RR10),
   `hold_operand`, `hold_generic`, `release_generic`, `callee_drops`, `item_fn_args`,
   `arg_tasks`, the "call again" nodes (a `Many` run applies a second time at `Ret`).
@@ -1140,7 +1169,11 @@ E.op(a), op(a)               =>  a perform (5.26), from the THIR `res` of the na
 f(a) { block }               =>  f(a, || { block })          (a trailing block is a closure with no parameters)
 ```
 
-The receiver is a place first; the call reads it after the arguments (p7, p8).
+The receiver is a place first; the call reads it after the arguments (p7, p8). The
+THIR `Recv::mode` gives the read: `Borrow` is `tr := &<place x>` (a `Receiver`
+temporary), `Ref` copies the reference, `Value` copies plain data and moves another
+value, `Deref` copies the value through the reference (`adjust` of the receiver has the
+dereferences). A receiver that is not a place goes into a `Receiver` temporary first.
 `s.spawn(..)`, `t.join()`, `t.detach()` are `Spawn`, `Join`, `Detach` (5.29). **Goes
 away:** `note_via_call`, `finish_via_calls` (QA6): `writes_via` at a call is one rule of
 the template.
@@ -1167,6 +1200,14 @@ v(a)  =>  tv := copy v; ta := <a>; t = call (copy tv)(move ta) caps Lexical(env)
 The callee is an operand, read before the arguments. The analysis gives the set of
 values the callee can be (section 6.6). A `once` closure moves at the call: the callee
 operand is `move v` (W0502).
+
+Named arguments of a function value bind by the parameter names of the function item
+that the local holds (ADR 0009), so the THIR order of the arguments comes from the
+value flow of the old lowering. A local that a loop gives another value can get a
+second order in a later pass: the THIR then has a conflict for the call. `typeck`
+reports W0104 for such a call, so the body gets no IR (a conflict alone gives
+`NoIr::Conflict` too). Else the builder uses the THIR order, as for a call of a
+function item.
 
 ### 5.22 Closures [2.21]
 
@@ -1312,10 +1353,13 @@ assert(c)    =>  tc := <c>; Assert(move tc) -> [next, unwind: C]
 ```
 
 `print` reads its operands where they are written (N2). A value that is not plain data
-is borrowed, not moved. `assert` can abort the task: its cleanup edge and `may_abort`
-come from the terminator, and the summary of a body with an `Assert` can abort, so its
-callers get `may_abort` too (N4, probes p25 and p27). A bounds check, an overflow and a
-division by zero are faults: they stop the run and have no cleanup edge.
+is borrowed, not moved. So each operand of `Print` is plain data or a reference, and
+`Print` copies it. A condition of `assert` that is a place or a constant is the
+operand itself, as the condition of `if`. `assert` can abort the task: its cleanup
+edge and `may_abort` come from the terminator, and the summary of a body with an
+`Assert` can abort, so its callers get `may_abort` too (N4, probes p25 and p27). A
+bounds check, an overflow and a division by zero are faults: they stop the run and
+have no cleanup edge.
 
 ### 5.34 Effects at calls and handlers of a caller [2.34]
 

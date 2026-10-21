@@ -266,6 +266,11 @@ pub fn verify_body(p: &Program, tys: &TyTable, id: BodyId) -> Vec<Broken> {
     cx.out
 }
 
+/// The suffixes of cleanup chains that a walk of V16 checked with no broken order:
+/// the first value of each one (its rank and local), by its first block and the
+/// rank of `_0` in the chain.
+type CleanSuffixes = BTreeMap<(usize, Option<u8>), Option<(u8, LocalId)>>;
+
 /// Returns block id `i`.
 fn bid(i: usize) -> BlockId {
     BlockId(id_of(i))
@@ -1375,6 +1380,11 @@ impl<'a> Cx<'a> {
     }
 
     /// V16: the order of each cleanup chain.
+    ///
+    /// Chains share their suffixes (`docs/ir.md` 5.1.6). A suffix that one walk
+    /// checked with no broken order is not walked again: the next walk compares
+    /// its last value with the first value of the suffix and stops there. So the
+    /// cost is linear in the blocks of the chains, not in their lengths.
     fn chains(&mut self, g: &Graph) {
         let written = self.ret_written();
         // The head of each chain, with the state of `_0` at each abort edge into it.
@@ -1392,6 +1402,7 @@ impl<'a> Cx<'a> {
             }
             heads.entry(u.index()).or_default().push(st);
         }
+        let mut clean = BTreeMap::new();
         for (head, states) in heads {
             let ret_rank = if states.iter().all(|s| s.0) {
                 Some(1)
@@ -1400,72 +1411,123 @@ impl<'a> Cx<'a> {
             } else {
                 None
             };
-            self.chain(head, ret_rank);
+            self.chain(head, ret_rank, &mut clean);
         }
+    }
+
+    /// Returns the rank of local `l` in a cleanup chain (V16): 1 for `_0` with a
+    /// value, 2 for a temporary, 3 for another local, 4 for `_0` with no value, 5
+    /// for a parameter. `None` for a value that the order skips: the continuation
+    /// of a clause, a local of another frame, and `_0` if the paths into the chain
+    /// do not agree (`ret_rank` is `None`).
+    fn rank(&self, l: LocalId, kont: Option<LocalId>, ret_rank: Option<u8>) -> Option<u8> {
+        if Some(l) == kont || self.foreign(l) {
+            return None;
+        }
+        Some(if l == self.body.ret {
+            ret_rank?
+        } else if matches!(self.kind(l), Some(LocalKind::Temp(_))) {
+            2
+        } else if self.is_param(l) {
+            5
+        } else {
+            3
+        })
     }
 
     /// V16 for the chain that starts at block `head`. `ret_rank` is the place of `_0`
     /// in the order (1 with a value, 4 with no value), or `None` if the paths into
-    /// the chain do not agree.
-    fn chain(&mut self, head: usize, ret_rank: Option<u8>) {
+    /// the chain do not agree. `clean` has the first value of each suffix that a
+    /// walk checked with no broken order, by its first block and `ret_rank`.
+    fn chain(&mut self, head: usize, ret_rank: Option<u8>, clean: &mut CleanSuffixes) {
         let kont = match (self.body.kind, self.body.kont) {
             (BodyKind::Clause(..), Some((k, _))) => Some(k),
             _ => None,
         };
         let body = self.body;
-        let mut items: Vec<(BlockId, &StmtKind)> = Vec::new();
+        if let Some(k) = kont {
+            // The first statement of the chain.
+            let mut cur = head;
+            let mut seen = BTreeSet::new();
+            let mut first = None;
+            while let Some(blk) = body.blocks.get(cur) {
+                if !blk.cleanup || !seen.insert(cur) {
+                    break;
+                }
+                if let Some(s) = blk.stmts.first() {
+                    first = Some(&s.kind);
+                    break;
+                }
+                match blk.term.kind {
+                    TermKind::Goto(t) => cur = t.index(),
+                    _ => break,
+                }
+            }
+            if first != Some(&StmtKind::UnwindKont(k)) {
+                self.push(Rule::KontNotFirst, Some(bid(head)), Some(k));
+            }
+        }
+        let bad = |(lr, ll): (u8, LocalId), (rank, l): (u8, LocalId)| {
+            rank < lr || (rank == lr && (rank == 2 || rank == 3) && l > ll)
+        };
+        let mut last: Option<(u8, LocalId)> = None;
+        // The blocks of this walk, each with its first value.
+        let mut walked: Vec<(usize, Option<(u8, LocalId)>)> = Vec::new();
+        let mut ok = true;
+        let mut tail: Option<(u8, LocalId)> = None;
         let mut cur = head;
         let mut seen = BTreeSet::new();
         while let Some(blk) = body.blocks.get(cur) {
             if !blk.cleanup || !seen.insert(cur) {
                 break;
             }
-            items.extend(blk.stmts.iter().map(|s| (bid(cur), &s.kind)));
+            if ok {
+                if let Some(&first) = clean.get(&(cur, ret_rank)) {
+                    let fits = match (last, first) {
+                        (Some(a), Some(b)) => a.1 == b.1 || !bad(a, b),
+                        _ => true,
+                    };
+                    if fits {
+                        tail = first;
+                        break;
+                    }
+                }
+            }
+            let mut own = None;
+            for s in &blk.stmts {
+                let l = match &s.kind {
+                    StmtKind::Dead(l) => *l,
+                    StmtKind::UnwindValue(p, _) => p.local,
+                    _ => continue,
+                };
+                let Some(rank) = self.rank(l, kont, ret_rank) else {
+                    continue;
+                };
+                own = own.or(Some((rank, l)));
+                let Some(prev) = last else {
+                    last = Some((rank, l));
+                    continue;
+                };
+                if prev.1 == l {
+                    continue;
+                }
+                if bad(prev, (rank, l)) {
+                    ok = false;
+                    self.push(Rule::UnwindOrder, Some(bid(cur)), Some(l));
+                } else {
+                    last = Some((rank, l));
+                }
+            }
+            walked.push((cur, own));
             match blk.term.kind {
                 TermKind::Goto(t) => cur = t.index(),
                 _ => break,
             }
         }
-        if let Some(k) = kont {
-            let first = items.first().map(|(_, s)| *s);
-            if first != Some(&StmtKind::UnwindKont(k)) {
-                self.push(Rule::KontNotFirst, Some(bid(head)), Some(k));
-            }
-        }
-        let mut last: Option<(u8, LocalId)> = None;
-        for (b, s) in items {
-            let l = match s {
-                StmtKind::Dead(l) => *l,
-                StmtKind::UnwindValue(p, _) => p.local,
-                _ => continue,
-            };
-            if Some(l) == kont || self.foreign(l) {
-                continue;
-            }
-            let rank = if l == self.body.ret {
-                match ret_rank {
-                    Some(r) => r,
-                    None => continue,
-                }
-            } else if matches!(self.kind(l), Some(LocalKind::Temp(_))) {
-                2
-            } else if self.is_param(l) {
-                5
-            } else {
-                3
-            };
-            let Some((lr, ll)) = last else {
-                last = Some((rank, l));
-                continue;
-            };
-            if ll == l {
-                continue;
-            }
-            let bad = rank < lr || (rank == lr && (rank == 2 || rank == 3) && l > ll);
-            if bad {
-                self.push(Rule::UnwindOrder, Some(b), Some(l));
-            } else {
-                last = Some((rank, l));
+        if ok {
+            for (b, own) in walked.into_iter().rev() {
+                tail = own.or(tail);
+                clean.insert((b, ret_rank), tail);
             }
         }
     }

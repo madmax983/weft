@@ -1,0 +1,41 @@
+fn f0 wait(Duration, Duration) -> Duration: b0
+fn f1 waits() -> Duration: b1
+fn f2 sleeps() -> () / Clock: b2
+fn f3 sleep(Duration) -> () / Clock: extern
+cap_env e0
+
+body b0: fn wait; cap_env e0; unwind_exit bb1
+  _0: Duration (Return)
+  _1: Duration (Param(0) `d`)
+  _2: Duration (Param(1) `e`)
+  bb0:
+    _0 = copy _1
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn waits; cap_env e0; unwind_exit bb3
+  _0: Duration (Return)
+  bb0:
+    _0 = call wait(const 2000ms, const 500ms) / e0 -> [bb2, unwind: bb1]
+  bb1 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb2:
+    Return
+  bb3 (cleanup):
+    UnwindExit
+
+body b2: fn sleeps; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  bb0:
+    _0 = call sleep(const 1000ms) / e0 -> [bb2, unwind: bb1]
+  bb1 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb2:
+    Return
+  bb3 (cleanup):
+    UnwindExit

@@ -1,0 +1,32 @@
+fn f0 tell(String) -> () / Log: b0
+cap_env e0
+
+body b0: fn tell; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: String (Param(0) `m`)
+  _2: () (Temp(Discarded))
+  _3: String (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = perform Row(Log).info(copy _1) -> [bb3, unwind: bb2]
+  bb1 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb6)
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb1)
+  bb3:
+    Dead(_2)
+    Live(_3)
+    _3 = Concat(copy _1, const "!")
+    _0 = perform Row(Log).warn(move _3) -> [bb5, unwind: bb4]
+  bb4 (cleanup):
+    Dead(_3)
+    Goto(bb1)
+  bb5:
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    UnwindExit

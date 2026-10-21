@@ -1,0 +1,35 @@
+// Calls of generic extern functions of the prelude (`docs/ir.md` 5.18,
+// 5.20): the call has the type arguments of the THIR. An extern function
+// with an empty row cannot abort: no `unwind` block. `Box.new` builds its
+// argument in place.
+
+struct Frame: !Move { buf: [u8; 2], cur: &u8 in self.buf[] }
+
+fn vecs() -> usize {
+    let v = Vec.new()
+    v.push(1)
+    v.len()
+}
+
+fn boxes() -> Box<Frame> {
+    Box.new(Frame { buf: [1, 2] })
+}
+
+fn rcs(x: u64) -> Rc<u64> {
+    Rc.new(x)
+}
+
+// A `!Move` value built for a parameter of its own type is built in place.
+fn keep(f: Frame) {}
+
+fn kept() {
+    keep(Frame { buf: [1, 2] })
+}
+
+// A parameter of a type parameter lets the callee move the value: not in
+// place (W0604 is for the fact generator).
+fn hold<T>(x: T) {}
+
+fn held() {
+    hold(Frame { buf: [1, 2] })
+}

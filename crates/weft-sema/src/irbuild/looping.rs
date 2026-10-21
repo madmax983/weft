@@ -267,18 +267,30 @@ mod tests {
 
     use super::super::frame::Jump;
     use super::super::unset::PlaceFields;
-    use super::super::{Builder, Fence, ScopeKind, Targets};
+    use std::collections::BTreeMap;
+
+    use super::super::{Builder, Decls, Fence, ScopeKind, Targets};
     use crate::thir::Tables;
 
     /// Runs `f` on a builder of an empty body with the scopes `kinds`, from
     /// the outermost. The loop scopes have exit `bb1` and head `bb2`.
     fn with_scopes(kinds: &[ScopeKind], f: impl FnOnce(&mut Builder<'_>)) {
+        let Ok(a) = crate::analyze_source("", crate::Options::default()) else {
+            panic!("the empty program does not analyze");
+        };
         let t = Tables::default();
         let mut tys = TyTable::new();
         let mut fields = PlaceFields::new(&tys);
+        let (mut fns, mut decls) = (BTreeMap::new(), Vec::new());
+        let d = Decls {
+            a: &a,
+            fns: &mut fns,
+            items: &mut decls,
+            cap_envs: &[],
+        };
         let unit = tys.unit();
         let span = Span { lo: 0, hi: 1 };
-        let mut b = Builder::new(&t, &mut tys, &mut fields, 0, unit, span);
+        let mut b = Builder::new(&t, &mut tys, &mut fields, d, 0, unit, span);
         b.new_block();
         b.new_block();
         for &k in kinds {

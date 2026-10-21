@@ -1,0 +1,60 @@
+fn f0 check(Vec<u64>, usize) -> (): b0
+fn f1 Vec.len<T0>(&Vec<T0>) -> usize / (): extern
+cap_env e0
+
+body b0: fn check; cap_env e0; unwind_exit bb10
+  _0: () (Return)
+  _1: Vec<u64> (Param(0) `v`)
+  _2: usize (Param(1) `n`)
+  _3: usize (User `k`)
+  _4: bool (Temp(Operand))
+  _5: bool (Temp(Operand))
+  _6: usize (Temp(Operand))
+  _7: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_3)
+    _3 = Add<usize>(copy _2, const 1usize)
+    Live(_4)
+    _4 = Gt(copy _3, copy _2)
+    assert move _4 -> [bb4, unwind: bb3]
+  bb1 (cleanup):
+    Dead(_0)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb10)
+  bb2 (cleanup):
+    Dead(_3)
+    Goto(bb1)
+  bb3 (cleanup):
+    Dead(_4)
+    Goto(bb2)
+  bb4:
+    Dead(_4)
+    Live(_5)
+    Live(_6)
+    Live(_7)
+    _7 = &_1
+    _6 = call Vec.len<u64>(move _7) / e0 -> [bb5]
+  bb5:
+    _5 = Eq(move _6, copy _2)
+    assert move _5 -> [bb9, unwind: bb8]
+  bb6 (cleanup):
+    Dead(_5)
+    Goto(bb2)
+  bb7 (cleanup):
+    Dead(_6)
+    Goto(bb6)
+  bb8 (cleanup):
+    Dead(_7)
+    Goto(bb7)
+  bb9:
+    Dead(_7)
+    Dead(_6)
+    Dead(_5)
+    _0 = const ()
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb10 (cleanup):
+    UnwindExit

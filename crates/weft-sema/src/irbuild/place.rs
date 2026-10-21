@@ -76,6 +76,13 @@ impl Builder<'_> {
     /// and no statement.
     pub(super) fn as_place(&mut self, e: &Expr) -> R<Option<Place>> {
         let mut place = match &e.kind {
+            // A name that is not a local is a value: a variant or an item.
+            ExprKind::Name(_) if !matches!(self.t.res.get(&e.id), Some(Res::Local(_))) => {
+                return match self.t.res.get(&e.id) {
+                    Some(_) => Ok(None),
+                    None => unsupported(Construct::NoThir, e.span),
+                };
+            }
             ExprKind::Name(_) => self.local_place(e)?,
             ExprKind::Field { base, .. } => {
                 if matches!(base.kind, ExprKind::Lit(_)) {
@@ -83,8 +90,8 @@ impl Builder<'_> {
                     return Ok(None);
                 }
                 if self.t.res.contains_key(&e.id) {
-                    // A member of a path: a variant or an item.
-                    return unsupported(Construct::ItemName, e.span);
+                    // A member of a path: a variant or an item, a value.
+                    return Ok(None);
                 }
                 match self.t.field.get(&e.id) {
                     Some(thir::FieldIdx::Field(i)) => {
@@ -186,8 +193,7 @@ impl Builder<'_> {
                 Some(&l) => Ok(Place::local(l)),
                 None => unsupported(Construct::NoThir, e.span),
             },
-            Some(_) => unsupported(Construct::ItemName, e.span),
-            None => unsupported(Construct::NoThir, e.span),
+            _ => unsupported(Construct::NoThir, e.span),
         }
     }
 

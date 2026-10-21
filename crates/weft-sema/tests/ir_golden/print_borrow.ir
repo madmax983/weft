@@ -1,0 +1,81 @@
+fn f0 one() -> u64: b0
+fn f1 show(Vec<u64>, u64) -> (): b1
+fn f2 show_value() -> (): b2
+cap_env e0
+
+body b0: fn one; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  bb0:
+    _0 = const 1u64
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn show; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: Vec<u64> (Param(0) `v`)
+  _2: u64 (Param(1) `x`)
+  _3: () (Temp(Discarded))
+  _4: &Vec<u64> (Temp(Operand))
+  _5: u64 (Temp(Operand))
+  _6: u64 (Temp(Operand))
+  _7: &Vec<u64> (Temp(Operand))
+  bb0:
+    Live(_3)
+    Live(_4)
+    _4 = &_1
+    Live(_5)
+    _5 = copy _2
+    Live(_6)
+    _6 = call one() / e0 -> [bb6, unwind: bb5]
+  bb1 (cleanup):
+    Dead(_0)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb7)
+  bb2 (cleanup):
+    Dead(_3)
+    Goto(bb1)
+  bb3 (cleanup):
+    Dead(_4)
+    Goto(bb2)
+  bb4 (cleanup):
+    Dead(_5)
+    Goto(bb3)
+  bb5 (cleanup):
+    Dead(_6)
+    Goto(bb4)
+  bb6:
+    Print(copy _4, copy _5, copy _6)
+    _3 = const ()
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Live(_7)
+    _7 = &_1
+    Print(copy _7)
+    _0 = const ()
+    Dead(_7)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb7 (cleanup):
+    UnwindExit
+
+body b2: fn show_value; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Vec<i64> (Temp(Borrowed))
+  _2: &Vec<i64> (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = vec[const 1i64, const 2i64]
+    Live(_2)
+    _2 = &_1
+    Print(copy _2)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
