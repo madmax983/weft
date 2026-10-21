@@ -202,9 +202,13 @@ pub enum Kind {
     /// (5.12); the AST engine keeps them to the end of the statement. Shape:
     /// the IR run reads a dangling reference, and the AST run does not.
     BranchTemps,
-    /// The unwind order of a frame before stage I6 (5.1.6): the IR engine
-    /// unwinds `_0` after the locals. Shape: both runs end the same way,
-    /// with another output.
+    /// The unwind order of the cleanup chains (5.1.6, 8.2, stage I6): the
+    /// chain of a clause unwinds its fresh continuation first, where the AST
+    /// engine unwinds the clause frame first; and the chain runs the `on
+    /// abort` of each value when it gets to the value, so an `on abort` can
+    /// run before the fault at a linear value with no `on abort` (W0602).
+    /// Shape: both runs end with the same status and message (the line can
+    /// differ), with another output.
     UnwindOrder,
     /// Rule CAPTURE (5.1.7): a borrowed capture is `ByRef`, so the oracle
     /// sees a dangling cell earlier. Shape: the IR run reads a dangling
@@ -344,6 +348,9 @@ impl Kind {
         let same_end = ao.zip(io).is_some_and(|(x, y)| {
             x.status == y.status && x.message == y.message && x.line == y.line
         });
+        let same_status = ao
+            .zip(io)
+            .is_some_and(|(x, y)| x.status == y.status && x.message == y.message);
         let other_output = ao
             .zip(io)
             .is_some_and(|(x, y)| x.output_hash != y.output_hash);
@@ -363,7 +370,7 @@ impl Kind {
             Self::ChoiceA => (same_end && other_output) || (a == Facet::Dangling && i == Facet::Ok),
             Self::LoopTemps => a == Facet::Ok && i == Facet::Ok && other_output,
             Self::BranchTemps => i == Facet::Dangling && a != Facet::Dangling,
-            Self::UnwindOrder => same_end && other_output,
+            Self::UnwindOrder => same_status && other_output,
             Self::Capture => {
                 (i == Facet::Dangling && a != Facet::Dangling) || elsewhere(Facet::Dangling)
             }

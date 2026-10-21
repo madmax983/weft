@@ -648,7 +648,9 @@ mod ir_ops {
     use std::collections::BTreeSet;
     use std::rc::Rc;
 
-    use weft_interp::code::{CapHold, ClauseSpec, Code, CodeKind, HandleSpec, Op, VarRef};
+    use weft_interp::code::{
+        CapHold, ClauseSpec, Code, CodeKind, HandleSpec, Op, UnwindStep, VarRef,
+    };
     use weft_interp::compile::{Compiler, Exports};
     use weft_interp::runtime::Runtime;
     use weft_interp::{run_runtime_main, RunOptions, RunOutcome, RuntimeError};
@@ -657,6 +659,8 @@ mod ir_ops {
     use weft_syntax::ast::Span;
 
     const SRC: &str = "enum E { A, B(u64) }\nlinear struct T { x: u64 }\n\
+        linear struct U { x: u64 }\n    on abort = undo\n\
+        fn undo(u: U) { let U(x) = u\n print(\"undo\", x) }\n\
         effect Ask { fn ask() -> u64 }\nfn main() {}";
 
     /// Runs `main` with hand-made code: `ops`, with `slots` slots, of which
@@ -691,6 +695,7 @@ mod ir_ops {
             unit: 0,
             temp_slots: 0,
             locs: Vec::new(),
+            pads: Vec::new(),
         }
     }
 
@@ -700,6 +705,18 @@ mod ir_ops {
         ops: Vec<Op>,
         slots: u32,
         temps: u32,
+        extra: Vec<Code>,
+    ) -> Result<RunOutcome, RuntimeError> {
+        run_code(ops, slots, temps, Vec::new(), extra)
+    }
+
+    /// Runs `main` as `run_units` does. `pads` is the landing-pad table of
+    /// `main` (`Code::pads`).
+    fn run_code(
+        ops: Vec<Op>,
+        slots: u32,
+        temps: u32,
+        pads: Vec<(usize, usize)>,
         extra: Vec<Code>,
     ) -> Result<RunOutcome, RuntimeError> {
         let a = weft_sema::analyze_source(SRC, Options::default()).unwrap();
@@ -719,6 +736,7 @@ mod ir_ops {
             unit: 0,
             temp_slots: temps,
             locs: Vec::new(),
+            pads,
         });
         compiled.codes.extend(extra.into_iter().map(Rc::new));
         let rt = Runtime::with_code(&a.program, &a.sigs, BTreeSet::new(), compiled);
@@ -1140,5 +1158,119 @@ mod ir_ops {
         ]);
         let o = run_units(ops, 2, 0, vec![closure_unit(body, 0, 0)]).unwrap();
         assert_eq!(o.stdout, "1\n1\n");
+    }
+
+    /// The ops that put a struct `name { x: x }` into slot `slot`.
+    fn make(name: &str, x: i64, slot: u32) -> Vec<Op> {
+        vec![
+            Op::Int(x),
+            Op::MakeStruct {
+                adt: adt(name),
+                fields: vec![0],
+                total: 1,
+            },
+            Op::Bind(slot),
+        ]
+    }
+
+    /// Runs `main`: `setup`, then an `Assert` that fails, with a landing
+    /// pad into the cleanup code `chain`. Returns the output and the
+    /// error message.
+    fn abort_with(setup: Vec<Op>, slots: u32, chain: Vec<Op>) -> (String, String) {
+        let mut ops = setup;
+        ops.extend([Op::Bool(false), Op::Assert]);
+        let at = ops.len() - 1;
+        ops.extend([Op::Unit, Op::Return]);
+        let pad = ops.len();
+        ops.extend(chain);
+        let e = run_code(ops, slots, 0, vec![(at, pad)], Vec::new()).unwrap_err();
+        (e.outcome.stdout.clone(), e.message)
+    }
+
+    #[test]
+    fn unwind_value_runs_the_on_abort_of_the_value_at_its_place() {
+        // The chain decides the order: the unwinder runs the `on abort` of
+        // each value when the chain gets to it.
+        let mut setup = make("U", 1, 0);
+        setup.extend(make("U", 2, 1));
+        let finish = |s: u32| {
+            [
+                Op::UnwindValue {
+                    var: VarRef::Local(s),
+                    path: Vec::new(),
+                },
+                Op::DropSlots(vec![s]),
+            ]
+        };
+        let mut chain: Vec<Op> = finish(1).into_iter().chain(finish(0)).collect();
+        chain.push(Op::UnwindExit);
+        let (out, e) = abort_with(setup.clone(), 2, chain);
+        assert_eq!(out, "undo 2\nundo 1\n");
+        assert!(e.contains("the condition is false"), "{e}");
+        let mut chain: Vec<Op> = finish(0).into_iter().chain(finish(1)).collect();
+        chain.push(Op::UnwindExit);
+        assert_eq!(abort_with(setup, 2, chain).0, "undo 1\nundo 2\n");
+    }
+
+    #[test]
+    fn unwind_value_follows_the_path_and_skips_another_variant() {
+        // `(_0 as B).0` of the value `E::A` names no value: the unwinder
+        // does nothing (`docs/ir.md` 5.1.6). A part of a tuple is a part.
+        let setup = vec![
+            Op::MakeEnum {
+                adt: adt("E"),
+                variant: 0,
+                n: 0,
+            },
+            Op::Bind(0),
+        ];
+        let chain = vec![
+            Op::UnwindValue {
+                var: VarRef::Local(0),
+                path: vec![UnwindStep::Variant(1), UnwindStep::Part(0)],
+            },
+            Op::DropSlots(vec![0]),
+            Op::UnwindExit,
+        ];
+        let (out, e) = abort_with(setup, 1, chain);
+        assert_eq!(out, "");
+        assert!(e.contains("the condition is false"), "{e}");
+        let mut setup = vec![Op::Int(0)];
+        setup.extend(make("U", 3, 0));
+        setup.extend([var(0), Op::Read, Op::Tuple(2), Op::Bind(0)]);
+        let chain = vec![
+            Op::UnwindValue {
+                var: VarRef::Local(0),
+                path: vec![UnwindStep::Part(1)],
+            },
+            Op::DropSlots(vec![0]),
+            Op::UnwindExit,
+        ];
+        assert_eq!(abort_with(setup, 1, chain).0, "undo 3\n");
+    }
+
+    #[test]
+    fn the_oracle_finds_a_value_that_a_cleanup_chain_misses() {
+        // `docs/ir.md` 8.2: after the chain of a frame, the scan of its
+        // cells finds no live linear value. A hand-made chain that misses
+        // the value of slot 0 fails the check.
+        let (_, e) = abort_with(make("U", 1, 0), 1, vec![Op::UnwindExit]);
+        assert!(e.contains("left after the cleanup chain of `main`"), "{e}");
+        // A chain that ends the cell with no `UnwindValue` drops the value:
+        // a linear leak.
+        let chain = vec![Op::DropSlots(vec![0]), Op::UnwindExit];
+        let (_, e) = abort_with(make("U", 1, 0), 1, chain);
+        assert!(e.contains("linear leak"), "{e}");
+        // A linear value with no `on abort` is a fault at its `UnwindValue`.
+        let chain = vec![
+            Op::UnwindValue {
+                var: VarRef::Local(0),
+                path: Vec::new(),
+            },
+            Op::DropSlots(vec![0]),
+            Op::UnwindExit,
+        ];
+        let (_, e) = abort_with(make("T", 1, 0), 1, chain);
+        assert!(e.contains("has no `on abort`"), "{e}");
     }
 }

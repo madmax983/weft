@@ -54,6 +54,9 @@ pub struct CodeFrame {
     pub loops: Vec<(usize, usize)>,
     /// The lexical handlers.
     pub henv: HEnv,
+    /// In unwind mode (`docs/ir.md` 8.2): the cells that the frame had when
+    /// its cleanup chain started. `None` on a normal path.
+    pub chain: Option<Vec<CellId>>,
 }
 
 /// One clause of a handler mark: operation, code and captured cells.
@@ -497,6 +500,7 @@ impl<'r, 'a> Machine<'r, 'a> {
             marks: Vec::new(),
             loops: Vec::new(),
             henv,
+            chain: None,
         })
     }
 

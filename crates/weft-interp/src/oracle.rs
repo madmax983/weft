@@ -13,6 +13,9 @@
 //!   reference;
 //! - a live linear value goes away with no consume and no `on abort`, or is
 //!   still live at the end of the run;
+//! - a live linear value is in a cell of a frame after the cleanup chain of
+//!   the frame ran (the frame scan of `docs/ir.md` 8.2): the chain must
+//!   finish each value of the frame;
 //! - two tasks access overlapping places, one of them writes, and no join
 //!   orders them (a vector-clock race detector). Spawn, join, the end of a
 //!   scope or a `fork` and unwinding are the points that order tasks;
@@ -212,6 +215,15 @@ impl Oracle {
         if self.violation.is_none() {
             self.violation = Some(msg.into());
         }
+    }
+
+    /// Notes that the scan of a frame found a live linear value after the
+    /// cleanup chain of the frame ended (`docs/ir.md` 8.2): the chain does
+    /// not finish each value of the frame.
+    pub fn left_after_chain(&mut self, frame: &str) {
+        self.flag(format!(
+            "oracle: a live linear value is left after the cleanup chain of `{frame}`"
+        ));
     }
 
     /// Takes the violation that the machine did not report yet.

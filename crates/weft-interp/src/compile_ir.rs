@@ -8,11 +8,13 @@
 //! - A parameter, `_0`, a variable and the iterator of a `for` loop get a
 //!   slot: `Live` is `BindEmpty`, `Dead` is `DropSlots`. A temporary gets a
 //!   slot that holds a temporary cell: `Live` is `LiveTemp`, `Dead` is
-//!   `EndTemp`. The cell is also on the temporary list of the frame, so the
-//!   unwinder finds the temporaries newest first and then the slots, as for
-//!   the code of the AST compiler. The unwinder still uses the frame values:
-//!   the cleanup blocks of the IR do not run before the landing pads (plan
-//!   stage I6).
+//!   `EndTemp`. The cell is also on the temporary list of the frame.
+//! - The cleanup blocks come after the blocks of the normal paths. Their ops
+//!   run in unwind mode: `UnwindValue`, `UnwindKont`, the ends of the
+//!   locals, jumps, and `UnwindExit` at the end. The landing-pad table
+//!   ([`Code::pads`]) maps each op that can abort the frame to the first op
+//!   of the cleanup chain of its terminator, so the unwinder runs the chain
+//!   of the IR (`docs/ir.md` 8.2).
 //! - An assignment is the ops of the right side, the ops of the place, then
 //!   `Store`. A place is `Var`, then `Deref`, `Part` and `Index` for its
 //!   projections. A read is the place, then `Read`.
@@ -54,8 +56,8 @@ use std::rc::Rc;
 
 use weft_ir::{
     AggKind, Block, BlockId, Body, BodyId, BodyKind, Callee, CapOperand, CaptureMode, ClosureId,
-    Const, HandlerId, IterSource, LocalId, LocalKind, OpIdx, Operand, Origin, Place, Proj, Rvalue,
-    Stmt, StmtKind, Term, TermKind, Ty, TyTable,
+    Const, DerefKind, HandlerId, IterSource, LocalId, LocalKind, OpIdx, Operand, Origin, Place,
+    Proj, Rvalue, Stmt, StmtKind, Term, TermKind, Ty, TyTable,
 };
 use weft_sema::irbuild::{Built, Outcome};
 use weft_sema::program::{EffectId, FnId, Program};
@@ -63,7 +65,7 @@ use weft_sema::types::{AdtId, IntTy};
 use weft_syntax::ast::{BinOp, Span};
 use weft_syntax::diag::Code as DiagCode;
 
-use crate::code::{CapHold, ClauseSpec, Code, CodeKind, HandleSpec, IrLoc, Op, VarRef};
+use crate::code::{CapHold, ClauseSpec, Code, CodeKind, HandleSpec, IrLoc, Op, UnwindStep, VarRef};
 use crate::compile::Compiled;
 
 /// Why the IR compiler does not compile a program: a body has no IR, or
@@ -335,6 +337,9 @@ struct BodyCx<'a> {
     /// The ops whose targets are labels, and the labels in the order of the
     /// targets of the op.
     fixups: Vec<(usize, Vec<Label>)>,
+    /// The landing pads: each op that can abort the frame, and the cleanup
+    /// block of its terminator.
+    pads: Vec<(usize, BlockId)>,
     /// The location and the span of the ops that come next.
     loc: IrLoc,
     span: Span,
@@ -447,6 +452,7 @@ impl<'a> BodyCx<'a> {
             spans: Vec::new(),
             locs: Vec::new(),
             fixups: Vec::new(),
+            pads: Vec::new(),
             loc: IrLoc::default(),
             span: Span::default(),
         })
@@ -455,13 +461,16 @@ impl<'a> BodyCx<'a> {
     fn compile(mut self, name: String, kind: CodeKind) -> S<Code> {
         let body = self.body;
         // The blocks that run on a normal path, in the order of the IR. The
-        // cleanup blocks run only in the landing pads of plan stage I6.
+        // cleanup blocks and the `UnwindExit` block come after them: they run
+        // only in unwind mode, from a landing pad (`docs/ir.md` 8.2).
+        let unwinds = |x: &Block| x.cleanup || x.term.kind == TermKind::UnwindExit;
         let order: Vec<BlockId> = body
             .block_ids()
-            .filter(|&b| {
-                body.block(b)
-                    .is_some_and(|x| !x.cleanup && x.term.kind != TermKind::UnwindExit)
-            })
+            .filter(|&b| body.block(b).is_some_and(|x| !unwinds(x)))
+            .collect();
+        let cleanup: Vec<BlockId> = body
+            .block_ids()
+            .filter(|&b| body.block(b).is_some_and(unwinds))
             .collect();
         self.loc = IrLoc {
             body: self.id.0,
@@ -482,6 +491,14 @@ impl<'a> BodyCx<'a> {
             };
             let next = order.get(k + 1).copied();
             self.block(b, block, next)?;
+        }
+        for (k, &b) in cleanup.iter().enumerate() {
+            starts.insert(b, self.ops.len());
+            let Some(block) = body.block(b) else {
+                return bad("a block is missing");
+            };
+            let next = cleanup.get(k + 1).copied();
+            self.cleanup_block(b, block, next)?;
         }
         // The back edges: one stub for each block that a back edge enters.
         let mut backs: BTreeSet<BlockId> = BTreeSet::new();
@@ -523,6 +540,11 @@ impl<'a> BodyCx<'a> {
                 _ => return bad("a jump has no target"),
             }
         }
+        let mut pads = Vec::with_capacity(self.pads.len());
+        for &(at, b) in &self.pads {
+            pads.push((at, target(&Label::Block(b))?));
+        }
+        pads.sort_unstable();
         Ok(Code {
             name,
             kind,
@@ -533,6 +555,7 @@ impl<'a> BodyCx<'a> {
             unit: body.origin.span.unit as usize,
             temp_slots: self.temp_slots,
             locs: self.locs,
+            pads,
         })
     }
 
@@ -669,6 +692,62 @@ impl<'a> BodyCx<'a> {
         }
         self.at(b, block.stmts.len(), block.term.origin);
         self.term(b, &block.term, next)
+    }
+
+    /// A block of a cleanup chain (`docs/ir.md` 5.1.6, 8.2). Its ops run in
+    /// unwind mode: `UnwindValue`, `UnwindKont`, the ends of the locals,
+    /// jumps to the next block of the chain, and `UnwindExit`.
+    fn cleanup_block(&mut self, b: BlockId, block: &Block, next: Option<BlockId>) -> S<()> {
+        for (i, s) in block.stmts.iter().enumerate() {
+            self.at(b, i, s.origin);
+            match &s.kind {
+                StmtKind::UnwindValue(p, _) => {
+                    let var = self.unwind_root(p.local)?;
+                    let mut path = Vec::with_capacity(p.proj.len());
+                    for proj in &p.proj {
+                        path.push(match proj {
+                            Proj::Field(k) => UnwindStep::Part(k.0),
+                            Proj::Variant(v) => UnwindStep::Variant(v.0),
+                            Proj::Deref(DerefKind::Box) => UnwindStep::Deref,
+                            Proj::Elems => UnwindStep::Elems,
+                            other => {
+                                return bad(format!("an unwind place with the step {other:?}"))
+                            }
+                        });
+                    }
+                    self.emit(Op::UnwindValue { var, path });
+                }
+                StmtKind::UnwindKont(l) => {
+                    let slot = self.slot(*l)?;
+                    self.emit(Op::UnwindKont(slot));
+                }
+                StmtKind::Dead(_) => self.stmt(s)?,
+                _ => return bad("a statement of a normal path in a cleanup block"),
+            }
+        }
+        self.at(b, block.stmts.len(), block.term.origin);
+        match block.term.kind {
+            // A chain has no loop: no back edge, no preemption point.
+            TermKind::Goto(to) => {
+                if next != Some(to) {
+                    self.jump(Label::Block(to));
+                }
+            }
+            TermKind::UnwindExit => {
+                self.emit(Op::UnwindExit);
+            }
+            _ => return bad("a cleanup block ends with a terminator of a normal path"),
+        }
+        Ok(())
+    }
+
+    /// Returns the cell of the local of an `UnwindValue`: a slot of the
+    /// frame.
+    fn unwind_root(&self, l: LocalId) -> S<VarRef> {
+        match self.slots.get(l.index()).copied().flatten() {
+            Some(s) => Ok(VarRef::Local(s)),
+            None => bad(format!("the unwind value _{} has no slot", l.0)),
+        }
     }
 
     fn at(&mut self, b: BlockId, i: usize, o: Origin) {
@@ -1025,6 +1104,25 @@ impl<'a> BodyCx<'a> {
     // -----------------------------------------------------------------------
 
     fn term(&mut self, b: BlockId, t: &Term, next: Option<BlockId>) -> S<()> {
+        let start = self.ops.len();
+        self.term_ops(b, t, next)?;
+        // The landing pad: the op of the terminator that can abort the
+        // frame goes to the cleanup chain of the terminator.
+        if let Some(u) = t.kind.unwind() {
+            let at = self
+                .ops
+                .get(start..)
+                .and_then(|ops| ops.iter().position(can_abort))
+                .map(|i| start + i);
+            let Some(at) = at else {
+                return bad("a terminator with an unwind block has no op that can abort");
+            };
+            self.pads.push((at, u));
+        }
+        Ok(())
+    }
+
+    fn term_ops(&mut self, b: BlockId, t: &Term, next: Option<BlockId>) -> S<()> {
         match &t.kind {
             TermKind::Goto(to) => self.goto(b, *to, next),
             TermKind::Switch {
@@ -1419,6 +1517,25 @@ fn elems_base(p: &Place) -> Option<Place> {
         }),
         _ => None,
     }
+}
+
+/// True if the op can abort the frame: a call, a perform, a `handle`, a
+/// `scope`, a wait for tasks, a `fork` or an `assert`. Each terminator
+/// with an `unwind` block has one of them.
+const fn can_abort(op: &Op) -> bool {
+    matches!(
+        op,
+        Op::Call { .. }
+            | Op::CallValue(_)
+            | Op::CallMethod { .. }
+            | Op::Perform { .. }
+            | Op::PerformCap { .. }
+            | Op::Handle(_)
+            | Op::Scope { .. }
+            | Op::ScopeWait(_)
+            | Op::Fork { .. }
+            | Op::Assert
+    )
 }
 
 const fn span_of(o: Origin) -> Span {

@@ -368,6 +368,24 @@ files = [
 reason = "a deep list: the AST engine takes more than 10 s (also alone), the IR engine takes less than 1 s (stage I1)"
 stage = "I5"
 
+[[entry]]
+class = "engine"
+difference = "unwind-order"
+files = ["tests/gate/probes/ir/probes/p20_clause_unwind_order.wf"]
+reason = "the cleanup chain of a clause starts with `UnwindKont` (docs/ir.md 5.1.6, 8.3): the IR engine unwinds the fresh continuation first (`rollback 1`), then the clause frame (`rollback 2`), as the effects model does. The AST engine unwinds the clause frame first"
+stage = "I6"
+
+[[entry]]
+class = "engine"
+difference = "fault-text"
+files = [
+    "tests/gate/probes/ir/probes/p25_assert_abort.wf",
+    "tests/gate/probes/ir/probes/p27_assert_callee.wf",
+    "tests/gate/probes/verify/s5/p/g2_generic_task_hold.wf",
+]
+reason = "the unwinder faults at a linear value with no `on abort`. The IR engine runs the cleanup chain (docs/ir.md 8.2), so the fault has the line of the op that aborted the frame of the value; the AST engine gives the line of the frame below the unwinding, or no line. Both engines fault after the same output; the ledger has an open-old entry for each program"
+stage = "I6"
+
 # -- Programs that the checker rejects: one rule for each class.
 
 [[entry]]
@@ -514,8 +532,8 @@ class = "engine"
 difference = "unwind-order"
 checker = "rejects"
 files = ["**"]
-reason = "before stage I6 the IR engine unwinds the value of `_0` after the locals (docs/ir.md 8.3, the shapes of F3-7). Stage I6 runs the cleanup chains and removes this entry"
-stage = "I5"
+reason = "the IR engine runs the cleanup chains (docs/ir.md 8.2): it runs the `on abort` of each value when the chain gets to the value, so an `on abort` can run before the fault at a linear value with no `on abort` (W0602); the AST engine finds that value first. A clause unwinds its fresh continuation first (5.1.6)"
+stage = "I6"
 
 [[entry]]
 class = "engine"

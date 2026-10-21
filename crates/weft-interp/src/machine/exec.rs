@@ -815,6 +815,9 @@ impl super::Machine<'_, '_> {
                 }
             }
             Op::EndTemp(s) => self.end_temp(*s)?,
+            Op::UnwindValue { var, path } => return self.unwind_value(*var, path),
+            Op::UnwindKont(s) => return self.unwind_kont(*s),
+            Op::UnwindExit => return self.unwind_exit(),
         }
         Ok(Flow::Continue)
     }

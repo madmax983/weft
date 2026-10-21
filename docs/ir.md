@@ -2618,6 +2618,51 @@ frame at `UnwindExit`. So the order and the content of an unwinding come from th
 scan of today stays as an oracle check: after the chain of a frame, no live linear value
 is left in its cells (it also finds the closure cells of I3-2).
 
+As built (plan stage I6):
+
+- `compile_ir` puts the cleanup blocks and the `UnwindExit` block of a body after the
+  blocks of the normal paths. `UnwindValue(p, a)` is the op `UnwindValue` with the slot
+  of the local of `p` and the steps of `p` (`Part`, `Variant`, `Deref` of a `Box`,
+  `Elems`); `UnwindKont(k)` is the op `UnwindKont` with the slot of `k`; `Dead` is
+  `DropSlots` or `EndTemp`, as on a normal path; a `Goto` is a `Jump` (a chain has no
+  back edge, so no preemption point); `UnwindExit` is the op `UnwindExit`.
+- `Code::pads` is the landing-pad table: for each terminator with an `unwind` block, the
+  op of the terminator that can abort the frame (`Call`, `CallValue`, `CallMethod`,
+  `Perform`, `PerformCap`, `Handle`, `Scope`, `ScopeWait`, `Fork`, `Assert`) and the
+  first op of its cleanup block. The code of the AST compiler has no table.
+- When the unwinder gets to a frame of the IR, the aborting op is the op before `pc` (a
+  call with a frame above it, an `Assert`) or the op at `pc` (a `ScopeWait` or a `join`
+  that waits: they run again when the task wakes). If the op has a landing pad, the frame
+  goes back on top of the task stack in unwind mode, at the first op of the chain, and
+  the machine runs the chain as code. Else the unwinder scans the frame, as before.
+- `UnwindValue` takes the live linear values out of the value at the place
+  (`extract_linear`, so the action of the IR and the action of the run time agree: a
+  linear value with no `on abort` is the fault of today) and runs their `on abort` in an
+  inner unwinding above the frame, before the next op of the chain. So an `on abort` of
+  `_0` runs while the locals of the frame still have their values. A place that names no
+  value (a moved value, another variant, a `Deref` of a value that is not a `Box`) does
+  nothing. `UnwindValue` of the `ScopeCap` local and of a `TaskResult` local finds
+  nothing: the `Scope` mark below the frame cancels and joins the tasks, as before.
+- `UnwindKont` aborts the continuation in the slot if it is fresh: its frames unwind in
+  an inner unwinding, before the rest of the chain of the clause. The `Clause` mark below
+  the frame of the clause then finds the continuation dropped and does nothing.
+- A value on the operand stack of the frame at the abort is the result of the aborting
+  op on its way to its destination: a handler gave it, and an interrupt that the
+  unwinding deferred (a deadline, a cancel) aborts the frame before the store. The
+  unwinder finishes it first, as the AST engine does with its operand stack.
+- `UnwindExit` takes the frame off the stack. The scan of today (`frame_values`) stays as
+  a check: it looks at the cells that the chain did not end and at the closures in the
+  cells that it ended. With the oracle on, a live linear value there is the fault
+  "oracle: a live linear value is left after the cleanup chain of `f`". The unwinder
+  then finishes the value, as before. The captures that the first frame of a task owns
+  are not locals of the IR: the unwinder finishes them at `UnwindExit` (no fault).
+- The engine differential (plan stage I5) sees two new kinds of difference, and the
+  ledger has them: the order of a clause (p20, class `unwind-order`), and a chain that
+  runs an `on abort` before the fault at a linear value with no `on abort` (W0602
+  programs: the AST engine finds that value first; class `unwind-order`). The fault "has
+  no `on abort`" now has the line of the op that aborted the frame (class `fault-text`).
+  The frame scan finds nothing on tiers 1 and 2.
+
 ### 8.3 Run-time decisions
 
 | Decision | What changes at run time | Programs that see it |
@@ -2625,8 +2670,8 @@ is left in its cells (it also finds the closure cells of I3-2).
 | an operand is read where it is written (choice A, 5.1.1) | the interpreter reads a place operand of a binary operator, of `print` and the base of an index at the operand | `x + { x = 5; 1 }` gives 2, not 6 (p1); a program that read through a dangling reference late (p2, p9, p10) reads before the change |
 | the tail temporaries of a loop body end at each iteration (5.1.2) | earlier frees | `Weak.upgrade` of a tail temporary of a loop body (p24) |
 | the temporaries of a branch of `if` or `match` end before the join (5.12) | earlier frees | `show(if c { first(&mk_v()) } else { &u })` reads a freed temporary: the oracle of the IR engine faults where the AST engine runs; the old checker accepts these programs (stage I5: 24 programs of tier 2, `r3/oracle/sweep1/*__tmp_*__arg.wf`, `R3a_diff/sweep/*ref_temp*`), so the `ir` pipeline must reject them |
-| unwind order in a frame: `_0`, then temporaries newest first, then slots from the highest (5.1.6) | none: today the operand stack (the value of the frame and the operands on their way) unwinds first, then the temporary cells, then the slots. Before stage I6 the IR engine unwinds `_0` with the slots, after the locals: the engine differential ledgers this for the shapes of F3-7 (class `unwind-order`), and I6 removes the difference | the effects model changes `max_slot` |
-| a clause unwinds its fresh continuation first (5.1.6) | the interpreter changes when it runs landing pads | p20: `rollback 1` (the continuation) prints before `rollback 2` (the clause frame) |
+| unwind order in a frame: `_0`, then temporaries newest first, then slots from the highest (5.1.6) | none: the AST engine unwinds the operand stack (the value of the frame and the operands on their way) first, then the temporary cells, then the slots. Before stage I6 the IR engine unwound `_0` with the slots, after the locals; from stage I6 the chain finishes `_0` first, as the AST engine does | the effects model changes `max_slot` |
+| a clause unwinds its fresh continuation first (5.1.6) | the IR engine runs the chain of the clause, which starts with `UnwindKont` (stage I6); the AST engine unwinds the clause frame first. The engine differential ledgers this (class `unwind-order`) | p20: `rollback 1` (the continuation) prints before `rollback 2` (the clause frame) |
 | rule CAPTURE (5.1.7) | a borrowed plain capture is `ByRef`: its cell ends with the variable | the oracle sees a dangling cell where today's kept cell stayed readable; the checker rejects these programs (J5, J5d) |
 | `Dead` of a fresh continuation at a clause end | none (the interpreter drops it at the clause return today) | |
 
@@ -2640,6 +2685,7 @@ unwind-mode ops `UnwindValue`, `UnwindKont`, `UnwindExit`. Stage I1 adds three m
 (8.1): `Part` (a part of a value by index), `Take` (`move p`) and `LiveTemp` (`Live` of
 a temporary). Stage I2 adds `MakeClosureIr` (a closure with the modes of the IR).
 Stage I3 adds `PerformCap` (a perform through a capability value).
+Stage I6 adds the unwind-mode ops `UnwindValue`, `UnwindKont` and `UnwindExit`.
 Each one has a unit test in `crates/weft-interp/tests/semantics.rs`.
 
 ### 8.5 Differential tests and oracles

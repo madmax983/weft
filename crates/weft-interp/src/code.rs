@@ -103,6 +103,20 @@ pub struct HandleSpec {
     pub cap: bool,
 }
 
+/// One step of the place of an [`Op::UnwindValue`] (`docs/ir.md` 8.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnwindStep {
+    /// Part `i` of a struct, a tuple or the payload of a variant.
+    Part(u32),
+    /// The payload of variant `v`. If the value has another variant, the
+    /// place names no value, and the unwinder does nothing.
+    Variant(u32),
+    /// The target of a `Box`.
+    Deref,
+    /// All the elements of a `Vec` or an array.
+    Elems,
+}
+
 /// One instruction.
 #[derive(Clone, Debug)]
 pub enum Op {
@@ -347,6 +361,24 @@ pub enum Op {
     /// Ends the temporary cell of a slot (`Dead` of an IR temporary): drops
     /// its value and takes it off the temporary list of the frame.
     EndTemp(u32),
+    /// Unwind mode (`docs/ir.md` 8.2): finishes the value at the place
+    /// `var` and `path`. The unwinder takes each live linear value out of
+    /// it and runs its `on abort` before the next op of the chain. A place
+    /// that names no value (a moved value, another variant) does nothing.
+    UnwindValue {
+        /// The cell of the local.
+        var: VarRef,
+        /// The steps from the local to the place.
+        path: Vec<UnwindStep>,
+    },
+    /// Unwind mode: aborts the continuation in a slot if it is fresh. Its
+    /// frames unwind before the next op of the chain. A continuation that
+    /// is no longer fresh, or a moved one, does nothing.
+    UnwindKont(u32),
+    /// Unwind mode: the end of the cleanup chain. The frame leaves the
+    /// unwinding. The unwinder scans the cells of the frame: a live linear
+    /// value there is an error of the chain (an oracle check).
+    UnwindExit,
 }
 
 /// The IR location of an op (`docs/ir.md` 8.1): the body, the block and the
@@ -404,11 +436,26 @@ pub struct Code {
     /// The IR location of each instruction. Empty for code of the AST
     /// compiler.
     pub locs: Vec<IrLoc>,
+    /// The landing pads (`docs/ir.md` 8.2): the index of each op that can
+    /// abort the frame, and the index of the first op of its cleanup chain,
+    /// in the order of the ops. Empty for code of the AST compiler: the
+    /// unwinder scans its frames.
+    pub pads: Vec<(usize, usize)>,
 }
 
 impl Code {
     /// Returns the number of slots that are not temporary cells.
     pub const fn local_slots(&self) -> usize {
         self.n_slots.saturating_sub(self.temp_slots) as usize
+    }
+
+    /// Returns the first op of the cleanup chain of the op at `at`, if the
+    /// op has a landing pad.
+    pub fn pad(&self, at: usize) -> Option<usize> {
+        self.pads
+            .binary_search_by_key(&at, |&(op, _)| op)
+            .ok()
+            .and_then(|i| self.pads.get(i))
+            .map(|&(_, pad)| pad)
     }
 }

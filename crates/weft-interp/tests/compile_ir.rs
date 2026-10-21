@@ -861,3 +861,110 @@ fn a_jump_out_of_a_handled_body_or_a_clause_faults_with_the_w0315_text() {
     let e = e.expect("the `return` faults");
     assert!(e.contains("`return` cannot leave a handler clause"), "{e}");
 }
+
+// ---------------------------------------------------------------------------
+// Landing pads and the unwind order (plan stage I6, `docs/ir.md` 8.2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_unwinder_keeps_the_order_of_the_locals_of_p18() {
+    // The cleanup chain of `work` finishes the locals from the highest
+    // index: `c`, then `b`, then `a` (`docs/ir.md` 5.1.6). This is the
+    // order of the AST engine too.
+    let want = "caught boom\nrollback 3\nrollback 2\nrollback 1\n";
+    for engine in [Engine::Ast, Engine::Ir] {
+        assert_eq!(
+            probe("p18_abort_order", engine),
+            (want.to_string(), None),
+            "{engine:?}"
+        );
+    }
+}
+
+#[test]
+fn a_clause_unwinds_its_fresh_continuation_first() {
+    // `docs/ir.md` 8.3 (probe p20): the chain of the clause starts with
+    // `UnwindKont`, so the frames of the continuation unwind before the
+    // locals of the clause, as in the effects model. The AST engine
+    // unwinds the clause frame first.
+    assert_eq!(
+        probe("p20_clause_unwind_order", Engine::Ir),
+        ("caught x\nrollback 1\nrollback 2\n".to_string(), None)
+    );
+    assert_eq!(
+        probe("p20_clause_unwind_order", Engine::Ast),
+        ("caught x\nrollback 2\nrollback 1\n".to_string(), None)
+    );
+}
+
+/// A scope body whose value has an `on abort`. A child fails, so the
+/// `ScopeWait` of the scope body aborts while the value is in `_0`.
+const SCOPE_VALUE: &str = "linear struct Tx { id: u64 }\n    on abort = rollback\n\
+    fn rollback(t: Tx) { let Tx(i) = t; print(\"rollback\", i) }\n\
+    fn commit(t: Tx) { let Tx(i) = t; print(\"commit\", i) }\n\
+    fn main() / async, fail {\n\
+    handle Fail { fn fail(m) { print(\"caught\", m) } } in {\n\
+    let t = scope { s =>\n s.spawn(|| fail(\"child\"))\n Tx { id: 1 }\n }\n\
+    commit(t)\n }\n}";
+
+#[test]
+fn the_value_of_a_scope_body_is_finished_when_scope_wait_aborts() {
+    // `docs/ir.md` 5.1.6: the chain of `ScopeWait` starts with `_0`.
+    let o = run_with(SCOPE_VALUE, Engine::Ir);
+    assert_eq!(o.fallback, None);
+    assert_eq!(o.stdout, "rollback 1\ncaught child\n");
+    assert_eq!(run_with(SCOPE_VALUE, Engine::Ast).stdout, o.stdout);
+    // The landing pad of `ScopeWait` starts with the `UnwindValue` of `_0`
+    // (slot 1: the scope capability is slot 0).
+    let code = compiled(SCOPE_VALUE);
+    let unit = code
+        .codes
+        .iter()
+        .find(|c| c.kind == CodeKind::ScopeBody)
+        .expect("a scope body");
+    let at = unit
+        .ops
+        .iter()
+        .position(|op| matches!(op, Op::ScopeWait(_)))
+        .expect("a `ScopeWait`");
+    let pad = unit.pad(at).expect("a landing pad");
+    assert!(
+        matches!(&unit.ops[pad], Op::UnwindValue { var: VarRef::Local(1), path } if path.is_empty()),
+        "{:?}",
+        &unit.ops[pad..]
+    );
+}
+
+#[test]
+fn each_aborting_op_of_the_ir_has_a_landing_pad_into_its_cleanup_code() {
+    // Each call has a landing pad. The code of the pad has only
+    // unwind-mode ops, the ends of slots and jumps, and it ends at
+    // `UnwindExit`.
+    let code = compiled(SCOPE_VALUE);
+    let mut pads = 0;
+    for unit in &code.codes {
+        for (at, op) in unit.ops.iter().enumerate() {
+            let Some(mut pc) = unit.pad(at) else {
+                assert!(
+                    !matches!(op, Op::Call { .. } | Op::ScopeWait(_) | Op::Handle(_)),
+                    "{}: op {at} {op:?} has no landing pad",
+                    unit.name
+                );
+                continue;
+            };
+            pads += 1;
+            loop {
+                match &unit.ops[pc] {
+                    Op::UnwindExit => break,
+                    Op::Jump(t) => pc = *t,
+                    Op::UnwindValue { .. }
+                    | Op::UnwindKont(_)
+                    | Op::DropSlots(_)
+                    | Op::EndTemp(_) => pc += 1,
+                    other => panic!("{}: {other:?} in a cleanup chain", unit.name),
+                }
+            }
+        }
+    }
+    assert!(pads >= 4, "only {pads} landing pads");
+}
