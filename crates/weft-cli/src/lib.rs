@@ -41,9 +41,10 @@ RUN is [--seed N] [--workers N] [--unchecked] [--oracle] [--engine=ast|ir].
 --oracle turns on strict run-time checks: a dangling reference, a moved `Vec`
 buffer, a linear leak, a data race and a stealable task that reaches a
 nonportable value are run-time errors.
---engine=ir runs the core IR (docs/ir.md 8.1). For a program with a construct
-that the IR compiler does not compile yet, the AST compiler runs it, and a note
-tells why. --engine=ast (the default) runs the AST compiler.
+--engine=ir runs the core IR (docs/ir.md 8.1). A program with a body that has
+no IR (a type error, an error in a declaration, W0303) has errors: the AST
+compiler runs it, and a note tells why. --engine=ast (the default) runs the AST
+compiler.
 
 Exit codes: 0 on success; 1 when the program has errors or fails; 2 on a usage
 error or a file that cannot be read. With --unchecked, the exit code of `run`

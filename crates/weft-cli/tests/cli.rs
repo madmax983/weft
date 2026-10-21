@@ -692,13 +692,23 @@ fn run_and_test_take_an_engine() {
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert_eq!(out.text, "stepped 1 hp=9\nstepped 2 hp=19\n");
     assert!(!out.stderr.contains("note: --engine"), "{}", out.stderr);
-    // A program with a scope falls back to the AST compiler, and says so.
+    // A program with a scope runs on the IR engine (plan stage I4).
     let out = cmd(&["run", "--engine=ir", &format!("{INTERP}/scope_join.wf")]);
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert_eq!(out.text, "a\nc\nb\n6\n");
+    assert!(!out.stderr.contains("note: --engine"), "{}", out.stderr);
+    // A program with a body that has no IR (a type error) falls back to the
+    // AST compiler, and says so.
+    let out = cmd(&[
+        "run",
+        "--engine=ir",
+        "--unchecked",
+        &format!("{INTERP}/interrupt_nested_unwind.wf"),
+    ]);
     assert!(
-        out.stderr
-            .starts_with("note: --engine=ir: the AST compiler runs the program: `"),
+        out.stderr.contains(
+            "\nnote: --engine=ir: the AST compiler runs the program: `rollback` has no IR"
+        ),
         "{}",
         out.stderr
     );

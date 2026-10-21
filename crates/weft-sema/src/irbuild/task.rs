@@ -201,10 +201,15 @@ impl Builder<'_> {
                 return unsupported(Construct::NoThir, x.span);
             };
             let origin = self.origin(x.span, Some(x.id));
+            // The site has the origin of the task argument: the checker
+            // names the task by it (`stealable`).
+            let Some(arg) = task_arg(x) else {
+                return unsupported(Construct::NoThir, x.span);
+            };
             let site = self.d.pending.add_spawn(SpawnDecl {
                 scope: Some(sid),
                 fork: false,
-                origin,
+                origin: self.origin(arg.span, Some(arg.id)),
             });
             self.d.pending.results.insert(x.id, site);
             // The result is a `once` value of the scope body (`docs/ir.md`
@@ -294,7 +299,7 @@ impl Builder<'_> {
             self.d.pending.add_spawn(SpawnDecl {
                 scope,
                 fork: false,
-                origin,
+                origin: self.origin(f.span, Some(f.id)),
             })
         };
         let next = self.new_block();
@@ -499,6 +504,13 @@ fn spawn_on(t: &Tables, x: &Expr, b: BindingId) -> bool {
         Some(thir::Callee::Builtin(Builtin::Spawn))
     ) && matches!(receiver.kind, ExprKind::Name(_))
         && t.res.get(&receiver.id) == Some(&Res::Local(b))
+}
+
+/// Returns the task argument of spawn `x`: its one argument or its
+/// trailing block.
+fn task_arg(x: &Expr) -> Option<&Expr> {
+    let (_, args, trailing) = parts(x)?;
+    args.first().map(|a| &a.value).or(trailing)
 }
 
 /// Returns the spawns on scope capability binding `b` that the builder

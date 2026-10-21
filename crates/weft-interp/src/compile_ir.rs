@@ -36,12 +36,17 @@
 //!   and the continuation of a clause is its parameter after the operation
 //!   arguments. A perform through a capability is [`Op::PerformCap`], and a
 //!   `resume` is a call of the continuation (`CallValue`).
+//! - A scope body is a code unit of kind [`CodeKind::ScopeBody`]. Its scope
+//!   capability is its parameter: the `Scope` op gives it. `ScopeWait` waits
+//!   for the tasks of the scope. A spawn, a `join` and a `detach` are the
+//!   native methods of the AST compiler (`CallMethod`), with the place of
+//!   the receiver and the other operands. `fork` is the `Fork` op.
+//!   `sim.run` and `with_timeout` are calls of their native functions.
 //!
-//! The compiler handles the construct groups A to D: functions, tests,
-//! places, calls of items, performs, operators, aggregates, `match`, loops,
-//! `assert`, closures, function values, handlers and continuations. For a
-//! task it gives a [`Fallback`] that names the plan stage of the construct
-//! (I4), and the AST compiler runs the program.
+//! The compiler handles each construct of the IR. A program with a body
+//! that has no IR (a type error, an error in a declaration, W0303) gets a
+//! [`Fallback`], and the AST compiler runs it. The checker rejects these
+//! programs.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -61,10 +66,12 @@ use weft_syntax::diag::Code as DiagCode;
 use crate::code::{CapHold, ClauseSpec, Code, CodeKind, HandleSpec, IrLoc, Op, VarRef};
 use crate::compile::Compiled;
 
-/// Why the IR compiler does not compile a program. The AST compiler runs it.
+/// Why the IR compiler does not compile a program: a body has no IR, or
+/// the IR does not have the shape that the compiler expects (an internal
+/// error). The AST compiler runs the program.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Fallback {
-    /// The reason, with the plan stage that adds the construct.
+    /// The reason.
     pub reason: String,
 }
 
@@ -77,24 +84,6 @@ impl fmt::Display for Fallback {
 /// The result type of the IR compiler.
 type R<T> = Result<T, Fallback>;
 
-/// A construct that the IR compiler does not compile yet.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Later {
-    /// A `scope`, a task, a `fork`.
-    Task,
-    /// `sim.run` or `with_timeout`.
-    Intrinsic,
-}
-
-impl Later {
-    const fn what(self) -> (&'static str, &'static str) {
-        match self {
-            Self::Task => ("a scope or a task", "I4"),
-            Self::Intrinsic => ("`sim.run` or `with_timeout`", "I4"),
-        }
-    }
-}
-
 /// Compiles the IR of each function and each test of a program.
 ///
 /// `prog` is the program of the analysis that `built` comes from: the code
@@ -102,8 +91,8 @@ impl Later {
 ///
 /// # Errors
 ///
-/// A [`Fallback`] if a body has no IR, or if the IR has a construct that the
-/// IR compiler does not compile yet.
+/// A [`Fallback`] if a body has no IR, or if the IR does not have the shape
+/// that the compiler expects.
 pub fn compile_ir(prog: &Program, built: &Built) -> Result<Compiled, Fallback> {
     if let Some(b) = built.broken.first() {
         return Err(Fallback {
@@ -147,12 +136,6 @@ pub fn compile_ir(prog: &Program, built: &Built) -> Result<Compiled, Fallback> {
     for (i, body) in p.bodies.iter().enumerate() {
         let id = BodyId(u32::try_from(i).unwrap_or(u32::MAX));
         let name = top_name(p, id, &names);
-        let later = |l: Later| {
-            let (what, stage) = l.what();
-            Fallback {
-                reason: format!("`{name}` has {what} (stage {stage})"),
-            }
-        };
         let (code_name, kind) = match body.kind {
             BodyKind::Fn(f) => {
                 let Some(&sf) = fns.get(&f) else {
@@ -167,13 +150,12 @@ pub fn compile_ir(prog: &Program, built: &Built) -> Result<Compiled, Fallback> {
             BodyKind::Closure(_) => ("closure".to_string(), CodeKind::Closure),
             BodyKind::Clause(h, op) => (clause_name(prog, p, h, op), CodeKind::Clause),
             BodyKind::Handled(_) => ("handled computation".to_string(), CodeKind::HandleBody),
-            BodyKind::Scope(_) => return Err(later(Later::Task)),
+            BodyKind::Scope(_) => ("scope".to_string(), CodeKind::ScopeBody),
         };
         let cx = BodyCx::new(p, &built.tys, &fns, &shared, body, id, &name)?;
-        let code = cx.compile(code_name, kind).map_err(|e| match e {
-            Stop::Later(l) => later(l),
-            Stop::Internal(m) => internal(&name, &m),
-        })?;
+        let code = cx
+            .compile(code_name, kind)
+            .map_err(|Stop(m)| internal(&name, &m))?;
         codes.push(Rc::new(code));
     }
     let mut fn_code = vec![None; prog.fns.len()];
@@ -306,19 +288,15 @@ fn internal(name: &str, msg: &str) -> Fallback {
     }
 }
 
-/// Why the compilation of one body stops.
-enum Stop {
-    /// A construct of a later stage.
-    Later(Later),
-    /// The IR does not have the shape that the compiler expects.
-    Internal(String),
-}
+/// Why the compilation of one body stops: the IR does not have the shape
+/// that the compiler expects.
+struct Stop(String);
 
 /// The result type of the compilation of one body.
 type S<T> = Result<T, Stop>;
 
 fn bad<T>(msg: impl Into<String>) -> S<T> {
-    Err(Stop::Internal(msg.into()))
+    Err(Stop(msg.into()))
 }
 
 /// A jump target before the layout.
@@ -391,8 +369,9 @@ impl<'a> BodyCx<'a> {
         // The parameters are the first slots: the frame puts the arguments
         // there. The capability of a handled body and the continuation of a
         // clause are parameters too: the `Handle` op and the perform give
-        // them, after the operation arguments. `_0` comes next, so the
-        // unwinder finds it after the locals.
+        // them, after the operation arguments. The scope capability of a
+        // scope body is its one parameter: the `Scope` op gives it. `_0`
+        // comes next, so the unwinder finds it after the locals.
         let params = body.params.iter().copied().filter(|&l| Some(l) != env);
         let caps = body.caps.iter().map(|(_, l)| *l);
         for l in params.chain(caps).chain(body.kont.map(|(l, _)| l)) {
@@ -422,8 +401,9 @@ impl<'a> BodyCx<'a> {
         for (i, d) in body.locals.iter().enumerate() {
             match d.kind {
                 LocalKind::Return | LocalKind::Param(_) => {}
-                LocalKind::Cap(_) | LocalKind::Kont(_) if slots[i].is_some() => {}
-                LocalKind::Cap(_) | LocalKind::Kont(_) => {
+                LocalKind::Cap(_) | LocalKind::Kont(_) | LocalKind::ScopeCap
+                    if slots[i].is_some() => {}
+                LocalKind::Cap(_) | LocalKind::Kont(_) | LocalKind::ScopeCap => {
                     return Err(internal(
                         name,
                         "a capability or a continuation local is not a parameter",
@@ -431,19 +411,15 @@ impl<'a> BodyCx<'a> {
                 }
                 LocalKind::Upvar(_) if upv[i].is_some() => {}
                 LocalKind::Upvar(_) => return Err(internal(name, "an upvar local has no cell")),
-                LocalKind::User | LocalKind::Iterator => {
+                // A `TaskResult` local has no value at run time: the scope
+                // keeps the result of the task (`docs/ir.md` 5.29).
+                LocalKind::User | LocalKind::Iterator | LocalKind::TaskResult(_) => {
                     slots[i] = Some(next);
                     next += 1;
                 }
                 LocalKind::Temp(_) => temp[i] = true,
                 LocalKind::Env if env == Some(LocalId(u32_of(i))) => {}
                 LocalKind::Env => return Err(internal(name, "a body has a second environment")),
-                LocalKind::ScopeCap | LocalKind::TaskResult(_) => {
-                    let (what, stage) = Later::Task.what();
-                    return Err(Fallback {
-                        reason: format!("`{name}` has {what} (stage {stage})"),
-                    });
-                }
             }
         }
         let locals = next;
@@ -1035,16 +1011,9 @@ impl<'a> BodyCx<'a> {
     }
 
     /// Returns the function of the analysis for function `f` of the IR. An
-    /// intrinsic (`sim.run`, `with_timeout`) is a construct of stage I4.
+    /// intrinsic (`sim.run`, `with_timeout`) is a function of the analysis
+    /// too: the machine runs its native code.
     fn item(&self, f: weft_ir::FnId) -> S<FnId> {
-        if self
-            .p
-            .fns
-            .get(f.index())
-            .is_some_and(|d| d.intrinsic.is_some())
-        {
-            return Err(Stop::Later(Later::Intrinsic));
-        }
         match self.fns.get(&f) {
             Some(&sf) => Ok(sf),
             None => bad(format!("the function f{} has no function", f.0)),
@@ -1183,13 +1152,133 @@ impl<'a> BodyCx<'a> {
                 self.handle(*handler)?;
                 self.result(b, dest, Some(*to), next)?;
             }
-            TermKind::Scope { .. }
-            | TermKind::ScopeWait { .. }
-            | TermKind::Spawn { .. }
-            | TermKind::Join { .. }
-            | TermKind::Detach { .. }
-            | TermKind::Fork { .. } => return Err(Stop::Later(Later::Task)),
+            TermKind::Scope {
+                scope,
+                dest,
+                next: to,
+                ..
+            } => {
+                self.scope(*scope)?;
+                self.result(b, dest, Some(*to), next)?;
+            }
+            TermKind::ScopeWait {
+                scope, next: to, ..
+            } => {
+                if !scope.is_local() {
+                    return bad("a scope capability that is not a whole local");
+                }
+                let slot = self.slot(scope.local)?;
+                self.emit(Op::ScopeWait(slot));
+                self.goto(b, *to, next);
+            }
+            // The receiver is a place, then the task operand. The native
+            // method reads the scope capability and moves the closure into
+            // the task. A spawn with no destination drops the handle: the
+            // scope keeps the result (`docs/ir.md` 5.29).
+            TermKind::Spawn {
+                site,
+                scope,
+                task,
+                dest,
+                next: to,
+            } => {
+                let Some(decl) = self.p.spawns.get(site.index()) else {
+                    return bad(format!("the spawn site s{} has no declaration", site.0));
+                };
+                let arg_span = span_of(decl.origin);
+                self.receiver(scope)?;
+                self.operand(task)?;
+                self.emit(Op::CallMethod {
+                    name: Rc::from("spawn"),
+                    n: 1,
+                    arg_span,
+                });
+                if let Some(d) = dest {
+                    self.result(b, d, Some(*to), next)?;
+                } else {
+                    self.emit(Op::Pop);
+                    self.goto(b, *to, next);
+                }
+            }
+            TermKind::Join {
+                task,
+                dest,
+                next: to,
+                ..
+            } => {
+                self.receiver(task)?;
+                self.emit(Op::CallMethod {
+                    name: Rc::from("join"),
+                    n: 0,
+                    arg_span: self.span,
+                });
+                self.result(b, dest, Some(*to), next)?;
+            }
+            // The builder writes the `()` of a `detach` after it.
+            TermKind::Detach { task, next: to } => {
+                self.receiver(task)?;
+                self.emit(Op::CallMethod {
+                    name: Rc::from("detach"),
+                    n: 0,
+                    arg_span: self.span,
+                });
+                self.emit(Op::Pop);
+                self.goto(b, *to, next);
+            }
+            // Each branch moves into its task. The span of a branch names
+            // the task for the checker (`stealable`).
+            TermKind::Fork {
+                sites,
+                branches,
+                dest,
+                next: to,
+                ..
+            } => {
+                let mut spans = Vec::with_capacity(sites.len());
+                for s in sites {
+                    let Some(decl) = self.p.spawns.get(s.index()) else {
+                        return bad(format!("the spawn site s{} has no declaration", s.0));
+                    };
+                    spans.push(span_of(decl.origin));
+                }
+                if spans.len() != branches.len() {
+                    return bad("a `fork` has a wrong number of spawn sites");
+                }
+                self.operands(branches)?;
+                self.emit(Op::Fork {
+                    n: u32_of(branches.len()),
+                    spans,
+                });
+                self.result(b, dest, Some(*to), next)?;
+            }
         }
+        Ok(())
+    }
+
+    /// Pushes the place of the receiver of a native method of a task: the
+    /// operand `copy s` of a spawn, or `move h` of a `join` or a `detach`.
+    /// The native method reads or moves the value at the place, as with the
+    /// AST compiler.
+    fn receiver(&mut self, o: &Operand) -> S<()> {
+        match o {
+            Operand::Copy(p) | Operand::Move(p) => self.place(p),
+            Operand::Const(_) => bad("the receiver of a task method is a constant"),
+        }
+    }
+
+    /// A `scope` (`docs/ir.md` 5.29): the `Scope` op makes the scope and
+    /// gives the frame of the scope body the scope capability and the cells
+    /// of its upvar locals. The code unit of body `i` is code unit `i`
+    /// (`compile_ir`).
+    fn scope(&mut self, s: weft_ir::ScopeId) -> S<()> {
+        let Some(decl) = self.p.scopes.get(s.index()) else {
+            return bad(format!("the scope {} has no declaration", s.0));
+        };
+        let caps = self.child_cells(decl.body)?;
+        self.emit(Op::Scope {
+            code: decl.body.index(),
+            caps,
+        });
         Ok(())
     }
 

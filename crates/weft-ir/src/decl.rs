@@ -143,7 +143,9 @@ pub struct SpawnDecl {
     pub scope: Option<ScopeId>,
     /// The task is a branch of a `fork`: it runs on another thread.
     pub fork: bool,
-    /// Where the task starts.
+    /// Where the task starts: the task argument of the spawn (the closure
+    /// or the function value), or the branch of the `fork`. The checker
+    /// names the task by the span of this expression (`stealable`).
     pub origin: Origin,
 }
 

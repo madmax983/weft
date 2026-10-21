@@ -1,13 +1,12 @@
-//! The IR engine (`--engine=ir`, plan stages I1 to I3, `docs/ir.md` 8.1).
+//! The IR engine (`--engine=ir`, plan stages I1 to I4, `docs/ir.md` 8.1).
 //!
-//! The IR compiler compiles the programs of the construct groups A to D
-//! (closures, function values, handlers and continuations). For a program
-//! with a construct of a later stage (a task), the AST compiler runs the
-//! program, and the outcome tells why. The tests here check:
+//! The IR compiler compiles each program that has IR. A program with a body
+//! that has no IR (a type error, an error in a declaration, W0303) falls
+//! back to the AST compiler, and the outcome tells why. The checker rejects
+//! these programs. The tests here check:
 //!
-//! - each interpreter program that uses only groups A to D gives its `.out`
-//!   with the IR engine (none of them shows a change of `docs/ir.md` 8.3);
-//! - each other interpreter program falls back and says why;
+//! - each interpreter program gives its `.out` with the IR engine, and only
+//!   the programs with no IR fall back;
 //! - each program of the static corpus with a `main` or tests gives the same
 //!   output with the two engines;
 //! - the expected changes of `docs/ir.md` 8.3: choice A (5.1.1, probes p1,
@@ -21,7 +20,9 @@
 //! - an upvar local of a handled body or a clause is the cell of the site
 //!   local (5.1.7), a `multi` resume copies the cells of the handled body and
 //!   shares the cells of the site, and a perform through a capability finds
-//!   the handler of the capability (5.24 to 5.27).
+//!   the handler of the capability (5.24 to 5.27);
+//! - scopes, tasks, `fork`, `sim.run` and `with_timeout` (5.29 to 5.31) give
+//!   the output of the AST engine, and a task has the same `stealable` mark.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, missing_docs)]
 
@@ -32,38 +33,13 @@ use std::path::{Path, PathBuf};
 
 use weft_interp::code::{CodeKind, Op, VarRef};
 use weft_interp::compile_ir::compile_ir;
-use weft_interp::{run_main, run_tests, Engine, RunOptions, RunOutcome};
+use weft_interp::{run_main, run_tests, Engine, RunOptions, RunOutcome, TraceEvent};
 use weft_ir::CaptureMode;
 use weft_sema::Options;
 
-/// The interpreter programs that use only the construct groups A to D.
-/// The IR engine runs each one; each other program falls back.
-const RUNS_ON_IR: &[&str] = &[
-    "abort_closure_cells",
-    "abort_on_abort",
-    "blocking",
-    "clause_abort",
-    "closure_return",
-    "control",
-    "display",
-    "effect_paths",
-    "effects_log",
-    "int_width",
-    "multi_choose",
-    "multi_clause_caps",
-    "multi_heap",
-    "multi_nested_drop",
-    "named_args",
-    "no_runtime_marker",
-    "once_twice",
-    "op_named_args",
-    "place_statements",
-    "places",
-    "rc_cycle",
-    "root_handlers",
-    "shadow_log",
-    "values",
-];
+/// The interpreter programs with a body that has no IR. The AST compiler
+/// runs them; each other program runs on the IR engine.
+const NO_IR: &[&str] = &["interrupt_nested_unwind"];
 
 fn directive<'s>(src: &'s str, key: &str) -> Option<&'s str> {
     src.lines()
@@ -137,23 +113,21 @@ fn expected(path: &Path) -> String {
 }
 
 #[test]
-fn each_program_of_groups_a_to_d_gives_its_output_with_the_ir_engine() {
+fn each_interpreter_program_gives_its_output_with_the_ir_engine() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/programs");
     let mut failures = String::new();
-    let mut on_ir = BTreeSet::new();
+    let mut fell_back = BTreeSet::new();
+    let mut count = 0;
     for path in programs(&dir) {
+        count += 1;
         let name = stem(&path);
         let (out, fallback) = run_program(&path, Engine::Ir);
         if let Some(why) = fallback {
-            if RUNS_ON_IR.contains(&name.as_str()) {
+            if !why.contains("has no IR") {
                 let _ = writeln!(failures, "{name}: falls back: {why}");
             }
-            if !why.contains("stage I") && !why.contains("has no IR") {
-                let _ = writeln!(failures, "{name}: the fallback names no stage: {why}");
-            }
-            continue;
+            fell_back.insert(name.clone());
         }
-        on_ir.insert(name.clone());
         let want = expected(&path);
         if out != want {
             let _ = write!(
@@ -162,8 +136,9 @@ fn each_program_of_groups_a_to_d_gives_its_output_with_the_ir_engine() {
             );
         }
     }
-    let want: BTreeSet<String> = RUNS_ON_IR.iter().map(|s| (*s).to_string()).collect();
-    assert_eq!(on_ir, want, "the programs that the IR engine runs");
+    assert_eq!(count, 61, "the number of interpreter programs");
+    let want: BTreeSet<String> = NO_IR.iter().map(|s| (*s).to_string()).collect();
+    assert_eq!(fell_back, want, "the programs with no IR");
     assert!(failures.is_empty(), "{failures}");
 }
 
@@ -179,7 +154,9 @@ fn each_program_of_the_corpus_gives_the_same_output_with_both_engines() {
         }
         let name = stem(&path);
         let (out, fallback) = run_program(&path, Engine::Ir);
-        if fallback.is_some() {
+        if let Some(why) = fallback {
+            // Only a program with no IR falls back. The checker rejects it.
+            assert!(why.contains("has no IR"), "{name}: {why}");
             continue;
         }
         ran += 1;
@@ -191,7 +168,7 @@ fn each_program_of_the_corpus_gives_the_same_output_with_both_engines() {
             );
         }
     }
-    assert!(ran >= 4, "the IR engine runs only {ran} corpus programs");
+    assert!(ran >= 20, "the IR engine runs only {ran} corpus programs");
     assert!(failures.is_empty(), "{failures}");
 }
 
@@ -318,13 +295,145 @@ fn a_handler_runs_on_the_ir_engine() {
 }
 
 #[test]
-fn a_program_with_a_scope_falls_back_and_says_why() {
+fn a_scope_runs_on_the_ir_engine() {
     let src = "fn main() / async {\n let v = scope { s =>\n let t = s.spawn(|| 4)\n t.join() + 1\n }\n print(v)\n}";
     let o = run_with(src, Engine::Ir);
+    assert_eq!(o.fallback, None);
     assert_eq!(o.stdout, "5\n");
-    let why = o.fallback.expect("the IR engine falls back");
-    assert!(why.contains("stage I4"), "{why}");
-    assert_eq!(run_with(src, Engine::Ast).fallback, None);
+    // The scope body is a code unit of its own: it waits for its tasks.
+    let code = compiled(src);
+    let body = code
+        .codes
+        .iter()
+        .find(|u| u.kind == CodeKind::ScopeBody)
+        .expect("a scope body");
+    assert_eq!(body.n_params, 1, "the scope capability");
+    assert!(body.ops.iter().any(|o| matches!(o, Op::ScopeWait(0))));
+}
+
+#[test]
+fn a_program_with_no_ir_falls_back_and_says_why() {
+    // `rollback` has a type error: it has no IR. The checker rejects the
+    // program; the AST compiler runs it.
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/programs");
+    let (_, why) = run_program(&dir.join("interrupt_nested_unwind.wf"), Engine::Ir);
+    let why = why.expect("the IR engine falls back");
+    assert!(why.contains("`rollback` has no IR"), "{why}");
+}
+
+#[test]
+fn each_task_golden_gives_the_output_of_the_ast_engine() {
+    // The golden programs of the IR builder for scopes and tasks
+    // (`docs/ir.md` 5.29 to 5.31). Each one gets a `main` that calls its
+    // functions, if it has none.
+    let extra = [
+        ("scope_wait", "fn main() / async { print(scoped(3).len()) }"),
+        ("join", ""),
+        ("spawn_handle", ""),
+        ("detach", ""),
+        ("fork", ""),
+        (
+            "with_timeout",
+            "fn main() / async, fail { print(timed(4)) }",
+        ),
+        (
+            "scope_value_chain",
+            "fn main() / async { print(early(true), early(false), scoped()) }",
+        ),
+        ("scope_in_closure", ""),
+        ("nested_in_closure", ""),
+    ];
+    for (name, main) in extra {
+        let src = format!("{}\n{main}\n", golden(name));
+        let ir = run_oracle(&src, Engine::Ir);
+        assert_eq!(ir, run_oracle(&src, Engine::Ast), "{name}");
+        assert_eq!(ir.1, None, "{name}");
+    }
+    // A spawn in statement position: the scope keeps the result.
+    let src = format!(
+        "{}\nfn go() / async {{ main(true); main(false); print(1) }}\n",
+        golden("spawn_stmt_result")
+    )
+    .replace("fn main(c: bool)", "fn run(c: bool)")
+    .replace("main(true); main(false)", "run(true); run(false)")
+    .replace("fn go()", "fn main()");
+    assert_eq!(run_oracle(&src, Engine::Ir), ("1\n".to_string(), None));
+}
+
+#[test]
+fn sim_run_gives_its_body_the_workers_of_the_call() {
+    // `docs/ir.md` 5.30: `workers` is 4 when the call leaves it out.
+    let src = golden("sim_run");
+    let a = weft_sema::analyze_source(&src, Options::default()).unwrap();
+    let opts = |engine| RunOptions {
+        oracle: true,
+        engine,
+        ..RunOptions::default()
+    };
+    let ir = weft_interp::run_analysis_tests(&a, &opts(Engine::Ir));
+    let ast = weft_interp::run_analysis_tests(&a, &opts(Engine::Ast));
+    assert_eq!(ir.len(), 2);
+    for (i, t) in ir.iter().zip(&ast) {
+        assert_eq!(i.outcome.fallback, None);
+        assert!(i.passed, "{}: {:?}", i.name, i.message);
+        assert_eq!(i, t);
+    }
+}
+
+#[test]
+fn a_with_timeout_block_that_passes_its_deadline_aborts() {
+    // `docs/ir.md` 5.31: the call can abort. The handler of `fail` gets the
+    // failure of the deadline.
+    let src = "fn slow() -> u64 / clock { sleep(5.s); 1 }\n\
+        fn main() / io {\n\
+        let r = handle Fail { fn fail(msg) { print(\"failed: {msg}\"); 0 } } in {\n\
+        with_timeout(1.s) { slow() } + 1\n }\n print(r)\n}";
+    let o = run_with(src, Engine::Ir);
+    assert_eq!(o.fallback, None);
+    assert_eq!(o.stdout, run_with(src, Engine::Ast).stdout);
+    assert_eq!(o.stdout, "failed: timeout\n0\n");
+}
+
+#[test]
+fn a_task_of_the_ir_engine_has_the_stealable_mark_of_the_checker() {
+    // The checker names a task by the span of its closure argument; the IR
+    // engine finds the span in the spawn site (`docs/ir.md` 5.29). The two
+    // engines start the same tasks, with the same `stealable` marks. The
+    // preemption points are not the same: the IR engine runs more ops.
+    fn spawns(o: &RunOutcome) -> Vec<(usize, usize, bool)> {
+        o.trace
+            .iter()
+            .filter_map(|e| match e {
+                TraceEvent::Spawn {
+                    task,
+                    parent,
+                    stealable,
+                    ..
+                } => Some((*task, *parent, *stealable)),
+                _ => None,
+            })
+            .collect()
+    }
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/programs");
+    for name in ["steal", "fork", "scope_join"] {
+        let src = fs::read_to_string(dir.join(format!("{name}.wf"))).unwrap();
+        let c = checked(&src);
+        let opts = |engine| RunOptions {
+            workers: 4,
+            max_steps: Some(1_000_000),
+            oracle: true,
+            engine,
+            ..RunOptions::default()
+        };
+        let ir = run_main(&c, &opts(Engine::Ir)).unwrap();
+        let ast = run_main(&c, &opts(Engine::Ast)).unwrap();
+        assert_eq!(ir.fallback, None, "{name}");
+        assert_eq!(ir.stdout, ast.stdout, "{name}");
+        assert_eq!(spawns(&ir), spawns(&ast), "{name}");
+        if name == "steal" {
+            assert!(spawns(&ir).iter().any(|s| s.2), "{name}: a stealable task");
+        }
+    }
 }
 
 /// Returns the capture modes of each closure of the IR of `src`.
@@ -442,27 +551,14 @@ fn the_oracle_stops_a_by_ref_capture_after_the_end_of_its_variable() {
 }
 
 #[test]
-fn the_closures_of_capture_by_value_give_their_output_with_the_ir_engine() {
-    // `capture_by_value.wf` has a `scope` (plan stage I4). With the part that
-    // spawns a task taken out, the IR engine runs it, and it gives the
-    // `.out` lines of the other parts.
+fn capture_by_value_gives_its_output_with_the_ir_engine() {
+    // `capture_by_value.wf` has closures and a `scope` with a task.
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/programs");
     let src = fs::read_to_string(dir.join("capture_by_value.wf")).unwrap();
-    let from = src.find("    let w = Vec.new()").unwrap();
-    let to = src.find("    let b = Vec.new()").unwrap();
-    let cut = format!("{}{}", &src[..from], &src[to..]);
-    let mut want = String::new();
-    for l in fs::read_to_string(dir.join("capture_by_value.out"))
-        .unwrap()
-        .lines()
-        .filter(|l| !l.starts_with("task") && !l.starts_with("w "))
-    {
-        writeln!(want, "{l}").unwrap();
-    }
-    let o = run_with(&cut, Engine::Ir);
+    let want = fs::read_to_string(dir.join("capture_by_value.out")).unwrap();
+    let o = run_with(&src, Engine::Ir);
     assert_eq!(o.fallback, None);
     assert_eq!(o.stdout, want);
-    assert_eq!(run_with(&cut, Engine::Ast).stdout, want);
 }
 
 #[test]

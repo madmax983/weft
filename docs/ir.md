@@ -364,7 +364,7 @@ pub struct HandlerDecl {
     pub multi: bool,
 }
 pub struct ScopeDecl { pub body: BodyId, pub site: BodyId }
-pub struct SpawnDecl { pub scope: Option<ScopeId>, pub fork: bool, pub origin: Origin } // scope: None for a fork branch, or a capability that is not a scope binder
+pub struct SpawnDecl { pub scope: Option<ScopeId>, pub fork: bool, pub origin: Origin } // scope: None for a fork branch, or a capability that is not a scope binder; origin: the task argument or the fork branch
 /// A static capability environment: handlers are lexical.
 pub struct CapEnv {
     pub parent: Option<CapEnvId>,      // None at the entry of a function or a test
@@ -1550,7 +1550,11 @@ As built (`irbuild/task.rs`, plan stage B11):
 - The value of `scope`, `join` and `fork` comes from another frame, as a call result:
   the destination gets the `Uninit` of its place fields after the terminator (5.17).
 - `fork` evaluates its branches as operands in written order (a trailing block is the
-  last branch); each branch gets a `SpawnDecl` with `fork: true` and no scope. **Goes away:** `start_task`, `task_captures`, `task_ret`, `end_tasks`,
+  last branch); each branch gets a `SpawnDecl` with `fork: true` and no scope.
+- The origin of a `SpawnDecl` is the task argument of the spawn (the closure or the
+  function value), or the branch of the `fork` (plan stage I4). The checker names a
+  task by the span of this expression, and the interpreter finds the `stealable`
+  mark of the task by it (8.1). **Goes away:** `start_task`, `task_captures`, `task_ret`, `end_tasks`,
 `finish_task_values`, `finish_task_ends`, `finish_task_marks`, "task end" nodes,
 `restart_after`.
 
@@ -2563,6 +2567,46 @@ As built (plan stage I3, handlers and continuations):
   that does not resume, into its destination, as a call does.
 - After stage I3 only a program with a task, `sim.run` or `with_timeout` (I4),
   or with a body that has no IR, falls back to the AST compiler.
+
+As built (plan stage I4, tasks, `sim.run` and `with_timeout`):
+
+- A scope body is a `Code` of kind `ScopeBody` (the name of the AST compiler:
+  "scope"). Its `ScopeCap` local `_1` is its one parameter: the `Scope` op
+  makes the scope and gives the value `Scope`. The `Scope` op gives the frame
+  of the scope body the cells of its upvar locals, as `Handle` does for a
+  handled body (the slot of a site local, or a captured cell of the site,
+  also for an environment view). `ScopeWait(_1)` is the op `ScopeWait` with
+  the slot of `_1`. The `Scope` terminator stores the value of the scope
+  body into its destination, as a call does.
+- A `TaskResult` local gets a slot (`BindEmpty` at its `Live`), but it gets
+  no value at run time: the scope keeps the result of the task, as with the
+  AST compiler, and the frame end drops the empty slot.
+- `Spawn`, `Join` and `Detach` are the native methods of the AST compiler
+  (`CallMethod` with the names `spawn`, `join` and `detach`): the place of
+  the receiver operand (`copy s` or `move h`), then the task operand of a
+  spawn. The native method reads the scope capability or moves the handle,
+  and a `join` that waits runs the op again. A spawn with no destination
+  and a `detach` drop the value of the method (`Pop`): the scope keeps the
+  task. The span of the task is the origin of the `SpawnDecl` (5.29), so the
+  `stealable` mark of the checker is the same as with the AST compiler.
+- `Fork` is the op `Fork`: the branch operands, and the origin of the
+  `SpawnDecl` of each branch as its span.
+- `sim.run` and `with_timeout` are calls of their functions (`Call`): the
+  machine runs their native code. A missing `workers` of `sim.run` is the
+  constant argument 4 of the IR (5.30).
+- After stage I4 the IR compiler compiles each construct. A program with a
+  body that has no IR (a type error, an error in a declaration, W0303 a move
+  through a reference) still falls back to the AST compiler, and
+  `RunOutcome::fallback` and the note of `weft run --engine=ir` name the body
+  and the reason. DECISION: `--engine=ir` does not refuse these programs. The
+  checker rejects each of them, so their verdict does not depend on the
+  engine; with the fallback, `weft run --unchecked --engine=ir` and the
+  engine differential (plan stage I5) still run them, and they show as
+  "fallback", not as a difference.
+- The preemption points of the scheduler are the same (`BackEdge`), but the
+  IR engine runs more ops between them, so a quantum ends at another point.
+  The output of a program whose output does not depend on the schedule is the
+  same; the trace (`Run`, `Preempt`, `Steal`) can be different.
 
 ### 8.2 Landing pads
 

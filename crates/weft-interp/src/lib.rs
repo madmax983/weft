@@ -61,9 +61,10 @@ pub enum Engine {
     #[default]
     Ast,
     /// The IR compiler ([`compile_ir`]): it compiles the core IR of the
-    /// program (`docs/ir.md` 8.1). For a program with a construct that it
-    /// does not compile yet, the AST compiler runs the program, and
-    /// [`RunOutcome::fallback`] tells why.
+    /// program (`docs/ir.md` 8.1). For a program with a body that has no
+    /// IR (a type error, an error in a declaration, W0303), the AST compiler
+    /// runs the program, and [`RunOutcome::fallback`] tells why. The checker
+    /// rejects these programs.
     Ir,
 }
 

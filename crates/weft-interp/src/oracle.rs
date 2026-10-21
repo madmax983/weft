@@ -155,6 +155,15 @@ impl Oracle {
     pub fn access(&mut self, cell: CellId, path: &[u32], write: bool, what: &str) {
         let t = self.cur;
         self.ensure(t);
+        // When the running task is the only task that no task joined, each
+        // other task is done, and its accesses are ordered before this one
+        // (a join merges the clocks, and the clocks of the joins chain to
+        // this task). A task that starts later sees this access too. So the
+        // access cannot be part of a race, and the log does not need it. A
+        // deep recursion of one task then makes no log at all.
+        if self.live.len() == 1 && self.live.contains(&t) {
+            return;
+        }
         let epoch = self.at(t, t);
         // The logs of done tasks that each task sees: they are dropped, so
         // the cost of an access does not grow with the number of done tasks.
@@ -328,6 +337,27 @@ mod tests {
         o.set_task(101);
         o.access(3, &[1], false, "buffer");
         assert!(o.take_violation().is_some());
+    }
+
+    #[test]
+    fn the_only_live_task_makes_no_log() {
+        // Before a spawn and after the join of each task, no access can race:
+        // the log stays empty. A race between two live tasks is found.
+        let mut o = Oracle::default();
+        o.set_task(0);
+        o.access(4, &[], true, "local");
+        assert!(o.log.is_empty());
+        o.spawn(0, 1);
+        o.set_task(1);
+        o.access(4, &[], true, "local");
+        o.set_task(0);
+        o.access(4, &[], false, "local");
+        assert!(o.take_violation().is_some());
+        o.join(1);
+        let n = o.log.len();
+        o.access(5, &[], true, "local");
+        assert_eq!(o.log.len(), n);
+        assert!(o.take_violation().is_none());
     }
 
     #[test]
