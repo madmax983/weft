@@ -22,7 +22,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use weft_cli::package::{Profile, SyntaxError};
+use weft_cli::package::{Package, Profile, SyntaxError};
+use weft_sema::{FactGen, Groups};
 
 use crate::digest;
 use crate::manifest::Entry;
@@ -43,6 +44,9 @@ pub type Work = pool::Work<Outcome>;
 pub enum Pipeline {
     /// The fact generator of `crates/weft-sema/src/body/`.
     Old,
+    /// The fact generator of the IR (`crates/weft-sema/src/factgen/`) for a
+    /// program in scope (plan §2.6), else the old one.
+    Ir,
 }
 
 impl Pipeline {
@@ -50,6 +54,7 @@ impl Pipeline {
     pub fn parse(name: &str) -> Option<Self> {
         match name {
             "old" => Some(Self::Old),
+            "ir" => Some(Self::Ir),
             _ => None,
         }
     }
@@ -58,6 +63,15 @@ impl Pipeline {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Old => "old",
+            Self::Ir => "ir",
+        }
+    }
+
+    /// The fact pipeline of the analysis.
+    const fn fact_gen(self) -> FactGen {
+        match self {
+            Self::Old => FactGen::Old,
+            Self::Ir => FactGen::Ir,
         }
     }
 }
@@ -212,6 +226,8 @@ impl Outcome {
 pub struct Settings {
     /// The pipeline.
     pub pipeline: Pipeline,
+    /// The construct groups that are on in the `ir` pipeline (plan §2.6).
+    pub groups: Groups,
     /// The number of worker threads (at least 1).
     pub workers: usize,
     /// The time limit for one program.
@@ -225,15 +241,102 @@ fn without_base(base: &Path, text: &str) -> String {
     text.replace(&dir, "")
 }
 
-/// Checks the program `entry` below `base` with `pipeline`, on this thread.
+/// Checks the program `entry` below `base` with `pipeline`, on this thread,
+/// with the construct groups of the default options.
 ///
 /// A panic of the pipeline continues in the caller: [`run_pool`] catches it.
 pub fn check(base: &Path, entry: &Entry, pipeline: Pipeline) -> Outcome {
+    check_with(
+        base,
+        entry,
+        pipeline,
+        weft_sema::Options::default().ir_groups,
+    )
+}
+
+/// Checks the program `entry` below `base` with `pipeline` and the construct
+/// groups `groups` of the `ir` pipeline, on this thread.
+///
+/// A panic of the pipeline continues in the caller: [`run_pool`] catches it.
+pub fn check_with(base: &Path, entry: &Entry, pipeline: Pipeline, groups: Groups) -> Outcome {
     let start = Instant::now();
     let path = base.join(&entry.path);
+    let checked = weft_cli::check_path_with(&path, Profile::default(), pipeline.fact_gen(), groups);
+    let mut o = outcome(base, entry, pipeline, checked.as_ref().map(|(p, c)| (p, c)));
+    o.record.ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+    o
+}
+
+/// The records of one program with both pipelines ([`check_both`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Both {
+    /// The outcome of the `old` pipeline.
+    pub old: Outcome,
+    /// The outcome of the `ir` pipeline: the `old` result for a program out of
+    /// scope.
+    pub ir: Outcome,
+    /// True if the program is in scope (plan §2.6).
+    pub in_scope: bool,
+    /// The construct groups that the program uses (plan §2.6). Empty for a
+    /// program that the analysis does not reach.
+    pub used: Groups,
+}
+
+/// Checks the program `entry` below `base` with both pipelines in one
+/// analysis (`--facts=both`), with the construct groups `groups`.
+///
+/// A panic of the pipeline continues in the caller.
+pub fn check_both(base: &Path, entry: &Entry, groups: Groups) -> Both {
+    let start = Instant::now();
+    let path = base.join(&entry.path);
+    let checked = weft_cli::check_path_with(&path, Profile::default(), FactGen::Both, groups);
+    let ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+    let ir_side = checked
+        .as_ref()
+        .ok()
+        .and_then(|(p, c)| c.ir.as_deref().map(|ir| (p, ir)));
+    let in_scope = ir_side.is_some();
+    let used = checked
+        .as_ref()
+        .ok()
+        .and_then(|(_, c)| c.analysis.ir_scope.as_ref())
+        .map_or(Groups::NONE, |s| s.used);
+    let mut ir = match ir_side {
+        Some((p, c)) => outcome(base, entry, Pipeline::Ir, Ok((p, c))),
+        None => outcome(
+            base,
+            entry,
+            Pipeline::Ir,
+            checked.as_ref().map(|(p, c)| (p, c)),
+        ),
+    };
+    let mut old = outcome(
+        base,
+        entry,
+        Pipeline::Old,
+        checked.as_ref().map(|(p, c)| (p, c)),
+    );
+    old.record.ms = ms;
+    ir.record.ms = ms;
+    Both {
+        old,
+        ir,
+        in_scope,
+        used,
+    }
+}
+
+/// The outcome of the check `checked` of the program `entry` with `pipeline`.
+/// The time is 0.
+fn outcome(
+    base: &Path,
+    entry: &Entry,
+    pipeline: Pipeline,
+    checked: Result<(&Package, &weft_check::Checked), &anyhow::Error>,
+) -> Outcome {
     let mut record = Record::empty(entry, pipeline, Kind::Ok, None);
     let mut text = String::new();
-    match weft_cli::check_path(&path, Profile::default()) {
+    match checked {
         Ok((pkg, checked)) => {
             for d in &checked.diags {
                 let (file, line) = pkg.files.get(d.unit).map_or((String::new(), 0), |f| {
@@ -246,28 +349,25 @@ pub fn check(base: &Path, entry: &Entry, pipeline: Pipeline) -> Outcome {
                     .diagnostics
                     .push(Diag(d.code.as_str().to_string(), file, line));
             }
-            record.violations = digest::violations(base, &pkg, &checked);
-            let facts = digest::fact_digest(base, &pkg, &checked);
+            record.violations = digest::violations(base, pkg, checked);
+            let facts = digest::fact_digest(base, pkg, checked);
             text = facts.text();
             record.counts = facts.counts;
         }
-        Err(e) => match e.downcast::<SyntaxError>() {
-            Ok(s) => {
-                let file = digest::relative_name(base, &s.file.name);
-                let line = s.file.line_col(s.diag.span.lo).0;
-                record
-                    .diagnostics
-                    .push(Diag(s.diag.code.as_str().to_string(), file, line));
-            }
-            Err(e) => {
+        Err(e) => {
+            let Some(s) = e.downcast_ref::<SyntaxError>() else {
                 let message = without_base(base, &format!("{e:#}"));
                 return Outcome::empty(entry, pipeline, Kind::Error, message);
-            }
-        },
+            };
+            let file = digest::relative_name(base, &s.file.name);
+            let line = s.file.line_col(s.diag.span.lo).0;
+            record
+                .diagnostics
+                .push(Diag(s.diag.code.as_str().to_string(), file, line));
+        }
     }
     record.diagnostics.sort();
     record.digest = digest::sha256(&text);
-    record.ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
     Outcome {
         record,
         digest: text,
@@ -311,6 +411,63 @@ pub fn run_pool(
     })
 }
 
+/// Checks each entry below `base` with both pipelines ([`check_both`]).
+///
+/// The check runs on `settings.workers` worker threads. The function calls
+/// `emit` once for each entry with its index and its records, in the order in
+/// which the entries end. `settings.pipeline` is not used.
+///
+/// A panic gives two records of kind [`Kind::Crash`], a timeout two records
+/// of kind [`Kind::Timeout`], and the program is out of scope.
+///
+/// # Errors
+///
+/// Returns [`Error::Thread`] if the system cannot start a worker thread.
+pub fn run_both(
+    base: &Path,
+    entries: Vec<Entry>,
+    settings: &Settings,
+    mut emit: impl FnMut(usize, Both),
+) -> Result<(), Error> {
+    let base = base.to_path_buf();
+    let groups = settings.groups;
+    let limit = settings.limit;
+    let work: pool::Work<Both> = Arc::new(move |e: &Entry| check_both(&base, e, groups));
+    pool::run(entries, settings.workers, limit, work, |i, entry, ended| {
+        let both = match ended {
+            Ended::Done(b) => b,
+            Ended::Panic { text, ms } => {
+                let side = |p| {
+                    let mut o = Outcome::empty(entry, p, Kind::Crash, text.clone());
+                    o.record.ms = ms;
+                    o
+                };
+                Both {
+                    old: side(Pipeline::Old),
+                    ir: side(Pipeline::Ir),
+                    in_scope: false,
+                    used: Groups::NONE,
+                }
+            }
+            Ended::Timeout => {
+                let text = format!("the check takes more than {} ms", limit.as_millis());
+                let side = |p| {
+                    let mut o = Outcome::empty(entry, p, Kind::Timeout, text.clone());
+                    o.record.ms = u64::try_from(limit.as_millis()).unwrap_or(0);
+                    o
+                };
+                Both {
+                    old: side(Pipeline::Old),
+                    ir: side(Pipeline::Ir),
+                    in_scope: false,
+                    used: Groups::NONE,
+                }
+            }
+        };
+        emit(i, both);
+    })
+}
+
 /// Checks each entry below `base` with [`check`] on a pool ([`run_pool`]).
 ///
 /// # Errors
@@ -324,6 +481,7 @@ pub fn snapshot(
 ) -> Result<(), Error> {
     let base = base.to_path_buf();
     let pipeline = settings.pipeline;
-    let work: Work = Arc::new(move |e: &Entry| check(&base, e, pipeline));
+    let groups = settings.groups;
+    let work: Work = Arc::new(move |e: &Entry| check_with(&base, e, pipeline, groups));
     run_pool(entries, settings, work, emit)
 }

@@ -256,6 +256,14 @@ diagnostic of the old lowering (W0204, W0313, W0314, W0315, W0701, W0704, W0707)
 and its facts, and the IR pipeline gives its own (5.36, 6.8, 6.9). W0303 stays a
 diagnostic of the old lowering: a body with W0303 gets no IR (5.36).
 
+As built (plan stage F1): the drop list is by code, and only for the diagnostics of the
+lowering and of its effect inference (`weft_sema::IR_DROPS`); the item checks (also the
+W0204 of a signature) stay. The W0315 of the builder replaces the W0315 of the lowering.
+The `ir` pipeline also gives the exports of the AST compiler from the IR: the `ByMove`
+captures (and a moved `once` continuation) as `by_value`, the THIR argument order of a
+call of a method of a value or of a local with named arguments as `arg_order`, and the
+THIR integer types as `int_ops`. A body with no IR keeps the exports of the old lowering.
+
 ---
 
 ## 3. The IR types

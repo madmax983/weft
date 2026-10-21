@@ -329,6 +329,7 @@ fn no_runtime_has_no_root_handlers() {
         Options {
             library: false,
             no_runtime: true,
+            ..Options::default()
         },
     );
     let o = RunOptions {

@@ -817,7 +817,18 @@ pub(super) fn free_bindings(t: &crate::thir::Tables, e: &Expr) -> Vec<BindingId>
 /// an expression inside the body of a closure literal of `e`. `inner`: `e`
 /// itself is inside a closure body. The walk keeps its stack on the heap.
 pub(super) fn walk_exprs<'e>(e: &'e Expr, inner: bool, f: &mut impl FnMut(&'e Expr, bool)) {
-    let mut stack: Vec<(Node<'e>, bool)> = vec![(Node::Expr(e), inner)];
+    walk_nodes(Node::Expr(e), inner, f);
+}
+
+/// Calls `f` on each expression of block `b`, in pre-order, also on the
+/// expressions inside closure literals.
+pub fn walk_block<'e>(b: &'e ast::Block, f: &mut impl FnMut(&'e Expr)) {
+    walk_nodes(Node::Block(b), false, &mut |x, _| f(x));
+}
+
+/// The walk of [`walk_exprs`] from node `start`.
+fn walk_nodes<'e>(start: Node<'e>, inner: bool, f: &mut impl FnMut(&'e Expr, bool)) {
+    let mut stack: Vec<(Node<'e>, bool)> = vec![(start, inner)];
     let mut parts: Vec<Node<'e>> = Vec::new();
     while let Some((n, inner)) = stack.pop() {
         match n {

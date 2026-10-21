@@ -143,6 +143,7 @@ impl Package {
             Some(m) => weft_sema::Options {
                 library: m.package.kind == Kind::Lib,
                 no_runtime: m.package.runtime == Runtime::None,
+                ..weft_sema::Options::default()
             },
             None => self
                 .files
@@ -154,6 +155,7 @@ impl Package {
         weft_sema::Options {
             library: flags.library.unwrap_or(own.library),
             no_runtime: flags.no_runtime.unwrap_or(own.no_runtime),
+            ..own
         }
     }
 

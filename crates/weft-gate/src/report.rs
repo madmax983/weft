@@ -6,9 +6,10 @@
 //! a [`Report`]: one [`Row`] for each program, the blockers, and the warnings.
 //! [`Report::to_markdown`] gives the text of `target/gate/report.md`.
 //!
-//! Before stage F1 the `ir` pipeline does not exist. Then no program is in
-//! scope (§2.6), and the `ir` record of each program is its `old` record: the
-//! snapshot runs once. Each program is `same` or `open`.
+//! From stage F1 on, one analysis of each program gives both records
+//! (`--facts=both`, `crate::snapshot::check_both`). A program out of scope
+//! (§2.6) gets its `old` record as its `ir` record. The report gives the
+//! coverage: the share of the programs of each set in scope.
 //!
 //! From stage G6 on, the report also compares the old records with the
 //! baseline of the tier ([`Report::compare_baseline`], `crate::baseline`), and
@@ -122,7 +123,7 @@ pub struct Row {
 pub struct Report {
     /// Lines for the head of the report (the tier, the interpreter hash).
     pub notes: Vec<String>,
-    /// The groups that are on (§2.6). Empty before stage F1.
+    /// The groups that are on (§2.6). Empty while no group is on.
     pub groups_on: String,
     /// One row for each program, in the order of the manifest.
     pub rows: Vec<Row>,
@@ -141,6 +142,9 @@ pub struct Report {
     pub baseline: Option<Comparison>,
     /// The baseline file of the comparison.
     pub baseline_file: String,
+    /// The construct groups that each program uses (§2.6), in the order of
+    /// the rows. Empty if the run did not compute them.
+    pub used: Vec<weft_sema::Groups>,
 }
 
 /// The diagnostics of a record as a short text.
@@ -417,6 +421,7 @@ impl Report {
             let _ = writeln!(md, "| {s} | {scope} | {total} | {share:.1} % |");
         }
 
+        self.use_markdown(&mut md);
         self.baseline_markdown(&mut md);
         self.ledger_markdown(&mut md);
 
@@ -456,6 +461,49 @@ impl Report {
 }
 
 impl Report {
+    /// The section of the groups that the programs use.
+    ///
+    /// For each stage of the groups (A, AB, ..., ABCDEF), the programs of each
+    /// set that use only groups of that stage. It is the coverage of the stage
+    /// if the fact generator supports each of its groups.
+    fn use_markdown(&self, md: &mut String) {
+        if self.used.len() != self.rows.len() {
+            return;
+        }
+        md.push_str("\n## Groups that the programs use\n\n");
+        md.push_str("The programs of each set that use only the groups of each stage (§2.6).\n\n");
+        let stages: Vec<weft_sema::Groups> = (1..=GROUPS.len())
+            .filter_map(|n| {
+                let text: String = GROUPS.iter().take(n).collect();
+                weft_sema::Groups::parse(&text).ok()
+            })
+            .collect();
+        md.push_str("| set |");
+        for g in &stages {
+            let _ = write!(md, " {g} |");
+        }
+        md.push_str(" programs |\n|---|");
+        for _ in &stages {
+            md.push_str("---:|");
+        }
+        md.push_str("---:|\n");
+        for s in self.sets() {
+            let mine: Vec<weft_sema::Groups> = self
+                .rows
+                .iter()
+                .zip(&self.used)
+                .filter(|(r, _)| r.set == s)
+                .map(|(_, u)| *u)
+                .collect();
+            let _ = write!(md, "| {s} |");
+            for g in &stages {
+                let n = mine.iter().filter(|u| g.contains(**u)).count();
+                let _ = write!(md, " {n} |");
+            }
+            let _ = writeln!(md, " {} |", mine.len());
+        }
+    }
+
     /// The section on the baseline.
     fn baseline_markdown(&self, md: &mut String) {
         md.push_str("\n## Baseline\n\n");
@@ -648,6 +696,10 @@ pub struct RunSettings {
     /// True if [`run_tier1`] compares the old records with the committed
     /// baseline. False when the run writes a new baseline.
     pub baseline: bool,
+    /// The construct groups that are on in the `ir` pipeline (§2.6). The
+    /// default is the default of `weft_sema::Options`; `run --groups` forces
+    /// more groups on for a preview report.
+    pub groups: weft_sema::Groups,
 }
 
 impl Default for RunSettings {
@@ -659,6 +711,7 @@ impl Default for RunSettings {
             limit: snapshot::LIMIT,
             policy: Policy::default(),
             baseline: true,
+            groups: weft_sema::Options::default().ir_groups,
         }
     }
 }
@@ -666,9 +719,10 @@ impl Default for RunSettings {
 /// Runs the gate on the programs of `manifest` below `base`.
 ///
 /// Reads the verdicts of the engine [`ORACLE_ENGINE`] for the interpreter
-/// `interp` from `cache` first, so a stale cache stops the run before the snapshot. Then
-/// checks each program with the `old` pipeline. Before stage F1 no program is
-/// in scope, so the `ir` record is the `old` record. `alias` is a directory
+/// `interp` from `cache` first, so a stale cache stops the run before the
+/// snapshot. Then checks each program with both pipelines and the groups
+/// `settings.groups` (`snapshot::run_both`). A program out of scope gets its
+/// `old` record as its `ir` record. `alias` is a directory
 /// such as `tests/gate/probes`: a ledger entry can also name a program by its
 /// path below it (for tier 2).
 ///
@@ -702,42 +756,49 @@ pub fn run(
         .collect();
     let total = manifest.entries.len();
     let snap = Settings {
-        pipeline: Pipeline::Old,
+        pipeline: Pipeline::Ir,
+        groups: settings.groups,
         workers: settings.workers.max(1),
         limit: settings.limit,
     };
     snapshot::install_panic_hook();
-    let mut records: Vec<Option<Record>> = vec![None; total];
-    snapshot::snapshot(base, manifest.entries, &snap, |i, o| {
+    let mut records: Vec<Option<snapshot::Both>> = vec![None; total];
+    snapshot::run_both(base, manifest.entries, &snap, |i, b| {
         if let Some(slot) = records.get_mut(i) {
-            *slot = Some(o.record);
+            *slot = Some(b);
         }
     })?;
     let mut inputs = Vec::with_capacity(total);
+    let mut used = Vec::with_capacity(total);
     let mut not_ok = BTreeMap::<Kind, usize>::new();
     for ((record, verdict), paths) in records.into_iter().zip(verdicts).zip(paths) {
-        let Some(old) = record else {
+        let Some(both) = record else {
             continue;
         };
-        if old.kind != Kind::Ok {
-            *not_ok.entry(old.kind).or_default() += 1;
+        if both.old.record.kind != Kind::Ok {
+            *not_ok.entry(both.old.record.kind).or_default() += 1;
         }
+        used.push(both.used);
         inputs.push(Input {
-            ir: old.clone(),
-            old,
+            old: both.old.record,
+            ir: both.ir.record,
             verdict,
             paths,
-            in_scope: false,
+            in_scope: both.in_scope,
         });
     }
     let mut report = Report::build(&inputs, ledger, &settings.policy);
+    report.groups_on = settings.groups.to_string();
+    report.used = used;
     report.notes.push(format!(
         "oracle: the `{}` engine, interpreter hash {interp}",
         ORACLE_ENGINE.name()
     ));
-    report.notes.push(
-        "the `ir` pipeline does not exist before stage F1: no program is in scope, and the `ir` record of each program is its `old` record".to_string(),
-    );
+    let in_scope = inputs.iter().filter(|i| i.in_scope).count();
+    report.notes.push(format!(
+        "the `ir` pipeline: {in_scope} of {} programs in scope; a program out of scope gets its `old` record as its `ir` record",
+        inputs.len()
+    ));
     report.notes.push(format!(
         "time limit of a check: {} s, {} workers",
         settings.limit.as_secs(),

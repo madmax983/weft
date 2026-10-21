@@ -20,6 +20,10 @@ pub struct Checked {
     pub reports: Vec<Report>,
     /// All diagnostics, sorted by unit and location.
     pub diags: Vec<Diagnostic>,
+    /// With `--facts=both` and a program in scope (plan §2.6): the check of
+    /// the facts of the `ir` pipeline ([`Analysis::ir_facts`]). `None` when
+    /// the `ir` pipeline gives the facts of the old lowering.
+    pub ir: Option<Box<Self>>,
 }
 
 impl Checked {
@@ -39,7 +43,21 @@ impl Checked {
 /// `files[u]` is the source of unit `u`; it resolves line numbers in notes.
 /// Each fact that a diagnostic reports gets the index of its body
 /// ([`bridge::body_key`]), so two bodies with one name keep apart.
-pub fn check_analysis(analysis: Analysis, files: &[SourceFile]) -> Checked {
+pub fn check_analysis(mut analysis: Analysis, files: &[SourceFile]) -> Checked {
+    let ir = analysis.ir_facts.take().map(|facts| {
+        let mut view = analysis.clone();
+        view.bodies = facts.bodies;
+        view.diags = facts.diags;
+        Box::new(check_bodies(view, files))
+    });
+    let mut c = check_bodies(analysis, files);
+    c.ir = ir;
+    c
+}
+
+/// Runs the production checker on every body of `analysis`, with no `ir`
+/// side.
+fn check_bodies(analysis: Analysis, files: &[SourceFile]) -> Checked {
     let mut diags = analysis.diags.clone();
     let mut reports = Vec::new();
     for (i, b) in analysis.bodies.iter().enumerate() {
@@ -63,6 +81,7 @@ pub fn check_analysis(analysis: Analysis, files: &[SourceFile]) -> Checked {
         analysis,
         reports,
         diags,
+        ir: None,
     }
 }
 
@@ -107,9 +126,12 @@ fn check_source_here(name: &str, src: &str, opts: Options) -> Checked {
                 thir: Vec::new(),
                 thir_tys: weft_sema::thir::TyTable::new(),
                 thir_decl_error: None,
+                ir_scope: None,
+                ir_facts: None,
             },
             reports: Vec::new(),
             diags: vec![d],
+            ir: None,
         },
     }
 }
@@ -200,6 +222,62 @@ mod tests {
     fn a_checked_program_is_send_and_sync() {
         fn send_sync<T: Send + Sync>() {}
         send_sync::<Checked>();
+    }
+
+    /// An `emit` that writes no fact (the test hook of plan stage F1). Its
+    /// type is `weft_sema::factgen::Emit`, so it returns a `Result`.
+    #[allow(clippy::unnecessary_wraps)]
+    const fn empty(
+        _: &weft_sema::factgen::Input<'_>,
+        _: &mut [FnFacts],
+    ) -> Result<(), weft_sema::factgen::Unsupported> {
+        Ok(())
+    }
+
+    /// The analysis of `src` with the hook [`empty`], every group on, and the
+    /// pipeline `facts`.
+    fn hooked(src: &str, facts: weft_sema::FactGen) -> Analysis {
+        let units = vec![
+            weft_sema::prelude_unit().expect("the prelude"),
+            weft_sema::Unit {
+                name: String::new(),
+                file: weft_syntax::parse_file(src).expect("the source"),
+                is_std: false,
+            },
+        ];
+        let opts = Options {
+            facts,
+            ir_groups: weft_sema::Groups::ALL,
+            ..Options::default()
+        };
+        weft_sema::analyze_with_emit(&units, opts, empty)
+    }
+
+    const ESCAPE: &str = "effect Log { fn log(msg: String) }
+fn as_result() {
+    let f = handle Log { fn log(m) { resume(()) } } in || log(\"late\")
+}
+";
+
+    #[test]
+    fn the_both_mode_checks_both_fact_sets() {
+        let files = [
+            SourceFile::new("prelude.wf", weft_sema::PRELUDE_SRC),
+            SourceFile::new("a.wf", ESCAPE),
+        ];
+        let c = check_analysis(hooked(ESCAPE, weft_sema::FactGen::Both), &files);
+        assert!(c.codes().contains(&Code::W0313), "{:?}", c.codes());
+        let ir = c.ir.as_ref().expect("the ir side");
+        assert!(ir.diags.is_empty(), "{:?}", ir.codes());
+        assert!(ir.ir.is_none());
+        assert_eq!(ir.reports.len(), 1);
+        // The ir side is the result of the ir mode.
+        let alone = check_analysis(hooked(ESCAPE, weft_sema::FactGen::Ir), &files);
+        assert_eq!(alone.codes(), ir.codes());
+        assert!(alone.ir.is_none());
+        // Out of scope, the both mode has no ir side.
+        let old = check_source("a.wf", ESCAPE, Options::default());
+        assert!(old.ir.is_none());
     }
 
     #[test]

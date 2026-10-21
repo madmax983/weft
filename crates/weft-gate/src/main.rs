@@ -5,7 +5,7 @@
 //! weft-gate archive --tier 2 [--repo DIR] [--probes DIR] [--out FILE]
 //! weft-gate unpack --archive FILE --out DIR [--repo DIR]
 //! weft-gate copy-probes [--repo DIR] [--probes DIR]
-//! weft-gate snapshot --tier 1|2 [--facts old] [--out FILE.jsonl] [--full-digest DIR]
+//! weft-gate snapshot --tier 1|2 [--facts old|ir] [--groups ABCDEF] [--out FILE.jsonl] [--full-digest DIR]
 //!                    [--workers N] [--limit SECONDS] [--repo DIR] [--probes DIR]
 //! weft-gate oracle --tier 1|2 [--engine ast|ir] [--out FILE] [--workers N]
 //!                  [--limit SECONDS] [--max-steps N] [--max-memory MB]
@@ -37,7 +37,9 @@
 //! each program (plan §2.3). The default output is
 //! `target/gate/snapshot-tier<N>-<pipeline>.jsonl`. `--full-digest DIR` also writes
 //! the canonical fact digest of each program to `DIR/<hash>.<pipeline>.digest`.
-//! The default number of workers is the number of CPUs, and the default time limit
+//! `--facts ir` checks with the `ir` pipeline (plan §2.6): a program out of
+//! scope gets the result of the old pipeline. `--groups` puts more construct
+//! groups on. The default number of workers is the number of CPUs, and the default time limit
 //! is 60 s for each program.
 //!
 //! `oracle` gives the oracle verdict of each program of the manifest (plan §2.4,
@@ -68,7 +70,9 @@
 //! ledger `tests/gate/ledger.toml`, and writes the report (default
 //! `target/gate/report.md`). The exit code is 1 if the gate has a blocker. A
 //! cache with no verdict for a program (a stale key) is an error: run
-//! `oracle` first. Before stage F1 no group can be on (`--groups`).
+//! `oracle` first. One analysis of each program gives both records
+//! (`--facts=both`). `--groups` puts more construct groups on, for a preview
+//! report (plan §2.6); the report gives the coverage of each set.
 //!
 //! `run` also compares the old records with the baseline of the tier
 //! (`weft_gate::baseline`): `tests/gate/baseline-tier1.jsonl` (committed; it
@@ -132,7 +136,7 @@ const USAGE: &str = "usage:
   weft-gate archive --tier 2 [--repo DIR] [--probes DIR] [--out FILE]
   weft-gate unpack --archive FILE --out DIR [--repo DIR]
   weft-gate copy-probes [--repo DIR] [--probes DIR]
-  weft-gate snapshot --tier 1|2 [--facts old] [--out FILE.jsonl] [--full-digest DIR]
+  weft-gate snapshot --tier 1|2 [--facts old|ir] [--groups ABCDEF] [--out FILE.jsonl] [--full-digest DIR]
                      [--workers N] [--limit SECONDS] [--repo DIR] [--probes DIR]
   weft-gate oracle --tier 1|2 [--engine ast|ir] [--out FILE] [--workers N]
                    [--limit SECONDS] [--max-steps N] [--max-memory MB]
@@ -428,16 +432,24 @@ fn run_tool(cmd: &str, flags: Flags) -> Result<()> {
     }
 }
 
+/// The construct groups that are on: the default groups of the analysis and
+/// the groups of `--groups`.
+fn groups_on(flags: &Flags) -> Result<weft_sema::Groups> {
+    let on = weft_sema::Options::default().ir_groups;
+    match flags.groups.as_deref().filter(|g| !g.is_empty()) {
+        None => Ok(on),
+        Some(g) => weft_sema::Groups::parse(g)
+            .map(|g| on.union(g))
+            .map_err(|e| anyhow::anyhow!("--groups {g}: {e}")),
+    }
+}
+
 /// `run`: the gate on the programs of the tier. Returns false if the gate has
 /// a blocker.
 fn run_gate(flags: &Flags) -> Result<bool> {
     let tier = flags.tier.context("--tier is necessary")?;
-    if let Some(g) = flags.groups.as_deref().filter(|g| !g.is_empty()) {
-        bail!(
-            "the `ir` pipeline does not exist before stage F1: no group can be on (`--groups {g}`)"
-        );
-    }
     let settings = report::RunSettings {
+        groups: groups_on(flags)?,
         workers: flags.workers.unwrap_or_else(|| {
             std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
         }),
@@ -861,10 +873,8 @@ fn write_baseline(repo: &Path, tier: u8, records: &[snapshot::Record]) -> Result
 fn run_snapshot(flags: &Flags) -> Result<()> {
     let tier = flags.tier.context("--tier is necessary")?;
     let name = flags.facts.as_deref().unwrap_or("old");
-    let pipeline = match Pipeline::parse(name) {
-        Some(p) => p,
-        None if name == "ir" => bail!("the `ir` pipeline does not exist before stage F1"),
-        None => bail!("unknown pipeline `{name}`: use --facts old"),
+    let Some(pipeline) = Pipeline::parse(name) else {
+        bail!("unknown pipeline `{name}`: use --facts old or --facts ir");
     };
     let (m, base) = if tier == 1 {
         (tier1(flags)?, flags.repo.clone())
@@ -874,6 +884,7 @@ fn run_snapshot(flags: &Flags) -> Result<()> {
     };
     let settings = Settings {
         pipeline,
+        groups: groups_on(flags)?,
         workers: flags.workers.unwrap_or_else(|| {
             std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
         }),

@@ -34,6 +34,7 @@ mod handle;
 mod looping;
 mod pattern;
 mod place;
+pub mod scope;
 mod stmt;
 mod task;
 mod unset;
@@ -50,6 +51,8 @@ use weft_ir::{
 };
 use weft_syntax::ast::{self, Span};
 use weft_syntax::diag::Diagnostic;
+
+pub(crate) use closure::walk_block;
 
 use crate::thir::{BindingId, Tables};
 use crate::Analysis;

@@ -434,8 +434,9 @@ fn explain_and_help() {
     let help = cmd(&["help"]);
     assert_eq!(help.code, 0);
     for word in [
-        "run     [PROFILE] [RUN] PATH",
-        "test    [PROFILE] [RUN] PATH",
+        "run     [PROFILE] [FACTS] [RUN] PATH",
+        "test    [PROFILE] [FACTS] [RUN] PATH",
+        "FACTS is --facts=old|ir|both",
         "RUN is [--seed N] [--workers N] [--unchecked] [--oracle] [--engine=ast|ir].",
         "--unchecked",
         "--lib or --bin",
@@ -1022,4 +1023,58 @@ fn oracle_turns_on_the_strict_run_time_checks() {
         .to_string();
     let out = cmd(&["run", "--oracle", &path]);
     assert_eq!(out.code, 0, "{}", out.stderr);
+}
+
+#[test]
+fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
+    // No construct group is on before stage F8 (plan §2.6): each program goes
+    // to the old pipeline, and the command says why on standard error.
+    let path = "tests/programs/02_bad.wf";
+    let old = cmd(&["check", path]);
+    assert!(old.stderr.is_empty(), "{}", old.stderr);
+    assert_eq!(cmd(&["check", "--facts=old", path]), old);
+    for f in ["--facts=ir", "--facts=both"] {
+        let out = cmd(&["check", f, path]);
+        assert_eq!(out.text, old.text, "{f}");
+        assert_eq!(out.code, old.code, "{f}");
+        let note =
+            format!("note: {f}: the old pipeline checks the program: the program uses group A");
+        assert!(out.stderr.starts_with(&note), "{f}: {}", out.stderr);
+        assert_eq!(out.stderr.lines().count(), 1, "{}", out.stderr);
+    }
+    let out = cmd(&["check", "--facts", "ir", "--json", path]);
+    assert!(out.text.starts_with("{\"code\""), "{}", out.text);
+    assert!(
+        out.stderr.starts_with("note: --facts=ir: "),
+        "{}",
+        out.stderr
+    );
+    // Each command that checks takes the switch.
+    let run = format!("{INTERP}/root_handlers.wf");
+    let rules = "examples/lints/ref_across_abort.dl";
+    for args in [
+        vec!["facts", "--facts=ir", path, "bad"],
+        vec!["agree", "--facts=ir", path],
+        vec!["lint", "--facts=ir", "--rules", rules, path],
+        vec!["run", "--facts=ir", run.as_str()],
+        vec!["test", "--facts=ir", run.as_str()],
+    ] {
+        let out = cmd(&args);
+        assert!(
+            out.stderr
+                .contains("note: --facts=ir: the old pipeline checks the program"),
+            "{args:?}: {}",
+            out.stderr
+        );
+    }
+    let out = cmd(&["facts", "--facts=both", path, "bad"]);
+    assert_eq!(out.text, cmd(&["facts", path, "bad"]).text);
+    assert_eq!(
+        usage_error(&["check", "--facts=new", path]),
+        "--facts needs `old`, `ir` or `both`, found `new`"
+    );
+    assert_eq!(
+        usage_error(&["ir", "--facts=ir", path]),
+        "`ir` does not take --facts; see `weft help`"
+    );
 }

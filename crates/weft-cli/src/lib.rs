@@ -10,6 +10,7 @@ use anyhow::{bail, Context, Result};
 use weft_check::{agreement, bridge, check_analysis, codes, Checked};
 use weft_datalog::{evaluate, parse_program_named, EvalOptions};
 use weft_interp::{Engine, RunOptions, RuntimeError};
+use weft_sema::{FactGen, Groups};
 use weft_syntax::diag::{Diagnostic, Severity};
 
 use crate::package::{load, package_diags, Package, Profile, SyntaxError};
@@ -19,13 +20,13 @@ pub const USAGE: &str = "\
 usage: weft <command> [options] PATH
 
 commands:
-  check   [PROFILE] [--json] [--explain] PATH                    check a file or a package
-  run     [PROFILE] [RUN] PATH                                   check, then run `fn main`
-  test    [PROFILE] [RUN] PATH                                   check, then run the test blocks
-  facts   [PROFILE] PATH [FUNCTION]                              print the facts in Datalog syntax
+  check   [PROFILE] [FACTS] [--json] [--explain] PATH            check a file or a package
+  run     [PROFILE] [FACTS] [RUN] PATH                           check, then run `fn main`
+  test    [PROFILE] [FACTS] [RUN] PATH                           check, then run the test blocks
+  facts   [PROFILE] [FACTS] PATH [FUNCTION]                      print the facts in Datalog syntax
   ir      [PROFILE] PATH [FUNCTION]                              print the core IR (docs/ir.md)
-  agree   [PROFILE] PATH                                         compare the checker with spec/weft.dl
-  lint    [PROFILE] --rules RULES.dl PATH                        run user lint rules over the facts
+  agree   [PROFILE] [FACTS] PATH                                 compare the checker with spec/weft.dl
+  lint    [PROFILE] [FACTS] --rules RULES.dl PATH                run user lint rules over the facts
   explain CODE                                                   explain a diagnostic code
   deps    PATH                                                   check dependency authority
   spec                                                           print spec/weft.dl
@@ -34,6 +35,15 @@ commands:
 PROFILE is --lib or --bin, and --no-runtime or --runtime. A single file sets
 its profile with marker lines: `// weft: library` and `// weft: no-runtime`.
 A package sets it in weft.toml. A flag wins over both.
+
+FACTS is --facts=old|ir|both: the fact pipeline (docs/plan/core-ir.md 2.6).
+--facts=old (the default) uses the facts of the old lowering. --facts=ir uses
+the facts of the core IR for a program in scope: each construct group that
+the program uses must be on. Else the old pipeline checks the program, and a
+note tells why. --facts=both makes both fact sets: the output is that of the
+old pipeline; `check` writes a note for each diagnostic that only one
+pipeline gives, `facts` also prints the facts of the ir pipeline, and `agree`
+compares both.
 
 RUN is [--seed N] [--workers N] [--unchecked] [--oracle] [--engine=ast|ir].
 `run` and `test` do not run a program that has errors, unless --unchecked is given.
@@ -77,6 +87,7 @@ struct Flags {
     seed: Option<u64>,
     workers: Option<usize>,
     engine: Engine,
+    facts: FactGen,
     positional: Vec<String>,
     /// The options as given, for the check that the command takes them.
     given: Vec<String>,
@@ -88,10 +99,18 @@ const PROFILE: [&str; 4] = ["--lib", "--bin", "--no-runtime", "--runtime"];
 /// Returns the options that a command takes, or `None` for an unknown command.
 fn options_of(cmd: &str) -> Option<Vec<&'static str>> {
     let own: &[&str] = match cmd {
-        "check" => &["--json", "--explain"],
-        "run" | "test" => &["--seed", "--workers", "--unchecked", "--oracle", "--engine"],
-        "lint" => &["--rules"],
-        "facts" | "agree" | "ir" => &[],
+        "check" => &["--json", "--explain", "--facts"],
+        "run" | "test" => &[
+            "--seed",
+            "--workers",
+            "--unchecked",
+            "--oracle",
+            "--engine",
+            "--facts",
+        ],
+        "lint" => &["--rules", "--facts"],
+        "facts" | "agree" => &["--facts"],
+        "ir" => &[],
         "explain" | "deps" | "spec" | "help" | "--help" | "-h" => return Some(Vec::new()),
         _ => return None,
     };
@@ -151,6 +170,15 @@ fn engine(v: Option<&str>) -> Result<Engine> {
     }
 }
 
+/// Reads the value of `--facts`.
+fn fact_gen(v: Option<&str>) -> Result<FactGen> {
+    let need = "--facts needs `old`, `ir` or `both`";
+    match v {
+        Some(v) => FactGen::parse(v).with_context(|| format!("{need}, found `{v}`")),
+        None => bail!("{need}"),
+    }
+}
+
 fn flags(args: &[String]) -> Result<Flags> {
     let mut f = Flags::default();
     let mut it = args.iter();
@@ -167,6 +195,12 @@ fn flags(args: &[String]) -> Result<Flags> {
             "--rules" => f.rules = Some(it.next().context("--rules needs a file")?.clone()),
             "--seed" => f.seed = Some(number(&mut it, "--seed")?),
             "--engine" => f.engine = engine(it.next().map(String::as_str))?,
+            "--facts" => f.facts = fact_gen(it.next().map(String::as_str))?,
+            s if s.starts_with("--facts=") => {
+                f.facts = fact_gen(s.strip_prefix("--facts="))?;
+                f.given.push("--facts".into());
+                continue;
+            }
             s if s.starts_with("--engine=") => {
                 f.engine = engine(s.strip_prefix("--engine="))?;
                 f.given.push("--engine".into());
@@ -293,16 +327,99 @@ fn path_arg(f: &Flags) -> Result<&str> {
 /// Loads, analyzes and checks a file or a package. The flags win over the
 /// options of the manifest or of the file markers.
 pub fn check_path(path: &Path, profile: Profile) -> Result<(Package, Checked)> {
+    check_path_with(path, profile, FactGen::Old, Groups::NONE)
+}
+
+/// Loads, analyzes and checks a file or a package with a fact pipeline.
+///
+/// `facts` is the pipeline and `groups` the construct groups of the `ir`
+/// pipeline (plan §2.6). With [`FactGen::Both`], [`Checked::ir`] holds the
+/// check of the `ir` pipeline for a program in scope.
+pub fn check_path_with(
+    path: &Path,
+    profile: Profile,
+    facts: FactGen,
+    groups: Groups,
+) -> Result<(Package, Checked)> {
     let pkg = load(path)?;
-    let opts = pkg.options(profile);
+    let opts = weft_sema::Options {
+        facts,
+        ir_groups: groups,
+        ..pkg.options(profile)
+    };
     let analysis = weft_sema::analyze(&pkg.units, opts);
     let mut checked = check_analysis(analysis, &pkg.files);
-    checked.diags.extend(package_diags(&pkg, &checked.analysis));
+    finish_diags(&pkg, &mut checked);
+    if let Some(ir) = checked.ir.as_deref_mut() {
+        finish_diags(&pkg, ir);
+    }
+    Ok((pkg, checked))
+}
+
+/// Adds the diagnostics of the package and of the file markers, and sorts.
+fn finish_diags(pkg: &Package, checked: &mut Checked) {
+    checked.diags.extend(package_diags(pkg, &checked.analysis));
     checked.diags.extend(pkg.marker_diags());
     checked
         .diags
         .sort_by(|a, b| (a.unit, a.span.lo, &a.code).cmp(&(b.unit, b.span.lo, &b.code)));
-    Ok((pkg, checked))
+}
+
+/// Checks the program of the flags with their fact pipeline. Returns the
+/// package, the check, and the note of the fallback to the old pipeline, if
+/// any (empty otherwise).
+fn check_flags(f: &Flags) -> Result<(Package, Checked, String)> {
+    let path = Path::new(path_arg(f)?);
+    let (pkg, c) = check_path_with(path, f.profile, f.facts, Groups::NONE)?;
+    let note = c
+        .analysis
+        .ir_scope
+        .as_ref()
+        .and_then(|s| s.fallback.as_ref())
+        .map_or_else(String::new, |why| {
+            format!(
+                "note: --facts={}: the old pipeline checks the program: {why}\n",
+                f.facts.name()
+            )
+        });
+    Ok((pkg, c, note))
+}
+
+/// The notes of `--facts=both` for a program in scope: each diagnostic that
+/// only one pipeline gives.
+fn both_notes(pkg: &Package, c: &Checked) -> String {
+    let Some(ir) = c.ir.as_deref() else {
+        return String::new();
+    };
+    let key = |d: &Diagnostic| (d.unit, d.span.lo, d.code, d.severity == Severity::Error);
+    let text = |d: &Diagnostic| {
+        let sev = if d.severity == Severity::Error {
+            "error"
+        } else {
+            "warning"
+        };
+        let at = pkg.files.get(d.unit).map_or_else(String::new, |f| {
+            let (line, col) = f.line_col(d.span.lo);
+            format!(" at {}:{line}:{col}", f.name)
+        });
+        format!("{sev}[{}]{at}", d.code)
+    };
+    let mut out = String::new();
+    for (side, mine, other) in [("old", &c.diags, &ir.diags), ("ir", &ir.diags, &c.diags)] {
+        let mut rest: Vec<_> = other.iter().map(key).collect();
+        for d in mine {
+            if let Some(i) = rest.iter().position(|k| *k == key(d)) {
+                rest.swap_remove(i);
+            } else {
+                let _ = writeln!(
+                    out,
+                    "note: --facts=both: only the {side} pipeline gives {}",
+                    text(d)
+                );
+            }
+        }
+    }
+    out
 }
 
 fn render(pkg: &Package, d: &Diagnostic) -> String {
@@ -368,7 +485,8 @@ fn diag_json_in(file: Option<&weft_syntax::SourceFile>, d: &Diagnostic) -> Strin
 
 fn check(f: &Flags) -> Result<Output> {
     let path = Path::new(path_arg(f)?);
-    let (pkg, c) = check_path(path, f.profile)?;
+    let (pkg, c, note) = check_flags(f)?;
+    let stderr = note + &both_notes(&pkg, &c);
     let mut text = String::new();
     for d in &c.diags {
         if f.json {
@@ -443,21 +561,30 @@ fn check(f: &Flags) -> Result<Output> {
     }
     Ok(Output {
         text,
+        stderr,
         code: u8::from(!c.ok()),
-        ..Output::default()
     })
 }
 
 fn facts(f: &Flags) -> Result<Output> {
     let path = Path::new(path_arg(f)?);
     let only = f.positional.get(1);
-    let (_, c) = check_path(path, f.profile)?;
+    let (_, c, stderr) = check_flags(f)?;
     let mut text = String::new();
     for b in &c.analysis.bodies {
         if only.is_some_and(|o| *o != b.facts.name) {
             continue;
         }
         text.push_str(&bridge::facts_text(&b.facts));
+    }
+    if let Some(ir) = c.ir.as_deref() {
+        for b in &ir.analysis.bodies {
+            if only.is_some_and(|o| *o != b.facts.name) {
+                continue;
+            }
+            text.push_str("// the ir pipeline\n");
+            text.push_str(&bridge::facts_text(&b.facts));
+        }
     }
     if let (Some(name), true) = (only, text.is_empty()) {
         let names: Vec<&str> = c
@@ -473,7 +600,7 @@ fn facts(f: &Flags) -> Result<Output> {
         };
         return Ok(Output {
             stderr: format!(
-                "error: no function or test `{name}` in {}; {bodies}\n",
+                "{stderr}error: no function or test `{name}` in {}; {bodies}\n",
                 path.display()
             ),
             code: 1,
@@ -482,6 +609,7 @@ fn facts(f: &Flags) -> Result<Output> {
     }
     Ok(Output {
         text,
+        stderr,
         ..Output::default()
     })
 }
@@ -576,13 +704,24 @@ fn ir(f: &Flags) -> Result<Output> {
 }
 
 fn agree(f: &Flags) -> Result<Output> {
-    let path = Path::new(path_arg(f)?);
-    let (_, c) = check_path(path, f.profile)?;
-    match agreement(&c) {
-        Ok(n) => Ok(Output {
-            text: format!("agree: the checker and spec/weft.dl agree on {n} bodies\n"),
+    let (_, c, stderr) = check_flags(f)?;
+    let mut out = agree_text(&c, "");
+    if let Some(ir) = c.ir.as_deref() {
+        let more = agree_text(ir, " of the ir pipeline");
+        out.text += &more.text;
+        out.code = out.code.max(more.code);
+    }
+    out.stderr = stderr;
+    Ok(out)
+}
+
+/// The output of `agree` for one check. `what` follows the count of bodies.
+fn agree_text(c: &Checked, what: &str) -> Output {
+    match agreement(c) {
+        Ok(n) => Output {
+            text: format!("agree: the checker and spec/weft.dl agree on {n} bodies{what}\n"),
             ..Output::default()
-        }),
+        },
         Err(bad) => {
             let mut text = String::new();
             for b in bad {
@@ -599,11 +738,14 @@ fn agree(f: &Flags) -> Result<Output> {
                     let _ = writeln!(text, "  evidence: {e}");
                 }
             }
-            Ok(Output {
+            if !what.is_empty() {
+                let _ = writeln!(text, "(the bodies{what})");
+            }
+            Output {
                 text,
                 code: 1,
                 ..Output::default()
-            })
+            }
         }
     }
 }
@@ -633,8 +775,7 @@ fn lint(f: &Flags) -> Result<Output> {
     }
     let mut program = bridge::spec().clone();
     program.extend(user);
-    let path = Path::new(path_arg(f)?);
-    let (pkg, c) = check_path(path, f.profile)?;
+    let (pkg, c, stderr) = check_flags(f)?;
     let mut text = String::new();
     let mut count = 0;
     for b in &c.analysis.bodies {
@@ -669,6 +810,7 @@ fn lint(f: &Flags) -> Result<Output> {
     let _ = writeln!(text, "{count} lint warning(s)");
     Ok(Output {
         text,
+        stderr,
         ..Output::default()
     })
 }
@@ -735,7 +877,9 @@ impl Sink {
 /// error. Returns `None` if the program has errors and `--unchecked` is not given.
 fn checked_program(f: &Flags, sink: &mut Sink) -> Result<Option<(Package, Checked)>> {
     let path = Path::new(path_arg(f)?);
-    let (pkg, c) = check_path(path, f.profile)?;
+    let (pkg, c, note) = check_flags(f)?;
+    sink.stderr(&note);
+    sink.stderr(&both_notes(&pkg, &c));
     for d in &c.diags {
         sink.stderr(&render(&pkg, d));
     }

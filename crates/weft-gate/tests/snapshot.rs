@@ -206,6 +206,7 @@ fn a_file_that_cannot_be_read_gives_an_error_record() {
 const fn settings(workers: usize, limit: Duration) -> Settings {
     Settings {
         pipeline: Pipeline::Old,
+        groups: weft_sema::Groups::NONE,
         workers,
         limit,
     }
@@ -311,4 +312,92 @@ fn the_violation_relations_are_the_sinks_of_the_spec() {
     let mut spec: Vec<&str> = weft_check::bridge::VIOLATION_RELATIONS.to_vec();
     spec.sort_unstable();
     assert_eq!(names, spec);
+}
+
+/// The record without the fields that differ between the pipelines and the
+/// runs: the name of the pipeline and the time.
+fn same_result(r: &weft_gate::snapshot::Record) -> weft_gate::snapshot::Record {
+    let mut r = r.clone();
+    r.pipeline = String::new();
+    r.ms = 0;
+    r
+}
+
+/// The programs of `tests/data` that the tests of the `ir` pipeline check.
+fn ir_entries() -> Vec<Entry> {
+    vec![
+        entry("w0301.wf", Mode::File),
+        entry("clean.wf", Mode::File),
+        entry("w0601_pkg", Mode::Package),
+    ]
+}
+
+#[test]
+fn with_the_stub_fact_generator_the_ir_record_is_the_old_record() {
+    // Stage F1: the fact generator supports no group, so each program is out
+    // of scope, also with every group on.
+    let all = weft_sema::Groups::ALL;
+    for e in ir_entries() {
+        let old = snapshot::check(&data(), &e, Pipeline::Old);
+        let ir = snapshot::check_with(&data(), &e, Pipeline::Ir, all);
+        assert_eq!(ir.record.pipeline, "ir");
+        assert_eq!(
+            same_result(&ir.record),
+            same_result(&old.record),
+            "{}",
+            e.path
+        );
+        let both = snapshot::check_both(&data(), &e, all);
+        assert!(!both.in_scope, "{}", e.path);
+        assert_eq!(both.old.record.pipeline, "old");
+        assert_eq!(both.ir.record.pipeline, "ir");
+        assert_eq!(same_result(&both.old.record), same_result(&old.record));
+        assert_eq!(same_result(&both.ir.record), same_result(&old.record));
+    }
+    assert_eq!(Pipeline::parse("ir"), Some(Pipeline::Ir));
+    assert_eq!(Pipeline::Ir.name(), "ir");
+}
+
+#[test]
+fn the_gate_reports_no_coverage_with_the_stub_fact_generator() {
+    use weft_gate::classify::Class;
+    use weft_gate::oracle::{Cache, Row, Verdict};
+    use weft_gate::report::{self, RunSettings};
+    let interp = "interp-of-the-test";
+    let mut cache = Cache::default();
+    for e in ir_entries() {
+        cache.insert(Row {
+            hash: e.hash.clone(),
+            engine: report::ORACLE_ENGINE,
+            interp: interp.to_string(),
+            verdict: Verdict::Clean,
+            detail: String::new(),
+            path: e.path.clone(),
+        });
+    }
+    let manifest = weft_gate::manifest::Manifest {
+        entries: ir_entries(),
+        missing: Vec::new(),
+    };
+    let settings = RunSettings {
+        workers: 2,
+        baseline: false,
+        groups: weft_sema::Groups::ALL,
+        ..RunSettings::default()
+    };
+    let ledger = weft_gate::ledger::Ledger::default();
+    let r = report::run(&data(), manifest, &cache, interp, &ledger, &settings, None)
+        .unwrap_or_else(|e| panic!("the gate runs: {e}"));
+    assert_eq!(r.rows.len(), 3);
+    for row in &r.rows {
+        assert!(!row.in_scope, "{}", row.path);
+        assert_eq!(row.class, Class::Same, "{}", row.path);
+    }
+    assert_eq!(r.groups_on, "ABCDEF");
+    let md = r.to_markdown();
+    assert!(md.contains("| data | 0 | 3 | 0.0 % |"), "{md}");
+    // The groups that the programs use: `w0301.wf` and `clean.wf` use group
+    // A only.
+    assert_eq!(r.used.len(), 3);
+    assert!(md.contains("## Groups that the programs use"), "{md}");
 }

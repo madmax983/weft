@@ -13,12 +13,16 @@
 //! the `group` set of each claim equals the union of the groups that the
 //! pipeline computes for its repros ([`IrPipeline::groups_of`]).
 //!
-//! The interface [`IrPipeline`] isolates the `ir` pipeline. Before stage F1
-//! there is no `ir` pipeline: [`pipeline`] gives [`NoIrPipeline`], which has no
-//! group on. Stage F1 changes [`pipeline`] to give the real pipeline.
+//! The interface [`IrPipeline`] isolates the `ir` pipeline. [`pipeline`] gives
+//! the real pipeline ([`FactPipeline`], stage F1): the groups that are on are
+//! the default groups of the analysis. [`NoIrPipeline`] is the pipeline before
+//! stage F1, which has no group on.
+//!
+//! The check of the group set skips a `speed` claim: its repros are the
+//! programs that the old analysis checks slowly (finding Q3), and the scope
+//! needs the old analysis.
 
 use std::collections::BTreeMap;
-use std::fmt;
 use std::path::Path;
 
 use serde::Deserialize;
@@ -96,66 +100,9 @@ impl Verdict {
     }
 }
 
-/// A set of construct groups (plan §2.6): the letters `A` to `F`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Groups(u8);
-
-/// The letters of the construct groups, in order.
-const GROUP_LETTERS: [char; 6] = ['A', 'B', 'C', 'D', 'E', 'F'];
-
-impl Groups {
-    /// The empty set.
-    pub const NONE: Self = Self(0);
-
-    /// Reads a set: one or more letters `A` to `F`, in order, each one time.
-    ///
-    /// # Errors
-    ///
-    /// Returns a message for an empty text, a letter that is not a group, a
-    /// letter that is not in order, and a letter that occurs two times.
-    pub fn parse(text: &str) -> Result<Self, String> {
-        if text.is_empty() {
-            return Err("the group set is empty".to_string());
-        }
-        let mut bits = 0u8;
-        let mut last = None;
-        for c in text.chars() {
-            let Some(i) = GROUP_LETTERS.iter().position(|g| *g == c) else {
-                return Err(format!("`{c}` is not a construct group (A to F)"));
-            };
-            if last.is_some_and(|l| l >= i) {
-                return Err(format!(
-                    "the group set `{text}` must have each letter one time, in order"
-                ));
-            }
-            last = Some(i);
-            bits |= 1 << i;
-        }
-        Ok(Self(bits))
-    }
-
-    /// True if each group of `other` is in this set.
-    pub const fn contains(self, other: Self) -> bool {
-        self.0 & other.0 == other.0
-    }
-
-    /// The groups of this set and of `other`.
-    #[must_use]
-    pub const fn union(self, other: Self) -> Self {
-        Self(self.0 | other.0)
-    }
-}
-
-impl fmt::Display for Groups {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, c) in GROUP_LETTERS.iter().enumerate() {
-            if self.0 & (1 << i) != 0 {
-                write!(f, "{c}")?;
-            }
-        }
-        Ok(())
-    }
-}
+/// A set of construct groups (plan §2.6): the letters `A` to `F`. The
+/// scope test of the analysis owns the type (`weft_sema::irbuild::scope`).
+pub use weft_sema::Groups;
 
 /// A stage id of the plan: a phase letter and a number (`F8`, `S00`), with
 /// the numbers of follow-up stages (`F8.1`, rule 5 of the plan).
@@ -500,9 +447,87 @@ pub fn ir_oracle_verdict(repo: &Path, repro: &str) -> Result<OracleVerdict, Stri
         })
 }
 
-/// The `ir` pipeline of the claims test. Before stage F1: [`NoIrPipeline`].
+/// The `ir` pipeline of the analysis (`--facts=ir`, stage F1), with the
+/// construct groups `on`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FactPipeline {
+    /// The groups that are on.
+    pub on: Groups,
+}
+
+impl Default for FactPipeline {
+    /// The default groups of the analysis (`weft_sema::Options::ir_groups`).
+    fn default() -> Self {
+        Self {
+            on: weft_sema::Options::default().ir_groups,
+        }
+    }
+}
+
+/// The manifest entry of the repro `repro` of the repository `repo`.
+fn repro_entry(repo: &Path, repro: &str) -> crate::manifest::Entry {
+    let mode = if repo.join(repro).is_dir() {
+        crate::manifest::Mode::Package
+    } else {
+        crate::manifest::Mode::File
+    };
+    crate::manifest::Entry {
+        hash: String::new(),
+        path: repro.to_string(),
+        set: "claims".to_string(),
+        mode,
+        has_main: false,
+        has_tests: false,
+        others: Vec::new(),
+    }
+}
+
+impl IrPipeline for FactPipeline {
+    fn groups_on(&self) -> Groups {
+        self.on
+    }
+
+    fn groups_of(&self, repo: &Path, repro: &str) -> Result<Option<Groups>, String> {
+        let pkg = match weft_cli::package::load(&repo.join(repro)) {
+            Ok(p) => p,
+            Err(e) if e.downcast_ref::<weft_cli::package::SyntaxError>().is_some() => {
+                return Ok(None)
+            }
+            Err(e) => return Err(format!("{e:#}")),
+        };
+        let opts = weft_sema::Options {
+            facts: weft_sema::FactGen::Ir,
+            ir_groups: self.on,
+            ..pkg.options(weft_cli::package::Profile::default())
+        };
+        let a = weft_sema::analyze(&pkg.units, opts);
+        Ok(a.ir_scope.map(|s| s.used))
+    }
+
+    fn check(&self, repo: &Path, repro: &str) -> Result<Checked, String> {
+        let entry = repro_entry(repo, repro);
+        let o = crate::snapshot::check_with(repo, &entry, crate::snapshot::Pipeline::Ir, self.on);
+        if o.record.kind != crate::snapshot::Kind::Ok {
+            return Err(o
+                .record
+                .message
+                .unwrap_or_else(|| o.record.kind.name().to_string()));
+        }
+        Ok(Checked {
+            errors: o.record.diagnostics,
+            ms: o.record.ms,
+        })
+    }
+
+    fn engine_verdict(&self, repo: &Path, repro: &str) -> Result<OracleVerdict, String> {
+        ir_oracle_verdict(repo, repro)
+    }
+}
+
+/// The `ir` pipeline of the claims test: [`FactPipeline`] with the default
+/// groups.
 pub fn pipeline() -> Box<dyn IrPipeline> {
-    Box::new(NoIrPipeline)
+    Box::new(FactPipeline::default())
 }
 
 /// The result of one claim.
@@ -708,7 +733,11 @@ pub fn check_all(file: &ClaimsFile, repo: &Path, pipe: &dyn IrPipeline) -> Repor
     };
     for c in &file.claims {
         let mut scope = Some(Groups::NONE);
-        for r in c.repro.iter().filter(|r| repo.join(r).exists()) {
+        let repros = c
+            .repro
+            .iter()
+            .filter(|r| c.kind != Kind::Speed && repo.join(r).exists());
+        for r in repros {
             match pipe.groups_of(repo, r) {
                 Ok(Some(g)) => scope = scope.map(|s| s.union(g)),
                 Ok(None) => scope = None,

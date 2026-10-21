@@ -111,8 +111,15 @@ fn tier1_has_no_blocker() {
         out.display(),
         r.blockers.join("\n")
     );
-    // Before stage F1 the `ir` side is the old pipeline, so each program is
-    // `same` or `open`.
+    // No group is on before stage F8 (plan §2.6): no program is in scope,
+    // the `ir` side is the old pipeline, and each program is `same` or `open`.
+    let scope: Vec<&str> = r
+        .rows
+        .iter()
+        .filter(|row| row.in_scope)
+        .map(|row| row.path.as_str())
+        .collect();
+    assert!(scope.is_empty(), "programs in scope: {scope:?}");
     let other: Vec<String> = r
         .rows
         .iter()
