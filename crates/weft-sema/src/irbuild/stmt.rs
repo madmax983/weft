@@ -192,7 +192,7 @@ impl Builder<'_> {
         let t = self.temp(ty, TempKind::Operand, origin);
         self.into(value, Place::local(t))?;
         let Some(place) = self.as_place(target)? else {
-            return unsupported(Construct::AssignPlace, target.span);
+            return unsupported(Construct::NoThir, target.span);
         };
         let origin = self.origin(s.span, None);
         // A capture of a closure body can become `(*env.k)`: its `Drop` stays
@@ -219,7 +219,7 @@ impl Builder<'_> {
         let skip = self.inert(target);
         let v = self.operand(value, skip)?;
         let Some(place) = self.as_place(target)? else {
-            return unsupported(Construct::AssignPlace, target.span);
+            return unsupported(Construct::NoThir, target.span);
         };
         let ty = self.value_ty(target)?;
         let origin = self.origin(s.span, None);

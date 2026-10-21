@@ -21,7 +21,7 @@ use weft_ir::{
 };
 use weft_syntax::ast::{Lit, Pattern, PatternKind, Span, StrPart};
 
-use super::{unsupported, Builder, Construct, R};
+use super::{no_ir, unsupported, Builder, Construct, NoIr, R};
 use crate::thir::{self, BindingId};
 
 /// One test of a pattern.
@@ -250,7 +250,7 @@ impl Builder<'_> {
                     return Ok((b, How::Copy, q));
                 }
                 if through_ref(&q) {
-                    return unsupported(Construct::MoveThroughRef, span);
+                    return no_ir(NoIr::MoveThroughRef);
                 }
                 return Ok((b, How::Move, q));
             }

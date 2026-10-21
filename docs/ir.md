@@ -250,8 +250,9 @@ and the syntax tree, not places or flow. ADR 0002 lists them already.
 
 Until stage R2 of the plan, the old lowering is the `typeck`. In `--facts=ir` mode the
 pipeline keeps only these diagnostics of the old lowering. It drops each other
-diagnostic of the old lowering (W0204, W0303, W0313, W0314, W0315, W0701, W0704, W0707)
-and its facts, and the IR pipeline gives its own (5.36, 6.8, 6.9).
+diagnostic of the old lowering (W0204, W0313, W0314, W0315, W0701, W0704, W0707)
+and its facts, and the IR pipeline gives its own (5.36, 6.8, 6.9). W0303 stays a
+diagnostic of the old lowering: a body with W0303 gets no IR (5.36).
 
 ---
 
@@ -284,7 +285,9 @@ and its facts, and the IR pipeline gives its own (5.36, 6.8, 6.9).
   each local of the site that they use as an upvar local (`LocalKind::Upvar`). An upvar
   local has the cell of the site local, has no `Live` and no `Dead`, and a move of it
   moves the site local. A closure is a value: its captures are fields of its
-  environment, with the mode of rule CAPTURE (section 5.1.7).
+  environment, with the mode of rule CAPTURE (section 5.1.7). A body nested in a
+  closure body names the captures through an upvar local of the environment (a view,
+  `u.k`; section 5.1.7).
 - **Capabilities.** `CapOperand::Local` is a capability value: the `Cap` local of a
   handled body, an upvar local that names one, or a `Cap` field of a closure
   environment. `CapOperand::Row(E)` is the capability that the caller gives, valid in
@@ -550,12 +553,12 @@ to V17; the others need the type table.
 | V6 | At `Return` only `_0` (and the upvar locals and the environment) has a cell. At `UnwindExit` only the upvar locals and the environment have a cell. | D3 (each normal end has `scope_end`), C4 (each free has a node), W0204 of parameters |
 | V7 | `UnwindExit` is the only terminator of `Body::unwind_exit`, and only there. | one frame boundary for the unwinder |
 | V8 | Each projection fits the type: `Deref` only on a reference, a `Box` or an `Rc`; `Field` in range; `Variant` only in a block that a `Switch` on the discriminant of the same place dominates (not in an `Uninit`: it names a path and reads nothing, 5.2; not in an `UnwindValue`: the unwinder finishes the payload only if the value has the variant, 5.1.6); `Index` with a `usize` local; `Split` only on a slice. | B2 typed stability, B3 variant steps |
-| V9 | `Copy` only for a type with `Props::copy`; `Move` only for other types; no `Move` through `Deref(Ref)` (W0303 is a builder diagnostic). A `Move` of an upvar local is valid. A part of a function or continuation type is not checked: the props of a closure come from the analysis, and a `multi` continuation is plain data while a `once` one is not. | D1 (each move is a `moved_at`), C4 |
+| V9 | `Copy` only for a type with `Props::copy`; `Move` only for other types; no `Move` through `Deref(Ref)` (W0303: the body gets no IR, 5.36). A `Move` of an upvar local is valid. A part of a function or continuation type is not checked: the props of a closure come from the analysis, and a `multi` continuation is plain data while a `once` one is not. | D1 (each move is a `moved_at`), C4 |
 | V10 | Each terminator with `can_abort()` has an `unwind` block, except a `Call` of an extern function whose stated row is empty and that has no `assert`. | A1 for abort paths, D4 |
-| V11 | `CapOperand::Local` names a `Cap` local, an upvar local of one, or a `Cap` field of the environment. `Row(E)` appears only where the capability environment of the body does not bind `E`. `Resume` names a `Kont` local of the clause, an upvar local of one (a body inside the clause), or a `Kont` field of an environment. | capabilities and continuations are values of one frame |
+| V11 | `CapOperand::Local` names a `Cap` local, an upvar local of one, or a `Cap` field of the environment. `Row(E)` appears only where the capability environment of the body does not bind `E`. `Resume` names a `Kont` local of the clause, an upvar local of one (a body inside the clause), or a `Kont` field of an environment. A field of an environment view (5.1.7) is a field of the environment. | capabilities and continuations are values of one frame |
 | V12 | A temporary has one `Live`, and a `Dead` on each path from it to an exit. A temporary of the tail of a frame body ends after `_0` gets the value. | C2 holder cover, the frame-end order |
-| V13 | A `Kept` capture is never borrowed: its aggregate operand is `copy` of its source, the source is a cell (a whole local, or a capture `env.j` or `(*env.j)` of a maker closure), and no `Ref` in the closure body (or an inner body) names a place at or below `env.k` that is not behind a further reference. The verifier also recomputes `capture_mode` and compares. | F5 `kept`; the kept cell is outside the reference fragment of B1 |
-| V14 | Upvar locals exist only in clause, handled and scope bodies; each names a local of the parent body; none has `Live` or `Dead`. The environment local exists only in a closure body and has no `Live` or `Dead`; a `Move` of a place below it is valid only in a `once` closure. | splices share the cells of the site; the closure value outlives each run |
+| V13 | A `Kept` capture is never borrowed: its aggregate operand is `copy` of its source, the source is a cell (a whole local, or a capture `env.j` or `(*env.j)` of a maker closure), and no `Ref` in the closure body (or an inner body) names a place at or below `env.k` that is not behind a further reference. The verifier also recomputes `capture_mode` and compares. It reads each environment view (5.1.7): `u.k` in a handled body, a clause or a scope body inside the closure is `env.k`, and a source `u.j` or `(*u.j)` is a cell. | F5 `kept`; the kept cell is outside the reference fragment of B1 |
+| V14 | Upvar locals exist only in clause, handled and scope bodies; each names a local of the parent body; none has `Live` or `Dead`. The environment local exists only in a closure body and has no `Live` or `Dead`; a `Move` of a place below it, or below an environment view of it (5.1.7), is valid only in a `once` closure. | splices share the cells of the site; the closure value outlives each run |
 | V15 | Each handled body and each scope body is named by exactly one terminator; each clause by exactly one handler; each closure body by one aggregate kind. | the splice assumes a once-run frame (machine risk R10) |
 | V16 | The cleanup chain of a clause starts with `UnwindKont` of its continuation. A cleanup chain lists `_0` if it has a value, then the live temporaries newest first, then the live locals from the highest index, then the parameters. (`Dead(_0)` with no value comes before the parameters.) | one unwind order for the interpreter, the facts and the effects model |
 | V17 | `Drop(p)` only on a place with a `Deref`, and the next statement is `Assign(p, _)`. | the drop pair of W0601 behind a reference |
@@ -847,10 +850,28 @@ How the builder makes upvar locals (`irbuild/upvar.rs`, plan stage B10):
   the name and the props of the site local, no `Live`, no `Dead`, and it is not in a
   cleanup chain.
 - An upvar local names a whole local of the site. A capture of a closure body (`env.k`)
-  is not one: a `handle` in a closure body whose bodies name a capture or a `Cap` field
-  of the closure is `Unsupported` until plan stage B12 (2 bodies on tier 1). B12 can
-  give the nested body an upvar local of the environment (`uv.k`) and make rule CAPTURE
-  and V13 read the bodies inside the closure.
+  is not a whole local, so a `handle` or a `scope` in a closure body names the captures
+  and the `Cap` fields of the closure through an **upvar local of the environment**
+  (plan stage B12). Its kind is `Upvar(env)` (or `Upvar(u)` of such an upvar local of
+  the site, in a deeper body), and it has the type and the props of the environment. A
+  capture is the place `u.k` (or `(*u.k)` for a `ByRef` capture), as `env.k` is in the
+  closure body. All captures of one closure share one upvar local in each nested body.
+  The *environment views* of a closure are its environment local and each upvar local
+  whose chain of `Upvar` kinds ends at it. A view has the place type of the
+  environment: `u.k` has the type of field `k`.
+- Rule CAPTURE reads each view: a `Move`, a `Consume` or a borrow at or below `u.k` in
+  a handled body, a clause or a scope body inside the closure counts as one at or
+  below `env.k` (a closure that a nested body makes counts by its aggregate operand, as
+  in the closure body). The builder builds the nested bodies before it knows the modes
+  of the closure, with `u.k` for each capture. When it knows the modes, it puts the
+  `Deref` of each `ByRef` capture into each place of each view (`(*u.k)`), also into the
+  sources of the closures that the nested bodies make, and it keeps the `Drop` of a
+  store only for a `ByRef` capture (5.1.3).
+- V13 and V14 read the views too: no `Ref` names a place at or below a `Kept` capture
+  in any view; a `Move` of a place below a view is valid only in a `once` closure; a
+  `Kept` capture of a nested body has the source `u.j` or `(*u.j)`. V11 accepts a
+  `Cap` or `Kont` field of a view. At run time a view has the cell of the environment,
+  as each upvar local has the cell of its site local.
 
 #### 5.1.8 Capabilities
 
@@ -1009,6 +1030,7 @@ type asks for (RT9, V014, V098).
 | `x` (a local of the site, in a clause, handled body or scope body) | the upvar local `u` with `Upvar(x)` |
 | `x` (a closure capture, `ByRef`) | `(*env.k)` |
 | `x` (a closure capture, `ByMove` or `Kept`) | `env.k` |
+| `x` (a closure capture, in a clause, handled body or scope body inside the closure) | `u.k` or `(*u.k)`, with `u` the upvar local of the environment (5.1.7) |
 | `r.f` with `r: &S` | `(*r).f` |
 | `b.f` with `b: Box<S>` | `(*b).f` (`Deref(Box)`) |
 | `h.f` with `h: Rc<S>` | `(*h).f` (`Deref(Rc)`) |
@@ -1016,6 +1038,7 @@ type asks for (RT9, V014, V098).
 | `a[i]` with `a: [T; n]` | `a[ti]` (stable element step) |
 | `t.0` | `t.0` |
 | `o.Some` | `td := Discriminant(o); Switch(move td) [Some: next, otherwise: Unreachable]`, then `(o as Some).0` (the interpreter faults on another variant) |
+| `o.A` with `A` of no field or of more than one field | no place: the type is `()` or a tuple that the payload does not hold; the body gets no IR (`NoIr::VariantPayload`, 5.36) |
 | `&v[]` | `&v[]` (`Elems`) |
 
 No expression writes a split step. A split place (`v[..k]`, `v[k..]`) comes only from a
@@ -1352,10 +1375,11 @@ a store into a field      =>  (*r).f = move tclosure
 ```
 
 A function value is a value. It flows through locals, fields, elements and tuples as
-other values do. A struct constructor or a variant with a payload as a value (`map(xs,
-Some)`) has no IR form yet: no program of tier 1 has one, and plan stage B12 decides it
-(a closure with no captures whose body builds the aggregate is one choice). The analysis keeps the set of closures and items that each place can
-hold, also in the abstract heap behind references (heap slots). **Goes away:**
+other values do. A struct constructor or a variant with a payload is not a value in
+Weft: `typeck` reports `Some`, `S` or `E.A` as a value (W0101, W0104), so the body gets
+no IR (plan stage B12 checked this; no IR form is necessary). A variant with no payload
+as a value is an aggregate with no operand (`None`). The analysis keeps the set of
+closures and items that each place can hold, also in the abstract heap behind references (heap slots). **Goes away:**
 `FnTy::summary`, `fn_joins` (RR2, V107), `join_val`, `escape`, `escape_all`, `keep`,
 `store_into`, `apply_stored`, `insert_after`, `reach`, `known_at` (V027, V028, V089,
 QA17). `sim.run` as a value emits `sim_run_at` at the `Assign` (RT17).
@@ -1556,9 +1580,23 @@ of today, as one query (RT24a, RR9).
 
 ### 5.36 What the builder reports
 
-W0315 (a jump out of a fence) and W0303 (a move through a reference; the builder writes
-`Copy` to go on). Type errors, names, W0111, W0113, W0114, W0120, W0102 and W0107 stay in
-`typeck` (2.4).
+W0315 (a jump out of a fence). Type errors, names, W0111, W0113, W0114, W0120, W0102 and
+W0107 stay in `typeck` (2.4).
+
+A body that moves a value that is not plain data through a reference (W0303) gets no IR,
+as a body with a type error: `NoIr::MoveThroughRef`, "no IR: W0303". The old lowering
+gives the W0303 diagnostic, and it stays the error of the program (2.4). The IR has no
+form for the move: V9 rejects a `Move` through `Deref(Ref)` and a `Copy` of a value that
+is not plain data. A move in a closure or a nested body of the function gives the whole
+function no IR.
+
+Other bodies with no IR (plan stage B12), each with its reason:
+
+- `NoIr::VariantPayload`: a field expression `o.A` of a variant `A` with no field or
+  with more than one field (5.8). `typeck` gives it the type `()` or a tuple, but the
+  payload has no place of that type. No program of tiers 1 and 2 has one.
+- An assignment whose left side is not a place is W0112 of `typeck` (a type error). A
+  constructor as a value is W0101 or W0104 (5.23). The builder never sees these bodies.
 
 W0604 stays the spec rule `moved_immovable(V, P)`: a `moved_at` of a variable with the
 `immovable` flag. The fact generator gives the flag from the props of the type (6.3),
@@ -2229,7 +2267,8 @@ the IR and the analysis, not a surface walk:
 | W0204 (store forms) | A `stores` entry of a reference into a root that ends at an exit, behind a reference parameter or into an `rc` object. A query over the summary of each body, also of closures and clauses (V087, V108, FD3). |
 | W0204 (signature) | A returned reference must state its place. A signature check. |
 | W0118 | A query over the summary of the `on abort` function `f`: its changes are below its parameter value (F3-1); its row holds only effects that the root handlers serve; its `raises` part is empty; its `drops` part holds no type parameter of its parameter type (F3-3, F3-4). |
-| W0315, W0303 | builder diagnostics (5.36) |
+| W0315 | a builder diagnostic (5.36) |
+| W0303 | the old lowering; the body gets no IR (5.36) |
 | W0604 | the spec rule `moved_immovable`; the fact generator sets the `immovable` flag (5.36, 6.3) |
 | W0502 (into plain data) | `typeck`: a `once` closure goes into a place of plain data |
 

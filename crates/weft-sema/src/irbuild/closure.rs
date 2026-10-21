@@ -29,12 +29,13 @@ use std::collections::{HashMap, HashSet};
 use weft_ir::{
     AggKind, Body, BodyId, BodyKind, Callee, CapEnv, CapOperand, Capture, CaptureMode, ClosureDecl,
     ClosureId, DerefKind, ExprId, FieldIdx, HandlerDecl, IterSource, LocalDecl, LocalId, LocalKind,
-    Operand, Place, Proj, Props, Rvalue, ScopeDecl, ScopeId, SpawnDecl, SpawnId, StmtKind,
+    Operand, Place, Proj, Props, Rvalue, ScopeDecl, ScopeId, SpawnDecl, SpawnId, Stmt, StmtKind,
     TempKind, TermKind, Ty, TyId,
 };
 use weft_syntax::ast::{self, Expr, ExprKind, Lit, StrPart};
 
 use super::frame::closing;
+use super::upvar::EnvFields;
 use super::{id_of, unsupported, Builder, Construct, ScopeKind, R, RET};
 use crate::thir::{Binder, BindingId, Res};
 
@@ -130,12 +131,6 @@ impl Pending {
             *slot = Some(b);
         }
     }
-
-    /// Returns the declaration of closure `c`, if it is in this set.
-    fn closure_mut(&mut self, c: ClosureId) -> Option<&mut ClosureDecl> {
-        let i = c.index().checked_sub(self.base_closure as usize)?;
-        self.closures.get_mut(i).and_then(Option::as_mut)
-    }
 }
 
 /// One captured variable or capability of a closure body.
@@ -157,6 +152,9 @@ pub(super) struct Captures {
     pub(super) env: LocalId,
     /// The captures, in the order of the fields of the environment.
     caps: Vec<Cap>,
+    /// The type and the properties of each capture, for the views of the
+    /// environment in the nested bodies (`upvar.rs`).
+    pub(super) fields: EnvFields,
     /// The field of each captured binding.
     index: HashMap<BindingId, usize>,
 }
@@ -170,21 +168,19 @@ impl Captures {
             proj: vec![Proj::Field(FieldIdx(id_of(k)))],
         })
     }
+}
 
-    /// Returns the field `k` if place `p` is `env.k` and nothing more.
-    fn whole_field(&self, p: &Place) -> Option<usize> {
-        match p.proj.as_slice() {
-            [Proj::Field(k)] if p.local == self.env => Some(k.index()),
-            _ => None,
-        }
-    }
+/// The views of the environment of one closure (`docs/ir.md` 5.1.7): the
+/// environment local of the closure body, and the upvar locals of it in each
+/// body nested in the closure body, by body.
+type Views = HashMap<BodyId, Vec<LocalId>>;
 
-    /// Returns the field `k` if place `p` is at or below `env.k`.
-    pub(super) fn field_of(&self, p: &Place) -> Option<usize> {
-        match p.proj.first() {
-            Some(Proj::Field(k)) if p.local == self.env => Some(k.index()),
-            _ => None,
-        }
+/// Returns the field `k` if place `p` is at or below `v.k` for a view `v` in
+/// `locals`.
+fn view_field(locals: &[LocalId], p: &Place) -> Option<usize> {
+    match p.proj.first() {
+        Some(Proj::Field(k)) if locals.contains(&p.local) => Some(k.index()),
+        _ => None,
     }
 }
 
@@ -231,7 +227,7 @@ impl Builder<'_> {
         if let Some(p) = self.closure.as_ref().and_then(|c| c.place(b)) {
             return Some(p);
         }
-        self.site_var(b).map(Place::local)
+        self.site_var(b)
     }
 
     /// Returns the place, the type and the properties of binding `b` in this
@@ -242,10 +238,8 @@ impl Builder<'_> {
             let d = self.locals.get(p.local.index())?;
             return Some((p, d.ty, d.props));
         }
-        let c = self.closure.as_ref()?;
-        let k = *c.index.get(&b)?;
-        let cap = c.caps.get(k)?;
-        Some((p, cap.ty, cap.props))
+        let (ty, props) = self.capture_part(&p)?;
+        Some((p, ty, props))
     }
 
     /// Returns true if a read of place `p` of type `ty` copies it: the type is
@@ -258,25 +252,23 @@ impl Builder<'_> {
         self.place_props(p).is_none_or(|x| x.copy)
     }
 
-    /// Returns the properties of a whole local or a whole capture `p`: they
-    /// can hold the modes of a closure that the type does not show.
+    /// Returns the properties of a whole local or a whole capture `p` (`env.k`
+    /// or `u.k` of a view): they can hold the modes of a closure that the type
+    /// does not show.
     fn place_props(&self, p: &Place) -> Option<Props> {
         if p.is_local() {
             return self.locals.get(p.local.index()).map(|d| d.props);
         }
-        let c = self.closure.as_ref()?;
-        let k = c.whole_field(p)?;
-        c.caps.get(k).map(|x| x.props)
+        self.capture_part(p).map(|(_, props)| props)
     }
 
-    /// Returns true if place `p` is at or below a capture of this closure
-    /// body. Its mode is not known yet: a store there gets a `Drop` first if
-    /// the capture can become `ByRef` ([`Builder::rewrite_captures`] removes
-    /// it otherwise).
+    /// Returns true if place `p` is at or below a capture of a closure: of
+    /// this closure body, or of a closure around this body through a view
+    /// of its environment. Its mode is not known yet: a store there gets a
+    /// `Drop` first if the capture can become `ByRef`
+    /// ([`Builder::rewrite_captures`] removes it otherwise).
     pub(super) fn below_capture(&self, p: &Place) -> bool {
-        self.closure
-            .as_ref()
-            .is_some_and(|c| c.field_of(p).is_some())
+        matches!(p.proj.first(), Some(Proj::Field(_))) && self.env_fields(p.local).is_some()
     }
 
     /// Lowers closure literal `e` into `dest` (`docs/ir.md` 5.22).
@@ -326,6 +318,9 @@ impl Builder<'_> {
         let (body_id, bi) = self.d.pending.reserve_body();
         let pending = &mut *self.d.pending;
         let ci = pending.closures.len();
+        // The bodies and the closures that the closure body makes come after
+        // these slots.
+        let nested = (bi + 1, ci + 1);
         let cid = ClosureId(pending.base_closure.saturating_add(id_of(ci)));
         pending.closures.push(None);
         // The environment of the body binds each captured capability to its
@@ -354,7 +349,8 @@ impl Builder<'_> {
             sub.cap_env = env_id;
             sub.caps = env_adds;
             sub.closure_body(e, ty, &info.params, body, caps.clone(), index)?;
-            let mut modes = sub.capture_modes();
+            let views = sub.env_views(nested.0);
+            let mut modes = sub.capture_modes(&views, nested.0);
             // A capability and a continuation have modes of their own
             // (`docs/ir.md` 5.1.7, rule 4).
             for (k, m) in modes.iter_mut().enumerate() {
@@ -365,7 +361,7 @@ impl Builder<'_> {
                     _ => {}
                 }
             }
-            sub.rewrite_captures(&modes);
+            sub.rewrite_captures(&modes, &views, nested);
             self.diags.append(&mut sub.diags);
             (sub.finish(BodyKind::Closure(cid), e.span), modes)
         };
@@ -394,7 +390,6 @@ impl Builder<'_> {
         if let Some(slot) = pending.closures.get_mut(ci) {
             *slot = Some(decl);
         }
-        self.made.push(cid);
         // The environment: one operand for each capture, in order.
         let origin = self.origin(e.span, Some(e.id));
         let mut ops = Vec::with_capacity(caps.len());
@@ -491,7 +486,13 @@ impl Builder<'_> {
             origin,
         });
         self.params.push(env);
-        self.closure = Some(Box::new(Captures { env, caps, index }));
+        let fields = caps.iter().map(|c| (c.ty, c.props)).collect();
+        self.closure = Some(Box::new(Captures {
+            env,
+            caps,
+            fields,
+            index,
+        }));
         for (i, &b) in params.iter().enumerate() {
             let Some(binding) = self.t.binding_of(b) else {
                 return unsupported(Construct::NoThir, e.span);
@@ -579,49 +580,73 @@ impl Builder<'_> {
         Ok(())
     }
 
-    /// Returns the mode of each capture of this closure body (rule CAPTURE).
-    fn capture_modes(&self) -> Vec<CaptureMode> {
+    /// Returns the views of the environment of this closure body
+    /// (`docs/ir.md` 5.1.7): the environment local here, and each upvar
+    /// local whose chain ends at it in the bodies of the slots from `from` of
+    /// the pending bodies (the bodies nested in this body, in id order: a
+    /// site comes before its bodies).
+    fn env_views(&self, from: usize) -> Views {
+        let mut views = Views::new();
+        let Some(env) = self.closure.as_ref().map(|c| c.env) else {
+            return views;
+        };
+        views.insert(self.body_id, vec![env]);
+        let pending = &*self.d.pending;
+        for (i, b) in pending.bodies.iter().enumerate().skip(from) {
+            let Some((b, parent)) = b.as_ref().and_then(|b| Some((b, b.parent?))) else {
+                continue;
+            };
+            let Some(outer) = views.get(&parent) else {
+                continue;
+            };
+            let mine: Vec<LocalId> = b
+                .locals
+                .iter()
+                .enumerate()
+                .filter_map(|(j, d)| match d.kind {
+                    LocalKind::Upvar(src) if outer.contains(&src) => Some(LocalId(id_of(j))),
+                    _ => None,
+                })
+                .collect();
+            if !mine.is_empty() {
+                let id = pending.base_body.saturating_add(1).saturating_add(id_of(i));
+                views.insert(BodyId(id), mine);
+            }
+        }
+        views
+    }
+
+    /// Returns the mode of each capture of this closure body (rule CAPTURE):
+    /// from the uses in this body and in each view of the environment in
+    /// the nested bodies of the pending slots from `from`.
+    fn capture_modes(&self, views: &Views, from: usize) -> Vec<CaptureMode> {
         let Some(c) = self.closure.as_ref() else {
             return Vec::new();
         };
         let mut uses = vec![Uses::default(); c.caps.len()];
-        let mut note = |p: &Place, moved: bool| {
-            if let Some(u) = c.field_of(p).and_then(|k| uses.get_mut(k)) {
-                if moved {
-                    u.moved = true;
-                } else if borrows_cell(p) {
-                    u.borrowed = true;
+        let mut scan = |locals: &[LocalId], stmts: &[Stmt], term: Option<&TermKind>| {
+            note_uses(stmts, term, &mut |p, moved| {
+                if let Some(u) = view_field(locals, p).and_then(|k| uses.get_mut(k)) {
+                    if moved {
+                        u.moved = true;
+                    } else if borrows_cell(p) {
+                        u.borrowed = true;
+                    }
                 }
-            }
+            });
         };
+        let own = [c.env];
         for blk in &self.blocks {
-            for s in &blk.stmts {
-                match &s.kind {
-                    StmtKind::Consume(p) | StmtKind::Bounds(_, Operand::Move(p)) => note(p, true),
-                    StmtKind::Assign(_, rv) => match rv {
-                        Rvalue::Ref(p) | Rvalue::Iter(IterSource::Elems(p)) => note(p, false),
-                        _ => each_operand_rv(rv, &mut |o| {
-                            if let Operand::Move(p) = o {
-                                note(p, true);
-                            }
-                        }),
-                    },
-                    StmtKind::Print(ops) => {
-                        for o in ops {
-                            if let Operand::Move(p) = o {
-                                note(p, true);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            if let Some(term) = &blk.term {
-                each_operand_term(&term.kind, &mut |o| {
-                    if let Operand::Move(p) = o {
-                        note(p, true);
-                    }
-                });
+            scan(&own, &blk.stmts, blk.term.as_ref().map(|t| &t.kind));
+        }
+        let pending = &*self.d.pending;
+        for (i, b) in pending.bodies.iter().enumerate().skip(from) {
+            let id = BodyId(pending.base_body.saturating_add(1).saturating_add(id_of(i)));
+            let (Some(b), Some(locals)) = (b, views.get(&id)) else {
+                continue;
+            };
+            for blk in &b.blocks {
+                scan(locals, &blk.stmts, Some(&blk.term.kind));
             }
         }
         c.caps
@@ -632,42 +657,47 @@ impl Builder<'_> {
     }
 
     /// Puts the `Deref` of each `ByRef` capture into each place of it
-    /// (`env.k` becomes `(*env.k)`), also into the sources of the closures that
-    /// this body makes. A `Drop` before a store into a capture that is not
-    /// `ByRef` goes away: only a place behind a pointer gets one (V17).
-    fn rewrite_captures(&mut self, modes: &[CaptureMode]) {
+    /// (`env.k` becomes `(*env.k)`, a view `u.k` becomes `(*u.k)`), also into
+    /// the sources of the closures that this body and its nested bodies make
+    /// (the pending closures from slot `nested.1`). A `Drop` before a store
+    /// into a capture that is not `ByRef` goes away: only a place behind a
+    /// pointer gets one (V17). `nested.0` is the first pending slot of the
+    /// nested bodies.
+    fn rewrite_captures(&mut self, modes: &[CaptureMode], views: &Views, nested: (usize, usize)) {
         let Some(env) = self.closure.as_ref().map(|c| c.env) else {
             return;
         };
         let by_ref: Vec<bool> = modes.iter().map(|m| *m == CaptureMode::ByRef).collect();
-        let field = |p: &Place| match p.proj.first() {
-            Some(Proj::Field(k)) if p.local == env => Some(k.index()),
-            _ => None,
-        };
-        let fix = |p: &mut Place| {
-            if field(p).is_some_and(|k| by_ref.get(k).copied().unwrap_or(false)) {
-                p.proj.insert(1, Proj::Deref(DerefKind::Ref));
-            }
-        };
-        for blk in &mut self.blocks {
-            blk.stmts.retain(|s| match &s.kind {
-                StmtKind::Drop(p) => {
-                    p.has_deref()
-                        || field(p).is_none_or(|k| by_ref.get(k).copied().unwrap_or(false))
-                }
-                _ => true,
-            });
-            for s in &mut blk.stmts {
-                each_place_stmt(&mut s.kind, &mut |p| fix(p));
-            }
-            if let Some(t) = &mut blk.term {
-                each_place_term(&mut t.kind, &mut |p| fix(p));
-            }
+        let is_ref = |k: usize| by_ref.get(k).copied().unwrap_or(false);
+        rewrite_blocks(
+            self.blocks
+                .iter_mut()
+                .map(|b| (&mut b.stmts, b.term.as_mut().map(|t| &mut t.kind))),
+            &[env],
+            &is_ref,
+        );
+        let pending = &mut *self.d.pending;
+        let base = pending.base_body;
+        for (i, b) in pending.bodies.iter_mut().enumerate().skip(nested.0) {
+            let id = BodyId(base.saturating_add(1).saturating_add(id_of(i)));
+            let (Some(b), Some(locals)) = (b.as_mut(), views.get(&id)) else {
+                continue;
+            };
+            rewrite_blocks(
+                b.blocks
+                    .iter_mut()
+                    .map(|b| (&mut b.stmts, Some(&mut b.term.kind))),
+                locals,
+                &is_ref,
+            );
         }
-        for &c in &self.made {
-            if let Some(d) = self.d.pending.closure_mut(c) {
-                for cap in &mut d.captures {
-                    fix(&mut cap.source);
+        for d in pending.closures.iter_mut().skip(nested.1).flatten() {
+            let Some(locals) = views.get(&d.maker) else {
+                continue;
+            };
+            for cap in &mut d.captures {
+                if view_field(locals, &cap.source).is_some_and(is_ref) {
+                    cap.source.proj.insert(1, Proj::Deref(DerefKind::Ref));
                 }
             }
         }
@@ -684,6 +714,68 @@ impl Builder<'_> {
             for t in tys {
                 self.tys.intern(Ty::Ref(t));
             }
+        }
+    }
+}
+
+/// Calls `f` on each place that statements `stmts` and terminator `term`
+/// move (true) or borrow (false), for rule CAPTURE: a `Move` operand, a
+/// `Consume`, a `Ref` and an iterator over the elements.
+fn note_uses(stmts: &[Stmt], term: Option<&TermKind>, f: &mut impl FnMut(&Place, bool)) {
+    for s in stmts {
+        match &s.kind {
+            StmtKind::Consume(p) | StmtKind::Bounds(_, Operand::Move(p)) => f(p, true),
+            StmtKind::Assign(_, rv) => match rv {
+                Rvalue::Ref(p) | Rvalue::Iter(IterSource::Elems(p)) => f(p, false),
+                _ => each_operand_rv(rv, &mut |o| {
+                    if let Operand::Move(p) = o {
+                        f(p, true);
+                    }
+                }),
+            },
+            StmtKind::Print(ops) => {
+                for o in ops {
+                    if let Operand::Move(p) = o {
+                        f(p, true);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(term) = term {
+        each_operand_term(term, &mut |o| {
+            if let Operand::Move(p) = o {
+                f(p, true);
+            }
+        });
+    }
+}
+
+/// Puts the `Deref` of each `ByRef` capture into each place at or below a
+/// view in `locals` of the blocks `blocks` (their statements and their
+/// terminators), and removes each `Drop` before a store into a capture that
+/// is not `ByRef`. `is_ref(k)`: capture `k` is `ByRef`.
+fn rewrite_blocks<'b>(
+    blocks: impl Iterator<Item = (&'b mut Vec<Stmt>, Option<&'b mut TermKind>)>,
+    locals: &[LocalId],
+    is_ref: &impl Fn(usize) -> bool,
+) {
+    let fix = |p: &mut Place| {
+        if view_field(locals, p).is_some_and(is_ref) {
+            p.proj.insert(1, Proj::Deref(DerefKind::Ref));
+        }
+    };
+    for (stmts, term) in blocks {
+        stmts.retain(|s| match &s.kind {
+            StmtKind::Drop(p) => p.has_deref() || view_field(locals, p).is_none_or(is_ref),
+            _ => true,
+        });
+        for s in stmts.iter_mut() {
+            each_place_stmt(&mut s.kind, &mut |p| fix(p));
+        }
+        if let Some(t) = term {
+            each_place_term(t, &mut |p| fix(p));
         }
     }
 }

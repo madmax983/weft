@@ -533,15 +533,15 @@ fn ir(f: &Flags) -> Result<Output> {
                 }
                 weft_sema::irbuild::Outcome::Unsupported(u) => {
                     out.stderr = format!(
-                        "error: `{name}` has no IR yet: the builder does not lower {} at {} (stage {})\n",
+                        "error: `{name}` has no IR: the builder does not lower {} at {} (stage {})\n",
                         u.construct.name(),
                         at(e.unit, u.span),
                         u.construct.stage()
                     );
                     out.code = 1;
                 }
-                weft_sema::irbuild::Outcome::NoIr(_) => {
-                    out.stderr = format!("error: `{name}` has no IR: it has a type error\n");
+                weft_sema::irbuild::Outcome::NoIr(n) => {
+                    out.stderr = format!("error: `{name}` has no IR: {}\n", n.reason());
                     out.code = 1;
                 }
             }

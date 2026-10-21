@@ -60,8 +60,10 @@ pub struct Outcome {
 pub struct IrCounts {
     /// The bodies that the builder lowers.
     pub built: usize,
-    /// The bodies with no IR (a `typeck` error).
+    /// The bodies with no IR (a `typeck` error, W0303, ...).
     pub no_ir: usize,
+    /// The bodies with no IR, for each reason.
+    pub no_ir_reasons: BTreeMap<String, usize>,
     /// The bodies that the builder does not lower yet, for each construct (its
     /// name and the plan stage that lowers it).
     pub unsupported: BTreeMap<String, usize>,
@@ -74,6 +76,9 @@ impl IrCounts {
     pub fn add(&mut self, o: Self) {
         self.built += o.built;
         self.no_ir += o.no_ir;
+        for (k, n) in o.no_ir_reasons {
+            *self.no_ir_reasons.entry(k).or_default() += n;
+        }
         for (k, n) in o.unsupported {
             *self.unsupported.entry(k).or_default() += n;
         }
@@ -88,6 +93,11 @@ fn ir_counts(analysis: &weft_sema::Analysis) -> IrCounts {
     IrCounts {
         built,
         no_ir,
+        no_ir_reasons: b
+            .no_ir_counts()
+            .into_iter()
+            .map(|(r, n)| (r.reason().to_string(), n))
+            .collect(),
         unsupported: unsupported
             .into_iter()
             .map(|(c, n)| (format!("{} ({})", c.name(), c.stage()), n))
@@ -260,13 +270,17 @@ impl Summary {
         }
         let _ = writeln!(
             s,
-            "\n## The builder of the IR\n\n{} bodies built, {} with no IR (a `typeck` error), {} unsupported; {} programs whose IR breaks a rule.\n",
+            "\n## The builder of the IR\n\n{} bodies built, {} with no IR, {} unsupported; {} programs whose IR breaks a rule.\n",
             self.ir.built,
             self.ir.no_ir,
             self.ir.unsupported.values().sum::<usize>(),
             self.ir_broken.len()
         );
-        s.push_str("| unsupported construct (stage) | bodies |\n| --- | --- |\n");
+        s.push_str("| no IR: reason | bodies |\n| --- | --- |\n");
+        for (r, n) in &self.ir.no_ir_reasons {
+            let _ = writeln!(s, "| {r} | {n} |");
+        }
+        s.push_str("\n| unsupported construct (stage) | bodies |\n| --- | --- |\n");
         for (c, n) in &self.ir.unsupported {
             let _ = writeln!(s, "| {c} | {n} |");
         }

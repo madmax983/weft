@@ -180,7 +180,7 @@ impl Builder<'_> {
         let Some(place) = self.as_place(callee)? else {
             return unsupported(Construct::NoThir, callee.span);
         };
-        let read = self.read_place(place, fty, callee)?;
+        let read = self.read_place(place, fty)?;
         let skip = slots.iter().all(|a| self.inert(a));
         let op = if skip {
             read
@@ -270,7 +270,7 @@ impl Builder<'_> {
                 self.assign(Place::local(t), Rvalue::Ref(p), origin);
                 Ok(Operand::Move(Place::local(t)))
             }
-            RecvMode::Ref | RecvMode::Value | RecvMode::Deref => self.read_place(p, ty, x),
+            RecvMode::Ref | RecvMode::Value | RecvMode::Deref => self.read_place(p, ty),
         }
     }
 

@@ -139,7 +139,7 @@ impl Builder<'_> {
     pub(super) fn into(&mut self, e: &Expr, dest: Place) -> R<()> {
         if let Some(p) = self.as_place(e)? {
             let origin = self.origin(e.span, Some(e.id));
-            let op = self.read_place(p, self.value_ty(e)?, e)?;
+            let op = self.read_place(p, self.value_ty(e)?)?;
             self.assign(dest, Rvalue::Use(op), origin);
             return Ok(());
         }
@@ -280,7 +280,7 @@ impl Builder<'_> {
     /// Reads place `p` of type `ty` (the place of `e`) as an operand: the
     /// place itself with `skip`, else a temporary (`docs/ir.md` 5.1.1).
     fn place_operand(&mut self, p: Place, ty: weft_ir::TyId, e: &Expr, skip: bool) -> R<Operand> {
-        let op = self.read_place(p, ty, e)?;
+        let op = self.read_place(p, ty)?;
         if skip {
             return Ok(op);
         }

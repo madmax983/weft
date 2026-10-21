@@ -1,0 +1,42 @@
+fn f0 steal(&S) -> Vec<u64>: extern
+fn f1 steal_in_closure(&S) -> u64: extern
+fn f2 pair(E) -> u64: extern
+fn f3 one() -> u64: b0
+fn f4 not_a_place() -> (): extern
+fn f5 ctor() -> Option<u64>: extern
+fn f6 main() -> (): b1
+cap_env e0
+
+body b0: fn one; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  bb0:
+    _0 = const 1u64
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn main; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: E (User `e`)
+  _2: usize (Temp(Scrutinee))
+  bb0:
+    Live(_1)
+    _1 = E::B(const 1u64)
+    Live(_2)
+    _2 = Discriminant(_1)
+    switch move _2 -> [1: bb1, otherwise: bb2]
+  bb1:
+    Print(copy (_1 as #1).0)
+    _0 = const ()
+    Dead(_1)
+    Dead(_2)
+    Return
+  bb2:
+    Unreachable
+  bb3 (cleanup):
+    UnwindExit
+// steal: no IR: W0303, a move through a reference
+// steal_in_closure: no IR: W0303, a move through a reference
+// pair: no IR: a variant payload of no field or of more than one field
+// not_a_place: no IR: a type error
+// ctor: no IR: a type error

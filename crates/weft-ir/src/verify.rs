@@ -101,9 +101,10 @@ pub enum Rule {
     /// V12: at a `Return`, a statement other than the end of a parameter, the
     /// capability or the continuation comes after the end of one of them.
     FrameEndOrder,
-    /// V13: a `Kept` capture is borrowed in the closure body, or its operand in the
-    /// closure aggregate is not a copy of its source cell (a whole local, or a capture
-    /// of the maker closure).
+    /// V13: a `Kept` capture is borrowed in the closure body (or through a view of
+    /// the environment in a nested body), or its operand in the closure aggregate is
+    /// not a copy of its source cell (a whole local, or a capture of the maker
+    /// closure or of a view).
     KeptBorrowed,
     /// V13: the stated capture mode is not the mode of rule CAPTURE.
     CaptureMode {
@@ -116,7 +117,8 @@ pub enum Rule {
     /// local that the parent body does not have; the environment is in a body that
     /// is not a closure; or one of them has `Live` or `Dead`.
     BadUpvar,
-    /// V14: a `Move` of a place below the environment in a closure that is not `once`.
+    /// V14: a `Move` of a place below the environment, or below a view of it in a
+    /// nested body (`docs/ir.md` 5.1.7), in a closure that is not `once`.
     EnvMove,
     /// V15: a handled body or a scope body is not named by exactly one terminator, a
     /// clause by exactly one handler, or a closure body by exactly one closure.
@@ -230,8 +232,11 @@ pub fn verify_program(p: &Program, tys: &TyTable) -> Vec<Broken> {
         out.extend(verify_body(p, tys, BodyId(id_of(i))));
     }
     once_run(p, &mut out);
+    let views = env_views(p);
     for (ci, c) in p.closures.iter().enumerate() {
-        kept(p, tys, ClosureId(id_of(ci)), c, &mut out);
+        let id = ClosureId(id_of(ci));
+        let v = views.get(&id).map_or(&[][..], Vec::as_slice);
+        kept(p, tys, id, c, v, &mut out);
     }
     let mut seen = HashSet::new();
     out.retain(|b| seen.insert(b.clone()));
@@ -860,12 +865,16 @@ impl<'a> Cx<'a> {
     }
 
     /// Returns the place type of the local of place `p`, before its projections.
+    /// The environment of a closure and each view of it (`docs/ir.md` 5.1.7)
+    /// have the place type of the environment.
     fn local_pt(&self, l: LocalId) -> Pt {
         let Some(d) = self.body.local(l) else {
             return Pt::Unknown;
         };
-        match (d.kind, self.body.kind) {
-            (LocalKind::Env, BodyKind::Closure(c)) => Pt::Env(c),
+        match d.kind {
+            LocalKind::Env | LocalKind::Upvar(_) => {
+                env_of(self.p, self.id, l).map_or(Pt::Ty(d.ty), Pt::Env)
+            }
             _ => Pt::Ty(d.ty),
         }
     }
@@ -1152,17 +1161,13 @@ impl<'a> Cx<'a> {
     }
 
     /// Returns the capture mode of place `p` if it is field `k` of the environment of
-    /// this closure body: `env.k`.
+    /// this closure body (`env.k`), or of a view of the environment of a closure
+    /// around this body (`u.k`).
     fn env_field(&self, p: &Place) -> Option<CaptureMode> {
-        let BodyKind::Closure(c) = self.body.kind else {
-            return None;
-        };
-        if self.kind(p.local) != Some(LocalKind::Env) {
-            return None;
-        }
         let [Proj::Field(k)] = p.proj.as_slice() else {
             return None;
         };
+        let c = env_of(self.p, self.id, p.local)?;
         let decl = self.p.closures.get(c.index())?;
         decl.captures.get(k.index()).map(|x| x.mode)
     }
@@ -1326,11 +1331,18 @@ impl<'a> Cx<'a> {
                 }
             }
         }
-        let once = match self.body.kind {
-            BodyKind::Closure(c) => self.p.closures.get(c.index()).is_some_and(|d| d.once),
-            _ => return,
-        };
-        if once {
+        // A move below the environment, or below a view of it in a nested body,
+        // is valid only in a `once` closure.
+        let mut not_once: BTreeMap<LocalId, bool> = BTreeMap::new();
+        for (i, d) in self.body.locals.iter().enumerate() {
+            if matches!(d.kind, LocalKind::Env | LocalKind::Upvar(_)) {
+                if let Some(c) = env_of(self.p, self.id, lid(i)) {
+                    let once = self.p.closures.get(c.index()).is_some_and(|x| x.once);
+                    not_once.insert(lid(i), !once);
+                }
+            }
+        }
+        if !not_once.values().any(|&x| x) {
             return;
         }
         for (i, blk) in self.body.blocks.iter().enumerate() {
@@ -1341,7 +1353,7 @@ impl<'a> Cx<'a> {
             term_uses(&blk.term.kind, &mut |u| uses.push(u));
             for u in uses {
                 if let Use::Op(Operand::Move(p)) = u {
-                    if !p.proj.is_empty() && self.kind(p.local) == Some(LocalKind::Env) {
+                    if !p.proj.is_empty() && not_once.get(&p.local) == Some(&true) {
                         self.push(Rule::EnvMove, Some(bid(i)), Some(p.local));
                     }
                 }
@@ -1718,6 +1730,50 @@ fn once_run(p: &Program, out: &mut Vec<Broken>) {
     }
 }
 
+/// Returns the closure whose environment local `l` of body `body` is, or views
+/// (`docs/ir.md` 5.1.7): the environment local of a closure body, or an upvar
+/// local whose chain of `Upvar` kinds ends at one. A parent has a lower id than
+/// its nested bodies, so the walk ends.
+fn env_of(p: &Program, body: BodyId, l: LocalId) -> Option<ClosureId> {
+    let (mut at, mut l) = (body, l);
+    loop {
+        let b = p.body(at)?;
+        match b.local_kind(l)? {
+            LocalKind::Env => {
+                return match b.kind {
+                    BodyKind::Closure(c) if b.params.first() == Some(&l) => Some(c),
+                    _ => None,
+                };
+            }
+            LocalKind::Upvar(src) => {
+                let parent = b.parent.filter(|x| x.index() < at.index())?;
+                at = parent;
+                l = src;
+            }
+            _ => return None,
+        }
+    }
+}
+
+/// Returns the views of the environment of each closure of `p` (`docs/ir.md`
+/// 5.1.7): its environment local in its body, then each upvar local of it in the
+/// bodies nested in the closure body, in body order.
+fn env_views(p: &Program) -> BTreeMap<ClosureId, Vec<(BodyId, LocalId)>> {
+    let mut out: BTreeMap<ClosureId, Vec<(BodyId, LocalId)>> = BTreeMap::new();
+    for (bi, b) in p.bodies.iter().enumerate() {
+        let id = BodyId(id_of(bi));
+        for (li, d) in b.locals.iter().enumerate() {
+            if !matches!(d.kind, LocalKind::Env | LocalKind::Upvar(_)) {
+                continue;
+            }
+            if let Some(c) = env_of(p, id, lid(li)) {
+                out.entry(c).or_default().push((id, lid(li)));
+            }
+        }
+    }
+    out
+}
+
 /// Returns true if place `p` of the closure body is at or below field `k` of the
 /// environment local `env`.
 fn below_field(p: &Place, env: LocalId, k: usize) -> bool {
@@ -1782,10 +1838,12 @@ fn source_copy(p: &Program, tys: &TyTable, c: &crate::ClosureDecl, k: usize) -> 
     if !matches!(tys.try_get(t), Some(Ty::Fn(_))) {
         return Some(!tys.not_copy(t));
     }
-    // A function value of a capture of the maker: the properties of its source.
-    let (BodyKind::Closure(mc), LocalKind::Env, Some(Proj::Field(j))) =
-        (maker.kind, d.kind, cap.source.proj.first())
-    else {
+    // A function value of a capture of the maker (or of a view of the
+    // environment of a closure around the maker): the properties of its source.
+    let (Some(mc), Some(Proj::Field(j))) = (
+        env_of(p, c.maker, cap.source.local),
+        cap.source.proj.first(),
+    ) else {
         return None;
     };
     let outer = p.closures.get(mc.index())?;
@@ -1796,12 +1854,14 @@ fn source_copy(p: &Program, tys: &TyTable, c: &crate::ClosureDecl, k: usize) -> 
 }
 
 /// Returns true if `src` is a cell that a `Kept` capture can share: a whole local
-/// of the maker, or a capture `env.j` (or `(*env.j)`) of the maker closure.
-fn kept_cell(maker: &Body, src: &Place) -> bool {
+/// of the maker, or a capture `env.j` (or `(*env.j)`) of the maker closure, or a
+/// capture `u.j` (or `(*u.j)`) of a view of the environment of a closure around the
+/// maker.
+fn kept_cell(p: &Program, maker: BodyId, src: &Place) -> bool {
     if src.is_local() {
         return true;
     }
-    maker.local_kind(src.local) == Some(LocalKind::Env)
+    env_of(p, maker, src.local).is_some()
         && matches!(
             src.proj.as_slice(),
             [Proj::Field(_)] | [Proj::Field(_), Proj::Deref(crate::DerefKind::Ref)]
@@ -1809,12 +1869,14 @@ fn kept_cell(maker: &Body, src: &Place) -> bool {
 }
 
 /// Returns the mode that rule CAPTURE (`docs/ir.md` 5.1.7) gives capture `k` of
-/// closure `c`, from the closure body and the source local.
+/// closure `c`, from the views of its environment (`views`: the closure body and
+/// the bodies nested in it) and the source local.
 fn capture_rule(
     p: &Program,
     tys: &TyTable,
     c: &crate::ClosureDecl,
     k: usize,
+    views: &[(BodyId, LocalId)],
 ) -> Option<CaptureMode> {
     let cap = c.captures.get(k)?;
     let src = p.body(c.maker)?.local(cap.source.local)?;
@@ -1829,29 +1891,31 @@ fn capture_rule(
         (Some(LocalKind::Kont(_)), _) | (_, Some(Ty::Cont(..))) => return Some(CaptureMode::Kont),
         _ => {}
     }
-    let body = p.body(c.body)?;
-    let env = body
-        .params
-        .first()
-        .copied()
-        .filter(|&e| body.local_kind(e) == Some(LocalKind::Env))?;
+    if views.is_empty() {
+        return None;
+    }
     let mut moved = false;
     let mut consumed = false;
     let mut borrowed = false;
-    for blk in &body.blocks {
-        let mut f = |u: Use<'_>| match u {
-            Use::Op(Operand::Move(q)) if below_field(q, env, k) => moved = true,
-            Use::Borrow(q) if borrows_var(q, env, k, cap.mode) => borrowed = true,
-            _ => {}
+    for &(bid, env) in views {
+        let Some(body) = p.body(bid) else {
+            continue;
         };
-        for s in &blk.stmts {
-            // A by-value pattern that consumes a linear value takes it, as a move.
-            if let StmtKind::Consume(q) = &s.kind {
-                consumed |= below_field(q, env, k);
+        for blk in &body.blocks {
+            let mut f = |u: Use<'_>| match u {
+                Use::Op(Operand::Move(q)) if below_field(q, env, k) => moved = true,
+                Use::Borrow(q) if borrows_var(q, env, k, cap.mode) => borrowed = true,
+                _ => {}
+            };
+            for s in &blk.stmts {
+                // A by-value pattern that consumes a linear value takes it, as a move.
+                if let StmtKind::Consume(q) = &s.kind {
+                    consumed |= below_field(q, env, k);
+                }
+                stmt_uses(&s.kind, &mut f);
             }
-            stmt_uses(&s.kind, &mut f);
+            term_uses(&blk.term.kind, &mut f);
         }
-        term_uses(&blk.term.kind, &mut f);
     }
     moved |= consumed;
     let copy = source_copy(p, tys, c, k)?;
@@ -1866,7 +1930,15 @@ fn capture_rule(
 
 /// V13 for closure `ci`: a `Kept` capture is never borrowed, its aggregate operand
 /// is a copy of its source cell, and each stated mode is the mode of rule CAPTURE.
-fn kept(p: &Program, tys: &TyTable, ci: ClosureId, c: &crate::ClosureDecl, out: &mut Vec<Broken>) {
+/// `views` are the views of the environment of the closure (`docs/ir.md` 5.1.7).
+fn kept(
+    p: &Program,
+    tys: &TyTable,
+    ci: ClosureId,
+    c: &crate::ClosureDecl,
+    views: &[(BodyId, LocalId)],
+    out: &mut Vec<Broken>,
+) {
     let mut first_agg: Option<BlockId> = None;
     if let Some(maker) = p.body(c.maker) {
         for (bi, blk) in maker.blocks.iter().enumerate() {
@@ -1883,7 +1955,7 @@ fn kept(p: &Program, tys: &TyTable, ci: ClosureId, c: &crate::ClosureDecl, out: 
                     if cap.mode != CaptureMode::Kept {
                         continue;
                     }
-                    let cell_copy = kept_cell(maker, &cap.source)
+                    let cell_copy = kept_cell(p, c.maker, &cap.source)
                         && matches!(ops.get(k), Some(Operand::Copy(pl)) if *pl == cap.source);
                     if !cell_copy {
                         out.push(Broken {
@@ -1897,34 +1969,34 @@ fn kept(p: &Program, tys: &TyTable, ci: ClosureId, c: &crate::ClosureDecl, out: 
             }
         }
     }
-    if let Some(body) = p.body(c.body) {
-        if let Some(env) = body.params.first().copied() {
-            for (bi, blk) in body.blocks.iter().enumerate() {
-                let mut hit = false;
-                let mut f = |u: Use<'_>| {
-                    if let Use::Borrow(q) = u {
-                        hit |= c.captures.iter().enumerate().any(|(k, cap)| {
-                            cap.mode == CaptureMode::Kept
-                                && borrows_var(q, env, k, CaptureMode::Kept)
-                        });
-                    }
-                };
-                for s in &blk.stmts {
-                    stmt_uses(&s.kind, &mut f);
-                }
-                if hit {
-                    out.push(Broken {
-                        rule: Rule::KeptBorrowed,
-                        body: c.body,
-                        block: Some(bid(bi)),
-                        local: Some(env),
+    for &(vb, env) in views {
+        let Some(body) = p.body(vb) else {
+            continue;
+        };
+        for (bi, blk) in body.blocks.iter().enumerate() {
+            let mut hit = false;
+            let mut f = |u: Use<'_>| {
+                if let Use::Borrow(q) = u {
+                    hit |= c.captures.iter().enumerate().any(|(k, cap)| {
+                        cap.mode == CaptureMode::Kept && borrows_var(q, env, k, CaptureMode::Kept)
                     });
                 }
+            };
+            for s in &blk.stmts {
+                stmt_uses(&s.kind, &mut f);
+            }
+            if hit {
+                out.push(Broken {
+                    rule: Rule::KeptBorrowed,
+                    body: vb,
+                    block: Some(bid(bi)),
+                    local: Some(env),
+                });
             }
         }
     }
     for (k, cap) in c.captures.iter().enumerate() {
-        let Some(rule) = capture_rule(p, tys, c, k) else {
+        let Some(rule) = capture_rule(p, tys, c, k, views) else {
             continue;
         };
         if rule != cap.mode {

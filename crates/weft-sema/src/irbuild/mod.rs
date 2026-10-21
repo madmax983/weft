@@ -12,10 +12,11 @@
 //! expression (`docs/ir.md` 5.1.1): `into` writes the value into a place,
 //! `operand` gives an operand, and `place` gives a place.
 //!
-//! The builder grows one construct group at a time (plan stages B3 to B12). A
-//! construct that the builder does not lower yet gives
-//! [`Outcome::Unsupported`] with the construct, never a panic. A body with a `typeck` error gets no IR
-//! ([`Outcome::NoIr`]).
+//! The builder grew one construct group at a time (plan stages B3 to B12),
+//! and it lowers each construct of the language now. A THIR that does not fit
+//! the syntax tree gives [`Outcome::Unsupported`] (a bug), never a panic. A
+//! body with a `typeck` error, or with a move through a reference (W0303),
+//! gets no IR ([`Outcome::NoIr`], `docs/ir.md` 5.36).
 //!
 //! The builder runs the verifier ([`weft_ir::verify::verify_program`]) on the
 //! program that it makes, and keeps each broken rule in [`Built::broken`]. A
@@ -43,9 +44,9 @@ use std::fmt::Write as _;
 
 use weft_ir::verify::{verify_program, Broken};
 use weft_ir::{
-    Block, BlockId, Body, BodyId, BodyKind, CapEnv, CapEnvId, ClosureId, EffectId, ExprId, FnDecl,
-    Intrinsic, LocalDecl, LocalId, LocalKind, Origin, Place, Program, Props, Rvalue, Stmt,
-    StmtKind, TempKind, Term, TermKind, TestDecl, TestId, TyId, TyTable,
+    Block, BlockId, Body, BodyId, BodyKind, CapEnv, CapEnvId, EffectId, ExprId, FnDecl, Intrinsic,
+    LocalDecl, LocalId, LocalKind, Origin, Place, Program, Props, Rvalue, Stmt, StmtKind, TempKind,
+    Term, TermKind, TestDecl, TestId, TyId, TyTable,
 };
 use weft_syntax::ast::{self, Span};
 use weft_syntax::diag::Diagnostic;
@@ -53,25 +54,16 @@ use weft_syntax::diag::Diagnostic;
 use crate::thir::{BindingId, Tables};
 use crate::Analysis;
 
-/// A construct that the builder does not lower yet. Each one names the plan
-/// stage that lowers it ([`Construct::stage`]).
+/// A construct that the builder does not lower.
+///
+/// Since plan stage B12 the builder lowers each construct of the language,
+/// so the only one left is a THIR that does not fit the syntax tree: a bug of
+/// `typeck` or of the builder, never a property of the program. Each one
+/// names the plan stage that owns it ([`Construct::stage`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Construct {
-    /// An assignment whose target is not a place.
-    AssignPlace,
-    /// A move of a value that is not plain data through a reference: W0303
-    /// (`docs/ir.md` 5.36). The verifier rejects the `Move` (V9) and the
-    /// `Copy` that 5.36 names.
-    MoveThroughRef,
-    /// The payload of a variant with more than one field as a place: `o.A`.
-    VariantField,
-    /// A constructor of a struct or of a variant with a payload as a value.
-    ItemName,
-    /// A `handle` or a `scope` in a closure body whose nested bodies name a
-    /// capture or a capability field of the closure: an upvar local cannot
-    /// name a field of the environment.
-    Handle,
-    /// The THIR has no type or no binding for a part of the body.
+    /// The THIR has no type or no binding for a part of the body, or the
+    /// entry does not fit the syntax tree.
     NoThir,
 }
 
@@ -79,30 +71,20 @@ impl Construct {
     /// Returns the name of the construct.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::AssignPlace => "assignment to a value",
-            Self::MoveThroughRef => "move through a reference",
-            Self::VariantField => "variant field",
-            Self::ItemName => "constructor as a value",
-            Self::Handle => "handle or scope in a closure that names a capture",
             Self::NoThir => "no THIR entry",
         }
     }
 
-    /// Returns the plan stage that lowers the construct.
+    /// Returns the plan stage that owns the construct.
     pub const fn stage(self) -> &'static str {
         match self {
-            Self::AssignPlace
-            | Self::MoveThroughRef
-            | Self::VariantField
-            | Self::ItemName
-            | Self::Handle => "B12",
             Self::NoThir => "T3",
         }
     }
 }
 
-/// A body that the builder does not lower yet: the first construct of a later
-/// stage that it finds.
+/// A body that the builder does not lower: the first construct that it
+/// cannot lower.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Unsupported {
     /// The construct.
@@ -111,8 +93,8 @@ pub struct Unsupported {
     pub span: Span,
 }
 
-/// Why a body gets no IR (`docs/ir.md` 5).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Why a body gets no IR (`docs/ir.md` 5, 5.36).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum NoIr {
     /// The body has a `typeck` error: a W01xx diagnostic, or the error type.
     TypeError,
@@ -120,6 +102,25 @@ pub enum NoIr {
     DeclTypes,
     /// The THIR tables of the body have a conflict.
     Conflict,
+    /// The body moves a value that is not plain data through a reference:
+    /// W0303 of the old lowering (`docs/ir.md` 5.36).
+    MoveThroughRef,
+    /// The body names the payload of a variant with no field or with more
+    /// than one field as a place: `o.A` (`docs/ir.md` 5.8, 5.36).
+    VariantPayload,
+}
+
+impl NoIr {
+    /// Returns why the body gets no IR, as text.
+    pub const fn reason(self) -> &'static str {
+        match self {
+            Self::TypeError => "a type error",
+            Self::DeclTypes => "the declarations have no final types",
+            Self::Conflict => "a conflict in the THIR tables",
+            Self::MoveThroughRef => "W0303, a move through a reference",
+            Self::VariantPayload => "a variant payload of no field or of more than one field",
+        }
+    }
 }
 
 /// What the builder made of one body of the analysis.
@@ -181,6 +182,17 @@ impl Built {
         }
         (built, none, unsupported)
     }
+
+    /// Returns the count of bodies with no IR for each reason.
+    pub fn no_ir_counts(&self) -> BTreeMap<NoIr, usize> {
+        let mut out = BTreeMap::new();
+        for e in &self.entries {
+            if let Outcome::NoIr(n) = e.outcome {
+                *out.entry(n).or_insert(0) += 1;
+            }
+        }
+        out
+    }
 }
 
 /// Returns the text of the IR of `b`.
@@ -214,12 +226,7 @@ pub fn text(b: &Built, at: &dyn Fn(usize, Span) -> String) -> String {
                 );
             }
             Outcome::NoIr(n) => {
-                let why = match n {
-                    NoIr::TypeError => "a type error",
-                    NoIr::DeclTypes => "the declarations have no final types",
-                    NoIr::Conflict => "a conflict in the THIR tables",
-                };
-                let _ = writeln!(s, "// {}: no IR: {why}", e.name);
+                let _ = writeln!(s, "// {}: no IR: {}", e.name, n.reason());
             }
         }
     }
@@ -409,13 +416,16 @@ fn body_outcome(
             }
             Outcome::Built(id)
         }
-        Err(u) => {
+        Err(stop) => {
             out.program.cap_envs.truncate(envs_before);
             if out.program.fns.len() > fns_before {
                 out.program.fns.truncate(fns_before);
                 out.fns.retain(|_, v| v.index() < fns_before);
             }
-            Outcome::Unsupported(u)
+            match stop {
+                Stop::Unsupported(u) => Outcome::Unsupported(u),
+                Stop::NoIr(n) => Outcome::NoIr(n),
+            }
         }
     }
 }
@@ -511,13 +521,27 @@ fn is_sim(a: &Analysis, m: crate::ids::ModId) -> bool {
 /// The return slot `_0`.
 const RET: LocalId = LocalId(0);
 
-/// A result of the builder: a value, or the construct that the builder does
-/// not lower yet.
-type R<T> = Result<T, Unsupported>;
+/// Why the builder stops on a body: a construct that it does not lower, or
+/// a reason for no IR (`docs/ir.md` 5.36).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Stop {
+    /// A construct that the builder does not lower.
+    Unsupported(Unsupported),
+    /// The body gets no IR.
+    NoIr(NoIr),
+}
+
+/// A result of the builder: a value, or why the builder stops on the body.
+type R<T> = Result<T, Stop>;
 
 /// Returns the result for construct `c` at `span`.
 const fn unsupported<T>(c: Construct, span: Span) -> R<T> {
-    Err(Unsupported { construct: c, span })
+    Err(Stop::Unsupported(Unsupported { construct: c, span }))
+}
+
+/// Returns the result for a body with no IR for reason `n`.
+const fn no_ir<T>(n: NoIr) -> R<T> {
+    Err(Stop::NoIr(n))
 }
 
 /// What a scope is (`docs/ir.md` 5.1.2).
@@ -698,8 +722,10 @@ struct Builder<'a> {
     body_id: BodyId,
     /// The captures of a closure body (`closure.rs`); `None` for another body.
     closure: Option<Box<closure::Captures>>,
-    /// The closures that this body makes.
-    made: Vec<ClosureId>,
+    /// The views of the environment of a closure around this body: each
+    /// upvar local of an environment, with the fields of the environment
+    /// (`upvar.rs`, `docs/ir.md` 5.1.7).
+    views: HashMap<LocalId, upvar::EnvFields>,
 }
 
 impl<'a> Builder<'a> {
@@ -745,7 +771,7 @@ impl<'a> Builder<'a> {
             unwinds: HashMap::new(),
             body_id: BodyId(0),
             closure: None,
-            made: Vec::new(),
+            views: HashMap::new(),
         };
         let props = b.props(ret);
         b.locals.push(LocalDecl {

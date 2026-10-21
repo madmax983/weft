@@ -14,20 +14,27 @@
 //! upvar local of a site local at the first use.
 //!
 //! An upvar local names a whole local of the site. A capture of a closure
-//! body (`env.k`) is not a whole local: a `handle` or a `scope` in a closure
-//! body that names a capture or a capability field of the closure is
-//! [`Construct::Handle`] (plan stage B12).
+//! body (`env.k`) is not a whole local, so a nested body in a closure body
+//! names the captures through an upvar local of the environment: an
+//! *environment view* (`docs/ir.md` 5.1.7, plan stage B12). The capture is
+//! `u.k` there, as it is `env.k` in the closure body. The closure reads the
+//! views when it gives the capture modes (`closure.rs`).
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
-use weft_ir::{EffectId, LocalDecl, LocalId, LocalKind, Origin, Place, Props, TyId};
+use weft_ir::{EffectId, LocalDecl, LocalId, LocalKind, Origin, Place, Proj, Props, TyId};
 use weft_syntax::ast::{Expr, Span};
 
 use super::closure::free_bindings;
 use super::{unsupported, Builder, Construct, R};
 use crate::thir::BindingId;
 
-/// A local of the site that a nested body can name.
+/// The type and the properties of each capture of a closure, in the order
+/// of the fields of its environment.
+pub(super) type EnvFields = Rc<[(TyId, Props)]>;
+
+/// A local of the site that a nested body can name, or a field of it.
 #[derive(Clone, Debug)]
 pub(super) struct SiteVar {
     /// The local in the site.
@@ -40,6 +47,12 @@ pub(super) struct SiteVar {
     props: Props,
     /// Where it comes from.
     origin: Origin,
+    /// The path from the local to the variable: empty, or the field `k` of
+    /// an environment (a capture or a capability field of a closure).
+    proj: Vec<Proj>,
+    /// The fields of the environment if the local is an environment or a
+    /// view of one.
+    fields: Option<EnvFields>,
 }
 
 /// The locals and the capabilities of the site that a nested body can name.
@@ -62,18 +75,31 @@ impl Site {
 }
 
 impl Builder<'_> {
-    /// Returns the upvar local of binding `b` of the site, if the site names
-    /// `b`. The builder makes it at the first use.
-    pub(super) fn site_var(&mut self, b: BindingId) -> Option<LocalId> {
+    /// Returns the place of binding `b` of the site, if the site names `b`:
+    /// its upvar local, or the field of the view of the environment
+    /// (`u.k`). The builder makes the upvar local at the first use.
+    pub(super) fn site_var(&mut self, b: BindingId) -> Option<Place> {
         let v = self.site.as_ref()?.vars.get(&b)?.clone();
-        let l = self.upvar(&v);
-        self.vars.insert(b, l);
-        Some(l)
+        let p = self.upvar(&v);
+        if p.is_local() {
+            self.vars.insert(b, p.local);
+        }
+        Some(p)
     }
 
-    /// Returns the upvar local of site local `v`. The builder makes it at
-    /// the first use: it has a cell at the entry, and no `Live` or `Dead`.
-    pub(super) fn upvar(&mut self, v: &SiteVar) -> LocalId {
+    /// Returns the place of site variable `v` in this body: its upvar local,
+    /// with the path of `v`. The builder makes the upvar local at the first
+    /// use: it has a cell at the entry, and no `Live` or `Dead`.
+    pub(super) fn upvar(&mut self, v: &SiteVar) -> Place {
+        let local = self.upvar_local(v);
+        Place {
+            local,
+            proj: v.proj.clone(),
+        }
+    }
+
+    /// Returns the upvar local of the local of site variable `v`.
+    fn upvar_local(&mut self, v: &SiteVar) -> LocalId {
         if let Some(&l) = self.site.as_ref().and_then(|s| s.upvars.get(&v.local)) {
             return l;
         }
@@ -88,7 +114,28 @@ impl Builder<'_> {
         if let Some(s) = self.site.as_mut() {
             s.upvars.insert(v.local, l);
         }
+        if let Some(f) = &v.fields {
+            self.views.insert(l, Rc::clone(f));
+        }
         l
+    }
+
+    /// Returns the fields of the environment if local `l` is the
+    /// environment of this closure body or a view of an environment.
+    pub(super) fn env_fields(&self, l: LocalId) -> Option<EnvFields> {
+        if let Some(c) = self.closure.as_ref().filter(|c| c.env == l) {
+            return Some(Rc::clone(&c.fields));
+        }
+        self.views.get(&l).cloned()
+    }
+
+    /// Returns the type and the properties of the capture that place `p`
+    /// names, if `p` is a whole capture `env.k` or `u.k`.
+    pub(super) fn capture_part(&self, p: &Place) -> Option<(TyId, Props)> {
+        let [Proj::Field(k)] = p.proj.as_slice() else {
+            return None;
+        };
+        self.env_fields(p.local)?.get(k.index()).copied()
     }
 
     /// Returns the site of the bodies of `handle` or `scope` expression `e`:
@@ -110,11 +157,15 @@ impl Builder<'_> {
         Ok(site)
     }
 
-    /// Returns the site local of place `p` of this body. Only a whole local
-    /// can be the cell of an upvar local.
+    /// Returns the site variable of place `p` of this body: a whole local,
+    /// or a field `k` of the environment or of a view of it (a capture or a
+    /// capability field: `env.k`, `u.k`). The cell of the upvar local is the
+    /// local; the nested body names the field through it.
     fn site_local(&self, p: &Place, span: Span) -> R<SiteVar> {
-        if !p.is_local() {
-            return unsupported(Construct::Handle, span);
+        let fields = self.env_fields(p.local);
+        let whole_field = matches!(p.proj.as_slice(), [Proj::Field(_)]) && fields.is_some();
+        if !p.is_local() && !whole_field {
+            return unsupported(Construct::NoThir, span);
         }
         let Some(d) = self.locals.get(p.local.index()) else {
             return unsupported(Construct::NoThir, span);
@@ -125,6 +176,8 @@ impl Builder<'_> {
             name: d.name.clone(),
             props: d.props,
             origin: d.origin,
+            proj: p.proj.clone(),
+            fields,
         })
     }
 }

@@ -185,9 +185,14 @@ fn ir_prints_the_core_ir() {
         scopes.text
     );
     assert!(scopes.text.contains("scope_wait _1"), "{}", scopes.text);
-    let later = cmd(&["ir", "tests/programs/12_aliasing.wf", "steal"]);
-    assert_eq!(later.code, 1);
-    assert!(later.stderr.contains("(stage B12)"), "{}", later.stderr);
+    // A move through a reference (W0303) gives the body no IR (ir 5.36).
+    let moved = cmd(&["ir", "tests/programs/12_aliasing.wf", "steal"]);
+    assert_eq!(moved.code, 1);
+    assert!(
+        moved.stderr.contains("`steal` has no IR: W0303"),
+        "{}",
+        moved.stderr
+    );
     let missing = cmd(&["ir", file, "nope"]);
     assert_eq!(missing.code, 1);
     assert!(

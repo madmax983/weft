@@ -15,7 +15,7 @@ use weft_ir::{
     AggKind, Body, BodyId, Callee, CapArgs, CapOperand, CaptureMode, ClosureDecl, Const, DerefKind,
     LocalId, LocalKind, Operand, Place, Proj, Rvalue, StmtKind, TempKind, TermKind,
 };
-use weft_sema::irbuild::{self, Built, Outcome};
+use weft_sema::irbuild::{self, Built, NoIr, Outcome};
 use weft_sema::{analyze_source, Analysis, Options};
 use weft_syntax::ast::StmtKind as AstStmt;
 
@@ -439,19 +439,46 @@ fn a_returned_reference_to_a_local_ends_the_local_first() {
 }
 
 #[test]
-fn a_construct_of_a_later_stage_is_unsupported() {
-    let (_, b) = build("struct S { v: Vec<u64> }\nfn f(r: &S) -> Vec<u64> {\n    r.v\n}\n");
+fn a_move_through_a_reference_gives_no_ir() {
+    // `docs/ir.md` 5.36: W0303 of the old lowering stays the error; the body
+    // gets no IR.
+    let (a, b) = build("struct S { v: Vec<u64> }\nfn f(r: &S) -> Vec<u64> {\n    r.v\n}\n");
+    assert!(a.diags.iter().any(|d| d.code.as_str() == "W0303"));
     let e = b
         .entries
         .iter()
         .find(|e| e.name == "f")
         .unwrap_or_else(|| panic!("no `f`"));
-    match &e.outcome {
-        Outcome::Unsupported(u) => {
-            assert_eq!(u.construct.name(), "move through a reference");
-            assert_eq!(u.construct.stage(), "B12");
-        }
-        other => panic!("a move through a reference is for stage B12: {other:?}"),
+    assert_eq!(e.outcome, Outcome::NoIr(NoIr::MoveThroughRef));
+    let text = irbuild::text(&b, &|_, s| s.lo.to_string());
+    assert!(text.contains("// f: no IR: W0303"), "{text}");
+}
+
+#[test]
+fn a_payload_of_two_fields_gives_no_ir() {
+    let (_, b) = build("enum E { A(u64, u64), B(u64) }\nfn f(e: E) -> u64 {\n    let p = e.A\n    p.0\n}\nfn g(e: E) -> u64 { e.B }\n");
+    let outcome = |n: &str| {
+        b.entries
+            .iter()
+            .find(|e| e.name == n)
+            .map(|e| e.outcome.clone())
+    };
+    assert_eq!(outcome("f"), Some(Outcome::NoIr(NoIr::VariantPayload)));
+    assert!(matches!(outcome("g"), Some(Outcome::Built(_))));
+}
+
+#[test]
+fn a_constructor_as_a_value_and_an_assignment_to_a_value_are_type_errors() {
+    let (_, b) = build(
+        "fn one() -> u64 { 1 }\nfn f() { one() = 2 }\nfn g() -> Option<u64> {\n    let s = Some\n    s(1)\n}\n",
+    );
+    for n in ["f", "g"] {
+        let e = b.entries.iter().find(|e| e.name == n);
+        assert_eq!(
+            e.map(|e| e.outcome.clone()),
+            Some(Outcome::NoIr(NoIr::TypeError)),
+            "{n}"
+        );
     }
 }
 
@@ -503,6 +530,7 @@ fn the_builder_is_total_on_the_corpus() {
     }
     eprintln!("corpus: {built} bodies built, {no_ir} with no IR, unsupported: {unsupported:?}");
     assert!(built > 0);
+    assert!(unsupported.is_empty(), "{unsupported:?}");
 }
 
 /// Returns the golden program `name` and its IR.
@@ -2979,4 +3007,265 @@ fn print_borrows_a_local_that_holds_a_once_closure() {
         .filter(|s| matches!(s, StmtKind::Assign(_, Rvalue::Ref(p)) if *p == Place::local(f)))
         .count();
     assert_eq!(borrows, 2);
+}
+
+#[test]
+fn golden_scope_in_closure() {
+    golden("scope_in_closure");
+}
+
+#[test]
+fn golden_handle_in_closure() {
+    golden("handle_in_closure");
+}
+
+#[test]
+fn golden_nested_in_closure() {
+    golden("nested_in_closure");
+}
+
+#[test]
+fn golden_no_ir() {
+    golden("no_ir");
+}
+
+/// Returns the mode of the capture of closure `c` whose source is the local
+/// `name` of the body `maker` of `b`.
+fn mode_of(b: &Built, c: &ClosureDecl, maker: &str, name: &str) -> CaptureMode {
+    let l = named(body(b, maker), name);
+    c.captures
+        .iter()
+        .find(|x| x.source == Place::local(l))
+        .map_or_else(|| panic!("no capture of `{name}`"), |x| x.mode)
+}
+
+/// Returns the upvar locals of the environment in body `body` of `b`: each
+/// upvar local whose chain ends at the environment of a closure.
+fn env_views(b: &Built, body: &Body) -> Vec<LocalId> {
+    let mut out = Vec::new();
+    for (i, d) in body.locals.iter().enumerate() {
+        let LocalKind::Upvar(mut src) = d.kind else {
+            continue;
+        };
+        let mut at = body.parent;
+        while let Some(pb) = at.and_then(|x| b.program.body(x)) {
+            match pb.locals[src.index()].kind {
+                LocalKind::Env => {
+                    out.push(LocalId(u32::try_from(i).unwrap_or(u32::MAX)));
+                    break;
+                }
+                LocalKind::Upvar(s) => {
+                    src = s;
+                    at = pb.parent;
+                }
+                _ => break,
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn rule_capture_reads_the_scope_body_inside_a_closure() {
+    let b = golden_built("scope_in_closure");
+    let c = &b.program.closures[0];
+    assert_eq!(mode_of(&b, c, "main", "v"), CaptureMode::ByRef);
+    assert_eq!(mode_of(&b, c, "main", "w"), CaptureMode::ByMove);
+    assert_eq!(mode_of(&b, c, "main", "count"), CaptureMode::Kept);
+    assert!(c.once, "the closure moves `w`");
+    let scope = one_scope_body(&b);
+    let views = env_views(&b, scope);
+    assert_eq!(views.len(), 1, "one view of the environment");
+    // The borrow of `v` goes through the reference of the `ByRef` capture.
+    let k = c
+        .captures
+        .iter()
+        .position(|x| x.mode == CaptureMode::ByRef)
+        .unwrap_or_else(|| panic!("no ByRef capture"));
+    let field = u32::try_from(k).unwrap_or(u32::MAX);
+    let through = Place {
+        local: views[0],
+        proj: vec![
+            Proj::Field(weft_ir::FieldIdx(field)),
+            Proj::Deref(DerefKind::Ref),
+        ],
+    };
+    assert!(
+        stmts(scope)
+            .iter()
+            .any(|s| matches!(s, StmtKind::Assign(_, Rvalue::Ref(p)) if *p == through)),
+        "the scope body borrows `(*u.k)`"
+    );
+}
+
+#[test]
+fn rule_capture_reads_the_handled_body_and_the_clause_inside_a_closure() {
+    let b = golden_built("handle_in_closure");
+    let c = &b.program.closures[0];
+    assert_eq!(mode_of(&b, c, "main", "l"), CaptureMode::ByMove);
+    assert_eq!(mode_of(&b, c, "main", "n"), CaptureMode::Kept);
+    assert_eq!(mode_of(&b, c, "main", "v"), CaptureMode::ByRef);
+    assert!(c.once, "the closure moves the linear `l`");
+    for body in &b.program.bodies {
+        if matches!(
+            body.kind,
+            weft_ir::BodyKind::Handled(_) | weft_ir::BodyKind::Clause(..)
+        ) {
+            assert_eq!(env_views(&b, body).len(), 1, "{:?}", body.kind);
+        }
+    }
+}
+
+#[test]
+fn a_closure_in_a_nested_body_captures_through_the_view() {
+    let b = golden_built("nested_in_closure");
+    // c0 is `f`; c1 is `h`, made in the scope body inside `f`.
+    let h = &b.program.closures[1];
+    let maker = b
+        .program
+        .body(h.maker)
+        .unwrap_or_else(|| panic!("no maker"));
+    assert!(matches!(maker.kind, weft_ir::BodyKind::Scope(_)));
+    let views = env_views(&b, maker);
+    assert_eq!(views.len(), 1);
+    assert!(
+        h.captures.iter().any(|x| x.source.local == views[0]
+            && x.source.proj.get(1) == Some(&Proj::Deref(DerefKind::Ref))),
+        "`h` captures `v` through `(*u.k)`: {:?}",
+        h.captures
+    );
+    // The handled body performs `say` through the `Cap` field of `f`.
+    let handled = b
+        .program
+        .bodies
+        .iter()
+        .find(|x| {
+            matches!(x.kind, weft_ir::BodyKind::Handled(_))
+                && x.parent
+                    .and_then(|p| b.program.body(p))
+                    .is_some_and(|p| matches!(p.kind, weft_ir::BodyKind::Closure(_)))
+        })
+        .unwrap_or_else(|| panic!("no handled body in the closure"));
+    let views = env_views(&b, handled);
+    assert!(
+        terms(handled).iter().any(|k| matches!(
+            k,
+            TermKind::Perform { cap: CapOperand::Local(p), .. }
+                if views.contains(&p.local) && !p.is_local()
+        )),
+        "the handled body performs through `u.k`"
+    );
+}
+
+#[test]
+fn v13_a_borrow_of_a_kept_capture_in_a_nested_body() {
+    let mut b = golden_built("handle_in_closure");
+    let c = b.program.closures[0].clone();
+    let k = c
+        .captures
+        .iter()
+        .position(|x| x.mode == CaptureMode::Kept)
+        .unwrap_or_else(|| panic!("no Kept capture"));
+    let field = u32::try_from(k).unwrap_or(u32::MAX);
+    // Borrow `u.k` of the kept `n` in the clause: rule CAPTURE gives `ByRef`.
+    let ci = b
+        .program
+        .bodies
+        .iter()
+        .position(|x| matches!(x.kind, weft_ir::BodyKind::Clause(..)))
+        .unwrap_or_else(|| panic!("no clause"));
+    let clause = b.program.bodies[ci].clone();
+    let view = env_views(&b, &clause)[0];
+    let u64_ty = b.tys.intern(weft_ir::Ty::Int(weft_ir::IntTy::U64));
+    let rty = b.tys.intern(weft_ir::Ty::Ref(u64_ty));
+    let clause = &mut b.program.bodies[ci];
+    let t = LocalId(u32::try_from(clause.locals.len()).unwrap_or(u32::MAX));
+    let mut d = clause.locals[0].clone();
+    d.ty = rty;
+    d.kind = LocalKind::Temp(TempKind::Borrowed);
+    d.name = None;
+    clause.locals.push(d);
+    let at = Place {
+        local: view,
+        proj: vec![Proj::Field(weft_ir::FieldIdx(field))],
+    };
+    let origin = clause.origin;
+    let entry = clause.entry.index();
+    let s = |kind| weft_ir::Stmt { kind, origin };
+    clause.blocks[entry].stmts.insert(0, s(StmtKind::Live(t)));
+    clause.blocks[entry]
+        .stmts
+        .insert(1, s(StmtKind::Assign(Place::local(t), Rvalue::Ref(at))));
+    clause.blocks[entry].stmts.insert(2, s(StmtKind::Dead(t)));
+    let broken = weft_ir::verify::verify_program(&b.program, &b.tys);
+    assert!(
+        broken
+            .iter()
+            .any(|x| x.rule == weft_ir::verify::Rule::KeptBorrowed),
+        "{broken:#?}"
+    );
+    assert!(
+        broken.iter().any(|x| x.rule
+            == weft_ir::verify::Rule::CaptureMode {
+                stated: CaptureMode::Kept,
+                rule: CaptureMode::ByRef,
+            }),
+        "{broken:#?}"
+    );
+}
+
+#[test]
+fn v14_a_move_below_a_view_in_a_closure_that_is_not_once() {
+    let mut b = golden_built("scope_in_closure");
+    b.program.closures[0].once = false;
+    let broken = weft_ir::verify::verify_program(&b.program, &b.tys);
+    let scope = b
+        .program
+        .bodies
+        .iter()
+        .position(|x| matches!(x.kind, weft_ir::BodyKind::Scope(_)))
+        .unwrap_or_else(|| panic!("no scope body"));
+    assert!(!broken.is_empty());
+    assert!(
+        broken
+            .iter()
+            .all(|x| x.rule == weft_ir::verify::Rule::EnvMove && x.body.index() == scope),
+        "{broken:#?}"
+    );
+}
+
+#[test]
+fn a_store_into_a_capture_in_a_nested_body_drops_only_behind_the_reference() {
+    // `l` is linear: a store into it drops the old value. Through a `ByRef`
+    // capture the store is behind a reference, so `Drop((*u.0))` comes
+    // first (V17). With a move of `l` in the closure, the capture is
+    // `ByMove` and the store has no `Drop`.
+    for (moved, src) in [
+        (false, "linear struct Lk { id: u64 }\nfn main() / async {\n    let l = Lk { id: 1 }\n    let f = || { scope { s => l = Lk { id: 2 } } }\n    f()\n    let Lk(i) = l\n}\n"),
+        (true, "linear struct Lk { id: u64 }\nfn eat(l: Lk) { let Lk(i) = l }\nfn main() / async {\n    let l = Lk { id: 1 }\n    let f = || { scope { s => l = Lk { id: 2 } }\n eat(l) }\n    f()\n}\n"),
+    ] {
+        let (_, b) = build(src);
+        assert!(b.broken.is_empty(), "{}", rules(&b));
+        let scope = one_scope_body(&b);
+        let views = env_views(&b, scope);
+        assert_eq!(views.len(), 1);
+        let drops: Vec<&Place> = stmts(scope)
+            .into_iter()
+            .filter_map(|s| match s {
+                StmtKind::Drop(p) => Some(p),
+                _ => None,
+            })
+            .collect();
+        if moved {
+            assert!(drops.is_empty(), "{drops:?}");
+            assert_eq!(b.program.closures[0].captures[0].mode, CaptureMode::ByMove);
+        } else {
+            let want = Place {
+                local: views[0],
+                proj: vec![Proj::Field(weft_ir::FieldIdx(0)), Proj::Deref(DerefKind::Ref)],
+            };
+            assert_eq!(drops, vec![&want]);
+            assert_eq!(b.program.closures[0].captures[0].mode, CaptureMode::ByRef);
+        }
+    }
 }

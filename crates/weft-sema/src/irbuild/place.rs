@@ -13,7 +13,7 @@
 use weft_ir::{FieldIdx, LocalId, Operand, Place, Proj, Rvalue, StmtKind, TempKind, Ty, TyId};
 use weft_syntax::ast::{Expr, ExprKind};
 
-use super::{unsupported, Builder, Construct, R};
+use super::{no_ir, unsupported, Builder, Construct, NoIr, R};
 use crate::thir::{self, Res};
 
 /// Returns the projection of an implicit dereference of the THIR.
@@ -150,6 +150,8 @@ impl Builder<'_> {
     ///
     /// The value at run time can be another variant: the interpreter stops
     /// with a fault there. The checker follows only the path of the variant.
+    /// A variant with no field or with more than one field has no payload
+    /// place of the type of `e`: the body gets no IR (`docs/ir.md` 5.8).
     fn variant_field(&mut self, base: &Expr, v: u32, e: &Expr) -> R<Place> {
         let mut p = self.place_or_temp(base)?;
         let ty = self.value_ty(base)?;
@@ -163,7 +165,7 @@ impl Builder<'_> {
             _ => false,
         };
         if !one {
-            return unsupported(Construct::VariantField, e.span);
+            return no_ir(NoIr::VariantPayload);
         }
         let origin = self.origin(e.span, Some(e.id));
         let uty = self.tys.intern(Ty::Int(weft_ir::IntTy::Usize));
@@ -224,17 +226,16 @@ impl Builder<'_> {
         Ok(t)
     }
 
-    /// Returns the operand that reads place `p` of type `ty` (the type of
-    /// `e`): a copy of plain data, else a move. A local that holds a `once`
+    /// Returns the operand that reads place `p` of type `ty`: a copy of plain data, else a move. A local that holds a `once`
     /// closure is not plain data (`docs/ir.md` 5.21). A move through a
-    /// reference is W0303 (`docs/ir.md` 5.36): the builder does not lower it
-    /// yet.
-    pub(super) fn read_place(&self, p: Place, ty: TyId, e: &Expr) -> R<Operand> {
+    /// reference is W0303 of the old lowering: the body gets no IR
+    /// (`docs/ir.md` 5.36).
+    pub(super) fn read_place(&self, p: Place, ty: TyId) -> R<Operand> {
         if self.copies(&p, ty) {
             return Ok(Operand::Copy(p));
         }
         if p.proj.contains(&Proj::Deref(weft_ir::DerefKind::Ref)) {
-            return unsupported(Construct::MoveThroughRef, e.span);
+            return no_ir(NoIr::MoveThroughRef);
         }
         Ok(Operand::Move(p))
     }

@@ -56,9 +56,9 @@ impl Builder<'_> {
         }
         let v = self.site.as_ref().and_then(|s| s.cap(e)).cloned();
         if let Some(v) = v {
-            let l = self.upvar(&v);
-            self.caps.push((e, Place::local(l)));
-            return CapOperand::Local(Place::local(l));
+            let p = self.upvar(&v);
+            self.caps.push((e, p.clone()));
+            return CapOperand::Local(p);
         }
         CapOperand::Row(e)
     }

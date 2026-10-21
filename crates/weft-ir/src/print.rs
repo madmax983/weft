@@ -541,11 +541,30 @@ impl<'a> Printer<'a> {
 
     /// Returns the effect of a capability place: from the kind or the type of its
     /// local if the place is a whole local, else from the capability environment of
-    /// the body (a `Cap` field of a closure environment).
+    /// the closure body (a `Cap` field of a closure environment, also through a view
+    /// of the environment in a nested body, `docs/ir.md` 5.1.7).
     fn cap_effect(&self, b: &Body, p: &Place) -> Option<EffectId> {
         if !p.is_local() {
-            let env = self.p.cap_envs.get(b.cap_env.index())?;
-            return env.adds.iter().find(|(_, q)| q == p).map(|(e, _)| *e);
+            // Walk the chain of upvar locals to the environment local.
+            let (mut body, mut l) = (b, p.local);
+            for _ in 0..=self.p.bodies.len() {
+                match body.local(l)?.kind {
+                    LocalKind::Env => {
+                        let env = self.p.cap_envs.get(body.cap_env.index())?;
+                        let q = Place {
+                            local: l,
+                            proj: p.proj.clone(),
+                        };
+                        return env.adds.iter().find(|(_, x)| *x == q).map(|(e, _)| *e);
+                    }
+                    LocalKind::Upvar(src) => {
+                        body = self.p.body(body.parent?)?;
+                        l = src;
+                    }
+                    _ => return None,
+                }
+            }
+            return None;
         }
         let d = b.local(p.local)?;
         if let LocalKind::Cap(e) = d.kind {

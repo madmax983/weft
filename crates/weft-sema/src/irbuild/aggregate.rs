@@ -137,14 +137,15 @@ impl Builder<'_> {
     /// with no payload is an aggregate with no operand (`None`). A function
     /// item as a value is a constant with its type arguments (`docs/ir.md`
     /// 5.23): `dest = Use(Const::Fn(f, tys))`. A constructor as a value is
-    /// for plan stage B12.
+    /// a type error of `typeck` (W0101, W0104), so the THIR never has one
+    /// here (`docs/ir.md` 5.23).
     pub(super) fn item_into(&mut self, e: &Expr, dest: Place) -> R<()> {
         let t = self.t;
         match t.res.get(&e.id) {
             Some(Res::Variant { variant, .. }) => {
                 let ty = self.ty(e)?;
                 if !self.unit_variant(ty, *variant) {
-                    return unsupported(Construct::ItemName, e.span);
+                    return unsupported(Construct::NoThir, e.span);
                 }
                 self.aggregate_into(e, AggKind::Variant(ty, VariantIdx(*variant)), &[], dest)
             }
@@ -155,7 +156,6 @@ impl Builder<'_> {
                 self.assign(dest, Rvalue::Use(Operand::Const(c)), origin);
                 Ok(())
             }
-            Some(Res::Struct(_)) => unsupported(Construct::ItemName, e.span),
             _ => unsupported(Construct::NoThir, e.span),
         }
     }
