@@ -1,0 +1,111 @@
+fn f0 vec_elem(Vec<u64>, usize) -> u64: b0
+fn f1 array_elem([u64; 3]) -> u64: b1
+fn f2 through_ref(&Vec<u64>, usize) -> u64: b2
+fn f3 nested(Vec<Vec<u64>>, usize, usize) -> u64: b3
+fn f4 all(Vec<u64>) -> u64: b4
+fn f5 field_elem(&W, usize) -> u64: b5
+cap_env e0
+
+body b0: fn vec_elem; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: Vec<u64> (Param(0) `v`)
+  _2: usize (Param(1) `i`)
+  _3: usize (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = copy _2
+    Bounds(_1, copy _3)
+    _0 = copy _1[_3]
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn array_elem; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: [u64; 3] (Param(0) `a`)
+  _2: usize (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 2usize
+    Bounds(_1, copy _2)
+    _0 = copy _1[_2]
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn through_ref; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: &Vec<u64> (Param(0) `v`)
+  _2: usize (Param(1) `i`)
+  _3: usize (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = copy _2
+    Bounds((*_1), copy _3)
+    _0 = copy (*_1)[_3]
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn nested; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: Vec<Vec<u64>> (Param(0) `m`)
+  _2: usize (Param(1) `i`)
+  _3: usize (Param(2) `j`)
+  _4: usize (Temp(Operand))
+  _5: usize (Temp(Operand))
+  bb0:
+    Live(_4)
+    _4 = copy _2
+    Bounds(_1, copy _4)
+    Live(_5)
+    _5 = copy _3
+    Bounds(_1[_4], copy _5)
+    _0 = copy _1[_4][_5]
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: fn all; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: Vec<u64> (Param(0) `v`)
+  _2: &[u64] (User `s`)
+  bb0:
+    Live(_2)
+    _2 = &_1[]
+    _0 = const 0u64
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b5: fn field_elem; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: &W (Param(0) `w`)
+  _2: usize (Param(1) `i`)
+  _3: usize (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = Add<usize>(copy _2, const 1usize)
+    Bounds((*_1).0, copy _3)
+    _0 = copy (*_1).0[_3]
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit

@@ -11,7 +11,9 @@
 
 use std::path::{Path, PathBuf};
 
-use weft_ir::{Body, LocalId, LocalKind, Operand, Place, Rvalue, StmtKind, TempKind, TermKind};
+use weft_ir::{
+    Body, DerefKind, LocalId, LocalKind, Operand, Place, Proj, Rvalue, StmtKind, TempKind, TermKind,
+};
 use weft_sema::irbuild::{self, Built, Outcome};
 use weft_sema::{analyze_source, Analysis, Options};
 use weft_syntax::ast::StmtKind as AstStmt;
@@ -96,6 +98,36 @@ fn golden_ret_ref() {
 #[test]
 fn golden_block_tail() {
     golden("block_tail");
+}
+
+#[test]
+fn golden_places() {
+    golden("places");
+}
+
+#[test]
+fn golden_deref_rc_box() {
+    golden("deref_rc_box");
+}
+
+#[test]
+fn golden_index_bounds() {
+    golden("index_bounds");
+}
+
+#[test]
+fn golden_compound() {
+    golden("compound");
+}
+
+#[test]
+fn golden_borrow_value() {
+    golden("borrow_value");
+}
+
+#[test]
+fn golden_assign_through() {
+    golden("assign_through");
 }
 
 /// Returns the built body of the function or test `name`.
@@ -292,4 +324,176 @@ fn the_builder_is_total_on_the_corpus() {
     }
     eprintln!("corpus: {built} bodies built, {no_ir} with no IR, unsupported: {unsupported:?}");
     assert!(built > 0);
+}
+
+/// Returns the golden program `name` and its IR.
+fn golden_built(name: &str) -> Built {
+    let wf = golden_dir().join(format!("{name}.wf"));
+    let src = std::fs::read_to_string(&wf).unwrap_or_else(|e| panic!("read {}: {e}", wf.display()));
+    let (_, b) = build(&src);
+    assert!(b.broken.is_empty(), "{name}: {}", rules(&b));
+    b
+}
+
+/// Returns the first `Deref` kind of each place of the statements of `body`.
+fn derefs(body: &Body) -> Vec<DerefKind> {
+    let mut v = Vec::new();
+    for s in stmts(body) {
+        let mut add = |p: &Place| {
+            v.extend(p.proj.iter().filter_map(|x| match x {
+                Proj::Deref(k) => Some(*k),
+                _ => None,
+            }));
+        };
+        match s {
+            StmtKind::Assign(p, rv) => {
+                add(p);
+                match rv {
+                    Rvalue::Use(Operand::Copy(q) | Operand::Move(q)) | Rvalue::Ref(q) => add(q),
+                    Rvalue::Binary(_, _, a, b) => {
+                        for o in [a, b] {
+                            if let Some(q) = o.place() {
+                                add(q);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            StmtKind::Drop(p) | StmtKind::Mention(p) | StmtKind::Bounds(p, _) => add(p),
+            _ => {}
+        }
+    }
+    v
+}
+
+#[test]
+fn a_field_through_a_pointer_is_a_deref_projection() {
+    let b = golden_built("deref_rc_box");
+    assert_eq!(derefs(body(&b, "by_ref")), vec![DerefKind::Ref]);
+    assert_eq!(derefs(body(&b, "by_box")), vec![DerefKind::Box]);
+    assert_eq!(derefs(body(&b, "by_rc")), vec![DerefKind::Rc]);
+    assert_eq!(
+        derefs(body(&b, "ref_ref")),
+        vec![DerefKind::Ref, DerefKind::Ref]
+    );
+    assert_eq!(
+        derefs(body(&b, "ref_box")),
+        vec![DerefKind::Ref, DerefKind::Box]
+    );
+}
+
+#[test]
+fn a_store_behind_a_pointer_drops_only_a_maybe_linear_old_value() {
+    let b = golden_built("assign_through");
+    for (name, drop) in [
+        ("set_field", false),
+        ("set_through", false),
+        ("set_linear", true),
+        ("set_generic", true),
+        ("set_box", false),
+        ("set_elem_ref", false),
+    ] {
+        let f = body(&b, name);
+        let ss = stmts(f);
+        let at = ss.iter().position(|s| matches!(s, StmtKind::Drop(_)));
+        assert_eq!(at.is_some(), drop, "{name}: {ss:?}");
+        if let Some(i) = at {
+            // V17: the next statement stores into the same place.
+            match (ss[i], ss.get(i + 1)) {
+                (StmtKind::Drop(p), Some(StmtKind::Assign(q, _))) => assert_eq!(p, q, "{name}"),
+                other => panic!("{name}: no store after the drop: {other:?}"),
+            }
+        }
+    }
+}
+
+#[test]
+fn a_place_store_runs_the_value_before_the_target() {
+    let b = golden_built("assign_through");
+    let f = body(&b, "set_elem");
+    let (i, j) = (named(f, "i"), named(f, "j"));
+    let ss = stmts(f);
+    // The index temporary of `v[j]` gets `copy j` before the one of `v[i]`
+    // gets `copy i`.
+    let read = |x: LocalId| {
+        ss.iter()
+            .position(|s| matches!(s, StmtKind::Assign(_, Rvalue::Use(Operand::Copy(p))) if *p == Place::local(x)))
+            .unwrap_or_else(|| panic!("no read of _{}: {ss:?}", x.0))
+    };
+    assert!(read(j) < read(i), "the value must run first: {ss:?}");
+    let bounds = ss
+        .iter()
+        .filter(|s| matches!(s, StmtKind::Bounds(..)))
+        .count();
+    assert_eq!(bounds, 2, "{ss:?}");
+}
+
+#[test]
+fn a_compound_store_on_a_reference_local_writes_through_it() {
+    let b = golden_built("compound");
+    let f = body(&b, "through_ref");
+    let r = named(f, "r");
+    let through = Place {
+        local: r,
+        proj: vec![Proj::Deref(DerefKind::Ref)],
+    };
+    let ss = stmts(f);
+    assert!(
+        ss.iter().any(
+            |s| matches!(s, StmtKind::Assign(p, Rvalue::Use(Operand::Move(_))) if *p == through)
+        ),
+        "no store into (*r): {ss:?}"
+    );
+    assert!(
+        !ss.iter()
+            .any(|s| matches!(s, StmtKind::Assign(p, _) if *p == Place::local(r))),
+        "the store must not give `r` a new value: {ss:?}"
+    );
+}
+
+#[test]
+fn a_borrow_of_a_value_borrows_a_temporary_of_the_statement() {
+    let b = golden_built("borrow_value");
+    let f = body(&b, "value");
+    let tv = f
+        .locals
+        .iter()
+        .position(|d| d.kind == LocalKind::Temp(TempKind::Borrowed))
+        .map_or_else(
+            || panic!("no `Borrowed` temporary"),
+            |i| LocalId(u32::try_from(i).unwrap_or(u32::MAX)),
+        );
+    let ss = stmts(f);
+    let r = named(f, "r");
+    let borrow = ss
+        .iter()
+        .position(|s| matches!(s, StmtKind::Assign(p, Rvalue::Ref(q)) if *p == Place::local(r) && *q == Place::local(tv)))
+        .unwrap_or_else(|| panic!("no `r = &tv`: {ss:?}"));
+    let dead = ss
+        .iter()
+        .position(|s| **s == StmtKind::Dead(tv))
+        .unwrap_or_else(|| panic!("no `Dead(tv)`: {ss:?}"));
+    let dead_r = ss
+        .iter()
+        .position(|s| **s == StmtKind::Dead(r))
+        .unwrap_or_else(|| panic!("no `Dead(r)`: {ss:?}"));
+    assert!(borrow < dead && dead < dead_r, "{ss:?}");
+}
+
+#[test]
+fn a_place_in_statement_position_is_a_mention() {
+    let b = golden_built("places");
+    let f = body(&b, "mention");
+    let ss = stmts(f);
+    let mentions = ss
+        .iter()
+        .filter(|s| matches!(s, StmtKind::Mention(_)))
+        .count();
+    assert_eq!(mentions, 2, "{ss:?}");
+    assert!(
+        !ss.iter()
+            .any(|s| matches!(s, StmtKind::Assign(_, Rvalue::Use(Operand::Move(_))))),
+        "a mention moves nothing: {ss:?}"
+    );
 }

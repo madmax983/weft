@@ -595,16 +595,31 @@ pub fn ir_props(table: &TyTable, t: TyId) -> Props {
     }
 }
 
+/// Returns true if a value of the final type `t` can be linear.
+///
+/// A part of it is linear, or a part of it is a type parameter. This is
+/// `linear` in a generic body of the old lowering (`Lower::generic`). The
+/// builder of the IR uses it for the `Drop` before a store behind a pointer
+/// (`docs/ir.md` 5.1.3, rule V17).
+pub fn ir_maybe_linear(table: &TyTable, t: TyId) -> bool {
+    ir_has_in(table, t, TyProp::Linear, true)
+}
+
 /// Returns true if property `p` holds for a value of the final type `t`: a
 /// part of it has the property. The rows of the definitions come from the
 /// table. The cases are the cases of `Lower::ty_has_in` for a type with no
 /// inference variable and no closure summary, and with a type parameter that
 /// is not linear.
 fn ir_has(table: &TyTable, t: TyId, p: TyProp) -> bool {
+    ir_has_in(table, t, p, false)
+}
+
+/// [`ir_has`]; with `params`, a type parameter is linear.
+fn ir_has_in(table: &TyTable, t: TyId, p: TyProp, params: bool) -> bool {
     let Some(ty) = table.try_get(t) else {
         return false;
     };
-    let h = |x: TyId| ir_has(table, x, p);
+    let h = |x: TyId| ir_has_in(table, x, p, params);
     let lang = |a: weft_ir::AdtId| table.adts().get(a.index()).and_then(|d| d.lang);
     match ty {
         // The copies of a `multi` resume share an `rc` object: a function
@@ -639,7 +654,8 @@ fn ir_has(table: &TyTable, t: TyId, p: TyProp) -> bool {
             _ => false,
         },
         IrTy::Fn(_) => p == TyProp::Fns,
-        IrTy::Param(_) | IrTy::Cont(..) => p == TyProp::NotCopy,
+        IrTy::Param(_) => p == TyProp::NotCopy || (p == TyProp::Linear && params),
+        IrTy::Cont(..) => p == TyProp::NotCopy,
         IrTy::Scope => matches!(p, TyProp::Nonportable | TyProp::Resource),
         // A capability value is plain data: a copy names the same handler.
         IrTy::Cap(_) | IrTy::Unit | IrTy::Bool | IrTy::Never | IrTy::Int(_) => false,

@@ -1,0 +1,78 @@
+fn f0 fields(Q) -> u64: b0
+fn f1 tuple_part((u64, bool)) -> bool: b1
+fn f2 take_part(V) -> Vec<u64>: b2
+fn f3 through_ref(&Q) -> u64: b3
+fn f4 mention(Q, Vec<u64>) -> (): b4
+fn f5 no_temp(Q, &Q) -> u64: b5
+cap_env e0
+
+body b0: fn fields; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: Q (Param(0) `q`)
+  bb0:
+    _0 = Add<u64>(copy _1.0.0, copy _1.1)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn tuple_part; cap_env e0; unwind_exit bb1
+  _0: bool (Return)
+  _1: (u64, bool) (Param(0) `t`)
+  bb0:
+    _0 = copy _1.1
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn take_part; cap_env e0; unwind_exit bb1
+  _0: Vec<u64> (Return)
+  _1: V (Param(0) `v`)
+  bb0:
+    _0 = move _1.0
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn through_ref; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: &Q (Param(0) `r`)
+  bb0:
+    _0 = copy (*_1).0.1
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: fn mention; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Q (Param(0) `q`)
+  _2: Vec<u64> (Param(1) `v`)
+  _3: usize (Temp(Operand))
+  bb0:
+    Mention(_1.0)
+    Live(_3)
+    _3 = const 1usize
+    Bounds(_2, copy _3)
+    Mention(_2[_3])
+    Dead(_3)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b5: fn no_temp; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: Q (Param(0) `q`)
+  _2: &Q (Param(1) `r`)
+  bb0:
+    _0 = Add<u64>(copy _1.1, copy (*_2).1)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit

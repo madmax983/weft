@@ -23,6 +23,7 @@
 
 mod expr;
 mod frame;
+mod place;
 mod stmt;
 
 use std::collections::BTreeMap;
@@ -43,18 +44,15 @@ use crate::Analysis;
 /// stage that lowers it ([`Construct::stage`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Construct {
-    /// An implicit dereference of the THIR (`adjust`).
-    Deref,
-    /// A field place `p.f` or a duration literal `2.s`.
-    Field,
-    /// An index place `v[i]` or `v[]`.
-    Index,
-    /// A borrow of a value that is not a place: `&f()`.
-    BorrowValue,
-    /// An assignment to a place that is not a local.
+    /// An assignment whose target is not a place.
     AssignPlace,
-    /// A compound assignment `x += v`.
-    CompoundAssign,
+    /// A move of a value that is not plain data through a reference: W0303
+    /// (`docs/ir.md` 5.36). The verifier rejects the `Move` (V9) and the
+    /// `Copy` that 5.36 names.
+    MoveThroughRef,
+    /// The payload of a variant as a place: `o.Some` (a test of the variant
+    /// comes first).
+    VariantField,
     /// `if`.
     If,
     /// `&&` or `||`.
@@ -105,12 +103,9 @@ impl Construct {
     /// Returns the name of the construct.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::Deref => "implicit deref",
-            Self::Field => "field",
-            Self::Index => "index",
-            Self::BorrowValue => "borrow of a value",
-            Self::AssignPlace => "assignment to a place",
-            Self::CompoundAssign => "compound assignment",
+            Self::AssignPlace => "assignment to a value",
+            Self::MoveThroughRef => "move through a reference",
+            Self::VariantField => "variant field",
             Self::If => "if",
             Self::AndOr => "&& or ||",
             Self::Match => "match",
@@ -139,13 +134,13 @@ impl Construct {
     /// Returns the plan stage that lowers the construct.
     pub const fn stage(self) -> &'static str {
         match self {
-            Self::Deref
-            | Self::Field
-            | Self::Index
-            | Self::BorrowValue
-            | Self::AssignPlace
-            | Self::CompoundAssign => "B4",
-            Self::If | Self::AndOr | Self::Match | Self::LetPattern | Self::LetUninit => "B5",
+            Self::AssignPlace | Self::MoveThroughRef => "B12",
+            Self::If
+            | Self::AndOr
+            | Self::Match
+            | Self::LetPattern
+            | Self::LetUninit
+            | Self::VariantField => "B5",
             Self::While | Self::For | Self::Loop | Self::Break | Self::Continue | Self::Range => {
                 "B6"
             }
@@ -600,11 +595,6 @@ impl<'a> Builder<'a> {
         self.locals
             .get(l.index())
             .map_or_else(|| self.tys.unit(), |d| d.ty)
-    }
-
-    /// Returns true if local `l` holds plain data.
-    fn local_copy(&self, l: LocalId) -> bool {
-        self.locals.get(l.index()).is_some_and(|d| d.props.copy)
     }
 
     /// Adds a local and returns its id.

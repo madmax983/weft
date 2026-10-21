@@ -1,5 +1,5 @@
-//! Expressions: literals, names, operators, borrows of a local and blocks
-//! (`docs/ir.md` 5.1.1, 5.16).
+//! Expressions: literals, operators, borrows and blocks (`docs/ir.md`
+//! 5.1.1, 5.9, 5.16). The places are in `place.rs`.
 //!
 //! An operand is read where it is written (choice A, `docs/ir.md` 5.1.1). A
 //! place operand skips its temporary only if no later operand of the same
@@ -9,7 +9,6 @@ use weft_ir::{BinOp, Const, IntTy, Operand, Place, Rvalue, TempKind, Ty, TyId, U
 use weft_syntax::ast::{self, Expr, ExprKind, Lit, StrPart};
 
 use super::{unsupported, Builder, Construct, R};
-use crate::thir::Res;
 
 /// Returns the constant `()`.
 pub(super) const fn unit() -> Operand {
@@ -39,8 +38,6 @@ const fn bin_op(op: ast::BinOp) -> Option<(BinOp, bool)> {
 /// lower yet.
 const fn later(e: &ExprKind) -> Construct {
     match e {
-        ExprKind::Field { .. } => Construct::Field,
-        ExprKind::Index { .. } => Construct::Index,
         ExprKind::Call { .. } => Construct::Call,
         ExprKind::MethodCall { .. } => Construct::MethodCall,
         ExprKind::Range { .. } => Construct::Range,
@@ -53,9 +50,13 @@ const fn later(e: &ExprKind) -> Construct {
         ExprKind::Handle { .. } => Construct::Handle,
         ExprKind::Scope { .. } => Construct::Scope,
         ExprKind::Binary { .. } => Construct::AndOr,
-        ExprKind::Unary { .. } => Construct::BorrowValue,
         ExprKind::Name(_) => Construct::ItemName,
-        ExprKind::Lit(_) | ExprKind::Block(_) => Construct::NoThir,
+        // The builder lowers these kinds before it asks for a right side.
+        ExprKind::Field { .. }
+        | ExprKind::Index { .. }
+        | ExprKind::Unary { .. }
+        | ExprKind::Lit(_)
+        | ExprKind::Block(_) => Construct::NoThir,
     }
 }
 
@@ -68,37 +69,15 @@ impl Builder<'_> {
         }
     }
 
-    /// Returns `Unsupported` if the THIR dereferences the value of `e`. Plan
-    /// stage B4 writes the dereferences.
-    fn no_adjust(&self, e: &Expr) -> R<()> {
-        if self.t.adjust.get(&e.id).is_some_and(|v| !v.is_empty()) {
-            return unsupported(Construct::Deref, e.span);
-        }
-        Ok(())
-    }
-
-    /// Returns the place of `e` if `e` is a place expression: here a name of a
-    /// local. A value gives `None`.
-    pub(super) fn as_place(&self, e: &Expr) -> R<Option<Place>> {
-        self.no_adjust(e)?;
-        match &e.kind {
-            ExprKind::Name(_) => match self.t.res.get(&e.id) {
-                Some(Res::Local(b)) => match self.vars.get(b) {
-                    Some(&l) => Ok(Some(Place::local(l))),
-                    None => unsupported(Construct::NoThir, e.span),
-                },
-                Some(_) => unsupported(Construct::ItemName, e.span),
-                None => unsupported(Construct::NoThir, e.span),
-            },
-            ExprKind::Field { .. } | ExprKind::Index { .. } => unsupported(later(&e.kind), e.span),
-            _ => Ok(None),
-        }
-    }
-
     /// Returns the constant of `e` if `e` is a literal with no interpolation.
-    /// `-128` is one literal (`docs/ir.md` 5.16).
+    /// `-128` is one literal, and so is the duration `2.s` (`docs/ir.md` 5.16).
     fn constant(&self, e: &Expr) -> R<Option<Const>> {
         match &e.kind {
+            ExprKind::Field { base, name } => Ok(match (&base.kind, name.name.as_str()) {
+                (ExprKind::Lit(Lit::Int(n)), "s") => Some(Const::Duration(n.saturating_mul(1000))),
+                (ExprKind::Lit(Lit::Int(n)), "ms") => Some(Const::Duration(*n)),
+                _ => None,
+            }),
             ExprKind::Lit(Lit::Int(n)) => self.int_const(e, i128::from(*n)).map(Some),
             ExprKind::Lit(Lit::Bool(b)) => Ok(Some(Const::Bool(*b))),
             ExprKind::Lit(Lit::Unit) => Ok(Some(Const::Unit)),
@@ -147,36 +126,33 @@ impl Builder<'_> {
         }
     }
 
-    /// Returns true if `e` cannot run code: a constant or a plain local. A place
-    /// operand before it can skip its temporary.
-    fn inert(&self, e: &Expr) -> bool {
-        let local = matches!(e.kind, ExprKind::Name(_))
-            && matches!(self.t.res.get(&e.id), Some(Res::Local(_)))
-            && self.t.adjust.get(&e.id).is_none_or(Vec::is_empty);
-        local || matches!(self.constant(e), Ok(Some(_)))
-    }
-
-    /// Returns the operand that reads the whole local place `p`: a copy of
-    /// plain data, else a move.
-    fn read_place(&self, p: Place) -> Operand {
-        if self.local_copy(p.local) {
-            Operand::Copy(p)
-        } else {
-            Operand::Move(p)
-        }
+    /// Returns true if `e` cannot run code: a constant, or a path of a local
+    /// and fields, through references, `Box`es and `Rc`s (`docs/ir.md` 5.1.1).
+    /// A place operand before it can skip its temporary.
+    pub(super) fn inert(&self, e: &Expr) -> bool {
+        self.plain_path(e) || matches!(self.constant(e), Ok(Some(_)))
     }
 
     /// Writes the value of `e` into `dest` (`docs/ir.md` 5.1.1). A block and an
-    /// operator write into `dest` itself, with no temporary between.
+    /// operator write into `dest` itself, with no temporary between. A place
+    /// is read: a copy of plain data, else a move.
     pub(super) fn into(&mut self, e: &Expr, dest: Place) -> R<()> {
+        if let Some(p) = self.as_place(e)? {
+            let origin = self.origin(e.span, Some(e.id));
+            let op = self.read_place(p, self.value_ty(e)?, e)?;
+            self.assign(dest, Rvalue::Use(op), origin);
+            return Ok(());
+        }
+        self.value_into(e, dest)
+    }
+
+    /// Writes the value of `e` into `dest`, with no implicit dereference: a
+    /// constant, a block, or a right side. The place of a place expression
+    /// is for [`Builder::into`].
+    pub(super) fn value_into(&mut self, e: &Expr, dest: Place) -> R<()> {
         let origin = self.origin(e.span, Some(e.id));
         if let Some(c) = self.constant(e)? {
             self.assign(dest, Rvalue::Use(Operand::Const(c)), origin);
-            return Ok(());
-        }
-        if let Some(p) = self.as_place(e)? {
-            let op = self.read_place(p);
-            self.assign(dest, Rvalue::Use(op), origin);
             return Ok(());
         }
         if let ExprKind::Block(b) = &e.kind {
@@ -189,15 +165,11 @@ impl Builder<'_> {
 
     /// Returns the right side of an operator, a borrow or an interpolation.
     fn rvalue(&mut self, e: &Expr) -> R<Rvalue> {
-        self.no_adjust(e)?;
         match &e.kind {
             ExprKind::Unary {
                 op: ast::UnOp::Ref,
                 expr,
-            } => match self.as_place(expr)? {
-                Some(p) => Ok(Rvalue::Ref(p)),
-                None => unsupported(Construct::BorrowValue, e.span),
-            },
+            } => self.borrow(expr),
             ExprKind::Unary { op, expr } => {
                 let a = self.operand(expr, true)?;
                 Ok(match op {
@@ -241,7 +213,7 @@ impl Builder<'_> {
     }
 
     /// Returns the integer type of the operator `e` from the THIR.
-    fn int_ty(&self, e: &Expr) -> Option<IntTy> {
+    pub(super) fn int_ty(&self, e: &Expr) -> Option<IntTy> {
         self.t.int_ty.get(&e.id).copied()
     }
 
@@ -249,23 +221,24 @@ impl Builder<'_> {
     /// 5.1.1). A constant stays a constant. A place gives `t := copy p` or
     /// `t := move p`; with `skip`, no later operand can run code, and the place
     /// itself is the operand. A value gives a temporary.
-    fn operand(&mut self, e: &Expr, skip: bool) -> R<Operand> {
+    pub(super) fn operand(&mut self, e: &Expr, skip: bool) -> R<Operand> {
         if let Some(c) = self.constant(e)? {
             return Ok(Operand::Const(c));
         }
         let origin = self.origin(e.span, Some(e.id));
         if let Some(p) = self.as_place(e)? {
-            let op = self.read_place(p);
+            let ty = self.value_ty(e)?;
+            let op = self.read_place(p, ty, e)?;
             if skip {
                 return Ok(op);
             }
-            let t = self.temp(self.local_ty(op_local(&op)), TempKind::Operand, origin);
+            let t = self.temp(ty, TempKind::Operand, origin);
             self.assign(Place::local(t), Rvalue::Use(op), origin);
             return Ok(Operand::Move(Place::local(t)));
         }
         let ty = self.ty(e)?;
         let t = self.temp(ty, TempKind::Operand, origin);
-        self.into(e, Place::local(t))?;
+        self.value_into(e, Place::local(t))?;
         Ok(Operand::Move(Place::local(t)))
     }
 
@@ -274,7 +247,7 @@ impl Builder<'_> {
     /// as in [`Builder::operand`]. Another value is borrowed where it is
     /// written: `t := &p`, or `tv := <e>; t := &tv` for a value.
     fn read_operand(&mut self, e: &Expr, skip: bool) -> R<Operand> {
-        let ty = self.ty(e)?;
+        let ty = self.value_ty(e)?;
         if !self.tys.not_copy(ty) {
             return self.operand(e, skip);
         }
@@ -283,7 +256,7 @@ impl Builder<'_> {
             p
         } else {
             let tv = self.temp(ty, TempKind::Borrowed, origin);
-            self.into(e, Place::local(tv))?;
+            self.value_into(e, Place::local(tv))?;
             Place::local(tv)
         };
         let rty = self.tys.intern(Ty::Ref(ty));
@@ -291,9 +264,4 @@ impl Builder<'_> {
         self.assign(Place::local(t), Rvalue::Ref(place), origin);
         Ok(Operand::Move(Place::local(t)))
     }
-}
-
-/// Returns the local of a place operand, or `_0` for a constant.
-fn op_local(op: &Operand) -> weft_ir::LocalId {
-    op.place().map_or(weft_ir::LocalId(0), |p| p.local)
 }

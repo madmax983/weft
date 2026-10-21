@@ -1,0 +1,32 @@
+// Borrows (`docs/ir.md` 5.9): a borrow of a place, a reborrow through a
+// reference, and a borrow of a value into a `Borrowed` temporary.
+
+struct S { v: Vec<u64>, n: u64 }
+
+fn place(s: S) -> u64 {
+    let r = &s.v
+    0
+}
+
+// `&r` with `r: &S` is `&*r`.
+fn reborrow(r: &S) -> u64 {
+    let q = &r
+    0
+}
+
+// The temporary of the value ends at the end of the statement.
+fn value(a: u64) -> u64 {
+    let r = &(a + 1)
+    0
+}
+
+fn block_value(a: u64) -> u64 {
+    let r = &{ let b = a
+        b }
+    0
+}
+
+fn field_through(r: &S) -> u64 {
+    let q = &r.n
+    0
+}

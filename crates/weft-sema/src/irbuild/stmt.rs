@@ -1,6 +1,6 @@
 //! Blocks and statements (`docs/ir.md` 5.3, 5.4, 5.5, 5.11).
 
-use weft_ir::{Operand, Place, Rvalue, StmtKind, TempKind};
+use weft_ir::{BinOp, Operand, Place, Rvalue, StmtKind, TempKind};
 use weft_syntax::ast::{self, AssignOp, Expr, PatternKind, Stmt, StmtKind as S};
 
 use super::frame::closing;
@@ -87,7 +87,7 @@ impl Builder<'_> {
                 self.into(init, Place::local(l))
             }
             PatternKind::Wild(_) => {
-                let ty = self.ty(init)?;
+                let ty = self.value_ty(init)?;
                 let origin = self.origin(init.span, Some(init.id));
                 let t = self.temp(ty, TempKind::Discarded, origin);
                 self.into(init, Place::local(t))
@@ -113,33 +113,67 @@ impl Builder<'_> {
         let ty = self.ty(e)?;
         let origin = self.origin(e.span, Some(e.id));
         let t = self.temp(ty, TempKind::Discarded, origin);
-        self.into(e, Place::local(t))
+        self.value_into(e, Place::local(t))
     }
 
-    /// Lowers an assignment to a local (`docs/ir.md` 5.5):
+    /// Lowers an assignment (`docs/ir.md` 5.5, 5.6):
     ///
     /// ```text
-    /// x = v   =>  t := <v>; x = move t
+    /// x = v         =>  t := <v>; x = move t
+    /// p.f = v       =>  t := <v>; <place p>; p.f = move t
+    /// (*r).f = v    =>  t := <v>; [Drop((*r).f)]; (*r).f = move t
     /// ```
     ///
-    /// The value runs first, then the target, then the store. The `Assign`
-    /// drops the old value.
+    /// The value runs first, then the target place (its index expressions
+    /// too), then the store. The `Assign` drops the old value. Behind a
+    /// pointer, `Drop` comes first if the old value can be linear (V17).
     fn assign_stmt(&mut self, target: &Expr, op: AssignOp, value: &Expr, s: &Stmt) -> R<()> {
-        if op != AssignOp::Assign {
-            return unsupported(Construct::CompoundAssign, s.span);
-        }
-        if !matches!(target.kind, ast::ExprKind::Name(_)) {
-            return unsupported(Construct::AssignPlace, target.span);
-        }
-        let Some(place) = self.as_place(target)? else {
-            return unsupported(Construct::AssignPlace, target.span);
+        let bin = match op {
+            AssignOp::Assign => None,
+            AssignOp::Add => Some(BinOp::Add),
+            AssignOp::Sub => Some(BinOp::Sub),
+            AssignOp::Mul => Some(BinOp::Mul),
         };
-        let ty = self.ty(value)?;
+        if let Some(bin) = bin {
+            return self.compound(target, bin, value, s);
+        }
+        let ty = self.value_ty(value)?;
         let origin = self.origin(value.span, Some(value.id));
         let t = self.temp(ty, TempKind::Operand, origin);
         self.into(value, Place::local(t))?;
+        let Some(place) = self.as_place(target)? else {
+            return unsupported(Construct::AssignPlace, target.span);
+        };
         let origin = self.origin(s.span, None);
+        if place.has_deref() && self.maybe_linear(self.value_ty(target)?) {
+            self.push(StmtKind::Drop(place.clone()), origin);
+        }
         self.assign(place, Rvalue::Use(Operand::Move(Place::local(t))), origin);
+        Ok(())
+    }
+
+    /// Lowers a compound assignment (`docs/ir.md` 5.7):
+    ///
+    /// ```text
+    /// p += v   =>  t := <v>; t2 := Add(copy p, move t) as T; p = move t2
+    /// ```
+    ///
+    /// `p` is the place after the implicit dereferences of the THIR, so on a
+    /// reference local the store writes through it (RT9). A constant value
+    /// stays a constant. A place value needs no temporary if the target place
+    /// runs no code. The integer type is at the value (`Tables::int_ty`).
+    fn compound(&mut self, target: &Expr, bin: BinOp, value: &Expr, s: &Stmt) -> R<()> {
+        let skip = self.inert(target);
+        let v = self.operand(value, skip)?;
+        let Some(place) = self.as_place(target)? else {
+            return unsupported(Construct::AssignPlace, target.span);
+        };
+        let ty = self.value_ty(target)?;
+        let origin = self.origin(s.span, None);
+        let t2 = self.temp(ty, TempKind::Operand, origin);
+        let rv = Rvalue::Binary(bin, self.int_ty(value), Operand::Copy(place.clone()), v);
+        self.assign(Place::local(t2), rv, origin);
+        self.assign(place, Rvalue::Use(Operand::Move(Place::local(t2))), origin);
         Ok(())
     }
 }
