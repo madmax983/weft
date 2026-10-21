@@ -69,6 +69,10 @@ pub enum CapHold {
     /// a cell of its own (a `ByRef` capture). A call does not take it, so
     /// each call reads through the reference.
     Ref,
+    /// The operand is a copy of a capability or of a `multi` continuation:
+    /// the closure holds it in a cell of its own (a `Cap` or a `Kont`
+    /// capture). A call does not take it.
+    Copied,
 }
 
 /// One handler clause of a `handle` expression.
@@ -93,6 +97,10 @@ pub struct HandleSpec {
     pub body: CodeId,
     /// The variables that the body captures.
     pub body_caps: Vec<VarRef>,
+    /// The handled body takes the capability of the handler as its one
+    /// parameter (the code of the IR compiler, `docs/ir.md` 8.1). The code of
+    /// the AST compiler takes no parameter.
+    pub cap: bool,
 }
 
 /// One instruction.
@@ -226,6 +234,16 @@ pub enum Op {
         /// The effect.
         effect: EffectId,
         /// The operation index.
+        op: usize,
+        /// The number of arguments.
+        n: u32,
+    },
+    /// Performs operation `op` through the capability under the `n`
+    /// arguments (`docs/ir.md` 8.1). The effect is the effect of the
+    /// capability. The machine finds the handler in the lexical handlers, as
+    /// for [`Op::Perform`].
+    PerformCap {
+        /// The operation index in the effect.
         op: usize,
         /// The number of arguments.
         n: u32,

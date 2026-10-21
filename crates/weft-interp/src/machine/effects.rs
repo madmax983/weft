@@ -77,6 +77,35 @@ impl super::Machine<'_, '_> {
         None
     }
 
+    /// Returns true if a perform of `op` of `effect` with the lexical
+    /// handlers `henv` goes to handler `id`, the handler of the capability of
+    /// the perform (`docs/ir.md` 8.1). It is also true if the mark of handler
+    /// `id` is not on the stack of the task (the capability left its
+    /// handler, W0313), or if the handler has no clause for `op` (the
+    /// operation goes to an outer handler): then the machine finds a handler
+    /// as for a perform through the row.
+    pub(crate) fn finds_handler_of_cap(
+        &self,
+        effect: EffectId,
+        op: usize,
+        id: u64,
+        henv: &HEnv,
+    ) -> bool {
+        let Some(frames) = self.tasks.get(self.cur).map(|t| &t.frames) else {
+            return true;
+        };
+        let takes = frames.iter().any(
+            |f| matches!(f, Frame::Handle(m) if m.id == id && m.clauses.iter().any(|c| c.0 == op)),
+        );
+        if !takes {
+            return true;
+        }
+        match self.find_handler(effect, op, henv) {
+            Some((idx, ..)) => matches!(frames.get(idx), Some(Frame::Handle(m)) if m.id == id),
+            None => false,
+        }
+    }
+
     /// Performs `fail(msg)`.
     pub(crate) fn fail(&mut self, msg: String, henv: &HEnv) -> R<Flow> {
         let Some(e) = self.rt.b.fail else {

@@ -2521,9 +2521,48 @@ As built (plan stage I2, closures and function values):
   operand, the arguments, then `CallValue`; the result goes to the destination as
   for `Call`. A function item that is an intrinsic (`sim.run`, `with_timeout`) is a
   construct of stage I4.
-- A `Cap` or `Kont` capture is a construct of stage I3. An environment view (an
-  upvar local of the environment, 5.1.7) is only in a handled body, a clause or a
-  scope body, so it falls back with these bodies (I3, I4).
+- A `Cap` or `Kont` capture was a construct of stage I3 (see below). An
+  environment view (an upvar local of the environment, 5.1.7) is only in a
+  handled body, a clause or a scope body.
+
+As built (plan stage I3, handlers and continuations):
+
+- A handled body is a `Code` of kind `HandleBody`, and a clause is a `Code` of
+  kind `Clause` (the names are the names of the AST compiler: "handled
+  computation" and "handler `op`"). The capability local `_1` of a handled body
+  is its one parameter: the `Handle` op gives the new value `Cap::Handler`
+  (the effect and the handler instance) when `HandleSpec::cap` is set. The
+  parameters of a clause are the operation arguments, then its `Kont` local:
+  the perform gives the continuation value after the arguments.
+- An upvar local has no slot. It is a captured cell `Var(Cap(i))` of the frame:
+  the upvar locals of a body, in the order of their ids, get the captured cells
+  in order. An environment view gets one captured cell for each field of the
+  environment, so `u.k` is `Var(Cap(i + k))` and `(*u.k)` adds `Deref`. The
+  `Handle` op of the site gives the frame of the handled body and of each clause
+  the cells of the site locals: the slot of a local, or a captured cell of the
+  site when the site local is an upvar local or a field of the environment. A
+  read, a write, a borrow or a move of an upvar local is one of the site
+  local. The upvar locals have no `Live` and no `Dead`.
+- A `multi` resume copies the frames of the continuation as before: the slots,
+  the temporaries and the owned cells of the handled body get new cells, and
+  the captured cells (the cells of the site) stay shared (probe J4).
+- A perform through a capability place is the new op `PerformCap`: the place
+  ops and `Read` push the capability, then the arguments. The machine finds the
+  handler in the lexical handlers of the frame, as for a perform through the
+  row, with the effect of the capability. In a debug build an assertion checks
+  that the handler is the handler of the capability, if the mark of that
+  handler is on the stack of the task and has a clause for the operation.
+- `Resume(kont, arg)` is the place of `kont`, `Read`, the argument, then
+  `CallValue(1)`: a call of the continuation value. The result goes to the
+  destination as for a call.
+- A closure holds a `Cap` capture or a `Kont` capture of a `multi` operation
+  (`copy`) in a cell of its own (`CapHold::Copied`): a call does not take it.
+  A `Kont` capture of a `once` operation (`move`) moves into an owned cell
+  (`CapHold::Moved`): a call takes it, so the closure runs once.
+- The `Handle` terminator stores the value of the handled body, or of a clause
+  that does not resume, into its destination, as a call does.
+- After stage I3 only a program with a task, `sim.run` or `with_timeout` (I4),
+  or with a body that has no IR, falls back to the AST compiler.
 
 ### 8.2 Landing pads
 
@@ -2555,6 +2594,7 @@ order (plan stage C3). ADR 0010 states that the interpreter runs the IR (plan st
 unwind-mode ops `UnwindValue`, `UnwindKont`, `UnwindExit`. Stage I1 adds three more
 (8.1): `Part` (a part of a value by index), `Take` (`move p`) and `LiveTemp` (`Live` of
 a temporary). Stage I2 adds `MakeClosureIr` (a closure with the modes of the IR).
+Stage I3 adds `PerformCap` (a perform through a capability value).
 Each one has a unit test in `crates/weft-interp/tests/semantics.rs`.
 
 ### 8.5 Differential tests and oracles
@@ -2829,7 +2869,7 @@ a repro of group E uses group C too; the claims file holds the set of groups tha
 | Id | Class | Verdict | Mechanism | Repro | Group | Claim |
 | --- | --- | --- | --- | --- | --- | --- |
 | FD1 (= QA2) | DROP | construction | `UnwindValue(_, OnAbort(f))` applies the summary of `f` with `CapArgs::Root` (5.28, 6.4) | `r2/fidelity/repro/FD1_onabort_*.wf`, `r2/quality/repro/QA2_on_abort_effects.wf` | A | F7 |
-| FD2 | interpreter | none (class I) | the engine differential and the interpreter tests | `r2/fidelity/repro/FD2_multi_nested_drop.wf` | D | I3 |
+| FD2 | interpreter | none (class I) | the engine differential and the interpreter tests | `r2/fidelity/repro/FD2_multi_nested_drop.wf` | D | I5 |
 | FD3 | STORE | one rule | the `stores` part and the W0204 store check (6.7, 6.9) | `r2/fidelity/repro/FD3_rc_backchannel.wf` | C | F13 |
 | IP1 | SPEC | stays | W0504 in `typeck`; the runtime raises a failure past a clause | `r2/interp/repro/ip_fail_resume_*.wf` | D, E | F19 |
 | IP3 | SPEC | stays | the pinning rules; `spawns_in` and `opaque` from the `tasks` part (6.4) | `r2/interp/repro/ip_steal_shares_rc.wf` | E | F19 |

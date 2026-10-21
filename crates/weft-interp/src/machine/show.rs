@@ -179,6 +179,7 @@ impl super::Machine<'_, '_> {
                 Cap::Net => "<NetCap>",
                 Cap::Stdout => "<Stdout>",
                 Cap::Listener(_) => "<Listener>",
+                Cap::Handler { .. } => "<capability>",
             }),
             Value::Request(r) => {
                 let _ = write!(out, "<request {} {}>", r.method, r.path);

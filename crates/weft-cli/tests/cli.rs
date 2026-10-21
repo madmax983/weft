@@ -687,10 +687,15 @@ fn run_and_test_take_an_engine() {
     }
     let out = cmd(&["run", "--engine", "ir", &path]);
     assert_eq!(out.text, "rollback 3\n");
-    // A program with a closure falls back to the AST compiler, and says so.
+    // A program with a handler runs on the IR engine (plan stage I3).
     let out = cmd(&["run", "--engine=ir", &format!("{INTERP}/effects_log.wf")]);
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert_eq!(out.text, "stepped 1 hp=9\nstepped 2 hp=19\n");
+    assert!(!out.stderr.contains("note: --engine"), "{}", out.stderr);
+    // A program with a scope falls back to the AST compiler, and says so.
+    let out = cmd(&["run", "--engine=ir", &format!("{INTERP}/scope_join.wf")]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.text, "a\nc\nb\n6\n");
     assert!(
         out.stderr
             .starts_with("note: --engine=ir: the AST compiler runs the program: `"),

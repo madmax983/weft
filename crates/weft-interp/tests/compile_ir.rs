@@ -1,13 +1,12 @@
-//! The IR engine (`--engine=ir`, plan stages I1 and I2, `docs/ir.md` 8.1).
+//! The IR engine (`--engine=ir`, plan stages I1 to I3, `docs/ir.md` 8.1).
 //!
-//! The IR compiler compiles the programs of the construct groups A, B and C
-//! (closures and function values). For a program with a construct of a later
-//! stage (a handler, a task), the AST compiler runs the program, and the
-//! outcome tells why. The tests here check:
+//! The IR compiler compiles the programs of the construct groups A to D
+//! (closures, function values, handlers and continuations). For a program
+//! with a construct of a later stage (a task), the AST compiler runs the
+//! program, and the outcome tells why. The tests here check:
 //!
-//! - each interpreter program that uses only groups A, B and C gives its
-//!   `.out` with the IR engine (none of them shows a change of `docs/ir.md`
-//!   8.3);
+//! - each interpreter program that uses only groups A to D gives its `.out`
+//!   with the IR engine (none of them shows a change of `docs/ir.md` 8.3);
 //! - each other interpreter program falls back and says why;
 //! - each program of the static corpus with a `main` or tests gives the same
 //!   output with the two engines;
@@ -18,7 +17,11 @@
 //! - the captures of a closure follow the modes of the IR (rule CAPTURE,
 //!   `docs/ir.md` 5.1.7): a `Kept` capture shares the cell of the variable, a
 //!   `ByRef` capture holds a reference to it, a `ByMove` capture takes the
-//!   value when the closure is made.
+//!   value when the closure is made;
+//! - an upvar local of a handled body or a clause is the cell of the site
+//!   local (5.1.7), a `multi` resume copies the cells of the handled body and
+//!   shares the cells of the site, and a perform through a capability finds
+//!   the handler of the capability (5.24 to 5.27).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, missing_docs)]
 
@@ -27,25 +30,38 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use weft_interp::code::Op;
+use weft_interp::code::{CodeKind, Op, VarRef};
 use weft_interp::compile_ir::compile_ir;
 use weft_interp::{run_main, run_tests, Engine, RunOptions, RunOutcome};
 use weft_ir::CaptureMode;
 use weft_sema::Options;
 
-/// The interpreter programs that use only the construct groups A, B and C.
+/// The interpreter programs that use only the construct groups A to D.
 /// The IR engine runs each one; each other program falls back.
 const RUNS_ON_IR: &[&str] = &[
+    "abort_closure_cells",
+    "abort_on_abort",
     "blocking",
+    "clause_abort",
     "closure_return",
     "control",
+    "display",
+    "effect_paths",
+    "effects_log",
     "int_width",
+    "multi_choose",
+    "multi_clause_caps",
+    "multi_heap",
+    "multi_nested_drop",
     "named_args",
     "no_runtime_marker",
+    "once_twice",
+    "op_named_args",
     "place_statements",
     "places",
     "rc_cycle",
     "root_handlers",
+    "shadow_log",
     "values",
 ];
 
@@ -121,7 +137,7 @@ fn expected(path: &Path) -> String {
 }
 
 #[test]
-fn each_program_of_groups_a_to_c_gives_its_output_with_the_ir_engine() {
+fn each_program_of_groups_a_to_d_gives_its_output_with_the_ir_engine() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/programs");
     let mut failures = String::new();
     let mut on_ir = BTreeSet::new();
@@ -293,13 +309,21 @@ fn a_tail_temporary_of_a_loop_body_ends_at_each_iteration() {
 }
 
 #[test]
-fn a_program_with_a_handler_falls_back_and_says_why() {
+fn a_handler_runs_on_the_ir_engine() {
     let src = "effect Ask { fn ask() -> u64 }\n\
         fn main() {\n let v = handle Ask { fn ask() { resume(4) } } in { ask() + 1 }\n print(v)\n}";
     let o = run_with(src, Engine::Ir);
+    assert_eq!(o.fallback, None);
+    assert_eq!(o.stdout, "5\n");
+}
+
+#[test]
+fn a_program_with_a_scope_falls_back_and_says_why() {
+    let src = "fn main() / async {\n let v = scope { s =>\n let t = s.spawn(|| 4)\n t.join() + 1\n }\n print(v)\n}";
+    let o = run_with(src, Engine::Ir);
     assert_eq!(o.stdout, "5\n");
     let why = o.fallback.expect("the IR engine falls back");
-    assert!(why.contains("handler") && why.contains("stage I3"), "{why}");
+    assert!(why.contains("stage I4"), "{why}");
     assert_eq!(run_with(src, Engine::Ast).fallback, None);
 }
 
@@ -515,4 +539,229 @@ fn a_payload_place_of_a_variant_reads_the_payload_or_faults() {
     let e = run_main(&c, &RunOptions::default()).unwrap_err();
     assert_eq!(e.outcome.stdout, "");
     assert!(e.message.contains("no field `Some`"), "{}", e.message);
+}
+
+/// Runs the unchecked program `src` with the oracle checks and `engine`.
+/// Returns the output and the error message, if any. The IR engine must not
+/// fall back.
+fn run_oracle(src: &str, engine: Engine) -> (String, Option<String>) {
+    let a = weft_sema::analyze_source(src, Options::default()).unwrap();
+    let opts = RunOptions {
+        max_steps: Some(1_000_000),
+        oracle: true,
+        engine,
+        ..RunOptions::default()
+    };
+    match weft_interp::run_analysis_main(&a, &opts) {
+        Ok(o) => {
+            assert_eq!(o.fallback, None, "{engine:?}");
+            (o.stdout, None)
+        }
+        Err(e) => {
+            assert_eq!(e.outcome.fallback, None, "{engine:?}");
+            (e.outcome.stdout.clone(), Some(e.message))
+        }
+    }
+}
+
+/// Returns the source of the golden program `name` of the IR builder.
+fn golden(name: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../weft-sema/tests/ir_golden")
+        .join(format!("{name}.wf"));
+    fs::read_to_string(path).unwrap()
+}
+
+/// Compiles the IR of the checked program `src`.
+fn compiled(src: &str) -> weft_interp::compile::Compiled {
+    let c = checked(src);
+    let built = weft_sema::irbuild::build(&c.analysis);
+    compile_ir(&c.analysis.program, &built).expect("the IR compiler compiles it")
+}
+
+#[test]
+fn an_upvar_local_is_the_captured_cell_of_the_site() {
+    // The handled body and the clause write `n` through their upvar locals
+    // (`docs/ir.md` 5.1.7): the writes are writes of the cell of `n`.
+    let src = "effect Tick { fn tick() }\n\
+        fn main() {\n let n = 1\n\
+        handle Tick { fn tick() { n += 10; resume(()) } } in {\n n += 1\n tick()\n n += 100\n }\n\
+        print(n)\n}";
+    let o = run_with(src, Engine::Ir);
+    assert_eq!(o.fallback, None);
+    assert_eq!(o.stdout, "112\n");
+    // The `Handle` op gives the handled body and the clause the cell of the
+    // slot of `n`; there the upvar local is the captured cell 0.
+    let code = compiled(src);
+    let main = code.codes.iter().find(|u| u.name == "main").unwrap();
+    let spec = main
+        .ops
+        .iter()
+        .find_map(|o| match o {
+            Op::Handle(s) => Some(s.clone()),
+            _ => None,
+        })
+        .expect("main has a `Handle` op");
+    assert!(matches!(spec.body_caps.as_slice(), [VarRef::Local(_)]));
+    assert_eq!(spec.clauses.len(), 1);
+    assert_eq!(spec.clauses[0].caps, spec.body_caps);
+    for kind in [CodeKind::HandleBody, CodeKind::Clause] {
+        let unit = code.codes.iter().find(|u| u.kind == kind).unwrap();
+        assert!(
+            unit.ops
+                .iter()
+                .any(|o| matches!(o, Op::Var(VarRef::Cap(0)))),
+            "{kind:?}"
+        );
+    }
+}
+
+#[test]
+fn a_move_of_an_upvar_local_in_a_handled_body_moves_the_site_local() {
+    // `take(v)` in the handled body moves the value of `v` of `main`. The
+    // second `take(v)` reads a moved value. The checker rejects it (W0302).
+    let src = "fn take(v: Vec<u64>) -> usize { v.len() }\n\
+        effect Tick { fn tick() }\n\
+        fn main() {\n let v = Vec.new()\n v.push(1)\n\
+        let n = handle Tick { fn tick() { resume(()) } } in { tick(); take(v) }\n\
+        print(n)\n print(take(v))\n}";
+    for engine in [Engine::Ast, Engine::Ir] {
+        let (out, e) = run_oracle(src, engine);
+        assert_eq!(out, "1\n", "{engine:?}");
+        let e = e.expect("the second `take` faults");
+        assert!(e.contains("moved"), "{engine:?}: {e}");
+    }
+}
+
+#[test]
+fn a_multi_resume_copies_the_cells_of_the_handled_body_and_shares_the_site_cells() {
+    // Each run of the handled body starts from a copy of its frame at the
+    // perform: `local` is 0 at the start of each run. `total` is a local of
+    // `main`: the runs share its cell.
+    let src = "effect Pick { multi fn pick() -> bool }\n\
+        fn main() {\n let total = 0\n\
+        handle Pick { fn pick() { resume(true); resume(false) } } in {\n\
+        let local = 0\n let b = pick()\n local += 1\n total += 1\n print(b, local, total)\n }\n\
+        print(total)\n}";
+    let o = run_with(src, Engine::Ir);
+    assert_eq!(o.fallback, None);
+    assert_eq!(o.stdout, "true 1 1\nfalse 1 2\n2\n");
+    // Judge probe J4: the reference `r` of the handled body is copied, and
+    // it points into the shared `o`, which the first run cleared. The
+    // oracle stops the read of the second run with both engines.
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/gate/probes/ir/judge_sound/j4_multi_outer_ref.wf");
+    let src = fs::read_to_string(path).unwrap();
+    for engine in [Engine::Ast, Engine::Ir] {
+        let (out, e) = run_oracle(&src, engine);
+        assert_eq!(out, "2\n", "{engine:?}");
+        let e = e.expect("the second run reads a freed cell");
+        assert!(e.contains("dangling"), "{engine:?}: {e}");
+    }
+}
+
+#[test]
+fn a_perform_through_a_capability_finds_the_handler_of_the_capability() {
+    // `docs/ir.md` 5.1.8, 5.26: the handled body performs through its
+    // capability local, the closure through its `Cap` field. The machine
+    // finds the handler; a debug assertion checks that it is the handler of
+    // the capability.
+    let src = golden("cap_field");
+    let o = run_with(&src, Engine::Ir);
+    assert_eq!(o.fallback, None);
+    assert_eq!(o.stdout, "one\n2\n");
+    let code = compiled(&src);
+    let closure = code
+        .codes
+        .iter()
+        .find(|u| u.kind == CodeKind::Closure)
+        .unwrap();
+    assert!(closure
+        .ops
+        .iter()
+        .any(|o| matches!(o, Op::PerformCap { .. })));
+    // The inner clause performs `outer` through the capability of the outer
+    // handled body.
+    let src = golden("nested_handle");
+    let o = run_with(&src, Engine::Ir);
+    assert_eq!(o.fallback, None);
+    assert_eq!(o.stdout, "30\n");
+}
+
+#[test]
+fn a_closure_resumes_through_its_kont_field() {
+    // `docs/ir.md` 5.27: the closure copies the `multi` continuation into a
+    // `Kont` field, so it can run twice.
+    let src = format!("{}\nfn main() {{ print(count()) }}\n", golden("cont_field"));
+    let o = run_with(&src, Engine::Ir);
+    assert_eq!(o.fallback, None);
+    assert_eq!(o.stdout, "3\n");
+    // Judge probe J2: the clause resumes through a closure, then clears `v`.
+    // The oracle stops the read through `keep` with both engines.
+    let src = golden("resume_closure");
+    for engine in [Engine::Ast, Engine::Ir] {
+        let (_, e) = run_oracle(&src, engine);
+        let e = e.expect("the read through `keep` dangles");
+        assert!(e.contains("dangling"), "{engine:?}: {e}");
+    }
+}
+
+#[test]
+fn a_handled_body_in_a_closure_names_the_captures_through_a_view() {
+    // `docs/ir.md` 5.1.7 (B12): the handled body and the clause name the
+    // captures of the closure through an upvar local of the environment.
+    // The handled body moves the linear `l`, the clause reads `n`, and the
+    // handled body borrows `v`.
+    let src = golden("handle_in_closure");
+    let o = run_with(&src, Engine::Ir);
+    assert_eq!(o.fallback, None);
+    assert_eq!(o.stdout, "unlock 1\n10\n");
+}
+
+#[test]
+fn each_handler_golden_gives_the_output_of_the_ast_engine() {
+    // The golden programs of the IR builder for handlers, also the ones
+    // that the checker rejects: the two engines give the same output and
+    // the same error.
+    for name in [
+        "handle_value",
+        "multi_tail_upvar",
+        "cap_field",
+        "nested_handle",
+        "handle_in_closure",
+        "resume_closure",
+        "m8_abort_value_into_body",
+    ] {
+        let src = golden(name);
+        assert_eq!(
+            run_oracle(&src, Engine::Ir),
+            run_oracle(&src, Engine::Ast),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn nested_multi_continuations_run_on_the_ir_engine() {
+    // Finding FD2: each copy of a nested `multi` continuation has a record
+    // of its own. The IR engine runs the repro with no fault of the oracle.
+    // The claim of FD2 reads the IR oracle cache of plan stage I5.
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/gate/probes/r2/fidelity/repro/FD2_multi_nested_drop.wf");
+    let src = fs::read_to_string(path).unwrap();
+    assert_eq!(run_oracle(&src, Engine::Ir), ("2\n".to_string(), None));
+}
+
+#[test]
+fn a_jump_out_of_a_handled_body_or_a_clause_faults_with_the_w0315_text() {
+    // The builder ends the path of a `return` or a `break` that leaves a
+    // handled body or a clause with `Unreachable` (W0315). The IR engine
+    // faults there with the text of W0315. The checker rejects the program.
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/gate/probes/ir/probes/p17_return_in_clause.wf");
+    let src = fs::read_to_string(path).unwrap();
+    let (out, e) = run_oracle(&src, Engine::Ir);
+    assert_eq!(out, "");
+    let e = e.expect("the `return` faults");
+    assert!(e.contains("`return` cannot leave a handler clause"), "{e}");
 }

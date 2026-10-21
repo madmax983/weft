@@ -101,6 +101,14 @@ pub enum Cap {
     Stdout,
     /// A listener made by `NetCap.listen`.
     Listener(usize),
+    /// The capability of a handler: the value of the capability local of a
+    /// handled body of the IR (`docs/ir.md` 5.24).
+    Handler {
+        /// The handled effect.
+        effect: EffectId,
+        /// The handler instance.
+        id: u64,
+    },
 }
 
 /// An HTTP request.

@@ -515,6 +515,18 @@ impl super::Machine<'_, '_> {
                 let henv = self.fr()?.henv.clone();
                 return self.perform(*effect, *op, args, &henv);
             }
+            Op::PerformCap { op, n } => {
+                let args = self.pop_n(*n as usize)?;
+                let Value::Cap(Cap::Handler { effect, id }) = self.pop()? else {
+                    return Err(self.fault("internal: a perform has no capability of a handler"));
+                };
+                let henv = self.fr()?.henv.clone();
+                debug_assert!(
+                    self.finds_handler_of_cap(effect, *op, id, &henv),
+                    "the machine does not find the handler of the capability"
+                );
+                return self.perform(effect, *op, args, &henv);
+            }
             Op::MakeClosure {
                 code,
                 caps,
@@ -567,7 +579,7 @@ impl super::Machine<'_, '_> {
                             cells.push(cell);
                             own.push(cell);
                         }
-                        (CapHold::Ref, v) => {
+                        (CapHold::Ref | CapHold::Copied, v) => {
                             cells.push(self.heap.alloc(SlotKind::Local, v));
                         }
                     }
@@ -603,7 +615,17 @@ impl super::Machine<'_, '_> {
                     clauses: Rc::from(clauses),
                     outer: henv,
                 }));
-                let f = self.code_frame(spec.body, Vec::new(), Rc::from(cells), inner)?;
+                // The handled body of the IR takes the capability of the
+                // handler (`docs/ir.md` 5.24).
+                let args = if spec.cap {
+                    vec![Value::Cap(Cap::Handler {
+                        effect: spec.effect,
+                        id,
+                    })]
+                } else {
+                    Vec::new()
+                };
+                let f = self.code_frame(spec.body, args, Rc::from(cells), inner)?;
                 self.task().frames.push(Frame::Code(f));
             }
             Op::Scope { code, caps } => {

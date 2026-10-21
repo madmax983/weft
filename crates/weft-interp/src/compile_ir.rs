@@ -26,12 +26,22 @@
 //!   capture shares the cell of the variable, a `ByMove` capture takes the
 //!   value, and a `ByRef` capture holds the reference that `&x` made, so
 //!   `(*env.k)` reads through it. The modes come from the IR.
+//! - A handled body and a clause are code units of kind
+//!   [`CodeKind::HandleBody`] and [`CodeKind::Clause`]. An upvar local has no
+//!   slot: it is a captured cell `Var(Cap(i))` of the frame, and the
+//!   `Handle` op of the site gives the frame the cell of the site local. An
+//!   upvar local of a closure environment (a view, `docs/ir.md` 5.1.7) has
+//!   one captured cell for each field of the environment: `u.k` is the cell
+//!   of field `k`. The capability local of a handled body is its parameter,
+//!   and the continuation of a clause is its parameter after the operation
+//!   arguments. A perform through a capability is [`Op::PerformCap`], and a
+//!   `resume` is a call of the continuation (`CallValue`).
 //!
-//! The compiler handles the construct groups A, B and C: functions, tests,
-//! places, calls of items, performs through the row, operators, aggregates,
-//! `match`, loops, `assert`, closures and function values. For a handler or
-//! a task it gives a [`Fallback`] that names the plan stage of the construct
-//! (I3 or I4), and the AST compiler runs the program.
+//! The compiler handles the construct groups A to D: functions, tests,
+//! places, calls of items, performs, operators, aggregates, `match`, loops,
+//! `assert`, closures, function values, handlers and continuations. For a
+//! task it gives a [`Fallback`] that names the plan stage of the construct
+//! (I4), and the AST compiler runs the program.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -39,15 +49,16 @@ use std::rc::Rc;
 
 use weft_ir::{
     AggKind, Block, BlockId, Body, BodyId, BodyKind, Callee, CapOperand, CaptureMode, ClosureId,
-    Const, IterSource, LocalId, LocalKind, Operand, Origin, Place, Proj, Rvalue, Stmt, StmtKind,
-    Term, TermKind, Ty, TyTable,
+    Const, HandlerId, IterSource, LocalId, LocalKind, OpIdx, Operand, Origin, Place, Proj, Rvalue,
+    Stmt, StmtKind, Term, TermKind, Ty, TyTable,
 };
 use weft_sema::irbuild::{Built, Outcome};
 use weft_sema::program::{EffectId, FnId, Program};
 use weft_sema::types::{AdtId, IntTy};
 use weft_syntax::ast::{BinOp, Span};
+use weft_syntax::diag::Code as DiagCode;
 
-use crate::code::{CapHold, Code, CodeKind, IrLoc, Op, VarRef};
+use crate::code::{CapHold, ClauseSpec, Code, CodeKind, HandleSpec, IrLoc, Op, VarRef};
 use crate::compile::Compiled;
 
 /// Why the IR compiler does not compile a program. The AST compiler runs it.
@@ -69,9 +80,6 @@ type R<T> = Result<T, Fallback>;
 /// A construct that the IR compiler does not compile yet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Later {
-    /// A `handle`, a clause, a handled body, a perform through a capability
-    /// value, a `resume`.
-    Handler,
     /// A `scope`, a task, a `fork`.
     Task,
     /// `sim.run` or `with_timeout`.
@@ -81,7 +89,6 @@ enum Later {
 impl Later {
     const fn what(self) -> (&'static str, &'static str) {
         match self {
-            Self::Handler => ("a handler", "I3"),
             Self::Task => ("a scope or a task", "I4"),
             Self::Intrinsic => ("`sim.run` or `with_timeout`", "I4"),
         }
@@ -123,6 +130,19 @@ pub fn compile_ir(prog: &Program, built: &Built) -> Result<Compiled, Fallback> {
     }
     let fns: BTreeMap<weft_ir::FnId, FnId> = built.fns.iter().map(|(s, i)| (*i, *s)).collect();
     let p = &built.program;
+    let mut shared = Shared {
+        upvars: Vec::with_capacity(p.bodies.len()),
+        jumps: BTreeMap::new(),
+    };
+    for i in 0..p.bodies.len() {
+        let id = BodyId(u32_of(i));
+        let ups = upvars_of(p, id).map_err(|m| internal(&top_name(p, id, &names), &m))?;
+        shared.upvars.push(ups);
+    }
+    for d in built.diags.iter().filter(|d| d.code == DiagCode::W0315) {
+        let key = (d.unit, d.span.lo, d.span.hi);
+        shared.jumps.insert(key, Rc::from(d.message.as_str()));
+    }
     let mut codes = Vec::new();
     for (i, body) in p.bodies.iter().enumerate() {
         let id = BodyId(u32::try_from(i).unwrap_or(u32::MAX));
@@ -145,10 +165,11 @@ pub fn compile_ir(prog: &Program, built: &Built) -> Result<Compiled, Fallback> {
                 (format!("test \"{test}\""), CodeKind::Test)
             }
             BodyKind::Closure(_) => ("closure".to_string(), CodeKind::Closure),
-            BodyKind::Clause(..) | BodyKind::Handled(_) => return Err(later(Later::Handler)),
+            BodyKind::Clause(h, op) => (clause_name(prog, p, h, op), CodeKind::Clause),
+            BodyKind::Handled(_) => ("handled computation".to_string(), CodeKind::HandleBody),
             BodyKind::Scope(_) => return Err(later(Later::Task)),
         };
-        let cx = BodyCx::new(p, &built.tys, &fns, body, id, &name)?;
+        let cx = BodyCx::new(p, &built.tys, &fns, &shared, body, id, &name)?;
         let code = cx.compile(code_name, kind).map_err(|e| match e {
             Stop::Later(l) => later(l),
             Stop::Internal(m) => internal(&name, &m),
@@ -191,6 +212,94 @@ fn top_name(p: &weft_ir::Program, id: BodyId, names: &BTreeMap<BodyId, String>) 
     format!("body b{}", id.0)
 }
 
+/// Returns the name of the code of a clause, as the AST compiler gives it.
+fn clause_name(prog: &Program, p: &weft_ir::Program, h: HandlerId, op: OpIdx) -> String {
+    p.handlers
+        .get(h.index())
+        .and_then(|d| prog.effects.get(d.effect.index()))
+        .and_then(|e| e.ops.get(op.index()))
+        .map_or_else(|| "handler".to_string(), |o| format!("handler {}", o.name))
+}
+
+/// What the compilation of each body reads about the other bodies.
+struct Shared {
+    /// The upvar locals of each body (`upvars_of`).
+    upvars: Vec<Vec<(LocalId, Upvar)>>,
+    /// The text of each W0315 of the builder, by its unit and span: the
+    /// builder ends the path of the jump with `Unreachable` there.
+    jumps: BTreeMap<(usize, u32, u32), Rc<str>>,
+}
+
+/// How a handled body or a clause names a local of its site: an upvar
+/// local (`docs/ir.md` 5.1.7).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Upvar {
+    /// An upvar local of a local of the site: one captured cell.
+    Whole,
+    /// An upvar local of a closure environment (a view) with this number of
+    /// fields: one captured cell for each field.
+    View(u32),
+}
+
+impl Upvar {
+    const fn cells(self) -> u32 {
+        match self {
+            Self::Whole => 1,
+            Self::View(n) => n,
+        }
+    }
+}
+
+/// Returns the upvar locals of body `id`, in the order of their ids. Their
+/// cells are the captured cells of the frame of the body, in that order.
+fn upvars_of(p: &weft_ir::Program, id: BodyId) -> Result<Vec<(LocalId, Upvar)>, String> {
+    let Some(body) = p.body(id) else {
+        return Err(format!("the body b{} is missing", id.0));
+    };
+    let mut out = Vec::new();
+    for (i, d) in body.locals.iter().enumerate() {
+        if !matches!(d.kind, LocalKind::Upvar(_)) {
+            continue;
+        }
+        let l = LocalId(u32_of(i));
+        let u = match view_of(p, id, l) {
+            Some(c) => {
+                let Some(decl) = p.closures.get(c.index()) else {
+                    return Err(format!("the closure c{} has no declaration", c.0));
+                };
+                Upvar::View(u32_of(decl.captures.len()))
+            }
+            None => Upvar::Whole,
+        };
+        out.push((l, u));
+    }
+    Ok(out)
+}
+
+/// Returns the closure whose environment the upvar local `l` of body `body`
+/// views: the chain of its `Upvar` kinds ends at the environment local of
+/// the closure body (`docs/ir.md` 5.1.7). A parent has a lower id than the
+/// bodies in it, so the walk ends.
+fn view_of(p: &weft_ir::Program, body: BodyId, l: LocalId) -> Option<ClosureId> {
+    let (mut at, mut l) = (body, l);
+    loop {
+        let b = p.body(at)?;
+        match b.local_kind(l)? {
+            LocalKind::Env => {
+                return match b.kind {
+                    BodyKind::Closure(c) if b.params.first() == Some(&l) => Some(c),
+                    _ => None,
+                };
+            }
+            LocalKind::Upvar(src) => {
+                at = b.parent.filter(|x| x.index() < at.index())?;
+                l = src;
+            }
+            _ => return None,
+        }
+    }
+}
+
 fn internal(name: &str, msg: &str) -> Fallback {
     Fallback {
         reason: format!("internal: `{name}`: {msg}"),
@@ -226,6 +335,7 @@ struct BodyCx<'a> {
     p: &'a weft_ir::Program,
     tys: &'a TyTable,
     fns: &'a BTreeMap<weft_ir::FnId, FnId>,
+    shared: &'a Shared,
     body: &'a Body,
     id: BodyId,
     /// The environment local of a closure body. It has no slot: its fields
@@ -233,9 +343,13 @@ struct BodyCx<'a> {
     env: Option<LocalId>,
     /// The slot of each local, if it has one.
     slots: Vec<Option<u32>>,
+    /// The upvar locals: how each one names the site, and its first
+    /// captured cell.
+    upv: Vec<Option<(Upvar, u32)>>,
     /// The local is a temporary.
     temp: Vec<bool>,
     n_slots: u32,
+    n_params: u32,
     temp_slots: u32,
     ops: Vec<Op>,
     spans: Vec<Span>,
@@ -253,6 +367,7 @@ impl<'a> BodyCx<'a> {
         p: &'a weft_ir::Program,
         tys: &'a TyTable,
         fns: &'a BTreeMap<weft_ir::FnId, FnId>,
+        shared: &'a Shared,
         body: &'a Body,
         id: BodyId,
         name: &str,
@@ -274,9 +389,13 @@ impl<'a> BodyCx<'a> {
             return Err(internal(name, "a closure body has no environment"));
         }
         // The parameters are the first slots: the frame puts the arguments
-        // there. `_0` comes next, so the unwinder finds it after the locals.
-        let params = body.params.iter().filter(|&&l| Some(l) != env);
-        for &l in params.chain(std::iter::once(&body.ret)) {
+        // there. The capability of a handled body and the continuation of a
+        // clause are parameters too: the `Handle` op and the perform give
+        // them, after the operation arguments. `_0` comes next, so the
+        // unwinder finds it after the locals.
+        let params = body.params.iter().copied().filter(|&l| Some(l) != env);
+        let caps = body.caps.iter().map(|(_, l)| *l);
+        for l in params.chain(caps).chain(body.kont.map(|(l, _)| l)) {
             if let Some(s) = slots.get_mut(l.index()) {
                 if s.is_none() {
                     *s = Some(next);
@@ -284,9 +403,34 @@ impl<'a> BodyCx<'a> {
                 }
             }
         }
+        let n_params = next;
+        if let Some(s) = slots.get_mut(body.ret.index()) {
+            if s.is_none() {
+                *s = Some(next);
+                next += 1;
+            }
+        }
+        // The upvar locals are the captured cells of the frame.
+        let mut upv = vec![None; n];
+        let mut cell = 0u32;
+        for &(l, u) in shared.upvars.get(id.index()).map_or(&[][..], Vec::as_slice) {
+            if let Some(x) = upv.get_mut(l.index()) {
+                *x = Some((u, cell));
+            }
+            cell += u.cells();
+        }
         for (i, d) in body.locals.iter().enumerate() {
             match d.kind {
                 LocalKind::Return | LocalKind::Param(_) => {}
+                LocalKind::Cap(_) | LocalKind::Kont(_) if slots[i].is_some() => {}
+                LocalKind::Cap(_) | LocalKind::Kont(_) => {
+                    return Err(internal(
+                        name,
+                        "a capability or a continuation local is not a parameter",
+                    ));
+                }
+                LocalKind::Upvar(_) if upv[i].is_some() => {}
+                LocalKind::Upvar(_) => return Err(internal(name, "an upvar local has no cell")),
                 LocalKind::User | LocalKind::Iterator => {
                     slots[i] = Some(next);
                     next += 1;
@@ -294,12 +438,6 @@ impl<'a> BodyCx<'a> {
                 LocalKind::Temp(_) => temp[i] = true,
                 LocalKind::Env if env == Some(LocalId(u32_of(i))) => {}
                 LocalKind::Env => return Err(internal(name, "a body has a second environment")),
-                LocalKind::Cap(_) | LocalKind::Kont(_) | LocalKind::Upvar(_) => {
-                    let (what, stage) = Later::Handler.what();
-                    return Err(Fallback {
-                        reason: format!("`{name}` has {what} (stage {stage})"),
-                    });
-                }
                 LocalKind::ScopeCap | LocalKind::TaskResult(_) => {
                     let (what, stage) = Later::Task.what();
                     return Err(Fallback {
@@ -319,12 +457,15 @@ impl<'a> BodyCx<'a> {
             p,
             tys,
             fns,
+            shared,
             body,
             id,
             env,
             slots,
+            upv,
             temp,
             n_slots: next,
+            n_params,
             temp_slots: next - locals,
             ops: Vec::new(),
             spans: Vec::new(),
@@ -412,7 +553,7 @@ impl<'a> BodyCx<'a> {
             ops: self.ops,
             spans: self.spans,
             n_slots: self.n_slots,
-            n_params: u32_of(body.params.len() - usize::from(self.env.is_some())),
+            n_params: self.n_params,
             unit: body.origin.span.unit as usize,
             temp_slots: self.temp_slots,
             locs: self.locs,
@@ -466,6 +607,68 @@ impl<'a> BodyCx<'a> {
             Some(s) => Ok(s),
             None => bad(format!("_{} has no slot", l.0)),
         }
+    }
+
+    fn upvar(&self, l: LocalId) -> Option<(Upvar, u32)> {
+        self.upv.get(l.index()).copied().flatten()
+    }
+
+    /// Returns the cell of local `s` of this body for an upvar local of a
+    /// nested body: its slot, or its captured cell.
+    fn cell_ref(&self, s: LocalId) -> S<VarRef> {
+        if let Some(slot) = self.slots.get(s.index()).copied().flatten() {
+            return Ok(VarRef::Local(slot));
+        }
+        match self.upvar(s) {
+            Some((Upvar::Whole, cell)) => Ok(VarRef::Cap(cell)),
+            _ => bad(format!("an upvar local names _{}, which has no cell", s.0)),
+        }
+    }
+
+    /// Returns the cell of field `k` of the environment that local `s` of
+    /// this body is or views, for a view of a nested body.
+    fn field_ref(&self, s: LocalId, k: u32) -> S<VarRef> {
+        if Some(s) == self.env {
+            return Ok(VarRef::Cap(k));
+        }
+        match self.upvar(s) {
+            Some((Upvar::View(n), cell)) if k < n => Ok(VarRef::Cap(cell + k)),
+            _ => bad(format!(
+                "a view names _{}, which is not an environment",
+                s.0
+            )),
+        }
+    }
+
+    /// Returns the cells of this body that the frame of the nested body
+    /// `child` captures: the cells of the site locals of its upvar locals,
+    /// in the order of `upvars_of`.
+    fn child_cells(&self, child: BodyId) -> S<Vec<VarRef>> {
+        let (Some(body), Some(ups)) = (self.p.body(child), self.shared.upvars.get(child.index()))
+        else {
+            return bad(format!("the body b{} is missing", child.0));
+        };
+        if body.parent != Some(self.id) {
+            return bad(format!(
+                "the site of the body b{} is not its parent",
+                child.0
+            ));
+        }
+        let mut out = Vec::new();
+        for &(l, u) in ups {
+            let Some(LocalKind::Upvar(s)) = body.local_kind(l) else {
+                return bad("an upvar local is not an upvar");
+            };
+            match u {
+                Upvar::Whole => out.push(self.cell_ref(s)?),
+                Upvar::View(n) => {
+                    for k in 0..n {
+                        out.push(self.field_ref(s, k)?);
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 
     fn is_temp(&self, l: LocalId) -> bool {
@@ -681,8 +884,21 @@ impl<'a> BodyCx<'a> {
                     self.operand(o)?;
                     CapHold::Ref
                 }
+                // A capability and a `multi` continuation are copy values:
+                // the closure holds a copy. A `once` continuation moves into
+                // the closure (`docs/ir.md` 5.27).
+                (CaptureMode::Cap | CaptureMode::Kont, Operand::Copy(p)) => {
+                    self.place(p)?;
+                    self.emit(Op::Read);
+                    CapHold::Copied
+                }
+                (CaptureMode::Kont, Operand::Move(p)) => {
+                    self.place(p)?;
+                    self.emit(Op::Take);
+                    CapHold::Moved
+                }
                 (CaptureMode::Cap | CaptureMode::Kont, _) => {
-                    return Err(Stop::Later(Later::Handler))
+                    return bad("a capability or a continuation capture is not a place")
                 }
             };
             holds.push(hold);
@@ -773,6 +989,24 @@ impl<'a> BodyCx<'a> {
             };
             self.emit(Op::Var(VarRef::Cap(k.0)));
             proj = rest;
+        } else if let Some((u, cell)) = self.upvar(p.local) {
+            // An upvar local is a captured cell. A field of a view is the
+            // captured cell of the field.
+            match u {
+                Upvar::Whole => {
+                    self.emit(Op::Var(VarRef::Cap(cell)));
+                }
+                Upvar::View(n) => {
+                    let Some((Proj::Field(k), rest)) = proj.split_first() else {
+                        return bad("an environment view is used as a whole");
+                    };
+                    if k.0 >= n {
+                        return bad("a view has no such field");
+                    }
+                    self.emit(Op::Var(VarRef::Cap(cell + k.0)));
+                    proj = rest;
+                }
+            }
         } else {
             let s = self.slot(p.local)?;
             self.emit(Op::Var(VarRef::Local(s)));
@@ -839,12 +1073,15 @@ impl<'a> BodyCx<'a> {
                 self.emit(Op::Return);
             }
             TermKind::Unreachable => {
-                let msg = if self.variant_test(b) {
-                    "this value is another variant: it has no such field"
+                let o = t.origin.span;
+                let msg = if let Some(m) = self.shared.jumps.get(&(o.unit as usize, o.lo, o.hi)) {
+                    Rc::clone(m)
+                } else if self.variant_test(b) {
+                    Rc::from("this value is another variant: it has no such field")
                 } else {
-                    "no `match` arm matches the value"
+                    Rc::from("no `match` arm matches the value")
                 };
-                self.emit(Op::Fault(Rc::from(msg)));
+                self.emit(Op::Fault(msg));
             }
             TermKind::UnwindExit => return bad("`UnwindExit` on a normal path"),
             TermKind::Call {
@@ -881,15 +1118,28 @@ impl<'a> BodyCx<'a> {
                 next: to,
                 ..
             } => {
-                let CapOperand::Row(e) = cap else {
-                    return Err(Stop::Later(Later::Handler));
-                };
-                self.operands(args)?;
-                self.emit(Op::Perform {
-                    effect: EffectId(e.index()),
-                    op: op.index(),
-                    n: u32_of(args.len()),
-                });
+                match cap {
+                    CapOperand::Row(e) => {
+                        self.operands(args)?;
+                        self.emit(Op::Perform {
+                            effect: EffectId(e.index()),
+                            op: op.index(),
+                            n: u32_of(args.len()),
+                        });
+                    }
+                    // The capability value, then the arguments. The machine
+                    // finds the handler; in a debug build it checks that the
+                    // handler is the one of the capability.
+                    CapOperand::Local(c) => {
+                        self.place(c)?;
+                        self.emit(Op::Read);
+                        self.operands(args)?;
+                        self.emit(Op::PerformCap {
+                            op: op.index(),
+                            n: u32_of(args.len()),
+                        });
+                    }
+                }
                 self.result(b, dest, Some(*to), next)?;
             }
             TermKind::Assert { cond, next: to, .. } => {
@@ -910,8 +1160,28 @@ impl<'a> BodyCx<'a> {
                 self.emit_to(Op::IterNext { slot, exit: 0 }, vec![Self::label(b, *done)]);
                 self.result(b, dest, Some(*to), next)?;
             }
-            TermKind::Resume { .. } | TermKind::Handle { .. } => {
-                return Err(Stop::Later(Later::Handler))
+            // A `resume` is a call of the continuation.
+            TermKind::Resume {
+                kont,
+                arg,
+                dest,
+                next: to,
+                ..
+            } => {
+                self.place(kont)?;
+                self.emit(Op::Read);
+                self.operand(arg)?;
+                self.emit(Op::CallValue(1));
+                self.result(b, dest, Some(*to), next)?;
+            }
+            TermKind::Handle {
+                handler,
+                dest,
+                next: to,
+                ..
+            } => {
+                self.handle(*handler)?;
+                self.result(b, dest, Some(*to), next)?;
             }
             TermKind::Scope { .. }
             | TermKind::ScopeWait { .. }
@@ -920,6 +1190,32 @@ impl<'a> BodyCx<'a> {
             | TermKind::Detach { .. }
             | TermKind::Fork { .. } => return Err(Stop::Later(Later::Task)),
         }
+        Ok(())
+    }
+
+    /// A `handle` (`docs/ir.md` 5.24): the `Handle` op gives the frames of
+    /// the handled body and of each clause the cells of their upvar locals.
+    /// The code unit of body `i` is code unit `i` (`compile_ir`).
+    fn handle(&mut self, h: HandlerId) -> S<()> {
+        let Some(decl) = self.p.handlers.get(h.index()) else {
+            return bad(format!("the handler h{} has no declaration", h.0));
+        };
+        let mut clauses = Vec::with_capacity(decl.clauses.len());
+        for &(op, body) in &decl.clauses {
+            clauses.push(ClauseSpec {
+                op: op.index(),
+                code: body.index(),
+                caps: self.child_cells(body)?,
+            });
+        }
+        let spec = HandleSpec {
+            effect: EffectId(decl.effect.index()),
+            clauses,
+            body: decl.handled.index(),
+            body_caps: self.child_cells(decl.handled)?,
+            cap: true,
+        };
+        self.emit(Op::Handle(Rc::new(spec)));
         Ok(())
     }
 

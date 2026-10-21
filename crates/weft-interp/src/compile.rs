@@ -957,6 +957,7 @@ impl<'a> Compiler<'a> {
                     clauses: specs,
                     body: bcode,
                     body_caps: bcaps,
+                    cap: false,
                 })));
             }
             ExprKind::Scope { binder, body } => {

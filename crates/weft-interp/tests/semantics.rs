@@ -648,7 +648,7 @@ mod ir_ops {
     use std::collections::BTreeSet;
     use std::rc::Rc;
 
-    use weft_interp::code::{CapHold, Code, CodeKind, Op, VarRef};
+    use weft_interp::code::{CapHold, ClauseSpec, Code, CodeKind, HandleSpec, Op, VarRef};
     use weft_interp::compile::{Compiler, Exports};
     use weft_interp::runtime::Runtime;
     use weft_interp::{run_runtime_main, RunOptions, RunOutcome, RuntimeError};
@@ -656,7 +656,8 @@ mod ir_ops {
     use weft_sema::{AdtId, Options};
     use weft_syntax::ast::Span;
 
-    const SRC: &str = "enum E { A, B(u64) }\nlinear struct T { x: u64 }\nfn main() {}";
+    const SRC: &str = "enum E { A, B(u64) }\nlinear struct T { x: u64 }\n\
+        effect Ask { fn ask() -> u64 }\nfn main() {}";
 
     /// Runs `main` with hand-made code: `ops`, with `slots` slots, of which
     /// the last `temps` hold temporary cells.
@@ -674,10 +675,15 @@ mod ir_ops {
 
     /// A closure code unit with hand-made code and `params` parameters.
     fn closure_unit(ops: Vec<Op>, slots: u32, params: u32) -> Code {
+        unit(CodeKind::Closure, ops, slots, params)
+    }
+
+    /// A code unit of `kind` with hand-made code and `params` parameters.
+    fn unit(kind: CodeKind, ops: Vec<Op>, slots: u32, params: u32) -> Code {
         let n = ops.len();
         Code {
             name: "closure".into(),
-            kind: CodeKind::Closure,
+            kind,
             ops,
             spans: vec![Span::default(); n],
             n_slots: slots,
@@ -1000,5 +1006,139 @@ mod ir_ops {
             "{}",
             e.message
         );
+    }
+
+    fn effect(name: &str) -> weft_sema::EffectId {
+        let a = weft_sema::analyze_source(SRC, Options::default()).unwrap();
+        weft_sema::EffectId(
+            a.program
+                .effects
+                .iter()
+                .position(|d| d.name == name)
+                .unwrap(),
+        )
+    }
+
+    /// A `Handle` of `Ask` whose handled body is code unit `body` and whose
+    /// clause is code unit `clause`. The handled body takes the capability.
+    fn handle_ask(body: usize, clause: usize, body_caps: Vec<VarRef>) -> Op {
+        Op::Handle(Rc::new(HandleSpec {
+            effect: effect("Ask"),
+            clauses: vec![ClauseSpec {
+                op: 0,
+                code: clause,
+                caps: Vec::new(),
+            }],
+            body,
+            body_caps,
+            cap: true,
+        }))
+    }
+
+    /// The clause of `ask`: `resume(41)`. Its parameter is the continuation.
+    fn ask_clause() -> Code {
+        let ops = vec![var(0), Op::Read, Op::Int(41), Op::CallValue(1), Op::Return];
+        unit(CodeKind::Clause, ops, 1, 1)
+    }
+
+    #[test]
+    fn perform_cap_performs_through_the_capability_of_a_handled_body() {
+        // The handled body (unit `first`) gets the capability of the handler
+        // in slot 0. `PerformCap` reads the effect from it: `ask()` gives 41.
+        let first = first_extra_unit();
+        let body = vec![
+            var(0),
+            Op::Read,
+            Op::PerformCap { op: 0, n: 0 },
+            Op::Int(1),
+            Op::Bin(weft_syntax::ast::BinOp::Add),
+            Op::Return,
+        ];
+        let ops = vec![
+            handle_ask(first, first + 1, Vec::new()),
+            Op::Print(1),
+            Op::Pop,
+            Op::Unit,
+            Op::Return,
+        ];
+        let units = vec![unit(CodeKind::HandleBody, body, 1, 1), ask_clause()];
+        let o = run_units(ops, 0, 0, units).unwrap();
+        assert_eq!(o.stdout, "42\n");
+        // A capability that is not a capability of a handler is a fault.
+        let ops = vec![Op::Int(1), Op::PerformCap { op: 0, n: 0 }];
+        assert!(fault(ops, 0, 0).contains("capability"));
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "the handler of the capability")]
+    fn perform_cap_asserts_that_the_machine_finds_the_handler_of_the_capability() {
+        // The outer handled body (unit `first`) gives its capability to the
+        // inner handled body (unit `first + 1`), which performs through it.
+        // The machine finds the inner handler (lexical): the IR never does
+        // this, and the debug assertion stops it.
+        let first = first_extra_unit();
+        let outer = vec![
+            handle_ask(first + 1, first + 2, vec![VarRef::Local(0)]),
+            Op::Return,
+        ];
+        let inner = vec![
+            Op::Var(VarRef::Cap(0)),
+            Op::Read,
+            Op::PerformCap { op: 0, n: 0 },
+            Op::Return,
+        ];
+        let ops = vec![
+            handle_ask(first, first + 2, Vec::new()),
+            Op::Print(1),
+            Op::Pop,
+            Op::Unit,
+            Op::Return,
+        ];
+        let units = vec![
+            unit(CodeKind::HandleBody, outer, 1, 1),
+            unit(CodeKind::HandleBody, inner, 1, 1),
+            ask_clause(),
+        ];
+        let _ = run_units(ops, 0, 0, units);
+    }
+
+    #[test]
+    fn make_closure_ir_copies_a_copied_capture_into_a_cell_of_its_own() {
+        // A `Cap` or a `multi` `Kont` capture (`CapHold::Copied`): the closure
+        // holds a copy of the value in a cell of its own, and a call does not
+        // take it. A later write of the variable does not change the copy.
+        let code = first_extra_unit();
+        let body = vec![
+            Op::Var(VarRef::Cap(0)),
+            Op::Read,
+            Op::Print(1),
+            Op::Pop,
+            Op::Unit,
+            Op::Return,
+        ];
+        let mut ops = vec![Op::Int(1), Op::Bind(0), var(0), Op::Read];
+        ops.extend([
+            Op::MakeClosureIr {
+                code,
+                holds: vec![CapHold::Copied],
+                span: Span::default(),
+            },
+            Op::Bind(1),
+            Op::Int(5),
+            var(0),
+            Op::Store,
+        ]);
+        ops.extend([var(1), Op::Read, Op::CallValue(0), Op::Pop]);
+        ops.extend([
+            var(1),
+            Op::Read,
+            Op::CallValue(0),
+            Op::Pop,
+            Op::Unit,
+            Op::Return,
+        ]);
+        let o = run_units(ops, 2, 0, vec![closure_unit(body, 0, 0)]).unwrap();
+        assert_eq!(o.stdout, "1\n1\n");
     }
 }

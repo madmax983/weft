@@ -85,9 +85,9 @@ finding = "FD2"
 kind = "interp"
 verdict = "none"
 group = "AD"
-stage = "I3"
+stage = "I5"
 repro = ["tests/gate/probes/r2/fidelity/repro/FD2_multi_nested_drop.wf"]
-note = "Nested multi continuations share one exec record"
+note = "Nested multi continuations share one exec record. Stage I3 runs the repro on the IR engine (crates/weft-interp/tests/compile_ir.rs); the claim reads the IR oracle cache of stage I5"
 
 [[claim]]
 finding = "FD3"
