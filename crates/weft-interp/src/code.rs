@@ -54,6 +54,23 @@ pub enum CPat {
     },
 }
 
+/// How a closure of the IR holds one capture (`docs/ir.md` 8.1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CapHold {
+    /// The operand is a place: the closure shares the cell there with the
+    /// maker (a `Kept` capture).
+    Shared,
+    /// The operand is a value that the maker moved: the closure holds it in
+    /// a cell of its own (a `ByMove` capture). The closure owns the cell, and
+    /// a call takes its value, as for a capture of [`Op::MakeClosure`] in
+    /// `owned`.
+    Moved,
+    /// The operand is the reference that `&x` made: the closure holds it in
+    /// a cell of its own (a `ByRef` capture). A call does not take it, so
+    /// each call reads through the reference.
+    Ref,
+}
+
 /// One handler clause of a `handle` expression.
 #[derive(Clone, Debug)]
 pub struct ClauseSpec {
@@ -224,6 +241,18 @@ pub enum Op {
         owned: Vec<u32>,
         /// The closure expression. The checker names the tasks that run the
         /// closure by it (`stealable`).
+        span: Span,
+    },
+    /// Makes a closure of the IR (`docs/ir.md` 8.1). It pops one operand
+    /// for each capture: a place for a [`CapHold::Shared`] capture, else a
+    /// value.
+    MakeClosureIr {
+        /// The code.
+        code: CodeId,
+        /// How the closure holds each capture, in the order of the fields of
+        /// the environment.
+        holds: Vec<CapHold>,
+        /// The closure expression.
         span: Span,
     },
     /// Pushes a function item as a value.

@@ -2440,7 +2440,7 @@ lines) at the end of the migration.
 | `Deref(_)` | the place ops follow the pointer (`Field` and `Index` already do; a new op `Deref` for a bare dereference) |
 | `(*env.k)` and `env.k` in a closure | `env.k` is `Var(Cap(k))`: the owned cell of a `ByMove` or a `ByRef` field, or the cell that a `Kept` field shares with the maker. A `ByRef` field holds the reference that its operand `&x` made, so `(*env.k)` adds `Deref`, and the oracle checks each read through it after the end of `x` (rule CAPTURE, 8.3) |
 | `Binary(op, ty, a, b)` | `a`, `b`, `Bin(op)`, `CheckInt(ty)` |
-| an aggregate | `Tuple`, `MakeVec`, `MakeStruct`, `MakeEnum`; a closure is `MakeClosure` with the shared cells of its `Kept` operands and the `owned` list of its `ByMove` operands (the moved values) and `ByRef` operands (the references) |
+| an aggregate | `Tuple`, `MakeVec`, `MakeStruct`, `MakeEnum`; a closure is `MakeClosureIr` with the shared cells of its `Kept` operands and cells of its own for its `ByMove` operands (the moved values, in the `owned` list) and its `ByRef` operands (the references) |
 | `Uninit(l)`, `Uninit(t.f)` | nothing for a whole local after `BindEmpty`; `MakeStruct` leaves `Moved` in a place field that the literal does not give, as today; nothing for the place field paths of a parameter at the entry (the path can name a variant that the value does not have) |
 | `Unary(op, ty, a)` | `a`, `Neg` or `Not`, `CheckInt(ty)` |
 | `Concat(ops)` | each operand, `ToStr`, then `Concat` |
@@ -2491,10 +2491,39 @@ As built (plan stage I1, `compile_ir.rs`):
 - The cleanup blocks are not compiled before I6. A call (`Call` with the function of
   the analysis), a perform through the row (`Perform`), `IterNext` and `Assert` store
   their result into the place of their destination with `Store`.
-- A program whose IR has a closure, a function item as a value, a call of a function
-  value, a handler or a task, or a body with no IR, falls back to the AST compiler;
-  `RunOutcome::fallback` (and the note of `weft run --engine=ir`) names the construct
-  and the plan stage (I2 to I4).
+- A program whose IR has a handler or a task, or a body with no IR, falls back to the
+  AST compiler; `RunOutcome::fallback` (and the note of `weft run --engine=ir`) names
+  the construct and the plan stage (I3 or I4).
+
+As built (plan stage I2, closures and function values):
+
+- A closure body is a `Code` of kind `Closure`. Its environment local `_1` gets no
+  slot and no argument: the parameters after it get the first slots. A place
+  `env.k` is `Var(Cap(k))`, the captured cell `k` of the frame, and the steps after
+  `env.k` are the place ops (`(*env.k)` adds `Deref`). The environment as a whole is
+  never a place.
+- A closure value is the new op `MakeClosureIr`. The compiler reads the mode of each
+  capture from the `ClosureDecl` (no `FnFacts::by_value`), and pushes one operand for
+  each field: for a `Kept` capture the place of its operand `copy x` (no `Read`), so
+  the closure shares the cell of `x` (or the cell that `(*env.j)` names); for a
+  `ByMove` capture the moved value; for a `ByRef` capture the reference that `&x`
+  made. The op puts each value into a new cell of the closure. Only the cells of the
+  `ByMove` captures are in the `owned` list of the closure value: a call takes their
+  values (a `once` closure, as with the AST compiler), and the unwinder finishes
+  their linear values. The cell of a `ByRef` capture is not in `owned`, so each call
+  reads through the reference, and the oracle sees a read after the end of `x`
+  (J5d).
+- A closure value is a copy value at run time: a `copy f` shares the closure (the
+  same cells), it does not clone it. So a `Kept` capture of a local that holds a
+  closure calls the closure that the local has at the call (B12 probe
+  `late_once_capture`).
+- `Const::Fn(f, _)` is `FnValue(f)`. A call of a function value is the callee
+  operand, the arguments, then `CallValue`; the result goes to the destination as
+  for `Call`. A function item that is an intrinsic (`sim.run`, `with_timeout`) is a
+  construct of stage I4.
+- A `Cap` or `Kont` capture is a construct of stage I3. An environment view (an
+  upvar local of the environment, 5.1.7) is only in a handled body, a clause or a
+  scope body, so it falls back with these bodies (I3, I4).
 
 ### 8.2 Landing pads
 
@@ -2525,7 +2554,8 @@ order (plan stage C3). ADR 0010 states that the interpreter runs the IR (plan st
 `Deref`, `Len`, `Tag`, `JumpTable`, `Bounds`, `DropPlace`, `Consume`, `EndTemp`, and the
 unwind-mode ops `UnwindValue`, `UnwindKont`, `UnwindExit`. Stage I1 adds three more
 (8.1): `Part` (a part of a value by index), `Take` (`move p`) and `LiveTemp` (`Live` of
-a temporary). Each one has a unit test in `crates/weft-interp/tests/semantics.rs`.
+a temporary). Stage I2 adds `MakeClosureIr` (a closure with the modes of the IR).
+Each one has a unit test in `crates/weft-interp/tests/semantics.rs`.
 
 ### 8.5 Differential tests and oracles
 

@@ -8,7 +8,7 @@ use weft_syntax::ast::Span;
 use weft_verified::lifecycle::LinState;
 
 use super::{CodeFrame, Flow, Frame, HandleMark, LinRec, ScopeRec, TaskResult, Wait, R};
-use crate::code::{CPat, LitPat, Op, VarRef};
+use crate::code::{CPat, CapHold, LitPat, Op, VarRef};
 use crate::error::{ErrorKind, RuntimeError};
 use crate::heap::SlotKind;
 use crate::runtime::Native;
@@ -538,6 +538,38 @@ impl super::Machine<'_, '_> {
                         own.push(cell);
                     } else {
                         cells.push(cell);
+                    }
+                }
+                let henv = self.fr()?.henv.clone();
+                self.push(Value::Closure(Rc::new(ClosureVal {
+                    code: *code,
+                    cells,
+                    owned: own,
+                    henv,
+                    span: *span,
+                })))?;
+            }
+            Op::MakeClosureIr { code, holds, span } => {
+                let ops = self.pop_n(holds.len())?;
+                let mut cells = Vec::with_capacity(holds.len());
+                let mut own = Vec::new();
+                for (hold, v) in holds.iter().zip(ops) {
+                    match (hold, v) {
+                        // A `Kept` capture shares the cell of the variable.
+                        (CapHold::Shared, Value::Loc(p, _)) if p.path.is_empty() => {
+                            cells.push(p.cell);
+                        }
+                        (CapHold::Shared, _) => {
+                            return Err(self.fault("internal: a kept capture is not a whole cell"));
+                        }
+                        (CapHold::Moved, v) => {
+                            let cell = self.heap.alloc(SlotKind::Local, v);
+                            cells.push(cell);
+                            own.push(cell);
+                        }
+                        (CapHold::Ref, v) => {
+                            cells.push(self.heap.alloc(SlotKind::Local, v));
+                        }
                     }
                 }
                 let henv = self.fr()?.henv.clone();

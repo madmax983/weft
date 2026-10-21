@@ -648,7 +648,7 @@ mod ir_ops {
     use std::collections::BTreeSet;
     use std::rc::Rc;
 
-    use weft_interp::code::{Code, CodeKind, Op, VarRef};
+    use weft_interp::code::{CapHold, Code, CodeKind, Op, VarRef};
     use weft_interp::compile::{Compiler, Exports};
     use weft_interp::runtime::Runtime;
     use weft_interp::{run_runtime_main, RunOptions, RunOutcome, RuntimeError};
@@ -661,6 +661,41 @@ mod ir_ops {
     /// Runs `main` with hand-made code: `ops`, with `slots` slots, of which
     /// the last `temps` hold temporary cells.
     fn run_ops(ops: Vec<Op>, slots: u32, temps: u32) -> Result<RunOutcome, RuntimeError> {
+        run_units(ops, slots, temps, Vec::new())
+    }
+
+    /// The id of the first code unit that `run_units` adds.
+    fn first_extra_unit() -> usize {
+        let a = weft_sema::analyze_source(SRC, Options::default()).unwrap();
+        Compiler::compile(&a.program, &a.sigs, &Exports::default())
+            .codes
+            .len()
+    }
+
+    /// A closure code unit with hand-made code and `params` parameters.
+    fn closure_unit(ops: Vec<Op>, slots: u32, params: u32) -> Code {
+        let n = ops.len();
+        Code {
+            name: "closure".into(),
+            kind: CodeKind::Closure,
+            ops,
+            spans: vec![Span::default(); n],
+            n_slots: slots,
+            n_params: params,
+            unit: 0,
+            temp_slots: 0,
+            locs: Vec::new(),
+        }
+    }
+
+    /// Runs `main` as `run_ops` does, with the code units `extra` after the
+    /// code units of the program.
+    fn run_units(
+        ops: Vec<Op>,
+        slots: u32,
+        temps: u32,
+        extra: Vec<Code>,
+    ) -> Result<RunOutcome, RuntimeError> {
         let a = weft_sema::analyze_source(SRC, Options::default()).unwrap();
         let mut compiled = Compiler::compile(&a.program, &a.sigs, &Exports::default());
         let Some(ItemRef::Fn(f)) = a.program.mods[a.program.root].items.get("main").copied() else {
@@ -679,6 +714,7 @@ mod ir_ops {
             temp_slots: temps,
             locs: Vec::new(),
         });
+        compiled.codes.extend(extra.into_iter().map(Rc::new));
         let rt = Runtime::with_code(&a.program, &a.sigs, BTreeSet::new(), compiled);
         let opts = RunOptions {
             max_steps: Some(10_000),
@@ -918,5 +954,51 @@ mod ir_ops {
         // After `Dead` the slot has no cell.
         let ops = vec![Op::LiveTemp(0), Op::EndTemp(0), var(0), Op::Read];
         assert!(fault(ops, 1, 1).contains("before it has a value"));
+    }
+
+    #[test]
+    fn make_closure_ir_shares_kept_cells_and_owns_the_other_captures() {
+        // Slot 0 is `x`, slot 1 is a `Vec` `v`, slot 2 is the closure. The
+        // closure shares the cell of `x` (`Kept`), takes `v` (`ByMove`) and
+        // holds `&x` (`ByRef`). After a write of `x`, the closure reads 5
+        // through the shared cell and through the reference, and the `Vec`
+        // that it took.
+        let code = first_extra_unit();
+        let body = vec![
+            Op::Var(VarRef::Cap(0)),
+            Op::Read,
+            Op::Var(VarRef::Cap(1)),
+            Op::Len,
+            Op::Var(VarRef::Cap(2)),
+            Op::Deref,
+            Op::Read,
+            Op::Print(3),
+            Op::Pop,
+            Op::Unit,
+            Op::Return,
+        ];
+        let mut ops = vec![Op::Int(1), Op::Bind(0), Op::Int(4), Op::MakeVec(1)];
+        ops.extend([Op::Bind(1), var(0), var(1), Op::Take, var(0), Op::Borrow]);
+        ops.extend([
+            Op::MakeClosureIr {
+                code,
+                holds: vec![CapHold::Shared, CapHold::Moved, CapHold::Ref],
+                span: Span::default(),
+            },
+            Op::Bind(2),
+            Op::Int(5),
+            var(0),
+            Op::Store,
+        ]);
+        ops.extend([var(2), Op::Read, Op::CallValue(0), Op::Pop, var(1)]);
+        ops.extend(print_end());
+        let e = run_units(ops, 3, 0, vec![closure_unit(body, 0, 0)]).unwrap_err();
+        assert_eq!(e.outcome.stdout, "5 1 5\n");
+        // The closure moved `v` when it was made.
+        assert!(
+            e.message.contains("used after it was moved"),
+            "{}",
+            e.message
+        );
     }
 }

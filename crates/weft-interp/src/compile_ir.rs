@@ -20,28 +20,34 @@
 //!   the next block is left out. A jump back is a back edge: `BackEdge`, the
 //!   preemption point of the scheduler, then `Jump`.
 //! - Each op carries its IR location ([`IrLoc`]) and the span of its origin.
+//! - A closure body gets the arguments of the call in its parameter slots.
+//!   Its environment local has no slot: a capture `env.k` is the captured
+//!   cell `Var(Cap(k))`. A closure value is [`Op::MakeClosureIr`]: a `Kept`
+//!   capture shares the cell of the variable, a `ByMove` capture takes the
+//!   value, and a `ByRef` capture holds the reference that `&x` made, so
+//!   `(*env.k)` reads through it. The modes come from the IR.
 //!
-//! The compiler handles the construct groups A and B: functions, tests,
+//! The compiler handles the construct groups A, B and C: functions, tests,
 //! places, calls of items, performs through the row, operators, aggregates,
-//! `match`, loops and `assert`. For a closure, a function value, a handler
-//! or a task it gives a [`Fallback`] that names the plan stage of the
-//! construct (I2 to I4), and the AST compiler runs the program.
+//! `match`, loops, `assert`, closures and function values. For a handler or
+//! a task it gives a [`Fallback`] that names the plan stage of the construct
+//! (I3 or I4), and the AST compiler runs the program.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::rc::Rc;
 
 use weft_ir::{
-    AggKind, Block, BlockId, Body, BodyId, BodyKind, Callee, CapOperand, Const, IterSource,
-    LocalId, LocalKind, Operand, Origin, Place, Proj, Rvalue, Stmt, StmtKind, Term, TermKind, Ty,
-    TyTable,
+    AggKind, Block, BlockId, Body, BodyId, BodyKind, Callee, CapOperand, CaptureMode, ClosureId,
+    Const, IterSource, LocalId, LocalKind, Operand, Origin, Place, Proj, Rvalue, Stmt, StmtKind,
+    Term, TermKind, Ty, TyTable,
 };
 use weft_sema::irbuild::{Built, Outcome};
 use weft_sema::program::{EffectId, FnId, Program};
 use weft_sema::types::{AdtId, IntTy};
 use weft_syntax::ast::{BinOp, Span};
 
-use crate::code::{Code, CodeKind, IrLoc, Op, VarRef};
+use crate::code::{CapHold, Code, CodeKind, IrLoc, Op, VarRef};
 use crate::compile::Compiled;
 
 /// Why the IR compiler does not compile a program. The AST compiler runs it.
@@ -63,12 +69,6 @@ type R<T> = Result<T, Fallback>;
 /// A construct that the IR compiler does not compile yet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Later {
-    /// A closure body or a closure value.
-    Closure,
-    /// A function item as a value.
-    FnValue,
-    /// A call of a function value.
-    ValueCall,
     /// A `handle`, a clause, a handled body, a perform through a capability
     /// value, a `resume`.
     Handler,
@@ -81,9 +81,6 @@ enum Later {
 impl Later {
     const fn what(self) -> (&'static str, &'static str) {
         match self {
-            Self::Closure => ("a closure", "I2"),
-            Self::FnValue => ("a function item as a value", "I2"),
-            Self::ValueCall => ("a call of a function value", "I2"),
             Self::Handler => ("a handler", "I3"),
             Self::Task => ("a scope or a task", "I4"),
             Self::Intrinsic => ("`sim.run` or `with_timeout`", "I4"),
@@ -147,7 +144,7 @@ pub fn compile_ir(prog: &Program, built: &Built) -> Result<Compiled, Fallback> {
                 let test = p.tests.get(t.index()).map_or("", |d| d.name.as_str());
                 (format!("test \"{test}\""), CodeKind::Test)
             }
-            BodyKind::Closure(_) => return Err(later(Later::Closure)),
+            BodyKind::Closure(_) => ("closure".to_string(), CodeKind::Closure),
             BodyKind::Clause(..) | BodyKind::Handled(_) => return Err(later(Later::Handler)),
             BodyKind::Scope(_) => return Err(later(Later::Task)),
         };
@@ -231,6 +228,9 @@ struct BodyCx<'a> {
     fns: &'a BTreeMap<weft_ir::FnId, FnId>,
     body: &'a Body,
     id: BodyId,
+    /// The environment local of a closure body. It has no slot: its fields
+    /// are the captured cells of the frame.
+    env: Option<LocalId>,
     /// The slot of each local, if it has one.
     slots: Vec<Option<u32>>,
     /// The local is a temporary.
@@ -261,9 +261,22 @@ impl<'a> BodyCx<'a> {
         let mut slots = vec![None; n];
         let mut temp = vec![false; n];
         let mut next = 0u32;
+        // The environment of a closure is its first parameter. The call gives
+        // no argument for it.
+        let env = match body.kind {
+            BodyKind::Closure(_) => body.params.first().copied().filter(|&l| {
+                body.local(l)
+                    .is_some_and(|d| matches!(d.kind, LocalKind::Env))
+            }),
+            _ => None,
+        };
+        if matches!(body.kind, BodyKind::Closure(_)) && env.is_none() {
+            return Err(internal(name, "a closure body has no environment"));
+        }
         // The parameters are the first slots: the frame puts the arguments
         // there. `_0` comes next, so the unwinder finds it after the locals.
-        for &l in body.params.iter().chain(std::iter::once(&body.ret)) {
+        let params = body.params.iter().filter(|&&l| Some(l) != env);
+        for &l in params.chain(std::iter::once(&body.ret)) {
             if let Some(s) = slots.get_mut(l.index()) {
                 if s.is_none() {
                     *s = Some(next);
@@ -279,7 +292,8 @@ impl<'a> BodyCx<'a> {
                     next += 1;
                 }
                 LocalKind::Temp(_) => temp[i] = true,
-                LocalKind::Env => return Err(internal(name, "a function body has an environment")),
+                LocalKind::Env if env == Some(LocalId(u32_of(i))) => {}
+                LocalKind::Env => return Err(internal(name, "a body has a second environment")),
                 LocalKind::Cap(_) | LocalKind::Kont(_) | LocalKind::Upvar(_) => {
                     let (what, stage) = Later::Handler.what();
                     return Err(Fallback {
@@ -307,6 +321,7 @@ impl<'a> BodyCx<'a> {
             fns,
             body,
             id,
+            env,
             slots,
             temp,
             n_slots: next,
@@ -397,7 +412,7 @@ impl<'a> BodyCx<'a> {
             ops: self.ops,
             spans: self.spans,
             n_slots: self.n_slots,
-            n_params: u32::try_from(body.params.len()).unwrap_or(u32::MAX),
+            n_params: u32_of(body.params.len() - usize::from(self.env.is_some())),
             unit: body.origin.span.unit as usize,
             temp_slots: self.temp_slots,
             locs: self.locs,
@@ -633,8 +648,51 @@ impl<'a> BodyCx<'a> {
                     n: u32_of(ops.len()),
                 });
             }
-            AggKind::Closure(_) => return Err(Stop::Later(Later::Closure)),
+            AggKind::Closure(c) => self.closure(*c, ops)?,
         }
+        Ok(())
+    }
+
+    /// A closure value (`docs/ir.md` 5.22, 8.1). The operand of a `Kept`
+    /// capture is the place of the variable (`copy x`): the closure shares
+    /// its cell. The operand of a `ByMove` capture is the moved value, and
+    /// the operand of a `ByRef` capture is the reference `&x`: the closure
+    /// holds each in a cell of its own.
+    fn closure(&mut self, c: ClosureId, ops: &[Operand]) -> S<()> {
+        let Some(decl) = self.p.closures.get(c.index()) else {
+            return bad(format!("the closure c{} has no declaration", c.0));
+        };
+        if decl.captures.len() != ops.len() {
+            return bad("a closure has a wrong number of operands");
+        }
+        let mut holds = Vec::with_capacity(ops.len());
+        for (cap, o) in decl.captures.iter().zip(ops) {
+            let hold = match (cap.mode, o) {
+                (CaptureMode::Kept, Operand::Copy(p)) => {
+                    self.place(p)?;
+                    CapHold::Shared
+                }
+                (CaptureMode::Kept, _) => return bad("a kept capture is not a place"),
+                (CaptureMode::ByMove, o) => {
+                    self.operand(o)?;
+                    CapHold::Moved
+                }
+                (CaptureMode::ByRef, o) => {
+                    self.operand(o)?;
+                    CapHold::Ref
+                }
+                (CaptureMode::Cap | CaptureMode::Kont, _) => {
+                    return Err(Stop::Later(Later::Handler))
+                }
+            };
+            holds.push(hold);
+        }
+        // The code unit of body `i` is code unit `i` (`compile_ir`).
+        self.emit(Op::MakeClosureIr {
+            code: decl.body.index(),
+            holds,
+            span: self.span,
+        });
         Ok(())
     }
 
@@ -698,7 +756,7 @@ impl<'a> BodyCx<'a> {
                     },
                     Const::Str(s) => Op::Str(Rc::from(s.as_str())),
                     Const::Duration(ms) => Op::Dur(*ms),
-                    Const::Fn(..) => return Err(Stop::Later(Later::FnValue)),
+                    Const::Fn(f, _) => Op::FnValue(self.item(*f)?),
                 };
                 self.emit(op);
             }
@@ -707,9 +765,19 @@ impl<'a> BodyCx<'a> {
     }
 
     fn place(&mut self, p: &Place) -> S<()> {
-        let s = self.slot(p.local)?;
-        self.emit(Op::Var(VarRef::Local(s)));
-        for proj in &p.proj {
+        let mut proj: &[Proj] = &p.proj;
+        if Some(p.local) == self.env {
+            // A field of the environment is a captured cell.
+            let Some((Proj::Field(k), rest)) = proj.split_first() else {
+                return bad("the environment is used as a whole");
+            };
+            self.emit(Op::Var(VarRef::Cap(k.0)));
+            proj = rest;
+        } else {
+            let s = self.slot(p.local)?;
+            self.emit(Op::Var(VarRef::Local(s)));
+        }
+        for proj in proj {
             match proj {
                 Proj::Deref(_) => {
                     self.emit(Op::Deref);
@@ -730,6 +798,23 @@ impl<'a> BodyCx<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Returns the function of the analysis for function `f` of the IR. An
+    /// intrinsic (`sim.run`, `with_timeout`) is a construct of stage I4.
+    fn item(&self, f: weft_ir::FnId) -> S<FnId> {
+        if self
+            .p
+            .fns
+            .get(f.index())
+            .is_some_and(|d| d.intrinsic.is_some())
+        {
+            return Err(Stop::Later(Later::Intrinsic));
+        }
+        match self.fns.get(&f) {
+            Some(&sf) => Ok(sf),
+            None => bad(format!("the function f{} has no function", f.0)),
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -769,26 +854,23 @@ impl<'a> BodyCx<'a> {
                 next: to,
                 ..
             } => {
-                let f = match callee {
-                    Callee::Fn(f, _) => *f,
-                    Callee::Value(_) => return Err(Stop::Later(Later::ValueCall)),
-                };
-                if self
-                    .p
-                    .fns
-                    .get(f.index())
-                    .is_some_and(|d| d.intrinsic.is_some())
-                {
-                    return Err(Stop::Later(Later::Intrinsic));
+                match callee {
+                    Callee::Fn(f, _) => {
+                        let sf = self.item(*f)?;
+                        self.operands(args)?;
+                        self.emit(Op::Call {
+                            f: sf,
+                            n: u32_of(args.len()),
+                        });
+                    }
+                    // The callee is read before the arguments (`docs/ir.md`
+                    // 5.21).
+                    Callee::Value(v) => {
+                        self.operand(v)?;
+                        self.operands(args)?;
+                        self.emit(Op::CallValue(u32_of(args.len())));
+                    }
                 }
-                let Some(&sf) = self.fns.get(&f) else {
-                    return bad(format!("the function f{} has no function", f.0));
-                };
-                self.operands(args)?;
-                self.emit(Op::Call {
-                    f: sf,
-                    n: u32_of(args.len()),
-                });
                 self.result(b, dest, *to, next)?;
             }
             TermKind::Perform {
