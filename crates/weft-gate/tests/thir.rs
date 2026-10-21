@@ -1,6 +1,8 @@
 //! Test D0, part 1 (plan stage T3), on each program of tier 1: the THIR tables
 //! that the old lowering records, against the syntax tree, the facts and the
-//! final types (`weft_sema::thir::d0`).
+//! final types (`weft_sema::thir::d0`). On the same analysis, the builder of
+//! the IR (plan stage B3) must not panic, and the IR must break no rule of the
+//! verifier.
 //!
 //! A debug build is slower than a release build, so a program can time out
 //! here. The test skips a timeout as unknown, prints its path, and fails if
@@ -65,5 +67,10 @@ fn d0_holds_on_tier1() {
         sum.counts.is_empty() && sum.crashes.is_empty(),
         "D0 fails on tier 1:\n{text}"
     );
+    assert!(
+        sum.ir_broken.is_empty(),
+        "the IR breaks rules on tier 1:\n{text}"
+    );
+    assert!(sum.ir.built > 0, "{text}");
     assert!(sum.checked * 10 > sum.bodies * 9, "{text}");
 }

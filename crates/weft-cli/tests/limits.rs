@@ -3,11 +3,11 @@
 //! For each deep or long construct, the test finds the largest program that the
 //! parser accepts. That program must go through every stage on a 2 MiB thread,
 //! the stack of a test thread: parse, print, analyze, check, the spec, the
-//! interpreter and drop. The library moves its stages to a thread with a large
-//! stack (`weft_sema::on_large_stack`), so the test keeps them on the 2 MiB
-//! thread with `weft_sema::on_current_stack`. A larger program gets a parser
-//! error, never a stack overflow. A flat chain of binary operators has no
-//! limit.
+//! builder of the IR, the interpreter and drop. The library moves its stages to
+//! a thread with a large stack (`weft_sema::on_large_stack`), so the test keeps
+//! them on the 2 MiB thread with `weft_sema::on_current_stack`. A larger program
+//! gets a parser error, never a stack overflow. A flat chain of binary
+//! operators has no limit.
 //!
 //! The derivation printer of `check --explain` does not recurse. It folds a
 //! long chain of relations that depend on each other, so a long path in a
@@ -37,6 +37,8 @@ fn pipeline(src: String) -> Option<String> {
                 drop(file);
                 let checked = weft_check::check_source("limit.wf", &src, Options::default());
                 assert!(weft_check::agreement(&checked).is_ok());
+                let ir = weft_sema::irbuild::build(&checked.analysis);
+                assert!(ir.broken.is_empty(), "the IR breaks rules: {:?}", ir.broken);
                 if !checked.ok() {
                     return None;
                 }

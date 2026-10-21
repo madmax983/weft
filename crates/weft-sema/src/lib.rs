@@ -9,6 +9,7 @@ pub mod effects;
 pub mod fip;
 pub mod ids;
 pub mod infer;
+pub mod irbuild;
 pub mod program;
 pub mod props;
 pub mod thir;

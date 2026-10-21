@@ -16,8 +16,8 @@
 //!   whole temporary is valid for each type (`move _3` of a `&Vec<u64>` receiver, as
 //!   the M3 example of `docs/ir.md` 5.37 shows). For a whole local the verifier
 //!   reads [`Props::copy`](crate::Props::copy) of the local. For a part it computes
-//!   the property from the type table, with the cases of `NotCopy` in
-//!   `weft_sema::props::ir_props`. A part of a function type can be a closure, whose
+//!   the property from the type table ([`TyTable::not_copy`], which
+//!   `weft_sema::props::ir_props` uses too). A part of a function type can be a closure, whose
 //!   properties come from the analysis and not from the type, so the verifier does
 //!   not check `Copy` or `Move` of such a part.
 //! - V10: an extern function with an empty stated row and no intrinsic meaning
@@ -32,7 +32,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
 
-use crate::ty::{AdtKind, ExternDeref, FnTy, Lang, Ty, TyProp};
+use crate::ty::{AdtKind, ExternDeref, FnTy, Lang, Ty};
 use crate::{
     id_of, AggKind, BlockId, Body, BodyId, BodyKind, Callee, CapEnvId, CapOperand, CaptureMode,
     ClosureId, EffectId, IterSource, LocalId, LocalKind, Operand, Place, Program, Proj, Rvalue,
@@ -551,34 +551,6 @@ enum Pt {
     Env(ClosureId),
     /// The verifier cannot find the type (the table has no interned form of it).
     Unknown,
-}
-
-/// Returns true if a value of type `t` is not plain data. The cases are the cases
-/// of `NotCopy` in `weft_sema::props::ir_props`.
-fn not_copy(tys: &TyTable, t: TyId) -> bool {
-    let Some(ty) = tys.try_get(t) else {
-        return false;
-    };
-    match ty {
-        Ty::Adt(a, args) => tys.adts().get(a.index()).is_some_and(|d| {
-            let row = d.row(TyProp::NotCopy);
-            row.always
-                || row
-                    .params
-                    .iter()
-                    .any(|&j| args.get(j as usize).is_some_and(|&x| not_copy(tys, x)))
-        }),
-        Ty::Tuple(ts) => ts.iter().any(|&x| not_copy(tys, x)),
-        Ty::Array(..) | Ty::Slice(_) | Ty::Iter(_) | Ty::Param(_) | Ty::Cont(..) => true,
-        Ty::Ref(_)
-        | Ty::Fn(_)
-        | Ty::Scope
-        | Ty::Cap(_)
-        | Ty::Unit
-        | Ty::Bool
-        | Ty::Never
-        | Ty::Int(_) => false,
-    }
 }
 
 /// Returns type `t` with the type parameters replaced by `args`, if the table has
@@ -1104,7 +1076,7 @@ impl<'a> Cx<'a> {
         };
         match self.tys.try_get(t)? {
             Ty::Fn(_) => None,
-            _ => Some(!not_copy(self.tys, t)),
+            _ => Some(!self.tys.not_copy(t)),
         }
     }
 

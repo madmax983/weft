@@ -580,7 +580,8 @@ pub fn ir_props(table: &TyTable, t: TyId) -> Props {
     let top = table.try_get(t);
     let linear = has(TyProp::Linear);
     Props {
-        copy: !has(TyProp::NotCopy),
+        // One source of the copy property: the verifier of the IR uses it too.
+        copy: !table.not_copy(t),
         linear,
         on_abort: !has(TyProp::NoOnAbort),
         // A value that a `multi` resume cannot copy is not `many` either.

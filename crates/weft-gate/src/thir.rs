@@ -1,9 +1,13 @@
 //! The `thir` command: test D0, part 1, on each program of a tier (plan stage
-//! T3).
+//! T3), and the builder of the IR on the same analysis (plan stage B3).
 //!
 //! For each program the command loads the package, analyzes it and runs
 //! [`weft_sema::thir::d0::d0`] on the THIR tables that the old lowering
 //! records. [`Summary`] counts the failures of each check and keeps examples.
+//! Then it builds the IR ([`weft_sema::irbuild::build`]) and counts the bodies
+//! that the builder lowers, the bodies that it does not lower yet (for each
+//! construct), and the rules that the IR breaks (each one is a bug of the
+//! builder).
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -47,6 +51,49 @@ pub struct Outcome {
     pub note_lines: Vec<String>,
     /// Why the program has no report.
     pub error: Option<String>,
+    /// What the builder of the IR made of the program.
+    pub ir: IrCounts,
+}
+
+/// What the builder of the IR made of the bodies of one or more programs.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct IrCounts {
+    /// The bodies that the builder lowers.
+    pub built: usize,
+    /// The bodies with no IR (a `typeck` error).
+    pub no_ir: usize,
+    /// The bodies that the builder does not lower yet, for each construct (its
+    /// name and the plan stage that lowers it).
+    pub unsupported: BTreeMap<String, usize>,
+    /// The rules that the IR breaks, as text.
+    pub broken: Vec<String>,
+}
+
+impl IrCounts {
+    /// Adds the counts of `o`.
+    pub fn add(&mut self, o: Self) {
+        self.built += o.built;
+        self.no_ir += o.no_ir;
+        for (k, n) in o.unsupported {
+            *self.unsupported.entry(k).or_default() += n;
+        }
+        self.broken.extend(o.broken);
+    }
+}
+
+/// Builds the IR of `analysis` and counts the outcomes.
+fn ir_counts(analysis: &weft_sema::Analysis) -> IrCounts {
+    let b = weft_sema::irbuild::build(analysis);
+    let (built, no_ir, unsupported) = b.counts();
+    IrCounts {
+        built,
+        no_ir,
+        unsupported: unsupported
+            .into_iter()
+            .map(|(c, n)| (format!("{} ({})", c.name(), c.stage()), n))
+            .collect(),
+        broken: b.broken.iter().map(ToString::to_string).collect(),
+    }
 }
 
 /// Runs D0 on program `entry` below `base`, on this thread.
@@ -64,6 +111,7 @@ pub fn check(base: &Path, entry: &Entry) -> Outcome {
     let opts = pkg.options(weft_cli::package::Profile::default());
     let analysis = weft_sema::analyze(&pkg.units, opts);
     let report = d0::d0(&analysis);
+    let ir = ir_counts(&analysis);
     let at = |f: &d0::Finding| {
         pkg.files.get(f.unit).map_or_else(String::new, |sf| {
             format!(
@@ -80,6 +128,7 @@ pub fn check(base: &Path, entry: &Entry) -> Outcome {
         lines,
         note_lines,
         error: None,
+        ir,
     }
 }
 
@@ -113,6 +162,10 @@ pub struct Summary {
     /// The notes (`d0::Report::notes`): each conflict in a body that D0 does
     /// not check, and each free type variable.
     pub notes: Vec<Example>,
+    /// What the builder of the IR made of the bodies.
+    pub ir: IrCounts,
+    /// The programs whose IR breaks a rule of the verifier.
+    pub ir_broken: Vec<String>,
 }
 
 impl Summary {
@@ -124,6 +177,14 @@ impl Summary {
             return;
         };
         self.loaded += 1;
+        if !o.ir.broken.is_empty() && self.ir_broken.len() < NOTES {
+            self.ir_broken
+                .push(format!("{path}: {}", o.ir.broken.join("; ")));
+        }
+        self.ir.add(IrCounts {
+            broken: Vec::new(),
+            ..o.ir
+        });
         self.bodies += r.bodies;
         self.checked += r.checked;
         self.exprs += r.exprs;
@@ -161,9 +222,12 @@ impl Summary {
     }
 
     /// Returns true if D0 holds on each program: no failure, no crash and no
-    /// timeout.
+    /// timeout. The IR of each program breaks no rule.
     pub fn holds(&self) -> bool {
-        self.counts.is_empty() && self.crashes.is_empty() && self.timeouts.is_empty()
+        self.counts.is_empty()
+            && self.crashes.is_empty()
+            && self.timeouts.is_empty()
+            && self.ir_broken.is_empty()
     }
 
     /// The summary as Markdown.
@@ -193,6 +257,21 @@ impl Summary {
             for e in ex {
                 let _ = writeln!(s, "- `{}` {}: {}", e.at, e.body, e.text);
             }
+        }
+        let _ = writeln!(
+            s,
+            "\n## The builder of the IR\n\n{} bodies built, {} with no IR (a `typeck` error), {} unsupported; {} programs whose IR breaks a rule.\n",
+            self.ir.built,
+            self.ir.no_ir,
+            self.ir.unsupported.values().sum::<usize>(),
+            self.ir_broken.len()
+        );
+        s.push_str("| unsupported construct (stage) | bodies |\n| --- | --- |\n");
+        for (c, n) in &self.ir.unsupported {
+            let _ = writeln!(s, "| {c} | {n} |");
+        }
+        for p in &self.ir_broken {
+            let _ = writeln!(s, "- broken: `{p}`");
         }
         if !self.notes.is_empty() {
             s.push_str("\n## Notes (not failures)\n\n");

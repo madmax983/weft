@@ -946,6 +946,7 @@ dependencies = [
  "weft-datalog",
  "weft-facts",
  "weft-interp",
+ "weft-ir",
  "weft-sema",
  "weft-syntax",
 ]

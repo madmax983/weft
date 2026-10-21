@@ -23,6 +23,7 @@ commands:
   run     [PROFILE] [RUN] PATH                                   check, then run `fn main`
   test    [PROFILE] [RUN] PATH                                   check, then run the test blocks
   facts   [PROFILE] PATH [FUNCTION]                              print the facts in Datalog syntax
+  ir      [PROFILE] PATH [FUNCTION]                              print the core IR (docs/ir.md)
   agree   [PROFILE] PATH                                         compare the checker with spec/weft.dl
   lint    [PROFILE] --rules RULES.dl PATH                        run user lint rules over the facts
   explain CODE                                                   explain a diagnostic code
@@ -85,7 +86,7 @@ fn options_of(cmd: &str) -> Option<Vec<&'static str>> {
         "check" => &["--json", "--explain"],
         "run" | "test" => &["--seed", "--workers", "--unchecked", "--oracle"],
         "lint" => &["--rules"],
-        "facts" | "agree" => &[],
+        "facts" | "agree" | "ir" => &[],
         "explain" | "deps" | "spec" | "help" | "--help" | "-h" => return Some(Vec::new()),
         _ => return None,
     };
@@ -97,7 +98,7 @@ fn options_of(cmd: &str) -> Option<Vec<&'static str>> {
 fn positional_of(cmd: &str) -> (&'static [&'static str], &'static [&'static str]) {
     match cmd {
         "check" | "run" | "test" | "agree" | "lint" | "deps" => (&["PATH"], &[]),
-        "facts" => (&["PATH"], &["FUNCTION"]),
+        "facts" | "ir" => (&["PATH"], &["FUNCTION"]),
         "explain" => (&["CODE"], &[]),
         "help" | "--help" | "-h" => (&[], &["COMMAND"]),
         _ => (&[], &[]),
@@ -217,6 +218,7 @@ fn run_with(args: &[String], live: bool) -> Result<Output> {
         "run" => run_main(&f, live),
         "test" => run_tests(&f, live),
         "facts" => facts(&f),
+        "ir" => ir(&f),
         "agree" => agree(&f),
         "lint" => lint(&f),
         "explain" => explain(&f),
@@ -461,6 +463,70 @@ fn facts(f: &Flags) -> Result<Output> {
         text,
         ..Output::default()
     })
+}
+
+/// Prints the core IR of a file or a package, or of one function or test
+/// (`docs/ir.md` 3.3). A body that the builder does not lower yet, or that has
+/// a type error, gets a comment line. A broken rule of the verifier is a bug
+/// of the builder: the command writes it to standard error and exits with 1.
+fn ir(f: &Flags) -> Result<Output> {
+    let path = Path::new(path_arg(f)?);
+    let only = f.positional.get(1);
+    let pkg = load(path)?;
+    let analysis = weft_sema::analyze(&pkg.units, pkg.options(f.profile));
+    let built = weft_sema::irbuild::build(&analysis);
+    let at = |unit: usize, span: weft_syntax::ast::Span| {
+        pkg.files.get(unit).map_or_else(
+            || format!("{}..{}", span.lo, span.hi),
+            |sf| {
+                let (line, col) = sf.line_col(span.lo);
+                format!("{}:{line}:{col}", sf.name)
+            },
+        )
+    };
+    let mut out = Output::default();
+    match only {
+        None => out.text = weft_sema::irbuild::text(&built, &at),
+        Some(name) => {
+            let Some(e) = built.entries.iter().find(|e| e.name == *name) else {
+                let names: Vec<&str> = built.entries.iter().map(|e| e.name.as_str()).collect();
+                let bodies = if names.is_empty() {
+                    "it has no functions or tests".to_string()
+                } else {
+                    format!("the bodies are `{}`", names.join("`, `"))
+                };
+                out.stderr = format!(
+                    "error: no function or test `{name}` in {}; {bodies}\n",
+                    path.display()
+                );
+                out.code = 1;
+                return Ok(out);
+            };
+            match &e.outcome {
+                weft_sema::irbuild::Outcome::Built(id) => {
+                    out.text = weft_ir::print::print_body(&built.program, &built.tys, *id);
+                }
+                weft_sema::irbuild::Outcome::Unsupported(u) => {
+                    out.stderr = format!(
+                        "error: `{name}` has no IR yet: the builder does not lower {} at {} (stage {})\n",
+                        u.construct.name(),
+                        at(e.unit, u.span),
+                        u.construct.stage()
+                    );
+                    out.code = 1;
+                }
+                weft_sema::irbuild::Outcome::NoIr(_) => {
+                    out.stderr = format!("error: `{name}` has no IR: it has a type error\n");
+                    out.code = 1;
+                }
+            }
+        }
+    }
+    for b in &built.broken {
+        let _ = writeln!(out.stderr, "error: a bug of the IR builder: {b}");
+        out.code = 1;
+    }
+    Ok(out)
 }
 
 fn agree(f: &Flags) -> Result<Output> {

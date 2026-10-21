@@ -1,0 +1,45 @@
+fn f0 dangle() -> &u64: b0
+fn f1 early(u64) -> u64: b1
+fn f2 typo(u64) -> u64: extern
+cap_env e0
+
+body b0: fn dangle; cap_env e0; unwind_exit bb1
+  _0: &u64 (Return)
+  _1: u64 (User `x`)
+  bb0:
+    Live(_1)
+    _1 = const 1u64
+    _0 = &_1
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn early; cap_env e0; unwind_exit bb2
+  _0: u64 (Return)
+  _1: u64 (Param(0) `a`)
+  _2: u64 (User `b`)
+  _3: u64 (User `c`)
+  _4: ! (Temp(Operand))
+  _5: u64 (User `d`)
+  bb0:
+    Live(_2)
+    _2 = copy _1
+    Live(_3)
+    Live(_4)
+    Live(_5)
+    _5 = copy _2
+    _0 = Add<u64>(copy _5, const 1u64)
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1:
+    _3 = Add<u64>(const 1u64, move _4)
+    _0 = copy _3
+    Unreachable
+  bb2 (cleanup):
+    UnwindExit
+// typo: no IR: a type error

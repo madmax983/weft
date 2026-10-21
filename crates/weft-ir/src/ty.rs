@@ -515,6 +515,37 @@ impl TyTable {
         }
     }
 
+    /// Returns true if a value of type `id` is not plain data: it moves, it is not
+    /// copied. This is the one source of the copy property: the verifier (rule V9)
+    /// and `weft_sema::props::ir_props` both use it. A function type is plain data
+    /// here: the analysis adds the properties of the closures that a function value
+    /// can be.
+    pub fn not_copy(&self, id: TyId) -> bool {
+        let Some(ty) = self.try_get(id) else {
+            return false;
+        };
+        match ty {
+            Ty::Adt(a, args) => self.adts.get(a.index()).is_some_and(|d| {
+                let row = d.row(TyProp::NotCopy);
+                row.always
+                    || row
+                        .params
+                        .iter()
+                        .any(|&j| args.get(j as usize).is_some_and(|&x| self.not_copy(x)))
+            }),
+            Ty::Tuple(ts) => ts.iter().any(|&x| self.not_copy(x)),
+            Ty::Array(..) | Ty::Slice(_) | Ty::Iter(_) | Ty::Param(_) | Ty::Cont(..) => true,
+            Ty::Ref(_)
+            | Ty::Fn(_)
+            | Ty::Scope
+            | Ty::Cap(_)
+            | Ty::Unit
+            | Ty::Bool
+            | Ty::Never
+            | Ty::Int(_) => false,
+        }
+    }
+
     /// Returns the text of type `id`, as diagnostics show a type.
     pub fn show(&self, id: TyId) -> String {
         let mut s = String::new();

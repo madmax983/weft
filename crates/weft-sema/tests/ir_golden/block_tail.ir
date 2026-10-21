@@ -1,0 +1,74 @@
+fn f0 inner(Vec<u64>) -> Vec<u64>: b0
+fn f1 operand(u64) -> u64: b1
+fn f2 stmt_block(u64) -> (): b2
+fn f3 ret(u64) -> u64: b3
+cap_env e0
+
+body b0: fn inner; cap_env e0; unwind_exit bb1
+  _0: Vec<u64> (Return)
+  _1: Vec<u64> (Param(0) `a`)
+  _2: Vec<u64> (User `s`)
+  _3: Vec<u64> (User `t`)
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = move _1
+    _2 = move _3
+    Dead(_3)
+    _0 = move _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn operand; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: u64 (Param(0) `a`)
+  _2: u64 (Temp(Operand))
+  _3: u64 (User `k`)
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = copy _1
+    _2 = copy _3
+    Dead(_3)
+    _0 = Add<u64>(const 1u64, move _2)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn stmt_block; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: u64 (Param(0) `a`)
+  _2: u64 (Temp(Discarded))
+  _3: u64 (User `k`)
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = copy _1
+    _2 = copy _3
+    Dead(_3)
+    Dead(_2)
+    Mention(_1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn ret; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: u64 (Param(0) `a`)
+  _2: u64 (User `b`)
+  bb0:
+    Live(_2)
+    _2 = copy _1
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit

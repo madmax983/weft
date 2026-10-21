@@ -127,6 +127,38 @@ fn facts_are_datalog() {
 }
 
 #[test]
+fn ir_prints_the_core_ir() {
+    let file = "crates/weft-sema/tests/ir_golden/ret_ref.wf";
+    let all = cmd(&["ir", file]);
+    assert_eq!(all.code, 0, "{}", all.stderr);
+    assert!(all.text.contains("body b0: fn dangle"), "{}", all.text);
+    assert!(
+        all.text.contains("// typo: no IR: a type error"),
+        "{}",
+        all.text
+    );
+    let one = cmd(&["ir", file, "dangle"]);
+    assert_eq!(one.code, 0, "{}", one.stderr);
+    assert!(one.text.starts_with("body b0: fn dangle"), "{}", one.text);
+    assert!(one
+        .text
+        .contains("    _0 = &_1\n    Dead(_1)\n    Return\n"));
+    let none = cmd(&["ir", file, "typo"]);
+    assert_eq!(none.code, 1);
+    assert!(none.stderr.contains("has no IR"), "{}", none.stderr);
+    let later = cmd(&["ir", "tests/programs/01_places.wf", "tick"]);
+    assert_eq!(later.code, 1);
+    assert!(later.stderr.contains("(stage B6)"), "{}", later.stderr);
+    let missing = cmd(&["ir", file, "nope"]);
+    assert_eq!(missing.code, 1);
+    assert!(
+        missing.stderr.contains("the bodies are `dangle`"),
+        "{}",
+        missing.stderr
+    );
+}
+
+#[test]
 fn agree_compares_checker_and_spec() {
     let out = cmd(&["agree", "tests/programs/08_ingest.wf"]);
     assert_eq!(out.code, 0, "{}", out.text);
