@@ -1,0 +1,185 @@
+fn f0 tail(bool, u64, u64) -> u64: b0
+fn f1 let_value(bool, Vec<u64>, Vec<u64>) -> Vec<u64>: b1
+fn f2 no_else(bool, u64) -> u64: b2
+fn f3 chain(u64) -> u64: b3
+fn f4 early(bool, u64) -> u64: b4
+fn f5 cond_ref(&bool) -> u64: b5
+fn f6 stmt(bool, u64) -> u64: b6
+cap_env e0
+
+body b0: fn tail; cap_env e0; unwind_exit bb4
+  _0: u64 (Return)
+  _1: bool (Param(0) `c`)
+  _2: u64 (Param(1) `a`)
+  _3: u64 (Param(2) `b`)
+  bb0:
+    switch copy _1 -> [1: bb1, otherwise: bb2]
+  bb1:
+    _0 = copy _2
+    Goto(bb3)
+  bb2:
+    _0 = copy _3
+    Goto(bb3)
+  bb3:
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b1: fn let_value; cap_env e0; unwind_exit bb4
+  _0: Vec<u64> (Return)
+  _1: bool (Param(0) `c`)
+  _2: Vec<u64> (Param(1) `v`)
+  _3: Vec<u64> (Param(2) `w`)
+  _4: Vec<u64> (User `x`)
+  bb0:
+    Live(_4)
+    switch copy _1 -> [1: bb1, otherwise: bb2]
+  bb1:
+    _4 = move _2
+    Goto(bb3)
+  bb2:
+    _4 = move _3
+    Goto(bb3)
+  bb3:
+    _0 = move _4
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b2: fn no_else; cap_env e0; unwind_exit bb4
+  _0: u64 (Return)
+  _1: bool (Param(0) `c`)
+  _2: u64 (Param(1) `x`)
+  _3: () (Temp(Discarded))
+  _4: u64 (Temp(Operand))
+  bb0:
+    Live(_3)
+    switch copy _1 -> [1: bb1, otherwise: bb2]
+  bb1:
+    Live(_4)
+    _4 = const 1u64
+    _2 = move _4
+    Dead(_4)
+    _3 = const ()
+    Goto(bb3)
+  bb2:
+    _3 = const ()
+    Goto(bb3)
+  bb3:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b3: fn chain; cap_env e0; unwind_exit bb7
+  _0: u64 (Return)
+  _1: u64 (Param(0) `n`)
+  _2: bool (Temp(Operand))
+  _3: bool (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Eq(copy _1, const 0u64)
+    switch move _2 -> [1: bb1, otherwise: bb2]
+  bb1:
+    _0 = const 10u64
+    Goto(bb3)
+  bb2:
+    Live(_3)
+    _3 = Eq(copy _1, const 1u64)
+    switch move _3 -> [1: bb4, otherwise: bb5]
+  bb3:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4:
+    _0 = const 20u64
+    Goto(bb6)
+  bb5:
+    _0 = const 30u64
+    Goto(bb6)
+  bb6:
+    Dead(_3)
+    Goto(bb3)
+  bb7 (cleanup):
+    UnwindExit
+
+body b4: fn early; cap_env e0; unwind_exit bb4
+  _0: u64 (Return)
+  _1: bool (Param(0) `c`)
+  _2: u64 (Param(1) `x`)
+  bb0:
+    switch copy _1 -> [1: bb1, otherwise: bb2]
+  bb1:
+    _0 = const 0u64
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2:
+    _0 = Add<u64>(copy _2, const 1u64)
+    Goto(bb3)
+  bb3:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b5: fn cond_ref; cap_env e0; unwind_exit bb4
+  _0: u64 (Return)
+  _1: &bool (Param(0) `c`)
+  bb0:
+    switch copy (*_1) -> [1: bb1, otherwise: bb2]
+  bb1:
+    _0 = const 1u64
+    Goto(bb3)
+  bb2:
+    _0 = const 0u64
+    Goto(bb3)
+  bb3:
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b6: fn stmt; cap_env e0; unwind_exit bb4
+  _0: u64 (Return)
+  _1: bool (Param(0) `c`)
+  _2: u64 (Param(1) `x`)
+  _3: () (Temp(Discarded))
+  _4: u64 (Temp(Operand))
+  _5: u64 (Temp(Operand))
+  bb0:
+    Live(_3)
+    switch copy _1 -> [1: bb1, otherwise: bb2]
+  bb1:
+    Live(_4)
+    _4 = const 2u64
+    _2 = move _4
+    Dead(_4)
+    _3 = const ()
+    Goto(bb3)
+  bb2:
+    Live(_5)
+    _5 = const 3u64
+    _2 = move _5
+    Dead(_5)
+    _3 = const ()
+    Goto(bb3)
+  bb3:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit

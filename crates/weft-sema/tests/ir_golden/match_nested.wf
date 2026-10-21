@@ -1,0 +1,27 @@
+// Nested tuple and variant patterns (`docs/ir.md` 5.13): the tests run in
+// pre-order, left to right. A `Variant` projection comes only after the test
+// of its variant. No binding comes before the last test of its arm.
+
+fn nested(p: (Option<u64>, bool)) -> u64 {
+    match p {
+        (Some(1), true) => 1,
+        (Some(n), _) => n,
+        (None, b) => 0,
+    }
+}
+
+fn deep(o: Option<Option<Vec<u64>>>, d: Vec<u64>) -> Vec<u64> {
+    match o {
+        Some(Some(v)) => v,
+        Some(None) => d,
+        None => d,
+    }
+}
+
+// The binding `x` comes before the test in the source, after it in the IR.
+fn bind_then_test(p: (u64, Option<u64>)) -> u64 {
+    match p {
+        (x, Some(2)) => x,
+        _ => 0,
+    }
+}

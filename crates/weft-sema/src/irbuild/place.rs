@@ -86,16 +86,15 @@ impl Builder<'_> {
                     // A member of a path: a variant or an item.
                     return unsupported(Construct::ItemName, e.span);
                 }
-                let f = match self.t.field.get(&e.id) {
-                    Some(thir::FieldIdx::Field(i)) => FieldIdx(*i),
-                    Some(thir::FieldIdx::Variant(_)) => {
-                        return unsupported(Construct::VariantField, e.span)
+                match self.t.field.get(&e.id) {
+                    Some(thir::FieldIdx::Field(i)) => {
+                        let mut p = self.place_or_temp(base)?;
+                        p.proj.push(Proj::Field(FieldIdx(*i)));
+                        p
                     }
+                    Some(thir::FieldIdx::Variant(v)) => self.variant_field(base, *v, e)?,
                     None => return unsupported(Construct::NoThir, e.span),
-                };
-                let mut p = self.place_or_temp(base)?;
-                p.proj.push(Proj::Field(f));
-                p
+                }
             }
             ExprKind::Index { base, index } => {
                 let mut p = self.place_or_temp(base)?;
@@ -131,6 +130,53 @@ impl Builder<'_> {
             .proj
             .extend(self.adjust(e).iter().map(|&k| deref_proj(k)));
         Ok(Some(place))
+    }
+
+    /// Returns the place of the payload of variant `v` of `base`, the place
+    /// expression `e` (`docs/ir.md` 5.8): `(p as V).0` after a test of the
+    /// variant.
+    ///
+    /// ```text
+    /// td := Discriminant(p); Switch(move td) [v: next, otherwise: fail]
+    /// fail: Unreachable
+    /// ```
+    ///
+    /// The value at run time can be another variant: the interpreter stops
+    /// with a fault there. The checker follows only the path of the variant.
+    fn variant_field(&mut self, base: &Expr, v: u32, e: &Expr) -> R<Place> {
+        let mut p = self.place_or_temp(base)?;
+        let ty = self.value_ty(base)?;
+        let one = match self.tys.try_get(ty) {
+            Some(Ty::Adt(a, _)) => match self.tys.adts().get(a.index()).map(|d| &d.kind) {
+                Some(weft_ir::ty::AdtKind::Enum(vs)) => {
+                    vs.get(v as usize).is_some_and(|x| x.fields.len() == 1)
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        if !one {
+            return unsupported(Construct::VariantField, e.span);
+        }
+        let origin = self.origin(e.span, Some(e.id));
+        let uty = self.tys.intern(Ty::Int(weft_ir::IntTy::Usize));
+        let td = self.temp(uty, TempKind::Scrutinee, origin);
+        self.assign(Place::local(td), Rvalue::Discriminant(p.clone()), origin);
+        let (ok, fail) = (self.new_block(), self.new_block());
+        self.terminate(
+            weft_ir::TermKind::Switch {
+                on: Operand::Move(Place::local(td)),
+                arms: vec![(u128::from(v), weft_ir::BlockId(super::id_of(ok)))],
+                otherwise: weft_ir::BlockId(super::id_of(fail)),
+            },
+            origin,
+        );
+        self.enter(fail);
+        self.terminate(weft_ir::TermKind::Unreachable, origin);
+        self.enter(ok);
+        p.proj.push(Proj::Variant(weft_ir::VariantIdx(v)));
+        p.proj.push(Proj::Field(FieldIdx(0)));
+        Ok(p)
     }
 
     /// Returns the place of the local that name `e` names.

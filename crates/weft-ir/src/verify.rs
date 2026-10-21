@@ -811,6 +811,15 @@ impl<'a> Cx<'a> {
             let id = bid(i);
             let mut uses = Vec::new();
             for s in &blk.stmts {
+                // An `Uninit` names the path of a place field of a value built
+                // in place, also below a variant that no test chose: it reads
+                // nothing (`docs/ir.md` 5.2, 5.17).
+                if let StmtKind::Uninit(p) = &s.kind {
+                    if let Err(i) = self.place_ty(p) {
+                        self.push(Rule::BadProj(i), Some(id), Some(p.local));
+                    }
+                    continue;
+                }
                 stmt_uses(&s.kind, &mut |u| uses.push(u));
             }
             term_uses(&blk.term.kind, &mut |u| uses.push(u));

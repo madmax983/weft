@@ -1,0 +1,125 @@
+fn f0 pick(&Pair) -> &Vec<u64>: b0
+fn f1 count(&Option<u64>) -> u64: b1
+fn f2 payload_ref(Option<&Vec<u64>>) -> u64: b2
+cap_env e0
+
+body b0: fn pick; cap_env e0; unwind_exit bb8
+  _0: &Vec<u64> (Return)
+  _1: &Pair (Param(0) `r`)
+  _2: usize (Temp(Scrutinee))
+  _3: &Vec<u64> (User `v`)
+  _4: usize (Temp(Scrutinee))
+  _5: &Vec<u64> (User `w`)
+  bb0:
+    Live(_2)
+    _2 = Discriminant((*_1))
+    switch move _2 -> [0: bb3, otherwise: bb4]
+  bb1:
+    Dead(_1)
+    Return
+  bb2:
+    Live(_4)
+    _4 = Discriminant((*_1))
+    switch move _4 -> [1: bb6, otherwise: bb7]
+  bb3:
+    Dead(_2)
+    Live(_3)
+    _3 = &((*_1) as #0).0
+    _0 = copy _3
+    Dead(_3)
+    Goto(bb1)
+  bb4:
+    Dead(_2)
+    Goto(bb2)
+  bb5:
+    Unreachable
+  bb6:
+    Dead(_4)
+    Live(_5)
+    _5 = &((*_1) as #1).0
+    _0 = copy _5
+    Dead(_5)
+    Goto(bb1)
+  bb7:
+    Dead(_4)
+    Goto(bb5)
+  bb8 (cleanup):
+    UnwindExit
+
+body b1: fn count; cap_env e0; unwind_exit bb8
+  _0: u64 (Return)
+  _1: &Option<u64> (Param(0) `r`)
+  _2: usize (Temp(Scrutinee))
+  _3: u64 (User `n`)
+  _4: usize (Temp(Scrutinee))
+  bb0:
+    Live(_2)
+    _2 = Discriminant((*_1))
+    switch move _2 -> [0: bb3, otherwise: bb4]
+  bb1:
+    Dead(_1)
+    Return
+  bb2:
+    Live(_4)
+    _4 = Discriminant((*_1))
+    switch move _4 -> [1: bb6, otherwise: bb7]
+  bb3:
+    Dead(_2)
+    Live(_3)
+    _3 = copy ((*_1) as #0).0
+    _0 = copy _3
+    Dead(_3)
+    Goto(bb1)
+  bb4:
+    Dead(_2)
+    Goto(bb2)
+  bb5:
+    Unreachable
+  bb6:
+    Dead(_4)
+    _0 = const 0u64
+    Goto(bb1)
+  bb7:
+    Dead(_4)
+    Goto(bb5)
+  bb8 (cleanup):
+    UnwindExit
+
+body b2: fn payload_ref; cap_env e0; unwind_exit bb8
+  _0: u64 (Return)
+  _1: Option<&Vec<u64>> (Param(0) `o`)
+  _2: usize (Temp(Scrutinee))
+  _3: &Vec<u64> (User `v`)
+  _4: usize (Temp(Scrutinee))
+  bb0:
+    Live(_2)
+    _2 = Discriminant(_1)
+    switch move _2 -> [0: bb3, otherwise: bb4]
+  bb1:
+    Dead(_1)
+    Return
+  bb2:
+    Live(_4)
+    _4 = Discriminant(_1)
+    switch move _4 -> [1: bb6, otherwise: bb7]
+  bb3:
+    Dead(_2)
+    Live(_3)
+    _3 = copy (_1 as #0).0
+    _0 = const 1u64
+    Dead(_3)
+    Goto(bb1)
+  bb4:
+    Dead(_2)
+    Goto(bb2)
+  bb5:
+    Unreachable
+  bb6:
+    Dead(_4)
+    _0 = const 0u64
+    Goto(bb1)
+  bb7:
+    Dead(_4)
+    Goto(bb5)
+  bb8 (cleanup):
+    UnwindExit

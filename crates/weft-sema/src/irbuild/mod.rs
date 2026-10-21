@@ -21,10 +21,13 @@
 //! program that it makes, and keeps each broken rule in [`Built::broken`]. A
 //! broken rule is a bug of the builder.
 
+mod branch;
 mod expr;
 mod frame;
+mod pattern;
 mod place;
 mod stmt;
+mod unset;
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -50,19 +53,8 @@ pub enum Construct {
     /// (`docs/ir.md` 5.36). The verifier rejects the `Move` (V9) and the
     /// `Copy` that 5.36 names.
     MoveThroughRef,
-    /// The payload of a variant as a place: `o.Some` (a test of the variant
-    /// comes first).
+    /// The payload of a variant with more than one field as a place: `o.A`.
     VariantField,
-    /// `if`.
-    If,
-    /// `&&` or `||`.
-    AndOr,
-    /// `match`.
-    Match,
-    /// A `let` with a pattern that is not a name or `_`.
-    LetPattern,
-    /// A `let` with no value: `let x: T`.
-    LetUninit,
     /// `while`.
     While,
     /// `for`.
@@ -106,11 +98,6 @@ impl Construct {
             Self::AssignPlace => "assignment to a value",
             Self::MoveThroughRef => "move through a reference",
             Self::VariantField => "variant field",
-            Self::If => "if",
-            Self::AndOr => "&& or ||",
-            Self::Match => "match",
-            Self::LetPattern => "let pattern",
-            Self::LetUninit => "let with no value",
             Self::While => "while",
             Self::For => "for",
             Self::Loop => "loop",
@@ -134,13 +121,7 @@ impl Construct {
     /// Returns the plan stage that lowers the construct.
     pub const fn stage(self) -> &'static str {
         match self {
-            Self::AssignPlace | Self::MoveThroughRef => "B12",
-            Self::If
-            | Self::AndOr
-            | Self::Match
-            | Self::LetPattern
-            | Self::LetUninit
-            | Self::VariantField => "B5",
+            Self::AssignPlace | Self::MoveThroughRef | Self::VariantField => "B12",
             Self::While | Self::For | Self::Loop | Self::Break | Self::Continue | Self::Range => {
                 "B6"
             }
@@ -291,6 +272,7 @@ fn build_all(a: &Analysis) -> Built {
         fns: BTreeMap::new(),
         broken: Vec::new(),
     };
+    let mut fields = unset::PlaceFields::new(&out.tys);
     // One capability environment: the entry of each function and each test
     // binds no effect.
     out.program.cap_envs.push(CapEnv {
@@ -342,7 +324,7 @@ fn build_all(a: &Analysis) -> Built {
         let outcome = match src {
             None => Outcome::NoIr(NoIr::TypeError),
             Some(src) => {
-                let outcome = body_outcome(a, b.unit, t, &src, &mut out);
+                let outcome = body_outcome(a, b.unit, t, &src, &mut out, &mut fields);
                 if let (Outcome::Built(id), BodyKind::Test(_)) = (&outcome, src.kind) {
                     out.program.tests.push(TestDecl {
                         name: test.map_or_else(String::new, |t| t.name.clone()),
@@ -390,7 +372,14 @@ fn typeck_error(a: &Analysis, unit: usize, span: Span, block: &ast::Block) -> bo
 }
 
 /// Builds one body, or tells why it has none.
-fn body_outcome(a: &Analysis, unit: usize, t: &Tables, src: &Src<'_>, out: &mut Built) -> Outcome {
+fn body_outcome(
+    a: &Analysis,
+    unit: usize,
+    t: &Tables,
+    src: &Src<'_>,
+    out: &mut Built,
+    fields: &mut unset::PlaceFields,
+) -> Outcome {
     if a.thir_decl_error.is_some() {
         return Outcome::NoIr(NoIr::DeclTypes);
     }
@@ -404,7 +393,7 @@ fn body_outcome(a: &Analysis, unit: usize, t: &Tables, src: &Src<'_>, out: &mut 
         return Outcome::NoIr(NoIr::TypeError);
     };
     let unit_id = id_of(unit);
-    let mut b = Builder::new(t, &mut out.tys, unit_id, ret, src.span);
+    let mut b = Builder::new(t, &mut out.tys, fields, unit_id, ret, src.span);
     match b.body(src) {
         Ok(()) => {
             let id = BodyId(id_of(out.program.bodies.len()));
@@ -515,6 +504,8 @@ struct Draft {
     stmts: Vec<Stmt>,
     /// The terminator, when the block is complete.
     term: Option<Term>,
+    /// An edge from a point that can run enters the block.
+    live: bool,
 }
 
 /// The builder of one body. The state is here, not in the frames of the
@@ -524,6 +515,8 @@ struct Builder<'a> {
     t: &'a Tables,
     /// The final types.
     tys: &'a mut TyTable,
+    /// The place fields of the full types.
+    fields: &'a mut unset::PlaceFields,
     /// The unit of the body.
     unit: u32,
     /// The locals. `_0` is first.
@@ -545,16 +538,25 @@ struct Builder<'a> {
 
 impl<'a> Builder<'a> {
     /// Makes a builder with `_0` of type `ret`.
-    fn new(t: &'a Tables, tys: &'a mut TyTable, unit: u32, ret: TyId, span: Span) -> Self {
+    fn new(
+        t: &'a Tables,
+        tys: &'a mut TyTable,
+        fields: &'a mut unset::PlaceFields,
+        unit: u32,
+        ret: TyId,
+        span: Span,
+    ) -> Self {
         let mut b = Self {
             t,
             tys,
+            fields,
             unit,
             locals: Vec::new(),
             params: Vec::new(),
             blocks: vec![Draft {
                 stmts: Vec::new(),
                 term: None,
+                live: true,
             }],
             cur: Some(0),
             live: true,
@@ -610,13 +612,39 @@ impl<'a> Builder<'a> {
         if let Some(c) = self.cur {
             return c;
         }
+        let c = self.new_block();
+        self.cur = Some(c);
+        c
+    }
+
+    /// Adds an empty block and returns its index. No edge enters it yet.
+    fn new_block(&mut self) -> usize {
         let c = self.blocks.len();
         self.blocks.push(Draft {
             stmts: Vec::new(),
             term: None,
+            live: false,
         });
-        self.cur = Some(c);
         c
+    }
+
+    /// Makes block `b` the block that gets the next statement. The point can
+    /// run if an edge from a point that can run enters the block. Each edge
+    /// into `b` is in the blocks before this call: the builder makes only
+    /// forward edges here.
+    fn enter(&mut self, b: usize) {
+        self.cur = Some(b);
+        self.live = self.blocks.get(b).is_some_and(|d| d.live);
+    }
+
+    /// Ends the current block with `Goto(b)` if the point can run. Else a
+    /// block that no edge enters ends with `Unreachable`.
+    fn goto(&mut self, b: usize, origin: Origin) {
+        if self.live {
+            self.terminate(TermKind::Goto(BlockId(id_of(b))), origin);
+        } else if self.cur.is_some() {
+            self.terminate(TermKind::Unreachable, origin);
+        }
     }
 
     /// Adds statement `kind` with `origin` at the current point.
@@ -636,6 +664,13 @@ impl<'a> Builder<'a> {
     /// not live: no edge comes to it.
     fn terminate(&mut self, kind: TermKind, origin: Origin) {
         let c = self.block_index();
+        if self.live {
+            for s in kind.successors() {
+                if let Some(d) = self.blocks.get_mut(s.index()) {
+                    d.live = true;
+                }
+            }
+        }
         if let Some(b) = self.blocks.get_mut(c) {
             b.term = Some(Term { kind, origin });
         }
@@ -657,6 +692,22 @@ impl<'a> Builder<'a> {
     /// statement, so its temporaries belong to the scope around the block
     /// (`docs/ir.md` 5.1.2).
     fn temp(&mut self, ty: TyId, kind: TempKind, origin: Origin) -> LocalId {
+        let l = self.loose_temp(ty, kind, origin);
+        if let Some(s) = self
+            .scopes
+            .iter_mut()
+            .rev()
+            .find(|s| s.kind != ScopeKind::Block)
+        {
+            s.locals.push(l);
+        }
+        l
+    }
+
+    /// Adds a temporary of type `ty` with `Live` at the current point, in no
+    /// scope: the caller writes its `Dead` on each path (the tests of a
+    /// `match`).
+    fn loose_temp(&mut self, ty: TyId, kind: TempKind, origin: Origin) -> LocalId {
         let props = self.props(ty);
         let l = self.add_local(LocalDecl {
             ty,
@@ -667,14 +718,6 @@ impl<'a> Builder<'a> {
             origin,
         });
         self.push(StmtKind::Live(l), origin);
-        if let Some(s) = self
-            .scopes
-            .iter_mut()
-            .rev()
-            .find(|s| s.kind != ScopeKind::Block)
-        {
-            s.locals.push(l);
-        }
         l
     }
 

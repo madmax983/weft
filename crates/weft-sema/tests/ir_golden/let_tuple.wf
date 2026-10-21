@@ -1,0 +1,27 @@
+// `let` with a tuple pattern and `let` with no value (`docs/ir.md` 5.3).
+
+// The value goes into a temporary; each binding takes its part.
+fn split(t: (u64, Vec<u64>)) -> Vec<u64> {
+    let (n, v) = t
+    v
+}
+
+// Nested tuples, plain data: each binding copies.
+fn nested(t: (u64, (bool, u64))) -> u64 {
+    let (a, (b, c)) = t
+    a + c
+}
+
+// A tuple through a reference: each binding is a reference into it.
+fn through_ref(t: &(u64, Vec<u64>)) -> u64 {
+    let (a, b) = t
+    a + 0
+}
+
+// No value: `Live(x); Uninit(x)`, the same for each binding of a tuple.
+fn no_value(c: bool) -> u64 {
+    let x: u64
+    let (p, q): (u64, bool)
+    x = 1
+    x
+}

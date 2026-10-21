@@ -61,12 +61,19 @@ impl Builder<'_> {
     /// Lowers `let` (`docs/ir.md` 5.3):
     ///
     /// ```text
-    /// let x = e   =>  Live(x); <into(e, x)>
-    /// let _ = e   =>  t := <e>; Dead(t)
+    /// let x = e        =>  Live(x); <into(e, x)>
+    /// let x: T         =>  Live(x); Uninit(x)      (a tuple: the same for each binding)
+    /// let (a, b) = e   =>  t := <e>; Live(a); a = move t.0; Live(b); b = move t.1
+    /// let S(a, b) = s  =>  Live(a); a = move s.0; Live(b); b = move s.1; Consume(s)
+    /// let _ = e        =>  t := <e>; Dead(t)
     /// ```
+    ///
+    /// A `let` takes the value: a linear part under `_` moves into a
+    /// temporary and ends there. `Consume` only for a struct that can be
+    /// linear.
     fn let_stmt(&mut self, pat: &ast::Pattern, init: Option<&Expr>, s: &Stmt) -> R<()> {
         let Some(init) = init else {
-            return unsupported(Construct::LetUninit, s.span);
+            return self.let_uninit(pat);
         };
         match &pat.kind {
             PatternKind::Bind(id) => {
@@ -81,19 +88,47 @@ impl Builder<'_> {
                 let by_value = self.t.pat_ty.get(&pat.id).is_none_or(|&p| p == ty)
                     && self.t.pat_adjust.get(&pat.id).is_none_or(Vec::is_empty);
                 if !by_value {
-                    return unsupported(Construct::LetPattern, pat.span());
+                    return unsupported(Construct::NoThir, pat.span());
                 }
                 let l = self.user_local(b, id.span)?;
                 self.into(init, Place::local(l))
             }
-            PatternKind::Wild(_) => {
+            PatternKind::Wild(_) | PatternKind::Lit(..) => {
                 let ty = self.value_ty(init)?;
                 let origin = self.origin(init.span, Some(init.id));
                 let t = self.temp(ty, TempKind::Discarded, origin);
                 self.into(init, Place::local(t))
             }
-            _ => unsupported(Construct::LetPattern, pat.span()),
+            PatternKind::Tuple(..) => {
+                let ty = self.value_ty(init)?;
+                let origin = self.origin(init.span, Some(init.id));
+                let t = self.temp(ty, TempKind::Scrutinee, origin);
+                self.into(init, Place::local(t))?;
+                self.let_pattern(pat, Place::local(t), ty, s)
+            }
+            PatternKind::Variant { .. } => {
+                let (place, ty) = if let Some(p) = self.as_place(init)? {
+                    (p, self.value_ty(init)?)
+                } else {
+                    let ty = self.ty(init)?;
+                    let origin = self.origin(init.span, Some(init.id));
+                    let t = self.temp(ty, TempKind::Scrutinee, origin);
+                    self.value_into(init, Place::local(t))?;
+                    (Place::local(t), ty)
+                };
+                self.let_pattern(pat, place, ty, s)
+            }
         }
+    }
+
+    /// Binds pattern `pat` of a `let` from place `q` of type `ty`. A `let`
+    /// pattern never fails: a test is an error of `typeck` (W0113).
+    fn let_pattern(&mut self, pat: &ast::Pattern, q: Place, ty: weft_ir::TyId, s: &Stmt) -> R<()> {
+        let plan = self.plan(pat, q, ty)?;
+        if plan.has_tests() {
+            return unsupported(Construct::NoThir, s.span);
+        }
+        self.binds(&plan, true)
     }
 
     /// Lowers an expression statement (`docs/ir.md` 5.4):

@@ -1,0 +1,27 @@
+// Destructuring of linear values (`docs/ir.md` 5.3, 5.13): a `let` with a
+// struct pattern takes each field, then `Consume` finishes the struct. An arm
+// that matches a variant with no payload consumes a linear scrutinee.
+
+linear struct Lock { id: u64 }
+linear struct Two { l: Lock, n: u64 }
+
+fn open(l: Lock) -> u64 {
+    let Lock(i) = l
+    i
+}
+
+fn parts(t: Two) -> Lock {
+    let Two(l, n) = t
+    l
+}
+
+// `None` of a linear scrutinee: `Consume(o)`.
+fn none_or(o: Option<Lock>, d: Lock) -> Lock {
+    match o {
+        Some(l) => {
+            let Lock(i) = d
+            l
+        }
+        None => d,
+    }
+}

@@ -220,6 +220,27 @@ fn v8_a_variant_with_no_test() {
 }
 
 #[test]
+fn v8_an_uninit_below_a_variant_needs_no_test() {
+    // The place field path of a value built in place names a payload that no
+    // test chose: `Uninit` reads nothing.
+    let (mut p, t) = opt_program(1);
+    let payload = Place {
+        local: LocalId(1),
+        proj: vec![Proj::Variant(VariantIdx(1)), Proj::Field(FieldIdx(0))],
+    };
+    p.bodies[0].blocks[2]
+        .stmts
+        .push(s(StmtKind::Uninit(payload.clone())));
+    let broken = verify_program(&p, &t);
+    assert!(broken.is_empty(), "{broken:#?}");
+    // A `Mention` of the same place in the same block reads it.
+    p.bodies[0].blocks[2]
+        .stmts
+        .push(s(StmtKind::Mention(payload)));
+    only(&p, &t, br(Rule::VariantUntested, 0, Some(2), Some(1)));
+}
+
+#[test]
 fn v9_a_copy_of_a_value_that_is_not_plain_data() {
     let (mut p, t) = m3();
     p.bodies[0].locals[1].props.copy = false;

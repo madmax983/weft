@@ -548,7 +548,7 @@ to V17; the others need the type table.
 | V5 | No `Live` of a local that has a cell. | one binding for each cell |
 | V6 | At `Return` only `_0` (and the upvar locals and the environment) has a cell. At `UnwindExit` only the upvar locals and the environment have a cell. | D3 (each normal end has `scope_end`), C4 (each free has a node), W0204 of parameters |
 | V7 | `UnwindExit` is the only terminator of `Body::unwind_exit`, and only there. | one frame boundary for the unwinder |
-| V8 | Each projection fits the type: `Deref` only on a reference, a `Box` or an `Rc`; `Field` in range; `Variant` only in a block that a `Switch` on the discriminant of the same place dominates; `Index` with a `usize` local; `Split` only on a slice. | B2 typed stability, B3 variant steps |
+| V8 | Each projection fits the type: `Deref` only on a reference, a `Box` or an `Rc`; `Field` in range; `Variant` only in a block that a `Switch` on the discriminant of the same place dominates (not in an `Uninit`: it names a path and reads nothing, 5.2); `Index` with a `usize` local; `Split` only on a slice. | B2 typed stability, B3 variant steps |
 | V9 | `Copy` only for a type with `Props::copy`; `Move` only for other types; no `Move` through `Deref(Ref)` (W0303 is a builder diagnostic). A `Move` of an upvar local is valid. | D1 (each move is a `moved_at`), C4 |
 | V10 | Each terminator with `can_abort()` has an `unwind` block, except a `Call` of an extern function whose stated row is empty and that has no `assert`. | A1 for abort paths, D4 |
 | V11 | `CapOperand::Local` names a `Cap` local, an upvar local of one, or a `Cap` field of the environment. `Row(E)` appears only where the capability environment of the body does not bind `E`. `Resume` names a `Kont` local of the clause or a `Kont` field of an environment. | capabilities and continuations are values of one frame |
@@ -818,6 +818,10 @@ body f (Fn):  params _1.._n (cells at the entry), _0
 
 - A by-value parameter is a local of the frame. A reference parameter is a local of
   reference type: a place through it is `(*_i).proj`.
+- A by-value parameter is built in place (ADR 0007): at the entry, `Uninit(_i.q)` for
+  each place field path `q` of its full type (5.17), also below a variant or a `Box`.
+  A path that stops at a struct or an enum of a cycle on the way stands for each place
+  field at or below it.
 - The row capabilities are `CapOperand::Row(E)`.
 - A test body is a `Test` body with no parameters.
 - **Goes away:** the second `Param` root of a by-value parameter that holds references
@@ -915,7 +919,7 @@ type asks for (RT9, V014, V098).
 | `v[i]` with `v: Vec<T>` | `ti := <i>; Bounds(v, copy ti); v[ti]` (unstable element step) |
 | `a[i]` with `a: [T; n]` | `a[ti]` (stable element step) |
 | `t.0` | `t.0` |
-| `o.Some` | `(o as Some).0` (after a test) |
+| `o.Some` | `td := Discriminant(o); Switch(move td) [Some: next, otherwise: Unreachable]`, then `(o as Some).0` (the interpreter faults on another variant) |
 | `&v[]` | `&v[]` (`Elems`) |
 
 No expression writes a split step. A split place (`v[..k]`, `v[k..]`) comes only from a
@@ -964,7 +968,11 @@ into(if c { a } else { b }, dest)  =>  tc := <c>; Switch(move tc) [true: bbA, fa
 a && b  =>  t := <a>; Switch(copy t) [false: done, true: bbB];  bbB: t = <b>; Goto(done)
 ```
 
-The temporaries of the condition belong to the statement around the `if`. The value of
+The temporaries of the condition belong to the statement around the `if`. A condition
+that is a place or a constant is the operand of the `Switch` itself (no code runs
+between). `a && b` and `a || b` write `dest` itself and switch on `copy dest`. Each
+branch has a `Stmt` scope of its own: its temporaries end before the join. With no
+`else`, the value of the `then` block is discarded and `dest` gets `()`. The value of
 each branch moves into `dest` (S059, V059). A branch of type `Never` ends in
 `Unreachable` or in a jump. **Goes away:** `branch_state`, `set_branch`, `joined`,
 `join_uniq` (the join of the analysis), `retire_stale`, `join_val`.
@@ -985,8 +993,10 @@ wins):
 ```text
 test_i:  the tests of P_i, in pre-order, left to right:
            a variant at place q:          td := Discriminant(q); Switch(move td) [v: next, otherwise: test_i+1]
-           an integer, bool or unit literal: tv := copy q; Switch(move tv) [lit: next, otherwise: test_i+1]
-           a string literal:              tq := &q; tb := Eq(move tq, const "..."); Switch(move tb) [true: next, false: test_i+1]
+           an integer or bool literal:    Switch(copy q) [lit: next, otherwise: test_i+1]
+           a unit literal:                no test (`()` has one value)
+           a string literal:              tb := Eq(copy q, const "..."); Switch(move tb) [true: next, false: test_i+1]
+                                          (a `String` is plain data; else tq := &q and Eq(move tq, ..))
            a tuple, a binding, `_`:       no test (a tuple tests its parts)
          then: Block scope { <bind P_i from s>; into(a_i, dest) }; Goto(end)
 test_n+1: Unreachable                    (W0120 says that the arms cover each value)
@@ -995,8 +1005,14 @@ test_n+1: Unreachable                    (W0120 says that the arms cover each va
 - No binding and no move happens before all the tests of the arm pass. A test only
   reads (`Discriminant`, `copy` of a scalar, a borrow for a string). A `Variant`
   projection comes only after the test of its variant (V8).
-- The temporaries of the tests end at the end of the test block. The bindings live in
-  the `Block` scope of the arm.
+- The temporaries of the tests (`td`, `tb`) end on each edge out of their tests: first
+  in the block after the last test of the arm, and in a block of its own on each failed
+  test, before the `Goto` to the tests of the next arm. They are in no scope. The
+  bindings live in the `Block` scope of the arm; the value of the arm has a `Stmt`
+  scope inside it.
+- The arm takes the value if a binding moves a part of it, or if the scrutinee is a
+  temporary. A `let` always takes it. `let (a, b) = e` puts the value in a temporary
+  first; `let S(a, b) = s` takes the parts of the place `s`.
 - A binding by value: `x = move (s as V).0`. A binding through a reference (the
   scrutinee is `(*r)`): `x = &((*r) as V).0`. A binding of a reference payload by value
   copies the reference, and α of a copy of a reference is the places that the stored
@@ -2111,7 +2127,7 @@ lines) at the end of the migration.
 | `(*env.k)` and `env.k` in a closure | `env.k` is `Var(Cap(k))`: the owned cell of a `ByMove` or a `ByRef` field, or the cell that a `Kept` field shares with the maker. A `ByRef` field holds the reference that its operand `&x` made, so `(*env.k)` adds `Deref`, and the oracle checks each read through it after the end of `x` (rule CAPTURE, 8.3) |
 | `Binary(op, ty, a, b)` | `a`, `b`, `Bin(op)`, `CheckInt(ty)` |
 | an aggregate | `Tuple`, `MakeVec`, `MakeStruct`, `MakeEnum`; a closure is `MakeClosure` with the shared cells of its `Kept` operands and the `owned` list of its `ByMove` operands (the moved values) and `ByRef` operands (the references) |
-| `Uninit(l)`, `Uninit(t.f)` | nothing for a whole local after `BindEmpty`; `MakeStruct` leaves `Moved` in a place field that the literal does not give, as today |
+| `Uninit(l)`, `Uninit(t.f)` | nothing for a whole local after `BindEmpty`; `MakeStruct` leaves `Moved` in a place field that the literal does not give, as today; nothing for the place field paths of a parameter at the entry (the path can name a variant that the value does not have) |
 | `Unary(op, ty, a)` | `a`, `Neg` or `Not`, `CheckInt(ty)` |
 | `Concat(ops)` | each operand, `ToStr`, then `Concat` |
 | `Iter(Elems(p))`, `Iter(Range(a, b))` | the place ops and `ElemIter`; `a`, `b` and `RangeIter` |

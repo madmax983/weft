@@ -1,0 +1,113 @@
+fn f0 and(bool, bool) -> bool: b0
+fn f1 or(bool, bool) -> bool: b1
+fn f2 mixed(bool, &bool, u64) -> bool: b2
+fn f3 in_cond(bool, bool) -> u64: b3
+fn f4 let_and(bool, u64) -> bool: b4
+cap_env e0
+
+body b0: fn and; cap_env e0; unwind_exit bb3
+  _0: bool (Return)
+  _1: bool (Param(0) `a`)
+  _2: bool (Param(1) `b`)
+  bb0:
+    _0 = copy _1
+    switch copy _0 -> [0: bb2, otherwise: bb1]
+  bb1:
+    _0 = copy _2
+    Goto(bb2)
+  bb2:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    UnwindExit
+
+body b1: fn or; cap_env e0; unwind_exit bb3
+  _0: bool (Return)
+  _1: bool (Param(0) `a`)
+  _2: bool (Param(1) `b`)
+  bb0:
+    _0 = copy _1
+    switch copy _0 -> [1: bb2, otherwise: bb1]
+  bb1:
+    _0 = copy _2
+    Goto(bb2)
+  bb2:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    UnwindExit
+
+body b2: fn mixed; cap_env e0; unwind_exit bb5
+  _0: bool (Return)
+  _1: bool (Param(0) `a`)
+  _2: &bool (Param(1) `b`)
+  _3: u64 (Param(2) `n`)
+  bb0:
+    _0 = copy _1
+    switch copy _0 -> [0: bb2, otherwise: bb1]
+  bb1:
+    _0 = copy (*_2)
+    Goto(bb2)
+  bb2:
+    switch copy _0 -> [1: bb4, otherwise: bb3]
+  bb3:
+    _0 = Gt(copy _3, const 1u64)
+    Goto(bb4)
+  bb4:
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    UnwindExit
+
+body b3: fn in_cond; cap_env e0; unwind_exit bb6
+  _0: u64 (Return)
+  _1: bool (Param(0) `a`)
+  _2: bool (Param(1) `b`)
+  _3: bool (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = copy _1
+    switch copy _3 -> [0: bb2, otherwise: bb1]
+  bb1:
+    _3 = copy _2
+    Goto(bb2)
+  bb2:
+    switch move _3 -> [1: bb3, otherwise: bb4]
+  bb3:
+    _0 = const 1u64
+    Goto(bb5)
+  bb4:
+    _0 = const 0u64
+    Goto(bb5)
+  bb5:
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    UnwindExit
+
+body b4: fn let_and; cap_env e0; unwind_exit bb3
+  _0: bool (Return)
+  _1: bool (Param(0) `a`)
+  _2: u64 (Param(1) `n`)
+  _3: bool (User `x`)
+  bb0:
+    Live(_3)
+    _3 = Gt(copy _2, const 0u64)
+    switch copy _3 -> [0: bb2, otherwise: bb1]
+  bb1:
+    _3 = copy _1
+    Goto(bb2)
+  bb2:
+    _0 = copy _3
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    UnwindExit

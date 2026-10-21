@@ -1,0 +1,100 @@
+fn f0 frame(Frame) -> (): b0
+fn f1 wraps(Wrap<Wrap<Frame>>) -> (): b1
+fn f2 boxed(Box<Frame>, (u64, Frame)) -> (): b2
+fn f3 option(Option<Frame>) -> (): b3
+fn f4 node(Node) -> (): b4
+fn f5 nest(Nest<Frame>) -> (): b5
+fn f6 by_ref(&Frame) -> (): b6
+fn f7 plain(Wrap<u64>) -> (): b7
+cap_env e0
+
+body b0: fn frame; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Frame (Param(0) `f`)
+  bb0:
+    Uninit(_1.1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn wraps; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Wrap<Wrap<Frame>> (Param(0) `w`)
+  bb0:
+    Uninit(_1.0.0.1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn boxed; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Box<Frame> (Param(0) `b`)
+  _2: (u64, Frame) (Param(1) `t`)
+  bb0:
+    Uninit((*_1).1)
+    Uninit(_2.1.1)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn option; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Option<Frame> (Param(0) `o`)
+  bb0:
+    Uninit((_1 as #0).0.1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: fn node; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Node (Param(0) `n`)
+  bb0:
+    Uninit(_1.0.1)
+    Uninit((*(_1.1 as #0).0))
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b5: fn nest; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Nest<Frame> (Param(0) `n`)
+  bb0:
+    Uninit(_1.0.1)
+    Uninit((*(_1.1 as #0).0))
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b6: fn by_ref; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &Frame (Param(0) `f`)
+  bb0:
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b7: fn plain; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Wrap<u64> (Param(0) `w`)
+  bb0:
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit

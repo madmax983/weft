@@ -45,14 +45,14 @@ const fn later(e: &ExprKind) -> Construct {
         ExprKind::Array(_) => Construct::Array,
         ExprKind::StructLit { .. } => Construct::StructLit,
         ExprKind::Closure { .. } => Construct::Closure,
-        ExprKind::If { .. } => Construct::If,
-        ExprKind::Match { .. } => Construct::Match,
         ExprKind::Handle { .. } => Construct::Handle,
         ExprKind::Scope { .. } => Construct::Scope,
-        ExprKind::Binary { .. } => Construct::AndOr,
         ExprKind::Name(_) => Construct::ItemName,
         // The builder lowers these kinds before it asks for a right side.
-        ExprKind::Field { .. }
+        ExprKind::If { .. }
+        | ExprKind::Match { .. }
+        | ExprKind::Binary { .. }
+        | ExprKind::Field { .. }
         | ExprKind::Index { .. }
         | ExprKind::Unary { .. }
         | ExprKind::Lit(_)
@@ -147,16 +147,28 @@ impl Builder<'_> {
     }
 
     /// Writes the value of `e` into `dest`, with no implicit dereference: a
-    /// constant, a block, or a right side. The place of a place expression
-    /// is for [`Builder::into`].
+    /// constant, a block, a branch, or a right side. The place of a place
+    /// expression is for [`Builder::into`].
     pub(super) fn value_into(&mut self, e: &Expr, dest: Place) -> R<()> {
         let origin = self.origin(e.span, Some(e.id));
         if let Some(c) = self.constant(e)? {
             self.assign(dest, Rvalue::Use(Operand::Const(c)), origin);
             return Ok(());
         }
-        if let ExprKind::Block(b) = &e.kind {
-            return self.block_into(b, dest, false);
+        match &e.kind {
+            ExprKind::Block(b) => return self.block_into(b, dest, false),
+            ExprKind::If { cond, then, else_ } => {
+                return self.if_into(cond, then, else_.as_deref(), e, dest)
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                return self.match_into(scrutinee, arms, e, &dest)
+            }
+            ExprKind::Binary {
+                op: op @ (ast::BinOp::And | ast::BinOp::Or),
+                lhs,
+                rhs,
+            } => return self.and_or_into(*op == ast::BinOp::And, lhs, rhs, e, dest),
+            _ => {}
         }
         let rv = self.rvalue(e)?;
         self.assign(dest, rv, origin);
@@ -179,7 +191,7 @@ impl Builder<'_> {
             }
             ExprKind::Binary { op, lhs, rhs } => {
                 let Some((op, arith)) = bin_op(*op) else {
-                    return unsupported(Construct::AndOr, e.span);
+                    return unsupported(Construct::NoThir, e.span);
                 };
                 let skip = self.inert(rhs);
                 if arith {

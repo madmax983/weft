@@ -32,6 +32,7 @@ impl Builder<'_> {
                 s.locals.push(l);
             }
         }
+        self.unset_params(src.span);
         let tail = frame_tail(src.block);
         let ret = Place::local(RET);
         let discard = tail.is_some_and(|e| self.discards(e));
@@ -80,6 +81,26 @@ impl Builder<'_> {
         });
         self.vars.insert(b, l);
         Ok(l)
+    }
+
+    /// Writes `Uninit` for each place field of each by-value parameter
+    /// (ADR 0007): a by-value parameter is built in place, so its place
+    /// fields have no value at the entry (`irbuild/unset.rs`).
+    fn unset_params(&mut self, span: Span) {
+        let origin = self.origin(span, None);
+        for i in 0..self.params.len() {
+            let Some(&l) = self.params.get(i) else {
+                continue;
+            };
+            let ty = self.local_ty(l);
+            for path in self.fields.of(self.tys, ty).iter() {
+                let place = Place {
+                    local: l,
+                    proj: path.proj.clone(),
+                };
+                self.push(StmtKind::Uninit(place), origin);
+            }
+        }
     }
 
     /// Returns true if the tail `e` of the frame body does not give the value

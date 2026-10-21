@@ -1,0 +1,42 @@
+// `if` (`docs/ir.md` 5.12): each branch writes the value into the
+// destination itself. The condition is read before the switch; its
+// temporaries belong to the statement around the `if`.
+
+// A tail: each branch writes `_0`.
+fn tail(c: bool, a: u64, b: u64) -> u64 {
+    if c { a } else { b }
+}
+
+// The value of a `let`: a value that is not plain data moves into `x`.
+fn let_value(c: bool, v: Vec<u64>, w: Vec<u64>) -> Vec<u64> {
+    let x = if c { v } else { w }
+    x
+}
+
+// No `else`: the other path gives `()`.
+fn no_else(c: bool, x: u64) -> u64 {
+    if c { x = 1 }
+    x
+}
+
+// An `else if` chain: the condition of the inner `if` is a temporary of
+// its branch.
+fn chain(n: u64) -> u64 {
+    if n == 0 { 10 } else if n == 1 { 20 } else { 30 }
+}
+
+// A branch that returns does not go to the join.
+fn early(c: bool, x: u64) -> u64 {
+    if c { return 0 } else { x + 1 }
+}
+
+// A condition through a reference: `copy (*c)`.
+fn cond_ref(c: &bool) -> u64 {
+    if c { 1 } else { 0 }
+}
+
+// A statement: the value of the `if` is discarded.
+fn stmt(c: bool, x: u64) -> u64 {
+    if c { x = 2 } else { x = 3 }
+    x
+}
