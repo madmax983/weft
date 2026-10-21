@@ -1,0 +1,48 @@
+// `while` (`docs/ir.md` 5.14): the condition is a statement of its own at
+// the loop head. Its temporaries end on each edge of the switch: at the
+// start of the body and before the exit. The back edge is a `Goto` to the
+// head.
+
+// A condition that is a place: the switch reads it, with no temporary.
+fn flag(c: bool) -> u64 {
+    let n = 0
+    while c {
+        c = false
+        n += 1
+    }
+    n
+}
+
+// An operator condition: its temporary ends in the body and at the exit.
+fn count(n: u64) -> u64 {
+    let i = 0
+    while i < n { i += 1 }
+    i
+}
+
+// A block condition: its local ends inside the condition. The temporaries
+// of its tail belong to the condition statement.
+fn block_cond(n: u64) -> u64 {
+    let i = 0
+    while { let k = i + 1; k < n } { i += 1 }
+    i
+}
+
+// A condition that borrows: `==` on a `Vec` reads through references.
+fn vec_cond(v: Vec<u64>, w: Vec<u64>) -> Vec<u64> {
+    let n = 0
+    while v == w { n += 1 }
+    v
+}
+
+// The locals of the body end at the end of each iteration.
+fn body_local(n: u64) -> u64 {
+    let s = 0
+    let i = 0
+    while i < n {
+        let d = i * 2
+        s += d
+        i += 1
+    }
+    s
+}

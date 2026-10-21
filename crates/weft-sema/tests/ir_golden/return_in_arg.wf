@@ -1,0 +1,31 @@
+// `return` in a later operand (`docs/ir.md` 5.1.5, 5.15, OL-3c): the
+// temporaries of the earlier operands end before the frame end. Calls come
+// at stage B7, so operators hold the operands here.
+
+// An arithmetic operand.
+fn add(a: u64, n: u64) -> u64 {
+    a * 2 + {
+        if n > 3 { return 0 }
+        n
+    }
+}
+
+// A borrowed `Vec` value: its `Dead` at the `return` drops it.
+fn cmp(v: Vec<u64>, w: Vec<u64>, c: bool) -> bool {
+    { v } == {
+        if c { return false }
+        w
+    }
+}
+
+// From inside a `for`: the element and the iterator end too.
+fn in_loop(n: u64) -> u64 {
+    let s = 0
+    for i in 0..n {
+        s = s + i * {
+            if i > 5 { return s }
+            1
+        }
+    }
+    s
+}

@@ -193,7 +193,7 @@ impl Builder<'_> {
 
     /// Returns the place of `e`. A value with no place goes into a temporary
     /// of the current statement (`docs/ir.md` 5.1.1).
-    fn place_or_temp(&mut self, e: &Expr) -> R<Place> {
+    pub(super) fn place_or_temp(&mut self, e: &Expr) -> R<Place> {
         if let Some(p) = self.as_place(e)? {
             return Ok(p);
         }

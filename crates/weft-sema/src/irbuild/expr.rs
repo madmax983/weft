@@ -40,7 +40,6 @@ const fn later(e: &ExprKind) -> Construct {
     match e {
         ExprKind::Call { .. } => Construct::Call,
         ExprKind::MethodCall { .. } => Construct::MethodCall,
-        ExprKind::Range { .. } => Construct::Range,
         ExprKind::Tuple(_) => Construct::Tuple,
         ExprKind::Array(_) => Construct::Array,
         ExprKind::StructLit { .. } => Construct::StructLit,
@@ -48,8 +47,10 @@ const fn later(e: &ExprKind) -> Construct {
         ExprKind::Handle { .. } => Construct::Handle,
         ExprKind::Scope { .. } => Construct::Scope,
         ExprKind::Name(_) => Construct::ItemName,
-        // The builder lowers these kinds before it asks for a right side.
-        ExprKind::If { .. }
+        // The builder lowers these kinds before it asks for a right side. A
+        // range is valid only in a `for` (W0114).
+        ExprKind::Range { .. }
+        | ExprKind::If { .. }
         | ExprKind::Match { .. }
         | ExprKind::Binary { .. }
         | ExprKind::Field { .. }

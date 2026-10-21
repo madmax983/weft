@@ -24,6 +24,7 @@
 mod branch;
 mod expr;
 mod frame;
+mod looping;
 mod pattern;
 mod place;
 mod stmt;
@@ -39,6 +40,7 @@ use weft_ir::{
     TermKind, TestDecl, TestId, TyId, TyTable,
 };
 use weft_syntax::ast::{self, Span};
+use weft_syntax::diag::Diagnostic;
 
 use crate::thir::{BindingId, Tables};
 use crate::Analysis;
@@ -55,18 +57,6 @@ pub enum Construct {
     MoveThroughRef,
     /// The payload of a variant with more than one field as a place: `o.A`.
     VariantField,
-    /// `while`.
-    While,
-    /// `for`.
-    For,
-    /// `loop`.
-    Loop,
-    /// `break`.
-    Break,
-    /// `continue`.
-    Continue,
-    /// A range `a..b`.
-    Range,
     /// A call.
     Call,
     /// A method call.
@@ -98,12 +88,6 @@ impl Construct {
             Self::AssignPlace => "assignment to a value",
             Self::MoveThroughRef => "move through a reference",
             Self::VariantField => "variant field",
-            Self::While => "while",
-            Self::For => "for",
-            Self::Loop => "loop",
-            Self::Break => "break",
-            Self::Continue => "continue",
-            Self::Range => "range",
             Self::Call => "call",
             Self::MethodCall => "method call",
             Self::Tuple => "tuple",
@@ -122,9 +106,6 @@ impl Construct {
     pub const fn stage(self) -> &'static str {
         match self {
             Self::AssignPlace | Self::MoveThroughRef | Self::VariantField => "B12",
-            Self::While | Self::For | Self::Loop | Self::Break | Self::Continue | Self::Range => {
-                "B6"
-            }
             Self::Call
             | Self::MethodCall
             | Self::Tuple
@@ -200,6 +181,9 @@ pub struct Built {
     /// The rules that the program breaks (`weft_ir::verify`). Each one is a bug
     /// of the builder.
     pub broken: Vec<Broken>,
+    /// The diagnostics of the builder (`docs/ir.md` 5.36): W0315 for a jump
+    /// out of a fence. Only the built bodies give diagnostics.
+    pub diags: Vec<Diagnostic>,
 }
 
 impl Built {
@@ -223,9 +207,19 @@ impl Built {
 ///
 /// The text is the program as [`weft_ir::print`] prints it, then one comment
 /// line for each body that has no IR. `at` gives the text of a location in a
-/// unit (for example `line:column`).
+/// unit (for example `line:column`). Each diagnostic of the builder is a
+/// comment line too.
 pub fn text(b: &Built, at: &dyn Fn(usize, Span) -> String) -> String {
     let mut s = weft_ir::print::print_program(&b.program, &b.tys);
+    for d in &b.diags {
+        let _ = writeln!(
+            s,
+            "// {} at {}: {}",
+            d.code.as_str(),
+            at(d.unit, d.span),
+            d.message
+        );
+    }
     for e in &b.entries {
         match &e.outcome {
             Outcome::Built(_) => {}
@@ -271,6 +265,7 @@ fn build_all(a: &Analysis) -> Built {
         entries: Vec::new(),
         fns: BTreeMap::new(),
         broken: Vec::new(),
+        diags: Vec::new(),
     };
     let mut fields = unset::PlaceFields::new(&out.tys);
     // One capability environment: the entry of each function and each test
@@ -397,6 +392,10 @@ fn body_outcome(
     match b.body(src) {
         Ok(()) => {
             let id = BodyId(id_of(out.program.bodies.len()));
+            out.diags.extend(b.diags.drain(..).map(|mut d| {
+                d.unit = unit;
+                d
+            }));
             let body = b.finish(src.kind, src.span);
             out.program.bodies.push(body);
             if let BodyKind::Fn(f) = src.kind {
@@ -484,6 +483,52 @@ enum ScopeKind {
     Block,
     /// A statement: its temporaries.
     Stmt,
+    /// A loop: the iterator of a `for`, and the targets of `break` and
+    /// `continue`.
+    Loop(Targets),
+    /// A handled body, a clause or a scope body: no jump can cross it
+    /// (W0315).
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "plan stages B10 and B11 open fences")
+    )]
+    Fence(Fence),
+}
+
+/// The targets of the jumps of a loop: block indexes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Targets {
+    /// The block after the loop: the target of `break`.
+    exit: usize,
+    /// The loop head: the target of `continue` and of the back edge.
+    head: usize,
+}
+
+/// A body that a jump cannot leave (`docs/ir.md` 5.1.5). Plan stages B10 and
+/// B11 open these scopes.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "plan stages B10 and B11 open fences")
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Fence {
+    /// The handled body of a `handle`.
+    Handled,
+    /// A handler clause.
+    Clause,
+    /// The body of a `scope`.
+    ScopeBody,
+}
+
+impl Fence {
+    /// Returns the name of the body in a diagnostic.
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Handled => "handled body",
+            Self::Clause => "handler clause",
+            Self::ScopeBody => "scope body",
+        }
+    }
 }
 
 /// One scope of the stack.
@@ -534,6 +579,8 @@ struct Builder<'a> {
     scopes: Vec<Scope>,
     /// The local of each binding.
     vars: BTreeMap<BindingId, LocalId>,
+    /// The diagnostics of the builder (W0315).
+    diags: Vec<Diagnostic>,
 }
 
 impl<'a> Builder<'a> {
@@ -562,6 +609,7 @@ impl<'a> Builder<'a> {
             live: true,
             scopes: Vec::new(),
             vars: BTreeMap::new(),
+            diags: Vec::new(),
         };
         let props = b.props(ret);
         b.locals.push(LocalDecl {
@@ -630,8 +678,9 @@ impl<'a> Builder<'a> {
 
     /// Makes block `b` the block that gets the next statement. The point can
     /// run if an edge from a point that can run enters the block. Each edge
-    /// into `b` is in the blocks before this call: the builder makes only
-    /// forward edges here.
+    /// into `b` is in the blocks before this call, but for the back edges of
+    /// a loop head (`looping.rs`). A back edge comes from a point that the
+    /// head reaches, so it cannot make the head live.
     fn enter(&mut self, b: usize) {
         self.cur = Some(b);
         self.live = self.blocks.get(b).is_some_and(|d| d.live);
@@ -688,8 +737,8 @@ impl<'a> Builder<'a> {
     }
 
     /// Adds a temporary of type `ty` with `Live` at the current point. It goes
-    /// into the innermost scope that is not a block: a block tail is not a
-    /// statement, so its temporaries belong to the scope around the block
+    /// into the innermost statement scope or frame scope: a block tail is not
+    /// a statement, so its temporaries belong to the scope around the block
     /// (`docs/ir.md` 5.1.2).
     fn temp(&mut self, ty: TyId, kind: TempKind, origin: Origin) -> LocalId {
         let l = self.loose_temp(ty, kind, origin);
@@ -697,7 +746,7 @@ impl<'a> Builder<'a> {
             .scopes
             .iter_mut()
             .rev()
-            .find(|s| s.kind != ScopeKind::Block)
+            .find(|s| matches!(s.kind, ScopeKind::Stmt | ScopeKind::Frame))
         {
             s.locals.push(l);
         }

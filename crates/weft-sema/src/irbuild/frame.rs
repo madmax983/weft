@@ -3,6 +3,7 @@
 
 use weft_ir::{LocalDecl, LocalId, LocalKind, Origin, Place, Rvalue, StmtKind, TermKind};
 use weft_syntax::ast::{self, Span};
+use weft_syntax::diag::{Code, Diagnostic};
 
 use super::{unsupported, Builder, Construct, ScopeKind, Src, R, RET};
 use crate::thir::{Binder, BindingId};
@@ -129,26 +130,90 @@ impl Builder<'_> {
         }
     }
 
-    /// Ends each open scope, from the innermost, for a jump out of the frame:
-    /// `Dead` of each local of each scope (`docs/ir.md` 5.1.5). The scopes stay
-    /// on the stack: the code after the jump closes them, at a point that
-    /// cannot run.
-    pub(super) fn exit_all(&mut self, origin: Origin) {
-        let ends: Vec<LocalId> = self
-            .scopes
-            .iter()
-            .rev()
-            .flat_map(|s| s.locals.iter().rev().copied())
-            .collect();
-        for l in ends {
+    /// Writes `Dead` of `locals` in reverse order with `origin`, if the point
+    /// can run.
+    pub(super) fn end_locals(&mut self, locals: &[LocalId], origin: Origin) {
+        if !self.live {
+            return;
+        }
+        for &l in locals.iter().rev() {
             self.push(StmtKind::Dead(l), origin);
         }
     }
 
+    /// Ends the scopes from index `depth` of the stack to the innermost, for a
+    /// jump out of them: `Dead` of each local of each scope, from the
+    /// innermost (`docs/ir.md` 5.1.5). The scopes stay on the stack: the code
+    /// after the jump closes them, at a point that cannot run.
+    fn exit_to(&mut self, depth: usize, origin: Origin) {
+        let ends: Vec<LocalId> = self
+            .scopes
+            .iter()
+            .skip(depth)
+            .flat_map(|s| s.locals.iter().copied())
+            .collect();
+        self.end_locals(&ends, origin);
+    }
+
+    /// Returns the index of the scope that jump `j` goes to (`docs/ir.md`
+    /// 5.1.5): the innermost loop for `break` and `continue`, the innermost
+    /// frame for `return`. A fence stops the search: the builder reports
+    /// W0315 if the point can run, and gives `None`. A `break` or a
+    /// `continue` with no loop in its frame is W0111 of `typeck`, so the
+    /// THIR is wrong.
+    fn jump_scope(&mut self, j: Jump, span: Span) -> R<Option<usize>> {
+        for (i, s) in self.scopes.iter().enumerate().rev() {
+            match (s.kind, j) {
+                (ScopeKind::Fence(f), _) => {
+                    if self.live {
+                        let text = format!("`{}` cannot leave a {}", j.word(), f.name());
+                        self.diags.push(Diagnostic::error(Code::W0315, text, span));
+                    }
+                    return Ok(None);
+                }
+                (ScopeKind::Loop(_), Jump::Break | Jump::Continue)
+                | (ScopeKind::Frame, Jump::Return) => return Ok(Some(i)),
+                (ScopeKind::Frame, _) => break,
+                _ => {}
+            }
+        }
+        unsupported(Construct::NoThir, span)
+    }
+
+    /// Lowers `break` or `continue` (`docs/ir.md` 5.14, 5.1.5): the end of
+    /// each scope inside the loop, from the innermost, then `Goto` to the
+    /// exit or the head. A jump out of a fence is W0315: the path ends with
+    /// `Unreachable`.
+    pub(super) fn jump(&mut self, j: Jump, span: Span) -> R<()> {
+        let origin = self.origin(span, None);
+        let Some(i) = self.jump_scope(j, span)? else {
+            self.terminate(TermKind::Unreachable, origin);
+            return Ok(());
+        };
+        let target = match self.scopes.get(i).map(|s| s.kind) {
+            Some(ScopeKind::Loop(t)) => match j {
+                Jump::Continue => t.head,
+                _ => t.exit,
+            },
+            _ => return unsupported(Construct::NoThir, span),
+        };
+        self.exit_to(i + 1, origin);
+        self.goto(target, origin);
+        Ok(())
+    }
+
     /// Lowers `return e` (`docs/ir.md` 5.15): `into(e, _0)`, the end of each
-    /// scope of the frame, the end of the parameters, then `Return` with the
-    /// origin of `e`.
+    /// scope of the frame (the parameters last), then `Return` with the
+    /// origin of `e`. A `return` out of a fence is W0315: the value is a
+    /// discarded expression statement, and the path ends with `Unreachable`.
     pub(super) fn return_stmt(&mut self, value: Option<&ast::Expr>, span: Span) -> R<()> {
+        let Some(depth) = self.jump_scope(Jump::Return, span)? else {
+            if let Some(e) = value {
+                self.expr_stmt(e)?;
+            }
+            self.terminate(TermKind::Unreachable, self.origin(span, None));
+            return Ok(());
+        };
         let ret = Place::local(RET);
         let origin = if let Some(e) = value {
             self.into(e, ret)?;
@@ -158,9 +223,31 @@ impl Builder<'_> {
             self.assign(ret, Rvalue::Use(super::expr::unit()), origin);
             origin
         };
-        self.exit_all(self.origin(span, None));
+        self.exit_to(depth, self.origin(span, None));
         self.terminate(TermKind::Return, origin);
         Ok(())
+    }
+}
+
+/// A jump statement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Jump {
+    /// `break`.
+    Break,
+    /// `continue`.
+    Continue,
+    /// `return`.
+    Return,
+}
+
+impl Jump {
+    /// Returns the keyword of the jump.
+    const fn word(self) -> &'static str {
+        match self {
+            Self::Break => "break",
+            Self::Continue => "continue",
+            Self::Return => "return",
+        }
     }
 }
 

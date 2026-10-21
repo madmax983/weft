@@ -185,6 +185,46 @@ fn golden_match_string() {
     golden("match_string");
 }
 
+#[test]
+fn golden_while_cond() {
+    golden("while_cond");
+}
+
+#[test]
+fn golden_for_elems() {
+    golden("for_elems");
+}
+
+#[test]
+fn golden_for_range() {
+    golden("for_range");
+}
+
+#[test]
+fn golden_break_nested_block() {
+    golden("break_nested_block");
+}
+
+#[test]
+fn golden_continue_temps() {
+    golden("continue_temps");
+}
+
+#[test]
+fn golden_return_in_arg() {
+    golden("return_in_arg");
+}
+
+#[test]
+fn golden_loop_tail_temp() {
+    golden("loop_tail_temp");
+}
+
+#[test]
+fn golden_break_in_closure() {
+    golden("break_in_closure");
+}
+
 /// Returns the built body of the function or test `name`.
 fn body<'b>(b: &'b Built, name: &str) -> &'b Body {
     let e = b
@@ -319,15 +359,15 @@ fn a_returned_reference_to_a_local_ends_the_local_first() {
 
 #[test]
 fn a_construct_of_a_later_stage_is_unsupported() {
-    let (_, b) = build("fn f(c: bool) -> u64 {\n    while c { c = false }\n    1\n}\n");
+    let (_, b) = build("fn g() -> u64 { 1 }\nfn f() -> u64 {\n    g()\n}\n");
     let e = b
         .entries
         .iter()
         .find(|e| e.name == "f")
         .unwrap_or_else(|| panic!("no `f`"));
     match &e.outcome {
-        Outcome::Unsupported(u) => assert_eq!(u.construct.name(), "while"),
-        other => panic!("`while` is for stage B6: {other:?}"),
+        Outcome::Unsupported(u) => assert_eq!(u.construct.name(), "call"),
+        other => panic!("a call is for stage B7: {other:?}"),
     }
 }
 
@@ -821,4 +861,114 @@ fn a_variant_field_place_tests_the_variant_first() {
         ),
         "no test of `o`"
     );
+}
+
+/// Returns the locals of `body` of kind `kind`.
+fn temps_of(body: &Body, kind: TempKind) -> Vec<LocalId> {
+    (0..body.locals.len())
+        .filter(|&i| body.locals[i].kind == LocalKind::Temp(kind))
+        .map(|i| LocalId(u32::try_from(i).unwrap_or(u32::MAX)))
+        .collect()
+}
+
+/// Returns the index of the block of `body` with statement `s`.
+fn block_with(body: &Body, s: &StmtKind) -> Option<usize> {
+    body.blocks
+        .iter()
+        .position(|b| b.stmts.iter().any(|x| x.kind == *s))
+}
+
+#[test]
+fn a_return_in_a_later_operand_ends_the_earlier_operand_temporaries() {
+    // OL-3c with an operator: `{ v } == { if c { return false }; w }`. The
+    // left operand is a borrowed temporary of the `Vec`; the `return` path
+    // ends it (its `Dead` drops the value) before `Return`.
+    let b = golden_built("return_in_arg");
+    let f = body(&b, "cmp");
+    let borrowed = temps_of(f, TempKind::Borrowed);
+    assert!(!borrowed.is_empty(), "no borrowed temporary");
+    let early: Vec<&weft_ir::Block> = f
+        .blocks
+        .iter()
+        .filter(|blk| {
+            blk.term.kind == TermKind::Return
+                && blk.stmts.iter().any(|s| {
+                    matches!(&s.kind, StmtKind::Assign(p, Rvalue::Use(Operand::Const(weft_ir::Const::Bool(false))))
+                        if *p == Place::local(LocalId(0)))
+                })
+        })
+        .collect();
+    assert_eq!(early.len(), 1, "one `return false` path");
+    let ends: Vec<&StmtKind> = early[0].stmts.iter().map(|s| &s.kind).collect();
+    for t in &borrowed {
+        assert!(
+            ends.contains(&&StmtKind::Dead(*t)),
+            "the `return` path does not end {t:?}: {ends:?}"
+        );
+    }
+    // From inside a `for`: `s + i * { if i > 5 { return s }; 1 }`. Each
+    // operand temporary, the element and the iterator end on the `return`
+    // path.
+    let f = body(&b, "in_loop");
+    let s_local = named(f, "s");
+    let early: Vec<&weft_ir::Block> = f
+        .blocks
+        .iter()
+        .filter(|blk| {
+            blk.term.kind == TermKind::Return
+                && blk.stmts.iter().any(|s| {
+                    matches!(&s.kind, StmtKind::Assign(p, Rvalue::Use(Operand::Copy(q)))
+                        if *p == Place::local(LocalId(0)) && *q == Place::local(s_local))
+                })
+                && blk
+                    .stmts
+                    .iter()
+                    .any(|s| matches!(s.kind, StmtKind::Dead(l) if f.locals[l.index()].kind == LocalKind::Temp(TempKind::Scrutinee)))
+        })
+        .collect();
+    assert_eq!(early.len(), 1, "one `return s` path in the loop");
+    let ends: Vec<&StmtKind> = early[0].stmts.iter().map(|s| &s.kind).collect();
+    let operands = temps_of(f, TempKind::Operand);
+    assert!(operands.len() >= 3, "operand temporaries: {operands:?}");
+    let iterators = (0..f.locals.len())
+        .filter(|&i| f.locals[i].kind == LocalKind::Iterator)
+        .map(|i| LocalId(u32::try_from(i).unwrap_or(u32::MAX)));
+    for t in operands
+        .iter()
+        .copied()
+        .chain(temps_of(f, TempKind::Scrutinee))
+        .chain(iterators)
+    {
+        assert!(
+            ends.contains(&&StmtKind::Dead(t)),
+            "the `return` path does not end {t:?}: {ends:?}"
+        );
+    }
+}
+
+#[test]
+fn the_tail_temporaries_of_a_loop_body_end_at_each_iteration() {
+    // `while i < n { i += 1; i * 2 }`: the tail temporary gets its `Dead` in
+    // the block that takes the back edge to the head, before the next `Live`.
+    let b = golden_built("loop_tail_temp");
+    let f = body(&b, "tail_value");
+    let tails = temps_of(f, TempKind::Discarded);
+    assert_eq!(tails.len(), 1, "one tail temporary: {tails:?}");
+    let t = tails[0];
+    let live = block_with(f, &StmtKind::Live(t)).unwrap_or_else(|| panic!("no Live"));
+    let dead = block_with(f, &StmtKind::Dead(t)).unwrap_or_else(|| panic!("no Dead"));
+    let blk = &f.blocks[dead];
+    let pos = |k: &StmtKind| blk.stmts.iter().position(|s| s.kind == *k);
+    // The `Dead` comes after the `Live` in the same iteration, and the block
+    // goes back to a block at or before the block of the `Live`.
+    match blk.term.kind {
+        TermKind::Goto(h) => assert!(
+            h.index() <= live,
+            "the tail temporary ends in bb{dead}, which does not go back to the head"
+        ),
+        ref k => panic!("the block of the Dead ends with {k:?}, not a back edge"),
+    }
+    if dead == live {
+        assert!(pos(&StmtKind::Live(t)) < pos(&StmtKind::Dead(t)));
+    }
 }

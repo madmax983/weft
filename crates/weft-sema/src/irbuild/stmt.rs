@@ -3,7 +3,7 @@
 use weft_ir::{BinOp, Operand, Place, Rvalue, StmtKind, TempKind};
 use weft_syntax::ast::{self, AssignOp, Expr, PatternKind, Stmt, StmtKind as S};
 
-use super::frame::closing;
+use super::frame::{closing, Jump};
 use super::{unsupported, Builder, Construct, ScopeKind, R};
 
 impl Builder<'_> {
@@ -40,18 +40,18 @@ impl Builder<'_> {
     }
 
     /// Lowers statement `s` in a statement scope of its own.
-    fn stmt(&mut self, s: &Stmt) -> R<()> {
+    pub(super) fn stmt(&mut self, s: &Stmt) -> R<()> {
         self.open(ScopeKind::Stmt, s.span);
         match &s.kind {
             S::Let { pat, init, .. } => self.let_stmt(pat, init.as_ref(), s)?,
             S::Expr(e) => self.expr_stmt(e)?,
             S::Assign { target, op, value } => self.assign_stmt(target, *op, value, s)?,
             S::Return(e) => self.return_stmt(e.as_ref(), s.span)?,
-            S::Break => return unsupported(Construct::Break, s.span),
-            S::Continue => return unsupported(Construct::Continue, s.span),
-            S::While { .. } => return unsupported(Construct::While, s.span),
-            S::For { .. } => return unsupported(Construct::For, s.span),
-            S::Loop(_) => return unsupported(Construct::Loop, s.span),
+            S::Break => self.jump(Jump::Break, s.span)?,
+            S::Continue => self.jump(Jump::Continue, s.span)?,
+            S::While { cond, body } => self.while_loop(cond, body, s.span)?,
+            S::For { pat, iter, body } => self.for_loop(pat, iter, body, s.span)?,
+            S::Loop(body) => self.loop_loop(body, s.span)?,
             S::Assert(_) => return unsupported(Construct::Assert, s.span),
         }
         self.close();
@@ -139,7 +139,7 @@ impl Builder<'_> {
     /// ```
     ///
     /// The statement scope ends the temporary.
-    fn expr_stmt(&mut self, e: &Expr) -> R<()> {
+    pub(super) fn expr_stmt(&mut self, e: &Expr) -> R<()> {
         if let Some(p) = self.as_place(e)? {
             let origin = self.origin(e.span, Some(e.id));
             self.push(StmtKind::Mention(p), origin);

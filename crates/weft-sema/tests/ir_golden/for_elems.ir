@@ -1,0 +1,250 @@
+fn f0 sum(Vec<u64>) -> u64: b0
+fn f1 sum_ref(&Vec<u64>) -> u64: b1
+fn f2 firsts(Vec<Vec<u64>>) -> u64: b2
+fn f3 pairs(Vec<(u64, u64)>) -> u64: b3
+fn f4 count(Vec<String>) -> u64: b4
+fn f5 arr([u64; 3]) -> u64: b5
+cap_env e0
+
+body b0: fn sum; cap_env e0; unwind_exit bb5
+  _0: u64 (Return)
+  _1: Vec<u64> (Param(0) `v`)
+  _2: u64 (User `s`)
+  _3: Iter<u64> (Iterator)
+  _4: u64 (Temp(Scrutinee))
+  _5: u64 (User `x`)
+  _6: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0u64
+    Live(_3)
+    _3 = Iter(elems _1[])
+    Goto(bb1)
+  bb1:
+    Live(_4)
+    _4 = next _3 -> [bb3, done: bb4]
+  bb2:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3:
+    Live(_5)
+    _5 = copy _4
+    Live(_6)
+    _6 = Add<u64>(copy _2, copy _5)
+    _2 = move _6
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Goto(bb1)
+  bb4:
+    Dead(_4)
+    Goto(bb2)
+  bb5 (cleanup):
+    UnwindExit
+
+body b1: fn sum_ref; cap_env e0; unwind_exit bb5
+  _0: u64 (Return)
+  _1: &Vec<u64> (Param(0) `v`)
+  _2: u64 (User `s`)
+  _3: Iter<u64> (Iterator)
+  _4: u64 (Temp(Scrutinee))
+  _5: u64 (User `x`)
+  _6: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0u64
+    Live(_3)
+    _3 = Iter(elems (*_1)[])
+    Goto(bb1)
+  bb1:
+    Live(_4)
+    _4 = next _3 -> [bb3, done: bb4]
+  bb2:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3:
+    Live(_5)
+    _5 = copy _4
+    Live(_6)
+    _6 = Add<u64>(copy _2, copy _5)
+    _2 = move _6
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Goto(bb1)
+  bb4:
+    Dead(_4)
+    Goto(bb2)
+  bb5 (cleanup):
+    UnwindExit
+
+body b2: fn firsts; cap_env e0; unwind_exit bb5
+  _0: u64 (Return)
+  _1: Vec<Vec<u64>> (Param(0) `m`)
+  _2: u64 (User `n`)
+  _3: Iter<&Vec<u64>> (Iterator)
+  _4: &Vec<u64> (Temp(Scrutinee))
+  _5: &Vec<u64> (User `r`)
+  _6: usize (Temp(Operand))
+  _7: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0u64
+    Live(_3)
+    _3 = Iter(elems _1[])
+    Goto(bb1)
+  bb1:
+    Live(_4)
+    _4 = next _3 -> [bb3, done: bb4]
+  bb2:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3:
+    Live(_5)
+    _5 = copy _4
+    Live(_6)
+    _6 = const 0usize
+    Bounds((*_5), copy _6)
+    Live(_7)
+    _7 = Add<u64>(copy _2, copy (*_5)[_6])
+    _2 = move _7
+    Dead(_7)
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Goto(bb1)
+  bb4:
+    Dead(_4)
+    Goto(bb2)
+  bb5 (cleanup):
+    UnwindExit
+
+body b3: fn pairs; cap_env e0; unwind_exit bb5
+  _0: u64 (Return)
+  _1: Vec<(u64, u64)> (Param(0) `ps`)
+  _2: u64 (User `n`)
+  _3: Iter<&(u64, u64)> (Iterator)
+  _4: &(u64, u64) (Temp(Scrutinee))
+  _5: &u64 (User `a`)
+  _6: &u64 (User `b`)
+  _7: u64 (User `t`)
+  _8: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0u64
+    Live(_3)
+    _3 = Iter(elems _1[])
+    Goto(bb1)
+  bb1:
+    Live(_4)
+    _4 = next _3 -> [bb3, done: bb4]
+  bb2:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3:
+    Live(_5)
+    _5 = &(*_4).0
+    Live(_6)
+    _6 = &(*_4).1
+    Live(_7)
+    _7 = Mul<u64>(copy (*_5), copy (*_6))
+    Live(_8)
+    _8 = Add<u64>(copy _2, copy _7)
+    _2 = move _8
+    Dead(_8)
+    Dead(_7)
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Goto(bb1)
+  bb4:
+    Dead(_4)
+    Goto(bb2)
+  bb5 (cleanup):
+    UnwindExit
+
+body b4: fn count; cap_env e0; unwind_exit bb5
+  _0: u64 (Return)
+  _1: Vec<String> (Param(0) `v`)
+  _2: u64 (User `n`)
+  _3: Iter<String> (Iterator)
+  _4: String (Temp(Scrutinee))
+  _5: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0u64
+    Live(_3)
+    _3 = Iter(elems _1[])
+    Goto(bb1)
+  bb1:
+    Live(_4)
+    _4 = next _3 -> [bb3, done: bb4]
+  bb2:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3:
+    Live(_5)
+    _5 = Add<u64>(copy _2, const 1u64)
+    _2 = move _5
+    Dead(_5)
+    Dead(_4)
+    Goto(bb1)
+  bb4:
+    Dead(_4)
+    Goto(bb2)
+  bb5 (cleanup):
+    UnwindExit
+
+body b5: fn arr; cap_env e0; unwind_exit bb5
+  _0: u64 (Return)
+  _1: [u64; 3] (Param(0) `a`)
+  _2: u64 (User `s`)
+  _3: Iter<u64> (Iterator)
+  _4: u64 (Temp(Scrutinee))
+  _5: u64 (User `x`)
+  _6: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0u64
+    Live(_3)
+    _3 = Iter(elems _1[])
+    Goto(bb1)
+  bb1:
+    Live(_4)
+    _4 = next _3 -> [bb3, done: bb4]
+  bb2:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3:
+    Live(_5)
+    _5 = copy _4
+    Live(_6)
+    _6 = Add<u64>(copy _2, copy _5)
+    _2 = move _6
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Goto(bb1)
+  bb4:
+    Dead(_4)
+    Goto(bb2)
+  bb5 (cleanup):
+    UnwindExit

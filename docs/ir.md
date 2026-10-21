@@ -685,7 +685,10 @@ the origin of `e` (V18).
 the innermost: the `Dead` of 5.1.3 for each one, then `Goto`. A value on its way (an
 operand in a temporary of an open statement) is a temporary of an exited `Stmt` scope,
 so it gets its `Dead` there (OL-3c). A `Fence` scope stops the search: W0315 for a jump
-out of a handled body, a clause or a scope body. The builder reports W0315.
+out of a handled body, a clause or a scope body. The builder reports W0315
+(`Built::diags`), only at a point that can run, and ends the path with `Unreachable`; a
+`return e` there evaluates `e` as an expression statement first. A `Frame` scope (a
+closure body) stops the search of `break` and `continue`: that is W0111 of `typeck`.
 
 #### 5.1.6 Cleanup chains
 
@@ -1027,14 +1030,32 @@ test_n+1: Unreachable                    (W0120 says that the arms cover each va
 ### 5.14 Loops [2.13]
 
 ```text
-while c { b }    =>  head: Stmt scope { tc := <c> }; Switch(move tc) [true: body, false: exit]
-                     body: Block scope { b (tail in its own Stmt scope) }; Goto(head)
+while c { b }    =>  head: Stmt scope { tc := <c> }; Switch(move tc) [true: body, false: out]
+                     out:  <Dead of the condition temporaries>; Goto(exit)
+                     body: <Dead of the condition temporaries>
+                           Block scope { b (tail in its own Stmt scope) }; Goto(head)
 loop { b }       =>  head: Block scope { b }; Goto(head)
 for p in e { b } =>  it := Iter(Elems(<place_or_temp e>))   (or Range(lo, hi))
-                     head: Live(x); IterNext(it, x) -> [next: body, done: exit]
-                     body: Block scope { <bind p from x>; b }; Goto(head)
+                     head: Live(x); IterNext(it, x) -> [next: body, done: out]
+                     out:  Dead(x); Goto(exit)
+                     body: Block scope { <bind p from x>; b }; Dead(x); Goto(head)
+                     exit: Dead(it)
 break / continue =>  <exit scopes up to the loop>; Goto(exit / head)
 ```
+
+- Each statement of a loop body, the tail too, is in a `Stmt` scope of its own. A tail
+  value goes into a `Discarded` temporary (5.1.3). With no condition temporary, the
+  `Switch` of a `while` goes to the exit itself.
+- The condition of a `while` and the source of a `for` run before the `Loop` scope
+  opens: a `break` in them goes to an outer loop, as in `typeck`. The temporaries of the
+  source belong to the `for` statement, so they end after `Dead(it)`.
+- `x` is a temporary (`Scrutinee`) of a `Stmt` scope of each iteration: `break` and
+  `continue` end it, and the head can give it a new cell (V5). The bindings of `p` are in
+  a `Block` scope inside it. A `for` pattern has no test.
+- The place of `Elems` has the type `[T]`: `v[]` itself, or `v` with an `Elems` step for
+  `for x in v`. `x` has the type `T` for a scalar `T` (an integer, `bool`, `()`,
+  `String`, `Duration`), else `&T`. `it` has the type `Iter<type of x>` and the `@ uniq`
+  mode of the local of the place.
 
 - The loop is a cycle in the CFG. The analysis iterates to a fixpoint with widening at
   the loop head (section 6.6). **Goes away:** `lower_loop`, `LoopHead`,
