@@ -1,0 +1,162 @@
+fn f0 work(u64) -> Vec<u64>: b0
+fn f1 main(bool) -> () / Async: b1
+fn f2 Vec.new<T0>() -> Vec<T0> / (): extern
+closure c0: body b3, maker b2, cap_env e0, captures []
+closure c1: body b4, maker b2, cap_env e0, captures [Kept _8]
+closure c2: body b5, maker b2, cap_env e0, captures []
+scope s0: body b2, site b1
+spawn sp0: scope s0
+spawn sp1: scope s0
+spawn sp2: scope s0
+cap_env e0
+
+body b0: fn work; cap_env e0; unwind_exit bb2
+  _0: Vec<u64> (Return)
+  _1: u64 (Param(0) `x`)
+  bb0:
+    _0 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b1: fn main; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: bool (Param(0) `c`)
+  bb0:
+    _0 = scope s0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b2: scope s0; parent b1; cap_env e0; unwind_exit bb17
+  _0: () (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: Vec<u64> (TaskResult(sp0))
+  _3: Vec<u64> (TaskResult(sp1))
+  _4: Vec<u64> (TaskResult(sp2))
+  _5: fn() -> Vec<u64> (Temp(Operand))
+  _6: Iter<u64> (Iterator)
+  _7: u64 (Temp(Scrutinee))
+  _8: u64 (User `i`)
+  _9: fn() -> Vec<u64> (Temp(Operand))
+  _10: bool (Upvar(_1) `c`)
+  _11: fn() -> Vec<u64> (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    Live(_4)
+    Live(_5)
+    _5 = closure c0()
+    spawn sp0(copy _1, move _5) -> [bb1]
+  bb1:
+    Dead(_5)
+    Live(_6)
+    _6 = Iter(const 0u64..const 3u64)
+    Goto(bb2)
+  bb2:
+    Live(_7)
+    _7 = next _6 -> [bb3, done: bb5]
+  bb3:
+    Live(_8)
+    _8 = copy _7
+    Live(_9)
+    _9 = closure c1(copy _8)
+    spawn sp1(copy _1, move _9) -> [bb4]
+  bb4:
+    Dead(_9)
+    Dead(_8)
+    Dead(_7)
+    Goto(bb2)
+  bb5:
+    Dead(_7)
+    Goto(bb6)
+  bb6:
+    Dead(_6)
+    switch copy _10 -> [1: bb7, otherwise: bb9]
+  bb7:
+    Live(_11)
+    _11 = closure c2()
+    spawn sp2(copy _1, move _11) -> [bb8]
+  bb8:
+    Dead(_11)
+    _0 = const ()
+    Goto(bb10)
+  bb9:
+    _0 = const ()
+    Goto(bb10)
+  bb10:
+    scope_wait _1, orphans [_2, _3, _4] -> [bb11, unwind: bb12]
+  bb11:
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb12 (cleanup):
+    Dead(_0)
+    Goto(bb13)
+  bb13 (cleanup):
+    UnwindValue(_4, Drop)
+    Dead(_4)
+    Goto(bb14)
+  bb14 (cleanup):
+    UnwindValue(_3, Drop)
+    Dead(_3)
+    Goto(bb15)
+  bb15 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb16)
+  bb16 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb17)
+  bb17 (cleanup):
+    UnwindExit
+
+body b3: closure c0; parent b2; cap_env e0; unwind_exit bb3
+  _0: Vec<u64> (Return)
+  _1: fn() -> Vec<u64> (Env)
+  bb0:
+    _0 = call work(const 1u64) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b4: closure c1; parent b2; cap_env e0; unwind_exit bb3
+  _0: Vec<u64> (Return)
+  _1: fn() -> Vec<u64> (Env)
+  bb0:
+    _0 = call work(copy _1.0) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b5: closure c2; parent b2; cap_env e0; unwind_exit bb3
+  _0: Vec<u64> (Return)
+  _1: fn() -> Vec<u64> (Env)
+  bb0:
+    _0 = call work(const 2u64) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit

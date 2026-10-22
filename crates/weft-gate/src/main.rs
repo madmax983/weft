@@ -5,15 +5,24 @@
 //! weft-gate archive --tier 2 [--repo DIR] [--probes DIR] [--out FILE]
 //! weft-gate unpack --archive FILE --out DIR [--repo DIR]
 //! weft-gate copy-probes [--repo DIR] [--probes DIR]
-//! weft-gate snapshot --tier 1|2 [--facts old] [--out FILE.jsonl] [--full-digest DIR]
+//! weft-gate snapshot --tier 1|2 [--facts old|ir] [--groups ABCDEF] [--out FILE.jsonl] [--full-digest DIR]
 //!                    [--workers N] [--limit SECONDS] [--repo DIR] [--probes DIR]
-//! weft-gate oracle --tier 1|2 [--engine ast] [--out FILE] [--workers N]
+//! weft-gate oracle --tier 1|2 [--engine ast|ir] [--out FILE] [--workers N]
 //!                  [--limit SECONDS] [--max-steps N] [--max-memory MB]
 //!                  [--repo DIR] [--probes DIR]
 //! weft-gate oracle-run --base DIR --path PATH [--from K] [--limit-ms MS]
-//!                      [--max-steps N] [--max-memory MB]
+//!                      [--max-steps N] [--max-memory MB] [--engine ast|ir] [--observe]
 //! weft-gate run --tier 1|2 [--groups ABCDEF] [--report FILE] [--workers N]
 //!               [--limit SECONDS] [--repo DIR] [--probes DIR] [--write-baseline]
+//! weft-gate thir --tier 1|2 [--report FILE] [--workers N] [--limit SECONDS]
+//!                [--repo DIR] [--probes DIR]
+//! weft-gate ir-build --tier 1|2 [--report FILE] [--workers N] [--limit SECONDS]
+//!                    [--repo DIR] [--probes DIR]
+//! weft-gate engines --tier 1|2 [--report FILE] [--workers N] [--limit SECONDS]
+//!                   [--max-steps N] [--max-memory MB] [--sample PERCENT] [--seed N]
+//!                   [--repo DIR] [--probes DIR]
+//! weft-gate sigdiff --tier 1|2 [--groups ABCDEF] [--report FILE] [--workers N]
+//!                   [--limit SECONDS] [--repo DIR] [--probes DIR]
 //! ```
 //!
 //! `--repo` is the repository (default: the workspace of this crate). `--probes` is
@@ -30,7 +39,9 @@
 //! each program (plan §2.3). The default output is
 //! `target/gate/snapshot-tier<N>-<pipeline>.jsonl`. `--full-digest DIR` also writes
 //! the canonical fact digest of each program to `DIR/<hash>.<pipeline>.digest`.
-//! The default number of workers is the number of CPUs, and the default time limit
+//! `--facts ir` checks with the `ir` pipeline (plan §2.6): a program out of
+//! scope gets the result of the old pipeline. `--groups` puts more construct
+//! groups on. The default number of workers is the number of CPUs, and the default time limit
 //! is 60 s for each program.
 //!
 //! `oracle` gives the oracle verdict of each program of the manifest (plan §2.4,
@@ -45,16 +56,25 @@
 //! (`oracle-run`): the parent stops a child at the time limit, and a child
 //! stops itself when it uses more than the memory limit (default 2048 MB).
 //!
-//! `oracle-run` is the child process of `oracle`: it runs the program `PATH`
-//! below `DIR` in the configurations from index `K` and writes one line for
-//! each run (`weft_gate::oracle::Step`).
+//! `oracle` takes `--engine ast` (the default) or `--engine ir`. From stage I5
+//! on, the gate classifies the programs with the verdicts of the `ir` engine
+//! (`tests/gate/oracle-ir.tsv`); the `ast` cache stays for the engine
+//! differential and for a comparison.
+//!
+//! `oracle-run` is the child process of `oracle` and `engines`: it runs the
+//! program `PATH` below `DIR` with the engine `--engine` in the configurations
+//! from index `K` and writes one line for each run (`weft_gate::oracle::Step`).
+//! With `--observe` it also writes the observation of each run
+//! (`weft_gate::oracle::Observation`).
 //!
 //! `run` is the gate (plan §2.5): it checks each program of the tier, reads
 //! the oracle verdicts from the cache, classifies each program with the
 //! ledger `tests/gate/ledger.toml`, and writes the report (default
 //! `target/gate/report.md`). The exit code is 1 if the gate has a blocker. A
 //! cache with no verdict for a program (a stale key) is an error: run
-//! `oracle` first. Before stage F1 no group can be on (`--groups`).
+//! `oracle` first. One analysis of each program gives both records
+//! (`--facts=both`). `--groups` puts more construct groups on, for a preview
+//! report (plan §2.6); the report gives the coverage of each set.
 //!
 //! `run` also compares the old records with the baseline of the tier
 //! (`weft_gate::baseline`): `tests/gate/baseline-tier1.jsonl` (committed; it
@@ -63,8 +83,43 @@
 //! file and does not compare them. Write a baseline with a release build: a
 //! debug build can give timeouts. In tier 2 an `open` program with no ledger
 //! entry does not block (`weft_gate::report::Policy::for_tier`).
+//!
+//! `thir` runs test D0 (plan stage T3, `weft_gate::thir`) on each program of
+//! the tier: the THIR tables that the old lowering records, against the syntax
+//! tree, the facts and the final types. It writes the summary (default
+//! `target/gate/thir-tier<N>.md`). The exit code is 1 if D0 fails on a program.
+//! Run it with a release build.
+//!
+//! `ir-build` builds and verifies the IR of each program of the tier (plan
+//! stage B12, `weft_gate::ir_build`). It counts the bodies that the builder
+//! lowers, the bodies with no IR for each reason, the unsupported bodies, the
+//! broken rules, the panics and the timeouts, and lists the slowest builds. It
+//! writes the summary (default `target/gate/ir-build-tier<N>.md`). The exit
+//! code is 1 if a program panics, breaks a rule or has an unsupported body. A
+//! timeout does not fail; the summary lists it. Run it with a release build.
+//!
+//! `engines` is the engine differential (plan stage I5, `weft_gate::engines`):
+//! it runs each program of the tier that has `main` or test blocks with the
+//! `ast` and the `ir` engine, with the oracle, in the six configurations, and
+//! compares the output, the status, and the message and line of each error.
+//! Each difference needs a ledger entry of class `engine`. The checker results
+//! come from the baseline of the tier. A program with a time limit on one side
+//! runs again, alone. `--sample PERCENT` keeps that share of the programs that
+//! the checker rejects (a fixed choice for `--seed`, default 1) and each program
+//! that it accepts. It writes the report (default
+//! `target/gate/engines-tier<N>.md`) and the differences as JSON lines next to
+//! it. The exit code is 1 if a difference has no entry. Run it with a release
+//! build.
+//!
+//! `sigdiff` is the signature diff (plan stage F6, `weft_gate::sigdiff`): for
+//! each program of the tier in scope of the `ir` pipeline with the groups of
+//! `--groups`, it compares the `EffectSig` of each function that the `ir`
+//! pipeline infers with the one of the old inference. Each difference needs a
+//! ledger entry of class `sig`. It writes the report (default
+//! `target/gate/sigdiff-tier<N>.md`). The exit code is 1 if a difference has
+//! no entry or a program panics. Run it with a release build.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -77,7 +132,7 @@ use weft_gate::ledger::{self, Ledger};
 use weft_gate::manifest::{self, Group, Manifest, Options, Root};
 use weft_gate::oracle::{self, Cache, Engine, Step, Verdict};
 use weft_gate::snapshot::{self, Kind, Pipeline, Settings};
-use weft_gate::{archive, baseline, copy, report};
+use weft_gate::{archive, baseline, copy, engines, report};
 
 /// The tier-1 manifest, relative to the repository.
 const TIER1_OUT: &str = "tests/gate/manifest-tier1.tsv";
@@ -91,15 +146,24 @@ const USAGE: &str = "usage:
   weft-gate archive --tier 2 [--repo DIR] [--probes DIR] [--out FILE]
   weft-gate unpack --archive FILE --out DIR [--repo DIR]
   weft-gate copy-probes [--repo DIR] [--probes DIR]
-  weft-gate snapshot --tier 1|2 [--facts old] [--out FILE.jsonl] [--full-digest DIR]
+  weft-gate snapshot --tier 1|2 [--facts old|ir] [--groups ABCDEF] [--out FILE.jsonl] [--full-digest DIR]
                      [--workers N] [--limit SECONDS] [--repo DIR] [--probes DIR]
-  weft-gate oracle --tier 1|2 [--engine ast] [--out FILE] [--workers N]
+  weft-gate oracle --tier 1|2 [--engine ast|ir] [--out FILE] [--workers N]
                    [--limit SECONDS] [--max-steps N] [--max-memory MB]
                    [--repo DIR] [--probes DIR]
   weft-gate oracle-run --base DIR --path PATH [--from K] [--limit-ms MS]
-                       [--max-steps N] [--max-memory MB]
+                       [--max-steps N] [--max-memory MB] [--engine ast|ir] [--observe]
   weft-gate run --tier 1|2 [--groups ABCDEF] [--report FILE] [--workers N]
-                [--limit SECONDS] [--repo DIR] [--probes DIR] [--write-baseline]";
+                [--limit SECONDS] [--repo DIR] [--probes DIR] [--write-baseline]
+  weft-gate thir --tier 1|2 [--report FILE] [--workers N] [--limit SECONDS]
+                 [--repo DIR] [--probes DIR]
+  weft-gate ir-build --tier 1|2 [--report FILE] [--workers N] [--limit SECONDS]
+                     [--repo DIR] [--probes DIR]
+  weft-gate engines --tier 1|2 [--report FILE] [--workers N] [--limit SECONDS]
+                    [--max-steps N] [--max-memory MB] [--sample PERCENT] [--seed N]
+                    [--repo DIR] [--probes DIR]
+  weft-gate sigdiff --tier 1|2 [--groups ABCDEF] [--report FILE] [--workers N]
+                    [--limit SECONDS] [--repo DIR] [--probes DIR]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -134,6 +198,10 @@ struct Flags {
     groups: Option<String>,
     report: Option<PathBuf>,
     write_baseline: bool,
+    observe: bool,
+    rejudge: bool,
+    sample: Option<u64>,
+    seed: Option<u64>,
 }
 
 impl Flags {
@@ -169,6 +237,10 @@ fn parse_flags(args: &[String]) -> Result<Flags> {
     let mut groups = None;
     let mut report = None;
     let mut write_baseline = false;
+    let mut observe = false;
+    let mut rejudge = false;
+    let mut sample = None;
+    let mut seed = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         let mut value = || it.next().with_context(|| format!("{a} needs a value"));
@@ -209,6 +281,22 @@ fn parse_flags(args: &[String]) -> Result<Flags> {
             "--groups" => groups = Some(value()?.clone()),
             "--report" => report = Some(PathBuf::from(value()?)),
             "--write-baseline" => write_baseline = true,
+            "--observe" => observe = true,
+            "--rejudge" => rejudge = true,
+            "--sample" => {
+                let v = value()?;
+                match v.parse::<u64>() {
+                    Ok(n) if (1..=100).contains(&n) => sample = Some(n),
+                    _ => bail!("--sample needs a percent from 1 to 100, found `{v}`"),
+                }
+            }
+            "--seed" => {
+                let v = value()?;
+                seed = Some(
+                    v.parse::<u64>()
+                        .with_context(|| format!("--seed needs a number, found `{v}`"))?,
+                );
+            }
             "--from" => {
                 let v = value()?;
                 match v.parse::<usize>() {
@@ -243,6 +331,10 @@ fn parse_flags(args: &[String]) -> Result<Flags> {
         groups,
         report,
         write_baseline,
+        observe,
+        rejudge,
+        sample,
+        seed,
     })
 }
 
@@ -262,6 +354,18 @@ fn run(args: &[String]) -> Result<bool> {
     let flags = parse_flags(rest)?;
     if cmd == "run" {
         return run_gate(&flags);
+    }
+    if cmd == "thir" {
+        return run_thir(&flags);
+    }
+    if cmd == "ir-build" {
+        return run_ir_build(&flags);
+    }
+    if cmd == "engines" {
+        return run_engines(&flags);
+    }
+    if cmd == "sigdiff" {
+        return run_sigdiff(&flags);
     }
     run_tool(cmd, flags).map(|()| true)
 }
@@ -343,16 +447,24 @@ fn run_tool(cmd: &str, flags: Flags) -> Result<()> {
     }
 }
 
+/// The construct groups that are on: the default groups of the analysis and
+/// the groups of `--groups`.
+fn groups_on(flags: &Flags) -> Result<weft_sema::Groups> {
+    let on = weft_sema::Options::default().ir_groups;
+    match flags.groups.as_deref().filter(|g| !g.is_empty()) {
+        None => Ok(on),
+        Some(g) => weft_sema::Groups::parse(g)
+            .map(|g| on.union(g))
+            .map_err(|e| anyhow::anyhow!("--groups {g}: {e}")),
+    }
+}
+
 /// `run`: the gate on the programs of the tier. Returns false if the gate has
 /// a blocker.
 fn run_gate(flags: &Flags) -> Result<bool> {
     let tier = flags.tier.context("--tier is necessary")?;
-    if let Some(g) = flags.groups.as_deref().filter(|g| !g.is_empty()) {
-        bail!(
-            "the `ir` pipeline does not exist before stage F1: no group can be on (`--groups {g}`)"
-        );
-    }
     let settings = report::RunSettings {
+        groups: groups_on(flags)?,
         workers: flags.workers.unwrap_or_else(|| {
             std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
         }),
@@ -371,7 +483,7 @@ fn run_gate(flags: &Flags) -> Result<bool> {
     } else {
         let probes = flags.probes()?;
         let m = tier2(&probes)?;
-        let name = oracle::cache_name(Engine::Ast);
+        let name = oracle::cache_name(report::ORACLE_ENGINE);
         let dir = std::env::var_os("WEFT_GATE_CACHE")
             .map_or_else(|| flags.repo.join("target/gate"), PathBuf::from);
         let mut cache = read_cache(&dir.join(&name))?;
@@ -430,6 +542,371 @@ fn run_gate(flags: &Flags) -> Result<bool> {
     Ok(r.passes())
 }
 
+/// `thir`: test D0 on the programs of the tier. Returns false if D0 fails.
+fn run_thir(flags: &Flags) -> Result<bool> {
+    let tier = flags.tier.context("--tier is necessary")?;
+    let (m, base) = if tier == 1 {
+        (tier1(flags)?, flags.repo.clone())
+    } else {
+        let probes = flags.probes()?;
+        (tier2(&probes)?, probes)
+    };
+    let workers = flags.workers.unwrap_or_else(|| {
+        std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+    });
+    let limit = flags.limit.map_or(snapshot::LIMIT, Duration::from_secs);
+    let out = flags
+        .report
+        .clone()
+        .unwrap_or_else(|| flags.repo.join(format!("target/gate/thir-tier{tier}.md")));
+    snapshot::install_panic_hook();
+    let total = m.entries.len();
+    println!("D0 on {total} programs of tier {tier} with {workers} workers");
+    let start = Instant::now();
+    let sum = weft_gate::thir::run(&base, m.entries, workers, limit, |ended| {
+        if ended % 2000 == 0 {
+            println!(
+                "{ended} of {total} programs in {:.1} s",
+                start.elapsed().as_secs_f64()
+            );
+        }
+    })?;
+    let text = sum.to_markdown(&format!("tier {tier}"));
+    write_text(&out, &text)?;
+    print!("{text}");
+    println!(
+        "{} programs in {:.1} s; wrote {}",
+        sum.programs,
+        start.elapsed().as_secs_f64(),
+        out.display()
+    );
+    Ok(sum.holds())
+}
+
+/// `ir-build`: builds and verifies the IR of the programs of the tier. Returns
+/// false if a program panics, breaks a rule or has an unsupported body.
+fn run_ir_build(flags: &Flags) -> Result<bool> {
+    let tier = flags.tier.context("--tier is necessary")?;
+    let (m, base) = if tier == 1 {
+        (tier1(flags)?, flags.repo.clone())
+    } else {
+        let probes = flags.probes()?;
+        (tier2(&probes)?, probes)
+    };
+    let workers = flags.workers.unwrap_or_else(|| {
+        std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+    });
+    let limit = flags.limit.map_or(snapshot::LIMIT, Duration::from_secs);
+    let out = flags.report.clone().unwrap_or_else(|| {
+        flags
+            .repo
+            .join(format!("target/gate/ir-build-tier{tier}.md"))
+    });
+    snapshot::install_panic_hook();
+    let total = m.entries.len();
+    println!("ir-build on {total} programs of tier {tier} with {workers} workers");
+    let start = Instant::now();
+    let sum = weft_gate::ir_build::run(&base, m.entries, workers, limit, |ended| {
+        if ended % 2000 == 0 {
+            println!(
+                "{ended} of {total} programs in {:.1} s",
+                start.elapsed().as_secs_f64()
+            );
+        }
+    })?;
+    let text = sum.to_markdown(&format!("tier {tier}"));
+    write_text(&out, &text)?;
+    print!("{text}");
+    println!(
+        "{} programs in {:.1} s; wrote {}",
+        sum.programs,
+        start.elapsed().as_secs_f64(),
+        out.display()
+    );
+    Ok(sum.holds())
+}
+
+/// `sigdiff`: the signature diff on the programs of the tier. Returns false
+/// if a difference has no ledger entry or a program panics.
+fn run_sigdiff(flags: &Flags) -> Result<bool> {
+    let tier = flags.tier.context("--tier is necessary")?;
+    let (m, base) = if tier == 1 {
+        (tier1(flags)?, flags.repo.clone())
+    } else {
+        let probes = flags.probes()?;
+        (tier2(&probes)?, probes)
+    };
+    let groups = groups_on(flags)?;
+    let workers = flags.workers.unwrap_or_else(|| {
+        std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+    });
+    let limit = flags.limit.map_or(snapshot::LIMIT, Duration::from_secs);
+    let out = flags.report.clone().unwrap_or_else(|| {
+        flags
+            .repo
+            .join(format!("target/gate/sigdiff-tier{tier}.md"))
+    });
+    let ledger = Ledger::read(&flags.repo.join(ledger::LEDGER))?;
+    snapshot::install_panic_hook();
+    let total = m.entries.len();
+    println!("sigdiff on {total} programs of tier {tier} with {workers} workers, groups {groups}");
+    let start = Instant::now();
+    let sum =
+        weft_gate::sigdiff::run(&base, m.entries, workers, limit, groups, &ledger, |ended| {
+            if ended % 2000 == 0 {
+                println!(
+                    "{ended} of {total} programs in {:.1} s",
+                    start.elapsed().as_secs_f64()
+                );
+            }
+        })?;
+    let text = sum.to_markdown(&format!("tier {tier}, groups {groups}"));
+    write_text(&out, &text)?;
+    println!(
+        "{} programs in {:.1} s: {} in scope, {} functions, {} same, {} differ, {} with no entry; wrote {}",
+        sum.programs,
+        start.elapsed().as_secs_f64(),
+        sum.in_scope,
+        sum.fns,
+        sum.same,
+        sum.fns.saturating_sub(sum.same),
+        sum.unledgered,
+        out.display()
+    );
+    Ok(sum.holds())
+}
+
+/// `engines`: the engine differential on the runnable programs of the tier.
+/// Returns false if a difference has no ledger entry.
+fn run_engines(flags: &Flags) -> Result<bool> {
+    let tier = flags.tier.context("--tier is necessary")?;
+    let (m, base, alias) = if tier == 1 {
+        (tier1(flags)?, flags.repo.clone(), None)
+    } else {
+        let probes = flags.probes()?;
+        (tier2(&probes)?, probes, Some(copy::PROBES_DIR))
+    };
+    let file = baseline::file(tier);
+    let Some(records) = baseline::read(&flags.repo.join(file))? else {
+        bail!(
+            "the baseline `{file}` does not exist: the differential reads the checker results from it. Run `cargo run -p weft-gate --release -- run --tier {tier} --write-baseline` first"
+        );
+    };
+    let rejected = engines::rejected_hashes(&records);
+    if flags.rejudge {
+        return rejudge_engines(flags, tier, &m, alias);
+    }
+    let mut entries: Vec<manifest::Entry> = m
+        .entries
+        .into_iter()
+        .filter(|e| e.has_main || e.has_tests)
+        .collect();
+    let runnable = entries.len();
+    let mut notes = vec![
+        format!("tier {tier}: {runnable} programs with `main` or test blocks"),
+        format!(
+            "the checker results come from `{file}`: {} of the programs that it lists are rejected",
+            rejected.len()
+        ),
+    ];
+    if let Some(percent) = flags.sample {
+        let seed = flags.seed.unwrap_or(1);
+        entries
+            .retain(|e| !rejected.contains(&e.hash) || engines::in_sample(&e.hash, percent, seed));
+        notes.push(format!(
+            "sample: {percent} % of the programs that the checker rejects (seed {seed}), and each program that it accepts: {} programs",
+            entries.len()
+        ));
+    }
+    let settings = oracle::Settings {
+        workers: flags.workers.unwrap_or_else(|| {
+            std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+        }),
+        limit: flags.limit.map_or(oracle::LIMIT, Duration::from_secs),
+        max_steps: Some(flags.max_steps.unwrap_or(oracle::MAX_STEPS)),
+        max_memory_mb: flags.max_memory.unwrap_or(oracle::MAX_MEMORY_MB),
+        exe: Some(std::env::current_exe().context("find the weft-gate program")?),
+        engine: Engine::Ast,
+    };
+    notes.push(format!(
+        "{} workers; time limit of a run {} s, step limit {}, memory limit {} MB",
+        settings.workers,
+        settings.limit.as_secs(),
+        settings.max_steps.unwrap_or(0),
+        settings.max_memory_mb
+    ));
+    let ledger = Ledger::read(&flags.repo.join(ledger::LEDGER))?;
+    let rules = engines::Rules::from_ledger(&ledger);
+    snapshot::install_panic_hook();
+    let total = entries.len();
+    println!(
+        "engine differential on {total} programs of tier {tier} with {} workers",
+        settings.workers
+    );
+    let start = Instant::now();
+    let mut runs: Vec<Option<engines::Runs>> = vec![None; total];
+    let mut ended = 0;
+    engines::run_all(&base, entries.clone(), &settings, |i, r| {
+        if let Some(slot) = runs.get_mut(i) {
+            *slot = Some(r);
+        }
+        ended += 1;
+        if ended % 500 == 0 {
+            println!(
+                "{ended} of {total} programs in {:.1} s",
+                start.elapsed().as_secs_f64()
+            );
+        }
+    })?;
+    // A time limit on one side only: run the program again, alone.
+    let again: Vec<usize> = runs
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.as_ref().is_some_and(engines::Runs::one_sided_timeout))
+        .map(|(i, _)| i)
+        .collect();
+    let mut rerun = BTreeSet::new();
+    if !again.is_empty() {
+        println!(
+            "{} programs with a time limit on one side run again, alone",
+            again.len()
+        );
+        let alone = oracle::Settings {
+            workers: 1,
+            ..settings
+        };
+        let list: Vec<manifest::Entry> = again
+            .iter()
+            .filter_map(|&i| entries.get(i).cloned())
+            .collect();
+        engines::run_all(&base, list, &alone, |k, r| {
+            if let Some(&i) = again.get(k) {
+                if let Some(slot) = runs.get_mut(i) {
+                    *slot = Some(r);
+                }
+                rerun.insert(i);
+            }
+        })?;
+        notes.push(format!(
+            "{} programs with a time limit on one side ran again with one worker",
+            again.len()
+        ));
+    }
+    let mut report = engines::Report {
+        notes,
+        problems: rules.problems.clone(),
+        ..engines::Report::default()
+    };
+    for &(k, kind) in &rules.entries {
+        if let Some(e) = ledger.entries.get(k) {
+            report.entries.insert(k, (e.label(), kind));
+        }
+    }
+    for (i, (e, r)) in entries.iter().zip(runs).enumerate() {
+        let Some(r) = r else { continue };
+        let paths = engines::entry_paths(e, alias);
+        let is_rejected = rejected.contains(&e.hash);
+        report.rows.push(engines::Row {
+            path: e.path.clone(),
+            rejected: is_rejected,
+            rerun: rerun.contains(&i),
+            result: engines::judge(&r, &paths, is_rejected, &ledger, &rules),
+        });
+    }
+    let out = flags.report.clone().unwrap_or_else(|| {
+        flags
+            .repo
+            .join(format!("target/gate/engines-tier{tier}.md"))
+    });
+    write_text(&out, &report.to_markdown())?;
+    let jsonl = out.with_extension("jsonl");
+    write_text(&jsonl, &report.differences_jsonl())?;
+    let (same, fallback, differ) = report.counts();
+    println!(
+        "{} programs in {:.1} s: same {same}, fallback {fallback}, differ {differ}",
+        report.rows.len(),
+        start.elapsed().as_secs_f64()
+    );
+    for (c, n) in report.class_counts() {
+        println!("  {c}: {n}");
+    }
+    for p in &report.problems {
+        eprintln!("problem: {p}");
+    }
+    for r in report.unledgered().iter().take(20) {
+        eprintln!("unledgered: {}", r.path);
+    }
+    println!(
+        "wrote {} and {}; {} unledgered differences",
+        out.display(),
+        jsonl.display(),
+        report.unledgered().len()
+    );
+    Ok(report.passes())
+}
+
+/// `engines --rejudge`: classifies the differences of the last run again
+/// (the JSON lines next to the report) with the ledger of today. Only the
+/// differences are in the file, so the report has no `same` program.
+fn rejudge_engines(flags: &Flags, tier: u8, m: &Manifest, alias: Option<&str>) -> Result<bool> {
+    let out = flags.report.clone().unwrap_or_else(|| {
+        flags
+            .repo
+            .join(format!("target/gate/engines-tier{tier}.md"))
+    });
+    let jsonl = out.with_extension("jsonl");
+    let text =
+        std::fs::read_to_string(&jsonl).with_context(|| format!("read {}", jsonl.display()))?;
+    let saved = engines::read_differences(&text)
+        .map_err(|e| anyhow::anyhow!("{}: {e}", jsonl.display()))?;
+    let ledger = Ledger::read(&flags.repo.join(ledger::LEDGER))?;
+    let rules = engines::Rules::from_ledger(&ledger);
+    let by_path: BTreeMap<&str, &manifest::Entry> =
+        m.entries.iter().map(|e| (e.path.as_str(), e)).collect();
+    let mut report = engines::Report {
+        notes: vec![format!(
+            "tier {tier}: the differences of `{}`, classified again with the ledger of today",
+            jsonl.display()
+        )],
+        problems: rules.problems.clone(),
+        ..engines::Report::default()
+    };
+    for &(k, kind) in &rules.entries {
+        if let Some(e) = ledger.entries.get(k) {
+            report.entries.insert(k, (e.label(), kind));
+        }
+    }
+    for s in saved {
+        let paths = by_path
+            .get(s.path.as_str())
+            .map_or_else(|| vec![s.path.clone()], |e| engines::entry_paths(e, alias));
+        report.rows.push(engines::Row {
+            path: s.path.clone(),
+            rejected: s.rejected,
+            rerun: s.rerun,
+            result: engines::judge_difference(s.diff, &paths, s.rejected, &ledger, &rules),
+        });
+    }
+    let new = out.with_file_name(format!("engines-tier{tier}-rejudged.md"));
+    write_text(&new, &report.to_markdown())?;
+    for (c, n) in report.class_counts() {
+        println!("  {c}: {n}");
+    }
+    for p in &report.problems {
+        eprintln!("problem: {p}");
+    }
+    for r in report.unledgered().iter().take(40) {
+        eprintln!("unledgered: {}", r.path);
+    }
+    println!(
+        "wrote {}; {} differences, {} unledgered",
+        new.display(),
+        report.rows.len(),
+        report.unledgered().len()
+    );
+    Ok(report.passes())
+}
+
 /// Writes `records` in the committed form to the baseline file of the tier.
 /// Warns if the build is a debug build or a record is a timeout.
 fn write_baseline(repo: &Path, tier: u8, records: &[snapshot::Record]) -> Result<()> {
@@ -461,10 +938,8 @@ fn write_baseline(repo: &Path, tier: u8, records: &[snapshot::Record]) -> Result
 fn run_snapshot(flags: &Flags) -> Result<()> {
     let tier = flags.tier.context("--tier is necessary")?;
     let name = flags.facts.as_deref().unwrap_or("old");
-    let pipeline = match Pipeline::parse(name) {
-        Some(p) => p,
-        None if name == "ir" => bail!("the `ir` pipeline does not exist before stage F1"),
-        None => bail!("unknown pipeline `{name}`: use --facts old"),
+    let Some(pipeline) = Pipeline::parse(name) else {
+        bail!("unknown pipeline `{name}`: use --facts old or --facts ir");
     };
     let (m, base) = if tier == 1 {
         (tier1(flags)?, flags.repo.clone())
@@ -474,6 +949,7 @@ fn run_snapshot(flags: &Flags) -> Result<()> {
     };
     let settings = Settings {
         pipeline,
+        groups: groups_on(flags)?,
         workers: flags.workers.unwrap_or_else(|| {
             std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
         }),
@@ -576,11 +1052,8 @@ fn open_journal(file: &Path) -> Result<std::fs::File> {
 fn run_oracle(flags: &Flags) -> Result<()> {
     let tier = flags.tier.context("--tier is necessary")?;
     let name = flags.engine.as_deref().unwrap_or("ast");
-    let engine = match Engine::parse(name) {
-        Some(e) => e,
-        None if name == "ir" => bail!("the `ir` engine does not exist before stage I1"),
-        None => bail!("unknown engine `{name}`: use --engine ast"),
-    };
+    let engine = Engine::parse(name)
+        .with_context(|| format!("unknown engine `{name}`: use --engine ast or --engine ir"))?;
     let (m, base) = if tier == 1 {
         (tier1(flags)?, flags.repo.clone())
     } else {
@@ -613,6 +1086,7 @@ fn run_oracle(flags: &Flags) -> Result<()> {
         max_steps: Some(flags.max_steps.unwrap_or(oracle::MAX_STEPS)),
         max_memory_mb: flags.max_memory.unwrap_or(oracle::MAX_MEMORY_MB),
         exe: Some(std::env::current_exe().context("find the weft-gate program")?),
+        engine,
     };
     let mut journal = open_journal(&out)?;
     snapshot::install_panic_hook();
@@ -720,14 +1194,26 @@ fn run_oracle_child(flags: &Flags) -> Result<()> {
             std::process::exit(oracle::MEMORY_EXIT + 1);
         }
     });
+    let engine = match flags.engine.as_deref() {
+        None => Engine::Ast,
+        Some(name) => Engine::parse(name).with_context(|| format!("unknown engine `{name}`"))?,
+    };
+    let observe = flags.observe;
     let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         oracle::run_configs(
             &base,
             &path,
             from,
             flags.max_steps,
+            engine,
             |k| current.store(k, Ordering::SeqCst),
-            |step| write_step(&step),
+            |step, o| {
+                if let Some(line) = o.filter(|_| observe).and_then(|o| o.to_line().ok()) {
+                    let mut out = std::io::stdout().lock();
+                    let _ = writeln!(out, "{line}");
+                }
+                write_step(&step);
+            },
         );
     }));
     if let Err(payload) = run {

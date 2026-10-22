@@ -1,0 +1,158 @@
+fn f0 rollback(Tx) -> (): b0
+fn f1 begin(u64) -> Tx: b1
+fn f2 commit(Tx) -> (): b2
+fn f3 step() -> u64: b3
+fn f4 pair(Tx, u64) -> (): b4
+fn f5 local() -> (): b5
+fn f6 param(Tx) -> (): b6
+fn f7 temp() -> (): b7
+cap_env e0
+
+body b0: fn rollback; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Tx (Param(0) `tx`)
+  _2: u64 (User `i`)
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Consume(_1)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn begin; cap_env e0; unwind_exit bb1
+  _0: Tx (Return)
+  _1: u64 (Param(0) `n`)
+  bb0:
+    _0 = Tx { copy _1 }
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn commit; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Tx (Param(0) `tx`)
+  _2: u64 (User `i`)
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Consume(_1)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn step; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  bb0:
+    _0 = const 1u64
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: fn pair; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: Tx (Param(0) `a`)
+  _2: u64 (Param(1) `n`)
+  bb0:
+    _0 = call commit(move _1) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_2)
+    UnwindValue(_1, OnAbort(rollback))
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b5: fn local; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: Tx (User `tx`)
+  _2: u64 (User `n`)
+  bb0:
+    Live(_1)
+    _1 = call begin(const 1u64) / e0 -> [bb1, unwind: bb5]
+  bb1:
+    Live(_2)
+    _2 = call step() / e0 -> [bb2, unwind: bb4]
+  bb2:
+    _0 = call commit(move _1) / e0 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_1, OnAbort(rollback))
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b6: fn param; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: Tx (Param(0) `tx`)
+  _2: u64 (User `n`)
+  bb0:
+    Live(_2)
+    _2 = call step() / e0 -> [bb1, unwind: bb3]
+  bb1:
+    _0 = call commit(move _1) / e0 -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, OnAbort(rollback))
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b7: fn temp; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: Tx (Temp(Operand))
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call begin(const 1u64) / e0 -> [bb1, unwind: bb5]
+  bb1:
+    Live(_2)
+    _2 = call step() / e0 -> [bb2, unwind: bb4]
+  bb2:
+    _0 = call pair(move _1, move _2) / e0 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_1, OnAbort(rollback))
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit

@@ -1,7 +1,8 @@
 //! The diff gate on tier 1 (plan `docs/plan/core-ir.md`, §1 rule 3 and stage G5).
 //!
 //! The test checks each program of tier 1, reads the oracle verdicts from the
-//! committed cache `tests/gate/oracle-ast.tsv`, classifies each program and
+//! committed cache of the IR engine `tests/gate/oracle-ir.tsv` (from stage I5;
+//! before it `tests/gate/oracle-ast.tsv`), classifies each program and
 //! writes the report to `target/gate/report-tier1.md`. A blocker of §2.5 makes
 //! the test fail. The test does not run the interpreter: if the cache has no
 //! verdict for the current interpreter sources, the test fails and tells you
@@ -110,8 +111,15 @@ fn tier1_has_no_blocker() {
         out.display(),
         r.blockers.join("\n")
     );
-    // Before stage F1 the `ir` side is the old pipeline, so each program is
-    // `same` or `open`.
+    // No group is on before stage F8 (plan §2.6): no program is in scope,
+    // the `ir` side is the old pipeline, and each program is `same` or `open`.
+    let scope: Vec<&str> = r
+        .rows
+        .iter()
+        .filter(|row| row.in_scope)
+        .map(|row| row.path.as_str())
+        .collect();
+    assert!(scope.is_empty(), "programs in scope: {scope:?}");
     let other: Vec<String> = r
         .rows
         .iter()

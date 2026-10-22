@@ -1,0 +1,438 @@
+fn f0 apply(&Acc, &Vec<Op>) -> () / (): b0
+fn f1 pairs() -> (u64, bool): b1
+fn f2 last_or(&Acc, u64) -> u64: b4
+fn f3 early(&Vec<u64>) -> u64: b5
+fn f4 strings(u64) -> String: b6
+fn f5 Vec.push<T0>(&Vec<T0>, T0) -> () / (): extern
+closure c0: body b2, maker b1, cap_env e0, captures []
+closure c1: body b3, maker b1, cap_env e0, captures []
+cap_env e0
+
+body b0: fn apply; cap_env e0; unwind_exit bb32
+  _0: () (Return)
+  _1: &Acc (Param(0) `acc`)
+  _2: &Vec<Op> (Param(1) `ops`)
+  _3: Iter<&Op> (Iterator)
+  _4: &Op (Temp(Scrutinee))
+  _5: &Op (User `op`)
+  _6: () (Temp(Discarded))
+  _7: usize (Temp(Scrutinee))
+  _8: u64 (User `n`)
+  _9: u64 (Temp(Operand))
+  _10: usize (Temp(Scrutinee))
+  _11: u64 (User `n`)
+  _12: bool (Temp(Operand))
+  _13: u64 (Temp(Operand))
+  _14: usize (Temp(Scrutinee))
+  _15: () (Temp(Discarded))
+  _16: u64 (Temp(Operand))
+  _17: &Vec<u64> (Temp(Receiver))
+  _18: i64 (User `i`)
+  _19: bool (Temp(Operand))
+  _20: u64 (Temp(Operand))
+  _21: i64 (Temp(Operand))
+  _22: () (Temp(Discarded))
+  _23: bool (Temp(Operand))
+  _24: u64 (Temp(Operand))
+  _25: Option<u64> (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = Iter(elems (*_2)[])
+    Goto(bb1)
+  bb1:
+    Live(_4)
+    _4 = next _3 -> [bb2, done: bb17]
+  bb2:
+    Live(_5)
+    _5 = copy _4
+    Live(_6)
+    Live(_7)
+    _7 = Discriminant((*_5))
+    switch move _7 -> [0: bb3, otherwise: bb4]
+  bb3:
+    Dead(_7)
+    Live(_8)
+    _8 = copy ((*_5) as #0).0
+    Live(_9)
+    _9 = Add<u64>(copy (*_1).0, copy _8)
+    (*_1).0 = move _9
+    Dead(_9)
+    _6 = const ()
+    Dead(_8)
+    Goto(bb9)
+  bb4:
+    Dead(_7)
+    Goto(bb5)
+  bb5:
+    Live(_10)
+    _10 = Discriminant((*_5))
+    switch move _10 -> [1: bb6, otherwise: bb12]
+  bb6:
+    Dead(_10)
+    Live(_11)
+    _11 = copy ((*_5) as #1).0
+    Live(_12)
+    _12 = Ge(copy (*_1).0, copy _11)
+    switch move _12 -> [1: bb7, otherwise: bb11]
+  bb7:
+    Live(_13)
+    _13 = Sub<u64>(copy (*_1).0, copy _11)
+    (*_1).0 = move _13
+    Dead(_13)
+    _6 = const ()
+    Goto(bb8)
+  bb8:
+    Dead(_12)
+    Dead(_11)
+    Goto(bb9)
+  bb9:
+    Dead(_6)
+    Live(_15)
+    Live(_16)
+    _16 = copy (*_1).0
+    Live(_17)
+    _17 = &(*_1).1
+    _15 = call Vec.push<u64>(move _17, move _16) / e0 -> [bb10]
+  bb10:
+    Dead(_17)
+    Dead(_16)
+    Dead(_15)
+    Dead(_5)
+    Dead(_4)
+    Goto(bb1)
+  bb11:
+    Dead(_12)
+    Dead(_11)
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Goto(bb1)
+  bb12:
+    Dead(_10)
+    Goto(bb13)
+  bb13:
+    Live(_14)
+    _14 = Discriminant((*_5))
+    switch move _14 -> [2: bb14, otherwise: bb15]
+  bb14:
+    Dead(_14)
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Goto(bb18)
+  bb15:
+    Dead(_14)
+    Goto(bb16)
+  bb16:
+    Unreachable
+  bb17:
+    Dead(_4)
+    Goto(bb18)
+  bb18:
+    Dead(_3)
+    Live(_18)
+    _18 = const 0i64
+    Goto(bb19)
+  bb19:
+    Live(_19)
+    _19 = Lt(copy _18, const 3i64)
+    switch copy _19 -> [0: bb21, otherwise: bb20]
+  bb20:
+    _19 = Gt(copy (*_1).0, const 0u64)
+    Goto(bb21)
+  bb21:
+    switch copy _19 -> [1: bb23, otherwise: bb22]
+  bb22:
+    _19 = const false
+    Goto(bb23)
+  bb23:
+    switch move _19 -> [1: bb24, otherwise: bb25]
+  bb24:
+    Dead(_19)
+    Live(_20)
+    _20 = Sub<u64>(copy (*_1).0, const 1u64)
+    (*_1).0 = move _20
+    Dead(_20)
+    Live(_21)
+    _21 = Add<i64>(copy _18, const 1i64)
+    _18 = move _21
+    Dead(_21)
+    Goto(bb19)
+  bb25:
+    Dead(_19)
+    Goto(bb26)
+  bb26:
+    Goto(bb27)
+  bb27:
+    Live(_22)
+    Live(_23)
+    _23 = Eq(copy (*_1).0, const 0u64)
+    switch move _23 -> [1: bb28, otherwise: bb30]
+  bb28:
+    Dead(_23)
+    Dead(_22)
+    Goto(bb29)
+  bb29:
+    Live(_25)
+    _25 = Option<u64>::Some(copy (*_1).0)
+    (*_1).2 = move _25
+    Dead(_25)
+    _0 = const ()
+    Dead(_18)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb30:
+    _22 = const ()
+    Goto(bb31)
+  bb31:
+    Dead(_23)
+    Dead(_22)
+    Live(_24)
+    _24 = Sub<u64>(copy (*_1).0, const 1u64)
+    (*_1).0 = move _24
+    Dead(_24)
+    Goto(bb27)
+  bb32 (cleanup):
+    UnwindExit
+
+body b1: fn pairs; cap_env e0; unwind_exit bb11
+  _0: (u64, bool) (Return)
+  _1: (u64, bool) (Temp(Scrutinee))
+  _2: u64 (User `a`)
+  _3: bool (User `b`)
+  _4: fn(u64, u64) -> u64 (User `f`)
+  _5: fn(u64) -> u64 (User `g`)
+  _6: u64 (User `c`)
+  _7: u64 (Temp(Operand))
+  _8: u64 (Temp(Operand))
+  _9: (u64, bool) (User `t`)
+  _10: u64 (Temp(Operand))
+  _11: bool (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = (const 1u64, const true)
+    Live(_2)
+    _2 = copy _1.0
+    Live(_3)
+    _3 = copy _1.1
+    Dead(_1)
+    Live(_4)
+    _4 = closure c0()
+    Live(_5)
+    _5 = closure c1()
+    Live(_6)
+    Live(_7)
+    _7 = call (copy _4)(copy _2, const 2u64) / e0 -> [bb1, unwind: bb4]
+  bb1:
+    Live(_8)
+    _8 = call (copy _5)(const 3u64) / e0 -> [bb2, unwind: bb3]
+  bb2:
+    _6 = Add<u64>(move _7, move _8)
+    Dead(_8)
+    Dead(_7)
+    Live(_9)
+    Live(_10)
+    _10 = copy _6
+    Live(_11)
+    _11 = Not(copy _3)
+    _9 = (move _10, move _11)
+    Dead(_11)
+    Dead(_10)
+    _0 = copy _9
+    Dead(_9)
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Return
+  bb3 (cleanup):
+    Dead(_8)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_7)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_6)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_5)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_4)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_3)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_2)
+    Goto(bb10)
+  bb10 (cleanup):
+    Dead(_0)
+    Goto(bb11)
+  bb11 (cleanup):
+    UnwindExit
+
+body b2: closure c0; parent b1; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: fn(u64, u64) -> u64 (Env)
+  _2: u64 (Param(0) `x`)
+  _3: u64 (Param(1) `y`)
+  bb0:
+    _0 = Add<u64>(copy _2, copy _3)
+    Dead(_3)
+    Dead(_2)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: closure c1; parent b1; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: fn(u64) -> u64 (Env)
+  _2: u64 (Param(0) `x`)
+  bb0:
+    _0 = Mul<u64>(copy _2, const 2u64)
+    Dead(_2)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: fn last_or; cap_env e0; unwind_exit bb8
+  _0: u64 (Return)
+  _1: &Acc (Param(0) `acc`)
+  _2: u64 (Param(1) `d`)
+  _3: usize (Temp(Scrutinee))
+  _4: u64 (User `v`)
+  _5: usize (Temp(Scrutinee))
+  bb0:
+    Live(_3)
+    _3 = Discriminant((*_1).2)
+    switch move _3 -> [0: bb1, otherwise: bb2]
+  bb1:
+    Dead(_3)
+    Live(_4)
+    _4 = copy ((*_1).2 as #0).0
+    _0 = copy _4
+    Dead(_4)
+    Goto(bb5)
+  bb2:
+    Dead(_3)
+    Goto(bb3)
+  bb3:
+    Live(_5)
+    _5 = Discriminant((*_1).2)
+    switch move _5 -> [1: bb4, otherwise: bb6]
+  bb4:
+    Dead(_5)
+    _0 = copy _2
+    Goto(bb5)
+  bb5:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb6:
+    Dead(_5)
+    Goto(bb7)
+  bb7:
+    Unreachable
+  bb8 (cleanup):
+    UnwindExit
+
+body b5: fn early; cap_env e0; unwind_exit bb12
+  _0: u64 (Return)
+  _1: &Vec<u64> (Param(0) `v`)
+  _2: Iter<u64> (Iterator)
+  _3: u64 (Temp(Scrutinee))
+  _4: u64 (User `x`)
+  _5: () (Temp(Discarded))
+  _6: bool (Temp(Operand))
+  _7: Iter<i64> (Iterator)
+  _8: i64 (Temp(Scrutinee))
+  _9: i64 (User `i`)
+  _10: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    _2 = Iter(elems (*_1)[])
+    Goto(bb1)
+  bb1:
+    Live(_3)
+    _3 = next _2 -> [bb2, done: bb6]
+  bb2:
+    Live(_4)
+    _4 = copy _3
+    Live(_5)
+    Live(_6)
+    _6 = Gt(copy _4, const 10u64)
+    switch move _6 -> [1: bb3, otherwise: bb4]
+  bb3:
+    _0 = copy _4
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4:
+    _5 = const ()
+    Goto(bb5)
+  bb5:
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Goto(bb1)
+  bb6:
+    Dead(_3)
+    Goto(bb7)
+  bb7:
+    Dead(_2)
+    Live(_7)
+    _7 = Iter(const 0i64..const 3i64)
+    Goto(bb8)
+  bb8:
+    Live(_8)
+    _8 = next _7 -> [bb9, done: bb10]
+  bb9:
+    Live(_9)
+    _9 = copy _8
+    Live(_10)
+    Print(copy _9)
+    _10 = const ()
+    Dead(_10)
+    Dead(_9)
+    Dead(_8)
+    Goto(bb8)
+  bb10:
+    Dead(_8)
+    Goto(bb11)
+  bb11:
+    Dead(_7)
+    _0 = const 0u64
+    Dead(_1)
+    Return
+  bb12 (cleanup):
+    UnwindExit
+
+body b6: fn strings; cap_env e0; unwind_exit bb1
+  _0: String (Return)
+  _1: u64 (Param(0) `n`)
+  _2: String (User `s`)
+  _3: u64 (Temp(Operand))
+  _4: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = copy _1
+    Live(_4)
+    _4 = Mul<u64>(copy _1, const 2u64)
+    _2 = Concat(const "n = ", move _3, const ", twice = ", move _4)
+    Dead(_4)
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit

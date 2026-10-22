@@ -1,0 +1,22 @@
+// The value of a frame in `_0` (`docs/ir.md` 5.1.6). `_0` is first in a
+// chain only after it gets a value. Before that the chain has `Dead(_0)`
+// after the locals and before the parameters.
+
+fn g(x: u64) -> u64 { x }
+
+// `return 1` writes `_0` on its own path. The call after the `if` is on the
+// other path: `_0` has no value in its chain.
+fn early(c: bool) -> u64 {
+    let v: Vec<u64> = Vec.new()
+    if c { return 1 }
+    g(2)
+}
+
+// The value of a scope body is in `_0` across `ScopeWait`, which can abort:
+// its chain starts with `_0`. Plan stage B11 builds scope bodies.
+fn scoped() -> u64 / async {
+    scope { s =>
+        let t = s.spawn(|| 40)
+        t.join() + 2
+    }
+}

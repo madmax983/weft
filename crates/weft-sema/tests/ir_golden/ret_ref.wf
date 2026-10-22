@@ -1,0 +1,24 @@
+// A reference to a local that leaves the frame: `Dead` of the local comes
+// before `Return`, and the origin of `Return` is the tail (W0204).
+
+fn dangle() -> &u64 {
+    let x = 1
+    &x
+}
+
+// A `return` in a block ends the open scopes from the innermost: the
+// statement temporaries, the block locals, then the parameters. The code
+// after it cannot run.
+fn early(a: u64) -> u64 {
+    let b = a
+    let c = 1 + {
+        let d = b
+        return d + 1
+    }
+    c
+}
+
+// A body with a type error gets no IR.
+fn typo(a: u64) -> u64 {
+    if_not_here(a)
+}

@@ -1,0 +1,175 @@
+fn f0 nested((Option<u64>, bool)) -> u64: b0
+fn f1 deep(Option<Option<Vec<u64>>>, Vec<u64>) -> Vec<u64>: b1
+fn f2 bind_then_test((u64, Option<u64>)) -> u64: b2
+cap_env e0
+
+body b0: fn nested; cap_env e0; unwind_exit bb15
+  _0: u64 (Return)
+  _1: (Option<u64>, bool) (Param(0) `p`)
+  _2: usize (Temp(Scrutinee))
+  _3: usize (Temp(Scrutinee))
+  _4: u64 (User `n`)
+  _5: usize (Temp(Scrutinee))
+  _6: bool (User `b`)
+  bb0:
+    Live(_2)
+    _2 = Discriminant(_1.0)
+    switch move _2 -> [0: bb1, otherwise: bb6]
+  bb1:
+    switch copy (_1.0 as #0).0 -> [1: bb2, otherwise: bb5]
+  bb2:
+    switch copy _1.1 -> [1: bb3, otherwise: bb4]
+  bb3:
+    Dead(_2)
+    _0 = const 1u64
+    Goto(bb12)
+  bb4:
+    Dead(_2)
+    Goto(bb7)
+  bb5:
+    Dead(_2)
+    Goto(bb7)
+  bb6:
+    Dead(_2)
+    Goto(bb7)
+  bb7:
+    Live(_3)
+    _3 = Discriminant(_1.0)
+    switch move _3 -> [0: bb8, otherwise: bb9]
+  bb8:
+    Dead(_3)
+    Live(_4)
+    _4 = copy (_1.0 as #0).0
+    _0 = copy _4
+    Dead(_4)
+    Goto(bb12)
+  bb9:
+    Dead(_3)
+    Goto(bb10)
+  bb10:
+    Live(_5)
+    _5 = Discriminant(_1.0)
+    switch move _5 -> [1: bb11, otherwise: bb13]
+  bb11:
+    Dead(_5)
+    Live(_6)
+    _6 = copy _1.1
+    _0 = const 0u64
+    Dead(_6)
+    Goto(bb12)
+  bb12:
+    Dead(_1)
+    Return
+  bb13:
+    Dead(_5)
+    Goto(bb14)
+  bb14:
+    Unreachable
+  bb15 (cleanup):
+    UnwindExit
+
+body b1: fn deep; cap_env e0; unwind_exit bb15
+  _0: Vec<u64> (Return)
+  _1: Option<Option<Vec<u64>>> (Param(0) `o`)
+  _2: Vec<u64> (Param(1) `d`)
+  _3: usize (Temp(Scrutinee))
+  _4: usize (Temp(Scrutinee))
+  _5: Vec<u64> (User `v`)
+  _6: usize (Temp(Scrutinee))
+  _7: usize (Temp(Scrutinee))
+  _8: usize (Temp(Scrutinee))
+  bb0:
+    Live(_3)
+    _3 = Discriminant(_1)
+    switch move _3 -> [0: bb1, otherwise: bb4]
+  bb1:
+    Live(_4)
+    _4 = Discriminant((_1 as #0).0)
+    switch move _4 -> [0: bb2, otherwise: bb3]
+  bb2:
+    Dead(_4)
+    Dead(_3)
+    Live(_5)
+    _5 = move ((_1 as #0).0 as #0).0
+    _0 = move _5
+    Dead(_5)
+    Goto(bb12)
+  bb3:
+    Dead(_4)
+    Dead(_3)
+    Goto(bb5)
+  bb4:
+    Dead(_3)
+    Goto(bb5)
+  bb5:
+    Live(_6)
+    _6 = Discriminant(_1)
+    switch move _6 -> [0: bb6, otherwise: bb9]
+  bb6:
+    Live(_7)
+    _7 = Discriminant((_1 as #0).0)
+    switch move _7 -> [1: bb7, otherwise: bb8]
+  bb7:
+    Dead(_7)
+    Dead(_6)
+    _0 = move _2
+    Goto(bb12)
+  bb8:
+    Dead(_7)
+    Dead(_6)
+    Goto(bb10)
+  bb9:
+    Dead(_6)
+    Goto(bb10)
+  bb10:
+    Live(_8)
+    _8 = Discriminant(_1)
+    switch move _8 -> [1: bb11, otherwise: bb13]
+  bb11:
+    Dead(_8)
+    _0 = move _2
+    Goto(bb12)
+  bb12:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb13:
+    Dead(_8)
+    Goto(bb14)
+  bb14:
+    Unreachable
+  bb15 (cleanup):
+    UnwindExit
+
+body b2: fn bind_then_test; cap_env e0; unwind_exit bb7
+  _0: u64 (Return)
+  _1: (u64, Option<u64>) (Param(0) `p`)
+  _2: usize (Temp(Scrutinee))
+  _3: u64 (User `x`)
+  bb0:
+    Live(_2)
+    _2 = Discriminant(_1.1)
+    switch move _2 -> [0: bb1, otherwise: bb4]
+  bb1:
+    switch copy (_1.1 as #0).0 -> [2: bb2, otherwise: bb3]
+  bb2:
+    Dead(_2)
+    Live(_3)
+    _3 = copy _1.0
+    _0 = copy _3
+    Dead(_3)
+    Goto(bb6)
+  bb3:
+    Dead(_2)
+    Goto(bb5)
+  bb4:
+    Dead(_2)
+    Goto(bb5)
+  bb5:
+    _0 = const 0u64
+    Goto(bb6)
+  bb6:
+    Dead(_1)
+    Return
+  bb7 (cleanup):
+    UnwindExit

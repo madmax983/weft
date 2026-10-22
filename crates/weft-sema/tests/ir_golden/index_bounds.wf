@@ -1,0 +1,31 @@
+// Index places with `Bounds` (`docs/ir.md` 5.8): the index goes into a
+// temporary, then the bounds check, then the element.
+
+fn vec_elem(v: Vec<u64>, i: usize) -> u64 {
+    v[i]
+}
+
+fn array_elem(a: [u64; 3]) -> u64 {
+    a[2]
+}
+
+fn through_ref(v: &Vec<u64>, i: usize) -> u64 {
+    v[i]
+}
+
+// The base runs first, then each index, in order.
+fn nested(m: Vec<Vec<u64>>, i: usize, j: usize) -> u64 {
+    m[i][j]
+}
+
+// All the elements: `&v[]`.
+fn all(v: Vec<u64>) -> u64 {
+    let s = &v[]
+    0
+}
+
+struct W { items: Vec<u64> }
+
+fn field_elem(w: &W, i: usize) -> u64 {
+    w.items[i + 1]
+}

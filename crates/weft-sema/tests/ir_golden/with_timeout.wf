@@ -1,0 +1,10 @@
+// `with_timeout(d) { block }` is a call of the intrinsic `with_timeout`
+// (`docs/ir.md` 5.31): the block is a closure argument, and the call can
+// abort.
+
+fn page(n: u64) -> u64 / async { n }
+
+fn timed(n: u64) -> u64 / async, fail {
+    let v = with_timeout(2.s) { page(n) }
+    v + 1
+}

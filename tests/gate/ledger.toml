@@ -4,7 +4,7 @@
 # at each run. An entry that matches no program gives a warning.
 #
 # [[entry]]
-# class = "lost-clean"   # open, edge, open-old, new-fp, lost-clean, moved or changed
+# class = "lost-clean"   # open, edge, open-old, new-fp, lost-clean, moved, changed or engine
 # files = ["tests/gate/probes/r2/oracle/fp/v069_part.wf"]   # paths or globs
 # finding = "V069"       # the finding id (open: a finding whose verdict is "stays")
 # verdict = "stays"      # open only: the verdict of the finding in docs/ir.md section 10
@@ -14,6 +14,30 @@
 # reason = "STATE: the holder of the part rebinds at the new value"
 # signed_by = "review agent, stage F8"   # lost-clean: a reviewer, not the author
 # stage = "F8"
+#
+# [[entry]]               # stage I5: a difference of the engine differential
+# class = "engine"        # (`weft-gate engines`, crates/weft-gate/src/engines.rs)
+# difference = "capture"  # the class of the difference (engines::Kind); its shape
+#                         # must hold for the difference
+# checker = "rejects"     # optional: a rule for each program that the checker
+#                         # rejects. With no `checker`, `files` names each
+#                         # program (no glob): a difference on a program that
+#                         # the checker accepts needs such an entry
+# files = ["**"]
+# reason = "rule CAPTURE: a borrowed capture is ByRef"
+# stage = "I5"
+#
+# For each difference, the engine differential takes the first engine entry
+# (in the order of this file) whose files match the program, whose `checker`
+# holds, and whose class has the shape of the difference.
+#
+# [[entry]]               # stage F6: a difference of the signature diff
+# class = "sig"           # (`weft-gate sigdiff`, crates/weft-gate/src/sigdiff.rs)
+# parts = ["muts text"]   # optional: the parts of the signature that the entry
+#                         # accepts (names of sigdiff::compare); none: each part
+# files = ["tests/gate/probes/r2/redteam/p/zz_deep.wf"]
+# reason = "the summary cuts a place at 8 steps"
+# stage = "F6"
 
 # Stage G6: the `open` programs of tier 1 with the old pipeline. The old
 # pipeline accepts each program, and the `ast` oracle faults on it. Each group
@@ -90,19 +114,11 @@ finding = "map-N2"
 reason = "dangling read: the result of a call of a function parameter has no places of the caller"
 stage = "G6"
 
-[[entry]]
-class = "open-old"
-files = ["tests/gate/probes/ir/probes/p2_late_operand_ref.wf"]
-finding = "sem-N1"
-reason = "dangling read: a place operand of a binary operator is read later than the facts say"
-stage = "G6"
-
-[[entry]]
-class = "open-old"
-files = ["tests/gate/probes/ir/probes/p9_print_late.wf"]
-finding = "sem-N2"
-reason = "dangling read: an operand of `print` is read later than the facts say"
-stage = "G6"
+# Stage I5 removed the entries of p2_late_operand_ref.wf (sem-N1) and
+# p9_print_late.wf (sem-N2): from stage I5 the gate reads the oracle of the
+# `ir` engine, which reads each operand where the facts say (choice A), so the
+# oracle does not fault on them. An engine entry below accepts the difference
+# of the engines on them.
 
 [[entry]]
 class = "open-old"
@@ -262,3 +278,287 @@ files = [
 finding = "unclassified"
 reason = "interpreter: the literal 18446744073709551615 (u64 max) is a runtime error (`integer literal is too large`). The checker is correct; no finding names this defect"
 stage = "G6"
+
+# ----------------------------------------------------------------------------
+# Stage I5: the engine differential (`weft-gate engines --tier 1|2`,
+# docs/ir.md section 8.5). Each difference of the `ast` and the `ir` engine
+# needs an entry of class `engine`. First the entries for programs that the
+# checker accepts (one entry names each program), then the rules for the
+# programs that the checker rejects. The run of a program has no checker, so
+# a program that the checker rejects runs too; its run is not a run of the
+# language, and the two engines can take other ways in it.
+
+# -- Programs that the checker accepts.
+
+[[entry]]
+class = "engine"
+difference = "choice-a"
+files = [
+    "tests/gate/probes/ir/probes/p1_late_operand.wf",
+    "tests/gate/probes/ir/probes/p2_late_operand_ref.wf",
+    "tests/gate/probes/ir/probes/p9_print_late.wf",
+]
+reason = "choice A (docs/ir.md 5.1.1): the IR reads a place operand of an operator or of `print` where the source writes it. p1 prints 2, not 6; p2 and p9 read before the reference dangles (findings sem-N1, sem-N2)"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "loop-temps"
+files = ["tests/gate/probes/ir/probes/p24_loop_tail_temp.wf"]
+reason = "the tail temporaries of a loop body end at each iteration (docs/ir.md 5.1.2): `Weak.upgrade` of the `Rc` of an earlier iteration fails on the IR engine"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "branch-temps"
+files = [
+    "r3/oracle/sweep1/if__tmp_box__arg.wf",
+    "r3/oracle/sweep1/if__tmp_clo__arg.wf",
+    "r3/oracle/sweep1/if__tmp_field__arg.wf",
+    "r3/oracle/sweep1/if__tmp_first__arg.wf",
+    "r3/oracle/sweep1/if__tmp_get__arg.wf",
+    "r3/oracle/sweep1/if__tmp_id__arg.wf",
+    "r3/oracle/sweep1/if__tmp_index__arg.wf",
+    "r3/oracle/sweep1/if__tmp_lit__arg.wf",
+    "r3/oracle/sweep1/if__tmp_opt__arg.wf",
+    "r3/oracle/sweep1/if__tmp_tuple__arg.wf",
+    "r3/oracle/sweep1/match__tmp_box__arg.wf",
+    "r3/oracle/sweep1/match__tmp_clo__arg.wf",
+    "r3/oracle/sweep1/match__tmp_field__arg.wf",
+    "r3/oracle/sweep1/match__tmp_first__arg.wf",
+    "r3/oracle/sweep1/match__tmp_get__arg.wf",
+    "r3/oracle/sweep1/match__tmp_id__arg.wf",
+    "r3/oracle/sweep1/match__tmp_index__arg.wf",
+    "r3/oracle/sweep1/match__tmp_lit__arg.wf",
+    "r3/oracle/sweep1/match__tmp_opt__arg.wf",
+    "r3/oracle/sweep1/match__tmp_tuple__arg.wf",
+    "verify/s5/R3a_diff/sweep/if__ref_temp__arg.wf",
+    "verify/s5/R3a_diff/sweep/if__ref_temp_idx__arg.wf",
+    "verify/s5/R3a_diff/sweep/match__ref_temp__arg.wf",
+    "verify/s5/R3a_diff/sweep/match__ref_temp_idx__arg.wf",
+]
+reason = "tier 2. The temporaries of a branch of `if` or `match` end before the join (docs/ir.md 5.12, 8.3): `show(if c { first(&mk_v()) } else { &u })` reads the temporary `Vec` of the branch after its end, so the oracle of the IR engine faults. The AST engine and the old facts keep the temporary to the end of the statement, so the old checker accepts the program. The `ir` pipeline must reject these programs (phase F: the facts come from the IR)"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "capture"
+files = ["tests/gate/probes/ir/judge_sound/j5d_maker_borrow.wf"]
+reason = "rule CAPTURE (docs/ir.md 5.1.7, finding J5d): the borrowed capture is ByRef, so the oracle finds the dangling cell at line 7 (the end of the variable), not at line 4. Both engines fault; the ledger has an open-old entry for the program"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "dangling-moved"
+files = ["tests/gate/probes/r3/oracle/probes/rh6_task_rc_scope_end.wf"]
+reason = "the local ends at its `Dead`: the IR engine reads a dangling reference where the AST engine reads a moved value. Both engines fault; the ledger has an open-old entry for the program"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "schedule"
+files = [
+    "tests/gate/probes/r3/interp/probe/f4_sim_join_outside.wf",
+    "tests/gate/probes/r3/oracle/probes/s12_steal_handler_clause.wf",
+    "tests/gate/probes/r3/oracle/probes/s13_steal_item.wf",
+    "tests/gate/probes/verify/s5/R2d: tasks, scopes, fork and the scheduler/p/ip9_b.wf",
+]
+reason = "the IR engine runs more operations in a quantum (the preemption points are the same back edges), so the tasks interleave in another way; the output has the same lines in another order. Each output is a valid run of the program"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "timeout"
+files = [
+    "tests/gate/probes/r3/interp/probe/m1_deep_list.wf",
+    "tests/gate/probes/r3/interp/probe/m1_n.wf",
+]
+reason = "a deep list: the AST engine takes more than 10 s (also alone), the IR engine takes less than 1 s (stage I1)"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "unwind-order"
+files = ["tests/gate/probes/ir/probes/p20_clause_unwind_order.wf"]
+reason = "the cleanup chain of a clause starts with `UnwindKont` (docs/ir.md 5.1.6, 8.3): the IR engine unwinds the fresh continuation first (`rollback 1`), then the clause frame (`rollback 2`), as the effects model does. The AST engine unwinds the clause frame first"
+stage = "I6"
+
+[[entry]]
+class = "engine"
+difference = "fault-text"
+files = [
+    "tests/gate/probes/ir/probes/p25_assert_abort.wf",
+    "tests/gate/probes/ir/probes/p27_assert_callee.wf",
+    "tests/gate/probes/verify/s5/p/g2_generic_task_hold.wf",
+]
+reason = "the unwinder faults at a linear value with no `on abort`. The IR engine runs the cleanup chain (docs/ir.md 8.2), so the fault has the line of the op that aborted the frame of the value; the AST engine gives the line of the frame below the unwinding, or no line. Both engines fault after the same output; the ledger has an open-old entry for each program"
+stage = "I6"
+
+# -- Programs that the checker rejects: one rule for each class.
+
+[[entry]]
+class = "engine"
+difference = "w0315"
+checker = "rejects"
+files = ["**"]
+reason = "W0315 (docs/ir.md 5.36): the IR engine faults with the W0315 text at a `break`, `continue` or `return` out of a handled body, a clause or a scope body; the AST engine jumps"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "receiver"
+checker = "rejects"
+files = ["**"]
+reason = "a native method gets a moved receiver: one engine faults with \"a `Vec` is needed here\" or \"`clone` needs an `Rc`\", the other with \"used after it was moved\" (I1 class c)"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "leak-at-dead"
+checker = "rejects"
+files = ["**"]
+reason = "a linear local ends at its `Dead` at the end of its scope: the IR engine finds the linear leak there, the AST engine at the statement of the local (W0601 programs)"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "static-type-read"
+checker = "rejects"
+files = ["**"]
+reason = "the IR reads a value with its static type (an `on abort` parameter of a copy type that holds a linear value, W0118), and drops the linear value (I3: oa9)"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "race-before-dangling"
+checker = "rejects"
+files = ["**"]
+reason = "the IR reads the place of a compound assignment first, so the oracle finds a data race before the dangling read, or the other way (I4)"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "race-read-first"
+checker = "rejects"
+files = ["**"]
+reason = "the IR reads the place of a compound assignment before it writes it (`t := op(copy p, v); p = move t`); the AST engine writes in one step. The oracle finds the data race at the read (I4)"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "schedule"
+checker = "rejects"
+files = ["**"]
+reason = "the IR engine runs more operations in a quantum, so the tasks interleave in another way: the output has its lines in another order, or the oracle finds the race of another pair of accesses (I4)"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "dangling-moved"
+checker = "rejects"
+files = ["**"]
+reason = "a local or a temporary ends at its `Dead` in the IR: one engine reads a dangling reference where the other reads a moved value (I1 class d)"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "read-order"
+checker = "rejects"
+files = [
+    "tests/gate/probes/ir/probes/p8_recv_late_ref.wf",
+    "tests/gate/probes/verify/s1diff/p/i15_rc_field_recv.wf",
+]
+reason = "the IR reads a receiver after the arguments of the call (docs/ir.md 5.19, I1 class b): the dangling read is at another point"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "capture"
+checker = "rejects"
+files = ["**"]
+reason = "rule CAPTURE (docs/ir.md 5.1.7): a borrowed capture is ByRef, its cell ends with the variable, so the oracle sees the dangling cell where the kept cell of the AST engine stayed readable, or at another point (J5, J5d, the `*_kept_*` probes)"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "mention"
+checker = "rejects"
+files = ["**"]
+reason = "a place in statement position (the place tail of a block or of a loop body) is a `Mention` in the IR: the AST engine moves the value, so a later use faults on the AST engine only (I1 class a)"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "moved-read"
+checker = "rejects"
+files = ["**"]
+reason = "the IR reads an operand at the operand, so a moved or unset value faults there with \"used after it was moved\"; the AST engine shows `<moved>`, reads it later, or faults in another way (I1 class c)"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "moved-closure"
+checker = "rejects"
+files = ["**"]
+reason = "a closure value moves at another point: a `once` closure moves into a call or a spawn in the IR, and closure values are shared (not copied) at run time (I2, I3, I4: W0502 programs)"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "closure-copy"
+checker = "rejects"
+files = ["**"]
+reason = "a function value is plain data in the IR (B12b): a read copies it where the AST engine moves it (I4: s9_steal_stored; test D1 lists the captures)"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "fault-text"
+checker = "rejects"
+files = ["**"]
+reason = "both engines fault after the same output, with another text or at another line (for example the destructure of the `()` that a resuming `fail` clause gives: \"not a tuple of that size\" against \"has no part 0\")"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "choice-a"
+checker = "rejects"
+files = ["**"]
+reason = "choice A (docs/ir.md 5.1.1): the IR reads a place operand where the source writes it"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "loop-temps"
+checker = "rejects"
+files = ["**"]
+reason = "the tail temporaries of a loop body end at each iteration (docs/ir.md 5.1.2)"
+stage = "I5"
+
+[[entry]]
+class = "engine"
+difference = "unwind-order"
+checker = "rejects"
+files = ["**"]
+reason = "the IR engine runs the cleanup chains (docs/ir.md 8.2): it runs the `on abort` of each value when the chain gets to the value, so an `on abort` can run before the fault at a linear value with no `on abort` (W0602); the AST engine finds that value first. A clause unwinds its fresh continuation first (5.1.6)"
+stage = "I6"
+
+[[entry]]
+class = "engine"
+difference = "timeout"
+checker = "rejects"
+files = ["**"]
+reason = "one engine takes more than the time limit, also alone: the engines run other numbers of operations"
+stage = "I5"
+
+# Stage F6: the differences of the signature diff (`weft-gate sigdiff`): the
+# `EffectSig` that the `ir` pipeline infers from the summaries of the bodies
+# against the one of the old inference, for each function of a program in
+# scope (tier 1, group A).
+
+[[entry]]
+class = "sig"
+parts = ["muts text"]
+files = ["tests/gate/probes/r2/redteam/p/zz_deep.wf"]
+reason = "a changed place of more than 8 steps: the summary cuts it at SIG_PLACE_STEPS and adds a wildcard step, so its text is `w.x.x.x.x.x.x.x.x..`; the old row keeps the 8 steps with the text of the whole place. The steps are the same, and the text of W0701 shows the cut place"
+stage = "F6"

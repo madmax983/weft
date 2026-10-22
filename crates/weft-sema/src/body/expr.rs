@@ -59,7 +59,8 @@ struct ClausesDone {
 impl Lower<'_> {
     /// Lowers an expression and returns its value.
     pub(super) fn expr(&mut self, e: &Expr) -> Val {
-        match &e.kind {
+        self.rec.open.push(e.id);
+        let v = match &e.kind {
             ExprKind::Lit(l) => {
                 self.lit_span = e.span;
                 self.lit(l)
@@ -70,6 +71,7 @@ impl Lower<'_> {
             } if neg_literal(expr) => {
                 // `-128` is one literal: its value is negative. `--128` is 128.
                 let v = self.expr(expr);
+                self.rec_peel(expr.id, &v.ty);
                 if let Some(last) = self.int_lits.last_mut() {
                     last.1 = !last.1;
                     last.3 = e.span;
@@ -81,37 +83,8 @@ impl Lower<'_> {
                     ..Val::default()
                 }
             }
-            ExprKind::Name(id) => self.name(id, e.span),
-            ExprKind::Field { base, name } => {
-                if let ExprKind::Lit(l) = &base.kind {
-                    // `2.s` and `500.ms` are durations. A literal has no other field.
-                    if matches!(l, Lit::Int(_)) && matches!(name.name.as_str(), "s" | "ms") {
-                        let d = self
-                            .b
-                            .duration
-                            .map_or(Ty::Error, |d| Ty::Adt(d, Vec::new()));
-                        return Val {
-                            ty: d,
-                            ..Val::default()
-                        };
-                    }
-                    self.lit_span = base.span;
-                    let _ = self.lit(l);
-                    self.err(
-                        Code::W0104,
-                        format!("a literal has no field `{}`", name.name),
-                        name.span,
-                    );
-                    return Val {
-                        ty: Ty::Error,
-                        ..Val::default()
-                    };
-                }
-                if let Some(v) = self.path_member(base, name) {
-                    return v;
-                }
-                self.place_value(e)
-            }
+            ExprKind::Name(id) => self.name(id, e),
+            ExprKind::Field { base, name } => self.field_value(e, base, name),
             ExprKind::Index { .. } => self.place_value(e),
             ExprKind::Call {
                 callee,
@@ -130,6 +103,7 @@ impl Lower<'_> {
             } => self.borrow(expr),
             ExprKind::Unary { op, expr } => {
                 let v = self.expr(expr);
+                self.rec_peel(expr.id, &v.ty);
                 let t = self.deref_ty(&v.ty);
                 if *op == UnOp::Not {
                     self.unify(&Ty::Bool, &t, expr.span);
@@ -209,7 +183,7 @@ impl Lower<'_> {
                 }
             }
             ExprKind::StructLit { path, fields } => self.struct_lit(path, fields, e.span),
-            ExprKind::Closure { params, body } => self.closure(params, body, None, e.span),
+            ExprKind::Closure { params, body } => self.closure(e, params, body, None),
             ExprKind::Block(b) => self.block(b),
             ExprKind::If { cond, then, else_ } => {
                 self.if_expr(cond, then, else_.as_deref(), e.span)
@@ -221,6 +195,63 @@ impl Lower<'_> {
                 body,
             } => self.handle(effect, clauses, body, e.span),
             ExprKind::Scope { binder, body } => self.scope(binder, body, e.span),
+        };
+        self.rec_leave(e, &v);
+        v
+    }
+
+    /// Lowers a field expression `base.name`: a duration literal, a path member
+    /// or a place.
+    fn field_value(&mut self, e: &Expr, base: &Expr, name: &ast::Ident) -> Val {
+        if let ExprKind::Lit(l) = &base.kind {
+            // `2.s` and `500.ms` are durations. A literal has no other field.
+            if matches!(l, Lit::Int(_)) && matches!(name.name.as_str(), "s" | "ms") {
+                let d = self
+                    .b
+                    .duration
+                    .map_or(Ty::Error, |d| Ty::Adt(d, Vec::new()));
+                return Val {
+                    ty: d,
+                    ..Val::default()
+                };
+            }
+            self.lit_span = base.span;
+            let _ = self.lit(l);
+            self.err(
+                Code::W0104,
+                format!("a literal has no field `{}`", name.name),
+                name.span,
+            );
+            return Val {
+                ty: Ty::Error,
+                ..Val::default()
+            };
+        }
+        if let Some(v) = self.path_member(e, base, name) {
+            return v;
+        }
+        self.place_value(e)
+    }
+
+    /// Ends the visit of expression `e` with value `v`: the recorder gets its
+    /// type, its call and its integer type.
+    fn rec_leave(&mut self, e: &Expr, v: &Val) {
+        self.rec.open.pop();
+        self.rec.end_call(e.id);
+        self.rec.expr_ty(e.id, &v.ty);
+        let arith = match &e.kind {
+            ExprKind::Binary { op, .. } => matches!(
+                op,
+                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem
+            ),
+            ExprKind::Unary {
+                op: UnOp::Neg,
+                expr,
+            } => !neg_literal(expr),
+            _ => false,
+        };
+        if arith {
+            self.rec.int_op(e.id, &v.ty);
         }
     }
 
@@ -228,6 +259,7 @@ impl Lower<'_> {
     pub(super) fn expr_with(&mut self, e: &Expr, expected: Option<&Ty>) -> Val {
         match (&e.kind, expected.map(|t| self.inf.shallow(t))) {
             (ExprKind::Array(es), Some(Ty::Array(elem, n))) => {
+                self.rec.open.push(e.id);
                 let (caps, refs) = self.elements(es, &elem);
                 if u64::try_from(es.len()).ok() != Some(n) {
                     self.err(
@@ -236,15 +268,17 @@ impl Lower<'_> {
                         e.span,
                     );
                 }
-                Val {
+                let v = Val {
                     ty: Ty::Array(elem, n),
                     caps,
                     refs,
                     ..Val::default()
-                }
+                };
+                self.rec_leave(e, &v);
+                v
             }
             (ExprKind::Closure { params, body }, Some(Ty::Fn(f))) => {
-                self.closure(params, body, Some(&f), e.span)
+                self.closure(e, params, body, Some(&f))
             }
             _ => self.expr(e),
         }
@@ -283,13 +317,18 @@ impl Lower<'_> {
         (caps, refs)
     }
 
-    /// `Enum.Variant` and `module.function` used as values.
-    fn path_member(&mut self, base: &Expr, name: &ast::Ident) -> Option<Val> {
-        match self.path_ref(base)? {
+    /// `Enum.Variant` and `module.function` used as values. `e` is the
+    /// expression `base.name`.
+    fn path_member(&mut self, e: &Expr, base: &Expr, name: &ast::Ident) -> Option<Val> {
+        let pr = self.path_ref(base)?;
+        self.rec_path(base);
+        match pr {
             PathRef::Adt(a) => {
                 if let AdtKind::Enum(vs) = &self.prog.adts[a].kind {
                     if let Some(vi) = self.prog.variant_index(a, &name.name) {
                         if vs[vi].fields.is_empty() {
+                            self.rec
+                                .res(e.id, crate::thir::record::RawRes::Variant(a, vi));
                             let args: Vec<Ty> = self.prog.adts[a]
                                 .generics
                                 .iter()
@@ -317,7 +356,7 @@ impl Lower<'_> {
             PathRef::Mod(m) => {
                 if let Some(ItemRef::Fn(f)) = self.prog.lookup_in(m, &name.name) {
                     self.check_visible(f, name.span);
-                    Some(self.item_value(f, name.span))
+                    Some(self.item_value(f, name.span, e.id))
                 } else {
                     self.err(
                         Code::W0104,
@@ -372,11 +411,13 @@ impl Lower<'_> {
         }
     }
 
-    fn name(&mut self, id: &ast::Ident, span: Span) -> Val {
+    fn name(&mut self, id: &ast::Ident, e: &Expr) -> Val {
+        let span = e.span;
         if let Some(l) = self.lookup_local(&id.name) {
             if self.locals[l].cont.as_ref().is_some_and(|k| k.fail) {
                 self.fail_resume(span);
             }
+            self.rec_local(e, l, false);
             self.use_local(l);
             let loc = self.locals[l].clone();
             // A use of the local as a value reads its variable (W0405).
@@ -419,9 +460,9 @@ impl Lower<'_> {
             };
         }
         if let Some(ItemRef::Fn(f)) = self.prog.lookup(self.module, &id.name) {
-            self.item_value(f, span)
+            self.item_value(f, span, e.id)
         } else {
-            if let Some(v) = self.unit_variant(&id.name) {
+            if let Some(v) = self.unit_variant(&id.name, e.id) {
                 return v;
             }
             self.err(Code::W0101, format!("unknown name `{}`", id.name), span);
@@ -432,14 +473,16 @@ impl Lower<'_> {
         }
     }
 
-    /// A function item used as a value.
-    fn item_value(&mut self, f: FnId, span: Span) -> Val {
+    /// A function item used as a value, at expression `e`.
+    fn item_value(&mut self, f: FnId, span: Span, e: ast::ExprId) -> Val {
         // A call through the value can install the root handlers of `sim.run`.
         if self.is_sim_run(f) {
             self.note_sim_run(span);
         }
         let sig = &self.sigs[f];
         let targs: Vec<Ty> = sig.generics.iter().map(|_| self.inf.fresh()).collect();
+        self.rec
+            .res(e, crate::thir::record::RawRes::Fn(f, targs.clone()));
         self.check_item_value(f, &targs, span);
         let sig = &self.sigs[f];
         let ty = Ty::Fn(Arc::new(FnTy {
@@ -466,7 +509,7 @@ impl Lower<'_> {
         def.is_std && def.path == "run" && self.prog.mods[def.module].name == "sim"
     }
 
-    fn unit_variant(&mut self, name: &str) -> Option<Val> {
+    fn unit_variant(&mut self, name: &str, e: ast::ExprId) -> Option<Val> {
         let &(adt, vi) = self.prog.variants.get(name)?.first()?;
         let AdtKind::Enum(vs) = &self.prog.adts[adt].kind else {
             return None;
@@ -474,6 +517,8 @@ impl Lower<'_> {
         if !vs[vi].fields.is_empty() {
             return None;
         }
+        self.rec
+            .res(e, crate::thir::record::RawRes::Variant(adt, vi));
         let args: Vec<Ty> = self.prog.adts[adt]
             .generics
             .iter()
@@ -519,6 +564,26 @@ impl Lower<'_> {
         }
     }
 
+    /// Records what each name of path `e` means: a module, a type or an
+    /// effect ([`Lower::path_ref`]).
+    pub(super) fn rec_path(&mut self, e: &Expr) {
+        let Some(pr) = self.path_ref(e) else {
+            return;
+        };
+        let r = match pr {
+            PathRef::Mod(m) => crate::thir::record::RawRes::Mod(m),
+            PathRef::Adt(a) => crate::thir::record::RawRes::Adt(a),
+            PathRef::Effect(x) => {
+                self.rec.effect(e.id, x);
+                crate::thir::record::RawRes::Effect(x)
+            }
+        };
+        self.rec.res(e.id, r);
+        if let ExprKind::Field { base, .. } = &e.kind {
+            self.rec_path(base);
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Places
     // -----------------------------------------------------------------------
@@ -536,6 +601,7 @@ impl Lower<'_> {
                         if let Some(c) = loc.cell {
                             self.read_var(c);
                         }
+                        self.rec_local(e, l, true);
                         let (places, deps) = self.split_deps(&loc.refs);
                         Some(LVal {
                             places,
@@ -548,6 +614,7 @@ impl Lower<'_> {
                         })
                     }
                     t => {
+                        self.rec_local(e, l, false);
                         let r = if let Some(r) = loc.root {
                             r
                         } else {
@@ -575,10 +642,11 @@ impl Lower<'_> {
                     return None;
                 }
                 let lv = self.place_or_temp(base);
-                Some(self.field_of(lv, name, e.span))
+                Some(self.field_of(lv, name, e, base))
             }
             ExprKind::Index { base, index } => {
                 let lv = self.place_or_temp(base);
+                self.rec_adjust(base.id, self.ref_depth(&lv.ty));
                 // An element through a reference that a part holds: the elements
                 // are where the reference points.
                 let lv = match self.inf.shallow(&lv.ty) {
@@ -595,6 +663,7 @@ impl Lower<'_> {
                 }
                 if let Some(ix) = index {
                     let v = self.expr(ix);
+                    self.rec_peel(ix.id, &v.ty);
                     let t = self.deref_ty(&v.ty);
                     self.unify(&Ty::Int(IntTy::Usize), &t, ix.span);
                 }
@@ -607,6 +676,7 @@ impl Lower<'_> {
                         Some(s) => lv.places.iter().map(|&p| self.child(p, s, "[]")).collect(),
                         None => lv.places.clone(),
                     };
+                    self.rec.expr_ty(e.id, &elem);
                     Some(LVal {
                         places,
                         ty: elem,
@@ -615,6 +685,7 @@ impl Lower<'_> {
                 } else {
                     let shown = self.show(&rt);
                     self.err(Code::W0104, format!("`{shown}` has no elements"), e.span);
+                    self.rec.expr_ty(e.id, &Ty::Error);
                     Some(LVal {
                         ty: Ty::Error,
                         ..lv
@@ -625,12 +696,18 @@ impl Lower<'_> {
         }
     }
 
-    fn field_of(&mut self, lv: LVal, name: &ast::Ident, span: Span) -> LVal {
+    /// The place of field expression `e`, `base.name`, where `lv` is the place
+    /// of `base`.
+    fn field_of(&mut self, lv: LVal, name: &ast::Ident, e: &Expr, base: &Expr) -> LVal {
+        use crate::thir::DerefKind;
+        let span = e.span;
+        let mut derefs: Vec<DerefKind> = self.rec.take_base(base.id).into_iter().collect();
         let mut lv = lv;
         // Follow references, `Rc` groups and `Box`es.
         loop {
             match self.inf.shallow(&lv.ty) {
                 Ty::Ref(inner) => {
+                    derefs.push(DerefKind::Ref);
                     lv = self.deref_lval(lv);
                     lv.ty = *inner;
                 }
@@ -643,6 +720,7 @@ impl Lower<'_> {
                         }
                     ) =>
                 {
+                    derefs.push(DerefKind::Rc);
                     let inner = args.first().cloned().unwrap_or(Ty::Error);
                     let inner_r = self.inf.resolve(&inner);
                     let g = match inner_r {
@@ -676,18 +754,32 @@ impl Lower<'_> {
             let mut places = lv.places.clone();
             for (s, text) in &steps {
                 let label = if text == "*" {
+                    derefs.push(DerefKind::Box);
                     String::new()
                 } else {
                     text.clone()
                 };
                 places = places.iter().map(|&p| self.child(p, *s, &label)).collect();
             }
+            self.rec.adjust(base.id, derefs);
+            match steps.last().map(|(s, _)| s.kind) {
+                Some(StepKind::Field { id }) => {
+                    self.rec.field(e.id, crate::thir::FieldIdx::Field(id));
+                }
+                Some(StepKind::Variant { id }) => {
+                    self.rec.field(e.id, crate::thir::FieldIdx::Variant(id));
+                }
+                _ => {}
+            }
+            self.rec.expr_ty(e.id, &next);
             LVal {
                 places,
                 ty: next,
                 ..lv
             }
         } else {
+            self.rec.adjust(base.id, derefs);
+            self.rec.expr_ty(e.id, &Ty::Error);
             if !matches!(t, Ty::Error) {
                 let shown = self.show(&t);
                 self.err(
@@ -759,6 +851,8 @@ impl Lower<'_> {
             return None;
         };
         let blv = self.place_expr(base)?;
+        // A second look at the place: its parent took its dereference already.
+        self.rec.base_deref = None;
         let Ty::Adt(a, _) = self.deref_ty(&blv.ty) else {
             return None;
         };
@@ -775,6 +869,7 @@ impl Lower<'_> {
         let lv = match &inner.kind {
             ExprKind::Index { base, index: None } => {
                 let lv = self.place_or_temp(base);
+                self.rec_adjust(base.id, self.ref_depth(&lv.ty));
                 let t = self.deref_ty(&lv.ty);
                 let rt = self.inf.deep(&t);
                 match elem_step(self.prog, &rt) {
@@ -783,6 +878,8 @@ impl Lower<'_> {
                             Some(s) => lv.places.iter().map(|&p| self.child(p, s, "[]")).collect(),
                             None => lv.places.clone(),
                         };
+                        self.rec
+                            .expr_ty(inner.id, &Ty::Slice(Box::new(elem.clone())));
                         LVal {
                             places,
                             ty: Ty::Slice(Box::new(elem)),
@@ -794,6 +891,7 @@ impl Lower<'_> {
             }
             _ => {
                 if let Some(lv) = self.place_expr(inner) {
+                    self.rec_adjust(inner.id, 0);
                     lv
                 } else {
                     let v = self.expr(inner);
@@ -823,10 +921,12 @@ impl Lower<'_> {
     fn binary(&mut self, op: BinOp, lhs: &Expr, rhs: &Expr, span: Span) -> Val {
         if matches!(op, BinOp::And | BinOp::Or) {
             let a = self.expr(lhs);
+            self.rec_peel(lhs.id, &a.ty);
             let at = self.deref_ty(&a.ty);
             self.unify(&Ty::Bool, &at, lhs.span);
             let br = self.emit(span, "branch", String::new());
             let b = self.expr(rhs);
+            self.rec_peel(rhs.id, &b.ty);
             let bt = self.deref_ty(&b.ty);
             self.unify(&Ty::Bool, &bt, rhs.span);
             self.flush(expr_tail(rhs));
@@ -841,6 +941,8 @@ impl Lower<'_> {
         let held = self.hold_later(&a, "operand", lhs.span);
         let b = self.expr(rhs);
         self.pend_uses.extend(held);
+        self.rec_peel(lhs.id, &a.ty);
+        self.rec_peel(rhs.id, &b.ty);
         match op {
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
                 let at = self.deref_ty(&a.ty);
@@ -984,6 +1086,7 @@ impl Lower<'_> {
 
     fn if_expr(&mut self, cond: &Expr, then: &ast::Block, else_: Option<&Expr>, span: Span) -> Val {
         let c = self.expr(cond);
+        self.rec_peel(cond.id, &c.ty);
         let ct = self.deref_ty(&c.ty);
         self.unify(&Ty::Bool, &ct, cond.span);
         let br = self.emit(cond.span, "branch", String::new());
@@ -1070,6 +1173,9 @@ impl Lower<'_> {
     fn match_expr(&mut self, scrut: &Expr, arms: &[ast::Arm], span: Span) -> Val {
         let errors = self.diags.len();
         let lv = self.place_expr(scrut);
+        if lv.is_some() {
+            self.rec_adjust(scrut.id, 0);
+        }
         let temp = lv.is_none();
         // A binding by reference depends on the `Rc` handles on the way.
         let deps = lv.as_ref().map(|l| l.deps.clone()).unwrap_or_default();
@@ -1193,6 +1299,12 @@ impl Lower<'_> {
         sval: &Val,
         n: NodeId,
     ) {
+        self.rec.pat_ty(pat.id, ty);
+        let refs = self.ref_depth(ty);
+        self.rec.pat_adjust(
+            pat.id,
+            std::iter::repeat_n(crate::thir::DerefKind::Ref, refs).collect(),
+        );
         let t = self.deref_ty(ty);
         match &pat.kind {
             PatternKind::Wild(_) => {}
@@ -1228,6 +1340,7 @@ impl Lower<'_> {
                     self.match_moves = true;
                 }
                 let l = self.new_local(&id.name, VarKind::Local, id.span, v.ty.clone(), false);
+                self.rec_bind(crate::thir::Binder::Pat(pat.id), l);
                 self.assign_local(l, &v, n);
             }
             PatternKind::Tuple(ps, s) => {
@@ -1358,11 +1471,13 @@ impl Lower<'_> {
     /// Lowers a closure as its own CFG component and returns the closure value.
     pub(super) fn closure(
         &mut self,
+        ce: &Expr,
         params: &[ast::Param],
         body: &Expr,
         expected: Option<&FnTy>,
-        span: Span,
     ) -> Val {
+        let span = ce.span;
+        self.rec.open.push(ce.id);
         let saved = self.cur;
         let saved_pending = self.take_pending();
         let saved_stmts = std::mem::take(&mut self.stmt_temps);
@@ -1391,6 +1506,7 @@ impl Lower<'_> {
             ExprKind::Block(b) => self.block_with(b, false),
             _ => self.expr(body),
         };
+        self.rec.expr_ty(body.id, &v.ty);
         // The body can end normally, or only through `return`.
         let falls = self.cur.is_some();
         let stated = expected.is_some_and(|f| !matches!(self.inf.shallow(&f.ret), Ty::Unit));
@@ -1479,7 +1595,19 @@ impl Lower<'_> {
         self.cur = saved;
         self.restore_pending(saved_pending);
         self.stmt_temps = saved_stmts;
-        self.closure_value(id, &sum, (ptys, ret_ty), span)
+        self.rec_closure(ce.id, params.len(), &ret_ty, expected);
+        self.rec.open.pop();
+        self.closure_value(id, &sum, (ptys, ret_ty), (span, ce.id))
+    }
+
+    /// Records closure literal `e` with `n` parameters, its result type and
+    /// the type that the context gives.
+    fn rec_closure(&mut self, e: ast::ExprId, n: usize, ret: &Ty, expected: Option<&FnTy>) {
+        let params = (0..n)
+            .map(|i| crate::thir::Binder::ClosureParam(e, u32::try_from(i).unwrap_or(u32::MAX)))
+            .collect();
+        let row = expected.and_then(|f| f.effects.clone());
+        self.rec.closure(e, params, ret, row);
     }
 
     /// Binds the parameters of a closure at node `entry`. `expected` is the
@@ -1510,6 +1638,10 @@ impl Lower<'_> {
             };
             ptys.push(ty.clone());
             let l = self.new_local(&p.name.name, VarKind::Param, p.span, ty.clone(), false);
+            if let Some(ce) = self.rec.top() {
+                let b = crate::thir::Binder::ClosureParam(ce, u32::try_from(i).unwrap_or(u32::MAX));
+                self.rec_bind(b, l);
+            }
             // A parameter that holds references points into what the call gives.
             let refs = if self.holds_refs(&ty) {
                 let r = self.root(&p.name.name, RootKind::Arg);
@@ -1555,7 +1687,7 @@ impl Lower<'_> {
         id: usize,
         sum: &Summary,
         (ptys, ret_ty): (Vec<Ty>, Ty),
-        span: Span,
+        (span, e): (Span, ast::ExprId),
     ) -> Val {
         // The closure refers to the variables that it captures, as in the
         // interpreter. A captured copy value stays readable after its scope
@@ -1621,6 +1753,7 @@ impl Lower<'_> {
             item: None,
         };
         let ty = Ty::Fn(Arc::new(fty));
+        self.rec.expr_ty(e, &ty);
         let mut info = self.var_info("{closure}", VarKind::Closure, span, &ty, false);
         info.once |= self.closure_not_many(id);
         info.uniq = self.closure_uniq(id);
@@ -1830,6 +1963,7 @@ impl Lower<'_> {
         let Some(eid) = self.handled_effect(effect) else {
             return self.expr(body);
         };
+        self.rec_handle(eid, clauses);
         let prog = self.prog;
         let def = &prog.effects[eid];
         let ident = effects::identity(self.prog, eid);
@@ -1895,7 +2029,8 @@ impl Lower<'_> {
             outer: start.locals,
         };
         let mut done = ClausesDone::default();
-        for c in clauses {
+        for (ci, c) in clauses.iter().enumerate() {
+            self.rec.clause = u32::try_from(ci).unwrap_or(u32::MAX);
             self.lower_clause(c, &around, &mut done);
         }
         let ClausesDone {
@@ -2009,6 +2144,31 @@ impl Lower<'_> {
         h.end = end;
         self.handled.push(h);
         self.join_clause_vals(v, clause_vals)
+    }
+
+    /// Records the `handle` that the lowering is in: its effect `eid` and the
+    /// operation of each of its clauses.
+    fn rec_handle(&mut self, eid: EffectId, clauses: &[ast::HandlerClause]) {
+        let Some(e) = self.rec.top() else {
+            return;
+        };
+        let def = &self.prog.effects[eid];
+        let info = crate::thir::HandleInfo {
+            effect: weft_ir::EffectId(u32::try_from(eid.index()).unwrap_or(u32::MAX)),
+            identity: effects::identity(self.prog, eid),
+            clauses: clauses
+                .iter()
+                .map(|c| {
+                    def.ops
+                        .iter()
+                        .position(|o| o.name == c.op.name)
+                        .and_then(|i| u32::try_from(i).ok())
+                })
+                .collect(),
+            multi: def.has_multi(),
+        };
+        self.rec.handle(e, info);
+        self.rec.effect(e, eid);
     }
 
     /// Lowers a clause of a `handle` whose handled body is lowered, and adds
@@ -2173,6 +2333,14 @@ impl Lower<'_> {
         let mut param_roots = BTreeMap::new();
         for (i, (p, pt)) in c.params.iter().zip(&op.params).enumerate() {
             let l = self.new_local(&p.name.name, VarKind::Param, p.span, pt.clone(), false);
+            if let Some(h) = self.rec.top() {
+                let b = crate::thir::Binder::ClauseParam(
+                    h,
+                    self.rec.clause,
+                    u32::try_from(i).unwrap_or(u32::MAX),
+                );
+                self.rec_bind(b, l);
+            }
             let refs = if self.holds_refs(pt) {
                 let r = self.root(&p.name.name, RootKind::Arg);
                 param_roots.insert(r, i);
@@ -2237,6 +2405,9 @@ impl Lower<'_> {
         let ty = &around.ty;
         let kty = Ty::Cont(Box::new(op.ret.clone()), Box::new(ty.clone()));
         let k = self.new_local("resume", VarKind::Continuation, c.span, kty, false);
+        if let Some(h) = self.rec.top() {
+            self.rec_bind(crate::thir::Binder::Resume(h, self.rec.clause), k);
+        }
         self.facts.vars[self.locals[k].var.index()].once = !op.multi;
         self.locals.get_mut(k).cont = Some(ContInfo {
             arg: op.ret.clone(),
@@ -2949,6 +3120,9 @@ impl Lower<'_> {
         self.push_frame(None);
         let n = self.emit(span, "scope", String::new());
         let l = self.new_local(&binder.name, VarKind::Local, binder.span, Ty::Scope, false);
+        if let Some(e) = self.rec.top() {
+            self.rec_bind(crate::thir::Binder::Scope(e), l);
+        }
         self.facts.vars[self.locals[l].var.index()].nonportable = true;
         self.assign_local(
             l,

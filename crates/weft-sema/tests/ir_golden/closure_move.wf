@@ -1,0 +1,13 @@
+// A closure that moves a capture holds it by move: the aggregate operand is
+// `move v`, the closure is `once`, and the body moves `env.0` (`docs/ir.md`
+// 5.1.7, 5.22).
+
+fn take(v: Vec<u64>) -> usize { v.len() }
+
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let n = 2
+    let f = || print(take(v) + n)
+    f()
+}

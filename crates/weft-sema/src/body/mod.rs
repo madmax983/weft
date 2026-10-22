@@ -686,6 +686,9 @@ pub struct Lowered {
     pub diags: Vec<Diagnostic>,
     /// The work of the lowering.
     pub work: crate::Work,
+    /// The decisions of the lowering for the THIR, with settled types
+    /// (`crate::thir::record`).
+    pub(crate) thir: Box<crate::thir::record::Recorder>,
 }
 
 #[derive(Clone, Debug)]
@@ -1446,6 +1449,9 @@ pub struct Lower<'p> {
     work: crate::Work,
     /// The most passes of one loop, for a test. `None`: [`loops::loop_pass_bound`].
     loop_bound: Option<usize>,
+    /// The recorder of the THIR tables (`crate::thir::record`). It only adds:
+    /// no decision of the lowering reads it.
+    rec: Box<crate::thir::record::Recorder>,
 }
 
 impl<'p> Lower<'p> {
@@ -1575,6 +1581,7 @@ impl<'p> Lower<'p> {
             task_ends: Vec::new(),
             work: crate::Work::default(),
             loop_bound: None,
+            rec: Box::default(),
         }
     }
 
@@ -3338,5 +3345,55 @@ impl<'p> Lower<'p> {
             Ty::Ref(inner) => self.deref_ty(&inner),
             t => t,
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // The recorder of the THIR (`crate::thir::record`)
+    // -----------------------------------------------------------------------
+
+    /// The number of references that [`Lower::deref_ty`] follows in `t` now.
+    fn ref_depth(&self, t: &Ty) -> usize {
+        let mut n = 0;
+        let mut t = self.inf.peek(t);
+        while let Ty::Ref(inner) = t {
+            n += 1;
+            t = self.inf.peek(&inner);
+        }
+        n
+    }
+
+    /// Records the dereferences of the value of expression `e`: the
+    /// dereference of its place that the lowering found
+    /// ([`crate::thir::record::Recorder::base_deref`]), then `refs` more
+    /// references.
+    fn rec_adjust(&mut self, e: ast::ExprId, refs: usize) {
+        let mut steps: Vec<crate::thir::DerefKind> = self.rec.take_base(e).into_iter().collect();
+        steps.extend(std::iter::repeat_n(crate::thir::DerefKind::Ref, refs));
+        self.rec.adjust(e, steps);
+    }
+
+    /// Records that an operator or a condition follows the references of the
+    /// value of expression `e`, of type `t` ([`Lower::deref_ty`]).
+    fn rec_peel(&mut self, e: ast::ExprId, t: &Ty) {
+        let n = self.ref_depth(t);
+        self.rec_adjust(e, n);
+    }
+
+    /// Records the use of local `l` at name expression `e`: its type and its
+    /// binding. A place through a local of a reference type follows the
+    /// reference (`through`).
+    fn rec_local(&mut self, e: &Expr, l: usize, through: bool) {
+        let (var, ty) = (self.locals[l].var, self.locals[l].ty.clone());
+        self.rec.res(e.id, crate::thir::record::RawRes::Local(var));
+        self.rec.expr_ty(e.id, &ty);
+        if through {
+            self.rec.base_deref = Some(e.id);
+        }
+    }
+
+    /// Records a binding of local `l`.
+    fn rec_bind(&mut self, b: crate::thir::Binder, l: usize) {
+        let local = &self.locals[l];
+        self.rec.bind(b, local.var, &local.name, &local.ty);
     }
 }

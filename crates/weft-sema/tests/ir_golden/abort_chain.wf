@@ -1,0 +1,34 @@
+// The cleanup chain of a terminator that can abort (`docs/ir.md` 5.1.6).
+// It finishes each value that has a cell at the terminator: the
+// temporaries from the newest, then the locals from the highest index,
+// then `Dead(_0)` (`_0` has no value yet), then the parameters. A value
+// that is not plain data gets `UnwindValue(_, Drop)` before its `Dead`;
+// plain data gets only its `Dead`. Two chains with one suffix share the
+// blocks of the suffix.
+
+fn g(x: u64) -> u64 { x }
+fn mk() -> Vec<u64> { Vec.new() }
+fn take(v: Vec<u64>, n: u64) -> u64 { n }
+
+// The chain of `g(b)`: the temporary of `g(b)`, the `Vec` temporary of
+// `mk()`, `b`, `a`, `Dead(_0)`, `n`, `p`.
+fn order(p: Vec<u64>, n: u64) -> u64 {
+    let a = mk()
+    let b = g(n)
+    take(mk(), g(b))
+}
+
+// The chain of `g(a)` adds `b` to the chain of `g(x)`: the blocks of `a`,
+// `v` and the parameters are the same blocks.
+fn share(x: u64) -> u64 {
+    let v = mk()
+    let a = g(x)
+    let b = g(a)
+    a + b
+}
+
+// `assert` can abort: it has a chain too.
+fn check(v: Vec<u64>, n: u64) {
+    let w = mk()
+    assert n > 0
+}

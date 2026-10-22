@@ -1,0 +1,42 @@
+// Assignment to a place (`docs/ir.md` 5.6): the value runs first, then
+// the target place, then the store. Behind a pointer, `Drop` comes before
+// the store only if the old value can be linear (V17).
+
+struct P { x: u64, y: u64 }
+linear struct Tok { id: u64 }
+struct H { t: Tok, n: u64 }
+struct Cell<T> { v: T }
+
+fn set_field(p: P, q: P) -> u64 {
+    p.x = q.y
+    p.x
+}
+
+// Plain data behind a reference: no `Drop`.
+fn set_through(r: &P) / mut(r) {
+    r.x = 5
+}
+
+// A linear old value behind a reference: `Drop` first.
+fn set_linear(r: &H, t: Tok) / mut(r) {
+    r.t = t   //~ W0601
+}
+
+// A value of a type parameter can be linear: `Drop` first.
+fn set_generic<T>(r: &Cell<T>, v: T) / mut(r) {
+    r.v = v
+}
+
+fn set_box(b: Box<P>) -> u64 {
+    b.x = 1
+    b.x
+}
+
+// The value runs before the index of the target.
+fn set_elem(v: Vec<u64>, i: usize, j: usize) {
+    v[i] = v[j]
+}
+
+fn set_elem_ref(v: &Vec<u64>, i: usize) / mut(v[]) {
+    v[i] = 2
+}

@@ -1,0 +1,37 @@
+// A field through a reference, a `Box` and an `Rc` (`docs/ir.md` 5.8,
+// 5.32): each implicit dereference of the THIR is a `Deref` projection.
+
+struct S { f: u64, g: Vec<u64> }
+
+fn by_ref(r: &S) -> u64 {
+    r.f
+}
+
+fn by_box(b: Box<S>) -> u64 {
+    b.f
+}
+
+fn by_rc(h: Rc<S>) -> u64 {
+    h.f
+}
+
+// Two references: two dereferences.
+fn ref_ref(r: &&S) -> u64 {
+    r.f
+}
+
+// A `Box` behind a reference.
+fn ref_box(r: &Box<S>) -> u64 {
+    r.f
+}
+
+// A borrow through a `Box` names the `Box` (OL-R2d-box).
+fn borrow_box(b: Box<S>) -> u64 {
+    let g = &b.g
+    0
+}
+
+// An operator follows the reference of its operand.
+fn deref_operand(r: &u64) -> u64 {
+    r + 1
+}

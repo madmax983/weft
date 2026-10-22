@@ -1,0 +1,142 @@
+fn f0 set_field(P, P) -> u64: b0
+fn f1 set_through(&P) -> () / (): b1
+fn f2 set_linear(&H, Tok) -> () / (): b2
+fn f3 set_generic<T0>(&Cell<T0>, T0) -> () / (): b3
+fn f4 set_box(Box<P>) -> u64: b4
+fn f5 set_elem(Vec<u64>, usize, usize) -> (): b5
+fn f6 set_elem_ref(&Vec<u64>, usize) -> () / (): b6
+cap_env e0
+
+body b0: fn set_field; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: P (Param(0) `p`)
+  _2: P (Param(1) `q`)
+  _3: u64 (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = copy _2.1
+    _1.0 = move _3
+    Dead(_3)
+    _0 = copy _1.0
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn set_through; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &P (Param(0) `r`)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 5u64
+    (*_1).0 = move _2
+    Dead(_2)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn set_linear; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &H (Param(0) `r`)
+  _2: Tok (Param(1) `t`)
+  _3: Tok (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = move _2
+    Drop((*_1).0)
+    (*_1).0 = move _3
+    Dead(_3)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn set_generic; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &Cell<T0> (Param(0) `r`)
+  _2: T0 (Param(1) `v`)
+  _3: T0 (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = move _2
+    Drop((*_1).0)
+    (*_1).0 = move _3
+    Dead(_3)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: fn set_box; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: Box<P> (Param(0) `b`)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 1u64
+    (*_1).0 = move _2
+    Dead(_2)
+    _0 = copy (*_1).0
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b5: fn set_elem; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Vec<u64> (Param(0) `v`)
+  _2: usize (Param(1) `i`)
+  _3: usize (Param(2) `j`)
+  _4: u64 (Temp(Operand))
+  _5: usize (Temp(Operand))
+  _6: usize (Temp(Operand))
+  bb0:
+    Live(_4)
+    Live(_5)
+    _5 = copy _3
+    Bounds(_1, copy _5)
+    _4 = copy _1[_5]
+    Live(_6)
+    _6 = copy _2
+    Bounds(_1, copy _6)
+    _1[_6] = move _4
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    _0 = const ()
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b6: fn set_elem_ref; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &Vec<u64> (Param(0) `v`)
+  _2: usize (Param(1) `i`)
+  _3: u64 (Temp(Operand))
+  _4: usize (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = const 2u64
+    Live(_4)
+    _4 = copy _2
+    Bounds((*_1), copy _4)
+    (*_1)[_4] = move _3
+    Dead(_4)
+    Dead(_3)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit

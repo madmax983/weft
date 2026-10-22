@@ -1,0 +1,32 @@
+// The place fields of a value built in place (`docs/ir.md` 5.2, 5.17; ADR
+// 0007): a by-value parameter has no value in its place fields, at each
+// depth of its full type. The walk follows struct fields, tuple parts, enum
+// payloads and the target of a `Box`. At a struct or an enum of a cycle on
+// the way it stops with one path for each place field below.
+
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct Wrap<T> { x: T, n: u64 }
+struct Node: !Move { fr: Frame, next: Option<Box<Node>> }
+struct Nest<T> { x: T, next: Option<Box<Nest<Box<T>>>> }
+
+fn frame(f: Frame) {}
+
+// A second use of one generic type walks both levels.
+fn wraps(w: Wrap<Wrap<Frame>>) {}
+
+fn boxed(b: Box<Frame>, t: (u64, Frame)) {}
+
+fn option(o: Option<Frame>) {}
+
+// A recursive type: the path below `next` stands for each place field
+// there.
+fn node(n: Node) {}
+
+// A type that grows at each depth.
+fn nest(n: Nest<Frame>) {}
+
+// A reference parameter has no place field of its own.
+fn by_ref(f: &Frame) {}
+
+// A type with no place field: nothing.
+fn plain(w: Wrap<u64>) {}

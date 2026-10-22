@@ -1,0 +1,14 @@
+// A closure in a clause holds the continuation in a `Kont` field. A `multi`
+// continuation is copied into the field, so the closure can run more than once.
+effect Choose { multi fn choose() -> bool }
+
+fn count() -> u64 {
+    handle Choose {
+        fn choose() {
+            let again = |b: bool| resume(b)
+            again(true) + again(false)
+        }
+    } in {
+        if choose() { 1 } else { 2 }
+    }
+}

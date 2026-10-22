@@ -1,0 +1,38 @@
+// `match` with bindings by value (`docs/ir.md` 5.13): the tests of an arm
+// come first, then the bindings in the block scope of the arm, then the
+// value of the arm into the destination.
+
+enum Shape { Circle(u64), Rect(u64, u64), Empty }
+
+// Plain data: each binding copies its part.
+fn area(s: Shape) -> u64 {
+    match s {
+        Circle(r) => r * r,
+        Shape.Rect(w, h) => w * h,
+        Empty => 0,
+    }
+}
+
+// A part that is not plain data moves into the binding.
+fn take(o: Option<Vec<u64>>, d: Vec<u64>) -> Vec<u64> {
+    match o {
+        Some(v) => v,
+        None => d,
+    }
+}
+
+// A scrutinee that is not a place goes into a temporary of the statement.
+fn of_block(o: Option<u64>) -> u64 {
+    match { o } {
+        Some(n) => n,
+        None => 0,
+    }
+}
+
+// A binding of the whole value: no test, so the later arms cannot run.
+fn whole(o: Option<u64>) -> u64 {
+    match o {
+        x => 1,
+        None => 0,
+    }
+}

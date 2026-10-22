@@ -12,6 +12,7 @@ members = [
     "crates/weft-interp",
     "crates/weft-cli",
     "crates/weft-gate",
+    "crates/weft-ir",
 ]
 
 [workspace.package]
@@ -44,6 +45,7 @@ weft-check = { path = "crates/weft-check" }
 weft-sema = { path = "crates/weft-sema" }
 weft-interp = { path = "crates/weft-interp" }
 weft-cli = { path = "crates/weft-cli" }
+weft-ir = { path = "crates/weft-ir" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

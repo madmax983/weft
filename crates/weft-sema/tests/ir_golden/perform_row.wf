@@ -1,0 +1,13 @@
+// A bare operation call is a perform through the row (`docs/ir.md` 5.26,
+// 5.1.8): the caller gives the capability. A call passes the lexical
+// capability environment to its callee (5.34).
+
+effect Tick { fn tick(n: u64) -> u64 }
+
+fn step(n: u64) -> u64 / Tick {
+    tick(n) + tick(2)
+}
+
+fn steps() -> u64 / Tick {
+    step(1)
+}

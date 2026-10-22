@@ -1,0 +1,76 @@
+fn f0 double(u64) -> u64: b0
+fn f1 names(Vec<u64>) -> Vec<u64>: b1
+fn f2 nothing() -> (): b2
+test t0 "let and assign": b3
+cap_env e0
+
+body b0: fn double; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: u64 (Param(0) `a`)
+  _2: u64 (User `b`)
+  _3: u64 (User `c`)
+  bb0:
+    Live(_2)
+    _2 = Add<u64>(copy _1, copy _1)
+    Live(_3)
+    _3 = Mul<u64>(copy _2, const 2u64)
+    _0 = copy _3
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn names; cap_env e0; unwind_exit bb1
+  _0: Vec<u64> (Return)
+  _1: Vec<u64> (Param(0) `s`)
+  _2: Vec<u64> (User `t`)
+  _3: i64 (Temp(Discarded))
+  bb0:
+    Live(_2)
+    _2 = move _1
+    Live(_3)
+    _3 = const 7i64
+    Dead(_3)
+    _0 = move _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn nothing; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: i64 (User `x`)
+  _2: i64 (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = const 1i64
+    Live(_2)
+    _2 = const 2i64
+    _1 = move _2
+    Dead(_2)
+    Mention(_1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: test "let and assign"; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: i64 (User `n`)
+  _2: i64 (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = const 3i64
+    Live(_2)
+    _2 = Add<i64>(copy _1, const 1i64)
+    _1 = move _2
+    Dead(_2)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit

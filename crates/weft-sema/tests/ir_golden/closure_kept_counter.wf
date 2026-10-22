@@ -1,0 +1,19 @@
+// A closure that writes a plain-data capture and does not borrow it keeps the
+// cell of the variable (`Kept`): `|| count += 1`. A counter closure that
+// leaves its function stays legal (`docs/ir.md` 5.1.7).
+
+fn counter() -> fn() -> u64 {
+    let n = 0
+    || { n += 1
+ n }
+}
+
+fn main() {
+    let count = 0
+    let inc = || count += 1
+    inc()
+    inc()
+    print(count)
+    let c = counter()
+    print(c())
+}

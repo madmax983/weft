@@ -1,0 +1,345 @@
+//! Summaries (`docs/ir.md` 6.7): what a body does, in the terms of its
+//! interface.
+//!
+//! A [`Summary`] has the parts of `docs/ir.md` 6.7. Each part names places of
+//! the interface of the body ([`IPlace`]): the pointee of a parameter, the
+//! places that the references behind a parameter point into, a capture, a
+//! capability, the frame of the body, a place of a caller, the `rc` group of
+//! a type. A run node maps them onto its own places with `σ`
+//! (`super::apply`). The relation table `RELS` (`crate::factgen::rels`) says
+//! which part carries each relation of the spec.
+//!
+//! A place of a summary has at most [`SIG_PLACE_STEPS`] steps. A longer place
+//! is cut there, and a wildcard step after the cut stands for each place
+//! below it ([`IPlace::cut`]). So the parts are finite, and a fixpoint over
+//! summaries ends (`docs/ir.md` 6.6).
+//!
+//! Stage F5 makes summaries from signatures (`super::sig`). Stage F6 makes
+//! the summary of a function with a body from its facts (`super::summarize`)
+//! in the fixpoint of the call graph (`super::callgraph`). The parts that
+//! only a body with a closure, a handler or a task gives (`runs`, `tasks`,
+//! `uses`, `moves`, `rebinds`, `frees`) stay empty; stage F11 and later
+//! fill them.
+
+use std::collections::BTreeSet;
+
+use weft_facts::Step;
+use weft_ir::AdtId;
+
+use crate::factgen::rels::Part;
+
+/// The most steps of a place of a summary (`docs/ir.md` 6.6).
+pub const SIG_PLACE_STEPS: usize = 8;
+
+/// The root of a place of an interface (`docs/ir.md` 6.7).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum IRoot {
+    /// What reference parameter `i` points into, or the places that the
+    /// references in by-value parameter `i` point into.
+    Param(u32),
+    /// The places that the references behind parameter `i` point into.
+    Held(u32),
+    /// The cell of capture or upvar `k`.
+    CaptureCell(u32),
+    /// The value of capture or upvar `k`.
+    Capture(u32),
+    /// A capability: an effect of the row, or a captured capability.
+    Cap(u32),
+    /// In a handled body: what a `resume` gives to operation `op`.
+    OpResult(u32),
+    /// In a clause: what `resume` gives back.
+    ResumeResult,
+    /// A local of the frame of the body that leaves it (the callee frame).
+    Frame,
+    /// A place of a caller.
+    Caller,
+    /// The `rc` group of a type definition.
+    Group(AdtId),
+}
+
+/// One step of a place of an interface.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum IStep {
+    /// A fixed step, with its text.
+    Step(Step, String),
+    /// The wildcard step: each place at or below.
+    Wild,
+    /// A side of a split at the parameter `label`. Each run node gives the
+    /// split an id of its own (QA17).
+    Seg {
+        /// The parameter that names the split point.
+        label: u32,
+        /// True for `[k..]`.
+        hi: bool,
+        /// The stability of the element step.
+        unstable: bool,
+    },
+}
+
+/// A place of an interface: a root and its steps.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct IPlace {
+    /// The root.
+    pub root: IRoot,
+    /// The steps, at most [`SIG_PLACE_STEPS`] and a wildcard.
+    pub steps: Vec<IStep>,
+}
+
+impl IPlace {
+    /// The place `root` with the steps `steps`, cut at
+    /// [`SIG_PLACE_STEPS`] steps: a longer place keeps its first steps and
+    /// gets a wildcard step.
+    pub fn cut(root: IRoot, mut steps: Vec<IStep>) -> Self {
+        if steps.len() > SIG_PLACE_STEPS {
+            steps.truncate(SIG_PLACE_STEPS);
+            steps.push(IStep::Wild);
+        }
+        Self { root, steps }
+    }
+
+    /// The root itself.
+    pub const fn root(root: IRoot) -> Self {
+        Self {
+            root,
+            steps: Vec::new(),
+        }
+    }
+
+    /// The wildcard place of the root: each place at or below it.
+    pub fn wild(root: IRoot) -> Self {
+        Self {
+            root,
+            steps: vec![IStep::Wild],
+        }
+    }
+
+    /// True if the place starts at the frame of the body.
+    pub const fn in_frame(&self) -> bool {
+        matches!(self.root, IRoot::Frame)
+    }
+}
+
+/// The capability interface of an operation.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum CapIface {
+    /// The capability of the effect that a caller gives (the row).
+    Row,
+    /// A capability of the interface: an effect of the row, or a captured
+    /// capability (`IRoot::Cap`).
+    Cap(u32),
+}
+
+/// An effect that the body performs, and through which capability.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Perform {
+    /// The identity of the effect (`crate::effects::identity`).
+    pub effect: String,
+    /// The capability.
+    pub cap: CapIface,
+}
+
+/// A way the body can end with an abort (`docs/ir.md` 6.5).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Abort {
+    /// An operation of the effect through the capability can abort.
+    Perform(Perform),
+    /// A failure that the runtime makes (`raises`).
+    Raises,
+    /// A failed `assert`.
+    Assert,
+}
+
+/// A function value of the interface that the body runs (stage F11 and
+/// later fill this part).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Run {
+    /// The function parameter (or capture) that the body runs.
+    pub param: u32,
+    /// The body can run it more than once.
+    pub many: bool,
+    /// The body runs it as a task.
+    pub task: bool,
+}
+
+/// The abstract value of `_0` (`docs/ir.md` 6.7, part `ret`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Ret {
+    /// The places that the result points into, with no part of its own.
+    pub places: Vec<IPlace>,
+    /// The places of a part of a tuple result: the index of the part, its
+    /// places, and the `@ uniq` mode of the part.
+    pub parts: Vec<(u32, Vec<IPlace>, bool)>,
+    /// The result is `@ uniq`.
+    pub uniq: bool,
+    /// The places that flow from the arguments into a result with no stated
+    /// place: a `Param(i)` root names the places that the references in
+    /// argument `i` point into. They hold only if the type of the result can
+    /// hold a reference. A one-place result (`&T` or `Option<&T>`) gets a
+    /// one-place instance of each wildcard place (ADR 0003).
+    pub flows: Vec<IPlace>,
+}
+
+/// How a value of an argument flows into the pointee of a reference
+/// argument that the body changes (part `stores`, R3RT6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Flow {
+    /// The references behind argument `i` (`Held(i)`, wildcard).
+    Held(u32),
+    /// A reference into argument `i` (`Param(i)`, wildcard). It goes in only
+    /// if the type of the pointee can hold a reference to a part of the
+    /// pointee of the argument.
+    Into(u32),
+    /// The references of the by-value argument `i` as they are. They go in
+    /// only if the type of the pointee can hold a reference of their type.
+    Value(u32),
+}
+
+/// A store of the body: values of other arguments that go behind
+/// reference parameter `into` (part `stores`).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Store {
+    /// The reference parameter whose pointee gets the values.
+    pub into: u32,
+    /// What goes there.
+    pub flows: Vec<Flow>,
+}
+
+/// The parts of a summary (`docs/ir.md` 6.7).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Summary {
+    /// Places that the body changes, each with the callee root index of the
+    /// parameter that it names (`call_mut`).
+    pub muts: Vec<(IPlace, u32)>,
+    /// Places that the body reads.
+    pub reads: Vec<IPlace>,
+    /// Places that the body frees.
+    pub frees: Vec<IPlace>,
+    /// Places that the body gives to code that it does not know.
+    pub lends: Vec<IPlace>,
+    /// The operations that the body performs.
+    pub performs: BTreeSet<Perform>,
+    /// The ways the body can abort.
+    pub aborts: BTreeSet<Abort>,
+    /// The body can resume a `multi` continuation more than once.
+    pub multi: bool,
+    /// The body can resume more than once with no effect of its row that
+    /// says so (a call of an unknown function value): the `multi` part of
+    /// the `EffectSig` of today.
+    pub unknown_multi: bool,
+    /// The function values of the interface that the body runs.
+    pub runs: Vec<Run>,
+    /// The tasks that the body starts in a scope that it does not own
+    /// (stage F18 fills this part).
+    pub tasks: Vec<u32>,
+    /// The value of `_0`.
+    pub ret: Ret,
+    /// The values that the body writes behind a reference parameter.
+    pub stores: Vec<Store>,
+    /// The type parameters of the values that the body drops.
+    pub drops: BTreeSet<u32>,
+    /// The type parameters of the values that the body holds across a node
+    /// that can abort or resume more than once.
+    pub holds: BTreeSet<u32>,
+    /// The captures and upvars that the body uses.
+    pub uses: BTreeSet<u32>,
+    /// The captures and upvars that the body moves.
+    pub moves: BTreeSet<u32>,
+    /// The captures and upvars that the body gives a whole new value on each
+    /// path to its `Return` (a must part).
+    pub rebinds: BTreeSet<u32>,
+    /// The reference parameters that are `@ uniq`.
+    pub uniq_needs: BTreeSet<u32>,
+    /// Each change of the body is below its first parameter (`writes_via`
+    /// at a method call).
+    pub only_self: bool,
+    /// The interface of each parameter: its name, its callee root index
+    /// (`call_arg`), and its stated `in` place (`param_in`).
+    pub params: Vec<ParamIface>,
+}
+
+/// The interface of one parameter.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ParamIface {
+    /// The name of the parameter.
+    pub name: String,
+    /// The callee root index (`crate::body::roots`): a parameter with an
+    /// `in` place has the root of the parameter of its place.
+    pub root: u32,
+    /// The stated `in` place of a reference parameter.
+    pub in_place: Option<IPlace>,
+}
+
+impl Summary {
+    /// True if the result can point into the frame of the body: then the
+    /// frame root of a run node ends at its `FrameEnd`.
+    pub fn ret_in_frame(&self) -> bool {
+        self.ret.places.iter().any(IPlace::in_frame)
+            || self.ret.flows.iter().any(IPlace::in_frame)
+            || self
+                .ret
+                .parts
+                .iter()
+                .any(|(_, ps, _)| ps.iter().any(IPlace::in_frame))
+    }
+
+    /// True if the body can abort.
+    pub fn can_abort(&self) -> bool {
+        !self.aborts.is_empty()
+    }
+
+    /// True if the part `part` of the relation table `RELS` has content. The
+    /// match is exhaustive: each part that `RELS` names has a field here.
+    pub fn has(&self, part: Part) -> bool {
+        match part {
+            Part::Muts => !self.muts.is_empty(),
+            Part::Reads => !self.reads.is_empty(),
+            Part::Frees => !self.frees.is_empty(),
+            Part::Lends => !self.lends.is_empty(),
+            Part::Performs => !self.performs.is_empty(),
+            Part::Aborts => !self.aborts.is_empty(),
+            Part::Multi => self.multi,
+            Part::Runs => !self.runs.is_empty(),
+            Part::Tasks => !self.tasks.is_empty(),
+            Part::Ret => {
+                !self.ret.places.is_empty()
+                    || !self.ret.parts.is_empty()
+                    || !self.ret.flows.is_empty()
+            }
+            Part::Stores => !self.stores.is_empty(),
+            Part::Drops => !self.drops.is_empty(),
+            Part::Holds => !self.holds.is_empty(),
+            Part::UsesMoves => !self.uses.is_empty() || !self.moves.is_empty(),
+            Part::Rebinds => !self.rebinds.is_empty(),
+            Part::UniqNeeds => !self.uniq_needs.is_empty(),
+            Part::OnlySelf => self.only_self,
+        }
+    }
+}
+
+/// The summary of each function that a call can run, by the function of the
+/// IR. A function with no summary has the reason (a later stage gives it).
+#[derive(Clone, Debug, Default)]
+pub struct Summaries {
+    /// The summary of each function, or why it has none.
+    by_fn: std::collections::HashMap<weft_ir::FnId, Result<Summary, &'static str>>,
+}
+
+impl Summaries {
+    /// The summary of function `f`.
+    ///
+    /// # Errors
+    ///
+    /// Returns why `f` has no summary yet.
+    pub fn get(&self, f: weft_ir::FnId) -> Result<&Summary, &'static str> {
+        match self.by_fn.get(&f) {
+            Some(Ok(s)) => Ok(s),
+            Some(Err(why)) => Err(why),
+            None => Err("a call of a function with no summary"),
+        }
+    }
+
+    /// Gives function `f` the summary `s`, or the reason why it has none.
+    pub fn insert(&mut self, f: weft_ir::FnId, s: Result<Summary, &'static str>) {
+        self.by_fn.insert(f, s);
+    }
+}

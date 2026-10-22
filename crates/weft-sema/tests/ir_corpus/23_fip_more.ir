@@ -1,0 +1,264 @@
+fn f0 mirror(Tree) -> Tree: b0
+fn f1 twice(List) -> List: b1
+fn f2 make() -> List: b2
+fn f3 closure_use(List) -> List: b3
+fn f4 helper(List) -> List: b5
+fn f5 not_fip(List) -> List: b6
+fn f6 calls(List) -> List: b7
+fn f7 loops(List) -> List: b8
+fn f8 twice_used(List) -> List: b9
+closure c0: body b4, maker b3, cap_env e0, captures []
+cap_env e0
+
+body b0: fn mirror; cap_env e0; unwind_exit bb11
+  _0: Tree (Return)
+  _1: Tree (Param(0) `t`)
+  _2: usize (Temp(Scrutinee))
+  _3: Tree (User `l`)
+  _4: u64 (User `v`)
+  _5: Tree (User `r`)
+  _6: Tree (Temp(Operand))
+  _7: u64 (Temp(Operand))
+  _8: Tree (Temp(Operand))
+  _9: usize (Temp(Scrutinee))
+  bb0:
+    Live(_2)
+    _2 = Discriminant(_1)
+    switch move _2 -> [0: bb1, otherwise: bb12]
+  bb1:
+    Dead(_2)
+    Live(_3)
+    _3 = move (_1 as #0).0
+    Live(_4)
+    _4 = copy (_1 as #0).1
+    Live(_5)
+    _5 = move (_1 as #0).2
+    Live(_6)
+    _6 = call mirror(move _5) / e0 -> [bb2, unwind: bb6]
+  bb2:
+    Live(_7)
+    _7 = copy _4
+    Live(_8)
+    _8 = call mirror(move _3) / e0 -> [bb3, unwind: bb4]
+  bb3:
+    _0 = Tree::Node(move _6, move _7, move _8)
+    Dead(_8)
+    Dead(_7)
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Goto(bb15)
+  bb4 (cleanup):
+    UnwindValue(_8, Drop)
+    Dead(_8)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_7)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_6, Drop)
+    Dead(_6)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindValue(_5, Drop)
+    Dead(_5)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_4)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindValue(_3, Drop)
+    Dead(_3)
+    Goto(bb10)
+  bb10 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb11)
+  bb11 (cleanup):
+    UnwindExit
+  bb12:
+    Dead(_2)
+    Goto(bb13)
+  bb13:
+    Live(_9)
+    _9 = Discriminant(_1)
+    switch move _9 -> [1: bb14, otherwise: bb16]
+  bb14:
+    Dead(_9)
+    _0 = Tree::Leaf()
+    Goto(bb15)
+  bb15:
+    Dead(_1)
+    Return
+  bb16:
+    Dead(_9)
+    Goto(bb17)
+  bb17:
+    Unreachable
+
+body b1: fn twice; cap_env e0; unwind_exit bb4
+  _0: List (Return)
+  _1: List (Param(0) `xs`)
+  bb0:
+    switch const true -> [1: bb1, otherwise: bb2]
+  bb1:
+    _0 = move _1
+    Goto(bb3)
+  bb2:
+    _0 = move _1
+    Goto(bb3)
+  bb3:
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b2: fn make; cap_env e0; unwind_exit bb1
+  _0: List (Return)
+  _1: List (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = List::Nil()
+    _0 = List::Cons(const 1u64, move _1)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn closure_use; cap_env e0; unwind_exit bb1
+  _0: List (Return)
+  _1: List (Param(0) `xs`)
+  _2: fn() -> i64 (User `f`)
+  bb0:
+    Live(_2)
+    _2 = closure c0()
+    _0 = move _1
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: closure c0; parent b3; cap_env e0; unwind_exit bb1
+  _0: i64 (Return)
+  _1: fn() -> i64 (Env)
+  bb0:
+    _0 = const 1i64
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b5: fn helper; cap_env e0; unwind_exit bb1
+  _0: List (Return)
+  _1: List (Param(0) `xs`)
+  bb0:
+    _0 = move _1
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b6: fn not_fip; cap_env e0; unwind_exit bb1
+  _0: List (Return)
+  _1: List (Param(0) `xs`)
+  bb0:
+    _0 = move _1
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b7: fn calls; cap_env e0; unwind_exit bb5
+  _0: List (Return)
+  _1: List (Param(0) `xs`)
+  _2: List (User `ys`)
+  bb0:
+    Live(_2)
+    _2 = call helper(move _1) / e0 -> [bb1, unwind: bb3]
+  bb1:
+    _0 = call not_fip(move _2) / e0 -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b8: fn loops; cap_env e0; unwind_exit bb4
+  _0: List (Return)
+  _1: List (Param(0) `xs`)
+  _2: () (Temp(Discarded))
+  bb0:
+    Goto(bb1)
+  bb1:
+    switch const false -> [1: bb2, otherwise: bb3]
+  bb2:
+    Live(_2)
+    Print(const 1i64)
+    _2 = const ()
+    Dead(_2)
+    Goto(bb1)
+  bb3:
+    _0 = move _1
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b9: fn twice_used; cap_env e0; unwind_exit bb8
+  _0: List (Return)
+  _1: List (Param(0) `xs`)
+  _2: List (Temp(Discarded))
+  _3: usize (Temp(Scrutinee))
+  _4: u64 (User `x`)
+  _5: List (User `rest`)
+  _6: usize (Temp(Scrutinee))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = Discriminant(_1)
+    switch move _3 -> [0: bb1, otherwise: bb2]
+  bb1:
+    Dead(_3)
+    Live(_4)
+    _4 = copy (_1 as #0).0
+    Live(_5)
+    _5 = move (_1 as #0).1
+    _2 = List::Cons(copy _4, move _5)
+    Dead(_5)
+    Dead(_4)
+    Goto(bb5)
+  bb2:
+    Dead(_3)
+    Goto(bb3)
+  bb3:
+    Live(_6)
+    _6 = Discriminant(_1)
+    switch move _6 -> [1: bb4, otherwise: bb6]
+  bb4:
+    Dead(_6)
+    _2 = List::Nil()
+    Goto(bb5)
+  bb5:
+    Dead(_2)
+    _0 = move _1
+    Dead(_1)
+    Return
+  bb6:
+    Dead(_6)
+    Goto(bb7)
+  bb7:
+    Unreachable
+  bb8 (cleanup):
+    UnwindExit

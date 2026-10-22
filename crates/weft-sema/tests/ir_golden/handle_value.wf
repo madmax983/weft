@@ -1,0 +1,11 @@
+// A `handle` is a value: the value of the handled body, or of a clause.
+effect Ask { fn ask(n: u64) -> u64 }
+
+fn main() {
+    let r = handle Ask {
+        fn ask(n) { resume(n + 1) }
+    } in {
+        ask(1) + 2
+    }
+    print(r)
+}

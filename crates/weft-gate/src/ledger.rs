@@ -31,6 +31,12 @@ pub enum EntryClass {
     Moved,
     /// A `changed` program.
     Changed,
+    /// A difference of the engine differential (`crate::engines`), not a
+    /// class of the gate.
+    Engine,
+    /// A difference of the signature diff (`crate::sigdiff`, plan stage F6),
+    /// not a class of the gate.
+    Sig,
 }
 
 impl EntryClass {
@@ -44,17 +50,23 @@ impl EntryClass {
             Self::LostClean => "lost-clean",
             Self::Moved => "moved",
             Self::Changed => "changed",
+            Self::Engine => "engine",
+            Self::Sig => "sig",
         }
     }
 
-    /// The class of the programs that an entry of this class accepts.
-    pub const fn program_class(self) -> Class {
+    /// The class of the programs that an entry of this class accepts in the
+    /// gate. An `engine` entry accepts no program of the gate: it accepts a
+    /// difference of the engine differential. A `sig` entry accepts a
+    /// difference of the signature diff.
+    pub const fn program_class(self) -> Option<Class> {
         match self {
-            Self::Open | Self::Edge | Self::OpenOld => Class::Open,
-            Self::NewFp => Class::NewFp,
-            Self::LostClean => Class::LostClean,
-            Self::Moved => Class::Moved,
-            Self::Changed => Class::Changed,
+            Self::Open | Self::Edge | Self::OpenOld => Some(Class::Open),
+            Self::NewFp => Some(Class::NewFp),
+            Self::LostClean => Some(Class::LostClean),
+            Self::Moved => Some(Class::Moved),
+            Self::Changed => Some(Class::Changed),
+            Self::Engine | Self::Sig => None,
         }
     }
 }
@@ -103,6 +115,19 @@ pub struct Entry {
     /// The stage that added the entry.
     #[serde(default)]
     pub stage: Option<String>,
+    /// The class of the difference (class `engine`): a name of
+    /// `crate::engines::Kind`.
+    #[serde(default)]
+    pub difference: Option<String>,
+    /// `"rejects"` (class `engine`): the entry is a rule for each program
+    /// that the checker rejects. With no `checker`, the entry must name each
+    /// program with a path (no glob).
+    #[serde(default)]
+    pub checker: Option<String>,
+    /// The parts of a signature that the entry accepts (class `sig`): names
+    /// of `crate::sigdiff::compare`. Empty means each part.
+    #[serde(default)]
+    pub parts: Vec<String>,
 }
 
 /// True if the text is there and is not empty.
@@ -149,7 +174,24 @@ impl Entry {
             EntryClass::LostClean if !given(self.signed_by.as_ref()) => {
                 "`signed_by` (a reviewer that is not the author of the stage)"
             }
-            EntryClass::Moved | EntryClass::Changed if !reason => "a `reason`",
+            EntryClass::Moved | EntryClass::Changed | EntryClass::Engine | EntryClass::Sig
+                if !reason =>
+            {
+                "a `reason`"
+            }
+            EntryClass::Engine if !given(self.difference.as_ref()) => {
+                "a `difference` (the class of the difference)"
+            }
+            EntryClass::Engine
+                if self.checker.is_some() && self.checker.as_deref() != Some("rejects") =>
+            {
+                "`checker = \"rejects\"` or no `checker`"
+            }
+            EntryClass::Engine
+                if self.checker.is_none() && self.files.iter().any(|f| f.contains(['*', '?'])) =>
+            {
+                "a path with no glob for each program, or `checker = \"rejects\"`"
+            }
             _ => return None,
         };
         Some(format!("the entry needs {text}"))

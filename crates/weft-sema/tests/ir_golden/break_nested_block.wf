@@ -1,0 +1,62 @@
+// `break` from a block inside the loop (`docs/ir.md` 5.1.5): each scope
+// between the jump and the loop ends, from the innermost, then `Goto` to
+// the exit. A value on its way is a temporary of an exited statement scope,
+// so it ends there too (OL-3c).
+
+// The block local `b`, the operand temporary of `a`, the body local `a`.
+fn find(k: u64) -> u64 {
+    let i = 0
+    loop {
+        let a = i * 2
+        let s = a + {
+            let b = a + 1
+            if b > k { break }
+            b
+        }
+        i += s
+    }
+    i
+}
+
+// In a `for`: the element ends at the jump, the iterator at the exit.
+fn first_big(v: Vec<u64>) -> u64 {
+    let r = 0
+    for x in v[] {
+        let y = x + {
+            if x > 10 {
+                r = x
+                break
+            }
+            0
+        }
+        r += y
+    }
+    r
+}
+
+// A `break` leaves only the innermost loop.
+fn inner(n: u64) -> u64 {
+    let c = 0
+    while c < n {
+        loop {
+            c += 1
+            break
+        }
+        c += 1
+    }
+    c
+}
+
+// A borrowed `Vec` on its way: the temporary ends at the `break`, and its
+// `Dead` drops the value.
+fn on_way(v: Vec<u64>, w: Vec<u64>, c: bool) -> bool {
+    let r = false
+    loop {
+        r = { v } == {
+            if c { break }
+            w
+        }
+        return r
+    }
+    r
+}

@@ -1,0 +1,29 @@
+// `match` through a reference (`docs/ir.md` 5.13): a binding of a part that
+// is not plain data is a reference into the place, `&((*r) as V).0`. A part
+// of a scalar type is a copy. A reference payload is copied.
+
+enum Pair { L(Vec<u64>), R(Vec<u64>) }
+
+// Each arm binds a reference, and the reference leaves the function.
+fn pick(r: &Pair) -> &Vec<u64> in r.. {
+    match r {
+        L(v) => v,
+        R(w) => w,
+    }
+}
+
+// A scalar part through a reference binds by value.
+fn count(r: &Option<u64>) -> u64 {
+    match r {
+        Some(n) => n,
+        None => 0,
+    }
+}
+
+// A reference payload: the binding copies the reference.
+fn payload_ref(o: Option<&Vec<u64>>) -> u64 {
+    match o {
+        Some(v) => 1,
+        None => 0,
+    }
+}

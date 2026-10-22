@@ -1,0 +1,30 @@
+// Bodies nested in a closure body (`docs/ir.md` 5.1.7, plan stage B12): a
+// `scope` in a handled body in a closure. Each nested body has its own upvar
+// local of the environment (`Upvar` of the one of its site). The handled body
+// performs `Say` through the `Cap` field of the closure, and a closure inside
+// the scope body captures `v` through the view (`ByRef` source `(*_n.0)`).
+
+effect Say { fn say(msg: String) }
+effect Ask { fn ask() -> u64 }
+
+fn total(v: &Vec<u64>) -> u64 / async { v[0] }
+
+fn main() / async {
+    let v = Vec.new()
+    v.push(1)
+    handle Say {
+        fn say(msg) { print(msg); resume(()) }
+    } in {
+        let f = || {
+            handle Ask { fn ask() { resume(2) } } in {
+                say("in")
+                scope { s =>
+                    let k = ask()
+                    let h = || total(&v) + k
+                    h()
+                }
+            }
+        }
+        print(f())
+    }
+}

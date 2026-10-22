@@ -1,0 +1,12 @@
+// `[a, b]` is a `Vec` aggregate (`docs/ir.md` 5.17). The elements run in
+// order; an element that moves is a temporary.
+
+fn one() -> u64 { 1 }
+
+fn nums(x: u64) -> Vec<u64> {
+    [one(), x]
+}
+
+fn nested(v: Vec<u64>) -> Vec<Vec<u64>> {
+    [v, [1, 2]]
+}

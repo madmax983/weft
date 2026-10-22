@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7"]
 
 
 # ----------------------------------------------------------------------
@@ -85,9 +85,9 @@ finding = "FD2"
 kind = "interp"
 verdict = "none"
 group = "AD"
-stage = "I3"
+stage = "I5"
 repro = ["tests/gate/probes/r2/fidelity/repro/FD2_multi_nested_drop.wf"]
-note = "Nested multi continuations share one exec record"
+note = "Nested multi continuations share one exec record. Stage I3 runs the repro on the IR engine (crates/weft-interp/tests/compile_ir.rs); the claim reads the IR oracle cache of stage I5"
 
 [[claim]]
 finding = "FD3"
@@ -1292,7 +1292,7 @@ note = "A use of a reference variable as a value is not a read (W0405)"
 finding = "RT11"
 kind = "unsound"
 verdict = "construction"
-group = "ABC"
+group = "AC"
 stage = "F13"
 repro = ["tests/gate/probes/redteam/c01_closure_return.wf"]
 note = "`return`/`break` in closure, handled and scope bodies go to the wrong target"
@@ -1367,7 +1367,7 @@ note = "A closure escapes its handler through a local, a tuple or a container (W
 finding = "RT17"
 kind = "unsound"
 verdict = "construction"
-group = "ACDE"
+group = "ACD"
 stage = "F19"
 repro = ["tests/gate/probes/redteam/lib01.wf"]
 note = "`sim.run` as a value bypasses W0802"
@@ -1732,7 +1732,7 @@ note = "Reassigned function value later in a loop body (second verifier); duplic
 finding = "V031"
 kind = "unsound"
 verdict = "one-rule"
-group = "ABC"
+group = "AC"
 stage = "F20"
 repro = ["tests/gate/probes/verify/review_core/Core_S2/probes/rt7_containers.wf"]
 note = "A closure that goes into a generic container is not tracked as stored"
@@ -2121,7 +2121,7 @@ note = "A local named as an if/match arm tail is not moved"
 finding = "V059"
 kind = "unsound"
 verdict = "construction"
-group = "AC"
+group = "A"
 stage = "F13"
 repro = [
     "tests/gate/probes/verify/partb/S4/p/i4_if_move2.wf",
@@ -3034,7 +3034,7 @@ note = "The scope capability in a tuple or an Option leaves the scope"
 finding = "V136"
 kind = "unsound"
 verdict = "construction"
-group = "ACE"
+group = "A"
 stage = "F19"
 repro = [
     "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/adv/p/g1_join_args.wf",
@@ -3043,6 +3043,35 @@ repro = [
     "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/adv/p/g4_join_effect.wf",
 ]
 note = "Sema ignores the arguments of `join` and `detach`; the interpreter runs them"
+
+# ----------------------------------------------------------------------
+# Stage B12: the closure modes of a local of a function type. The builder gives
+# such a local the modes that the analysis infers (linear, nonportable,
+# `once`), but its `copy` property stays the copy property of its type: the
+# analysis joins the values of a variable over the whole body, and a capture
+# of a variable that gets a `once` closure later must still share its cell.
+# So F11 and F12 must not read `LocalDecl.props.copy` of a function value as
+# "it can run twice": a call of a function value moves it if `props.once`.
+
+[[claim]]
+finding = "B12-fn-once"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/fixes/b12/fn_alias_once.wf"]
+code = "W0502"
+line = 15
+note = "`let g = f` of a once closure: `g` is `once` and `copy`; the second call of `g` is W0502 (the facts read `once`, not `copy`)"
+
+[[claim]]
+finding = "B12-late-once"
+kind = "sound"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/fixes/b12/late_once_capture.wf"]
+note = "A closure captures `c` before `c` gets a once closure: the capture is `Kept` (one cell), the call runs the new value once; a correct program, the ir pipeline must accept it"
 
 # ----------------------------------------------------------------------
 # Findings with no claim, and notes on repros with no claim. One line each.

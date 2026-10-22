@@ -1,0 +1,38 @@
+// Field and index places (`docs/ir.md` 5.8) and places in statement
+// position (5.4).
+
+struct P { x: u64, y: u64 }
+struct Q { p: P, n: u64 }
+struct V { items: Vec<u64> }
+
+// The parts of a local: a field of a field, a tuple part.
+fn fields(q: Q) -> u64 {
+    q.p.x + q.n
+}
+
+fn tuple_part(t: (u64, bool)) -> bool {
+    t.1
+}
+
+// A part that is not plain data moves out of the local.
+fn take_part(v: V) -> Vec<u64> {
+    v.items
+}
+
+// A field of a reference is a place through it: `(*r).p.y`.
+fn through_ref(r: &Q) -> u64 {
+    r.p.y
+}
+
+// A place in statement position names the place: it reads only the length
+// of its index.
+fn mention(q: Q, v: Vec<u64>) {
+    q.p
+    v[1]
+}
+
+// An operand that cannot run code: the place before it needs no
+// temporary.
+fn no_temp(q: Q, r: &Q) -> u64 {
+    q.n + r.n
+}

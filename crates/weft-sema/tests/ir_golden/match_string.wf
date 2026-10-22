@@ -1,0 +1,18 @@
+// String literal patterns (`docs/ir.md` 5.13): `tb := Eq(copy q, const "..")`
+// (a `String` is plain data), then a switch on `tb`.
+
+fn word(s: String) -> u64 {
+    match s {
+        "a" => 1,
+        "b" => 2,
+        _ => 0,
+    }
+}
+
+fn in_option(o: Option<String>) -> u64 {
+    match o {
+        Some("x") => 1,
+        Some(s) => 2,
+        None => 0,
+    }
+}

@@ -1,0 +1,12 @@
+// `h.detach()` moves the handle and lets the task run on (`docs/ir.md`
+// 5.29). It does not suspend and cannot abort. Its value is `()`.
+
+fn work() -> u64 { 1 }
+
+fn main() / async {
+    scope { s =>
+        let h = s.spawn(|| work())
+        h.detach()
+        s.spawn(|| work()).detach()
+    }
+}

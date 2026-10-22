@@ -1,0 +1,8 @@
+// `Log.info(m)` is a perform (`docs/ir.md` 5.19, 5.26): the capability comes
+// from the capability environment (5.1.8). With no handler around it, it is
+// the capability of the row: `Row(Log)`.
+
+fn tell(m: String) / log {
+    Log.info(m)
+    Log.warn("{m}!")
+}

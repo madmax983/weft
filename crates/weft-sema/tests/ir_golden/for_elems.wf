@@ -1,0 +1,50 @@
+// `for` over elements (`docs/ir.md` 5.14): `it := Iter(elems p)`, then at
+// the head `Live(x); IterNext(it, x)`. A scalar element is a copy. Another
+// element is a reference into the buffer. The pattern binds from `x` in a
+// block scope of each iteration. `x` ends at the end of each iteration and
+// on the exit edge; the iterator ends at the exit.
+
+// Scalar elements.
+fn sum(v: Vec<u64>) -> u64 {
+    let s = 0
+    for x in v[] { s += x }
+    s
+}
+
+// Elements through a reference parameter.
+fn sum_ref(v: &Vec<u64>) -> u64 {
+    let s = 0
+    for x in v[] { s += x }
+    s
+}
+
+// Elements that are not scalar: each one is a reference into the buffer.
+fn firsts(m: Vec<Vec<u64>>) -> u64 {
+    let n = 0
+    for r in m[] { n += r[0] }
+    n
+}
+
+// A tuple pattern binds through the reference to each element.
+fn pairs(ps: Vec<(u64, u64)>) -> u64 {
+    let n = 0
+    for (a, b) in ps[] {
+        let t = a * b
+        n += t
+    }
+    n
+}
+
+// A wildcard binds nothing.
+fn count(v: Vec<String>) -> u64 {
+    let n = 0
+    for _ in v[] { n += 1 }
+    n
+}
+
+// The elements of a fixed array.
+fn arr(a: [u64; 3]) -> u64 {
+    let s = 0
+    for x in a[] { s += x }
+    s
+}

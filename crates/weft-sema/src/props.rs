@@ -15,6 +15,7 @@
 
 use crate::program::{AdtKind, Program, PRELUDE};
 use crate::types::{AdtId, Ty};
+use weft_ir::ty::{Lang, Props, Ty as IrTy, TyId, TyProp, TyTable};
 
 /// A property of a type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -545,6 +546,131 @@ pub(crate) fn is_rc_handle(prog: &Program, a: AdtId) -> bool {
 fn is_task_handle(prog: &Program, a: AdtId) -> bool {
     let def = &prog.adts[a];
     def.module == PRELUDE && def.name == "Task"
+}
+
+// ---------------------------------------------------------------------------
+// Properties of the final types of the IR
+// ---------------------------------------------------------------------------
+
+/// Returns the property of the IR for property `p`.
+pub const fn ir_prop(p: Prop) -> TyProp {
+    match p {
+        Prop::Linear => TyProp::Linear,
+        Prop::Nonportable => TyProp::Nonportable,
+        Prop::Immovable => TyProp::Immovable,
+        Prop::Refs => TyProp::Refs,
+        Prop::Fns => TyProp::Fns,
+        Prop::NotCopy => TyProp::NotCopy,
+        Prop::NoOnAbort => TyProp::NoOnAbort,
+        Prop::Resource => TyProp::Resource,
+    }
+}
+
+/// Returns the properties of the final type `t` (`docs/ir.md` 2.3, 3.2).
+///
+/// They are the flags that the old lowering gives a variable of type `t`
+/// (`Lower::var_info`, `Lower::is_copy`, `Lower::holds_refs`), with two
+/// differences. A function type has no closure summary, so a function value
+/// gets only `callable`: the analysis adds the properties of the closures that
+/// it can be. And `uniq` is false: the mode `@ uniq` is in the declaration, not
+/// in the type. A type parameter is not linear here; `generic` tells that a
+/// caller can give it a linear type.
+pub fn ir_props(table: &TyTable, t: TyId) -> Props {
+    let has = |p| ir_has(table, t, p);
+    let top = table.try_get(t);
+    let linear = has(TyProp::Linear);
+    Props {
+        // One source of the copy property: the verifier of the IR uses it too.
+        copy: !table.not_copy(t),
+        linear,
+        on_abort: !has(TyProp::NoOnAbort),
+        // A value that a `multi` resume cannot copy is not `many` either.
+        once: linear || has(TyProp::Resource) || matches!(top, Some(IrTy::Cont(..))),
+        immovable: has(TyProp::Immovable),
+        nonportable: has(TyProp::Nonportable),
+        uniq: false,
+        callable: matches!(top, Some(IrTy::Fn(_))),
+        generic: table.mentions_param(t),
+        holds_refs: has(TyProp::Refs),
+    }
+}
+
+/// Returns true if a borrow of a value of the final type `t` puts the value
+/// into a promoted temporary (`docs/ir.md` 5.10).
+///
+/// The value is plain data, and no part is a function value or a resource.
+/// This is the temporary of a borrow that the old lowering gives no variable
+/// (`Lower::temp_root`): a temporary that is plain data never goes out of
+/// scope there.
+pub fn ir_promotes(table: &TyTable, t: TyId) -> bool {
+    !table.not_copy(t) && !ir_has(table, t, TyProp::Fns) && !ir_has(table, t, TyProp::Resource)
+}
+
+/// Returns true if a value of the final type `t` can be linear.
+///
+/// A part of it is linear, or a part of it is a type parameter. This is
+/// `linear` in a generic body of the old lowering (`Lower::generic`). The
+/// builder of the IR uses it for the `Drop` before a store behind a pointer
+/// (`docs/ir.md` 5.1.3, rule V17).
+pub fn ir_maybe_linear(table: &TyTable, t: TyId) -> bool {
+    ir_has_in(table, t, TyProp::Linear, true)
+}
+
+/// Returns true if property `p` holds for a value of the final type `t`: a
+/// part of it has the property. The rows of the definitions come from the
+/// table. The cases are the cases of `Lower::ty_has_in` for a type with no
+/// inference variable and no closure summary, and with a type parameter that
+/// is not linear.
+fn ir_has(table: &TyTable, t: TyId, p: TyProp) -> bool {
+    ir_has_in(table, t, p, false)
+}
+
+/// [`ir_has`]; with `params`, a type parameter is linear.
+fn ir_has_in(table: &TyTable, t: TyId, p: TyProp, params: bool) -> bool {
+    let Some(ty) = table.try_get(t) else {
+        return false;
+    };
+    let h = |x: TyId| ir_has_in(table, x, p, params);
+    let lang = |a: weft_ir::AdtId| table.adts().get(a.index()).and_then(|d| d.lang);
+    match ty {
+        // The copies of a `multi` resume share an `rc` object: a function
+        // value or a reference in it points into the locals of one run.
+        IrTy::Adt(a, args)
+            if p == TyProp::Resource && matches!(lang(*a), Some(Lang::Rc | Lang::Weak)) =>
+        {
+            args.first()
+                .is_some_and(|&x| ir_has(table, x, TyProp::Fns) || ir_has(table, x, TyProp::Refs))
+        }
+        IrTy::Adt(a, args) => table.adts().get(a.index()).is_some_and(|d| {
+            let row = d.row(p);
+            row.always
+                || row
+                    .params
+                    .iter()
+                    .any(|&j| args.get(j as usize).is_some_and(|&x| h(x)))
+        }),
+        IrTy::Tuple(ts) => ts.iter().any(|&x| h(x)),
+        IrTy::Array(x, _) => p == TyProp::NotCopy || h(*x),
+        // A reference to a nonportable value is nonportable: another thread
+        // could use the value through it.
+        IrTy::Ref(x) => match p {
+            TyProp::Refs => true,
+            TyProp::Fns | TyProp::Nonportable => h(*x),
+            _ => false,
+        },
+        // An iterator of a `for` loop can point into its collection, as a slice does.
+        IrTy::Slice(x) | IrTy::Iter(x) => match p {
+            TyProp::Refs | TyProp::NotCopy => true,
+            TyProp::Fns | TyProp::Nonportable => h(*x),
+            _ => false,
+        },
+        IrTy::Fn(_) => p == TyProp::Fns,
+        IrTy::Param(_) => p == TyProp::NotCopy || (p == TyProp::Linear && params),
+        IrTy::Cont(..) => p == TyProp::NotCopy,
+        IrTy::Scope => matches!(p, TyProp::Nonportable | TyProp::Resource),
+        // A capability value is plain data: a copy names the same handler.
+        IrTy::Cap(_) | IrTy::Unit | IrTy::Bool | IrTy::Never | IrTy::Int(_) => false,
+    }
 }
 
 #[cfg(test)]

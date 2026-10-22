@@ -1,0 +1,12 @@
+// `dest = fork(f, g)` runs each branch as a task and waits for all of them
+// (`docs/ir.md` 5.29). Each branch is a spawn site with no scope. The value
+// is the tuple of the results; it can abort.
+
+fn a() -> u64 { 1 }
+fn b() -> u64 { 2 }
+
+fn main() / par {
+    let (x, y) = fork(|| a(), || b())
+    let z = fork(|| a()) { b() }
+    print(x + y + z.0)
+}

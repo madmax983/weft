@@ -247,6 +247,18 @@ pipeline for the whole program and say so (`weft check --facts=ir` prints one no
 gate reports the coverage: the share of programs of each set in scope. A stage that turns
 a group on adds it to the default set of `ir_groups`.
 
+As built (F1): `irbuild/scope.rs` reads the groups from the IR of each function or test
+and of each body inside it. A loop that never goes back to its head (`loop { break }`) is
+group A. A local whose type has a function part (also through fields) is group C; a task
+handle, a scope capability or `sim.run`/`with_timeout` as a value is group E; a
+capability or a continuation is group D; a type that names a type parameter is group F. A
+body with no IR (a type error, W0303) uses no group: the `ir` pipeline gives it no facts,
+and the diagnostics of `typeck` reject the program. A body that the builder does not
+lower keeps the program out of scope. A program is in scope when its groups are on and
+the fact generator (`factgen::emit`) supports them; until F8 the stub supports none. The
+gate computes both records in one analysis (`--facts=both`), reports the coverage, and
+also the share of programs of each set that use only the groups of each group stage.
+
 ### 2.7 Common exit criteria
 
 Each stage that changes `ir` diagnostics ends only if, on the programs in scope:

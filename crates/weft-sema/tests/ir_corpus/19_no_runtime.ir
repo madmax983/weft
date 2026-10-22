@@ -1,0 +1,156 @@
+fn f0 work() -> () / Log, main.Tick: b0
+fn f1 main() -> (): b1
+fn f2 helper() -> () / Clock: b7
+fn f3 main2() -> () / Clock: b8
+fn f4 sleep(Duration) -> () / Clock: extern
+handler h0 main.Tick: handled b2, site b1, clauses [tick: b3]
+handler h1 Log: handled b4, site b2, clauses [info: b5, warn: b6]
+cap_env e0
+cap_env e1: parent e0, main.Tick _1
+cap_env e2: parent e1, Log _1
+
+body b0: fn work; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: () (Temp(Discarded))
+  bb0:
+    Live(_1)
+    _1 = perform Row(main.Tick).tick() -> [bb1, unwind: bb3]
+  bb1:
+    Dead(_1)
+    _0 = perform Row(Log).info(const "done") -> [bb2, unwind: bb4]
+  bb2:
+    Return
+  bb3 (cleanup):
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b1: fn main; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  bb0:
+    _0 = handle h0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b2: handled h0; parent b1; cap_env e1; unwind_exit bb3
+  _0: () (Return)
+  _1: Cap<main.Tick> (Cap(main.Tick) `Tick`)
+  bb0:
+    _0 = handle h1 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b3: clause h0 tick; parent b1; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: resume(()) -> () (Kont(once) `resume`)
+  bb0:
+    _0 = resume _1(const ()) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindKont(_1)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b4: handled h1; parent b2; cap_env e2; unwind_exit bb3
+  _0: () (Return)
+  _1: Cap<Log> (Cap(Log) `Log`)
+  bb0:
+    _0 = call work() / e2 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b5: clause h1 info; parent b2; cap_env e1; unwind_exit bb4
+  _0: () (Return)
+  _1: String (Param(0) `m`)
+  _2: resume(()) -> () (Kont(once) `resume`)
+  bb0:
+    _0 = resume _2(const ()) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindKont(_2)
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b6: clause h1 warn; parent b2; cap_env e1; unwind_exit bb4
+  _0: () (Return)
+  _1: String (Param(0) `m`)
+  _2: resume(()) -> () (Kont(once) `resume`)
+  bb0:
+    _0 = resume _2(const ()) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindKont(_2)
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b7: fn helper; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  bb0:
+    _0 = call sleep(const 1000ms) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b8: fn main2; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  bb0:
+    _0 = call helper() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit

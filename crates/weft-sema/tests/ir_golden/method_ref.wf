@@ -1,0 +1,26 @@
+// A method whose `self` is a reference (`docs/ir.md` 5.19): the receiver is
+// a place first, the arguments run, then the call borrows the receiver.
+
+struct Acc { n: u64 }
+
+impl Acc {
+    fn plus(self, k: u64) -> u64 { self.n + k }
+}
+
+fn one() -> u64 { 1 }
+
+// `&a` comes after the call of `one`.
+fn on_place(a: Acc) -> u64 {
+    a.plus(one())
+}
+
+// A receiver behind a reference: the call borrows the place behind it
+// (`&(*r)`, the dereference of the THIR).
+fn on_ref(r: &Acc) -> u64 {
+    r.plus(2)
+}
+
+// A prelude method: `v.push(v.len())` borrows `v` for `push` after `len`.
+fn prelude(v: Vec<usize>) {
+    v.push(v.len())
+}

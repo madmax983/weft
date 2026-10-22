@@ -946,6 +946,7 @@ dependencies = [
  "weft-datalog",
  "weft-facts",
  "weft-interp",
+ "weft-ir",
  "weft-sema",
  "weft-syntax",
 ]
@@ -994,9 +995,17 @@ dependencies = [
  "proptest",
  "thiserror",
  "weft-check",
+ "weft-ir",
  "weft-sema",
  "weft-syntax",
  "weft-verified",
+]
+
+[[package]]
+name = "weft-ir"
+version = "0.1.0"
+dependencies = [
+ "weft-syntax",
 ]
 
 [[package]]
@@ -1004,6 +1013,7 @@ name = "weft-sema"
 version = "0.1.0"
 dependencies = [
  "weft-facts",
+ "weft-ir",
  "weft-syntax",
  "weft-verified",
 ]

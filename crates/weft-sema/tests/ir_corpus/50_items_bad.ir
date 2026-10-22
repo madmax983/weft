@@ -1,0 +1,154 @@
+fn f0 dup_param(u64, String) -> (): extern
+fn f1 dup_gen<T0, T1>(T0) -> (): extern
+fn f2 H.one<T0, T1>(&H<T0, T1>) -> (): b0
+fn f3 H.two<T0, T1>(&H<T0, T1>) -> (): b1
+fn f4 H.shadow<T0, T1>(&H<T0>, T0) -> (): extern
+fn f5 wrong(&Bad) -> (): b2
+fn f6 finish(Good) -> (): b3
+fn f7 uniq_shared(&u64) -> (): extern
+fn f8 once_many(fn() -> ()) -> (): extern
+fn f9 uniq_aliased(&u64) -> (): extern
+fn f10 portable(&u64) -> (): extern
+fn f11 contended(&u64) -> (): extern
+fn f12 fine_modes(&u64, &u64) -> (): b4
+fn f13 self_place(&u64) -> (): b5
+fn f14 cycle(&Vec<u64>, &u64, &u64) -> (): b6
+fn f15 chain(&Vec<u64>, &u64, &u64) -> (): b7
+fn f16 no_type(()) -> (): extern
+fn f17 Pt.get(&Pt, ()) -> u64: extern
+fn f18 Pt.fine(&Pt) -> u64: b8
+fn f19 variant_let(Option<u64>) -> (): extern
+fn f20 unknown_let(u64) -> (): extern
+fn f21 struct_let(Pt) -> u64: b9
+cap_env e0
+
+body b0: fn H.one; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &H<T0, T1> (Param(0) `self`)
+  bb0:
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn H.two; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &H<T0, T1> (Param(0) `self`)
+  bb0:
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn wrong; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &Bad (Param(0) `b`)
+  bb0:
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn finish; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Good (Param(0) `g`)
+  _2: u64 (User `i`)
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Consume(_1)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: fn fine_modes; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &u64 (Param(0) `a`)
+  _2: &u64 (Param(1) `b`)
+  bb0:
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b5: fn self_place; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &u64 (Param(0) `x`)
+  bb0:
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b6: fn cycle; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &Vec<u64> (Param(0) `v`)
+  _2: &u64 (Param(1) `x`)
+  _3: &u64 (Param(2) `y`)
+  bb0:
+    _0 = const ()
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b7: fn chain; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &Vec<u64> (Param(0) `v`)
+  _2: &u64 (Param(1) `x`)
+  _3: &u64 (Param(2) `y`)
+  bb0:
+    _0 = const ()
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b8: fn Pt.fine; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: &Pt (Param(0) `self`)
+  bb0:
+    _0 = copy (*_1).0
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b9: fn struct_let; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: Pt (Param(0) `p`)
+  _2: u64 (User `x`)
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+// dup_param: no IR: a type error
+// dup_gen: no IR: a type error
+// H.shadow: no IR: a type error
+// uniq_shared: no IR: a type error
+// once_many: no IR: a type error
+// uniq_aliased: no IR: a type error
+// portable: no IR: a type error
+// contended: no IR: a type error
+// no_type: no IR: a type error
+// Pt.get: no IR: a type error
+// variant_let: no IR: a type error
+// unknown_let: no IR: a type error

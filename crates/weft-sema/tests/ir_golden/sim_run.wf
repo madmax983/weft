@@ -1,0 +1,17 @@
+// `sim.run(seed, workers) { body }` is a call of the intrinsic `sim.run`
+// (`docs/ir.md` 5.30). The body is a closure argument. `workers = 4` when the
+// call leaves it out is a constant argument.
+
+fn work() / async { print(1) }
+
+test "default workers" {
+    sim.run(seed: 7) {
+        work()
+    }
+}
+
+test "two workers" {
+    sim.run(seed: 7, workers: 2) {
+        work()
+    }
+}

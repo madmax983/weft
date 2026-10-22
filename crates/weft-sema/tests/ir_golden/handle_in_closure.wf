@@ -1,0 +1,25 @@
+// A `handle` in a closure body names the captures of the closure through an
+// upvar local of the environment (`docs/ir.md` 5.1.7, plan stage B12). The
+// handled body moves the linear capture `l` (`ByMove`: the closure is `once`),
+// the clause reads `n` (`Kept`), and the handled body borrows `v` (`ByRef`).
+// Probe `verify/s5/R2c/p/o6.wf` has the same shape.
+
+effect Ask { fn ask() -> u64 }
+linear struct Lk { id: u64 }
+fn unlock(l: Lk) { let Lk(id) = l; print("unlock", id) }
+fn first(v: &Vec<u64>) -> u64 { v[0] }
+
+fn main() {
+    let l = Lk { id: 1 }
+    let n = 7
+    let v = Vec.new()
+    v.push(3)
+    let g = || {
+        handle Ask { fn ask() { resume(n) } } in {
+            let x = ask()
+            unlock(l)
+            x + first(&v)
+        }
+    }
+    print(g())
+}

@@ -1,0 +1,82 @@
+fn f0 by_ref(&S) -> u64: b0
+fn f1 by_box(Box<S>) -> u64: b1
+fn f2 by_rc(Rc<S>) -> u64: b2
+fn f3 ref_ref(&&S) -> u64: b3
+fn f4 ref_box(&Box<S>) -> u64: b4
+fn f5 borrow_box(Box<S>) -> u64: b5
+fn f6 deref_operand(&u64) -> u64: b6
+cap_env e0
+
+body b0: fn by_ref; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: &S (Param(0) `r`)
+  bb0:
+    _0 = copy (*_1).0
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn by_box; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: Box<S> (Param(0) `b`)
+  bb0:
+    _0 = copy (*_1).0
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn by_rc; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: Rc<S> (Param(0) `h`)
+  bb0:
+    _0 = copy (*_1).0
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn ref_ref; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: &&S (Param(0) `r`)
+  bb0:
+    _0 = copy (*(*_1)).0
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: fn ref_box; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: &Box<S> (Param(0) `r`)
+  bb0:
+    _0 = copy (*(*_1)).0
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b5: fn borrow_box; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: Box<S> (Param(0) `b`)
+  _2: &Vec<u64> (User `g`)
+  bb0:
+    Live(_2)
+    _2 = &(*_1).1
+    _0 = const 0u64
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b6: fn deref_operand; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: &u64 (Param(0) `r`)
+  bb0:
+    _0 = Add<u64>(copy (*_1), const 1u64)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit

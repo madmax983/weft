@@ -1,0 +1,96 @@
+// Borrows of plain data (`docs/ir.md` 5.9, 5.10): the value goes into a
+// `Promoted` temporary. It has a `Live` at the borrow and a `Dead` at the frame
+// exit, so a reference to it stays valid after the statement, as in the old
+// pipeline. A borrow of a value that is not plain data still borrows a
+// temporary of the statement.
+
+struct P { x: u64, y: u64 }
+struct Q { p: P, n: u64 }
+struct V { v: Vec<u64> }
+
+impl P {
+    fn px(self) -> &u64 in self { &self.x }
+}
+
+fn g() -> u64 { 3 }
+fn mkp() -> P { P { x: 1, y: 2 } }
+fn mkq() -> Q { Q { p: mkp(), n: 4 } }
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(5); v }
+
+fn temp_copy() {
+    let r = &1
+    print(r)
+}
+
+fn constants() {
+    let s = &"s"
+    let b = &true
+    let u = &()
+    let d = &2.s
+    let n = &-1
+    print(s)
+    print(b)
+    print(u)
+    print(d)
+    print(n)
+}
+
+fn aggregates() {
+    let t = &(1, 2)
+    let p = &P { x: 1, y: 2 }
+    print(t.0)
+    print(p.x)
+}
+
+fn values(a: u64) {
+    let c = &g()
+    let e = &(a + 1)
+    let l = &mkv().len()
+    print(c)
+    print(e)
+    print(l)
+}
+
+// The base value of a borrowed field path is promoted too.
+fn field_paths() {
+    let f = &(3, 4).0
+    let x = &mkp().x
+    let y = &mkq().p.y
+    print(f)
+    print(x)
+    print(y)
+}
+
+// A receiver of plain data that the call borrows is promoted too.
+fn receiver() {
+    let r = mkp().px()
+    print(r)
+}
+
+fn in_branch(c: bool) {
+    let k = 0
+    let r = &k
+    if c { r = &5 }
+    print(r)
+}
+
+fn in_loop(n: u64) {
+    let v = Vec.new()
+    let i = 0
+    while i < n {
+        v.push(&(i + 1))
+        i += 1
+    }
+    print(v.len())
+}
+
+// Not plain data: a temporary of the statement.
+fn not_plain() {
+    let r = &mkv()[0]
+    print(r)
+}
+
+fn not_plain_value() {
+    let w = &V { v: Vec.new() }
+    print(w.v.len())
+}

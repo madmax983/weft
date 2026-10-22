@@ -31,6 +31,7 @@
 
 pub mod code;
 pub mod compile;
+pub mod compile_ir;
 pub mod error;
 pub mod heap;
 mod machine;
@@ -52,6 +53,20 @@ use crate::compile::{ArgOrder, ByValue, Exports, IntOps};
 use crate::machine::{Machine, TaskResult};
 use crate::runtime::Runtime;
 use crate::value::{Cap, Obj, Value};
+
+/// The compiler that makes the code of a run.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Engine {
+    /// The AST compiler ([`compile`]). It is the default.
+    #[default]
+    Ast,
+    /// The IR compiler ([`compile_ir`]): it compiles the core IR of the
+    /// program (`docs/ir.md` 8.1). For a program with a body that has no
+    /// IR (a type error, an error in a declaration, W0303), the AST compiler
+    /// runs the program, and [`RunOutcome::fallback`] tells why. The checker
+    /// rejects these programs.
+    Ir,
+}
 
 /// Options for one run.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -75,6 +90,8 @@ pub struct RunOptions {
     /// buffer that a `Vec` moves, a linear leak, a data race and a stealable
     /// task that reaches a nonportable value are faults. Off by default.
     pub oracle: bool,
+    /// The compiler that makes the code.
+    pub engine: Engine,
 }
 
 impl Default for RunOptions {
@@ -88,6 +105,7 @@ impl Default for RunOptions {
             quantum: 1000,
             no_runtime: false,
             oracle: false,
+            engine: Engine::Ast,
         }
     }
 }
@@ -105,6 +123,9 @@ pub struct RunOutcome {
     pub leaked_rc: usize,
     /// The number of calls that ran on the blocking pool.
     pub blocking_calls: usize,
+    /// With [`Engine::Ir`]: the reason why the AST compiler ran the program,
+    /// if it did.
+    pub fallback: Option<String>,
 }
 
 /// The result of one test block.
@@ -196,13 +217,8 @@ pub fn exports(analysis: &Analysis) -> Exports {
 /// `once` continuation. The run is on a large stack ([`weft_sema::on_large_stack`]).
 pub fn run_main(checked: &Checked, opts: &RunOptions) -> Result<RunOutcome, RuntimeError> {
     weft_sema::on_large_stack(|| {
-        let rt = Runtime::new(
-            &checked.analysis.program,
-            &checked.analysis.sigs,
-            stealable_spans(checked),
-            &exports(&checked.analysis),
-        );
-        run_main_with(&rt, opts)
+        let (rt, fallback) = runtime(&checked.analysis, stealable_spans(checked), opts.engine);
+        with_fallback(run_main_with(&rt, opts), fallback)
     })
 }
 
@@ -213,13 +229,8 @@ pub fn run_analysis_main(
     opts: &RunOptions,
 ) -> Result<RunOutcome, RuntimeError> {
     weft_sema::on_large_stack(|| {
-        let rt = Runtime::new(
-            &analysis.program,
-            &analysis.sigs,
-            BTreeSet::new(),
-            &exports(analysis),
-        );
-        run_main_with(&rt, opts)
+        let (rt, fallback) = runtime(analysis, BTreeSet::new(), opts.engine);
+        with_fallback(run_main_with(&rt, opts), fallback)
     })
 }
 
@@ -227,13 +238,8 @@ pub fn run_analysis_main(
 /// stack ([`weft_sema::on_large_stack`]).
 pub fn run_tests(checked: &Checked, opts: &RunOptions) -> Vec<TestOutcome> {
     weft_sema::on_large_stack(|| {
-        let rt = Runtime::new(
-            &checked.analysis.program,
-            &checked.analysis.sigs,
-            stealable_spans(checked),
-            &exports(&checked.analysis),
-        );
-        run_tests_with(&rt, opts)
+        let (rt, fallback) = runtime(&checked.analysis, stealable_spans(checked), opts.engine);
+        tests_with_fallback(run_tests_with(&rt, opts), fallback.as_deref())
     })
 }
 
@@ -241,14 +247,59 @@ pub fn run_tests(checked: &Checked, opts: &RunOptions) -> Vec<TestOutcome> {
 /// large stack ([`weft_sema::on_large_stack`]).
 pub fn run_analysis_tests(analysis: &Analysis, opts: &RunOptions) -> Vec<TestOutcome> {
     weft_sema::on_large_stack(|| {
-        let rt = Runtime::new(
-            &analysis.program,
-            &analysis.sigs,
-            BTreeSet::new(),
-            &exports(analysis),
-        );
-        run_tests_with(&rt, opts)
+        let (rt, fallback) = runtime(analysis, BTreeSet::new(), opts.engine);
+        tests_with_fallback(run_tests_with(&rt, opts), fallback.as_deref())
     })
+}
+
+/// Makes the tables and the code of a run with `engine`. With
+/// [`Engine::Ir`], the second value is the reason why the AST compiler
+/// compiled the program, if it did.
+fn runtime(
+    analysis: &Analysis,
+    stealable: BTreeSet<(usize, u32, u32)>,
+    engine: Engine,
+) -> (Runtime<'_>, Option<String>) {
+    let (prog, sigs) = (&analysis.program, analysis.sigs.as_slice());
+    if engine == Engine::Ir {
+        let built = weft_sema::irbuild::build(analysis);
+        match compile_ir::compile_ir(prog, &built) {
+            Ok(code) => return (Runtime::with_code(prog, sigs, stealable, code), None),
+            Err(f) => {
+                let rt = Runtime::new(prog, sigs, stealable, &exports(analysis));
+                return (rt, Some(f.to_string()));
+            }
+        }
+    }
+    (
+        Runtime::new(prog, sigs, stealable, &exports(analysis)),
+        None,
+    )
+}
+
+/// Writes the reason of a fallback into the outcome of a run.
+fn with_fallback(
+    r: Result<RunOutcome, RuntimeError>,
+    fallback: Option<String>,
+) -> Result<RunOutcome, RuntimeError> {
+    match r {
+        Ok(mut o) => {
+            o.fallback = fallback;
+            Ok(o)
+        }
+        Err(mut e) => {
+            e.outcome.fallback = fallback;
+            Err(e)
+        }
+    }
+}
+
+/// Writes the reason of a fallback into the outcome of each test.
+fn tests_with_fallback(mut ts: Vec<TestOutcome>, fallback: Option<&str>) -> Vec<TestOutcome> {
+    for t in &mut ts {
+        t.outcome.fallback = fallback.map(str::to_string);
+    }
+    ts
 }
 
 fn env_value(rt: &Runtime<'_>) -> Value {
@@ -301,6 +352,12 @@ fn finish_run(m: &mut Machine<'_, '_>, root: usize) -> Result<RunOutcome, Runtim
             m,
         )),
     }
+}
+
+/// Runs `fn main` of a program whose tables and code are ready, on the
+/// current stack. A test can give it hand-made code.
+pub fn run_runtime_main(rt: &Runtime<'_>, opts: &RunOptions) -> Result<RunOutcome, RuntimeError> {
+    run_main_with(rt, opts)
 }
 
 fn run_main_with(rt: &Runtime<'_>, opts: &RunOptions) -> Result<RunOutcome, RuntimeError> {

@@ -46,6 +46,7 @@ fn isolated(limit: Duration, max_steps: Option<u64>, max_memory_mb: u64) -> Sett
         max_steps,
         max_memory_mb,
         exe: Some(PathBuf::from(env!("CARGO_BIN_EXE_weft-gate"))),
+        engine: Engine::Ast,
     }
 }
 
@@ -256,7 +257,8 @@ fn the_benign_texts_are_those_of_the_harness() {
 fn the_engine_names() {
     assert_eq!(Engine::parse("ast"), Some(Engine::Ast));
     assert_eq!(Engine::Ast.name(), "ast");
-    assert_eq!(Engine::parse("ir"), None);
+    assert_eq!(Engine::parse("ir"), Some(Engine::Ir));
+    assert_eq!(Engine::parse("mir"), None);
     assert_eq!(oracle::cache_name(Engine::Ast), "oracle-ast.tsv");
 }
 
@@ -352,34 +354,40 @@ fn the_interpreter_hash_follows_its_sources() {
     assert_ne!(oracle::interp_hash(dir.path()).expect("hash"), h2);
 }
 
-/// The committed cache of the `ast` engine has a row for each program of
-/// tier 1, with the hash of the interpreter sources of today.
+/// The committed cache of each engine has a row for each program of tier 1,
+/// with the hash of the interpreter sources of today.
 #[test]
-fn the_committed_cache_covers_tier_1() {
+fn the_committed_caches_cover_tier_1() {
     let repo = repo();
     let manifest = std::fs::read_to_string(repo.join("tests/gate/manifest-tier1.tsv"))
         .expect("read the tier-1 manifest");
     let manifest = Manifest::from_tsv(&manifest).expect("parse the tier-1 manifest");
-    let file = repo
-        .join("tests/gate")
-        .join(oracle::cache_name(Engine::Ast));
-    let text = std::fs::read_to_string(&file).expect("read tests/gate/oracle-ast.tsv");
-    let cache = Cache::from_tsv(&text).expect("parse tests/gate/oracle-ast.tsv");
     let interp = oracle::interp_hash(&repo).expect("hash the interpreter sources");
-    let missing: Vec<&str> = manifest
-        .entries
-        .iter()
-        .filter(|e| cache.get(&e.hash, Engine::Ast, &interp).is_none())
-        .map(|e| e.path.as_str())
-        .collect();
-    assert!(
-        missing.is_empty(),
-        "tests/gate/oracle-ast.tsv has no row for {} programs of tier 1 with the \
-         interpreter hash {interp} (first: {:?}). The interpreter sources or the \
-         manifest changed. Run `cargo run -p weft-gate --release -- oracle --engine ast \
-         --tier 1` and commit the file.",
-        missing.len(),
-        missing.first()
-    );
-    assert_eq!(cache.len(), manifest.entries.len(), "only tier-1 rows");
+    for engine in Engine::ALL {
+        let name = oracle::cache_name(engine);
+        let file = repo.join("tests/gate").join(&name);
+        let text = std::fs::read_to_string(&file).unwrap_or_else(|e| panic!("read {name}: {e}"));
+        let cache = Cache::from_tsv(&text).unwrap_or_else(|e| panic!("parse {name}: {e}"));
+        let missing: Vec<&str> = manifest
+            .entries
+            .iter()
+            .filter(|e| cache.get(&e.hash, engine, &interp).is_none())
+            .map(|e| e.path.as_str())
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "tests/gate/{name} has no row for {} programs of tier 1 with the \
+             interpreter hash {interp} (first: {:?}). The interpreter sources or the \
+             manifest changed. Run `cargo run -p weft-gate --release -- oracle --engine {} \
+             --tier 1` and commit the file.",
+            missing.len(),
+            missing.first(),
+            engine.name()
+        );
+        assert_eq!(
+            cache.len(),
+            manifest.entries.len(),
+            "only tier-1 rows in {name}"
+        );
+    }
 }

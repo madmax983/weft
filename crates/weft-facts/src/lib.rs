@@ -186,6 +186,10 @@ pub enum VarKind {
     /// A value that a generic function item can drop where the body uses the
     /// item as a value. The name is the item.
     Dropped,
+    /// The value that a body gives back (`_0` of the IR, `docs/ir.md` 6.9).
+    /// The name tells the frame: `the result` (a function), `the closure
+    /// result`, `handled body value`, `scope body value` or `clause value`.
+    Result,
 }
 
 /// A variable and its static properties.

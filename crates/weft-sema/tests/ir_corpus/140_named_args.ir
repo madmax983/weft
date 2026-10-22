@@ -1,0 +1,464 @@
+fn f0 Entity.diff(&Entity, i32, i32) -> i32: b0
+fn f1 diff(i32, i32) -> i32: b1
+fn f2 show(&Entity, i32) -> (): b2
+fn f3 mk(u64, u64) -> Range: b3
+fn f4 span(Range) -> u64: b4
+fn f5 unknown_field() -> (): extern
+fn f6 unknown_parameter() -> (): extern
+fn f7 unknown_method_parameter() -> (): extern
+fn f8 unknown_item_value_parameter() -> (): extern
+fn f9 unknown_operation_parameter() -> () / main.Ask: extern
+fn f10 closure_has_no_names() -> (): extern
+fn f11 parameter_has_no_names(fn(i64, i64) -> i64) -> (): extern
+fn f12 joined_values_have_no_names(bool) -> (): extern
+fn f13 variant_has_no_names() -> (): extern
+fn f14 builtins_have_no_names() -> () / Par: extern
+fn f15 join_and_detach_take_no_arguments() -> () / Async, Par: extern
+fn f16 named() -> (): b5
+fn f17 join_and_detach() -> () / Async, Par: b8
+test t0 "named arguments": b12
+closure c0: body b10, maker b9, cap_env e0, captures []
+closure c1: body b11, maker b9, cap_env e0, captures []
+handler h0 main.Ask: handled b6, site b5, clauses [ask: b7]
+scope s0: body b9, site b8
+spawn sp0: scope s0
+spawn sp1: scope s0
+cap_env e0
+cap_env e1: parent e0, main.Ask _1
+
+body b0: fn Entity.diff; cap_env e0; unwind_exit bb1
+  _0: i32 (Return)
+  _1: &Entity (Param(0) `self`)
+  _2: i32 (Param(1) `a`)
+  _3: i32 (Param(2) `b`)
+  bb0:
+    _0 = Sub<i32>(copy _2, copy _3)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn diff; cap_env e0; unwind_exit bb1
+  _0: i32 (Return)
+  _1: i32 (Param(0) `a`)
+  _2: i32 (Param(1) `b`)
+  bb0:
+    _0 = Sub<i32>(copy _1, copy _2)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn show; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &Entity (Param(0) `e`)
+  _2: i32 (Param(1) `n`)
+  _3: String (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = Concat(const "e.hp = ", copy (*_1).0, const ", n = ", copy _2)
+    Print(copy _3)
+    _0 = const ()
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn mk; cap_env e0; unwind_exit bb1
+  _0: Range (Return)
+  _1: u64 (Param(0) `lo`)
+  _2: u64 (Param(1) `hi`)
+  bb0:
+    _0 = Range { copy _1, copy _2 }
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: fn span; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: Range (Param(0) `r`)
+  bb0:
+    _0 = Sub<u64>(copy _1.1, copy _1.0)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b5: fn named; cap_env e0; unwind_exit bb35
+  _0: () (Return)
+  _1: Entity (User `x`)
+  _2: Entity (User `y`)
+  _3: () (Temp(Discarded))
+  _4: i32 (Temp(Operand))
+  _5: () (Temp(Discarded))
+  _6: i32 (Temp(Operand))
+  _7: &Entity (Temp(Receiver))
+  _8: fn(i32, i32) -> i32 / () (User `g`)
+  _9: () (Temp(Discarded))
+  _10: i32 (Temp(Operand))
+  _11: fn(&Entity, i32) -> () / () (User `h`)
+  _12: () (Temp(Discarded))
+  _13: fn(&Entity, i32) -> () / () (Temp(Callee))
+  _14: &Entity (Temp(Operand))
+  _15: () (Temp(Discarded))
+  _16: u64 (Temp(Operand))
+  _17: Range (Temp(Operand))
+  _18: () (Temp(Discarded))
+  _19: u64 (Temp(Operand))
+  _20: Range (Temp(Operand))
+  _21: () (Temp(Discarded))
+  _22: u64 (Temp(Operand))
+  _23: Range (Temp(Operand))
+  _24: u64 (User `v`)
+  bb0:
+    Live(_1)
+    _1 = Entity { const 1i32 }
+    Live(_2)
+    _2 = Entity { const 2i32 }
+    Live(_3)
+    Live(_4)
+    _4 = call diff(const 3i32, const 10i32) / e0 -> [bb1, unwind: bb30]
+  bb1:
+    Print(copy _4)
+    _3 = const ()
+    Dead(_4)
+    Dead(_3)
+    Live(_5)
+    Live(_6)
+    Live(_7)
+    _7 = &_1
+    _6 = call Entity.diff(move _7, const 3i32, const 10i32) / e0 -> [bb2, unwind: bb27]
+  bb2:
+    Print(copy _6)
+    _5 = const ()
+    Dead(_7)
+    Dead(_6)
+    Dead(_5)
+    Live(_8)
+    _8 = const diff
+    Live(_9)
+    Live(_10)
+    _10 = call (copy _8)(const 3i32, const 10i32) / e0 -> [bb3, unwind: bb24]
+  bb3:
+    Print(copy _10)
+    _9 = const ()
+    Dead(_10)
+    Dead(_9)
+    Live(_11)
+    _11 = const show
+    Live(_12)
+    Live(_13)
+    _13 = copy _11
+    Live(_14)
+    _14 = &_2
+    _12 = call (copy _13)(move _14, const 5i32) / e0 -> [bb4, unwind: bb20]
+  bb4:
+    Dead(_14)
+    Dead(_13)
+    Dead(_12)
+    Live(_15)
+    Live(_16)
+    Live(_17)
+    _17 = call mk(const 2u64, const 10u64) / e0 -> [bb5, unwind: bb17]
+  bb5:
+    _16 = call span(move _17) / e0 -> [bb6, unwind: bb17]
+  bb6:
+    Print(copy _16)
+    _15 = const ()
+    Dead(_17)
+    Dead(_16)
+    Dead(_15)
+    Live(_18)
+    Live(_19)
+    Live(_20)
+    _20 = Range { const 2u64, const 10u64 }
+    _19 = call span(move _20) / e0 -> [bb7, unwind: bb14]
+  bb7:
+    Print(copy _19)
+    _18 = const ()
+    Dead(_20)
+    Dead(_19)
+    Dead(_18)
+    Live(_21)
+    Live(_22)
+    Live(_23)
+    _23 = Range { const 2u64, const 10u64 }
+    _22 = call span(move _23) / e0 -> [bb8, unwind: bb11]
+  bb8:
+    Print(copy _22)
+    _21 = const ()
+    Dead(_23)
+    Dead(_22)
+    Dead(_21)
+    Live(_24)
+    _24 = handle h0 -> [bb9, unwind: bb10]
+  bb9:
+    Print(copy _24)
+    _0 = const ()
+    Dead(_24)
+    Dead(_11)
+    Dead(_8)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb10 (cleanup):
+    Dead(_24)
+    Goto(bb23)
+  bb11 (cleanup):
+    Dead(_23)
+    Goto(bb12)
+  bb12 (cleanup):
+    Dead(_22)
+    Goto(bb13)
+  bb13 (cleanup):
+    Dead(_21)
+    Goto(bb23)
+  bb14 (cleanup):
+    Dead(_20)
+    Goto(bb15)
+  bb15 (cleanup):
+    Dead(_19)
+    Goto(bb16)
+  bb16 (cleanup):
+    Dead(_18)
+    Goto(bb23)
+  bb17 (cleanup):
+    Dead(_17)
+    Goto(bb18)
+  bb18 (cleanup):
+    Dead(_16)
+    Goto(bb19)
+  bb19 (cleanup):
+    Dead(_15)
+    Goto(bb23)
+  bb20 (cleanup):
+    Dead(_14)
+    Goto(bb21)
+  bb21 (cleanup):
+    Dead(_13)
+    Goto(bb22)
+  bb22 (cleanup):
+    Dead(_12)
+    Goto(bb23)
+  bb23 (cleanup):
+    Dead(_11)
+    Goto(bb26)
+  bb24 (cleanup):
+    Dead(_10)
+    Goto(bb25)
+  bb25 (cleanup):
+    Dead(_9)
+    Goto(bb26)
+  bb26 (cleanup):
+    Dead(_8)
+    Goto(bb32)
+  bb27 (cleanup):
+    Dead(_7)
+    Goto(bb28)
+  bb28 (cleanup):
+    Dead(_6)
+    Goto(bb29)
+  bb29 (cleanup):
+    Dead(_5)
+    Goto(bb32)
+  bb30 (cleanup):
+    Dead(_4)
+    Goto(bb31)
+  bb31 (cleanup):
+    Dead(_3)
+    Goto(bb32)
+  bb32 (cleanup):
+    Dead(_2)
+    Goto(bb33)
+  bb33 (cleanup):
+    Dead(_1)
+    Goto(bb34)
+  bb34 (cleanup):
+    Dead(_0)
+    Goto(bb35)
+  bb35 (cleanup):
+    UnwindExit
+
+body b6: handled h0; parent b5; cap_env e1; unwind_exit bb3
+  _0: u64 (Return)
+  _1: Cap<main.Ask> (Cap(main.Ask) `Ask`)
+  bb0:
+    _0 = perform Local(_1).ask(const 1u64) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b7: clause h0 ask; parent b5; cap_env e0; unwind_exit bb5
+  _0: u64 (Return)
+  _1: u64 (Param(0) `q`)
+  _2: resume(u64) -> u64 (Kont(once) `resume`)
+  _3: u64 (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = Add<u64>(copy _1, const 1u64)
+    _0 = resume _2(move _3) -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindKont(_2)
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_3)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b8: fn join_and_detach; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  bb0:
+    _0 = scope s0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b9: scope s0; parent b8; cap_env e0; unwind_exit bb14
+  _0: () (Return)
+  _1: Scope (ScopeCap `s`)
+  _2: Task<i64> (User `t`)
+  _3: fn() -> i64 (Temp(Operand))
+  _4: () (Temp(Discarded))
+  _5: i64 (Temp(Operand))
+  _6: Task<()> (User `w`)
+  _7: fn() -> () (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = closure c0()
+    _2 = spawn sp0(copy _1, move _3) -> [bb1]
+  bb1:
+    Dead(_3)
+    Live(_4)
+    Live(_5)
+    _5 = join move _2 -> [bb2, unwind: bb10]
+  bb2:
+    Print(copy _5)
+    _4 = const ()
+    Dead(_5)
+    Dead(_4)
+    Live(_6)
+    Live(_7)
+    _7 = closure c1()
+    _6 = spawn sp1(copy _1, move _7) -> [bb3]
+  bb3:
+    Dead(_7)
+    detach move _6 -> [bb4]
+  bb4:
+    _0 = const ()
+    scope_wait _1 -> [bb5, unwind: bb6]
+  bb5:
+    Dead(_6)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb6 (cleanup):
+    Dead(_0)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindValue(_6, Drop)
+    Dead(_6)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb14)
+  bb10 (cleanup):
+    Dead(_5)
+    Goto(bb11)
+  bb11 (cleanup):
+    Dead(_4)
+    Goto(bb12)
+  bb12 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb13)
+  bb13 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb14)
+  bb14 (cleanup):
+    UnwindExit
+
+body b10: closure c0; parent b9; cap_env e0; unwind_exit bb1
+  _0: i64 (Return)
+  _1: fn() -> i64 (Env)
+  bb0:
+    _0 = const 5i64
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b11: closure c1; parent b9; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: fn() -> () (Env)
+  bb0:
+    Print(const "child")
+    _0 = const ()
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b12: test "named arguments"; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: () (Temp(Discarded))
+  bb0:
+    Live(_1)
+    _1 = call named() / e0 -> [bb1, unwind: bb3]
+  bb1:
+    Dead(_1)
+    _0 = call join_and_detach() / e0 -> [bb2, unwind: bb4]
+  bb2:
+    Return
+  bb3 (cleanup):
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+// unknown_field: no IR: a type error
+// unknown_parameter: no IR: a type error
+// unknown_method_parameter: no IR: a type error
+// unknown_item_value_parameter: no IR: a type error
+// unknown_operation_parameter: no IR: a type error
+// closure_has_no_names: no IR: a type error
+// parameter_has_no_names: no IR: a type error
+// joined_values_have_no_names: no IR: a type error
+// variant_has_no_names: no IR: a type error
+// builtins_have_no_names: no IR: a type error
+// join_and_detach_take_no_arguments: no IR: a type error

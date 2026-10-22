@@ -1,0 +1,187 @@
+fn f0 upto(u64) -> u64: b0
+fn f1 computed(u64, u64) -> u64: b1
+fn f2 times(u64) -> u64: b2
+fn f3 triangle(u64) -> u64: b3
+cap_env e0
+
+body b0: fn upto; cap_env e0; unwind_exit bb5
+  _0: u64 (Return)
+  _1: u64 (Param(0) `n`)
+  _2: u64 (User `s`)
+  _3: Iter<u64> (Iterator)
+  _4: u64 (Temp(Scrutinee))
+  _5: u64 (User `i`)
+  _6: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0u64
+    Live(_3)
+    _3 = Iter(const 0u64..copy _1)
+    Goto(bb1)
+  bb1:
+    Live(_4)
+    _4 = next _3 -> [bb2, done: bb3]
+  bb2:
+    Live(_5)
+    _5 = copy _4
+    Live(_6)
+    _6 = Add<u64>(copy _2, copy _5)
+    _2 = move _6
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Goto(bb1)
+  bb3:
+    Dead(_4)
+    Goto(bb4)
+  bb4:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    UnwindExit
+
+body b1: fn computed; cap_env e0; unwind_exit bb5
+  _0: u64 (Return)
+  _1: u64 (Param(0) `a`)
+  _2: u64 (Param(1) `b`)
+  _3: u64 (User `s`)
+  _4: u64 (Temp(Operand))
+  _5: u64 (Temp(Operand))
+  _6: Iter<u64> (Iterator)
+  _7: u64 (Temp(Scrutinee))
+  _8: u64 (User `i`)
+  _9: u64 (Temp(Operand))
+  bb0:
+    Live(_3)
+    _3 = const 0u64
+    Live(_4)
+    _4 = Add<u64>(copy _1, const 1u64)
+    Live(_5)
+    _5 = Mul<u64>(copy _2, const 2u64)
+    Live(_6)
+    _6 = Iter(move _4..move _5)
+    Goto(bb1)
+  bb1:
+    Live(_7)
+    _7 = next _6 -> [bb2, done: bb3]
+  bb2:
+    Live(_8)
+    _8 = copy _7
+    Live(_9)
+    _9 = Add<u64>(copy _3, copy _8)
+    _3 = move _9
+    Dead(_9)
+    Dead(_8)
+    Dead(_7)
+    Goto(bb1)
+  bb3:
+    Dead(_7)
+    Goto(bb4)
+  bb4:
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    _0 = copy _3
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    UnwindExit
+
+body b2: fn times; cap_env e0; unwind_exit bb5
+  _0: u64 (Return)
+  _1: u64 (Param(0) `n`)
+  _2: u64 (User `c`)
+  _3: Iter<u64> (Iterator)
+  _4: u64 (Temp(Scrutinee))
+  _5: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0u64
+    Live(_3)
+    _3 = Iter(const 0u64..copy _1)
+    Goto(bb1)
+  bb1:
+    Live(_4)
+    _4 = next _3 -> [bb2, done: bb3]
+  bb2:
+    Live(_5)
+    _5 = Add<u64>(copy _2, const 1u64)
+    _2 = move _5
+    Dead(_5)
+    Dead(_4)
+    Goto(bb1)
+  bb3:
+    Dead(_4)
+    Goto(bb4)
+  bb4:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    UnwindExit
+
+body b3: fn triangle; cap_env e0; unwind_exit bb9
+  _0: u64 (Return)
+  _1: u64 (Param(0) `n`)
+  _2: u64 (User `s`)
+  _3: Iter<u64> (Iterator)
+  _4: u64 (Temp(Scrutinee))
+  _5: u64 (User `i`)
+  _6: Iter<u64> (Iterator)
+  _7: u64 (Temp(Scrutinee))
+  _8: u64 (User `j`)
+  _9: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0u64
+    Live(_3)
+    _3 = Iter(const 0u64..copy _1)
+    Goto(bb1)
+  bb1:
+    Live(_4)
+    _4 = next _3 -> [bb2, done: bb7]
+  bb2:
+    Live(_5)
+    _5 = copy _4
+    Live(_6)
+    _6 = Iter(const 0u64..copy _5)
+    Goto(bb3)
+  bb3:
+    Live(_7)
+    _7 = next _6 -> [bb4, done: bb5]
+  bb4:
+    Live(_8)
+    _8 = copy _7
+    Live(_9)
+    _9 = Add<u64>(copy _2, copy _8)
+    _2 = move _9
+    Dead(_9)
+    Dead(_8)
+    Dead(_7)
+    Goto(bb3)
+  bb5:
+    Dead(_7)
+    Goto(bb6)
+  bb6:
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Goto(bb1)
+  bb7:
+    Dead(_4)
+    Goto(bb8)
+  bb8:
+    Dead(_3)
+    _0 = copy _2
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb9 (cleanup):
+    UnwindExit

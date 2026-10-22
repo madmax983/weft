@@ -1,0 +1,1105 @@
+fn f0 unlock(Lock) -> (): b0
+fn f1 lock() -> Lock: b1
+fn f2 none_then_some() -> (): b2
+fn f3 none_in_loop(u64) -> (): b3
+fn f4 none_by_path() -> (): b4
+fn f5 none_then_left() -> (): b5
+fn f6 some_then_some() -> (): b6
+fn f7 some_then_none() -> (): b7
+fn f8 none_then_payload() -> (): b8
+fn f9 none_if(bool) -> (): b9
+fn f10 unlock_opt(Option<Lock>) -> (): b10
+fn f11 none_or_clause() -> (): b11
+fn f12 none_or_after_resume() -> (): b14
+fn f13 none_from_each() -> (): b17
+fn f14 body_value_moves() -> (): b20
+fn f15 vec_drained() -> (): b23
+fn f16 vec_left() -> (): b24
+fn f17 Vec.new<T0>() -> Vec<T0> / (): extern
+fn f18 Vec.push<T0>(&Vec<T0>, T0) -> () / (): extern
+fn f19 Vec.pop<T0>(&Vec<T0>) -> Option<T0> / (): extern
+handler h0 main.Op: handled b12, site b11, clauses [op: b13]
+handler h1 main.Op: handled b15, site b14, clauses [op: b16]
+handler h2 main.Op: handled b18, site b17, clauses [op: b19]
+handler h3 main.Op: handled b21, site b20, clauses [op: b22]
+cap_env e0
+cap_env e1: parent e0, main.Op _1
+cap_env e2: parent e0, main.Op _1
+cap_env e3: parent e0, main.Op _1
+cap_env e4: parent e0, main.Op _1
+
+body b0: fn unlock; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Lock (Param(0) `l`)
+  _2: u64 (User `i`)
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Consume(_1)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn lock; cap_env e0; unwind_exit bb1
+  _0: Lock (Return)
+  bb0:
+    _0 = Lock { const 1u64 }
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn none_then_some; cap_env e0; unwind_exit bb15
+  _0: () (Return)
+  _1: Option<Lock> (User `o`)
+  _2: Option<Lock> (Temp(Operand))
+  _3: Lock (Temp(Operand))
+  _4: usize (Temp(Scrutinee))
+  _5: Lock (User `l`)
+  _6: usize (Temp(Scrutinee))
+  bb0:
+    Live(_1)
+    _1 = Option<Lock>::None()
+    Live(_2)
+    Live(_3)
+    _3 = call lock() / e0 -> [bb1, unwind: bb11]
+  bb1:
+    _2 = Option<Lock>::Some(move _3)
+    _1 = move _2
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    _4 = Discriminant(_1)
+    switch move _4 -> [0: bb2, otherwise: bb5]
+  bb2:
+    Dead(_4)
+    Live(_5)
+    _5 = move (_1 as #0).0
+    _0 = call unlock(move _5) / e0 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_5)
+    Goto(bb8)
+  bb4 (cleanup):
+    UnwindValue(_5, Fault)
+    Dead(_5)
+    Goto(bb13)
+  bb5:
+    Dead(_4)
+    Goto(bb6)
+  bb6:
+    Live(_6)
+    _6 = Discriminant(_1)
+    switch move _6 -> [1: bb7, otherwise: bb9]
+  bb7:
+    Dead(_6)
+    Consume(_1)
+    _0 = const ()
+    Goto(bb8)
+  bb8:
+    Dead(_1)
+    Return
+  bb9:
+    Dead(_6)
+    Goto(bb10)
+  bb10:
+    Unreachable
+  bb11 (cleanup):
+    UnwindValue(_3, Fault)
+    Dead(_3)
+    Goto(bb12)
+  bb12 (cleanup):
+    UnwindValue((_2 as #0).0, Fault)
+    Dead(_2)
+    Goto(bb13)
+  bb13 (cleanup):
+    UnwindValue((_1 as #0).0, Fault)
+    Dead(_1)
+    Goto(bb14)
+  bb14 (cleanup):
+    Dead(_0)
+    Goto(bb15)
+  bb15 (cleanup):
+    UnwindExit
+
+body b3: fn none_in_loop; cap_env e0; unwind_exit bb22
+  _0: () (Return)
+  _1: u64 (Param(0) `n`)
+  _2: Option<Lock> (User `o`)
+  _3: Iter<u64> (Iterator)
+  _4: u64 (Temp(Scrutinee))
+  _5: u64 (User `i`)
+  _6: Option<Lock> (Temp(Operand))
+  _7: Lock (Temp(Operand))
+  _8: () (Temp(Discarded))
+  _9: usize (Temp(Scrutinee))
+  _10: Lock (User `l`)
+  _11: usize (Temp(Scrutinee))
+  _12: Option<Lock> (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Option<Lock>::None()
+    Live(_3)
+    _3 = Iter(const 0u64..copy _1)
+    Goto(bb1)
+  bb1:
+    Live(_4)
+    _4 = next _3 -> [bb2, done: bb23]
+  bb2:
+    Live(_5)
+    _5 = copy _4
+    Live(_6)
+    Live(_7)
+    _7 = call lock() / e0 -> [bb3, unwind: bb15]
+  bb3:
+    _6 = Option<Lock>::Some(move _7)
+    _2 = move _6
+    Dead(_7)
+    Dead(_6)
+    Live(_8)
+    Live(_9)
+    _9 = Discriminant(_2)
+    switch move _9 -> [0: bb4, otherwise: bb9]
+  bb4:
+    Dead(_9)
+    Live(_10)
+    _10 = move (_2 as #0).0
+    _8 = call unlock(move _10) / e0 -> [bb5, unwind: bb6]
+  bb5:
+    Dead(_10)
+    Goto(bb12)
+  bb6 (cleanup):
+    Dead(_8)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_4)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindValue(_10, Fault)
+    Dead(_10)
+    Goto(bb18)
+  bb9:
+    Dead(_9)
+    Goto(bb10)
+  bb10:
+    Live(_11)
+    _11 = Discriminant(_2)
+    switch move _11 -> [1: bb11, otherwise: bb13]
+  bb11:
+    Dead(_11)
+    Consume(_2)
+    _8 = const ()
+    Goto(bb12)
+  bb12:
+    Dead(_8)
+    Live(_12)
+    _12 = Option<Lock>::None()
+    _2 = move _12
+    Dead(_12)
+    Dead(_5)
+    Dead(_4)
+    Goto(bb1)
+  bb13:
+    Dead(_11)
+    Goto(bb14)
+  bb14:
+    Unreachable
+  bb15 (cleanup):
+    UnwindValue(_7, Fault)
+    Dead(_7)
+    Goto(bb16)
+  bb16 (cleanup):
+    UnwindValue((_6 as #0).0, Fault)
+    Dead(_6)
+    Goto(bb17)
+  bb17 (cleanup):
+    Dead(_4)
+    Goto(bb18)
+  bb18 (cleanup):
+    Dead(_5)
+    Goto(bb19)
+  bb19 (cleanup):
+    UnwindValue(_3, Drop)
+    Dead(_3)
+    Goto(bb20)
+  bb20 (cleanup):
+    UnwindValue((_2 as #0).0, Fault)
+    Dead(_2)
+    Goto(bb21)
+  bb21 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb22)
+  bb22 (cleanup):
+    UnwindExit
+  bb23:
+    Dead(_4)
+    Goto(bb24)
+  bb24:
+    Dead(_3)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+
+body b4: fn none_by_path; cap_env e0; unwind_exit bb15
+  _0: () (Return)
+  _1: Option<Lock> (User `o`)
+  _2: Option<Lock> (Temp(Operand))
+  _3: Lock (Temp(Operand))
+  _4: usize (Temp(Scrutinee))
+  _5: Lock (User `l`)
+  _6: usize (Temp(Scrutinee))
+  bb0:
+    Live(_1)
+    _1 = Option<Lock>::None()
+    Live(_2)
+    Live(_3)
+    _3 = call lock() / e0 -> [bb1, unwind: bb11]
+  bb1:
+    _2 = Option<Lock>::Some(move _3)
+    _1 = move _2
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    _4 = Discriminant(_1)
+    switch move _4 -> [0: bb2, otherwise: bb5]
+  bb2:
+    Dead(_4)
+    Live(_5)
+    _5 = move (_1 as #0).0
+    _0 = call unlock(move _5) / e0 -> [bb3, unwind: bb4]
+  bb3:
+    Dead(_5)
+    Goto(bb8)
+  bb4 (cleanup):
+    UnwindValue(_5, Fault)
+    Dead(_5)
+    Goto(bb13)
+  bb5:
+    Dead(_4)
+    Goto(bb6)
+  bb6:
+    Live(_6)
+    _6 = Discriminant(_1)
+    switch move _6 -> [1: bb7, otherwise: bb9]
+  bb7:
+    Dead(_6)
+    Consume(_1)
+    _0 = const ()
+    Goto(bb8)
+  bb8:
+    Dead(_1)
+    Return
+  bb9:
+    Dead(_6)
+    Goto(bb10)
+  bb10:
+    Unreachable
+  bb11 (cleanup):
+    UnwindValue(_3, Fault)
+    Dead(_3)
+    Goto(bb12)
+  bb12 (cleanup):
+    UnwindValue((_2 as #0).0, Fault)
+    Dead(_2)
+    Goto(bb13)
+  bb13 (cleanup):
+    UnwindValue((_1 as #0).0, Fault)
+    Dead(_1)
+    Goto(bb14)
+  bb14 (cleanup):
+    Dead(_0)
+    Goto(bb15)
+  bb15 (cleanup):
+    UnwindExit
+
+body b5: fn none_then_left; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: Option<Lock> (User `o`)
+  _2: Option<Lock> (Temp(Operand))
+  _3: Lock (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = Option<Lock>::None()
+    Live(_2)
+    Live(_3)
+    _3 = call lock() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    _2 = Option<Lock>::Some(move _3)
+    _1 = move _2
+    Dead(_3)
+    Dead(_2)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindValue(_3, Fault)
+    Dead(_3)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindValue((_2 as #0).0, Fault)
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindValue((_1 as #0).0, Fault)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b6: fn some_then_some; cap_env e0; unwind_exit bb17
+  _0: () (Return)
+  _1: Option<Lock> (User `o`)
+  _2: Lock (Temp(Operand))
+  _3: Option<Lock> (Temp(Operand))
+  _4: Lock (Temp(Operand))
+  _5: usize (Temp(Scrutinee))
+  _6: Lock (User `l`)
+  _7: usize (Temp(Scrutinee))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = call lock() / e0 -> [bb1, unwind: bb14]
+  bb1:
+    _1 = Option<Lock>::Some(move _2)
+    Dead(_2)
+    Live(_3)
+    Live(_4)
+    _4 = call lock() / e0 -> [bb2, unwind: bb12]
+  bb2:
+    _3 = Option<Lock>::Some(move _4)
+    _1 = move _3
+    Dead(_4)
+    Dead(_3)
+    Live(_5)
+    _5 = Discriminant(_1)
+    switch move _5 -> [0: bb3, otherwise: bb6]
+  bb3:
+    Dead(_5)
+    Live(_6)
+    _6 = move (_1 as #0).0
+    _0 = call unlock(move _6) / e0 -> [bb4, unwind: bb5]
+  bb4:
+    Dead(_6)
+    Goto(bb9)
+  bb5 (cleanup):
+    UnwindValue(_6, Fault)
+    Dead(_6)
+    Goto(bb15)
+  bb6:
+    Dead(_5)
+    Goto(bb7)
+  bb7:
+    Live(_7)
+    _7 = Discriminant(_1)
+    switch move _7 -> [1: bb8, otherwise: bb10]
+  bb8:
+    Dead(_7)
+    Consume(_1)
+    _0 = const ()
+    Goto(bb9)
+  bb9:
+    Dead(_1)
+    Return
+  bb10:
+    Dead(_7)
+    Goto(bb11)
+  bb11:
+    Unreachable
+  bb12 (cleanup):
+    UnwindValue(_4, Fault)
+    Dead(_4)
+    Goto(bb13)
+  bb13 (cleanup):
+    UnwindValue((_3 as #0).0, Fault)
+    Dead(_3)
+    Goto(bb15)
+  bb14 (cleanup):
+    UnwindValue(_2, Fault)
+    Dead(_2)
+    Goto(bb15)
+  bb15 (cleanup):
+    UnwindValue((_1 as #0).0, Fault)
+    Dead(_1)
+    Goto(bb16)
+  bb16 (cleanup):
+    Dead(_0)
+    Goto(bb17)
+  bb17 (cleanup):
+    UnwindExit
+
+body b7: fn some_then_none; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: Option<Lock> (User `o`)
+  _2: Lock (Temp(Operand))
+  _3: Option<Lock> (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = call lock() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    _1 = Option<Lock>::Some(move _2)
+    Dead(_2)
+    Live(_3)
+    _3 = Option<Lock>::None()
+    _1 = move _3
+    Dead(_3)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindValue(_2, Fault)
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindValue((_1 as #0).0, Fault)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b8: fn none_then_payload; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: Option<Lock> (User `o`)
+  _2: Lock (Temp(Operand))
+  _3: usize (Temp(Scrutinee))
+  bb0:
+    Live(_1)
+    _1 = Option<Lock>::None()
+    Live(_2)
+    _2 = call lock() / e0 -> [bb1, unwind: bb4]
+  bb1:
+    Live(_3)
+    _3 = Discriminant(_1)
+    switch move _3 -> [0: bb2, otherwise: bb3]
+  bb2:
+    (_1 as #0).0 = move _2
+    Dead(_3)
+    Dead(_2)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb3:
+    Unreachable
+  bb4 (cleanup):
+    UnwindValue(_2, Fault)
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue((_1 as #0).0, Fault)
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b9: fn none_if; cap_env e0; unwind_exit bb8
+  _0: () (Return)
+  _1: bool (Param(0) `c`)
+  _2: Option<Lock> (User `o`)
+  _3: Lock (Temp(Operand))
+  bb0:
+    Live(_2)
+    switch copy _1 -> [1: bb1, otherwise: bb2]
+  bb1:
+    _2 = Option<Lock>::None()
+    Goto(bb4)
+  bb2:
+    Live(_3)
+    _3 = call lock() / e0 -> [bb3, unwind: bb5]
+  bb3:
+    _2 = Option<Lock>::Some(move _3)
+    Dead(_3)
+    Goto(bb4)
+  bb4:
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    UnwindValue(_3, Fault)
+    Dead(_3)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue((_2 as #0).0, Fault)
+    Dead(_2)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+
+body b10: fn unlock_opt; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: Option<Lock> (Param(0) `o`)
+  _2: usize (Temp(Scrutinee))
+  _3: Lock (User `l`)
+  _4: usize (Temp(Scrutinee))
+  bb0:
+    Live(_2)
+    _2 = Discriminant(_1)
+    switch move _2 -> [0: bb1, otherwise: bb6]
+  bb1:
+    Dead(_2)
+    Live(_3)
+    _3 = move (_1 as #0).0
+    _0 = call unlock(move _3) / e0 -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_3)
+    Goto(bb9)
+  bb3 (cleanup):
+    UnwindValue(_3, Fault)
+    Dead(_3)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    UnwindValue((_1 as #0).0, Fault)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+  bb6:
+    Dead(_2)
+    Goto(bb7)
+  bb7:
+    Live(_4)
+    _4 = Discriminant(_1)
+    switch move _4 -> [1: bb8, otherwise: bb10]
+  bb8:
+    Dead(_4)
+    Consume(_1)
+    _0 = const ()
+    Goto(bb9)
+  bb9:
+    Dead(_1)
+    Return
+  bb10:
+    Dead(_4)
+    Goto(bb11)
+  bb11:
+    Unreachable
+
+body b11: fn none_or_clause; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: Option<Lock> (User `o`)
+  bb0:
+    Live(_1)
+    _1 = handle h0 -> [bb1, unwind: bb2]
+  bb1:
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindValue((_1 as #0).0, Fault)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b12: handled h0; parent b11; cap_env e1; unwind_exit bb4
+  _0: Option<Lock> (Return)
+  _1: Cap<main.Op> (Cap(main.Op) `Op`)
+  _2: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    _2 = perform Local(_1).op() -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    _0 = Option<Lock>::None()
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b13: clause h0 op; parent b11; cap_env e0; unwind_exit bb5
+  _0: Option<Lock> (Return)
+  _1: resume(()) -> Option<Lock> (Kont(once) `resume`)
+  _2: Lock (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = call lock() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    _0 = Option<Lock>::Some(move _2)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindKont(_1)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindValue(_2, Fault)
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b14: fn none_or_after_resume; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: Option<Lock> (User `o`)
+  bb0:
+    Live(_1)
+    _1 = handle h1 -> [bb1, unwind: bb2]
+  bb1:
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindValue((_1 as #0).0, Fault)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b15: handled h1; parent b14; cap_env e2; unwind_exit bb4
+  _0: Option<Lock> (Return)
+  _1: Cap<main.Op> (Cap(main.Op) `Op`)
+  _2: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    _2 = perform Local(_1).op() -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    _0 = Option<Lock>::None()
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b16: clause h1 op; parent b14; cap_env e0; unwind_exit bb11
+  _0: Option<Lock> (Return)
+  _1: resume(()) -> Option<Lock> (Kont(once) `resume`)
+  _2: Option<Lock> (User `r`)
+  _3: () (Temp(Discarded))
+  _4: Lock (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = resume _1(const ()) -> [bb1, unwind: bb8]
+  bb1:
+    Live(_3)
+    _3 = call unlock_opt(move _2) / e0 -> [bb2, unwind: bb6]
+  bb2:
+    Dead(_3)
+    Live(_4)
+    _4 = call lock() / e0 -> [bb3, unwind: bb4]
+  bb3:
+    _0 = Option<Lock>::Some(move _4)
+    Dead(_2)
+    Dead(_4)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindKont(_1)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_4, Fault)
+    Dead(_4)
+    Goto(bb9)
+  bb6 (cleanup):
+    UnwindKont(_1)
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_3)
+    Goto(bb9)
+  bb8 (cleanup):
+    UnwindKont(_1)
+    Dead(_1)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindValue((_2 as #0).0, Fault)
+    Dead(_2)
+    Goto(bb10)
+  bb10 (cleanup):
+    Dead(_0)
+    Goto(bb11)
+  bb11 (cleanup):
+    UnwindExit
+
+body b17: fn none_from_each; cap_env e0; unwind_exit bb16
+  _0: () (Return)
+  _1: Option<Lock> (User `o`)
+  _2: Option<Lock> (Temp(Operand))
+  _3: Lock (Temp(Operand))
+  _4: usize (Temp(Scrutinee))
+  _5: Lock (User `l`)
+  _6: usize (Temp(Scrutinee))
+  bb0:
+    Live(_1)
+    _1 = handle h2 -> [bb1, unwind: bb14]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = call lock() / e0 -> [bb2, unwind: bb12]
+  bb2:
+    _2 = Option<Lock>::Some(move _3)
+    _1 = move _2
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    _4 = Discriminant(_1)
+    switch move _4 -> [0: bb3, otherwise: bb6]
+  bb3:
+    Dead(_4)
+    Live(_5)
+    _5 = move (_1 as #0).0
+    _0 = call unlock(move _5) / e0 -> [bb4, unwind: bb5]
+  bb4:
+    Dead(_5)
+    Goto(bb9)
+  bb5 (cleanup):
+    UnwindValue(_5, Fault)
+    Dead(_5)
+    Goto(bb14)
+  bb6:
+    Dead(_4)
+    Goto(bb7)
+  bb7:
+    Live(_6)
+    _6 = Discriminant(_1)
+    switch move _6 -> [1: bb8, otherwise: bb10]
+  bb8:
+    Dead(_6)
+    Consume(_1)
+    _0 = const ()
+    Goto(bb9)
+  bb9:
+    Dead(_1)
+    Return
+  bb10:
+    Dead(_6)
+    Goto(bb11)
+  bb11:
+    Unreachable
+  bb12 (cleanup):
+    UnwindValue(_3, Fault)
+    Dead(_3)
+    Goto(bb13)
+  bb13 (cleanup):
+    UnwindValue((_2 as #0).0, Fault)
+    Dead(_2)
+    Goto(bb14)
+  bb14 (cleanup):
+    UnwindValue((_1 as #0).0, Fault)
+    Dead(_1)
+    Goto(bb15)
+  bb15 (cleanup):
+    Dead(_0)
+    Goto(bb16)
+  bb16 (cleanup):
+    UnwindExit
+
+body b18: handled h2; parent b17; cap_env e3; unwind_exit bb4
+  _0: Option<Lock> (Return)
+  _1: Cap<main.Op> (Cap(main.Op) `Op`)
+  _2: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    _2 = perform Local(_1).op() -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    _0 = Option<Lock>::None()
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b19: clause h2 op; parent b17; cap_env e0; unwind_exit bb1
+  _0: Option<Lock> (Return)
+  _1: resume(()) -> Option<Lock> (Kont(once) `resume`)
+  bb0:
+    _0 = Option<Lock>::None()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b20: fn body_value_moves; cap_env e0; unwind_exit bb16
+  _0: () (Return)
+  _1: Option<Lock> (User `a`)
+  _2: Lock (Temp(Operand))
+  _3: Option<Lock> (User `o`)
+  _4: usize (Temp(Scrutinee))
+  _5: Lock (User `l`)
+  _6: usize (Temp(Scrutinee))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = call lock() / e0 -> [bb1, unwind: bb13]
+  bb1:
+    _1 = Option<Lock>::Some(move _2)
+    Dead(_2)
+    Live(_3)
+    _3 = handle h3 -> [bb2, unwind: bb12]
+  bb2:
+    Live(_4)
+    _4 = Discriminant(_3)
+    switch move _4 -> [0: bb3, otherwise: bb6]
+  bb3:
+    Dead(_4)
+    Live(_5)
+    _5 = move (_3 as #0).0
+    _0 = call unlock(move _5) / e0 -> [bb4, unwind: bb5]
+  bb4:
+    Dead(_5)
+    Goto(bb9)
+  bb5 (cleanup):
+    UnwindValue(_5, Fault)
+    Dead(_5)
+    Goto(bb12)
+  bb6:
+    Dead(_4)
+    Goto(bb7)
+  bb7:
+    Live(_6)
+    _6 = Discriminant(_3)
+    switch move _6 -> [1: bb8, otherwise: bb10]
+  bb8:
+    Dead(_6)
+    Consume(_3)
+    _0 = const ()
+    Goto(bb9)
+  bb9:
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb10:
+    Dead(_6)
+    Goto(bb11)
+  bb11:
+    Unreachable
+  bb12 (cleanup):
+    UnwindValue((_3 as #0).0, Fault)
+    Dead(_3)
+    Goto(bb14)
+  bb13 (cleanup):
+    UnwindValue(_2, Fault)
+    Dead(_2)
+    Goto(bb14)
+  bb14 (cleanup):
+    UnwindValue((_1 as #0).0, Fault)
+    Dead(_1)
+    Goto(bb15)
+  bb15 (cleanup):
+    Dead(_0)
+    Goto(bb16)
+  bb16 (cleanup):
+    UnwindExit
+
+body b21: handled h3; parent b20; cap_env e4; unwind_exit bb4
+  _0: Option<Lock> (Return)
+  _1: Cap<main.Op> (Cap(main.Op) `Op`)
+  _2: () (Temp(Discarded))
+  _3: Option<Lock> (Upvar(_1) `a`)
+  bb0:
+    Live(_2)
+    _2 = perform Local(_1).op() -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    _0 = move _3
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b22: clause h3 op; parent b20; cap_env e0; unwind_exit bb5
+  _0: Option<Lock> (Return)
+  _1: resume(()) -> Option<Lock> (Kont(once) `resume`)
+  _2: Lock (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = call lock() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    _0 = Option<Lock>::Some(move _2)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindKont(_1)
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindValue(_2, Fault)
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b23: fn vec_drained; cap_env e0; unwind_exit bb20
+  _0: () (Return)
+  _1: Vec<Lock> (User `v`)
+  _2: () (Temp(Discarded))
+  _3: Lock (Temp(Operand))
+  _4: &Vec<Lock> (Temp(Receiver))
+  _5: Option<Lock> (Temp(Scrutinee))
+  _6: &Vec<Lock> (Temp(Receiver))
+  _7: usize (Temp(Scrutinee))
+  _8: Lock (User `l`)
+  _9: usize (Temp(Scrutinee))
+  bb0:
+    Live(_1)
+    _1 = call Vec.new<Lock>() / e0 -> [bb1]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = call lock() / e0 -> [bb2, unwind: bb16]
+  bb2:
+    Live(_4)
+    _4 = &_1
+    _2 = call Vec.push<Lock>(move _4, move _3) / e0 -> [bb3]
+  bb3:
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Live(_5)
+    Live(_6)
+    _6 = &_1
+    _5 = call Vec.pop<Lock>(move _6) / e0 -> [bb4]
+  bb4:
+    Live(_7)
+    _7 = Discriminant(_5)
+    switch move _7 -> [0: bb5, otherwise: bb10]
+  bb5:
+    Dead(_7)
+    Live(_8)
+    _8 = move (_5 as #0).0
+    _0 = call unlock(move _8) / e0 -> [bb6, unwind: bb7]
+  bb6:
+    Dead(_8)
+    Goto(bb13)
+  bb7 (cleanup):
+    Dead(_6)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindValue((_5 as #0).0, Fault)
+    Dead(_5)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindValue(_8, Fault)
+    Dead(_8)
+    Goto(bb18)
+  bb10:
+    Dead(_7)
+    Goto(bb11)
+  bb11:
+    Live(_9)
+    _9 = Discriminant(_5)
+    switch move _9 -> [1: bb12, otherwise: bb14]
+  bb12:
+    Dead(_9)
+    Consume(_5)
+    _0 = const ()
+    Goto(bb13)
+  bb13:
+    Dead(_1)
+    Dead(_6)
+    Dead(_5)
+    Return
+  bb14:
+    Dead(_9)
+    Goto(bb15)
+  bb15:
+    Unreachable
+  bb16 (cleanup):
+    UnwindValue(_3, Fault)
+    Dead(_3)
+    Goto(bb17)
+  bb17 (cleanup):
+    Dead(_2)
+    Goto(bb18)
+  bb18 (cleanup):
+    UnwindValue(_1[], Fault)
+    Dead(_1)
+    Goto(bb19)
+  bb19 (cleanup):
+    Dead(_0)
+    Goto(bb20)
+  bb20 (cleanup):
+    UnwindExit
+
+body b24: fn vec_left; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: Vec<Lock> (User `v`)
+  _2: Lock (Temp(Operand))
+  _3: &Vec<Lock> (Temp(Receiver))
+  bb0:
+    Live(_1)
+    _1 = call Vec.new<Lock>() / e0 -> [bb1]
+  bb1:
+    Live(_2)
+    _2 = call lock() / e0 -> [bb2, unwind: bb4]
+  bb2:
+    Live(_3)
+    _3 = &_1
+    _0 = call Vec.push<Lock>(move _3, move _2) / e0 -> [bb3]
+  bb3:
+    Dead(_1)
+    Dead(_3)
+    Dead(_2)
+    Return
+  bb4 (cleanup):
+    UnwindValue(_2, Fault)
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_1[], Fault)
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit

@@ -54,6 +54,27 @@ pub enum CPat {
     },
 }
 
+/// How a closure of the IR holds one capture (`docs/ir.md` 8.1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CapHold {
+    /// The operand is a place: the closure shares the cell there with the
+    /// maker (a `Kept` capture).
+    Shared,
+    /// The operand is a value that the maker moved: the closure holds it in
+    /// a cell of its own (a `ByMove` capture). The closure owns the cell, and
+    /// a call takes its value, as for a capture of [`Op::MakeClosure`] in
+    /// `owned`.
+    Moved,
+    /// The operand is the reference that `&x` made: the closure holds it in
+    /// a cell of its own (a `ByRef` capture). A call does not take it, so
+    /// each call reads through the reference.
+    Ref,
+    /// The operand is a copy of a capability or of a `multi` continuation:
+    /// the closure holds it in a cell of its own (a `Cap` or a `Kont`
+    /// capture). A call does not take it.
+    Copied,
+}
+
 /// One handler clause of a `handle` expression.
 #[derive(Clone, Debug)]
 pub struct ClauseSpec {
@@ -76,6 +97,24 @@ pub struct HandleSpec {
     pub body: CodeId,
     /// The variables that the body captures.
     pub body_caps: Vec<VarRef>,
+    /// The handled body takes the capability of the handler as its one
+    /// parameter (the code of the IR compiler, `docs/ir.md` 8.1). The code of
+    /// the AST compiler takes no parameter.
+    pub cap: bool,
+}
+
+/// One step of the place of an [`Op::UnwindValue`] (`docs/ir.md` 8.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnwindStep {
+    /// Part `i` of a struct, a tuple or the payload of a variant.
+    Part(u32),
+    /// The payload of variant `v`. If the value has another variant, the
+    /// place names no value, and the unwinder does nothing.
+    Variant(u32),
+    /// The target of a `Box`.
+    Deref,
+    /// All the elements of a `Vec` or an array.
+    Elems,
 }
 
 /// One instruction.
@@ -213,6 +252,16 @@ pub enum Op {
         /// The number of arguments.
         n: u32,
     },
+    /// Performs operation `op` through the capability under the `n`
+    /// arguments (`docs/ir.md` 8.1). The effect is the effect of the
+    /// capability. The machine finds the handler in the lexical handlers, as
+    /// for [`Op::Perform`].
+    PerformCap {
+        /// The operation index in the effect.
+        op: usize,
+        /// The number of arguments.
+        n: u32,
+    },
     /// Makes a closure.
     MakeClosure {
         /// The code.
@@ -224,6 +273,18 @@ pub enum Op {
         owned: Vec<u32>,
         /// The closure expression. The checker names the tasks that run the
         /// closure by it (`stealable`).
+        span: Span,
+    },
+    /// Makes a closure of the IR (`docs/ir.md` 8.1). It pops one operand
+    /// for each capture: a place for a [`CapHold::Shared`] capture, else a
+    /// value.
+    MakeClosureIr {
+        /// The code.
+        code: CodeId,
+        /// How the closure holds each capture, in the order of the fields of
+        /// the environment.
+        holds: Vec<CapHold>,
+        /// The closure expression.
         span: Span,
     },
     /// Pushes a function item as a value.
@@ -263,6 +324,74 @@ pub enum Op {
     },
     /// A compile-time error that becomes a run-time error here.
     Fault(Rc<str>),
+    /// Place to place: part `i` of a struct, a tuple or the payload of a
+    /// variant. It follows no pointer: the IR writes each `Deref`
+    /// (`docs/ir.md` 8.1).
+    Part(u32),
+    /// Place to place: follows the pointer at the place (a reference, a
+    /// `Box` or an `Rc`). A slice stays at its place: `Index`, `Bounds`,
+    /// `Len` and `ElemIter` read its range there.
+    Deref,
+    /// Place to value: the number of elements of a `Vec` or a slice.
+    Len,
+    /// Place to value: the index of the variant of an enum value.
+    Tag,
+    /// Pops an integer or a boolean, and jumps to the target of its value
+    /// (`false` is 0, `true` is 1), else to `otherwise`.
+    JumpTable {
+        /// The value and the target of each arm.
+        arms: Vec<(u128, usize)>,
+        /// The target for each other value.
+        otherwise: usize,
+    },
+    /// `[place, index]`: faults if the index is not below the number of
+    /// elements at the place. It pushes nothing.
+    Bounds,
+    /// Place to value: moves the value out of the place and leaves `Moved`
+    /// there, also for a copy value (a `move` of the IR).
+    Take,
+    /// Pops a place, drops its value and leaves `Moved` there.
+    DropPlace,
+    /// Pops a place and finishes the linear record of the struct there, if
+    /// it has one.
+    Consume,
+    /// Gives a slot a new temporary cell with no value (`Live` of an IR
+    /// temporary). The cell goes on the temporary list of the frame.
+    LiveTemp(u32),
+    /// Ends the temporary cell of a slot (`Dead` of an IR temporary): drops
+    /// its value and takes it off the temporary list of the frame.
+    EndTemp(u32),
+    /// Unwind mode (`docs/ir.md` 8.2): finishes the value at the place
+    /// `var` and `path`. The unwinder takes each live linear value out of
+    /// it and runs its `on abort` before the next op of the chain. A place
+    /// that names no value (a moved value, another variant) does nothing.
+    UnwindValue {
+        /// The cell of the local.
+        var: VarRef,
+        /// The steps from the local to the place.
+        path: Vec<UnwindStep>,
+    },
+    /// Unwind mode: aborts the continuation in a slot if it is fresh. Its
+    /// frames unwind before the next op of the chain. A continuation that
+    /// is no longer fresh, or a moved one, does nothing.
+    UnwindKont(u32),
+    /// Unwind mode: the end of the cleanup chain. The frame leaves the
+    /// unwinding. The unwinder scans the cells of the frame: a live linear
+    /// value there is an error of the chain (an oracle check).
+    UnwindExit,
+}
+
+/// The IR location of an op (`docs/ir.md` 8.1): the body, the block and the
+/// index of the statement in the block. The terminator has the index after
+/// the last statement.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct IrLoc {
+    /// The body.
+    pub body: u32,
+    /// The block.
+    pub block: u32,
+    /// The statement, or the number of statements for the terminator.
+    pub stmt: u32,
 }
 
 /// What a code unit is.
@@ -299,4 +428,34 @@ pub struct Code {
     pub n_params: u32,
     /// The source unit of the code. Its spans are byte offsets in that unit.
     pub unit: usize,
+    /// The number of slots at the end of the slots that hold temporary
+    /// cells. A temporary cell is also on the temporary list of the frame,
+    /// so the unwinder finds it there and not with the slots. The AST
+    /// compiler gives 0.
+    pub temp_slots: u32,
+    /// The IR location of each instruction. Empty for code of the AST
+    /// compiler.
+    pub locs: Vec<IrLoc>,
+    /// The landing pads (`docs/ir.md` 8.2): the index of each op that can
+    /// abort the frame, and the index of the first op of its cleanup chain,
+    /// in the order of the ops. Empty for code of the AST compiler: the
+    /// unwinder scans its frames.
+    pub pads: Vec<(usize, usize)>,
+}
+
+impl Code {
+    /// Returns the number of slots that are not temporary cells.
+    pub const fn local_slots(&self) -> usize {
+        self.n_slots.saturating_sub(self.temp_slots) as usize
+    }
+
+    /// Returns the first op of the cleanup chain of the op at `at`, if the
+    /// op has a landing pad.
+    pub fn pad(&self, at: usize) -> Option<usize> {
+        self.pads
+            .binary_search_by_key(&at, |&(op, _)| op)
+            .ok()
+            .and_then(|i| self.pads.get(i))
+            .map(|&(_, pad)| pad)
+    }
 }

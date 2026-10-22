@@ -1444,3 +1444,66 @@ fn a_violation_with_no_site_is_still_an_error() {
     }
     assert!(ds.iter().all(|d| d.facts.len() == 1), "{ds:?}");
 }
+
+/// The facts of `_0` of a body whose frame is `frame` (the name of the
+/// variable): `_0` points into `v[]`, `v` ends at the frame end, and the
+/// `return` uses `_0` (`docs/ir.md` 6.9).
+fn result_facts(frame: &str) -> B {
+    let mut b = B::new();
+    b.f.name = "f".into();
+    let v = b.local("v");
+    let elem = b.elem(v);
+    let vv = b.var("v");
+    b.f.owner.push((v, vv));
+    let result = b.var_with(frame, |i| i.kind = VarKind::Result);
+    let n0 = b.node("assign");
+    b.bind(vv, n0);
+    b.bind(result, n0);
+    b.f.points_into.push((result, elem));
+    let n1 = b.node("dead");
+    b.f.scope_end.push((vv, n1));
+    let n2 = b.node("return");
+    b.use_(result, n2);
+    b
+}
+
+#[test]
+fn a_returned_value_into_a_local_is_w0204_of_a_function_and_w0301_of_a_frame() {
+    use weft_syntax::diag::Code;
+    let codes = |frame: &str| -> Vec<(Code, String)> {
+        let b = result_facts(frame);
+        let r = check(&b.f);
+        crate::diagnose::diagnose_marked(&b.f, &r)
+            .into_iter()
+            .map(|d| (d.code, d.message))
+            .collect()
+    };
+    assert_eq!(
+        codes("the result"),
+        vec![(
+            Code::W0204,
+            "returned reference points into `v[]`: the local `v` of `f` goes out of scope at the return"
+                .to_string()
+        )]
+    );
+    assert_eq!(
+        codes("the closure result"),
+        vec![(
+            Code::W0204,
+            "the closure returns a reference into `v[]`: its local `v` goes out of scope at the return"
+                .to_string()
+        )]
+    );
+    for frame in ["handled body", "scope body", "clause"] {
+        let got = codes(&format!("{frame} value"));
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].0, Code::W0301);
+        assert!(
+            got[0]
+                .1
+                .starts_with("the value leaves after its place ends"),
+            "{got:?}"
+        );
+        assert!(got[0].1.contains(&format!("end of the {frame}")), "{got:?}");
+    }
+}

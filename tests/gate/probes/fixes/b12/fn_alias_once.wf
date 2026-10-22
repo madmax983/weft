@@ -1,0 +1,16 @@
+// Stage B12 (item: closure modes of function values). `g` holds the `once`
+// closure of `f`. The IR gives `g` the mode `once` from the analysis, but its
+// read stays a `copy` (the copy property of its type, `docs/ir.md` 5.22). The
+// facts must take the second call of `g` as a second run of a `once` value:
+// a call of a function value moves it if its local is `once`, not only if it
+// is not `copy`.
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) {}
+
+fn main() {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    let g = f
+    g()
+    g()
+}

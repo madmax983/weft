@@ -1,0 +1,108 @@
+fn f0 user(String) -> User / Net: b0
+fn f1 main(Env) -> () / Async, Blocking, Clock, Fs, Log, Net, Rand: b1
+fn f2 handle(Request) -> Response / Log, Net: b2
+fn f3 serve(Listener, fn(Request) -> Response / Net, Log) -> () / Net: extern
+fn f4 NetCap.listen(&NetCap, String) -> Listener / Net: extern
+fn f5 Request.param(&Request, String) -> String / (): extern
+fn f6 Response.json<T0>(T0) -> Response / (): extern
+cap_env e0
+
+body b0: fn user; cap_env e0; unwind_exit bb1
+  _0: User (Return)
+  _1: String (Param(0) `id`)
+  bb0:
+    _0 = User { const 1u64, copy _1 }
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn main; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: Env (Param(0) `env`)
+  _2: Listener (Temp(Operand))
+  _3: &NetCap (Temp(Receiver))
+  _4: fn(Request) -> Response / Async, Net, Log (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = &_1.1
+    _2 = call NetCap.listen(move _3, const ":8080") / e0 -> [bb1, unwind: bb4]
+  bb1:
+    Live(_4)
+    _4 = const handle
+    _0 = call serve(move _2, move _4) / e0 -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_4)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_3)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b2: fn handle; cap_env e0; unwind_exit bb11
+  _0: Response (Return)
+  _1: Request (Param(0) `req`)
+  _2: User (User `user`)
+  _3: String (Temp(Operand))
+  _4: &Request (Temp(Receiver))
+  _5: () (Temp(Discarded))
+  _6: String (Temp(Operand))
+  bb0:
+    Live(_2)
+    Live(_3)
+    Live(_4)
+    _4 = &_1
+    _3 = call Request.param(move _4, const "id") / e0 -> [bb1]
+  bb1:
+    _2 = call user(move _3) / e0 -> [bb2, unwind: bb7]
+  bb2:
+    Dead(_4)
+    Dead(_3)
+    Live(_5)
+    Live(_6)
+    _6 = Concat(const "served ", copy _2.0)
+    _5 = perform Row(Log).info(move _6) -> [bb3, unwind: bb5]
+  bb3:
+    Dead(_6)
+    Dead(_5)
+    _0 = call Response.json<User>(copy _2) / e0 -> [bb4]
+  bb4:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    Dead(_6)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_5)
+    Goto(bb9)
+  bb7 (cleanup):
+    Dead(_4)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_3)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_2)
+    Goto(bb10)
+  bb10 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb11)
+  bb11 (cleanup):
+    UnwindExit

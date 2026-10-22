@@ -1,0 +1,151 @@
+fn f0 lend_wild(&World, fn(&World) -> &Entity, fn(&Entity) -> ()) -> (): b0
+fn f1 lend_wild_base(&World, &World, fn(&World) -> &Entity, fn(&Entity) -> ()) -> (): b1
+fn f2 lend_param_wild(&World, &Entity, fn(&Entity) -> ()) -> (): b2
+cap_env e0
+
+body b0: fn lend_wild; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: &World (Param(0) `world`)
+  _2: fn(&World) -> &Entity (Param(1) `h`)
+  _3: fn(&Entity) -> () (Param(2) `g`)
+  _4: &Entity (User `s`)
+  _5: usize (Temp(Operand))
+  _6: &Entity (User `e`)
+  _7: () (Temp(Discarded))
+  bb0:
+    Live(_4)
+    Live(_5)
+    _5 = const 0usize
+    Bounds((*_1).0, copy _5)
+    _4 = &(*_1).0[_5]
+    Dead(_5)
+    Live(_6)
+    _6 = call (copy _2)(copy _1) / e0 -> [bb1, unwind: bb4]
+  bb1:
+    Live(_7)
+    _7 = call (copy _3)(copy _6) / e0 -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_7)
+    Print(copy (*_4).0)
+    _0 = const ()
+    Dead(_6)
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_7)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_6)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_4)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b1: fn lend_wild_base; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: &World (Param(0) `world`)
+  _2: &World (Param(1) `other`)
+  _3: fn(&World) -> &Entity (Param(2) `h`)
+  _4: fn(&Entity) -> () (Param(3) `g`)
+  _5: &Entity (User `s`)
+  _6: usize (Temp(Operand))
+  _7: &Entity (User `e`)
+  _8: () (Temp(Discarded))
+  _9: () (Temp(Discarded))
+  bb0:
+    Live(_5)
+    Live(_6)
+    _6 = const 0usize
+    Bounds((*_2).0, copy _6)
+    _5 = &(*_2).0[_6]
+    Dead(_6)
+    Live(_7)
+    _7 = call (copy _3)(copy _1) / e0 -> [bb1, unwind: bb4]
+  bb1:
+    Live(_8)
+    _8 = call (copy _4)(copy _7) / e0 -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_8)
+    Live(_9)
+    Print(copy (*_1).1)
+    _9 = const ()
+    Dead(_9)
+    Print(copy (*_5).0)
+    _0 = const ()
+    Dead(_7)
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_8)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_7)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_5)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b2: fn lend_param_wild; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: &World (Param(0) `world`)
+  _2: &Entity (Param(1) `e`)
+  _3: fn(&Entity) -> () (Param(2) `g`)
+  _4: &Entity (User `s`)
+  _5: usize (Temp(Operand))
+  _6: () (Temp(Discarded))
+  bb0:
+    Live(_4)
+    Live(_5)
+    _5 = const 0usize
+    Bounds((*_1).0, copy _5)
+    _4 = &(*_1).0[_5]
+    Dead(_5)
+    Live(_6)
+    _6 = call (copy _3)(copy _2) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_6)
+    Print(copy (*_4).0)
+    _0 = const ()
+    Dead(_4)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_6)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_4)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit

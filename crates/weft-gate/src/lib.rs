@@ -11,7 +11,12 @@
 //! programs. [`report`] runs the gate, applies the rules and writes the
 //! report. [`baseline`] keeps the old records of a tier and compares a run
 //! with them. [`claims`] reads the claims file and checks each claim that is on
-//! with the `ir` pipeline.
+//! with the `ir` pipeline. [`thir`] runs test D0 on the THIR tables of each
+//! program. [`ir_build`] builds and verifies the IR of each program.
+//! [`engines`] runs each program with the two engines of the interpreter
+//! and compares the runs (the engine differential). [`sigdiff`] compares
+//! the signatures that the `ir` pipeline infers with those of the old
+//! inference.
 
 use std::path::PathBuf;
 
@@ -21,12 +26,16 @@ pub mod claims;
 pub mod classify;
 pub mod copy;
 pub mod digest;
+pub mod engines;
+pub mod ir_build;
 pub mod ledger;
 pub mod manifest;
 pub mod oracle;
 pub mod pool;
 pub mod report;
+pub mod sigdiff;
 pub mod snapshot;
+pub mod thir;
 
 /// An error of the gate tools.
 #[derive(Debug, thiserror::Error)]

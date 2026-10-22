@@ -1,0 +1,389 @@
+fn f0 mk() -> Rc<Cell2>: b0
+fn f1 eat(Rc<Cell2>) -> u64: b1
+fn f2 reset(&S) -> u64 / (): b2
+fn f3 group_ret(&Rc<Cell2>) -> &Vec<u64>: b3
+fn f4 group_ret_s(&S) -> &Vec<u64>: b4
+fn f5 callee_result() -> (): b5
+fn f6 callee_result_field() -> (): b6
+fn f7 receiver_moved() -> (): b7
+fn f8 receiver_ref() -> (): b8
+fn f9 receiver_field(&S) -> () / (): b9
+fn f10 callee_result_kept() -> (): b10
+fn f11 receiver_kept() -> (): b11
+fn f12 Rc.new<T0>(T0) -> Rc<T0> / (): extern
+fn f13 Vec.new<T0>() -> Vec<T0> / (): extern
+fn f14 Vec.push<T0>(&Vec<T0>, T0) -> () / (): extern
+fn f15 Rc.clone<T0>(&Rc<T0>) -> Rc<T0> / (): extern
+cap_env e0
+
+body b0: fn mk; cap_env e0; unwind_exit bb3
+  _0: Rc<Cell2> (Return)
+  _1: Cell2 (Temp(Operand))
+  _2: Vec<u64> (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    _1 = Cell2 { move _2, const 4u64 }
+    _0 = call Rc.new<Cell2>(move _1) / e0 -> [bb2]
+  bb2:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    UnwindExit
+
+body b1: fn eat; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: Rc<Cell2> (Param(0) `c`)
+  bb0:
+    _0 = const 0u64
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn reset; cap_env e0; unwind_exit bb4
+  _0: u64 (Return)
+  _1: &S (Param(0) `s`)
+  _2: Rc<Cell2> (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = call mk() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    (*_1).0 = move _2
+    Dead(_2)
+    _0 = const 0u64
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b3: fn group_ret; cap_env e0; unwind_exit bb1
+  _0: &Vec<u64> (Return)
+  _1: &Rc<Cell2> (Param(0) `h`)
+  bb0:
+    _0 = &(*(*_1)).0
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: fn group_ret_s; cap_env e0; unwind_exit bb1
+  _0: &Vec<u64> (Return)
+  _1: &S (Param(0) `s`)
+  bb0:
+    _0 = &(*(*_1).0).0
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b5: fn callee_result; cap_env e0; unwind_exit bb10
+  _0: () (Return)
+  _1: Rc<Cell2> (User `a`)
+  _2: () (Temp(Discarded))
+  _3: &Vec<u64> (Temp(Receiver))
+  _4: &Vec<u64> (User `r`)
+  _5: &Rc<Cell2> (Temp(Operand))
+  _6: Rc<Cell2> (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call mk() / e0 -> [bb1, unwind: bb8]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = &(*_1).0
+    _2 = call Vec.push<u64>(move _3, const 1u64) / e0 -> [bb2]
+  bb2:
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    Live(_5)
+    _5 = &_1
+    _4 = call group_ret(move _5) / e0 -> [bb3, unwind: bb6]
+  bb3:
+    Dead(_5)
+    Live(_6)
+    _6 = call mk() / e0 -> [bb4, unwind: bb5]
+  bb4:
+    _1 = move _6
+    Dead(_6)
+    Print(copy _4)
+    _0 = const ()
+    Dead(_4)
+    Dead(_1)
+    Return
+  bb5 (cleanup):
+    UnwindValue(_6, Drop)
+    Dead(_6)
+    Goto(bb7)
+  bb6 (cleanup):
+    Dead(_5)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_4)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_0)
+    Goto(bb10)
+  bb10 (cleanup):
+    UnwindExit
+
+body b6: fn callee_result_field; cap_env e0; unwind_exit bb10
+  _0: () (Return)
+  _1: S (User `s`)
+  _2: Rc<Cell2> (Temp(Operand))
+  _3: &Vec<u64> (User `r`)
+  _4: &S (Temp(Operand))
+  _5: Rc<Cell2> (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = call mk() / e0 -> [bb1, unwind: bb7]
+  bb1:
+    _1 = S { move _2, const 0u64 }
+    Dead(_2)
+    Live(_3)
+    Live(_4)
+    _4 = &_1
+    _3 = call group_ret_s(move _4) / e0 -> [bb2, unwind: bb5]
+  bb2:
+    Dead(_4)
+    Live(_5)
+    _5 = call mk() / e0 -> [bb3, unwind: bb4]
+  bb3:
+    _1.0 = move _5
+    Dead(_5)
+    Print(copy _3)
+    _0 = const ()
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindValue(_5, Drop)
+    Dead(_5)
+    Goto(bb6)
+  bb5 (cleanup):
+    Dead(_4)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_3)
+    Goto(bb8)
+  bb7 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_0)
+    Goto(bb10)
+  bb10 (cleanup):
+    UnwindExit
+
+body b7: fn receiver_moved; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: Rc<Cell2> (User `a`)
+  _2: u64 (Temp(Operand))
+  _3: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_1)
+    _1 = call mk() / e0 -> [bb1, unwind: bb5]
+  bb1:
+    Live(_2)
+    _2 = call eat(move _1) / e0 -> [bb2, unwind: bb4]
+  bb2:
+    Live(_3)
+    _3 = &(*_1).0
+    _0 = call Vec.push<u64>(move _3, move _2) / e0 -> [bb3]
+  bb3:
+    Dead(_1)
+    Dead(_3)
+    Dead(_2)
+    Return
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b8: fn receiver_ref; cap_env e0; unwind_exit bb8
+  _0: () (Return)
+  _1: Rc<Cell2> (User `a`)
+  _2: &Vec<u64> (User `r`)
+  _3: u64 (Temp(Operand))
+  _4: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_1)
+    _1 = call mk() / e0 -> [bb1, unwind: bb6]
+  bb1:
+    Live(_2)
+    _2 = &(*_1).0
+    Live(_3)
+    _3 = call eat(move _1) / e0 -> [bb2, unwind: bb4]
+  bb2:
+    Live(_4)
+    _4 = &(*_2)
+    _0 = call Vec.push<u64>(move _4, move _3) / e0 -> [bb3]
+  bb3:
+    Dead(_2)
+    Dead(_1)
+    Dead(_4)
+    Dead(_3)
+    Return
+  bb4 (cleanup):
+    Dead(_3)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+
+body b9: fn receiver_field; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: &S (Param(0) `s`)
+  _2: u64 (Temp(Operand))
+  _3: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    _2 = call reset(copy _1) / e0 -> [bb1, unwind: bb3]
+  bb1:
+    Live(_3)
+    _3 = &(*(*_1).0).0
+    _0 = call Vec.push<u64>(move _3, move _2) / e0 -> [bb2]
+  bb2:
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b10: fn callee_result_kept; cap_env e0; unwind_exit bb8
+  _0: () (Return)
+  _1: Rc<Cell2> (User `a`)
+  _2: &Vec<u64> (User `r`)
+  _3: &Rc<Cell2> (Temp(Operand))
+  _4: Rc<Cell2> (User `b`)
+  _5: &Rc<Cell2> (Temp(Receiver))
+  bb0:
+    Live(_1)
+    _1 = call mk() / e0 -> [bb1, unwind: bb6]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = &_1
+    _2 = call group_ret(move _3) / e0 -> [bb2, unwind: bb4]
+  bb2:
+    Dead(_3)
+    Live(_4)
+    Live(_5)
+    _5 = &_1
+    _4 = call Rc.clone<Cell2>(move _5) / e0 -> [bb3]
+  bb3:
+    Dead(_5)
+    Print(copy _2)
+    _0 = const ()
+    Dead(_4)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    Dead(_3)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_0)
+    Goto(bb8)
+  bb8 (cleanup):
+    UnwindExit
+
+body b11: fn receiver_kept; cap_env e0; unwind_exit bb9
+  _0: () (Return)
+  _1: Rc<Cell2> (User `a`)
+  _2: Rc<Cell2> (User `b`)
+  _3: &Rc<Cell2> (Temp(Receiver))
+  _4: u64 (Temp(Operand))
+  _5: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_1)
+    _1 = call mk() / e0 -> [bb1, unwind: bb7]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = &_1
+    _2 = call Rc.clone<Cell2>(move _3) / e0 -> [bb2]
+  bb2:
+    Dead(_3)
+    Live(_4)
+    _4 = call eat(move _2) / e0 -> [bb3, unwind: bb5]
+  bb3:
+    Live(_5)
+    _5 = &(*_1).0
+    _0 = call Vec.push<u64>(move _5, move _4) / e0 -> [bb4]
+  bb4:
+    Dead(_2)
+    Dead(_1)
+    Dead(_5)
+    Dead(_4)
+    Return
+  bb5 (cleanup):
+    Dead(_4)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindValue(_1, Drop)
+    Dead(_1)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_0)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindExit

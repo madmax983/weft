@@ -1,0 +1,143 @@
+fn f0 link(Rc<Node>, Rc<Node>) -> () / (): b0
+fn f1 bump_all(Rc<Node>) -> () / (): b1
+fn f2 tag_then_read(Rc<Node>) -> () / (): b2
+fn f3 hidden(Rc<Node>) -> (): b3
+fn f4 shown(Rc<Node>) -> () / (): b4
+fn f5 Rc.downgrade<T0>(&Rc<T0>) -> Weak<T0> / (): extern
+fn f6 Vec.push<T0>(&Vec<T0>, T0) -> () / (): extern
+fn f7 Rc.clone<T0>(&Rc<T0>) -> Rc<T0> / (): extern
+fn f8 Vec.clear<T0>(&Vec<T0>) -> () / (): extern
+cap_env e0
+
+body b0: fn link; cap_env e0; unwind_exit bb2
+  _0: () (Return)
+  _1: Rc<Node> (Param(0) `a`)
+  _2: Rc<Node> (Param(1) `b`)
+  _3: Option<Weak<Node>> (Temp(Operand))
+  _4: Weak<Node> (Temp(Operand))
+  _5: &Rc<Node> (Temp(Receiver))
+  _6: Option<Rc<Node>> (Temp(Operand))
+  bb0:
+    Live(_3)
+    Live(_4)
+    Live(_5)
+    _5 = &_1
+    _4 = call Rc.downgrade<Node>(move _5) / e0 -> [bb1]
+  bb1:
+    _3 = Option<Weak<Node>>::Some(move _4)
+    (*_2).2 = move _3
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    Live(_6)
+    _6 = Option<Rc<Node>>::Some(move _2)
+    (*_1).1 = move _6
+    Dead(_6)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b1: fn bump_all; cap_env e0; unwind_exit bb2
+  _0: () (Return)
+  _1: Rc<Node> (Param(0) `head`)
+  _2: u64 (Temp(Operand))
+  _3: u64 (Temp(Operand))
+  _4: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    _2 = Add<u64>(copy (*_1).0, const 1u64)
+    (*_1).0 = move _2
+    Dead(_2)
+    Live(_3)
+    _3 = copy (*_1).0
+    Live(_4)
+    _4 = &(*_1).3
+    _0 = call Vec.push<u64>(move _4, move _3) / e0 -> [bb1]
+  bb1:
+    Dead(_4)
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b2: fn tag_then_read; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: Rc<Node> (Param(0) `a`)
+  _2: &u64 (User `first`)
+  _3: usize (Temp(Operand))
+  _4: u64 (Temp(Operand))
+  _5: () (Temp(Discarded))
+  _6: Rc<Node> (User `b`)
+  _7: &Rc<Node> (Temp(Receiver))
+  _8: () (Temp(Discarded))
+  _9: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = const 0usize
+    Bounds((*_1).3, copy _3)
+    _2 = &(*_1).3[_3]
+    Dead(_3)
+    Live(_4)
+    _4 = const 3u64
+    (*_1).0 = move _4
+    Dead(_4)
+    Live(_5)
+    Print(copy _2)
+    _5 = const ()
+    Dead(_5)
+    Live(_6)
+    Live(_7)
+    _7 = &_1
+    _6 = call Rc.clone<Node>(move _7) / e0 -> [bb1]
+  bb1:
+    Dead(_7)
+    Live(_8)
+    Live(_9)
+    _9 = &(*_6).3
+    _8 = call Vec.clear<u64>(move _9) / e0 -> [bb2]
+  bb2:
+    Dead(_9)
+    Dead(_8)
+    Print(copy _2)
+    _0 = const ()
+    Dead(_6)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    UnwindExit
+
+body b3: fn hidden; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Rc<Node> (Param(0) `a`)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 1u64
+    (*_1).0 = move _2
+    Dead(_2)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b4: fn shown; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: Rc<Node> (Param(0) `a`)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 1u64
+    (*_1).0 = move _2
+    Dead(_2)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit

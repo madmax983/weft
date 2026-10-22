@@ -127,6 +127,82 @@ fn facts_are_datalog() {
 }
 
 #[test]
+fn ir_prints_the_core_ir() {
+    let file = "crates/weft-sema/tests/ir_golden/ret_ref.wf";
+    let all = cmd(&["ir", file]);
+    assert_eq!(all.code, 0, "{}", all.stderr);
+    assert!(all.text.contains("body b0: fn dangle"), "{}", all.text);
+    assert!(
+        all.text.contains("// typo: no IR: a type error"),
+        "{}",
+        all.text
+    );
+    let one = cmd(&["ir", file, "dangle"]);
+    assert_eq!(one.code, 0, "{}", one.stderr);
+    assert!(one.text.starts_with("body b0: fn dangle"), "{}", one.text);
+    assert!(one
+        .text
+        .contains("    _0 = &_1\n    Dead(_1)\n    Return\n"));
+    let none = cmd(&["ir", file, "typo"]);
+    assert_eq!(none.code, 1);
+    assert!(none.stderr.contains("has no IR"), "{}", none.stderr);
+    let calls = cmd(&["ir", "tests/programs/01_places.wf", "tick"]);
+    assert_eq!(calls.code, 0, "{}", calls.stderr);
+    assert!(calls.text.contains("call step("), "{}", calls.text);
+    let closures = cmd(&[
+        "ir",
+        "crates/weft-sema/tests/ir_golden/closure_move.wf",
+        "main",
+    ]);
+    assert_eq!(closures.code, 0, "{}", closures.stderr);
+    assert!(
+        closures.text.starts_with("body b1: fn main"),
+        "{}",
+        closures.text
+    );
+    assert!(
+        closures.text.contains("\nbody b2: closure c0; parent b1;"),
+        "the closure bodies of `main` follow it: {}",
+        closures.text
+    );
+    let handles = cmd(&["ir", "tests/programs/05_effects.wf", "main"]);
+    assert_eq!(handles.code, 0, "{}", handles.stderr);
+    assert!(
+        handles.text.contains(" = handle h0 -> ["),
+        "{}",
+        handles.text
+    );
+    assert!(
+        handles.text.contains(": handled h0; parent ") && handles.text.contains(": clause h0 log;"),
+        "the handled body and the clause of `main` follow it: {}",
+        handles.text
+    );
+    let scopes = cmd(&["ir", "tests/programs/07_scopes.wf", "profile_page"]);
+    assert_eq!(scopes.code, 0, "{}", scopes.stderr);
+    assert!(
+        scopes.text.contains(" = scope s0 -> [") && scopes.text.contains(": scope s0; parent "),
+        "the scope body of `profile_page` follows it: {}",
+        scopes.text
+    );
+    assert!(scopes.text.contains("scope_wait _1"), "{}", scopes.text);
+    // A move through a reference (W0303) gives the body no IR (ir 5.36).
+    let moved = cmd(&["ir", "tests/programs/12_aliasing.wf", "steal"]);
+    assert_eq!(moved.code, 1);
+    assert!(
+        moved.stderr.contains("`steal` has no IR: W0303"),
+        "{}",
+        moved.stderr
+    );
+    let missing = cmd(&["ir", file, "nope"]);
+    assert_eq!(missing.code, 1);
+    assert!(
+        missing.stderr.contains("the bodies are `dangle`"),
+        "{}",
+        missing.stderr
+    );
+}
+
+#[test]
 fn agree_compares_checker_and_spec() {
     let out = cmd(&["agree", "tests/programs/08_ingest.wf"]);
     assert_eq!(out.code, 0, "{}", out.text);
@@ -358,9 +434,10 @@ fn explain_and_help() {
     let help = cmd(&["help"]);
     assert_eq!(help.code, 0);
     for word in [
-        "run     [PROFILE] [RUN] PATH",
-        "test    [PROFILE] [RUN] PATH",
-        "RUN is [--seed N] [--workers N] [--unchecked] [--oracle].",
+        "run     [PROFILE] [FACTS] [RUN] PATH",
+        "test    [PROFILE] [FACTS] [RUN] PATH",
+        "FACTS is --facts=old|ir|both",
+        "RUN is [--seed N] [--workers N] [--unchecked] [--oracle] [--engine=ast|ir].",
         "--unchecked",
         "--lib or --bin",
         "1 to 1024",
@@ -596,6 +673,65 @@ fn run_takes_seed_and_workers() {
         "--workers needs a number from 1 to 1024, found `0`"
     );
     assert_eq!(usage_error(&["run", "--seed"]), "--seed needs a number");
+}
+
+#[test]
+fn run_and_test_take_an_engine() {
+    // `root_handlers.wf` uses only the construct groups A and B: the IR
+    // engine runs it.
+    let path = format!("{INTERP}/root_handlers.wf");
+    for engine in ["--engine=ir", "--engine=ast"] {
+        let out = cmd(&["run", engine, &path]);
+        assert_eq!(out.code, 1, "{engine}");
+        assert_eq!(out.text, "rollback 3\n", "{engine}");
+        assert!(!out.stderr.contains("note: --engine"), "{}", out.stderr);
+    }
+    let out = cmd(&["run", "--engine", "ir", &path]);
+    assert_eq!(out.text, "rollback 3\n");
+    // A program with a handler runs on the IR engine (plan stage I3).
+    let out = cmd(&["run", "--engine=ir", &format!("{INTERP}/effects_log.wf")]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.text, "stepped 1 hp=9\nstepped 2 hp=19\n");
+    assert!(!out.stderr.contains("note: --engine"), "{}", out.stderr);
+    // A program with a scope runs on the IR engine (plan stage I4).
+    let out = cmd(&["run", "--engine=ir", &format!("{INTERP}/scope_join.wf")]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(out.text, "a\nc\nb\n6\n");
+    assert!(!out.stderr.contains("note: --engine"), "{}", out.stderr);
+    // A program with a body that has no IR (W0303) falls back to the AST
+    // compiler, and says so.
+    let out = cmd(&[
+        "run",
+        "--engine=ir",
+        "--unchecked",
+        "tests/programs/12_aliasing.wf",
+    ]);
+    assert!(
+        out.stderr
+            .contains("\nnote: --engine=ir: the AST compiler runs the program: `steal` has no IR"),
+        "{}",
+        out.stderr
+    );
+    let out = cmd(&["test", "--engine=ir", &format!("{INTERP}/int_width.wf")]);
+    assert_eq!(out.code, 1);
+    assert!(
+        out.text.contains("test values that fit: ok"),
+        "{}",
+        out.text
+    );
+    assert!(!out.stderr.contains("note: --engine"), "{}", out.stderr);
+    assert_eq!(
+        usage_error(&["run", "--engine=jit", &path]),
+        "--engine needs `ast` or `ir`, found `jit`"
+    );
+    assert_eq!(
+        usage_error(&["run", "--engine"]),
+        "--engine needs `ast` or `ir`"
+    );
+    assert_eq!(
+        usage_error(&["check", "--engine=ir", &path]),
+        "`check` does not take --engine; see `weft help`"
+    );
 }
 
 #[test]
@@ -886,4 +1022,141 @@ fn oracle_turns_on_the_strict_run_time_checks() {
         .to_string();
     let out = cmd(&["run", "--oracle", &path]);
     assert_eq!(out.code, 0, "{}", out.stderr);
+}
+
+#[test]
+fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
+    // No construct group is on before stage F8 (plan §2.6): each program goes
+    // to the old pipeline, and the command says why on standard error.
+    let path = "tests/programs/02_bad.wf";
+    let old = cmd(&["check", path]);
+    assert!(old.stderr.is_empty(), "{}", old.stderr);
+    assert_eq!(cmd(&["check", "--facts=old", path]), old);
+    for f in ["--facts=ir", "--facts=both"] {
+        let out = cmd(&["check", f, path]);
+        assert_eq!(out.text, old.text, "{f}");
+        assert_eq!(out.code, old.code, "{f}");
+        let note =
+            format!("note: {f}: the old pipeline checks the program: the program uses group A");
+        assert!(out.stderr.starts_with(&note), "{f}: {}", out.stderr);
+        assert_eq!(out.stderr.lines().count(), 1, "{}", out.stderr);
+    }
+    let out = cmd(&["check", "--facts", "ir", "--json", path]);
+    assert!(out.text.starts_with("{\"code\""), "{}", out.text);
+    assert!(
+        out.stderr.starts_with("note: --facts=ir: "),
+        "{}",
+        out.stderr
+    );
+    // Each command that checks takes the switch.
+    let run = format!("{INTERP}/root_handlers.wf");
+    let rules = "examples/lints/ref_across_abort.dl";
+    for args in [
+        vec!["facts", "--facts=ir", path, "bad"],
+        vec!["agree", "--facts=ir", path],
+        vec!["lint", "--facts=ir", "--rules", rules, path],
+        vec!["run", "--facts=ir", run.as_str()],
+        vec!["test", "--facts=ir", run.as_str()],
+    ] {
+        let out = cmd(&args);
+        assert!(
+            out.stderr
+                .contains("note: --facts=ir: the old pipeline checks the program"),
+            "{args:?}: {}",
+            out.stderr
+        );
+    }
+    let out = cmd(&["facts", "--facts=both", path, "bad"]);
+    assert_eq!(out.text, cmd(&["facts", path, "bad"]).text);
+    assert_eq!(
+        usage_error(&["check", "--facts=new", path]),
+        "--facts needs `old`, `ir` or `both`, found `new`"
+    );
+    assert_eq!(
+        usage_error(&["ir", "--facts=ir", path]),
+        "`ir` does not take --facts; see `weft help`"
+    );
+}
+
+#[test]
+fn groups_put_a_program_in_scope_of_the_ir_pipeline() {
+    // A program with no call: with group A on, the ir pipeline checks it.
+    let dir = scratch(
+        "groups",
+        &[(
+            "no_calls.wf",
+            "fn f() -> u64 {\n    let x = 1\n    let r = &x\n    x = 2\n    print(r)\n    x\n}\n",
+        )],
+    );
+    let path = format!("{dir}/no_calls.wf");
+    let out = cmd(&["agree", "--facts=ir", "--groups=A", &path]);
+    assert_eq!(out.code, 0, "{}{}", out.text, out.stderr);
+    assert!(out.stderr.is_empty(), "{}", out.stderr);
+    assert!(out.text.starts_with("agree: "), "{}", out.text);
+    let out = cmd(&["agree", "--facts=both", "--groups", "A", &path]);
+    assert!(out.text.contains("of the ir pipeline"), "{}", out.text);
+    let out = cmd(&["check", "--facts=both", "--groups=A", &path]);
+    assert!(out.stderr.is_empty(), "{}", out.stderr);
+    let facts = cmd(&["facts", "--facts=ir", "--groups=A", &path, "f"]);
+    assert!(facts.text.contains("rebound_at("), "{}", facts.text);
+    // Group A is off by default: the old pipeline checks the program.
+    let out = cmd(&["agree", "--facts=ir", &path]);
+    assert!(
+        out.stderr.contains("the program uses group A"),
+        "{}",
+        out.stderr
+    );
+    // A call of a function with no stated row is in scope (stage F6), and
+    // so is a cleanup chain with an `on abort` function (stage F7).
+    let out = cmd(&[
+        "agree",
+        "--facts=ir",
+        "--groups=A",
+        "tests/programs/02_bad.wf",
+    ]);
+    assert!(out.stderr.is_empty(), "{}", out.stderr);
+    let dir = scratch(
+        "groups_on_abort",
+        &[(
+            "on_abort.wf",
+            "linear struct Tx { id: u64 }\n    on abort = undo\nfn undo(t: Tx) { let Tx(i) = t }\nfn g() { print(1) }\nfn f() {\n    let t = Tx { id: 1 }\n    g()\n    let Tx(i) = t\n}\n",
+        )],
+    );
+    let out = cmd(&[
+        "agree",
+        "--facts=ir",
+        "--groups=A",
+        &format!("{dir}/on_abort.wf"),
+    ]);
+    assert!(out.stderr.is_empty(), "{}", out.stderr);
+    assert!(out.text.starts_with("agree: "), "{}", out.text);
+    assert_eq!(
+        usage_error(&["check", "--groups=G", &path]),
+        "--groups needs construct groups from A to F, found `G`: `G` is not a construct group (A to F)"
+    );
+}
+
+#[test]
+fn a_borrow_of_plain_data_gives_the_old_diagnostics_in_the_ir_pipeline() {
+    // `docs/ir.md` 5.10: `temp_copy` of `tests/programs/32_temporaries.wf`
+    // and other borrows of plain data, in a program with no call (group A).
+    let src = "struct P { x: u64, y: u64 }\n\
+        fn temp_copy() {\n    let r = &1\n    print(r)\n}\n\
+        fn forms(c: bool) {\n\
+        \x20   let a = &\"s\"\n    let b = &true\n    let u = &()\n    let d = &2.s\n\
+        \x20   let t = &(1, 2)\n    let p = &P { x: 1, y: 2 }\n    let f = &(3, 4).0\n\
+        \x20   let k = 0\n    let r = &k\n    if c { r = &5 }\n\
+        \x20   print(a)\n    print(b)\n    print(u)\n    print(d)\n\
+        \x20   print(t.0)\n    print(p.x)\n    print(f)\n    print(r)\n}\n";
+    let dir = scratch("promoted", &[("plain.wf", src)]);
+    let path = format!("{dir}/plain.wf");
+    let old = cmd(&["check", "--facts=old", &path]);
+    let ir = cmd(&["check", "--facts=ir", "--groups=A", &path]);
+    assert!(
+        ir.stderr.is_empty(),
+        "the program is not in scope: {}",
+        ir.stderr
+    );
+    assert_eq!(old.code, 0, "{}", old.text);
+    assert_eq!((ir.code, ir.text), (old.code, old.text));
 }

@@ -247,6 +247,17 @@ impl<'a> Runtime<'a> {
         exports: &Exports,
     ) -> Self {
         let compiled = Compiler::compile(prog, sigs, exports);
+        Self::with_code(prog, sigs, stealable, compiled)
+    }
+
+    /// Builds the tables of a program whose code is already compiled, for
+    /// example by [`crate::compile_ir`].
+    pub fn with_code(
+        prog: &'a Program,
+        sigs: &'a [FnSig],
+        stealable: BTreeSet<(usize, u32, u32)>,
+        compiled: Compiled,
+    ) -> Self {
         let natives = prog.fn_ids().map(|f| native_of(prog, sigs, f)).collect();
         let adts: Vec<AdtInfo> = prog
             .adts

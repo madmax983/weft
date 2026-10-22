@@ -1,0 +1,32 @@
+// Literal patterns (`docs/ir.md` 5.13): an integer or a bool tests a copy of
+// the place; `()` has one value and needs no test. The first arm that
+// matches wins; the tests of the next arm come after each failed test.
+
+fn int(n: u64) -> u64 {
+    match n {
+        0 => 10,
+        1 => 20,
+        _ => 30,
+    }
+}
+
+fn boolean(b: bool) -> u64 {
+    match b {
+        true => 1,
+        false => 0,
+    }
+}
+
+fn unit(u: ()) -> u64 {
+    match u {
+        () => 1,
+    }
+}
+
+// A literal through a reference: the test reads `(*r)`.
+fn int_ref(r: &u8) -> u64 {
+    match r {
+        7 => 1,
+        _ => 0,
+    }
+}

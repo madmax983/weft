@@ -1,0 +1,25 @@
+// `&&` and `||` (`docs/ir.md` 5.12): the left side writes the destination,
+// a switch on it skips the right side.
+
+fn and(a: bool, b: bool) -> bool {
+    a && b
+}
+
+fn or(a: bool, b: bool) -> bool {
+    a || b
+}
+
+// A chain with a reference and a comparison: `(a && b) || n > 1`.
+fn mixed(a: bool, b: &bool, n: u64) -> bool {
+    a && b || n > 1
+}
+
+// A condition: the value goes into a temporary of the statement.
+fn in_cond(a: bool, b: bool) -> u64 {
+    if a && b { 1 } else { 0 }
+}
+
+fn let_and(a: bool, n: u64) -> bool {
+    let x = n > 0 && a
+    x
+}

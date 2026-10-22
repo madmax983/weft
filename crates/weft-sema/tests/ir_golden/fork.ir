@@ -1,0 +1,158 @@
+fn f0 a() -> u64: b0
+fn f1 b() -> u64: b1
+fn f2 main() -> () / Par: b2
+closure c0: body b3, maker b2, cap_env e0, captures []
+closure c1: body b4, maker b2, cap_env e0, captures []
+closure c2: body b5, maker b2, cap_env e0, captures []
+closure c3: body b6, maker b2, cap_env e0, captures []
+spawn sp0: fork
+spawn sp1: fork
+spawn sp2: fork
+spawn sp3: fork
+cap_env e0
+
+body b0: fn a; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  bb0:
+    _0 = const 1u64
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn b; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  bb0:
+    _0 = const 2u64
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn main; cap_env e0; unwind_exit bb12
+  _0: () (Return)
+  _1: (u64, u64) (Temp(Scrutinee))
+  _2: fn() -> u64 (Temp(Operand))
+  _3: fn() -> u64 (Temp(Operand))
+  _4: u64 (User `x`)
+  _5: u64 (User `y`)
+  _6: (u64, u64) (User `z`)
+  _7: fn() -> u64 (Temp(Operand))
+  _8: fn() -> u64 (Temp(Operand))
+  _9: u64 (Temp(Operand))
+  _10: u64 (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = closure c0()
+    Live(_3)
+    _3 = closure c1()
+    _1 = fork [sp0: move _2, sp1: move _3] -> [bb1, unwind: bb8]
+  bb1:
+    Live(_4)
+    _4 = copy _1.0
+    Live(_5)
+    _5 = copy _1.1
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Live(_6)
+    Live(_7)
+    _7 = closure c2()
+    Live(_8)
+    _8 = closure c3()
+    _6 = fork [sp2: move _7, sp3: move _8] -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_8)
+    Dead(_7)
+    Live(_9)
+    Live(_10)
+    _10 = Add<u64>(copy _4, copy _5)
+    _9 = Add<u64>(move _10, copy _6.0)
+    Print(copy _9)
+    _0 = const ()
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Dead(_10)
+    Dead(_9)
+    Return
+  bb3 (cleanup):
+    Dead(_8)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_7)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_6)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_5)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_4)
+    Goto(bb11)
+  bb8 (cleanup):
+    Dead(_3)
+    Goto(bb9)
+  bb9 (cleanup):
+    Dead(_2)
+    Goto(bb10)
+  bb10 (cleanup):
+    Dead(_1)
+    Goto(bb11)
+  bb11 (cleanup):
+    Dead(_0)
+    Goto(bb12)
+  bb12 (cleanup):
+    UnwindExit
+
+body b3: closure c0; parent b2; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = call a() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b4: closure c1; parent b2; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = call b() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b5: closure c2; parent b2; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = call a() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b6: closure c3; parent b2; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = call b() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit

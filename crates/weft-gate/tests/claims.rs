@@ -7,9 +7,10 @@
 //! `unsound` repro and accept an `fp` or `sound` repro.
 //!
 //! The synthetic tests use a fake pipeline. The test of the committed file
-//! uses [`claims::pipeline`]: before stage F1 there is no `ir` pipeline, no
-//! group is on, and each claim is off. The test then checks only that each
-//! repro exists. The test does not run the interpreter.
+//! uses [`claims::pipeline`]: the `ir` pipeline of the analysis (stage F1).
+//! It computes the construct groups of each repro, and the group set of each
+//! claim must be equal to them. Before stage F8 no group is on, and each claim
+//! of a group stage is off. The test does not run the interpreter.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -379,11 +380,74 @@ fn the_group_set_must_equal_the_scope_of_the_repro() {
     );
 }
 
+#[test]
+fn a_speed_claim_has_no_check_of_its_group_set() {
+    // The repros of a `speed` claim are the programs that the old analysis
+    // checks slowly (Q3): the claims test does not compute their scope.
+    let root = tree(&[R]);
+    let file = one(
+        "\"G7\"",
+        &claim_fields("speed", "AC", "F12", "limit_ms = 1000"),
+    );
+    let mut fake = Fake::default();
+    fake.groups.insert(R.to_string(), "ACD");
+    let report = claims::check_all(&file, root.path(), &fake);
+    assert!(report.failures().is_empty(), "{:?}", report.failures());
+}
+
+#[test]
+fn the_ir_pipeline_computes_the_groups_of_a_repro() {
+    let root = tempfile::tempdir().expect("make a temporary directory");
+    let files = [
+        (
+            "loop.wf",
+            "fn main() { let i = 0; while i < 3 { i += 1 } }\n",
+            "AB",
+        ),
+        ("clo.wf", "fn main() { let g = || 1; print(g()) }\n", "AC"),
+        ("plain.wf", "fn main() { print(1) }\n", "A"),
+    ];
+    let pipe = claims::pipeline();
+    assert_eq!(pipe.groups_on(), weft_sema::Options::default().ir_groups);
+    for (name, text, want) in files {
+        fs::write(root.path().join(name), text).expect("write the file");
+        let got = pipe.groups_of(root.path(), name);
+        assert_eq!(
+            got,
+            Ok(Some(Groups::parse(want).expect("a group set"))),
+            "{name}"
+        );
+    }
+    // A program that does not parse has no scope.
+    fs::write(root.path().join("bad.wf"), "fn main( {\n").expect("write the file");
+    assert_eq!(pipe.groups_of(root.path(), "bad.wf"), Ok(None));
+    assert!(pipe.groups_of(root.path(), "none.wf").is_err());
+    // The check gives the errors of the program.
+    fs::write(root.path().join("w.wf"), "fn main() { print(nope) }\n").expect("write the file");
+    let c = pipe.check(root.path(), "w.wf").expect("the check runs");
+    assert!(
+        c.errors.iter().any(|d| d.0 == "W0101" && d.2 == 1),
+        "{:?}",
+        c.errors
+    );
+}
+
 // ------------------------------------------------------ the committed claims
 
 fn committed() -> ClaimsFile {
     ClaimsFile::read(&repo().join(claims::CLAIMS))
         .unwrap_or_else(|e| panic!("read {}: {e}", claims::CLAIMS))
+}
+
+#[test]
+fn an_interp_claim_reads_the_committed_cache_of_the_ir_oracle() {
+    let repo = repo();
+    let repro = "tests/gate/probes/r2/fidelity/repro/FD2_multi_nested_drop.wf";
+    assert_eq!(claims::ir_oracle_verdict(&repo, repro), Ok(Verdict::Clean));
+    let pipe = claims::pipeline();
+    assert_eq!(pipe.engine_verdict(&repo, repro), Ok(Verdict::Clean));
+    let missing = claims::ir_oracle_verdict(&repo, "tests/gate/no_such_program.wf");
+    assert!(missing.is_err());
 }
 
 #[test]
