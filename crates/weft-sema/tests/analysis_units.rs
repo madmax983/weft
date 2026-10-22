@@ -814,3 +814,352 @@ fn a_place_of_a_summary_is_cut_at_eight_steps() {
     let q = IPlace::cut(IRoot::Param(0), vec![step; 3]);
     assert_eq!(q.steps.len(), 3);
 }
+
+// ------------------------------------------ summaries of bodies (F6)
+
+/// The analysis of `src` with both pipelines and group A on.
+fn both_a(src: &str) -> weft_sema::Analysis {
+    let opts = weft_sema::Options {
+        facts: weft_sema::FactGen::Both,
+        ir_groups: weft_sema::Groups::parse("A").unwrap_or(weft_sema::Groups::NONE),
+        ..weft_sema::Options::default()
+    };
+    weft_sema::analyze_source(src, opts)
+        .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message))
+}
+
+/// The function of the program of `a` with the name `name`.
+fn sema_fn(a: &weft_sema::Analysis, name: &str) -> weft_sema::FnId {
+    a.program
+        .fn_ids()
+        .find(|&f| a.program.fns[f].name == name)
+        .unwrap_or_else(|| panic!("no function `{name}`"))
+}
+
+/// A signature as the gate compares it: each part, and each `mut` place with
+/// no text.
+fn sig_key(e: &weft_sema::program::EffectSig) -> String {
+    let mut c = e.clone();
+    for m in &mut c.muts {
+        m.text.clear();
+        for s in &mut m.steps {
+            if let weft_sema::program::SigStep::Step(_, t) = s {
+                t.clear();
+            }
+        }
+    }
+    c.muts
+        .sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+    format!("{c:?}")
+}
+
+/// A recursive pair: `ping` and `pong` call each other; only `pong` changes
+/// the vector and performs `Note`.
+const PAIR: &str = "effect Note { fn note(x: u64) }
+
+fn ping(v: &Vec<u64>, n: u64) {
+    if n > 0 {
+        pong(v, n - 1)
+    }
+}
+
+fn pong(v: &Vec<u64>, n: u64) {
+    if n > 0 {
+        ping(v, n - 1)
+    } else {
+        v.push(1)
+        note(n)
+    }
+}
+";
+
+#[test]
+fn a_recursive_pair_of_functions_reaches_a_fixpoint() {
+    use weft_sema::analysis::summary::{IPlace, IRoot};
+    let a = both_a(PAIR);
+    let b = weft_sema::irbuild::build(&a);
+    let inf = weft_sema::analysis::callgraph::infer(&a, &b, None);
+    assert!(inf.diags.is_empty(), "{:?}", inf.diags);
+    for name in ["ping", "pong"] {
+        let f = b
+            .program
+            .fns
+            .iter()
+            .position(|d| d.name.ends_with(name))
+            .unwrap_or_else(|| panic!("no `{name}`"));
+        let s = inf
+            .sums
+            .get(FnId(u32::try_from(f).unwrap_or(u32::MAX)))
+            .unwrap_or_else(|e| panic!("`{name}`: {e}"));
+        // Each function of the pair changes what `v` points into and
+        // performs `Note` through the capability of its caller.
+        assert_eq!(s.muts, vec![(IPlace::root(IRoot::Param(0)), 0)], "`{name}`");
+        assert!(
+            s.performs.iter().any(|p| p.effect == "main.Note"),
+            "`{name}`: {:?}",
+            s.performs
+        );
+        assert!(s.can_abort(), "`{name}`");
+    }
+    // The pair needs more than one round for each function: the first
+    // round of `ping` sees an empty summary of `pong`.
+    assert!(inf.rounds > 2, "{} rounds", inf.rounds);
+    // The `EffectSig` of each function is the one of the old inference.
+    let ir = a.ir_facts.as_ref().expect("the program is in scope");
+    for name in ["ping", "pong"] {
+        let f = sema_fn(&a, name);
+        assert_eq!(
+            sig_key(&ir.sigs[f.index()].effects),
+            sig_key(&a.sigs[f.index()].effects),
+            "`{name}`"
+        );
+    }
+}
+
+#[test]
+fn a_row_only_grows() {
+    use weft_facts::{Step, StepKind};
+    use weft_sema::analysis::sig::Inferred;
+    use weft_sema::analysis::summary::{IPlace, IRoot, IStep};
+    let field = IStep::Step(
+        Step {
+            kind: StepKind::Field { id: 0 },
+            unstable: false,
+        },
+        ".x".to_string(),
+    );
+    let v = IPlace::root(IRoot::Param(0));
+    let vx = IPlace::cut(IRoot::Param(0), vec![field]);
+    let row = |muts: Vec<IPlace>, named: &[&str]| Inferred {
+        muts: muts.into_iter().map(|m| (m, 0)).collect(),
+        named: named.iter().map(|n| (*n).to_string()).collect(),
+        ..Inferred::default()
+    };
+    let mut r = row(vec![vx.clone()], &["main.A"]);
+    // A place that covers the changed place replaces it.
+    assert!(r.join(&row(vec![v.clone()], &[])));
+    assert_eq!(r.muts, vec![(v.clone(), 0)]);
+    // A place that the row covers adds nothing; the row does not shrink.
+    assert!(!r.join(&row(vec![vx], &[])));
+    assert!(!r.join(&Inferred::default()));
+    assert_eq!(r.muts, vec![(v, 0)]);
+    assert_eq!(r.named.len(), 1);
+    // A new effect and `raises` grow the row.
+    assert!(r.join(&row(Vec::new(), &["main.B"])));
+    assert!(r.join(&Inferred {
+        raises: true,
+        ..Inferred::default()
+    }));
+    assert!(r.raises && r.named.len() == 2);
+}
+
+#[test]
+fn the_guard_w0706_stops_a_fixpoint_that_grows_past_its_limit() {
+    let a = both_a(PAIR);
+    let b = weft_sema::irbuild::build(&a);
+    let inf = weft_sema::analysis::callgraph::infer(&a, &b, Some(0));
+    let mut codes: Vec<String> = inf
+        .diags
+        .iter()
+        .map(|d| format!("{:?} {}", d.code, d.message))
+        .collect();
+    codes.sort();
+    assert_eq!(codes.len(), 2, "{codes:?}");
+    assert!(codes.iter().all(|c| c.starts_with("W0706")), "{codes:?}");
+    assert!(codes.iter().any(|c| c.contains("`ping`")), "{codes:?}");
+}
+
+/// The source of `tests/gate/probes/ir/work/map/opres.wf` (map N1).
+const OPRES: &str = include_str!("../../../tests/gate/probes/ir/work/map/opres.wf");
+
+#[test]
+fn a_perform_through_the_row_points_into_the_arguments_and_the_callers() {
+    let a = both_a(OPRES);
+    let b = weft_sema::irbuild::build(&a);
+    let i = b
+        .entries
+        .iter()
+        .position(|e| e.name == "body")
+        .expect("a body `body`");
+    let f = weft_sema::factgen::preview(&a, &b, i).unwrap_or_else(|u| panic!("{u}"));
+    let n = f
+        .escapes_at
+        .iter()
+        .find(|(_, e)| e == "main.Pick")
+        .map(|(n, _)| *n)
+        .expect("the perform escapes");
+    assert!(f.may_abort.contains(&n));
+    let root_name = |p: PlaceId| f.roots[f.place(p).root.index()].name.clone();
+    // The perform lends the argument and the places of the callers.
+    let lent: Vec<String> = f
+        .lends_mut
+        .iter()
+        .filter(|(m, _)| *m == n)
+        .map(|(_, p)| f.place(*p).display.clone())
+        .collect();
+    assert!(lent.iter().any(|d| d == "v"), "{lent:?}");
+    assert!(
+        f.lends_mut
+            .iter()
+            .any(|&(m, p)| m == n && root_name(p) == "a place of a caller"),
+        "{lent:?}"
+    );
+    // `r` points into each place of `v` and into the places of the
+    // callers.
+    let r = f
+        .vars
+        .iter()
+        .position(|v| v.name == "r")
+        .map(|i| weft_facts::VarId(u32::try_from(i).unwrap_or(u32::MAX)))
+        .expect("a variable `r`");
+    let into: Vec<PlaceId> = f
+        .points_into
+        .iter()
+        .filter(|(v, _)| *v == r)
+        .map(|(_, p)| *p)
+        .collect();
+    assert!(
+        into.iter()
+            .any(|&p| f.place(p).display.starts_with('v') && f.place(p).is_wildcard()),
+        "{:?}",
+        into.iter()
+            .map(|&p| f.place(p).display.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(into.iter().any(|&p| root_name(p) == "a place of a caller"));
+}
+
+#[test]
+fn a_function_with_no_stated_row_gets_the_summary_of_its_body() {
+    // `grow` states no row: its summary comes from its body, so a call of
+    // it is no longer a construct of a later stage.
+    let src = "fn grow(v: &Vec<u64>) {
+    v.push(1)
+}
+
+fn main() {
+    let v = Vec.new()
+    grow(&v)
+    print(v.len())
+}
+";
+    let a = both_a(src);
+    let scope = a.ir_scope.as_ref().expect("a scope");
+    assert!(scope.in_scope(), "{:?}", scope.fallback);
+    let ir = a.ir_facts.as_ref().expect("the facts of the ir pipeline");
+    let f = sema_fn(&a, "grow");
+    assert_eq!(ir.sigs[f.index()].effects.muts.len(), 1);
+    assert_eq!(ir.sigs[f.index()].effects.muts[0].text, "v");
+    assert_eq!(
+        sig_key(&ir.sigs[f.index()].effects),
+        sig_key(&a.sigs[f.index()].effects)
+    );
+}
+
+#[test]
+fn a_public_function_with_no_stated_row_gets_w0701_from_its_summary() {
+    let src = "effect Note { fn note(x: u64) }
+
+pub fn tell(v: &Vec<u64>) {
+    v.push(1)
+    note(2)
+}
+";
+    let mut opts = weft_sema::Options::from_markers("// weft: library\n");
+    opts.facts = weft_sema::FactGen::Both;
+    opts.ir_groups = weft_sema::Groups::parse("A").unwrap_or(weft_sema::Groups::NONE);
+    let a = weft_sema::analyze_source(src, opts)
+        .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message));
+    let ir = a.ir_facts.as_ref().expect("the program is in scope");
+    let msg = |ds: &[weft_syntax::diag::Diagnostic]| -> Vec<String> {
+        ds.iter()
+            .filter(|d| format!("{:?}", d.code) == "W0701")
+            .map(|d| d.message.clone())
+            .collect()
+    };
+    let old = msg(&a.diags);
+    assert_eq!(old.len(), 1, "{:?}", a.diags);
+    assert_eq!(msg(&ir.diags), old);
+}
+
+#[test]
+fn the_effect_sig_of_each_corpus_function_of_group_a_is_the_one_of_the_old_inference() {
+    // The signature diff of the gate (`weft-gate sigdiff`, class `sig` of
+    // the ledger) on the corpus: no difference.
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/programs");
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .map(|d| {
+            d.filter_map(Result::ok)
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "wf"))
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort();
+    let (mut programs, mut fns) = (0usize, 0usize);
+    let mut bad = Vec::new();
+    for f in &files {
+        let Ok(src) = std::fs::read_to_string(f) else {
+            continue;
+        };
+        let mut opts = weft_sema::Options::from_markers(&src);
+        opts.facts = weft_sema::FactGen::Both;
+        opts.ir_groups = weft_sema::Groups::parse("A").unwrap_or(weft_sema::Groups::NONE);
+        let Ok(a) = weft_sema::analyze_source(&src, opts) else {
+            continue;
+        };
+        let Some(ir) = a.ir_facts.as_ref() else {
+            continue;
+        };
+        programs += 1;
+        for g in a.program.fn_ids() {
+            let def = &a.program.fns[g];
+            if def.is_std || def.decl.body.is_none() {
+                continue;
+            }
+            fns += 1;
+            let (old, new) = (&a.sigs[g.index()].effects, &ir.sigs[g.index()].effects);
+            let same_text = old.muts.iter().map(|m| &m.text).collect::<BTreeSet<_>>()
+                == new.muts.iter().map(|m| &m.text).collect::<BTreeSet<_>>();
+            if sig_key(old) != sig_key(new) || !same_text {
+                bad.push(format!("{}: `{}`", f.display(), def.path));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+    assert!(
+        programs >= 10 && fns >= 40,
+        "{programs} programs, {fns} functions"
+    );
+}
+
+#[test]
+fn a_change_of_a_by_value_parameter_is_in_the_row_as_the_old_inference_says() {
+    // `tests/gate/probes/partb/p/bv.wf`: the old inference names a change of
+    // a by-value parameter with no reference in the row (`mut(v)`), so W0701
+    // asks for it. The `EffectSig` of the summary is the same.
+    let src = "pub fn f(v: Vec<u64>) { v.push(1) }
+fn k(v: Vec<u64>) { v.push(1) }
+fn m(v: Vec<u64>) { k(v) }
+";
+    let a = both_a(src);
+    let ir = a.ir_facts.as_ref().expect("the program is in scope");
+    for name in ["f", "k", "m"] {
+        let f = sema_fn(&a, name);
+        assert_eq!(
+            sig_key(&ir.sigs[f.index()].effects),
+            sig_key(&a.sigs[f.index()].effects),
+            "`{name}`"
+        );
+    }
+    assert_eq!(ir.sigs[sema_fn(&a, "k").index()].effects.muts.len(), 1);
+    assert!(ir.sigs[sema_fn(&a, "m").index()].effects.muts.is_empty());
+    let w0701 = |ds: &[weft_syntax::diag::Diagnostic]| {
+        ds.iter()
+            .filter(|d| format!("{:?}", d.code) == "W0701")
+            .map(|d| d.message.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(w0701(&ir.diags), w0701(&a.diags));
+    assert_eq!(w0701(&ir.diags).len(), 1);
+}

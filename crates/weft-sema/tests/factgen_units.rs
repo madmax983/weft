@@ -1210,6 +1210,44 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
                 "multi_at",
                 "writes_via",
                 "rebound_at",
+                "overwrites",
+            ],
+            &[],
+        ),
+        // A perform through the capability of a caller (plan stage F6): the
+        // operands, the places that the clause gets and can change, the
+        // places of the callers, the effect, the abort.
+        "perform" => (
+            &[
+                "cfg_edge",
+                "reads_at",
+                "uses",
+                "moved_at",
+                "moved_part",
+                "rest_linear",
+                "call",
+                "lends_mut",
+                "escapes_at",
+                "may_abort",
+                "multi_at",
+                "overwrites",
+            ],
+            &[],
+        ),
+        // The result binds.
+        "perform ret" => (
+            &[
+                "cfg_edge",
+                "rebound_at",
+                "empty_at",
+                "uses",
+                "moved_at",
+                "moved_part",
+                "rest_linear",
+                "mutates_at",
+                "reads_at",
+                "overwrites",
+                "writes_via",
             ],
             &[],
         ),

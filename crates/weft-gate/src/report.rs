@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use crate::baseline::{self, Comparison};
 use crate::classify::{self, Class};
-use crate::ledger::{self, EntryClass, Ledger};
+use crate::ledger::{self, Ledger};
 use crate::manifest::{self, Entry, Manifest, Options};
 use crate::oracle::{self, Cache, Engine, Verdict};
 use crate::snapshot::{self, Kind, Pipeline, Record, Settings};
@@ -213,7 +213,7 @@ impl Report {
                 .entries
                 .iter()
                 .enumerate()
-                .filter(|(_, e)| e.class != EntryClass::Engine && e.matches(&input.paths))
+                .filter(|(_, e)| e.class.program_class().is_some() && e.matches(&input.paths))
                 .map(|(k, _)| k)
                 .collect();
             for &k in &candidates {
@@ -239,7 +239,8 @@ impl Report {
         report.new_fp_share();
         for (k, e) in ledger.entries.iter().enumerate() {
             let Some(program_class) = e.class.program_class() else {
-                // An `engine` entry: the engine differential checks it.
+                // An `engine` or a `sig` entry: the engine differential or
+                // the signature diff checks it.
                 continue;
             };
             let label = format!("ledger entry {} ({})", k + 1, e.label());

@@ -14,7 +14,9 @@
 //! with the `ir` pipeline. [`thir`] runs test D0 on the THIR tables of each
 //! program. [`ir_build`] builds and verifies the IR of each program.
 //! [`engines`] runs each program with the two engines of the interpreter
-//! and compares the runs (the engine differential).
+//! and compares the runs (the engine differential). [`sigdiff`] compares
+//! the signatures that the `ir` pipeline infers with those of the old
+//! inference.
 
 use std::path::PathBuf;
 
@@ -31,6 +33,7 @@ pub mod manifest;
 pub mod oracle;
 pub mod pool;
 pub mod report;
+pub mod sigdiff;
 pub mod snapshot;
 pub mod thir;
 

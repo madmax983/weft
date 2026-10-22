@@ -14,9 +14,12 @@
 //! below it ([`IPlace::cut`]). So the parts are finite, and a fixpoint over
 //! summaries ends (`docs/ir.md` 6.6).
 //!
-//! Stage F5 makes summaries from signatures (`super::sig`). The parts that
-//! only a body gives (`runs`, `tasks`, `uses`, `moves`, `rebinds`, `frees`)
-//! stay empty there; stage F6 and later fill them.
+//! Stage F5 makes summaries from signatures (`super::sig`). Stage F6 makes
+//! the summary of a function with a body from its facts (`super::summarize`)
+//! in the fixpoint of the call graph (`super::callgraph`). The parts that
+//! only a body with a closure, a handler or a task gives (`runs`, `tasks`,
+//! `uses`, `moves`, `rebinds`, `frees`) stay empty; stage F11 and later
+//! fill them.
 
 use std::collections::BTreeSet;
 
@@ -219,6 +222,10 @@ pub struct Summary {
     pub aborts: BTreeSet<Abort>,
     /// The body can resume a `multi` continuation more than once.
     pub multi: bool,
+    /// The body can resume more than once with no effect of its row that
+    /// says so (a call of an unknown function value): the `multi` part of
+    /// the `EffectSig` of today.
+    pub unknown_multi: bool,
     /// The function values of the interface that the body runs.
     pub runs: Vec<Run>,
     /// The tasks that the body starts in a scope that it does not own
@@ -327,7 +334,7 @@ impl Summaries {
         match self.by_fn.get(&f) {
             Some(Ok(s)) => Ok(s),
             Some(Err(why)) => Err(why),
-            None => Err("a call of a function with no summary (stage F6)"),
+            None => Err("a call of a function with no summary"),
         }
     }
 

@@ -21,7 +21,12 @@
 //! (`crate::analysis`) gives the states, and the templates ([`templates`])
 //! write the facts of each node. Stage F5 adds the calls of the functions
 //! whose summary comes from a signature ([`summaries`]), and the W0204 store
-//! check ([`Input::diags`]). A program with another construct gets
+//! check ([`Input::diags`]). Stage F6 adds the summaries of the bodies: the
+//! fixpoint of the call graph (`crate::analysis::callgraph`) runs the fact
+//! generator on each function body, callees first, and [`emit`] keeps the
+//! facts of its last round. It also adds a `perform` through the capability
+//! of a caller (`crate::analysis::unknown`), and W0701 and W0706 from the
+//! inferred signatures. A program with another construct gets
 //! [`Unsupported`]: the old pipeline checks it. A test can give another emit
 //! ([`crate::analyze_with_emit`]), and [`preview`] gives the facts of one
 //! body.
@@ -74,8 +79,12 @@ pub struct Input<'a> {
     /// The scope of the program.
     pub scope: &'a Scope,
     /// The diagnostics of the fact generator: the W0204 store check
-    /// (`docs/ir.md` 6.9).
+    /// (`docs/ir.md` 6.9), W0701 and W0706 of the effect inference
+    /// (`docs/ir.md` 6.8).
     pub diags: &'a std::cell::RefCell<Vec<Diagnostic>>,
+    /// The `EffectSig` of each function whose summary comes from its body
+    /// (`crate::analysis::sig::to_effect_sig`).
+    pub effects: &'a std::cell::RefCell<Vec<(crate::FnId, crate::program::EffectSig)>>,
 }
 
 /// A fact generator.
@@ -96,7 +105,7 @@ pub type Emit = fn(&Input<'_>, &mut [FnFacts]) -> Result<(), Unsupported>;
 /// Returns [`Unsupported`] for the first body with a construct that the
 /// fact generator does not support yet.
 pub fn emit(input: &Input<'_>, facts: &mut [FnFacts]) -> Result<(), Unsupported> {
-    let sums = summaries(input.analysis, input.built);
+    let mut inf = crate::analysis::callgraph::infer(input.analysis, input.built, None);
     for (i, e) in input.built.entries.iter().enumerate() {
         let Outcome::Built(entry) = e.outcome else {
             continue;
@@ -104,35 +113,80 @@ pub fn emit(input: &Input<'_>, facts: &mut [FnFacts]) -> Result<(), Unsupported>
         let Some(f) = facts.get_mut(i) else {
             continue;
         };
-        let ds = emit_body(input.analysis, input.built, &sums, i, entry, f)?;
+        let ds = match inf.facts.remove(&i) {
+            Some(Ok((done, ds))) => {
+                *f = done;
+                ds
+            }
+            Some(Err(u)) => return Err(u),
+            None => emit_body(input.analysis, input.built, &inf.sums, i, entry, f)?,
+        };
         input.diags.borrow_mut().extend(ds);
     }
+    let mut diags = input.diags.borrow_mut();
+    diags.extend(inf.diags);
+    for (f, e) in &inf.effects {
+        diags.extend(w0701(input.analysis, *f, e));
+    }
+    input.effects.borrow_mut().extend(inf.effects);
     Ok(())
 }
 
+/// W0701 (`docs/ir.md` 6.8): a public function with no stated row whose
+/// inferred row `e` changes a place or performs an effect. The effects of a
+/// function parameter pass through with no syntax, so a row with only
+/// pass-through parameters has nothing to state. The text is the text of
+/// the old inference (`Lower::effect_text`).
+fn w0701(a: &Analysis, f: crate::FnId, e: &crate::program::EffectSig) -> Option<Diagnostic> {
+    use crate::effects;
+    use weft_syntax::diag::Code;
+    let prog = &a.program;
+    let def = prog.fns.get(f.index())?;
+    let declared = a.sigs.get(f.index()).is_some_and(|s| s.declared);
+    let to_state = !e.muts.is_empty() || !e.named.is_empty();
+    if !def.is_pub || declared || !to_state || def.decl.is_extern {
+        return None;
+    }
+    let mut parts: Vec<String> = Vec::new();
+    if !e.muts.is_empty() {
+        let ps: Vec<&str> = e.muts.iter().map(|m| m.text.as_str()).collect();
+        parts.push(format!("mut({})", ps.join(", ")));
+    }
+    parts.extend(
+        e.named
+            .iter()
+            .map(|n| effects::written(prog, def.module, n).unwrap_or_else(|| n.clone())),
+    );
+    let mut d = Diagnostic::error(
+        Code::W0701,
+        format!(
+            "public function `{}` must state its effects: `/ {}`",
+            def.name,
+            parts.join(", ")
+        ),
+        def.decl.name.span,
+    );
+    // An effect that this module cannot name shows its identity. The note
+    // tells why.
+    for n in &e.named {
+        if !effects::is_std(n) && effects::written(prog, def.module, n).is_none() {
+            let hidden = effects::seen(prog, def.module, n);
+            d = d.note(effects::unnamed_note(n, hidden));
+        }
+    }
+    d.unit = prog.mods.get(def.module.index()).map_or(0, |m| m.unit);
+    Some(d)
+}
+
 /// The summary of each function of the IR that a call can run (`docs/ir.md`
-/// 6.7).
+/// 6.7): the fixpoint of `crate::analysis::callgraph`.
 ///
 /// A function with a stated signature (also an extern function) gets the
-/// summary of its signature (`crate::analysis::sig`). A function with no
-/// stated signature gets one from its body in stage F6.
+/// summary of its signature (`crate::analysis::sig`), with the parts that
+/// its body gives. A function with no stated signature gets the summary of
+/// its body.
 pub fn summaries(a: &Analysis, built: &Built) -> crate::analysis::Summaries {
-    let mut out = crate::analysis::Summaries::default();
-    for (&sema, &f) in &built.fns {
-        let (Some(sig), Some(decl)) = (a.sigs.get(sema.index()), built.program.fns.get(f.index()))
-        else {
-            continue;
-        };
-        let s = if decl.intrinsic.is_some() {
-            Err("a call of `sim.run` or `with_timeout` (stage F19)")
-        } else if !sig.declared {
-            Err("a call of a function with no stated signature (summaries of bodies, stage F6)")
-        } else {
-            crate::analysis::sig::from_signature(&a.program, sema, sig, decl, &built.tys)
-        };
-        out.insert(f, s);
-    }
-    out
+    crate::analysis::callgraph::infer(a, built, None).sums
 }
 
 /// The facts of body `index` of the analysis from the `ir` pipeline: the
@@ -271,7 +325,11 @@ fn check_supported(
                 | TermKind::Return
                 | TermKind::UnwindExit
                 | TermKind::Unreachable
-                | TermKind::Assert { .. } => {}
+                | TermKind::Assert { .. }
+                | TermKind::Perform {
+                    cap: weft_ir::CapOperand::Row(_),
+                    ..
+                } => {}
                 TermKind::Call {
                     callee: weft_ir::Callee::Fn(f, _),
                     ..
@@ -283,7 +341,12 @@ fn check_supported(
                 TermKind::Call { .. } => {
                     return no(Group::C, "a call of a function value (stage F12)");
                 }
-                TermKind::Perform { .. } => return no(Group::A, "a perform (stage F14)"),
+                TermKind::Perform { .. } => {
+                    return no(
+                        Group::D,
+                        "a perform through a capability of a handler (stage F14)",
+                    );
+                }
                 TermKind::Resume { .. } => return no(Group::D, "a continuation (stage F16)"),
                 TermKind::IterNext { .. } => return no(Group::B, "an iterator (stage F10)"),
                 TermKind::Handle { .. } => return no(Group::D, "a handler (stage F14)"),
@@ -319,6 +382,24 @@ pub fn emit_body(
     entry: weft_ir::BodyId,
     facts: &mut FnFacts,
 ) -> Result<Vec<Diagnostic>, Unsupported> {
+    emit_component(a, built, sums, index, entry, facts).map(|(d, _)| d)
+}
+
+/// [`emit_body`], that also gives the roots of the component: the summary
+/// of the body maps its fact places back to its interface
+/// (`crate::analysis::summarize`).
+///
+/// # Errors
+///
+/// The errors of [`emit_body`].
+pub fn emit_component(
+    a: &Analysis,
+    built: &Built,
+    sums: &crate::analysis::Summaries,
+    index: usize,
+    entry: weft_ir::BodyId,
+    facts: &mut FnFacts,
+) -> Result<(Vec<Diagnostic>, alpha::Roots), Unsupported> {
     use std::collections::BTreeMap;
     let p = &built.program;
     let comp = component(built, entry);
@@ -403,7 +484,7 @@ pub fn emit_body(
     }
     decls::std_effects(facts);
     facts.normalize();
-    Ok(diags)
+    Ok((diags, roots))
 }
 
 /// The W0204 store check (`docs/ir.md` 6.9): a reference into a local, a
@@ -569,6 +650,20 @@ fn emit_blocks(
                     aborts: table.get(at(Phase::FrameEnd, PAST)).into_iter().collect(),
                 };
                 templates::call(em, &nodes, &st, block, &blk.term.kind, blk.term.origin.span)?;
+            } else if let weft_ir::TermKind::Perform { .. } = &blk.term.kind {
+                let nodes = templates::CallNodes {
+                    main: n,
+                    ret: table.get(NodeKey {
+                        body: bid,
+                        block,
+                        at: TERM,
+                        phase: Phase::Ret,
+                        dest: NORMAL,
+                    }),
+                    frame_end: None,
+                    aborts: Vec::new(),
+                };
+                templates::perform(em, &nodes, &st, &blk.term.kind)?;
             } else {
                 templates::term(em, n, &st, &blk.term.kind, blk.term.origin.span)?;
             }
@@ -657,9 +752,15 @@ impl Scope {
 pub struct IrFacts {
     /// The facts of each body, in the order of [`Analysis::bodies`].
     pub bodies: Vec<BodyFacts>,
-    /// The diagnostics: those of `typeck` and of the item checks, and those
-    /// of the builder (W0315).
+    /// The diagnostics: those of `typeck` and of the item checks, those of
+    /// the builder (W0315), and those of the fact generator and of its
+    /// effect inference (W0204 stores, W0701, W0706).
     pub diags: Vec<Diagnostic>,
+    /// The signatures, by [`crate::FnId`]: a function whose summary comes
+    /// from its body has the `EffectSig` of its summary
+    /// (`crate::analysis::sig::to_effect_sig`, `docs/ir.md` 6.8); the other
+    /// functions keep the signature of the old inference.
+    pub sigs: Vec<crate::FnSig>,
 }
 
 /// The text of a list of groups that are off: `group A`, or
@@ -720,17 +821,25 @@ pub(crate) fn run(
     }
     let mut facts: Vec<FnFacts> = a.bodies.iter().map(|b| seed(&b.facts)).collect();
     let emitted = std::cell::RefCell::new(Vec::new());
+    let effects = std::cell::RefCell::new(Vec::new());
     let input = Input {
         analysis: a,
         built: &built,
         scope: &s,
         diags: &emitted,
+        effects: &effects,
     };
     if let Err(u) = emit(&input, &mut facts) {
         s.fallback = Some(u.to_string());
         return (s, None);
     }
     exports::fill(a, &built, &mut facts);
+    let mut sigs = a.sigs.clone();
+    for (f, e) in effects.into_inner() {
+        if let Some(sig) = sigs.get_mut(f.index()) {
+            sig.effects = e;
+        }
+    }
     let bodies = a
         .bodies
         .iter()
@@ -739,13 +848,23 @@ pub(crate) fn run(
             func: b.func,
             unit: b.unit,
             facts,
-            effects: b.effects.clone(),
+            effects: b
+                .func
+                .and_then(|f| sigs.get(f.index()))
+                .map_or_else(|| b.effects.clone(), |s| s.effects.clone()),
         })
         .collect();
     let mut diags = kept;
     diags.extend(built.diags.iter().cloned());
     diags.extend(emitted.into_inner());
-    (s, Some(IrFacts { bodies, diags }))
+    (
+        s,
+        Some(IrFacts {
+            bodies,
+            diags,
+            sigs,
+        }),
+    )
 }
 
 /// The bodies of the component of the function or test body `entry`.
@@ -773,7 +892,7 @@ pub fn component(built: &Built, entry: weft_ir::BodyId) -> Vec<weft_ir::BodyId> 
 /// lowering: the name, the names of the effects, and the flags of the driver
 /// (`library()`, `started()`, `no_runtime()`). They do not depend on the code
 /// of the body.
-fn seed(old: &FnFacts) -> FnFacts {
+pub(crate) fn seed(old: &FnFacts) -> FnFacts {
     FnFacts {
         name: old.name.clone(),
         effect_names: old.effect_names.clone(),

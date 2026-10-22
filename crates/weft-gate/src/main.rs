@@ -21,6 +21,8 @@
 //! weft-gate engines --tier 1|2 [--report FILE] [--workers N] [--limit SECONDS]
 //!                   [--max-steps N] [--max-memory MB] [--sample PERCENT] [--seed N]
 //!                   [--repo DIR] [--probes DIR]
+//! weft-gate sigdiff --tier 1|2 [--groups ABCDEF] [--report FILE] [--workers N]
+//!                   [--limit SECONDS] [--repo DIR] [--probes DIR]
 //! ```
 //!
 //! `--repo` is the repository (default: the workspace of this crate). `--probes` is
@@ -108,6 +110,14 @@
 //! `target/gate/engines-tier<N>.md`) and the differences as JSON lines next to
 //! it. The exit code is 1 if a difference has no entry. Run it with a release
 //! build.
+//!
+//! `sigdiff` is the signature diff (plan stage F6, `weft_gate::sigdiff`): for
+//! each program of the tier in scope of the `ir` pipeline with the groups of
+//! `--groups`, it compares the `EffectSig` of each function that the `ir`
+//! pipeline infers with the one of the old inference. Each difference needs a
+//! ledger entry of class `sig`. It writes the report (default
+//! `target/gate/sigdiff-tier<N>.md`). The exit code is 1 if a difference has
+//! no entry or a program panics. Run it with a release build.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write as _;
@@ -151,7 +161,9 @@ const USAGE: &str = "usage:
                      [--repo DIR] [--probes DIR]
   weft-gate engines --tier 1|2 [--report FILE] [--workers N] [--limit SECONDS]
                     [--max-steps N] [--max-memory MB] [--sample PERCENT] [--seed N]
-                    [--repo DIR] [--probes DIR]";
+                    [--repo DIR] [--probes DIR]
+  weft-gate sigdiff --tier 1|2 [--groups ABCDEF] [--report FILE] [--workers N]
+                    [--limit SECONDS] [--repo DIR] [--probes DIR]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -351,6 +363,9 @@ fn run(args: &[String]) -> Result<bool> {
     }
     if cmd == "engines" {
         return run_engines(&flags);
+    }
+    if cmd == "sigdiff" {
+        return run_sigdiff(&flags);
     }
     run_tool(cmd, flags).map(|()| true)
 }
@@ -606,6 +621,56 @@ fn run_ir_build(flags: &Flags) -> Result<bool> {
         "{} programs in {:.1} s; wrote {}",
         sum.programs,
         start.elapsed().as_secs_f64(),
+        out.display()
+    );
+    Ok(sum.holds())
+}
+
+/// `sigdiff`: the signature diff on the programs of the tier. Returns false
+/// if a difference has no ledger entry or a program panics.
+fn run_sigdiff(flags: &Flags) -> Result<bool> {
+    let tier = flags.tier.context("--tier is necessary")?;
+    let (m, base) = if tier == 1 {
+        (tier1(flags)?, flags.repo.clone())
+    } else {
+        let probes = flags.probes()?;
+        (tier2(&probes)?, probes)
+    };
+    let groups = groups_on(flags)?;
+    let workers = flags.workers.unwrap_or_else(|| {
+        std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+    });
+    let limit = flags.limit.map_or(snapshot::LIMIT, Duration::from_secs);
+    let out = flags.report.clone().unwrap_or_else(|| {
+        flags
+            .repo
+            .join(format!("target/gate/sigdiff-tier{tier}.md"))
+    });
+    let ledger = Ledger::read(&flags.repo.join(ledger::LEDGER))?;
+    snapshot::install_panic_hook();
+    let total = m.entries.len();
+    println!("sigdiff on {total} programs of tier {tier} with {workers} workers, groups {groups}");
+    let start = Instant::now();
+    let sum =
+        weft_gate::sigdiff::run(&base, m.entries, workers, limit, groups, &ledger, |ended| {
+            if ended % 2000 == 0 {
+                println!(
+                    "{ended} of {total} programs in {:.1} s",
+                    start.elapsed().as_secs_f64()
+                );
+            }
+        })?;
+    let text = sum.to_markdown(&format!("tier {tier}, groups {groups}"));
+    write_text(&out, &text)?;
+    println!(
+        "{} programs in {:.1} s: {} in scope, {} functions, {} same, {} differ, {} with no entry; wrote {}",
+        sum.programs,
+        start.elapsed().as_secs_f64(),
+        sum.in_scope,
+        sum.fns,
+        sum.same,
+        sum.fns.saturating_sub(sum.same),
+        sum.unledgered,
         out.display()
     );
     Ok(sum.holds())

@@ -12,12 +12,23 @@
 //! of its target, and visits the target again if that state changed. Stage
 //! F3 has no widening (stage F10): a body whose states still change after
 //! [`VISITS`] visits of one block gives an error.
+//!
+//! The summaries (`docs/ir.md` 6.7) carry what a body does across a call:
+//! [`summary`] holds them, [`sig`] makes them from signatures and projects
+//! them onto the `EffectSig` of today, [`apply`] applies them at a run node,
+//! [`summarize`] makes them from the facts of a body, [`unknown`] is the run
+//! node of an operation of a caller, and [`callgraph`] runs the summaries of
+//! the bodies to their fixpoint, callees first (the effect inference of the
+//! `ir` pipeline, `docs/ir.md` 6.8).
 
 pub mod apply;
+pub mod callgraph;
 pub mod domain;
 pub mod sig;
+pub mod summarize;
 pub mod summary;
 pub mod transfer;
+pub mod unknown;
 
 use std::collections::BTreeSet;
 

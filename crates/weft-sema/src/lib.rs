@@ -207,13 +207,14 @@ pub struct Analysis {
 
 impl Analysis {
     /// The analysis as the `ir` pipeline gives it: with [`FactGen::Both`]
-    /// and a program in scope, the facts and the diagnostics of
-    /// [`Analysis::ir_facts`]; else the analysis as it is.
+    /// and a program in scope, the facts, the diagnostics and the signatures
+    /// of [`Analysis::ir_facts`]; else the analysis as it is.
     #[must_use]
     pub fn ir_view(mut self) -> Self {
         if let Some(ir) = self.ir_facts.take() {
             self.bodies = ir.bodies;
             self.diags = ir.diags;
+            self.sigs = ir.sigs;
         }
         self
     }
@@ -463,15 +464,17 @@ fn analyze_bounded(
 /// The codes of the old lowering that the `ir` pipeline drops.
 ///
 /// These are diagnostics of the old lowering and of its effect inference
-/// (`docs/ir.md` 2.4): the fact generator of the IR gives its own. W0303
-/// stays: a body with W0303 has no IR (`docs/ir.md` 5.36).
-pub const IR_DROPS: [Code; 7] = [
+/// (`docs/ir.md` 2.4): the fact generator of the IR gives its own, and its
+/// effect inference gives W0701 and W0706 (`docs/ir.md` 6.8). W0303 stays: a
+/// body with W0303 has no IR (`docs/ir.md` 5.36).
+pub const IR_DROPS: [Code; 8] = [
     Code::W0204,
     Code::W0313,
     Code::W0314,
     Code::W0315,
     Code::W0701,
     Code::W0704,
+    Code::W0706,
     Code::W0707,
 ];
 

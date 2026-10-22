@@ -334,10 +334,11 @@ fn ir_entries() -> Vec<Entry> {
 
 /// True if the `ir` pipeline checks program `path` of [`ir_entries`] with
 /// every group on: since stage F5 the fact generator supports the calls of
-/// the prelude (`push` in `w0301.wf`). `clean.wf` calls a function with no
-/// stated signature (stage F6).
+/// the prelude (`push` in `w0301.wf`), and since stage F6 the calls of a
+/// function with no stated signature (`get` in `clean.wf`, `forgets` in
+/// `w0601_pkg`).
 fn in_scope_now(path: &str) -> bool {
-    path == "w0301.wf"
+    matches!(path, "w0301.wf" | "clean.wf" | "w0601_pkg")
 }
 
 #[test]
@@ -414,7 +415,7 @@ fn the_gate_reports_the_coverage_of_the_fact_generator() {
     }
     assert_eq!(r.groups_on, "ABCDEF");
     let md = r.to_markdown();
-    assert!(md.contains("| data | 1 | 3 | 33.3 % |"), "{md}");
+    assert!(md.contains("| data | 3 | 3 | 100.0 % |"), "{md}");
     // The groups that the programs use: `w0301.wf` and `clean.wf` use group
     // A only.
     assert_eq!(r.used.len(), 3);

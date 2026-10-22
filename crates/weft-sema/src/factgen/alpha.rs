@@ -68,6 +68,9 @@ pub enum Role {
     /// The callee frame of the run node with this id: the locals of the
     /// callee that its result points into.
     Frame(u32),
+    /// A place of a caller that the body cannot name (`docs/ir.md` 6.3):
+    /// code of a caller can give a reference into it.
+    Caller,
 }
 
 /// The roots of one component, made when α first needs them.
@@ -88,6 +91,10 @@ pub struct Roots {
     handles: HashSet<PlaceId>,
     /// The callee frame root of each run node.
     frames: HashMap<u32, PlaceId>,
+    /// The root of the places of a caller, if α made it.
+    caller: Option<PlaceId>,
+    /// The definition of each group root of a definition.
+    group_adts: HashMap<RootId, AdtId>,
     /// The stated place of each place field of a struct (`cur: &u8 in
     /// self.buf[]`), in terms of the struct (`self`).
     fields: HashMap<(AdtId, u32), crate::program::SigPlace>,
@@ -294,6 +301,18 @@ impl Roots {
         self.handles.contains(&p)
     }
 
+    /// The handle place `h.*` of the `Rc` handle at place `h`: a reference
+    /// into the group through the handle depends on it (ADR 0003).
+    pub fn handle_place(&mut self, facts: &mut FnFacts, h: PlaceId) -> PlaceId {
+        let step = Step {
+            kind: StepKind::Deref,
+            unstable: true,
+        };
+        let hp = facts.child(h, step, ".*");
+        self.handles.insert(hp);
+        hp
+    }
+
     /// The move path of fact place `p`, if its root is the value of a local:
     /// the local and the longest prefix of field and variant steps. A step
     /// of another kind (an element, a dereference, a wildcard) ends the
@@ -342,6 +361,27 @@ impl Roots {
         let r = facts.add_root(name, RootKind::Group);
         self.groups.insert(key, r);
         self.roles.insert(facts.place(r).root, Role::Group);
+        self.group_adts.insert(facts.place(r).root, a);
+        r
+    }
+
+    /// The definition of the group root `r`, if it is the group of a
+    /// definition.
+    pub fn group_adt(&self, r: RootId) -> Option<AdtId> {
+        self.group_adts.get(&r).copied()
+    }
+
+    /// The root of the places of a caller that the body cannot name
+    /// (`docs/ir.md` 6.3, kind `Arg`, shown as "a place of a caller"). Code
+    /// of a caller (an operation of a handler of a caller) can give a
+    /// reference into it and can change it.
+    pub fn caller(&mut self, facts: &mut FnFacts) -> PlaceId {
+        if let Some(r) = self.caller {
+            return r;
+        }
+        let r = facts.add_root("a place of a caller", RootKind::Arg);
+        self.caller = Some(r);
+        self.roles.insert(facts.place(r).root, Role::Caller);
         r
     }
 
@@ -364,6 +404,9 @@ impl Roots {
         let r = facts.add_root(name, RootKind::Group);
         self.groups.insert(key, r);
         self.roles.insert(facts.place(r).root, Role::Group);
+        if let GroupKey::Adt(a) = key {
+            self.group_adts.insert(facts.place(r).root, a);
+        }
         r
     }
 }

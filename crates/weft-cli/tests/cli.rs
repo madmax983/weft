@@ -1107,16 +1107,31 @@ fn groups_put_a_program_in_scope_of_the_ir_pipeline() {
         "{}",
         out.stderr
     );
-    // A program with a call is not in scope yet.
+    // A call of a function with no stated row is in scope (stage F6); a
+    // cleanup chain with an `on abort` function is not in scope yet (F7).
     let out = cmd(&[
         "agree",
         "--facts=ir",
         "--groups=A",
         "tests/programs/02_bad.wf",
     ]);
+    assert!(out.stderr.is_empty(), "{}", out.stderr);
+    let dir = scratch(
+        "groups_on_abort",
+        &[(
+            "on_abort.wf",
+            "linear struct Tx { id: u64 }\n    on abort = undo\nfn undo(t: Tx) { let Tx(i) = t }\nfn g() { print(1) }\nfn f() {\n    let t = Tx { id: 1 }\n    g()\n    let Tx(i) = t\n}\n",
+        )],
+    );
+    let out = cmd(&[
+        "agree",
+        "--facts=ir",
+        "--groups=A",
+        &format!("{dir}/on_abort.wf"),
+    ]);
     assert!(
         out.stderr
-            .contains("the fact generator does not support group A: a call"),
+            .contains("the fact generator does not support group A: an `on abort` function"),
         "{}",
         out.stderr
     );

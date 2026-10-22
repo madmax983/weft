@@ -2,9 +2,11 @@
 //!
 //! There is one function for each statement kind and for each terminator
 //! kind: `Switch`, `Goto`, `Return`, the terminators with no effect on the
-//! state, and a `Call` of a function item, which applies the summary of the
-//! callee (`super::apply`, stage F5). The other terminators that run another
-//! body give [`AlphaError::Later`].
+//! state, a `Call` of a function item, which applies the summary of the
+//! callee (`super::apply`, stage F5), and a `Perform` through the capability
+//! of a caller (`super::unknown`, stage F6). The other terminators that run
+//! another body give [`AlphaError::Later`]. A run node that changes a place
+//! of a local that can hold a linear value can put one there.
 //!
 //! - `Ref(q)` gives `refs = α(q)` and the handle places of each `Deref(Rc)`
 //!   on `q`.
@@ -124,8 +126,14 @@ pub fn held_at(
             "a reference in an `rc` object (stored values, stage F13)",
         )),
         Some(Role::Frame(_)) => Err(AlphaError::Later(
-            "a reference in a local of a callee (summaries of bodies, stage F6)",
+            "a reference in a local of a callee (stage F14)",
         )),
+        // A reference in a place of a caller points into a place of a
+        // caller.
+        Some(Role::Caller) => {
+            let c = roots.caller(facts);
+            Ok(vec![facts.wildcard(c)])
+        }
         None => Err(AlphaError::BadPlace(
             "a place with no root of the component".to_string(),
         )),
@@ -644,7 +652,16 @@ pub fn term(
             ..
         } => call(cx, body, block, st, *f, targs, args, dest),
         TermKind::Call { .. } => Err(AlphaError::Later("a call of a function value (stage F12)")),
-        TermKind::Perform { .. } => Err(AlphaError::Later("a perform (stage F14)")),
+        TermKind::Perform {
+            cap: weft_ir::CapOperand::Row(e),
+            op,
+            args,
+            dest,
+            ..
+        } => perform_row(cx, body, st, *e, *op, args, dest),
+        TermKind::Perform { .. } => Err(AlphaError::Later(
+            "a perform through a capability of a handler (stage F14)",
+        )),
         TermKind::Resume { .. } => Err(AlphaError::Later("a continuation (stage F16)")),
         TermKind::IterNext { .. } => Err(AlphaError::Later("an iterator (stage F10)")),
         TermKind::Handle { .. } => Err(AlphaError::Later("a handler (stage F14)")),
@@ -775,6 +792,77 @@ fn call(
             st.add(k, &path, &Tree::leaf(AbsVal::refs(refs.iter().copied())));
         }
     }
+    let changed: Vec<PlaceId> = out.muts.iter().map(|(q, _)| *q).collect();
+    for (k, path) in can_get_linear(cx, &changed) {
+        st.add(k, &path, &Tree::leaf(AbsVal::of_type(true)));
+    }
+    bind_result(cx, body, st, args, dest, out.ret)
+}
+
+/// The move paths of the places `changed` that can get a linear value.
+///
+/// A run node changes the places `changed`. The type of the local of such
+/// a move path can hold a linear value. The callee can put a linear value into such a place and keep the
+/// old value (`Vec.push`), so the local can hold a linear value after the
+/// node, also if it held none before (an empty `Vec`).
+pub fn can_get_linear(cx: &Cx<'_>, changed: &[PlaceId]) -> Vec<(Key, Vec<PathStep>)> {
+    let mut out: Vec<(Key, Vec<PathStep>)> = Vec::new();
+    for &q in changed {
+        let Some((k, path)) = cx.roots.path_of(cx.facts, q) else {
+            continue;
+        };
+        let linear =
+            cx.p.bodies
+                .get(k.0.index())
+                .and_then(|b| b.locals.get(k.1.index()))
+                .is_some_and(|d| crate::props::ir_maybe_linear(cx.tys, d.ty));
+        if linear && !out.contains(&(k, path.clone())) {
+            out.push((k, path));
+        }
+    }
+    out
+}
+
+/// `Perform` through the capability of a caller: an operation of a caller
+/// (`super::unknown`). The moved arguments leave no value; the result binds
+/// to `dest`.
+///
+/// # Errors
+///
+/// The errors of [`super::unknown::op_of_caller`] and of α.
+#[allow(clippy::too_many_arguments)]
+fn perform_row(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &mut State,
+    e: weft_ir::EffectId,
+    op: weft_ir::OpIdx,
+    args: &[Operand],
+    dest: &Place,
+) -> Result<(), AlphaError> {
+    let out = super::unknown::op_of_caller(cx, body, st, e, op, args)?;
+    let lent: Vec<PlaceId> = out.args.iter().flatten().copied().collect();
+    for (k, path) in can_get_linear(cx, &lent) {
+        st.add(k, &path, &Tree::leaf(AbsVal::of_type(true)));
+    }
+    bind_result(cx, body, st, args, dest, out.ret)
+}
+
+/// The result `ret` of a run node with the arguments `args` binds to
+/// `dest`: the moved arguments leave no value, then a move path gets the
+/// value (a strong update), and another place joins it (a weak update).
+///
+/// # Errors
+///
+/// The errors of α.
+fn bind_result(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &mut State,
+    args: &[Operand],
+    dest: &Place,
+    ret: Tree,
+) -> Result<(), AlphaError> {
     let target = move_path(cx.p, body, dest)?;
     let a = if target.is_some() {
         None
@@ -783,10 +871,10 @@ fn call(
     };
     moves(cx.p, body, st, args)?;
     if let Some((k, path)) = target {
-        st.write(k, &path, out.ret);
+        st.write(k, &path, ret);
         return Ok(());
     }
-    let flat = Tree::leaf(out.ret.flat());
+    let flat = Tree::leaf(ret.flat());
     let targets: BTreeSet<(Key, Vec<PathStep>)> = a
         .iter()
         .flat_map(|a| a.places.iter())

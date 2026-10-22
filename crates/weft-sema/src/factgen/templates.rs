@@ -1572,6 +1572,8 @@ pub fn call(
         crate::analysis::apply::RunKind::Item,
     )?;
     via_receiver(em, main, st, args, sum.only_self, &changed)?;
+    let places: Vec<PlaceId> = changed.iter().map(|(q, _)| *q).collect();
+    gets_linear(em, main, st, &places);
     // The callee frame root: a local of the callee that the result points
     // into.
     let frame = out.sigma.frame.map(|r| {
@@ -1609,6 +1611,7 @@ pub fn call(
         drops.push(v);
     }
     if let Some(r) = nodes.ret {
+        held_refs(em, r, st, args)?;
         bind_dest(em, r, st, dest, &out.ret)?;
         for (i, op) in args.iter().enumerate() {
             let (true, Operand::Move(q)) = (held.get(i).copied().unwrap_or(false), op) else {
@@ -1636,4 +1639,152 @@ pub fn call(
         em.facts.unwound_at.extend(drops.iter().map(|&v| (v, a)));
     }
     Ok(())
+}
+
+/// A `Perform` through the capability of a caller: an operation of a caller
+/// (`crate::analysis::unknown`, map N1). Its nodes are `Main` and `Ret`
+/// (`docs/ir.md` 6.2).
+///
+/// - `Main`: the operands; `reads_at`, `call_arg`, `lends_mut` and
+///   `call_mut` of the places of each reference argument (the clause gets
+///   them and can change them, W0312 compares them); `call_arg` of the
+///   places of the references of a by-value argument; `reads_at` and
+///   `lends_mut` of the places of the callers; `escapes_at` of the effect;
+///   `may_abort`; `multi_at` for a `multi` operation.
+/// - `Ret`: the result binds to `dest`.
+///
+/// # Errors
+///
+/// Returns [`AlphaError::Later`] for a perform through a capability of a
+/// local handler (stage F14), and the errors of α.
+pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R {
+    let TermKind::Perform {
+        cap: weft_ir::CapOperand::Row(e),
+        op,
+        args,
+        dest,
+        ..
+    } = t
+    else {
+        return Err(AlphaError::Later(
+            "a perform through a capability of a handler (stage F14)",
+        ));
+    };
+    let body = em.body;
+    let out = crate::analysis::unknown::op_of_caller(&mut em.cx(), body, st, *e, *op, args)?;
+    let n = nodes.main;
+    for op in args {
+        operand_moves(em, n, st, op, false, true)?;
+    }
+    for (i, ps) in out.args.iter().enumerate() {
+        let root = crate::body::roots::param(i);
+        for &p in ps {
+            em.facts.reads_at.push((n, p));
+            em.facts.call_arg.push((n, p, root));
+            em.facts.lends_mut.push((n, p));
+            em.facts.call_mut.push((n, p, root));
+        }
+    }
+    for (i, ps) in out.values.iter().enumerate() {
+        let root = crate::body::roots::fn_arg(i);
+        em.facts.call_arg.extend(ps.iter().map(|&p| (n, p, root)));
+    }
+    let lent: Vec<PlaceId> = out.args.iter().flatten().copied().collect();
+    gets_linear(em, n, st, &lent);
+    em.facts.reads_at.push((n, out.caller));
+    em.facts.lends_mut.push((n, out.caller));
+    em.facts.escapes_at.push((n, out.effect.clone()));
+    em.facts.may_abort.push(n);
+    if out.multi {
+        em.facts.multi_at.push(n);
+    }
+    if let Some(r) = nodes.ret {
+        held_refs(em, r, st, args)?;
+        bind_dest(em, r, st, dest, &out.ret)?;
+    }
+    Ok(())
+}
+
+/// A run node `n` that changes the places `changed` (the callee, or a clause
+/// of a caller, can put a linear value there and keep the old value, as
+/// `Vec.push`): a local that can hold a linear value and holds none in the
+/// state `st` before the node gets `overwrites(S(l), n)`, so its linear value
+/// is live after the node (W0601 at its end). A local that can hold one
+/// already is live: the node is no overwrite of it.
+fn gets_linear(em: &mut Em<'_>, n: NodeId, st: &State, changed: &[PlaceId]) {
+    let keys: Vec<Key> = transfer::can_get_linear(&em.cx(), changed)
+        .into_iter()
+        .map(|(k, _)| k)
+        .collect();
+    let mut done: Vec<Key> = Vec::new();
+    for k in keys {
+        if done.contains(&k) {
+            continue;
+        }
+        done.push(k);
+        if !st.value(k, &[]).flat().empty {
+            continue;
+        }
+        if let Some(v) = em.s_var(k) {
+            em.facts.overwrites.push((v, n));
+        }
+    }
+}
+
+/// The callee (or the clause) holds each reference argument until it
+/// returns: at the `Ret` node `r`, `uses` of each argument of plain data
+/// that holds a reference into a value that another argument moves at
+/// `Main` (`f(&v[0], v)`). The move frees the value, so the reference that
+/// the callee holds is invalid (W0301 at the call). A reference into a place
+/// that the call only changes is the W0312 check (`call_mut`, `call_arg`).
+///
+/// # Errors
+///
+/// The errors of α.
+fn held_refs(em: &mut Em<'_>, r: NodeId, st: &State, args: &[Operand]) -> R {
+    let mut moved: Vec<PlaceId> = Vec::new();
+    for op in args {
+        let Operand::Move(q) = op else { continue };
+        let plain = em.place_ty(q).is_some_and(|t| !em.tys.not_copy(t));
+        if !plain {
+            moved.extend(em.alpha(st, q)?.places);
+        }
+    }
+    if moved.is_empty() {
+        return Ok(());
+    }
+    let body = em.body;
+    for op in args {
+        let (Operand::Copy(q) | Operand::Move(q)) = op else {
+            continue;
+        };
+        let Some(t) = em.place_ty(q) else { continue };
+        if em.tys.not_copy(t) || !ir_props(em.tys, t).holds_refs {
+            continue;
+        }
+        let refs = transfer::operand(&mut em.cx(), body, st, op)?.flat().refs;
+        let hit = refs
+            .iter()
+            .any(|&p| moved.iter().any(|&m| overlap(em.facts, p, m)));
+        if hit {
+            let vs = em.vars_of(q)?;
+            em.facts.uses.extend(vs.into_iter().map(|v| (v, r)));
+        }
+    }
+    Ok(())
+}
+
+/// True if fact place `a` is at or below `b`, or `b` at or below `a`.
+fn overlap(facts: &FnFacts, a: PlaceId, b: PlaceId) -> bool {
+    let below = |x: PlaceId, y: PlaceId| {
+        let mut at = Some(x);
+        while let Some(p) = at {
+            if p == y {
+                return true;
+            }
+            at = facts.places.get(p.index()).and_then(|i| i.parent);
+        }
+        false
+    };
+    below(a, b) || below(b, a)
 }

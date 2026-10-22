@@ -528,7 +528,7 @@ pub(crate) fn infer(
 }
 
 /// W0706: the row of `f` did not reach a fixpoint.
-fn not_converged(prog: &Program, f: usize) -> Diagnostic {
+pub(crate) fn not_converged(prog: &Program, f: usize) -> Diagnostic {
     let mut d = Diagnostic::error(
         Code::W0706,
         format!(

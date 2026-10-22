@@ -155,9 +155,9 @@ fn call_digest(
 
 #[test]
 fn the_prelude_calls_give_the_call_facts_and_the_diagnostics_of_the_old_pipeline() {
-    // `tests/programs/02_bad.wf` with a literal for `Entity.new()` (a
-    // function with no stated signature gets its summary in stage F6), and
-    // the calls `Vec.new`, `len` and `clear`.
+    // `tests/programs/02_bad.wf` with a literal for `Entity.new()` (the
+    // calls of the prelude only), and the calls `Vec.new`, `len` and
+    // `clear`.
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/programs/02_bad.wf");
     let bad = fs::read_to_string(path).unwrap_or_default();
     assert!(bad.contains("Entity.new()"), "{bad}");
@@ -193,9 +193,9 @@ fn the_prelude_calls_give_the_call_facts_and_the_diagnostics_of_the_old_pipeline
 
 #[test]
 fn the_ir_pipeline_finds_the_references_that_a_match_through_a_reference_copies() {
-    // R3RT2 and R3RT3 (`tests/gate/probes/r3/redteam/repro`): the repro with
-    // no call of a function with no stated signature (stage F6), so that
-    // the `ir` pipeline checks it with group A. Each `//~` marker is a
+    // R3RT2 and R3RT3 (`tests/gate/probes/r3/redteam/repro`): the part of
+    // the repro before `mkw`, so that the `ir` pipeline checks it with
+    // group A. Each `//~` marker is a
     // diagnostic of the `ir` pipeline; the old pipeline misses all but one.
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/gate/probes/r3/redteam/repro/R3RT2_match_through_ref.wf");
@@ -234,4 +234,132 @@ fn the_ir_pipeline_finds_the_references_that_a_match_through_a_reference_copies(
         .collect();
     want.sort();
     assert_eq!(got, want);
+}
+
+/// The codes and lines of the diagnostics of `src` with the `ir` pipeline
+/// and group A on.
+fn ir_codes(src: &str) -> Vec<(String, usize)> {
+    let opts = Options {
+        facts: weft_sema::FactGen::Ir,
+        ir_groups: weft_sema::Groups::parse("A").unwrap_or(weft_sema::Groups::NONE),
+        ..Options::from_markers(src)
+    };
+    let a = analyze_source(src, opts)
+        .unwrap_or_else(|d| panic!("the program does not parse: {}", d.message));
+    assert!(
+        a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope),
+        "{:?}",
+        a.ir_scope.as_ref().and_then(|s| s.fallback.clone())
+    );
+    let line = |lo: u32| {
+        src.get(..lo as usize)
+            .map_or(0, |s| s.matches('\n').count() + 1)
+    };
+    check_analysis(a, &[])
+        .diags
+        .iter()
+        .map(|d| (format!("{:?}", d.code), line(d.span.lo)))
+        .collect()
+}
+
+#[test]
+fn a_callee_that_keeps_a_linear_argument_makes_the_place_hold_a_linear_value() {
+    // `let v = []` holds no linear value. `push` keeps its argument in `v`,
+    // so `v` holds a `Tx` at its end (W0601, at the closing brace in the
+    // `ir` pipeline): also through a function with no stated row, whose
+    // summary comes from its body (plan stage F6).
+    let direct = "linear struct Tx { id: u64 }
+fn main() {
+    let v: Vec<Tx> = []
+    v.push(Tx { id: 1 })
+    print(v.len())
+}
+";
+    assert_eq!(ir_codes(direct), vec![("W0601".to_string(), 6)]);
+    let callee = "linear struct Tx { id: u64 }
+fn put(v: &Vec<Tx>) { v.push(Tx { id: 1 }) }
+fn main() {
+    let v: Vec<Tx> = []
+    put(&v)
+    print(v.len())
+}
+";
+    assert_eq!(ir_codes(callee), vec![("W0601".to_string(), 7)]);
+    // A second `push` is no overwrite: one diagnostic.
+    let twice = "linear struct Tx { id: u64 }
+fn main() {
+    let v: Vec<Tx> = []
+    v.push(Tx { id: 1 })
+    v.push(Tx { id: 2 })
+    print(v.len())
+}
+";
+    assert_eq!(ir_codes(twice), vec![("W0601".to_string(), 7)]);
+}
+
+#[test]
+fn the_result_of_an_operation_of_a_caller_points_into_its_argument() {
+    // `ir/work/map/opres.wf` (map N1): the clause of a caller can give back
+    // a reference into `v`, and `v.clear()` frees it. The old pipeline
+    // accepts `body` (open-old); the facts of the IR give W0301 at the read.
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/gate/probes/ir/work/map/opres.wf");
+    let src = fs::read_to_string(path).unwrap_or_default();
+    let a = analyze_source(&src, Options::from_markers(&src))
+        .unwrap_or_else(|d| panic!("the program does not parse: {}", d.message));
+    let built = irbuild::build(&a);
+    let i = built
+        .entries
+        .iter()
+        .position(|e| e.name == "body")
+        .expect("a function `body`");
+    let facts = factgen::preview(&a, &built, i).unwrap_or_else(|u| panic!("{u}"));
+    let mut b = a.bodies[i].clone();
+    b.facts = facts;
+    let line = |lo: u32| {
+        src.get(..lo as usize)
+            .map_or(0, |s| s.matches('\n').count() + 1)
+    };
+    let ir: Vec<(String, usize)> = body_diags(&a, b)
+        .into_iter()
+        .map(|(c, lo)| (c, line(lo)))
+        .collect();
+    assert_eq!(ir, vec![("W0301".to_string(), 8)]);
+    assert!(body_diags(&a, a.bodies[i].clone()).is_empty());
+}
+
+#[test]
+fn a_result_in_an_rc_group_depends_on_the_handle_of_the_argument() {
+    // `verify/review_core/Core_S1/rt1/esc_rc_callee.wf`: the result of
+    // `group_ret` is in the `rc` group, through the handle `a`. A new value
+    // of `a` frees the object (W0301 at the read).
+    let src = "struct Cell2 { items: Vec<u64> }
+fn group_ret(h: &Rc<Cell2>) -> &Vec<u64> in Cell2.items { &h.items }
+fn main() {
+    let a = Rc.new(Cell2 { items: Vec.new() })
+    let r = group_ret(&a)
+    a = Rc.new(Cell2 { items: Vec.new() })
+    print(r)
+}
+";
+    assert_eq!(ir_codes(src), vec![("W0301".to_string(), 7)]);
+}
+
+#[test]
+fn a_callee_holds_a_reference_argument_into_a_value_that_another_argument_moves() {
+    // The callee gets `&v[0]` and `v`: it can free `v` and then read the
+    // reference (the oracle faults). The move at the call frees `v`, and the
+    // callee holds the reference until it returns (W0301 at the call).
+    let src = "fn both(r: &u64, v: Vec<u64>) {
+    let w = v
+    w.clear()
+    print(r)
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    both(&v[0], v)
+}
+";
+    assert_eq!(ir_codes(src), vec![("W0301".to_string(), 9)]);
 }

@@ -2492,6 +2492,52 @@ As built (plan stage F5, `crates/weft-sema/src/analysis/`):
 - `raises` is an abort of the summary (6.5), so the node gets `may_abort`; the old
   lowering gives none for `raises` alone.
 
+As built (plan stage F6, `crates/weft-sema/src/analysis/`):
+
+- `summarize.rs`: the summary of a function body is a projection of the facts of its
+  component. `mutates_at` gives `muts`: each changed place whose root is a root of the
+  interface (`Param`, `Held`, `Group`), cut at `SIG_PLACE_STEPS`; a change below a
+  wildcard place is a change of its base; a covered place adds nothing. A change of a
+  by-value parameter with no reference in its type is a `Param` place too, as the old
+  inference says (W0701 asks for it; σ gives such a parameter no place, so a caller
+  applies nothing). `escapes_at` gives `performs` and `aborts` through `Row`; a callee
+  that `raises` gives `raises`; a callee that can resume more than once with no effect
+  of its row (an unknown function value) gives `multi`. A body that the fact generator
+  supports has no type parameter, so `drops` and `holds` are empty.
+- The other parts of the summary of a function with no stated row come from its
+  signature (`sig::build`): the parameters, the reads (the root of each parameter), the
+  result (the stated places and the flows of 6.7 above), the stores and the `@ uniq`
+  parameters. The part `ret` is not the value of `_0`: a reference into a local of the
+  body at `Return` is `error(_0, Return)` at the callee, so the summary has no `Frame`
+  place. This keeps the callers of the old pipeline; the value of `_0` is a later
+  precision step. A function with a stated row has its stated row and the parts that
+  its body gives (`raises`, `multi`, `drops`, `holds`).
+- `unknown.rs`, an operation of a caller (map N1): the run node reads and lends the
+  places of each reference argument (`call_arg` and `call_mut` with the root of the
+  parameter, for W0312, as the old lowering), gives `call_arg` of the places of a
+  by-value argument that holds references, and reads and lends `Caller..`. Its result
+  points into the wildcard place of each reference argument, of the `Param` and `Held`
+  roots of the parameters of the body (a place of a caller that the body can name: the
+  root `Caller` stands only for the places that it cannot name), and into `Caller..`.
+  The node has `escapes_at`, `may_abort`, and `multi_at` for a `multi` operation.
+- The root `Caller` has the kind `Arg` and the text "a place of a caller". The
+  references in a place of a caller point into `Caller..`. σ of `Caller` at a run node
+  is the root `Caller` of the run node. A summary that performs an effect of its row
+  also lends `Caller..` (the clause of a caller can change the places that a result of
+  an operation points into), so a call of it makes such a reference invalid.
+- A run node (a call, a perform) that changes a place of a local whose type can hold a
+  linear value can put one there and keep the old value (`Vec.push`). The local then
+  can hold a linear value: the state joins one, and the node gets `overwrites(S(l), n)`
+  if the state says that the local holds none (`let v = []`), so W0601 holds at its end.
+- A callee holds each reference argument until it returns: the `Ret` node uses each
+  argument of plain data that holds a reference into a value that another argument
+  moves (`both(&v[0], v)`). The move frees the value, so the reference is invalid
+  (W0301 at the call).
+- A stated place of the result in an `rc` group depends on the handles of the
+  arguments (`Lower::group_arg_deps`): the handle places on the way to each argument,
+  and the handle `h.*` of a reference argument to an `Rc` (or each handle below a
+  reference argument whose pointee is `nonportable`).
+
 ### 6.8 Effect inference and signatures
 
 Effect rows are a part of the summaries: the effects that a body performs through `Row`
@@ -2505,6 +2551,32 @@ users outside fact generation: W0701 (a public function states less than it infe
 `weft deps` (W0901, W0902), the `pins` part that the interpreter reads (ADR 0010). The gate
 compares this projection with the `EffectSig` of the old pipeline for each function
 (stage F6 of the plan), as a check of the inference.
+
+As built (plan stage F6): `analysis/callgraph.rs` is the fixpoint of 6.6. The graph
+links each function body to each function item that a `Call` in its component names
+(stage F11 and later add closures, clauses, continuations, tasks and `on abort`
+functions). Tarjan's algorithm gives the strongly connected components, callees first.
+Each summary starts with the stated row (or an empty row) and empty inferred parts
+(`sig::Inferred`). A round runs the fact generator on each body of the component with
+the summaries of now and joins the projection of its facts into the inferred parts. The
+first round with no growth is the fixpoint; a component of one function that does not
+call itself needs one round. The emit pass takes the facts of the last round of each
+body. W0706: a row that grows more often than `infer::growth_limit` (the height of its
+lattice) stops the iteration of its component, and each function of it gets W0706; the
+`ir` pipeline drops the W0706 of the old inference. A body that the fact generator does
+not support gives its callers a reason with the group of its construct; a function with
+a stated row then keeps the summary of stage F5. A body with no IR (a type error) has
+the summary of its signature from the old inference.
+
+`sig::to_effect_sig` gives the changed places (a `Held` root is its parameter with a
+first `Held` step; the text is the name of the parameter and the text of each step; a
+place cut at 8 steps has the text `..` at the cut), the effects through `Row`,
+`raises`, `multi` (only for an unknown function value), `drops` and `holds`. A
+function with a stated row keeps its row. In the `ir` pipeline the signatures of the
+analysis (`Analysis::sigs`, `BodyFacts::effects`) are these, so W0701, `weft deps` and
+the interpreter read them; W0701 comes from them, with the text of the old lowering.
+`weft-gate sigdiff` compares them with the old ones on each program in scope; each
+difference needs a ledger entry of class `sig`.
 
 ### 6.9 Checks in Rust, and diagnostics
 

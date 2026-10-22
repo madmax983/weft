@@ -34,6 +34,9 @@ pub enum EntryClass {
     /// A difference of the engine differential (`crate::engines`), not a
     /// class of the gate.
     Engine,
+    /// A difference of the signature diff (`crate::sigdiff`, plan stage F6),
+    /// not a class of the gate.
+    Sig,
 }
 
 impl EntryClass {
@@ -48,12 +51,14 @@ impl EntryClass {
             Self::Moved => "moved",
             Self::Changed => "changed",
             Self::Engine => "engine",
+            Self::Sig => "sig",
         }
     }
 
     /// The class of the programs that an entry of this class accepts in the
     /// gate. An `engine` entry accepts no program of the gate: it accepts a
-    /// difference of the engine differential.
+    /// difference of the engine differential. A `sig` entry accepts a
+    /// difference of the signature diff.
     pub const fn program_class(self) -> Option<Class> {
         match self {
             Self::Open | Self::Edge | Self::OpenOld => Some(Class::Open),
@@ -61,7 +66,7 @@ impl EntryClass {
             Self::LostClean => Some(Class::LostClean),
             Self::Moved => Some(Class::Moved),
             Self::Changed => Some(Class::Changed),
-            Self::Engine => None,
+            Self::Engine | Self::Sig => None,
         }
     }
 }
@@ -119,6 +124,10 @@ pub struct Entry {
     /// program with a path (no glob).
     #[serde(default)]
     pub checker: Option<String>,
+    /// The parts of a signature that the entry accepts (class `sig`): names
+    /// of `crate::sigdiff::compare`. Empty means each part.
+    #[serde(default)]
+    pub parts: Vec<String>,
 }
 
 /// True if the text is there and is not empty.
@@ -165,7 +174,11 @@ impl Entry {
             EntryClass::LostClean if !given(self.signed_by.as_ref()) => {
                 "`signed_by` (a reviewer that is not the author of the stage)"
             }
-            EntryClass::Moved | EntryClass::Changed | EntryClass::Engine if !reason => "a `reason`",
+            EntryClass::Moved | EntryClass::Changed | EntryClass::Engine | EntryClass::Sig
+                if !reason =>
+            {
+                "a `reason`"
+            }
             EntryClass::Engine if !given(self.difference.as_ref()) => {
                 "a `difference` (the class of the difference)"
             }

@@ -4,7 +4,8 @@
 //! `σ` ([`Sigma`]) maps the places of the interface of the callee onto the
 //! places of the caller at the run node: the places of each argument, the
 //! places that the references behind a reference argument point into, the
-//! `rc` groups, and the frame root of the callee. Stage F5 knows one kind of
+//! `rc` groups, the frame root of the callee, and the places of a caller
+//! (the root of the places of the callers of the run node). Stage F5 knows one kind of
 //! run node: a `Call` of a function item ([`RunKind::Item`]).
 //!
 //! - [`main`] gives the facts of the `Main` node: the parts `reads`, `muts`,
@@ -256,14 +257,17 @@ fn places(
         IRoot::Held(i) => get(&s.helds, i),
         IRoot::Group(a) => vec![cx.roots.group_of_adt(cx.tys, cx.facts, a)],
         IRoot::Frame => s.frame.into_iter().collect(),
+        // A place of a caller of the callee is a place of a caller of the
+        // run node, or a place of the run node that it cannot name: the
+        // places of the caller of the run node.
+        IRoot::Caller => vec![cx.roots.caller(cx.facts)],
         IRoot::CaptureCell(_)
         | IRoot::Capture(_)
         | IRoot::Cap(_)
         | IRoot::OpResult(_)
-        | IRoot::ResumeResult
-        | IRoot::Caller => {
+        | IRoot::ResumeResult => {
             return Err(AlphaError::Later(
-                "a summary that names a capture, a handler or a caller (stages F11 and later)",
+                "a summary that names a capture or a handler (stages F11 and later)",
             ))
         }
     };
@@ -303,6 +307,31 @@ fn places(
     Ok(out)
 }
 
+/// The handles that a place of an `rc` group in the result depends on: the
+/// handle places on the way to each argument, and the handle of each
+/// reference argument to an `Rc` (`&Rc<T>`), or to a value that holds one
+/// (each handle below it: the wildcard place). A new value of such a handle
+/// can free the object (`Lower::group_arg_deps`, ADR 0003).
+fn group_deps(cx: &mut Cx<'_>, s: &Sigma) -> Vec<PlaceId> {
+    let mut out: Vec<PlaceId> = s.deps.iter().flatten().copied().collect();
+    for (i, &t) in s.tys.iter().enumerate() {
+        let Some(x) = pointee(cx.tys, t) else {
+            continue;
+        };
+        let top = matches!(cx.tys.lang(x), Some((weft_ir::ty::Lang::Rc, _)));
+        if !top && !ir_props(cx.tys, x).nonportable {
+            continue;
+        }
+        for &p in s.args.get(i).into_iter().flatten() {
+            let h = if top { p } else { cx.facts.wildcard(p) };
+            out.push(cx.roots.handle_place(cx.facts, h));
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// True if a result of type `t` is one reference to a value with no
 /// reference in it, or an `Option` of one: a call gives it a one-place
 /// instance of each wildcard place (ADR 0003).
@@ -336,9 +365,12 @@ pub fn ret_value(cx: &mut Cx<'_>, sum: &Summary, s: &Sigma, ret: TyId) -> Result
     let mut top = AbsVal::of_type(props.linear);
     for p in &sum.ret.places {
         top.refs.extend(places(cx, s, p, Base::Args)?);
-        if let IRoot::Param(i) = p.root {
-            top.refs
-                .extend(s.deps.get(i as usize).into_iter().flatten().copied());
+        match p.root {
+            IRoot::Param(i) => top
+                .refs
+                .extend(s.deps.get(i as usize).into_iter().flatten().copied()),
+            IRoot::Group(_) => top.refs.extend(group_deps(cx, s)),
+            _ => {}
         }
     }
     if !sum.ret.places.is_empty() && sum.ret.uniq {
@@ -558,12 +590,17 @@ pub fn main(
     }
     for l in &sum.lends {
         let root = match l.root {
-            IRoot::Param(i) => sum.params.get(i as usize).map_or(0, |p| p.root),
-            _ => 0,
+            IRoot::Param(i) => Some(sum.params.get(i as usize).map_or(0, |p| p.root)),
+            IRoot::Caller => None,
+            _ => Some(0),
         };
         for p in places(cx, s, l, Base::Args)? {
             cx.facts.lends_mut.push((n, p));
-            cx.facts.call_mut.push((n, p, root));
+            // A place of a caller is no argument of the call: no alias
+            // check (W0312) compares it.
+            if let Some(root) = root {
+                cx.facts.call_mut.push((n, p, root));
+            }
         }
     }
     for pf in &sum.performs {

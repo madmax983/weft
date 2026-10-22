@@ -30,6 +30,14 @@
 # For each difference, the engine differential takes the first engine entry
 # (in the order of this file) whose files match the program, whose `checker`
 # holds, and whose class has the shape of the difference.
+#
+# [[entry]]               # stage F6: a difference of the signature diff
+# class = "sig"           # (`weft-gate sigdiff`, crates/weft-gate/src/sigdiff.rs)
+# parts = ["muts text"]   # optional: the parts of the signature that the entry
+#                         # accepts (names of sigdiff::compare); none: each part
+# files = ["tests/gate/probes/r2/redteam/p/zz_deep.wf"]
+# reason = "the summary cuts a place at 8 steps"
+# stage = "F6"
 
 # Stage G6: the `open` programs of tier 1 with the old pipeline. The old
 # pipeline accepts each program, and the `ast` oracle faults on it. Each group
@@ -542,3 +550,15 @@ checker = "rejects"
 files = ["**"]
 reason = "one engine takes more than the time limit, also alone: the engines run other numbers of operations"
 stage = "I5"
+
+# Stage F6: the differences of the signature diff (`weft-gate sigdiff`): the
+# `EffectSig` that the `ir` pipeline infers from the summaries of the bodies
+# against the one of the old inference, for each function of a program in
+# scope (tier 1, group A).
+
+[[entry]]
+class = "sig"
+parts = ["muts text"]
+files = ["tests/gate/probes/r2/redteam/p/zz_deep.wf"]
+reason = "a changed place of more than 8 steps: the summary cuts it at SIG_PLACE_STEPS and adds a wildcard step, so its text is `w.x.x.x.x.x.x.x.x..`; the old row keeps the 8 steps with the text of the whole place. The steps are the same, and the text of W0701 shows the cut place"
+stage = "F6"
