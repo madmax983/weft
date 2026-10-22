@@ -666,6 +666,7 @@ const fn temp_kind(t: TempKind) -> &'static str {
         TempKind::Receiver => "Receiver",
         TempKind::Scrutinee => "Scrutinee",
         TempKind::Borrowed => "Borrowed",
+        TempKind::Promoted => "Promoted",
         TempKind::Discarded => "Discarded",
         TempKind::Value => "Value",
     }

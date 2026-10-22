@@ -282,7 +282,7 @@ impl Builder<'_> {
         let [f] = slots else {
             return unsupported(Construct::NoThir, e.span);
         };
-        let p = self.receiver_place(x)?;
+        let p = self.receiver_place(x, r.mode)?;
         let task = self.operand(f, false)?;
         let scope = self.read_receiver(r.mode, p, x)?;
         let origin = self.origin(e.span, Some(e.id));
@@ -347,7 +347,7 @@ impl Builder<'_> {
         if !slots.is_empty() {
             return unsupported(Construct::NoThir, e.span);
         }
-        let p = self.receiver_place(x)?;
+        let p = self.receiver_place(x, r.mode)?;
         let task = self.read_receiver(r.mode, p, x)?;
         let origin = self.origin(e.span, Some(e.id));
         let unwind = Some(self.cleanup(origin));
@@ -379,7 +379,7 @@ impl Builder<'_> {
         if !slots.is_empty() {
             return unsupported(Construct::NoThir, e.span);
         }
-        let p = self.receiver_place(x)?;
+        let p = self.receiver_place(x, r.mode)?;
         let task = self.read_receiver(r.mode, p, x)?;
         let origin = self.origin(e.span, Some(e.id));
         let next = self.new_block();

@@ -184,6 +184,7 @@ const fn temp_text(k: TempKind) -> &'static str {
         TempKind::Receiver => "receiver",
         TempKind::Scrutinee => "scrutinee",
         TempKind::Borrowed => "borrowed",
+        TempKind::Promoted => "promoted",
         TempKind::Discarded => "discarded",
         TempKind::Value => "value",
     }

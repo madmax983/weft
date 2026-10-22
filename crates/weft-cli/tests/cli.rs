@@ -1125,3 +1125,28 @@ fn groups_put_a_program_in_scope_of_the_ir_pipeline() {
         "--groups needs construct groups from A to F, found `G`: `G` is not a construct group (A to F)"
     );
 }
+
+#[test]
+fn a_borrow_of_plain_data_gives_the_old_diagnostics_in_the_ir_pipeline() {
+    // `docs/ir.md` 5.10: `temp_copy` of `tests/programs/32_temporaries.wf`
+    // and other borrows of plain data, in a program with no call (group A).
+    let src = "struct P { x: u64, y: u64 }\n\
+        fn temp_copy() {\n    let r = &1\n    print(r)\n}\n\
+        fn forms(c: bool) {\n\
+        \x20   let a = &\"s\"\n    let b = &true\n    let u = &()\n    let d = &2.s\n\
+        \x20   let t = &(1, 2)\n    let p = &P { x: 1, y: 2 }\n    let f = &(3, 4).0\n\
+        \x20   let k = 0\n    let r = &k\n    if c { r = &5 }\n\
+        \x20   print(a)\n    print(b)\n    print(u)\n    print(d)\n\
+        \x20   print(t.0)\n    print(p.x)\n    print(f)\n    print(r)\n}\n";
+    let dir = scratch("promoted", &[("plain.wf", src)]);
+    let path = format!("{dir}/plain.wf");
+    let old = cmd(&["check", "--facts=old", &path]);
+    let ir = cmd(&["check", "--facts=ir", "--groups=A", &path]);
+    assert!(
+        ir.stderr.is_empty(),
+        "the program is not in scope: {}",
+        ir.stderr
+    );
+    assert_eq!(old.code, 0, "{}", old.text);
+    assert_eq!((ir.code, ir.text), (old.code, old.text));
+}

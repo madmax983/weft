@@ -1,0 +1,531 @@
+fn f0 P.px(&P) -> &u64: b0
+fn f1 g() -> u64: b1
+fn f2 mkp() -> P: b2
+fn f3 mkq() -> Q: b3
+fn f4 mkv() -> Vec<u64>: b4
+fn f5 temp_copy() -> (): b5
+fn f6 constants() -> (): b6
+fn f7 aggregates() -> (): b7
+fn f8 values(u64) -> (): b8
+fn f9 field_paths() -> (): b9
+fn f10 receiver() -> (): b10
+fn f11 in_branch(bool) -> (): b11
+fn f12 in_loop(u64) -> (): b12
+fn f13 not_plain() -> (): b13
+fn f14 not_plain_value() -> (): b14
+fn f15 Vec.new<T0>() -> Vec<T0> / (): extern
+fn f16 Vec.push<T0>(&Vec<T0>, T0) -> () / (): extern
+fn f17 Vec.len<T0>(&Vec<T0>) -> usize / (): extern
+cap_env e0
+
+body b0: fn P.px; cap_env e0; unwind_exit bb1
+  _0: &u64 (Return)
+  _1: &P (Param(0) `self`)
+  bb0:
+    _0 = &(*_1).0
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b1: fn g; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  bb0:
+    _0 = const 3u64
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn mkp; cap_env e0; unwind_exit bb1
+  _0: P (Return)
+  bb0:
+    _0 = P { const 1u64, const 2u64 }
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn mkq; cap_env e0; unwind_exit bb4
+  _0: Q (Return)
+  _1: P (Temp(Operand))
+  bb0:
+    Live(_1)
+    _1 = call mkp() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    _0 = Q { move _1, const 4u64 }
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_1)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b4: fn mkv; cap_env e0; unwind_exit bb3
+  _0: Vec<u64> (Return)
+  _1: Vec<u64> (User `v`)
+  _2: () (Temp(Discarded))
+  _3: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_1)
+    _1 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = &_1
+    _2 = call Vec.push<u64>(move _3, const 5u64) / e0 -> [bb2]
+  bb2:
+    Dead(_3)
+    Dead(_2)
+    _0 = move _1
+    Dead(_1)
+    Return
+  bb3 (cleanup):
+    UnwindExit
+
+body b5: fn temp_copy; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &i64 (User `r`)
+  _2: i64 (Temp(Promoted))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = const 1i64
+    _1 = &_2
+    Print(copy _1)
+    _0 = const ()
+    Dead(_1)
+    Dead(_2)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b6: fn constants; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &String (User `s`)
+  _2: String (Temp(Promoted))
+  _3: &bool (User `b`)
+  _4: bool (Temp(Promoted))
+  _5: &() (User `u`)
+  _6: () (Temp(Promoted))
+  _7: &Duration (User `d`)
+  _8: Duration (Temp(Promoted))
+  _9: &i64 (User `n`)
+  _10: i64 (Temp(Promoted))
+  _11: () (Temp(Discarded))
+  _12: () (Temp(Discarded))
+  _13: () (Temp(Discarded))
+  _14: () (Temp(Discarded))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = const "s"
+    _1 = &_2
+    Live(_3)
+    Live(_4)
+    _4 = const true
+    _3 = &_4
+    Live(_5)
+    Live(_6)
+    _6 = const ()
+    _5 = &_6
+    Live(_7)
+    Live(_8)
+    _8 = const 2000ms
+    _7 = &_8
+    Live(_9)
+    Live(_10)
+    _10 = const -1i64
+    _9 = &_10
+    Live(_11)
+    Print(copy _1)
+    _11 = const ()
+    Dead(_11)
+    Live(_12)
+    Print(copy _3)
+    _12 = const ()
+    Dead(_12)
+    Live(_13)
+    Print(copy _5)
+    _13 = const ()
+    Dead(_13)
+    Live(_14)
+    Print(copy _7)
+    _14 = const ()
+    Dead(_14)
+    Print(copy _9)
+    _0 = const ()
+    Dead(_9)
+    Dead(_7)
+    Dead(_5)
+    Dead(_3)
+    Dead(_1)
+    Dead(_10)
+    Dead(_8)
+    Dead(_6)
+    Dead(_4)
+    Dead(_2)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b7: fn aggregates; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &(i64, i64) (User `t`)
+  _2: (i64, i64) (Temp(Promoted))
+  _3: &P (User `p`)
+  _4: P (Temp(Promoted))
+  _5: () (Temp(Discarded))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = (const 1i64, const 2i64)
+    _1 = &_2
+    Live(_3)
+    Live(_4)
+    _4 = P { const 1u64, const 2u64 }
+    _3 = &_4
+    Live(_5)
+    Print(copy (*_1).0)
+    _5 = const ()
+    Dead(_5)
+    Print(copy (*_3).0)
+    _0 = const ()
+    Dead(_3)
+    Dead(_1)
+    Dead(_4)
+    Dead(_2)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b8: fn values; cap_env e0; unwind_exit bb9
+  _0: () (Return)
+  _1: u64 (Param(0) `a`)
+  _2: &u64 (User `c`)
+  _3: u64 (Temp(Promoted))
+  _4: &u64 (User `e`)
+  _5: u64 (Temp(Promoted))
+  _6: &usize (User `l`)
+  _7: usize (Temp(Promoted))
+  _8: Vec<u64> (Temp(Receiver))
+  _9: &Vec<u64> (Temp(Receiver))
+  _10: () (Temp(Discarded))
+  _11: () (Temp(Discarded))
+  bb0:
+    Live(_2)
+    Live(_3)
+    _3 = call g() / e0 -> [bb1, unwind: bb7]
+  bb1:
+    _2 = &_3
+    Live(_4)
+    Live(_5)
+    _5 = Add<u64>(copy _1, const 1u64)
+    _4 = &_5
+    Live(_6)
+    Live(_7)
+    Live(_8)
+    _8 = call mkv() / e0 -> [bb2, unwind: bb4]
+  bb2:
+    Live(_9)
+    _9 = &_8
+    _7 = call Vec.len<u64>(move _9) / e0 -> [bb3]
+  bb3:
+    _6 = &_7
+    Dead(_9)
+    Dead(_8)
+    Live(_10)
+    Print(copy _2)
+    _10 = const ()
+    Dead(_10)
+    Live(_11)
+    Print(copy _4)
+    _11 = const ()
+    Dead(_11)
+    Print(copy _6)
+    _0 = const ()
+    Dead(_6)
+    Dead(_4)
+    Dead(_2)
+    Dead(_7)
+    Dead(_5)
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindValue(_8, Drop)
+    Dead(_8)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_6)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_4)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_2)
+    Goto(bb8)
+  bb8 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb9)
+  bb9 (cleanup):
+    UnwindExit
+
+body b9: fn field_paths; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: &i64 (User `f`)
+  _2: (i64, i64) (Temp(Promoted))
+  _3: &u64 (User `x`)
+  _4: P (Temp(Promoted))
+  _5: &u64 (User `y`)
+  _6: Q (Temp(Promoted))
+  _7: () (Temp(Discarded))
+  _8: () (Temp(Discarded))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = (const 3i64, const 4i64)
+    _1 = &_2.0
+    Live(_3)
+    Live(_4)
+    _4 = call mkp() / e0 -> [bb1, unwind: bb4]
+  bb1:
+    _3 = &_4.0
+    Live(_5)
+    Live(_6)
+    _6 = call mkq() / e0 -> [bb2, unwind: bb3]
+  bb2:
+    _5 = &_6.0.1
+    Live(_7)
+    Print(copy _1)
+    _7 = const ()
+    Dead(_7)
+    Live(_8)
+    Print(copy _3)
+    _8 = const ()
+    Dead(_8)
+    Print(copy _5)
+    _0 = const ()
+    Dead(_5)
+    Dead(_3)
+    Dead(_1)
+    Dead(_6)
+    Dead(_4)
+    Dead(_2)
+    Return
+  bb3 (cleanup):
+    Dead(_5)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_3)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b10: fn receiver; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: &u64 (User `r`)
+  _2: P (Temp(Promoted))
+  _3: &P (Temp(Receiver))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = call mkp() / e0 -> [bb1, unwind: bb4]
+  bb1:
+    Live(_3)
+    _3 = &_2
+    _1 = call P.px(move _3) / e0 -> [bb2, unwind: bb3]
+  bb2:
+    Dead(_3)
+    Print(copy _1)
+    _0 = const ()
+    Dead(_1)
+    Dead(_2)
+    Return
+  bb3 (cleanup):
+    Dead(_3)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b11: fn in_branch; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: bool (Param(0) `c`)
+  _2: i64 (User `k`)
+  _3: &i64 (User `r`)
+  _4: () (Temp(Discarded))
+  _5: &i64 (Temp(Operand))
+  _6: i64 (Temp(Promoted))
+  bb0:
+    Live(_2)
+    _2 = const 0i64
+    Live(_3)
+    _3 = &_2
+    Live(_4)
+    switch copy _1 -> [1: bb1, otherwise: bb2]
+  bb1:
+    Live(_5)
+    Live(_6)
+    _6 = const 5i64
+    _5 = &_6
+    _3 = move _5
+    Dead(_5)
+    _4 = const ()
+    Goto(bb3)
+  bb2:
+    _4 = const ()
+    Goto(bb3)
+  bb3:
+    Dead(_4)
+    Print(copy _3)
+    _0 = const ()
+    Dead(_3)
+    Dead(_2)
+    Dead(_6)
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b12: fn in_loop; cap_env e0; unwind_exit bb8
+  _0: () (Return)
+  _1: u64 (Param(0) `n`)
+  _2: Vec<&u64> (User `v`)
+  _3: u64 (User `i`)
+  _4: bool (Temp(Operand))
+  _5: () (Temp(Discarded))
+  _6: &u64 (Temp(Operand))
+  _7: u64 (Temp(Promoted))
+  _8: &Vec<&u64> (Temp(Receiver))
+  _9: u64 (Temp(Operand))
+  _10: usize (Temp(Operand))
+  _11: &Vec<&u64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    _2 = call Vec.new<&u64>() / e0 -> [bb1]
+  bb1:
+    Live(_3)
+    _3 = const 0u64
+    Goto(bb2)
+  bb2:
+    Live(_4)
+    _4 = Lt(copy _3, copy _1)
+    switch move _4 -> [1: bb3, otherwise: bb5]
+  bb3:
+    Dead(_4)
+    Live(_5)
+    Live(_6)
+    Live(_7)
+    _7 = Add<u64>(copy _3, const 1u64)
+    _6 = &_7
+    Live(_8)
+    _8 = &_2
+    _5 = call Vec.push<&u64>(move _8, move _6) / e0 -> [bb4]
+  bb4:
+    Dead(_8)
+    Dead(_6)
+    Dead(_5)
+    Live(_9)
+    _9 = Add<u64>(copy _3, const 1u64)
+    _3 = move _9
+    Dead(_9)
+    Goto(bb2)
+  bb5:
+    Dead(_4)
+    Goto(bb6)
+  bb6:
+    Live(_10)
+    Live(_11)
+    _11 = &_2
+    _10 = call Vec.len<&u64>(move _11) / e0 -> [bb7]
+  bb7:
+    Print(copy _10)
+    _0 = const ()
+    Dead(_3)
+    Dead(_2)
+    Dead(_11)
+    Dead(_10)
+    Dead(_7)
+    Dead(_1)
+    Return
+  bb8 (cleanup):
+    UnwindExit
+
+body b13: fn not_plain; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: &u64 (User `r`)
+  _2: Vec<u64> (Temp(Operand))
+  _3: usize (Temp(Operand))
+  bb0:
+    Live(_1)
+    Live(_2)
+    _2 = call mkv() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Live(_3)
+    _3 = const 0usize
+    Bounds(_2, copy _3)
+    _1 = &_2[_3]
+    Dead(_3)
+    Dead(_2)
+    Print(copy _1)
+    _0 = const ()
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b14: fn not_plain_value; cap_env e0; unwind_exit bb3
+  _0: () (Return)
+  _1: &V (User `w`)
+  _2: V (Temp(Borrowed))
+  _3: Vec<u64> (Temp(Operand))
+  _4: usize (Temp(Operand))
+  _5: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_1)
+    Live(_2)
+    Live(_3)
+    _3 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    _2 = V { move _3 }
+    _1 = &_2
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    Live(_5)
+    _5 = &(*_1).0
+    _4 = call Vec.len<u64>(move _5) / e0 -> [bb2]
+  bb2:
+    Print(copy _4)
+    _0 = const ()
+    Dead(_1)
+    Dead(_5)
+    Dead(_4)
+    Return
+  bb3 (cleanup):
+    UnwindExit

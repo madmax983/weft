@@ -246,18 +246,61 @@ impl Builder<'_> {
     /// &p        =>  &<place p>
     /// &p[]      =>  &<place p>[]
     /// &value    =>  tv := <value>; &tv          (tv in the current Stmt scope)
+    /// &plain    =>  tv := <plain>; &tv          (tv promoted: in the Frame scope, 5.10)
+    /// &plain.f  =>  tv := <plain>; &tv.f        (tv promoted)
     /// ```
     ///
     /// A borrow does not read the value.
     pub(super) fn borrow(&mut self, inner: &Expr) -> R<Rvalue> {
-        if let Some(p) = self.as_place(inner)? {
+        if let Some(p) = self.borrowed_place(inner)? {
             return Ok(Rvalue::Ref(p));
         }
         let ty = self.ty(inner)?;
         let origin = self.origin(inner.span, Some(inner.id));
-        let tv = self.temp(ty, TempKind::Borrowed, origin);
+        let tv = if crate::props::ir_promotes(self.tys, ty) {
+            self.promoted_temp(ty, origin)
+        } else {
+            self.temp(ty, TempKind::Borrowed, origin)
+        };
         self.value_into(inner, Place::local(tv))?;
         Ok(Rvalue::Ref(Place::local(tv)))
+    }
+
+    /// Returns the place of `e` for a borrow: the place of
+    /// [`Builder::as_place`], but the base value of a field path goes into a
+    /// promoted temporary if it is plain data (`docs/ir.md` 5.10). So
+    /// `&mkp().x` borrows a field of a cell that never ends. A value with no
+    /// place gives `None` and no statement.
+    fn borrowed_place(&mut self, e: &Expr) -> R<Option<Place>> {
+        let ExprKind::Field { base, .. } = &e.kind else {
+            return self.as_place(e);
+        };
+        let field = match self.t.field.get(&e.id) {
+            Some(thir::FieldIdx::Field(i)) => *i,
+            _ => return self.as_place(e),
+        };
+        if matches!(base.kind, ExprKind::Lit(_)) || self.t.res.contains_key(&e.id) {
+            return self.as_place(e);
+        }
+        let mut place = if let Some(p) = self.borrowed_place(base)? {
+            p
+        } else {
+            // The base is a value: `borrowed_place` wrote no statement.
+            let ty = self.ty(base)?;
+            if !crate::props::ir_promotes(self.tys, ty) {
+                return self.as_place(e);
+            }
+            let origin = self.origin(base.span, Some(base.id));
+            let tv = self.promoted_temp(ty, origin);
+            self.value_into(base, Place::local(tv))?;
+            Place::local(tv)
+        };
+        place.proj.push(Proj::Field(FieldIdx(field)));
+        self.value_ty(e)?;
+        place
+            .proj
+            .extend(self.adjust(e).iter().map(|&k| deref_proj(k)));
+        Ok(Some(place))
     }
 
     /// Returns true if the old value at a place of type `t` can be linear: a

@@ -172,6 +172,47 @@ fn v6_a_missing_dead_of_a_temporary() {
 }
 
 #[test]
+fn v6_a_promoted_temporary_keeps_its_cell_on_a_cleanup_path() {
+    // `docs/ir.md` 5.10: no cleanup chain ends a promoted temporary. Its cell
+    // is still there at the `UnwindExit`.
+    let (mut p, t) = m3();
+    let five = LocalId(5);
+    p.bodies[1].locals[5].kind = LocalKind::Temp(TempKind::Promoted);
+    for b in p.bodies[1].blocks.iter_mut().filter(|b| b.cleanup) {
+        b.stmts.retain(|x| x.kind != StmtKind::Dead(five));
+    }
+    assert_eq!(verify_program(&p, &t.table), vec![]);
+    // An `Operand` temporary leaks the cell (V6).
+    p.bodies[1].locals[5].kind = LocalKind::Temp(TempKind::Operand);
+    let got = verify_program(&p, &t.table);
+    assert!(
+        got.iter().all(|x| x.rule == Rule::LeakedCell) && !got.is_empty(),
+        "{got:#?}"
+    );
+}
+
+#[test]
+fn v4_the_dead_of_a_promoted_temporary_needs_no_cell() {
+    // `docs/ir.md` 5.10: the `Dead` at the frame exit is on each path, also on
+    // a path where the `Live` did not run. A promoted temporary must still
+    // end at the `Return` (V6).
+    let (mut p, t) = m3();
+    p.bodies[1].locals[5].kind = LocalKind::Temp(TempKind::Promoted);
+    for b in p.bodies[1].blocks.iter_mut().filter(|b| b.cleanup) {
+        b.stmts.retain(|x| x.kind != StmtKind::Dead(LocalId(5)));
+    }
+    // A second `Dead(_5)` after the first: the cell is gone there.
+    let at = stmts(&mut p, 1, 3)
+        .iter()
+        .position(|x| x.kind == StmtKind::Dead(LocalId(5)))
+        .unwrap_or_else(|| panic!("no Dead(_5)"));
+    stmts(&mut p, 1, 3).insert(at + 1, s(StmtKind::Dead(LocalId(5))));
+    assert_eq!(verify_program(&p, &t.table), vec![]);
+    stmts(&mut p, 1, 3).retain(|x| x.kind != StmtKind::Dead(LocalId(5)));
+    only(&p, &t.table, br(Rule::LeakedCell, 1, Some(3), Some(5)));
+}
+
+#[test]
 fn v6_a_parameter_that_does_not_end() {
     // By-value parameters end before `Return` too (W0204 of a returned reference
     // into a parameter needs their end).

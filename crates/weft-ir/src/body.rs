@@ -179,6 +179,12 @@ pub enum TempKind {
     Scrutinee,
     /// A value that a borrow (`&e`) puts into a cell.
     Borrowed,
+    /// A value of plain data that a borrow (`&e`, or the base of `&e.f`) puts
+    /// into a cell of the frame (`docs/ir.md` 5.10). It has a `Live` at the
+    /// borrow and a `Dead` at each exit of the frame, also on a path with no
+    /// `Live`. Each `Live` of it makes a new cell, also in a loop: a
+    /// reference into the old cell stays valid. No cleanup chain ends it.
+    Promoted,
     /// A value that nothing keeps: its `Dead` drops it.
     Discarded,
     /// The value of a branch, an arm, a block or a frame body.

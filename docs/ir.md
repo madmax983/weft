@@ -426,7 +426,10 @@ pub enum LocalKind {
     TaskResult(SpawnId),
     Upvar(LocalId), // the cell of this local of the parent body
 }
-pub enum TempKind { Operand, Callee, Receiver, Scrutinee, Borrowed, Discarded, Value }
+pub enum TempKind {
+    Operand, Callee, Receiver, Scrutinee, Borrowed, Discarded, Value,
+    Promoted, // a borrowed value of plain data: in the Frame scope, Dead at each frame exit (5.10)
+}
 pub struct Props {
     pub copy: bool, pub linear: bool, pub on_abort: bool, pub once: bool,
     pub immovable: bool, pub nonportable: bool, pub uniq: bool, pub callable: bool,
@@ -558,15 +561,15 @@ to V17; the others need the type table.
 | V1 | Each successor is a block of the body. | A1 path cover |
 | V2 | A normal edge goes from a normal block to a normal block. An `unwind` edge goes to a cleanup block. A cleanup block goes only to cleanup blocks. | the abort paths are separate (D3 versus `unwound_at`) |
 | V3 | A cleanup block ends with `Goto` to a cleanup block or with `UnwindExit`. No `Return` is on a cleanup path. | each abort path ends at the frame boundary |
-| V4 | Each use of a local is on a path where the local has a cell on each path from the entry. | `bound_before_use` for each component (closure and clause components too) |
-| V5 | No `Live` of a local that has a cell. | one binding for each cell |
-| V6 | At `Return` only `_0` (and the upvar locals and the environment) has a cell. At `UnwindExit` only the upvar locals and the environment have a cell. | D3 (each normal end has `scope_end`), C4 (each free has a node), W0204 of parameters |
+| V4 | Each use of a local is on a path where the local has a cell on each path from the entry. The `Dead` of a promoted temporary (5.10) needs no cell: its `Live` can be on one path only. | `bound_before_use` for each component (closure and clause components too) |
+| V5 | No `Live` of a local that has a cell, except a promoted temporary in a loop: each run of its `Live` makes a new cell (5.10). | one binding for each cell |
+| V6 | At `Return` only `_0` (and the upvar locals and the environment) has a cell. At `UnwindExit` only the upvar locals, the environment and the promoted temporaries (5.10) have a cell. | D3 (each normal end has `scope_end`), C4 (each free has a node), W0204 of parameters |
 | V7 | `UnwindExit` is the only terminator of `Body::unwind_exit`, and only there. | one frame boundary for the unwinder |
 | V8 | Each projection fits the type: `Deref` only on a reference, a `Box` or an `Rc`; `Field` in range; `Variant` only in a block that a `Switch` on the discriminant of the same place dominates (not in an `Uninit`: it names a path and reads nothing, 5.2; not in an `UnwindValue`: the unwinder finishes the payload only if the value has the variant, 5.1.6); `Index` with a `usize` local; `Split` only on a slice. | B2 typed stability, B3 variant steps |
 | V9 | `Copy` only for a type with `Props::copy`; `Move` only for other types; no `Move` through `Deref(Ref)` (W0303: the body gets no IR, 5.36). A `Move` of an upvar local is valid. A part of a function or continuation type is not checked: the props of a closure come from the analysis, and a `multi` continuation is plain data while a `once` one is not. | D1 (each move is a `moved_at`), C4 |
 | V10 | Each terminator with `can_abort()` has an `unwind` block, except a `Call` of an extern function whose stated row is empty and that has no `assert`. | A1 for abort paths, D4 |
 | V11 | `CapOperand::Local` names a `Cap` local, an upvar local of one, or a `Cap` field of the environment. `Row(E)` appears only where the capability environment of the body does not bind `E`. `Resume` names a `Kont` local of the clause, an upvar local of one (a body inside the clause), or a `Kont` field of an environment. A field of an environment view (5.1.7) is a field of the environment. | capabilities and continuations are values of one frame |
-| V12 | A temporary has one `Live`, and a `Dead` on each path from it to an exit. A temporary of the tail of a frame body ends after `_0` gets the value. | C2 holder cover, the frame-end order |
+| V12 | A temporary has one `Live`, and a `Dead` on each path from it to an exit (a promoted temporary: on each normal path to a `Return`, 5.10). A temporary of the tail of a frame body ends after `_0` gets the value. | C2 holder cover, the frame-end order |
 | V13 | A `Kept` capture is never borrowed: its aggregate operand is `copy` of its source, the source is a cell (a whole local, or a capture `env.j` or `(*env.j)` of a maker closure), and no `Ref` in the closure body (or an inner body) names a place at or below `env.k` that is not behind a further reference. The verifier also recomputes `capture_mode` and compares. It reads each environment view (5.1.7): `u.k` in a handled body, a clause or a scope body inside the closure is `env.k`, and a source `u.j` or `(*u.j)` is a cell. | F5 `kept`; the kept cell is outside the reference fragment of B1 |
 | V14 | Upvar locals exist only in clause, handled and scope bodies; each names a local of the parent body; none has `Live` or `Dead`. The environment local exists only in a closure body and has no `Live` or `Dead`; a `Move` of a place below it, or below an environment view of it (5.1.7), is valid only in a `once` closure. | splices share the cells of the site; the closure value outlives each run |
 | V15 | Each handled body and each scope body is named by exactly one terminator; each clause by exactly one handler; each closure body by one aggregate kind. | the splice assumes a once-run frame (machine risk R10) |
@@ -633,13 +636,14 @@ The builder keeps a stack of scopes:
 
 | Scope | Opened by | Holds | Closed by |
 | --- | --- | --- | --- |
-| `Frame` | each body | the parameters, the tail temporaries of the body | the frame end (5.1.4) |
+| `Frame` | each body | the parameters, the tail temporaries of the body, the promoted temporaries (5.10) | the frame end (5.1.4) |
 | `Block` | each block `{ }` | its `let` locals and the bindings of `match` arms | the end of the block, or a jump out of it |
 | `Stmt` | each statement that is not a tail; the condition of `while`; the tail of a loop body | the temporaries of the statement | the end of the statement |
 | `Loop` | `while`, `loop`, `for` | the iterator of `for`; the `break` and `continue` targets | the end of the loop |
 | `Fence` | a handled body, a clause, a scope body | nothing; `break`, `continue` and `return` cannot cross it (W0315) | the end of the body |
 
-A temporary goes into the innermost `Stmt` scope. A block tail is not a statement, so
+A temporary goes into the innermost `Stmt` scope; a promoted temporary goes into the
+`Frame` scope (5.10). A block tail is not a statement, so
 its temporaries go into the scope around the block (`docs/plan/core-ir-inputs/semantics.md` 4.2). The
 temporaries of the tail of a loop body go into a `Stmt` scope of their own: they end at
 the end of each iteration (decision N5, a run-time change).
@@ -677,7 +681,7 @@ Each body ends in the order of the machine (`docs/plan/core-ir-inputs/semantics.
 _0 = <tail operand>        // the value leaves into the return slot (a call writes _0 itself)
 ScopeWait(s) -> [next, C]  // only a scope body: wait for the tasks
 Dead of the block locals   // reverse declaration order (TaskResult locals too)
-Dead of the tail temporaries
+Dead of the tail temporaries and the promoted temporaries (5.10)
 Dead of the parameters, the capability parameter and the continuation (not the environment)
 Return                     // origin: the expression whose value leaves
 ```
@@ -712,7 +716,7 @@ frame at that point. It finishes each value that has a cell there:
 ```text
 cleanup:     UnwindKont(k) ; Dead(k)                               // a clause: the fresh continuation first
              [UnwindValue(_0, a) ; Dead(_0)]                       // `_0`, only if it has a value
-             UnwindValue(t_newest, a) ; Dead(t_newest) ; ...       // live temporaries, newest first
+             UnwindValue(t_newest, a) ; Dead(t_newest) ; ...       // live temporaries, newest first (not a promoted one, 5.10)
              UnwindValue(l_highest, a) ; Dead(l_highest) ; ...     // live locals, highest index first
              [Dead(_0)]                                            // `_0` with no value
              [UnwindValue(s, Drop)] ; Dead(params), Dead(cap)      // the parameters (a scope body cancels and joins its tasks at its ScopeCap), the capability
@@ -1088,8 +1092,17 @@ it reads the handle (O3-6).
 &p        =>  t := &<place p>
 &p[]      =>  t := &<place p>[]
 &value    =>  tv := <value>; t := &tv          (tv in the current Stmt scope)
+&plain    =>  tv := <plain>; t := &tv          (tv promoted: in the Frame scope, 5.10)
+&plain.f  =>  tv := <plain>; t := &tv.f        (the base value promoted; also `&plain.f.g`, `&(1, 2).0`)
 &b.items  =>  t := &(*b).items                 (names b: a read of the Box, OL-R2d-box)
 ```
+
+`plain` is a value (not a place) of plain data with no function part and no resource
+part (`weft_sema::props::ir_promotes`): a constant (`&1`, `&"s"`, `&true`, `&()`,
+`&2.s`), a tuple or a struct of plain data (`&(1, 2)`, `&P { x: 1, y: 2 }`), the result
+of a call or an operator (`&g()`, `&(a + 1)`). A `Vec` literal, an array and a struct
+with a `Vec` are not plain data: `&mkv()[0]` and `&V { v: Vec.new() }` borrow a
+temporary of the statement (W0301 at a later use, `32_temporaries.wf`).
 
 A borrow does not read the value. A borrow of a place field with no value is a use
 (W0304). **Goes away:** `temp_root` (S007).
@@ -1100,6 +1113,50 @@ A temporary ends at the end of its `Stmt` scope, or at the frame end for a tail
 temporary of a frame body. Each frame kind uses 5.1.4. The summary of a closure or a
 clause reports the frees of its own temporaries as frees of the callee frame root, not
 as `scope_end` of hidden variables (`Summary::dropped` goes away).
+
+**Promoted temporaries.** Weft has no `let` extension of temporaries: `let r =
+&mkv()[0]; print(r)` is W0301. But a borrowed temporary of plain data (5.9) is a
+*promoted* temporary (`TempKind::Promoted`): it ends with its frame, not with its
+statement. So `let r = &1; print(r)` (`temp_copy` of `32_temporaries.wf`, no marker)
+is valid, and `fn f() -> &u64 { &1 }` is W0204 (`error(_0, Return)`, 6.9: a reference
+into a local of the frame at the `Return`).
+
+- The builder writes `Live(t)` at the borrow and puts `t` into the `Frame` scope. So
+  each exit of the frame (the frame end and each `return`) has `Dead(t)`, with the
+  tail temporaries (5.1.4). The `Live` can be in a branch: on a path that did not run
+  it, the `Dead` has no cell to end (V4 allows it, and the interpreter does nothing).
+- The `Live` can be in a loop. Each run of it makes a new cell (V5 allows it); the old
+  cell stays, so a reference of an earlier iteration stays valid
+  (`while i < n { v.push(&(i + 1)); i += 1 }` keeps one cell for each element). The
+  facts see one variable `S(t)`: its first value after a `Live` writes nothing (6.4),
+  and its `scope_end` is at the frame exit.
+- No cleanup chain lists `t` (5.1.6): its value is plain data, so the unwinder has
+  nothing to finish (V6 allows the cell at `UnwindExit`).
+
+Why this rule: it is the rule of the old pipeline. The old lowering gives a temporary
+of plain data no variable (`Lower::temp_root`: no `may_free`), so no node ends it in
+the body, and the check of a returned reference sees a temporary of the frame (W0204).
+At run time, both engines keep the value of a temporary cell of plain data after its
+end and the oracle does not mark the cell as ended (`Heap::end_cell_value`): a read
+through the reference runs clean, after the statement and after the frame. So the rule
+changes no run-time behaviour. A temporary that is not plain data can hold a linear
+value or a buffer, and its end frees them: it keeps the end of its statement.
+
+Two choices that the rule does not take: a constant place that never ends (Rust
+promotion to `'static`) accepts `fn f() -> &u64 { &1 }`, which the old pipeline
+rejects, and covers only constants, not `&g()` or `&(a + 1)`; a temporary with its
+`Live` at the frame entry shares one cell between the iterations of a loop, so a
+reference of an earlier iteration would see a later value.
+
+The old lowering also promotes a plain-data temporary that holds a reference, but it
+drops the references in it: `let rr = &&v; let w = v; print(rr.len())` is accepted
+and faults at run time. The IR keeps them: `t := &v; rr := &t`, and the facts see
+`rr` through `t` into `v`.
+
+A receiver value of plain data that a method borrows (`self` by reference, 5.19) is a
+borrow of a value too: `mkp().px()` with `fn px(self) -> &u64 in self` puts `mkp()`
+into a promoted temporary, and `let r = mkp().px(); print(r)` is valid, as in the old
+pipeline.
 
 ### 5.11 Blocks and tails [2.10]
 
@@ -1321,7 +1378,8 @@ The receiver is a place first; the call reads it after the arguments (p7, p8). T
 THIR `Recv::mode` gives the read: `Borrow` is `tr := &<place x>` (a `Receiver`
 temporary), `Ref` copies the reference, `Value` copies plain data and moves another
 value, `Deref` copies the value through the reference (`adjust` of the receiver has the
-dereferences). A receiver that is not a place goes into a `Receiver` temporary first.
+dereferences). A receiver that is not a place goes into a `Receiver` temporary first;
+with `Borrow` and a value of plain data it goes into a promoted temporary (5.10).
 `s.spawn(..)`, `t.join()`, `t.detach()` are `Spawn`, `Join`, `Detach` (5.29). **Goes
 away:** `note_via_call`, `finish_via_calls` (QA6): `writes_via` at a call is one rule of
 the template.
@@ -2755,6 +2813,7 @@ As built (plan stage I6):
 | a clause unwinds its fresh continuation first (5.1.6) | the IR engine runs the chain of the clause, which starts with `UnwindKont` (stage I6); the AST engine unwinds the clause frame first. The engine differential ledgers this (class `unwind-order`) | p20: `rollback 1` (the continuation) prints before `rollback 2` (the clause frame) |
 | rule CAPTURE (5.1.7) | a borrowed plain capture is `ByRef`: its cell ends with the variable | the oracle sees a dangling cell where today's kept cell stayed readable; the checker rejects these programs (J5, J5d) |
 | `Dead` of a fresh continuation at a clause end | none (the interpreter drops it at the clause return today) | |
+| a borrowed temporary of plain data ends at the frame exit (5.10) | none: a temporary cell of plain data keeps its value after its end on both engines, and the oracle does not mark it | `let r = &1; print(r)` |
 
 `docs/design.md` states the order of evaluation, the end of temporaries and the unwind
 order (plan stage C3). ADR 0010 states that the interpreter runs the IR (plan stage C3).

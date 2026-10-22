@@ -69,3 +69,40 @@ fn the_checker_and_the_spec_agree_on_the_ir_facts_of_the_bodies_with_no_call() {
     eprintln!("the checker and the spec agree on {agreed} bodies of {programs} programs");
     assert!(agreed > 100, "only {agreed} bodies");
 }
+
+/// Returns the code and the start of each diagnostic of `a` with only body
+/// `body` (and no diagnostic of the analysis).
+fn body_diags(a: &weft_sema::Analysis, body: weft_sema::BodyFacts) -> Vec<(String, u32)> {
+    let mut view = a.clone();
+    view.bodies = vec![body];
+    view.diags = Vec::new();
+    check_analysis(view, &[])
+        .diags
+        .iter()
+        .map(|d| (format!("{:?}", d.code), d.span.lo))
+        .collect()
+}
+
+#[test]
+fn the_preview_gives_the_old_diagnostics_on_the_bodies_of_the_temporaries_program() {
+    // `docs/ir.md` 5.10: `let r = &1; print(r)` (`temp_copy`) has no
+    // diagnostic in the old pipeline. A borrow of plain data borrows a
+    // promoted temporary, so the facts of the IR agree.
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/programs/32_temporaries.wf");
+    let src = fs::read_to_string(path).unwrap_or_default();
+    let a = analyze_source(&src, Options::from_markers(&src))
+        .unwrap_or_else(|d| panic!("the program does not parse: {}", d.message));
+    let built = irbuild::build(&a);
+    let mut seen = Vec::new();
+    for (i, e) in built.entries.iter().enumerate() {
+        let (Ok(facts), Some(old)) = (factgen::preview(&a, &built, i), a.bodies.get(i)) else {
+            continue;
+        };
+        let mut b = old.clone();
+        b.facts = facts;
+        let ir = body_diags(&a, b);
+        assert_eq!(ir, body_diags(&a, old.clone()), "`{}`", e.name);
+        seen.push(e.name.clone());
+    }
+    assert!(seen.iter().any(|n| n == "temp_copy"), "{seen:?}");
+}

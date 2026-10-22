@@ -27,6 +27,10 @@
 //!   `Return` the parameters, the capability and the continuation end last, after
 //!   `_0` gets its value and after the temporaries end. A missing `Dead` of a
 //!   temporary is a [`Rule::LeakedCell`] (V6).
+//! - V4, V5, V6 and a promoted temporary (`docs/ir.md` 5.10): its one `Live`
+//!   can run again in a loop (each run makes a new cell), and can be on one
+//!   path only. Its `Dead` is at each exit of the frame and needs no cell.
+//!   No cleanup chain ends it, so it can have a cell at `UnwindExit`.
 //! - V16: the verifier takes "newest first" for temporaries as "highest index
 //!   first", because the builder makes each temporary when it needs it.
 
@@ -38,7 +42,7 @@ use crate::ty::{AdtKind, ExternDeref, FnTy, Lang, Ty};
 use crate::{
     id_of, AggKind, BlockId, Body, BodyId, BodyKind, Callee, CapEnvId, CapOperand, CaptureMode,
     ClosureId, EffectId, IterSource, LocalId, LocalKind, Operand, Place, Program, Proj, Rvalue,
-    StmtKind, TermKind, TyId, TyTable, VariantIdx,
+    StmtKind, TempKind, TermKind, TyId, TyTable, VariantIdx,
 };
 
 /// One broken rule: the rule, and where the verifier found it.
@@ -775,6 +779,13 @@ impl<'a> Cx<'a> {
         matches!(self.kind(l), Some(LocalKind::Upvar(_) | LocalKind::Env))
     }
 
+    /// Returns true for a promoted temporary (`docs/ir.md` 5.10): each `Live`
+    /// of it makes a new cell, its `Dead` at a frame exit needs no cell, and
+    /// no cleanup chain ends it.
+    fn promoted(&self, l: LocalId) -> bool {
+        matches!(self.kind(l), Some(LocalKind::Temp(TempKind::Promoted)))
+    }
+
     /// Returns true for a local that ends last at the frame end: a parameter, the
     /// capability parameter or the continuation.
     fn is_param(&self, l: LocalId) -> bool {
@@ -939,8 +950,10 @@ impl<'a> Cx<'a> {
         for i in leaked {
             let l = lid(i);
             // An upvar local and the environment keep their cells; `_0` keeps
-            // its cell at a `Return`.
-            let kept = self.foreign(l) || (normal && l == body.ret);
+            // its cell at a `Return`. No cleanup chain ends a promoted
+            // temporary.
+            let kept =
+                self.foreign(l) || (normal && l == body.ret) || (!normal && self.promoted(l));
             if !kept {
                 self.push(Rule::LeakedCell, Some(id), Some(l));
             }
@@ -972,10 +985,14 @@ impl<'a> Cx<'a> {
     fn check_cells(&mut self, k: &StmtKind, cells: &Cells, b: BlockId) {
         match k {
             StmtKind::Live(l) => {
-                if cells.has(l.index()) {
+                // A `Live` of a promoted temporary in a loop makes a new cell:
+                // the old cell does not end.
+                if cells.has(l.index()) && !self.promoted(*l) {
                     self.push(Rule::LiveTwice, Some(b), Some(*l));
                 }
             }
+            // The `Live` of a promoted temporary can be on one path only.
+            StmtKind::Dead(l) if self.promoted(*l) => {}
             StmtKind::Dead(l) | StmtKind::UnwindKont(l) => self.need(*l, cells, b),
             _ => {
                 let mut uses = Vec::new();

@@ -956,6 +956,22 @@ impl<'a> Builder<'a> {
         l
     }
 
+    /// Adds a promoted temporary of type `ty` (`docs/ir.md` 5.10) with
+    /// `Live` at the current point. It goes into the frame scope: its `Dead`
+    /// is at each exit of the frame, and no cleanup chain lists it.
+    fn promoted_temp(&mut self, ty: TyId, origin: Origin) -> LocalId {
+        let l = self.loose_temp(ty, TempKind::Promoted, origin);
+        if let Some(s) = self
+            .scopes
+            .iter_mut()
+            .rev()
+            .find(|s| matches!(s.kind, ScopeKind::Frame))
+        {
+            s.locals.push(l);
+        }
+        l
+    }
+
     /// Adds a temporary of type `ty` with `Live` at the current point, in no
     /// scope: the caller writes its `Dead` on each path (the tests of a
     /// `match`).

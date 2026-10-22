@@ -30,8 +30,8 @@ use std::rc::Rc;
 
 use weft_ir::ty::{AdtKind, Lang};
 use weft_ir::{
-    BlockId, DerefKind, FieldIdx, LocalId, LocalKind, Origin, Place, Proj, StmtKind, TermKind, Ty,
-    TyId, UnwindAction, VariantIdx,
+    BlockId, DerefKind, FieldIdx, LocalId, LocalKind, Origin, Place, Proj, StmtKind, TempKind,
+    TermKind, Ty, TyId, UnwindAction, VariantIdx,
 };
 use weft_syntax::ast::Span;
 
@@ -80,6 +80,10 @@ impl Builder<'_> {
                         continue;
                     }
                     let of = match self.locals.get(l.index()).map(|d| d.kind) {
+                        // A promoted temporary holds plain data: the
+                        // unwinder has nothing to finish, and its `Live`
+                        // may not have run (`docs/ir.md` 5.10).
+                        Some(LocalKind::Temp(TempKind::Promoted)) => continue,
                         Some(LocalKind::Temp(_)) => 1,
                         // The capability of a handled body and the scope
                         // capability end with the parameters.

@@ -120,7 +120,7 @@ impl Builder<'_> {
         let params: Vec<TyId> = decl.params.iter().skip(first).copied().collect();
         let boxes = self.builds_in_place(f);
         let base = match recv {
-            Some((r, x)) => Some((r, x, self.receiver_place(x)?)),
+            Some((r, x)) => Some((r, x, self.receiver_place(x, r.mode)?)),
             None => None,
         };
         let skips = self.skips(slots);
@@ -244,14 +244,20 @@ impl Builder<'_> {
     }
 
     /// Evaluates the receiver `x` of a method call to a place (`docs/ir.md`
-    /// 5.19): its own place, or a `Receiver` temporary for a value.
-    pub(super) fn receiver_place(&mut self, x: &Expr) -> R<Place> {
+    /// 5.19): its own place, or a `Receiver` temporary for a value. A value of
+    /// plain data that the call borrows (`self` by reference) goes into a
+    /// promoted temporary, as the value of a borrow does (5.10).
+    pub(super) fn receiver_place(&mut self, x: &Expr, mode: RecvMode) -> R<Place> {
         if let Some(p) = self.as_place(x)? {
             return Ok(p);
         }
         let ty = self.ty(x)?;
         let origin = self.origin(x.span, Some(x.id));
-        let t = self.temp(ty, TempKind::Receiver, origin);
+        let t = if mode == RecvMode::Borrow && crate::props::ir_promotes(self.tys, ty) {
+            self.promoted_temp(ty, origin)
+        } else {
+            self.temp(ty, TempKind::Receiver, origin)
+        };
         self.value_into(x, Place::local(t))?;
         Ok(Place::local(t))
     }

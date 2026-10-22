@@ -1,5 +1,6 @@
 // Borrows (`docs/ir.md` 5.9): a borrow of a place, a reborrow through a
-// reference, and a borrow of a value into a `Borrowed` temporary.
+// reference, and a borrow of a value into a temporary. A value of plain data
+// goes into a `Promoted` temporary (5.10, see promoted_borrow.wf).
 
 struct S { v: Vec<u64>, n: u64 }
 
@@ -14,7 +15,7 @@ fn reborrow(r: &S) -> u64 {
     0
 }
 
-// The temporary of the value ends at the end of the statement.
+// The value is plain data: its temporary is promoted and does not end.
 fn value(a: u64) -> u64 {
     let r = &(a + 1)
     0

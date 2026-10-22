@@ -286,6 +286,31 @@ fn a_tail_temporary_of_a_loop_body_ends_at_each_iteration() {
 }
 
 #[test]
+fn a_borrow_of_plain_data_runs_clean_under_the_oracle() {
+    // `docs/ir.md` 5.10: a borrow of plain data borrows a promoted temporary.
+    // `temp_copy` is the function of `tests/programs/32_temporaries.wf`. In a
+    // loop each `Live` makes a new cell: the reference of each iteration
+    // keeps its own value, as on the AST engine.
+    let src = "struct P { x: u64, y: u64 }\n\
+        fn mkp() -> P { P { x: 1, y: 2 } }\n\
+        fn temp_copy() {\n    let r = &1\n    print(r)\n}\n\
+        fn in_branch(c: bool) { let k = 0; let r = &k; if c { r = &5 }; print(r) }\n\
+        fn field_path() { let x = &mkp().x; print(x) }\n\
+        fn in_loop() {\n\
+            let v = Vec.new()\n    let i = 0\n\
+            while i < 3 { v.push(&(i + 1)); i += 1 }\n\
+            print(v[0])\n    print(v[2])\n}\n\
+        fn write_through() {\n    let i = 0\n\
+            while i < 2 { let r = &(0, 0); r.0 += 1; print(r.0); i += 1 }\n}\n\
+        fn main() { temp_copy(); in_branch(true); field_path(); in_loop(); write_through() }\n";
+    let want = "1\n5\n1\n1\n3\n1\n1\n";
+    let ir = run_with(src, Engine::Ir);
+    assert_eq!(ir.fallback, None);
+    assert_eq!(ir.stdout, want);
+    assert_eq!(run_with(src, Engine::Ast).stdout, want);
+}
+
+#[test]
 fn a_handler_runs_on_the_ir_engine() {
     let src = "effect Ask { fn ask() -> u64 }\n\
         fn main() {\n let v = handle Ask { fn ask() { resume(4) } } in { ask() + 1 }\n print(v)\n}";

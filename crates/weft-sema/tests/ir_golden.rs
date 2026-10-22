@@ -660,9 +660,113 @@ fn a_compound_store_on_a_reference_local_writes_through_it() {
 }
 
 #[test]
+fn golden_promoted_borrow() {
+    golden("promoted_borrow");
+}
+
+/// Returns the temporary at the root of each place that a `Ref` of `body`
+/// borrows, but not a method receiver.
+fn borrowed_temps(body: &Body) -> Vec<LocalId> {
+    let receiver = |l: LocalId| body.locals[l.index()].kind == LocalKind::Temp(TempKind::Receiver);
+    let mut v: Vec<LocalId> = stmts(body)
+        .into_iter()
+        .filter_map(|s| match s {
+            StmtKind::Assign(d, Rvalue::Ref(q)) if !receiver(d.local) => Some(q.local),
+            _ => None,
+        })
+        .filter(|l| matches!(body.locals[l.index()].kind, LocalKind::Temp(_)))
+        .collect();
+    v.dedup();
+    v
+}
+
+#[test]
+fn a_borrow_of_plain_data_promotes_its_temporary() {
+    // `docs/ir.md` 5.10: the temporary has one `Live`, and its `Dead` is at
+    // the frame exit (the block of the `Return`), in a branch and in a loop
+    // too. No cleanup chain ends it.
+    let b = golden_built("promoted_borrow");
+    for (name, n) in [
+        ("temp_copy", 1),
+        ("constants", 5),
+        ("aggregates", 2),
+        ("values", 3),
+        ("field_paths", 3),
+        ("in_branch", 1),
+        ("in_loop", 1),
+    ] {
+        let f = body(&b, name);
+        let temps = borrowed_temps(f);
+        assert_eq!(temps.len(), n, "{name}: {temps:?}");
+        let ss = stmts(f);
+        for t in temps {
+            assert_eq!(
+                f.locals[t.index()].kind,
+                LocalKind::Temp(TempKind::Promoted),
+                "{name}: {t:?}"
+            );
+            let lives = ss.iter().filter(|s| ***s == StmtKind::Live(t)).count();
+            assert_eq!(lives, 1, "{name}: {t:?}: {ss:?}");
+            let ends: Vec<&weft_ir::Block> = f
+                .blocks
+                .iter()
+                .filter(|blk| blk.stmts.iter().any(|s| s.kind == StmtKind::Dead(t)))
+                .collect();
+            assert_eq!(ends.len(), 1, "{name}: {t:?}: {ss:?}");
+            assert!(
+                !ends[0].cleanup && ends[0].term.kind == TermKind::Return,
+                "{name}: {t:?} ends before the frame exit: {ss:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_receiver_of_plain_data_that_a_call_borrows_is_promoted() {
+    // `mkp().px()` with `px(self) -> &u64 in self`: the old pipeline accepts
+    // `let r = mkp().px(); print(r)` (`docs/ir.md` 5.10).
+    let b = golden_built("promoted_borrow");
+    let f = body(&b, "receiver");
+    let ps = temps_of(f, TempKind::Promoted);
+    assert_eq!(ps.len(), 1, "{ps:?}");
+    let ss = stmts(f);
+    assert!(
+        ss.iter()
+            .any(|s| matches!(s, StmtKind::Assign(d, Rvalue::Ref(q))
+            if *q == Place::local(ps[0])
+                && f.locals[d.local.index()].kind == LocalKind::Temp(TempKind::Receiver))),
+        "{ss:?}"
+    );
+    assert!(temps_of(f, TempKind::Receiver).len() == 1, "{ss:?}");
+}
+
+#[test]
+fn a_borrow_of_a_value_that_is_not_plain_data_ends_with_its_statement() {
+    // `&mkv()[0]` and `&V { .. }` (32_temporaries.wf): no promotion.
+    let b = golden_built("promoted_borrow");
+    for (name, kind) in [
+        ("not_plain", TempKind::Operand),
+        ("not_plain_value", TempKind::Borrowed),
+    ] {
+        let f = body(&b, name);
+        let temps = borrowed_temps(f);
+        assert_eq!(temps.len(), 1, "{name}: {temps:?}");
+        let t = temps[0];
+        assert_eq!(f.locals[t.index()].kind, LocalKind::Temp(kind), "{name}");
+        let ss = stmts(f);
+        let dead = ss.iter().position(|s| **s == StmtKind::Dead(t));
+        let print = ss.iter().position(|s| matches!(s, StmtKind::Print(_)));
+        assert!(
+            matches!((dead, print), (Some(d), Some(p)) if d < p),
+            "{name}: the temporary must end before the `print`: {ss:?}"
+        );
+    }
+}
+
+#[test]
 fn a_borrow_of_a_value_borrows_a_temporary_of_the_statement() {
-    let b = golden_built("borrow_value");
-    let f = body(&b, "value");
+    let b = golden_built("promoted_borrow");
+    let f = body(&b, "not_plain_value");
     let tv = f
         .locals
         .iter()
@@ -672,7 +776,7 @@ fn a_borrow_of_a_value_borrows_a_temporary_of_the_statement() {
             |i| LocalId(u32::try_from(i).unwrap_or(u32::MAX)),
         );
     let ss = stmts(f);
-    let r = named(f, "r");
+    let r = named(f, "w");
     let borrow = ss
         .iter()
         .position(|s| matches!(s, StmtKind::Assign(p, Rvalue::Ref(q)) if *p == Place::local(r) && *q == Place::local(tv)))

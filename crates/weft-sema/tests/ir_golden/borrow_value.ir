@@ -37,15 +37,15 @@ body b2: fn value; cap_env e0; unwind_exit bb1
   _0: u64 (Return)
   _1: u64 (Param(0) `a`)
   _2: &u64 (User `r`)
-  _3: u64 (Temp(Borrowed))
+  _3: u64 (Temp(Promoted))
   bb0:
     Live(_2)
     Live(_3)
     _3 = Add<u64>(copy _1, const 1u64)
     _2 = &_3
-    Dead(_3)
     _0 = const 0u64
     Dead(_2)
+    Dead(_3)
     Dead(_1)
     Return
   bb1 (cleanup):
@@ -55,7 +55,7 @@ body b3: fn block_value; cap_env e0; unwind_exit bb1
   _0: u64 (Return)
   _1: u64 (Param(0) `a`)
   _2: &u64 (User `r`)
-  _3: u64 (Temp(Borrowed))
+  _3: u64 (Temp(Promoted))
   _4: u64 (User `b`)
   bb0:
     Live(_2)
@@ -65,9 +65,9 @@ body b3: fn block_value; cap_env e0; unwind_exit bb1
     _3 = copy _4
     Dead(_4)
     _2 = &_3
-    Dead(_3)
     _0 = const 0u64
     Dead(_2)
+    Dead(_3)
     Dead(_1)
     Return
   bb1 (cleanup):

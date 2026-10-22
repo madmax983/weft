@@ -595,6 +595,17 @@ pub fn ir_props(table: &TyTable, t: TyId) -> Props {
     }
 }
 
+/// Returns true if a borrow of a value of the final type `t` puts the value
+/// into a promoted temporary (`docs/ir.md` 5.10).
+///
+/// The value is plain data, and no part is a function value or a resource.
+/// This is the temporary of a borrow that the old lowering gives no variable
+/// (`Lower::temp_root`): a temporary that is plain data never goes out of
+/// scope there.
+pub fn ir_promotes(table: &TyTable, t: TyId) -> bool {
+    !table.not_copy(t) && !ir_has(table, t, TyProp::Fns) && !ir_has(table, t, TyProp::Resource)
+}
+
 /// Returns true if a value of the final type `t` can be linear.
 ///
 /// A part of it is linear, or a part of it is a type parameter. This is

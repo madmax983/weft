@@ -124,7 +124,7 @@ body b3: fn methods; cap_env e0; unwind_exit bb2
   _0: List (Return)
   _1: List (Param(0) `xs`)
   _2: usize (User `n`)
-  _3: String (Temp(Receiver))
+  _3: String (Temp(Promoted))
   _4: &String (Temp(Receiver))
   bb0:
     Live(_2)
@@ -135,9 +135,9 @@ body b3: fn methods; cap_env e0; unwind_exit bb2
     _2 = call String.len(move _4) / e0 -> [bb1]
   bb1:
     Dead(_4)
-    Dead(_3)
     _0 = move _1
     Dead(_2)
+    Dead(_3)
     Dead(_1)
     Return
   bb2 (cleanup):

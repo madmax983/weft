@@ -668,16 +668,16 @@ body b14: fn temp_same_statement; cap_env e0; unwind_exit bb19
 body b15: fn temp_copy; cap_env e0; unwind_exit bb1
   _0: () (Return)
   _1: &i64 (User `r`)
-  _2: i64 (Temp(Borrowed))
+  _2: i64 (Temp(Promoted))
   bb0:
     Live(_1)
     Live(_2)
     _2 = const 1i64
     _1 = &_2
-    Dead(_2)
     Print(copy _1)
     _0 = const ()
     Dead(_1)
+    Dead(_2)
     Return
   bb1 (cleanup):
     UnwindExit
