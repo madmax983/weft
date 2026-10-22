@@ -19,7 +19,9 @@
 //! Stage F4: [`emit`] writes the facts of the bodies with no call, no
 //! `perform` and no `resume` (group A with no calls): the analysis
 //! (`crate::analysis`) gives the states, and the templates ([`templates`])
-//! write the facts of each node. A program with another construct gets
+//! write the facts of each node. Stage F5 adds the calls of the functions
+//! whose summary comes from a signature ([`summaries`]), and the W0204 store
+//! check ([`Input::diags`]). A program with another construct gets
 //! [`Unsupported`]: the old pipeline checks it. A test can give another emit
 //! ([`crate::analyze_with_emit`]), and [`preview`] gives the facts of one
 //! body.
@@ -71,6 +73,9 @@ pub struct Input<'a> {
     pub built: &'a Built,
     /// The scope of the program.
     pub scope: &'a Scope,
+    /// The diagnostics of the fact generator: the W0204 store check
+    /// (`docs/ir.md` 6.9).
+    pub diags: &'a std::cell::RefCell<Vec<Diagnostic>>,
 }
 
 /// A fact generator.
@@ -91,6 +96,7 @@ pub type Emit = fn(&Input<'_>, &mut [FnFacts]) -> Result<(), Unsupported>;
 /// Returns [`Unsupported`] for the first body with a construct that the
 /// fact generator does not support yet.
 pub fn emit(input: &Input<'_>, facts: &mut [FnFacts]) -> Result<(), Unsupported> {
+    let sums = summaries(input.analysis, input.built);
     for (i, e) in input.built.entries.iter().enumerate() {
         let Outcome::Built(entry) = e.outcome else {
             continue;
@@ -98,9 +104,35 @@ pub fn emit(input: &Input<'_>, facts: &mut [FnFacts]) -> Result<(), Unsupported>
         let Some(f) = facts.get_mut(i) else {
             continue;
         };
-        emit_body(input.analysis, input.built, i, entry, f)?;
+        let ds = emit_body(input.analysis, input.built, &sums, i, entry, f)?;
+        input.diags.borrow_mut().extend(ds);
     }
     Ok(())
+}
+
+/// The summary of each function of the IR that a call can run (`docs/ir.md`
+/// 6.7).
+///
+/// A function with a stated signature (also an extern function) gets the
+/// summary of its signature (`crate::analysis::sig`). A function with no
+/// stated signature gets one from its body in stage F6.
+pub fn summaries(a: &Analysis, built: &Built) -> crate::analysis::Summaries {
+    let mut out = crate::analysis::Summaries::default();
+    for (&sema, &f) in &built.fns {
+        let (Some(sig), Some(decl)) = (a.sigs.get(sema.index()), built.program.fns.get(f.index()))
+        else {
+            continue;
+        };
+        let s = if decl.intrinsic.is_some() {
+            Err("a call of `sim.run` or `with_timeout` (stage F19)")
+        } else if !sig.declared {
+            Err("a call of a function with no stated signature (summaries of bodies, stage F6)")
+        } else {
+            crate::analysis::sig::from_signature(&a.program, sema, sig, decl, &built.tys)
+        };
+        out.insert(f, s);
+    }
+    out
 }
 
 /// The facts of body `index` of the analysis from the `ir` pipeline: the
@@ -125,7 +157,8 @@ pub fn preview(a: &Analysis, built: &Built, index: usize) -> Result<FnFacts, Uns
         .get(index)
         .ok_or_else(|| unsupported("no such body"))?;
     let mut facts = seed(&old.facts);
-    emit_body(a, built, index, entry, &mut facts)?;
+    let sums = summaries(a, built);
+    emit_body(a, built, &sums, index, entry, &mut facts)?;
     Ok(facts)
 }
 
@@ -163,12 +196,14 @@ fn unsupported(e: &alpha::AlphaError) -> Unsupported {
     }
 }
 
-/// Checks that the fact generator of stage F4 supports each construct of
-/// the component `comp`: function and test bodies, the statements, and the
-/// terminators that run no other body.
+/// Checks that the fact generator supports each construct of the component
+/// `comp`: function and test bodies, the statements, the terminators that
+/// run no other body (stage F4), and the calls of the functions that have a
+/// summary in `sums` (stage F5).
 fn check_supported(
     p: &weft_ir::Program,
     tys: &weft_ir::TyTable,
+    sums: &crate::analysis::Summaries,
     comp: &[weft_ir::BodyId],
 ) -> Result<(), Unsupported> {
     use weft_ir::{BodyKind, Rvalue, StmtKind, TermKind};
@@ -237,9 +272,19 @@ fn check_supported(
                 | TermKind::UnwindExit
                 | TermKind::Unreachable
                 | TermKind::Assert { .. } => {}
-                TermKind::Call { .. } | TermKind::Perform { .. } | TermKind::Resume { .. } => {
-                    return no(Group::A, "a call (summaries, stage F5)");
+                TermKind::Call {
+                    callee: weft_ir::Callee::Fn(f, _),
+                    ..
+                } => {
+                    if let Err(why) = sums.get(*f) {
+                        return no(later_group(why), why);
+                    }
                 }
+                TermKind::Call { .. } => {
+                    return no(Group::C, "a call of a function value (stage F12)");
+                }
+                TermKind::Perform { .. } => return no(Group::A, "a perform (stage F14)"),
+                TermKind::Resume { .. } => return no(Group::D, "a continuation (stage F16)"),
                 TermKind::IterNext { .. } => return no(Group::B, "an iterator (stage F10)"),
                 TermKind::Handle { .. } => return no(Group::D, "a handler (stage F14)"),
                 _ => return no(Group::E, "a task (stage F18)"),
@@ -262,21 +307,23 @@ fn check_supported(
 ///
 /// # Errors
 ///
-/// Returns [`Unsupported`] for a construct that stage F4 does not support:
-/// a call, a `perform`, a `resume`, a loop, and the constructs of the groups
-/// B to F.
+/// Returns [`Unsupported`] for a construct that the fact generator does not
+/// support yet: a call of a function with no summary, a `perform`, a
+/// `resume`, a loop, and the constructs of the groups B to F. The result is
+/// the diagnostics of the W0204 store check.
 pub fn emit_body(
     a: &Analysis,
     built: &Built,
+    sums: &crate::analysis::Summaries,
     index: usize,
     entry: weft_ir::BodyId,
     facts: &mut FnFacts,
-) -> Result<(), Unsupported> {
+) -> Result<Vec<Diagnostic>, Unsupported> {
     use std::collections::BTreeMap;
     let p = &built.program;
     let comp = component(built, entry);
     let mut tys = built.tys.clone();
-    check_supported(p, &tys, &comp)?;
+    check_supported(p, &tys, sums, &comp)?;
     let body = p
         .bodies
         .get(entry.index())
@@ -318,11 +365,12 @@ pub fn emit_body(
             tys: &mut tys,
             facts,
             roots: &mut roots,
+            sums,
         };
         crate::analysis::run(&mut cx, entry, init).map_err(|e| unsupported(&e))?
     };
     let mut uniq: BTreeMap<weft_facts::VarId, bool> = BTreeMap::new();
-    {
+    let stored = {
         let mut em = templates::Em {
             p,
             sema: &a.program,
@@ -335,10 +383,14 @@ pub fn emit_body(
             ret_places: ret_places.as_deref(),
             uniq: &mut uniq,
             skip_s: None,
+            sums,
+            stored: Vec::new(),
         };
         templates::entry(&mut em, entry_node, &params).map_err(|e| unsupported(&e))?;
         emit_blocks(&mut em, &table, &states, body).map_err(|e| unsupported(&e))?;
-    }
+        em.stored
+    };
+    let diags = stored_behind(p, &tys, facts, &roots, body, &stored);
     // Each local with a root owns it.
     let owners: Vec<(PlaceId, weft_facts::VarId)> = roots
         .local_roots()
@@ -351,7 +403,82 @@ pub fn emit_body(
     }
     decls::std_effects(facts);
     facts.normalize();
-    Ok(())
+    Ok(diags)
+}
+
+/// The W0204 store check (`docs/ir.md` 6.9): a reference into a local, a
+/// temporary or a by-value parameter that the body puts behind a reference
+/// parameter or into an `rc` object. The local ends at the return, and the
+/// caller keeps the reference. One diagnostic for each place that gets the
+/// reference and each local, at the span of the node, as the old lowering
+/// (`check_stored_behind`).
+fn stored_behind(
+    p: &weft_ir::Program,
+    tys: &weft_ir::TyTable,
+    facts: &FnFacts,
+    roots: &alpha::Roots,
+    body: &weft_ir::Body,
+    stored: &[templates::Stored],
+) -> Vec<Diagnostic> {
+    use weft_syntax::diag::Code;
+    let mut out = Vec::new();
+    let mut seen: Vec<(String, weft_facts::RootId)> = Vec::new();
+    for st in stored {
+        let Some(into_root) = facts.places.get(st.into.index()).map(|i| i.root) else {
+            continue;
+        };
+        let into = match roots.role(into_root) {
+            Some(alpha::Role::Param(b, i) | alpha::Role::Held(b, i)) => format!(
+                "behind the parameter `{}`",
+                crate::analysis::transfer::param_name(p, b, i)
+            ),
+            Some(alpha::Role::Group) => {
+                let name = facts
+                    .roots
+                    .get(into_root.index())
+                    .map_or_else(String::new, |r| r.name.clone());
+                format!("into an `rc` object of type `{name}`")
+            }
+            _ => continue,
+        };
+        for &r in &st.refs {
+            let Some(root) = facts.places.get(r.index()).map(|i| i.root) else {
+                continue;
+            };
+            let Some(alpha::Role::Local(key)) = roots.role(root) else {
+                continue;
+            };
+            if seen.contains(&(into.clone(), root)) {
+                continue;
+            }
+            seen.push((into.clone(), root));
+            let d = p
+                .bodies
+                .get(key.0.index())
+                .and_then(|b| b.locals.get(key.1.index()));
+            let name = d.map_or_else(String::new, |d| alpha::local_text(tys, d));
+            let what = match d.map(|d| d.kind) {
+                Some(weft_ir::LocalKind::Temp(_)) => "a temporary value".to_string(),
+                Some(weft_ir::LocalKind::Param(_)) => {
+                    format!("the by-value parameter `{name}`")
+                }
+                _ => format!("the local `{name}`"),
+            };
+            let shown = facts.place(r).display.clone();
+            let msg = format!(
+                "`{}` puts a reference into `{shown}` {into}: {what} goes out of scope at the return",
+                facts.name
+            );
+            let span = weft_syntax::ast::Span {
+                lo: st.span.lo,
+                hi: st.span.hi,
+            };
+            let mut diag = Diagnostic::error(Code::W0204, msg, span);
+            diag.unit = body.origin.span.unit as usize;
+            out.push(diag);
+        }
+    }
+    out
 }
 
 /// The templates of each block of `body` that the entry reaches, with the
@@ -427,7 +554,24 @@ fn emit_blocks(
             dest,
         };
         if let Some(n) = table.get(key) {
-            templates::term(em, n, &st, &blk.term.kind, blk.term.origin.span)?;
+            if let weft_ir::TermKind::Call { .. } = &blk.term.kind {
+                let at = |phase, dest| NodeKey {
+                    body: bid,
+                    block,
+                    at: TERM,
+                    phase,
+                    dest,
+                };
+                let nodes = templates::CallNodes {
+                    main: n,
+                    ret: table.get(at(Phase::Ret, NORMAL)),
+                    frame_end: table.get(at(Phase::FrameEnd, NORMAL)),
+                    aborts: table.get(at(Phase::FrameEnd, PAST)).into_iter().collect(),
+                };
+                templates::call(em, &nodes, &st, block, &blk.term.kind, blk.term.origin.span)?;
+            } else {
+                templates::term(em, n, &st, &blk.term.kind, blk.term.origin.span)?;
+            }
         }
     }
     em.cleanup = false;
@@ -484,6 +628,7 @@ const fn em_cx<'b>(em: &'b mut templates::Em<'_>) -> crate::analysis::Cx<'b> {
         tys: em.tys,
         facts: em.facts,
         roots: em.roots,
+        sums: em.sums,
     }
 }
 
@@ -574,10 +719,12 @@ pub(crate) fn run(
         return (s, None);
     }
     let mut facts: Vec<FnFacts> = a.bodies.iter().map(|b| seed(&b.facts)).collect();
+    let emitted = std::cell::RefCell::new(Vec::new());
     let input = Input {
         analysis: a,
         built: &built,
         scope: &s,
+        diags: &emitted,
     };
     if let Err(u) = emit(&input, &mut facts) {
         s.fallback = Some(u.to_string());
@@ -597,6 +744,7 @@ pub(crate) fn run(
         .collect();
     let mut diags = kept;
     diags.extend(built.diags.iter().cloned());
+    diags.extend(emitted.into_inner());
     (s, Some(IrFacts { bodies, diags }))
 }
 

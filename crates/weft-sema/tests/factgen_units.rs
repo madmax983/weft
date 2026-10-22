@@ -2,7 +2,8 @@
 //! analysis (plan stage F2, `docs/ir.md` 6.1 to 6.3 and 6.7: the relation
 //! table `RELS`, the nodes and phases, roots and α, and the variables), and
 //! the templates of the statements and the simple terminators (stage F4,
-//! `docs/ir.md` 6.4).
+//! `docs/ir.md` 6.4), and the phases of a call with the summary of its
+//! callee (stage F5, `docs/ir.md` 6.4 and 6.7).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1191,6 +1192,48 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
             &["cfg_edge", "reads_at", "uses", "may_abort", "spared_at"],
             &[],
         ),
+        // A call: the operands and the parts of the summary of the callee
+        // (`docs/ir.md` 6.4); the callee frame root and a value that the
+        // callee drops bind there.
+        "call" => (
+            &[
+                "cfg_edge",
+                "reads_at",
+                "uses",
+                "moved_at",
+                "moved_part",
+                "rest_linear",
+                "mutates_at",
+                "call",
+                "lends_mut",
+                "may_abort",
+                "multi_at",
+                "writes_via",
+                "rebound_at",
+            ],
+            &[],
+        ),
+        // The result binds; a held argument moves; a value that the callee
+        // drops ends.
+        "call ret" => (
+            &[
+                "cfg_edge",
+                "rebound_at",
+                "empty_at",
+                "uses",
+                "moved_at",
+                "moved_part",
+                "rest_linear",
+                "mutates_at",
+                "reads_at",
+                "overwrites",
+                "writes_via",
+                "scope_end",
+            ],
+            &[],
+        ),
+        "call frame end" => (&["cfg_edge", "scope_end"], &[]),
+        "call frame end (abort)" => (&["cfg_edge", "scope_end", "unwound_at"], &[]),
         _ => return None,
     })
 }
@@ -1692,5 +1735,485 @@ fn the_templates_run_on_the_bodies_with_no_call_of_the_corpus() {
     assert!(
         ok > 100 && later > 0,
         "{ok} bodies, {later} for later stages"
+    );
+}
+
+// ---------------------------------------------------------- calls (F5)
+
+/// Programs with calls of functions whose summary comes from a signature:
+/// the prelude, an extern function, a function with a stated row.
+const CALLS: &str = "linear struct Tx { id: u64 }
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+
+fn vec_calls() {
+    let v = Vec.new()
+    v.push(1)
+    let n = v.len()
+    v.clear()
+    print(n)
+}
+
+fn invalidates(world: &World) / mut(world.entities) {
+    let first = &world.entities[0]
+    world.entities.push(Entity { hp: 10 })
+    print(first.hp)
+}
+
+fn via(v: &Vec<u64>) / mut(v) {
+    v.push(1)
+}
+
+extern fn keep<T>(x: T) / log
+
+fn holds(t: Tx) / log {
+    keep(t)
+}
+
+extern fn mk() -> u64
+
+fn frame() {
+    let a = mk()
+    print(a)
+}
+
+fn extend(dst: &Vec<&Entity>, src: &Vec<&Entity>) / mut(dst) {
+    dst.push(src[0])
+}
+
+fn typed_flow(x: &Entity) {
+    let all = Vec.new()
+    let some = Vec.new()
+    some.push(x)
+    extend(&all, &some)
+    print(all.len())
+}
+
+fn keeps_ref(rs: &Vec<&u64>) / mut(rs) {
+    let x = 1
+    rs.push(&x)
+}
+";
+
+/// The facts of body `name` of [`CALLS`].
+fn call_facts(name: &str) -> FnFacts {
+    ir_facts_with(CALLS, Options::default(), name)
+}
+
+/// The node with label `label` on the line of the first node with label
+/// `call` whose span starts at or after `from`.
+fn call_phase(f: &FnFacts, label: &str, nth: usize) -> NodeId {
+    let nodes = nodes_labelled(f, label);
+    *nodes
+        .get(nth)
+        .unwrap_or_else(|| panic!("no node `{label}` number {nth}: {nodes:?}"))
+}
+
+#[test]
+fn the_prelude_calls_of_a_vec_give_the_changes_and_reads_of_their_signatures() {
+    let f = call_facts("vec_calls");
+    check_templates(&f, "vec_calls");
+    let calls = nodes_labelled(&f, "call");
+    // `Vec.new`, `push`, `len`, `clear`.
+    assert_eq!(calls.len(), 4, "{calls:?}");
+    let v: BTreeSet<String> = std::iter::once("v".to_string()).collect();
+    assert!(mutates(&f, calls[0]).is_empty());
+    assert_eq!(mutates(&f, calls[1]), v, "`push` changes `v`");
+    assert!(mutates(&f, calls[2]).is_empty(), "`len` changes nothing");
+    assert_eq!(mutates(&f, calls[3]), v, "`clear` changes `v`");
+    for &n in &calls[1..] {
+        assert!(reads(&f, n).contains("v"), "a method reads its receiver");
+        assert!(f
+            .call_arg
+            .iter()
+            .any(|&(m, p, r)| m == n && r == 0 && f.place(p).display == "v"));
+    }
+    assert!(f
+        .call_mut
+        .iter()
+        .any(|&(m, p, r)| m == calls[1] && r == 0 && f.place(p).display == "v"));
+    // No prelude call of the body can abort.
+    assert!(f.may_abort.is_empty());
+}
+
+#[test]
+fn the_result_binds_at_ret() {
+    let f = call_facts("vec_calls");
+    let n = var_named(&f, "n");
+    let rets = nodes_labelled(&f, "call ret");
+    // The result of `len` binds `n` at its `Ret` node, not at `Main`.
+    let len_ret = rets[2];
+    assert!(has(&f.rebound_at, n, len_ret), "{:?}", f.rebound_at);
+    assert!(has(&f.empty_at, n, len_ret));
+    let main = call_phase(&f, "call", 2);
+    assert!(!has(&f.rebound_at, n, main));
+    assert!(f.cfg_edge.contains(&(main, len_ret)));
+}
+
+#[test]
+fn a_change_of_a_place_invalidates_a_reference_into_it() {
+    let f = call_facts("invalidates");
+    let first = var_named(&f, "first");
+    assert!(points(&f, first).contains("world.entities[]"));
+    let push = call_phase(&f, "call", 0);
+    assert_eq!(
+        mutates(&f, push),
+        std::iter::once("world.entities".to_string()).collect()
+    );
+}
+
+#[test]
+fn writes_via_at_a_method_call_through_one_reference() {
+    let f = call_facts("via");
+    let v = var_named(&f, "v");
+    let push = call_phase(&f, "call", 0);
+    assert!(f.writes_via.contains(&(push, v)), "{:?}", f.writes_via);
+    // The body with a reference of a place that the call changes gets no
+    // `writes_via` for a local that is not a reference.
+    let g = call_facts("vec_calls");
+    assert!(g.writes_via.is_empty(), "{:?}", g.writes_via);
+}
+
+#[test]
+fn a_held_argument_moves_at_ret() {
+    let f = call_facts("holds");
+    let t = var_named(&f, "t");
+    let main = call_phase(&f, "call", 0);
+    let ret = call_phase(&f, "call ret", 0);
+    assert!(has(&f.uses, t, main), "the call reads its argument");
+    assert!(
+        !has(&f.moved_at, t, main),
+        "a held argument stays live at `Main`"
+    );
+    assert!(has(&f.moved_at, t, ret), "{:?}", f.moved_at);
+    // The callee can abort (`log`), so the value is live across an abort.
+    assert!(f.may_abort.contains(&main));
+    assert!(f.escapes_at.iter().any(|(n, e)| *n == main && e == "Log"));
+    // `keep` can drop a value of its type parameter: a linear type argument
+    // goes away at the call (W0601).
+    let dropped: Vec<VarId> = (0..f.vars.len())
+        .filter(|&i| f.vars[i].kind == weft_facts::VarKind::Dropped)
+        .map(|i| VarId(id(i)))
+        .collect();
+    assert_eq!(dropped.len(), 1, "{:?}", f.vars);
+    assert!(has(&f.rebound_at, dropped[0], main));
+    assert!(has(&f.scope_end, dropped[0], ret));
+}
+
+#[test]
+fn a_callee_frame_place_in_a_result_ends_at_frame_end() {
+    use weft_sema::analysis::summary::{IPlace, IRoot};
+    let a = analyze_source(CALLS, Options::default())
+        .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message));
+    let b = irbuild::build(&a);
+    let i = b
+        .entries
+        .iter()
+        .position(|e| e.name == "frame")
+        .unwrap_or_else(|| panic!("no body `frame`"));
+    let Outcome::Built(entry) = b.entries[i].outcome else {
+        panic!("`frame` has no IR");
+    };
+    // A summary of `mk` whose result points into a local of `mk`.
+    let mut sums = weft_sema::factgen::summaries(&a, &b);
+    let mk = b
+        .program
+        .fns
+        .iter()
+        .position(|d| d.name.ends_with("mk"))
+        .unwrap_or_else(|| panic!("no function `mk`"));
+    let mk = weft_ir::FnId(id(mk));
+    let mut s = sums.get(mk).cloned().unwrap_or_else(|e| panic!("{e}"));
+    s.ret.places.push(IPlace::root(IRoot::Frame));
+    sums.insert(mk, Ok(s));
+    let mut f = FnFacts::default();
+    weft_sema::factgen::emit_body(&a, &b, &sums, i, entry, &mut f)
+        .unwrap_or_else(|u| panic!("{u}"));
+    let main = call_phase(&f, "call", 0);
+    let fe = call_phase(&f, "call frame end", 0);
+    let frame = (0..f.vars.len())
+        .find(|&i| f.vars[i].name.starts_with("a local of"))
+        .map_or_else(
+            || panic!("no frame variable: {:?}", f.vars),
+            |i| VarId(id(i)),
+        );
+    assert!(has(&f.rebound_at, frame, main));
+    assert!(has(&f.scope_end, frame, fe));
+    let x = var_named(&f, "a");
+    assert!(
+        points(&f, x).iter().any(|p| p.starts_with("a local of")),
+        "{:?}",
+        points(&f, x)
+    );
+}
+
+#[test]
+fn a_changed_argument_keeps_only_the_references_that_its_type_can_hold() {
+    // R3RT6: `extend(&all, &some)` gives `all` the references in `some`, not
+    // a reference into `some`.
+    let f = call_facts("typed_flow");
+    let all = var_named(&f, "all");
+    let p = points(&f, all);
+    assert!(!p.iter().any(|x| x.starts_with("some")), "{p:?}");
+    assert!(p.contains("x"), "{p:?}");
+    // `rs.push(&x)` (ADR 0003): a vector of references keeps the reference.
+    let g = call_facts("keeps_ref");
+    let push = call_phase(&g, "call", 0);
+    assert!(mutates(&g, push).contains("rs"));
+}
+
+#[test]
+fn a_reference_into_a_local_behind_a_reference_parameter_is_w0204() {
+    let src = "fn keeps_ref(rs: &Vec<&u64>) / mut(rs) {
+    let x = 1
+    rs.push(&x)
+}
+";
+    let a = analyze_source(
+        src,
+        Options {
+            facts: weft_sema::FactGen::Ir,
+            ir_groups: weft_sema::Groups::of(weft_sema::Group::A),
+            ..Options::default()
+        },
+    )
+    .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message));
+    let w0204: Vec<String> = a
+        .diags
+        .iter()
+        .filter(|d| d.code == weft_syntax::diag::Code::W0204)
+        .map(|d| d.message.clone())
+        .collect();
+    // The `ir` pipeline checks the program: the old lowering does not give
+    // the diagnostic.
+    assert!(
+        a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope),
+        "{:?}",
+        a.ir_scope
+    );
+    assert_eq!(w0204.len(), 1, "{w0204:?}");
+    assert!(
+        w0204[0].contains("keeps_ref") && w0204[0].contains("`x`"),
+        "{w0204:?}"
+    );
+}
+
+/// R3RT2: a read through a reference uses the variables of the places that
+/// it reads through and of the references that it copies out.
+const THROUGH: &str = "struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct Wrap<T> { x: T }
+
+fn ref_to_option(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    let p = &o
+    world.entities.clear()
+    match p { Some(e) => print(e.hp), None => {} }
+}
+
+fn control_field(world: &World) / mut(world.entities) {
+    let w = Wrap { x: &world.entities[0] }
+    let p = &w
+    world.entities.clear()
+    print(p.x.hp)
+}
+
+fn nested_ref() {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    let t = (&v[0], 1)
+    let rt = &t
+    v.clear()
+    let (a, b) = rt
+    print(a)
+}
+";
+
+#[test]
+fn a_read_through_a_reference_uses_the_variables_of_what_it_reads() {
+    // `print(p.x.hp)` reads through the reference in `w.x`: it uses `w`.
+    let f = ir_facts_with(THROUGH, Options::default(), "control_field");
+    let w = var_named(&f, "w");
+    let print = nodes_labelled(&f, "print");
+    assert!(print.iter().any(|&n| has(&f.uses, w, n)), "{:?}", f.uses);
+    // `e = copy ((*p) as Some).0` copies the reference that `o` holds: it
+    // uses `o`, whose places the call changed.
+    let g = ir_facts_with(THROUGH, Options::default(), "ref_to_option");
+    let o = var_named(&g, "o");
+    let e = var_named(&g, "e");
+    let bind = (0..g.nodes.len())
+        .map(|i| NodeId(id(i)))
+        .find(|&n| has(&g.rebound_at, e, n))
+        .unwrap_or_else(|| panic!("no bind of `e`"));
+    assert!(has(&g.uses, o, bind), "{:?}", g.uses);
+    // `let (a, b) = rt` binds `a` by reference: `a = &(*rt).0` borrows a
+    // reference that `t` holds, and uses `t`.
+    let h = ir_facts_with(THROUGH, Options::default(), "nested_ref");
+    let t = var_named(&h, "t");
+    let a = var_named(&h, "a");
+    let bind = (0..h.nodes.len())
+        .map(|i| NodeId(id(i)))
+        .find(|&n| has(&h.rebound_at, a, n))
+        .unwrap_or_else(|| panic!("no bind of `a`"));
+    assert!(has(&h.uses, t, bind), "{:?}", h.uses);
+}
+
+#[test]
+fn an_argument_reaches_the_places_of_the_references_behind_it() {
+    // R3RT3: `clear_then(&o, world)` gives the callee the places that the
+    // reference in `o` points into, with the root of its parameter.
+    let src = "struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn clear_then(o: &Option<&Entity>, w: &World) / mut(w.entities) {
+    w.entities.clear()
+}
+fn callee_side(world: &World) / mut(world.entities) {
+    let o = Some(&world.entities[0])
+    clear_then(&o, world)
+}
+";
+    let f = ir_facts_with(src, Options::default(), "callee_side");
+    let call = nodes_labelled(&f, "call")[0];
+    let args: BTreeSet<(String, u32)> = f
+        .call_arg
+        .iter()
+        .filter(|(n, _, _)| *n == call)
+        .map(|&(_, p, r)| (f.place(p).display.clone(), r))
+        .collect();
+    assert!(args.contains(&("o".to_string(), 0)), "{args:?}");
+    assert!(
+        args.contains(&("world.entities[]".to_string(), 0)),
+        "{args:?}"
+    );
+    assert!(
+        f.call_mut
+            .iter()
+            .any(|&(n, p, r)| n == call && r == 1 && f.place(p).display == "world.entities"),
+        "{:?}",
+        f.call_mut
+    );
+}
+
+#[test]
+fn a_value_that_a_call_builds_in_place_does_not_read_its_place_fields() {
+    // `Box.new(Frame { .. })`: the call result goes into `h` with its place
+    // field `cur` that has no value (`docs/ir.md` 5.17, 5.36); the move of
+    // the result into the literal does not read it. W0304 comes at the read
+    // of `h.b.cur`, as in the old pipeline.
+    let src = "struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct Hold { b: Box<Frame> }
+fn one_box() {
+    let h = Hold { b: Box.new(Frame { buf: [1, 2, 3, 4] }) }
+    print(h.b.cur)
+}
+";
+    let f = ir_facts_with(src, Options::default(), "one_box");
+    let unset: BTreeSet<VarId> = f.unset_at.iter().map(|&(v, _)| v).collect();
+    let read: Vec<(String, String)> = f
+        .uses
+        .iter()
+        .filter(|&&(v, _)| unset.contains(&v))
+        .map(|&(v, n)| (f.var(v).name.clone(), f.node(n).label.clone()))
+        .collect();
+    // Only the `print` reads a place field with no value: `h.b.cur`.
+    assert!(
+        read.iter().all(|(v, l)| l == "print" && v == "h.b.cur"),
+        "{read:?}"
+    );
+    assert!(read.iter().any(|(v, _)| v == "h.b.cur"), "{read:?}");
+}
+
+#[test]
+fn a_store_through_a_box_gives_its_place_field_a_value() {
+    // `docs/ir.md` 5.8: the place fields of a boxed value are paths through
+    // `Deref(Box)`. A read of `b.buf[0]` does not read `b.cur`, and a store
+    // into `b.cur` gives it a value.
+    let src = "struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+fn boxed_in_place() {
+    let b = Box.new(Frame { buf: [1, 2, 3, 4] })
+    b.cur = &b.buf[0]
+    print(b.cur)
+}
+";
+    let f = ir_facts_with(src, Options::default(), "boxed_in_place");
+    let cur = (0..f.vars.len())
+        .find(|&i| f.vars[i].name == "b.cur")
+        .map_or_else(
+            || panic!("no variable `b.cur`: {:?}", f.vars),
+            |i| VarId(id(i)),
+        );
+    let store = (0..f.nodes.len())
+        .map(|i| NodeId(id(i)))
+        .find(|&n| f.node(n).label == "assign" && has(&f.rebound_at, cur, n));
+    let store = store.unwrap_or_else(|| panic!("no store gives `b.cur` a value"));
+    // The store reads `b.buf[0]` and not `b.cur`.
+    assert!(!has(&f.uses, cur, store), "{:?}", f.uses);
+}
+
+#[test]
+fn a_value_that_a_call_argument_moves_keeps_its_place() {
+    // A `Vec` moves its elements when its buffer grows: a `!Move` literal
+    // that goes to `push` moves (W0604), as in the old pipeline. `Box.new`
+    // builds its argument in place.
+    let src = "struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+fn in_vec() {
+    let v = Vec.new()
+    v.push(Frame { buf: [1, 2, 3, 4] })
+}
+fn in_box() {
+    let b = Box.new(Frame { buf: [1, 2, 3, 4] })
+}
+";
+    let frames = |f: &FnFacts| -> Vec<VarId> {
+        (0..f.vars.len())
+            .filter(|&i| f.vars[i].ty == "Frame")
+            .map(|i| VarId(id(i)))
+            .collect()
+    };
+    let f = ir_facts_with(src, Options::default(), "in_vec");
+    let push = nodes_labelled(&f, "call")[1];
+    let moved: Vec<VarId> = frames(&f)
+        .into_iter()
+        .filter(|&v| has(&f.moved_at, v, push))
+        .collect();
+    assert_eq!(moved.len(), 1, "{:?}", f.vars);
+    assert!(f.var(moved[0]).immovable, "{:?}", f.var(moved[0]));
+    let g = ir_facts_with(src, Options::default(), "in_box");
+    assert!(
+        frames(&g).iter().all(|&v| !g.var(v).immovable),
+        "{:?}",
+        g.vars
+    );
+}
+
+#[test]
+fn a_type_argument_that_is_a_reference_gives_the_places_behind_it() {
+    // `rss.push(&rs)`: `T` is `&Vec<&Counter>`, so `rss` gets the places
+    // behind `rs` too, and `mut(rss..)` changes them (`verify/s5/diff/p/v4a`).
+    let src = "struct Counter { items: Vec<u64> }
+fn grow2(rss: &Vec<&Vec<&Counter>>) / mut(rss..) {
+    let rs = rss[0]
+    let c = rs[0]
+    c.items.clear()
+}
+fn two_levels() {
+    let c = Counter { items: Vec.new() }
+    let rs = Vec.new()
+    rs.push(&c)
+    let rss = Vec.new()
+    rss.push(&rs)
+    grow2(&rss)
+}
+";
+    let f = ir_facts_with(src, Options::default(), "two_levels");
+    let rss = var_named(&f, "rss");
+    assert!(points(&f, rss).contains("c"), "{:?}", points(&f, rss));
+    let grow = *nodes_labelled(&f, "call")
+        .last()
+        .unwrap_or_else(|| panic!("no call"));
+    assert!(
+        mutates(&f, grow).iter().any(|m| m.starts_with('c')),
+        "{:?}",
+        mutates(&f, grow)
     );
 }

@@ -2144,6 +2144,49 @@ As built (plan stage F4, `factgen/templates.rs`, `kernel.rs`, `decls.rs` and
   no value below a path that must hold a value. A move of a whole local gives its holes to
   the destination.
 
+As built (plan stage F5, `factgen/templates.rs` `call`, `crate::analysis::apply`):
+
+- A `Call` of a function item whose summary comes from a signature (6.7: an extern
+  function of the prelude or of the program, or a function with a stated row) has the
+  nodes `Main`, `Ret` and `FrameEnd`, and `FrameEnd` on the path of an abort. A call of a
+  function with no stated row (stage F6), of a function value, of `sim.run` or
+  `with_timeout`, a `perform` and a `resume` stay `Unsupported`.
+- `Main`: the operands, then the summary: `reads_at` of the places of each argument;
+  `call_arg` of each place that an argument reaches, also the places behind a reference
+  argument (R3RT3); `mutates_at` and `call_mut` of the part `muts`; `lends_mut` and
+  `call_mut` of the places of each argument if an operation of an effect of the row takes
+  a reference; `escapes_at` of each effect of the row (group A has no local handler);
+  `may_abort` if the summary can abort (an effect of the row, or `raises`); `multi_at`;
+  `param_in`, `arg_at` and the argument sites of a stated `in` place; `uniq_param` and
+  `arg_aliased`. `writes_via(n, S(r))` at a method call whose callee changes only places
+  below `self` (`only_self`), if the receiver reaches through a local `r` of type `&X`
+  with no reference in `X` and each change of the node is at or below a place of `r`.
+- The callee frame root `F(n)` (a `Local` root, the text `a local of f`) binds at `Main`
+  if the part `ret` names the frame; it ends at `FrameEnd`, on each path. A linear type
+  argument of a type parameter in `drops` gets a variable of kind `Dropped` that binds at
+  `Main` and ends at `Ret` (W0601), and that the abort path unwinds.
+- `Ret`: the result binds to `dest` as the destination of an `Assign`. An argument whose
+  parameter names a type parameter in `holds` moves here, not at `Main`: a linear value
+  is live at the abort edge of `Main` (W0602). The values that go behind a reference
+  argument that the call changes (part `stores`) are a weak definition of the variable of
+  the place (no `rebound_at`); a place that a caller keeps gets the W0204 store check.
+- An access uses the variables of the move path of each pointer place on its path (the
+  pointer locals of the rule above). A read or a borrow through a pointer of a place
+  whose type can hold a reference uses the variables of the move paths of its places
+  (R3RT2): a copy of a reference out of `o` through `p` uses `o`.
+- A temporary that gets the result of a call is built in place (5.17): a move of it
+  gives its place fields to the destination. A value built in place that a call takes as
+  a whole argument keeps `immovable`, unless the builder builds it in place for the
+  callee (`in_place`, `Box.new`): `v.push(Frame { .. })` is W0604, as in the old lowering.
+- A place field of a boxed value is a path through `Deref(Box)` (5.8): a `U` variable
+  overlaps an access by the path that the local owns, with the dereferences of a `Box`.
+  A store into such a path gives the `U` variables at or below it a value.
+- The W0204 store check (6.9): a reference whose root is a local, a temporary or a
+  by-value parameter, that an `Assign` through a reference or the part `stores` of a call
+  puts behind a reference parameter or into an `rc` object, is W0204 at the span of the
+  node, with the text of the old lowering. The fact generator gives these diagnostics
+  (`Input::diags`).
+
 ### 6.5 Frames in the facts
 
 **The splice of a once-run frame.** For a `Handle` of handler `h` at node `n` in body
@@ -2412,6 +2455,42 @@ it can abort; it is `multi` if the operation is.
 **Soundness of a summary** is a hypothesis, not a theorem: each part must contain each
 effect of the body on its interface. The design reduces it to one procedure, `RELS`
 guards its coverage, and the summary oracle tests it on runs (section 8.5).
+
+As built (plan stage F5, `crates/weft-sema/src/analysis/`):
+
+- `summary.rs`: `Summary` has the parts of the table above (`muts` with the callee root
+  index of each place, `ret` with the stated places, the stated places of each part of a
+  tuple, and the places that flow from the arguments), and the interface of each
+  parameter (its name, its callee root index, its stated `in` place). `IPlace` is an
+  interface root and its steps; `IPlace::cut` keeps `SIG_PLACE_STEPS` steps and a
+  wildcard step. `Summary::has` matches each part of `RELS`. `Summaries` holds the summary
+  of each function of the IR, or the reason why it has none yet.
+- `sig.rs`: `from_signature` gives the summary of a function with a stated row (an
+  extern function too). The parts that only the old inference has for a function with a
+  body (`drops`, `holds`, `raises`) come from `Analysis::sigs` until stage F6. A signature
+  with a function value, a store into an `rc` object, a foreign change of an `rc` object,
+  or a task gives a reason, and the program stays with the old pipeline.
+- `apply.rs`: `Sigma` maps `Param(i)` to the places of argument `i` (a reference
+  argument, or a by-value argument whose parameter can hold references), `Held(i)` to
+  the places that the references behind a reference argument point into (only if its
+  pointee can hold a reference), `Group` to the group root, `Frame` to `F(n)`. Each run
+  node has its own split ids and its own one-place instances. `transfer::call_out` gives
+  the analysis and the templates one σ, one result and one list of stores.
+- Rules that resolve this section (as the old lowering, `call_flows`): a result with no
+  stated place for each reference can point anywhere inside each argument that can hold
+  references (`Param(i)` wildcard); a result that names a type parameter gets the places
+  of each by-value argument of a type parameter as they are; a reference argument gives
+  the places behind it if its pointee can hold a reference. In a tuple result with stated
+  places of its parts, the flows go only to the other parts. A one-place result (`&T` or
+  `Option<&T>`, `T` with no reference) gets a one-place instance of each wildcard place
+  (group A has no cycle).
+- The part `stores` (R3RT6): a reference parameter whose pointee can hold a reference and
+  whose root the call changes gets the references behind each other argument, a
+  reference into another argument only if its pointee type can hold a reference to a
+  part of the pointee of that argument, and the references of a by-value argument only if
+  their types meet.
+- `raises` is an abort of the summary (6.5), so the node gets `may_abort`; the old
+  lowering gives none for `raises` alone.
 
 ### 6.8 Effect inference and signatures
 

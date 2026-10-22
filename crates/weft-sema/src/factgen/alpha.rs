@@ -65,6 +65,9 @@ pub enum Role {
     Held(BodyId, u32),
     /// The `rc` group of a type.
     Group,
+    /// The callee frame of the run node with this id: the locals of the
+    /// callee that its result points into.
+    Frame(u32),
 }
 
 /// The roots of one component, made when α first needs them.
@@ -83,6 +86,8 @@ pub struct Roots {
     roles: HashMap<RootId, Role>,
     /// The handle places `h.*` that α made.
     handles: HashSet<PlaceId>,
+    /// The callee frame root of each run node.
+    frames: HashMap<u32, PlaceId>,
     /// The stated place of each place field of a struct (`cur: &u8 in
     /// self.buf[]`), in terms of the struct (`self`).
     fields: HashMap<(AdtId, u32), crate::program::SigPlace>,
@@ -309,6 +314,18 @@ impl Roots {
             }
         }
         Some((key, path))
+    }
+
+    /// The callee frame root of the run node `inst` (`docs/ir.md` 6.3): a
+    /// local of the callee `callee` that the result points into.
+    pub fn frame(&mut self, facts: &mut FnFacts, inst: u32, callee: &str) -> PlaceId {
+        if let Some(&r) = self.frames.get(&inst) {
+            return r;
+        }
+        let r = facts.add_root(format!("a local of {callee}"), RootKind::Local);
+        self.frames.insert(inst, r);
+        self.roles.insert(facts.place(r).root, Role::Frame(inst));
+        r
     }
 
     /// The group root of the `rc` objects of definition `a` (a signature

@@ -8,7 +8,9 @@
 //!
 //! Stage F4 has the templates of the statements, of the operands, and of the
 //! terminators that run no other body: `Goto`, `Switch`, `Return`,
-//! `Unreachable`, `UnwindExit` and `Assert`. The rules of a reference
+//! `Unreachable`, `UnwindExit` and `Assert`. Stage F5 adds the phases of a
+//! `Call` of a function item ([`call`]): `Main`, `Ret` and `FrameEnd`, with
+//! the summary of the callee (`crate::analysis::apply`). The rules of a reference
 //! fragment (a borrow, a copy of a reference, a read and a write through a
 //! reference) are pure functions in `super::kernel`.
 //!
@@ -64,6 +66,23 @@ pub struct Em<'a> {
     /// moves its parts one at a time, and its later parts are not a use of
     /// a moved value (the old lowering moves the whole value once).
     pub skip_s: Option<Key>,
+    /// The summary of each function that a call can run.
+    pub sums: &'a crate::analysis::Summaries,
+    /// The references that the body puts behind a reference parameter or
+    /// into an `rc` object (the W0204 store check, `docs/ir.md` 6.9).
+    pub stored: Vec<Stored>,
+}
+
+/// References that a node puts into a place that a caller keeps: behind a
+/// reference parameter, or into an `rc` object.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stored {
+    /// The place that gets the references.
+    pub into: PlaceId,
+    /// The places that the references point into.
+    pub refs: Vec<PlaceId>,
+    /// The span of the node.
+    pub span: Span,
 }
 
 /// The span of the facts for an IR span.
@@ -93,6 +112,23 @@ fn move_prefix(place: &Place) -> &[Proj] {
     place.proj.get(..end).unwrap_or(&[])
 }
 
+/// The projections of `place` up to the first one that is not a field, a
+/// variant or a dereference of a `Box`: the path that the local owns, with
+/// the boxed values in it.
+fn owned_prefix(place: &Place) -> &[Proj] {
+    let end = place
+        .proj
+        .iter()
+        .position(|p| {
+            !matches!(
+                p,
+                Proj::Field(_) | Proj::Variant(_) | Proj::Deref(weft_ir::DerefKind::Box)
+            )
+        })
+        .unwrap_or(place.proj.len());
+    place.proj.get(..end).unwrap_or(&[])
+}
+
 /// True if `a` is a prefix of `b` (or equal to it).
 fn is_prefix<T: PartialEq>(a: &[T], b: &[T]) -> bool {
     a.len() <= b.len() && a.iter().zip(b).all(|(x, y)| x == y)
@@ -106,6 +142,7 @@ impl Em<'_> {
             tys: self.tys,
             facts: self.facts,
             roots: self.roots,
+            sums: self.sums,
         }
     }
 
@@ -157,11 +194,15 @@ impl Em<'_> {
             self.s_var(k).into_iter().collect()
         };
         let prefix = move_prefix(place);
+        // A place field of a boxed value is a path through `Deref(Box)`
+        // (`docs/ir.md` 5.8): a `U` variable compares with the owned path.
+        let owned = owned_prefix(place);
         for (kind, proj, v) in self.vars.parts_of(k.0, k.1) {
             if *kind == PartKind::U && !unset {
                 continue;
             }
-            if is_prefix(proj, prefix) || is_prefix(prefix, proj) {
+            let at = if *kind == PartKind::U { owned } else { prefix };
+            if is_prefix(proj, at) || is_prefix(at, proj) {
                 out.push(*v);
             }
         }
@@ -196,13 +237,47 @@ impl Em<'_> {
         } else {
             None
         };
+        // The variables of each pointer local on the path (`docs/ir.md` 6.4,
+        // operands): a pointer in a place of another local is a use of that
+        // local.
+        let mut vars = self.vars_of(place)?;
+        for &q in &a.ptrs {
+            vars.extend(self.owner_vars(q, k));
+        }
+        vars.sort();
+        vars.dedup();
         let acc = Access {
-            vars: self.vars_of(place)?,
+            vars,
             places: a.places.clone(),
             ptrs,
             root,
         };
         Ok((acc, a))
+    }
+
+    /// The variables of the move path of the local that owns fact place
+    /// `q`, if it is not the local with key `base`: `S` of the local, and the
+    /// `H` and `U` variables at, above or below the path.
+    fn owner_vars(&self, q: PlaceId, base: Key) -> Vec<VarId> {
+        let Some((k, path)) = self.roots.path_of(self.facts, q) else {
+            return Vec::new();
+        };
+        if k == base {
+            return Vec::new();
+        }
+        let mut out: Vec<VarId> = if self.skip_s == Some(k) {
+            Vec::new()
+        } else {
+            self.s_var(k).into_iter().collect()
+        };
+        for (_, proj, v) in self.vars.parts_of(k.0, k.1) {
+            if let Some(s) = steps(proj) {
+                if is_prefix(&s, &path) || is_prefix(&path, &s) {
+                    out.push(*v);
+                }
+            }
+        }
+        out
     }
 
     /// The root place of the value of local `l`.
@@ -355,15 +430,31 @@ pub fn operand(em: &mut Em<'_>, n: NodeId, st: &State, op: &Operand) -> R {
 /// read the place fields. A `!Move` value does not read them either: its
 /// move is W0604.
 fn operand_in(em: &mut Em<'_>, n: NodeId, st: &State, op: &Operand, relocate: bool) -> R {
+    operand_moves(em, n, st, op, relocate, true)
+}
+
+/// An operand at node `n`, as [`operand_in`]. With `moves` false, a `move`
+/// does not move the base local at `n`: a callee that holds the argument
+/// moves it at the `Ret` node of the call.
+fn operand_moves(
+    em: &mut Em<'_>,
+    n: NodeId,
+    st: &State,
+    op: &Operand,
+    relocate: bool,
+    moves: bool,
+) -> R {
     match op {
         Operand::Const(_) => Ok(()),
         Operand::Copy(q) => {
-            let (a, _) = em.access(st, q, true)?;
+            let (mut a, al) = em.access(st, q, true)?;
+            copied_refs(em, q, &al, &mut a)?;
             em.apply(n, kernel::read(&a));
             Ok(())
         }
         Operand::Move(q) => {
             let (mut a, al) = em.access(st, q, true)?;
+            copied_refs(em, q, &al, &mut a)?;
             let ty = em.place_ty(q);
             let immovable = ty.is_some_and(|t| ir_props(em.tys, t).immovable);
             if relocate || immovable {
@@ -371,12 +462,35 @@ fn operand_in(em: &mut Em<'_>, n: NodeId, st: &State, op: &Operand, relocate: bo
             }
             em.apply(n, kernel::read(&a));
             let plain = ty.is_some_and(|t| !em.tys.not_copy(t));
-            if !plain {
+            if !plain && moves {
                 moved(em, n, st, q, &al)?;
             }
             Ok(())
         }
     }
+}
+
+/// A read of the value at `q` through a pointer that copies references out
+/// of a place of another local, or a borrow of such a place (R3RT2,
+/// `docs/ir.md` 5.13): the access uses the variables of the move paths that
+/// own the places, as an access of the local itself does.
+fn copied_refs(em: &mut Em<'_>, q: &Place, al: &Alpha, a: &mut Access) -> R {
+    if !q.has_deref() {
+        return Ok(());
+    }
+    let holds = em
+        .place_ty(q)
+        .is_some_and(|t| ir_props(em.tys, t).holds_refs);
+    if !holds {
+        return Ok(());
+    }
+    let base = em.key(q.local)?;
+    for &p in &al.places {
+        a.vars.extend(em.owner_vars(p, base));
+    }
+    a.vars.sort();
+    a.vars.dedup();
+    Ok(())
 }
 
 /// The move of the value at `q` at node `n` (a `move` operand or a
@@ -530,7 +644,10 @@ pub fn assign(
     }
     match rv {
         Rvalue::Ref(q) => {
-            let (a, al) = em.access(st, q, false)?;
+            let (mut a, al) = em.access(st, q, false)?;
+            // A borrow of a place that holds references, through a pointer,
+            // uses the references there (R3RT2: a binding by reference).
+            copied_refs(em, q, &al, &mut a)?;
             let (f, _) = kernel::borrow(&a, &al.handles);
             em.apply(n, f);
         }
@@ -708,7 +825,23 @@ fn element(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, v: &Tree) -> R
 
 /// The destination of an `Assign` goes through a reference.
 fn through(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, v: &Tree) -> R {
-    let (a, al) = em.access(st, place, false)?;
+    let (mut a, al) = em.access(st, place, false)?;
+    // A store into a path that the local owns through a `Box` gives the
+    // place fields at or below it a value: the store does not read them.
+    if owned_prefix(place).len() == place.proj.len() {
+        let k = em.key(place.local)?;
+        let given: Vec<VarId> = em
+            .vars
+            .parts_of(k.0, k.1)
+            .iter()
+            .filter(|(kind, proj, _)| *kind == PartKind::U && is_prefix(&place.proj, proj))
+            .map(|(_, _, v)| *v)
+            .collect();
+        a.vars.retain(|v| !given.contains(v));
+        em.facts
+            .rebound_at
+            .extend(given.into_iter().map(|u| (u, n)));
+    }
     // `writes_via`: the first dereference is of a whole local that holds one
     // reference to one place.
     let one = match place.proj.first() {
@@ -741,23 +874,42 @@ fn through(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, v: &Tree) -> R
     if refs.is_empty() {
         return Ok(());
     }
+    // A self-reference field has its own check (W0605).
+    let self_ref = field_place(em, st, place)?.is_some();
+    let sp = em.facts.node(n).span;
     for &q in &al.places {
-        let Some((k, path)) = em.roots.path_of(em.facts, q) else {
-            continue;
-        };
-        let holder = em
-            .h_below(k, &[])
-            .into_iter()
-            .filter(|(p, _)| is_prefix(p, &path))
-            .max_by_key(|(p, _)| p.len())
-            .map(|(_, v)| v)
-            .or_else(|| em.s_var(k));
-        if let Some(h) = holder {
-            let frag = kernel::copy_ref(&[h], &refs);
-            em.facts.points_into.extend(frag.points_into);
-        }
+        store(em, q, &refs, sp, !self_ref);
     }
     Ok(())
+}
+
+/// The references `refs` go into place `q` at a node with span `span`. A
+/// place of a local: a weak definition of the variable of the place (no
+/// `rebound_at`). A place that a caller keeps (behind a reference
+/// parameter, in an `rc` object): with `check`, the W0204 store check gets
+/// it ([`Stored`]).
+fn store(em: &mut Em<'_>, q: PlaceId, refs: &[PlaceId], span: Span, check: bool) {
+    let Some((k, path)) = em.roots.path_of(em.facts, q) else {
+        if check {
+            em.stored.push(Stored {
+                into: q,
+                refs: refs.to_vec(),
+                span,
+            });
+        }
+        return;
+    };
+    let holder = em
+        .h_below(k, &[])
+        .into_iter()
+        .filter(|(p, _)| is_prefix(p, &path))
+        .max_by_key(|(p, _)| p.len())
+        .map(|(_, v)| v)
+        .or_else(|| em.s_var(k));
+    if let Some(h) = holder {
+        let frag = kernel::copy_ref(&[h], refs);
+        em.facts.points_into.extend(frag.points_into);
+    }
 }
 
 /// The stated place of the place field that `place` names, if `place` is a
@@ -1026,8 +1178,11 @@ pub fn term(em: &mut Em<'_>, n: NodeId, st: &State, t: &TermKind, origin: weft_i
         TermKind::Switch { on, .. } => switch(em, n, st, on),
         TermKind::Return => ret(em, n, st, origin),
         TermKind::Assert { cond, .. } => assert(em, n, st, cond),
+        TermKind::Call { .. } => Err(AlphaError::BadPlace(
+            "a call needs the nodes of its phases (`call`)".to_string(),
+        )),
         _ => Err(AlphaError::Later(
-            "a terminator that runs another body (stages F5 and later)",
+            "a terminator that runs another body (stages F14 and later)",
         )),
     }
 }
@@ -1169,6 +1324,316 @@ pub fn entry(em: &mut Em<'_>, n: NodeId, params: &[(LocalId, Tree)]) -> R {
                 em.facts.points_into.extend(f.points_into);
             }
         }
+    }
+    Ok(())
+}
+
+// ------------------------------------------------------------------ calls
+
+/// The nodes of a `Call` (`docs/ir.md` 6.2).
+#[derive(Clone, Debug)]
+pub struct CallNodes {
+    /// The node `Main`.
+    pub main: NodeId,
+    /// The node `Ret`, if the call returns.
+    pub ret: Option<NodeId>,
+    /// The node `FrameEnd` of the normal path.
+    pub frame_end: Option<NodeId>,
+    /// The node `FrameEnd(d)` of the path of each abort.
+    pub aborts: Vec<NodeId>,
+}
+
+/// True if type `t` names type parameter `j`.
+fn mentions_index(tys: &TyTable, t: TyId, j: u32, depth: usize) -> bool {
+    if depth > 32 {
+        return true;
+    }
+    let deep = |x: &TyId| mentions_index(tys, *x, j, depth + 1);
+    match tys.try_get(t) {
+        Some(Ty::Param(i)) => *i == j,
+        Some(Ty::Tuple(ts) | Ty::Adt(_, ts)) => ts.iter().any(deep),
+        Some(Ty::Ref(x) | Ty::Slice(x) | Ty::Array(x, _) | Ty::Iter(x)) => deep(x),
+        Some(Ty::Cont(a, b)) => deep(a) || deep(b),
+        Some(Ty::Fn(f)) => f.params.iter().any(deep) || deep(&f.ret),
+        _ => false,
+    }
+}
+
+/// The span of operand `op` of a call with span `at`: the origin of its
+/// temporary, or the span of the call.
+fn operand_span(em: &Em<'_>, op: &Operand, at: Span) -> Span {
+    let local = match op {
+        Operand::Copy(q) | Operand::Move(q) if q.proj.is_empty() => Some(q.local),
+        _ => None,
+    };
+    local
+        .and_then(|l| {
+            em.p.bodies
+                .get(em.body.index())
+                .and_then(|b| b.locals.get(l.index()))
+        })
+        .filter(|d| matches!(d.kind, LocalKind::Temp(_)))
+        .map_or(at, |d| span(d.origin.span))
+}
+
+/// The local that a receiver argument reaches through: `r` for a receiver
+/// `&(*r).q` (a temporary that the body borrows through `r`) or `copy r`,
+/// where `r` is a reference.
+fn receiver_ref(em: &Em<'_>, op: &Operand) -> Option<LocalId> {
+    let (Operand::Copy(q) | Operand::Move(q)) = op else {
+        return None;
+    };
+    if !q.proj.is_empty() {
+        return None;
+    }
+    let b = em.p.bodies.get(em.body.index())?;
+    let d = b.locals.get(q.local.index())?;
+    let place = if matches!(d.kind, LocalKind::Temp(_)) {
+        b.blocks
+            .iter()
+            .flat_map(|blk| &blk.stmts)
+            .find_map(|s| match &s.kind {
+                StmtKind::Assign(
+                    dest,
+                    Rvalue::Ref(p) | Rvalue::Use(Operand::Copy(p) | Operand::Move(p)),
+                ) if dest.local == q.local && dest.proj.is_empty() => Some(p.clone()),
+                _ => None,
+            })?
+    } else {
+        q.clone()
+    };
+    let is_ref = |l: LocalId| {
+        b.locals
+            .get(l.index())
+            .is_some_and(|d| matches!(em.tys.try_get(d.ty), Some(Ty::Ref(_))))
+    };
+    match place.proj.first() {
+        None if is_ref(place.local) => Some(place.local),
+        Some(Proj::Deref(weft_ir::DerefKind::Ref)) => Some(place.local),
+        _ => None,
+    }
+}
+
+/// `writes_via` at a method call (`docs/ir.md` 6.4, QA6): the callee
+/// changes only places below its receiver, and the receiver reaches through
+/// a local `r` of type `&X` (with no reference in `X`). If each place that the
+/// node changes is at or below a place that `r` points into, the node
+/// gets `writes_via(n, S(r))`.
+fn via_receiver(
+    em: &mut Em<'_>,
+    n: NodeId,
+    st: &State,
+    args: &[Operand],
+    only_self: bool,
+    changed: &[(PlaceId, u32)],
+) -> R {
+    if !only_self || changed.is_empty() {
+        return Ok(());
+    }
+    let Some(r) = args.first().and_then(|op| receiver_ref(em, op)) else {
+        return Ok(());
+    };
+    let ty = em.place_ty(&Place::local(r));
+    let one = ty
+        .and_then(|t| match em.tys.try_get(t) {
+            Some(Ty::Ref(x)) => Some(*x),
+            _ => None,
+        })
+        .is_some_and(|x| !ir_props(em.tys, x).holds_refs);
+    if !one {
+        return Ok(());
+    }
+    let k = em.key(r)?;
+    let Some(s) = em.s_var(k) else {
+        return Ok(());
+    };
+    let refs = st.value(k, &[]).flat().refs;
+    let facts = &*em.facts;
+    let below = |p: PlaceId| {
+        let mut at = Some(p);
+        while let Some(q) = at {
+            if refs.contains(&q) {
+                return true;
+            }
+            at = facts.places.get(q.index()).and_then(|i| i.parent);
+        }
+        false
+    };
+    if changed.iter().all(|&(m, _)| below(m)) {
+        em.facts.writes_via.push((n, s));
+    }
+    Ok(())
+}
+
+/// The value `v` binds to the destination `dest` of a node `n`, as the
+/// destination of an `Assign` ([`assign`]).
+fn bind_dest(em: &mut Em<'_>, n: NodeId, st: &State, dest: &Place, v: &Tree) -> R {
+    let body = em.body;
+    match transfer::move_path(em.p, body, dest)? {
+        Some((k, path)) if path.is_empty() => whole(em, n, st, k, v),
+        Some((k, path)) => part(em, n, st, k, dest, &path, v)?,
+        None if !dest.has_deref() => element(em, n, st, dest, v)?,
+        None => through(em, n, st, dest, v)?,
+    }
+    place_field(em, st, n, dest, v)
+}
+
+/// A `Call` of a function item: its nodes `Main`, `Ret` and `FrameEnd`
+/// (`docs/ir.md` 6.4), with the summary of the callee (`docs/ir.md` 6.7).
+///
+/// - `Main`: the operands; the parts of the summary that act at the call
+///   (`crate::analysis::apply::main`); `writes_via` at a method call whose
+///   callee changes only places below its receiver; the binding of the
+///   callee frame root and of a value that the callee drops.
+/// - `Ret`: the result binds to `dest`; each argument that the callee holds
+///   moves here (part `holds`); the values that go behind a reference
+///   argument (part `stores`); a value that the callee drops ends here
+///   (W0601).
+/// - `FrameEnd`: the callee frame root ends, on the normal path and on the
+///   path of each abort.
+///
+/// # Errors
+///
+/// Returns [`AlphaError::Later`] for a call of a function value or of a
+/// function with no summary yet, and the errors of α.
+pub fn call(
+    em: &mut Em<'_>,
+    nodes: &CallNodes,
+    st: &State,
+    block: weft_ir::BlockId,
+    t: &TermKind,
+    origin: weft_ir::Span,
+) -> R {
+    let TermKind::Call {
+        callee: weft_ir::Callee::Fn(f, targs),
+        args,
+        dest,
+        ..
+    } = t
+    else {
+        return Err(AlphaError::Later("a call of a function value (stage F12)"));
+    };
+    let body = em.body;
+    let out = transfer::call_out(&mut em.cx(), body, block, st, *f, targs, args, dest)?;
+    let sum = &out.summary;
+    let p = em.p;
+    let decl = p
+        .fns
+        .get(f.index())
+        .ok_or_else(|| AlphaError::BadPlace(format!("no function f{}", f.0)))?;
+    let callee = decl
+        .name
+        .rsplit('.')
+        .next()
+        .unwrap_or(decl.name.as_str())
+        .to_string();
+    let main = nodes.main;
+    let at = span(origin);
+    // An argument of a type parameter that the callee holds moves at `Ret`.
+    let held: Vec<bool> = (0..args.len())
+        .map(|i| {
+            decl.params
+                .get(i)
+                .is_some_and(|&t| sum.holds.iter().any(|&j| mentions_index(em.tys, t, j, 0)))
+        })
+        .collect();
+    let mut spans = Vec::new();
+    let mut bases = Vec::new();
+    for (i, op) in args.iter().enumerate() {
+        let moves = !held.get(i).copied().unwrap_or(false);
+        // A value that the call builds in place (`Box.new(Frame { .. })`,
+        // `docs/ir.md` 5.36) goes to the callee with its place fields: the
+        // call does not read them. The result gets them (the `Uninit`
+        // after the call).
+        let relocate = match op {
+            Operand::Move(q) if q.proj.is_empty() => em
+                .key(q.local)
+                .is_ok_and(|k| em.vars.built_in_place(k.0, k.1)),
+            _ => false,
+        };
+        operand_moves(em, main, st, op, relocate, moves)?;
+        spans.push(operand_span(em, op, at));
+        bases.push(match op {
+            Operand::Copy(q) | Operand::Move(q) => em.alpha(st, q)?.places,
+            Operand::Const(_) => Vec::new(),
+        });
+    }
+    let site = crate::analysis::apply::Site {
+        callee: &callee,
+        spans,
+        bases,
+    };
+    let changed = crate::analysis::apply::main(
+        &mut em.cx(),
+        main,
+        sum,
+        &out.sigma,
+        &site,
+        crate::analysis::apply::RunKind::Item,
+    )?;
+    via_receiver(em, main, st, args, sum.only_self, &changed)?;
+    // The callee frame root: a local of the callee that the result points
+    // into.
+    let frame = out.sigma.frame.map(|r| {
+        let v = em.facts.add_var(weft_facts::VarInfo::plain(
+            format!("a local of `{callee}`"),
+            weft_facts::VarKind::Temp,
+            at,
+            String::new(),
+        ));
+        em.facts.owner.push((r, v));
+        em.facts.rebound_at.push((v, main));
+        v
+    });
+    // A value that the callee drops: a linear type argument goes away at the
+    // call (W0601).
+    let mut drops = Vec::new();
+    for &j in &sum.drops {
+        let Some(&targ) = targs.get(j as usize) else {
+            continue;
+        };
+        let props = ir_props(em.tys, targ);
+        if !props.linear {
+            continue;
+        }
+        let mut info = weft_facts::VarInfo::plain(
+            callee.clone(),
+            weft_facts::VarKind::Dropped,
+            at,
+            em.tys.show(targ),
+        );
+        info.linear = true;
+        info.has_on_abort = props.on_abort;
+        let v = em.facts.add_var(info);
+        em.facts.rebound_at.push((v, main));
+        drops.push(v);
+    }
+    if let Some(r) = nodes.ret {
+        bind_dest(em, r, st, dest, &out.ret)?;
+        for (i, op) in args.iter().enumerate() {
+            let (true, Operand::Move(q)) = (held.get(i).copied().unwrap_or(false), op) else {
+                continue;
+            };
+            let plain = em.place_ty(q).is_some_and(|t| !em.tys.not_copy(t));
+            if plain {
+                continue;
+            }
+            let vs = em.vars_of(q)?;
+            em.facts.uses.extend(vs.into_iter().map(|v| (v, r)));
+            let al = em.alpha(st, q)?;
+            moved(em, r, st, q, &al)?;
+        }
+        for (q, refs) in &out.stores {
+            store(em, *q, refs, at, true);
+        }
+        em.facts.scope_end.extend(drops.iter().map(|&v| (v, r)));
+    }
+    if let (Some(fe), Some(v)) = (nodes.frame_end, frame) {
+        em.facts.scope_end.push((v, fe));
+    }
+    for &a in &nodes.aborts {
+        em.facts.scope_end.extend(frame.map(|v| (v, a)));
+        em.facts.unwound_at.extend(drops.iter().map(|&v| (v, a)));
     }
     Ok(())
 }

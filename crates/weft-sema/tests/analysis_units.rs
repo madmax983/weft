@@ -11,7 +11,7 @@ use weft_ir::{
     FnId, IntTy, LocalDecl, LocalId, LocalKind, Operand, Origin, Place, Program, Proj, Props,
     Rvalue, Span, Stmt, StmtKind, Term, TermKind, Ty, TyId, TyTable, VariantIdx,
 };
-use weft_sema::analysis::{self, AbsVal, Cx, PathStep, State, Tree};
+use weft_sema::analysis::{self, AbsVal, Cx, PathStep, State, Summaries, Tree};
 use weft_sema::factgen::alpha::Roots;
 
 /// The types of the tests.
@@ -267,6 +267,7 @@ fn run_with(p: Program, t: &Tys, init: State) -> Run {
             tys: &mut tys,
             facts: &mut facts,
             roots: &mut roots,
+            sums: &Summaries::default(),
         };
         analysis::run(&mut cx, B, init).unwrap_or_else(|e| panic!("the analysis: {e:?}"))
     };
@@ -604,11 +605,13 @@ fn alpha_of_a_dereference_reads_the_state() {
     assert_eq!(out.refs(bb1, c, &[]), vec!["y"]);
     // α with the state of the entry of bb1: `(*r)` is `x`.
     let st = out.at(bb1).clone();
+    let sums = Summaries::default();
     let mut cx = Cx {
         p: &out.p,
         tys: &mut out.tys,
         facts: &mut out.facts,
         roots: &mut out.roots,
+        sums: &sums,
     };
     let al = analysis::transfer::alpha(&mut cx, B, &st, &deref(r, vec![]))
         .unwrap_or_else(|e| panic!("α: {e:?}"));
@@ -669,4 +672,145 @@ fn a_move_of_a_part_leaves_a_hole_and_the_hole_goes_with_the_value() {
     assert!(!st.must_hold((B, other), &[]));
     // The local that moved holds nothing.
     assert!(!st.may_hold((B, pair)));
+}
+
+// ------------------------------------------------------ summaries (F5)
+
+/// The summary of the function of the IR whose path ends with `name`, from
+/// its signature, in the program `src`.
+fn summary_of(src: &str, name: &str) -> weft_sema::analysis::Summary {
+    let a = weft_sema::analyze_source(src, weft_sema::Options::default())
+        .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message));
+    let b = weft_sema::irbuild::build(&a);
+    let sums = weft_sema::factgen::summaries(&a, &b);
+    let f = b
+        .program
+        .fns
+        .iter()
+        .position(|d| d.name.ends_with(name))
+        .unwrap_or_else(|| panic!("no function `{name}` in {:?}", b.program.fns));
+    sums.get(FnId(u32::try_from(f).unwrap_or(u32::MAX)))
+        .cloned()
+        .unwrap_or_else(|e| panic!("`{name}`: {e}"))
+}
+
+/// A program that calls the prelude functions of the tests.
+const PRELUDE_CALLS: &str = "fn f(e: &Env) / fs {
+    let v = Vec.new()
+    v.push(1)
+    let n = v.len()
+    let r = v.get(0)
+    v.clear()
+    let s = e.fs.read(\"a\")
+}
+";
+
+#[test]
+fn a_signature_gives_the_parts_of_a_summary() {
+    use weft_sema::analysis::summary::{Abort, Flow, IPlace, IRoot, IStep};
+    use weft_sema::factgen::rels::Part;
+    // `push(self, x: T) / mut(self)`.
+    let push = summary_of(PRELUDE_CALLS, "push");
+    assert_eq!(push.muts, vec![(IPlace::root(IRoot::Param(0)), 0)]);
+    assert_eq!(
+        push.reads,
+        vec![IPlace::root(IRoot::Param(0)), IPlace::root(IRoot::Param(1))]
+    );
+    assert!(push.only_self, "each change is below `self`");
+    assert!(!push.can_abort());
+    assert!(push.performs.is_empty());
+    // The receiver can keep the value of the argument (R3RT6: the run node
+    // checks the types).
+    assert_eq!(push.stores.len(), 1);
+    assert_eq!(push.stores[0].into, 0);
+    assert_eq!(push.stores[0].flows, vec![Flow::Held(1), Flow::Value(1)]);
+    // `len(self) -> usize` changes nothing.
+    let len = summary_of(PRELUDE_CALLS, "len");
+    assert!(len.muts.is_empty());
+    assert!(!len.has(Part::Ret));
+    // `clear(self) / mut(self)` drops the values of its type parameter.
+    let clear = summary_of(PRELUDE_CALLS, "clear");
+    assert_eq!(clear.drops.iter().copied().collect::<Vec<_>>(), vec![0]);
+    assert!(clear.has(Part::Drops));
+    // `get(self, i: usize) -> &T in self[]`: the stated place of the result.
+    let get = summary_of(PRELUDE_CALLS, "get");
+    assert_eq!(get.ret.places.len(), 1);
+    assert_eq!(get.ret.places[0].root, IRoot::Param(0));
+    assert!(matches!(
+        get.ret.places[0].steps.as_slice(),
+        [IStep::Step(..)]
+    ));
+    // `read(self, path: String) -> String / fs`: an effect of the row
+    // escapes and can abort; a read of a file can fail too.
+    let read = summary_of(PRELUDE_CALLS, "read");
+    assert!(
+        read.performs.iter().any(|p| p.effect == "Fs"),
+        "{:?}",
+        read.performs
+    );
+    assert!(read.aborts.contains(&Abort::Raises));
+    assert!(read.has(Part::Performs) && read.has(Part::Aborts));
+    assert!(!read.only_self);
+}
+
+#[test]
+fn rels_names_a_part_of_the_summary_for_each_relation_that_a_summary_carries() {
+    use weft_sema::factgen::rels::{self, Part};
+    // Each part that `RELS` gives a relation is a part of the summary
+    // (`Summary::has` matches each part), and the summaries of a signature
+    // fill the parts of the relations that a signature states.
+    let parts: std::collections::BTreeSet<String> = rels::ALL
+        .iter()
+        .filter_map(|r| rels::row_of(*r).part.ok())
+        .map(|p| format!("{p:?}"))
+        .collect();
+    let push = summary_of(PRELUDE_CALLS, "push");
+    for p in [
+        Part::Muts,
+        Part::Reads,
+        Part::Frees,
+        Part::Lends,
+        Part::Performs,
+        Part::Aborts,
+        Part::Multi,
+        Part::Runs,
+        Part::Tasks,
+        Part::Ret,
+        Part::Stores,
+        Part::Drops,
+        Part::Holds,
+        Part::UsesMoves,
+        Part::Rebinds,
+        Part::UniqNeeds,
+        Part::OnlySelf,
+    ] {
+        let _ = push.has(p);
+        let named = parts.contains(&format!("{p:?}"));
+        let summary_only = matches!(p, Part::Drops | Part::Holds | Part::Stores);
+        assert!(
+            named || summary_only,
+            "`RELS` names no relation of part {p:?}"
+        );
+    }
+    // `mutates_at` and `call_mut` go to `muts`, `reads_at` and `call_arg` to
+    // `reads`, `writes_via` to `only_self`.
+    assert_eq!(rels::row_of(rels::Rel::MutatesAt).part, Ok(Part::Muts));
+    assert_eq!(rels::row_of(rels::Rel::CallArg).part, Ok(Part::Reads));
+    assert_eq!(rels::row_of(rels::Rel::WritesVia).part, Ok(Part::OnlySelf));
+    assert!(push.has(Part::Muts) && push.has(Part::Reads) && push.has(Part::OnlySelf));
+}
+
+#[test]
+fn a_place_of_a_summary_is_cut_at_eight_steps() {
+    use weft_sema::analysis::summary::{IPlace, IRoot, IStep, SIG_PLACE_STEPS};
+    let step = IStep::Seg {
+        label: 1,
+        hi: true,
+        unstable: false,
+    };
+    let p = IPlace::cut(IRoot::Param(0), vec![step.clone(); 12]);
+    assert_eq!(p.steps.len(), SIG_PLACE_STEPS + 1);
+    assert_eq!(p.steps.last(), Some(&IStep::Wild));
+    let q = IPlace::cut(IRoot::Param(0), vec![step; 3]);
+    assert_eq!(q.steps.len(), 3);
 }

@@ -13,7 +13,10 @@
 //! F3 has no widening (stage F10): a body whose states still change after
 //! [`VISITS`] visits of one block gives an error.
 
+pub mod apply;
 pub mod domain;
+pub mod sig;
+pub mod summary;
 pub mod transfer;
 
 use std::collections::BTreeSet;
@@ -21,6 +24,7 @@ use std::collections::BTreeSet;
 use weft_ir::{BlockId, BodyId};
 
 pub use domain::{AbsVal, FnVal, Key, PathStep, State, Tree};
+pub use summary::{Summaries, Summary};
 pub use transfer::Cx;
 
 use crate::factgen::alpha::AlphaError;
@@ -100,7 +104,7 @@ pub fn run(cx: &mut Cx<'_>, body: BodyId, init: State) -> Result<States, AlphaEr
         if let Some(u) = blk.term.kind.unwind() {
             edges.push((u, st.clone()));
         }
-        transfer::term(cx, body, &mut st, &blk.term.kind)?;
+        transfer::term(cx, body, blk_id, &mut st, &blk.term.kind)?;
         for s in blk.term.kind.normal_successors() {
             edges.push((s, st.clone()));
         }

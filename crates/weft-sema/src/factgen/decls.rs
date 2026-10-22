@@ -176,7 +176,7 @@ fn held_refs(
                     out.extend(base.iter().skip(1).copied());
                 }
             }
-            Some(Role::Group) | None => {}
+            Some(Role::Group | Role::Frame(_)) | None => {}
         }
     }
     out.sort();

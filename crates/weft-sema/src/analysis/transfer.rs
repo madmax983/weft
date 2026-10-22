@@ -1,10 +1,10 @@
 //! The transfer functions of the analysis (`docs/ir.md` 6.6).
 //!
 //! There is one function for each statement kind and for each terminator
-//! kind that stage F3 knows (`Switch`, `Goto`, `Return`, and the terminators
-//! with no effect on the state). A terminator that runs another body applies
-//! its summary: it comes with stage F5, so [`term`] gives
-//! [`AlphaError::Later`] for it.
+//! kind: `Switch`, `Goto`, `Return`, the terminators with no effect on the
+//! state, and a `Call` of a function item, which applies the summary of the
+//! callee (`super::apply`, stage F5). The other terminators that run another
+//! body give [`AlphaError::Later`].
 //!
 //! - `Ref(q)` gives `refs = α(q)` and the handle places of each `Deref(Rc)`
 //!   on `q`.
@@ -38,6 +38,8 @@ pub struct Cx<'a> {
     pub facts: &'a mut FnFacts,
     /// The roots of the component.
     pub roots: &'a mut Roots,
+    /// The summary of each function that a call can run.
+    pub sums: &'a super::summary::Summaries,
 }
 
 /// The key of local `l` of body `body`: the site local of an upvar local.
@@ -120,6 +122,9 @@ pub fn held_at(
         }
         Some(Role::Group) => Err(AlphaError::Later(
             "a reference in an `rc` object (stored values, stage F13)",
+        )),
+        Some(Role::Frame(_)) => Err(AlphaError::Later(
+            "a reference in a local of a callee (summaries of bodies, stage F6)",
         )),
         None => Err(AlphaError::BadPlace(
             "a place with no root of the component".to_string(),
@@ -613,22 +618,34 @@ pub const fn unwind_kont(
     Ok(())
 }
 
-/// The transfer of a terminator, on its normal edges.
+/// The transfer of terminator `t` of block `block`, on its normal edges.
 ///
 /// # Errors
 ///
 /// Returns [`AlphaError::Later`] for a terminator that runs another body or
-/// a task (stages F5 and later).
-pub fn term(cx: &mut Cx<'_>, body: BodyId, st: &mut State, t: &TermKind) -> Result<(), AlphaError> {
+/// a task with no summary yet (stages F6 and later).
+pub fn term(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    block: weft_ir::BlockId,
+    st: &mut State,
+    t: &TermKind,
+) -> Result<(), AlphaError> {
     match t {
         TermKind::Goto(_) => goto(st),
         TermKind::Switch { on, .. } => switch(cx.p, body, st, on),
         TermKind::Return => ret(st),
         TermKind::Unreachable | TermKind::UnwindExit => Ok(()),
         TermKind::Assert { cond, .. } => moves(cx.p, body, st, [cond]),
-        TermKind::Call { .. } | TermKind::Perform { .. } | TermKind::Resume { .. } => {
-            Err(AlphaError::Later("a call (summaries, stage F5)"))
-        }
+        TermKind::Call {
+            callee: weft_ir::Callee::Fn(f, targs),
+            args,
+            dest,
+            ..
+        } => call(cx, body, block, st, *f, targs, args, dest),
+        TermKind::Call { .. } => Err(AlphaError::Later("a call of a function value (stage F12)")),
+        TermKind::Perform { .. } => Err(AlphaError::Later("a perform (stage F14)")),
+        TermKind::Resume { .. } => Err(AlphaError::Later("a continuation (stage F16)")),
         TermKind::IterNext { .. } => Err(AlphaError::Later("an iterator (stage F10)")),
         TermKind::Handle { .. } => Err(AlphaError::Later("a handler (stage F14)")),
         TermKind::Scope { .. }
@@ -664,5 +681,119 @@ pub fn switch(p: &Program, body: BodyId, st: &mut State, on: &Operand) -> Result
 ///
 /// None.
 pub const fn ret(_st: &mut State) -> Result<(), AlphaError> {
+    Ok(())
+}
+
+/// The id of the run node of the terminator of block `block` of body
+/// `body`: the splits and the one-place instances of a call are its own.
+pub const fn run_inst(body: BodyId, block: weft_ir::BlockId) -> u32 {
+    body.0.saturating_mul(1 << 16).saturating_add(block.0)
+}
+
+/// What a `Call` of the function item `f` with the type arguments `targs`
+/// gives: σ, the value of the result, the places that it changes, and the
+/// values that go behind its reference arguments.
+pub struct CallOut {
+    /// σ of the run node.
+    pub sigma: super::apply::Sigma,
+    /// The summary of the callee.
+    pub summary: super::summary::Summary,
+    /// The value of the result.
+    pub ret: Tree,
+    /// The places that the call changes, with their callee root indexes.
+    pub muts: Vec<(PlaceId, u32)>,
+    /// The values that go behind the reference arguments that the call
+    /// changes.
+    pub stores: Vec<(PlaceId, Vec<PlaceId>)>,
+}
+
+/// The run node of a `Call` of function item `f` of block `block`, in state
+/// `st` before it (`docs/ir.md` 6.7).
+///
+/// # Errors
+///
+/// Returns [`AlphaError::Later`] if `f` has no summary yet, and the errors of
+/// σ.
+#[allow(clippy::too_many_arguments)]
+pub fn call_out(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    block: weft_ir::BlockId,
+    st: &State,
+    f: weft_ir::FnId,
+    targs: &[TyId],
+    args: &[Operand],
+    dest: &Place,
+) -> Result<CallOut, AlphaError> {
+    let sums = cx.sums;
+    let p = cx.p;
+    let summary = sums.get(f).map_err(AlphaError::Later)?.clone();
+    let decl = p
+        .fns
+        .get(f.index())
+        .ok_or_else(|| AlphaError::BadPlace(format!("no function f{}", f.0)))?;
+    let inst = run_inst(body, block);
+    let mut sigma = super::apply::sigma(cx, body, st, decl, targs, args, inst)?;
+    if summary.ret_in_frame() {
+        sigma.frame = Some(cx.roots.frame(cx.facts, inst, &decl.name));
+    }
+    let ret_ty = place_ty(cx, body, dest)?;
+    let ret = super::apply::ret_value(cx, &summary, &sigma, ret_ty)?;
+    let muts = super::apply::muts(cx, &summary, &sigma)?;
+    let stores = super::apply::stores(cx, &summary, &sigma, &muts)?;
+    Ok(CallOut {
+        sigma,
+        summary,
+        ret,
+        muts,
+        stores,
+    })
+}
+
+/// `Call` of a function item: the summary of the callee. The values that go
+/// behind its reference arguments join into the move paths that they name
+/// (a weak update); the moved arguments leave no value; the result binds to
+/// `dest`.
+///
+/// # Errors
+///
+/// The errors of [`call_out`] and of α.
+#[allow(clippy::too_many_arguments)]
+fn call(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    block: weft_ir::BlockId,
+    st: &mut State,
+    f: weft_ir::FnId,
+    targs: &[TyId],
+    args: &[Operand],
+    dest: &Place,
+) -> Result<(), AlphaError> {
+    let out = call_out(cx, body, block, st, f, targs, args, dest)?;
+    for (q, refs) in &out.stores {
+        if let Some((k, path)) = cx.roots.path_of(cx.facts, *q) {
+            st.add(k, &path, &Tree::leaf(AbsVal::refs(refs.iter().copied())));
+        }
+    }
+    let target = move_path(cx.p, body, dest)?;
+    let a = if target.is_some() {
+        None
+    } else {
+        Some(alpha(cx, body, st, dest)?)
+    };
+    moves(cx.p, body, st, args)?;
+    if let Some((k, path)) = target {
+        st.write(k, &path, out.ret);
+        return Ok(());
+    }
+    let flat = Tree::leaf(out.ret.flat());
+    let targets: BTreeSet<(Key, Vec<PathStep>)> = a
+        .iter()
+        .flat_map(|a| a.places.iter())
+        .filter_map(|&q| cx.roots.path_of(cx.facts, q))
+        .collect();
+    for (k, path) in targets {
+        st.add(k, &path, &flat);
+    }
     Ok(())
 }

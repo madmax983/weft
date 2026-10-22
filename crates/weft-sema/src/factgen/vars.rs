@@ -72,8 +72,9 @@ pub struct Vars {
     /// The `H` and `U` variables of each local, with their projections.
     parts: HashMap<(BodyId, LocalId), Vec<PartVar>>,
     /// The locals whose value a construction builds in place: an `in_place`
-    /// local, and a temporary that gets an aggregate (`into` writes it into
-    /// its destination, `docs/ir.md` 5.36).
+    /// local, a temporary that gets an aggregate (`into` writes it into its
+    /// destination, `docs/ir.md` 5.36), and a temporary that gets the result
+    /// of a call (5.17).
     in_place: HashSet<(BodyId, LocalId)>,
 }
 
@@ -157,7 +158,8 @@ fn is_part(place: &Place) -> bool {
 }
 
 /// The locals of the bodies `comp` whose value a construction builds in
-/// place: each `in_place` local, and each temporary that gets an aggregate.
+/// place: each `in_place` local, each temporary that gets an aggregate, and
+/// each temporary that gets the result of a call.
 fn built_in_place(p: &Program, comp: &[BodyId]) -> HashSet<(BodyId, LocalId)> {
     let mut out = HashSet::new();
     for &bid in comp {
@@ -169,15 +171,48 @@ fn built_in_place(p: &Program, comp: &[BodyId]) -> HashSet<(BodyId, LocalId)> {
                 out.insert((bid, LocalId(u32::try_from(i).unwrap_or(u32::MAX))));
             }
         }
+        let temp = |dest: &Place| {
+            dest.proj.is_empty()
+                && b.locals
+                    .get(dest.local.index())
+                    .is_some_and(|d| matches!(d.kind, LocalKind::Temp(_)))
+        };
         for blk in &b.blocks {
             for s in &blk.stmts {
                 if let StmtKind::Assign(dest, weft_ir::Rvalue::Aggregate(..)) = &s.kind {
-                    let temp = b
-                        .locals
-                        .get(dest.local.index())
-                        .is_some_and(|d| matches!(d.kind, LocalKind::Temp(_)));
-                    if dest.proj.is_empty() && temp {
+                    if temp(dest) {
                         out.insert((bid, dest.local));
+                    }
+                }
+            }
+            // A call writes its result into its destination, with the place
+            // fields that have no value (`docs/ir.md` 5.17).
+            if let TermKind::Call { dest, .. } = &blk.term.kind {
+                if temp(dest) {
+                    out.insert((bid, dest.local));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The locals of the bodies `comp` that a call takes as a whole: `move l`
+/// as an argument. The callee can move the value (`Vec.push` moves it when
+/// its buffer grows), unless the builder builds it in place (`in_place`).
+fn call_args(p: &Program, comp: &[BodyId]) -> HashSet<(BodyId, LocalId)> {
+    let mut out = HashSet::new();
+    for &bid in comp {
+        let Some(b) = p.bodies.get(bid.index()) else {
+            continue;
+        };
+        for blk in &b.blocks {
+            if let TermKind::Call { args, .. } = &blk.term.kind {
+                for a in args {
+                    if let weft_ir::Operand::Move(q) = a {
+                        if q.proj.is_empty() {
+                            out.insert((bid, q.local));
+                        }
                     }
                 }
             }
@@ -210,6 +245,7 @@ impl Vars {
             in_place: built_in_place(p, comp),
             ..Self::default()
         };
+        let to_callee = call_args(p, comp);
         for &bid in comp {
             let Some(b) = p.bodies.get(bid.index()) else {
                 continue;
@@ -234,7 +270,11 @@ impl Vars {
                     linear: d.props.linear,
                     has_on_abort: d.props.linear && d.props.on_abort,
                     once,
-                    immovable: d.props.immovable && !v.in_place.contains(&(bid, l)),
+                    // A value built in place does not move, unless a call
+                    // that does not build it in place takes it (W0604).
+                    immovable: d.props.immovable
+                        && !d.in_place
+                        && (!v.in_place.contains(&(bid, l)) || to_callee.contains(&(bid, l))),
                     uniq: d.props.uniq,
                     nonportable: d.props.nonportable,
                     callable: d.props.callable,

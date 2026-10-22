@@ -332,34 +332,53 @@ fn ir_entries() -> Vec<Entry> {
     ]
 }
 
+/// True if the `ir` pipeline checks program `path` of [`ir_entries`] with
+/// every group on: since stage F5 the fact generator supports the calls of
+/// the prelude (`push` in `w0301.wf`). `clean.wf` calls a function with no
+/// stated signature (stage F6).
+fn in_scope_now(path: &str) -> bool {
+    path == "w0301.wf"
+}
+
 #[test]
-fn with_the_stub_fact_generator_the_ir_record_is_the_old_record() {
-    // Stage F1: the fact generator supports no group, so each program is out
-    // of scope, also with every group on.
+fn with_the_fact_generator_the_ir_record_is_the_old_record() {
+    // A program out of scope gets the old record; a program in scope gets
+    // the result of the old pipeline here too.
     let all = weft_sema::Groups::ALL;
+    // In scope, the facts differ: the result is the diagnostics and the
+    // violations.
+    let result = |r: &snapshot::Record, facts: bool| {
+        let mut r = same_result(r);
+        if !facts {
+            r.counts = std::collections::BTreeMap::default();
+            r.digest = String::new();
+        }
+        r
+    };
     for e in ir_entries() {
+        let facts = !in_scope_now(&e.path);
         let old = snapshot::check(&data(), &e, Pipeline::Old);
         let ir = snapshot::check_with(&data(), &e, Pipeline::Ir, all);
         assert_eq!(ir.record.pipeline, "ir");
         assert_eq!(
-            same_result(&ir.record),
-            same_result(&old.record),
+            result(&ir.record, facts),
+            result(&old.record, facts),
             "{}",
             e.path
         );
         let both = snapshot::check_both(&data(), &e, all);
-        assert!(!both.in_scope, "{}", e.path);
+        assert_eq!(both.in_scope, in_scope_now(&e.path), "{}", e.path);
         assert_eq!(both.old.record.pipeline, "old");
         assert_eq!(both.ir.record.pipeline, "ir");
         assert_eq!(same_result(&both.old.record), same_result(&old.record));
-        assert_eq!(same_result(&both.ir.record), same_result(&old.record));
+        assert_eq!(result(&both.ir.record, facts), result(&old.record, facts));
     }
     assert_eq!(Pipeline::parse("ir"), Some(Pipeline::Ir));
     assert_eq!(Pipeline::Ir.name(), "ir");
 }
 
 #[test]
-fn the_gate_reports_no_coverage_with_the_stub_fact_generator() {
+fn the_gate_reports_the_coverage_of_the_fact_generator() {
     use weft_gate::classify::Class;
     use weft_gate::oracle::{Cache, Row, Verdict};
     use weft_gate::report::{self, RunSettings};
@@ -390,12 +409,12 @@ fn the_gate_reports_no_coverage_with_the_stub_fact_generator() {
         .unwrap_or_else(|e| panic!("the gate runs: {e}"));
     assert_eq!(r.rows.len(), 3);
     for row in &r.rows {
-        assert!(!row.in_scope, "{}", row.path);
+        assert_eq!(row.in_scope, in_scope_now(&row.path), "{}", row.path);
         assert_eq!(row.class, Class::Same, "{}", row.path);
     }
     assert_eq!(r.groups_on, "ABCDEF");
     let md = r.to_markdown();
-    assert!(md.contains("| data | 0 | 3 | 0.0 % |"), "{md}");
+    assert!(md.contains("| data | 1 | 3 | 33.3 % |"), "{md}");
     // The groups that the programs use: `w0301.wf` and `clean.wf` use group
     // A only.
     assert_eq!(r.used.len(), 3);
