@@ -8,7 +8,9 @@
 //!   two references has one value for each part. The `top` of a node is the
 //!   part of the value that no child names (a value that came in as a whole).
 //! - [`State`] maps each local of a component to its tree, and holds which
-//!   move paths can hold a value (may) and must hold a value (must).
+//!   move paths can hold a value (may) and must hold a value (must, with
+//!   the holes that a move or an `Uninit` makes below a path that must hold
+//!   a value).
 //!
 //! A join is a union of the may parts and an intersection of the must parts.
 //! A local or a path with no entry has no value: [`AbsVal::none`] is the
@@ -270,8 +272,11 @@ pub struct State {
     vals: BTreeMap<Key, Tree>,
     /// The move paths that can hold a value.
     may: BTreeSet<Path>,
-    /// The move paths that must hold a value.
+    /// The move paths that must hold a value, but for the holes below them.
     must: BTreeSet<Path>,
+    /// The move paths that can have no value: a part that moved or that an
+    /// `Uninit` left with no value (may).
+    holes: BTreeSet<Path>,
 }
 
 /// True if `a` is a prefix of `b` (or equal to it).
@@ -303,6 +308,7 @@ impl State {
         self.vals.entry(key).or_insert_with(Tree::none).set(path, v);
         self.may.retain(|(k, p)| *k != key || !is_prefix(path, p));
         self.must.retain(|(k, p)| *k != key || !is_prefix(path, p));
+        self.holes.retain(|(k, p)| *k != key || !is_prefix(path, p));
         self.may.insert((key, path.to_vec()));
         self.must.insert((key, path.to_vec()));
     }
@@ -318,15 +324,34 @@ impl State {
     /// The move path `path` of local `key` has no value now: a move, a
     /// `Consume`, an `Uninit`. With an empty path, the whole local.
     pub fn clear(&mut self, key: Key, path: &[PathStep]) {
+        self.may.retain(|(k, p)| *k != key || !is_prefix(path, p));
+        self.must.retain(|(k, p)| *k != key || !is_prefix(path, p));
+        self.holes.retain(|(k, p)| *k != key || !is_prefix(path, p));
         if path.is_empty() {
             self.vals.remove(&key);
-        } else if let Some(t) = self.vals.get_mut(&key) {
-            t.set(path, Tree::none());
+        } else {
+            if let Some(t) = self.vals.get_mut(&key) {
+                t.set(path, Tree::none());
+            }
+            // The paths above the cleared part keep their other parts.
+            self.holes.insert((key, path.to_vec()));
         }
-        self.may.retain(|(k, p)| *k != key || !is_prefix(path, p));
-        // The paths above the cleared part do not hold a whole value now.
-        self.must
-            .retain(|(k, p)| *k != key || !(is_prefix(path, p) || is_prefix(p, path)));
+    }
+
+    /// Adds a hole at the move path `path` of local `key`: the part can have
+    /// no value (a part of a moved value that had no value).
+    pub fn add_hole(&mut self, key: Key, path: &[PathStep]) {
+        self.holes.insert((key, path.to_vec()));
+    }
+
+    /// The holes of local `key` at or below the move path `path`, relative
+    /// to `path`.
+    pub fn holes_below(&self, key: Key, path: &[PathStep]) -> Vec<Vec<PathStep>> {
+        self.holes
+            .iter()
+            .filter(|(k, p)| *k == key && is_prefix(path, p))
+            .filter_map(|(_, p)| p.get(path.len()..).map(<[PathStep]>::to_vec))
+            .collect()
     }
 
     /// True if local `key` can hold a value, or a value of a part.
@@ -335,11 +360,16 @@ impl State {
     }
 
     /// True if the move path `path` of local `key` must hold a value: the
-    /// path or a path above it got a value on each path to this point.
+    /// path or a path above it got a value on each path to this point, and
+    /// no hole overlaps the path.
     pub fn must_hold(&self, key: Key, path: &[PathStep]) -> bool {
         self.must
             .iter()
             .any(|(k, p)| *k == key && is_prefix(p, path))
+            && !self
+                .holes
+                .iter()
+                .any(|(k, p)| *k == key && (is_prefix(p, path) || is_prefix(path, p)))
     }
 
     /// Joins `o` into `self`: a union of the values and of the may parts,
@@ -361,6 +391,9 @@ impl State {
         let must = self.must.len();
         self.must.retain(|p| o.must.contains(p));
         changed |= self.must.len() != must;
+        let holes = self.holes.len();
+        self.holes.extend(o.holes.iter().cloned());
+        changed |= self.holes.len() != holes;
         changed
     }
 }

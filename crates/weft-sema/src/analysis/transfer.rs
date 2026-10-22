@@ -92,7 +92,15 @@ pub fn held_at(
     facts: &mut FnFacts,
     roots: &mut Roots,
     at: PlaceId,
+    field: Option<(weft_ir::AdtId, u32)>,
 ) -> Result<Vec<PlaceId>, AlphaError> {
+    // A place field points into the place that its struct states for it.
+    if let Some(sp) = field.and_then(|(a, f)| roots.field_place(a, f)).cloned() {
+        let parent = facts.places.get(at.index()).and_then(|i| i.parent);
+        if let Some(out) = parent.and_then(|base| field_places(facts, base, &sp)) {
+            return Ok(out);
+        }
+    }
     let root = facts
         .places
         .get(at.index())
@@ -117,6 +125,29 @@ pub fn held_at(
             "a place with no root of the component".to_string(),
         )),
     }
+}
+
+/// The places of the stated place `sp` of a place field (in terms of
+/// `self`), for the struct at fact place `base`. `None` for a stated place
+/// that is not in terms of `self` alone.
+fn field_places(
+    facts: &mut FnFacts,
+    base: PlaceId,
+    sp: &crate::program::SigPlace,
+) -> Option<Vec<PlaceId>> {
+    use crate::program::{SigRoot, SigStep};
+    if sp.root != SigRoot::Param(0) {
+        return None;
+    }
+    let mut q = base;
+    for s in &sp.steps {
+        q = match s {
+            SigStep::Step(step, text) => facts.child(q, *step, text),
+            SigStep::Wild => facts.wildcard(q),
+            SigStep::Held | SigStep::Seg { .. } => return None,
+        };
+    }
+    Some(vec![q])
 }
 
 /// The text of parameter `i` of body `body`: its name.
@@ -152,7 +183,7 @@ pub fn alpha(
         cx.roots,
         body,
         place,
-        &mut |facts, roots, at| held_at(p, st, facts, roots, at),
+        &mut |facts, roots, at, field| held_at(p, st, facts, roots, at, field),
     )
 }
 
@@ -185,8 +216,22 @@ pub fn place_value(
     let mut v = AbsVal::of_type(props.linear);
     if props.holds_refs {
         let a = alpha(cx, body, st, place)?;
+        let field = match place.proj.split_last() {
+            Some((Proj::Field(f), base)) => {
+                let base = Place {
+                    local: place.local,
+                    proj: base.to_vec(),
+                };
+                match alpha::place_ty(cx.p, cx.tys, body, &base).and_then(|t| cx.tys.try_get(t)) {
+                    Some(Ty::Adt(a, _)) => Some((*a, f.0)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
         for &at in &a.places {
-            v.refs.extend(held_at(cx.p, st, cx.facts, cx.roots, at)?);
+            v.refs
+                .extend(held_at(cx.p, st, cx.facts, cx.roots, at, field)?);
         }
     }
     Ok(Tree::leaf(v))
@@ -306,6 +351,31 @@ fn aggregate(
     }
 }
 
+/// The whole locals that rvalue `rv` moves into its value, with the steps
+/// of their place in the value: `move t` as the value, or as a part of a
+/// tuple, a struct or a variant.
+pub fn moved_wholes(rv: &Rvalue) -> Vec<(Vec<PathStep>, LocalId)> {
+    let whole = |op: &Operand| match op {
+        Operand::Move(q) if q.proj.is_empty() => Some(q.local),
+        _ => None,
+    };
+    let field = |i: usize| PathStep::Field(u32::try_from(i).unwrap_or(u32::MAX));
+    match rv {
+        Rvalue::Use(op) => whole(op).map(|l| (Vec::new(), l)).into_iter().collect(),
+        Rvalue::Aggregate(AggKind::Tuple | AggKind::Struct(_), ops) => ops
+            .iter()
+            .enumerate()
+            .filter_map(|(i, op)| whole(op).map(|l| (vec![field(i)], l)))
+            .collect(),
+        Rvalue::Aggregate(AggKind::Variant(_, v), ops) => ops
+            .iter()
+            .enumerate()
+            .filter_map(|(i, op)| whole(op).map(|l| (vec![PathStep::Variant(v.0), field(i)], l)))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// The operands of rvalue `rv`.
 pub fn rvalue_operands(rv: &Rvalue) -> Vec<&Operand> {
     match rv {
@@ -407,9 +477,21 @@ pub fn assign(
     } else {
         Some(alpha(cx, body, st, place)?)
     };
+    // The holes of a whole local that moves go with its value.
+    let mut carried: Vec<Vec<PathStep>> = Vec::new();
+    for (steps, l) in moved_wholes(rv) {
+        let k = key(cx.p, body, l)?;
+        for h in st.holes_below(k, &[]) {
+            carried.push(steps.iter().copied().chain(h).collect());
+        }
+    }
     moves(cx.p, body, st, rvalue_operands(rv))?;
     if let Some((k, path)) = dest {
         st.write(k, &path, v);
+        for h in carried {
+            let at: Vec<PathStep> = path.iter().copied().chain(h).collect();
+            st.add_hole(k, &at);
+        }
         return Ok(());
     }
     let flat = Tree::leaf(v.flat());

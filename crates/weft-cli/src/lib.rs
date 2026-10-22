@@ -43,7 +43,9 @@ the program uses must be on. Else the old pipeline checks the program, and a
 note tells why. --facts=both makes both fact sets: the output is that of the
 old pipeline; `check` writes a note for each diagnostic that only one
 pipeline gives, `facts` also prints the facts of the ir pipeline, and `agree`
-compares both.
+compares both. FACTS can also have --groups=LETTERS (for example --groups=A):
+the construct groups that are on (A to F, in order). No group is on by
+default.
 
 RUN is [--seed N] [--workers N] [--unchecked] [--oracle] [--engine=ast|ir].
 `run` and `test` do not run a program that has errors, unless --unchecked is given.
@@ -88,6 +90,7 @@ struct Flags {
     workers: Option<usize>,
     engine: Engine,
     facts: FactGen,
+    groups: Groups,
     positional: Vec<String>,
     /// The options as given, for the check that the command takes them.
     given: Vec<String>,
@@ -99,7 +102,7 @@ const PROFILE: [&str; 4] = ["--lib", "--bin", "--no-runtime", "--runtime"];
 /// Returns the options that a command takes, or `None` for an unknown command.
 fn options_of(cmd: &str) -> Option<Vec<&'static str>> {
     let own: &[&str] = match cmd {
-        "check" => &["--json", "--explain", "--facts"],
+        "check" => &["--json", "--explain", "--facts", "--groups"],
         "run" | "test" => &[
             "--seed",
             "--workers",
@@ -107,9 +110,10 @@ fn options_of(cmd: &str) -> Option<Vec<&'static str>> {
             "--oracle",
             "--engine",
             "--facts",
+            "--groups",
         ],
-        "lint" => &["--rules", "--facts"],
-        "facts" | "agree" => &["--facts"],
+        "lint" => &["--rules", "--facts", "--groups"],
+        "facts" | "agree" => &["--facts", "--groups"],
         "ir" => &[],
         "explain" | "deps" | "spec" | "help" | "--help" | "-h" => return Some(Vec::new()),
         _ => return None,
@@ -170,6 +174,14 @@ fn engine(v: Option<&str>) -> Result<Engine> {
     }
 }
 
+/// Reads the value of `--groups`.
+fn groups(v: Option<&str>) -> Result<Groups> {
+    let v = v.context("--groups needs construct groups from A to F")?;
+    Groups::parse(v).map_err(|e| {
+        anyhow::anyhow!("--groups needs construct groups from A to F, found `{v}`: {e}")
+    })
+}
+
 /// Reads the value of `--facts`.
 fn fact_gen(v: Option<&str>) -> Result<FactGen> {
     let need = "--facts needs `old`, `ir` or `both`";
@@ -196,6 +208,12 @@ fn flags(args: &[String]) -> Result<Flags> {
             "--seed" => f.seed = Some(number(&mut it, "--seed")?),
             "--engine" => f.engine = engine(it.next().map(String::as_str))?,
             "--facts" => f.facts = fact_gen(it.next().map(String::as_str))?,
+            "--groups" => f.groups = groups(it.next().map(String::as_str))?,
+            s if s.starts_with("--groups=") => {
+                f.groups = groups(s.strip_prefix("--groups="))?;
+                f.given.push("--groups".into());
+                continue;
+            }
             s if s.starts_with("--facts=") => {
                 f.facts = fact_gen(s.strip_prefix("--facts="))?;
                 f.given.push("--facts".into());
@@ -370,7 +388,7 @@ fn finish_diags(pkg: &Package, checked: &mut Checked) {
 /// any (empty otherwise).
 fn check_flags(f: &Flags) -> Result<(Package, Checked, String)> {
     let path = Path::new(path_arg(f)?);
-    let (pkg, c) = check_path_with(path, f.profile, f.facts, Groups::NONE)?;
+    let (pkg, c) = check_path_with(path, f.profile, f.facts, f.groups)?;
     let note = c
         .analysis
         .ir_scope

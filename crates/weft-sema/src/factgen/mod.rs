@@ -16,18 +16,26 @@
 //!   interpreter from the IR (module `exports`), and keeps the diagnostics of
 //!   `typeck` (`docs/ir.md` 2.4) and of the builder.
 //!
-//! Stage F1 has a stub [`emit`]: it supports no group, so each program is out
-//! of scope. A test can give another emit ([`crate::analyze_with_emit`]).
+//! Stage F4: [`emit`] writes the facts of the bodies with no call, no
+//! `perform` and no `resume` (group A with no calls): the analysis
+//! (`crate::analysis`) gives the states, and the templates ([`templates`])
+//! write the facts of each node. A program with another construct gets
+//! [`Unsupported`]: the old pipeline checks it. A test can give another emit
+//! ([`crate::analyze_with_emit`]), and [`preview`] gives the facts of one
+//! body.
 
 pub mod alpha;
+pub mod decls;
 mod exports;
+pub mod kernel;
 pub mod nodes;
 pub mod rels;
+pub mod templates;
 pub mod vars;
 
 use std::fmt;
 
-use weft_facts::FnFacts;
+use weft_facts::{FnFacts, PlaceId};
 use weft_syntax::diag::Diagnostic;
 
 use crate::irbuild::scope::{self, Group, Groups};
@@ -74,15 +82,409 @@ pub type Emit = fn(&Input<'_>, &mut [FnFacts]) -> Result<(), Unsupported>;
 
 /// The fact generator of the `ir` pipeline.
 ///
+/// It writes the facts of each body with IR into the entry of the body in
+/// `facts` ([`emit_body`]). A body with no IR keeps the facts of its
+/// declarations.
+///
 /// # Errors
 ///
-/// Stage F1: it supports no group yet. It returns [`Unsupported`] for the
-/// first group that the program uses.
-pub fn emit(input: &Input<'_>, _facts: &mut [FnFacts]) -> Result<(), Unsupported> {
-    Err(Unsupported {
-        group: input.scope.used.first().unwrap_or(Group::A),
-        reason: "no group is supported before stage F8".to_string(),
-    })
+/// Returns [`Unsupported`] for the first body with a construct that the
+/// fact generator does not support yet.
+pub fn emit(input: &Input<'_>, facts: &mut [FnFacts]) -> Result<(), Unsupported> {
+    for (i, e) in input.built.entries.iter().enumerate() {
+        let Outcome::Built(entry) = e.outcome else {
+            continue;
+        };
+        let Some(f) = facts.get_mut(i) else {
+            continue;
+        };
+        emit_body(input.analysis, input.built, i, entry, f)?;
+    }
+    Ok(())
+}
+
+/// The facts of body `index` of the analysis from the `ir` pipeline: the
+/// facts of its declarations and of its IR. A preview for a body of a
+/// program that is not in scope (plan stage F4).
+///
+/// # Errors
+///
+/// Returns [`Unsupported`] if the body has no IR or a construct that the
+/// fact generator does not support yet.
+pub fn preview(a: &Analysis, built: &Built, index: usize) -> Result<FnFacts, Unsupported> {
+    let unsupported = |reason: &str| Unsupported {
+        group: Group::A,
+        reason: reason.to_string(),
+    };
+    let entry = match built.entries.get(index).map(|e| &e.outcome) {
+        Some(Outcome::Built(b)) => *b,
+        _ => return Err(unsupported("the body has no IR")),
+    };
+    let old = a
+        .bodies
+        .get(index)
+        .ok_or_else(|| unsupported("no such body"))?;
+    let mut facts = seed(&old.facts);
+    emit_body(a, built, index, entry, &mut facts)?;
+    Ok(facts)
+}
+
+/// The group of a construct that the fact generator of stage F4 does not
+/// support, from the text of the reason.
+fn later_group(why: &str) -> Group {
+    let has = |w: &str| why.contains(w);
+    if has("loop") || has("iterator") {
+        Group::B
+    } else if has("closure") || has("function value") || has("environment") {
+        Group::C
+    } else if has("handler") || has("capabilit") || has("continuation") {
+        Group::D
+    } else if has("task") || has("scope") {
+        Group::E
+    } else if has("type parameter") {
+        Group::F
+    } else {
+        Group::A
+    }
+}
+
+/// The error of α as an [`Unsupported`] of the fact generator.
+fn unsupported(e: &alpha::AlphaError) -> Unsupported {
+    let reason = match e {
+        alpha::AlphaError::Later(why) => (*why).to_string(),
+        alpha::AlphaError::NeedsValue { local } => {
+            format!("a dereference of `_{}` with no value", local.0)
+        }
+        alpha::AlphaError::BadPlace(why) => format!("a place that does not fit its type: {why}"),
+    };
+    Unsupported {
+        group: later_group(&reason),
+        reason,
+    }
+}
+
+/// Checks that the fact generator of stage F4 supports each construct of
+/// the component `comp`: function and test bodies, the statements, and the
+/// terminators that run no other body.
+fn check_supported(
+    p: &weft_ir::Program,
+    tys: &weft_ir::TyTable,
+    comp: &[weft_ir::BodyId],
+) -> Result<(), Unsupported> {
+    use weft_ir::{BodyKind, Rvalue, StmtKind, TermKind};
+    let no = |group: Group, reason: &str| {
+        Err(Unsupported {
+            group,
+            reason: reason.to_string(),
+        })
+    };
+    for &bid in comp {
+        let Some(b) = p.bodies.get(bid.index()) else {
+            continue;
+        };
+        match b.kind {
+            BodyKind::Fn(_) | BodyKind::Test(_) => {}
+            BodyKind::Closure(_) => return no(Group::C, "a closure (stage F11)"),
+            BodyKind::Clause(..) | BodyKind::Handled(_) => {
+                return no(Group::D, "a handler (stage F14)");
+            }
+            BodyKind::Scope(_) => return no(Group::E, "a task scope (stage F18)"),
+        }
+        if b.locals.iter().any(|d| tys.mentions_param(d.ty)) {
+            return no(Group::F, "a type parameter (stage F20)");
+        }
+        // A back edge: an edge to a block that does not come later in
+        // reverse post-order.
+        let order = weft_ir::order::reverse_post_order(b);
+        let mut rank = vec![usize::MAX; b.blocks.len()];
+        for (i, x) in order.iter().enumerate() {
+            if let Some(r) = rank.get_mut(x.index()) {
+                *r = i;
+            }
+        }
+        for (i, blk) in b.blocks.iter().enumerate() {
+            let me = rank.get(i).copied().unwrap_or(usize::MAX);
+            let back = blk
+                .term
+                .kind
+                .successors()
+                .iter()
+                .any(|s| rank.get(s.index()).is_some_and(|&r| r <= me));
+            if back {
+                return no(Group::B, "a loop (widening, stage F10)");
+            }
+        }
+        for blk in &b.blocks {
+            for s in &blk.stmts {
+                match &s.kind {
+                    StmtKind::Assign(_, Rvalue::Aggregate(weft_ir::AggKind::Closure(_), _)) => {
+                        return no(Group::C, "a closure (stage F11)");
+                    }
+                    StmtKind::Assign(_, Rvalue::Iter(_)) => {
+                        return no(Group::B, "an iterator (stage F10)");
+                    }
+                    StmtKind::UnwindValue(_, weft_ir::UnwindAction::OnAbort(_)) => {
+                        return no(Group::A, "an `on abort` function (stage F7)");
+                    }
+                    StmtKind::UnwindKont(_) => return no(Group::D, "a continuation (stage F16)"),
+                    _ => {}
+                }
+            }
+            match &blk.term.kind {
+                TermKind::Goto(_)
+                | TermKind::Switch { .. }
+                | TermKind::Return
+                | TermKind::UnwindExit
+                | TermKind::Unreachable
+                | TermKind::Assert { .. } => {}
+                TermKind::Call { .. } | TermKind::Perform { .. } | TermKind::Resume { .. } => {
+                    return no(Group::A, "a call (summaries, stage F5)");
+                }
+                TermKind::IterNext { .. } => return no(Group::B, "an iterator (stage F10)"),
+                TermKind::Handle { .. } => return no(Group::D, "a handler (stage F14)"),
+                _ => return no(Group::E, "a task (stage F18)"),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Writes the facts of the component of the function or test body `entry`
+/// (body `index` of the analysis) into `facts`, which hold the facts of its
+/// declarations (`docs/ir.md` 6.1 to 6.4).
+///
+/// The steps: the variables of the component; the nodes and their edges
+/// (one abort destination: past the function); the entry node, where the
+/// parameters bind; the relations of the declarations; the analysis of the
+/// body; then for each block that the entry reaches, the template of each
+/// statement and of the terminator with the state before it; the owners of
+/// the roots of the locals and the `@ uniq` flags.
+///
+/// # Errors
+///
+/// Returns [`Unsupported`] for a construct that stage F4 does not support:
+/// a call, a `perform`, a `resume`, a loop, and the constructs of the groups
+/// B to F.
+pub fn emit_body(
+    a: &Analysis,
+    built: &Built,
+    index: usize,
+    entry: weft_ir::BodyId,
+    facts: &mut FnFacts,
+) -> Result<(), Unsupported> {
+    use std::collections::BTreeMap;
+    let p = &built.program;
+    let comp = component(built, entry);
+    let mut tys = built.tys.clone();
+    check_supported(p, &tys, &comp)?;
+    let body = p
+        .bodies
+        .get(entry.index())
+        .ok_or_else(|| unsupported(&alpha::AlphaError::BadPlace("no body".to_string())))?;
+    let vars = vars::Vars::build(p, &mut tys, facts, &comp);
+    let mut roots = alpha::Roots::default();
+    roots.set_field_places(&a.program);
+    let mut table = nodes::NodeTable::default();
+    table.add_body(p, entry, facts, &[nodes::PAST]);
+    // The entry node: the parameters bind there.
+    let sp = weft_facts::Span {
+        lo: body.origin.span.lo,
+        hi: body.origin.span.hi,
+    };
+    let entry_node = facts.add_node(sp, "entry", String::new());
+    if let Some(first) = table.first(entry, body.entry, nodes::NORMAL) {
+        facts.cfg_edge.push((entry_node, first));
+    }
+    let sig = a
+        .bodies
+        .get(index)
+        .and_then(|b| b.func)
+        .and_then(|f| a.sigs.get(f.index()));
+    let (params, ret_places) = match sig {
+        Some(sig) => {
+            let ps = decls::params(p, &mut tys, facts, &mut roots, entry, sig)
+                .map_err(|e| unsupported(&e))?;
+            decls::signature(p, &tys, facts, &mut roots, sig, &ps.bases);
+            let rp = decls::ret_places(p, &tys, facts, &mut roots, entry, sig, &ps.bases);
+            (ps.entry, rp)
+        }
+        None => (Vec::new(), None),
+    };
+    decls::tasks(p, &comp, facts);
+    let init = decls::entry_state(p, entry, &params).map_err(|e| unsupported(&e))?;
+    let states = {
+        let mut cx = crate::analysis::Cx {
+            p,
+            tys: &mut tys,
+            facts,
+            roots: &mut roots,
+        };
+        crate::analysis::run(&mut cx, entry, init).map_err(|e| unsupported(&e))?
+    };
+    let mut uniq: BTreeMap<weft_facts::VarId, bool> = BTreeMap::new();
+    {
+        let mut em = templates::Em {
+            p,
+            sema: &a.program,
+            tys: &mut tys,
+            facts,
+            roots: &mut roots,
+            vars: &vars,
+            body: entry,
+            cleanup: false,
+            ret_places: ret_places.as_deref(),
+            uniq: &mut uniq,
+            skip_s: None,
+        };
+        templates::entry(&mut em, entry_node, &params).map_err(|e| unsupported(&e))?;
+        emit_blocks(&mut em, &table, &states, body).map_err(|e| unsupported(&e))?;
+    }
+    // Each local with a root owns it.
+    let owners: Vec<(PlaceId, weft_facts::VarId)> = roots
+        .local_roots()
+        .filter_map(|(k, r)| vars.get(&vars::VarKey::S(k.0, k.1)).map(|v| (r, v)))
+        .collect();
+    facts.owner.extend(owners);
+    for (i, v) in facts.vars.iter_mut().enumerate() {
+        let id = weft_facts::VarId(u32::try_from(i).unwrap_or(u32::MAX));
+        v.uniq = uniq.get(&id).copied().unwrap_or(false);
+    }
+    decls::std_effects(facts);
+    facts.normalize();
+    Ok(())
+}
+
+/// The templates of each block of `body` that the entry reaches, with the
+/// states of the analysis: each statement, then the terminator. A cleanup
+/// block has one copy for the abort destination past the function.
+fn emit_blocks(
+    em: &mut templates::Em<'_>,
+    table: &nodes::NodeTable,
+    states: &crate::analysis::States,
+    body: &weft_ir::Body,
+) -> Result<(), alpha::AlphaError> {
+    use crate::analysis::transfer;
+    use nodes::{NodeKey, Phase, NORMAL, PAST, TERM};
+    let bid = em.body;
+    for (bi, blk) in body.blocks.iter().enumerate() {
+        let block = weft_ir::BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
+        let Some(start) = states.at(block) else {
+            continue;
+        };
+        let dest = if blk.cleanup { PAST } else { NORMAL };
+        em.cleanup = blk.cleanup;
+        let mut st = start.clone();
+        // The parts that the binds of the current pattern moved, by local.
+        let mut run: Vec<(crate::analysis::Key, Vec<crate::analysis::PathStep>)> = Vec::new();
+        for (si, s) in blk.stmts.iter().enumerate() {
+            em.skip_s = None;
+            match pattern_bind(em.p, bid, body, s)? {
+                Bind::Part(k, path, moves) => {
+                    if run.iter().any(|(rk, _)| *rk == k) {
+                        em.skip_s = Some(k);
+                    }
+                    if moves {
+                        run.push((k, path));
+                    }
+                }
+                Bind::Keep => {}
+                Bind::Other => run.clear(),
+            }
+            let at = u32::try_from(si).unwrap_or(u32::MAX);
+            let key = NodeKey {
+                body: bid,
+                block,
+                at,
+                phase: Phase::Main,
+                dest,
+            };
+            let pair = match &s.kind {
+                weft_ir::StmtKind::Drop(_) => em.vars.get(&vars::VarKey::D(bid, block, at)),
+                weft_ir::StmtKind::Assign(..) if si > 0 => {
+                    let prev = at - 1;
+                    match blk.stmts.get(si - 1).map(|x| &x.kind) {
+                        Some(weft_ir::StmtKind::Drop(_)) => {
+                            em.vars.get(&vars::VarKey::D(bid, block, prev))
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some(n) = table.get(key) {
+                templates::stmt(em, n, &st, &s.kind, pair)?;
+            }
+            let mut cx = em_cx(em);
+            transfer::stmt(&mut cx, bid, &mut st, &s.kind)?;
+        }
+        // The binds of a pattern end at the terminator.
+        em.skip_s = None;
+        let key = NodeKey {
+            body: bid,
+            block,
+            at: TERM,
+            phase: Phase::Main,
+            dest,
+        };
+        if let Some(n) = table.get(key) {
+            templates::term(em, n, &st, &blk.term.kind, blk.term.origin.span)?;
+        }
+    }
+    em.cleanup = false;
+    em.skip_s = None;
+    Ok(())
+}
+
+/// What a statement is for the binds of a pattern.
+enum Bind {
+    /// A bind of a pattern that reads the part `path` of a local: a move if
+    /// the bool is true.
+    Part(crate::analysis::Key, Vec<crate::analysis::PathStep>, bool),
+    /// A statement that the binds of a pattern can have between them
+    /// (`Live`, `Dead`, `Consume`).
+    Keep,
+    /// Another statement: the binds of the pattern end.
+    Other,
+}
+
+/// What statement `s` of body `body` is for the binds of a pattern. A bind
+/// of a pattern (`docs/ir.md` 5.13) gives a whole local the value of a part
+/// (a move, a copy or a borrow) with the origin of the local itself: the
+/// span of the name in the pattern.
+fn pattern_bind(
+    p: &weft_ir::Program,
+    bid: weft_ir::BodyId,
+    body: &weft_ir::Body,
+    s: &weft_ir::Stmt,
+) -> Result<Bind, alpha::AlphaError> {
+    use weft_ir::{Operand, Rvalue, StmtKind};
+    let (dest, q, moves) = match &s.kind {
+        StmtKind::Live(_) | StmtKind::Dead(_) | StmtKind::Consume(_) => return Ok(Bind::Keep),
+        StmtKind::Assign(dest, Rvalue::Use(Operand::Move(q))) => (dest, q, true),
+        StmtKind::Assign(dest, Rvalue::Use(Operand::Copy(q)) | Rvalue::Ref(q)) => (dest, q, false),
+        _ => return Ok(Bind::Other),
+    };
+    let named = body
+        .locals
+        .get(dest.local.index())
+        .is_some_and(|d| d.origin.span == s.origin.span);
+    if !dest.proj.is_empty() || q.proj.is_empty() || !named {
+        return Ok(Bind::Other);
+    }
+    match crate::analysis::transfer::move_path(p, bid, q)? {
+        Some((k, path)) => Ok(Bind::Part(k, path, moves)),
+        None => Ok(Bind::Other),
+    }
+}
+
+/// The context of the transfer functions for the emitter `em`.
+const fn em_cx<'b>(em: &'b mut templates::Em<'_>) -> crate::analysis::Cx<'b> {
+    crate::analysis::Cx {
+        p: em.p,
+        tys: em.tys,
+        facts: em.facts,
+        roots: em.roots,
+    }
 }
 
 /// The scope of a program (plan §2.6).
@@ -163,6 +565,12 @@ pub(crate) fn run(
     let off = used.minus(on);
     if !off.is_empty() {
         s.fallback = Some(off_text(off));
+        return (s, None);
+    }
+    // With no group on (the default before stage F8), no program is in
+    // scope: also a program whose bodies have no IR and use no group.
+    if on.is_empty() {
+        s.fallback = Some("no construct group is on".to_string());
         return (s, None);
     }
     let mut facts: Vec<FnFacts> = a.bodies.iter().map(|b| seed(&b.facts)).collect();

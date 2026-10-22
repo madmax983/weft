@@ -634,3 +634,39 @@ fn an_empty_state_gives_no_value() {
     assert_eq!(v, AbsVal::none());
     assert!(!st.may_hold((B, LocalId(1))));
 }
+
+#[test]
+fn a_move_of_a_part_leaves_a_hole_and_the_hole_goes_with_the_value() {
+    let t = tys();
+    let mut h = Hand::new(&t);
+    let x = h.user(t.u64, "x");
+    let pair = h.user(t.pair, "pair");
+    let a = h.user(t.ref_u64, "a");
+    let other = h.user(t.pair, "other");
+    let bb1 = BlockId(1);
+    h.block(
+        vec![
+            assign(at(x), Rvalue::Use(one())),
+            assign(
+                at(pair),
+                Rvalue::Aggregate(AggKind::Tuple, vec![one(), one()]),
+            ),
+            assign(
+                at(a),
+                Rvalue::Use(Operand::Move(proj(pair, vec![Proj::Field(FieldIdx(0))]))),
+            ),
+            assign(at(other), Rvalue::Use(Operand::Move(at(pair)))),
+        ],
+        TermKind::Goto(bb1),
+    );
+    h.block(vec![], TermKind::Return);
+    let out = run(h.program(&t), &t);
+    let st = out.at(bb1);
+    let f = |i| PathStep::Field(i);
+    // The other part still holds its value; the moved part does not.
+    assert!(st.must_hold((B, other), &[f(1)]));
+    assert!(!st.must_hold((B, other), &[f(0)]));
+    assert!(!st.must_hold((B, other), &[]));
+    // The local that moved holds nothing.
+    assert!(!st.may_hold((B, pair)));
+}

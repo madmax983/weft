@@ -1,10 +1,12 @@
-//! Unit tests of the parts of the fact generator that do not need the
-//! analysis (plan stage F2, `docs/ir.md` 6.1 to 6.3 and 6.7): the relation
-//! table `RELS`, the nodes and phases, roots and α, and the variables.
+//! Unit tests of the fact generator: the parts that do not need the
+//! analysis (plan stage F2, `docs/ir.md` 6.1 to 6.3 and 6.7: the relation
+//! table `RELS`, the nodes and phases, roots and α, and the variables), and
+//! the templates of the statements and the simple terminators (stage F4,
+//! `docs/ir.md` 6.4).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
-use weft_facts::{FnFacts, PlaceId, StepKind};
+use weft_facts::{FnFacts, NodeId, PlaceId, StepKind, VarId};
 use weft_ir::{
     BlockId, BodyId, CapOperand, Const, DerefKind, EffectId, HandlerId, LocalId, LocalKind, OpIdx,
     Operand, Place, Proj, ScopeId, Side, SpawnId, TermKind, TyTable,
@@ -968,5 +970,727 @@ fn the_skeleton_runs_on_the_corpus() {
     assert!(
         ok > 1000 && later > 0,
         "{ok} places, {later} for later stages"
+    );
+}
+
+// ------------------------------------------------------- templates (F4)
+
+/// Programs with no call: each statement kind of `docs/ir.md` 6.4 that a
+/// body with no call can have.
+const NO_CALLS: &str = "linear struct Tx { id: u64 }
+struct P { a: u64, b: u64 }
+struct H { o: Option<Tx> }
+
+fn drop_behind(h: &H) / mut(h.o) {
+    h.o = None
+}
+
+fn parts() {
+    let p = (Tx { id: 1 }, Tx { id: 2 })
+    let a = p.0
+    let Tx(i) = a
+    let Tx(j) = p.1
+}
+
+fn uninit_and_bounds(v: [u64; 3], i: usize) -> u64 {
+    let x: u64
+    x = v[i]
+    x
+}
+
+fn holes() {
+    let x = 1
+    let y = 2
+    let t = (&x, 1)
+    t.0 = &y
+    print(t.0)
+    assert(x == 1)
+}
+
+fn reads() {
+    let x = 1
+    let r = &x
+    print(r)
+    x = 2
+    let s = P { a: 1, b: 2 }
+    s
+}
+
+fn shared(p: &P @ shared) / mut(p.a) {
+    print(p.a)
+}
+
+fn logs() / log {
+}
+
+fn main() {
+    let o = None
+    match o {
+        None => print(1),
+        Some(t) => { let Tx(k) = t }
+    }
+}
+
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+struct Wrap { x: Frame, n: u64 }
+
+fn built_in_place() {
+    let w = Wrap { x: Frame { buf: [1, 2, 3, 4] }, n: 0 }
+    w.x.cur = &w.x.buf[0]
+    print(w.x.cur)
+}
+
+struct Two { a: Vec<u64>, b: Vec<u64> }
+
+fn destructure(p: Two) {
+    let Two(a, b) = p
+}
+
+fn two_lets(p: Two) {
+    let a = p.a
+    let b = p.b
+}
+";
+
+/// The facts of body `name` of `src` from the `ir` pipeline.
+fn ir_facts_with(src: &str, opts: Options, name: &str) -> FnFacts {
+    let a = analyze_source(src, opts)
+        .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message));
+    let b = irbuild::build(&a);
+    assert!(b.broken.is_empty(), "{:?}", b.broken);
+    let i = b
+        .entries
+        .iter()
+        .position(|e| e.name == name)
+        .unwrap_or_else(|| panic!("no body `{name}`"));
+    weft_sema::factgen::preview(&a, &b, i).unwrap_or_else(|u| panic!("`{name}`: {u}"))
+}
+
+/// The facts of body `name` of [`NO_CALLS`].
+fn ir_facts(name: &str) -> FnFacts {
+    ir_facts_with(NO_CALLS, Options::default(), name)
+}
+
+/// The node relations at each node: the name of each relation with the
+/// node in it.
+fn node_rels(f: &FnFacts) -> BTreeMap<NodeId, BTreeSet<&'static str>> {
+    let mut m: BTreeMap<NodeId, BTreeSet<&'static str>> = BTreeMap::new();
+    let mut add = |n: NodeId, r: &'static str| {
+        m.entry(n).or_default().insert(r);
+    };
+    for &(a, _) in &f.cfg_edge {
+        add(a, "cfg_edge");
+    }
+    for &(n, _) in &f.mutates_at {
+        add(n, "mutates_at");
+    }
+    for &(n, _) in &f.reads_at {
+        add(n, "reads_at");
+    }
+    for &(n, _) in &f.performs_at {
+        add(n, "performs_at");
+    }
+    let vn: [(&'static str, &Vec<(VarId, NodeId)>); 10] = [
+        ("rebound_at", &f.rebound_at),
+        ("uses", &f.uses),
+        ("moved_at", &f.moved_at),
+        ("scope_end", &f.scope_end),
+        ("overwrites", &f.overwrites),
+        ("unset_at", &f.unset_at),
+        ("empty_at", &f.empty_at),
+        ("unwound_at", &f.unwound_at),
+        ("rest_linear", &f.rest_linear),
+        ("spared_at", &f.spared_at),
+    ];
+    for (name, rel) in vn {
+        for &(_, n) in rel {
+            add(n, name);
+        }
+    }
+    for &(n, _) in &f.writes_via {
+        add(n, "writes_via");
+    }
+    for &(_, n) in &f.moved_part {
+        add(n, "moved_part");
+    }
+    for &(n, _) in &f.releases_at {
+        add(n, "releases_at");
+    }
+    for &n in &f.may_abort {
+        add(n, "may_abort");
+    }
+    for &n in &f.multi_at {
+        add(n, "multi_at");
+    }
+    for &n in &f.sim_run_at {
+        add(n, "sim_run_at");
+    }
+    for &(n, _) in &f.ref_at {
+        add(n, "ref_at");
+    }
+    for &(n, _) in &f.ref_in {
+        add(n, "ref_in");
+    }
+    for &(n, _) in &f.lends_mut {
+        add(n, "lends_mut");
+    }
+    for &(n, _, _) in f.call_mut.iter().chain(&f.call_arg) {
+        add(n, "call");
+    }
+    for &(_, n) in f.spawned_at.iter().chain(&f.joined_at) {
+        add(n, "task");
+    }
+    m
+}
+
+/// The relations that the template of each node label can emit
+/// (`docs/ir.md` 6.4), and the relations that a cleanup path adds. `entry`
+/// is the node where the parameters bind.
+fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'static str])> {
+    Some(match label {
+        "entry" => (&["cfg_edge", "rebound_at", "empty_at"], &[]),
+        "live" | "unwind continuation" | "goto" | "unreachable" | "unwind exit" => {
+            (&["cfg_edge"], &[])
+        }
+        "dead" => (&["cfg_edge", "scope_end"], &["unwound_at"]),
+        "assign" => (
+            &[
+                "cfg_edge",
+                "mutates_at",
+                "reads_at",
+                "rebound_at",
+                "uses",
+                "moved_at",
+                "scope_end",
+                "overwrites",
+                "empty_at",
+                "moved_part",
+                "rest_linear",
+                "writes_via",
+                "sim_run_at",
+                "ref_at",
+                "ref_in",
+                // A place field of a value built in place has no value in
+                // its destination.
+                "unset_at",
+            ],
+            &[],
+        ),
+        "drop" => (&["cfg_edge", "reads_at", "rebound_at", "uses"], &[]),
+        // Not a use: a pattern moved the parts before it.
+        "consume" => (&["cfg_edge", "moved_at", "moved_part", "rest_linear"], &[]),
+        "uninit" => (&["cfg_edge", "unset_at"], &[]),
+        "bounds" | "switch" | "print" => (&["cfg_edge", "reads_at", "uses"], &[]),
+        "mention" => (&["cfg_edge", "uses"], &[]),
+        "unwind value" => (&["cfg_edge", "unwound_at"], &[]),
+        "return" => (&["cfg_edge", "uses", "ref_at", "ref_in"], &[]),
+        // The node with no edges of the W0605 check of an `Assign` or of a
+        // struct literal (`ref_outside` reads it).
+        "field" => (&["ref_at", "ref_in"], &[]),
+        "assert" => (
+            &["cfg_edge", "reads_at", "uses", "may_abort", "spared_at"],
+            &[],
+        ),
+        _ => return None,
+    })
+}
+
+/// Checks that each node of `f` emits only the relations of the template of
+/// its label. Returns the relations of each label.
+fn check_templates(f: &FnFacts, what: &str) -> BTreeMap<String, BTreeSet<&'static str>> {
+    let mut seen: BTreeMap<String, BTreeSet<&'static str>> = BTreeMap::new();
+    for (n, rels) in node_rels(f) {
+        let label = f.node(n).label.clone();
+        let (normal, cleanup) =
+            template_of(&label).unwrap_or_else(|| panic!("{what}: no template for `{label}`"));
+        for r in &rels {
+            assert!(
+                normal.contains(r) || cleanup.contains(r),
+                "{what}: `{label}` emits {r}"
+            );
+        }
+        seen.entry(label).or_default().extend(rels);
+    }
+    seen
+}
+
+/// The variable named `name`.
+fn var_named(f: &FnFacts, name: &str) -> VarId {
+    let i = f
+        .vars
+        .iter()
+        .position(|v| v.name == name)
+        .unwrap_or_else(|| panic!("no variable `{name}`"));
+    VarId(id(i))
+}
+
+/// The display texts of the places that variable `v` points into.
+fn points(f: &FnFacts, v: VarId) -> BTreeSet<String> {
+    f.points_into
+        .iter()
+        .filter(|(x, _)| *x == v)
+        .map(|(_, p)| f.place(*p).display.clone())
+        .collect()
+}
+
+/// The nodes with label `label`.
+fn nodes_labelled(f: &FnFacts, label: &str) -> Vec<NodeId> {
+    (0..f.nodes.len())
+        .filter(|&i| f.nodes[i].label == label)
+        .map(|i| NodeId(id(i)))
+        .collect()
+}
+
+/// The display texts of the places that node `n` reads.
+fn reads(f: &FnFacts, n: NodeId) -> BTreeSet<String> {
+    f.reads_at
+        .iter()
+        .filter(|(x, _)| *x == n)
+        .map(|(_, p)| f.place(*p).display.clone())
+        .collect()
+}
+
+/// The display texts of the places that node `n` mutates.
+fn mutates(f: &FnFacts, n: NodeId) -> BTreeSet<String> {
+    f.mutates_at
+        .iter()
+        .filter(|(x, _)| *x == n)
+        .map(|(_, p)| f.place(*p).display.clone())
+        .collect()
+}
+
+/// True if the pair `(v, n)` is in `rel`.
+fn has(rel: &[(VarId, NodeId)], v: VarId, n: NodeId) -> bool {
+    rel.contains(&(v, n))
+}
+
+#[test]
+fn each_statement_kind_emits_the_relations_of_its_template() {
+    let mut seen: BTreeMap<String, BTreeSet<&'static str>> = BTreeMap::new();
+    for name in [
+        "drop_behind",
+        "parts",
+        "uninit_and_bounds",
+        "holes",
+        "reads",
+        "shared",
+        "logs",
+        "main",
+        "built_in_place",
+        "destructure",
+        "two_lets",
+    ] {
+        let f = ir_facts(name);
+        for (l, rs) in check_templates(&f, name) {
+            seen.entry(l).or_default().extend(rs);
+        }
+    }
+    // Each statement kind of these bodies emits the relations that make it
+    // what it is.
+    for (label, rels) in [
+        ("entry", &["rebound_at"][..]),
+        ("dead", &["scope_end", "unwound_at"]),
+        (
+            "assign",
+            &[
+                "rebound_at",
+                "uses",
+                "reads_at",
+                "moved_at",
+                "moved_part",
+                "rest_linear",
+                "mutates_at",
+                "empty_at",
+                "scope_end",
+                "unset_at",
+            ],
+        ),
+        ("drop", &["rebound_at", "uses", "reads_at"]),
+        ("consume", &["moved_at"]),
+        ("uninit", &["unset_at"]),
+        ("bounds", &["reads_at", "uses"]),
+        ("print", &["reads_at", "uses"]),
+        ("switch", &["reads_at", "uses"]),
+        ("return", &["uses"]),
+        ("assert", &["uses", "reads_at", "may_abort"]),
+    ] {
+        let have = seen.get(label).cloned().unwrap_or_default();
+        for r in rels {
+            assert!(have.contains(r), "no `{label}` node emits {r}: {have:?}");
+        }
+    }
+}
+
+#[test]
+fn dead_ends_the_value_and_a_cleanup_path_unwinds_it() {
+    let f = ir_facts("holes");
+    let t = var_named(&f, "t");
+    let deads = nodes_labelled(&f, "dead");
+    let ends = deads.iter().filter(|&&n| has(&f.scope_end, t, n)).count();
+    let unwinds: Vec<NodeId> = deads
+        .iter()
+        .copied()
+        .filter(|&n| has(&f.unwound_at, t, n))
+        .collect();
+    assert_eq!(ends, 1, "`Dead(t)` on the normal path");
+    assert_eq!(
+        unwinds.len(),
+        1,
+        "`Dead(t)` on the cleanup path of `assert`"
+    );
+    // The cleanup path has no `scope_end`.
+    assert!(!has(&f.scope_end, t, unwinds[0]));
+    // A value that is not plain data ends at its `Dead` too.
+    let f = ir_facts("parts");
+    let a = var_named(&f, "a");
+    assert!(nodes_labelled(&f, "dead")
+        .iter()
+        .any(|&n| has(&f.scope_end, a, n)));
+}
+
+#[test]
+fn return_uses_the_result() {
+    let f = ir_facts("uninit_and_bounds");
+    let r = var_named(&f, "the result");
+    let rets = nodes_labelled(&f, "return");
+    assert!(
+        rets.iter().any(|&n| has(&f.uses, r, n)),
+        "`Return` uses `_0`"
+    );
+    // The value of the result binds where it is written.
+    assert!(f.rebound_at.iter().any(|(v, _)| *v == r));
+}
+
+#[test]
+fn a_part_move_moves_the_whole_local_and_leaves_its_linear_rest() {
+    let f = ir_facts("parts");
+    let p = var_named(&f, "p");
+    let n = f
+        .moved_part
+        .iter()
+        .find(|(m, _)| f.place(*m).display == "p.0")
+        .map(|(_, n)| *n)
+        .expect("a move of `p.0`");
+    assert!(has(&f.moved_at, p, n), "moved_at of the whole local");
+    assert!(has(&f.uses, p, n));
+    assert!(has(&f.rest_linear, p, n), "`p.1` can hold a linear value");
+    // `Consume(p.1)` of the pattern finishes the last part: no linear rest.
+    let c = nodes_labelled(&f, "consume");
+    let last = c
+        .iter()
+        .copied()
+        .find(|&n| {
+            f.moved_part
+                .iter()
+                .any(|(m, x)| *x == n && f.place(*m).display == "p.1")
+        })
+        .expect("a consume of `p.1`");
+    assert!(has(&f.moved_at, p, last));
+    assert!(!has(&f.rest_linear, p, last));
+}
+
+#[test]
+fn a_drop_behind_a_reference_is_a_drop_pair_that_ends_at_the_assign() {
+    let f = ir_facts("drop_behind");
+    let drop = nodes_labelled(&f, "drop");
+    assert_eq!(drop.len(), 1);
+    let pair: Vec<VarId> = f
+        .rebound_at
+        .iter()
+        .filter(|(_, n)| *n == drop[0])
+        .map(|(v, _)| *v)
+        .collect();
+    assert_eq!(pair.len(), 1, "one drop pair variable");
+    let d = pair[0];
+    assert!(f.var(d).linear, "the old value can be linear");
+    assert!(!f.empty_at.contains(&(d, drop[0])));
+    // The pair ends at the `Assign` right after the `Drop`.
+    let next = f
+        .cfg_edge
+        .iter()
+        .find(|(a, _)| *a == drop[0])
+        .map(|(_, b)| *b)
+        .expect("an edge out of the drop");
+    assert_eq!(f.node(next).label, "assign");
+    assert!(has(&f.scope_end, d, next));
+    // The `Assign` changes the place behind the reference.
+    assert_eq!(mutates(&f, next), BTreeSet::from(["h.o".to_string()]));
+    // The drop reads the reference.
+    assert!(reads(&f, drop[0]).contains("h"));
+}
+
+#[test]
+fn print_of_a_reference_reads_through_it() {
+    let f = ir_facts("reads");
+    let prints = nodes_labelled(&f, "print");
+    assert_eq!(prints.len(), 1);
+    let rd = reads(&f, prints[0]);
+    assert!(rd.contains("x"), "reads the place behind `r`: {rd:?}");
+    assert!(rd.contains("r"), "reads `r`: {rd:?}");
+    assert!(has(&f.uses, var_named(&f, "r"), prints[0]));
+}
+
+#[test]
+fn the_first_value_writes_nothing_and_an_overwrite_mutates_the_root() {
+    let f = ir_facts("reads");
+    let x = var_named(&f, "x");
+    let binds: Vec<NodeId> = f
+        .rebound_at
+        .iter()
+        .filter(|(v, _)| *v == x)
+        .map(|(_, n)| *n)
+        .collect();
+    assert_eq!(binds.len(), 2, "`let x = 1` and `x = 2`");
+    let muts: Vec<BTreeSet<String>> = binds.iter().map(|&n| mutates(&f, n)).collect();
+    assert_eq!(
+        muts.iter().filter(|m| m.is_empty()).count(),
+        1,
+        "the first value writes nothing: {muts:?}"
+    );
+    assert!(
+        muts.iter().any(|m| m.contains("x")),
+        "the overwrite mutates the root of `x`: {muts:?}"
+    );
+    // A temporary is not a source local: its value writes nothing.
+    for (v, n) in &f.rebound_at {
+        if f.var(*v).kind == weft_facts::VarKind::Temp {
+            let m = mutates(&f, *n);
+            assert!(m.is_empty(), "a temporary mutates {m:?}");
+        }
+    }
+}
+
+#[test]
+fn a_new_value_of_a_part_with_a_variable_replaces_its_places() {
+    let f = ir_facts("holes");
+    let t = var_named(&f, "t");
+    let t0 = var_named(&f, "t.0");
+    // The part holds the places of its values; the whole local does not.
+    assert_eq!(
+        points(&f, t0),
+        ["x".to_string(), "y".to_string()].into_iter().collect()
+    );
+    assert!(points(&f, t).is_empty(), "{:?}", points(&f, t));
+    // A new value of the whole and of the part rebinds the part.
+    let rebinds: Vec<NodeId> = f
+        .rebound_at
+        .iter()
+        .filter(|(v, _)| *v == t0)
+        .map(|(_, n)| *n)
+        .collect();
+    assert_eq!(rebinds.len(), 2);
+    // The part assignment uses the whole local and changes the part.
+    let part = rebinds
+        .iter()
+        .copied()
+        .find(|&n| !has(&f.rebound_at, t, n))
+        .expect("the part assignment");
+    assert!(has(&f.uses, t, part));
+    assert_eq!(mutates(&f, part), BTreeSet::from(["t.0".to_string()]));
+    // A read of the part uses the part and the whole local.
+    let print = nodes_labelled(&f, "print");
+    assert!(has(&f.uses, t0, print[0]) && has(&f.uses, t, print[0]));
+}
+
+#[test]
+fn a_place_field_of_a_value_built_in_place_goes_with_the_value() {
+    let f = ir_facts("built_in_place");
+    // The `U` variable of `w.x.cur` (the `H` variable has the same name).
+    let (cur, _) = *f
+        .unset_at
+        .iter()
+        .find(|(v, _)| f.var(*v).name == "w.x.cur")
+        .expect("an unset place field `w.x.cur`");
+    // The construction of `w` gives `w.x.cur` no value.
+    let unset: Vec<NodeId> = f
+        .unset_at
+        .iter()
+        .filter(|(v, _)| *v == cur)
+        .map(|(_, n)| *n)
+        .collect();
+    assert_eq!(unset.len(), 1);
+    assert_eq!(f.node(unset[0]).label, "assign");
+    assert!(!has(&f.rebound_at, cur, unset[0]));
+    // The move of the frame into `w` reads no place field of the frame.
+    let inner = var_named(&f, "operand temporary.cur");
+    assert!(!f.uses.iter().any(|(v, _)| *v == inner));
+    // The temporary is built in place: its move is not W0604.
+    let moved_temps: Vec<VarId> = f
+        .moved_at
+        .iter()
+        .map(|(v, _)| *v)
+        .filter(|v| f.var(*v).kind == weft_facts::VarKind::Temp)
+        .collect();
+    assert!(moved_temps.iter().all(|v| !f.var(*v).immovable));
+    // The new value of the field, then a read that uses it.
+    assert!(f
+        .rebound_at
+        .iter()
+        .any(|(v, n)| *v == cur && *n != unset[0]));
+    let print = nodes_labelled(&f, "print");
+    assert!(has(&f.uses, cur, print[0]));
+}
+
+#[test]
+fn the_binds_of_one_pattern_move_the_value_once() {
+    // `let Two(a, b) = p`: the first bind uses `p` and moves it; the
+    // second bind is not a use after a move.
+    let f = ir_facts("destructure");
+    let p = var_named(&f, "p");
+    let uses: BTreeSet<NodeId> = f
+        .uses
+        .iter()
+        .filter(|(v, _)| *v == p)
+        .map(|(_, n)| *n)
+        .collect();
+    let moves: BTreeSet<NodeId> = f
+        .moved_at
+        .iter()
+        .filter(|(v, _)| *v == p)
+        .map(|(_, n)| *n)
+        .collect();
+    assert_eq!(moves.len(), 2, "two part moves");
+    assert_eq!(uses.len(), 1, "one use: {uses:?}");
+    assert!(moves.contains(uses.iter().next().expect("a use")));
+    // `let a = p.a; let b = p.b`: two statements, so the second is a use
+    // after a move (W0302 keeps its meaning).
+    let f = ir_facts("two_lets");
+    let p = var_named(&f, "p");
+    let uses = f.uses.iter().filter(|(v, _)| *v == p).count();
+    assert_eq!(uses, 2);
+}
+
+#[test]
+fn the_relations_with_no_node_come_from_the_declarations() {
+    // `has_signature`, `declared_mut`, `shared_root`.
+    let f = ir_facts("shared");
+    assert!(f.has_signature);
+    let dm: Vec<String> = f
+        .declared_mut
+        .iter()
+        .map(|p| f.place(*p).display.clone())
+        .collect();
+    assert_eq!(dm, vec!["p.a".to_string()]);
+    let sr: Vec<String> = f
+        .shared_root
+        .iter()
+        .map(|p| f.place(*p).display.clone())
+        .collect();
+    assert_eq!(sr, vec!["p".to_string()]);
+    assert!(f.param_rooted(f.declared_mut[0]));
+    let plain = ir_facts("parts");
+    assert!(!plain.has_signature && plain.declared_mut.is_empty());
+    assert!(plain.shared_root.is_empty());
+    // `declared_effect` and `std_effect`.
+    let f = ir_facts("logs");
+    assert!(f.declared_effect.contains(&"Log".to_string()));
+    assert!(f.std_effects.contains(&"Log".to_string()));
+    // `started` for `main`, `no_runtime` with the marker, `library` with the
+    // marker.
+    assert!(ir_facts("main").started);
+    assert!(!ir_facts("parts").started);
+    let src = format!("// weft: no-runtime\n{NO_CALLS}");
+    let f = ir_facts_with(&src, Options::from_markers(&src), "main");
+    assert!(f.no_runtime && f.started);
+    let src = format!("// weft: library\n{NO_CALLS}");
+    let f = ir_facts_with(&src, Options::from_markers(&src), "parts");
+    assert!(f.library);
+    assert!(!ir_facts("parts").library);
+    // `task` and `fork_task`: one task for each spawn site and each branch
+    // of a `fork`.
+    let src = "fn work() -> u64 { 1 }
+fn main() {
+    let x = scope { s =>
+        let h = s.spawn(|| work())
+        h.join()
+    }
+    let (a, b) = fork(|| work(), || work())
+}
+";
+    let (_, b) = built(src);
+    let m = body_of(&b, "main");
+    let comp = weft_sema::factgen::component(&b, m);
+    let mut facts = FnFacts::default();
+    let tasks = weft_sema::factgen::decls::tasks(&b.program, &comp, &mut facts);
+    let kinds: Vec<weft_facts::TaskKind> = facts.tasks.iter().map(|t| t.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            weft_facts::TaskKind::Spawn,
+            weft_facts::TaskKind::Fork,
+            weft_facts::TaskKind::Fork
+        ]
+    );
+    assert_eq!(tasks.len(), 3);
+}
+
+#[test]
+fn writes_via_needs_one_place_at_or_above_each_change() {
+    use weft_sema::factgen::kernel::{self, Access};
+    let a = Access {
+        vars: vec![VarId(0)],
+        places: vec![PlaceId(5)],
+        ptrs: vec![PlaceId(1)],
+        root: None,
+    };
+    // The place 5 is below the place 4.
+    let below = |m: PlaceId, d: PlaceId| m == d || (m == PlaceId(5) && d == PlaceId(4));
+    let f = kernel::write_through(&a, Some((VarId(0), PlaceId(4))), &below);
+    assert_eq!(f.writes_via, vec![VarId(0)]);
+    assert_eq!(f.mutates, vec![PlaceId(5)]);
+    assert_eq!(f.uses, vec![VarId(0)]);
+    assert_eq!(f.reads, vec![PlaceId(1)]);
+    // A change outside the place: no `writes_via`.
+    let f = kernel::write_through(&a, Some((VarId(0), PlaceId(7))), &below);
+    assert!(f.writes_via.is_empty());
+    // The reference does not hold one place.
+    let f = kernel::write_through(&a, None, &below);
+    assert!(f.writes_via.is_empty());
+    // A borrow uses the variables, reads the pointers, and gives the places.
+    let (f, refs) = kernel::borrow(&a, &[PlaceId(9)]);
+    assert_eq!(refs, vec![PlaceId(5), PlaceId(9)]);
+    assert_eq!(f.reads, vec![PlaceId(1)]);
+    assert!(f.mutates.is_empty());
+    // A copy of a reference points into its places.
+    let f = kernel::copy_ref(&[VarId(2)], &[PlaceId(5)]);
+    assert_eq!(f.points_into, vec![(VarId(2), PlaceId(5))]);
+}
+
+/// On each program of the corpus: each body with no call gets the facts of
+/// the templates, and no other relation.
+#[test]
+fn the_templates_run_on_the_bodies_with_no_call_of_the_corpus() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/programs");
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .expect("the corpus")
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "wf"))
+        .collect();
+    files.sort();
+    let (mut ok, mut later) = (0usize, 0usize);
+    for f in &files {
+        let src = std::fs::read_to_string(f).expect("read");
+        let Ok(a) = analyze_source(&src, Options::from_markers(&src)) else {
+            continue;
+        };
+        let b = irbuild::build(&a);
+        for (i, e) in b.entries.iter().enumerate() {
+            if !matches!(e.outcome, Outcome::Built(_)) {
+                continue;
+            }
+            match weft_sema::factgen::preview(&a, &b, i) {
+                Ok(facts) => {
+                    ok += 1;
+                    check_templates(&facts, &format!("{}: {}", f.display(), e.name));
+                }
+                Err(_) => later += 1,
+            }
+        }
+    }
+    eprintln!("{ok} bodies with facts, {later} for later stages");
+    assert!(
+        ok > 100 && later > 0,
+        "{ok} bodies, {later} for later stages"
     );
 }

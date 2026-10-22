@@ -83,6 +83,9 @@ pub struct Roots {
     roles: HashMap<RootId, Role>,
     /// The handle places `h.*` that α made.
     handles: HashSet<PlaceId>,
+    /// The stated place of each place field of a struct (`cur: &u8 in
+    /// self.buf[]`), in terms of the struct (`self`).
+    fields: HashMap<(AdtId, u32), crate::program::SigPlace>,
 }
 
 /// The fact places of an IR place.
@@ -248,6 +251,28 @@ impl Roots {
         r
     }
 
+    /// Gives the table the stated place of each place field of the structs
+    /// of the program `prog` of the analysis.
+    pub fn set_field_places(&mut self, prog: &crate::Program) {
+        for (i, d) in prog.adts.iter().enumerate() {
+            let crate::program::AdtKind::Struct(fs) = &d.kind else {
+                continue;
+            };
+            let a = AdtId(u32::try_from(i).unwrap_or(u32::MAX));
+            for (j, f) in fs.iter().enumerate() {
+                if let Some(sp) = &f.place {
+                    self.fields
+                        .insert((a, u32::try_from(j).unwrap_or(u32::MAX)), sp.clone());
+                }
+            }
+        }
+    }
+
+    /// The stated place of field `f` of struct `a`, if it is a place field.
+    pub fn field_place(&self, a: AdtId, f: u32) -> Option<&crate::program::SigPlace> {
+        self.fields.get(&(a, f))
+    }
+
     /// What root `r` is, if this table made it.
     pub fn role(&self, r: RootId) -> Option<Role> {
         self.roles.get(&r).copied()
@@ -283,6 +308,23 @@ impl Roots {
             }
         }
         Some((key, path))
+    }
+
+    /// The group root of the `rc` objects of definition `a` (a signature
+    /// place `Group`).
+    pub fn group_of_adt(&mut self, tys: &TyTable, facts: &mut FnFacts, a: AdtId) -> PlaceId {
+        let key = GroupKey::Adt(a);
+        if let Some(&r) = self.groups.get(&key) {
+            return r;
+        }
+        let name = tys
+            .adts()
+            .get(a.index())
+            .map_or_else(|| format!("group {}", a.0), |d| d.name.clone());
+        let r = facts.add_root(name, RootKind::Group);
+        self.groups.insert(key, r);
+        self.roles.insert(facts.place(r).root, Role::Group);
+        r
     }
 
     /// The group root of the `rc` type `inner` (the target of an `Rc`).
@@ -511,15 +553,23 @@ pub fn alpha(
     place: &Place,
 ) -> Result<Alpha, AlphaError> {
     let local = place.local;
-    alpha_with(p, tys, facts, roots, body, place, &mut |_, _, _| {
+    alpha_with(p, tys, facts, roots, body, place, &mut |_, _, _, _| {
         Err(AlphaError::NeedsValue { local })
     })
 }
 
 /// The function that gives the places that the reference at a fact place
 /// points into ([`alpha_with`]).
-pub type Pointees<'a> =
-    dyn FnMut(&mut FnFacts, &mut Roots, PlaceId) -> Result<Vec<PlaceId>, AlphaError> + 'a;
+///
+/// The last argument is the struct and the field that the place names, if
+/// its last step is a field of a struct.
+pub type Pointees<'a> = dyn FnMut(
+        &mut FnFacts,
+        &mut Roots,
+        PlaceId,
+        Option<(AdtId, u32)>,
+    ) -> Result<Vec<PlaceId>, AlphaError>
+    + 'a;
 
 /// α of `place` of body `body`, with `pointees` for each `Deref(Ref)`: it
 /// gives the places that the reference at a fact place points into.
@@ -545,7 +595,17 @@ pub fn alpha_with(
         ..Alpha::default()
     };
     let mut last: Option<Step> = None;
+    // The struct and the field of the last projection, if it is a field of
+    // a struct.
+    let mut field: Option<(AdtId, u32)> = None;
     for pr in &place.proj {
+        let named = match (at, pr) {
+            (At::Ty(t), Proj::Field(f)) => match tys.try_get(t) {
+                Some(Ty::Adt(a, _)) => Some((*a, f.0)),
+                _ => None,
+            },
+            _ => None,
+        };
         match pr {
             Proj::Deref(DerefKind::Ref) => {
                 let At::Ty(t) = at else {
@@ -565,7 +625,7 @@ pub fn alpha_with(
                 let mut to = Vec::new();
                 for &r in &out.places {
                     out.ptrs.push(r);
-                    to.extend(pointees(facts, roots, r)?);
+                    to.extend(pointees(facts, roots, r, field)?);
                 }
                 to.sort();
                 to.dedup();
@@ -618,6 +678,7 @@ pub fn alpha_with(
                 }
             }
         }
+        field = named;
     }
     out.places.sort();
     out.places.dedup();

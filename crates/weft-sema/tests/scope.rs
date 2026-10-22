@@ -421,3 +421,18 @@ fn the_exports_of_the_corpus_are_the_exports_of_the_old_lowering() {
     }
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
+
+#[test]
+fn with_no_group_on_no_program_is_in_scope() {
+    // Each body has a type error: the bodies have no IR and use no group.
+    let src = "fn f() -> u64 { true }\nfn g() -> u64 { nope }\n";
+    let a = analyze(src, opts(FactGen::Ir, Groups::NONE));
+    let scope = a.ir_scope.as_ref().expect("a scope");
+    assert!(scope.used.is_empty());
+    let why = scope.fallback.as_deref().expect("out of scope");
+    assert!(why.contains("no construct group is on"), "{why}");
+    // With a group on, the program is in scope: its diagnostics are those
+    // of `typeck`.
+    let a = analyze(src, opts(FactGen::Ir, Groups::of(Group::A)));
+    assert!(a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope));
+}

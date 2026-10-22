@@ -10,6 +10,9 @@
 //! - `U(l.q)`: each place field path that can have no value (an `Uninit` of a
 //!   projected place).
 //! - `C(x)`: the cell of each local that a closure captures `ByRef`.
+//! - `D(n)`: the drop pair of each `Drop` statement: the old value of the
+//!   place behind a pointer. It binds at the `Drop` and ends at the `Assign`
+//!   after it (W0601 for a linear old value).
 //!
 //! The flags come from the properties of the local ([`weft_ir::Props`]; for a
 //! local of a function type the builder joins the modes of the closures that
@@ -19,16 +22,17 @@
 //! property of the local; the analysis (stage F3) makes it "each value is
 //! `@ uniq`".
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use weft_facts::{FnFacts, Span, VarId, VarInfo, VarKind};
 use weft_ir::ty::{AdtKind, Lang, TyProp};
 use weft_ir::{
-    BodyId, CaptureMode, LocalDecl, LocalId, LocalKind, Place, Program, Proj, StmtKind, TempKind,
-    TermKind, Ty, TyId, TyTable,
+    BlockId, BodyId, CaptureMode, LocalDecl, LocalId, LocalKind, Place, Program, Proj, StmtKind,
+    TempKind, TermKind, Ty, TyId, TyTable,
 };
 
-use super::alpha::{local_text, owner_local, path_text, path_ty};
+use super::alpha::{local_text, owner_local, path_text, path_ty, place_ty};
+use crate::props::ir_props;
 
 /// The key of a variable.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -41,6 +45,21 @@ pub enum VarKey {
     U(BodyId, Place),
     /// `C(x)`: the cell of a local that a closure captures by reference.
     C(BodyId, LocalId),
+    /// `D(n)`: the drop pair of the `Drop` statement `at` of a block.
+    D(BodyId, BlockId, u32),
+}
+
+/// A variable of a part: its kind, the projections of the part, and the
+/// variable.
+pub type PartVar = (PartKind, Vec<Proj>, VarId);
+
+/// The kind of a variable of a part ([`Vars::parts_of`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PartKind {
+    /// `H(l.q)`: the references of a part.
+    H,
+    /// `U(l.q)`: a place field path that can have no value.
+    U,
 }
 
 /// The variables of one component.
@@ -50,6 +69,12 @@ pub struct Vars {
     ids: HashMap<VarKey, VarId>,
     /// The keys, in the order of the variables.
     order: Vec<VarKey>,
+    /// The `H` and `U` variables of each local, with their projections.
+    parts: HashMap<(BodyId, LocalId), Vec<PartVar>>,
+    /// The locals whose value a construction builds in place: an `in_place`
+    /// local, and a temporary that gets an aggregate (`into` writes it into
+    /// its destination, `docs/ir.md` 5.36).
+    in_place: HashSet<(BodyId, LocalId)>,
 }
 
 /// The span of the facts for an IR span.
@@ -131,6 +156,36 @@ fn is_part(place: &Place) -> bool {
             .all(|p| matches!(p, Proj::Field(_) | Proj::Variant(_)))
 }
 
+/// The locals of the bodies `comp` whose value a construction builds in
+/// place: each `in_place` local, and each temporary that gets an aggregate.
+fn built_in_place(p: &Program, comp: &[BodyId]) -> HashSet<(BodyId, LocalId)> {
+    let mut out = HashSet::new();
+    for &bid in comp {
+        let Some(b) = p.bodies.get(bid.index()) else {
+            continue;
+        };
+        for (i, d) in b.locals.iter().enumerate() {
+            if d.in_place {
+                out.insert((bid, LocalId(u32::try_from(i).unwrap_or(u32::MAX))));
+            }
+        }
+        for blk in &b.blocks {
+            for s in &blk.stmts {
+                if let StmtKind::Assign(dest, weft_ir::Rvalue::Aggregate(..)) = &s.kind {
+                    let temp = b
+                        .locals
+                        .get(dest.local.index())
+                        .is_some_and(|d| matches!(d.kind, LocalKind::Temp(_)));
+                    if dest.proj.is_empty() && temp {
+                        out.insert((bid, dest.local));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The place that a terminator writes, if it writes one.
 const fn term_dest(t: &TermKind) -> Option<&Place> {
     match t {
@@ -151,7 +206,10 @@ impl Vars {
     /// Makes the variables of the bodies `comp` of a component in `facts`, in
     /// this order: `S` of each local of each body, then `H`, `U` and `C`.
     pub fn build(p: &Program, tys: &mut TyTable, facts: &mut FnFacts, comp: &[BodyId]) -> Self {
-        let mut v = Self::default();
+        let mut v = Self {
+            in_place: built_in_place(p, comp),
+            ..Self::default()
+        };
         for &bid in comp {
             let Some(b) = p.bodies.get(bid.index()) else {
                 continue;
@@ -176,7 +234,7 @@ impl Vars {
                     linear: d.props.linear,
                     has_on_abort: d.props.linear && d.props.on_abort,
                     once,
-                    immovable: d.props.immovable && !d.in_place,
+                    immovable: d.props.immovable && !v.in_place.contains(&(bid, l)),
                     uniq: d.props.uniq,
                     nonportable: d.props.nonportable,
                     callable: d.props.callable,
@@ -187,8 +245,126 @@ impl Vars {
         for &bid in comp {
             v.parts(p, tys, facts, bid);
         }
+        v.relocated(p, tys, facts, comp);
         v.cells(p, tys, facts, comp);
+        for &bid in comp {
+            v.drop_pairs(p, tys, facts, bid);
+        }
         v
+    }
+
+    /// True if a construction builds the value of local `l` of body `body`
+    /// in place: a move of the whole local into its destination does not
+    /// move the value, and the place fields of the value go with it.
+    pub fn built_in_place(&self, body: BodyId, l: LocalId) -> bool {
+        self.in_place.contains(&(body, l))
+    }
+
+    /// Adds the `U` variables of the place fields that a move of a value
+    /// built in place gives its destination: `d = Wrap { move t, .. }` with
+    /// `U(t.1)` gives `U(d.0.1)`. A chain of such moves gives a variable at
+    /// each step.
+    fn relocated(&mut self, p: &Program, tys: &mut TyTable, facts: &mut FnFacts, comp: &[BodyId]) {
+        // Each round adds the variables of one more step of a chain.
+        for _ in 0..=comp.len().saturating_add(16) {
+            let mut new: Vec<(VarKey, VarInfo)> = Vec::new();
+            for &bid in comp {
+                let Some(b) = p.bodies.get(bid.index()) else {
+                    continue;
+                };
+                for blk in &b.blocks {
+                    for s in &blk.stmts {
+                        let StmtKind::Assign(dest, rv) = &s.kind else {
+                            continue;
+                        };
+                        if !is_part(dest) && !dest.proj.is_empty() {
+                            continue;
+                        }
+                        let Ok((db, dl)) = owner_local(p, bid, dest.local) else {
+                            continue;
+                        };
+                        for (steps, t) in crate::analysis::transfer::moved_wholes(rv) {
+                            let Ok((tb, tl)) = owner_local(p, bid, t) else {
+                                continue;
+                            };
+                            if !self.in_place.contains(&(tb, tl)) {
+                                continue;
+                            }
+                            for (kind, r, _) in self.parts_of(tb, tl) {
+                                if *kind != PartKind::U {
+                                    continue;
+                                }
+                                let mut proj = dest.proj.clone();
+                                proj.extend(steps.iter().map(|s| match s {
+                                    crate::analysis::PathStep::Field(i) => {
+                                        Proj::Field(weft_ir::FieldIdx(*i))
+                                    }
+                                    crate::analysis::PathStep::Variant(v) => {
+                                        Proj::Variant(weft_ir::VariantIdx(*v))
+                                    }
+                                }));
+                                proj.extend(r.iter().cloned());
+                                let place = Place { local: dl, proj };
+                                let key = VarKey::U(db, place.clone());
+                                if self.ids.contains_key(&key) {
+                                    continue;
+                                }
+                                let ty = path_ty(p, tys, db, &place)
+                                    .map_or_else(String::new, |t| tys.show(t));
+                                let info = Self::plain(
+                                    path_text(p, tys, db, &place),
+                                    span(s.origin.span),
+                                    ty,
+                                );
+                                new.push((key, info));
+                            }
+                        }
+                    }
+                }
+            }
+            if new.is_empty() {
+                return;
+            }
+            for (k, info) in new {
+                self.add(facts, k, info);
+            }
+        }
+    }
+
+    /// Adds the drop pair variable of each `Drop` statement of body `bid`.
+    /// It has the flags of the type of the place: the old value can be
+    /// linear.
+    fn drop_pairs(&mut self, p: &Program, tys: &mut TyTable, facts: &mut FnFacts, bid: BodyId) {
+        let Some(b) = p.bodies.get(bid.index()) else {
+            return;
+        };
+        for (bi, blk) in b.blocks.iter().enumerate() {
+            for (si, s) in blk.stmts.iter().enumerate() {
+                let StmtKind::Drop(place) = &s.kind else {
+                    continue;
+                };
+                let block = BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
+                let at = u32::try_from(si).unwrap_or(u32::MAX);
+                let ty = place_ty(p, tys, bid, place);
+                let props = ty.map(|t| ir_props(tys, t)).unwrap_or_default();
+                let mut info = Self::plain(
+                    format!("the old value of `{}`", path_text(p, tys, bid, place)),
+                    span(s.origin.span),
+                    ty.map_or_else(String::new, |t| tys.show(t)),
+                );
+                info.kind = VarKind::Temp;
+                info.linear = props.linear;
+                info.has_on_abort = props.linear && props.on_abort;
+                info.once = props.linear;
+                self.add(facts, VarKey::D(bid, block, at), info);
+            }
+        }
+    }
+
+    /// The `H` and `U` variables of local `l` of body `body` (the owner
+    /// local, not an upvar), with the projections of their parts.
+    pub fn parts_of(&self, body: BodyId, l: LocalId) -> &[PartVar] {
+        self.parts.get(&(body, l)).map_or(&[], Vec::as_slice)
     }
 
     /// Adds the variable `info` with the key `key`, if the key has none.
@@ -197,6 +373,19 @@ impl Vars {
             return;
         }
         let id = facts.add_var(info);
+        match &key {
+            VarKey::H(b, pl) => self.parts.entry((*b, pl.local)).or_default().push((
+                PartKind::H,
+                pl.proj.clone(),
+                id,
+            )),
+            VarKey::U(b, pl) => self.parts.entry((*b, pl.local)).or_default().push((
+                PartKind::U,
+                pl.proj.clone(),
+                id,
+            )),
+            _ => {}
+        }
         self.ids.insert(key.clone(), id);
         self.order.push(key);
     }

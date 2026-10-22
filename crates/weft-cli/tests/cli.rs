@@ -1078,3 +1078,50 @@ fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
         "`ir` does not take --facts; see `weft help`"
     );
 }
+
+#[test]
+fn groups_put_a_program_in_scope_of_the_ir_pipeline() {
+    // A program with no call: with group A on, the ir pipeline checks it.
+    let dir = scratch(
+        "groups",
+        &[(
+            "no_calls.wf",
+            "fn f() -> u64 {\n    let x = 1\n    let r = &x\n    x = 2\n    print(r)\n    x\n}\n",
+        )],
+    );
+    let path = format!("{dir}/no_calls.wf");
+    let out = cmd(&["agree", "--facts=ir", "--groups=A", &path]);
+    assert_eq!(out.code, 0, "{}{}", out.text, out.stderr);
+    assert!(out.stderr.is_empty(), "{}", out.stderr);
+    assert!(out.text.starts_with("agree: "), "{}", out.text);
+    let out = cmd(&["agree", "--facts=both", "--groups", "A", &path]);
+    assert!(out.text.contains("of the ir pipeline"), "{}", out.text);
+    let out = cmd(&["check", "--facts=both", "--groups=A", &path]);
+    assert!(out.stderr.is_empty(), "{}", out.stderr);
+    let facts = cmd(&["facts", "--facts=ir", "--groups=A", &path, "f"]);
+    assert!(facts.text.contains("rebound_at("), "{}", facts.text);
+    // Group A is off by default: the old pipeline checks the program.
+    let out = cmd(&["agree", "--facts=ir", &path]);
+    assert!(
+        out.stderr.contains("the program uses group A"),
+        "{}",
+        out.stderr
+    );
+    // A program with a call is not in scope yet.
+    let out = cmd(&[
+        "agree",
+        "--facts=ir",
+        "--groups=A",
+        "tests/programs/02_bad.wf",
+    ]);
+    assert!(
+        out.stderr
+            .contains("the fact generator does not support group A: a call"),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(
+        usage_error(&["check", "--groups=G", &path]),
+        "--groups needs construct groups from A to F, found `G`: `G` is not a construct group (A to F)"
+    );
+}

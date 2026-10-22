@@ -1876,9 +1876,9 @@ Statements (third column: what a cleanup path adds):
 | --- | --- | --- |
 | `Live` | cfg_edge | |
 | `Dead` | cfg_edge, scope_end | unwound_at (in place of scope_end) |
-| `Assign` | cfg_edge, points_into, mutates_at, reads_at, rebound_at, uses, moved_at, scope_end (a drop pair), overwrites, empty_at, moved_part, rest_linear, writes_via, sim_run_at, ref_at, ref_in | |
+| `Assign` | cfg_edge, points_into, mutates_at, reads_at, rebound_at, uses, moved_at, scope_end (a drop pair), overwrites, empty_at, moved_part, rest_linear, writes_via, sim_run_at, ref_at, ref_in, unset_at (the place fields of a value built in place) | |
 | `Drop` | cfg_edge, reads_at, rebound_at (a drop pair), uses | |
-| `Consume` | cfg_edge, uses, moved_at | |
+| `Consume` | cfg_edge, moved_at, moved_part, rest_linear (a part) | |
 | `Uninit` | cfg_edge, unset_at | |
 | `Bounds` | cfg_edge, reads_at, uses | |
 | `Mention` | cfg_edge, uses | |
@@ -2043,6 +2043,48 @@ aggregate emits `uses` and `reads_at` of the variable and no reference.
 `may_abort(n)` holds at each node whose abort edge the fact generator keeps: a perform
 (each effect can abort, ADR 0005), a call or a resume whose summary can abort, `Join`,
 `ScopeWait`, `Fork`, `Assert`, `Scope` (it performs `Async`).
+
+As built (plan stage F4, `factgen/templates.rs`, `kernel.rs`, `decls.rs` and
+`factgen::emit`):
+
+- `emit` writes the facts of a body of group A with no `Call`, `Perform` or `Resume`, no
+  loop and no `OnAbort` action. Another construct gives `Unsupported`, and the old pipeline
+  checks the program. `factgen::preview` gives the facts of one body.
+- With no group on (the default until stage F8), no program is in scope, also a program
+  whose bodies have no IR and so use no group. `weft check|facts|agree|lint|run|test`
+  take `--groups=LETTERS` to turn groups on.
+- A node `entry` before the entry block binds the parameters: `rebound_at`, `points_into`
+  and `empty_at` of each parameter and of its `H` and `U` variables. The `Param` root of a
+  reference parameter has the text of the parameter (as the old lowering), and the `Held`
+  root has the text `*p`.
+- A `move` of a value of a plain-data type is a copy: no `moved_at` (the builder writes
+  `move` for a temporary of any type, for example `switch move _2`).
+- `Consume` is not a use: the parts of the value moved before it. A part gives
+  `moved_part` and `rest_linear`, as a `move` of a part.
+- `rest_linear` holds if the type of another part can hold a linear value and the state
+  says that the rest of the value can hold one (a part that moved before holds nothing).
+- The binds of one pattern move the value once. A bind is an `Assign` of a part to a whole
+  local with the origin of that local (the name in the pattern). A later bind of the same
+  pattern does not use `S(l)` (the old lowering moves the whole value at a destructure).
+  Two `let` statements stay a use after a move (W0302 keeps its meaning).
+- A value built in place: an `in_place` local, or a temporary that gets an aggregate
+  (`into` writes it into its destination, 5.36). Its `immovable` flag is off. A move of
+  it into a move path does not read its place fields: each `U` variable of the
+  destination at its place fields gets `unset_at` if the place field can have no value
+  (its `rebound_at` goes away). A move of a `!Move` value (W0604) and a move into `_0` do
+  not read the place fields either.
+- A reference in a place field points into the place that the struct states for the
+  field: α of `(*(*f).cur)` is `f.buf[]`.
+- W0605 (`ref_at`, `ref_in` of a place field, and `ref_at` of a struct literal) and the
+  stated returned places of `Return` use a node with no edges (label `field` or `return`)
+  and a `RefSite`, as the old lowering. A returned reference into a local, a temporary or
+  a by-value parameter has no `ref_at`: `error(_0, Return)` gives W0301 for it until
+  `diagnose.rs` maps it to W0204 (6.9).
+- `sim_run_at` holds at a node with an operand `Const::Fn` of `sim.run`.
+- `uniq(S(l))` is the meet of the `@ uniq` modes of the values that `l` gets.
+- The state of 6.6 also has holes: the move paths that a move or an `Uninit` leaves with
+  no value below a path that must hold a value. A move of a whole local gives its holes to
+  the destination.
 
 ### 6.5 Frames in the facts
 
