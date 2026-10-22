@@ -6,7 +6,9 @@
 //!   upvar local uses the variable of its site local, and the environment of a
 //!   closure body has no variable (it is an interface root).
 //! - `H(l.q)`: each move path that the body assigns on its own and whose type
-//!   can hold a reference, a function value, a capability or a task.
+//!   can hold a reference, a function value, a capability or a task. Each
+//!   value of the part gets a variable of its own (`super::holders`); this
+//!   variable is the first.
 //! - `U(l.q)`: each place field path that can have no value (an `Uninit` of a
 //!   projected place).
 //! - `C(x)`: the cell of each local that a closure captures `ByRef`.
@@ -27,8 +29,8 @@ use std::collections::{HashMap, HashSet};
 use weft_facts::{FnFacts, Span, VarId, VarInfo, VarKind};
 use weft_ir::ty::{AdtKind, Lang, TyProp};
 use weft_ir::{
-    BlockId, BodyId, CaptureMode, LocalDecl, LocalId, LocalKind, Place, Program, Proj, StmtKind,
-    TempKind, TermKind, Ty, TyId, TyTable,
+    BlockId, BodyId, BodyKind, CaptureMode, LocalDecl, LocalId, LocalKind, Place, Program, Proj,
+    StmtKind, TempKind, TermKind, Ty, TyId, TyTable,
 };
 
 use super::alpha::{local_text, owner_local, path_text, path_ty, place_ty};
@@ -88,9 +90,27 @@ fn is_task(tys: &TyTable, t: TyId) -> bool {
     matches!(tys.lang(t), Some((Lang::Task, _)))
 }
 
+/// The name of the variable of `_0` of a body of kind `kind`: the
+/// diagnostics name the frame by it (`docs/ir.md` 6.9). `None` for another
+/// local.
+fn result_text(kind: &BodyKind, d: &LocalDecl) -> Option<String> {
+    if d.kind != LocalKind::Return {
+        return None;
+    }
+    let text = match kind {
+        BodyKind::Fn(_) | BodyKind::Test(_) => "the result",
+        BodyKind::Closure(_) => "the closure result",
+        BodyKind::Handled(_) => "handled body value",
+        BodyKind::Scope(_) => "scope body value",
+        BodyKind::Clause(..) => "clause value",
+    };
+    Some(text.to_string())
+}
+
 /// The kind of the variable of a local.
 fn var_kind(tys: &TyTable, d: &LocalDecl) -> VarKind {
     match d.kind {
+        LocalKind::Return => VarKind::Result,
         LocalKind::Param(_) => VarKind::Param,
         LocalKind::Temp(TempKind::Value) => VarKind::BlockValue,
         LocalKind::Temp(_) => VarKind::Temp,
@@ -263,7 +283,7 @@ impl Vars {
                         LocalKind::TaskResult(_) | LocalKind::ScopeCap | LocalKind::Kont(false)
                     );
                 let info = VarInfo {
-                    name: local_text(tys, d),
+                    name: result_text(&b.kind, d).unwrap_or_else(|| local_text(tys, d)),
                     kind: var_kind(tys, d),
                     span: span(d.origin.span),
                     ty: tys.show(d.ty),
@@ -407,6 +427,35 @@ impl Vars {
         self.parts.get(&(body, l)).map_or(&[], Vec::as_slice)
     }
 
+    /// The `H` variable of each part of the component: the key of its
+    /// owner local, its move path and its variable.
+    pub fn holder_parts(
+        &self,
+    ) -> Vec<(crate::analysis::Key, Vec<crate::analysis::PathStep>, VarId)> {
+        let mut out = Vec::new();
+        for key in &self.order {
+            let VarKey::H(b, pl) = key else {
+                continue;
+            };
+            let Some(v) = self.ids.get(key) else {
+                continue;
+            };
+            let steps: Option<Vec<crate::analysis::PathStep>> = pl
+                .proj
+                .iter()
+                .map(|pr| match pr {
+                    Proj::Field(f) => Some(crate::analysis::PathStep::Field(f.0)),
+                    Proj::Variant(x) => Some(crate::analysis::PathStep::Variant(x.0)),
+                    _ => None,
+                })
+                .collect();
+            if let Some(steps) = steps {
+                out.push(((*b, pl.local), steps, *v));
+            }
+        }
+        out
+    }
+
     /// Adds the variable `info` with the key `key`, if the key has none.
     fn add(&mut self, facts: &mut FnFacts, key: VarKey, info: VarInfo) {
         if self.ids.contains_key(&key) {
@@ -491,7 +540,15 @@ impl Vars {
             if self.ids.contains_key(&key) {
                 continue;
             }
-            let info = Self::plain(path_text(p, tys, bid, place), span(sp), tys.show(t));
+            // Each value of the part gets a variable of its own: this one is
+            // the first (`super::holders`). The name is that of the part
+            // holders of the old lowering.
+            let mut info = Self::plain(
+                format!("value in `{}`", path_text(p, tys, bid, place)),
+                span(sp),
+                tys.show(t),
+            );
+            info.kind = VarKind::Temp;
             self.add(facts, key, info);
         }
         for (place, sp) in unset {

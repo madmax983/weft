@@ -115,6 +115,28 @@ pub const fn term_name(t: &TermKind) -> &'static str {
     }
 }
 
+/// The span of the node of statement `s` of body `b`: the span of its
+/// origin. The end of a parameter of a function or a test has the span of
+/// the function, as the old lowering: a diagnostic of the parameter at its
+/// end (W0601) is at the declaration.
+fn stmt_span(b: &Body, s: &weft_ir::Stmt) -> Span {
+    if let StmtKind::Dead(l) = s.kind {
+        let param = b
+            .locals
+            .get(l.index())
+            .is_some_and(|d| matches!(d.kind, weft_ir::LocalKind::Param(_)));
+        if param
+            && matches!(
+                b.kind,
+                weft_ir::BodyKind::Fn(_) | weft_ir::BodyKind::Test(_)
+            )
+        {
+            return span(b.origin.span);
+        }
+    }
+    span(s.origin.span)
+}
+
 /// The name of a statement, for node labels.
 const fn stmt_name(s: &StmtKind) -> &'static str {
     match s {
@@ -303,7 +325,7 @@ impl NodeTable {
                 phase: Phase::Main,
                 dest,
             };
-            let n = self.node(facts, key, span(s.origin.span), stmt_name(&s.kind), &detail);
+            let n = self.node(facts, key, stmt_span(b, s), stmt_name(&s.kind), &detail);
             self.chain(facts, &mut last, n, body, block, dest);
         }
         let name = term_name(&blk.term.kind);

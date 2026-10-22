@@ -39,6 +39,7 @@ pub mod checks;
 pub mod decls;
 mod exports;
 pub mod frames;
+pub mod holders;
 pub mod kernel;
 pub mod nodes;
 pub mod rels;
@@ -484,6 +485,7 @@ pub fn emit_component(
         crate::analysis::run(&mut cx, entry, init).map_err(|e| unsupported(&e))?
     };
     let mut uniq: BTreeMap<weft_facts::VarId, bool> = BTreeMap::new();
+    let mut holders = holders::Holders::new(vars.holder_parts());
     let stored = {
         let mut em = templates::Em {
             p,
@@ -492,6 +494,7 @@ pub fn emit_component(
             facts,
             roots: &mut roots,
             vars: &vars,
+            holders: &mut holders,
             body: entry,
             cleanup: false,
             ret_places: ret_places.as_deref(),
@@ -505,6 +508,7 @@ pub fn emit_component(
         emit_blocks(&mut em, &table, &frames, &states, body).map_err(|e| unsupported(&e))?;
         em.stored
     };
+    holders.finish(facts);
     let diags = stored_behind(p, &tys, facts, &roots, body, &stored);
     // Each local with a root owns it.
     let owners: Vec<(PlaceId, weft_facts::VarId)> = roots
@@ -687,6 +691,7 @@ fn emit_block(
         };
         if let Some(n) = table.get(key) {
             em.at = (block, at);
+            em.holders.before(n, &st);
             templates::stmt(em, n, &st, &s.kind, pair)?;
         }
         let mut cx = em_cx(em);
@@ -711,6 +716,15 @@ fn emit_block(
         .iter()
         .filter_map(|d| table.get(at(Phase::FrameEnd, d.id())))
         .collect();
+    // Each node of the terminator sees the state before it.
+    let phases = [Phase::Main, Phase::Ret, Phase::FrameEnd];
+    for m in phases
+        .iter()
+        .filter_map(|&ph| table.get(at(ph, dest)))
+        .chain(aborts.iter().copied())
+    {
+        em.holders.before(m, &st);
+    }
     match &blk.term.kind {
         weft_ir::TermKind::Call { .. } => {
             let nodes = templates::CallNodes {

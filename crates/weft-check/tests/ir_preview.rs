@@ -459,3 +459,242 @@ fn main() / fail {
 ";
     assert_eq!(ir_codes(clean), Vec::<(String, usize)>::new());
 }
+
+/// The code and the line of each diagnostic of the bodies `names` of the
+/// corpus program `file`: with the facts of the old pipeline and with the
+/// facts of the preview of the `ir` pipeline.
+#[allow(clippy::type_complexity)]
+fn corpus_bodies(
+    file: &str,
+    names: &[&str],
+) -> Vec<(String, Vec<(String, usize)>, Vec<(String, usize)>)> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/programs")
+        .join(file);
+    let src = fs::read_to_string(path).unwrap_or_default();
+    let a = analyze_source(&src, Options::from_markers(&src))
+        .unwrap_or_else(|d| panic!("the program does not parse: {}", d.message));
+    let built = irbuild::build(&a);
+    let line = |lo: u32| {
+        src.get(..lo as usize)
+            .map_or(0, |s| s.matches('\n').count() + 1)
+    };
+    let lines = |ds: Vec<(String, u32)>| {
+        let mut v: Vec<(String, usize)> = ds.into_iter().map(|(c, lo)| (c, line(lo))).collect();
+        v.sort();
+        v
+    };
+    let mut out = Vec::new();
+    for (i, e) in built.entries.iter().enumerate() {
+        if !names.contains(&e.name.as_str()) {
+            continue;
+        }
+        let Some(old) = a.bodies.get(i) else {
+            continue;
+        };
+        let facts = factgen::preview(&a, &built, i)
+            .unwrap_or_else(|u| panic!("`{}`: no preview: {}", e.name, u.reason));
+        let mut b = old.clone();
+        b.facts = facts;
+        out.push((
+            e.name.clone(),
+            lines(body_diags(&a, old.clone())),
+            lines(body_diags(&a, b)),
+        ));
+    }
+    assert_eq!(out.len(), names.len(), "{file}: {out:?}");
+    out
+}
+
+#[test]
+fn a_new_value_of_a_part_replaces_the_references_of_its_old_value() {
+    // `docs/ir.md` 6.3: a new value of `w.x` replaces the places of `w.x`.
+    // A reference in an old value of the part does not make a later use of
+    // the part invalid (76 `reassign_*`, 87 `branch_stale`, the `Box`
+    // shapes of 154), but a reference in a value that the part can hold
+    // still does (76 `branch_keeps_part`, 87 `branch_live`). Not here: 154
+    // `move_set`, where a place field reference into a boxed value moves
+    // with the box (a relocation of place fields, ADR 0007; stage F20).
+    let cases: [(&str, &[&str]); 3] = [
+        (
+            "76_ref_flow.wf",
+            &[
+                "reassign_part",
+                "reassign_whole",
+                "branch_keeps_part",
+                "new_part_value",
+            ],
+        ),
+        ("87_stored_refs.wf", &["branch_stale", "branch_live"]),
+        (
+            "154_unset_nested.wf",
+            &["new_box", "store_unset", "new_box_set", "new_frame"],
+        ),
+    ];
+    let mut bad = Vec::new();
+    for (file, names) in cases {
+        for (name, old, ir) in corpus_bodies(file, names) {
+            if old != ir {
+                bad.push(format!("{file} `{name}`: old {old:?}, ir {ir:?}"));
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+#[test]
+fn a_part_that_is_stale_on_one_branch_is_valid_after_the_join() {
+    let src = "struct E { hp: u64 }
+struct World { entities: Vec<E> }
+struct Wrap<T> { x: T }
+fn moved_rest(a: &World, b: &World) / mut(a.entities) {
+    let w = Wrap { x: (&b.entities[0], []) }
+    w.x = (&a.entities[0], [&b.entities[0]])
+    let m = w.x.1
+    a.entities.clear()
+    print(w.x.0.hp)
+}
+fn stale_then(a: &World, b: &World, c: bool) / mut(a.entities) {
+    let w = Wrap { x: &b.entities[0] }
+    if c {
+        w.x = &a.entities[0]
+        w.x = &b.entities[0]
+        a.entities.clear()
+    } else {
+        w.x = &a.entities[0]
+    }
+    print(w.x.hp)
+}
+fn stale_then_live(a: &World, b: &World, c: bool) / mut(a.entities) {
+    let w = Wrap { x: &b.entities[0] }
+    if c {
+        w.x = &a.entities[0]
+        w.x = &b.entities[0]
+    } else {
+        w.x = &a.entities[0]
+    }
+    a.entities.clear()
+    print(w.x.hp)
+}
+fn main() {}
+";
+    let mut got = ir_codes(src);
+    got.sort();
+    // The rest of a part after a move of another part keeps its references
+    // (line 9: W0301 and the W0302 of the R3a encoding); the stale value of
+    // the `then` branch is not a use at line 20; the value of the `else`
+    // branch is (line 31). The old pipeline gives the same.
+    let want: Vec<(String, usize)> = [("W0301", 9), ("W0301", 31), ("W0302", 9)]
+        .iter()
+        .map(|(c, l)| ((*c).to_string(), *l))
+        .collect();
+    assert_eq!(got, want);
+}
+
+/// The codes and lines of the diagnostics of `src` with the old pipeline.
+fn old_codes(src: &str) -> Vec<(String, usize)> {
+    let a = analyze_source(src, Options::from_markers(src))
+        .unwrap_or_else(|d| panic!("the program does not parse: {}", d.message));
+    let line = |lo: u32| {
+        src.get(..lo as usize)
+            .map_or(0, |s| s.matches('\n').count() + 1)
+    };
+    let mut v: Vec<(String, usize)> = check_analysis(a, &[])
+        .diags
+        .iter()
+        .map(|d| (format!("{:?}", d.code), line(d.span.lo)))
+        .collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn a_returned_reference_into_a_local_is_w0204_at_the_returned_expression() {
+    // `docs/ir.md` 6.9: `error(_0, Return)` of a function is W0204 at the
+    // span of the `Return` origin, as the old lowering. A by-value
+    // parameter that the signature states has only the W0204 of the
+    // signature check. `fn one() -> &u64 { &1 }`: the promoted temporary
+    // ends at the frame end.
+    let src = "struct E { hp: u64 }
+struct Wrap<T> { x: T }
+fn local_ref() -> Option<&u64> {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    Some(&v[0])
+}
+fn wrapped_local() -> Wrap<&u64> {
+    let v: Vec<u64> = Vec.new()
+    v.push(1)
+    Wrap { x: &v[0] }
+}
+fn ret_local(v: &Vec<u64>) -> &u64 in v[] {
+    let w = Vec.new()
+    w.push(1)
+    &w[0]
+}
+fn ret_by_value(v: Vec<u64>) -> &u64 in v[] { &v[0] }
+fn ret_in_by_value(v: Vec<u64>, r: &u64 in v[]) -> &u64 in v[] { r }
+fn one() -> &u64 { &1 }
+fn early(c: bool) -> &u64 {
+    let w = [1, 2]
+    if c { return &w[0] }
+    &2
+}
+fn main() {}
+";
+    let mut got = ir_codes(src);
+    got.sort();
+    assert_eq!(got, old_codes(src));
+    assert!(
+        got.iter().filter(|(c, _)| c == "W0204").count() >= 7,
+        "{got:?}"
+    );
+    assert!(!got.iter().any(|(c, _)| c == "W0301"), "{got:?}");
+}
+
+#[test]
+fn a_linear_parameter_that_the_body_drops_is_w0601_at_the_function() {
+    // The old lowering ends the parameters at a node with the span of the
+    // function: W0601 of a parameter is at the line of the declaration
+    // (70_type_props, 72 `match_payload_wild`). A local ends at the
+    // closing brace in both pipelines.
+    let src = "linear struct Tok { id: u64 }
+linear struct Tx { id: u64 }
+fn in_option(o: Option<Tok>) {
+    let x = 1
+}
+fn match_payload_wild(o: Option<Tx>) {
+    match o {
+        Some(_) => {},
+        None => {}
+    }
+}
+fn loc() {
+    let t = Tok { id: 1 }
+    let y = 2
+}
+fn main() {}
+";
+    let mut got = ir_codes(src);
+    got.sort();
+    assert_eq!(got, old_codes(src));
+}
+
+#[test]
+fn a_receiver_that_a_later_argument_moves_is_rejected() {
+    // `docs/ir.md` 5.19: the receiver is read after the arguments. In
+    // 33_rc_deps line 32 (`a.items.push(eat(a))`) `eat` moves `a` before the
+    // receiver reads it: W0302 (the old pipeline says W0301). The IR engine
+    // faults on it (weft-interp `compile_ir.rs`).
+    let src = "struct Cell2 { items: Vec<u64>, n: u64 }
+fn mk() -> Rc<Cell2> { Rc.new(Cell2 { items: Vec.new(), n: 4 }) }
+fn eat(c: Rc<Cell2>) -> u64 { 0 }
+fn receiver_moved() {
+    let a = mk()
+    a.items.push(eat(a))
+}
+fn main() {}
+";
+    assert_eq!(ir_codes(src), vec![("W0302".to_string(), 6)]);
+    assert_eq!(old_codes(src), vec![("W0301".to_string(), 6)]);
+}

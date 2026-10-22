@@ -995,3 +995,97 @@ fn each_aborting_op_of_the_ir_has_a_landing_pad_into_its_cleanup_code() {
     }
     assert!(pads >= 4, "only {pads} landing pads");
 }
+
+/// Runs the unchecked program `src` with `engine` and the oracle checks.
+/// Returns the output and the error message, if any.
+fn run_unchecked_oracle(src: &str, engine: Engine) -> (String, Option<String>) {
+    let a = weft_sema::analyze_source(src, Options::default()).unwrap();
+    let opts = RunOptions {
+        max_steps: Some(1_000_000),
+        oracle: true,
+        engine,
+        ..RunOptions::default()
+    };
+    match weft_interp::run_analysis_main(&a, &opts) {
+        Ok(o) => {
+            assert_eq!(o.fallback, None);
+            (o.stdout, None)
+        }
+        Err(e) => {
+            assert_eq!(e.outcome.fallback, None);
+            (e.outcome.stdout.clone(), Some(e.to_string()))
+        }
+    }
+}
+
+#[test]
+fn the_receiver_is_read_after_the_arguments_on_the_ir_engine() {
+    // `docs/ir.md` 5.19 (33_rc_deps, 26 `temp_receiver`, v21_recv_deps).
+    // `a.items.push(eat(a))`: `eat` moves `a`, then the receiver reads it.
+    // The run faults: the `ir` pipeline must reject it (W0302).
+    let moved = "struct Cell2 { items: Vec<u64>, n: u64 }
+fn mk() -> Rc<Cell2> { Rc.new(Cell2 { items: Vec.new(), n: 4 }) }
+fn eat(c: Rc<Cell2>) -> u64 { 0 }
+fn main() {
+    let a = mk()
+    a.items.push(eat(a))
+}";
+    let (_, err) = run_unchecked_oracle(moved, Engine::Ir);
+    assert!(
+        err.as_deref()
+            .is_some_and(|m| m.contains("used after it was moved")),
+        "{err:?}"
+    );
+    // `s.h.items.push(reset(s))`: `reset` gives `s.h` a new handle, then the
+    // receiver reads the new handle. The run is clean: the old W0301 is a
+    // false positive under the order of the IR.
+    let field = "struct Cell2 { items: Vec<u64>, n: u64 }
+struct S { h: Rc<Cell2>, k: u64 }
+fn mk() -> Rc<Cell2> { Rc.new(Cell2 { items: Vec.new(), n: 4 }) }
+fn reset(s: &S) -> u64 / mut(s.h) { s.h = mk(); 0 }
+fn receiver_field(s: &S) / mut(s.h, Cell2) {
+    s.h.items.push(reset(s))
+}
+fn main() {
+    let s = S { h: mk(), k: 0 }
+    receiver_field(&s)
+    print(s.h.items.len())
+}";
+    assert_eq!(
+        run_unchecked_oracle(field, Engine::Ir),
+        ("1\n".to_string(), None)
+    );
+    // `world.entities[0].heal(grow(world))`: `grow` pushes, then the
+    // receiver borrows the element. Clean on the IR engine; the AST engine
+    // takes the receiver first and reads a freed cell.
+    let temp = "struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+impl Entity {
+    fn heal(self, n: u64) / mut(self) { self.hp += 1 }
+}
+fn grow(w: &World) -> u64 / mut(w.entities) {
+    w.entities.push(Entity { hp: 1 })
+    0
+}
+fn main() {
+    let w = World { entities: [Entity { hp: 1 }] }
+    w.entities[0].heal(grow(&w))
+    print(w.entities[0].hp)
+}";
+    assert_eq!(
+        run_unchecked_oracle(temp, Engine::Ir),
+        ("2\n".to_string(), None)
+    );
+    // `if c { v }` with no `else`: the tail is a place statement (127
+    // `if_tail_moves`), `v` does not move, and the run is clean.
+    let tail = "fn main() {
+    let v = Vec.new()
+    v.push(1)
+    if true { v }
+    print(v.len())
+}";
+    assert_eq!(
+        run_unchecked_oracle(tail, Engine::Ir),
+        ("1\n".to_string(), None)
+    );
+}

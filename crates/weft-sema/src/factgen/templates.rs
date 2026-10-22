@@ -55,6 +55,8 @@ pub struct Em<'a> {
     pub roots: &'a mut Roots,
     /// The variables of the component.
     pub vars: &'a Vars,
+    /// The values of the parts with variables of their own.
+    pub holders: &'a mut super::holders::Holders,
     /// The body of the nodes.
     pub body: BodyId,
     /// The node is on a cleanup path.
@@ -323,10 +325,11 @@ impl Em<'_> {
     }
 
     /// The facts of a new value `v` of the move path `path` of the local
-    /// with key `k`: `points_into` of each `H` variable at or below the path,
-    /// with the places of its part. The places of the parts with no `H`
-    /// variable go to `whole` (`S(l)`, or the variable above the path).
-    fn give_value(&mut self, k: Key, path: &[PathStep], v: &Tree, whole: Option<VarId>) {
+    /// with key `k` at node `n`: each `H` variable at or below the path gets
+    /// a new value with the places of its part (`super::holders`). The
+    /// places of the parts with no `H` variable go to `whole` (`S(l)`, or a
+    /// weak definition of the variable above the path).
+    fn give_value(&mut self, n: NodeId, k: Key, path: &[PathStep], v: &Tree, whole: Option<VarId>) {
         let hs = self.h_below(k, path);
         let all: Vec<&[PathStep]> = hs.iter().map(|(p, _)| p.as_slice()).collect();
         for (rel, var) in &hs {
@@ -335,13 +338,25 @@ impl Em<'_> {
                 .filter(|(o, _)| o.len() > rel.len() && is_prefix(rel, o))
                 .filter_map(|(o, _)| o.get(rel.len()..))
                 .collect();
-            let refs = v.get(rel).flat_without(&deeper).refs;
-            let frag = kernel::copy_ref(&[*var], &refs.into_iter().collect::<Vec<_>>());
-            self.facts.points_into.extend(frag.points_into);
+            let refs: Vec<PlaceId> = v.get(rel).flat_without(&deeper).refs.into_iter().collect();
+            self.hold(None, *var, &refs);
         }
         if let Some(w) = whole {
-            let refs = v.flat_without(&all).refs;
-            let frag = kernel::copy_ref(&[w], &refs.into_iter().collect::<Vec<_>>());
+            let refs: Vec<PlaceId> = v.flat_without(&all).refs.into_iter().collect();
+            self.hold(Some(n), w, &refs);
+        }
+    }
+
+    /// The variable `var` points into `refs`: with no node, a new value of
+    /// a part with a variable of its own; with node `n`, a weak definition
+    /// of the part at `n`. Another variable gets `points_into`.
+    fn hold(&mut self, n: Option<NodeId>, var: VarId, refs: &[PlaceId]) {
+        let part = match n {
+            None => self.holders.value(var, refs),
+            Some(n) => self.holders.add(n, var, refs),
+        };
+        if !part {
+            let frag = kernel::copy_ref(&[var], refs);
             self.facts.points_into.extend(frag.points_into);
         }
     }
@@ -744,7 +759,7 @@ fn whole(em: &mut Em<'_>, n: NodeId, st: &State, k: Key, v: &Tree) {
     em.facts
         .rebound_at
         .extend(em.vars.parts_of(k.0, k.1).iter().map(|(_, _, v)| (*v, n)));
-    em.give_value(k, &[], v, s);
+    em.give_value(n, k, &[], v, s);
     if em.source_local(k) && st.may_hold(k) {
         if let Ok(r) = em.roots.local(em.p, em.tys, em.facts, k.0, k.1) {
             em.facts.mutates_at.push((n, r));
@@ -783,7 +798,7 @@ fn part(
         .max_by_key(|(p, _)| p.len())
         .map(|(_, v)| v)
         .or(s);
-    em.give_value(k, path, v, above);
+    em.give_value(n, k, path, v, above);
     let al = em.alpha(st, place)?;
     em.facts
         .mutates_at
@@ -811,16 +826,16 @@ fn element(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, v: &Tree) -> R
         .map(|(_, v)| v)
         .or(s);
     let refs: Vec<PlaceId> = v.flat().refs.into_iter().collect();
-    let mut f = Frag {
+    let f = Frag {
         uses: a.vars.clone(),
         reads: a.ptrs.clone(),
         mutates: a.places,
         ..Frag::default()
     };
-    if let Some(h) = holder {
-        f.extend(kernel::copy_ref(&[h], &refs));
-    }
     em.apply(n, f);
+    if let Some(h) = holder {
+        em.hold(Some(n), h, &refs);
+    }
     if let (Some(s), Some(t)) = (s, em.place_ty(place)) {
         if ir_props(em.tys, t).linear {
             em.facts.overwrites.push((s, n));
@@ -884,7 +899,7 @@ fn through(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, v: &Tree) -> R
     let self_ref = field_place(em, st, place)?.is_some();
     let sp = em.facts.node(n).span;
     for &q in &al.places {
-        store(em, q, &refs, sp, !self_ref);
+        store(em, n, q, &refs, sp, !self_ref);
     }
     Ok(())
 }
@@ -894,7 +909,7 @@ fn through(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, v: &Tree) -> R
 /// `rebound_at`). A place that a caller keeps (behind a reference
 /// parameter, in an `rc` object): with `check`, the W0204 store check gets
 /// it ([`Stored`]).
-fn store(em: &mut Em<'_>, q: PlaceId, refs: &[PlaceId], span: Span, check: bool) {
+fn store(em: &mut Em<'_>, n: NodeId, q: PlaceId, refs: &[PlaceId], span: Span, check: bool) {
     let Some((k, path)) = em.roots.path_of(em.facts, q) else {
         if check {
             em.stored.push(Stored {
@@ -913,8 +928,7 @@ fn store(em: &mut Em<'_>, q: PlaceId, refs: &[PlaceId], span: Span, check: bool)
         .map(|(_, v)| v)
         .or_else(|| em.s_var(k));
     if let Some(h) = holder {
-        let frag = kernel::copy_ref(&[h], refs);
-        em.facts.points_into.extend(frag.points_into);
+        em.hold(Some(n), h, refs);
     }
 }
 
@@ -1309,11 +1323,14 @@ pub fn ret(em: &mut Em<'_>, n: NodeId, st: &State, origin: weft_ir::Span) -> R {
     let Some(allowed) = em.ret_places else {
         return Ok(());
     };
-    let refs: Vec<PlaceId> = named_refs(em, st.value(k, &[]).flat().refs)
-        .into_iter()
-        .filter(|&r| !super::decls::is_local_root(em.facts, r))
-        .collect();
-    if refs.is_empty() {
+    let all = named_refs(em, st.value(k, &[]).flat().refs);
+    // A reference into a local of the body is `error(_0, Return)` (W0204 of
+    // the diagnostics). The node of the stated places is there too: the
+    // diagnostics do not report a by-value parameter that the signature
+    // states twice.
+    let mut refs = all.clone();
+    refs.retain(|&r| !super::decls::is_local_root(em.facts, r));
+    if all.is_empty() {
         return Ok(());
     }
     let allowed = allowed.to_vec();
@@ -1379,8 +1396,7 @@ pub fn entry(em: &mut Em<'_>, n: NodeId, params: &[(LocalId, Tree)]) -> R {
             em.facts.rebound_at.push((var, n));
             if kind == PartKind::H {
                 let refs: Vec<PlaceId> = flat.refs.iter().copied().collect();
-                let f = kernel::copy_ref(&[var], &refs);
-                em.facts.points_into.extend(f.points_into);
+                em.hold(None, var, &refs);
             }
         }
     }
@@ -1692,7 +1708,7 @@ pub fn call(
             moved(em, r, st, q, &al)?;
         }
         for (q, refs) in &out.stores {
-            store(em, *q, refs, at, true);
+            store(em, r, *q, refs, at, true);
         }
         em.facts.scope_end.extend(drops.iter().map(|&v| (v, r)));
     }

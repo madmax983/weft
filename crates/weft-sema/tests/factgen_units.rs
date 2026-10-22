@@ -783,7 +783,7 @@ fn each_local_with_storage_has_an_owner_variable_with_its_flags() {
         local: local("p"),
         proj: vec![Proj::Field(weft_ir::FieldIdx(0))],
     };
-    assert_eq!(var(VarKey::H(f, pa)).name, "p.0");
+    assert_eq!(var(VarKey::H(f, pa)).name, "value in `p.0`");
     // A local that a closure captures by reference has a cell variable.
     let (c, cap) = p
         .closures
@@ -1110,7 +1110,13 @@ fn node_rels(f: &FnFacts) -> BTreeMap<NodeId, BTreeSet<&'static str>> {
         ("spared_at", &f.spared_at),
     ];
     for (name, rel) in vn {
-        for &(_, n) in rel {
+        for &(v, n) in rel {
+            // A version of a part binds again at each node where the part
+            // does not hold its value (`factgen::holders`): not a fact of
+            // the template of the node.
+            if name == "rebound_at" && f.var(v).name.starts_with("value in `") {
+                continue;
+            }
             add(n, name);
         }
     }
@@ -1562,32 +1568,48 @@ fn the_first_value_writes_nothing_and_an_overwrite_mutates_the_root() {
 fn a_new_value_of_a_part_with_a_variable_replaces_its_places() {
     let f = ir_facts("holes");
     let t = var_named(&f, "t");
-    let t0 = var_named(&f, "t.0");
-    // The part holds the places of its values; the whole local does not.
-    assert_eq!(
-        points(&f, t0),
-        ["x".to_string(), "y".to_string()].into_iter().collect()
-    );
-    assert!(points(&f, t).is_empty(), "{:?}", points(&f, t));
-    // A new value of the whole and of the part rebinds the part.
-    let rebinds: Vec<NodeId> = f
-        .rebound_at
-        .iter()
-        .filter(|(v, _)| *v == t0)
-        .map(|(_, n)| *n)
+    // Each value of the part has a version of the variable of the part
+    // (`factgen::holders`): `(&x, 1)` and `&y`.
+    let versions: Vec<VarId> = (0..f.vars.len())
+        .map(|i| VarId(id(i)))
+        .filter(|&v| f.var(v).name == "value in `t.0`")
         .collect();
-    assert_eq!(rebinds.len(), 2);
-    // The part assignment uses the whole local and changes the part.
-    let part = rebinds
+    assert_eq!(versions.len(), 2, "{versions:?}");
+    let of = |place: &str| {
+        versions
+            .iter()
+            .copied()
+            .find(|&v| points(&f, v) == BTreeSet::from([place.to_string()]))
+            .unwrap_or_else(|| panic!("no version points into `{place}`"))
+    };
+    let (tx, ty) = (of("x"), of("y"));
+    // The whole local holds no place of the part.
+    assert!(points(&f, t).is_empty(), "{:?}", points(&f, t));
+    // A new value of the whole and of the part rebinds each version.
+    let assigns = nodes_labelled(&f, "assign");
+    let whole = assigns
         .iter()
         .copied()
-        .find(|&n| !has(&f.rebound_at, t, n))
+        .find(|&n| has(&f.rebound_at, t, n))
+        .expect("the assignment of `t`");
+    let part = assigns
+        .iter()
+        .copied()
+        .find(|&n| mutates(&f, n) == BTreeSet::from(["t.0".to_string()]))
         .expect("the part assignment");
+    for n in [whole, part] {
+        assert!(has(&f.rebound_at, tx, n) && has(&f.rebound_at, ty, n));
+    }
+    // The part assignment uses the whole local.
     assert!(has(&f.uses, t, part));
-    assert_eq!(mutates(&f, part), BTreeSet::from(["t.0".to_string()]));
-    // A read of the part uses the part and the whole local.
+    assert!(!has(&f.rebound_at, t, part));
+    // A read of the part uses the whole local and the version of the value
+    // that the part holds there. The old value binds again: its state does
+    // not go on.
     let print = nodes_labelled(&f, "print");
-    assert!(has(&f.uses, t0, print[0]) && has(&f.uses, t, print[0]));
+    assert!(has(&f.uses, ty, print[0]) && has(&f.uses, t, print[0]));
+    assert!(!has(&f.uses, tx, print[0]));
+    assert!(has(&f.rebound_at, tx, print[0]));
 }
 
 #[test]

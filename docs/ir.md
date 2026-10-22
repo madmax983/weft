@@ -1931,6 +1931,22 @@ type parameter can); `U` comes from each `Uninit` of a projected place; `C` from
 `ByRef` capture of a whole local (at the site local of an upvar); `has_on_abort` needs
 `linear`; `uniq` is the property of the local until the analysis (F3).
 
+As built (plan stage F8a, `factgen/holders.rs`): `points_into` has no node, so one `H`
+variable for each part would collect the places of each value that the part gets, and a
+reference in an old value would make a later use of the part invalid (76 `reassign_*`,
+87 `branch_stale`). Each value of a part gets a *version* of the variable: the versions
+of one part are keyed by the places of the new value (two writes with the same places
+share one), and a weak definition (a store through a pointer, an element, a part with no
+variable of its own) adds its places to each version that the part can hold there. A
+version is *current* at a node if the state of the analysis before the node lets the part
+hold one of its places. A use of the part uses the current versions; a write of the part
+or of a part above it rebinds each version; at each node where a version is not current it
+gets `rebound_at`, so an old value that a branch replaced does not carry its invalid state
+to the join. The versions have the name of the part holders of the old lowering
+(``value in `w.x` ``). Not closed: a place field reference into a boxed value moves with the
+box and makes the destination point into the source local (154 `move_set`, and the
+W0301 of the `n*_immov` probes): a relocation of place fields (ADR 0007), stage F20.
+
 ### 6.4 Templates
 
 Each instruction has one template: the input relations of `spec/weft.dl` that it can emit
@@ -2639,6 +2655,17 @@ the IR and the analysis, not a surface walk:
 | W0303 | the old lowering; the body gets no IR (5.36) |
 | W0604 | the spec rule `moved_immovable`; the fact generator sets the `immovable` flag (5.36, 6.3) |
 | W0502 (into plain data) | `typeck`: a `once` closure goes into a place of plain data |
+
+As built (plan stage F8a): `_0` has the variable kind `Result` (`weft-facts`), and its
+name tells the frame: `the result` (a function or a test), `the closure result`,
+`handled body value`, `scope body value`, `clause value`. An `error` of `_0` at the
+`return` node whose cause is the end of a local is W0204 for the first two (the text of
+the old lowering; a by-value parameter that the signature states as a returned place has
+only the W0204 of the signature check, so `ret` keeps the node of the stated places also
+when each returned reference is into a local), and W0301 "the value leaves after its
+place ends" for the others. The `Dead` of a parameter of a function or a test has the
+span of the function, as the end of the parameters of the old lowering: W0601 of a
+parameter is at its declaration.
 
 `diagnose.rs` names a variable by its local and a temporary by its kind and origin
 ("the temporary of `mk_v()` at line 3"). The corpus markers keep their lines: the spans
