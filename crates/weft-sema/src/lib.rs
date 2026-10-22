@@ -363,8 +363,10 @@ fn analyze_bounded(
     let inferred = infer::infer(&prog, &mut sigs, &user_fns, limit, &lower);
     kept.extend(typeck_only(&inferred.diags));
     diags.extend(inferred.diags);
+    // W0118 of the old inference. The `ir` pipeline asks the summaries
+    // (`factgen::checks`) and keeps these only with another emit.
     let rows = program::check_on_abort_rows(&prog, &sigs, opts.no_runtime);
-    kept.extend(rows.iter().cloned());
+    let old_rows = rows.clone();
     diags.extend(rows);
     let mut bodies = Vec::new();
     let mut work = Work::default();
@@ -451,7 +453,11 @@ fn analyze_bounded(
         ir_facts: None,
     };
     if opts.facts != FactGen::Old {
-        let (scope, ir) = factgen::run(&a, opts.ir_groups, emit, kept);
+        let on_abort = factgen::OnAbortRows {
+            old: old_rows,
+            no_runtime: opts.no_runtime,
+        };
+        let (scope, ir) = factgen::run(&a, opts.ir_groups, emit, kept, on_abort);
         a.ir_scope = Some(scope);
         a.ir_facts = ir;
         if opts.facts == FactGen::Ir {

@@ -14,6 +14,7 @@ use weft_ir::{
 };
 use weft_ir::{Callee, CapArgs};
 use weft_sema::factgen::alpha::{self, AlphaError, Roots};
+use weft_sema::factgen::frames::Frames;
 use weft_sema::factgen::nodes::{self, NodeKey, NodeTable, Phase, PAST};
 use weft_sema::factgen::rels::{self, Part, Rel, Role, Source};
 use weft_sema::factgen::vars::{VarKey, Vars};
@@ -441,7 +442,7 @@ fn the_node_table_links_the_phases_and_the_blocks() {
     let f = body_of(&b, "f");
     let body = &b.program.bodies[f.index()];
     let mut facts = FnFacts::default();
-    let table = NodeTable::build(&b.program, f, &mut facts, &[PAST]);
+    let table = NodeTable::build(&b.program, f, &mut facts, &Frames::past(&b.program, f));
     let (cb, next, unwind) = body
         .blocks
         .iter()
@@ -951,7 +952,12 @@ fn the_skeleton_runs_on_the_corpus() {
             let mut roots = Roots::default();
             let mut table = NodeTable::default();
             for &body in &comp {
-                table.add_body(&b.program, body, &mut facts, &[PAST]);
+                table.add_body(
+                    &b.program,
+                    body,
+                    &mut facts,
+                    &Frames::past(&b.program, body),
+                );
                 for pl in places_of(&b.program.bodies[body.index()]) {
                     match alpha::alpha(&b.program, &mut tys, &mut facts, &mut roots, body, &pl) {
                         Ok(_) => ok += 1,
@@ -1183,7 +1189,18 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
         "uninit" => (&["cfg_edge", "unset_at"], &[]),
         "bounds" | "switch" | "print" => (&["cfg_edge", "reads_at", "uses"], &[]),
         "mention" => (&["cfg_edge", "uses"], &[]),
-        "unwind value" => (&["cfg_edge", "unwound_at"], &[]),
+        // An `on abort` function: the summary of the function at the node,
+        // with the root handlers (plan stage F7).
+        "unwind value" => (
+            &[
+                "cfg_edge",
+                "unwound_at",
+                "reads_at",
+                "mutates_at",
+                "lends_mut",
+            ],
+            &[],
+        ),
         "return" => (&["cfg_edge", "uses", "ref_at", "ref_in"], &[]),
         // The node with no edges of the W0605 check of an `Assign` or of a
         // struct literal (`ref_outside` reads it).
@@ -2254,4 +2271,351 @@ fn two_levels() {
         "{:?}",
         mutates(&f, grow)
     );
+}
+
+// ------------------------------------------- aborts past the function (F7)
+
+/// The summary of the function `name` of the program of `a`.
+fn summary_named(a: &Analysis, b: &Built, name: &str) -> weft_sema::analysis::Summary {
+    let sema = a
+        .program
+        .fns
+        .iter()
+        .position(|f| f.name == name && !f.is_std)
+        .unwrap_or_else(|| panic!("no function `{name}`"));
+    let f = b
+        .fns
+        .iter()
+        .find_map(|(s, f)| (s.index() == sema).then_some(*f))
+        .unwrap_or_else(|| panic!("`{name}` has no function of the IR"));
+    let sums = weft_sema::factgen::summaries(a, b);
+    sums.get(f)
+        .unwrap_or_else(|why| panic!("`{name}` has no summary: {why}"))
+        .clone()
+}
+
+/// The nodes that an edge from `n` reaches.
+fn succs(f: &FnFacts, n: NodeId) -> Vec<NodeId> {
+    f.cfg_edge
+        .iter()
+        .filter(|(a, _)| *a == n)
+        .map(|(_, b)| *b)
+        .collect()
+}
+
+/// True if node `n` is a node of a cleanup block (its detail names a block
+/// that is a cleanup block of body `body`) or an abort phase.
+fn on_cleanup(f: &FnFacts, b: &Built, n: NodeId) -> bool {
+    let node = f.node(n);
+    if node.label.ends_with("(abort)") {
+        return true;
+    }
+    let mut parts = node.detail.split_whitespace();
+    let (Some(body), Some(block)) = (parts.next(), parts.next()) else {
+        return false;
+    };
+    let (Ok(body), Ok(block)) = (
+        body.trim_start_matches('b').parse::<usize>(),
+        block.trim_start_matches("bb").parse::<usize>(),
+    ) else {
+        return false;
+    };
+    b.program.bodies[body].blocks[block].cleanup
+}
+
+const ABORTS: &str = "fn work() / fail { fail(\"x\") }
+fn quiet(x: u64) -> u64 { x }
+fn run() / fail {
+    let a = quiet(1)
+    work()
+    print(a)
+}
+";
+
+#[test]
+fn a_call_keeps_its_abort_edge_only_if_its_callee_can_abort() {
+    let f = ir_facts_with(ABORTS, Options::default(), "run");
+    check_templates(&f, "run");
+    let calls = nodes_labelled(&f, "call");
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    let (quiet, work) = (calls[0], calls[1]);
+    assert!(!f.may_abort.contains(&quiet), "`quiet` cannot abort");
+    assert!(f.may_abort.contains(&work), "`work` can fail");
+    let aborts = nodes_labelled(&f, "call frame end (abort)");
+    assert_eq!(aborts.len(), 1, "one abort path: {aborts:?}");
+    assert!(succs(&f, work).contains(&aborts[0]));
+    let (_, b) = built(ABORTS);
+    for n in succs(&f, quiet) {
+        assert!(!on_cleanup(&f, &b, n), "`quiet` has an abort edge");
+    }
+}
+
+const P25: &str = "linear struct Lk { id: u64 }
+fn done(l: Lk) { let Lk(i) = l; print(\"done\", i) }
+fn main() {
+    let l = Lk { id: 1 }
+    let x = 3
+    assert x == 4
+    done(l)
+}
+";
+
+const P27: &str = "linear struct Lk { id: u64 }
+fn done(l: Lk) { let Lk(i) = l; print(\"done\", i) }
+fn check(x: u64) { assert x == 4 }
+fn main() {
+    let l = Lk { id: 1 }
+    check(3)
+    done(l)
+}
+";
+
+#[test]
+fn an_assert_aborts_past_the_function_also_in_a_callee() {
+    use weft_sema::analysis::summary::Abort;
+    // `tests/gate/probes/ir/probes/p25_assert_abort.wf`.
+    let (_, b) = built(P25);
+    let f = ir_facts_with(P25, Options::default(), "main");
+    let assert = nodes_labelled(&f, "assert");
+    assert_eq!(assert.len(), 1);
+    assert!(f.may_abort.contains(&assert[0]));
+    assert!(
+        succs(&f, assert[0]).iter().any(|&n| on_cleanup(&f, &b, n)),
+        "the assert has an abort edge"
+    );
+    // `p27_assert_callee.wf`: the summary of `check` has the abort of its
+    // `assert`, so the call of `check` keeps its abort edge.
+    let (a, b) = built(P27);
+    let sum = summary_named(&a, &b, "check");
+    assert!(sum.aborts.contains(&Abort::Assert), "{:?}", sum.aborts);
+    let f = ir_facts_with(P27, Options::default(), "main");
+    let call = nodes_labelled(&f, "call")[0];
+    assert!(f.may_abort.contains(&call));
+    assert_eq!(nodes_labelled(&f, "call frame end (abort)").len(), 1);
+}
+
+#[test]
+fn unwound_at_holds_only_on_the_cleanup_nodes() {
+    for (src, names) in [
+        (ABORTS, &["run", "work", "quiet"][..]),
+        (P25, &["main", "done"][..]),
+        (P27, &["main", "check"][..]),
+        (CALLS, &["holds", "vec_calls", "frame"][..]),
+        (ON_ABORT, &["holder", "main", "undo"][..]),
+    ] {
+        let (_, b) = built(src);
+        for name in names {
+            let f = ir_facts_with(src, Options::default(), name);
+            for &(_, n) in &f.unwound_at {
+                assert!(
+                    on_cleanup(&f, &b, n),
+                    "{name}: unwound_at at {:?}",
+                    f.node(n)
+                );
+            }
+            for &(_, n) in &f.scope_end {
+                assert!(
+                    !on_cleanup(&f, &b, n),
+                    "{name}: scope_end at {:?}",
+                    f.node(n)
+                );
+            }
+        }
+    }
+}
+
+/// F3-1: `undo` changes a place through the reference in its value.
+const ON_ABORT: &str = "linear struct R { o: Option<&Vec<u64>> }
+    on abort = undo
+fn undo(r: R) {
+    let R(o) = r
+    match o {
+        Some(v) => v.push(7),
+        None => {},
+    }
+}
+fn holder(v: &Vec<u64>) {
+    let r = R { o: Some(v) }
+    assert v.len() == 0
+    let R(x) = r
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let first = &v[0]
+    holder(&v)
+    print(first)
+}
+";
+
+#[test]
+fn an_on_abort_function_applies_its_summary_at_the_unwind_value() {
+    use weft_sema::analysis::summary::IRoot;
+    let f = ir_facts_with(ON_ABORT, Options::default(), "holder");
+    check_templates(&f, "holder");
+    let unwind = nodes_labelled(&f, "unwind value");
+    assert_eq!(unwind.len(), 1, "{unwind:?}");
+    let v: BTreeSet<String> = std::iter::once("v".to_string()).collect();
+    assert_eq!(
+        mutates(&f, unwind[0]),
+        v,
+        "`undo` changes what `r` points into"
+    );
+    // The change goes into the summary of `holder`, so it shows at the
+    // caller (F3-1).
+    let (a, b) = built(ON_ABORT);
+    let sum = summary_named(&a, &b, "holder");
+    assert!(
+        sum.muts.iter().any(|(m, _)| m.root == IRoot::Param(0)),
+        "{:?}",
+        sum.muts
+    );
+    let g = ir_facts_with(ON_ABORT, Options::default(), "main");
+    let call = *nodes_labelled(&g, "call")
+        .last()
+        .unwrap_or_else(|| panic!("no call"));
+    assert_eq!(mutates(&g, call), v);
+}
+
+#[test]
+fn w0118_is_a_query_over_the_summary_of_the_on_abort_function() {
+    let (a, b) = built(ON_ABORT);
+    let sums = weft_sema::factgen::summaries(&a, &b);
+    let ds = weft_sema::factgen::checks::on_abort_rows(&a, &b, &sums, false);
+    let texts: Vec<&str> = ds.iter().map(|d| d.message.as_str()).collect();
+    assert_eq!(
+        texts,
+        vec!["`on abort` function `undo` changes `r`, a place outside the value that it gets"],
+        "{ds:?}"
+    );
+    assert!(ds.iter().all(|d| d.code == weft_syntax::diag::Code::W0118));
+    // A change of the value itself is local: no W0118.
+    let local = "linear struct H { items: Vec<u64> }
+    on abort = undo_local
+fn undo_local(h: H) {
+    let H(items) = h
+    items.push(1)
+}
+";
+    let (a, b) = built(local);
+    let sums = weft_sema::factgen::summaries(&a, &b);
+    let ds = weft_sema::factgen::checks::on_abort_rows(&a, &b, &sums, false);
+    assert!(ds.is_empty(), "{ds:?}");
+}
+
+/// A child failure inside a local `handle Fail`, and with no local handler.
+const TASKS: &str = "fn quick() -> u64 { 5 }
+fn local() {
+    let r = handle Fail { fn fail(m) { 0 } } in {
+        scope { s =>
+            let t = s.spawn(|| quick())
+            let (a, b) = fork(|| quick(), || quick())
+            t.join() + a + b
+        }
+    }
+    print(r)
+}
+fn past() {
+    let r = scope { s =>
+        let t = s.spawn(|| quick())
+        let (a, b) = fork(|| quick(), || quick())
+        t.join() + a + b
+    }
+    print(r)
+}
+";
+
+#[test]
+fn a_child_failure_aborts_to_the_local_fail_handler_and_a_cancel_past_the_function() {
+    use weft_sema::factgen::frames::{self, Dest};
+    let (a, b) = built(TASKS);
+    let sums = weft_sema::factgen::summaries(&a, &b);
+    let p = &b.program;
+    // The scope body of the function `f`: its site is `f`, or the handled
+    // body of a `handle` of `f`.
+    let scope_body = |f: BodyId| -> BodyId {
+        let in_f =
+            |site: BodyId| site == f || p.handlers.iter().any(|h| h.handled == site && h.site == f);
+        let s = p.scopes.iter().find(|s| in_f(s.site));
+        s.unwrap_or_else(|| panic!("no scope in {f:?}")).body
+    };
+    let kinds = |body: BodyId| -> Vec<(&'static str, Vec<Dest>)> {
+        p.bodies[body.index()]
+            .blocks
+            .iter()
+            .filter(|blk| {
+                matches!(
+                    blk.term.kind,
+                    TermKind::Join { .. } | TermKind::Fork { .. } | TermKind::ScopeWait { .. }
+                )
+            })
+            .map(|blk| {
+                (
+                    nodes::term_name(&blk.term.kind),
+                    frames::destinations(p, &b.tys, &sums, body, &blk.term.kind),
+                )
+            })
+            .collect()
+    };
+    let h = HandlerId(0);
+    let local = kinds(scope_body(body_of(&b, "local")));
+    assert_eq!(local.len(), 3, "{local:?}");
+    for (name, ds) in &local {
+        assert!(ds.contains(&Dest::Past), "{name}: a cancel aborts past");
+        assert!(
+            ds.contains(&Dest::Handler {
+                handler: h,
+                value: true
+            }),
+            "{name}: a child failure goes to the `Fail` handler: {ds:?}"
+        );
+    }
+    let past = kinds(scope_body(body_of(&b, "past")));
+    assert_eq!(past.len(), 3, "{past:?}");
+    for (name, ds) in &past {
+        assert_eq!(ds, &vec![Dest::Past], "{name}");
+    }
+    // The node table: an abort to the handler binds the value of the clause
+    // (`AbortValue`) and goes to the cleanup copy for the handler.
+    let body = scope_body(body_of(&b, "local"));
+    let fr = Frames::of_body(p, &b.tys, &sums, body);
+    let mut facts = FnFacts::default();
+    let table = NodeTable::build(p, body, &mut facts, &fr);
+    let d = Dest::Handler {
+        handler: h,
+        value: true,
+    }
+    .id();
+    for (bi, blk) in p.bodies[body.index()].blocks.iter().enumerate() {
+        let (TermKind::Join {
+            unwind: Some(u), ..
+        }
+        | TermKind::Fork {
+            unwind: Some(u), ..
+        }
+        | TermKind::ScopeWait {
+            unwind: Some(u), ..
+        }) = blk.term.kind
+        else {
+            continue;
+        };
+        let key = NodeKey {
+            body,
+            block: BlockId(id(bi)),
+            at: u32::MAX,
+            phase: Phase::AbortValue,
+            dest: d,
+        };
+        let av = table
+            .get(key)
+            .unwrap_or_else(|| panic!("no abort value node: {key:?}"));
+        let copy = table
+            .first(body, u, d)
+            .expect("a cleanup copy for the handler");
+        assert!(facts.cfg_edge.contains(&(av, copy)));
+        assert!(
+            table.first(body, u, PAST).is_some(),
+            "and one past the function"
+        );
+    }
 }

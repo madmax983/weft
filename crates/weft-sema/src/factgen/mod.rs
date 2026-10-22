@@ -26,14 +26,19 @@
 //! generator on each function body, callees first, and [`emit`] keeps the
 //! facts of its last round. It also adds a `perform` through the capability
 //! of a caller (`crate::analysis::unknown`), and W0701 and W0706 from the
-//! inferred signatures. A program with another construct gets
+//! inferred signatures. Stage F7 adds the abort destinations of each node
+//! ([`frames`]: no abort edge for a call that cannot abort, `assert` in the
+//! summaries), the `on abort` function at an `UnwindValue`, and W0118 as a
+//! query over the summaries ([`checks`]). A program with another construct gets
 //! [`Unsupported`]: the old pipeline checks it. A test can give another emit
 //! ([`crate::analyze_with_emit`]), and [`preview`] gives the facts of one
 //! body.
 
 pub mod alpha;
+pub mod checks;
 pub mod decls;
 mod exports;
+pub mod frames;
 pub mod kernel;
 pub mod nodes;
 pub mod rels;
@@ -85,6 +90,22 @@ pub struct Input<'a> {
     /// The `EffectSig` of each function whose summary comes from its body
     /// (`crate::analysis::sig::to_effect_sig`).
     pub effects: &'a std::cell::RefCell<Vec<(crate::FnId, crate::program::EffectSig)>>,
+    /// No root handler serves an effect (W0118).
+    pub no_runtime: bool,
+    /// W0118 from the summaries of the `on abort` functions
+    /// ([`checks::on_abort_rows`]). An emit that leaves it `None` keeps the
+    /// W0118 of the old inference.
+    pub on_abort: &'a std::cell::RefCell<Option<Vec<Diagnostic>>>,
+}
+
+/// W0118 of the old inference, for an emit that does not give its own, and
+/// the option that the check needs.
+#[derive(Clone, Debug, Default)]
+pub struct OnAbortRows {
+    /// The diagnostics of the old inference.
+    pub old: Vec<Diagnostic>,
+    /// No root handler serves an effect.
+    pub no_runtime: bool,
 }
 
 /// A fact generator.
@@ -123,6 +144,12 @@ pub fn emit(input: &Input<'_>, facts: &mut [FnFacts]) -> Result<(), Unsupported>
         };
         input.diags.borrow_mut().extend(ds);
     }
+    *input.on_abort.borrow_mut() = Some(checks::on_abort_rows(
+        input.analysis,
+        input.built,
+        &inf.sums,
+        input.no_runtime,
+    ));
     let mut diags = input.diags.borrow_mut();
     diags.extend(inf.diags);
     for (f, e) in &inf.effects {
@@ -312,8 +339,12 @@ fn check_supported(
                     StmtKind::Assign(_, Rvalue::Iter(_)) => {
                         return no(Group::B, "an iterator (stage F10)");
                     }
-                    StmtKind::UnwindValue(_, weft_ir::UnwindAction::OnAbort(_)) => {
-                        return no(Group::A, "an `on abort` function (stage F7)");
+                    // The unwinder runs the `on abort` function: its summary
+                    // applies at the node (stage F7).
+                    StmtKind::UnwindValue(_, weft_ir::UnwindAction::OnAbort(f)) => {
+                        if let Err(why) = sums.get(*f) {
+                            return no(later_group(why), why);
+                        }
                     }
                     StmtKind::UnwindKont(_) => return no(Group::D, "a continuation (stage F16)"),
                     _ => {}
@@ -362,7 +393,7 @@ fn check_supported(
 /// declarations (`docs/ir.md` 6.1 to 6.4).
 ///
 /// The steps: the variables of the component; the nodes and their edges
-/// (one abort destination: past the function); the entry node, where the
+/// (the abort destinations of `frames`); the entry node, where the
 /// parameters bind; the relations of the declarations; the analysis of the
 /// body; then for each block that the entry reaches, the template of each
 /// statement and of the terminator with the state before it; the owners of
@@ -412,8 +443,10 @@ pub fn emit_component(
     let vars = vars::Vars::build(p, &mut tys, facts, &comp);
     let mut roots = alpha::Roots::default();
     roots.set_field_places(&a.program);
+    // The abort destinations of each node (`docs/ir.md` 6.5).
+    let frames = frames::Frames::of_body(p, &tys, sums, entry);
     let mut table = nodes::NodeTable::default();
-    table.add_body(p, entry, facts, &[nodes::PAST]);
+    table.add_body(p, entry, facts, &frames);
     // The entry node: the parameters bind there.
     let sp = weft_facts::Span {
         lo: body.origin.span.lo,
@@ -466,9 +499,10 @@ pub fn emit_component(
             skip_s: None,
             sums,
             stored: Vec::new(),
+            at: (weft_ir::BlockId(0), 0),
         };
         templates::entry(&mut em, entry_node, &params).map_err(|e| unsupported(&e))?;
-        emit_blocks(&mut em, &table, &states, body).map_err(|e| unsupported(&e))?;
+        emit_blocks(&mut em, &table, &frames, &states, body).map_err(|e| unsupported(&e))?;
         em.stored
     };
     let diags = stored_behind(p, &tys, facts, &roots, body, &stored);
@@ -564,114 +598,142 @@ fn stored_behind(
 
 /// The templates of each block of `body` that the entry reaches, with the
 /// states of the analysis: each statement, then the terminator. A cleanup
-/// block has one copy for the abort destination past the function.
+/// block has one copy for each abort destination that reaches it
+/// (`frames`, `docs/ir.md` 6.5).
 fn emit_blocks(
     em: &mut templates::Em<'_>,
     table: &nodes::NodeTable,
+    frames: &frames::Frames,
     states: &crate::analysis::States,
     body: &weft_ir::Body,
 ) -> Result<(), alpha::AlphaError> {
-    use crate::analysis::transfer;
-    use nodes::{NodeKey, Phase, NORMAL, PAST, TERM};
+    use nodes::NORMAL;
     let bid = em.body;
     for (bi, blk) in body.blocks.iter().enumerate() {
         let block = weft_ir::BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
         let Some(start) = states.at(block) else {
             continue;
         };
-        let dest = if blk.cleanup { PAST } else { NORMAL };
-        em.cleanup = blk.cleanup;
-        let mut st = start.clone();
-        // The parts that the binds of the current pattern moved, by local.
-        let mut run: Vec<(crate::analysis::Key, Vec<crate::analysis::PathStep>)> = Vec::new();
-        for (si, s) in blk.stmts.iter().enumerate() {
-            em.skip_s = None;
-            match pattern_bind(em.p, bid, body, s)? {
-                Bind::Part(k, path, moves) => {
-                    if run.iter().any(|(rk, _)| *rk == k) {
-                        em.skip_s = Some(k);
-                    }
-                    if moves {
-                        run.push((k, path));
-                    }
-                }
-                Bind::Keep => {}
-                Bind::Other => run.clear(),
-            }
-            let at = u32::try_from(si).unwrap_or(u32::MAX);
-            let key = NodeKey {
-                body: bid,
-                block,
-                at,
-                phase: Phase::Main,
-                dest,
-            };
-            let pair = match &s.kind {
-                weft_ir::StmtKind::Drop(_) => em.vars.get(&vars::VarKey::D(bid, block, at)),
-                weft_ir::StmtKind::Assign(..) if si > 0 => {
-                    let prev = at - 1;
-                    match blk.stmts.get(si - 1).map(|x| &x.kind) {
-                        Some(weft_ir::StmtKind::Drop(_)) => {
-                            em.vars.get(&vars::VarKey::D(bid, block, prev))
-                        }
-                        _ => None,
-                    }
-                }
-                _ => None,
-            };
-            if let Some(n) = table.get(key) {
-                templates::stmt(em, n, &st, &s.kind, pair)?;
-            }
-            let mut cx = em_cx(em);
-            transfer::stmt(&mut cx, bid, &mut st, &s.kind)?;
-        }
-        // The binds of a pattern end at the terminator.
-        em.skip_s = None;
-        let key = NodeKey {
-            body: bid,
-            block,
-            at: TERM,
-            phase: Phase::Main,
-            dest,
+        // A cleanup block: each copy that the node table made.
+        let copies = if blk.cleanup {
+            table.copies(bid, block)
+        } else {
+            vec![NORMAL]
         };
-        if let Some(n) = table.get(key) {
-            if let weft_ir::TermKind::Call { .. } = &blk.term.kind {
-                let at = |phase, dest| NodeKey {
-                    body: bid,
-                    block,
-                    at: TERM,
-                    phase,
-                    dest,
-                };
-                let nodes = templates::CallNodes {
-                    main: n,
-                    ret: table.get(at(Phase::Ret, NORMAL)),
-                    frame_end: table.get(at(Phase::FrameEnd, NORMAL)),
-                    aborts: table.get(at(Phase::FrameEnd, PAST)).into_iter().collect(),
-                };
-                templates::call(em, &nodes, &st, block, &blk.term.kind, blk.term.origin.span)?;
-            } else if let weft_ir::TermKind::Perform { .. } = &blk.term.kind {
-                let nodes = templates::CallNodes {
-                    main: n,
-                    ret: table.get(NodeKey {
-                        body: bid,
-                        block,
-                        at: TERM,
-                        phase: Phase::Ret,
-                        dest: NORMAL,
-                    }),
-                    frame_end: None,
-                    aborts: Vec::new(),
-                };
-                templates::perform(em, &nodes, &st, &blk.term.kind)?;
-            } else {
-                templates::term(em, n, &st, &blk.term.kind, blk.term.origin.span)?;
-            }
+        for dest in copies {
+            emit_block(em, table, frames, start, body, block, dest)?;
         }
     }
     em.cleanup = false;
     em.skip_s = None;
     Ok(())
+}
+
+/// The templates of copy `dest` of block `block` of `body`, from the state
+/// `start` of the analysis at its entry.
+fn emit_block(
+    em: &mut templates::Em<'_>,
+    table: &nodes::NodeTable,
+    frames: &frames::Frames,
+    start: &crate::analysis::State,
+    body: &weft_ir::Body,
+    block: weft_ir::BlockId,
+    dest: u32,
+) -> Result<(), alpha::AlphaError> {
+    use crate::analysis::transfer;
+    use nodes::{NodeKey, Phase, NORMAL, TERM};
+    let bid = em.body;
+    let Some(blk) = body.blocks.get(block.index()) else {
+        return Ok(());
+    };
+    em.cleanup = blk.cleanup;
+    let mut st = start.clone();
+    // The parts that the binds of the current pattern moved, by local.
+    let mut run: Vec<(crate::analysis::Key, Vec<crate::analysis::PathStep>)> = Vec::new();
+    for (si, s) in blk.stmts.iter().enumerate() {
+        em.skip_s = None;
+        match pattern_bind(em.p, bid, body, s)? {
+            Bind::Part(k, path, moves) => {
+                if run.iter().any(|(rk, _)| *rk == k) {
+                    em.skip_s = Some(k);
+                }
+                if moves {
+                    run.push((k, path));
+                }
+            }
+            Bind::Keep => {}
+            Bind::Other => run.clear(),
+        }
+        let at = u32::try_from(si).unwrap_or(u32::MAX);
+        let key = NodeKey {
+            body: bid,
+            block,
+            at,
+            phase: Phase::Main,
+            dest,
+        };
+        let pair = match &s.kind {
+            weft_ir::StmtKind::Drop(_) => em.vars.get(&vars::VarKey::D(bid, block, at)),
+            weft_ir::StmtKind::Assign(..) if si > 0 => {
+                let prev = at - 1;
+                match blk.stmts.get(si - 1).map(|x| &x.kind) {
+                    Some(weft_ir::StmtKind::Drop(_)) => {
+                        em.vars.get(&vars::VarKey::D(bid, block, prev))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        if let Some(n) = table.get(key) {
+            em.at = (block, at);
+            templates::stmt(em, n, &st, &s.kind, pair)?;
+        }
+        let mut cx = em_cx(em);
+        transfer::stmt(&mut cx, bid, &mut st, &s.kind)?;
+    }
+    // The binds of a pattern end at the terminator.
+    em.skip_s = None;
+    let at = |phase, dest| NodeKey {
+        body: bid,
+        block,
+        at: TERM,
+        phase,
+        dest,
+    };
+    let Some(n) = table.get(at(Phase::Main, dest)) else {
+        return Ok(());
+    };
+    // The abort destinations of the terminator, and their `FrameEnd`
+    // nodes (`docs/ir.md` 6.5).
+    let dests = frames.dests(bid, block);
+    let aborts: Vec<weft_facts::NodeId> = dests
+        .iter()
+        .filter_map(|d| table.get(at(Phase::FrameEnd, d.id())))
+        .collect();
+    match &blk.term.kind {
+        weft_ir::TermKind::Call { .. } => {
+            let nodes = templates::CallNodes {
+                main: n,
+                ret: table.get(at(Phase::Ret, NORMAL)),
+                frame_end: table.get(at(Phase::FrameEnd, NORMAL)),
+                aborts,
+                may_abort: !dests.is_empty(),
+            };
+            templates::call(em, &nodes, &st, block, &blk.term.kind, blk.term.origin.span)
+        }
+        weft_ir::TermKind::Perform { .. } => {
+            let nodes = templates::CallNodes {
+                main: n,
+                ret: table.get(at(Phase::Ret, NORMAL)),
+                frame_end: None,
+                aborts: Vec::new(),
+                may_abort: !dests.is_empty(),
+            };
+            templates::perform(em, &nodes, &st, &blk.term.kind)
+        }
+        _ => templates::term(em, n, &st, &blk.term.kind, blk.term.origin.span),
+    }
 }
 
 /// What a statement is for the binds of a pattern.
@@ -779,7 +841,9 @@ fn off_text(off: Groups) -> String {
 
 /// Runs the `ir` pipeline on the analysis `a` of the old lowering, with the
 /// groups `on` and the fact generator `emit`. `kept` holds the diagnostics of
-/// the analysis that the `ir` pipeline keeps (`docs/ir.md` 2.4).
+/// the analysis that the `ir` pipeline keeps (`docs/ir.md` 2.4), and `rows`
+/// the W0118 of the old inference: `emit` can replace them with its own
+/// ([`Input::on_abort`]).
 ///
 /// Returns the scope of the program and, if it is in scope, its facts and
 /// diagnostics.
@@ -788,6 +852,7 @@ pub(crate) fn run(
     on: Groups,
     emit: Emit,
     kept: Vec<Diagnostic>,
+    rows: OnAbortRows,
 ) -> (Scope, Option<IrFacts>) {
     let built = irbuild::build(a);
     let bodies = scope::groups(&built);
@@ -822,12 +887,15 @@ pub(crate) fn run(
     let mut facts: Vec<FnFacts> = a.bodies.iter().map(|b| seed(&b.facts)).collect();
     let emitted = std::cell::RefCell::new(Vec::new());
     let effects = std::cell::RefCell::new(Vec::new());
+    let on_abort = std::cell::RefCell::new(None);
     let input = Input {
         analysis: a,
         built: &built,
         scope: &s,
         diags: &emitted,
         effects: &effects,
+        no_runtime: rows.no_runtime,
+        on_abort: &on_abort,
     };
     if let Err(u) = emit(&input, &mut facts) {
         s.fallback = Some(u.to_string());
@@ -855,6 +923,7 @@ pub(crate) fn run(
         })
         .collect();
     let mut diags = kept;
+    diags.extend(on_abort.into_inner().unwrap_or(rows.old));
     diags.extend(built.diags.iter().cloned());
     diags.extend(emitted.into_inner());
     (

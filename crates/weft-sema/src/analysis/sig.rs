@@ -176,7 +176,7 @@ fn effect_multi(prog: &crate::Program, e: &str) -> bool {
 /// The parts of a summary that effect inference gives (`docs/ir.md` 6.8).
 ///
 /// They are the row (the changed places and the effects), and the parts
-/// that a body always infers (`raises`, `drops`, `holds`). A signature
+/// that a body always infers (`raises`, `assert`, `drops`, `holds`). A signature
 /// states the row, and the body of a function with no stated row gives it
 /// (`super::summarize`). Each part only grows in the fixpoint
 /// (`super::callgraph`).
@@ -189,6 +189,10 @@ pub struct Inferred {
     pub named: BTreeSet<String>,
     /// The body can raise a failure that the runtime makes.
     pub raises: bool,
+    /// The body can end with a failed `assert`, also in a callee (part
+    /// `aborts`, `docs/ir.md` 6.5). The `EffectSig` of today has no part
+    /// for it.
+    pub assert: bool,
     /// The body can resume a continuation more than once with no effect of
     /// the row that says so (a call of an unknown function value).
     pub multi: bool,
@@ -249,6 +253,10 @@ impl Inferred {
         }
         if o.raises && !self.raises {
             self.raises = true;
+            grew = true;
+        }
+        if o.assert && !self.assert {
+            self.assert = true;
             grew = true;
         }
         if o.multi && !self.multi {
@@ -388,6 +396,9 @@ pub fn build(
     }
     if inf.raises {
         s.aborts.insert(Abort::Raises);
+    }
+    if inf.assert {
+        s.aborts.insert(Abort::Assert);
     }
     if inf.multi {
         s.multi = true;

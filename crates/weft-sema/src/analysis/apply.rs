@@ -6,10 +6,12 @@
 //! places that the references behind a reference argument point into, the
 //! `rc` groups, the frame root of the callee, and the places of a caller
 //! (the root of the places of the callers of the run node). Stage F5 knows one kind of
-//! run node: a `Call` of a function item ([`RunKind::Item`]).
+//! run node: a `Call` of a function item ([`RunKind::Item`]). Stage F7 adds
+//! the `UnwindValue` of a value whose type has an `on abort` function
+//! ([`RunKind::OnAbort`]).
 //!
 //! - [`main`] gives the facts of the `Main` node: the parts `reads`, `muts`,
-//!   `lends`, `performs`, `aborts`, `multi`, and the checks of one call
+//!   `lends`, `performs`, `multi`, and the checks of one call
 //!   against its callee (`call_arg` of each place that an argument reaches,
 //!   also through the references behind it, R3RT3; `call_mut`, `arg_at`,
 //!   `param_in`, `uniq_param`, `arg_aliased`, the argument sites).
@@ -41,6 +43,12 @@ use crate::props::ir_props;
 pub enum RunKind {
     /// A `Call` of a function item: σ maps the parameters to the arguments.
     Item,
+    /// An `UnwindValue` with an `on abort` function (`docs/ir.md` 5.28): σ
+    /// maps the parameter to the value. The function gets the root
+    /// handlers (`CapArgs::Root`), so its effects do not go to a handler of
+    /// the code that aborts, and the unwinder drops its result. W0118 checks
+    /// the rest of the function (`crate::factgen::checks`).
+    OnAbort,
 }
 
 /// σ of a run node: the places of the caller for the interface roots of the
@@ -545,9 +553,13 @@ pub struct Site<'a> {
 /// The facts of the `Main` node `n` of a run node of `sum` with σ `s`.
 ///
 /// They are `reads_at`, `mutates_at` and `call_mut` (part `muts`),
-/// `lends_mut`, `escapes_at` (part `performs`), `may_abort`, `multi_at`, and
-/// the checks of the call against its callee: `call_arg`, `param_in` and
-/// `arg_at` (W0203), `uniq_param` and `arg_aliased` (W0406).
+/// `lends_mut`, `escapes_at` (part `performs`), `multi_at`, and the checks
+/// of the call against its callee: `call_arg`, `param_in` and `arg_at`
+/// (W0203), `uniq_param` and `arg_aliased` (W0406). The template gives
+/// `may_abort` if the node keeps an abort edge (`crate::factgen::frames`).
+///
+/// For [`RunKind::OnAbort`] only `reads_at`, `mutates_at` and `lends_mut`
+/// (not of the places of a caller): the function gets the root handlers.
 ///
 /// Returns the places that the node changes, with their callee root
 /// indexes.
@@ -563,13 +575,15 @@ pub fn main(
     site: &Site<'_>,
     kind: RunKind,
 ) -> Result<Vec<(PlaceId, u32)>, AlphaError> {
-    let RunKind::Item = kind;
+    let item = kind == RunKind::Item;
     for r in &sum.reads {
         for p in places(cx, s, r, Base::Args)? {
             cx.facts.reads_at.push((n, p));
         }
     }
-    for (i, pi) in sum.params.iter().enumerate() {
+    // The checks of the arguments compare the arguments of one call: the
+    // unwinder gives an `on abort` function one value.
+    for (i, pi) in sum.params.iter().enumerate().filter(|_| item) {
         let args = s.args.get(i).cloned().unwrap_or_default();
         let given = if args.is_empty() {
             s.values.get(i).cloned().unwrap_or_default()
@@ -586,9 +600,15 @@ pub fn main(
     let changed = muts(cx, sum, s)?;
     for &(p, idx) in &changed {
         cx.facts.mutates_at.push((n, p));
-        cx.facts.call_mut.push((n, p, idx));
+        if item {
+            cx.facts.call_mut.push((n, p, idx));
+        }
     }
     for l in &sum.lends {
+        // The root handlers do not change a place of a caller.
+        if !item && l.root == IRoot::Caller {
+            continue;
+        }
         let root = match l.root {
             IRoot::Param(i) => Some(sum.params.get(i as usize).map_or(0, |p| p.root)),
             IRoot::Caller => None,
@@ -598,10 +618,15 @@ pub fn main(
             cx.facts.lends_mut.push((n, p));
             // A place of a caller is no argument of the call: no alias
             // check (W0312) compares it.
-            if let Some(root) = root {
+            if let (Some(root), true) = (root, item) {
                 cx.facts.call_mut.push((n, p, root));
             }
         }
+    }
+    if !item {
+        // The root handlers serve the effects of an `on abort` function:
+        // no effect leaves the code that aborts, and no clause resumes it.
+        return Ok(changed);
     }
     for pf in &sum.performs {
         match pf.cap {
@@ -612,9 +637,6 @@ pub fn main(
                 ))
             }
         }
-    }
-    if sum.can_abort() {
-        cx.facts.may_abort.push(n);
     }
     if sum.multi {
         cx.facts.multi_at.push(n);

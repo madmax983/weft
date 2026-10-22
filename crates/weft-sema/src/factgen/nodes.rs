@@ -8,15 +8,19 @@
 //! variable.
 //!
 //! A cleanup block has one copy of each node for each abort destination
-//! ([`NodeKey::dest`]). Destination [`NORMAL`] is the normal path. Stage F2
-//! knows one abort destination: [`PAST`], an abort past the function. The
-//! destinations of local handlers (F15), the splices of handled and scope
-//! bodies (F14, F18) and the `Copy` nodes of re-entry edges (F16) come later.
+//! that reaches it ([`NodeKey::dest`]). Destination [`NORMAL`] is the normal
+//! path, [`PAST`] an abort past the function, and the destinations of local
+//! handlers come after it (`super::frames`, stage F7). A terminator with no
+//! destination has no abort edge. The splices of handled and scope bodies
+//! (F14, F18), the `Landing` of an abort to a handler (F15) and the `Copy`
+//! nodes of re-entry edges (F16) come later.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use weft_facts::{FnFacts, NodeId, Span};
 use weft_ir::{BlockId, Body, BodyId, Program, StmtKind, TermKind};
+
+use super::frames::{Dest, Frames};
 
 /// The phase of a node (`docs/ir.md` 6.2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -186,6 +190,36 @@ pub fn landing_phases(t: &TermKind) -> Vec<Phase> {
     }
 }
 
+/// The destination ids of the copies of each cleanup block of body `b`
+/// (body `body`): each destination of a terminator copies the cleanup
+/// blocks that its abort reaches.
+fn cleanup_copies(b: &Body, body: BodyId, frames: &Frames) -> BTreeMap<BlockId, BTreeSet<u32>> {
+    let mut out: BTreeMap<BlockId, BTreeSet<u32>> = BTreeMap::new();
+    for (bi, blk) in b.blocks.iter().enumerate() {
+        if blk.cleanup {
+            continue;
+        }
+        let Some(u) = blk.term.kind.unwind() else {
+            continue;
+        };
+        let block = BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
+        for dst in frames.dests(body, block) {
+            let d = dst.id();
+            let mut work = vec![u];
+            while let Some(c) = work.pop() {
+                let Some(cb) = b.blocks.get(c.index()) else {
+                    continue;
+                };
+                if !cb.cleanup || !out.entry(c).or_default().insert(d) {
+                    continue;
+                }
+                work.extend(cb.term.kind.successors());
+            }
+        }
+    }
+    out
+}
+
 /// The span of the facts for an origin of the IR.
 const fn span(s: weft_ir::Span) -> Span {
     Span { lo: s.lo, hi: s.hi }
@@ -205,23 +239,28 @@ impl NodeTable {
     /// Makes the nodes of body `body` of `p` in `facts`, with their edges
     /// (`cfg_edge`): the nodes of each block in order, the phases of each
     /// terminator in the order of [`normal_phases`], each normal successor,
-    /// and for each destination of `dests` the path of an abort from a
-    /// terminator to the copy of its cleanup block ([`abort_phases`]). A
-    /// cleanup block gets one copy for each destination of `dests`.
-    pub fn build(p: &Program, body: BodyId, facts: &mut FnFacts, dests: &[u32]) -> Self {
+    /// and for each abort destination of a terminator (`frames`) the path of
+    /// the abort to the copy of its cleanup block for that destination
+    /// ([`abort_phases`]). A cleanup block gets one copy for each destination
+    /// whose abort reaches it.
+    pub fn build(p: &Program, body: BodyId, facts: &mut FnFacts, frames: &Frames) -> Self {
         let mut t = Self::default();
-        t.add_body(p, body, facts, dests);
+        t.add_body(p, body, facts, frames);
         t
     }
 
     /// Adds the nodes and the edges of body `body` (see [`NodeTable::build`]).
-    pub fn add_body(&mut self, p: &Program, body: BodyId, facts: &mut FnFacts, dests: &[u32]) {
+    pub fn add_body(&mut self, p: &Program, body: BodyId, facts: &mut FnFacts, frames: &Frames) {
         let Some(b) = p.bodies.get(body.index()) else {
             return;
         };
-        let copies = |cleanup: bool| -> Vec<u32> {
+        let copies = cleanup_copies(b, body, frames);
+        let copies_of = |block: BlockId, cleanup: bool| -> Vec<u32> {
             if cleanup {
-                dests.to_vec()
+                copies
+                    .get(&block)
+                    .map(|ds| ds.iter().copied().collect())
+                    .unwrap_or_default()
             } else {
                 vec![NORMAL]
             }
@@ -229,15 +268,15 @@ impl NodeTable {
         // The nodes of each copy of each block, and the edges inside it.
         for (bi, blk) in b.blocks.iter().enumerate() {
             let block = BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
-            for dest in copies(blk.cleanup) {
+            for dest in copies_of(block, blk.cleanup) {
                 self.block_nodes(body, b, block, dest, facts);
             }
         }
         // The edges between blocks.
         for (bi, blk) in b.blocks.iter().enumerate() {
             let block = BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
-            for dest in copies(blk.cleanup) {
-                self.block_edges(body, b, block, dest, dests, facts);
+            for dest in copies_of(block, blk.cleanup) {
+                self.block_edges(body, b, block, dest, frames.dests(body, block), facts);
             }
         }
     }
@@ -314,7 +353,7 @@ impl NodeTable {
         b: &Body,
         block: BlockId,
         dest: u32,
-        dests: &[u32],
+        dests: &[Dest],
         facts: &mut FnFacts,
     ) {
         let Some(blk) = b.blocks.get(block.index()) else {
@@ -343,7 +382,8 @@ impl NodeTable {
             }
         }
         // An abort: from `Main` through the abort phases to the cleanup copy
-        // of each destination.
+        // of each destination. A terminator with no destination cannot abort
+        // (`docs/ir.md` 6.5): it has no abort edge.
         let (Some(u), false) = (kind.unwind(), blk.cleanup) else {
             return;
         };
@@ -352,9 +392,10 @@ impl NodeTable {
         };
         let detail = format!("b{} bb{}", body.0, block.0);
         let name = term_name(kind);
-        for &d in dests {
+        for dst in dests {
+            let d = dst.id();
             let mut prev = main;
-            for phase in abort_phases(kind, false).into_iter().skip(1) {
+            for phase in abort_phases(kind, dst.value()).into_iter().skip(1) {
                 let label = format!("{name} {} (abort)", phase.name());
                 let n = self.node(
                     facts,
@@ -397,6 +438,14 @@ impl NodeTable {
     /// The first node of copy `dest` of block `block` of body `body`.
     pub fn first(&self, body: BodyId, block: BlockId, dest: u32) -> Option<NodeId> {
         self.firsts.get(&(body, block, dest)).copied()
+    }
+
+    /// The destinations of the copies of block `block` of body `body`.
+    pub fn copies(&self, body: BodyId, block: BlockId) -> Vec<u32> {
+        self.firsts
+            .range((body, block, 0)..=(body, block, u32::MAX))
+            .map(|(k, _)| k.2)
+            .collect()
     }
 
     /// The number of nodes.

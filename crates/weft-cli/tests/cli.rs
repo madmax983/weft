@@ -698,18 +698,17 @@ fn run_and_test_take_an_engine() {
     assert_eq!(out.code, 0, "{}", out.stderr);
     assert_eq!(out.text, "a\nc\nb\n6\n");
     assert!(!out.stderr.contains("note: --engine"), "{}", out.stderr);
-    // A program with a body that has no IR (a type error) falls back to the
-    // AST compiler, and says so.
+    // A program with a body that has no IR (W0303) falls back to the AST
+    // compiler, and says so.
     let out = cmd(&[
         "run",
         "--engine=ir",
         "--unchecked",
-        &format!("{INTERP}/interrupt_nested_unwind.wf"),
+        "tests/programs/12_aliasing.wf",
     ]);
     assert!(
-        out.stderr.contains(
-            "\nnote: --engine=ir: the AST compiler runs the program: `rollback` has no IR"
-        ),
+        out.stderr
+            .contains("\nnote: --engine=ir: the AST compiler runs the program: `steal` has no IR"),
         "{}",
         out.stderr
     );
@@ -1107,8 +1106,8 @@ fn groups_put_a_program_in_scope_of_the_ir_pipeline() {
         "{}",
         out.stderr
     );
-    // A call of a function with no stated row is in scope (stage F6); a
-    // cleanup chain with an `on abort` function is not in scope yet (F7).
+    // A call of a function with no stated row is in scope (stage F6), and
+    // so is a cleanup chain with an `on abort` function (stage F7).
     let out = cmd(&[
         "agree",
         "--facts=ir",
@@ -1129,12 +1128,8 @@ fn groups_put_a_program_in_scope_of_the_ir_pipeline() {
         "--groups=A",
         &format!("{dir}/on_abort.wf"),
     ]);
-    assert!(
-        out.stderr
-            .contains("the fact generator does not support group A: an `on abort` function"),
-        "{}",
-        out.stderr
-    );
+    assert!(out.stderr.is_empty(), "{}", out.stderr);
+    assert!(out.text.starts_with("agree: "), "{}", out.text);
     assert_eq!(
         usage_error(&["check", "--groups=G", &path]),
         "--groups needs construct groups from A to F, found `G`: `G` is not a construct group (A to F)"

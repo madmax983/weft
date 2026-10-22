@@ -1,41 +1,80 @@
-fn f0 undo_ask(A) -> () / main.Ask: extern
-fn f1 tell(u64) -> () / main.Note: b0
-fn f2 undo_note(B) -> (): extern
-fn f3 undo_fail(C) -> () / Fail: extern
-fn f4 undo_group(D) -> () / (): extern
-fn f5 undo_timeout(E) -> (): extern
-fn f6 undo_field(I) -> (): extern
-fn f7 undo_elems(J) -> (): extern
-fn f8 undo_read(K) -> () / Fs: extern
-fn f9 undo_join(L) -> () / Async: extern
-fn f10 quick() -> u64: b1
-fn f11 undo_fork(M) -> () / Par: extern
-fn f12 helper_scope() -> () / Async: b2
-fn f13 undo_scope(N) -> (): extern
-fn f14 undo_clock(F) -> () / Clock: b5
-fn f15 undo_log(G) -> (): b6
-fn f16 undo_local(H) -> (): b7
-fn f17 undo_caught(P) -> () / Async: b8
-fn f18 undo_known(Q) -> (): b11
-fn f19 clean_aborts() -> () / Async, main.Stop: b13
-fn f20 main() -> (): b16
-fn f21 sleep(Duration) -> () / Clock: extern
-fn f22 Vec.push<T0>(&Vec<T0>, T0) -> () / (): extern
-fn f23 Vec.new<T0>() -> Vec<T0> / (): extern
-closure c0: body b4, maker b3, cap_env e0, captures []
-closure c1: body b12, maker b11, cap_env e0, captures [Kept _2]
-closure c2: body b15, maker b14, cap_env e0, captures []
-handler h0 Fail: handled b9, site b8, clauses [fail: b10]
-handler h1 main.Stop: handled b17, site b16, clauses [stop: b18]
-scope s0: body b3, site b2
-scope s1: body b14, site b13
-spawn sp0: scope s0
-spawn sp1: scope s1
+fn f0 undo_ask(A) -> () / main.Ask: b0
+fn f1 tell(u64) -> () / main.Note: b1
+fn f2 undo_note(B) -> (): b2
+fn f3 undo_fail(C) -> () / Fail: b3
+fn f4 undo_group(D) -> () / (): b4
+fn f5 undo_timeout(E) -> (): b5
+fn f6 undo_field(I) -> (): b7
+fn f7 undo_elems(J) -> (): b8
+fn f8 undo_read(K) -> () / Fs: b9
+fn f9 undo_join(L) -> () / Async: b10
+fn f10 quick() -> u64: b11
+fn f11 undo_fork(M) -> () / Par: b12
+fn f12 helper_scope() -> () / Async: b15
+fn f13 undo_scope(N) -> (): b18
+fn f14 undo_clock(F) -> () / Clock: b19
+fn f15 undo_log(G) -> (): b20
+fn f16 undo_local(H) -> (): b21
+fn f17 undo_caught(P) -> () / Async: b22
+fn f18 undo_known(Q) -> (): b25
+fn f19 clean_aborts() -> () / Async, main.Stop: b27
+fn f20 main() -> (): b30
+fn f21 Vec.push<T0>(&Vec<T0>, T0) -> () / (): extern
+fn f22 with_timeout<T0>(Duration, fn() -> T0) -> T0 / Async, Fail [with_timeout]: extern
+fn f23 FsCap.read(&FsCap, String) -> String / Fs: extern
+fn f24 sleep(Duration) -> () / Clock: extern
+fn f25 Vec.new<T0>() -> Vec<T0> / (): extern
+closure c0: body b6, maker b5, cap_env e0, captures [Kept _2]
+closure c1: body b13, maker b12, cap_env e0, captures []
+closure c2: body b14, maker b12, cap_env e0, captures []
+closure c3: body b17, maker b16, cap_env e0, captures []
+closure c4: body b26, maker b25, cap_env e0, captures [Kept _2]
+closure c5: body b29, maker b28, cap_env e0, captures []
+handler h0 Fail: handled b23, site b22, clauses [fail: b24]
+handler h1 main.Stop: handled b31, site b30, clauses [stop: b32]
+scope s0: body b16, site b15
+scope s1: body b28, site b27
+spawn sp0: fork
+spawn sp1: fork
+spawn sp2: scope s0
+spawn sp3: scope s1
 cap_env e0
 cap_env e1: parent e0, Fail _1
 cap_env e2: parent e0, main.Stop _1
 
-body b0: fn tell; cap_env e0; unwind_exit bb3
+body b0: fn undo_ask; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: A (Param(0) `a`)
+  _2: u64 (User `i`)
+  _3: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Consume(_1)
+    Live(_3)
+    _3 = perform Row(main.Ask).ask() -> [bb1, unwind: bb2]
+  bb1:
+    Print(copy _3)
+    _0 = const ()
+    Dead(_2)
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_3)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, OnAbort(undo_ask))
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b1: fn tell; cap_env e0; unwind_exit bb3
   _0: () (Return)
   _1: u64 (Param(0) `x`)
   bb0:
@@ -50,7 +89,255 @@ body b0: fn tell; cap_env e0; unwind_exit bb3
   bb3 (cleanup):
     UnwindExit
 
-body b1: fn quick; cap_env e0; unwind_exit bb1
+body b2: fn undo_note; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: B (Param(0) `b`)
+  _2: u64 (User `i`)
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Consume(_1)
+    _0 = call tell(copy _2) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, OnAbort(undo_note))
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b3: fn undo_fail; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: C (Param(0) `c`)
+  _2: u64 (User `i`)
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Consume(_1)
+    _0 = perform Row(Fail).fail(const "in undo") -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, OnAbort(undo_fail))
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b4: fn undo_group; cap_env e0; unwind_exit bb2
+  _0: () (Return)
+  _1: D (Param(0) `d`)
+  _2: Rc<Node> (User `n`)
+  _3: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_2)
+    _2 = move _1.0
+    Consume(_1)
+    Live(_3)
+    _3 = &(*_2).0
+    _0 = call Vec.push<u64>(move _3, const 9u64) / e0 -> [bb1]
+  bb1:
+    Dead(_2)
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    UnwindExit
+
+body b5: fn undo_timeout; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: E (Param(0) `e`)
+  _2: u64 (User `i`)
+  _3: u64 (User `x`)
+  _4: fn() -> u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Consume(_1)
+    Live(_3)
+    Live(_4)
+    _4 = closure c0(copy _2)
+    _3 = call with_timeout<u64>(const 10ms, move _4) / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_4)
+    _0 = const ()
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_4)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_3)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, OnAbort(undo_timeout))
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b6: closure c0; parent b5; cap_env e0; unwind_exit bb1
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = copy _1.0
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b7: fn undo_field; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: I (Param(0) `i`)
+  _2: fn() -> () (User `f`)
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Consume(_1)
+    _0 = call (copy _2)() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, OnAbort(undo_field))
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b8: fn undo_elems; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: J (Param(0) `j`)
+  _2: Vec<fn() -> ()> (User `fs`)
+  _3: fn() -> () (User `f`)
+  _4: usize (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = move _1.0
+    Consume(_1)
+    Live(_3)
+    Live(_4)
+    _4 = const 0usize
+    Bounds(_2, copy _4)
+    _3 = copy _2[_4]
+    Dead(_4)
+    _0 = call (copy _3)() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_3)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_3)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, OnAbort(undo_elems))
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b9: fn undo_read; cap_env e0; unwind_exit bb6
+  _0: () (Return)
+  _1: K (Param(0) `k`)
+  _2: FsCap (User `fs`)
+  _3: String (Temp(Operand))
+  _4: &FsCap (Temp(Receiver))
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Consume(_1)
+    Live(_3)
+    Live(_4)
+    _4 = &_2
+    _3 = call FsCap.read(move _4, const "undo.txt") / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Print(copy _3)
+    _0 = const ()
+    Dead(_2)
+    Dead(_4)
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_4)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_3)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, OnAbort(undo_read))
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    UnwindExit
+
+body b10: fn undo_join; cap_env e0; unwind_exit bb5
+  _0: () (Return)
+  _1: L (Param(0) `l`)
+  _2: Task<u64> (User `t`)
+  _3: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = move _1.0
+    Consume(_1)
+    Live(_3)
+    _3 = join move _2 -> [bb1, unwind: bb2]
+  bb1:
+    Print(copy _3)
+    _0 = const ()
+    Dead(_2)
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_3)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, OnAbort(undo_join))
+    Dead(_1)
+    Goto(bb5)
+  bb5 (cleanup):
+    UnwindExit
+
+body b11: fn quick; cap_env e0; unwind_exit bb1
   _0: u64 (Return)
   bb0:
     _0 = const 5u64
@@ -58,7 +345,86 @@ body b1: fn quick; cap_env e0; unwind_exit bb1
   bb1 (cleanup):
     UnwindExit
 
-body b2: fn helper_scope; cap_env e0; unwind_exit bb4
+body b12: fn undo_fork; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: M (Param(0) `m`)
+  _2: u64 (User `i`)
+  _3: (u64, u64) (Temp(Scrutinee))
+  _4: fn() -> u64 (Temp(Operand))
+  _5: fn() -> u64 (Temp(Operand))
+  _6: u64 (User `a`)
+  _7: u64 (User `b`)
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Consume(_1)
+    Live(_3)
+    Live(_4)
+    _4 = closure c1()
+    Live(_5)
+    _5 = closure c2()
+    _3 = fork [sp0: move _4, sp1: move _5] -> [bb1, unwind: bb2]
+  bb1:
+    Live(_6)
+    _6 = copy _3.0
+    Live(_7)
+    _7 = copy _3.1
+    Dead(_5)
+    Dead(_4)
+    Dead(_3)
+    _0 = const ()
+    Dead(_7)
+    Dead(_6)
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_5)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_4)
+    Goto(bb4)
+  bb4 (cleanup):
+    Dead(_3)
+    Goto(bb5)
+  bb5 (cleanup):
+    Dead(_2)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, OnAbort(undo_fork))
+    Dead(_1)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit
+
+body b13: closure c1; parent b12; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = call quick() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b14: closure c2; parent b12; cap_env e0; unwind_exit bb3
+  _0: u64 (Return)
+  _1: fn() -> u64 (Env)
+  bb0:
+    _0 = call quick() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Return
+  bb2 (cleanup):
+    Dead(_0)
+    Goto(bb3)
+  bb3 (cleanup):
+    UnwindExit
+
+body b15: fn helper_scope; cap_env e0; unwind_exit bb4
   _0: () (Return)
   _1: Task<u64> (Temp(Discarded))
   bb0:
@@ -78,14 +444,14 @@ body b2: fn helper_scope; cap_env e0; unwind_exit bb4
   bb4 (cleanup):
     UnwindExit
 
-body b3: scope s0; parent b2; cap_env e0; unwind_exit bb6
+body b16: scope s0; parent b15; cap_env e0; unwind_exit bb6
   _0: Task<u64> (Return)
   _1: Scope (ScopeCap `s`)
   _2: fn() -> u64 (Temp(Operand))
   bb0:
     Live(_2)
-    _2 = closure c0()
-    _0 = spawn sp0(copy _1, move _2) -> [bb1]
+    _2 = closure c3()
+    _0 = spawn sp2(copy _1, move _2) -> [bb1]
   bb1:
     scope_wait _1 -> [bb2, unwind: bb3]
   bb2:
@@ -106,7 +472,7 @@ body b3: scope s0; parent b2; cap_env e0; unwind_exit bb6
   bb6 (cleanup):
     UnwindExit
 
-body b4: closure c0; parent b3; cap_env e0; unwind_exit bb3
+body b17: closure c3; parent b16; cap_env e0; unwind_exit bb3
   _0: u64 (Return)
   _1: fn() -> u64 (Env)
   bb0:
@@ -119,7 +485,31 @@ body b4: closure c0; parent b3; cap_env e0; unwind_exit bb3
   bb3 (cleanup):
     UnwindExit
 
-body b5: fn undo_clock; cap_env e0; unwind_exit bb4
+body b18: fn undo_scope; cap_env e0; unwind_exit bb4
+  _0: () (Return)
+  _1: N (Param(0) `n`)
+  _2: u64 (User `i`)
+  bb0:
+    Live(_2)
+    _2 = copy _1.0
+    Consume(_1)
+    _0 = call helper_scope() / e0 -> [bb1, unwind: bb2]
+  bb1:
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb2 (cleanup):
+    Dead(_2)
+    Goto(bb3)
+  bb3 (cleanup):
+    Dead(_0)
+    UnwindValue(_1, OnAbort(undo_scope))
+    Dead(_1)
+    Goto(bb4)
+  bb4 (cleanup):
+    UnwindExit
+
+body b19: fn undo_clock; cap_env e0; unwind_exit bb4
   _0: () (Return)
   _1: F (Param(0) `f`)
   _2: u64 (User `i`)
@@ -152,7 +542,7 @@ body b5: fn undo_clock; cap_env e0; unwind_exit bb4
   bb4 (cleanup):
     UnwindExit
 
-body b6: fn undo_log; cap_env e0; unwind_exit bb4
+body b20: fn undo_log; cap_env e0; unwind_exit bb4
   _0: () (Return)
   _1: G (Param(0) `g`)
   _2: u64 (User `i`)
@@ -176,7 +566,7 @@ body b6: fn undo_log; cap_env e0; unwind_exit bb4
   bb4 (cleanup):
     UnwindExit
 
-body b7: fn undo_local; cap_env e0; unwind_exit bb2
+body b21: fn undo_local; cap_env e0; unwind_exit bb2
   _0: () (Return)
   _1: H (Param(0) `h`)
   _2: Vec<u64> (User `items`)
@@ -196,7 +586,7 @@ body b7: fn undo_local; cap_env e0; unwind_exit bb2
   bb2 (cleanup):
     UnwindExit
 
-body b8: fn undo_caught; cap_env e0; unwind_exit bb4
+body b22: fn undo_caught; cap_env e0; unwind_exit bb4
   _0: () (Return)
   _1: P (Param(0) `p`)
   _2: Task<u64> (User `t`)
@@ -221,7 +611,7 @@ body b8: fn undo_caught; cap_env e0; unwind_exit bb4
   bb4 (cleanup):
     UnwindExit
 
-body b9: handled h0; parent b8; cap_env e1; unwind_exit bb4
+body b23: handled h0; parent b22; cap_env e1; unwind_exit bb4
   _0: () (Return)
   _1: Cap<Fail> (Cap(Fail) `Fail`)
   _2: u64 (Temp(Operand))
@@ -245,7 +635,7 @@ body b9: handled h0; parent b8; cap_env e1; unwind_exit bb4
   bb4 (cleanup):
     UnwindExit
 
-body b10: clause h0 fail; parent b8; cap_env e0; unwind_exit bb1
+body b24: clause h0 fail; parent b22; cap_env e0; unwind_exit bb1
   _0: () (Return)
   _1: String (Param(0) `m`)
   _2: resume(()) -> () (Kont(once) `resume`)
@@ -262,7 +652,7 @@ body b10: clause h0 fail; parent b8; cap_env e0; unwind_exit bb1
   bb1 (cleanup):
     UnwindExit
 
-body b11: fn undo_known; cap_env e0; unwind_exit bb5
+body b25: fn undo_known; cap_env e0; unwind_exit bb5
   _0: () (Return)
   _1: Q (Param(0) `q`)
   _2: u64 (User `i`)
@@ -272,7 +662,7 @@ body b11: fn undo_known; cap_env e0; unwind_exit bb5
     _2 = copy _1.0
     Consume(_1)
     Live(_3)
-    _3 = closure c1(copy _2)
+    _3 = closure c4(copy _2)
     _0 = call (copy _3)() / e0 -> [bb1, unwind: bb2]
   bb1:
     Dead(_3)
@@ -293,7 +683,7 @@ body b11: fn undo_known; cap_env e0; unwind_exit bb5
   bb5 (cleanup):
     UnwindExit
 
-body b12: closure c1; parent b11; cap_env e0; unwind_exit bb1
+body b26: closure c4; parent b25; cap_env e0; unwind_exit bb1
   _0: () (Return)
   _1: fn() -> () (Env)
   _2: String (Temp(Operand))
@@ -307,7 +697,7 @@ body b12: closure c1; parent b11; cap_env e0; unwind_exit bb1
   bb1 (cleanup):
     UnwindExit
 
-body b13: fn clean_aborts; cap_env e0; unwind_exit bb9
+body b27: fn clean_aborts; cap_env e0; unwind_exit bb9
   _0: () (Return)
   _1: F (User `f`)
   _2: G (User `g`)
@@ -383,7 +773,7 @@ body b13: fn clean_aborts; cap_env e0; unwind_exit bb9
   bb9 (cleanup):
     UnwindExit
 
-body b14: scope s1; parent b13; cap_env e0; unwind_exit bb15
+body b28: scope s1; parent b27; cap_env e0; unwind_exit bb15
   _0: () (Return)
   _1: Scope (ScopeCap `s`)
   _2: P (User `p`)
@@ -396,8 +786,8 @@ body b14: scope s1; parent b13; cap_env e0; unwind_exit bb15
     Live(_2)
     Live(_3)
     Live(_4)
-    _4 = closure c2()
-    _3 = spawn sp1(copy _1, move _4) -> [bb1]
+    _4 = closure c5()
+    _3 = spawn sp3(copy _1, move _4) -> [bb1]
   bb1:
     _2 = P { move _3 }
     Dead(_4)
@@ -461,7 +851,7 @@ body b14: scope s1; parent b13; cap_env e0; unwind_exit bb15
   bb15 (cleanup):
     UnwindExit
 
-body b15: closure c2; parent b14; cap_env e0; unwind_exit bb3
+body b29: closure c5; parent b28; cap_env e0; unwind_exit bb3
   _0: u64 (Return)
   _1: fn() -> u64 (Env)
   bb0:
@@ -474,7 +864,7 @@ body b15: closure c2; parent b14; cap_env e0; unwind_exit bb3
   bb3 (cleanup):
     UnwindExit
 
-body b16: fn main; cap_env e0; unwind_exit bb4
+body b30: fn main; cap_env e0; unwind_exit bb4
   _0: () (Return)
   _1: () (Temp(Discarded))
   bb0:
@@ -494,7 +884,7 @@ body b16: fn main; cap_env e0; unwind_exit bb4
   bb4 (cleanup):
     UnwindExit
 
-body b17: handled h1; parent b16; cap_env e2; unwind_exit bb3
+body b31: handled h1; parent b30; cap_env e2; unwind_exit bb3
   _0: () (Return)
   _1: Cap<main.Stop> (Cap(main.Stop) `Stop`)
   bb0:
@@ -509,7 +899,7 @@ body b17: handled h1; parent b16; cap_env e2; unwind_exit bb3
   bb3 (cleanup):
     UnwindExit
 
-body b18: clause h1 stop; parent b16; cap_env e0; unwind_exit bb1
+body b32: clause h1 stop; parent b30; cap_env e0; unwind_exit bb1
   _0: () (Return)
   _1: resume(()) -> () (Kont(once) `resume`)
   bb0:
@@ -518,14 +908,3 @@ body b18: clause h1 stop; parent b16; cap_env e0; unwind_exit bb1
     Return
   bb1 (cleanup):
     UnwindExit
-// undo_ask: no IR: a type error
-// undo_note: no IR: a type error
-// undo_fail: no IR: a type error
-// undo_group: no IR: a type error
-// undo_timeout: no IR: a type error
-// undo_field: no IR: a type error
-// undo_elems: no IR: a type error
-// undo_read: no IR: a type error
-// undo_join: no IR: a type error
-// undo_fork: no IR: a type error
-// undo_scope: no IR: a type error

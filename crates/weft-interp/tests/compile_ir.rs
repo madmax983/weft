@@ -38,8 +38,10 @@ use weft_ir::CaptureMode;
 use weft_sema::Options;
 
 /// The interpreter programs with a body that has no IR. The AST compiler
-/// runs them; each other program runs on the IR engine.
-const NO_IR: &[&str] = &["interrupt_nested_unwind"];
+/// runs them; each other program runs on the IR engine. W0118 is not a
+/// type error (plan stage F7): `interrupt_nested_unwind` runs on the IR
+/// engine.
+const NO_IR: &[&str] = &[];
 
 fn directive<'s>(src: &'s str, key: &str) -> Option<&'s str> {
     src.lines()
@@ -338,12 +340,12 @@ fn a_scope_runs_on_the_ir_engine() {
 
 #[test]
 fn a_program_with_no_ir_falls_back_and_says_why() {
-    // `rollback` has a type error: it has no IR. The checker rejects the
-    // program; the AST compiler runs it.
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/programs");
-    let (_, why) = run_program(&dir.join("interrupt_nested_unwind.wf"), Engine::Ir);
+    // `steal` moves through a reference (W0303): it has no IR. The checker
+    // rejects the program; the AST compiler runs it.
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/programs");
+    let (_, why) = run_program(&dir.join("12_aliasing.wf"), Engine::Ir);
     let why = why.expect("the IR engine falls back");
-    assert!(why.contains("`rollback` has no IR"), "{why}");
+    assert!(why.contains("`steal` has no IR"), "{why}");
 }
 
 #[test]

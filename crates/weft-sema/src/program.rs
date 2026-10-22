@@ -2327,6 +2327,19 @@ fn takes_instance(sig: &FnSig, a: AdtId, n: usize) -> bool {
 /// (`proofs/effects`), and this check mirrors that assumption.
 pub fn check_on_abort_rows(prog: &Program, sigs: &[FnSig], no_runtime: bool) -> Vec<Diagnostic> {
     let mut out = Vec::new();
+    for f in on_abort_fns(prog) {
+        if let Some(sig) = sigs.get(f.index()) {
+            out.extend(on_abort_row(prog, f, sig, &sig.effects, no_runtime));
+        }
+    }
+    out
+}
+
+/// The `on abort` functions of the program, each once, in the order of the
+/// type definitions that name them. A function of the prelude does not
+/// count.
+pub fn on_abort_fns(prog: &Program) -> Vec<FnId> {
+    let mut out = Vec::new();
     let mut seen = BTreeSet::new();
     for def in &prog.adts {
         let Some(name) = &def.on_abort else {
@@ -2335,159 +2348,176 @@ pub fn check_on_abort_rows(prog: &Program, sigs: &[FnSig], no_runtime: bool) -> 
         let Some(ItemRef::Fn(f)) = prog.lookup(def.module, name) else {
             continue;
         };
-        let (Some(sig), Some(fd)) = (sigs.get(f.index()), prog.fns.get(f.index())) else {
+        let Some(fd) = prog.fns.get(f.index()) else {
             continue;
         };
-        if !seen.insert(f) || fd.is_std {
-            continue;
+        if seen.insert(f) && !fd.is_std {
+            out.push(f);
         }
-        let unit = prog.mods[fd.module].unit;
-        let span = fd.decl.name.span;
-        let e = &sig.effects;
-        // A failure that the runtime raises in the function (a `join`, a scope,
-        // a `fork`, a read) goes where a `fail` goes.
-        let fails = e.named.contains("Fail") || e.raises;
-        let bad: Vec<String> = e
-            .named
+    }
+    out
+}
+
+/// W0118 for the `on abort` function `f` with the signature `sig` and the
+/// row `e` ([`check_on_abort_rows`]).
+///
+/// The old pipeline gives the row of its
+/// inference; the `ir` pipeline gives the row of the summary of the
+/// function (`crate::factgen::checks`).
+pub fn on_abort_row(
+    prog: &Program,
+    f: FnId,
+    sig: &FnSig,
+    e: &EffectSig,
+    no_runtime: bool,
+) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    let Some(fd) = prog.fns.get(f.index()) else {
+        return out;
+    };
+    let unit = prog.mods[fd.module].unit;
+    let span = fd.decl.name.span;
+    // A failure that the runtime raises in the function (a `join`, a scope,
+    // a `fork`, a read) goes where a `fail` goes.
+    let fails = e.named.contains("Fail") || e.raises;
+    let bad: Vec<String> = e
+        .named
+        .iter()
+        .chain(&e.task_effects)
+        .filter(|n| n.as_str() != "Fail" && (no_runtime || !effects::is_std(n)))
+        .map(|n| {
+            let w = effects::written(prog, fd.module, n).unwrap_or_else(|| n.clone());
+            format!("`{w}`")
+        })
+        .collect::<BTreeSet<String>>()
+        .into_iter()
+        .collect();
+    if fails {
+        let mut d = Diagnostic::error(
+            Code::W0118,
+            format!(
+                "`on abort` function `{}` can fail, and a failure there does not reach the handlers of the code that aborts",
+                fd.name
+            ),
+            span,
+        )
+        .note("handle the failure inside the function, or do the work after a normal path");
+        if !e.named.contains("Fail") {
+            d = d.note("a `join`, a scope, a `fork` and a read of a file can fail at run time");
+        }
+        d.unit = unit;
+        out.push(d);
+    }
+    if !bad.is_empty() {
+        let note = if no_runtime {
+            "with no runtime, no root handler serves an effect where the unwinder runs it"
+        } else {
+            "an `on abort` function can perform only the standard effects other than `fail`"
+        };
+        let mut d = Diagnostic::error(
+            Code::W0118,
+            format!(
+                "`on abort` function `{}` performs {}, but the unwinder runs it with the root handlers only",
+                fd.name,
+                bad.join(", ")
+            ),
+            span,
+        )
+        .note(note);
+        d.unit = unit;
+        out.push(d);
+    }
+    // A function value that the function does not know, for example from a
+    // field of its value, can do what its maker can: perform through a
+    // handler of the code that aborts, fail, or change a place outside.
+    if e.reaches {
+        let mut d = Diagnostic::error(
+            Code::W0118,
+            format!(
+                "`on abort` function `{}` calls a function value that it does not know, but the unwinder runs it with the root handlers only",
+                fd.name
+            ),
+            span,
+        )
+        .note("the value can perform through a handler of the code that aborts, fail, or change a place outside the value; call only known functions there");
+        d.unit = unit;
+        out.push(d);
+    }
+    // A by-value parameter that holds references points into a parameter
+    // root (ADR 0003). So a change through such a reference is a change of
+    // `Param(0)` in the row, and the row cannot show it apart from a change
+    // of the value itself. If the type holds a reference, each change of
+    // the parameter counts as outside (review round 3, F3-1).
+    let refs = sig
+        .params
+        .first()
+        .is_some_and(|p| prog.ty_holds_refs(&p.ty));
+    let outside: Vec<String> = e
+        .muts
+        .iter()
+        .filter(|m| m.root != SigRoot::Param(0) || m.steps.contains(&SigStep::Held) || refs)
+        .map(|m| format!("`{}`", m.text))
+        .collect();
+    if !outside.is_empty() {
+        let mut d = Diagnostic::error(
+            Code::W0118,
+            format!(
+                "`on abort` function `{}` changes {}, a place outside the value that it gets",
+                fd.name,
+                outside.join(", ")
+            ),
+            span,
+        )
+        .note("the unwinder runs it where a node aborts, and that node does not state the change");
+        if refs {
+            d = d.note("the value holds a reference, and a change through it is a change of the place that it points to");
+        }
+        d.unit = unit;
+        out.push(d);
+    }
+    // The unwinder gives the function each instance of the type, also one
+    // with a linear type argument. No call of the facts checks the type
+    // argument there, so the function cannot drop or hold a value of a
+    // type parameter (review round 3, F3-3).
+    let generic: BTreeSet<usize> = e.drops.union(&e.holds).copied().collect();
+    if !generic.is_empty() {
+        let names: Vec<String> = generic
             .iter()
-            .chain(&e.task_effects)
-            .filter(|n| n.as_str() != "Fail" && (no_runtime || !effects::is_std(n)))
-            .map(|n| {
-                let w = effects::written(prog, fd.module, n).unwrap_or_else(|| n.clone());
-                format!("`{w}`")
-            })
-            .collect::<BTreeSet<String>>()
-            .into_iter()
+            .map(|&j| format!("`{}`", sig.generics.get(j).map_or("?", String::as_str)))
             .collect();
-        if fails {
-            let mut d = Diagnostic::error(
-                Code::W0118,
-                format!(
-                    "`on abort` function `{}` can fail, and a failure there does not reach the handlers of the code that aborts",
-                    fd.name
-                ),
-                span,
-            )
-            .note("handle the failure inside the function, or do the work after a normal path");
-            if !e.named.contains("Fail") {
-                d = d.note("a `join`, a scope, a `fork` and a read of a file can fail at run time");
-            }
-            d.unit = unit;
-            out.push(d);
-        }
-        if !bad.is_empty() {
-            let note = if no_runtime {
-                "with no runtime, no root handler serves an effect where the unwinder runs it"
-            } else {
-                "an `on abort` function can perform only the standard effects other than `fail`"
-            };
-            let mut d = Diagnostic::error(
-                Code::W0118,
-                format!(
-                    "`on abort` function `{}` performs {}, but the unwinder runs it with the root handlers only",
-                    fd.name,
-                    bad.join(", ")
-                ),
-                span,
-            )
-            .note(note);
-            d.unit = unit;
-            out.push(d);
-        }
-        // A function value that the function does not know, for example from a
-        // field of its value, can do what its maker can: perform through a
-        // handler of the code that aborts, fail, or change a place outside.
-        if e.reaches {
-            let mut d = Diagnostic::error(
-                Code::W0118,
-                format!(
-                    "`on abort` function `{}` calls a function value that it does not know, but the unwinder runs it with the root handlers only",
-                    fd.name
-                ),
-                span,
-            )
-            .note("the value can perform through a handler of the code that aborts, fail, or change a place outside the value; call only known functions there");
-            d.unit = unit;
-            out.push(d);
-        }
-        // A by-value parameter that holds references points into a parameter
-        // root (ADR 0003). So a change through such a reference is a change of
-        // `Param(0)` in the row, and the row cannot show it apart from a change
-        // of the value itself. If the type holds a reference, each change of
-        // the parameter counts as outside (review round 3, F3-1).
-        let refs = sig
-            .params
-            .first()
-            .is_some_and(|p| prog.ty_holds_refs(&p.ty));
-        let outside: Vec<String> = e
-            .muts
-            .iter()
-            .filter(|m| m.root != SigRoot::Param(0) || m.steps.contains(&SigStep::Held) || refs)
-            .map(|m| format!("`{}`", m.text))
-            .collect();
-        if !outside.is_empty() {
-            let mut d = Diagnostic::error(
-                Code::W0118,
-                format!(
-                    "`on abort` function `{}` changes {}, a place outside the value that it gets",
-                    fd.name,
-                    outside.join(", ")
-                ),
-                span,
-            )
-            .note(
-                "the unwinder runs it where a node aborts, and that node does not state the change",
-            );
-            if refs {
-                d = d.note("the value holds a reference, and a change through it is a change of the place that it points to");
-            }
-            d.unit = unit;
-            out.push(d);
-        }
-        // The unwinder gives the function each instance of the type, also one
-        // with a linear type argument. No call of the facts checks the type
-        // argument there, so the function cannot drop or hold a value of a
-        // type parameter (review round 3, F3-3).
-        let generic: BTreeSet<usize> = e.drops.union(&e.holds).copied().collect();
-        if !generic.is_empty() {
-            let names: Vec<String> = generic
-                .iter()
-                .map(|&j| format!("`{}`", sig.generics.get(j).map_or("?", String::as_str)))
-                .collect();
-            let (what, at) = match (e.drops.is_empty(), e.holds.is_empty()) {
-                (false, true) => ("can drop", ""),
-                (true, false) => ("holds", " across a node that can abort"),
-                _ => ("can drop or hold", ""),
-            };
-            let mut d = Diagnostic::error(
-                Code::W0118,
-                format!(
-                    "`on abort` function `{}` {what} a value of type parameter {}{at}",
-                    fd.name,
-                    names.join(", ")
-                ),
-                span,
-            )
-            .note("the unwinder gives it each instance of the type, also one with a linear type argument, and the value of that type then goes away")
-            .note("take the type parameter only as a marker, or give the type a part of a fixed type");
-            d.unit = unit;
-            out.push(d);
-        }
-        // The unwinder does not keep the result of the function. So a result
-        // that can hold a linear value goes away there.
-        if prog.ty_may_hold_linear(&sig.ret) {
-            let mut d = Diagnostic::error(
-                Code::W0118,
-                format!(
-                    "`on abort` function `{}` returns a value that can be linear, but the unwinder drops the result",
-                    fd.name
-                ),
-                span,
-            )
-            .note("consume the value inside the function, and return a value of plain data or `()`");
-            d.unit = unit;
-            out.push(d);
-        }
+        let (what, at) = match (e.drops.is_empty(), e.holds.is_empty()) {
+            (false, true) => ("can drop", ""),
+            (true, false) => ("holds", " across a node that can abort"),
+            _ => ("can drop or hold", ""),
+        };
+        let mut d = Diagnostic::error(
+            Code::W0118,
+            format!(
+                "`on abort` function `{}` {what} a value of type parameter {}{at}",
+                fd.name,
+                names.join(", ")
+            ),
+            span,
+        )
+        .note("the unwinder gives it each instance of the type, also one with a linear type argument, and the value of that type then goes away")
+        .note("take the type parameter only as a marker, or give the type a part of a fixed type");
+        d.unit = unit;
+        out.push(d);
+    }
+    // The unwinder does not keep the result of the function. So a result
+    // that can hold a linear value goes away there.
+    if prog.ty_may_hold_linear(&sig.ret) {
+        let mut d = Diagnostic::error(
+            Code::W0118,
+            format!(
+                "`on abort` function `{}` returns a value that can be linear, but the unwinder drops the result",
+                fd.name
+            ),
+            span,
+        )
+        .note("consume the value inside the function, and return a value of plain data or `()`");
+        d.unit = unit;
+        out.push(d);
     }
     out
 }

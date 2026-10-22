@@ -588,7 +588,9 @@ brackets), and name the special cases of the old lowering that go away.
 
 The builder builds a body only if `typeck` reports no error in it. A body with a type
 error gets no IR and no facts; the program keeps its `typeck` diagnostics (W01xx), as the
-corpus markers expect.
+corpus markers expect. W0118 at the name of an `on abort` function is not a `typeck`
+error: it is a check of the effects of the function, and the `ir` pipeline asks the
+summary of the body for it (6.9). So such a body gets its IR (plan stage F7).
 
 Notation: `t`, `t1` are new temporaries. `t := rv` is `Live(t); t = rv`. A terminator is
 `dest = kind(args) -> [next, unwind: C]`. `C` is the cleanup block of the current point
@@ -1556,6 +1558,16 @@ An `on abort` function is a function item with a body. The cleanup chain names i
 `UnwindValue` node, with `CapArgs::Root`. W0118 becomes a query over that summary
 (section 6.9).
 
+As built (plan stage F7): `apply` with `RunKind::OnAbort` gives `reads_at`,
+`mutates_at` and `lends_mut` (not of `Caller..`) at the `UnwindValue` node, with σ of the
+parameter onto the value at the place (a change through a reference in the value changes
+the place that it points into, F3-1). With the root handlers, no effect leaves the code
+that aborts (no `escapes_at`), no clause resumes it (no `multi_at`), and the node has no
+`may_abort` and no argument checks. The analysis state does not change at the node: the
+unwinder drops the result, and W0118 rejects a function that keeps a value outside its
+parameter. The call graph links a body to the `on abort` function of each of its
+`UnwindValue` statements, so its summary is ready first.
+
 ### 5.29 `scope`, `spawn`, `join`, `detach`, `fork` [2.28]
 
 ```text
@@ -2252,6 +2264,37 @@ cleanup of the frames outside the handled body of `h`. Then:
 An abort edge that the summary says cannot occur is not emitted. The IR keeps the block
 (the builder writes every edge that a kind of terminator can have).
 
+As built (plan stage F7, `crates/weft-sema/src/factgen/frames.rs`, `nodes.rs`):
+
+- `frames::destinations` gives the destinations of each terminator: `Dest::Past` or
+  `Dest::Handler { handler, value }` (node destination id `2 + handler`). A `Call` of a
+  function item takes them from the `aborts` part of the summary of the callee: an effect
+  through `Row` resolves in the capability environment of `CapArgs::Lexical` (the first
+  environment of the chain that adds the effect; a handled body that opens it names its
+  handler), `raises` resolves `Fail` there, `assert` goes past; `CapArgs::Root` goes past.
+  A call of an intrinsic, of a function value or of a function with no summary goes past
+  and to the `Fail` handler. `Join` and `Fork` go past (a cancel) and to the `Fail`
+  handler of the environment of the body (a child failure); `ScopeWait` the same with the
+  environment of the `Scope` site. A `perform` through a local capability goes to the
+  handler of its effect in the environment of the body. `Assert`, `Scope`, `Handle`,
+  `Resume` and a `perform` through `Row` go past.
+- A capability of a closure environment counts as one of a caller (past the function)
+  until stage F11. A `perform` through a local handler counts as an abort with a value
+  until stage F15 finds the clauses that can end with no resume point.
+- A terminator with no destination has no abort edge: a call of a function whose
+  summary cannot abort keeps its cleanup block in the IR, but the facts have no path to
+  it. `may_abort(n)` holds exactly when the node has a destination.
+- The node table copies each cleanup block once for each destination whose abort reaches
+  it, and makes the abort phases of each terminator for each of its destinations
+  (`AbortValue` for a destination with a value, then `FrameEnd(d)` for a call). The
+  templates run on each copy with the state of the block.
+- The summary part `aborts` has `Abort::Assert` for a body with an `assert` or a call of
+  a callee with one (`sig::Inferred::assert`; the `EffectSig` of today has no part for
+  it, so `weft-gate sigdiff` does not see it).
+- Not yet: the splices to the site (F14, F18), `Landing` and the template of
+  `AbortValue` (F15), and `spared_at` (F15). With only `Past` in group A, no variable is
+  spared, so `spared_at` is empty, which is sound (it only removes errors).
+
 **Re-entry edges (`multi`).** Let `P` be a node with `multi_at(P)`. Its continuation
 holds the frames from `P` up to its destination. For each such `P` the fact generator
 adds:
@@ -2591,7 +2634,7 @@ the IR and the analysis, not a surface walk:
 | W0204 (local forms) | Not a Rust check any more: `uses(S(_0), Return)` makes the spec derive `error(_0, Return)`. `diagnose.rs` reports an `error` of `_0` at a `Return` node as W0204 for a function or a closure, at the span of the `Return` origin (the returned expression, V18). In a handled body, a scope body or a clause, the same `error` is W0301 with the text "the value leaves after its place ends". |
 | W0204 (store forms) | A `stores` entry of a reference into a root that ends at an exit, behind a reference parameter or into an `rc` object. A query over the summary of each body, also of closures and clauses (V087, V108, FD3). |
 | W0204 (signature) | A returned reference must state its place. A signature check. |
-| W0118 | A query over the summary of the `on abort` function `f`: its changes are below its parameter value (F3-1); its row holds only effects that the root handlers serve; its `raises` part is empty; its `drops` part holds no type parameter of its parameter type (F3-3, F3-4). |
+| W0118 | A query over the summary of the `on abort` function `f`: its changes are below its parameter value (F3-1); its row holds only effects that the root handlers serve; its `raises` part is empty; its `drops` part holds no type parameter of its parameter type (F3-3, F3-4). As built (F7): `factgen::checks::on_abort_rows` projects the summary with `sig::to_effect_sig` and gives the texts of the old check (`program::on_abort_row`); a function with no summary keeps the row of the old inference. An emit that gives no rows keeps the W0118 of the old inference. |
 | W0315 | a builder diagnostic (5.36) |
 | W0303 | the old lowering; the body gets no IR (5.36) |
 | W0604 | the spec rule `moved_immovable`; the fact generator sets the `immovable` flag (5.36, 6.3) |

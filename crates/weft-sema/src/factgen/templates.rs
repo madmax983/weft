@@ -10,7 +10,9 @@
 //! terminators that run no other body: `Goto`, `Switch`, `Return`,
 //! `Unreachable`, `UnwindExit` and `Assert`. Stage F5 adds the phases of a
 //! `Call` of a function item ([`call`]): `Main`, `Ret` and `FrameEnd`, with
-//! the summary of the callee (`crate::analysis::apply`). The rules of a reference
+//! the summary of the callee (`crate::analysis::apply`). Stage F7 adds the
+//! `on abort` function of an `UnwindValue` ([`unwind_value`]) and gives
+//! `may_abort` only to a node with an abort destination. The rules of a reference
 //! fragment (a borrow, a copy of a reference, a read and a write through a
 //! reference) are pure functions in `super::kernel`.
 //!
@@ -71,6 +73,10 @@ pub struct Em<'a> {
     /// The references that the body puts behind a reference parameter or
     /// into an `rc` object (the W0204 store check, `docs/ir.md` 6.9).
     pub stored: Vec<Stored>,
+    /// The block and the statement index of the node of now: the id of a
+    /// run node of a statement (an `UnwindValue` with an `on abort`
+    /// function).
+    pub at: (weft_ir::BlockId, u32),
 }
 
 /// References that a node puts into a place that a caller keeps: behind a
@@ -544,7 +550,7 @@ pub fn stmt(em: &mut Em<'_>, n: NodeId, st: &State, s: &StmtKind, pair: Option<V
         StmtKind::Bounds(p, i) => bounds(em, n, st, p, i),
         StmtKind::Mention(p) => mention(em, n, st, p),
         StmtKind::Print(ops) => print(em, n, st, ops),
-        StmtKind::UnwindValue(p, a) => unwind_value(em, n, p, a),
+        StmtKind::UnwindValue(p, a) => unwind_value(em, n, st, p, a),
         StmtKind::UnwindKont(k) => unwind_kont(em, n, *k),
     }
 }
@@ -1129,15 +1135,17 @@ pub fn print(em: &mut Em<'_>, n: NodeId, st: &State, ops: &[Operand]) -> R {
 }
 
 /// `UnwindValue(p, a)`: `unwound_at` of `S(l)` and of the variables below
-/// `p`. An `OnAbort` action applies the summary of the function (stage F7).
+/// `p`.
+///
+/// An `OnAbort(f)` action also applies the summary of `f` at `n`, with
+/// its parameter mapped onto the value at `p` and the root handlers
+/// (`on_abort`).
 ///
 /// # Errors
 ///
-/// Returns [`AlphaError::Later`] for an `OnAbort` action.
-pub fn unwind_value(em: &mut Em<'_>, n: NodeId, place: &Place, a: &UnwindAction) -> R {
-    if let UnwindAction::OnAbort(_) = a {
-        return Err(AlphaError::Later("an `on abort` function (stage F7)"));
-    }
+/// The errors of α, and [`AlphaError::Later`] for a function `f` with no
+/// summary.
+pub fn unwind_value(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, a: &UnwindAction) -> R {
     let k = em.key(place.local)?;
     let prefix = move_prefix(place);
     let vars = em.vars;
@@ -1148,6 +1156,57 @@ pub fn unwind_value(em: &mut Em<'_>, n: NodeId, place: &Place, a: &UnwindAction)
             .map(|(_, _, v)| *v),
     );
     em.facts.unwound_at.extend(vs.map(|v| (v, n)));
+    if let UnwindAction::OnAbort(f) = a {
+        on_abort(em, n, st, place, *f)?;
+    }
+    Ok(())
+}
+
+/// The run node `n` of the `on abort` function `f` for the value at `place`
+/// (`docs/ir.md` 5.28 and 6.7): the parts of the summary of `f` that act at
+/// the node (`crate::analysis::apply::main` with
+/// [`crate::analysis::apply::RunKind::OnAbort`]). A change through a
+/// reference in the value changes the place that it points into, here
+/// (F3-1). The function gets the root handlers: no effect leaves the code
+/// that aborts, and the unwinder drops the result.
+///
+/// # Errors
+///
+/// The errors of α and of σ, and [`AlphaError::Later`] for a function with
+/// no summary.
+fn on_abort(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, f: weft_ir::FnId) -> R {
+    use crate::analysis::apply;
+    let sum = em.sums.get(f).map_err(AlphaError::Later)?.clone();
+    let p = em.p;
+    let decl = p
+        .fns
+        .get(f.index())
+        .ok_or_else(|| AlphaError::BadPlace(format!("no function f{}", f.0)))?;
+    // The function takes each instance of the type: the type arguments of
+    // the value.
+    let targs = match em.place_ty(place).and_then(|t| em.tys.try_get(t).cloned()) {
+        Some(Ty::Adt(_, args)) => args,
+        _ => Vec::new(),
+    };
+    let body = em.body;
+    let inst = transfer::run_inst(body, em.at.0).saturating_add(em.at.1.saturating_mul(1 << 24));
+    let args = [Operand::Copy(place.clone())];
+    let sigma = apply::sigma(&mut em.cx(), body, st, decl, &targs, &args, inst)?;
+    let name = decl.name.rsplit('.').next().unwrap_or(decl.name.as_str());
+    let span = em.facts.node(n).span;
+    let site = apply::Site {
+        callee: name,
+        spans: vec![span],
+        bases: vec![em.alpha(st, place)?.places],
+    };
+    apply::main(
+        &mut em.cx(),
+        n,
+        &sum,
+        &sigma,
+        &site,
+        apply::RunKind::OnAbort,
+    )?;
     Ok(())
 }
 
@@ -1341,6 +1400,9 @@ pub struct CallNodes {
     pub frame_end: Option<NodeId>,
     /// The node `FrameEnd(d)` of the path of each abort.
     pub aborts: Vec<NodeId>,
+    /// The node keeps an abort edge: it has an abort destination
+    /// (`super::frames`).
+    pub may_abort: bool,
 }
 
 /// True if type `t` names type parameter `j`.
@@ -1571,6 +1633,9 @@ pub fn call(
         &site,
         crate::analysis::apply::RunKind::Item,
     )?;
+    if nodes.may_abort {
+        em.facts.may_abort.push(main);
+    }
     via_receiver(em, main, st, args, sum.only_self, &changed)?;
     let places: Vec<PlaceId> = changed.iter().map(|(q, _)| *q).collect();
     gets_linear(em, main, st, &places);
@@ -1694,7 +1759,9 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
     em.facts.reads_at.push((n, out.caller));
     em.facts.lends_mut.push((n, out.caller));
     em.facts.escapes_at.push((n, out.effect.clone()));
-    em.facts.may_abort.push(n);
+    if nodes.may_abort {
+        em.facts.may_abort.push(n);
+    }
     if out.multi {
         em.facts.multi_at.push(n);
     }

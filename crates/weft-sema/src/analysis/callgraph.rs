@@ -3,8 +3,9 @@
 //!
 //! The analysis of a body reads the summaries of the functions that it
 //! calls. [`infer`] links each function body to each function body whose
-//! summary it reads (a `Call` of a function item; stage F11 and later add
-//! closures, clauses and tasks), and finds the strongly connected components
+//! summary it reads (a `Call` of a function item, and an `on abort` function
+//! of an `UnwindValue`; stage F11 and later add closures, clauses and
+//! tasks), and finds the strongly connected components
 //! of that graph. It runs each component to a fixpoint, callees first:
 //!
 //! - the summary of each function of the component starts with its stated
@@ -30,7 +31,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use weft_facts::{FnFacts, StepKind};
-use weft_ir::{BodyId, Callee, TermKind};
+use weft_ir::{BodyId, Callee, StmtKind, TermKind, UnwindAction};
 use weft_syntax::diag::Diagnostic;
 
 use super::sig::{self, Inferred};
@@ -174,6 +175,7 @@ fn stated(
 ) -> Inferred {
     let mut out = Inferred::of_signature(sig, decl, tys);
     out.raises = body.raises;
+    out.assert = body.assert;
     out.multi = body.multi;
     out.drops.clone_from(&body.drops);
     out.holds.clone_from(&body.holds);
@@ -204,7 +206,13 @@ fn summary_of(
         s.effects.multi = inf.multi;
         s.effects.drops = inf.drops.iter().map(|&j| j as usize).collect();
         s.effects.holds = inf.holds.iter().map(|&j| j as usize).collect();
-        return sig::from_signature(&a.program, sema, &s, decl, tys);
+        // The signature has no part for an `assert`: the body gives it.
+        return sig::from_signature(&a.program, sema, &s, decl, tys).map(|mut sum| {
+            if inf.assert {
+                sum.aborts.insert(super::summary::Abort::Assert);
+            }
+            sum
+        });
     }
     if decl.params.iter().any(|&t| tys.mentions_fn(t)) || tys.mentions_fn(decl.ret) {
         return Err("a call of a function with a function value in its signature (stage F12)");
@@ -309,6 +317,15 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                 {
                     if let Some(&j) = by_fn.get(g) {
                         n.callees.insert(j);
+                    }
+                }
+                // The unwinder runs an `on abort` function on a cleanup
+                // path: its summary applies there (stage F7).
+                for s in &blk.stmts {
+                    if let StmtKind::UnwindValue(_, UnwindAction::OnAbort(g)) = &s.kind {
+                        if let Some(&j) = by_fn.get(g) {
+                            n.callees.insert(j);
+                        }
                     }
                 }
             }

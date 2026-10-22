@@ -353,11 +353,15 @@ struct Src<'a> {
 }
 
 /// Returns true if a `typeck` diagnostic is inside the body at `span` with
-/// block `block` of unit `unit` (the rule of test D0).
+/// block `block` of unit `unit` (the rule of test D0). W0118 does not count:
+/// it is a check of the effects of an `on abort` function, and the `ir`
+/// pipeline asks the summary of the body of the function for it
+/// (`crate::factgen::checks`, `docs/ir.md` 6.9).
 fn typeck_error(a: &Analysis, unit: usize, span: Span, block: &ast::Block) -> bool {
     a.diags.iter().any(|d| {
         d.unit == unit
             && d.code.as_str().starts_with("W01")
+            && d.code != weft_syntax::diag::Code::W0118
             && d.span.lo >= span.lo
             && d.span.hi <= span.hi.max(block.span.hi)
     })

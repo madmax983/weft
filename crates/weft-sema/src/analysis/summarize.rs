@@ -17,8 +17,8 @@
 //! - `escapes_at` (part `performs`): each effect that a node performs
 //!   through the capability of a caller.
 //! - `may_abort` (part `aborts`): a failure of the runtime (`raises`) of a
-//!   callee. An abort of an effect comes with its perform. Stage F7 adds
-//!   `assert` and the aborts past the function.
+//!   callee, and an `assert` of the body or of a callee (stage F7). An abort
+//!   of an effect comes with its perform.
 //! - `multi_at` (part `multi`): a callee that can resume more than once with
 //!   no effect of its row that says so.
 //!
@@ -163,6 +163,9 @@ pub fn summarize(
             continue;
         };
         for blk in &body.blocks {
+            if let TermKind::Assert { .. } = blk.term.kind {
+                out.assert = true;
+            }
             let TermKind::Call {
                 callee: Callee::Fn(f, _),
                 ..
@@ -175,6 +178,9 @@ pub fn summarize(
             };
             if s.aborts.contains(&Abort::Raises) {
                 out.raises = true;
+            }
+            if s.aborts.contains(&Abort::Assert) {
+                out.assert = true;
             }
             if s.unknown_multi {
                 out.multi = true;

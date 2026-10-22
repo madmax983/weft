@@ -363,3 +363,99 @@ fn main() {
 ";
     assert_eq!(ir_codes(src), vec![("W0301".to_string(), 9)]);
 }
+
+#[test]
+fn an_assert_aborts_past_the_function_with_a_live_linear_value() {
+    // `tests/gate/probes/ir/probes/p25_assert_abort.wf` and
+    // `p27_assert_callee.wf` (sem-N4): W0602 at the `assert`, and at the
+    // call of a function with an `assert` (plan stage F7).
+    let p25 = "linear struct Lk { id: u64 }
+fn done(l: Lk) { let Lk(i) = l; print(\"done\", i) }
+fn main() {
+    let l = Lk { id: 1 }
+    let x = 3
+    assert x == 4
+    done(l)
+}
+";
+    assert_eq!(ir_codes(p25), vec![("W0602".to_string(), 6)]);
+    let p27 = "linear struct Lk { id: u64 }
+fn done(l: Lk) { let Lk(i) = l; print(\"done\", i) }
+fn check(x: u64) { assert x == 4 }
+fn main() {
+    let l = Lk { id: 1 }
+    check(3)
+    done(l)
+}
+";
+    assert_eq!(ir_codes(p27), vec![("W0602".to_string(), 6)]);
+}
+
+#[test]
+fn the_ir_pipeline_applies_the_on_abort_function_on_the_abort_path() {
+    // F3-1: `undo` changes the vector through the reference in its value.
+    // W0118 rejects it, and the change shows at the caller of `holder`.
+    let src = "linear struct R { o: Option<&Vec<u64>> }
+    on abort = undo
+fn undo(r: R) {
+    let R(o) = r
+    match o {
+        Some(v) => v.push(7),
+        None => {},
+    }
+}
+fn holder(v: &Vec<u64>) {
+    let r = R { o: Some(v) }
+    assert v.len() == 0
+    let R(x) = r
+}
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let first = &v[0]
+    holder(&v)
+    print(first)
+}
+";
+    let mut got = ir_codes(src);
+    got.sort();
+    assert_eq!(
+        got,
+        vec![("W0118".to_string(), 3), ("W0301".to_string(), 20)]
+    );
+    // QA2: `rollback` performs `Note`: W0118, as in the old pipeline.
+    let qa2 = "effect Note { fn note(x: u64) }
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { note(1); let Tx(i) = t }
+fn commit(t: Tx) { let Tx(i) = t }
+fn work() / fail { fail(\"x\") }
+fn f() / fail {
+    let t = Tx { id: 1 }
+    work()
+    commit(t)
+}
+fn main() / fail {
+    f()
+}
+";
+    assert_eq!(ir_codes(qa2), vec![("W0118".to_string(), 4)]);
+    // A clean `on abort` function: no diagnostic.
+    let clean = "linear struct H { items: Vec<u64> }
+    on abort = undo_local
+fn undo_local(h: H) {
+    let H(items) = h
+    items.push(1)
+}
+fn work() / fail { fail(\"x\") }
+fn f() / fail {
+    let h = H { items: Vec.new() }
+    work()
+    let H(x) = h
+}
+fn main() / fail {
+    f()
+}
+";
+    assert_eq!(ir_codes(clean), Vec::<(String, usize)>::new());
+}
