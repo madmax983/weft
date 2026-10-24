@@ -1,0 +1,11 @@
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+impl Entity {
+    fn plus(self, n: i32) -> i32 { self.hp + n }
+}
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+// A block argument clears the `Vec` (f8/variants2/broad/r_e_recvShrinkBlock.wf).
+fn main() {
+    let w = mkw()
+    print(w.entities[0].plus({ w.entities.clear(); 0 }))
+}

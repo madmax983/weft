@@ -414,6 +414,28 @@ reason = "W0601 precision: the tail `t.0` of the block moves the linear part int
 signed_by = "review agent, stage F8 (independent)"
 stage = "F8"
 
+# Stage F8.3. The third review of stage F8 (f8/review3_receiver_bounds.md,
+# addendum at f4a2b84) signed this entry; stage F8.3 copied it as the
+# reviewer gave it.
+[[entry]]
+class = "lost-clean"
+files = [
+  "tests/gate/probes/fixes/f8/receiver_bounds/shrink.wf",
+  "tests/gate/probes/fixes/f8/receiver_bounds/pop.wf",
+  "tests/gate/probes/fixes/f8/receiver_bounds/renew.wf",
+  "tests/gate/probes/fixes/f8/receiver_bounds/block.wf",
+  "tests/gate/probes/fixes/f8/receiver_bounds/r_b_recvShrink.wf",
+  "tests/gate/probes/fixes/f8/receiver_bounds/r_c_recvPop.wf",
+  "tests/gate/probes/fixes/f8/receiver_bounds/r_d_recvRenew.wf",
+  "tests/gate/probes/fixes/f8/receiver_bounds/r_e_recvShrinkBlock.wf",
+  "tests/gate/probes/fixes/f8/receiver_bounds/r_f_recvIdxVar.wf",
+  "tests/gate/probes/fixes/f8/receiver_bounds/r_i_recvFieldOfRef.wf",
+  "tests/gate/probes/fixes/f8/receiver_bounds/r_k_recvVecMethod.wf",
+]
+reason = "Receiver order (ir 5.19, ledger entry 25): the index value of the receiver place is fixed before the arguments, the call borrows the element after them, and the IR engine checks the index again at that borrow (Op::Index; pinned by compile_ir.rs a_receiver_index_that_a_later_argument_makes_invalid_stops_with_a_bounds_error). An argument that clears, pops or renews the Vec makes the run stop with 'index 0 is out of bounds' (benign), not a read of a freed cell. Old W0301 is a false positive under this order. Only index steps: a variant step in a receiver place stays W0301, and the IR engine checks its tag (review3 R1, fixed at f4a2b84). 70 index variants (renew to length 2, reorder, nested indices, field below the index, Box, Rc, tuple, reference base, by-value and mut receivers) gave no memory fault, the same at aad0824 and f4a2b84"
+signed_by = "review agent, stage F8 (independent)"
+stage = "F8"
+
 # ----------------------------------------------------------------------------
 # Stage I5: the engine differential (`weft-gate engines --tier 1|2`,
 # docs/ir.md section 8.5). Each difference of the `ast` and the `ir` engine

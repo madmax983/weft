@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3"]
 
 
 # ----------------------------------------------------------------------
@@ -3248,12 +3248,19 @@ verdict = "construction"
 group = "A"
 stage = "F8.3"
 repro = [
-    "crates/weft-interp/tests/receiver_bounds/shrink.wf",
-    "crates/weft-interp/tests/receiver_bounds/pop.wf",
-    "crates/weft-interp/tests/receiver_bounds/renew.wf",
-    "crates/weft-interp/tests/receiver_bounds/block.wf",
+    "tests/gate/probes/fixes/f8/receiver_bounds/shrink.wf",
+    "tests/gate/probes/fixes/f8/receiver_bounds/pop.wf",
+    "tests/gate/probes/fixes/f8/receiver_bounds/renew.wf",
+    "tests/gate/probes/fixes/f8/receiver_bounds/block.wf",
+    "tests/gate/probes/fixes/f8/receiver_bounds/r_b_recvShrink.wf",
+    "tests/gate/probes/fixes/f8/receiver_bounds/r_c_recvPop.wf",
+    "tests/gate/probes/fixes/f8/receiver_bounds/r_d_recvRenew.wf",
+    "tests/gate/probes/fixes/f8/receiver_bounds/r_e_recvShrinkBlock.wf",
+    "tests/gate/probes/fixes/f8/receiver_bounds/r_f_recvIdxVar.wf",
+    "tests/gate/probes/fixes/f8/receiver_bounds/r_i_recvFieldOfRef.wf",
+    "tests/gate/probes/fixes/f8/receiver_bounds/r_k_recvVecMethod.wf",
 ]
-note = "receiver order and Bounds (second review of F8, 4.2): in `w.entities[0].plus(shrink(&w))` the `Bounds` of the receiver index runs before the arguments, and the borrow after them (docs/ir.md 5.19). The `ir` pipeline accepts the programs (old: W0301). The IR engine checks the index again at the borrow, so the run stops with an out-of-bounds error (benign) and never reads a freed cell. Pinned now by the weft-interp test compile_ir `a_receiver_index_that_a_later_argument_makes_invalid_stops_with_a_bounds_error`. The claim is off: in the gate the programs are `lost-clean`, and they need a signed ledger entry (a reviewer that is not the author) before stage F8.3 copies them into tests/gate/probes and turns the claim on"
+note = "receiver order and Bounds (second review of F8, 4.2; third review): in `w.entities[0].plus(shrink(&w))` the `Bounds` of the receiver index runs before the arguments, and the borrow after them (docs/ir.md 5.19). The `ir` pipeline accepts the programs (old: W0301). The IR engine checks the index again at the borrow, so the run stops with an out-of-bounds error (benign) and never reads a freed cell. Pinned by the weft-interp test compile_ir `a_receiver_index_that_a_later_argument_makes_invalid_stops_with_a_bounds_error`. In the gate the programs are `lost-clean` with the entry that the third review signed (stage F8.3). `shrink`, `pop`, `renew` and `block` are copies of crates/weft-interp/tests/receiver_bounds/"
 
 [[claim]]
 finding = "branch-temps"

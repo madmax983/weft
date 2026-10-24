@@ -172,6 +172,11 @@ them again if it runs.
   stage F8 (holes N1 and N2; claims F8-H3b and F8-H3c), with the helper functions
   that `main` does not call removed. `fixes/f8/n1_*.wf`, `fixes/f8/n2_*.wf` and
   `fixes/f8/ctl_*.wf`: more shapes and controls of stage F8c.
+- `fixes/f8/variant_receiver/*.wf`: the variant-step receivers of the third review
+  of stage F8 (hole R1) and more shapes and controls of stage F8d (claims F8-R1).
+- `fixes/f8/receiver_bounds/*.wf`: the index receivers of the third review of stage
+  F8 (stage F8.3; signed `lost-clean` entry; claim F8-RB). `shrink`, `pop`, `renew`
+  and `block` are copies of `crates/weft-interp/tests/receiver_bounds/`.
 - `r3/oracle/sweep1/{if,match}__tmp_*__arg.wf` and
   `verify/s5/R3a_diff/sweep/{if,match}__ref_temp*__arg.wf`: copies of the 24
   tier-2 programs of the branch temporaries (claim branch-temps, docs/ir.md 5.12).
