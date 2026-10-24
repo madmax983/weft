@@ -171,6 +171,10 @@ fn accessed(b: &weft_ir::Body) -> Vec<&Place> {
 /// variable.
 pub type PartVar = (PartKind, Vec<Proj>, VarId);
 
+/// An `N` variable of a value temporary: the base place, the variant and the
+/// variable.
+pub type NamedVar = (Place, u32, VarId);
+
 /// The kind of a variable of a part ([`Vars::parts_of`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PartKind {
@@ -194,6 +198,12 @@ pub struct Vars {
     /// destination, `docs/ir.md` 5.36), and a temporary that gets the result
     /// of a call (5.17).
     in_place: HashSet<(BodyId, LocalId)>,
+    /// The `W` variables of each tested base place: the variant and the
+    /// variable.
+    tested: HashMap<(BodyId, Place), Vec<(u32, VarId)>>,
+    /// The `N` variables of each value temporary: the base, the variant and
+    /// the variable.
+    named: HashMap<(BodyId, LocalId), Vec<NamedVar>>,
 }
 
 /// The span of the facts for an IR span.
@@ -519,16 +529,16 @@ impl Vars {
 
     /// The `N` variables of body `body` for the assignment whose value
     /// starts with temporary `t`: the base, the variant and the variable.
-    pub fn named_by(&self, body: BodyId, t: LocalId) -> Vec<(Place, u32, VarId)> {
-        self.order
-            .iter()
-            .filter_map(|k| match k {
-                VarKey::N(b, l, base, v) if *b == body && *l == t => {
-                    self.get(k).map(|id| (base.clone(), *v, id))
-                }
-                _ => None,
-            })
-            .collect()
+    pub fn named_by(&self, body: BodyId, t: LocalId) -> &[NamedVar] {
+        self.named.get(&(body, t)).map_or(&[], Vec::as_slice)
+    }
+
+    /// The `W` variables of body `body` that the test of base place `base`
+    /// binds: the variant and the variable.
+    pub fn tested_at(&self, body: BodyId, base: &Place) -> &[(u32, VarId)] {
+        self.tested
+            .get(&(body, base.clone()))
+            .map_or(&[], Vec::as_slice)
     }
 
     /// The `N` variable of each variant step of `target` for the assignment
@@ -700,6 +710,17 @@ impl Vars {
                 pl.proj.clone(),
                 id,
             )),
+            VarKey::W(b, base, v) => self
+                .tested
+                .entry((*b, base.clone()))
+                .or_default()
+                .push((*v, id)),
+            VarKey::N(b, t, base, v) => {
+                self.named
+                    .entry((*b, *t))
+                    .or_default()
+                    .push((base.clone(), *v, id));
+            }
             _ => {}
         }
         self.ids.insert(key.clone(), id);

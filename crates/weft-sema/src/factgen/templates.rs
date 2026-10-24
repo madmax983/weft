@@ -684,8 +684,9 @@ pub fn stmt(em: &mut Em<'_>, n: NodeId, st: &State, s: &StmtKind, pair: Option<V
 ///
 /// The errors of α.
 pub fn live(em: &mut Em<'_>, n: NodeId, st: &State, l: LocalId) -> R {
-    for (base, v, var) in em.vars.named_by(em.body, l) {
-        em.bind_variant(n, st, var, &base, v)?;
+    let vars = em.vars;
+    for (base, v, var) in vars.named_by(em.body, l) {
+        em.bind_variant(n, st, *var, base, *v)?;
     }
     Ok(())
 }
@@ -791,17 +792,8 @@ pub fn assign(
         Rvalue::Discriminant(q) => {
             let (a, _) = em.access(st, q, true)?;
             em.apply(n, kernel::read(&a));
-            let tests: Vec<(u32, VarId)> = em
-                .vars
-                .keys()
-                .filter_map(|k| match k {
-                    VarKey::W(b, base, v) if *b == em.body && base == q => {
-                        em.vars.get(k).map(|id| (*v, id))
-                    }
-                    _ => None,
-                })
-                .collect();
-            for (v, var) in tests {
+            let vars = em.vars;
+            for &(v, var) in vars.tested_at(em.body, q) {
                 em.bind_variant(n, st, var, q, v)?;
             }
         }
