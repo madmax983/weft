@@ -281,11 +281,17 @@ pub enum Kind {
     /// ends, also in a second run alone. Shape: exactly one run is a
     /// timeout.
     Timeout,
+    /// A payload place of a variant (`e.A`, `o.Some`, 8.1): the AST engine
+    /// finds no field of that name in an enum value and faults at each
+    /// such place; the IR engine reads the payload, and from stage F8d
+    /// checks the tag at each read. Shape: the AST run faults with "has no
+    /// field", and the IR run does not.
+    VariantPlace,
 }
 
 impl Kind {
     /// All the classes.
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 21] = [
         Self::ChoiceA,
         Self::LoopTemps,
         Self::BranchTemps,
@@ -306,6 +312,7 @@ impl Kind {
         Self::RaceBeforeDangling,
         Self::StaticTypeRead,
         Self::Timeout,
+        Self::VariantPlace,
     ];
 
     /// The name in the ledger.
@@ -331,6 +338,7 @@ impl Kind {
             Self::RaceBeforeDangling => "race-before-dangling",
             Self::StaticTypeRead => "static-type-read",
             Self::Timeout => "timeout",
+            Self::VariantPlace => "variant-place",
         }
     }
 
@@ -411,6 +419,12 @@ impl Kind {
             }
             Self::StaticTypeRead => i == Facet::Leak && (a != Facet::Leak || other_output),
             Self::Timeout => (a == Facet::Timeout) != (i == Facet::Timeout),
+            Self::VariantPlace => {
+                let no_field = |o: Option<&Observation>| {
+                    o.is_some_and(|o| o.status == "fault" && o.message.contains("has no field `"))
+                };
+                no_field(ao) && !no_field(io)
+            }
         }
     }
 }

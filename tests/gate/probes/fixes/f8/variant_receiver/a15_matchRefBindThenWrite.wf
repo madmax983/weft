@@ -1,0 +1,10 @@
+struct Entity { hp: i32 }
+impl Entity {
+    fn plus(self, n: i32) -> i32 { self.hp + n }
+}
+struct Other { b: i32 }
+enum Two { A(Entity), B(Other) }
+struct H { t: Two }
+fn flip(h: &H) -> i32 / mut(h.t) { h.t = Two.B(Other { b: 1000 }); 0 }
+fn mkh() -> H { H { t: Two.A(Entity { hp: 1 }) } }
+fn main() { let h = mkh(); let r = &h.t; match r { Two.A(x) => print(x.plus(flip(&h))), Two.B(o) => {} } }

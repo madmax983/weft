@@ -1283,11 +1283,17 @@ mod ir_ops {
 /// Runs the unchecked program `src` on the IR engine with the oracle checks.
 /// Returns the output and the error message, if any.
 fn run_ir_unchecked(src: &str) -> (String, Option<String>) {
+    run_unchecked(src, weft_interp::Engine::Ir)
+}
+
+/// Runs the unchecked program `src` on `engine` with the oracle checks.
+/// Returns the output and the error message, if any.
+fn run_unchecked(src: &str, engine: weft_interp::Engine) -> (String, Option<String>) {
     let a = weft_sema::analyze_source(src, Options::default()).unwrap();
     let o = RunOptions {
         max_steps: Some(1_000_000),
         oracle: true,
-        engine: weft_interp::Engine::Ir,
+        engine,
         ..RunOptions::default()
     };
     match run_analysis_main(&a, &o) {
@@ -1342,4 +1348,104 @@ enum Two { A(Entity), B(Other) }
     let good = "fn main() { let e = Two.A(Entity { hp: 1 }); print(e.A.plus(2)); print(e.A.bump({ e = Two.A(Entity { hp: 4 }); 5 })) }";
     let (out, err) = run_ir_unchecked(&format!("{head}{good}"));
     assert_eq!((out.as_str(), err), ("3\n9\n", None));
+}
+
+// ---------------------------------------------------------------------------
+// 12. References into the payload of an enum value (oracle)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_reference_into_an_enum_payload_ends_when_the_enum_gets_a_new_value() {
+    // Third review of stage F8, addendum (a15, b07): a reference into the
+    // payload of an enum value stayed valid when the enum got another
+    // variant, and the run read the payload of the new variant as the old
+    // type (it printed 1000). The checker rejects these programs (W0301:
+    // the variant step is unstable). With the oracle on, a new value of the
+    // enum (a whole write of it or of a place above it) ends each reference
+    // into its parts, and a read through one is a dangling read. `Entity`
+    // is not plain data, so a pattern binds it by reference.
+    let head = "struct Entity { hp: i32, v: Vec<i32> }
+impl Entity {
+    fn plus(self, n: i32) -> i32 { self.hp + n }
+    fn me(self, n: i32) -> &Entity in self { self }
+}
+fn ent(hp: i32) -> Entity { Entity { hp: hp, v: Vec.new() } }
+struct Other { b: i32 }
+enum Two { A(Entity), B(Other) }
+struct H { t: Two }
+fn flip(h: &H) -> i32 / mut(h.t) { h.t = Two.B(Other { b: 1000 }); 0 }
+fn mkh() -> H { H { t: Two.A(ent(1)) } }
+";
+    let ir_only = [
+        // a15: a match binds `x` into the payload, an argument flips it.
+        "fn main() { let h = mkh(); let r = &h.t; match r { Two.A(x) => print(x.plus(flip(&h))), Two.B(o) => {} } }",
+        // b07: a returned reference into the payload, then a flip.
+        "fn main() { let h = mkh(); let x = h.t.A.me(0); let n = flip(&h); print(x.hp + n) }",
+        // A new value of the same variant is a new value too.
+        "fn main() { let h = mkh(); let x = h.t.A.me(0); h.t = Two.A(ent(7)); print(x.hp) }",
+        // A new value of a place above the enum.
+        "fn main() { let h = mkh(); let x = h.t.A.me(0); h = mkh(); print(x.hp) }",
+        // An enum in an element of a `Vec`.
+        "fn main() { let v = Vec.new(); v.push(Two.A(ent(1))); let x = v[0].A.me(0); v[0] = Two.B(Other { b: 1000 }); print(x.hp) }",
+    ];
+    // A match through a reference binds by reference on both engines.
+    let both = [
+        "fn main() { let h = mkh(); let r = &h.t; match r { Two.A(x) => { let n = flip(&h); print(x.hp + n) }, Two.B(o) => {} } }",
+        "fn main() { let o = Some(ent(1)); let r = &o; match r { Some(x) => { o = None; print(x.hp) }, None => {} } }",
+    ];
+    let engines = [weft_interp::Engine::Ast, weft_interp::Engine::Ir];
+    let runs = ir_only
+        .iter()
+        .map(|b| (*b, weft_interp::Engine::Ir))
+        .chain(both.iter().flat_map(|b| engines.map(|e| (*b, e))));
+    for (b, e) in runs {
+        let (out, err) = run_unchecked(&format!("{head}{b}"), e);
+        assert_eq!(out, "", "{e:?} {b}");
+        let err = err.unwrap_or_default();
+        assert!(
+            err.contains("oracle:")
+                && err.contains("an enum value")
+                && err.contains("(a dangling reference)"),
+            "{e:?} {b}: {err}"
+        );
+    }
+}
+
+#[test]
+fn a_write_inside_the_payload_keeps_the_references_into_the_enum_value() {
+    // Controls of the test above. A write to a field of the payload does
+    // not give the enum a new value: a reference to another field stays
+    // valid (as for a struct). A reference to the enum value itself (not
+    // into its payload) stays valid when the enum gets a new value. A
+    // reference made after the new value is valid.
+    let head = "struct P2 { a: i32, b: i32 }
+enum E2 { P(P2), Q(i32) }
+fn setb(p: &P2) -> i32 / mut(p.b) { p.b = 5; 0 }
+struct Other { b: i32 }
+struct Entity { hp: i32 }
+enum Two { A(Entity), B(Other) }
+struct H { t: Two }
+fn flip(h: &H) -> i32 / mut(h.t) { h.t = Two.B(Other { b: 1000 }); 0 }
+fn mkh() -> H { H { t: Two.A(Entity { hp: 1 }) } }
+";
+    let good = [
+        (
+            "fn main() { let e = E2.P(P2 { a: 1, b: 2 }); match &e { E2.P(p) => { let ra = &p.a; let n = setb(&p); print(ra); print(p.b + n) }, E2.Q(_) => {} } }",
+            "1\n5\n",
+        ),
+        (
+            "fn main() { let h = mkh(); let r = &h.t; let n = flip(&h); match r { Two.A(x) => print(x.hp), Two.B(o) => print(o.b + n) } }",
+            "1000\n",
+        ),
+        (
+            "fn main() { let h = mkh(); match &h.t { Two.A(x) => print(x.hp), Two.B(_) => {} }; let n = flip(&h); match &h.t { Two.B(o) => print(o.b + n), Two.A(_) => {} } }",
+            "1\n1000\n",
+        ),
+    ];
+    for (g, want) in good {
+        for e in [weft_interp::Engine::Ast, weft_interp::Engine::Ir] {
+            let (out, err) = run_unchecked(&format!("{head}{g}"), e);
+            assert_eq!((out.as_str(), err), (want, None), "{e:?} {g}");
+        }
+    }
 }

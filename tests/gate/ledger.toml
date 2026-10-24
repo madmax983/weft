@@ -576,6 +576,25 @@ files = [
 reason = "the unwinder faults at a linear value with no `on abort`. The IR engine runs the cleanup chain (docs/ir.md 8.2), so the fault has the line of the op that aborted the frame of the value; the AST engine gives the line of the frame below the unwinding, or no line. Both engines fault after the same output; the ledger has an open-old entry for each program"
 stage = "I6"
 
+[[entry]]
+class = "engine"
+difference = "variant-place"
+files = [
+    "tests/gate/probes/fixes/f8/variant_receiver/ctl_a13_assignOk.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/ctl_a14_recvOk.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/ctl_a17_someRecvOkThenNone.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/ctl_a24_payloadFieldWrite.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/ctl_a33_twoRecvOk.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/f8d_a07_recvValue.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/f8d_a15_assignTargetArg.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/f8d_a18_idxVariantAssign.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/f8d_a20_compoundCall.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/z01_assignVariantField.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/z02_compoundVariantField.wf",
+]
+reason = "a payload place of a variant (`e.A`, `o.Some`; docs/ir.md 8.1): the AST engine finds no field of that name in an enum value and faults with \"this value has no field\" at each such place; the IR engine reads the payload and checks the tag at each read (op Variant, stage F8d). The old checker accepts these probes of stage F8d: the controls run clean on the IR engine, and the IR engine stops with \"this value is another variant\" on the others (the ir pipeline rejects them: `fixed`). Found by the first engine differential after F8d (stage F8e)"
+stage = "F8"
+
 # -- Programs that the checker rejects: one rule for each class.
 
 [[entry]]

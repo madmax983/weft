@@ -21,12 +21,53 @@ pub type LinId = usize;
 pub type CodeId = usize;
 
 /// A location: a heap cell and a path of field or element indices inside it.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+///
+/// Two places are equal if they have the same cell and path. The marks are
+/// not part of the location.
+#[derive(Clone, Debug)]
 pub struct Place {
     /// The cell.
     pub cell: CellId,
     /// Field, payload or element indices, from the outside in.
     pub path: Vec<u32>,
+    /// With the oracle checks on: the enum values that a reference to this
+    /// place goes through, in the order of the path (see [`EnumMark`]).
+    /// Each other place has no marks.
+    pub marks: Vec<EnumMark>,
+}
+
+/// An enum value that a reference goes through.
+///
+/// The value at the first `depth` steps of the path is the enum value `id`,
+/// and the step at `depth` goes into its payload. When the enum gets a new
+/// value, the reference ends: the oracle reports a read or a write through
+/// it as a dangling reference.
+#[derive(Clone, Copy, Debug)]
+pub struct EnumMark {
+    /// The number of path steps above the enum value.
+    pub depth: u32,
+    /// The identity of the enum value ([`EnumVal::id`]).
+    pub id: u64,
+}
+
+impl PartialEq for Place {
+    fn eq(&self, other: &Self) -> bool {
+        self.cell == other.cell && self.path == other.path
+    }
+}
+
+impl Eq for Place {}
+
+impl PartialOrd for Place {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Place {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.cell, &self.path).cmp(&(other.cell, &other.path))
+    }
 }
 
 impl Place {
@@ -35,10 +76,21 @@ impl Place {
         Self {
             cell,
             path: Vec::new(),
+            marks: Vec::new(),
         }
     }
 
-    /// Returns the place of field or element `i` of this place.
+    /// Returns the place at `path` in `cell`, with no marks.
+    pub const fn new(cell: CellId, path: Vec<u32>) -> Self {
+        Self {
+            cell,
+            path,
+            marks: Vec::new(),
+        }
+    }
+
+    /// Returns the place of field or element `i` of this place. It keeps
+    /// the marks of this place.
     #[must_use]
     pub fn child(&self, i: u32) -> Self {
         let mut path = self.path.clone();
@@ -46,6 +98,7 @@ impl Place {
         Self {
             cell: self.cell,
             path,
+            marks: self.marks.clone(),
         }
     }
 }
@@ -70,6 +123,10 @@ pub struct EnumVal {
     pub variant: u32,
     /// The payload.
     pub fields: Vec<Value>,
+    /// With the oracle checks on: the identity of the value. Each new enum
+    /// value gets a new identity; a copy and a move keep it. A write of a
+    /// part of the payload keeps it too. Without the oracle checks it is 0.
+    pub id: u64,
 }
 
 /// A closure: code, captured cells and the handlers where it was made.

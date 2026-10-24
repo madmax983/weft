@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use crate::oracle::Oracle;
-use crate::value::{CellId, ClosureVal, Place, TaskId, Value};
+use crate::value::{CellId, ClosureVal, EnumMark, Place, TaskId, Value};
 
 /// What a cell holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,6 +128,77 @@ impl Heap {
         }
     }
 
+    /// Returns the identity of a new enum value ([`crate::value::EnumVal::id`]):
+    /// a new number with the oracle checks on, else 0.
+    pub fn new_enum_id(&self) -> u64 {
+        self.oracle
+            .as_ref()
+            .map_or(0, |o| o.borrow_mut().next_enum_id())
+    }
+
+    /// With the oracle checks on, returns `p` with a mark for each enum
+    /// value that the path of `p` goes into (see [`EnumMark`]). A step that
+    /// has a mark keeps it: a reference made from an old reference keeps
+    /// the enum values of the old one. Use it for each new reference.
+    pub fn mark(&self, p: Place) -> Place {
+        if self.oracle.is_none() || p.path.is_empty() {
+            return p;
+        }
+        let mut p = p;
+        let Ok(slot) = self.slot(p.cell) else {
+            return p;
+        };
+        let mut v = &slot.val;
+        let mut marks = Vec::new();
+        for (d, &i) in p.path.iter().enumerate() {
+            let depth = u32::try_from(d).unwrap_or(u32::MAX);
+            if let Some(m) = p.marks.iter().find(|m| m.depth == depth) {
+                marks.push(*m);
+            } else if let Value::Enum(e) = v {
+                marks.push(EnumMark { depth, id: e.id });
+            }
+            let Some(next) = part(v, i) else {
+                // The rest of the path does not exist now: keep the old
+                // marks below this step.
+                marks.extend(p.marks.iter().filter(|m| m.depth > depth).copied());
+                break;
+            };
+            v = next;
+        }
+        p.marks = marks;
+        p
+    }
+
+    /// With the oracle checks on, notes a violation and returns it as an
+    /// error if an enum value that a mark of `p` names got a new value.
+    fn check_marks(&self, p: &Place, what: &str) -> Result<(), String> {
+        let (Some(o), Ok(slot)) = (&self.oracle, self.slot(p.cell)) else {
+            return Ok(());
+        };
+        let mut v = &slot.val;
+        let mut marks = p.marks.iter().peekable();
+        for (d, &i) in p.path.iter().enumerate() {
+            let depth = u32::try_from(d).unwrap_or(u32::MAX);
+            if let Some(m) = marks.next_if(|m| m.depth == depth) {
+                if !matches!(v, Value::Enum(e) if e.id == m.id) {
+                    let msg = format!(
+                        "oracle: {what} of a part of an enum value that got a new value (a dangling reference)"
+                    );
+                    o.borrow_mut().flag(msg.clone());
+                    return Err(msg);
+                }
+            }
+            if marks.peek().is_none() {
+                return Ok(());
+            }
+            let Some(next) = part(v, i) else {
+                return Ok(());
+            };
+            v = next;
+        }
+        Ok(())
+    }
+
     /// Allocates a cell.
     pub fn alloc(&mut self, kind: SlotKind, val: Value) -> CellId {
         self.slots.push(Slot { val, kind });
@@ -157,6 +228,9 @@ impl Heap {
     /// Returns the value at a place.
     pub fn get(&self, p: &Place) -> Result<&Value, String> {
         self.oracle_freed(p.cell, "a read")?;
+        if !p.marks.is_empty() {
+            self.check_marks(p, "a read")?;
+        }
         let mut v = &self.slot(p.cell)?.val;
         for &i in &p.path {
             let i = i as usize;
@@ -174,6 +248,9 @@ impl Heap {
     /// Returns the value at a place for writing.
     pub fn get_mut(&mut self, p: &Place) -> Result<&mut Value, String> {
         self.oracle_freed(p.cell, "a write")?;
+        if !p.marks.is_empty() {
+            self.check_marks(p, "a write")?;
+        }
         self.oracle_access(p.cell, &p.path, true);
         let mut v = &mut self.slot_mut(p.cell)?.val;
         for &i in &p.path {
@@ -395,12 +472,12 @@ impl Heap {
             }
             Value::Ref(p) => Value::Ref(Place {
                 cell: m(&p.cell),
-                path: p.path.clone(),
+                ..p.clone()
             }),
             Value::Loc(p, t) => Value::Loc(
                 Place {
                     cell: m(&p.cell),
-                    path: p.path.clone(),
+                    ..p.clone()
                 },
                 *t,
             ),
@@ -452,6 +529,18 @@ impl Heap {
                 _ => {}
             }
         }
+    }
+}
+
+/// Returns part `i` of a value: a field, a payload part, a tuple part or an
+/// element of a buffer.
+fn part(v: &Value, i: u32) -> Option<&Value> {
+    let i = i as usize;
+    match v {
+        Value::Tuple(vs) | Value::List(vs) => vs.get(i),
+        Value::Struct(o) => o.fields.get(i),
+        Value::Enum(e) => e.fields.get(i),
+        _ => None,
     }
 }
 

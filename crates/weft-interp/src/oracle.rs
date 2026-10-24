@@ -9,6 +9,11 @@
 //!   `Vec` can, so a reference into the old buffer dangles;
 //! - a reference into a local whose scope ended is used, also after an abort
 //!   path unwound the frame of the local;
+//! - a reference into the payload of an enum value is used after the enum
+//!   got a new value (a write of the enum or of a place above it), also of
+//!   the same variant: the payload of a real enum is in place, so the old
+//!   parts are gone (`docs/ir.md` 8.5). A write inside the payload keeps
+//!   the value, as a write of a field of a struct does;
 //! - a display (`print`) of a moved value, or of a value through a dangling
 //!   reference;
 //! - a live linear value goes away with no consume and no `on abort`, or is
@@ -78,6 +83,8 @@ pub struct Oracle {
     /// The tasks that no task joined yet. A joined task is done: it makes no
     /// more accesses.
     live: BTreeSet<usize>,
+    /// The last identity of an enum value.
+    enum_ids: u64,
 }
 
 impl Oracle {
@@ -208,6 +215,12 @@ impl Oracle {
         l.last = l.last.max(epoch);
         let m = if write { &mut l.writes } else { &mut l.reads };
         m.insert(path.to_vec(), epoch);
+    }
+
+    /// Returns the identity of a new enum value (from 1).
+    pub const fn next_enum_id(&mut self) -> u64 {
+        self.enum_ids += 1;
+        self.enum_ids
     }
 
     /// Notes a violation. The machine reports the first one.

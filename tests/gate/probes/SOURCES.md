@@ -174,6 +174,9 @@ them again if it runs.
   `fixes/f8/ctl_*.wf`: more shapes and controls of stage F8c.
 - `fixes/f8/variant_receiver/*.wf`: the variant-step receivers of the third review
   of stage F8 (hole R1) and more shapes and controls of stage F8d (claims F8-R1).
+  `a15_matchRefBindThenWrite.wf` and `b07_returnRefPayload.wf` (stage F8e, helpers
+  that `main` does not call removed): a reference into an enum payload after the enum
+  gets another variant; the oracle faults on them from F8e.
 - `fixes/f8/receiver_bounds/*.wf`: the index receivers of the third review of stage
   F8 (stage F8.3; signed `lost-clean` entry; claim F8-RB). `shrink`, `pop`, `renew`
   and `block` are copies of `crates/weft-interp/tests/receiver_bounds/`.

@@ -307,6 +307,32 @@ fn each_class_has_its_shape() {
         obs(0, "ok", "", "true"),
         obs(0, "fault", moved, "")
     ));
+    let no_field = "this value has no field `A`";
+    assert!(fits(
+        Kind::VariantPlace,
+        obs(0, "fault", no_field, ""),
+        obs(0, "ok", "", "5\n")
+    ));
+    assert!(fits(
+        Kind::VariantPlace,
+        obs(0, "fault", no_field, ""),
+        obs(
+            0,
+            "fault",
+            "this value is another variant: it has no such field",
+            ""
+        )
+    ));
+    assert!(!fits(
+        Kind::VariantPlace,
+        obs(0, "fault", no_field, ""),
+        obs(0, "fault", no_field, "")
+    ));
+    assert!(!fits(
+        Kind::VariantPlace,
+        obs(0, "ok", "", "5\n"),
+        obs(0, "fault", no_field, "")
+    ));
     for k in Kind::ALL {
         assert_eq!(Kind::parse(k.name()), Some(k));
     }

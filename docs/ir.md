@@ -3221,8 +3221,27 @@ The classes are those of 8.3 (`choice-a`, `loop-temps`, `branch-temps`, `unwind-
 ones that stages I1 to I5 found: `w0315`, `receiver`, `leak-at-dead`, `static-type-read`,
 `race-before-dangling`, `race-read-first`, `schedule`, `dangling-moved`, `read-order`,
 `mention`, `moved-read`, `moved-closure`, `closure-copy`, `fault-text` and `timeout`.
+Stage F8e adds `variant-place`: the AST engine faults at each payload place of a
+variant (`e.A`, `o.Some`), and the IR engine reads the payload (8.1).
 From stage I5 the gate classifies the programs with the oracle of the `ir` engine
 (`tests/gate/oracle-ir.tsv`).
+
+**As built (F8e): references into an enum payload.** The payload of an enum value is in
+place, as the fields of a struct are, but its layout depends on the variant. So the oracle
+(`crates/weft-interp/src/oracle.rs`, `heap.rs`) ends each reference into the parts of an
+enum value when the enum gets a new value: a write of the enum, or of a place above it,
+also with the same variant. A write of a part of the payload does not give the enum a new
+value, so a reference to another part stays valid (the rule for a struct). A reference to
+the enum value itself also stays valid. A read or a write through an ended reference is a
+fault: "a read of a part of an enum value that got a new value (a dangling reference)".
+This is the rule of the facts: a variant step is unstable (6.3). The machine does it with
+two marks. Each new enum value gets an identity (`EnumVal::id`; a copy and a move keep
+it). Each new reference (`Borrow`, a pattern bind, a receiver, a part of a tuple or a
+struct behind a reference) records the identity of each enum value that its path goes into
+(`EnumMark`). Each read and each write through the place compares the marks with the
+values there. The oracle is the same for both engines. Before F8e a reference into a
+payload read the payload of the new variant as the old type with no fault (third review of
+F8, `a15`, `b07`: the checker rejects them; the gate did not see the class).
 
 The fact oracle and the summary oracle run with `weft run --fact-oracle` on each accepted
 program of the gate. A failure is a defect of the fact generator with a concrete program

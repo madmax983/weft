@@ -305,6 +305,7 @@ impl super::Machine<'_, '_> {
             }
             Op::Borrow => {
                 let (p, _) = self.pop_loc()?;
+                let p = self.heap.mark(p);
                 self.push(Value::Ref(p))?;
             }
             Op::BorrowAll => {
@@ -464,10 +465,12 @@ impl super::Machine<'_, '_> {
             }
             Op::MakeEnum { adt, variant, n } => {
                 let vs = self.pop_n(*n as usize)?;
+                let id = self.heap.new_enum_id();
                 self.push(Value::Enum(Box::new(EnumVal {
                     adt: *adt,
                     variant: *variant,
                     fields: vs,
+                    id,
                 })))?;
             }
             Op::Untuple(n) => self.untuple(*n as usize)?,
@@ -934,10 +937,7 @@ impl super::Machine<'_, '_> {
         if *i >= 0 {
             return Ok(());
         }
-        let parent = Place {
-            cell: p.cell,
-            path: parent.to_vec(),
-        };
+        let parent = Place::new(p.cell, parent.to_vec());
         if let Ok(Value::Struct(o)) = self.heap.get(&parent) {
             let info = &self.rt.adts[o.adt.index()];
             if info.unsigned.get(last as usize).copied().unwrap_or(false) {
@@ -1013,7 +1013,7 @@ impl super::Machine<'_, '_> {
                         self.heap.log_read(&q);
                         x
                     } else {
-                        Value::Ref(q)
+                        Value::Ref(self.heap.mark(q))
                     };
                     self.push(item)?;
                 }
@@ -1049,7 +1049,7 @@ impl super::Machine<'_, '_> {
                         self.heap.log_read(&q);
                         x
                     } else {
-                        Value::Ref(q)
+                        Value::Ref(self.heap.mark(q))
                     };
                     self.push(item)?;
                 }
@@ -1149,7 +1149,7 @@ impl super::Machine<'_, '_> {
                         self.heap.log_read(p);
                         x.clone()
                     } else {
-                        Value::Ref(p.clone())
+                        Value::Ref(self.heap.mark(p.clone()))
                     }
                 } else {
                     self.use_place(p)?
@@ -1322,7 +1322,7 @@ impl super::Machine<'_, '_> {
             .and_then(|s| s.params.first())
             .is_some_and(|p| p.ty.is_ref());
         let recv = if by_ref {
-            Value::Ref(p)
+            Value::Ref(self.heap.mark(p))
         } else {
             self.use_place(&p)?
         };
