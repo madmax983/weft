@@ -252,6 +252,7 @@ impl Em<'_> {
         for &q in &a.ptrs {
             vars.extend(self.owner_vars(q, k));
         }
+        vars.extend(self.tests_of(place)?);
         vars.sort();
         vars.dedup();
         let acc = Access {
@@ -286,6 +287,33 @@ impl Em<'_> {
             }
         }
         out
+    }
+
+    /// The `W` variables of the variant steps of `place` (`docs/ir.md`
+    /// 6.3): an access through a step uses the test of its variant. A later
+    /// bind of a pattern does not use them: the tests of the pattern come
+    /// right before its binds, and an earlier bind can move a part below the
+    /// variant place.
+    fn tests_of(&self, place: &Place) -> Result<Vec<VarId>, AlphaError> {
+        if self.skip_s == Some(self.key(place.local)?) {
+            return Ok(Vec::new());
+        }
+        Ok(self.vars.tests_of(self.body, place))
+    }
+
+    /// Variable `var` gets a value at node `n` that points into the places
+    /// of the variant place `(base as v)` in state `st`, and into the handle
+    /// places on its path (as a borrow of the place).
+    fn bind_variant(&mut self, n: NodeId, st: &State, var: VarId, base: &Place, v: u32) -> R {
+        let al = self.alpha(st, &super::vars::variant_place(base, v))?;
+        self.facts.rebound_at.push((var, n));
+        let mut refs: Vec<PlaceId> = al.places.iter().chain(&al.handles).copied().collect();
+        refs.sort();
+        refs.dedup();
+        self.facts
+            .points_into
+            .extend(refs.into_iter().map(|q| (var, q)));
+        Ok(())
     }
 
     /// The root place of the value of local `l`.
@@ -630,7 +658,7 @@ fn moved(em: &mut Em<'_>, n: NodeId, st: &State, q: &Place, al: &Alpha) -> R {
 /// stage.
 pub fn stmt(em: &mut Em<'_>, n: NodeId, st: &State, s: &StmtKind, pair: Option<VarId>) -> R {
     match s {
-        StmtKind::Live(l) => live(em, n, *l),
+        StmtKind::Live(l) => live(em, n, st, *l),
         StmtKind::Dead(l) => dead(em, n, *l),
         StmtKind::Assign(p, rv) => assign(em, n, st, p, rv, pair),
         StmtKind::Drop(p) => drop_place(em, n, st, p, pair),
@@ -644,13 +672,21 @@ pub fn stmt(em: &mut Em<'_>, n: NodeId, st: &State, s: &StmtKind, pair: Option<V
     }
 }
 
-/// `Live(l)`: no fact but the edge. The first value after it writes
-/// nothing (`assign`).
+/// `Live(l)`: the edge. The first value after it writes nothing
+/// (`assign`).
+///
+/// If `l` is the temporary that the value of an assignment starts with,
+/// each `N` variable of a variant step of the target binds here: it points
+/// into the variant place of the target in the state before the value
+/// (`docs/ir.md` 5.6, 6.3). The write of the target uses it.
 ///
 /// # Errors
 ///
-/// None.
-pub const fn live(_em: &mut Em<'_>, _n: NodeId, _l: LocalId) -> R {
+/// The errors of α.
+pub fn live(em: &mut Em<'_>, n: NodeId, st: &State, l: LocalId) -> R {
+    for (base, v, var) in em.vars.named_by(em.body, l) {
+        em.bind_variant(n, st, var, &base, v)?;
+    }
     Ok(())
 }
 
@@ -746,9 +782,28 @@ pub fn assign(
             let (f, _) = kernel::borrow(&a, &al.handles);
             em.apply(n, f);
         }
-        Rvalue::Len(q) | Rvalue::Discriminant(q) => {
+        Rvalue::Len(q) => {
             let (a, _) = em.access(st, q, true)?;
             em.apply(n, kernel::read(&a));
+        }
+        // The test of a variant binds the `W` variable of each variant step
+        // that the body reads through `q` (`docs/ir.md` 6.3).
+        Rvalue::Discriminant(q) => {
+            let (a, _) = em.access(st, q, true)?;
+            em.apply(n, kernel::read(&a));
+            let tests: Vec<(u32, VarId)> = em
+                .vars
+                .keys()
+                .filter_map(|k| match k {
+                    VarKey::W(b, base, v) if *b == em.body && base == q => {
+                        em.vars.get(k).map(|id| (*v, id))
+                    }
+                    _ => None,
+                })
+                .collect();
+            for (v, var) in tests {
+                em.bind_variant(n, st, var, q, v)?;
+            }
         }
         Rvalue::Aggregate(weft_ir::AggKind::Struct(t), ops) => literal_fields(em, st, n, *t, ops)?,
         // The text of a part and a comparison read the whole value, through
@@ -764,6 +819,18 @@ pub fn assign(
         }
         _ => {}
     }
+    // The target of an assignment, and the read of the target of a compound
+    // assignment, use the `N` variables that bound where the value starts.
+    let named = match rv {
+        Rvalue::Use(Operand::Move(t)) if t.proj.is_empty() => {
+            em.vars.named_of(em.body, t.local, place)
+        }
+        Rvalue::Binary(_, _, Operand::Copy(q), Operand::Move(t)) if t.proj.is_empty() => {
+            em.vars.named_of(em.body, t.local, q)
+        }
+        _ => Vec::new(),
+    };
+    em.facts.uses.extend(named.into_iter().map(|v| (v, n)));
     let body = em.body;
     let v = transfer::rvalue(&mut em.cx(), body, st, rv)?;
     let dest = transfer::move_path(em.p, body, place)?;
@@ -867,6 +934,8 @@ fn part(
     if let Some(s) = s {
         em.facts.uses.push((s, n));
     }
+    let tests = em.tests_of(place)?;
+    em.facts.uses.extend(tests.into_iter().map(|w| (w, n)));
     em.facts.rebound_at.extend(
         em.vars
             .parts_of(k.0, k.1)

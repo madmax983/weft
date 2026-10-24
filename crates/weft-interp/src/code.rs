@@ -328,6 +328,12 @@ pub enum Op {
     /// variant. It follows no pointer: the IR writes each `Deref`
     /// (`docs/ir.md` 8.1).
     Part(u32),
+    /// Place to place: the payload of variant `v` of the enum value at the
+    /// place. The place stays the same: the payload values are the parts of
+    /// the enum value. If the value has another variant, the run stops
+    /// (`docs/ir.md` 8.1): an operand can give the base another variant
+    /// after the test of the variant (a receiver place, 5.19).
+    Variant(u32),
     /// Place to place: follows the pointer at the place (a reference, a
     /// `Box` or an `Rc`). A slice stays at its place: `Index`, `Bounds`,
     /// `Len` and `ElemIter` read its range there.

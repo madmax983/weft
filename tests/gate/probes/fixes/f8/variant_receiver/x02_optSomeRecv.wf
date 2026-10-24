@@ -1,0 +1,7 @@
+// Third review of stage F8, hole R1 (f8/variants3/x02_optSomeRecv.wf, header trimmed).
+struct Entity { hp: i32 }
+impl Entity {
+    fn plus(self, n: i32) -> i32 { self.hp + n }
+    fn bump(self, n: i32) -> i32 / mut(self) { self.hp += n; self.hp }
+}
+fn main() { let o = Some(Entity { hp: 1 }); print(o.Some.plus({ o = None; 0 })) }

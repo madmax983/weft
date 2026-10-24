@@ -1275,3 +1275,71 @@ mod ir_ops {
         assert!(e.contains("has no `on abort`"), "{e}");
     }
 }
+
+// ---------------------------------------------------------------------------
+// 11. Variant steps on the IR engine (`docs/ir.md` 5.8, 8.1)
+// ---------------------------------------------------------------------------
+
+/// Runs the unchecked program `src` on the IR engine with the oracle checks.
+/// Returns the output and the error message, if any.
+fn run_ir_unchecked(src: &str) -> (String, Option<String>) {
+    let a = weft_sema::analyze_source(src, Options::default()).unwrap();
+    let o = RunOptions {
+        max_steps: Some(1_000_000),
+        oracle: true,
+        engine: weft_interp::Engine::Ir,
+        ..RunOptions::default()
+    };
+    match run_analysis_main(&a, &o) {
+        Ok(out) => {
+            assert_eq!(out.fallback, None);
+            (out.stdout, None)
+        }
+        Err(e) => {
+            assert_eq!(e.outcome.fallback, None);
+            (e.outcome.stdout.clone(), Some(e.message))
+        }
+    }
+}
+
+#[test]
+fn a_variant_step_checks_the_tag_at_each_read_and_write() {
+    // Third review of stage F8 (hole R1). The IR tests the variant of a
+    // receiver place before the arguments and reads the payload after
+    // them. An argument that gives the base another variant must not let
+    // the engine read or write the payload of the other variant as the
+    // wrong type: each place step `(p as V)` checks the tag again, and
+    // another variant stops the run with the text of the `o.Some` test.
+    let head = "struct Entity { hp: i32 }
+impl Entity {
+    fn plus(self, n: i32) -> i32 { self.hp + n }
+    fn bump(self, n: i32) -> i32 / mut(self) { self.hp += n; self.hp }
+}
+struct Other { b: i32, a: Vec<i32> }
+enum Two { A(Entity), B(Other) }
+";
+    let bad = [
+        // A read through the receiver (y01: the run printed 1000).
+        "fn main() { let e = Two.A(Entity { hp: 1 }); print(e.A.plus({ e = Two.B(Other { b: 1000, a: Vec.new() }); 0 })) }",
+        // A write through the receiver (y02: the run printed 1005 1005).
+        "fn main() { let e = Two.A(Entity { hp: 1 }); print(e.A.bump({ e = Two.B(Other { b: 1000, a: Vec.new() }); 5 })) }",
+        // An element of a `Vec` (y08).
+        "fn main() { let v = Vec.new(); v.push(Two.A(Entity { hp: 1 })); print(v[0].A.plus({ v[0] = Two.B(Other { b: 1000, a: Vec.new() }); 0 })) }",
+        // `Option` (x02).
+        "fn main() { let o = Some(Entity { hp: 1 }); print(o.Some.plus({ o = None; 0 })) }",
+    ];
+    for b in bad {
+        let src = format!("{head}{b}");
+        let (out, err) = run_ir_unchecked(&src);
+        assert_eq!(out, "", "{b}");
+        let err = err.unwrap_or_default();
+        assert!(
+            err.contains("this value is another variant: it has no such field"),
+            "{b}: {err}"
+        );
+    }
+    // The same variant: the steps read and write the payload.
+    let good = "fn main() { let e = Two.A(Entity { hp: 1 }); print(e.A.plus(2)); print(e.A.bump({ e = Two.A(Entity { hp: 4 }); 5 })) }";
+    let (out, err) = run_ir_unchecked(&format!("{head}{good}"));
+    assert_eq!((out.as_str(), err), ("3\n9\n", None));
+}

@@ -15,6 +15,16 @@
 //! - `D(n)`: the drop pair of each `Drop` statement: the old value of the
 //!   place behind a pointer. It binds at the `Drop` and ends at the `Assign`
 //!   after it (W0601 for a linear old value).
+//! - `W(b, v)`: the variant test of base place `b` for variant `v`, for each
+//!   `Discriminant(b)` of the body and each variant `v` that a place of the
+//!   body reads through `(b as v)`. It binds at each test, points into the
+//!   variant place, and each access through the step uses it (`docs/ir.md`
+//!   6.3): a new value of `b` between the test and a late read (a receiver
+//!   place, 5.19) makes the read W0301.
+//! - `N(t, b, v)`: the variant `v` of base `b` that the target of an
+//!   assignment names, for an assignment whose value starts with temporary
+//!   `t` (5.6, 5.7). It binds at `Live(t)` and the write of the target uses
+//!   it: a value that gives `b` a new value is W0301.
 //!
 //! The flags come from the properties of the local ([`weft_ir::Props`]; for a
 //! local of a function type the builder joins the modes of the closures that
@@ -29,11 +39,12 @@ use std::collections::{HashMap, HashSet};
 use weft_facts::{FnFacts, Span, VarId, VarInfo, VarKind};
 use weft_ir::ty::{AdtKind, Lang, TyProp};
 use weft_ir::{
-    BlockId, BodyId, BodyKind, CaptureMode, LocalDecl, LocalId, LocalKind, Place, Program, Proj,
-    StmtKind, TempKind, TermKind, Ty, TyId, TyTable,
+    BlockId, BodyId, BodyKind, CaptureMode, IterSource, LocalDecl, LocalId, LocalKind, Operand,
+    Place, Program, Proj, Rvalue, StmtKind, TempKind, TermKind, Ty, TyId, TyTable,
 };
 
 use super::alpha::{local_text, owner_local, path_text, path_ty, place_ty};
+use crate::analysis::transfer::rvalue_operands;
 use crate::props::ir_props;
 
 /// The key of a variable.
@@ -49,6 +60,111 @@ pub enum VarKey {
     C(BodyId, LocalId),
     /// `D(n)`: the drop pair of the `Drop` statement `at` of a block.
     D(BodyId, BlockId, u32),
+    /// `W(b, v)`: the test of variant `v` of the value at base place `b`.
+    W(BodyId, Place, u32),
+    /// `N(t, b, v)`: variant `v` of base place `b` in the target of an
+    /// assignment whose value starts with the temporary `t`.
+    N(BodyId, LocalId, Place, u32),
+}
+
+/// The variant steps of `place`: for each `Variant(v)` step, its base place
+/// (the projections before it) and `v`.
+pub fn variant_steps(place: &Place) -> Vec<(Place, u32)> {
+    place
+        .proj
+        .iter()
+        .enumerate()
+        .filter_map(|(j, pr)| match pr {
+            Proj::Variant(v) => Some((
+                Place {
+                    local: place.local,
+                    proj: place
+                        .proj
+                        .get(..j)
+                        .map(<[Proj]>::to_vec)
+                        .unwrap_or_default(),
+                },
+                v.0,
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The place `base` with the step `Variant(v)` after it.
+pub fn variant_place(base: &Place, v: u32) -> Place {
+    let mut proj = base.proj.clone();
+    proj.push(Proj::Variant(weft_ir::VariantIdx(v)));
+    Place {
+        local: base.local,
+        proj,
+    }
+}
+
+/// The place of operand `o`, if it has one.
+const fn op(o: &Operand) -> Option<&Place> {
+    match o {
+        Operand::Copy(q) | Operand::Move(q) => Some(q),
+        Operand::Const(_) => None,
+    }
+}
+
+/// The places that the statements and the terminators of a body access
+/// (not the places that `Uninit` and `UnwindValue` name: they read no
+/// value).
+fn accessed(b: &weft_ir::Body) -> Vec<&Place> {
+    let mut out: Vec<&Place> = Vec::new();
+    for blk in &b.blocks {
+        for s in &blk.stmts {
+            match &s.kind {
+                StmtKind::Assign(dest, rv) => {
+                    out.push(dest);
+                    out.extend(rvalue_operands(rv).into_iter().filter_map(op));
+                    match rv {
+                        Rvalue::Ref(q)
+                        | Rvalue::Len(q)
+                        | Rvalue::Discriminant(q)
+                        | Rvalue::Iter(IterSource::Elems(q)) => out.push(q),
+                        _ => {}
+                    }
+                }
+                StmtKind::Drop(q) | StmtKind::Consume(q) | StmtKind::Mention(q) => out.push(q),
+                StmtKind::Bounds(q, i) => {
+                    out.push(q);
+                    out.extend(op(i));
+                }
+                StmtKind::Print(ops) => out.extend(ops.iter().filter_map(op)),
+                _ => {}
+            }
+        }
+        let t = &blk.term.kind;
+        match t {
+            TermKind::Switch { on, .. } => out.extend(op(on)),
+            TermKind::Call { callee, args, .. } => {
+                if let weft_ir::Callee::Value(c) = callee {
+                    out.extend(op(c));
+                }
+                out.extend(args.iter().filter_map(op));
+            }
+            TermKind::Perform { args, .. } => out.extend(args.iter().filter_map(op)),
+            TermKind::Resume { kont, arg, .. } => {
+                out.push(kont);
+                out.extend(op(arg));
+            }
+            TermKind::ScopeWait { scope, .. } => out.push(scope),
+            TermKind::Spawn { scope, task, .. } => {
+                out.extend(op(scope));
+                out.extend(op(task));
+            }
+            TermKind::Join { task, .. } | TermKind::Detach { task, .. } => out.extend(op(task)),
+            TermKind::Fork { branches, .. } => out.extend(branches.iter().filter_map(op)),
+            TermKind::Assert { cond, .. } => out.extend(op(cond)),
+            TermKind::IterNext { iter, .. } => out.push(iter),
+            _ => {}
+        }
+        out.extend(term_dest(t));
+    }
+    out
 }
 
 /// A variable of a part: its kind, the projections of the part, and the
@@ -310,7 +426,118 @@ impl Vars {
         for &bid in comp {
             v.drop_pairs(p, tys, facts, bid);
         }
+        for &bid in comp {
+            v.variant_tests(p, tys, facts, bid);
+        }
         v
+    }
+
+    /// Adds the `W` and `N` variables of body `bid`.
+    fn variant_tests(&mut self, p: &Program, tys: &mut TyTable, facts: &mut FnFacts, bid: BodyId) {
+        let Some(b) = p.bodies.get(bid.index()) else {
+            return;
+        };
+        // The first test of each base place.
+        let mut tests: HashMap<&Place, weft_ir::Span> = HashMap::new();
+        for blk in &b.blocks {
+            for s in &blk.stmts {
+                if let StmtKind::Assign(_, Rvalue::Discriminant(q)) = &s.kind {
+                    tests.entry(q).or_insert(s.origin.span);
+                }
+            }
+        }
+        let mut new: Vec<(VarKey, VarInfo)> = Vec::new();
+        for q in accessed(b) {
+            for (base, v) in variant_steps(q) {
+                let Some(&sp) = tests.get(&base) else {
+                    continue;
+                };
+                let key = VarKey::W(bid, base.clone(), v);
+                if self.ids.contains_key(&key) || new.iter().any(|(k, _)| *k == key) {
+                    continue;
+                }
+                let ty = place_ty(p, tys, bid, &base).map_or_else(String::new, |t| tys.show(t));
+                let mut info = Self::plain(
+                    format!("variant test of `{}`", path_text(p, tys, bid, &base)),
+                    span(sp),
+                    ty,
+                );
+                info.kind = VarKind::Temp;
+                new.push((key, info));
+            }
+        }
+        // The target of an assignment: `p = move t`, and `t2 := Op(copy p,
+        // move t)` of a compound assignment.
+        let temp = |l: &LocalId| {
+            b.locals
+                .get(l.index())
+                .is_some_and(|d| matches!(d.kind, LocalKind::Temp(_)))
+        };
+        for blk in &b.blocks {
+            for s in &blk.stmts {
+                let (StmtKind::Assign(target, Rvalue::Use(Operand::Move(t)))
+                | StmtKind::Assign(
+                    _,
+                    Rvalue::Binary(_, _, Operand::Copy(target), Operand::Move(t)),
+                )) = &s.kind
+                else {
+                    continue;
+                };
+                if !t.proj.is_empty() || !temp(&t.local) {
+                    continue;
+                }
+                for (base, v) in variant_steps(target) {
+                    let key = VarKey::N(bid, t.local, base.clone(), v);
+                    if self.ids.contains_key(&key) || new.iter().any(|(k, _)| *k == key) {
+                        continue;
+                    }
+                    let named = variant_place(&base, v);
+                    let ty = place_ty(p, tys, bid, &base).map_or_else(String::new, |t| tys.show(t));
+                    let mut info = Self::plain(
+                        format!("assigned place `{}`", path_text(p, tys, bid, &named)),
+                        span(s.origin.span),
+                        ty,
+                    );
+                    info.kind = VarKind::Temp;
+                    new.push((key, info));
+                }
+            }
+        }
+        for (key, info) in new {
+            self.add(facts, key, info);
+        }
+    }
+
+    /// The `W` variable of each variant step of `place` of body `body`
+    /// that has one.
+    pub fn tests_of(&self, body: BodyId, place: &Place) -> Vec<VarId> {
+        variant_steps(place)
+            .into_iter()
+            .filter_map(|(base, v)| self.get(&VarKey::W(body, base, v)))
+            .collect()
+    }
+
+    /// The `N` variables of body `body` for the assignment whose value
+    /// starts with temporary `t`: the base, the variant and the variable.
+    pub fn named_by(&self, body: BodyId, t: LocalId) -> Vec<(Place, u32, VarId)> {
+        self.order
+            .iter()
+            .filter_map(|k| match k {
+                VarKey::N(b, l, base, v) if *b == body && *l == t => {
+                    self.get(k).map(|id| (base.clone(), *v, id))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The `N` variable of each variant step of `target` for the assignment
+    /// whose value starts with temporary `t`.
+    pub fn named_of(&self, body: BodyId, t: LocalId, target: &Place) -> Vec<VarId> {
+        variant_steps(target)
+            .into_iter()
+            .filter_map(|(base, v)| self.get(&VarKey::N(body, t, base, v)))
+            .collect()
     }
 
     /// True if a construction builds the value of local `l` of body `body`

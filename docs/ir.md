@@ -1048,6 +1048,11 @@ v[i] = x      =>  t := <x>; ti := <i>; Bounds((*v), copy ti); (*v)[ti] = move t
 ```
 
 - The target place runs after the value (its index expressions too).
+- The source names the target before the value. So a value that gives the base of a
+  variant step of the target a new value is W0301, also when the test of the variant
+  after the value would stop the run (`e.A.hp = { e = Two.B(..); 5 }`, and the same
+  with `+=`): the write uses the `N` variable of the step, which binds where the value
+  starts (6.3).
 - A new value of a part of a local is an assignment to a move path. The fact generator
   gives each move path that the body assigns its own fact variable (section 6.3): the
   part holders of today (`part_holder`, `retire_holders`, `retire_stale`, S069) are
@@ -1390,7 +1395,17 @@ f(a) { block }               =>  f(a, || { block })          (a trailing block i
 ```
 
 The receiver is a place first; the call reads it after the arguments (p7, p8). The
-THIR `Recv::mode` gives the read: `Borrow` is `tr := &<place x>` (a `Receiver`
+index value of a receiver place is fixed before the arguments, and the element is the
+one at that index when the call reads the receiver, after the arguments: the `Bounds`
+before the arguments gives no safety, the check of the index at the read does (the
+engine checks it again, 8.1; `w.entities[0].plus(reorder(&w))` runs `plus` on the
+element that `reorder` put at index 0). A variant step of a receiver place is tested
+before the arguments too, and read after them. So an argument that gives the base of
+the step a new value (an assignment, a move, a change through a reference or by a
+call) is W0301: the read uses the `W` variable of the test (6.3). The engine checks
+the tag again at the read (8.1).
+
+The THIR `Recv::mode` gives the read: `Borrow` is `tr := &<place x>` (a `Receiver`
 temporary), `Ref` copies the reference, `Value` copies plain data and moves another
 value, `Deref` copies the value through the reference (`adjust` of the receiver has the
 dereferences). A receiver that is not a place goes into a `Receiver` temporary first;
@@ -1893,6 +1908,8 @@ the path of `q`: for each `Deref`, the place before it. An access of `q` reads t
 | `F(n)`, `K(h)`, `R(n)` | frames that the body cannot see | see the roots |
 | a heap slot variable | a function value or a capability stored behind a reference, in a `Box`, a `Vec` or an `rc` object | `points_into` of the places that its values hold; `uses` at each node that runs a value from the slot; a store is a weak update: no `rebound_at` |
 | a drop pair | `Drop(p)` behind a pointer of a maybe-linear type | `rebound_at` at the `Drop` node, `scope_end` at the `Assign` after it (W0601) |
+| `W(b, v)` of each base place `b` with a `Discriminant(b)` and each variant `v` that the body reads through `(b as v)` | the variant test of a place (as built F8d) | `rebound_at` and `points_into(α(b as v))` at each `Discriminant(b)`; `uses` at each access through the step `(b as v)` |
+| `N(t, b, v)` of the target of an assignment `p = move t` or `t2 := Op(copy p, move t)` with a step `(b as v)` | the variant that the target names before the value (5.6, 5.7; as built F8d) | `rebound_at` and `points_into(α(b as v))` at `Live(t)`; `uses` at the write (or the read) of the target |
 
 During the migration the move and linear facts use `S(l)` of the whole local, as the R3a
 encoding does today: a move of a part `l.q` emits `moved_at(S(l), n)`, `moved_part(α(l.q),
@@ -1906,6 +1923,27 @@ the closures that the analysis says it can hold (V061). `immovable` is off for a
 `once` continuation. `uniq(v)` holds only if each value of `v` is `@ uniq` (RT24b, V066).
 Diagnostics show the name of the local, or the kind of a temporary with the span of its
 origin.
+
+**Variant steps (as built F8d).** A variant step `(b as v)` of a place is valid only for
+the value of `b` that the test of the variant saw, in the same way as a reference into
+`b.v`: the step is unstable, so a write of `b` or of a place above it, a move or the end
+of `b`, and a change of `b` by a call (`mutates_at`, `lends_mut`) end it. The `W`
+variable of the step points into `α(b as v)` from each test of `b`, and each access
+through the step uses it (the operands, a borrow, a `Discriminant` of a place below it,
+a write). So an access after such a change, with no new test, is W0301 with the text
+``the variant test of `b` used after it was invalidated``. Only a receiver place (5.19)
+has code between its test and its access; in a `match` the binds come right after the
+tests, and a later bind of one pattern does not use `W` (an earlier bind can move a part
+below the variant place, as with `S`). A write below the payload (`e.A.hp = 7`) does
+not end the step. The target of an assignment runs after the value (5.6) but the source
+names it first: its `N` variables bind at `Live(t)` of the temporary that the value
+starts with, in the state before the value, and the write of the target uses them
+(``the assigned place `e.A` used after it was invalidated``). No new relation: the
+W0301 rules of the spec apply to these variables as to a reference. Before F8d the IR
+pipeline accepted `e.A.plus({ e = Two.B(..); 0 })` (the old pipeline gives W0301 for its
+early borrow of the receiver) and the IR engine read the payload of the other variant
+(third review of F8, R1); both pipelines accepted the assignment form. Loops (group B,
+F10) keep the rule: each test rebinds `W`.
 
 **Parts with variables of their own.** When a move path `l.q` has an `H` variable, the
 places of the value of `l.q` belong to `H(l.q)` only. `S(l)` holds the places of the
@@ -1973,7 +2011,7 @@ Statements (third column: what a cleanup path adds):
 
 | Statement | Relations | On a cleanup path |
 | --- | --- | --- |
-| `Live` | cfg_edge | |
+| `Live` | cfg_edge, rebound_at, points_into (the `N` variables of an assignment target, 6.3) | |
 | `Dead` | cfg_edge, scope_end | unwound_at (in place of scope_end) |
 | `Assign` | cfg_edge, points_into, mutates_at, reads_at, rebound_at, uses, moved_at, scope_end (a drop pair), overwrites, empty_at, moved_part, rest_linear, writes_via, sim_run_at, ref_at, ref_in, unset_at (the place fields of a value built in place) | |
 | `Drop` | cfg_edge, reads_at, rebound_at (a drop pair), uses | |
@@ -2034,11 +2072,16 @@ aggregate emits `uses` and `reads_at` of the variable and no reference.
 
 *Statements.*
 
-- `Live(l)`: no fact but the edge.
+- `Live(l)`: no fact but the edge, except for the temporary `t` that the value of an
+  assignment starts with: `rebound_at(N, n)` and `points_into(N, α(b as v))` of each `N`
+  variable of a variant step of the target (6.3).
 - `Dead(l)`: on a normal path `scope_end(v, n)` for `S(l)`, for each `H` and `U`
   variable of `l`, and for `C(l)`. On a cleanup path `unwound_at` in place of
   `scope_end`. `Dead` of an upvar local or of the environment does not exist (V14).
-- `Assign(p, rv)`: the operands of `rv`. Then for the destination:
+- `Assign(p, rv)`: the operands of `rv`. `rv = Discriminant(q)` also gives
+  `rebound_at(W, n)` and `points_into(W, α(q as v))` of each `W(q, v)` (6.3). The write
+  of an assignment target, and the read `copy p` of a compound assignment, use the `N`
+  variables of its value temporary. Then for the destination:
   - `p` is a whole local `l`: `rebound_at(S(l), n)` and `rebound_at` of each `H` and
     `U` variable of `l`; `points_into(S(l), A)` for `A` in `refs(rv)`; `empty_at(S(l), n)`
     if `rv` has no linear part; `mutates_at(n, root(l))` if `l` is a source local and the
@@ -2913,10 +2956,20 @@ As built (plan stage I1, `compile_ir.rs`):
   then the parameters.
 - A `Field` or `Variant` step of a place is the new op `Part` (the index of the part
   of a struct, a tuple or a payload): `Field` of the AST compiler finds a field by name
-  and follows pointers, and a payload has no name. A `Variant` step adds no op: the
-  `Switch` before it tested the tag. The `Unreachable` of a failed test of a payload
-  place (`o.Some`, 5.8) faults with "this value is another variant"; each other
-  `Unreachable` faults with the message of a `match` with no arm.
+  and follows pointers, and a payload has no name. The `Unreachable` of a failed test of
+  a payload place (`o.Some`, 5.8) faults with "this value is another variant"; each
+  other `Unreachable` faults with the message of a `match` with no arm.
+- As built (F8d): a `Variant(v)` step of a place is the op `Variant(v)`. It checks the
+  tag of the value at the place again and keeps the place; another variant stops the
+  run with "this value is another variant: it has no such field" (the text of the
+  failed `o.Some` test). Before F8d the step added no op, because the `Switch` before
+  it tested the tag. But an operand can run between the test and the access: the
+  receiver place of a method call is tested before the arguments and read after them
+  (5.19). An argument that gave the base another variant made the engine read or write
+  the payload of the other variant as the wrong type (third review of F8, R1:
+  `e.A.plus({ e = Two.B(..); 0 })` printed a field of `Two.B`). The checker rejects
+  these programs (6.3, `W` variables); the op is a second guard. It logs no read, as
+  `Part` logs none.
 - `move p` is the new op `Take`: it moves the value out also when the value is a copy
   value at run time (`Read` copies it). `Return` takes `_0`. So a `move` of a large
   plain value (a deep enum of integers) does not copy it.
@@ -3123,6 +3176,7 @@ unwind-mode ops `UnwindValue`, `UnwindKont`, `UnwindExit`. Stage I1 adds three m
 a temporary). Stage I2 adds `MakeClosureIr` (a closure with the modes of the IR).
 Stage I3 adds `PerformCap` (a perform through a capability value).
 Stage I6 adds the unwind-mode ops `UnwindValue`, `UnwindKont` and `UnwindExit`.
+Stage F8d adds `Variant` (the tag check of a variant step, 8.1).
 Each one has a unit test in `crates/weft-interp/tests/semantics.rs`.
 
 ### 8.5 Differential tests and oracles

@@ -3199,6 +3199,49 @@ repro = [
 note = "controls of N1 and N2: the deep reads before the clear, and a new chain after it, are valid"
 
 [[claim]]
+finding = "F8-R1"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/fixes/f8/variant_receiver/y01_enumSilentWrongType.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/y02_enumWriteWrongType.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/y03_enumWriteIntoBox.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/y06_enumRefPayload.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/y08_enumInVecIdx.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/x01_optSomeIdx.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/x02_optSomeRecv.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/x03_enumSwitch.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/x04_enumSwitchIdx.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/z01_assignVariantField.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/z02_compoundVariantField.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/f8d_a07_recvValue.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/f8d_a15_assignTargetArg.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/f8d_a18_idxVariantAssign.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/f8d_a20_compoundCall.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/f8d_a23_innerVariantChange.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/f8d_a27_rcBase.wf",
+]
+code = "W0301"
+note = "R1 (third review of F8): a variant step of a receiver place is tested before the arguments and read after them (docs/ir.md 5.19); an argument that gives the base a new value (an assignment, a move, a call that changes it, a new Rc) made the IR engine read or write the payload of another variant as the wrong type. The test binds a W variable that points into the variant place and each access through the step uses it (6.3). The target of an assignment (also `+=`) is named before its value: N variables bind where the value starts (5.6). The IR engine checks the tag at each variant step too (8.1, op Variant)"
+
+[[claim]]
+finding = "F8-R1"
+kind = "sound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/fixes/f8/variant_receiver/ctl_a13_assignOk.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/ctl_a14_recvOk.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/ctl_a17_someRecvOkThenNone.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/ctl_a24_payloadFieldWrite.wf",
+    "tests/gate/probes/fixes/f8/variant_receiver/ctl_a33_twoRecvOk.wf",
+]
+note = "controls of R1: a value or an argument that writes another local or a place below the payload, a write after the read, and a receiver argument that is a receiver of another local are valid"
+
+[[claim]]
 finding = "F8-RB"
 kind = "interp"
 verdict = "construction"

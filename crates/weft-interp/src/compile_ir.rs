@@ -1074,9 +1074,12 @@ impl<'a> BodyCx<'a> {
                 Proj::Field(k) => {
                     self.emit(Op::Part(k.0));
                 }
-                // The tag was tested before: the payload values are the
-                // parts of the enum value.
-                Proj::Variant(_) => {}
+                // The tag was tested before, but an operand that runs after
+                // the test can give the base another variant (a receiver
+                // place, `docs/ir.md` 5.19): the step checks the tag again.
+                Proj::Variant(v) => {
+                    self.emit(Op::Variant(v.0));
+                }
                 Proj::Index(l) => {
                     let i = self.slot(*l)?;
                     self.emit(Op::Var(VarRef::Local(i)));

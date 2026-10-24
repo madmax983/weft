@@ -1162,9 +1162,11 @@ fn node_rels(f: &FnFacts) -> BTreeMap<NodeId, BTreeSet<&'static str>> {
 fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'static str])> {
     Some(match label {
         "entry" => (&["cfg_edge", "rebound_at", "empty_at"], &[]),
-        "live" | "unwind continuation" | "goto" | "unreachable" | "unwind exit" => {
-            (&["cfg_edge"], &[])
-        }
+        // `Live` of the temporary that the value of an assignment starts
+        // with binds the `N` variables of the variant steps of the target
+        // (stage F8d, `docs/ir.md` 6.3).
+        "live" => (&["cfg_edge", "rebound_at"], &[]),
+        "unwind continuation" | "goto" | "unreachable" | "unwind exit" => (&["cfg_edge"], &[]),
         "dead" => (&["cfg_edge", "scope_end"], &["unwound_at"]),
         "assign" => (
             &[

@@ -1159,3 +1159,125 @@ fn main() {}
         .collect();
     assert_eq!(got, want);
 }
+
+#[test]
+fn a_variant_step_read_after_a_new_value_of_its_base_is_w0301() {
+    // Third review of stage F8 (hole R1, f8/variants3/x*, y*, z*): the IR
+    // tests the variant of a receiver place before the arguments and reads
+    // the payload after them (`docs/ir.md` 5.19). An argument that gives the
+    // base a new value (an assignment, a call that changes it) makes the
+    // test stale: the IR engine would read the payload of another variant.
+    // The value of an assignment runs before its target (5.6), but the
+    // source names the target first: a value that gives the base of a
+    // variant step of the target a new value is W0301 too. A write below
+    // the payload, a write of another local and a write after the read stay
+    // valid, and so do the binds of a pattern.
+    let src = "\
+struct Entity { hp: i32 }
+impl Entity {
+    fn plus(self, n: i32) -> i32 { self.hp + n }
+    fn plusv(self: Entity, n: i32) -> i32 { self.hp + n }
+    fn bump(self, n: i32) -> i32 / mut(self) { self.hp += n; self.hp }
+}
+struct Other { b: i32 }
+enum Two { A(Entity), B(Other) }
+enum Outer { X(Two), Y(i32) }
+struct H { t: Two }
+fn flip(h: &H) -> i32 / mut(h.t) { h.t = Two.B(Other { b: 1000 }); 5 }
+fn recv_borrow() {
+    let e = Two.A(Entity { hp: 1 })
+    print(e.A.plus({ e = Two.B(Other { b: 1000 }); 0 }))   //~ W0301
+}
+fn recv_mut() {
+    let e = Two.A(Entity { hp: 1 })
+    print(e.A.bump({ e = Two.B(Other { b: 1000 }); 5 }))   //~ W0301
+}
+fn recv_value() {
+    let e = Two.A(Entity { hp: 1 })
+    print(e.A.plusv({ e = Two.B(Other { b: 1000 }); 0 }))   //~ W0301
+}
+fn recv_index() {
+    let v = Vec.new()
+    v.push(Two.A(Entity { hp: 1 }))
+    print(v[0].A.plus({ v[0] = Two.B(Other { b: 1000 }); 0 }))   //~ W0301
+}
+fn recv_some() {
+    let o = Some(Entity { hp: 1 })
+    print(o.Some.plus({ o = None; 0 }))   //~ W0301
+}
+fn recv_some_index() {
+    let v = Vec.new()
+    v.push(Entity { hp: 1 })
+    let o = Some(v)
+    print(o.Some[0].plus({ o = None; 0 }))   //~ W0301
+}
+fn recv_field() {
+    let h = H { t: Two.A(Entity { hp: 1 }) }
+    print(h.t.A.plus({ h.t = Two.B(Other { b: 1000 }); 0 }))   //~ W0301
+}
+fn recv_call() {
+    let h = H { t: Two.A(Entity { hp: 1 }) }
+    print(h.t.A.plus(flip(&h)))   //~ W0301
+}
+fn recv_ref_param(h: &H) -> i32 / mut(h.t) {
+    h.t.A.plus({ h.t = Two.B(Other { b: 1000 }); 0 })   //~ W0301
+}
+fn recv_inner() {
+    let o = Outer.X(Two.A(Entity { hp: 1 }))
+    print(o.X.A.plus({ o.X = Two.B(Other { b: 1000 }); 0 }))   //~ W0301
+}
+fn assign_target() {
+    let e = Two.A(Entity { hp: 1 })
+    e.A.hp = { e = Two.B(Other { b: 1000 }); 5 }   //~ W0301
+}
+fn compound_target() {
+    let e = Two.A(Entity { hp: 1 })
+    e.A.hp += { e = Two.B(Other { b: 1000 }); 5 }   //~ W0301
+}
+fn assign_call() {
+    let h = H { t: Two.A(Entity { hp: 1 }) }
+    h.t.A.hp = flip(&h)   //~ W0301
+}
+fn clean_payload_write() {
+    let e = Two.A(Entity { hp: 1 })
+    print(e.A.plus({ e.A.hp = 7; 0 }))
+}
+fn clean_other_local() {
+    let e = Two.A(Entity { hp: 1 })
+    let k = 3
+    print(e.A.plus({ k = 4; k }))
+    e.A.hp = { k = 5; k }
+    e.A.hp += { let z = 4; z + 1 }
+}
+fn clean_write_after() {
+    let e = Two.A(Entity { hp: 1 })
+    print(e.A.plus(2))
+    e = Two.B(Other { b: 1000 })
+    let o = Some(Entity { hp: 1 })
+    o.Some.hp = 4
+    o = None
+    o = Some(Entity { hp: 2 })
+    print(o.Some.plus(1))
+}
+fn clean_match(e: Two, p: Option<(Vec<i32>, Vec<i32>)>) {
+    match e {
+        Two.A(x) => {
+            e = Two.B(Other { b: 1000 })
+            print(x.hp)
+        },
+        Two.B(o) => print(o.b),
+    }
+    match p {
+        Some((a, b)) => {
+            print(a.len())
+            print(b.len())
+        },
+        None => {},
+    }
+}
+fn main() {}
+";
+    let mut got = ir_codes(src);
+    got.sort();
+    assert_eq!(got, markers(src));
+}

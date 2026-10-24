@@ -1,0 +1,9 @@
+// Third review of stage F8, hole R1 (f8/variants3/y08_enumInVecIdx.wf, header trimmed).
+struct Entity { hp: i32 }
+impl Entity {
+    fn plus(self, n: i32) -> i32 { self.hp + n }
+    fn bump(self, n: i32) -> i32 / mut(self) { self.hp += n; self.hp }
+}
+struct Other { b: i32 }
+enum Two { A(Entity), B(Other) }
+fn main() { let v = Vec.new(); v.push(Two.A(Entity { hp: 1 })); print(v[0].A.plus({ v[0] = Two.B(Other { b: 1000 }); 0 })) }

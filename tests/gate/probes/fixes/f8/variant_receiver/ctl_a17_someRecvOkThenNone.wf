@@ -1,0 +1,7 @@
+// Stage F8d, control of hole R1: valid (own variant a17 of F8d).
+struct Entity { hp: i32 }
+impl Entity {
+    fn plus(self, n: i32) -> i32 { self.hp + n }
+    fn plusv(self: Entity, n: i32) -> i32 { self.hp + n }
+}
+fn main() { let o = Some(Entity { hp: 1 }); print(o.Some.plus(2)); o = None; print(1) }

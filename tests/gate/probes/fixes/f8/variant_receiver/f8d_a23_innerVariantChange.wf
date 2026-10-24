@@ -1,0 +1,10 @@
+// Stage F8d, hole R1: a variant step read late (own variant a23 of F8d).
+struct Entity { hp: i32 }
+impl Entity {
+    fn plus(self, n: i32) -> i32 { self.hp + n }
+    fn plusv(self: Entity, n: i32) -> i32 { self.hp + n }
+}
+struct Other { b: i32 }
+enum Two { A(Entity), B(Other) }
+enum Outer { X(Two), Y(i32) }
+fn main() { let o = Outer.X(Two.A(Entity { hp: 1 })); print(o.X.A.plus({ o.X = Two.B(Other { b: 1000 }); 0 })) }

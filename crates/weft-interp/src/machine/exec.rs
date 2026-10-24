@@ -741,6 +741,7 @@ impl super::Machine<'_, '_> {
             }
             Op::Fault(msg) => return Err(self.fault(msg.to_string())),
             Op::Part(i) => self.part(*i)?,
+            Op::Variant(v) => self.variant(*v)?,
             Op::Deref => self.deref_place()?,
             Op::Len => {
                 let (p, tr) = self.pop_loc()?;
@@ -837,6 +838,23 @@ impl super::Machine<'_, '_> {
             return Err(self.fault(format!("this value has no part {i}")));
         }
         self.push(Value::Loc(p.child(i), tr))
+    }
+
+    /// Pops a place and pushes it again if the value there is variant `v` of
+    /// an enum. Another variant stops the run, with the text of the failed
+    /// test of a payload place (`o.Some`). The check reads only the tag: it
+    /// logs no read, as `Part` logs none.
+    fn variant(&mut self, v: u32) -> R<()> {
+        let (p, tr) = self.pop_loc()?;
+        match self.hget(&p)? {
+            Value::Enum(e) if e.variant == v => {}
+            Value::Enum(_) => {
+                return Err(self.fault("this value is another variant: it has no such field"));
+            }
+            Value::Moved => return Err(self.fault("a value is used after it was moved")),
+            _ => return Err(self.fault("internal: a variant is needed here")),
+        }
+        self.push(Value::Loc(p, tr))
     }
 
     /// Pops a place and pushes the place that the pointer there points to.

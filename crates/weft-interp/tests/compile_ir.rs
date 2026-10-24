@@ -1056,6 +1056,36 @@ fn a_receiver_index_that_a_later_argument_makes_invalid_stops_with_a_bounds_erro
 }
 
 #[test]
+fn a_receiver_index_reads_the_element_that_is_at_the_index_after_the_arguments() {
+    // Third review of stage F8 (f8/variants3/v04, v13; docs/ir.md 5.19).
+    // The index value of a receiver place is fixed before the arguments,
+    // and the call reads the element at that index after them. `reorder`
+    // swaps the two elements, so `plus` runs on the element that was at
+    // index 1 (hp 2), and `bump` changes that element.
+    let head = "struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+impl Entity {
+    fn plus(self, n: i32) -> i32 { self.hp + n }
+    fn bump(self, n: i32) -> i32 / mut(self) { self.hp += n; self.hp }
+}
+fn mk2() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w.entities.push(Entity { hp: 2 }); w }
+fn reorder(w: &World) -> i32 / mut(w.entities) {
+    let a = w.entities.pop()
+    let b = w.entities.pop()
+    match a { Some(x) => w.entities.push(x), None => {} }
+    match b { Some(x) => w.entities.push(x), None => {} }
+    0
+}
+";
+    let read = "fn main() { let w = mk2(); print(w.entities[0].plus(reorder(&w))) }";
+    let (out, err) = run_unchecked_oracle(&format!("{head}{read}"), Engine::Ir);
+    assert_eq!((out.as_str(), err), ("2\n", None));
+    let write = "fn main() { let w = mk2(); print(w.entities[0].bump(reorder(&w))); print(w.entities[0].hp); print(w.entities[1].hp) }";
+    let (out, err) = run_unchecked_oracle(&format!("{head}{write}"), Engine::Ir);
+    assert_eq!((out.as_str(), err), ("2\n2\n1\n", None));
+}
+
+#[test]
 fn the_receiver_is_read_after_the_arguments_on_the_ir_engine() {
     // `docs/ir.md` 5.19 (33_rc_deps, 26 `temp_receiver`, v21_recv_deps).
     // `a.items.push(eat(a))`: `eat` moves `a`, then the receiver reads it.
