@@ -2643,3 +2643,59 @@ fn a_child_failure_aborts_to_the_local_fail_handler_and_a_cancel_past_the_functi
         );
     }
 }
+
+// ------------------------------------------------------- the fact oracle
+
+/// The components of the fact oracle (`docs/ir.md` 8.5) have the facts that
+/// the checker reads in the `ir` pipeline, on each corpus program in scope:
+/// the oracle maps the IR to the node ids of those facts. The components are
+/// made from the analysis of the old pipeline, as the interpreter does.
+#[test]
+fn the_components_of_the_fact_oracle_have_the_facts_of_the_checker() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/programs");
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .expect("the corpus")
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "wf"))
+        .collect();
+    files.sort();
+    let mut checked = 0;
+    let mut bad = Vec::new();
+    for f in &files {
+        let src = std::fs::read_to_string(f).expect("read");
+        let ir_opts = Options {
+            facts: weft_sema::FactGen::Ir,
+            ..Options::default()
+        };
+        let (Ok(old), Ok(ir)) = (
+            analyze_source(&src, Options::default()),
+            analyze_source(&src, ir_opts),
+        ) else {
+            continue;
+        };
+        if !ir.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope) {
+            continue;
+        }
+        let built = irbuild::build(&old);
+        let comps = weft_sema::factgen::components(&old, &built)
+            .unwrap_or_else(|u| panic!("{}: {u}", f.display()));
+        for c in &comps {
+            checked += 1;
+            let want = &ir.bodies[c.index].facts;
+            if &c.facts != want {
+                bad.push(format!("{} {}", f.display(), c.facts.name));
+            }
+            // The entry node is `n0`, and each node of the table is a node
+            // of the facts.
+            assert_eq!(c.emitted.entry_node, NodeId(0));
+            assert!(c
+                .emitted
+                .table
+                .iter()
+                .all(|(_, n)| n.index() < c.facts.nodes.len()));
+        }
+    }
+    assert!(checked > 100, "only {checked} components");
+    assert!(bad.is_empty(), "facts that differ: {bad:#?}");
+}

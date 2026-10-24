@@ -432,6 +432,43 @@ pub fn emit_component(
     entry: weft_ir::BodyId,
     facts: &mut FnFacts,
 ) -> Result<(Vec<Diagnostic>, alpha::Roots), Unsupported> {
+    emit_parts(a, built, sums, index, entry, facts).map(|e| (e.diags, e.roots))
+}
+
+/// What [`emit_parts`] makes next to the facts of a component: the tables
+/// that map the IR to the facts. The fact oracle of the interpreter
+/// (`docs/ir.md` 8.5) reads them.
+#[derive(Clone, Debug)]
+pub struct Emitted {
+    /// The diagnostics of the W0204 store check.
+    pub diags: Vec<Diagnostic>,
+    /// The roots of the component.
+    pub roots: alpha::Roots,
+    /// The node of each IR location.
+    pub table: nodes::NodeTable,
+    /// The variables of the component.
+    pub vars: vars::Vars,
+    /// The versions of each part with a variable of its own.
+    pub parts: Vec<holders::PartVersions>,
+    /// The entry node: the parameters bind there.
+    pub entry_node: weft_facts::NodeId,
+    /// The type table, with the types that the fact generator interned.
+    pub tys: weft_ir::TyTable,
+}
+
+/// [`emit_component`], that gives all the tables of [`Emitted`].
+///
+/// # Errors
+///
+/// The errors of [`emit_body`].
+pub fn emit_parts(
+    a: &Analysis,
+    built: &Built,
+    sums: &crate::analysis::Summaries,
+    index: usize,
+    entry: weft_ir::BodyId,
+    facts: &mut FnFacts,
+) -> Result<Emitted, Unsupported> {
     use std::collections::BTreeMap;
     let p = &built.program;
     let comp = component(built, entry);
@@ -510,7 +547,7 @@ pub fn emit_component(
         emit_blocks(&mut em, &table, &frames, &states, body).map_err(|e| unsupported(&e))?;
         em.stored
     };
-    holders.finish(facts);
+    let parts = holders.finish(facts);
     let diags = stored_behind(p, &tys, facts, &roots, body, &stored);
     // Each local with a root owns it.
     let owners: Vec<(PlaceId, weft_facts::VarId)> = roots
@@ -524,7 +561,73 @@ pub fn emit_component(
     }
     decls::std_effects(facts);
     facts.normalize();
-    Ok((diags, roots))
+    Ok(Emitted {
+        diags,
+        roots,
+        table,
+        vars,
+        parts,
+        entry_node,
+        tys,
+    })
+}
+
+/// The facts of one component and the tables that map its IR to them
+/// ([`components`]).
+#[derive(Clone, Debug)]
+pub struct Component {
+    /// The index of the entry body in [`Analysis::bodies`].
+    pub index: usize,
+    /// The entry body of the component.
+    pub entry: weft_ir::BodyId,
+    /// The facts, as the checker gets them in the `ir` pipeline.
+    pub facts: FnFacts,
+    /// The tables.
+    pub emitted: Emitted,
+}
+
+/// The facts of each component of a program in scope, with the tables that
+/// map its IR to them: the input of the fact oracle of the interpreter
+/// (`docs/ir.md` 8.5).
+///
+/// The summaries are the fixpoint of the call graph, as in [`emit`]. Each
+/// component is made again with them, so the node ids are the ids of the
+/// facts that the checker reads. A body with no IR has no component.
+///
+/// # Errors
+///
+/// Returns [`Unsupported`] for the first body that the fact generator does
+/// not support (the program is not in scope).
+pub fn components(a: &Analysis, built: &Built) -> Result<Vec<Component>, Unsupported> {
+    let inf = crate::analysis::callgraph::infer(a, built, None);
+    let mut facts: Vec<FnFacts> = a.bodies.iter().map(|b| seed(&b.facts)).collect();
+    let mut tables = Vec::new();
+    for (i, e) in built.entries.iter().enumerate() {
+        let Outcome::Built(entry) = e.outcome else {
+            continue;
+        };
+        if let Some(Err(u)) = inf.facts.get(&i) {
+            return Err(u.clone());
+        }
+        let Some(f) = facts.get_mut(i) else {
+            continue;
+        };
+        let emitted = emit_parts(a, built, &inf.sums, i, entry, f)?;
+        tables.push((i, entry, emitted));
+    }
+    exports::fill(a, built, &mut facts);
+    Ok(tables
+        .into_iter()
+        .filter_map(|(index, entry, emitted)| {
+            let facts = facts.get(index)?.clone();
+            Some(Component {
+                index,
+                entry,
+                facts,
+                emitted,
+            })
+        })
+        .collect())
 }
 
 /// The W0204 store check (`docs/ir.md` 6.9): a reference into a local, a

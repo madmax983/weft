@@ -470,6 +470,32 @@ impl NodeTable {
             .collect()
     }
 
+    /// The nodes of statement `at` (or of the terminator, [`TERM`]) of block
+    /// `block` of body `body`: each phase of each copy, in the order of the
+    /// keys.
+    pub fn nodes_at(
+        &self,
+        body: BodyId,
+        block: BlockId,
+        at: u32,
+    ) -> impl Iterator<Item = (&NodeKey, &NodeId)> {
+        let lo = NodeKey {
+            body,
+            block,
+            at,
+            phase: Phase::Main,
+            dest: 0,
+        };
+        let hi = NodeKey {
+            body,
+            block,
+            at,
+            phase: Phase::Copy,
+            dest: u32::MAX,
+        };
+        self.ids.range(lo..=hi)
+    }
+
     /// The number of nodes.
     pub fn len(&self) -> usize {
         self.ids.len()

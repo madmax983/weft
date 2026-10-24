@@ -91,6 +91,23 @@ pub struct Holders {
     before: BTreeMap<NodeId, Vec<BTreeSet<PlaceId>>>,
 }
 
+/// The versions of one part, as [`Holders::finish`] makes them: what the
+/// fact oracle of the interpreter needs to find the value of each version
+/// at run time (`docs/ir.md` 8.5).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PartVersions {
+    /// The key of the local.
+    pub key: Key,
+    /// The move path of the part.
+    pub steps: Vec<PathStep>,
+    /// The parts below this part that have variables of their own, relative
+    /// to this part.
+    pub deeper: Vec<Vec<PathStep>>,
+    /// The variables of the versions. A part with no version keeps its
+    /// placeholder.
+    pub vars: Vec<VarId>,
+}
+
 /// True if `a` is a prefix of `b` (or equal to it).
 fn is_prefix(a: &[PathStep], b: &[PathStep]) -> bool {
     a.len() <= b.len() && a.iter().zip(b).all(|(x, y)| x == y)
@@ -173,9 +190,10 @@ impl Holders {
     }
 
     /// Makes the versions and writes their facts (see the module comment).
-    pub fn finish(self, facts: &mut FnFacts) {
+    /// Returns the versions of each part.
+    pub fn finish(self, facts: &mut FnFacts) -> Vec<PartVersions> {
         if self.parts.is_empty() {
-            return;
+            return Vec::new();
         }
         let mut versions: Vec<Vec<Version>> = vec![Vec::new(); self.parts.len()];
         let new_var = |facts: &mut FnFacts, part: &Part, first: bool| {
@@ -314,5 +332,19 @@ impl Holders {
                 }
             }
         }
+        self.parts
+            .iter()
+            .zip(&versions)
+            .map(|(p, vs)| PartVersions {
+                key: p.key,
+                steps: p.steps.clone(),
+                deeper: p.deeper.clone(),
+                vars: if vs.is_empty() {
+                    vec![p.var]
+                } else {
+                    vs.iter().map(|v| v.var).collect()
+                },
+            })
+            .collect()
     }
 }
