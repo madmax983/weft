@@ -1,0 +1,9 @@
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn main() {
+    let b = mkv()
+    let o = Some(&b[0])
+    let p = (1, &o)
+    let r = &p.1
+    b.clear()
+    print(r)
+}

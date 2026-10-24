@@ -861,6 +861,242 @@ fn main() {}
     assert_eq!(got, want);
 }
 
+/// The `//~ CODE` markers of `src` as (code, line), sorted.
+fn markers(src: &str) -> Vec<(String, usize)> {
+    let mut want: Vec<(String, usize)> = src
+        .lines()
+        .enumerate()
+        .filter_map(|(i, l)| {
+            l.split("//~ ")
+                .nth(1)
+                .map(|c| (c.trim().to_string(), i + 1))
+        })
+        .collect();
+    want.sort();
+    want
+}
+
+#[test]
+fn a_read_through_a_chain_of_references_uses_the_owners_at_each_level() {
+    // Second review of stage F8 (hole N1, f8/variants2/h3/h3_j*): the read
+    // goes `r -> u.1 -> t -> t.1 -> b[]`. Only `t.1` is stale after the
+    // clear. The read uses the owners of each place on the chain, to a
+    // fixpoint, so the stale `t.1` makes it invalid. A clean read before
+    // the clear, and a chain of new values after it, stay valid.
+    let src = "\
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn show3(x: &&(u64, &u64)) { print(x) }
+fn sum3(x: &&(u64, &u64)) -> u64 { x.1 + 0 }
+fn tuple_of_tuple_ref() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let u = (6, &t)
+    let r = &u.1
+    b.clear()
+    print(r)   //~ W0301
+}
+fn ref_whole_outer() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let u = (6, &t)
+    let r = &u
+    b.clear()
+    print(r)   //~ W0301
+}
+fn ref_of_ref_in_tuple() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let u = &t
+    let w = (7, &u)
+    let r = &w.1
+    b.clear()
+    print(r)   //~ W0301
+}
+fn four_levels() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let u = (6, &t)
+    let w = (7, &u)
+    let r = &w.1
+    b.clear()
+    print(r)   //~ W0301
+}
+fn call_arg() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let u = (6, &t)
+    let r = &u.1
+    b.clear()
+    show3(r)   //~ W0301
+}
+fn call_arg_sum() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let u = (6, &t)
+    let r = &u.1
+    b.clear()
+    print(sum3(r))   //~ W0301
+}
+fn option_nest() {
+    let b = mkv()
+    let o = Some(&b[0])
+    let p = (1, &o)
+    let r = &p.1
+    b.clear()
+    print(r)   //~ W0301
+}
+fn vec_nest() {
+    let b = mkv()
+    let vs = Vec.new()
+    vs.push(&b[0])
+    let t = (1, &vs)
+    let r = &t.1
+    b.clear()
+    print(r)   //~ W0301
+}
+fn copy_then_print() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let u = (6, &t)
+    let r = &u.1
+    b.clear()
+    let x = r
+    print(x)   //~ W0301
+}
+fn clean_before_the_clear() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let u = (6, &t)
+    let r = &u.1
+    print(r)
+    show3(r)
+    b.clear()
+}
+fn clean_new_values() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let u = (6, &t)
+    b.clear()
+    b.push(3)
+    let t2 = (5, &b[0])
+    let u2 = (6, &t2)
+    let r = &u2.1
+    print(r)
+}
+fn main() {}
+";
+    let mut got = ir_codes(src);
+    got.sort();
+    assert_eq!(got, markers(src));
+}
+
+#[test]
+fn an_interpolation_and_a_comparison_read_through_their_operands() {
+    // Second review of stage F8 (hole N2, f8/variants2/h3/h3_k*): the parts
+    // of an interpolation (`Concat`) and the operands of a comparison of
+    // values that hold references read through the references, as `print`
+    // does. `==` of a scalar through `r` stays W0301 (a deref place).
+    let src = "\
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn interp() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let r = &t.1
+    b.clear()
+    let s = \"{r}\"   //~ W0301
+    print(s)
+}
+fn print_interp() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let r = &t.1
+    b.clear()
+    print(\"v={r}\")   //~ W0301
+}
+fn interp_ref_whole() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let r = &t
+    b.clear()
+    let s = \"{r}\"   //~ W0301
+    print(s)
+}
+fn interp_deep() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let u = (6, &t)
+    let w = (7, &u)
+    let r = &w.1
+    b.clear()
+    let s = \"x {r} y\"   //~ W0301
+    print(s)
+}
+fn interp_whole_tuple() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let u = (6, &t)
+    b.clear()
+    print(\"{u}\")   //~ W0301
+}
+fn eq_whole_tuple() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let u = (6, &t)
+    b.clear()
+    print(u == u)   //~ W0301
+}
+fn eq_deep() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let u = (6, &t)
+    let r = &u.1
+    b.clear()
+    print(r == r)   //~ W0301
+}
+fn clean_interp() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let u = (6, &t)
+    let r = &u.1
+    print(\"{r} {u}\")
+    print(u == u)
+    b.clear()
+}
+fn main() {}
+";
+    let mut got = ir_codes(src);
+    got.sort();
+    assert_eq!(got, markers(src));
+}
+
+#[test]
+fn a_perform_argument_reads_through_its_references() {
+    // The handler of an operation can read through each argument, as a
+    // callee does: the argument uses the owners of the chain.
+    let src = "\
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+effect Show { fn show(x: &&u64) }
+fn f() / Show {
+    let b = mkv()
+    let t = (5, &b[0])
+    let r = &t.1
+    b.clear()
+    show(r)   //~ W0301
+}
+fn g() / Show {
+    let b = mkv()
+    let t = (5, &b[0])
+    let r = &t.1
+    show(r)
+    b.clear()
+}
+fn main() {}
+";
+    let mut got = ir_codes(src);
+    got.sort();
+    assert_eq!(got, markers(src));
+}
+
 #[test]
 fn a_bind_after_the_consume_of_another_part_is_one_destructure() {
     // Tier 2 of stage F8 (verify/partb/S4/run/match_none.wf): the arm

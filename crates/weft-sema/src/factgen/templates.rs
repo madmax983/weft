@@ -751,6 +751,17 @@ pub fn assign(
             em.apply(n, kernel::read(&a));
         }
         Rvalue::Aggregate(weft_ir::AggKind::Struct(t), ops) => literal_fields(em, st, n, *t, ops)?,
+        // The text of a part and a comparison read the whole value, through
+        // its references (hole N2).
+        Rvalue::Concat(ops) => {
+            for op in ops {
+                read_through(em, n, st, op)?;
+            }
+        }
+        Rvalue::Binary(_, _, a, b) => {
+            read_through(em, n, st, a)?;
+            read_through(em, n, st, b)?;
+        }
         _ => {}
     }
     let body = em.body;
@@ -1214,22 +1225,52 @@ pub fn mention(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place) -> R {
 pub fn print(em: &mut Em<'_>, n: NodeId, st: &State, ops: &[Operand]) -> R {
     for op in ops {
         operand(em, n, st, op)?;
-        let body = em.body;
-        let v = transfer::operand(&mut em.cx(), body, st, op)?;
-        let refs = named_refs(em, v.flat().refs);
-        em.apply(n, kernel::read_through(&refs));
-        deep_uses(em, n, op, &refs)?;
+        read_through(em, n, st, op)?;
     }
     Ok(())
 }
 
+/// A read at node `n` of the whole value of operand `op` through its
+/// references (a `print` operand, a part of an interpolation, an operand of
+/// a comparison): `reads_at` of the places that its value points into, and
+/// the deep `uses` of the chain of references ([`deep_uses`]).
+///
+/// # Errors
+///
+/// The errors of α.
+fn read_through(em: &mut Em<'_>, n: NodeId, st: &State, op: &Operand) -> R {
+    let body = em.body;
+    let v = transfer::operand(&mut em.cx(), body, st, op)?;
+    let refs = named_refs(em, v.flat().refs);
+    em.apply(n, kernel::read_through(&refs));
+    deep_uses(em, n, st, op, &refs)
+}
+
+/// The most places that [`deep_uses`] visits on one chain of references. A
+/// longer chain is not in the scope of the `ir` pipeline: the old pipeline
+/// checks the program.
+const DEEP_LIMIT: usize = 4096;
+
 /// A read through the value of operand `op` at node `n` that can read a
 /// reference in a place that the value points into (`**r` with `r:
 /// &&u64`): `uses` of the variables of the owners of the places `refs` of
-/// the value. So the end of the place that the inner reference points into
-/// makes the read invalid (review of stage F8, hole H3). A `print` of the
-/// operand and an argument of a call read through it.
-fn deep_uses(em: &mut Em<'_>, n: NodeId, op: &Operand, refs: &[PlaceId]) -> R {
+/// the value that hold references, and of the owners of the places that
+/// those references point into that hold references, to a fixpoint
+/// (`docs/ir.md` 6.4). So the end of a
+/// place at any level of the chain makes the read invalid (review of stage
+/// F8, holes H3 and N1: `t = (5, &b[0]); u = (6, &t); r = &u.1`, the read
+/// goes `r -> u.1 -> t -> t.1 -> b[]`). A `print` of the operand, a part of
+/// an interpolation, an operand of a comparison, and an argument of a call
+/// or of a `perform` read through it.
+///
+/// Each place is visited one time. The cost is linear in the number of
+/// places on the chain.
+///
+/// # Errors
+///
+/// The errors of α, and [`AlphaError::Later`] for a chain of more than
+/// [`DEEP_LIMIT`] places.
+fn deep_uses(em: &mut Em<'_>, n: NodeId, st: &State, op: &Operand, refs: &[PlaceId]) -> R {
     let (Operand::Copy(q) | Operand::Move(q)) = op else {
         return Ok(());
     };
@@ -1238,9 +1279,31 @@ fn deep_uses(em: &mut Em<'_>, n: NodeId, op: &Operand, refs: &[PlaceId]) -> R {
         return Ok(());
     }
     let base = em.key(q.local)?;
+    let mut seen: std::collections::BTreeSet<PlaceId> = std::collections::BTreeSet::new();
+    let mut work: Vec<PlaceId> = refs.to_vec();
     let mut uses = Vec::new();
-    for &r in refs {
+    while let Some(r) = work.pop() {
+        if !seen.insert(r) {
+            continue;
+        }
+        if seen.len() > DEEP_LIMIT {
+            return Err(AlphaError::Later(
+                "a chain of references of more than 4096 places",
+            ));
+        }
+        let next = transfer::held_at(em.p, st, em.facts, em.roots, r, None)?;
+        // Only a place that holds a reference has a variable that the read
+        // needs: the variable of the reference that the read follows. The
+        // last place of the chain (`b[]`) is the data that the read gets.
+        if next.is_empty() {
+            continue;
+        }
         uses.extend(em.owner_vars(r, base));
+        work.extend(
+            named_refs(em, next)
+                .into_iter()
+                .filter(|p| !seen.contains(p)),
+        );
     }
     uses.sort();
     uses.dedup();
@@ -1751,7 +1814,7 @@ pub fn call(
         // The callee can read through the argument (hole H3).
         let v = transfer::operand(&mut em.cx(), body, st, op)?;
         let refs = named_refs(em, v.flat().refs);
-        deep_uses(em, main, op, &refs)?;
+        deep_uses(em, main, st, op, &refs)?;
         spans.push(operand_span(em, op, at));
         bases.push(match op {
             Operand::Copy(q) | Operand::Move(q) => em.alpha(st, q)?.places,
@@ -1878,6 +1941,10 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
     let n = nodes.main;
     for op in args {
         operand_moves(em, n, st, op, false, true)?;
+        // The handler can read through the argument (hole N1).
+        let v = transfer::operand(&mut em.cx(), body, st, op)?;
+        let refs = named_refs(em, v.flat().refs);
+        deep_uses(em, n, st, op, &refs)?;
     }
     for (i, ps) in out.args.iter().enumerate() {
         let root = crate::body::roots::param(i);

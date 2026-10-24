@@ -405,6 +405,15 @@ reason = "a mutated reference argument gets only the held references of the othe
 signed_by = "review agent, stage F8 (independent)"
 stage = "F8"
 
+# Tier 2. The second review of stage F8 (f8/review2.md, section 1) signed
+# this entry; stage F8c copied it as the reviewer gave it.
+[[entry]]
+class = "lost-clean"
+files = ["verify/s5/R3a_diff/blk.wf"]
+reason = "W0601 precision: the tail `t.0` of the block moves the linear part into `y`, and `rollback(y)` consumes it; the other part is an `i64` (no rest_linear). The old lowering ends the scope of `t` before the tail move (scope_end n5, moved_at n6); the IR moves first (`_1 = move _2.0; Dead(_2)`). Each variant with a linear part that no path consumes is W0601"
+signed_by = "review agent, stage F8 (independent)"
+stage = "F8"
+
 # ----------------------------------------------------------------------------
 # Stage I5: the engine differential (`weft-gate engines --tier 1|2`,
 # docs/ir.md section 8.5). Each difference of the `ast` and the `ir` engine

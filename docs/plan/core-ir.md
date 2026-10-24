@@ -1489,6 +1489,14 @@ with the group forced on, report only).
   every interpreter test pass with the defaults; `--facts=old` and `--engine=ast` still
   work (tested once each).
 - Do: switch; move the corpus markers; update the documents.
+- Do (second review of F8, section 3): the cut-over makes `--engine=ir` the default of
+  `weft run`. The AST engine reads an operand when it uses it, not where the IR copies
+  it (choice A, `ir` 5.1.1, 5.16, 5.33). So a program that both checkers accept can stop
+  on the AST engine with "a place does not exist (the value changed shape)", for example
+  `r.hp * { v.clear(); 1 }` (`f8/variants2/semN/n_l_clear.wf`; `--engine=ir` prints
+  1). The claims sem-N1 and sem-N2 hold only with the IR engine as the reference
+  semantics. Until the switch, the ledger `engine` entry of p1, p2 and p9 records the
+  difference.
 - Gate: the common gates; tier 2.
 - Exit: the defaults are `ir`; the old pipeline stays behind its flags for one review
   round. Then the review round of the ship rule runs (outside this plan). Phase R starts
@@ -1591,6 +1599,7 @@ gate and the exit of its parent, limited to its group of differences.
 | --- | --- | --- | --- |
 | F8.1 | F8 | W0301 / W0304: a place-field reference in a `!Move` value travels with the moved value in the analysis (`r2/oracle/probes/n?_immov_*.wf`, `changed`; `tests/programs/154_place_fields.wf` `move_set`, group F, a W0301 false positive). Fix: relocate place-field references on a move (ADR 0007). Needs group F for 154 | open (do it at or before F20) |
 | F8.2 | F8 | the gate: the key of the `ir` oracle cache is the hash of `crates/weft-interp/src` only, so a change of the IR builder does not make the cache stale. Stage F8 regenerated both `ir` caches by hand | open |
+| F8.3 | F8 | lost-clean W0301 / none: receiver order and `Bounds` (second review of F8, 4.2). In `w.entities[0].plus(shrink(&w))` the `ir` pipeline accepts the program (old: W0301), and the IR engine stops at the borrow with "index 0 is out of bounds" (benign). The safety rests on the second index check of the engine at the borrow (`crates/weft-interp/tests/compile_ir.rs`, claim F8-RB, off). Needs a signed `lost-clean` entry (a reviewer that is not the author); then copy `crates/weft-interp/tests/receiver_bounds/*.wf` to `tests/gate/probes`, and add F8.3 to `done` | open (needs a signature) |
 
 Some stages are larger than a few hours. If such a stage does not fit its box, rule 5
 splits it at these points (each part keeps the gates; the code of a later part stays

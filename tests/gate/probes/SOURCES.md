@@ -168,6 +168,10 @@ them again if it runs.
 
 - `fixes/f8/*.wf`: the variants of the review of the `lost-clean` programs of
   stage F8 (holes H1 to H3; claims F8-H1 to F8-H3).
+- `fixes/f8/h3_j*.wf`, `fixes/f8/h3_k*.wf`: the variants of the second review of
+  stage F8 (holes N1 and N2; claims F8-H3b and F8-H3c), with the helper functions
+  that `main` does not call removed. `fixes/f8/n1_*.wf`, `fixes/f8/n2_*.wf` and
+  `fixes/f8/ctl_*.wf`: more shapes and controls of stage F8c.
 - `r3/oracle/sweep1/{if,match}__tmp_*__arg.wf` and
   `verify/s5/R3a_diff/sweep/{if,match}__ref_temp*__arg.wf`: copies of the 24
   tier-2 programs of the branch temporaries (claim branch-temps, docs/ir.md 5.12).

@@ -1028,6 +1028,34 @@ fn run_unchecked_oracle(src: &str, engine: Engine) -> (String, Option<String>) {
 }
 
 #[test]
+fn a_receiver_index_that_a_later_argument_makes_invalid_stops_with_a_bounds_error() {
+    // Second review of stage F8, section 4.2 (claim F8-RB). In
+    // `w.entities[0].plus(shrink(&w))` the IR writes `Bounds` of the
+    // receiver index before the arguments and borrows the element
+    // (`&w.entities[i]`) after them (`docs/ir.md` 5.19). The `ir` pipeline
+    // accepts these programs. The `Bounds` before the arguments does not
+    // protect the borrow: the engine checks the index again when it
+    // evaluates the place of the borrow. So the run stops with an
+    // out-of-bounds error and never reads a freed cell.
+    let programs = [
+        ("shrink", include_str!("receiver_bounds/shrink.wf")),
+        ("pop", include_str!("receiver_bounds/pop.wf")),
+        ("renew", include_str!("receiver_bounds/renew.wf")),
+        ("block", include_str!("receiver_bounds/block.wf")),
+    ];
+    for (name, src) in programs {
+        let (out, err) = run_unchecked_oracle(src, Engine::Ir);
+        assert_eq!(out, "", "{name}");
+        let err = err.unwrap_or_default();
+        assert!(
+            err.contains("index 0 is out of bounds (length 0)"),
+            "{name}: {err}"
+        );
+        assert!(!err.contains("oracle"), "{name}: {err}");
+    }
+}
+
+#[test]
 fn the_receiver_is_read_after_the_arguments_on_the_ir_engine() {
     // `docs/ir.md` 5.19 (33_rc_deps, 26 `temp_receiver`, v21_recv_deps).
     // `a.items.push(eat(a))`: `eat` moves `a`, then the receiver reads it.

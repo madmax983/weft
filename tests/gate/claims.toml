@@ -3142,6 +3142,76 @@ code = "W0301"
 line = 7
 note = "`print(r)` with `r = &t.1` and `t.1` a reference into `b[]`: the read through `r` uses the variables of `t` (both pipelines accepted it before F8)"
 
+# Stage F8c: the second review of F8 (f8/review2.md). N1: the read goes
+# down the whole chain of references (a fixpoint), not one level. N2: the
+# parts of an interpolation and the operands of a comparison read through
+# their references, as `print` does. Both pipelines accepted each repro
+# before F8c (open for the old pipeline, `fixed` for ir).
+
+[[claim]]
+finding = "F8-H3b"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/fixes/f8/h3_j_tupleOfTupleRef.wf",
+    "tests/gate/probes/fixes/f8/h3_j4_refWholeOuter.wf",
+    "tests/gate/probes/fixes/f8/h3_j5_refOfRefInTuple.wf",
+    "tests/gate/probes/fixes/f8/h3_j6_callArg.wf",
+    "tests/gate/probes/fixes/f8/h3_j6b_callArgSum.wf",
+    "tests/gate/probes/fixes/f8/h3_j7_optionNest.wf",
+    "tests/gate/probes/fixes/f8/h3_j8_vecNest.wf",
+    "tests/gate/probes/fixes/f8/n1_letCopyDeep.wf",
+    "tests/gate/probes/fixes/f8/n1_fourLevels.wf",
+]
+code = "W0301"
+note = "N1: `t = (5, &b[0]); u = (6, &t); r = &u.1; b.clear(); print(r)` (and `r = &u`, `w = (7, &u)`, a call argument, `Option` and `Vec` between two references, four levels): the read through `r` uses the owners of each place on the chain that holds a reference (templates::deep_uses, docs/ir.md 6.4)"
+
+[[claim]]
+finding = "F8-H3c"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/fixes/f8/h3_k1_interp.wf",
+    "tests/gate/probes/fixes/f8/h3_k10_printInterp.wf",
+    "tests/gate/probes/fixes/f8/h3_k11_interpRefWhole.wf",
+    "tests/gate/probes/fixes/f8/n2_interpDeep.wf",
+    "tests/gate/probes/fixes/f8/n2_interpFour.wf",
+    "tests/gate/probes/fixes/f8/n2_eqWholeTuple.wf",
+    "tests/gate/probes/fixes/f8/n2_interpWholeTuple.wf",
+]
+code = "W0301"
+note = "N2: `\"{r}\"` with `r = &t.1` (and `r = &t`, `print(\"v={r}\")`, a chain, `\"{u}\"` and `u == u` with `u = (6, &t)`): a part of an interpolation (`Concat`) and an operand of a comparison read through the value, as a `print` operand"
+
+[[claim]]
+finding = "F8-H3b"
+kind = "sound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/fixes/f8/ctl_cleanDeep.wf",
+    "tests/gate/probes/fixes/f8/ctl_cleanAfterRefresh.wf",
+]
+note = "controls of N1 and N2: the deep reads before the clear, and a new chain after it, are valid"
+
+[[claim]]
+finding = "F8-RB"
+kind = "interp"
+verdict = "construction"
+group = "A"
+stage = "F8.3"
+repro = [
+    "crates/weft-interp/tests/receiver_bounds/shrink.wf",
+    "crates/weft-interp/tests/receiver_bounds/pop.wf",
+    "crates/weft-interp/tests/receiver_bounds/renew.wf",
+    "crates/weft-interp/tests/receiver_bounds/block.wf",
+]
+note = "receiver order and Bounds (second review of F8, 4.2): in `w.entities[0].plus(shrink(&w))` the `Bounds` of the receiver index runs before the arguments, and the borrow after them (docs/ir.md 5.19). The `ir` pipeline accepts the programs (old: W0301). The IR engine checks the index again at the borrow, so the run stops with an out-of-bounds error (benign) and never reads a freed cell. Pinned now by the weft-interp test compile_ir `a_receiver_index_that_a_later_argument_makes_invalid_stops_with_a_bounds_error`. The claim is off: in the gate the programs are `lost-clean`, and they need a signed ledger entry (a reviewer that is not the author) before stage F8.3 copies them into tests/gate/probes and turns the claim on"
+
 [[claim]]
 finding = "branch-temps"
 kind = "unsound"

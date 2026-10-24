@@ -2065,7 +2065,9 @@ aggregate emits `uses` and `reads_at` of the variable and no reference.
 - `Bounds(q, i)`: `reads_at(n, α(q))` (the length and the buffer, OR5) and the operand.
 - `Mention(q)`: `uses` of `v(q)` and of the pointer locals on `ptr(q)`; no read.
 - `Print(ops)`: the operands; an operand that holds a reference reads through it
-  (`reads_at` of its `refs`).
+  (`reads_at` of its `refs`, and the `uses` of the owners of each place on the chain of
+  references that holds a reference; as built F8c). A part of a `Concat` and an operand
+  of a `Binary` read through their values in the same way.
 - `UnwindValue(p, a)`: `unwound_at(v, n)` for `S(l)` and the variables below `p`. If `a`
   is `OnAbort(f)`: `apply` of the summary of `f` at `n` with its parameter mapped onto
   `α(p)` and `CapArgs::Root` (FD1, F3-1, F3-3, V119).
@@ -2704,6 +2706,28 @@ As built (plan stage F8): group A is on by default (`weft_sema::DEFAULT_GROUPS`,
   at each argument of a call. So the end of `b[]` in
   `let t = (5, &b[0]); let r = &t.1; b.clear(); print(r)` makes the read W0301 (both
   pipelines accepted it before).
+
+As built (plan stage F8c): the second review of F8 found that H3 went down one level
+only, and only at `print` and at call arguments. Both pipelines accepted the programs
+(open for the old pipeline).
+
+- N1: `deep_uses` follows the chain of references to a fixpoint. It starts at the
+  places that the value of the operand points into. For each place it reads the places
+  that the references in that place point into (`transfer::held_at`, the state before
+  the node), and visits each place one time (a visited set; the cost is linear in the
+  places of the chain). Each place on the chain that holds a reference gives `uses` of
+  the variables of its owner (`S` and the `H` and `U` variables on its path). The last
+  place (the data that the read gets, `b[]`) gives no `uses`: no reference of it is
+  followed. A chain of more than 4096 places is `Later` (the old pipeline checks the
+  program). So `t = (5, &b[0]); u = (6, &t); r = &u.1; b.clear(); print(r)` is W0301
+  (`r -> u.1 -> t -> t.1 -> b[]`), also with `Option` or `Vec` between two references
+  and in a callee that reads `x.1`.
+- N2: a read of the whole value through its references (`templates::read_through`:
+  `reads_at` of the places of the value and `deep_uses`) is at each `print` operand, at
+  each part of an interpolation (`Concat`, 5.16), and at each operand of a `Binary`
+  (a comparison of values that hold references, `u == u`, reads through them; a
+  scalar operand holds no reference and gives nothing). A call argument and a `perform`
+  argument get `deep_uses` (the callee or the handler can read through them).
 
 The entry node of a component is node `n0`, as in the old lowering: the hypothesis
 `bound_before_use` of the proof link starts there.

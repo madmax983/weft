@@ -1,0 +1,10 @@
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn show3(x: &&(u64, &u64)) { print(x) }
+fn main() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let u = (6, &t)
+    let r = &u.1
+    b.clear()
+    show3(r)
+}
