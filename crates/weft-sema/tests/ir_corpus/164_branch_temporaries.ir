@@ -1,0 +1,354 @@
+fn f0 mk_v() -> Vec<u64>: b0
+fn f1 first(&Vec<u64>) -> &u64: b1
+fn f2 show(&u64) -> (): b2
+fn f3 if_temp(bool) -> (): b3
+fn f4 match_temp(u64) -> (): b4
+fn f5 if_local(bool) -> (): b5
+fn f6 match_inside(u64) -> (): b6
+fn f7 main() -> (): b7
+fn f8 Vec.new<T0>() -> Vec<T0> / (): extern
+fn f9 Vec.push<T0>(&Vec<T0>, T0) -> () / (): extern
+cap_env e0
+
+body b0: fn mk_v; cap_env e0; unwind_exit bb4
+  _0: Vec<u64> (Return)
+  _1: Vec<u64> (User `v`)
+  _2: () (Temp(Discarded))
+  _3: &Vec<u64> (Temp(Receiver))
+  _4: () (Temp(Discarded))
+  _5: &Vec<u64> (Temp(Receiver))
+  bb0:
+    Live(_1)
+    _1 = call Vec.new<u64>() / e0 -> [bb1]
+  bb1:
+    Live(_2)
+    Live(_3)
+    _3 = &_1
+    _2 = call Vec.push<u64>(move _3, const 1u64) / e0 -> [bb2]
+  bb2:
+    Dead(_3)
+    Dead(_2)
+    Live(_4)
+    Live(_5)
+    _5 = &_1
+    _4 = call Vec.push<u64>(move _5, const 2u64) / e0 -> [bb3]
+  bb3:
+    Dead(_5)
+    Dead(_4)
+    _0 = move _1
+    Dead(_1)
+    Return
+  bb4 (cleanup):
+    UnwindExit
+
+body b1: fn first; cap_env e0; unwind_exit bb1
+  _0: &u64 (Return)
+  _1: &Vec<u64> (Param(0) `v`)
+  _2: usize (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = const 0usize
+    Bounds((*_1), copy _2)
+    _0 = &(*_1)[_2]
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b2: fn show; cap_env e0; unwind_exit bb1
+  _0: () (Return)
+  _1: &u64 (Param(0) `r`)
+  _2: u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = Add<u64>(copy (*_1), const 1u64)
+    Print(copy _2)
+    _0 = const ()
+    Dead(_2)
+    Dead(_1)
+    Return
+  bb1 (cleanup):
+    UnwindExit
+
+body b3: fn if_temp; cap_env e0; unwind_exit bb13
+  _0: () (Return)
+  _1: bool (Param(0) `c`)
+  _2: Vec<u64> (User `keep`)
+  _3: &u64 (Temp(Operand))
+  _4: &Vec<u64> (Temp(Operand))
+  _5: Vec<u64> (Temp(Borrowed))
+  _6: usize (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = call mk_v() / e0 -> [bb1, unwind: bb11]
+  bb1:
+    Live(_3)
+    switch copy _1 -> [1: bb2, otherwise: bb7]
+  bb2:
+    Live(_4)
+    Live(_5)
+    _5 = call mk_v() / e0 -> [bb3, unwind: bb5]
+  bb3:
+    _4 = &_5
+    _3 = call first(move _4) / e0 -> [bb4, unwind: bb5]
+  bb4:
+    Dead(_5)
+    Dead(_4)
+    Goto(bb8)
+  bb5 (cleanup):
+    UnwindValue(_5, Drop)
+    Dead(_5)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_4)
+    Goto(bb10)
+  bb7:
+    Live(_6)
+    _6 = const 0usize
+    Bounds(_2, copy _6)
+    _3 = &_2[_6]
+    Dead(_6)
+    Goto(bb8)
+  bb8:
+    _0 = call show(move _3) / e0 -> [bb9, unwind: bb10]
+  bb9:
+    Dead(_2)
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb10 (cleanup):
+    Dead(_3)
+    Goto(bb11)
+  bb11 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb12)
+  bb12 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb13)
+  bb13 (cleanup):
+    UnwindExit
+
+body b4: fn match_temp; cap_env e0; unwind_exit bb13
+  _0: () (Return)
+  _1: u64 (Param(0) `n`)
+  _2: Vec<u64> (User `keep`)
+  _3: &u64 (Temp(Operand))
+  _4: &Vec<u64> (Temp(Operand))
+  _5: Vec<u64> (Temp(Borrowed))
+  _6: usize (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = call mk_v() / e0 -> [bb1, unwind: bb11]
+  bb1:
+    Live(_3)
+    switch copy _1 -> [0: bb2, otherwise: bb7]
+  bb2:
+    Live(_4)
+    Live(_5)
+    _5 = call mk_v() / e0 -> [bb3, unwind: bb5]
+  bb3:
+    _4 = &_5
+    _3 = call first(move _4) / e0 -> [bb4, unwind: bb5]
+  bb4:
+    Dead(_5)
+    Dead(_4)
+    Goto(bb8)
+  bb5 (cleanup):
+    UnwindValue(_5, Drop)
+    Dead(_5)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_4)
+    Goto(bb10)
+  bb7:
+    Live(_6)
+    _6 = const 0usize
+    Bounds(_2, copy _6)
+    _3 = &_2[_6]
+    Dead(_6)
+    Goto(bb8)
+  bb8:
+    _0 = call show(move _3) / e0 -> [bb9, unwind: bb10]
+  bb9:
+    Dead(_2)
+    Dead(_3)
+    Dead(_1)
+    Return
+  bb10 (cleanup):
+    Dead(_3)
+    Goto(bb11)
+  bb11 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb12)
+  bb12 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb13)
+  bb13 (cleanup):
+    UnwindExit
+
+body b5: fn if_local; cap_env e0; unwind_exit bb13
+  _0: () (Return)
+  _1: bool (Param(0) `c`)
+  _2: Vec<u64> (User `keep`)
+  _3: Vec<u64> (User `other`)
+  _4: &u64 (Temp(Operand))
+  _5: &Vec<u64> (Temp(Operand))
+  _6: usize (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = call mk_v() / e0 -> [bb1, unwind: bb11]
+  bb1:
+    Live(_3)
+    _3 = call mk_v() / e0 -> [bb2, unwind: bb10]
+  bb2:
+    Live(_4)
+    switch copy _1 -> [1: bb3, otherwise: bb6]
+  bb3:
+    Live(_5)
+    _5 = &_3
+    _4 = call first(move _5) / e0 -> [bb4, unwind: bb5]
+  bb4:
+    Dead(_5)
+    Goto(bb7)
+  bb5 (cleanup):
+    Dead(_5)
+    Goto(bb9)
+  bb6:
+    Live(_6)
+    _6 = const 0usize
+    Bounds(_2, copy _6)
+    _4 = &_2[_6]
+    Dead(_6)
+    Goto(bb7)
+  bb7:
+    _0 = call show(move _4) / e0 -> [bb8, unwind: bb9]
+  bb8:
+    Dead(_3)
+    Dead(_2)
+    Dead(_4)
+    Dead(_1)
+    Return
+  bb9 (cleanup):
+    Dead(_4)
+    Goto(bb10)
+  bb10 (cleanup):
+    UnwindValue(_3, Drop)
+    Dead(_3)
+    Goto(bb11)
+  bb11 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb12)
+  bb12 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb13)
+  bb13 (cleanup):
+    UnwindExit
+
+body b6: fn match_inside; cap_env e0; unwind_exit bb15
+  _0: () (Return)
+  _1: u64 (Param(0) `n`)
+  _2: Vec<u64> (User `keep`)
+  _3: u64 (User `k`)
+  _4: &u64 (Temp(Operand))
+  _5: &Vec<u64> (Temp(Operand))
+  _6: Vec<u64> (Temp(Borrowed))
+  _7: usize (Temp(Operand))
+  _8: &u64 (Temp(Operand))
+  bb0:
+    Live(_2)
+    _2 = call mk_v() / e0 -> [bb1, unwind: bb13]
+  bb1:
+    Live(_3)
+    switch copy _1 -> [0: bb2, otherwise: bb8]
+  bb2:
+    Live(_4)
+    Live(_5)
+    Live(_6)
+    _6 = call mk_v() / e0 -> [bb3, unwind: bb5]
+  bb3:
+    _5 = &_6
+    _4 = call first(move _5) / e0 -> [bb4, unwind: bb5]
+  bb4:
+    _3 = Add<u64>(copy (*_4), const 0u64)
+    Dead(_6)
+    Dead(_5)
+    Dead(_4)
+    Goto(bb9)
+  bb5 (cleanup):
+    UnwindValue(_6, Drop)
+    Dead(_6)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_5)
+    Goto(bb7)
+  bb7 (cleanup):
+    Dead(_4)
+    Goto(bb12)
+  bb8:
+    Live(_7)
+    _7 = const 0usize
+    Bounds(_2, copy _7)
+    _3 = copy _2[_7]
+    Dead(_7)
+    Goto(bb9)
+  bb9:
+    Live(_8)
+    _8 = &_3
+    _0 = call show(move _8) / e0 -> [bb10, unwind: bb11]
+  bb10:
+    Dead(_3)
+    Dead(_2)
+    Dead(_8)
+    Dead(_1)
+    Return
+  bb11 (cleanup):
+    Dead(_8)
+    Goto(bb12)
+  bb12 (cleanup):
+    Dead(_3)
+    Goto(bb13)
+  bb13 (cleanup):
+    UnwindValue(_2, Drop)
+    Dead(_2)
+    Goto(bb14)
+  bb14 (cleanup):
+    Dead(_0)
+    Dead(_1)
+    Goto(bb15)
+  bb15 (cleanup):
+    UnwindExit
+
+body b7: fn main; cap_env e0; unwind_exit bb7
+  _0: () (Return)
+  _1: () (Temp(Discarded))
+  _2: () (Temp(Discarded))
+  bb0:
+    Live(_1)
+    _1 = call if_local(const true) / e0 -> [bb1, unwind: bb5]
+  bb1:
+    Dead(_1)
+    Live(_2)
+    _2 = call match_inside(const 0u64) / e0 -> [bb2, unwind: bb4]
+  bb2:
+    Dead(_2)
+    _0 = call if_temp(const true) / e0 -> [bb3, unwind: bb6]
+  bb3:
+    Return
+  bb4 (cleanup):
+    Dead(_2)
+    Goto(bb6)
+  bb5 (cleanup):
+    Dead(_1)
+    Goto(bb6)
+  bb6 (cleanup):
+    Dead(_0)
+    Goto(bb7)
+  bb7 (cleanup):
+    UnwindExit

@@ -1026,10 +1026,20 @@ fn oracle_turns_on_the_strict_run_time_checks() {
 
 #[test]
 fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
-    // No construct group is on before stage F8 (plan §2.6): each program goes
-    // to the old pipeline, and the command says why on standard error.
-    let path = "tests/programs/02_bad.wf";
+    // Only group A is on by default (stage F8, plan §2.6): a program with a
+    // loop (group B) goes to the old pipeline, and the command says why on
+    // standard error.
+    let dir = scratch(
+        "fallback",
+        &[(
+            "loop_bad.wf",
+            "fn bad() {\n    let v = [1]\n    let w = v\n    let i = 0\n    while i < 1 { i += 1 }\n    print(v.len())\n}\nfn main() { bad() }\n",
+        )],
+    );
+    let path = format!("{dir}/loop_bad.wf");
+    let path = path.as_str();
     let old = cmd(&["check", path]);
+    assert_eq!(old.code, 1, "{}", old.text);
     assert!(old.stderr.is_empty(), "{}", old.stderr);
     assert_eq!(cmd(&["check", "--facts=old", path]), old);
     for f in ["--facts=ir", "--facts=both"] {
@@ -1037,7 +1047,7 @@ fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
         assert_eq!(out.text, old.text, "{f}");
         assert_eq!(out.code, old.code, "{f}");
         let note =
-            format!("note: {f}: the old pipeline checks the program: the program uses group A");
+            format!("note: {f}: the old pipeline checks the program: the program uses group B");
         assert!(out.stderr.starts_with(&note), "{f}: {}", out.stderr);
         assert_eq!(out.stderr.lines().count(), 1, "{}", out.stderr);
     }
@@ -1049,7 +1059,8 @@ fn facts_switch_falls_back_to_the_old_pipeline_with_a_note() {
         out.stderr
     );
     // Each command that checks takes the switch.
-    let run = format!("{INTERP}/root_handlers.wf");
+    // `sim.wf` uses groups B to E.
+    let run = format!("{INTERP}/sim.wf");
     let rules = "examples/lints/ref_across_abort.dl";
     for args in [
         vec!["facts", "--facts=ir", path, "bad"],
@@ -1099,8 +1110,15 @@ fn groups_put_a_program_in_scope_of_the_ir_pipeline() {
     assert!(out.stderr.is_empty(), "{}", out.stderr);
     let facts = cmd(&["facts", "--facts=ir", "--groups=A", &path, "f"]);
     assert!(facts.text.contains("rebound_at("), "{}", facts.text);
-    // Group A is off by default: the old pipeline checks the program.
+    // Group A is on by default (stage F8): the ir pipeline checks the
+    // program with no `--groups`. With `--groups=B` group A is off.
     let out = cmd(&["agree", "--facts=ir", &path]);
+    assert!(out.stderr.is_empty(), "{}", out.stderr);
+    assert_eq!(
+        out.text,
+        cmd(&["agree", "--facts=ir", "--groups=A", &path]).text
+    );
+    let out = cmd(&["agree", "--facts=ir", "--groups=B", &path]);
     assert!(
         out.stderr.contains("the program uses group A"),
         "{}",

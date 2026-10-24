@@ -54,11 +54,15 @@ impl Builder<'_> {
     /// Lowers the body of a loop: a block scope with each statement in a
     /// statement scope of its own, the tail too. So the temporaries of the
     /// tail end at the end of each iteration (`docs/ir.md` 5.1.2, N5), and a
-    /// tail value is discarded (5.1.3).
+    /// tail value is dropped: a tail place moves (5.1.3, [`Builder::drop_tail`]).
     fn loop_body(&mut self, b: &ast::Block) -> R<()> {
         self.open(ScopeKind::Block, closing(b.span));
-        for s in &b.stmts {
-            self.stmt(s)?;
+        let n = b.stmts.len();
+        for (i, s) in b.stmts.iter().enumerate() {
+            match &s.kind {
+                ast::StmtKind::Expr(e) if i + 1 == n => self.drop_tail(e, s)?,
+                _ => self.stmt(s)?,
+            }
         }
         self.close();
         Ok(())

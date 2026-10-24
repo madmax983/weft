@@ -132,6 +132,11 @@ fn golden_assign_through() {
 }
 
 #[test]
+fn golden_drop_tail() {
+    golden("drop_tail");
+}
+
+#[test]
 fn golden_if_tail() {
     golden("if_tail");
 }

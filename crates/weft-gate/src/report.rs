@@ -592,17 +592,22 @@ fn rule(
             )),
         ),
         _ => {
+            let (d_old, d_ir) = (classify::errors(&input.old), classify::errors(&input.ir));
             let codes = if matches!(class, Class::Moved | Class::Changed) {
-                classify::changed_codes(&classify::errors(&input.old), &classify::errors(&input.ir))
+                classify::changed_codes(&d_old, &d_ir)
             } else {
                 Vec::new()
             };
+            let all = |d: &[snapshot::Diag]| d.iter().map(|x| x.0.clone()).collect::<Vec<_>>();
+            let (all_old, all_ir) = (all(&d_old), all(&d_ir));
             let applicable: Vec<usize> = candidates
                 .iter()
                 .copied()
                 .filter(|&k| {
                     ledger.entries.get(k).is_some_and(|e| {
-                        e.class.program_class() == Some(class) && e.accepts_codes(&codes)
+                        e.class.program_class() == Some(class)
+                            && e.accepts_codes(&codes)
+                            && e.both_have(&all_old, &all_ir)
                     })
                 })
                 .collect();
@@ -764,7 +769,12 @@ pub fn run(
     };
     snapshot::install_panic_hook();
     let mut records: Vec<Option<snapshot::Both>> = vec![None; total];
-    snapshot::run_both(base, manifest.entries, &snap, |i, b| {
+    snapshot::run_both(base, manifest.entries, &snap, |i, mut b| {
+        // The report reads the records only: the text of the fact digest of
+        // each program (its hash is in the record) would hold gigabytes on
+        // tier 2.
+        b.old.digest = String::new();
+        b.ir.digest = String::new();
         if let Some(slot) = records.get_mut(i) {
             *slot = Some(b);
         }

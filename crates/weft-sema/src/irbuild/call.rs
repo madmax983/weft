@@ -15,7 +15,7 @@ use weft_ir::{
 use weft_syntax::ast::{Arg, Expr, ExprKind, Span};
 
 use super::{id_of, unsupported, Builder, Construct, R};
-use crate::thir::{self, Builtin, CallInfo, Recv, RecvMode};
+use crate::thir::{self, BindingId, Builtin, CallInfo, Recv, RecvMode, Res};
 
 /// The parts of a call expression: the receiver of a method call, the
 /// arguments and the trailing block.
@@ -229,18 +229,42 @@ impl Builder<'_> {
     }
 
     /// Returns, for each operand of `parts`, true if no later operand can run
-    /// code: then a place operand can skip its temporary (`docs/ir.md`
-    /// 5.1.1). One pass from the end, so the cost is linear.
+    /// code and no later operand names the local that the operand moves:
+    /// then a place operand can skip its temporary (`docs/ir.md` 5.1.1). So
+    /// in `f(v, v)` the move of the first `v` is a statement before the call,
+    /// and the read of the second `v` comes after it. One pass from the end,
+    /// so the cost is linear in the operands.
     pub(super) fn skips(&self, parts: &[&Expr]) -> Vec<bool> {
         let mut v = vec![true; parts.len()];
         let mut inert = true;
+        // The base locals of the later operands (each one is inert).
+        let mut later: std::collections::HashSet<BindingId> = std::collections::HashSet::new();
         for (i, x) in parts.iter().enumerate().rev() {
+            let base = self.path_base(x);
+            let moved_again = base.is_some_and(|b| later.contains(&b))
+                && self.value_ty(x).is_ok_and(|t| self.tys.not_copy(t));
             if let Some(s) = v.get_mut(i) {
-                *s = inert;
+                *s = inert && !moved_again;
             }
             inert = inert && self.inert(x);
+            if inert {
+                later.extend(base);
+            }
         }
         v
+    }
+
+    /// The binding of the local at the base of the plain path `e` (a local
+    /// and fields), or `None`.
+    fn path_base(&self, e: &Expr) -> Option<BindingId> {
+        match &e.kind {
+            ExprKind::Name(_) => match self.t.res.get(&e.id) {
+                Some(Res::Local(b)) => Some(*b),
+                _ => None,
+            },
+            ExprKind::Field { base, .. } if self.plain_path(e) => self.path_base(base),
+            _ => None,
+        }
     }
 
     /// Evaluates the receiver `x` of a method call to a place (`docs/ir.md`

@@ -427,6 +427,72 @@ fn rest_linear(tys: &mut TyTable, t: TyId, proj: &[Proj]) -> bool {
     }
 }
 
+/// True if a part of a value of type `t` that is not at or below a path of
+/// `skip` can hold a linear value: a linear type, a part of a tuple, a
+/// field of a struct, or a field of the payload of a variant. A linear
+/// struct or enum holds a linear value with each of its parts gone.
+fn linear_outside(tys: &mut TyTable, t: TyId, skip: &[Vec<PathStep>]) -> bool {
+    if skip.iter().any(Vec::is_empty) {
+        return false;
+    }
+    if skip.is_empty() {
+        return ir_props(tys, t).linear;
+    }
+    // The paths of `skip` below step `s`, relative to it.
+    let below = |s: PathStep| -> Vec<Vec<PathStep>> {
+        skip.iter()
+            .filter_map(|p| {
+                p.split_first()
+                    .filter(|(h, _)| **h == s)
+                    .map(|(_, r)| r.to_vec())
+            })
+            .collect()
+    };
+    match tys.try_get(t).cloned() {
+        Some(Ty::Tuple(ts)) => ts.iter().enumerate().any(|(i, &x)| {
+            let i = u32::try_from(i).unwrap_or(u32::MAX);
+            linear_outside(tys, x, &below(PathStep::Field(i)))
+        }),
+        Some(Ty::Adt(a, args)) => {
+            let Some(d) = tys.adts().get(a.index()).cloned() else {
+                return true;
+            };
+            if d.linear {
+                return true;
+            }
+            match &d.kind {
+                AdtKind::Struct(fs) => fs.iter().enumerate().any(|(i, f)| {
+                    let x = subst(tys, f.ty, &args);
+                    let i = u32::try_from(i).unwrap_or(u32::MAX);
+                    linear_outside(tys, x, &below(PathStep::Field(i)))
+                }),
+                AdtKind::Enum(vs) => vs.iter().enumerate().any(|(v, var)| {
+                    let v = u32::try_from(v).unwrap_or(u32::MAX);
+                    let inside = below(PathStep::Variant(v));
+                    if inside.iter().any(Vec::is_empty) {
+                        return false;
+                    }
+                    var.fields.iter().enumerate().any(|(i, &y)| {
+                        let x = subst(tys, y, &args);
+                        let i = u32::try_from(i).unwrap_or(u32::MAX);
+                        let sub: Vec<Vec<PathStep>> = inside
+                            .iter()
+                            .filter_map(|p| {
+                                p.split_first()
+                                    .filter(|(h, _)| **h == PathStep::Field(i))
+                                    .map(|(_, r)| r.to_vec())
+                            })
+                            .collect();
+                        linear_outside(tys, x, &sub)
+                    })
+                }),
+                AdtKind::Extern { .. } => ir_props(tys, t).linear,
+            }
+        }
+        _ => ir_props(tys, t).linear,
+    }
+}
+
 // ------------------------------------------------------------ operands
 
 /// An operand at node `n`.
@@ -530,7 +596,15 @@ fn moved(em: &mut Em<'_>, n: NodeId, st: &State, q: &Place, al: &Alpha) -> R {
             .moved_part
             .extend(al.places.iter().map(|&m| (m, n)));
         let t = super::alpha::place_ty(em.p, em.tys, em.body, &Place::local(q.local));
-        let by_type = t.is_some_and(|t| rest_linear(em.tys, t, &q.proj));
+        // The parts that moved before (the holes of the state) hold
+        // nothing: `let (a, b) = p` ends `p` at the move of `p.1`. A move
+        // of an element (`a[0]`, `s.v[0]`) leaves the other elements.
+        let mut skip = st.holes_below(k, &[]);
+        if move_prefix(q).len() == q.proj.len() {
+            skip.extend(steps(&q.proj));
+        }
+        let by_type =
+            t.is_some_and(|t| rest_linear(em.tys, t, &q.proj) && linear_outside(em.tys, t, &skip));
         let by_state = match steps(move_prefix(q)) {
             Some(path) if !path.is_empty() => {
                 st.value(k, &[]).flat_without(&[path.as_slice()]).linear
@@ -1144,8 +1218,52 @@ pub fn print(em: &mut Em<'_>, n: NodeId, st: &State, ops: &[Operand]) -> R {
         let v = transfer::operand(&mut em.cx(), body, st, op)?;
         let refs = named_refs(em, v.flat().refs);
         em.apply(n, kernel::read_through(&refs));
+        deep_uses(em, n, op, &refs)?;
     }
     Ok(())
+}
+
+/// A read through the value of operand `op` at node `n` that can read a
+/// reference in a place that the value points into (`**r` with `r:
+/// &&u64`): `uses` of the variables of the owners of the places `refs` of
+/// the value. So the end of the place that the inner reference points into
+/// makes the read invalid (review of stage F8, hole H3). A `print` of the
+/// operand and an argument of a call read through it.
+fn deep_uses(em: &mut Em<'_>, n: NodeId, op: &Operand, refs: &[PlaceId]) -> R {
+    let (Operand::Copy(q) | Operand::Move(q)) = op else {
+        return Ok(());
+    };
+    let deep = em.place_ty(q).is_some_and(|t| refs_to_refs(em.tys, t));
+    if !deep {
+        return Ok(());
+    }
+    let base = em.key(q.local)?;
+    let mut uses = Vec::new();
+    for &r in refs {
+        uses.extend(em.owner_vars(r, base));
+    }
+    uses.sort();
+    uses.dedup();
+    em.apply(
+        n,
+        Frag {
+            uses,
+            ..Frag::default()
+        },
+    );
+    Ok(())
+}
+
+/// True if a value of type `t` can hold a reference to a value that holds
+/// a reference: a reference whose pointee holds references, also in a
+/// tuple, an array, a slice or a type argument.
+fn refs_to_refs(tys: &TyTable, t: TyId) -> bool {
+    match tys.try_get(t) {
+        Some(Ty::Ref(p)) => ir_props(tys, *p).holds_refs || refs_to_refs(tys, *p),
+        Some(Ty::Tuple(xs) | Ty::Adt(_, xs)) => xs.iter().any(|&x| refs_to_refs(tys, x)),
+        Some(Ty::Array(x, _) | Ty::Slice(x)) => refs_to_refs(tys, *x),
+        _ => false,
+    }
 }
 
 /// `UnwindValue(p, a)`: `unwound_at` of `S(l)` and of the variables below
@@ -1630,6 +1748,10 @@ pub fn call(
             _ => false,
         };
         operand_moves(em, main, st, op, relocate, moves)?;
+        // The callee can read through the argument (hole H3).
+        let v = transfer::operand(&mut em.cx(), body, st, op)?;
+        let refs = named_refs(em, v.flat().refs);
+        deep_uses(em, main, op, &refs)?;
         spans.push(operand_span(em, op, at));
         bases.push(match op {
             Operand::Copy(q) | Operand::Move(q) => em.alpha(st, q)?.places,

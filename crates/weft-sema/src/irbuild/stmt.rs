@@ -6,6 +6,17 @@ use weft_syntax::ast::{self, AssignOp, Expr, PatternKind, Stmt, StmtKind as S};
 use super::frame::{closing, Jump};
 use super::{unsupported, Builder, Construct, ScopeKind, R};
 
+/// What a block does with its tail expression.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Tail {
+    /// The tail is the value of the block: it goes into the destination.
+    Value,
+    /// The tail is an expression statement (a frame whose `_0` is `()`).
+    Statement,
+    /// Nothing keeps the value: [`Builder::drop_tail`].
+    Drop,
+}
+
 impl Builder<'_> {
     /// Lowers block `b` into `dest` (`docs/ir.md` 5.11):
     ///
@@ -22,16 +33,37 @@ impl Builder<'_> {
         Ok(())
     }
 
+    /// Lowers block `b` whose value nothing keeps, the branch of an `if`
+    /// with no `else` (`docs/ir.md` 5.1.3, ADR 0003): its tail is dropped
+    /// ([`Builder::drop_tail`]), and `dest` gets `()`.
+    pub(super) fn block_drop_into(&mut self, b: &ast::Block, dest: Place) -> R<()> {
+        self.open(ScopeKind::Block, closing(b.span));
+        self.block_stmts_with(b, dest, Tail::Drop)?;
+        self.close();
+        Ok(())
+    }
+
     /// Lowers the statements and the tail of block `b` into `dest` in the
     /// block scope that the caller opened, and does not close it: the body
     /// of a scope waits for its tasks after the tail and before the block
     /// locals end (`task.rs`).
     pub(super) fn block_stmts(&mut self, b: &ast::Block, dest: Place, discard: bool) -> R<()> {
+        let tail = if discard {
+            Tail::Statement
+        } else {
+            Tail::Value
+        };
+        self.block_stmts_with(b, dest, tail)
+    }
+
+    /// [`Builder::block_stmts`] with the treatment `how` of the tail.
+    fn block_stmts_with(&mut self, b: &ast::Block, dest: Place, how: Tail) -> R<()> {
         let n = b.stmts.len();
         let mut tail = None;
         for (i, s) in b.stmts.iter().enumerate() {
             match &s.kind {
-                S::Expr(e) if i + 1 == n && !discard => tail = Some(e),
+                S::Expr(e) if i + 1 == n && how == Tail::Value => tail = Some(e),
+                S::Expr(e) if i + 1 == n && how == Tail::Drop => self.drop_tail(e, s)?,
                 _ => self.stmt(s)?,
             }
         }
@@ -45,6 +77,34 @@ impl Builder<'_> {
             }
             None => {}
         }
+        Ok(())
+    }
+
+    /// Lowers the tail `e` (statement `s`) of a block whose value nothing
+    /// keeps: the branch of an `if` with no `else` and a loop body
+    /// (`docs/ir.md` 5.1.3, ADR 0003). A place whose value is not plain
+    /// data moves into a `Discarded` temporary, and the `Dead` of the
+    /// temporary drops it. A place of plain data is a `Mention`, and any
+    /// other tail is an expression statement.
+    pub(super) fn drop_tail(&mut self, e: &Expr, s: &Stmt) -> R<()> {
+        if self.is_spawn(e) {
+            return self.stmt(s);
+        }
+        self.open(ScopeKind::Stmt, s.span);
+        if let Some(p) = self.as_place(e)? {
+            let origin = self.origin(e.span, Some(e.id));
+            let ty = self.value_ty(e)?;
+            match self.read_place(p.clone(), ty)? {
+                Operand::Move(q) => {
+                    let t = self.temp(ty, TempKind::Discarded, origin);
+                    self.assign(Place::local(t), Rvalue::Use(Operand::Move(q)), origin);
+                }
+                _ => self.push(StmtKind::Mention(p), origin),
+            }
+        } else {
+            self.expr_stmt(e)?;
+        }
+        self.close();
         Ok(())
     }
 

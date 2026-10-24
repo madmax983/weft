@@ -528,6 +528,57 @@ fn an_entry_with_codes_covers_only_those_codes() {
 }
 
 #[test]
+fn a_rule_entry_covers_the_programs_where_both_sides_have_a_code() {
+    // Stage F8: one rule for each class of programs, not one entry for each
+    // program. `both_have` names the codes (globs) that each side must give.
+    let typeck = pair(
+        "a.wf",
+        PROBES,
+        &[("W0101", 3), ("W0805", 4)],
+        &[("W0101", 3)],
+        Verdict::Fault,
+    );
+    let ir_only = pair(
+        "b.wf",
+        PROBES,
+        &[("W0805", 4)],
+        &[("W0101", 3)],
+        Verdict::Fault,
+    );
+    let none = pair(
+        "c.wf",
+        PROBES,
+        &[("W0301", 3)],
+        &[("W0302", 3)],
+        Verdict::Fault,
+    );
+    let rule = "[[entry]]\nclass = \"changed\"\nfiles = [\"**\"]\nboth_have = [\"W01*\", \"W0303\"]\nreason = \"r\"\n";
+    let r = build(&[typeck, ir_only, none], rule);
+    let blocked: Vec<&str> = r
+        .rows
+        .iter()
+        .filter(|row| row.blocker.is_some())
+        .map(|row| row.path.as_str())
+        .collect();
+    assert_eq!(blocked, ["b.wf", "c.wf"]);
+    assert_eq!(r.rows[0].entry, Some(0));
+    let w0303 = pair(
+        "d.wf",
+        PROBES,
+        &[("W0303", 3), ("W0301", 5)],
+        &[("W0303", 3)],
+        Verdict::Fault,
+    );
+    assert!(one(w0303, rule).passes());
+    // `both_have` is for the classes where both sides reject.
+    let bad = "[[entry]]\nclass = \"lost-clean\"\nfiles = [\"**\"]\nboth_have = [\"W01*\"]\nreason = \"r\"\nsigned_by = \"x\"\n";
+    let e = ledger(bad);
+    assert!(e.entries[0]
+        .problem()
+        .is_some_and(|p| p.contains("both_have")));
+}
+
+#[test]
 fn open_with_no_entry_blocks_from_the_baseline_on() {
     let r = one(pair("a.wf", PROBES, &[], &[], Verdict::Fault), "");
     assert_eq!(r.rows[0].class, Class::Open);

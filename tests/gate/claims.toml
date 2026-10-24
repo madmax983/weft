@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8"]
 
 
 # ----------------------------------------------------------------------
@@ -878,21 +878,39 @@ note = "the result of a call of a function parameter has no places of the caller
 
 [[claim]]
 finding = "sem-N1"
-kind = "unsound"
+kind = "sound"
 verdict = "construction"
 group = "A"
 stage = "F8"
 repro = ["tests/gate/probes/ir/probes/p2_late_operand_ref.wf"]
-note = "a place operand is read later than the facts say"
+note = "a place operand is read later than the facts say. Choice A (docs/ir.md 5.1.1, 5.16): the IR engine copies `r.hp` before the push, so the program is correct and the ir pipeline accepts it (stage F8). The interp claim below checks the IR oracle"
+
+[[claim]]
+finding = "sem-N1"
+kind = "interp"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/ir/probes/p2_late_operand_ref.wf"]
+note = "choice A: the oracle of the IR engine does not fault (the operand is read where it is written)"
 
 [[claim]]
 finding = "sem-N2"
-kind = "unsound"
+kind = "sound"
 verdict = "construction"
 group = "A"
 stage = "F8"
 repro = ["tests/gate/probes/ir/probes/p9_print_late.wf"]
-note = "an operand of `print` is read later than the facts say"
+note = "an operand of `print` is read later than the facts say. Choice A (docs/ir.md 5.1.1, 5.33): the IR engine copies `r.hp` before the push, so the program is correct and the ir pipeline accepts it (stage F8). The interp claim below checks the IR oracle"
+
+[[claim]]
+finding = "sem-N2"
+kind = "interp"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/ir/probes/p9_print_late.wf"]
+note = "choice A: the oracle of the IR engine does not fault (the operand is read where it is written)"
 
 [[claim]]
 finding = "sem-N3"
@@ -3072,6 +3090,144 @@ group = "AC"
 stage = "F11"
 repro = ["tests/gate/probes/fixes/b12/late_once_capture.wf"]
 note = "A closure captures `c` before `c` gets a once closure: the capture is `Kept` (one cell), the call runs the new value once; a correct program, the ir pipeline must accept it"
+
+# ----------------------------------------------------------------------
+# Stage F8: group A on. The holes that the review of the `lost-clean`
+# programs found (F8-H1 to F8-H3; repros in tests/gate/probes/fixes/f8,
+# copies of the variants of the reviewer), the branch temporaries
+# (docs/ir.md 5.12; ORCHESTRATOR decision after I5) and the group-A parts of
+# R3RT2, R3RT3, R3RT6 and R3RT10.
+
+[[claim]]
+finding = "F8-H1"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/fixes/f8/i_k_wholeTwice.wf",
+    "tests/gate/probes/fixes/f8/i_l_linearTwice.wf",
+    "tests/gate/probes/fixes/f8/i_a_twice.wf",
+    "tests/gate/probes/fixes/f8/i_e_wholeThenPart.wf",
+    "tests/gate/probes/fixes/f8/i_b_lenAfter.wf",
+    "tests/gate/probes/fixes/f8/i_d_refAfter.wf",
+    "tests/gate/probes/fixes/f8/i_i_blockArg.wf",
+]
+code = "W0302"
+note = "a later operand of one call reads a local that an earlier operand moves (`two(v, v)`, `consume_s(s, s.n)`, `consume_r(s.items, &s.items)`): the move is a statement before the call (docs/ir.md 5.1.1), and a bind of a part that overlaps a moved part uses `S(l)`"
+
+[[claim]]
+finding = "F8-H2"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/fixes/f8/st2_i_if_param.wf",
+    "tests/gate/probes/fixes/f8/st2_j_if_true_linear.wf",
+    "tests/gate/probes/fixes/f8/st2_h_paren.wf",
+    "tests/gate/probes/r3/oracle/probes/st2_if_semi.wf",
+]
+code = "W0302"
+note = "the tail place of the branch of an `if` with no `else` moves into a `Discarded` temporary (ADR 0003, docs/ir.md 5.1.3); a later use is W0302"
+
+[[claim]]
+finding = "F8-H3"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/fixes/f8/x_refref_tuple.wf"]
+code = "W0301"
+line = 7
+note = "`print(r)` with `r = &t.1` and `t.1` a reference into `b[]`: the read through `r` uses the variables of `t` (both pipelines accepted it before F8)"
+
+[[claim]]
+finding = "branch-temps"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/gate/probes/verify/s5/R3a_diff/sweep/if__ref_temp__arg.wf",
+    "tests/gate/probes/verify/s5/R3a_diff/sweep/if__ref_temp_idx__arg.wf",
+    "tests/gate/probes/verify/s5/R3a_diff/sweep/match__ref_temp__arg.wf",
+    "tests/gate/probes/verify/s5/R3a_diff/sweep/match__ref_temp_idx__arg.wf",
+]
+code = "W0301"
+note = "the temporaries of a branch end before the join (docs/ir.md 5.12): a reference into a temporary of a branch cannot be the value of the `if` or `match`. A language change: stricter than the old pipeline, like the tail-expression temporaries of Rust 2024 (tests/programs/164_branch_temporaries.wf)"
+
+[[claim]]
+finding = "branch-temps"
+kind = "unsound"
+verdict = "construction"
+group = "ACF"
+stage = "F20"
+repro = [
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_box__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_clo__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_field__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_first__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_get__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_id__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_index__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_lit__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_opt__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_tuple__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_box__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_clo__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_field__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_first__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_get__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_id__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_index__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_lit__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_opt__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_tuple__arg.wf",
+]
+code = "W0301"
+note = "the branch temporaries of the r3 sweep: the programs have a closure and a generic function, so they are in scope when groups C and F are on"
+
+[[claim]]
+finding = "R3RT2"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = [
+    "tests/ir_targets/r3rt2_match_through_ref.wf",
+    "tests/gate/probes/r3/redteam/p/i6_destr.wf",
+]
+code = "W0301"
+note = "a `match` or a destructure through a reference keeps the places of the held reference (new true positives at group A)"
+
+[[claim]]
+finding = "R3RT3"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/r3/redteam/p/q2_held.wf"]
+code = "W0312"
+note = "a call gives the places of the references behind a reference argument: W0312 at the aliased calls"
+
+[[claim]]
+finding = "R3RT6"
+kind = "fp"
+verdict = "partly"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/r3/redteam/p/q8_mv_fp.wf"]
+note = "the type part of R3RT6 (F5): a `mut` reference argument gets only the held references of the other arguments whose types fit (signed lost-clean, stage F8)"
+
+[[claim]]
+finding = "R3RT10"
+kind = "fp"
+verdict = "one-rule"
+group = "A"
+stage = "F8"
+repro = ["tests/gate/probes/r3/redteam/p/i8_partset_fp.wf"]
+note = "a new value of a part with an `H` variable replaces the places of the part (signed lost-clean, stage F8)"
 
 # ----------------------------------------------------------------------
 # Findings with no claim, and notes on repros with no claim. One line each.

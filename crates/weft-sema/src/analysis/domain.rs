@@ -17,6 +17,7 @@
 //! identity of the join.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 use weft_facts::PlaceId;
 use weft_ir::{BodyId, FnId, LocalId, SpawnId, TyId};
@@ -269,14 +270,197 @@ pub type Path = (Key, Vec<PathStep>);
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct State {
     /// The value of each local that can have one.
-    vals: BTreeMap<Key, Tree>,
+    vals: Chunked<Rc<Tree>>,
     /// The move paths that can hold a value.
-    may: BTreeSet<Path>,
+    may: PathSet,
     /// The move paths that must hold a value, but for the holes below them.
-    must: BTreeSet<Path>,
+    must: PathSet,
     /// The move paths that can have no value: a part that moved or that an
     /// `Uninit` left with no value (may).
-    holes: BTreeSet<Path>,
+    holes: PathSet,
+}
+
+/// The number of locals of one chunk of a [`Chunked`] map.
+const CHUNK: u32 = 64;
+
+/// The key of the chunk of local `k`.
+const fn chunk_of(k: Key) -> (BodyId, u32) {
+    (k.0, k.1 .0 / CHUNK)
+}
+
+/// A map from locals to values that the states of the blocks share: the
+/// locals go in chunks of [`CHUNK`], and a clone shares each chunk. A
+/// change copies the map of the chunks and the one chunk that it changes.
+/// So a body with many blocks and many locals (a long chain of calls, a
+/// cleanup chain) keeps one copy of each chunk that no block changes, and a
+/// clone of a state costs no copy of the values.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Chunked<V: Clone> {
+    /// The chunks, by body and chunk number.
+    chunks: Rc<Chunks<V>>,
+}
+
+/// The chunks of a [`Chunked`] map.
+type Chunks<V> = BTreeMap<(BodyId, u32), Rc<BTreeMap<Key, V>>>;
+
+/// The paths of one local in a [`PathSet`].
+type Paths = Rc<BTreeSet<Vec<PathStep>>>;
+
+impl<V: Clone> Default for Chunked<V> {
+    fn default() -> Self {
+        Self {
+            chunks: Rc::new(BTreeMap::new()),
+        }
+    }
+}
+
+impl<V: Clone> Chunked<V> {
+    /// The value of local `k`.
+    fn get(&self, k: Key) -> Option<&V> {
+        self.chunks.get(&chunk_of(k)).and_then(|c| c.get(&k))
+    }
+
+    /// Gives local `k` the value `v`.
+    fn insert(&mut self, k: Key, v: V) {
+        let chunk = Rc::make_mut(&mut self.chunks)
+            .entry(chunk_of(k))
+            .or_default();
+        Rc::make_mut(chunk).insert(k, v);
+    }
+
+    /// The value of local `k` to change, with `f` for a new value.
+    fn entry(&mut self, k: Key, f: impl FnOnce() -> V) -> &mut V {
+        let chunk = Rc::make_mut(&mut self.chunks)
+            .entry(chunk_of(k))
+            .or_default();
+        Rc::make_mut(chunk).entry(k).or_insert_with(f)
+    }
+
+    /// The value of local `k` to change, if it has one.
+    fn get_mut(&mut self, k: Key) -> Option<&mut V> {
+        self.get(k)?;
+        let chunk = Rc::make_mut(&mut self.chunks).get_mut(&chunk_of(k))?;
+        Rc::make_mut(chunk).get_mut(&k)
+    }
+
+    /// Removes the value of local `k`.
+    fn remove(&mut self, k: Key) {
+        if self.get(k).is_none() {
+            return;
+        }
+        let chunks = Rc::make_mut(&mut self.chunks);
+        let c = chunk_of(k);
+        if let Some(chunk) = chunks.get_mut(&c) {
+            Rc::make_mut(chunk).remove(&k);
+            if chunk.is_empty() {
+                chunks.remove(&c);
+            }
+        }
+    }
+
+    /// The locals and their values, by chunk: a chunk that `o` shares with
+    /// `self` is left out (for the joins).
+    fn not_shared<'a>(&'a self, o: &'a Self) -> impl Iterator<Item = (&'a Key, &'a V)> {
+        self.chunks
+            .iter()
+            .filter(move |(c, chunk)| o.chunks.get(c).is_none_or(|x| !Rc::ptr_eq(x, chunk)))
+            .flat_map(|(_, chunk)| chunk.iter())
+    }
+}
+
+/// A set of move paths, by local. The set of each local is shared between
+/// the states of the blocks, as the trees of [`State`] are: a change copies
+/// the set of one local.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct PathSet(Chunked<Paths>);
+
+impl PathSet {
+    /// Adds the path `path` of local `key`.
+    fn insert(&mut self, key: Key, path: &[PathStep]) {
+        if self.0.get(key).is_some_and(|s| s.contains(path)) {
+            return;
+        }
+        let set = self.0.entry(key, Rc::default);
+        Rc::make_mut(set).insert(path.to_vec());
+    }
+
+    /// Removes the paths of local `key` at or below `path`.
+    fn remove_below(&mut self, key: Key, path: &[PathStep]) {
+        let Some(set) = self.0.get(key) else {
+            return;
+        };
+        if !set.iter().any(|p| is_prefix(path, p)) {
+            return;
+        }
+        let kept: BTreeSet<Vec<PathStep>> = set
+            .iter()
+            .filter(|p| !is_prefix(path, p))
+            .cloned()
+            .collect();
+        if kept.is_empty() {
+            self.0.remove(key);
+        } else {
+            self.0.insert(key, Rc::new(kept));
+        }
+    }
+
+    /// The paths of local `key`.
+    fn of(&self, key: Key) -> impl Iterator<Item = &Vec<PathStep>> {
+        self.0.get(key).into_iter().flat_map(|s| s.iter())
+    }
+
+    /// Adds each path of `o`. Returns true if `self` changed.
+    fn union(&mut self, o: &Self) -> bool {
+        let mut new: Vec<(Key, Paths)> = Vec::new();
+        for (k, theirs) in o.0.not_shared(&self.0) {
+            match self.0.get(*k) {
+                Some(mine) if Rc::ptr_eq(mine, theirs) => {}
+                Some(mine) => {
+                    if !theirs.iter().all(|p| mine.contains(p)) {
+                        let mut all = (**mine).clone();
+                        all.extend(theirs.iter().cloned());
+                        new.push((*k, Rc::new(all)));
+                    }
+                }
+                None => new.push((*k, Rc::clone(theirs))),
+            }
+        }
+        let changed = !new.is_empty();
+        for (k, v) in new {
+            self.0.insert(k, v);
+        }
+        changed
+    }
+
+    /// Keeps only the paths that `o` has too. Returns true if `self`
+    /// changed.
+    fn intersect(&mut self, o: &Self) -> bool {
+        let mut new: Vec<(Key, Option<Paths>)> = Vec::new();
+        for (k, mine) in self.0.not_shared(&o.0) {
+            match o.0.get(*k) {
+                Some(theirs) if Rc::ptr_eq(mine, theirs) => {}
+                Some(theirs) => {
+                    if mine.iter().any(|p| !theirs.contains(p)) {
+                        let kept: BTreeSet<Vec<PathStep>> = mine
+                            .iter()
+                            .filter(|p| theirs.contains(*p))
+                            .cloned()
+                            .collect();
+                        new.push((*k, (!kept.is_empty()).then(|| Rc::new(kept))));
+                    }
+                }
+                None => new.push((*k, None)),
+            }
+        }
+        let changed = !new.is_empty();
+        for (k, v) in new {
+            match v {
+                Some(v) => self.0.insert(k, v),
+                None => self.0.remove(k),
+            }
+        }
+        changed
+    }
 }
 
 /// True if `a` is a prefix of `b` (or equal to it).
@@ -293,107 +477,107 @@ impl State {
     /// The value of the move path `path` of local `key`. A local with no
     /// value gives [`Tree::none`].
     pub fn value(&self, key: Key, path: &[PathStep]) -> Tree {
-        self.vals.get(&key).map_or_else(Tree::none, |t| t.get(path))
+        self.vals.get(key).map_or_else(Tree::none, |t| t.get(path))
     }
 
     /// The tree of local `key`, if it has one.
     pub fn tree(&self, key: Key) -> Option<&Tree> {
-        self.vals.get(&key)
+        self.vals.get(key).map(Rc::as_ref)
     }
 
     /// Gives the move path `path` of local `key` the value `v` (a strong
     /// update): it can and must hold a value now, and its parts get the
     /// parts of `v`.
     pub fn write(&mut self, key: Key, path: &[PathStep], v: Tree) {
-        self.vals.entry(key).or_insert_with(Tree::none).set(path, v);
-        self.may.retain(|(k, p)| *k != key || !is_prefix(path, p));
-        self.must.retain(|(k, p)| *k != key || !is_prefix(path, p));
-        self.holes.retain(|(k, p)| *k != key || !is_prefix(path, p));
-        self.may.insert((key, path.to_vec()));
-        self.must.insert((key, path.to_vec()));
+        Rc::make_mut(self.vals.entry(key, || Rc::new(Tree::none()))).set(path, v);
+        self.may.remove_below(key, path);
+        self.must.remove_below(key, path);
+        self.holes.remove_below(key, path);
+        self.may.insert(key, path);
+        self.must.insert(key, path);
     }
 
     /// Joins `v` into the move path `path` of local `key` (a weak update:
     /// a store through a reference or into an element). The path can hold a
     /// value now.
     pub fn add(&mut self, key: Key, path: &[PathStep], v: &Tree) {
-        self.vals.entry(key).or_insert_with(Tree::none).add(path, v);
-        self.may.insert((key, path.to_vec()));
+        Rc::make_mut(self.vals.entry(key, || Rc::new(Tree::none()))).add(path, v);
+        self.may.insert(key, path);
     }
 
     /// The move path `path` of local `key` has no value now: a move, a
     /// `Consume`, an `Uninit`. With an empty path, the whole local.
     pub fn clear(&mut self, key: Key, path: &[PathStep]) {
-        self.may.retain(|(k, p)| *k != key || !is_prefix(path, p));
-        self.must.retain(|(k, p)| *k != key || !is_prefix(path, p));
-        self.holes.retain(|(k, p)| *k != key || !is_prefix(path, p));
+        self.may.remove_below(key, path);
+        self.must.remove_below(key, path);
+        self.holes.remove_below(key, path);
         if path.is_empty() {
-            self.vals.remove(&key);
+            self.vals.remove(key);
         } else {
-            if let Some(t) = self.vals.get_mut(&key) {
-                t.set(path, Tree::none());
+            if let Some(t) = self.vals.get_mut(key) {
+                Rc::make_mut(t).set(path, Tree::none());
             }
             // The paths above the cleared part keep their other parts.
-            self.holes.insert((key, path.to_vec()));
+            self.holes.insert(key, path);
         }
     }
 
     /// Adds a hole at the move path `path` of local `key`: the part can have
     /// no value (a part of a moved value that had no value).
     pub fn add_hole(&mut self, key: Key, path: &[PathStep]) {
-        self.holes.insert((key, path.to_vec()));
+        self.holes.insert(key, path);
     }
 
     /// The holes of local `key` at or below the move path `path`, relative
     /// to `path`.
     pub fn holes_below(&self, key: Key, path: &[PathStep]) -> Vec<Vec<PathStep>> {
         self.holes
-            .iter()
-            .filter(|(k, p)| *k == key && is_prefix(path, p))
-            .filter_map(|(_, p)| p.get(path.len()..).map(<[PathStep]>::to_vec))
+            .of(key)
+            .filter(|p| is_prefix(path, p))
+            .filter_map(|p| p.get(path.len()..).map(<[PathStep]>::to_vec))
             .collect()
     }
 
     /// True if local `key` can hold a value, or a value of a part.
     pub fn may_hold(&self, key: Key) -> bool {
-        self.may.iter().any(|(k, _)| *k == key)
+        self.may.of(key).next().is_some()
     }
 
     /// True if the move path `path` of local `key` must hold a value: the
     /// path or a path above it got a value on each path to this point, and
     /// no hole overlaps the path.
     pub fn must_hold(&self, key: Key, path: &[PathStep]) -> bool {
-        self.must
-            .iter()
-            .any(|(k, p)| *k == key && is_prefix(p, path))
+        self.must.of(key).any(|p| is_prefix(p, path))
             && !self
                 .holes
-                .iter()
-                .any(|(k, p)| *k == key && (is_prefix(p, path) || is_prefix(path, p)))
+                .of(key)
+                .any(|p| is_prefix(p, path) || is_prefix(path, p))
     }
 
     /// Joins `o` into `self`: a union of the values and of the may parts,
     /// and an intersection of the must parts. Returns true if `self`
     /// changed.
     pub fn join(&mut self, o: &Self) -> bool {
-        let mut changed = false;
-        for (k, t) in &o.vals {
-            if let Some(mine) = self.vals.get_mut(k) {
-                changed |= mine.join(t);
-            } else {
-                self.vals.insert(*k, t.clone());
-                changed = true;
+        let mut new: Vec<(Key, Rc<Tree>)> = Vec::new();
+        for (k, t) in o.vals.not_shared(&self.vals) {
+            match self.vals.get(*k) {
+                Some(mine) if Rc::ptr_eq(mine, t) || **mine == **t => {}
+                Some(mine) => {
+                    let mut joined = (**mine).clone();
+                    if joined.join(t) {
+                        new.push((*k, Rc::new(joined)));
+                    }
+                }
+                None => new.push((*k, Rc::clone(t))),
             }
         }
-        let may = self.may.len();
-        self.may.extend(o.may.iter().cloned());
-        changed |= self.may.len() != may;
-        let must = self.must.len();
-        self.must.retain(|p| o.must.contains(p));
-        changed |= self.must.len() != must;
-        let holes = self.holes.len();
-        self.holes.extend(o.holes.iter().cloned());
-        changed |= self.holes.len() != holes;
+        let mut changed = !new.is_empty();
+        for (k, t) in new {
+            self.vals.insert(k, t);
+        }
+        changed |= self.may.union(&o.may);
+        changed |= self.must.intersect(&o.must);
+        changed |= self.holes.union(&o.holes);
         changed
     }
 }

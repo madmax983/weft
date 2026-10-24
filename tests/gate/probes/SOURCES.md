@@ -160,3 +160,14 @@ section again after a run of `copy-probes`.
 - `verify/s5/r2a/t/tk3.wf`
 - `verify/s5/r2a/t/x3.wf`
 - `verify/s5/r2a/t/x5.wf`
+
+## Programs that stage F8 added
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs.
+
+- `fixes/f8/*.wf`: the variants of the review of the `lost-clean` programs of
+  stage F8 (holes H1 to H3; claims F8-H1 to F8-H3).
+- `r3/oracle/sweep1/{if,match}__tmp_*__arg.wf` and
+  `verify/s5/R3a_diff/sweep/{if,match}__ref_temp*__arg.wf`: copies of the 24
+  tier-2 programs of the branch temporaries (claim branch-temps, docs/ir.md 5.12).

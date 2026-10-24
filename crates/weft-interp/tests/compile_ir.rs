@@ -144,6 +144,12 @@ fn each_interpreter_program_gives_its_output_with_the_ir_engine() {
     assert!(failures.is_empty(), "{failures}");
 }
 
+/// The corpus programs whose output differs between the engines by design.
+/// `164_branch_temporaries`: the temporaries of a branch end before the
+/// join on the IR engine (`docs/ir.md` 5.12, 8.3), so `main` reads a freed
+/// cell there (the engine ledger has the class `branch-temps`).
+const ENGINE_DIFFERENCES: [&str; 1] = ["164_branch_temporaries"];
+
 #[test]
 fn each_program_of_the_corpus_gives_the_same_output_with_both_engines() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/programs");
@@ -163,7 +169,10 @@ fn each_program_of_the_corpus_gives_the_same_output_with_both_engines() {
         }
         ran += 1;
         let want = expected(&path);
-        if out != want {
+        let differs = ENGINE_DIFFERENCES.contains(&name.as_str());
+        if differs && out == want {
+            let _ = writeln!(failures, "{name}: the engines give the same output now");
+        } else if !differs && out != want {
             let _ = write!(
                 failures,
                 "{name}: output differs\n--- ast\n{want}--- ir\n{out}"
@@ -1076,16 +1085,17 @@ fn main() {
         run_unchecked_oracle(temp, Engine::Ir),
         ("2\n".to_string(), None)
     );
-    // `if c { v }` with no `else`: the tail is a place statement (127
-    // `if_tail_moves`), `v` does not move, and the run is clean.
+    // `if c { v }` with no `else`: the tail moves into a temporary that
+    // drops it (ADR 0003, docs/ir.md 5.1.3; 127 `if_tail_moves`), so the
+    // later read faults, as on the AST engine.
     let tail = "fn main() {
     let v = Vec.new()
     v.push(1)
     if true { v }
     print(v.len())
 }";
-    assert_eq!(
-        run_unchecked_oracle(tail, Engine::Ir),
-        ("1\n".to_string(), None)
-    );
+    let (_, err) = run_unchecked_oracle(tail, Engine::Ir);
+    assert!(err.is_some(), "the run is clean");
+    let (_, ast) = run_unchecked_oracle(tail, Engine::Ast);
+    assert!(ast.is_some(), "the run is clean on the AST engine");
 }

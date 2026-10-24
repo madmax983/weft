@@ -436,3 +436,18 @@ fn with_no_group_on_no_program_is_in_scope() {
     let a = analyze(src, opts(FactGen::Ir, Groups::of(Group::A)));
     assert!(a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope));
 }
+
+#[test]
+fn group_a_is_on_by_default() {
+    // Stage F8 turns group A on (plan §2.6): the default options put a
+    // program of group A in scope, and keep a program with a loop out.
+    assert_eq!(Options::default().ir_groups, Groups::of(Group::A));
+    let o = Options {
+        facts: FactGen::Ir,
+        ..Options::default()
+    };
+    let a = analyze("fn main() { let x = 1; print(x) }\n", o);
+    assert!(a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope));
+    let a = analyze("fn main() { let i = 0; while i < 3 { i += 1 } }\n", o);
+    assert!(!a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope));
+}

@@ -698,3 +698,228 @@ fn main() {}
     assert_eq!(ir_codes(src), vec![("W0302".to_string(), 6)]);
     assert_eq!(old_codes(src), vec![("W0301".to_string(), 6)]);
 }
+
+#[test]
+fn a_later_operand_of_one_call_that_reads_a_moved_local_is_w0302() {
+    // Review of stage F8 (hole H1): two operands of one call or aggregate on
+    // one local. The second operand reads the value that the first moves.
+    let src = "\
+struct S { items: Vec<u64>, n: u64 }
+linear struct Tx { id: u64 }
+fn two(a: Vec<u64>, b: Vec<u64>) {}
+fn commit2(a: Tx, b: Tx) { let Tx(i) = a; let Tx(j) = b }
+fn consume2(v: Vec<u64>, w: Vec<u64>) -> u64 { 1 }
+fn consume_s(s: S, n: u64) -> u64 { n }
+fn consume_z(v: Vec<u64>, n: usize) -> usize { n }
+fn consume_r(v: Vec<u64>, w: &Vec<u64>) -> usize { w.len() }
+fn consume(v: Vec<u64>, n: u64) -> u64 { n }
+fn mk() -> S { S { items: Vec.new(), n: 3 } }
+fn whole_twice() {
+    let v = Vec.new()
+    two(v, v)   //~ W0302
+}
+fn linear_twice() {
+    let t = Tx { id: 1 }
+    commit2(t, t)   //~ W0302
+}
+fn part_twice() {
+    let s = mk()
+    print(consume2(s.items, s.items))   //~ W0302
+}
+fn whole_then_part() {
+    let s = mk()
+    print(consume_s(s, s.n))   //~ W0302
+}
+fn len_after() {
+    let s = mk()
+    print(consume_z(s.items, s.items.len()))   //~ W0302
+}
+fn ref_after() {
+    let s = mk()
+    print(consume_r(s.items, &s.items))   //~ W0302
+}
+fn block_arg() {
+    let s = mk()
+    print(consume(s.items, { s.items.push(2); 3 }))   //~ W0302
+}
+fn tuple_twice() {
+    let v = Vec.new()
+    let t = (v, v)   //~ W0302
+}
+fn other_parts() {
+    // A read of another part after a part move: W0302 in both pipelines
+    // (the read uses `S(s)`; i12_partial_arg).
+    let s = mk()
+    print(consume(s.items, s.n))   //~ W0302
+}
+fn main() {}
+";
+    let mut want: Vec<(String, usize)> = src
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains("//~ W0302"))
+        .map(|(i, _)| ("W0302".to_string(), i + 1))
+        .collect();
+    want.sort();
+    let got: Vec<(String, usize)> = ir_codes(src)
+        .into_iter()
+        .filter(|(c, _)| c == "W0302")
+        .collect();
+    assert_eq!(got, want, "{:?}", ir_codes(src));
+}
+
+#[test]
+fn the_tail_of_an_if_with_no_else_moves_its_place() {
+    // Review of stage F8 (hole H2): ADR 0003 and docs/ir.md 5.1.3. The tail
+    // of the branch of an `if` with no `else` moves into a temporary that
+    // drops it (st2_if_semi, 127_place_statements `if_tail_moves`).
+    let src = "\
+linear struct Tx { id: u64 }
+fn mk() -> Vec<u64> { Vec.new() }
+fn commit(t: Tx) { let Tx(i) = t }
+fn if_tail(c: bool) {
+    let v = mk()
+    if c { v }
+    print(v.len())   //~ W0302
+}
+fn linear_tail() {
+    let t = Tx { id: 1 }
+    if true { t }   //~ W0601
+    commit(t)   //~ W0302
+}
+fn plain_tail(c: bool) {
+    let n = 1
+    if c { n }
+    print(n)
+}
+fn index_tail(c: bool) {
+    let v = mk()
+    if c { v[0] }
+    print(v.len())
+}
+fn main() {}
+";
+    let mut want: Vec<(String, usize)> = src
+        .lines()
+        .enumerate()
+        .filter_map(|(i, l)| {
+            l.split("//~ ")
+                .nth(1)
+                .map(|c| (c.trim().to_string(), i + 1))
+        })
+        .collect();
+    want.sort();
+    let mut got = ir_codes(src);
+    got.sort();
+    assert_eq!(got, want);
+}
+
+#[test]
+fn a_read_through_a_reference_to_a_part_that_holds_a_reference_uses_its_owner() {
+    // Review of stage F8 (hole H3, x_refref_tuple): `r` points into `t.1`,
+    // and `t.1` points into `b[]`. `print(r)` reads `**r`: the read uses
+    // the variables of `t`, so the end of `b[]` makes it invalid. A
+    // reference to a part of plain data stays valid.
+    let src = "\
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn show(r: &&u64) { print(r) }
+fn tuple_part() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let r = &t.1
+    b.clear()
+    print(r)   //~ W0301
+}
+fn tuple_part_call() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let r = &t.1
+    b.clear()
+    show(r)   //~ W0301
+}
+fn plain_part() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let r = &t.0
+    b.clear()
+    print(r)
+}
+fn main() {}
+";
+    let mut want: Vec<(String, usize)> = src
+        .lines()
+        .enumerate()
+        .filter_map(|(i, l)| {
+            l.split("//~ ")
+                .nth(1)
+                .map(|c| (c.trim().to_string(), i + 1))
+        })
+        .collect();
+    want.sort();
+    let mut got = ir_codes(src);
+    got.sort();
+    assert_eq!(got, want);
+}
+
+#[test]
+fn a_bind_after_the_consume_of_another_part_is_one_destructure() {
+    // Tier 2 of stage F8 (verify/partb/S4/run/match_none.wf): the arm
+    // `(None, Some(b))` consumes `p.0` (a variant with no payload) and then
+    // moves the payload of `p.1`. Both are parts of one destructure: the
+    // move does not read the moved `p` (no W0302).
+    let src = "\
+linear struct Tx { id: u64 }
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn m(p: (Option<Tx>, Option<Tx>)) {
+    match p {
+        (None, None) => {},
+        (Some(a), Some(b)) => {
+            rollback(a)
+            rollback(b)
+        },
+        (None, Some(b)) => rollback(b),
+        (Some(a), None) => rollback(a),
+    }
+}
+fn pair(p: (Tx, Tx)) {
+    // The move of `p.1` ends `p`: `p.0` moved before (a hole of the state),
+    // so no other part is linear (no W0601).
+    let (a, b) = p
+    rollback(a)
+    rollback(b)
+}
+fn main() {}
+";
+    assert_eq!(ir_codes(src), Vec::<(String, usize)>::new());
+}
+
+#[test]
+fn a_move_of_an_element_leaves_the_other_linear_elements() {
+    // r4_partmove (tier 1): the move of `a[0]` leaves `a[1]`: W0601 at the
+    // end of the function, also with the holes of earlier part moves.
+    let src = "\
+linear struct Tx { id: u64 }
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin(n: u64) -> Tx { Tx { id: n } }
+struct W { v: Vec<Tx>, t: Tx }
+fn arr_part() {
+    let a = [begin(1), begin(2)]
+    rollback(a[0])
+}
+fn field_elem(w: W) {
+    rollback(w.t)
+    rollback(w.v[0])
+}
+fn main() {}
+";
+    // The same errors as the old pipeline: W0601 of `a` at its end and of
+    // `w` at its declaration, and W0302 for the read of `w.v` after the move
+    // of `w.t` (a read of another part after a part move).
+    let mut got = ir_codes(src);
+    got.sort();
+    let want: Vec<(String, usize)> = [("W0302", 11), ("W0601", 8), ("W0601", 9)]
+        .iter()
+        .map(|(c, l)| ((*c).to_string(), *l))
+        .collect();
+    assert_eq!(got, want);
+}

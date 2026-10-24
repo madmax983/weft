@@ -23,8 +23,8 @@ impl Builder<'_> {
     ///
     /// A condition that is a place or a constant is the operand itself: no
     /// code can run between the read and the switch. With no `else`, the
-    /// value of the `then` block is discarded and `dest` gets `()` on each
-    /// path.
+    /// value of the `then` block is dropped (its tail place moves into a
+    /// `Discarded` temporary, 5.1.3) and `dest` gets `()` on each path.
     pub(super) fn if_into(
         &mut self,
         cond: &Expr,
@@ -46,7 +46,11 @@ impl Builder<'_> {
         );
         self.enter(a);
         self.open(ScopeKind::Stmt, then.span);
-        self.block_into(then, dest.clone(), else_.is_none())?;
+        if else_.is_none() {
+            self.block_drop_into(then, dest.clone())?;
+        } else {
+            self.block_into(then, dest.clone(), false)?;
+        }
         self.close();
         self.goto(join, origin);
         self.enter(b);

@@ -10,12 +10,16 @@
 //!
 //! - the summary of each function of the component starts with its stated
 //!   row (or an empty row) and empty inferred parts;
-//! - each round runs the fact generator on each body of the component with
+//! - each round runs the fact generator on one body of the component with
 //!   the summaries of now, and projects its facts onto its interface
 //!   (`super::summarize`); the inferred parts only grow (a join,
 //!   [`Inferred::join`]);
-//! - the fixpoint is the first round with no growth. A component with one
-//!   function that does not call itself needs one round.
+//! - a worklist holds the functions to run: first each function, in
+//!   post-order of the calls (callees first), then each caller in the
+//!   component of a function whose summary grew (stage F8: a ring of 400
+//!   functions took 400 passes over the ring);
+//! - the fixpoint is an empty worklist. A component with one function that
+//!   does not call itself needs one round.
 //!
 //! The parts are finite (places of at most `SIG_PLACE_STEPS` steps, the
 //! effects of the program), so the iteration ends. W0706 is a guard: a row
@@ -253,6 +257,43 @@ fn add_steps(steps: &mut BTreeSet<weft_facts::Step>, facts: &FnFacts) {
     }
 }
 
+/// The functions of the component `comp` in post-order of the calls inside
+/// it: a callee comes before its callers, but on a cycle.
+fn post_order(comp: &[usize], nodes: &[Node]) -> Vec<usize> {
+    let inside: BTreeSet<usize> = comp.iter().copied().collect();
+    let mut seen: BTreeSet<usize> = BTreeSet::new();
+    let mut out = Vec::with_capacity(comp.len());
+    for &root in comp {
+        if !seen.insert(root) {
+            continue;
+        }
+        let mut stack: Vec<(usize, Vec<usize>)> = vec![(root, callees_in(root, nodes, &inside))];
+        while let Some((v, rest)) = stack.last_mut() {
+            if let Some(w) = rest.pop() {
+                if seen.insert(w) {
+                    let next = callees_in(w, nodes, &inside);
+                    stack.push((w, next));
+                }
+            } else {
+                out.push(*v);
+                stack.pop();
+            }
+        }
+    }
+    out
+}
+
+/// The callees of function `i` that are in the set `inside`.
+fn callees_in(i: usize, nodes: &[Node], inside: &BTreeSet<usize>) -> Vec<usize> {
+    nodes.get(i).map_or_else(Vec::new, |n| {
+        n.callees
+            .iter()
+            .copied()
+            .filter(|j| inside.contains(j))
+            .collect()
+    })
+}
+
 /// Runs the summaries of the functions of the IR `built` of the analysis `a`
 /// to their fixpoint (see the module). `limit`, if given, is the most
 /// growths of one row: a test can make the guard W0706 fire.
@@ -359,17 +400,28 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                 *x = start;
             }
         }
-        let recursive = comp.len() > 1
-            || comp
-                .first()
-                .and_then(|&i| nodes.get(i))
-                .is_some_and(|n| comp.iter().any(|j| n.callees.contains(j)));
+        // A worklist: a function runs again when a callee in the component
+        // grows. The functions go in post-order of the calls (callees
+        // first), so a growth goes around a cycle of calls in one pass (a
+        // ring of 400 functions needs a few passes, not 400).
+        let order = post_order(&comp, &nodes);
+        let pos: HashMap<usize, usize> = order.iter().enumerate().map(|(p, &i)| (i, p)).collect();
+        let mut callers: HashMap<usize, Vec<usize>> = HashMap::new();
+        for &i in &comp {
+            if let Some(n) = nodes.get(i) {
+                for j in n.callees.iter().filter(|j| pos.contains_key(j)) {
+                    callers.entry(*j).or_default().push(i);
+                }
+            }
+        }
+        let mut work: BTreeSet<usize> = (0..order.len()).collect();
         let mut failed_nodes: BTreeSet<usize> = BTreeSet::new();
         let mut growths: HashMap<usize, usize> = HashMap::new();
         let mut stopped = false;
-        loop {
+        while let Some(p) = work.pop_first() {
+            let Some(&i) = order.get(p) else { continue };
             let mut grew = false;
-            for &i in &comp {
+            {
                 if failed_nodes.contains(&i) {
                     continue;
                 }
@@ -433,8 +485,12 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                         out.facts.insert(n.index, Err(u));
                     }
                 }
-                if stopped {
-                    break;
+            }
+            if grew {
+                for c in callers.get(&i).into_iter().flatten() {
+                    if let Some(&cp) = pos.get(c) {
+                        work.insert(cp);
+                    }
                 }
             }
             if stopped {
@@ -447,9 +503,6 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                         out.facts.remove(&n.index);
                     }
                 }
-                break;
-            }
-            if !grew || !recursive {
                 break;
             }
         }

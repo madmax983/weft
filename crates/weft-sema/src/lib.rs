@@ -32,7 +32,7 @@ pub use weft_syntax::diag::{PRELUDE_UNIT, ROOT_UNIT};
 pub const PRELUDE_SRC: &str = include_str!("../../../std/prelude.wf");
 
 /// Analysis options.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Options {
     /// The root unit is a library: it may not install root handlers.
     pub library: bool,
@@ -41,8 +41,26 @@ pub struct Options {
     /// The fact pipeline (`--facts`, plan §2.6).
     pub facts: FactGen,
     /// The construct groups that the `ir` pipeline checks (plan §2.6). A
-    /// program that uses a group that is off goes to the old pipeline.
+    /// program that uses a group that is off goes to the old pipeline. The
+    /// default is [`DEFAULT_GROUPS`].
     pub ir_groups: Groups,
+}
+
+/// The construct groups that are on by default (plan §2.6). Stage F8 turns
+/// group A on. Each later group stage adds its group.
+pub const DEFAULT_GROUPS: Groups = Groups::of(Group::A);
+
+impl Default for Options {
+    /// A program that is not a library, with the standard runtime, the old
+    /// fact pipeline, and the groups [`DEFAULT_GROUPS`].
+    fn default() -> Self {
+        Self {
+            library: false,
+            no_runtime: false,
+            facts: FactGen::Old,
+            ir_groups: DEFAULT_GROUPS,
+        }
+    }
 }
 
 /// The fact pipeline (`--facts`, plan §2.6 and stage F1).

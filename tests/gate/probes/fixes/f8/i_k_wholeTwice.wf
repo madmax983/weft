@@ -1,0 +1,6 @@
+fn two(a: Vec<u64>, b: Vec<u64>) -> u64 { 1 }
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    print(two(v, v))
+}

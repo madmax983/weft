@@ -248,6 +248,7 @@ body b8: fn loop_tail_moves; cap_env e0; unwind_exit bb7
   _4: Iter<i64> (Iterator)
   _5: i64 (Temp(Scrutinee))
   _6: i64 (User `i`)
+  _7: Vec<i64> (Temp(Discarded))
   bb0:
     Live(_1)
     _1 = call Vec.new<i64>() / e0 -> [bb1]
@@ -268,7 +269,9 @@ body b8: fn loop_tail_moves; cap_env e0; unwind_exit bb7
   bb4:
     Live(_6)
     _6 = copy _5
-    Mention(_1)
+    Live(_7)
+    _7 = move _1
+    Dead(_7)
     Dead(_6)
     Dead(_5)
     Goto(bb3)
@@ -290,8 +293,9 @@ body b9: fn if_tail_moves; cap_env e0; unwind_exit bb7
   _3: () (Temp(Discarded))
   _4: &Vec<i64> (Temp(Receiver))
   _5: () (Temp(Discarded))
-  _6: usize (Temp(Operand))
-  _7: &Vec<i64> (Temp(Receiver))
+  _6: Vec<i64> (Temp(Discarded))
+  _7: usize (Temp(Operand))
+  _8: &Vec<i64> (Temp(Receiver))
   bb0:
     Live(_2)
     _2 = call Vec.new<i64>() / e0 -> [bb1]
@@ -306,7 +310,9 @@ body b9: fn if_tail_moves; cap_env e0; unwind_exit bb7
     Live(_5)
     switch copy _1 -> [1: bb3, otherwise: bb4]
   bb3:
-    Mention(_2)
+    Live(_6)
+    _6 = move _2
+    Dead(_6)
     _5 = const ()
     Goto(bb5)
   bb4:
@@ -314,16 +320,16 @@ body b9: fn if_tail_moves; cap_env e0; unwind_exit bb7
     Goto(bb5)
   bb5:
     Dead(_5)
-    Live(_6)
     Live(_7)
-    _7 = &_2
-    _6 = call Vec.len<i64>(move _7) / e0 -> [bb6]
+    Live(_8)
+    _8 = &_2
+    _7 = call Vec.len<i64>(move _8) / e0 -> [bb6]
   bb6:
-    Print(copy _6)
+    Print(copy _7)
     _0 = const ()
     Dead(_2)
+    Dead(_8)
     Dead(_7)
-    Dead(_6)
     Dead(_1)
     Return
   bb7 (cleanup):

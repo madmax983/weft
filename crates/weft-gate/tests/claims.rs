@@ -9,8 +9,8 @@
 //! The synthetic tests use a fake pipeline. The test of the committed file
 //! uses [`claims::pipeline`]: the `ir` pipeline of the analysis (stage F1).
 //! It computes the construct groups of each repro, and the group set of each
-//! claim must be equal to them. Before stage F8 no group is on, and each claim
-//! of a group stage is off. The test does not run the interpreter.
+//! claim must be equal to them. From stage F8 on, group A is on: a claim of
+//! group A whose stage is done is on. The test does not run the interpreter.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;

@@ -446,14 +446,16 @@ pub fn emit_component(
     roots.set_field_places(&a.program);
     // The abort destinations of each node (`docs/ir.md` 6.5).
     let frames = frames::Frames::of_body(p, &tys, sums, entry);
-    let mut table = nodes::NodeTable::default();
-    table.add_body(p, entry, facts, &frames);
-    // The entry node: the parameters bind there.
+    // The entry node: the parameters bind there. It is node `n0`, as in the
+    // old lowering: the hypothesis `bound_before_use` of the proof link
+    // starts at `n0` (`proofs/link/lints/unbound_use.dl`).
     let sp = weft_facts::Span {
         lo: body.origin.span.lo,
         hi: body.origin.span.hi,
     };
     let entry_node = facts.add_node(sp, "entry", String::new());
+    let mut table = nodes::NodeTable::default();
+    table.add_body(p, entry, facts, &frames);
     if let Some(first) = table.first(entry, body.entry, nodes::NORMAL) {
         facts.cfg_edge.push((entry_node, first));
     }
@@ -604,6 +606,11 @@ fn stored_behind(
 /// states of the analysis: each statement, then the terminator. A cleanup
 /// block has one copy for each abort destination that reaches it
 /// (`frames`, `docs/ir.md` 6.5).
+///
+/// The blocks go in reverse post-order. The analysis keeps the state of
+/// each join block only (`crate::analysis::States`): the state at the
+/// entry of another block is the state on the edge from its one
+/// predecessor, which this function computes and keeps until it uses it.
 fn emit_blocks(
     em: &mut templates::Em<'_>,
     table: &nodes::NodeTable,
@@ -613,10 +620,18 @@ fn emit_blocks(
 ) -> Result<(), alpha::AlphaError> {
     use nodes::NORMAL;
     let bid = em.body;
-    for (bi, blk) in body.blocks.iter().enumerate() {
-        let block = weft_ir::BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
-        let Some(start) = states.at(block) else {
+    let mut pending: std::collections::HashMap<weft_ir::BlockId, crate::analysis::State> =
+        std::collections::HashMap::new();
+    for block in weft_ir::order::reverse_post_order(body) {
+        let Some(blk) = body.blocks.get(block.index()) else {
             continue;
+        };
+        let start = match states.at(block) {
+            Some(s) => s.clone(),
+            None => match pending.remove(&block) {
+                Some(s) => s,
+                None => continue,
+            },
         };
         // A cleanup block: each copy that the node table made.
         let copies = if blk.cleanup {
@@ -624,8 +639,30 @@ fn emit_blocks(
         } else {
             vec![NORMAL]
         };
+        let mut after = None;
         for dest in copies {
-            emit_block(em, table, frames, start, body, block, dest)?;
+            let st = emit_block(em, table, frames, &start, body, block, dest)?;
+            after.get_or_insert(st);
+        }
+        // The states on the edges to the blocks that are not join blocks.
+        let after = match after {
+            Some(st) => st,
+            None => after_stmts(em, &start, blk)?,
+        };
+        let needs = blk
+            .term
+            .kind
+            .unwind()
+            .into_iter()
+            .chain(blk.term.kind.normal_successors())
+            .any(|to| !states.is_join(to));
+        if needs {
+            let mut cx = em_cx(em);
+            for (to, st) in crate::analysis::edges(&mut cx, bid, block, &blk.term.kind, after)? {
+                if !states.is_join(to) {
+                    pending.insert(to, st);
+                }
+            }
         }
     }
     em.cleanup = false;
@@ -633,8 +670,25 @@ fn emit_blocks(
     Ok(())
 }
 
+/// The state after the statements of block `blk`, from the state `start`
+/// at its entry, with no templates.
+fn after_stmts(
+    em: &mut templates::Em<'_>,
+    start: &crate::analysis::State,
+    blk: &weft_ir::Block,
+) -> Result<crate::analysis::State, alpha::AlphaError> {
+    let bid = em.body;
+    let mut st = start.clone();
+    let mut cx = em_cx(em);
+    for s in &blk.stmts {
+        crate::analysis::transfer::stmt(&mut cx, bid, &mut st, &s.kind)?;
+    }
+    Ok(st)
+}
+
 /// The templates of copy `dest` of block `block` of `body`, from the state
-/// `start` of the analysis at its entry.
+/// `start` of the analysis at its entry. Returns the state after the
+/// statements of the block (before its terminator).
 fn emit_block(
     em: &mut templates::Em<'_>,
     table: &nodes::NodeTable,
@@ -643,12 +697,12 @@ fn emit_block(
     body: &weft_ir::Body,
     block: weft_ir::BlockId,
     dest: u32,
-) -> Result<(), alpha::AlphaError> {
+) -> Result<crate::analysis::State, alpha::AlphaError> {
     use crate::analysis::transfer;
     use nodes::{NodeKey, Phase, NORMAL, TERM};
     let bid = em.body;
     let Some(blk) = body.blocks.get(block.index()) else {
-        return Ok(());
+        return Ok(start.clone());
     };
     em.cleanup = blk.cleanup;
     let mut st = start.clone();
@@ -658,13 +712,22 @@ fn emit_block(
         em.skip_s = None;
         match pattern_bind(em.p, bid, body, s)? {
             Bind::Part(k, path, moves) => {
-                if run.iter().any(|(rk, _)| *rk == k) {
+                // A later bind of another part of the same local is one move
+                // with the earlier binds. A bind of a part that overlaps a
+                // moved part reads a moved value: it keeps its use of `S(l)`
+                // (W0302; review of stage F8, `consume_r(s.items, &s.items)`).
+                let overlaps =
+                    |p: &[crate::analysis::PathStep]| p.starts_with(&path) || path.starts_with(p);
+                if run.iter().any(|(rk, _)| *rk == k)
+                    && !run.iter().any(|(rk, rp)| *rk == k && overlaps(rp))
+                {
                     em.skip_s = Some(k);
                 }
                 if moves {
                     run.push((k, path));
                 }
             }
+            Bind::Consumed(k, path) => run.push((k, path)),
             Bind::Keep => {}
             Bind::Other => run.clear(),
         }
@@ -707,7 +770,7 @@ fn emit_block(
         dest,
     };
     let Some(n) = table.get(at(Phase::Main, dest)) else {
-        return Ok(());
+        return Ok(st);
     };
     // The abort destinations of the terminator, and their `FrameEnd`
     // nodes (`docs/ir.md` 6.5).
@@ -734,7 +797,7 @@ fn emit_block(
                 aborts,
                 may_abort: !dests.is_empty(),
             };
-            templates::call(em, &nodes, &st, block, &blk.term.kind, blk.term.origin.span)
+            templates::call(em, &nodes, &st, block, &blk.term.kind, blk.term.origin.span)?;
         }
         weft_ir::TermKind::Perform { .. } => {
             let nodes = templates::CallNodes {
@@ -744,10 +807,11 @@ fn emit_block(
                 aborts: Vec::new(),
                 may_abort: !dests.is_empty(),
             };
-            templates::perform(em, &nodes, &st, &blk.term.kind)
+            templates::perform(em, &nodes, &st, &blk.term.kind)?;
         }
-        _ => templates::term(em, n, &st, &blk.term.kind, blk.term.origin.span),
+        _ => templates::term(em, n, &st, &blk.term.kind, blk.term.origin.span)?,
     }
+    Ok(st)
 }
 
 /// What a statement is for the binds of a pattern.
@@ -755,8 +819,11 @@ enum Bind {
     /// A bind of a pattern that reads the part `path` of a local: a move if
     /// the bool is true.
     Part(crate::analysis::Key, Vec<crate::analysis::PathStep>, bool),
+    /// A `Consume` of a part: a part of the pattern that ends with no
+    /// bind (a variant with no payload). It is a moved part of the run.
+    Consumed(crate::analysis::Key, Vec<crate::analysis::PathStep>),
     /// A statement that the binds of a pattern can have between them
-    /// (`Live`, `Dead`, `Consume`).
+    /// (`Live`, `Dead`, the `Consume` of a whole local).
     Keep,
     /// Another statement: the binds of the pattern end.
     Other,
@@ -774,6 +841,12 @@ fn pattern_bind(
 ) -> Result<Bind, alpha::AlphaError> {
     use weft_ir::{Operand, Rvalue, StmtKind};
     let (dest, q, moves) = match &s.kind {
+        StmtKind::Consume(q) if !q.proj.is_empty() => {
+            return Ok(match crate::analysis::transfer::move_path(p, bid, q)? {
+                Some((k, path)) => Bind::Consumed(k, path),
+                None => Bind::Keep,
+            });
+        }
         StmtKind::Live(_) | StmtKind::Dead(_) | StmtKind::Consume(_) => return Ok(Bind::Keep),
         StmtKind::Assign(dest, Rvalue::Use(Operand::Move(q))) => (dest, q, true),
         StmtKind::Assign(dest, Rvalue::Use(Operand::Copy(q)) | Rvalue::Ref(q)) => (dest, q, false),
@@ -892,7 +965,7 @@ pub(crate) fn run(
         s.fallback = Some(off_text(off));
         return (s, None);
     }
-    // With no group on (the default before stage F8), no program is in
+    // With no group on (`--groups` with no letter), no program is in
     // scope: also a program whose bodies have no IR and use no group.
     if on.is_empty() {
         s.fallback = Some("no construct group is on".to_string());

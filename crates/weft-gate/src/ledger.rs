@@ -128,6 +128,12 @@ pub struct Entry {
     /// of `crate::sigdiff::compare`. Empty means each part.
     #[serde(default)]
     pub parts: Vec<String>,
+    /// A rule for a class of programs (classes `moved` and `changed`, stage
+    /// F8): the entry accepts a program only if each pipeline gives an error
+    /// whose code matches one of these patterns ([`glob_match`], for example
+    /// `W01*`). Empty means each program that the files match.
+    #[serde(default)]
+    pub both_have: Vec<String>,
 }
 
 /// True if the text is there and is not empty.
@@ -141,6 +147,17 @@ impl Entry {
         self.files
             .iter()
             .any(|f| paths.iter().any(|p| glob_match(f, p.as_ref())))
+    }
+
+    /// True if the condition [`Entry::both_have`] holds for the error codes
+    /// `old` and `ir` of the two pipelines.
+    pub fn both_have<S: AsRef<str>>(&self, old: &[S], ir: &[S]) -> bool {
+        let has = |codes: &[S]| {
+            codes
+                .iter()
+                .any(|c| self.both_have.iter().any(|p| glob_match(p, c.as_ref())))
+        };
+        self.both_have.is_empty() || (has(old) && has(ir))
     }
 
     /// True if the entry accepts each code of `codes`.
@@ -157,6 +174,11 @@ impl Entry {
         let reason = given(self.reason.as_ref());
         let finding = given(self.finding.as_ref());
         let text = match self.class {
+            EntryClass::Moved | EntryClass::Changed if !reason => "a `reason`",
+            EntryClass::Moved | EntryClass::Changed => return None,
+            _ if !self.both_have.is_empty() => {
+                "no `both_have` (only classes `moved` and `changed` take it)"
+            }
             EntryClass::Open if !finding => "a `finding`",
             EntryClass::Open if self.verdict.as_deref().map(str::trim) != Some("stays") => {
                 "`verdict = \"stays\"`"
@@ -174,11 +196,7 @@ impl Entry {
             EntryClass::LostClean if !given(self.signed_by.as_ref()) => {
                 "`signed_by` (a reviewer that is not the author of the stage)"
             }
-            EntryClass::Moved | EntryClass::Changed | EntryClass::Engine | EntryClass::Sig
-                if !reason =>
-            {
-                "a `reason`"
-            }
+            EntryClass::Engine | EntryClass::Sig if !reason => "a `reason`",
             EntryClass::Engine if !given(self.difference.as_ref()) => {
                 "a `difference` (the class of the difference)"
             }

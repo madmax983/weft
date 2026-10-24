@@ -615,6 +615,10 @@ The builder has three entry points for an expression `e`:
   comparison, `print`). A value gives a temporary. A constant stays a constant. A place
   operand may skip the temporary only if no later operand of the same construct can run
   code (each later operand is a constant or a plain local): then the order cannot show.
+  As built (plan stage F8): a `move` operand also needs a temporary if a later operand
+  names the same local (`f(v, v)`, `f(s.items, s.n)`): the move is then a statement
+  before the call or the aggregate, and the facts see the later read after the move
+  (W0302). One node with both would hide the order (review of stage F8, hole H1).
 - `place(e)`: evaluate a place expression and give a `Place`. Its index expressions run
   now, in order, into temporaries (`Index(t)`). A value that is not a place goes into a
   temporary of the current statement.
@@ -1013,6 +1017,14 @@ p;  (a place of a local) =>  Stmt scope { <index temporaries>; Bounds(..); Menti
 - A discarded value always gets a temporary and its `Dead`: a scope statement (O3-1),
   a spawn statement with a handle type (O3-4, unless it is the `dest: None` form of
   5.29), a block statement (V118).
+- The tail of a block whose value nothing keeps (the branch of an `if` with no `else`,
+  a loop body) is not a place statement (ADR 0003, 5.1.3): a tail place whose value is
+  not plain data moves into a `Discarded` temporary, and its `Dead` drops it
+  (`t := move p; Dead(t)`); a tail place of plain data is a `Mention`. As built (plan
+  stage F8, `irbuild/stmt.rs` `drop_tail`; review of stage F8, hole H2): until F8 the
+  builder gave a `Mention` there, which accepted `if c { v }; print(v.len())`. The tail
+  of a frame body whose `_0` is `()` (`fn f() { v }`) stays an expression statement, as
+  in the old lowering.
 - **Goes away:** `drop_value` and its early returns, `discard_block_value`,
   `local_place`.
 
@@ -1181,7 +1193,8 @@ The temporaries of the condition belong to the statement around the `if`. A cond
 that is a place or a constant is the operand of the `Switch` itself (no code runs
 between). `a && b` and `a || b` write `dest` itself and switch on `copy dest`. Each
 branch has a `Stmt` scope of its own: its temporaries end before the join. With no
-`else`, the value of the `then` block is discarded and `dest` gets `()`. The value of
+`else`, the value of the `then` block is dropped (its tail place moves, 5.4) and `dest`
+gets `()`. The value of
 each branch moves into `dest` (S059, V059). A branch of type `Never` ends in
 `Unreachable` or in a jump. **Goes away:** `branch_state`, `set_branch`, `joined`,
 `join_uniq` (the join of the analysis), `retire_stale`, `join_val`.
@@ -2136,7 +2149,7 @@ As built (plan stage F4, `factgen/templates.rs`, `kernel.rs`, `decls.rs` and
 - `emit` writes the facts of a body of group A with no `Call`, `Perform` or `Resume`, no
   loop and no `OnAbort` action. Another construct gives `Unsupported`, and the old pipeline
   checks the program. `factgen::preview` gives the facts of one body.
-- With no group on (the default until stage F8), no program is in scope, also a program
+- With no group on (the default until stage F8; from F8 group A is on), no program is in scope, also a program
   whose bodies have no IR and so use no group. `weft check|facts|agree|lint|run|test`
   take `--groups=LETTERS` to turn groups on.
 - A node `entry` before the entry block binds the parameters: `rebound_at`, `points_into`
@@ -2407,6 +2420,16 @@ terminator that aborts. `uniq` holds for a copy of a `@ uniq` value only: a cons
 borrow and an aggregate are not `@ uniq`. There is no widening yet (stage F10): a block
 that the driver visits more than 64 times is an error.
 
+As built (plan stage F8, cost): the maps of a state (values and the move-path sets) go
+in chunks of 64 locals that the states share (`domain::Chunked`): a clone copies no
+value, and a change copies one chunk. The driver keeps the state of each *join block*
+only (the entry, a block with no edge in or more than one; each block of a body with a
+back edge); the fact generator computes the state of another block from its one
+predecessor, in reverse post-order (`analysis::edges`). Before this, a long chain of
+calls, or a cleanup chain of a call after many `let`s (one block for each live local),
+kept blocks times locals trees: tier 2 ran out of memory (9 GB for
+`r2/quality/gen/si_4000.wf`, 12 GB for `verify/le_15000.wf`).
+
 **The post-passes of today**, and where each one goes:
 
 | Today | In this design |
@@ -2666,6 +2689,34 @@ when each returned reference is into a local), and W0301 "the value leaves after
 place ends" for the others. The `Dead` of a parameter of a function or a test has the
 span of the function, as the end of the parameters of the old lowering: W0601 of a
 parameter is at its declaration.
+
+As built (plan stage F8): group A is on by default (`weft_sema::DEFAULT_GROUPS`, plan
+§2.6). The review of the `lost-clean` programs found three holes, fixed in F8:
+
+- H1: two operands of one call or aggregate on one local. The builder gives the moved
+  operand a temporary (5.1.1). In `emit`, a bind of a part (a `Temp` or a local whose
+  origin is the statement) keeps its `uses` of `S(l)` if its path overlaps a part that an
+  earlier bind of the same run moved: `_3 = move s.items; _4 = &s.items` is W0302.
+- H2: the tail place of a discarded block moves (5.4).
+- H3: a read through a value that can hold a reference to a value that holds a
+  reference (`**r` with `r = &t.1` and `t.1: &u64`) uses the variables of the owners
+  of the places that the value points into (`templates::deep_uses`): at `print` and
+  at each argument of a call. So the end of `b[]` in
+  `let t = (5, &b[0]); let r = &t.1; b.clear(); print(r)` makes the read W0301 (both
+  pipelines accepted it before).
+
+The entry node of a component is node `n0`, as in the old lowering: the hypothesis
+`bound_before_use` of the proof link starts there.
+
+Tier 2 of stage F8 found two false positives of the facts of group A, fixed in F8:
+
+- The `Consume` of a part (a variant with no payload in a pattern) is a moved part of
+  the run of the pattern, so a later bind of another part does not use `S(l)`
+  (`(None, Some(b)) => ..` gave W0302).
+- `rest_linear` of a part move leaves out the parts that moved before (the holes of the
+  state) and the moved part, by type: `let (a, b) = p` ends `p` at the move of `p.1`
+  (it gave W0601, because the top of the value of a parameter keeps the whole value). A
+  move of an element (`a[0]`) leaves the other elements.
 
 `diagnose.rs` names a variable by its local and a temporary by its kind and origin
 ("the temporary of `mk_v()` at line 3"). The corpus markers keep their lines: the spans
@@ -3029,6 +3080,7 @@ As built (plan stage I6):
 | --- | --- | --- |
 | an operand is read where it is written (choice A, 5.1.1) | the interpreter reads a place operand of a binary operator, of `print` and the base of an index at the operand | `x + { x = 5; 1 }` gives 2, not 6 (p1); a program that read through a dangling reference late (p2, p9, p10) reads before the change |
 | the tail temporaries of a loop body end at each iteration (5.1.2) | earlier frees | `Weak.upgrade` of a tail temporary of a loop body (p24) |
+| the tail place of the branch of an `if` with no `else` and of a loop body moves and drops (5.4, ADR 0003; stage F8) | the value goes away at the end of the branch | `if c { v }; print(v.len())` faults "used after it was moved" on both engines (before F8 the IR engine gave a `Mention` and ran it) |
 | the temporaries of a branch of `if` or `match` end before the join (5.12) | earlier frees | `show(if c { first(&mk_v()) } else { &u })` reads a freed temporary: the oracle of the IR engine faults where the AST engine runs; the old checker accepts these programs (stage I5: 24 programs of tier 2, `r3/oracle/sweep1/*__tmp_*__arg.wf`, `R3a_diff/sweep/*ref_temp*`), so the `ir` pipeline must reject them |
 | unwind order in a frame: `_0`, then temporaries newest first, then slots from the highest (5.1.6) | none: the AST engine unwinds the operand stack (the value of the frame and the operands on their way) first, then the temporary cells, then the slots. Before stage I6 the IR engine unwound `_0` with the slots, after the locals; from stage I6 the chain finishes `_0` first, as the AST engine does | the effects model changes `max_slot` |
 | a clause unwinds its fresh continuation first (5.1.6) | the IR engine runs the chain of the clause, which starts with `UnwindKont` (stage I6); the AST engine unwinds the clause frame first. The engine differential ledgers this (class `unwind-order`) | p20: `rollback 1` (the continuation) prints before `rollback 2` (the clause frame) |

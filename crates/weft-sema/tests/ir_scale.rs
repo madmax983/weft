@@ -109,3 +109,80 @@ fn many_closures_verify_in_time() {
         "{n} closures: the verifier takes {verify:?}"
     );
 }
+
+/// The time bound of the `ir` pipeline (facts and summaries) on a long
+/// chain of calls and on a long chain of `let`s with a cleanup chain.
+const FACTS_BOUND: Duration = Duration::from_secs(30);
+
+/// Analyzes `src` with the facts of the `ir` pipeline (group A) and returns
+/// the time. The program must be in scope.
+fn ir_facts_time(src: &str) -> Duration {
+    let opts = Options {
+        facts: weft_sema::FactGen::Ir,
+        ..Options::from_markers(src)
+    };
+    let start = Instant::now();
+    let a = analyze_source(src, opts)
+        .unwrap_or_else(|d| panic!("the source does not parse: {}", d.message));
+    let time = start.elapsed();
+    assert!(
+        a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope),
+        "{:?}",
+        a.ir_scope.as_ref().and_then(|s| s.fallback.clone())
+    );
+    time
+}
+
+#[test]
+fn the_facts_of_long_chains_of_blocks_take_linear_space() {
+    // Stage F8 (tier 2 ran out of memory): each call is a block, and the
+    // cleanup chain of a call has a block for each live local. The analysis
+    // kept a state of each block with each local (blocks times locals).
+    // 2000 linear locals, then 2000 calls that consume them.
+    let mut s = String::from(
+        "linear struct Tok { id: u64 }\nfn spend(t: Tok) { let Tok(i) = t }\nfn f() {\n",
+    );
+    for i in 0..2000 {
+        let _ = writeln!(s, "    let t{i} = Tok {{ id: {i} }}");
+    }
+    for i in 0..2000 {
+        let _ = writeln!(s, "    spend(t{i})");
+    }
+    s.push_str("}\n");
+    let calls = ir_facts_time(&s);
+    // 6000 `let`s before a call: the call has a cleanup chain of 6000
+    // blocks.
+    let mut s = String::from("fn g() -> u64 { 1 }\nfn f() {\n");
+    for _ in 0..6000 {
+        s.push_str("    let i = 1\n");
+    }
+    s.push_str("    print(g())\n}\n");
+    let lets = ir_facts_time(&s);
+    assert!(
+        calls < FACTS_BOUND && lets < FACTS_BOUND,
+        "calls {calls:?}, lets {lets:?}"
+    );
+}
+
+#[test]
+fn a_ring_of_calls_reaches_its_fixpoint_in_a_few_passes() {
+    // Stage F8 (tier 2: r2/quality/gen/ring_400.wf timed out): `f(i)` calls
+    // `f(i + 1)` and performs `E(i)`, and the last calls the first. Each
+    // row gets each effect. A round over each function of the ring moved
+    // one effect one step: rounds times functions runs of the fact
+    // generator.
+    let n = 200;
+    let mut s = String::new();
+    for i in 0..n {
+        let _ = writeln!(s, "effect E{i} {{ fn op() }}");
+    }
+    for i in 0..n {
+        let next = (i + 1) % n;
+        let _ = writeln!(
+            s,
+            "fn f{i}(k: u64) {{ if k > 0 {{ f{next}(k - 1) }}\n    E{i}.op() }}"
+        );
+    }
+    let time = ir_facts_time(&s);
+    assert!(time < FACTS_BOUND, "{time:?}");
+}

@@ -11,6 +11,9 @@
 # issue = 12             # edge: the issue number; new-fp with reason_class "precision"
 # reason_class = "stricter"   # new-fp only: "stricter" (a rule of the ADR) or "precision"
 # codes = ["W0301"]      # moved and changed only: the codes that the entry accepts
+# both_have = ["W01*"]   # moved and changed only: a rule for a class of programs.
+#                        # The entry accepts a program only if each pipeline
+#                        # gives an error with a code that matches a pattern
 # reason = "STATE: the holder of the part rebinds at the new value"
 # signed_by = "review agent, stage F8"   # lost-clean: a reviewer, not the author
 # stage = "F8"
@@ -120,22 +123,9 @@ stage = "G6"
 # oracle does not fault on them. An engine entry below accepts the difference
 # of the engines on them.
 
-[[entry]]
-class = "open-old"
-files = ["tests/gate/probes/ir/probes/p10_index_late.wf"]
-finding = "sem-N3"
-reason = "dangling read: the base of an index is read after the index expression invalidates it"
-stage = "G6"
-
-[[entry]]
-class = "open-old"
-files = [
-    "tests/gate/probes/ir/probes/p25_assert_abort.wf",
-    "tests/gate/probes/ir/probes/p27_assert_callee.wf",
-]
-finding = "sem-N4"
-reason = "unwinder fault: `assert` aborts with no abort edge (also through a callee); a linear value with no `on abort` is live across it"
-stage = "G6"
+# Stage F8 removed the entries of p10_index_late.wf (sem-N3) and of
+# p25_assert_abort.wf and p27_assert_callee.wf (sem-N4): group A is on, and
+# the `ir` pipeline rejects them (`fixed`; claims sem-N3 and sem-N4).
 
 [[entry]]
 class = "open-old"
@@ -218,22 +208,9 @@ finding = "F3-2"
 reason = "dangling reference: a closure or a clause keeps its reference parameter in an outer local; a callee gives a reference into its own local"
 stage = "G6"
 
-[[entry]]
-class = "open-old"
-files = [
-    "tests/gate/probes/r3/redteam/p/i2_refenum.wf",
-    "tests/gate/probes/r3/redteam/p/i4_matchref.wf",
-]
-finding = "R3RT2"
-reason = "dangling read: a `match` through a reference loses the places of a held reference"
-stage = "G6"
-
-[[entry]]
-class = "open-old"
-files = ["tests/gate/probes/r3/redteam/p/q1_held.wf"]
-finding = "R3RT3"
-reason = "dangling read: a call does not give the places of the references behind a reference argument"
-stage = "G6"
+# Stage F8 removed the entries of i2_refenum.wf and i4_matchref.wf (R3RT2)
+# and of q1_held.wf (R3RT3): the `ir` pipeline rejects them (`fixed`; claims
+# R3RT2 and R3RT3).
 
 [[entry]]
 class = "open-old"
@@ -278,6 +255,155 @@ files = [
 finding = "unclassified"
 reason = "interpreter: the literal 18446744073709551615 (u64 max) is a runtime error (`integer literal is too large`). The checker is correct; no finding names this defect"
 stage = "G6"
+
+# ----------------------------------------------------------------------------
+# Stage F8: group A is on. Each entry is one rule for a class of programs that
+# both pipelines reject with other errors (`changed`) or on other lines
+# (`moved`). The rule entries come first; then the classes that name their
+# programs.
+
+[[entry]]
+class = "changed"
+files = ["**"]
+both_have = ["W01*", "W0303"]
+reason = "a body with a type error (W01xx) or a move through a reference (W0303) has no IR (docs/ir.md 5.36). Both pipelines reject the program with the same typeck errors (or W0303); the `ir` pipeline gives no fact of such a body, so it does not give the other errors of the old lowering in it (W0302, W0601, W0602, W0702, W0805, W0313, W0315, ...). Decision of the orchestrator after F1/F2"
+stage = "F8"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/r2/oracle/probes/h7_option_ref_payload.wf",
+    "tests/gate/probes/verify/s1diff/p/i04_block.wf",
+    "tests/gate/probes/verify/s1diff/p/i07_block_named.wf",
+    "tests/gate/probes/redteam/a02_scope_dangle.wf",
+    "tests/gate/probes/redteam/d02.wf",
+    "tests/gate/probes/r3/oracle/probes/c13_weak_tmp.wf",
+    "tests/gate/probes/redteam/a07_returns.wf",
+    "tests/gate/probes/redteam/a07b_returns.wf",
+    "tests/gate/probes/verify/s5/R3a_diff/sweep/*__ref_frame_local__value.wf",
+]
+codes = ["W0301"]
+reason = "W0301 at the use of the reference: the old lowering reports it at the line of the block, `match` or binding whose value holds the reference (the hidden variable of the block value); the `ir` pipeline at the read through the reference (docs/ir.md 6.9: a marker can move where a hidden variable becomes a temporary)"
+stage = "F8"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/r2/oracle/probes/d14_lin_overwrite_field.wf"]
+codes = ["W0601"]
+reason = "W0601 precision: the `Consume` of the `None` arm ends `h.t`, so the old false positive W0601@10 goes. The program stays rejected with W0601 at line 4. (r5_lin_match of the F8a preview is `same` since the fix of `rest_linear` in stage F8.)"
+stage = "F8"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/r2/oracle/probes/n?_immov_*.wf"]
+codes = ["W0301", "W0304", "W0604"]
+reason = "place-field relocation (ADR 0007): a place-field reference in a `!Move` value moves with the value in the analysis, so a later read is W0301 (the source local ends) where the old pipeline gives W0304 (the place field of the new place is unset). Both reject with W0604. The fix is a relocation of place-field references on a move (stage F20, follow-up F8.1; 154_place_fields `move_set` has the same cause)"
+stage = "F8"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/programs/33_rc_deps.wf",
+    "tests/gate/probes/r2/redteam/p/b_order.wf",
+    "tests/gate/probes/verify/s1diff/p/i10_rc_recv.wf",
+    "tests/gate/probes/verify/s1diff/p/i11_rc_recv_only.wf",
+    "tests/gate/probes/verify/s1diff/p/i15_rc_field_recv.wf",
+    "tests/gate/probes/verify/s1diff/p/v21_recv_deps.wf",
+    "tests/gate/probes/verify/s5/S5c/mut/progs/*_33_rc_deps.wf",
+]
+codes = ["W0301", "W0302"]
+reason = "receiver order (docs/ir.md 5.19): the IR reads a method receiver after the arguments. A receiver that a later argument moves is W0302 (the read of a moved value), not W0301; a receiver that a later argument gives a new value is valid (33_rc_deps line 44, b_order line 37, i15, v21 rc_field_recv: the IR engine runs them clean). Decision of the orchestrator after F6; the corpus markers of 33_rc_deps have an expectation for each pipeline"
+stage = "F8"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/ir_targets/r3rt2_match_through_ref.wf",
+    "tests/gate/probes/r3/redteam/repro/R3RT2_match_through_ref.wf",
+    "tests/gate/probes/r3/redteam/p/i6_destr.wf",
+    "tests/gate/probes/r3/redteam/p/q2_held.wf",
+    "tests/gate/probes/r3/redteam/p/q7_held_move.wf",
+]
+codes = ["W0301", "W0312"]
+reason = "new true positives (also tier 2): a `match` or a destructure through a reference keeps the places of the held reference (R3RT2, docs/ir.md 5.13), and a call gives the places of the references behind a reference argument (R3RT3, W0312). q7_held_move: the errors are at the lines of its markers, the old false positives W0301@14 and @15 go"
+stage = "F8"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/verify/s5/S5a/e6b_ref.wf"]
+codes = ["W0601"]
+reason = "a new true positive (tier 2): `fill(&o)` puts a linear `Lock` into `o`, and `o` ends with it at the end of `h` (W0601 at line 9; the summary of a callee that keeps a linear value, stage F6). The old pipeline gives only the W0601 of the overwrite in `fill`"
+stage = "F8"
+
+# The tier-1 copies of the branch-temps programs of tier 2 (stage F8, for the
+# claims): the old pipeline accepts them and the oracle of the IR engine
+# faults. They use groups C and F (a closure and a generic function), so the
+# `ir` pipeline checks them from stage F20 on (claim branch-temps). The four
+# programs of R3a_diff use group A only: the `ir` pipeline rejects them
+# (`fixed`).
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_box__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_clo__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_field__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_first__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_get__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_id__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_index__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_lit__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_opt__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_tuple__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_box__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_clo__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_field__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_first__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_get__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_id__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_index__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_lit__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_opt__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_tuple__arg.wf",
+]
+finding = "branch-temps"
+reason = "dangling read: a reference into a temporary of a branch of `if` or `match` is the value of the branch; the temporary ends before the join (docs/ir.md 5.12)"
+stage = "F8"
+
+# The lost-clean programs of stage F8. A review agent that is not the author
+# of the stage signed each entry (review of the lost-clean programs, stage
+# F8). The reviewer refused st2_if_semi.wf and i12_partial_arg.wf: their
+# review found the holes F8-H1 and F8-H2 (fixed in this stage, with claims),
+# and both programs are `same` now.
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/r2/oracle/fp/W0301_p1012.wf",
+    "tests/gate/probes/r2/oracle/fp2/W0301_p43514.wf",
+]
+reason = "the block value points into a local of the block, but no node uses it: W0301 is an error at a use (ir 5.9, 5.10), and the IR has no hidden variable for the block value; each variant with a read is W0301"
+signed_by = "review agent, stage F8 (independent)"
+stage = "F8"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/r3/redteam/p/i8_partset_fp.wf",
+    "tests/gate/probes/r3/redteam/repro/R3RT10_part_refresh_fp.wf",
+]
+finding = "R3RT10"
+reason = "STATE: a new value of a part with an H variable replaces the places of the part (ir 6.3); the stale reference is not read"
+signed_by = "review agent, stage F8 (independent)"
+stage = "F8"
+
+[[entry]]
+class = "lost-clean"
+files = ["tests/gate/probes/r3/redteam/p/q8_mv_fp.wf"]
+finding = "R3RT6"
+reason = "a mutated reference argument gets only the held references of the other arguments whose types fit (F5): Vec<&Entity> cannot hold a reference into the other Vec"
+signed_by = "review agent, stage F8 (independent)"
+stage = "F8"
 
 # ----------------------------------------------------------------------------
 # Stage I5: the engine differential (`weft-gate engines --tier 1|2`,
@@ -336,8 +462,33 @@ files = [
     "verify/s5/R3a_diff/sweep/if__ref_temp_idx__arg.wf",
     "verify/s5/R3a_diff/sweep/match__ref_temp__arg.wf",
     "verify/s5/R3a_diff/sweep/match__ref_temp_idx__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_box__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_clo__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_field__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_first__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_get__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_id__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_index__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_lit__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_opt__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/if__tmp_tuple__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_box__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_clo__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_field__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_first__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_get__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_id__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_index__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_lit__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_opt__arg.wf",
+    "tests/gate/probes/r3/oracle/sweep1/match__tmp_tuple__arg.wf",
+    "tests/gate/probes/verify/s5/R3a_diff/sweep/if__ref_temp__arg.wf",
+    "tests/gate/probes/verify/s5/R3a_diff/sweep/if__ref_temp_idx__arg.wf",
+    "tests/gate/probes/verify/s5/R3a_diff/sweep/match__ref_temp__arg.wf",
+    "tests/gate/probes/verify/s5/R3a_diff/sweep/match__ref_temp_idx__arg.wf",
+    "tests/programs/164_branch_temporaries.wf",
 ]
-reason = "tier 2. The temporaries of a branch of `if` or `match` end before the join (docs/ir.md 5.12, 8.3): `show(if c { first(&mk_v()) } else { &u })` reads the temporary `Vec` of the branch after its end, so the oracle of the IR engine faults. The AST engine and the old facts keep the temporary to the end of the statement, so the old checker accepts the program. The `ir` pipeline must reject these programs (phase F: the facts come from the IR)"
+reason = "tier 2, and from stage F8 the tier-1 copies of the programs (for the claims) and the corpus program 164_branch_temporaries.wf. The temporaries of a branch of `if` or `match` end before the join (docs/ir.md 5.12, 8.3): `show(if c { first(&mk_v()) } else { &u })` reads the temporary `Vec` of the branch after its end, so the oracle of the IR engine faults. The AST engine and the old facts keep the temporary to the end of the statement, so the old checker accepts the program. The `ir` pipeline must reject these programs (phase F: the facts come from the IR)"
 stage = "I5"
 
 [[entry]]
@@ -479,13 +630,22 @@ files = ["**"]
 reason = "rule CAPTURE (docs/ir.md 5.1.7): a borrowed capture is ByRef, its cell ends with the variable, so the oracle sees the dangling cell where the kept cell of the AST engine stayed readable, or at another point (J5, J5d, the `*_kept_*` probes)"
 stage = "I5"
 
+# Stage F8 removed the I5 rule `mention` (the place tail of a block or of a
+# loop body was a `Mention` in the IR): the tail of a discarded block moves
+# now (ADR 0003, docs/ir.md 5.4), as on the AST engine.
+
 [[entry]]
 class = "engine"
 difference = "mention"
 checker = "rejects"
-files = ["**"]
-reason = "a place in statement position (the place tail of a block or of a loop body) is a `Mention` in the IR: the AST engine moves the value, so a later use faults on the AST engine only (I1 class a)"
-stage = "I5"
+files = [
+    "r2/oracle/runs/g7/p40833.wf",
+    "r2/oracle/runs/g7/p44667.wf",
+    "r2/oracle/runs/m2/p5841.wf",
+    "r2/oracle/t0/q202.wf",
+]
+reason = "tier 2, a borrow of a moved value (not a tail): `tx.commit(); tx.debit(5)` with `debit(self)` borrows the moved `tx`. The AST engine faults where it reads the receiver; the IR engine borrows it (a borrow does not read, docs/ir.md 5.9) and the run goes on. The checker rejects each program (W0302). Only the shape `mention` fits; stage F8 kept these four programs of the I5 rule"
+stage = "F8"
 
 [[entry]]
 class = "engine"

@@ -1589,7 +1589,8 @@ gate and the exit of its parent, limited to its group of differences.
 
 | Id | Parent | Group of differences (code pair, shape) | Status |
 | --- | --- | --- | --- |
-| (none yet) | | | |
+| F8.1 | F8 | W0301 / W0304: a place-field reference in a `!Move` value travels with the moved value in the analysis (`r2/oracle/probes/n?_immov_*.wf`, `changed`; `tests/programs/154_place_fields.wf` `move_set`, group F, a W0301 false positive). Fix: relocate place-field references on a move (ADR 0007). Needs group F for 154 | open (do it at or before F20) |
+| F8.2 | F8 | the gate: the key of the `ir` oracle cache is the hash of `crates/weft-interp/src` only, so a change of the IR builder does not make the cache stale. Stage F8 regenerated both `ir` caches by hand | open |
 
 Some stages are larger than a few hours. If such a stage does not fit its box, rule 5
 splits it at these points (each part keeps the gates; the code of a later part stays
@@ -1609,6 +1610,8 @@ Gate record (filled at G6, F8, F10, F13, F17, F19, F20, C1, C2):
 | Stage | Programs in scope | same | fixed | new-fp | lost-clean | moved | changed | open (ledgered) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | G6 (baseline) | | | | | | | | |
+| F8 (tier 1, group A) | 1184 of 3394 | 3235 | 12 | 0 | 5 (signed) | 8 | 61 | 73 (open-old) |
+| F8 (tier 2, group A) | 2560 of 57393 | 56867 | 10 | 0 | 6 (5 signed; `verify/s5/R3a_diff/blk.wf` needs a reviewer) | 11 | 411 | 88 (tier-2 policy; 2 in scope: open-old `unclassified`) |
 
 ---
 

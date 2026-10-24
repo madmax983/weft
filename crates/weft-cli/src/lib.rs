@@ -44,7 +44,7 @@ note tells why. --facts=both makes both fact sets: the output is that of the
 old pipeline; `check` writes a note for each diagnostic that only one
 pipeline gives, `facts` also prints the facts of the ir pipeline, and `agree`
 compares both. FACTS can also have --groups=LETTERS (for example --groups=A):
-the construct groups that are on (A to F, in order). No group is on by
+the construct groups that are on (A to F, in order). Group A is on by
 default.
 
 RUN is [--seed N] [--workers N] [--unchecked] [--oracle] [--engine=ast|ir].
@@ -192,7 +192,10 @@ fn fact_gen(v: Option<&str>) -> Result<FactGen> {
 }
 
 fn flags(args: &[String]) -> Result<Flags> {
-    let mut f = Flags::default();
+    let mut f = Flags {
+        groups: weft_sema::DEFAULT_GROUPS,
+        ..Flags::default()
+    };
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {

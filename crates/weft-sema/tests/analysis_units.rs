@@ -269,7 +269,7 @@ fn run_with(p: Program, t: &Tys, init: State) -> Run {
             roots: &mut roots,
             sums: &Summaries::default(),
         };
-        analysis::run(&mut cx, B, init).unwrap_or_else(|e| panic!("the analysis: {e:?}"))
+        analysis::run_all(&mut cx, B, init).unwrap_or_else(|e| panic!("the analysis: {e:?}"))
     };
     Run {
         states,
