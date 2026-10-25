@@ -255,7 +255,12 @@ capability or a continuation is group D; a type that names a type parameter is g
 body with no IR (a type error, W0303) uses no group: the `ir` pipeline gives it no facts,
 and the diagnostics of `typeck` reject the program. A body that the builder does not
 lower keeps the program out of scope. A program is in scope when its groups are on and
-the fact generator (`factgen::emit`) supports them; until F8 the stub supports none. The
+the fact generator (`factgen::emit`) supports them; until F8 the stub supports none.
+As built (F10-fix, hole H-B): a body with no IR keeps the program in scope only if the
+program reports an error for the reason (`irbuild::Entry::reported`): a W01xx diagnostic
+of `typeck` in the body, a declaration error, or W0303 in the body. A conflict in the THIR
+tables, a variant payload, or a type error with no W01xx diagnostic keeps the program out
+of scope: no pipeline would check that body. The
 gate computes both records in one analysis (`--facts=both`), reports the coverage, and
 also the share of programs of each set that use only the groups of each group stage.
 
@@ -1600,6 +1605,7 @@ gate and the exit of its parent, limited to its group of differences.
 | F8.1 | F8 | W0301 / W0304: a place-field reference in a `!Move` value travels with the moved value in the analysis (`r2/oracle/probes/n?_immov_*.wf`, `changed`; `tests/programs/154_place_fields.wf` `move_set`, group F, a W0301 false positive). Fix: relocate place-field references on a move (ADR 0007). Needs group F for 154 | open (do it at or before F20) |
 | F8.2 | F8 | the gate: the key of the `ir` oracle cache is the hash of `crates/weft-interp/src` only, so a change of the IR builder does not make the cache stale. Stage F8 regenerated both `ir` caches by hand | open |
 | F8.3 | F8 | lost-clean W0301 / none: receiver order and `Bounds` (second review of F8, 4.2). In `w.entities[0].plus(shrink(&w))` the `ir` pipeline accepts the program (old: W0301), and the IR engine stops at the borrow with "index 0 is out of bounds" (benign). The safety rests on the second index check of the engine at the borrow (`crates/weft-interp/tests/compile_ir.rs`). The third review of F8 signed the `lost-clean` entry after the fix of hole R1 (a variant step in a receiver place, F8d). The 11 programs are in `tests/gate/probes/fixes/f8/receiver_bounds/` (tier 1, 11 `lost-clean`, 0 blockers); claim F8-RB is on and holds | done (F8.3) |
+| F10.1 | F10 | lost-fault W0301, W0302, W0601 / none in group A (review of stage F10, before group B). Hole H-B: a body with no IR (a type error with no W01xx diagnostic, a conflict in the THIR tables, a variant payload) got no facts, and the program stayed in scope, so no pipeline checked the body. Fix: such a program is out of scope (`irbuild::Entry::reported`). The programs are in `tests/gate/probes/fixes/f10/hb/`; claim F10-HB | done (F10.1) |
 
 Some stages are larger than a few hours. If such a stage does not fit its box, rule 5
 splits it at these points (each part keeps the gates; the code of a later part stays

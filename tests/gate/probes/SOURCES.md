@@ -186,3 +186,14 @@ them again if it runs.
 - `fixes/f9/*.wf`: the defects of the fact generator that the fact oracle of stage F9
   found (`reads_at` facts; claim F9-C5, docs/ir.md 8.5). `mention_index_read.wf` is a
   variant of the first review of stage F8.
+
+## Programs that stage F10 added
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs.
+
+- `fixes/f10/*.wf`: the defects that stage F10a found (claims F10-H1, F10-U1,
+  F10-W1, F10-T1, F10-P1).
+- `fixes/f10/hb/*.wf`: the variants of the review of stage F10 for hole H-B (a
+  body with no IR and no error for it), with one line of header (stage F10.1;
+  claim F10-HB).

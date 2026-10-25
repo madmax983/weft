@@ -148,6 +148,12 @@ pub struct Entry {
     pub unit: usize,
     /// What the builder made of it.
     pub outcome: Outcome,
+    /// For a body with no IR: the program reports an error for the reason (a
+    /// W01xx diagnostic of `typeck` in the body, a declaration error, W0303 in
+    /// the body). The `ir` pipeline checks a program only if this is
+    /// true for each body with no IR (stage F10-fix, hole H-B). It is false
+    /// for each other outcome.
+    pub reported: bool,
 }
 
 /// The result of [`build`].
@@ -187,12 +193,13 @@ impl Built {
         (built, none, unsupported)
     }
 
-    /// Returns the count of bodies with no IR for each reason.
-    pub fn no_ir_counts(&self) -> BTreeMap<NoIr, usize> {
+    /// Returns the count of bodies with no IR for each reason, and for each
+    /// value of [`Entry::reported`].
+    pub fn no_ir_counts(&self) -> BTreeMap<(NoIr, bool), usize> {
         let mut out = BTreeMap::new();
         for e in &self.entries {
             if let Outcome::NoIr(n) = e.outcome {
-                *out.entry(n).or_insert(0) += 1;
+                *out.entry((n, e.reported)).or_insert(0) += 1;
             }
         }
         out
@@ -307,8 +314,8 @@ fn build_all(a: &Analysis) -> Built {
                 ret: Some(out.tys.unit()),
             })
         };
-        let outcome = match src {
-            None => Outcome::NoIr(NoIr::TypeError),
+        let (outcome, reported) = match src {
+            None => (Outcome::NoIr(NoIr::TypeError), false),
             Some(src) => {
                 let outcome = body_outcome(a, b.unit, t, &src, &mut out, &mut fields);
                 if let (Outcome::Built(id), BodyKind::Test(_)) = (&outcome, src.kind) {
@@ -317,13 +324,18 @@ fn build_all(a: &Analysis) -> Built {
                         body: *id,
                     });
                 }
-                outcome
+                let reported = match outcome {
+                    Outcome::NoIr(n) => reported(a, b.unit, &src, n),
+                    _ => false,
+                };
+                (outcome, reported)
             }
         };
         out.entries.push(Entry {
             name,
             unit: b.unit,
             outcome,
+            reported,
         });
     }
     // The blocks in reverse post-order (`docs/ir.md` 5.1.9): the text reads
@@ -365,6 +377,39 @@ fn typeck_error(a: &Analysis, unit: usize, span: Span, block: &ast::Block) -> bo
             && d.span.lo >= span.lo
             && d.span.hi <= span.hi.max(block.span.hi)
     })
+}
+
+/// Returns true if the program reports an error for the reason `n` that the
+/// body `src` of unit `unit` has no IR (stage F10-fix, hole H-B):
+///
+/// - a type error: a W01xx diagnostic of `typeck` in the body
+///   ([`typeck_error`]), or an error of a declaration of the function;
+/// - the declarations have no final types: an error that the `ir` pipeline
+///   keeps (a declaration error);
+/// - W0303: W0303 in the body.
+///
+/// A conflict in the THIR tables and a variant payload come with no error.
+/// For them, and for a type error with no diagnostic (for example the type of
+/// a local that a later statement of a loop settles), it returns false: the
+/// old pipeline must check the program.
+fn reported(a: &Analysis, unit: usize, src: &Src<'_>, n: NoIr) -> bool {
+    use weft_syntax::diag::{Code, Severity};
+    let error = |d: &&Diagnostic| d.severity == Severity::Error;
+    let kept = |d: &&Diagnostic| !crate::IR_DROPS.contains(&d.code);
+    match n {
+        NoIr::TypeError => {
+            typeck_error(a, unit, src.span, src.block)
+                || (!src.decl_ok && a.diags.iter().filter(error).any(|d| kept(&d)))
+        }
+        NoIr::DeclTypes => a.diags.iter().filter(error).any(|d| kept(&d)),
+        NoIr::MoveThroughRef => a.diags.iter().filter(error).any(|d| {
+            d.code == Code::W0303
+                && d.unit == unit
+                && d.span.lo >= src.span.lo
+                && d.span.hi <= src.span.hi.max(src.block.span.hi)
+        }),
+        NoIr::Conflict | NoIr::VariantPayload => false,
+    }
 }
 
 /// Builds one body, or tells why it has none.

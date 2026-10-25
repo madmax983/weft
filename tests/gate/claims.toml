@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10.1"]
 
 
 # ----------------------------------------------------------------------
@@ -3519,3 +3519,43 @@ repro = ["tests/gate/probes/fixes/f10/store_behind_loop.wf"]
 code = "W0301"
 line = 18
 note = "the loop form of F10-H1 (tier 2 `verify/s5/R2a: .../W3_store_behind.wf`): iteration i + 1 reads back what iteration i stored behind `out`"
+
+[[claim]]
+finding = "F10-HB"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F10.1"
+repro = [
+    "tests/gate/probes/fixes/f10/hb/th15_variantPayload.wf",
+    "tests/gate/probes/fixes/f10/hb/th16b_loopNoneTypeErrFault.wf",
+    "tests/gate/probes/fixes/f10/hb/th17_variantPayloadTuple.wf",
+    "tests/gate/probes/fixes/f10/hb/th20_variantPayloadInCallee.wf",
+    "tests/gate/probes/fixes/f10/hb/th22_bestCompare.wf",
+]
+code = "W0301"
+note = "a body with no IR and no error for it (review of stage F10, hole H-B: a type error with no W01xx diagnostic, a conflict in the THIR tables, a variant payload): the program stays out of scope of the ir pipeline, and the old pipeline checks it (stage F10.1); before, no pipeline checked the body and the oracle faults"
+
+[[claim]]
+finding = "F10-HB"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F10.1"
+repro = [
+    "tests/gate/probes/fixes/f10/hb/th18_variantPayloadLinear.wf",
+]
+code = "W0601"
+note = "hole H-B with a linear value that nothing consumes (stage F10.1)"
+
+[[claim]]
+finding = "F10-HB"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F10.1"
+repro = [
+    "tests/gate/probes/fixes/f10/hb/th19_variantPayloadMove.wf",
+]
+code = "W0302"
+note = "hole H-B with a use after a move (stage F10.1)"

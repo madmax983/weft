@@ -451,3 +451,83 @@ fn group_a_is_on_by_default() {
     let a = analyze("fn main() { let i = 0; while i < 3 { i += 1 } }\n", o);
     assert!(!a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope));
 }
+
+/// The fallback note of `src` with the `ir` pipeline, group A and the fact
+/// generator of the pipeline.
+fn fallback_a(src: &str) -> Option<String> {
+    let a = analyze(src, opts(FactGen::Ir, Groups::of(Group::A)));
+    a.ir_scope.and_then(|s| s.fallback)
+}
+
+#[test]
+fn a_body_with_no_ir_and_no_error_for_it_keeps_the_program_out_of_scope() {
+    // Stage F10-fix, hole H-B (f10 review). Each body has no IR, and the
+    // program reports no error for it: the old pipeline must check it.
+    let cases = [
+        // A type error with no W01xx diagnostic: `best` gets its type later
+        // in the loop.
+        (
+            "struct Entity { hp: i32 }
+            fn f(es: &Vec<Entity>) / mut(es) {
+                let best = None
+                for e in es[] {
+                    let better = match best { Some(b) => e.hp > b.hp, None => true }
+                    if better { best = Some(e) }
+                }
+                es.clear()
+                match best { Some(b) => print(b.hp), None => {} }
+            }
+            fn main() { let es = Vec.new(); es.push(Entity { hp: 1 }); f(&es) }",
+            "a type error",
+        ),
+        // A conflict in the THIR tables.
+        (
+            "fn main() {
+                let v = Vec.new()
+                v.push(1)
+                let o = None
+                let i = 0
+                while i < 2 {
+                    match o { Some(r) => print(r), None => {} }
+                    o = Some(&v[0])
+                    i += 1
+                }
+                v.push(2)
+                match o { Some(r) => print(r), None => {} }
+            }",
+            "THIR",
+        ),
+        // A variant payload with two fields.
+        (
+            "enum E { A(u64, u64), B }
+            fn main() {
+                let e = E.A(1, 2)
+                let v = Vec.new()
+                v.push(1)
+                let r = &v[0]
+                v.push(2)
+                print(r)
+                print(e.A)
+            }",
+            "variant payload",
+        ),
+    ];
+    for (src, why) in cases {
+        let note = fallback_a(src).unwrap_or_else(|| panic!("in scope: {src}"));
+        assert!(note.contains("has no IR") && note.contains(why), "{note}");
+    }
+}
+
+#[test]
+fn a_body_with_no_ir_for_an_error_of_the_program_keeps_the_program_in_scope() {
+    // A W01xx diagnostic of `typeck` in the body.
+    let typo = "fn typo() -> u64 { nope }
+        fn plain(n: u64) -> u64 { n + 1 }";
+    // W0303 in the body.
+    let w0303 = "struct Holder { name: String }
+        fn take(s: String) { print(s) }
+        fn steal(h: &Holder) { take(h.name) }";
+    for src in [typo, w0303] {
+        assert_eq!(fallback_a(src), None, "{src}");
+    }
+}

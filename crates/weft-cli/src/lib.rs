@@ -60,8 +60,9 @@ each node cover the references, frees, changes, moves and aborts of the run.
 A failure is a run-time error; a note gives what the oracle checked.
 --ir-trace writes the IR location of each step of each frame to standard error.
 --engine=ir runs the core IR (docs/ir.md 8.1). A program with a body that has
-no IR (a type error, an error in a declaration, W0303) has errors: the AST
-compiler runs it, and a note tells why. --engine=ast (the default) runs the AST
+no IR (a type error, an error in a declaration, W0303, a conflict in the THIR
+tables, a variant payload) is not run on the IR: the AST compiler runs it, and
+a note tells why. --engine=ast (the default) runs the AST
 compiler.
 
 Exit codes: 0 on success; 1 when the program has errors or fails; 2 on a usage

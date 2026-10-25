@@ -96,7 +96,14 @@ pub fn ir_counts(analysis: &weft_sema::Analysis) -> IrCounts {
         no_ir_reasons: b
             .no_ir_counts()
             .into_iter()
-            .map(|(r, n)| (r.reason().to_string(), n))
+            .map(|((r, reported), n)| {
+                let text = if reported {
+                    r.reason().to_string()
+                } else {
+                    format!("{}, with no error of the program", r.reason())
+                };
+                (text, n)
+            })
             .collect(),
         unsupported: unsupported
             .into_iter()

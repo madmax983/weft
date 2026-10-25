@@ -1057,6 +1057,24 @@ pub(crate) fn run(
         s.fallback = Some("no construct group is on".to_string());
         return (s, None);
     }
+    // A body with no IR has no facts. The program stays in scope only if it
+    // reports an error for the reason (`irbuild::Entry::reported`): else no
+    // pipeline checks the body (stage F10-fix, hole H-B).
+    if let Some(e) = built
+        .entries
+        .iter()
+        .find(|e| matches!(e.outcome, Outcome::NoIr(_)) && !e.reported)
+    {
+        let why = match e.outcome {
+            Outcome::NoIr(n) => n.reason(),
+            _ => "",
+        };
+        s.fallback = Some(format!(
+            "`{}` has no IR ({why}), and the program reports no error for it",
+            e.name
+        ));
+        return (s, None);
+    }
     let mut facts: Vec<FnFacts> = a.bodies.iter().map(|b| seed(&b.facts)).collect();
     let emitted = std::cell::RefCell::new(Vec::new());
     let effects = std::cell::RefCell::new(Vec::new());
