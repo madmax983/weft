@@ -3874,6 +3874,28 @@ line = 12
 note = "control (a new false positive of the tier-2 preview, r3/quality/fuzz/o21/bad_21_4598_explain.wf): a closure summary has no `lends` of code of a caller at the run of a capture (`Em::run_nodes`)"
 
 [[claim]]
+finding = "F12-R8"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F12"
+repro = ["tests/gate/probes/fixes/f12/value_drops.wf"]
+code = "W0601"
+line = 13
+note = "a linear closure that goes to a function value that does not run it, or to code of a caller, can go away there (`templates::dropped_fn_args`; verify/partb/S4/run/cv.wf of tier 2)"
+
+[[claim]]
+finding = "F12-R9"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F12"
+repro = ["tests/gate/probes/fixes/f12/value_drops.wf"]
+code = "W0301"
+line = 44
+note = "a closure that a loop makes keeps the last value of a local of the loop body (`transfer::dead`; verify/s5/r2a/t/fv2.wf of tier 2)"
+
+[[claim]]
 finding = "F12-N1"
 kind = "sound"
 verdict = "construction"

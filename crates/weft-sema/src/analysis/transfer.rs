@@ -756,13 +756,27 @@ pub fn live(p: &Program, body: BodyId, st: &mut State, l: LocalId) -> Result<(),
     Ok(())
 }
 
-/// `Dead(l)`: the local has no value after its end.
+/// `Dead(l)`: the local has no value after its end, but a variable that a
+/// closure keeps (`Kept`) keeps its last value.
 ///
 /// # Errors
 ///
 /// Returns [`AlphaError::BadPlace`] if the local does not exist.
 pub fn dead(p: &Program, body: BodyId, st: &mut State, l: LocalId) -> Result<(), AlphaError> {
-    st.clear(key(p, body, l)?, &[]);
+    // A closure that keeps the variable (`Kept`) reads its last value when
+    // it runs after the end of the variable (a closure that a loop makes
+    // from a local of the loop body).
+    let kept = p.closures.iter().any(|c| {
+        c.maker == body
+            && c.captures.iter().any(|cap| {
+                cap.mode == weft_ir::CaptureMode::Kept
+                    && cap.source.proj.is_empty()
+                    && cap.source.local == l
+            })
+    });
+    if !kept {
+        st.clear(key(p, body, l)?, &[]);
+    }
     Ok(())
 }
 
@@ -1987,6 +2001,19 @@ fn apply_value(
                     a.kind = super::apply::RunKind::Run;
                     if let Some(r) = a.run.as_mut() {
                         r.task = true;
+                    }
+                }
+            }
+            // The code can run a `once` value of an argument more than once:
+            // the run moves the argument, and the run again uses it (W0502).
+            if let Given::Args(args) = given {
+                for a in args {
+                    let once = reach_fns(cx, body, st, a)?
+                        .into_iter()
+                        .find(|g| once_value(p, g));
+                    let at = once.and_then(|g| apps.seen.get(&g).copied());
+                    if let Some(app) = at.and_then(|k| apps.out.get_mut(k)) {
+                        app.once_args.push((body, a.clone()));
                     }
                 }
             }

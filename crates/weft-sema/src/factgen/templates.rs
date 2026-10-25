@@ -2420,13 +2420,89 @@ fn call_value(
         Operand::Const(_) => Vec::new(),
     };
     fn_arg_effects(em, main, st, &fn_params, args, &spans)?;
+    // The label of the node names the callee (`nodes::callee_names`).
+    let name = em
+        .facts
+        .nodes
+        .get(main.index())
+        .map(|n| n.label.clone())
+        .filter(|l| !l.is_empty())
+        .unwrap_or_else(|| "the function value".to_string());
+    let drops = dropped_fn_args(em, (main, at, &name), st, &fn_params, args, &out.apps)?;
     if let Some(r) = nodes.ret {
         held_refs(em, r, st, args)?;
         bind_dest(em, r, st, dest, &out.ret)?;
         apps_at_ret(em, r, st, &out.apps, at);
+        em.facts.scope_end.extend(drops.iter().map(|&v| (v, r)));
     }
     end_frames(em, nodes, &frames);
+    for &a in &nodes.aborts {
+        em.facts.unwound_at.extend(drops.iter().map(|&v| (v, a)));
+    }
     Ok(())
+}
+
+/// The linear closures among the arguments `args` of a call of a function
+/// value that a value of the callee can drop (W0601, as the old lowering:
+/// "a closure moves a linear value, but it can go out of scope without a
+/// call"): code of a caller can drop each one, and an item or a closure
+/// drops one that it does not run (part `runs`). The node is `main`, at
+/// `at`, of the callee `name`; `params` are the parameter types of the
+/// function type of the callee. Returns the `Dropped` variables.
+///
+/// # Errors
+///
+/// The errors of α.
+fn dropped_fn_args(
+    em: &mut Em<'_>,
+    (main, at, name): (NodeId, Span, &str),
+    st: &State,
+    params: &[TyId],
+    args: &[Operand],
+    apps: &[transfer::Applied],
+) -> Result<Vec<VarId>, AlphaError> {
+    use crate::analysis::apply::RunKind;
+    let mut out = Vec::new();
+    let body = em.body;
+    for (i, op) in args.iter().enumerate() {
+        let Some(&pt) = params.get(i) else {
+            continue;
+        };
+        if crate::props::ir_maybe_linear(em.tys, pt)
+            || !crate::props::ir_has_fns(em.tys, pt)
+            || em.tys.mentions_param(pt)
+        {
+            continue;
+        }
+        let drops = apps.iter().any(|a| match a.kind {
+            RunKind::Unknown => true,
+            RunKind::Item | RunKind::Closure => !a
+                .summary
+                .runs
+                .iter()
+                .any(|r| !r.capture && r.param as usize == i),
+            _ => false,
+        });
+        if !drops {
+            continue;
+        }
+        let v = transfer::operand(&mut em.cx(), body, st, op)?.flat();
+        if !v.linear || v.fns.is_empty() {
+            continue;
+        }
+        let mut info = weft_facts::VarInfo::plain(
+            name.to_string(),
+            weft_facts::VarKind::Dropped,
+            at,
+            em.tys.show(pt),
+        );
+        info.linear = true;
+        info.has_on_abort = closure_on_abort(em, &v);
+        let var = em.facts.add_var(info);
+        em.facts.rebound_at.push((var, main));
+        out.push(var);
+    }
+    Ok(out)
 }
 
 /// The facts of the summaries `apps` that a run node applies (`Main`, and
@@ -2839,7 +2915,8 @@ pub fn closure_entry(em: &mut Em<'_>, n: NodeId, params: &[(LocalId, Tree)], env
 /// # Errors
 ///
 /// Returns [`AlphaError::Later`] for a perform through a capability of a
-/// local handler (stage F14), and the errors of α.
+/// local handler and for a function value in an argument (stage F14), and
+/// the errors of α.
 pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> R {
     let TermKind::Perform {
         cap: weft_ir::CapOperand::Row(e),
@@ -2854,6 +2931,15 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
         ));
     };
     let body = em.body;
+    // A handler can run a function value of an argument, drop it or run it
+    // more than once: the facts of a clause are stage F14.
+    for a in args {
+        if !transfer::reach_fns(&mut em.cx(), body, st, a)?.is_empty() {
+            return Err(AlphaError::Later(
+                "a function value that an operation gives to a handler (stage F14)",
+            ));
+        }
+    }
     let out = crate::analysis::unknown::op_of_caller(&mut em.cx(), body, st, *e, *op, args)?;
     let n = nodes.main;
     for op in args {

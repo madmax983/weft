@@ -194,3 +194,8 @@ fn a_run_checks_the_changes_of_the_value_against_the_places_that_the_callee_give
 fn a_closure_that_runs_a_capture_gives_back_what_the_run_gives_back() {
     check("run_results.wf");
 }
+
+#[test]
+fn a_linear_closure_that_a_function_value_can_drop_is_w0601() {
+    check("value_drops.wf");
+}

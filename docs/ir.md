@@ -2998,6 +2998,13 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
 - The results of a run (`transfer::with_results`): a closure of the body that gives back a
   capture gives the values of the capture, also through a chain of closures that give
   back closures (16 levels; a longer chain stays with the old pipeline).
+- A linear closure that goes to a function value can go away there (a `Dropped`
+  variable, W0601): code of a caller can drop it, and an item or a closure that does not
+  run it drops it (`templates::dropped_fn_args`). Code of a caller that can run a `once`
+  argument runs it again (W0502). A function value that an operation gives to a handler
+  stays with the old pipeline (stage F14).
+- `Dead(l)` keeps the value of a variable that a closure keeps (`Kept`): a closure that a
+  loop makes from a local of the loop body runs its last value after the loop.
 - A pattern that binds a part that can be a `once` closure moves the part only: the other
   parts of the same pattern are no use of a moved value.
 - A run argument that points into a local of the body (`f(&x)`) is the frame root of the
