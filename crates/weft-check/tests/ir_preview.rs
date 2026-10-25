@@ -1323,3 +1323,82 @@ fn main() {}
     got.sort();
     assert_eq!(got, markers(src));
 }
+
+#[test]
+fn a_reference_in_a_heap_slot_is_invalid_after_its_referent_changes() {
+    // Stage F10.1 (hole H-A of the review of stage F10, f10/variants/hA): a
+    // body stores a reference behind `out`, changes the referent, then reads
+    // the reference back. The heap slot of `(*out)[]` has a variable of its
+    // own (`factgen::holders`): its version points into `v[]` from the store
+    // on, and each read of the slot uses it. A store after the change and a
+    // new value in the same place stay valid.
+    let src = "\
+struct Entity { hp: i32, id: u64, kids: Vec<Entity> }
+fn index(v: &Vec<Entity>, out: &Vec<&Entity>) / mut(v.., out) {
+    out.push(&v[0])
+    v.clear()
+    print(out[0].hp)   //~ W0301
+}
+fn copy_out(v: &Vec<Entity>, out: &Vec<&Entity>) / mut(v.., out) {
+    out.push(&v[0])
+    v.clear()
+    let c = out[0]   //~ W0301
+    print(c.hp)
+}
+fn kids(v: &Vec<Entity>, out: &Vec<&Entity>) / mut(v.., out) {
+    out.push(&v[0].kids[0])
+    v[0].kids.clear()
+    print(out[0].hp)   //~ W0301
+}
+fn option_slot(v: &Vec<Entity>, out: &Vec<Option<&Entity>>) / mut(v.., out) {
+    out[0] = Some(&v[0])
+    v.clear()
+    match out[0] {
+        Some(e) => print(e.hp),   //~ W0301
+        None => {}
+    }
+}
+fn popped(v: &Vec<Entity>, out: &Vec<&Entity>) / mut(v.., out) {
+    out.push(&v[0])
+    v.clear()
+    match out.pop() {   //~ W0301
+        Some(e) => print(e.hp),
+        None => {}
+    }
+}
+fn show(out: &Vec<&Entity>) { print(out[0].hp) }
+fn by_callee(v: &Vec<Entity>, out: &Vec<&Entity>) / mut(v.., out) {
+    out.push(&v[0])
+    v.clear()
+    show(out)   //~ W0301
+}
+fn put(v: &Vec<Entity>, out: &Vec<&Entity>) / mut(out) { out.push(&v[0]) }
+fn stored_by_callee(v: &Vec<Entity>, out: &Vec<&Entity>) / mut(v.., out) {
+    put(v, out)
+    v.clear()
+    print(out[0].hp)   //~ W0301
+}
+fn store_after(v: &Vec<Entity>, out: &Vec<&Entity>) / mut(v.., out) {
+    v.clear()
+    v.push(Entity { hp: 1, id: 1, kids: Vec.new() })
+    out.push(&v[0])
+    print(out[0].hp)
+}
+fn same_place(v: &Vec<Entity>, out: &Vec<&Entity>) / mut(v.., out) {
+    out.push(&v[0])
+    v[0] = Entity { hp: 4, id: 4, kids: Vec.new() }
+    print(out[0].hp)
+}
+fn two_slots(v: &Vec<Entity>, w: &Vec<Entity>, out: &Vec<&Entity>) / mut(v.., out) {
+    out.push(&w[0])
+    v.clear()
+    v.push(Entity { hp: 1, id: 1, kids: Vec.new() })
+    out.push(&v[0])
+    print(out[0].hp)
+}
+fn main() {}
+";
+    let mut got = ir_codes(src);
+    got.sort();
+    assert_eq!(got, markers(src));
+}

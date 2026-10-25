@@ -782,3 +782,21 @@ files = [
 codes = ["W0301"]
 reason = "heap slot of a reference parameter (stage F10a, docs/ir.md 6.6): the body reads back the reference that it stored behind `out`, so the `ir` pipeline reports the dangling read of `k` in the body (line 12, where the oracle faults); the old pipeline misses it there and reports `out` at the end of the caller (line 27). The loop form (group B, line 18 vs 40) is the same"
 stage = "F10"
+
+[[entry]]
+class = "moved"
+files = ["tests/gate/probes/fixes/f10/ha/*.wf"]
+codes = ["W0301"]
+reason = "heap slot variables (stage F10.1, hole H-A of the review of stage F10, docs/ir.md 6.6): the body stores a reference behind `out`, changes its referent, and reads the reference back; the `ir` pipeline reports the read in the body (where the oracle faults), the old pipeline reports `out` at the call in the caller"
+stage = "F10.1"
+
+[[entry]]
+class = "lost-clean"
+files = [
+    "tests/gate/probes/r3/redteam/p/q9_extend_fp.wf",
+    "tests/gate/probes/r3/redteam/repro/R3RT6_ref_arg_flow_fp.wf",
+]
+finding = "R3RT6"
+reason = "a mutated reference argument gets only the held references of the other arguments whose types fit (F5): a Vec<&Entity> cannot hold a reference into the other Vec; the programs are new in scope because `extend` has a loop. Each variant where the types fit or a held referent changes is W0301 (f10 review, lc01-lc23); lc22 (a read back in the callee) is hole H-A, not this rule"
+signed_by = "review agent, stage F10 (independent)"
+stage = "F10"

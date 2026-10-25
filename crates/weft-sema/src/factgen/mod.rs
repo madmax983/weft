@@ -839,7 +839,7 @@ fn emit_block(
         };
         if let Some(n) = table.get(key) {
             em.at = (block, at);
-            em.holders.before(n, &st);
+            em.holders.before(n, &st, em.facts);
             templates::stmt(em, n, &st, &s.kind, pair)?;
         }
         let mut cx = em_cx(em);
@@ -871,7 +871,7 @@ fn emit_block(
         .filter_map(|&ph| table.get(at(ph, dest)))
         .chain(aborts.iter().copied())
     {
-        em.holders.before(m, &st);
+        em.holders.before(m, &st, em.facts);
     }
     match &blk.term.kind {
         weft_ir::TermKind::Call { .. } => {

@@ -197,3 +197,6 @@ them again if it runs.
 - `fixes/f10/hb/*.wf`: the variants of the review of stage F10 for hole H-B (a
   body with no IR and no error for it), with one line of header (stage F10.1;
   claim F10-HB).
+- `fixes/f10/ha/*.wf`: the variants of the review of stage F10 for hole H-A (a
+  reference in a heap slot read back after its referent changes; `hA/`, `h/`,
+  `lc/lc22`), with one line of header (stage F10.1; claim F10-HA).

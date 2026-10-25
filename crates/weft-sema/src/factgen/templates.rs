@@ -305,10 +305,12 @@ impl Em<'_> {
 
     /// The variables of the move path of the local that owns fact place
     /// `q`, if it is not the local with key `base`: `S` of the local, and the
-    /// `H` and `U` variables at, above or below the path.
+    /// `H` and `U` variables at, above or below the path. A place that no
+    /// local owns gives the variables of the heap slots that overlap it
+    /// (`super::holders`, stage F10.1).
     fn owner_vars(&self, q: PlaceId, base: Key) -> Vec<VarId> {
         let Some((k, path)) = self.roots.path_of(self.facts, q) else {
-            return Vec::new();
+            return self.holders.slot_vars(self.facts, q);
         };
         if k == base {
             return Vec::new();

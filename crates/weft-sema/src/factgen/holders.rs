@@ -27,10 +27,24 @@
 //! rebinds it while the part holds the value. So each reference that the
 //! part can hold at a use is in a version that the node uses and that is
 //! invalid if the reference is.
+//!
+//! A heap slot (`docs/ir.md` 6.6: a place that no local of the component
+//! owns, behind a reference parameter or in a place of a caller, that gets
+//! references) gets variables in the same way (stage F10.1, hole H-A of the
+//! review of stage F10). The state of the analysis gives the places that
+//! each slot can hold before each node (`State::behind`). A version of a
+//! slot is a variable for the places of the slot that overlap. It is current
+//! at a node where the slot can hold one of its places, and it gets
+//! `rebound_at` at each other node: before the store, a change of the
+//! referent does not make the version invalid. A read of a place of the slot
+//! (an access through it, a copy of a reference out of it, a read through a
+//! chain of references) uses the slot ([`Holders::slot_vars`]), and the use
+//! goes to the current versions. So a reference that a body stores behind
+//! `out`, then reads back after its referent changes, is W0301.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use weft_facts::{FnFacts, NodeId, PlaceId, VarId};
+use weft_facts::{FnFacts, NodeId, PlaceId, VarId, VarInfo, VarKind};
 
 use crate::analysis::{Key, PathStep, State};
 
@@ -47,6 +61,36 @@ struct Part {
     deeper: Vec<Vec<PathStep>>,
     /// The placeholder: the variable that the templates use.
     var: VarId,
+}
+
+/// A heap slot with a variable of its own (see the module comment).
+#[derive(Clone, Debug)]
+struct Slot {
+    /// The place of the slot: its key in `State::behind`.
+    key: PlaceId,
+    /// The placeholder: the variable that the templates use.
+    var: VarId,
+}
+
+/// True if fact place `a` is at or below `b`.
+fn at_or_below(facts: &FnFacts, a: PlaceId, b: PlaceId) -> bool {
+    let mut cur = Some(a);
+    while let Some(c) = cur {
+        if c == b {
+            return true;
+        }
+        cur = facts.places.get(c.index()).and_then(|i| i.parent);
+    }
+    false
+}
+
+/// True if fact places `a` and `b` overlap: one is at or below the other. A
+/// place below a wildcard place counts as the base of the wildcard place (the
+/// rule of the heap slots of the analysis, `stored_at`).
+fn overlap(facts: &FnFacts, a: PlaceId, b: PlaceId) -> bool {
+    let norm = |p: PlaceId| facts.wild_base(p).unwrap_or(p);
+    let (a, b) = (norm(a), norm(b));
+    at_or_below(facts, a, b) || at_or_below(facts, b, a)
 }
 
 /// A version of a part.
@@ -89,6 +133,14 @@ pub struct Holders {
     /// For each node: the places that each part can hold before the node,
     /// in the order of [`Holders::parts`].
     before: BTreeMap<NodeId, Vec<BTreeSet<PlaceId>>>,
+    /// The heap slots, in the order that the states show them.
+    slots: Vec<Slot>,
+    /// The slot of each place of a slot.
+    slot_of: HashMap<PlaceId, usize>,
+    /// For each node: the places that each slot can hold before the node, in
+    /// the order of [`Holders::slots`]. A slot after the end of the list
+    /// holds nothing there.
+    slot_before: BTreeMap<NodeId, Vec<BTreeSet<PlaceId>>>,
 }
 
 /// The versions of one part, as [`Holders::finish`] makes them: what the
@@ -149,13 +201,48 @@ impl Holders {
         })
     }
 
-    /// Records the state `st` before node `n`.
-    pub fn before(&mut self, n: NodeId, st: &State) {
+    /// Records the state `st` before node `n`. A heap slot that `st` shows for
+    /// the first time gets its placeholder variable in `facts`.
+    pub fn before(&mut self, n: NodeId, st: &State, facts: &mut FnFacts) {
+        self.slots_before(n, st, facts);
         if self.parts.is_empty() || self.before.contains_key(&n) {
             return;
         }
         let cur = (0..self.parts.len()).map(|i| self.holds(i, st)).collect();
         self.before.insert(n, cur);
+    }
+
+    /// Records the places of each heap slot in the state `st` before node `n`.
+    fn slots_before(&mut self, n: NodeId, st: &State, facts: &mut FnFacts) {
+        if self.slot_before.contains_key(&n) {
+            return;
+        }
+        for (q, refs) in st.behind() {
+            if refs.is_empty() || self.slot_of.contains_key(q) {
+                continue;
+            }
+            let name = format!("value in `{}`", facts.place(*q).display);
+            let span = facts.node(n).span;
+            let var = facts.add_var(VarInfo::plain(name, VarKind::Temp, span, String::new()));
+            self.slot_of.insert(*q, self.slots.len());
+            self.slots.push(Slot { key: *q, var });
+        }
+        let cur = self
+            .slots
+            .iter()
+            .map(|s| st.behind().get(&s.key).cloned().unwrap_or_default())
+            .collect();
+        self.slot_before.insert(n, cur);
+    }
+
+    /// The placeholders of the heap slots whose places overlap fact place
+    /// `q`: a read of `q` reads what the slot holds.
+    pub fn slot_vars(&self, facts: &FnFacts, q: PlaceId) -> Vec<VarId> {
+        self.slots
+            .iter()
+            .filter(|s| overlap(facts, s.key, q))
+            .map(|s| s.var)
+            .collect()
     }
 
     /// The part `var` gets a new value that points into `refs`. Returns
@@ -192,6 +279,7 @@ impl Holders {
     /// Makes the versions and writes their facts (see the module comment).
     /// Returns the versions of each part.
     pub fn finish(self, facts: &mut FnFacts) -> Vec<PartVersions> {
+        self.finish_slots(facts);
         if self.parts.is_empty() {
             return Vec::new();
         }
@@ -346,5 +434,72 @@ impl Holders {
                 },
             })
             .collect()
+    }
+
+    /// Makes the versions of each heap slot and writes their facts (see the
+    /// module comment).
+    fn finish_slots(&self, facts: &mut FnFacts) {
+        for (i, slot) in self.slots.iter().enumerate() {
+            // Each place that the slot can hold at some node.
+            let held: BTreeSet<PlaceId> = self
+                .slot_before
+                .values()
+                .filter_map(|c| c.get(i))
+                .flatten()
+                .copied()
+                .collect();
+            // The versions: a place goes to each version that it overlaps,
+            // or makes a new one.
+            let mut versions: Vec<(BTreeSet<PlaceId>, VarId)> = Vec::new();
+            for r in held {
+                let mut found = false;
+                for (all, _) in &mut versions {
+                    if all.iter().any(|&x| overlap(facts, x, r)) {
+                        all.insert(r);
+                        found = true;
+                    }
+                }
+                if !found {
+                    let var = if versions.is_empty() {
+                        slot.var
+                    } else {
+                        let info = facts.var(slot.var).clone();
+                        facts.add_var(info)
+                    };
+                    versions.push((std::iter::once(r).collect(), var));
+                }
+            }
+            for (all, var) in &versions {
+                facts.points_into.extend(all.iter().map(|&q| (*var, q)));
+            }
+            // A version is current at a node where the slot can hold one of
+            // its places. With no record of the node, each version is.
+            let current = |n: NodeId| -> Vec<VarId> {
+                match self.slot_before.get(&n) {
+                    Some(c) => versions
+                        .iter()
+                        .filter(|(all, _)| c.get(i).is_some_and(|c| !all.is_disjoint(c)))
+                        .map(|(_, v)| *v)
+                        .collect(),
+                    None => versions.iter().map(|(_, v)| *v).collect(),
+                }
+            };
+            let mut uses = Vec::with_capacity(facts.uses.len());
+            for &(v, n) in &facts.uses {
+                if v == slot.var {
+                    uses.extend(current(n).into_iter().map(|w| (w, n)));
+                } else {
+                    uses.push((v, n));
+                }
+            }
+            facts.uses = uses;
+            for (n, c) in &self.slot_before {
+                for (all, var) in &versions {
+                    if c.get(i).is_none_or(|c| all.is_disjoint(c)) {
+                        facts.rebound_at.push((*var, *n));
+                    }
+                }
+            }
+        }
     }
 }

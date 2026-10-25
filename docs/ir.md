@@ -2532,6 +2532,21 @@ next iteration of a loop) sees the places of the stored references (tier 2
 form was a lost fault of group A too). The heap slots join by union and widen at a loop
 head with the rules above.
 
+As built (plan stage F10.1, heap slot variables; hole H-A of the review of stage F10):
+the heap slot gave the *read value* the places of the stored references, but no variable
+held them, so the order "store, change the referent, read back" was accepted
+(`out.push(&v[0]); v.clear(); print(out[0].hp)`, also through a callee that stores or
+reads, an `Option` slot, `pop`, and the next iteration of a loop). Now each heap slot has
+variables of its own (`factgen::holders`, as the versions of a part): the state before
+each node gives the places that the slot can hold; the places that overlap make one
+version (a variable named ``value in `p` ``) with `points_into` of them; a version is
+current at a node where the slot can hold one of its places and gets `rebound_at` at each
+other node (so a change before the store does not make it invalid). A read of a place
+that no local owns uses the slots that overlap it (`owner_vars`: an access through the
+place, a copy of a reference out of it, a read through a chain of references, and so each
+argument of a call that reaches the slot). As in the old pipeline, a use of `out` that
+reaches the slot after the change (`out.len()`, a call with `out`) is W0301 too.
+
 **The post-passes of today**, and where each one goes:
 
 | Today | In this design |

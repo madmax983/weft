@@ -1,0 +1,14 @@
+// F10 review, hole H-A: a reference in a heap slot read back after its referent changes (lc/lc22_extendReadBackInCallee.wf).
+struct Entity { hp: i32 }
+fn extend_from(dst: &Vec<&Entity>, src: &Vec<Entity>) / mut(dst, src) {
+    let i = 0
+    while i < src.len() { dst.push(&src[i]); i += 1 }
+    src.clear()
+    print(dst[0].hp)
+}
+fn main() {
+    let es = Vec.new()
+    es.push(Entity { hp: 3 })
+    let all = Vec.new()
+    extend_from(&all, &es)
+}

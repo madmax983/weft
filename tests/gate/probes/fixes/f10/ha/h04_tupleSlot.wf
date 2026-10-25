@@ -1,0 +1,25 @@
+// F10 review, hole H-A: a reference in a heap slot read back after its referent changes (h/h04_tupleSlot.wf).
+struct Entity { hp: i32, id: u64, kids: Vec<Entity> }
+fn ent(id: u64) -> Entity {
+    let e = Entity { hp: 1, id: id, kids: Vec.new() }
+    e.kids.push(Entity { hp: 2, id: 9, kids: Vec.new() })
+    e
+}
+fn behind(v: &Entity, out: &Vec<(u64, &Entity)>, n: u64) / mut(v.., out) {
+    let i = 0
+    while i < n {
+        let k = &out[0].1.kids[0]
+        print(k.hp)
+        out[0] = (i, &v.kids[0])
+        v.kids.clear()
+        v.kids.push(ent(i))
+        i += 1
+    }
+}
+fn main() {
+    let v = ent(1)
+    let w = ent(2)
+    let out = Vec.new()
+    out.push((0, &w))
+    behind(&v, &out, 3)
+}

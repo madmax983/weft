@@ -3573,3 +3573,47 @@ repro = [
 ]
 code = "W0302"
 note = "hole H-B with a use after a move (stage F10.1)"
+
+[[claim]]
+finding = "F10-HA"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F10.1"
+repro = [
+    "tests/gate/probes/fixes/f10/ha/ha01_pushClearRead.wf",
+    "tests/gate/probes/fixes/f10/ha/ha02_pushClearReadLet.wf",
+    "tests/gate/probes/fixes/f10/ha/ha03_pushKidsClear.wf",
+    "tests/gate/probes/fixes/f10/ha/ha04_optSlot.wf",
+    "tests/gate/probes/fixes/f10/ha/ha05_popAfter.wf",
+    "tests/gate/probes/fixes/f10/ha/ha07_paramStoreBehindRefLocal.wf",
+    "tests/gate/probes/fixes/f10/ha/ha08_callStores.wf",
+    "tests/gate/probes/fixes/f10/ha/ha10_readViaCall.wf",
+    "tests/gate/probes/fixes/f10/ha/ha11_mutViaCall.wf",
+    "tests/gate/probes/fixes/f10/ha/ha12_localAlias.wf",
+    "tests/gate/probes/fixes/f10/ha/ha13_pushKidsRef.wf",
+    "tests/gate/probes/fixes/f10/ha/ha14_interp.wf",
+    "tests/gate/probes/fixes/f10/ha/ha15_compare.wf",
+    "tests/gate/probes/fixes/f10/ha/ha18_slotStillReadInCaller.wf",
+]
+code = "W0301"
+note = "a reference stored behind a reference parameter (a heap slot), read back after its referent changes (review of stage F10, hole H-A): each heap slot has variables of its own (factgen::holders, stage F10.1), and each read of the slot uses them; the ir pipeline accepted these and both oracles fault"
+
+[[claim]]
+finding = "F10-HA"
+kind = "unsound"
+verdict = "construction"
+group = "AB"
+stage = "F10.1"
+repro = [
+    "tests/gate/probes/fixes/f10/ha/h01_storeClearRead.wf",
+    "tests/gate/probes/fixes/f10/ha/h02_storeKidsClear.wf",
+    "tests/gate/probes/fixes/f10/ha/h03_optSlot.wf",
+    "tests/gate/probes/fixes/f10/ha/h04_tupleSlot.wf",
+    "tests/gate/probes/fixes/f10/ha/h14_slotPopBack.wf",
+    "tests/gate/probes/fixes/f10/ha/h15_slotBreak.wf",
+    "tests/gate/probes/fixes/f10/ha/ha09_readViaFor.wf",
+    "tests/gate/probes/fixes/f10/ha/lc22_extendReadBackInCallee.wf",
+]
+code = "W0301"
+note = "hole H-A in a loop: iteration k stores the reference, iteration k + 1 reads it back after a change (stage F10.1)"

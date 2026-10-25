@@ -316,7 +316,12 @@ fn a_loop_reads_back_what_the_iteration_before_stored_behind_a_parameter() {
     // `i + 1` reads it back, borrows into it, and clears the kids of the
     // new `e` (the same place). The heap slot of `*out` carries the place
     // around the loop. The second function stores a deeper place at each
-    // iteration: the heap slot widens, and the analysis ends.
+    // iteration: the heap slot widens, and the analysis ends. The read of
+    // the slot (`c`) is W0301 too (stage F10.1, heap slot variables): `e`
+    // points anywhere into `*v` (the wildcard place of the result of
+    // `find`), so the change of `e.kids` makes the slot invalid, as it makes
+    // `out` invalid in the old pipeline. Only the write through `e` itself
+    // keeps `e` valid (`writes_via`).
     let src = "\
 struct Entity { hp: i32, id: u64, kids: Vec<Entity> }
 struct Link { v: u64, next: Vec<Link> }
@@ -329,7 +334,7 @@ fn behind(v: &Vec<Entity>, out: &Vec<&Entity>, n: u64) / mut(v.., out) {
     while i < n {
         match find(v, 1) {
             Some(e) => {
-                let c = out[out.len() - 1]
+                let c = out[out.len() - 1]   //~ W0301
                 let k = &c.kids[0]
                 e.kids.clear()
                 print(k.hp)   //~ W0301
@@ -390,4 +395,44 @@ fn main() { let es = Vec.new(); es.push(Entity { hp: 1 }); f(&es) }
     for src in [best, next] {
         assert_eq!(ab_codes(src), markers(src), "{src}");
     }
+}
+
+#[test]
+fn a_reference_in_a_heap_slot_is_invalid_in_the_next_iteration_after_a_change() {
+    // Stage F10.1 (hole H-A of the review of stage F10, f10/variants/h and
+    // lc22): iteration k stores `&v[0]` behind `out` and clears `v`;
+    // iteration k + 1 reads it back. A callee that copies the held
+    // references of another `Vec` (`q9_extend_fp`) and a promoted temporary
+    // in a loop stay valid.
+    let src = "\
+struct Entity { hp: i32 }
+fn next_iter(v: &Vec<Entity>, out: &Vec<&Entity>, n: u64) / mut(v.., out) {
+    let i = 0
+    while i < n {
+        if i > 0 { print(out[out.len() - 1].hp) }   //~ W0301
+        out.push(&v[0])
+        v.clear()
+        v.push(Entity { hp: 2 })
+        i += 1
+    }
+}
+fn read_back(dst: &Vec<&Entity>, src: &Vec<Entity>) / mut(dst, src) {
+    let i = 0
+    while i < src.len() { dst.push(&src[i]); i += 1 }
+    src.clear()
+    print(dst[0].hp)   //~ W0301
+}
+fn extend(dst: &Vec<&Entity>, src: &Vec<&Entity>) / mut(dst) {
+    let i = 0
+    while i < src.len() { dst.push(src[i]); i += 1 }
+}
+fn promoted() {
+    let v = Vec.new()
+    let i = 0
+    while i < 3 { v.push(&(i + 1)); i += 1 }
+    print(v[0])
+}
+fn main() {}
+";
+    assert_eq!(ab_codes(src), markers(src));
 }
