@@ -2,7 +2,7 @@
 //! 6.6).
 //!
 //! Each test checks a program with `--facts=ir` and the groups A and B on
-//! (the preview of stage F10a: group B is not in the default set yet). The
+//! (the preview of stage F10a; the default groups from stage F10b). The
 //! `//~ CODE` markers are the diagnostics of the `ir` pipeline.
 
 use std::fmt::Write as _;
@@ -283,6 +283,33 @@ fn f(n: u64) {
     print(v.len())
 }
 fn main() {}
+";
+    assert_eq!(ab_codes(src), markers(src));
+}
+
+#[test]
+fn a_promoted_temporary_in_a_loop_after_an_earlier_change_is_a_known_false_positive() {
+    // The review of stage F10 (`pt/pt09`): a new false positive of group B.
+    // The old pipeline accepts the program, and both oracles run it clean.
+    // The promoted temporary of `&&v[0]` points into `v[]` (a fact for each
+    // node), so `v.push(1)` before the loop makes it invalid, and the path
+    // with no iteration takes that to the read of `rs[0]`. A `rebound_at` at
+    // its first value in an iteration would be unsound: `rs` keeps the
+    // references to the cells of the earlier iterations, and a change of `v`
+    // in a later iteration must make them invalid. The fix is a version per
+    // definition (plan track P1, the STATE class of R3RT10, issue 20). The
+    // program is not a probe of tier 1: one `new-fp` probe is more than the
+    // 0.1 % of the probes that the gate allows. When the fix comes, this
+    // test must show no diagnostic.
+    let src = "\
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let rs = Vec.new()
+    let i = 0
+    while i < 3 { rs.push(&&v[0]); i += 1 }
+    print(rs[0])   //~ W0301
+}
 ";
     assert_eq!(ab_codes(src), markers(src));
 }

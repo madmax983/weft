@@ -1172,6 +1172,15 @@ drops the references in it: `let rr = &&v; let w = v; print(rr.len())` is accept
 and faults at run time. The IR keeps them: `t := &v; rr := &t`, and the facts see
 `rr` through `t` into `v`.
 
+A known false positive of this rule with loops (stage F10b, review of stage F10,
+`pt09`): `v.push(1); while i < 3 { rs.push(&&v[0]); i += 1 }; print(rs[0])` is W0301.
+`S(t)` points into `v[]` at each node, so the change of `v` before the loop makes it
+invalid, and the path with no iteration takes that to the read. A new value of `S(t)`
+at its first value in an iteration would be unsound: `rs` keeps the references to the
+cells of the earlier iterations, and a later change of `v` must make them invalid.
+The fix is a version for each definition (plan track P1; test `ir_loops`
+`a_promoted_temporary_in_a_loop_after_an_earlier_change_is_a_known_false_positive`).
+
 A receiver value of plain data that a method borrows (`self` by reference, 5.19) is a
 borrow of a value too: `mkp().px()` with `fn px(self) -> &u64 in self` puts `mkp()`
 into a promoted temporary, and `let r = mkp().px(); print(r)` is valid, as in the old
@@ -2208,7 +2217,7 @@ As built (plan stage F4, `factgen/templates.rs`, `kernel.rs`, `decls.rs` and
 - `emit` writes the facts of a body of group A with no `Call`, `Perform` or `Resume`, no
   loop and no `OnAbort` action. Another construct gives `Unsupported`, and the old pipeline
   checks the program. `factgen::preview` gives the facts of one body.
-- With no group on (the default until stage F8; from F8 group A is on), no program is in scope, also a program
+- With no group on (the default until stage F8; from F8 group A is on, from F10 the groups A and B), no program is in scope, also a program
   whose bodies have no IR and so use no group. `weft check|facts|agree|lint|run|test`
   take `--groups=LETTERS` to turn groups on.
 - A node `entry` before the entry block binds the parameters: `rebound_at`, `points_into`
@@ -2490,8 +2499,8 @@ calls, or a cleanup chain of a call after many `let`s (one block for each live l
 kept blocks times locals trees: tier 2 ran out of memory (9 GB for
 `r2/quality/gen/si_4000.wf`, 12 GB for `verify/le_15000.wf`).
 
-As built (plan stage F10a, `crates/weft-sema/src/analysis/widen.rs`; group B is a
-preview, not in the default set): a *loop head* is the target of a back edge (an edge to a
+As built (plan stage F10a, `crates/weft-sema/src/analysis/widen.rs`; group B was a
+preview in F10a, and stage F10b puts it in the default set): a *loop head* is the target of a back edge (an edge to a
 block whose rank in reverse post-order is not higher, normal or `unwind`). The driver keeps
 the first state at each head (the state before the loop). At each later join into a head
 that changes the state, the joined state widens, with the rules of the loop passes of the

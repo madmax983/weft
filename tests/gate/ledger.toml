@@ -775,12 +775,9 @@ stage = "F6"
 
 [[entry]]
 class = "moved"
-files = [
-    "tests/gate/probes/fixes/f10/store_behind.wf",
-    "tests/gate/probes/fixes/f10/store_behind_loop.wf",
-]
+files = ["tests/gate/probes/fixes/f10/store_behind.wf"]
 codes = ["W0301"]
-reason = "heap slot of a reference parameter (stage F10a, docs/ir.md 6.6): the body reads back the reference that it stored behind `out`, so the `ir` pipeline reports the dangling read of `k` in the body (line 12, where the oracle faults); the old pipeline misses it there and reports `out` at the end of the caller (line 27). The loop form (group B, line 18 vs 40) is the same"
+reason = "heap slot of a reference parameter (stage F10a, docs/ir.md 6.6): the body reads back the reference that it stored behind `out`, so the `ir` pipeline reports the dangling read of `k` in the body (line 12, where the oracle faults); the old pipeline misses it there and reports `out` at the end of the caller (line 27). The loop form store_behind_loop.wf is `changed` (stage F10b)"
 stage = "F10"
 
 [[entry]]
@@ -823,12 +820,58 @@ codes = ["W0301"]
 reason = "a store through a held reference in a callee (stage F10.2, hole H-C): the held reference to the parameter `inner` is in a local struct or tuple; the `ir` pipeline reports the read through `inner` after `v.clear()` (where the oracle faults), the old pipeline the end of the local"
 stage = "F10.2"
 
+# ----------------------------------------------------------------------------
+# Stage F10b: group B (loops) is on by default. The review of stage F10
+# (f10/review.md, section 3) judged each row of the AB preview below.
+
 [[entry]]
-class = "open-old"
+class = "moved"
 files = [
-    "tests/gate/probes/fixes/f10/hc/t40B_putHeldLoop.wf",
-    "tests/gate/probes/fixes/f10/hc/t42B_putHeldForIter.wf",
+    "tests/gate/probes/r3/redteam/p/i5_formatch.wf",
+    "tests/gate/probes/redteam/a06_containers.wf",
+    "tests/gate/probes/verify/s1diff/p/v07_rc.wf",
+    "tests/gate/probes/verify/s5/r2a/t/x3.wf",
+    "verify/review_core/Core_S1/rt2/jumps.wf",
 ]
-finding = "F10-HC"
-reason = "dangling read: a callee stores a reference through a reference that its argument holds (hole H-C), with a loop (group B). Under the default groups the old pipeline checks the programs and misses the store; with group B on, the `ir` pipeline rejects them (W0301, claim F10-HC of group AB, stage F10)"
-stage = "F10.2"
+codes = ["W0301"]
+reason = "W0301 at the first use of the stale reference (docs/ir.md 6.9), as entry 22 for group A: the old lowering reports the line of the statement whose hidden variable holds the reference, the `ir` pipeline the read. i5_formatch: `let (n, e) = t` (17), not the `for` (16): the iterator reads only the tuples. a06_containers: the arm `Some(r) => print(r.hp)` (32), not `match o` (31). v07_rc: `print(r)` (41, 68), not the block tail or the `match` (39, 66). x3: the conservative W0301 of the value in `t.0` is at its use `t.0.kids.push` (14), not at `&t.1.hp` (13); the real fault `print(r)` (15) is W0301 in both. jumps (tier 2): the statement `first.hp` (10, 19, 27), not the `continue`, `break` or `return` after it (11, 20, 28). Review of stage F10, section 3"
+stage = "F10"
+
+[[entry]]
+class = "changed"
+files = ["tests/gate/probes/verify/s5/R2c/repro/V3_tail_place_statement.wf"]
+codes = ["W0301"]
+reason = "place-field relocation (the class of entry 24, follow-up F8.1): `print(f.cur)` at line 43 reads the `!Move` value `f` that the block `{ f }` moved, so it is W0302 at 43 in both pipelines; the old W0301 of the place field at 43 goes. The program faults (a linear leak at line 12) and both pipelines reject it. Review of stage F10, section 3"
+stage = "F10"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/f10/store_behind_loop.wf",
+    "verify/s5/R2a: loops, places and wildcard rules (foundation, speed, test harness)/W3_store_behind.wf",
+    "verify/s5/R2a: loops, places and wildcard rules (foundation, speed, test harness)/W3b_store_behind.wf",
+]
+codes = ["W0301"]
+reason = "heap slot variables (stages F10a and F10.1, docs/ir.md 6.6): W0301 at the dangling read `print(k.hp)` (18, where the oracle faults), and a new conservative W0301 at `let c = out[out.len() - 1]` (15): the slot of `*out` holds the place of `find(v, 1)` with a wildcard, and `e.kids.clear()` in the iteration before changes a place below it (spec `wild_at`). The old pipeline reports `out` at the end of the test (40; W3b: 35). W3 and W3b (tier 2) are the programs that store_behind_loop.wf comes from (the lost faults of the first AB preview). Precision note of stage F10.1"
+stage = "F10"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/gate/probes/fixes/f10/hb/th16_loopNoneReturn.wf",
+    "tests/gate/probes/fixes/f10/hb/th16b_loopNoneTypeErrFault.wf",
+]
+codes = ["W0301"]
+reason = "the bodies of hole H-B have IR since stage F10.1 (the THIR tables keep the last pass of each loop). th16: the loop has no back edge (`break` at its end), so `best` holds no reference at the `match` and the old false positive at `print(b.hp)` (6) goes; `e` after `es.clear()` (7) stays W0301 in both (conservative: the `Some` arm never runs, the oracle runs it clean). th16b: the `ir` pipeline also reports the loop iterator after `es.push` (6) and `e` (8), true positives: the oracle faults (the old pipeline reports only line 7)"
+stage = "F10"
+
+[[entry]]
+class = "changed"
+files = [
+    "verify/s5/R2a: loops, places and wildcard rules (foundation, speed, test harness)/L9_part_chains.wf",
+    "verify/s5/R3t/rt2v.wf",
+    "verify/s5/R3t_diff/r3rt2_more.wf",
+]
+codes = ["W0301", "W0312"]
+reason = "new true positives in loops (tier 2; each test faults where the `ir` pipeline reports): L9_part_chains `tuple_chain`: a copy of the stale `t.9` into `t.8`, ... is a use of an invalid reference (8-16), as the old pipeline reports for the `Option` chain (36-45). rt2v: `match_then_clear` (23), and `callee_field` W0312 (47): `&w` holds `&world.entities[0]` and the callee clears `world.entities` (R3RT3). r3rt2_more: the `//~ W0301` marker of `bind_then_clear` (26, R3RT2). The old pipeline misses them. Review of stage F10, section 3"
+stage = "F10"

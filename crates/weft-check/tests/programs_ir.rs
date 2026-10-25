@@ -92,14 +92,16 @@ fn the_corpus_in_scope_gives_the_markers_of_the_ir_pipeline() {
         }
     }
     eprintln!("{in_scope} programs of the corpus are in scope");
-    assert!(in_scope >= 19, "only {in_scope} programs are in scope");
+    // Stage F10 turns group B (loops) on: 28 programs at F10b.
+    assert!(in_scope >= 26, "only {in_scope} programs are in scope");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
 #[test]
 fn the_corpus_in_scope_of_the_groups_a_and_b_gives_the_markers_of_the_ir_pipeline() {
-    // The preview of stage F10a: loops (group B) are not in the default set
-    // yet. The loop programs of the corpus keep their markers.
+    // The groups of stage F10 (the preview of F10a, the default from F10b),
+    // named here so that the test does not change when a later stage adds a
+    // group. The loop programs of the corpus keep their markers.
     let ab = weft_sema::Groups::parse("AB").expect("the groups parse");
     let (mut in_scope, mut failures) = (0, Vec::new());
     for path in corpus_paths() {

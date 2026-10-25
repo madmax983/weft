@@ -1628,6 +1628,8 @@ Gate record (filled at G6, F8, F10, F13, F17, F19, F20, C1, C2):
 | G6 (baseline) | | | | | | | | |
 | F8 (tier 1, group A) | 1184 of 3394 | 3235 | 12 | 0 | 5 (signed) | 8 | 61 | 73 (open-old) |
 | F8 (tier 2, group A) | 2560 of 57393 | 56867 | 10 | 0 | 6 (5 signed; `verify/s5/R3a_diff/blk.wf` needs a reviewer) | 11 | 411 | 88 (tier-2 policy; 2 in scope: open-old `unclassified`) |
+| F10 (tier 1, groups A and B) | 1373 of 3509 | 3263 | 47 | 0 (`pt09` of the review: a precision loss, test `ir_loops`, track P1) | 18 (signed) | 37 | 71 | 73 (open-old) |
+| F10 (tier 2, groups A and B) | 2852 of 57393 | 56822 | 10 | 0 | 8 (signed) | 16 | 449 | 88 (tier-2 policy) |
 
 ---
 

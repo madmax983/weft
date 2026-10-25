@@ -396,7 +396,7 @@ fn the_committed_caches_cover_tier_1() {
 
 /// The fact oracle (stage F9, `docs/ir.md` 8.5): a program in scope that the
 /// `ir` pipeline accepts runs with it and passes; a program that the `ir`
-/// pipeline rejects, and a program out of scope (a loop, group B), do not
+/// pipeline rejects, and a program out of scope (a closure, group C), do not
 /// run. The child processes get `--fact-oracle`.
 #[test]
 fn the_fact_oracle_runs_the_accepted_programs_of_the_scope() {
@@ -414,7 +414,7 @@ fn the_fact_oracle_runs_the_accepted_programs_of_the_scope() {
             vec![
                 entry("clean.wf"),
                 entry("w0301.wf"),
-                entry("oracle_loop.wf"),
+                entry("fact_closure.wf"),
             ],
             s,
         );
@@ -429,9 +429,10 @@ fn the_fact_oracle_runs_the_accepted_programs_of_the_scope() {
             "{out:?}"
         );
     }
-    // With the groups A and B on (the preview of stage F10a), the loops are
-    // in scope: a program whose loops end passes the fact oracle, and with
-    // the default groups it is out of scope.
+    // With the groups A and B on (the default groups from stage F10, and
+    // `--groups AB`), the loops are in scope: a program whose loops end
+    // passes the fact oracle. (`--groups` adds to the default groups, so no
+    // flag turns group B off.)
     let ab = weft_sema::Groups::parse("AB").ok();
     for groups in [None, ab] {
         let child = Settings {
@@ -441,12 +442,11 @@ fn the_fact_oracle_runs_the_accepted_programs_of_the_scope() {
         };
         let out = run_all(&data(), vec![entry("fact_loop.wf")], &child);
         let classes: Vec<oracle::FactClass> = out.iter().map(oracle::fact_class).collect();
-        let want = if groups.is_some() {
-            oracle::FactClass::Pass
-        } else {
-            oracle::FactClass::OutOfScope
-        };
-        assert_eq!(classes, vec![want], "{groups:?}: {out:?}");
+        assert_eq!(
+            classes,
+            vec![oracle::FactClass::Pass],
+            "{groups:?}: {out:?}"
+        );
     }
     // A failure of the fact oracle is a failure class.
     let failed = Outcome {
