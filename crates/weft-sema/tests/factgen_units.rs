@@ -1161,7 +1161,9 @@ fn node_rels(f: &FnFacts) -> BTreeMap<NodeId, BTreeSet<&'static str>> {
 /// is the node where the parameters bind.
 fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'static str])> {
     Some(match label {
-        "entry" => (&["cfg_edge", "rebound_at", "empty_at"], &[]),
+        // The entry of a closure body (stage F11): its parameters and its
+        // `ByMove` captures bind, as the parameters of a function.
+        "entry" | "closure entry" => (&["cfg_edge", "rebound_at", "empty_at"], &[]),
         // `Live` of the temporary that the value of an assignment starts
         // with binds the `N` variables of the variant steps of the target
         // (stage F8d, `docs/ir.md` 6.3).
@@ -2716,4 +2718,164 @@ fn the_components_of_the_fact_oracle_have_the_facts_of_the_checker() {
     }
     assert!(checked > 100, "only {checked} components");
     assert!(bad.is_empty(), "facts that differ: {bad:#?}");
+}
+
+// -------------------------------------------------------------- closures
+
+/// The options of the `ir` pipeline with the groups A, B and C on (stage
+/// F11: group C stays off by default).
+fn abc() -> Options {
+    Options {
+        facts: weft_sema::FactGen::Ir,
+        ir_groups: weft_sema::Groups::parse("ABC").unwrap_or(weft_sema::Groups::NONE),
+        ..Options::default()
+    }
+}
+
+/// The nodes with label `label` that have the fact `(v, n)` in `rel`.
+fn var_at(rel: &[(VarId, NodeId)], f: &FnFacts, v: VarId, label: &str) -> usize {
+    rel.iter()
+        .filter(|(x, n)| *x == v && f.node(*n).label == label)
+        .count()
+}
+
+/// The display texts of the places that the nodes with label `label` change.
+fn changed_at(f: &FnFacts, label: &str) -> BTreeSet<String> {
+    f.mutates_at
+        .iter()
+        .filter(|(n, _)| f.node(*n).label == label)
+        .map(|(_, p)| f.place(*p).display.clone())
+        .collect()
+}
+
+const CLOSURES: &str = "\
+struct E { hp: i32 }
+struct W { items: Vec<u64> }
+fn grow(w: &W) -> &u64 in w.items[] / mut(w.items) { w.items.push(1); &w.items[0] }
+fn mk() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn counter() -> u64 {
+    let count = 0
+    let f = || count += 1
+    f()
+    count
+}
+fn by_ref() {
+    let v = mk()
+    let show = || print(v.len())
+    show()
+}
+fn kept_ref(d: &E) {
+    let r = d
+    let g = || print(r.hp)
+    g()
+}
+fn refresh(w: &W) / mut(w.items) {
+    let r = &w.items[0]
+    let h = || { r = grow(w) }
+    h()
+    print(r)
+}
+fn nested(d: &E) {
+    let r = d
+    let g = || print(r.hp)
+    let f = || g()
+    f()
+}
+fn main() {}
+";
+
+#[test]
+fn a_call_of_a_closure_that_writes_a_kept_counter_changes_the_counter() {
+    // `docs/ir.md` 6.7: σ maps `Capture(k)` of a `Kept` field to the root
+    // of the variable of the maker (the shared cell). So the call is a
+    // write of `count` (`mutates_at`), as a task that runs the closure
+    // writes it (W0405 with the tasks of stage F18).
+    let f = ir_facts_with(CLOSURES, abc(), "counter");
+    assert!(
+        changed_at(&f, "call").contains("count"),
+        "{:?}",
+        changed_at(&f, "call")
+    );
+    // The closure body writes the place of the maker too (instantiated).
+    let entries = nodes_labelled(&f, "closure entry");
+    assert_eq!(entries.len(), 1);
+    let first = entries[0];
+    assert!(f
+        .mutates_at
+        .iter()
+        .any(|(n, p)| n.0 > first.0 && f.place(*p).display == "count"));
+}
+
+#[test]
+fn a_closure_that_captures_by_reference_points_into_the_cell_of_the_variable() {
+    // `docs/ir.md` 6.3: the cell root `v (cell)` is owned by `C(v)`, which
+    // only the end of `v` ends. The closure value points into it, not into
+    // the value root of `v`.
+    let f = ir_facts_with(CLOSURES, abc(), "by_ref");
+    let show = var_named(&f, "show");
+    assert_eq!(points(&f, show), BTreeSet::from(["v (cell)".to_string()]));
+    let cell = var_named(&f, "v (cell)");
+    let owned: Vec<String> = f
+        .owner
+        .iter()
+        .filter(|(_, v)| *v == cell)
+        .map(|(r, _)| f.place(*r).display.clone())
+        .collect();
+    assert_eq!(owned, vec!["v (cell)".to_string()]);
+    assert!(f.scope_end.iter().any(|(v, _)| *v == cell));
+    // The call uses `v` (part `uses`): it reads the value of `v` now.
+    let v = var_named(&f, "v");
+    assert_eq!(var_at(&f.uses, &f, v, "call"), 1);
+}
+
+#[test]
+fn a_kept_capture_of_an_instantiated_closure_is_the_variable_of_the_maker() {
+    // `docs/ir.md` 6.5: in the facts of the closure body, `env.r` is the
+    // place of `r` of the maker, and its value is the value of `r`: the
+    // read of `r.hp` reads `d.hp` and uses `r`.
+    let f = ir_facts_with(CLOSURES, abc(), "kept_ref");
+    let entry = nodes_labelled(&f, "closure entry")[0];
+    let r = var_named(&f, "r");
+    assert!(f.uses.iter().any(|(v, n)| *v == r && n.0 > entry.0));
+    let read: BTreeSet<String> = f
+        .reads_at
+        .iter()
+        .filter(|(n, _)| n.0 > entry.0)
+        .map(|(_, p)| f.place(*p).display.clone())
+        .collect();
+    assert!(read.contains("d.hp"), "{read:?}");
+}
+
+#[test]
+fn a_closure_that_rebinds_a_capture_on_each_path_rebinds_it_at_ret() {
+    // Part `rebinds` (F3-11): `r` gets its new value at the `Ret` node of
+    // the call, after the change of `w.items` at `Main`, and it points into
+    // the result of `grow` (`w.items[]`).
+    let f = ir_facts_with(CLOSURES, abc(), "refresh");
+    let r = var_named(&f, "r");
+    assert_eq!(var_at(&f.rebound_at, &f, r, "call ret"), 1);
+    assert!(
+        changed_at(&f, "call").contains("w.items"),
+        "{:?}",
+        changed_at(&f, "call")
+    );
+    assert!(points(&f, r).contains("w.items[]"), "{:?}", points(&f, r));
+}
+
+#[test]
+fn a_closure_that_runs_a_capture_applies_the_value_of_the_capture() {
+    // Part `runs` (V103): `f` runs `g`, its capture. At the call of `f` the
+    // summary of the value of `g` there applies: it uses `r`.
+    let f = ir_facts_with(CLOSURES, abc(), "nested");
+    let r = var_named(&f, "r");
+    let g = var_named(&f, "g");
+    let calls = nodes_labelled(&f, "call");
+    // The call of `f` is the last call of the body of `nested`.
+    let main_call = calls
+        .iter()
+        .copied()
+        .filter(|n| f.uses.iter().any(|(v, x)| *v == g && x == n))
+        .min()
+        .unwrap_or_else(|| panic!("no call uses `g`"));
+    assert!(f.uses.contains(&(r, main_call)));
 }

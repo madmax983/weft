@@ -126,6 +126,56 @@ pub fn params(
     Ok(out)
 }
 
+/// The places of the parameters of closure body `body` after the
+/// environment, and their values at the entry.
+///
+/// A reference parameter points
+/// into its `Param` root, a by-value parameter that can hold references into
+/// a `Param` root of its own, as for a function with no stated place.
+///
+/// # Errors
+///
+/// The errors of α for the root of a by-value parameter.
+pub fn closure_params(
+    p: &Program,
+    tys: &mut TyTable,
+    facts: &mut FnFacts,
+    roots: &mut Roots,
+    body: BodyId,
+) -> Result<Params, AlphaError> {
+    let Some(b) = p.bodies.get(body.index()) else {
+        return Err(AlphaError::BadPlace(format!("no body b{}", body.0)));
+    };
+    let mut out = Params::default();
+    for (i, &l) in b.params.iter().enumerate().skip(1) {
+        let i32 = u32::try_from(i).unwrap_or(u32::MAX);
+        let d = b
+            .locals
+            .get(l.index())
+            .ok_or_else(|| AlphaError::BadPlace(format!("no parameter {i}")))?;
+        let name = d.name.clone().unwrap_or_else(|| format!("parameter {i}"));
+        let (base, refs) = if is_ref(tys, d.ty) {
+            let r = roots.param(facts, body, i32, &name);
+            (vec![r], vec![r])
+        } else {
+            let r = roots.local(p, tys, facts, body, l)?;
+            let fnv = matches!(tys.try_get(d.ty), Some(Ty::Fn(_)));
+            if !fnv && ir_props(tys, d.ty).holds_refs {
+                let q = roots.param(facts, body, i32, &name);
+                (vec![r, q], vec![q])
+            } else {
+                (vec![r], Vec::new())
+            }
+        };
+        out.bases.push(base);
+        let mut v = AbsVal::of_type(d.props.linear);
+        v.refs = refs.into_iter().collect();
+        v.uniq = d.props.uniq;
+        out.entry.push((l, Tree::leaf(v)));
+    }
+    Ok(out)
+}
+
 /// The state at the entry of a body whose parameters have the values
 /// `entry`.
 ///
@@ -176,7 +226,12 @@ fn held_refs(
                     out.extend(base.iter().skip(1).copied());
                 }
             }
-            Some(Role::Group | Role::Frame(_) | Role::Caller) | None => {}
+            Some(Role::Capture(b, k)) => out.push(roots.capture_held_of(p, facts, b, k)),
+            Some(Role::CaptureHeld(b, k) | Role::CaptureDeep(b, k)) => {
+                let h = roots.capture_deep_of(p, facts, b, k);
+                out.push(facts.wildcard(h));
+            }
+            Some(Role::Group | Role::Frame(_) | Role::Caller | Role::Cell(_)) | None => {}
         }
     }
     out.sort();

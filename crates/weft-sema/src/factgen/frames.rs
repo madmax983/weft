@@ -115,7 +115,7 @@ pub fn resolve(p: &Program, tys: &TyTable, env: CapEnvId, effect: &str, value: b
         {
             // The handled body that opens the environment names its handler.
             // A closure environment holds a captured capability: the closure
-            // can run where the analysis cannot see (stage F11).
+            // can run where the analysis cannot see (stage F14).
             let handler = p.bodies.iter().find_map(|b| match b.kind {
                 BodyKind::Handled(h) if b.cap_env == id => Some(h),
                 _ => None,

@@ -20,14 +20,20 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use weft_facts::PlaceId;
-use weft_ir::{BodyId, FnId, LocalId, SpawnId, TyId};
+use weft_ir::{BodyId, ClosureId, FnId, LocalId, SpawnId, TyId};
 
-/// A function value that a value can be (stage F3 knows items only; the
-/// closures and the function parameters come with stages F11 and F12).
+/// A function value that a value can be (stage F3 knows items; stage F11
+/// adds the closures of the component; the function parameters come with
+/// stage F12).
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FnVal {
     /// A function item with its type arguments.
     Item(FnId, Vec<TyId>),
+    /// The closure of a literal of the component. Its environment is in the
+    /// value too: the cell roots of its `ByRef` captures and what its
+    /// `ByMove` captures hold (`docs/ir.md` 6.6); a `Kept` capture shares
+    /// the cell of the variable of the maker, so a call reads the variable.
+    Closure(ClosureId),
     /// A value that the analysis does not know.
     Unknown,
 }

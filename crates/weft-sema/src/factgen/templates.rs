@@ -81,6 +81,18 @@ pub struct Em<'a> {
     /// run node of a statement (an `UnwindValue` with an `on abort`
     /// function).
     pub at: (weft_ir::BlockId, u32),
+    /// The state before each `Return` of the body: the summary of a closure
+    /// reads the values that leave it (`crate::analysis::summarize::closure`).
+    pub returns: Vec<State>,
+    /// The aborts (a failure, an `assert`) of the summaries that the body
+    /// applies at its calls of function values: the summary of the body
+    /// gets them.
+    pub aborts: std::collections::BTreeSet<crate::analysis::summary::Abort>,
+    /// With `Some`, the join of the states before each terminator and before
+    /// each closure literal of the body: the values that a closure of the
+    /// body can see when it runs (the instantiation of its facts,
+    /// `docs/ir.md` 6.5).
+    pub union: Option<State>,
 }
 
 /// References that a node puts into a place that a caller keeps: behind a
@@ -213,12 +225,67 @@ impl Em<'_> {
     /// variable (a move of a whole value that does not read its place
     /// fields).
     fn vars_with(&self, place: &Place, unset: bool) -> Result<Vec<VarId>, AlphaError> {
-        let k = self.key(place.local)?;
-        let mut out: Vec<VarId> = if self.skip_s == Some(k) {
-            Vec::new()
+        self.vars_in(self.body, place, unset)
+    }
+
+    /// The variable of the base of `place` of body `body`: `S` of its local,
+    /// or for a capture of a closure body the variable of the capture (`E`
+    /// of a `ByMove` capture; none for a `ByRef` capture, a reference in the
+    /// environment; a `Kept` capture is the variable of the maker,
+    /// [`Em::vars_in`]).
+    fn base_var(&self, body: BodyId, place: &Place) -> Result<Option<VarId>, AlphaError> {
+        if let Some((_, k, mode)) = super::alpha::env_capture(self.p, body, place) {
+            return Ok(match mode {
+                weft_ir::CaptureMode::ByMove => self.vars.get(&VarKey::E(body, k)),
+                _ => None,
+            });
+        }
+        let k = transfer::key(self.p, body, place.local)?;
+        Ok(if self.skip_s == Some(k) {
+            None
         } else {
-            self.s_var(k).into_iter().collect()
-        };
+            self.s_var(k)
+        })
+    }
+
+    /// The variables `v(q)` of `place` of body `body` (a body of the
+    /// component: the maker of a closure for the source of a capture). A
+    /// `Kept` capture of a closure body is the variable of its source in
+    /// the maker.
+    fn vars_in(&self, body: BodyId, place: &Place, unset: bool) -> Result<Vec<VarId>, AlphaError> {
+        if let Some((c, k, weft_ir::CaptureMode::Kept)) =
+            super::alpha::env_capture(self.p, body, place)
+        {
+            let Some(src) = self.p.closures.get(c.index()).and_then(|d| {
+                d.captures
+                    .get(k as usize)
+                    .map(|x| (d.maker, x.source.clone()))
+            }) else {
+                return Ok(Vec::new());
+            };
+            // The rest of the place below the capture, on the source.
+            let mut q = src.1;
+            q.proj.extend(place.proj.iter().skip(1).cloned());
+            return self.vars_in(src.0, &q, unset);
+        }
+        // A place through a `ByRef` capture is a place of its variable.
+        if let Some((c, k, weft_ir::CaptureMode::ByRef)) =
+            super::alpha::env_capture(self.p, body, place)
+        {
+            if place.proj.get(1) == Some(&Proj::Deref(weft_ir::DerefKind::Ref)) {
+                let src = self.p.closures.get(c.index()).and_then(|d| {
+                    d.captures
+                        .get(k as usize)
+                        .map(|x| (d.maker, x.source.clone()))
+                });
+                if let Some((maker, mut q)) = src {
+                    q.proj.extend(place.proj.iter().skip(2).cloned());
+                    return self.vars_in(maker, &q, unset);
+                }
+            }
+        }
+        let k = transfer::key(self.p, body, place.local)?;
+        let mut out: Vec<VarId> = self.base_var(body, place)?.into_iter().collect();
         let prefix = move_prefix(place);
         // A place field of a boxed value is a path through `Deref(Box)`
         // (`docs/ir.md` 5.8): a `U` variable compares with the owned path.
@@ -234,7 +301,7 @@ impl Em<'_> {
         }
         for pr in &place.proj {
             if let Proj::Index(i) = pr {
-                out.extend(self.s_var(self.key(*i)?));
+                out.extend(self.s_var(transfer::key(self.p, body, *i)?));
             }
         }
         out.sort();
@@ -656,6 +723,27 @@ fn copied_refs(em: &mut Em<'_>, q: &Place, al: &Alpha, a: &mut Access) -> R {
 /// value can (a part that moved before holds nothing).
 fn moved(em: &mut Em<'_>, n: NodeId, st: &State, q: &Place, al: &Alpha) -> R {
     let k = em.key(q.local)?;
+    // A move of a capture of the environment moves its variable `E`: the
+    // other captures are apart.
+    if super::alpha::env_capture(em.p, em.body, q).is_some() {
+        let Some(s) = em.base_var(em.body, q)? else {
+            return Ok(());
+        };
+        em.facts.moved_at.push((s, n));
+        if q.proj.len() > 1 {
+            em.facts
+                .moved_part
+                .extend(al.places.iter().map(|&m| (m, n)));
+            // Another part of the capture can still hold a linear value.
+            let t = super::alpha::env_capture(em.p, em.body, q)
+                .and_then(|(c, ck, _)| super::alpha::capture_ty(em.p, em.tys, c, ck));
+            let rest = q.proj.get(1..).unwrap_or(&[]);
+            if t.is_some_and(|t| rest_linear(em.tys, t, rest)) {
+                em.facts.rest_linear.push((s, n));
+            }
+        }
+        return Ok(());
+    }
     let Some(s) = em.s_var(k) else {
         return Ok(());
     };
@@ -872,11 +960,20 @@ pub fn assign(
     em.facts.uses.extend(named.into_iter().map(|v| (v, n)));
     let body = em.body;
     let v = transfer::rvalue(&mut em.cx(), body, st, rv)?;
-    let dest = transfer::move_path(em.p, body, place)?;
+    let dest = match transfer::move_path(em.p, body, place)? {
+        Some(d) => Some(d),
+        None => transfer::kept_whole(&mut em.cx(), body, st, place)?.map(|k| (k, Vec::new())),
+    };
+    // A `Kept` capture is the cell of a variable of the maker: a write
+    // through the closure is a write of a place that the body does not own.
+    let kept = matches!(
+        super::alpha::env_capture(em.p, body, place),
+        Some((_, _, weft_ir::CaptureMode::Kept))
+    );
     match &dest {
         Some((k, path)) if path.is_empty() => whole(em, n, st, *k, &v),
         Some((k, path)) => part(em, n, st, *k, place, path, &v)?,
-        None if !place.has_deref() => element(em, n, st, place, &v)?,
+        None if !place.has_deref() && !kept => element(em, n, st, place, &v)?,
         None => through(em, n, st, place, &v)?,
     }
     if let Some(d) = pair {
@@ -969,6 +1066,28 @@ fn part(
     path: &[PathStep],
     v: &Tree,
 ) -> R {
+    // A new value of a whole `ByMove` capture of a closure body: its `E`
+    // variable gets a new value.
+    if let Some((_, ck, weft_ir::CaptureMode::ByMove)) =
+        super::alpha::env_capture(em.p, em.body, place)
+    {
+        if path.len() == 1 {
+            if let Some(e) = em.vars.get(&VarKey::E(em.body, ck)) {
+                let flat = v.flat();
+                em.facts.rebound_at.push((e, n));
+                if flat.empty {
+                    em.facts.empty_at.push((e, n));
+                }
+                let refs: Vec<PlaceId> = flat.refs.into_iter().collect();
+                em.hold(None, e, &refs);
+            }
+            let al = em.alpha(st, place)?;
+            em.facts
+                .mutates_at
+                .extend(al.places.iter().map(|&m| (n, m)));
+            return Ok(());
+        }
+    }
     let s = em.s_var(k);
     if let Some(s) = s {
         em.facts.uses.push((s, n));
@@ -1879,10 +1998,18 @@ fn via_receiver(
 /// destination of an `Assign` ([`assign`]).
 fn bind_dest(em: &mut Em<'_>, n: NodeId, st: &State, dest: &Place, v: &Tree) -> R {
     let body = em.body;
-    match transfer::move_path(em.p, body, dest)? {
+    let target = match transfer::move_path(em.p, body, dest)? {
+        Some(d) => Some(d),
+        None => transfer::kept_whole(&mut em.cx(), body, st, dest)?.map(|k| (k, Vec::new())),
+    };
+    let kept = matches!(
+        super::alpha::env_capture(em.p, body, dest),
+        Some((_, _, weft_ir::CaptureMode::Kept))
+    );
+    match target {
         Some((k, path)) if path.is_empty() => whole(em, n, st, k, v),
         Some((k, path)) => part(em, n, st, k, dest, &path, v)?,
-        None if !dest.has_deref() => element(em, n, st, dest, v)?,
+        None if !dest.has_deref() && !kept => element(em, n, st, dest, v)?,
         None => through(em, n, st, dest, v)?,
     }
     place_field(em, st, n, dest, v)
@@ -1914,14 +2041,20 @@ pub fn call(
     t: &TermKind,
     origin: weft_ir::Span,
 ) -> R {
-    let TermKind::Call {
-        callee: weft_ir::Callee::Fn(f, targs),
-        args,
-        dest,
-        ..
-    } = t
-    else {
-        return Err(AlphaError::Later("a call of a function value (stage F12)"));
+    let (f, targs, args, dest) = match t {
+        TermKind::Call {
+            callee: weft_ir::Callee::Fn(f, targs),
+            args,
+            dest,
+            ..
+        } => (f, targs, args, dest),
+        TermKind::Call {
+            callee: weft_ir::Callee::Value(v),
+            args,
+            dest,
+            ..
+        } => return call_value(em, nodes, st, block, v, args, dest, origin),
+        _ => return Err(AlphaError::Later("a call of a function value (stage F12)")),
     };
     let body = em.body;
     let out = transfer::call_out(&mut em.cx(), body, block, st, *f, targs, args, dest)?;
@@ -2054,6 +2187,183 @@ pub fn call(
     for &a in &nodes.aborts {
         em.facts.scope_end.extend(frame.map(|v| (v, a)));
         em.facts.unwound_at.extend(drops.iter().map(|&v| (v, a)));
+    }
+    Ok(())
+}
+
+/// A `Call` of a function value (stage F11): its nodes `Main`, `Ret` and
+/// `FrameEnd`, with the summary of each value that the callee can be
+/// (`crate::analysis::transfer::value_out`, `docs/ir.md` 6.7).
+///
+/// - `Main`: the callee and the arguments; a callee that holds a `once`
+///   value moves (`props.once`: also a copy of the local moves it, W0502);
+///   the parts of each summary that act at the call
+///   (`crate::analysis::apply::main`); the variable of each `Kept` and
+///   `ByRef` capture that the closure uses (part `uses`, RR7), and the move
+///   of each `once` value that the closure runs through a capture.
+/// - `Ret`: the result binds to `dest`; the values that the closure puts
+///   into places of the caller (a weak definition); the new value of each
+///   capture that it rebinds on each path (part `rebinds`, F3-11); a second
+///   run of a capture that the closure runs more than once.
+/// - `FrameEnd`: the callee frame root ends.
+///
+/// # Errors
+///
+/// Returns [`AlphaError::Later`] for a value that the analysis does not
+/// know (stage F12), and the errors of α.
+#[allow(clippy::too_many_arguments)]
+fn call_value(
+    em: &mut Em<'_>,
+    nodes: &CallNodes,
+    st: &State,
+    block: weft_ir::BlockId,
+    callee: &Operand,
+    args: &[Operand],
+    dest: &Place,
+    origin: weft_ir::Span,
+) -> R {
+    let body = em.body;
+    let out = transfer::value_out(&mut em.cx(), body, block, st, callee, args, dest)?;
+    let main = nodes.main;
+    let at = span(origin);
+    operand_moves(em, main, st, callee, false, true)?;
+    if let Operand::Copy(q) | Operand::Move(q) = callee {
+        if transfer::once_source(em.p, body, q) {
+            if let Some(v) = em.base_var(body, q)? {
+                em.facts.moved_at.push((v, main));
+            }
+        }
+    }
+    let mut spans = Vec::new();
+    let mut bases = Vec::new();
+    for op in args {
+        operand_moves(em, main, st, op, false, true)?;
+        // The callee can read through the argument (hole H3).
+        let v = transfer::operand(&mut em.cx(), body, st, op)?;
+        let refs = named_refs(em, v.flat().refs);
+        deep_uses(em, main, st, op, &refs)?;
+        spans.push(operand_span(em, op, at));
+        bases.push(match op {
+            Operand::Copy(q) | Operand::Move(q) => em.alpha(st, q)?.places,
+            Operand::Const(_) => Vec::new(),
+        });
+    }
+    let mut abort = false;
+    let mut frames = Vec::new();
+    for app in &out.apps {
+        let n_runs = if app.again {
+            vec![Some(main), nodes.ret]
+        } else {
+            vec![Some(main)]
+        };
+        for n in n_runs.into_iter().flatten() {
+            let site = crate::analysis::apply::Site {
+                callee: &app.name,
+                spans: spans.clone(),
+                bases: bases.clone(),
+            };
+            let changed = crate::analysis::apply::main(
+                &mut em.cx(),
+                n,
+                &app.summary,
+                &app.sigma,
+                &site,
+                app.kind,
+            )?;
+            let places: Vec<PlaceId> = changed.iter().map(|(q, _)| *q).collect();
+            gets_linear(em, n, st, &places);
+            for (mb, src) in &app.uses {
+                let vs = em.vars_in(*mb, src, true)?;
+                em.facts.uses.extend(vs.into_iter().map(|v| (v, n)));
+            }
+            for (mb, src) in &app.once {
+                if let Some(v) = em.base_var(*mb, src)? {
+                    em.facts.moved_at.push((v, n));
+                }
+            }
+        }
+        abort |= app.summary.can_abort();
+        em.aborts.extend(
+            app.summary
+                .aborts
+                .iter()
+                .filter(|a| {
+                    matches!(
+                        a,
+                        crate::analysis::summary::Abort::Raises
+                            | crate::analysis::summary::Abort::Assert
+                    )
+                })
+                .cloned(),
+        );
+        if app.sigma.frame.is_some() {
+            let v = em.facts.add_var(weft_facts::VarInfo::plain(
+                "a local of the closure".to_string(),
+                weft_facts::VarKind::Temp,
+                at,
+                String::new(),
+            ));
+            if let Some(r) = app.sigma.frame {
+                em.facts.owner.push((r, v));
+            }
+            em.facts.rebound_at.push((v, main));
+            frames.push(v);
+        }
+    }
+    if nodes.may_abort && abort {
+        em.facts.may_abort.push(main);
+    }
+    if let Some(r) = nodes.ret {
+        held_refs(em, r, st, args)?;
+        bind_dest(em, r, st, dest, &out.ret)?;
+        for app in &out.apps {
+            for (q, refs) in &app.stores {
+                store(em, r, *q, refs, at, true);
+            }
+            for (k, v) in &app.rebinds {
+                whole(em, r, st, *k, v);
+            }
+        }
+    }
+    for &v in &frames {
+        if let Some(fe) = nodes.frame_end {
+            em.facts.scope_end.push((v, fe));
+        }
+        for &a in &nodes.aborts {
+            em.facts.scope_end.push((v, a));
+        }
+    }
+    Ok(())
+}
+
+/// The entry node `n` of a closure body: the parameters bind as in
+/// [`entry`], and the `E` variable of each `ByMove` capture binds to its
+/// value in the environment `env` (`docs/ir.md` 6.5).
+///
+/// # Errors
+///
+/// The errors of [`entry`].
+pub fn closure_entry(em: &mut Em<'_>, n: NodeId, params: &[(LocalId, Tree)], env: &Tree) -> R {
+    entry(em, n, params)?;
+    let Some((_, decl)) = em.p.closure_of(em.body) else {
+        return Ok(());
+    };
+    for (k, cap) in decl.captures.iter().enumerate() {
+        if cap.mode != weft_ir::CaptureMode::ByMove {
+            continue;
+        }
+        let k = u32::try_from(k).unwrap_or(u32::MAX);
+        let Some(e) = em.vars.get(&VarKey::E(em.body, k)) else {
+            continue;
+        };
+        let v = env.get(&[PathStep::Field(k)]).flat();
+        em.facts.rebound_at.push((e, n));
+        if v.empty {
+            em.facts.empty_at.push((e, n));
+        }
+        let refs: Vec<PlaceId> = v.refs.into_iter().collect();
+        let f = kernel::copy_ref(&[e], &refs);
+        em.facts.points_into.extend(f.points_into);
     }
     Ok(())
 }

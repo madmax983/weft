@@ -3,9 +3,10 @@
 //!
 //! The analysis of a body reads the summaries of the functions that it
 //! calls. [`infer`] links each function body to each function body whose
-//! summary it reads (a `Call` of a function item, and an `on abort` function
-//! of an `UnwindValue`; stage F11 and later add closures, clauses and
-//! tasks), and finds the strongly connected components
+//! summary it reads (a `Call` of a function item, an `on abort` function of
+//! an `UnwindValue`, and a function item as a value; a closure is a part of
+//! the component of its function, so its calls count too, stage F11; later
+//! stages add clauses and tasks), and finds the strongly connected components
 //! of that graph. It runs each component to a fixpoint, callees first:
 //!
 //! - the summary of each function of the component starts with its stated
@@ -361,11 +362,38 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                     }
                 }
                 // The unwinder runs an `on abort` function on a cleanup
-                // path: its summary applies there (stage F7).
+                // path: its summary applies there (stage F7). A function
+                // item as a value can run at a call of a function value
+                // (stage F11).
                 for s in &blk.stmts {
-                    if let StmtKind::UnwindValue(_, UnwindAction::OnAbort(g)) = &s.kind {
-                        if let Some(&j) = by_fn.get(g) {
-                            n.callees.insert(j);
+                    match &s.kind {
+                        StmtKind::UnwindValue(_, UnwindAction::OnAbort(g)) => {
+                            if let Some(&j) = by_fn.get(g) {
+                                n.callees.insert(j);
+                            }
+                        }
+                        StmtKind::Assign(_, rv) => {
+                            for op in super::transfer::rvalue_operands(rv) {
+                                if let weft_ir::Operand::Const(weft_ir::Const::Fn(g, _)) = op {
+                                    if let Some(&j) = by_fn.get(g) {
+                                        n.callees.insert(j);
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if let TermKind::Call { args, callee, .. } = &blk.term.kind {
+                    let value = match callee {
+                        Callee::Value(op) => Some(op),
+                        Callee::Fn(..) => None,
+                    };
+                    for op in args.iter().chain(value) {
+                        if let weft_ir::Operand::Const(weft_ir::Const::Fn(g, _)) = op {
+                            if let Some(&j) = by_fn.get(g) {
+                                n.callees.insert(j);
+                            }
                         }
                     }
                 }
@@ -435,18 +463,21 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                 };
                 out.rounds += 1;
                 let mut facts = factgen::seed(&old.facts);
-                let run = factgen::emit_component(a, built, &out.sums, n.index, n.body, &mut facts);
+                let run = factgen::emit_parts(a, built, &out.sums, n.index, n.body, &mut facts);
                 match run {
-                    Ok((diags, roots)) => {
+                    Ok(e) => {
+                        let diags = e.diags;
                         let body = super::summarize::summarize(
                             &built.program,
                             tys,
                             &out.sums,
                             &facts,
-                            &roots,
+                            &e.roots,
                             &n.comp,
                             n.body,
                             sig,
+                            e.entry_nodes,
+                            &e.aborts,
                         );
                         add_steps(&mut steps, &facts);
                         let new = if sig.declared {

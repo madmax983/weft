@@ -29,7 +29,11 @@
 //! inferred signatures. Stage F7 adds the abort destinations of each node
 //! ([`frames`]: no abort edge for a call that cannot abort, `assert` in the
 //! summaries), the `on abort` function at an `UnwindValue`, and W0118 as a
-//! query over the summaries ([`checks`]). A program with another construct gets
+//! query over the summaries ([`checks`]). Stage F11 adds the closures: each
+//! closure body is a component of the facts of its function, with a summary
+//! in the terms of its interface for the calls of the closure and facts that
+//! are instantiated with the places of the maker (`docs/ir.md` 6.5, 6.7). A
+//! program with another construct gets
 //! [`Unsupported`]: the old pipeline checks it. A test can give another emit
 //! ([`crate::analyze_with_emit`]), and [`preview`] gives the facts of one
 //! body.
@@ -288,7 +292,7 @@ fn check_supported(
     sums: &crate::analysis::Summaries,
     comp: &[weft_ir::BodyId],
 ) -> Result<(), Unsupported> {
-    use weft_ir::{BodyKind, Rvalue, StmtKind, TermKind};
+    use weft_ir::{BodyKind, StmtKind, TermKind};
     let no = |group: Group, reason: &str| {
         Err(Unsupported {
             group,
@@ -300,8 +304,9 @@ fn check_supported(
             continue;
         };
         match b.kind {
-            BodyKind::Fn(_) | BodyKind::Test(_) => {}
-            BodyKind::Closure(_) => return no(Group::C, "a closure (stage F11)"),
+            // A closure body is a component of its own in the facts of its
+            // function (stage F11).
+            BodyKind::Fn(_) | BodyKind::Test(_) | BodyKind::Closure(_) => {}
             BodyKind::Clause(..) | BodyKind::Handled(_) => {
                 return no(Group::D, "a handler (stage F14)");
             }
@@ -313,9 +318,6 @@ fn check_supported(
         for blk in &b.blocks {
             for s in &blk.stmts {
                 match &s.kind {
-                    StmtKind::Assign(_, Rvalue::Aggregate(weft_ir::AggKind::Closure(_), _)) => {
-                        return no(Group::C, "a closure (stage F11)");
-                    }
                     // The unwinder runs the `on abort` function: its summary
                     // applies at the node (stage F7).
                     StmtKind::UnwindValue(_, weft_ir::UnwindAction::OnAbort(f)) => {
@@ -335,6 +337,12 @@ fn check_supported(
                 | TermKind::Unreachable
                 | TermKind::Assert { .. }
                 | TermKind::IterNext { .. }
+                // A call of a function value: the analysis finds the values
+                // that it can be (stage F11), or the program is out of scope.
+                | TermKind::Call {
+                    callee: weft_ir::Callee::Value(_),
+                    ..
+                }
                 | TermKind::Perform {
                     cap: weft_ir::CapOperand::Row(_),
                     ..
@@ -346,9 +354,6 @@ fn check_supported(
                     if let Err(why) = sums.get(*f) {
                         return no(later_group(why), why);
                     }
-                }
-                TermKind::Call { .. } => {
-                    return no(Group::C, "a call of a function value (stage F12)");
                 }
                 TermKind::Perform { .. } => {
                     return no(
@@ -430,6 +435,14 @@ pub struct Emitted {
     pub entry_node: weft_facts::NodeId,
     /// The type table, with the types that the fact generator interned.
     pub tys: weft_ir::TyTable,
+    /// The number of nodes of the component of the entry body: the nodes of
+    /// the closure bodies come after them.
+    pub entry_nodes: usize,
+    /// The entry node of each closure body of the component.
+    pub closure_entries: Vec<(weft_ir::BodyId, weft_facts::NodeId)>,
+    /// The aborts (a failure, an `assert`) of the summaries that the entry
+    /// body applies at its calls of function values.
+    pub aborts: std::collections::BTreeSet<crate::analysis::summary::Abort>,
 }
 
 /// [`emit_component`], that gives all the tables of [`Emitted`].
@@ -454,6 +467,28 @@ pub fn emit_parts(
         .bodies
         .get(entry.index())
         .ok_or_else(|| unsupported(&alpha::AlphaError::BadPlace("no body".to_string())))?;
+    // The summary of each closure of the component, in the terms of its
+    // interface (`docs/ir.md` 6.7): an inner closure first, as a maker has a
+    // lower id than its closures.
+    let closures: Vec<weft_ir::BodyId> = comp
+        .iter()
+        .copied()
+        .filter(|&b| p.closure_of(b).is_some())
+        .collect();
+    let with_closures;
+    let sums: &crate::analysis::Summaries = if closures.is_empty() {
+        sums
+    } else {
+        let mut all = sums.clone();
+        for &cb in closures.iter().rev() {
+            let s = closure_summary(a, built, &all, cb)?;
+            if let Some((c, _)) = p.closure_of(cb) {
+                all.insert_closure(c, s);
+            }
+        }
+        with_closures = all;
+        &with_closures
+    };
     let vars = vars::Vars::build(p, &mut tys, facts, &comp);
     let mut roots = alpha::Roots::default();
     roots.set_field_places(&a.program);
@@ -521,17 +556,66 @@ pub fn emit_parts(
             cycles: &cycles,
             stored: Vec::new(),
             at: (weft_ir::BlockId(0), 0),
+            returns: Vec::new(),
+            aborts: std::collections::BTreeSet::new(),
+            union: (!closures.is_empty()).then(crate::analysis::State::new),
         };
         templates::entry(&mut em, entry_node, &params).map_err(|e| unsupported(&e))?;
         emit_blocks(&mut em, &table, &frames, &states, body).map_err(|e| unsupported(&e))?;
-        em.stored
+        (em.stored, em.aborts, em.union)
     };
+    let (mut stored, aborts, union) = stored;
+    // The facts of each closure body, instantiated (`docs/ir.md` 6.5): a
+    // `Kept` capture is the place of the variable of the maker, and the body
+    // starts with the values that the maker has where the closure can run.
+    let entry_nodes = facts.nodes.len();
+    let mut unions: std::collections::HashMap<weft_ir::BodyId, crate::analysis::State> =
+        std::collections::HashMap::new();
+    if let Some(u) = union {
+        unions.insert(entry, u);
+    }
+    let mut closure_entries = Vec::new();
+    for &cb in &closures {
+        let (n, st) = emit_closure(
+            &ClosureCx {
+                a,
+                p,
+                sums,
+                cycles: &cycles,
+                seed: p
+                    .closure_of(cb)
+                    .and_then(|(_, d)| unions.get(&d.maker))
+                    .cloned()
+                    .unwrap_or_default(),
+            },
+            &mut ClosureOut {
+                tys: &mut tys,
+                facts,
+                roots: &mut roots,
+                vars: &vars,
+                holders: &mut holders,
+                uniq: &mut uniq,
+                table: &mut table,
+                stored: &mut stored,
+            },
+            cb,
+        )
+        .map_err(|e| unsupported(&e))?;
+        closure_entries.push((cb, n));
+        unions.insert(cb, st);
+    }
     let parts = holders.finish(facts);
     let diags = stored_behind(p, &tys, facts, &roots, body, &stored);
-    // Each local with a root owns it.
+    // Each local with a root owns it, and the cell of a local that a closure
+    // captures `ByRef` is owned by `C` of the local.
     let owners: Vec<(PlaceId, weft_facts::VarId)> = roots
         .local_roots()
         .filter_map(|(k, r)| vars.get(&vars::VarKey::S(k.0, k.1)).map(|v| (r, v)))
+        .chain(
+            roots
+                .cell_roots()
+                .filter_map(|(k, r)| vars.get(&vars::VarKey::C(k.0, k.1)).map(|v| (r, v))),
+        )
         .collect();
     facts.owner.extend(owners);
     // A `@ uniq` value is not `many` (`once_var`, as in the old lowering):
@@ -551,7 +635,277 @@ pub fn emit_parts(
         parts,
         entry_node,
         tys,
+        entry_nodes,
+        closure_entries,
+        aborts,
     })
+}
+
+/// What the facts of a closure body read ([`emit_closure`]).
+struct ClosureCx<'a> {
+    /// The analysis.
+    a: &'a Analysis,
+    /// The program.
+    p: &'a weft_ir::Program,
+    /// The summaries, with those of the closures of the component.
+    sums: &'a crate::analysis::Summaries,
+    /// The blocks of the component that are in a cycle of the CFG.
+    cycles: &'a crate::analysis::widen::Cycles,
+    /// The values of the maker where the closure can run: the join of its
+    /// states before each terminator and before each closure literal.
+    seed: crate::analysis::State,
+}
+
+/// What the facts of a closure body write into ([`emit_closure`]): the
+/// tables of the component.
+struct ClosureOut<'a, 'b> {
+    /// The types.
+    tys: &'b mut weft_ir::TyTable,
+    /// The facts of the component.
+    facts: &'b mut FnFacts,
+    /// The roots of the component.
+    roots: &'b mut alpha::Roots,
+    /// The variables of the component.
+    vars: &'a vars::Vars,
+    /// The versions of the parts.
+    holders: &'b mut holders::Holders,
+    /// The `@ uniq` mode of each variable.
+    uniq: &'b mut std::collections::BTreeMap<weft_facts::VarId, bool>,
+    /// The nodes of the component.
+    table: &'b mut nodes::NodeTable,
+    /// The references that the bodies put behind a reference parameter.
+    stored: &'b mut Vec<templates::Stored>,
+}
+
+/// The value of the environment local of closure body `cb` at its entry
+/// (`docs/ir.md` 6.5).
+///
+/// With no `seed` (the summary of the closure, in the terms of its
+/// interface): a `ByRef` capture points into its `Capture` root, and a
+/// `ByMove` capture holds what its `CaptureHeld` root stands for. With the
+/// state `seed` of the maker (the instantiated facts): a `ByRef` capture
+/// points into the places of its source in the maker, and a `ByMove`
+/// capture holds the value of its source.
+///
+/// # Errors
+///
+/// The errors of α.
+fn env_value(
+    cx: &mut crate::analysis::Cx<'_>,
+    cb: weft_ir::BodyId,
+    seed: Option<&crate::analysis::State>,
+) -> Result<crate::analysis::Tree, alpha::AlphaError> {
+    use crate::analysis::{AbsVal, PathStep, Tree};
+    use weft_ir::CaptureMode;
+    let p = cx.p;
+    let Some((c, decl)) = p.closure_of(cb) else {
+        return Ok(Tree::none());
+    };
+    let mut t = Tree::leaf(AbsVal::plain());
+    for (k, cap) in decl.captures.iter().enumerate() {
+        let k32 = u32::try_from(k).unwrap_or(u32::MAX);
+        let v = match (cap.mode, seed) {
+            (CaptureMode::ByRef, None) => {
+                let name = alpha::capture_name(p, c, k32);
+                Tree::leaf(AbsVal::refs([cx.roots.capture(cx.facts, cb, k32, &name)]))
+            }
+            (CaptureMode::ByRef, Some(st)) => {
+                let a = crate::analysis::transfer::alpha(cx, decl.maker, st, &cap.source)?;
+                Tree::leaf(AbsVal::refs(a.places))
+            }
+            (CaptureMode::ByMove, None) => {
+                let props = alpha::capture_ty(p, cx.tys, c, k32)
+                    .map(|t| crate::props::ir_props(cx.tys, t))
+                    .unwrap_or_default();
+                let mut v = AbsVal::of_type(props.linear);
+                if props.holds_refs {
+                    v.refs
+                        .insert(cx.roots.capture_held_of(p, cx.facts, cb, k32));
+                }
+                Tree::leaf(v)
+            }
+            (CaptureMode::ByMove, Some(st)) => {
+                crate::analysis::transfer::place_value(cx, decl.maker, st, &cap.source)?
+            }
+            _ => continue,
+        };
+        t.kids.insert(PathStep::Field(k32), v);
+    }
+    Ok(t)
+}
+
+/// The summary of closure body `cb` in the terms of its interface
+/// (`docs/ir.md` 6.7): the facts of the body alone, with `Arg` roots for its
+/// captures and parameters, projected onto the interface
+/// (`crate::analysis::summarize::closure`).
+///
+/// # Errors
+///
+/// Returns [`Unsupported`] for a construct that the fact generator does not
+/// support yet in the body.
+fn closure_summary(
+    a: &Analysis,
+    built: &Built,
+    sums: &crate::analysis::Summaries,
+    cb: weft_ir::BodyId,
+) -> Result<crate::analysis::Summary, Unsupported> {
+    let p = &built.program;
+    let mut tys = built.tys.clone();
+    let mut facts = FnFacts::default();
+    let comp = [cb];
+    let vars = vars::Vars::build(p, &mut tys, &mut facts, &comp);
+    let mut roots = alpha::Roots::default();
+    roots.set_field_places(&a.program);
+    let frames = frames::Frames::of_body(p, &tys, sums, cb);
+    let body = p
+        .bodies
+        .get(cb.index())
+        .ok_or_else(|| unsupported(&alpha::AlphaError::BadPlace("no body".to_string())))?;
+    let sp = weft_facts::Span {
+        lo: body.origin.span.lo,
+        hi: body.origin.span.hi,
+    };
+    let en = facts.add_node(sp, "closure entry", String::new());
+    let mut table = nodes::NodeTable::default();
+    table.add_body(p, cb, &mut facts, &frames);
+    if let Some(first) = table.first(cb, body.entry, nodes::NORMAL) {
+        facts.cfg_edge.push((en, first));
+    }
+    let params = decls::closure_params(p, &mut tys, &mut facts, &mut roots, cb)
+        .map_err(|e| unsupported(&e))?;
+    let cycles = crate::analysis::widen::Cycles::of(p, &comp);
+    let (env, states) = {
+        let mut cx = crate::analysis::Cx {
+            p,
+            tys: &mut tys,
+            facts: &mut facts,
+            roots: &mut roots,
+            sums,
+            cycles: &cycles,
+        };
+        let env = env_value(&mut cx, cb, None).map_err(|e| unsupported(&e))?;
+        let mut init = decls::entry_state(p, cb, &params.entry).map_err(|e| unsupported(&e))?;
+        if let Some(&e) = body.params.first() {
+            init.write((cb, e), &[], env.clone());
+        }
+        let states = crate::analysis::run(&mut cx, cb, init).map_err(|e| unsupported(&e))?;
+        (env, states)
+    };
+    let mut uniq = std::collections::BTreeMap::new();
+    let mut holders = holders::Holders::new(vars.holder_parts());
+    let (returns, aborts) = {
+        let mut em = templates::Em {
+            p,
+            sema: &a.program,
+            tys: &mut tys,
+            facts: &mut facts,
+            roots: &mut roots,
+            vars: &vars,
+            holders: &mut holders,
+            body: cb,
+            cleanup: false,
+            ret_places: None,
+            uniq: &mut uniq,
+            skip_s: None,
+            sums,
+            cycles: &cycles,
+            stored: Vec::new(),
+            at: (weft_ir::BlockId(0), 0),
+            returns: Vec::new(),
+            aborts: std::collections::BTreeSet::new(),
+            union: None,
+        };
+        templates::closure_entry(&mut em, en, &params.entry, &env).map_err(|e| unsupported(&e))?;
+        emit_blocks(&mut em, &table, &frames, &states, body).map_err(|e| unsupported(&e))?;
+        (
+            std::mem::take(&mut em.returns),
+            std::mem::take(&mut em.aborts),
+        )
+    };
+    Ok(crate::analysis::summarize::closure(
+        p, sums, &facts, &roots, cb, &returns, &aborts,
+    ))
+}
+
+/// The facts of closure body `cb`, instantiated (`docs/ir.md` 6.5): its
+/// nodes, from a node `closure entry` where its parameters and its captures
+/// bind, in the tables of the component. Its `Kept` captures are the places
+/// of the variables of the maker (`alpha::Roots::instantiate`), and the
+/// analysis starts from the state `seed` of the maker, so the facts see the
+/// aliases between the captures. Returns the entry node and the join of the
+/// states that a closure of the body can see.
+///
+/// # Errors
+///
+/// The errors of α and of the analysis.
+fn emit_closure(
+    cx: &ClosureCx<'_>,
+    out: &mut ClosureOut<'_, '_>,
+    cb: weft_ir::BodyId,
+) -> Result<(weft_facts::NodeId, crate::analysis::State), alpha::AlphaError> {
+    let p = cx.p;
+    out.roots.instantiate(cb);
+    let body = p
+        .bodies
+        .get(cb.index())
+        .ok_or_else(|| alpha::AlphaError::BadPlace("no body".to_string()))?;
+    let frames = frames::Frames::of_body(p, out.tys, cx.sums, cb);
+    let sp = weft_facts::Span {
+        lo: body.origin.span.lo,
+        hi: body.origin.span.hi,
+    };
+    let en = out.facts.add_node(sp, "closure entry", String::new());
+    out.table.add_body(p, cb, out.facts, &frames);
+    if let Some(first) = out.table.first(cb, body.entry, nodes::NORMAL) {
+        out.facts.cfg_edge.push((en, first));
+    }
+    let params = decls::closure_params(p, out.tys, out.facts, out.roots, cb)?;
+    let (env, states) = {
+        let mut acx = crate::analysis::Cx {
+            p,
+            tys: out.tys,
+            facts: out.facts,
+            roots: out.roots,
+            sums: cx.sums,
+            cycles: cx.cycles,
+        };
+        let env = env_value(&mut acx, cb, Some(&cx.seed))?;
+        let mut init = cx.seed.clone();
+        for (l, v) in &params.entry {
+            init.write(crate::analysis::transfer::key(p, cb, *l)?, &[], v.clone());
+        }
+        if let Some(&e) = body.params.first() {
+            init.write((cb, e), &[], env.clone());
+        }
+        let states = crate::analysis::run(&mut acx, cb, init)?;
+        (env, states)
+    };
+    let mut em = templates::Em {
+        p,
+        sema: &cx.a.program,
+        tys: out.tys,
+        facts: out.facts,
+        roots: out.roots,
+        vars: out.vars,
+        holders: out.holders,
+        body: cb,
+        cleanup: false,
+        ret_places: None,
+        uniq: out.uniq,
+        skip_s: None,
+        sums: cx.sums,
+        cycles: cx.cycles,
+        stored: Vec::new(),
+        at: (weft_ir::BlockId(0), 0),
+        returns: Vec::new(),
+        aborts: std::collections::BTreeSet::new(),
+        union: Some(crate::analysis::State::new()),
+    };
+    templates::closure_entry(&mut em, en, &params.entry, &env)?;
+    emit_blocks(&mut em, out.table, &frames, &states, body)?;
+    out.stored.append(&mut em.stored);
+    let union = em.union.take().unwrap_or_default();
+    Ok((en, union))
 }
 
 /// The facts of one component and the tables that map its IR to them
@@ -837,6 +1191,18 @@ fn emit_block(
             }
             _ => None,
         };
+        // A closure sees the values of the body when it runs: the state
+        // before its literal (`docs/ir.md` 6.5).
+        if let (
+            Some(u),
+            weft_ir::StmtKind::Assign(
+                _,
+                weft_ir::Rvalue::Aggregate(weft_ir::AggKind::Closure(_), _),
+            ),
+        ) = (em.union.as_mut(), &s.kind)
+        {
+            u.join(&st);
+        }
         if let Some(n) = table.get(key) {
             em.at = (block, at);
             em.holders.before(n, &st, em.facts);
@@ -854,9 +1220,15 @@ fn emit_block(
         phase,
         dest,
     };
+    if let Some(u) = em.union.as_mut() {
+        u.join(&st);
+    }
     let Some(n) = table.get(at(Phase::Main, dest)) else {
         return Ok(st);
     };
+    if matches!(blk.term.kind, weft_ir::TermKind::Return) && dest == NORMAL {
+        em.returns.push(st.clone());
+    }
     // The abort destinations of the terminator, and their `FrameEnd`
     // nodes (`docs/ir.md` 6.5).
     let dests = frames.dests(bid, block);

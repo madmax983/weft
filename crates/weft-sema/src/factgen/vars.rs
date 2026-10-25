@@ -12,6 +12,10 @@
 //! - `U(l.q)`: each place field path that can have no value (an `Uninit` of a
 //!   projected place).
 //! - `C(x)`: the cell of each local that a closure captures `ByRef`.
+//! - `E(c, k)`: each `ByMove` capture `k` of a closure body: the value in the
+//!   environment. It binds at the entry of the closure body, and a move of
+//!   the capture moves it (stage F11). The environment local has no `S`
+//!   variable: its captures are apart.
 //! - `D(n)`: the drop pair of each `Drop` statement: the old value of the
 //!   place behind a pointer. It binds at the `Drop` and ends at the `Assign`
 //!   after it (W0601 for a linear old value).
@@ -58,6 +62,9 @@ pub enum VarKey {
     U(BodyId, Place),
     /// `C(x)`: the cell of a local that a closure captures by reference.
     C(BodyId, LocalId),
+    /// `E(c, k)`: the value of `ByMove` capture `k` in the environment of
+    /// closure body `c`.
+    E(BodyId, u32),
     /// `D(n)`: the drop pair of the `Drop` statement `at` of a block.
     D(BodyId, BlockId, u32),
     /// `W(b, v)`: the test of variant `v` of the value at base place `b`.
@@ -433,6 +440,7 @@ impl Vars {
         }
         v.relocated(p, tys, facts, comp);
         v.cells(p, tys, facts, comp);
+        v.env_values(p, tys, facts, comp);
         for &bid in comp {
             v.drop_pairs(p, tys, facts, bid);
         }
@@ -849,6 +857,40 @@ impl Vars {
                     tys.show(d.ty),
                 );
                 self.add(facts, VarKey::C(ob, ol), info);
+            }
+        }
+    }
+
+    /// Adds the `E` variable of each `ByMove` capture of each closure body
+    /// of the component: the flags come from the type of the capture.
+    fn env_values(&mut self, p: &Program, tys: &mut TyTable, facts: &mut FnFacts, comp: &[BodyId]) {
+        for &bid in comp {
+            let Some((c, decl)) = p.closure_of(bid) else {
+                continue;
+            };
+            let origin = p
+                .bodies
+                .get(bid.index())
+                .map_or_else(weft_ir::Span::default, |b| b.origin.span);
+            for (k, cap) in decl.captures.iter().enumerate() {
+                if cap.mode != CaptureMode::ByMove {
+                    continue;
+                }
+                let k = u32::try_from(k).unwrap_or(u32::MAX);
+                let Some(t) = super::alpha::capture_ty(p, tys, c, k) else {
+                    continue;
+                };
+                let props = ir_props(tys, t);
+                let mut info = Self::plain(
+                    super::alpha::capture_name(p, c, k),
+                    span(origin),
+                    tys.show(t),
+                );
+                info.linear = props.linear;
+                info.has_on_abort = props.linear && props.on_abort;
+                info.once = props.once || is_task(tys, t);
+                info.nonportable = props.nonportable;
+                self.add(facts, VarKey::E(bid, k), info);
             }
         }
     }

@@ -3,16 +3,20 @@
 //! There is one function for each statement kind and for each terminator
 //! kind: `Switch`, `Goto`, `Return`, the terminators with no effect on the
 //! state, a `Call` of a function item, which applies the summary of the
-//! callee (`super::apply`, stage F5), and a `Perform` through the capability
-//! of a caller (`super::unknown`, stage F6). The other terminators that run
-//! another body give [`AlphaError::Later`]. A run node that changes a place
-//! of a local that can hold a linear value can put one there.
+//! callee (`super::apply`, stage F5), a `Perform` through the capability of
+//! a caller (`super::unknown`, stage F6), and a `Call` of a function value
+//! that the body knows: a closure of the component or an item (stage F11,
+//! [`value_out`]). The other terminators that run another body give
+//! [`AlphaError::Later`]. A run node that changes a place of a local that
+//! can hold a linear value can put one there.
 //!
 //! - `Ref(q)` gives `refs = α(q)` and the handle places of each `Deref(Rc)`
 //!   on `q`.
 //! - `Use(copy q)` gives the value at `q`, with the structure of its move
 //!   paths. `Use(move q)` gives it too, and then `q` has no value.
-//! - An aggregate gives the values of its operands as its parts.
+//! - An aggregate gives the values of its operands as its parts. A closure
+//!   aggregate gives the closure, the cell roots of its `ByRef` captures and
+//!   what its `ByMove` captures hold.
 //! - α of `Deref(Ref)` reads the state: the places that the reference points
 //!   into ([`held_at`]).
 
@@ -55,9 +59,13 @@ pub fn key(p: &Program, body: BodyId, l: LocalId) -> Result<Key, AlphaError> {
     alpha::owner_local(p, body, l)
 }
 
-/// The place as a move path: its local and its steps, if each projection is
-/// a field or a variant. `None` for a place through a dereference, an index,
-/// the elements or a split.
+/// The place as a move path: its local and its steps.
+///
+/// A place is a move path if each projection is a field or a variant. `None`
+/// for a place through a dereference, an index,
+/// the elements or a split, and for a place at or below a `Kept` capture of
+/// a closure body: it is the cell of a variable of the maker (`docs/ir.md`
+/// 5.1.7), not a part of the environment.
 ///
 /// # Errors
 ///
@@ -67,6 +75,14 @@ pub fn move_path(
     body: BodyId,
     place: &Place,
 ) -> Result<Option<(Key, Vec<PathStep>)>, AlphaError> {
+    if let Some((_, _, mode)) = alpha::env_capture(p, body, place) {
+        if !matches!(
+            mode,
+            weft_ir::CaptureMode::ByRef | weft_ir::CaptureMode::ByMove
+        ) {
+            return Ok(None);
+        }
+    }
     let k = key(p, body, place.local)?;
     let mut path = Vec::new();
     for pr in &place.proj {
@@ -77,6 +93,38 @@ pub fn move_path(
         }
     }
     Ok(Some((k, path)))
+}
+
+/// The variable of the maker that a whole `Kept` capture `place` names.
+///
+/// In an instantiated closure body (`docs/ir.md` 6.5) a new value of the
+/// capture is a new value of the variable (a strong update), as at an
+/// assignment of the variable in the maker.
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn kept_whole(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &State,
+    place: &Place,
+) -> Result<Option<Key>, AlphaError> {
+    if place.proj.len() != 1 || !cx.roots.is_instantiated(body) {
+        return Ok(None);
+    }
+    let Some((_, _, weft_ir::CaptureMode::Kept)) = alpha::env_capture(cx.p, body, place) else {
+        return Ok(None);
+    };
+    let a = alpha(cx, body, st, place)?;
+    Ok(match a.places.as_slice() {
+        [q] => cx
+            .roots
+            .path_of(cx.facts, *q)
+            .filter(|(_, path)| path.is_empty())
+            .map(|(k, _)| k),
+        _ => None,
+    })
 }
 
 /// The places that the references in the value at fact place `at` point
@@ -132,6 +180,23 @@ pub fn held_at(
         Some(Role::Frame(_)) => Err(AlphaError::Later(
             "a reference in a local of a callee (stage F14)",
         )),
+        // A reference in the value of a capture points into what the
+        // references of the capture point into (the summary of a closure,
+        // `docs/ir.md` 6.7), or into a value that the body stored there.
+        Some(Role::Capture(b, k)) => {
+            let mut out = vec![roots.capture_held_of(p, facts, b, k)];
+            out.extend(stored_at(facts, st, at));
+            Ok(out)
+        }
+        Some(Role::CaptureHeld(b, k) | Role::CaptureDeep(b, k)) => {
+            let h = roots.capture_deep_of(p, facts, b, k);
+            let mut out = vec![facts.wildcard(h)];
+            out.extend(stored_at(facts, st, at));
+            Ok(out)
+        }
+        // The cell of a variable holds no reference of its own: the value
+        // of the variable has them.
+        Some(Role::Cell(_)) => Ok(Vec::new()),
         // A reference in a place of a caller points into a place of a
         // caller.
         Some(Role::Caller) => {
@@ -280,6 +345,26 @@ pub fn place_value(
     if let Some((k, path)) = move_path(cx.p, body, place)? {
         return Ok(st.value(k, &path));
     }
+    // A `Kept` capture of an instantiated closure is the variable of the
+    // maker: its value in the state (the closure body runs with the values
+    // of the maker, `docs/ir.md` 6.5).
+    if let Some((_, _, weft_ir::CaptureMode::Kept)) = alpha::env_capture(cx.p, body, place) {
+        if cx.roots.is_instantiated(body) && !place.has_deref() {
+            let a = alpha(cx, body, st, place)?;
+            let paths: Option<Vec<(Key, Vec<PathStep>)>> = a
+                .places
+                .iter()
+                .map(|&q| cx.roots.path_of(cx.facts, q))
+                .collect();
+            if let Some(paths) = paths.filter(|ps| !ps.is_empty()) {
+                let mut v = AbsVal::none();
+                for (k, path) in paths {
+                    v.join(&st.value(k, &path).flat());
+                }
+                return Ok(Tree::leaf(v));
+            }
+        }
+    }
     let t = place_ty(cx, body, place)?;
     let props = ir_props(cx.tys, t);
     let mut v = AbsVal::of_type(props.linear);
@@ -352,8 +437,7 @@ fn is_enum(tys: &TyTable, t: TyId) -> bool {
 ///
 /// # Errors
 ///
-/// The errors of α, and [`AlphaError::Later`] for a closure aggregate
-/// (stage F11).
+/// The errors of α.
 pub fn rvalue(cx: &mut Cx<'_>, body: BodyId, st: &State, rv: &Rvalue) -> Result<Tree, AlphaError> {
     match rv {
         Rvalue::Use(op) => operand(cx, body, st, op),
@@ -475,8 +559,70 @@ fn aggregate(
             }
             Ok(Tree::leaf(v))
         }
-        AggKind::Closure(_) => Err(AlphaError::Later("a closure (stage F11)")),
+        AggKind::Closure(c) => closure_value(cx, body, *c, &parts),
     }
+}
+
+/// The value of a closure aggregate of closure `c` in body `body`, with the
+/// values `parts` of its operands (`docs/ir.md` 5.22, 6.6): the closure
+/// itself, the cell root of the variable of each `ByRef` capture (a move of
+/// the variable does not end the cell, O3-11), and what each `ByMove`
+/// capture holds. A `Kept` capture shares the cell of the variable: no
+/// reference points into it (V13), so it adds no place; a call reads the
+/// variable.
+///
+/// # Errors
+///
+/// Returns [`AlphaError::BadPlace`] for a closure that does not exist.
+fn closure_value(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    c: weft_ir::ClosureId,
+    parts: &[Tree],
+) -> Result<Tree, AlphaError> {
+    let p = cx.p;
+    let decl = p
+        .closures
+        .get(c.index())
+        .ok_or_else(|| AlphaError::BadPlace(format!("no closure c{}", c.0)))?;
+    let mut v = AbsVal::plain();
+    v.fns.insert(FnVal::Closure(c));
+    for (cap, part) in decl.captures.iter().zip(parts) {
+        match cap.mode {
+            weft_ir::CaptureMode::ByRef => {
+                let owner = if cap.source.proj.is_empty() {
+                    let k = key(p, body, cap.source.local)?;
+                    let env = p
+                        .bodies
+                        .get(k.0.index())
+                        .and_then(|b| b.locals.get(k.1.index()))
+                        .is_some_and(|d| d.kind == weft_ir::LocalKind::Env);
+                    (!env).then_some(k)
+                } else {
+                    None
+                };
+                match owner {
+                    Some(k) => {
+                        v.refs.insert(cx.roots.cell(p, cx.tys, cx.facts, k)?);
+                    }
+                    // A capture of a capture of the maker: the place that
+                    // the reference of the maker points into.
+                    None => v.refs.extend(part.flat().refs),
+                }
+            }
+            weft_ir::CaptureMode::ByMove => {
+                let f = part.flat();
+                v.refs.extend(f.refs);
+                v.caps.extend(f.caps);
+                v.tasks.extend(f.tasks);
+                v.linear |= f.linear;
+            }
+            weft_ir::CaptureMode::Kept | weft_ir::CaptureMode::Cap | weft_ir::CaptureMode::Kont => {
+            }
+        }
+    }
+    v.empty = !v.linear;
+    Ok(Tree::leaf(v))
 }
 
 /// The whole locals that rvalue `rv` moves into its value, with the steps
@@ -599,7 +745,10 @@ pub fn assign(
     rv: &Rvalue,
 ) -> Result<(), AlphaError> {
     let v = rvalue(cx, body, st, rv)?;
-    let dest = move_path(cx.p, body, place)?;
+    let dest = match move_path(cx.p, body, place)? {
+        Some(d) => Some(d),
+        None => kept_whole(cx, body, st, place)?.map(|k| (k, Vec::new())),
+    };
     let a = if dest.is_some() {
         None
     } else {
@@ -770,7 +919,12 @@ pub fn term(
             dest,
             ..
         } => call(cx, body, block, st, *f, targs, args, dest),
-        TermKind::Call { .. } => Err(AlphaError::Later("a call of a function value (stage F12)")),
+        TermKind::Call {
+            callee: weft_ir::Callee::Value(f),
+            args,
+            dest,
+            ..
+        } => call_value(cx, body, block, st, f, args, dest),
         TermKind::Perform {
             cap: weft_ir::CapOperand::Row(e),
             op,
@@ -921,6 +1075,433 @@ fn call(
     bind_result(cx, body, st, args, dest, out.ret)
 }
 
+/// The most closures that a run node applies through the captures that run
+/// each other (`f` runs `g`, which runs `h`): a deeper chain is a later
+/// stage (F12).
+const RUN_DEPTH: usize = 8;
+
+/// One summary that a run node of a function value applies (`docs/ir.md`
+/// 6.7): of a value that the callee can be, or of a value that such a
+/// closure runs through a capture (part `runs`).
+#[derive(Clone, Debug)]
+pub struct Applied {
+    /// The kind of the run node.
+    pub kind: super::apply::RunKind,
+    /// The name of the callee, for the diagnostics.
+    pub name: String,
+    /// σ of the run node.
+    pub sigma: super::apply::Sigma,
+    /// The summary.
+    pub summary: super::summary::Summary,
+    /// The value of the result, for a value of the callee itself.
+    pub ret: Option<Tree>,
+    /// The places that the run changes, with their callee root indexes.
+    pub muts: Vec<(PlaceId, u32)>,
+    /// The references that go into places of the caller (a weak update):
+    /// the part `stores` of an item, and the part `puts` of a closure.
+    pub stores: Vec<(PlaceId, Vec<PlaceId>)>,
+    /// The captured variables that the run gives a whole new value (part
+    /// `rebinds`): the key of the variable and its new value.
+    pub rebinds: Vec<(Key, Tree)>,
+    /// The variables that the run uses (part `uses`): the source of each
+    /// `Kept` and `ByRef` capture, in the body of its maker.
+    pub uses: Vec<(BodyId, Place)>,
+    /// The places of `once` values that the run moves: the source of a
+    /// capture that holds a `once` closure and that the run calls.
+    pub once: Vec<(BodyId, Place)>,
+    /// The run happens again at the `Ret` node (a capture that the closure
+    /// runs `Many` times, OR3).
+    pub again: bool,
+}
+
+/// What a `Call` of a function value gives: the summaries that it applies
+/// and the value of the result.
+#[derive(Clone, Debug)]
+pub struct ValueOut {
+    /// The summaries, the values of the callee first.
+    pub apps: Vec<Applied>,
+    /// The value of the result: the join of the results of the values of the
+    /// callee.
+    pub ret: Tree,
+}
+
+/// True if body `body` is a closure body whose facts are in the terms of
+/// its interface: the summary of the closure (`super::summarize::closure`).
+pub fn in_interface(cx: &Cx<'_>, body: BodyId) -> bool {
+    cx.p.closure_of(body).is_some() && !cx.roots.is_instantiated(body)
+}
+
+/// The run node of a `Call` of the function value `callee` of block `block`
+/// of body `body`, in state `st` before it (`docs/ir.md` 6.7).
+///
+/// The value can be function items and closures of the component: each one
+/// applies its summary, and a closure also applies the summary of each
+/// value that it runs through a capture (part `runs`). In the summary of a
+/// closure body, a call of a capture is in the part `runs`: it applies
+/// nothing here.
+///
+/// # Errors
+///
+/// Returns [`AlphaError::Later`] for a value that the analysis does not
+/// know (a parameter, a field, the result of a call: stage F12), and the
+/// errors of σ.
+#[allow(clippy::too_many_arguments)]
+pub fn value_out(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    block: weft_ir::BlockId,
+    st: &State,
+    callee: &Operand,
+    args: &[Operand],
+    dest: &Place,
+) -> Result<ValueOut, AlphaError> {
+    let ret_ty = place_ty(cx, body, dest)?;
+    if let Operand::Copy(q) | Operand::Move(q) = callee {
+        if q.proj.len() == 1
+            && alpha::env_capture(cx.p, body, q).is_some()
+            && in_interface(cx, body)
+        {
+            // The summary of the closure has the run (`runs`): the run node
+            // of the closure applies the value of the capture.
+            let props = ir_props(cx.tys, ret_ty);
+            if props.holds_refs || cx.tys.mentions_fn(ret_ty) {
+                return Err(AlphaError::Later(
+                    "a run of a captured function value with a reference in its result (stage F12)",
+                ));
+            }
+            for a in args {
+                let t = match a {
+                    Operand::Copy(x) | Operand::Move(x) => place_ty(cx, body, x)?,
+                    Operand::Const(_) => continue,
+                };
+                if ir_props(cx.tys, t).holds_refs || cx.tys.mentions_fn(t) {
+                    return Err(AlphaError::Later(
+                        "a run of a captured function value with a reference argument (stage F12)",
+                    ));
+                }
+            }
+            return Ok(ValueOut {
+                apps: Vec::new(),
+                ret: Tree::leaf(AbsVal::of_type(props.linear)),
+            });
+        }
+    }
+    let fns = operand(cx, body, st, callee)?.flat().fns;
+    let inst = run_inst(body, block);
+    let mut apps = Vec::new();
+    let mut ret: Option<Tree> = None;
+    if fns.is_empty() {
+        return Err(AlphaError::Later(
+            "a call of a function value that the body does not know (stage F12)",
+        ));
+    }
+    for fv in &fns {
+        let start = apps.len();
+        apply_value(
+            cx,
+            body,
+            block,
+            st,
+            fv,
+            callee,
+            args,
+            Some(ret_ty),
+            inst,
+            0,
+            &mut apps,
+        )?;
+        if let Some(r) = apps.get(start).and_then(|a| a.ret.clone()) {
+            ret = Some(match ret {
+                Some(t) => Tree::leaf(t.flat().joined(&r.flat())),
+                None => r,
+            });
+        }
+    }
+    Ok(ValueOut {
+        apps,
+        ret: ret.unwrap_or_else(|| Tree::leaf(AbsVal::plain())),
+    })
+}
+
+/// Applies the function value `fv` at the run node `inst` of body `body`
+/// (state `st`): its summary, and for a closure the summary of each value
+/// that it runs through a capture, at depth `depth`. `ret_ty` is the type of
+/// the result of a value of the callee itself (`None` for a run through a
+/// capture). The summaries go to `out`, the value itself first.
+#[allow(clippy::too_many_arguments)]
+fn apply_value(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    block: weft_ir::BlockId,
+    st: &State,
+    fv: &FnVal,
+    callee: &Operand,
+    args: &[Operand],
+    ret_ty: Option<TyId>,
+    inst: u32,
+    depth: usize,
+    out: &mut Vec<Applied>,
+) -> Result<(), AlphaError> {
+    use super::summary::{IPlace, IRoot};
+    if depth > RUN_DEPTH {
+        return Err(AlphaError::Later(
+            "a chain of closures that run each other deeper than eight (stage F12)",
+        ));
+    }
+    let p = cx.p;
+    match fv {
+        FnVal::Unknown => Err(AlphaError::Later(
+            "a call of a function value that the body does not know (stage F12)",
+        )),
+        FnVal::Item(f, targs) => {
+            let summary = cx.sums.get(*f).map_err(AlphaError::Later)?.clone();
+            let decl = p
+                .fns
+                .get(f.index())
+                .ok_or_else(|| AlphaError::BadPlace(format!("no function f{}", f.0)))?;
+            if decl.intrinsic.is_some() {
+                return Err(AlphaError::Later(
+                    "a call of `sim.run` or `with_timeout` as a value (stage F19)",
+                ));
+            }
+            let mut sigma = super::apply::sigma(cx, body, st, decl, targs, args, inst)?;
+            sigma.cyclic = cx.cycles.has(body, block);
+            if summary.ret_in_frame() {
+                sigma.frame = Some(cx.roots.frame(cx.facts, inst, &decl.name));
+            }
+            let ret = match ret_ty {
+                Some(t) => Some(super::apply::ret_value(cx, &summary, &sigma, t)?),
+                None => None,
+            };
+            let muts = super::apply::muts(cx, &summary, &sigma)?;
+            let stores = super::apply::stores(cx, &summary, &sigma, &muts)?;
+            let name = decl
+                .name
+                .rsplit('.')
+                .next()
+                .unwrap_or(&decl.name)
+                .to_string();
+            out.push(Applied {
+                kind: super::apply::RunKind::Item,
+                name,
+                sigma,
+                summary,
+                ret,
+                muts,
+                stores,
+                rebinds: Vec::new(),
+                uses: Vec::new(),
+                once: Vec::new(),
+                again: false,
+            });
+            Ok(())
+        }
+        FnVal::Closure(c) => {
+            let summary = cx.sums.closure(*c).map_err(AlphaError::Later)?.clone();
+            let decl = p
+                .closures
+                .get(c.index())
+                .ok_or_else(|| AlphaError::BadPlace(format!("no closure c{}", c.0)))?;
+            let mut sigma = super::apply::closure_sigma(cx, body, st, *c, callee, args, inst)?;
+            sigma.cyclic = cx.cycles.has(body, block);
+            if summary.ret_in_frame() {
+                sigma.frame = Some(cx.roots.frame(cx.facts, inst, "the closure"));
+            }
+            let ret = match ret_ty {
+                Some(t) => Some(super::apply::ret_value(cx, &summary, &sigma, t)?),
+                None => None,
+            };
+            let muts = super::apply::muts(cx, &summary, &sigma)?;
+            // The new value of each capture that the body rebinds on each
+            // path: a whole local of the maker gets it (a strong update).
+            let mut rebinds = Vec::new();
+            let mut whole: Vec<u32> = Vec::new();
+            for &k in &summary.rebinds {
+                let Some(cap) = decl.captures.get(k as usize) else {
+                    continue;
+                };
+                if !cap.source.proj.is_empty()
+                    || alpha::env_capture(p, decl.maker, &cap.source).is_some()
+                {
+                    continue;
+                }
+                let key = key(p, decl.maker, cap.source.local)?;
+                let ty = p
+                    .bodies
+                    .get(key.0.index())
+                    .and_then(|b| b.locals.get(key.1.index()))
+                    .map(|d| d.ty);
+                let mut v = AbsVal::of_type(ty.is_some_and(|t| ir_props(cx.tys, t).linear));
+                if ty.is_some_and(|t| cx.tys.mentions_fn(t)) {
+                    v.fns.insert(FnVal::Unknown);
+                }
+                let root = IPlace::root(IRoot::Capture(k));
+                for (into, refs) in &summary.puts {
+                    if *into == root {
+                        for r in refs {
+                            v.refs.extend(super::apply::iplaces(cx, &sigma, r)?);
+                        }
+                    }
+                }
+                whole.push(k);
+                rebinds.push((key, Tree::leaf(v)));
+            }
+            // The other values that the body puts into a place of the caller
+            // (a weak update).
+            let mut stores = Vec::new();
+            for (into, refs) in &summary.puts {
+                if let IRoot::Capture(k) = into.root {
+                    if into.steps.is_empty() && whole.contains(&k) {
+                        continue;
+                    }
+                }
+                let mut rs = Vec::new();
+                for r in refs {
+                    rs.extend(super::apply::iplaces(cx, &sigma, r)?);
+                }
+                rs.sort();
+                rs.dedup();
+                if rs.is_empty() {
+                    continue;
+                }
+                for q in super::apply::iplaces(cx, &sigma, into)? {
+                    stores.push((q, rs.clone()));
+                }
+            }
+            let uses: Vec<(BodyId, Place)> = summary
+                .uses
+                .iter()
+                .filter_map(|&k| decl.captures.get(k as usize))
+                .filter(|cap| {
+                    matches!(
+                        cap.mode,
+                        weft_ir::CaptureMode::Kept | weft_ir::CaptureMode::ByRef
+                    )
+                })
+                .map(|cap| (decl.maker, cap.source.clone()))
+                .collect();
+            let runs = summary.runs.clone();
+            out.push(Applied {
+                kind: super::apply::RunKind::Closure,
+                name: "the closure".to_string(),
+                sigma,
+                summary,
+                ret,
+                muts,
+                stores,
+                rebinds,
+                uses,
+                once: Vec::new(),
+                again: false,
+            });
+            // Each value that the closure runs through a capture: the value
+            // of the variable of the capture at the run node.
+            for run in runs.iter().filter(|r| r.capture) {
+                let Some(cap) = decl.captures.get(run.param as usize) else {
+                    continue;
+                };
+                if cap.mode != weft_ir::CaptureMode::Kept {
+                    return Err(AlphaError::Later(
+                        "a run of a function value that a closure owns (stage F12)",
+                    ));
+                }
+                let v = place_value(cx, decl.maker, st, &cap.source)?.flat();
+                if v.fns.is_empty() {
+                    return Err(AlphaError::Later(
+                        "a run of a captured function value that the body does not know (stage F12)",
+                    ));
+                }
+                let src = Operand::Copy(cap.source.clone());
+                let once = once_source(p, decl.maker, &cap.source);
+                for g in &v.fns {
+                    let start = out.len();
+                    apply_value(
+                        cx,
+                        decl.maker,
+                        block,
+                        st,
+                        g,
+                        &src,
+                        &[],
+                        None,
+                        inst,
+                        depth + 1,
+                        out,
+                    )?;
+                    if let Some(first) = out.get_mut(start) {
+                        if once {
+                            first.once.push((decl.maker, cap.source.clone()));
+                        }
+                    }
+                    if run.many {
+                        for a in out.iter_mut().skip(start) {
+                            a.again = true;
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+/// True if `place` of body `body` holds a `once` value.
+///
+/// A `once` value is a closure that moves a capture: the mode of its local
+/// (`docs/ir.md` 5.22). A call of such a value moves it, also through a copy
+/// of the local (B12-fn-once).
+pub fn once_source(p: &Program, body: BodyId, place: &Place) -> bool {
+    if !place.proj.is_empty() {
+        return false;
+    }
+    let Ok(k) = key(p, body, place.local) else {
+        return false;
+    };
+    p.bodies
+        .get(k.0.index())
+        .and_then(|b| b.locals.get(k.1.index()))
+        .is_some_and(|d| d.props.once && d.kind != weft_ir::LocalKind::Env)
+}
+
+/// `Call` of a function value (stage F11): the summaries of the values that
+/// the callee can be ([`value_out`]). The values that go into places of the
+/// caller join there (a weak update); each captured variable that a closure
+/// rebinds gets its new value; the moved arguments leave no value; the
+/// result binds to `dest`.
+///
+/// # Errors
+///
+/// The errors of [`value_out`] and of α.
+#[allow(clippy::too_many_arguments)]
+fn call_value(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    block: weft_ir::BlockId,
+    st: &mut State,
+    callee: &Operand,
+    args: &[Operand],
+    dest: &Place,
+) -> Result<(), AlphaError> {
+    let out = value_out(cx, body, block, st, callee, args, dest)?;
+    for app in &out.apps {
+        for (q, refs) in &app.stores {
+            if let Some((k, path)) = cx.roots.path_of(cx.facts, *q) {
+                st.add(k, &path, &Tree::leaf(AbsVal::refs(refs.iter().copied())));
+            } else {
+                st.store_behind(*q, refs.iter().copied());
+            }
+        }
+        let changed: Vec<PlaceId> = app.muts.iter().map(|(q, _)| *q).collect();
+        for (k, path) in can_get_linear(cx, &changed) {
+            st.add(k, &path, &Tree::leaf(AbsVal::of_type(true)));
+        }
+        for (k, v) in &app.rebinds {
+            st.write(*k, &[], v.clone());
+        }
+    }
+    bind_result(cx, body, st, args, dest, out.ret)
+}
+
 /// The move paths of the places `changed` that can get a linear value.
 ///
 /// A run node changes the places `changed`. The type of the local of such
@@ -985,7 +1566,10 @@ fn bind_result(
     dest: &Place,
     ret: Tree,
 ) -> Result<(), AlphaError> {
-    let target = move_path(cx.p, body, dest)?;
+    let target = match move_path(cx.p, body, dest)? {
+        Some(d) => Some(d),
+        None => kept_whole(cx, body, st, dest)?.map(|k| (k, Vec::new())),
+    };
     let a = if target.is_some() {
         None
     } else {

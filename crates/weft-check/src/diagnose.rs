@@ -418,8 +418,12 @@ fn w0301(f: &FnFacts, r: &Report, out: &mut Vec<Diagnostic>) {
 ///   after its place ends.
 fn returned(f: &FnFacts, inv: &Invalidation, o: VarId) -> Option<Diagnostic> {
     let var = f.var(inv.var);
-    let owner = f.var(o);
-    let path = &f.place(inv.path).display;
+    let mut owner = f.var(o).clone();
+    // A closure that captures a local by reference points into the cell of
+    // the local (`x (cell)`, `docs/ir.md` 6.3): the text names the local.
+    let cell = |t: &str| t.strip_suffix(" (cell)").unwrap_or(t).to_string();
+    owner.name = cell(&owner.name);
+    let path = &cell(&f.place(inv.path).display);
     let span = node_span(f, inv.used_at);
     let holder = holder_text(f, inv, false);
     let what = w0301_cause(f, inv).0;

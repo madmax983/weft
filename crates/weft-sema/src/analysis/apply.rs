@@ -49,6 +49,10 @@ pub enum RunKind {
     /// the code that aborts, and the unwinder drops its result. W0118 checks
     /// the rest of the function (`crate::factgen::checks`).
     OnAbort,
+    /// A `Call` of a closure value that the body knows (stage F11): σ maps
+    /// the parameters of the closure to the arguments, and each capture to
+    /// the places of its variable at the run node (`Sigma::captures`).
+    Closure,
 }
 
 /// σ of a run node: the places of the caller for the interface roots of the
@@ -81,6 +85,16 @@ pub struct Sigma {
     /// The run node is in a cycle of the CFG (a loop): its result gets no
     /// one-place instance (`docs/ir.md` 6.6).
     pub cyclic: bool,
+    /// σ(`Capture(k)`) of a closure: the places of the variable of a `Kept`
+    /// or a `ByRef` capture at the run node (its value now, RR7), or the
+    /// place of the closure value for a `ByMove` capture.
+    pub captures: Vec<Vec<PlaceId>>,
+    /// σ(`CaptureHeld(k)`) of a closure: what the references in the value of
+    /// capture `k` point into at the run node.
+    pub cap_helds: Vec<Vec<PlaceId>>,
+    /// σ(`CaptureDeep(k)`) of a closure: what the references behind those
+    /// point into at the run node.
+    pub cap_deeps: Vec<Vec<PlaceId>>,
 }
 
 /// The type behind a reference type `t`.
@@ -194,16 +208,40 @@ pub fn sigma(
     args: &[Operand],
     inst: u32,
 ) -> Result<Sigma, AlphaError> {
+    let mut params = Vec::with_capacity(args.len());
+    for i in 0..args.len() {
+        let declared = *decl
+            .params
+            .get(i)
+            .ok_or_else(|| AlphaError::BadPlace(format!("an argument {i} with no parameter")))?;
+        params.push((declared, subst(cx.tys, declared, targs)));
+    }
+    sigma_of(cx, body, st, &params, args, inst)
+}
+
+/// σ of a run node with the arguments `args`: `params` has the declared
+/// type of each parameter and its type with the type arguments of the call.
+///
+/// # Errors
+///
+/// The errors of α, and [`AlphaError::BadPlace`] for an argument with no
+/// parameter.
+fn sigma_of(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &State,
+    params: &[(TyId, TyId)],
+    args: &[Operand],
+    inst: u32,
+) -> Result<Sigma, AlphaError> {
     let mut s = Sigma {
         inst,
         ..Sigma::default()
     };
     for (i, op) in args.iter().enumerate() {
-        let declared = *decl
-            .params
+        let &(declared, ty) = params
             .get(i)
             .ok_or_else(|| AlphaError::BadPlace(format!("an argument {i} with no parameter")))?;
-        let ty = subst(cx.tys, declared, targs);
         let v = transfer::operand(cx, body, st, op)?.flat();
         let (named, deps): (Vec<PlaceId>, Vec<PlaceId>) = v
             .refs
@@ -225,6 +263,89 @@ pub fn sigma(
         s.deps.push(deps);
         s.helds.push(helds);
         s.uniq.push(v.uniq);
+    }
+    Ok(s)
+}
+
+/// σ of a `Call` of closure `c` in state `st` of body `body`: `callee` is
+/// the operand of the closure value and `args` the arguments (`docs/ir.md`
+/// 6.7, "The kinds of run node").
+///
+/// The parameters of the closure map to the arguments, as for an item.
+/// `Capture(k)` of a `Kept` or a `ByRef` capture maps to the places of its
+/// variable at the run node (the source of the capture, in its maker), and
+/// `CaptureHeld(k)` to what the references in the value of the variable
+/// point into now (RR7, V103). `Capture(k)` of a `ByMove` capture maps to
+/// the place of the closure value, and `CaptureHeld(k)` to the references of
+/// the closure value.
+///
+/// # Errors
+///
+/// The errors of α, and [`AlphaError::Later`] for a capture of a capability
+/// or a continuation (stage F14).
+pub fn closure_sigma(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &State,
+    c: weft_ir::ClosureId,
+    callee: &Operand,
+    args: &[Operand],
+    inst: u32,
+) -> Result<Sigma, AlphaError> {
+    let p = cx.p;
+    let decl = p
+        .closures
+        .get(c.index())
+        .ok_or_else(|| AlphaError::BadPlace(format!("no closure c{}", c.0)))?;
+    let cb = p
+        .bodies
+        .get(decl.body.index())
+        .ok_or_else(|| AlphaError::BadPlace(format!("no body b{}", decl.body.0)))?;
+    let params: Vec<(TyId, TyId)> = cb
+        .params
+        .iter()
+        .skip(1)
+        .filter_map(|l| cb.locals.get(l.index()).map(|d| (d.ty, d.ty)))
+        .collect();
+    let mut s = sigma_of(cx, body, st, &params, args, inst)?;
+    let held = |cx: &mut Cx<'_>, ps: &[PlaceId]| -> Result<Vec<PlaceId>, AlphaError> {
+        let mut out = Vec::new();
+        for &q in ps {
+            out.extend(transfer::held_at(cx.p, st, cx.facts, cx.roots, q, None)?);
+        }
+        out.sort();
+        out.dedup();
+        Ok(out)
+    };
+    for cap in &decl.captures {
+        match cap.mode {
+            weft_ir::CaptureMode::Kept | weft_ir::CaptureMode::ByRef => {
+                let a = transfer::alpha(cx, decl.maker, st, &cap.source)?;
+                let v = transfer::place_value(cx, decl.maker, st, &cap.source)?.flat();
+                let refs: Vec<PlaceId> = v.refs.into_iter().collect();
+                s.cap_deeps.push(held(cx, &refs)?);
+                s.captures.push(a.places);
+                s.cap_helds.push(refs);
+            }
+            weft_ir::CaptureMode::ByMove => {
+                let (places, refs) = match callee {
+                    Operand::Copy(q) | Operand::Move(q) => {
+                        let a = transfer::alpha(cx, body, st, q)?;
+                        let v = transfer::operand(cx, body, st, callee)?.flat();
+                        (a.places, v.refs.into_iter().collect())
+                    }
+                    Operand::Const(_) => (Vec::new(), Vec::new()),
+                };
+                s.cap_deeps.push(held(cx, &refs)?);
+                s.captures.push(places);
+                s.cap_helds.push(refs);
+            }
+            weft_ir::CaptureMode::Cap | weft_ir::CaptureMode::Kont => {
+                return Err(AlphaError::Later(
+                    "a closure that captures a capability or a continuation (stage F14)",
+                ))
+            }
+        }
     }
     Ok(s)
 }
@@ -251,8 +372,8 @@ enum Base {
 ///
 /// # Errors
 ///
-/// Returns [`AlphaError::Later`] for a root of a closure, of a handler or of
-/// a caller (stages F11 and later).
+/// Returns [`AlphaError::Later`] for the cell of a capture and for a root of
+/// a handler (stages F14 and later).
 fn places(
     cx: &mut Cx<'_>,
     s: &Sigma,
@@ -272,13 +393,12 @@ fn places(
         // run node, or a place of the run node that it cannot name: the
         // places of the caller of the run node.
         IRoot::Caller => vec![cx.roots.caller(cx.facts)],
-        IRoot::CaptureCell(_)
-        | IRoot::Capture(_)
-        | IRoot::Cap(_)
-        | IRoot::OpResult(_)
-        | IRoot::ResumeResult => {
+        IRoot::Capture(k) => get(&s.captures, k),
+        IRoot::CaptureHeld(k) => get(&s.cap_helds, k),
+        IRoot::CaptureDeep(k) => get(&s.cap_deeps, k),
+        IRoot::CaptureCell(_) | IRoot::Cap(_) | IRoot::OpResult(_) | IRoot::ResumeResult => {
             return Err(AlphaError::Later(
-                "a summary that names a capture or a handler (stages F11 and later)",
+                "a summary that names the cell of a capture or a handler (stages F14 and later)",
             ))
         }
     };
@@ -316,6 +436,16 @@ fn places(
     out.sort();
     out.dedup();
     Ok(out)
+}
+
+/// σ of the interface place `place`: the places of the run node for it
+/// (the places of an argument for a `Param` root).
+///
+/// # Errors
+///
+/// The errors of σ.
+pub fn iplaces(cx: &mut Cx<'_>, s: &Sigma, place: &IPlace) -> Result<Vec<PlaceId>, AlphaError> {
+    places(cx, s, place, Base::Args)
 }
 
 /// The handles that a place of an `rc` group in the result depends on: the
@@ -657,7 +787,9 @@ pub fn main(
     site: &Site<'_>,
     kind: RunKind,
 ) -> Result<Vec<(PlaceId, u32)>, AlphaError> {
-    let item = kind == RunKind::Item;
+    // The checks of the arguments compare the arguments of one call: a call
+    // of an item or of a closure.
+    let item = kind != RunKind::OnAbort;
     for r in &sum.reads {
         for p in places(cx, s, r, Base::Args)? {
             cx.facts.reads_at.push((n, p));
@@ -694,6 +826,10 @@ pub fn main(
         let root = match l.root {
             IRoot::Param(i) => Some(sum.params.get(i as usize).map_or(0, |p| p.root)),
             IRoot::Caller => None,
+            // A capture is no argument: the value that the call runs.
+            IRoot::Capture(_) | IRoot::CaptureHeld(_) | IRoot::CaptureDeep(_) => {
+                Some(crate::body::roots::STORED)
+            }
             _ => Some(0),
         };
         for p in places(cx, s, l, Base::Args)? {

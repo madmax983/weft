@@ -1995,7 +1995,8 @@ nodes of one body for a list of abort destinations (F2 knows one: past the funct
 field is the variant step itself (as the old lowering), a slice names its elements
 (`Index` or `Elems` of a slice adds no step), a split step has the stability of the
 element step before it, a `Box` step has the text of the old lowering (none), and
-`Deref(Ref)` gives an error until F3, an environment field until F11. In `vars.rs` the `H`
+`Deref(Ref)` gives an error until F3, an environment field until F11 (see "As built (F11)"
+below). In `vars.rs` the `H`
 variables are the parts (fields and variants only) that a statement or a terminator
 writes and whose type can hold a reference, a function value, a capability or a task (a
 type parameter can); `U` comes from each `Uninit` of a projected place; `C` from each
@@ -2420,6 +2421,48 @@ where the analysis cannot see (a returned or stored closure, an unknown callee).
 spec sees the real aliasing between two captures or two parameters inside the closure.
 The summary (6.7) stays in interface terms.
 
+As built (plan stage F11, `factgen/mod.rs` `emit_parts`, `closure_summary`,
+`emit_closure`; group C stays off by default until F13, so this is a preview with
+`--groups ABC`):
+
+- A closure body is a component of the `FnFacts` of its function: a node `closure entry`
+  (its parameters and the `E` variables of its `ByMove` captures bind there, `rebound_at`,
+  `empty_at`, `points_into`), then the nodes of its blocks, with its own abort
+  destinations. No edge joins it to the function: its effects reach each run node through
+  its summary.
+- The fact generator makes each component twice. First the summary of each closure (an
+  inner closure first: a maker has a lower id), from facts of the body alone in a scratch
+  table, in the terms of its interface: a `Kept` capture `env.k` is the `Arg` root
+  `Capture(k)`, a `ByRef` capture `env.k` points into it, a `ByMove` capture is a part of
+  the environment root `env`, and the references in the value of a capture point into
+  `CaptureHeld(k)` (one level) and `CaptureDeep(k)` (each deeper level, a wildcard), as
+  `Param(i)` and `Held(i)` do for a parameter. The parameters after the environment have
+  `Param` roots. Then the function body, with the closure summaries at its calls. Then
+  each closure body, *instantiated*, into the tables of the function: a `Kept` capture is
+  the place of the variable of the maker (α of the source of the capture, through the
+  makers), a `ByRef` capture points into the value root of its variable, and the analysis
+  starts from the join of the states of the maker before each terminator and before each
+  closure literal (the values that the maker has where the closure can run: at a call of
+  it, or after the return of a closure that leaves). So a change of one capture and a
+  reference into another capture of the same variable are visible in the body (the alias
+  test), and the variables of the maker (`S(x)`) carry the uses. No edge reaches the
+  component from `n0`, so the `bound_before_use` lint of the proof link does not read it.
+- The parameters of an instantiated closure keep their `Param` roots: the call checks its
+  arguments against the places that the closure changes (`call_mut` with the root
+  `STORED` for a capture, W0312), as for an item.
+- A whole new value of a `Kept` capture in an instantiated body is a new value of the
+  variable of the maker (a strong update, `rebound_at` of `S(x)`): `|| { r = grow(w) }`
+  does not use the old `r`.
+- The `E(c, k)` variable of a `ByMove` capture `k` (`vars.rs`) has the flags of the type
+  of the capture; a move of the capture moves it (`moved_at`, `moved_part` and
+  `rest_linear` for a part), so the captures are apart. The environment local has no `S`
+  variable.
+- The summary of the function body reads only the nodes of the function component (the
+  closure components come after them, `Emitted::entry_nodes`), and the aborts (a failure,
+  an `assert`) of the closure summaries that it applies at its calls.
+- A view of an environment in a nested body (`u.k`, 5.1.7) and a capture of a capability
+  or a continuation are groups D and E: `Later`.
+
 ### 6.6 The analysis
 
 The analysis gives the abstract values that the templates read. It replaces the abstract
@@ -2779,6 +2822,59 @@ behind a parameter: a heap slot).
   no flow from an argument into itself.
 - The programs are in `tests/gate/probes/fixes/f10/hc/` and
   `tests/programs/165_store_through_held_ref.wf` (claim F10-HC).
+
+As built (plan stage F11, `analysis::transfer::value_out`, `apply::closure_sigma`,
+`summarize::closure`; group C is a preview until F13):
+
+- The analysis gives a closure aggregate the value `fns = {Closure(c)}`, the cell root
+  `x (cell)` of the variable of each `ByRef` capture (owned by `C(x)`: only `Dead(x)` and
+  the unwinding of `x` end it, so a move and a new value of `x` keep the closure valid,
+  O3-11; a capture of a capture of the maker gives the places that the reference of the
+  maker points into), and the places and the linear part of each `ByMove` value. A `Kept`
+  capture adds nothing: no reference points into the shared cell (V13), so a returned
+  counter closure is valid (`d5_count.wf`), and a closure that borrows a captured local
+  (`ByRef`) points into its cell, which the frame end ends (J5d, W0204).
+- A `Call` of a function value applies the summary of each value that the callee can be:
+  an item (as a `Call` of the item) or a closure of the component. A value that the
+  analysis does not know (a parameter, a field, a result) is `Later` (stage F12). σ of a
+  closure (`closure_sigma`): the parameters map to the arguments; `Capture(k)` of a `Kept`
+  or a `ByRef` capture maps to α of the source of the capture in its maker, in the state
+  at the run node, `CaptureHeld(k)` to what the value of the source points into now, and
+  `CaptureDeep(k)` to what the references there point into (RR7, V103); `Capture(k)` of a
+  `ByMove` capture maps to the place of the closure value, and `CaptureHeld(k)` to its
+  references. So a closure that writes a `Kept` counter changes the root of the counter at
+  each call (`mutates_at`; a task does so as `task_writes`, W0405, with stage F18).
+- The parts of a closure summary (`summarize::closure`): `muts`, `reads` and `lends` are
+  the places of `mutates_at`, `reads_at` and `lends_mut` with an interface root (callee
+  root `STORED` for a capture, the root of the argument for a parameter); `performs` and
+  `aborts` from `escapes_at` (each operation can abort), the failures and the `assert`s of
+  the callees and of the body; `uses` are the `Kept` and `ByRef` captures (the body names
+  each capture); `moves` the `ByMove` captures that a `move` or a `Consume` names;
+  `rebinds` the `Kept` and `ByRef` captures that each normal path to a `Return` assigns
+  as a whole (a forward must analysis on the IR); `puts` the references of each heap slot
+  of an interface place at each `Return` (a store into a capture, into a part of it, or
+  behind a reference), and the new references of each `ByMove` capture, with a reference
+  into a local of the body as the `Frame` root; `ret` the interface places of `_0`;
+  `runs` each capture that the body calls (`Many` for two calls or a call in a cycle).
+- At the run node: `Main` has the operands, a move of a callee whose local is `once`
+  (`props.once`; a copy of the local moves it too, B12-fn-once, W0502), the parts that
+  act at the call (`apply::main`), the uses of the variables of the sources of the `uses`
+  captures (a new value of a captured reference that a change invalidates is W0301 at the
+  call, RR7), and each value that the closure runs through a capture (`runs`): the value
+  of the source of the capture at the run node applies its summary at the same node
+  (V103, at most eight levels), and a source that holds a `once` closure moves. `Ret` has
+  the result, the `puts` (a weak definition of the variable of each place), the new value
+  of each `rebinds` capture (`rebound_at` of the variable and `points_into` of the stored
+  places: F3-11 is valid, a new value on one path only is not), and a second application
+  of a `Many` run. `FrameEnd` ends the frame root of a closure whose result or `puts`
+  name its frame.
+- A call of a function value keeps the abort edges of the IR, and gets `may_abort` only if
+  a summary that it applies can abort.
+- The calls of a capture in the summary of a closure body (in the terms of its interface)
+  apply nothing there (their effects reach the run node of the closure through `runs`);
+  a reference argument or a reference in the result of such a call is stage F12. In the
+  instantiated facts the capture holds the values of the maker, so the call applies their
+  summaries at its own node.
 
 ### 6.8 Effect inference and signatures
 

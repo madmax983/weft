@@ -1,0 +1,17 @@
+linear struct Tx { id: u64 }
+fn release(t: Tx) { print("release {t.id}"); let Tx(i) = t }
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print(b.items.len()) }
+fn mkbuf() -> Buf { Buf { items: Vec.new() } }
+fn mk_eat(b: Buf) -> fn() { || eat(b) }
+fn mk_release(t: Tx) -> fn() { || release(t) }
+fn mk_local() -> fn() { let c = mkbuf(); || eat(c) }
+fn block_scope() {
+    let k = || print(0)
+    {
+        let b = mkbuf()
+        k = || eat(b)
+    }
+    k()
+}
+fn main() { block_scope() }

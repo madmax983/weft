@@ -21,8 +21,18 @@
 //! value of the reference: [`alpha_with`] asks a function for the places that
 //! the reference at a fact place points into (the analysis reads its state,
 //! `crate::analysis`), and [`alpha`] with no state returns
-//! [`AlphaError::NeedsValue`]. An environment field of a closure component
-//! comes with stage F11 ([`AlphaError::Later`]).
+//! [`AlphaError::NeedsValue`].
+//!
+//! A field `env.k` of the environment of a closure body names a capture
+//! (`docs/ir.md` 6.3, stage F11). A `ByRef` capture is a reference in the
+//! environment and a `ByMove` capture a value of the environment: both are
+//! places of the environment root `env`. A `Kept` capture is the cell of the
+//! variable of the maker. In the summary of the closure ([`Roots::capture`])
+//! it is the `Arg` root of the capture; in the facts that the checker reads
+//! (an instantiated closure, [`Roots::instantiate`]) it is the place of the
+//! variable in the maker. What a `ByRef` capture points into, and what the
+//! references in a capture point into, come from the state (`Role::Capture`,
+//! `Role::CaptureHeld`).
 //!
 //! The roots of the interface of a function body are `Param` roots: the
 //! pointee of a reference parameter, or the pointees of the references in a
@@ -36,8 +46,8 @@ use std::collections::{HashMap, HashSet};
 use weft_facts::{FnFacts, PlaceId, RootId, RootKind, Step, StepKind};
 use weft_ir::ty::{AdtKind, ExternDeref, Lang};
 use weft_ir::{
-    AdtId, BodyId, DerefKind, LocalDecl, LocalId, LocalKind, Place, Program, Proj, Side, TempKind,
-    Ty, TyId, TyTable,
+    AdtId, BodyId, CaptureMode, ClosureId, DerefKind, LocalDecl, LocalId, LocalKind, Place,
+    Program, Proj, Side, TempKind, Ty, TyId, TyTable,
 };
 
 use crate::analysis::domain::{Key, PathStep};
@@ -71,6 +81,18 @@ pub enum Role {
     /// A place of a caller that the body cannot name (`docs/ir.md` 6.3):
     /// code of a caller can give a reference into it.
     Caller,
+    /// In the summary of a closure body: the value of capture `k` (what a
+    /// `ByRef` capture points into, or the cell of a `Kept` capture).
+    Capture(BodyId, u32),
+    /// In the summary of a closure body: what the references in the value of
+    /// capture `k` point into.
+    CaptureHeld(BodyId, u32),
+    /// In the summary of a closure body: what the references behind the
+    /// references of capture `k` point into (each deeper level).
+    CaptureDeep(BodyId, u32),
+    /// The cell of a local that a closure captures `ByRef` (`docs/ir.md`
+    /// 6.3): only the end of the local ends it, not a move.
+    Cell(Key),
 }
 
 /// The roots of one component, made when α first needs them.
@@ -98,6 +120,17 @@ pub struct Roots {
     /// The stated place of each place field of a struct (`cur: &u8 in
     /// self.buf[]`), in terms of the struct (`self`).
     fields: HashMap<(AdtId, u32), crate::program::SigPlace>,
+    /// The `Capture` root of each capture of a closure body.
+    captures: HashMap<(BodyId, u32), PlaceId>,
+    /// The `CaptureHeld` root of each capture of a closure body.
+    capture_helds: HashMap<(BodyId, u32), PlaceId>,
+    /// The `CaptureDeep` root of each capture of a closure body.
+    capture_deeps: HashMap<(BodyId, u32), PlaceId>,
+    /// The cell root of each local that a closure captures `ByRef`.
+    cells: HashMap<Key, PlaceId>,
+    /// The closure bodies whose `Kept` captures are the places of the maker
+    /// (the instantiated facts, [`Roots::instantiate`]).
+    instantiated: HashSet<BodyId>,
 }
 
 /// The fact places of an IR place.
@@ -208,8 +241,7 @@ impl Roots {
     ///
     /// # Errors
     ///
-    /// Returns [`AlphaError::Later`] for the environment of a closure body,
-    /// and [`AlphaError::BadPlace`] if the local does not exist.
+    /// Returns [`AlphaError::BadPlace`] if the local does not exist.
     pub fn local(
         &mut self,
         p: &Program,
@@ -227,12 +259,14 @@ impl Roots {
             .get(key.0.index())
             .and_then(|b| b.locals.get(key.1.index()))
             .ok_or_else(|| AlphaError::BadPlace("no local".to_string()))?;
-        if d.kind == LocalKind::Env {
-            return Err(AlphaError::Later(
-                "the environment of a closure (stage F11)",
-            ));
-        }
-        let r = facts.add_root(local_text(tys, d), RootKind::Local);
+        // The environment of a closure body is the closure value of the run
+        // node: an `Arg` root with no owner (`docs/ir.md` 6.3).
+        let kind = if d.kind == LocalKind::Env {
+            RootKind::Arg
+        } else {
+            RootKind::Local
+        };
+        let r = facts.add_root(local_text(tys, d), kind);
         self.locals.insert(key, r);
         self.roles.insert(facts.place(r).root, Role::Local(key));
         Ok(r)
@@ -385,6 +419,121 @@ impl Roots {
         r
     }
 
+    /// The `Capture` root of capture `k` of closure body `body`, with the
+    /// text `name`: in the summary of the closure, the value of the capture.
+    pub fn capture(&mut self, facts: &mut FnFacts, body: BodyId, k: u32, name: &str) -> PlaceId {
+        if let Some(&r) = self.captures.get(&(body, k)) {
+            return r;
+        }
+        let r = facts.add_root(name, RootKind::Arg);
+        self.captures.insert((body, k), r);
+        self.roles
+            .insert(facts.place(r).root, Role::Capture(body, k));
+        r
+    }
+
+    /// The `CaptureHeld` root of capture `k` of closure body `body` (the
+    /// text `*name`): what the references in the value of the capture point
+    /// into.
+    pub fn capture_held(
+        &mut self,
+        facts: &mut FnFacts,
+        body: BodyId,
+        k: u32,
+        name: &str,
+    ) -> PlaceId {
+        if let Some(&r) = self.capture_helds.get(&(body, k)) {
+            return r;
+        }
+        let r = facts.add_root(format!("*{name}"), RootKind::Arg);
+        self.capture_helds.insert((body, k), r);
+        self.roles
+            .insert(facts.place(r).root, Role::CaptureHeld(body, k));
+        r
+    }
+
+    /// The cell root of the local with key `key` (the text `x (cell)`): a
+    /// closure that captures the local `ByRef` points into it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AlphaError::BadPlace`] if the local does not exist.
+    pub fn cell(
+        &mut self,
+        p: &Program,
+        tys: &TyTable,
+        facts: &mut FnFacts,
+        key: Key,
+    ) -> Result<PlaceId, AlphaError> {
+        if let Some(&r) = self.cells.get(&key) {
+            return Ok(r);
+        }
+        let d = p
+            .bodies
+            .get(key.0.index())
+            .and_then(|b| b.locals.get(key.1.index()))
+            .ok_or_else(|| AlphaError::BadPlace("no local".to_string()))?;
+        let r = facts.add_root(format!("{} (cell)", local_text(tys, d)), RootKind::Local);
+        self.cells.insert(key, r);
+        self.roles.insert(facts.place(r).root, Role::Cell(key));
+        Ok(r)
+    }
+
+    /// The `CaptureHeld` root of capture `k` of closure body `body`, with
+    /// the name of the variable of the capture ([`capture_name`]).
+    pub fn capture_held_of(
+        &mut self,
+        p: &Program,
+        facts: &mut FnFacts,
+        body: BodyId,
+        k: u32,
+    ) -> PlaceId {
+        let name = p
+            .closure_of(body)
+            .map_or_else(|| format!("capture {k}"), |(c, _)| capture_name(p, c, k));
+        self.capture_held(facts, body, k, &name)
+    }
+
+    /// The `CaptureDeep` root of capture `k` of closure body `body` (the
+    /// text `**name`): what the references behind the references of the
+    /// capture point into.
+    pub fn capture_deep_of(
+        &mut self,
+        p: &Program,
+        facts: &mut FnFacts,
+        body: BodyId,
+        k: u32,
+    ) -> PlaceId {
+        if let Some(&r) = self.capture_deeps.get(&(body, k)) {
+            return r;
+        }
+        let name = p
+            .closure_of(body)
+            .map_or_else(|| format!("capture {k}"), |(c, _)| capture_name(p, c, k));
+        let r = facts.add_root(format!("**{name}"), RootKind::Arg);
+        self.capture_deeps.insert((body, k), r);
+        self.roles
+            .insert(facts.place(r).root, Role::CaptureDeep(body, k));
+        r
+    }
+
+    /// The cell roots that this table made, with the keys of their locals.
+    pub fn cell_roots(&self) -> impl Iterator<Item = (Key, PlaceId)> + '_ {
+        self.cells.iter().map(|(k, p)| (*k, *p))
+    }
+
+    /// The `Kept` captures of closure body `body` are the places of the
+    /// variables of the maker from now on: the facts that the checker reads
+    /// (`docs/ir.md` 6.5, the instantiation of a closure component).
+    pub fn instantiate(&mut self, body: BodyId) {
+        self.instantiated.insert(body);
+    }
+
+    /// True if closure body `body` is instantiated ([`Roots::instantiate`]).
+    pub fn is_instantiated(&self, body: BodyId) -> bool {
+        self.instantiated.contains(&body)
+    }
+
     /// The group root of the `rc` type `inner` (the target of an `Rc`).
     pub fn group(&mut self, tys: &TyTable, facts: &mut FnFacts, inner: TyId) -> PlaceId {
         let key = match tys.try_get(inner) {
@@ -426,6 +575,82 @@ enum Next {
     Step(Step, String, At),
     /// No step: the place stays, the type changes.
     Same(At),
+}
+
+/// The capture that `place` of body `body` names: the closure, the index
+/// `k` and the mode of the capture, if the place is `env.k` (or a place
+/// below it) of the environment local of a closure body.
+pub fn env_capture(
+    p: &Program,
+    body: BodyId,
+    place: &Place,
+) -> Option<(ClosureId, u32, CaptureMode)> {
+    let (c, decl) = p.closure_of(body)?;
+    let b = p.body(body)?;
+    if b.params.first() != Some(&place.local) || b.local_kind(place.local)? != LocalKind::Env {
+        return None;
+    }
+    let Some(Proj::Field(f)) = place.proj.first() else {
+        return None;
+    };
+    let cap = decl.captures.get(f.index())?;
+    Some((c, f.0, cap.mode))
+}
+
+/// The type of field `k` of the environment of closure `c`.
+///
+/// It is the type of the source of the capture in the maker, or a reference
+/// to it for a `ByRef` capture. A maker has a lower id than its closures, so
+/// the walk ends.
+pub fn capture_ty(p: &Program, tys: &mut TyTable, c: ClosureId, k: u32) -> Option<TyId> {
+    let decl = p.closures.get(c.index())?;
+    let cap = decl.captures.get(k as usize)?;
+    if decl.maker.index() >= decl.body.index() {
+        return None;
+    }
+    let src = place_ty(p, tys, decl.maker, &cap.source)?;
+    Some(match cap.mode {
+        CaptureMode::ByRef => tys.intern(Ty::Ref(src)),
+        _ => src,
+    })
+}
+
+/// The name of capture `k` of closure `c`: the name of the variable that
+/// it captures, through the captures of the makers.
+pub fn capture_name(p: &Program, c: ClosureId, k: u32) -> String {
+    let mut at = (c, k);
+    for _ in 0..=p.closures.len() {
+        let Some(decl) = p.closures.get(at.0.index()) else {
+            break;
+        };
+        let Some(cap) = decl.captures.get(at.1 as usize) else {
+            break;
+        };
+        if let Some((oc, ok, _)) = env_capture(p, decl.maker, &cap.source) {
+            at = (oc, ok);
+            continue;
+        }
+        return owner_local(p, decl.maker, cap.source.local)
+            .ok()
+            .and_then(|(b, l)| {
+                p.bodies
+                    .get(b.index())
+                    .and_then(|x| x.locals.get(l.index()))
+            })
+            .and_then(|d| d.name.clone())
+            .unwrap_or_else(|| format!("capture {k}"));
+    }
+    format!("capture {k}")
+}
+
+/// The type at the base of `place` of body `body`, and the number of
+/// projections that the base covers: a field of the environment of a
+/// closure body is the capture itself ([`env_capture`]).
+fn base_at(p: &Program, tys: &mut TyTable, body: BodyId, place: &Place) -> Option<(At, usize)> {
+    if let Some((c, k, _)) = env_capture(p, body, place) {
+        return Some((At::Ty(capture_ty(p, tys, c, k)?), 1));
+    }
+    Some((At::Ty(local_ty(p, body, place.local).ok()?), 0))
 }
 
 /// The type of a local of body `body`.
@@ -602,9 +827,10 @@ fn next(tys: &mut TyTable, at: At, pr: &Proj, last: Option<Step>) -> Result<Next
 /// # Errors
 ///
 /// Returns [`AlphaError::NeedsValue`] for a `Deref(Ref)` (the analysis gives
-/// the value, [`alpha_with`]), [`AlphaError::Later`] for an environment field
-/// (stage F11), and [`AlphaError::BadPlace`] for a place that does not fit
-/// its type.
+/// the value, [`alpha_with`]), [`AlphaError::Later`] for a capability or a
+/// continuation in an environment and for a view of an environment in a
+/// nested body (stage F14), and [`AlphaError::BadPlace`] for a place that
+/// does not fit its type.
 pub fn alpha(
     p: &Program,
     tys: &mut TyTable,
@@ -637,9 +863,10 @@ pub type Pointees<'a> = dyn FnMut(
 ///
 /// # Errors
 ///
-/// The errors of `pointees`, [`AlphaError::Later`] for an environment field
-/// (stage F11), and [`AlphaError::BadPlace`] for a place that does not fit
-/// its type.
+/// The errors of `pointees`, [`AlphaError::Later`] for a capability or a
+/// continuation in an environment and for a view of an environment in a
+/// nested body (stage F14), and [`AlphaError::BadPlace`] for a place that
+/// does not fit its type.
 pub fn alpha_with(
     p: &Program,
     tys: &mut TyTable,
@@ -649,17 +876,77 @@ pub fn alpha_with(
     place: &Place,
     pointees: &mut Pointees<'_>,
 ) -> Result<Alpha, AlphaError> {
-    let root = roots.local(p, tys, facts, body, place.local)?;
-    let mut at = At::Ty(local_ty(p, body, place.local)?);
-    let mut out = Alpha {
-        places: vec![root],
-        ..Alpha::default()
+    let (mut out, mut at, skip) = if let Some((c, k, mode)) = env_capture(p, body, place) {
+        // A capture whose source the fact generator cannot type is a
+        // place of a nested body of a later stage (an environment view
+        // in a handled body or a scope body).
+        let t = capture_ty(p, tys, c, k).ok_or(AlphaError::Later(
+            "a capture of a place of a handler or a scope body (stage F14)",
+        ))?;
+        let name = capture_name(p, c, k);
+        let out = match mode {
+            // A reference or a value in the environment: a place of the
+            // environment root.
+            CaptureMode::ByRef | CaptureMode::ByMove => {
+                let env = roots.local(p, tys, facts, body, place.local)?;
+                let step = Step {
+                    kind: StepKind::Field { id: k },
+                    unstable: false,
+                };
+                Alpha {
+                    places: vec![facts.child(env, step, &format!(".{name}"))],
+                    ..Alpha::default()
+                }
+            }
+            // The cell of the variable: the place of the maker in the
+            // instantiated facts, else the `Capture` root.
+            CaptureMode::Kept if roots.is_instantiated(body) => {
+                let decl = p
+                    .closures
+                    .get(c.index())
+                    .ok_or_else(|| AlphaError::BadPlace("no closure".to_string()))?;
+                let source = decl
+                    .captures
+                    .get(k as usize)
+                    .map(|x| x.source.clone())
+                    .ok_or_else(|| AlphaError::BadPlace("no capture".to_string()))?;
+                alpha_with(p, tys, facts, roots, decl.maker, &source, pointees)?
+            }
+            CaptureMode::Kept => Alpha {
+                places: vec![roots.capture(facts, body, k, &name)],
+                ..Alpha::default()
+            },
+            CaptureMode::Cap | CaptureMode::Kont => {
+                return Err(AlphaError::Later(
+                    "a capability or a continuation in a closure (stage F14)",
+                ))
+            }
+        };
+        (out, At::Ty(t), 1)
+    } else {
+        // An upvar local that views the environment of a closure
+        // (`docs/ir.md` 5.1.7) names a capture in a handled body or a
+        // scope body: groups D and E.
+        let (ob, ol) = owner_local(p, body, place.local)?;
+        if (ob, ol) != (body, place.local)
+            && p.body(ob).and_then(|b| b.local_kind(ol)) == Some(LocalKind::Env)
+        {
+            return Err(AlphaError::Later(
+                "a view of the environment of a closure in a nested body (stage F14)",
+            ));
+        }
+        let root = roots.local(p, tys, facts, body, place.local)?;
+        let out = Alpha {
+            places: vec![root],
+            ..Alpha::default()
+        };
+        (out, At::Ty(local_ty(p, body, place.local)?), 0)
     };
     let mut last: Option<Step> = None;
     // The struct and the field of the last projection, if it is a field of
     // a struct.
     let mut field: Option<(AdtId, u32)> = None;
-    for pr in &place.proj {
+    for pr in place.proj.iter().skip(skip) {
         let named = match (at, pr) {
             (At::Ty(t), Proj::Field(f)) => match tys.try_get(t) {
                 Some(Ty::Adt(a, _)) => Some((*a, f.0)),
@@ -761,13 +1048,22 @@ pub fn path_text(p: &Program, tys: &mut TyTable, body: BodyId, place: &Place) ->
                 .and_then(|x| x.locals.get(l.index()))
         })
         .map_or_else(|| format!("_{}", place.local.0), |d| local_text(tys, d));
-    let Ok(t) = local_ty(p, body, place.local) else {
-        return base;
+    let (base, (mut at, skip)) = match env_capture(p, body, place) {
+        Some((c, k, _)) => {
+            let name = capture_name(p, c, k);
+            match base_at(p, tys, body, place) {
+                Some(x) => (name, x),
+                None => return name,
+            }
+        }
+        None => match base_at(p, tys, body, place) {
+            Some(x) => (base, x),
+            None => return base,
+        },
     };
     let mut text = base;
-    let mut at = At::Ty(t);
     let mut last = None;
-    for pr in &place.proj {
+    for pr in place.proj.iter().skip(skip) {
         match next(tys, at, pr, last) {
             Ok(Next::Step(step, s, after)) => {
                 text.push_str(&s);
@@ -784,9 +1080,9 @@ pub fn path_text(p: &Program, tys: &mut TyTable, body: BodyId, place: &Place) ->
 /// The type of a move path `place` of body `body` (a place with no
 /// `Deref`), or `None` if it does not fit its type.
 pub fn path_ty(p: &Program, tys: &mut TyTable, body: BodyId, place: &Place) -> Option<TyId> {
-    let mut at = At::Ty(local_ty(p, body, place.local).ok()?);
+    let (mut at, skip) = base_at(p, tys, body, place)?;
     let mut last = None;
-    for pr in &place.proj {
+    for pr in place.proj.iter().skip(skip) {
         match next(tys, at, pr, last).ok()? {
             Next::Step(step, _, after) => {
                 last = Some(step);
@@ -805,9 +1101,9 @@ pub fn path_ty(p: &Program, tys: &mut TyTable, body: BodyId, place: &Place) -> O
 /// through a reference, a `Box` or an `Rc`. `None` if it does not fit its
 /// type, or if it names a payload with no type of its own.
 pub fn place_ty(p: &Program, tys: &mut TyTable, body: BodyId, place: &Place) -> Option<TyId> {
-    let mut at = At::Ty(local_ty(p, body, place.local).ok()?);
+    let (mut at, skip) = base_at(p, tys, body, place)?;
     let mut last = None;
-    for pr in &place.proj {
+    for pr in place.proj.iter().skip(skip) {
         match (at, pr) {
             (At::Ty(t), Proj::Deref(DerefKind::Ref)) => match tys.try_get(t)? {
                 Ty::Ref(x) => {

@@ -1,0 +1,20 @@
+struct W { items: Vec<u64> }
+fn grow(w: &W) -> &u64 in w.items[] / mut(w.items) { w.items.push(1); &w.items[0] }
+fn refresh(w: &W) / mut(w.items) {
+    let r = &w.items[0]
+    let h = || { r = grow(w) }
+    h()
+    print(r)
+}
+fn refresh_one_path(w: &W, c: bool) / mut(w.items) {
+    let r = &w.items[0]
+    let h = || { if c { r = grow(w) } }
+    h()
+    print(r)   //~ W0301
+}
+fn main() {
+    let w = W { items: Vec.new() }
+    w.items.push(5)
+    refresh(&w)
+    refresh_one_path(&w, true)
+}

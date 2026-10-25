@@ -1,0 +1,21 @@
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) {}
+fn twice() {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    f()
+    f()   //~ W0502
+}
+fn alias_twice() {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    let g = f
+    g()
+    g()   //~ W0502
+}
+fn once() {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    f()
+}
+fn main() { once() }

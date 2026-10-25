@@ -16,10 +16,14 @@
 //!
 //! Stage F5 makes summaries from signatures (`super::sig`). Stage F6 makes
 //! the summary of a function with a body from its facts (`super::summarize`)
-//! in the fixpoint of the call graph (`super::callgraph`). The parts that
-//! only a body with a closure, a handler or a task gives (`runs`, `tasks`,
-//! `uses`, `moves`, `rebinds`, `frees`) stay empty; stage F11 and later
-//! fill them.
+//! in the fixpoint of the call graph (`super::callgraph`). Stage F11 makes
+//! the summary of a closure body (`super::summarize::closure`): its parts
+//! name the captures (`Capture`, `CaptureHeld`) and the parameters of the
+//! closure, and it has the parts `runs` (the captures that hold a function
+//! value and that the body calls), `uses`, `moves`, `rebinds` and `puts`
+//! (the values that the body stores into a capture or behind a reference).
+//! The parts that only a handler or a task gives (`tasks`, `frees`) stay
+//! empty; later stages fill them.
 
 use std::collections::BTreeSet;
 
@@ -41,8 +45,14 @@ pub enum IRoot {
     Held(u32),
     /// The cell of capture or upvar `k`.
     CaptureCell(u32),
-    /// The value of capture or upvar `k`.
+    /// The value of capture or upvar `k`: what a `ByRef` capture points
+    /// into, the cell of a `Kept` capture, or the value in the environment
+    /// of a `ByMove` capture.
     Capture(u32),
+    /// What the references in the value of capture `k` point into.
+    CaptureHeld(u32),
+    /// What the references behind the references of capture `k` point into.
+    CaptureDeep(u32),
     /// A capability: an effect of the row, or a captured capability.
     Cap(u32),
     /// In a handled body: what a `resume` gives to operation `op`.
@@ -149,12 +159,15 @@ pub enum Abort {
     Assert,
 }
 
-/// A function value of the interface that the body runs (stage F11 and
-/// later fill this part).
+/// A function value of the interface that the body runs (stage F11 fills
+/// this part for the captures of a closure; stage F12 adds the function
+/// parameters).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Run {
     /// The function parameter (or capture) that the body runs.
     pub param: u32,
+    /// True if `param` is a capture of the closure, not a parameter.
+    pub capture: bool,
     /// The body can run it more than once.
     pub many: bool,
     /// The body runs it as a task.
@@ -247,6 +260,12 @@ pub struct Summary {
     /// The captures and upvars that the body gives a whole new value on each
     /// path to its `Return` (a must part).
     pub rebinds: BTreeSet<u32>,
+    /// The references that the body of a closure puts into an interface
+    /// place: a capture, a part of it, or a place behind a reference (the
+    /// heap slots of the body at its `Return`). Each entry is the place and
+    /// the places that the references there can point into. A place of a
+    /// local of the body is the `Frame` root.
+    pub puts: Vec<(IPlace, Vec<IPlace>)>,
     /// The reference parameters that are `@ uniq`.
     pub uniq_needs: BTreeSet<u32>,
     /// Each change of the body is below its first parameter (`writes_via`
@@ -273,7 +292,10 @@ impl Summary {
     /// True if the result can point into the frame of the body: then the
     /// frame root of a run node ends at its `FrameEnd`.
     pub fn ret_in_frame(&self) -> bool {
-        self.ret.places.iter().any(IPlace::in_frame)
+        self.puts
+            .iter()
+            .any(|(_, ps)| ps.iter().any(IPlace::in_frame))
+            || self.ret.places.iter().any(IPlace::in_frame)
             || self.ret.flows.iter().any(IPlace::in_frame)
             || self
                 .ret
@@ -305,7 +327,7 @@ impl Summary {
                     || !self.ret.parts.is_empty()
                     || !self.ret.flows.is_empty()
             }
-            Part::Stores => !self.stores.is_empty(),
+            Part::Stores => !self.stores.is_empty() || !self.puts.is_empty(),
             Part::Drops => !self.drops.is_empty(),
             Part::Holds => !self.holds.is_empty(),
             Part::UsesMoves => !self.uses.is_empty() || !self.moves.is_empty(),
@@ -316,12 +338,18 @@ impl Summary {
     }
 }
 
-/// The summary of each function that a call can run, by the function of the
-/// IR. A function with no summary has the reason (a later stage gives it).
+/// The summary of each function that a call can run, and of each closure.
+///
+/// The functions are keyed by the function of the IR, the closures by the
+/// closure of a component (`super::summarize::closure`). A function with no
+/// summary has the reason (a later stage gives it).
 #[derive(Clone, Debug, Default)]
 pub struct Summaries {
     /// The summary of each function, or why it has none.
     by_fn: std::collections::HashMap<weft_ir::FnId, Result<Summary, &'static str>>,
+    /// The summary of each closure of the component that the fact generator
+    /// emits.
+    by_closure: std::collections::HashMap<weft_ir::ClosureId, Summary>,
 }
 
 impl Summaries {
@@ -341,5 +369,26 @@ impl Summaries {
     /// Gives function `f` the summary `s`, or the reason why it has none.
     pub fn insert(&mut self, f: weft_ir::FnId, s: Result<Summary, &'static str>) {
         self.by_fn.insert(f, s);
+    }
+
+    /// The summary of closure `c`.
+    ///
+    /// # Errors
+    ///
+    /// Returns why `c` has no summary.
+    pub fn closure(&self, c: weft_ir::ClosureId) -> Result<&Summary, &'static str> {
+        self.by_closure
+            .get(&c)
+            .ok_or("a call of a closure with no summary")
+    }
+
+    /// Gives closure `c` the summary `s`.
+    pub fn insert_closure(&mut self, c: weft_ir::ClosureId, s: Summary) {
+        self.by_closure.insert(c, s);
+    }
+
+    /// True if a closure has a summary.
+    pub fn has_closures(&self) -> bool {
+        !self.by_closure.is_empty()
     }
 }
