@@ -324,6 +324,10 @@ pub struct FnParts<'a> {
     /// closure summary, because a caller applies the value that it gives
     /// there.
     pub run_nodes: &'a [weft_facts::NodeId],
+    /// In a closure body: each node where the body gives a capture a whole
+    /// new value (`whole_capture`), with the index of the capture. The
+    /// changes at the nodes after them are the part `late_muts`.
+    pub rebind_nodes: &'a [(u32, weft_facts::NodeId)],
 }
 
 /// The part `runs` of a body from the runs at its run nodes (`runs`): one
@@ -603,6 +607,32 @@ fn moved_captures(
     out
 }
 
+/// The capture of closure `decl` that an assignment to place `q` of body `b`
+/// gives a whole new value: `env.k` of a `Kept` capture, or `(*env.k)` of a
+/// `ByRef` capture.
+pub fn whole_capture(
+    b: &weft_ir::Body,
+    decl: &weft_ir::ClosureDecl,
+    q: &weft_ir::Place,
+) -> Option<u32> {
+    use weft_ir::{CaptureMode, DerefKind, Proj};
+    if Some(q.local) != b.params.first().copied() {
+        return None;
+    }
+    let Some(Proj::Field(f)) = q.proj.first() else {
+        return None;
+    };
+    let mode = decl.captures.get(f.index())?.mode;
+    let whole = match mode {
+        CaptureMode::Kept => q.proj.len() == 1,
+        CaptureMode::ByRef => {
+            q.proj.len() == 2 && q.proj.get(1) == Some(&Proj::Deref(DerefKind::Ref))
+        }
+        _ => false,
+    };
+    whole.then_some(f.0)
+}
+
 /// The captures of closure `decl` that body `b` gives a whole new value on
 /// each normal path from its entry to a `Return` (part `rebinds`, a must
 /// part): an assignment to `env.k` of a `Kept` capture or to `(*env.k)` of a
@@ -612,28 +642,11 @@ fn rebound_captures(
     decl: &weft_ir::ClosureDecl,
 ) -> std::collections::BTreeSet<u32> {
     use std::collections::BTreeSet;
-    use weft_ir::{CaptureMode, DerefKind, Proj, StmtKind, TermKind};
-    let env = b.params.first().copied();
+    use weft_ir::{StmtKind, TermKind};
     let all: BTreeSet<u32> = (0..decl.captures.len())
         .filter_map(|k| u32::try_from(k).ok())
         .collect();
-    let gives = |q: &weft_ir::Place| -> Option<u32> {
-        if Some(q.local) != env {
-            return None;
-        }
-        let Some(Proj::Field(f)) = q.proj.first() else {
-            return None;
-        };
-        let mode = decl.captures.get(f.index())?.mode;
-        let whole = match mode {
-            CaptureMode::Kept => q.proj.len() == 1,
-            CaptureMode::ByRef => {
-                q.proj.len() == 2 && q.proj.get(1) == Some(&Proj::Deref(DerefKind::Ref))
-            }
-            _ => false,
-        };
-        whole.then_some(f.0)
-    };
+    let gives = |q: &weft_ir::Place| whole_capture(b, decl, q);
     let order = weft_ir::order::reverse_post_order(b);
     // The set at the entry of each block: `None` until a path reaches it.
     let mut at: Vec<Option<BTreeSet<u32>>> = vec![None; b.blocks.len()];
@@ -688,6 +701,46 @@ fn rebound_captures(
         .intersection(&all)
         .copied()
         .collect()
+}
+
+/// The part `late_muts` of a closure summary: the interface places that the
+/// facts `facts` change or lend at the nodes that come after a node of
+/// `rebind_nodes` of a capture in `rebinds` (on some path). A call gives the
+/// captures their new values at `Ret`, so these changes come at `Ret` too
+/// (hole H1 of the review of the ABC preview: `|| { r = &v[0]; v.push(3) }`).
+/// `place` gives the interface place of a fact place.
+fn late_muts(
+    facts: &FnFacts,
+    rebinds: &std::collections::BTreeSet<u32>,
+    rebind_nodes: &[(u32, weft_facts::NodeId)],
+    place: &dyn Fn(PlaceId) -> Option<(IPlace, u32)>,
+) -> Vec<(IPlace, u32)> {
+    use std::collections::BTreeSet;
+    let mut next: BTreeMap<weft_facts::NodeId, Vec<weft_facts::NodeId>> = BTreeMap::new();
+    for &(a, b) in &facts.cfg_edge {
+        next.entry(a).or_default().push(b);
+    }
+    let mut seen: BTreeSet<weft_facts::NodeId> = BTreeSet::new();
+    let mut work: Vec<weft_facts::NodeId> = rebind_nodes
+        .iter()
+        .filter(|(k, _)| rebinds.contains(k))
+        .flat_map(|(_, n)| next.get(n).cloned().unwrap_or_default())
+        .collect();
+    while let Some(n) = work.pop() {
+        if seen.insert(n) {
+            work.extend(next.get(&n).cloned().unwrap_or_default());
+        }
+    }
+    let mut out: Vec<(IPlace, u32)> = facts
+        .mutates_at
+        .iter()
+        .chain(facts.lends_mut.iter())
+        .filter(|(n, _)| seen.contains(n))
+        .filter_map(|&(_, m)| place(m))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// The summary of closure body `body` from the facts `facts` of its
@@ -829,6 +882,7 @@ pub fn closure(
         .collect();
     out.moves = moved_captures(b, decl);
     out.rebinds = rebound_captures(b, decl);
+    out.late_muts = late_muts(facts, &out.rebinds, fv.rebind_nodes, &place);
     // The values that the body puts into interface places, and the result.
     let refs_of = |ps: &mut dyn Iterator<Item = PlaceId>| -> Vec<IPlace> {
         let mut v: Vec<IPlace> = ps

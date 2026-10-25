@@ -1,0 +1,85 @@
+// A closure gives a captured reference a new value and then changes its new
+// referent (review of the ABC preview, hole H1: `h1/hr_*`, `rb1_b`, `x13`).
+// The call gives the capture its new value at `Ret`, so the changes that
+// come after the rebind in the body come after it at the call too.
+struct W { items: Vec<u64> }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn grow(w: &W) -> &u64 in w.items[] / mut(w.items) { w.items.push(1); &w.items[0] }
+fn local_push() {
+    let v = mk_v()
+    let r = &v[0]
+    let h = || { r = &v[0]; v.push(3) }
+    h()
+    print(r) //~ W0301
+}
+fn field_push() {
+    let w = W { items: mk_v() }
+    let r = &w.items[0]
+    let h = || { r = &w.items[0]; w.items.push(3) }
+    h()
+    print(r) //~ W0301
+}
+fn other_first() {
+    let v = mk_v()
+    let u = mk_v()
+    let r = &u[0]
+    let h = || { r = &v[0]; v.clear() }
+    h()
+    print(r) //~ W0301
+}
+fn change_on_a_path(c: bool) {
+    let v = mk_v()
+    let r = &v[0]
+    let h = || { r = &v[0]; if c { v.clear() } }
+    h()
+    print(r) //~ W0301
+}
+fn nested_change() {
+    let v = mk_v()
+    let r = &v[0]
+    let h = || { r = &v[0]; let k = || v.clear(); k() }
+    h()
+    print(r) //~ W0301
+}
+fn param_change(v: &Vec<u64>) / mut(v) {
+    let r = &v[0]
+    let h = || { r = &v[0]; v.clear() }
+    h()
+    print(r) //~ W0301
+}
+fn grow_then_push(w: &W) / mut(w.items) {
+    let r = &w.items[0]
+    let h = || { r = grow(w); w.items.push(3) }
+    h()
+    print(r) //~ W0301
+}
+fn grow_twice(w: &W) / mut(w.items) {
+    let r = &w.items[0]
+    let h = || { r = grow(w); grow(w) }
+    h()
+    print(r) //~ W0301
+}
+// Clean: the change comes before the rebind.
+fn change_then_rebind() {
+    let v = mk_v()
+    let r = &v[0]
+    let h = || { v.clear(); v.push(2); r = &v[0] }
+    h()
+    print(r)
+}
+// Clean: the change after the rebind is of another place.
+fn change_of_another_place() {
+    let v = mk_v()
+    let u = mk_v()
+    let r = &v[0]
+    let h = || { r = &v[0]; u.clear() }
+    h()
+    print(r)
+}
+fn main() {
+    let w = W { items: mk_v() }
+    change_then_rebind()
+    change_of_another_place()
+    let v = mk_v()
+    param_change(&v)
+}

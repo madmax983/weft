@@ -2503,6 +2503,11 @@ As built (plan stage F11, `factgen/mod.rs` `emit_parts`, `closure_summary`,
   (F11-U1).
 - A capture that the closure rebinds (part `rebinds`) gets its new value at the `Ret`
   node of the call: the change of the capture at `Main` is no `overwrites` of it.
+  The changes and lends that the body makes after a rebind, on some path (part
+  `late_muts`, the nodes after the rebind nodes of the component), are at `Ret`
+  too, for each place that overlaps a place of a new value: `|| { r = &v[0];
+  v.push(3) }` makes `r` invalid after the call (hole H1 of the review of the ABC
+  preview, F12-fix). A change before the rebind stays at `Main` only.
 - A function with a function value in its signature and no stated row has no summary
   until stage F12 (`callgraph::summary_of`). W0701 takes the row of the old inference
   for it (`Inference::old_rows`), which adds the effects of the closures that the

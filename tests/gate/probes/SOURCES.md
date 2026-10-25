@@ -224,3 +224,13 @@ them again if it runs.
   `value_drops.wf` (linear closures that a function value drops, and a
   closure that a loop makes, from the tier-2 preview) (claims F12-R5,
   F12-C1, F12-R6, F12-R7, F12-R8, F12-R9).
+
+## Programs that the F12 fixes added
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs. Each one is a variant of the review of the ABC preview
+(scratchpad `f12/review.md`, section 4), with one line of header that names the
+variant.
+
+- `fixes/f12/h1/*.wf`: hole H1, a closure rebinds a captured reference and then
+  changes the new referent (claim F12-H1).

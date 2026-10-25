@@ -2338,7 +2338,7 @@ pub fn call(
         for (q, refs) in &out.stores {
             store(em, r, *q, refs, at, true);
         }
-        apps_at_ret(em, r, st, &out.apps, at);
+        apps_at_ret(em, r, st, &out.apps, at)?;
         em.facts.scope_end.extend(drops.iter().map(|&v| (v, r)));
     }
     end_frames(em, nodes, &run_frames);
@@ -2432,7 +2432,7 @@ fn call_value(
     if let Some(r) = nodes.ret {
         held_refs(em, r, st, args)?;
         bind_dest(em, r, st, dest, &out.ret)?;
-        apps_at_ret(em, r, st, &out.apps, at);
+        apps_at_ret(em, r, st, &out.apps, at)?;
         em.facts.scope_end.extend(drops.iter().map(|&v| (v, r)));
     }
     end_frames(em, nodes, &frames);
@@ -2786,8 +2786,14 @@ fn once_vars(
 /// The facts of the summaries `apps` at the `Ret` node `r`: the values that
 /// a closure puts into places of the caller (a weak definition), and the
 /// new value of each capture that it rebinds on each path (part `rebinds`,
-/// F3-11).
-fn apps_at_ret(em: &mut Em<'_>, r: NodeId, st: &State, apps: &[transfer::Applied], at: Span) {
+/// F3-11). The changes that the closure makes after such a rebind (part
+/// `late_muts`) are at `r` too, for the places that a new value points into
+/// (hole H1 of the review of the ABC preview).
+///
+/// # Errors
+///
+/// The errors of σ.
+fn apps_at_ret(em: &mut Em<'_>, r: NodeId, st: &State, apps: &[transfer::Applied], at: Span) -> R {
     for app in apps {
         for (q, refs) in &app.stores {
             store(em, r, *q, refs, at, true);
@@ -2795,7 +2801,30 @@ fn apps_at_ret(em: &mut Em<'_>, r: NodeId, st: &State, apps: &[transfer::Applied
         for (k, v) in &app.rebinds {
             whole(em, r, st, *k, v);
         }
+        if app.rebinds.is_empty() || app.summary.late_muts.is_empty() {
+            continue;
+        }
+        let late = crate::analysis::summary::Summary {
+            muts: app.summary.late_muts.clone(),
+            ..Default::default()
+        };
+        let changed = crate::analysis::apply::muts(&mut em.cx(), &late, &app.sigma)?;
+        let refs: Vec<PlaceId> = app
+            .rebinds
+            .iter()
+            .flat_map(|(_, v)| v.flat().refs)
+            .collect();
+        let norm = |p: PlaceId| em.facts.wild_base(p).unwrap_or(p);
+        let mut hit: Vec<PlaceId> = changed
+            .iter()
+            .map(|(q, _)| *q)
+            .filter(|&q| refs.iter().any(|&x| overlap(em.facts, norm(x), norm(q))))
+            .collect();
+        hit.sort();
+        hit.dedup();
+        em.facts.mutates_at.extend(hit.into_iter().map(|q| (r, q)));
     }
+    Ok(())
 }
 
 /// The callee frame roots `frames` end at `FrameEnd` and on each abort path.

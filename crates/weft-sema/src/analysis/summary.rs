@@ -294,6 +294,11 @@ pub struct Summary {
     /// The captures and upvars that the body gives a whole new value on each
     /// path to its `Return` (a must part).
     pub rebinds: BTreeSet<u32>,
+    /// In the summary of a closure with `rebinds`: the places that the body
+    /// changes or lends after it gives a capture its new value (on some
+    /// path). A call gives the new values at `Ret`, and these changes there
+    /// too, so the new value of a capture sees them.
+    pub late_muts: Vec<(IPlace, u32)>,
     /// The references that the body of a closure puts into an interface
     /// place: a capture, a part of it, or a place behind a reference (the
     /// heap slots of the body at its `Return`). Each entry is the place and

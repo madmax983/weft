@@ -902,6 +902,7 @@ fn closure_summary(
             std::mem::take(&mut em.run_nodes),
         )
     };
+    let rebind_nodes = rebind_nodes(p, &table, cb);
     Ok(crate::analysis::summarize::closure(
         p,
         sums,
@@ -915,8 +916,55 @@ fn closure_summary(
             code_multi: false,
             run_nodes: &run_nodes,
             made: made.as_ref(),
+            rebind_nodes: &rebind_nodes,
         },
     ))
+}
+
+/// The nodes of closure body `cb` where it gives a capture a whole new value
+/// (`summarize::whole_capture`), with the index of the capture: the node of
+/// an assignment, and the `Ret` node of a call that gives its result to the
+/// capture.
+fn rebind_nodes(
+    p: &weft_ir::Program,
+    table: &nodes::NodeTable,
+    cb: weft_ir::BodyId,
+) -> Vec<(u32, weft_facts::NodeId)> {
+    let mut out = Vec::new();
+    let (Some((_, decl)), Some(b)) = (p.closure_of(cb), p.body(cb)) else {
+        return out;
+    };
+    let key = |block, at, phase| nodes::NodeKey {
+        body: cb,
+        block,
+        at,
+        phase,
+        dest: nodes::NORMAL,
+    };
+    for (i, blk) in b.blocks.iter().enumerate() {
+        let block = weft_ir::BlockId(u32::try_from(i).unwrap_or(u32::MAX));
+        for (j, s) in blk.stmts.iter().enumerate() {
+            if let weft_ir::StmtKind::Assign(q, _) = &s.kind {
+                let k = crate::analysis::summarize::whole_capture(b, decl, q);
+                let n = table.get(key(
+                    block,
+                    u32::try_from(j).unwrap_or(u32::MAX),
+                    nodes::Phase::Main,
+                ));
+                if let (Some(k), Some(n)) = (k, n) {
+                    out.push((k, n));
+                }
+            }
+        }
+        if let weft_ir::TermKind::Call { dest, .. } = &blk.term.kind {
+            let k = crate::analysis::summarize::whole_capture(b, decl, dest);
+            let n = table.get(key(block, nodes::TERM, nodes::Phase::Ret));
+            if let (Some(k), Some(n)) = (k, n) {
+                out.push((k, n));
+            }
+        }
+    }
+    out
 }
 
 /// The facts of closure body `cb`, instantiated (`docs/ir.md` 6.5): its

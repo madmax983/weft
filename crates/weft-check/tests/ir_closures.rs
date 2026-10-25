@@ -248,3 +248,11 @@ fn a_closure_program_is_out_of_scope_with_the_default_groups() {
         "{fallback:?}"
     );
 }
+
+#[test]
+fn a_change_after_a_rebind_of_a_capture_invalidates_the_new_value() {
+    // Review of the ABC preview, hole H1: the call gives the capture its
+    // new value at `Ret`, so the changes that the body makes after the
+    // rebind are at `Ret` too (part `late_muts`).
+    check("rebind_then_change.wf");
+}
