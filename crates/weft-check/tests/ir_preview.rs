@@ -175,7 +175,7 @@ fn the_prelude_calls_give_the_call_facts_and_the_diagnostics_of_the_old_pipeline
         };
         let names = ["new", "push", "len", "clear"];
         let old_calls = call_digest(&src, &old.facts, &|l| names.contains(&l));
-        let ir_calls = call_digest(&src, &facts, &|l| l == "call");
+        let ir_calls = call_digest(&src, &facts, &|l| names.contains(&l));
         assert_eq!(ir_calls, old_calls, "`{}`", e.name);
         let mut b = old.clone();
         b.facts = facts;

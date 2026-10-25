@@ -1888,6 +1888,17 @@ the fact generator keeps (6.5), the splice edges and the re-entry edges. A state
 node with no facts and one successor may merge with its successor; this changes no
 derivation of the spec.
 
+As built (plan stage F12, labels): diagnostics name a node by its label. Each node of a
+`Call` or a `Perform` (each phase, also on an abort path) has the label of its callee, as
+the old lowering: the name of the function item (`push`, not `Vec.push`), the local of a
+function value (also through its callee temporary), or the operation (`note`). An
+`Assign` of a whole variable `x` has the label `x =` (a W0301 note says `x : new value`).
+Each other node has the name of its statement or terminator kind. The node has no detail
+(a W0301 note shows `push : mut(v)`). The kind of the node and its phase (`call ret`) and
+its IR location (`b1 bb3`) are the fields `kind` and `at` of `NodeInfo`, for tests and
+tools; the old pipeline leaves them empty. Before, the label was the kind (`` `call`
+performs `Note` ``) and the detail the location (`call : b1 bb0`).
+
 ### 6.3 Roots, α and variables
 
 **Roots.**

@@ -295,6 +295,13 @@ pub struct NodeInfo {
     pub label: String,
     /// More text, such as the effect `mut(world.entities)`.
     pub detail: String,
+    /// The kind of a node of the facts of the IR and its phase, such as
+    /// `call ret` or `dead`. Empty in the old pipeline. The label of a call
+    /// names the callee, as the old pipeline; tests and tools use the kind.
+    pub kind: String,
+    /// The IR location of the node, such as `b1 bb3`. Empty in the old
+    /// pipeline.
+    pub at: String,
 }
 
 /// The label of a node right after the end of a task. Semantic analysis gives
@@ -1116,6 +1123,29 @@ impl FnFacts {
             span,
             label: label.into(),
             detail: detail.into(),
+            kind: String::new(),
+            at: String::new(),
+        });
+        id
+    }
+
+    /// Adds a node of the facts of the IR: `label` names it in diagnostics,
+    /// `kind` is the IR statement or terminator and its phase, and `at` is
+    /// the IR location. The node has no detail.
+    pub fn add_ir_node(
+        &mut self,
+        span: Span,
+        label: impl Into<String>,
+        kind: impl Into<String>,
+        at: impl Into<String>,
+    ) -> NodeId {
+        let id = NodeId(u32::try_from(self.nodes.len()).unwrap_or(u32::MAX));
+        self.nodes.push(NodeInfo {
+            span,
+            label: label.into(),
+            detail: String::new(),
+            kind: kind.into(),
+            at: at.into(),
         });
         id
     }

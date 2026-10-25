@@ -162,3 +162,97 @@ fn a_pipeline_word_selects_the_codes_after_it() {
     assert!(has_pipeline_markers(src));
     assert!(!has_pipeline_markers("fn f() {} //~ W0301\n"));
 }
+
+/// The diagnostics of `src` with the pipeline `facts` and the groups A, B
+/// and C: `None` if the ir pipeline does not check the program.
+fn diags_of(name: &str, src: &str, facts: FactGen) -> Option<Vec<(usize, String, String, String)>> {
+    let opts = Options {
+        facts,
+        ir_groups: weft_sema::Groups::parse("ABC").expect("the groups parse"),
+        ..Options::from_markers(src)
+    };
+    let checked = check_source(name, src, opts);
+    if facts == FactGen::Ir
+        && !checked
+            .analysis
+            .ir_scope
+            .as_ref()
+            .is_some_and(weft_sema::Scope::in_scope)
+    {
+        return None;
+    }
+    let file = SourceFile::new(name, src);
+    let mut out: Vec<_> = checked
+        .diags
+        .iter()
+        .map(|d| {
+            (
+                file.line(d.span),
+                d.code.to_string(),
+                d.message.clone(),
+                d.render(&file),
+            )
+        })
+        .collect();
+    out.sort();
+    Some(out)
+}
+
+#[test]
+fn a_diagnostic_at_a_call_names_the_callee_as_the_old_pipeline() {
+    // The ir pipeline labels the nodes of a call with the name of the
+    // callee (a function item, the local of a function value, an
+    // operation), as the old pipeline. Before, the text named the kind of
+    // the IR node (`call performs Note`), and a note showed the IR location
+    // (`call : b1 bb0`). Each code here names the node of a call in its
+    // message.
+    const CODES: [&str; 6] = ["W0312", "W0402", "W0503", "W0602", "W0702", "W0703"];
+    let mut compared = 0;
+    let mut problems = Vec::new();
+    for path in corpus_paths() {
+        let src = fs::read_to_string(&path).expect("the program is readable");
+        let name = path
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        let Some(ir) = diags_of(&name, &src, FactGen::Ir) else {
+            continue;
+        };
+        let old = diags_of(&name, &src, FactGen::Old).unwrap_or_default();
+        for (line, code, msg, text) in &ir {
+            // No text shows an IR location or the kind of a call node.
+            let ir_words = ["`call`", "`perform`", "call ret", "call frame end"];
+            let location = text
+                .split_whitespace()
+                .zip(text.split_whitespace().skip(1))
+                .any(|(a, b)| {
+                    a.strip_prefix('b')
+                        .is_some_and(|n| n.parse::<u32>().is_ok())
+                        && b.strip_prefix("bb")
+                            .is_some_and(|n| n.parse::<u32>().is_ok())
+                });
+            if location || ir_words.iter().any(|w| text.contains(w)) {
+                problems.push(format!(
+                    "{name}:{line}: {code}: the text names the IR:\n{text}"
+                ));
+            }
+            if !CODES.contains(&code.as_str()) {
+                continue;
+            }
+            let same: Vec<&String> = old
+                .iter()
+                .filter(|(l, c, _, _)| l == line && c == code)
+                .map(|(_, _, m, _)| m)
+                .collect();
+            if same.is_empty() {
+                continue;
+            }
+            compared += 1;
+            if !same.contains(&msg) {
+                problems.push(format!("{name}:{line}: {code}: ir `{msg}`, old {same:?}"));
+            }
+        }
+    }
+    eprintln!("{compared} messages compared");
+    assert!(compared >= 10, "only {compared} messages compared");
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}

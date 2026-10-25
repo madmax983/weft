@@ -442,7 +442,13 @@ fn the_node_table_links_the_phases_and_the_blocks() {
     let f = body_of(&b, "f");
     let body = &b.program.bodies[f.index()];
     let mut facts = FnFacts::default();
-    let table = NodeTable::build(&b.program, f, &mut facts, &Frames::past(&b.program, f));
+    let table = NodeTable::build(
+        &b.program,
+        &b.tys,
+        f,
+        &mut facts,
+        &Frames::past(&b.program, f),
+    );
     let (cb, next, unwind) = body
         .blocks
         .iter()
@@ -954,6 +960,7 @@ fn the_skeleton_runs_on_the_corpus() {
             for &body in &comp {
                 table.add_body(
                     &b.program,
+                    &b.tys,
                     body,
                     &mut facts,
                     &Frames::past(&b.program, body),
@@ -1327,7 +1334,7 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
 fn check_templates(f: &FnFacts, what: &str) -> BTreeMap<String, BTreeSet<&'static str>> {
     let mut seen: BTreeMap<String, BTreeSet<&'static str>> = BTreeMap::new();
     for (n, rels) in node_rels(f) {
-        let label = f.node(n).label.clone();
+        let label = f.node(n).kind.clone();
         let (normal, cleanup) =
             template_of(&label).unwrap_or_else(|| panic!("{what}: no template for `{label}`"));
         for r in &rels {
@@ -1363,7 +1370,7 @@ fn points(f: &FnFacts, v: VarId) -> BTreeSet<String> {
 /// The nodes with label `label`.
 fn nodes_labelled(f: &FnFacts, label: &str) -> Vec<NodeId> {
     (0..f.nodes.len())
-        .filter(|&i| f.nodes[i].label == label)
+        .filter(|&i| f.nodes[i].kind == label)
         .map(|i| NodeId(id(i)))
         .collect()
 }
@@ -1538,7 +1545,7 @@ fn a_drop_behind_a_reference_is_a_drop_pair_that_ends_at_the_assign() {
         .find(|(a, _)| *a == drop[0])
         .map(|(_, b)| *b)
         .expect("an edge out of the drop");
-    assert_eq!(f.node(next).label, "assign");
+    assert_eq!(f.node(next).kind, "assign");
     assert!(has(&f.scope_end, d, next));
     // The `Assign` changes the place behind the reference.
     assert_eq!(mutates(&f, next), BTreeSet::from(["h.o".to_string()]));
@@ -1652,7 +1659,7 @@ fn a_place_field_of_a_value_built_in_place_goes_with_the_value() {
         .map(|(_, n)| *n)
         .collect();
     assert_eq!(unset.len(), 1);
-    assert_eq!(f.node(unset[0]).label, "assign");
+    assert_eq!(f.node(unset[0]).kind, "assign");
     assert!(!has(&f.rebound_at, cur, unset[0]));
     // The move of the frame into `w` reads no place field of the frame.
     let inner = var_named(&f, "operand temporary.cur");
@@ -2217,7 +2224,7 @@ fn one_box() {
         .uses
         .iter()
         .filter(|&&(v, _)| unset.contains(&v))
-        .map(|&(v, n)| (f.var(v).name.clone(), f.node(n).label.clone()))
+        .map(|&(v, n)| (f.var(v).name.clone(), f.node(n).kind.clone()))
         .collect();
     // Only the `print` reads a place field with no value: `h.b.cur`.
     assert!(
@@ -2248,7 +2255,7 @@ fn boxed_in_place() {
         );
     let store = (0..f.nodes.len())
         .map(|i| NodeId(id(i)))
-        .find(|&n| f.node(n).label == "assign" && has(&f.rebound_at, cur, n));
+        .find(|&n| f.node(n).kind == "assign" && has(&f.rebound_at, cur, n));
     let store = store.unwrap_or_else(|| panic!("no store gives `b.cur` a value"));
     // The store reads `b.buf[0]` and not `b.cur`.
     assert!(!has(&f.uses, cur, store), "{:?}", f.uses);
@@ -2352,14 +2359,14 @@ fn succs(f: &FnFacts, n: NodeId) -> Vec<NodeId> {
         .collect()
 }
 
-/// True if node `n` is a node of a cleanup block (its detail names a block
+/// True if node `n` is a node of a cleanup block (its IR location names a block
 /// that is a cleanup block of body `body`) or an abort phase.
 fn on_cleanup(f: &FnFacts, b: &Built, n: NodeId) -> bool {
     let node = f.node(n);
-    if node.label.ends_with("(abort)") {
+    if node.kind.ends_with("(abort)") {
         return true;
     }
-    let mut parts = node.detail.split_whitespace();
+    let mut parts = node.at.split_whitespace();
     let (Some(body), Some(block)) = (parts.next(), parts.next()) else {
         return false;
     };
@@ -2629,7 +2636,7 @@ fn a_child_failure_aborts_to_the_local_fail_handler_and_a_cancel_past_the_functi
     let body = scope_body(body_of(&b, "local"));
     let fr = Frames::of_body(p, &b.tys, &sums, body);
     let mut facts = FnFacts::default();
-    let table = NodeTable::build(p, body, &mut facts, &fr);
+    let table = NodeTable::build(p, &b.tys, body, &mut facts, &fr);
     let d = Dest::Handler {
         handler: h,
         value: true,
@@ -2740,7 +2747,7 @@ fn abc() -> Options {
 /// The nodes with label `label` that have the fact `(v, n)` in `rel`.
 fn var_at(rel: &[(VarId, NodeId)], f: &FnFacts, v: VarId, label: &str) -> usize {
     rel.iter()
-        .filter(|(x, n)| *x == v && f.node(*n).label == label)
+        .filter(|(x, n)| *x == v && f.node(*n).kind == label)
         .count()
 }
 
@@ -2748,7 +2755,7 @@ fn var_at(rel: &[(VarId, NodeId)], f: &FnFacts, v: VarId, label: &str) -> usize 
 fn changed_at(f: &FnFacts, label: &str) -> BTreeSet<String> {
     f.mutates_at
         .iter()
-        .filter(|(n, _)| f.node(*n).label == label)
+        .filter(|(n, _)| f.node(*n).kind == label)
         .map(|(_, p)| f.place(*p).display.clone())
         .collect()
 }

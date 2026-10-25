@@ -1367,7 +1367,7 @@ fn place_field(em: &mut Em<'_>, st: &State, n: NodeId, place: &Place, v: &Tree) 
         return Ok(());
     }
     let sp = em.facts.node(n).span;
-    let m = em.facts.add_node(sp, "field", String::new());
+    let m = em.facts.add_ir_node(sp, "field", "field", "");
     em.facts.ref_in.extend(allowed.into_iter().map(|d| (m, d)));
     em.facts.ref_at.extend(refs.into_iter().map(|r| (m, r)));
     em.facts.ref_sites.push(RefSite {
@@ -1406,7 +1406,7 @@ fn literal_fields(em: &mut Em<'_>, st: &State, n: NodeId, t: TyId, ops: &[Operan
         }
         let needs = sema_field_place(em.sema, a, i).map_or_else(String::new, |p| p.text);
         let sp = em.facts.node(n).span;
-        let m = em.facts.add_node(sp, "field", String::new());
+        let m = em.facts.add_ir_node(sp, "field", "field", "");
         em.facts.ref_at.extend(refs.into_iter().map(|r| (m, r)));
         em.facts.ref_sites.push(RefSite {
             node: m,
@@ -1860,7 +1860,7 @@ pub fn ret(em: &mut Em<'_>, n: NodeId, st: &State, origin: weft_ir::Span) -> R {
         return Ok(());
     }
     let allowed = allowed.to_vec();
-    let m = em.facts.add_node(span(origin), "return", String::new());
+    let m = em.facts.add_ir_node(span(origin), "return", "return", "");
     let needs: Vec<String> = allowed
         .iter()
         .map(|&d| em.facts.place(d).display.clone())

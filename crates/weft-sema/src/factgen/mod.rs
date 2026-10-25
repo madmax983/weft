@@ -508,9 +508,9 @@ pub fn emit_parts(
         lo: body.origin.span.lo,
         hi: body.origin.span.hi,
     };
-    let entry_node = facts.add_node(sp, "entry", String::new());
+    let entry_node = facts.add_ir_node(sp, "entry", "entry", "");
     let mut table = nodes::NodeTable::default();
-    table.add_body(p, entry, facts, &frames);
+    table.add_body(p, &tys, entry, facts, &frames);
     if let Some(first) = table.first(entry, body.entry, nodes::NORMAL) {
         facts.cfg_edge.push((entry_node, first));
     }
@@ -772,9 +772,9 @@ fn closure_summary(
         lo: body.origin.span.lo,
         hi: body.origin.span.hi,
     };
-    let en = facts.add_node(sp, "closure entry", String::new());
+    let en = facts.add_ir_node(sp, "closure entry", "closure entry", "");
     let mut table = nodes::NodeTable::default();
-    table.add_body(p, cb, &mut facts, &frames);
+    table.add_body(p, &tys, cb, &mut facts, &frames);
     if let Some(first) = table.first(cb, body.entry, nodes::NORMAL) {
         facts.cfg_edge.push((en, first));
     }
@@ -861,8 +861,10 @@ fn emit_closure(
         lo: body.origin.span.lo,
         hi: body.origin.span.hi,
     };
-    let en = out.facts.add_node(sp, "closure entry", String::new());
-    out.table.add_body(p, cb, out.facts, &frames);
+    let en = out
+        .facts
+        .add_ir_node(sp, "closure entry", "closure entry", "");
+    out.table.add_body(p, out.tys, cb, out.facts, &frames);
     if let Some(first) = out.table.first(cb, body.entry, nodes::NORMAL) {
         out.facts.cfg_edge.push((en, first));
     }

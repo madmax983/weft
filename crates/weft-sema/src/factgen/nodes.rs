@@ -18,7 +18,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use weft_facts::{FnFacts, NodeId, Span};
-use weft_ir::{BlockId, Body, BodyId, Program, StmtKind, TermKind};
+use weft_ir::{
+    BlockId, Body, BodyId, Callee, CapOperand, LocalId, LocalKind, Operand, Program, Rvalue,
+    StmtKind, TempKind, TermKind, TyTable,
+};
 
 use super::frames::{Dest, Frames};
 
@@ -113,6 +116,61 @@ pub const fn term_name(t: &TermKind) -> &'static str {
         TermKind::Assert { .. } => "assert",
         TermKind::IterNext { .. } => "iter next",
     }
+}
+
+/// The labels of the call and perform nodes of body `b`: the name of the
+/// callee of each block whose terminator is a call or a perform, as the old
+/// lowering: the name of a function item (`push`), of the local of a
+/// function value (`f`), or of an operation (`note`). A block with no name
+/// in the IR keeps the kind of its terminator.
+fn callee_names(p: &Program, tys: &TyTable, b: &Body) -> BTreeMap<BlockId, String> {
+    // The local that each callee temporary copies.
+    let mut copies: BTreeMap<LocalId, LocalId> = BTreeMap::new();
+    for s in b.blocks.iter().flat_map(|blk| &blk.stmts) {
+        if let StmtKind::Assign(dest, Rvalue::Use(Operand::Copy(x) | Operand::Move(x))) = &s.kind {
+            let callee = b
+                .local(dest.local)
+                .is_some_and(|d| d.kind == LocalKind::Temp(TempKind::Callee));
+            if callee && dest.proj.is_empty() {
+                copies.insert(dest.local, x.local);
+            }
+        }
+    }
+    let value_name = |v: &Operand| -> Option<String> {
+        let (Operand::Copy(q) | Operand::Move(q)) = v else {
+            return None;
+        };
+        let l = copies.get(&q.local).copied().unwrap_or(q.local);
+        b.local(l).and_then(|d| d.name.clone())
+    };
+    let mut out = BTreeMap::new();
+    for (bi, blk) in b.blocks.iter().enumerate() {
+        let name = match &blk.term.kind {
+            TermKind::Call {
+                callee: Callee::Fn(f, _),
+                ..
+            } => p.fns.get(f.index()).and_then(|d| {
+                let name = d.name.rsplit('.').next().unwrap_or(&d.name);
+                (!name.is_empty()).then(|| name.to_string())
+            }),
+            TermKind::Call {
+                callee: Callee::Value(v),
+                ..
+            } => value_name(v),
+            TermKind::Perform { cap, op, .. } => match cap {
+                CapOperand::Row(e) => Some(*e),
+                CapOperand::Local(q) => weft_ir::print::cap_effect(p, tys, b, q),
+            }
+            .and_then(|e| tys.effects().get(e.index()))
+            .and_then(|d| d.ops.get(op.index()))
+            .map(|d| d.name.clone()),
+            _ => None,
+        };
+        if let Some(n) = name {
+            out.insert(BlockId(u32::try_from(bi).unwrap_or(u32::MAX)), n);
+        }
+    }
+    out
 }
 
 /// The span of the node of statement `s` of body `b`: the span of its
@@ -273,17 +331,31 @@ impl NodeTable {
     /// the abort to the copy of its cleanup block for that destination
     /// ([`abort_phases`]). A cleanup block gets one copy for each destination
     /// whose abort reaches it.
-    pub fn build(p: &Program, body: BodyId, facts: &mut FnFacts, frames: &Frames) -> Self {
+    pub fn build(
+        p: &Program,
+        tys: &TyTable,
+        body: BodyId,
+        facts: &mut FnFacts,
+        frames: &Frames,
+    ) -> Self {
         let mut t = Self::default();
-        t.add_body(p, body, facts, frames);
+        t.add_body(p, tys, body, facts, frames);
         t
     }
 
     /// Adds the nodes and the edges of body `body` (see [`NodeTable::build`]).
-    pub fn add_body(&mut self, p: &Program, body: BodyId, facts: &mut FnFacts, frames: &Frames) {
+    pub fn add_body(
+        &mut self,
+        p: &Program,
+        tys: &TyTable,
+        body: BodyId,
+        facts: &mut FnFacts,
+        frames: &Frames,
+    ) {
         let Some(b) = p.bodies.get(body.index()) else {
             return;
         };
+        let names = callee_names(p, tys, b);
         let copies = cleanup_copies(b, body, frames);
         let copies_of = |block: BlockId, cleanup: bool| -> Vec<u32> {
             if cleanup {
@@ -299,25 +371,29 @@ impl NodeTable {
         for (bi, blk) in b.blocks.iter().enumerate() {
             let block = BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
             for dest in copies_of(block, blk.cleanup) {
-                self.block_nodes(body, b, block, dest, facts);
+                self.block_nodes(body, b, block, dest, names.get(&block), facts);
             }
         }
         // The edges between blocks.
         for (bi, blk) in b.blocks.iter().enumerate() {
             let block = BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
             for dest in copies_of(block, blk.cleanup) {
-                self.block_edges(body, b, block, dest, frames.dests(body, block), facts);
+                let dests = frames.dests(body, block);
+                self.block_edges(body, b, block, dest, dests, names.get(&block), facts);
             }
         }
     }
 
     /// Adds the nodes of copy `dest` of block `block` and the edges between them.
+    /// `callee` is the name of the callee of the terminator: the label of
+    /// each of its nodes.
     fn block_nodes(
         &mut self,
         body: BodyId,
         b: &Body,
         block: BlockId,
         dest: u32,
+        callee: Option<&String>,
         facts: &mut FnFacts,
     ) {
         let Some(blk) = b.blocks.get(block.index()) else {
@@ -333,7 +409,19 @@ impl NodeTable {
                 phase: Phase::Main,
                 dest,
             };
-            let n = self.node(facts, key, stmt_span(b, s), stmt_name(&s.kind), &detail);
+            let name = stmt_name(&s.kind);
+            // A new value of a whole variable is `x =`, as the old lowering:
+            // a W0301 note says `x : new value`.
+            let label = match &s.kind {
+                StmtKind::Assign(q, _) if q.proj.is_empty() => b
+                    .local(q.local)
+                    .filter(|d| d.kind == LocalKind::User)
+                    .and_then(|d| d.name.as_ref())
+                    .map(|x| format!("{x} =")),
+                _ => None,
+            };
+            let label = label.as_deref().unwrap_or(name);
+            let n = self.node(facts, key, stmt_span(b, s), [label, name, &detail]);
             self.chain(facts, &mut last, n, body, block, dest);
         }
         let name = term_name(&blk.term.kind);
@@ -345,12 +433,18 @@ impl NodeTable {
                 phase,
                 dest,
             };
-            let label = if phase == Phase::Main {
+            let kind = if phase == Phase::Main {
                 name.to_string()
             } else {
                 format!("{name} {}", phase.name())
             };
-            let n = self.node(facts, key, span(blk.term.origin.span), &label, &detail);
+            let label = callee.map_or(kind.as_str(), String::as_str);
+            let n = self.node(
+                facts,
+                key,
+                span(blk.term.origin.span),
+                [label, &kind, &detail],
+            );
             self.chain(facts, &mut last, n, body, block, dest);
         }
     }
@@ -376,7 +470,9 @@ impl NodeTable {
     }
 
     /// Adds the edges from copy `dest` of block `block` to its successors, and
-    /// the paths of its aborts.
+    /// the paths of its aborts. `callee` is the name of the callee of the
+    /// terminator (see [`Self::block_nodes`]).
+    #[allow(clippy::too_many_arguments)]
     fn block_edges(
         &mut self,
         body: BodyId,
@@ -384,6 +480,7 @@ impl NodeTable {
         block: BlockId,
         dest: u32,
         dests: &[Dest],
+        callee: Option<&String>,
         facts: &mut FnFacts,
     ) {
         let Some(blk) = b.blocks.get(block.index()) else {
@@ -426,13 +523,13 @@ impl NodeTable {
             let d = dst.id();
             let mut prev = main;
             for phase in abort_phases(kind, dst.value()).into_iter().skip(1) {
-                let label = format!("{name} {} (abort)", phase.name());
+                let kind = format!("{name} {} (abort)", phase.name());
+                let label = callee.map_or(kind.as_str(), String::as_str);
                 let n = self.node(
                     facts,
                     at(phase, d),
                     span(blk.term.origin.span),
-                    &label,
-                    &detail,
+                    [label, &kind, &detail],
                 );
                 facts.cfg_edge.push((prev, n));
                 prev = n;
@@ -443,19 +540,15 @@ impl NodeTable {
         }
     }
 
-    /// Returns the node of `key`, and makes it if it does not exist.
-    fn node(
-        &mut self,
-        facts: &mut FnFacts,
-        key: NodeKey,
-        span: Span,
-        label: &str,
-        detail: &str,
-    ) -> NodeId {
+    /// Returns the node of `key`, and makes it if it does not exist, with
+    /// the label, the kind and the IR location of `text` (see
+    /// [`FnFacts::add_ir_node`]).
+    fn node(&mut self, facts: &mut FnFacts, key: NodeKey, span: Span, text: [&str; 3]) -> NodeId {
         if let Some(&n) = self.ids.get(&key) {
             return n;
         }
-        let n = facts.add_node(span, label, detail);
+        let [label, kind, at] = text;
+        let n = facts.add_ir_node(span, label, kind, at);
         self.ids.insert(key, n);
         n
     }

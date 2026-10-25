@@ -593,7 +593,12 @@ fn w0301_cause(f: &FnFacts, inv: &Invalidation) -> (String, String) {
             let owner = &f.var(o).name;
             // A local of a closure or a handler clause goes out of scope
             // when the body returns at a call or an operation.
+            // A node of the facts of the IR names a callee only if it is a
+            // node of a call or a perform.
+            let ir_call = at.kind.starts_with("call") || at.kind.starts_with("perform");
+            let ir_end = !at.kind.is_empty() && !ir_call;
             let when = match at.label.as_str() {
+                _ if ir_end => "goes out of scope".to_string(),
                 "end of block" | "end of statement" | "exit" | "return" | "jump"
                 | "drop" => "goes out of scope".to_string(),
                 callee => format!("goes out of scope when `{callee}` returns"),

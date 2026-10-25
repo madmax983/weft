@@ -539,41 +539,9 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Returns the effect of a capability place: from the kind or the type of its
-    /// local if the place is a whole local, else from the capability environment of
-    /// the closure body (a `Cap` field of a closure environment, also through a view
-    /// of the environment in a nested body, `docs/ir.md` 5.1.7).
+    /// Returns the effect of a capability place (see [`cap_effect`]).
     fn cap_effect(&self, b: &Body, p: &Place) -> Option<EffectId> {
-        if !p.is_local() {
-            // Walk the chain of upvar locals to the environment local.
-            let (mut body, mut l) = (b, p.local);
-            for _ in 0..=self.p.bodies.len() {
-                match body.local(l)?.kind {
-                    LocalKind::Env => {
-                        let env = self.p.cap_envs.get(body.cap_env.index())?;
-                        let q = Place {
-                            local: l,
-                            proj: p.proj.clone(),
-                        };
-                        return env.adds.iter().find(|(_, x)| *x == q).map(|(e, _)| *e);
-                    }
-                    LocalKind::Upvar(src) => {
-                        body = self.p.body(body.parent?)?;
-                        l = src;
-                    }
-                    _ => return None,
-                }
-            }
-            return None;
-        }
-        let d = b.local(p.local)?;
-        if let LocalKind::Cap(e) = d.kind {
-            return Some(e);
-        }
-        match self.tys.try_get(d.ty)? {
-            Ty::Cap(e) => Some(*e),
-            _ => None,
-        }
+        cap_effect(self.p, self.tys, b, p)
     }
 
     /// Returns the text of a type.
@@ -604,6 +572,45 @@ impl<'a> Printer<'a> {
             .fns
             .get(f.index())
             .map_or_else(|| format!("f{}", f.0), |d| d.name.clone())
+    }
+}
+
+/// Returns the effect of a capability place.
+///
+/// For a whole local, the effect comes from the kind or the type of the local.
+/// Else it comes from the capability environment of the closure body (a `Cap`
+/// field of a closure environment, also through a view of the environment in a
+/// nested body, `docs/ir.md` 5.1.7).
+pub fn cap_effect(prog: &Program, tys: &TyTable, b: &Body, p: &Place) -> Option<EffectId> {
+    if !p.is_local() {
+        // Walk the chain of upvar locals to the environment local.
+        let (mut body, mut l) = (b, p.local);
+        for _ in 0..=prog.bodies.len() {
+            match body.local(l)?.kind {
+                LocalKind::Env => {
+                    let env = prog.cap_envs.get(body.cap_env.index())?;
+                    let q = Place {
+                        local: l,
+                        proj: p.proj.clone(),
+                    };
+                    return env.adds.iter().find(|(_, x)| *x == q).map(|(e, _)| *e);
+                }
+                LocalKind::Upvar(src) => {
+                    body = prog.body(body.parent?)?;
+                    l = src;
+                }
+                _ => return None,
+            }
+        }
+        return None;
+    }
+    let d = b.local(p.local)?;
+    if let LocalKind::Cap(e) = d.kind {
+        return Some(e);
+    }
+    match tys.try_get(d.ty)? {
+        Ty::Cap(e) => Some(*e),
+        _ => None,
     }
 }
 
