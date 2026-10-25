@@ -442,6 +442,8 @@ pub struct Code {
     /// The IR location of each instruction. Empty for code of the AST
     /// compiler.
     pub locs: Vec<IrLoc>,
+    /// The IR local of each slot. Empty for code of the AST compiler.
+    pub slot_locals: Vec<u32>,
     /// The landing pads (`docs/ir.md` 8.2): the index of each op that can
     /// abort the frame, and the index of the first op of its cleanup chain,
     /// in the order of the ops. Empty for code of the AST compiler: the

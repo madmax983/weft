@@ -575,6 +575,11 @@ impl super::Machine<'_, '_> {
         let Some(pad) = pad else {
             return Ok(Some(cf));
         };
+        if cf.uid != 0 && self.facts.is_some() && self.holds_live_linear(&cf) {
+            if let Some(Err(m)) = self.facts.as_mut().map(|f| f.check_abort(cf.uid)) {
+                return Err(self.fault(m));
+            }
+        }
         let n = cf.code.local_slots();
         let mut cells = cf.temps.clone();
         cells.extend(cf.slots.iter().take(n).flatten().copied());
@@ -590,6 +595,54 @@ impl super::Machine<'_, '_> {
         let live = self.abort_found(found)?;
         self.inner_unwind(Vec::new(), live);
         Ok(None)
+    }
+
+    /// True if a cell of code frame `cf` holds a live linear value (the
+    /// check D4 of the fact oracle).
+    fn holds_live_linear(&self, cf: &CodeFrame) -> bool {
+        let n = cf.code.local_slots();
+        let cells = cf.temps.iter().chain(cf.slots.iter().take(n).flatten());
+        let mut work: Vec<&Value> = cells
+            .filter_map(|&c| self.heap.slot(c).ok().map(|s| &s.val))
+            .collect();
+        let mut budget = 100_000usize;
+        while let Some(v) = work.pop() {
+            budget = budget.saturating_sub(1);
+            if budget == 0 {
+                return false;
+            }
+            match v {
+                Value::Struct(o) => {
+                    let live = o.lin.is_some_and(|id| {
+                        self.lins
+                            .get(id)
+                            .is_some_and(|l| l.l.state == LinState::Live)
+                    });
+                    if live {
+                        return true;
+                    }
+                    work.extend(o.fields.iter());
+                }
+                Value::Task(t) => {
+                    if self
+                        .tasks
+                        .get(*t)
+                        .is_some_and(|x| x.handle.state == LinState::Live)
+                    {
+                        return true;
+                    }
+                }
+                Value::Enum(e) => work.extend(e.fields.iter()),
+                Value::Tuple(vs) | Value::List(vs) => work.extend(vs.iter()),
+                Value::Vec(c) | Value::Boxed(c) => {
+                    if let Ok(s) = self.heap.slot(*c) {
+                        work.push(&s.val);
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
     }
 
     /// Marks each live linear value in `found` as aborted. Returns the
@@ -1113,6 +1166,9 @@ impl super::Machine<'_, '_> {
                         loops: cf.loops.clone(),
                         henv: cf.henv.clone(),
                         chain: cf.chain.as_ref().map(|cs| cs.iter().map(m).collect()),
+                        // The fact oracle does not follow a copied frame
+                        // (group D, stage F16).
+                        uid: 0,
                     })
                 }
                 Frame::Handle(h) => Frame::Handle(HandleMark {

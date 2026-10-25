@@ -153,6 +153,9 @@ const USAGE: &str = "usage:
                    [--repo DIR] [--probes DIR]
   weft-gate oracle-run --base DIR --path PATH [--from K] [--limit-ms MS]
                        [--max-steps N] [--max-memory MB] [--engine ast|ir] [--observe]
+                       [--fact-oracle]
+  weft-gate fact-oracle --tier 1|2 [--report FILE] [--workers N] [--limit SECONDS]
+                        [--max-steps N] [--max-memory MB] [--repo DIR] [--probes DIR]
   weft-gate run --tier 1|2 [--groups ABCDEF] [--report FILE] [--workers N]
                 [--limit SECONDS] [--repo DIR] [--probes DIR] [--write-baseline]
   weft-gate thir --tier 1|2 [--report FILE] [--workers N] [--limit SECONDS]
@@ -199,6 +202,7 @@ struct Flags {
     report: Option<PathBuf>,
     write_baseline: bool,
     observe: bool,
+    fact_oracle: bool,
     rejudge: bool,
     sample: Option<u64>,
     seed: Option<u64>,
@@ -238,6 +242,7 @@ fn parse_flags(args: &[String]) -> Result<Flags> {
     let mut report = None;
     let mut write_baseline = false;
     let mut observe = false;
+    let mut fact_oracle = false;
     let mut rejudge = false;
     let mut sample = None;
     let mut seed = None;
@@ -282,6 +287,7 @@ fn parse_flags(args: &[String]) -> Result<Flags> {
             "--report" => report = Some(PathBuf::from(value()?)),
             "--write-baseline" => write_baseline = true,
             "--observe" => observe = true,
+            "--fact-oracle" => fact_oracle = true,
             "--rejudge" => rejudge = true,
             "--sample" => {
                 let v = value()?;
@@ -332,6 +338,7 @@ fn parse_flags(args: &[String]) -> Result<Flags> {
         report,
         write_baseline,
         observe,
+        fact_oracle,
         rejudge,
         sample,
         seed,
@@ -366,6 +373,9 @@ fn run(args: &[String]) -> Result<bool> {
     }
     if cmd == "sigdiff" {
         return run_sigdiff(&flags);
+    }
+    if cmd == "fact-oracle" {
+        return run_fact_oracle(&flags);
     }
     run_tool(cmd, flags).map(|()| true)
 }
@@ -727,6 +737,7 @@ fn run_engines(flags: &Flags) -> Result<bool> {
         max_memory_mb: flags.max_memory.unwrap_or(oracle::MAX_MEMORY_MB),
         exe: Some(std::env::current_exe().context("find the weft-gate program")?),
         engine: Engine::Ast,
+        fact_oracle: false,
     };
     notes.push(format!(
         "{} workers; time limit of a run {} s, step limit {}, memory limit {} MB",
@@ -1087,6 +1098,7 @@ fn run_oracle(flags: &Flags) -> Result<()> {
         max_memory_mb: flags.max_memory.unwrap_or(oracle::MAX_MEMORY_MB),
         exe: Some(std::env::current_exe().context("find the weft-gate program")?),
         engine,
+        fact_oracle: false,
     };
     let mut journal = open_journal(&out)?;
     snapshot::install_panic_hook();
@@ -1199,7 +1211,19 @@ fn run_oracle_child(flags: &Flags) -> Result<()> {
         Some(name) => Engine::parse(name).with_context(|| format!("unknown engine `{name}`"))?,
     };
     let observe = flags.observe;
+    let fact = flags.fact_oracle;
     let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if fact {
+            oracle::run_fact_configs(
+                &base,
+                &path,
+                from,
+                flags.max_steps,
+                |k| current.store(k, Ordering::SeqCst),
+                |step| write_step(&step),
+            );
+            return;
+        }
         oracle::run_configs(
             &base,
             &path,
@@ -1233,6 +1257,72 @@ fn run_oracle_child(flags: &Flags) -> Result<()> {
         });
     }
     Ok(())
+}
+
+/// `fact-oracle`: the fact oracle and trace conformance (`docs/ir.md` 8.5)
+/// on each program of the tier with `main` or test blocks that the `ir`
+/// pipeline checks and accepts. Writes the report (default
+/// `target/gate/fact-oracle-tier<N>.md`). Returns false if a run fails the
+/// fact oracle or trace conformance.
+fn run_fact_oracle(flags: &Flags) -> Result<bool> {
+    let tier = flags.tier.context("--tier is necessary")?;
+    let (m, base) = if tier == 1 {
+        (tier1(flags)?, flags.repo.clone())
+    } else {
+        let probes = flags.probes()?;
+        (tier2(&probes)?, probes)
+    };
+    let entries: Vec<manifest::Entry> = m
+        .entries
+        .into_iter()
+        .filter(|e| e.has_main || e.has_tests)
+        .collect();
+    let settings = oracle::Settings {
+        workers: flags.workers.unwrap_or_else(|| {
+            std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get)
+        }),
+        limit: flags.limit.map_or(oracle::LIMIT, Duration::from_secs),
+        max_steps: Some(flags.max_steps.unwrap_or(oracle::MAX_STEPS)),
+        max_memory_mb: flags.max_memory.unwrap_or(oracle::MAX_MEMORY_MB),
+        exe: Some(std::env::current_exe().context("find the weft-gate program")?),
+        engine: Engine::Ir,
+        fact_oracle: true,
+    };
+    snapshot::install_panic_hook();
+    let total = entries.len();
+    println!(
+        "fact oracle of {total} programs on {} workers",
+        settings.workers
+    );
+    let start = Instant::now();
+    let paths: Vec<String> = entries.iter().map(|e| e.path.clone()).collect();
+    let mut rows: Vec<(String, oracle::FactClass, String)> = Vec::new();
+    oracle::run_all(&base, entries, &settings, |i, o| {
+        let path = paths.get(i).cloned().unwrap_or_default();
+        rows.push((path, oracle::fact_class(&o), o.detail));
+        if rows.len() % 1000 == 0 {
+            println!(
+                "{} of {total} programs in {:.1} s",
+                rows.len(),
+                start.elapsed().as_secs_f64()
+            );
+        }
+    })?;
+    rows.sort();
+    let text = oracle::fact_report(tier, &rows, start.elapsed());
+    let out = flags.report.clone().unwrap_or_else(|| {
+        flags
+            .repo
+            .join(format!("target/gate/fact-oracle-tier{tier}.md"))
+    });
+    write_text(&out, &text)?;
+    let failed = rows.iter().filter(|r| r.1.is_failure()).count();
+    println!(
+        "wrote {} in {:.1} s: {failed} failures of the fact oracle",
+        out.display(),
+        start.elapsed().as_secs_f64()
+    );
+    Ok(failed == 0)
 }
 
 fn tier1(flags: &Flags) -> Result<Manifest> {

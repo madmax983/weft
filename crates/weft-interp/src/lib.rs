@@ -47,6 +47,7 @@ use weft_check::Checked;
 use weft_sema::Analysis;
 
 pub use error::{ErrorKind, RuntimeError};
+pub use oracle::facts::{FactReport, IrStep};
 pub use trace::{SuspendReason, TaskEnd, TraceEvent};
 
 use crate::compile::{ArgOrder, ByValue, Exports, IntOps};
@@ -92,6 +93,16 @@ pub struct RunOptions {
     pub oracle: bool,
     /// The compiler that makes the code.
     pub engine: Engine,
+    /// Turns on the fact oracle and trace conformance
+    /// ([`oracle::facts`], `docs/ir.md` 8.5): the run checks the facts of
+    /// the `ir` pipeline against what it does. The IR engine runs the
+    /// program, whatever [`RunOptions::engine`] says. A failure is a fault
+    /// whose message starts with `fact oracle` or `trace conformance`.
+    /// Off by default.
+    pub fact_oracle: bool,
+    /// Records the IR location of each step of each frame of the IR engine
+    /// ([`RunOutcome::ir_trace`]). Off by default.
+    pub ir_trace: bool,
 }
 
 impl Default for RunOptions {
@@ -106,6 +117,8 @@ impl Default for RunOptions {
             no_runtime: false,
             oracle: false,
             engine: Engine::Ast,
+            fact_oracle: false,
+            ir_trace: false,
         }
     }
 }
@@ -126,6 +139,10 @@ pub struct RunOutcome {
     /// With [`Engine::Ir`]: the reason why the AST compiler ran the program,
     /// if it did.
     pub fallback: Option<String>,
+    /// With [`RunOptions::ir_trace`]: each step of the IR trace.
+    pub ir_trace: Vec<IrStep>,
+    /// With [`RunOptions::fact_oracle`]: what the fact oracle saw.
+    pub fact_oracle: Option<FactReport>,
 }
 
 /// The result of one test block.
@@ -217,7 +234,7 @@ pub fn exports(analysis: &Analysis) -> Exports {
 /// `once` continuation. The run is on a large stack ([`weft_sema::on_large_stack`]).
 pub fn run_main(checked: &Checked, opts: &RunOptions) -> Result<RunOutcome, RuntimeError> {
     weft_sema::on_large_stack(|| {
-        let (rt, fallback) = runtime(&checked.analysis, stealable_spans(checked), opts.engine);
+        let (rt, fallback) = runtime(&checked.analysis, stealable_spans(checked), opts, None);
         with_fallback(run_main_with(&rt, opts), fallback)
     })
 }
@@ -229,7 +246,7 @@ pub fn run_analysis_main(
     opts: &RunOptions,
 ) -> Result<RunOutcome, RuntimeError> {
     weft_sema::on_large_stack(|| {
-        let (rt, fallback) = runtime(analysis, BTreeSet::new(), opts.engine);
+        let (rt, fallback) = runtime(analysis, BTreeSet::new(), opts, None);
         with_fallback(run_main_with(&rt, opts), fallback)
     })
 }
@@ -238,7 +255,7 @@ pub fn run_analysis_main(
 /// stack ([`weft_sema::on_large_stack`]).
 pub fn run_tests(checked: &Checked, opts: &RunOptions) -> Vec<TestOutcome> {
     weft_sema::on_large_stack(|| {
-        let (rt, fallback) = runtime(&checked.analysis, stealable_spans(checked), opts.engine);
+        let (rt, fallback) = runtime(&checked.analysis, stealable_spans(checked), opts, None);
         tests_with_fallback(run_tests_with(&rt, opts), fallback.as_deref())
     })
 }
@@ -247,24 +264,43 @@ pub fn run_tests(checked: &Checked, opts: &RunOptions) -> Vec<TestOutcome> {
 /// large stack ([`weft_sema::on_large_stack`]).
 pub fn run_analysis_tests(analysis: &Analysis, opts: &RunOptions) -> Vec<TestOutcome> {
     weft_sema::on_large_stack(|| {
-        let (rt, fallback) = runtime(analysis, BTreeSet::new(), opts.engine);
+        let (rt, fallback) = runtime(analysis, BTreeSet::new(), opts, None);
         tests_with_fallback(run_tests_with(&rt, opts), fallback.as_deref())
     })
 }
 
-/// Makes the tables and the code of a run with `engine`. With
+/// A change of the facts of each component, for a test of the fact oracle.
+pub type FactEdit<'e> = &'e (dyn Fn(&mut weft_facts::FnFacts) + Sync);
+
+/// Makes the tables and the code of a run with the engine of `opts`. With
 /// [`Engine::Ir`], the second value is the reason why the AST compiler
-/// compiled the program, if it did.
-fn runtime(
-    analysis: &Analysis,
+/// compiled the program, if it did. With the fact oracle, the IR engine
+/// runs the program, and the runtime gets the components of its facts
+/// (changed by `edit`, for a test).
+fn runtime<'a>(
+    analysis: &'a Analysis,
     stealable: BTreeSet<(usize, u32, u32)>,
-    engine: Engine,
-) -> (Runtime<'_>, Option<String>) {
+    opts: &RunOptions,
+    edit: Option<FactEdit<'_>>,
+) -> (Runtime<'a>, Option<String>) {
     let (prog, sigs) = (&analysis.program, analysis.sigs.as_slice());
-    if engine == Engine::Ir {
+    if opts.engine == Engine::Ir || opts.fact_oracle {
         let built = weft_sema::irbuild::build(analysis);
         match compile_ir::compile_ir(prog, &built) {
-            Ok(code) => return (Runtime::with_code(prog, sigs, stealable, code), None),
+            Ok(code) => {
+                let mut rt = Runtime::with_code(prog, sigs, stealable, code);
+                if opts.fact_oracle {
+                    let mut comps = weft_sema::factgen::components(analysis, &built)
+                        .map_err(|u| format!("the program is not in scope: {u}"));
+                    if let (Ok(cs), Some(edit)) = (&mut comps, edit) {
+                        for c in cs {
+                            edit(&mut c.facts);
+                        }
+                    }
+                    rt.facts = Some(std::rc::Rc::new(oracle::facts::FactInput { built, comps }));
+                }
+                return (rt, None);
+            }
             Err(f) => {
                 let rt = Runtime::new(prog, sigs, stealable, &exports(analysis));
                 return (rt, Some(f.to_string()));
@@ -275,6 +311,25 @@ fn runtime(
         Runtime::new(prog, sigs, stealable, &exports(analysis)),
         None,
     )
+}
+
+/// Runs `fn main` of a checked program with the fact oracle, as
+/// [`run_main`] does, after `edit` changes the facts of each component.
+/// A test breaks the facts by hand and sees the fact oracle fail.
+pub fn run_main_with_facts(
+    checked: &Checked,
+    opts: &RunOptions,
+    edit: impl Fn(&mut weft_facts::FnFacts) + Sync,
+) -> Result<RunOutcome, RuntimeError> {
+    weft_sema::on_large_stack(|| {
+        let (rt, fallback) = runtime(
+            &checked.analysis,
+            stealable_spans(checked),
+            opts,
+            Some(&edit),
+        );
+        with_fallback(run_main_with(&rt, opts), fallback)
+    })
 }
 
 /// Writes the reason of a fallback into the outcome of a run.

@@ -202,6 +202,7 @@ impl<'a> Compiler<'a> {
                 .map_or(usize::MAX, |m| m.unit),
             temp_slots: 0,
             locs: Vec::new(),
+            slot_locals: Vec::new(),
             pads: Vec::new(),
         });
     }
@@ -1546,6 +1547,7 @@ fn empty_code() -> Code {
         unit: usize::MAX,
         temp_slots: 0,
         locs: Vec::new(),
+        slot_locals: Vec::new(),
         pads: Vec::new(),
     }
 }

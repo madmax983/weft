@@ -137,6 +137,21 @@ fn owned_prefix(place: &Place) -> &[Proj] {
     place.proj.get(..end).unwrap_or(&[])
 }
 
+/// True if type `t` has elements that move when the buffer grows: an
+/// extern type with an unstable element step (`Vec`).
+fn moving_elems(tys: &TyTable, t: TyId) -> bool {
+    match tys.try_get(t) {
+        Some(weft_ir::Ty::Adt(a, _)) => matches!(
+            tys.adts().get(a.index()).map(|d| &d.kind),
+            Some(weft_ir::ty::AdtKind::Extern {
+                elem_unstable: Some(true),
+                ..
+            })
+        ),
+        _ => false,
+    }
+}
+
 /// True if `a` is a prefix of `b` (or equal to it).
 fn is_prefix<T: PartialEq>(a: &[T], b: &[T]) -> bool {
     a.len() <= b.len() && a.iter().zip(b).all(|(x, y)| x == y)
@@ -234,11 +249,32 @@ impl Em<'_> {
     ) -> Result<(Access, Alpha), AlphaError> {
         let a = self.alpha(st, place)?;
         let mut ptrs = a.ptrs.clone();
-        for pr in &place.proj {
+        for (j, pr) in place.proj.iter().enumerate() {
             if let Proj::Index(i) = pr {
                 ptrs.push(self.root_of(*i)?);
             }
+            // An element of a buffer that moves (a `Vec`) is behind the
+            // handle of the buffer: the access reads the handle, as it reads
+            // a pointer (trace of the fact oracle, `docs/ir.md` 8.5).
+            if matches!(pr, Proj::Index(_) | Proj::Elems) {
+                let base = Place {
+                    local: place.local,
+                    proj: place
+                        .proj
+                        .get(..j)
+                        .map(<[Proj]>::to_vec)
+                        .unwrap_or_default(),
+                };
+                if self
+                    .place_ty(&base)
+                    .is_some_and(|t| moving_elems(self.tys, t))
+                {
+                    ptrs.extend(self.alpha(st, &base)?.places);
+                }
+            }
         }
+        ptrs.sort();
+        ptrs.dedup();
         let k = self.key(place.local)?;
         let root = if root && self.source_local(k) {
             Some(self.root_of(place.local)?)
@@ -1324,7 +1360,8 @@ const DEEP_LIMIT: usize = 4096;
 /// an interpolation, an operand of a comparison, and an argument of a call
 /// or of a `perform` read through it.
 ///
-/// Each place is visited one time. The cost is linear in the number of
+/// The node also reads each place on the chain. Each place is visited one
+/// time. The cost is linear in the number of
 /// places on the chain.
 ///
 /// # Errors
@@ -1368,10 +1405,13 @@ fn deep_uses(em: &mut Em<'_>, n: NodeId, st: &State, op: &Operand, refs: &[Place
     }
     uses.sort();
     uses.dedup();
+    // The read reads each place on the chain (C5 of the fact oracle,
+    // `docs/ir.md` 8.5).
     em.apply(
         n,
         Frag {
             uses,
+            reads: seen.into_iter().collect(),
             ..Frag::default()
         },
     );

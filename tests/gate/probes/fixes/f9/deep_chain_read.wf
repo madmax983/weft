@@ -1,0 +1,11 @@
+// Stage F9 (fact oracle, C5): a read through a chain of references reads
+// each place on the chain (`r -> u.1 -> t -> t.1 -> b[]`). The facts must
+// give `reads_at` of each one at the `print`.
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn main() {
+    let b = mkv()
+    let t = (5, &b[0])
+    let u = (6, &t)
+    let r = &u.1
+    print(r)
+}

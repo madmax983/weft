@@ -1195,8 +1195,9 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
         // Not a use: a pattern moved the parts before it.
         "consume" => (&["cfg_edge", "moved_at", "moved_part", "rest_linear"], &[]),
         "uninit" => (&["cfg_edge", "unset_at"], &[]),
-        "bounds" | "switch" | "print" => (&["cfg_edge", "reads_at", "uses"], &[]),
-        "mention" => (&["cfg_edge", "uses"], &[]),
+        // A mention reads the pointers and the index locals of its place
+        // (stage F9).
+        "bounds" | "switch" | "print" | "mention" => (&["cfg_edge", "reads_at", "uses"], &[]),
         // An `on abort` function: the summary of the function at the node,
         // with the root handlers (plan stage F7).
         "unwind value" => (

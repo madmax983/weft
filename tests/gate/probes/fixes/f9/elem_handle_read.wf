@@ -1,0 +1,8 @@
+// Stage F9 (fact oracle, C5): a borrow of an element of a `Vec` reads the
+// handle of the buffer. The facts must give `reads_at` of `b` at the borrow.
+fn mkv() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn main() {
+    let b = mkv()
+    let r = &b[0]
+    print(r)
+}

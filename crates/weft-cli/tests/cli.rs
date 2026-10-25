@@ -437,7 +437,8 @@ fn explain_and_help() {
         "run     [PROFILE] [FACTS] [RUN] PATH",
         "test    [PROFILE] [FACTS] [RUN] PATH",
         "FACTS is --facts=old|ir|both",
-        "RUN is [--seed N] [--workers N] [--unchecked] [--oracle] [--engine=ast|ir].",
+        "RUN is [--seed N] [--workers N] [--unchecked] [--oracle] [--fact-oracle]",
+        "--ir-trace",
         "--unchecked",
         "--lib or --bin",
         "1 to 1024",
@@ -1177,4 +1178,28 @@ fn a_borrow_of_plain_data_gives_the_old_diagnostics_in_the_ir_pipeline() {
     );
     assert_eq!(old.code, 0, "{}", old.text);
     assert_eq!((ir.code, ir.text), (old.code, old.text));
+}
+
+/// `--fact-oracle` runs the fact oracle on the IR engine and writes what it
+/// checked; `--ir-trace` writes each step of the IR trace (stage F9).
+#[test]
+fn the_fact_oracle_and_the_ir_trace_write_notes() {
+    let path = format!("{INTERP}/rc_cycle.wf");
+    let out = cmd(&["run", "--fact-oracle", "--ir-trace", &path]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(
+        out.stderr.contains("note: --fact-oracle: 1 frame(s)"),
+        "{}",
+        out.stderr
+    );
+    assert!(out.stderr.contains("ir-trace: frame 1 b"), "{}", out.stderr);
+    // A program that is not in scope (a handler, group D): the oracle checks
+    // nothing.
+    let handled = format!("{INTERP}/effects_log.wf");
+    let looped = cmd(&["run", "--fact-oracle", &handled]);
+    assert!(
+        looped.stderr.contains("the oracle checks nothing"),
+        "{}",
+        looped.stderr
+    );
 }

@@ -8,9 +8,10 @@ use weft_syntax::ast::Span;
 use weft_verified::lifecycle::LinState;
 
 use super::{CodeFrame, Flow, Frame, HandleMark, LinRec, ScopeRec, TaskResult, Wait, R};
-use crate::code::{CPat, CapHold, LitPat, Op, VarRef};
+use crate::code::{CPat, CapHold, Code, LitPat, Op, VarRef};
 use crate::error::{ErrorKind, RuntimeError};
 use crate::heap::SlotKind;
+use crate::oracle::facts::IrStep;
 use crate::runtime::Native;
 use crate::trace::{SuspendReason, TraceEvent};
 use crate::value::{Cap, CellId, ClosureVal, EnumVal, HEnv, IterState, Obj, Place, ScopeId, Value};
@@ -217,12 +218,12 @@ impl super::Machine<'_, '_> {
     /// Runs one step of the current task.
     pub(crate) fn step(&mut self) -> R<Flow> {
         let cur = self.cur;
-        let (code, pc) = match self.tasks[cur].frames.last_mut() {
+        let (code, pc, uid) = match self.tasks[cur].frames.last_mut() {
             None => return Ok(Flow::Done),
             Some(Frame::Code(cf)) => {
                 let pc = cf.pc;
                 cf.pc += 1;
-                (Rc::clone(&cf.code), pc)
+                (Rc::clone(&cf.code), pc, cf.uid)
             }
             Some(Frame::Unwind(_)) => return self.unwind_step(),
             Some(Frame::Fork { .. }) => return self.fork_step(),
@@ -231,7 +232,93 @@ impl super::Machine<'_, '_> {
         let Some(op) = code.ops.get(pc) else {
             return Err(self.fault("internal: the code has no instruction here"));
         };
-        self.exec(op)
+        if uid == 0 {
+            return self.exec(op);
+        }
+        if let Err(m) = self.before_op(uid, &code, pc, op) {
+            return Err(self.fault(m));
+        }
+        let flow = self.exec(op)?;
+        if let Err(m) = self.after_op(uid, &code, op) {
+            return Err(self.fault(m));
+        }
+        Ok(flow)
+    }
+
+    /// Before op `op` at `pc` of frame `uid` (`crate::oracle::facts`): the
+    /// IR trace, trace conformance and C1 when the location changes, and C4
+    /// for an op that ends the cells of locals.
+    fn before_op(&mut self, uid: u64, code: &Code, pc: usize, op: &Op) -> Result<(), String> {
+        let Some(loc) = code.locs.get(pc).copied() else {
+            return Ok(());
+        };
+        if self.opts.ir_trace {
+            let at = (loc.body, loc.block, loc.stmt);
+            if self.trace_at.get(&uid) != Some(&at) {
+                self.trace_at.insert(uid, at);
+                self.ir_trace.push(IrStep {
+                    frame: uid,
+                    body: loc.body,
+                    block: loc.block,
+                    stmt: loc.stmt,
+                });
+            }
+        }
+        let Some(fo) = self.facts.as_mut() else {
+            return Ok(());
+        };
+        let changed = fo.step(uid, loc.block, loc.stmt)?;
+        let Some(Frame::Code(cf)) = self.tasks.get(self.cur).and_then(|t| t.frames.last()) else {
+            return Ok(());
+        };
+        if changed && cf.chain.is_none() {
+            fo.check_uses(uid, code, &cf.slots, &self.heap)?;
+        }
+        let ends: &[u32] = match op {
+            Op::DropSlots(ss) => ss,
+            Op::EndTemp(s) => std::slice::from_ref(s),
+            _ => &[],
+        };
+        for &s in ends {
+            let live = cf.slots.get(s as usize).is_some_and(Option::is_some);
+            if let (true, Some(&l)) = (live, code.slot_locals.get(s as usize)) {
+                fo.check_end(uid, weft_ir::LocalId(l))?;
+            }
+        }
+        let _ = self.heap.take_facts_log();
+        Ok(())
+    }
+
+    /// After op `op` of frame `uid`: C5 and D1 for the accesses of the op.
+    fn after_op(&mut self, uid: u64, code: &Code, op: &Op) -> Result<(), String> {
+        let Some(fo) = self.facts.as_mut() else {
+            return Ok(());
+        };
+        let events = self.heap.take_facts_log();
+        if matches!(op, Op::Return) {
+            fo.leave(uid);
+            return Ok(());
+        }
+        if events.is_empty() {
+            return Ok(());
+        }
+        let frame = self.tasks.get(self.cur).and_then(|t| {
+            t.frames.iter().rev().find_map(|f| match f {
+                Frame::Code(cf) if cf.uid == uid => Some(cf),
+                _ => None,
+            })
+        });
+        let Some(cf) = frame else {
+            return Ok(());
+        };
+        if cf.chain.is_some() {
+            return Ok(());
+        }
+        // A move of the program is a `move` operand (`Take`, or a `Read` of
+        // a value that is not a copy value). A take in another op (a drop,
+        // the code of a native function) changes the place.
+        let moves = matches!(op, Op::Take | Op::Read);
+        fo.check_events(uid, code, &cf.slots, &self.heap, &events, moves)
     }
 
     #[allow(clippy::too_many_lines)]
@@ -869,6 +956,7 @@ impl super::Machine<'_, '_> {
         let to = match self.hget(&p)? {
             Value::Ref(q) => {
                 self.heap.check_ref(q);
+                self.heap.log_deref(&p);
                 (q.clone(), true)
             }
             Value::Boxed(c) => (Place::root(*c), tr),

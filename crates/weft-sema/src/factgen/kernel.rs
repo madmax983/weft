@@ -74,11 +74,13 @@ pub fn read(a: &Access) -> Frag {
     }
 }
 
-/// A mention of the place (`Mention`): it uses its variables, and reads
-/// nothing.
+/// A mention of the place (`Mention`): it uses its variables and reads its
+/// pointers and index locals (the place is evaluated), but it does not read
+/// the place.
 pub fn mention(a: &Access) -> Frag {
     Frag {
         uses: a.vars.clone(),
+        reads: a.ptrs.clone(),
         ..Frag::default()
     }
 }

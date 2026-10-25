@@ -183,3 +183,6 @@ them again if it runs.
 - `r3/oracle/sweep1/{if,match}__tmp_*__arg.wf` and
   `verify/s5/R3a_diff/sweep/{if,match}__ref_temp*__arg.wf`: copies of the 24
   tier-2 programs of the branch temporaries (claim branch-temps, docs/ir.md 5.12).
+- `fixes/f9/*.wf`: the defects of the fact generator that the fact oracle of stage F9
+  found (`reads_at` facts; claim F9-C5, docs/ir.md 8.5). `mention_index_read.wf` is a
+  variant of the first review of stage F8.

@@ -7,6 +7,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
+use crate::oracle::facts::HeapEvent;
 use crate::oracle::Oracle;
 use crate::value::{CellId, ClosureVal, EnumMark, Place, TaskId, Value};
 
@@ -53,6 +54,9 @@ pub struct Heap {
     /// statement position: the scope keeps the task, and no `join` takes its
     /// result.
     dropped_tasks: BTreeSet<TaskId>,
+    /// With the fact oracle on: the accesses since the last
+    /// [`Heap::take_facts_log`] (`crate::oracle::facts`).
+    facts_log: Option<RefCell<Vec<HeapEvent>>>,
 }
 
 impl Heap {
@@ -63,6 +67,27 @@ impl Heap {
             move_only,
             oracle: None,
             dropped_tasks: BTreeSet::new(),
+            facts_log: None,
+        }
+    }
+
+    /// Turns the log of the fact oracle on.
+    pub fn enable_facts_log(&mut self) {
+        self.facts_log = Some(RefCell::new(Vec::new()));
+    }
+
+    /// Takes the accesses that the log of the fact oracle has.
+    pub fn take_facts_log(&self) -> Vec<HeapEvent> {
+        self.facts_log
+            .as_ref()
+            .map(|l| std::mem::take(&mut *l.borrow_mut()))
+            .unwrap_or_default()
+    }
+
+    /// Adds an access to the log of the fact oracle, if it is on.
+    fn log_fact(&self, e: impl FnOnce() -> HeapEvent) {
+        if let Some(l) = &self.facts_log {
+            l.borrow_mut().push(e());
         }
     }
 
@@ -114,6 +139,13 @@ impl Heap {
     /// With the oracle checks on, records a read of the value at `p`.
     pub fn log_read(&self, p: &Place) {
         self.oracle_access(p.cell, &p.path, false);
+        self.log_fact(|| HeapEvent::Read(Place::new(p.cell, p.path.clone())));
+    }
+
+    /// With the fact oracle on, records that the run follows the reference
+    /// at `p`.
+    pub fn log_deref(&self, p: &Place) {
+        self.log_fact(|| HeapEvent::Deref(Place::new(p.cell, p.path.clone())));
     }
 
     /// With the oracle checks on, notes a violation if a reference to `p` is
@@ -247,6 +279,24 @@ impl Heap {
 
     /// Returns the value at a place for writing.
     pub fn get_mut(&mut self, p: &Place) -> Result<&mut Value, String> {
+        if self.facts_log.is_some() {
+            let fresh = matches!(self.get_quiet(p), Ok(Value::Moved));
+            self.log_fact(|| HeapEvent::Write(Place::new(p.cell, p.path.clone()), fresh));
+        }
+        self.get_mut_quiet(p)
+    }
+
+    /// The value at a place, with no check and no log.
+    fn get_quiet(&self, p: &Place) -> Result<&Value, String> {
+        let mut v = &self.slot(p.cell)?.val;
+        for &i in &p.path {
+            v = part(v, i).ok_or_else(|| "a place does not exist".to_string())?;
+        }
+        Ok(v)
+    }
+
+    /// [`Heap::get_mut`] with no log of the fact oracle.
+    fn get_mut_quiet(&mut self, p: &Place) -> Result<&mut Value, String> {
         self.oracle_freed(p.cell, "a write")?;
         if !p.marks.is_empty() {
             self.check_marks(p, "a write")?;
@@ -268,7 +318,10 @@ impl Heap {
 
     /// Takes the value out of a place and leaves [`Value::Moved`].
     pub fn take(&mut self, p: &Place) -> Result<Value, String> {
-        Ok(take_moved(self.get_mut(p)?))
+        if self.facts_log.is_some() {
+            self.log_fact(|| HeapEvent::Take(Place::new(p.cell, p.path.clone())));
+        }
+        Ok(take_moved(self.get_mut_quiet(p)?))
     }
 
     /// Returns the elements of a buffer cell.
@@ -284,6 +337,7 @@ impl Heap {
     pub fn list_mut(&mut self, buf: CellId) -> Result<&mut Vec<Value>, String> {
         self.oracle_freed(buf, "a write")?;
         self.oracle_access(buf, &[], true);
+        self.log_fact(|| HeapEvent::Write(Place::root(buf), false));
         match &mut self.slot_mut(buf)?.val {
             Value::List(vs) => Ok(vs),
             _ => Err("a buffer was freed".into()),

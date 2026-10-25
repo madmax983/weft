@@ -169,6 +169,9 @@ pub struct Runtime<'a> {
     /// The tasks that the checker marked stealable: the source unit and the
     /// span of the function value that each one runs.
     pub stealable: BTreeSet<(usize, u32, u32)>,
+    /// With the fact oracle: the IR and the components of its facts
+    /// (`crate::oracle::facts`).
+    pub facts: Option<Rc<crate::oracle::facts::FactInput>>,
 }
 
 /// Returns the qualified name of a function: `Vec.push`, `sim.net.partition`.
@@ -337,6 +340,7 @@ impl<'a> Runtime<'a> {
             move_only,
             b,
             stealable,
+            facts: None,
         }
     }
 

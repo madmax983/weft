@@ -225,6 +225,10 @@ pub struct Settings {
     pub exe: Option<PathBuf>,
     /// The engine that runs the programs.
     pub engine: Engine,
+    /// Runs the fact oracle and trace conformance (`docs/ir.md` 8.5) on each
+    /// program in scope that the `ir` pipeline accepts ([`run_fact_configs`]),
+    /// in place of the oracle verdict.
+    pub fact_oracle: bool,
 }
 
 impl Default for Settings {
@@ -236,6 +240,7 @@ impl Default for Settings {
             max_memory_mb: MAX_MEMORY_MB,
             exe: None,
             engine: Engine::Ast,
+            fact_oracle: false,
         }
     }
 }
@@ -758,6 +763,17 @@ pub fn run_entry_observed(
 ) -> (Outcome, Vec<Observation>) {
     let mut c = Combine::default();
     let mut seen = Vec::new();
+    if settings.fact_oracle {
+        run_fact_configs(
+            base,
+            &entry.path,
+            0,
+            settings.max_steps,
+            |_| {},
+            |s| c.add(s),
+        );
+        return (c.outcome(), seen);
+    }
     run_configs(
         base,
         &entry.path,
@@ -771,6 +787,208 @@ pub fn run_entry_observed(
         },
     );
     (c.outcome(), seen)
+}
+
+/// The class of the outcome of the fact oracle on one program
+/// ([`run_fact_configs`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum FactClass {
+    /// A failure of trace conformance.
+    Trace,
+    /// A failure of the fact oracle (C1, C4, C5, D1, D4).
+    Fact,
+    /// Another fault: the memory oracle, a panic, a fault marker.
+    Fault,
+    /// The run does not end in the limits.
+    Timeout,
+    /// The runs end with no failure of the fact oracle (also a `fail`, an
+    /// `assert` or a benign error).
+    Pass,
+    /// The program is not in scope of the `ir` pipeline.
+    OutOfScope,
+    /// The `ir` pipeline rejects the program.
+    Rejected,
+    /// The program does not load, or has no `main` and no test block.
+    NotRunnable,
+}
+
+impl FactClass {
+    /// The classes, in the order of the report.
+    pub const ALL: [Self; 8] = [
+        Self::Trace,
+        Self::Fact,
+        Self::Fault,
+        Self::Timeout,
+        Self::Pass,
+        Self::OutOfScope,
+        Self::Rejected,
+        Self::NotRunnable,
+    ];
+
+    /// The name in the report.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Trace => "trace",
+            Self::Fact => "fact-oracle",
+            Self::Fault => "fault",
+            Self::Timeout => "timeout",
+            Self::Pass => "pass",
+            Self::OutOfScope => "out-of-scope",
+            Self::Rejected => "rejected",
+            Self::NotRunnable => "not-runnable",
+        }
+    }
+
+    /// True for a failure of the fact oracle or of trace conformance.
+    pub const fn is_failure(self) -> bool {
+        matches!(self, Self::Trace | Self::Fact)
+    }
+}
+
+/// The class of outcome `o` of [`run_fact_configs`].
+pub fn fact_class(o: &Outcome) -> FactClass {
+    let d = &o.detail;
+    match o.verdict {
+        Verdict::Fault if d.contains("trace conformance:") => FactClass::Trace,
+        Verdict::Fault if d.contains("fact oracle (") => FactClass::Fact,
+        Verdict::Fault => FactClass::Fault,
+        Verdict::Timeout => FactClass::Timeout,
+        Verdict::NotRunnable if d.contains(&format!("{FACT_SKIP}out of scope")) => {
+            FactClass::OutOfScope
+        }
+        Verdict::NotRunnable if d.contains(FACT_SKIP) => FactClass::Rejected,
+        Verdict::NotRunnable => FactClass::NotRunnable,
+        Verdict::Fail | Verdict::Benign | Verdict::Clean => FactClass::Pass,
+    }
+}
+
+/// The report of `weft-gate fact-oracle`: the count of each class, and the
+/// path and the detail of each program of the classes before `pass`.
+pub fn fact_report(tier: u8, rows: &[(String, FactClass, String)], took: Duration) -> String {
+    let mut s = String::new();
+    let _ = writeln!(s, "# Fact oracle and trace conformance, tier {tier}\n");
+    let _ = writeln!(
+        s,
+        "The runs of `weft-gate fact-oracle` (`docs/ir.md` 8.5): each program with `main` or test blocks that the `ir` pipeline checks and accepts runs on the IR engine with the fact oracle and the memory oracle, in the six configurations. {} programs, {:.1} s.\n",
+        rows.len(),
+        took.as_secs_f64()
+    );
+    let _ = writeln!(s, "| Class | Programs |\n| --- | --- |");
+    for c in FactClass::ALL {
+        let n = rows.iter().filter(|r| r.1 == c).count();
+        let _ = writeln!(s, "| {} | {n} |", c.name());
+    }
+    for c in [
+        FactClass::Trace,
+        FactClass::Fact,
+        FactClass::Fault,
+        FactClass::Timeout,
+    ] {
+        let list: Vec<&(String, FactClass, String)> = rows.iter().filter(|r| r.1 == c).collect();
+        if list.is_empty() {
+            continue;
+        }
+        let _ = writeln!(s, "\n## {}\n", c.name());
+        for (p, _, d) in list {
+            let _ = writeln!(s, "- `{p}`: {d}");
+        }
+    }
+    s
+}
+
+/// The start of the detail of a program that the fact oracle does not run:
+/// a program that is not in scope of the `ir` pipeline, or that it rejects.
+pub const FACT_SKIP: &str = "fact oracle: no run: ";
+
+/// Runs the program at `path` below `base` with the fact oracle (`docs/ir.md`
+/// 8.5).
+///
+/// The runs use the memory oracle and the IR engine, in the configurations
+/// of [`CONFIGS`] from index `from`, on this thread. A program that is not
+/// in scope of the `ir` pipeline (the default groups), or that the `ir`
+/// pipeline rejects, gives [`Step::NotRunnable`] with a detail that starts
+/// with [`FACT_SKIP`]. A failure of the fact oracle or of trace conformance
+/// is a [`Verdict::Fault`] whose detail holds `fact oracle (` or `trace
+/// conformance:`.
+///
+/// A panic of the interpreter continues in the caller.
+pub fn run_fact_configs(
+    base: &Path,
+    path: &str,
+    from: usize,
+    max_steps: Option<u64>,
+    mut start: impl FnMut(usize),
+    mut emit: impl FnMut(Step),
+) {
+    let pkg = match package::load(&base.join(path)) {
+        Ok(pkg) => pkg,
+        Err(e) => {
+            let dir = format!("{}/", base.display());
+            let text = format!("the program does not load: {e:#}").replace(&dir, "");
+            emit(Step::NotRunnable(text));
+            return;
+        }
+    };
+    let opts = weft_sema::Options {
+        facts: weft_sema::FactGen::Both,
+        ..pkg.options(Profile::default())
+    };
+    let analysis = weft_sema::analyze(&pkg.units, opts);
+    let fallback = analysis.ir_scope.as_ref().and_then(|s| s.fallback.clone());
+    let checked = weft_check::check_analysis(analysis, &pkg.files);
+    let Some(ir) = &checked.ir else {
+        let why = fallback.unwrap_or_else(|| "no scope".to_string());
+        emit(Step::NotRunnable(format!("{FACT_SKIP}out of scope: {why}")));
+        return;
+    };
+    if !ir.ok() {
+        emit(Step::NotRunnable(format!(
+            "{FACT_SKIP}the ir pipeline rejects it"
+        )));
+        return;
+    }
+    for (config, &(seed, workers)) in CONFIGS.iter().enumerate().skip(from) {
+        start(config);
+        let run_opts = RunOptions {
+            seed,
+            workers,
+            max_steps,
+            capture_output: true,
+            no_runtime: opts.no_runtime,
+            oracle: true,
+            engine: weft_interp::Engine::Ir,
+            fact_oracle: true,
+            ..RunOptions::default()
+        };
+        let mut best: Option<(Verdict, String)> = None;
+        let run = weft_interp::run_main(&checked, &run_opts);
+        if matches!(&run, Err(e) if e.kind == ErrorKind::NoMain) {
+            let tests = weft_interp::run_tests(&checked, &run_opts);
+            if tests.is_empty() {
+                emit(Step::NotRunnable("no `main` and no test block".to_string()));
+                return;
+            }
+            for t in &tests {
+                keep_first(&mut best, test_verdict(t));
+            }
+        } else {
+            keep_first(&mut best, main_verdict(&pkg, base, &run));
+        }
+        let (verdict, text) = best.unwrap_or((Verdict::Clean, String::new()));
+        let detail = if verdict == Verdict::Clean {
+            String::new()
+        } else {
+            format!("{}: {text}", config_text(config))
+        };
+        emit(Step::Run {
+            config,
+            verdict,
+            detail,
+        });
+        if verdict == Verdict::Fault {
+            return;
+        }
+    }
 }
 
 /// What a reader thread of a child process sends.
@@ -820,6 +1038,7 @@ fn spawn_child(
         .arg(settings.max_memory_mb.to_string())
         .arg("--engine")
         .arg(settings.engine.name())
+        .args(settings.fact_oracle.then_some("--fact-oracle"))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

@@ -2018,7 +2018,7 @@ Statements (third column: what a cleanup path adds):
 | `Consume` | cfg_edge, moved_at, moved_part, rest_linear (a part) | |
 | `Uninit` | cfg_edge, unset_at | |
 | `Bounds` | cfg_edge, reads_at, uses | |
-| `Mention` | cfg_edge, uses | |
+| `Mention` | cfg_edge, uses, reads_at (its pointers and index locals, F9) | |
 | `Print` | cfg_edge, reads_at, uses | |
 | `UnwindValue` | cfg_edge, unwound_at, and the summary of `on abort` (mutates_at, reads_at, lends_mut, ...) | |
 | `UnwindKont` | cfg_edge | |
@@ -3242,6 +3242,58 @@ struct behind a reference) records the identity of each enum value that its path
 values there. The oracle is the same for both engines. Before F8e a reference into a
 payload read the payload of the new variant as the old type with no fault (third review of
 F8, `a15`, `b07`: the checker rejects them; the gate did not see the class).
+
+**As built (F9): the fact oracle and trace conformance.** `RunOptions::fact_oracle`
+(`weft run --fact-oracle`) runs the program on the IR engine and checks each frame of the
+entry body of a component (`crates/weft-interp/src/oracle/facts.rs`). The input is
+`weft_sema::factgen::components`: the facts of each component, made again with the
+summaries of the fixpoint, so they are the facts that the checker reads (a test compares
+them on the corpus), and the tables that map the IR to them (`factgen::Emitted`: the node
+table, the roots, the variables, the versions of the parts, the entry node).
+`RunOptions::ir_trace` (`--ir-trace`) records the IR location of each step of each frame.
+
+- Trace conformance: when the location of the next op of a frame changes, the oracle
+  keeps the nodes of the new location that a `cfg_edge` path reaches from the nodes of the
+  old one. The path can go through the later phases of the old terminator and through
+  nodes whose location has no op (a `Goto` that falls through, an `Uninit`, the entry
+  node). An abort path goes from the terminator through its abort phases to the cleanup
+  copy of its destination.
+- The cell-to-root map: a slot is its local; a cell that a value of the frame owns (a
+  `Box`, the buffer of a `Vec`, an `Rc` object) is the place of its owner with the step of
+  the handle; the target of a reference in a parameter at the entry of the frame is the
+  `Param` root of the parameter, a target behind it the `Held` root. α of the IR place
+  gives the fact places; each IR place that reaches a cell gives its places. A place with
+  no name is counted, not checked.
+- C1: at the entry of each node, each reference that a used `S(l)` (the value of `l`
+  outside the parts with variables of their own) or a used version of a part holds is
+  inside a `points_into` place of the variable (at or below it by stable steps, or below
+  the base of a wildcard place; a side of a split counts as the element step, as in the
+  coarse embedding of the proof link). C2 (holder cover): when the run follows a
+  reference that a local of the frame holds (a `Deref` of a place), the node uses a
+  variable of the local. C4: the end of the cell of a local with a root (`Dead`,
+  also in a cleanup chain) has `frees_at` of the root. C5: a write of a place that has a
+  value has `mutates_at` or `lends_mut` at or above it, and a read has a `reads_at` that
+  overlaps it. D1: a `move` operand of a value that is not plain data (by its IR type)
+  has `moved_at` of the variable of its local, and a part also `moved_part`. D4: an abort
+  that unwinds a frame with a live linear value has `may_abort` at the aborting node. The
+  checks of a node take the facts of each phase of its location.
+- Rules of the oracle: the read of `_0` at `Return` and a whole write of a temporary or of
+  `_0` need no fact (the value goes to the caller; the facts rebind the variable); the
+  read of the buffer handle of an array (the machine keeps the elements of an array in a
+  buffer cell) is not a read of the facts; a cell that the op frees (the old buffer that
+  the memory oracle moves) is changed by the write of its owner; a take inside a native
+  function or a `Drop` is a write; a frame in unwind mode gets trace conformance and C4
+  only.
+- Defects that it found and that F9 fixed (`tests/gate/probes/fixes/f9/`): an access of an
+  element of a `Vec` did not read the handle of the buffer (`elem_handle_read.wf`), a read
+  through a chain of references read only the first place of the chain
+  (`deep_chain_read.wf`), and a `Mention` did not read the pointers and the index locals
+  of its place (`mention_index_read.wf`, a variant of the first review of F8). Each is a
+  `reads_at` fact, an input of W0405 only (group E): no diagnostic of group A changes.
+- `weft-gate fact-oracle --tier N` runs it on each program of the tier with `main` or
+  test blocks that the `ir` pipeline checks and accepts, in the six configurations, with
+  the memory oracle, and writes `target/gate/fact-oracle-tier<N>.md`. A failure of the
+  fact oracle or of trace conformance fails the command.
 
 The fact oracle and the summary oracle run with `weft run --fact-oracle` on each accepted
 program of the gate. A failure is a defect of the fact generator with a concrete program

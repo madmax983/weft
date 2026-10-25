@@ -696,6 +696,7 @@ mod ir_ops {
             unit: 0,
             temp_slots: 0,
             locs: Vec::new(),
+            slot_locals: Vec::new(),
             pads: Vec::new(),
         }
     }
@@ -737,6 +738,7 @@ mod ir_ops {
             unit: 0,
             temp_slots: temps,
             locs: Vec::new(),
+            slot_locals: Vec::new(),
             pads,
         });
         compiled.codes.extend(extra.into_iter().map(Rc::new));

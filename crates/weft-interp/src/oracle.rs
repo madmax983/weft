@@ -30,6 +30,8 @@
 //! An accepted program must not fault with these checks. The interpreter
 //! program tests and the runs of the corpus turn them on.
 
+pub mod facts;
+
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::value::CellId;

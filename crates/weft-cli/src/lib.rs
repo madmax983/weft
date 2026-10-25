@@ -47,12 +47,18 @@ compares both. FACTS can also have --groups=LETTERS (for example --groups=A):
 the construct groups that are on (A to F, in order). Group A is on by
 default.
 
-RUN is [--seed N] [--workers N] [--unchecked] [--oracle] [--engine=ast|ir].
+RUN is [--seed N] [--workers N] [--unchecked] [--oracle] [--fact-oracle]
+[--ir-trace] [--engine=ast|ir].
 `run` and `test` do not run a program that has errors, unless --unchecked is given.
 --seed (default 0) and --workers (1 to 1024, default 4) set the deterministic scheduler.
 --oracle turns on strict run-time checks: a dangling reference, a moved `Vec`
 buffer, a linear leak, a data race and a stealable task that reaches a
 nonportable value are run-time errors.
+--fact-oracle runs the core IR and checks the facts of the ir pipeline on the
+run (docs/ir.md 8.5): each step follows an edge of the facts, and the facts of
+each node cover the references, frees, changes, moves and aborts of the run.
+A failure is a run-time error; a note gives what the oracle checked.
+--ir-trace writes the IR location of each step of each frame to standard error.
 --engine=ir runs the core IR (docs/ir.md 8.1). A program with a body that has
 no IR (a type error, an error in a declaration, W0303) has errors: the AST
 compiler runs it, and a note tells why. --engine=ast (the default) runs the AST
@@ -85,6 +91,8 @@ struct Flags {
     explain: bool,
     unchecked: bool,
     oracle: bool,
+    fact_oracle: bool,
+    ir_trace: bool,
     rules: Option<String>,
     seed: Option<u64>,
     workers: Option<usize>,
@@ -108,6 +116,8 @@ fn options_of(cmd: &str) -> Option<Vec<&'static str>> {
             "--workers",
             "--unchecked",
             "--oracle",
+            "--fact-oracle",
+            "--ir-trace",
             "--engine",
             "--facts",
             "--groups",
@@ -207,6 +217,8 @@ fn flags(args: &[String]) -> Result<Flags> {
             "--explain" => f.explain = true,
             "--unchecked" => f.unchecked = true,
             "--oracle" => f.oracle = true,
+            "--fact-oracle" => f.fact_oracle = true,
+            "--ir-trace" => f.ir_trace = true,
             "--rules" => f.rules = Some(it.next().context("--rules needs a file")?.clone()),
             "--seed" => f.seed = Some(number(&mut it, "--seed")?),
             "--engine" => f.engine = engine(it.next().map(String::as_str))?,
@@ -929,8 +941,37 @@ fn run_options(f: &Flags, pkg: &Package, capture: bool) -> RunOptions {
         no_runtime: pkg.options(f.profile).no_runtime,
         oracle: f.oracle,
         engine: f.engine,
+        fact_oracle: f.fact_oracle,
+        ir_trace: f.ir_trace,
         ..defaults
     }
+}
+
+/// The lines of `--ir-trace` and the note of `--fact-oracle` for a run.
+fn trace_notes(o: &weft_interp::RunOutcome) -> String {
+    let mut s = String::new();
+    for t in &o.ir_trace {
+        let _ = writeln!(
+            s,
+            "ir-trace: frame {} b{} bb{} {}",
+            t.frame, t.body, t.block, t.stmt
+        );
+    }
+    if let Some(r) = &o.fact_oracle {
+        match &r.skipped {
+            Some(why) => {
+                let _ = writeln!(s, "note: --fact-oracle: the oracle checks nothing: {why}");
+            }
+            None => {
+                let _ = writeln!(
+                    s,
+                    "note: --fact-oracle: {} frame(s), {} step(s), {} check(s), {} place(s) with no name",
+                    r.frames, r.steps, r.checks, r.unnamed
+                );
+            }
+        }
+    }
+    s
 }
 
 /// The note of `--engine=ir` when the AST compiler runs the program.
@@ -965,6 +1006,7 @@ fn run_main(f: &Flags, live: bool) -> Result<Output> {
     if let Some(why) = &outcome.fallback {
         sink.stderr(&fallback_note(why));
     }
+    sink.stderr(&trace_notes(&outcome));
     if !live {
         sink.stdout(&outcome.stdout);
         sink.stderr(&outcome.stderr);
@@ -999,6 +1041,7 @@ fn run_tests(f: &Flags, live: bool) -> Result<Output> {
     for t in results {
         sink.stdout(&t.outcome.stdout);
         sink.stderr(&t.outcome.stderr);
+        sink.stderr(&trace_notes(&t.outcome));
         match &t.message {
             None => {
                 passed += 1;

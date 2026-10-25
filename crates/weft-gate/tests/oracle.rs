@@ -47,6 +47,7 @@ fn isolated(limit: Duration, max_steps: Option<u64>, max_memory_mb: u64) -> Sett
         max_memory_mb,
         exe: Some(PathBuf::from(env!("CARGO_BIN_EXE_weft-gate"))),
         engine: Engine::Ast,
+        fact_oracle: false,
     }
 }
 
@@ -390,4 +391,47 @@ fn the_committed_caches_cover_tier_1() {
             "only tier-1 rows in {name}"
         );
     }
+}
+
+/// The fact oracle (stage F9, `docs/ir.md` 8.5): a program in scope that the
+/// `ir` pipeline accepts runs with it and passes; a program that the `ir`
+/// pipeline rejects, and a program out of scope (a loop, group B), do not
+/// run. The child processes get `--fact-oracle`.
+#[test]
+fn the_fact_oracle_runs_the_accepted_programs_of_the_scope() {
+    let on_thread = Settings {
+        fact_oracle: true,
+        ..settings(oracle::LIMIT, Some(1_000_000))
+    };
+    let child = Settings {
+        fact_oracle: true,
+        ..isolated(oracle::LIMIT, Some(1_000_000), oracle::MAX_MEMORY_MB)
+    };
+    for s in [&on_thread, &child] {
+        let out = run_all(
+            &data(),
+            vec![
+                entry("clean.wf"),
+                entry("w0301.wf"),
+                entry("oracle_loop.wf"),
+            ],
+            s,
+        );
+        let classes: Vec<oracle::FactClass> = out.iter().map(oracle::fact_class).collect();
+        assert_eq!(
+            classes,
+            vec![
+                oracle::FactClass::Pass,
+                oracle::FactClass::Rejected,
+                oracle::FactClass::OutOfScope
+            ],
+            "{out:?}"
+        );
+    }
+    // A failure of the fact oracle is a failure class.
+    let failed = Outcome {
+        verdict: Verdict::Fault,
+        detail: "seed 1, workers 1: runtime error: fact oracle (C4): in `main`".to_string(),
+    };
+    assert!(oracle::fact_class(&failed).is_failure());
 }

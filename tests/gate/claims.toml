@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9"]
 
 
 # ----------------------------------------------------------------------
@@ -3240,6 +3240,19 @@ repro = [
     "tests/gate/probes/fixes/f8/variant_receiver/ctl_a33_twoRecvOk.wf",
 ]
 note = "controls of R1: a value or an argument that writes another local or a place below the payload, a write after the read, and a receiver argument that is a receiver of another local are valid"
+
+[[claim]]
+finding = "F9-C5"
+kind = "sound"
+verdict = "construction"
+group = "A"
+stage = "F9"
+repro = [
+    "tests/gate/probes/fixes/f9/deep_chain_read.wf",
+    "tests/gate/probes/fixes/f9/elem_handle_read.wf",
+    "tests/gate/probes/fixes/f9/mention_index_read.wf",
+]
+note = "defects of the fact generator that the fact oracle found (stage F9, docs/ir.md 8.5): `reads_at` of the handle of a `Vec` at an element access, of each place of a chain of references, and of the pointers and index locals of a `Mention`; the programs are correct, the ir pipeline accepts them, and `crates/weft-interp/tests/fact_oracle.rs` runs them with the fact oracle"
 
 [[claim]]
 finding = "F8-RB"

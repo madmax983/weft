@@ -540,6 +540,12 @@ impl<'a> BodyCx<'a> {
                 _ => return bad("a jump has no target"),
             }
         }
+        let mut slot_locals = vec![u32::MAX; self.n_slots as usize];
+        for (l, s) in self.slots.iter().enumerate() {
+            if let Some(x) = s.and_then(|s| slot_locals.get_mut(s as usize)) {
+                *x = u32_of(l);
+            }
+        }
         let mut pads = Vec::with_capacity(self.pads.len());
         for &(at, b) in &self.pads {
             pads.push((at, target(&Label::Block(b))?));
@@ -555,6 +561,7 @@ impl<'a> BodyCx<'a> {
             unit: body.origin.span.unit as usize,
             temp_slots: self.temp_slots,
             locs: self.locs,
+            slot_locals,
             pads,
         })
     }
