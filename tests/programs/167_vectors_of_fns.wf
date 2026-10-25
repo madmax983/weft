@@ -1,0 +1,46 @@
+// A vector of function values can go into another vector, an `Option` or a
+// field. It is a linear value only if a linear closure went into it: a
+// closure that moves a linear value must run one time.
+linear struct Tx { id: u64 }
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin() -> Tx { Tx { id: 1 } }
+struct Fns { fs: Vec<fn()> }
+
+fn hi() { print(1) }
+
+fn plain_in_vec() {
+    let fs = Vec.new()
+    fs.push(|| print(2))
+    let ffs = Vec.new()
+    ffs.push(fs)
+    let g = ffs[0][0]
+    g()
+}
+
+fn items_in_option_and_field() {
+    let fs = Vec.new()
+    fs.push(hi)
+    let o = Some(fs)
+    match o {
+        Some(v) => {
+            let k = Fns { fs: v }
+            let g = k.fs[0]
+            g()
+        },
+        None => {}
+    }
+}
+
+// The inner vector holds a linear closure that no path runs.
+fn linear_in_vec() {
+    let t = begin()
+    let fs = Vec.new()
+    fs.push(|| rollback(t))
+    let ffs = Vec.new()
+    ffs.push(fs)
+}   //~ W0601
+
+fn main() {
+    plain_in_vec()
+    items_in_option_and_field()
+}

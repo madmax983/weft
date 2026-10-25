@@ -234,3 +234,5 @@ variant.
 
 - `fixes/f12/h1/*.wf`: hole H1, a closure rebinds a captured reference and then
   changes the new referent (claim F12-H1).
+- `fixes/f12/fp1/*.wf`: false positive FP1, a `Vec<fn()>` with no linear closure
+  in another `Vec`, an `Option` or a field (claim F12-FP1).

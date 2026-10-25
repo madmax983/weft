@@ -199,3 +199,11 @@ fn a_closure_that_runs_a_capture_gives_back_what_the_run_gives_back() {
 fn a_linear_closure_that_a_function_value_can_drop_is_w0601() {
     check("value_drops.wf");
 }
+
+#[test]
+fn a_vector_of_function_values_in_another_value_is_linear_only_with_a_linear_closure() {
+    // Review of the ABC preview, false positive FP1: a push of a value that
+    // is not linear made the vector a linear value in the state, so the
+    // vector in another vector, an `Option` or a field was W0601.
+    check("vec_of_fns.wf");
+}

@@ -1133,8 +1133,15 @@ pub fn call_out(
 /// applies: the values that go into places of the caller, a linear value
 /// in a changed place, the new value of each captured variable that a
 /// closure rebinds.
-fn apply_apps(cx: &Cx<'_>, st: &mut State, apps: &[Applied]) {
+///
+/// `fns`: an argument of the run node can hold a linear value. A function
+/// item puts only the values of its arguments into the places of the caller
+/// (a function value behind a reference stays with the old pipeline), so
+/// the summary of an item gives a linear closure to a place only with
+/// `fns`. A closure and code of a caller can make one.
+fn apply_apps(cx: &Cx<'_>, st: &mut State, apps: &[Applied], fns: bool) {
     for app in apps {
+        let fns = fns || app.kind != super::apply::RunKind::Item;
         for (q, refs) in &app.stores {
             if let Some((k, path)) = cx.roots.path_of(cx.facts, *q) {
                 st.add(k, &path, &Tree::leaf(AbsVal::refs(refs.iter().copied())));
@@ -1143,7 +1150,7 @@ fn apply_apps(cx: &Cx<'_>, st: &mut State, apps: &[Applied]) {
             }
         }
         let changed: Vec<PlaceId> = app.muts.iter().map(|(q, _)| *q).collect();
-        for (k, path) in can_get_linear(cx, &changed) {
+        for (k, path) in can_get_linear_with(cx, &changed, fns) {
             st.add(k, &path, &Tree::leaf(AbsVal::of_type(true)));
         }
         for (k, v) in &app.rebinds {
@@ -1241,6 +1248,7 @@ fn call(
     args: &[Operand],
     dest: &Place,
 ) -> Result<(), AlphaError> {
+    let fns = args_linear(cx, body, st, args)?;
     let out = call_out(cx, body, block, st, f, targs, args, dest)?;
     for (q, refs) in &out.stores {
         if let Some((k, path)) = cx.roots.path_of(cx.facts, *q) {
@@ -1250,10 +1258,10 @@ fn call(
         }
     }
     let mut changed: Vec<PlaceId> = out.muts.iter().map(|(q, _)| *q).collect();
-    for (k, path) in can_get_linear(cx, &changed) {
+    for (k, path) in can_get_linear_with(cx, &changed, fns) {
         st.add(k, &path, &Tree::leaf(AbsVal::of_type(true)));
     }
-    apply_apps(cx, st, &out.apps);
+    apply_apps(cx, st, &out.apps, fns);
     changed.extend(out.apps.iter().flat_map(|a| a.muts.iter().map(|(q, _)| *q)));
     store_fns(cx, body, st, args, &changed)?;
     bind_result(cx, body, st, args, dest, out.ret)
@@ -2444,8 +2452,9 @@ fn call_value(
     args: &[Operand],
     dest: &Place,
 ) -> Result<(), AlphaError> {
+    let fns = args_linear(cx, body, st, args)?;
     let out = value_out(cx, body, block, st, callee, args, dest)?;
-    apply_apps(cx, st, &out.apps);
+    apply_apps(cx, st, &out.apps, fns);
     let changed: Vec<PlaceId> = out
         .apps
         .iter()
@@ -2455,6 +2464,25 @@ fn call_value(
     bind_result(cx, body, st, args, dest, out.ret)
 }
 
+/// True if an argument of `args` can hold a linear value in state `st`.
+///
+/// # Errors
+///
+/// The errors of α.
+fn args_linear(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &State,
+    args: &[Operand],
+) -> Result<bool, AlphaError> {
+    for op in args {
+        if operand(cx, body, st, op)?.flat().linear {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The move paths of the places `changed` that can get a linear value.
 ///
 /// A run node changes the places `changed`. The type of the local of such
@@ -2462,6 +2490,19 @@ fn call_value(
 /// old value (`Vec.push`), so the local can hold a linear value after the
 /// node, also if it held none before (an empty `Vec`).
 pub fn can_get_linear(cx: &Cx<'_>, changed: &[PlaceId]) -> Vec<(Key, Vec<PathStep>)> {
+    can_get_linear_with(cx, changed, true)
+}
+
+/// [`can_get_linear`] with the flag `fns`.
+///
+/// A local whose type has a function part, and cannot hold a linear value
+/// by its type, counts only with `fns` (a linear closure can go there:
+/// review of the ABC preview, false positive FP1).
+pub fn can_get_linear_with(
+    cx: &Cx<'_>,
+    changed: &[PlaceId],
+    fns: bool,
+) -> Vec<(Key, Vec<PathStep>)> {
     let mut out: Vec<(Key, Vec<PathStep>)> = Vec::new();
     for &q in changed {
         let Some((k, path)) = cx.roots.path_of(cx.facts, q) else {
@@ -2475,7 +2516,7 @@ pub fn can_get_linear(cx: &Cx<'_>, changed: &[PlaceId]) -> Vec<(Key, Vec<PathSte
                 .and_then(|b| b.locals.get(k.1.index()))
                 .is_some_and(|d| {
                     crate::props::ir_maybe_linear(cx.tys, d.ty)
-                        || crate::props::ir_has_fns(cx.tys, d.ty)
+                        || (fns && crate::props::ir_has_fns(cx.tys, d.ty))
                 });
         if linear && !out.contains(&(k, path.clone())) {
             out.push((k, path));

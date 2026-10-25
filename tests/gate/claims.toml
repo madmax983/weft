@@ -3937,3 +3937,18 @@ repro = [
 ]
 code = "W0301"
 note = "a closure gives a captured reference a new value and then changes its new referent: the call gives the new value at `Ret`, and the changes after the rebind (part `late_muts`) there too (hole H1 of the review of the ABC preview)"
+
+[[claim]]
+finding = "F12-FP1"
+kind = "sound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12/fp1/fp01_vecvec_clean.wf",
+    "tests/gate/probes/fixes/f12/fp1/fp02_vecvec_plain.wf",
+    "tests/gate/probes/fixes/f12/fp1/fp05_opt_vec.wf",
+    "tests/gate/probes/fixes/f12/fp1/fp06_struct_vec.wf",
+    "tests/gate/probes/fixes/f12/fp1/fp07_vecvec_item.wf",
+]
+note = "a `Vec<fn()>` with no linear closure in another `Vec`, an `Option` or a field is no linear value: a function item puts only the values of its arguments into a place of the caller (`transfer::can_get_linear_with`; false positive FP1 of the review of the ABC preview)"

@@ -1,0 +1,14 @@
+// F12 review (ABC preview), false positive FP1: a Vec<fn()> with no linear closure goes into another Vec, an Option or a field (old accepts, the oracle is clean) (fp/fp01_vecvec_clean.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn main() {
+    let w = mkw()
+    let fs = Vec.new()
+    fs.push(|| w.entities.clear())
+    let ffs = Vec.new()
+    ffs.push(fs)
+    let g = ffs[0][0]
+    g()
+    print(w.entities.len())
+}

@@ -2982,6 +2982,13 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
   `pub fn a(f: fn() / log) { f() }`); with no row its effects pass through.
 - A linear closure that goes to a parameter of a type that is not linear, and that the
   callee does not run, is a value that the callee can drop (a `Dropped` variable: W0601).
+- A place whose type has a function part (and cannot hold a linear value by its type)
+  gets a linear value at a call of a function item only if an argument can hold one
+  (`transfer::can_get_linear_with`): an item puts only the values of its arguments into
+  a place of the caller, because a function value behind a reference stays with the old
+  pipeline. A closure and code of a caller can make a linear closure, so their runs keep
+  the rule of the type (false positive FP1 of the review of the ABC preview, F12-fix:
+  `ffs.push(fs)` of a `Vec<fn()>` with plain closures was W0601).
 - The places of a closure that a body gives back: its `Kept` captures, and the `Kept`
   captures of each closure that they hold, with the last value of each variable (the
   states before each `Dead`, `Em::last`).
