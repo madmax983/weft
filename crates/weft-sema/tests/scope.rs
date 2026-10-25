@@ -461,42 +461,12 @@ fn fallback_a(src: &str) -> Option<String> {
 
 #[test]
 fn a_body_with_no_ir_and_no_error_for_it_keeps_the_program_out_of_scope() {
-    // Stage F10-fix, hole H-B (f10 review). Each body has no IR, and the
-    // program reports no error for it: the old pipeline must check it.
+    // Stage F10.1, hole H-B (review of stage F10). Each body has no IR, and
+    // the program reports no error for it. (A local that gets its type later
+    // in a loop gave a type error with no W01xx diagnostic or a conflict in
+    // the THIR tables before stage F10.1: such a body has IR now, test
+    // `ir_loops`.)
     let cases = [
-        // A type error with no W01xx diagnostic: `best` gets its type later
-        // in the loop.
-        (
-            "struct Entity { hp: i32 }
-            fn f(es: &Vec<Entity>) / mut(es) {
-                let best = None
-                for e in es[] {
-                    let better = match best { Some(b) => e.hp > b.hp, None => true }
-                    if better { best = Some(e) }
-                }
-                es.clear()
-                match best { Some(b) => print(b.hp), None => {} }
-            }
-            fn main() { let es = Vec.new(); es.push(Entity { hp: 1 }); f(&es) }",
-            "a type error",
-        ),
-        // A conflict in the THIR tables.
-        (
-            "fn main() {
-                let v = Vec.new()
-                v.push(1)
-                let o = None
-                let i = 0
-                while i < 2 {
-                    match o { Some(r) => print(r), None => {} }
-                    o = Some(&v[0])
-                    i += 1
-                }
-                v.push(2)
-                match o { Some(r) => print(r), None => {} }
-            }",
-            "THIR",
-        ),
         // A variant payload with two fields.
         (
             "enum E { A(u64, u64), B }
@@ -509,6 +479,18 @@ fn a_body_with_no_ir_and_no_error_for_it_keeps_the_program_out_of_scope() {
                 print(r)
                 print(e.A)
             }",
+            "variant payload",
+        ),
+        // The same in a callee, next to an error of another body.
+        (
+            "enum E { A(u64, u64), B }
+            fn show(e: &E) { print(e.A) }
+            fn bad(v: &Vec<u64>) / mut(v) {
+                let r = &v[0]
+                v.push(2)
+                print(r)
+            }
+            fn main() { let v = Vec.new(); v.push(1); bad(&v); show(&E.A(1, 2)) }",
             "variant payload",
         ),
     ];

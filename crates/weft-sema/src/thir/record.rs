@@ -78,12 +78,43 @@ pub struct RawClosure {
     row: Option<Vec<String>>,
 }
 
-/// Adds `v` to the values of `k` if it is new.
-fn add<K: Eq + Hash, V: PartialEq>(m: &mut HashMap<K, Vec<V>>, k: K, v: V) {
-    let vs = m.entry(k).or_default();
-    if !vs.contains(&v) {
-        vs.push(v);
+/// The values that the visits of one key gave, in the last pass that
+/// visited the key ([`Recorder::next_pass`]).
+#[derive(Clone, Debug)]
+struct Visits<V> {
+    /// The pass of the values.
+    pass: u32,
+    /// The values, each one time.
+    vs: Vec<V>,
+}
+
+impl<V: PartialEq> Visits<V> {
+    /// Adds `v`, a value of a visit in pass `pass`. A visit in a later pass
+    /// removes the values of the earlier passes.
+    fn add(&mut self, pass: u32, v: V) {
+        if self.pass < pass {
+            self.pass = pass;
+            self.vs.clear();
+        }
+        if !self.vs.contains(&v) {
+            self.vs.push(v);
+        }
     }
+}
+
+/// Adds `v`, a value of key `k` in pass `pass` ([`Visits::add`]).
+fn add<K: Eq + Hash, V: PartialEq>(m: &mut HashMap<K, Visits<V>>, pass: u32, k: K, v: V) {
+    m.entry(k)
+        .or_insert_with(|| Visits {
+            pass,
+            vs: Vec::new(),
+        })
+        .add(pass, v);
+}
+
+/// The values of each key of `m`, by key.
+fn by_key<K: Ord, V>(m: HashMap<K, Visits<V>>) -> BTreeMap<K, Vec<V>> {
+    m.into_iter().map(|(k, v)| (k, v.vs)).collect()
 }
 
 /// The decisions of one lowering of a body.
@@ -106,19 +137,22 @@ pub struct Recorder {
     pub recv_expr: Option<ExprId>,
     /// The calls whose parts the lowering records now.
     pending: HashMap<ExprId, RawCall>,
-    expr_ty: HashMap<ExprId, Vec<Ty>>,
-    pat_ty: HashMap<PatId, Vec<Ty>>,
-    binders: HashMap<Binder, (String, Vec<Ty>)>,
+    /// The number of the current pass: each rewind of a loop starts a new
+    /// pass ([`Recorder::next_pass`]).
+    pass: u32,
+    expr_ty: HashMap<ExprId, Visits<Ty>>,
+    pat_ty: HashMap<PatId, Visits<Ty>>,
+    binders: HashMap<Binder, (String, Visits<Ty>)>,
     var_binder: HashMap<VarId, Binder>,
-    res: HashMap<ExprId, Vec<RawRes>>,
-    call: HashMap<ExprId, Vec<RawCall>>,
-    adjust: HashMap<ExprId, Vec<Vec<DerefKind>>>,
-    pat_adjust: HashMap<PatId, Vec<Vec<DerefKind>>>,
-    field: HashMap<ExprId, Vec<FieldIdx>>,
-    int_op: HashMap<ExprId, Vec<Ty>>,
-    closure: HashMap<ExprId, Vec<RawClosure>>,
-    handle: HashMap<ExprId, Vec<HandleInfo>>,
-    effect: HashMap<ExprId, Vec<crate::ids::EffectId>>,
+    res: HashMap<ExprId, Visits<RawRes>>,
+    call: HashMap<ExprId, Visits<RawCall>>,
+    adjust: HashMap<ExprId, Visits<Vec<DerefKind>>>,
+    pat_adjust: HashMap<PatId, Visits<Vec<DerefKind>>>,
+    field: HashMap<ExprId, Visits<FieldIdx>>,
+    int_op: HashMap<ExprId, Visits<Ty>>,
+    closure: HashMap<ExprId, Visits<RawClosure>>,
+    handle: HashMap<ExprId, Visits<HandleInfo>>,
+    effect: HashMap<ExprId, Visits<crate::ids::EffectId>>,
 }
 
 impl Recorder {
@@ -127,42 +161,54 @@ impl Recorder {
         self.open.last().copied()
     }
 
+    /// Starts a new pass: the lowering goes back to the head of a loop and
+    /// lowers its body again (`Lower::rewind`). A later visit of a key keeps
+    /// only the values of its pass. So the tables have the decisions of the
+    /// last pass of each loop body, as the facts and the diagnostics of the
+    /// lowering do: an earlier pass can see a local with no final type yet,
+    /// for example `let best = None` before `best = Some(e)` later in the
+    /// loop (stage F10.1, hole H-B of the review of stage F10).
+    pub const fn next_pass(&mut self) {
+        self.pass = self.pass.saturating_add(1);
+    }
+
     /// Records the type of a visit of expression `e`.
     pub fn expr_ty(&mut self, e: ExprId, t: &Ty) {
-        let vs = self.expr_ty.entry(e).or_default();
-        if !vs.contains(t) {
-            vs.push(t.clone());
-        }
+        add(&mut self.expr_ty, self.pass, e, t.clone());
     }
 
     /// Records the type of the value at pattern `p`.
     pub fn pat_ty(&mut self, p: PatId, t: &Ty) {
-        let vs = self.pat_ty.entry(p).or_default();
-        if !vs.contains(t) {
-            vs.push(t.clone());
-        }
+        add(&mut self.pat_ty, self.pass, p, t.clone());
     }
 
     /// Records a binding with variable `var`, name `name` and type `t`.
     pub fn bind(&mut self, b: Binder, var: VarId, name: &str, t: &Ty) {
         self.var_binder.insert(var, b);
-        let e = self
-            .binders
+        let pass = self.pass;
+        self.binders
             .entry(b)
-            .or_insert_with(|| (name.to_string(), Vec::new()));
-        if !e.1.contains(t) {
-            e.1.push(t.clone());
-        }
+            .or_insert_with(|| {
+                (
+                    name.to_string(),
+                    Visits {
+                        pass,
+                        vs: Vec::new(),
+                    },
+                )
+            })
+            .1
+            .add(pass, t.clone());
     }
 
     /// Records what name `e` means.
     pub fn res(&mut self, e: ExprId, r: RawRes) {
-        add(&mut self.res, e, r);
+        add(&mut self.res, self.pass, e, r);
     }
 
     /// Records the effect of an operation name, an effect path or a `handle`.
     pub fn effect(&mut self, e: ExprId, x: crate::ids::EffectId) {
-        add(&mut self.effect, e, x);
+        add(&mut self.effect, self.pass, e, x);
     }
 
     /// Records the callee of the innermost open call, with `n` explicit
@@ -210,13 +256,13 @@ impl Recorder {
     /// Ends a visit of call `e`: its record goes to the table.
     pub fn end_call(&mut self, e: ExprId) {
         if let Some(c) = self.pending.remove(&e) {
-            add(&mut self.call, e, c);
+            add(&mut self.call, self.pass, e, c);
         }
     }
 
     /// Records the dereferences of the value of expression `e`.
     pub fn adjust(&mut self, e: ExprId, steps: Vec<DerefKind>) {
-        add(&mut self.adjust, e, steps);
+        add(&mut self.adjust, self.pass, e, steps);
     }
 
     /// Takes the dereference of the place of expression `e` that the lowering
@@ -230,26 +276,24 @@ impl Recorder {
 
     /// Records the dereferences of the value at pattern `p`.
     pub fn pat_adjust(&mut self, p: PatId, steps: Vec<DerefKind>) {
-        add(&mut self.pat_adjust, p, steps);
+        add(&mut self.pat_adjust, self.pass, p, steps);
     }
 
     /// Records the part that field expression `e` names.
     pub fn field(&mut self, e: ExprId, f: FieldIdx) {
-        add(&mut self.field, e, f);
+        add(&mut self.field, self.pass, e, f);
     }
 
     /// Records the type of the arithmetic at expression `e`.
     pub fn int_op(&mut self, e: ExprId, t: &Ty) {
-        let vs = self.int_op.entry(e).or_default();
-        if !vs.contains(t) {
-            vs.push(t.clone());
-        }
+        add(&mut self.int_op, self.pass, e, t.clone());
     }
 
     /// Records closure literal `e`.
     pub fn closure(&mut self, e: ExprId, params: Vec<Binder>, ret: &Ty, row: Option<Vec<String>>) {
         add(
             &mut self.closure,
+            self.pass,
             e,
             RawClosure {
                 params,
@@ -261,21 +305,21 @@ impl Recorder {
 
     /// Records `handle` expression `e`.
     pub fn handle(&mut self, e: ExprId, h: HandleInfo) {
-        add(&mut self.handle, e, h);
+        add(&mut self.handle, self.pass, e, h);
     }
 
     /// Replaces each type with its resolved type: the inference of the body
     /// has ended.
     pub fn settle(&mut self, inf: &Infer) {
-        let fix = |ts: &mut Vec<Ty>| {
-            let mut out: Vec<Ty> = Vec::with_capacity(ts.len());
-            for t in ts.drain(..) {
+        let fix = |ts: &mut Visits<Ty>| {
+            let mut out: Vec<Ty> = Vec::with_capacity(ts.vs.len());
+            for t in ts.vs.drain(..) {
                 let r = inf.resolve(&t);
                 if !out.contains(&r) {
                     out.push(r);
                 }
             }
-            *ts = out;
+            ts.vs = out;
         };
         self.expr_ty.values_mut().for_each(fix);
         self.pat_ty.values_mut().for_each(fix);
@@ -289,14 +333,14 @@ impl Recorder {
             }
         };
         for rs in self.res.values_mut() {
-            for r in rs.iter_mut() {
+            for r in &mut rs.vs {
                 if let RawRes::Fn(_, ts) = r {
                     targs(ts);
                 }
             }
         }
         for cs in self.call.values_mut() {
-            for c in cs.iter_mut() {
+            for c in &mut cs.vs {
                 match &mut c.callee {
                     RawCallee::Item(_, ts)
                     | RawCallee::Struct(_, ts)
@@ -306,7 +350,7 @@ impl Recorder {
             }
         }
         for cs in self.closure.values_mut() {
-            for c in cs.iter_mut() {
+            for c in &mut cs.vs {
                 c.ret = inf.resolve(&c.ret);
             }
         }
@@ -427,7 +471,11 @@ pub fn build(
         out: Tables::default(),
     };
     // The bindings, in the order of their binders.
-    let binders: BTreeMap<Binder, (String, Vec<Ty>)> = rec.binders.into_iter().collect();
+    let binders: BTreeMap<Binder, (String, Vec<Ty>)> = rec
+        .binders
+        .into_iter()
+        .map(|(b, (name, ts))| (b, (name, ts.vs)))
+        .collect();
     let mut ids: BTreeMap<Binder, BindingId> = BTreeMap::new();
     // The properties of the variables of each binder, as the analysis ends.
     let mut values: HashMap<Binder, ValueProps> = HashMap::new();
@@ -467,9 +515,7 @@ pub fn build(
         }
     }
     let var_binding = |v: &VarId| rec.var_binder.get(v).and_then(|x| ids.get(x)).copied();
-    let sorted =
-        |m: HashMap<ExprId, Vec<Ty>>| -> BTreeMap<ExprId, Vec<Ty>> { m.into_iter().collect() };
-    for (e, ts) in sorted(rec.expr_ty) {
+    for (e, ts) in by_key(rec.expr_ty) {
         if ts.iter().any(has_var) {
             b.out.free.push(e);
         }
@@ -477,14 +523,12 @@ pub fn build(
             b.out.expr_ty.insert(e, id);
         }
     }
-    let pats: BTreeMap<PatId, Vec<Ty>> = rec.pat_ty.into_iter().collect();
-    for (p, ts) in pats {
+    for (p, ts) in by_key(rec.pat_ty) {
         if let Some(id) = b.one_ty("pat_ty", Key::Pat(p), &ts) {
             b.out.pat_ty.insert(p, id);
         }
     }
-    let res: BTreeMap<ExprId, Vec<RawRes>> = rec.res.into_iter().collect();
-    for (e, rs) in res {
+    for (e, rs) in by_key(rec.res) {
         let mut done = Vec::new();
         for r in rs {
             let x = match r {
@@ -510,8 +554,7 @@ pub fn build(
             b.out.res.insert(e, r);
         }
     }
-    let calls: BTreeMap<ExprId, Vec<RawCall>> = rec.call.into_iter().collect();
-    for (e, cs) in calls {
+    for (e, cs) in by_key(rec.call) {
         let mut done = Vec::new();
         for c in cs {
             let callee = match c.callee {
@@ -544,30 +587,26 @@ pub fn build(
             b.out.call.insert(e, c);
         }
     }
-    let adjusts: BTreeMap<ExprId, Vec<Vec<DerefKind>>> = rec.adjust.into_iter().collect();
-    for (e, vs) in adjusts {
+    for (e, vs) in by_key(rec.adjust) {
         if let Some(steps) = b.one("adjust", Key::Expr(e), vs) {
             if !steps.is_empty() {
                 b.out.adjust.insert(e, steps);
             }
         }
     }
-    let adjusts: BTreeMap<PatId, Vec<Vec<DerefKind>>> = rec.pat_adjust.into_iter().collect();
-    for (p, vs) in adjusts {
+    for (p, vs) in by_key(rec.pat_adjust) {
         if let Some(steps) = b.one("pat_adjust", Key::Pat(p), vs) {
             if !steps.is_empty() {
                 b.out.pat_adjust.insert(p, steps);
             }
         }
     }
-    let fields: BTreeMap<ExprId, Vec<FieldIdx>> = rec.field.into_iter().collect();
-    for (e, vs) in fields {
+    for (e, vs) in by_key(rec.field) {
         if let Some(f) = b.one("field", Key::Expr(e), vs) {
             b.out.field.insert(e, f);
         }
     }
-    let ops: BTreeMap<ExprId, Vec<Ty>> = rec.int_op.into_iter().collect();
-    for (e, ts) in ops {
+    for (e, ts) in by_key(rec.int_op) {
         // Arithmetic on a `String` or a `Duration` has no integer type.
         let ints: Vec<crate::types::IntTy> = ts
             .iter()
@@ -580,8 +619,7 @@ pub fn build(
             b.out.int_ty.insert(e, crate::types::to_ir_int(i));
         }
     }
-    let closures: BTreeMap<ExprId, Vec<RawClosure>> = rec.closure.into_iter().collect();
-    for (e, cs) in closures {
+    for (e, cs) in by_key(rec.closure) {
         let mut done = Vec::new();
         for c in cs {
             let params: Option<Vec<BindingId>> =
@@ -614,14 +652,12 @@ pub fn build(
             b.out.closure.insert(e, c);
         }
     }
-    let handles: BTreeMap<ExprId, Vec<HandleInfo>> = rec.handle.into_iter().collect();
-    for (e, hs) in handles {
+    for (e, hs) in by_key(rec.handle) {
         if let Some(h) = b.one("handle", Key::Expr(e), hs) {
             b.out.handle.insert(e, h);
         }
     }
-    let effects: BTreeMap<ExprId, Vec<crate::ids::EffectId>> = rec.effect.into_iter().collect();
-    for (e, xs) in effects {
+    for (e, xs) in by_key(rec.effect) {
         let xs: Vec<weft_ir::EffectId> = xs.into_iter().map(eff).collect();
         if let Some(x) = b.one("effect", Key::Expr(e), xs) {
             b.out.effect.insert(e, x);

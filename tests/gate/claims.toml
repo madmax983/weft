@@ -3528,13 +3528,27 @@ group = "A"
 stage = "F10.1"
 repro = [
     "tests/gate/probes/fixes/f10/hb/th15_variantPayload.wf",
-    "tests/gate/probes/fixes/f10/hb/th16b_loopNoneTypeErrFault.wf",
     "tests/gate/probes/fixes/f10/hb/th17_variantPayloadTuple.wf",
     "tests/gate/probes/fixes/f10/hb/th20_variantPayloadInCallee.wf",
-    "tests/gate/probes/fixes/f10/hb/th22_bestCompare.wf",
 ]
 code = "W0301"
-note = "a body with no IR and no error for it (review of stage F10, hole H-B: a type error with no W01xx diagnostic, a conflict in the THIR tables, a variant payload): the program stays out of scope of the ir pipeline, and the old pipeline checks it (stage F10.1); before, no pipeline checked the body and the oracle faults"
+note = "a body with no IR and no error for it (review of stage F10, hole H-B: a variant payload of two fields): the program stays out of scope of the ir pipeline, and the old pipeline checks it (stage F10.1); before, no pipeline checked the body and the oracle faults"
+
+[[claim]]
+finding = "F10-HB"
+kind = "unsound"
+verdict = "construction"
+group = "AB"
+stage = "F10.1"
+repro = [
+    "tests/gate/probes/fixes/f10/hb/th11_loopNoneUse.wf",
+    "tests/gate/probes/fixes/f10/hb/th16b_loopNoneTypeErrFault.wf",
+    "tests/gate/probes/fixes/f10/hb/th22_bestCompare.wf",
+    "tests/gate/probes/fixes/f10/hb/th24_noneWhileNum.wf",
+    "tests/gate/probes/fixes/f10/hb/w23_optRefNextIter.wf",
+]
+code = "W0301"
+note = "hole H-B in a loop: a local gets its type later in the loop body (a type error with no W01xx diagnostic, or a conflict in the THIR tables, before stage F10.1). The THIR tables keep the decisions of the last pass of the lowering (stage F10.1), so the body has IR and the ir pipeline rejects it; with group B off the old pipeline checks it"
 
 [[claim]]
 finding = "F10-HB"

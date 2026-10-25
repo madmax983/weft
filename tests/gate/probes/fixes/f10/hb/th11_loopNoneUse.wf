@@ -1,0 +1,14 @@
+// F10 review, hole H-B: a body with no IR and no error for it (th/th11_loopNoneUse.wf).
+fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let o = None
+    let i = 0
+    while i < 2 {
+        match o { Some(r) => print(r), None => {} }
+        o = Some(&v[0])
+        i += 1
+    }
+    v.push(2)
+    match o { Some(r) => print(r), None => {} }
+}

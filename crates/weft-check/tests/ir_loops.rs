@@ -354,3 +354,40 @@ fn main() {}
 ";
     assert_eq!(ab_codes(src), markers(src));
 }
+
+#[test]
+fn a_local_that_gets_its_type_later_in_a_loop_has_ir() {
+    // Stage F10.1 (hole H-B of the review of stage F10): the lowering visits
+    // a loop body in more than one pass, and the first pass does not know
+    // the type of `best` or `o` yet. The THIR tables keep the decisions of
+    // the last pass, so the body has IR and the `ir` pipeline checks it.
+    let best = "struct Entity { hp: i32 }
+fn f(es: &Vec<Entity>) / mut(es) {
+    let best = None
+    for e in es[] {
+        let better = match best { Some(b) => e.hp > b.hp, None => true }
+        if better { best = Some(e) }
+    }
+    es.clear()
+    match best { Some(b) => print(b.hp), None => {} }   //~ W0301
+}
+fn main() { let es = Vec.new(); es.push(Entity { hp: 1 }); f(&es) }
+";
+    let next = "fn main() {
+    let v = Vec.new()
+    v.push(1)
+    let o = None
+    let i = 0
+    while i < 2 {
+        match o { Some(r) => print(r), None => {} }
+        o = Some(&v[0])
+        i += 1
+    }
+    v.push(2)
+    match o { Some(r) => print(r), None => {} }   //~ W0301
+}
+";
+    for src in [best, next] {
+        assert_eq!(ab_codes(src), markers(src), "{src}");
+    }
+}

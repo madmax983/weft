@@ -838,7 +838,8 @@ impl Lower<'_> {
             held_roots: _,
             held_of: _,
             work: _,
-            // The recorder keeps each visit of each pass (`crate::thir::record`).
+            // The recorder keeps the visits of the last pass of each key
+            // (`crate::thir::record`); a rewind starts a new pass.
             rec: _,
             // The values of the captures of each closure, by closure index.
             cap_values: _,
@@ -1032,7 +1033,7 @@ impl Lower<'_> {
             held_roots: _,
             held_of: _,
             work: _,
-            rec: _,
+            rec,
             cap_values: _,
             holder_log: _,
             late_stores: _,
@@ -1117,6 +1118,9 @@ impl Lower<'_> {
             task_ends,
             local_performs,
         } = self;
+        // The next pass records its decisions again: the tables keep those of
+        // the last pass (`crate::thir::record`).
+        rec.next_pass();
         facts.rewind(&head.facts);
         let node = NodeId(u32::try_from(head.nodes).unwrap_or(u32::MAX));
         let task = TaskId(u32::try_from(head.tasks).unwrap_or(u32::MAX));
