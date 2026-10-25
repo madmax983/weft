@@ -2472,7 +2472,7 @@ As built (plan stage F11, `factgen/mod.rs` `emit_parts`, `closure_summary`,
   variable of the maker (a strong update, `rebound_at` of `S(x)`): `|| { r = grow(w) }`
   does not use the old `r`.
 - The `E(c, k)` variable of a `ByMove` capture `k` (`vars.rs`) has the flags of the type
-  of the capture; a move of the capture moves it (`moved_at`, `moved_part` and
+  of the capture (also `immovable`: a move of a `!Move` capture in the body is W0604); a move of the capture moves it (`moved_at`, `moved_part` and
   `rest_linear` for a part), so the captures are apart. The environment local has no `S`
   variable.
 - The summary of the function body reads only the nodes of the function component (the
@@ -2490,6 +2490,11 @@ As built (plan stage F11, `factgen/mod.rs` `emit_parts`, `closure_summary`,
   uses the `U` variable of each place field that the closure reads (part `reads`),
   because the closure component does not see where the maker gives the field a value
   (F11-U1).
+- A function with a function value in its signature and no stated row has no summary
+  until stage F12 (`callgraph::summary_of`). W0701 takes the row of the old inference
+  for it (`Inference::old_rows`), which adds the effects of the closures that the
+  function makes. A function that returns a closure inside a struct has a summary with
+  no row for the closure: its W0701 waits for F12.
 
 ### 6.6 The analysis
 

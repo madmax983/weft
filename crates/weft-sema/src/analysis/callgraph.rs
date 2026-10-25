@@ -59,6 +59,10 @@ pub struct Inference {
     /// The `EffectSig` of each function of the program of the analysis
     /// whose summary comes from its body (`super::sig::to_effect_sig`).
     pub effects: Vec<(crate::FnId, EffectSig)>,
+    /// Each function of the program of the analysis whose body has IR but
+    /// whose summary has no row yet (a function value in its signature:
+    /// stage F12). W0701 takes the row of the old inference for it.
+    pub old_rows: Vec<crate::FnId>,
     /// W0706 for each function of a component whose fixpoint stopped.
     pub diags: Vec<Diagnostic>,
     /// The facts of the last round of each function body, by the index of
@@ -540,6 +544,9 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
     }
     for (i, n) in nodes.iter().enumerate() {
         let (Ok(sum), Some(x), Some(true)) = (out.sums.get(n.f), inf.get(i), ok.get(i)) else {
+            if out.sums.get(n.f).is_err() && ok.get(i) == Some(&true) {
+                out.old_rows.push(n.sema);
+            }
             continue;
         };
         out.effects.push((n.sema, effect_sig(a, n.sema, x, sum)));

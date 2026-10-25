@@ -934,6 +934,8 @@ impl Vars {
                 info.has_on_abort = props.linear && props.on_abort;
                 info.once = props.once || is_task(tys, t);
                 info.nonportable = props.nonportable;
+                // A move of the capture in the body moves the value again.
+                info.immovable = props.immovable;
                 self.add(facts, VarKey::E(bid, k), info);
             }
         }

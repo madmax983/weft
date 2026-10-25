@@ -211,6 +211,21 @@ fn a_linear_closure_that_moves_into_a_place_is_a_linear_value_of_the_place() {
 }
 
 #[test]
+fn a_move_of_an_immovable_capture_in_the_closure_body_is_w0604() {
+    // Preview of stage F11 (tier 1 imm1.wf): the `E` variable of a `ByMove`
+    // capture has the flag `immovable` of its type.
+    check("immovable_capture.wf");
+}
+
+#[test]
+fn a_public_function_that_returns_a_closure_states_its_effects() {
+    // Preview of stage F11 (tier 1 redteam/pkg): a function with a function
+    // value in its signature has no summary until stage F12, so W0701 takes
+    // the row of the old inference.
+    check("returned_closure_row.wf");
+}
+
+#[test]
 fn a_closure_program_is_out_of_scope_with_the_default_groups() {
     // Group C stays off by default in stage F11 (plan: F13 turns it on).
     let src = program("rr7_late_ref.wf");

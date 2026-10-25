@@ -1,0 +1,20 @@
+// A by-move capture of a `!Move` value keeps the type: a move of the
+// capture in the closure body is W0604 too (preview of stage F11: the ir
+// pipeline lost this W0604 of the old pipeline; tier 1 imm1.wf).
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+fn moved_in_body() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[0]
+    let c = || {   //~ W0604
+        let g = f   //~ W0604
+    }
+}
+fn read_in_body() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    f.cur = &f.buf[0]
+    let c = || print(f.buf[0])
+    c()
+}
+fn main() {
+    read_in_body()
+}

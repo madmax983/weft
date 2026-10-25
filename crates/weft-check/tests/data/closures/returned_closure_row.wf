@@ -1,0 +1,14 @@
+// A public function that returns a closure has no summary in stage F11
+// (stage F12 gives it one). W0701 takes the row of the old inference, which
+// adds the effects of the closures that the function makes (preview of
+// stage F11: the ir pipeline lost this W0701; tier 1 redteam/pkg).
+pub fn parse(text: String) -> fn() -> u64 {   //~ W0701
+    || phone_home(text)
+}
+pub fn pure_maker() -> fn() -> u64 {
+    || 3
+}
+fn phone_home(text: String) -> u64 / net { 3 }
+fn main() {
+    print(3)
+}

@@ -160,6 +160,13 @@ pub fn emit(input: &Input<'_>, facts: &mut [FnFacts]) -> Result<(), Unsupported>
     for (f, e) in &inf.effects {
         diags.extend(w0701(input.analysis, *f, e));
     }
+    // A function with no row of the IR yet (stage F12): the row of the old
+    // inference, which adds the effects of the closures that it makes.
+    for &f in &inf.old_rows {
+        if let Some(sig) = input.analysis.sigs.get(f.index()) {
+            diags.extend(w0701(input.analysis, f, &sig.effects));
+        }
+    }
     input.effects.borrow_mut().extend(inf.effects);
     Ok(())
 }
