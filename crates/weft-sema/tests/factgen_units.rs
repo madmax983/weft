@@ -1305,7 +1305,9 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
             &[],
         ),
         // The result binds; a held argument moves; a value that the callee
-        // drops ends.
+        // drops ends. A function value that the callee runs more than once
+        // runs again here (part `runs`, `Many`, stage F12): its summary
+        // applies a second time.
         "call ret" => (
             &[
                 "cfg_edge",
@@ -1320,6 +1322,10 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
                 "overwrites",
                 "writes_via",
                 "scope_end",
+                "call",
+                "lends_mut",
+                "multi_at",
+                "escapes_at",
             ],
             &[],
         ),
@@ -2889,5 +2895,12 @@ fn a_closure_that_runs_a_capture_applies_the_value_of_the_capture() {
         .filter(|n| f.uses.iter().any(|(v, x)| *v == g && x == n))
         .min()
         .unwrap_or_else(|| panic!("no call uses `g`"));
-    assert!(f.uses.contains(&(r, main_call)));
+    // A value that a closure runs runs at `Ret` (stage F12): the closure can
+    // change a place before it runs the value.
+    let span = f.node(main_call).span;
+    let ret = nodes_labelled(&f, "call ret")
+        .into_iter()
+        .find(|&n| f.node(n).span == span)
+        .unwrap_or_else(|| panic!("no `Ret` of the call of `f`"));
+    assert!(f.uses.contains(&(r, ret)), "{:?}", f.uses);
 }

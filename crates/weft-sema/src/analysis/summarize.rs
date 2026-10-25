@@ -152,10 +152,46 @@ pub fn summarize(
     sig: &FnSig,
     nodes: usize,
     applied: &std::collections::BTreeSet<Abort>,
+    fv: &FnParts<'_>,
 ) -> Inferred {
     let mut out = Inferred::default();
     let mut changed = Inferred::default();
     let owned = owned_params(ir, tys, entry);
+    // The function values (stage F12): the runs, and the values of the
+    // result with the places of their environments.
+    let place = |p: PlaceId| -> Option<IPlace> {
+        if let Some((ip, _)) = interface_place(facts, roots, entry, sig, &owned, p) {
+            return Some(ip);
+        }
+        let info = facts.places.get(p.index())?;
+        matches!(roots.role(info.root), Some(Role::Caller))
+            .then(|| IPlace::cut(IRoot::Caller, steps_of(facts, p)))
+    };
+    let runs = runs_of(fv.runs, false, &place);
+    for r in &runs {
+        super::sig::join_run(&mut changed.runs, r);
+    }
+    let ret_ty = ir
+        .bodies
+        .get(entry.index())
+        .and_then(|b| b.local(b.ret))
+        .map(|d| d.ty);
+    if ret_ty.is_some_and(|t| crate::props::ir_has_fns(tys, t)) {
+        let (fns, places) = ret_fns_of(ir, fv.returns, fv.made, entry, &place);
+        // The effects of a closure that the function gives back are in its
+        // row, as the old inference says (W0701, W0702 at a caller).
+        for f in &fns {
+            if let super::summary::RetFn::Made(c) = f {
+                if let Ok(cs) = sums.closure(*c) {
+                    changed
+                        .named
+                        .extend(cs.performs.iter().map(|pf| pf.effect.clone()));
+                }
+            }
+        }
+        changed.ret_fns = fns;
+        changed.ret_places = places;
+    }
     for &(n, m) in &facts.mutates_at {
         if n.index() >= nodes {
             continue;
@@ -167,6 +203,7 @@ pub fn summarize(
     }
     changed.muts.sort();
     changed.muts.dedup();
+    let made_named = changed.named.clone();
     out.join(&changed);
     out.named = facts
         .escapes_at
@@ -174,6 +211,7 @@ pub fn summarize(
         .filter(|(n, _)| n.index() < nodes)
         .map(|(_, e)| e.clone())
         .collect();
+    out.named.extend(made_named);
     out.raises |= applied.contains(&Abort::Raises);
     out.assert |= applied.contains(&Abort::Assert);
     for &b in comp.iter().filter(|&&b| ir.closure_of(b).is_none()) {
@@ -206,6 +244,122 @@ pub fn summarize(
         }
     }
     out
+}
+
+/// What the fact generation of a body gives for its function values (stage
+/// F12): the runs at its run nodes (each with `many`), and the states at its
+/// `Return` nodes.
+#[derive(Clone, Copy, Debug)]
+pub struct FnParts<'a> {
+    /// The runs of the function values of the interface.
+    pub runs: &'a [(crate::analysis::transfer::RunOf, bool)],
+    /// The state at each `Return`.
+    pub returns: &'a [super::State],
+    /// The join of the states where the body makes its closures (before
+    /// each closure literal and each terminator): a `Kept` capture keeps
+    /// the value that its variable has there, also after the variable ends.
+    pub made: Option<&'a super::State>,
+}
+
+/// The part `runs` of a body from the runs at its run nodes (`runs`): one
+/// entry for each parameter (`capture` false) or capture (`capture` true),
+/// `many` if a run node runs it more than once or two run nodes run it,
+/// with the interface places (`place`) that the run nodes give. With
+/// `closure`, the body is a closure body (its captures count).
+fn runs_of(
+    runs: &[(crate::analysis::transfer::RunOf, bool)],
+    closure: bool,
+    place: &dyn Fn(PlaceId) -> Option<IPlace>,
+) -> Vec<super::summary::Run> {
+    let mut out: Vec<super::summary::Run> = Vec::new();
+    for (r, many) in runs {
+        // A function body has no capture.
+        if r.capture && !closure {
+            continue;
+        }
+        let mut args: Vec<IPlace> = r.places.iter().filter_map(|&q| place(q)).collect();
+        args.sort();
+        args.dedup();
+        let run = super::summary::Run {
+            param: r.param,
+            capture: r.capture,
+            many: *many,
+            task: r.task,
+            args,
+            multi: r.multi,
+        };
+        // A second run node of the value runs it again.
+        if let Some(x) = out
+            .iter_mut()
+            .find(|x| x.param == run.param && x.capture == run.capture)
+        {
+            x.many = true;
+        }
+        super::sig::join_run(&mut out, &run);
+    }
+    out
+}
+
+/// The function values of `_0` of body `body` at its `Return` states
+/// `returns` (part `ret`, stage F12), and the interface places (`place`)
+/// that the result and the environments of its closures point into. A
+/// closure of the body goes out as a closure that a callee made: its `Kept`
+/// captures hold the values of the variables of the maker at the
+/// `Return` and where the body makes the closure (`made`).
+fn ret_fns_of(
+    ir: &weft_ir::Program,
+    returns: &[super::State],
+    made: Option<&super::State>,
+    body: BodyId,
+    place: &dyn Fn(PlaceId) -> Option<IPlace>,
+) -> (
+    std::collections::BTreeSet<super::summary::RetFn>,
+    std::collections::BTreeSet<IPlace>,
+) {
+    use super::summary::RetFn;
+    use super::FnVal;
+    let mut fns = std::collections::BTreeSet::new();
+    let mut places = std::collections::BTreeSet::new();
+    let Some(b) = ir.body(body) else {
+        return (fns, places);
+    };
+    let one = |f: &FnVal| match f {
+        FnVal::Item(g, t) => RetFn::Item(*g, t.clone()),
+        FnVal::Closure(c) | FnVal::Made(c) => RetFn::Made(*c),
+        FnVal::Param(i) => RetFn::Param(*i),
+        FnVal::Capture(k) => RetFn::Capture(*k),
+        FnVal::Unknown => RetFn::Unknown,
+    };
+    for st in returns {
+        let v = st.value((body, b.ret), &[]).flat();
+        places.extend(v.refs.iter().filter_map(|&q| place(q)));
+        for f in &v.fns {
+            fns.insert(one(f));
+            let FnVal::Closure(c) = f else {
+                continue;
+            };
+            let Some(decl) = ir.closures.get(c.index()) else {
+                continue;
+            };
+            for cap in &decl.captures {
+                if cap.mode != weft_ir::CaptureMode::Kept {
+                    continue;
+                }
+                let Ok(k) = crate::factgen::alpha::owner_local(ir, decl.maker, cap.source.local)
+                else {
+                    fns.insert(RetFn::Unknown);
+                    continue;
+                };
+                let mut src = st.value(k, &[]).flat();
+                if let Some(m) = made {
+                    src.join(&m.value(k, &[]).flat());
+                }
+                places.extend(src.refs.iter().filter_map(|&q| place(q)));
+                fns.extend(src.fns.iter().map(one));
+            }
+        }
+    }
+    (fns, places)
 }
 
 /// The interface place of fact place `p` of the facts of closure body
@@ -474,11 +628,12 @@ pub fn closure(
     facts: &FnFacts,
     roots: &Roots,
     body: BodyId,
-    returns: &[super::State],
     aborts: &std::collections::BTreeSet<Abort>,
+    fv: &FnParts<'_>,
 ) -> super::summary::Summary {
-    use super::summary::{CapIface, ParamIface, Perform, Run, Summary};
+    use super::summary::{CapIface, ParamIface, Perform, Summary};
     use std::collections::BTreeSet;
+    let (returns, runs) = (fv.returns, fv.runs);
     let mut out = Summary::default();
     let Some((_, decl)) = ir.closure_of(body) else {
         return out;
@@ -535,10 +690,7 @@ pub fn closure(
     // A node of the body that can resume more than once (a `multi`
     // operation, a callee that can): a run of the closure can.
     out.multi = !facts.multi_at.is_empty();
-    let cycles = super::widen::Cycles::of(ir, &[body]);
-    let mut run_sites: BTreeMap<u32, (usize, bool)> = BTreeMap::new();
-    for (bi, blk) in b.blocks.iter().enumerate() {
-        let block = weft_ir::BlockId(u32::try_from(bi).unwrap_or(u32::MAX));
+    for blk in &b.blocks {
         match &blk.term.kind {
             TermKind::Assert { .. } => {
                 out.aborts.insert(Abort::Assert);
@@ -556,28 +708,14 @@ pub fn closure(
                     out.unknown_multi |= s.unknown_multi;
                 }
             }
-            TermKind::Call {
-                callee: Callee::Value(weft_ir::Operand::Copy(q) | weft_ir::Operand::Move(q)),
-                ..
-            } if Some(&q.local) == b.params.first() && q.proj.len() == 1 => {
-                if let Some(weft_ir::Proj::Field(f)) = q.proj.first() {
-                    let e = run_sites.entry(f.0).or_insert((0, false));
-                    e.0 += 1;
-                    e.1 |= cycles.has(body, block);
-                }
-            }
             _ => {}
         }
     }
-    out.runs = run_sites
-        .into_iter()
-        .map(|(k, (n, cyc))| Run {
-            param: k,
-            capture: true,
-            many: n > 1 || cyc,
-            task: false,
-        })
-        .collect();
+    // The function values of the interface that the body runs: its captures
+    // and its parameters (stage F12).
+    out.runs = runs_of(runs, true, &|q| {
+        closure_place(ir, facts, roots, body, q, false).map(|x| x.0)
+    });
     out.uses = decl
         .captures
         .iter()
@@ -636,6 +774,11 @@ pub fn closure(
             }
         }
     }
+    let (fns, places) = ret_fns_of(ir, returns, fv.made, body, &|q| {
+        closure_place(ir, facts, roots, body, q, false).map(|x| x.0)
+    });
+    out.ret.fns = fns.into_iter().collect();
+    ret.extend(places);
     out.puts = puts
         .into_iter()
         .map(|(k, v)| (k, v.into_iter().collect()))

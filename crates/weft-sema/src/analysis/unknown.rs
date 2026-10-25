@@ -1,5 +1,5 @@
 //! Code that the body does not know (`docs/ir.md` 6.7): an operation of a
-//! caller.
+//! caller, and code of a caller ([`code_of_caller`], map N2).
 //!
 //! A `Perform` through the capability of a caller (`CapOperand::Row`) runs a
 //! clause of a handler of a caller. The body does not know the clause, so
@@ -19,11 +19,12 @@
 //! after a perform and its facts agree.
 
 use weft_facts::PlaceId;
-use weft_ir::{BodyId, EffectId, OpIdx, Operand, Ty};
+use weft_ir::{BodyId, EffectId, OpIdx, Operand, Ty, TyId, TyTable};
 
 use super::apply::pointee_refs;
 use super::domain::{AbsVal, State, Tree};
 use super::sig::{byval_refs, holds_refs, is_ref};
+use super::summary::{Abort, IPlace, IRoot, ParamIface, Summary};
 use super::transfer::{self, Cx};
 use crate::factgen::alpha::AlphaError;
 use crate::props::ir_props;
@@ -141,4 +142,71 @@ fn param_places(cx: &mut Cx<'_>, body: BodyId) -> Result<Vec<PlaceId>, AlphaErro
         }
     }
     Ok(out)
+}
+
+/// The summary of code of a caller (`docs/ir.md` 6.7, map N2).
+///
+/// It is the summary of a call of a function value that the body does not know (a
+/// function parameter, a value of a capture in the summary of a closure, a value that the
+/// analysis does not follow). `params` are the parameter types of the function type, `ret` its result type and `row`
+/// its stated row.
+///
+/// The code reads and lends the places of each reference argument, of the
+/// references in a by-value argument and of the references behind a
+/// reference argument (a change through them invalidates the places below
+/// them through an unstable step, as for the old lowering), and
+/// `Caller..`. Its result points into the wildcard places of these places
+/// and into `Caller..`. It can abort (`raises`: the run node gets
+/// `may_abort`), and it can resume more than once if an effect of its row
+/// has a `multi` operation (with no row: an effect of the program has one,
+/// as `may_be_multi` of the old lowering). Its effects pass through: the
+/// function value that the caller gives applies its own summary where the
+/// caller runs it (part `runs`).
+pub fn code_of_caller(
+    tys: &TyTable,
+    params: &[TyId],
+    ret: TyId,
+    row: Option<&[EffectId]>,
+) -> Summary {
+    let mut s = Summary::default();
+    for (i, &t) in params.iter().enumerate() {
+        let k = u32::try_from(i).unwrap_or(u32::MAX);
+        s.params.push(ParamIface {
+            name: format!("parameter {i}"),
+            root: crate::body::roots::param(i),
+            in_place: None,
+        });
+        // The code gets the places of the argument (as the old lowering: a
+        // change through them invalidates the unstable places below them)
+        // and the places that the references there point into.
+        let mut given = Vec::new();
+        if is_ref(tys, t) || byval_refs(tys, t) {
+            given.push(IRoot::Param(k));
+        }
+        if matches!(tys.try_get(t), Some(Ty::Ref(_))) && pointee_refs(tys, t) {
+            given.push(IRoot::Held(k));
+        }
+        s.reads
+            .extend(given.iter().map(|r| IPlace::root(r.clone())));
+        s.lends
+            .extend(given.iter().map(|r| IPlace::root(r.clone())));
+        s.ret
+            .flows
+            .extend(given.iter().map(|r| IPlace::wild(r.clone())));
+    }
+    s.reads.push(IPlace::wild(IRoot::Caller));
+    s.lends.push(IPlace::wild(IRoot::Caller));
+    if holds_refs(tys, ret) || crate::props::ir_has_fns(tys, ret) {
+        s.ret.places.push(IPlace::wild(IRoot::Caller));
+    }
+    s.aborts.insert(Abort::Raises);
+    let multi = |e: &weft_ir::ty::EffectDecl| e.ops.iter().any(|o| o.multi);
+    s.multi = match row {
+        Some(es) => es
+            .iter()
+            .any(|e| tys.effects().get(e.index()).is_some_and(multi)),
+        None => tys.effects().iter().any(multi),
+    };
+    s.unknown_multi = s.multi;
+    s
 }

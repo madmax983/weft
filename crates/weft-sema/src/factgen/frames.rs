@@ -171,6 +171,12 @@ pub fn destinations(
             let intrinsic = p.fns.get(f.index()).is_some_and(|d| d.intrinsic.is_some());
             match sums.get(*f) {
                 Ok(sum) if !intrinsic => {
+                    // A function value that the callee runs can abort in
+                    // each way (stage F12, part `runs`).
+                    if !sum.runs.is_empty() {
+                        out.push(Dest::Past);
+                        out.push(fails(env));
+                    }
                     for a in &sum.aborts {
                         out.push(match a {
                             Abort::Perform(pf) => match pf.cap {

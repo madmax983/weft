@@ -2929,6 +2929,55 @@ As built (plan stage F11, `analysis::transfer::value_out`, `apply::closure_sigma
   instantiated facts the capture holds the values of the maker, so the call applies their
   summaries at its own node.
 
+As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknown::code_of_caller`,
+`summarize::runs_of`, `summarize::ret_fns_of`; group C is a preview until F13):
+
+- Function sets (`domain::FnVal`): an item, a closure of the component, `Made(c)` (a closure that a
+  callee made and gave back: the value holds its environment, so σ maps each capture to the place
+  and the references of the value, `apply::made_sigma`), `Param(i)` (a value of parameter `i`, or a
+  value inside it or behind it), `Capture(k)` (a value of a capture in the summary of a closure),
+  and `Unknown`. A function parameter starts with `Param(i)`; a read through a pointer or of an
+  element gives the values of the places (`transfer::fns_at`). A set with more than
+  `domain::FNS_MAX` (32) values drops its items for `Unknown` (the widening; the other values are
+  finite). A value with a function part that goes behind a reference (a heap slot) is stage F13: the
+  program stays with the old pipeline.
+- A closure aggregate holds the references of its `Kept` captures too (a closure that leaves its
+  maker, or that a closure gives back, reads them). A call of a value that the analysis does not
+  know (`Param`, `Capture`, `Unknown`) is code of a caller (map N2): it reads and lends the places
+  of its reference arguments (not their wildcards: a stable place below them stays valid, as for
+  the old lowering), the places behind them, the wildcard places of the references of the value
+  (its environment) and `Caller..`; its result points into their wildcard places and into
+  `Caller..`, and can be each function value of the arguments and the value of the parameter
+  again; it can abort (`raises`), and it is `multi` if an effect of the row of its type has a
+  `multi` operation (with no row: an effect of the program). It runs each function value that its
+  arguments reach, more than once.
+- Part `runs`: each run node of a `Param(i)` or `Capture(k)` value records a run with the places of
+  its arguments (`transfer::RunOf`); `many` for two run nodes, a node in a cycle, or a run again.
+  At a call of an item or a closure, `apply_runs` applies each value that the argument (or the
+  source of the capture) reaches, and the values that their runs give back (four levels), with
+  `Given::Opaque` (each parameter of the value gets the places of the run). A run is at `Ret`
+  (`Applied::late`: the callee can change a place first, `clear_then`), at `Main` and `Ret` for
+  `many` or for two runs (each order, `run_both`), and has no check of the arguments of the call
+  against the value, only of its changes against its environment (`RunKind::Run`, W0312). A run
+  again of a `once` closure is W0502. A value applies one time at a run node (Q3-2: a DAG of
+  closures is linear); a chain deeper than 64 stays with the old pipeline.
+- Part `ret` (`Ret::fns`): the function values of `_0` at each `Return` in interface terms; a
+  closure of the body goes out as `Made(c)`, with the places of its `Kept` captures (their values
+  where the body makes the closure, `FnParts::made`). A caller maps `Param(i)` to the values that
+  argument `i` reaches. A function that gives back a closure has the effects of the closure in its
+  row (W0701, W0702 at a caller, as the old inference). The summary of each closure goes into
+  `Summaries` for the callers.
+- W0705: at a call, `param_effect` of the row of each parameter of a function type with a row, and
+  `fn_arg_effect` of the effects of each value of the argument (a closure, an item, or the row of
+  the type of a value that the body does not know).
+- A function with no body and a function value in its signature runs each function value of its
+  parameters more than once and gives back `Unknown` and the values of its parameters
+  (`sig::foreign_fn_parts`).
+- Not done: a run as a task (W0405 of code of a caller, stage F18), a value stored behind a
+  reference (F13), the environment of a `Made` closure capture by capture (a wildcard environment
+  can give a W0703 that the old pipeline does not give, `44_returned_fns`), the check of an item
+  value with type arguments (`check_item_value`; group F).
+
 ### 6.8 Effect inference and signatures
 
 Effect rows are a part of the summaries: the effects that a body performs through `Row`

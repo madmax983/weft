@@ -39,7 +39,8 @@ use std::collections::BTreeSet;
 use weft_ir::{FnDecl, Ty, TyId, TyTable};
 
 use super::summary::{
-    Abort, CapIface, Flow, IPlace, IRoot, IStep, ParamIface, Perform, Ret, Store, Summary,
+    Abort, CapIface, Flow, IPlace, IRoot, IStep, ParamIface, Perform, Ret, RetFn, Run, Store,
+    Summary,
 };
 use crate::body::roots;
 use crate::program::{EffectSig, FnSig, SigPlace, SigRoot, SigStep};
@@ -132,21 +133,23 @@ pub(crate) fn sig_root(sig: &FnSig, i: usize) -> u32 {
     roots::param(i)
 }
 
-/// The part of a signature that a summary of stage F5 cannot carry, if any.
-fn unsupported(sig: &FnSig, decl: &FnDecl, tys: &TyTable) -> Option<&'static str> {
+/// The part of a signature that a summary cannot carry, if any. With
+/// `body`, the body of the function gives the parts of its function values
+/// (`runs`, `ret`): the parts of the old inference for them (`passthrough`,
+/// `lent`, `reaches` and the others) do not count. A function with no body
+/// and a function value in its signature gets the worst case
+/// ([`foreign_fn_parts`]), if the old signature has no other part for it.
+fn unsupported(sig: &FnSig, body: bool) -> Option<&'static str> {
     let e = &sig.effects;
-    if decl.params.iter().any(|&t| tys.mentions_fn(t)) || tys.mentions_fn(decl.ret) {
-        return Some("a call of a function with a function value in its signature (stage F12)");
-    }
-    if !e.passthrough.is_empty()
-        || !e.lent.is_empty()
-        || e.ret.is_some()
-        || !e.stores.is_empty()
-        || e.reaches
-        || !e.fn_stores.is_empty()
-        || !e.fn_store_refs.is_empty()
-        || !e.op_fns.is_empty()
-        || !e.op_effects.is_empty()
+    if !body
+        && (!e.lent.is_empty()
+            || e.ret.is_some()
+            || !e.stores.is_empty()
+            || e.reaches
+            || !e.fn_stores.is_empty()
+            || !e.fn_store_refs.is_empty()
+            || !e.op_fns.is_empty()
+            || !e.op_effects.is_empty())
     {
         return Some("a call of a function that runs or keeps function values (stage F12)");
     }
@@ -157,6 +160,46 @@ fn unsupported(sig: &FnSig, decl: &FnDecl, tys: &TyTable) -> Option<&'static str
         return Some("a call of a function that starts tasks (stage F18)");
     }
     None
+}
+
+/// The parts of a function with no body that has a function value in its signature: code
+/// of a caller (`docs/ir.md` 6.7).
+///
+/// It runs each function value of each parameter more than once, with the places of each
+/// argument; its result can be each function value of a parameter, or a value that the
+/// body does not know.
+pub fn foreign_fn_parts(decl: &FnDecl, tys: &TyTable, inf: &mut Inferred) {
+    let u = u32_of;
+    let mut args = vec![IPlace::wild(IRoot::Caller)];
+    for (i, &t) in decl.params.iter().enumerate() {
+        if is_ref(tys, t) || byval_refs(tys, t) {
+            args.push(IPlace::wild(IRoot::Param(u(i))));
+        }
+        if super::apply::pointee_refs(tys, t) {
+            args.push(IPlace::wild(IRoot::Held(u(i))));
+        }
+    }
+    args.sort();
+    for (i, &t) in decl.params.iter().enumerate() {
+        if crate::props::ir_has_fns(tys, t) {
+            join_run(
+                &mut inf.runs,
+                &Run {
+                    param: u(i),
+                    capture: false,
+                    many: true,
+                    task: true,
+                    args: args.clone(),
+                    multi: fn_multi(tys, t),
+                },
+            );
+            inf.ret_fns.insert(RetFn::Param(u(i)));
+        }
+    }
+    if crate::props::ir_has_fns(tys, decl.ret) {
+        inf.ret_fns.insert(RetFn::Unknown);
+        inf.ret_places.extend(args);
+    }
 }
 
 /// True if an operation of the effect with identity `e` takes a reference
@@ -203,6 +246,15 @@ pub struct Inferred {
     /// The type parameters of the values that the body holds across a node
     /// that can abort or resume more than once.
     pub holds: BTreeSet<u32>,
+    /// The function values of the interface that the body runs (part
+    /// `runs`, stage F12), one entry for each parameter.
+    pub runs: Vec<Run>,
+    /// The function values that the result can be (part `ret`, stage F12).
+    pub ret_fns: BTreeSet<RetFn>,
+    /// The interface places that the environments of the closures in the
+    /// result point into, and the places of a result with a function part
+    /// (part `ret`, stage F12).
+    pub ret_places: BTreeSet<IPlace>,
 }
 
 /// True if interface place `a` is `b` or a place that holds `b`.
@@ -265,6 +317,15 @@ impl Inferred {
             self.multi = true;
             grew = true;
         }
+        for r in &o.runs {
+            grew |= join_run(&mut self.runs, r);
+        }
+        for f in &o.ret_fns {
+            grew |= self.ret_fns.insert(f.clone());
+        }
+        for p in &o.ret_places {
+            grew |= self.ret_places.insert(p.clone());
+        }
         if grew {
             self.muts.sort();
         }
@@ -303,6 +364,47 @@ impl Inferred {
     }
 }
 
+/// Joins run `r` into `runs`: one entry for each parameter (or capture),
+/// `many` if one run is, with the places of both. Returns true if `runs`
+/// grows.
+pub fn join_run(runs: &mut Vec<Run>, r: &Run) -> bool {
+    let Some(x) = runs
+        .iter_mut()
+        .find(|x| x.param == r.param && x.capture == r.capture)
+    else {
+        runs.push(r.clone());
+        runs.sort();
+        return true;
+    };
+    let before = (x.many, x.task, x.multi, x.args.len());
+    x.many |= r.many;
+    x.task |= r.task;
+    x.multi |= r.multi;
+    for a in &r.args {
+        if !x.args.contains(a) {
+            x.args.push(a.clone());
+        }
+    }
+    x.args.sort();
+    before != (x.many, x.task, x.multi, x.args.len())
+}
+
+/// True if code of a caller of the function values of type `t` can resume
+/// more than once: an effect of the row of the function type has a `multi`
+/// operation, or (with no row, or no function type) an effect of the
+/// program has one.
+fn fn_multi(tys: &TyTable, t: TyId) -> bool {
+    let multi = |e: &weft_ir::ty::EffectDecl| e.ops.iter().any(|o| o.multi);
+    match tys.try_get(t) {
+        Some(Ty::Fn(f)) if f.row.is_some() => f
+            .row
+            .iter()
+            .flatten()
+            .any(|e| tys.effects().get(e.index()).is_some_and(multi)),
+        _ => tys.effects().iter().any(multi),
+    }
+}
+
 /// `i` as a `u32` (saturated).
 fn u32_of(i: usize) -> u32 {
     u32::try_from(i).unwrap_or(u32::MAX)
@@ -311,18 +413,24 @@ fn u32_of(i: usize) -> u32 {
 /// The summary of the function `f` of the program of the analysis, with the
 /// signature `sig` and the declaration `decl` of the IR.
 ///
+/// With `with_body`, the IR body of the function gives the parts of its
+/// function values (`runs`, `ret`); else the summary takes the worst case
+/// for them ([`foreign_fn_parts`]).
+///
 /// # Errors
 ///
-/// Returns the reason if the signature has a part that a summary of stage
-/// F5 cannot carry.
+/// Returns the reason if the signature has a part that a summary cannot
+/// carry.
 pub fn from_signature(
     prog: &crate::Program,
     f: crate::FnId,
     sig: &FnSig,
     decl: &FnDecl,
     tys: &TyTable,
+    with_body: bool,
 ) -> Result<Summary, &'static str> {
-    if let Some(why) = unsupported(sig, decl, tys) {
+    let body = with_body;
+    if let Some(why) = unsupported(sig, body) {
         return Err(why);
     }
     let def = prog.fns.get(f.index());
@@ -336,13 +444,11 @@ pub fn from_signature(
     {
         return Err("a call of a foreign function that changes an `rc` object (stage F13)");
     }
-    let mut s = build(
-        prog,
-        sig,
-        decl,
-        tys,
-        &Inferred::of_signature(sig, decl, tys),
-    );
+    let mut inf = Inferred::of_signature(sig, decl, tys);
+    if !body {
+        foreign_fn_parts(decl, tys, &mut inf);
+    }
+    let mut s = build(prog, sig, decl, tys, &inf);
     let e = &sig.effects;
     s.only_self =
         e.named.is_empty() && !e.multi && e.muts.iter().all(|m| m.root == SigRoot::Param(0));
@@ -443,7 +549,15 @@ pub fn build(
     }
     s.drops.clone_from(&inf.drops);
     s.holds.clone_from(&inf.holds);
+    s.runs.clone_from(&inf.runs);
+    s.ret.fns = inf.ret_fns.iter().cloned().collect();
+    for p in &inf.ret_places {
+        if !s.ret.places.contains(p) {
+            s.ret.places.push(p.clone());
+        }
+    }
     s.only_self = inf.named.is_empty()
+        && inf.runs.is_empty()
         && !inf.multi
         && inf
             .muts

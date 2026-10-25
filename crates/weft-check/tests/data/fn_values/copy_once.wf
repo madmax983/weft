@@ -1,0 +1,36 @@
+// The closure-copy rule of stage F11 for function values in elements, fields
+// and captures (`docs/ir.md` 5.22, stage F12): a read of a value that can be
+// a `once` closure moves it. A copy of a plain closure is a copy.
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print(b.items.len()) }
+struct H { f: fn() }
+fn elems() {
+    let b = Buf { items: Vec.new() }
+    let a = [|| eat(b)]
+    let g = a[0]
+    let h = a[0]   //~ W0302
+    g()
+    h()
+}
+fn field() {
+    let b = Buf { items: Vec.new() }
+    let s = H { f: || eat(b) }   //~ W0502
+    let g = s.f
+    let h = s.f   //~ W0302
+    g()
+    h()
+}
+fn capture() {
+    let b = Buf { items: Vec.new() }
+    let k = || eat(b)
+    let c = || { let g = k; g() }
+    c()
+    c()   //~ W0502
+}
+fn plain_ok() {
+    let s = H { f: || print(1) }
+    let g = s.f
+    let h = s.f
+    g()
+    h()
+}

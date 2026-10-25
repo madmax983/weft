@@ -1,0 +1,19 @@
+// RT6 (tests/gate/probes/redteam/e04_if_item.wf): an `if` joins two items.
+mod api {
+    pub fn fetch(x: u64) -> u64 / net { x + 1 }
+}
+fn pure_one(x: u64) -> u64 { x }
+fn caller_if_rev(c: bool) -> u64 / clock {
+    let g = if c { pure_one } else { api.fetch }
+    g(1)   //~ W0702
+}
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+fn grow(w: &World) / mut(w.entities) { w.entities.push(Entity { hp: 1 }) }
+fn noop(w: &World) {}
+fn if_item_mut(world: &World, c: bool) / mut(world.entities) {
+    let first = &world.entities[0]
+    let g = if c { noop } else { grow }
+    g(world)
+    print(first.hp)   //~ W0301
+}

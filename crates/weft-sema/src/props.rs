@@ -606,6 +606,14 @@ pub fn ir_promotes(table: &TyTable, t: TyId) -> bool {
     !table.not_copy(t) && !ir_has(table, t, TyProp::Fns) && !ir_has(table, t, TyProp::Resource)
 }
 
+/// Returns true if a value of the final type `t` can hold a function value: the type is a
+/// function type, or a part of it is (a field, an element, a pointee).
+///
+/// The analysis keeps the function values of such a value (`docs/ir.md` 6.6).
+pub fn ir_has_fns(table: &TyTable, t: TyId) -> bool {
+    ir_has(table, t, TyProp::Fns)
+}
+
 /// Returns true if a value of the final type `t` can be linear.
 ///
 /// A part of it is linear, or a part of it is a type parameter. This is

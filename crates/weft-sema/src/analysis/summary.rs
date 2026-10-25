@@ -28,7 +28,7 @@
 use std::collections::BTreeSet;
 
 use weft_facts::Step;
-use weft_ir::AdtId;
+use weft_ir::{AdtId, ClosureId, FnId, TyId};
 
 use crate::factgen::rels::Part;
 
@@ -159,9 +159,10 @@ pub enum Abort {
     Assert,
 }
 
-/// A function value of the interface that the body runs (stage F11 fills
-/// this part for the captures of a closure; stage F12 adds the function
-/// parameters).
+/// A function value of the interface that the body runs.
+///
+/// It is a capture of a closure (stage F11), or a value that a parameter holds (stage F12: the
+/// value of the parameter, or a function value inside it or behind it).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Run {
     /// The function parameter (or capture) that the body runs.
@@ -172,6 +173,30 @@ pub struct Run {
     pub many: bool,
     /// The body runs it as a task.
     pub task: bool,
+    /// The interface places that the body gives to the runs (the places of
+    /// their arguments): the run node gives each parameter of the value
+    /// that runs these places.
+    pub args: Vec<IPlace>,
+    /// Code of a caller there can resume more than once (the row of the
+    /// function type of the value): a value of a caller that the run node
+    /// does not know runs with it.
+    pub multi: bool,
+}
+
+/// A function value that the result can be (part `ret`, stage F12).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum RetFn {
+    /// A function item with its type arguments.
+    Item(FnId, Vec<TyId>),
+    /// A closure that the body (or a callee of it) made: the result holds its
+    /// environment.
+    Made(ClosureId),
+    /// The function values of parameter `i` (a value of the caller).
+    Param(u32),
+    /// The function values of capture `k` of a closure.
+    Capture(u32),
+    /// A value that the body does not know.
+    Unknown,
 }
 
 /// The abstract value of `_0` (`docs/ir.md` 6.7, part `ret`).
@@ -190,6 +215,9 @@ pub struct Ret {
     /// hold a reference. A one-place result (`&T` or `Option<&T>`) gets a
     /// one-place instance of each wildcard place (ADR 0003).
     pub flows: Vec<IPlace>,
+    /// The function values that the result can be (stage F12). The places
+    /// that their environments point into are in `places`.
+    pub fns: Vec<RetFn>,
 }
 
 /// How a value of an argument flows into the pointee of a reference
@@ -326,6 +354,7 @@ impl Summary {
                 !self.ret.places.is_empty()
                     || !self.ret.parts.is_empty()
                     || !self.ret.flows.is_empty()
+                    || !self.ret.fns.is_empty()
             }
             Part::Stores => !self.stores.is_empty() || !self.puts.is_empty(),
             Part::Drops => !self.drops.is_empty(),

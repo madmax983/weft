@@ -121,6 +121,13 @@ pub fn params(
         let mut v = AbsVal::of_type(d.props.linear);
         v.refs = refs.into_iter().collect();
         v.uniq = d.props.uniq;
+        // A function value of a caller (stage F12): a call of it is code of
+        // a caller, and the summary runs it (part `runs`).
+        if !is_ref(tys, d.ty) && crate::props::ir_has_fns(tys, d.ty) {
+            v.fns.insert(crate::analysis::FnVal::Param(
+                u32::try_from(i).unwrap_or(u32::MAX),
+            ));
+        }
         out.entry.push((l, Tree::leaf(v)));
     }
     Ok(out)
@@ -172,6 +179,9 @@ pub fn closure_params(
         let mut v = AbsVal::of_type(d.props.linear);
         v.refs = refs.into_iter().collect();
         v.uniq = d.props.uniq;
+        if !is_ref(tys, d.ty) && crate::props::ir_has_fns(tys, d.ty) {
+            v.fns.insert(crate::analysis::FnVal::Param(i32 - 1));
+        }
         out.entry.push((l, Tree::leaf(v)));
     }
     Ok(out)

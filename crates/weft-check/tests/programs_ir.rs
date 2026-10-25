@@ -205,7 +205,7 @@ fn a_diagnostic_at_a_call_names_the_callee_as_the_old_pipeline() {
     // operation), as the old pipeline. Before, the text named the kind of
     // the IR node (`call performs Note`), and a note showed the IR location
     // (`call : b1 bb0`). Each code here names the node of a call in its
-    // message.
+    // message; the test compares that name.
     const CODES: [&str; 6] = ["W0312", "W0402", "W0503", "W0602", "W0702", "W0703"];
     let mut compared = 0;
     let mut problems = Vec::new();
@@ -219,7 +219,13 @@ fn a_diagnostic_at_a_call_names_the_callee_as_the_old_pipeline() {
         };
         let old = diags_of(&name, &src, FactGen::Old).unwrap_or_default();
         for (line, code, msg, text) in &ir {
-            // No text shows an IR location or the kind of a call node.
+            let same: Vec<&String> = old
+                .iter()
+                .filter(|(l, c, _, _)| l == line && c == code)
+                .map(|(_, _, m, _)| m)
+                .collect();
+            // No text shows an IR location or the kind of a call node (a
+            // callee can have the name `call`: the old text has it then).
             let ir_words = ["`call`", "`perform`", "call ret", "call frame end"];
             let location = text
                 .split_whitespace()
@@ -230,24 +236,28 @@ fn a_diagnostic_at_a_call_names_the_callee_as_the_old_pipeline() {
                         && b.strip_prefix("bb")
                             .is_some_and(|n| n.parse::<u32>().is_ok())
                 });
-            if location || ir_words.iter().any(|w| text.contains(w)) {
+            let named = src.contains("fn call(") || src.contains("fn perform(");
+            let kind = !named
+                && ir_words
+                    .iter()
+                    .any(|w| text.contains(w) && !same.iter().any(|m| m.contains(w)));
+            if location || kind {
                 problems.push(format!(
                     "{name}:{line}: {code}: the text names the IR:\n{text}"
                 ));
             }
-            if !CODES.contains(&code.as_str()) {
+            if !CODES.contains(&code.as_str()) || same.is_empty() {
                 continue;
             }
-            let same: Vec<&String> = old
-                .iter()
-                .filter(|(l, c, _, _)| l == line && c == code)
-                .map(|(_, _, m, _)| m)
-                .collect();
-            if same.is_empty() {
-                continue;
-            }
+            // The name of the node: the first quoted word, or the word after
+            // `live across`. The places of the message can differ (the ir
+            // pipeline can be more precise).
+            let label = |m: &str| -> String {
+                let m = m.split("live across ").nth(1).unwrap_or(m);
+                m.split('`').nth(1).unwrap_or("").to_string()
+            };
             compared += 1;
-            if !same.contains(&msg) {
+            if !same.iter().any(|m| label(m) == label(msg)) {
                 problems.push(format!("{name}:{line}: {code}: ir `{msg}`, old {same:?}"));
             }
         }

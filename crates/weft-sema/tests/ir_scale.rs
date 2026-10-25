@@ -186,3 +186,68 @@ fn a_ring_of_calls_reaches_its_fixpoint_in_a_few_passes() {
     let time = ir_facts_time(&s);
     assert!(time < FACTS_BOUND, "{time:?}");
 }
+
+/// The time of the fact generator of the `ir` pipeline in the last analysis
+/// of [`emit_time`], in nanoseconds.
+static EMIT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The fact generator of the `ir` pipeline, with its time in [`EMIT_NS`].
+fn timed_emit(
+    input: &weft_sema::factgen::Input<'_>,
+    facts: &mut [weft_facts::FnFacts],
+) -> Result<(), weft_sema::factgen::Unsupported> {
+    let start = Instant::now();
+    let out = weft_sema::factgen::emit(input, facts);
+    let ns = u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX);
+    EMIT_NS.store(ns, std::sync::atomic::Ordering::SeqCst);
+    out
+}
+
+/// Analyzes `src` with the `ir` pipeline and the groups A, B and C, and
+/// returns the time of its fact generator (not of the old lowering, which
+/// runs too). The program must be in scope.
+fn emit_time(src: &str) -> Duration {
+    let prelude =
+        weft_sema::prelude_unit().unwrap_or_else(|e| panic!("the prelude: {}", e.message));
+    let file = weft_syntax::parse_file(src).unwrap_or_else(|e| panic!("the source: {}", e.message));
+    let units = vec![
+        prelude,
+        weft_sema::Unit {
+            name: String::new(),
+            file,
+            is_std: false,
+        },
+    ];
+    let opts = Options {
+        facts: weft_sema::FactGen::Ir,
+        ir_groups: weft_sema::Groups::parse("ABC").unwrap_or(weft_sema::Groups::NONE),
+        ..Options::from_markers(src)
+    };
+    let a = weft_sema::analyze_with_emit(&units, opts, timed_emit);
+    assert!(
+        a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope),
+        "{:?}",
+        a.ir_scope.as_ref().and_then(|s| s.fallback.clone())
+    );
+    Duration::from_nanos(EMIT_NS.load(std::sync::atomic::Ordering::SeqCst))
+}
+
+#[test]
+fn a_dag_of_closures_that_run_each_other_gets_its_facts_in_time() {
+    // Q3-2 (`tests/gate/probes/r3/quality/repro/Q3_closure_dag_18.wf`):
+    // closure `c(k)` runs `c(k - 1)` and `c(k - 2)`. A run node applies
+    // each closure that it reaches one time, so the cost is linear (before
+    // stage F12 the program was out of scope, and the old lowering takes
+    // exponential time on it). The old lowering runs in this test too, so
+    // the size is small.
+    let n = 12;
+    let mut s = String::from(
+        "struct W { v: Vec<u64> }\nfn f(w: &W) / mut(w.v) {\n    let c0 = || w.v.push(1)\n    let c1 = || w.v.push(2)\n",
+    );
+    for k in 2..n {
+        let _ = writeln!(s, "    let c{k} = || {{ c{}(); c{}() }}", k - 1, k - 2);
+    }
+    let _ = writeln!(s, "    c{}()\n}}", n - 1);
+    let time = emit_time(&s);
+    assert!(time < CLOSURES_BOUND, "{time:?}");
+}

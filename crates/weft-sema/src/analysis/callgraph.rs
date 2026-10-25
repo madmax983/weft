@@ -188,6 +188,9 @@ fn stated(
     out.multi = body.multi;
     out.drops.clone_from(&body.drops);
     out.holds.clone_from(&body.holds);
+    out.runs.clone_from(&body.runs);
+    out.ret_fns.clone_from(&body.ret_fns);
+    out.ret_places.clone_from(&body.ret_places);
     out
 }
 
@@ -196,8 +199,7 @@ fn stated(
 /// # Errors
 ///
 /// Returns the reason if a function with a stated row has a signature that
-/// a summary cannot carry yet (`super::sig::from_signature`), or if a
-/// function with no stated row has a function value in its signature.
+/// a summary cannot carry yet (`super::sig::from_signature`).
 fn summary_of(
     a: &Analysis,
     tys: &weft_ir::TyTable,
@@ -216,15 +218,21 @@ fn summary_of(
         s.effects.drops = inf.drops.iter().map(|&j| j as usize).collect();
         s.effects.holds = inf.holds.iter().map(|&j| j as usize).collect();
         // The signature has no part for an `assert`: the body gives it.
-        return sig::from_signature(&a.program, sema, &s, decl, tys).map(|mut sum| {
+        return sig::from_signature(&a.program, sema, &s, decl, tys, true).map(|mut sum| {
             if inf.assert {
                 sum.aborts.insert(super::summary::Abort::Assert);
             }
+            // The function values: the body gives them (stage F12).
+            sum.runs.clone_from(&inf.runs);
+            sum.ret.fns = inf.ret_fns.iter().cloned().collect();
+            for p in &inf.ret_places {
+                if !sum.ret.places.contains(p) {
+                    sum.ret.places.push(p.clone());
+                }
+            }
+            sum.only_self &= inf.runs.is_empty();
             sum
         });
-    }
-    if decl.params.iter().any(|&t| tys.mentions_fn(t)) || tys.mentions_fn(decl.ret) {
-        return Err("a call of a function with a function value in its signature (stage F12)");
     }
     Ok(sig::build(&a.program, sig, decl, tys, inf))
 }
@@ -336,7 +344,7 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
             // An extern function, or a body with no IR (a type error): the
             // summary of its signature, with the parts of the old inference.
             out.sums
-                .insert(f, sig::from_signature(prog, sema, sig, decl, tys));
+                .insert(f, sig::from_signature(prog, sema, sig, decl, tys, false));
             continue;
         };
         nodes.push(Node {
@@ -471,6 +479,11 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                 match run {
                     Ok(e) => {
                         let diags = e.diags;
+                        // A caller can apply the summary of a closure that
+                        // the function gives back (stage F12).
+                        for (c, s) in &e.closures {
+                            out.sums.insert_closure(*c, s.clone());
+                        }
                         let body = super::summarize::summarize(
                             &built.program,
                             tys,
@@ -482,6 +495,11 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                             sig,
                             e.entry_nodes,
                             &e.aborts,
+                            &super::summarize::FnParts {
+                                runs: &e.runs,
+                                returns: &e.returns,
+                                made: e.made.as_ref(),
+                            },
                         );
                         add_steps(&mut steps, &facts);
                         let new = if sig.declared {
@@ -512,7 +530,7 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                         let s = if sig.declared {
                             // The summary of stage F5: the signature, with
                             // the parts of the old inference.
-                            sig::from_signature(prog, n.sema, sig, decl, tys)
+                            sig::from_signature(prog, n.sema, sig, decl, tys, false)
                         } else {
                             Err(failed(u.group))
                         };

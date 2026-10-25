@@ -242,6 +242,25 @@ fn stored_at(facts: &FnFacts, st: &State, at: PlaceId) -> Vec<PlaceId> {
     out
 }
 
+/// A value with function values that goes into a place that no local of the
+/// component owns (behind a reference parameter) is a stored value.
+///
+/// # Errors
+///
+/// Returns [`AlphaError::Later`] for it (stage F13).
+fn fns_behind(cx: &Cx<'_>, v: &AbsVal, places: &[PlaceId]) -> Result<(), AlphaError> {
+    if !v.fns.is_empty()
+        && places
+            .iter()
+            .any(|&q| cx.roots.path_of(cx.facts, q).is_none())
+    {
+        return Err(AlphaError::Later(
+            "a function value stored behind a reference (stored values, stage F13)",
+        ));
+    }
+    Ok(())
+}
+
 /// Each place of `places` that no local of the component owns gets the
 /// references `refs` in its heap slot (a weak update, `docs/ir.md` 6.6).
 fn store_heap(
@@ -368,6 +387,14 @@ pub fn place_value(
     let t = place_ty(cx, body, place)?;
     let props = ir_props(cx.tys, t);
     let mut v = AbsVal::of_type(props.linear);
+    // A function value through a pointer or in an element: the values that
+    // the places can hold (stage F12, `docs/ir.md` 6.6).
+    if crate::props::ir_has_fns(cx.tys, t) {
+        let a = alpha(cx, body, st, place)?;
+        for &at in &a.places {
+            v.fns.extend(fns_at(cx, st, at));
+        }
+    }
     if props.holds_refs {
         let a = alpha(cx, body, st, place)?;
         let field = match place.proj.split_last() {
@@ -406,6 +433,9 @@ pub fn operand(
     match op {
         Operand::Copy(q) | Operand::Move(q) => place_value(cx, body, st, q),
         Operand::Const(Const::Fn(f, targs)) => {
+            if let Some(why) = crate::factgen::checks::item_value(cx.sums, cx.tys, *f, targs) {
+                return Err(AlphaError::Later(why));
+            }
             let mut v = AbsVal::plain();
             v.fns.insert(FnVal::Item(*f, targs.clone()));
             Ok(Tree::leaf(v))
@@ -613,12 +643,21 @@ fn closure_value(
             weft_ir::CaptureMode::ByMove => {
                 let f = part.flat();
                 v.refs.extend(f.refs);
+                // A function value that the closure owns: the closure runs
+                // it through its value (stage F12), so the value of the
+                // closure can be it too (a call of the closure applies it).
+                v.fns.extend(f.fns);
                 v.caps.extend(f.caps);
                 v.tasks.extend(f.tasks);
                 v.linear |= f.linear;
             }
-            weft_ir::CaptureMode::Kept | weft_ir::CaptureMode::Cap | weft_ir::CaptureMode::Kont => {
-            }
+            // A `Kept` capture shares the cell of its variable: no
+            // reference points into the cell, but the closure can read the
+            // references in the value (stage F12: a closure that leaves its
+            // maker, or a closure that another closure gives back, holds
+            // them).
+            weft_ir::CaptureMode::Kept => v.refs.extend(part.flat().refs),
+            weft_ir::CaptureMode::Cap | weft_ir::CaptureMode::Kont => {}
         }
     }
     v.empty = !v.linear;
@@ -781,6 +820,7 @@ pub fn assign(
         st.add(k, &path, &flat);
     }
     if let Some(a) = &a {
+        fns_behind(cx, &flat.top, &a.places)?;
         let refs: Vec<PlaceId> = flat.top.refs.iter().copied().collect();
         store_heap(cx.facts, cx.roots, st, &a.places, &refs);
     }
@@ -995,6 +1035,9 @@ pub struct CallOut {
     /// The values that go behind the reference arguments that the call
     /// changes.
     pub stores: Vec<(PlaceId, Vec<PlaceId>)>,
+    /// The summaries of the function values that the callee runs (part
+    /// `runs`, stage F12).
+    pub apps: Vec<Applied>,
 }
 
 /// The run node of a `Call` of function item `f` of block `block`, in state
@@ -1032,13 +1075,137 @@ pub fn call_out(
     let ret = super::apply::ret_value(cx, &summary, &sigma, ret_ty)?;
     let muts = super::apply::muts(cx, &summary, &sigma)?;
     let stores = super::apply::stores(cx, &summary, &sigma, &muts)?;
+    // The function values that the callee runs, and the function values of
+    // the result (stage F12).
+    let r = Run0 {
+        body,
+        block,
+        inst,
+        st,
+    };
+    let mut apps = Apps::default();
+    let given = Given::Args(args);
+    apply_runs(
+        cx,
+        r,
+        &summary.runs,
+        &sigma,
+        &mut |cx, run| param_fns(cx, r, run, given),
+        0,
+        &mut apps,
+    )?;
+    let mut fs = ret_fns(cx, r, &summary, given, &mut |_, _| {
+        Ok(BTreeSet::from([FnVal::Unknown]))
+    })?;
+    // A result of a type parameter can be a function value of an argument
+    // (`Box.new(f)`, `v.pop()`).
+    if crate::props::ir_has_fns(cx.tys, ret_ty) && cx.tys.mentions_param(decl.ret) {
+        for a in args {
+            fs.extend(reach_fns(cx, body, st, a)?);
+        }
+    }
+    let ret = with_fns(cx, ret, ret_ty, fs);
     Ok(CallOut {
         sigma,
         summary,
         ret,
         muts,
         stores,
+        apps: apps.out,
     })
+}
+
+/// The changes of the states of the summaries `apps` that a run node
+/// applies: the values that go into places of the caller, a linear value
+/// in a changed place, the new value of each captured variable that a
+/// closure rebinds.
+fn apply_apps(cx: &Cx<'_>, st: &mut State, apps: &[Applied]) {
+    for app in apps {
+        for (q, refs) in &app.stores {
+            if let Some((k, path)) = cx.roots.path_of(cx.facts, *q) {
+                st.add(k, &path, &Tree::leaf(AbsVal::refs(refs.iter().copied())));
+            } else {
+                st.store_behind(*q, refs.iter().copied());
+            }
+        }
+        let changed: Vec<PlaceId> = app.muts.iter().map(|(q, _)| *q).collect();
+        for (k, path) in can_get_linear(cx, &changed) {
+            st.add(k, &path, &Tree::leaf(AbsVal::of_type(true)));
+        }
+        for (k, v) in &app.rebinds {
+            st.write(*k, &[], v.clone());
+        }
+    }
+}
+
+/// A run node with the arguments `args` that changes the places `changed`
+/// can put a function value of an argument there (`v.push(f)`): each move
+/// path of such a place whose local can hold a function value gets the
+/// function values of the arguments (a weak update).
+///
+/// # Errors
+///
+/// Returns [`AlphaError::Later`] for a function value that can go behind a
+/// reference (a heap slot: stored values, stage F13), and the errors of α.
+fn store_fns(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &mut State,
+    args: &[Operand],
+    changed: &[PlaceId],
+) -> Result<(), AlphaError> {
+    let mut fns = BTreeSet::new();
+    // An argument that points to a place that can hold a function value:
+    // the callee can store one behind it.
+    let mut behind = false;
+    for a in args {
+        if let Operand::Copy(q) | Operand::Move(q) = a {
+            let t = place_ty(cx, body, q)?;
+            if crate::props::ir_has_fns(cx.tys, t) {
+                if is_ref_ty(cx.tys, t) || ir_props(cx.tys, t).holds_refs {
+                    behind = true;
+                }
+                if !is_ref_ty(cx.tys, t) {
+                    fns.extend(operand(cx, body, st, a)?.flat().fns);
+                }
+            }
+        }
+        if let Operand::Const(Const::Fn(f, t)) = a {
+            fns.insert(FnVal::Item(*f, t.clone()));
+        }
+    }
+    if fns.is_empty() {
+        return Ok(());
+    }
+    for &q in changed {
+        match cx.roots.path_of(cx.facts, q) {
+            Some((k, path)) => {
+                let holds = cx
+                    .p
+                    .bodies
+                    .get(k.0.index())
+                    .and_then(|b| b.locals.get(k.1.index()))
+                    .is_some_and(|d| crate::props::ir_has_fns(cx.tys, d.ty));
+                if holds {
+                    let mut v = AbsVal::none();
+                    v.fns.clone_from(&fns);
+                    st.add(k, &path, &Tree::leaf(v));
+                }
+            }
+            None if behind => {
+                return Err(AlphaError::Later(
+                    "a function value that a call can store behind a reference (stored values, stage F13)",
+                ))
+            }
+            None => {}
+        }
+    }
+    Ok(())
+}
+
+/// True if `t` is a reference type.
+fn is_ref_ty(tys: &TyTable, t: TyId) -> bool {
+    matches!(tys.try_get(t), Some(Ty::Ref(_)))
 }
 
 /// `Call` of a function item: the summary of the callee. The values that go
@@ -1068,21 +1235,54 @@ fn call(
             st.store_behind(*q, refs.iter().copied());
         }
     }
-    let changed: Vec<PlaceId> = out.muts.iter().map(|(q, _)| *q).collect();
+    let mut changed: Vec<PlaceId> = out.muts.iter().map(|(q, _)| *q).collect();
     for (k, path) in can_get_linear(cx, &changed) {
         st.add(k, &path, &Tree::leaf(AbsVal::of_type(true)));
     }
+    apply_apps(cx, st, &out.apps);
+    changed.extend(out.apps.iter().flat_map(|a| a.muts.iter().map(|(q, _)| *q)));
+    store_fns(cx, body, st, args, &changed)?;
     bind_result(cx, body, st, args, dest, out.ret)
 }
 
-/// The most closures that a run node applies through the captures that run
-/// each other (`f` runs `g`, which runs `h`): a deeper chain is a later
-/// stage (F12).
-const RUN_DEPTH: usize = 8;
+/// The most levels of values that a run node applies through the runs of
+/// the values that it runs (`f` runs `g`, which runs `h`). Each value applies
+/// one time at a run node, so a chain costs one application for each
+/// closure (Q3-2); a deeper chain stays with the old pipeline.
+const RUN_DEPTH: usize = 64;
+
+/// How a run node gives the arguments to a function value that it runs.
+#[derive(Clone, Copy, Debug)]
+pub enum Given<'o> {
+    /// The operands of the call.
+    Args(&'o [Operand]),
+    /// A callee runs the value with arguments that the run node does not
+    /// know: each parameter gets these places (the places that the callee
+    /// gives to the run, part `runs`). The flag says if code of a caller
+    /// there can resume more than once (the row of its function type).
+    Opaque(&'o [PlaceId], bool),
+}
+
+/// A run of a function value of the interface (a parameter or a capture):
+/// the summary of the body gets it (part `runs`).
+#[derive(Clone, Debug)]
+pub struct RunOf {
+    /// The parameter, or the capture.
+    pub param: u32,
+    /// True for a capture of a closure.
+    pub capture: bool,
+    /// The places that the run node gives to the run.
+    pub places: Vec<PlaceId>,
+    /// Code of a caller there can resume more than once (the row of the
+    /// function type of the value).
+    pub multi: bool,
+    /// The run can be on another thread (code of a caller, ADR 0006).
+    pub task: bool,
+}
 
 /// One summary that a run node of a function value applies (`docs/ir.md`
 /// 6.7): of a value that the callee can be, or of a value that such a
-/// closure runs through a capture (part `runs`).
+/// value runs (part `runs`).
 #[derive(Clone, Debug)]
 pub struct Applied {
     /// The kind of the run node.
@@ -1109,9 +1309,27 @@ pub struct Applied {
     /// The places of `once` values that the run moves: the source of a
     /// capture that holds a `once` closure and that the run calls.
     pub once: Vec<(BodyId, Place)>,
-    /// The run happens again at the `Ret` node (a capture that the closure
-    /// runs `Many` times, OR3).
+    /// The values of the arguments of a run (part `runs`) that hold a `once`
+    /// closure: the run moves them, and a run again uses them (W0502).
+    pub once_args: Vec<(BodyId, Operand)>,
+    /// The run happens again at the `Ret` node (a value that runs another
+    /// value `Many` times, OR3).
     pub again: bool,
+    /// The run happens at the `Ret` node, after the parts of the summary of
+    /// the run node (a value that a callee runs: the callee can change a
+    /// place before it runs the value, which then reads a reference into
+    /// it).
+    pub late: bool,
+    /// A run of a function value of the interface: code of a caller here,
+    /// and an entry of the part `runs` of the summary of the body.
+    pub run: Option<RunOf>,
+    /// The summary is code of a caller (map N2): the value that the caller
+    /// gives applies its own aborts where the caller runs it.
+    pub code: bool,
+    /// The places that code of a caller can change through the environment
+    /// of the function value (the wildcard places of the references of the
+    /// value): `lends_mut` and `reads_at` at the node.
+    pub lends: Vec<PlaceId>,
 }
 
 /// What a `Call` of a function value gives: the summaries that it applies
@@ -1134,19 +1352,122 @@ pub fn in_interface(cx: &Cx<'_>, body: BodyId) -> bool {
     cx.p.closure_of(body).is_some() && !cx.roots.is_instantiated(body)
 }
 
-/// The run node of a `Call` of the function value `callee` of block `block`
-/// of body `body`, in state `st` before it (`docs/ir.md` 6.7).
+/// The function values that a value at fact place `at` can be (`docs/ir.md` 6.6).
 ///
-/// The value can be function items and closures of the component: each one
-/// applies its summary, and a closure also applies the summary of each
-/// value that it runs through a capture (part `runs`). In the summary of a
-/// closure body, a call of a capture is in the part `runs`: it applies
-/// nothing here.
+/// They are the values of the move path of a local that holds the place, a value of a parameter
+/// (`FnVal::Param`) or of a capture (`FnVal::Capture`) for a place of the interface, the
+/// values of the variable of the cell of a `ByRef` capture, and [`FnVal::Unknown`] for
+/// another place (a place of a caller, of an `rc` object, of a callee frame).
+pub fn fns_at(cx: &Cx<'_>, st: &State, at: PlaceId) -> BTreeSet<FnVal> {
+    let mut out = BTreeSet::new();
+    let Some(root) = cx.facts.places.get(at.index()).map(|i| i.root) else {
+        out.insert(FnVal::Unknown);
+        return out;
+    };
+    match cx.roots.role(root) {
+        Some(Role::Local(_)) => match cx.roots.path_of(cx.facts, at) {
+            Some((k, path)) => out.extend(st.value(k, &path).flat().fns),
+            None => {
+                out.insert(FnVal::Unknown);
+            }
+        },
+        Some(Role::Param(_, i) | Role::Held(_, i)) => {
+            out.insert(FnVal::Param(i));
+        }
+        Some(Role::Capture(_, k) | Role::CaptureHeld(_, k) | Role::CaptureDeep(_, k)) => {
+            out.insert(FnVal::Capture(k));
+        }
+        Some(Role::Cell(k)) => out.extend(st.value(k, &[]).flat().fns),
+        _ => {
+            out.insert(FnVal::Unknown);
+        }
+    }
+    out
+}
+
+/// The function values that a callee can run through the value of operand
+/// `op` of body `body` in state `st`: the values that it is, and the values
+/// behind its references (two levels).
 ///
 /// # Errors
 ///
-/// Returns [`AlphaError::Later`] for a value that the analysis does not
-/// know (a parameter, a field, the result of a call: stage F12), and the
+/// The errors of α.
+pub fn reach_fns(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &State,
+    op: &Operand,
+) -> Result<BTreeSet<FnVal>, AlphaError> {
+    let ty = match op {
+        Operand::Copy(q) | Operand::Move(q) => Some(place_ty(cx, body, q)?),
+        Operand::Const(_) => None,
+    };
+    let v = operand(cx, body, st, op)?.flat();
+    let mut out = v.fns;
+    if !ty.is_some_and(|t| crate::props::ir_has_fns(cx.tys, t)) {
+        return Ok(out);
+    }
+    let mut level: Vec<PlaceId> = v.refs.into_iter().collect();
+    for _ in 0..2 {
+        let mut next = Vec::new();
+        for &r in &level {
+            out.extend(fns_at(cx, st, r));
+            if let Ok(h) = held_at(cx.p, st, cx.facts, cx.roots, r, None) {
+                next.extend(h);
+            }
+        }
+        next.sort();
+        next.dedup();
+        level = next;
+    }
+    Ok(out)
+}
+
+/// The places that a run node gives to code of a caller with the arguments
+/// `args`: the places that the references of each argument point into (the
+/// places of a reference argument). The run gets what the references there
+/// point into too (`super::apply::opaque_sigma`).
+///
+/// # Errors
+///
+/// The errors of α.
+fn given_places(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &State,
+    args: &[Operand],
+) -> Result<Vec<PlaceId>, AlphaError> {
+    let mut out = Vec::new();
+    for a in args {
+        let v = operand(cx, body, st, a)?.flat();
+        out.extend(v.refs.iter().copied());
+    }
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
+/// The applications of one run node: the summaries in order, and the value
+/// that each one is for (each value applies one time).
+#[derive(Default)]
+struct Apps {
+    /// The summaries.
+    out: Vec<Applied>,
+    /// The first summary of each value that the node applies.
+    seen: std::collections::HashMap<FnVal, usize>,
+}
+
+/// The run node of a `Call` of the function value `callee` of block `block`
+/// of body `body`, in state `st` before it (`docs/ir.md` 6.7).
+///
+/// The value can be function items, closures of the component, closures
+/// that a callee made, and function values of the interface or that the
+/// analysis does not know (code of a caller, map N2). Each one applies its
+/// summary, and the values that it runs apply theirs (part `runs`).
+///
+/// # Errors
+///
+/// Returns [`AlphaError::Later`] for a construct of a later stage, and the
 /// errors of σ.
 #[allow(clippy::too_many_arguments)]
 pub fn value_out(
@@ -1159,84 +1480,55 @@ pub fn value_out(
     dest: &Place,
 ) -> Result<ValueOut, AlphaError> {
     let ret_ty = place_ty(cx, body, dest)?;
-    if let Operand::Copy(q) | Operand::Move(q) = callee {
-        if q.proj.len() == 1
-            && alpha::env_capture(cx.p, body, q).is_some()
-            && in_interface(cx, body)
-        {
-            // The summary of the closure has the run (`runs`): the run node
-            // of the closure applies the value of the capture.
-            let props = ir_props(cx.tys, ret_ty);
-            if props.holds_refs || cx.tys.mentions_fn(ret_ty) {
-                return Err(AlphaError::Later(
-                    "a run of a captured function value with a reference in its result (stage F12)",
-                ));
-            }
-            for a in args {
-                let t = match a {
-                    Operand::Copy(x) | Operand::Move(x) => place_ty(cx, body, x)?,
-                    Operand::Const(_) => continue,
-                };
-                if ir_props(cx.tys, t).holds_refs || cx.tys.mentions_fn(t) {
-                    return Err(AlphaError::Later(
-                        "a run of a captured function value with a reference argument (stage F12)",
-                    ));
-                }
-            }
-            return Ok(ValueOut {
-                apps: Vec::new(),
-                ret: Tree::leaf(AbsVal::of_type(props.linear)),
-                once: false,
-            });
-        }
-    }
-    let fns = operand(cx, body, st, callee)?.flat().fns;
-    let inst = run_inst(body, block);
-    let mut apps = Vec::new();
-    let mut ret: Option<Tree> = None;
+    let mut fns = operand(cx, body, st, callee)?.flat().fns;
     // A local that holds no value here (it moved): the call stops with a
     // fault at run time, and the use of the local is W0302 or W0502. No
     // closure runs.
     if let Operand::Copy(q) | Operand::Move(q) = callee {
         if fns.is_empty() && q.proj.is_empty() && !st.may_hold(key(cx.p, body, q.local)?) {
             return Ok(ValueOut {
-                apps,
+                apps: Vec::new(),
                 ret: Tree::leaf(AbsVal::of_type(ir_props(cx.tys, ret_ty).linear)),
                 once: false,
             });
         }
     }
+    // A value that the analysis does not follow is code of a caller.
     if fns.is_empty() {
-        return Err(AlphaError::Later(
-            "a call of a function value that the body does not know (stage F12)",
-        ));
+        fns.insert(FnVal::Unknown);
     }
+    let inst = run_inst(body, block);
+    let mut apps = Apps::default();
+    let mut ret: Option<Tree> = None;
     for fv in &fns {
-        let start = apps.len();
+        let start = apps.out.len();
         apply_value(
             cx,
-            body,
-            block,
-            st,
+            Run0 {
+                body,
+                block,
+                inst,
+                st,
+            },
             fv,
-            callee,
-            args,
+            (callee, body),
+            Given::Args(args),
             Some(ret_ty),
-            inst,
             0,
             &mut apps,
         )?;
-        if let Some(r) = apps.get(start).and_then(|a| a.ret.clone()) {
+        if let Some(r) = apps.out.get(start).and_then(|a| a.ret.clone()) {
             ret = Some(match ret {
                 Some(t) => Tree::leaf(t.flat().joined(&r.flat())),
                 None => r,
             });
         }
     }
+    let once = fns.iter().any(|fv| once_value(cx.p, fv));
     Ok(ValueOut {
-        apps,
+        apps: apps.out,
         ret: ret.unwrap_or_else(|| Tree::leaf(AbsVal::plain())),
-        once: fns.iter().any(|fv| once_value(cx.p, fv)),
+        once,
     })
 }
 
@@ -1245,41 +1537,425 @@ pub fn value_out(
 /// value).
 pub fn once_value(p: &Program, fv: &FnVal) -> bool {
     match fv {
-        FnVal::Closure(c) => p.closures.get(c.index()).is_some_and(|d| d.once),
-        FnVal::Item(..) | FnVal::Unknown => false,
+        FnVal::Closure(c) | FnVal::Made(c) => p.closures.get(c.index()).is_some_and(|d| d.once),
+        FnVal::Item(..) | FnVal::Param(_) | FnVal::Capture(_) | FnVal::Unknown => false,
     }
 }
 
-/// Applies the function value `fv` at the run node `inst` of body `body`
-/// (state `st`): its summary, and for a closure the summary of each value
-/// that it runs through a capture, at depth `depth`. `ret_ty` is the type of
-/// the result of a value of the callee itself (`None` for a run through a
-/// capture). The summaries go to `out`, the value itself first.
-#[allow(clippy::too_many_arguments)]
-fn apply_value(
+/// The run node: its body, block, id, and the state before it.
+#[derive(Clone, Copy)]
+struct Run0<'s> {
+    /// The body of the node.
+    body: BodyId,
+    /// The block of the node.
+    block: weft_ir::BlockId,
+    /// The id of the node.
+    inst: u32,
+    /// The state before the node.
+    st: &'s State,
+}
+
+/// The parameter types, the result type and the row of the function type of
+/// operand `callee` of body `body`.
+fn fn_type(
     cx: &mut Cx<'_>,
     body: BodyId,
-    block: weft_ir::BlockId,
-    st: &State,
-    fv: &FnVal,
     callee: &Operand,
-    args: &[Operand],
-    ret_ty: Option<TyId>,
-    inst: u32,
+) -> (Vec<TyId>, Option<TyId>, Option<Vec<weft_ir::EffectId>>) {
+    let t = match callee {
+        Operand::Copy(q) | Operand::Move(q) => place_ty(cx, body, q).ok(),
+        Operand::Const(_) => None,
+    };
+    match t.and_then(|t| cx.tys.try_get(t)) {
+        Some(Ty::Fn(f)) => (f.params.clone(), Some(f.ret), f.row.clone()),
+        _ => (Vec::new(), None, None),
+    }
+}
+
+/// σ of a run with `given`: the arguments of the call, or the places that a
+/// callee gives to each parameter of the types `params`.
+///
+/// # Errors
+///
+/// The errors of σ.
+fn given_sigma(
+    cx: &mut Cx<'_>,
+    r: Run0<'_>,
+    params: &[(TyId, TyId)],
+    given: Given<'_>,
+) -> Result<super::apply::Sigma, AlphaError> {
+    match given {
+        Given::Args(args) => {
+            let n = args.len().min(params.len());
+            super::apply::sigma_with(
+                cx,
+                r.body,
+                r.st,
+                params.get(..n).unwrap_or(&[]),
+                args,
+                r.inst,
+            )
+        }
+        Given::Opaque(places, _) => {
+            Ok(super::apply::opaque_sigma(cx, r.st, params, places, r.inst))
+        }
+    }
+}
+
+/// The function values of the result of a run of summary `sum` with
+/// `given` (part `ret`, stage F12): an item and a closure that a callee made
+/// as they are, the values of a parameter (of an argument), and the values
+/// of a capture (`capture`).
+///
+/// # Errors
+///
+/// The errors of α.
+fn ret_fns(
+    cx: &mut Cx<'_>,
+    r: Run0<'_>,
+    sum: &super::summary::Summary,
+    given: Given<'_>,
+    capture: &mut CaptureValues<'_>,
+) -> Result<BTreeSet<FnVal>, AlphaError> {
+    use super::summary::RetFn;
+    let mut out = BTreeSet::new();
+    for f in &sum.ret.fns {
+        match f {
+            RetFn::Item(g, t) => {
+                out.insert(FnVal::Item(*g, t.clone()));
+            }
+            RetFn::Made(c) => {
+                out.insert(FnVal::Made(*c));
+            }
+            RetFn::Param(i) => match given {
+                Given::Args(args) => match args.get(*i as usize) {
+                    Some(a) => {
+                        let reach = reach_fns(cx, r.body, r.st, a)?;
+                        out.extend(with_results(cx, reach));
+                    }
+                    None => {
+                        out.insert(FnVal::Unknown);
+                    }
+                },
+                Given::Opaque(..) => {
+                    out.insert(FnVal::Unknown);
+                }
+            },
+            RetFn::Capture(k) => out.extend(capture(cx, *k)?),
+            RetFn::Unknown => {
+                out.insert(FnVal::Unknown);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Adds the function values `fns` to the top of the result `t` of type
+/// `ret_ty`, if the type can hold one.
+fn with_fns(cx: &Cx<'_>, mut t: Tree, ret_ty: TyId, fns: BTreeSet<FnVal>) -> Tree {
+    if !fns.is_empty() && crate::props::ir_has_fns(cx.tys, ret_ty) {
+        t.top.fns.extend(fns);
+    }
+    t
+}
+
+/// The reason for a function value that code of a caller can run as a task.
+const TASK_RUN: &str =
+    "a function value that changes places or holds a nonportable value, and that code of a caller can run on another thread (stage F18)";
+
+/// True if code of a caller that runs the function value `fv` on another
+/// thread at the same time can race (ADR 0006: W0401, W0403, W0405 of the
+/// old lowering): the value changes or lends a place, or a capture holds a
+/// nonportable value or is a reference to a variable.
+fn task_unsafe(cx: &mut Cx<'_>, fv: &FnVal) -> bool {
+    let sum = match fv {
+        FnVal::Closure(c) | FnVal::Made(c) => {
+            let p = cx.p;
+            let Some(decl) = p.closures.get(c.index()) else {
+                return true;
+            };
+            for (k, cap) in decl.captures.iter().enumerate() {
+                if cap.mode == weft_ir::CaptureMode::ByRef {
+                    return true;
+                }
+                let k = u32::try_from(k).unwrap_or(u32::MAX);
+                let nonportable = alpha::capture_ty(p, cx.tys, *c, k)
+                    .is_none_or(|t| ir_props(cx.tys, t).nonportable);
+                if nonportable {
+                    return true;
+                }
+            }
+            cx.sums.closure(*c).ok()
+        }
+        FnVal::Item(f, _) => cx.sums.get(*f).ok(),
+        FnVal::Param(_) | FnVal::Capture(_) | FnVal::Unknown => return false,
+    };
+    sum.is_none_or(|s| !s.muts.is_empty() || !s.lends.is_empty() || !s.puts.is_empty())
+}
+
+/// The function values of a capture of a closure ([`ret_fns`]).
+type CaptureValues<'a> = dyn FnMut(&mut Cx<'_>, u32) -> Result<BTreeSet<FnVal>, AlphaError> + 'a;
+
+/// The function values of a run, the operand that holds them and its body.
+type RunSource = (BTreeSet<FnVal>, Operand, BodyId);
+
+/// The function values of each run of a summary ([`apply_runs`]).
+type RunValues<'a> =
+    dyn FnMut(&mut Cx<'_>, &super::summary::Run) -> Result<Option<RunSource>, AlphaError> + 'a;
+
+/// Applies the runs `runs` of a summary with σ `sigma` at run node `r`
+/// (part `runs`): each function value that the parameter or the capture
+/// holds applies its summary with the places of the run (`run.args`). `of`
+/// gives the values of a parameter (`false`) or of a capture (`true`).
+///
+/// # Errors
+///
+/// The errors of [`apply_value`].
+#[allow(clippy::too_many_arguments)]
+fn apply_runs(
+    cx: &mut Cx<'_>,
+    r: Run0<'_>,
+    runs: &[super::summary::Run],
+    sigma: &super::apply::Sigma,
+    of: &mut RunValues<'_>,
     depth: usize,
-    out: &mut Vec<Applied>,
+    apps: &mut Apps,
+) -> Result<(), AlphaError> {
+    // A body that runs two values can run them in each order: each run can
+    // come after the other one.
+    let two = runs.len() > 1;
+    for run in runs {
+        let many = run.many || two;
+        let Some((fns, src, src_body)) = of(cx, run)? else {
+            continue;
+        };
+        let mut places = Vec::new();
+        for a in &run.args {
+            places.extend(super::apply::iplaces(cx, sigma, a)?);
+        }
+        places.sort();
+        places.dedup();
+        for g in &fns {
+            if run.task && task_unsafe(cx, g) {
+                return Err(AlphaError::Later(TASK_RUN));
+            }
+            let start = apps.out.len();
+            let fresh = !apps.seen.contains_key(g);
+            apply_value(
+                cx,
+                r,
+                g,
+                (&src, src_body),
+                Given::Opaque(&places, run.multi),
+                None,
+                depth + 1,
+                apps,
+            )?;
+            for a in apps.out.iter_mut().skip(start) {
+                a.kind = super::apply::RunKind::Run;
+                a.late = true;
+            }
+            // A capture that holds a `once` value moves at the run of the
+            // closure (`Applied::once`); a value of a parameter moves here.
+            if fresh && !run.capture && once_value(cx.p, g) {
+                if let Some(a) = apps.out.get_mut(start) {
+                    a.once_args.push((src_body, src.clone()));
+                }
+            }
+            if many {
+                match (fresh, apps.seen.get(g)) {
+                    (true, _) => {
+                        for a in apps.out.iter_mut().skip(start) {
+                            a.again = true;
+                        }
+                    }
+                    (false, Some(&k)) => {
+                        if let Some(a) = apps.out.get_mut(k) {
+                            a.again = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Applies the function value `fv` at the run node `r`: its summary, and the
+/// summary of each value that it runs, at depth `depth`. `callee` is the
+/// operand of the value; `ret_ty` is the type of the result of a value of
+/// the callee itself (`None` for a run that a summary gives). The summaries
+/// go to `apps`, the value itself first. A value applies one time at a run
+/// node.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn apply_value(
+    cx: &mut Cx<'_>,
+    r: Run0<'_>,
+    fv: &FnVal,
+    (callee, cb): (&Operand, BodyId),
+    given: Given<'_>,
+    ret_ty: Option<TyId>,
+    depth: usize,
+    apps: &mut Apps,
 ) -> Result<(), AlphaError> {
     use super::summary::{IPlace, IRoot};
     if depth > RUN_DEPTH {
         return Err(AlphaError::Later(
-            "a chain of closures that run each other deeper than eight (stage F12)",
+            "a chain of function values that run each other deeper than 64 (stage F12)",
         ));
     }
+    if apps.seen.contains_key(fv) {
+        return Ok(());
+    }
+    apps.seen.insert(fv.clone(), apps.out.len());
     let p = cx.p;
+    let (body, st) = (r.body, r.st);
     match fv {
-        FnVal::Unknown => Err(AlphaError::Later(
-            "a call of a function value that the body does not know (stage F12)",
-        )),
+        FnVal::Unknown | FnVal::Param(_) | FnVal::Capture(_) => {
+            let (params, fn_ret, row) = fn_type(cx, cb, callee);
+            let fn_ret = ret_ty.or(fn_ret).unwrap_or_else(|| cx.tys.unit());
+            let pairs: Vec<(TyId, TyId)> = params.iter().map(|&t| (t, t)).collect();
+            let (summary, sigma) = match given {
+                Given::Args(_) => {
+                    let summary =
+                        super::unknown::code_of_caller(cx.tys, &params, fn_ret, row.as_deref());
+                    (summary, given_sigma(cx, r, &pairs, given)?)
+                }
+                Given::Opaque(_, multi) => {
+                    // The parameters of the value are not known: one
+                    // parameter stands for each place that the run gets.
+                    let any = cx.tys.unit();
+                    let t = cx.tys.intern(Ty::Ref(any));
+                    let mut summary =
+                        super::unknown::code_of_caller(cx.tys, &[t], fn_ret, row.as_deref());
+                    summary.multi = multi;
+                    summary.unknown_multi = multi;
+                    (summary, given_sigma(cx, r, &[(t, t)], given)?)
+                }
+            };
+            // The environment of the value: what its references point into.
+            let env: Vec<PlaceId> = match given {
+                Given::Args(_) => {
+                    let v = operand(cx, cb, st, callee)?.flat();
+                    v.refs.iter().map(|&q| cx.facts.wildcard(q)).collect()
+                }
+                Given::Opaque(..) => Vec::new(),
+            };
+            let mut ret = match ret_ty {
+                Some(t) => {
+                    let mut v = super::apply::ret_value(cx, &summary, &sigma, t)?;
+                    if ir_props(cx.tys, t).holds_refs || crate::props::ir_has_fns(cx.tys, t) {
+                        v.top.refs.extend(env.iter().copied());
+                    }
+                    Some(v)
+                }
+                None => None,
+            };
+            let run = match (fv, given) {
+                (FnVal::Param(i) | FnVal::Capture(i), Given::Args(args)) => Some(RunOf {
+                    param: *i,
+                    capture: matches!(fv, FnVal::Capture(_)),
+                    places: given_places(cx, body, st, args)?,
+                    multi: summary.multi,
+                    task: false,
+                }),
+                (FnVal::Param(i) | FnVal::Capture(i), Given::Opaque(ps, _)) => Some(RunOf {
+                    param: *i,
+                    capture: matches!(fv, FnVal::Capture(_)),
+                    places: ps.to_vec(),
+                    multi: summary.multi,
+                    task: false,
+                }),
+                _ => None,
+            };
+            // The code can run each function value that the arguments
+            // reach, more than once, and give the result one of them.
+            let mut reach = BTreeSet::new();
+            if let Given::Args(args) = given {
+                for a in args {
+                    reach.extend(reach_fns(cx, body, st, a)?);
+                }
+            }
+            if let (Some(t), Some(rt)) = (ret.take(), ret_ty) {
+                let mut fs = reach.clone();
+                fs.insert(FnVal::Unknown);
+                // The result of a run of a value of the interface: a value
+                // that the run of the value of the caller gives (part
+                // `runs`: the caller applies the results too).
+                if matches!(fv, FnVal::Param(_) | FnVal::Capture(_)) {
+                    fs.insert(fv.clone());
+                }
+                ret = Some(with_fns(cx, t, rt, fs));
+            }
+            let name = match callee {
+                Operand::Copy(q) | Operand::Move(q) => p
+                    .bodies
+                    .get(cb.index())
+                    .and_then(|b| b.locals.get(q.local.index()))
+                    .and_then(|d| d.name.clone())
+                    .unwrap_or_else(|| "the function value".to_string()),
+                Operand::Const(_) => "the function value".to_string(),
+            };
+            let multi = summary.multi;
+            apps.out.push(Applied {
+                kind: super::apply::RunKind::Unknown,
+                name,
+                sigma,
+                summary,
+                ret,
+                muts: Vec::new(),
+                stores: Vec::new(),
+                rebinds: Vec::new(),
+                uses: Vec::new(),
+                once: Vec::new(),
+                once_args: Vec::new(),
+                again: false,
+                late: false,
+                run,
+                code: true,
+                lends: env,
+            });
+            let places = match given {
+                Given::Args(args) => {
+                    let mut ps = given_places(cx, body, st, args)?;
+                    let c = cx.roots.caller(cx.facts);
+                    ps.push(cx.facts.wildcard(c));
+                    ps
+                }
+                Given::Opaque(ps, _) => ps.to_vec(),
+            };
+            for g in &reach {
+                if matches!(g, FnVal::Unknown) {
+                    continue;
+                }
+                // Code of a caller can run the value on another thread at
+                // the same time (ADR 0006): the facts of a task are stage
+                // F18.
+                if task_unsafe(cx, g) {
+                    return Err(AlphaError::Later(TASK_RUN));
+                }
+                let start = apps.out.len();
+                apply_value(
+                    cx,
+                    r,
+                    g,
+                    (callee, cb),
+                    Given::Opaque(&places, multi),
+                    None,
+                    depth + 1,
+                    apps,
+                )?;
+                for a in apps.out.iter_mut().skip(start) {
+                    a.again = true;
+                    a.kind = super::apply::RunKind::Run;
+                    if let Some(r) = a.run.as_mut() {
+                        r.task = true;
+                    }
+                }
+            }
+            Ok(())
+        }
         FnVal::Item(f, targs) => {
             let summary = cx.sums.get(*f).map_err(AlphaError::Later)?.clone();
             let decl = p
@@ -1291,13 +1967,24 @@ fn apply_value(
                     "a call of `sim.run` or `with_timeout` as a value (stage F19)",
                 ));
             }
-            let mut sigma = super::apply::sigma(cx, body, st, decl, targs, args, inst)?;
-            sigma.cyclic = cx.cycles.has(body, block);
+            let pairs: Vec<(TyId, TyId)> = decl
+                .params
+                .iter()
+                .map(|&t| (t, crate::irbuild::subst(cx.tys, t, targs)))
+                .collect();
+            let mut sigma = given_sigma(cx, r, &pairs, given)?;
+            sigma.cyclic = cx.cycles.has(body, r.block);
             if summary.ret_in_frame() {
-                sigma.frame = Some(cx.roots.frame(cx.facts, inst, &decl.name));
+                sigma.frame = Some(cx.roots.frame(cx.facts, r.inst, &decl.name));
             }
             let ret = match ret_ty {
-                Some(t) => Some(super::apply::ret_value(cx, &summary, &sigma, t)?),
+                Some(t) => {
+                    let v = super::apply::ret_value(cx, &summary, &sigma, t)?;
+                    let fs = ret_fns(cx, r, &summary, given, &mut |_, _| {
+                        Ok(BTreeSet::from([FnVal::Unknown]))
+                    })?;
+                    Some(with_fns(cx, v, t, fs))
+                }
                 None => None,
             };
             let muts = super::apply::muts(cx, &summary, &sigma)?;
@@ -1308,10 +1995,11 @@ fn apply_value(
                 .next()
                 .unwrap_or(&decl.name)
                 .to_string();
-            out.push(Applied {
+            let runs = summary.runs.clone();
+            apps.out.push(Applied {
                 kind: super::apply::RunKind::Item,
                 name,
-                sigma,
+                sigma: sigma.clone(),
                 summary,
                 ret,
                 muts,
@@ -1319,23 +2007,48 @@ fn apply_value(
                 rebinds: Vec::new(),
                 uses: Vec::new(),
                 once: Vec::new(),
+                once_args: Vec::new(),
                 again: false,
+                late: false,
+                run: None,
+                code: false,
+                lends: Vec::new(),
             });
-            Ok(())
+            apply_runs(
+                cx,
+                r,
+                &runs,
+                &sigma,
+                &mut |cx, run| param_fns(cx, r, run, given),
+                depth,
+                apps,
+            )
         }
-        FnVal::Closure(c) => {
+        FnVal::Closure(c) | FnVal::Made(c) => {
+            let made = matches!(fv, FnVal::Made(_));
             let summary = cx.sums.closure(*c).map_err(AlphaError::Later)?.clone();
             let decl = p
                 .closures
                 .get(c.index())
                 .ok_or_else(|| AlphaError::BadPlace(format!("no closure c{}", c.0)))?;
-            let mut sigma = super::apply::closure_sigma(cx, body, st, *c, callee, args, inst)?;
-            sigma.cyclic = cx.cycles.has(body, block);
+            let mut sigma = if made {
+                super::apply::made_sigma(cx, body, st, *c, (callee, cb), given, r.inst)?
+            } else {
+                super::apply::closure_sigma(cx, body, st, *c, (callee, cb), given, r.inst)?
+            };
+            sigma.cyclic = cx.cycles.has(body, r.block);
             if summary.ret_in_frame() {
-                sigma.frame = Some(cx.roots.frame(cx.facts, inst, "the closure"));
+                sigma.frame = Some(cx.roots.frame(cx.facts, r.inst, "the closure"));
             }
             let ret = match ret_ty {
-                Some(t) => Some(super::apply::ret_value(cx, &summary, &sigma, t)?),
+                Some(t) => {
+                    let v = super::apply::ret_value(cx, &summary, &sigma, t)?;
+                    let callee_fns = operand(cx, cb, st, callee)?.flat().fns;
+                    let fs = ret_fns(cx, r, &summary, given, &mut |cx, k| {
+                        capture_fns(cx, r, *c, k, made, &callee_fns)
+                    })?;
+                    Some(with_fns(cx, v, t, fs))
+                }
                 None => None,
             };
             let muts = super::apply::muts(cx, &summary, &sigma)?;
@@ -1343,7 +2056,7 @@ fn apply_value(
             // path: a whole local of the maker gets it (a strong update).
             let mut rebinds = Vec::new();
             let mut whole: Vec<u32> = Vec::new();
-            for &k in &summary.rebinds {
+            for &k in summary.rebinds.iter().filter(|_| !made) {
                 let Some(cap) = decl.captures.get(k as usize) else {
                     continue;
                 };
@@ -1359,7 +2072,7 @@ fn apply_value(
                     .and_then(|b| b.locals.get(key.1.index()))
                     .map(|d| d.ty);
                 let mut v = AbsVal::of_type(ty.is_some_and(|t| ir_props(cx.tys, t).linear));
-                if ty.is_some_and(|t| cx.tys.mentions_fn(t)) {
+                if ty.is_some_and(|t| crate::props::ir_has_fns(cx.tys, t)) {
                     v.fns.insert(FnVal::Unknown);
                 }
                 let root = IPlace::root(IRoot::Capture(k));
@@ -1395,23 +2108,28 @@ fn apply_value(
                     stores.push((q, rs.clone()));
                 }
             }
-            let uses: Vec<(u32, BodyId, Place)> = summary
-                .uses
-                .iter()
-                .filter_map(|&k| decl.captures.get(k as usize).map(|c| (k, c)))
-                .filter(|(_, cap)| {
-                    matches!(
-                        cap.mode,
-                        weft_ir::CaptureMode::Kept | weft_ir::CaptureMode::ByRef
-                    )
-                })
-                .map(|(k, cap)| (k, decl.maker, cap.source.clone()))
-                .collect();
+            let uses: Vec<(u32, BodyId, Place)> = if made {
+                Vec::new()
+            } else {
+                summary
+                    .uses
+                    .iter()
+                    .filter_map(|&k| decl.captures.get(k as usize).map(|c| (k, c)))
+                    .filter(|(_, cap)| {
+                        matches!(
+                            cap.mode,
+                            weft_ir::CaptureMode::Kept | weft_ir::CaptureMode::ByRef
+                        )
+                    })
+                    .map(|(k, cap)| (k, decl.maker, cap.source.clone()))
+                    .collect()
+            };
             let runs = summary.runs.clone();
-            out.push(Applied {
+            let first = apps.out.len();
+            apps.out.push(Applied {
                 kind: super::apply::RunKind::Closure,
                 name: "the closure".to_string(),
-                sigma,
+                sigma: sigma.clone(),
                 summary,
                 ret,
                 muts,
@@ -1419,56 +2137,174 @@ fn apply_value(
                 rebinds,
                 uses,
                 once: Vec::new(),
+                once_args: Vec::new(),
                 again: false,
+                late: false,
+                run: None,
+                code: false,
+                lends: Vec::new(),
             });
-            // Each value that the closure runs through a capture: the value
-            // of the variable of the capture at the run node.
-            for run in runs.iter().filter(|r| r.capture) {
-                let Some(cap) = decl.captures.get(run.param as usize) else {
-                    continue;
-                };
-                if cap.mode != weft_ir::CaptureMode::Kept {
-                    return Err(AlphaError::Later(
-                        "a run of a function value that a closure owns (stage F12)",
-                    ));
-                }
-                let v = place_value(cx, decl.maker, st, &cap.source)?.flat();
-                if v.fns.is_empty() {
-                    return Err(AlphaError::Later(
-                        "a run of a captured function value that the body does not know (stage F12)",
-                    ));
-                }
-                let src = Operand::Copy(cap.source.clone());
-                for g in &v.fns {
-                    let once = once_value(p, g);
-                    let start = out.len();
-                    apply_value(
-                        cx,
-                        decl.maker,
-                        block,
-                        st,
-                        g,
-                        &src,
-                        &[],
-                        None,
-                        inst,
-                        depth + 1,
-                        out,
-                    )?;
-                    if let Some(first) = out.get_mut(start) {
-                        if once {
-                            first.once.push((decl.maker, cap.source.clone()));
-                        }
+            // A closure that a callee made holds the values that it runs in
+            // its own value: they apply as values of the callee. A capture
+            // that runs more than once makes each run happen again.
+            if made {
+                if runs.iter().any(|x| x.capture && x.many) {
+                    for a in &mut apps.out {
+                        a.again = true;
                     }
-                    if run.many {
-                        for a in out.iter_mut().skip(start) {
-                            a.again = true;
-                        }
+                }
+                let param_runs: Vec<super::summary::Run> =
+                    runs.iter().filter(|x| !x.capture).cloned().collect();
+                return apply_runs(
+                    cx,
+                    r,
+                    &param_runs,
+                    &sigma,
+                    &mut |cx, run| param_fns(cx, r, run, given),
+                    depth,
+                    apps,
+                );
+            }
+            let maker = decl.maker;
+            apply_runs(
+                cx,
+                r,
+                &runs,
+                &sigma,
+                &mut |cx, run| {
+                    if !run.capture {
+                        return param_fns(cx, r, run, given);
+                    }
+                    let Some(cap) = decl.captures.get(run.param as usize) else {
+                        return Ok(None);
+                    };
+                    if cap.mode == weft_ir::CaptureMode::ByMove {
+                        // The closure owns the value: the value of the
+                        // closure holds it.
+                        let mut fns = operand(cx, cb, st, callee)?.flat().fns;
+                        fns.remove(&FnVal::Closure(*c));
+                        return Ok(Some((fns, callee.clone(), cb)));
+                    }
+                    let src = Operand::Copy(cap.source.clone());
+                    let fns = reach_fns(cx, maker, st, &src)?;
+                    Ok(Some((fns, src, maker)))
+                },
+                depth,
+                apps,
+            )?;
+            // A `once` value that the closure runs through a capture moves.
+            for (k, cap) in decl.captures.iter().enumerate() {
+                let k = u32::try_from(k).unwrap_or(u32::MAX);
+                if !runs.iter().any(|x| x.capture && x.param == k) {
+                    continue;
+                }
+                let v = place_value(cx, maker, st, &cap.source)?.flat();
+                if v.fns.iter().any(|g| once_value(p, g)) {
+                    if let Some(a) = apps.out.get_mut(first) {
+                        a.once.push((maker, cap.source.clone()));
                     }
                 }
             }
             Ok(())
         }
+    }
+}
+
+/// The function values of parameter `run.param` of a run with `given`, and
+/// the operand that holds them: the values that the argument reaches.
+///
+/// # Errors
+///
+/// The errors of α.
+fn param_fns(
+    cx: &mut Cx<'_>,
+    r: Run0<'_>,
+    run: &super::summary::Run,
+    given: Given<'_>,
+) -> Result<Option<RunSource>, AlphaError> {
+    match given {
+        Given::Args(args) => {
+            let Some(a) = args.get(run.param as usize) else {
+                return Ok(None);
+            };
+            let reach = reach_fns(cx, r.body, r.st, a)?;
+            let fns = with_results(cx, reach);
+            Ok(Some((fns, a.clone(), r.body)))
+        }
+        Given::Opaque(..) => Ok(Some((
+            BTreeSet::from([FnVal::Unknown]),
+            Operand::Const(Const::Unit),
+            r.body,
+        ))),
+    }
+}
+
+/// The function values `fns` and the function values that their runs give
+/// back (part `ret`): a callee that runs a value of a parameter can run its
+/// result too (`ap(|| || ..)`). Four levels; a value that gives back the
+/// value of a parameter or of a capture is code of a caller here.
+fn with_results(cx: &Cx<'_>, mut fns: BTreeSet<FnVal>) -> BTreeSet<FnVal> {
+    use super::summary::RetFn;
+    let mut level = fns.clone();
+    for _ in 0..4 {
+        let mut next = BTreeSet::new();
+        for f in &level {
+            let sum = match f {
+                FnVal::Closure(c) | FnVal::Made(c) => cx.sums.closure(*c).ok(),
+                FnVal::Item(g, _) => cx.sums.get(*g).ok(),
+                _ => None,
+            };
+            for rf in sum.map_or(&[][..], |s| s.ret.fns.as_slice()) {
+                next.insert(match rf {
+                    RetFn::Item(g, t) => FnVal::Item(*g, t.clone()),
+                    RetFn::Made(c) => FnVal::Made(*c),
+                    RetFn::Param(_) | RetFn::Capture(_) | RetFn::Unknown => FnVal::Unknown,
+                });
+            }
+        }
+        next.retain(|f| !fns.contains(f));
+        if next.is_empty() {
+            break;
+        }
+        fns.extend(next.iter().cloned());
+        level = next;
+    }
+    fns
+}
+
+/// The function values of capture `k` of closure `c` at run node `r`: the
+/// values that its source in the maker reaches; for a closure that a callee
+/// made, the values of the callee (`callee`) and code of a caller.
+///
+/// # Errors
+///
+/// The errors of α.
+fn capture_fns(
+    cx: &mut Cx<'_>,
+    r: Run0<'_>,
+    c: weft_ir::ClosureId,
+    k: u32,
+    made: bool,
+    callee: &BTreeSet<FnVal>,
+) -> Result<BTreeSet<FnVal>, AlphaError> {
+    if made {
+        let mut out: BTreeSet<FnVal> = callee
+            .iter()
+            .filter(|f| **f != FnVal::Made(c))
+            .cloned()
+            .collect();
+        out.insert(FnVal::Unknown);
+        return Ok(out);
+    }
+    let p = cx.p;
+    let Some(decl) = p.closures.get(c.index()) else {
+        return Ok(BTreeSet::from([FnVal::Unknown]));
+    };
+    match decl.captures.get(k as usize) {
+        Some(cap) if cap.mode != weft_ir::CaptureMode::ByMove => {
+            reach_fns(cx, decl.maker, r.st, &Operand::Copy(cap.source.clone()))
+        }
+        _ => Ok(BTreeSet::from([FnVal::Unknown])),
     }
 }
 
@@ -1510,22 +2346,13 @@ fn call_value(
     dest: &Place,
 ) -> Result<(), AlphaError> {
     let out = value_out(cx, body, block, st, callee, args, dest)?;
-    for app in &out.apps {
-        for (q, refs) in &app.stores {
-            if let Some((k, path)) = cx.roots.path_of(cx.facts, *q) {
-                st.add(k, &path, &Tree::leaf(AbsVal::refs(refs.iter().copied())));
-            } else {
-                st.store_behind(*q, refs.iter().copied());
-            }
-        }
-        let changed: Vec<PlaceId> = app.muts.iter().map(|(q, _)| *q).collect();
-        for (k, path) in can_get_linear(cx, &changed) {
-            st.add(k, &path, &Tree::leaf(AbsVal::of_type(true)));
-        }
-        for (k, v) in &app.rebinds {
-            st.write(*k, &[], v.clone());
-        }
-    }
+    apply_apps(cx, st, &out.apps);
+    let changed: Vec<PlaceId> = out
+        .apps
+        .iter()
+        .flat_map(|a| a.muts.iter().map(|(q, _)| *q))
+        .collect();
+    store_fns(cx, body, st, args, &changed)?;
     bind_result(cx, body, st, args, dest, out.ret)
 }
 
@@ -1548,7 +2375,8 @@ pub fn can_get_linear(cx: &Cx<'_>, changed: &[PlaceId]) -> Vec<(Key, Vec<PathSte
                 .get(k.0.index())
                 .and_then(|b| b.locals.get(k.1.index()))
                 .is_some_and(|d| {
-                    crate::props::ir_maybe_linear(cx.tys, d.ty) || cx.tys.mentions_fn(d.ty)
+                    crate::props::ir_maybe_linear(cx.tys, d.ty)
+                        || crate::props::ir_has_fns(cx.tys, d.ty)
                 });
         if linear && !out.contains(&(k, path.clone())) {
             out.push((k, path));
@@ -1621,6 +2449,7 @@ fn bind_result(
         st.add(k, &path, &flat);
     }
     if let Some(a) = &a {
+        fns_behind(cx, &flat.top, &a.places)?;
         let refs: Vec<PlaceId> = flat.top.refs.iter().copied().collect();
         store_heap(cx.facts, cx.roots, st, &a.places, &refs);
     }

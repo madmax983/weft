@@ -53,6 +53,19 @@ pub enum RunKind {
     /// the parameters of the closure to the arguments, and each capture to
     /// the places of its variable at the run node (`Sigma::captures`).
     Closure,
+    /// A `Call` of a function value that the body does not know (stage
+    /// F12): code of a caller (`super::unknown::code_of_caller`, map N2).
+    Unknown,
+    /// A run of a function value that a callee does (part `runs`, stage
+    /// F12): the callee gives the arguments, so the node has no check of
+    /// the arguments against the parameters of the value (`call_arg`,
+    /// `call_mut`, W0312), only the check of the places that the value
+    /// changes against the places that its environment points into.
+    Run,
+    /// [`RunKind::Run`] at the `Main` node of the call: the check of the
+    /// arguments of the call is at that node, so the run has no check of
+    /// its own there (its check is at `Ret`).
+    RunShared,
 }
 
 /// σ of a run node: the places of the caller for the interface roots of the
@@ -226,6 +239,58 @@ pub fn sigma(
 ///
 /// The errors of α, and [`AlphaError::BadPlace`] for an argument with no
 /// parameter.
+pub fn sigma_with(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &State,
+    params: &[(TyId, TyId)],
+    args: &[Operand],
+    inst: u32,
+) -> Result<Sigma, AlphaError> {
+    sigma_of(cx, body, st, params, args, inst)
+}
+
+/// σ of a run that a callee does with arguments that the run node does not know.
+///
+/// The run is a part `runs` of the callee: each parameter of the types `params` gets the places `places`, and the places that the
+/// references there point into.
+pub fn opaque_sigma(
+    cx: &mut Cx<'_>,
+    st: &State,
+    params: &[(TyId, TyId)],
+    places: &[PlaceId],
+    inst: u32,
+) -> Sigma {
+    let mut helds = Vec::new();
+    for &q in places {
+        if let Ok(h) = transfer::held_at(cx.p, st, cx.facts, cx.roots, q, None) {
+            helds.extend(h);
+        }
+    }
+    helds.sort();
+    helds.dedup();
+    let mut s = Sigma {
+        inst,
+        ..Sigma::default()
+    };
+    for &(_, t) in params {
+        s.tys.push(t);
+        s.args.push(places.to_vec());
+        s.values.push(places.to_vec());
+        s.deps.push(Vec::new());
+        s.helds.push(helds.clone());
+        s.uniq.push(false);
+    }
+    s
+}
+
+/// σ of a run node with the arguments `args`: `params` has the declared
+/// type of each parameter and its type with the type arguments of the call.
+///
+/// # Errors
+///
+/// The errors of α, and [`AlphaError::BadPlace`] for an argument with no
+/// parameter.
 fn sigma_of(
     cx: &mut Cx<'_>,
     body: BodyId,
@@ -288,8 +353,8 @@ pub fn closure_sigma(
     body: BodyId,
     st: &State,
     c: weft_ir::ClosureId,
-    callee: &Operand,
-    args: &[Operand],
+    (callee, callee_body): (&Operand, BodyId),
+    given: transfer::Given<'_>,
     inst: u32,
 ) -> Result<Sigma, AlphaError> {
     let p = cx.p;
@@ -307,7 +372,13 @@ pub fn closure_sigma(
         .skip(1)
         .filter_map(|l| cb.locals.get(l.index()).map(|d| (d.ty, d.ty)))
         .collect();
-    let mut s = sigma_of(cx, body, st, &params, args, inst)?;
+    let mut s = match given {
+        transfer::Given::Args(args) => {
+            let n = args.len().min(params.len());
+            sigma_of(cx, body, st, params.get(..n).unwrap_or(&[]), args, inst)?
+        }
+        transfer::Given::Opaque(places, _) => opaque_sigma(cx, st, &params, places, inst),
+    };
     let held = |cx: &mut Cx<'_>, ps: &[PlaceId]| -> Result<Vec<PlaceId>, AlphaError> {
         let mut out = Vec::new();
         for &q in ps {
@@ -330,8 +401,8 @@ pub fn closure_sigma(
             weft_ir::CaptureMode::ByMove => {
                 let (places, refs) = match callee {
                     Operand::Copy(q) | Operand::Move(q) => {
-                        let a = transfer::alpha(cx, body, st, q)?;
-                        let v = transfer::operand(cx, body, st, callee)?.flat();
+                        let a = transfer::alpha(cx, callee_body, st, q)?;
+                        let v = transfer::operand(cx, callee_body, st, callee)?.flat();
                         (a.places, v.refs.into_iter().collect())
                     }
                     Operand::Const(_) => (Vec::new(), Vec::new()),
@@ -346,6 +417,77 @@ pub fn closure_sigma(
                 ))
             }
         }
+    }
+    Ok(s)
+}
+
+/// σ of a `Call` of closure `c` that a callee made and gave back (`FnVal::Made`).
+///
+/// The parameters map to the arguments, and each capture to the place of the closure
+/// value and to its references (stage F12). The maker frame is gone: the value holds the environment, as a `ByMove` capture of a
+/// closure of the component.
+///
+/// # Errors
+///
+/// The errors of α, and [`AlphaError::Later`] for a capture of a capability
+/// or a continuation (stage F14).
+pub fn made_sigma(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &State,
+    c: weft_ir::ClosureId,
+    (callee, callee_body): (&Operand, BodyId),
+    given: transfer::Given<'_>,
+    inst: u32,
+) -> Result<Sigma, AlphaError> {
+    let p = cx.p;
+    let decl = p
+        .closures
+        .get(c.index())
+        .ok_or_else(|| AlphaError::BadPlace(format!("no closure c{}", c.0)))?;
+    let cb = p
+        .bodies
+        .get(decl.body.index())
+        .ok_or_else(|| AlphaError::BadPlace(format!("no body b{}", decl.body.0)))?;
+    let params: Vec<(TyId, TyId)> = cb
+        .params
+        .iter()
+        .skip(1)
+        .filter_map(|l| cb.locals.get(l.index()).map(|d| (d.ty, d.ty)))
+        .collect();
+    let mut s = match given {
+        transfer::Given::Args(args) => {
+            let n = args.len().min(params.len());
+            sigma_of(cx, body, st, params.get(..n).unwrap_or(&[]), args, inst)?
+        }
+        transfer::Given::Opaque(places, _) => opaque_sigma(cx, st, &params, places, inst),
+    };
+    let (places, refs): (Vec<PlaceId>, Vec<PlaceId>) = match callee {
+        Operand::Copy(q) | Operand::Move(q) => {
+            let a = transfer::alpha(cx, callee_body, st, q)?;
+            let v = transfer::operand(cx, callee_body, st, callee)?.flat();
+            (a.places, v.refs.into_iter().collect())
+        }
+        Operand::Const(_) => (Vec::new(), Vec::new()),
+    };
+    let mut deep = Vec::new();
+    for &q in &refs {
+        deep.extend(transfer::held_at(cx.p, st, cx.facts, cx.roots, q, None)?);
+    }
+    deep.sort();
+    deep.dedup();
+    for cap in &decl.captures {
+        if matches!(
+            cap.mode,
+            weft_ir::CaptureMode::Cap | weft_ir::CaptureMode::Kont
+        ) {
+            return Err(AlphaError::Later(
+                "a closure that captures a capability or a continuation (stage F14)",
+            ));
+        }
+        s.captures.push(places.clone());
+        s.cap_helds.push(refs.clone());
+        s.cap_deeps.push(deep.clone());
     }
     Ok(s)
 }
@@ -518,7 +660,8 @@ pub fn ret_value(cx: &mut Cx<'_>, sum: &Summary, s: &Sigma, ret: TyId) -> Result
         top.uniq = true;
     }
     let mut flows = std::collections::BTreeSet::new();
-    if props.holds_refs {
+    // A function value can hold references in its environment (stage F12).
+    if props.holds_refs || crate::props::ir_has_fns(cx.tys, ret) {
         let one = !s.cyclic && one_result(cx.tys, ret);
         for p in &sum.ret.flows {
             flows.extend(places(cx, s, p, Base::Values(one))?);
@@ -789,7 +932,10 @@ pub fn main(
 ) -> Result<Vec<(PlaceId, u32)>, AlphaError> {
     // The checks of the arguments compare the arguments of one call: a call
     // of an item or of a closure.
-    let item = kind != RunKind::OnAbort;
+    let item = !matches!(kind, RunKind::OnAbort | RunKind::Run | RunKind::RunShared);
+    // An `on abort` function gets the root handlers; a run that a callee
+    // does performs and resumes as the value.
+    let acts = kind != RunKind::OnAbort;
     for r in &sum.reads {
         for p in places(cx, s, r, Base::Args)? {
             cx.facts.reads_at.push((n, p));
@@ -811,16 +957,27 @@ pub fn main(
             .call_arg
             .extend(given.into_iter().chain(held).map(|p| (n, p, pi.root)));
     }
+    // A run that a callee does gives the value places that its arguments
+    // reach; the value must not change a place that its environment points
+    // into (W0312, as for a call of the value with two such arguments).
+    let run = kind == RunKind::Run;
+    if run {
+        for ps in &s.cap_helds {
+            cx.facts
+                .call_arg
+                .extend(ps.iter().map(|&p| (n, p, crate::body::roots::STORED)));
+        }
+    }
     let changed = muts(cx, sum, s)?;
     for &(p, idx) in &changed {
         cx.facts.mutates_at.push((n, p));
-        if item {
+        if item || run {
             cx.facts.call_mut.push((n, p, idx));
         }
     }
     for l in &sum.lends {
         // The root handlers do not change a place of a caller.
-        if !item && l.root == IRoot::Caller {
+        if !acts && l.root == IRoot::Caller {
             continue;
         }
         let root = match l.root {
@@ -836,12 +993,12 @@ pub fn main(
             cx.facts.lends_mut.push((n, p));
             // A place of a caller is no argument of the call: no alias
             // check (W0312) compares it.
-            if let (Some(root), true) = (root, item) {
+            if let (Some(root), true) = (root, item || run) {
                 cx.facts.call_mut.push((n, p, root));
             }
         }
     }
-    if !item {
+    if !acts {
         // The root handlers serve the effects of an `on abort` function:
         // no effect leaves the code that aborts, and no clause resumes it.
         return Ok(changed);
@@ -859,7 +1016,9 @@ pub fn main(
     if sum.multi {
         cx.facts.multi_at.push(n);
     }
-    check_args(cx, n, sum, s, site)?;
+    if item {
+        check_args(cx, n, sum, s, site)?;
+    }
     Ok(changed)
 }
 

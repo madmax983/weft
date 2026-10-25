@@ -123,7 +123,7 @@ pub const fn term_name(t: &TermKind) -> &'static str {
 /// lowering: the name of a function item (`push`), of the local of a
 /// function value (`f`), or of an operation (`note`). A block with no name
 /// in the IR keeps the kind of its terminator.
-fn callee_names(p: &Program, tys: &TyTable, b: &Body) -> BTreeMap<BlockId, String> {
+fn callee_names(p: &Program, tys: &TyTable, id: BodyId, b: &Body) -> BTreeMap<BlockId, String> {
     // The local that each callee temporary copies.
     let mut copies: BTreeMap<LocalId, LocalId> = BTreeMap::new();
     for s in b.blocks.iter().flat_map(|blk| &blk.stmts) {
@@ -141,6 +141,10 @@ fn callee_names(p: &Program, tys: &TyTable, b: &Body) -> BTreeMap<BlockId, Strin
             return None;
         };
         let l = copies.get(&q.local).copied().unwrap_or(q.local);
+        // A capture of a closure: the name of its variable.
+        if let Some((c, k, _)) = super::alpha::env_capture(p, id, q) {
+            return Some(super::alpha::capture_name(p, c, k));
+        }
         b.local(l).and_then(|d| d.name.clone())
     };
     let mut out = BTreeMap::new();
@@ -355,7 +359,7 @@ impl NodeTable {
         let Some(b) = p.bodies.get(body.index()) else {
             return;
         };
-        let names = callee_names(p, tys, b);
+        let names = callee_names(p, tys, body, b);
         let copies = cleanup_copies(b, body, frames);
         let copies_of = |block: BlockId, cleanup: bool| -> Vec<u32> {
             if cleanup {

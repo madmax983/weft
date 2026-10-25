@@ -93,6 +93,10 @@ pub struct Em<'a> {
     /// body can see when it runs (the instantiation of its facts,
     /// `docs/ir.md` 6.5).
     pub union: Option<State>,
+    /// The runs of function values of the interface (a parameter, a capture
+    /// of a closure) at the run nodes of the body, each with `many` (part
+    /// `runs`, stage F12).
+    pub runs: Vec<(crate::analysis::transfer::RunOf, bool)>,
 }
 
 /// References that a node puts into a place that a caller keeps: behind a
@@ -263,10 +267,20 @@ impl Em<'_> {
             }) else {
                 return Ok(Vec::new());
             };
-            // The rest of the place below the capture, on the source.
+            // The rest of the place below the capture, on the source. An
+            // index local is a local of this body.
             let mut q = src.1;
-            q.proj.extend(place.proj.iter().skip(1).cloned());
-            return self.vars_in(src.0, &q, unset);
+            q.proj.extend(
+                place
+                    .proj
+                    .iter()
+                    .skip(1)
+                    .take_while(|x| !matches!(x, Proj::Index(_)))
+                    .cloned(),
+            );
+            let mut out = self.vars_in(src.0, &q, unset)?;
+            out.extend(self.index_vars(body, place)?);
+            return Ok(out);
         }
         // A place through a `ByRef` capture is a place of its variable.
         if let Some((c, k, weft_ir::CaptureMode::ByRef)) =
@@ -279,8 +293,17 @@ impl Em<'_> {
                         .map(|x| (d.maker, x.source.clone()))
                 });
                 if let Some((maker, mut q)) = src {
-                    q.proj.extend(place.proj.iter().skip(2).cloned());
-                    return self.vars_in(maker, &q, unset);
+                    q.proj.extend(
+                        place
+                            .proj
+                            .iter()
+                            .skip(2)
+                            .take_while(|x| !matches!(x, Proj::Index(_)))
+                            .cloned(),
+                    );
+                    let mut out = self.vars_in(maker, &q, unset)?;
+                    out.extend(self.index_vars(body, place)?);
+                    return Ok(out);
                 }
             }
         }
@@ -299,13 +322,20 @@ impl Em<'_> {
                 out.push(*v);
             }
         }
+        out.extend(self.index_vars(body, place)?);
+        out.sort();
+        out.dedup();
+        Ok(out)
+    }
+
+    /// The variables of the index locals of `place` of body `body`.
+    fn index_vars(&self, body: BodyId, place: &Place) -> Result<Vec<VarId>, AlphaError> {
+        let mut out = Vec::new();
         for pr in &place.proj {
             if let Proj::Index(i) = pr {
                 out.extend(self.s_var(transfer::key(self.p, body, *i)?));
             }
         }
-        out.sort();
-        out.dedup();
         Ok(out)
     }
 
@@ -709,7 +739,7 @@ fn once_read(em: &mut Em<'_>, st: &State, q: &Place) -> Result<bool, AlphaError>
     let Some(t) = em.place_ty(q) else {
         return Ok(false);
     };
-    if !em.tys.mentions_fn(t) {
+    if !crate::props::ir_has_fns(em.tys, t) {
         return Ok(false);
     }
     let body = em.body;
@@ -2182,8 +2212,8 @@ pub fn call(
     }
     let site = crate::analysis::apply::Site {
         callee: &callee,
-        spans,
-        bases,
+        spans: spans.clone(),
+        bases: bases.clone(),
     };
     let changed = crate::analysis::apply::main(
         &mut em.cx(),
@@ -2193,7 +2223,13 @@ pub fn call(
         &site,
         crate::analysis::apply::RunKind::Item,
     )?;
-    if nodes.may_abort {
+    // The function values that the callee runs (part `runs`, stage F12).
+    let run_frames = emit_apps(em, nodes, st, block, args, &out.apps, at, &spans, &bases)?;
+    let ptys: Vec<weft_ir::TyId> = out.sigma.tys.clone();
+    fn_arg_effects(em, main, st, &ptys, args, &spans)?;
+    // A callee that runs function values has the abort edges of each way
+    // (`super::frames`): the node can abort if the callee can.
+    if nodes.may_abort && sum.can_abort() {
         em.facts.may_abort.push(main);
     }
     via_receiver(em, main, st, args, sum.only_self, &changed)?;
@@ -2255,8 +2291,10 @@ pub fn call(
         for (q, refs) in &out.stores {
             store(em, r, *q, refs, at, true);
         }
+        apps_at_ret(em, r, st, &out.apps, at);
         em.facts.scope_end.extend(drops.iter().map(|&v| (v, r)));
     }
+    end_frames(em, nodes, &run_frames);
     if let (Some(fe), Some(v)) = (nodes.frame_end, frame) {
         em.facts.scope_end.push((v, fe));
     }
@@ -2322,19 +2360,77 @@ fn call_value(
             Operand::Const(_) => Vec::new(),
         });
     }
+    let frames = emit_apps(em, nodes, st, block, args, &out.apps, at, &spans, &bases)?;
+    // The parameter types of the function type of the callee (W0705).
+    let fn_params = match callee {
+        Operand::Copy(q) | Operand::Move(q) => em
+            .place_ty(q)
+            .and_then(|t| match em.tys.try_get(t) {
+                Some(weft_ir::Ty::Fn(f)) => Some(f.params.clone()),
+                _ => None,
+            })
+            .unwrap_or_default(),
+        Operand::Const(_) => Vec::new(),
+    };
+    fn_arg_effects(em, main, st, &fn_params, args, &spans)?;
+    if let Some(r) = nodes.ret {
+        held_refs(em, r, st, args)?;
+        bind_dest(em, r, st, dest, &out.ret)?;
+        apps_at_ret(em, r, st, &out.apps, at);
+    }
+    end_frames(em, nodes, &frames);
+    Ok(())
+}
+
+/// The facts of the summaries `apps` that a run node applies (`Main`, and
+/// `Ret` for a run that happens again): the parts that act at the call
+/// (`crate::analysis::apply::main`); the variable of each `Kept` and `ByRef`
+/// capture that a closure uses (part `uses`, RR7); the move of each `once`
+/// value that a closure runs through a capture; the run of each function
+/// value of the interface (part `runs` of the summary of the body). The
+/// node gets `may_abort` if a summary can abort. Returns the variables of
+/// the callee frame roots.
+///
+/// # Errors
+///
+/// The errors of σ.
+#[allow(clippy::too_many_arguments)]
+fn emit_apps(
+    em: &mut Em<'_>,
+    nodes: &CallNodes,
+    st: &State,
+    block: weft_ir::BlockId,
+    args: &[Operand],
+    apps: &[transfer::Applied],
+    at: Span,
+    spans: &[Span],
+    bases: &[Vec<PlaceId>],
+) -> Result<Vec<VarId>, AlphaError> {
+    let main = nodes.main;
     let mut abort = false;
     let mut frames = Vec::new();
-    for app in &out.apps {
+    let cyclic = em.cycles.has(em.body, block);
+    for app in apps {
         let n_runs = if app.again {
             vec![Some(main), nodes.ret]
+        } else if app.late {
+            // A node with no `Ret` (a callee that does not return) runs the
+            // value at `Main`.
+            vec![nodes.ret.or(Some(main))]
         } else {
             vec![Some(main)]
         };
         for n in n_runs.into_iter().flatten() {
             let site = crate::analysis::apply::Site {
                 callee: &app.name,
-                spans: spans.clone(),
-                bases: bases.clone(),
+                spans: spans.to_vec(),
+                bases: bases.to_vec(),
+            };
+            let kind = match app.kind {
+                crate::analysis::apply::RunKind::Run if n == main => {
+                    crate::analysis::apply::RunKind::RunShared
+                }
+                k => k,
             };
             let changed = crate::analysis::apply::main(
                 &mut em.cx(),
@@ -2342,7 +2438,7 @@ fn call_value(
                 &app.summary,
                 &app.sigma,
                 &site,
-                app.kind,
+                kind,
             )?;
             let places: Vec<PlaceId> = changed.iter().map(|(q, _)| *q).collect();
             fn_linear_args(em, st, args, &places)?;
@@ -2364,6 +2460,28 @@ fn call_value(
                     em.facts.moved_at.push((v, n));
                 }
             }
+            // Code of a caller can change what the environment of the value
+            // points into.
+            for &q in &app.lends {
+                em.facts.lends_mut.push((n, q));
+                em.facts.reads_at.push((n, q));
+            }
+            // A `once` closure that a callee runs more than once (part
+            // `runs`): the run moves the value that holds it, and the run
+            // again uses it, so W0502 (OR3, `or3d`). A value behind a
+            // reference argument is the value of the place that the
+            // reference points into.
+            if app.again {
+                for (mb, op) in &app.once_args {
+                    for v in once_vars(em, st, *mb, op)? {
+                        if n == main {
+                            em.facts.moved_at.push((v, n));
+                        } else {
+                            em.facts.uses.push((v, n));
+                        }
+                    }
+                }
+            }
             for (k, _) in &app.rebinds {
                 let linear =
                     em.p.bodies
@@ -2375,20 +2493,27 @@ fn call_value(
                 }
             }
         }
+        if let Some(r) = &app.run {
+            em.runs.push((r.clone(), app.again || cyclic));
+        }
         abort |= app.summary.can_abort();
-        em.aborts.extend(
-            app.summary
-                .aborts
-                .iter()
-                .filter(|a| {
-                    matches!(
-                        a,
-                        crate::analysis::summary::Abort::Raises
-                            | crate::analysis::summary::Abort::Assert
-                    )
-                })
-                .cloned(),
-        );
+        // Code of a caller: the value that the caller gives applies its own
+        // aborts where the caller runs it.
+        if !app.code {
+            em.aborts.extend(
+                app.summary
+                    .aborts
+                    .iter()
+                    .filter(|a| {
+                        matches!(
+                            a,
+                            crate::analysis::summary::Abort::Raises
+                                | crate::analysis::summary::Abort::Assert
+                        )
+                    })
+                    .cloned(),
+            );
+        }
         if app.sigma.frame.is_some() {
             let v = em.facts.add_var(weft_facts::VarInfo::plain(
                 "a local of the closure".to_string(),
@@ -2403,22 +2528,149 @@ fn call_value(
             frames.push(v);
         }
     }
-    if nodes.may_abort && abort {
+    if nodes.may_abort && abort && !em.facts.may_abort.contains(&main) {
         em.facts.may_abort.push(main);
     }
-    if let Some(r) = nodes.ret {
-        held_refs(em, r, st, args)?;
-        bind_dest(em, r, st, dest, &out.ret)?;
-        for app in &out.apps {
-            for (q, refs) in &app.stores {
-                store(em, r, *q, refs, at, true);
+    Ok(frames)
+}
+
+/// W0705 (`docs/ir.md` 6.9): a function argument of a parameter whose
+/// function type states a row must perform only effects of the row. At the
+/// call node `n` with the parameter types `ptys`: `param_effect` of each
+/// effect of the row (closed under implication), `fn_arg_effect` of each
+/// effect that a value of the argument performs (a closure, an item, or the
+/// row of the type of a value that the body does not know), and the site of
+/// the argument.
+///
+/// # Errors
+///
+/// The errors of α.
+fn fn_arg_effects(
+    em: &mut Em<'_>,
+    n: NodeId,
+    st: &State,
+    ptys: &[weft_ir::TyId],
+    args: &[Operand],
+    spans: &[Span],
+) -> R {
+    use crate::analysis::FnVal;
+    let body = em.body;
+    let ident = |tys: &TyTable, e: &weft_ir::EffectId| {
+        tys.effects().get(e.index()).map(|d| d.identity.clone())
+    };
+    for (i, (op, &pt)) in args.iter().zip(ptys).enumerate() {
+        let Some(weft_ir::Ty::Fn(f)) = em.tys.try_get(pt) else {
+            continue;
+        };
+        let Some(row) = f.row.clone() else {
+            continue;
+        };
+        let allowed: std::collections::BTreeSet<String> =
+            row.iter().filter_map(|e| ident(em.tys, e)).collect();
+        let arg_row = match op {
+            Operand::Copy(q) | Operand::Move(q) => {
+                em.place_ty(q).and_then(|t| match em.tys.try_get(t) {
+                    Some(weft_ir::Ty::Fn(g)) => g.row.clone(),
+                    _ => None,
+                })
             }
-            for (k, v) in &app.rebinds {
-                whole(em, r, st, *k, v);
+            Operand::Const(_) => None,
+        };
+        let v = transfer::operand(&mut em.cx(), body, st, op)?.flat();
+        let mut performed: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for fv in &v.fns {
+            let sum = match fv {
+                FnVal::Closure(c) | FnVal::Made(c) => em.sums.closure(*c).ok(),
+                FnVal::Item(g, _) => em.sums.get(*g).ok(),
+                FnVal::Param(_) | FnVal::Capture(_) | FnVal::Unknown => {
+                    if let Some(r) = &arg_row {
+                        performed.extend(r.iter().filter_map(|e| ident(em.tys, e)));
+                    }
+                    None
+                }
+            };
+            if let Some(sum) = sum {
+                performed.extend(sum.performs.iter().map(|pf| pf.effect.clone()));
             }
         }
+        if performed.is_empty() {
+            continue;
+        }
+        let index = u32::try_from(i).unwrap_or(u32::MAX);
+        let allowed = crate::effects::close(&allowed);
+        em.facts
+            .param_effect
+            .extend(allowed.into_iter().map(|e| (n, index, e)));
+        em.facts
+            .fn_arg_effect
+            .extend(performed.into_iter().map(|e| (n, index, e)));
+        let span = spans
+            .get(i)
+            .copied()
+            .unwrap_or_else(|| em.facts.node(n).span);
+        em.facts.arg_sites.push(weft_facts::ArgSite {
+            node: n,
+            index,
+            span,
+            callee: String::new(),
+            param: String::new(),
+            needs: String::new(),
+            via: None,
+        });
     }
-    for &v in &frames {
+    Ok(())
+}
+
+/// The variables of the value of operand `op` of body `mb` that holds a
+/// `once` closure that a callee runs: the base variable of a place, or the
+/// owners of the places that a reference points into.
+///
+/// # Errors
+///
+/// The errors of α.
+fn once_vars(
+    em: &mut Em<'_>,
+    st: &State,
+    mb: BodyId,
+    op: &Operand,
+) -> Result<Vec<VarId>, AlphaError> {
+    let (Operand::Copy(q) | Operand::Move(q)) = op else {
+        return Ok(Vec::new());
+    };
+    let is_ref = super::alpha::place_ty(em.p, em.tys, mb, q)
+        .is_some_and(|t| matches!(em.tys.try_get(t), Some(weft_ir::Ty::Ref(_))));
+    if !is_ref {
+        return Ok(em.base_var(mb, q)?.into_iter().collect());
+    }
+    let v = transfer::place_value(&mut em.cx(), mb, st, q)?.flat();
+    let base = transfer::key(em.p, mb, q.local)?;
+    let mut out = Vec::new();
+    for r in v.refs {
+        out.extend(em.owner_vars(r, base));
+    }
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
+/// The facts of the summaries `apps` at the `Ret` node `r`: the values that
+/// a closure puts into places of the caller (a weak definition), and the
+/// new value of each capture that it rebinds on each path (part `rebinds`,
+/// F3-11).
+fn apps_at_ret(em: &mut Em<'_>, r: NodeId, st: &State, apps: &[transfer::Applied], at: Span) {
+    for app in apps {
+        for (q, refs) in &app.stores {
+            store(em, r, *q, refs, at, true);
+        }
+        for (k, v) in &app.rebinds {
+            whole(em, r, st, *k, v);
+        }
+    }
+}
+
+/// The callee frame roots `frames` end at `FrameEnd` and on each abort path.
+fn end_frames(em: &mut Em<'_>, nodes: &CallNodes, frames: &[VarId]) {
+    for &v in frames {
         if let Some(fe) = nodes.frame_end {
             em.facts.scope_end.push((v, fe));
         }
@@ -2426,7 +2678,6 @@ fn call_value(
             em.facts.scope_end.push((v, a));
         }
     }
-    Ok(())
 }
 
 /// The `U` variables of the place fields at or below the source `src` (of
@@ -2632,7 +2883,9 @@ fn mark_fn_linear(em: &mut Em<'_>, k: Key, v: &crate::analysis::AbsVal) {
         .bodies
         .get(k.0.index())
         .and_then(|b| b.locals.get(k.1.index()))
-        .is_some_and(|d| em.tys.mentions_fn(d.ty) && !crate::props::ir_maybe_linear(em.tys, d.ty));
+        .is_some_and(|d| {
+            crate::props::ir_has_fns(em.tys, d.ty) && !crate::props::ir_maybe_linear(em.tys, d.ty)
+        });
     if !fnty {
         return;
     }
@@ -2665,7 +2918,10 @@ fn fn_linear_args(em: &mut Em<'_>, st: &State, args: &[Operand], changed: &[Plac
         let (Operand::Copy(q) | Operand::Move(q)) = op else {
             continue;
         };
-        if !em.place_ty(q).is_some_and(|t| em.tys.mentions_fn(t)) {
+        if !em
+            .place_ty(q)
+            .is_some_and(|t| crate::props::ir_has_fns(em.tys, t))
+        {
             continue;
         }
         let x = transfer::operand(&mut em.cx(), body, st, op)?.flat();

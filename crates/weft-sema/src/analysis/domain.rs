@@ -22,9 +22,11 @@ use std::rc::Rc;
 use weft_facts::PlaceId;
 use weft_ir::{BodyId, ClosureId, FnId, LocalId, SpawnId, TyId};
 
-/// A function value that a value can be (stage F3 knows items; stage F11
-/// adds the closures of the component; the function parameters come with
-/// stage F12).
+/// A function value that a value can be (`docs/ir.md` 6.6).
+///
+/// Stage F3 knows items, stage F11 the closures of the component, and stage F12 the
+/// function values of the interface, the closures that a callee makes and gives back, and
+/// the values that the analysis does not know.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FnVal {
     /// A function item with its type arguments.
@@ -34,8 +36,37 @@ pub enum FnVal {
     /// `ByMove` captures hold (`docs/ir.md` 6.6); a `Kept` capture shares
     /// the cell of the variable of the maker, so a call reads the variable.
     Closure(ClosureId),
-    /// A value that the analysis does not know.
+    /// A closure that a callee made and gave back (its result, `Ret::fns`).
+    /// Its maker frame is gone: the value itself holds its environment, so
+    /// the references of the value are the references of the captures.
+    Made(ClosureId),
+    /// A function value that parameter `i` of the body holds, or that is
+    /// inside the value of the parameter (a field, an element, behind a
+    /// reference): a value of a caller. A call of it is code of a caller,
+    /// and the summary of the body runs it (part `runs`).
+    Param(u32),
+    /// A function value that capture `k` of the closure body holds, in the
+    /// summary of the closure (its interface): the run node of the closure
+    /// runs the value of the capture (part `runs`).
+    Capture(u32),
+    /// A value that the analysis does not know: code of a caller.
     Unknown,
+}
+
+/// The most function values that one value keeps.
+///
+/// With more, the items go and [`FnVal::Unknown`] takes their place: code of a caller
+/// does each change that an item can do to the places that the node gives it. The other
+/// values are finite (the closures and the parameters of a component), so a join ends
+/// (the widening of `docs/ir.md` 6.6).
+pub const FNS_MAX: usize = 32;
+
+/// Widens the function set `fns` (see [`FNS_MAX`]).
+fn widen_fns(fns: &mut BTreeSet<FnVal>) {
+    if fns.len() > FNS_MAX {
+        fns.retain(|f| !matches!(f, FnVal::Item(..)));
+        fns.insert(FnVal::Unknown);
+    }
 }
 
 /// The abstract value of one value (`docs/ir.md` 6.6).
@@ -128,6 +159,7 @@ impl AbsVal {
         );
         self.refs.extend(o.refs.iter().copied());
         self.fns.extend(o.fns.iter().cloned());
+        widen_fns(&mut self.fns);
         self.caps.extend(o.caps.iter().copied());
         self.tasks.extend(o.tasks.iter().copied());
         self.linear |= o.linear;

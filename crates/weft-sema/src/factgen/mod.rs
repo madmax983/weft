@@ -450,6 +450,17 @@ pub struct Emitted {
     /// The aborts (a failure, an `assert`) of the summaries that the entry
     /// body applies at its calls of function values.
     pub aborts: std::collections::BTreeSet<crate::analysis::summary::Abort>,
+    /// The runs of the function values of the interface at the run nodes of
+    /// the entry body, each with `many` (stage F12).
+    pub runs: Vec<(crate::analysis::transfer::RunOf, bool)>,
+    /// The state at each `Return` of the entry body.
+    pub returns: Vec<crate::analysis::State>,
+    /// The join of the states of the entry body before each terminator and
+    /// each closure literal (with closures in the component).
+    pub made: Option<crate::analysis::State>,
+    /// The summary of each closure of the component: a caller of the
+    /// function applies it to a closure that the function gives back.
+    pub closures: Vec<(weft_ir::ClosureId, crate::analysis::Summary)>,
 }
 
 /// [`emit_component`], that gives all the tables of [`Emitted`].
@@ -564,14 +575,20 @@ pub fn emit_parts(
             stored: Vec::new(),
             at: (weft_ir::BlockId(0), 0),
             returns: Vec::new(),
+            runs: Vec::new(),
             aborts: std::collections::BTreeSet::new(),
             union: (!closures.is_empty()).then(crate::analysis::State::new),
         };
         templates::entry(&mut em, entry_node, &params).map_err(|e| unsupported(&e))?;
         emit_blocks(&mut em, &table, &frames, &states, body).map_err(|e| unsupported(&e))?;
-        (em.stored, em.aborts, em.union)
+        (em.stored, em.aborts, em.union, em.runs, em.returns)
     };
-    let (mut stored, aborts, union) = stored;
+    let (mut stored, aborts, union, runs, returns) = stored;
+    let closure_sums: Vec<(weft_ir::ClosureId, crate::analysis::Summary)> = closures
+        .iter()
+        .filter_map(|&cb| p.closure_of(cb).map(|(c, _)| c))
+        .filter_map(|c| sums.closure(c).ok().map(|s| (c, s.clone())))
+        .collect();
     // The facts of each closure body, instantiated (`docs/ir.md` 6.5): a
     // `Kept` capture is the place of the variable of the maker, and the body
     // starts with the values that the maker has where the closure can run.
@@ -645,6 +662,10 @@ pub fn emit_parts(
         entry_nodes,
         closure_entries,
         aborts,
+        runs,
+        returns,
+        made: unions.remove(&entry),
+        closures: closure_sums,
     })
 }
 
@@ -734,8 +755,28 @@ fn env_value(
             (CaptureMode::ByMove, Some(st)) => {
                 crate::analysis::transfer::place_value(cx, decl.maker, st, &cap.source)?
             }
+            // A `Kept` reference points into the `CaptureHeld` root, as a
+            // reference through the capture does (stage F12).
+            (CaptureMode::Kept, None) => {
+                let holds = alpha::capture_ty(p, cx.tys, c, k32)
+                    .is_some_and(|t| crate::props::ir_props(cx.tys, t).holds_refs);
+                let mut v = AbsVal::plain();
+                if holds {
+                    v.refs
+                        .insert(cx.roots.capture_held_of(p, cx.facts, cb, k32));
+                }
+                Tree::leaf(v)
+            }
             _ => continue,
         };
+        let mut v = v;
+        // In the terms of the interface, a function value of a capture is
+        // the value that the run node gives (stage F12, part `runs`).
+        let fns = alpha::capture_ty(p, cx.tys, c, k32)
+            .is_some_and(|t| crate::props::ir_has_fns(cx.tys, t));
+        if seed.is_none() && fns && cap.mode != CaptureMode::ByRef {
+            v.top.fns.insert(crate::analysis::FnVal::Capture(k32));
+        }
         t.kids.insert(PathStep::Field(k32), v);
     }
     Ok(t)
@@ -800,7 +841,7 @@ fn closure_summary(
     };
     let mut uniq = std::collections::BTreeMap::new();
     let mut holders = holders::Holders::new(vars.holder_parts());
-    let (returns, aborts) = {
+    let (returns, aborts, runs, made) = {
         let mut em = templates::Em {
             p,
             sema: &a.program,
@@ -819,18 +860,31 @@ fn closure_summary(
             stored: Vec::new(),
             at: (weft_ir::BlockId(0), 0),
             returns: Vec::new(),
+            runs: Vec::new(),
             aborts: std::collections::BTreeSet::new(),
-            union: None,
+            union: Some(crate::analysis::State::new()),
         };
         templates::closure_entry(&mut em, en, &params.entry, &env).map_err(|e| unsupported(&e))?;
         emit_blocks(&mut em, &table, &frames, &states, body).map_err(|e| unsupported(&e))?;
         (
             std::mem::take(&mut em.returns),
             std::mem::take(&mut em.aborts),
+            std::mem::take(&mut em.runs),
+            em.union.take(),
         )
     };
     Ok(crate::analysis::summarize::closure(
-        p, sums, &facts, &roots, cb, &returns, &aborts,
+        p,
+        sums,
+        &facts,
+        &roots,
+        cb,
+        &aborts,
+        &crate::analysis::summarize::FnParts {
+            runs: &runs,
+            returns: &returns,
+            made: made.as_ref(),
+        },
     ))
 }
 
@@ -907,6 +961,7 @@ fn emit_closure(
         stored: Vec::new(),
         at: (weft_ir::BlockId(0), 0),
         returns: Vec::new(),
+        runs: Vec::new(),
         aborts: std::collections::BTreeSet::new(),
         union: Some(crate::analysis::State::new()),
     };
