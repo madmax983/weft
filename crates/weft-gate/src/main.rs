@@ -154,7 +154,7 @@ const USAGE: &str = "usage:
   weft-gate oracle-run --base DIR --path PATH [--from K] [--limit-ms MS]
                        [--max-steps N] [--max-memory MB] [--engine ast|ir] [--observe]
                        [--fact-oracle]
-  weft-gate fact-oracle --tier 1|2 [--report FILE] [--workers N] [--limit SECONDS]
+  weft-gate fact-oracle --tier 1|2 [--groups ABCDEF] [--report FILE] [--workers N] [--limit SECONDS]
                         [--max-steps N] [--max-memory MB] [--repo DIR] [--probes DIR]
   weft-gate run --tier 1|2 [--groups ABCDEF] [--report FILE] [--workers N]
                 [--limit SECONDS] [--repo DIR] [--probes DIR] [--write-baseline]
@@ -738,6 +738,7 @@ fn run_engines(flags: &Flags) -> Result<bool> {
         exe: Some(std::env::current_exe().context("find the weft-gate program")?),
         engine: Engine::Ast,
         fact_oracle: false,
+        groups: None,
     };
     notes.push(format!(
         "{} workers; time limit of a run {} s, step limit {}, memory limit {} MB",
@@ -1099,6 +1100,7 @@ fn run_oracle(flags: &Flags) -> Result<()> {
         exe: Some(std::env::current_exe().context("find the weft-gate program")?),
         engine,
         fact_oracle: false,
+        groups: None,
     };
     let mut journal = open_journal(&out)?;
     snapshot::install_panic_hook();
@@ -1219,6 +1221,10 @@ fn run_oracle_child(flags: &Flags) -> Result<()> {
                 &path,
                 from,
                 flags.max_steps,
+                match flags.groups {
+                    Some(_) => groups_on(flags).ok(),
+                    None => None,
+                },
                 |k| current.store(k, Ordering::SeqCst),
                 |step| write_step(&step),
             );
@@ -1261,7 +1267,8 @@ fn run_oracle_child(flags: &Flags) -> Result<()> {
 
 /// `fact-oracle`: the fact oracle and trace conformance (`docs/ir.md` 8.5)
 /// on each program of the tier with `main` or test blocks that the `ir`
-/// pipeline checks and accepts. Writes the report (default
+/// pipeline checks and accepts. `--groups` puts more construct groups on
+/// (the preview of a stage). Writes the report (default
 /// `target/gate/fact-oracle-tier<N>.md`). Returns false if a run fails the
 /// fact oracle or trace conformance.
 fn run_fact_oracle(flags: &Flags) -> Result<bool> {
@@ -1287,6 +1294,10 @@ fn run_fact_oracle(flags: &Flags) -> Result<bool> {
         exe: Some(std::env::current_exe().context("find the weft-gate program")?),
         engine: Engine::Ir,
         fact_oracle: true,
+        groups: match flags.groups {
+            Some(_) => Some(groups_on(flags)?),
+            None => None,
+        },
     };
     snapshot::install_panic_hook();
     let total = entries.len();

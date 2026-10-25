@@ -229,6 +229,9 @@ pub struct Settings {
     /// program in scope that the `ir` pipeline accepts ([`run_fact_configs`]),
     /// in place of the oracle verdict.
     pub fact_oracle: bool,
+    /// The construct groups of the `ir` pipeline for the fact oracle, or
+    /// `None` for the default groups (`--groups`, a preview of a stage).
+    pub groups: Option<weft_sema::Groups>,
 }
 
 impl Default for Settings {
@@ -241,6 +244,7 @@ impl Default for Settings {
             exe: None,
             engine: Engine::Ast,
             fact_oracle: false,
+            groups: None,
         }
     }
 }
@@ -769,6 +773,7 @@ pub fn run_entry_observed(
             &entry.path,
             0,
             settings.max_steps,
+            settings.groups,
             |_| {},
             |s| c.add(s),
         );
@@ -917,6 +922,7 @@ pub fn run_fact_configs(
     path: &str,
     from: usize,
     max_steps: Option<u64>,
+    groups: Option<weft_sema::Groups>,
     mut start: impl FnMut(usize),
     mut emit: impl FnMut(Step),
 ) {
@@ -929,10 +935,13 @@ pub fn run_fact_configs(
             return;
         }
     };
-    let opts = weft_sema::Options {
+    let mut opts = weft_sema::Options {
         facts: weft_sema::FactGen::Both,
         ..pkg.options(Profile::default())
     };
+    if let Some(g) = groups {
+        opts.ir_groups = g;
+    }
     let analysis = weft_sema::analyze(&pkg.units, opts);
     let fallback = analysis.ir_scope.as_ref().and_then(|s| s.fallback.clone());
     let checked = weft_check::check_analysis(analysis, &pkg.files);
@@ -1039,6 +1048,12 @@ fn spawn_child(
         .arg("--engine")
         .arg(settings.engine.name())
         .args(settings.fact_oracle.then_some("--fact-oracle"))
+        .args(
+            settings
+                .groups
+                .iter()
+                .flat_map(|g| ["--groups".to_string(), g.to_string()]),
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

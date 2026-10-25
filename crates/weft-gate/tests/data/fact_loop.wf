@@ -1,0 +1,31 @@
+// Loops that end: a `for` over the elements, a `while` that walks a
+// list, and a borrow of plain data in a loop (group B).
+struct Link { v: u64, next: Vec<Link> }
+fn sum(v: &Vec<u64>) -> u64 {
+    let s = 0
+    for x in v[] { s += x }
+    s
+}
+fn last(l: &Link) -> u64 {
+    let cur = l
+    while cur.next.len() > 0 {
+        cur = &cur.next[0]
+    }
+    cur.v
+}
+fn main() {
+    let v = Vec.new()
+    let i = 0
+    while i < 4 {
+        v.push(i)
+        i += 1
+    }
+    let rs = Vec.new()
+    for x in v[] { rs.push(&(x + 1)) }
+    print(sum(&v))
+    print(rs.len())
+    let inner = Link { v: 7, next: Vec.new() }
+    let outer = Link { v: 1, next: Vec.new() }
+    outer.next.push(inner)
+    print(last(&outer))
+}

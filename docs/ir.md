@@ -3351,6 +3351,16 @@ table, the roots, the variables, the versions of the parts, the entry node).
   test blocks that the `ir` pipeline checks and accepts, in the six configurations, with
   the memory oracle, and writes `target/gate/fact-oracle-tier<N>.md`. A failure of the
   fact oracle or of trace conformance fails the command.
+- As built (F10a, loops): `weft-gate fact-oracle --groups LETTERS` checks the scope of
+  more groups (the child processes get `--groups`), for the preview of a stage. Trace
+  conformance needs no rule of its own for a back edge: the facts have a `cfg_edge` to
+  the first node of the loop head, and `reach` follows it as any other edge (no trace
+  failure on the loops of tier 1 with the groups A and B). A place below a wildcard
+  place (`(head.next[]..).next`, after a walk widens) is anywhere inside the base of its
+  outermost wildcard step, as `wild_at` of the spec says: C1 and C5 use that base. A promoted temporary in a loop gets a new cell at each `LiveTemp`, and the
+  references of the earlier iterations stay in the old cells (5.10): the oracle keeps the
+  old cell of each temporary that gets a new one (`FactOracle::retire`) and names it as
+  the local, so C1 checks those references too (before, they were places with no name).
 
 The fact oracle and the summary oracle run with `weft run --fact-oracle` on each accepted
 program of the gate. A failure is a defect of the fact generator with a concrete program

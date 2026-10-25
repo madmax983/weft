@@ -274,6 +274,14 @@ impl super::Machine<'_, '_> {
         if changed && cf.chain.is_none() {
             fo.check_uses(uid, code, &cf.slots, &self.heap)?;
         }
+        // A temporary that gets a new cell keeps the name of its old one.
+        if let Op::LiveTemp(s) = op {
+            if let (Some(Some(c)), Some(&l)) =
+                (cf.slots.get(*s as usize), code.slot_locals.get(*s as usize))
+            {
+                fo.retire(uid, *c, weft_ir::LocalId(l));
+            }
+        }
         let ends: &[u32] = match op {
             Op::DropSlots(ss) => ss,
             Op::EndTemp(s) => std::slice::from_ref(s),

@@ -32,6 +32,17 @@ fn check(src: &str) -> Checked {
     check_source("test.wf", src, opts)
 }
 
+/// Checks `src` with both pipelines and the groups A and B on (the loops
+/// of stage F10a, a preview).
+fn check_ab(src: &str) -> Checked {
+    let opts = Options {
+        facts: FactGen::Both,
+        ir_groups: weft_sema::Groups::parse("AB").unwrap(),
+        ..Options::default()
+    };
+    check_source("test.wf", src, opts)
+}
+
 /// The options of a run with the fact oracle and the memory oracle.
 fn opts() -> RunOptions {
     RunOptions {
@@ -185,6 +196,76 @@ fn failure(r: &Result<weft_interp::RunOutcome, weft_interp::RuntimeError>) -> Op
 
 #[test]
 fn each_accepted_corpus_program_in_scope_passes_the_fact_oracle() {
+    corpus_passes(check);
+}
+
+#[test]
+fn each_accepted_corpus_program_in_scope_of_the_groups_a_and_b_passes_the_fact_oracle() {
+    // The loops of the corpus (stage F10a): back edges, `IterNext`, and the
+    // promoted temporaries of a loop body.
+    corpus_passes(check_ab);
+}
+
+/// A reference that an earlier iteration of a loop took into a promoted
+/// temporary points into the old cell of the temporary: the oracle names
+/// the cell as the local, and checks it (stage F10a).
+#[test]
+fn a_reference_of_an_earlier_iteration_into_a_promoted_temporary_has_a_name() {
+    let src = "fn main() {\n let v = Vec.new()\n let i = 0\n while i < 4 { v.push(i)\n i += 1 }\n\
+        let rs = Vec.new()\n for x in v[] { rs.push(&(x + 1)) }\n print(rs.len())\n}\n";
+    let c = check_ab(src);
+    assert!(c.ir.as_ref().is_some_and(|ir| ir.ok()), "{:?}", c.diags);
+    let r = run_main(&c, &opts());
+    assert!(failure(&r).is_none(), "{:?}", failure(&r));
+    let report = r.unwrap().fact_oracle.unwrap();
+    assert!(report.checks > 0);
+    assert_eq!(report.unnamed, 0, "{report:?}");
+}
+
+/// A walk down a list widens the reference to `head.next[]..`, and a borrow
+/// of a field through it is a place below the wildcard place,
+/// `(head.next[]..).next`. In the spec (`wild_at`) such a place is anywhere
+/// inside the base `head.next[]`, so it covers each deeper place of the walk
+/// at run time (stage F10a, tier 1 `R1_walk_then_write.wf`).
+#[test]
+fn a_place_below_a_wildcard_place_covers_each_place_inside_its_base() {
+    let src = "struct Node { val: u64, next: Vec<Node> }\n\
+        fn set_last(head: &Node, x: u64) / mut(head..) {\n\
+        let cur = head\n while cur.next.len() > 0 { cur = &cur.next[0] }\n\
+        cur.val = x\n print(cur.val)\n}\n\
+        fn main() {\n let n = Node { val: 1, next: Vec.new() }\n\
+        let m = Node { val: 2, next: Vec.new() }\n\
+        m.next.push(Node { val: 3, next: Vec.new() })\n\
+        n.next.push(m)\n set_last(&n, 7)\n}\n";
+    let c = check_ab(src);
+    assert!(c.ir.as_ref().is_some_and(|ir| ir.ok()), "{:?}", c.diags);
+    let r = run_main(&c, &opts());
+    assert!(failure(&r).is_none(), "{:?}", failure(&r));
+}
+
+/// The programs of the defects of stage F10a (`tests/gate/probes/fixes/f10`)
+/// pass with the groups A and B on.
+#[test]
+fn the_defects_of_the_loops_are_fixed() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/gate/probes/fixes/f10");
+    for p in programs(&dir) {
+        let src = fs::read_to_string(&p).unwrap();
+        let c = check_ab(&src);
+        let Some(ir) = &c.ir else {
+            panic!("{} is not in scope", p.display());
+        };
+        if !ir.ok() {
+            continue;
+        }
+        let r = run_main(&c, &opts());
+        assert!(failure(&r).is_none(), "{}: {:?}", p.display(), failure(&r));
+    }
+}
+
+/// Each program of the corpus (and of the interpreter tests) that `check`
+/// puts in scope and that the `ir` pipeline accepts runs with no failure of
+/// the fact oracle.
+fn corpus_passes(check: fn(&str) -> Checked) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut files = programs(&root.join("../../tests/programs"));
     files.extend(programs(&root.join("tests/programs")));

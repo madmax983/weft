@@ -32,6 +32,8 @@
 //!   of the variable. `S(l)` holds the references of the value of `l`,
 //!   except the parts with variables of their own; the versions of a part
 //!   hold the references of the part.
+//! - **C2 (holder cover).** When the run follows a reference that a local of
+//!   the frame holds, the node uses a variable of that local.
 //! - **C4 (free cover).** The end of the cell of a local (`Dead`, also in a
 //!   cleanup chain) has a `frees_at` at the node for a place at or above the
 //!   root of the local.
@@ -43,6 +45,14 @@
 //!   move of a part also `moved_part` of the part.
 //! - **D4 (suspension cover).** An abort that unwinds a frame with a live
 //!   linear value has `may_abort` at the aborting node.
+//!
+//! Rules of the oracle (`docs/ir.md` 8.5, "As built (F9)"): the read of `_0`
+//! at `Return`, a whole write of a temporary or of `_0`, the read of the
+//! buffer handle of an array and an access of a cell that the op frees need
+//! no fact; a take inside a native function or a `Drop` is a write; a side
+//! of a split counts as the element step. The old cell of a temporary that
+//! gets a new cell (a promoted temporary in a loop, stage F10a) keeps the
+//! name of the local.
 //!
 //! The checks on a frame in unwind mode are trace conformance and C4: the
 //! cleanup chain ends the frame, and `unwound_at` invalidates what points
@@ -193,6 +203,10 @@ struct FrameFacts {
     /// The current location.
     at: Option<(u32, u32)>,
     anchors: Vec<Anchor>,
+    /// The old cells of the temporaries that got a new cell (`LiveTemp`
+    /// again, a promoted temporary in a loop): a reference of an earlier
+    /// iteration points into such a cell, and its name is the local.
+    retired: HashMap<CellId, LocalId>,
 }
 
 /// The base of a cell in the heap index: a local or an anchor.
@@ -472,30 +486,36 @@ impl Comp {
     }
 
     /// True if fact place `q` is inside the place `d` that a reference
-    /// points into: `d` is a wildcard place and `q` is at or below its
-    /// base, or `q` is at or below `d` by stable steps only.
+    /// points into: `d` is a wildcard place or a place below one, and `q`
+    /// is at or below the base of its outermost wildcard step; or `q` is at
+    /// or below `d` by stable steps only.
     fn ref_inside(&self, q: PlaceId, d: PlaceId) -> bool {
         let (pq, pd) = (self.facts.place(q), self.facts.place(d));
         if pq.root != pd.root {
             return false;
         }
-        if pd.is_wildcard() {
-            return pd.parent.is_some_and(|b| {
-                weft_verified::places::within(&pq.steps, &coarse(&self.facts.place(b).steps))
-            });
+        // A wildcard place, and a place below one, is anywhere inside the
+        // base of its outermost wildcard step (`wild_at` of the spec).
+        if let Some(b) = self.facts.wild_base(d) {
+            return weft_verified::places::within(&pq.steps, &coarse(&self.facts.place(b).steps));
         }
         weft_verified::places::within(&pq.steps, &coarse(&pd.steps))
             && pq.steps.iter().skip(pd.steps.len()).all(|s| !s.unstable)
     }
 
     /// True if fact place `q` is at or below place `m`, or below the base of
-    /// the wildcard place `m`.
+    /// the outermost wildcard step of `m` (a wildcard place, or a place below
+    /// one).
     fn below(&self, q: PlaceId, m: PlaceId) -> bool {
         let (pq, pm) = (self.facts.place(q), self.facts.place(m));
         if pq.root != pm.root {
             return false;
         }
-        let base = if pm.is_wildcard() { pm.parent } else { Some(m) };
+        let base = if pm.is_wildcard() || self.facts.wild_base(m).is_some() {
+            self.facts.wild_base(m).or(pm.parent)
+        } else {
+            Some(m)
+        };
         base.is_some_and(|b| {
             weft_verified::places::within(&pq.steps, &coarse(&self.facts.place(b).steps))
         })
@@ -575,6 +595,7 @@ impl FactOracle {
                 cur: vec![comp.entry],
                 at: None,
                 anchors,
+                retired: HashMap::new(),
             },
         );
     }
@@ -587,7 +608,18 @@ impl FactOracle {
             cur: f.cur.clone(),
             at: f.at,
             anchors: Vec::new(),
+            retired: HashMap::new(),
         })
+    }
+
+    /// The temporary `l` of frame `uid` gets a new cell, and its old cell
+    /// `c` stays (`LiveTemp` of a promoted temporary in a loop: the end of
+    /// a cell of plain data keeps its value, `docs/ir.md` 5.10). The old
+    /// cell keeps the name of the local.
+    pub fn retire(&mut self, uid: u64, c: CellId, l: LocalId) {
+        if let Some(fr) = self.frames.get_mut(&uid) {
+            fr.retired.insert(c, l);
+        }
     }
 
     /// The frame `uid` ended.
@@ -1001,7 +1033,14 @@ impl FactOracle {
         let Some(fr) = self.frames.get(&uid) else {
             return Ok(());
         };
-        let found = locate(code, slots, heap, &fr.anchors, p.cell, &p.path);
+        let found = locate(
+            code,
+            slots,
+            heap,
+            (&fr.anchors, &fr.retired),
+            p.cell,
+            &p.path,
+        );
         let locals: Vec<LocalId> = found
             .iter()
             .filter_map(|(b, _)| match b {
@@ -1057,7 +1096,7 @@ impl FactOracle {
             Target::Place(p) => (p.cell, p.path.clone(), false),
             Target::Elems(b) => (*b, Vec::new(), true),
         };
-        let found = locate(code, slots, heap, &fr.anchors, cell, &path);
+        let found = locate(code, slots, heap, (&fr.anchors, &fr.retired), cell, &path);
         let ci = fr.comp;
         let mut bases = Vec::new();
         for (base, mut proj) in found {
@@ -1393,14 +1432,15 @@ fn translate(v: &Value, path: &[u32]) -> Option<Vec<Proj>> {
 }
 
 /// The bases and the projections of the concrete place (`cell`, `path`) in
-/// a frame with the slots `slots` and the anchors `anchors`: the slot of a
-/// local, each anchor at or above it, and the first owner of the cell in
-/// each local and each anchor.
+/// a frame with the slots `slots`, the anchors `anchors` and the retired
+/// cells `retired` of its temporaries: the slot of a local (or a retired
+/// cell of it), each anchor at or above it, and the first owner of the cell
+/// in each local and each anchor.
 fn locate(
     code: &Code,
     slots: &[Option<CellId>],
     heap: &Heap,
-    anchors: &[Anchor],
+    (anchors, retired): (&[Anchor], &HashMap<CellId, LocalId>),
     cell: CellId,
     path: &[u32],
 ) -> Vec<(Base, Vec<Proj>)> {
@@ -1409,7 +1449,7 @@ fn locate(
         translate(v, at)
     };
     let mut out = Vec::new();
-    if let Some(l) = cell_local(code, slots, cell) {
+    if let Some(l) = cell_local(code, slots, cell).or_else(|| retired.get(&cell).copied()) {
         if let Some(p) = in_cell(cell, path) {
             out.push((Base::Local(l), p));
         }

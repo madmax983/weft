@@ -48,6 +48,7 @@ fn isolated(limit: Duration, max_steps: Option<u64>, max_memory_mb: u64) -> Sett
         exe: Some(PathBuf::from(env!("CARGO_BIN_EXE_weft-gate"))),
         engine: Engine::Ast,
         fact_oracle: false,
+        groups: None,
     }
 }
 
@@ -427,6 +428,25 @@ fn the_fact_oracle_runs_the_accepted_programs_of_the_scope() {
             ],
             "{out:?}"
         );
+    }
+    // With the groups A and B on (the preview of stage F10a), the loops are
+    // in scope: a program whose loops end passes the fact oracle, and with
+    // the default groups it is out of scope.
+    let ab = weft_sema::Groups::parse("AB").ok();
+    for groups in [None, ab] {
+        let child = Settings {
+            fact_oracle: true,
+            groups,
+            ..isolated(oracle::LIMIT, Some(1_000_000), oracle::MAX_MEMORY_MB)
+        };
+        let out = run_all(&data(), vec![entry("fact_loop.wf")], &child);
+        let classes: Vec<oracle::FactClass> = out.iter().map(oracle::fact_class).collect();
+        let want = if groups.is_some() {
+            oracle::FactClass::Pass
+        } else {
+            oracle::FactClass::OutOfScope
+        };
+        assert_eq!(classes, vec![want], "{groups:?}: {out:?}");
     }
     // A failure of the fact oracle is a failure class.
     let failed = Outcome {
