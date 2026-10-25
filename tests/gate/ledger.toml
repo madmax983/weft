@@ -772,3 +772,13 @@ parts = ["muts text"]
 files = ["tests/gate/probes/r2/redteam/p/zz_deep.wf"]
 reason = "a changed place of more than 8 steps: the summary cuts it at SIG_PLACE_STEPS and adds a wildcard step, so its text is `w.x.x.x.x.x.x.x.x..`; the old row keeps the 8 steps with the text of the whole place. The steps are the same, and the text of W0701 shows the cut place"
 stage = "F6"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/fixes/f10/store_behind.wf",
+    "tests/gate/probes/fixes/f10/store_behind_loop.wf",
+]
+codes = ["W0301"]
+reason = "heap slot of a reference parameter (stage F10a, docs/ir.md 6.6): the body reads back the reference that it stored behind `out`, so the `ir` pipeline reports the dangling read of `k` in the body (line 12, where the oracle faults); the old pipeline misses it there and reports `out` at the end of the caller (line 27). The loop form (group B, line 18 vs 40) is the same"
+stage = "F10"

@@ -1211,6 +1211,19 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
             &[],
         ),
         "return" => (&["cfg_edge", "uses", "ref_at", "ref_in"], &[]),
+        // The next element of a `for` (stage F10, `docs/ir.md` 6.4): a read
+        // of the iterator and of the elements, and the element binds.
+        "iter next" => (
+            &[
+                "cfg_edge",
+                "reads_at",
+                "uses",
+                "rebound_at",
+                "points_into",
+                "empty_at",
+            ],
+            &[],
+        ),
         // The node with no edges of the W0605 check of an `Assign` or of a
         // struct literal (`ref_outside` reads it).
         "field" => (&["ref_at", "ref_in"], &[]),
@@ -1748,7 +1761,7 @@ fn main() {
 }
 
 #[test]
-fn writes_via_needs_one_place_at_or_above_each_change() {
+fn writes_via_needs_a_place_of_the_reference_at_or_above_each_change() {
     use weft_sema::factgen::kernel::{self, Access};
     let a = Access {
         vars: vec![VarId(0)],
@@ -1758,15 +1771,19 @@ fn writes_via_needs_one_place_at_or_above_each_change() {
     };
     // The place 5 is below the place 4.
     let below = |m: PlaceId, d: PlaceId| m == d || (m == PlaceId(5) && d == PlaceId(4));
-    let f = kernel::write_through(&a, Some((VarId(0), PlaceId(4))), &below);
+    let f = kernel::write_through(&a, Some((VarId(0), &[PlaceId(4)])), &below);
     assert_eq!(f.writes_via, vec![VarId(0)]);
     assert_eq!(f.mutates, vec![PlaceId(5)]);
     assert_eq!(f.uses, vec![VarId(0)]);
     assert_eq!(f.reads, vec![PlaceId(1)]);
     // A change outside the place: no `writes_via`.
-    let f = kernel::write_through(&a, Some((VarId(0), PlaceId(7))), &below);
+    let f = kernel::write_through(&a, Some((VarId(0), &[PlaceId(7)])), &below);
     assert!(f.writes_via.is_empty());
-    // The reference does not hold one place.
+    // The reference can point into more than one place: each change is
+    // below one of them.
+    let f = kernel::write_through(&a, Some((VarId(0), &[PlaceId(7), PlaceId(4)])), &below);
+    assert_eq!(f.writes_via, vec![VarId(0)]);
+    // The write does not go through a reference local.
     let f = kernel::write_through(&a, None, &below);
     assert!(f.writes_via.is_empty());
     // A borrow uses the variables, reads the pointers, and gives the places.

@@ -221,7 +221,10 @@ impl Builder<'_> {
             return Ok(());
         }
         let ty = self.ty(e)?;
-        let origin = self.origin(e.span, Some(e.id));
+        // The value of a block is the value of its tail: the temporary has
+        // the span of the tail, as the old lowering (`expr_tail`), so a
+        // linear value that ends there (W0601) has the line of the tail.
+        let origin = self.origin(tail_span(e), Some(e.id));
         let t = self.temp(ty, TempKind::Discarded, origin);
         self.value_into(e, Place::local(t))
     }
@@ -288,5 +291,23 @@ impl Builder<'_> {
         self.assign(Place::local(t2), rv, origin);
         self.assign(place, Rvalue::Use(Operand::Move(Place::local(t2))), origin);
         Ok(())
+    }
+}
+
+/// The span of the value of expression `e`: the tail of a block (the last
+/// statement), through nested blocks; else `e` itself.
+fn tail_span(e: &Expr) -> ast::Span {
+    let mut at = e;
+    loop {
+        let ast::ExprKind::Block(b) = &at.kind else {
+            return at.span;
+        };
+        match b.stmts.last() {
+            Some(Stmt {
+                kind: S::Expr(t), ..
+            }) => at = t,
+            Some(st) => return st.span,
+            None => return b.span,
+        }
     }
 }

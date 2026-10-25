@@ -310,35 +310,11 @@ fn check_supported(
         if b.locals.iter().any(|d| tys.mentions_param(d.ty)) {
             return no(Group::F, "a type parameter (stage F20)");
         }
-        // A back edge: an edge to a block that does not come later in
-        // reverse post-order.
-        let order = weft_ir::order::reverse_post_order(b);
-        let mut rank = vec![usize::MAX; b.blocks.len()];
-        for (i, x) in order.iter().enumerate() {
-            if let Some(r) = rank.get_mut(x.index()) {
-                *r = i;
-            }
-        }
-        for (i, blk) in b.blocks.iter().enumerate() {
-            let me = rank.get(i).copied().unwrap_or(usize::MAX);
-            let back = blk
-                .term
-                .kind
-                .successors()
-                .iter()
-                .any(|s| rank.get(s.index()).is_some_and(|&r| r <= me));
-            if back {
-                return no(Group::B, "a loop (widening, stage F10)");
-            }
-        }
         for blk in &b.blocks {
             for s in &blk.stmts {
                 match &s.kind {
                     StmtKind::Assign(_, Rvalue::Aggregate(weft_ir::AggKind::Closure(_), _)) => {
                         return no(Group::C, "a closure (stage F11)");
-                    }
-                    StmtKind::Assign(_, Rvalue::Iter(_)) => {
-                        return no(Group::B, "an iterator (stage F10)");
                     }
                     // The unwinder runs the `on abort` function: its summary
                     // applies at the node (stage F7).
@@ -358,6 +334,7 @@ fn check_supported(
                 | TermKind::UnwindExit
                 | TermKind::Unreachable
                 | TermKind::Assert { .. }
+                | TermKind::IterNext { .. }
                 | TermKind::Perform {
                     cap: weft_ir::CapOperand::Row(_),
                     ..
@@ -380,7 +357,6 @@ fn check_supported(
                     );
                 }
                 TermKind::Resume { .. } => return no(Group::D, "a continuation (stage F16)"),
-                TermKind::IterNext { .. } => return no(Group::B, "an iterator (stage F10)"),
                 TermKind::Handle { .. } => return no(Group::D, "a handler (stage F14)"),
                 _ => return no(Group::E, "a task (stage F18)"),
             }
@@ -513,6 +489,7 @@ pub fn emit_parts(
     };
     decls::tasks(p, &comp, facts);
     let init = decls::entry_state(p, entry, &params).map_err(|e| unsupported(&e))?;
+    let cycles = crate::analysis::widen::Cycles::of(p, &comp);
     let states = {
         let mut cx = crate::analysis::Cx {
             p,
@@ -520,6 +497,7 @@ pub fn emit_parts(
             facts,
             roots: &mut roots,
             sums,
+            cycles: &cycles,
         };
         crate::analysis::run(&mut cx, entry, init).map_err(|e| unsupported(&e))?
     };
@@ -540,6 +518,7 @@ pub fn emit_parts(
             uniq: &mut uniq,
             skip_s: None,
             sums,
+            cycles: &cycles,
             stored: Vec::new(),
             at: (weft_ir::BlockId(0), 0),
         };
@@ -555,9 +534,12 @@ pub fn emit_parts(
         .filter_map(|(k, r)| vars.get(&vars::VarKey::S(k.0, k.1)).map(|v| (r, v)))
         .collect();
     facts.owner.extend(owners);
+    // A `@ uniq` value is not `many` (`once_var`, as in the old lowering):
+    // a `multi` resume would copy it (W0503).
     for (i, v) in facts.vars.iter_mut().enumerate() {
         let id = weft_facts::VarId(u32::try_from(i).unwrap_or(u32::MAX));
         v.uniq = uniq.get(&id).copied().unwrap_or(false);
+        v.once |= v.uniq;
     }
     decls::std_effects(facts);
     facts.normalize();
@@ -976,6 +958,7 @@ const fn em_cx<'b>(em: &'b mut templates::Em<'_>) -> crate::analysis::Cx<'b> {
         facts: em.facts,
         roots: em.roots,
         sums: em.sums,
+        cycles: em.cycles,
     }
 }
 

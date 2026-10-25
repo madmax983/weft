@@ -244,6 +244,24 @@ impl Tree {
         }
     }
 
+    /// Each place of the value: the places of the top and of each part.
+    pub fn places(&self, out: &mut BTreeSet<PlaceId>) {
+        out.extend(self.top.refs.iter().copied());
+        for k in self.kids.values() {
+            k.places(out);
+        }
+    }
+
+    /// Changes the places of the top and of each part with `f`. `f` gives
+    /// true if it changed a set. Returns true if a set changed.
+    pub fn map_refs(&mut self, f: &mut dyn FnMut(&mut BTreeSet<PlaceId>) -> bool) -> bool {
+        let mut changed = f(&mut self.top.refs);
+        for k in self.kids.values_mut() {
+            changed |= k.map_refs(f);
+        }
+        changed
+    }
+
     /// Joins `o` into `self`, part by part. Returns true if `self` changed.
     pub fn join(&mut self, o: &Self) -> bool {
         let mut changed = self.top.join(&o.top);
@@ -278,6 +296,11 @@ pub struct State {
     /// The move paths that can have no value: a part that moved or that an
     /// `Uninit` left with no value (may).
     holes: PathSet,
+    /// The heap slots (`docs/ir.md` 6.6): for each fact place that is not
+    /// a place of a local of the component (behind a reference parameter,
+    /// in a place of a caller), the places that the references stored
+    /// there can point into (may; a store there is a weak update).
+    behind: Rc<BTreeMap<PlaceId, BTreeSet<PlaceId>>>,
 }
 
 /// The number of locals of one chunk of a [`Chunked`] map.
@@ -356,6 +379,11 @@ impl<V: Clone> Chunked<V> {
                 chunks.remove(&c);
             }
         }
+    }
+
+    /// The locals and their values.
+    fn iter(&self) -> impl Iterator<Item = (&Key, &V)> {
+        self.chunks.values().flat_map(|chunk| chunk.iter())
     }
 
     /// The locals and their values, by chunk: a chunk that `o` shares with
@@ -554,6 +582,32 @@ impl State {
                 .any(|p| is_prefix(p, path) || is_prefix(path, p))
     }
 
+    /// The places of the value of each local: the places of each part of
+    /// its tree (for the widening at a loop head, `super::widen`).
+    pub fn places(&self) -> BTreeMap<Key, BTreeSet<PlaceId>> {
+        let mut out: BTreeMap<Key, BTreeSet<PlaceId>> = BTreeMap::new();
+        for (k, t) in self.vals.iter() {
+            let mut ps = BTreeSet::new();
+            t.places(&mut ps);
+            if !ps.is_empty() {
+                out.insert(*k, ps);
+            }
+        }
+        out
+    }
+
+    /// Changes the places of each part of the value of local `key` with
+    /// `f` (`super::widen`). Only a tree that changes is copied.
+    pub fn map_refs(&mut self, key: Key, f: &mut dyn FnMut(&mut BTreeSet<PlaceId>) -> bool) {
+        let Some(t) = self.vals.get(key) else {
+            return;
+        };
+        let mut copy = (**t).clone();
+        if copy.map_refs(f) {
+            self.vals.insert(key, Rc::new(copy));
+        }
+    }
+
     /// Joins `o` into `self`: a union of the values and of the may parts,
     /// and an intersection of the must parts. Returns true if `self`
     /// changed.
@@ -578,6 +632,48 @@ impl State {
         changed |= self.may.union(&o.may);
         changed |= self.must.intersect(&o.must);
         changed |= self.holes.union(&o.holes);
+        if !Rc::ptr_eq(&self.behind, &o.behind) {
+            for (q, refs) in o.behind.iter() {
+                changed |= self.store_behind(*q, refs.iter().copied());
+            }
+        }
         changed
+    }
+
+    /// A store of references that point into `refs` at the fact place `q`
+    /// that no local of the component owns (a heap slot). Returns true if
+    /// the slot changed.
+    pub fn store_behind(&mut self, q: PlaceId, refs: impl IntoIterator<Item = PlaceId>) -> bool {
+        let new: Vec<PlaceId> = refs
+            .into_iter()
+            .filter(|r| self.behind.get(&q).is_none_or(|have| !have.contains(r)))
+            .collect();
+        if new.is_empty() {
+            return false;
+        }
+        Rc::make_mut(&mut self.behind)
+            .entry(q)
+            .or_default()
+            .extend(new);
+        true
+    }
+
+    /// The heap slots: each place that got a store, and the places that the
+    /// stored references can point into.
+    pub fn behind(&self) -> &BTreeMap<PlaceId, BTreeSet<PlaceId>> {
+        &self.behind
+    }
+
+    /// Changes the places of each heap slot with `f` (`super::widen`). `f`
+    /// gets the place of the slot and gives true if it changed the set.
+    pub fn map_behind(&mut self, f: &mut dyn FnMut(PlaceId, &mut BTreeSet<PlaceId>) -> bool) {
+        let mut copy = (*self.behind).clone();
+        let mut changed = false;
+        for (q, refs) in &mut copy {
+            changed |= f(*q, refs);
+        }
+        if changed {
+            self.behind = Rc::new(copy);
+        }
     }
 }

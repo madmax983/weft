@@ -118,13 +118,13 @@ pub const fn term_name(t: &TermKind) -> &'static str {
 /// The span of the node of statement `s` of body `b`: the span of its
 /// origin. The end of a parameter of a function or a test has the span of
 /// the function, as the old lowering: a diagnostic of the parameter at its
-/// end (W0601) is at the declaration.
+/// end (W0601) is at the declaration. The end of a discarded temporary has
+/// the span of the temporary: the value that the statement discards (the
+/// tail of a block statement, as the old lowering).
 fn stmt_span(b: &Body, s: &weft_ir::Stmt) -> Span {
     if let StmtKind::Dead(l) = s.kind {
-        let param = b
-            .locals
-            .get(l.index())
-            .is_some_and(|d| matches!(d.kind, weft_ir::LocalKind::Param(_)));
+        let d = b.locals.get(l.index());
+        let param = d.is_some_and(|d| matches!(d.kind, weft_ir::LocalKind::Param(_)));
         if param
             && matches!(
                 b.kind,
@@ -132,6 +132,14 @@ fn stmt_span(b: &Body, s: &weft_ir::Stmt) -> Span {
             )
         {
             return span(b.origin.span);
+        }
+        if let Some(d) = d.filter(|d| {
+            matches!(
+                d.kind,
+                weft_ir::LocalKind::Temp(weft_ir::TempKind::Discarded)
+            )
+        }) {
+            return span(d.origin.span);
         }
     }
     span(s.origin.span)

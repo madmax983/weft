@@ -11,6 +11,7 @@ use weft_ir::{
     FnId, IntTy, LocalDecl, LocalId, LocalKind, Operand, Origin, Place, Program, Proj, Props,
     Rvalue, Span, Stmt, StmtKind, Term, TermKind, Ty, TyId, TyTable, VariantIdx,
 };
+use weft_sema::analysis::widen::{self, Cycles, Head};
 use weft_sema::analysis::{self, AbsVal, Cx, PathStep, State, Summaries, Tree};
 use weft_sema::factgen::alpha::Roots;
 
@@ -268,6 +269,7 @@ fn run_with(p: Program, t: &Tys, init: State) -> Run {
             facts: &mut facts,
             roots: &mut roots,
             sums: &Summaries::default(),
+            cycles: &Cycles::default(),
         };
         analysis::run_all(&mut cx, B, init).unwrap_or_else(|e| panic!("the analysis: {e:?}"))
     };
@@ -612,6 +614,7 @@ fn alpha_of_a_dereference_reads_the_state() {
         facts: &mut out.facts,
         roots: &mut out.roots,
         sums: &sums,
+        cycles: &Cycles::default(),
     };
     let al = analysis::transfer::alpha(&mut cx, B, &st, &deref(r, vec![]))
         .unwrap_or_else(|e| panic!("α: {e:?}"));
@@ -672,6 +675,204 @@ fn a_move_of_a_part_leaves_a_hole_and_the_hole_goes_with_the_value() {
     assert!(!st.must_hold((B, other), &[]));
     // The local that moved holds nothing.
     assert!(!st.may_hold((B, pair)));
+}
+
+// ------------------------------------------------------------ loops (F10)
+
+/// `bool`.
+fn bool_ty(t: &mut TyTable) -> TyId {
+    t.intern(Ty::Bool)
+}
+
+#[test]
+fn a_loop_head_joins_the_value_of_each_iteration() {
+    // bb0: r = &x; goto bb1. bb1 (head): switch c [1: bb2, else bb3].
+    // bb2: r = &y; goto bb1 (a back edge). bb3: return. The head holds the
+    // place of the first iteration and of the later ones, and the cycle is
+    // bb1 and bb2.
+    let mut t = tys();
+    let b = bool_ty(&mut t.table);
+    let mut h = Hand::new(&t);
+    let x = h.user(t.u64, "x");
+    let y = h.user(t.u64, "y");
+    let r = h.user(t.ref_u64, "r");
+    let c = h.user(b, "c");
+    let (bb1, bb2, bb3) = (BlockId(1), BlockId(2), BlockId(3));
+    h.block(
+        vec![
+            assign(at(x), Rvalue::Use(one())),
+            assign(at(y), Rvalue::Use(one())),
+            assign(at(r), Rvalue::Ref(at(x))),
+        ],
+        TermKind::Goto(bb1),
+    );
+    h.block(
+        vec![],
+        TermKind::Switch {
+            on: Operand::Copy(at(c)),
+            arms: vec![(1, bb2)],
+            otherwise: bb3,
+        },
+    );
+    h.block(vec![assign(at(r), Rvalue::Ref(at(y)))], TermKind::Goto(bb1));
+    h.block(vec![], TermKind::Return);
+    let p = h.program(&t);
+    let cycles = Cycles::of(&p, &[B]);
+    assert!(!cycles.has(B, BlockId(0)));
+    assert!(cycles.has(B, bb1) && cycles.has(B, bb2));
+    assert!(!cycles.has(B, bb3));
+    let rank = widen::ranks(&p.bodies[0]);
+    assert_eq!(
+        widen::heads(&p.bodies[0], &rank),
+        vec![false, true, false, false]
+    );
+    let out = run(p, &t);
+    assert_eq!(out.refs(bb1, r, &[]), vec!["x", "y"]);
+    assert_eq!(out.refs(bb3, r, &[]), vec!["x", "y"]);
+}
+
+/// A chain of `n` field steps below `p` in `facts`, with the field `id`.
+fn deeper(facts: &mut FnFacts, p: PlaceId, n: usize, id: u32) -> PlaceId {
+    let step = weft_facts::Step {
+        kind: weft_facts::StepKind::Field { id },
+        unstable: false,
+    };
+    (0..n).fold(p, |q, _| facts.child(q, step, ".next"))
+}
+
+/// The state where local `l` points into `refs`.
+fn points(l: LocalId, refs: &[PlaceId]) -> State {
+    let mut st = State::new();
+    st.write((B, l), &[], Tree::leaf(AbsVal::refs(refs.iter().copied())));
+    st
+}
+
+/// The display texts of the places of local `l` in `st`.
+fn texts_of(facts: &FnFacts, st: &State, l: LocalId) -> Vec<String> {
+    let mut v: Vec<String> = st
+        .value((B, l), &[])
+        .flat()
+        .refs
+        .iter()
+        .map(|p| facts.place(*p).display.clone())
+        .collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn a_place_below_a_place_that_the_loop_added_widens_to_a_wildcard_place() {
+    // A walk `cur = &cur.next`: the head has `l` before the loop. The first
+    // back edge adds `l.next` (below a place from before the loop: it
+    // stays). The second adds `l.next.next`, below `l.next` that the loop
+    // added: it becomes `l.next..`. A place below `l.next..` is `l.next..`,
+    // so the state is stable.
+    let mut facts = FnFacts::default();
+    let roots = Roots::default();
+    let l = facts.add_root("l", weft_facts::RootKind::Local);
+    let cur = LocalId(1);
+    let n1 = deeper(&mut facts, l, 1, 0);
+    let n2 = deeper(&mut facts, l, 2, 0);
+    let first = points(cur, &[l]);
+    let mut head = Head::new(&first);
+    let mut st = points(cur, &[l, n1]);
+    assert!(widen::widen(
+        &mut facts, &roots, &mut st, &first, &mut head, 4
+    ));
+    assert_eq!(texts_of(&facts, &st, cur), vec!["l", "l.next"]);
+    let old = st.clone();
+    let mut st = points(cur, &[l, n1, n2]);
+    assert!(widen::widen(
+        &mut facts, &roots, &mut st, &old, &mut head, 4
+    ));
+    assert_eq!(texts_of(&facts, &st, cur), vec!["l", "l.next", "l.next.."]);
+    let w = facts.wildcard(n1);
+    let below = deeper(&mut facts, w, 3, 0);
+    let old = st.clone();
+    let mut again = points(cur, &[l, n1, w, below]);
+    assert!(widen::widen(
+        &mut facts, &roots, &mut again, &old, &mut head, 4
+    ));
+    assert_eq!(again, old, "the state at the head is stable");
+}
+
+#[test]
+fn a_place_ten_steps_deeper_widens_at_the_outermost_new_place() {
+    // Each iteration goes ten steps deeper: after two visits the place is
+    // the wildcard place of the outermost place that the loop added.
+    let mut facts = FnFacts::default();
+    let roots = Roots::default();
+    let l = facts.add_root("l", weft_facts::RootKind::Local);
+    let cur = LocalId(1);
+    let d10 = deeper(&mut facts, l, 10, 0);
+    let d20 = deeper(&mut facts, l, 20, 0);
+    let first = points(cur, &[l]);
+    let mut head = Head::new(&first);
+    let mut st = points(cur, &[l, d10]);
+    assert!(widen::widen(
+        &mut facts, &roots, &mut st, &first, &mut head, 4
+    ));
+    let old = st.clone();
+    let mut st = points(cur, &[l, d10, d20]);
+    assert!(widen::widen(
+        &mut facts, &roots, &mut st, &old, &mut head, 4
+    ));
+    let w = facts.wildcard(d10);
+    let got = st.value((B, cur), &[]).flat().refs;
+    assert!(got.contains(&w), "{:?}", texts_of(&facts, &st, cur));
+    assert!(!got.contains(&d20));
+}
+
+#[test]
+fn too_many_places_of_one_root_become_the_wildcard_place_of_their_prefix() {
+    // Seventeen fields of `w.a` in one value: more than `PLACES_MAX`.
+    let mut facts = FnFacts::default();
+    let roots = Roots::default();
+    let w = facts.add_root("w", weft_facts::RootKind::Local);
+    let a = deeper(&mut facts, w, 1, 0);
+    let r = LocalId(1);
+    let many: Vec<PlaceId> = (1..=17).map(|i| deeper(&mut facts, a, 1, i)).collect();
+    let first = points(r, &[]);
+    let mut head = Head::new(&first);
+    let mut st = points(r, &many);
+    assert!(widen::widen(
+        &mut facts, &roots, &mut st, &first, &mut head, 4
+    ));
+    let wa = facts.wildcard(a);
+    assert_eq!(
+        st.value((B, r), &[]).flat().refs,
+        std::iter::once(wa).collect::<BTreeSet<_>>()
+    );
+    const { assert!(widen::PLACES_MAX < 17) };
+}
+
+#[test]
+fn after_the_root_visits_a_new_place_widens_to_its_root_and_the_bound_ends_the_loop() {
+    // After `roots_after(locals)` visits, a new place becomes the wildcard
+    // place of the deepest known place above it, or of its root. A head
+    // that needs more than `visit_bound(locals)` visits is an error.
+    let mut facts = FnFacts::default();
+    let roots = Roots::default();
+    let w = facts.add_root("w", weft_facts::RootKind::Local);
+    let a = deeper(&mut facts, w, 3, 0);
+    let r = LocalId(1);
+    let first = points(r, &[]);
+    let mut head = Head::new(&first);
+    head.visits = widen::roots_after(4);
+    let mut st = points(r, &[a]);
+    assert!(widen::widen(
+        &mut facts, &roots, &mut st, &first, &mut head, 4
+    ));
+    let ww = facts.wildcard(w);
+    assert_eq!(
+        texts_of(&facts, &st, r),
+        vec![facts.place(ww).display.clone()]
+    );
+    head.visits = widen::visit_bound(4);
+    let mut st = points(r, &[a]);
+    assert!(!widen::widen(
+        &mut facts, &roots, &mut st, &first, &mut head, 4
+    ));
 }
 
 // ------------------------------------------------------ summaries (F5)

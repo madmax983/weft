@@ -3456,3 +3456,66 @@ note = "a new value of a part with an `H` variable replaces the places of the pa
 # I3-3: an interpreter defect (class I): the engine differential and the interpreter tests cover it, not a claim
 # I3-4: an interpreter defect (class I): the engine differential and the interpreter tests cover it, not a claim
 # Q3-3: verdict stays (NAMES, outside the lowering)
+
+[[claim]]
+finding = "F10-U1"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F10"
+repro = ["tests/gate/probes/fixes/f10/uniq_across_multi.wf"]
+code = "W0503"
+line = 7
+note = "a `@ uniq` reference live across a `multi` operation (stage F10a): the facts of the ir pipeline gave `uniq` and no `once_var`, so W0503 was lost; the old lowering sets `once` for each `@ uniq` value"
+
+[[claim]]
+finding = "F10-T1"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F10"
+repro = ["tests/gate/probes/fixes/f10/block_tail_line.wf"]
+code = "W0601"
+line = 9
+exact = ["W0302", "W0601"]
+note = "the discarded value of a block statement is its tail (stage F10a, tests/programs/127_place_statements.wf): the temporary and its `Dead` have the span of the tail, so W0601 is at the line of the tail, as in the old lowering"
+
+[[claim]]
+finding = "F10-W1"
+kind = "sound"
+verdict = "construction"
+group = "AB"
+stage = "F10"
+repro = ["tests/gate/probes/fixes/f10/walk_write_through.wf"]
+note = "a write through a reference that a loop walk found (stage F10a, tests/programs/105_walk_writes.wf): the widened reference has more than one place, and the write changes the place that it points to at run time, so `writes_via` holds (rule 4); the program is correct"
+
+[[claim]]
+finding = "F10-P1"
+kind = "sound"
+verdict = "construction"
+group = "AB"
+stage = "F10"
+repro = ["tests/gate/probes/fixes/f10/promoted_in_loop.wf"]
+note = "references of earlier iterations into a promoted temporary stay valid (stage F10a, docs/ir.md 5.10): the first value after `Live` writes nothing"
+
+[[claim]]
+finding = "F10-H1"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F10"
+repro = ["tests/gate/probes/fixes/f10/store_behind.wf"]
+code = "W0301"
+line = 12
+note = "a value stored behind a reference parameter and read back (stage F10a, from the tier-2 lost faults W3_store_behind/W3b): the heap slot of the parameter keeps the places of the stored references (docs/ir.md 6.6); the ir pipeline accepted it and the oracle faults"
+
+[[claim]]
+finding = "F10-H1"
+kind = "unsound"
+verdict = "construction"
+group = "AB"
+stage = "F10"
+repro = ["tests/gate/probes/fixes/f10/store_behind_loop.wf"]
+code = "W0301"
+line = 18
+note = "the loop form of F10-H1 (tier 2 `verify/s5/R2a: .../W3_store_behind.wf`): iteration i + 1 reads back what iteration i stored behind `out`"

@@ -1,0 +1,10 @@
+// Stage F10a: a `@ uniq` value is not `many` (`once_var`). A `multi`
+// operation can resume more than once, so the reference must not be live
+// there (W0503). The facts of the ir pipeline gave `uniq` and no
+// `once_var`: the old lowering sets both.
+effect Choice { multi fn choose() -> bool }
+fn walk(xs: &[u64] @ uniq) / Choice {
+    let b = choose()   //~ W0503
+    print(xs[0])
+}
+fn main() {}

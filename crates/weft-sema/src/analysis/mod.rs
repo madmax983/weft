@@ -9,9 +9,10 @@
 //!
 //! [`run`] is the driver: a worklist over the blocks of a body in reverse
 //! post-order. It joins the state of each edge into the state at the entry
-//! of its target, and visits the target again if that state changed. Stage
-//! F3 has no widening (stage F10): a body whose states still change after
-//! [`VISITS`] visits of one block gives an error.
+//! of its target, and visits the target again if that state changed. At a
+//! loop head (the target of a back edge) the join widens ([`widen`], stage
+//! F10), so the states of a loop are stable after a finite number of
+//! visits.
 //!
 //! The summaries (`docs/ir.md` 6.7) carry what a body does across a call:
 //! [`summary`] holds them, [`sig`] makes them from signatures and projects
@@ -29,6 +30,7 @@ pub mod summarize;
 pub mod summary;
 pub mod transfer;
 pub mod unknown;
+pub mod widen;
 
 use std::collections::BTreeSet;
 
@@ -39,9 +41,6 @@ pub use summary::{Summaries, Summary};
 pub use transfer::Cx;
 
 use crate::factgen::alpha::AlphaError;
-
-/// The most visits of one block. A loop needs widening (stage F10).
-pub const VISITS: usize = 64;
 
 /// The states of one body: the state at the entry of each block that the
 /// entry reaches and that is a *join* block.
@@ -143,7 +142,8 @@ fn join_blocks(b: &weft_ir::Body, rank: &[usize]) -> Vec<bool> {
 /// # Errors
 ///
 /// The errors of the transfer functions, and [`AlphaError::Later`] if a
-/// block needs more than [`VISITS`] visits (a loop: widening is stage F10).
+/// loop head needs more than [`widen::visit_bound`] visits (a bug of the
+/// widening).
 pub fn run(cx: &mut Cx<'_>, body: BodyId, init: State) -> Result<States, AlphaError> {
     run_with(cx, body, init, false)
 }
@@ -169,20 +169,21 @@ fn run_with(cx: &mut Cx<'_>, body: BodyId, init: State, all: bool) -> Result<Sta
         .get(body.index())
         .ok_or_else(|| AlphaError::BadPlace(format!("no body b{}", body.0)))?;
     let order = weft_ir::order::reverse_post_order(b);
-    let mut rank = vec![usize::MAX; b.blocks.len()];
-    for (i, blk) in order.iter().enumerate() {
-        if let Some(r) = rank.get_mut(blk.index()) {
-            *r = i;
-        }
-    }
+    let rank = widen::ranks(b);
     let join = join_blocks(b, &rank);
+    let is_head = widen::heads(b, &rank);
+    let mut heads: Vec<Option<widen::Head>> = vec![None; b.blocks.len()];
     let mut out = States {
         entry: vec![None; b.blocks.len()],
         join,
     };
-    let mut visits = vec![0usize; b.blocks.len()];
     let mut work: BTreeSet<usize> = BTreeSet::new();
     if let Some(e) = out.entry.get_mut(b.entry.index()) {
+        if is_head.get(b.entry.index()).copied().unwrap_or(false) {
+            if let Some(h) = heads.get_mut(b.entry.index()) {
+                *h = Some(widen::Head::new(&init));
+            }
+        }
         *e = Some(init);
         work.insert(rank.get(b.entry.index()).copied().unwrap_or(0));
     }
@@ -204,12 +205,6 @@ fn run_with(cx: &mut Cx<'_>, body: BodyId, init: State, all: bool) -> Result<Sta
         }) else {
             continue;
         };
-        if let Some(v) = visits.get_mut(blk_id.index()) {
-            *v += 1;
-            if *v > VISITS {
-                return Err(AlphaError::Later("a loop (widening, stage F10)"));
-            }
-        }
         for s in &blk.stmts {
             transfer::stmt(cx, body, &mut st, &s.kind)?;
         }
@@ -217,11 +212,30 @@ fn run_with(cx: &mut Cx<'_>, body: BodyId, init: State, all: bool) -> Result<Sta
             let Some(slot) = out.entry.get_mut(to.index()) else {
                 continue;
             };
-            let changed = if let Some(have) = slot {
-                have.join(&s)
-            } else {
-                *slot = Some(s);
-                true
+            let head = heads.get_mut(to.index());
+            let changed = match (slot, head) {
+                (Some(have), Some(Some(h))) => {
+                    // A loop head: the join widens (`widen`).
+                    let old = have.clone();
+                    if have.join(&s) {
+                        if !widen::widen(cx.facts, cx.roots, have, &old, h, b.locals.len()) {
+                            return Err(AlphaError::Later("a loop that the widening does not end"));
+                        }
+                        *have != old
+                    } else {
+                        false
+                    }
+                }
+                (Some(have), _) => have.join(&s),
+                (slot, head) => {
+                    if is_head.get(to.index()).copied().unwrap_or(false) {
+                        if let Some(h) = head {
+                            *h = Some(widen::Head::new(&s));
+                        }
+                    }
+                    *slot = Some(s);
+                    true
+                }
             };
             if changed {
                 if let Some(&tr) = rank.get(to.index()) {

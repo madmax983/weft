@@ -1,0 +1,40 @@
+// Stage F10a (tier 2 lost faults `verify/s5/R2a: .../W3_store_behind.wf`
+// and `W3b`): a loop stores a call result behind a reference parameter and
+// reads it back in the next iteration. The heap slot of `*out` carries the
+// place around the loop: W0301 at the read of `k`.
+struct Entity { hp: i32, id: u64, kids: Vec<Entity> }
+fn find(v: &Vec<Entity>, id: u64) -> Option<&Entity> {
+    for e in v[] { if e.id == id { return Some(e) } }
+    None
+}
+fn behind(v: &Vec<Entity>, out: &Vec<&Entity>, n: u64) / mut(v.., out) {
+    let i = 0
+    while i < n {
+        match find(v, 1) {
+            Some(e) => {
+                let c = out[out.len() - 1]
+                let k = &c.kids[0]
+                e.kids.clear()
+                print(k.hp)   //~ W0301
+                e.kids.push(Entity { hp: 3, id: 9, kids: Vec.new() })
+                out.push(e)
+            }
+            None => {}
+        }
+        i += 1
+    }
+}
+fn ent(id: u64) -> Entity {
+    let e = Entity { hp: 1, id: id, kids: Vec.new() }
+    e.kids.push(Entity { hp: 2, id: 9, kids: Vec.new() })
+    e
+}
+test "behind" {
+    let v = Vec.new()
+    v.push(ent(1))
+    let w = Vec.new()
+    w.push(ent(2))
+    let out = Vec.new()
+    out.push(&w[0])
+    behind(&v, &out, 3)
+}

@@ -42,6 +42,8 @@ pub struct Cx<'a> {
     pub roots: &'a mut Roots,
     /// The summary of each function that a call can run.
     pub sums: &'a super::summary::Summaries,
+    /// The blocks of the component that are in a cycle of the CFG.
+    pub cycles: &'a super::widen::Cycles,
 }
 
 /// The key of local `l` of body `body`: the site local of an upvar local.
@@ -120,7 +122,9 @@ pub fn held_at(
         Some(Role::Param(body, i) | Role::Held(body, i)) => {
             let name = param_name(p, body, i);
             let h = roots.held(facts, body, i, &name);
-            Ok(vec![facts.wildcard(h)])
+            let mut out = vec![facts.wildcard(h)];
+            out.extend(stored_at(facts, st, at));
+            Ok(out)
         }
         Some(Role::Group) => Err(AlphaError::Later(
             "a reference in an `rc` object (stored values, stage F13)",
@@ -132,11 +136,63 @@ pub fn held_at(
         // caller.
         Some(Role::Caller) => {
             let c = roots.caller(facts);
-            Ok(vec![facts.wildcard(c)])
+            let mut out = vec![facts.wildcard(c)];
+            out.extend(stored_at(facts, st, at));
+            Ok(out)
         }
         None => Err(AlphaError::BadPlace(
             "a place with no root of the component".to_string(),
         )),
+    }
+}
+
+/// The places that the references stored in a heap slot that overlaps the
+/// fact place `at` can point into (`docs/ir.md` 6.6): a value that the body
+/// puts behind a reference parameter, and reads back later (a loop reads in
+/// the next iteration what the iteration before stored). A place below a
+/// wildcard place counts as its base.
+fn stored_at(facts: &FnFacts, st: &State, at: PlaceId) -> Vec<PlaceId> {
+    if st.behind().is_empty() {
+        return Vec::new();
+    }
+    let norm = |p: PlaceId| facts.wild_base(p).unwrap_or(p);
+    let below = |x: PlaceId, y: PlaceId| {
+        let mut cur = Some(x);
+        while let Some(c) = cur {
+            if c == y {
+                return true;
+            }
+            cur = facts.places.get(c.index()).and_then(|i| i.parent);
+        }
+        false
+    };
+    let a = norm(at);
+    let mut out = Vec::new();
+    for (q, refs) in st.behind() {
+        let b = norm(*q);
+        if below(a, b) || below(b, a) {
+            out.extend(refs.iter().copied());
+        }
+    }
+    out
+}
+
+/// Each place of `places` that no local of the component owns gets the
+/// references `refs` in its heap slot (a weak update, `docs/ir.md` 6.6).
+fn store_heap(
+    facts: &FnFacts,
+    roots: &Roots,
+    st: &mut State,
+    places: &[PlaceId],
+    refs: &[PlaceId],
+) {
+    if refs.is_empty() {
+        return;
+    }
+    for &q in places {
+        if roots.path_of(facts, q).is_none() {
+            st.store_behind(q, refs.iter().copied());
+        }
     }
 }
 
@@ -297,7 +353,7 @@ fn is_enum(tys: &TyTable, t: TyId) -> bool {
 /// # Errors
 ///
 /// The errors of α, and [`AlphaError::Later`] for a closure aggregate
-/// (stage F11) and an iterator (stage F10).
+/// (stage F11).
 pub fn rvalue(cx: &mut Cx<'_>, body: BodyId, st: &State, rv: &Rvalue) -> Result<Tree, AlphaError> {
     match rv {
         Rvalue::Use(op) => operand(cx, body, st, op),
@@ -311,10 +367,69 @@ pub fn rvalue(cx: &mut Cx<'_>, body: BodyId, st: &State, rv: &Rvalue) -> Result<
         | Rvalue::Unary(..)
         | Rvalue::Len(_)
         | Rvalue::Discriminant(_)
-        | Rvalue::Concat(_) => Ok(Tree::leaf(AbsVal::plain())),
+        | Rvalue::Concat(_)
+        | Rvalue::Iter(weft_ir::IterSource::Range(..)) => Ok(Tree::leaf(AbsVal::plain())),
         Rvalue::Aggregate(kind, ops) => aggregate(cx, body, st, kind, ops),
-        Rvalue::Iter(_) => Err(AlphaError::Later("an iterator (stage F10)")),
+        Rvalue::Iter(weft_ir::IterSource::Elems(q)) => iter_value(cx, body, st, q),
     }
+}
+
+/// The value of an iterator over the elements `q` (`docs/ir.md` 5.14): it
+/// points into the places of the elements and into the handle places on
+/// the way, as a borrow of `q`. It is `@ uniq` if the value of the local of
+/// `q` is (RT18).
+///
+/// # Errors
+///
+/// The errors of α.
+fn iter_value(cx: &mut Cx<'_>, body: BodyId, st: &State, q: &Place) -> Result<Tree, AlphaError> {
+    let a = alpha(cx, body, st, q)?;
+    let mut v = AbsVal::refs(a.places.iter().chain(&a.handles).copied());
+    v.uniq = st.value(key(cx.p, body, q.local)?, &[]).flat().uniq;
+    Ok(Tree::leaf(v))
+}
+
+/// The value that `IterNext` gives to `dest` from the iterator at `iter`.
+///
+/// An element of a type that can hold a reference is a reference into the
+/// elements (the places of the iterator, and its `@ uniq` mode); a scalar
+/// element is a copy (`docs/ir.md` 5.14).
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn next_value(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &State,
+    iter: &Place,
+    dest: &Place,
+) -> Result<Tree, AlphaError> {
+    let t = place_ty(cx, body, dest)?;
+    if !ir_props(cx.tys, t).holds_refs {
+        return Ok(Tree::leaf(AbsVal::plain()));
+    }
+    let it = place_value(cx, body, st, iter)?.flat();
+    let mut v = AbsVal::refs(it.refs);
+    v.uniq = it.uniq;
+    Ok(Tree::leaf(v))
+}
+
+/// `IterNext(iter, dest)`: `dest` gets the next element ([`next_value`]).
+/// The `done` edge gets the same state: the block there ends `dest`.
+///
+/// # Errors
+///
+/// The errors of α.
+fn iter_next(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &mut State,
+    iter: &Place,
+    dest: &Place,
+) -> Result<(), AlphaError> {
+    let v = next_value(cx, body, st, iter, dest)?;
+    bind_result(cx, body, st, &[], dest, v)
 }
 
 /// The value of an aggregate: the values of its operands as its parts.
@@ -516,6 +631,10 @@ pub fn assign(
     for (k, path) in targets {
         st.add(k, &path, &flat);
     }
+    if let Some(a) = &a {
+        let refs: Vec<PlaceId> = flat.top.refs.iter().copied().collect();
+        store_heap(cx.facts, cx.roots, st, &a.places, &refs);
+    }
     Ok(())
 }
 
@@ -663,7 +782,7 @@ pub fn term(
             "a perform through a capability of a handler (stage F14)",
         )),
         TermKind::Resume { .. } => Err(AlphaError::Later("a continuation (stage F16)")),
-        TermKind::IterNext { .. } => Err(AlphaError::Later("an iterator (stage F10)")),
+        TermKind::IterNext { iter, dest, .. } => iter_next(cx, body, st, iter, dest),
         TermKind::Handle { .. } => Err(AlphaError::Later("a handler (stage F14)")),
         TermKind::Scope { .. }
         | TermKind::ScopeWait { .. }
@@ -751,6 +870,7 @@ pub fn call_out(
         .ok_or_else(|| AlphaError::BadPlace(format!("no function f{}", f.0)))?;
     let inst = run_inst(body, block);
     let mut sigma = super::apply::sigma(cx, body, st, decl, targs, args, inst)?;
+    sigma.cyclic = cx.cycles.has(body, block);
     if summary.ret_in_frame() {
         sigma.frame = Some(cx.roots.frame(cx.facts, inst, &decl.name));
     }
@@ -790,6 +910,8 @@ fn call(
     for (q, refs) in &out.stores {
         if let Some((k, path)) = cx.roots.path_of(cx.facts, *q) {
             st.add(k, &path, &Tree::leaf(AbsVal::refs(refs.iter().copied())));
+        } else {
+            st.store_behind(*q, refs.iter().copied());
         }
     }
     let changed: Vec<PlaceId> = out.muts.iter().map(|(q, _)| *q).collect();
@@ -882,6 +1004,10 @@ fn bind_result(
         .collect();
     for (k, path) in targets {
         st.add(k, &path, &flat);
+    }
+    if let Some(a) = &a {
+        let refs: Vec<PlaceId> = flat.top.refs.iter().copied().collect();
+        store_heap(cx.facts, cx.roots, st, &a.places, &refs);
     }
     Ok(())
 }

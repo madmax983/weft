@@ -37,17 +37,26 @@ fn corpus_paths() -> Vec<PathBuf> {
     paths
 }
 
-/// The result of one program: `None` if it is out of scope, else the
-/// problems (empty if the program passes).
+/// The result of one program with the default groups: `None` if it is out
+/// of scope, else the problems (empty if the program passes).
 fn run(path: &Path) -> Option<String> {
+    run_with(path, None)
+}
+
+/// [`run`] with the construct groups `groups` (the default groups if
+/// `None`).
+fn run_with(path: &Path, groups: Option<weft_sema::Groups>) -> Option<String> {
     let src = fs::read_to_string(path).expect("the program is readable");
     let name = path
         .file_name()
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-    let opts = Options {
+    let mut opts = Options {
         facts: FactGen::Ir,
         ..Options::from_markers(&src)
     };
+    if let Some(g) = groups {
+        opts.ir_groups = g;
+    }
     let checked = check_source(&name, &src, opts);
     if !checked
         .analysis
@@ -84,6 +93,25 @@ fn the_corpus_in_scope_gives_the_markers_of_the_ir_pipeline() {
     }
     eprintln!("{in_scope} programs of the corpus are in scope");
     assert!(in_scope >= 19, "only {in_scope} programs are in scope");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn the_corpus_in_scope_of_the_groups_a_and_b_gives_the_markers_of_the_ir_pipeline() {
+    // The preview of stage F10a: loops (group B) are not in the default set
+    // yet. The loop programs of the corpus keep their markers.
+    let ab = weft_sema::Groups::parse("AB").expect("the groups parse");
+    let (mut in_scope, mut failures) = (0, Vec::new());
+    for path in corpus_paths() {
+        if let Some(msg) = run_with(&path, Some(ab)) {
+            in_scope += 1;
+            if !msg.is_empty() {
+                failures.push(msg);
+            }
+        }
+    }
+    eprintln!("{in_scope} programs of the corpus are in scope of the groups A and B");
+    assert!(in_scope >= 26, "only {in_scope} programs are in scope");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 

@@ -1288,6 +1288,17 @@ break / continue =>  <exit scopes up to the loop>; Goto(exit / head)
 - An element of scalar type is a copy. Another element is a reference into the buffer.
   The iterator is `@ uniq` if its source is (RT18). `IterNext` reads the length at each
   step.
+- As built (plan stage F10a, facts): `Iter(Elems(q))` is a borrow of `q` (`uses` of the
+  variables of `q`, `reads_at` of its pointers); the value of the iterator points into
+  α(`q`) and the handle places on the way, and is `@ uniq` if the value of the local of
+  `q` is. `Iter(Range(a, b))` reads its operands and holds nothing. `IterNext(it, x)`
+  uses the variables of `it`, reads its place and the places that it points into, and
+  gives `x` the element as an `Assign` of a whole local: a reference into the places of
+  the iterator (an element type that can hold a reference), else plain data. The `done`
+  edge gets the same state; the block there ends `x`. The iterator does not point into
+  the places that the elements point into (the old lowering added them): so a stale
+  reference in an element is an error at the first read through the element, not at the
+  `for` (`r3/redteam/p/i5_formatch.wf`, class `moved`).
 
 ### 5.15 `return` [2.14]
 
@@ -2093,8 +2104,11 @@ aggregate emits `uses` and `reads_at` of the variable and no reference.
     `points_into(H(p), A)`; `rebound_at(U(p), n)` for a place field; `mutates_at(n, α(p))`;
     `overwrites(S(l), n)` if the part can hold a live linear value.
   - `p` goes through `Deref` of `r`: `mutates_at(n, α(p))`; `uses` and `reads_at` of
-    `ptr(p)`; `writes_via(n, S(r))` if the analysis says that `r` holds one reference to
-    one place (not a wildcard) and each `mutates_at` of `n` is at or below it (C6); a
+    `ptr(p)`; `writes_via(n, S(r))` if the first `Deref` is of a whole local `r` of type
+    `&X` with no reference in `X`, and each `mutates_at` of `n` is at or below a place of
+    `r` (C6; as built F10a, the rule of the old lowering: the places can be more than one,
+    or a wildcard place after a loop widens, because at run time `r` points to one place
+    and the write changes it or a place below it); a
     store of a reference value into the held places of a local is a weak definition there
     (`points_into` with no `rebound_at`); a store into a `Param`, `Arg` or `Group` root
     goes into the `stores` part (6.7) and the W0204 store check (6.9); the `scope_end` of
@@ -2462,8 +2476,9 @@ A store through a pointer or into an element is a weak update of the move path t
 the place (or a move path above it), with no structure. `Live`, `Dead`, `Consume`,
 `Uninit` and a `move` operand leave no value. A cleanup block gets the state before the
 terminator that aborts. `uniq` holds for a copy of a `@ uniq` value only: a constant, a
-borrow and an aggregate are not `@ uniq`. There is no widening yet (stage F10): a block
-that the driver visits more than 64 times is an error.
+borrow and an aggregate are not `@ uniq`. (Until stage F10 there was no widening: a block
+that the driver visited more than 64 times was an error, and the fact generator refused a
+back edge.)
 
 As built (plan stage F8, cost): the maps of a state (values and the move-path sets) go
 in chunks of 64 locals that the states share (`domain::Chunked`): a clone copies no
@@ -2474,6 +2489,48 @@ predecessor, in reverse post-order (`analysis::edges`). Before this, a long chai
 calls, or a cleanup chain of a call after many `let`s (one block for each live local),
 kept blocks times locals trees: tier 2 ran out of memory (9 GB for
 `r2/quality/gen/si_4000.wf`, 12 GB for `verify/le_15000.wf`).
+
+As built (plan stage F10a, `crates/weft-sema/src/analysis/widen.rs`; group B is a
+preview, not in the default set): a *loop head* is the target of a back edge (an edge to a
+block whose rank in reverse post-order is not higher, normal or `unwind`). The driver keeps
+the first state at each head (the state before the loop). At each later join into a head
+that changes the state, the joined state widens, with the rules of the loop passes of the
+old lowering (`widen_deeper`, `widen_place`, `collapse_places`), for the places of each
+local:
+
+1. A place below a shared wildcard place `b..` becomes `b..`.
+2. A new place below a place that an earlier visit added (a place of the local at the head
+   before the join that the state before the loop did not have) becomes the wildcard place
+   of the outermost such place. So a walk (`cur = &cur.next[0]`, also ten steps at a time)
+   stops after two visits: this is the rule "deeper than the places at the head" with the
+   depth of one visit, as the old lowering did it before its pass 8.
+3. More than 16 places of one root in one value become the wildcard place of their common
+   prefix.
+4. After `locals + 16` visits of the head, a new place becomes the wildcard place of the
+   deepest place of the local above it, or of its root. The roots are finite, so the head
+   is stable after a finite number of visits; `2 (locals + 16) + 32` visits are a bug of
+   the analysis (the program is out of scope: "a loop that the widening does not end").
+
+A chain of locals that rotate their values (RR1) needs one visit for each local: rule 4
+comes later. The function values of group B are items (a finite set); the function sets of
+stage F12 add the `Unknown` rule. W0707 goes away: the ir pipeline drops it (`IR_DROPS`),
+and nothing in the analysis can report it. A call in a block of a cycle (a strongly
+connected part of the CFG with more than one block, or a block with an edge to itself,
+`widen::Cycles`) gives its result no one-place instance (`Sigma::cyclic`): the result of
+the iteration before can be inside the result of this one (`102_wild_instances.wf`,
+`again`). The templates run once for each block, with the state of the fixpoint.
+
+As built (plan stage F10a, heap slots): a store of references into a place that no local
+of the component owns (behind a reference parameter, in a place of a caller: an `Assign`
+through a pointer, the `stores` part of a callee, the destination of a run node) is a weak
+update of the *heap slot* of that fact place (`State::store_behind`). `held_at` of a place
+of a `Param`, `Held` or `Caller` root gives the wildcard place of the root and the places
+of each heap slot whose place overlaps it (a place below a wildcard place counts as its
+base). So a body that reads back what it put behind `out` (in the same run, or in the
+next iteration of a loop) sees the places of the stored references (tier 2
+`verify/s5/R2a: .../W3_store_behind.wf`, a lost fault of the preview; the straight-line
+form was a lost fault of group A too). The heap slots join by union and widen at a loop
+head with the rules above.
 
 **The post-passes of today**, and where each one goes:
 

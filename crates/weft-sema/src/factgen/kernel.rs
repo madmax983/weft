@@ -14,8 +14,8 @@
 //!   ([`read`]); a read through a reference reads what it points into
 //!   ([`read_through`]);
 //! - a write through a reference changes the places of `q`, uses and reads
-//!   its pointers, and gives `writes_via` when the reference holds one place
-//!   at or above each change ([`write_through`]).
+//!   its pointers, and gives `writes_via` when each change is at or below a
+//!   place of the reference ([`write_through`]).
 
 use weft_facts::{PlaceId, VarId};
 
@@ -129,17 +129,23 @@ pub fn read_through(refs: &[PlaceId]) -> Frag {
 /// A write through a reference to the place: it changes the places, uses
 /// the variables of the pointer, and reads the pointers.
 ///
-/// `one` is the variable of the reference and the place that it points to,
-/// if it holds one reference to one place that is not a wildcard place. Then
-/// the node gets `writes_via` if each change is at or below that place
-/// (`below(m, d)`: place `m` is at or below place `d`; rule 4, C6).
+/// `via` is the variable of the reference and the places that it can point
+/// into, if the write goes through a reference local to a value with no
+/// reference in it. Then the node gets `writes_via` if each change is at or
+/// below one of those places (`below(m, d)`: place `m` is at or below place
+/// `d`; rule 4, C6). At run time the reference points to one place, and the
+/// write changes that place or a place below it, so the reference stays
+/// valid. This holds also if the analysis gives more than one place, or a
+/// wildcard place (a walk in a loop, `docs/ir.md` 6.6).
 pub fn write_through(
     a: &Access,
-    one: Option<(VarId, PlaceId)>,
+    via: Option<(VarId, &[PlaceId])>,
     below: &dyn Fn(PlaceId, PlaceId) -> bool,
 ) -> Frag {
-    let via = one
-        .filter(|&(_, d)| !a.places.is_empty() && a.places.iter().all(|&m| below(m, d)))
+    let via = via
+        .filter(|(_, ds)| {
+            !a.places.is_empty() && a.places.iter().all(|&m| ds.iter().any(|&d| below(m, d)))
+        })
         .map(|(v, _)| v);
     Frag {
         uses: a.vars.clone(),

@@ -1281,3 +1281,45 @@ fn main() {}
     got.sort();
     assert_eq!(got, markers(src));
 }
+
+#[test]
+fn a_value_stored_behind_a_reference_parameter_is_read_back_from_its_heap_slot() {
+    // Stage F10a (tier 2 lost faults `W3_store_behind.wf`, `W3b`): a body
+    // puts `&v[0]` into the vector behind `out`, reads it back, borrows
+    // into it, and clears `v[0].kids`. The heap slot of `*out`
+    // (`docs/ir.md` 6.6) keeps the places of the stored reference, so the
+    // read gives `v[0]` and the borrow `k` is invalid. A store into one
+    // parameter and a read of another, and a read before the change, are
+    // valid.
+    let src = "\
+struct Entity { hp: i32, id: u64, kids: Vec<Entity> }
+fn behind(v: &Vec<Entity>, out: &Vec<&Entity>) / mut(v.., out) {
+    let e = &v[0]
+    out.push(e)
+    let c = out[out.len() - 1]
+    let k = &c.kids[0]
+    e.kids.clear()
+    print(k.hp)   //~ W0301
+}
+fn other(v: &Vec<Entity>, out: &Vec<&Entity>, w: &Vec<&Entity>) / mut(v.., out) {
+    let e = &v[0]
+    out.push(e)
+    let c = w[0]
+    let k = &c.kids[0]
+    e.kids.clear()
+    print(k.hp)
+}
+fn before(v: &Vec<Entity>, out: &Vec<&Entity>) / mut(v.., out) {
+    let e = &v[0]
+    out.push(e)
+    let c = out[out.len() - 1]
+    let k = &c.kids[0]
+    print(k.hp)
+    e.kids.clear()
+}
+fn main() {}
+";
+    let mut got = ir_codes(src);
+    got.sort();
+    assert_eq!(got, markers(src));
+}

@@ -72,6 +72,8 @@ pub struct Em<'a> {
     pub skip_s: Option<Key>,
     /// The summary of each function that a call can run.
     pub sums: &'a crate::analysis::Summaries,
+    /// The blocks of the component that are in a cycle of the CFG.
+    pub cycles: &'a crate::analysis::widen::Cycles,
     /// The references that the body puts behind a reference parameter or
     /// into an `rc` object (the W0204 store check, `docs/ir.md` 6.9).
     pub stored: Vec<Stored>,
@@ -166,6 +168,7 @@ impl Em<'_> {
             facts: self.facts,
             roots: self.roots,
             sums: self.sums,
+            cycles: self.cycles,
         }
     }
 
@@ -811,6 +814,12 @@ pub fn assign(
         }
     }
     match rv {
+        // An iterator over the elements borrows them (`docs/ir.md` 5.14).
+        Rvalue::Iter(weft_ir::IterSource::Elems(q)) => {
+            let (a, al) = em.access(st, q, false)?;
+            let (f, _) = kernel::borrow(&a, &al.handles);
+            em.apply(n, f);
+        }
         Rvalue::Ref(q) => {
             let (mut a, al) = em.access(st, q, false)?;
             // A borrow of a place that holds references, through a pointer,
@@ -1045,14 +1054,22 @@ fn through(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, v: &Tree) -> R
             .rebound_at
             .extend(given.into_iter().map(|u| (u, n)));
     }
-    // `writes_via`: the first dereference is of a whole local that holds one
-    // reference to one place.
-    let one = match place.proj.first() {
+    // `writes_via`: the first dereference is of a whole local of type `&X`,
+    // with no reference in `X` (the rule of `via_receiver` and of the old
+    // lowering, `writes_through`).
+    let via = match place.proj.first() {
         Some(Proj::Deref(weft_ir::DerefKind::Ref)) => {
             let k = em.key(place.local)?;
-            let refs = st.value(k, &[]).flat().refs;
-            match (refs.len(), refs.first(), em.s_var(k)) {
-                (1, Some(&d), Some(s)) if em.facts.wild_base(d).is_none() => Some((s, d)),
+            let plain = em
+                .place_ty(&Place::local(place.local))
+                .and_then(|t| match em.tys.try_get(t) {
+                    Some(Ty::Ref(x)) => Some(*x),
+                    _ => None,
+                })
+                .is_some_and(|x| !ir_props(em.tys, x).holds_refs);
+            let refs: Vec<PlaceId> = st.value(k, &[]).flat().refs.into_iter().collect();
+            match em.s_var(k) {
+                Some(s) if plain && !refs.is_empty() => Some((s, refs)),
                 _ => None,
             }
         }
@@ -1069,7 +1086,7 @@ fn through(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, v: &Tree) -> R
         }
         false
     };
-    let f = kernel::write_through(&a, one, &below);
+    let f = kernel::write_through(&a, via.as_ref().map(|(s, r)| (*s, r.as_slice())), &below);
     em.apply(n, f);
     // A store of a reference into a local through a pointer: a weak
     // definition of the variable of the place (no `rebound_at`).
@@ -1536,10 +1553,41 @@ pub fn term(em: &mut Em<'_>, n: NodeId, st: &State, t: &TermKind, origin: weft_i
         TermKind::Call { .. } => Err(AlphaError::BadPlace(
             "a call needs the nodes of its phases (`call`)".to_string(),
         )),
+        TermKind::IterNext { iter, dest, .. } => iter_next(em, n, st, iter, dest),
         _ => Err(AlphaError::Later(
             "a terminator that runs another body (stages F14 and later)",
         )),
     }
+}
+
+/// `IterNext(iter, dest)` (`docs/ir.md` 6.4).
+///
+/// `uses` of the variables of
+/// the iterator and the reads of its place; `reads_at` of the elements that
+/// it points into (each step reads the length and an element); then `dest`
+/// gets the element as the destination of an `Assign` (`rebound_at`,
+/// `points_into`, `empty_at`).
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn iter_next(em: &mut Em<'_>, n: NodeId, st: &State, iter: &Place, dest: &Place) -> R {
+    let (a, _) = em.access(st, iter, false)?;
+    em.apply(n, kernel::read(&a));
+    let body = em.body;
+    let it = transfer::place_value(&mut em.cx(), body, st, iter)?;
+    let refs = named_refs(em, it.flat().refs);
+    em.apply(n, kernel::read_through(&refs));
+    let v = transfer::next_value(&mut em.cx(), body, st, iter, dest)?;
+    match transfer::move_path(em.p, body, dest)? {
+        Some((k, path)) if path.is_empty() => whole(em, n, st, k, &v),
+        _ => {
+            return Err(AlphaError::BadPlace(
+                "the element of an iterator that is not a whole local".to_string(),
+            ))
+        }
+    }
+    Ok(())
 }
 
 /// `Goto`: the edge only.

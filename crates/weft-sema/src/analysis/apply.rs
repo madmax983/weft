@@ -78,6 +78,9 @@ pub struct Sigma {
     /// The id of the run node: each run node gives its splits and its
     /// one-place instances ids of their own.
     pub inst: u32,
+    /// The run node is in a cycle of the CFG (a loop): its result gets no
+    /// one-place instance (`docs/ir.md` 6.6).
+    pub cyclic: bool,
 }
 
 /// The type behind a reference type `t`.
@@ -362,8 +365,8 @@ fn one_result(tys: &TyTable, t: TyId) -> bool {
 ///
 /// The stated places of the result, each part of a tuple with its own
 /// places; and, if the type of the result can hold a reference, the places
-/// that flow from the arguments. A call in no cycle gives a one-place
-/// result a one-place instance of each wildcard place.
+/// that flow from the arguments. A call in no cycle ([`Sigma::cyclic`])
+/// gives a one-place result a one-place instance of each wildcard place.
 ///
 /// # Errors
 ///
@@ -386,7 +389,7 @@ pub fn ret_value(cx: &mut Cx<'_>, sum: &Summary, s: &Sigma, ret: TyId) -> Result
     }
     let mut flows = std::collections::BTreeSet::new();
     if props.holds_refs {
-        let one = one_result(cx.tys, ret);
+        let one = !s.cyclic && one_result(cx.tys, ret);
         for p in &sum.ret.flows {
             flows.extend(places(cx, s, p, Base::Values(one))?);
         }
