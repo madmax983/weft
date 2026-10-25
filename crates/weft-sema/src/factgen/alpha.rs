@@ -131,6 +131,9 @@ pub struct Roots {
     /// The closure bodies whose `Kept` captures are the places of the maker
     /// (the instantiated facts, [`Roots::instantiate`]).
     instantiated: HashSet<BodyId>,
+    /// The closure bodies whose parameter roots are `Arg` roots
+    /// ([`Roots::closure_params`]).
+    arg_params: HashSet<BodyId>,
 }
 
 /// The fact places of an IR place.
@@ -279,7 +282,7 @@ impl Roots {
         if let Some(&r) = self.params.get(&(body, i)) {
             return r;
         }
-        let r = facts.add_root(name, RootKind::Param);
+        let r = facts.add_root(name, self.param_kind(body));
         self.params.insert((body, i), r);
         self.roles.insert(facts.place(r).root, Role::Param(body, i));
         r
@@ -292,10 +295,28 @@ impl Roots {
         if let Some(&r) = self.helds.get(&(body, i)) {
             return r;
         }
-        let r = facts.add_root(format!("*{name}"), RootKind::Param);
+        let r = facts.add_root(format!("*{name}"), self.param_kind(body));
         self.helds.insert((body, i), r);
         self.roles.insert(facts.place(r).root, Role::Held(body, i));
         r
+    }
+
+    /// The parameters of closure body `body` get `Arg` roots from now on: a
+    /// change of what a parameter of a closure points into is a change of
+    /// the places of a caller of the closure, not of a parameter of the
+    /// function (`param_rooted`, W0703 asks for no row there).
+    pub fn closure_params(&mut self, body: BodyId) {
+        self.arg_params.insert(body);
+    }
+
+    /// The kind of the `Param` and `Held` roots of the parameters of body
+    /// `body`.
+    fn param_kind(&self, body: BodyId) -> RootKind {
+        if self.arg_params.contains(&body) {
+            RootKind::Arg
+        } else {
+            RootKind::Param
+        }
     }
 
     /// Gives the table the stated place of each place field of the structs

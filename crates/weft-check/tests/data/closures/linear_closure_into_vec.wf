@@ -1,0 +1,20 @@
+// A linear closure that goes into a `Vec` is a linear value of the `Vec`:
+// the move into the call hands it over, so the end of the `Vec` drops it
+// (tier 1 vec_fn_drop.wf; the old pipeline reports the move at the push).
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx
+ print("rollback {i}") }
+fn begin() -> Tx { Tx { id: 1 } }
+fn into_vec() {
+    let tx = begin()
+    let v: Vec<fn()> = Vec.new()
+    v.push(|| rollback(tx))
+}   //~ W0601
+fn into_local() {
+    let tx = begin()
+    let f = || rollback(tx)
+    let g = f
+    g()
+}
+fn main() { into_local() }

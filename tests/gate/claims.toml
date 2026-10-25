@@ -3666,3 +3666,90 @@ group = "A"
 stage = "F10.2"
 repro = ["tests/gate/probes/fixes/f10/hc/t90_ctlPutNoChange.wf"]
 note = "control of hole H-C: the callee stores through the held reference, and the referent does not change; the program is correct (before stage F10.2 the fact oracle failed C1 on it)"
+
+# ----------------------------------------------------------------------
+# Stage F11: closures (group C, part 1; group C stays off until stage
+# F13). The defects that the preview with the groups A, B and C found
+# (repros in tests/gate/probes/fixes/f11).
+
+[[claim]]
+finding = "F11-L1"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/fixes/f11/move_linear_one_path.wf"]
+code = "W0601"
+line = 10
+note = "a closure that moves a linear capture on one path only drops it on the other path when it returns: the `E` variable of a `ByMove` capture ends at the `Return` of the closure body (lost fault of the preview: tier 1 g9_closure_branch_lin.wf)"
+
+[[claim]]
+finding = "F11-L1"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/fixes/f11/rebind_linear.wf"]
+code = "W0601"
+line = 12
+note = "a closure that gives a linear capture a new value drops the old value in its body; the call gives the variable the new value, with no second overwrite"
+
+[[claim]]
+finding = "F11-P1"
+kind = "fp"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/fixes/f11/closure_param_change.wf"]
+note = "a change through a parameter of a closure is a change of a place of a caller of the closure: the parameter roots of a closure are `Arg` roots, so W0703 does not check them in the body (new false positive of the preview: tier 1 rt24_apply.wf)"
+
+[[claim]]
+finding = "F11-M1"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F11"
+repro = ["tests/gate/probes/fixes/f11/closure_multi.wf"]
+code = "W0503"
+line = 9
+note = "a closure that performs a `multi` operation can resume more than once at its call: the summary of a closure has the part `multi` (the preview lost the W0503 of tier 1 u1_uniq.wf)"
+
+[[claim]]
+finding = "F11-O1"
+kind = "fp"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/fixes/f11/uniq_capture_twice.wf"]
+note = "a closure that keeps a `@ uniq` reference is `once` for a `multi` resume, but a call does not move it: a call moves the callee only if a closure that it can be moves a capture (preview: W0502 of tier 1 a1.wf)"
+
+[[claim]]
+finding = "F11-U1"
+kind = "fp"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/fixes/f11/capture_buf.wf"]
+note = "the borrow of a `ByRef` capture reads no place field of the variable (preview: W0304 of tier 1 73_immovable.wf)"
+
+[[claim]]
+finding = "F11-U1"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/fixes/f11/capture_cur.wf"]
+code = "W0304"
+line = 8
+note = "a closure that reads a place field with no value is W0304 at its call: the part `reads` of the summary names the field, and the facts of the closure body do not see where the maker gives it a value"
+
+[[claim]]
+finding = "F11-C1"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F11"
+repro = ["tests/gate/probes/fixes/f11/once_copy.wf"]
+code = "W0502"
+line = 12
+note = "a copy of a `once` closure (`let h = g`) shares the closure, so a call through each local runs it twice: a read of a value that can be a `once` closure moves it, as the old pipeline does (the decision of stage F11 for the class closure-copy of stage I5; the preview accepted it and the IR engine faults)"

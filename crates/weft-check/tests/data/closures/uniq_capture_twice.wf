@@ -1,0 +1,11 @@
+// A closure that keeps a `@ uniq` reference is `once` for a `multi` resume
+// (W0503), but a call does not move it: two calls are valid (preview of
+// stage F11: a W0502 at the second call; tier 1 a1.wf, a02_w0406_variants.wf).
+fn needs_uniq(es: &[u64] @ uniq) / mut(es) {}
+fn twice(v: &Vec<u64>) / mut(v[]) {
+    let (l, r) = v.split_mut(1)
+    let f = || needs_uniq(l)
+    f()
+    f()
+}
+fn main() {}

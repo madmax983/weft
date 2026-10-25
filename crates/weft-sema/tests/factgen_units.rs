@@ -1168,7 +1168,10 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
         // with binds the `N` variables of the variant steps of the target
         // (stage F8d, `docs/ir.md` 6.3).
         "live" => (&["cfg_edge", "rebound_at"], &[]),
-        "unwind continuation" | "goto" | "unreachable" | "unwind exit" => (&["cfg_edge"], &[]),
+        "unwind continuation" | "goto" | "unreachable" => (&["cfg_edge"], &[]),
+        // The unwinder finishes the `ByMove` captures of a closure body
+        // (stage F11).
+        "unwind exit" => (&["cfg_edge"], &["unwound_at"]),
         "dead" => (&["cfg_edge", "scope_end"], &["unwound_at"]),
         "assign" => (
             &[
@@ -1212,7 +1215,9 @@ fn template_of(label: &str) -> Option<(&'static [&'static str], &'static [&'stat
             ],
             &[],
         ),
-        "return" => (&["cfg_edge", "uses", "ref_at", "ref_in"], &[]),
+        // The `Return` of a closure body ends its `ByMove` captures (stage
+        // F11).
+        "return" => (&["cfg_edge", "uses", "ref_at", "ref_in", "scope_end"], &[]),
         // The next element of a `for` (stage F10, `docs/ir.md` 6.4): a read
         // of the iterator and of the elements, and the element binds.
         "iter next" => (

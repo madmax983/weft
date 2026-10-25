@@ -13,6 +13,18 @@ fn alias_twice() {
     g()
     g()   //~ W0502
 }
+// A copy of a `once` closure: both locals hold one closure (the run time
+// shares it), so a read of a value that can be a `once` closure moves it
+// (the decision of stage F11 for the class closure-copy). The second local
+// holds the closure; the first is moved.
+fn copy_twice() {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    let g = f
+    let h = g
+    g()   //~ W0502
+    h()
+}
 fn once() {
     let b = Buf { items: Vec.new() }
     let f = || eat(b)

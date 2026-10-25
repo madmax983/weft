@@ -1,0 +1,15 @@
+// A closure that gives a linear capture a new value drops the old value in
+// its body (W0601 there). The call gives the variable the new value: it is
+// no second overwrite at the call (preview of stage F11: tier 1
+// ow_closure_run.wf had a second W0601 at the call).
+struct Conn { id: u64 }
+linear struct Tx { conn: Conn }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(c) = tx; print("rollback {c.id}") }
+fn begin(id: u64) -> Tx { Tx { conn: Conn { id: id } } }
+fn main() {
+    let tx = begin(1)
+    let f = || { tx = begin(2) }   //~ W0601
+    f()
+    rollback(tx)
+}

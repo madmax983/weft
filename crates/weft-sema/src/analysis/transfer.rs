@@ -1103,9 +1103,9 @@ pub struct Applied {
     /// The captured variables that the run gives a whole new value (part
     /// `rebinds`): the key of the variable and its new value.
     pub rebinds: Vec<(Key, Tree)>,
-    /// The variables that the run uses (part `uses`): the source of each
-    /// `Kept` and `ByRef` capture, in the body of its maker.
-    pub uses: Vec<(BodyId, Place)>,
+    /// The variables that the run uses (part `uses`): the index of each
+    /// `Kept` and `ByRef` capture and its source, in the body of its maker.
+    pub uses: Vec<(u32, BodyId, Place)>,
     /// The places of `once` values that the run moves: the source of a
     /// capture that holds a `once` closure and that the run calls.
     pub once: Vec<(BodyId, Place)>,
@@ -1123,6 +1123,9 @@ pub struct ValueOut {
     /// The value of the result: the join of the results of the values of the
     /// callee.
     pub ret: Tree,
+    /// The callee can be a `once` closure: the call moves it (W0502 at a
+    /// second call, also through a copy of the local, B12-fn-once).
+    pub once: bool,
 }
 
 /// True if body `body` is a closure body whose facts are in the terms of
@@ -1183,6 +1186,7 @@ pub fn value_out(
             return Ok(ValueOut {
                 apps: Vec::new(),
                 ret: Tree::leaf(AbsVal::of_type(props.linear)),
+                once: false,
             });
         }
     }
@@ -1190,6 +1194,18 @@ pub fn value_out(
     let inst = run_inst(body, block);
     let mut apps = Vec::new();
     let mut ret: Option<Tree> = None;
+    // A local that holds no value here (it moved): the call stops with a
+    // fault at run time, and the use of the local is W0302 or W0502. No
+    // closure runs.
+    if let Operand::Copy(q) | Operand::Move(q) = callee {
+        if fns.is_empty() && q.proj.is_empty() && !st.may_hold(key(cx.p, body, q.local)?) {
+            return Ok(ValueOut {
+                apps,
+                ret: Tree::leaf(AbsVal::of_type(ir_props(cx.tys, ret_ty).linear)),
+                once: false,
+            });
+        }
+    }
     if fns.is_empty() {
         return Err(AlphaError::Later(
             "a call of a function value that the body does not know (stage F12)",
@@ -1220,7 +1236,18 @@ pub fn value_out(
     Ok(ValueOut {
         apps,
         ret: ret.unwrap_or_else(|| Tree::leaf(AbsVal::plain())),
+        once: fns.iter().any(|fv| once_value(cx.p, fv)),
     })
+}
+
+/// True if a call of the function value `fv` moves it: a closure that is
+/// `once` (it moves a capture that is not plain data, or it holds a `once`
+/// value).
+pub fn once_value(p: &Program, fv: &FnVal) -> bool {
+    match fv {
+        FnVal::Closure(c) => p.closures.get(c.index()).is_some_and(|d| d.once),
+        FnVal::Item(..) | FnVal::Unknown => false,
+    }
 }
 
 /// Applies the function value `fv` at the run node `inst` of body `body`
@@ -1368,17 +1395,17 @@ fn apply_value(
                     stores.push((q, rs.clone()));
                 }
             }
-            let uses: Vec<(BodyId, Place)> = summary
+            let uses: Vec<(u32, BodyId, Place)> = summary
                 .uses
                 .iter()
-                .filter_map(|&k| decl.captures.get(k as usize))
-                .filter(|cap| {
+                .filter_map(|&k| decl.captures.get(k as usize).map(|c| (k, c)))
+                .filter(|(_, cap)| {
                     matches!(
                         cap.mode,
                         weft_ir::CaptureMode::Kept | weft_ir::CaptureMode::ByRef
                     )
                 })
-                .map(|cap| (decl.maker, cap.source.clone()))
+                .map(|(k, cap)| (k, decl.maker, cap.source.clone()))
                 .collect();
             let runs = summary.runs.clone();
             out.push(Applied {
@@ -1412,8 +1439,8 @@ fn apply_value(
                     ));
                 }
                 let src = Operand::Copy(cap.source.clone());
-                let once = once_source(p, decl.maker, &cap.source);
                 for g in &v.fns {
+                    let once = once_value(p, g);
                     let start = out.len();
                     apply_value(
                         cx,
@@ -1514,11 +1541,15 @@ pub fn can_get_linear(cx: &Cx<'_>, changed: &[PlaceId]) -> Vec<(Key, Vec<PathSte
         let Some((k, path)) = cx.roots.path_of(cx.facts, q) else {
             continue;
         };
+        // A local whose type has a function part can get a linear closure
+        // (stage F11): the closure is linear by its value, not by its type.
         let linear =
             cx.p.bodies
                 .get(k.0.index())
                 .and_then(|b| b.locals.get(k.1.index()))
-                .is_some_and(|d| crate::props::ir_maybe_linear(cx.tys, d.ty));
+                .is_some_and(|d| {
+                    crate::props::ir_maybe_linear(cx.tys, d.ty) || cx.tys.mentions_fn(d.ty)
+                });
         if linear && !out.contains(&(k, path.clone())) {
             out.push((k, path));
         }

@@ -673,6 +673,12 @@ fn operand_moves(
             let (mut a, al) = em.access(st, q, true)?;
             copied_refs(em, q, &al, &mut a)?;
             em.apply(n, kernel::read(&a));
+            // A read of a value that can be a `once` closure moves it: a
+            // copy would let two calls run the closure (the decision of
+            // stage F11 for the class closure-copy, `docs/ir.md` 5.22).
+            if moves && once_read(em, st, q)? {
+                moved(em, n, st, q, &al)?;
+            }
             Ok(())
         }
         Operand::Move(q) => {
@@ -685,12 +691,30 @@ fn operand_moves(
             }
             em.apply(n, kernel::read(&a));
             let plain = ty.is_some_and(|t| !em.tys.not_copy(t));
-            if !plain && moves {
+            if (!plain || once_read(em, st, q)?) && moves {
                 moved(em, n, st, q, &al)?;
             }
             Ok(())
         }
     }
+}
+
+/// True if the value at `q` in state `st` can be a `once` closure (it moves
+/// a capture when it runs): a read of it moves it.
+///
+/// # Errors
+///
+/// The errors of α.
+fn once_read(em: &mut Em<'_>, st: &State, q: &Place) -> Result<bool, AlphaError> {
+    let Some(t) = em.place_ty(q) else {
+        return Ok(false);
+    };
+    if !em.tys.mentions_fn(t) {
+        return Ok(false);
+    }
+    let body = em.body;
+    let v = transfer::place_value(&mut em.cx(), body, st, q)?.flat();
+    Ok(v.fns.iter().any(|fv| transfer::once_value(em.p, fv)))
 }
 
 /// A read of the value at `q` through a pointer that copies references out
@@ -887,12 +911,27 @@ pub fn assign(
     let relocates = |em: &Em<'_>, l: LocalId| {
         to_result || em.key(l).is_ok_and(|k| em.vars.built_in_place(k.0, k.1))
     };
-    for op in transfer::rvalue_operands(rv) {
+    // The `Kept` operands of a closure aggregate share the cell of their
+    // variable: no copy of the value, so no move of a `once` value.
+    let kept: Vec<bool> = match rv {
+        Rvalue::Aggregate(weft_ir::AggKind::Closure(c), ops) => {
+            let decl = em.p.closures.get(c.index());
+            (0..ops.len())
+                .map(|i| {
+                    decl.and_then(|d| d.captures.get(i))
+                        .is_some_and(|x| x.mode == weft_ir::CaptureMode::Kept)
+                })
+                .collect()
+        }
+        _ => Vec::new(),
+    };
+    for (i, op) in transfer::rvalue_operands(rv).into_iter().enumerate() {
         let relocate = match op {
             Operand::Move(q) if q.proj.is_empty() => relocates(em, q.local),
             _ => false,
         };
-        operand_in(em, n, st, op, relocate)?;
+        let shares = kept.get(i).copied().unwrap_or(false);
+        operand_moves(em, n, st, op, relocate, !shares)?;
         if let Operand::Const(weft_ir::Const::Fn(f, _)) = op {
             let sim =
                 em.p.fns
@@ -912,6 +951,20 @@ pub fn assign(
         }
         Rvalue::Ref(q) => {
             let (mut a, al) = em.access(st, q, false)?;
+            // The borrow of a `ByRef` capture for a closure reads no place
+            // field of the variable: the body of the closure reads what it
+            // reads, with the `U` variables of the maker.
+            if place.proj.is_empty() && em.vars.is_capture_ref(em.body, place.local) {
+                let k = em.key(q.local)?;
+                let us: Vec<VarId> = em
+                    .vars
+                    .parts_of(k.0, k.1)
+                    .iter()
+                    .filter(|(kind, _, _)| *kind == PartKind::U)
+                    .map(|(_, _, v)| *v)
+                    .collect();
+                a.vars.retain(|v| !us.contains(v));
+            }
             // A borrow of a place that holds references, through a pointer,
             // uses the references there (R3RT2: a binding by reference).
             copied_refs(em, q, &al, &mut a)?;
@@ -1035,8 +1088,9 @@ fn relocate(
 
 /// The destination of an `Assign` is the whole local with key `k`.
 fn whole(em: &mut Em<'_>, n: NodeId, st: &State, k: Key, v: &Tree) {
-    let s = em.s_var(k);
     let flat = v.flat();
+    mark_fn_linear(em, k, &flat);
+    let s = em.s_var(k);
     if let Some(s) = s {
         em.facts.rebound_at.push((s, n));
         if flat.empty {
@@ -1734,8 +1788,24 @@ pub const fn unreachable(_em: &mut Em<'_>, _n: NodeId) -> R {
 /// # Errors
 ///
 /// None.
-pub const fn unwind_exit(_em: &mut Em<'_>, _n: NodeId) -> R {
+pub fn unwind_exit(em: &mut Em<'_>, n: NodeId) -> R {
+    // The unwinder finishes the `ByMove` captures that the closure owns
+    // (`docs/ir.md` 8.2: the owned cells of the frame).
+    let es = env_vars(em);
+    em.facts.unwound_at.extend(es.into_iter().map(|v| (v, n)));
     Ok(())
+}
+
+/// The `E` variables of the `ByMove` captures of the body of `em`, if it is
+/// a closure body: the values that the closure owns.
+fn env_vars(em: &Em<'_>) -> Vec<VarId> {
+    let Some((_, decl)) = em.p.closure_of(em.body) else {
+        return Vec::new();
+    };
+    (0..decl.captures.len())
+        .filter_map(|k| u32::try_from(k).ok())
+        .filter_map(|k| em.vars.get(&VarKey::E(em.body, k)))
+        .collect()
 }
 
 /// `Switch`: its operand.
@@ -1771,6 +1841,11 @@ pub fn ret(em: &mut Em<'_>, n: NodeId, st: &State, origin: weft_ir::Span) -> R {
             .map(|(_, _, v)| *v),
     );
     em.facts.uses.extend(vs.map(|v| (v, n)));
+    // The `ByMove` captures end with the closure: a linear value that the
+    // body does not consume on each path is dropped (W0601, as the end of a
+    // local).
+    let es = env_vars(em);
+    em.facts.scope_end.extend(es.into_iter().map(|v| (v, n)));
     let Some(allowed) = em.ret_places else {
         return Ok(());
     };
@@ -2123,6 +2198,7 @@ pub fn call(
     }
     via_receiver(em, main, st, args, sum.only_self, &changed)?;
     let places: Vec<PlaceId> = changed.iter().map(|(q, _)| *q).collect();
+    fn_linear_args(em, st, args, &places)?;
     gets_linear(em, main, st, &places);
     // The callee frame root: a local of the callee that the result points
     // into.
@@ -2227,11 +2303,9 @@ fn call_value(
     let main = nodes.main;
     let at = span(origin);
     operand_moves(em, main, st, callee, false, true)?;
-    if let Operand::Copy(q) | Operand::Move(q) = callee {
-        if transfer::once_source(em.p, body, q) {
-            if let Some(v) = em.base_var(body, q)? {
-                em.facts.moved_at.push((v, main));
-            }
+    if let (Operand::Copy(q) | Operand::Move(q), true) = (callee, out.once) {
+        if let Some(v) = em.base_var(body, q)? {
+            em.facts.moved_at.push((v, main));
         }
     }
     let mut spans = Vec::new();
@@ -2271,13 +2345,29 @@ fn call_value(
                 app.kind,
             )?;
             let places: Vec<PlaceId> = changed.iter().map(|(q, _)| *q).collect();
+            fn_linear_args(em, st, args, &places)?;
             gets_linear(em, n, st, &places);
-            for (mb, src) in &app.uses {
-                let vs = em.vars_in(*mb, src, true)?;
+            // The variables of the captures, and the `U` variable of each
+            // place field that the closure reads (part `reads`): the closure
+            // component does not see where the maker gives the field a
+            // value, so the call checks it (W0304).
+            for (k, mb, src) in &app.uses {
+                let mut vs = em.vars_in(*mb, src, false)?;
+                vs.extend(read_fields(em, &app.summary, *k, *mb, src)?);
                 em.facts.uses.extend(vs.into_iter().map(|v| (v, n)));
             }
             for (mb, src) in &app.once {
                 if let Some(v) = em.base_var(*mb, src)? {
+                    em.facts.moved_at.push((v, n));
+                }
+            }
+            for (k, _) in &app.rebinds {
+                let linear =
+                    em.p.bodies
+                        .get(k.0.index())
+                        .and_then(|b| b.locals.get(k.1.index()))
+                        .is_some_and(|d| crate::props::ir_maybe_linear(em.tys, d.ty));
+                if let (true, Some(v)) = (linear, em.s_var(*k)) {
                     em.facts.moved_at.push((v, n));
                 }
             }
@@ -2334,6 +2424,64 @@ fn call_value(
         }
     }
     Ok(())
+}
+
+/// The `U` variables of the place fields at or below the source `src` (of
+/// body `mb`) of capture `k` that the closure of summary `sum` reads: a read
+/// place of the root `Capture(k)` whose steps overlap the path of the field.
+///
+/// # Errors
+///
+/// Returns [`AlphaError::BadPlace`] if the local does not exist.
+fn read_fields(
+    em: &Em<'_>,
+    sum: &crate::analysis::summary::Summary,
+    k: u32,
+    mb: BodyId,
+    src: &Place,
+) -> Result<Vec<VarId>, AlphaError> {
+    use crate::analysis::summary::{IRoot, IStep};
+    use weft_facts::StepKind;
+    let key = transfer::key(em.p, mb, src.local)?;
+    let reads: Vec<&[IStep]> = sum
+        .reads
+        .iter()
+        .filter(|r| r.root == IRoot::Capture(k))
+        .map(|r| r.steps.as_slice())
+        .collect();
+    if reads.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for (kind, proj, v) in em.vars.parts_of(key.0, key.1) {
+        if *kind != PartKind::U || !is_prefix(&src.proj, proj) {
+            continue;
+        }
+        let rel = proj.get(src.proj.len()..).unwrap_or(&[]);
+        let kinds: Vec<Option<StepKind>> = rel
+            .iter()
+            .map(|p| match p {
+                Proj::Field(f) => Some(StepKind::Field { id: f.0 }),
+                Proj::Variant(x) => Some(StepKind::Variant { id: x.0 }),
+                Proj::Deref(weft_ir::DerefKind::Box) => Some(StepKind::Deref),
+                _ => None,
+            })
+            .collect();
+        let overlaps = |steps: &[IStep]| {
+            for (a, b) in steps.iter().zip(&kinds) {
+                match (a, b) {
+                    (IStep::Wild, _) | (_, None) => return true,
+                    (IStep::Step(s, _), Some(k)) if s.kind == *k => {}
+                    _ => return false,
+                }
+            }
+            true
+        };
+        if reads.iter().any(|r| overlaps(r)) {
+            out.push(*v);
+        }
+    }
+    Ok(out)
 }
 
 /// The entry node `n` of a closure body: the parameters bind as in
@@ -2444,6 +2592,103 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
 /// state `st` before the node gets `overwrites(S(l), n)`, so its linear value
 /// is live after the node (W0601 at its end). A local that can hold one
 /// already is live: the node is no overwrite of it.
+/// True if each linear closure that the value `v` can be finishes its linear
+/// captures with their `on abort` functions (the props of a closure,
+/// `docs/ir.md` 5.22): `has_on_abort` of a variable that holds it.
+fn closure_on_abort(em: &mut Em<'_>, v: &crate::analysis::AbsVal) -> bool {
+    let mut any = false;
+    for fv in &v.fns {
+        let crate::analysis::FnVal::Closure(c) = fv else {
+            continue;
+        };
+        let Some(decl) = em.p.closures.get(c.index()) else {
+            return false;
+        };
+        for (k, cap) in decl.captures.iter().enumerate() {
+            if cap.mode != weft_ir::CaptureMode::ByMove {
+                continue;
+            }
+            let k = u32::try_from(k).unwrap_or(u32::MAX);
+            let Some(t) = super::alpha::capture_ty(em.p, em.tys, *c, k) else {
+                return false;
+            };
+            let props = ir_props(em.tys, t);
+            if props.linear && !props.on_abort {
+                return false;
+            }
+            any |= props.linear;
+        }
+    }
+    any
+}
+
+/// The local with key `k` gets a linear closure value `v` (stage F11): a
+/// local whose type has a function part holds a linear value by its value,
+/// not by its type, so its variable `S` gets the flags `linear` and
+/// `has_on_abort` (W0601 at its end, W0602 across an abort).
+fn mark_fn_linear(em: &mut Em<'_>, k: Key, v: &crate::analysis::AbsVal) {
+    if !v.linear {
+        return;
+    }
+    let fnty = em
+        .p
+        .bodies
+        .get(k.0.index())
+        .and_then(|b| b.locals.get(k.1.index()))
+        .is_some_and(|d| em.tys.mentions_fn(d.ty) && !crate::props::ir_maybe_linear(em.tys, d.ty));
+    if !fnty {
+        return;
+    }
+    let on_abort = closure_on_abort(em, v);
+    let Some(var) = em.s_var(k) else {
+        return;
+    };
+    if let Some(info) = em.facts.vars.get_mut(var.index()) {
+        if info.linear {
+            info.has_on_abort &= on_abort;
+        } else {
+            info.linear = true;
+            info.has_on_abort = on_abort;
+        }
+    }
+}
+
+/// A run node `n` with the arguments `args` that changes the places
+/// `changed`: a linear closure in an argument can go into a changed place
+/// (`v.push(|| rollback(tx))`), so each local of a type with a function part
+/// there gets the flags of a linear value ([`mark_fn_linear`]).
+///
+/// # Errors
+///
+/// The errors of α.
+fn fn_linear_args(em: &mut Em<'_>, st: &State, args: &[Operand], changed: &[PlaceId]) -> R {
+    let body = em.body;
+    let mut v = crate::analysis::AbsVal::none();
+    for op in args {
+        let (Operand::Copy(q) | Operand::Move(q)) = op else {
+            continue;
+        };
+        if !em.place_ty(q).is_some_and(|t| em.tys.mentions_fn(t)) {
+            continue;
+        }
+        let x = transfer::operand(&mut em.cx(), body, st, op)?.flat();
+        if x.linear {
+            v.join(&x);
+        }
+    }
+    if !v.linear {
+        return Ok(());
+    }
+    let keys: Vec<Key> = changed
+        .iter()
+        .filter_map(|&q| em.roots.path_of(em.facts, q).map(|(k, _)| k))
+        .collect();
+    for k in keys {
+        mark_fn_linear(em, k, &v);
+    }
+    Ok(())
+}
+
 fn gets_linear(em: &mut Em<'_>, n: NodeId, st: &State, changed: &[PlaceId]) {
     let keys: Vec<Key> = transfer::can_get_linear(&em.cx(), changed)
         .into_iter()

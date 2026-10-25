@@ -146,6 +146,7 @@ pub fn closure_params(
     let Some(b) = p.bodies.get(body.index()) else {
         return Err(AlphaError::BadPlace(format!("no body b{}", body.0)));
     };
+    roots.closure_params(body);
     let mut out = Params::default();
     for (i, &l) in b.params.iter().enumerate().skip(1) {
         let i32 = u32::try_from(i).unwrap_or(u32::MAX);

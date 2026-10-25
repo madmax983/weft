@@ -260,6 +260,15 @@ fn closure_place(
             let StepKind::Field { id } = s.kind else {
                 return None;
             };
+            // The reference of a `ByRef` capture is a part of the closure
+            // value: its pointee is the `Capture` root.
+            let by_move = ir
+                .closure_of(body)
+                .and_then(|(_, d)| d.captures.get(id as usize))
+                .is_some_and(|c| c.mode == weft_ir::CaptureMode::ByMove);
+            if !by_move {
+                return None;
+            }
             (
                 IRoot::Capture(id),
                 stored,
@@ -523,6 +532,9 @@ pub fn closure(
         out.performs.insert(pf);
     }
     out.aborts.extend(aborts.iter().cloned());
+    // A node of the body that can resume more than once (a `multi`
+    // operation, a callee that can): a run of the closure can.
+    out.multi = !facts.multi_at.is_empty();
     let cycles = super::widen::Cycles::of(ir, &[body]);
     let mut run_sites: BTreeMap<u32, (usize, bool)> = BTreeMap::new();
     for (bi, blk) in b.blocks.iter().enumerate() {

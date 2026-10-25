@@ -1,0 +1,20 @@
+// A closure that moves a linear capture on one path only drops it on the
+// other path when it returns (preview of stage F11: the ir pipeline lost
+// the W0601 of the old pipeline; tier 1 g9_closure_branch_lin.wf, cret.wf).
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(t: Tx) { let Tx(id) = t; print("rollback {id}") }
+fn commit(t: Tx) / io { let Tx(id) = t; print("commit {id}") }
+fn one_path(c: bool) / io {
+    let t = Tx { id: 1 }
+    let f = || if c { commit(t) }   //~ W0601
+    f()
+}
+fn each_path(c: bool) / io {
+    let t = Tx { id: 2 }
+    let f = || if c { commit(t) } else { rollback(t) }
+    f()
+}
+fn main() / io {
+    each_path(true)
+}

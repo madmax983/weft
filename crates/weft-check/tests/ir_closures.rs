@@ -156,6 +156,61 @@ fn the_runs_of_captured_closures_move_a_once_value() {
 }
 
 #[test]
+fn a_closure_that_moves_a_linear_capture_on_one_path_drops_it_on_the_other() {
+    // Defect of the preview (lost fault, tier 1 g9_closure_branch_lin.wf):
+    // the `E` variable of a `ByMove` capture ends at the `Return` of the
+    // closure body, so a linear value that a path does not consume is W0601.
+    check("move_linear_one_path.wf");
+}
+
+#[test]
+fn a_change_through_a_parameter_of_a_closure_needs_no_row_of_the_function() {
+    // Defect of the preview (new false positive, tier 1 rt24_apply.wf): the
+    // parameter roots of a closure are `Arg` roots, not parameters of the
+    // function, so W0703 does not check them in the body. The call changes
+    // the places of the argument: W0703 there if the row does not state them.
+    check("closure_param_change.wf");
+}
+
+#[test]
+fn a_closure_that_resumes_more_than_once_is_multi_at_its_call() {
+    // Defect of the preview (lost W0503, tier 1 u1_uniq.wf): the summary of
+    // a closure has the part `multi`.
+    check("closure_multi.wf");
+}
+
+#[test]
+fn a_closure_that_keeps_a_uniq_reference_can_run_twice() {
+    // Defect of the preview (W0502 false positive, tier 1 a1.wf): a call
+    // moves the closure only if the closure is `once` because it moves a
+    // capture, not if its local is `once` because of a `@ uniq` capture.
+    check("uniq_capture_twice.wf");
+}
+
+#[test]
+fn a_closure_that_rebinds_a_linear_capture_drops_the_old_value_once() {
+    // Preview of stage F11 (tier 1 ow_closure_run.wf): the body drops the
+    // old value (W0601 there); the new value at the call is no second
+    // overwrite.
+    check("rebind_linear.wf");
+}
+
+#[test]
+fn a_borrow_for_a_closure_reads_no_place_field() {
+    // Preview of stage F11 (tier 1 73_immovable.wf): the borrow of a `ByRef`
+    // capture reads no place field; the body of the closure reads its own.
+    check("capture_unset_field.wf");
+}
+
+#[test]
+fn a_linear_closure_that_moves_into_a_place_is_a_linear_value_of_the_place() {
+    // A read of a `once` closure moves it (the decision for the class
+    // closure-copy): the destination holds the linear value. A local whose
+    // type has a function part gets the flag `linear` from the value.
+    check("linear_closure_into_vec.wf");
+}
+
+#[test]
 fn a_closure_program_is_out_of_scope_with_the_default_groups() {
     // Group C stays off by default in stage F11 (plan: F13 turns it on).
     let src = program("rr7_late_ref.wf");

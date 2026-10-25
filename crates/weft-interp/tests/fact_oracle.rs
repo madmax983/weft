@@ -44,6 +44,15 @@ fn check_ab(src: &str) -> Checked {
 }
 
 /// The options of a run with the fact oracle and the memory oracle.
+fn check_abc(src: &str) -> Checked {
+    let opts = Options {
+        facts: FactGen::Both,
+        ir_groups: weft_sema::Groups::parse("ABC").unwrap(),
+        ..Options::default()
+    };
+    check_source("test.wf", src, opts)
+}
+
 fn opts() -> RunOptions {
     RunOptions {
         fact_oracle: true,
@@ -204,6 +213,62 @@ fn each_accepted_corpus_program_in_scope_of_the_groups_a_and_b_passes_the_fact_o
     // The loops of the corpus (stage F10a): back edges, `IterNext`, and the
     // promoted temporaries of a loop body.
     corpus_passes(check_ab);
+}
+
+#[test]
+fn each_accepted_corpus_program_in_scope_of_the_groups_a_b_and_c_passes_the_fact_oracle() {
+    // The closures of the corpus (stage F11, a preview of group C): the
+    // oracle follows the frames of the closure bodies too.
+    corpus_passes(check_abc);
+}
+
+/// The oracle follows each frame of a closure body from its node `closure
+/// entry` (stage F11): a reference into a local of the closure, a borrow
+/// and a call inside it are checked.
+#[test]
+fn the_frames_of_a_closure_body_are_followed() {
+    let src = "fn show(r: &u64) { print(r) }
+        fn main() {
+ let v = Vec.new()
+ v.push(1)
+        let f = || { let w = Vec.new()
+ w.push(2)
+ let r = &w[0]
+ show(r)
+ print(v.len()) }
+        f()
+ f()
+}
+";
+    let c = check_abc(src);
+    assert!(c.ir.as_ref().is_some_and(|ir| ir.ok()), "{:?}", c.diags);
+    let r = run_main(&c, &opts());
+    assert!(failure(&r).is_none(), "{:?}", failure(&r));
+    let report = r.unwrap().fact_oracle.unwrap();
+    // `main`, two frames of the closure and two frames of `show`.
+    assert!(report.frames >= 5, "{report:?}");
+}
+
+/// The programs of the defects of stage F11 (`tests/gate/probes/fixes/f11`)
+/// that the `ir` pipeline accepts pass with the groups A, B and C on.
+#[test]
+fn the_defects_of_the_closures_are_fixed() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/gate/probes/fixes/f11");
+    let mut ran = 0;
+    for p in programs(&dir) {
+        let src = fs::read_to_string(&p).unwrap();
+        let c = check_abc(&src);
+        let Some(ir) = &c.ir else {
+            panic!("{} is not in scope", p.display());
+        };
+        if !ir.ok() {
+            continue;
+        }
+        let r = run_main(&c, &opts());
+        assert!(failure(&r).is_none(), "{}: {:?}", p.display(), failure(&r));
+        ran += 1;
+    }
+    assert!(ran >= 3, "only {ran} runs");
 }
 
 /// A reference that an earlier iteration of a loop took into a promoted

@@ -1513,6 +1513,24 @@ body c (Closure):  params _1 = env, _2 = p; _0
 - **Goes away:** `{closure}` hidden variables, `note_capture`, `moved_captures`,
   `captures_live_at`, the `closure end` node, `late_join` and its functions (RR7, V103,
   V104, O3-11, F3-11), `union_ret`, the `by_value` export (OR2, V017).
+- **Decision of stage F11 (the class closure-copy of stage I5).** A function value is
+  plain data in the IR, and the run time shares a closure value: a copy does not clone
+  the environment (I2). The old analysis moves a value that holds a function value when
+  a body reads it (13 programs of tier 1, all rejected: `exports_parity.rs`
+  `CLOSURE_COPY`). The old behaviour is right for a `once` closure and too strict for
+  any other: two copies of a `once` closure share its `ByMove` cells, so a call through
+  each copy runs the closure twice (the IR engine faults at the second call). So the
+  facts give `moved_at` of the variable at each read of a value that the analysis says
+  can be a `once` closure (a copy into another local, an argument, a part of an
+  aggregate) and at each call of it; the IR keeps `copy`, and the capture modes stay
+  those of rule CAPTURE. The `Kept` operand of a closure aggregate shares the cell and is
+  no read of the value. A read of any other function value is a copy. Stage F11 knows
+  the values of whole locals; stage F12 applies the rule to function values in fields,
+  elements and captures (the 13 programs: a closure that reads `a[1]` out of a captured
+  array moves the element when it can be `once`). The mode `once` of a local that comes
+  from a `@ uniq` field is for a `multi` resume only (W0503): it does not make a call a
+  move (B12-fn-once uses the `once` of the closures that the value can be, not the
+  `once` of the local).
 
 ### 5.23 Function items as values, joins [2.22], stored values [2.23]
 
@@ -2462,6 +2480,16 @@ As built (plan stage F11, `factgen/mod.rs` `emit_parts`, `closure_summary`,
   an `assert`) of the closure summaries that it applies at its calls.
 - A view of an environment in a nested body (`u.k`, 5.1.7) and a capture of a capability
   or a continuation are groups D and E: `Later`.
+- The `E` variables of a closure body end at its `Return` (`scope_end`: a linear
+  capture that a path does not consume is W0601 there, F11-L1) and at its
+  `UnwindExit` (`unwound_at`: the unwinder finishes the owned cells).
+- The parameters of a closure body have `Arg` roots (not `Param`): W0703 checks the
+  places of the function, and a change through a parameter of a closure is a change of
+  a place of its caller, checked at the call (F11-P1).
+- The borrow `t := &x` of a `ByRef` capture reads no place field of `x`: the call
+  uses the `U` variable of each place field that the closure reads (part `reads`),
+  because the closure component does not see where the maker gives the field a value
+  (F11-U1).
 
 ### 6.6 The analysis
 
@@ -2869,7 +2897,14 @@ As built (plan stage F11, `analysis::transfer::value_out`, `apply::closure_sigma
   of a `Many` run. `FrameEnd` ends the frame root of a closure whose result or `puts`
   name its frame.
 - A call of a function value keeps the abort edges of the IR, and gets `may_abort` only if
-  a summary that it applies can abort.
+  a summary that it applies can abort. The part `multi` of a closure summary holds if a
+  node of the body can resume more than once (F11-M1).
+- A call moves the callee (`moved_at` of its variable) if a closure that the value can
+  be is `once` (decision above; F11-O1, F11-C1). A call through a local that holds no
+  value (it moved) applies no summary: the use of the local is W0302 or W0502.
+- A closure that gives a linear capture a new value finishes the old value in its body
+  (the drop pair, W0601 there); the call moves the variable at `Main` and gives it the
+  new value at `Ret`, so the new value is no second overwrite.
 - The calls of a capture in the summary of a closure body (in the terms of its interface)
   apply nothing there (their effects reach the run node of the closure through `runs`);
   a reference argument or a reference in the result of such a call is stage F12. In the

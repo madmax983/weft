@@ -5,7 +5,12 @@
 //! reads the facts of each component of a program in scope
 //! (`weft_sema::factgen::components`) and the tables that map the IR to them:
 //! the node of each IR location, the roots, the variables and the versions
-//! of the parts. Each frame of the entry body of a component has a state.
+//! of the parts. Each frame of the entry body of a component has a state,
+//! and so has each frame of a closure body of the component (stage F11: the
+//! closure body is a component of the facts of its function, from its node
+//! `closure entry`). A captured cell of a closure frame is a cell of its
+//! maker: the map names it only through the maker, so a closure frame counts
+//! it as unnamed.
 //!
 //! - **Trace conformance (A1).** Each op of the IR engine has its IR
 //!   location. When the location of the next op of a frame changes, the
@@ -248,7 +253,15 @@ fn u32_of(n: usize) -> u32 {
 }
 
 impl Comp {
-    fn new(built: &Built, c: &Component, code: Option<&Code>) -> Self {
+    /// The component of body `body` (the entry body of `c`, or a closure
+    /// body of it) with the entry node `entry` and the code `code`.
+    fn new(
+        built: &Built,
+        c: &Component,
+        code: Option<&Code>,
+        body_id: BodyId,
+        entry: NodeId,
+    ) -> Self {
         let f = &c.facts;
         let n = f.nodes.len();
         let mut succ = vec![Vec::new(); n];
@@ -260,7 +273,7 @@ impl Comp {
         let mut loc = vec![None; n];
         let mut at_loc: HashMap<(u32, u32), Vec<NodeId>> = HashMap::new();
         for (k, &id) in c.emitted.table.iter() {
-            if k.body != c.entry {
+            if k.body != body_id {
                 continue;
             }
             if let Some(x) = loc.get_mut(id.index()) {
@@ -269,7 +282,7 @@ impl Comp {
             at_loc.entry((k.block.0, k.at)).or_default().push(id);
         }
         // The locations with an op.
-        let body = built.program.bodies.get(c.entry.index());
+        let body = built.program.bodies.get(body_id.index());
         let mut ops: HashSet<(u32, u32)> = HashSet::new();
         if let (Some(code), Some(b)) = (code, body) {
             for l in &code.locs {
@@ -355,7 +368,7 @@ impl Comp {
         let mut s_of = HashMap::new();
         for key in c.emitted.vars.keys() {
             if let VarKey::S(b, l) = key {
-                if *b == c.entry {
+                if *b == body_id {
                     if let Some(v) = c.emitted.vars.get(key) {
                         roles.insert(v, VarRole::Local(*l));
                         s_of.insert(*l, v);
@@ -366,11 +379,11 @@ impl Comp {
         let mut of_local: HashMap<LocalId, Vec<VarId>> = HashMap::new();
         for key in c.emitted.vars.keys() {
             let local = match key {
-                VarKey::S(b, l) | VarKey::C(b, l) if *b == c.entry => Some(*l),
-                VarKey::H(b, pl) | VarKey::U(b, pl) | VarKey::W(b, pl, _) if *b == c.entry => {
+                VarKey::S(b, l) | VarKey::C(b, l) if *b == body_id => Some(*l),
+                VarKey::H(b, pl) | VarKey::U(b, pl) | VarKey::W(b, pl, _) if *b == body_id => {
                     Some(pl.local)
                 }
-                VarKey::N(b, _, pl, _) if *b == c.entry => Some(pl.local),
+                VarKey::N(b, _, pl, _) if *b == body_id => Some(pl.local),
                 _ => None,
             };
             if let (Some(l), Some(v)) = (local, c.emitted.vars.get(key)) {
@@ -378,7 +391,7 @@ impl Comp {
             }
         }
         for (i, p) in c.emitted.parts.iter().enumerate() {
-            if p.key.0 != c.entry {
+            if p.key.0 != body_id {
                 continue;
             }
             for &v in &p.vars {
@@ -399,15 +412,15 @@ impl Comp {
             .emitted
             .roots
             .local_roots()
-            .filter(|(k, _)| k.0 == c.entry)
+            .filter(|(k, _)| k.0 == body_id)
             .map(|(k, p)| (k.1, p))
             .collect();
         Self {
-            body: c.entry,
+            body: body_id,
             facts: c.facts.clone(),
             roots: c.emitted.roots.clone(),
             tys: c.emitted.tys.clone(),
-            entry: c.emitted.entry_node,
+            entry,
             succ,
             loc,
             at_loc,
@@ -534,7 +547,19 @@ impl FactOracle {
                 for c in cs {
                     by_body.insert(c.entry.0, comps.len());
                     let code = codes.get(c.entry.index()).map(Rc::as_ref);
-                    comps.push(Comp::new(&input.built, c, code));
+                    comps.push(Comp::new(
+                        &input.built,
+                        c,
+                        code,
+                        c.entry,
+                        c.emitted.entry_node,
+                    ));
+                    // Each closure body of the component, from its entry node.
+                    for &(cb, n) in &c.emitted.closure_entries {
+                        by_body.insert(cb.0, comps.len());
+                        let code = codes.get(cb.index()).map(Rc::as_ref);
+                        comps.push(Comp::new(&input.built, c, code, cb, n));
+                    }
                 }
             }
             Err(why) => report.skipped = Some(why.clone()),
@@ -570,7 +595,12 @@ impl FactOracle {
         let mut anchors = Vec::new();
         if let Some(b) = body {
             for (i, &l) in b.params.iter().enumerate() {
-                let Some(Some(cell)) = slots.get(i) else {
+                // The slot of the parameter: the environment of a closure
+                // body has no slot.
+                let Some(s) = code.slot_locals.iter().position(|&x| x == l.0) else {
+                    continue;
+                };
+                let Some(Some(cell)) = slots.get(s) else {
                     continue;
                 };
                 let Ok(s) = heap.slot(*cell) else {

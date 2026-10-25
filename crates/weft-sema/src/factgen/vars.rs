@@ -74,6 +74,38 @@ pub enum VarKey {
     N(BodyId, LocalId, Place, u32),
 }
 
+/// The temporaries of the borrows of the `ByRef` captures of the closure
+/// aggregates of the bodies `comp`: each operand `move t` of a `ByRef`
+/// capture.
+fn capture_refs(p: &Program, comp: &[BodyId]) -> HashSet<(BodyId, LocalId)> {
+    let mut out = HashSet::new();
+    for &bid in comp {
+        let Some(b) = p.bodies.get(bid.index()) else {
+            continue;
+        };
+        for blk in &b.blocks {
+            for s in &blk.stmts {
+                let StmtKind::Assign(_, Rvalue::Aggregate(weft_ir::AggKind::Closure(c), ops)) =
+                    &s.kind
+                else {
+                    continue;
+                };
+                let Some(decl) = p.closures.get(c.index()) else {
+                    continue;
+                };
+                for (cap, op) in decl.captures.iter().zip(ops) {
+                    if let (CaptureMode::ByRef, Operand::Move(t)) = (cap.mode, op) {
+                        if t.proj.is_empty() {
+                            out.insert((bid, t.local));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The variant steps of `place`: for each `Variant(v)` step, its base place
 /// (the projections before it) and `v`.
 pub fn variant_steps(place: &Place) -> Vec<(Place, u32)> {
@@ -211,6 +243,9 @@ pub struct Vars {
     /// The `N` variables of each value temporary: the base, the variant and
     /// the variable.
     named: HashMap<(BodyId, LocalId), Vec<NamedVar>>,
+    /// The temporaries of the borrows of `ByRef` captures
+    /// ([`Vars::is_capture_ref`]).
+    capture_refs: HashSet<(BodyId, LocalId)>,
 }
 
 /// The span of the facts for an IR span.
@@ -441,6 +476,7 @@ impl Vars {
         v.relocated(p, tys, facts, comp);
         v.cells(p, tys, facts, comp);
         v.env_values(p, tys, facts, comp);
+        v.capture_refs = capture_refs(p, comp);
         for &bid in comp {
             v.drop_pairs(p, tys, facts, bid);
         }
@@ -851,14 +887,22 @@ impl Vars {
                 if d.kind == LocalKind::Env {
                     continue;
                 }
-                let info = Self::plain(
+                let mut info = Self::plain(
                     format!("{} (cell)", local_text(tys, d)),
                     span(d.origin.span),
                     tys.show(d.ty),
                 );
+                info.kind = var_kind(tys, d);
                 self.add(facts, VarKey::C(ob, ol), info);
             }
         }
+    }
+
+    /// True if local `l` of body `body` is the temporary of the borrow of a
+    /// `ByRef` capture: the operand `move t` of a closure aggregate, with
+    /// `t := &x` (`docs/ir.md` 5.22).
+    pub fn is_capture_ref(&self, body: BodyId, l: LocalId) -> bool {
+        self.capture_refs.contains(&(body, l))
     }
 
     /// Adds the `E` variable of each `ByMove` capture of each closure body

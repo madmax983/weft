@@ -1,0 +1,14 @@
+// Stage F11 (preview, a hole of the ir pipeline that the old pipeline
+// rejects): a copy of a `once` closure shares the closure (the run time does
+// not clone it), so two calls through two locals run it twice. A read of a
+// value that can be a `once` closure moves it (the class closure-copy).
+struct Buf { items: Vec<u64> }
+fn eat(b: Buf) { print(b.items.len()) }
+fn main() {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    let g = f
+    let h = g
+    g()   //~ W0502
+    h()
+}

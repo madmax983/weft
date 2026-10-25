@@ -1,0 +1,9 @@
+// Stage F11 (preview of tier 1 73_immovable.wf): a closure that reads a
+// place field with no value is W0304 at its call (the part `reads` of the
+// summary names the field).
+struct Frame: !Move { buf: [u8; 4], cur: &u8 in self.buf[] }
+fn main() {
+    let f = Frame { buf: [1, 2, 3, 4] }
+    let c = || print(f.cur)
+    c()   //~ W0304
+}

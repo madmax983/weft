@@ -205,3 +205,11 @@ them again if it runs.
   holds; `t/`, `t2/`, `t3/`, `t4/`, `t6/`, `s/s06`, and the control `t/t90`),
   with one line of header (stage F10.2; claim F10-HC). The control `t4/t90`
   is in `crates/weft-interp/tests/held_store/` (the old pipeline rejects it).
+
+## Programs that stage F11 added
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs.
+
+- `fixes/f11/*.wf`: the defects that the preview of stage F11 (closures, the
+  groups A, B and C) found (claims F11-L1, F11-P1, F11-M1, F11-O1, F11-U1).
