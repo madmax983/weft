@@ -34,7 +34,7 @@ use super::domain::{AbsVal, PathStep, State, Tree};
 use super::sig::{byval_refs, holds_refs, is_ref};
 use super::summary::{CapIface, Flow, IPlace, IRoot, IStep, Summary};
 use super::transfer::{self, Cx};
-use crate::factgen::alpha::AlphaError;
+use crate::factgen::alpha::{AlphaError, Role};
 use crate::irbuild::subst;
 use crate::props::ir_props;
 
@@ -451,6 +451,16 @@ pub fn muts(cx: &mut Cx<'_>, sum: &Summary, s: &Sigma) -> Result<Vec<(PlaceId, u
 /// into another argument only if the type of the pointee can hold one
 /// (R3RT6).
 ///
+/// The callee can also store through a reference that the argument holds
+/// (`out[0].push(&v[0])` with `out: &Vec<&Vec<&T>>`, hole H-C of the second
+/// review of stage F10, `docs/ir.md` 6.7 "As built (F10.2)"). So each
+/// referent of such a reference whose root the node changes gets the
+/// stored values too (a weak update): the places of `σ(Held(j))` for a
+/// reference argument, and the places of `σ(Param(j))` for a by-value
+/// argument that holds references. This is the reach of the part `muts`
+/// (`mut(out..)` changes `*out`). The type of the value of the root of the
+/// referent must be able to hold the stored references (the R3RT6 rule).
+///
 /// # Errors
 ///
 /// The errors of σ.
@@ -464,23 +474,8 @@ pub fn stores(
         .iter()
         .filter_map(|(m, _)| cx.facts.places.get(m.index()).map(|i| i.root))
         .collect();
-    let mut out = Vec::new();
-    for st in &sum.stores {
-        let j = st.into as usize;
-        let Some(&tj) = s.tys.get(j) else {
-            continue;
-        };
-        let Some(holder) = pointee(cx.tys, tj) else {
-            continue;
-        };
-        if !pointee_refs(cx.tys, tj) {
-            continue;
-        }
-        let into: Vec<PlaceId> = s
-            .args
-            .get(j)
-            .into_iter()
-            .flatten()
+    let in_changed = |cx: &Cx<'_>, ps: &[PlaceId]| -> Vec<PlaceId> {
+        ps.iter()
             .copied()
             .filter(|p| {
                 cx.facts
@@ -488,56 +483,140 @@ pub fn stores(
                     .get(p.index())
                     .is_some_and(|i| roots.contains(&i.root))
             })
-            .collect();
-        if into.is_empty() {
+            .collect()
+    };
+    let mut out = Vec::new();
+    for st in &sum.stores {
+        let j = st.into as usize;
+        let Some(&tj) = s.tys.get(j) else {
             continue;
-        }
-        let mut refs = Vec::new();
-        for f in &st.flows {
-            match *f {
-                Flow::Held(i) => refs.extend(s.helds.get(i as usize).into_iter().flatten()),
-                Flow::Into(i) => {
-                    let Some(&ti) = s.tys.get(i as usize) else {
-                        continue;
-                    };
-                    let ok = match pointee(cx.tys, ti) {
-                        Some(pi) => can_hold_into(cx.tys, holder, pi),
-                        None => can_hold_value(cx.tys, holder, ti),
-                    };
-                    if ok {
-                        refs.extend(places(
-                            cx,
-                            s,
-                            &IPlace::wild(IRoot::Param(i)),
-                            Base::Values(false),
-                        )?);
-                    }
-                }
-                Flow::Value(i) => {
-                    let Some(&ti) = s.tys.get(i as usize) else {
-                        continue;
-                    };
-                    if can_hold_value(cx.tys, holder, ti) {
-                        refs.extend(places(
-                            cx,
-                            s,
-                            &IPlace::root(IRoot::Param(i)),
-                            Base::Values(false),
-                        )?);
-                    }
+        };
+        // The pointee of a reference argument.
+        if let Some(holder) = pointee(cx.tys, tj).filter(|_| pointee_refs(cx.tys, tj)) {
+            let into = in_changed(cx, s.args.get(j).map_or(&[][..], Vec::as_slice));
+            if !into.is_empty() {
+                let refs = flow_refs(cx, s, &st.flows, &[holder])?;
+                if !refs.is_empty() {
+                    out.extend(into.into_iter().map(|p| (p, refs.clone())));
                 }
             }
         }
-        refs.sort();
-        refs.dedup();
-        if refs.is_empty() {
+        // The referents of the references that the argument holds.
+        let (held, holder) = if is_ref(cx.tys, tj) {
+            (s.helds.get(j), pointee(cx.tys, tj))
+        } else if byval_refs(cx.tys, tj) {
+            (s.args.get(j), Some(tj))
+        } else {
+            continue;
+        };
+        let (Some(held), Some(holder)) = (held, holder) else {
+            continue;
+        };
+        let into = in_changed(cx, held);
+        if into.is_empty() {
             continue;
         }
-        for p in into {
-            out.push((p, refs.clone()));
+        // The types that a referent can have: the targets of the references
+        // in the holder. A type parameter can be any type (the holder then
+        // passes each check).
+        let kinds: Vec<TyId> =
+            targets(cx.tys, holder).map_or_else(|| vec![holder], |ts| ts.into_iter().collect());
+        for q in into {
+            let tys: Vec<TyId> = match root_ty(cx, q) {
+                Some(t) => vec![t],
+                None => kinds.clone(),
+            };
+            let tys: Vec<TyId> = tys
+                .into_iter()
+                .filter(|&t| holds_refs(cx.tys, t) || cx.tys.mentions_param(t))
+                .collect();
+            if tys.is_empty() {
+                continue;
+            }
+            let refs = flow_refs(cx, s, &st.flows, &tys)?;
+            if !refs.is_empty() {
+                out.push((q, refs));
+            }
         }
     }
     Ok(out)
+}
+
+/// The type of the value of the root of fact place `q`, if the node knows
+/// it: the type of a local, or the pointee of a reference parameter.
+fn root_ty(cx: &Cx<'_>, q: PlaceId) -> Option<TyId> {
+    let root = cx.facts.places.get(q.index())?.root;
+    match cx.roots.role(root)? {
+        Role::Local((b, l)) => {
+            cx.p.bodies
+                .get(b.index())?
+                .locals
+                .get(l.index())
+                .map(|d| d.ty)
+        }
+        Role::Param(b, i) => {
+            let body = cx.p.bodies.get(b.index())?;
+            let l = body.params.get(i as usize)?;
+            pointee(cx.tys, body.locals.get(l.index())?.ty)
+        }
+        _ => None,
+    }
+}
+
+/// The places that the flows `flows` of a store give to a value of one of
+/// the types `holders` (part `stores`, R3RT6): the references behind the
+/// other arguments, and a reference into another argument only if a
+/// holder type can hold one.
+///
+/// # Errors
+///
+/// The errors of σ.
+fn flow_refs(
+    cx: &mut Cx<'_>,
+    s: &Sigma,
+    flows: &[Flow],
+    holders: &[TyId],
+) -> Result<Vec<PlaceId>, AlphaError> {
+    let mut refs = Vec::new();
+    for f in flows {
+        match *f {
+            Flow::Held(i) => refs.extend(s.helds.get(i as usize).into_iter().flatten()),
+            Flow::Into(i) => {
+                let Some(&ti) = s.tys.get(i as usize) else {
+                    continue;
+                };
+                let pi = pointee(cx.tys, ti);
+                let ok = holders.iter().any(|&h| match pi {
+                    Some(pi) => can_hold_into(cx.tys, h, pi),
+                    None => can_hold_value(cx.tys, h, ti),
+                });
+                if ok {
+                    refs.extend(places(
+                        cx,
+                        s,
+                        &IPlace::wild(IRoot::Param(i)),
+                        Base::Values(false),
+                    )?);
+                }
+            }
+            Flow::Value(i) => {
+                let Some(&ti) = s.tys.get(i as usize) else {
+                    continue;
+                };
+                if holders.iter().any(|&h| can_hold_value(cx.tys, h, ti)) {
+                    refs.extend(places(
+                        cx,
+                        s,
+                        &IPlace::root(IRoot::Param(i)),
+                        Base::Values(false),
+                    )?);
+                }
+            }
+        }
+    }
+    refs.sort();
+    refs.dedup();
+    Ok(refs)
 }
 
 /// What [`main`] needs to know about the call besides σ.

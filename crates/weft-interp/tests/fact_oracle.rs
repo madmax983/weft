@@ -262,6 +262,40 @@ fn the_defects_of_the_loops_are_fixed() {
     }
 }
 
+/// The programs of hole H-C (stage F10.2, `tests/gate/probes/fixes/f10/hc`):
+/// a callee stores a reference through a reference that its argument holds.
+/// With the default groups, the `ir` pipeline accepts only the controls (no
+/// change of the stored referent), and they pass the fact oracle: the
+/// referent of the held reference holds the stored places (C1), and a read
+/// through it reads them (C5). The control with a parameter referent is in
+/// `tests/held_store`: the old pipeline rejects it (a `lost-clean` program
+/// needs the signature of a reviewer before it can go into tier 1).
+#[test]
+fn a_store_through_a_held_reference_in_a_callee_passes_the_fact_oracle() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = programs(&root.join("../../tests/gate/probes/fixes/f10/hc"));
+    files.extend(programs(&root.join("tests/held_store")));
+    let mut accepted = Vec::new();
+    for p in files {
+        let src = fs::read_to_string(&p).unwrap();
+        let c = check(&src);
+        let Some(ir) = &c.ir else {
+            continue;
+        };
+        if !ir.ok() {
+            continue;
+        }
+        let r = run_main(&c, &opts());
+        assert!(failure(&r).is_none(), "{}: {:?}", p.display(), failure(&r));
+        let name = p.file_name().unwrap().to_string_lossy().into_owned();
+        accepted.push(name);
+    }
+    assert_eq!(
+        accepted,
+        ["t90_ctlPutNoChange.wf", "t90_ctlParamInnerNoChange.wf"]
+    );
+}
+
 /// Each program of the corpus (and of the interpreter tests) that `check`
 /// puts in scope and that the `ir` pipeline accepts runs with no failure of
 /// the fact oracle.

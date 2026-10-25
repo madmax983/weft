@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10.1"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10.1", "F10.2"]
 
 
 # ----------------------------------------------------------------------
@@ -3617,3 +3617,52 @@ repro = [
 ]
 code = "W0301"
 note = "hole H-A in a loop: iteration k stores the reference, iteration k + 1 reads it back after a change (stage F10.1)"
+
+[[claim]]
+finding = "F10-HC"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F10.2"
+repro = [
+    "tests/gate/probes/fixes/f10/hc/s06_slotOfSlotReadViaInnerInCaller.wf",
+    "tests/gate/probes/fixes/f10/hc/t01_storeViaHeldRefReadInner.wf",
+    "tests/gate/probes/fixes/f10/hc/t05_putViaOptField.wf",
+    "tests/gate/probes/fixes/f10/hc/t23_putByValueOuter.wf",
+    "tests/gate/probes/fixes/f10/hc/t24_putTupleHeld.wf",
+    "tests/gate/probes/fixes/f10/hc/t25_putHeldInStructH.wf",
+    "tests/gate/probes/fixes/f10/hc/t26_putHeldOptionSlotInner.wf",
+    "tests/gate/probes/fixes/f10/hc/t27_putHeldIndexSetInner.wf",
+    "tests/gate/probes/fixes/f10/hc/t28_putHeldInnerReadInCallee2.wf",
+    "tests/gate/probes/fixes/f10/hc/t29_putHeldLocalRefToInner.wf",
+    "tests/gate/probes/fixes/f10/hc/t31_paramInnerLocalOutCallee.wf",
+    "tests/gate/probes/fixes/f10/hc/t50_paramFieldViaLocalOut.wf",
+    "tests/gate/probes/fixes/f10/hc/t51_paramViaLocalOptStruct.wf",
+    "tests/gate/probes/fixes/f10/hc/t57_paramLocalRefToInner.wf",
+    "tests/gate/probes/fixes/f10/hc/t58_paramInnerTupleLocal.wf",
+    "tests/gate/probes/fixes/f10/hc/t80_shareHeldViaCallee.wf",
+]
+code = "W0301"
+note = "a callee stores a reference through a reference that its argument holds (`out[0].push(&v[0])`, second review of stage F10, hole H-C), and the caller reads the referent after the stored referent changes: the part `stores` reaches the referents of the held references, as the part `muts` does (analysis::apply::stores, stage F10.2); the ir pipeline accepted these and both oracles fault (t31, t50, t51, t57, t58 were regressions: the old pipeline rejects them)"
+
+[[claim]]
+finding = "F10-HC"
+kind = "unsound"
+verdict = "construction"
+group = "AB"
+stage = "F10.2"
+repro = [
+    "tests/gate/probes/fixes/f10/hc/t40B_putHeldLoop.wf",
+    "tests/gate/probes/fixes/f10/hc/t42B_putHeldForIter.wf",
+]
+code = "W0301"
+note = "hole H-C with a loop in the callee or in the read (group B: on when stage F10b turns group B on)"
+
+[[claim]]
+finding = "F10-HC"
+kind = "sound"
+verdict = "construction"
+group = "A"
+stage = "F10.2"
+repro = ["tests/gate/probes/fixes/f10/hc/t90_ctlPutNoChange.wf"]
+note = "control of hole H-C: the callee stores through the held reference, and the referent does not change; the program is correct (before stage F10.2 the fact oracle failed C1 on it)"

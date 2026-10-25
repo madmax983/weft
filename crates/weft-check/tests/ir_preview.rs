@@ -1402,3 +1402,201 @@ fn main() {}
     got.sort();
     assert_eq!(got, markers(src));
 }
+
+#[test]
+fn a_store_through_a_held_reference_in_a_callee_reaches_the_referent() {
+    // Stage F10.2 (hole H-C of the second review of stage F10,
+    // f10/variants_r2/t*): a callee stores a reference through a reference
+    // that its argument holds (`out[0].push(&v[0])`). The part `stores`
+    // of the summary reaches the referents of the references that the
+    // argument holds, as the part `muts` does: a local (`inner`) or a heap
+    // slot (`*inner` of a parameter) gets the stored places. A by-value
+    // argument, a tuple part, an `Option` field, two levels, a read in a
+    // callee and callees with no stated row (`inferred_rows`) are the same.
+    // Controls: no change of the stored referent, a callee that changes only
+    // the top of the argument, and a referent whose type cannot hold the
+    // stored reference (`w`, and `ks` of `typed_referent`: a `Vec<&bool>`).
+    let src = "\
+struct Entity { hp: i32, id: u64 }
+struct OV { o: Option<&Vec<&Entity>>, n: u64 }
+struct H { o: Option<&Entity>, n: u64 }
+struct HB { rs: Vec<&Entity>, n: u64 }
+struct H2 { e: Option<&Entity>, k: Option<&Vec<&bool>> }
+fn put(v: &Vec<Entity>, out: &Vec<&Vec<&Entity>>) / mut(out..) { out[0].push(&v[0]) }
+fn put_e(v: &Vec<Entity>, out: &Vec<&H2>) / mut(out..) { out[0].e = Some(&v[0]) }
+fn put_opt(v: &Vec<Entity>, ov: &OV) / mut(ov..) {
+    match ov.o {
+        Some(x) => x.push(&v[0]),
+        None => {},
+    }
+}
+fn put_o(v: &Vec<Entity>, out: &Vec<&H>) / mut(out..) { out[0].o = Some(&v[0]) }
+fn put_bv(v: &Vec<Entity>, out: Vec<&Vec<&Entity>>) { out[0].push(&v[0]) }
+fn put_t(v: &Vec<Entity>, t: &(u64, &Vec<&Entity>)) / mut(t..) { t.1.push(&v[0]) }
+fn put2(v: &Vec<Entity>, out: &Vec<&Vec<&Vec<&Entity>>>) / mut(out..) { out[0][0].push(&v[0]) }
+fn top_only(out: &Vec<&Vec<&Entity>>) / mut(out) { out.clear() }
+fn show(iv: &Vec<&Entity>) { print(iv[0].hp) }
+fn put_inferred(v: &Vec<Entity>, out: &Vec<&Vec<&Entity>>) { out[0].push(&v[0]) }
+fn pass_inferred(v: &Vec<Entity>, out: &Vec<&Vec<&Entity>>) { put_inferred(v, out) }
+fn inferred_rows() {
+    let v = Vec.new()
+    v.push(Entity { hp: 1, id: 1 })
+    let inner = Vec.new()
+    let out = Vec.new()
+    out.push(&inner)
+    pass_inferred(&v, &out)
+    v.clear()
+    print(inner[0].hp)   //~ W0301
+}
+fn local_inner() {
+    let v = Vec.new()
+    v.push(Entity { hp: 1, id: 1 })
+    let inner = Vec.new()
+    let out = Vec.new()
+    out.push(&inner)
+    put(&v, &out)
+    v.clear()
+    print(inner[0].hp)   //~ W0301
+}
+fn param_inner(v: &Vec<Entity>, inner: &Vec<&Entity>) / mut(v.., inner..) {
+    let out = Vec.new()
+    out.push(inner)
+    put(v, &out)
+    v.clear()
+    print(inner[0].hp)   //~ W0301
+}
+fn param_field(v: &Vec<Entity>, h: &HB) / mut(v.., h..) {
+    let out = Vec.new()
+    out.push(&h.rs)
+    put(v, &out)
+    v.clear()
+    print(h.rs[0].hp)   //~ W0301
+}
+fn option_field() {
+    let v = Vec.new()
+    v.push(Entity { hp: 1, id: 1 })
+    let inner = Vec.new()
+    let ov = OV { o: Some(&inner), n: 0 }
+    put_opt(&v, &ov)
+    v.clear()
+    print(inner[0].hp)   //~ W0301
+}
+fn option_slot() {
+    let v = Vec.new()
+    v.push(Entity { hp: 1, id: 1 })
+    let w = Entity { hp: 2, id: 2 }
+    let h = H { o: None, n: 0 }
+    let out = Vec.new()
+    out.push(&h)
+    put_o(&v, &out)
+    v.clear()
+    print(w.hp)
+    match h.o {
+        Some(r) => print(r.hp),   //~ W0301
+        None => {},
+    }
+}
+fn by_value() {
+    let v = Vec.new()
+    v.push(Entity { hp: 1, id: 1 })
+    let inner = Vec.new()
+    let out = Vec.new()
+    out.push(&inner)
+    put_bv(&v, out)
+    v.clear()
+    print(inner[0].hp)   //~ W0301
+}
+fn tuple_part() {
+    let v = Vec.new()
+    v.push(Entity { hp: 1, id: 1 })
+    let inner = Vec.new()
+    let t = (1, &inner)
+    put_t(&v, &t)
+    v.clear()
+    print(inner[0].hp)   //~ W0301
+}
+fn shared() {
+    let v = Vec.new()
+    v.push(Entity { hp: 1, id: 1 })
+    let inner = Vec.new()
+    let a = Vec.new()
+    let b = Vec.new()
+    a.push(&inner)
+    b.push(&inner)
+    put(&v, &a)
+    v.clear()
+    print(b[0][0].hp)   //~ W0301
+}
+fn two_levels() {
+    let v = Vec.new()
+    v.push(Entity { hp: 1, id: 1 })
+    let in2 = Vec.new()
+    let inner = Vec.new()
+    inner.push(&in2)
+    let out = Vec.new()
+    out.push(&inner)
+    put2(&v, &out)
+    v.clear()
+    print(in2[0].hp)   //~ W0301
+}
+fn read_in_callee() {
+    let v = Vec.new()
+    v.push(Entity { hp: 1, id: 1 })
+    let inner = Vec.new()
+    let out = Vec.new()
+    out.push(&inner)
+    put(&v, &out)
+    v.clear()
+    show(&inner)   //~ W0301
+}
+fn typed_referent() {
+    let v = Vec.new()
+    v.push(Entity { hp: 1, id: 1 })
+    let t = true
+    let ks = Vec.new()
+    ks.push(&t)
+    let h = H2 { e: None, k: Some(&ks) }
+    let out = Vec.new()
+    out.push(&h)
+    put_e(&v, &out)
+    v.clear()
+    print(ks[0])
+    match h.e {
+        Some(r) => print(r.hp),   //~ W0301
+        None => {},
+    }
+}
+fn no_change() {
+    let v = Vec.new()
+    v.push(Entity { hp: 1, id: 1 })
+    let inner = Vec.new()
+    let out = Vec.new()
+    out.push(&inner)
+    put(&v, &out)
+    print(inner[0].hp)
+}
+fn param_no_change(v: &Vec<Entity>, inner: &Vec<&Entity>) / mut(inner..) {
+    let out = Vec.new()
+    out.push(inner)
+    put(v, &out)
+    print(inner[0].hp)
+}
+fn top_changes() {
+    let v = Vec.new()
+    v.push(Entity { hp: 1, id: 1 })
+    let w = Vec.new()
+    w.push(Entity { hp: 2, id: 2 })
+    let inner = Vec.new()
+    inner.push(&w[0])
+    let out = Vec.new()
+    out.push(&inner)
+    top_only(&out)
+    v.clear()
+    print(inner[0].hp)
+}
+fn main() {}
+";
+    let mut got = ir_codes(src);
+    got.sort();
+    assert_eq!(got, markers(src));
+}

@@ -16,7 +16,9 @@
 //! - `stores`: a reference parameter that the row changes gets the held
 //!   references of the other arguments, and a reference into another
 //!   argument only where its type can hold one (R3RT6, checked at the run
-//!   node with the types of the call);
+//!   node with the types of the call); the referents of the references that
+//!   a parameter holds (also a by-value parameter) get them too, if the row
+//!   changes them (hole H-C, `super::apply::stores`);
 //! - `drops`, `holds`, `uniq_needs` and `only_self` as the signature states
 //!   them.
 //!
@@ -414,9 +416,11 @@ pub fn build(
     }
     s.ret = ret_of(sig, decl, tys);
     // A reference parameter that the body changes can keep what the other
-    // arguments give: the run node checks the types (R3RT6).
+    // arguments give: the run node checks the types (R3RT6). The body can
+    // also store through a reference that a parameter holds, also a
+    // by-value parameter (`out[0].push(..)`, hole H-C, stage F10.2).
     for (j, &tj) in decl.params.iter().enumerate() {
-        if !is_ref(tys, tj) {
+        if !is_ref(tys, tj) && !byval_refs(tys, tj) {
             continue;
         }
         let mut flows = Vec::new();

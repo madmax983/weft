@@ -200,3 +200,8 @@ them again if it runs.
 - `fixes/f10/ha/*.wf`: the variants of the review of stage F10 for hole H-A (a
   reference in a heap slot read back after its referent changes; `hA/`, `h/`,
   `lc/lc22`), with one line of header (stage F10.1; claim F10-HA).
+- `fixes/f10/hc/*.wf`: the variants of the second review of stage F10 for hole
+  H-C (a callee stores a reference through a reference that its argument
+  holds; `t/`, `t2/`, `t3/`, `t4/`, `t6/`, `s/s06`, and the control `t/t90`),
+  with one line of header (stage F10.2; claim F10-HC). The control `t4/t90`
+  is in `crates/weft-interp/tests/held_store/` (the old pipeline rejects it).

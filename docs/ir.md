@@ -2737,6 +2737,40 @@ As built (plan stage F6, `crates/weft-sema/src/analysis/`):
   and the handle `h.*` of a reference argument to an `Rc` (or each handle below a
   reference argument whose pointee is `nonportable`).
 
+As built (plan stage F10.2, `analysis::apply::stores`; hole H-C of the second review of
+stage F10): a callee can store a reference through a reference that its argument holds.
+`put(v: &Vec<T>, out: &Vec<&Vec<&T>>) / mut(out..) { out[0].push(&v[0]) }` changes
+`*out` (the part `muts` has `Held(1)`), and it also puts `&v[0]` into `*out[0]`. Before
+this stage the part `stores` gave the stored places only to the argument (`out`), so
+the referent (`inner` after `out.push(&inner)`) did not point into `v[]`, and
+`v.clear(); print(inner[0].hp)` was accepted (a regression where the referent is
+behind a parameter: a heap slot).
+
+- The part `stores` reaches the referents of the references that the argument holds,
+  with the reach of the part `muts`: each place of `σ(Held(j))` of a reference argument,
+  and each place of `σ(Param(j))` of a by-value argument that holds references, whose
+  root the node changes. Each such place gets the stored values as a weak update: a
+  local joins them into its value (a variable of the local points into them), and a
+  place that no local owns gets them in its heap slot (6.6, F10.1).
+- The R3RT6 type rule holds for the referent too. The type of the referent is the type
+  of the value of its root (a local, or the pointee of a reference parameter), or, if
+  the node does not know it, any type that the references in the pointee of the
+  argument can point to. A referent whose type cannot hold a reference gets nothing
+  (`w: Entity`, held next to `h: H`), a held reference gets the references behind the
+  other arguments, and a reference into another argument needs a type that can hold
+  one (`can_hold_into`). A callee with `mut(out)` (no `..`) does not change `*out`, so
+  it stores nothing through it (`q9_extend_fp` and `R3RT6_ref_arg_flow_fp` stay
+  accepted).
+- The summary of a body (`sig::build`) has a part `stores` for a by-value parameter
+  that holds references too. A body that stores through a held reference changes a
+  place of `Held(j)` (or `Param(j)` of a by-value parameter), and `summarize` projects
+  that change into `muts`, so its callers apply the store.
+- A callee that moves a reference from one referent of an argument to another one of
+  the same argument (`out[0].push(out[1][0])`) is W0312 in the callee, so the part has
+  no flow from an argument into itself.
+- The programs are in `tests/gate/probes/fixes/f10/hc/` and
+  `tests/programs/165_store_through_held_ref.wf` (claim F10-HC).
+
 ### 6.8 Effect inference and signatures
 
 Effect rows are a part of the summaries: the effects that a body performs through `Row`
@@ -3236,6 +3270,8 @@ As built (plan stage I6):
 | rule CAPTURE (5.1.7) | a borrowed plain capture is `ByRef`: its cell ends with the variable | the oracle sees a dangling cell where today's kept cell stayed readable; the checker rejects these programs (J5, J5d) |
 | `Dead` of a fresh continuation at a clause end | none (the interpreter drops it at the clause return today) | |
 | a borrowed temporary of plain data ends at the frame exit (5.10) | none: a temporary cell of plain data keeps its value after its end on both engines, and the oracle does not mark it | `let r = &1; print(r)` |
+| `&r` of a local `r` of reference type is a reborrow `&(*r)` (2.1, the THIR adjustment of a reference local used as a place) | `rr = &r` points where `r` points, not to the local `r`, so a later `r = &v[0]` does not change what `rr` reads | `let r = &u; let rr = &r; r = &v[0]; v.clear(); print(rr.hp)` (`probe/p3.wf` of the second review of stage F10): the IR engine prints the value of `u`; the AST engine reads `v[0]` through the local `r`, a freed cell. Both checkers accept the program (the old lowering takes the reborrow too). Stage F10.2: no program of tier 1 or tier 2 has the shape (the engine differential shows no such difference), so no ledger class is needed yet; a program with the shape needs one (or a change of the AST engine) |
+| the unwind order of a frame: the slots from the highest (5.1.6) | while a frame unwinds, the IR engine runs the `on abort` function of a value before it frees an older local; the AST engine frees the older local first | `let l = L { o: Some(&v[0]) }; risky(1)` where the `on abort` function of `L` reads `v[0]` (`a/a91`, `a/a92` of the second review of stage F10): the IR engine runs clean, the AST engine reads a freed cell. Both checkers accept a91; the old pipeline rejects a92 (W0301, a false positive under the IR order). Stage F10.2: no program of the tiers has the shape (no such difference). The shape of the class `unwind-order` does not fit it (only one engine faults), so a program with the shape needs a new class (or a change of the AST engine) |
 
 `docs/design.md` states the order of evaluation, the end of temporaries and the unwind
 order (plan stage C3). ADR 0010 states that the interpreter runs the IR (plan stage C3).

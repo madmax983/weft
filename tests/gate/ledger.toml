@@ -800,3 +800,35 @@ finding = "R3RT6"
 reason = "a mutated reference argument gets only the held references of the other arguments whose types fit (F5): a Vec<&Entity> cannot hold a reference into the other Vec; the programs are new in scope because `extend` has a loop. Each variant where the types fit or a held referent changes is W0301 (f10 review, lc01-lc23); lc22 (a read back in the callee) is hole H-A, not this rule"
 signed_by = "review agent, stage F10 (independent)"
 stage = "F10"
+
+[[entry]]
+class = "changed"
+files = [
+    "tests/programs/165_store_through_held_ref.wf",
+    "tests/gate/probes/fixes/f10/hc/t31_paramInnerLocalOutCallee.wf",
+    "tests/gate/probes/fixes/f10/hc/t50_paramFieldViaLocalOut.wf",
+    "tests/gate/probes/fixes/f10/hc/t57_paramLocalRefToInner.wf",
+]
+codes = ["W0301"]
+reason = "a store through a held reference in a callee (stage F10.2, hole H-C of the second review of stage F10, docs/ir.md 6.7): `put(v, &out)` pushes `&v[0]` into `*out[0]`, and the referent of `out[0]` (a local, or a heap slot behind a parameter) gets the stored places. The `ir` pipeline reports the read through the referent after `v.clear()` (where the oracle faults on the probes; the `main` of 165 runs only the controls); the old pipeline reports `out` at the end of the body and the call in the caller, and it misses the store into a local referent (165: `local_inner`, `option_slot`, `shared`). In 165 the old pipeline also rejects the clean control `param_no_change` (the oracle runs it clean)"
+stage = "F10.2"
+
+[[entry]]
+class = "moved"
+files = [
+    "tests/gate/probes/fixes/f10/hc/t51_paramViaLocalOptStruct.wf",
+    "tests/gate/probes/fixes/f10/hc/t58_paramInnerTupleLocal.wf",
+]
+codes = ["W0301"]
+reason = "a store through a held reference in a callee (stage F10.2, hole H-C): the held reference to the parameter `inner` is in a local struct or tuple; the `ir` pipeline reports the read through `inner` after `v.clear()` (where the oracle faults), the old pipeline the end of the local"
+stage = "F10.2"
+
+[[entry]]
+class = "open-old"
+files = [
+    "tests/gate/probes/fixes/f10/hc/t40B_putHeldLoop.wf",
+    "tests/gate/probes/fixes/f10/hc/t42B_putHeldForIter.wf",
+]
+finding = "F10-HC"
+reason = "dangling read: a callee stores a reference through a reference that its argument holds (hole H-C), with a loop (group B). Under the default groups the old pipeline checks the programs and misses the store; with group B on, the `ir` pipeline rejects them (W0301, claim F10-HC of group AB, stage F10)"
+stage = "F10.2"

@@ -1,0 +1,40 @@
+// F10 review 2, hole H-C: as t01 (the first find of the class) (s/s06_slotOfSlotReadViaInnerInCaller.wf).
+struct Entity { hp: i32, id: u64, kids: Vec<Entity> }
+struct H { o: Option<&Entity>, rs: Vec<&Entity>, t: (u64, &Entity) }
+struct Outer { h: H, n: u64 }
+struct HB { rs: Vec<&Entity> }
+fn ent(id: u64) -> Entity {
+    let e = Entity { hp: 1, id: id, kids: Vec.new() }
+    e.kids.push(Entity { hp: 2, id: 9, kids: Vec.new() })
+    e
+}
+impl Entity {
+    fn wipe_kids(self) / mut(self) { self.kids.clear() }
+    fn bump(self) / mut(self.hp) { self.hp += 1 }
+}
+fn fill(out: &Vec<&Entity>, v: &Vec<Entity>) / mut(out) { out.push(&v[0]) }
+fn fill2(out: &Vec<&Entity>, v: &Vec<Entity>) / mut(out) { fill(out, v) }
+fn wipe(v: &Vec<Entity>) / mut(v) { v.clear() }
+fn consume(e: Entity) { print(e.id) }
+fn at(o: &Vec<&Entity>, i: usize) -> &Entity in o.. { o[i] }
+fn last(o: &Vec<&Entity>) -> &Entity in o.. { o[o.len() - 1] }
+fn wrap(e: &Entity) -> Vec<&Entity> {
+    let o = Vec.new()
+    o.push(e)
+    o
+}
+fn opt(e: &Entity) -> Option<&Entity> { Some(e) }
+
+struct OV { o: Option<&Vec<&Entity>>, n: u64 }
+fn geth(o: &Outer) -> &H in o.h { &o.h }
+fn put(v: &Vec<Entity>, out: &Vec<&Vec<&Entity>>) / mut(out..) { out[0].push(&v[0]) }
+fn main() {
+    let v = Vec.new()
+    v.push(ent(1))
+    let inner = Vec.new()
+    let out = Vec.new()
+    out.push(&inner)
+    put(&v, &out)
+    v.clear()
+    print(inner[0].hp)
+}
