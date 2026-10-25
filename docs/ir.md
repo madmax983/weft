@@ -2490,6 +2490,8 @@ As built (plan stage F11, `factgen/mod.rs` `emit_parts`, `closure_summary`,
   uses the `U` variable of each place field that the closure reads (part `reads`),
   because the closure component does not see where the maker gives the field a value
   (F11-U1).
+- A capture that the closure rebinds (part `rebinds`) gets its new value at the `Ret`
+  node of the call: the change of the capture at `Main` is no `overwrites` of it.
 - A function with a function value in its signature and no stated row has no summary
   until stage F12 (`callgraph::summary_of`). W0701 takes the row of the old inference
   for it (`Inference::old_rows`), which adds the effects of the closures that the
