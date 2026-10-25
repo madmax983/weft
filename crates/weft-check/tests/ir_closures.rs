@@ -226,6 +226,14 @@ fn a_public_function_that_returns_a_closure_states_its_effects() {
 }
 
 #[test]
+fn a_rebind_of_a_capture_that_holds_no_linear_value_is_no_overwrite() {
+    // Preview of stage F11 (tier 2 e6b_closure3.wf): the call gives the
+    // capture its new value at `Ret` (part `rebinds`), so the change of the
+    // capture at `Main` is no overwrite.
+    check("rebind_from_none.wf");
+}
+
+#[test]
 fn a_closure_program_is_out_of_scope_with_the_default_groups() {
     // Group C stays off by default in stage F11 (plan: F13 turns it on).
     let src = program("rr7_late_ref.wf");

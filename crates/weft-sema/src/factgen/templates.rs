@@ -2346,7 +2346,10 @@ fn call_value(
             )?;
             let places: Vec<PlaceId> = changed.iter().map(|(q, _)| *q).collect();
             fn_linear_args(em, st, args, &places)?;
-            gets_linear(em, n, st, &places);
+            // A capture that the closure rebinds gets its new value at
+            // `Ret` (`whole`): the change at `n` is no overwrite of it.
+            let rebound: Vec<Key> = app.rebinds.iter().map(|(k, _)| *k).collect();
+            gets_linear_but(em, n, st, &places, &rebound);
             // The variables of the captures, and the `U` variable of each
             // place field that the closure reads (part `reads`): the closure
             // component does not see where the maker gives the field a
@@ -2586,12 +2589,6 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
     Ok(())
 }
 
-/// A run node `n` that changes the places `changed` (the callee, or a clause
-/// of a caller, can put a linear value there and keep the old value, as
-/// `Vec.push`): a local that can hold a linear value and holds none in the
-/// state `st` before the node gets `overwrites(S(l), n)`, so its linear value
-/// is live after the node (W0601 at its end). A local that can hold one
-/// already is live: the node is no overwrite of it.
 /// True if each linear closure that the value `v` can be finishes its linear
 /// captures with their `on abort` functions (the props of a closure,
 /// `docs/ir.md` 5.22): `has_on_abort` of a variable that holds it.
@@ -2689,12 +2686,23 @@ fn fn_linear_args(em: &mut Em<'_>, st: &State, args: &[Operand], changed: &[Plac
     Ok(())
 }
 
+/// A run node `n` that changes the places `changed` (the callee, or a clause
+/// of a caller, can put a linear value there and keep the old value, as
+/// `Vec.push`): a local that can hold a linear value and holds none in the
+/// state `st` before the node gets `overwrites(S(l), n)`, so its linear value
+/// is live after the node (W0601 at its end). A local that can hold one
+/// already is live: the node is no overwrite of it.
 fn gets_linear(em: &mut Em<'_>, n: NodeId, st: &State, changed: &[PlaceId]) {
+    gets_linear_but(em, n, st, changed, &[]);
+}
+
+/// [`gets_linear`] for each local but the locals `but`.
+fn gets_linear_but(em: &mut Em<'_>, n: NodeId, st: &State, changed: &[PlaceId], but: &[Key]) {
     let keys: Vec<Key> = transfer::can_get_linear(&em.cx(), changed)
         .into_iter()
         .map(|(k, _)| k)
         .collect();
-    let mut done: Vec<Key> = Vec::new();
+    let mut done: Vec<Key> = but.to_vec();
     for k in keys {
         if done.contains(&k) {
             continue;
