@@ -155,3 +155,37 @@ fn the_lost_faults_of_the_preview_are_rejected() {
 fn a_read_of_a_once_closure_in_an_element_a_field_or_a_capture_moves_it() {
     check("copy_once.wf");
 }
+
+#[test]
+fn more_classes_of_the_preview_are_rejected() {
+    // A closure that a returned closure runs keeps the last value of its
+    // captured reference; a parameter type with a row performs it; a callee
+    // that does not run a linear closure can drop it.
+    check("preview_fixes2.wf");
+}
+
+#[test]
+fn a_closure_that_code_of_a_caller_can_run_on_another_thread_stays_with_the_old_pipeline() {
+    let src = program("foreign_task.wf");
+    let a = analyze_source(&src, abc(&src)).unwrap_or_else(|d| panic!("{}", d.message));
+    let why = a
+        .ir_scope
+        .as_ref()
+        .and_then(|s| s.fallback.clone())
+        .unwrap_or_default();
+    assert!(why.contains("another thread"), "{why}");
+}
+
+#[test]
+fn a_reference_into_the_frame_of_a_callee_that_a_closure_keeps_goes_out_of_scope() {
+    check("run_frame.wf");
+}
+
+#[test]
+fn a_run_checks_the_changes_of_the_value_against_the_places_that_the_callee_gives() {
+    // The places behind a parameter whose type holds no function value
+    // give no function value (`world: &World`): before the fix, the
+    // capture `world` made code of a caller run at the call (W0312 on the
+    // clean cases).
+    check("run_given.wf");
+}

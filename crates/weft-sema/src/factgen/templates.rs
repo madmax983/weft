@@ -97,6 +97,13 @@ pub struct Em<'a> {
     /// of a closure) at the run nodes of the body, each with `many` (part
     /// `runs`, stage F12).
     pub runs: Vec<(crate::analysis::transfer::RunOf, bool)>,
+    /// A run node of the body runs code of a caller that can resume more
+    /// than once (the part `multi` of the summary, as the old inference).
+    pub code_multi: bool,
+    /// The join of the states before each `Dead` of the body, if it has
+    /// closures: the last value of a variable that a closure keeps (`Kept`)
+    /// when the body gives the closure back (stage F12).
+    pub last: Option<State>,
 }
 
 /// References that a node puts into a place that a caller keeps: behind a
@@ -735,7 +742,7 @@ fn operand_moves(
 /// # Errors
 ///
 /// The errors of α.
-fn once_read(em: &mut Em<'_>, st: &State, q: &Place) -> Result<bool, AlphaError> {
+pub(super) fn once_read(em: &mut Em<'_>, st: &State, q: &Place) -> Result<bool, AlphaError> {
     let Some(t) = em.place_ty(q) else {
         return Ok(false);
     };
@@ -2272,6 +2279,42 @@ pub fn call(
         em.facts.rebound_at.push((v, main));
         drops.push(v);
     }
+    // A linear closure that goes to a parameter of a type that is not
+    // linear, and that the callee does not run (part `runs`): the callee can
+    // drop it (W0601, as the old lowering: "a closure moves a linear value,
+    // but it can go out of scope without a call").
+    // A parameter of a type parameter keeps the value (`push`): its
+    // summary says what it drops (part `drops`).
+    for (i, op) in args.iter().enumerate() {
+        let (Some(&pt), Some(&declared)) = (out.sigma.tys.get(i), decl.params.get(i)) else {
+            continue;
+        };
+        if crate::props::ir_maybe_linear(em.tys, pt)
+            || !crate::props::ir_has_fns(em.tys, declared)
+            || em.tys.mentions_param(declared)
+        {
+            continue;
+        }
+        let runs = sum.runs.iter().any(|r| !r.capture && r.param as usize == i);
+        if runs {
+            continue;
+        }
+        let v = transfer::operand(&mut em.cx(), body, st, op)?.flat();
+        if !v.linear || v.fns.is_empty() {
+            continue;
+        }
+        let mut info = weft_facts::VarInfo::plain(
+            callee.clone(),
+            weft_facts::VarKind::Dropped,
+            at,
+            em.tys.show(pt),
+        );
+        info.linear = true;
+        info.has_on_abort = closure_on_abort(em, &v);
+        let var = em.facts.add_var(info);
+        em.facts.rebound_at.push((var, main));
+        drops.push(var);
+    }
     if let Some(r) = nodes.ret {
         held_refs(em, r, st, args)?;
         bind_dest(em, r, st, dest, &out.ret)?;
@@ -2496,6 +2539,9 @@ fn emit_apps(
         if let Some(r) = &app.run {
             em.runs.push((r.clone(), app.again || cyclic));
         }
+        // A value of a parameter passes its effects through: the caller
+        // applies the value that it gives (part `runs`).
+        em.code_multi |= app.code && app.run.is_none() && app.summary.multi;
         abort |= app.summary.can_abort();
         // Code of a caller: the value that the caller gives applies its own
         // aborts where the caller runs it.

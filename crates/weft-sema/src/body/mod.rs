@@ -580,8 +580,11 @@ impl Summary {
 /// The state of a property query (`Lower::ty_has`).
 #[derive(Default)]
 pub(super) struct Has {
-    /// The closure summaries on the way.
-    seen: Vec<usize>,
+    /// The closure summaries that the query looked at. The query is "a part
+    /// has the property", and it stops at the first "yes". So a summary that
+    /// the query looked at gives no new "yes", and the query looks at each
+    /// summary one time (review round 3, Q3-2).
+    seen: BTreeSet<usize>,
     /// A value of a type parameter counts as linear.
     params: bool,
 }
@@ -1447,6 +1450,8 @@ pub struct Lower<'p> {
     task_ends: Vec<(TaskId, NodeId)>,
     /// The work so far. A loop rewind keeps it.
     work: crate::Work,
+    /// The count of `Work::closure_queries`: a property query has `&self`.
+    closure_queries: std::cell::Cell<usize>,
     /// The most passes of one loop, for a test. `None`: [`loops::loop_pass_bound`].
     loop_bound: Option<usize>,
     /// The recorder of the THIR tables (`crate::thir::record`). It only adds:
@@ -1580,6 +1585,7 @@ impl<'p> Lower<'p> {
             task_run_places: BTreeMap::new(),
             task_ends: Vec::new(),
             work: crate::Work::default(),
+            closure_queries: std::cell::Cell::new(0),
             loop_bound: None,
             rec: Box::default(),
         }
@@ -3161,7 +3167,7 @@ impl<'p> Lower<'p> {
     /// The state of a property query in the mode of the body.
     pub(super) const fn has(&self) -> Has {
         Has {
-            seen: Vec::new(),
+            seen: BTreeSet::new(),
             params: self.generic,
         }
     }
@@ -3215,19 +3221,17 @@ impl<'p> Lower<'p> {
     /// it moves a linear capture: a call takes the value. It is nonportable if it
     /// captures a nonportable value: it refers to the variable.
     fn closure_has(&self, s: usize, p: Prop, h: &mut Has) -> bool {
-        if h.seen.contains(&s) {
+        if !h.seen.insert(s) {
             return false;
         }
+        self.closure_queries.set(self.closure_queries.get() + 1);
         let sum = &self.closures[s];
-        h.seen.push(s);
         let vars = if p == Prop::Nonportable {
             &sum.captures
         } else {
             &sum.moved_captures
         };
-        let found = vars.iter().any(|&v| self.var_has(v, p, h));
-        h.seen.pop();
-        found
+        vars.iter().any(|&v| self.var_has(v, p, h))
     }
 
     /// Returns true if variable `v` has property `p`: from the type of its local,

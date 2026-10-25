@@ -246,6 +246,7 @@ impl Lower<'_> {
         }
         let work = crate::Work {
             type_steps: self.inf.steps(),
+            closure_queries: self.closure_queries.get(),
             ..self.work
         };
         let mut thir = self.rec;

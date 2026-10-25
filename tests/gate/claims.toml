@@ -339,7 +339,7 @@ finding = "F3-2"
 kind = "unsound"
 verdict = "one-rule"
 group = "AC"
-stage = "F15"
+stage = "F12"
 repro = [
     "tests/gate/probes/r3/fidelity/repro/F3-2_closure_keeps_callee_ref.wf",
     "tests/gate/probes/r3/fidelity/repro/F3-2_closure_stores_callee_ref.wf",
@@ -1051,7 +1051,7 @@ finding = "F3-2"
 kind = "unsound"
 verdict = "one-rule"
 group = "AC"
-stage = "F15"
+stage = "F12"
 repro = [
     "tests/gate/probes/r3/fidelity/p/cl1.wf",
     "tests/gate/probes/r3/fidelity/p/cl2.wf",
@@ -3753,3 +3753,118 @@ repro = ["tests/gate/probes/fixes/f11/once_copy.wf"]
 code = "W0502"
 line = 12
 note = "a copy of a `once` closure (`let h = g`) shares the closure, so a call through each local runs it twice: a read of a value that can be a `once` closure moves it, as the old pipeline does (the decision of stage F11 for the class closure-copy of stage I5; the preview accepted it and the IR engine faults)"
+
+[[claim]]
+finding = "F12-R1"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F12"
+repro = [
+    "tests/gate/probes/verify/s5/p/or3d.wf",
+    "tests/gate/probes/r3/oracle/probes/b5_twice_moves.wf",
+    "tests/gate/probes/r2/oracle/fp/W0502_p3681.wf",
+]
+code = "W0502"
+note = "a callee that runs a `once` closure more than once (part `runs`, `Many`): the second run uses the moved value (the preview of stage F12 accepted these programs, and the IR engine faults)"
+
+[[claim]]
+finding = "F12-R2"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F12"
+repro = [
+    "tests/gate/probes/r2/oracle/probes/e1_run_both.wf",
+    "tests/gate/probes/verify/s5/S5c/p/b2_value_first.wf",
+    "tests/gate/probes/verify/s5/S5c/p/b4_method_first.wf",
+    "tests/gate/probes/verify/s5/S5c_diff/probes/stored2.wf",
+]
+code = "W0301"
+note = "a callee that runs two function values can run them in each order, and a callee can change a place before it runs a value: each run is at `Ret` too (preview of stage F12)"
+
+[[claim]]
+finding = "F12-R3"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F12"
+repro = ["tests/gate/probes/r2/oracle/probes/a7_closure_returning_closure.wf"]
+code = "W0301"
+note = "a closure that a closure gives back holds the references of the `Kept` captures of its maker (preview of stage F12)"
+
+[[claim]]
+finding = "F12-R4"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F12"
+repro = [
+    "tests/gate/probes/r3/oracle/probes/se1_field_lin_never.wf",
+    "tests/gate/probes/r3/oracle/probes/se2_field_lin_twice.wf",
+]
+code = "W0601"
+note = "a linear closure in a field of a struct makes the struct a linear value (the function part of a type goes through its fields; preview of stage F12)"
+
+[[claim]]
+finding = "F12-R5"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F12"
+repro = [
+    "tests/gate/probes/fixes/f12/preview_fixes.wf",
+    "tests/gate/probes/fixes/f12/preview_fixes2.wf",
+]
+note = "the classes of the lost faults of the preview of stage F12 in one program (crates/weft-check/tests/data/fn_values/preview_fixes.wf)"
+
+[[claim]]
+finding = "F12-C1"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F12"
+repro = ["tests/gate/probes/fixes/f12/copy_once.wf"]
+code = "W0302"
+line = 11
+note = "the closure-copy rule of stage F11 for an element and a field: a read of a value that can be a `once` closure moves it (docs/ir.md 5.22)"
+
+[[claim]]
+finding = "F12-R6"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F12"
+repro = ["tests/gate/probes/fixes/f12/run_given.wf"]
+code = "W0312"
+line = 39
+note = "a value that a callee runs must not change what the other arguments of the call point into: the callee can keep them across the run (`Sigma::others`)"
+
+[[claim]]
+finding = "F12-N2"
+kind = "sound"
+verdict = "construction"
+group = "ABC"
+stage = "F12"
+repro = ["tests/gate/probes/fixes/f12/run_given.wf"]
+code = "W0312"
+line = 16
+note = "control: a closure that captures `world: &World` (no function value behind it) and reads a field is no code of a caller at the run (`transfer::fns_at`)"
+
+[[claim]]
+finding = "F12-N1"
+kind = "sound"
+verdict = "construction"
+group = "ABC"
+stage = "F12"
+repro = [
+    "tests/gate/probes/verify/p/v18_stored_fp.wf",
+    "tests/gate/probes/verify/p/v17_scale.wf",
+    "tests/gate/probes/verify/review_core/Core_S2/probes/clean_callbacks.wf",
+    "tests/gate/probes/verify/review_core/Core_S2/probes/clean_field_cb.wf",
+    "tests/gate/probes/verify/review_core/Core_S2/probes/fp_stored_param.wf",
+    "tests/gate/probes/verify/s5/R2e: names, interpreter fidelity, proof claims and refactor/p/rr10_n.wf",
+    "tests/gate/probes/verify/s5/R2e_diff/p/nc9_late_show.wf",
+    "tests/gate/probes/verify/s5/p/fp4.wf",
+]
+note = "controls (new false positives of the preview of stage F12): a run that a callee does has no check of the arguments of the call against the value, code of a caller lends the places of its arguments (not their wildcards), and a `once` closure that a callee runs one time is no W0502"

@@ -838,6 +838,7 @@ impl Lower<'_> {
             held_roots: _,
             held_of: _,
             work: _,
+            closure_queries: _,
             // The recorder keeps the visits of the last pass of each key
             // (`crate::thir::record`); a rewind starts a new pass.
             rec: _,
@@ -1033,6 +1034,7 @@ impl Lower<'_> {
             held_roots: _,
             held_of: _,
             work: _,
+            closure_queries: _,
             rec,
             cap_values: _,
             holder_log: _,

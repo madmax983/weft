@@ -2973,10 +2973,38 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
 - A function with no body and a function value in its signature runs each function value of its
   parameters more than once and gives back `Unknown` and the values of its parameters
   (`sig::foreign_fn_parts`).
+- Code of a caller performs the effects of the stated row of its function type (W0701 of
+  `pub fn a(f: fn() / log) { f() }`); with no row its effects pass through.
+- A linear closure that goes to a parameter of a type that is not linear, and that the
+  callee does not run, is a value that the callee can drop (a `Dropped` variable: W0601).
+- The places of a closure that a body gives back: its `Kept` captures, and the `Kept`
+  captures of each closure that they hold, with the last value of each variable (the
+  states before each `Dead`, `Em::last`).
+- Code of a caller can run a function argument on another thread (ADR 0006): a closure
+  that changes or lends a place, puts a reference, has a `ByRef` capture or a nonportable
+  capture, and an item that changes a place, stay with the old pipeline when code of a
+  caller can run them (the facts of tasks are stage F18; W0401, W0403, W0405).
+- A place behind a parameter whose type cannot hold a function value gives no function
+  value (`transfer::fns_at`): a closure that captures `world: &World` is no code of a
+  caller where a callee runs it.
+- A run checks the places that the value changes through its environment against the
+  places that the callee gives to it and against the other arguments of the call
+  (`Sigma::others`, W0312): the callee can keep references into them across the run. A
+  change through a parameter of the value is a change of what the callee gives.
+- A pattern that binds a part that can be a `once` closure moves the part only: the other
+  parts of the same pattern are no use of a moved value.
+- A run argument that points into a local of the body (`f(&x)`) is the frame root of the
+  run node (`IRoot::Frame`): a closure that keeps it outside the call holds a place that
+  goes out of scope at the `FrameEnd` of the call (F3-2, W0301).
+- The old lowering stays in the `ir` pipeline (the checks of `typeck`). Its property query
+  `Lower::closure_has` looks at each closure summary one time (a visited set), so the
+  Q3-2 repros check in less than 50 ms (`Work::closure_queries`).
+- A function item as a value whose summary drops or holds a linear type argument stays
+  with the old pipeline (`factgen::checks::item_value`, `check_item_value` of the old
+  lowering; the facts have no node for it).
 - Not done: a run as a task (W0405 of code of a caller, stage F18), a value stored behind a
   reference (F13), the environment of a `Made` closure capture by capture (a wildcard environment
-  can give a W0703 that the old pipeline does not give, `44_returned_fns`), the check of an item
-  value with type arguments (`check_item_value`; group F).
+  can give a W0703 that the old pipeline does not give, `44_returned_fns`).
 
 ### 6.8 Effect inference and signatures
 

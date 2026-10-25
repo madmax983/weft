@@ -213,3 +213,10 @@ them again if it runs.
 
 - `fixes/f11/*.wf`: the defects that the preview of stage F11 (closures, the
   groups A, B and C) found (claims F11-L1, F11-P1, F11-M1, F11-O1, F11-U1).
+- `fixes/f12/*.wf`: copies of `crates/weft-check/tests/data/fn_values/preview_fixes.wf`,
+  `preview_fixes2.wf`
+  (the classes of the lost faults of the preview of stage F12: function values, the
+  groups A, B and C), `copy_once.wf` (the closure-copy rule for elements,
+  fields and pattern parts) and `run_given.wf` (a run of a value against the
+  places that the callee gives and the other arguments of the call, found in
+  the review of the rows of the preview) (claims F12-R5, F12-C1, F12-R6).

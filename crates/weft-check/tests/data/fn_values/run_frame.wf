@@ -1,0 +1,32 @@
+// A callee runs a function argument with a reference into its own local.
+// A closure that keeps the reference outside the call holds a place that
+// goes out of scope when the callee returns (claim F3-2).
+fn apply(f: fn(&u64)) {
+    let x = 5
+    f(&x)
+}
+fn keep_in_local() {
+    let y = 1
+    let last = &y
+    apply(|r| last = r)
+    print(last) //~ W0301
+}
+fn keep_in_vector() {
+    let keep: Vec<&u64> = Vec.new()
+    apply(|r| keep.push(r))
+    print(keep[0]) //~ W0301
+}
+// Clean: the closure reads the reference and keeps a copy of the value.
+fn copy_the_value() {
+    let n = 0
+    apply(|r| n = r + 0)
+    print(n)
+}
+// Clean: the closure keeps the reference, but the caller does not use it
+// after the call.
+fn no_use_after() {
+    let y = 1
+    let last = &y
+    print(last)
+    apply(|r| last = r)
+}

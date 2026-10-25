@@ -760,3 +760,41 @@ fn place_fields_of_a_deep_type_are_found_in_linear_work() {
     );
     assert!(wg.place_types >= 1 && wg.place_types <= 8, "{wg:?}");
 }
+
+/// `n` helper closures in one body. Each helper calls the `back` helpers
+/// before it (review round 3, Q3-2: `r3/quality/repro/Q3_closure_*.wf`).
+fn helper_closures(n: usize, back: usize) -> String {
+    let mut s = String::from("struct Out { v: Vec<u64> }\nfn render(out: &Out) / mut(out.v) {\n");
+    for i in 0..n {
+        let calls: Vec<String> = (i.saturating_sub(back)..i)
+            .rev()
+            .map(|j| format!("h{j}()"))
+            .collect();
+        if calls.is_empty() {
+            let _ = writeln!(s, "    let h{i} = || out.v.push({i})");
+        } else {
+            let _ = writeln!(s, "    let h{i} = || {{ {} }}", calls.join("; "));
+        }
+    }
+    let _ = writeln!(s, "    h{}()\n}}", n - 1);
+    s
+}
+
+/// A property query looks at each closure summary one time, so closures that
+/// call each other cost polynomial work, not work that grows by a factor for
+/// each closure (Q3-2). Before the fix, 16 helpers that each call the two
+/// helpers before them took about 4 s in a release build.
+#[test]
+fn closures_that_call_closures_cost_polynomial_work() {
+    for back in [1, 2, 16] {
+        let (wa, ..) = work_of(&helper_closures(8, back));
+        let (wb, ..) = work_of(&helper_closures(16, back));
+        assert!(wa.closure_queries > 0, "{wa:?}");
+        // Two times the closures: at most eight times the work (a cubic
+        // bound: n queries of n closures, and a closure that calls n others).
+        assert!(
+            wb.closure_queries <= 8 * wa.closure_queries + 64,
+            "back {back}: {wa:?} {wb:?}"
+        );
+    }
+}

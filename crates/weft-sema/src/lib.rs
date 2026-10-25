@@ -163,6 +163,10 @@ pub struct Work {
     /// The full types whose place fields the lowering walked: each one once
     /// for a body (review round 3, Q3-4).
     pub place_types: usize,
+    /// The closure summaries that the property queries looked at
+    /// (`Lower::closure_has`). A query looks at each summary one time
+    /// (review round 3, Q3-2).
+    pub closure_queries: usize,
 }
 
 impl Work {
@@ -174,6 +178,7 @@ impl Work {
         self.holder_steps += o.holder_steps;
         self.item_steps += o.item_steps;
         self.place_types += o.place_types;
+        self.closure_queries += o.closure_queries;
     }
 }
 

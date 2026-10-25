@@ -19,7 +19,7 @@ fn order() {
     let r = &v[0]
     let f = || v.clear()
     let g = || print(r + 1)
-    run_both(f, g)   //~ W0301
+    run_both(f, g)   //~ W0301 W0312
 }
 // A callee changes a place and then runs the value, which reads a reference
 // into it (`tests/programs/38_callbacks.wf`, `clear_then`).

@@ -1,0 +1,40 @@
+// More classes of the preview of stage F12.
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+linear struct Tx { id: u64 }
+fn begin() -> Tx { Tx { id: 1 } }
+fn rollback(tx: Tx) { let Tx(i) = tx; print(i) }
+// A returned closure runs a captured closure whose captured reference gets
+// a new value before the return (`verify/s5/p/rr7b.wf`).
+fn mk4(a: &World, b: &World) -> fn() {
+    let r = &a.entities[0]
+    let f = || print(r.hp)
+    let g = || f()
+    r = &b.entities[0]
+    g
+}
+fn returned_nested() {
+    let a = World { entities: Vec.new() }
+    a.entities.push(Entity { hp: 1 })
+    let b = World { entities: Vec.new() }
+    b.entities.push(Entity { hp: 2 })
+    let f = mk4(&a, &b)
+    b.entities.clear()
+    f()   //~ W0301
+}
+// A function parameter whose type states a row performs it
+// (`verify/s5/b/p/a4.wf`).
+pub fn stated(f: fn() / log) { f() }   //~ W0701
+// A linear closure that a callee does not run can be dropped there
+// (`redteam/l01_linear.wf`).
+fn ignore(f: fn()) {}
+fn closure_ignored() {
+    let tx = begin()
+    ignore(|| rollback(tx))   //~ W0601
+}
+// Control: a callee that runs the closure.
+fn run(f: fn()) { f() }
+fn closure_run() {
+    let tx = begin()
+    run(|| rollback(tx))
+}

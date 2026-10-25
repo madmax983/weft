@@ -455,6 +455,9 @@ pub struct Emitted {
     pub runs: Vec<(crate::analysis::transfer::RunOf, bool)>,
     /// The state at each `Return` of the entry body.
     pub returns: Vec<crate::analysis::State>,
+    /// A run node of the entry body runs code of a caller that can resume
+    /// more than once.
+    pub code_multi: bool,
     /// The join of the states of the entry body before each terminator and
     /// each closure literal (with closures in the component).
     pub made: Option<crate::analysis::State>,
@@ -576,14 +579,24 @@ pub fn emit_parts(
             at: (weft_ir::BlockId(0), 0),
             returns: Vec::new(),
             runs: Vec::new(),
+            code_multi: false,
+            last: (!closures.is_empty()).then(crate::analysis::State::new),
             aborts: std::collections::BTreeSet::new(),
             union: (!closures.is_empty()).then(crate::analysis::State::new),
         };
         templates::entry(&mut em, entry_node, &params).map_err(|e| unsupported(&e))?;
         emit_blocks(&mut em, &table, &frames, &states, body).map_err(|e| unsupported(&e))?;
-        (em.stored, em.aborts, em.union, em.runs, em.returns)
+        (
+            em.stored,
+            em.aborts,
+            em.union,
+            em.runs,
+            em.returns,
+            em.last,
+            em.code_multi,
+        )
     };
-    let (mut stored, aborts, union, runs, returns) = stored;
+    let (mut stored, aborts, union, runs, returns, last, code_multi) = stored;
     let closure_sums: Vec<(weft_ir::ClosureId, crate::analysis::Summary)> = closures
         .iter()
         .filter_map(|&cb| p.closure_of(cb).map(|(c, _)| c))
@@ -664,7 +677,13 @@ pub fn emit_parts(
         aborts,
         runs,
         returns,
-        made: unions.remove(&entry),
+        code_multi,
+        made: unions.remove(&entry).map(|mut u| {
+            if let Some(l) = &last {
+                u.join(l);
+            }
+            u
+        }),
         closures: closure_sums,
     })
 }
@@ -861,6 +880,8 @@ fn closure_summary(
             at: (weft_ir::BlockId(0), 0),
             returns: Vec::new(),
             runs: Vec::new(),
+            code_multi: false,
+            last: Some(crate::analysis::State::new()),
             aborts: std::collections::BTreeSet::new(),
             union: Some(crate::analysis::State::new()),
         };
@@ -870,7 +891,12 @@ fn closure_summary(
             std::mem::take(&mut em.returns),
             std::mem::take(&mut em.aborts),
             std::mem::take(&mut em.runs),
-            em.union.take(),
+            em.union.take().map(|mut u| {
+                if let Some(l) = &em.last {
+                    u.join(l);
+                }
+                u
+            }),
         )
     };
     Ok(crate::analysis::summarize::closure(
@@ -883,6 +909,7 @@ fn closure_summary(
         &crate::analysis::summarize::FnParts {
             runs: &runs,
             returns: &returns,
+            code_multi: false,
             made: made.as_ref(),
         },
     ))
@@ -962,6 +989,8 @@ fn emit_closure(
         at: (weft_ir::BlockId(0), 0),
         returns: Vec::new(),
         runs: Vec::new(),
+        code_multi: false,
+        last: None,
         aborts: std::collections::BTreeSet::new(),
         union: Some(crate::analysis::State::new()),
     };
@@ -1215,6 +1244,9 @@ fn emit_block(
         em.skip_s = None;
         match pattern_bind(em.p, bid, body, s)? {
             Bind::Part(k, path, moves) => {
+                // A copy of a part that can be a `once` closure moves it
+                // (stage F12, `docs/ir.md` 5.22).
+                let moves = moves || copy_once(em, &st, s)?;
                 // A later bind of another part of the same local is one move
                 // with the earlier binds. A bind of a part that overlaps a
                 // moved part reads a moved value: it keeps its use of `S(l)`
@@ -1265,6 +1297,9 @@ fn emit_block(
             ),
         ) = (em.union.as_mut(), &s.kind)
         {
+            u.join(&st);
+        }
+        if let (Some(u), weft_ir::StmtKind::Dead(_)) = (em.last.as_mut(), &s.kind) {
             u.join(&st);
         }
         if let Some(n) = table.get(key) {
@@ -1383,6 +1418,24 @@ fn pattern_bind(
     match crate::analysis::transfer::move_path(p, bid, q)? {
         Some((k, path)) => Ok(Bind::Part(k, path, moves)),
         None => Ok(Bind::Other),
+    }
+}
+
+/// True if statement `s` copies a part that can be a `once` closure in
+/// state `st`: the copy moves the part ([`templates::once_read`]).
+///
+/// # Errors
+///
+/// The errors of α.
+fn copy_once(
+    em: &mut templates::Em<'_>,
+    st: &crate::analysis::State,
+    s: &weft_ir::Stmt,
+) -> Result<bool, alpha::AlphaError> {
+    use weft_ir::{Operand, Rvalue, StmtKind};
+    match &s.kind {
+        StmtKind::Assign(_, Rvalue::Use(Operand::Copy(q))) => templates::once_read(em, st, q),
+        _ => Ok(false),
     }
 }
 

@@ -1371,8 +1371,22 @@ pub fn fns_at(cx: &Cx<'_>, st: &State, at: PlaceId) -> BTreeSet<FnVal> {
                 out.insert(FnVal::Unknown);
             }
         },
-        Some(Role::Param(_, i) | Role::Held(_, i)) => {
-            out.insert(FnVal::Param(i));
+        // A place behind a parameter whose type cannot hold a function
+        // value gives none (`world: &World` with no function field). In a
+        // closure body, parameter 0 is the environment.
+        Some(Role::Param(b, i) | Role::Held(b, i)) => {
+            let closure = cx.p.closure_of(b).is_some();
+            let ty =
+                cx.p.bodies
+                    .get(b.index())
+                    .and_then(|body| body.params.get(i as usize))
+                    .and_then(|&l| cx.p.bodies.get(b.index())?.local(l))
+                    .map(|d| d.ty);
+            let may_hold =
+                ty.is_none_or(|t| crate::props::ir_has_fns(cx.tys, t) || cx.tys.mentions_param(t));
+            if may_hold && !(closure && i == 0) {
+                out.insert(FnVal::Param(if closure { i - 1 } else { i }));
+            }
         }
         Some(Role::Capture(_, k) | Role::CaptureHeld(_, k) | Role::CaptureDeep(_, k)) => {
             out.insert(FnVal::Capture(k));
@@ -1735,6 +1749,23 @@ fn apply_runs(
         }
         places.sort();
         places.dedup();
+        // The other arguments of the call: the callee can keep references
+        // into them across the run (`Sigma::others`).
+        let mut others = Vec::new();
+        for (i, a) in sigma.args.iter().enumerate() {
+            if !run.capture && i == run.param as usize {
+                continue;
+            }
+            let given = if a.is_empty() {
+                sigma.values.get(i).map_or(&[][..], Vec::as_slice)
+            } else {
+                a.as_slice()
+            };
+            others.extend(given.iter().copied());
+            others.extend(sigma.helds.get(i).into_iter().flatten().copied());
+        }
+        others.sort();
+        others.dedup();
         for g in &fns {
             if run.task && task_unsafe(cx, g) {
                 return Err(AlphaError::Later(TASK_RUN));
@@ -1754,6 +1785,7 @@ fn apply_runs(
             for a in apps.out.iter_mut().skip(start) {
                 a.kind = super::apply::RunKind::Run;
                 a.late = true;
+                a.sigma.others.clone_from(&others);
             }
             // A capture that holds a `once` value moves at the run of the
             // closure (`Applied::once`); a value of a parameter moves here.

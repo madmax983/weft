@@ -34,3 +34,13 @@ fn plain_ok() {
     g()
     h()
 }
+// A pattern that binds a `once` closure and another part of a tuple moves
+// the closure only (no W0302 of the scrutinee at the bind of `n`).
+fn pattern_parts() {
+    let b = Buf { items: Vec.new() }
+    let f = || eat(b)
+    let t = (f, 1)
+    let (g, n) = t
+    g()
+    print(n)
+}

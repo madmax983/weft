@@ -498,6 +498,7 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                             &super::summarize::FnParts {
                                 runs: &e.runs,
                                 returns: &e.returns,
+                                code_multi: e.code_multi,
                                 made: e.made.as_ref(),
                             },
                         );

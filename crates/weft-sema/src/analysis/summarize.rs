@@ -167,7 +167,21 @@ pub fn summarize(
         matches!(roots.role(info.root), Some(Role::Caller))
             .then(|| IPlace::cut(IRoot::Caller, steps_of(facts, p)))
     };
-    let runs = runs_of(fv.runs, false, &place);
+    // A run gets a reference into a local of the body (`f(&x)`): the frame
+    // of the run node, which ends at its `FrameEnd` (F3-2).
+    let run_place = |p: PlaceId| -> Option<IPlace> {
+        place(p).or_else(|| {
+            let info = facts.places.get(p.index())?;
+            match roots.role(info.root) {
+                Some(Role::Local(_) | Role::Frame(_) | Role::Cell(_)) => {
+                    Some(IPlace::wild(IRoot::Frame))
+                }
+                _ => None,
+            }
+        })
+    };
+    let runs = runs_of(fv.runs, false, &run_place);
+    changed.multi |= fv.code_multi;
     for r in &runs {
         super::sig::join_run(&mut changed.runs, r);
     }
@@ -177,15 +191,59 @@ pub fn summarize(
         .and_then(|b| b.local(b.ret))
         .map(|d| d.ty);
     if ret_ty.is_some_and(|t| crate::props::ir_has_fns(tys, t)) {
-        let (fns, places) = ret_fns_of(ir, fv.returns, fv.made, entry, &place);
+        let (fns, places, caps) = ret_fns_of(ir, fv.returns, fv.made, entry, &place);
         // The effects of a closure that the function gives back are in its
-        // row, as the old inference says (W0701, W0702 at a caller).
+        // row, as the old inference says (W0701, W0702 at a caller): its
+        // effects, and its changes through the references of its captures.
+        // The effects of the closures that those closures give back too.
+        let mut work: Vec<weft_ir::ClosureId> = fns
+            .iter()
+            .filter_map(|f| match f {
+                super::summary::RetFn::Made(c) => Some(*c),
+                _ => None,
+            })
+            .collect();
+        let mut seen = std::collections::BTreeSet::new();
+        while let Some(c) = work.pop() {
+            if !seen.insert(c) {
+                continue;
+            }
+            if let Ok(cs) = sums.closure(c) {
+                changed
+                    .named
+                    .extend(cs.performs.iter().map(|pf| pf.effect.clone()));
+                work.extend(cs.ret.fns.iter().filter_map(|f| match f {
+                    super::summary::RetFn::Made(x) => Some(*x),
+                    _ => None,
+                }));
+            }
+        }
         for f in &fns {
             if let super::summary::RetFn::Made(c) = f {
                 if let Ok(cs) = sums.closure(*c) {
-                    changed
-                        .named
-                        .extend(cs.performs.iter().map(|pf| pf.effect.clone()));
+                    for (m, _) in &cs.muts {
+                        let (k, wild) = match m.root {
+                            IRoot::CaptureHeld(k) => (k, false),
+                            IRoot::CaptureDeep(k) => (k, true),
+                            _ => continue,
+                        };
+                        for base in caps.get(&(*c, k)).into_iter().flatten() {
+                            let mut steps = base.steps.clone();
+                            if wild {
+                                steps.push(IStep::Wild);
+                            } else {
+                                steps.extend(m.steps.iter().cloned());
+                            }
+                            let ip = IPlace::cut(base.root.clone(), steps);
+                            let idx = match base.root {
+                                IRoot::Param(i) | IRoot::Held(i) => {
+                                    super::sig::sig_root(sig, i as usize)
+                                }
+                                _ => continue,
+                            };
+                            changed.muts.push((ip, idx));
+                        }
+                    }
                 }
             }
         }
@@ -255,6 +313,8 @@ pub struct FnParts<'a> {
     pub runs: &'a [(crate::analysis::transfer::RunOf, bool)],
     /// The state at each `Return`.
     pub returns: &'a [super::State],
+    /// A run node runs code of a caller that can resume more than once.
+    pub code_multi: bool,
     /// The join of the states where the body makes its closures (before
     /// each closure literal and each terminator): a `Kept` capture keeps
     /// the value that its variable has there, also after the variable ends.
@@ -312,16 +372,14 @@ fn ret_fns_of(
     made: Option<&super::State>,
     body: BodyId,
     place: &dyn Fn(PlaceId) -> Option<IPlace>,
-) -> (
-    std::collections::BTreeSet<super::summary::RetFn>,
-    std::collections::BTreeSet<IPlace>,
-) {
+) -> RetParts {
     use super::summary::RetFn;
     use super::FnVal;
     let mut fns = std::collections::BTreeSet::new();
     let mut places = std::collections::BTreeSet::new();
+    let mut caps: CapPlaces = BTreeMap::new();
     let Some(b) = ir.body(body) else {
-        return (fns, places);
+        return (fns, places, caps);
     };
     let one = |f: &FnVal| match f {
         FnVal::Item(g, t) => RetFn::Item(*g, t.clone()),
@@ -333,16 +391,27 @@ fn ret_fns_of(
     for st in returns {
         let v = st.value((body, b.ret), &[]).flat();
         places.extend(v.refs.iter().filter_map(|&q| place(q)));
-        for f in &v.fns {
-            fns.insert(one(f));
+        // The closures of the result, and the closures that their `Kept`
+        // captures hold (a closure that runs a captured closure), each one
+        // time.
+        let mut work: Vec<FnVal> = v.fns.iter().cloned().collect();
+        let mut seen = std::collections::BTreeSet::new();
+        while let Some(f) = work.pop() {
+            if !seen.insert(f.clone()) {
+                continue;
+            }
+            fns.insert(one(&f));
             let FnVal::Closure(c) = f else {
                 continue;
             };
             let Some(decl) = ir.closures.get(c.index()) else {
                 continue;
             };
-            for cap in &decl.captures {
-                if cap.mode != weft_ir::CaptureMode::Kept {
+            for (ki, cap) in decl.captures.iter().enumerate() {
+                if !matches!(
+                    cap.mode,
+                    weft_ir::CaptureMode::Kept | weft_ir::CaptureMode::ByMove
+                ) {
                     continue;
                 }
                 let Ok(k) = crate::factgen::alpha::owner_local(ir, decl.maker, cap.source.local)
@@ -354,13 +423,31 @@ fn ret_fns_of(
                 if let Some(m) = made {
                     src.join(&m.value(k, &[]).flat());
                 }
-                places.extend(src.refs.iter().filter_map(|&q| place(q)));
-                fns.extend(src.fns.iter().map(one));
+                let ps: Vec<IPlace> = src.refs.iter().filter_map(|&q| place(q)).collect();
+                caps.entry((c, u32::try_from(ki).unwrap_or(u32::MAX)))
+                    .or_default()
+                    .extend(ps.iter().cloned());
+                if cap.mode == weft_ir::CaptureMode::Kept {
+                    places.extend(ps);
+                    work.extend(src.fns.iter().cloned());
+                }
             }
         }
     }
-    (fns, places)
+    (fns, places, caps)
 }
+
+/// The interface places that the references of each capture of each closure
+/// of a result point into ([`ret_fns_of`]).
+type CapPlaces = BTreeMap<(weft_ir::ClosureId, u32), std::collections::BTreeSet<IPlace>>;
+
+/// The function values of a result, the places of their environments, and
+/// the places of each capture ([`ret_fns_of`]).
+type RetParts = (
+    std::collections::BTreeSet<super::summary::RetFn>,
+    std::collections::BTreeSet<IPlace>,
+    CapPlaces,
+);
 
 /// The interface place of fact place `p` of the facts of closure body
 /// `body` in the terms of its interface (`docs/ir.md` 6.7), with its callee
@@ -714,7 +801,7 @@ pub fn closure(
     // The function values of the interface that the body runs: its captures
     // and its parameters (stage F12).
     out.runs = runs_of(runs, true, &|q| {
-        closure_place(ir, facts, roots, body, q, false).map(|x| x.0)
+        closure_place(ir, facts, roots, body, q, true).map(|x| x.0)
     });
     out.uses = decl
         .captures
@@ -774,7 +861,7 @@ pub fn closure(
             }
         }
     }
-    let (fns, places) = ret_fns_of(ir, returns, fv.made, body, &|q| {
+    let (fns, places, _) = ret_fns_of(ir, returns, fv.made, body, &|q| {
         closure_place(ir, facts, roots, body, q, false).map(|x| x.0)
     });
     out.ret.fns = fns.into_iter().collect();

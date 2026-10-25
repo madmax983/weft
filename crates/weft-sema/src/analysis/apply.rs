@@ -105,6 +105,11 @@ pub struct Sigma {
     /// σ(`CaptureHeld(k)`) of a closure: what the references in the value of
     /// capture `k` point into at the run node.
     pub cap_helds: Vec<Vec<PlaceId>>,
+    /// For a run that a callee does ([`RunKind::Run`]): the places of the
+    /// other arguments of the call that gives the value to the callee. The
+    /// callee can keep them across the run, so the value must not change
+    /// them through its environment (W0312).
+    pub others: Vec<PlaceId>,
     /// σ(`CaptureDeep(k)`) of a closure: what the references behind those
     /// point into at the run node.
     pub cap_deeps: Vec<Vec<PlaceId>>,
@@ -961,18 +966,37 @@ pub fn main(
     // reach; the value must not change a place that its environment points
     // into (W0312, as for a call of the value with two such arguments).
     let run = kind == RunKind::Run;
+    // The places that the callee gives to the run are one argument: the
+    // value must not change them through its environment (W0312: the
+    // callee keeps them across the run). A change through a parameter of
+    // the value is a change of what the callee gives.
+    let given = sum.params.first().map(|p| p.root);
+    let as_given = |idx: u32| -> u32 {
+        match given {
+            Some(g) if run && sum.params.iter().any(|p| p.root == idx) => g,
+            _ => idx,
+        }
+    };
     if run {
         for ps in &s.cap_helds {
             cx.facts
                 .call_arg
                 .extend(ps.iter().map(|&p| (n, p, crate::body::roots::STORED)));
         }
+        let g = given.unwrap_or_else(|| crate::body::roots::param(0));
+        let mut places: Vec<PlaceId> = s.args.iter().flatten().copied().collect();
+        places.extend(s.others.iter().copied());
+        places.sort();
+        places.dedup();
+        cx.facts
+            .call_arg
+            .extend(places.into_iter().map(|p| (n, p, g)));
     }
     let changed = muts(cx, sum, s)?;
     for &(p, idx) in &changed {
         cx.facts.mutates_at.push((n, p));
         if item || run {
-            cx.facts.call_mut.push((n, p, idx));
+            cx.facts.call_mut.push((n, p, as_given(idx)));
         }
     }
     for l in &sum.lends {
@@ -994,7 +1018,7 @@ pub fn main(
             // A place of a caller is no argument of the call: no alias
             // check (W0312) compares it.
             if let (Some(root), true) = (root, item || run) {
-                cx.facts.call_mut.push((n, p, root));
+                cx.facts.call_mut.push((n, p, as_given(root)));
             }
         }
     }

@@ -317,12 +317,17 @@ pub struct ParamIface {
 }
 
 impl Summary {
-    /// True if the result can point into the frame of the body: then the
-    /// frame root of a run node ends at its `FrameEnd`.
+    /// True if the result (or a function value that the body runs) can
+    /// point into the frame of the body: then the frame root of a run node
+    /// ends at its `FrameEnd`.
     pub fn ret_in_frame(&self) -> bool {
-        self.puts
+        self.runs
             .iter()
-            .any(|(_, ps)| ps.iter().any(IPlace::in_frame))
+            .any(|r| r.args.iter().any(IPlace::in_frame))
+            || self
+                .puts
+                .iter()
+                .any(|(_, ps)| ps.iter().any(IPlace::in_frame))
             || self.ret.places.iter().any(IPlace::in_frame)
             || self.ret.flows.iter().any(IPlace::in_frame)
             || self

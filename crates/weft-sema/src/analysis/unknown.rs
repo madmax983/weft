@@ -159,9 +159,10 @@ fn param_places(cx: &mut Cx<'_>, body: BodyId) -> Result<Vec<PlaceId>, AlphaErro
 /// and into `Caller..`. It can abort (`raises`: the run node gets
 /// `may_abort`), and it can resume more than once if an effect of its row
 /// has a `multi` operation (with no row: an effect of the program has one,
-/// as `may_be_multi` of the old lowering). Its effects pass through: the
-/// function value that the caller gives applies its own summary where the
-/// caller runs it (part `runs`).
+/// as `may_be_multi` of the old lowering). It performs the effects of a
+/// stated row; with no row its effects pass through: the function value
+/// that the caller gives applies its own summary where the caller runs it
+/// (part `runs`).
 pub fn code_of_caller(
     tys: &TyTable,
     params: &[TyId],
@@ -200,6 +201,18 @@ pub fn code_of_caller(
         s.ret.places.push(IPlace::wild(IRoot::Caller));
     }
     s.aborts.insert(Abort::Raises);
+    // A stated row: the code performs its effects (with no row the effects
+    // of the value pass through, ADR 0005).
+    for e in row.unwrap_or(&[]) {
+        if let Some(d) = tys.effects().get(e.index()) {
+            let pf = super::summary::Perform {
+                effect: d.identity.clone(),
+                cap: super::summary::CapIface::Row,
+            };
+            s.aborts.insert(Abort::Perform(pf.clone()));
+            s.performs.insert(pf);
+        }
+    }
     let multi = |e: &weft_ir::ty::EffectDecl| e.ops.iter().any(|o| o.multi);
     s.multi = match row {
         Some(es) => es
