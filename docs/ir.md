@@ -3007,6 +3007,16 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
   parameters apart (`Summary::code_lends`): a caller applies the values that it gives
   there. A closure that a callee made (`Made`) runs its captures as code of a caller, so
   they are `lends` where it runs.
+- A function value carries the places that its environment points into wherever its
+  values go (F12-fix, hole H2 of the review of the ABC preview): `store_fns` gives a
+  place that a call changes the references of each function argument with its values
+  (`fs.push(mk())`), a read of an element or a place behind a pointer of a type with a
+  function part gives the references at the place (`place_value`), a result that is a
+  value of an argument (`id(f)`, code of a caller) gets the references that the
+  argument reaches (`transfer::reach_refs`), and σ of a `Made` closure maps a `ByRef`
+  or `Kept` capture to each place that the value points into as well as to the value
+  itself (`apply::made_sigma`): a closure that a closure gives back keeps the cell of
+  its `ByRef` capture.
 - The results of a run (`transfer::with_results`): a closure of the body that gives back a
   capture gives the values of the capture, also through a chain of closures that give
   back closures (16 levels; a longer chain stays with the old pipeline).

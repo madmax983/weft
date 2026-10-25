@@ -392,7 +392,15 @@ pub fn place_value(
     if crate::props::ir_has_fns(cx.tys, t) {
         let a = alpha(cx, body, st, place)?;
         for &at in &a.places {
-            v.fns.extend(fns_at(cx, st, at));
+            let fs = fns_at(cx, st, at);
+            // The places that the environments of the closures there point
+            // into (hole H2 of the review of the ABC preview: `fs[0]`). The
+            // environment of a value of a caller is the place of the caller.
+            if !props.holds_refs && has_closure(&fs) {
+                v.refs
+                    .extend(held_at(cx.p, st, cx.facts, cx.roots, at, None)?);
+            }
+            v.fns.extend(fs);
         }
     }
     if props.holds_refs {
@@ -1115,7 +1123,8 @@ pub fn call_out(
     // (`Box.new(f)`, `v.pop()`).
     if crate::props::ir_has_fns(cx.tys, ret_ty) && cx.tys.mentions_param(decl.ret) {
         for a in args {
-            fs.extend(reach_fns(cx, body, st, a)?);
+            fs.0.extend(reach_fns(cx, body, st, a)?);
+            fs.1.extend(reach_refs(cx, body, st, a)?);
         }
     }
     let ret = with_fns(cx, ret, ret_ty, fs);
@@ -1176,6 +1185,10 @@ fn store_fns(
     changed: &[PlaceId],
 ) -> Result<(), AlphaError> {
     let mut fns = BTreeSet::new();
+    // The places that the environments of the function values point into:
+    // the stored value holds them (hole H2 of the review of the ABC preview:
+    // `fs.push(mk())`).
+    let mut refs = BTreeSet::new();
     // An argument that points to a place that can hold a function value:
     // the callee can store one behind it.
     let mut behind = false;
@@ -1187,7 +1200,9 @@ fn store_fns(
                     behind = true;
                 }
                 if !is_ref_ty(cx.tys, t) {
-                    fns.extend(operand(cx, body, st, a)?.flat().fns);
+                    let v = operand(cx, body, st, a)?.flat();
+                    fns.extend(v.fns);
+                    refs.extend(v.refs);
                 }
             }
         }
@@ -1210,6 +1225,7 @@ fn store_fns(
                 if holds {
                     let mut v = AbsVal::none();
                     v.fns.clone_from(&fns);
+                    v.refs.clone_from(&refs);
                     st.add(k, &path, &Tree::leaf(v));
                 }
             }
@@ -1652,9 +1668,10 @@ fn ret_fns(
     sum: &super::summary::Summary,
     given: Given<'_>,
     capture: &mut CaptureValues<'_>,
-) -> Result<BTreeSet<FnVal>, AlphaError> {
+) -> Result<(BTreeSet<FnVal>, BTreeSet<PlaceId>), AlphaError> {
     use super::summary::RetFn;
     let mut out = BTreeSet::new();
+    let mut refs = BTreeSet::new();
     for f in &sum.ret.fns {
         match f {
             RetFn::Item(g, t) => {
@@ -1668,6 +1685,7 @@ fn ret_fns(
                     Some(a) => {
                         let reach = reach_fns(cx, r.body, r.st, a)?;
                         out.extend(with_results(cx, r, reach)?);
+                        refs.extend(reach_refs(cx, r.body, r.st, a)?);
                     }
                     None => {
                         out.insert(FnVal::Unknown);
@@ -1687,16 +1705,77 @@ fn ret_fns(
             }
         }
     }
-    Ok(out)
+    Ok((out, refs))
 }
 
-/// Adds the function values `fns` to the top of the result `t` of type
-/// `ret_ty`, if the type can hold one.
-fn with_fns(cx: &Cx<'_>, mut t: Tree, ret_ty: TyId, fns: BTreeSet<FnVal>) -> Tree {
-    if !fns.is_empty() && crate::props::ir_has_fns(cx.tys, ret_ty) {
+/// Adds the function values `fns` and the places `refs` of their
+/// environments to the top of the result `t` of type `ret_ty`, if the type
+/// can hold a function value.
+fn with_fns(
+    cx: &Cx<'_>,
+    mut t: Tree,
+    ret_ty: TyId,
+    (fns, refs): (BTreeSet<FnVal>, BTreeSet<PlaceId>),
+) -> Tree {
+    if crate::props::ir_has_fns(cx.tys, ret_ty) {
         t.top.fns.extend(fns);
+        t.top.refs.extend(refs);
     }
     t
+}
+
+/// True if the function values `fns` hold a closure of the program (a
+/// closure of the component, or one that a callee made).
+fn has_closure(fns: &BTreeSet<FnVal>) -> bool {
+    fns.iter()
+        .any(|f| matches!(f, FnVal::Closure(_) | FnVal::Made(_)))
+}
+
+/// The places that the environments of the closures that operand `op`
+/// reaches point into.
+///
+/// Operand `op` is of body `body` in state `st` ([`reach_fns`]): the
+/// references of a value of a type with a function part, and the
+/// references at each place behind its references that holds a function
+/// value (two levels). A function value that goes through a call (`id(f)`)
+/// keeps them (hole H2 of the review of the ABC preview).
+///
+/// # Errors
+///
+/// The errors of α.
+pub fn reach_refs(
+    cx: &mut Cx<'_>,
+    body: BodyId,
+    st: &State,
+    op: &Operand,
+) -> Result<BTreeSet<PlaceId>, AlphaError> {
+    let mut out = BTreeSet::new();
+    let ty = match op {
+        Operand::Copy(q) | Operand::Move(q) => place_ty(cx, body, q)?,
+        Operand::Const(_) => return Ok(out),
+    };
+    if !crate::props::ir_has_fns(cx.tys, ty) {
+        return Ok(out);
+    }
+    let v = operand(cx, body, st, op)?.flat();
+    if !is_ref_ty(cx.tys, ty) {
+        out.extend(v.refs.iter().copied());
+    }
+    let mut level: Vec<PlaceId> = v.refs.into_iter().collect();
+    for _ in 0..2 {
+        let mut next = Vec::new();
+        for &r in &level {
+            let held = held_at(cx.p, st, cx.facts, cx.roots, r, None).unwrap_or_default();
+            if has_closure(&fns_at(cx, st, r)) {
+                out.extend(held.iter().copied());
+            }
+            next.extend(held);
+        }
+        next.sort();
+        next.dedup();
+        level = next;
+    }
+    Ok(out)
 }
 
 /// The reason for a function value that code of a caller can run as a task.
@@ -1930,9 +2009,11 @@ fn apply_value(
             // The code can run each function value that the arguments
             // reach, more than once, and give the result one of them.
             let mut reach = BTreeSet::new();
+            let mut reach_at = BTreeSet::new();
             if let Given::Args(args) = given {
                 for a in args {
                     reach.extend(reach_fns(cx, body, st, a)?);
+                    reach_at.extend(reach_refs(cx, body, st, a)?);
                 }
             }
             if let (Some(t), Some(rt)) = (ret.take(), ret_ty) {
@@ -1944,7 +2025,7 @@ fn apply_value(
                 if matches!(fv, FnVal::Param(_) | FnVal::Capture(_)) {
                     fs.insert(fv.clone());
                 }
-                ret = Some(with_fns(cx, t, rt, fs));
+                ret = Some(with_fns(cx, t, rt, (fs, reach_at)));
             }
             let name = match callee {
                 Operand::Copy(q) | Operand::Move(q) => p

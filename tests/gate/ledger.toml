@@ -875,3 +875,14 @@ files = [
 codes = ["W0301", "W0312"]
 reason = "new true positives in loops (tier 2; each test faults where the `ir` pipeline reports): L9_part_chains `tuple_chain`: a copy of the stale `t.9` into `t.8`, ... is a use of an invalid reference (8-16), as the old pipeline reports for the `Option` chain (36-45). rt2v: `match_then_clear` (23), and `callee_field` W0312 (47): `&w` holds `&world.entities[0]` and the callee clears `world.entities` (R3RT3). r3rt2_more: the `//~ W0301` marker of `bind_then_clear` (26, R3RT2). The old pipeline misses them. Review of stage F10, section 3"
 stage = "F10"
+
+# ----------------------------------------------------------------------------
+# F12-fix: the fixes of the holes of the review of the ABC preview
+# (scratchpad f12/review.md). Group C stays off by default.
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/fixes/f12/oldholes/hv_m_vec_ret_fn.wf"]
+finding = "F12-H2"
+reason = "old hole that the ABC preview kept (review of the ABC preview, 4.7): `mkfs(w) -> Vec<fn()>` gives back a closure that clears `w.entities`; the old pipeline loses its effects, and the default AB pipeline gives the program (group C) to the old pipeline. Under ABC the vector holds the places of the environment of the closure (F12-fix H2): W0301. Drop this entry when group C is on (F13)"
+stage = "F12"

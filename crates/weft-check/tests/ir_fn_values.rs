@@ -207,3 +207,12 @@ fn a_vector_of_function_values_in_another_value_is_linear_only_with_a_linear_clo
     // vector in another vector, an `Option` or a field was W0601.
     check("vec_of_fns.wf");
 }
+
+#[test]
+fn a_closure_that_a_maker_gives_back_keeps_its_effects_through_calls_and_values() {
+    // Review of the ABC preview, hole H2: a `Made` closure lost its effects
+    // in a `Vec` (`fs.push(mk())`), through `id(f)` and `run(mk())`, and a
+    // closure that a closure gives back lost them in each value. The value
+    // holds the places of the environment with its function values.
+    check("made_through_values.wf");
+}

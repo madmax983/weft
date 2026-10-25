@@ -471,7 +471,13 @@ pub fn made_sigma(
         Operand::Copy(q) | Operand::Move(q) => {
             let a = transfer::alpha(cx, callee_body, st, q)?;
             let v = transfer::operand(cx, callee_body, st, callee)?.flat();
-            (a.places, v.refs.into_iter().collect())
+            // A value behind a reference argument (a run of `fs[i]` in a
+            // callee that gets `&fs`): the places of its environment.
+            let mut refs: Vec<PlaceId> = v.refs.into_iter().collect();
+            refs.extend(transfer::reach_refs(cx, callee_body, st, callee)?);
+            refs.sort();
+            refs.dedup();
+            (a.places, refs)
         }
         Operand::Const(_) => (Vec::new(), Vec::new()),
     };
@@ -490,7 +496,21 @@ pub fn made_sigma(
                 "a closure that captures a capability or a continuation (stage F14)",
             ));
         }
-        s.captures.push(places.clone());
+        // A `ByRef` capture points into the place of its variable, and a
+        // `Kept` capture names the variable: the closure value holds that
+        // place as a reference (`transfer::closure_value`), so the capture
+        // is also each place that the value points into (hole H2 of the
+        // review of the ABC preview: a closure that a closure gives back).
+        let mut at = places.clone();
+        if matches!(
+            cap.mode,
+            weft_ir::CaptureMode::ByRef | weft_ir::CaptureMode::Kept
+        ) {
+            at.extend(refs.iter().copied());
+            at.sort();
+            at.dedup();
+        }
+        s.captures.push(at);
         s.cap_helds.push(refs.clone());
         s.cap_deeps.push(deep.clone());
     }

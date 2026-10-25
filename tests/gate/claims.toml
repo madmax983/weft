@@ -3952,3 +3952,33 @@ repro = [
     "tests/gate/probes/fixes/f12/fp1/fp07_vecvec_item.wf",
 ]
 note = "a `Vec<fn()>` with no linear closure in another `Vec`, an `Option` or a field is no linear value: a function item puts only the values of its arguments into a place of the caller (`transfer::can_get_linear_with`; false positive FP1 of the review of the ABC preview)"
+
+[[claim]]
+finding = "F12-H2"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12/h2/hv_a_vecpush_mk.wf",
+    "tests/gate/probes/fixes/f12/h2/hv_b_vecpush_local.wf",
+    "tests/gate/probes/fixes/f12/h2/hv_c_opt_mk.wf",
+    "tests/gate/probes/fixes/f12/h2/hv_d_field_mk.wf",
+    "tests/gate/probes/fixes/f12/h2/hv_e_tuple_mk.wf",
+    "tests/gate/probes/fixes/f12/h2/hv_f_vec_fnmaker.wf",
+    "tests/gate/probes/fixes/f12/h2/hv_g_vec_fnmaker_local.wf",
+    "tests/gate/probes/fixes/f12/h2/hv_i_vec_mk_run.wf",
+    "tests/gate/probes/fixes/f12/h2/hv_j_vec_index_call.wf",
+    "tests/gate/probes/fixes/f12/h2/hv_k_vec_pop.wf",
+    "tests/gate/probes/fixes/f12/h2/hv_l_vec_param.wf",
+    "tests/gate/probes/fixes/f12/h2/hm_f_id_fnmaker.wf",
+    "tests/gate/probes/fixes/f12/h2/hm_k_fnmaker_vec_run_in_callee.wf",
+    "tests/gate/probes/fixes/f12/h2/m03_id_made_local.wf",
+    "tests/gate/probes/fixes/f12/h2/m04_closure_maker_run.wf",
+    "tests/gate/probes/fixes/f12/h2/m05_closure_maker_id.wf",
+    "tests/gate/probes/fixes/f12/h2/m12_made_chain_maker_maker.wf",
+    "tests/gate/probes/fixes/f12/h2/c6_d_vec.wf",
+    "tests/gate/probes/fixes/f12/oldholes/hv_m_vec_ret_fn.wf",
+]
+code = "W0301"
+note = "a closure that a function or a closure gives back keeps the places of its environment with its function values: through `Vec.push` and an element read (`store_fns`, `place_value`), through `id(f)` and code of a caller (`reach_refs`), and a `ByRef` or `Kept` capture of a `Made` closure is each place that the value points into (`made_sigma`) (hole H2 of the review of the ABC preview, and the old hole hv_m)"

@@ -1,0 +1,20 @@
+// F12 review (ABC preview), hole H2: a closure that a function or a closure gives back goes through a call argument, an Option, a field or a tuple, then runs after a reference into what it changes (old W0301) (h6/m12_made_chain_maker_maker.wf).
+struct Entity { hp: i32 }
+struct World { entities: Vec<Entity> }
+struct K { f: fn() }
+fn mkw() -> World { let w = World { entities: Vec.new() }; w.entities.push(Entity { hp: 1 }); w }
+fn run(f: fn()) { f() }
+fn clr(w: &World) -> fn() / mut(w.entities) { || w.entities.clear() }
+fn id(f: fn()) -> fn() { f }
+fn mk_v() -> Vec<u64> { let v = Vec.new(); v.push(1); v }
+fn shower(v: &Vec<u64>) -> fn() { || print(v[0]) }
+fn clr2(w: &World) -> fn() / mut(w.entities) { clr(w) }
+fn main() {
+    let w = mkw()
+    let fs = Vec.new()
+    fs.push(clr2(&w))
+    let first = &w.entities[0]
+    let g = fs[0]
+    g()
+    print(first.hp)
+}
