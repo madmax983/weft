@@ -319,6 +319,11 @@ pub struct FnParts<'a> {
     /// each closure literal and each terminator): a `Kept` capture keeps
     /// the value that its variable has there, also after the variable ends.
     pub made: Option<&'a super::State>,
+    /// The run nodes of code of a caller for a value of the interface
+    /// (`Em::run_nodes`): the `lends` of these nodes are `code_lends` in a
+    /// closure summary, because a caller applies the value that it gives
+    /// there.
+    pub run_nodes: &'a [weft_facts::NodeId],
 }
 
 /// The part `runs` of a body from the runs at its run nodes (`runs`): one
@@ -757,14 +762,21 @@ pub fn closure(
     reads.sort();
     reads.dedup();
     out.reads = reads;
-    let mut lends: Vec<IPlace> = facts
+    let (code, other): (Vec<_>, Vec<_>) = facts
         .lends_mut
         .iter()
-        .filter_map(|&(_, r)| place(r).map(|x| x.0))
-        .collect();
-    lends.sort();
-    lends.dedup();
-    out.lends = lends;
+        .partition(|(n, _)| fv.run_nodes.contains(n));
+    let lends_of = |v: Vec<&(weft_facts::NodeId, PlaceId)>| {
+        let mut l: Vec<IPlace> = v
+            .iter()
+            .filter_map(|&&(_, r)| place(r).map(|x| x.0))
+            .collect();
+        l.sort();
+        l.dedup();
+        l
+    };
+    out.lends = lends_of(other);
+    out.code_lends = lends_of(code);
     for (_, e) in &facts.escapes_at {
         let pf = Perform {
             effect: e.clone(),

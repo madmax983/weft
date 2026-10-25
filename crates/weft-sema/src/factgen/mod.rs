@@ -580,6 +580,7 @@ pub fn emit_parts(
             returns: Vec::new(),
             runs: Vec::new(),
             code_multi: false,
+            run_nodes: Vec::new(),
             last: (!closures.is_empty()).then(crate::analysis::State::new),
             aborts: std::collections::BTreeSet::new(),
             union: (!closures.is_empty()).then(crate::analysis::State::new),
@@ -860,7 +861,7 @@ fn closure_summary(
     };
     let mut uniq = std::collections::BTreeMap::new();
     let mut holders = holders::Holders::new(vars.holder_parts());
-    let (returns, aborts, runs, made) = {
+    let (returns, aborts, runs, made, run_nodes) = {
         let mut em = templates::Em {
             p,
             sema: &a.program,
@@ -881,6 +882,7 @@ fn closure_summary(
             returns: Vec::new(),
             runs: Vec::new(),
             code_multi: false,
+            run_nodes: Vec::new(),
             last: Some(crate::analysis::State::new()),
             aborts: std::collections::BTreeSet::new(),
             union: Some(crate::analysis::State::new()),
@@ -897,6 +899,7 @@ fn closure_summary(
                 }
                 u
             }),
+            std::mem::take(&mut em.run_nodes),
         )
     };
     Ok(crate::analysis::summarize::closure(
@@ -910,6 +913,7 @@ fn closure_summary(
             runs: &runs,
             returns: &returns,
             code_multi: false,
+            run_nodes: &run_nodes,
             made: made.as_ref(),
         },
     ))
@@ -990,6 +994,7 @@ fn emit_closure(
         returns: Vec::new(),
         runs: Vec::new(),
         code_multi: false,
+        run_nodes: Vec::new(),
         last: None,
         aborts: std::collections::BTreeSet::new(),
         union: Some(crate::analysis::State::new()),

@@ -1645,7 +1645,7 @@ fn ret_fns(
                 Given::Args(args) => match args.get(*i as usize) {
                     Some(a) => {
                         let reach = reach_fns(cx, r.body, r.st, a)?;
-                        out.extend(with_results(cx, reach));
+                        out.extend(with_results(cx, r, reach)?);
                     }
                     None => {
                         out.insert(FnVal::Unknown);
@@ -1655,7 +1655,11 @@ fn ret_fns(
                     out.insert(FnVal::Unknown);
                 }
             },
-            RetFn::Capture(k) => out.extend(capture(cx, *k)?),
+            // The value of the capture again, and what its runs give back.
+            RetFn::Capture(k) => {
+                let vals = capture(cx, *k)?;
+                out.extend(with_results(cx, r, vals)?);
+            }
             RetFn::Unknown => {
                 out.insert(FnVal::Unknown);
             }
@@ -2058,7 +2062,15 @@ fn apply_value(
         }
         FnVal::Closure(c) | FnVal::Made(c) => {
             let made = matches!(fv, FnVal::Made(_));
-            let summary = cx.sums.closure(*c).map_err(AlphaError::Later)?.clone();
+            let mut summary = cx.sums.closure(*c).map_err(AlphaError::Later)?.clone();
+            // A closure that a callee made runs its captures as code of a
+            // caller (`Summary::code_lends`).
+            if made {
+                let code = summary.code_lends.clone();
+                summary.lends.extend(code);
+                summary.lends.sort();
+                summary.lends.dedup();
+            }
             let decl = p
                 .closures
                 .get(c.index())
@@ -2260,7 +2272,7 @@ fn param_fns(
                 return Ok(None);
             };
             let reach = reach_fns(cx, r.body, r.st, a)?;
-            let fns = with_results(cx, reach);
+            let fns = with_results(cx, r, reach)?;
             Ok(Some((fns, a.clone(), r.body)))
         }
         Given::Opaque(..) => Ok(Some((
@@ -2273,36 +2285,64 @@ fn param_fns(
 
 /// The function values `fns` and the function values that their runs give
 /// back (part `ret`): a callee that runs a value of a parameter can run its
-/// result too (`ap(|| || ..)`). Four levels; a value that gives back the
-/// value of a parameter or of a capture is code of a caller here.
-fn with_results(cx: &Cx<'_>, mut fns: BTreeSet<FnVal>) -> BTreeSet<FnVal> {
+/// result too (`ap(|| || ..)`). A closure of the body that gives back a
+/// capture gives the values of the capture at run node `r` (a chain of
+/// closures that give back closures). Each value counts one time; a chain
+/// longer than [`RESULT_DEPTH`] stays with the old pipeline. A value that
+/// gives back the value of a parameter is code of a caller here.
+///
+/// # Errors
+///
+/// The errors of α, and [`AlphaError::Later`] for a longer chain.
+fn with_results(
+    cx: &mut Cx<'_>,
+    r: Run0<'_>,
+    mut fns: BTreeSet<FnVal>,
+) -> Result<BTreeSet<FnVal>, AlphaError> {
     use super::summary::RetFn;
     let mut level = fns.clone();
-    for _ in 0..4 {
+    for _ in 0..RESULT_DEPTH {
         let mut next = BTreeSet::new();
         for f in &level {
             let sum = match f {
-                FnVal::Closure(c) | FnVal::Made(c) => cx.sums.closure(*c).ok(),
-                FnVal::Item(g, _) => cx.sums.get(*g).ok(),
+                FnVal::Closure(c) | FnVal::Made(c) => cx.sums.closure(*c).ok().cloned(),
+                FnVal::Item(g, _) => cx.sums.get(*g).ok().cloned(),
                 _ => None,
             };
-            for rf in sum.map_or(&[][..], |s| s.ret.fns.as_slice()) {
-                next.insert(match rf {
-                    RetFn::Item(g, t) => FnVal::Item(*g, t.clone()),
-                    RetFn::Made(c) => FnVal::Made(*c),
-                    RetFn::Param(_) | RetFn::Capture(_) | RetFn::Unknown => FnVal::Unknown,
-                });
+            let Some(sum) = sum else {
+                continue;
+            };
+            for rf in &sum.ret.fns {
+                match (rf, f) {
+                    (RetFn::Item(g, t), _) => {
+                        next.insert(FnVal::Item(*g, t.clone()));
+                    }
+                    (RetFn::Made(c), _) => {
+                        next.insert(FnVal::Made(*c));
+                    }
+                    (RetFn::Capture(k), FnVal::Closure(c)) => {
+                        next.extend(capture_fns(cx, r, *c, *k, false, &BTreeSet::new())?);
+                    }
+                    _ => {
+                        next.insert(FnVal::Unknown);
+                    }
+                }
             }
         }
         next.retain(|f| !fns.contains(f));
         if next.is_empty() {
-            break;
+            return Ok(fns);
         }
         fns.extend(next.iter().cloned());
         level = next;
     }
-    fns
+    Err(AlphaError::Later(
+        "a chain of function values that give back function values (stage F13)",
+    ))
 }
+
+/// The most levels of [`with_results`].
+const RESULT_DEPTH: usize = 16;
 
 /// The function values of capture `k` of closure `c` at run node `r`: the
 /// values that its source in the maker reaches; for a closure that a callee

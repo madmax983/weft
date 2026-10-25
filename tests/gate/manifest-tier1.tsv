@@ -949,6 +949,7 @@ d23a117630eb518a26ab44285ea2513ca1fb6d57fe688d96253b6efaff591b37	tests/gate/prob
 9021b772d31e894193a59b472733d5ba7f53b3b030bce3d8a6d89287e6c4c7e3	tests/gate/probes/fixes/f12/preview_fixes.wf	probes	file	0	0	
 890c9fffd3f31f686345253d2ce5e95fbbfe256f0dd13f5f6c45e2139e93f0a8	tests/gate/probes/fixes/f12/preview_fixes2.wf	probes	file	0	0	
 4bdcfaaf5bdb312eccc280f756c0c3fef4838e382e161afa6f429d610a769af8	tests/gate/probes/fixes/f12/run_given.wf	probes	file	1	0	
+945386fafa38c9dcc00d94741d0b5118c6d230484d97d2a4431dd5968a33579a	tests/gate/probes/fixes/f12/run_results.wf	probes	file	1	0	
 a5c34051a049292afffe548df7a23b5d22dc2c73dc60c8c8ae75c75a999798e5	tests/gate/probes/fixes/f8/ctl_cleanAfterRefresh.wf	probes	file	1	0	
 affa381fb96f5020a4d304026c46e873cfa7b6caf5a51c868cb339309667114b	tests/gate/probes/fixes/f8/ctl_cleanDeep.wf	probes	file	1	0	
 a56782bfdafdf0742b83569dd9afac6daf0b168409d4345a865f7499966e4b3c	tests/gate/probes/fixes/f8/h3_j4_refWholeOuter.wf	probes	file	1	0	

@@ -2991,6 +2991,13 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
   places that the callee gives to it and against the other arguments of the call
   (`Sigma::others`, W0312): the callee can keep references into them across the run. A
   change through a parameter of the value is a change of what the callee gives.
+- A closure summary keeps the `lends` of code of a caller at the runs of its captures and
+  parameters apart (`Summary::code_lends`): a caller applies the values that it gives
+  there. A closure that a callee made (`Made`) runs its captures as code of a caller, so
+  they are `lends` where it runs.
+- The results of a run (`transfer::with_results`): a closure of the body that gives back a
+  capture gives the values of the capture, also through a chain of closures that give
+  back closures (16 levels; a longer chain stays with the old pipeline).
 - A pattern that binds a part that can be a `once` closure moves the part only: the other
   parts of the same pattern are no use of a moved value.
 - A run argument that points into a local of the body (`f(&x)`) is the frame root of the

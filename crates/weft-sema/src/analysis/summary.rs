@@ -257,6 +257,12 @@ pub struct Summary {
     pub frees: Vec<IPlace>,
     /// Places that the body gives to code that it does not know.
     pub lends: Vec<IPlace>,
+    /// In the summary of a closure: the places that code of a caller can
+    /// change at the runs of the function values of its interface (part
+    /// `runs`). A caller that applies the runs with the values that it
+    /// gives does not use them; a closure that a callee made (`Made`) runs
+    /// its captures as code of a caller, so they are `lends` there.
+    pub code_lends: Vec<IPlace>,
     /// The operations that the body performs.
     pub performs: BTreeSet<Perform>,
     /// The ways the body can abort.

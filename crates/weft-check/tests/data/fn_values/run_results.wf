@@ -1,0 +1,34 @@
+// A closure that runs a capture gives back what the run gives back. Its
+// summary has no `lends` of code of a caller at the run of the capture: the
+// caller applies the value of the capture (review of the tier-2 preview,
+// `r3/quality/fuzz/o21/bad_21_4598_explain.wf`).
+struct W { v: Vec<u64> }
+fn chain(w: &W) / mut(w.v) {
+    let c0 = || w.v.push(1)
+    let c1 = || c0()
+    let c2 = || c1
+    let c3 = || c2()
+    let c4 = || c3()
+    let c5 = || c4()
+    let c6 = || c5()
+    let c7 = || c6()
+    c7()
+}
+// The value that the chain gives back changes `w.v`: a reference into it
+// is invalid after its call.
+fn chain_bad(w: &W) / mut(w.v) {
+    w.v.push(1)
+    let r = &w.v[0]
+    let c0 = || w.v.clear()
+    let c1 = || c0
+    let c2 = || c1()
+    let c3 = || c2()
+    let g = c3()
+    g()
+    print(r) //~ W0301
+}
+fn main() {
+    let w = W { v: Vec.new() }
+    chain(&w)
+    chain_bad(&w)
+}

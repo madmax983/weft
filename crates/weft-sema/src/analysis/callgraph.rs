@@ -500,6 +500,7 @@ pub fn infer(a: &Analysis, built: &Built, limit: Option<usize>) -> Inference {
                                 returns: &e.returns,
                                 code_multi: e.code_multi,
                                 made: e.made.as_ref(),
+                                run_nodes: &[],
                             },
                         );
                         add_steps(&mut steps, &facts);

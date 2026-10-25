@@ -3852,6 +3852,28 @@ line = 16
 note = "control: a closure that captures `world: &World` (no function value behind it) and reads a field is no code of a caller at the run (`transfer::fns_at`)"
 
 [[claim]]
+finding = "F12-R7"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F12"
+repro = ["tests/gate/probes/fixes/f12/run_results.wf"]
+code = "W0301"
+line = 28
+note = "a closure that runs a capture gives back what the run gives back: a chain of closures that give back closures (`transfer::with_results`)"
+
+[[claim]]
+finding = "F12-N3"
+kind = "sound"
+verdict = "construction"
+group = "AC"
+stage = "F12"
+repro = ["tests/gate/probes/fixes/f12/run_results.wf"]
+code = "W0301"
+line = 12
+note = "control (a new false positive of the tier-2 preview, r3/quality/fuzz/o21/bad_21_4598_explain.wf): a closure summary has no `lends` of code of a caller at the run of a capture (`Em::run_nodes`)"
+
+[[claim]]
 finding = "F12-N1"
 kind = "sound"
 verdict = "construction"

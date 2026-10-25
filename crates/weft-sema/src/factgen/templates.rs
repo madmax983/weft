@@ -100,6 +100,10 @@ pub struct Em<'a> {
     /// A run node of the body runs code of a caller that can resume more
     /// than once (the part `multi` of the summary, as the old inference).
     pub code_multi: bool,
+    /// The run nodes where code of a caller runs a function value of the
+    /// interface (an entry of `runs`): a caller applies the value that it
+    /// gives there (`Summary::code_lends`).
+    pub run_nodes: Vec<NodeId>,
     /// The join of the states before each `Dead` of the body, if it has
     /// closures: the last value of a variable that a closure keeps (`Kept`)
     /// when the body gives the closure back (stage F12).
@@ -2538,6 +2542,10 @@ fn emit_apps(
         }
         if let Some(r) = &app.run {
             em.runs.push((r.clone(), app.again || cyclic));
+            if app.code {
+                em.run_nodes.push(main);
+                em.run_nodes.extend(nodes.ret);
+            }
         }
         // A value of a parameter passes its effects through: the caller
         // applies the value that it gives (part `runs`).

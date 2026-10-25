@@ -219,4 +219,6 @@ them again if it runs.
   groups A, B and C), `copy_once.wf` (the closure-copy rule for elements,
   fields and pattern parts) and `run_given.wf` (a run of a value against the
   places that the callee gives and the other arguments of the call, found in
-  the review of the rows of the preview) (claims F12-R5, F12-C1, F12-R6).
+  the review of the rows of the preview) and `run_results.wf` (a chain of
+  closures that give back closures, from the tier-2 preview) (claims F12-R5,
+  F12-C1, F12-R6, F12-R7).

@@ -648,7 +648,8 @@ fn show(lines: &[String]) -> String {
 /// the function value, and the IR copies the function value. All of them are
 /// programs that the checker rejects. A new program in this list needs a
 /// review.
-const CLOSURE_COPY: [&str; 13] = [
+const CLOSURE_COPY: [&str; 14] = [
+    "tests/gate/probes/fixes/f12/run_results.wf",
     "tests/gate/probes/r2/redteam/p/zz_modes_vec.wf",
     "tests/gate/probes/r3/oracle/probes/s9_steal_stored.wf",
     "tests/gate/probes/r3/oracle/probes/sc4_vec_in_task.wf",

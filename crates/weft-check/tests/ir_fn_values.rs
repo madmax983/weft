@@ -189,3 +189,8 @@ fn a_run_checks_the_changes_of_the_value_against_the_places_that_the_callee_give
     // clean cases).
     check("run_given.wf");
 }
+
+#[test]
+fn a_closure_that_runs_a_capture_gives_back_what_the_run_gives_back() {
+    check("run_results.wf");
+}
