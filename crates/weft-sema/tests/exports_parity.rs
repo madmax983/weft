@@ -665,6 +665,18 @@ const CLOSURE_COPY: [&str; 14] = [
     "tests/programs/143_arg_roots.wf",
 ];
 
+/// The programs in which a closure gives back a closure that moves a
+/// parameter of the outer closure (`|t: Tx| || rollback(t)`): the old
+/// lowering puts the move of `t` in `by_value` of the outer closure, and the
+/// IR moves `t` into the inner closure (the parameter of the outer closure is
+/// not one of its captures). The IR is right: the oracle runs the inner
+/// closure with the moved value. Variants of hole H3 of the review of the
+/// ABC preview (F12-fix). A new program in this list needs a review.
+const NESTED_PARAM_MOVE: [&str; 2] = [
+    "tests/gate/probes/fixes/f12/h3/d11_ret_from_closure_maker_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_e_localmaker.wf",
+];
+
 #[test]
 fn the_by_move_captures_of_the_ir_are_the_by_value_captures() {
     let r = tier1();
@@ -685,7 +697,18 @@ fn the_by_move_captures_of_the_ir_are_the_by_value_captures() {
         .collect();
     assert!(new.is_empty(), "new closure-copy cases: {new:?}");
     eprintln!("{} closure-copy cases", r.found.fn_copy.len());
-    assert!(r.found.by_value.is_empty(), "{}", show(&r.found.by_value));
+    let by_value: Vec<String> = r
+        .found
+        .by_value
+        .iter()
+        .filter(|l| {
+            !NESTED_PARAM_MOVE
+                .iter()
+                .any(|p| l.starts_with(&format!("{p}:")) && l.contains("is in by_value"))
+        })
+        .cloned()
+        .collect();
+    assert!(by_value.is_empty(), "{}", show(&by_value));
 }
 
 #[test]

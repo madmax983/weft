@@ -240,3 +240,5 @@ variant.
   goes through a call argument, an `Option`, a field or a tuple (claim F12-H2).
 - `fixes/f12/oldholes/*.wf`: old holes that the ABC preview kept (review 4.7);
   the default pipeline gives them to the old pipeline (ledger `open-old`).
+- `fixes/f12/h3/*.wf`: hole H3, a linear closure that a function or a closure
+  gives back, dropped by the caller (claim F12-H3).

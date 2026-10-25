@@ -249,6 +249,7 @@ pub fn summarize(
         }
         changed.ret_fns = fns;
         changed.ret_places = places;
+        changed.ret_linear = ret_linear(ir, tys, fv.returns, entry);
     }
     for &(n, m) in &facts.mutates_at {
         if n.index() >= nodes {
@@ -444,6 +445,31 @@ fn ret_fns_of(
         }
     }
     (fns, places, caps)
+}
+
+/// True if `_0` of body `body` can hold a linear closure (`Ret::linear`).
+///
+/// The value of `_0` at a `Return` state of `returns` is linear, and its
+/// type has a function part. A type that can be linear (a linear type, a
+/// type parameter) says so by itself.
+pub fn ret_linear(
+    ir: &weft_ir::Program,
+    tys: &weft_ir::TyTable,
+    returns: &[super::State],
+    body: BodyId,
+) -> bool {
+    let Some(b) = ir.body(body) else {
+        return false;
+    };
+    let fn_part = b.local(b.ret).is_some_and(|d| {
+        crate::props::ir_has_fns(tys, d.ty)
+            && !crate::props::ir_maybe_linear(tys, d.ty)
+            && !tys.mentions_param(d.ty)
+    });
+    fn_part
+        && returns
+            .iter()
+            .any(|st| st.value((body, b.ret), &[]).flat().linear)
 }
 
 /// The interface places that the references of each capture of each closure

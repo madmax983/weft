@@ -903,7 +903,8 @@ fn closure_summary(
         )
     };
     let rebind_nodes = rebind_nodes(p, &table, cb);
-    Ok(crate::analysis::summarize::closure(
+    let ret_linear = crate::analysis::summarize::ret_linear(p, &tys, &returns, cb);
+    let mut sum = crate::analysis::summarize::closure(
         p,
         sums,
         &facts,
@@ -918,7 +919,9 @@ fn closure_summary(
             made: made.as_ref(),
             rebind_nodes: &rebind_nodes,
         },
-    ))
+    );
+    sum.ret.linear = ret_linear;
+    Ok(sum)
 }
 
 /// The nodes of closure body `cb` where it gives a capture a whole new value

@@ -1,0 +1,76 @@
+// A linear closure that a function or a closure gives back is a linear
+// value of the caller: a caller that drops it is W0601 (review of the ABC
+// preview, hole H3: `h4/hl_*`, `fd/d11`..`d25`, `lcv2/r5_f`, `lcv3/x09`,
+// `x10`). The old pipeline reports W0204 at the maker instead (R3RT5).
+linear struct Tx { id: u64 }
+    on abort = rollback
+fn rollback(tx: Tx) { let Tx(i) = tx }
+fn begin(i: u64) -> Tx { Tx { id: i } }
+struct K { f: fn() }
+fn mk_release(t: Tx) -> fn() { || rollback(t) }
+fn mk_local() -> fn() { let t = Tx { id: 1 }; || rollback(t) }
+fn mkfs(t: Tx) -> Vec<fn()> { let fs = Vec.new(); fs.push(|| rollback(t)); fs }
+fn mkk(t: Tx) -> K { K { f: || rollback(t) } }
+fn mko(t: Tx) -> Option<fn()> { Some(|| rollback(t)) }
+fn ignore(f: fn()) { }
+fn dropped() {
+    let h = mk_release(begin(7))
+    print(1)
+}   //~ W0601
+fn discarded() {
+    mk_release(begin(7)) //~ W0601
+    print(1)
+}
+// The local stays linear after the new value (as for a closure that the
+// body makes, `fd/d02`): its end is W0601 too.
+fn overwritten() {
+    let h = mk_release(begin(7))
+    h = || print(0) //~ W0601
+    h()
+}   //~ W0601
+fn run_on_no_path() {
+    let h = mk_release(begin(7))
+    if false { h() }
+}   //~ W0601
+fn closure_maker() {
+    let mk = |t: Tx| || rollback(t)
+    let h = mk(begin(7))
+    print(1)
+}   //~ W0601
+fn in_field() {
+    let k = K { f: mk_release(begin(7)) }
+    print(1)
+}   //~ W0601
+fn in_vec() {
+    let fs = Vec.new()
+    fs.push(mk_release(begin(7)))
+    print(1)
+}   //~ W0601
+fn local_of_maker() {
+    let h = mk_local()
+    print(1)
+}   //~ W0601
+fn to_a_callee_that_drops_it() {
+    let h = mk_release(begin(7))
+    ignore(h) //~ W0601
+}
+fn returned_vec() {
+    let fs = mkfs(begin(1))
+    print(fs.len())
+}   //~ W0601
+fn returned_struct() {
+    let k = mkk(begin(1))
+    print(0)
+}   //~ W0601
+fn returned_option() {
+    let o = mko(begin(1))
+    print(0)
+}   //~ W0601
+// Clean: the caller runs the closure one time.
+fn run_once() {
+    let h = mk_release(begin(7))
+    h()
+}
+fn main() {
+    run_once()
+}

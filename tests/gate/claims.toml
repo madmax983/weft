@@ -3982,3 +3982,32 @@ repro = [
 ]
 code = "W0301"
 note = "a closure that a function or a closure gives back keeps the places of its environment with its function values: through `Vec.push` and an element read (`store_fns`, `place_value`), through `id(f)` and code of a caller (`reach_refs`), and a `ByRef` or `Kept` capture of a `Made` closure is each place that the value points into (`made_sigma`) (hole H2 of the review of the ABC preview, and the old hole hv_m)"
+
+[[claim]]
+finding = "F12-H3"
+kind = "unsound"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f12/h3/hl_a_retdrop.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_b_retdiscard.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_c_retoverwrite.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_d_retif.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_e_localmaker.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_f_retfield.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_g_retvec.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_j_returns_local.wf",
+    "tests/gate/probes/fixes/f12/h3/hl_k_param_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/d11_ret_from_closure_maker_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/d12_ret_fn_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/d18_ret_vec_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/d19_ret_struct_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/d20_ret_option_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/d25_ret_maker_loop_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/r5_f_leak.wf",
+    "tests/gate/probes/fixes/f12/h3/x09_esc_ret_linear_drop.wf",
+    "tests/gate/probes/fixes/f12/h3/x10_v06_parse_linear.wf",
+]
+code = "W0601"
+note = "a linear closure that a function or a closure gives back (also in a Vec, a field or an Option) is a linear value of the caller (`Ret::linear`): a caller that drops it is W0601. The old pipeline rejects most of these programs only by the R3RT5 W0204 at the maker (hole H3 of the review of the ABC preview)"

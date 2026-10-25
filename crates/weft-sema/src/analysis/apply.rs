@@ -670,7 +670,7 @@ fn one_result(tys: &TyTable, t: TyId) -> bool {
 /// The errors of σ.
 pub fn ret_value(cx: &mut Cx<'_>, sum: &Summary, s: &Sigma, ret: TyId) -> Result<Tree, AlphaError> {
     let props = ir_props(cx.tys, ret);
-    let mut top = AbsVal::of_type(props.linear);
+    let mut top = AbsVal::of_type(props.linear || sum.ret.linear);
     for p in &sum.ret.places {
         top.refs.extend(places(cx, s, p, Base::Args)?);
         match p.root {

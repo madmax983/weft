@@ -886,3 +886,10 @@ files = ["tests/gate/probes/fixes/f12/oldholes/hv_m_vec_ret_fn.wf"]
 finding = "F12-H2"
 reason = "old hole that the ABC preview kept (review of the ABC preview, 4.7): `mkfs(w) -> Vec<fn()>` gives back a closure that clears `w.entities`; the old pipeline loses its effects, and the default AB pipeline gives the program (group C) to the old pipeline. Under ABC the vector holds the places of the environment of the closure (F12-fix H2): W0301. Drop this entry when group C is on (F13)"
 stage = "F12"
+
+[[entry]]
+class = "changed"
+files = ["tests/programs/169_returned_linear_closures.wf"]
+codes = ["W0204", "W0601"]
+reason = "a closure owns its `ByMove` capture (R3RT5): the old W0204 at the maker is its false positive; the `ir` pipeline (groups A, B and C) reports the caller that drops the linear closure (W0601, F12-fix H3). Under the default groups the program uses group C and the old pipeline checks it"
+stage = "F12"

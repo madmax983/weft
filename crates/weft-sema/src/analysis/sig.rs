@@ -255,6 +255,8 @@ pub struct Inferred {
     /// result point into, and the places of a result with a function part
     /// (part `ret`, stage F12).
     pub ret_places: BTreeSet<IPlace>,
+    /// The result can hold a linear closure (part `ret`, `Ret::linear`).
+    pub ret_linear: bool,
 }
 
 /// True if interface place `a` is `b` or a place that holds `b`.
@@ -325,6 +327,10 @@ impl Inferred {
         }
         for p in &o.ret_places {
             grew |= self.ret_places.insert(p.clone());
+        }
+        if o.ret_linear && !self.ret_linear {
+            self.ret_linear = true;
+            grew = true;
         }
         if grew {
             self.muts.sort();
@@ -551,6 +557,7 @@ pub fn build(
     s.holds.clone_from(&inf.holds);
     s.runs.clone_from(&inf.runs);
     s.ret.fns = inf.ret_fns.iter().cloned().collect();
+    s.ret.linear = inf.ret_linear;
     for p in &inf.ret_places {
         if !s.ret.places.contains(p) {
             s.ret.places.push(p.clone());

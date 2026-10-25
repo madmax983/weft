@@ -216,3 +216,11 @@ fn a_closure_that_a_maker_gives_back_keeps_its_effects_through_calls_and_values(
     // holds the places of the environment with its function values.
     check("made_through_values.wf");
 }
+
+#[test]
+fn a_linear_closure_that_a_maker_gives_back_is_a_linear_value_of_the_caller() {
+    // Review of the ABC preview, hole H3: the result of a call that gives
+    // back a linear closure (in a value of a type with a function part) is
+    // linear (part `ret`, `Ret::linear`); a caller that drops it is W0601.
+    check("returned_linear.wf");
+}

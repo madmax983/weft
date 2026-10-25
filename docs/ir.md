@@ -3017,6 +3017,11 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
   or `Kept` capture to each place that the value points into as well as to the value
   itself (`apply::made_sigma`): a closure that a closure gives back keeps the cell of
   its `ByRef` capture.
+- Part `ret` has `linear` (`Ret::linear`, F12-fix H3): `_0` can hold a linear value at a
+  `Return` and its type has a function part (no type parameter, not linear by its
+  type), so a linear closure that the body gives back (also in a `Vec`, a field or an
+  `Option`) makes the result of a call linear (`apply::ret_value`). A caller that drops
+  it is W0601; the old pipeline reports the maker (R3RT5 W0204).
 - The results of a run (`transfer::with_results`): a closure of the body that gives back a
   capture gives the values of the capture, also through a chain of closures that give
   back closures (16 levels; a longer chain stays with the old pipeline).

@@ -3015,7 +3015,7 @@ pub fn perform(em: &mut Em<'_>, nodes: &CallNodes, st: &State, t: &TermKind) -> 
 fn closure_on_abort(em: &mut Em<'_>, v: &crate::analysis::AbsVal) -> bool {
     let mut any = false;
     for fv in &v.fns {
-        let crate::analysis::FnVal::Closure(c) = fv else {
+        let (crate::analysis::FnVal::Closure(c) | crate::analysis::FnVal::Made(c)) = fv else {
             continue;
         };
         let Some(decl) = em.p.closures.get(c.index()) else {

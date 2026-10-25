@@ -191,6 +191,7 @@ fn stated(
     out.runs.clone_from(&body.runs);
     out.ret_fns.clone_from(&body.ret_fns);
     out.ret_places.clone_from(&body.ret_places);
+    out.ret_linear = body.ret_linear;
     out
 }
 
@@ -225,6 +226,7 @@ fn summary_of(
             // The function values: the body gives them (stage F12).
             sum.runs.clone_from(&inf.runs);
             sum.ret.fns = inf.ret_fns.iter().cloned().collect();
+            sum.ret.linear = inf.ret_linear;
             for p in &inf.ret_places {
                 if !sum.ret.places.contains(p) {
                     sum.ret.places.push(p.clone());

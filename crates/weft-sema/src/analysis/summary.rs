@@ -218,6 +218,10 @@ pub struct Ret {
     /// The function values that the result can be (stage F12). The places
     /// that their environments point into are in `places`.
     pub fns: Vec<RetFn>,
+    /// The result can hold a linear value that its type does not show: a
+    /// linear closure in a value of a type with a function part (hole H3 of
+    /// the review of the ABC preview).
+    pub linear: bool,
 }
 
 /// How a value of an argument flows into the pointee of a reference
