@@ -2706,6 +2706,32 @@ program stayed with the old pipeline ("a function value stored behind a referenc
   `tests/gate/probes/fixes/f13b/ab_rc3/e17_read_in_param_fn_b.wf`): the body has no heap
   slot of its own for the references that the object holds at its entry (both pipelines
   miss it; ledger `open-old`).
+- Stricter than the old pipeline by design (class FP-RC-strict of the review of stage F13):
+  a use of the references of an `rc` object (in the body, or in a callee that reads them)
+  after a callee whose row allows a change of the group is W0301, also when the callee
+  does not change the group at run time (a loop that runs zero times).
+- A reference in an `rc` object points into the wildcard place of each field of the group
+  that its type can point into (`Roots::group_targets`; F13-fix, false positive FP-AB-RC):
+  a `&u64` in `Cache.refs` points into `Cache.data..`, so `c.refs.push(c.refs[0])` changes no
+  place that the copy points into (before: `Cache..`, W0312 and W0301). A generic struct
+  keeps the wildcard place of the group.
+- A heap slot holds the join of the values that each store puts there (a weak update):
+  after a callee stores another value over a closure that an earlier callee stored there,
+  the slot still holds the old closure, and a run of the slot applies its summary too.
+  This is stricter than the old pipeline by design (class FP-S3 of the review of stage F13:
+  `reg(cb, world); calm(cb); run_ref(cb)` is W0301 for a reference into `world`).
+- A value of a caller and a closure in one value (a slot that holds both): the run of the
+  value of the caller (code of a caller) gets no environment from the references of the
+  value, which are the environment of the closure (F13-fix, false positive FP-S2:
+  `s.o = Some(|| ..); let o = s.o; match o { Some(f) => f(), .. }` lent `world..`).
+- A closure that another function made (its maker frame is gone) keeps the cell of each
+  `Kept` and `ByRef` variable with it: σ of such a capture is the place of the closure
+  value, not the places that the variable points into (`apply::other_maker`; F13-fix,
+  false positive FP-K4: a returned closure that runs `r = &b.entities[0]` changed `b`).
+- A callee that runs two function values runs them in each order (`Applied::again` with
+  `order`): each run applies at `Main` or at `Ret`, but one time, so a `once` closure that
+  it runs one time is no W0502 (`fn both(f, g) { f(); g() }`, finding (a) of stage
+  F12-fix3). The same value that runs two times is W0502.
 - A copy of a function value through a pointer is a copy of the references of its
   environment (`templates::copied_refs`; F13-fix, classes H-S1 and H-RC1): a read back of a
   closure from a heap slot (`let g = cb.f`, `let g = h.f`) uses the variables of the slot.

@@ -220,3 +220,18 @@ fn a_linear_closure_in_a_part_or_behind_a_reference_is_a_linear_value_of_the_own
     // or live across an abort.
     check("linear_slots.wf");
 }
+
+#[test]
+fn a_copy_of_a_reference_of_an_rc_object_into_the_object_is_accepted() {
+    // False positive FP-AB-RC of the review of stage F13 (default groups):
+    // `c.refs.push(c.refs[0])` gave W0312 and W0301, because a reference in
+    // an `rc` object pointed into the wildcard place of the whole group.
+    check_ab("rc_copy_ref.wf");
+}
+
+#[test]
+fn stored_and_returned_closures_of_the_false_positive_classes_are_accepted() {
+    // FP-S2 and FP-K4 of the review of stage F13, and finding (a) of stage
+    // F12-fix3 (`both(f, g)` with one `once` closure).
+    check("fp_closures.wf");
+}

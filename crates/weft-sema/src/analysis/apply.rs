@@ -541,11 +541,18 @@ pub fn made_sigma(
         // place as a reference (`transfer::closure_value`), so the capture
         // is also each place that the value points into (hole H2 of the
         // review of the ABC preview: a closure that a closure gives back).
+        // A closure that another function made keeps the cell of the
+        // variable with it (the frame of the maker is gone): a new value of
+        // the variable is a change of the closure value, not of what the
+        // variable points into (false positive FP-K4 of the review of stage
+        // F13: `r = &b.entities[0]` in a returned closure is no change of
+        // `b`).
         let mut at = places.clone();
         if matches!(
             cap.mode,
             weft_ir::CaptureMode::ByRef | weft_ir::CaptureMode::Kept
-        ) {
+        ) && !other_maker(p, decl.maker, body)
+        {
             at.extend(refs.iter().copied());
             at.extend(cells.iter().copied());
             at.sort();
@@ -556,6 +563,25 @@ pub fn made_sigma(
         s.cap_deeps.push(deep.clone());
     }
     Ok(s)
+}
+
+/// True if the function body that makes `maker` (the body itself, or the
+/// function of a closure body) is not the function of body `body`: a closure
+/// that `maker` makes leaves a frame that is gone when `body` runs it.
+fn other_maker(p: &weft_ir::Program, maker: BodyId, body: BodyId) -> bool {
+    let root = |mut b: BodyId| {
+        for _ in 0..=p.closures.len() {
+            match p.closure_of(b) {
+                Some((_, d)) => b = d.maker,
+                None => return Some(b),
+            }
+        }
+        None
+    };
+    match (root(maker), root(body)) {
+        (Some(a), Some(b)) => a != b,
+        _ => false,
+    }
 }
 
 /// The place in body `body` that capture `k` of closure `c` names, if the

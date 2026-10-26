@@ -174,14 +174,15 @@ pub fn held_at(
             Ok(out)
         }
         // A reference in an `rc` object points into a place that each
-        // handle of the group can reach: the wildcard place of the group,
+        // handle of the group can reach: the wildcard place of each field of
+        // the group that its type can point into (`Roots::group_targets`),
         // and the places that the body stored there (stage F13).
         Some(Role::Group) => {
             let mut top = at;
             while let Some(up) = facts.places.get(top.index()).and_then(|i| i.parent) {
                 top = up;
             }
-            let mut out = vec![facts.wildcard(top)];
+            let mut out = roots.group_targets(facts, top, at);
             out.extend(stored_at(facts, st, at));
             Ok(out)
         }
@@ -1452,6 +1453,11 @@ pub struct Applied {
     /// The run happens again at the `Ret` node (a value that runs another
     /// value `Many` times, OR3).
     pub again: bool,
+    /// With `again`: the run happens one time, at the `Main` node or at the
+    /// `Ret` node (a body that runs two values can run them in each order).
+    /// A `once` value runs once then (no W0502: `fn both(f, g) { f(); g() }`
+    /// with one `once` closure, stage F12-fix3 finding (a)).
+    pub order: bool,
     /// The run happens at the `Ret` node, after the parts of the summary of
     /// the run node (a value that a callee runs: the callee can change a
     /// place before it runs the value, which then reads a reference into
@@ -2266,11 +2272,14 @@ fn apply_runs(
                     (true, _) => {
                         for a in apps.out.iter_mut().skip(start) {
                             a.again = true;
+                            a.order = !run.many;
                         }
                     }
+                    // The same value runs a second time.
                     (false, Some(&k)) => {
                         if let Some(a) = apps.out.get_mut(k) {
                             a.again = true;
+                            a.order = false;
                         }
                     }
                     _ => {}
@@ -2369,6 +2378,22 @@ fn apply_value(
             };
             // The environment of the value: what its references point into.
             let env: Vec<PlaceId> = match given {
+                // A value of a caller next to a closure in one value (a slot
+                // that holds the value of the caller and a closure that the
+                // body stored there): the references of the value are the
+                // environment of the closure, which its own run applies. The
+                // value of the caller has the places of a caller (false
+                // positive FP-S2 of the review of stage F13: `let o = s.o`).
+                Given::Args(_)
+                    if !matches!(fv, FnVal::Unknown)
+                        && operand(cx, cb, st, callee)?
+                            .flat()
+                            .fns
+                            .iter()
+                            .any(|f| matches!(f, FnVal::Closure(_) | FnVal::Made(_))) =>
+                {
+                    Vec::new()
+                }
                 Given::Args(_) => {
                     let v = operand(cx, cb, st, callee)?.flat();
                     // The cell of a variable that a closure captures `ByRef`
@@ -2473,6 +2498,7 @@ fn apply_value(
                 once: Vec::new(),
                 once_args: Vec::new(),
                 again: false,
+                order: false,
                 late: false,
                 run,
                 code: true,
@@ -2592,6 +2618,7 @@ fn apply_value(
                 once: Vec::new(),
                 once_args: Vec::new(),
                 again: false,
+                order: false,
                 late: false,
                 run: None,
                 code: false,
@@ -2757,6 +2784,7 @@ fn apply_value(
                 once: Vec::new(),
                 once_args: Vec::new(),
                 again: false,
+                order: false,
                 late: false,
                 run: None,
                 code: false,

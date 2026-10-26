@@ -4684,3 +4684,44 @@ repro = [
     "tests/gate/probes/fixes/f13b/hlin/l02_behind_ref_never_run_c.wf",
 ]
 note = "the clean twin of H-LIN"
+
+[[claim]]
+finding = "F13B-FP-AB-RC"
+kind = "fp"
+verdict = "construction"
+group = "A"
+stage = "F13.1"
+repro = ["tests/gate/probes/fixes/f13b/fp/k05_copy_ref_same_object.wf"]
+note = "a copy of a reference that an `rc` object holds goes into the object again: no W0312 and no W0301 (a `&u64` in `Cache.refs` points into `Cache.data..`, `Roots::group_targets`; false positive FP-AB-RC of the review of stage F13)"
+
+[[claim]]
+finding = "F13B-FP-S2"
+kind = "fp"
+verdict = "construction"
+group = "ABC"
+stage = "F13"
+repro = [
+    "tests/gate/probes/fixes/f13b/fp/s1_07_readback_option_c.wf",
+    "tests/gate/probes/fixes/f13b/fp/s1_08_readback_vec_last_c.wf",
+    "tests/gate/probes/fixes/f13b/fp/s1_20_get_returns_slot_c.wf",
+    "tests/gate/probes/fixes/f13b/fp/s1b_06_nested_clear_capture_w_c.wf",
+]
+note = "a body stores a closure behind a parameter, reads the slot back and runs it: the value of the caller in the slot has no environment of the closure (false positive FP-S2 of the review of stage F13)"
+
+[[claim]]
+finding = "F13B-FP-K4"
+kind = "fp"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/fixes/f13b/fp/k04_rebind_inside_returned_closure_c.wf"]
+note = "a returned closure gives its `Kept` variable a new value: no change of the referent (false positive FP-K4 of the review of stage F13)"
+
+[[claim]]
+finding = "F12R3-BOTH"
+kind = "fp"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/fixes/f13b/fp/both_once.wf"]
+note = "a callee runs two function values one time each, one a `once` closure: no W0502 (finding (a) of stage F12-fix3; `Applied::order`)"

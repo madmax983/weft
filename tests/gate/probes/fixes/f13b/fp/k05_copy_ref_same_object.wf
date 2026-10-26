@@ -1,0 +1,17 @@
+// Review of stage F13, a false positive that F13-fix removes (s7b/k05_copy_ref_same_object.wf).
+struct Cache { refs: Vec<&u64>, data: Vec<u64> }
+struct Store { xs: Vec<u64> }
+fn newc() -> Rc<Cache> { Rc.new(Cache { refs: Vec.new(), data: Vec.new() }) }
+fn news() -> Rc<Store> { Rc.new(Store { xs: Vec.new() }) }
+fn stash(c: Rc<Cache>, x: &u64) / mut(Cache) { c.refs.push(x) }
+fn read0(c: Rc<Cache>) {
+    let r = c.refs[0]
+    print(r + 0)
+}
+fn main() / mut(Cache) {
+    let c = newc()
+    c.data.push(1)
+    c.refs.push(&c.data[0])
+    c.refs.push(c.refs[0])
+    read0(c)
+}

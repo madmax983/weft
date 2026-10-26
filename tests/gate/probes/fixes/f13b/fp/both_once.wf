@@ -1,0 +1,6 @@
+// Stage F12-fix3 finding (a): a callee runs two values one time each; one is a once closure (scratchpad f12fix3/both.wf).
+struct Buf { items: Vec<u64> }
+fn mkbuf() -> Buf { let b = Buf { items: Vec.new() }; b.items.push(1); b }
+fn eat(b: Buf) { print(b.items.len()) }
+fn both(f: fn(), g: fn()) { f(); g() }
+fn main() { let b = mkbuf(); both(|| eat(b), || print(1)) }

@@ -341,3 +341,7 @@ names the class and the review file.
   variant: the late value is a place of a parameter that `main` clears).
 - `fixes/f13b/hlin/*.wf`: class H-LIN, a linear closure in a part of a local, behind
   a reference, in a `Box` or in an `rc` object (claim F13B-HLIN).
+- `fixes/f13b/fp/*.wf`: false positives that F13-fix removes: FP-AB-RC (`k05`, claim
+  F13B-FP-AB-RC), FP-S2 (claim F13B-FP-S2), FP-K4 (claim F13B-FP-K4), and `both_once`
+  (finding (a) of stage F12-fix3, claim F12R3-BOTH).
+

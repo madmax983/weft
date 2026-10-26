@@ -2917,7 +2917,7 @@ fn emit_apps(
             // again uses it, so W0502 (OR3, `or3d`). A value behind a
             // reference argument is the value of the place that the
             // reference points into.
-            if app.again {
+            if app.again && !app.order {
                 for (mb, op) in &app.once_args {
                     for v in once_vars(em, st, *mb, op)? {
                         if n == main {
@@ -2954,7 +2954,8 @@ fn emit_apps(
             }
         }
         if let Some(r) = &app.run {
-            em.runs.push((r.clone(), app.again || cyclic));
+            em.runs
+                .push((r.clone(), (app.again && !app.order) || cyclic));
             if app.code {
                 em.run_nodes.push(main);
                 em.run_nodes.extend(nodes.ret);

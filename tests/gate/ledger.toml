@@ -1922,3 +1922,12 @@ files = [
 codes = ["W0204"]
 reason = "class K3-Made (F13-fix): a closure that a closure makes goes into a slot of a parameter, then the kept variable gets a reference into a local. The ir pipeline reports the store (the closure that the callee gets, `kept_escapes`); the old pipeline reports the next line"
 stage = "F13"
+
+# F13-fix: the classes FP-S3 (a weak heap slot keeps a closure that a later
+# callee overwrites) and FP-RC-strict (a use of the references of an `rc`
+# object after a callee whose row allows a change of the group) are stricter
+# than the old pipeline by design (docs/ir.md 6.6). Their review files
+# (scratchpad f13/variants s1/s1_10_c, s7c/e04_c, e08_c, e16_c) are no probes:
+# the gate allows one `new-fp` probe for each 1000 probes that `old` accepts,
+# and the probe of the N2 class (fixes/f12c/n2/tw.wf) has that place.
+
