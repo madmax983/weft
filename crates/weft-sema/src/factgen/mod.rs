@@ -643,7 +643,7 @@ pub fn emit_parts(
         unions.insert(cb, st);
     }
     let parts = holders.finish(facts);
-    let mut diags = stored_behind(p, &tys, facts, &roots, body, &stored);
+    let mut diags = stored_behind(p, &tys, facts, &roots, body, &stored)?;
     diags.extend(kept_escapes(p, &tys, facts, &roots, entry, &returns));
     // Each local with a root owns it, and the cell of a local that a closure
     // captures `ByRef` is owned by `C` of the local.
@@ -1122,6 +1122,12 @@ pub fn components(a: &Analysis, built: &Built) -> Result<Vec<Component>, Unsuppo
 /// caller keeps the reference. One diagnostic for each place that gets the
 /// reference and each local, at the span of the node, as the old lowering
 /// (`check_stored_behind`).
+///
+/// # Errors
+///
+/// Returns [`Unsupported`] for a reference through a whole local handle that
+/// can be a copy of a handle of the object that gets it
+/// (`templates::Stored::maybe_same`).
 fn stored_behind(
     p: &weft_ir::Program,
     tys: &weft_ir::TyTable,
@@ -1129,7 +1135,7 @@ fn stored_behind(
     roots: &alpha::Roots,
     body: &weft_ir::Body,
     stored: &[templates::Stored],
-) -> Vec<Diagnostic> {
+) -> Result<Vec<Diagnostic>, Unsupported> {
     use weft_syntax::diag::Code;
     let mut out = Vec::new();
     let mut seen: Vec<(String, weft_facts::RootId)> = Vec::new();
@@ -1155,15 +1161,18 @@ fn stored_behind(
             let Some(root) = facts.places.get(r.index()).map(|i| i.root) else {
                 continue;
             };
-            // A handle of the `rc` type of the store can be a handle of the
-            // object itself: the reference goes away with the object (as
-            // the old lowering, `check_stored_behind`).
-            let into_group = facts.places.get(st.into.index()).map(|i| i.root);
-            let handle_group = roots
-                .handle_group(r)
-                .and_then(|g| facts.places.get(g.index()).map(|i| i.root));
-            if handle_group.is_some() && handle_group == into_group {
+            // A whole local handle of the object that gets the store: the
+            // reference goes away with the object (`templates::rc_handles`).
+            if st.same.contains(&r) {
                 continue;
+            }
+            // A whole local handle that can be a copy of a handle of the
+            // object: the facts cannot tell if the object is the same.
+            if st.maybe_same.contains(&r) {
+                return Err(Unsupported {
+                    group: Group::A,
+                    reason: "a reference through a copy of an `rc` handle goes into an `rc` object of the same type".to_string(),
+                });
             }
             // A reference into a local, or into the cell of a local that a
             // closure captures `ByRef` (a closure that captures the local,
@@ -1210,7 +1219,7 @@ fn stored_behind(
             out.push(diag);
         }
     }
-    out
+    Ok(out)
 }
 
 /// The W0204 check of the `Kept` captures of a closure that leaves the

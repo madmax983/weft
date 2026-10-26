@@ -1923,9 +1923,11 @@ fn put_values(
     let mut stores = Vec::new();
     let mut fns_out = Vec::new();
     for (into, refs) in &sum.puts {
+        // The references flow from the values of the arguments, with the
+        // handles on the way (as the part `stores`, `apply::flow_refs`).
         let mut rs = Vec::new();
         for x in refs {
-            rs.extend(super::apply::iplaces(cx, sigma, x)?);
+            rs.extend(super::apply::vplaces(cx, sigma, x)?);
         }
         rs.sort();
         rs.dedup();

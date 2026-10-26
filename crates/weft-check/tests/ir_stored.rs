@@ -25,6 +25,14 @@ fn abc(src: &str) -> Options {
     }
 }
 
+/// The options of the `ir` pipeline with the default groups (A and B).
+fn ab(src: &str) -> Options {
+    Options {
+        facts: weft_sema::FactGen::Ir,
+        ..Options::from_markers(src)
+    }
+}
+
 /// The line of byte offset `lo` of `src`.
 fn line_of(src: &str, lo: u32) -> usize {
     src.get(..lo as usize)
@@ -43,6 +51,25 @@ fn program(name: &str) -> String {
 /// and the groups A, B and C on. The program must be in scope.
 fn abc_codes(name: &str, src: &str) -> Vec<(String, usize)> {
     let a = analyze_source(src, abc(src))
+        .unwrap_or_else(|d| panic!("{name} does not parse: {}", d.message));
+    assert!(
+        a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope),
+        "{name}: {:?}",
+        a.ir_scope.as_ref().and_then(|s| s.fallback.clone())
+    );
+    let mut got: Vec<(String, usize)> = check_analysis(a, &[])
+        .diags
+        .iter()
+        .map(|d| (format!("{:?}", d.code), line_of(src, d.span.lo)))
+        .collect();
+    got.sort();
+    got
+}
+
+/// The codes and lines of the diagnostics of `src` with the `ir` pipeline
+/// and the default groups. The program must be in scope.
+fn ab_codes(name: &str, src: &str) -> Vec<(String, usize)> {
+    let a = analyze_source(src, ab(src))
         .unwrap_or_else(|d| panic!("{name} does not parse: {}", d.message));
     assert!(
         a.ir_scope.as_ref().is_some_and(weft_sema::Scope::in_scope),
@@ -79,6 +106,14 @@ fn markers(src: &str) -> Vec<(String, usize)> {
 fn check(name: &str) {
     let src = program(name);
     assert_eq!(abc_codes(name, &src), markers(&src), "{name}");
+}
+
+/// Checks program `name` with the default groups and with the groups A, B
+/// and C: its diagnostics are its markers in both.
+fn check_ab(name: &str) {
+    let src = program(name);
+    assert_eq!(ab_codes(name, &src), markers(&src), "{name} (AB)");
+    assert_eq!(abc_codes(name, &src), markers(&src), "{name} (ABC)");
 }
 
 #[test]
@@ -120,4 +155,42 @@ fn a_closure_that_leaves_the_body_sees_the_last_value_of_a_kept_variable() {
     // the late stores of the old lowering). Before stage F13 the ir pipeline
     // accepted both, and a run of the closure read the dead local.
     check("kept_late.wf");
+}
+
+#[test]
+fn a_reference_through_another_handle_of_the_rc_type_is_a_store_of_a_local() {
+    // Classes AB-RC1 and AB-RC2 of the review of stage F13 (default groups):
+    // a reference through a handle in a local `Vec`, struct or tuple, through
+    // a whole local handle of a new object, or through a second by-value
+    // handle parameter goes into the `rc` object of the store. Before the
+    // fix the ir pipeline skipped each handle of the same `rc` type (the old
+    // pipeline gives W0204 for the first forms and misses the others). The
+    // handle of the store itself (`fill_self`) stays accepted.
+    check_ab("rc_handles.wf");
+}
+
+#[test]
+fn a_reference_through_a_copy_of_the_handle_of_the_store_goes_to_the_old_pipeline() {
+    // `let d = c.clone()`: the facts cannot tell a copy of the handle from a
+    // handle of another object, so the program is not in scope.
+    let name = "rc_clone_handle.wf";
+    let src = program(name);
+    let a = analyze_source(&src, ab(&src))
+        .unwrap_or_else(|d| panic!("{name} does not parse: {}", d.message));
+    let why = a
+        .ir_scope
+        .as_ref()
+        .and_then(|s| s.fallback.clone())
+        .unwrap_or_default();
+    assert!(why.contains("a copy of an `rc` handle"), "{name}: {why}");
+    assert!(check_analysis(a, &[]).diags.is_empty(), "{name}");
+}
+
+#[test]
+fn a_callee_that_reads_the_references_of_an_rc_object_after_a_change_is_w0301() {
+    // Class AB-RC3 of the review of stage F13 (default groups): the run node
+    // of a callee that reads `c.refs[0]` uses the variables of the heap slot
+    // of the group. Before the fix only a read in the body was W0301 (both
+    // pipelines accepted the callee forms).
+    check_ab("rc_callee_reads.wf");
 }

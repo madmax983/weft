@@ -698,6 +698,19 @@ pub fn iplaces(cx: &mut Cx<'_>, s: &Sigma, place: &IPlace) -> Result<Vec<PlaceId
     places(cx, s, place, Base::Args)
 }
 
+/// σ of the interface place `place` as a value that flows.
+///
+/// The places of the value of an argument for a `Param` root, with the
+/// handle places on the way to it (a reference through a handle depends on
+/// it, ADR 0003).
+///
+/// # Errors
+///
+/// The errors of σ.
+pub fn vplaces(cx: &mut Cx<'_>, s: &Sigma, place: &IPlace) -> Result<Vec<PlaceId>, AlphaError> {
+    places(cx, s, place, Base::Values(false))
+}
+
 /// The handles that a place of an `rc` group in the result depends on: the
 /// handle places on the way to each argument, and the handle of each
 /// reference argument to an `Rc` (`&Rc<T>`), or to a value that holds one

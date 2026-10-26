@@ -1511,17 +1511,24 @@ reason = "the old W0301 at `reg(&h, ..)` assumes that `reg` runs its function ar
 stage = "F13"
 
 [[entry]]
-class = "moved"
+class = "changed"
 files = ["verify/s5/R2b: closures, function values and stored references/fd3_localrc.wf"]
-codes = ["W0301"]
-reason = "block-value-line class: the block value points into an `rc` object through the handle `d` of the block; the ir pipeline reports the use of `r` (20), the old pipeline the end of the block (18). In scope from stage F13 (a reference in an `rc` object); group A"
+codes = ["W0204", "W0301"]
+reason = "block-value-line class: the block value points into an `rc` object through the handle `d` of the block; the ir pipeline reports the use of `r` (20), the old pipeline the end of the block (18). In scope from stage F13 (a reference in an `rc` object); group A. F13-fix (class AB-RC1 of the review of stage F13): `local_rc` puts a reference through the handle of a new local object `d` into the object of `c` (W0204, 11): the object of `d` goes away at the return. The old pipeline skips each whole local handle of the same `rc` type and misses it"
 stage = "F13"
 
 [[entry]]
 class = "changed"
 files = ["verify/s5/R2b: closures, function values and stored references/fd3_fp.wf"]
+codes = ["W0204", "W0301"]
+reason = "the `rc` object keeps the references that the callees put into `c.refs` (stage F13, the heap slot of the group root): after `other_rc_direct` changes `Cache` (`d.data.push`), the next use of `c.refs` is W0301 (35: `local_rc` reads `c.refs` in `push`, F13-fix class AB-RC3). F13-fix (class AB-RC1): `local_rc` puts a reference through the handle of the new local object `d` into `c` (W0204, 15): this is the fault of the run at 41 (`c.refs[2]` points into the dead object), which the old pipeline misses; `other_rc_direct` puts a reference through its second by-value handle parameter `d` (W0204, 10: stricter than the old pipeline, `main` gives a handle that stays). The W0312 lines are in both. In scope from stage F13; group A"
+stage = "F13"
+
+[[entry]]
+class = "changed"
+files = ["verify/s5/R2b: closures, function values and stored references/fd3_param.wf"]
 codes = ["W0301"]
-reason = "the `rc` object keeps the references that the callees put into `c.refs` (stage F13, the heap slot of the group root): after `other_rc_direct` changes `Cache` (`d.data.push`), a use of `c.refs` is W0301 (39, 40; the run faults at 41: `c.refs[2]` points into the dead object of `local_rc`, which both pipelines accept as a handle of the same `rc` type). The W0312 lines are in both. In scope from stage F13; group A"
+reason = "F13-fix (class AB-RC3 of the review of stage F13): a callee (`read`) reads the references of the `rc` object after their referent changes (`t_top`: `v.clear()`, 26) or ends (`t_scope`: the end of the block, 33). The run node uses the variables of the heap slot, as a read in the body. The old pipeline misses both (`main` is empty, so the runs do not fault). Group A"
 stage = "F13"
 
 # Stage F13: the rows of tier 2 with the groups A, B and C (the classes above).
@@ -1800,4 +1807,22 @@ files = [
 ]
 reason_class = "stricter"
 reason = "map N2 (ADR 0012, ir 6.7), third review of the ABC preview (`fpx2/tw.wf`; the review rows `fpx2/ab1.wf`, `n1b/y06`, `h3b/u10` are the same class and are not probes: the gate allows one `new-fp` probe in 1000): a result of code of a caller (`let g = m()`) can point into `Caller..`, and a later run of code of a caller (`let h = m()`, a `fail` operation through `risky(n)`) can change `Caller..`, so the use of `g` is W0301 (as `ln1.wf`). A `fail` operation does not resume, but its clause runs before the body unwinds, and an `on abort` function can read a reference that the clause invalidated; the lend must stay on the abort path, and the facts have no node for effects on the abort edge only. The old pipeline accepts these programs"
+stage = "F13"
+
+# ----------------------------------------------------------------------
+# F13-fix: the classes of the review of stage F13 part 1 (scratchpad
+# f13/review.md).
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/fixes/f13b/ab_rc1/a13_nested_rc_rc_b.wf"]
+finding = "F13B-AB-RC1"
+reason = "old hole AB-RC1 (review of stage F13): a reference through a whole local handle of a new object goes into an object that an `Rc<Rc<Cache>>` parameter reaches. The handle of the store is a handle in an `rc` object, so the facts cannot tell if the objects are the same: the old pipeline checks the program, and it skips each whole local handle of the same `rc` type (no W0204)"
+stage = "F13"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/fixes/f13b/ab_rc3/e17_read_in_param_fn_b.wf"]
+finding = "F13B-AB-RC3"
+reason = "old hole AB-RC3 (review of stage F13): the caller puts a reference into an `rc` object (`fill_self`), then a callee changes the group and reads the reference (`use_it`: `grow`, then `read0`). The callee has no heap slot of its own for the references that the object holds at its entry (they point into the wildcard place of the group), so no variable gets invalid. Both pipelines miss it"
 stage = "F13"

@@ -2694,6 +2694,18 @@ program stayed with the old pipeline ("a function value stored behind a referenc
   referent, each use of the container that reaches the slot is W0301
   (`tests/data/stored/rc.wf`, `main`; the old pipeline accepts a use that does not read
   the reference).
+- A run node uses the variables of each heap slot that overlaps a place that the applied
+  summary reads (part `reads`, `templates::slot_reads`; F13-fix, class AB-RC3 of the review
+  of stage F13): a callee that reads `c.refs[0]` after a change of the group is W0301, as
+  the same read in the body. Before, only an argument that reaches the slot through a
+  reference (`deep_uses`) used it, and an `Rc` handle argument is no reference. The same
+  rule holds for a closure run (`emit_apps`): a closure in a heap slot that keeps a
+  reference into the group, or a made closure in a slot of a parameter, reads the slot
+  (classes H-RC1 and H-S1). Not done: a callee whose caller filled the object, and that
+  changes the group and then reads the references (`use_it` of
+  `tests/gate/probes/fixes/f13b/ab_rc3/e17_read_in_param_fn_b.wf`): the body has no heap
+  slot of its own for the references that the object holds at its entry (both pipelines
+  miss it; ledger `open-old`).
 
 **The post-passes of today**, and where each one goes:
 
@@ -3290,8 +3302,27 @@ reads the stores of each body of the component, also of the instantiated closure
 and the stores that a run node applies (parts `stores`, `puts`, `put_fns` of a callee or a
 closure). A reference into the cell of a local that a closure captures `ByRef` counts as a
 reference into the local ("puts a closure that captures `v`"). A handle place `h.*` of the
-`rc` type of the object that gets the store is no local: the reference goes away with the
-object (`fill_self` of `tests/programs/116_rc_stores.wf`, as `check_stored_behind`). A new
+handle of the store itself is no local: the reference goes away with the object
+(`fill_self` of `tests/programs/116_rc_stores.wf`, as `check_stored_behind`).
+
+As built (F13-fix, classes AB-RC1 and AB-RC2 of the review of stage F13): the template of
+the store gives the handle places through which the store reaches the object (`al.handles`
+of the destination, the handles `σ.deps` of the argument of a callee;
+`templates::rc_handles`), and the check skips only those. A handle in a local `Vec`, struct
+or tuple (`hs[0].data[0]`) is no handle of the object: W0204, as the old lowering (F13 part 1
+skipped each handle of the same `rc` type, a regression). A whole local handle of another
+object (`let d = newc()`, an `Option` payload, a second by-value handle parameter) is W0204
+too: the old lowering skips each whole local handle of the same type and misses the dangling
+reference. This is stricter than the old pipeline when the other handle is a handle of a
+living object (`other(c, d)` with `d` a handle that the caller keeps; two local objects of
+`main` that point into each other). A whole local handle whose value can come from the same
+local or parameter as a handle of the store (`let d = c.clone()`, `transfer` gives the clone
+the place of `c`) can be a handle of the same object: the facts cannot tell, so the program
+goes to the old pipeline ("a reference through a copy of an `rc` handle"). A store with no
+known handle (the `puts` of a callee with a by-value handle argument, a closure) keeps the
+rule of the old lowering; such a callee also gets W0312 for an argument that points into the
+group. The references of the part `puts` flow from the values of the arguments with their
+handle places (`apply::vplaces`), as the part `stores`. A new
 check, `factgen::kept_escapes`, gives the late values of `Kept` captures: a closure that
 the function gives back or puts into a heap slot of an interface place sees the value of
 each variable that it keeps at the `Return`, and a reference there into a local is W0204

@@ -312,3 +312,22 @@ that names the class and the review file.
 - `fixes/f12c/w0502/*.wf`: the W0502 class, a `once` maker that a callee runs one
   time (claim F12R3-W0502).
 - `fixes/f12c/n2/tw.wf`: a map N2 row (by design; ledger `new-fp`, `stricter`).
+
+## Programs that the F13 fixes added
+
+These programs are not copies of SCRATCH. `copy-probes` does not know them: add
+them again if it runs. Each one is a file of the review of stage F13 part 1
+(scratchpad `f13/review.md`, `f13/variants/`), with one line of header that
+names the class and the review file.
+
+- `fixes/f13b/ab_rc2/*.wf`: class AB-RC2, a reference through a handle in a local
+  `Vec`, struct or tuple goes into an `rc` object of the same type (claim
+  F13B-AB-RC2), and clean twins.
+- `fixes/f13b/ab_rc1/*.wf`: class AB-RC1, a reference through a whole local handle
+  of another object (claim F13B-AB-RC1), clean twins, a copy of the handle of the
+  store (`k01`, the old pipeline checks it), and the old hole `a13` (ledger
+  `open-old`).
+- `fixes/f13b/ab_rc3/*.wf`: class AB-RC3, a callee reads the references of an `rc`
+  object after a change of the group (claim F13B-AB-RC3), clean twins, and the old
+  hole `e17` (ledger `open-old`).
+

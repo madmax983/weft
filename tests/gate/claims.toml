@@ -51,7 +51,7 @@
 # A stage that turns claims on adds its id to `done` (rule 5 of the plan: a
 # follow-up stage `F8.1` is a stage id too).
 
-done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2"]
+done = ["S00", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "I5", "F7", "F8", "F8.3", "F9", "F10", "F10.1", "F10.2", "F13.1"]
 
 
 # ----------------------------------------------------------------------
@@ -4434,3 +4434,93 @@ repro = [
     "tests/gate/probes/fixes/f12c/w0502/p18_once_maker_through_go2.wf",
 ]
 note = "the result of a run of a parameter is `FnVal::ParamResult`, and part `runs` keeps a run of the result apart from a run of the parameter (`Run::result`): a `once` maker that a callee runs one time, and whose result it runs one time, runs once (W0502 class of the third review of the ABC preview)"
+
+# ----------------------------------------------------------------------
+# F13-fix (scratchpad f13/review.md): the classes of the review of stage F13 part
+# 1. The classes of the default groups (A) are on at stage F13.1 (the release
+# blockers of the default pipeline); the classes of group C wait for F13.
+
+[[claim]]
+finding = "F13B-AB-RC2"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F13.1"
+repro = [
+    "tests/gate/probes/fixes/f13b/ab_rc2/a10_vec_of_handles_local_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc2/b01_struct_field_handle_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc2/b02_tuple_handle_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc2/b04_vec_handle_index_var_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc2/b05_vec_handle_via_stash_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc2/b06_vec_handle_param_vec_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc2/b09_vec_handle_twice_b.wf",
+]
+code = "W0204"
+note = "a reference through a handle in a local `Vec`, struct or tuple, or in a by-value `Vec` parameter, goes into an `rc` object of the same type: the handle is no handle of the object, so the W0204 store check reports it (as the old pipeline; class AB-RC2 of the review of stage F13, a regression of F13 part 1)"
+
+[[claim]]
+finding = "F13B-AB-RC1"
+kind = "unsound"
+verdict = "construction"
+group = "A"
+stage = "F13.1"
+repro = [
+    "tests/gate/probes/fixes/f13b/ab_rc1/a01_localrc_same_type_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc1/a04_param_handle_temp_object_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc1/a11_option_handle_local_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc1/b08_handle_by_value_param_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc1/b10_option_vec_handle_b.wf",
+]
+code = "W0204"
+note = "a reference through a whole local handle of another object (a new object, an `Option` payload, a second by-value handle parameter) goes into an `rc` object of the same type: W0204 (class AB-RC1 of the review of stage F13; the old pipeline misses it)"
+
+[[claim]]
+finding = "F13B-AB-RC1"
+kind = "sound"
+verdict = "construction"
+group = "A"
+stage = "F13.1"
+repro = [
+    "tests/gate/probes/fixes/f13b/ab_rc1/a01_localrc_same_type_c.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc1/a11_option_handle_local_c.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc1/k01_clone_of_param.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc2/a10_vec_of_handles_local_c.wf",
+]
+note = "the clean twins of AB-RC1 and AB-RC2, and a copy of the handle of the store (`k01`: the old pipeline checks it)"
+
+[[claim]]
+finding = "F13B-AB-RC3"
+kind = "unsound"
+verdict = "construction"
+group = "AB"
+stage = "F13.1"
+repro = [
+    "tests/gate/probes/fixes/f13b/ab_rc3/e01_change_by_callee_read_by_callee_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e02_change_through_other_handle_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e03_vec_of_handles_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e05_whole_field_reassign_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e06_change_in_loop_read_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e07_option_handle_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e09_struct_with_handle_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e11_direct_fill_callee_read_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e12_direct_fill_direct_change_callee_read_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e13_callee_fill_direct_change_callee_read_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e14_read_by_callee2_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e15_all_in_one_callee_b.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e18_two_objects_same_type_b.wf",
+]
+code = "W0301"
+note = "a callee reads the references of an `rc` object after a change of the group: the run node uses the variables of the heap slot (class AB-RC3 of the review of stage F13; the old pipeline misses it)"
+
+[[claim]]
+finding = "F13B-AB-RC3"
+kind = "sound"
+verdict = "construction"
+group = "AB"
+stage = "F13.1"
+repro = [
+    "tests/gate/probes/fixes/f13b/ab_rc3/e05_whole_field_reassign_c.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e12_direct_fill_direct_change_callee_read_c.wf",
+    "tests/gate/probes/fixes/f13b/ab_rc3/e13_callee_fill_direct_change_callee_read_c.wf",
+]
+note = "the clean twins of AB-RC3 that change no referent before the read"

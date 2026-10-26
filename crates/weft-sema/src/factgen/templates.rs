@@ -120,6 +120,17 @@ pub struct Stored {
     pub refs: Vec<PlaceId>,
     /// The span of the node.
     pub span: Span,
+    /// The handle places `h.*` of `refs` of a whole local handle of the
+    /// `rc` type of the object that gets the store, that can be a handle of
+    /// that object: the handle of the store itself (`c.refs.push(&c.data[0])`),
+    /// or a template that does not know the handle of the store. The
+    /// reference goes away with the object: no W0204 for them.
+    pub same: Vec<PlaceId>,
+    /// The handle places of `refs` of a whole local handle of the `rc` type
+    /// of the store that can be a copy of a handle of the object
+    /// (`let d = c.clone()`): the fact generator cannot tell if the object
+    /// is the same. The old pipeline checks the program.
+    pub maybe_same: Vec<PlaceId>,
 }
 
 /// The span of the facts for an IR span.
@@ -1316,8 +1327,9 @@ fn through(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, v: &Tree) -> R
     // A self-reference field has its own check (W0605).
     let self_ref = field_place(em, st, place)?.is_some();
     let sp = em.facts.node(n).span;
+    let own = (!al.handles.is_empty()).then_some((st, al.handles.as_slice()));
     for &q in &al.places {
-        store(em, n, q, &refs, sp, !self_ref);
+        store(em, n, q, &refs, sp, !self_ref, own);
     }
     Ok(())
 }
@@ -1326,14 +1338,27 @@ fn through(em: &mut Em<'_>, n: NodeId, st: &State, place: &Place, v: &Tree) -> R
 /// place of a local: a weak definition of the variable of the place (no
 /// `rebound_at`). A place that a caller keeps (behind a reference
 /// parameter, in an `rc` object): with `check`, the W0204 store check gets
-/// it ([`Stored`]).
-fn store(em: &mut Em<'_>, n: NodeId, q: PlaceId, refs: &[PlaceId], span: Span, check: bool) {
+/// it ([`Stored`]). `own` is the state before the node and the handle
+/// places through which the store reaches `q`, if the template knows them
+/// ([`rc_handles`]).
+fn store(
+    em: &mut Em<'_>,
+    n: NodeId,
+    q: PlaceId,
+    refs: &[PlaceId],
+    span: Span,
+    check: bool,
+    own: Option<(&State, &[PlaceId])>,
+) {
     let Some((k, path)) = em.roots.path_of(em.facts, q) else {
         if check {
+            let (same, maybe_same) = rc_handles(em, q, refs, own);
             em.stored.push(Stored {
                 into: q,
                 refs: refs.to_vec(),
                 span,
+                same,
+                maybe_same,
             });
         }
         return;
@@ -1348,6 +1373,131 @@ fn store(em: &mut Em<'_>, n: NodeId, q: PlaceId, refs: &[PlaceId], span: Span, c
     if let Some(h) = holder {
         em.hold(Some(n), h, refs);
     }
+}
+
+/// The handle places of `refs` that are a whole local handle `h.*` of the
+/// `rc` type of the object that gets the store into `q` (the W0204 store
+/// check, `docs/ir.md` 6.9): the handles that can be a handle of that object
+/// (the first list) and the handles that can be a copy of one (the second
+/// list).
+///
+/// A handle of the store itself (in `own`) is a handle of the object. A
+/// local whose value can come from the same local or parameter as a handle
+/// of the store (`let d = c.clone()`) can be a copy: the facts cannot tell
+/// if the objects are the same. Another local is a handle of another object
+/// (`let d = newc()`, a second parameter): the object of `h` can go away at
+/// the return, so the check reports it (class AB-RC1 of the review of stage
+/// F13). A handle in a container, a struct or a tuple is no whole local:
+/// the check reports it, as the old lowering (class AB-RC2). With no `own`
+/// (a template that does not know the handle of the store) each whole local
+/// handle is in the first list, as the old lowering.
+fn rc_handles(
+    em: &Em<'_>,
+    q: PlaceId,
+    refs: &[PlaceId],
+    own: Option<(&State, &[PlaceId])>,
+) -> (Vec<PlaceId>, Vec<PlaceId>) {
+    let mut same = Vec::new();
+    let mut maybe = Vec::new();
+    let into = em.facts.places.get(q.index()).map(|i| i.root);
+    for &r in refs {
+        let group = em
+            .roots
+            .handle_group(r)
+            .and_then(|g| em.facts.places.get(g.index()).map(|i| i.root));
+        if group.is_none() || group != into {
+            continue;
+        }
+        let Some(k) = whole_local_handle(em, r) else {
+            continue;
+        };
+        let Some((st, own)) = own else {
+            same.push(r);
+            continue;
+        };
+        if own.contains(&r) {
+            same.push(r);
+            continue;
+        }
+        // The locals and parameters that the handles of the store can come
+        // from. A handle of the store that is not of a local (a handle in an
+        // `rc` object) can be a copy of any handle.
+        let mut sources = std::collections::BTreeSet::new();
+        let mut known = true;
+        for &h in own {
+            match whole_or_local_handle(em, h).and_then(|o| handle_sources(em, st, o)) {
+                Some(o) => sources.extend(o),
+                None => known = false,
+            }
+        }
+        let mine = handle_sources(em, st, k);
+        let shared = mine.is_none_or(|m| m.iter().any(|x| sources.contains(x)));
+        if !known || shared {
+            maybe.push(r);
+        }
+    }
+    (same, maybe)
+}
+
+/// The key of local `h` if `r` is the handle place `h.*` of the whole local
+/// `h`.
+fn whole_local_handle(em: &Em<'_>, r: PlaceId) -> Option<Key> {
+    let parent = em.facts.places.get(r.index())?.parent?;
+    let info = em.facts.places.get(parent.index())?;
+    if !info.steps.is_empty() {
+        return None;
+    }
+    match em.roots.role(info.root)? {
+        super::alpha::Role::Local(k) => Some(k),
+        _ => None,
+    }
+}
+
+/// The key of the local or the parameter that owns the handle place `r`,
+/// at any depth (`hs[].*` gives `hs`).
+fn whole_or_local_handle(em: &Em<'_>, r: PlaceId) -> Option<Key> {
+    let root = em.facts.places.get(r.index())?.root;
+    match em.roots.role(root)? {
+        super::alpha::Role::Local(k) => Some(k),
+        super::alpha::Role::Param(b, i) => param_key(em, b, i),
+        _ => None,
+    }
+}
+
+/// The key of the local of parameter `i` of body `b`.
+fn param_key(em: &Em<'_>, b: BodyId, i: u32) -> Option<Key> {
+    let body = em.p.bodies.get(b.index())?;
+    body.params.get(i as usize).map(|&l| (b, l))
+}
+
+/// The locals and parameters that the value of local `k` can come from in
+/// state `st`: `k`, and each local or parameter whose place a reference in
+/// the value points into, to a fixpoint (a copy of a handle,
+/// `let d = c.clone()`, points into `c`). None for more than 64 locals:
+/// the caller then cannot tell the objects apart.
+fn handle_sources(em: &Em<'_>, st: &State, k: Key) -> Option<std::collections::BTreeSet<Key>> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut work = vec![k];
+    while let Some(x) = work.pop() {
+        if !seen.insert(x) {
+            continue;
+        }
+        if seen.len() > 64 {
+            return None;
+        }
+        for r in st.value(x, &[]).flat().refs {
+            let Some(info) = em.facts.places.get(r.index()) else {
+                continue;
+            };
+            let next = match em.roots.role(info.root) {
+                Some(super::alpha::Role::Local(y)) => Some(y),
+                Some(super::alpha::Role::Param(b, i)) => param_key(em, b, i),
+                _ => None,
+            };
+            work.extend(next.filter(|y| !seen.contains(y)));
+        }
+    }
+    Some(seen)
 }
 
 /// The stated place of the place field that `place` names, if `place` is a
@@ -2231,6 +2381,7 @@ pub fn call(
         spans: spans.clone(),
         bases: bases.clone(),
     };
+    let read = em.facts.reads_at.len();
     let changed = crate::analysis::apply::main(
         &mut em.cx(),
         main,
@@ -2239,6 +2390,7 @@ pub fn call(
         &site,
         crate::analysis::apply::RunKind::Item,
     )?;
+    slot_reads(em, main, read);
     // The function values that the callee runs (part `runs`, stage F12).
     let run_frames = emit_apps(em, nodes, st, block, args, &out.apps, at, &spans, &bases)?;
     let ptys: Vec<weft_ir::TyId> = out.sigma.tys.clone();
@@ -2351,7 +2503,11 @@ pub fn call(
             moved(em, r, st, q, &al)?;
         }
         for (q, refs) in &out.stores {
-            store(em, r, *q, refs, at, true);
+            // A store with no known handle (a `puts` of an `rc` object
+            // through a by-value handle) keeps the rule of the old lowering.
+            let own = sigma_handles(&out.sigma, *q);
+            let own = (!own.is_empty()).then_some((st, own.as_slice()));
+            store(em, r, *q, refs, at, true, own);
         }
         let changed: Vec<PlaceId> = out
             .muts
@@ -2647,6 +2803,7 @@ fn emit_apps(
                 k => k,
             };
             let lent = em.facts.lends_mut.len();
+            let read = em.facts.reads_at.len();
             let changed = crate::analysis::apply::main(
                 &mut em.cx(),
                 n,
@@ -2655,6 +2812,7 @@ fn emit_apps(
                 &site,
                 kind,
             )?;
+            slot_reads(em, n, read);
             let places: Vec<PlaceId> = changed.iter().map(|(q, _)| *q).collect();
             fn_linear_args(em, st, args, &places)?;
             put_linear(em, &app.put_fns);
@@ -2987,6 +3145,56 @@ fn once_behind(em: &mut Em<'_>, st: &State, r: PlaceId) -> bool {
     false
 }
 
+/// The handle places on the way to each argument of σ `s` whose places
+/// hold place `q`: the handles through which a store of the callee reaches
+/// `q` ([`rc_handles`]).
+fn sigma_handles(s: &crate::analysis::apply::Sigma, q: PlaceId) -> Vec<PlaceId> {
+    let mut out: Vec<PlaceId> = Vec::new();
+    for (j, deps) in s.deps.iter().enumerate() {
+        let has = |v: &Vec<Vec<PlaceId>>| v.get(j).is_some_and(|ps| ps.contains(&q));
+        if has(&s.args) || has(&s.helds) || has(&s.values) {
+            out.extend(deps.iter().copied());
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The reads of a run node `n` from index `from` of `reads_at` (the part
+/// `reads` of the summary that the node applies): a read of a place of a
+/// heap slot reads the references that the slot holds, so the node uses the
+/// variables of each slot that overlaps a read place that no local owns
+/// (`super::holders`). A callee that reads `c.refs[0]` of an `rc` object
+/// after a change of the referent is W0301, as the same read in the body
+/// (class AB-RC3 of the review of stage F13).
+fn slot_reads(em: &mut Em<'_>, n: NodeId, from: usize) {
+    let reads: Vec<PlaceId> = em
+        .facts
+        .reads_at
+        .get(from..)
+        .unwrap_or_default()
+        .iter()
+        .filter(|(m, _)| *m == n)
+        .map(|(_, q)| *q)
+        .collect();
+    let mut uses = Vec::new();
+    for q in reads {
+        if em.roots.path_of(em.facts, q).is_none() {
+            uses.extend(em.holders.slot_vars(em.facts, q));
+        }
+    }
+    uses.sort();
+    uses.dedup();
+    em.apply(
+        n,
+        Frag {
+            uses,
+            ..Frag::default()
+        },
+    );
+}
+
 /// The facts of the summaries `apps` at the `Ret` node `r`: the values that
 /// a closure puts into places of the caller (a weak definition), and the
 /// new value of each capture that it rebinds on each path (part `rebinds`,
@@ -3000,7 +3208,7 @@ fn once_behind(em: &mut Em<'_>, st: &State, r: PlaceId) -> bool {
 fn apps_at_ret(em: &mut Em<'_>, r: NodeId, st: &State, apps: &[transfer::Applied], at: Span) -> R {
     for app in apps {
         for (q, refs) in &app.stores {
-            store(em, r, *q, refs, at, true);
+            store(em, r, *q, refs, at, true, None);
         }
         for (k, v) in &app.rebinds {
             whole(em, r, st, *k, v);
@@ -3096,7 +3304,7 @@ fn fn_stores(
             // A place that no local owns: its heap slot holds them, and the
             // W0204 store check gets them (stage F13).
             if behind {
-                store(em, r, q, &refs, at, true);
+                store(em, r, q, &refs, at, true, None);
             }
             continue;
         };
@@ -3106,7 +3314,7 @@ fn fn_stores(
                 .and_then(|b| b.locals.get(k.1.index()))
                 .is_some_and(|d| crate::props::ir_has_fns(em.tys, d.ty));
         if holds {
-            store(em, r, q, &refs, at, false);
+            store(em, r, q, &refs, at, false, None);
         }
     }
     Ok(())
