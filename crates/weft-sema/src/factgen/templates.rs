@@ -2328,6 +2328,7 @@ pub fn call(
     if let Some(r) = nodes.ret {
         held_refs(em, r, st, args)?;
         bind_dest(em, r, st, dest, &out.ret)?;
+        once_copied_out(em, r, st, sum, args)?;
         for (i, op) in args.iter().enumerate() {
             let (true, Operand::Move(q)) = (held.get(i).copied().unwrap_or(false), op) else {
                 continue;
@@ -2768,6 +2769,46 @@ fn fn_arg_effects(
             needs: String::new(),
             via: None,
         });
+    }
+    Ok(())
+}
+
+/// A callee whose result is a function value of a reference argument
+/// (part `ret`, `RetFn::Param`) copies it out of the referent (`first(&fs)`
+/// gives `fs[0]`): when the value can be a `once` closure, the copy moves it
+/// there (the closure-copy rule, `docs/ir.md` 5.22), so `moved_at` of the
+/// owners of the referent at the `Ret` node `r` (old hole `b14` of the
+/// review of the ABC preview).
+///
+/// # Errors
+///
+/// The errors of α.
+fn once_copied_out(
+    em: &mut Em<'_>,
+    r: NodeId,
+    st: &State,
+    sum: &crate::analysis::summary::Summary,
+    args: &[Operand],
+) -> R {
+    use crate::analysis::summary::RetFn;
+    let body = em.body;
+    for f in &sum.ret.fns {
+        let RetFn::Param(i) = f else { continue };
+        let Some(op @ (Operand::Copy(q) | Operand::Move(q))) = args.get(*i as usize) else {
+            continue;
+        };
+        let is_ref = em
+            .place_ty(q)
+            .is_some_and(|t| matches!(em.tys.try_get(t), Some(Ty::Ref(_))));
+        if !is_ref {
+            continue;
+        }
+        let reach = transfer::reach_fns(&mut em.cx(), body, st, op)?;
+        if !reach.iter().any(|fv| transfer::once_value(em.p, fv)) {
+            continue;
+        }
+        let vs = once_vars(em, st, body, op)?;
+        em.facts.moved_at.extend(vs.into_iter().map(|v| (v, r)));
     }
     Ok(())
 }

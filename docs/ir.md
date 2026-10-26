@@ -3017,6 +3017,11 @@ As built (plan stage F12, `analysis::transfer::value_out`, `apply_runs`, `unknow
   or `Kept` capture to each place that the value points into as well as to the value
   itself (`apply::made_sigma`): a closure that a closure gives back keeps the cell of
   its `ByRef` capture.
+- A callee whose result is a function value of a reference argument (`RetFn::Param` of
+  `first(fs: &Vec<fn()>) -> fn() { fs[0] }`) copies the value out of the referent: when
+  it can be a `once` closure, the `Ret` node moves the owners of the referent
+  (`templates::once_copied_out`, the closure-copy rule of 5.22; old hole `b14` of the
+  review of the ABC preview, F12-fix).
 - A run in part `runs` has `maybe` (`Run::maybe`, F12-fix H5): a normal path of the body
   from its entry to a `Return` passes no block whose terminator runs the value
   (`summarize::returns_without`). A linear closure that goes to such a parameter can go

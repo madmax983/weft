@@ -1024,6 +1024,7 @@ c43383deedb64bd8e1601f54e84da559e38dc0aaac5226c55e4158d35848f8c3	tests/gate/prob
 aa1a90291e49d3ee9105e48b42fb3a7f8bcc4757cb1f49dfc1cb4d6221913748	tests/gate/probes/fixes/f12/h6/v02_loop_nopop.wf	probes	file	1	0	
 eab73c387d7166b8f445af1ff37b03d2a7d4c7bfac608f26e7e6547f08f5f321	tests/gate/probes/fixes/f12/h6/v03_loop_local_closure_vec.wf	probes	file	1	0	
 e7bd27a4b52d5ee61236e38dfde738d1cbe9d55d3b1122d9811c73ebb7788290	tests/gate/probes/fixes/f12/h6/x11_a2_loop_linear_pop_one.wf	probes	file	1	0	
+e30a7523efa1eb05aa158af4e75b7b26540167896da3e619a5491ca9fc5b494a	tests/gate/probes/fixes/f12/oldholes/b14_vec_first_twice.wf	probes	file	1	0	
 23a631e6c66088c18413a9022542bb638f6d49425a4010297bcf70c0a038b2b7	tests/gate/probes/fixes/f12/oldholes/hv_m_vec_ret_fn.wf	probes	file	1	0	
 c4c7a8c39cb5d6f1a51bd15ab11c2406b7f9ee1f8c3ca4bcb002cbb970fa9d9c	tests/gate/probes/fixes/f12/oldholes/m09_made_ref_ends_vec.wf	probes	file	1	0	
 9021b772d31e894193a59b472733d5ba7f53b3b030bce3d8a6d89287e6c4c7e3	tests/gate/probes/fixes/f12/preview_fixes.wf	probes	file	0	0	

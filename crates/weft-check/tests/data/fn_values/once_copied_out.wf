@@ -1,0 +1,29 @@
+// A callee that gives back a function value from behind a reference
+// argument copies it: when the value can be a `once` closure, the call
+// moves it out of the referent (review of the ABC preview, old hole
+// `oh/b14_vec_first_twice.wf`; the closure-copy rule, docs/ir.md 5.22).
+struct Buf { items: Vec<u64> }
+fn mkbuf() -> Buf { let b = Buf { items: Vec.new() }; b.items.push(1); b }
+fn eat(b: Buf) { print(b.items.len()) }
+fn first(fs: &Vec<fn()>) -> fn() { fs[0] }
+fn twice_through_a_callee() {
+    let b = mkbuf()
+    let fs = Vec.new()
+    fs.push(|| eat(b))
+    let g = first(&fs)
+    g()
+    let h = first(&fs) //~ W0302
+    h()
+}
+// Clean: a closure that is not `once`.
+fn plain_twice() {
+    let fs = Vec.new()
+    fs.push(|| print(1))
+    let g = first(&fs)
+    g()
+    let h = first(&fs)
+    h()
+}
+fn main() {
+    plain_twice()
+}

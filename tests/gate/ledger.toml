@@ -907,3 +907,10 @@ files = ["tests/programs/170_closures_in_containers.wf"]
 codes = ["W0301"]
 reason = "the vector holds the places of its closures (F12-fix H4): the `ir` pipeline (groups A, B and C) reports the read of the element of the invalid vector, the old pipeline the call of the copy one line later. Under the default groups the program uses group C and the old pipeline checks it"
 stage = "F12"
+
+[[entry]]
+class = "open-old"
+files = ["tests/gate/probes/fixes/f12/oldholes/b14_vec_first_twice.wf"]
+finding = "F12-OH1"
+reason = "old hole that the ABC preview kept (review of the ABC preview, 4.7): `first(fs: &Vec<fn()>) -> fn() { fs[0] }` copies a `once` closure out of the vector, and the caller runs two copies; the old pipeline misses it, and the default AB pipeline gives the program (group C) to the old pipeline. Under ABC the call moves the referent (F12-fix, `templates::once_copied_out`): W0302 at the second copy. Drop this entry when group C is on (F13)"
+stage = "F12"

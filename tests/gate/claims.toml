@@ -4066,3 +4066,13 @@ repro = [
 ]
 code = "W0601"
 note = "a push of a linear closure in a loop into a local whose type has a function part starts its linear value (`overwrites`) on the first run of the node too: the local starts empty (`templates::gets_linear_but`; hole H6 of the review of the ABC preview)"
+
+[[claim]]
+finding = "F12-OH1"
+kind = "unsound"
+verdict = "construction"
+group = "AC"
+stage = "F13"
+repro = ["tests/gate/probes/fixes/f12/oldholes/b14_vec_first_twice.wf"]
+code = "W0302"
+note = "a callee whose result is a function value of a reference argument (`first(&fs) -> fn() { fs[0] }`) copies it out of the referent: a `once` closure moves there (`templates::once_copied_out`, the closure-copy rule), so a second copy is W0302 (old hole of the review of the ABC preview, 4.7)"

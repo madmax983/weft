@@ -233,3 +233,11 @@ fn a_linear_closure_that_runs_on_some_paths_only_can_go_away() {
     // variable is linear), is W0601.
     check("runs_on_some_paths.wf");
 }
+
+#[test]
+fn a_once_closure_that_a_callee_copies_out_of_a_referent_moves() {
+    // Old hole of the review of the ABC preview (`oh/b14`): `first(&fs)`
+    // gives back a copy of a `once` closure in `fs`; a second copy ran it
+    // again. The call moves the referent (the closure-copy rule).
+    check("once_copied_out.wf");
+}
